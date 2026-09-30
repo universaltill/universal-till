@@ -60,6 +60,12 @@ type WasmRuntime struct {
 	baseDir    string
 	unsubGen   int           // bumped per sync so stale handlers no-op
 	calls      *wasmCallGate // concurrent-call caps, sale-path slot reserved (ut-docs#3154)
+	// queueWait bounds how long a queued non-blocking event waits for a
+	// call slot before its run deadline starts (ut-docs#3171).
+	queueWait time.Duration
+	// drainCtx ends the drainers' slot waits at Close; drainStop cancels it.
+	drainCtx  context.Context
+	drainStop context.CancelFunc
 	// wg tracks the per-plugin event-channel drainer goroutines Sync starts,
 	// so Close can wait for them to exit at shutdown (ut-docs#380).
 	wg sync.WaitGroup
@@ -86,6 +92,15 @@ const exportTimeout = 30 * time.Second
 // simpler, and the size cap (maxImportFileSize, import_dispatch.go) is
 // what actually bounds worst case, not this deadline.
 const importTimeout = 5 * time.Minute
+
+// queuedEventWait is how long a non-blocking event (sale.completed,
+// stock.adjusted, …) off a plugin's drainer may wait for a call slot
+// (ut-docs#3171). On Android/iOS a plugin has one ordinary slot, and an
+// export or import holds it for up to exportTimeout / importTimeout; a
+// queued event that waited only its own 2 s deadline failed and was never
+// retried. Waiting as long as the longest ordinary call lets it through
+// once that call ends. Blocking calls keep their deadline-bound wait.
+const queuedEventWait = importTimeout
 
 // isExportClassEvent reports whether eventType is in the export/report
 // event class that needs exportTimeout rather than the default deadline.
@@ -188,6 +203,7 @@ func NewWasmRuntime(baseDir string) *WasmRuntime {
 		// Modules that import "ut" will fail to instantiate; log, don't crash.
 		logging.L().Errorf("wasm host module: %v", err)
 	}
+	drainCtx, drainStop := context.WithCancel(context.Background())
 	return &WasmRuntime{
 		rt:         rt,
 		modules:    map[string]wazero.CompiledModule{},
@@ -198,6 +214,9 @@ func NewWasmRuntime(baseDir string) *WasmRuntime {
 		hasTCP:     map[string]bool{},
 		baseDir:    baseDir,
 		calls:      newWasmCallGate(wasmConcurrencyLimits(goruntime.GOOS)),
+		queueWait:  queuedEventWait,
+		drainCtx:   drainCtx,
+		drainStop:  drainStop,
 	}
 }
 
@@ -218,6 +237,7 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 	w.mu.Lock()
 	w.unsubGen++
 	gen := w.unsubGen
+	drainCtx := w.drainCtx
 	w.db = db // host functions resolve storage/permissions through this
 	// Drop compiled modules for plugins that are gone/disabled.
 	active := map[string]bool{}
@@ -343,11 +363,25 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 				}
 				continue
 			}
+			// Channel events are non-blocking: nobody waits on the answer,
+			// so they queue for a slot instead of failing at their own
+			// deadline behind a long export/import (ut-docs#3171).
+			queued := func(ev Event) {
+				w.mu.Lock()
+				stale := gen != w.unsubGen
+				w.mu.Unlock()
+				if stale {
+					return
+				}
+				if _, err := w.handleQueuedEvent(drainCtx, pluginID, ev); err != nil {
+					logging.L().Errorf("wasm %s handling %s: %v", pluginID, ev.Type, err)
+				}
+			}
 			w.wg.Add(1)
 			go func() {
 				defer w.wg.Done()
 				for ev := range ch {
-					_, _ = handle(context.Background(), ev)
+					queued(ev)
 				}
 			}()
 			logging.L().Infof("wasm plugin %s loaded, handling %v", pluginID, events)
@@ -477,6 +511,12 @@ func (w *WasmRuntime) Close(ctx context.Context) {
 	}
 	w.mu.Lock()
 	db := w.db
+	// A drainer queued for a call slot (ut-docs#3171) stops waiting now; a
+	// later Sync starts its drainers on a fresh context.
+	if w.drainStop != nil {
+		w.drainStop()
+	}
+	w.drainCtx, w.drainStop = context.WithCancel(context.Background())
 	w.mu.Unlock()
 	if db != nil {
 		SharedBus(db).ResetSubscribers() // closes every open channel — drainers exit
@@ -539,9 +579,22 @@ func (w *WasmRuntime) load(pluginID, version, path string) error {
 // interpreting that JSON is entirely up to that caller, not this generic
 // runtime.
 func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event) (json.RawMessage, error) {
+	return w.handleEvent(ctx, pluginID, ev, 0)
+}
+
+// handleQueuedEvent is HandleEvent for a non-blocking event off a plugin's
+// drainer (ut-docs#3171): it waits up to w.queueWait for a call slot, and
+// the event's own deadline starts only once it is admitted.
+func (w *WasmRuntime) handleQueuedEvent(ctx context.Context, pluginID string, ev Event) (json.RawMessage, error) {
+	return w.handleEvent(ctx, pluginID, ev, w.queueWait)
+}
+
+// handleEvent runs ev. queueWait == 0: waiting for a slot counts against
+// the call's own deadline. queueWait > 0: the slot wait is bounded by
+// queueWait instead and the deadline starts after admission.
+func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event, queueWait time.Duration) (json.RawMessage, error) {
 	w.mu.Lock()
-	compiled, ok := w.modules[pluginID]
-	db := w.db
+	_, ok := w.modules[pluginID]
 	w.mu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("module not loaded: %s", pluginID)
@@ -558,15 +611,38 @@ func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event
 		return nil, fmt.Errorf("encode event: %w", err)
 	}
 
-	cctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	// Waiting for a slot counts against the call's own deadline, so a
-	// saturated plugin fails the call instead of queueing forever.
-	release, err := w.calls.acquire(cctx, pluginID, isSalePathEvent(ev.Type))
-	if err != nil {
-		return nil, fmt.Errorf("wasm handler: %s has too many calls in flight: %w", pluginID, err)
+	var release func()
+	var cctx context.Context
+	var cancel context.CancelFunc
+	if queueWait > 0 {
+		qctx, qcancel := context.WithTimeout(ctx, queueWait)
+		release, err = w.calls.acquire(qctx, pluginID, isSalePathEvent(ev.Type))
+		qcancel()
+		if err != nil {
+			return nil, fmt.Errorf("wasm handler: %s had no free call slot within %s: %w", pluginID, queueWait, err)
+		}
+		cctx, cancel = context.WithTimeout(ctx, timeout)
+	} else {
+		cctx, cancel = context.WithTimeout(ctx, timeout)
+		// Waiting for a slot counts against the call's own deadline, so a
+		// saturated plugin fails the call instead of queueing forever.
+		release, err = w.calls.acquire(cctx, pluginID, isSalePathEvent(ev.Type))
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("wasm handler: %s has too many calls in flight: %w", pluginID, err)
+		}
 	}
+	defer cancel()
 	defer release()
+	// Re-read after admission: a long queue wait can outlive a Sync that
+	// dropped or replaced the module.
+	w.mu.Lock()
+	compiled, ok := w.modules[pluginID]
+	db := w.db
+	w.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("module not loaded: %s", pluginID)
+	}
 	// Host functions ("ut" module) resolve the caller through this state.
 	cctx = withHostState(cctx, &hostState{pluginID: pluginID, db: db, httpClient: w.httpClient})
 

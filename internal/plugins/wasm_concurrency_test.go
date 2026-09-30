@@ -179,3 +179,112 @@ func TestWasmCallGateNilIsUnlimited(t *testing.T) {
 	}
 	rel()
 }
+
+// queuedTestRuntime is a runtime with one loaded no-op module on a mobile
+// gate (2 per plugin: one ordinary slot, one reserved) and a short default
+// deadline, with that one ordinary slot held. It returns the hold's release.
+func queuedTestRuntime(t *testing.T, pluginID string) (*WasmRuntime, func()) {
+	t.Helper()
+	w := NewWasmRuntime(t.TempDir())
+	t.Cleanup(func() { _ = w.rt.Close(context.Background()) })
+	compiled, err := w.rt.CompileModule(context.Background(), []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.mu.Lock()
+	w.modules[pluginID] = compiled
+	w.mu.Unlock()
+	w.timeout = 50 * time.Millisecond
+	perCap, global := wasmConcurrencyLimits("android")
+	w.calls = newWasmCallGate(perCap, global)
+	hold, err := w.calls.acquire(context.Background(), pluginID, false) // the long export/import
+	if err != nil {
+		t.Fatal(err)
+	}
+	return w, hold
+}
+
+// ut-docs#3171: a non-blocking sale.completed queued behind a long ordinary
+// call waits past its own deadline and is delivered once the slot frees;
+// a blocking call in the same spot still fails at its deadline.
+func TestWasmQueuedEventDeliveredWhenOrdinarySlotFrees(t *testing.T) {
+	const pluginID = "com.test.queued"
+	w, hold := queuedTestRuntime(t, pluginID)
+
+	if _, err := w.HandleEvent(context.Background(), pluginID, Event{Type: "sale.completed"}); err == nil {
+		t.Fatal("blocking call on a saturated plugin ran; want it refused at its deadline")
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := w.handleQueuedEvent(context.Background(), pluginID, Event{Type: "sale.completed"})
+		done <- err
+	}()
+	// Held for 4× the event's own deadline: the pre-fix code failed here.
+	time.Sleep(4 * w.timeout)
+	select {
+	case err := <-done:
+		t.Fatalf("queued event returned while the slot was still held: %v", err)
+	default:
+	}
+	hold()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("queued event after the slot freed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("queued event not delivered after the slot freed")
+	}
+}
+
+// The queue wait is bounded: a slot that never frees fails the event after
+// queueWait, not never.
+func TestWasmQueuedEventWaitIsBounded(t *testing.T) {
+	const pluginID = "com.test.queued-bound"
+	w, hold := queuedTestRuntime(t, pluginID)
+	defer hold()
+	w.queueWait = 150 * time.Millisecond
+
+	start := time.Now()
+	_, err := w.handleQueuedEvent(context.Background(), pluginID, Event{Type: "stock.adjusted"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want a queue-wait deadline", err)
+	}
+	if took := time.Since(start); took < w.queueWait {
+		t.Fatalf("gave up after %s, before queueWait %s", took, w.queueWait)
+	}
+}
+
+// Close ends a drainer's slot wait at once instead of holding shutdown for
+// the whole queue wait.
+func TestWasmQueuedEventWaitEndsOnClose(t *testing.T) {
+	const pluginID = "com.test.queued-close"
+	w, hold := queuedTestRuntime(t, pluginID)
+	defer hold()
+	w.mu.Lock()
+	drainCtx := w.drainCtx
+	w.mu.Unlock()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := w.handleQueuedEvent(drainCtx, pluginID, Event{Type: "sale.completed"})
+		done <- err
+	}()
+	time.Sleep(2 * w.timeout)
+	w.Close(context.Background())
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not end the queued wait")
+	}
+	w.mu.Lock()
+	fresh := w.drainCtx
+	w.mu.Unlock()
+	if fresh.Err() != nil {
+		t.Fatal("Close left a cancelled drain context for the next Sync")
+	}
+}
