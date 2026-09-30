@@ -56,6 +56,7 @@ package mobile
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -69,6 +70,7 @@ import (
 	"github.com/universaltill/universal-till/internal/bluetooth"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/listenport"
+	"github.com/universaltill/universal-till/internal/procrestart"
 	"github.com/universaltill/universal-till/internal/recovery"
 )
 
@@ -88,6 +90,11 @@ var (
 	mu       sync.Mutex
 	inst     *instance
 	starting bool
+	// restarting is non-nil (and closed when done) while restartInProcess
+	// runs: Start and Stop wait for it and IsRunning reports true, so a
+	// native caller (iOS TillController.resume's probe, Android's
+	// TillService) never races the restart's own Stop/Start (ut-docs#3220).
+	restarting chan struct{}
 )
 
 // Start boots the till server with its on-device data directory at dataDir
@@ -131,6 +138,15 @@ var (
 // the dead instance's closed done channel and starts fresh instead of
 // returning a stale address.
 func Start(dataDir string) (string, error) {
+	mu.Lock()
+	waitForRestartLocked()
+	mu.Unlock()
+	return start(dataDir)
+}
+
+// start is Start without waiting for an in-process restart — the restart
+// itself calls it.
+func start(dataDir string) (string, error) {
 	mu.Lock()
 	if inst != nil {
 		select {
@@ -268,6 +284,58 @@ func Start(dataDir string) (string, error) {
 	return localAddr, nil
 }
 
+// waitForRestartLocked blocks, with mu held on entry and on return, until
+// no in-process restart is running.
+func waitForRestartLocked() {
+	for restarting != nil {
+		ch := restarting
+		mu.Unlock()
+		<-ch
+		mu.Lock()
+	}
+}
+
+// The app can't re-exec itself (iOS forbids exec; on Android it would
+// replace the whole app process), so "Restart now" after joining a shop or
+// staging a backup restore restarts the server in-process instead
+// (ut-docs#3220): procrestart calls restartInProcess in place of its
+// re-exec, and Supported() is true only because of this registration.
+func init() {
+	procrestart.SetRestarter(restartInProcess)
+}
+
+// restartInProcess stops the running server and starts it again on the
+// same data dir. Start reuses the persisted port (just released by Stop)
+// and runs app.Run's startup path again, which applies a staged restore
+// (db.ApplyPendingRestore) — so the WebView's /healthz poll on the same
+// address reloads straight into the restored till.
+func restartInProcess() error {
+	mu.Lock()
+	if restarting != nil {
+		mu.Unlock()
+		return errors.New("mobile: a restart is already in progress")
+	}
+	cur := inst
+	if cur == nil {
+		mu.Unlock()
+		return errors.New("mobile: restart requested but the till server is not running")
+	}
+	done := make(chan struct{})
+	restarting = done
+	mu.Unlock()
+	defer func() {
+		mu.Lock()
+		restarting = nil
+		close(done)
+		mu.Unlock()
+	}()
+	stop()
+	if _, err := start(cur.dataDir); err != nil {
+		return fmt.Errorf("mobile: restart: %w", err)
+	}
+	return nil
+}
+
 // Stop gracefully shuts the server down and BLOCKS until it has actually
 // finished — including internal/server.Start's own shutdown drain and
 // internal/app.Run's deferred database.Close() — not just until the
@@ -279,6 +347,14 @@ func Start(dataDir string) (string, error) {
 // (no-op). A caller wanting non-blocking behavior should call this from
 // its own background thread/coroutine, same as any blocking mobile API.
 func Stop() {
+	mu.Lock()
+	waitForRestartLocked()
+	mu.Unlock()
+	stop()
+}
+
+// stop is Stop without waiting for an in-process restart.
+func stop() {
 	mu.Lock()
 	cur := inst
 	inst = nil
@@ -298,6 +374,9 @@ func Stop() {
 func IsRunning() bool {
 	mu.Lock()
 	defer mu.Unlock()
+	if restarting != nil {
+		return true // coming straight back; a native restart now would race it
+	}
 	if inst == nil {
 		return false
 	}

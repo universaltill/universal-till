@@ -38,11 +38,19 @@
 // the app, which re-runs ApplyPendingRestore at the next start through the
 // exact same startup path. A native Windows restart is tracked separately
 // (ut-docs#1614).
+//
+// iOS and Android can't re-exec either (reexec_mobile.go): there the till is
+// a gomobile library inside the app process — iOS forbids exec, and on
+// Android it would replace the whole app. The mobile package registers an
+// in-process restarter instead (SetRestarter: stop the server, start it
+// again on the same data dir and port), and Supported() is true only when
+// one of the two mechanisms really exists (ut-docs#3220).
 package procrestart
 
 import (
 	"context"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/logging"
@@ -81,27 +89,62 @@ func SetBeforeRestart(fn func(context.Context)) {
 	beforeRestart = fn
 }
 
-// Supported reports whether Restart can replace the process image on this
-// platform. It is a pure build-tag decision (see reexec_unix.go /
-// reexec_windows.go), so a template can branch on it to show either the
-// auto-restart flow or the honest "close and reopen" instruction.
-func Supported() bool {
-	return supported
+// restarter, when set, replaces the re-exec: an in-process restart
+// registered by an embedding that can't exec (the mobile package on
+// iOS/Android — ut-docs#3220).
+var restarter atomic.Pointer[func() error]
+
+// SetRestarter registers an in-process restart used instead of re-exec.
+// Call it before the server starts (the mobile package does it from init).
+// A nil fn clears it.
+func SetRestarter(fn func() error) {
+	if fn == nil {
+		restarter.Store(nil)
+		return
+	}
+	restarter.Store(&fn)
 }
 
-// Restart schedules an in-place re-exec of the running executable after
-// reexecDelay and returns immediately. It never blocks the caller; a
+// Supported reports whether Restart can really restart the till on this
+// platform: an in-place re-exec (build tags — reexec_unix.go, never on
+// Windows, iOS or Android) or a registered in-process restarter. A template
+// branches on it to show either the auto-restart flow or the honest "close
+// and reopen" instruction — never a button that can't work.
+func Supported() bool {
+	return supported || InProcess()
+}
+
+// InProcess reports whether Restart uses a registered in-process restarter
+// rather than re-exec.
+func InProcess() bool {
+	return restarter.Load() != nil
+}
+
+// Restart schedules an in-place re-exec of the running executable (or the
+// registered in-process restarter) after reexecDelay and returns
+// immediately. It never blocks the caller; a
 // re-exec failure is logged (there is no caller left to return it to) and
 // the operator can retry or restart by hand. If the running executable
 // cannot be located — practically impossible, but not worth a goroutine
 // that only fails later — nothing is scheduled and the error is logged.
 func Restart() {
+	if fn := restarter.Load(); fn != nil {
+		logging.L().Infof("[procrestart] restarting in-process in %v", reexecDelay)
+		scheduleRestart("in-process restart", *fn)
+		return
+	}
 	exe, err := osExecutable()
 	if err != nil {
 		logging.L().Errorf("[procrestart] locate executable: %v (restart manually)", err)
 		return
 	}
 	logging.L().Infof("[procrestart] restarting %s in %v", exe, reexecDelay)
+	scheduleRestart("re-exec", func() error { return reexecFn(exe) })
+}
+
+// scheduleRestart runs restart after reexecDelay on its own goroutine, with
+// the beforeRestart hook overlapping the delay.
+func scheduleRestart(what string, restart func() error) {
 	go func() {
 		// Run beforeRestart CONCURRENTLY with the flush-delay sleep below,
 		// not sequentially after it (ut-docs#1616 review finding): stopping
@@ -132,8 +175,8 @@ func Restart() {
 		if hookDone != nil {
 			<-hookDone
 		}
-		if err := reexecFn(exe); err != nil {
-			logging.L().Errorf("[procrestart] re-exec failed (restart manually): %v", err)
+		if err := restart(); err != nil {
+			logging.L().Errorf("[procrestart] %s failed (restart manually): %v", what, err)
 		}
 	}()
 }

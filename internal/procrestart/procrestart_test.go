@@ -30,7 +30,7 @@ func stubSeams(t *testing.T) (reexecd chan string) {
 // reexec_windows.go): a test can only assert it portably against the GOOS
 // the test binary is actually running on.
 func TestSupportedMatchesGOOS(t *testing.T) {
-	want := runtime.GOOS != "windows"
+	want := execSupportedGOOS()
 	if got := Supported(); got != want {
 		t.Fatalf("Supported() on %s = %v, want %v", runtime.GOOS, got, want)
 	}
@@ -193,4 +193,82 @@ func TestRestartSkipsWhenExecutableUnknown(t *testing.T) {
 		t.Fatalf("re-exec fired with %q despite os.Executable failing", exe)
 	case <-time.After(50 * time.Millisecond):
 	}
+}
+
+// ut-docs#3220: a registered in-process restarter (the mobile package's)
+// replaces the re-exec entirely — reexecFn must never run, Supported() is
+// true whatever the build tag says, and the beforeRestart hook still runs
+// first.
+func TestRestartUsesRegisteredRestarterInsteadOfReexec(t *testing.T) {
+	reexecd := stubSeams(t)
+	t.Cleanup(func() { SetRestarter(nil); SetBeforeRestart(nil) })
+
+	var order []string
+	restarted := make(chan struct{})
+	SetBeforeRestart(func(context.Context) { order = append(order, "hook") })
+	SetRestarter(func() error {
+		order = append(order, "restarter")
+		close(restarted)
+		return nil
+	})
+	if !Supported() || !InProcess() {
+		t.Fatalf("Supported()=%v InProcess()=%v with a restarter registered, want both true", Supported(), InProcess())
+	}
+
+	Restart()
+	select {
+	case <-restarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("registered restarter never ran")
+	}
+	select {
+	case exe := <-reexecd:
+		t.Fatalf("re-exec'd %q although an in-process restarter is registered", exe)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if len(order) != 2 || order[0] != "hook" || order[1] != "restarter" {
+		t.Fatalf("call order = %v, want [hook restarter]", order)
+	}
+}
+
+// Clearing the restarter restores the build-tag answer and the re-exec path.
+func TestSetRestarterNilRestoresReexec(t *testing.T) {
+	reexecd := stubSeams(t)
+	SetRestarter(func() error { t.Error("cleared restarter ran"); return nil })
+	SetRestarter(nil)
+
+	if got, want := Supported(), execSupportedGOOS(); got != want {
+		t.Fatalf("Supported() after clearing = %v, want %v", got, want)
+	}
+	Restart()
+	select {
+	case <-reexecd:
+	case <-time.After(2 * time.Second):
+		t.Fatal("re-exec never fired after the restarter was cleared")
+	}
+}
+
+// A failing restarter is logged, never panicked (same as a re-exec error).
+func TestRestartSurvivesRestarterError(t *testing.T) {
+	stubSeams(t)
+	t.Cleanup(func() { SetRestarter(nil) })
+	ran := make(chan struct{})
+	SetRestarter(func() error { close(ran); return errors.New("boom") })
+	Restart()
+	select {
+	case <-ran:
+	case <-time.After(2 * time.Second):
+		t.Fatal("restarter never ran")
+	}
+	time.Sleep(20 * time.Millisecond)
+}
+
+// execSupportedGOOS mirrors the build tags: re-exec everywhere but Windows,
+// iOS and Android.
+func execSupportedGOOS() bool {
+	switch runtime.GOOS {
+	case "windows", "ios", "android":
+		return false
+	}
+	return true
 }

@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !ios && !android
 
 package procrestart
 
@@ -7,7 +7,8 @@ import (
 	"syscall"
 )
 
-// supported: every non-Windows target can exec in place.
+// supported: every desktop/server non-Windows target can exec in place.
+// iOS and Android are excluded (reexec_mobile.go, ut-docs#3220).
 const supported = true
 
 // reexec replaces this process image with exe (same PID, same argv and

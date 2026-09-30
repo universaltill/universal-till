@@ -53,5 +53,7 @@ internal/pos/session_manager.go: unreachable func: SessionBasketManager.Create
 internal/pos/session_manager.go: unreachable func: SessionBasketManager.TableOwner
 internal/pos/session_manager.go: unreachable func: SessionBasketManager.TableOwnerActive
 internal/print/kitchen.go: unreachable func: RenderKitchenTicketText
+internal/procrestart/procrestart.go: unreachable func: InProcess
+internal/procrestart/procrestart.go: unreachable func: SetRestarter
 internal/secrets/keystore.go: unreachable func: KeyStore.Exists
 internal/secrets/keystore.go: unreachable func: KeyStore.Path
