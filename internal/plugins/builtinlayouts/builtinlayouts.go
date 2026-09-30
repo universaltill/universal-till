@@ -1,5 +1,5 @@
 // Package builtinlayouts wires the ADR-0026 shop_type setting
-// (internal/pages/setup_page.go's setupShopTypes, changeable later in
+// (plugins.ShopTypes, offered by the setup wizard and changeable later in
 // Settings) to the ADR-0088 declarative UI slot registry: the till's own
 // `layout` plugins that ship inside the binary rather than through the
 // marketplace (ut-docs#1902).

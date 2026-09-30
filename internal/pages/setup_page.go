@@ -17,6 +17,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
 )
 
@@ -72,17 +73,12 @@ type setupCountry struct {
 
 // setupShopTypes is the ADR-0026 shop-type taxonomy (café, retail, service
 // trade, hospitality, market stall/pop-up, other) — reused verbatim, not a
-// new list (ut-docs#539). Labels are the setup.shop_type.* locale keys.
-var setupShopTypes = []string{"cafe", "retail", "service", "hospitality", "market_stall", "other"}
+// new list (ut-docs#539). Labels are the setup.shop_type.* locale keys. The
+// list lives in internal/plugins so the manifest's `layout.shop_type:<type>`
+// capability validates against the same set (ADR-0129, ut-docs#3176).
+var setupShopTypes = plugins.ShopTypes()
 
-func isValidShopType(v string) bool {
-	for _, t := range setupShopTypes {
-		if v == t {
-			return true
-		}
-	}
-	return false
-}
+func isValidShopType(v string) bool { return plugins.IsKnownShopType(v) }
 
 // wizardCountries reads the wizard's country list from country_settings
 // (ut-docs#660) — the compile-time setupCountries slice that used to live

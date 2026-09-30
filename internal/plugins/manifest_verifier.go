@@ -162,6 +162,11 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 	if manifest.DeviceArch == "" {
 		result.Errors = append(result.Errors, "manifest missing required field: device_arch")
 	}
+	// ADR-0129 closed set, same as ParseManifest: this is the marketplace
+	// install path, which never goes through ParseManifest (ut-docs#3176).
+	if err := validateProvidesAndMarkets(&manifest); err != nil {
+		result.Errors = append(result.Errors, err.Error())
+	}
 
 	// Checksum verification (if provided in manifest)
 	result.ChecksumVerified = true // Default to true if no checksum in manifest

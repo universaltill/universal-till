@@ -48,6 +48,17 @@ type Manifest struct {
 
 	// Permissions: requested capabilities
 	Permissions []string `json:"permissions,omitempty"`
+
+	// Provides names what this plugin IS, from a closed set
+	// (manifest_provides.go, ADR-0129 §2), so core finds a plugin by
+	// capability instead of by hard-coded ID. Markets scopes where it is
+	// for (ISO 3166-1 alpha-2, upper case; empty = every market, ADR-0129
+	// §3) — never where it is mandated. Both omitempty: a manifest without
+	// them marshals byte-identically to before, so old signatures verify.
+	// ut-cloud's internal/signing.CanonicalManifest must mirror both (same
+	// position, same tags) or the marketplace signer strips them.
+	Provides []string `json:"provides,omitempty"`
+	Markets  []string `json:"markets,omitempty"`
 }
 
 // ManifestEntry represents a UI/integration entry
@@ -215,6 +226,11 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 	// Setting-bound grants (ut-docs#2899) must be well-formed and name keys
 	// this manifest declares.
 	if err := validateSettingBoundPermissions(&m); err != nil {
+		return nil, err
+	}
+	// provides/markets are closed-set (ADR-0129): a typo would otherwise
+	// silently match nothing, so it fails here.
+	if err := validateProvidesAndMarkets(&m); err != nil {
 		return nil, err
 	}
 
