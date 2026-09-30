@@ -237,7 +237,9 @@
                             hx-sync="#basket:replace"
                             aria-label="{{ T "basket.qty.increase" }}">+</button>
                   </div>
-                  <input class="disc-input" type="number" name="discount" value="{{ .LineDiscount.Minor }}" min="0" step="1"
+                  {{/* ut-docs#3297: blank at zero, so the "Disc." placeholder shows instead of an
+                       unexplained "0"; /api/pos/line reads an empty discount as 0. */}}
+                  <input class="disc-input" type="number" name="discount" value="{{ if not .LineDiscount.IsZero }}{{ .LineDiscount.Minor }}{{ end }}" min="0" step="1"
                          title="{{ T "basket.discount_hint" }}" placeholder="{{ T "basket.discount_short" }}"
                          hx-post="/api/pos/line"
                          hx-vals='{{ jsonVals "key" .LineKey }}'

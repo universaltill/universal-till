@@ -6,11 +6,7 @@
        the 🐞 emoji on desktop Chromium and still left it small on the
        tablet's own emoji font. See internal/httpx/icons.go. -->
   <span class="nav-toggle-ico" aria-hidden="true">{{ icon "bug" }}</span>
-  <!-- Always visually hidden (not .nav-toggle-label, which becomes visible in
-       the <=480px top bar): the phone-width budget (ut-docs#413) never had
-       room for a bug-report label, and the emoji used to be the button's
-       only text node. Screen readers already had the aria-label; this keeps
-       a text node for the phone-width layout guard's "every control has a
-       label" check now that the icon is a decorative SVG. -->
-  <span class="visually-hidden">{{ T "issuereport.nav_label" }}</span>
+  <!-- The label: hidden in the rail like every .nav-toggle-label, shown in
+       the phone ☰ drawer (ut-docs#3297; the old top bar had no room). -->
+  <span class="nav-toggle-label">{{ T "issuereport.nav_label" }}</span>
 </button>
