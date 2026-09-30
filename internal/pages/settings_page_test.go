@@ -1767,7 +1767,7 @@ func TestSettingsPage_CoreSettingsAndFilterMatchTheRealTemplate(t *testing.T) {
 	// TestSettingsPage_NavIndexNeverLeaksManagerOnlyRowsToCashier exists to
 	// prevent, for whichever NEW card it is that this test didn't know
 	// about).
-	allFilteredOut := filterSettingsNavForRender(settingsnav.Resolve("en", nil), false, false, false)
+	allFilteredOut := filterSettingsNavForRender(settingsnav.Resolve("en", nil), false, false, false, false)
 	filteredKeys := map[string]bool{}
 	for _, c := range cards {
 		if c.gated {
