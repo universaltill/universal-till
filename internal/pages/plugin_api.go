@@ -589,9 +589,12 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 			return
 		}
 
-		// Remove DB rows (FK cascade removes entries/settings/hooks/permissions)
-		// and record the uninstall audit event.
-		if err := plugins.UninstallPlugin(ctx, d.Db, pluginID); err != nil {
+		// Remove DB rows (FK cascade removes entries/settings/hooks/permissions),
+		// record the uninstall audit event and remove the installed files
+		// (best-effort; the DB is the source of truth) — under the per-plugin
+		// lock, so it can't delete the tree under a running rollback
+		// (ut-docs#3082).
+		if err := plugins.UninstallPluginTree(ctx, d.Db, paths.Plugins(), pluginID); err != nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -599,12 +602,6 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 				"error": fmt.Sprintf("Uninstall failed: %v", err),
 			})
 			return
-		}
-
-		// Remove the installed files (best-effort; the DB is the source of truth).
-		pluginDir := filepath.Join(paths.Plugins(), pluginID)
-		if err := os.RemoveAll(pluginDir); err != nil {
-			log.Printf("warning: failed to remove plugin files %s: %v", pluginDir, err)
 		}
 
 		// Clear marketplace install-status records so the plugins page doesn't
