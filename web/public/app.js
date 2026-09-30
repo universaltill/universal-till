@@ -3417,6 +3417,7 @@ window.utTabBarFade = function (el) {
   function setDrawer(open, restoreFocus) {
     var btn = toggleBtn();
     body.classList.toggle('nav-drawer-open', open);
+    if (!open) requestAnimationFrame(measureBar);
     if (btn) {
       btn.setAttribute('aria-expanded', open ? 'true' : 'false');
       btn.setAttribute('aria-label', btn.getAttribute(open ? 'data-label-close' : 'data-label-open') || '');
@@ -3430,10 +3431,17 @@ window.utTabBarFade = function (el) {
   }
 
   // The bottom bar's height, so the grid's last row scrolls clear of it.
+  // The status row counts as 0 while it is hidden (on the phone sale
+  // screen it lives in the ☰ drawer unless there is a problem to show).
   function measureBar() {
+    watchSb();
     var sb = document.querySelector('.statusbar');
-    var sh = sb ? sb.getBoundingClientRect().height : 0;
-    if (sh > 0) document.documentElement.style.setProperty('--phone-sb-h', sh + 'px');
+    // While the drawer is open the row is its foot, not a bar over the
+    // grid: keep the last at-rest value.
+    if (!body.classList.contains('nav-drawer-open')) {
+      var sh = sb ? sb.getBoundingClientRect().height : 0;
+      document.documentElement.style.setProperty('--phone-sb-h', sh + 'px');
+    }
     var basket = document.getElementById('basket');
     if (!basket || body.classList.contains('pos-sheet-open')) return;
     var h = basket.getBoundingClientRect().height;
@@ -3462,7 +3470,7 @@ window.utTabBarFade = function (el) {
     // A link navigates, a button (bug report, Lock) opens its own panel:
     // either way the drawer closes. page-zoom (ut-docs#2942) has already
     // taken its tap origin at pointerdown, before this click.
-    if (t.closest('#nav-drawer a, #nav-drawer button') && body.classList.contains('nav-drawer-open')) { setDrawer(false, false); return; }
+    if (t.closest('#nav-drawer a, #nav-drawer button, .statusbar a') && body.classList.contains('nav-drawer-open')) { setDrawer(false, false); return; }
     if (t.closest('.basket-phonebar')) { setSheet(true); return; }
     if (t.closest('.basket-sheet-close')) { setSheet(false); }
   });
@@ -3510,6 +3518,24 @@ window.utTabBarFade = function (el) {
     lastWasReceipt = isReceipt;
   });
   window.addEventListener('resize', measureBar);
+  // The status row shows, hides and wraps on its own (the network light
+  // going offline, a chip loading late): follow it. A boosted navigation
+  // replaces #ut-page, status bar included, so watchSb (called from every
+  // measureBar, i.e. every afterSettle) moves the observer to the new row;
+  // offline, the polls that would settle fail, so online/offline measure too.
+  var sbRO = window.ResizeObserver ? new ResizeObserver(function () { measureBar(); }) : null;
+  var sbWatched = null;
+  function watchSb() {
+    if (!sbRO) return;
+    var sb = document.querySelector('.statusbar');
+    if (sb === sbWatched) return;
+    if (sbWatched) sbRO.unobserve(sbWatched);
+    sbWatched = sb;
+    if (sb) sbRO.observe(sb);
+  }
+  function measureNextFrame() { requestAnimationFrame(measureBar); }
+  window.addEventListener('online', measureNextFrame);
+  window.addEventListener('offline', measureNextFrame);
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', measureBar);
   } else {

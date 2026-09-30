@@ -5638,16 +5638,39 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   /* Sale screen: products fill; basket is a bottom bar; the rest waits in
      the sheet. */
   body.sale-screen:not(.pos-sheet-open) .kiosk-header { display: none; }
-  /* The status bar (main-till link, network light, update/enrol chips)
-     stays on screen -- offline state is never hidden (offline-first) -- as
-     one slim row just above the pay bar (or, in the open sheet, at the very
-     bottom, with Pay pinned above it); it wraps when full (app.js
-     re-measures it). */
+  /* The status bar (main-till link, network light, update/enrol chips).
+     Product owner, 2026-09-29, on an iPhone: the dark row above the pay bar
+     cost the grid a row for information that is fine one tap away -- it
+     moves to the foot of the ☰ drawer (the approved mock-up's layout). A
+     problem still shows on the sale screen itself (offline-first: offline
+     state is never hidden): no internet, main till not reachable, or an
+     underpowered supply bring the row back just above the pay bar (or, in
+     the open sheet, at the very bottom, with Pay pinned above it). So does
+     an open dialog: the scrim covers ☰, and status must stay reachable
+     (html.ut-scrim-on lifts the row above it, below). app.js re-measures
+     it whenever it appears, wraps or goes. */
   body.sale-screen .statusbar {
     position: fixed; inset-inline: 0; bottom: var(--phone-bar-h, 8rem); z-index: 39;
     padding-block: .2rem; font-size: .8rem;
   }
   body.sale-screen.pos-sheet-open .statusbar { bottom: 0; }
+  html:not(.ut-scrim-on) body.sale-screen:not(.nav-drawer-open) .statusbar:not(:has(.sb-conn.is-offline, .sb-main-till, .sb-power)) { display: none; }
+  /* In the open drawer: its foot, one item per line, above the backdrop
+     (the nav's stacking context is z-index 60). The drawer pads its end by
+     the row's height so the last link scrolls clear of it. */
+  body.sale-screen.nav-drawer-open .statusbar {
+    inset-inline: 0 auto; bottom: 0; z-index: 61;
+    inline-size: min(20rem, 86vw); box-sizing: border-box;
+    flex-direction: column; align-items: flex-start; gap: .35rem;
+    padding: .6rem .9rem calc(.6rem + env(safe-area-inset-bottom));
+    background: var(--brand); color: #cbd5e1; font-size: .85rem;
+    border-block-start: 1px solid rgba(255, 255, 255, .15);
+  }
+  body.sale-screen.nav-drawer-open .statusbar .sb-ver { margin-inline-start: 0; }
+  body.sale-screen.nav-drawer-open .statusbar :is(.sb-update, .sb-enrol, .sb-power, .sb-main-till, .sb-plugin-update, .sb-language-pack-update, .sb-release-notes) { margin-inline-start: 0; }
+  body.sale-screen.nav-drawer-open .nav-drawer {
+    padding-block-end: calc(var(--phone-sb-h, 0px) + .75rem);
+  }
   /* ...and, like everywhere else, it stays above #ut-scrim while a dialog
      is open (status stays reachable; base rule html.ut-scrim-on .statusbar). */
   html.ut-scrim-on body.sale-screen .statusbar { z-index: 460; }
@@ -5659,7 +5682,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   .pos-container > .products {
     order: 1; flex: 1 1 auto; min-height: 0; max-height: none;
     overflow-y: auto; margin: 0; border: 0; border-radius: 0; box-shadow: none;
-    padding-block-end: calc(var(--phone-bar-h, 8rem) + var(--phone-sb-h, 2.25rem) + .75rem);
+    padding-block-end: calc(var(--phone-bar-h, 8rem) + var(--phone-sb-h, 0px) + .75rem);
   }
   body:not(.pos-sheet-open) .pos-container > .tender { display: none; }
   body:not(.pos-sheet-open) .pos-container > .basket {
@@ -5671,17 +5694,44 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
     max-height: none; min-height: 0; overflow: visible;
   }
   body:not(.pos-sheet-open) .pos-container > .basket:not(.receipt-view) > :not(.order-type-row):not(.basket-phonebar):not(.pos-notice) { display: none; }
-  body:not(.pos-sheet-open) .pos-container > .basket > .order-type-row { margin: 0; }
+  /* Product owner, 2026-09-29: Dine in | Takeaway sits NEXT TO the pay
+     bar, one row (the approved mock-up), not on a row of its own above
+     it. The order-type row becomes a contents box so its toggle is the
+     bar's sibling; the table button waits in the sheet, where the whole
+     row comes back. A long locale's segment label wraps to two lines
+     inside the 56px segment rather than squeezing Pay. */
+  body:not(.pos-sheet-open) .pos-container > .basket:not(.receipt-view) {
+    display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+    align-items: stretch; column-gap: .5rem;
+  }
+  body:not(.pos-sheet-open) .pos-container > .basket:not(.receipt-view) > .pos-notice { grid-column: 1 / -1; }
+  body:not(.pos-sheet-open) .pos-container > .basket > .order-type-row { display: contents; }
+  body:not(.pos-sheet-open) .pos-container > .basket #table-picker,
+  body:not(.pos-sheet-open) .pos-container > .basket .table-picker-trigger { display: none; }
+  body:not(.pos-sheet-open) .basket .order-type-toggle-group {
+    align-self: stretch; max-inline-size: min(13rem, 46vw); min-block-size: 56px;
+    border-color: var(--muted); border-radius: 12px;
+  }
+  body:not(.pos-sheet-open) .basket .order-type-option {
+    flex: 1 1 0; min-inline-size: 0; min-block-size: 56px; padding: .25rem .55rem;
+    font-size: .9rem; white-space: normal; overflow-wrap: anywhere; hyphens: auto; text-align: center;
+  }
+  body:not(.pos-sheet-open) .basket .order-type-option.is-active {
+    background: color-mix(in srgb, var(--success) 72%, #000); color: #fff;
+  }
+  body:not(.pos-sheet-open) .basket .order-type-ico { display: none; }
   .basket-phonebar {
     display: flex; align-items: center; justify-content: space-between; gap: .75rem;
-    inline-size: 100%; min-height: 56px; padding: .4rem 1rem;
+    inline-size: 100%; min-inline-size: 0; min-height: 56px; padding: .4rem .75rem .4rem .9rem;
     border: 0; border-radius: 12px; font: inherit; cursor: pointer;
     background: color-mix(in srgb, var(--success) 72%, #000); color: #fff; text-align: start;
   }
   .basket-phonebar.is-empty { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
-  .basket-phonebar-text { display: flex; flex-direction: column; line-height: 1.2; }
+  .basket-phonebar-text { display: flex; flex-direction: column; line-height: 1.2; min-inline-size: 0; overflow-wrap: anywhere; }
   .basket-phonebar-pay { font-size: 1.15rem; font-weight: 700; }
   .basket-phonebar-count { font-size: .85rem; }
+  .basket-phonebar.is-empty .basket-phonebar-pay { font-size: 1rem; font-weight: 650; }
+  .basket-phonebar.is-empty .basket-phonebar-count { display: none; }
   .basket-phonebar .btn-ico svg { inline-size: 1.3rem; block-size: 1.3rem; }
   .basket-phonebar:focus-visible { outline: 3px solid var(--focus-border); outline-offset: 2px; }
 
@@ -5700,7 +5750,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   body.pos-sheet-open .pos-container > .tender:has(dialog[open]) { position: static; z-index: auto; }
   /* Pay stays in reach at the foot of the sheet while the lines scroll. */
   body.pos-sheet-open .pos-container > .tender {
-    flex: none; position: sticky; bottom: var(--phone-sb-h, 2.25rem); z-index: 2;
+    flex: none; position: sticky; bottom: var(--phone-sb-h, 0px); z-index: 2;
     box-shadow: 0 -4px 16px rgba(15, 23, 42, .14);
   }
   /* The sheet has the whole screen, so the ±1 steppers the packed phone
@@ -5727,13 +5777,57 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   }
   body.pos-sheet-open .basket-sheet-close .btn-ico svg { inline-size: 1.4rem; block-size: 1.4rem; }
 
-  /* Categories: one row that scrolls sideways, never wrapping. */
+  /* Categories: one white bar of 40px pills under the top bar, scrolling
+     sideways, never wrapping, and staying put while the tiles scroll
+     (product owner, 2026-09-29: the tall boxes with a check mark weren't
+     the approved mock-up). The selected pill is filled -- a lightness
+     change, not colour alone -- so it needs no check mark here. */
   .pos-container .products .filter-chips {
     flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
-    margin-inline: -.25rem; padding-inline: .25rem; padding-block-end: .25rem;
+    position: sticky; top: -.7rem; z-index: 2; gap: .5rem;
+    margin: 0 -.8rem .75rem; padding: .1rem .8rem .6rem;
+    background: var(--surface); border-block-end: 1px solid var(--border);
   }
   .pos-container .products .filter-chips::-webkit-scrollbar { display: none; }
-  .pos-container .products .filter-chips .chip { flex-shrink: 0; white-space: nowrap; }
+  .pos-container .products .filter-chips .chip {
+    flex-shrink: 0; white-space: nowrap; position: relative;
+    min-block-size: 40px; block-size: 40px; padding: 0 1rem; border-radius: 20px;
+    font-size: .95rem; font-weight: 600;
+  }
+  /* 40px to the eye (the mock-up), 44px to the finger (the touch floor):
+     the bar's own padding has the room. */
+  .pos-container .products .filter-chips .chip::after {
+    content: ""; position: absolute; inset-block: -2px; inset-inline: 0;
+  }
+  .pos-container .products .filter-chips .chip[aria-pressed="true"] {
+    background: color-mix(in srgb, var(--success) 72%, #000);
+    border-color: color-mix(in srgb, var(--success) 72%, #000); color: #fff;
+  }
+  .pos-container .products .filter-chips .chip-check { display: none; }
+
+  /* Search and Edit sit in the top bar, at its end (the approved mock-up):
+     same DOM (buttons.html's .products-strip, inside the finder's Alpine
+     scope), fixed over the bar. The bar keeps their room free for its
+     alert chips. While searching, the two hide (x-show) and the back
+     button and search field take the strip's own row under the bar. */
+  body.sale-screen .pos-container .products-strip :is(.products-strip-search, .products-strip-edit) {
+    position: fixed; inset-block-start: calc((var(--phone-top-h) - 48px) / 2); z-index: 61;
+    inline-size: 48px; min-inline-size: 48px; block-size: 48px; min-block-size: 48px; padding: 0;
+    border: 0; border-radius: 10px; background: transparent; color: #fff; box-shadow: none;
+  }
+  body.sale-screen .pos-container .products-strip .products-strip-edit { inset-inline-end: .4rem; }
+  body.sale-screen .pos-container .products-strip .products-strip-search { inset-inline-end: calc(.4rem + 48px + .15rem); }
+  body.sale-screen .pos-container .products-strip:not(:has(.products-strip-edit)) .products-strip-search { inset-inline-end: .4rem; }
+  body.sale-screen .pos-container .products-strip :is(.products-strip-search, .products-strip-edit) .btn-ico svg { inline-size: 1.45rem; block-size: 1.45rem; }
+  body.sale-screen .pos-container .products-strip :is(.products-strip-search, .products-strip-edit):focus-visible { outline: 3px solid #fff; outline-offset: -3px; }
+  body.sale-screen:has(.products-strip-edit) .nav { padding-inline-end: calc(.4rem + 96px + .15rem); }
+  body.sale-screen:has(.products-strip-search):not(:has(.products-strip-edit)) .nav { padding-inline-end: calc(.4rem + 48px); }
+  /* Under the drawer's backdrop and any dialog's scrim, like the bar. */
+  body.sale-screen.nav-drawer-open .pos-container .products-strip :is(.products-strip-search, .products-strip-edit) { z-index: 59; }
+  /* At rest, with the two icons lifted out and no tab bar, the strip is
+     empty: it takes no room above the category pills. */
+  body.sale-screen .pos-container .products-finder:not(:has(.products-strip .tab-bar)) { gap: 0; }
+  body.sale-screen .pos-container .products-strip:has(> input[type="search"]:not([style*="none"])) { margin-block-end: .6rem; }
 
   /* App-icon tiles: 3 per row, the picture or the initials in a rounded
      square, name and price under it. */
