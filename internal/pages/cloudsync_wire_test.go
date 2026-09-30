@@ -3129,3 +3129,70 @@ func TestCollectProblems_RedactsSecrets(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#3246: the main till reports its shop name (trimmed) on every
+// check-in so my. can adopt a name saved under Settings → My shop.
+func TestBuildCloudHooks_MainTillReportsStoreName(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, common.KeyStoreName, "  Corner Café  "); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	extra := buildCloudHooks(dp, nil).DeviceExtra(ctx)
+	if got, ok := extra["store_name"].(string); !ok || got != "Corner Café" {
+		t.Fatalf("store_name = %#v, want %q", extra["store_name"], "Corner Café")
+	}
+}
+
+// ut-docs#3246: only the till that decides for itself reports the shop
+// name; an additional till (sync.primary_url set) never does, whatever its
+// local copy says.
+func TestBuildCloudHooks_AdditionalTillOmitsStoreName(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, common.KeyStoreName, "Corner Café"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	setReplica(t, dp)
+	if v, ok := buildCloudHooks(dp, nil).DeviceExtra(ctx)["store_name"]; ok {
+		t.Fatalf("an additional till reported store_name = %#v", v)
+	}
+}
+
+// ut-docs#3246: an unset, blank, placeholder or invalid name is left out,
+// so the cloud never adopts "My Store" over the real name.
+func TestBuildCloudHooks_StoreNameOmittedWhenPlaceholder(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	hooks := buildCloudHooks(dp, nil)
+	if v, ok := hooks.DeviceExtra(ctx)["store_name"]; ok {
+		t.Fatalf("unset name reported as %#v", v)
+	}
+	for _, name := range []string{"", "   ", "My Store", " my store ", "Universal Till store", "Bad‮name", strings.Repeat("x", 81)} {
+		if err := dp.Settings.Set(ctx, common.KeyStoreName, name); err != nil {
+			t.Fatalf("seed %q: %v", name, err)
+		}
+		if v, ok := hooks.DeviceExtra(ctx)["store_name"]; ok {
+			t.Fatalf("name %q reported as %#v", name, v)
+		}
+	}
+}
+
+// ut-docs#3246: a settings read error leaves store_name out rather than
+// failing the heartbeat or reporting a blank name.
+func TestRemoteStoreNameReport_ReadErrorOmits(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, common.KeyStoreName, "Corner Café"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if name, ok := remoteStoreNameReport(ctx, dp); !ok || name != "Corner Café" {
+		t.Fatalf("before close: %q %v", name, ok)
+	}
+	if err := dp.Db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if name, ok := remoteStoreNameReport(ctx, dp); ok {
+		t.Fatalf("read error reported %q", name)
+	}
+}
