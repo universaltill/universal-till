@@ -22,6 +22,8 @@ internal/httpx/httpx.go: unreachable func: NewRenderer
 internal/httpx/httpx.go: unreachable func: Renderer.Render
 internal/httpx/icons.go: unreachable func: IconNames
 internal/httpx/tplcache.go: unreachable func: ResetCacheForTests
+internal/imaging/tile.go: unreachable func: SquareTile
+internal/imaging/tile.go: unreachable func: subjectBounds
 internal/logging/capture.go: unreachable func: CaptureForTest
 internal/logging/logging.go: unreachable func: ResetRecent
 internal/manual/manual.go: unreachable func: Library.IDs
