@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/db"
 )
 
 // ADR-0129 §2/§3, slice 2b (ut-docs#3281): the till persists a plugin's
@@ -46,12 +47,12 @@ func TestPersistManifest_PersistsProvidesAndMarkets(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"com.test.register"}) {
 		t.Fatalf("PluginsProviding(fiscal.register) = %v, want [com.test.register]", got)
 	}
-	markets, err := repo.ListPluginMarkets(ctx, "com.test.register")
+	markets, err := pluginMarkets(t, d, "com.test.register")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(markets, []string{"AT", "DE"}) {
-		t.Fatalf("ListPluginMarkets = %v, want [AT DE] (sorted)", markets)
+		t.Fatalf("persisted markets = %v, want [AT DE] (sorted)", markets)
 	}
 }
 
@@ -73,7 +74,7 @@ func TestPersistManifest_UpdateReplacesProvidesAndMarkets(t *testing.T) {
 	if got, _ := repo.PluginsProviding(ctx, "layout.shop_type:cafe", false); !reflect.DeepEqual(got, []string{"com.test.ai"}) {
 		t.Fatalf("new capability not persisted on update: %v", got)
 	}
-	if got, _ := repo.ListPluginMarkets(ctx, "com.test.ai"); !reflect.DeepEqual(got, []string{"TR"}) {
+	if got, _ := pluginMarkets(t, d, "com.test.ai"); !reflect.DeepEqual(got, []string{"TR"}) {
 		t.Fatalf("markets after update = %v, want [TR] (DE must be replaced)", got)
 	}
 
@@ -85,7 +86,7 @@ func TestPersistManifest_UpdateReplacesProvidesAndMarkets(t *testing.T) {
 	if got, _ := repo.PluginsProviding(ctx, CapabilityAI, false); len(got) != 0 {
 		t.Fatalf("an update that no longer declares provides must clear its rows, still providing: %v", got)
 	}
-	if got, _ := repo.ListPluginMarkets(ctx, "com.test.ai"); len(got) != 0 {
+	if got, _ := pluginMarkets(t, d, "com.test.ai"); len(got) != 0 {
 		t.Fatalf("an update that no longer declares markets must clear its rows, got %v", got)
 	}
 }
@@ -226,6 +227,26 @@ func TestPersistManifest_FiscalExclusivityFailsClosedOnDBError(t *testing.T) {
 	}
 }
 
+// pluginMarkets reads pluginID's persisted markets, sorted (no production
+// reader exists until ADR-0129 slice 6, ut-docs#3180).
+func pluginMarkets(t *testing.T, d *db.DB, pluginID string) ([]string, error) {
+	t.Helper()
+	rows, err := d.DB.Query(`SELECT market FROM plugin_markets WHERE plugin_id = ? ORDER BY market`, pluginID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var m string
+		if err := rows.Scan(&m); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // seedRollbackTarget writes a version manifest into the RollbackManager's
 // versions/ tree (the catalog row is seeded by the caller).
 func seedRollbackTarget(t *testing.T, base, id, version, manifest string) {
@@ -263,7 +284,7 @@ VALUES ('com.rb.ai', '1.0.0', 'RB', 'none', '', 'https://example.invalid', 'dead
 	if got, _ := repo.PluginsProviding(ctx, CapabilityAI, false); len(got) != 0 {
 		t.Fatalf("rollback to a version without provides must clear them, got %v", got)
 	}
-	if got, _ := repo.ListPluginMarkets(ctx, "com.rb.ai"); !reflect.DeepEqual(got, []string{"DE"}) {
+	if got, _ := pluginMarkets(t, d, "com.rb.ai"); !reflect.DeepEqual(got, []string{"DE"}) {
 		t.Fatalf("rollback must restore the target's markets, got %v", got)
 	}
 }

@@ -75,16 +75,6 @@ func (r *PluginRepo) ListPluginProvides(ctx context.Context, pluginID string) ([
 	return scanStrings(rows, "list_provides")
 }
 
-// ListPluginMarkets returns pluginID's persisted markets, sorted. Empty
-// means every market (ADR-0129 §3).
-func (r *PluginRepo) ListPluginMarkets(ctx context.Context, pluginID string) ([]string, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT market FROM plugin_markets WHERE plugin_id = ? ORDER BY market`, pluginID)
-	if err != nil {
-		return nil, pluginObs.wrap("list_markets", err)
-	}
-	return scanStrings(rows, "list_markets")
-}
-
 // CapabilityProviderOwner returns an INSTALLED plugin other than
 // excludePluginID, active or disabled, that declares capability — the
 // ownership query behind ADR-0129 §2's `fiscal.*` exclusivity (at most one

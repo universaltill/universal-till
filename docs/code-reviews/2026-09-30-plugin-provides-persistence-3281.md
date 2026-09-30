@@ -8,7 +8,7 @@
 ## What shipped
 
 - Migration `053_plugin_provides_markets.sql` adds two tables, `plugin_provides(plugin_id, capability)` and `plugin_markets(plugin_id, market)`. Each has PK `(plugin_id, value)`, an FK to `plugins(id) ON DELETE CASCADE`, and an index on the value. The checksum is pinned in `shipped_migrations_test.go`.
-- `internal/data/plugin_provides_repo.go` adds `ReplacePluginProvides`, `ReplacePluginMarkets`, `PluginsProviding(ctx, capability, activeOnly)` (sorted IDs), `ListPluginProvides`, `ListPluginMarkets` and `CapabilityProviderOwner`. The last one looks at installed plugins, active or not. All raw SQL for this lives here.
+- `internal/data/plugin_provides_repo.go` adds `ReplacePluginProvides`, `ReplacePluginMarkets`, `PluginsProviding(ctx, capability, activeOnly)` (sorted IDs), `ListPluginProvides` and `CapabilityProviderOwner`. The last one looks at installed plugins, active or not. All raw SQL for this lives here.
 - `internal/plugins/manifest_provides.go` adds `IsExclusiveCapability` (every `fiscal.*` value), `FiscalProvidesConflict`, `validateFiscalProvidesExclusivity` and `persistProvidesAndMarkets`.
 - `PersistManifest` runs the exclusivity check (step 0i) before any write and replaces both lists after the plugin row is written. `Rollback` does the same check and rewrites the lists from the target manifest. `POST /api/plugins/{id}/enable` returns 409 when another installed plugin provides the same `fiscal.*` capability, and 500 (fail closed) on a DB error.
 - The two tables are classified non-admin in `sync_admin_repo.go`. They are recreated on re-install, like `plugin_entries`.
@@ -33,6 +33,12 @@ The reviewer confirmed:
 - A plugin's own rows are excluded, so self-update and re-enable work.
 - Binding a `bool` in modernc works on both branches.
 - The FK cascade and the migration are safe on existing tills: those tills get empty tables.
+
+## CI follow-up
+
+`desktop-shell`'s `guard-deadcode-baseline.sh` flagged `PluginRepo.PluginsProviding` and `PluginRepo.ListPluginMarkets` as unreachable, because no production reader exists until slice 6.
+- `ListPluginMarkets` is removed. Only the tests used it, and they now query `plugin_markets` directly.
+- `PluginsProviding` is the API the card asks for, so it goes into `scripts/ci/deadcode-baseline.txt`. ut-docs#3180 is asked to drop that entry once its readers call it.
 
 ## TDD re-verification (by the reviewer, revert → fail → restore)
 
