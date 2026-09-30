@@ -2744,7 +2744,7 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    #osk (1000). The self-order kiosk's
    #selforder-modal stays showModal() (kiosk mode must NOT reach status/
    lock/exit) and keeps .modifier-modal::backdrop. */
-#modifier-modal, #order-type-prompt-modal, #table-modal, #barcode-backfill-modal, #table-qr-modal {
+#modifier-modal, #order-type-prompt-modal, #table-modal, #barcode-backfill-modal, #sku-backfill-modal, #table-qr-modal {
   position: fixed; inset: 0; margin: auto; block-size: fit-content;
   max-block-size: calc(100dvh - 8rem); overflow-y: auto; z-index: 500;
 }

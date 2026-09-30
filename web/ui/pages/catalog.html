@@ -91,6 +91,21 @@
             aria-label="{{ T "catalog.barcode_backfill.btn" }}" title="{{ T "catalog.barcode_backfill.btn" }}">
       <span class="btn-ico" aria-hidden="true">{{ icon "scan-barcode" }}</span>
     </button>
+    {{/* ut-docs#3097: "Generate missing SKUs" — only on a primary till (a
+         replica's catalog comes from its primary; .SyncPrimary is set on a
+         replica) and only while some item has no SKU. Same preview-first
+         dialog pattern as the barcode backfill button above; .show(),
+         never .showModal() (ut-docs#2097). The count rides on the label
+         and on a .count-badge so it isn't hidden behind the icon. */}}
+    {{ if and (not .SyncPrimary) (gt .MissingSKUCount 0) }}
+    <button id="catalog-sku-backfill-btn" class="btn secondary btn-icon" style="position:relative"
+            hx-get="/api/catalog/sku-backfill" hx-target="#sku-backfill-modal" hx-swap="innerHTML"
+            hx-on::after-request="if (event.detail.successful) { document.getElementById('sku-backfill-modal').show(); }"
+            aria-label="{{ printf (T "catalog.sku_backfill.btn") .MissingSKUCount }}" title="{{ printf (T "catalog.sku_backfill.btn") .MissingSKUCount }}">
+      <span class="btn-ico" aria-hidden="true">{{ icon "sparkles" }}</span>
+      <span class="count-badge" aria-hidden="true">{{ .MissingSKUCount }}</span>
+    </button>
+    {{ end }}
     <input type="search" id="catalog-search" placeholder="{{ T "catalog.search_placeholder" }}" autocomplete="off">
     {{/* ut-docs#2165 (follow-up of ut-docs#2119): collapsed behind a
          filter-icon trigger + popover instead of an always-visible chip
@@ -112,6 +127,7 @@
 {{/* data-ut-refresh (ut-docs#2762): the result's Close button refreshes
      only the catalog grid, via UT.refreshRegion (app.js). */}}
 <dialog id="barcode-backfill-modal" class="modifier-modal barcode-backfill-modal" aria-labelledby="catalog-barcode-backfill-btn" data-ut-refresh="#catalog-table" data-ut-escape-close></dialog>
+<dialog id="sku-backfill-modal" class="modifier-modal barcode-backfill-modal" aria-labelledby="sku-backfill-heading" data-ut-refresh="#catalog-table" data-ut-escape-close></dialog>
 
 <!-- ut-docs#2095: Import and Tax codes floating above the /items shell —
      see the Import/Tax codes buttons above for the full reasoning. Empty

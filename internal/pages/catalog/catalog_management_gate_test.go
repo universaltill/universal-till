@@ -97,6 +97,7 @@ func TestCatalogHandlers_CatalogManagementGate_RealSessionGatesByRole(t *testing
 		"/api/catalog/barcode",
 		"/api/catalog/barcode/delete",
 		"/api/catalog/barcode-backfill",
+		"/api/catalog/sku-backfill",
 	}
 
 	post := func(path string, u auth.User) *httptest.ResponseRecorder {
@@ -208,6 +209,7 @@ func TestCatalogHandlers_CatalogManagementGate_GETFragmentRoutes(t *testing.T) {
 		"/api/catalog/item-variants?item_id=itm1",
 		"/api/catalog/item/icon-state?item_id=itm1",
 		"/api/catalog/barcode-backfill",
+		"/api/catalog/sku-backfill",
 	}
 
 	get := func(path string, u auth.User) *httptest.ResponseRecorder {

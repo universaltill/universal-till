@@ -234,6 +234,11 @@ func Run(ctx context.Context) error {
 		}
 	}
 
+	// ut-docs#3097: items created before #3087 may still have no SKU. After
+	// ApplyReplicaIdentity above, so a till that just joined a shop is
+	// already a replica here and is skipped. Best-effort, never fatal.
+	backfillItemSKUsOnPrimary(ctx, database.DB, log)
+
 	// wg tracks the background goroutines this boot sequence starts —
 	// directly (enroll/updates/alerts), via server.Start, or via pages.Init
 	// (cloudsync, and since ut-docs#153 also StartSyncPush/StartSyncPull/
