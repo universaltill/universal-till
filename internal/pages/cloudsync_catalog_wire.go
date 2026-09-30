@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/cloudsync"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fleetlink"
+	"github.com/universaltill/universal-till/internal/imaging"
+	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -216,4 +220,119 @@ func cloudDeleteModifierGroup(ctx context.Context, d *common.Deps, id string) (s
 	}
 	auditCloudDirective(ctx, d, "modifier_group", id, "cloud_modifier_group_deleted", nil)
 	return "deleted modifier group", nil
+}
+
+// cloudSetCatalogImage is the set_catalog_image hook (contract §3.9,
+// ut-docs#3076/#3139): an item or category image set or removed in my.
+// cloudsync has already checked the payload's shape; this checks the id is
+// on this till BEFORE fetching anything, then writes through the same
+// functions the till's own upload and Remove use (catalog.StoreItemPhoto /
+// ClearItemPicture, storeCategoryPhoto / clearCategoryPicture), so the file,
+// the item_images row or categories.image_path, and what the sale screen
+// shows are exactly what a local upload produces. Satellites get the file
+// through the existing asset sync (/api/sync/assets, #2566/#2785); the
+// admin nudge makes them pull now.
+//
+// Idempotent: a replay of the same image rewrites the same file and row and
+// reports the same text; when the served photo is unchanged (or a clear
+// finds no picture) no audit row is added.
+func cloudSetCatalogImage(ctx context.Context, d *common.Deps, img cloudsync.CatalogImage) (string, error) {
+	if img.Entity != "item" && img.Entity != "category" {
+		return "", fmt.Errorf("unknown entity %s", img.Entity)
+	}
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	repo := data.NewCatalogRepo(d.Db)
+	notHere := fmt.Errorf("%s %s is not on this till", img.Entity, img.ID)
+	// An id that could escape the asset directory can't be a row the
+	// till's own screens created; refuse it before it reaches a path.
+	if !safeCategoryID(img.ID) {
+		return "", notHere
+	}
+	// current is what the entity shows now: its item_images path or its
+	// categories.image_path/icon ("" = no picture at all).
+	var name, current string
+	if img.Entity == "item" {
+		l, ok, err := repo.GetItemLabel(ctx, img.ID)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			return "", notHere
+		}
+		name = l.Name
+		if current, _, err = repo.ItemThumbnailPath(ctx, img.ID); err != nil {
+			return "", err
+		}
+	} else {
+		c, ok, err := repo.CategoryPicture(ctx, img.ID)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			return "", notHere
+		}
+		name, current = c.Name, c.ImagePath+c.Icon
+	}
+	target := catalog.ItemThumbURL(img.ID)
+	if img.Entity == "category" {
+		target = categoryThumbURL(img.ID)
+	}
+	audit := func(action string, payload map[string]any) {
+		auditCloudDirective(ctx, d, img.Entity, img.ID, action, payload)
+		// A photo is a file on /api/sync/assets, not only a row: tell
+		// linked tills to pull now, as the till's own upload does.
+		d.NudgeLink(fleetlink.ScopeAdmin)
+	}
+
+	if img.Clear {
+		msg := fmt.Sprintf("image removed from %s %s", img.Entity, name)
+		// Nothing shown and no stray photo file: a replay, or never set.
+		if current == "" && cloudsync.ServedImageSHA256(target) == "" {
+			return msg, nil
+		}
+		var err error
+		if img.Entity == "item" {
+			err = catalog.ClearItemPicture(ctx, repo, img.ID)
+		} else {
+			err = clearCategoryPicture(ctx, repo, img.ID)
+		}
+		if err != nil {
+			return "", err
+		}
+		audit("cloud_catalog_image_cleared", nil)
+		return msg, nil
+	}
+
+	if img.Fetch == nil {
+		return "", errors.New("this till cannot download images right now; save the image again to retry")
+	}
+	raw, err := img.Fetch(ctx)
+	if err != nil {
+		return "", err
+	}
+	pic, err := imaging.PrepareThumb(raw)
+	if err != nil {
+		if errors.Is(err, imaging.ErrTooManyPixels) {
+			return "", errors.New("the image from the cloud has too many pixels for this till")
+		}
+		return "", errors.New("the image from the cloud could not be read as a PNG or JPEG")
+	}
+	before := ""
+	if current == target {
+		before = cloudsync.ServedImageSHA256(target)
+	}
+	if img.Entity == "item" {
+		err = catalog.StoreItemPhoto(ctx, repo, img.ID, pic)
+	} else {
+		err = storeCategoryPhoto(ctx, repo, img.ID, pic)
+	}
+	if err != nil {
+		return "", err
+	}
+	if after := cloudsync.ServedImageSHA256(target); before == "" || after != before {
+		audit("cloud_catalog_image_set", map[string]any{"sha256": img.SHA256, "size": img.Size})
+	}
+	return fmt.Sprintf("image set on %s %s", img.Entity, name), nil
 }

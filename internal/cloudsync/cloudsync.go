@@ -200,6 +200,15 @@ type Hooks struct {
 	// category list and Designer reorders make — unlisted categories keep
 	// their relative order after the listed ones. Audited, idempotent.
 	SetCategoryOrder func(ctx context.Context, ids []string) (string, error)
+	// SetCatalogImage handles "set_catalog_image" (contract §3.9,
+	// ut-docs#3076): an item or category image set or removed in my.
+	// Main-till only like the catalog hooks above. apply decodes and
+	// validates the payload (rule 1's shape checks); the hook refuses an id
+	// that is not on this till, then — for a set — calls img.Fetch (the
+	// download from the cloud with the store credential, size-capped and
+	// checksum-verified) and writes through the till's own upload path, or
+	// — for a clear — the till's own Remove. Audited, idempotent.
+	SetCatalogImage func(ctx context.Context, img CatalogImage) (string, error)
 	// The till user directives (ut-docs reference/till-user-directives.md
 	// §4, ADR-0115 amendment 2026-09-25): main-till only, like the catalog
 	// ones above. Each opens pin_sealed (when present) with the main
@@ -244,6 +253,11 @@ type Hooks struct {
 	// processed makes the next check-in POST without asking (checkin.go);
 	// the link records it before it kicks. Must not block.
 	LinkVersion func() int64
+
+	// fetchCatalogImage is set by tick (it needs the cloud endpoint and
+	// credential from cfg) and bound into each set_catalog_image's
+	// CatalogImage.Fetch. Nil when apply runs without a tick.
+	fetchCatalogImage func(ctx context.Context, sha string) ([]byte, error)
 }
 
 type directive struct {
@@ -347,6 +361,23 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		// never fails the tick.
 		pushSalesAggregates(ctx, cfg, db)
 	}
+	// Image fetches share one budget per tick: after the first
+	// transport-level failure (errImageFetchUnreachable) no further fetch is
+	// tried this tick, and each affected directive stays pending (no result
+	// post) for the next tick — never 100 × catalogImageFetchTimeout, never
+	// a mass "failed" the owner must re-save by hand.
+	imageRouteDown, fetchDeferred := false, false
+	hooks.fetchCatalogImage = func(ctx context.Context, sum string) ([]byte, error) {
+		if imageRouteDown {
+			fetchDeferred = true
+			return nil, errImageFetchUnreachable
+		}
+		b, err := fetchCatalogImage(ctx, cfg, sum)
+		if errors.Is(err, errImageFetchUnreachable) {
+			imageRouteDown, fetchDeferred = true, true
+		}
+		return b, err
+	}
 	catalogApplied := false
 	for _, d := range dirs {
 		if !isMainTill && mainTillOnlyTypes[d.Type] {
@@ -360,7 +391,12 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 			}
 			continue
 		}
+		fetchDeferred = false
 		status, msg := apply(ctx, d, hooks)
+		if fetchDeferred && status == "failed" {
+			logging.L().Warnf("cloudsync: directive %s (%s) left pending: %s", d.ID, d.Type, msg)
+			continue
+		}
 		if status == "applied" && catalogTypes[d.Type] {
 			catalogApplied = true
 		}
@@ -750,6 +786,24 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", bad
 		}
 		msg, err = hooks.SetCategoryOrder(ctx, ids)
+	case "set_catalog_image":
+		if hooks.SetCatalogImage == nil {
+			return "failed", "set_catalog_image is not supported on this till"
+		}
+		img, bad := decodeCatalogImage(payload(d.Payload))
+		if bad != "" {
+			return "failed", bad
+		}
+		if !img.Clear {
+			fetch, sum := hooks.fetchCatalogImage, img.SHA256
+			img.Fetch = func(ctx context.Context) ([]byte, error) {
+				if fetch == nil {
+					return nil, errors.New("this till cannot download images right now; save the image again to retry")
+				}
+				return fetch(ctx, sum)
+			}
+		}
+		msg, err = hooks.SetCatalogImage(ctx, img)
 	case "delete_category":
 		if hooks.DeleteCategory == nil {
 			return "failed", "delete_category is not supported on this till"
@@ -1020,6 +1074,10 @@ type snapshotItemRow struct {
 	ModifierOptOutIDs         []string             `json:"modifier_opt_out_ids"`
 	EffectiveModifierGroupIDs []string             `json:"effective_modifier_group_ids"`
 	Variants                  []snapshotVariantRow `json:"variants"`
+	// ImageSHA256 is the hex SHA-256 of the photo the till serves for this
+	// item, "" for none or a built-in icon (contract §3.9 rule 5), so my.
+	// can tell an image it set from one taken on the till.
+	ImageSHA256 string `json:"image_sha256"`
 }
 
 // pushSnapshotIfChanged uploads the catalog + on-hand stock when it differs
@@ -1053,6 +1111,13 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 		logging.L().Warnf("cloudsync: catalog has %d items; the snapshot carries the first %d (inactive items dropped first)", len(items), maxSnapshotItems)
 		items = items[:maxSnapshotItems]
 	}
+	// Photos (§3.9 rule 5). A read error only costs the image field: the
+	// rest of the snapshot is still worth sending.
+	thumbs, err := data.NewCatalogRepo(db).ItemThumbnails(ctx)
+	if err != nil {
+		logging.L().Warnf("cloudsync: snapshot item thumbnails: %v", err)
+		thumbs = nil
+	}
 	rows := make([]snapshotItemRow, 0, len(items))
 	for _, it := range items {
 		row := snapshotItemRow{
@@ -1061,7 +1126,8 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 			IsWeighed: it.IsWeighed, StockUntracked: it.StockUntracked,
 			Barcodes: it.Barcodes, ModifierGroupIDs: it.ModifierGroupIDs,
 			ModifierOptOutIDs: it.ModifierOptOutIDs, EffectiveModifierGroupIDs: it.EffectiveModifierGroupIDs,
-			Variants: make([]snapshotVariantRow, 0, len(it.Variants)),
+			Variants:    make([]snapshotVariantRow, 0, len(it.Variants)),
+			ImageSHA256: ServedImageSHA256(thumbs[it.ID]),
 		}
 		if len(it.Barcodes) > 0 {
 			row.Barcode = it.Barcodes[0]

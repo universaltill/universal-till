@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"image"
@@ -65,6 +66,28 @@ func removeCategoryUpload(id string) {
 	if err := os.Remove(categoryThumbFile(id)); err != nil && !os.IsNotExist(err) {
 		log.Printf("[categories] remove superseded upload for %s: %v", id, err)
 	}
+}
+
+// storeCategoryPhoto writes an already-prepared (imaging.PrepareThumb)
+// photo as the category's picture: the file, then image_path pointing at it
+// with the icon id cleared (one picture per category, ut-docs#2717). The
+// one write path for the category dialog's upload and the cloud's
+// set_catalog_image directive (ut-docs#3139). id must pass safeCategoryID.
+func storeCategoryPhoto(ctx context.Context, repo *data.CatalogRepo, id string, img image.Image) error {
+	if err := imaging.WriteThumbPNG(img, categoryThumbFile(id)); err != nil {
+		return err
+	}
+	return repo.SetCategoryPicture(ctx, id, categoryThumbURL(id), "")
+}
+
+// clearCategoryPicture is the dialog's "No image": path and icon cleared,
+// then the uploaded file removed. Shared with set_catalog_image's clear.
+func clearCategoryPicture(ctx context.Context, repo *data.CatalogRepo, id string) error {
+	if err := repo.SetCategoryPicture(ctx, id, "", ""); err != nil {
+		return err
+	}
+	removeCategoryUpload(id)
+	return nil
 }
 
 // isHtmxDialogRequest reports whether r came from the record dialog's own
@@ -549,22 +572,17 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 	saveCategoryImage := func(w http.ResponseWriter, r *http.Request, id string, f categoryForm) (string, bool) {
 		switch {
 		case f.photo != nil:
-			if err := imaging.WriteThumbPNG(f.photo, categoryThumbFile(id)); err != nil {
-				log.Printf("[categories] write thumb for %s: %v", id, err)
-				renderCategoryDialogError(w, r, "categories.error.update", 0)
-				return "", false
-			}
-			if err := catRepo.SetCategoryPicture(r.Context(), id, categoryThumbURL(id), ""); err != nil {
+			if err := storeCategoryPhoto(r.Context(), catRepo, id, f.photo); err != nil {
+				log.Printf("[categories] store photo for %s: %v", id, err)
 				renderCategoryDialogError(w, r, "categories.error.update", 0)
 				return "", false
 			}
 			return "upload", true
 		case f.icon == "none":
-			if err := catRepo.SetCategoryPicture(r.Context(), id, "", ""); err != nil {
+			if err := clearCategoryPicture(r.Context(), catRepo, id); err != nil {
 				renderCategoryDialogError(w, r, "categories.error.update", 0)
 				return "", false
 			}
-			removeCategoryUpload(id)
 			return "none", true
 		case f.iconID != "" || f.iconPath != "":
 			if err := catRepo.SetCategoryPicture(r.Context(), id, f.iconPath, f.iconID); err != nil {
