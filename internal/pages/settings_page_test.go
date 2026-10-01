@@ -13,12 +13,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -874,13 +876,78 @@ func TestTillNameEndpoint(t *testing.T) {
 	}
 }
 
-// The Settings page's till-name field only makes sense on the primary —
-// till.name isn't read anywhere on a replica (its own identity is
-// sync.till_name, set at join time), so showing an editable field there
-// would be a dead control: a manager could save a name that changes
-// nothing anywhere in the product (independent review, ut-docs#396).
-func TestSettingsPage_TillNameFieldOnlyOnPrimary(t *testing.T) {
+// ut-docs#3292: on a joined till (sync.primary_url set) the Settings rename
+// is that till's own name — sync.till_name, per-till, saved locally — never
+// till.name, which there is the main till's shop-wide name and would be
+// written through to the main till (ut-docs#2791), renaming it instead.
+func TestTillNameEndpoint_JoinedTillRenamesItselfNotTheMainTill(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
+	ctx := t.Context()
+	var mainHits atomic.Int32
+	main := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mainHits.Add(1)
+		http.Error(w, "the main till must not be asked", http.StatusTeapot)
+	}))
+	t.Cleanup(main.Close)
+	// A bearer, so a write-through would really reach the stub above
+	// (applySettingsOnMain refuses before any request without one).
+	for k, v := range map[string]string{
+		"sync.primary_url": main.URL,
+		"sync.bearer":      "test-bearer",
+		"till.name":        "Main Counter",
+		"sync.till_name":   "Back Office",
+	} {
+		if err := d.Settings.Set(ctx, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if rec := postForm(mux, "/api/settings/till-name", url.Values{"name": {"  Terrace  "}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("joined till-name = %d body=%s, want 204", rec.Code, rec.Body.String())
+	}
+	if got := settingValue(t, d, "sync.till_name"); got != "Terrace" {
+		t.Fatalf("sync.till_name = %q, want %q", got, "Terrace")
+	}
+	if got := settingValue(t, d, "till.name"); got != "Main Counter" {
+		t.Fatalf("till.name (the main till's) = %q, want it unchanged", got)
+	}
+	if n := mainHits.Load(); n != 0 {
+		t.Fatalf("the rename reached the main till %d time(s); a joined till's own name is per-till", n)
+	}
+	if got := enroll.DeviceName(ctx, d.Settings); got != "Terrace" {
+		t.Fatalf("DeviceName (reported to the cloud) = %q, want %q", got, "Terrace")
+	}
+	audits := renameTillAudits(t, d)
+	if len(audits) != 1 || audits[0]["_entity_id"] != "sync.till_name" || audits[0]["key"] != "sync.till_name" || audits[0]["name"] != "Terrace" {
+		t.Fatalf("audit rows = %+v, want one till_name_changed on sync.till_name", audits)
+	}
+}
+
+// The main till's Settings rename is unchanged by ut-docs#3292: till.name,
+// audited under that key.
+func TestTillNameEndpoint_MainTillAuditsTillNameKey(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	if rec := postForm(mux, "/api/settings/till-name", url.Values{"name": {"Front"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("main till-name = %d, want 204", rec.Code)
+	}
+	if got := settingValue(t, d, "till.name"); got != "Front" {
+		t.Fatalf("till.name = %q", got)
+	}
+	if got := settingValue(t, d, "sync.till_name"); got != "" {
+		t.Fatalf("sync.till_name = %q, want it untouched on a main till", got)
+	}
+	audits := renameTillAudits(t, d)
+	if len(audits) != 1 || audits[0]["_entity_id"] != "till.name" || audits[0]["key"] != "till.name" {
+		t.Fatalf("audit rows = %+v, want one till_name_changed on till.name", audits)
+	}
+}
+
+// ut-docs#3292: the till-name field shows on every till, holding the name
+// that till reports for itself (enroll.DeviceName): till.name on the main
+// till, sync.till_name on a joined till — never the main till's name there.
+func TestSettingsPage_TillNameFieldShowsThisTillsOwnName(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	ctx := t.Context()
 
 	get := func() string {
 		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
@@ -892,16 +959,34 @@ func TestSettingsPage_TillNameFieldOnlyOnPrimary(t *testing.T) {
 		}
 		return rec.Body.String()
 	}
+	field := func(v string) string { return `<input type="text" name="name" maxlength="60" value="` + v + `">` }
 
-	if body := get(); !strings.Contains(body, `/api/settings/till-name`) {
-		t.Fatalf("primary till: expected the till-name field, got:\n%s", body)
+	if err := d.Settings.Set(ctx, "till.name", "Main Counter"); err != nil {
+		t.Fatal(err)
+	}
+	if body := get(); !strings.Contains(body, `/api/settings/till-name`) || !strings.Contains(body, field("Main Counter")) {
+		t.Fatalf("main till: expected the till-name field holding till.name, got:\n%s", body)
 	}
 
-	if err := d.Settings.Set(t.Context(), "sync.primary_url", "https://primary.local"); err != nil {
-		t.Fatalf("set sync.primary_url: %v", err)
+	for k, v := range map[string]string{"sync.primary_url": "https://primary.local", "sync.till_name": "Back Office"} {
+		if err := d.Settings.Set(ctx, k, v); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if body := get(); strings.Contains(body, `/api/settings/till-name`) {
-		t.Fatalf("replica: till-name field should be hidden, got:\n%s", body)
+	body := get()
+	if !strings.Contains(body, `/api/settings/till-name`) || !strings.Contains(body, field("Back Office")) {
+		t.Fatalf("joined till: expected the till-name field holding sync.till_name, got:\n%s", body)
+	}
+	if strings.Contains(body, field("Main Counter")) {
+		t.Fatal("joined till: the till-name field must not show the main till's name")
+	}
+
+	// No own name yet → the translated default, like the main till.
+	if err := d.Settings.Set(ctx, "sync.till_name", ""); err != nil {
+		t.Fatal(err)
+	}
+	if body := get(); !strings.Contains(body, field(httpx.T("en", "setup.till_name.default"))) {
+		t.Fatalf("joined till with no own name: expected the default name in the field")
 	}
 }
 
@@ -1142,8 +1227,7 @@ func TestSettingsPage_TillRegisterPickerRendersAndSelects(t *testing.T) {
 		t.Fatalf("expected regB selected after persisting it, got:\n%s", body)
 	}
 
-	// A replica (sync.primary_url set) keeps the picker — no
-	// .IsPrimaryTill gate here, unlike till-name.
+	// A replica (sync.primary_url set) keeps the picker, like till-name.
 	if err := d.Settings.Set(t.Context(), "sync.primary_url", "https://primary.local"); err != nil {
 		t.Fatal(err)
 	}
@@ -2346,7 +2430,7 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 		`data-testid="restore-dismiss"`,              // data card (kept restorePromptDeferred guard)
 		`data-testid="pending-base-plugin-dismiss"`,  // data card (kept pendingBasePlugins guard)
 		`hx-post="/api/settings/report-retention"`,   // retention card: mode form only
-		`hx-post="/api/settings/till-name"`,          // tills card (kept IsPrimaryTill guard)
+		`hx-post="/api/settings/till-name"`,          // tills card: this till's own name
 		`hx-post="/api/settings/till-register"`,      // tills card: register picker
 		`hx-post="/api/settings/idle-lock"`,          // idle-lock card
 		`hx-post="/api/settings/kiosk-idle-reset"`,   // kiosk-idle-reset card

@@ -1796,14 +1796,12 @@
 </script>
 {{ end }}
 <!-- ut-docs#867: till-name and till-register are elevation-wired — the card
-     renders for every session (the .IsPrimaryTill data guard is unchanged). -->
+     renders for every session. -->
 <div class="card" id="settings-tills">
   <h2>🔗 {{ T "tills.title" }}</h2>
-  {{ if .IsPrimaryTill }}
-  <!-- Only the primary has its own name to edit here (ut-docs#396 review):
-       a replica's identity is sync.till_name, set at join time — a separate,
-       out-of-scope concern (see the card's non-goals) — so this field would
-       be a dead control on a replica with nothing reading till.name back. -->
+  <!-- This till's own name, on every till (ut-docs#3292): the main till
+       saves till.name; a joined till saves its own per-till sync.till_name,
+       never till.name (which there holds the main till's name). -->
   <!-- ut-docs#796: same Content-Type reload guard as the report-retention
        form above — a 200 elevation prompt (text/html) must not trigger the
        success reload, which would destroy the just-opened dialog; the real
@@ -1818,9 +1816,8 @@
          report-retention form's identical span). -->
     <span id="till-name-msg" aria-live="polite"></span>
   </form>
-  {{ end }}
   <!-- This till's register identity (ut-docs#268): which register's shift a
-       payout (e.g. Pfandrückgabe) lands on. Unlike the till-name field above,
+       payout (e.g. Pfandrückgabe) lands on. Like the till-name field above,
        this renders on primary AND replica — every till processes its own
        local payouts, so its register identity matters everywhere. -->
   <form hx-post="/api/settings/till-register" hx-swap="none"

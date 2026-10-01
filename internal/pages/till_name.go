@@ -1,11 +1,16 @@
 package pages
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
 // maxTillNameRunes is the longest till display name (ut-docs#396): the
@@ -44,4 +49,15 @@ func validateTillName(raw string) (string, error) {
 		return "", errors.New("till name contains a control character")
 	}
 	return name, nil
+}
+
+// deviceNameOrDefault is the Settings till-name field's value: this till's
+// own name as it reports it to the cloud (enroll.DeviceName) — till.name on
+// the main till, sync.till_name on a joined till, never the main till's
+// name there (ut-docs#3292) — or the translated default when it has none.
+func deviceNameOrDefault(ctx context.Context, d *common.Deps, locale string) string {
+	if name := enroll.DeviceName(ctx, d.Settings); name != "" {
+		return name
+	}
+	return httpx.T(locale, "setup.till_name.default")
 }
