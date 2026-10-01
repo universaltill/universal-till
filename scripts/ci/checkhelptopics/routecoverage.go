@@ -41,6 +41,7 @@ var skippedPrefixes = []struct{ prefix, why string }{
 	{"/help", "the manual's own self-referential routes"},
 	{"/public/", "static file server"},
 	{"/healthz", "liveness probe"},
+	{"/csp-report", "report-only CSP violation sink and its JSON inventory (UT_CSP_REPORT_ONLY, ut-docs#2913) — dev/test tooling, not an operator page"},
 	{"/plugin/", "plugin-owned dynamically-dispatched pages — each plugin ships its own content bundle, not this manual's job"},
 	{"/self-order", "customer-facing kiosk screen (RenderPartial, no base layout/nav) — carries no operator \"?\" to link from; content lives in the self-order topic, reachable via manual search, not a page-level link (ut-docs#326 review)"},
 }

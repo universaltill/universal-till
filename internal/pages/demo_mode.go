@@ -156,6 +156,11 @@ func writeDemoRefusal(w http.ResponseWriter, r *http.Request, status int) {
 // demoDeniedRoutes are refused in the demo whatever the allow-list says
 // (ADR-0113 §1.5). Exact mux patterns, grouped by why.
 var demoDeniedRoutes = map[string]bool{
+	// Report-only CSP sink and inventory (ut-docs#2913): a dev/test
+	// inventory aid, only registered with UT_CSP_REPORT_ONLY on — nothing a
+	// demo visitor needs.
+	"POST /csp-report": true,
+	"GET /csp-report":  true,
 	// Plugins: install, update, side-load, rollback, enable/disable, trust and
 	// permission grants, the marketplace, the plugin store, plugin-owned
 	// pages/settings/actions (plugin settings can take endpoints) and the

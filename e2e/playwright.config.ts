@@ -87,6 +87,13 @@ const DIAGNOSTICS_ONLY_SPECS = /diagnostic-mode-indicator-2169\.spec\.ts$/;
 // one-time what's-new chip shows — never in the shared default till.
 const RELEASE_NOTES_ONLY_SPECS = /release-notes-3091\.spec\.ts$/;
 
+// ut-docs#2913: the report-only CSP spec drives a till started with
+// UT_CSP_REPORT_ONLY=1 (run-till-csp.sh). With the flag on, every page logs
+// its report-only violations as console errors by design, which would trip
+// watchConsole in every other spec — so it gets its own server + project,
+// and the shared default till never sets the flag.
+const CSP_ONLY_SPECS = /csp-report-only-2913\.spec\.ts$/;
+
 // ut-docs#2345: the `default` project's till is NOT in the `webServer`
 // list below. Its ~134 spec files run in parallel, and `internal/pos.Engine`
 // is a server-side singleton, so one shared server would let workers race
@@ -185,11 +192,17 @@ export default defineConfig<{}, WorkerOptions>({
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
     },
+    {
+      command: 'bash ./run-till-csp.sh',
+      url: 'http://127.0.0.1:8098/healthz',
+      timeout: 120_000,
+      reuseExistingServer: !process.env.CI,
+    },
   ],
   projects: [
     {
       name: 'default',
-      testIgnore: [AUTH_ONLY_SPECS, AI_IDENTIFY_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS, RELEASE_NOTES_ONLY_SPECS],
+      testIgnore: [AUTH_ONLY_SPECS, AI_IDENTIFY_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS, RELEASE_NOTES_ONLY_SPECS, CSP_ONLY_SPECS],
       use: {
         // No static baseURL: the `workerServerURL` fixture supplies this
         // worker's own server (9091 + parallelIndex) — see the note above
@@ -250,6 +263,17 @@ export default defineConfig<{}, WorkerOptions>({
       workers: STATIC_SERVER_WORKERS,
       use: {
         baseURL: 'http://127.0.0.1:8097',
+        trace: 'retain-on-failure',
+        screenshot: 'only-on-failure',
+        launchOptions,
+      },
+    },
+    {
+      name: 'csp',
+      testMatch: CSP_ONLY_SPECS,
+      workers: STATIC_SERVER_WORKERS,
+      use: {
+        baseURL: 'http://127.0.0.1:8098',
         trace: 'retain-on-failure',
         screenshot: 'only-on-failure',
         launchOptions,

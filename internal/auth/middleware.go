@@ -480,9 +480,25 @@ func refererPath(r *http.Request) string {
 	return ""
 }
 
+// exemptRequest is exempt() for routes whose exemption depends on the
+// method, not just the path.
+//
+// POST /csp-report (ut-docs#2913): browsers send Content-Security-Policy
+// violation reports from every page the report-only policy covers — the
+// login and setup pages included, where no session exists yet. The
+// handler only counts sanitised, size-capped reports in a bounded
+// in-memory set and is registered only when UT_CSP_REPORT_ONLY is on —
+// and the exemption follows the flag too (svc.EnableCSPReportSink), so a
+// till with the flag off answers this path like any other. The GET inventory of what was collected is NOT exempt: it stays behind the
+// session like any other till data.
+func exemptRequest(r *http.Request, svc *Service) bool {
+	return svc != nil && svc.cspReportSink.Load() &&
+		r.Method == http.MethodPost && r.URL.Path == "/csp-report"
+}
+
 func Middleware(next http.Handler, svc *Service) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if exempt(r.URL.Path) {
+		if exempt(r.URL.Path) || exemptRequest(r, svc) {
 			next.ServeHTTP(w, r)
 			return
 		}
