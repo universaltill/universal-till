@@ -55,6 +55,19 @@ async function scan(page, code: string) {
   ]);
 }
 
+// ut-docs#3297: a zero discount renders as an empty box (its placeholder
+// shows), which would make the clipped-value checks below vacuous: give the
+// line a real, wide discount first.
+async function setDiscount(page) {
+  const disc = page.locator('.disc-input').first();
+  await disc.fill('1234');
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/pos/line')),
+    disc.press('Tab'),
+  ]);
+  await expect(page.locator('.disc-input').first()).toHaveValue('1234');
+}
+
 async function setScale(page, scale: string) {
   if (scale === '1') return;
   await page.request.post('/api/settings/ui-scale', { form: { scale } });
@@ -141,6 +154,7 @@ test.describe('basket never scrolls horizontally, remove button fully reachable 
     await page.goto('/');
     await scan(page, CODES[0]);
     await expect(page.locator('.qty-input').first()).toBeVisible();
+    await setDiscount(page);
 
     const inputs = await page.evaluate(() => {
       const read = (el: HTMLInputElement) => ({ value: el.value, scrollWidth: el.scrollWidth, clientWidth: el.clientWidth });
@@ -202,6 +216,7 @@ for (const viewport of VIEWPORTS) {
         await page.request.post('/api/pos/scan', { form: { code: CODES[0], qty: '1' } });
         await page.goto('/');
         await expect(page.locator('.basket .btn-x')).toBeVisible();
+        await setDiscount(page);
 
         const data = await page.evaluate(() => {
           const scroll = document.querySelector('.basket-scroll') as HTMLElement;

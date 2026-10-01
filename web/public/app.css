@@ -1253,7 +1253,7 @@ a.chip-warn { text-decoration: none; }
    `hidden` on an unstyled wrapper instead), but guarded here so the next
    edit that puts `hidden` directly on a .field-pair doesn't fail silently. */
 .field-pair[hidden] { display: none; }
-.field-checks { display: flex; gap: 1rem; margin: .3rem 0 .7rem; }
+.field-checks { display: flex; flex-wrap: wrap; gap: .5rem 1rem; margin: .3rem 0 .7rem; } /* wraps: a phone row of checkboxes (ut-docs#3297) */
 /* ut-docs#1997: `.field-checks` is used two ways in this codebase — a
    <div> wrapping several plain <label> children (the rule above; the
    descendant selector here), AND a class on a single standalone <label>
@@ -4115,21 +4115,13 @@ body.login-screen {
 .pairing-notice-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .pairing-notice a { color: inherit; font-weight: 700; text-decoration: underline; }
 
-/* Operator chip + lock button in the nav. Column by default (the rail);
-   the <=480px block right below restores the previous horizontal row for
-   the top-bar fallback -- kept HERE, right after the rule it overrides,
-   rather than folded into the earlier top-bar media block, since this
-   declaration (unlike .sync-chip/.fiscal-chip above) needs to come after
-   in cascade order to actually win at that width. */
+/* Operator chip + lock button in the nav: a column, in the rail and in
+   the phone ☰ drawer alike (ut-docs#3297 removed the old top bar's
+   one-row override). */
 .session-chip { display: flex; flex-direction: column; align-items: stretch; gap: .3rem; }
 .session-user { font-weight: 600; }
 .session-lock { display: block; margin: 0; }
 .btn-lock { padding: .5rem .3rem; }
-@media (max-width: 480px) {
-  .session-chip { flex-direction: row; align-items: center; gap: .5rem; margin-inline-start: .8rem; }
-  .session-lock { display: inline; }
-  .btn-lock { padding: .25rem .7rem; }
-}
 
 /* Users admin page */
 .users-layout { display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; align-items: start; }
@@ -4144,6 +4136,18 @@ body.login-screen {
    table scroll inside its own card rather than stretch the page. */
 .users-list { min-inline-size: 0; }
 .users-list .table { display: block; overflow-x: auto; }
+/* ut-docs#3297: on a phone every wide data table (stock, shifts, audit,
+   translations, tills…) scrolls sideways inside its own box, the same way
+   the users list above always has, instead of dragging the whole page
+   sideways. Fields never grow past their container either. */
+@media (max-width: 480px) {
+  /* A table that already has its own scroll box (the permissions grid
+     with its pinned column, list cards, inline overflow wrappers) keeps it. */
+  :is(table.table, .card table, table.translations-grid):not(:is(.perm-scroll, .list-scroll, [style*="overflow-x"]) > table):not(.basket table) {
+    display: block; max-inline-size: 100%; overflow-x: auto;
+  }
+  main :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) { max-inline-size: 100%; box-sizing: border-box; }
+}
 .users-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
 .users-inline { display: inline-flex; gap: .35rem; margin: 0; }
 .users-inline input { width: 7.5rem; }
@@ -4352,6 +4356,9 @@ body.login-screen {
 @media (max-width: 52rem) { .items-layout { grid-template-columns: 1fr; } }
 
 .items-rail-wrap { position: sticky; inset-block-start: .5rem; }
+/* ut-docs#3297: stacked, the section list sits above the panel; pinned,
+   it stayed on screen and the catalog scrolled up under it. */
+@media (max-width: 52rem) { .items-rail-wrap { position: static; } }
 .items-rail-list { display: flex; flex-direction: column; gap: .2rem; }
 /* Compact row target block-size: ~3.4rem (two text lines + padding) — still
    well under the old card tiles' ~6rem+, and keeps a >=44px touch target
@@ -4560,15 +4567,13 @@ body.login-screen {
               background: var(--swatch, transparent); border: 1px solid rgba(15, 23, 42, .18); }
 /* Category editor pickers (ut-docs#2284): the colour grid reuses the item
    swatch picker above unchanged; these only space the dialog's three
-   sections and let the group/station checkbox rows wrap (the base
-   .field-checks is a single non-wrapping row sized for three fixed
-   toggles). .category-swatch is the same dot drawn inline beside a list
+   sections (the base .field-checks rows wrap since ut-docs#3297).
+   .category-swatch is the same dot drawn inline beside a list
    row's name, so the list shows the colour without opening the row.
    Logical properties only — the dialog renders RTL for fa/ar/he. */
 .category-dialog-section { margin-block-start: .9rem; }
 .category-dialog-label { font-size: .82rem; margin-block-end: .25rem; }
 .category-dialog-help { font-size: .82rem; margin-block: 0 .4rem; }
-.category-dialog-checks { flex-wrap: wrap; gap: .5rem 1rem; }
 /* ut-docs#2500: the category dialog's image picker — the current uploaded
    photo's preview line, and breathing room between the upload buttons and
    the built-in icon grid. [hidden] must win over the flex display. */
@@ -5627,6 +5632,8 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   .nav-drawer .nav-toggle,
   .nav .nav-drawer button.nav-toggle { justify-content: flex-start; inline-size: 100%; min-height: 48px; }
   .nav-drawer .nav-rail-only { display: flex; }
+  /* ut-docs#3297: the Lock button, a row like every other drawer item. */
+  .nav-drawer .btn-lock { padding: .5rem .75rem; }
   body.nav-drawer-open .nav-drawer-backdrop {
     display: block; position: fixed; inset: 0; z-index: 1;
     background: rgba(15, 23, 42, .45);
@@ -5714,7 +5721,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   }
   body:not(.pos-sheet-open) .basket .order-type-option {
     flex: 1 1 0; min-inline-size: 0; min-block-size: 56px; padding: .25rem .55rem;
-    font-size: .9rem; white-space: normal; overflow-wrap: anywhere; hyphens: auto; text-align: center;
+    font-size: .9rem; white-space: normal; overflow-wrap: break-word; hyphens: manual; text-align: center;
   }
   body:not(.pos-sheet-open) .basket .order-type-option.is-active {
     background: color-mix(in srgb, var(--success) 72%, #000); color: #fff;
@@ -5768,6 +5775,28 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
     grid-template-areas: "name name name  name  name"
                          "qty  qty  price total remove";
   }
+  /* ut-docs#3297 review: at 360px the basket is ~288px wide, too narrow
+     for − qty + beside four fixed tracks (+ wrapped under −). The ✕ moves
+     up beside the item name and price/total take their own width, so the
+     second row is just the quantity controls, the price and the total. */
+  body.pos-sheet-open .basket :is(thead, tbody) tr {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas: "name  name  remove"
+                         "qty   price total";
+  }
+  /* ut-docs#3297: [−] qty [+] on one row, the discount box after them
+     (wrapping under them when the row is full), not a tower of qty /
+     steppers / discount (the packed tier's column order). */
+  body.pos-sheet-open .basket .line-inputs {
+    flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: .3rem;
+  }
+  body.pos-sheet-open .basket td:nth-child(2) { width: auto; padding-inline: .3rem; }
+  body.pos-sheet-open .basket :is(td, th):is(:nth-child(3), :nth-child(4)) { width: auto; white-space: nowrap; }
+  body.pos-sheet-open .basket .qty-stepper { display: contents; }
+  body.pos-sheet-open .basket .qty-step-btn:first-child { order: 1; }
+  body.pos-sheet-open .basket .qty-input { order: 2; inline-size: 2.8rem; min-block-size: 44px; text-align: center; }
+  body.pos-sheet-open .basket .qty-step-btn:last-child { order: 3; }
+  body.pos-sheet-open .basket .disc-input { order: 4; min-block-size: 44px; }
   body.pos-sheet-open .basket-sheet-close {
     display: inline-flex; align-items: center; justify-content: center;
     position: absolute; inset-block-start: .5rem; inset-inline-end: .5rem; z-index: 1;
