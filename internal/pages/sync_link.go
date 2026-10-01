@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +38,7 @@ func newSyncLinkHub(d *common.Deps, cfg fleetlink.Config, adminRepo *data.SyncAd
 	pluginsRepo := data.NewSyncPluginsRepo(d.Db)
 	stockRepo := data.NewSyncStockRepo(data.NewPOSRepo(d.Db))
 	tills := data.NewTillsRepo(d.Db)
+	var unusableNames sync.Map // till id → the unusable name last warned about
 	return fleetlink.NewHub(fleetlink.HubOptions{
 		Config: cfg,
 		Hello: func(ctx context.Context, _ string) fleetlink.Hello {
@@ -72,7 +74,43 @@ func newSyncLinkHub(d *common.Deps, cfg fleetlink.Config, adminRepo *data.SyncAd
 				logging.L().Warnf("sync link: touch last seen for %s: %v", tillID, err)
 			}
 		},
+		OnReport: func(tillID string, r fleetlink.Report) {
+			applyReportedTillName(tills, &unusableNames, tillID, r.Name)
+		},
 	})
+}
+
+// applyReportedTillName keeps the main till's tills row in step with the
+// name a joined till reports for itself (ut-docs#3294): a rename on that
+// till, or from the cloud, otherwise never reached the Tills page or the
+// quarantine page here. Untrusted LAN input, so it passes validateTillName
+// first; an empty name (an older replica) or an invalid one keeps the row.
+// A name another till already uses is still applied: the row shows what the
+// till is really called, as the cloud does.
+// An unusable name is warned about once per till and name, not on every
+// periodic report (unusableNames).
+func applyReportedTillName(tills *data.TillsRepo, unusableNames *sync.Map, tillID, reported string) {
+	if strings.TrimSpace(reported) == "" {
+		return
+	}
+	name, err := validateTillName(reported)
+	if err != nil {
+		if prev, ok := unusableNames.Swap(tillID, reported); !ok || prev != reported {
+			logging.L().Warnf("sync link: till %s reported an unusable name: %v", tillID, err)
+		}
+		return
+	}
+	unusableNames.Delete(tillID)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	changed, err := tills.UpdateName(ctx, tillID, name)
+	if err != nil {
+		logging.L().Warnf("sync link: rename till %s: %v", tillID, err)
+		return
+	}
+	if changed {
+		logging.L().Infof("sync link: till %s now reports the name %q", tillID, name)
+	}
 }
 
 // registerSyncLink mounts GET /api/sync/link. Auth-middleware exempt (the

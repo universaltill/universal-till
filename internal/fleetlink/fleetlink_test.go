@@ -81,6 +81,27 @@ func TestReport_ClipsFields(t *testing.T) {
 	}
 }
 
+// ut-docs#3294: a joined till's report carries its own name, so the main
+// till's Tills page can follow a rename. A valid name is up to 60 runes —
+// more than maxReportField bytes in Persian or Arabic — so it is never cut
+// at 64 bytes; an oversized one is dropped whole rather than clipped into a
+// different, shorter name.
+func TestReport_NameIsKeptWholeOrDropped(t *testing.T) {
+	fa := strings.Repeat("ص", 60) // 60 runes, 120 bytes
+	r, ok := decodeReport(json.RawMessage(`{"version":"v1","name":"` + fa + `"}`))
+	if !ok || r.Name != fa {
+		t.Fatalf("a valid 60-rune name came back as %q (ok=%v)", r.Name, ok)
+	}
+	r, ok = decodeReport(json.RawMessage(`{"version":"v1","name":"` + strings.Repeat("x", maxReportNameBytes+1) + `"}`))
+	if !ok || r.Name != "" {
+		t.Fatalf("an oversized name must be dropped, got %d bytes (ok=%v)", len(r.Name), ok)
+	}
+	r, ok = decodeReport(json.RawMessage(`{"version":"v1"}`))
+	if !ok || r.Name != "" {
+		t.Fatalf("an older replica's report must decode with no name, got %q (ok=%v)", r.Name, ok)
+	}
+}
+
 // ut-docs#2897: a replica's hello carries its own cloud device id
 // (enroll.CurrentStatus, #2730) alongside the LAN pairing till_id. It is
 // untrusted LAN input, display-only on my. (never used for auth), so it is
@@ -199,6 +220,31 @@ func TestPeer_StoresPeerHelloAndLatestReport(t *testing.T) {
 	}
 	if h, ok := p.Hello(); !ok || h.Role != "replica" || len(h.Cursors.Admin) != maxReportField {
 		t.Fatalf("peer hello = %+v, %v (strings must be clipped before being kept)", h, ok)
+	}
+}
+
+// ut-docs#3294: OnReport hands the main till each report from a till's
+// live link (here, the till's name) so it can update its tills row.
+func TestHub_OnReportGetsTheLiveLinksReport(t *testing.T) {
+	type got struct {
+		till string
+		r    Report
+	}
+	reports := make(chan got, 4)
+	hub := NewHub(HubOptions{Config: fastConfig(), Hello: testHello,
+		OnReport: func(tillID string, r Report) { reports <- got{tillID, r} }})
+	defer hub.Close()
+	fc, _ := servePeer(t, hub, "till-2")
+	fc.next(t)
+	fc.send(t, mustMsg(t, "r-1", TypeHello, "", Hello{TillID: "till-2", Role: "replica", Version: "v1"}))
+	fc.send(t, mustMsg(t, "r-2", TypeReport, "", Report{Version: "v1", Name: "Bar till"}))
+	select {
+	case g := <-reports:
+		if g.till != "till-2" || g.r.Name != "Bar till" {
+			t.Fatalf("OnReport(%q, %+v), want till-2 named Bar till", g.till, g.r)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("OnReport was never called")
 	}
 }
 

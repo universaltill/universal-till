@@ -33,6 +33,23 @@ func (r *TillsRepo) InsertTill(ctx context.Context, name, bearerHash string) (st
 	return id, nil
 }
 
+// UpdateName sets an enrolled till's display name to the name that till
+// reports for itself (ut-docs#3294). It writes only when the name really
+// changed, so a repeated report never bumps sync_admin_version (migration
+// 023's tills trigger fires on a name change); changed says whether it did.
+// The caller validates the name.
+func (r *TillsRepo) UpdateName(ctx context.Context, id, name string) (bool, error) {
+	res, err := r.db.ExecContext(ctx, `UPDATE tills SET name = ? WHERE id = ? AND name IS NOT ?`, name, id, name)
+	if err != nil {
+		return false, fmt.Errorf("update till name: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("update till name: %w", err)
+	}
+	return n > 0, nil
+}
+
 // ListTills returns enrolled tills, newest first.
 func (r *TillsRepo) ListTills(ctx context.Context) ([]TillRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
