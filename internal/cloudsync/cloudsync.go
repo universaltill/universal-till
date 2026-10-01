@@ -971,6 +971,11 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 		"role":      role,
 		"health":    health,
 	}
+	// Read-only (never mint via discovery.TillID): the cloud merges/retires
+	// this machine's older device rows by it (ut-docs#2802).
+	if tid := strings.TrimSpace(get("sync.till_id")); tid != "" {
+		device["till_id"] = tid
+	}
 	if hooks.DeviceExtra != nil {
 		for k, v := range hooks.DeviceExtra(ctx) {
 			if _, taken := device[k]; !taken {
