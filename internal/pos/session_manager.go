@@ -332,19 +332,6 @@ const (
 	BindRefusedTillBusy
 )
 
-// String names the refusal, so a failing test prints a word, not a number.
-func (r BindRefusal) String() string {
-	switch r {
-	case BindOK:
-		return "BindOK"
-	case BindRefusedTableInUse:
-		return "BindRefusedTableInUse"
-	case BindRefusedTillBusy:
-		return "BindRefusedTillBusy"
-	}
-	return "BindRefusal(?)"
-}
-
 // BindTable atomically resolves one guest's scan of tableID (ut-docs#2434,
 // ADR-0103 review finding N3, corrected in the ADR itself): the busy check
 // and the claim (move an existing session onto tableID, or mint a fresh

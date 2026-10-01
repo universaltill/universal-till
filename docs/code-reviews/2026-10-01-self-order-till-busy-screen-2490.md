@@ -22,8 +22,8 @@ guest's first scan at a free table.
 ## What shipped
 
 - `internal/pos/session_manager.go`: `BindTable` now returns a typed
-  `BindRefusal` (`BindOK`, `BindRefusedTableInUse`, `BindRefusedTillBusy`,
-  with `String()`) instead of `busy bool`. The return values are the only
+  `BindRefusal` (`BindOK`, `BindRefusedTableInUse`, `BindRefusedTillBusy`)
+  instead of `busy bool`. The return values are the only
   change. Lock scope is untouched, and `m.mu` is still released before every
   `SetTable`/`factory()` call.
 - `internal/pages/self_order_page.go`: the limiter refusal maps to
@@ -98,7 +98,7 @@ branch's `en.json`.
 | 2 | nit | The limiter answers before the table is looked at, so a source over its mint budget sees till-busy even at a held table | **Accepted, documented** at the limiter call. Both screens say "wait and try again", and the next retry shows the right one. The suggested `TableOwnerActive` probe ignores BindTable's shorter empty-session window, so it could misreport a freeable table as in use |
 | 3 | nit | fa hint grammar (`رسیدگی کردن` takes `به`, not `را`); ar used `نقطة البيع` where ar.json mostly uses `الصندوق` | **Fixed** |
 | 4 | nit | Manual documents neither guest screen | **Fixed:** one sentence in `tables` (all 5 locales) plus docs-shots |
-| 5 | nit | Stale "busy=true" test message; no `String()` on `BindRefusal` | **Fixed** |
+| 5 | nit | Stale "busy=true" test message; no `String()` on `BindRefusal` | Message **fixed**. A `String()` was added, but CI's `guard-deadcode-baseline` (desktop-shell job) rejected it as unreachable from production code, so it was removed rather than baselined (#1566: the baseline only shrinks). Test failures print the numeric value |
 
 No findings on locking, callers (`BindTable` has one production caller), RTL,
 offline-first, or the kiosk-engine isolation. The two recurring bugs
