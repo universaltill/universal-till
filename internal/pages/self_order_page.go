@@ -169,13 +169,18 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 		if d.KioskEngine != nil {
 			bound := false
 			if requestedTable != "" && d.SelfOrderSessions != nil {
-				var busy bool
-				bound, busy = bindSelfOrderTableSession(w, r, d, requestedTable, time.Now(), limiter)
-				if busy {
+				var refusal pos.BindRefusal
+				bound, refusal = bindSelfOrderTableSession(w, r, d, requestedTable, time.Now(), limiter)
+				if refusal != pos.BindOK {
+					// Two screens (ut-docs#2490): another phone holds this
+					// table, or the till can't start a new session right
+					// now (rate limit / session cap) — the table itself
+					// may be free, so never blame it for the till.
 					httpx.RenderPartial("ui/pages/self_order.html", map[string]any{
 						"title":    httpx.T(httpx.RequestLocale(r), "page.title.self_order"),
 						"shopName": kioskShopName(r.Context(), d),
 						"Busy":     true,
+						"TillBusy": refusal == pos.BindRefusedTillBusy,
 					})(w, r)
 					return
 				}
@@ -207,18 +212,18 @@ func kioskShopName(ctx context.Context, d *common.Deps) string {
 }
 
 // bindSelfOrderTableSession is the ?table= half of GET /self-order
-// (ADR-0103 Decisions 2 and 4). It reports (bound, busy):
+// (ADR-0103 Decisions 2 and 4). It reports (bound, refusal):
 //
-//   - bound=false, busy=false: tableID doesn't name a valid, enabled table
+//   - bound=false, refusal=pos.BindOK: tableID doesn't name a valid, enabled table
 //     (stale/reprinted/tampered QR) — nothing minted, no cookie; the caller
 //     falls through to the plain walk-up path, exactly today's "leaves the
 //     basket with no table, never errors the page out" behaviour.
-//   - busy=true: the table already has a live, RECENTLY-ACTIVE session
+//   - refusal=pos.BindRefusedTableInUse: the table already has a live, RECENTLY-ACTIVE session
 //     owned by a different browser (two phones at one table) — EMPTY or
 //     not (ut-docs#2434, ADR-0103 review finding N3, corrected in the ADR
 //     itself: an empty session still holds its table, closing the race two
 //     staggered scans before either added an item used to slip through).
-//     Nothing minted; the caller renders the existing "till busy" screen
+//     Nothing minted; the caller renders the "table in use" screen
 //     (ut-docs#815's own template, copy revised by ut-docs#2261 review
 //     finding B2 for the narrowed trigger). A session idle past its own
 //     recency window never blocks — see BindTable's own doc comment
@@ -227,20 +232,20 @@ func kioskShopName(ctx context.Context, d *common.Deps) string {
 //     far shorter window (selfOrderTableBusyMaxIdleEmpty) than a non-empty
 //     one (selfOrderTableBusyMaxIdle) so a guest can't self-lock their own
 //     table for minutes just by re-scanning from a second cookie jar.
-//   - bound=true: this request now has a live session bound to the table —
-//     resumed (this browser already held one for that table: the idle-reset
-//     bounce, or a deliberate re-open — nothing reset, nothing re-minted,
+//   - bound=true, refusal=pos.BindOK: this request now has a live session
+//     bound to the table — resumed (this browser already held one for that
+//     table: the idle-reset bounce, or a deliberate re-open — nothing reset, nothing re-minted,
 //     the guest keeps their order) or freshly minted, with the cookie set.
-//   - busy=true is also what a refused mint reports (ut-docs#2432): either
-//     limiter (too many new-session mints from this source, recently) or
-//     BindTable's own session-count cap (the manager is at
-//     pos.MaxLiveSelfOrderSessions *real, item-holding* sessions — see its
-//     own doc comment for the evict-oldest-empty step that keeps an
-//     empty-session flood from ever reaching this refusal for a real
-//     guest) refusing the request. Neither is distinguished from a
-//     genuinely busy table at the page layer — all three reuse the
-//     existing "till busy" screen and cost no new UI state or i18n key
-//     (deferred follow-up: ut-docs#2490). Only a request that would
+//   - refusal=pos.BindRefusedTillBusy is what a refused mint reports
+//     (ut-docs#2432): either limiter (too many new-session mints from this
+//     source, recently) or BindTable's own session-count cap (the manager
+//     is at pos.MaxLiveSelfOrderSessions *real, item-holding* sessions —
+//     see its own doc comment for the evict-oldest-empty step that keeps
+//     an empty-session flood from ever reaching this refusal for a real
+//     guest) refusing the request. The page shows its own "till busy"
+//     screen for it, not the table-in-use one (ut-docs#2490): on NAT'd
+//     guest Wi-Fi several real guests share one source IP, so the limiter
+//     can refuse a guest at a perfectly free table. Only a request that would
 //     actually MINT a session is ever subject to either check — mover ==
 //     nil, i.e. no existing cookie at all; resuming your own session or
 //     moving it to a different table (the branch just above) and the
@@ -289,28 +294,33 @@ func kioskShopName(ctx context.Context, d *common.Deps) string {
 // cookieless-scan-loop attack shape) — never for a resume or a
 // table-to-table move, neither of which grows the manager's live-session
 // count. BindTable's own session-count cap is the same mint-only shape, one
-// layer down. Both refusals reuse the existing "till busy" screen at the
-// page layer — see this function's own busy=true bullet above.
-func bindSelfOrderTableSession(w http.ResponseWriter, r *http.Request, d *common.Deps, tableID string, now time.Time, limiter *pairRateLimiter) (bound, busy bool) {
+// layer down. Both report pos.BindRefusedTillBusy — see this function's own
+// refusal bullet above.
+func bindSelfOrderTableSession(w http.ResponseWriter, r *http.Request, d *common.Deps, tableID string, now time.Time, limiter *pairRateLimiter) (bound bool, refusal pos.BindRefusal) {
 	t, found, err := data.NewPOSRepo(d.Db).GetTable(r.Context(), tableID)
 	if err != nil || !found || !t.Enabled {
-		return false, false
+		return false, pos.BindOK
 	}
 	current, currentToken := selfOrderSession(d, r)
 	var mover *pos.Service
 	if currentToken != "" {
 		mover = current
 	}
+	// The limiter answers before the table is looked at (review of
+	// ut-docs#2490): a source over its mint budget sees "till busy" even at
+	// a table another phone holds. Both screens say "wait and try again",
+	// and probing the table here (TableOwnerActive) would ignore BindTable's
+	// shorter empty-session window and misreport a freeable table as in use.
 	if mover == nil && limiter != nil && !limiter.allow(sourceOf(r)) {
-		return false, true
+		return false, pos.BindRefusedTillBusy
 	}
-	token, svc, busy := d.SelfOrderSessions.BindTable(t.ID, t.Label, currentToken, mover, selfOrderTableBusyMaxIdle, selfOrderTableBusyMaxIdleEmpty, now)
-	if busy {
-		return false, true
+	token, svc, refusal := d.SelfOrderSessions.BindTable(t.ID, t.Label, currentToken, mover, selfOrderTableBusyMaxIdle, selfOrderTableBusyMaxIdleEmpty, now)
+	if refusal != pos.BindOK {
+		return false, refusal
 	}
 	if svc == mover {
-		return true, false // resumed (own table unchanged) or moved (basket kept), cookie unchanged
+		return true, pos.BindOK // resumed (own table unchanged) or moved (basket kept), cookie unchanged
 	}
 	setSelfOrderSessionCookie(w, token, 0)
-	return true, false
+	return true, pos.BindOK
 }
