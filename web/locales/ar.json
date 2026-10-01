@@ -1934,7 +1934,7 @@
   "selforder.counter.place_order": "تقديم الطلب",
   "selforder.counter.title": "الدفع عند الطاولة",
   "selforder.decrease": "إنقاص الكمية",
-  "selforder.exit": "الخروج إلى إعدادات الصندوق (يتطلب رمز PIN)",
+  "selforder.exit": "الخروج من وضع الكشك (يتطلب رمز PIN)",
   "selforder.increase": "زيادة الكمية",
   "selforder.no_items": "لم يتم العثور على أصناف.",
   "selforder.order_type.dine_in": "تناول في المكان",

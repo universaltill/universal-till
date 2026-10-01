@@ -1934,7 +1934,7 @@
   "selforder.counter.place_order": "ثبت سفارش",
   "selforder.counter.title": "در صندوق پرداخت کنید",
   "selforder.decrease": "کاهش تعداد",
-  "selforder.exit": "خروج به تنظیمات صندوق (نیاز به پین)",
+  "selforder.exit": "خروج از حالت کیوسک (نیاز به پین)",
   "selforder.increase": "افزایش تعداد",
   "selforder.no_items": "کالایی یافت نشد.",
   "selforder.order_type.dine_in": "صرف در محل",
