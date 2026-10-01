@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/logging"
@@ -381,17 +382,102 @@ var backgroundPollPaths = map[string]bool{
 
 func backgroundPoll(path string) bool { return backgroundPollPaths[path] }
 
-// displayBoardPoll marks the pollers of screens meant to be watched, not
-// touched: the kitchen display and the order-status board. They deliberately still extend the session, as they
-// always have — with the default 10-minute auto-lock, a no-touch rule would
-// lock a kitchen screen mid-service. Whether display devices should
-// auto-lock at all is a separate product decision (ut-docs#2935).
-func displayBoardPoll(path string) bool {
-	if path == "/ui/orders" {
+// Display boards (ut-docs#2935): screens meant to be watched rather than
+// touched — the order-status board (/orders) and the per-station kitchen
+// display (/kitchen-display/{id}). Their pollers never extend a session,
+// like every other poller. When the session goes idle on a board it is
+// narrowed to board-only rather than revoked (Service.ResolveFor): the board
+// keeps updating and its one-tap actions keep working mid-service, while
+// anything else — Settings, a refund, the sale screen — revokes it and shows
+// the PIN pad. docs: architecture/pos-auth.md (ut-docs).
+
+// displayBoardPage reports whether path is a board page itself.
+func displayBoardPage(path string) bool {
+	if path == "/orders" {
 		return true
 	}
-	id, ok := strings.CutPrefix(path, "/ui/kitchen-display/")
+	return singleSegment(path, "/kitchen-display/")
+}
+
+// displayBoardPoll marks the boards' own timer-driven fragments.
+func displayBoardPoll(path string) bool {
+	return path == "/ui/orders" || singleSegment(path, "/ui/kitchen-display/")
+}
+
+// singleSegment reports whether path is prefix plus one non-empty segment.
+func singleSegment(path, prefix string) bool {
+	id, ok := strings.CutPrefix(path, prefix)
 	return ok && id != "" && !strings.Contains(id, "/")
+}
+
+// displayBoardRequest reports whether a request may be served to a session
+// narrowed to the boards: the pages, their fragments and live stream; and,
+// only when sent from a board page, its one-tap actions (advance an order,
+// resend a kitchen ticket) and the shell's own requests (shellGetPaths,
+// shellPostPaths).
+func displayBoardRequest(r *http.Request) bool {
+	p := r.URL.Path
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		if displayBoardPage(p) || displayBoardPoll(p) || p == "/api/orders/stream" {
+			return true
+		}
+		return shellGetPaths[p] && displayBoardPage(refererPath(r))
+	case http.MethodPost:
+		if p == "/api/print/kitchen" || shellPostPaths[p] || orderStatusPost(p) {
+			return displayBoardPage(refererPath(r))
+		}
+	}
+	return false
+}
+
+// shellGetPaths / shellPostPaths are the requests base.html and nav.html
+// make on their own on every page — the status chips at load and on a
+// timer, the reload-reason beacon after a full reload, and the real-input
+// heartbeat. Only these (never another page's pollers) are admitted for a
+// board-only session, so reloading an idle kitchen display keeps it
+// running (ut-docs#2935 review). TestShellRequestsAreBoardScoped scans the
+// two templates and fails on a shell request missing here.
+var shellGetPaths = map[string]bool{
+	"/ui/main-till-status": true,
+	"/ui/net-status":       true,
+	"/ui/sync-chip":        true,
+	"/ui/fiscal-chip":      true,
+	"/ui/diagnostics-chip": true,
+	"/ui/pairing-notice":   true,
+	"/ui/theme-sync":       true,
+	"/ui/session-chip":     true,
+	"/ui/bugreport-chip":   true,
+}
+
+var shellPostPaths = map[string]bool{
+	"/api/window/input-heartbeat": true,
+	"/api/diag/reload-reason":     true,
+}
+
+// orderStatusPost matches POST /api/orders/{receipt_no}/status.
+func orderStatusPost(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/api/orders/")
+	if !ok {
+		return false
+	}
+	receipt, ok := strings.CutSuffix(rest, "/status")
+	return ok && receipt != "" && !strings.Contains(receipt, "/")
+}
+
+// refererPath is the path of the page a request came from: Referer, or
+// htmx's HX-Current-URL when a referrer policy strips it. Both are
+// browser-supplied; that is enough here, because a board-only session can
+// only ever be narrowed further, never widened.
+func refererPath(r *http.Request) string {
+	for _, h := range []string{"Referer", "HX-Current-URL"} {
+		if v := r.Header.Get(h); v != "" {
+			if u, err := url.Parse(v); err == nil {
+				return u.Path
+			}
+		}
+	}
+	return ""
 }
 
 func Middleware(next http.Handler, svc *Service) http.Handler {
@@ -401,14 +487,9 @@ func Middleware(next http.Handler, svc *Service) http.Handler {
 			return
 		}
 		if c, err := r.Cookie(CookieName); err == nil {
-			resolve := svc.Resolve
-			switch {
-			case displayBoardPoll(r.URL.Path):
-				// Watched, not touched: keeps extending, as it always has.
-			case backgroundPoll(r.URL.Path):
-				resolve = svc.ResolveNoTouch
-			}
-			if u, ok := resolve(r.Context(), c.Value); ok {
+			p := r.URL.Path
+			touch := !backgroundPoll(p) && !displayBoardPoll(p) && p != "/api/orders/stream"
+			if u, ok := svc.ResolveFor(r.Context(), c.Value, touch, displayBoardRequest(r)); ok {
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u)))
 				return
 			}
