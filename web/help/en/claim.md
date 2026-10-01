@@ -13,7 +13,7 @@ Registering connects your till to the Universal Till marketplace; claiming links
 
 ## How to use it
 
-1. Settings → Till registration shows the store identity; Register now connects it if needed.
+1. Settings → Till registration shows the store identity; Register now connects it if needed. On a joined till, the main till registers it for you: this card then says it is registered through the main till, and claiming is done on the main till.
 2. Click Claim this store to get a short code (valid 15 minutes) and a QR — scan it with your phone to claim from there.
 3. Sign in to the marketplace with your Universal Till ID, open the claim page and enter the code.
 

@@ -78,6 +78,13 @@
       <button class="btn btn-touch" hx-post="/api/enrol/claim-code" hx-target="#claim-code-msg" hx-swap="innerHTML">{{ T "settings.enrol.claim_btn" }}</button>
       <div id="claim-code-msg" aria-live="polite" class="set-gap-s"></div>
     </div>
+  {{ else if enrolledviamain }}
+    {{/* ut-docs#2753: a replica its main till registered. No fleet, claim or
+         Register now here — those need the store token only the main till
+         holds. */}}
+    <p>✅ {{ T "settings.enrol.registered_via_main" }}</p>
+    {{ if enrolstore }}<p class="muted">{{ T "settings.enrol.store" }}: <code>{{ enrolstore }}</code></p>{{ end }}
+    {{ if enroldevice }}<p class="muted">{{ T "settings.enrol.device" }}: <code>{{ enroldevice }}</code></p>{{ end }}
   {{ else }}
     <p>⚠️ {{ T "settings.enrol.not_registered" }}</p>
     <p class="muted">{{ T "settings.enrol.benefits" }}</p>

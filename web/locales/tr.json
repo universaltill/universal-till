@@ -2170,6 +2170,7 @@
   "settings.enrol.forbidden": "Bu satış noktasını yalnızca bir yönetici veya sorumlu kaydedebilir.",
   "settings.enrol.not_registered": "Bu kasa henüz kayıtlı değil.",
   "settings.enrol.registered": "Bu kasa Universal Till mağazasına kayıtlı.",
+  "settings.enrol.registered_via_main": "Bu kasa ana kasa üzerinden kayıtlı.",
   "settings.enrol.retry": "Şimdi kaydol",
   "settings.enrol.store": "Mağaza kimliği",
   "settings.enrol.title": "Kasa kaydı",

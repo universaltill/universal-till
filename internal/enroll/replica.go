@@ -184,6 +184,14 @@ func applyVouch(ctx context.Context, m config.MarketplaceConfig, kv Settings, v 
 	if err := kv.Set(ctx, keyDeviceRegistered, deviceID); err != nil {
 		return fmt.Errorf("enrol: persist %s: %w", keyDeviceRegistered, err)
 	}
+	// ut-docs#2753: only while still a replica — a vouch answer that lands
+	// after POST /api/sync/promote (which clears sync.primary_url, then
+	// ForgetReplicaVouch) must not bring the via-main state back.
+	if isReplica(ctx, kv) {
+		mu.Lock()
+		vouchedDevice = deviceID
+		mu.Unlock()
+	}
 	if at, _, _ := kv.Get(ctx, keyEnrolledAt); at == "" {
 		if err := kv.Set(ctx, keyEnrolledAt, time.Now().UTC().Format(time.RFC3339)); err != nil {
 			logging.L().Warnf("enrolment: persist enrolled_at: %v", err)

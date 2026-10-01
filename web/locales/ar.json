@@ -2170,6 +2170,7 @@
   "settings.enrol.forbidden": "يمكن للمدير أو المسؤول فقط تسجيل نقطة البيع هذه.",
   "settings.enrol.not_registered": "هذا الصندوق غير مسجّل بعد.",
   "settings.enrol.registered": "هذا الصندوق مسجّل في متجر Universal Till.",
+  "settings.enrol.registered_via_main": "هذا الصندوق مسجّل عبر الصندوق الأساسي.",
   "settings.enrol.retry": "سجّل الآن",
   "settings.enrol.store": "معرّف المتجر",
   "settings.enrol.title": "تسجيل الصندوق",

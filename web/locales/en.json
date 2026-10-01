@@ -2155,6 +2155,7 @@
   "settings.enrol.forbidden": "Only a manager or admin can register this till.",
   "settings.enrol.not_registered": "This till is not registered yet.",
   "settings.enrol.registered": "This till is registered with the Universal Till marketplace.",
+  "settings.enrol.registered_via_main": "This till is registered through the main till.",
   "settings.enrol.retry": "Register now",
   "settings.enrol.store": "Store ID",
   "settings.enrol.title": "Till registration",
