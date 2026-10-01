@@ -59,6 +59,7 @@ var pluginUpdateTickFn = pluginUpdateCheckTick
 func StartPluginUpdateScheduler(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pages.pluginUpdateScheduler")
 		defer wg.Done()
 		select {
 		case <-time.After(pluginUpdateCheckInitialDelay):

@@ -115,7 +115,10 @@ func (s *Supervisor) StartPlugin(ctx context.Context, pluginID, entrypoint strin
 
 	// Monitor process in background (wg-tracked so Shutdown can join it)
 	s.wg.Add(1)
-	go s.monitorProcess(procCtx, proc)
+	go func(ctx context.Context, proc *PluginProcess) {
+		defer logging.RecoverAndLog("plugins.monitorProcess")
+		s.monitorProcess(ctx, proc)
+	}(procCtx, proc)
 
 	return nil
 }
@@ -268,7 +271,10 @@ func (s *Supervisor) monitorProcess(ctx context.Context, proc *PluginProcess) {
 	// (and so before its own deferred Done fires), so the WaitGroup counter
 	// never has a window at zero mid-restart.
 	s.wg.Add(1)
-	go s.monitorProcess(procCtx, proc)
+	go func(ctx context.Context, proc *PluginProcess) {
+		defer logging.RecoverAndLog("plugins.monitorProcess")
+		s.monitorProcess(ctx, proc)
+	}(procCtx, proc)
 }
 
 // IsRunning checks if a plugin is currently running
@@ -346,6 +352,7 @@ func (s *Supervisor) Shutdown(ctx context.Context) error {
 
 	done := make(chan struct{})
 	go func() {
+		defer logging.RecoverAndLog("plugins.supervisorShutdownWait")
 		defer close(done)
 		s.wg.Wait()
 	}()

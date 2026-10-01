@@ -97,23 +97,30 @@ func snapshotSucceeded() { resetSnapshotGuard() }
 // be logged once more — harmless, and memory stays bounded).
 const maxSatelliteSkipLogged = 256
 
-var satelliteSkipLog struct {
+// skipOnceLog remembers which directive ids this process already logged as
+// skipped, so a directive left pending logs once, not on every tick.
+type skipOnceLog struct {
 	mu   sync.Mutex
 	seen map[string]struct{}
 }
 
+// first reports whether id is new to this log, and remembers it.
+func (l *skipOnceLog) first(id string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if _, ok := l.seen[id]; ok {
+		return false
+	}
+	if l.seen == nil || len(l.seen) >= maxSatelliteSkipLogged {
+		l.seen = make(map[string]struct{})
+	}
+	l.seen[id] = struct{}{}
+	return true
+}
+
+var satelliteSkipLog skipOnceLog
+
 // firstSatelliteSkip reports whether this is the first time this process
 // skips directive id as main-till only (finding 5: log once per directive,
 // not every tick while it stays pending for the main till).
-func firstSatelliteSkip(id string) bool {
-	satelliteSkipLog.mu.Lock()
-	defer satelliteSkipLog.mu.Unlock()
-	if _, ok := satelliteSkipLog.seen[id]; ok {
-		return false
-	}
-	if satelliteSkipLog.seen == nil || len(satelliteSkipLog.seen) >= maxSatelliteSkipLogged {
-		satelliteSkipLog.seen = make(map[string]struct{})
-	}
-	satelliteSkipLog.seen[id] = struct{}{}
-	return true
-}
+func firstSatelliteSkip(id string) bool { return satelliteSkipLog.first(id) }

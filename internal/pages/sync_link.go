@@ -111,6 +111,7 @@ func StartSyncLink(ctx context.Context, d *common.Deps, wg *sync.WaitGroup, admi
 	runLinkAdminWatch(ctx, d, wg, linkAdminWatchInterval, adminRepo)
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pages.syncLinkClose")
 		defer wg.Done()
 		<-ctx.Done()
 		d.Link.Close()
@@ -127,6 +128,7 @@ func StartSyncLink(ctx context.Context, d *common.Deps, wg *sync.WaitGroup, admi
 func runLinkAdminWatch(ctx context.Context, d *common.Deps, wg *sync.WaitGroup, every time.Duration, adminRepo *data.SyncAdminRepo) {
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pages.linkAdminWatch")
 		defer wg.Done()
 		t := time.NewTicker(every)
 		defer t.Stop()

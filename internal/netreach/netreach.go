@@ -26,6 +26,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 const (
@@ -162,7 +164,10 @@ func (m *Monitor) Status() State {
 	defer m.mu.Unlock()
 	if !m.inFlight && (m.checked.IsZero() || m.now().Sub(m.checked) >= m.ttl) {
 		m.inFlight = true
-		go m.probe()
+		go func() {
+			defer logging.RecoverAndLog("netreach.probe")
+			m.probe()
+		}()
 	}
 	return m.state
 }
@@ -170,6 +175,14 @@ func (m *Monitor) Status() State {
 // probe runs one bounded request and records its outcome.
 func (m *Monitor) probe() {
 	st := Unreachable
+	// Record the outcome in a defer so a panic mid-probe (recovered by the
+	// caller's logging.RecoverAndLog) still clears inFlight; otherwise no
+	// probe would ever start again (ut-docs#3304).
+	defer func() {
+		m.mu.Lock()
+		m.state, m.checked, m.inFlight = st, m.now(), false
+		m.mu.Unlock()
+	}()
 	ctx, cancel := context.WithTimeout(m.ctx, m.timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, m.probeURL, nil)
@@ -181,7 +194,4 @@ func (m *Monitor) probe() {
 			st = Reachable
 		}
 	}
-	m.mu.Lock()
-	m.state, m.checked, m.inFlight = st, m.now(), false
-	m.mu.Unlock()
 }

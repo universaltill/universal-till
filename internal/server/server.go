@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	dbpkg "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/housekeeping"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
@@ -66,6 +67,7 @@ func (bj *BackgroundJobs) Start(ctx context.Context, wg *sync.WaitGroup) {
 	// User must explicitly refresh via UI to fetch from marketplace
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("server.catalogSync")
 		defer wg.Done()
 		ticker := time.NewTicker(bj.catalogSyncInterval)
 		defer ticker.Stop()
@@ -90,6 +92,7 @@ func (bj *BackgroundJobs) Start(ctx context.Context, wg *sync.WaitGroup) {
 	// Telemetry reporting job (stub for T024)
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("server.telemetry")
 		defer wg.Done()
 		ticker := time.NewTicker(bj.telemetryInterval)
 		defer ticker.Stop()
@@ -108,6 +111,7 @@ func (bj *BackgroundJobs) Start(ctx context.Context, wg *sync.WaitGroup) {
 	// Revocation check job (T030)
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("server.revocation")
 		defer wg.Done()
 		ticker := time.NewTicker(bj.revocationInterval)
 		defer ticker.Stop()
@@ -203,6 +207,7 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	if db != nil {
 		wg.Add(1)
 		go func() {
+			defer logging.RecoverAndLog("server.housekeeping")
 			defer wg.Done()
 			var hk housekeeping.Schedule
 			run := func() {
@@ -235,6 +240,7 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	if db != nil {
 		wg.Add(1)
 		go func() {
+			defer logging.RecoverAndLog("server.relatedItems")
 			defer wg.Done()
 			repo := data.NewRelatedItemsRepo(db)
 			rebuild := func() {
@@ -303,6 +309,7 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	// actually exited, not merely been asked to.
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("server.shutdown")
 		defer wg.Done()
 		<-ctx.Done()
 		log.Printf("shutting down HTTP server...")
@@ -320,7 +327,10 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	// server accepts connections. Skipped on kiosk tills (they launch their own
 	// browser) and when UT_OPEN_BROWSER is set falsy.
 	if openBrowserFor(cfg.Demo) {
-		go openSetupPage(actualAddr)
+		go func(addr string) {
+			defer logging.RecoverAndLog("server.openSetupPage")
+			openSetupPage(addr)
+		}(actualAddr)
 	}
 
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {

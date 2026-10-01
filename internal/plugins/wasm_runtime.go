@@ -386,6 +386,7 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			}
 			w.wg.Add(1)
 			go func() {
+				defer logging.RecoverAndLog("plugins.wasmEventQueue")
 				defer w.wg.Done()
 				for ev := range ch {
 					queued(ev)
@@ -531,6 +532,7 @@ func (w *WasmRuntime) Close(ctx context.Context) {
 
 	done := make(chan struct{})
 	go func() {
+		defer logging.RecoverAndLog("plugins.wasmCloseWait")
 		defer close(done)
 		w.wg.Wait()
 	}()

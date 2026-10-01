@@ -126,7 +126,10 @@ func (i *MarketplaceInstaller) DownloadToStore(ctx context.Context, req Marketpl
 		ExpectedChecksum: tokenResp.ChecksumSHA256,
 		MaxSizeBytes:     200 * 1024 * 1024,
 	})
-	go i.ackDownload(req.ListingID, tokenResp.Version, tokenResp.Token, err)
+	go func(listingID, version, token string, downloadErr error) {
+		defer logging.RecoverAndLog("plugins.ackDownload")
+		i.ackDownload(listingID, version, token, downloadErr)
+	}(req.ListingID, tokenResp.Version, tokenResp.Token, err)
 	if err != nil {
 		_ = downloadMgr.CleanupPartFile(req.ListingID)
 		return nil, err

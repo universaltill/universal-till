@@ -19,6 +19,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // Status is the last known power-supply health.
@@ -68,6 +70,7 @@ func Start(ctx context.Context, wg *sync.WaitGroup) {
 	}
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pihealth.loop")
 		defer wg.Done()
 		select {
 		case <-time.After(15 * time.Second):

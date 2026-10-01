@@ -341,6 +341,7 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	if replica && !clientIDExplicit {
 		wg.Add(1)
 		go func() {
+			defer logging.RecoverAndLog("enroll.replicaLoop")
 			defer wg.Done()
 			replicaLoop(ctx, *m, kv)
 		}()
@@ -350,6 +351,7 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	}
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("enroll.run")
 		defer wg.Done()
 		run(ctx, *m, deviceName, kv, needKey, needDevice)
 	}()

@@ -2,10 +2,17 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
+
+// errBrowsePanicked is the browse result when a browse panicked
+// (recovered and logged by logging.RecoverAndLog).
+var errBrowsePanicked = errors.New("discovery: browse panicked")
 
 // DiscoverPrinters is what the operator's "Find printers on the network"
 // button calls. It combines the two sources that each see something the other
@@ -53,8 +60,13 @@ func DiscoverPrinters(ctx context.Context, timeout time.Duration) ([]PrinterCand
 	}
 	browsedCh := make(chan browseResult, 1)
 	go func() {
+		defer logging.RecoverAndLog("discovery.browsePrinters")
+		// Deferred so a recovered panic still answers the unbounded
+		// receive below instead of hanging the request (ut-docs#3304).
+		res := browseResult{err: errBrowsePanicked}
+		defer func() { browsedCh <- res }()
 		c, err := BrowsePrinters(ctx, browseTimeout)
-		browsedCh <- browseResult{c, err}
+		res = browseResult{c, err}
 	}()
 
 	// Phase 1 of the sweep runs CONCURRENTLY with the browse, which is only
@@ -146,6 +158,7 @@ func mergePrinterCandidates(ctx context.Context, browsed, swept []PrinterCandida
 		}
 		wg.Add(1)
 		go func(i int, c PrinterCandidate) {
+			defer logging.RecoverAndLog("discovery.mergePrinter")
 			defer wg.Done()
 			select {
 			case sem <- struct{}{}:

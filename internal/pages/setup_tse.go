@@ -388,6 +388,7 @@ func tseProvisionRetryTick(ctx context.Context, d *common.Deps) {
 func StartTSEProvisionRetry(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pages.tseProvisionRetry")
 		defer wg.Done()
 		select {
 		case <-time.After(tseRetryInitialDelay):

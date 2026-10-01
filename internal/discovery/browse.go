@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/hashicorp/mdns"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // Candidate is one primary found by Browse. JSON tags are for
@@ -200,6 +202,7 @@ func scanOnce[T any](ctx context.Context, timeout time.Duration, serviceName str
 	candidates := make([]T, 0)
 	collected := make(chan struct{})
 	go func() {
+		defer logging.RecoverAndLog("discovery.browseCollect")
 		defer close(collected)
 		for e := range entries {
 			// Drop answers that belong to some other service before they
@@ -229,8 +232,9 @@ func scanOnce[T any](ctx context.Context, timeout time.Duration, serviceName str
 
 	queryErr := make(chan error, 1)
 	go func() {
-		err := mdnsQuery(params)
-		// Close entries HERE — in the query goroutine, unconditionally —
+		defer logging.RecoverAndLog("discovery.browseQuery")
+		// Close entries HERE — in the query goroutine, unconditionally (deferred, so even a
+		// panic inside mdnsQuery — recovered above, ut-docs#3304 — gets here) —
 		// rather than on the caller's success path only. Two reasons:
 		//
 		//  1. Correctness of the close itself: mdns.Query's sends to
@@ -245,8 +249,12 @@ func scanOnce[T any](ctx context.Context, timeout time.Duration, serviceName str
 		//     stuck goroutine per abandoned request, for the life of the
 		//     process. Covered by
 		//     TestBrowse_DoesNotLeakCollectorGoroutineWhenCancelledMidScan.
-		close(entries)
-		queryErr <- err
+		err := errBrowsePanicked
+		defer func() {
+			close(entries)
+			queryErr <- err
+		}()
+		err = mdnsQuery(params)
 	}()
 
 	select {

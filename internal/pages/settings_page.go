@@ -2627,10 +2627,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// ParseForm only moved up to make override_pin readable
 		// (ut-docs#796).
 		_ = r.ParseForm()
-		name := strings.TrimSpace(r.Form.Get("name"))
-		if rs := []rune(name); len(rs) > 60 { // mirrors the field's own maxlength="60" server-side
-			name = string(rs[:60])
-		}
+		// Mirrors the field's own maxlength server-side (maxTillNameRunes,
+		// shared with the cloud rename_till hook, which refuses instead).
+		name := truncateTillName(r.Form.Get("name"))
 		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
 			locale := httpx.ResolveLocale(w, r)

@@ -68,6 +68,7 @@ func StartOrderStatusStreamBridge(ctx context.Context, d *common.Deps, wg *sync.
 	}
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pages.orderStatusStreamBridge")
 		defer wg.Done()
 		backoff := orderStreamBridgeBackoffMin
 		for {

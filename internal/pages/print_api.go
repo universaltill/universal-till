@@ -12,6 +12,7 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -469,6 +470,7 @@ func recordPrintFailureCtx() (context.Context, context.CancelFunc) {
 func printReceiptAsync(d *common.Deps, receiptNo string, actorID string) {
 	d.AsyncWork.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pages.printReceiptAsync")
 		defer d.AsyncWork.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), printAsyncTimeout)
 		defer cancel()

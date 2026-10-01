@@ -105,7 +105,10 @@ func Serve(ctx context.Context, cfg *config.Config, failure Failure) (Result, er
 	srv := &http.Server{Handler: mux}
 
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- srv.Serve(ln) }()
+	go func() {
+		defer logging.RecoverAndLog("recovery.serve")
+		serveErr <- srv.Serve(ln)
+	}()
 
 	log.Warnf("boot failed (%s), serving recovery screen on %s — ref %s: %s", failure.Kind, cfg.ListenAddr, failure.RefCode, failure.Detail)
 

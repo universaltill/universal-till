@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // AndroidBridge is the Go-side view of Android's own Bluetooth stack,
@@ -190,6 +192,7 @@ func bridgeCall[T any](ctx context.Context, fn func() (T, error)) (T, error) {
 	}
 	ch := make(chan bridgeResult[T], 1)
 	go func() {
+		defer logging.RecoverAndLog("bluetooth.bridgeCall")
 		v, err := fn()
 		ch <- bridgeResult[T]{val: v, err: err}
 	}()
