@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { ensureOperator, openPhoneDrawer } from './helpers';
 
 // ut-docs#3297: signed in as a manager on an admin page, the phone ☰
