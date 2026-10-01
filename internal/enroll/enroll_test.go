@@ -822,3 +822,32 @@ func TestInitWritesExplicitFlagsUnderMu(t *testing.T) {
 	close(stop)
 	<-done
 }
+
+// ut-docs#2802: register() sends sync.till_id when known, nothing otherwise.
+func TestRegisterSendsTillID(t *testing.T) {
+	for name, seed := range map[string]string{"set": "till-abc", "unset": "", "whitespace": "  "} {
+		t.Run(name, func(t *testing.T) {
+			resetState()
+			var gotBody map[string]any
+			srv := registerTestServer(t, &gotBody)
+			kv := newFakeKV()
+			if seed != "" {
+				if err := kv.Set(context.Background(), keySyncTillID, seed); err != nil {
+					t.Fatal(err)
+				}
+			}
+			m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
+			if err := register(context.Background(), m, "Corner Shop", kv); err != nil {
+				t.Fatalf("register: %v", err)
+			}
+			got, has := gotBody["till_id"]
+			if name == "set" {
+				if got != "till-abc" {
+					t.Fatalf("till_id = %v, want till-abc", got)
+				}
+			} else if has {
+				t.Fatalf("till_id present: %#v", gotBody)
+			}
+		})
+	}
+}
