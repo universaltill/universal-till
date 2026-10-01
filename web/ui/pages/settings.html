@@ -101,6 +101,8 @@
        not trigger the success reload. Toggling ON also registers now,
        best-effort; toggling OFF never deregisters anything. -->
   <div class="set-divider">
+    <fieldset class="set-lock" data-lock-region="settings-auto-register"{{ if index $.lockedRegions "settings-auto-register" }} disabled{{ end }}>
+    {{ if index $.lockedRegions "settings-auto-register" }}{{ template "set-lock-note" }}{{ end }}
     <form hx-post="/api/settings/auto-register" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-auto-register')} } else {document.getElementById('settings-save-error').hidden=false}">
       <label><input type="checkbox" name="optIn" {{ if eq (index .settingsMap "marketplace.auto_register_opt_in") "true" }}checked{{ end }}> {{ T "settings.enrol.auto_register.label" }}</label>
       <p class="muted">{{ T "settings.enrol.auto_register.help" }}</p>
@@ -109,6 +111,7 @@
         <span id="auto-register-msg" aria-live="polite"></span>
       </div>
     </form>
+    </fieldset>
   </div>
 </div>
 {{ if .canReportIssue }}
@@ -308,6 +311,8 @@
             hx-indicator="#update-check-msg">{{ T "settings.update.check_btn" }}</button>
     <span id="update-check-msg" aria-live="polite"></span>
   </div>
+  <fieldset class="set-lock" data-lock-region="settings-update-schedule"{{ if index $.lockedRegions "settings-update-schedule" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-update-schedule" }}{{ template "set-lock-note" }}{{ end }}
   <form hx-post="/api/settings/update-schedule" hx-swap="none" class="set-gap">
     <label class="set-row">
       <input type="checkbox" name="enabled" {{ if .autoUpdateEnabled }}checked{{ end }}> {{ T "settings.update.auto_enable" }}
@@ -315,6 +320,7 @@
     <input type="time" name="time" value="{{ .autoUpdateTime }}">
     <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
   </form>
+  </fieldset>
   {{ end }}
 </div>
 <!-- ut-docs#3091: Settings → About — the running version, when this till
@@ -619,6 +625,8 @@
 {{ if .payMethods }}
 <div class="card" id="settings-payments">
   <h2>{{ T "settings.payments.title" }} {{ helpLink "payments" }}</h2>
+  <fieldset class="set-lock" data-lock-region="settings-payments"{{ if index $.lockedRegions "settings-payments" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-payments" }}{{ template "set-lock-note" }}{{ end }}
   <p class="muted">{{ T "settings.payments.default_help" }}</p>
   <form hx-post="/api/settings/payments-default" hx-target="#pay-default-msg" hx-swap="innerHTML">
     <label class="set-row">{{ T "settings.payments.default" }}
@@ -650,6 +658,7 @@
     <span id="fee-msg-{{ .ID }}" aria-live="polite" class="fee-msg"></span>
   </form>
   {{ end }}
+  </fieldset>
 </div>
 {{ end }}
 <!-- ut-docs#1817: the short customer-facing order number scheme -- a sale
@@ -662,6 +671,8 @@
 <div class="card" id="settings-order-no">
   <h2>{{ T "settings.order_no.title" }} {{ helpLink "order-status" }}</h2>
   <p class="muted">{{ T "settings.order_no.help" }}</p>
+  <fieldset class="set-lock" data-lock-region="settings-order-no"{{ if index $.lockedRegions "settings-order-no" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-order-no" }}{{ template "set-lock-note" }}{{ end }}
   <form hx-post="/api/settings/order-no-scheme" hx-target="#order-no-scheme-msg" hx-swap="innerHTML">
     {{ $orderNoScheme := index .settingsMap "sale.display_no_scheme" }}
     <label class="set-row">{{ T "settings.order_no.scheme" }}
@@ -673,6 +684,7 @@
       <span id="order-no-scheme-msg" aria-live="polite"></span>
     </label>
   </form>
+  </fieldset>
 </div>
 <!-- ut-docs#2282: WHEN/WHERE the sale screen asks the cashier dine-in or
      takeaway -- top of basket (always visible, the pre-this-card default),
@@ -682,6 +694,8 @@
 <div class="card" id="settings-order-type-prompt">
   <h2>{{ T "settings.order_type_prompt.title" }} {{ helpLink "sell" }}</h2>
   <p class="muted">{{ T "settings.order_type_prompt.help" }}</p>
+  <fieldset class="set-lock" data-lock-region="settings-order-type-prompt"{{ if index $.lockedRegions "settings-order-type-prompt" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-order-type-prompt" }}{{ template "set-lock-note" }}{{ end }}
   <form hx-post="/api/settings/order-type-prompt" hx-target="#order-type-prompt-msg" hx-swap="innerHTML">
     {{ $orderTypePromptMode := index .settingsMap "sale.order_type_prompt" }}
     <label class="set-row">{{ T "settings.order_type_prompt.label" }}
@@ -694,6 +708,7 @@
       <span id="order-type-prompt-msg" aria-live="polite"></span>
     </label>
   </form>
+  </fieldset>
 </div>
 <div class="card" id="settings-barcode">
   <!-- ADR-0059 Decision §2, ut-docs#935: shop-selectable barcode symbology
@@ -701,6 +716,8 @@
        immediately on change (same per-checkbox hx-post/revert-on-failure
        pattern as launch-on-startup above) — no separate Save button. -->
   <h2>{{ T "settings.barcode.symbologies_title" }} {{ helpLink "catalog" }}</h2>
+  <fieldset class="set-lock" data-lock-region="settings-barcode"{{ if index $.lockedRegions "settings-barcode" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-barcode" }}{{ template "set-lock-note" }}{{ end }}
   <p class="muted">{{ T "settings.barcode.symbologies_help" }}</p>
   {{ range .barcodeSymbologies }}
   <!-- ut-docs#935 review: NOT class="set-row" (a flex row) — a couple of
@@ -733,6 +750,7 @@
   </label>
   {{ end }}
   <div id="barcode-symbologies-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
+  </fieldset>
 </div>
 <script>
 (function () {
@@ -762,6 +780,8 @@
        as part of that card above it, and the manual already describes it
        as its own place ("Settings → Catalog import defaults"). -->
   <h2>{{ T "settings.catalog_import_barcode_default.title" }} {{ helpLink "catalog" }}</h2>
+  <fieldset class="set-lock" data-lock-region="settings-catalog-import-barcode-default"{{ if index $.lockedRegions "settings-catalog-import-barcode-default" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-catalog-import-barcode-default" }}{{ template "set-lock-note" }}{{ end }}
   <label style="display:block; margin:.35rem 0">
     <input type="checkbox" id="catalog-import-barcode-default-cb" name="enabled"
            hx-post="/api/settings/catalog-import-barcode-default" hx-trigger="change" hx-swap="none"
@@ -773,6 +793,7 @@
   </label>
   <p class="muted">{{ T "settings.catalog_import_barcode_default.hint" }}</p>
   <div id="catalog-import-barcode-default-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
+  </fieldset>
 </div>
 <script>
 (function () {
@@ -798,6 +819,8 @@
      three-way enum means nothing to a shop owner until it's described. -->
 <div class="card" id="settings-sell-screen">
   <h2>{{ T "settings.sell_screen.title" }} {{ helpLink "sell" }}</h2>
+  <fieldset class="set-lock" data-lock-region="settings-sell-screen"{{ if index $.lockedRegions "settings-sell-screen" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-sell-screen" }}{{ template "set-lock-note" }}{{ end }}
   <form id="browsing-mode-form" hx-post="/api/settings/browsing-mode" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}" class="set-gap">
     {{ $bm := .browsingMode }}
     <label class="set-row">{{ T "settings.sell_screen.browsing_mode_label" }}
@@ -813,6 +836,7 @@
     <p class="muted" data-browsing-mode-hint="strip_overflow"{{ if ne $bm "strip_overflow" }} hidden{{ end }}>{{ T "settings.sell_screen.browsing_mode_strip_overflow_hint" }}</p>
     <div id="browsing-mode-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
   </form>
+  </fieldset>
 </div>
 <script>
 (function () {
@@ -849,6 +873,8 @@
      inventory" is our word, not a shop owner's. -->
 <div class="card settings-wide" id="settings-stock-tracking">
   <h2>{{ T "settings.stock_tracking.title" }} {{ helpLink "inventory" }}</h2>
+  <fieldset class="set-lock" data-lock-region="settings-stock-tracking"{{ if index $.lockedRegions "settings-stock-tracking" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-stock-tracking" }}{{ template "set-lock-note" }}{{ end }}
   <label style="display:block; margin:.35rem 0">
     <input type="checkbox" id="allow-negative-inventory-cb" name="enabled"
            hx-post="/api/settings/allow-negative-inventory" hx-trigger="change" hx-swap="none"
@@ -860,6 +886,7 @@
   </label>
   <p class="muted">{{ T "settings.stock_tracking.hint" }}</p>
   <div id="allow-negative-inventory-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
+  </fieldset>
 </div>
 <script>
 (function () {
@@ -1029,12 +1056,17 @@
     <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
     <h3 style="margin:0 0 .3rem">{{ T "settings.data.restore_title" }}</h3>
     <p class="muted">{{ T "settings.data.restore_help" }}</p>
+    {{ if index $.lockedRegions "settings-restore-prompt" }}{{ template "set-lock-note" }}{{ end }}
     <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
+      {{/* Resume is a plain link to /import, not a settings write: kept
+           outside the lock (a disabled fieldset never disables an <a>). */}}
       <a class="btn primary" href="/import" data-testid="restore-resume">{{ T "settings.data.restore_resume_btn" }}</a>
+      <fieldset class="set-lock" data-lock-region="settings-restore-prompt"{{ if index $.lockedRegions "settings-restore-prompt" }} disabled{{ end }}>
       <button class="btn secondary" data-testid="restore-dismiss"
               hx-post="/api/settings/dismiss-restore-prompt"
               hx-target="#restore-resume-block" hx-swap="outerHTML"
               hx-disabled-elt="this">{{ T "settings.data.restore_dismiss_btn" }}</button>
+      </fieldset>
       <!-- ut-docs#865 review finding F1: the elevation dialog's retry form
            always hx-swap="innerHTML"s into its own hxTarget
            (elevation_prompt.html) — pointing that at #restore-resume-block
@@ -1489,6 +1521,8 @@
        the just-opened dialog before anyone could use it. Content-Type
        (text/html only on the elevation prompt; the real 204 success has
        none) is the same signal app.js's utPostWithElevation uses. -->
+  <fieldset class="set-lock" data-lock-region="settings-retention"{{ if index $.lockedRegions "settings-retention" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-retention" }}{{ template "set-lock-note" }}{{ end }}
   <form hx-post="/api/settings/report-retention" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-report-retention')} } else {document.getElementById('settings-save-error').hidden=false}">
     {{ $mode := .reportRetentionMode }}
     <label>{{ T "settings.retention.mode_label" }}
@@ -1506,6 +1540,7 @@
          for that. -->
     <span id="retention-msg" aria-live="polite"></span>
   </form>
+  </fieldset>
   <p class="muted">{{ T "settings.retention.capacity_advisory" }}</p>
   {{ if .isManager }}
   <p>
@@ -1868,6 +1903,8 @@
   <!-- ut-docs#794 review finding: same Content-Type reload guard as the
        report-retention form above — the elevation prompt is itself a 2xx
        (200 + dialog HTML). -->
+  <fieldset class="set-lock" data-lock-region="settings-invoice"{{ if index $.lockedRegions "settings-invoice" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-invoice" }}{{ template "set-lock-note" }}{{ end }}
   <form hx-post="/api/settings/invoice" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-invoice')} } else {document.getElementById('settings-save-error').hidden=false}">
     <div class="field-pair">
       <label>{{ T "settings.invoice.seller_name" }}
@@ -1883,6 +1920,7 @@
     <!-- Exists purely as the elevation dialog retry's hx-target. -->
     <span id="invoice-settings-msg" aria-live="polite"></span>
   </form>
+  </fieldset>
 </div>
 <!-- ut-docs#867: idle-lock, kiosk-idle-reset and telemetry below are all
      elevation-wired — their cards render for every session. -->
@@ -1893,6 +1931,8 @@
        (#796) — a 200 elevation prompt (text/html) must not trigger the
        success reload, which would destroy the just-opened dialog; the
        real success is a bare 204 with no Content-Type. -->
+  <fieldset class="set-lock" data-lock-region="settings-idle-lock"{{ if index $.lockedRegions "settings-idle-lock" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-idle-lock" }}{{ template "set-lock-note" }}{{ end }}
   <form hx-post="/api/settings/idle-lock" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-idle-lock')} } else {document.getElementById('settings-save-error').hidden=false}">
     {{ $idle := .settings.IdleLockMinutes }}
     <select name="minutes">
@@ -1910,10 +1950,13 @@
          discards it on the direct-allowed path. -->
     <span id="idle-lock-msg" aria-live="polite"></span>
   </form>
+  </fieldset>
 </div>
 <div class="card" id="settings-kiosk-idle-reset">
   <h2>{{ T "settings.kiosk_idle_reset.title" }}</h2>
   <p class="muted">{{ T "settings.kiosk_idle_reset.help" }}</p>
+  <fieldset class="set-lock" data-lock-region="settings-kiosk-idle-reset"{{ if index $.lockedRegions "settings-kiosk-idle-reset" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-kiosk-idle-reset" }}{{ template "set-lock-note" }}{{ end }}
   <form hx-post="/api/settings/kiosk-idle-reset" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}">
     {{ $kioskIdle := .settings.KioskIdleResetSeconds }}
     <select name="seconds">
@@ -1926,6 +1969,7 @@
     <button class="btn" type="submit">{{ T "settings.kiosk_idle_reset.apply" }}</button>
     <span id="kiosk-idle-reset-msg" aria-live="polite"></span>
   </form>
+  </fieldset>
 </div>
 <!-- ut-docs#582: self-order kiosk checkout mode -- "kiosk" (the existing
      card/contactless payment picker) or "counter" ("pay at counter": the
@@ -1934,6 +1978,8 @@
      kiosk-idle-reset above. -->
 <div class="card" id="settings-kiosk-payment-mode">
   <h2>{{ T "settings.kiosk.payment_mode" }} {{ helpLink "self-order" }}</h2>
+  <fieldset class="set-lock" data-lock-region="settings-kiosk-payment-mode"{{ if index $.lockedRegions "settings-kiosk-payment-mode" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-kiosk-payment-mode" }}{{ template "set-lock-note" }}{{ end }}
   <form hx-post="/api/settings/kiosk-payment-mode" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}">
     {{ $kioskPaymentMode := .settings.KioskPaymentMode }}
     <select name="mode">
@@ -1943,6 +1989,7 @@
     <button class="btn" type="submit">{{ T "settings.kiosk_idle_reset.apply" }}</button>
     <span id="kiosk-payment-mode-msg" aria-live="polite"></span>
   </form>
+  </fieldset>
 </div>
 <div class="card" id="settings-telemetry">
   <h2>{{ T "settings.telemetry.title" }}</h2>
@@ -1950,6 +1997,8 @@
   <!-- ut-docs#865: same Content-Type reload guard as idle-lock above — the
        unconditional reload previously here would destroy an elevation
        prompt the instant it appeared. -->
+  <fieldset class="set-lock" data-lock-region="settings-telemetry"{{ if index $.lockedRegions "settings-telemetry" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-telemetry" }}{{ template "set-lock-note" }}{{ end }}
   <form hx-post="/api/settings/telemetry" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-telemetry')} } else {document.getElementById('settings-save-error').hidden=false}">
     <label><input type="checkbox" name="optIn" {{ if eq (index .settingsMap "marketplace.telemetry_opt_in") "true" }}checked{{ end }}> {{ T "settings.telemetry.enable" }}</label>
     <div class="set-gap-s">
@@ -1957,6 +2006,7 @@
       <span id="telemetry-msg" aria-live="polite"></span>
     </div>
   </form>
+  </fieldset>
 </div>
 <!-- ut-docs#3115: the shop's name (store.name), editable after setup.
      Elevation-wired like Shop type below, so it renders for every session.
@@ -1971,12 +2021,15 @@
 <div class="card" id="settings-store-name">
   <h2>{{ T "settings.store_name.title" }}</h2>
   <p class="muted">{{ T "settings.store_name.help" }}</p>
+  <fieldset class="set-lock" data-lock-region="settings-store-name"{{ if index $.lockedRegions "settings-store-name" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-store-name" }}{{ template "set-lock-note" }}{{ end }}
   <form hx-post="/api/settings/store-name" hx-target="#store-name-msg" hx-swap="innerHTML" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-save')} } else {document.getElementById('store-name-msg').textContent=event.detail.xhr.responseText; document.getElementById('settings-save-error').hidden=false}">
     <label for="store-name-input" class="visually-hidden">{{ T "settings.store_name.title" }}</label>
     <input type="text" id="store-name-input" name="store_name" value="{{ .storeName }}" maxlength="80" dir="auto" autocomplete="off" data-testid="store-name-input">
     <button class="btn" type="submit" data-testid="store-name-save">{{ T "common.save" }}</button>
     <span id="store-name-msg" aria-live="polite" data-testid="store-name-msg"></span>
   </form>
+  </fieldset>
 </div>
 <!-- ut-docs#867: currency and shop-type post to elevation-wired endpoints —
      both cards render for every session. -->
@@ -1985,6 +2038,8 @@
   <p class="muted">{{ T "settings.currency.help" }}</p>
   <!-- ut-docs#796: Content-Type reload guard, same as the report-retention
        form — see the till-name form's comment. -->
+  <fieldset class="set-lock" data-lock-region="settings-currency"{{ if index $.lockedRegions "settings-currency" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-currency" }}{{ template "set-lock-note" }}{{ end }}
   <form hx-post="/api/settings/save" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-save')} } else {document.getElementById('settings-save-error').hidden=false}">
     {{ $cur := currency }}
     <select name="currency">
@@ -1995,6 +2050,7 @@
     <button class="btn" type="submit">{{ T "settings.currency.apply" }}</button>
     <span id="settings-save-msg" aria-live="polite"></span>
   </form>
+  </fieldset>
   <p class="muted">{{ T "settings.currency.warning" }}</p>
 </div>
 <!-- ut-docs#861: the shop's default locale — used for anything with no
@@ -2013,6 +2069,8 @@
 <div class="card" id="settings-language">
   <h2>{{ T "settings.language.title" }}</h2>
   <p class="muted">{{ T "settings.language.help" }}</p>
+  <fieldset class="set-lock" data-lock-region="settings-language"{{ if index $.lockedRegions "settings-language" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-language" }}{{ template "set-lock-note" }}{{ end }}
   <form hx-post="/api/settings/save" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-save')} } else {document.getElementById('settings-save-error').hidden=false}">
     {{ $cur := defaultlocale }}
     <select name="locale">
@@ -2030,6 +2088,7 @@
          bigger change than this card's scope. -->
     <span aria-live="polite"></span>
   </form>
+  </fieldset>
 </div>
 <!-- ut-docs#3086: which languages the ☰ Menu offers staff. Every installed
      language is listed here so the admin can choose; the shop's default
@@ -2038,6 +2097,8 @@
 <div class="card" id="settings-staff-languages">
   <h2>{{ T "settings.staff_languages.title" }}</h2>
   <p class="muted">{{ T "settings.staff_languages.help" }}</p>
+  <fieldset class="set-lock" data-lock-region="settings-staff-languages"{{ if index $.lockedRegions "settings-staff-languages" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-staff-languages" }}{{ template "set-lock-note" }}{{ end }}
   <form hx-post="/api/settings/staff-languages" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-save')} } else {var m=document.getElementById('staff-languages-msg'); m.textContent=event.detail.xhr.status===400?event.detail.xhr.responseText:''; if(event.detail.xhr.status!==400){document.getElementById('settings-save-error').hidden=false}}">
     {{ $sel := .staffLocaleSet }}{{ $def := .defaultStaffLocale }}
     <fieldset class="staff-lang-list">
@@ -2054,6 +2115,7 @@
     <button class="btn" type="submit">{{ T "common.save" }}</button>
     <span id="staff-languages-msg" aria-live="polite"></span>
   </form>
+  </fieldset>
 </div>
 <div class="card" id="settings-shop-type">
   <h2>{{ T "settings.shop_type.title" }}</h2>
@@ -2063,6 +2125,8 @@
        every other shop type keeps the byte-identical, everything-visible
        menu, so the note only needs to name the one that isn't a no-op). -->
   <p class="muted">{{ T "settings.shop_type.service_layout_note" }}</p>
+  <fieldset class="set-lock" data-lock-region="settings-shop-type"{{ if index $.lockedRegions "settings-shop-type" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-shop-type" }}{{ template "set-lock-note" }}{{ end }}
   <form hx-post="/api/settings/shop-type" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}">
     {{ $stype := .shopType }}
     <select name="shop_type">
@@ -2074,6 +2138,7 @@
     <button class="btn" type="submit">{{ T "common.save" }}</button>
     <span id="shop-type-msg" aria-live="polite"></span>
   </form>
+  </fieldset>
 </div>
 <!-- ut-docs#867 deliberate exception: /api/settings/upsert IS elevation-wired,
      but this card stays manager-only anyway — it's an unbounded, un-field-scoped
@@ -2606,3 +2671,6 @@
 })();
 </script>
 {{ end }}
+{{/* ut-docs#2981: the note inside a set-lock fieldset (settings_shopwide_lock.go)
+     while this additional till cannot reach its main till. */}}
+{{ define "set-lock-note" }}<p class="set-lock-note" role="note" data-testid="set-lock-note">{{ T "settings.error.main_till_unreachable" }}</p>{{ end }}

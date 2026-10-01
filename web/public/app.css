@@ -4991,6 +4991,17 @@ body.login-screen {
 .set-gap-s { margin-block-start: .45rem; }
 .set-divider { margin-block-start: .8rem; border-block-start: 1px solid var(--border);
                padding-block-start: .6rem; }
+/* ut-docs#2981: a Settings region that writes a shop-wide key sits in a
+   set-lock fieldset — no frame of its own; `disabled` while this additional
+   till cannot reach its main till, with the note on top (warning tint, text
+   in var(--text) for contrast, as .chip-warn). */
+/* display: contents: a fieldset is its own block formatting context, so
+   the margins around it stopped collapsing and some cards grew 6-11px on a
+   main till (#2981 Tester); disabled still reaches its controls. */
+.set-lock { display: contents; border: 0; margin: 0; padding: 0; min-inline-size: 0; }
+.set-lock-note { margin-block: .4rem; padding-block: .4rem; padding-inline: .6rem;
+                 background: var(--warning-tint); color: var(--text);
+                 border: 1px solid var(--warning-tint-border); border-radius: 6px; }
 
 /* ut-docs#1840: the "Remove sample data" kept-items list (Settings → Data)
    — one row per item RemoveDemoCatalogue couldn't remove, with its real
