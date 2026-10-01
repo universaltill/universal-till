@@ -866,6 +866,15 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		DeactivateUser: func(ctx context.Context, u cloudsync.UserDirective) (string, error) {
 			return cloudDeactivateUser(ctx, d, directiveKeys, u)
 		},
+		// The custom role directives (ADR-0128 §3): main-till only, one
+		// transaction each, audited, idempotent. See
+		// cloud_role_directives.go.
+		SaveRole: func(ctx context.Context, r cloudsync.RoleDirective) (string, error) {
+			return cloudSaveRole(ctx, d, r)
+		},
+		DeleteRole: func(ctx context.Context, r cloudsync.RoleDirective) (string, error) {
+			return cloudDeleteRole(ctx, d, r)
+		},
 		// diagnostic_mode_revoke (ADR-0092 §1/§4, ut-docs#2169): Universal
 		// Till ended this till's diagnostic session — clear the local flag
 		// and drain that session's whole pending queue in one step. Same

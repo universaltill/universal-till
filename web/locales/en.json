@@ -1310,6 +1310,7 @@
   "permissions.action_desc.void_comp_waste": "Take a priced item off the basket as a void, comp or waste without a manager PIN, and see the shrinkage figures in Reports.",
   "permissions.action_desc.worker_allocation": "Record tip and service-charge payouts to staff in Reports.",
   "permissions.col.action": "Action",
+  "permissions.error.cloud_role": "This role is managed in my.universaltill.com. Change it there.",
   "permissions.error.super_admin_required": "Super admin required",
   "permissions.group.catalog": "Catalog",
   "permissions.group.other": "Other",
