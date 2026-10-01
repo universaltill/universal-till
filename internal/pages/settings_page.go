@@ -138,6 +138,29 @@ func demoDataInLiveBasket(cashier, kiosk *pos.Service) demoBasketMatch {
 	return noBasketMatch
 }
 
+// applyDisplayMode persists the per-till device profile ("register",
+// "backoffice" or "self_order"; "register" is stored as "") and updates the
+// live template flags. Shared by POST /api/settings/display-mode and the
+// kiosk-user PIN login (ut-docs#3136), so both switches leave the till in
+// the same state.
+func applyDisplayMode(ctx context.Context, d *common.Deps, rawMode string) error {
+	mode := rawMode
+	if mode == "register" {
+		mode = "" // empty = default register profile
+	}
+	if err := d.Settings.Set(ctx, "display.mode", mode); err != nil {
+		return err
+	}
+	// ut-docs#2099: keep httpx's live "selforder" template flag
+	// (record_dialog.html's status/lock/exit-to-OS withholding, §10) in
+	// step with the mode that was JUST persisted — without this the flag
+	// would only ever reflect the value pages.Init read at boot, stale until
+	// the till restarts. Mirrors httpx.InitOSKMode(mode) in the OSK handler.
+	httpx.InitSelfOrderMode(mode == "self_order")
+	httpx.InitDisplayMode(mode) // ut-docs#2154, same live-update
+	return nil
+}
+
 // settingsAudit writes the audit entry for one settings mutation wired to
 // checkOrElevate (ut-docs#796, mechanism ADR-0052/ut-docs#557): plain
 // InsertAudit attributed to the session user on the allowed path,
@@ -1919,21 +1942,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				[]elevationHiddenField{{Name: "mode", Value: mode}}, elev)
 			return
 		}
-		if mode == "register" {
-			mode = "" // empty = default register profile
-		}
-		if err := d.Settings.Set(r.Context(), "display.mode", mode); err != nil {
+		if err := applyDisplayMode(r.Context(), d, rawMode); err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
-		// ut-docs#2099: keep httpx's live "selforder" template flag
-		// (record_dialog.html's status/lock/exit-to-OS withholding, §10)
-		// in step with the mode that was JUST persisted — without this the
-		// flag would only ever reflect the value pages.Init read at boot,
-		// stale until the till restarts. Mirrors httpx.InitOSKMode(mode)
-		// right above the OSK settings handler in this same file.
-		httpx.InitSelfOrderMode(rawMode == "self_order")
-		httpx.InitDisplayMode(rawMode) // ut-docs#2154, same live-update
 		// ut-docs#1259: self_order is customer-facing and auth-exempt
 		// (/self-order, /api/self-order/*) — the browser that just made this
 		// switch must not keep a live session past it, or anyone with

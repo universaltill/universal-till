@@ -44,6 +44,21 @@ func sanitizeLoginNext(v string) string {
 	return ""
 }
 
+// kioskUserID is the seeded self-order kiosk user (migration 001). Signing
+// in with its PIN switches the till into self-order mode (ut-docs#3136).
+const kioskUserID = "kiosk"
+
+// inSelfOrderMode reports whether this till is currently a self-order kiosk
+// (display.mode=self_order). A read error counts as "no": the login itself
+// must still work.
+func inSelfOrderMode(ctx context.Context, d *common.Deps) bool {
+	if d.Settings == nil {
+		return false
+	}
+	mode, _, err := d.Settings.Get(ctx, "display.mode")
+	return err == nil && mode == "self_order"
+}
+
 // loginDestination maps a sanitized "next" to the actual redirect target.
 func loginDestination(next string) string {
 	if next == "kiosk" {
@@ -185,8 +200,48 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			return
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, user.ID, "user", user.ID, "login", nil, now, "")
+
+		// ut-docs#3136: the device mode follows who signs in. The seeded
+		// kiosk user's PIN turns this till into the self-order kiosk —
+		// persisted exactly like the Settings switch, so a reboot comes back
+		// as a kiosk, and the Android app pins the screen on /self-order.
+		// The kiosk user never holds a session: the screen is about to face
+		// customers, so its new token and any staff session this browser
+		// still carried are revoked, as the Settings switch does (#1259).
+		if user.ID == kioskUserID {
+			svc.Logout(r.Context(), token)
+			if c, err := r.Cookie(auth.CookieName); err == nil {
+				svc.Logout(r.Context(), c.Value)
+			}
+			setSessionCookie(w, "", -1)
+			if err := applyDisplayMode(r.Context(), d, "self_order"); err != nil {
+				loginUnavailable(w, r, next, err)
+				return
+			}
+			_ = posRepo.InsertAudit(r.Context(), nil, user.ID, "settings", "display.mode", "kiosk_mode_entered",
+				map[string]any{"mode": "self_order"}, now, "")
+			http.Redirect(w, r, "/self-order", http.StatusSeeOther)
+			return
+		}
+		dest := loginDestination(next)
+		// Any other user's PIN entered through the kiosk's own lock link
+		// (next=kiosk — the only login reachable from the kiosk screen) puts
+		// a self-order till back into normal till mode and lands on the sale
+		// screen. A plain /login from another browser on the LAN (a manager
+		// checking reports from a phone) leaves the kiosk alone; back-office
+		// and register tills keep their mode.
+		if next == "kiosk" && inSelfOrderMode(r.Context(), d) {
+			if err := applyDisplayMode(r.Context(), d, "register"); err != nil {
+				svc.Logout(r.Context(), token)
+				loginUnavailable(w, r, next, err)
+				return
+			}
+			_ = posRepo.InsertAudit(r.Context(), nil, user.ID, "settings", "display.mode", "kiosk_mode_exited",
+				map[string]any{"mode": "register"}, now, "")
+			dest = "/"
+		}
 		setSessionCookie(w, token, int(auth.SessionTTL.Seconds()))
-		http.Redirect(w, r, loginDestination(next), http.StatusSeeOther)
+		http.Redirect(w, r, dest, http.StatusSeeOther)
 	})
 
 	// One-time first-boot: set the seeded admin's PIN and sign in. Refuses
