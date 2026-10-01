@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"image"
 	"image/png"
 	"io"
 	"log"
@@ -1888,20 +1889,16 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			common.LocalizedError(w, r, http.StatusBadRequest, ThumbErrorKey(err))
 			return
 		}
-		if err := imaging.WriteThumbPNG(img, filepath.Join(paths.Data("public", "assets", "items", itemID), "thumb.png")); err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
-			return
-		}
-		// Review finding F2 (ut-docs#1189): this handler used to write ONLY
-		// the disk file — the admin Catalog table (which checks the file)
-		// showed the new photo, but the POS sale-screen grid/basket/self-
-		// order/suggestions (which resolve via item_images/ImageURL) never
-		// saw it, so a placeholder icon (or nothing) kept showing there
-		// forever with no in-app way to clear it. Best-effort: the photo
-		// is already saved and correct on disk either way, so a DB hiccup
-		// here logs rather than fails the upload.
-		if err := repo.SetItemThumbnail(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png"); err != nil {
-			log.Printf("[catalog] record item_images thumbnail for %s: %v", itemID, err)
+		// StoreItemPhoto is shared with the set_catalog_image directive
+		// (ut-docs#3139). Its row write is best-effort HERE (review finding
+		// F2, ut-docs#1189): the photo is already saved and correct on disk,
+		// so a DB hiccup logs rather than fails the upload.
+		if err := StoreItemPhoto(r.Context(), repo, itemID, img); err != nil {
+			if !errors.Is(err, ErrItemThumbRow) {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
+				return
+			}
+			log.Printf("[catalog] %v", err)
 		}
 		// The photo is a file on /api/sync/assets, not an admin-table row:
 		// no trigger moves for it, so tell linked tills to pull now
@@ -2005,11 +2002,10 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 		icon := strings.TrimSpace(r.Form.Get("icon"))
 		if icon == "" || icon == "none" {
-			if err := repo.ClearItemThumbnail(r.Context(), itemID); err != nil {
+			if err := ClearItemPicture(r.Context(), repo, itemID); err != nil {
 				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 				return
 			}
-			removeUploadedThumbnail(itemID)
 			writeRowOOB(w, r, itemID, false)
 			return
 		}
@@ -2492,6 +2488,49 @@ func ThumbErrorKey(err error) string {
 	return "catalog.error.image_invalid"
 }
 
+// ItemThumbURL is the servable path of an item's uploaded photo, the value
+// item_images.path holds for it; its file is under the stable data dir
+// (paths.Data), where the /public/ file server looks first.
+func ItemThumbURL(itemID string) string { return "/public/assets/items/" + itemID + "/thumb.png" }
+
+func itemThumbFile(itemID string) string {
+	return filepath.Join(paths.Data("public", "assets", "items", itemID), "thumb.png")
+}
+
+// ErrItemThumbRow marks a StoreItemPhoto whose file was written but whose
+// item_images row was not: the upload handler logs it (the photo is on
+// disk), the set_catalog_image directive fails on it (the cloud retry
+// re-applies).
+var ErrItemThumbRow = errors.New("item photo saved but its item_images thumbnail row was not recorded")
+
+// StoreItemPhoto writes an already-prepared (imaging.PrepareThumb) photo as
+// the item's thumbnail and points item_images at it — the one write path
+// for the till's own upload and the cloud's set_catalog_image directive
+// (ut-docs#3139). The file must be written first: every surface that
+// resolves the photo by its path convention checks the file. itemID must
+// already be validated (no "/", "\" or ".").
+func StoreItemPhoto(ctx context.Context, repo *data.CatalogRepo, itemID string, img image.Image) error {
+	if err := imaging.WriteThumbPNG(img, itemThumbFile(itemID)); err != nil {
+		return err
+	}
+	if err := repo.SetItemThumbnail(ctx, itemID, ItemThumbURL(itemID)); err != nil {
+		return fmt.Errorf("%w (%s): %v", ErrItemThumbRow, itemID, err)
+	}
+	return nil
+}
+
+// ClearItemPicture is the till's own "no image" (the icon picker's none):
+// the item_images thumbnail row goes, then any uploaded photo file.
+// Shared with set_catalog_image's clear (ut-docs#3139). itemID must
+// already be validated.
+func ClearItemPicture(ctx context.Context, repo *data.CatalogRepo, itemID string) error {
+	if err := repo.ClearItemThumbnail(ctx, itemID); err != nil {
+		return err
+	}
+	removeUploadedThumbnail(itemID)
+	return nil
+}
+
 // removeUploadedThumbnail deletes an item's uploaded thumbnail file, if one
 // exists, at the same "public/assets/items/<id>/thumb.png" path the upload
 // handler above writes to. This is the built-in icon picker's (ut-docs#1844)
@@ -2511,7 +2550,7 @@ func ThumbErrorKey(err error) string {
 // (no "/", "\" or "." — see the path-traversal guard on the /icon route)
 // before it ever reaches this function.
 func removeUploadedThumbnail(itemID string) {
-	path := filepath.Join(paths.Data("public", "assets", "items", itemID), "thumb.png")
+	path := itemThumbFile(itemID)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		log.Printf("[catalog] remove superseded upload for %s: %v", itemID, err)
 	}
