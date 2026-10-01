@@ -60,8 +60,7 @@ var quarantineReasonKeys = map[string]string{
 // Quarantine entries are a PRIMARY-only concept: applyJournal (sync_sales.go)
 // is where InsertJournalQuarantine is ever called, and that handler only
 // runs on the till receiving a replica's pushed batch — i.e. the primary.
-// A replica is redirected to Settings, same as the till-name edit's own
-// .IsPrimaryTill guard (settings.html) and the promote-only sections of
+// A replica is redirected to Settings, same as the promote-only sections of
 // tills.html: showing an always-empty page on every replica would be a
 // standing "nothing to see here" a manager has to learn to ignore, and
 // worse, could read as "confirmed clean" on a device that was never in a
