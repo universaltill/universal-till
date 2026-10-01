@@ -137,11 +137,13 @@ test.describe('basket item name is legible at the 360px phone tier (ut-docs#1338
       const remove = tr.querySelector('td:nth-child(5)')!.getBoundingClientRect();
       return { qty, price, total, remove };
     });
-    // The four controls must not overlap each other -- each is its own
-    // grid-area column on the line's second row.
+    // qty, price and total must not overlap each other -- each is its own
+    // grid-area column on the line's second row. ut-docs#3297: in the open
+    // sheet the remove ✕ sits on the NAME row (the second row had no room
+    // for − qty + at 360px), above the total, below nothing.
     expect(row.qty.right, 'qty must not overlap price').toBeLessThanOrEqual(row.price.left + 1);
     expect(row.price.right, 'price must not overlap total').toBeLessThanOrEqual(row.total.left + 1);
-    expect(row.total.right, 'total must not overlap remove').toBeLessThanOrEqual(row.remove.left + 1);
+    expect(row.remove.bottom, 'remove sits on the row above qty/price/total').toBeLessThanOrEqual(row.total.top + 1);
     assertClean();
   });
 
@@ -169,12 +171,16 @@ test.describe('basket item name is legible at the 360px phone tier (ut-docs#1338
       return {
         rowWidth: tr.getBoundingClientRect().width,
         nameCellWidth: nameCell.getBoundingClientRect().width,
+        nameRight: nameCell.getBoundingClientRect().right,
+        lastColLeft: (tr.querySelector('td:nth-child(4)') as HTMLElement).getBoundingClientRect().left,
       };
     });
+    // ut-docs#3297: in the open sheet the remove ✕ shares the name row, so
+    // the item cell spans the line up to that last column (the total's).
     expect(
-      span.nameCellWidth,
-      `the item cell must span the whole line, not the reserved-column sum (${span.nameCellWidth}px of ${span.rowWidth}px)`,
-    ).toBeGreaterThanOrEqual(span.rowWidth - 1);
+      span.nameRight,
+      `the item cell must span the whole line up to the ✕ column, not the reserved-column sum (${span.nameCellWidth}px of ${span.rowWidth}px)`,
+    ).toBeGreaterThanOrEqual(span.lastColLeft - 1);
     assertClean();
   });
 

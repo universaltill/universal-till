@@ -46,7 +46,7 @@ func TestPluginStoreShowsCatalogForAnonymousTill(t *testing.T) {
 	cfg := &config.Config{
 		Theme:         "default",
 		DefaultLocale: "en-US",
-		Locales:       config.Locales{Currency: "GBP", TaxRate: 20},
+		Locales:       config.Locales{Currency: "GBP", TaxRateBP: 2000},
 		Marketplace:   config.MarketplaceConfig{EndpointURL: mp.URL},
 	}
 	client := marketplace.NewClient(&cfg.Marketplace, oauth.NewTokenClient(&cfg.Marketplace))

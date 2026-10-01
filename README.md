@@ -310,7 +310,7 @@ UT_STORE=sqlite                        # Database type (sqlite recommended)
 # Business settings
 UT_CURRENCY=USD                        # Currency code (USD, GBP, EUR, etc.)
 UT_TAX_INCLUSIVE=true                  # Tax included in prices?
-UT_TAX_RATE=20                         # Tax rate percentage
+UT_TAX_RATE=20                         # Default tax rate percentage (fractional ok, e.g. 8.1)
 
 # Marketplace integration (cloud plugin store). The endpoint must include /api.
 UT_MARKETPLACE_ENDPOINT_URL=https://cloud.home.taskrunnertech.co.uk/api  # Dev marketplace

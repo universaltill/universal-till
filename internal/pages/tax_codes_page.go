@@ -85,10 +85,9 @@ func taxCodeFormActive(r *http.Request) bool {
 }
 
 // parsePercentToBP parses a percent string ("19", "19.5") into basis
-// points, the same *100-and-round direction internal/pages/init.go's
-// TaxRatePct*100 conversion already uses. There is no ParsePercent helper
-// in internal/taxrate (only FormatPercent, the display side), so this is
-// the parse-side counterpart, kept local to this handler. Rejects
+// points for a tax code's rate. internal/taxrate.ParsePercent (ut-docs#3259,
+// the shop default rate's parser) accepts the same grammar and range; this
+// handler keeps its own error-returning wrapper over httpx.ParsePercentBP. Rejects
 // unparseable, non-finite, negative, and >100% (>10000bp) input as a
 // basic sanity bound (ut-docs#259) -- not a real limit on any real tax
 // regime, just a guard against a fat-fingered entry silently persisting.

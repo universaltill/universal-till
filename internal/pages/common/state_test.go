@@ -35,8 +35,8 @@ func baseCfg() *config.Config {
 	return &config.Config{
 		Theme: "monarch",
 		Locales: config.Locales{
-			Currency: "GBP",
-			TaxRate:  2000,
+			Currency:  "GBP",
+			TaxRateBP: 2000,
 		},
 	}
 }
@@ -57,8 +57,8 @@ func TestLoadState_DefaultsWhenStoreEmpty(t *testing.T) {
 	if st.Country != "GB" {
 		t.Errorf("Country = %q, want hardcoded default %q", st.Country, "GB")
 	}
-	if st.TaxRatePct != 2000 {
-		t.Errorf("TaxRatePct = %d, want cfg default 2000", st.TaxRatePct)
+	if st.TaxRateBP != 2000 {
+		t.Errorf("TaxRateBP = %d, want cfg default 2000", st.TaxRateBP)
 	}
 	if st.TaxInclusive {
 		t.Errorf("TaxInclusive = true, want cfg default false")
@@ -103,7 +103,7 @@ func TestLoadState_OverridesFromStore(t *testing.T) {
 		KeyTaxInclusive:                "true",
 		KeyUIScale:                     "1.75",
 		KeyBasketPanelWidth:            "28.5",
-		KeyTaxRate:                     "1900",
+		KeyTaxRate:                     "19",
 		"pos.allow_negative_inventory": "true",
 		KeyIdleLock:                    "15",
 		KeyOSK:                         "on",
@@ -140,8 +140,8 @@ func TestLoadState_OverridesFromStore(t *testing.T) {
 	if st.BasketPanelWidthRem != 28.5 {
 		t.Errorf("BasketPanelWidthRem = %v, want 28.5", st.BasketPanelWidthRem)
 	}
-	if st.TaxRatePct != 1900 {
-		t.Errorf("TaxRatePct = %d, want 1900", st.TaxRatePct)
+	if st.TaxRateBP != 1900 {
+		t.Errorf("TaxRateBP = %d, want 1900", st.TaxRateBP)
 	}
 	if !st.AllowNegativeInventory {
 		t.Errorf("AllowNegativeInventory = false, want true")
@@ -271,8 +271,8 @@ func TestLoadState_UnparsableValuesFallBackToCfgDefault(t *testing.T) {
 	if st.BasketPanelWidthRem != 0 {
 		t.Errorf("BasketPanelWidthRem = %v from unparsable value, want 0", st.BasketPanelWidthRem)
 	}
-	if st.TaxRatePct != 2000 {
-		t.Errorf("TaxRatePct = %d from unparsable value, want cfg default 2000", st.TaxRatePct)
+	if st.TaxRateBP != 2000 {
+		t.Errorf("TaxRateBP = %d from unparsable value, want cfg default 2000", st.TaxRateBP)
 	}
 	if st.IdleLockMinutes != DefaultIdleLockMinutes {
 		t.Errorf("IdleLockMinutes = %d from unparsable value, want default %d", st.IdleLockMinutes, DefaultIdleLockMinutes)
@@ -455,7 +455,7 @@ func TestSaveState_RoundTripsThroughLoadState(t *testing.T) {
 		Country:                "DE",
 		Region:                 "BY",
 		TaxInclusive:           true,
-		TaxRatePct:             1900,
+		TaxRateBP:              810, // fractional round-trips exactly (ut-docs#3259)
 		AllowNegativeInventory: true,
 		UIScale:                1.5,
 		BasketPanelWidthRem:    27.5,
@@ -580,7 +580,7 @@ func TestSaveState_Atomic(t *testing.T) {
 	d := openMigratedDB(t, "state_atomic.db")
 	store := settings.NewStore(d.DB)
 
-	if err := SaveState(ctx, store, RuntimeState{Currency: "GBP", TaxRatePct: 20}); err != nil {
+	if err := SaveState(ctx, store, RuntimeState{Currency: "GBP", TaxRateBP: 2000}); err != nil {
 		t.Fatalf("seed SaveState: %v", err)
 	}
 
@@ -591,7 +591,7 @@ BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
 		t.Fatalf("create trigger: %v", err)
 	}
 
-	err := SaveState(ctx, store, RuntimeState{Currency: "EUR", TaxRatePct: 7})
+	err := SaveState(ctx, store, RuntimeState{Currency: "EUR", TaxRateBP: 700})
 	if err == nil {
 		t.Fatal("SaveState with an aborting trigger returned nil error, want non-nil")
 	}
@@ -611,7 +611,7 @@ BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
 		t.Fatalf("Get(%s) = ok=%v err=%v, want the seeded row intact", KeyTaxRate, ok, err)
 	}
 	if rate != "20" {
-		t.Fatalf("TaxRatePct = %q after a failed save, want seeded %q", rate, "20")
+		t.Fatalf("store.tax_rate = %q after a failed save, want seeded %q", rate, "20")
 	}
 }
 

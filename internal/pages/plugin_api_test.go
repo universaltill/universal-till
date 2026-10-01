@@ -57,7 +57,7 @@ func isolatePluginsDir(t *testing.T) {
 func basePluginCfg() *config.Config {
 	return &config.Config{
 		Theme:   "default",
-		Locales: config.Locales{Currency: "GBP", Locale: "en", TaxRate: 20},
+		Locales: config.Locales{Currency: "GBP", Locale: "en", TaxRateBP: 2000},
 	}
 }
 

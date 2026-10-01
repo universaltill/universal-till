@@ -46,7 +46,7 @@ func setupStatusDB(t *testing.T) *sql.DB {
 func TestStatusEndpoint_ParkAndVoid(t *testing.T) {
 	db := setupStatusDB(t)
 	defer db.Close()
-	dp := &common.Deps{Db: db, State: common.RuntimeState{Currency: "GBP", TaxRatePct: 20}}
+	dp := &common.Deps{Db: db, State: common.RuntimeState{Currency: "GBP", TaxRateBP: 2000}}
 	mux := http.NewServeMux()
 	registerPOSAPI(mux, dp)
 
@@ -89,7 +89,7 @@ func TestStatusEndpoint_ParkAndVoid(t *testing.T) {
 func TestStatusEndpoint_RecordsSessionOperatorAsActor(t *testing.T) {
 	db := setupStatusDB(t)
 	defer db.Close()
-	dp := &common.Deps{Db: db, State: common.RuntimeState{Currency: "GBP", TaxRatePct: 20}}
+	dp := &common.Deps{Db: db, State: common.RuntimeState{Currency: "GBP", TaxRateBP: 2000}}
 	mux := http.NewServeMux()
 	registerPOSAPI(mux, dp)
 
@@ -116,7 +116,7 @@ func TestStatusEndpoint_RecordsSessionOperatorAsActor(t *testing.T) {
 func TestStatusEndpoint_UnknownSaleFailsAndWritesNoAudit(t *testing.T) {
 	db := setupStatusDB(t)
 	defer db.Close()
-	dp := &common.Deps{Db: db, State: common.RuntimeState{Currency: "GBP", TaxRatePct: 20}}
+	dp := &common.Deps{Db: db, State: common.RuntimeState{Currency: "GBP", TaxRateBP: 2000}}
 	mux := http.NewServeMux()
 	registerPOSAPI(mux, dp)
 
