@@ -692,7 +692,12 @@
                    friendly hint tills.html's join form already uses, so both screens read
                    consistently. -->
               <label>{{ T "tills.join_code" }}
-                <input type="text" name="code" placeholder="{{ T "tills.join_code_ph" }}" required>
+                <input type="text" name="code" placeholder="{{ T "tills.join_code_ph" }}" autocapitalize="characters" autocomplete="off" spellcheck="false" required>
+              </label>
+              {{/* ut-docs#3219: the short code needs the main till's address
+                   typed alongside it; ignored for a pasted full code. */}}
+              <label>{{ T "tills.join_address" }}
+                <input type="text" name="address" dir="ltr" placeholder="{{ T "tills.join_address_ph" }}" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false">
               </label>
               <button class="btn primary" type="submit">{{ T "tills.join_btn" }}</button>
               <div id="setup-join-msg" aria-live="polite" style="min-height:1.4rem; margin-top:.4rem"></div>

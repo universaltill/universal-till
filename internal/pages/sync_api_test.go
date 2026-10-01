@@ -922,6 +922,9 @@ func TestFriendlyJoinError_TranslatesEachKind(t *testing.T) {
 		{"snapshot failed", &joinError{kind: joinErrSnapshotFailed, detail: "500 Internal Server Error"}, "tills.join_error.snapshot_failed", "500 Internal Server Error"},
 		{"stage snapshot failed", &joinError{kind: joinErrStageSnapshotFailed, detail: "boom"}, "tills.join_error.stage_snapshot_failed", "boom"},
 		{"stage identity failed", &joinError{kind: joinErrStageIdentityFailed, detail: "boom"}, "tills.join_error.stage_identity_failed", "boom"},
+		{"need address", &joinError{kind: joinErrNeedAddress}, "tills.join_error.need_address", ""},
+		{"bad address", &joinError{kind: joinErrBadAddress}, "tills.join_error.bad_address", ""},
+		{"too many attempts", &joinError{kind: joinErrTooManyAttempts}, "tills.join_error.too_many_attempts", ""},
 	}
 	for _, locale := range []string{"en", "ar", "fa", "tr"} {
 		for _, tt := range tests {

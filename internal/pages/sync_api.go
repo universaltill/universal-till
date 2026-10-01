@@ -11,6 +11,7 @@ import (
 	"html"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -35,28 +36,178 @@ import (
 
 // enrolTokens is the in-memory one-time token store. Losing them on
 // restart just means re-showing the QR.
+//
+// ut-docs#3219: a token minted for the Tills page's "Show pairing code" also
+// gets a short twin — six characters a person can type (shortCodeAlphabet,
+// shown as XXX-XXX) — so manual pairing no longer means copying the whole
+// ~90-character encodeEnrollCode string by hand. The two are one credential:
+// same 10-minute expiry, and using either burns both. Six symbols of 5 bits
+// is only 30 bits, so short codes get two extra defences the 128-bit long
+// token never needed: a per-source rate limit in the enrol handler, and the
+// shop-wide failure budget kept here (shortCodeFailureBudget).
 type enrolTokens struct {
 	mu     sync.Mutex
 	tokens map[string]time.Time // token → expiry
+	// short maps a live short code (normalised, no dash) to its long twin.
+	// Lazily created: callers and tests build the struct with tokens only.
+	short map[string]string
+	// shortFailures counts failed short-code attempts since the last code
+	// was issued or the last budget purge.
+	shortFailures int
 }
 
+const (
+	// shortCodeAlphabet: digits and capitals minus the look-alikes 0/O and
+	// 1/I. Exactly 32 symbols, so one random byte & 31 picks one unbiased.
+	shortCodeAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+	shortCodeLen      = 6
+	// shortCodeFailureBudget: after this many failed short-code attempts
+	// (from any source) the live short code is invalidated, so even a
+	// distributed guesser gets at most this many tries per displayed code
+	// before the manager has to show a new one. Only the guessable short
+	// half dies: the 128-bit long twin (QR, full code) stays usable, so a
+	// stranger flooding wrong codes cannot also kill QR pairing (review
+	// finding, ut-docs#3219).
+	shortCodeFailureBudget = 10
+	enrolTokenTTL          = 10 * time.Minute
+)
+
+// issue mints a long one-time token only. Used by the approve-to-pair flow
+// (pairing_api.go), which hands the token to the replica directly and never
+// displays a code, so it gets no short twin and does not reset the
+// short-code failure budget.
 func (e *enrolTokens) issue() string {
-	raw := make([]byte, 16)
-	_, _ = rand.Read(raw)
-	tok := hex.EncodeToString(raw)
+	tok := newLongEnrolToken()
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.tokens[tok] = time.Now().Add(10 * time.Minute)
+	e.tokens[tok] = time.Now().Add(enrolTokenTTL)
 	return tok
 }
 
-// consume validates and burns a token (one-time).
+// issueWithShort mints a long token plus its short twin (normalised, no
+// dash — formatShortCode adds it for display). Only ONE short code is live
+// per shop: issuing a new one retires earlier short codes (their long twins
+// stay live until used or expired), so resetting the failure budget here
+// never hands a guesser fresh tries against older codes too.
+func (e *enrolTokens) issueWithShort() (long, short string) {
+	long = newLongEnrolToken()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	now := time.Now()
+	e.pruneLocked(now)
+	e.short = map[string]string{}
+	for {
+		short = newShortCode()
+		if _, taken := e.short[short]; !taken {
+			break
+		}
+	}
+	e.tokens[long] = now.Add(enrolTokenTTL)
+	e.short[short] = long
+	e.shortFailures = 0
+	return long, short
+}
+
+// consume validates and burns a long token (one-time), and its short twin.
 func (e *enrolTokens) consume(tok string) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	exp, ok := e.tokens[tok]
 	delete(e.tokens, tok)
+	for s, l := range e.short {
+		if l == tok {
+			delete(e.short, s)
+		}
+	}
 	return ok && time.Now().Before(exp)
+}
+
+// consumeShort validates and burns a short code (already normalised by
+// normaliseShortCode) together with its long twin. A miss counts against the
+// shop-wide failure budget; reaching it invalidates the live short code
+// (never its long twin), then starts the count again.
+func (e *enrolTokens) consumeShort(code string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if long, ok := e.short[code]; ok {
+		delete(e.short, code)
+		exp, live := e.tokens[long]
+		delete(e.tokens, long)
+		// A real code that merely expired is a person re-typing a stale
+		// code, not a guess: refuse it without spending the budget.
+		return live && time.Now().Before(exp)
+	}
+	e.shortFailures++
+	if e.shortFailures >= shortCodeFailureBudget {
+		e.short = map[string]string{}
+		e.shortFailures = 0
+	}
+	return false
+}
+
+// pruneLocked drops expired tokens (and their short twins) so the maps stay
+// small and "unique among live codes" is checked against live codes only.
+func (e *enrolTokens) pruneLocked(now time.Time) {
+	for tok, exp := range e.tokens {
+		if !now.Before(exp) {
+			delete(e.tokens, tok)
+		}
+	}
+	for s, l := range e.short {
+		if _, ok := e.tokens[l]; !ok {
+			delete(e.short, s)
+		}
+	}
+}
+
+func newLongEnrolToken() string {
+	raw := make([]byte, 16)
+	_, _ = rand.Read(raw)
+	return hex.EncodeToString(raw)
+}
+
+// newShortCode draws shortCodeLen symbols from crypto/rand. 256 is a
+// multiple of len(shortCodeAlphabet) (32), so b&31 is unbiased.
+func newShortCode() string {
+	raw := make([]byte, shortCodeLen)
+	_, _ = rand.Read(raw)
+	out := make([]byte, shortCodeLen)
+	for i, b := range raw {
+		out[i] = shortCodeAlphabet[b&31]
+	}
+	return string(out)
+}
+
+// formatShortCode renders a normalised short code for display: XXX-XXX.
+func formatShortCode(code string) string {
+	if len(code) != shortCodeLen {
+		return code
+	}
+	return code[:3] + "-" + code[3:]
+}
+
+// normaliseShortCode turns what a person typed ("k7p 4xq", "K7P-4XQ") into
+// the stored form: uppercase, everything but ASCII letters and digits
+// dropped. ok is false unless the result is exactly shortCodeLen symbols
+// from shortCodeAlphabet — a long token or an encodeEnrollCode string never
+// is, which is how the enrol handler tells the two apart.
+func normaliseShortCode(typed string) (code string, ok bool) {
+	var b strings.Builder
+	for _, c := range strings.ToUpper(typed) {
+		if (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+			b.WriteRune(c)
+		}
+	}
+	code = b.String()
+	if len(code) != shortCodeLen {
+		return code, false
+	}
+	for _, c := range code {
+		if !strings.ContainsRune(shortCodeAlphabet, c) {
+			return code, false
+		}
+	}
+	return code, true
 }
 
 func hashBearer(b string) string {
@@ -121,6 +272,11 @@ var lanipIPv4 = lanip.IPv4
 // never shows raw {"url":…,"token":…} to whoever reads it off the screen.
 // The QR carries the same string. (Issue #7 — until LAN auto-discovery
 // replaces manual pairing entirely.)
+//
+// Since ut-docs#3219 this long code is no longer what a person is asked to
+// type: the main till shows a short twin (XXX-XXX, see enrolTokens) plus its
+// own address, and joinPrimary accepts either. The long code is kept for the
+// QR and behind a "full code for copy & paste" disclosure.
 func encodeEnrollCode(url, token string) string {
 	b, _ := json.Marshal(map[string]string{"url": url, "token": token})
 	return base64.RawURLEncoding.EncodeToString(b)
@@ -128,7 +284,9 @@ func encodeEnrollCode(url, token string) string {
 
 // decodeEnrollCode reverses encodeEnrollCode. It also accepts a raw-JSON
 // payload (a QR/paste from a not-yet-upgraded primary) — base64url can't
-// contain '{' or '"', so the two forms never collide.
+// contain '{' or '"', so the two forms never collide. A short code
+// ("K7P-4XQ") never decodes here (it is not base64url of a JSON object), so
+// joinPrimary tries this first and falls back to normaliseShortCode.
 func decodeEnrollCode(code string) (url, token string, err error) {
 	code = strings.TrimSpace(code)
 	var p struct {
@@ -144,6 +302,18 @@ func decodeEnrollCode(code string) (url, token string, err error) {
 		return p.URL, p.Token, nil
 	}
 	return "", "", fmt.Errorf("not a valid enrolment code")
+}
+
+// displayPrimaryAddress is what the main till shows as "the address to type"
+// next to a short pairing code (ut-docs#3219): host:port for plain http —
+// joinPrimary puts the http:// back — but the full URL for https, so the
+// joining till doesn't silently dial the wrong scheme.
+func displayPrimaryAddress(primaryURL string) string {
+	a := strings.TrimSuffix(strings.TrimSpace(primaryURL), "/")
+	if rest, ok := strings.CutPrefix(a, "http://"); ok {
+		return rest
+	}
+	return a
 }
 
 // syncTill authenticates a replica's sync call by its bearer (only the
@@ -168,6 +338,10 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	repo := data.NewTillsRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
 	tokens := &enrolTokens{tokens: map[string]time.Time{}}
+	// ut-docs#3219: short pairing codes are only 30 bits, so each source
+	// gets 5 tries a minute at /api/sync/enroll (long tokens stay
+	// unlimited, as before). Its own instance: unrelated to pair-request.
+	shortCodeLimiter := newPairRateLimiter(time.Minute, 5)
 
 	// Tills page (manager): enrolled replicas + Add-till QR.
 	mux.HandleFunc("GET /tills", func(w http.ResponseWriter, r *http.Request) {
@@ -194,8 +368,9 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		httpx.Render("ui/pages/tills.html", m)(w, r)
 	})
 
-	// Issue a one-time enrolment token; responds with the QR + manual code.
-	// (encode/decodeEnrollCode keep the pairing "code" opaque — see below.)
+	// Issue a one-time enrolment token; responds with the short code + this
+	// till's address (what a person types, ut-docs#3219), the QR, and the
+	// long code for copy & paste (encode/decodeEnrollCode keep it opaque).
 	mux.HandleFunc("POST /api/sync/enroll-token", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "sync_management") {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
@@ -215,7 +390,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			return
 		}
 		_ = r.ParseForm()
-		tok := tokens.issue()
+		tok, short := tokens.issueWithShort()
 		// The replica needs OUR address as it sees us; take the Host the
 		// manager's browser used (LAN address), overridable via the form.
 		primaryURL := strings.TrimSpace(r.Form.Get("url"))
@@ -249,15 +424,33 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			return
 		}
 		locale := httpx.ResolveLocale(w, r)
+		t := func(key string) string { return html.EscapeString(httpx.T(locale, key)) }
+		// ut-docs#3219: what a person types is the short code + this
+		// address; the QR and the long code (for copy & paste) stay.
+		// dir="ltr" on the code and address: they read left-to-right even
+		// on an ar/fa till.
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprintf(w,
-			`<div style="text-align:center"><img alt="enrol QR" src="data:image/png;base64,%s"><br>
-			 <small class="muted">%s</small><br>
-			 <code style="user-select:all">%s</code><br>
-			 <small class="muted">%s</small></div>`,
+			`<div class="pairing-code-panel" style="text-align:center">
+			 <p class="muted" style="margin-block:0">%s</p>
+			 <p class="pairing-short-code" dir="ltr" style="font-family:monospace;font-size:2.6rem;font-weight:700;letter-spacing:.12em;margin-block:.2rem">%s</p>
+			 <p class="muted" style="margin-block:0">%s</p>
+			 <p class="pairing-address" dir="ltr" style="font-family:monospace;font-size:1.6rem;font-weight:600;margin-block:.2rem;overflow-wrap:anywhere">%s</p>
+			 <small class="muted">%s</small>
+			 <p style="margin-block:.8rem 0"><img alt="%s" src="data:image/png;base64,%s"><br>
+			 <small class="muted">%s</small></p>
+			 <details style="margin-block-start:.6rem;text-align:start"><summary>%s</summary>
+			 <div dir="ltr" style="overflow-wrap:anywhere;word-break:break-all"><code style="user-select:all">%s</code></div></details></div>`,
+			t("tills.pair_short_code_label"),
+			html.EscapeString(formatShortCode(short)),
+			t("tills.pair_address_label"),
+			html.EscapeString(displayPrimaryAddress(primaryURL)),
+			t("tills.qr_expiry"),
+			t("tills.pair_qr_alt"),
 			base64.StdEncoding.EncodeToString(png),
-			httpx.T(locale, "tills.qr_hint"), code,
-			httpx.T(locale, "tills.qr_expiry"))
+			t("tills.qr_hint"),
+			t("tills.pair_full_code"),
+			html.EscapeString(code))
 	})
 
 	// Replica enrolment — token IS the auth (one-time, 10-min), so this
@@ -282,7 +475,20 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			_ = r.ParseForm()
 			in.Token, in.Name = r.Form.Get("token"), r.Form.Get("name")
 		}
-		if !tokens.consume(strings.TrimSpace(in.Token)) {
+		// ut-docs#3219: a short pairing code (typed by hand, 30 bits) is
+		// rate-limited per source and spends the shop-wide failure budget;
+		// a long token is neither, exactly as before.
+		presented := strings.TrimSpace(in.Token)
+		if short, isShort := normaliseShortCode(presented); isShort {
+			if !shortCodeLimiter.allow(sourceOf(r)) {
+				http.Error(w, "too many pairing attempts; wait a minute and try again", http.StatusTooManyRequests)
+				return
+			}
+			if !tokens.consumeShort(short) {
+				http.Error(w, "invalid or expired enrolment token", http.StatusForbidden)
+				return
+			}
+		} else if !tokens.consume(presented) {
 			http.Error(w, "invalid or expired enrolment token", http.StatusForbidden)
 			return
 		}
@@ -521,7 +727,8 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		}
 		_ = r.ParseForm()
 		shopName, err := joinPrimary(r, d,
-			strings.TrimSpace(r.Form.Get("code")), strings.TrimSpace(r.Form.Get("name")))
+			strings.TrimSpace(r.Form.Get("code")), strings.TrimSpace(r.Form.Get("address")),
+			strings.TrimSpace(r.Form.Get("name")))
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
@@ -551,7 +758,8 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		}
 		_ = r.ParseForm()
 		shopName, err := joinPrimary(r, d,
-			strings.TrimSpace(r.Form.Get("code")), strings.TrimSpace(r.Form.Get("name")))
+			strings.TrimSpace(r.Form.Get("code")), strings.TrimSpace(r.Form.Get("address")),
+			strings.TrimSpace(r.Form.Get("name")))
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
@@ -590,6 +798,11 @@ const (
 	joinErrSnapshotFailed
 	joinErrStageSnapshotFailed
 	joinErrStageIdentityFailed
+	// ut-docs#3219: short pairing code entered without / with an unusable
+	// main-till address, and the main till throttling short-code attempts.
+	joinErrNeedAddress
+	joinErrBadAddress
+	joinErrTooManyAttempts
 )
 
 // joinErrLocaleKey maps each kind to its web/locales/*.json key. Every key
@@ -605,6 +818,9 @@ var joinErrLocaleKey = map[joinErrKind]string{
 	joinErrSnapshotFailed:      "tills.join_error.snapshot_failed",
 	joinErrStageSnapshotFailed: "tills.join_error.stage_snapshot_failed",
 	joinErrStageIdentityFailed: "tills.join_error.stage_identity_failed",
+	joinErrNeedAddress:         "tills.join_error.need_address",
+	joinErrBadAddress:          "tills.join_error.bad_address",
+	joinErrTooManyAttempts:     "tills.join_error.too_many_attempts",
 }
 
 // joinError is what every joinPrimary/completeJoin failure path returns.
@@ -647,12 +863,56 @@ func friendlyJoinError(locale string, err error) string {
 
 // joinPrimary runs the whole replica-side join: enrol with the one-time
 // code, download the snapshot, stage restore + identity for the restart.
-func joinPrimary(r *http.Request, d *common.Deps, code, name string) (string, error) {
-	primaryURL, token, err := decodeEnrollCode(code)
-	if err != nil {
+//
+// code is either the long encodeEnrollCode string (QR / copy & paste —
+// carries the main till's URL, so address is ignored) or, since
+// ut-docs#3219, the short XXX-XXX code, which needs the main till's address
+// typed alongside it.
+func joinPrimary(r *http.Request, d *common.Deps, code, address, name string) (string, error) {
+	if primaryURL, token, err := decodeEnrollCode(code); err == nil {
+		return completeJoin(r, d, primaryURL, token, name)
+	}
+	short, ok := normaliseShortCode(code)
+	if !ok {
 		return "", &joinError{kind: joinErrBadCode}
 	}
-	return completeJoin(r, d, primaryURL, token, name)
+	if strings.TrimSpace(address) == "" {
+		return "", &joinError{kind: joinErrNeedAddress}
+	}
+	primaryURL, ok := primaryURLFromAddress(address)
+	if !ok {
+		return "", &joinError{kind: joinErrBadAddress}
+	}
+	return completeJoin(r, d, primaryURL, short, name)
+}
+
+// primaryURLFromAddress turns the address a person typed next to a short
+// code ("192.168.1.10:8080", what the main till shows for plain http) into
+// the base URL completeJoin dials. No scheme means http. Anything with a
+// path, query, fragment or userinfo is refused: the main till never shows
+// one, and refusing keeps the typed field from steering the request
+// anywhere but a till's root.
+func primaryURLFromAddress(address string) (string, bool) {
+	a := strings.TrimSpace(address)
+	// Checked on the raw text: url.Parse reports an empty fragment/query
+	// for a bare trailing "#"/"?", which would then reach completeJoin as
+	// "http://x:1#/api/sync/enroll" and fail as "not a till" (review finding).
+	if strings.ContainsAny(a, "#?") {
+		return "", false
+	}
+	if !strings.Contains(a, "://") {
+		a = "http://" + a
+	}
+	a = strings.TrimSuffix(a, "/")
+	if !validPrimaryBaseURL(a) {
+		return "", false
+	}
+	u, err := url.Parse(a)
+	if err != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery ||
+		u.Fragment != "" || u.User != nil || u.Opaque != "" {
+		return "", false
+	}
+	return a, true
 }
 
 // completeJoin is joinPrimary's tail, extracted so the approve-to-pair flow
@@ -692,6 +952,11 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name strin
 		// expired" here is what made ut-docs#362 undiagnosable from the shop
 		// floor: it blames the code, so the owner regenerates it forever.
 		return "", &joinError{kind: joinErrNotATill, detail: base}
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		// ut-docs#3219: the main till throttles short-code attempts per
+		// source — "wait a minute", not "the code is wrong".
+		return "", &joinError{kind: joinErrTooManyAttempts}
 	}
 	if resp.StatusCode == http.StatusUnprocessableEntity {
 		// ut-docs#1264: the primary rejected the name as already in use on

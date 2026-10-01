@@ -97,7 +97,7 @@ test.describe.serial('first-boot setup and PIN login', () => {
       // NOT required) — reportValidity() blocks the request client-side
       // without it, which would leave #setup-join-msg empty for a reason
       // unrelated to what this test is actually proving.
-      await p.locator('button:visible', { hasText: 'Paste a pairing code' }).click();
+      await p.locator('button:visible', { hasText: 'Enter a pairing code' }).click();
       await p.locator('#setup-pairing-till-name:visible').fill('Till 2');
       await p.locator('input[name="code"]:visible').fill('not-a-real-pairing-code');
       await p.locator('button:visible', { hasText: 'Join' }).click();
