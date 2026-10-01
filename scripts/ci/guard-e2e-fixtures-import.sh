@@ -42,7 +42,7 @@
 #
 # session-idle-lock-loop-3005.spec.ts (ut-docs#3005) is an auth-project spec
 # too (real PIN session, idle-lock revocation), exempt for the same reason.
-# display-board-idle-2935.spec.ts (ut-docs#2935) is its board-only sibling
+# session-display-board-idle-2935.spec.ts (ut-docs#2935) is its board-only sibling
 # on the same auth-project till, exempt for the same reason.
 # session-expiry-redirect-2144.spec.ts (ut-docs#2144) is exempt on the same
 # objective criterion, not a copy-paste of it: it proves that an htmx-driven
@@ -87,7 +87,7 @@ if [ ! -d "$TESTS_DIR" ]; then
   exit 1
 fi
 
-EXEMPT_FILES=('login.spec.ts' 'nav-rail-lock-reachable-1346.spec.ts' 'nav-rail-svg-icons-lock-1423.spec.ts' 'session-expiry-redirect-2144.spec.ts' 'session-expiry-redirect-admin-2157.spec.ts' 'session-idle-lock-loop-3005.spec.ts' 'display-board-idle-2935.spec.ts')
+EXEMPT_FILES=('login.spec.ts' 'nav-rail-lock-reachable-1346.spec.ts' 'nav-rail-svg-icons-lock-1423.spec.ts' 'session-expiry-redirect-2144.spec.ts' 'session-expiry-redirect-admin-2157.spec.ts' 'session-idle-lock-loop-3005.spec.ts' 'session-display-board-idle-2935.spec.ts')
 
 is_exempt() {
   local base="$1" f
