@@ -98,6 +98,10 @@ func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.
 			UpdateState:    "idle", // #2726 fills the fleet-update states
 			PushQueueDepth: depth,
 			TLSPinned:      false, // #2736
+			// This till's own name (sync.till_name), so the main till's
+			// Tills page follows a rename made here or from the cloud
+			// (ut-docs#3294). A change is sent at the next on-change check.
+			Name: enroll.DeviceName(ctx, d.Settings),
 		}
 	}
 	opts.OnHello = func(ctx context.Context, main fleetlink.Hello) {

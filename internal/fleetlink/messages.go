@@ -163,14 +163,25 @@ const (
 // only, latest per till, for the Tills page (#… §10) and the fleet-update
 // cards; strings are clipped so a peer can't grow the store.
 type Report struct {
-	Version        string    `json:"version"`
-	UpdateState    string    `json:"update_state"`
-	PushQueueDepth int       `json:"push_queue_depth"`
-	TLSPinned      bool      `json:"tls_pinned"`
-	ReceivedAt     time.Time `json:"-"`
+	Version        string `json:"version"`
+	UpdateState    string `json:"update_state"`
+	PushQueueDepth int    `json:"push_queue_depth"`
+	TLSPinned      bool   `json:"tls_pinned"`
+	// Name is the peer's own till name (enroll.DeviceName: a joined till's
+	// sync.till_name), so the main till's tills row follows a rename made
+	// on that till or from the cloud (ut-docs#3294). Omitempty: an older
+	// replica's report has none, and the main till then keeps its row.
+	Name       string    `json:"name,omitempty"`
+	ReceivedAt time.Time `json:"-"`
 }
 
 const maxReportField = 64
+
+// maxReportNameBytes bounds a report's name. A valid till name is up to 60
+// runes (pages.maxTillNameRunes), up to 240 bytes in UTF-8, so it is never
+// held to maxReportField; anything longer is dropped whole, because cutting
+// it could turn an over-long name into a different, valid one.
+const maxReportNameBytes = 256
 
 func decodeReport(raw json.RawMessage) (Report, bool) {
 	var r Report
@@ -179,6 +190,9 @@ func decodeReport(raw json.RawMessage) (Report, bool) {
 	}
 	r.Version = clip(r.Version, maxReportField)
 	r.UpdateState = clip(r.UpdateState, maxReportField)
+	if len(r.Name) > maxReportNameBytes {
+		r.Name = ""
+	}
 	if r.PushQueueDepth < 0 {
 		r.PushQueueDepth = 0
 	}

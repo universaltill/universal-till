@@ -187,6 +187,60 @@ func TestReplicaLink_HelloCarriesItsOwnCloudDeviceID(t *testing.T) {
 	}
 }
 
+// ut-docs#3294: a joined till's own name (enroll.DeviceName, its
+// sync.till_name) reaches the main till's tills row over the link, so the
+// Tills page and the quarantine page stop showing the pairing-time name.
+// A later rename follows on the report's on-change check; a name that
+// fails validateTillName never overwrites the stored one.
+func TestReplicaLink_JoinedTillsNameReachesTheMainTillsRow(t *testing.T) {
+	f := newSyncLinkFixture(t)
+	tillID := f.enrol(t, "Till 2", "token-abc")
+	tills := data.NewTillsRepo(f.dp.Db)
+	nameAtMain := func() string {
+		rows, err := tills.ListTills(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range rows {
+			if r.ID == tillID {
+				return r.Name
+			}
+		}
+		return ""
+	}
+
+	replica := linkReplica(t, f.srv.URL, tillID, fastLinkClientOptions())
+	if err := replica.Settings.Set(t.Context(), "sync.till_name", "Bar till"); err != nil {
+		t.Fatal(err)
+	}
+	runReplica(t, replica, time.Hour, time.Hour)
+
+	if !waitFor(t, 3*time.Second, func() bool { return nameAtMain() == "Bar till" }) {
+		t.Fatalf("main till's row = %q, want the joined till's own name Bar till", nameAtMain())
+	}
+
+	if err := replica.Settings.Set(t.Context(), "sync.till_name", "Back bar"); err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, 3*time.Second, func() bool { return nameAtMain() == "Back bar" }) {
+		t.Fatalf("main till's row = %q after a rename, want Back bar", nameAtMain())
+	}
+
+	// A control character fails validateTillName: the stored name stays.
+	if err := replica.Settings.Set(t.Context(), "sync.till_name", "Bad\x07name"); err != nil {
+		t.Fatal(err)
+	}
+	if !waitFor(t, 3*time.Second, func() bool {
+		r, ok := f.dp.Link.Report(tillID)
+		return ok && r.Name == "Bad\x07name"
+	}) {
+		t.Fatal("the invalid name's report never reached the main till")
+	}
+	if got := nameAtMain(); got != "Back bar" {
+		t.Fatalf("an invalid reported name overwrote the row: %q", got)
+	}
+}
+
 func TestReplicaLink_OlderMainWithoutLinkIsNeverDialled(t *testing.T) {
 	var dials atomic.Int32
 	mux := http.NewServeMux()

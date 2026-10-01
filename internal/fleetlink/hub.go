@@ -29,6 +29,11 @@ type HubOptions struct {
 	// linked instead of polling.
 	OnFrame      func(tillID string)
 	OnFrameEvery time.Duration
+	// OnReport, when set, is called on the reader goroutine with each
+	// report from tillID's live link, before it is stored — the main till
+	// uses it to keep tills.name in step with a joined till's own name
+	// (ut-docs#3294).
+	OnReport func(tillID string, r Report)
 }
 
 // Hub is the main till's side of every link: at most one Peer per paired
@@ -125,9 +130,14 @@ func (h *Hub) gotMessage(p *Peer, env Envelope) {
 	if env.Type != TypeReport {
 		return // sync/fleet/pairing/cloud_checkin are main → peer only; a peer sending them is ignored
 	}
-	if r, ok := decodeReport(env.Payload); ok {
-		h.storeReportFrom(p, r)
+	r, ok := decodeReport(env.Payload)
+	if !ok {
+		return
 	}
+	if h.opts.OnReport != nil && h.isLive(p) {
+		h.opts.OnReport(p.tillID, r)
+	}
+	h.storeReportFrom(p, r)
 }
 
 // Handle registers the handler for inbound requests of type typ (e.g. the
@@ -318,6 +328,13 @@ func (h *Hub) Report(tillID string) (Report, bool) {
 	defer h.mu.Unlock()
 	r, ok := h.reports[tillID]
 	return r, ok
+}
+
+// isLive reports whether p is still its till's registered link.
+func (h *Hub) isLive(p *Peer) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.peers[p.tillID] == p
 }
 
 // storeReportFrom keeps a report only while p is still tillID's live link,
