@@ -578,6 +578,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// that never end on their own. Joined by app.Run's drain.
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pages.orderStatusClose")
 		defer wg.Done()
 		<-bgCtx.Done()
 		dp.OrderStatus.Close()

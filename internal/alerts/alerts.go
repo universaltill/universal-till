@@ -212,6 +212,7 @@ func unusualSales(ctx context.Context, db *sql.DB, ref time.Time) (float64, int6
 func Start(ctx context.Context, cfg *config.Config, db *sql.DB, wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("alerts.loop")
 		defer wg.Done()
 		first := time.NewTimer(firstDelay())
 		defer first.Stop()

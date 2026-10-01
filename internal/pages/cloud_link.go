@@ -15,6 +15,7 @@ import (
 	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -241,6 +242,7 @@ func StartCloudLink(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) {
 	}
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pages.cloudLink")
 		defer wg.Done()
 		d.CloudLink.Run(ctx)
 	}()

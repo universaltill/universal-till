@@ -764,6 +764,7 @@ func dismissPendingBasePlugin(ctx context.Context, d *common.Deps, canonicalType
 func StartBasePluginRetry(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pages.basePluginRetry")
 		defer wg.Done()
 		select {
 		case <-time.After(basePluginRetryInitialDelay):

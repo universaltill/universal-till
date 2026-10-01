@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // RawPrintPort is the AppSocket/JetDirect port every network ESC/POS printer
@@ -205,6 +207,7 @@ func forEachBounded(ctx context.Context, items []string, fn func(string)) {
 	for _, it := range items {
 		wg.Add(1)
 		go func(it string) {
+			defer logging.RecoverAndLog("discovery.sweep")
 			defer wg.Done()
 			select {
 			case sem <- struct{}{}:

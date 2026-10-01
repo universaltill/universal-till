@@ -82,6 +82,7 @@ func NewAdvertiser(settings *data.SettingsRepo, isPrimary RoleCheck, port int) *
 func (a *Advertiser) Start(ctx context.Context, wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("discovery.advertiser")
 		defer wg.Done()
 		a.tick(ctx) // check immediately — don't wait a full interval to advertise a primary that already was one at boot
 		ticker := time.NewTicker(roleCheckInterval)

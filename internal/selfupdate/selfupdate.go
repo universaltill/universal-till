@@ -490,8 +490,14 @@ func applyVersion(ctx context.Context, version string, idle func() bool) error {
 	// if this process is somehow still alive afterwards (ut-docs#2759).
 	plan := newRestartPlan(exe, version, swappedWeb)
 	plan.idle = idle
-	go restartInto(plan)
-	go restartWatchdog(plan)
+	go func(p restartPlan) {
+		defer logging.RecoverAndLog("selfupdate.restartInto")
+		restartInto(p)
+	}(plan)
+	go func(p restartPlan) {
+		defer logging.RecoverAndLog("selfupdate.restartWatchdog")
+		restartWatchdog(p)
+	}(plan)
 	return nil
 }
 

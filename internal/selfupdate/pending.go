@@ -310,8 +310,11 @@ func restartInto(p restartPlan) {
 	close(p.idleSeen)
 	done := make(chan struct{})
 	go func() {
+		defer logging.RecoverAndLog("selfupdate.pendingHook")
+		// Deferred so a recovered hook panic does not hold the restart for
+		// the full hookBound (ut-docs#3304).
+		defer close(done)
 		p.hook(context.Background())
-		close(done)
 	}()
 	time.Sleep(p.delay)
 	select {

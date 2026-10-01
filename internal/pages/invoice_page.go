@@ -319,6 +319,7 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 		// d.AsyncWork (ut-docs#425), same reasoning as printReceiptAsync.
 		d.AsyncWork.Add(1)
 		go func() {
+			defer logging.RecoverAndLog("pages.invoiceAsync")
 			defer d.AsyncWork.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()

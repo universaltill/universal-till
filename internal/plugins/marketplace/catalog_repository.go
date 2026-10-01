@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/singleflight"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // CatalogSnapshot represents a cached marketplace catalog
@@ -389,6 +391,7 @@ func (cr *CatalogRepository) refreshInBackground(key, locale, deviceArch string)
 	cr.mu.Unlock()
 
 	go func() {
+		defer logging.RecoverAndLog("marketplace.catalogRefresh")
 		defer func() {
 			cr.mu.Lock()
 			delete(cr.refreshing, key)

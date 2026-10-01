@@ -887,6 +887,7 @@ func eodSchedulerTick(ctx context.Context, d *common.Deps, repo *data.POSRepo) {
 func StartEODScheduler(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pages.eodScheduler")
 		defer wg.Done()
 		repo := data.NewPOSRepo(d.Db)
 		lastPruneDay := ""

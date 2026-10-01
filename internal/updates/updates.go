@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // releasesURL is a var (not const) purely as a test seam: tests point it at a
@@ -58,6 +59,7 @@ func Start(ctx context.Context, wg *sync.WaitGroup) {
 	}
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("updates.check")
 		defer wg.Done()
 		select {
 		case <-time.After(30 * time.Second):
