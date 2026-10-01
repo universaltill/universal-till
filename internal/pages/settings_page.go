@@ -790,10 +790,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"autoUpdateEnabled":      autoUpdateEnabled,
 			"autoUpdateTime":         autoUpdateTime,
 			"about":                  aboutView(r.Context(), d.Settings, locale), // ut-docs#3091
-			"TillName":               tillNameOrDefault(r.Context(), d, locale),
+			"TillName":               deviceNameOrDefault(r.Context(), d, locale),
 			"TillRegisterID":         tillRegisterID,
 			"registers":              registers,
-			"IsPrimaryTill":          isPrimaryTill,
 			"QuarantineCount":        quarantineCount,
 			"ShowQuarantineSection":  showQuarantineSection,
 			"reportRetentionMode":    reportRetentionMode,
@@ -2625,8 +2624,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		renderTSEProvisioningBlock(w, r, st)
 	})
 
-	// This till's own display name (ut-docs#396) — distinct from a replica's
-	// own sync.till_name — shown in Settings and on the /tills page.
+	// This till's own display name (ut-docs#396), shown in Settings and
+	// reported to the cloud (enroll.DeviceName). The main till's /tills page
+	// shows it for the main till only; a joined till's row there keeps its
+	// pairing-time name until ut-docs#3294.
 	mux.HandleFunc("POST /api/settings/till-name", func(w http.ResponseWriter, r *http.Request) {
 		// No rejecting validation here (the name is only trimmed/
 		// truncated), so the gate stays first, exactly as before —
@@ -2645,16 +2646,24 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if name != "" {
-			// till.name is admin-synced (shop-wide by data.SettingScope),
-			// so an additional till writes it through (ut-docs#2791).
-			if err := saveShopSettings(r.Context(), d, elev, map[string]string{"till.name": name}); err != nil {
+			// The key enroll.DeviceName reads for this till's role, as the
+			// cloud's rename_till does (cloudRenameTill): the main till's
+			// own name is till.name; a joined till's is its per-till
+			// sync.till_name, which saveShopSettings keeps local. till.name
+			// is shop-wide there (it holds the main till's name), so writing
+			// it would rename the main till instead (ut-docs#3292).
+			key := "till.name"
+			if tillFollowsMain(r.Context(), d) {
+				key = "sync.till_name"
+			}
+			if err := saveShopSettings(r.Context(), d, elev, map[string]string{key: name}); err != nil {
 				if !respondSettingsSyncError(w, r, err) {
 					http.Error(w, "could not save", http.StatusInternalServerError)
 				}
 				return
 			}
-			settingsAudit(r, posRepo, elev, "settings", "till.name", "till_name_changed",
-				map[string]any{"name": name})
+			settingsAudit(r, posRepo, elev, "settings", key, "till_name_changed",
+				map[string]any{"name": name, "key": key})
 		}
 		settingsRespondSaved(w, r, elev)
 	})

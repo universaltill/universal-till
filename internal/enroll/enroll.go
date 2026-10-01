@@ -542,6 +542,15 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 	if region != "" {
 		fields["region"] = region
 	}
+	// Best-effort like region: the cloud merges/retires older rows by the
+	// till's LAN sync id (ut-docs#2802). Only a joined till holds
+	// sync.till_id (set at join), and a joined till registers through
+	// registerOnReplica, so today this is empty on every path that reaches
+	// here. It is sent so the row carries it if that ever changes; the main
+	// till's own id on its cloud row is a separate card.
+	if tid, _, err := kv.Get(ctx, keySyncTillID); err == nil && strings.TrimSpace(tid) != "" {
+		fields["till_id"] = strings.TrimSpace(tid)
+	}
 	payload, err := json.Marshal(fields)
 	if err != nil {
 		return err
@@ -769,9 +778,8 @@ func registerDevice(ctx context.Context, m config.MarketplaceConfig, deviceName 
 // registerDeviceID is the /v1/stores/devices/register call for any device id
 // — this till's own (registerDevice) or a replica's the main till vouches for
 // (VouchForReplica). tillID is the till's LAN sync id (sync.till_id), sent
-// when known as the stable machine key the cloud can use to merge or retire
-// a physical till's older device rows (ut-docs#2730); today's cloud ignores
-// it.
+// when known as the stable machine key the cloud uses to merge or retire a
+// physical till's older device rows (ut-docs#2730, #2752).
 func registerDeviceID(ctx context.Context, m config.MarketplaceConfig, deviceID, deviceName, version, tillID string) error {
 	storeID, token := m.StoreID, m.MerchantToken
 	if storeID == "" || token == "" {
