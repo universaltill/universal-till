@@ -32,6 +32,8 @@
     data-id="{{ .Item.ID }}" data-name="{{ .Item.Name }}" data-sku="{{ .Item.SKU }}"
     data-description="{{ .Item.Description }}" data-unit="{{ .Item.Unit }}"
     data-weighed="{{ if .Item.IsWeighed }}1{{ else }}0{{ end }}"
+    data-net-qty="{{ with .Item.NetQuantityValue }}{{ . }}{{ end }}"
+    data-net-qty-unit="{{ with .Item.NetQuantityUnit }}{{ . }}{{ end }}"
     data-stock-untracked="{{ if .Item.StockUntracked }}1{{ else }}0{{ end }}"
     data-age-restricted="{{ if .Item.AgeRestricted }}1{{ else }}0{{ end }}"
     data-category="{{ with .Item.CategoryID }}{{ . }}{{ end }}"

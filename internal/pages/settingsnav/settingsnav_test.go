@@ -71,6 +71,7 @@ func TestResolve_ZeroAmendmentsGroupsCoreSettingsByCategory(t *testing.T) {
 		{Key: "settings-diagnostics", Label: "Diagnostic mode", Group: advanced, Cat: "advanced"},
 		{Key: "settings-barcode", Label: "Barcode types", Group: advanced, Cat: "advanced"},
 		{Key: "settings-catalog-import-barcode-default", Label: "Catalog import defaults", Group: advanced, Cat: "advanced"},
+		{Key: "settings-catalog-pre-pack-unit-price", Label: "Unit price on pre-packed labels", Group: advanced, Cat: "advanced"},
 		{Key: "settings-data", Label: "🧹 Data management", Group: advanced, Cat: "advanced"},
 		{Key: "settings-retention", Label: "🗄️ Report retention", Group: advanced, Cat: "advanced"},
 		{Key: "settings-telemetry", Label: "Plugin telemetry", Group: advanced, Cat: "advanced"},

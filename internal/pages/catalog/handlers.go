@@ -2633,6 +2633,10 @@ func parseItemInput(r *http.Request) (pos.ItemInput, error) {
 	cat := strPtr(r.Form.Get("categoryId"))
 	brand := strPtr(r.Form.Get("brandId"))
 	taxCode := strPtr(r.Form.Get("taxCode"))
+	nqValue, nqUnit, err := parseNetQuantity(r)
+	if err != nil {
+		return pos.ItemInput{}, err
+	}
 	return pos.ItemInput{
 		Name:        name,
 		SKU:         strings.TrimSpace(r.Form.Get("sku")),
@@ -2660,8 +2664,33 @@ func parseItemInput(r *http.Request) (pos.ItemInput, error) {
 		// (ut-docs#1367), same convention as the variant/modifier-group
 		// forms — see that helper's own comment for why Form.Get alone
 		// would get this backwards.
-		IsActive: formCheckboxActive(r),
+		IsActive:         formCheckboxActive(r),
+		NetQuantityValue: nqValue,
+		NetQuantityUnit:  nqUnit,
 	}, nil
+}
+
+// parseNetQuantity reads the item form's pre-pack net quantity
+// (ut-docs#3391). A blank netQuantityValue means "none" (both nil) whatever
+// the unit <select> sent — the select always submits a value, and a
+// weighed item's disabled fields submit nothing. Anything else must be a
+// positive whole number with a g/ml/ea unit; the unit is checked here,
+// server-side, never trusted from the client's option list.
+func parseNetQuantity(r *http.Request) (*int64, *string, error) {
+	raw := strings.TrimSpace(r.Form.Get("netQuantityValue"))
+	if raw == "" {
+		return nil, nil, nil
+	}
+	errInvalid := errors.New("invalid net quantity")
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return nil, nil, errInvalid
+	}
+	u := strings.TrimSpace(r.Form.Get("netQuantityUnit"))
+	if !catalogtypes.ValidNetQuantity(&v, &u) {
+		return nil, nil, errInvalid
+	}
+	return &v, &u, nil
 }
 
 type lookup struct {

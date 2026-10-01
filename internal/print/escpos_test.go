@@ -546,6 +546,26 @@ func TestRenderLabel(t *testing.T) {
 	}
 }
 
+// ut-docs#3391: a pre-packed item's unit price prints on its own normal-
+// size line between the (double-size) pack price and the barcode; an empty
+// unit price leaves the label byte-identical to RenderLabel's.
+func TestRenderLabelWithUnitPrice(t *testing.T) {
+	plain := RenderLabel("Rice 300g", "£2.00", "5000000000011", "utf8")
+	if got := RenderLabelWithUnitPrice("Rice 300g", "£2.00", "", "5000000000011", "utf8"); !bytes.Equal(got, plain) {
+		t.Fatalf("empty unit price must render exactly RenderLabel's bytes")
+	}
+	out := RenderLabelWithUnitPrice("Rice 300g", "£2.00", "£6.67 per kg", "5000000000011", "utf8")
+	want := []byte("£2.00\n")
+	want = append(want, cmdDoubleOff...)
+	want = append(want, []byte("£6.67 per kg\n")...)
+	if !bytes.Contains(out, want) {
+		t.Fatalf("unit price must follow the pack price at normal size, got %q", out)
+	}
+	if bytes.Index(out, []byte("£6.67 per kg")) > bytes.Index(out, []byte("{B")) {
+		t.Fatal("unit price must print above the barcode")
+	}
+}
+
 // ut-docs#2880 review: Meta lines were clipped to Width, so a TSE signature
 // (88 base64 chars) or serial (64 hex chars) lost its tail on paper, as would
 // a signer's 200-char receipt line. A long Meta line must wrap, never lose

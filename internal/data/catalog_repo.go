@@ -184,6 +184,11 @@ type ItemLabel struct {
 	PriceMinor int64
 	Code       string // primary barcode, else SKU
 	IsWeighed  bool
+	// NetQuantityValue/NetQuantityUnit are a pre-packed item's net content
+	// (g / ml / ea, ut-docs#3391) — NULL when none is configured. The print
+	// path turns them into a unit price when the shop opts in.
+	NetQuantityValue sql.NullInt64
+	NetQuantityUnit  sql.NullString
 }
 
 // GetItemLabel loads label data for one item: name, CURRENT effective price
@@ -203,6 +208,8 @@ type ItemLabel struct {
 // till actually charges whenever a scheduled/promotional price_history row
 // is active — worse than the same gap on a screen tile (ut-docs#2228/#2258),
 // since a physical label persists after the promotion starts or ends.
+// It also carries is_weighed and the pre-pack net quantity (ut-docs#3391)
+// so the label can show a unit price.
 func (r *CatalogRepo) GetItemLabel(ctx context.Context, itemID string) (ItemLabel, bool, error) {
 	var l ItemLabel
 	var sku string
@@ -218,9 +225,9 @@ SELECT i.name,
          i.base_price
        ),
        COALESCE(i.sku, ''),
-       i.is_weighed
+       i.is_weighed, i.net_quantity_value, i.net_quantity_unit
 FROM items i WHERE i.id = ?`, itemID).
-		Scan(&l.Name, &l.PriceMinor, &sku, &weighed)
+		Scan(&l.Name, &l.PriceMinor, &sku, &weighed, &l.NetQuantityValue, &l.NetQuantityUnit)
 	l.IsWeighed = weighed != 0
 	if err == sql.ErrNoRows {
 		return ItemLabel{}, false, nil
@@ -254,7 +261,7 @@ func (r *CatalogRepo) ListItems(ctx context.Context) ([]catalogtypes.ItemInput, 
 	// COALESCE(sku, '') — ut-docs#1176: sku is nullable (no real SKU stores
 	// NULL, not a UUID), and itm.SKU below is a plain string, so scanning a
 	// NULL directly would error on every item that has no real SKU.
-	rows, err := r.db.QueryContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data, stock_untracked, age_restricted, color FROM items WHERE is_active = 1 ORDER BY name`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data, stock_untracked, age_restricted, color, net_quantity_value, net_quantity_unit FROM items WHERE is_active = 1 ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -262,10 +269,12 @@ func (r *CatalogRepo) ListItems(ctx context.Context) ([]catalogtypes.ItemInput, 
 	var out []catalogtypes.ItemInput
 	for rows.Next() {
 		var itm catalogtypes.ItemInput
-		var tax, cat, brand, desc, color sql.NullString
-		if err := rows.Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed, &itm.IsSampleData, &itm.StockUntracked, &itm.AgeRestricted, &color); err != nil {
+		var tax, cat, brand, desc, color, nqUnit sql.NullString
+		var nqValue sql.NullInt64
+		if err := rows.Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed, &itm.IsSampleData, &itm.StockUntracked, &itm.AgeRestricted, &color, &nqValue, &nqUnit); err != nil {
 			return nil, err
 		}
+		setNetQuantity(&itm, nqValue, nqUnit)
 		if desc.Valid {
 			itm.Description = desc.String
 		}
@@ -370,9 +379,11 @@ func (r *CatalogRepo) GetItem(ctx context.Context, itemID string) (catalogtypes.
 // *sql.DB.
 func getItemExec(ctx context.Context, ex execer, itemID string) (catalogtypes.ItemInput, bool, error) {
 	var itm catalogtypes.ItemInput
-	var tax, cat, brand, desc, color sql.NullString
-	err := ex.QueryRowContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data, stock_untracked, age_restricted, color FROM items WHERE id = ?`, itemID).
-		Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed, &itm.IsSampleData, &itm.StockUntracked, &itm.AgeRestricted, &color)
+	var tax, cat, brand, desc, color, nqUnit sql.NullString
+	var nqValue sql.NullInt64
+	err := ex.QueryRowContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data, stock_untracked, age_restricted, color, net_quantity_value, net_quantity_unit FROM items WHERE id = ?`, itemID).
+		Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed, &itm.IsSampleData, &itm.StockUntracked, &itm.AgeRestricted, &color, &nqValue, &nqUnit)
+	setNetQuantity(&itm, nqValue, nqUnit)
 	if errors.Is(err, sql.ErrNoRows) {
 		return catalogtypes.ItemInput{}, false, nil
 	}
@@ -396,6 +407,23 @@ func getItemExec(ctx context.Context, ex execer, itemID string) (catalogtypes.It
 	}
 	return itm, true, nil
 }
+
+// setNetQuantity copies a scanned net_quantity_value/net_quantity_unit pair
+// onto itm (nil when NULL).
+func setNetQuantity(itm *catalogtypes.ItemInput, v sql.NullInt64, u sql.NullString) {
+	if v.Valid {
+		n := v.Int64
+		itm.NetQuantityValue = &n
+	}
+	if u.Valid {
+		s := u.String
+		itm.NetQuantityUnit = &s
+	}
+}
+
+// ErrInvalidNetQuantity is returned for a net-quantity pair that is not
+// both-unset or a positive value with a g/ml/ea unit (ut-docs#3391).
+var ErrInvalidNetQuantity = errors.New("invalid net quantity")
 
 // ItemBarcodesFor returns ONE item's barcodes (primary first, then by
 // code) — the single-item counterpart to ItemBarcodes, same ordering
@@ -2411,6 +2439,9 @@ WHERE NOT EXISTS (
 // SKU first, it generates again (bounded). An explicit SKU that is already
 // taken returns ErrSKUExists and is never replaced.
 func insertItemRow(ctx context.Context, q dbExecutor, in *catalogtypes.ItemInput) error {
+	if !catalogtypes.ValidNetQuantity(in.NetQuantityValue, in.NetQuantityUnit) {
+		return ErrInvalidNetQuantity
+	}
 	active := 1
 	if !in.IsActive {
 		active = 0
@@ -2425,9 +2456,9 @@ func insertItemRow(ctx context.Context, q dbExecutor, in *catalogtypes.ItemInput
 			in.SKU = sku
 		}
 		_, err := q.ExecContext(ctx, `
-INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, stock_untracked, age_restricted, color)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, in.ID, in.SKU, in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked), boolToInt(in.AgeRestricted), nullableString(in.Color))
+INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, stock_untracked, age_restricted, color, net_quantity_value, net_quantity_unit)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, in.ID, in.SKU, in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked), boolToInt(in.AgeRestricted), nullableString(in.Color), nullableInt64(in.NetQuantityValue), nullable(in.NetQuantityUnit))
 		if err == nil {
 			return nil
 		}
@@ -3070,6 +3101,9 @@ func validateItemUpdate(in catalogtypes.ItemInput) error {
 	if in.Name == "" {
 		return errors.New("name required")
 	}
+	if !catalogtypes.ValidNetQuantity(in.NetQuantityValue, in.NetQuantityUnit) {
+		return ErrInvalidNetQuantity
+	}
 	return nil
 }
 
@@ -3101,9 +3135,11 @@ SET sku = COALESCE(NULLIF(?, ''), sku),
     is_weighed = ?,
     stock_untracked = ?,
     age_restricted = ?,
-    color = ?
+    color = ?,
+    net_quantity_value = ?,
+    net_quantity_unit = ?
 WHERE id = ?
-`, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked), boolToInt(in.AgeRestricted), nullableString(in.Color), in.ID)
+`, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked), boolToInt(in.AgeRestricted), nullableString(in.Color), nullableInt64(in.NetQuantityValue), nullable(in.NetQuantityUnit), in.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrSKUExists

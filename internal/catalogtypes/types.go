@@ -38,6 +38,37 @@ type ItemInput struct {
 	// it flows into a CSS custom property downstream and an arbitrary
 	// string is not safe to trust there.
 	Color string
+	// NetQuantityValue/NetQuantityUnit are a pre-packed item's net content
+	// (ut-docs#3391, Price Marking Order 2004): grams ("g"), millilitres
+	// ("ml") or a plain count ("ea"). Both nil = none configured; both are
+	// set or neither — ValidNetQuantity is the rule every write path checks.
+	// The shelf label turns them into a unit price (per kg / per litre /
+	// per item) when the shop opts in.
+	NetQuantityValue *int64
+	NetQuantityUnit  *string
+}
+
+// Net-quantity units (items.net_quantity_unit, migration 055's CHECK).
+const (
+	NetQuantityGrams       = "g"
+	NetQuantityMillilitres = "ml"
+	NetQuantityEach        = "ea"
+)
+
+// ValidNetQuantity reports whether a value/unit pair may be stored: both
+// nil (none), or a positive value with one of the three units.
+func ValidNetQuantity(value *int64, unit *string) bool {
+	if value == nil && unit == nil {
+		return true
+	}
+	if value == nil || unit == nil || *value <= 0 {
+		return false
+	}
+	switch *unit {
+	case NetQuantityGrams, NetQuantityMillilitres, NetQuantityEach:
+		return true
+	}
+	return false
 }
 
 // ItemColor is one swatch in the fixed item-color palette (ut-docs#1901).
