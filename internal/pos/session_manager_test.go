@@ -20,6 +20,14 @@ func newTestSessionManager(t *testing.T) (*SessionBasketManager, *time.Time) {
 	return m, &now
 }
 
+// bindBusy is BindTable with its refusal folded to "was it refused" — what
+// most BindTable tests here assert. The reason itself is pinned by
+// TestSessionBasketManager_BindTable_RefusalSaysWhy (ut-docs#2490).
+func bindBusy(m *SessionBasketManager, tableID, tableLabel, ownToken string, mover *Service, maxIdle, emptyMaxIdle time.Duration, now time.Time) (string, *Service, bool) {
+	tok, svc, refusal := m.BindTable(tableID, tableLabel, ownToken, mover, maxIdle, emptyMaxIdle, now)
+	return tok, svc, refusal != BindOK
+}
+
 func TestSessionBasketManager_CreateGetRemoveRoundTrip(t *testing.T) {
 	m, _ := newTestSessionManager(t)
 
@@ -677,7 +685,7 @@ func TestSessionBasketManager_BindTable_ConcurrentSameTableBindsExactlyOnce(t *t
 			go func() {
 				defer wg.Done()
 				start.Wait()
-				tok, svc, isBusy := m.BindTable("table-A", "T1", "", nil, time.Hour, time.Hour, time.Now())
+				tok, svc, isBusy := bindBusy(m, "table-A", "T1", "", nil, time.Hour, time.Hour, time.Now())
 				resMu.Lock()
 				defer resMu.Unlock()
 				if isBusy {
@@ -725,17 +733,17 @@ func TestSessionBasketManager_BindTable_MoverBlockedByBusyTableKeepsOwnBinding(t
 	// sessionBasket.tableID record (ut-docs#2443), which only BindTable
 	// keeps in sync; a direct SetTable bypasses it entirely.
 	incumbentToken, incumbent, _ := m.Create()
-	if _, _, busy := m.BindTable("table-B", "T2", incumbentToken, incumbent, time.Hour, time.Hour, *now); busy {
+	if _, _, busy := bindBusy(m, "table-B", "T2", incumbentToken, incumbent, time.Hour, time.Hour, *now); busy {
 		t.Fatal("setup: incumbent's own bind to table-B must not itself report busy")
 	}
 
 	moverToken, mover, _ := m.Create()
-	if _, _, busy := m.BindTable("table-A", "T1", moverToken, mover, time.Hour, time.Hour, *now); busy {
+	if _, _, busy := bindBusy(m, "table-A", "T1", moverToken, mover, time.Hour, time.Hour, *now); busy {
 		t.Fatal("setup: mover's own bind to table-A must not itself report busy")
 	}
 	mover.AddLineWithModifiers(BasketLine{SKU: "x", ItemID: "x", Name: "line", PriceCents: 100}, 1, nil)
 
-	tok, svc, busy := m.BindTable("table-B", "T2", moverToken, mover, time.Hour, time.Hour, *now)
+	tok, svc, busy := bindBusy(m, "table-B", "T2", moverToken, mover, time.Hour, time.Hour, *now)
 	if !busy {
 		t.Fatal("moving onto a table another live session already holds must report busy")
 	}
@@ -778,16 +786,16 @@ func TestSessionBasketManager_BindTable_EmptySessionFreesTableAfterEmptyMaxIdle(
 	// call would leave the manager's own sessionBasket.tableID record at
 	// "", invisible to BindTable's busy-check.
 	firstToken, first, _ := m.Create()
-	if _, _, busy := m.BindTable("table-A", "T1", firstToken, first, maxIdle, emptyMaxIdle, *now); busy {
+	if _, _, busy := bindBusy(m, "table-A", "T1", firstToken, first, maxIdle, emptyMaxIdle, *now); busy {
 		t.Fatal("setup: first's own bind to table-A must not itself report busy")
 	} // bound, zero lines
 
-	if _, _, busy := m.BindTable("table-A", "T1", "", nil, maxIdle, emptyMaxIdle, *now); !busy {
+	if _, _, busy := bindBusy(m, "table-A", "T1", "", nil, maxIdle, emptyMaxIdle, *now); !busy {
 		t.Fatal("right after binding: a second, unrelated scan of the same table must see busy, even though the first session is empty")
 	}
 
 	later := now.Add(emptyMaxIdle + time.Second)
-	tok, svc, busy := m.BindTable("table-A", "T1", "", nil, maxIdle, emptyMaxIdle, later)
+	tok, svc, busy := bindBusy(m, "table-A", "T1", "", nil, maxIdle, emptyMaxIdle, later)
 	if busy {
 		t.Fatal("an EMPTY session idle past emptyMaxIdle must not block a new scan of its table, even though maxIdle (the non-empty window) hasn't elapsed")
 	}
@@ -819,18 +827,18 @@ func TestSessionBasketManager_BindTable_NonEmptySessionOutlastsEmptyMaxIdle(t *t
 	// call would leave the manager's own sessionBasket.tableID record at
 	// "", invisible to BindTable's busy-check.
 	firstToken, first, _ := m.Create()
-	if _, _, busy := m.BindTable("table-A", "T1", firstToken, first, maxIdle, emptyMaxIdle, *now); busy {
+	if _, _, busy := bindBusy(m, "table-A", "T1", firstToken, first, maxIdle, emptyMaxIdle, *now); busy {
 		t.Fatal("setup: first's own bind to table-A must not itself report busy")
 	}
 	first.AddLineWithModifiers(BasketLine{SKU: "x", ItemID: "x", Name: "line", PriceCents: 100}, 1, nil)
 
 	pastEmptyStillWithinMaxIdle := now.Add(emptyMaxIdle + time.Second)
-	if _, _, busy := m.BindTable("table-A", "T1", "", nil, maxIdle, emptyMaxIdle, pastEmptyStillWithinMaxIdle); !busy {
+	if _, _, busy := bindBusy(m, "table-A", "T1", "", nil, maxIdle, emptyMaxIdle, pastEmptyStillWithinMaxIdle); !busy {
 		t.Fatal("a NON-EMPTY session past emptyMaxIdle (but still within maxIdle) must still block a competing scan")
 	}
 
 	pastMaxIdle := now.Add(maxIdle + time.Second)
-	tok, svc, busy := m.BindTable("table-A", "T1", "", nil, maxIdle, emptyMaxIdle, pastMaxIdle)
+	tok, svc, busy := bindBusy(m, "table-A", "T1", "", nil, maxIdle, emptyMaxIdle, pastMaxIdle)
 	if busy {
 		t.Fatal("a NON-EMPTY session idle past maxIdle must eventually free its table too")
 	}
@@ -864,7 +872,7 @@ func TestSessionBasketManager_BindTable_StaleResumeAfterCompetingBindSeesBusy(t 
 	// Bind through BindTable itself (ut-docs#2443) — a direct SetTable call
 	// would leave the manager's own sessionBasket.tableID record at "",
 	// so A would never register as busy below regardless of staleness.
-	if _, _, busy := m.BindTable("table-A", "T1", aToken, aSvc, 10*time.Minute, 10*time.Minute, *now); busy {
+	if _, _, busy := bindBusy(m, "table-A", "T1", aToken, aSvc, 10*time.Minute, 10*time.Minute, *now); busy {
 		t.Fatal("setup: A's own bind to table-A must not itself report busy")
 	}
 	aSvc.AddLineWithModifiers(BasketLine{SKU: "x", ItemID: "x", Name: "line", PriceCents: 100}, 1, nil)
@@ -873,7 +881,7 @@ func TestSessionBasketManager_BindTable_StaleResumeAfterCompetingBindSeesBusy(t 
 	// session, then bind B — B's own lastSeen is stamped at this later
 	// time via the same m.clock() mechanism A's was stamped at originally.
 	*now = now.Add(10*time.Minute + time.Second)
-	bToken, bSvc, busy := m.BindTable("table-A", "T1", "", nil, 10*time.Minute, 10*time.Minute, *now)
+	bToken, bSvc, busy := bindBusy(m, "table-A", "T1", "", nil, 10*time.Minute, 10*time.Minute, *now)
 	if busy || bSvc == nil {
 		t.Fatalf("B's fresh scan after A went stale: busy=%v svc=%v, want busy=false, a bound session", busy, bSvc)
 	}
@@ -885,9 +893,9 @@ func TestSessionBasketManager_BindTable_StaleResumeAfterCompetingBindSeesBusy(t 
 	// bindSelfOrderTableSession now makes unconditionally, passing A's own
 	// live *Service as mover.
 	*now = now.Add(time.Second)
-	tok, svc, aBusy := m.BindTable("table-A", "T1", aToken, aSvc, 10*time.Minute, 10*time.Minute, *now)
+	tok, svc, aBusy := bindBusy(m, "table-A", "T1", aToken, aSvc, 10*time.Minute, 10*time.Minute, *now)
 	if !aBusy {
-		t.Fatal("A's stale resume after B's legitimate bind must see busy=true")
+		t.Fatal("A's stale resume after B's legitimate bind must be refused (table in use)")
 	}
 	if tok != "" || svc != nil {
 		t.Fatalf("busy result must return no token/service, got (%q, %p)", tok, svc)
@@ -962,7 +970,7 @@ func TestSessionBasketManager_BindTable_SlowChargePolicyAskDoesNotBlockOtherTabl
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		m.BindTable("table-A", "T1", moverToken, mover, time.Hour, time.Hour, *now)
+		bindBusy(m, "table-A", "T1", moverToken, mover, time.Hour, time.Hour, *now)
 	}()
 
 	select {
@@ -978,7 +986,7 @@ func TestSessionBasketManager_BindTable_SlowChargePolicyAskDoesNotBlockOtherTabl
 	otherDone := make(chan struct{})
 	go func() {
 		defer close(otherDone)
-		tok, svc, busy := m.BindTable("table-B", "T2", "", nil, time.Hour, time.Hour, *now)
+		tok, svc, busy := bindBusy(m, "table-B", "T2", "", nil, time.Hour, time.Hour, *now)
 		if busy || svc == nil || tok == "" {
 			t.Errorf("table-B bind while table-A's ask is stuck: busy=%v svc=%v tok=%q, want a clean bind", busy, svc, tok)
 		}
@@ -1032,7 +1040,7 @@ func TestSessionBasketManager_BindTable_MintPathFactoryAskDoesNotHoldLock(t *tes
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		m.BindTable("table-A", "T1", "", nil, time.Hour, time.Hour, now)
+		bindBusy(m, "table-A", "T1", "", nil, time.Hour, time.Hour, now)
 	}()
 
 	select {
@@ -1064,5 +1072,47 @@ func TestSessionBasketManager_BindTable_MintPathFactoryAskDoesNotHoldLock(t *tes
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("table-A's BindTable never returned after its ask was released")
+	}
+}
+
+// ut-docs#2490: BindTable says WHY it refused. Another phone holding the
+// table and the till having no room for a new session are different
+// conditions with different remedies, and the self-order page shows a
+// different screen for each.
+func TestSessionBasketManager_BindTable_RefusalSaysWhy(t *testing.T) {
+	m, now := newTestSessionManager(t)
+
+	// Fill the manager to the cap with sessions that each hold an item, so
+	// evict-oldest-empty has nothing to evict. The first one is on table-A.
+	ownerTok, owner, refusal := m.BindTable("table-A", "T1", "", nil, time.Hour, time.Hour, *now)
+	if refusal != BindOK {
+		t.Fatalf("first bind to a free table: refusal = %v, want BindOK", refusal)
+	}
+	owner.AddLineWithModifiers(BasketLine{SKU: "A", Name: "Coffee", ItemID: "ia", PriceCents: 1000}, 1, nil)
+	for i := 1; i < MaxLiveSelfOrderSessions; i++ {
+		_, svc, ok := m.Create()
+		if !ok {
+			t.Fatalf("prefill Create refused at %d", i)
+		}
+		svc.AddLineWithModifiers(BasketLine{SKU: "A", Name: "Coffee", ItemID: "ia", PriceCents: 1000}, 1, nil)
+	}
+
+	// Another phone on the SAME table: the table is in use, whatever the
+	// session count.
+	if _, _, refusal := m.BindTable("table-A", "T1", "", nil, time.Hour, time.Hour, *now); refusal != BindRefusedTableInUse {
+		t.Fatalf("second phone on a held table: refusal = %v, want BindRefusedTableInUse", refusal)
+	}
+	// A phone on a FREE table while the manager is full: the table is fine,
+	// the till has no room.
+	tok, svc, refusal := m.BindTable("table-B", "T2", "", nil, time.Hour, time.Hour, *now)
+	if refusal != BindRefusedTillBusy {
+		t.Fatalf("free table, full manager: refusal = %v, want BindRefusedTillBusy", refusal)
+	}
+	if tok != "" || svc != nil {
+		t.Fatalf("a refused bind must return no token/service, got (%q, %p)", tok, svc)
+	}
+	// The owner resuming their own table is neither: it never mints.
+	if _, _, refusal := m.BindTable("table-A", "T1", ownerTok, owner, time.Hour, time.Hour, *now); refusal != BindOK {
+		t.Fatalf("owner's own resume at the cap: refusal = %v, want BindOK", refusal)
 	}
 }

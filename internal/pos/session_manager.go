@@ -314,6 +314,24 @@ func (m *SessionBasketManager) TableOwnerActive(tableID string, maxIdle time.Dur
 	return "", nil, false
 }
 
+// BindRefusal says why BindTable did not bind (ut-docs#2490). The two
+// refusals have different remedies, so the guest sees different screens:
+// a table in use means another phone already holds this table; a busy till
+// means the till cannot start another session right now.
+type BindRefusal int
+
+const (
+	// BindOK: bound (minted, resumed or moved); nothing was refused.
+	BindOK BindRefusal = iota
+	// BindRefusedTableInUse: a different, recently-active session already
+	// holds this table.
+	BindRefusedTableInUse
+	// BindRefusedTillBusy: a fresh session was needed, but the manager is
+	// at MaxLiveSelfOrderSessions with every live session holding items.
+	// The self-order page also uses it for its own per-source mint limiter.
+	BindRefusedTillBusy
+)
+
 // BindTable atomically resolves one guest's scan of tableID (ut-docs#2434,
 // ADR-0103 review finding N3, corrected in the ADR itself): the busy check
 // and the claim (move an existing session onto tableID, or mint a fresh
@@ -338,7 +356,7 @@ func (m *SessionBasketManager) TableOwnerActive(tableID string, maxIdle time.Dur
 // atomic against a stale-then-resumed session racing a different phone's
 // fresh bind, not just against two fresh binds.
 //
-// busy=true when a DIFFERENT live session (any token != ownToken) is
+// refusal is BindRefusedTableInUse when a DIFFERENT live session (any token != ownToken) is
 // already bound to tableID and was touched within its own recency window of
 // now — no item-count EXCLUSION: an EMPTY session holds its table exactly
 // like a non-empty one, which is what actually closes the N3 race (the old
@@ -373,13 +391,18 @@ func (m *SessionBasketManager) TableOwnerActive(tableID string, maxIdle time.Dur
 // Basket() can, so it's a different, narrower exception to "no Service
 // call under m.mu" than sb.tableID's, not a violation of it.
 //
-// A nil manager or empty tableID both report not-busy with no service and
+// refusal is BindRefusedTillBusy when this call would mint a fresh
+// session but the manager is at MaxLiveSelfOrderSessions and has no empty
+// session to evict (ut-docs#2490): the table may well be free — it is the
+// till that has no room — so the page shows a different screen for it.
+//
+// A nil manager or empty tableID both report BindOK with no service and
 // no token — same "there is nothing to check" contract TableOwner(Active)
 // already use, even though today's only caller (bindSelfOrderTableSession)
 // never reaches here with either.
-func (m *SessionBasketManager) BindTable(tableID, tableLabel, ownToken string, mover *Service, maxIdle, emptyMaxIdle time.Duration, now time.Time) (token string, svc *Service, busy bool) {
+func (m *SessionBasketManager) BindTable(tableID, tableLabel, ownToken string, mover *Service, maxIdle, emptyMaxIdle time.Duration, now time.Time) (token string, svc *Service, refusal BindRefusal) {
 	if m == nil || tableID == "" {
-		return "", nil, false
+		return "", nil, BindOK
 	}
 	// A nil mover means this call can only possibly mint a fresh session
 	// (the common first-ever-scan case) — build that Service now, BEFORE
@@ -411,7 +434,7 @@ func (m *SessionBasketManager) BindTable(tableID, tableLabel, ownToken string, m
 		}
 		if !sb.lastSeen.Before(c) {
 			m.mu.Unlock()
-			return "", nil, true
+			return "", nil, BindRefusedTableInUse
 		}
 	}
 	// mover is only honoured when its own session is still actually live in
@@ -461,7 +484,7 @@ func (m *SessionBasketManager) BindTable(tableID, tableLabel, ownToken string, m
 			sb.tableID = sb.svc.TableID()
 		}
 		m.mu.Unlock()
-		return ownToken, sb.svc, false
+		return ownToken, sb.svc, BindOK
 	}
 	if freshSvc == nil {
 		// Rare fallback: mover was non-nil but its session was evicted
@@ -484,7 +507,7 @@ func (m *SessionBasketManager) BindTable(tableID, tableLabel, ownToken string, m
 	// out every real guest at every table.
 	if len(m.sessions) >= MaxLiveSelfOrderSessions && !m.evictOldestEmptyLocked() {
 		m.mu.Unlock()
-		return "", nil, true
+		return "", nil, BindRefusedTillBusy
 	}
 	svc = freshSvc
 	token = newSessionToken()
@@ -505,7 +528,7 @@ func (m *SessionBasketManager) BindTable(tableID, tableLabel, ownToken string, m
 		sb.tableID = svc.TableID()
 	}
 	m.mu.Unlock()
-	return token, svc, false
+	return token, svc, BindOK
 }
 
 // Sweep evicts every session whose last Create/Get is more than maxIdle

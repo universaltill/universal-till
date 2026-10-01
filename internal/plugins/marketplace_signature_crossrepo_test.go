@@ -46,3 +46,29 @@ func TestMarketplaceSignatureRejectedByWrongKey(t *testing.T) {
 		t.Fatal("signature must not verify under the wrong public key")
 	}
 }
+
+// abi3FixturePublicKeyHex verifies testdata/marketplace_signed_manifest_abi3.json:
+// a manifest carrying every ADR-0121 ABI-3 field (ut-docs#3155), signed by
+// ut-cloud's internal/signing.Signer with a deterministic test seed (bytes
+// 31..62). It proves the till and the marketplace marshal those fields to
+// the same bytes, including the zero values (keep_years 0, an absent
+// jitter_s), which the source-level mirror test cannot.
+const abi3FixturePublicKeyHex = "af3d20264f9c26ef085b5ce537f417d424037a0963a6386ff6d050e5bf773714"
+
+func TestMarketplaceSignatureVerifiesABI3Fields(t *testing.T) {
+	verifier, err := NewManifestVerifier(abi3FixturePublicKeyHex)
+	if err != nil {
+		t.Fatalf("NewManifestVerifier: %v", err)
+	}
+	result, err := verifier.VerifyManifest("testdata/marketplace_signed_manifest_abi3.json")
+	if err != nil {
+		t.Fatalf("VerifyManifest returned errors: %v (%v)", err, result.Errors)
+	}
+	if !result.SignatureVerified {
+		t.Fatal("marketplace signature over the ABI-3 fields did not verify with the real POS verifier")
+	}
+	m := result.Manifest
+	if m.Limits == nil || len(m.Schedules) != 2 || m.DB == nil || m.Retention == nil || len(m.ViewsUsed) != 2 || m.Entries[0].Slot != "reports.panels" {
+		t.Fatalf("fixture lost ABI-3 fields: %+v", m)
+	}
+}
