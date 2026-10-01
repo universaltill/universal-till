@@ -1328,6 +1328,7 @@
   "permissions.action_desc.void_comp_waste": "إزالة صنف له سعر من السلة كإبطال أو مجاملة أو هدر دون رمز مدير، والاطلاع على أرقام الهدر في التقارير.",
   "permissions.action_desc.worker_allocation": "تسجيل دفعات الإكراميات ورسوم الخدمة للموظفين في التقارير.",
   "permissions.col.action": "الإجراء",
+  "permissions.error.cloud_role": "تتم إدارة هذا الدور في my.universaltill.com. غيّره من هناك.",
   "permissions.error.super_admin_required": "مطلوب صلاحية مدير النظام",
   "permissions.group.catalog": "الكتالوج",
   "permissions.group.other": "أخرى",

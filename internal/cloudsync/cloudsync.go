@@ -218,6 +218,12 @@ type Hooks struct {
 	SaveUser       func(ctx context.Context, u UserDirective) (string, error)
 	SetUserPIN     func(ctx context.Context, u UserDirective) (string, error)
 	DeactivateUser func(ctx context.Context, u UserDirective) (string, error)
+	// The custom role directives (ADR-0128 §3, ut-docs#3165): main-till
+	// only. SaveRole creates or replaces an origin='cloud' role and its
+	// complete grant set; DeleteRole removes one no user holds. Each runs
+	// in one write transaction, audited and idempotent.
+	SaveRole   func(ctx context.Context, r RoleDirective) (string, error)
+	DeleteRole func(ctx context.Context, r RoleDirective) (string, error)
 	// RenameTill handles "rename_till" (ut-docs#3272): the owner renamed
 	// THIS till in the cloud (my. or the portal). Payload {device_id, name};
 	// Tick already skipped it unless device_id is this till's own, so it
@@ -885,6 +891,19 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", bad
 		}
 		msg, err = hook(ctx, u)
+	case "save_role", "delete_role":
+		hook := hooks.SaveRole
+		if d.Type == "delete_role" {
+			hook = hooks.DeleteRole
+		}
+		if hook == nil {
+			return "failed", d.Type + " is not supported on this till"
+		}
+		r, bad := decodeRoleDirective(d)
+		if bad != "" {
+			return "failed", bad
+		}
+		msg, err = hook(ctx, r)
 	default:
 		return "failed", "unknown directive type " + d.Type
 	}

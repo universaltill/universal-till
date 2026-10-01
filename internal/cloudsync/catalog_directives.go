@@ -34,6 +34,10 @@ var mainTillOnlyTypes = map[string]bool{
 	"save_user":       true,
 	"set_user_pin":    true,
 	"deactivate_user": true,
+	// Custom role directives (ADR-0128 §1): the main till applies them;
+	// the admin bundle carries roles and grants to the other tills.
+	"save_role":   true,
+	"delete_role": true,
 	// TSE ready signal (ADR-0053, ut-docs#3039): one TSE per store, from
 	// the main till — the till that applies it spends the single-use
 	// credential handoff and keeps the credential on its own disk.

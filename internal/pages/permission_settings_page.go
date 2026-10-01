@@ -177,12 +177,21 @@ func registerPermissionSettings(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "role and action required", http.StatusBadRequest)
 			return
 		}
-		if ok, err := authRepo.RoleExists(r.Context(), role); err != nil {
+		if origin, ok, err := authRepo.RoleOrigin(r.Context(), role); err != nil {
 			logging.L().Errorf("permission matrix: role exists check: %v", err)
 			http.Error(w, "failed to save", http.StatusInternalServerError)
 			return
 		} else if !ok {
 			http.Error(w, "unknown role", http.StatusBadRequest)
+			return
+		} else if origin == data.RoleOriginCloud {
+			// ADR-0128 §3/§6: a custom role is edited only in
+			// my.universaltill.com (its grants arrive by save_role
+			// directive, which would overwrite a till-side edit). Same
+			// 409 + text/html fragment as the replica refusal above.
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusConflict)
+			fmt.Fprintf(w, `<span class="login-error">%s</span>`, httpx.T(locale, "permissions.error.cloud_role"))
 			return
 		}
 		if ok, err := authRepo.ActionExists(r.Context(), action); err != nil {

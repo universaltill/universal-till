@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -148,8 +149,12 @@ var adminTables = []adminTable{
 	// match holds only "because every till seeds them identically," the
 	// exact fragility #1554 calls out (a future custom-roles feature, or
 	// two tills mid-rollout on different migration versions, would break
-	// it silently). roles/permission_actions have no FK dependencies of
-	// their own; role_permissions FKs onto both, so it must apply after —
+	// it silently). That custom-roles feature now exists (ADR-0128,
+	// ut-docs#3165): roles created by a save_role directive on the main till
+	// travel here with label/origin, and ApplyAdmin prunes a local
+	// origin='cloud' role the bundle no longer carries (built-in rows are
+	// still never pruned). roles/permission_actions have no FK dependencies
+	// of their own; role_permissions FKs onto both, so it must apply after —
 	// ordered accordingly here.
 	{name: "roles", pk: []string{"role"}},
 	{name: "permission_actions", pk: []string{"action"}},
@@ -877,16 +882,24 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 	}
 	defer tx.Rollback()
 
-	// ut-docs#1589 (found in #1554's own review): roles/permission_actions
-	// are migration-seeded catalog tables nothing in this codebase ever
-	// DELETEs (additive-only) — verified by grep, and true today because no
-	// custom-roles feature exists yet (the day one does, this assumption
-	// needs re-checking; see the "future custom-roles feature" note on
-	// adminTables above). A replica one release ahead of its primary has
-	// extra role/action rows the primary's dump doesn't mention at all, and
-	// unconditionally pruning them was silently destroying that skew state
-	// with no warning — so both are exempted from deleteMissing entirely,
-	// the same shape as settings' own exemption below.
+	// ut-docs#1589 (found in #1554's own review): permission_actions and
+	// BUILT-IN roles are migration-seeded catalog rows nothing in this
+	// codebase ever DELETEs (additive-only). A replica one release ahead of
+	// its primary has extra role/action rows the primary's dump doesn't
+	// mention at all, and unconditionally pruning them was silently
+	// destroying that skew state with no warning — so both stay exempt from
+	// the generic deleteMissing, the same shape as settings' own exemption
+	// below.
+	//
+	// ADR-0128 §6 (ut-docs#3165) revisited that assumption the day custom
+	// roles arrived: an origin='cloud' role IS deleted at runtime — by a
+	// delete_role directive on the main till — so a local cloud role the
+	// bundle no longer carries is pruned (pruneCloudRoles, below: its
+	// role_permissions rows first, then the roles row). Built-in roles keep
+	// the never-prune rule. users.role has no FK onto roles, and the main
+	// till refuses delete_role while any user holds the role, so the same
+	// bundle's users table has already moved every holder; a satellite-only
+	// holder (never expected) keeps a role string that grants nothing.
 	//
 	// role_permissions needs a narrower rule, not the same blanket skip: it
 	// DOES have a real, frequent same-version write path — a manager
@@ -908,7 +921,12 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 	// CURRENT dump doesn't know about at all — real version skew, not
 	// drift — and those are safe to protect without weakening #1554,
 	// because the primary literally cannot have an opinion on a grant for a
-	// role/action it doesn't know exists yet.
+	// role/action it doesn't know exists yet. The one exception (ADR-0128
+	// §6): a grant row of a local cloud role that is about to be pruned is
+	// never spared — whatever its action — or the roles DELETE would hit
+	// role_permissions' REFERENCES roles(role) (foreign keys are on) and
+	// abort the whole ApplyAdmin, so this satellite would stop receiving
+	// every admin change.
 	knownRoles := map[string]bool{}
 	for _, rec := range bundle.Tables["roles"] {
 		knownRoles[fmt.Sprint(rec["role"])] = true
@@ -917,8 +935,21 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 	for _, rec := range bundle.Tables["permission_actions"] {
 		knownActions[fmt.Sprint(rec["action"])] = true
 	}
+	var prunedCloudRoles map[string]bool
+	// A roles table with no rows can't come from a healthy primary (the
+	// built-in roles are always seeded), so it is never read as "every
+	// custom role was deleted" (#3165 review).
+	if recs, ok := bundle.Tables["roles"]; ok && len(recs) > 0 {
+		if prunedCloudRoles, err = cloudRolesMissingFrom(ctx, tx, knownRoles); err != nil {
+			return err
+		}
+	}
 	rolePermissionSkew := func(rec map[string]any) bool {
-		return !knownRoles[fmt.Sprint(rec["role"])] || !knownActions[fmt.Sprint(rec["action"])]
+		role := fmt.Sprint(rec["role"])
+		if prunedCloudRoles[role] {
+			return false
+		}
+		return !knownRoles[role] || !knownActions[fmt.Sprint(rec["action"])]
 	}
 
 	// Phase 1 — deletes, children first, so UNIQUE collisions (e.g. a
@@ -939,9 +970,14 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 		// applyFiscalRegisterStorage (ut-docs#1670) for the same reason —
 		// the bundle only ever carries fiscal_register: rows, so the generic
 		// prune would wipe every OTHER plugin's private storage on this till.
+		if t.name == "roles" {
+			if err := pruneCloudRoles(ctx, tx, prunedCloudRoles); err != nil {
+				return err
+			}
+			continue
+		}
 		if t.name == "settings" || t.name == "plugin_settings" ||
-			t.name == "plugin_storage" ||
-			t.name == "roles" || t.name == "permission_actions" {
+			t.name == "plugin_storage" || t.name == "permission_actions" {
 			continue
 		}
 		var skipPrune func(map[string]any) bool
@@ -1035,6 +1071,50 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 	// are dropped here: a pulled barcode symbology set must take effect on
 	// the next scan, not at the next restart (ut-docs#2979).
 	invalidateBarcodeSymbologyCache(r.db)
+	return nil
+}
+
+// cloudRolesMissingFrom lists this till's origin='cloud' roles whose key
+// is not in known (the bundle's roles) — the ones ApplyAdmin prunes
+// (ADR-0128 §6).
+func cloudRolesMissingFrom(ctx context.Context, tx *sql.Tx, known map[string]bool) (map[string]bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT role FROM roles WHERE origin = 'cloud'`)
+	if err != nil {
+		return nil, fmt.Errorf("prune roles: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var role string
+		if err := rows.Scan(&role); err != nil {
+			return nil, fmt.Errorf("prune roles: %w", err)
+		}
+		if !known[role] {
+			out[role] = true
+		}
+	}
+	return out, rows.Err()
+}
+
+// pruneCloudRoles deletes each listed cloud role, children first: its
+// role_permissions rows (deleteMissing already removed the ones the bundle
+// carries a role_permissions table for; this also covers a bundle without
+// one), then the roles row. Never a built-in row.
+func pruneCloudRoles(ctx context.Context, tx *sql.Tx, roles map[string]bool) error {
+	keys := make([]string, 0, len(roles))
+	for role := range roles {
+		keys = append(keys, role)
+	}
+	sort.Strings(keys)
+	for _, role := range keys {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM role_permissions WHERE role = ?`, role); err != nil {
+			return fmt.Errorf("prune cloud role %s grants: %w", role, err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM roles WHERE role = ? AND origin = 'cloud'`, role); err != nil {
+			return fmt.Errorf("prune cloud role %s: %w", role, err)
+		}
+		logging.L().Infof("sync pull: pruned custom role %s (deleted on the main till)", role)
+	}
 	return nil
 }
 

@@ -1,4 +1,4 @@
--- 054_shadow_customer_documents.sql — ADR-0124, ut-docs#3169.
+-- 055_shadow_customer_documents.sql — ADR-0124, ut-docs#3169.
 -- A per-market data property: whether a till that is NOT the shop's
 -- system of record (a shadow pilot) may produce documents the customer
 -- sees or receives (receipts, reprints, the post-tender receipt view).

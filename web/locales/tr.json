@@ -1328,6 +1328,7 @@
   "permissions.action_desc.void_comp_waste": "Fiyatlı bir ürünü sepetten storno, ikram veya fire olarak yönetici PIN'i olmadan çıkarma ve Raporlar'da zayiat rakamlarını görme.",
   "permissions.action_desc.worker_allocation": "Raporlar'da personele yapılan bahşiş ve servis ücreti ödemelerini kaydetme.",
   "permissions.col.action": "İşlem",
+  "permissions.error.cloud_role": "Bu rol my.universaltill.com üzerinden yönetilir. Değişikliği orada yapın.",
   "permissions.error.super_admin_required": "Süper yönetici gerekli",
   "permissions.group.catalog": "Katalog",
   "permissions.group.other": "Diğer",

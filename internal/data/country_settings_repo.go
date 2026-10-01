@@ -77,7 +77,7 @@ type CountrySetting struct {
 // builtinCountryDefaults is what Delete restores a builtin country to. It
 // mirrors the migration seed exactly (001_init.sql, plus PT from
 // 051_builtin_country_pt.sql, ut-docs#2963, plus the shadow_customer_documents
-// column from 054, ADR-0124); TestBuiltinDefaultsMatchMigrationSeed
+// column from 055, ADR-0124); TestBuiltinDefaultsMatchMigrationSeed
 // asserts the two cannot drift, so this stays a restore source rather than a
 // second source of truth.
 var builtinCountryDefaults = []CountrySetting{
@@ -89,7 +89,7 @@ var builtinCountryDefaults = []CountrySetting{
 	{Code: "ES", NameKey: "setup.country.es", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2100, TaxInclusive: true, DefaultLocale: "es-ES"},
 	{Code: "IT", NameKey: "setup.country.it", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2200, TaxInclusive: true, DefaultLocale: "it-IT"},
 	{Code: "NL", NameKey: "setup.country.nl", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2100, TaxInclusive: true, DefaultLocale: "nl-NL"},
-	// ADR-0124: PT's shadow_customer_documents is "forbidden" (054).
+	// ADR-0124: PT's shadow_customer_documents is "forbidden" (055).
 	{Code: "PT", NameKey: "setup.country.pt", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2300, TaxInclusive: true, DefaultLocale: "pt-PT", ShadowCustomerDocuments: shadowDocumentsForbidden},
 	{Code: "TR", NameKey: "setup.country.tr", Currency: "TRY", CurrencySymbol: "₺", TaxRateBP: 2000, TaxInclusive: true, DefaultLocale: "tr-TR"},
 	{Code: "AE", NameKey: "setup.country.ae", Currency: "AED", TaxRateBP: 500, TaxInclusive: true, DefaultLocale: "ar-AE"},
@@ -114,7 +114,7 @@ func BuiltinCountryDefaults() []CountrySetting {
 	return out
 }
 
-// Values of country_settings.shadow_customer_documents (054's CHECK allows
+// Values of country_settings.shadow_customer_documents (055's CHECK allows
 // exactly these two).
 const (
 	shadowDocumentsAllowed   = "allowed"
