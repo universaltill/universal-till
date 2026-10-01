@@ -86,6 +86,8 @@ type ItemSeed struct {
 	BasePrice int64
 	TaxCodeID string
 	IsActive  bool
+	Unit      string // defaults to "each" (schema default) when empty
+	IsWeighed bool
 }
 
 // VariantSeed defines the inputs for seeding a variant.
@@ -102,12 +104,19 @@ type VariantSeed struct {
 // SeedItem inserts a minimal item row.
 func SeedItem(t *testing.T, db *sql.DB, seed ItemSeed) {
 	t.Helper()
-	active := 0
+	active, weighed := 0, 0
 	if seed.IsActive {
 		active = 1
 	}
-	if _, err := db.Exec(`INSERT INTO items(id, sku, name, base_price, tax_code_id, is_active) VALUES(?,?,?,?,?,?)`,
-		seed.ID, seed.SKU, seed.Name, seed.BasePrice, seed.TaxCodeID, active); err != nil {
+	if seed.IsWeighed {
+		weighed = 1
+	}
+	unit := seed.Unit
+	if unit == "" {
+		unit = "each"
+	}
+	if _, err := db.Exec(`INSERT INTO items(id, sku, name, base_price, tax_code_id, is_active, unit, is_weighed) VALUES(?,?,?,?,?,?,?,?)`,
+		seed.ID, seed.SKU, seed.Name, seed.BasePrice, seed.TaxCodeID, active, unit, weighed); err != nil {
 		t.Fatalf("seed item: %v", err)
 	}
 }

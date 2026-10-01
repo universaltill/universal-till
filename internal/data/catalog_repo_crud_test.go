@@ -163,6 +163,39 @@ func TestGetItemLabel(t *testing.T) {
 	}
 }
 
+// ut-docs#3343: a weighed item's label needs its IsWeighed flag so the
+// caller can print "£x.xx per kg" (Price Marking Order 2004). Deliberately
+// NOT testing against `Unit: "kg"` only — review (finding 1) found a
+// catalog-imported weighed item always has `items.unit = "each"`
+// (internal/pages/import_page.go), and the hand-entry form's unit field
+// has no link to the Sold-by-weight checkbox either, so IsWeighed must
+// carry the whole signal on its own, independent of whatever `unit` says.
+func TestGetItemLabel_IncludesIsWeighed(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "SKU1", Name: "Bananas", BasePrice: 150, IsActive: true, Unit: "each", IsWeighed: true})
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i2", SKU: "SKU2", Name: "Mug", BasePrice: 500, IsActive: true})
+
+	l, ok, err := repo.GetItemLabel(ctx, "i1")
+	if err != nil || !ok {
+		t.Fatalf("expected label, got ok=%v err=%v", ok, err)
+	}
+	if !l.IsWeighed {
+		t.Fatalf("expected a weighed item even though its own unit field is %q, got IsWeighed=%v", "each", l.IsWeighed)
+	}
+
+	l2, ok, err := repo.GetItemLabel(ctx, "i2")
+	if err != nil || !ok {
+		t.Fatalf("expected label, got ok=%v err=%v", ok, err)
+	}
+	if l2.IsWeighed {
+		t.Fatalf("expected a non-weighed item, got IsWeighed=%v", l2.IsWeighed)
+	}
+}
+
 func TestGetItemLabel_StripsRetireMangledSKU(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()
@@ -248,6 +281,39 @@ func TestGetVariantLabel(t *testing.T) {
 
 	if _, ok, err := repo.GetVariantLabel(ctx, "missing"); err != nil || ok {
 		t.Fatalf("expected ok=false for a missing variant, got ok=%v err=%v", ok, err)
+	}
+}
+
+// ut-docs#3343 review finding 2: a variant has no is_weighed column of its
+// own, but internal/data/pos_repo.go's variant-sale queries price it by
+// weight whenever its PARENT item is weighed (e.g. "Apples Large" under a
+// weighed "Apples") — so its label must inherit the parent's flag, not
+// silently print a bare price.
+func TestGetVariantLabel_InheritsParentIsWeighed(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Apples", BasePrice: 150, IsActive: true, IsWeighed: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "i1", SKU: "S1-L", Name: "Large", Price: 180, IsActive: true})
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i2", SKU: "S2", Name: "Latte", BasePrice: 300, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v2", ItemID: "i2", SKU: "S2-L", Name: "Large", Price: 350, IsActive: true})
+
+	weighed, ok, err := repo.GetVariantLabel(ctx, "v1")
+	if err != nil || !ok {
+		t.Fatalf("expected label, got ok=%v err=%v", ok, err)
+	}
+	if !weighed.IsWeighed {
+		t.Fatalf("expected variant of a weighed item to inherit IsWeighed=true, got %v", weighed.IsWeighed)
+	}
+
+	notWeighed, ok, err := repo.GetVariantLabel(ctx, "v2")
+	if err != nil || !ok {
+		t.Fatalf("expected label, got ok=%v err=%v", ok, err)
+	}
+	if notWeighed.IsWeighed {
+		t.Fatalf("expected variant of a non-weighed item to have IsWeighed=false, got %v", notWeighed.IsWeighed)
 	}
 }
 

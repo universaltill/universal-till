@@ -116,6 +116,76 @@ func TestPostPrintLabels_SystemModeRendersPosNoticeError(t *testing.T) {
 	}
 }
 
+// ut-docs#3343: Price Marking Order 2004 — a weighed item's printed shelf
+// label must show its unit price ("per kg"), not just the bare price.
+func TestPostPrintLabels_WeighedItemPrintsPricePerUnit(t *testing.T) {
+	initLabelsNoticeI18n(t)
+	mux, dp := newPrintAPITestDeps(t)
+
+	// ut-docs#3343 review finding 1: a weighed item's OWN `unit` field is
+	// "each" in every real case (catalog import always writes "each"
+	// regardless of IsWeighed, and the hand-entry form's unit field has no
+	// link to the Sold-by-weight checkbox) — this seed deliberately does
+	// NOT use unit='kg', to prove the per-kg suffix doesn't depend on it.
+	if _, err := dp.Db.Exec(`INSERT INTO items (id, sku, name, base_price, unit, is_weighed) VALUES ('item-weighed', 'SKU-W', 'Bananas', 150, 'each', 1)`); err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO items (id, sku, name, base_price, unit, is_weighed) VALUES ('item-each', 'SKU-E', 'Mug', 500, 'each', 0)`); err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+	// A variant of a weighed item (e.g. "Apples Large" under weighed
+	// "Apples") must inherit the per-kg suffix too (review finding 2).
+	if _, err := dp.Db.Exec(`INSERT INTO items (id, sku, name, base_price, unit, is_weighed) VALUES ('item-weighed-parent', 'SKU-WP', 'Apples', 200, 'each', 1)`); err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO item_variants (id, item_id, sku, name, price, is_active) VALUES ('variant-weighed', 'item-weighed-parent', 'SKU-WP-L', 'Large', 220, 1)`); err != nil {
+		t.Fatalf("seed variant: %v", err)
+	}
+
+	devicePath := filepath.Join(t.TempDir(), "fake-printer")
+	if err := os.WriteFile(devicePath, nil, 0o644); err != nil {
+		t.Fatalf("create fake device file: %v", err)
+	}
+	if err := dp.Settings.Set(t.Context(), keyPrinterMode, "device"); err != nil {
+		t.Fatalf("set printer mode: %v", err)
+	}
+	if err := dp.Settings.Set(t.Context(), keyPrinterDevice, devicePath); err != nil {
+		t.Fatalf("set printer device: %v", err)
+	}
+
+	print := func(form string) string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/print/labels", strings.NewReader(form))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 for %q, got %d: %s", form, rec.Code, rec.Body.String())
+		}
+		out, err := os.ReadFile(devicePath)
+		if err != nil {
+			t.Fatalf("read device file: %v", err)
+		}
+		return string(out)
+	}
+	printItem := func(itemID string) string { return print("item_id=" + itemID) }
+
+	weighedJob := printItem("item-weighed")
+	if !strings.Contains(weighedJob, "£1.50 per kg") {
+		t.Fatalf("expected weighed item's label job to contain %q, got: %q", "£1.50 per kg", weighedJob)
+	}
+
+	variantOfWeighedJob := print("variant_id=variant-weighed")
+	if !strings.Contains(variantOfWeighedJob, "£2.20 per kg") {
+		t.Fatalf("expected a variant of a weighed item to inherit the per-kg suffix, got: %q", variantOfWeighedJob)
+	}
+
+	eachJob := printItem("item-each")
+	if strings.Contains(eachJob, "per ") {
+		t.Fatalf("non-weighed item's label job must not carry a unit-price suffix, got: %q", eachJob)
+	}
+}
+
 func TestPostPrintLabels_SuccessRendersPosNoticeSuccessWithCopiesCount(t *testing.T) {
 	initLabelsNoticeI18n(t)
 	mux, dp := newPrintAPITestDeps(t)
