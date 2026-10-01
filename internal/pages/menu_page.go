@@ -181,6 +181,13 @@ func init() {
 		"catalog_management": func(v *menuVisibility) bool {
 			return canPerform(v.d, v.r, "catalog_management")
 		},
+		// ut-docs#3135: the /report-issue tile gates on the same action the
+		// page, its nav chip and its API do (issueReportingAction) -- it used
+		// to borrow "settings", so a role granted one but not the other saw
+		// a tile that 403'd or reached the page with no tile.
+		"issue_reporting": func(v *menuVisibility) bool {
+			return canPerform(v.d, v.r, issueReportingAction)
+		},
 		// ut-docs#3079 (cashier is sale-only): the /reports tile — the page
 		// itself 403s on the same action (requirePage, reports_page.go).
 		"reports": func(v *menuVisibility) bool {

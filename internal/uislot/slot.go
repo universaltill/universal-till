@@ -278,7 +278,7 @@ var CoreMenu = []Entry{
 	// Order 2700, between /translations and /fiscal-register) so the
 	// group's members stay contiguous in this declaration — see the
 	// package doc comment above for why that matters.
-	{Key: "/report-issue", Href: "/report-issue", LabelKey: "issuereport.title", Icon: "bug", Order: 2500, VisibleIf: "settings"},
+	{Key: "/report-issue", Href: "/report-issue", LabelKey: "issuereport.title", Icon: "bug", Order: 2500, VisibleIf: "issue_reporting"}, // ut-docs#3135: same action as the page
 	// ut-docs#2008: the single gated "Administration" tile that replaces
 	// #1959's group heading below — opens /admin, a tree page listing
 	// whichever of the six grouped destinations below the viewer can see.
