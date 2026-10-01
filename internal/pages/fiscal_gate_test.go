@@ -38,7 +38,7 @@ func newFiscalTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	}
 	engine := pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver)
 
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "EUR", TaxRate: 19}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "EUR", TaxRateBP: 1900}}
 	pm, err := plugins.Init(t.Context(), cfg, db)
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)

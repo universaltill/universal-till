@@ -55,7 +55,7 @@ func setupSelfOrderShopDeps(t *testing.T) (*common.Deps, *db.DB) {
 	dp := &common.Deps{
 		Cfg:         &config.Config{Theme: "default", StoreName: "Task Runner Cafe"},
 		Db:          d.DB,
-		State:       common.RuntimeState{Currency: "GBP", TaxRatePct: 20},
+		State:       common.RuntimeState{Currency: "GBP", TaxRateBP: 2000},
 		Menu:        []common.MenuItem{},
 		Settings:    settings.NewStore(d.DB),
 		Engine:      engine,
@@ -722,7 +722,7 @@ func TestSelfOrderShop_CheckoutHappyPath(t *testing.T) {
 	if err := d.DB.QueryRow(`SELECT total FROM sales WHERE status = 'completed'`).Scan(&total); err != nil {
 		t.Fatalf("expected a completed sale row: %v", err)
 	}
-	// 320 + 20% tax (setupSelfOrderShopDeps: TaxRatePct 20, TaxInclusive false).
+	// 320 + 20% tax (setupSelfOrderShopDeps: TaxRateBP 2000, TaxInclusive false).
 	if total != 384 {
 		t.Fatalf("want sale total 384 (320 + 20%% tax), got %d", total)
 	}

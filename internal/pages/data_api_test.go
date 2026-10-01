@@ -46,7 +46,7 @@ func newDataAPITestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	seedForPages(t, db)
 	seedDataAPIManager(t, db)
 
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
 	pm, err := plugins.Init(t.Context(), cfg, db)
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
@@ -666,7 +666,7 @@ func newRealDBDataAPIDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	dp := &common.Deps{
 		Db:       dbo,
 		Settings: settings.NewStore(dbo),
-		Cfg:      &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}},
+		Cfg:      &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}},
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
 		AuthSvc:  auth.NewService(dbo),
 	}

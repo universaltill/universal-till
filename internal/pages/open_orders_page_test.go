@@ -33,7 +33,7 @@ func newOpenOrdersTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	d := &common.Deps{
 		Db:       hold.Db,
 		Engine:   hold.Engine,
-		State:    common.RuntimeState{Currency: "GBP", TaxRatePct: 20},
+		State:    common.RuntimeState{Currency: "GBP", TaxRateBP: 2000},
 		Settings: settings.NewStore(hold.Db),
 		Menu:     []common.MenuItem{{Href: "/", Label: "nav.till"}},
 	}

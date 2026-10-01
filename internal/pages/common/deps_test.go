@@ -139,7 +139,7 @@ func TestDeps_StateMuSerializesConcurrentAccess(t *testing.T) {
 		wg.Add(2)
 		go func(n int) {
 			defer wg.Done()
-			d.UpdateState(func(s *RuntimeState) { s.TaxRatePct = n })
+			d.UpdateState(func(s *RuntimeState) { s.TaxRateBP = n })
 		}(i)
 		go func() {
 			defer wg.Done()

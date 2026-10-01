@@ -111,7 +111,7 @@ func TestRecordFiscalDeviceEvidence_PersistsAndConfirmsOnce(t *testing.T) {
 	// ut-docs#1750: the confirmation half only runs for the market this flow
 	// is for, so the happy path needs a real Turkish shop with the plugin.
 	seedActiveTaxTrPlugin(t, db, true)
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "TRY", TaxRate: 20}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "TRY", TaxRateBP: 2000}}
 	st := settings.NewStore(db)
 	if err := st.Set(t.Context(), "store.country", "TR"); err != nil {
 		t.Fatalf("set country: %v", err)
@@ -196,7 +196,7 @@ func TestRecordFiscalDeviceEvidence_DoesNotConfirmOutsideTurkey(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role) VALUES ('cashier','cashier1','Cashier One','x','cashier')`); err != nil {
 		t.Fatalf("seed actor: %v", err)
 	}
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "EUR", TaxRate: 19}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "EUR", TaxRateBP: 1900}}
 	st := settings.NewStore(db)
 	if err := st.Set(t.Context(), "store.country", "DE"); err != nil {
 		t.Fatalf("set country: %v", err)

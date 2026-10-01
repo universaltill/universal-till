@@ -60,7 +60,7 @@ func setupScanBarcodeDeps(t *testing.T) (*http.ServeMux, *common.Deps, *db.DB) {
 	dp := &common.Deps{
 		Cfg:      &config.Config{Theme: "default", StoreName: "Scale Test Shop"},
 		Db:       d.DB,
-		State:    common.RuntimeState{Currency: "EUR", TaxRatePct: 20},
+		State:    common.RuntimeState{Currency: "EUR", TaxRateBP: 2000},
 		Settings: settings.NewStore(d.DB),
 		Engine:   engine,
 	}

@@ -23,7 +23,7 @@ func newJournalMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
 
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
 	setStore := settings.NewStore(db)
 	d := &common.Deps{
 		Cfg:      cfg,

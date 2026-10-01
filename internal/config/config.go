@@ -12,12 +12,16 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/paths"
+	"github.com/universaltill/universal-till/internal/taxrate"
 )
 
 type Locales struct {
-	Currency     string
-	Locale       string
-	TaxRate      int
+	Currency string
+	Locale   string
+	// TaxRateBP is the shop's default VAT rate in basis points (810 = 8.1 %),
+	// ut-docs#3259. UT_TAX_RATE and the stored store.tax_rate setting stay
+	// percent strings; internal/taxrate.ParsePercent/FormatPercent convert.
+	TaxRateBP    int
 	TaxInclusive bool
 
 	// CurrencySymbol was removed (ut-docs#1172): it was a dead, drift-prone
@@ -245,13 +249,18 @@ func Init() (*Config, error) {
 		},
 	}
 
-	taxRate, _ := strconv.Atoi(getenv("UT_TAX_RATE", "20"))
+	// UT_TAX_RATE is a percent string, fractional allowed ("8.1"); an
+	// unreadable value falls back to 20 % (ut-docs#3259).
+	taxRateBP, ok := taxrate.ParsePercent(getenv("UT_TAX_RATE", "20"))
+	if !ok {
+		taxRateBP = 2000
+	}
 	tax_inclusive, _ := strconv.ParseBool(getenv("UT_TAX_INCLUSIVE", "true"))
 
 	locales := Locales{
 		Currency:     getenv("UT_CURRENCY", "GBP"),
 		Locale:       getenv("UT_DEFAULT_LOCALE", "en-US"),
-		TaxRate:      taxRate,
+		TaxRateBP:    taxRateBP,
 		TaxInclusive: tax_inclusive,
 	}
 	cfg.Locales = locales

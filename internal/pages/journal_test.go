@@ -28,7 +28,7 @@ func TestOfflineTenderUpdatesJournal(t *testing.T) {
 	}
 
 	setStore := settings.NewStore(db)
-	state := common.LoadState(t.Context(), setStore, &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}})
+	state := common.LoadState(t.Context(), setStore, &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}})
 	pm, err := plugins.Init(t.Context(), &config.Config{}, db)
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)

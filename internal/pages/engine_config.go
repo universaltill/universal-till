@@ -61,7 +61,7 @@ func applyEngineConfig(ctx context.Context, d *common.Deps) {
 func engineConfigFor(st common.RuntimeState) pos.Config {
 	return pos.Config{
 		TaxInclusive:                 st.TaxInclusive,
-		TaxRateBasisPoints:           st.TaxRatePct * 100,
+		TaxRateBasisPoints:           st.TaxRateBP,
 		ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(st),
 		ChargesForbidden:             common.ServiceChargeForbidden(st.Country),
 	}

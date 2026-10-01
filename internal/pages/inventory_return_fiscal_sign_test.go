@@ -30,7 +30,7 @@ func newInventoryReturnTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
 
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
 	pm, err := plugins.Init(t.Context(), cfg, db)
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)

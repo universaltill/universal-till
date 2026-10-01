@@ -30,7 +30,7 @@ func TestPromoBarcodeSetsDiscount_FromDB(t *testing.T) {
 	_, _ = db.Exec(`INSERT INTO promotions(code, type, value, description, is_active) VALUES('PROMO50','amount',50,'50p off',1)`)
 
 	dp := &common.Deps{
-		State:  common.RuntimeState{Currency: "GBP", TaxRatePct: 20},
+		State:  common.RuntimeState{Currency: "GBP", TaxRateBP: 2000},
 		Engine: pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, nil),
 		Db:     db,
 	}
@@ -64,7 +64,7 @@ func TestPromoBarcodeSetsDiscount_Percent(t *testing.T) {
 		"100": {SKU: "100", Name: "Item", Qty: 1, PriceCents: 1000},
 	}
 	dp := &common.Deps{
-		State:  common.RuntimeState{Currency: "GBP", TaxRatePct: 20},
+		State:  common.RuntimeState{Currency: "GBP", TaxRateBP: 2000},
 		Engine: pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver),
 		Db:     db,
 	}
@@ -101,7 +101,7 @@ func TestPromoBarcodeRequiresCustomerMatch(t *testing.T) {
 	_, _ = db.Exec(`INSERT INTO promotions(code, type, value, description, customer_id, is_active) VALUES('PROMO-CUST','amount',250,'£2.50 off','cust-1',1);`)
 
 	dp := &common.Deps{
-		State:  common.RuntimeState{Currency: "GBP", TaxRatePct: 20},
+		State:  common.RuntimeState{Currency: "GBP", TaxRateBP: 2000},
 		Engine: pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, promoStubResolver{}),
 		Db:     db,
 	}

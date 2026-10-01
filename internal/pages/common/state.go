@@ -12,6 +12,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
+	"github.com/universaltill/universal-till/internal/taxrate"
 	"github.com/universaltill/universal-till/internal/uislot"
 )
 
@@ -384,7 +385,7 @@ func LoadStateChecked(ctx context.Context, store *settings.Store, cfg *config.Co
 		Country:                get(KeyCountry, "GB"),
 		Region:                 get(KeyRegion, ""),
 		Locale:                 get(KeyLocale, cfg.Locales.Locale),
-		TaxRatePct:             cfg.Locales.TaxRate,
+		TaxRateBP:              cfg.Locales.TaxRateBP,
 		TaxInclusive:           cfg.Locales.TaxInclusive,
 		AllowNegativeInventory: false,
 	}
@@ -404,10 +405,10 @@ func LoadStateChecked(ctx context.Context, store *settings.Store, cfg *config.Co
 			st.BasketPanelWidthRem = ClampBasketPanelWidthRem(f)
 		}
 	}
-	if v := get(KeyTaxRate, strconv.Itoa(cfg.Locales.TaxRate)); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			st.TaxRatePct = n
-		}
+	// store.tax_rate is a percent string, fractional allowed ("8.1" →
+	// 810 bp, ut-docs#3259); an unreadable value keeps cfg's default.
+	if bp, ok := taxrate.ParsePercent(get(KeyTaxRate, "")); ok {
+		st.TaxRateBP = bp
 	}
 	if v := get(KeyServiceChargeRate, "0"); v != "" {
 		if bp, ok := ParseServiceChargeRateBasisPoints(v); ok {
@@ -603,7 +604,7 @@ func StateKV(ctx context.Context, store *settings.Store, st RuntimeState) map[st
 		KeyRegion:                 st.Region,
 		KeyLocale:                 st.Locale,
 		KeyTaxInclusive:           strconv.FormatBool(st.TaxInclusive),
-		KeyTaxRate:                strconv.Itoa(st.TaxRatePct),
+		KeyTaxRate:                taxrate.FormatPercent(st.TaxRateBP), // "19" / "8.1" (ut-docs#3259)
 		KeyServiceChargeRate:      FormatServiceChargeRatePercent(st.ServiceChargeRateBasisPoints),
 		KeyAllowNegativeInventory: strconv.FormatBool(st.AllowNegativeInventory),
 		KeyBrowsingMode:           ClampBrowsingMode(st.BrowsingMode),

@@ -103,8 +103,8 @@ func TestInitDefaults(t *testing.T) {
 	if cfg.Locales.Currency != "GBP" {
 		t.Errorf("Locales currency = %+v", cfg.Locales)
 	}
-	if cfg.Locales.TaxRate != 20 {
-		t.Errorf("TaxRate = %d, want 20", cfg.Locales.TaxRate)
+	if cfg.Locales.TaxRateBP != 2000 {
+		t.Errorf("TaxRateBP = %d, want 2000", cfg.Locales.TaxRateBP)
 	}
 	if !cfg.Locales.TaxInclusive {
 		t.Error("TaxInclusive must default to true")
@@ -212,8 +212,8 @@ func TestInitHonorsEnvOverrides(t *testing.T) {
 	if cfg.Locales.Currency != "EUR" {
 		t.Errorf("Locales currency = %+v", cfg.Locales)
 	}
-	if cfg.Locales.TaxRate != 19 {
-		t.Errorf("TaxRate = %d", cfg.Locales.TaxRate)
+	if cfg.Locales.TaxRateBP != 1900 {
+		t.Errorf("TaxRateBP = %d", cfg.Locales.TaxRateBP)
 	}
 	if cfg.Locales.TaxInclusive {
 		t.Error("TaxInclusive should be false")
@@ -306,5 +306,21 @@ func TestNormalizeStoreName(t *testing.T) {
 				t.Fatalf("NormalizeStoreName(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// ut-docs#3259: UT_TAX_RATE stays a percent string but may be fractional
+// ("8.1" → 810 bp); anything ParsePercent refuses falls back to 20 %.
+func TestInitTaxRateEnvFractional(t *testing.T) {
+	for in, want := range map[string]int{"8.1": 810, "8,1": 810, "19": 1900, "abc": 2000, "8.125": 2000, "101": 2000, "-5": 2000} {
+		unsetForTest(t, configEnvKeys)
+		t.Setenv("UT_TAX_RATE", in)
+		cfg, err := Init()
+		if err != nil {
+			t.Fatalf("Init: %v", err)
+		}
+		if cfg.Locales.TaxRateBP != want {
+			t.Errorf("UT_TAX_RATE=%q: TaxRateBP = %d, want %d", in, cfg.Locales.TaxRateBP, want)
+		}
 	}
 }

@@ -44,7 +44,7 @@ func TestImport_CategoryAndTaxCodeLookupsAreCachedPerRun(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = seedDB.Close() })
 
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", Locale: "en", TaxRate: 20}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", Locale: "en", TaxRateBP: 2000}}
 	pm, err := plugins.Init(t.Context(), cfg, seedDB.DB)
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)

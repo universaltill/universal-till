@@ -121,7 +121,7 @@ func TestSetupWizardHappyPath(t *testing.T) {
 	if done, ok, _ := d.Settings.Get(t.Context(), "setup.completed"); !ok || done != "true" {
 		t.Fatalf("setup.completed = %q ok=%v", done, ok)
 	}
-	if d.CurrentState().Currency != "GBP" || d.CurrentState().TaxRatePct != 20 {
+	if d.CurrentState().Currency != "GBP" || d.CurrentState().TaxRateBP != 2000 {
 		t.Fatalf("state not applied: %+v", d.CurrentState())
 	}
 	// The admin PIN works at the keypad.
@@ -969,9 +969,9 @@ func TestSetupWizardPrefillsAdminEditedCountry(t *testing.T) {
 		t.Fatalf("GET /setup?lang=en: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	// 2150bp rounds to 22% (round-half-up; see wizardCountries' doc comment
-	// on why the wizard only carries whole-percent precision).
-	for _, want := range []string{"country: 'GB'", "currency: 'GBP'", "tax: '22'"} {
+	// 2150bp prefills exactly 21.5 — no whole-percent rounding since
+	// ut-docs#3259.
+	for _, want := range []string{"country: 'GB'", "currency: 'GBP'", "tax: '21.5'"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("GET /setup?lang=en body missing %q after editing GB's tax rate — wizard is not reading country_settings:\n%s", want, body)
 		}
@@ -1066,5 +1066,48 @@ func TestSetupWizardPINErrorRerenderKeepsStoreName(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("PIN-error re-render lacks %s", want)
 		}
+	}
+}
+
+// ut-docs#3259: a fractional country rate (Switzerland's 8.1 %, 810 bp)
+// prefills the wizard exactly — it used to round to a whole 8 % — and
+// posting it back stores store.tax_rate "8.1" and 810 bp live.
+func TestSetupWizardFractionalTaxRate(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	repo := data.NewCountrySettingsRepo(d.Db)
+	gb, ok, err := repo.Get(t.Context(), "GB")
+	if err != nil || !ok {
+		t.Fatalf("seeded GB missing: ok=%v err=%v", ok, err)
+	}
+	gb.TaxRateBP = 810
+	if err := repo.Upsert(t.Context(), gb); err != nil {
+		t.Fatalf("edit GB: %v", err)
+	}
+
+	withOSLocale(t, "en_GB.UTF-8", "Europe/London")
+	rec := getSetup(mux, "?lang=en", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup?lang=en: code=%d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"tax: '8.1'", `value="GB" data-currency="GBP" data-tax="8.1"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /setup body missing %q", want)
+		}
+	}
+
+	rec = postForm(mux, "/api/setup", url.Values{
+		"pin": {"2468"}, "pin_confirm": {"2468"},
+		"country": {"GB"}, "currency": {"GBP"}, "tax_rate_pct": {"8.1"},
+		"store_name": {"Corner Shop"},
+	}, nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), common.KeyTaxRate); v != "8.1" {
+		t.Fatalf("store.tax_rate = %q, want %q", v, "8.1")
+	}
+	if got := d.CurrentState().TaxRateBP; got != 810 {
+		t.Fatalf("live TaxRateBP = %d, want 810", got)
 	}
 }

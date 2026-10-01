@@ -27,7 +27,7 @@ func TestScanHandlerUpdatesBasketTotals(t *testing.T) {
 		"ABC": {SKU: "ABC", Name: "Test Item", Qty: 1, PriceCents: 100},
 	}
 	dp := &common.Deps{
-		State:  common.RuntimeState{Currency: "GBP", TaxRatePct: 20},
+		State:  common.RuntimeState{Currency: "GBP", TaxRateBP: 2000},
 		Engine: pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver),
 		Db:     db,
 	}

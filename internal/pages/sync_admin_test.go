@@ -33,7 +33,7 @@ func newMigratedSyncDeps(t *testing.T, name string) *common.Deps {
 
 	cfg := &config.Config{
 		Theme:   "default",
-		Locales: config.Locales{Currency: "GBP", Locale: "en", TaxRate: 20},
+		Locales: config.Locales{Currency: "GBP", Locale: "en", TaxRateBP: 2000},
 		// CompiledDefaultLocale mirrors Locales.Locale here, same as
 		// config.Init() sets them identically at boot (ut-docs#1892) —
 		// LoadRuntimeConfig is what diverges them in production by

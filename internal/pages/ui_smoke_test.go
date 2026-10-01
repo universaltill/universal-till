@@ -185,7 +185,7 @@ func TestIndexAndBasketRender(t *testing.T) {
 	engine := pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver)
 	cfg := &config.Config{
 		Theme:   "default",
-		Locales: config.Locales{Currency: "GBP", TaxRate: 20},
+		Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000},
 		Marketplace: config.MarketplaceConfig{
 			EndpointURL: mockMarketplace.URL,
 		},
@@ -290,7 +290,7 @@ func TestPOSTenderSplitPayments(t *testing.T) {
 	}
 
 	setStore := settings.NewStore(db)
-	state := common.LoadState(t.Context(), setStore, &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}})
+	state := common.LoadState(t.Context(), setStore, &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}})
 	pm, err := plugins.Init(t.Context(), &config.Config{}, db)
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
@@ -376,7 +376,7 @@ VALUES ('com.tax.plugin', 'receipt_legal', '', 'Receipt Legal', '', 'receipt_tem
 	}
 
 	setStore := settings.NewStore(db)
-	state := common.LoadState(t.Context(), setStore, &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}})
+	state := common.LoadState(t.Context(), setStore, &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}})
 	pm, err := plugins.Init(t.Context(), &config.Config{}, db)
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
@@ -503,7 +503,7 @@ func TestInventoryFormRender(t *testing.T) {
 
 	cfg := &config.Config{
 		Theme:   "default",
-		Locales: config.Locales{Currency: "GBP", TaxRate: 20},
+		Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000},
 		Marketplace: config.MarketplaceConfig{
 			EndpointURL: "http://localhost:8081",
 		},
@@ -583,7 +583,7 @@ func TestInventoryReceiptTriggersStockTableRefresh(t *testing.T) {
 
 	cfg := &config.Config{
 		Theme:   "default",
-		Locales: config.Locales{Currency: "GBP", TaxRate: 20},
+		Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000},
 		Marketplace: config.MarketplaceConfig{
 			EndpointURL: "http://localhost:8081",
 		},
@@ -654,7 +654,7 @@ func TestManagerOverrideForm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
 	}
-	state := common.LoadState(t.Context(), settings.NewStore(db), &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}})
+	state := common.LoadState(t.Context(), settings.NewStore(db), &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}})
 	dp := &common.Deps{
 		Db:       db,
 		State:    state,
@@ -723,7 +723,7 @@ func TestReturnFormRender(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
 	}
-	state := common.LoadState(t.Context(), settings.NewStore(db), &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}})
+	state := common.LoadState(t.Context(), settings.NewStore(db), &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}})
 	dp := &common.Deps{
 		Db:       db,
 		State:    state,
@@ -771,7 +771,7 @@ func TestLowStockBadge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
 	}
-	state := common.LoadState(t.Context(), settings.NewStore(db), &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}})
+	state := common.LoadState(t.Context(), settings.NewStore(db), &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}})
 	dp := &common.Deps{
 		Db:       db,
 		State:    state,

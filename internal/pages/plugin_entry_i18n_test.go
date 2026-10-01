@@ -112,7 +112,7 @@ func TestPayTab_PaymentEntryLabelResolvesPluginLocaleOverlay(t *testing.T) {
 	writePluginLocaleOverlay(t, pluginID, version, "de", "payment.sumup.label", "Kartenzahlung SumUp")
 
 	i18n := newI18nForEntryOverlayTest(t)
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
 	pm, err := plugins.Init(t.Context(), cfg, db)
 	if err != nil {
 		t.Fatalf("plugins.Init: %v", err)

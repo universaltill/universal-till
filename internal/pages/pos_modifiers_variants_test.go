@@ -78,7 +78,7 @@ func setupVariantModifiersTestDeps(t *testing.T) (*common.Deps, *db.DB) {
 		"T-1":          {SKU: "TEA-1", ItemID: "itm-tea", VariantID: "v-tea-1", Name: "Tea Mug", Qty: 1, PriceCents: 250},
 	}
 	dp := &common.Deps{
-		State:       common.RuntimeState{Currency: "GBP", TaxRatePct: 20},
+		State:       common.RuntimeState{Currency: "GBP", TaxRateBP: 2000},
 		Engine:      pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver),
 		KioskEngine: pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver),
 		Db:          d.DB,
@@ -487,7 +487,7 @@ func setupVariantModifiersRealResolverTestDeps(t *testing.T) (*common.Deps, *db.
 
 	resolver := ui.PriceResolverAdapter{Store: ui.NewButtonStore(d.DB)}
 	dp := &common.Deps{
-		State:       common.RuntimeState{Currency: "GBP", TaxRatePct: 20},
+		State:       common.RuntimeState{Currency: "GBP", TaxRateBP: 2000},
 		Engine:      pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver),
 		KioskEngine: pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver),
 		Db:          d.DB,
