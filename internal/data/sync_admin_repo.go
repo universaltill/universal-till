@@ -1105,14 +1105,12 @@ UPDATE price_history SET ends_at = CURRENT_TIMESTAMP
 // itself fixed — and reuses generatedVariantSKU() directly since this file
 // lives in the same package.
 //
-// Deliberately NOT sticky across repeated polls: if the primary is still
-// sending a blank sku on the NEXT pull, the generic upsert above rewrites
-// sku=NULL first (primary always wins, this table's whole raison d'être),
-// and this function then hands out a *fresh* code again. The value can
-// therefore change between polls while a primary stays behind — cosmetic,
-// self-resolving the moment that primary itself boots the fix — but it can
-// never go back to being genuinely codeless, which is the actual
-// correctness property this guards.
+// Stable across repeated polls: item_variants.sku is a sticky column
+// (stickyNonBlankCols, ut-docs#2246), so when the primary is still sending a
+// blank sku on the NEXT pull the generic upsert above keeps the code handed
+// out here, and since ut-docs#2875 doesn't rewrite the row at all. It can
+// never go back to being genuinely codeless, which is the correctness
+// property this guards.
 //
 // Also catches a revived retire-mangled sku (ut-docs#2273): deleteMissing's
 // FK-blocked retire-in-place rewrites item_variants.sku to "<sku>~<id>" — a
@@ -1434,26 +1432,35 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 		// FK-blocked (row referenced by local sales history): retire it in
 		// place — deactivate, and release its UNIQUE values (sku, username,
 		// …) so the primary's row can still upsert. The CASE keeps the
-		// mangle idempotent across pulls.
+		// mangle idempotent across pulls, and `pending` skips a row that is
+		// already retired: an UPDATE that rewrites the same values still
+		// fires the version triggers, refreshing every open sale screen on
+		// every pull (ut-docs#2875).
 		if t.hasIsActive || len(t.unique) > 0 {
-			var sets []string
+			var sets, pending []string
 			if t.hasIsActive {
 				col := t.activeCol
 				if col == "" {
 					col = "is_active"
 				}
 				sets = append(sets, col+" = 0")
+				pending = append(pending, col+" IS NOT 0")
 			}
 			pk := t.pk[0]
 			for _, c := range t.unique {
 				sets = append(sets, fmt.Sprintf(
 					"%s = CASE WHEN %s LIKE '%%~' || %s THEN %s ELSE %s || '~' || %s END",
 					c, c, pk, c, c, pk))
+				pending = append(pending, fmt.Sprintf("NOT (%s LIKE '%%~' || %s)", c, pk))
 			}
-			if _, derr := tx.ExecContext(ctx,
-				`UPDATE `+t.name+` SET `+strings.Join(sets, ", ")+` WHERE `+strings.Join(where, " AND "),
-				args...); derr == nil {
-				logSatelliteDivergencePrune(t, args, "retired in place, has history")
+			res, derr := tx.ExecContext(ctx,
+				`UPDATE `+t.name+` SET `+strings.Join(sets, ", ")+
+					` WHERE `+strings.Join(where, " AND ")+` AND (`+strings.Join(pending, " OR ")+`)`,
+				args...)
+			if derr == nil {
+				if n, _ := res.RowsAffected(); n > 0 {
+					logSatelliteDivergencePrune(t, args, "retired in place, has history")
+				}
 				continue
 			}
 		}
@@ -1517,11 +1524,13 @@ func syncedDays(v any) int64 {
 // actually travel (skip/redact/missing-column rules already applied, ut-docs#1369's
 // upsertRows groups rows sharing an identical `names`+`sets` signature so they
 // can share one multi-row statement), the SET-clause fragments for an
-// ON CONFLICT UPDATE, and the row's own bind values in `names` order.
+// ON CONFLICT UPDATE, the matching change predicates for its WHERE
+// (ut-docs#2875), and the row's own bind values in `names` order.
 type resolvedUpsertRow struct {
-	names []string
-	sets  []string
-	args  []any
+	names   []string
+	sets    []string
+	changed []string
+	args    []any
 }
 
 // resolveUpsertRow applies upsertRows' (and, historically, the now-removed
@@ -1551,7 +1560,14 @@ func resolveUpsertRow(t adminTable, cols []string, rec map[string]any) resolvedU
 	}
 	var names []string
 	var args []any
-	var sets []string
+	var sets, changed []string
+	// set records one updated column: its SET fragment and the predicate
+	// that is true only when that write would change the stored value.
+	// Bare column names in an upsert's WHERE are the existing row.
+	set := func(c, expr string) {
+		sets = append(sets, c+" = "+expr)
+		changed = append(changed, c+" IS NOT "+expr)
+	}
 	for _, c := range cols {
 		if skip[c] {
 			continue // till-local column; ignore even if an older primary sends it
@@ -1565,7 +1581,7 @@ func resolveUpsertRow(t adminTable, cols []string, rec map[string]any) resolvedU
 			names = append(names, c)
 			args = append(args, nil)
 			if !isPK[c] {
-				sets = append(sets, c+" = NULL")
+				set(c, "NULL")
 			}
 			continue
 		}
@@ -1580,13 +1596,13 @@ func resolveUpsertRow(t adminTable, cols []string, rec map[string]any) resolvedU
 				// A blank incoming value leaves the existing local value
 				// untouched; a real one still overwrites — see
 				// stickyNonBlankCols' own doc comment.
-				sets = append(sets, c+" = COALESCE(NULLIF(excluded."+c+", ''), "+c+")")
+				set(c, "COALESCE(NULLIF(excluded."+c+", ''), "+c+")")
 			} else {
-				sets = append(sets, c+" = excluded."+c)
+				set(c, "excluded."+c)
 			}
 		}
 	}
-	return resolvedUpsertRow{names: names, sets: sets, args: args}
+	return resolvedUpsertRow{names: names, sets: sets, changed: changed, args: args}
 }
 
 // maxBatchPlaceholders bounds how many bound parameters one multi-row
@@ -1611,9 +1627,10 @@ const maxBatchPlaceholders = 4000
 // rows — the unit buildUpsertBatches groups recs into and upsertRows then
 // executes one-for-one.
 type upsertBatch struct {
-	names []string
-	sets  []string
-	rows  [][]any
+	names   []string
+	sets    []string
+	changed []string
+	rows    [][]any
 }
 
 // buildUpsertBatches groups recs by resolveUpsertRow's exact column
@@ -1635,9 +1652,10 @@ type upsertBatch struct {
 // database.
 func buildUpsertBatches(t adminTable, cols []string, recs []map[string]any) []upsertBatch {
 	type group struct {
-		names []string
-		sets  []string
-		rows  [][]any
+		names   []string
+		sets    []string
+		changed []string
+		rows    [][]any
 	}
 	groups := map[string]*group{}
 	var order []string
@@ -1649,7 +1667,7 @@ func buildUpsertBatches(t adminTable, cols []string, recs []map[string]any) []up
 		sig := strings.Join(rr.names, "\x1f")
 		g, ok := groups[sig]
 		if !ok {
-			g = &group{names: rr.names, sets: rr.sets}
+			g = &group{names: rr.names, sets: rr.sets, changed: rr.changed}
 			groups[sig] = g
 			order = append(order, sig)
 		}
@@ -1668,7 +1686,7 @@ func buildUpsertBatches(t adminTable, cols []string, recs []map[string]any) []up
 			if end > len(g.rows) {
 				end = len(g.rows)
 			}
-			batches = append(batches, upsertBatch{names: g.names, sets: g.sets, rows: g.rows[start:end]})
+			batches = append(batches, upsertBatch{names: g.names, sets: g.sets, changed: g.changed, rows: g.rows[start:end]})
 		}
 	}
 	return batches
@@ -1687,7 +1705,7 @@ func buildUpsertBatches(t adminTable, cols []string, recs []map[string]any) []up
 // wire/bundle format.
 func upsertRows(ctx context.Context, tx *sql.Tx, t adminTable, cols []string, recs []map[string]any) error {
 	for _, b := range buildUpsertBatches(t, cols, recs) {
-		if err := execUpsertBatch(ctx, tx, t, b.names, b.sets, b.rows); err != nil {
+		if err := execUpsertBatch(ctx, tx, t, b); err != nil {
 			return err
 		}
 	}
@@ -1696,11 +1714,18 @@ func upsertRows(ctx context.Context, tx *sql.Tx, t adminTable, cols []string, re
 
 // execUpsertBatch issues one multi-row INSERT ... ON CONFLICT statement for
 // rows that all share the same resolved names/sets (see upsertRows).
-func execUpsertBatch(ctx context.Context, tx *sql.Tx, t adminTable, names, sets []string, rows [][]any) error {
+//
+// ut-docs#2875: the DO UPDATE only fires for a row whose values would
+// change. SQLite runs AFTER UPDATE triggers even for an identical rewrite,
+// so without the WHERE every re-applied row bumped sync_admin_version and
+// sell_screen_version, and every replica's open sale screen refreshed its
+// tile grid for an unrelated admin write on the main till.
+func execUpsertBatch(ctx context.Context, tx *sql.Tx, t adminTable, b upsertBatch) error {
+	names, sets := b.names, b.sets
 	rowPH := "(" + strings.TrimSuffix(strings.Repeat("?, ", len(names)), ", ") + ")"
-	placeholders := make([]string, len(rows))
-	args := make([]any, 0, len(rows)*len(names))
-	for i, row := range rows {
+	placeholders := make([]string, len(b.rows))
+	args := make([]any, 0, len(b.rows)*len(names))
+	for i, row := range b.rows {
 		placeholders[i] = rowPH
 		args = append(args, row...)
 	}
@@ -1709,7 +1734,7 @@ func execUpsertBatch(ctx context.Context, tx *sql.Tx, t adminTable, names, sets 
 	if len(sets) == 0 {
 		q += `NOTHING`
 	} else {
-		q += `UPDATE SET ` + strings.Join(sets, ", ")
+		q += `UPDATE SET ` + strings.Join(sets, ", ") + ` WHERE ` + strings.Join(b.changed, " OR ")
 	}
 	_, err := tx.ExecContext(ctx, q, args...)
 	return err
