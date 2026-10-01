@@ -384,6 +384,30 @@ stops the till from starting.
   "Not available in the demo." with status 403. The till binds exactly
   `UT_LISTEN_ADDR` (no fallback port) and never opens a browser.
 
+### Report-only Content-Security-Policy (developers and testing)
+
+`UT_CSP_REPORT_ONLY` (bool, default off; an unparseable value counts as off)
+inventories what a Content-Security-Policy would break before any is enforced
+(ut-docs#2913, slice 1). Off, nothing changes: no header and no route.
+
+- On, every response carries
+  `Content-Security-Policy-Report-Only: default-src 'self'; script-src 'self' 'report-sample'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; report-uri /csp-report`.
+  The browser blocks nothing; it only reports. Plugin pages keep their own
+  enforced policy as well.
+- `POST /csp-report` collects the reports (`application/csp-report` and
+  `application/reports+json`; body capped at 64 KiB). It needs no session,
+  because the login and setup pages report too. Each field is cleaned and
+  capped, and the query string is dropped from every URL. Up to 1,000 unique
+  violations are kept in memory until the till restarts. Each new one is
+  logged once at INFO with a `csp-report:` prefix (INFO, so it never floods the Problems ring).
+- `GET /csp-report` (behind the session) returns the deduplicated inventory
+  as `{ "data": [ { effective_directive, blocked_uri, document_path,
+  source_file, line, sample, count } ], "error": null }`.
+- The e2e `csp` project (`e2e/run-till-csp.sh`,
+  `e2e/tests/csp-report-only-2913.spec.ts`) visits the main pages with the
+  flag on and attaches that inventory. Later slices move inline scripts,
+  styles and `eval` users out, then switch to an enforced policy.
+
 ### System Settings
 
 Access `/settings` in the web interface to configure:
