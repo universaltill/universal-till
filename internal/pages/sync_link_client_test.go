@@ -114,10 +114,10 @@ func TestReplicaLink_HelloKicksAPullAndAnAdminChangeArrivesInASecond(t *testing.
 	if got := syncPullInterval(replica, syncPullEvery, syncPullEveryLinked)(); got != syncPullEveryLinked {
 		t.Fatalf("linked polling floor = %v, want %v", got, syncPullEveryLinked)
 	}
-	if p := f.dp.Link.Peer(tillID); p == nil {
-		t.Fatal("the main till has no link for the replica")
-	} else if h, ok := p.Hello(); !ok || h.Role != "replica" || h.TillID != tillID || h.SyncProtocol != fleetlink.SyncProtocolLevel {
-		t.Fatalf("replica hello at the main till = %+v (ok=%v)", h, ok)
+	if h, ok := waitPeerHello(t, f.dp.Link, tillID, 3*time.Second); !ok {
+		t.Fatal("the main till never recorded a hello from the replica")
+	} else if h.Role != "replica" || h.TillID != tillID || h.SyncProtocol != fleetlink.SyncProtocolLevel {
+		t.Fatalf("replica hello at the main till = %+v", h)
 	}
 	if !waitFor(t, 2*time.Second, func() bool {
 		r, ok := f.dp.Link.Report(tillID)
@@ -159,6 +159,24 @@ func TestReplicaLink_HelloKicksAPullAndAnAdminChangeArrivesInASecond(t *testing.
 	}
 }
 
+// waitPeerHello polls the main till's hub until it has recorded the peer's
+// hello: the client's Linked() flips on the main till's hello, and the hub
+// records the replica's independently (ut-docs#3330).
+func waitPeerHello(t *testing.T, link *fleetlink.Hub, tillID string, d time.Duration) (fleetlink.Hello, bool) {
+	t.Helper()
+	var h fleetlink.Hello
+	ok := waitFor(t, d, func() bool {
+		p := link.Peer(tillID)
+		if p == nil {
+			return false
+		}
+		var got bool
+		h, got = p.Hello()
+		return got
+	})
+	return h, ok
+}
+
 // ut-docs#2897: the replica's hello carries its own cloud device id
 // (enroll.CurrentStatus, #2730) alongside the LAN pairing till_id, so the
 // main till's status frame can name a satellite/replica by the id my.'s
@@ -177,13 +195,12 @@ func TestReplicaLink_HelloCarriesItsOwnCloudDeviceID(t *testing.T) {
 	if !waitFor(t, 3*time.Second, replica.LinkClient.Linked) {
 		t.Fatal("replica never linked")
 	}
-	p := f.dp.Link.Peer(tillID)
-	if p == nil {
-		t.Fatal("the main till has no link for the replica")
+	h, ok := waitPeerHello(t, f.dp.Link, tillID, 3*time.Second)
+	if !ok {
+		t.Fatal("the main till never recorded a hello from the replica")
 	}
-	h, ok := p.Hello()
-	if !ok || h.TillID != tillID || h.CloudDeviceID != "till-cloud-xyz" {
-		t.Fatalf("replica hello at the main till = %+v (ok=%v), want till_id %q and cloud_device_id till-cloud-xyz", h, ok, tillID)
+	if h.TillID != tillID || h.CloudDeviceID != "till-cloud-xyz" {
+		t.Fatalf("replica hello at the main till = %+v, want till_id %q and cloud_device_id till-cloud-xyz", h, tillID)
 	}
 }
 
