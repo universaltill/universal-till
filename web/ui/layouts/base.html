@@ -1516,7 +1516,9 @@
            /plugins) render only for a viewer who can open their target —
            `allowed` is bound per request (httpx.withHelpHref) to the same
            predicates the /menu grid uses; a cashier is sale-only. */}}
-      {{ if and (not enrolled) (allowed "settings") }}
+      {{/* ut-docs#2753: a replica its main till registered has no token of
+           its own (enrolled=false) but is registered — no chip. */}}
+      {{ if and (not enrolled) (not enrolledviamain) (allowed "settings") }}
         <!-- ut-docs#1859: was a bare ✦ emoji (platform-color-emoji-font
              risk); .btn-ico's 1em svg sizing already tracks whatever
              font-size .sb-item renders at, so it's reused as-is here

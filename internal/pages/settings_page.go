@@ -1095,7 +1095,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		status, err := enroll.RegisterNow(r.Context(), d.Cfg, d.Settings)
-		if err != nil || !status.Registered {
+		if err != nil || !(status.Registered || status.ViaMainTill) {
 			// Show the concrete reason (and the endpoint we tried) so the
 			// operator can see e.g. an unreachable/misconfigured marketplace.
 			reason := httpx.T(locale, "settings.enrol.not_registered")
@@ -1108,6 +1108,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "enrol_now_registered", map[string]any{"store_id": status.StoreID})
+		if !status.Registered {
+			// ut-docs#2753: a replica its main till registered — no store
+			// token of its own, but registered.
+			fmt.Fprintf(w, `<span>✅ %s</span>`, httpx.T(locale, "settings.enrol.registered_via_main"))
+			return
+		}
 		fmt.Fprintf(w, `<span>✅ %s — <code>%s</code></span>`,
 			httpx.T(locale, "settings.enrol.registered"), status.StoreID)
 	})

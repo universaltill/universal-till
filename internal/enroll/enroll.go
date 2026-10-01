@@ -110,8 +110,8 @@ type identity struct {
 }
 
 var (
-	// mu guards cur and every var below it through tokenExplicit
-	// (ut-docs#3021).
+	// mu guards cur and every var below it through tokenExplicit, plus
+	// vouchedDevice (ut-docs#3021).
 	mu  sync.RWMutex
 	cur identity
 	// storeIDExplicit records whether UT_MARKETPLACE_STORE_ID was set in the
@@ -129,6 +129,12 @@ var (
 	// this till after boot (ADR-0116 D4, ut-docs#2769), which the startup
 	// copy in cfg would otherwise shadow until a restart.
 	tokenExplicit bool
+	// vouchedDevice is the device id this replica's main till registered in
+	// the cloud on its behalf (ut-docs#2753); empty when none. The replica
+	// holds no store token, so Status.Registered stays false — this is what
+	// lets the UI say "registered through the main till" instead. Guarded
+	// by mu together with cur.
+	vouchedDevice string
 
 	// attemptSem serializes registration attempts (background loop + the
 	// Settings "Register now" button) so the marketplace never sees two
@@ -180,8 +186,12 @@ func releaseAttempt() {
 // chip, Settings card).
 type Status struct {
 	Registered bool
-	StoreID    string
-	DeviceID   string
+	// ViaMainTill: this replica has no cloud credential of its own (so
+	// Registered is false) but its main till registered its device
+	// (ut-docs#2753).
+	ViaMainTill bool
+	StoreID     string
+	DeviceID    string
 }
 
 // CurrentStatus returns the live registration state. Explicitly configured
@@ -189,11 +199,22 @@ type Status struct {
 func CurrentStatus() Status {
 	mu.RLock()
 	defer mu.RUnlock()
+	registered := explicitConfigured || (cur.StoreID != "" && cur.Token != "")
 	return Status{
-		Registered: explicitConfigured || (cur.StoreID != "" && cur.Token != ""),
-		StoreID:    displayStoreID,
-		DeviceID:   cur.DeviceID,
+		Registered:  registered,
+		ViaMainTill: !registered && vouchedDevice != "" && vouchedDevice == cur.DeviceID,
+		StoreID:     displayStoreID,
+		DeviceID:    cur.DeviceID,
 	}
+}
+
+// ForgetReplicaVouch drops the "registered through the main till" state.
+// Called when a replica is promoted to main till without a restart
+// (ut-docs#2753): it no longer has a main till vouching for it.
+func ForgetReplicaVouch() {
+	mu.Lock()
+	vouchedDevice = ""
+	mu.Unlock()
 }
 
 // RegisterNow performs one immediate, synchronous registration (and signing
@@ -291,11 +312,17 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 			log.Warnf("enrolment: persist device_id: %v", err)
 		}
 	}
+	// ut-docs#2753: read before taking mu, like the reads above.
+	vouched := ""
+	if replica && !clientIDExplicit && id.DeviceID != "" && get(keyDeviceRegistered) == id.DeviceID {
+		vouched = id.DeviceID
+	}
 	mu.Lock()
 	cur = id
 	explicitConfigured = clientIDExplicit
 	storeIDExplicit = storeIDExplicitLocal
 	tokenExplicit = tokenExplicitLocal
+	vouchedDevice = vouched
 	if clientIDExplicit {
 		displayStoreID = cfg.Marketplace.StoreID
 	} else {
