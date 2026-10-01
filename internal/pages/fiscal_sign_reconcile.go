@@ -185,6 +185,7 @@ type fiscalSignReconcileAskResponse struct {
 func StartFiscalSignReconcileSweep(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pages.fiscalSignReconcile")
 		defer wg.Done()
 		select {
 		case <-time.After(fiscalSignReconcileInitialDelay):

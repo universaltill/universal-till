@@ -323,6 +323,7 @@ func (p *Peer) notify(typ string, payload any) error {
 func (p *Peer) run() {
 	writerDone := make(chan struct{})
 	go func() {
+		defer logging.RecoverAndLog("fleetlink.writeLoop")
 		defer close(writerDone)
 		p.writeLoop()
 	}()
@@ -440,6 +441,7 @@ func (p *Peer) handleRequest(env Envelope) {
 	}
 	p.hwg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("fleetlink.handleRequest")
 		defer p.hwg.Done()
 		defer func() { <-p.inSem }()
 		ctx, cancel := context.WithTimeout(p.ctx, p.cfg.RequestTimeout)

@@ -485,6 +485,7 @@ const wasmCloseTimeout = 5 * time.Second
 func drainBackgroundServices(wg *sync.WaitGroup, log *logging.Logger, timeout time.Duration, label string) {
 	done := make(chan struct{})
 	go func() {
+		defer logging.RecoverAndLog("app.drainWait")
 		defer close(done)
 		wg.Wait()
 	}()

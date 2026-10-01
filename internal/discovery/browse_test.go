@@ -835,3 +835,28 @@ func TestBrowsePrinters_MatchesServiceNameCaseInsensitively(t *testing.T) {
 		t.Fatalf("got %+v, want the printer kept — DNS labels are case-insensitive", got)
 	}
 }
+
+// TestBrowse_PanickingQueryReturnsErrorPromptly pins ut-docs#3304's review
+// finding: a panic inside mdnsQuery is recovered (logging.RecoverAndLog) and
+// the deferred close/send still release the collector and the caller, so
+// the scan ends with errBrowsePanicked instead of waiting out its timeout.
+func TestBrowse_PanickingQueryReturnsErrorPromptly(t *testing.T) {
+	forceIPv6Supported(t, true)
+	orig := mdnsQuery
+	t.Cleanup(func() { mdnsQuery = orig })
+	mdnsQuery = func(p *mdns.QueryParam) error { panic("mdns exploded") }
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := BrowsePrinters(context.Background(), 10*time.Second)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, errBrowsePanicked) {
+			t.Fatalf("BrowsePrinters err = %v, want errBrowsePanicked", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("BrowsePrinters still blocked 5s after a panicking query, want a prompt errBrowsePanicked")
+	}
+}

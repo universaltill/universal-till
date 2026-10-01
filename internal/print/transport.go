@@ -11,6 +11,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // Transport delivers rendered bytes to a physical printer.
@@ -256,6 +258,7 @@ func (t *deviceTransport) Print(ctx context.Context, data []byte) error {
 	// on its own lock wait ("printer busy", audited by the caller).
 	done := make(chan error, 1)
 	go func() {
+		defer logging.RecoverAndLog("print.deviceWrite")
 		defer release()
 		defer f.Close()
 		_, werr := f.Write(data)

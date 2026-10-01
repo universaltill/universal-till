@@ -264,3 +264,34 @@ func (m *Monitor) snapshot() (State, bool) {
 	defer m.mu.Unlock()
 	return m.state, m.inFlight
 }
+
+// panickingTransport panics on every request, standing in for any bug deep
+// in the probe's HTTP path.
+type panickingTransport struct{ calls atomic.Int64 }
+
+func (p *panickingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	p.calls.Add(1)
+	panic("probe exploded")
+}
+
+// TestPanickingProbeStillClearsInFlight pins ut-docs#3304's review finding:
+// the probe goroutine recovers a panic (logging.RecoverAndLog), and the
+// outcome is recorded in a defer, so inFlight is cleared and a later Status
+// past the TTL starts a fresh probe instead of the light freezing forever.
+func TestPanickingProbeStillClearsInFlight(t *testing.T) {
+	tr := &panickingTransport{}
+	clk := newClock()
+	m := newTestMonitor(t, "https://cloud.example.test/api", clk, &http.Client{Transport: tr})
+	m.Status()
+	waitSettled(t, m, Unreachable)
+	clk.Add(11 * time.Second)
+	m.Status()
+	deadline := time.Now().Add(5 * time.Second)
+	for tr.calls.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n := tr.calls.Load(); n != 2 {
+		t.Fatalf("probes after a panicking one: %d, want 2 (inFlight stuck?)", n)
+	}
+	waitSettled(t, m, Unreachable)
+}

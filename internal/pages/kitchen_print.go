@@ -12,6 +12,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/print"
@@ -424,6 +425,7 @@ func printKitchenFiltered(ctx context.Context, d *common.Deps, receiptNo, actorI
 	for _, target := range targets {
 		wg.Add(1)
 		go func(target kitchenTarget) {
+			defer logging.RecoverAndLog("pages.kitchenPrintTarget")
 			defer wg.Done()
 			sendCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
@@ -503,6 +505,7 @@ func kitchenPrintingEnabledChecked(ctx context.Context, d *common.Deps) (bool, e
 func printKitchenAsync(d *common.Deps, receiptNo string, actorID string, filter kitchenLineFilter) {
 	d.AsyncWork.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pages.kitchenPrintAsync")
 		defer d.AsyncWork.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), printAsyncTimeout)
 		defer cancel()

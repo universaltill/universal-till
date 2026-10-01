@@ -34,6 +34,7 @@ func StartSelfOrderSessionSweep(ctx context.Context, d *common.Deps, wg *sync.Wa
 	}
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pages.selfOrderSessionSweep")
 		defer wg.Done()
 		ticker := time.NewTicker(selfOrderSessionSweepInterval)
 		defer ticker.Stop()

@@ -146,6 +146,7 @@ func Restart() {
 // the beforeRestart hook overlapping the delay.
 func scheduleRestart(what string, restart func() error) {
 	go func() {
+		defer logging.RecoverAndLog("procrestart.scheduleRestart")
 		// Run beforeRestart CONCURRENTLY with the flush-delay sleep below,
 		// not sequentially after it (ut-docs#1616 review finding): stopping
 		// hardware plugins can itself take real time (bounded, but not
@@ -167,8 +168,11 @@ func scheduleRestart(what string, restart func() error) {
 			done := make(chan struct{})
 			hookDone = done
 			go func() {
+				defer logging.RecoverAndLog("procrestart.beforeRestart")
+				// Deferred so a recovered panic in the hook still releases
+				// the unbounded <-hookDone below and the restart goes ahead.
+				defer close(done)
 				beforeRestart(context.Background())
-				close(done)
 			}()
 		}
 		time.Sleep(reexecDelay)

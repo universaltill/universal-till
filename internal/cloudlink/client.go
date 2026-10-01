@@ -761,6 +761,7 @@ func (c *Client) runLink(ctx context.Context, t Target, sess *fleetlink.Session)
 	c.cur.Store(sess)
 	done := make(chan struct{})
 	go func() {
+		defer logging.RecoverAndLog("cloudlink.session")
 		defer close(done)
 		sess.Run()
 	}()

@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // LinkPath is the main till's link endpoint (ADR-0114 §1).
@@ -495,6 +497,7 @@ func (c *Client) runLink(ctx context.Context, t Target, conn Conn) (end linkEnd,
 	c.cur.Store(p)
 	done := make(chan struct{})
 	go func() {
+		defer logging.RecoverAndLog("fleetlink.peerRun")
 		defer close(done)
 		p.run()
 	}()

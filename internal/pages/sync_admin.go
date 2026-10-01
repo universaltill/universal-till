@@ -360,6 +360,7 @@ func withinLast(ts string, d time.Duration) bool {
 func runSyncLoop(ctx context.Context, wg *sync.WaitGroup, kick <-chan struct{}, tick func()) {
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pages.syncLoop")
 		defer wg.Done()
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
@@ -426,6 +427,7 @@ func syncPullInterval(d *common.Deps, unlinked, linked time.Duration) func() tim
 func runPullLoop(ctx context.Context, wg *sync.WaitGroup, kick, reeval <-chan struct{}, interval func() time.Duration, tick func()) {
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pages.pullLoop")
 		defer wg.Done()
 		last := time.Now()
 		timer := time.NewTimer(interval())

@@ -162,7 +162,10 @@ func applyWindowsInstaller(ctx context.Context, exe, version string, idle func()
 	plan.idle = idle
 	plan.watchdogAfter = windowsWatchdogAfter
 	windowsHandover.Store(true)
-	go handOverToInstaller(plan, startWindowsHelperFn, want, script, setupPath, installDir, filepath.Join(root, "updater.log"))
+	go func(p restartPlan, start func(script, setup, installDir, logPath, marker string) error, sha256, script, setup, installDir, logPath string) {
+		defer logging.RecoverAndLog("selfupdate.handOverToInstaller")
+		handOverToInstaller(p, start, sha256, script, setup, installDir, logPath)
+	}(plan, startWindowsHelperFn, want, script, setupPath, installDir, filepath.Join(root, "updater.log"))
 	return nil
 }
 
@@ -177,8 +180,11 @@ func handOverToInstaller(p restartPlan, start func(script, setup, installDir, lo
 	_ = waitIdle(context.Background(), p.idle)
 	done := make(chan struct{})
 	go func() {
+		defer logging.RecoverAndLog("selfupdate.installerHook")
+		// Deferred so a recovered hook panic does not hold the restart for
+		// the full hookBound (ut-docs#3304).
+		defer close(done)
 		p.hook(context.Background())
-		close(done)
 	}()
 	select {
 	case <-done:

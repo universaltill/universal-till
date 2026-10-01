@@ -26,6 +26,7 @@ const shopTypeLayoutInterval = 30 * time.Second
 func StartShopTypeLayoutReconcile(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pages.shopTypeLayoutReconcile")
 		defer wg.Done()
 		var r shopTypeLayoutReconciler
 		ticker := time.NewTicker(shopTypeLayoutInterval)

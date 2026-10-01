@@ -253,6 +253,7 @@ func StartSyncLinkClient(ctx context.Context, d *common.Deps, wg *sync.WaitGroup
 	}
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pages.syncLinkClient")
 		defer wg.Done()
 		d.LinkClient.Run(ctx)
 	}()

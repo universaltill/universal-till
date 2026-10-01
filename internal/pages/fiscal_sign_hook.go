@@ -449,6 +449,7 @@ func dispatchFiscalSignStart(ctx context.Context, d *common.Deps, in *pos.SaleIn
 	repo := data.NewPOSRepo(d.Db)
 	d.AsyncWork.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pages.fiscalSignStart")
 		defer d.AsyncWork.Done()
 		// fiscalSignStartAsyncTimeout is a context deadline, not an
 		// enforcement mechanism, for a Go handler — review finding,

@@ -241,6 +241,7 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 func StartAutoUpdateScheduler(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
+		defer logging.RecoverAndLog("pages.autoUpdateScheduler")
 		defer wg.Done()
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
