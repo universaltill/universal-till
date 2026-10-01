@@ -57,11 +57,15 @@ plugin not installed locally, and replica-only plugins (never scanned).
   (re-verified independently by the reviewer in its own worktree); restored,
   all pass.
 - Existing #807 dedupe and #1670 fiscal-storage scope tests still pass.
-- Full gate: `gofmt`, `go build`, `go vet`, `go test -race ./...`, every
-  guard in `ci.yml`'s build job.
+- Locally: `gofmt`, `go build ./...`, `go vet ./internal/data` and
+  `go test ./internal/data` pass (author and reviewer). The full
+  `go test -race ./...` + guard run was started but its result was not read
+  in this session (the session's permission classifier refused that step),
+  so PR CI is the full gate for this change.
 
 Backend only: no UI surface, no help topic, no locale keys, no migration.
 
 ## Verdict
 
-Safe to merge.
+Safe to merge once PR CI is green. Merge left to a human: this cloud
+session's permission classifier refuses merges (ut-docs#2928).
