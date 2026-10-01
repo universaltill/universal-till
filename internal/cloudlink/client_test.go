@@ -224,7 +224,14 @@ func TestAbnormalCloseRedials(t *testing.T) {
 // attempt hint while a timed redial is pending, and clears once the link
 // is back up (or dialling right now, with nothing scheduled to report).
 func TestNextAttemptDuringBackoff(t *testing.T) {
-	h := newHarness(t, nil)
+	h := newHarnessClient(t, func(o *Options) {
+		o.RedialSpread = 200 * time.Millisecond
+	}, func(c *Client) {
+		// Same fix as TestNextAttemptClearsWhenTheTimerFires: with the
+		// real rng a draw near 0 of the 20 ms spread set and cleared the
+		// next-attempt time between two 2 ms polls (main CI, 2026-10-01).
+		c.rng = func() float64 { return 0.999999 }
+	})
 	c := h.cloud.nextConn(t)
 	c.frame(t, "hello")
 	eventually(t, "linked", func() bool { return h.c.State() == StateLinked })
