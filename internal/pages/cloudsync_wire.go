@@ -216,6 +216,45 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 	return key + " = " + value, nil
 }
 
+// cloudRenameTill is the rename_till hook (ut-docs#3272): the owner renamed
+// THIS till in the cloud. cloudsync.Tick only hands it a directive
+// addressed to this till's own device id. The name is validated like the
+// Settings rename (POST /api/settings/till-name) but refused rather than
+// truncated (validateTillName), so the till reports back exactly the
+// cloud's name. It is written to the key enroll.DeviceName reads for this
+// till's role, so the next heartbeat reports it:
+//   - main till: till.name, the Settings field — a plain local write (no
+//     write-through: this IS the main till; no elevation: a cloud
+//     directive has no operator, like every other hook);
+//   - additional till: its own sync.till_name (per-till) — never till.name,
+//     which there holds the main till's name (data.ShopWideSettingPrefixes)
+//     and would be reverted by the next admin pull anyway.
+//
+// An unchanged name is applied with no write and no audit row.
+func cloudRenameTill(ctx context.Context, d *common.Deps, raw string) (string, error) {
+	name, err := validateTillName(raw)
+	if err != nil {
+		return "", err
+	}
+	if enroll.DeviceName(ctx, d.Settings) == name {
+		return "name unchanged", nil
+	}
+	key := "till.name"
+	if tillFollowsMain(ctx, d) {
+		key = "sync.till_name"
+		if err := d.Settings.Set(ctx, "sync.till_name", name); err != nil {
+			return "", err
+		}
+	} else {
+		// settings-write:allow a cloud rename_till on the main till (tillFollowsMain is false here): the main till owns till.name, so a local write is the write-through's own end
+		if err := d.Settings.Set(ctx, "till.name", name); err != nil {
+			return "", err
+		}
+	}
+	auditCloudDirective(ctx, d, "settings", key, "till_name_changed", map[string]any{"name": name, "via": "cloud", "key": key})
+	return "till renamed", nil
+}
+
 // remoteTillSettingsReport is the read side (ut-docs#2306 Decision 2,
 // proposed ADR-0095, pending merge): the current value of every whitelisted
 // key, unset ones as "", for the heartbeat's device record — the cloud's
@@ -719,6 +758,12 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// cloudSetTillSetting for the list and the checks.
 		SetTillSetting: func(ctx context.Context, key, value string) (string, error) {
 			return cloudSetTillSetting(ctx, d, rederive, key, value)
+		},
+		// rename_till (ut-docs#3272): the owner renamed this till in the
+		// cloud; Tick already checked it names this device. See
+		// cloudRenameTill.
+		RenameTill: func(ctx context.Context, name string) (string, error) {
+			return cloudRenameTill(ctx, d, name)
 		},
 		InstallPlugin: func(ctx context.Context, listingID string) (string, error) {
 			return cloudInstallPlugin(ctx, d, listingID)
