@@ -6,6 +6,11 @@ is bound into the app with `gomobile bind` (`../mobile`) and started
 in-process; a small SwiftUI app shows it in a `WKWebView`. Everything the
 operator sees and does is the server's web UI.
 
+The web view locks page zoom (a user script sets the viewport to
+`maximum-scale=1, user-scalable=no`), so the till neither pinch-zooms nor
+zooms in when a field takes focus (ut-docs#3350); Safari keeps pinch.
+`scripts/ci/ios-webview-zoom_test.sh` pins it.
+
 ## Build (a Mac with Xcode)
 
 ```bash

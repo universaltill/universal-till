@@ -1871,6 +1871,18 @@ input, select, textarea {
   padding: .5rem .65rem; border-radius: 8px; border: 1px solid var(--control-border);
   background: var(--surface);
 }
+/* ut-docs#3350: iOS WebKit zooms the page in when a field under 16px takes
+   focus. At the phone tier (portrait) every typed-into field is at least
+   16px. :where() keeps this at element specificity, so a class rule that
+   sizes a field larger (the setup wizard's 1.05rem) still wins; 1em is the
+   parent's size, so a larger inherited size wins too. The basket's
+   qty/discount fields are sized below 16px by class, so they're named.
+   The iOS app shell also locks zoom in any orientation (TillWebView.swift);
+   browsers keep pinch-zoom. */
+@media (max-width: 480px) {
+  input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color])),
+  select, textarea, input.qty-input, input.disc-input { font-size: max(16px, 1em); }
+}
 input:focus, select:focus, textarea:focus {
   outline: 2px solid rgba(37, 99, 235, .35); outline-offset: 1px; border-color: var(--focus-border);
 }
