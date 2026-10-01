@@ -95,11 +95,33 @@ func isContentSlot(s string) bool {
 	return false
 }
 
+// minScheduleEveryS is the shortest schedule interval (ADR-0121 §8: "min
+// 30 s, jittered"). A shorter one is refused, not silently stretched.
+const minScheduleEveryS = 30
+
+// coreEventRoots are the first segments of core's own events and Ask
+// points. ADR-0121 §2: a plugin can never raise a core event. Which prefix
+// a plugin MAY use is ut-docs#3329; until it is decided, a schedule event
+// that starts with a core root is refused, so no manifest signed today can
+// tick a core event once the scheduler (build card 9) lands.
+var coreEventRoots = map[string]bool{
+	"basket": true, "catalog": true, "cloud": true, "cloudsync": true,
+	"customer": true, "device": true, "eod": true, "erp": true,
+	"export": true, "fiscal": true, "fiscaldevice": true,
+	"fiscalregister": true, "hardware": true, "import": true,
+	"kitchen": true, "loyalty": true, "orders": true, "payment": true,
+	"payments": true, "plugin": true, "plugins": true, "receipt": true,
+	"reconcile": true, "reports": true, "sale": true, "sales": true,
+	"shifts": true, "stock": true, "sync": true, "system": true,
+	"tax": true, "ui": true,
+}
+
 var (
 	// scheduleEventRe: at least two dot-separated lower-case segments
-	// (`tax_de.tse_retry.tick`). The rule for which prefix a plugin may use
-	// is ut-docs#3329; this is the shape only.
+	// (`tax_de.tse_retry.tick`).
 	scheduleEventRe = regexp.MustCompile(`^[a-z0-9_]+(\.[a-z0-9_]+)+$`)
+	// migrationsDirRe: the characters a migrations directory may use.
+	migrationsDirRe = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
 	// coreViewNameRe: a versioned core read view (ADR-0121 §5),
 	// `sales.by_day.v1`.
 	coreViewNameRe = regexp.MustCompile(`^[a-z0-9_]+(\.[a-z0-9_]+)*\.v[1-9][0-9]*$`)
@@ -117,7 +139,7 @@ func validateABI3Fields(m *Manifest) error {
 	case m.WasmABI < 0 || m.WasmABI == 1:
 		return fmt.Errorf("manifest wasm_abi %d is not a plugin ABI (omit it, or use %d..%d)", m.WasmABI, DefaultWasmABI, MaxSupportedWasmABI)
 	case m.WasmABI > MaxSupportedWasmABI:
-		return fmt.Errorf("plugin %s needs plugin ABI %d; this till supports up to %d — update the till to install it", m.ID, m.WasmABI, MaxSupportedWasmABI)
+		return fmt.Errorf("plugin %q needs plugin ABI %d; this till supports up to %d — update the till to install it", m.ID, m.WasmABI, MaxSupportedWasmABI)
 	}
 
 	if l := m.Limits; l != nil {
@@ -135,11 +157,14 @@ func validateABI3Fields(m *Manifest) error {
 		if !scheduleEventRe.MatchString(s.Event) {
 			return fmt.Errorf("manifest schedules[%d].event %q must be dot-separated lower-case segments, like <plugin>.<name>", i, s.Event)
 		}
-		if s.EveryS < 1 {
-			return fmt.Errorf("manifest schedules[%d].every_s must be at least 1 (got %d)", i, s.EveryS)
+		if root, _, _ := strings.Cut(s.Event, "."); coreEventRoots[root] {
+			return fmt.Errorf("manifest schedules[%d].event %q is in core's %q namespace; a plugin may not raise core events (ADR-0121 §2)", i, s.Event, root)
 		}
-		if s.JitterS < 0 {
-			return fmt.Errorf("manifest schedules[%d].jitter_s must not be negative (got %d)", i, s.JitterS)
+		if s.EveryS < minScheduleEveryS {
+			return fmt.Errorf("manifest schedules[%d].every_s must be at least %d (got %d)", i, minScheduleEveryS, s.EveryS)
+		}
+		if s.JitterS < 0 || s.JitterS > s.EveryS {
+			return fmt.Errorf("manifest schedules[%d].jitter_s must be between 0 and every_s (got %d)", i, s.JitterS)
 		}
 	}
 
@@ -186,7 +211,7 @@ func validateMigrationsDir(dir string) error {
 	if dir == "" {
 		return fmt.Errorf("manifest db.migrations is required when db is declared")
 	}
-	if strings.ContainsAny(dir, "\\:\x00") {
+	if !migrationsDirRe.MatchString(dir) {
 		return fmt.Errorf("manifest db.migrations %q must be a relative path with '/' separators", dir)
 	}
 	clean := path.Clean(dir)
