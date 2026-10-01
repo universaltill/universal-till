@@ -59,6 +59,49 @@ type Manifest struct {
 	// position, same tags) or the marketplace signer strips them.
 	Provides []string `json:"provides,omitempty"`
 	Markets  []string `json:"markets,omitempty"`
+
+	// ADR-0121 §2 (ut-docs#3155): the ABI-3 fields. All omitempty, so a
+	// manifest without them marshals byte-identically to before and old
+	// signatures verify. Validated in manifest_abi3.go at both install
+	// paths. ut-cloud's internal/signing.CanonicalManifest must mirror
+	// every one (same position, same tags), and the nested types too.
+	WasmABI   int                `json:"wasm_abi,omitempty"` // 0 = DefaultWasmABI
+	Limits    *ManifestLimits    `json:"limits,omitempty"`   // requests; see EffectiveLimits
+	Schedules []ManifestSchedule `json:"schedules,omitempty"`
+	DB        *ManifestDB        `json:"db,omitempty"`
+	Retention *ManifestRetention `json:"retention,omitempty"`
+	ViewsUsed []string           `json:"views_used,omitempty"`
+}
+
+// ManifestLimits are a plugin's resource requests (ADR-0121 §2). 0 means
+// the platform default; the host clamps each to its platform ceiling
+// (EffectiveLimits) and never writes the result back into the manifest.
+type ManifestLimits struct {
+	MemoryMB   int `json:"memory_mb,omitempty"`
+	StorageMB  int `json:"storage_mb,omitempty"`
+	HTTPBodyMB int `json:"http_body_mb,omitempty"`
+	LongCallS  int `json:"long_call_s,omitempty"`
+}
+
+// ManifestSchedule is a periodic tick the host raises for the plugin
+// (ADR-0121 §8; the scheduler is build card 9).
+type ManifestSchedule struct {
+	Event   string `json:"event"`
+	EveryS  int    `json:"every_s"`
+	JitterS int    `json:"jitter_s,omitempty"`
+}
+
+// ManifestDB declares the plugin's own SQLite database (ADR-0121 §4):
+// Migrations is a directory inside the plugin's code tree.
+type ManifestDB struct {
+	Migrations string `json:"migrations"`
+}
+
+// ManifestRetention is how long the plugin's own data must be kept
+// (ADR-0121 §4), with a locale key explaining why.
+type ManifestRetention struct {
+	KeepYears int    `json:"keep_years"`
+	ReasonKey string `json:"reason_key,omitempty"`
 }
 
 // ManifestEntry represents a UI/integration entry
@@ -105,6 +148,12 @@ type ManifestEntry struct {
 	// type simply omits them.
 	Entities    []string `json:"entities,omitempty"`
 	FileFormats []string `json:"file_formats,omitempty"`
+
+	// View names the plugin view this entry renders and Slot the core
+	// content slot it fills (ADR-0121 §7; one of contentSlots). Both
+	// optional; ut-cloud's CanonicalEntry mirrors them.
+	View string `json:"view,omitempty"`
+	Slot string `json:"slot,omitempty"`
 }
 
 // entryConfigJSON renders the config_json blob persisted for one manifest
@@ -231,6 +280,9 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 	// provides/markets are closed-set (ADR-0129): a typo would otherwise
 	// silently match nothing, so it fails here.
 	if err := validateProvidesAndMarkets(&m); err != nil {
+		return nil, err
+	}
+	if err := validateABI3Fields(&m); err != nil {
 		return nil, err
 	}
 

@@ -639,3 +639,201 @@ func (r *AuthRepo) SetRolePermission(ctx context.Context, tx *sql.Tx, role, acti
 	}
 	return nil
 }
+
+// RoleInfo is one roles row (ADR-0128 §2): the immutable key, the shop's
+// own label (empty for built-in roles, which take theirs from locale keys)
+// and its origin, "builtin" or "cloud".
+type RoleInfo struct {
+	Role   string
+	Label  string
+	Origin string
+}
+
+// RoleOriginBuiltin / RoleOriginCloud are the roles.origin values.
+const (
+	RoleOriginBuiltin = "builtin"
+	RoleOriginCloud   = "cloud"
+)
+
+// The transaction-taking reads/writes behind the custom role directives
+// save_role / delete_role (ADR-0128 §3): the main till applies one
+// directive in ONE write transaction, so every read and write goes
+// through tx.
+
+// GetRoleTx reads one roles row inside tx.
+func (r *AuthRepo) GetRoleTx(ctx context.Context, tx *sql.Tx, role string) (RoleInfo, bool, error) {
+	var ri RoleInfo
+	err := tx.QueryRowContext(ctx, `SELECT role, label, origin FROM roles WHERE role = ?`, role).Scan(&ri.Role, &ri.Label, &ri.Origin)
+	if err == sql.ErrNoRows {
+		return RoleInfo{}, false, nil
+	}
+	if err != nil {
+		return RoleInfo{}, false, fmt.Errorf("get role: %w", err)
+	}
+	return ri, true, nil
+}
+
+// ListRolesTx lists every roles row inside tx, ordered by key.
+func (r *AuthRepo) ListRolesTx(ctx context.Context, tx *sql.Tx) ([]RoleInfo, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT role, label, origin FROM roles ORDER BY role`)
+	if err != nil {
+		return nil, fmt.Errorf("list roles: %w", err)
+	}
+	defer rows.Close()
+	var out []RoleInfo
+	for rows.Next() {
+		var ri RoleInfo
+		if err := rows.Scan(&ri.Role, &ri.Label, &ri.Origin); err != nil {
+			return nil, fmt.Errorf("list roles: %w", err)
+		}
+		out = append(out, ri)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list roles: %w", err)
+	}
+	return out, nil
+}
+
+// ListActionsTx lists every known permission action (permission_actions)
+// inside tx, ordered by name.
+func (r *AuthRepo) ListActionsTx(ctx context.Context, tx *sql.Tx) ([]string, error) {
+	return queryStringsTx(ctx, tx, `SELECT action FROM permission_actions ORDER BY action`)
+}
+
+// RoleGrantsTx lists the actions role is granted (granted = 1) inside tx,
+// ordered by name — the audit's before/after sets.
+func (r *AuthRepo) RoleGrantsTx(ctx context.Context, tx *sql.Tx, role string) ([]string, error) {
+	return queryStringsTx(ctx, tx, `SELECT action FROM role_permissions WHERE role = ? AND granted = 1 ORDER BY action`, role)
+}
+
+func queryStringsTx(ctx context.Context, tx *sql.Tx, q string, args ...any) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// UpsertCloudRoleTx creates role as origin='cloud' with label, or sets the
+// label of an existing cloud role. It never touches a built-in row: an
+// existing origin='builtin' key fails. An unchanged label is not rewritten
+// (an UPDATE that writes the same value still bumps sync_admin_version).
+func (r *AuthRepo) UpsertCloudRoleTx(ctx context.Context, tx *sql.Tx, role, label string) error {
+	cur, found, err := r.GetRoleTx(ctx, tx, role)
+	if err != nil {
+		return err
+	}
+	switch {
+	case !found:
+		if _, err := tx.ExecContext(ctx, `INSERT INTO roles (role, label, origin) VALUES (?, ?, 'cloud')`, role, label); err != nil {
+			return fmt.Errorf("create cloud role %s: %w", role, err)
+		}
+	case cur.Origin != RoleOriginCloud:
+		return fmt.Errorf("upsert cloud role: %s is a %s role", role, cur.Origin)
+	case cur.Label != label:
+		if _, err := tx.ExecContext(ctx, `UPDATE roles SET label = ? WHERE role = ? AND origin = 'cloud'`, label, role); err != nil {
+			return fmt.Errorf("relabel cloud role %s: %w", role, err)
+		}
+	}
+	return nil
+}
+
+// ReplaceRoleGrantsTx makes grants role's complete grant set: granted = 1
+// for every listed action and granted = 0 for every other known action
+// (one row per known action). Every listed action must already exist in
+// permission_actions (the caller validates; an unknown one fails on the
+// FK). A row already holding the wanted value is not rewritten.
+func (r *AuthRepo) ReplaceRoleGrantsTx(ctx context.Context, tx *sql.Tx, role string, grants []string) error {
+	want := make(map[string]bool, len(grants))
+	for _, g := range grants {
+		want[g] = true
+	}
+	actions, err := r.ListActionsTx(ctx, tx)
+	if err != nil {
+		return fmt.Errorf("replace role grants: %w", err)
+	}
+	for _, g := range grants {
+		if !containsString(actions, g) {
+			return fmt.Errorf("replace role grants: unknown action %s", g)
+		}
+	}
+	for _, a := range actions {
+		g := 0
+		if want[a] {
+			g = 1
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO role_permissions (role, action, granted) VALUES (?, ?, ?)
+			 ON CONFLICT (role, action) DO UPDATE SET granted = excluded.granted
+			 WHERE role_permissions.granted IS NOT excluded.granted`, role, a, g); err != nil {
+			return fmt.Errorf("replace role grants %s/%s: %w", role, a, err)
+		}
+	}
+	return nil
+}
+
+func containsString(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// CountUsersWithRoleTx counts every user row holding role, active or not
+// (ADR-0128 §3: a deactivated holder would otherwise be reactivated into a
+// missing role).
+func (r *AuthRepo) CountUsersWithRoleTx(ctx context.Context, tx *sql.Tx, role string) (int, error) {
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE role = ?`, role).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count users with role: %w", err)
+	}
+	return n, nil
+}
+
+// DeleteCloudRoleTx deletes an origin='cloud' role: its role_permissions
+// rows first (they reference roles(role)), then the roles row. A built-in
+// or missing role is left alone (no error).
+func (r *AuthRepo) DeleteCloudRoleTx(ctx context.Context, tx *sql.Tx, role string) error {
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM role_permissions WHERE role = ? AND role IN (SELECT role FROM roles WHERE origin = 'cloud')`, role); err != nil {
+		return fmt.Errorf("delete cloud role grants %s: %w", role, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM roles WHERE role = ? AND origin = 'cloud'`, role); err != nil {
+		return fmt.Errorf("delete cloud role %s: %w", role, err)
+	}
+	return nil
+}
+
+// RoleOrigin returns role's origin ("builtin" or "cloud"); found is false
+// for an unknown role.
+func (r *AuthRepo) RoleOrigin(ctx context.Context, role string) (origin string, found bool, err error) {
+	err = r.db.QueryRowContext(ctx, `SELECT origin FROM roles WHERE role = ?`, role).Scan(&origin)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("role origin: %w", err)
+	}
+	return origin, true, nil
+}
+
+// CountRoleGrantRowsTx counts role's role_permissions rows (granted or
+// not) inside tx.
+func (r *AuthRepo) CountRoleGrantRowsTx(ctx context.Context, tx *sql.Tx, role string) (int, error) {
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM role_permissions WHERE role = ?`, role).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count role grant rows: %w", err)
+	}
+	return n, nil
+}
