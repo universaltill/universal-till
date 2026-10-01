@@ -228,7 +228,8 @@ func TestNextAttemptDuringBackoff(t *testing.T) {
 		o.RedialSpread = 200 * time.Millisecond
 	}, func(c *Client) {
 		// Same fix as TestNextAttemptClearsWhenTheTimerFires: with the
-		// real rng a draw near 0 of the 20 ms spread set and cleared the
+		// real rng a draw near 0 of the redial delay (20 ms spread + 5 ms
+		// backoff, the link being younger than StableLink) set and cleared the
 		// next-attempt time between two 2 ms polls (main CI, 2026-10-01).
 		c.rng = func() float64 { return 0.999999 }
 	})
