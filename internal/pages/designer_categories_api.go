@@ -29,8 +29,8 @@ import (
 //
 //  1. Gate. Everything under /designer gates on canPerform(d, r,
 //     "catalog_management") — the same action designer_page.go and
-//     /api/buttons/* gate on (ut-docs#2357/#2312) — where /categories gates
-//     on "settings". One page = one permission model; a manager who can
+//     /api/buttons/* gate on (ut-docs#2357/#2312), and since ut-docs#2479
+//     /categories too. One page = one permission model; a manager who can
 //     reach the Designer must be able to use every control on it. A plain
 //     403 (no elevation prompt): the page itself is unreachable without the
 //     permission, so an elevation dialog here would only ever be reachable
