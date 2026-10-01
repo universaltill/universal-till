@@ -167,6 +167,33 @@ func TestStart_FastFailWhenServerDiesImmediately(t *testing.T) {
 	}
 }
 
+// A panic inside app.Run must not kill the process (a gomobile host would
+// take the whole Android app with it, unredacted) and must still close
+// done, so Start fails fast instead of hanging (ut-docs#3313).
+func TestStart_PanicInRunIsRecoveredAndClosesDone(t *testing.T) {
+	dataDir := mobileTestEnv(t)
+	orig := runApp
+	runApp = func(context.Context) error { panic("boom from app.Run") }
+	t.Cleanup(func() { runApp = orig })
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := Start(dataDir)
+		errCh <- err
+	}()
+	select {
+	case err := <-errCh:
+		if err == nil || !strings.Contains(err.Error(), "exited before becoming ready") {
+			t.Fatalf("Start error = %v, want \"exited before becoming ready\"", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Start hung: done was not closed after a panic in app.Run")
+	}
+	if IsRunning() {
+		t.Fatal("IsRunning() must be false after the server panicked")
+	}
+}
+
 // A server that dies on its own (e.g. a listener error) without Stop()
 // ever being called must not leave IsRunning()/Start() reporting stale
 // success — this is the "abandoned runErrCh" gap flagged in code review:

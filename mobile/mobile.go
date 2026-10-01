@@ -70,6 +70,7 @@ import (
 	"github.com/universaltill/universal-till/internal/bluetooth"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/listenport"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/procrestart"
 	"github.com/universaltill/universal-till/internal/recovery"
 	"github.com/universaltill/universal-till/internal/server"
@@ -292,6 +293,10 @@ const maxBindAttempts = 3
 // test seam only: tests take the port here to reproduce ut-docs#3290.
 var afterPortChosen = func(port string) {}
 
+// runApp is app.Run. A test seam only: tests swap in a func that panics to
+// prove the goroutine recovers and still closes done (ut-docs#3313).
+var runApp = app.Run
+
 // bindMovedError is runOnce's report that the server bound somewhere other
 // than 0.0.0.0:<port> — start retries on a fresh port.
 type bindMovedError struct{ want, got string }
@@ -325,8 +330,9 @@ func runOnce(dataDir, port string) (*instance, error) {
 	})
 
 	go func() {
-		newInst.err = app.Run(ctx)
-		close(newInst.done)
+		defer logging.RecoverAndLog("mobile.run")
+		defer close(newInst.done) // runs first on unwind, so waiters never hang on a panic
+		newInst.err = runApp(ctx)
 	}()
 
 	// 10s was too tight in practice: a real low/mid-range Android phone's
