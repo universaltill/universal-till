@@ -35,8 +35,18 @@
            recency window (selfOrderTableBusyMaxIdle) means an abandoned
            order stops blocking well before the busy screen would ever be
            a dead end. */}}
+      {{ if .TillBusy }}
+      {{/* ut-docs#2490: the table may be free — the till refused to start
+           another session (the per-source mint limiter, or the session
+           cap). Different remedy (wait a moment), so never tell this guest
+           someone else is at their table: on shared guest Wi-Fi a real
+           guest's first scan can hit the limiter. */}}
+      <h1>{{ T "selforder.till_busy.title" }}</h1>
+      <p class="selforder-hint">{{ T "selforder.till_busy.hint" }}</p>
+      {{ else }}
       <h1>{{ T "selforder.table_busy.title" }}</h1>
       <p class="selforder-hint">{{ T "selforder.table_busy.hint" }}</p>
+      {{ end }}
       <button type="button" class="btn primary selforder-start" onclick="location.reload()">
         {{ T "selforder.table_busy.retry" }}
       </button>
