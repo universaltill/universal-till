@@ -1325,6 +1325,7 @@
   "permissions.action_desc.void_comp_waste": "حذف یک قلم قیمت‌دار از سبد به‌عنوان ابطال، مهمانی یا ضایعات بدون پین مدیر، و دیدن ارقام کسری در گزارش‌ها.",
   "permissions.action_desc.worker_allocation": "ثبت پرداخت انعام و هزینه خدمات به کارکنان در گزارش‌ها.",
   "permissions.col.action": "عملیات",
+  "permissions.error.cloud_role": "این نقش در my.universaltill.com مدیریت می‌شود. آن را همان‌جا تغییر دهید.",
   "permissions.error.super_admin_required": "نیاز به دسترسی مدیر ارشد",
   "permissions.group.catalog": "کاتالوگ",
   "permissions.group.other": "سایر",
