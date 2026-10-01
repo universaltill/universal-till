@@ -706,6 +706,62 @@ func (r *AuthRepo) RoleGrantsTx(ctx context.Context, tx *sql.Tx, role string) ([
 	return queryStringsTx(ctx, tx, `SELECT action FROM role_permissions WHERE role = ? AND granted = 1 ORDER BY action`, role)
 }
 
+// RoleReportRow is one roles row with the actions it is granted
+// (granted = 1), sorted, never nil — one entry of the main till's
+// check-in report (ADR-0128 §5, ut-docs#3323).
+type RoleReportRow struct {
+	RoleInfo
+	Grants []string
+}
+
+// RolesReport reads every roles row with its granted actions, and every
+// known permission action, for the main till's check-in report (ADR-0128
+// §5, ut-docs#3323). All three reads run in ONE transaction, so the report
+// is a consistent snapshot: a grant never names an action the action list
+// lacks, and a role never appears without its grants. Grants come from one
+// query over role_permissions, not one per role. Both lists are sorted
+// and never nil.
+func (r *AuthRepo) RolesReport(ctx context.Context) ([]RoleReportRow, []string, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("roles report: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	roles, err := r.ListRolesTx(ctx, tx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("roles report: %w", err)
+	}
+	actions, err := r.ListActionsTx(ctx, tx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("roles report: actions: %w", err)
+	}
+	grants := map[string][]string{}
+	rows, err := tx.QueryContext(ctx, `SELECT role, action FROM role_permissions WHERE granted = 1 ORDER BY role, action`)
+	if err != nil {
+		return nil, nil, fmt.Errorf("roles report: grants: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var role, action string
+		if err := rows.Scan(&role, &action); err != nil {
+			return nil, nil, fmt.Errorf("roles report: grants: %w", err)
+		}
+		grants[role] = append(grants[role], action)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("roles report: grants: %w", err)
+	}
+	out := make([]RoleReportRow, 0, len(roles))
+	for _, ri := range roles {
+		g := grants[ri.Role]
+		if g == nil {
+			g = []string{}
+		}
+		out = append(out, RoleReportRow{RoleInfo: ri, Grants: g})
+	}
+	return out, actions, nil
+}
+
 func queryStringsTx(ctx context.Context, tx *sql.Tx, q string, args ...any) ([]string, error) {
 	rows, err := tx.QueryContext(ctx, q, args...)
 	if err != nil {
