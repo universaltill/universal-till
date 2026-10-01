@@ -32,7 +32,7 @@ func TestStorePageShowsLifecycleStatusAndInstalledSplit(t *testing.T) {
 
 	cfg := &config.Config{
 		Theme:   "default",
-		Locales: config.Locales{Currency: "GBP", Locale: "en", TaxRate: 20},
+		Locales: config.Locales{Currency: "GBP", Locale: "en", TaxRateBP: 2000},
 	}
 	pm, err := plugins.Init(t.Context(), cfg, db)
 	if err != nil {
@@ -122,9 +122,9 @@ func TestInstallFromMarketplaceFailurePersistsOperatorVisibleStatus(t *testing.T
 	cfg := &config.Config{
 		Theme: "default",
 		Locales: config.Locales{
-			Currency: "GBP",
-			Locale:   "en",
-			TaxRate:  20,
+			Currency:  "GBP",
+			Locale:    "en",
+			TaxRateBP: 2000,
 		},
 		Marketplace: config.MarketplaceConfig{
 			EndpointURL: "http://marketplace.test",

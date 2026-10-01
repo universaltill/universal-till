@@ -44,7 +44,7 @@ func newMyReportsTestMux(t *testing.T) (*http.ServeMux, *sql.DB) {
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
 
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
 	dp := &common.Deps{
 		Cfg:      cfg,

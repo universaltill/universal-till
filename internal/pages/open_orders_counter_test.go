@@ -218,7 +218,7 @@ func legacyCounterDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		Db:       db,
 		BtnStore: btn,
 		Engine:   pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000}, ui.PriceResolverAdapter{Store: btn}),
-		State:    common.RuntimeState{Currency: "GBP", TaxRatePct: 20},
+		State:    common.RuntimeState{Currency: "GBP", TaxRateBP: 2000},
 		Settings: settings.NewStore(db),
 		Menu:     []common.MenuItem{{Href: "/", Label: "nav.till"}},
 	}

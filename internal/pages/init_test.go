@@ -38,7 +38,7 @@ func TestInit_IdleAndKioskDefaultsSurviveTwoConsecutiveBoots(t *testing.T) {
 	d := &db.DB{DB: openPagesTestDB(t)}
 	defer d.Close()
 
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 
@@ -110,7 +110,7 @@ func TestInit_ClearsStaleTableClaimLeftByUncleanShutdown(t *testing.T) {
 		t.Fatalf("precondition: T1 must read occupied before the restart, got ok=%v err=%v", ok, err)
 	}
 
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
 	pctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	pm, err := plugins.Init(pctx, cfg, d.DB)
@@ -166,7 +166,7 @@ func TestInit_ReclaimsHeldOrdersTableClaimOnBoot(t *testing.T) {
 		t.Fatalf("test setup error: table must start with no live claim, only the held order, got %d claim rows", preClaimRows)
 	}
 
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
 	pctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	pm, err := plugins.Init(pctx, cfg, d.DB)
@@ -242,7 +242,7 @@ func TestInit_ReleasesOrphanedLiveClaimOnPrimaryAtBootEvenWhenTillStaysOnline(t 
 		t.Fatalf("precondition: T1 must read occupied before the restart, got free=%v err=%v", free, err)
 	}
 
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
 	pctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	pm, err := plugins.Init(pctx, cfg, d.DB)
@@ -348,7 +348,7 @@ func TestInit_HeldOrderClaimSurvivesReleaseAllEvenWhenBootReclaimFails(t *testin
 		t.Fatalf("seed held sale: %v", err)
 	}
 
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
 	pctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	pm, err := plugins.Init(pctx, cfg, d.DB)
@@ -391,7 +391,7 @@ func TestInit_ReconcilesBuiltinLayoutForPreExistingShopType(t *testing.T) {
 		t.Fatalf("seed pre-existing shop_type: %v", err)
 	}
 
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
 	pctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	pm, err := plugins.Init(pctx, cfg, d.DB)
@@ -467,7 +467,7 @@ func TestInit_SteadyStateRebootPopulatesSettingsAmendmentsWithoutReload(t *testi
 		t.Fatalf("seed shop_type: %v", err)
 	}
 
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
 
 	// First boot: installs + activates the salon layout (changed=true),
 	// which reloads regardless of whether the struct literal is correct —
@@ -537,7 +537,7 @@ func TestInit_LeavesNonServiceShopTypeAlone(t *testing.T) {
 	d := &db.DB{DB: openPagesTestDB(t)}
 	defer d.Close()
 
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
 	pctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	pm, err := plugins.Init(pctx, cfg, d.DB)

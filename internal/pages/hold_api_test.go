@@ -87,7 +87,7 @@ func newHoldTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	dp := &common.Deps{
 		Db:     db,
 		Engine: engine,
-		State:  common.RuntimeState{Currency: "GBP", TaxRatePct: 20},
+		State:  common.RuntimeState{Currency: "GBP", TaxRateBP: 2000},
 	}
 	mux := http.NewServeMux()
 	registerHoldAPI(mux, dp)

@@ -45,7 +45,7 @@ func newReceiptPrintInvoiceGateTestDeps(t *testing.T) *common.Deps {
 
 	cfg := &config.Config{
 		Theme:   "default",
-		Locales: config.Locales{Currency: "GBP", Locale: "en", TaxRate: 20},
+		Locales: config.Locales{Currency: "GBP", Locale: "en", TaxRateBP: 2000},
 		Marketplace: config.MarketplaceConfig{
 			EndpointURL: "http://localhost:8081",
 		},

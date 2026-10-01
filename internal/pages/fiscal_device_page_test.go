@@ -63,7 +63,7 @@ func newFiscalDeviceTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	// fails closed rather than panicking (review F5 corrected an earlier
 	// comment here); what needs Cfg is common.LoadState, which nil-derefs
 	// without it.
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "TRY", TaxRate: 20}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "TRY", TaxRateBP: 2000}}
 	d := &common.Deps{
 		Cfg:      cfg,
 		Db:       db,

@@ -70,7 +70,7 @@ func newHoldCrossTillReplica(t *testing.T, primaryURL, bearer string) (*http.Ser
 	dp := &common.Deps{
 		Db:       dbase,
 		Engine:   engine,
-		State:    common.RuntimeState{Currency: "GBP", TaxRatePct: 20},
+		State:    common.RuntimeState{Currency: "GBP", TaxRateBP: 2000},
 		Settings: settings.NewStore(dbase),
 	}
 	setReplicaSettings(t, dp.Settings, primaryURL, bearer)

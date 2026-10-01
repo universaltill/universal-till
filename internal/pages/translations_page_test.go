@@ -27,7 +27,7 @@ func newTranslationsTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *confi
 
 	cfg := &config.Config{
 		Theme:   "default",
-		Locales: config.Locales{Currency: "GBP", Locale: "en", TaxRate: 20},
+		Locales: config.Locales{Currency: "GBP", Locale: "en", TaxRateBP: 2000},
 	}
 	pm, err := plugins.Init(t.Context(), cfg, d)
 	if err != nil {

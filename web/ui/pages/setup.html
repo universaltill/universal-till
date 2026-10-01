@@ -43,7 +43,7 @@
          plain first-render case into one startStep. -->
     <main class="setup-card" x-data="{ step: {{ .startStep }}, last: 8,
                                        country: '{{ .detectedCountry }}', currency: '{{ .detectedCurrency }}',
-                                       tax: '{{ .detectedTaxRatePct }}', taxinc: '{{ if .detectedTaxInclusive }}on{{ else }}off{{ end }}',
+                                       tax: '{{ .detectedTaxRate }}', taxinc: '{{ if .detectedTaxInclusive }}on{{ else }}off{{ end }}',
                                        currencyTouched: false,
                                        restoreAsking: false, restoreChoice: '', restoreStagedId: '' }">
       <img class="login-logo" src="/public/assets/logo/unitill-logo.svg" alt="Universal Till" />
@@ -144,7 +144,7 @@
           <input type="hidden" name="country" :value="country">
           <div class="picker-grid" role="group" aria-label="{{ T "setup.country.title" }}" x-ref="countryGrid">
             {{ range .countries }}
-            <button type="button" class="picker-tile" value="{{ .Code }}" data-currency="{{ .Currency }}" data-tax="{{ .TaxRatePct }}" data-taxinc="{{ if .TaxInclusive }}on{{ else }}off{{ end }}" :aria-pressed="country === '{{ .Code }}'" x-show="showAllCountries || country === '{{ .Code }}'" @click="const d = $event.currentTarget.dataset; country = '{{ .Code }}'; currency = d.currency || currency; tax = d.tax ?? tax; taxinc = d.taxinc || taxinc; currencyTouched = true;">{{ if .NameKey }}{{ T .NameKey }}{{ else }}{{ .Code }}{{ end }}</button>
+            <button type="button" class="picker-tile" value="{{ .Code }}" data-currency="{{ .Currency }}" data-tax="{{ .TaxRate }}" data-taxinc="{{ if .TaxInclusive }}on{{ else }}off{{ end }}" :aria-pressed="country === '{{ .Code }}'" x-show="showAllCountries || country === '{{ .Code }}'" @click="const d = $event.currentTarget.dataset; country = '{{ .Code }}'; currency = d.currency || currency; tax = d.tax ?? tax; taxinc = d.taxinc || taxinc; currencyTouched = true;">{{ if .NameKey }}{{ T .NameKey }}{{ else }}{{ .Code }}{{ end }}</button>
             {{ end }}
           </div>
           <!-- Review finding (Should-fix 2): expanding used to leave focus

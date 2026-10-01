@@ -31,6 +31,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/settingsnav"
 	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/taxrate"
 )
 
 // isPiKioskAppliance reports whether the wired WindowController is the Pi
@@ -2881,10 +2882,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// (store.tax_inclusive / pos.allow_negative_inventory).
 		// taxRatePct keeps its guard below though no shipped UI posts it
 		// here either — not dead code, exercised by TestDisplayAndStoreSettings.
+		// Same percent grammar as every other store.tax_rate writer:
+		// 0–100, fractional allowed (ut-docs#3259).
 		if v := r.Form.Get("taxRatePct"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-				st.TaxRatePct = n
-				auditPayload["tax_rate_pct"] = n
+			if bp, ok := taxrate.ParsePercent(v); ok {
+				st.TaxRateBP = bp
+				auditPayload["tax_rate_pct"] = taxrate.FormatPercent(bp)
 			}
 		}
 		if err := saveStateThrough(r.Context(), d, elev, base, st, extra); err != nil {
@@ -2984,16 +2987,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
-		// ut-docs#3255: same validate-before-persisting reasoning — a whole
-		// percent 0–100 (RuntimeState.TaxRatePct is an int, as in the setup
-		// wizard), stored normalised so "025" is kept as "25".
+		// ut-docs#3255: same validate-before-persisting reasoning — a
+		// percent 0–100 with at most two decimals ('.' or ','; fractional
+		// since ut-docs#3259, e.g. Switzerland's 8.1), stored normalised so
+		// "025" is kept as "25" and "8,10" as "8.1".
 		if key == common.KeyTaxRate {
-			n, err := strconv.Atoi(value)
-			if err != nil || n < 0 || n > 100 {
+			bp, ok := taxrate.ParsePercent(value)
+			if !ok {
 				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "taxcodes.err.invalid_rate"), http.StatusBadRequest)
 				return
 			}
-			value = strconv.Itoa(n)
+			value = taxrate.FormatPercent(bp)
 		}
 		// ut-docs#2499: same validate-before-persisting reasoning as the
 		// service-charge rate above. An out-of-enum browsing mode would be
@@ -3239,8 +3243,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			case common.KeyTaxInclusive:
 				s.TaxInclusive = truthy(value)
 			case common.KeyTaxRate:
-				if n, err := strconv.Atoi(value); err == nil {
-					s.TaxRatePct = n
+				// Already validated and normalised above (ut-docs#3259).
+				if bp, ok := taxrate.ParsePercent(value); ok {
+					s.TaxRateBP = bp
 				}
 			case common.KeyServiceChargeRate:
 				// Already validated above; guard kept for defensive safety.
