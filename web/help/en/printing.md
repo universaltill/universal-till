@@ -47,6 +47,7 @@ Print a barcode label for a shelf or a price ticket straight from an item's own 
 3. Set **Copies** (1–50; a blank or invalid number is treated as 1, and anything typed over 50 is capped at 50) and press **Print labels**.
 4. An item or variant with no barcode and no SKU has nothing to print — the button reports **"This item has no barcode or SKU to print"** instead of sending a blank label; give it one on the Variants tab first (see [Catalog, variants & barcodes](/help/catalog)).
 5. Any operator can print labels — it's normal floor work, not a manager action.
+6. An item marked **Sold by weight** prints its price per kg too (e.g. "£1.50 per kg"), alongside the name and barcode. A variant of a weighed item (e.g. a large size) shows its own per-kg price the same way.
 
 Labels go to whichever printer is set up above (the receipt printer, not the kitchen one) — the same "Nothing is printing" causes below apply here too, e.g. the button reports a plain **"Print failed"** if no printer is configured yet. **Labels cannot print at all on a Regular printer (system) connection** — the button explains why: **"Shelf/price labels need a Network or USB receipt printer — a Regular printer (system) connection cannot print the barcode."** This is permanent, not a gap waiting on a fix — a shelf label's whole content is a scannable barcode, and a regular office printer can only receive plain text, not the raster codes a receipt/barcode printer draws. Switch to Network or USB device in Settings → Printer to print labels.
 

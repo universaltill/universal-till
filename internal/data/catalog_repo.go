@@ -183,19 +183,30 @@ type ItemLabel struct {
 	Name       string
 	PriceMinor int64
 	Code       string // primary barcode, else SKU
+	IsWeighed  bool
 }
 
 // GetItemLabel loads label data for one item: name, CURRENT effective price
 // (an active price_history row when one exists, else the configured
 // base_price — same resolution as ItemCurrentPrices/POSRepo.ResolveCurrentPrice,
-// ut-docs#2260), and the primary barcode (falling back to any barcode, then
-// the SKU). Without this, a printed shelf label could disagree with what the
+// ut-docs#2260), the primary barcode (falling back to any barcode, then
+// the SKU), and whether the item is weighed, so a weighed item's label can
+// show its unit price ("£x.xx per kg", Price Marking Order 2004 — ut-docs#3343).
+// A weighed item's quantity is always kilograms regardless of its own
+// `items.unit` text (the same convention `internal/ui/buttons.go`'s
+// embedded-weight decode relies on) — the suffix is the fixed word "kg",
+// never `items.unit` verbatim, which review found is "each" on every
+// catalog-imported weighed item (`import_page.go`) and on every
+// hand-entered one too (the catalog form's unit field has no link to the
+// Sold-by-weight checkbox and defaults to "each").
+// Without the price part, a printed shelf label could disagree with what the
 // till actually charges whenever a scheduled/promotional price_history row
 // is active — worse than the same gap on a screen tile (ut-docs#2228/#2258),
 // since a physical label persists after the promotion starts or ends.
 func (r *CatalogRepo) GetItemLabel(ctx context.Context, itemID string) (ItemLabel, bool, error) {
 	var l ItemLabel
 	var sku string
+	var weighed int
 	err := r.db.QueryRowContext(ctx, `
 SELECT i.name,
        COALESCE(
@@ -206,9 +217,11 @@ SELECT i.name,
           ORDER BY datetime(ph.starts_at) DESC, ph.rowid DESC LIMIT 1),
          i.base_price
        ),
-       COALESCE(i.sku, '')
+       COALESCE(i.sku, ''),
+       i.is_weighed
 FROM items i WHERE i.id = ?`, itemID).
-		Scan(&l.Name, &l.PriceMinor, &sku)
+		Scan(&l.Name, &l.PriceMinor, &sku, &weighed)
+	l.IsWeighed = weighed != 0
 	if err == sql.ErrNoRows {
 		return ItemLabel{}, false, nil
 	}
@@ -698,12 +711,17 @@ type VariantEditView struct {
 }
 
 // VariantLabel is what a shelf/product label needs for ONE variant: the
-// composed display name, the variant's own price and its scannable code
-// (primary variant barcode, else the variant SKU).
+// composed display name, the variant's own price, its scannable code
+// (primary variant barcode, else the variant SKU), and whether the PARENT
+// item is weighed (ut-docs#3343 review finding 2) — a variant has no
+// is_weighed of its own, but the POS prices it by weight whenever its
+// parent item is (internal/data/pos_repo.go's variant-sale queries select
+// i.is_weighed), so its label needs the same per-kg suffix as a plain item.
 type VariantLabel struct {
 	Name       string
 	PriceMinor int64
 	Code       string
+	IsWeighed  bool
 }
 
 // GetVariantLabel loads a variant's label data (item name + variant name)
@@ -714,6 +732,7 @@ type VariantLabel struct {
 func (r *CatalogRepo) GetVariantLabel(ctx context.Context, variantID string) (VariantLabel, bool, error) {
 	var l VariantLabel
 	var itemName, vName, sku string
+	var weighed int
 	err := r.db.QueryRowContext(ctx, `
 SELECT i.name, v.name, TRIM(COALESCE(v.sku, '')),
        COALESCE(
@@ -725,9 +744,11 @@ SELECT i.name, v.name, TRIM(COALESCE(v.sku, '')),
          v.price
        ),
        COALESCE((SELECT b.barcode FROM variant_barcodes b WHERE b.variant_id = v.id
-                 ORDER BY b.is_primary DESC, b.barcode LIMIT 1), '')
+                 ORDER BY b.is_primary DESC, b.barcode LIMIT 1), ''),
+       i.is_weighed
 FROM item_variants v JOIN items i ON i.id = v.item_id
-WHERE v.id = ?`, variantID).Scan(&itemName, &vName, &sku, &l.PriceMinor, &l.Code)
+WHERE v.id = ?`, variantID).Scan(&itemName, &vName, &sku, &l.PriceMinor, &l.Code, &weighed)
+	l.IsWeighed = weighed != 0
 	if err == sql.ErrNoRows {
 		return l, false, nil
 	}

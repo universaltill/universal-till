@@ -684,7 +684,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		if variantID := strings.TrimSpace(r.Form.Get("variant_id")); variantID != "" {
 			var vl data.VariantLabel
 			vl, found, err = data.NewCatalogRepo(d.Db).GetVariantLabel(r.Context(), variantID)
-			label = data.ItemLabel{Name: vl.Name, PriceMinor: vl.PriceMinor, Code: vl.Code}
+			label = data.ItemLabel{Name: vl.Name, PriceMinor: vl.PriceMinor, Code: vl.Code, IsWeighed: vl.IsWeighed}
 		} else {
 			label, found, err = data.NewCatalogRepo(d.Db).GetItemLabel(r.Context(), itemID)
 		}
@@ -720,7 +720,24 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		// Same Latin-digit ESC/POS constraint as buildReceiptDoc/buildEODDoc
 		// above, but the store's own separator/decimal convention rather
 		// than a hardcoded "en" (ut-docs#1130 review finding).
-		one := print.RenderLabel(label.Name, httpx.FormatMoneyLatin(label.PriceMinor, httpx.DefaultLocale()), label.Code, cfg.Charset)
+		priceText := httpx.FormatMoneyLatin(label.PriceMinor, httpx.DefaultLocale())
+		// Price Marking Order 2004 (as amended, commencing 6 Apr 2026):
+		// a weighed item's shelf label must show its unit price, not just
+		// the bare price — ut-docs#3343. The suffix is always the fixed
+		// word "kg", never the item's own free-text `unit` field: review
+		// found that field is "each" on every catalog-imported weighed
+		// item and every hand-entered one too (the catalog form's unit
+		// input has no link to the Sold-by-weight checkbox) — a weighed
+		// item's quantity is kilograms regardless of what `unit` says
+		// (the same convention internal/ui/buttons.go's embedded-weight
+		// decode relies on), so "kg" is the only value that is ever
+		// actually true. Same store-locale choice as priceText above
+		// (not the operator's own browser-cookie `locale`): this prints
+		// on a shop's physical shelf label, not the staff UI.
+		if label.IsWeighed {
+			priceText = fmt.Sprintf(httpx.T(httpx.DefaultLocale(), "catalog.labels.price_per_unit"), priceText, "kg")
+		}
+		one := print.RenderLabel(label.Name, priceText, label.Code, cfg.Charset)
 		job := make([]byte, 0, len(one)*copies)
 		for range copies {
 			job = append(job, one...)
