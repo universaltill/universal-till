@@ -180,7 +180,8 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 			<-pollDone
 		}()
 		go func() {
-			defer close(pollDone)
+			defer logging.RecoverAndLog("desktop.watchShellMode")
+			defer close(pollDone) // runs while a panic unwinds too, so the join above never hangs
 			// done() fires INSIDE the dispatched closure, after
 			// applyWindowMode returned on the UI thread — so applied=
 			// acknowledges a window that really changed, not a closure

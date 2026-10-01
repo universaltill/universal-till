@@ -55,6 +55,7 @@ func linuxStartSelfReexecWatch(ctx context.Context, childPid int) {
 		return os.Stat(p)
 	}
 	go func() {
+		defer logging.RecoverAndLog("desktop.selfReexecWatch")
 		t := time.NewTicker(selfReexecCheckInterval)
 		defer t.Stop()
 		if err := watchOwnBinary(ctx, exe, t.C, stat, func() { reexecSelf(exe, childPid) }, nil); err != nil {
@@ -107,6 +108,7 @@ func stopChildServer(pid int) {
 	}
 	exited := make(chan struct{})
 	go func() {
+		defer logging.RecoverAndLog("desktop.stopChildServerReap")
 		_, _ = p.Wait()
 		close(exited)
 	}()

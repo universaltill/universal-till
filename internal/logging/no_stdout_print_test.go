@@ -18,7 +18,11 @@ import (
 // or os.Stdout bypasses logging.Redact, so a secret in its arguments would
 // reach the console unredacted. Use logging.L() (Infof/Warnf/Errorf) instead,
 // which is routed through the redacted, rotated log file
-// (internal/logging/file.go).
+// (internal/logging/file.go). cmd/ is deliberately out of scope (ut-docs#3305):
+// entry points own their process's std streams — unitill-uninstall is a
+// terminal CLI whose output is stdout/stderr, and unitill-desktop wires the
+// child server's streams and falls back to stderr only when its log file
+// can't open.
 func TestNoStdoutPrintCalls(t *testing.T) {
 	root, err := filepath.Abs("..")
 	if err != nil {

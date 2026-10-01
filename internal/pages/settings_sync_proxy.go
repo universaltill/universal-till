@@ -45,8 +45,9 @@ import (
 // this package that is not per-till, main-till-only or annotated
 // `// settings-write:allow <reason>`. store.country travels like any other
 // shop-wide key (ut-docs#2980): the main till runs the owner check and the
-// old country's posture reset, never this till. Not covered
-// yet: read-only rendering while the main till is away (ut-docs#2981).
+// old country's posture reset, never this till. While the main till is
+// unreachable, Settings renders the shop-wide regions read-only up front
+// (settings_shopwide_lock.go, ut-docs#2981); the refusal here stays.
 
 // settingsSyncProxyClient is the additional-till -> main-till client; same
 // admin-screen budget as the users write-through.
