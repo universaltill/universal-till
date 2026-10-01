@@ -1919,7 +1919,7 @@
   "selforder.counter.place_order": "Place order",
   "selforder.counter.title": "Pay at the counter",
   "selforder.decrease": "Decrease quantity",
-  "selforder.exit": "Exit to till settings (PIN required)",
+  "selforder.exit": "Exit kiosk mode (PIN required)",
   "selforder.increase": "Increase quantity",
   "selforder.no_items": "No items found.",
   "selforder.order_type.dine_in": "Dine in",

@@ -306,8 +306,10 @@ func TestSelfOrderExit_PinLoginReachesTillSettingsNotKioskLoop(t *testing.T) {
 		}
 	}
 
-	// A valid manager PIN via the kiosk exit must land on the real gated
-	// till surface (/settings) — NOT loop back to /self-order.
+	// A valid manager PIN via the kiosk exit must land on a real till
+	// surface — NOT loop back to /self-order. Since ut-docs#3136 that
+	// login also puts the till back into normal till mode, so the
+	// destination is the sale screen; Settings stays reachable from there.
 	okRec := httptest.NewRecorder()
 	okReq := httptest.NewRequest(http.MethodPost, "/api/auth/login",
 		strings.NewReader(url.Values{"pin": {"4321"}, "next": {"kiosk"}}.Encode()))
@@ -316,8 +318,8 @@ func TestSelfOrderExit_PinLoginReachesTillSettingsNotKioskLoop(t *testing.T) {
 	if okRec.Code != http.StatusSeeOther {
 		t.Fatalf("valid PIN: code=%d body=%s", okRec.Code, okRec.Body.String())
 	}
-	if loc := okRec.Header().Get("Location"); loc != "/settings" {
-		t.Fatalf("valid PIN via kiosk exit redirected to %q, want /settings (not looped back into the kiosk)", loc)
+	if loc := okRec.Header().Get("Location"); loc != "/" {
+		t.Fatalf("valid PIN via kiosk exit redirected to %q, want / (normal till mode, ut-docs#3136)", loc)
 	}
 	var cookie *http.Cookie
 	for _, c := range okRec.Result().Cookies() {
@@ -430,8 +432,10 @@ func TestSelfOrderExit_ExistingSessionCookieStillRequiresPIN(t *testing.T) {
 	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	postReq.AddCookie(cookie)
 	h.ServeHTTP(postRec, postReq)
-	if postRec.Code != http.StatusSeeOther || postRec.Header().Get("Location") != "/settings" {
-		t.Fatalf("PIN re-entry via the kiosk exit = %d → %q, want 303 → /settings", postRec.Code, postRec.Header().Get("Location"))
+	// Since ut-docs#3136 a non-kiosk login also takes the till out of
+	// self-order mode, so the destination is the sale screen.
+	if postRec.Code != http.StatusSeeOther || postRec.Header().Get("Location") != "/" {
+		t.Fatalf("PIN re-entry via the kiosk exit = %d → %q, want 303 → /", postRec.Code, postRec.Header().Get("Location"))
 	}
 
 	// And, once through, the session is a real one: /settings answers it
