@@ -291,8 +291,9 @@ var adminTables = []adminTable{
 	// it would never fire. ux_plugin_settings_global (migration 053,
 	// ut-docs#787) IS a real, targetable unique constraint for global
 	// rows ((plugin_id, key) WHERE scope='global') -- applyPluginSettings
-	// still doesn't upsert against it, relying on its own per-plugin
-	// delete-then-insert instead (see applyPluginSettings' own comment).
+	// still doesn't upsert against it: its per-plugin diff first deletes
+	// any local global row whose (id, key) the bundle doesn't carry, so the
+	// id upsert can't collide (see applyPluginSettings' own comment).
 	{name: "plugin_settings", pk: []string{"id"}},
 	// ut-docs#1670: plugin_storage is generic plugin-private KV storage in
 	// general (per-plugin local state), but FiscalRegisterDEPluginID's
@@ -301,7 +302,7 @@ var adminTables = []adminTable{
 	// exact #1546 shape (shop-wide state missing from sync). Only that
 	// plugin's fiscal_register:-prefixed rows travel: the dump filter below
 	// (DumpAdmin) scopes on BOTH plugin_id and key prefix, and
-	// applyFiscalRegisterStorage's scoped delete-then-insert (mirroring
+	// applyFiscalRegisterStorage's scoped diff (mirroring
 	// applyPluginSettings just above) never touches any other row --
 	// scoping by plugin_id too (not prefix alone) matches every other
 	// plugin_storage accessor in this codebase, all of which key on
@@ -1173,9 +1174,10 @@ WHERE v.is_active = 1
 // primary doesn't have) keeps its local global settings. Rows for plugins not
 // installed on this till are skipped — plugin_settings FKs plugins, and
 // replicas install plugins from the marketplace themselves; the rows land on
-// the pull after the install. Delete-then-insert per plugin (not a prune):
-// it propagates key deletion within a plugin without seeing per-till rows,
-// which are absent from the bundle by design.
+// the pull after the install. A scoped diff per plugin (not the generic
+// prune): it propagates key deletion within a plugin without seeing per-till
+// rows, which are absent from the bundle by design, and leaves unchanged
+// rows untouched (ut-docs#3312).
 //
 // Defensive dedupe (ut-docs#807): a primary that hasn't yet applied
 // migration 053's ux_plugin_settings_global index (e.g. still running an
@@ -1207,16 +1209,43 @@ func applyPluginSettings(ctx context.Context, tx *sql.Tx, t adminTable, recs []m
 		installed[fmt.Sprint(rec["id"])] = true
 	}
 
-	cleared := map[string]bool{}
+	// ut-docs#3312: delete only the local global rows the bundle no longer
+	// carries as-is, then let upsertRows' conditional upsert (#2875) skip
+	// the unchanged rest. A blanket delete-then-insert fired the DELETE and
+	// INSERT sync_admin_version triggers for every row on every apply. A
+	// row is kept only when the bundle has the same (id, key) for its
+	// plugin: a missing key propagates the deletion, and a same-key row
+	// with another id (#807) is cleared so the insert can't collide with
+	// ux_plugin_settings_global.
+	keep := map[string]map[string]bool{}
 	for _, rec := range recs {
 		pid := fmt.Sprint(rec["plugin_id"])
-		if cleared[pid] {
-			continue
+		if keep[pid] == nil {
+			keep[pid] = map[string]bool{}
 		}
-		cleared[pid] = true
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM plugin_settings WHERE scope = 'global' AND plugin_id = ?`, pid); err != nil {
+		if fmt.Sprint(rec["scope"]) == "global" {
+			keep[pid][fmt.Sprint(rec["id"])+"\x1f"+fmt.Sprint(rec["key"])] = true
+		}
+	}
+	for pid, want := range keep {
+		rows, err := tx.QueryContext(ctx,
+			`SELECT id, key FROM plugin_settings WHERE scope = 'global' AND plugin_id = ?`, pid)
+		if err != nil {
 			return fmt.Errorf("apply plugin_settings: %w", err)
+		}
+		local, err := scanGenericCols(rows, []string{"id", "key"})
+		rows.Close()
+		if err != nil {
+			return fmt.Errorf("apply plugin_settings: %w", err)
+		}
+		for _, l := range local {
+			if want[fmt.Sprint(l["id"])+"\x1f"+fmt.Sprint(l["key"])] {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM plugin_settings WHERE id = ?`, l["id"]); err != nil {
+				return fmt.Errorf("apply plugin_settings: %w", err)
+			}
 		}
 	}
 
@@ -1247,24 +1276,20 @@ func applyPluginSettings(ctx context.Context, tx *sql.Tx, t adminTable, recs []m
 
 // applyFiscalRegisterStorage replaces this till's fiscal_register:-prefixed
 // plugin_storage rows — for FiscalRegisterDEPluginID specifically — with the
-// primary's copy (ut-docs#1670). Delete-then-insert, scoped by BOTH
+// primary's copy (ut-docs#1670). A scoped diff (missing keys deleted, the
+// rest upserted only when changed — ut-docs#3312), scoped by BOTH
 // plugin_id and key prefix — never touches a row under any other plugin_id,
-// or any other key, for any plugin: the DELETE's WHERE clause is the only
+// or any other key, for any plugin: the scoped SELECT and DELETE are the only
 // thing standing between this and wiping another plugin's private storage
 // (or broadcasting it to every satellite via the dump side), so it must
 // never be loosened to match on prefix alone or anything table-wide.
 // FiscalRegisterDEKeyPrefix ("fiscal_register:") is a fixed compile-time
 // constant with no '%'/'_' characters, so the LIKE pattern below needs no
 // ESCAPE clause. Same shape as applyPluginSettings just above: a scoped
-// delete-then-insert stands in for deleteMissing/upsertRows because the
+// diff stands in for deleteMissing because the
 // generic path can't safely reason about a bundle that is deliberately a
 // subset of the table.
 func applyFiscalRegisterStorage(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[string]any) error {
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM plugin_storage WHERE plugin_id = ? AND key LIKE ?`,
-		FiscalRegisterDEPluginID, FiscalRegisterDEKeyPrefix+"%"); err != nil {
-		return fmt.Errorf("apply plugin_storage (fiscal register): %w", err)
-	}
 	cols, err := tableColumns(ctx, tx, t.name)
 	if err != nil {
 		return err
@@ -1280,6 +1305,37 @@ func applyFiscalRegisterStorage(ctx context.Context, tx *sql.Tx, t adminTable, r
 			continue // defense in depth: mirrors applyPluginSettings' own scope re-check
 		}
 		toApply = append(toApply, rec)
+	}
+	// ut-docs#3312: delete only the keys the bundle no longer carries; the
+	// conditional upsert below (#2875) leaves unchanged rows alone, so an
+	// identical bundle fires no sync_admin_version trigger. A row written
+	// locally by PluginRepo.StorageSet holds a BLOB and the bundle carries
+	// TEXT, so that row is rewritten once (as TEXT, same bytes) and is
+	// stable after that. StorageGet reads either; don't add a CAST.
+	want := make(map[string]bool, len(toApply))
+	for _, rec := range toApply {
+		want[fmt.Sprint(rec["key"])] = true
+	}
+	rows, err := tx.QueryContext(ctx,
+		`SELECT key FROM plugin_storage WHERE plugin_id = ? AND key LIKE ?`,
+		FiscalRegisterDEPluginID, FiscalRegisterDEKeyPrefix+"%")
+	if err != nil {
+		return fmt.Errorf("apply plugin_storage (fiscal register): %w", err)
+	}
+	local, err := scanGenericCols(rows, []string{"key"})
+	rows.Close()
+	if err != nil {
+		return fmt.Errorf("apply plugin_storage (fiscal register): %w", err)
+	}
+	for _, l := range local {
+		if want[fmt.Sprint(l["key"])] {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM plugin_storage WHERE plugin_id = ? AND key = ?`,
+			FiscalRegisterDEPluginID, l["key"]); err != nil {
+			return fmt.Errorf("apply plugin_storage (fiscal register): %w", err)
+		}
 	}
 	if err := upsertRows(ctx, tx, t, cols, toApply); err != nil {
 		return fmt.Errorf("apply plugin_storage (fiscal register): %w", err)
