@@ -24,23 +24,25 @@ var goroutineAllowRe = regexp.MustCompile(`goroutine-recover:allow\s+\S`)
 // unrecovered panic in ANY goroutine takes down the whole till process —
 // mid-sale, on a merchant's counter — and its stack goes to the raw stderr,
 // bypassing till.log, redaction and the Problems ring. Every `go` statement
-// under internal/ and cmd/ (ut-docs#3305 extended the walk to the entry
-// points) must therefore start a func literal whose first statement
-// is `defer logging.RecoverAndLog("name")`, which logs the panic (redacted)
-// and ends just that goroutine. Reviewed exception: a
-// `// goroutine-recover:allow <reason>` comment on the go line or the line
-// directly above it.
+// under internal/, cmd/ and mobile/ (ut-docs#3305 extended the walk to the
+// entry points, ut-docs#3313 to the gomobile package) must therefore start a
+// func literal whose first statement is `defer logging.RecoverAndLog("name")`,
+// which logs the panic (redacted) and ends just that goroutine. Reviewed
+// exception: a `// goroutine-recover:allow <reason>` comment on the go line or
+// the line directly above it. plugins/ is deliberately not walked: the only
+// bare goroutine there (plugins/tax-tr/okc/sim/sim.go, a TCP simulator) is
+// moving out of core into its own plugin repo (ut-docs#2878).
 func TestNoUnrecoveredGoroutines(t *testing.T) {
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatalf("resolve repo root: %v", err)
 	}
-	violations, err := findUnrecoveredGoroutines(root, "internal", "cmd")
+	violations, err := findUnrecoveredGoroutines(root, "internal", "cmd", "mobile")
 	if err != nil {
-		t.Fatalf("walk internal/ and cmd/ trees: %v", err)
+		t.Fatalf("walk internal/, cmd/ and mobile/ trees: %v", err)
 	}
 	if len(violations) > 0 {
-		t.Errorf("%d go statement(s) can panic the whole till unrecovered and unredacted (ut-docs#3304, #3305) — write them as `go func() { defer logging.RecoverAndLog(\"pkg.what\"); ... }()`, or add a reviewed `// goroutine-recover:allow <reason>`:\n  %s",
+		t.Errorf("%d go statement(s) can panic the whole till unrecovered and unredacted (ut-docs#3304, #3305, #3313) — write them as `go func() { defer logging.RecoverAndLog(\"pkg.what\"); ... }()`, or add a reviewed `// goroutine-recover:allow <reason>`:\n  %s",
 			len(violations), strings.Join(violations, "\n  "))
 	}
 }
@@ -137,9 +139,11 @@ func h() {
 	go func() { defer RecoverAndLog("cmd impostor"); _ = 1 }()
 }
 `)
+	// mobile/ is walked too (ut-docs#3313).
+	write("mobile/m.go", "package mobile\n\nfunc run() {\n\tgo run()\n}\n")
 	write("other/outside.go", "package other\n\nfunc f() { go f() }\n")
 
-	got, err := findUnrecoveredGoroutines(root, "internal", "cmd")
+	got, err := findUnrecoveredGoroutines(root, "internal", "cmd", "mobile")
 	if err != nil {
 		t.Fatalf("findUnrecoveredGoroutines: %v", err)
 	}
@@ -147,7 +151,8 @@ func h() {
 	want := []string{at(11), at(12), at(13), at(18), at(19), at(20),
 		filepath.Join("internal", "foo", "logging", "impostor.go") + ":6",
 		filepath.Join("cmd", "app", "main.go") + ":4",
-		filepath.Join("cmd", "x", "logging", "impostor.go") + ":6"}
+		filepath.Join("cmd", "x", "logging", "impostor.go") + ":6",
+		filepath.Join("mobile", "m.go") + ":4"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("findUnrecoveredGoroutines reported\n  %v\nwant\n  %v", got, want)
 	}
