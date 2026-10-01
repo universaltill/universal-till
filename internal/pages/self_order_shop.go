@@ -552,6 +552,30 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		// ut-docs#3340 — age-restricted items fail closed here, the same
+		// shape as the blocked-tax refusal below: an unattended kiosk cannot
+		// check ID, so any item flagged items.age_restricted (read from the
+		// DB, the item's CURRENT flag) refuses card checkout with a 409 and
+		// a translated pointer to the counter. Nothing is recorded and the
+		// basket is untouched — staff finish the order at the till, where
+		// the cashier's ID-check prompt applies. A failed read fails closed
+		// too. The pay-at-counter branch above is deliberately NOT blocked:
+		// it takes no payment and parks the order for the till, which is
+		// exactly where an ID check can happen.
+		itemIDs := make([]string, 0, len(lines))
+		for _, l := range lines {
+			itemIDs = append(itemIDs, l.ItemID)
+		}
+		restricted, err := repo.AgeRestrictedItemIDs(r.Context(), itemIDs)
+		if err != nil || len(restricted) > 0 {
+			if err != nil {
+				logging.L().Errorf("self-order checkout: read age-restricted items: %v", err)
+			}
+			w.WriteHeader(http.StatusConflict)
+			renderKioskPaymentPicker(w, r, eng, methods, "age_check.kiosk_blocked")
+			return
+		}
+
 		// ut-docs#2067: a kiosk is its own register (Settings → Registers
 		// can pin it to a stock location), so the sale draws from THAT
 		// location, falling back to Main when none is assigned — same

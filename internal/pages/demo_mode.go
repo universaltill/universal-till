@@ -398,7 +398,10 @@ var demoAllowedRoutes = map[string]bool{
 	// tender route is shared; card-terminal tenders are a later card),
 	// holds/open orders, tables on the basket, suggestions, modifiers,
 	// vouchers.
-	"/":                                 true,
+	"/": true,
+	// ut-docs#3340: recording an age-restricted line's ID check is part
+	// of ringing up a sale, same as /api/pos/line.
+	"POST /api/pos/age-check":           true,
 	"/api/pos/discount":                 true,
 	"/api/pos/line":                     true,
 	"/api/pos/order-type":               true,

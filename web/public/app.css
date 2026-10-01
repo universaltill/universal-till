@@ -2987,11 +2987,33 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    (not left/right) keeps this RTL-correct with no separate ruleset. */
 /* z-index 500 (ut-docs#2873): the non-modal popup family's layer, above
    the shared popup scrim (450) -- without it the sheet painted under it. */
-.shrinkage-sheet {
+.shrinkage-sheet,
+.age-check-sheet {
   position: fixed; inset-block-start: 50%; inset-inline: 0; z-index: 500;
   transform: translateY(-50%); margin-inline: auto;
   max-height: min(80vh, 32rem); overflow-y: auto;
 }
+/* ut-docs#3340: the age-restricted line's persistent ID-check badge and its
+   sheet. Reuses the shrinkage sheet's fixed, centred frame above; the badge
+   is a compact pill under the line name, at least 44px tall to stay a real
+   touch target. State shows as TEXT ("Needs ID check" / "ID checked" / "ID
+   refused"), colour is only a second signal, from the existing tokens. */
+.age-check { display: block; margin-block-start: .2rem; }
+.age-check-toggle {
+  display: inline-flex; align-items: center; gap: .3rem;
+  min-block-size: 44px; padding-block: .2rem; padding-inline: .6rem;
+  border: 1px solid var(--warning); border-radius: 999px;
+  background: transparent; color: inherit; font: inherit; font-size: .8rem;
+  cursor: pointer; text-align: start;
+}
+.age-check-toggle.is-accepted { border-color: var(--success); color: var(--success); }
+.age-check-toggle.is-refused { border-color: var(--danger); color: var(--danger); }
+.age-check-toggle .btn-ico svg { inline-size: 1rem; block-size: 1rem; }
+.age-check-sheet-prompt { margin: 0 0 .3rem; font-size: .95rem; font-weight: 600; }
+.age-check-sheet-item { margin: 0 0 .5rem; }
+.age-check-refused-hint { margin: 0 0 .5rem; color: var(--danger); font-weight: 600; }
+.age-check-sheet-actions { display: flex; flex-direction: column; gap: .5rem; }
+.age-check-sheet-actions .btn { white-space: nowrap; }
 .shrinkage-remove { display: inline-block; }
 .shrinkage-sheet-prompt { margin: 0 0 .3rem; font-size: .95rem; font-weight: 600; }
 .shrinkage-sheet-actions { display: flex; flex-direction: column; gap: .5rem; }

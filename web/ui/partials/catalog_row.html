@@ -33,6 +33,7 @@
     data-description="{{ .Item.Description }}" data-unit="{{ .Item.Unit }}"
     data-weighed="{{ if .Item.IsWeighed }}1{{ else }}0{{ end }}"
     data-stock-untracked="{{ if .Item.StockUntracked }}1{{ else }}0{{ end }}"
+    data-age-restricted="{{ if .Item.AgeRestricted }}1{{ else }}0{{ end }}"
     data-category="{{ with .Item.CategoryID }}{{ . }}{{ end }}"
     data-brand="{{ with .Item.BrandID }}{{ . }}{{ end }}"
     data-price="{{ .Item.BasePrice }}"

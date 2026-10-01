@@ -60,7 +60,9 @@ func (r *DemoSeedRepo) SeedDemoCatalogue(ctx context.Context) error {
 //     permanently as the operator's own (KeepDemoItemAsOwn) — ut-docs#1840
 //     AC3.
 //   - ReasonHistory: the item (or a variant) has a live or archived
-//     sale_lines/stock_movements row. Never offered a "remove anyway" —
+//     sale_lines/stock_movements row, or a live or archived
+//     age_verifications row (ut-docs#3340: an ID check — typically a
+//     refusal — recorded against it). Never offered a "remove anyway" —
 //     doing so would either FK-fail or silently orphan a restorable
 //     archive batch (ut-docs#1840's own "Do not regress" section). Points
 //     the operator at Catalog cleanup instead (AC4), which handles this
@@ -141,6 +143,8 @@ CASE
 	  OR EXISTS (SELECT 1 FROM sale_lines_archive sl JOIN item_variants v ON v.id = sl.variant_id WHERE v.item_id = i.id)
 	  OR EXISTS (SELECT 1 FROM stock_movements_archive sm WHERE sm.item_id = i.id)
 	  OR EXISTS (SELECT 1 FROM stock_movements_archive sm JOIN item_variants v ON v.id = sm.variant_id WHERE v.item_id = i.id)
+	  OR EXISTS (SELECT 1 FROM age_verifications av WHERE av.item_id = i.id)
+	  OR EXISTS (SELECT 1 FROM age_verifications_archive av WHERE av.item_id = i.id)
 	THEN 'history'
 	ELSE 'edited'
 END`

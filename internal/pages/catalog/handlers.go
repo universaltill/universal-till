@@ -2651,6 +2651,10 @@ func parseItemInput(r *http.Request) (pos.ItemInput, error) {
 		// as false/tracked — no hidden-fallback trick needed, unlike
 		// isActive below (that one defaults CHECKED, this one doesn't).
 		StockUntracked: r.Form.Get("stockUntracked") == "1" || strings.ToLower(r.Form.Get("stockUntracked")) == "on",
+		// ut-docs#3340: same unchecked-means-absent-means-false shape as
+		// stockUntracked just above — false (unrestricted) is the safe
+		// default, so no hidden-fallback field is needed.
+		AgeRestricted: r.Form.Get("ageRestricted") == "1" || strings.ToLower(r.Form.Get("ageRestricted")) == "on",
 		// formCheckboxActive, not a bare Form.Get: the item form now pairs
 		// its Active checkbox with a hidden isActive=0 fallback
 		// (ut-docs#1367), same convention as the variant/modifier-group

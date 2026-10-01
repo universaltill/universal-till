@@ -486,7 +486,9 @@ var nonAdminTables = map[string]string{
 	// wrong shape for an append-only ledger. Cross-till shrinkage reporting
 	// (the "Shrinkage & Loss" reports tab) reads only this till's own rows,
 	// same as every other per-till operational-history table in this list.
-	"shrinkage_events": "pre-tender void/comp/waste event log — append-only per-till history, same reasoning as audit_log/sales",
+	"shrinkage_events":          "pre-tender void/comp/waste event log — append-only per-till history, same reasoning as audit_log/sales",
+	"age_verifications":         "ID-check outcome log for age-restricted sales (ut-docs#3340) — append-only per-till history written with each sale, same reasoning as shrinkage_events/sales",
+	"age_verifications_archive": "archived age_verifications (reset-transactions twin, migration 057) — same reasoning",
 
 	// Resolved classification (ADR-0099, ut-docs#2348, closing the question
 	// ut-docs#1671 deferred): correctly excluded. NOT a pure append-only

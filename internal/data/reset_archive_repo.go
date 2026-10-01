@@ -167,6 +167,17 @@ var resetArchiveTables = []resetArchiveTable{
 	{"sale_line_modifiers", "id, sale_line_id, group_id, option_id, group_name_snapshot, option_name_snapshot, price_delta_minor"},
 	{"sale_lines", "id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, order_type, refund_of_line_id"},
 	{"sale_charges", "sale_id, seq, key, label, amount_minor, tax_basis_bp, base"},
+	// age_verifications (ut-docs#3340, migrations 056/057): the ID-check
+	// outcome log. Its sale_id FK to sales has no ON DELETE action (056's
+	// header: a historical record must not vanish with its sale), so — the
+	// same trap sale_charges guards against directly above — it MUST be
+	// archived/cleared before sales, or the first reset after any ID check
+	// fails outright with "FOREIGN KEY constraint failed". Restore runs this
+	// slice in reverse, so it is re-inserted after sales (and after the
+	// live items/users its item_id/cashier_id FKs point at, which reset
+	// never touches). Found in independent review: the WIP version omitted
+	// it and every reset broke once a verification existed.
+	{"age_verifications", "id, sale_id, item_id, item_name, outcome, cashier_id, created_at"},
 	// display_no (ut-docs#1817, migration 013): added to sales_archive in
 	// the same migration and to this cols string here, same fix shape as
 	// every earlier ALTER's own note above (055 held_sales_archive.table_id,

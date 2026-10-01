@@ -21,6 +21,13 @@ type ItemInput struct {
 	// Go zero value (false) means "tracked" — see
 	// 013_items_stock_untracked.sql for why that direction matters.
 	StockUntracked bool
+	// AgeRestricted marks an item the merchant only sells after a staff ID
+	// check (ut-docs#3340, 055_items_age_restricted.sql): the till asks the
+	// cashier to record an ID-check outcome before tender, and the
+	// self-order kiosk refuses to take payment for it. Named so its Go zero
+	// value (false) means "unrestricted" — the same safe default the
+	// column's DEFAULT 0 gives every existing item on upgrade.
+	AgeRestricted bool
 	// Color is this item's tile swatch (ut-docs#1901) — one of
 	// ItemColors()' fixed hex values, e.g. "#0f172a", or "" for none.
 	// Renders as the sale-screen tile's solid background for a photo-less

@@ -86,6 +86,9 @@ var shippedMigrationChecksums = map[int]string{
 	52: "e11d7106700f8a15534fe01dc7b9e6627eff62885512b3a700e784389f7a5fcb",
 	53: "8eb1e88fe5dedd3c8b38cec0428d6bb32fd26af5cd0229dbfbcb21aeeb27f167",
 	54: "5aabdba4766c125a7d213f6c744b917f76dc8fc6f5464bec52fccc0c10acf61a",
+	55: "4d919a6b6dea8bffcb1e68f5fa5d1ada99c63ad8e11f987a173c995dd1193424",
+	56: "a3776ef297f1483886c25f43cca7c5a45d583fb5313fd5558a52f3f626adc0d2",
+	57: "bf38666d00cf270df3fd3fce5a4434534f528d1e321e1792922c21085753d622",
 }
 
 // shippedMigrationProblems is the check behind TestShippedMigrationsUnchanged,
