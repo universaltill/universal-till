@@ -869,3 +869,135 @@ func TestStripCSVDefuse(t *testing.T) {
 		})
 	}
 }
+
+// A Shopify products-CSV export (ut-docs#3284) — a representative slice of
+// Shopify's real product-export header, synthetic data only. Shopify's own
+// convention, reproduced here deliberately:
+//   - Handle repeats across every row of one product; Title/Type/Vendor are
+//     filled on the product's FIRST row only and blank on every row after.
+//   - Each extra variant is its own row (same Handle, blank Title), told
+//     apart by its Option1/2/3 Value cells and its own Variant SKU/Price.
+//   - A product with more images than variants gets extra image-only rows:
+//     same Handle, nothing but Image Src/Image Position set.
+//   - A single-variant product carries the placeholder Option1 Name "Title"
+//     / Option1 Value "Default Title" — Shopify's equivalent of Square's
+//     "Regular" variation, never meant to be shown as part of the name.
+//
+// "mystery-box" is a genuinely new product (new Handle) whose Title cell is
+// blank — a real data error, not a continuation row, so it must still come
+// back flagged IssueMissingName rather than inheriting the previous
+// product's name. "no-sku-mug" has no Variant SKU at all.
+const shopifyCSV = `Handle,Title,Body (HTML),Vendor,Product Category,Type,Tags,Published,Option1 Name,Option1 Value,Option2 Name,Option2 Value,Option3 Name,Option3 Value,Variant SKU,Variant Grams,Variant Inventory Tracker,Variant Inventory Qty,Variant Inventory Policy,Variant Fulfillment Service,Variant Price,Variant Compare At Price,Variant Requires Shipping,Variant Taxable,Variant Barcode,Image Src,Image Position,Image Alt Text,Gift Card,Status
+cold-brew,Cold Brew Coffee,<p>Smooth</p>,Example Roasters,Food & Beverages,Drinks,coffee,TRUE,Title,Default Title,,,,,SH-CB-1,330,shopify,24,deny,manual,3.50,,TRUE,TRUE,4006381333931,https://cdn.example.com/cb-1.jpg,1,,FALSE,active
+cold-brew,,,,,,,,,,,,,,,,,,,,,,,,,https://cdn.example.com/cb-2.jpg,2,,,
+tee,Logo Tee,<p>Cotton</p>,Example Apparel,Apparel,Clothing,shirt,TRUE,Size,S,Colour,Black,,,SH-TEE-S-BLK,200,shopify,5,deny,manual,15.00,,TRUE,TRUE,5449000000996,https://cdn.example.com/tee-1.jpg,1,,FALSE,active
+tee,,,,,,,,,M,,Black,,,SH-TEE-M-BLK,200,shopify,7,deny,manual,15.00,,TRUE,TRUE,,https://cdn.example.com/tee-2.jpg,2,,,
+tee,,,,,,,,,,,,,,,,,,,,,,,,,https://cdn.example.com/tee-3.jpg,3,,,
+tee,,,,,,,,,L,,White,,,SH-TEE-L-WHT,200,shopify,,deny,manual,16.50,,TRUE,TRUE,,,,,,
+no-sku-mug,Enamel Mug,,Example Home,,Homeware,,TRUE,Title,Default Title,,,,,,300,shopify,3,deny,manual,8.00,,TRUE,TRUE,,,,,FALSE,active
+mystery-box,,,,,Gifts,,TRUE,Title,Default Title,,,,,SH-MB-1,,shopify,1,deny,manual,20.00,,TRUE,TRUE,,,,,FALSE,active
+`
+
+func TestDetectFormatShopify(t *testing.T) {
+	headers := strings.Split(strings.SplitN(shopifyCSV, "\n", 2)[0], ",")
+	if got := DetectFormat(headers); got != "shopify" {
+		t.Errorf("DetectFormat(shopify header) = %q, want shopify", got)
+	}
+	// Loyverse also carries a Handle column — it must stay loyverse.
+	if got := DetectFormat([]string{"Handle", "SKU", "Name", "Sold by weight", "Price"}); got != "loyverse" {
+		t.Errorf("loyverse header = %q, want loyverse", got)
+	}
+	// Handle alone (no Variant SKU) is not Shopify's signature.
+	if got := DetectFormat([]string{"Handle", "Name", "Price"}); got == "shopify" {
+		t.Error("Handle without Variant SKU must not detect as shopify")
+	}
+}
+
+func TestParseShopifyVariantsAndImageRows(t *testing.T) {
+	res, err := Parse(strings.NewReader(shopifyCSV), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if res.Format != "shopify" {
+		t.Fatalf("format = %s, want shopify", res.Format)
+	}
+	// 8 data rows: 2 image-only continuation rows produce nothing, 6 items.
+	type want struct {
+		name, sku, barcode, category string
+		price                        int64
+		stock                        float64
+		hasStock                     bool
+		issue                        string
+	}
+	wants := []want{
+		{"Cold Brew Coffee", "SH-CB-1", "4006381333931", "Drinks", 350, 24, true, ""},
+		{"Logo Tee S Black", "SH-TEE-S-BLK", "5449000000996", "Clothing", 1500, 5, true, ""},
+		{"Logo Tee M Black", "SH-TEE-M-BLK", "", "Clothing", 1500, 7, true, ""},
+		{"Logo Tee L White", "SH-TEE-L-WHT", "", "Clothing", 1650, 0, false, ""},
+		{"Enamel Mug", "", "", "Homeware", 800, 3, true, ""},
+		{"", "SH-MB-1", "", "Gifts", 2000, 1, true, IssueMissingName},
+	}
+	if len(res.Items) != len(wants) {
+		for i, it := range res.Items {
+			t.Logf("item %d: %+v", i, it)
+		}
+		t.Fatalf("items = %d, want %d (image-only rows must produce no item)", len(res.Items), len(wants))
+	}
+	for i, w := range wants {
+		it := res.Items[i]
+		if it.Name != w.name || it.SKU != w.sku || it.Barcode != w.barcode || it.Category != w.category ||
+			it.PriceMinor != w.price || it.Stock != w.stock || it.HasStock != w.hasStock || it.Issue != w.issue {
+			t.Errorf("item %d = %+v\nwant %+v", i, it, w)
+		}
+	}
+	// Barcode goes through the shared registry matcher like every format.
+	if res.Items[0].BarcodeType != "EAN13" {
+		t.Errorf("cold brew barcode type = %q, want EAN13", res.Items[0].BarcodeType)
+	}
+}
+
+// A blank Title on a NEW handle that is also the very first data row (no
+// previous product to wrongly inherit from) must still be flagged, and a
+// bad Variant Price must flow through the existing IssueBadPrice path with
+// the raw cell as IssueDetail.
+func TestParseShopifyGenuineErrorsStillFlagged(t *testing.T) {
+	csv := "Handle,Title,Type,Option1 Value,Variant SKU,Variant Price,Variant Barcode,Image Src\n" +
+		"a,,Drinks,Default Title,SKU-A,1.00,,\n" +
+		"b,Bread,Bakery,Default Title,SKU-B,abc,,\n" +
+		"c,,,,,abc,,\n"
+	res, err := Parse(strings.NewReader(csv), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(res.Items) != 3 {
+		t.Fatalf("items = %d, want 3", len(res.Items))
+	}
+	if res.Items[0].Issue != IssueMissingName {
+		t.Errorf("row a issue = %q, want %q", res.Items[0].Issue, IssueMissingName)
+	}
+	if res.Items[1].Issue != IssueBadPrice || res.Items[1].IssueDetail != "abc" {
+		t.Errorf("row b issue = %q/%q, want bad_price/abc", res.Items[1].Issue, res.Items[1].IssueDetail)
+	}
+	if res.Items[2].Issue != IssueMissingNameAndBadPrice || res.Items[2].IssueDetail != "abc" {
+		t.Errorf("row c issue = %q/%q, want missing_name_and_bad_price/abc", res.Items[2].Issue, res.Items[2].IssueDetail)
+	}
+}
+
+// The Shopify-only fields must never leak into another format: a generic
+// file with a "Type" column keeps Category from its own Category column (or
+// empty), and its Handle-like columns change nothing.
+func TestParseShopifyFieldsIgnoredForOtherFormats(t *testing.T) {
+	csv := "Product Name,Retail Price,Type,Variant Price\n" +
+		"Widget,2.00,Hardware,9.99\n"
+	res, err := Parse(strings.NewReader(csv), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if res.Format != "generic" {
+		t.Fatalf("format = %s, want generic", res.Format)
+	}
+	it := res.Items[0]
+	if it.Category != "" || it.PriceMinor != 200 {
+		t.Errorf("generic row picked up shopify-only fields: %+v", it)
+	}
+}

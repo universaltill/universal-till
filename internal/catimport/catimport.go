@@ -206,7 +206,7 @@ type ImportItem struct {
 
 // Result is a parsed file.
 type Result struct {
-	Format string // loyverse | square | sumup | generic | generic-erp
+	Format string // loyverse | square | sumup | shopify | generic | generic-erp
 	Items  []ImportItem
 	// SheetName is which worksheet ParseXLSX actually read (ut-docs#1837
 	// AC2) — empty for a CSV/.bkp Result. The pages layer shows it next to
@@ -248,6 +248,23 @@ var columnSynonyms = map[string][]string{
 	// square-specific extras used only for detection / variation naming
 	"variation": {"variation name"},
 	"token":     {"token", "handle"},
+	// Shopify products-CSV columns (ut-docs#3284). Consulted ONLY when
+	// res.Format == "shopify" — see shopifyFallback in Parse — so none of
+	// these can change how another format's file reads. "handle" is its own
+	// field rather than a reuse of "token" above: token is Square's
+	// detection signature and must keep meaning exactly that. Shopify's
+	// "Type" lives in its own shopify_type field, never as a bare "type"
+	// synonym on the shared category field, where it could claim an
+	// unrelated "Type" column in a generic/ERP file.
+	"handle":          {"handle"},
+	"option1_value":   {"option1 value"},
+	"option2_value":   {"option2 value"},
+	"option3_value":   {"option3 value"},
+	"variant_sku":     {"variant sku"},
+	"variant_price":   {"variant price"},
+	"variant_barcode": {"variant barcode"},
+	"variant_stock":   {"variant inventory qty"},
+	"shopify_type":    {"type"},
 }
 
 // stripTrailingParen removes one trailing parenthesised suffix (and the
@@ -333,6 +350,13 @@ func DetectFormat(headers []string) string {
 		// SumUp's items-export (ut-docs#581): this takeaway-VAT-toggle column
 		// name is effectively unique to SumUp.
 		return "sumup"
+	case hasColumn(headers, "handle") && hasExactHeader(headers, "variant sku"):
+		// Shopify's products export (ut-docs#3284). Loyverse also carries a
+		// Handle column, but never "Variant SKU" (and Loyverse's own case
+		// above already won on "sold by weight"). Shopify's header set never
+		// carries a department column, so ordering against the generic-erp
+		// case below is safe either way.
+		return "shopify"
 	case hasColumn(headers, "department"):
 		// A department axis marks an enterprise/ERP master export (Ansar &c.)
 		// rather than a plain corner-shop catalog. Broad synonym coverage
@@ -469,6 +493,29 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 		}
 		return strings.TrimSpace(rec[i])
 	}
+	// shopifyFallback reads field, or — for a Shopify file only, and only
+	// when the file has no column for field at all — its Shopify-specific
+	// stand-in (ut-docs#3284: Shopify names its per-variant columns
+	// "Variant SKU"/"Variant Price"/..., never plain "SKU"/"Price"). Every
+	// other format reads exactly what get would, so the shared per-row
+	// parsing below (ParsePrice, normalizeBarcode, the optional-stock
+	// block) runs unchanged for all formats instead of being forked.
+	shopifyFallback := func(rec []string, field, shopifyField string) string {
+		if _, ok := idx[field]; !ok && res.Format == "shopify" {
+			return get(rec, shopifyField)
+		}
+		return get(rec, field)
+	}
+
+	// Shopify carry-forward state (ut-docs#3284): Shopify repeats Handle on
+	// every row of one product — each extra variant and each extra image
+	// gets its own row — but fills Title (and Type, Vendor, ...) on the
+	// product's first row only. A blank Title on a row whose Handle matches
+	// the previous row's is therefore a continuation, not a missing name.
+	// A blank Title on a NEW handle stays IssueMissingName, exactly as
+	// today. prevName is the product's base title, before any option
+	// values are appended, so one variant's options never leak into the next.
+	var prevHandle, prevName, prevCategory string
 
 	// Tracks which SKUs have already claimed a number-derived barcode this
 	// file, for useItemNumbersAsBarcodes below — first occurrence of a given
@@ -483,14 +530,36 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 		if err != nil {
 			return res, fmt.Errorf("row %d: %w", len(res.Items)+2, err)
 		}
-		rawBarcode := stripCSVDefuse(get(rec, "barcode"))
+		name := stripCSVDefuse(get(rec, "name"))
+		category := stripCSVDefuse(shopifyFallback(rec, "category", "shopify_type"))
+		rawPrice := shopifyFallback(rec, "price", "variant_price")
+		if res.Format == "shopify" {
+			handle := get(rec, "handle")
+			if handle != "" && handle == prevHandle && name == "" {
+				name = prevName
+				if category == "" {
+					category = prevCategory
+				}
+			}
+			// An image-only continuation row (no Title, Variant SKU or
+			// Variant Price of its own) describes no sellable item at all —
+			// drop it outright, before the Issue switch below, rather than
+			// surfacing it as a missing-name problem row.
+			if get(rec, "name") == "" && get(rec, "variant_sku") == "" && rawPrice == "" {
+				continue
+			}
+			if handle != prevHandle {
+				prevHandle, prevName, prevCategory = handle, name, category
+			}
+		}
+		rawBarcode := stripCSVDefuse(shopifyFallback(rec, "barcode", "variant_barcode"))
 		dec, barcodeMatched := normalizeBarcode(rawBarcode, enabledSymbologyIDs)
 		item := ImportItem{
-			Name:        stripCSVDefuse(get(rec, "name")),
-			SKU:         stripCSVDefuse(get(rec, "sku")),
+			Name:        name,
+			SKU:         stripCSVDefuse(shopifyFallback(rec, "sku", "variant_sku")),
 			Barcode:     dec.LookupKey,
 			BarcodeType: dec.SymbologyID,
-			Category:    stripCSVDefuse(get(rec, "category")),
+			Category:    category,
 			Department:  get(rec, "department"),
 			Description: stripCSVDefuse(get(rec, "description")),
 			IsWeighed:   isTruthy(get(rec, "weighed")),
@@ -503,11 +572,24 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 		if v := get(rec, "variation"); v != "" && !strings.EqualFold(v, "regular") && res.Format == "square" {
 			item.Name = strings.TrimSpace(item.Name + " " + v)
 		}
-		price, perr := ParsePrice(get(rec, "price"), currencyDecimals)
+		// Shopify: option values qualify the product title ("Logo Tee S
+		// Black"), in Option1/2/3 order, blanks skipped. "Default Title" is
+		// Shopify's own placeholder Option1 Value on every single-variant
+		// product (its counterpart to Square's "Regular" above) and is
+		// never appended. Only once there's a base name to qualify — a
+		// genuinely nameless row must stay nameless for IssueMissingName.
+		if res.Format == "shopify" && item.Name != "" {
+			for _, f := range []string{"option1_value", "option2_value", "option3_value"} {
+				if v := stripCSVDefuse(get(rec, f)); v != "" && !strings.EqualFold(v, "default title") {
+					item.Name += " " + v
+				}
+			}
+		}
+		price, perr := ParsePrice(rawPrice, currencyDecimals)
 		item.PriceMinor = price
 		// Opening stock is optional and never blocks a row: a blank or
 		// unparseable value just means "no stock carried over".
-		if raw := get(rec, "stock"); raw != "" {
+		if raw := shopifyFallback(rec, "stock", "variant_stock"); raw != "" {
 			if qty, err := strconv.ParseFloat(strings.ReplaceAll(raw, ",", ""), 64); err == nil {
 				item.Stock, item.HasStock = qty, true
 			}
@@ -546,12 +628,12 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 			// IssueMissingNameAndBadPrice's doc comment for why a single
 			// missing_name here used to hide the bad price entirely.
 			item.Issue = IssueMissingNameAndBadPrice
-			item.IssueDetail = get(rec, "price")
+			item.IssueDetail = rawPrice
 		case item.Name == "":
 			item.Issue = IssueMissingName
 		case perr != nil:
 			item.Issue = IssueBadPrice
-			item.IssueDetail = get(rec, "price")
+			item.IssueDetail = rawPrice
 		}
 		// useItemNumbersAsBarcodes (ut-docs#1224): only a row with no barcode
 		// of its own, that cleanly imports, and that carries an item number

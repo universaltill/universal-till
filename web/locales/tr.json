@@ -802,7 +802,7 @@
   "import.export_save_failed": "CSV kaydedilemedi.",
   "import.export_title": "Dışa aktar",
   "import.file": "Dışa aktarım dosyası (CSV, Excel veya .bkp)",
-  "import.help": "Ürünlerinizi başka bir kasadan getirin: oradaki kataloğu dışa aktarın (Loyverse, Square ve SumUp dışa aktarımları otomatik tanınır; ad ve fiyat sütunu olan her CSV çalışır, aynı sütunlara sahip bir Excel (.xlsx) dosyası da çalışır — speedy kasse / pepperm cashbox .bkp yedeği de doğrudan kabul edilir) ve dosyayı buraya yükleyin. Önce önizleyin — İçe aktar'a basana kadar hiçbir şey kaydedilmez. Barkodu veya SKU'su zaten var olan ürünler atlanır, bu yüzden iki kez içe aktarmak güvenlidir.",
+  "import.help": "Ürünlerinizi başka bir kasadan getirin: oradaki kataloğu dışa aktarın (Loyverse, Square, SumUp ve Shopify dışa aktarımları otomatik tanınır; ad ve fiyat sütunu olan her CSV çalışır, aynı sütunlara sahip bir Excel (.xlsx) dosyası da çalışır — speedy kasse / pepperm cashbox .bkp yedeği de doğrudan kabul edilir) ve dosyayı buraya yükleyin. Önce önizleyin — İçe aktar'a basana kadar hiçbir şey kaydedilmez. Barkodu veya SKU'su zaten var olan ürünler atlanır, bu yüzden iki kez içe aktarmak güvenlidir.",
   "import.import": "İçe aktar",
   "import.preview": "Önizleme",
   "import.problem_grid.corrected_name": "Düzeltilmiş ad",
