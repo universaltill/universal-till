@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -19,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
+	"github.com/universaltill/universal-till/internal/taxrate"
 )
 
 // autoRegisterAttemptTimeout bounds the ONE synchronous store-registration
@@ -67,7 +67,8 @@ type setupCountry struct {
 	Code         string
 	NameKey      string
 	Currency     string
-	TaxRatePct   int
+	TaxRateBP    int
+	TaxRate      string // TaxRateBP as a percent string ("8.1"), the form's value
 	TaxInclusive bool
 }
 
@@ -87,15 +88,12 @@ func isValidShopType(v string) bool { return plugins.IsKnownShopType(v) }
 // Settings → Country settings actually reach the one flow that most needs
 // them (first-boot setup).
 //
-// TaxRateBP (basis points) is rounded to the nearest whole percent:
-// setupCountry.TaxRatePct, the POST handler's tax_rate_pct form field, and
-// common.State.TaxRatePct are all `int` percent throughout the till's core —
-// widening that to fractional percent is a real but separate, much larger
-// change (touches State/Settings/the POS engine config, not just the
-// wizard) and out of scope here. Every builtin country ships whole-percent
-// rates today, so this is lossless for the seeded defaults; only a
-// fractional rate an admin sets via #659's CRUD UI would round when
-// prefilling this wizard.
+// TaxRateBP (basis points) is carried exactly and rendered with
+// taxrate.FormatPercent ("20", "8.1") into the country step's prefill; the
+// POST handler reads tax_rate_pct back with taxrate.ParsePercent into
+// common.RuntimeState.TaxRateBP. Until ut-docs#3259 the till's default rate
+// was whole-percent only, so a fractional country rate (Switzerland 8.1 %)
+// was rounded here and silently lost.
 //
 // "OTHER" is always placed last, matching the original hardcoded slice's
 // order and the UX convention of a "not listed" catch-all coming last in a
@@ -120,9 +118,10 @@ func builtinSetupCountries() []setupCountry {
 }
 
 // countrySettingsToSetupCountries is the one place CountrySetting (basis
-// points, DB row) becomes setupCountry (whole-percent, the wizard's view
-// model) — shared by the live DB read and the builtin-defaults fallback so
-// they can't drift from each other on rounding or OTHER-ordering.
+// points, DB row) becomes setupCountry (the wizard's view model, carrying
+// the same basis points plus their percent rendering) — shared by the live
+// DB read and the builtin-defaults fallback so they can't drift from each
+// other on rounding or OTHER-ordering.
 func countrySettingsToSetupCountries(rows []data.CountrySetting) []setupCountry {
 	out := make([]setupCountry, 0, len(rows))
 	var other *setupCountry
@@ -131,7 +130,8 @@ func countrySettingsToSetupCountries(rows []data.CountrySetting) []setupCountry 
 			Code:         r.Code,
 			NameKey:      r.NameKey,
 			Currency:     r.Currency,
-			TaxRatePct:   int((r.TaxRateBP + 50) / 100), // round half up, see doc comment
+			TaxRateBP:    int(r.TaxRateBP),
+			TaxRate:      taxrate.FormatPercent(int(r.TaxRateBP)), // exact, no rounding (ut-docs#3259)
 			TaxInclusive: r.TaxInclusive,
 		}
 		if sc.Code == "OTHER" {
@@ -262,7 +262,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				if c.Code == code {
 					data["detectedCountry"] = c.Code
 					data["detectedCurrency"] = c.Currency
-					data["detectedTaxRatePct"] = c.TaxRatePct
+					data["detectedTaxRate"] = c.TaxRate
 					data["detectedTaxInclusive"] = c.TaxInclusive
 					break
 				}
@@ -619,9 +619,10 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				st.Locale = cs.DefaultLocale
 			}
 		}
+		// Percent 0–100, fractional allowed ("8.1", "8,1"): ut-docs#3259.
 		if v := r.Form.Get("tax_rate_pct"); v != "" {
-			if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 100 {
-				st.TaxRatePct = n
+			if bp, ok := taxrate.ParsePercent(v); ok {
+				st.TaxRateBP = bp
 			}
 		}
 		st.TaxInclusive = r.Form.Get("tax_inclusive") != "off"

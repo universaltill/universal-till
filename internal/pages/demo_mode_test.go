@@ -495,7 +495,7 @@ func TestInit_DemoMiddlewareInstalledOnlyInDemoMode(t *testing.T) {
 			paths.Init(t.TempDir())
 			d := &db.DB{DB: openPagesTestDB(t)}
 			defer d.Close()
-			cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}, Demo: demo, DemoToken: testDemoToken}
+			cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}, Demo: demo, DemoToken: testDemoToken}
 			ctx, cancel := context.WithCancel(t.Context())
 			t.Cleanup(cancel)
 			pm, err := plugins.Init(ctx, cfg, d.DB)

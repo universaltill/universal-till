@@ -67,7 +67,7 @@ func baseCfg() *config.Config {
 		Locales: config.Locales{
 			Currency:     "GBP",
 			Locale:       "en-GB",
-			TaxRate:      2000,
+			TaxRateBP:    2000,
 			TaxInclusive: false,
 		},
 	}
@@ -100,7 +100,7 @@ func TestLoadRuntimeConfig_OverridesFromStore(t *testing.T) {
 		"store.currency":      "EUR",
 		"store.locale":        "de-DE",
 		"store.tax_inclusive": "true",
-		"store.tax_rate":      "1900",
+		"store.tax_rate":      "19",
 	} {
 		if err := s.Set(ctx, k, v); err != nil {
 			t.Fatalf("seed %s: %v", k, err)
@@ -125,8 +125,8 @@ func TestLoadRuntimeConfig_OverridesFromStore(t *testing.T) {
 	if !cfg.Locales.TaxInclusive {
 		t.Errorf("TaxInclusive = false, want true")
 	}
-	if cfg.Locales.TaxRate != 1900 {
-		t.Errorf("TaxRate = %d, want 1900", cfg.Locales.TaxRate)
+	if cfg.Locales.TaxRateBP != 1900 {
+		t.Errorf("TaxRateBP = %d, want 1900", cfg.Locales.TaxRateBP)
 	}
 }
 
@@ -145,7 +145,7 @@ func TestSaveRuntimeConfig_RoundTripsThroughLoad(t *testing.T) {
 	cfg.Locales.Currency = "EUR"
 	cfg.Locales.Locale = "de-DE"
 	cfg.Locales.TaxInclusive = true
-	cfg.Locales.TaxRate = 1900
+	cfg.Locales.TaxRateBP = 810 // fractional: ut-docs#3259
 
 	if err := s.SaveRuntimeConfig(ctx, cfg); err != nil {
 		t.Fatalf("SaveRuntimeConfig: %v", err)
@@ -170,8 +170,8 @@ func TestSaveRuntimeConfig_RoundTripsThroughLoad(t *testing.T) {
 	if reloaded.Locales.TaxInclusive != cfg.Locales.TaxInclusive {
 		t.Errorf("TaxInclusive round-trip = %v, want %v", reloaded.Locales.TaxInclusive, cfg.Locales.TaxInclusive)
 	}
-	if reloaded.Locales.TaxRate != cfg.Locales.TaxRate {
-		t.Errorf("TaxRate round-trip = %d, want %d", reloaded.Locales.TaxRate, cfg.Locales.TaxRate)
+	if reloaded.Locales.TaxRateBP != cfg.Locales.TaxRateBP {
+		t.Errorf("TaxRateBP round-trip = %d, want %d", reloaded.Locales.TaxRateBP, cfg.Locales.TaxRateBP)
 	}
 }
 

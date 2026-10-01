@@ -691,7 +691,7 @@ func TestDisplayAndStoreSettings(t *testing.T) {
 		t.Fatalf("save = %d", rec.Code)
 	}
 	st := d.CurrentState()
-	if st.Currency != "EUR" || st.Country != "DE" || st.TaxRatePct != 19 {
+	if st.Currency != "EUR" || st.Country != "DE" || st.TaxRateBP != 1900 {
 		t.Fatalf("save not applied: %+v", st)
 	}
 	// ut-docs#970 review (F2): this is the handler the shipped currency card

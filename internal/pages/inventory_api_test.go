@@ -33,7 +33,7 @@ func newInventoryAPITestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 
 	cfg := &config.Config{
 		Theme:   "default",
-		Locales: config.Locales{Currency: "GBP", TaxRate: 20},
+		Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000},
 		Marketplace: config.MarketplaceConfig{
 			EndpointURL: "http://localhost:8081",
 		},

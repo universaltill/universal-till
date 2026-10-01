@@ -25,16 +25,41 @@ func TestSettingsUpsertTaxRate_ReachesEveryEngine(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("upsert %s=25 = %d body=%s, want 204", common.KeyTaxRate, rec.Code, rec.Body.String())
 	}
-	if got := d.CurrentState().TaxRatePct; got != 25 {
-		t.Fatalf("live TaxRatePct = %d, want 25", got)
+	if got := d.CurrentState().TaxRateBP; got != 2500 {
+		t.Fatalf("live TaxRateBP = %d, want 2500", got)
 	}
 	assertEnginesOnTaxRate(t, d, sess, 2500)
+}
+
+// ut-docs#3259: a fractional default rate (Switzerland's 8.1 %) is accepted,
+// reaches every engine as exact basis points and is stored normalised.
+func TestSettingsUpsertTaxRate_FractionalRate(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	d.KioskEngine = pos.NewServiceWithResolver(pos.Config{}, stubResolver{})
+	d.SelfOrderSessions = pos.NewSessionBasketManager(func() *pos.Service {
+		return pos.NewServiceWithResolver(d.KioskEngine.Config(), stubResolver{})
+	})
+	_, sess, _ := d.SelfOrderSessions.Create()
+
+	for in, want := range map[string]string{"8.1": "8.1", "8,10": "8.1"} {
+		rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {common.KeyTaxRate}, "value": {in}}, &mgrUser)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("upsert %s=%s = %d body=%s, want 204", common.KeyTaxRate, in, rec.Code, rec.Body.String())
+		}
+		if v, _, _ := d.Settings.Get(t.Context(), common.KeyTaxRate); v != want {
+			t.Fatalf("upsert %s=%s stored %q, want %q", common.KeyTaxRate, in, v, want)
+		}
+		if got := d.CurrentState().TaxRateBP; got != 810 {
+			t.Fatalf("live TaxRateBP = %d, want 810", got)
+		}
+		assertEnginesOnTaxRate(t, d, sess, 810)
+	}
 }
 
 func TestSettingsUpsertTaxRate_RefusesInvalidWithoutPersisting(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	setTaxRate(t, d, 20)
-	for _, bad := range []string{"-1", "abc", "101", "12.5", ""} {
+	for _, bad := range []string{"-1", "abc", "101", "8.125", "100.01", "1e3", ""} {
 		rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {common.KeyTaxRate}, "value": {bad}}, &mgrUser)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("upsert %s=%q = %d, want 400", common.KeyTaxRate, bad, rec.Code)

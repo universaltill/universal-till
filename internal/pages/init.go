@@ -234,7 +234,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	resolver := ui.PriceResolverAdapter{Store: btnStore}
 	engine := pos.NewServiceWithResolver(pos.Config{
 		TaxInclusive:                 state.TaxInclusive,
-		TaxRateBasisPoints:           state.TaxRatePct * 100,
+		TaxRateBasisPoints:           state.TaxRateBP,
 		ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(state),
 		ChargesForbidden:             common.ServiceChargeForbidden(state.Country),
 	}, resolver)
@@ -258,7 +258,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// adapter, safe to share.
 	kioskEngine := pos.NewServiceWithResolver(pos.Config{
 		TaxInclusive:                 state.TaxInclusive,
-		TaxRateBasisPoints:           state.TaxRatePct * 100,
+		TaxRateBasisPoints:           state.TaxRateBP,
 		ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(state),
 		ChargesForbidden:             common.ServiceChargeForbidden(state.Country),
 	}, resolver)

@@ -28,7 +28,7 @@ func newDiscoveryAPITestDeps(t *testing.T) *common.Deps {
 
 	cfg := &config.Config{
 		Theme:   "default",
-		Locales: config.Locales{Currency: "GBP", TaxRate: 20},
+		Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000},
 	}
 	pm, err := plugins.Init(t.Context(), cfg, db)
 	if err != nil {

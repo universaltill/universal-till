@@ -43,7 +43,7 @@ func TestHelpHintResolvesPerPage(t *testing.T) {
 	}
 	httpx.InitI18n(i18n, "en")
 
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
 	dp := &common.Deps{
 		Cfg:      cfg,
@@ -121,7 +121,7 @@ func TestSettingsSectionsCarryExplicitHelpLinks(t *testing.T) {
 	}
 	httpx.InitI18n(i18n, "en")
 
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRateBP: 2000}}
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
 	dp := &common.Deps{
 		Cfg:      cfg,

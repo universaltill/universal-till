@@ -57,7 +57,7 @@ func setupModifiersTestDeps(t *testing.T) (*common.Deps, *sql.DB) {
 		"COFFEE": {SKU: "COFFEE", ItemID: "itm-coffee", Name: "Flat White", Qty: 1, PriceCents: 320},
 	}
 	dp := &common.Deps{
-		State:  common.RuntimeState{Currency: "GBP", TaxRatePct: 20},
+		State:  common.RuntimeState{Currency: "GBP", TaxRateBP: 2000},
 		Engine: pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver),
 		Db:     d,
 	}

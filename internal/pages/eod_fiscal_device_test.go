@@ -21,7 +21,7 @@ func efdOpenDeps(t *testing.T) (*sql.DB, *common.Deps) {
 	sqldb := openPagesTestDB(t)
 	t.Cleanup(func() { sqldb.Close() })
 	seedForPages(t, sqldb)
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "TRY", TaxRate: 20}}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "TRY", TaxRateBP: 2000}}
 	d := &common.Deps{
 		Cfg:      cfg,
 		Db:       sqldb,

@@ -311,13 +311,21 @@ type RuntimeState struct {
 	// UT_DEFAULT_LOCALE fallback", same as every other RuntimeState field.
 	Locale       string
 	TaxInclusive bool
-	TaxRatePct   int
+	// TaxRateBP is the shop's default VAT rate in basis points (810 = 8.1 %),
+	// ut-docs#3259 — fractional standard rates (Switzerland 8.1 %, 5.5 %,
+	// 13.5 %) are expressible. Stored as store.tax_rate in percent form
+	// (taxrate.FormatPercent: "19", "8.1"). Mixed-version caveat: an
+	// additional till still on an older build parses store.tax_rate with
+	// strconv.Atoi, so it can't read a fractional value and falls back to
+	// its config default; additional tills follow the main till's version
+	// (ut-docs#2732), so this window closes on their next update.
+	TaxRateBP int
 	// ServiceChargeRateBasisPoints (ut-docs#244) is the till-set service
 	// charge rate in basis points (1bp = 0.01%), added to the sale total
 	// (distinct from tip); 0 = disabled. Basis-point granularity is finer
 	// than whole percent, so fractional rates like the UK's standard 12.5%
-	// (1250bp) are expressible exactly — unlike TaxRatePct, which stays
-	// whole-percent (a separate, explicitly out-of-scope limitation).
+	// (1250bp) are expressible exactly — same scale as TaxRateBP above
+	// (ut-docs#3259 lifted the default tax rate's whole-percent limit).
 	ServiceChargeRateBasisPoints int
 	AllowNegativeInventory       bool
 	UIScale                      float64 // interface scale for this till's screen (0 = unset)
