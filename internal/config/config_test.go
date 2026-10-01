@@ -19,6 +19,7 @@ var configEnvKeys = []string{
 	"UT_TAX_RATE", "UT_TAX_INCLUSIVE", "UT_CURRENCY",
 	"UT_DEFAULT_LOCALE", "UT_MARKETPLACE_LOCALE",
 	"UT_DEMO", "UT_DEMO_TOKEN",
+	"UT_CSP_REPORT_ONLY",
 }
 
 // unsetForTest clears every key in configEnvKeys for the duration of the

@@ -61,6 +61,10 @@ type Service struct {
 	// somewhere other than /login (the self-order kiosk landing, when
 	// display.mode=self_order). Returns "" for the ordinary case.
 	anonymousRootRedirect atomic.Value // func(ctx context.Context) string
+	// cspReportSink is the ut-docs#2913 seam (set by pages.Init only when
+	// UT_CSP_REPORT_ONLY is on): while false, POST /csp-report is not
+	// auth-exempt, so with the flag off the chain is exactly as before.
+	cspReportSink atomic.Bool
 	// boardOnly holds the token hashes of sessions that went idle on a
 	// display board (ut-docs#2935): still served for board requests, revoked
 	// by anything else. In memory on purpose — after a restart the next
@@ -220,6 +224,14 @@ func (s *Service) SetAnonymousRootRedirect(fn func(ctx context.Context) string) 
 	if fn != nil {
 		s.anonymousRootRedirect.Store(fn)
 	}
+}
+
+// EnableCSPReportSink makes POST /csp-report auth-exempt (ut-docs#2913).
+// pages.Init calls it only when UT_CSP_REPORT_ONLY is on, the same moment
+// it registers the route; without it the path gets the session check like
+// any other.
+func (s *Service) EnableCSPReportSink() {
+	s.cspReportSink.Store(true)
 }
 
 // anonymousRootDest returns SetAnonymousRootRedirect's answer for this
