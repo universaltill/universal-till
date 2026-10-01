@@ -802,7 +802,7 @@
   "import.export_save_failed": "Could not save the CSV.",
   "import.export_title": "Export",
   "import.file": "Export file (CSV, Excel or .bkp)",
-  "import.help": "Bring your items over from another till: export your catalog there (Loyverse, Square and SumUp exports are recognised automatically; any CSV with name and price columns works, as does an Excel (.xlsx) workbook with the same columns — as is a speedy kasse / pepperm cashbox .bkp backup, accepted directly) and upload the file here. Preview first — nothing is saved until you press Import. Items whose barcode or SKU already exists are skipped, so importing twice is safe.",
+  "import.help": "Bring your items over from another till: export your catalog there (Loyverse, Square, SumUp and Shopify exports are recognised automatically; any CSV with name and price columns works, as does an Excel (.xlsx) workbook with the same columns — as is a speedy kasse / pepperm cashbox .bkp backup, accepted directly) and upload the file here. Preview first — nothing is saved until you press Import. Items whose barcode or SKU already exists are skipped, so importing twice is safe.",
   "import.import": "Import",
   "import.preview": "Preview",
   "import.problem_grid.corrected_name": "Corrected name",

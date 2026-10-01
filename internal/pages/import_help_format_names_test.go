@@ -28,7 +28,7 @@ import (
 // this card exists to backstop, just relocated one file over. Adding a
 // new named format to DetectFormat should always mean a matching edit to
 // this list AND the copy in the same change.
-var namedAutoDetectedFormats = []string{"Loyverse", "Square", "SumUp"}
+var namedAutoDetectedFormats = []string{"Loyverse", "Square", "SumUp", "Shopify"}
 
 // TestImportHelpCopy_NamesEveryAutoDetectedFormat is ut-docs#1836's guard:
 // import.help named Loyverse and Square as auto-detected but not SumUp
