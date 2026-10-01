@@ -86,4 +86,13 @@ touched packages (0 issues), and the guards `guard-data-access`,
 `guard-migration-version-collision` all pass. No migration, no new locale
 keys.
 
+First CI run failed `guard-docs-shots`: the help sentence changed the
+tax-codes topic hashes, and that guard was missing from the local run.
+`make docs-shots` re-captured all 120 screenshots; every PNG came out
+byte-identical, so only the four `tax-codes` topic hashes in
+`web/help/img/manifest.json` changed. The guard now passes locally. The
+whole build-job guard list was then run; all pass except
+`guard-shellcheck-version`, which needs a shellcheck binary this container
+lacks (no shell script is touched).
+
 **Verdict:** safe to merge.
