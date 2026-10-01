@@ -577,3 +577,35 @@ func TestPermissionSettingsPage_GET_HiddenActionsNotRendered(t *testing.T) {
 		t.Fatalf("stored grant for manager/void must be untouched: granted=%d err=%v", granted, err)
 	}
 }
+
+// ADR-0128 §3/§6 (ut-docs#3165): a custom role (origin='cloud') is edited
+// only in my.universaltill.com and arrives by save_role directive. A matrix
+// write on the till would be overwritten by the next directive and is
+// refused with a 409 and a translated message, before any elevation
+// prompt, leaving the grant unchanged.
+func TestPermissionSettingsPage_POST_RefusesCloudRole(t *testing.T) {
+	mux, dp := newPermissionSettingsTestDeps(t)
+	const role = "c_01j9z3k4m5n6p7q8r9s0t1v2w3"
+	if _, err := dp.Db.Exec(`INSERT INTO roles (role, label, origin) VALUES (?, 'Shift lead', 'cloud')`, role); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO role_permissions (role, action, granted) VALUES (?, 'refund', 1)`, role); err != nil {
+		t.Fatal(err)
+	}
+	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/users/permissions",
+		formBody("role="+role+"&action=refund&granted=0")), auth.User{ID: "sa-1", Role: "super_admin"})
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("cloud role POST = %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	want := httpx.T("en", "permissions.error.cloud_role")
+	if want == "permissions.error.cloud_role" || !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("body %q missing translated %q", rec.Body.String(), want)
+	}
+	if granted, err := data.NewAuthRepo(dp.Db).HasPermission(t.Context(), role, "refund"); err != nil || !granted {
+		t.Fatalf("a refused write changed the cloud role, granted=%v err=%v", granted, err)
+	}
+}
