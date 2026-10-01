@@ -410,10 +410,10 @@ func disableDemoRowButtonsScript(rowClass string) string {
 // never happen for a cashier session with nothing pending. Keeps whatever
 // ORDER settingsnav.Resolve produced (a `layout` plugin's reorder still
 // applies) — this only removes rows, never reorders the survivors.
-func filterSettingsNavForRender(rows []settingsnav.Row, isManager, hasPayMethods, showDataCard bool) []settingsnav.Row {
+func filterSettingsNavForRender(rows []settingsnav.Row, isManager, canReportIssue, hasPayMethods, showDataCard bool) []settingsnav.Row {
 	hiddenThisRequest := map[string]bool{
-		"settings-issuereport": !isManager,
-		"settings-diagnostics": !isManager, // ADR-0092 §7, ut-docs#2169
+		"settings-issuereport": !canReportIssue, // ut-docs#3135: same action as /report-issue
+		"settings-diagnostics": !isManager,      // ADR-0092 §7, ut-docs#2169
 		"settings-menulayout":  !isManager,
 		"settings-payments":    !hasPayMethods,
 		"settings-data":        !showDataCard,
@@ -711,6 +711,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// below via windowControlTopology, so both computations agree.
 		shellAttached, piKioskAppliance := windowControlTopology(d)
 		isManager := canPerform(d, r, "settings")
+		// ut-docs#3135: the Report-an-issue card links to /report-issue, so
+		// it follows that page's own action, not "settings".
+		canReportIssue := canPerform(d, r, issueReportingAction)
 		pendingBasePluginRows := pendingBasePluginViews(pendingBasePlugins)
 		restorePromptDeferred := restorePromptStatus == common.RestorePromptStatusDeferred
 		// ut-docs#1913: the same four conditions that gate whether
@@ -726,7 +729,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		showDataCard := isManager || sampleCount > 0 || len(pendingBasePluginRows) > 0 || restorePromptDeferred
 		settingsNav := filterSettingsNavForRender(
 			settingsnav.Resolve(locale, d.SettingsAmendmentsSnapshot()),
-			isManager, len(payMethods) > 0, showDataCard,
+			isManager, canReportIssue, len(payMethods) > 0, showDataCard,
 		)
 		data := map[string]any{
 			"title":       httpx.T(httpx.RequestLocale(r), "page.title.settings"),
@@ -737,8 +740,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"menuItems":   d.MenuSnapshot(),
 			"uiScale":     strconv.FormatFloat(scale, 'f', -1, 64),
 			// ADR-0119: the effects selector and what Auto detected.
-			"fxView":    effectsLevelViewFrom(all),
-			"isManager": isManager,
+			"fxView":         effectsLevelViewFrom(all),
+			"isManager":      isManager,
+			"canReportIssue": canReportIssue,
 			// ADR-0092 §7 / ut-docs#2169: the diagnostic-mode card's state
 			// (web/ui/partials/diagnostics_block.html). Only computed for a
 			// manager: #settings-diagnostics (settings.html) is the ONLY

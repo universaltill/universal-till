@@ -435,10 +435,14 @@ func TestMenuUnlocksByAction_DerivedFromCoreTables(t *testing.T) {
 		{"settings", "fiscalregister.title"},
 		{"stock_location_management", "locations.title"},
 		{"plugin_management", "nav.plugins"},
+		{"issue_reporting", "issuereport.title"}, // ut-docs#3135
 	} {
 		if !has(c.action, c.label) {
 			t.Errorf("menuUnlocksByAction()[%q] lacks %s: %+v", c.action, c.label, got[c.action])
 		}
+	}
+	if has("settings", "issuereport.title") {
+		t.Error("issuereport.title must unlock under issue_reporting, not settings (ut-docs#3135)")
 	}
 	for action, list := range got {
 		seen := map[string]bool{}

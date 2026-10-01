@@ -458,9 +458,26 @@ func TestWaitUntilReady_Healthy200IsReady(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	inst := &instance{done: make(chan struct{})}
+	inst := &instance{done: make(chan struct{}), bound: make(chan bindReport, 1)}
+	inst.bound <- bindReport{addr: srv.Listener.Addr().String()}
 	if err := waitUntilReady(strings.TrimPrefix(srv.URL, "http://"), 2*time.Second, inst); err != nil {
 		t.Fatalf("waitUntilReady against a healthy 200: %v", err)
+	}
+}
+
+// ut-docs#3290 review: our server reports its bind before it serves, so a
+// 200 with no bind report yet came from whatever holds the port. It must not
+// count as ready — the till would persist and hand the WebView a stranger's
+// address.
+func TestWaitUntilReady_200WithoutABindReportIsNotReady(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	inst := &instance{done: make(chan struct{}), bound: make(chan bindReport, 1)}
+	if err := waitUntilReady(strings.TrimPrefix(srv.URL, "http://"), 700*time.Millisecond, inst); err == nil {
+		t.Fatal("a 200 with no bind report was treated as ready")
 	}
 }
 
@@ -721,5 +738,126 @@ func TestRestartInProcess_NativeCallsWaitForIt(t *testing.T) {
 	}
 	if !IsRunning() {
 		t.Fatal("server not running after the restart")
+	}
+}
+
+// stealChosenPort makes afterPortChosen take each chosen port on every
+// interface before app.Run binds it — the probe-then-bind gap ut-docs#3290
+// found on main CI (another package's test took the port), and that another
+// app can hit on a real phone. It steals the first `times` ports (-1 = all)
+// and returns how many ports Start chose. With serveHTTP the thief answers
+// every request 200 (header X-Foreign), like a stray local web server.
+func stealChosenPort(t *testing.T, times int, serveHTTP bool) *int {
+	t.Helper()
+	chosen := 0
+	var held []net.Listener
+	afterPortChosen = func(port string) {
+		chosen++
+		if times >= 0 && chosen > times {
+			return
+		}
+		ln, err := net.Listen("tcp", "0.0.0.0:"+port)
+		if err != nil {
+			t.Errorf("steal port %s: %v", port, err)
+			return
+		}
+		held = append(held, ln)
+		if serveHTTP {
+			go http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { //nolint:errcheck // ends when ln closes
+				w.Header().Set("X-Foreign", "1")
+				w.WriteHeader(http.StatusOK)
+			}))
+		}
+	}
+	t.Cleanup(func() {
+		afterPortChosen = func(string) {}
+		for _, ln := range held {
+			ln.Close()
+		}
+	})
+	return &chosen
+}
+
+func TestStart_PortTakenBeforeBind_RetriesOnAFreshPortAndPersistsIt(t *testing.T) {
+	dataDir := mobileTestEnv(t)
+	chosen := stealChosenPort(t, 1, false)
+	stolen := strconv.Itoa(defaultListenPort) // nothing persisted: the first choice is the default
+
+	began := time.Now()
+	addr, err := Start(dataDir)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if took := time.Since(began); took > 20*time.Second {
+		t.Fatalf("Start took %s: it waited on the stolen port instead of noticing the moved bind", took)
+	}
+	host, port, _ := net.SplitHostPort(addr)
+	if host != "127.0.0.1" || port == stolen {
+		t.Fatalf("Start returned %s, want 127.0.0.1 on a port other than the stolen %s", addr, stolen)
+	}
+	if *chosen != 2 {
+		t.Fatalf("Start chose %d ports, want 2 (the stolen one, then one retry)", *chosen)
+	}
+	if got := listenport.Saved(dataDir); strconv.Itoa(got) != port {
+		t.Fatalf("persisted port = %d, want %s, the port actually served on", got, port)
+	}
+	resp, err := http.Get("http://" + addr + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz on the returned address: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/healthz = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestStart_PortTakenBeforeEveryBind_FailsFast(t *testing.T) {
+	dataDir := mobileTestEnv(t)
+	chosen := stealChosenPort(t, -1, false)
+
+	began := time.Now()
+	addr, err := Start(dataDir)
+	if err == nil {
+		t.Fatalf("Start returned %s, want an error: every chosen port was taken", addr)
+	}
+	if took := time.Since(began); took > 20*time.Second {
+		t.Fatalf("Start took %s to fail; it should give up as soon as each bind moves", took)
+	}
+	if *chosen != maxBindAttempts {
+		t.Fatalf("Start chose %d ports, want %d attempts", *chosen, maxBindAttempts)
+	}
+	if !strings.Contains(err.Error(), "moved") {
+		t.Fatalf("error %q should say the bind moved", err)
+	}
+	if got := listenport.Saved(dataDir); got != 0 {
+		t.Fatalf("persisted port %d after a failed Start, want none", got)
+	}
+}
+
+// ut-docs#3290 review: whatever took the port may answer /healthz 200 itself
+// (another package's httptest server on CI, a local server on a phone).
+// Start must still move to a fresh port, not return the stranger's address.
+func TestStart_PortTakenByAnHTTPServer_RetriesInsteadOfTrustingIt(t *testing.T) {
+	dataDir := mobileTestEnv(t)
+	chosen := stealChosenPort(t, 1, true)
+	stolen := strconv.Itoa(defaultListenPort)
+
+	addr, err := Start(dataDir)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, port, _ := net.SplitHostPort(addr); port == stolen {
+		t.Fatalf("Start returned the stolen port %s, answered by the port's other holder", stolen)
+	}
+	if *chosen != 2 {
+		t.Fatalf("Start chose %d ports, want 2", *chosen)
+	}
+	resp, err := http.Get("http://" + addr + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz: %v", err)
+	}
+	resp.Body.Close()
+	if resp.Header.Get("X-Foreign") != "" {
+		t.Fatal("the returned address is served by the port's other holder, not the till")
 	}
 }

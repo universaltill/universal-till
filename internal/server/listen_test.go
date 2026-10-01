@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net"
 	"testing"
 )
@@ -126,5 +127,41 @@ func TestMovedOffConfiguredAddr(t *testing.T) {
 		if got := movedOffConfiguredAddr(c.configured, c.actual); got != c.want {
 			t.Errorf("movedOffConfiguredAddr(%q, %q) = %v, want %v", c.configured, c.actual, got, c.want)
 		}
+	}
+}
+
+// ut-docs#3290: a caller that drives the boot in-process (mobile.Start) must
+// learn the address really bound, and whether the bind moved off the
+// configured one, instead of polling the configured port for 30s.
+func TestBoundAddrReporter_ReportsTheBindAndWhetherItMoved(t *testing.T) {
+	busy, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("occupy a port: %v", err)
+	}
+	defer busy.Close()
+	_, busyPort, _ := net.SplitHostPort(busy.Addr().String())
+	configured := "0.0.0.0:" + busyPort
+
+	var gotAddr string
+	var gotMoved bool
+	calls := 0
+	ctx := WithBoundAddr(context.Background(), func(actual string, moved bool) {
+		calls++
+		gotAddr, gotMoved = actual, moved
+	})
+	ln, actual, err := bindListener(configured, false)
+	if err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	defer ln.Close()
+	reportBoundAddr(ctx, configured, actual)
+	if calls != 1 || gotAddr != actual || !gotMoved {
+		t.Fatalf("reporter got (%q, moved=%v) after %d calls, want (%q, moved=true) once", gotAddr, gotMoved, calls, actual)
+	}
+
+	// No reporter on the context (every caller but mobile): a no-op.
+	reportBoundAddr(context.Background(), configured, actual)
+	if calls != 1 {
+		t.Fatalf("reporter called without being on the context")
 	}
 }
