@@ -533,6 +533,23 @@ func TestLinkVersionIsRecordedBeforeTheKick(t *testing.T) {
 	}
 }
 
+// ut-docs#3295: the real cloud pings the till (fleetlink.Peer's
+// writeLoop), so a link where the test stays quiet longer than
+// PeerTimeout must stay up. A fake cloud that never pings dropped the
+// link under CI load, losing the next frame the test sent.
+func TestQuietCloudLinkOutlivesPeerTimeout(t *testing.T) {
+	h := newHarness(t, func(o *Options) { o.Config.PeerTimeout = 300 * time.Millisecond })
+	c := h.cloud.nextConn(t)
+	eventually(t, "linked", func() bool { return h.c.State() == StateLinked })
+	time.Sleep(3 * h.c.o.Config.PeerTimeout)
+	kicks := h.kicks.Load()
+	c.send("nudge", map[string]any{"link_version": 9, "scopes": []string{"directives"}})
+	eventually(t, "kick on nudge", func() bool { return h.kicks.Load() == kicks+1 })
+	if n := h.cloud.dialCount(); n != 1 {
+		t.Fatalf("dials = %d, want 1: the link dropped while the test was quiet", n)
+	}
+}
+
 // ut-docs#2895: a 403 upgrade refusal carries ut-cloud's JSON error code
 // (stores_link.go: not_main_till / tier_periodic); the status surfaces
 // show the real reason, not "cloud busy". A 403 with no parseable code

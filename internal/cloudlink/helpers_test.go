@@ -88,6 +88,7 @@ func newFakeCloud(t *testing.T) *fakeCloud {
 		c.send("hello", map[string]any{"link_version": f.linkVersion.Load(), "live_view": f.liveView.Load()})
 		f.conns <- c
 		defer close(c.closed)
+		go c.pingUntilClosed(fakeCloudPingEvery)
 		for {
 			_, b, err := ws.Read(context.Background())
 			if err != nil {
@@ -97,7 +98,7 @@ func newFakeCloud(t *testing.T) *fakeCloud {
 			if err != nil {
 				continue
 			}
-			if env.Type == "ping" {
+			if env.Type == "ping" || env.Type == "pong" { // keepalive; pongs answer pingUntilClosed
 				continue
 			}
 			select {
@@ -131,6 +132,25 @@ func (f *fakeCloud) nextConn(t *testing.T) *cloudConn {
 	case <-time.After(3 * time.Second):
 		t.Fatal("the till never opened the cloud link")
 		return nil
+	}
+}
+
+// fakeCloudPingEvery matches fastOptions' PingInterval. The real cloud
+// pings every link (fleetlink.Peer's writeLoop); a fake that stays silent
+// lets the till's PeerTimeout drop the link whenever a test is slow to send
+// its next frame, and that frame is then lost (ut-docs#3295).
+const fakeCloudPingEvery = 50 * time.Millisecond
+
+func (c *cloudConn) pingUntilClosed(every time.Duration) {
+	tick := time.NewTicker(every)
+	defer tick.Stop()
+	for {
+		select {
+		case <-c.closed:
+			return
+		case <-tick.C:
+			c.send("ping", nil)
+		}
 	}
 }
 
