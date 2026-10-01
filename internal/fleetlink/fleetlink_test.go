@@ -634,7 +634,11 @@ func TestLink_HeartbeatPingsAndPeerGoneAfterSilence(t *testing.T) {
 
 func TestLink_PongKeepsPeerAliveAndPingIsAnswered(t *testing.T) {
 	cfg := fastConfig()
-	cfg.PeerTimeout = 150 * time.Millisecond
+	// Wide margin on purpose (#3316): the client only writes when it receives
+	// a server ping, so with a 150ms PeerTimeout against a 50ms PingInterval
+	// a ~100ms runner stall (race detector, loaded CI) tripped the watchdog
+	// (4008). 12x the ping interval needs a stall > ~550ms to drop the link.
+	cfg.PeerTimeout = 600 * time.Millisecond
 	h := newWSHarness(t, cfg)
 	c, _, err := h.dial(t, "good-till-2")
 	if err != nil {
