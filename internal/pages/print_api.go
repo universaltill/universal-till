@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -73,6 +74,20 @@ func printerConfig(ctx context.Context, d *common.Deps) print.Config {
 // it, so the async print paths can tell "off" from "couldn't tell" and
 // avoid silently no-op'ing a real DB fault (ut-docs#1153).
 func printerConfigChecked(ctx context.Context, d *common.Deps) (print.Config, error) {
+	return resolvePrinterConfig(ctx, d, true)
+}
+
+// printerConfigForSettings is the config the Settings page renders: the
+// stored policy (legacy derivation and plugin clamp applied) WITHOUT the
+// ADR-0124 shadow override. Showing the forced "never" there would make the
+// next save of any printer setting silently overwrite the shop's own choice
+// (ut-docs#3169 review); the page explains the override instead.
+func printerConfigForSettings(ctx context.Context, d *common.Deps) print.Config {
+	cfg, _ := resolvePrinterConfig(ctx, d, false)
+	return cfg
+}
+
+func resolvePrinterConfig(ctx context.Context, d *common.Deps, applyShadowGate bool) (print.Config, error) {
 	var firstErr error
 	get := func(key, def string) string {
 		if firstErr != nil {
@@ -124,6 +139,15 @@ func printerConfigChecked(ctx context.Context, d *common.Deps) (print.Config, er
 		if allowed, ok := receiptPolicyAskerFor(d.Db).AskReceiptPolicy(ctx); ok {
 			cfg.ReceiptPolicy = clampReceiptPolicy(cfg.ReceiptPolicy, allowed)
 		}
+	}
+	// ADR-0124 §3 (amends ADR-0089): in a market whose shipped data forbids
+	// customer documents from a shadow till, the effective policy is
+	// "never" — applied AFTER the plugin clamp, so no plugin answer (nor a
+	// stored "always"/"ask") can re-enable printing or the ask prompt.
+	// Suppression wins. Not gated on firstErr: the gate reads no printer
+	// setting, and a forbidden market is decided with no I/O at all.
+	if applyShadowGate && customerDocumentsSuppressed(ctx, d) {
+		cfg.ReceiptPolicy = receiptPolicyNever
 	}
 	// AutoPrint stays the one bit printReceiptAsync gates on: only "always"
 	// prints unprompted; "ask" and "never" both leave printing to the
@@ -475,6 +499,13 @@ func printReceiptAsync(d *common.Deps, receiptNo string, actorID string) {
 		ctx, cancel := context.WithTimeout(context.Background(), printAsyncTimeout)
 		defer cancel()
 		posRepo := data.NewPOSRepo(d.Db)
+		// ADR-0124: in a forbidden market this receipt could never print, so
+		// nothing below (including a settings-read failure) is a print
+		// failure. Decided before the settings read; a forbidden market
+		// needs no I/O to know.
+		if customerDocumentsSuppressed(ctx, d) {
+			return
+		}
 		cfg, cfgErr := printerConfigChecked(ctx, d)
 		if cfgErr != nil {
 			// The settings read itself failed (SQLite busy, disk error, ...)
@@ -494,6 +525,11 @@ func printReceiptAsync(d *common.Deps, receiptNo string, actorID string) {
 			return
 		}
 		if err := printReceiptFn(ctx, d, receiptNo); err != nil {
+			if errors.Is(err, errCustomerDocumentsSuppressed) {
+				// A withheld document (ADR-0124) is not a broken printer:
+				// no audit failure, no /orders warning.
+				return
+			}
 			wctx, wcancel := recordPrintFailureCtx()
 			defer wcancel()
 			_ = posRepo.InsertAudit(wctx, nil, actorID, "sale", receiptNo, "print_failed",
@@ -507,6 +543,12 @@ func printReceiptAsync(d *common.Deps, receiptNo string, actorID string) {
 }
 
 func printReceipt(ctx context.Context, d *common.Deps, receiptNo string) error {
+	// ADR-0124 §3: the shared choke point every receipt print path reaches
+	// (tender and refund auto-print, manual print, reprint) refuses here as
+	// well, so a handler that misses the gate still cannot print.
+	if customerDocumentsSuppressed(ctx, d) {
+		return errCustomerDocumentsSuppressed
+	}
 	cfg := printerConfig(ctx, d)
 	if !cfg.Enabled() {
 		return fmt.Errorf("no printer configured")
@@ -743,6 +785,15 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		defer cancel()
 		err := printReceipt(ctx, d, receiptNo)
 		now := time.Now().UTC().Format(time.RFC3339)
+		if errors.Is(err, errCustomerDocumentsSuppressed) {
+			// ADR-0124 §3: refused, with a distinct status the receipt
+			// partial never answers with window.print(). Audited as a
+			// refusal; the print-failed flag is left alone (not a fault).
+			_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "sale", receiptNo, "receipt_reprint",
+				map[string]any{"ok": false, "refused": "shadow_customer_documents"}, now, "")
+			writeCustomerDocumentsRefused(w, r)
+			return
+		}
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "sale", receiptNo, "receipt_reprint",
 			map[string]any{"ok": err == nil}, now, "")
 		// Keep the /orders warning honest (ut-docs#517a), same as the manual

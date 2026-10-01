@@ -3399,7 +3399,10 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
 .pos-notice.hide { opacity: 0; }
 .pos-notice[hidden] { display: none; }
 .pos-notice .notice-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.pos-notice.info { background: rgba(37, 99, 235, .1); color: var(--accent);
+/* Text is --text, not --accent (ut-docs#3169): a theme whose accent is green
+   put green on this blue tint at ~2:1. --text meets 4.5:1 on every theme's
+   surface, and the translucent tint keeps that true. */
+.pos-notice.info { background: rgba(37, 99, 235, .1); color: var(--text);
   border-color: rgba(37, 99, 235, .3); }
 .pos-notice.success { background: var(--success-tint); color: var(--success);
   border-color: var(--success-tint-border); }

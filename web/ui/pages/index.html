@@ -221,6 +221,17 @@
   </div>
   {{ end }}
 
+  {{/* ADR-0124 (ut-docs#3169): the shop's market forbids customer documents
+       from a shadow till, so this till records sales but prints and shows
+       no receipts. Persistent (no dismiss), a status surface, never a
+       modal; the icon plus text carries the meaning, not the colour. */}}
+  {{ if .shadowDocumentsSuppressed }}
+  <div class="pos-notice info" role="status" data-testid="shadow-documents-banner">
+    <span aria-hidden="true">ⓘ</span>
+    <span class="notice-text">{{ T "shadow_documents.banner" }}</span>
+  </div>
+  {{ end }}
+
   <!-- ut-docs#1174: one-shot banner right after the setup wizard when its
        own TSE kickoff attempt was definitively rejected — the same message
        the Settings block shows (tseProvisioningViewFor's mapping, same

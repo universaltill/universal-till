@@ -128,6 +128,7 @@
         <th>{{ T "countrysettings.col.symbol" }}</th>
         <th>{{ T "countrysettings.col.tax" }}</th>
         <th>{{ T "countrysettings.col.retention" }}</th>
+        <th>{{ T "countrysettings.shadow_documents" }}</th>
         <th></th>
       </tr>
     </thead>
@@ -154,6 +155,9 @@
         <td dir="ltr">{{ .CurrencySymbol }}</td>
         <td dir="ltr">{{ .TaxRatePct }}%{{ if .TaxInclusive }} <span class="muted">({{ T "countrysettings.tax.inclusive" }})</span>{{ end }}</td>
         <td dir="ltr">{{ .ArchiveMinDays }}</td>
+        {{/* ADR-0124: read-only text, never an input — a shipped market
+             fact, not an operator setting. */}}
+        <td data-testid="country-shadow-documents">{{ if .ShadowDocumentsForbidden }}{{ T "countrysettings.shadow_documents.forbidden" }}{{ else }}{{ T "countrysettings.shadow_documents.allowed" }}{{ end }}</td>
         <td class="list-actions">
           <button type="button" class="btn secondary btn-icon" data-record-edit
                   aria-label="{{ T "common.edit" }}" title="{{ T "common.edit" }}">
@@ -163,7 +167,7 @@
       </tr>
       {{ end }}
       <tr id="country-settings-no-results" class="list-empty-row" hidden>
-        <td colspan="6">{{ T "common.no_results" }}</td>
+        <td colspan="7">{{ T "common.no_results" }}</td>
       </tr>
     </tbody>
   </table>

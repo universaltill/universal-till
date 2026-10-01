@@ -142,7 +142,9 @@ func issueInvoice(ctx context.Context, d *common.Deps, sale data.SaleDetail, kin
 // sale carries an invoice and no credit note exists yet, one is issued
 // automatically in the same series (docs: invoicing.md).
 func maybeIssueCreditNote(ctx context.Context, d *common.Deps, refundReceiptNo, originalSaleID, actor string) {
-	if originalSaleID == "" {
+	// ADR-0124 §3: a credit note is a customer document; a forbidden market
+	// issues none, even for a sale invoiced before the gate applied.
+	if originalSaleID == "" || customerDocumentsSuppressed(ctx, d) {
 		return
 	}
 	repo := data.NewInvoiceRepo(d.Db)
@@ -285,6 +287,12 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 	// Issue an invoice for a completed sale (idempotent: an existing
 	// invoice is returned, never duplicated).
 	mux.HandleFunc("POST /api/invoices/issue", func(w http.ResponseWriter, r *http.Request) {
+		// ADR-0124 §3: an invoice is a customer document; a forbidden market
+		// issues none. Rendering an older invoice is #3170.
+		if customerDocumentsSuppressed(r.Context(), d) {
+			writeCustomerDocumentsRefused(w, r)
+			return
+		}
 		_ = r.ParseForm()
 		locale := httpx.ResolveLocale(w, r)
 		receiptNo := strings.TrimSpace(r.Form.Get("receipt_no"))
@@ -324,7 +332,7 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			cfg := printerConfig(ctx, d)
-			if !cfg.Enabled() {
+			if !cfg.Enabled() || customerDocumentsSuppressed(ctx, d) {
 				return
 			}
 			_ = print.PrintDoc(ctx, cfg, buildInvoiceDoc(ctx, d, inv, sale))

@@ -209,6 +209,13 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
+		// ADR-0124 §3: the designer's test print is a receipt-shaped sample
+		// with prices, so a suppressed market refuses it. The plain
+		// printer test page (POST /api/print/test) stays available.
+		if customerDocumentsSuppressed(r.Context(), d) {
+			writeCustomerDocumentsRefused(w, r)
+			return
+		}
 		_ = r.ParseForm()
 		rd := designFromForm(r)
 		cfg := printerConfig(r.Context(), d)

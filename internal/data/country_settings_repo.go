@@ -64,11 +64,20 @@ type CountrySetting struct {
 	// "de-DE" for DE. Blank ("OTHER", any operator-created country with no
 	// opinion) means "don't touch the shop's current locale".
 	DefaultLocale string
+	// ShadowCustomerDocuments is ADR-0124's per-market fact: "forbidden"
+	// means a shadow till in this market must issue no customer document
+	// (fiscal.CustomerDocuments). Scanned on read, IGNORED on write:
+	// Upsert never takes it from the caller (see Upsert), Delete restores
+	// a builtin row's shipped value, and the compiled builtin value is a
+	// read-time floor (BuiltinShadowDocumentsForbidden). In
+	// builtinCountryDefaults a blank value means "allowed".
+	ShadowCustomerDocuments string
 }
 
 // builtinCountryDefaults is what Delete restores a builtin country to. It
 // mirrors the migration seed exactly (001_init.sql, plus PT from
-// 051_builtin_country_pt.sql, ut-docs#2963); TestBuiltinDefaultsMatchMigrationSeed
+// 051_builtin_country_pt.sql, ut-docs#2963, plus the shadow_customer_documents
+// column from 054, ADR-0124); TestBuiltinDefaultsMatchMigrationSeed
 // asserts the two cannot drift, so this stays a restore source rather than a
 // second source of truth.
 var builtinCountryDefaults = []CountrySetting{
@@ -80,7 +89,8 @@ var builtinCountryDefaults = []CountrySetting{
 	{Code: "ES", NameKey: "setup.country.es", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2100, TaxInclusive: true, DefaultLocale: "es-ES"},
 	{Code: "IT", NameKey: "setup.country.it", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2200, TaxInclusive: true, DefaultLocale: "it-IT"},
 	{Code: "NL", NameKey: "setup.country.nl", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2100, TaxInclusive: true, DefaultLocale: "nl-NL"},
-	{Code: "PT", NameKey: "setup.country.pt", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2300, TaxInclusive: true, DefaultLocale: "pt-PT"},
+	// ADR-0124: PT's shadow_customer_documents is "forbidden" (054).
+	{Code: "PT", NameKey: "setup.country.pt", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2300, TaxInclusive: true, DefaultLocale: "pt-PT", ShadowCustomerDocuments: shadowDocumentsForbidden},
 	{Code: "TR", NameKey: "setup.country.tr", Currency: "TRY", CurrencySymbol: "₺", TaxRateBP: 2000, TaxInclusive: true, DefaultLocale: "tr-TR"},
 	{Code: "AE", NameKey: "setup.country.ae", Currency: "AED", TaxRateBP: 500, TaxInclusive: true, DefaultLocale: "ar-AE"},
 	{Code: "SA", NameKey: "setup.country.sa", Currency: "SAR", TaxRateBP: 1500, TaxInclusive: true, DefaultLocale: "ar-SA"},
@@ -96,9 +106,29 @@ func BuiltinCountryDefaults() []CountrySetting {
 	for i, c := range builtinCountryDefaults {
 		c.ArchiveMinDays = GlobalArchiveMinDays
 		c.IsBuiltin = true
+		if c.ShadowCustomerDocuments == "" {
+			c.ShadowCustomerDocuments = shadowDocumentsAllowed
+		}
 		out[i] = c
 	}
 	return out
+}
+
+// Values of country_settings.shadow_customer_documents (054's CHECK allows
+// exactly these two).
+const (
+	shadowDocumentsAllowed   = "allowed"
+	shadowDocumentsForbidden = "forbidden"
+)
+
+// BuiltinShadowDocumentsForbidden reports whether the COMPILED default for
+// code says "forbidden": ADR-0124 §1's floor, which a missing, pruned,
+// re-defaulted or synced row cannot lower. No I/O, so it cannot fail open;
+// fiscal.CustomerDocuments takes it as its builtinForbidden func. The code
+// is normalised, like every other lookup here.
+func BuiltinShadowDocumentsForbidden(code string) bool {
+	def, ok := builtinCountryDefault(normaliseCountryCode(code))
+	return ok && def.ShadowCustomerDocuments == shadowDocumentsForbidden
 }
 
 func builtinCountryDefault(code string) (CountrySetting, bool) {
@@ -127,12 +157,17 @@ func normaliseCountryCode(code string) string {
 	return strings.ToUpper(strings.TrimSpace(code))
 }
 
+// countrySettingsCols is what Upsert writes from the caller;
+// countrySettingsReadCols adds the read-only shadow_customer_documents
+// column (ADR-0124), which Upsert sets on insert only, never from the caller.
 const countrySettingsCols = `code, name_key, currency, currency_symbol, tax_rate_bp, tax_inclusive, archive_min_days, is_builtin, updated_at, default_locale`
+
+const countrySettingsReadCols = countrySettingsCols + `, shadow_customer_documents`
 
 func scanCountrySetting(sc interface{ Scan(...any) error }) (CountrySetting, error) {
 	var c CountrySetting
 	var inclusive, builtin int
-	if err := sc.Scan(&c.Code, &c.NameKey, &c.Currency, &c.CurrencySymbol, &c.TaxRateBP, &inclusive, &c.ArchiveMinDays, &builtin, &c.UpdatedAt, &c.DefaultLocale); err != nil {
+	if err := sc.Scan(&c.Code, &c.NameKey, &c.Currency, &c.CurrencySymbol, &c.TaxRateBP, &inclusive, &c.ArchiveMinDays, &builtin, &c.UpdatedAt, &c.DefaultLocale, &c.ShadowCustomerDocuments); err != nil {
 		return CountrySetting{}, err
 	}
 	c.TaxInclusive = inclusive == 1
@@ -146,7 +181,7 @@ func (r *CountrySettingsRepo) List(ctx context.Context) ([]CountrySetting, error
 	done := countrySettingsObs.trace("list")
 	defer func() { done(err) }()
 
-	rows, err := r.db.QueryContext(ctx, `SELECT `+countrySettingsCols+` FROM country_settings ORDER BY code`)
+	rows, err := r.db.QueryContext(ctx, `SELECT `+countrySettingsReadCols+` FROM country_settings ORDER BY code`)
 	if err != nil {
 		return nil, countrySettingsObs.wrapf("list", "list country settings", err)
 	}
@@ -173,7 +208,7 @@ func (r *CountrySettingsRepo) Get(ctx context.Context, code string) (CountrySett
 	done := countrySettingsObs.trace("get")
 	defer func() { done(err) }()
 
-	row := r.db.QueryRowContext(ctx, `SELECT `+countrySettingsCols+` FROM country_settings WHERE code = ?`, normaliseCountryCode(code))
+	row := r.db.QueryRowContext(ctx, `SELECT `+countrySettingsReadCols+` FROM country_settings WHERE code = ?`, normaliseCountryCode(code))
 	c, err := scanCountrySetting(row)
 	if err == sql.ErrNoRows {
 		err = nil
@@ -183,6 +218,27 @@ func (r *CountrySettingsRepo) Get(ctx context.Context, code string) (CountrySett
 		return CountrySetting{}, false, countrySettingsObs.wrapf("get", "get country setting %s", err, code)
 	}
 	return c, true, nil
+}
+
+// ShadowCustomerDocuments reads one country's STORED
+// shadow_customer_documents value (ADR-0124). found=false means no row. The
+// compiled floor is BuiltinShadowDocumentsForbidden; fiscal.CustomerDocuments
+// combines the two. Satisfies fiscal.CountryDocumentsReader.
+func (r *CountrySettingsRepo) ShadowCustomerDocuments(ctx context.Context, code string) (string, bool, error) {
+	var err error
+	done := countrySettingsObs.trace("shadow_customer_documents")
+	defer func() { done(err) }()
+
+	var v string
+	err = r.db.QueryRowContext(ctx, `SELECT shadow_customer_documents FROM country_settings WHERE code = ?`, normaliseCountryCode(code)).Scan(&v)
+	if err == sql.ErrNoRows {
+		err = nil
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, countrySettingsObs.wrapf("shadow_customer_documents", "read shadow_customer_documents for %s", err, code)
+	}
+	return v, true, nil
 }
 
 // validateCountrySetting holds the rules that must survive any caller. The
@@ -232,6 +288,11 @@ func validateCountrySetting(c *CountrySetting) error {
 // code we ship defaults for stays builtin, and anything else is an
 // operator-created country, so a caller cannot mark its own row builtin (which
 // would change what Delete does to it).
+//
+// shadow_customer_documents (ADR-0124) is not caller-controlled either, in
+// either direction: c.ShadowCustomerDocuments is ignored. An insert takes the
+// builtin value for the code, or "allowed" for an operator-created country;
+// an update keeps the stored value (the column is not in the DO UPDATE list).
 func (r *CountrySettingsRepo) Upsert(ctx context.Context, c CountrySetting) error {
 	var err error
 	done := countrySettingsObs.trace("upsert")
@@ -240,7 +301,11 @@ func (r *CountrySettingsRepo) Upsert(ctx context.Context, c CountrySetting) erro
 	if err = validateCountrySetting(&c); err != nil {
 		return err
 	}
-	_, isBuiltin := builtinCountryDefault(c.Code)
+	def, isBuiltin := builtinCountryDefault(c.Code)
+	shadowDocs := shadowDocumentsAllowed
+	if isBuiltin {
+		shadowDocs = def.ShadowCustomerDocuments
+	}
 
 	inclusive, builtin := 0, 0
 	if c.TaxInclusive {
@@ -250,8 +315,8 @@ func (r *CountrySettingsRepo) Upsert(ctx context.Context, c CountrySetting) erro
 		builtin = 1
 	}
 	_, err = r.db.ExecContext(ctx, `
-INSERT INTO country_settings (`+countrySettingsCols+`)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO country_settings (`+countrySettingsReadCols+`)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(code) DO UPDATE SET
 	name_key         = excluded.name_key,
 	currency         = excluded.currency,
@@ -263,7 +328,7 @@ ON CONFLICT(code) DO UPDATE SET
 	updated_at       = excluded.updated_at,
 	default_locale   = excluded.default_locale`,
 		c.Code, c.NameKey, c.Currency, c.CurrencySymbol, c.TaxRateBP, inclusive,
-		c.ArchiveMinDays, builtin, time.Now().UTC().Format(time.RFC3339), c.DefaultLocale)
+		c.ArchiveMinDays, builtin, time.Now().UTC().Format(time.RFC3339), c.DefaultLocale, shadowDocs)
 	if err != nil {
 		return countrySettingsObs.wrapf("upsert", "upsert country setting %s", err, c.Code)
 	}
@@ -285,7 +350,17 @@ func (r *CountrySettingsRepo) Delete(ctx context.Context, code string) error {
 
 	code = normaliseCountryCode(code)
 	if def, ok := builtinCountryDefault(code); ok {
-		return r.Upsert(ctx, def)
+		if err = r.Upsert(ctx, def); err != nil {
+			return err
+		}
+		// Upsert keeps a stored shadow_customer_documents on update by
+		// design, so restoring the shipped value is Delete's own write
+		// (ADR-0124 §1).
+		_, err = r.db.ExecContext(ctx, `UPDATE country_settings SET shadow_customer_documents = ? WHERE code = ?`, def.ShadowCustomerDocuments, code)
+		if err != nil {
+			return countrySettingsObs.wrapf("delete", "restore shadow_customer_documents for %s", err, code)
+		}
+		return nil
 	}
 	_, err = r.db.ExecContext(ctx, `DELETE FROM country_settings WHERE code = ?`, code)
 	if err != nil {
