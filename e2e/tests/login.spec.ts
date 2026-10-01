@@ -560,13 +560,16 @@ test.describe.serial('first-boot setup and PIN login', () => {
     await page.goto('/shifts');
     await expect(page.locator('#open-shift-form')).toBeVisible();
 
-    await Promise.all([
+    const [resp] = await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/shifts/open')),
       page.locator('#open-shift-form button[type=submit]').click(),
     ]);
+    // Check the status, not the text: the success message carries the new
+    // shift's UUID, which can itself contain "500" (ut-docs#3155 CI).
+    expect(resp.status()).toBeLessThan(500);
 
     const result = page.locator('#shift-result');
-    await expect(result).not.toContainText('500');
+    await expect(result).not.toContainText(/\b500\b/);
     await expect(result).not.toContainText('FOREIGN KEY');
 
     // A genuine reload (the form's hx-on::after-request triggers one on

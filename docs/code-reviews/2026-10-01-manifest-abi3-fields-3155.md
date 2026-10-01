@@ -50,3 +50,7 @@ The reviewer confirmed:
 - `guard-deadcode-baseline` reports `internal/logging` `Stderr`/`timestampWriter.Write` identically on `origin/main`: the desktop root is skipped locally for lack of GTK headers. It is not from this change.
 - An unrelated full-suite flake, `TestReplicaLink_HelloCarriesItsOwnCloudDeviceID`, failed under load and then passed 5/5. Filed as #3330.
 - ut-cloud `scripts/ci/verify.sh` with `POS_DIR=../universal-till`: green.
+
+## CI follow-up
+- Playwright `login.spec.ts` "a fresh till can open its first shift" failed on this PR's first run. The shift opened fine, but its UUID (`…-9500-…`) contains "500", which the assertion `not.toContainText('500')` treats as a server error. The `login.spec` retries then failed because they run in serial and depend on that state.
+- Fixed in this PR: the test now asserts on the response status (< 500), and the text check uses `/\b500\b/`. This is a test-only change in code this PR doesn't otherwise touch; the alternative was leaving a ~0.7 % false-red in the suite.
