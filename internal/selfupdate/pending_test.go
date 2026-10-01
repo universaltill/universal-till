@@ -468,8 +468,10 @@ func TestRestartIntoHoldsForAnOpenSale(t *testing.T) {
 }
 
 // The reviewer's case (ut-docs#2738): the till is idle when the restart is
-// scheduled, a sale opens during the delay, so restartInto holds. The
-// watchdog must not have started counting from its own earlier idle poll.
+// scheduled, then a sale opens, so restartInto holds. The watchdog must not
+// have started counting from an earlier idle poll — its own or restartInto's.
+// Deterministic (ut-docs#3303): the first idle() call, whoever makes it,
+// sees the till idle; the sale is open for every later call.
 func TestWatchdogQuietWhileASaleOpenedDuringTheDelayHoldsTheRestart(t *testing.T) {
 	logging.ResetRecent()
 	exe := fakeExe(t)
@@ -480,19 +482,64 @@ func TestWatchdogQuietWhileASaleOpenedDuringTheDelayHoldsTheRestart(t *testing.T
 		reexecFn, reexecDelay, restartIdlePoll, restartWatchdogAfter = oldReexec, oldDelay, oldPoll, oldAfter
 	})
 
-	var busy atomic.Bool // idle at scheduling time
+	var busy, polled atomic.Bool
 	plan := newRestartPlan(exe, "0.2.0", "")
-	plan.idle = func() bool { return !busy.Load() }
+	plan.idle = func() bool {
+		if !polled.Swap(true) {
+			busy.Store(true) // a sale opens right after this idle poll
+			return true
+		}
+		return !busy.Load()
+	}
 	plan.hook = func(context.Context) {}
 	inDone, wdDone := make(chan struct{}), make(chan struct{})
 	go func() { restartInto(plan); close(inDone) }()
 	go func() { restartWatchdog(plan); close(wdDone) }()
-	time.Sleep(10 * time.Millisecond)
-	busy.Store(true) // a sale opens during the delay
 	t.Cleanup(func() { busy.Store(false); <-inDone; <-wdDone })
 
 	time.Sleep(150 * time.Millisecond)
 	if p, ok := openProblem(ProblemKeyRestartPending); ok {
 		t.Fatalf("watchdog raised %+v while the restart was held for a sale", p)
+	}
+}
+
+// ut-docs#3303: the till is idle after the delay, restartInto starts
+// stopping the plugins, and a sale opens in that window, so the second
+// idle wait holds the restart. The watchdog must not report a restart
+// pending for a restart that is still held for a sale. Deterministic: the
+// sale opens inside the hook, which runs after the first idle wait.
+func TestWatchdogQuietWhileASaleOpenedWhilePluginsStopHoldsTheRestart(t *testing.T) {
+	logging.ResetRecent()
+	exe := fakeExe(t)
+	oldReexec, oldDelay, oldPoll, oldAfter := reexecFn, reexecDelay, restartIdlePoll, restartWatchdogAfter
+	execd := make(chan struct{}, 1)
+	reexecFn = func(string) error { execd <- struct{}{}; return nil }
+	reexecDelay, restartIdlePoll, restartWatchdogAfter = time.Millisecond, time.Millisecond, time.Millisecond
+	t.Cleanup(func() {
+		reexecFn, reexecDelay, restartIdlePoll, restartWatchdogAfter = oldReexec, oldDelay, oldPoll, oldAfter
+	})
+
+	var busy atomic.Bool
+	plan := newRestartPlan(exe, "0.2.0", "")
+	plan.idle = func() bool { return !busy.Load() }
+	plan.hook = func(context.Context) { busy.Store(true) } // a sale opens while the plugins stop
+	inDone, wdDone := make(chan struct{}), make(chan struct{})
+	go func() { restartInto(plan); close(inDone) }()
+	go func() { restartWatchdog(plan); close(wdDone) }()
+	t.Cleanup(func() { busy.Store(false); <-inDone; <-wdDone })
+
+	select {
+	case <-execd:
+		t.Fatal("restarted while a sale was open")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if p, ok := openProblem(ProblemKeyRestartPending); ok {
+		t.Fatalf("watchdog raised %+v while the restart was held for a sale", p)
+	}
+	busy.Store(false)
+	select {
+	case <-execd:
+	case <-time.After(2 * time.Second):
+		t.Fatal("never restarted once idle")
 	}
 }

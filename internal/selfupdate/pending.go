@@ -281,9 +281,11 @@ type restartPlan struct {
 	// after the delay: a sale started meanwhile holds the restart, and the
 	// plugins it needs are only stopped once it is done.
 	idle func() bool
-	// idleSeen is closed by restartInto once its own idle wait passed; the
-	// watchdog counts from then, never from a poll of its own (which could
-	// see idle just before a sale opens and report a held restart).
+	// idleSeen is closed by restartInto once its last idle wait passed,
+	// right before the exec (at once when idle is nil). The watchdog counts
+	// from then, never from a poll of its own or from an earlier idle wait:
+	// either could see idle just before a sale opens and report a held
+	// restart (ut-docs#3303).
 	idleSeen chan struct{}
 	// rolledBack is shared by restartInto and restartWatchdog: once the
 	// swap was undone there is no pending restart left to report.
@@ -306,8 +308,9 @@ func restartInto(p restartPlan) {
 		time.Sleep(p.delay)
 		_ = waitIdle(context.Background(), p.idle)
 		p.delay = 0 // already waited; stop the plugins now
+	} else {
+		close(p.idleSeen) // manual update: nothing can hold it, count from now
 	}
-	close(p.idleSeen)
 	done := make(chan struct{})
 	go func() {
 		p.hook(context.Background())
@@ -321,6 +324,12 @@ func restartInto(p restartPlan) {
 	}
 	// A sale opened while the plugins stopped still must not be cut off.
 	_ = waitIdle(context.Background(), p.idle)
+	if p.idle != nil {
+		// Not held by a sale any more: from here the restart is pending
+		// until this process is gone, so the watchdog starts counting
+		// (ut-docs#3303).
+		close(p.idleSeen)
+	}
 	err := p.exec(p.exe)
 	if err == nil {
 		return // only a test seam returns nil; a real exec never returns on success
@@ -355,7 +364,7 @@ func restartInto(p restartPlan) {
 // watchdogAfter after the restart was scheduled.
 func restartWatchdog(p restartPlan) {
 	// A restart held for an open sale is not "pending" yet: count from the
-	// moment restartInto's own idle wait passed.
+	// moment restartInto's last idle wait passed.
 	<-p.idleSeen
 	time.Sleep(p.watchdogAfter)
 	if p.rolledBack.Load() {
