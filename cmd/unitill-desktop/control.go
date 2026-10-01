@@ -155,7 +155,10 @@ func newControlServer() (*controlServer, error) {
 	mux.HandleFunc("POST /input-heartbeat", cs.withAuth(cs.handleInputHeartbeat))
 	mux.HandleFunc("GET /diagnostics", cs.withAuth(cs.handleDiagnostics))
 	cs.srv = &http.Server{Handler: mux, ReadHeaderTimeout: controlServerReadHeaderTimeout}
-	go func() { _ = cs.srv.Serve(ln) }()
+	go func() {
+		defer logging.RecoverAndLog("desktop.controlServer")
+		_ = cs.srv.Serve(ln)
+	}()
 	// Log the listener ADDRESS (never the token) at startup — review of
 	// ut-docs#1329: without this, GET /diagnostics is unreachable after
 	// the fact in spawn mode (the addr only otherwise exists in the

@@ -24,22 +24,23 @@ var goroutineAllowRe = regexp.MustCompile(`goroutine-recover:allow\s+\S`)
 // unrecovered panic in ANY goroutine takes down the whole till process —
 // mid-sale, on a merchant's counter — and its stack goes to the raw stderr,
 // bypassing till.log, redaction and the Problems ring. Every `go` statement
-// under internal/ must therefore start a func literal whose first statement
+// under internal/ and cmd/ (ut-docs#3305 extended the walk to the entry
+// points) must therefore start a func literal whose first statement
 // is `defer logging.RecoverAndLog("name")`, which logs the panic (redacted)
 // and ends just that goroutine. Reviewed exception: a
 // `// goroutine-recover:allow <reason>` comment on the go line or the line
 // directly above it.
 func TestNoUnrecoveredGoroutines(t *testing.T) {
-	root, err := filepath.Abs("..")
+	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
-		t.Fatalf("resolve internal/ root: %v", err)
+		t.Fatalf("resolve repo root: %v", err)
 	}
-	violations, err := findUnrecoveredGoroutines(root)
+	violations, err := findUnrecoveredGoroutines(root, "internal", "cmd")
 	if err != nil {
-		t.Fatalf("walk internal/ tree: %v", err)
+		t.Fatalf("walk internal/ and cmd/ trees: %v", err)
 	}
 	if len(violations) > 0 {
-		t.Errorf("%d go statement(s) can panic the whole till unrecovered and unredacted (ut-docs#3304) — write them as `go func() { defer logging.RecoverAndLog(\"pkg.what\"); ... }()`, or add a reviewed `// goroutine-recover:allow <reason>`:\n  %s",
+		t.Errorf("%d go statement(s) can panic the whole till unrecovered and unredacted (ut-docs#3304, #3305) — write them as `go func() { defer logging.RecoverAndLog(\"pkg.what\"); ... }()`, or add a reviewed `// goroutine-recover:allow <reason>`:\n  %s",
 			len(violations), strings.Join(violations, "\n  "))
 	}
 }
@@ -59,7 +60,7 @@ func TestFindUnrecoveredGoroutinesCatchesPlanted(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("bad/bad.go", `package bad
+	write("internal/bad/bad.go", `package bad
 
 import "github.com/universaltill/universal-till/internal/logging"
 
@@ -81,7 +82,7 @@ func f(x s) {
 	go func() { defer logging.Other("wrong func") }()
 }
 `)
-	write("ok/ok.go", `package ok
+	write("internal/ok/ok.go", `package ok
 
 import (
 	"github.com/universaltill/universal-till/internal/logging"
@@ -102,7 +103,7 @@ func g() {
 	_ = "go doWork()" // a go statement in a string
 }
 `)
-	write("logging/self.go", `package logging
+	write("internal/logging/self.go", `package logging
 
 func RecoverAndLog(string) {}
 
@@ -113,7 +114,7 @@ func h() {
 	// A second package that happens to be named logging (with its own no-op
 	// RecoverAndLog) gets no exemption: only the internal/logging directory
 	// itself may use the bare call (review of ut-docs#3304).
-	write("foo/logging/impostor.go", `package logging
+	write("internal/foo/logging/impostor.go", `package logging
 
 func RecoverAndLog(string) {}
 
@@ -121,31 +122,58 @@ func h() {
 	go func() { defer RecoverAndLog("impostor"); _ = 1 }()
 }
 `)
-	write("ok/skip_test.go", "package ok\n\nfunc t() { go doWork() }\n")
-	write("ok/testdata/guest.go", "package main\n\nfunc main() { go main() }\n")
+	write("internal/ok/skip_test.go", "package ok\n\nfunc t() { go doWork() }\n")
+	write("internal/ok/testdata/guest.go", "package main\n\nfunc main() { go main() }\n")
 
-	got, err := findUnrecoveredGoroutines(root)
+	// cmd/ is walked too (ut-docs#3305): an unwrapped go is reported with its
+	// cmd/ prefix, and a cmd/.../logging dir is no more exempt than any other
+	// package named logging.
+	write("cmd/app/main.go", "package main\n\nfunc main() {\n\tgo main()\n}\n")
+	write("cmd/x/logging/impostor.go", `package logging
+
+func RecoverAndLog(string) {}
+
+func h() {
+	go func() { defer RecoverAndLog("cmd impostor"); _ = 1 }()
+}
+`)
+	write("other/outside.go", "package other\n\nfunc f() { go f() }\n")
+
+	got, err := findUnrecoveredGoroutines(root, "internal", "cmd")
 	if err != nil {
 		t.Fatalf("findUnrecoveredGoroutines: %v", err)
 	}
-	at := func(line int) string { return filepath.Join("bad", "bad.go") + ":" + strconv.Itoa(line) }
+	at := func(line int) string { return filepath.Join("internal", "bad", "bad.go") + ":" + strconv.Itoa(line) }
 	want := []string{at(11), at(12), at(13), at(18), at(19), at(20),
-		filepath.Join("foo", "logging", "impostor.go") + ":6"}
+		filepath.Join("internal", "foo", "logging", "impostor.go") + ":6",
+		filepath.Join("cmd", "app", "main.go") + ":4",
+		filepath.Join("cmd", "x", "logging", "impostor.go") + ":6"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("findUnrecoveredGoroutines reported\n  %v\nwant\n  %v", got, want)
 	}
 }
 
-// findUnrecoveredGoroutines walks root (skipping testdata/ and _test.go
-// files), parses each .go file with go/ast and returns "rel/path.go:line"
+// findUnrecoveredGoroutines walks the given subtrees of the repo root
+// (skipping testdata/ and _test.go files), parses each .go file with go/ast
+// and returns "subtree/rel/path.go:line"
 // for every go statement that is not a func literal whose first statement
 // is `defer <logging>.RecoverAndLog(...)` — <logging> resolved through the
 // file's imports, or a bare RecoverAndLog inside package logging — and has
 // no reasoned goroutine-recover:allow comment on its line or the line above.
-func findUnrecoveredGoroutines(root string) ([]string, error) {
+func findUnrecoveredGoroutines(root string, subtrees ...string) ([]string, error) {
 	var violations []string
 	fset := token.NewFileSet()
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	for _, sub := range subtrees {
+		if err := walkGoroutines(fset, root, filepath.Join(root, sub), &violations); err != nil {
+			return violations, err
+		}
+	}
+	return violations, nil
+}
+
+// walkGoroutines scans one subtree; paths are reported relative to root.
+func walkGoroutines(fset *token.FileSet, root, dir string, violations *[]string) error {
+	return filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -176,9 +204,10 @@ func findUnrecoveredGoroutines(root string) ([]string, error) {
 			}
 		}
 		names := importNames(file)
-		// Keyed on the directory, not the package name, so another package
-		// called logging cannot exempt itself (same rule as the stdout guard).
-		inLogging := filepath.Dir(rel) == "logging"
+		// Keyed on the exact internal/logging directory, not the package
+		// name, so another package called logging (even under cmd/) cannot
+		// exempt itself (same rule as the stdout guard).
+		inLogging := filepath.Dir(rel) == filepath.Join("internal", "logging")
 
 		ast.Inspect(file, func(n ast.Node) bool {
 			gs, ok := n.(*ast.GoStmt)
@@ -189,12 +218,11 @@ func findUnrecoveredGoroutines(root string) ([]string, error) {
 			if allowed[line] || allowed[line-1] || isRecoveredGo(gs, names, inLogging) {
 				return true
 			}
-			violations = append(violations, rel+":"+strconv.Itoa(line))
+			*violations = append(*violations, rel+":"+strconv.Itoa(line))
 			return true
 		})
 		return nil
 	})
-	return violations, err
 }
 
 // isRecoveredGo reports whether gs is `go func(...) { defer

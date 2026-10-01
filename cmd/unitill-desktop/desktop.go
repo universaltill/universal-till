@@ -211,7 +211,12 @@ func main() {
 	var exited chan error
 	if runtime.GOOS != "darwin" {
 		exited = make(chan error, 1)
-		go func() { exited <- cmd.Wait() }()
+		go func() {
+			defer logging.RecoverAndLog("desktop.childReap")
+			// On a panic exited is never signalled: waitForChild then sees only
+			// ready or timeout, so an early child exit is reported as a timeout.
+			exited <- cmd.Wait()
+		}()
 	}
 
 	// Wait (up to ~10s) for the server to accept connections, stopping early
