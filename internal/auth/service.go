@@ -61,6 +61,13 @@ type Service struct {
 	// somewhere other than /login (the self-order kiosk landing, when
 	// display.mode=self_order). Returns "" for the ordinary case.
 	anonymousRootRedirect atomic.Value // func(ctx context.Context) string
+	// boardOnly holds the token hashes of sessions that went idle on a
+	// display board (ut-docs#2935): still served for board requests, revoked
+	// by anything else. In memory on purpose — after a restart the next
+	// board request narrows an idle session again, so nothing is lost.
+	// Entries for sessions revoked elsewhere (RevokeUserSessions, expiry)
+	// stay until that token is presented again: bounded by logins, 64 B each.
+	boardOnly sync.Map // token hash -> struct{}
 
 	mu       sync.Mutex
 	failures int
@@ -239,7 +246,7 @@ func touchInterval(window time.Duration) time.Duration {
 // till's own timer (app.js) also revokes on its verdict via IdleLock, because
 // this clock trails it after a page load (ut-docs#3005); either one locks.
 func (s *Service) Resolve(ctx context.Context, token string) (User, bool) {
-	return s.resolve(ctx, token, true)
+	return s.ResolveFor(ctx, token, true, false)
 }
 
 // ResolveNoTouch is Resolve for requests nobody made by touching the till:
@@ -248,30 +255,68 @@ func (s *Service) Resolve(ctx context.Context, token string) (User, bool) {
 // last_seen_at — otherwise a sale screen polling every few seconds keeps
 // its session alive forever and the idle auto-lock never fires.
 func (s *Service) ResolveNoTouch(ctx context.Context, token string) (User, bool) {
-	return s.resolve(ctx, token, false)
+	return s.ResolveFor(ctx, token, false, false)
 }
 
-func (s *Service) resolve(ctx context.Context, token string, touch bool) (User, bool) {
+// ResolveFor is the middleware's resolve. touch=false never refreshes
+// last_seen_at (background polls). board=true marks a display-board
+// request (ut-docs#2935): a session idle past the window is narrowed to
+// board-only and served, instead of revoked, so an untouched kitchen
+// display keeps running. A board-only session is served only for board
+// requests, never touched, and revoked by any other request — including
+// Resolve and ResolveNoTouch, so no handler ever sees it as signed in.
+func (s *Service) ResolveFor(ctx context.Context, token string, touch, board bool) (User, bool) {
 	if token == "" {
 		return User{}, false
 	}
 	hash := hashToken(token)
 	row, ok, err := s.repo.LookupSession(ctx, hash)
 	if err != nil || !ok {
-		return User{}, false
-	}
-	idle := time.Since(row.LastSeenAt)
-	if window := time.Duration(s.idleLockMinutes.Load()) * time.Minute; window > 0 && idle > window {
-		_ = s.repo.RevokeSession(ctx, hash)
-		if fn, k := s.onIdleLock.Load().(func(context.Context, string)); k {
-			fn(ctx, row.UserID)
+		if err == nil {
+			s.boardOnly.Delete(hash)
 		}
 		return User{}, false
 	}
-	if touch && idle >= touchInterval(time.Duration(s.idleLockMinutes.Load())*time.Minute) {
+	u := User{ID: row.UserID, Username: row.Username, DisplayName: row.DisplayName, Role: row.Role}
+	window := time.Duration(s.idleLockMinutes.Load()) * time.Minute
+	if _, narrowed := s.boardOnly.Load(hash); narrowed {
+		switch {
+		case window == 0:
+			// Auto-lock was switched off since: nothing to narrow for.
+			s.boardOnly.Delete(hash)
+		case board:
+			return u, true
+		default:
+			s.boardOnly.Delete(hash)
+			_ = s.repo.RevokeSession(ctx, hash)
+			return User{}, false
+		}
+	}
+	idle := time.Since(row.LastSeenAt)
+	if window > 0 && idle > window {
+		if board {
+			// Audit once, even when several board polls cross the window
+			// together. A restart forgets the map, so a still-idle board
+			// is narrowed (and audited) once more after it — accepted.
+			if _, already := s.boardOnly.LoadOrStore(hash, struct{}{}); !already {
+				s.auditIdleLock(ctx, row.UserID)
+			}
+			return u, true
+		}
+		_ = s.repo.RevokeSession(ctx, hash)
+		s.auditIdleLock(ctx, row.UserID)
+		return User{}, false
+	}
+	if touch && idle >= touchInterval(window) {
 		_ = s.repo.TouchSession(ctx, hash)
 	}
-	return User{ID: row.UserID, Username: row.Username, DisplayName: row.DisplayName, Role: row.Role}, true
+	return u, true
+}
+
+func (s *Service) auditIdleLock(ctx context.Context, userID string) {
+	if fn, k := s.onIdleLock.Load().(func(context.Context, string)); k {
+		fn(ctx, userID)
+	}
 }
 
 // IdleLock revokes the session behind the token on the client's idle verdict
@@ -287,6 +332,7 @@ func (s *Service) IdleLock(ctx context.Context, token string) {
 		return
 	}
 	hash := hashToken(token)
+	s.boardOnly.Delete(hash)
 	row, ok, err := s.repo.LookupSession(ctx, hash)
 	if err != nil || !ok {
 		return
@@ -302,6 +348,7 @@ func (s *Service) Logout(ctx context.Context, token string) {
 	if token == "" {
 		return
 	}
+	s.boardOnly.Delete(hashToken(token))
 	_ = s.repo.RevokeSession(ctx, hashToken(token))
 }
 
