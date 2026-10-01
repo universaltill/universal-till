@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/paths"
 )
 
@@ -98,8 +99,9 @@ func (tc *TokenClient) GetToken(ctx context.Context) (string, error) {
 	// Cache in memory and on disk
 	tc.cached = token
 	if err := tc.saveToDisk(token); err != nil {
-		// Log but don't fail - we have the token
-		fmt.Fprintf(os.Stderr, "warning: failed to cache token to disk: %v\n", err)
+		// Log but don't fail - we have the token. Through the logger, not
+		// os.Stderr, so the line is redacted and reaches till.log (ut-docs#3248).
+		logging.L().Warnf("oauth: failed to cache token to disk: %v", err)
 	}
 
 	return token.Token, nil
