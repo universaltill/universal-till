@@ -191,6 +191,10 @@ func TestWasmRuntimeClose_TimesOutLoudlyOnWedgedDrainer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
+	// The ctx deadline (fixed when WithTimeout ran) is the reference, not a
+	// later time.Now(): under load the two can drift apart by more than the
+	// timeout's slack and make a correct Close look like it returned early.
+	deadline, _ := ctx.Deadline()
 	start := time.Now()
 	done := make(chan struct{})
 	go func() { defer close(done); w.Close(ctx) }()
@@ -199,8 +203,8 @@ func TestWasmRuntimeClose_TimesOutLoudlyOnWedgedDrainer(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("Close never returned despite its ctx expiring")
 	}
-	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
-		t.Fatalf("Close returned after %s, before its ctx deadline — it never actually waited", elapsed)
+	if now := time.Now(); now.Before(deadline) {
+		t.Fatalf("Close returned %s before its ctx deadline — it never actually waited", deadline.Sub(now))
 	}
 
 	found := false
