@@ -8059,6 +8059,10 @@ type shortcutPriceRow struct {
 	Price     int64
 	Image     sql.NullString
 	TaxRateBP sql.NullInt64
+	// TaxCodeID is the JOINED tax_codes row's id (t.id), never the raw
+	// items.tax_code_id: a dangling reference (written before foreign keys
+	// were enforced) must read as "no tax code" so the engine charges the
+	// shop default, not the LEFT JOIN's COALESCE'd 0% (ut-docs#3250).
 	TaxCodeID sql.NullString
 	IsWeighed sql.NullInt64
 	Label     sql.NullString
@@ -8077,7 +8081,7 @@ const (
 	scanBarcodeVariantSelect = `
 SELECT %d AS tier, i.id, i.name, v.id, v.name, v.price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
-       COALESCE(t.rate_basis_points, 0), i.tax_code_id
+       COALESCE(t.rate_basis_points, 0), t.id
 FROM variant_barcodes vb
 JOIN item_variants v ON v.id = vb.variant_id
 JOIN items i ON i.id = v.item_id
@@ -8087,7 +8091,7 @@ WHERE vb.barcode = ?
 	scanBarcodeItemSelect = `
 SELECT %d AS tier, i.id, i.name, '', '', i.base_price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
-       COALESCE(t.rate_basis_points, 0), i.tax_code_id
+       COALESCE(t.rate_basis_points, 0), t.id
 FROM item_barcodes ib
 JOIN items i ON i.id = ib.item_id
 LEFT JOIN tax_codes t ON t.id = i.tax_code_id
@@ -8148,7 +8152,7 @@ func (r *POSRepo) resolveItemByID(ctx context.Context, itemID string) (shortcutP
 	row := r.db.QueryRowContext(ctx, `
 SELECT i.id, COALESCE(i.sku, ''), i.name, i.base_price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
-       COALESCE(t.rate_basis_points, 0), i.tax_code_id
+       COALESCE(t.rate_basis_points, 0), t.id
 FROM items i
 LEFT JOIN tax_codes t ON t.id = i.tax_code_id
 WHERE i.is_active = 1 AND i.id = ?
@@ -8179,7 +8183,7 @@ func (r *POSRepo) resolveShortcut(ctx context.Context, code string) (shortcutPri
 	row := r.db.QueryRowContext(ctx, `
 SELECT sb.item_id, sb.label, i.name, i.base_price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
-       COALESCE(t.rate_basis_points, 0), i.tax_code_id
+       COALESCE(t.rate_basis_points, 0), t.id
 FROM shortcut_buttons sb
 JOIN items i ON i.id = sb.item_id
 LEFT JOIN tax_codes t ON t.id = i.tax_code_id
@@ -8198,7 +8202,7 @@ func (r *POSRepo) resolveSKU(ctx context.Context, sku string) (shortcutPriceRow,
 	row := r.db.QueryRowContext(ctx, `
 SELECT i.id, i.sku, i.name, i.base_price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
-       COALESCE(t.rate_basis_points, 0), i.tax_code_id
+       COALESCE(t.rate_basis_points, 0), t.id
 FROM items i
 LEFT JOIN tax_codes t ON t.id = i.tax_code_id
 WHERE i.is_active = 1 AND i.sku = ?
@@ -8218,7 +8222,7 @@ func (r *POSRepo) resolveVariantSKU(ctx context.Context, sku string) (shortcutPr
 	row := r.db.QueryRowContext(ctx, `
 SELECT i.id, i.name, v.id, v.name, v.price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
-       COALESCE(t.rate_basis_points, 0), i.tax_code_id
+       COALESCE(t.rate_basis_points, 0), t.id
 FROM item_variants v
 JOIN items i ON i.id = v.item_id
 LEFT JOIN tax_codes t ON t.id = i.tax_code_id
@@ -8237,7 +8241,7 @@ func (r *POSRepo) resolveNameLike(ctx context.Context, like string) (shortcutPri
 	row := r.db.QueryRowContext(ctx, `
 SELECT i.id, i.name, i.base_price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
-       COALESCE(t.rate_basis_points, 0), i.tax_code_id
+       COALESCE(t.rate_basis_points, 0), t.id
 FROM items i
 LEFT JOIN tax_codes t ON t.id = i.tax_code_id
 WHERE i.is_active = 1 AND i.name LIKE ?
@@ -8258,7 +8262,7 @@ func (r *POSRepo) resolveVariantNameLike(ctx context.Context, like string) (shor
 	row := r.db.QueryRowContext(ctx, `
 SELECT i.id, i.name, v.id, v.name, v.price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
-       COALESCE(t.rate_basis_points, 0), i.tax_code_id
+       COALESCE(t.rate_basis_points, 0), t.id
 FROM item_variants v
 JOIN items i ON i.id = v.item_id
 LEFT JOIN tax_codes t ON t.id = i.tax_code_id
