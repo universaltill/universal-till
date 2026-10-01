@@ -843,6 +843,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// the SAME filtered rows so a category whose every section is
 			// gated out for this session gets no tile.
 			"settingsCategories": settingsCategoryTiles(settingsnav.Categories(locale, settingsNav)),
+			// ut-docs#2981: shop-wide regions render read-only while this
+			// additional till cannot reach its main till.
+			"lockedRegions": lockedSettingsRegions(r.Context(), d),
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})
