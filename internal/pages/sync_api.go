@@ -20,6 +20,7 @@ import (
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/lanip"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -500,6 +501,8 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
 		}
+		// ut-docs#2753: no longer a replica, so no main till vouches for it.
+		enroll.ForgetReplicaVouch()
 		now := time.Now().UTC().Format(time.RFC3339)
 		if elev.Outcome == elevated {
 			_ = posRepo.InsertAuditElevated(r.Context(), nil, actorID, elev.ActorID, "till", "-", "till_promoted", nil, now, "")

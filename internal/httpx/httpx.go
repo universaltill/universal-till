@@ -106,6 +106,7 @@ var baseFuncs = template.FuncMap{
 	// test happens to run on (ut-docs#1057).
 	"crossdevicelinkactionable": func() bool { return CrossDeviceLinkActionable() },
 	"enrolled":                  func() bool { return enroll.CurrentStatus().Registered },
+	"enrolledviamain":           func() bool { return enroll.CurrentStatus().ViaMainTill }, // ut-docs#2753
 	"enrolstore":                func() string { return enroll.CurrentStatus().StoreID },
 	"enroldevice":               func() string { return enroll.CurrentStatus().DeviceID },
 	// psuunderpowered: ut-docs#1232 — a Raspberry Pi whose power supply

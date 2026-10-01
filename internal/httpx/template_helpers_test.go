@@ -942,6 +942,7 @@ func TestBaseLayoutStatusBarAdminLinksFollowViewer(t *testing.T) {
 		req.Header.Set("X-Test-Role", role)
 		funcs := withHelpHref(FuncsFor("en"), req)
 		funcs["enrolled"] = func() bool { return false }
+		funcs["enrolledviamain"] = func() bool { return false }
 		files := append([]string{renderFiles[0], "ui/pages/pin.html"}, renderFiles[1:]...)
 		tpl, err := ClonedTemplate("statusbar-3079:"+role, "base.html", funcs, files...)
 		if err != nil {
