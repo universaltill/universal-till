@@ -542,8 +542,13 @@ func remoteCategoriesReport(ctx context.Context, d *common.Deps) []map[string]an
 			"show_on_sale_screen": !c.SellScreenHidden,
 			"sort_order":          c.SortOrder,
 			"active":              c.IsActive,
-			"modifier_group_ids":  capIDs(groupLinks[c.ID]),
-			"station_ids":         capIDs(stationRoutes[c.ID]),
+			// Contract §3.9 rule 5: the SHA-256 of the photo the till
+			// serves ("" for none or a library icon), so my. can tell an
+			// image it set from one set on the till. Categories are not in
+			// the catalog snapshot; they ride this report.
+			"image_sha256":       cloudsync.ServedImageSHA256(c.ImagePath),
+			"modifier_group_ids": capIDs(groupLinks[c.ID]),
+			"station_ids":        capIDs(stationRoutes[c.ID]),
 		})
 	}
 	return out
@@ -836,6 +841,12 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// cloudSetCategoryOrder.
 		SetCategoryOrder: func(ctx context.Context, ids []string) (string, error) {
 			return cloudSetCategoryOrder(ctx, d, ids)
+		},
+		// set_catalog_image (contract §3.9, ut-docs#3076): an item or
+		// category image set or removed in my., main-till only. cloudsync
+		// decodes it and fetches the bytes; see cloudSetCatalogImage.
+		SetCatalogImage: func(ctx context.Context, img cloudsync.CatalogImage) (string, error) {
+			return cloudSetCatalogImage(ctx, d, img)
 		},
 		SetQuickButtonLayout: func(ctx context.Context, barcodes []string) (string, error) {
 			return cloudSetQuickButtonLayout(ctx, d, barcodes)

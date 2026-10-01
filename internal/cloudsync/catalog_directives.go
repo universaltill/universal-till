@@ -11,8 +11,9 @@ import (
 
 // Manage-shop catalog directives (ut-docs
 // reference/manage-shop-catalog-api.md §3): save_item, save_category,
-// delete_category, save_modifier_group, delete_modifier_group, and
-// set_category_order (§3.8, ut-docs#3075).
+// delete_category, save_modifier_group, delete_modifier_group,
+// set_category_order (§3.8, ut-docs#3075) and set_catalog_image (§3.9,
+// ut-docs#3076; decode and fetch in catalog_image.go).
 
 // mainTillOnlyTypes are skipped entirely on a satellite till: no apply and
 // no result post, so the directive stays pending for the main till
@@ -26,6 +27,7 @@ var mainTillOnlyTypes = map[string]bool{
 	"save_modifier_group":   true,
 	"delete_modifier_group": true,
 	"set_category_order":    true,
+	"set_catalog_image":     true,
 	// Till user directives (reference/till-user-directives.md §4): only
 	// the main till applies them; the admin bundle carries the result to
 	// the other tills (ADR-0115 §1).
@@ -44,7 +46,7 @@ var mainTillOnlyTypes = map[string]bool{
 var catalogTypes = map[string]bool{
 	"save_item": true, "save_category": true, "delete_category": true,
 	"save_modifier_group": true, "delete_modifier_group": true, "set_category_order": true,
-	"set_price": true, "rename_item": true, "deactivate_item": true, "create_item": true,
+	"set_catalog_image": true, "set_price": true, "rename_item": true, "deactivate_item": true, "create_item": true,
 	"add_barcode": true, "update_item_details": true, "adjust_stock": true,
 	"upsert_category": true, "update_category": true, "upsert_modifier_group": true,
 }

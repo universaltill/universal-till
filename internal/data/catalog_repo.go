@@ -1593,6 +1593,32 @@ func (r *CatalogRepo) SetCategoryPicture(ctx context.Context, id, imagePath, ico
 	return nil
 }
 
+// CategoryPictureRow is a category's name and its one picture: an image
+// path (an uploaded photo, or a library tile an older till stored as a
+// path) or an icon id.
+type CategoryPictureRow struct {
+	Name      string
+	ImagePath string
+	Icon      string
+}
+
+// CategoryPicture reads a category's picture, active or not (ok=false: no
+// such row). The set_catalog_image directive (ut-docs#3139) checks the
+// category is on this till and what it currently shows with it.
+func (r *CatalogRepo) CategoryPicture(ctx context.Context, id string) (CategoryPictureRow, bool, error) {
+	var c CategoryPictureRow
+	err := r.db.QueryRowContext(ctx, `SELECT name, COALESCE(image_path, ''), COALESCE(icon, '') FROM categories WHERE id = ?`, id).
+		Scan(&c.Name, &c.ImagePath, &c.Icon)
+	if errors.Is(err, sql.ErrNoRows) {
+		return c, false, nil
+	}
+	if err != nil {
+		return c, false, fmt.Errorf("category picture: %w", err)
+	}
+	c.Name = stripRetireMangle(id, c.Name)
+	return c, true, nil
+}
+
 // ErrModifierGroupNotFound / ErrKitchenStationNotFound: UpdateCategoryPartial
 // was handed a link to a group or station this till doesn't have.
 var (
