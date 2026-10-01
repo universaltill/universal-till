@@ -1819,6 +1819,12 @@ function initOfflineOverride(updateFn){
   var locking = false;
   setInterval(function () {
     if (locking || (Date.now() - last) / 1000 <= secs) return;
+    // ut-docs#2935: a display board (kitchen display, order board) is
+    // watched, not touched. It keeps running; the server narrows its idle
+    // session to the board, so any other screen asks for the PIN.
+    // Checked at fire time: with the boosted shell (ADR-0098) this timer
+    // outlives the page it started on.
+    if (document.querySelector('[data-display-board]')) return;
     locking = true;
     // ut-docs#2788: a timer-driven jump to /login looks like a refresh on
     // the till. /login is outside base.html, so report it now.

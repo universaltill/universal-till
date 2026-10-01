@@ -110,29 +110,6 @@ func TestRealRequestStillExtendsTheSession(t *testing.T) {
 	}
 }
 
-// Display boards are watched, not touched; they keep today's behaviour
-// until the display-device auto-lock decision lands (ut-docs#2935).
-func TestDisplayBoardPollsStillExtendTheSession(t *testing.T) {
-	for _, p := range []string{"/ui/orders", "/ui/kitchen-display/st-1"} {
-		if !displayBoardPoll(p) {
-			t.Fatalf("%s should be a display-board poll", p)
-		}
-		db, h, token := pollRig(t)
-		setLastSeen(t, db, 9*time.Minute)
-		if rec := htmxGet(h, p, token); rec.Code != http.StatusOK {
-			t.Fatalf("%s: got %d", p, rec.Code)
-		}
-		if ago := lastSeenAgo(t, db); ago > time.Minute {
-			t.Errorf("%s did not extend the session: last_seen %v ago", p, ago)
-		}
-	}
-	for _, p := range []string{"/ui/kitchen-display/", "/ui/kitchen-display/a/b", "/ui/orders/x", "/kitchen-display/st-1"} {
-		if displayBoardPoll(p) {
-			t.Errorf("%s must not match the display-board tier", p)
-		}
-	}
-}
-
 func TestResolveNoTouch(t *testing.T) {
 	db := openAuthTestDB(t)
 	seedOperator(t, db, "op1", "cashier", "1234")
