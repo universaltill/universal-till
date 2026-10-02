@@ -1,6 +1,8 @@
 package catalog
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -47,9 +49,10 @@ func TestOptionSetsPage_EmptyStateThenCreateSetAndValues(t *testing.T) {
 			t.Fatalf("add value %q: want 200, got %d: %s", v, rec.Code, rec.Body.String())
 		}
 	}
-	// The list re-render carries the values as chips in insertion order.
+	// The list re-render carries the values as chips in insertion order
+	// (each chip's text is an in-place edit field since ut-docs#3319).
 	body := rec.Body.String()
-	iS, iM, iL := strings.Index(body, ">S<"), strings.Index(body, ">M<"), strings.Index(body, ">L<")
+	iS, iM, iL := strings.Index(body, `value="S"`), strings.Index(body, `value="M"`), strings.Index(body, `value="L"`)
 	if iS < 0 || iM < 0 || iL < 0 || !(iS < iM && iM < iL) {
 		t.Fatalf("values must render as chips in insertion order S, M, L; got: %s", body)
 	}
@@ -59,7 +62,7 @@ func TestOptionSetsPage_EmptyStateThenCreateSetAndValues(t *testing.T) {
 
 	// The full page lists it too.
 	rec = get(t, mux, "/catalog/option-sets")
-	if !strings.Contains(rec.Body.String(), "Size") || !strings.Contains(rec.Body.String(), ">M<") {
+	if !strings.Contains(rec.Body.String(), "Size") || !strings.Contains(rec.Body.String(), `value="M"`) {
 		t.Fatalf("page must list the set and its values, got: %s", rec.Body.String())
 	}
 }
@@ -219,6 +222,12 @@ func TestOptionSets_MutationsRefusedOnReplica(t *testing.T) {
 		{"/api/catalog/option-set-value", "optionSetId=" + setID + "&value=S"},
 		{"/api/catalog/item/option-sets", "panelItem=itm1&optionSetIds=" + setID},
 		{"/api/catalog/item/generate-variants", "panelItem=itm1"},
+		{"/api/catalog/option-set/rename", "optionSetId=" + setID + "&name=Sizes"},
+		{"/api/catalog/option-set/active", "optionSetId=" + setID + "&isActive=0"},
+		{"/api/catalog/option-set/delete", "optionSetId=" + setID},
+		{"/api/catalog/option-set-value/update", "optionSetId=" + setID + "&valueId=x&value=S"},
+		{"/api/catalog/option-set-value/move", "optionSetId=" + setID + "&valueId=x&direction=up"},
+		{"/api/catalog/option-set-value/remove", "optionSetId=" + setID + "&valueId=x"},
 	} {
 		rec := postForm(t, mux, tc.path, tc.form)
 		if rec.Code != http.StatusConflict {
@@ -274,5 +283,213 @@ func TestCatalogPage_TopRowHasNoRailDuplicateButtons(t *testing.T) {
 	}
 	if strings.Contains(topRow, `href="/modifiers"`) {
 		t.Fatal("catalog page's top action row must not link to /modifiers — it duplicates the /items rail section (ut-docs#2092)")
+	}
+}
+
+// --- manage parity (ut-docs#3319): rename, edit/reorder/remove a value,
+// active flag, delete-when-unused — all on the till's own screen. ---
+
+func seedSizeSet(t *testing.T, db *sql.DB) (setID string, valueIDs []string) {
+	t.Helper()
+	repo := data.NewOptionSetRepo(db)
+	setID, err := repo.CreateOptionSet(t.Context(), "Size")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []string{"S", "M", "L"} {
+		id, err := repo.AddOptionSetValue(t.Context(), setID, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		valueIDs = append(valueIDs, id)
+	}
+	return setID, valueIDs
+}
+
+func valueOrder(t *testing.T, db *sql.DB, setID string) string {
+	t.Helper()
+	set, err := data.NewOptionSetRepo(db).GetOptionSet(t.Context(), setID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, v := range set.Values {
+		out = append(out, v.Value)
+	}
+	return strings.Join(out, ",")
+}
+
+func TestOptionSetsPage_RenameAndCollisionShownInline(t *testing.T) {
+	mux, db := newCatalogMux(t)
+	setID, _ := seedSizeSet(t, db)
+	if _, err := data.NewOptionSetRepo(db).CreateOptionSet(t.Context(), "Colour"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := get(t, mux, "/catalog/option-sets")
+	if !strings.Contains(rec.Body.String(), `hx-post="/api/catalog/option-set/rename"`) {
+		t.Fatalf("page must offer a rename form, got: %s", rec.Body.String())
+	}
+
+	rec = postForm(t, mux, "/api/catalog/option-set/rename", "optionSetId="+setID+"&name=Sizes")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `value="Sizes"`) {
+		t.Fatalf("rename: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = postForm(t, mux, "/api/catalog/option-set/rename", "optionSetId="+setID+"&name=Colour")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("rename collision: want 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	// An HTML fragment (app.js force-swaps a text/html 4xx into the target)
+	// with the problem named on the card, not a generic banner.
+	if !strings.Contains(rec.Header().Get("Content-Type"), "text/html") || !strings.Contains(body, `id="option-sets-list"`) ||
+		!strings.Contains(body, `role="alert"`) || !strings.Contains(body, "already in use") {
+		t.Fatalf("collision must re-render the list with an inline alert, got %q: %s", rec.Header().Get("Content-Type"), body)
+	}
+	if set, _ := data.NewOptionSetRepo(db).GetOptionSet(t.Context(), setID); set.Name != "Sizes" {
+		t.Fatalf("refused rename changed the name to %q", set.Name)
+	}
+	if rec := postForm(t, mux, "/api/catalog/option-set/rename", "optionSetId="+setID+"&name=+"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("blank rename: want 400, got %d", rec.Code)
+	}
+	if rec := postForm(t, mux, "/api/catalog/option-set/rename", "optionSetId=nope&name=Fit"); rec.Code != http.StatusNotFound {
+		t.Fatalf("rename of an unknown set: want 404, got %d", rec.Code)
+	}
+}
+
+// Reorder is explicit up/down buttons, never a drag gesture: on the kiosk
+// touchscreen a pointerdown/drag handler can eat the page's scroll (UX note
+// on ut-docs#3319).
+func TestOptionSetsPage_EditMoveRemoveValue(t *testing.T) {
+	mux, db := newCatalogMux(t)
+	setID, ids := seedSizeSet(t, db)
+	sID, mID, lID := ids[0], ids[1], ids[2]
+
+	body := get(t, mux, "/catalog/option-sets").Body.String()
+	for _, want := range []string{
+		`hx-post="/api/catalog/option-set-value/move"`, `hx-post="/api/catalog/option-set-value/remove"`,
+		`hx-post="/api/catalog/option-set-value/update"`, `aria-label="Move S up"`, `aria-label="Move S down"`, `aria-label="Remove S"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("page missing %q, got: %s", want, body)
+		}
+	}
+	rec := postForm(t, mux, "/api/catalog/option-set-value/move", "optionSetId="+setID+"&valueId="+lID+"&direction=up")
+	if rec.Code != http.StatusOK || valueOrder(t, db, setID) != "S,L,M" {
+		t.Fatalf("move L up: %d order=%s", rec.Code, valueOrder(t, db, setID))
+	}
+	// Scoped to the list fragment (the app shell's own scripts are not this
+	// screen's): no drag gesture of its own.
+	for _, banned := range []string{"draggable", "pointerdown", "dragstart", "<script"} {
+		if strings.Contains(rec.Body.String(), banned) {
+			t.Fatalf("option-sets list must not use a drag gesture (%q found)", banned)
+		}
+	}
+	// Moving the first value up is a harmless no-op.
+	if rec := postForm(t, mux, "/api/catalog/option-set-value/move", "optionSetId="+setID+"&valueId="+sID+"&direction=up"); rec.Code != http.StatusOK || valueOrder(t, db, setID) != "S,L,M" {
+		t.Fatalf("move first up: %d order=%s", rec.Code, valueOrder(t, db, setID))
+	}
+	if rec := postForm(t, mux, "/api/catalog/option-set-value/move", "optionSetId="+setID+"&valueId="+sID+"&direction=down"); rec.Code != http.StatusOK || valueOrder(t, db, setID) != "L,S,M" {
+		t.Fatalf("move S down: %d order=%s", rec.Code, valueOrder(t, db, setID))
+	}
+	if rec := postForm(t, mux, "/api/catalog/option-set-value/move", "optionSetId="+setID+"&valueId="+sID+"&direction=sideways"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad direction: want 400, got %d", rec.Code)
+	}
+
+	rec = postForm(t, mux, "/api/catalog/option-set-value/update", "optionSetId="+setID+"&valueId="+mID+"&value=Medium")
+	if rec.Code != http.StatusOK || valueOrder(t, db, setID) != "L,S,Medium" {
+		t.Fatalf("edit M: %d order=%s", rec.Code, valueOrder(t, db, setID))
+	}
+	rec = postForm(t, mux, "/api/catalog/option-set-value/update", "optionSetId="+setID+"&valueId="+mID+"&value=S")
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `role="alert"`) || !strings.Contains(rec.Body.String(), "already in this set") {
+		t.Fatalf("duplicate value: want 400 with an inline alert, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if valueOrder(t, db, setID) != "L,S,Medium" {
+		t.Fatalf("refused edit changed values: %s", valueOrder(t, db, setID))
+	}
+
+	rec = postForm(t, mux, "/api/catalog/option-set-value/remove", "optionSetId="+setID+"&valueId="+lID)
+	if rec.Code != http.StatusOK || valueOrder(t, db, setID) != "S,Medium" {
+		t.Fatalf("remove L: %d order=%s", rec.Code, valueOrder(t, db, setID))
+	}
+	if rec := postForm(t, mux, "/api/catalog/option-set-value/remove", "optionSetId="+setID+"&valueId=nope"); rec.Code != http.StatusNotFound {
+		t.Fatalf("remove unknown value: want 404, got %d", rec.Code)
+	}
+}
+
+// The active state is a text label, not colour/opacity alone.
+func TestOptionSetsPage_ActiveToggleHasTextLabel(t *testing.T) {
+	mux, db := newCatalogMux(t)
+	setID, _ := seedSizeSet(t, db)
+	rec := postForm(t, mux, "/api/catalog/option-set/active", "optionSetId="+setID+"&isActive=0")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("deactivate: %d %s", rec.Code, rec.Body.String())
+	}
+	if set, _ := data.NewOptionSetRepo(db).GetOptionSet(t.Context(), setID); set.IsActive {
+		t.Fatal("set must be inactive")
+	}
+	if !strings.Contains(rec.Body.String(), `class="tag option-set-status"`) || !strings.Contains(rec.Body.String(), ">Inactive<") {
+		t.Fatalf("an inactive set must say so in text, got: %s", rec.Body.String())
+	}
+	if rec := postForm(t, mux, "/api/catalog/option-set/active", "optionSetId="+setID+"&isActive=1"); rec.Code != http.StatusOK {
+		t.Fatalf("reactivate: %d", rec.Code)
+	}
+	if set, _ := data.NewOptionSetRepo(db).GetOptionSet(t.Context(), setID); !set.IsActive {
+		t.Fatal("set must be active again")
+	}
+	if rec := postForm(t, mux, "/api/catalog/option-set/active", "optionSetId="+setID+"&isActive=maybe"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad isActive: want 400, got %d", rec.Code)
+	}
+}
+
+// Delete is offered only when no item uses the set; otherwise the items
+// are listed inline, visible without clicking anything, and the delete
+// control is disabled and says why. A stale page posting delete anyway is
+// refused with the item list.
+func TestOptionSetsPage_DeleteBlockedListsItemsInlineThenSucceedsWhenUnused(t *testing.T) {
+	mux, db := newCatalogMux(t)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "TEE", Name: "T-shirt", BasePrice: 1500, IsActive: true})
+	setID, _ := seedSizeSet(t, db)
+	repo := data.NewOptionSetRepo(db)
+	if err := repo.ApplyOptionSetsToItem(t.Context(), "itm1", []string{setID}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := get(t, mux, "/catalog/option-sets").Body.String()
+	for _, want := range []string{"Used by", `href="/catalog?item=itm1&amp;tab=variants"`, ">T-shirt<", "Remove it from these items before you can delete it"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("in-use set must list its items inline (%q missing): %s", want, body)
+		}
+	}
+	if !strings.Contains(body, `class="btn secondary option-set-delete-btn" disabled aria-describedby="option-set-usedby-`+setID+`"`) {
+		t.Fatalf("delete must be disabled and point at the used-by explanation: %s", body)
+	}
+
+	rec := postForm(t, mux, "/api/catalog/option-set/delete", "optionSetId="+setID)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `role="alert"`) || !strings.Contains(rec.Body.String(), "T-shirt") {
+		t.Fatalf("in-use delete: want 409 naming the item inline, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := repo.GetOptionSet(t.Context(), setID); err != nil {
+		t.Fatalf("refused delete removed the set: %v", err)
+	}
+
+	if err := repo.ApplyOptionSetsToItem(t.Context(), "itm1", nil); err != nil {
+		t.Fatal(err)
+	}
+	body = get(t, mux, "/catalog/option-sets").Body.String()
+	if strings.Contains(body, "Used by") || !strings.Contains(body, `hx-post="/api/catalog/option-set/delete"`) || !strings.Contains(body, "hx-confirm=") {
+		t.Fatalf("an unused set offers a confirmed delete and no used-by list: %s", body)
+	}
+	rec = postForm(t, mux, "/api/catalog/option-set/delete", "optionSetId="+setID)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "No option sets yet") {
+		t.Fatalf("unused delete: want 200 and the empty state back, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := repo.GetOptionSet(t.Context(), setID); !errors.Is(err, data.ErrOptionSetNotFound) {
+		t.Fatalf("set must be gone, got %v", err)
+	}
+	// A replay (double click, second tab) is harmless.
+	if rec := postForm(t, mux, "/api/catalog/option-set/delete", "optionSetId="+setID); rec.Code != http.StatusOK {
+		t.Fatalf("delete replay: want 200, got %d", rec.Code)
 	}
 }

@@ -201,6 +201,13 @@ type Hooks struct {
 	// good through the catalog cleanup's own repository rule. Main-till
 	// only; idempotent (an item already gone reports "already deleted").
 	DeleteItem func(ctx context.Context, id string) (string, error)
+	// SaveOptionSet / DeleteOptionSet handle "save_option_set" /
+	// "delete_option_set" (ut-docs#3319): main-till only like the
+	// modifier-group pair. Delete refuses a set still applied to an item;
+	// the hook's error text names those items and is the directive's
+	// failure message.
+	SaveOptionSet   func(ctx context.Context, p data.OptionSetSave) (string, error)
+	DeleteOptionSet func(ctx context.Context, id string) (string, error)
 	// SetCategoryOrder handles "set_category_order" (contract §3.8,
 	// ut-docs#3075): the owner's category order from my., as the full
 	// ordered id list. Main-till only like the five above. The hook
@@ -897,6 +904,24 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing id"
 		}
 		msg, err = hooks.DeleteModifierGroup(ctx, id)
+	case "save_option_set":
+		if hooks.SaveOptionSet == nil {
+			return "failed", "save_option_set is not supported on this till"
+		}
+		p, bad := decodeSaveOptionSet(payload(d.Payload))
+		if bad != "" {
+			return "failed", bad
+		}
+		msg, err = hooks.SaveOptionSet(ctx, p)
+	case "delete_option_set":
+		if hooks.DeleteOptionSet == nil {
+			return "failed", "delete_option_set is not supported on this till"
+		}
+		id := payload(d.Payload).id()
+		if id == "" {
+			return "failed", "missing id"
+		}
+		msg, err = hooks.DeleteOptionSet(ctx, id)
 	case "save_user", "set_user_pin", "deactivate_user":
 		hook := map[string]func(context.Context, UserDirective) (string, error){
 			"save_user": hooks.SaveUser, "set_user_pin": hooks.SetUserPIN, "deactivate_user": hooks.DeactivateUser,

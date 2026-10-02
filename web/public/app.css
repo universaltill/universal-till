@@ -1140,6 +1140,39 @@ body.kiosk .modifier-assign-add-item .modifiers-item-search { min-block-size: 2.
 .option-set-chip { font-family: inherit; font-size: .85rem; }
 .option-set-new { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-block-start: 0; }
 .option-set-new input[type="text"] { flex: 1 1 12rem; inline-size: auto; }
+/* ut-docs#3319: rename / per-value edit, up, down, remove / used-by /
+   activate + delete. Logical properties only (fa/ar RTL). Reorder is
+   buttons, not drag (kiosk scroll gesture). */
+.option-set-head { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between; }
+.option-set-rename { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; flex: 1 1 14rem; min-inline-size: 0; }
+.option-set-rename input[type="text"] { flex: 1 1 10rem; min-inline-size: 0; font-weight: 600; }
+.option-set-status { white-space: nowrap; }
+.option-set-error { margin: .4rem 0; padding: .35rem .55rem; border: 1px solid var(--warning-tint-border);
+                    border-radius: var(--radius); background: var(--warning-tint); color: var(--text); font-weight: 600; }
+.option-set-values { list-style: none; margin: .2rem 0 0; padding: 0; }
+/* Two classes: .chip (declared below) would otherwise win back its
+   monospace over .option-set-chip's override on source order alone. */
+.option-set-values .option-set-chip { gap: .1rem; padding-block: .05rem; padding-inline: .45rem .2rem; font-family: inherit; }
+.option-set-value-edit { display: inline-flex; margin: 0; }
+/* Width follows the text: the size attribute (set from the value's length)
+   for any engine, field-sizing where supported; bounded either way. */
+.option-set-value-edit input[type="text"] { border: 0; background: transparent; padding: .1rem; font: inherit; color: inherit;
+                                            inline-size: auto; field-sizing: content; min-inline-size: 2ch; max-inline-size: 14rem; }
+.option-set-value-edit input[type="text"]:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 1px; }
+.chip .option-set-chip-btn { inline-size: 1.75rem; block-size: 1.75rem; border-radius: 999px; font-size: .95rem;
+                             display: inline-flex; align-items: center; justify-content: center; }
+.chip .option-set-chip-btn:hover:not(:disabled),
+.chip .option-set-chip-btn:focus-visible { background: var(--surface); color: var(--text); }
+.chip .option-set-chip-btn:disabled { opacity: .35; cursor: default; }
+.option-set-usedby { margin-block-start: .6rem; }
+.option-set-usedby-item { text-decoration: none; color: inherit; }
+.option-set-usedby-hint { margin: .35rem 0 0; font-size: .85rem; }
+.option-set-card-footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; margin-block-start: .6rem;
+                          padding-block-start: .6rem; border-block-start: 1px solid var(--border); }
+body.kiosk .chip .option-set-chip-btn { inline-size: 2.75rem; block-size: 2.75rem; }
+body.kiosk .option-set-value-edit input[type="text"],
+body.kiosk .option-set-rename input[type="text"],
+body.kiosk .option-set-card-footer .btn { min-block-size: 2.75rem; }
 
 .chip-row { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; min-block-size: 1.6rem; }
 .chip { display: inline-flex; align-items: center; gap: .35rem; padding: .12rem .55rem;

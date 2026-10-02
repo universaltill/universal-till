@@ -28,6 +28,7 @@ import (
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/imaging"
+	"github.com/universaltill/universal-till/internal/logging"
 	productlookup "github.com/universaltill/universal-till/internal/lookup"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pages/itemsnav"
@@ -896,7 +897,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requireCatalogManagementPage(w, r) {
 			return
 		}
-		sets, err := data.NewOptionSetRepo(d.Db).ListOptionSets(r.Context())
+		sets, err := data.NewOptionSetRepo(d.Db).ListOptionSetsWithItems(r.Context())
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
 			return
@@ -908,8 +909,11 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"title":        httpx.T(httpx.RequestLocale(r), "items.option_sets.name"),
 			"menuItems":    d.MenuSnapshot(),
 			"theme":        d.CurrentState().Theme,
-			"Sets":         sets,
+			"Sets":         optionSetCards(sets),
 			"InItemsShell": httpx.IsFragmentSwap(w, r),
+			"ErrorSetID":   "",
+			"ErrorMsg":     "",
+			"MaxValueLen":  data.MaxOptionSetValueRunes,
 		}
 		// ut-docs#1950: same /items rail embedding as /catalog above.
 		if httpx.IsFragmentSwap(w, r) {
@@ -920,19 +924,229 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		httpx.Render("ui/pages/option_sets.html", optionSetsData)(w, r)
 	})
 
-	// renderOptionSetsList answers a mutation on the option-sets screen with
-	// its re-rendered list fragment (#option-sets-list, outerHTML swap).
-	renderOptionSetsList := func(w http.ResponseWriter, r *http.Request) {
-		sets, err := data.NewOptionSetRepo(d.Db).ListOptionSets(r.Context())
+	// renderOptionSetsListStatus answers a mutation on the option-sets screen
+	// with its re-rendered list fragment (#option-sets-list, outerHTML swap).
+	// A refused mutation (ut-docs#3319) answers with the SAME fragment and a
+	// 4xx status, its message in a role="alert" line on the affected card
+	// (errSetID) or at the top of the list (errSetID == "") — text/html, so
+	// app.js's beforeSwap force-swaps it in instead of discarding it for the
+	// generic banner, and the operator reads what went wrong where it went
+	// wrong.
+	renderOptionSetsListStatus := func(w http.ResponseWriter, r *http.Request, status int, errSetID, errMsg string) {
+		sets, err := data.NewOptionSetRepo(d.Db).ListOptionSetsWithItems(r.Context())
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		}
+		if status != http.StatusOK {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(status)
+		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "pages", "option_sets.html"),
-		), funcs)("option_sets_list", map[string]any{"Sets": sets})(w, r)
+		), funcs)("option_sets_list", map[string]any{"Sets": optionSetCards(sets), "ErrorSetID": errSetID, "ErrorMsg": errMsg, "MaxValueLen": data.MaxOptionSetValueRunes})(w, r)
 	}
+	renderOptionSetsList := func(w http.ResponseWriter, r *http.Request) {
+		renderOptionSetsListStatus(w, r, http.StatusOK, "", "")
+	}
+
+	// optionSetRefusal maps a refused option-set mutation to its status and
+	// translated inline message (ut-docs#3319). Anything unrecognised is
+	// logged and shown as the generic invalid-request line — never raw
+	// Go/SQL text.
+	optionSetRefusal := func(w http.ResponseWriter, r *http.Request, setID string, err error) {
+		loc := httpx.ResolveLocale(w, r)
+		switch {
+		case errors.Is(err, data.ErrOptionSetNotFound):
+			renderOptionSetsListStatus(w, r, http.StatusNotFound, "", httpx.T(loc, "catalog.option_sets.not_found"))
+		case errors.Is(err, data.ErrOptionSetExists):
+			renderOptionSetsListStatus(w, r, http.StatusBadRequest, setID, httpx.T(loc, "catalog.option_sets.exists"))
+		case errors.Is(err, data.ErrOptionSetValueExists):
+			renderOptionSetsListStatus(w, r, http.StatusBadRequest, setID, httpx.T(loc, "catalog.option_sets.value_exists"))
+		case errors.Is(err, data.ErrOptionSetValueInvalid):
+			renderOptionSetsListStatus(w, r, http.StatusBadRequest, setID, fmt.Sprintf(httpx.T(loc, "catalog.option_sets.value_invalid"), data.MaxOptionSetValueRunes))
+		case errors.Is(err, data.ErrOptionSetTooManyValues):
+			renderOptionSetsListStatus(w, r, http.StatusBadRequest, setID, fmt.Sprintf(httpx.T(loc, "catalog.option_sets.too_many_values"), data.MaxOptionSetValues))
+		case errors.Is(err, data.ErrOptionSetInUse):
+			items, lerr := data.NewOptionSetRepo(d.Db).ItemsUsingOptionSet(r.Context(), setID)
+			if lerr != nil {
+				logging.L().Warnf("catalog: option set %s in-use list: %v", setID, lerr)
+			}
+			names := make([]string, 0, min(len(items), optionSetUsedByMax))
+			for i, it := range items {
+				if i == optionSetUsedByMax {
+					break
+				}
+				names = append(names, it.Name)
+			}
+			list := strings.Join(names, ", ")
+			if more := len(items) - len(names); more > 0 {
+				list += " " + fmt.Sprintf(httpx.T(loc, "catalog.option_sets.used_by_more"), more)
+			}
+			renderOptionSetsListStatus(w, r, http.StatusConflict, setID, fmt.Sprintf(httpx.T(loc, "catalog.option_sets.in_use_refused"), len(items), list))
+		default:
+			logging.L().Warnf("catalog: option set %s mutation refused: %v", setID, err)
+			renderOptionSetsListStatus(w, r, http.StatusBadRequest, setID, httpx.T(loc, "catalog.error.invalid_request"))
+		}
+	}
+
+	// optionSetMutationStart is the shared front of every ut-docs#3319
+	// mutation: permission, main-till-only (option_sets are synced
+	// shop-wide), the form, and the set id.
+	optionSetMutationStart := func(w http.ResponseWriter, r *http.Request) (string, bool) {
+		if !requireCatalogManagement(w, r) {
+			return "", false
+		}
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+			return "", false
+		}
+		_ = r.ParseForm()
+		setID := strings.TrimSpace(r.Form.Get("optionSetId"))
+		if setID == "" {
+			http.Error(w, "optionSetId required", http.StatusBadRequest)
+			return "", false
+		}
+		return setID, true
+	}
+
+	// Rename a set (same uniqueness rule as create).
+	mux.HandleFunc("POST /api/catalog/option-set/rename", func(w http.ResponseWriter, r *http.Request) {
+		setID, ok := optionSetMutationStart(w, r)
+		if !ok {
+			return
+		}
+		name := strings.TrimSpace(r.Form.Get("name"))
+		if name == "" {
+			renderOptionSetsListStatus(w, r, http.StatusBadRequest, setID, httpx.T(httpx.ResolveLocale(w, r), "catalog.option_sets.name_required"))
+			return
+		}
+		if err := data.NewOptionSetRepo(d.Db).RenameOptionSet(r.Context(), setID, name); err != nil {
+			optionSetRefusal(w, r, setID, err)
+			return
+		}
+		renderOptionSetsList(w, r)
+	})
+
+	// Activate / deactivate a set. An inactive set stays on this screen but
+	// is no longer offered on an item's Variants tab.
+	mux.HandleFunc("POST /api/catalog/option-set/active", func(w http.ResponseWriter, r *http.Request) {
+		setID, ok := optionSetMutationStart(w, r)
+		if !ok {
+			return
+		}
+		var active bool
+		switch r.Form.Get("isActive") {
+		case "1":
+			active = true
+		case "0":
+		default:
+			renderOptionSetsListStatus(w, r, http.StatusBadRequest, setID, httpx.T(httpx.ResolveLocale(w, r), "catalog.error.invalid_request"))
+			return
+		}
+		if err := data.NewOptionSetRepo(d.Db).SetOptionSetActive(r.Context(), setID, active); err != nil {
+			optionSetRefusal(w, r, setID, err)
+			return
+		}
+		renderOptionSetsList(w, r)
+	})
+
+	// Delete a set only when no item uses it; otherwise 409 naming the
+	// items. The card already lists them and disables Delete, so this
+	// refusal is the guard for a page that went stale. A replay of an
+	// already-deleted set re-renders the list (nothing to do).
+	mux.HandleFunc("POST /api/catalog/option-set/delete", func(w http.ResponseWriter, r *http.Request) {
+		setID, ok := optionSetMutationStart(w, r)
+		if !ok {
+			return
+		}
+		if _, err := data.NewOptionSetRepo(d.Db).DeleteOptionSetIfUnused(r.Context(), setID); err != nil {
+			optionSetRefusal(w, r, setID, err)
+			return
+		}
+		renderOptionSetsList(w, r)
+	})
+
+	// The three per-value controls (edit text, move up/down, remove) each
+	// build the set's new full ordered list and write it through the one
+	// ReplaceOptionSetValues path the save_option_set directive uses.
+	// Reorder is explicit up/down buttons — no drag gesture on a screen
+	// that runs on the kiosk touchscreen (UX note, ut-docs#3319).
+	editOptionSetValues := func(w http.ResponseWriter, r *http.Request, edit func(vals []data.OptionSetValueInput, at int) ([]data.OptionSetValueInput, bool)) {
+		setID, ok := optionSetMutationStart(w, r)
+		if !ok {
+			return
+		}
+		repo := data.NewOptionSetRepo(d.Db)
+		set, err := repo.GetOptionSet(r.Context(), setID)
+		if err != nil {
+			optionSetRefusal(w, r, setID, err)
+			return
+		}
+		valueID := strings.TrimSpace(r.Form.Get("valueId"))
+		vals := make([]data.OptionSetValueInput, 0, len(set.Values))
+		at := -1
+		for i, v := range set.Values {
+			if v.ID == valueID {
+				at = i
+			}
+			vals = append(vals, data.OptionSetValueInput{ID: v.ID, Value: v.Value})
+		}
+		if at < 0 {
+			// The SET still exists (fetched above) — only the value is
+			// gone, so unlike a whole-set 404 this belongs on that set's
+			// own card, not the page-wide slot. Review finding: routing
+			// this through optionSetRefusal's shared ErrOptionSetNotFound
+			// case hardcodes setID to "", which used to also hit a dead
+			// branch (fixed above) and even now would put a per-set
+			// problem in the wrong place when other sets are showing.
+			renderOptionSetsListStatus(w, r, http.StatusNotFound, setID, httpx.T(httpx.ResolveLocale(w, r), "catalog.option_sets.not_found"))
+			return
+		}
+		next, changed := edit(vals, at)
+		if next == nil {
+			renderOptionSetsListStatus(w, r, http.StatusBadRequest, setID, httpx.T(httpx.ResolveLocale(w, r), "catalog.error.invalid_request"))
+			return
+		}
+		if changed {
+			if err := repo.ReplaceOptionSetValues(r.Context(), setID, next); err != nil {
+				optionSetRefusal(w, r, setID, err)
+				return
+			}
+		}
+		renderOptionSetsList(w, r)
+	}
+	mux.HandleFunc("POST /api/catalog/option-set-value/update", func(w http.ResponseWriter, r *http.Request) {
+		editOptionSetValues(w, r, func(vals []data.OptionSetValueInput, at int) ([]data.OptionSetValueInput, bool) {
+			text := strings.TrimSpace(r.Form.Get("value"))
+			changed := vals[at].Value != text
+			vals[at].Value = text
+			return vals, changed
+		})
+	})
+	mux.HandleFunc("POST /api/catalog/option-set-value/move", func(w http.ResponseWriter, r *http.Request) {
+		editOptionSetValues(w, r, func(vals []data.OptionSetValueInput, at int) ([]data.OptionSetValueInput, bool) {
+			to := at
+			switch r.Form.Get("direction") {
+			case "up":
+				to = at - 1
+			case "down":
+				to = at + 1
+			default:
+				return nil, false
+			}
+			if to < 0 || to >= len(vals) {
+				return vals, false // already first/last: a harmless no-op
+			}
+			vals[at], vals[to] = vals[to], vals[at]
+			return vals, true
+		})
+	})
+	mux.HandleFunc("POST /api/catalog/option-set-value/remove", func(w http.ResponseWriter, r *http.Request) {
+		editOptionSetValues(w, r, func(vals []data.OptionSetValueInput, at int) ([]data.OptionSetValueInput, bool) {
+			return append(vals[:at], vals[at+1:]...), true
+		})
+	})
 
 	// Create a shop-wide option set. Not item-scoped: called from the
 	// option-sets screen (re-renders its list); a panelItem, if one ever
@@ -2762,6 +2976,34 @@ func skuAwareError(w http.ResponseWriter, r *http.Request, status int, err error
 		return
 	}
 	common.LogAndLocalizedError(w, r, status, "catalog.error.invalid_request", "catalog", err)
+}
+
+// optionSetUsedByMax caps how many items an option-set card's "Used by"
+// list (and the in-use delete refusal) names before "and N more" — a set
+// applied across a whole range would otherwise turn the card into a wall
+// of links. The same order of magnitude as the cloud refusal's cap.
+const optionSetUsedByMax = 20
+
+// optionSetCard is one card on /catalog/option-sets: the set, its items and
+// the capped "Used by" slice the template renders (templates have no
+// arithmetic, so the remainder is computed here).
+type optionSetCard struct {
+	data.OptionSetAdmin
+	ShownItems     []data.AssignedItem
+	MoreItems      int
+	LastValueIndex int // disables the last value's "move down"
+}
+
+func optionSetCards(sets []data.OptionSetAdmin) []optionSetCard {
+	out := make([]optionSetCard, 0, len(sets))
+	for _, s := range sets {
+		c := optionSetCard{OptionSetAdmin: s, ShownItems: s.Items, LastValueIndex: len(s.Values) - 1}
+		if len(s.Items) > optionSetUsedByMax {
+			c.ShownItems, c.MoreItems = s.Items[:optionSetUsedByMax], len(s.Items)-optionSetUsedByMax
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // optionSetAwareError is skuAwareError's twin for the option-set routes

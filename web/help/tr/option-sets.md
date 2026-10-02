@@ -22,6 +22,13 @@ Oluşturulan her varyant sıradan bir varyanttır: kendi SKU'su, fiyatı, stoku 
 4. **Varyantları oluştur**a basın. Her kombinasyon için bir varyant oluşturulur (yalnızca Boyut için üç; üç renkli Boyut × Renk dokuz verir), *S* ya da *S / Kırmızı* gibi adlandırılır (değerler, setlerin bu sayfada listelendiği sırayla — yani oluşturduğunuz sırayla — birleştirilir) ve her biri oluşturulmuş bir SKU ile ürünün güncel fiyatını alır. Ardından tabloda istediğiniz adı, SKU'yu veya fiyatı düzenleyin, barkod ekleyin ve stoku her zamanki gibi ayarlayın.
 5. Sonradan bir değer mi eklediniz — bir *XL*? Seti kullanan her üründe **Varyantları oluştur**a yeniden basın. Yalnızca eksik kombinasyonlar oluşturulur; mevcut varyantlar asla çoğaltılmaz, yeniden adlandırılmaz veya silinmez, bu yüzden yeniden çalıştırmak her zaman güvenlidir.
 
+## Bir seti değiştirmek veya silmek
+
+- Bir seti yeniden adlandırmak için kartının üstündeki adı düzenleyin ve **Yeniden adlandır**a basın. İki set aynı adı taşıyamaz.
+- Bir değeri değiştirmek için karttaki metnine dokunun, yenisini yazın ve Enter'a basın (ya da başka bir yere dokunun). Bir değerin yanındaki **↑** ve **↓** düğmeleriyle onu listede öne veya arkaya taşıyın, **×** ile kaldırın. Daha önce oluşturduğunuz varyantlar adlarını korur — eşleşmelerini istiyorsanız ürünün tablosunda düzenleyin.
+- Bir seti silmeden ürünlerin **Varyantlar** sekmesinde sunulmasını durdurmak için **Devre dışı bırak**a basın; kartında artık *Devre dışı* yazar. **Etkinleştir** onu geri getirir.
+- Bir set yalnızca hiçbir ürün onu kullanmıyorken silinebilir. O zamana kadar kartı bu ürünleri **Kullanan ürünler** altında listeler (her ad o ürünü açar) ve **Seçenek setini sil** kullanılamaz: önce her ürünün **Varyantlar** sekmesinde setin işaretini kaldırın, sonra silin.
+
 ## Bilmekte fayda var
 
 - Seçenek setleri **gerçek bir ürün yelpazesi** içindir (boyutlar, renkler, paket boyları) — her kombinasyon kendi stok kalemidir. Kasada yapılan ve stokladığınız şeyi değiştirmeyen bir seçim için ("ekstra shot", "soğansız") bunun yerine ürünün **Özelleştirme seçenekleri**ni kullanın.

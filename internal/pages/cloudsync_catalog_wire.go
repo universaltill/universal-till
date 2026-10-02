@@ -279,6 +279,84 @@ func cloudDeleteModifierGroup(ctx context.Context, d *common.Deps, id string) (s
 	return "deleted modifier group", nil
 }
 
+// optionSetInUseMaxNames caps how many item names the delete_option_set
+// refusal lists before "and N more": the result is one line the cloud shows
+// verbatim, and the full list already rides the option_sets report.
+const optionSetInUseMaxNames = 10
+
+// cloudSaveOptionSet is the save_option_set hook (ut-docs#3319): the same
+// OptionSetRepo.SaveOptionSet the till's own /catalog/option-sets screen
+// writes through.
+func cloudSaveOptionSet(ctx context.Context, d *common.Deps, p data.OptionSetSave) (string, error) {
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	res, err := data.NewOptionSetRepo(d.Db).SaveOptionSet(ctx, p)
+	if err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "option_set", p.ID, "cloud_option_set_saved", map[string]any{"created": res.Created, "changed": res.Changed})
+	if res.Created {
+		return "created option set " + res.Name, nil
+	}
+	return "updated option set " + res.Name, nil
+}
+
+// cloudDeleteOptionSet is the delete_option_set hook (ut-docs#3319). A set
+// still applied to an item is refused — the error names those items — and
+// nothing is written; my. disables Delete on a used set already, so this is
+// the guard for a view that went stale between load and click.
+func cloudDeleteOptionSet(ctx context.Context, d *common.Deps, id string) (string, error) {
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	repo := data.NewOptionSetRepo(d.Db)
+	set, err := repo.GetOptionSet(ctx, id)
+	if errors.Is(err, data.ErrOptionSetNotFound) {
+		return "already deleted", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	found, err := repo.DeleteOptionSetIfUnused(ctx, id)
+	if errors.Is(err, data.ErrOptionSetInUse) {
+		items, lerr := repo.ItemsUsingOptionSet(ctx, id)
+		if lerr != nil {
+			return "", fmt.Errorf("option set %s is used by at least one item; remove it from those items first", set.Name)
+		}
+		return "", errors.New(optionSetInUseMessage(set.Name, items))
+	}
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "already deleted", nil
+	}
+	auditCloudDirective(ctx, d, "option_set", id, "cloud_option_set_deleted", map[string]any{"name": set.Name})
+	return "deleted option set " + set.Name, nil
+}
+
+// optionSetInUseMessage is the delete_option_set refusal: the set, how many
+// items use it, and up to optionSetInUseMaxNames of their names.
+func optionSetInUseMessage(setName string, items []data.AssignedItem) string {
+	names := make([]string, 0, min(len(items), optionSetInUseMaxNames))
+	for i, it := range items {
+		if i == optionSetInUseMaxNames {
+			break
+		}
+		names = append(names, it.Name)
+	}
+	noun := "items"
+	if len(items) == 1 {
+		noun = "item"
+	}
+	list := strings.Join(names, ", ")
+	if more := len(items) - len(names); more > 0 {
+		list += fmt.Sprintf(" and %d more", more)
+	}
+	return fmt.Sprintf("option set %s is used by %d %s: %s; remove it from those items first", setName, len(items), noun, list)
+}
+
 // cloudSetCatalogImage is the set_catalog_image hook (contract §3.9,
 // ut-docs#3076/#3139): an item or category image set or removed in my.
 // cloudsync has already checked the payload's shape; this checks the id is

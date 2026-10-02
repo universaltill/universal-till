@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
@@ -461,5 +462,331 @@ func TestOptionSetRepo_GenerateVariants_LeavesManualVariantsAlone(t *testing.T) 
 		if v.ID == manualID && (v.SKU.String != "TEE-MANUAL" || v.Price != 1400) {
 			t.Fatalf("manual variant altered: %+v", v)
 		}
+	}
+}
+
+// --- manage parity (ut-docs#3319): rename, values full replace, active
+// flag, delete-when-unused, and the used-by read. ---
+
+func optionSetValues(t *testing.T, repo *data.OptionSetRepo, setID string) []data.OptionSetValueView {
+	t.Helper()
+	set, err := repo.GetOptionSet(context.Background(), setID)
+	if err != nil {
+		t.Fatalf("GetOptionSet(%s): %v", setID, err)
+	}
+	return set.Values
+}
+
+func TestOptionSetRepo_RenameOptionSet_CollisionAndNotFound(t *testing.T) {
+	d := openOptionSetTestDB(t)
+	ctx := context.Background()
+	repo := data.NewOptionSetRepo(d.DB)
+	sizeID, _ := repo.CreateOptionSet(ctx, "Size")
+	if _, err := repo.CreateOptionSet(ctx, "Colour"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.RenameOptionSet(ctx, sizeID, "  Sizes  "); err != nil {
+		t.Fatalf("RenameOptionSet: %v", err)
+	}
+	set, err := repo.GetOptionSet(ctx, sizeID)
+	if err != nil || set.Name != "Sizes" {
+		t.Fatalf("renamed set = %+v err=%v, want trimmed name Sizes", set, err)
+	}
+	// Renaming to its own current name is a no-op, not a collision.
+	if err := repo.RenameOptionSet(ctx, sizeID, "Sizes"); err != nil {
+		t.Fatalf("rename to the same name: %v", err)
+	}
+	if err := repo.RenameOptionSet(ctx, sizeID, "Colour"); !errors.Is(err, data.ErrOptionSetExists) {
+		t.Fatalf("rename onto another set's name: want ErrOptionSetExists, got %v", err)
+	}
+	if set, _ := repo.GetOptionSet(ctx, sizeID); set.Name != "Sizes" {
+		t.Fatalf("a refused rename must leave the name, got %q", set.Name)
+	}
+	if err := repo.RenameOptionSet(ctx, sizeID, "   "); err == nil {
+		t.Fatal("a blank name must be rejected")
+	}
+	if err := repo.RenameOptionSet(ctx, "nope", "Fit"); !errors.Is(err, data.ErrOptionSetNotFound) {
+		t.Fatalf("rename of an unknown set: want ErrOptionSetNotFound, got %v", err)
+	}
+	if _, err := repo.GetOptionSet(ctx, "nope"); !errors.Is(err, data.ErrOptionSetNotFound) {
+		t.Fatalf("GetOptionSet of an unknown set: want ErrOptionSetNotFound, got %v", err)
+	}
+}
+
+// One call adds, edits, reorders and removes: known ids keep their id
+// (so generated variants' item_variant_options links survive a rename),
+// unknown ids are created WITH that id, unlisted ones are deleted, and
+// sort_order = index.
+func TestOptionSetRepo_ReplaceOptionSetValues_AddEditReorderRemoveInOneCall(t *testing.T) {
+	d := openOptionSetTestDB(t)
+	ctx := context.Background()
+	repo := data.NewOptionSetRepo(d.DB)
+	sizeID, _ := repo.CreateOptionSet(ctx, "Size")
+	sID, _ := repo.AddOptionSetValue(ctx, sizeID, "S")
+	mID, _ := repo.AddOptionSetValue(ctx, sizeID, "M")
+	lID, _ := repo.AddOptionSetValue(ctx, sizeID, "L")
+
+	// L first, M renamed to Medium, S removed, XL new.
+	err := repo.ReplaceOptionSetValues(ctx, sizeID, []data.OptionSetValueInput{
+		{ID: lID, Value: "L"},
+		{ID: mID, Value: " Medium "},
+		{ID: "val-xl", Value: "XL"},
+	})
+	if err != nil {
+		t.Fatalf("ReplaceOptionSetValues: %v", err)
+	}
+	got := optionSetValues(t, repo, sizeID)
+	want := []data.OptionSetValueView{{ID: lID, Value: "L", SortOrder: 0}, {ID: mID, Value: "Medium", SortOrder: 1}, {ID: "val-xl", Value: "XL", SortOrder: 2}}
+	if len(got) != len(want) {
+		t.Fatalf("values = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("values[%d] = %+v, want %+v (all: %+v)", i, got[i], want[i], got)
+		}
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM option_set_values WHERE id = ?`, sID).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("removed value S must be deleted, count=%d err=%v", n, err)
+	}
+
+	// Swapping two values' text in one call must not trip UNIQUE
+	// (option_set_id, value) midway.
+	if err := repo.ReplaceOptionSetValues(ctx, sizeID, []data.OptionSetValueInput{
+		{ID: lID, Value: "Medium"}, {ID: mID, Value: "L"}, {ID: "val-xl", Value: "XL"},
+	}); err != nil {
+		t.Fatalf("swap values: %v", err)
+	}
+	got = optionSetValues(t, repo, sizeID)
+	if got[0].ID != lID || got[0].Value != "Medium" || got[1].ID != mID || got[1].Value != "L" {
+		t.Fatalf("after swap = %+v", got)
+	}
+
+	// Empty list clears every value.
+	if err := repo.ReplaceOptionSetValues(ctx, sizeID, []data.OptionSetValueInput{}); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if got := optionSetValues(t, repo, sizeID); len(got) != 0 {
+		t.Fatalf("after clear = %+v", got)
+	}
+}
+
+func TestOptionSetRepo_ReplaceOptionSetValues_RejectsBadListsWritingNothing(t *testing.T) {
+	d := openOptionSetTestDB(t)
+	ctx := context.Background()
+	repo := data.NewOptionSetRepo(d.DB)
+	sizeID, _ := repo.CreateOptionSet(ctx, "Size")
+	sID, _ := repo.AddOptionSetValue(ctx, sizeID, "S")
+	colourID, _ := repo.CreateOptionSet(ctx, "Colour")
+	redID, _ := repo.AddOptionSetValue(ctx, colourID, "Red")
+
+	tooMany := make([]data.OptionSetValueInput, 0, 51)
+	for i := 0; i < 51; i++ {
+		tooMany = append(tooMany, data.OptionSetValueInput{ID: fmt.Sprintf("v%02d", i), Value: fmt.Sprintf("V%02d", i)})
+	}
+	for _, tc := range []struct {
+		name    string
+		setID   string
+		values  []data.OptionSetValueInput
+		wantErr error
+	}{
+		{"blank value", sizeID, []data.OptionSetValueInput{{ID: sID, Value: "  "}}, data.ErrOptionSetValueInvalid},
+		{"blank id", sizeID, []data.OptionSetValueInput{{ID: " ", Value: "M"}}, nil},
+		{"duplicate text", sizeID, []data.OptionSetValueInput{{ID: sID, Value: "S"}, {ID: "new", Value: " S"}}, data.ErrOptionSetValueExists},
+		{"duplicate id", sizeID, []data.OptionSetValueInput{{ID: sID, Value: "S"}, {ID: sID, Value: "M"}}, nil},
+		{"too long", sizeID, []data.OptionSetValueInput{{ID: sID, Value: strings.Repeat("é", 129)}}, data.ErrOptionSetValueInvalid},
+		{"too many", sizeID, tooMany, data.ErrOptionSetTooManyValues},
+		{"id from another set", sizeID, []data.OptionSetValueInput{{ID: redID, Value: "Red"}}, nil},
+		{"unknown set", "nope", []data.OptionSetValueInput{{ID: "a", Value: "A"}}, data.ErrOptionSetNotFound},
+	} {
+		err := repo.ReplaceOptionSetValues(ctx, tc.setID, tc.values)
+		if err == nil {
+			t.Errorf("%s: want an error", tc.name)
+			continue
+		}
+		if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+			t.Errorf("%s: want %v, got %v", tc.name, tc.wantErr, err)
+		}
+	}
+	if got := optionSetValues(t, repo, sizeID); len(got) != 1 || got[0].ID != sID || got[0].Value != "S" {
+		t.Fatalf("a refused replace must write nothing, Size values = %+v", got)
+	}
+	if got := optionSetValues(t, repo, colourID); len(got) != 1 || got[0].ID != redID {
+		t.Fatalf("another set's value must never move, Colour values = %+v", got)
+	}
+	// 128 runes exactly is fine; 50 values exactly is fine.
+	if err := repo.ReplaceOptionSetValues(ctx, sizeID, []data.OptionSetValueInput{{ID: sID, Value: strings.Repeat("é", 128)}}); err != nil {
+		t.Fatalf("128 runes must be allowed: %v", err)
+	}
+	if err := repo.ReplaceOptionSetValues(ctx, sizeID, tooMany[:50]); err != nil {
+		t.Fatalf("50 values must be allowed: %v", err)
+	}
+}
+
+func TestOptionSetRepo_SetOptionSetActive(t *testing.T) {
+	d := openOptionSetTestDB(t)
+	ctx := context.Background()
+	repo := data.NewOptionSetRepo(d.DB)
+	sizeID, _ := repo.CreateOptionSet(ctx, "Size")
+	if err := repo.SetOptionSetActive(ctx, sizeID, false); err != nil {
+		t.Fatalf("deactivate: %v", err)
+	}
+	if set, _ := repo.GetOptionSet(ctx, sizeID); set.IsActive {
+		t.Fatal("set must be inactive")
+	}
+	// Still listed: the admin screen shows a deactivated set.
+	if sets, _ := repo.ListOptionSets(ctx); len(sets) != 1 || sets[0].IsActive {
+		t.Fatalf("ListOptionSets = %+v", sets)
+	}
+	if err := repo.SetOptionSetActive(ctx, sizeID, true); err != nil {
+		t.Fatalf("reactivate: %v", err)
+	}
+	if set, _ := repo.GetOptionSet(ctx, sizeID); !set.IsActive {
+		t.Fatal("set must be active again")
+	}
+	if err := repo.SetOptionSetActive(ctx, "nope", true); !errors.Is(err, data.ErrOptionSetNotFound) {
+		t.Fatalf("unknown set: want ErrOptionSetNotFound, got %v", err)
+	}
+}
+
+// The DB would cascade an in-use set away (item_option_sets ON DELETE
+// CASCADE), so the repo refuses explicitly and the used-by read names the
+// items.
+func TestOptionSetRepo_DeleteOptionSetIfUnused_RefusesInUseNamesItems(t *testing.T) {
+	d := openOptionSetTestDB(t)
+	ctx := context.Background()
+	repo := data.NewOptionSetRepo(d.DB)
+	seedOptionSetItem(t, d, "tee", "T-shirt", 1500)
+	seedOptionSetItem(t, d, "hood", "Hoodie", 3000)
+	sizeID, _ := repo.CreateOptionSet(ctx, "Size")
+	if _, err := repo.AddOptionSetValue(ctx, sizeID, "S"); err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range []string{"tee", "hood"} {
+		if err := repo.ApplyOptionSetsToItem(ctx, it, []string{sizeID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	found, err := repo.DeleteOptionSetIfUnused(ctx, sizeID)
+	if !errors.Is(err, data.ErrOptionSetInUse) || found {
+		t.Fatalf("in-use delete: found=%v err=%v, want false + ErrOptionSetInUse", found, err)
+	}
+	if _, err := repo.GetOptionSet(ctx, sizeID); err != nil {
+		t.Fatalf("an in-use set must not be deleted: %v", err)
+	}
+	items, err := repo.ItemsUsingOptionSet(ctx, sizeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || items[0].ID != "hood" || items[0].Name != "Hoodie" || items[1].ID != "tee" || items[1].Name != "T-shirt" {
+		t.Fatalf("ItemsUsingOptionSet = %+v, want Hoodie, T-shirt (by name)", items)
+	}
+	usage, err := repo.ListOptionSetsWithItems(ctx)
+	if err != nil || len(usage) != 1 || len(usage[0].Items) != 2 || len(usage[0].Values) != 1 {
+		t.Fatalf("ListOptionSetsWithItems = %+v err=%v", usage, err)
+	}
+
+	// Unapply from both: the delete now succeeds and cascades its values.
+	for _, it := range []string{"tee", "hood"} {
+		if err := repo.ApplyOptionSetsToItem(ctx, it, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	found, err = repo.DeleteOptionSetIfUnused(ctx, sizeID)
+	if err != nil || !found {
+		t.Fatalf("unused delete: found=%v err=%v", found, err)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM option_set_values WHERE option_set_id = ?`, sizeID).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("values must cascade with the set, count=%d err=%v", n, err)
+	}
+	// Replay: nothing there to delete, reported as such, not an error.
+	found, err = repo.DeleteOptionSetIfUnused(ctx, sizeID)
+	if err != nil || found {
+		t.Fatalf("replay delete: found=%v err=%v, want false, nil", found, err)
+	}
+	if _, err := repo.DeleteOptionSetIfUnused(ctx, " "); err == nil {
+		t.Fatal("a blank id must be rejected")
+	}
+}
+
+// SaveOptionSet is the directive's one call: create-with-id, then a patch
+// where nil keeps a field.
+func TestOptionSetRepo_SaveOptionSet_CreateWithIDAndPatch(t *testing.T) {
+	d := openOptionSetTestDB(t)
+	ctx := context.Background()
+	repo := data.NewOptionSetRepo(d.DB)
+	name := "Size"
+	vals := []data.OptionSetValueInput{{ID: "v-s", Value: "S"}, {ID: "v-m", Value: "M"}}
+	if _, err := repo.SaveOptionSet(ctx, data.OptionSetSave{ID: "set-1", Name: &name}); !errors.Is(err, data.ErrOptionSetNotFound) {
+		t.Fatalf("update of an unknown id without create: want ErrOptionSetNotFound, got %v", err)
+	}
+	if _, err := repo.SaveOptionSet(ctx, data.OptionSetSave{ID: "set-1", Create: true}); err == nil {
+		t.Fatal("create without a name must be rejected")
+	}
+	res, err := repo.SaveOptionSet(ctx, data.OptionSetSave{ID: "set-1", Create: true, Name: &name, Values: &vals})
+	if err != nil || !res.Created || res.Name != "Size" {
+		t.Fatalf("create: %+v %v", res, err)
+	}
+	set, err := repo.GetOptionSet(ctx, "set-1")
+	if err != nil || set.Name != "Size" || !set.IsActive || len(set.Values) != 2 || set.Values[0].ID != "v-s" {
+		t.Fatalf("created set = %+v err=%v", set, err)
+	}
+	// Replay of the same create: idempotent update, same state.
+	res, err = repo.SaveOptionSet(ctx, data.OptionSetSave{ID: "set-1", Create: true, Name: &name, Values: &vals})
+	if err != nil || res.Created {
+		t.Fatalf("replay: %+v %v", res, err)
+	}
+	off := false
+	res, err = repo.SaveOptionSet(ctx, data.OptionSetSave{ID: "set-1", Active: &off})
+	if err != nil || res.Name != "Size" || strings.Join(res.Changed, ",") != "active" {
+		t.Fatalf("active-only patch: %+v %v", res, err)
+	}
+	set, _ = repo.GetOptionSet(ctx, "set-1")
+	if set.IsActive || set.Name != "Size" || len(set.Values) != 2 {
+		t.Fatalf("active-only patch must keep name and values: %+v", set)
+	}
+	// A rename collision rolls back the whole patch (values untouched).
+	other := "Colour"
+	if _, err := repo.SaveOptionSet(ctx, data.OptionSetSave{ID: "set-2", Create: true, Name: &other}); err != nil {
+		t.Fatal(err)
+	}
+	none := []data.OptionSetValueInput{}
+	if _, err := repo.SaveOptionSet(ctx, data.OptionSetSave{ID: "set-1", Name: &other, Values: &none}); !errors.Is(err, data.ErrOptionSetExists) {
+		t.Fatalf("collision: want ErrOptionSetExists, got %v", err)
+	}
+	if set, _ := repo.GetOptionSet(ctx, "set-1"); len(set.Values) != 2 || set.Name != "Size" {
+		t.Fatalf("a refused save must write nothing: %+v", set)
+	}
+}
+
+// A set created by the directive generates variants exactly like a
+// till-made one (card AC).
+func TestOptionSetRepo_SaveOptionSet_GeneratesVariantsLikeTillMade(t *testing.T) {
+	d := openOptionSetTestDB(t)
+	ctx := context.Background()
+	repo := data.NewOptionSetRepo(d.DB)
+	seedOptionSetItem(t, d, "tee", "T-shirt", 1500)
+	name := "Size"
+	vals := []data.OptionSetValueInput{{ID: "v-s", Value: "S"}, {ID: "v-m", Value: "M"}}
+	if _, err := repo.SaveOptionSet(ctx, data.OptionSetSave{ID: "set-1", Create: true, Name: &name, Values: &vals}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ApplyOptionSetsToItem(ctx, "tee", []string{"set-1"}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := repo.GenerateVariants(ctx, "tee")
+	if err != nil || created != 2 {
+		t.Fatalf("GenerateVariants = %d, %v; want 2", created, err)
+	}
+	var names []string
+	for _, v := range readVariants(t, d, "tee") {
+		names = append(names, v.Name)
+	}
+	sort.Strings(names)
+	if strings.Join(names, ",") != "M,S" {
+		t.Fatalf("variant names = %v", names)
 	}
 }
