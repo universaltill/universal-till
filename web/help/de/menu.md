@@ -12,6 +12,10 @@ keywords: [menü, navigation, kacheln, administration]
 
 Tippen Sie auf **☰ Menü** auf dem Verkaufsbildschirm, um eine Seite mit großen Touch-Kacheln zu öffnen — eine für jeden Bereich der Kasse. Tippen Sie auf eine Kachel, um dorthin zu gelangen; tippen Sie oben auf der Seite auf **← Zurück zum Verkauf** — oder auf jeder Seite auf **Kasse** in der Navigationsleiste —, um zum Verkaufen zurückzukehren. Die Pfandrückgabe öffnet sich an Ort und Stelle als kleines Formular, statt wegzunavigieren.
 
+## Zurück
+
+Jede Seite außer dem Verkaufsbildschirm hat eine **← Zurück**-Schaltfläche: oben in der Seitenleiste unter dem Logo oder auf dem Smartphone ganz vorn in der oberen Leiste. Sie bringt Sie zu der Seite zurück, von der Sie gekommen sind — Menü → Artikel → Bestand, dann Zurück, Zurück führt wieder zu Artikel und dann zum Menü, egal auf welchem Weg Sie dorthin gekommen sind (eine Menü-Kachel, die Seitenleiste, ein Link auf einer anderen Seite). Gibt es keine Seite, zu der Sie zurückkehren können — die Kasse wurde gerade auf dieser Seite gestartet oder Sie haben sie über ein Lesezeichen geöffnet —, geht Zurück stattdessen eine Ebene nach oben: ein Artikel-Bereich (Katalog, Bestand, …) zu **Artikel**, eine Administrationsseite zu **Administration**, jede andere Seite zum **Menü** und das Menü zum Verkaufsbildschirm. Dieselbe Schaltfläche funktioniert an der Kasse, auf einem Tablet, einem Smartphone und in der iPhone-App, die selbst keine Zurück-Schaltfläche hat.
+
 ## Administration
 
 Einrichtungs-Kacheln, die Sie einmal berühren und danach selten wieder aufrufen — Ländereinstellungen, Übersetzungen, die Fiskalregister-/Fiskalgerät-Seite, Standorte und Kassen — liegen hinter einer einzigen Kachel **Administration**, unterhalb der alltäglichen Kacheln. Tippen Sie darauf, um eine Seite zu öffnen, die sie in drei Gruppen auflistet: Fiskales, Standorte, Lokalisierung. Benutzer, Küchenstationen und Bluetooth-Geräte bleiben außerhalb dieser Kachel: Diese verwalten Sie häufiger als eine einmalige Einrichtung.

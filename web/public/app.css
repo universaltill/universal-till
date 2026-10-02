@@ -679,6 +679,12 @@ html.ut-scrim-on .nav .session-lock { position: relative; z-index: 1; pointer-ev
   position: absolute; width: 1px; height: 1px; margin: -1px;
   padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
 }
+/* ut-docs#3352 / ADR-0137: the shell Back (nav.html) points the way the
+   page reads — its arrow mirrors in RTL, like .products-strip-back's. */
+html[dir="rtl"] .nav-back .nav-toggle-ico svg { transform: scaleX(-1); }
+/* An action, not a destination: no tile behind it, so it doesn't read as a
+   fifth rail page (tap/hover feedback still tints it). */
+.nav-back { background: transparent; }
 /* ut-docs#1539: a small alert indicator on a rail icon (offline/queued
    replica, quarantined sync entries, a stale roster, a degraded fiscal
    signer) — replaces the old .sync-chip.warn/.fiscal-chip.warn
@@ -5638,6 +5644,19 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   }
   .nav-drawer-toggle .btn-ico svg { inline-size: 1.6rem; block-size: 1.6rem; }
   .nav-drawer-toggle:focus-visible { outline: 3px solid #fff; outline-offset: -3px; }
+  /* ut-docs#3352 / ADR-0137: Back leads the bar (top-start, where iOS puts
+     it), icon only like ☰; its label stays the accessible name. */
+  .nav > .nav-back {
+    order: -2; flex-shrink: 0; justify-content: center;
+    inline-size: 48px; block-size: 48px; min-width: 48px; min-height: 48px;
+    padding: 0; background: transparent;
+  }
+  .nav > .nav-back .nav-toggle-label {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+  }
+  .nav > .nav-back .nav-toggle-ico svg { inline-size: 1.6rem; block-size: 1.6rem; }
+  .nav > .nav-back:focus-visible { outline: 3px solid #fff; outline-offset: -3px; }
   .nav .logo img { height: 2rem; }
   .nav-alerts { flex-direction: row; align-items: center; gap: .3rem; margin-inline-start: auto; min-inline-size: 0; }
   /* An active alert chip is icon + badge in the bar (its label stays the

@@ -11,6 +11,10 @@ routes: [/menu, /settings/menu, /admin]
 
 Satış ekranındaki **☰ Menü** düğmesine dokunun; kasanın her bölümü için birer büyük karo açılır. Gitmek istediğiniz karoya dokunun; satışa dönmek için sayfanın üstündeki **← Satışa dön** düğmesine — ya da her sayfada bulunan gezinti çubuğundaki **Kasa** simgesine — dokunun. Depozito iadesi başka bir sayfaya gitmeden, olduğu yerde küçük bir form olarak açılır.
 
+## Geri dönmek
+
+Satış ekranı dışındaki her sayfada bir **← Geri** düğmesi vardır: yan çubuğun üstünde, logonun altında ya da telefonda üst çubuğun en başında. Sizi geldiğiniz sayfaya geri götürür — Menü → Ürünler → Stok, ardından Geri, Geri sizi önce Ürünler'e sonra Menü'ye döndürür; oraya hangi yoldan geldiğiniz fark etmez (bir Menü karosu, yan çubuk ya da başka bir sayfadaki bağlantı). Geri dönülecek bir sayfa yoksa — kasa o sayfada yeni açıldıysa ya da sayfayı bir yer iminden açtıysanız — Geri bunun yerine bir üst seviyeye gider: bir Ürünler bölümü (Katalog, Stok, …) **Ürünler**'e, bir Yönetim sayfası **Yönetim**'e, diğer her sayfa **Menü**'ye, Menü de satış ekranına. Aynı düğme kasada, tablette, telefonda ve kendi Geri düğmesi olmayan iPhone uygulamasında çalışır.
+
 ## Yönetim
 
 Bir kez ayarlayıp nadiren geri döndüğünüz kurulum karoları — Ülke ayarları, Çeviriler, mali kayıt/cihaz sayfası, Konumlar ve Kasalar — günlük karoların altındaki tek bir **Yönetim** karosunun arkasında yer alır. Karoya dokununca onları üç grupta listeleyen bir sayfa açılır: Mali, Konumlar, Yerelleştirme. Kullanıcılar, Mutfak istasyonları ve Bluetooth cihazları bu karonun dışında kalır: bunları tek seferlik bir kurulumdan daha sık yönetirsiniz.
