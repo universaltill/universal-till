@@ -42,7 +42,12 @@
   // behind More.
   var MAX_SHOWN = 4;
 
+  // data-card-label overrides the header text when a header carries more
+  // than its column's name (the Permissions page's custom-role note,
+  // ut-docs#3324), which would otherwise repeat on every card line.
   function headerText(th) {
+    var label = th.getAttribute('data-card-label');
+    if (label) return label.replace(/\s+/g, ' ').trim();
     return (th.textContent || '').replace(/\s+/g, ' ').trim();
   }
 

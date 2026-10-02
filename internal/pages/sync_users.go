@@ -199,7 +199,10 @@ func registerSyncUsers(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		if in.Op == "create" {
-			if !isAssignableUserRole(in.Role) {
+			if ok, err := isAssignableUserRole(ctx, repo, in.Role); err != nil {
+				serverError("role check", err)
+				return
+			} else if !ok {
 				writeSyncUserError(w, http.StatusBadRequest, "invalid_role", "invalid role")
 				return
 			}
@@ -310,7 +313,10 @@ func registerSyncUsers(mux *http.ServeMux, d *common.Deps) {
 			}
 
 		case "set_role":
-			if !isAssignableUserRole(in.Role) {
+			if ok, err := isAssignableUserRole(ctx, repo, in.Role); err != nil {
+				serverError("role check", err)
+				return
+			} else if !ok {
 				writeSyncUserError(w, http.StatusBadRequest, "invalid_role", "invalid role")
 				return
 			}
