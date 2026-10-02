@@ -208,6 +208,12 @@ type Hooks struct {
 	// failure message.
 	SaveOptionSet   func(ctx context.Context, p data.OptionSetSave) (string, error)
 	DeleteOptionSet func(ctx context.Context, id string) (string, error)
+	// SaveItemVariant handles "save_item_variant" (ut-docs#3477): an
+	// item's variant added, edited, deactivated or reactivated from my.
+	// Main-till only like the catalog hooks above; one transaction
+	// (CatalogRepo.SaveVariant), audited, idempotent. A variant is never
+	// deleted — active=false retires it.
+	SaveItemVariant func(ctx context.Context, p data.VariantSave) (string, error)
 	// SetCategoryOrder handles "set_category_order" (contract §3.8,
 	// ut-docs#3075): the owner's category order from my., as the full
 	// ordered id list. Main-till only like the five above. The hook
@@ -922,6 +928,15 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing id"
 		}
 		msg, err = hooks.DeleteOptionSet(ctx, id)
+	case "save_item_variant":
+		if hooks.SaveItemVariant == nil {
+			return "failed", "save_item_variant is not supported on this till"
+		}
+		p, bad := decodeSaveItemVariant(payload(d.Payload))
+		if bad != "" {
+			return "failed", bad
+		}
+		msg, err = hooks.SaveItemVariant(ctx, p)
 	case "save_user", "set_user_pin", "deactivate_user":
 		hook := map[string]func(context.Context, UserDirective) (string, error){
 			"save_user": hooks.SaveUser, "set_user_pin": hooks.SetUserPIN, "deactivate_user": hooks.DeactivateUser,

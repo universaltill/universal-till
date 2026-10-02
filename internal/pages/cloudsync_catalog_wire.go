@@ -279,6 +279,31 @@ func cloudDeleteModifierGroup(ctx context.Context, d *common.Deps, id string) (s
 	return "deleted modifier group", nil
 }
 
+// cloudSaveItemVariant is the save_item_variant hook (ut-docs#3477): one
+// CatalogRepo.SaveVariant transaction — create with the cloud-minted id,
+// edit, barcode-set replace, deactivate/reactivate. A barcode conflict
+// names the other item or variant, as save_item's does.
+func cloudSaveItemVariant(ctx context.Context, d *common.Deps, p data.VariantSave) (string, error) {
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	repo := data.NewCatalogRepo(d.Db)
+	res, err := repo.SaveVariant(ctx, p)
+	if err != nil {
+		var conflict *data.BarcodeConflictError
+		if errors.As(err, &conflict) {
+			return "", barcodeTakenError(ctx, repo, conflict)
+		}
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "item_variant", p.ID, "cloud_variant_saved", map[string]any{"item_id": p.ItemID, "created": res.Created, "changed": res.Changed})
+	label := strings.TrimSpace(res.ItemName + " " + res.Name)
+	if res.Created {
+		return "created variant " + label, nil
+	}
+	return "updated variant " + label, nil
+}
+
 // optionSetInUseMaxNames caps how many item names the delete_option_set
 // refusal lists before "and N more": the result is one line the cloud shows
 // verbatim, and the full list already rides the option_sets report.
