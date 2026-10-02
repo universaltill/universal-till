@@ -29,15 +29,25 @@ FAIL_COUNT=0
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
+# The resolver also searches Playwright's default per-user cache
+# (${XDG_CACHE_HOME:-$HOME/.cache}/ms-playwright — ut-docs#3257). Point HOME
+# at an empty directory so a developer's own cache can't change which
+# candidate the cases below resolve; the ut-docs#3257 cases populate it.
+export HOME="${TMP_DIR}/home"
+mkdir -p "${HOME}"
+unset XDG_CACHE_HOME
+
 BROWSERS_ROOT="${PLAYWRIGHT_BROWSERS_PATH:-/opt/pw-browsers}"
 REAL_CHROMIUM="${BROWSERS_ROOT}/chromium"
 
 # Mirrors resolve-chromium.sh's own find_headless_shell: the headless-shell
 # variant has no stable convenience symlink (unlike "chromium"), so its path
-# is revision-globbed rather than fixed.
+# is revision-globbed rather than fixed — in either Playwright layout
+# (ut-docs#3257).
 find_real_headless_shell() {
   local match
-  for match in "${BROWSERS_ROOT}"/chromium_headless_shell-*/chrome-linux/headless_shell; do
+  for match in "${BROWSERS_ROOT}"/chromium_headless_shell-*/chrome-linux/headless_shell \
+    "${BROWSERS_ROOT}"/chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell; do
     [ -e "${match}" ] && { echo "${match}"; return 0; }
   done
   return 1
@@ -92,7 +102,7 @@ ok() {
 # precedence). `|| true` so a genuine resolver failure here is reported as a
 # normal test failure below instead of aborting the whole suite silently
 # under `set -e` (ut-docs#622 review).
-out="$(PLAYWRIGHT_CHROMIUM_EXECUTABLE="${REAL_CHROMIUM}" PLAYWRIGHT_BROWSERS_PATH= bash "${RESOLVER}" 2>/dev/null || true)"
+out="$(PLAYWRIGHT_CHROMIUM_EXECUTABLE="${REAL_CHROMIUM}" PLAYWRIGHT_BROWSERS_PATH='' bash "${RESOLVER}" 2>/dev/null || true)"
 if [ "${out}" = "${REAL_CHROMIUM}" ]; then
   ok "resolves a real, working PLAYWRIGHT_CHROMIUM_EXECUTABLE, bypassing variant preference"
 else
@@ -103,7 +113,7 @@ fi
 # that fails the smoke test; the preferred headless-shell variant must be
 # found next — a normal fallback headless launch uses headless-shell, not
 # full Chrome, so that's what a reused browser should match first.
-out="$(PLAYWRIGHT_CHROMIUM_EXECUTABLE="${FAKE_BINARY}" PLAYWRIGHT_BROWSERS_PATH= \
+out="$(PLAYWRIGHT_CHROMIUM_EXECUTABLE="${FAKE_BINARY}" PLAYWRIGHT_BROWSERS_PATH='' \
   bash "${RESOLVER}" 2>/dev/null || true)"
 if [ "${out}" = "${REAL_HEADLESS_SHELL}" ]; then
   ok "skips a non-launchable override and prefers the headless-shell variant"
@@ -114,7 +124,7 @@ fi
 # Case 3 (ut-docs#632 AC2): headless-shell explicitly suppressed (absent in
 # this scenario) — must fall back to the full Chrome build, exactly as
 # before this variant-preference change existed.
-out="$(PLAYWRIGHT_CHROMIUM_EXECUTABLE="${FAKE_BINARY}" PLAYWRIGHT_BROWSERS_PATH= \
+out="$(PLAYWRIGHT_CHROMIUM_EXECUTABLE="${FAKE_BINARY}" PLAYWRIGHT_BROWSERS_PATH='' \
   UT_DOCS_SHOTS_TEST=1 UT_DOCS_SHOTS_FALLBACK_CHROMIUM_HEADLESS_SHELL="${NO_HEADLESS_SHELL}" \
   UT_DOCS_SHOTS_FALLBACK_CHROMIUM="${REAL_CHROMIUM}" bash "${RESOLVER}" 2>/dev/null || true)"
 if [ "${out}" = "${REAL_CHROMIUM}" ]; then
@@ -144,7 +154,7 @@ fi
 # an accidentally-exported value must never redirect a real run (ut-docs#622
 # review, nit). Ungated, the real headless-shell default is what resolves,
 # since it's preferred and nothing suppresses it here.
-out="$(PLAYWRIGHT_CHROMIUM_EXECUTABLE= PLAYWRIGHT_BROWSERS_PATH= \
+out="$(PLAYWRIGHT_CHROMIUM_EXECUTABLE='' PLAYWRIGHT_BROWSERS_PATH='' \
   UT_DOCS_SHOTS_FALLBACK_CHROMIUM_HEADLESS_SHELL="${FAKE_BINARY}" \
   UT_DOCS_SHOTS_FALLBACK_CHROMIUM="${FAKE_BINARY}" bash "${RESOLVER}" 2>/dev/null || true)"
 if [ "${out}" = "${REAL_HEADLESS_SHELL}" ]; then
@@ -180,6 +190,61 @@ if bogus_out="$(node scripts/expected-chromium-version.js this-entry-does-not-ex
   fail "expected a bogus browsers.json entry name to fail, but it printed [${bogus_out}] (argv[2] may be silently ignored)"
 else
   ok "expected-chromium-version.js genuinely uses argv[2] to select the entry (a bogus name fails, not silently defaults to chromium)"
+fi
+
+# Cases 7–9 (ut-docs#3257): current Playwright (headless shell v1228+)
+# installs `chromium_headless_shell-<rev>/chrome-headless-shell-linux64/
+# chrome-headless-shell`, not the old `chrome-linux/headless_shell`. A
+# fixture in that layout — a symlink to the real headless-shell binary, which
+# launches fine through a symlink — must resolve from PLAYWRIGHT_BROWSERS_PATH
+# and from Playwright's default per-user cache, which is where a developer's
+# plain `npx playwright install` puts it (no PLAYWRIGHT_BROWSERS_PATH set).
+make_new_layout() {
+  local dir="$1/chromium_headless_shell-1228/chrome-headless-shell-linux64"
+  mkdir -p "${dir}"
+  ln -s "${REAL_HEADLESS_SHELL}" "${dir}/chrome-headless-shell"
+  echo "${dir}/chrome-headless-shell"
+}
+
+NEW_PBP="$(make_new_layout "${TMP_DIR}/pbp-new-layout")"
+out="$(PLAYWRIGHT_CHROMIUM_EXECUTABLE='' PLAYWRIGHT_BROWSERS_PATH="${TMP_DIR}/pbp-new-layout" \
+  bash "${RESOLVER}" 2>/dev/null || true)"
+if [ "${out}" = "${NEW_PBP}" ]; then
+  ok "finds the new chrome-headless-shell-linux64 layout under PLAYWRIGHT_BROWSERS_PATH"
+else
+  fail "expected new-layout headless-shell [${NEW_PBP}], got [${out}]"
+fi
+
+NEW_HOME_CACHE="$(make_new_layout "${HOME}/.cache/ms-playwright")"
+out="$(PLAYWRIGHT_CHROMIUM_EXECUTABLE='' PLAYWRIGHT_BROWSERS_PATH='' bash "${RESOLVER}" 2>/dev/null || true)"
+if [ "${out}" = "${NEW_HOME_CACHE}" ]; then
+  ok "finds the new layout in Playwright's default cache (~/.cache/ms-playwright), ahead of /opt/pw-browsers"
+else
+  fail "expected default-cache headless-shell [${NEW_HOME_CACHE}], got [${out}]"
+fi
+
+NEW_XDG_CACHE="$(make_new_layout "${TMP_DIR}/xdg/ms-playwright")"
+out="$(XDG_CACHE_HOME="${TMP_DIR}/xdg" PLAYWRIGHT_CHROMIUM_EXECUTABLE='' PLAYWRIGHT_BROWSERS_PATH='' \
+  bash "${RESOLVER}" 2>/dev/null || true)"
+if [ "${out}" = "${NEW_XDG_CACHE}" ]; then
+  ok "honours XDG_CACHE_HOME for the default cache, as Playwright does on Linux"
+else
+  fail "expected XDG-cache headless-shell [${NEW_XDG_CACHE}], got [${out}]"
+fi
+
+# A root holding a stale old-layout revision beside the current new-layout
+# one (a developer who bumped @playwright/test without uninstalling) must
+# pick the new layout, not the stale one (ut-docs#3257 review).
+MIXED_ROOT="${TMP_DIR}/pbp-mixed"
+mkdir -p "${MIXED_ROOT}/chromium_headless_shell-1194/chrome-linux"
+ln -s "${REAL_HEADLESS_SHELL}" "${MIXED_ROOT}/chromium_headless_shell-1194/chrome-linux/headless_shell"
+NEW_MIXED="$(make_new_layout "${MIXED_ROOT}")"
+out="$(PLAYWRIGHT_CHROMIUM_EXECUTABLE='' PLAYWRIGHT_BROWSERS_PATH="${MIXED_ROOT}" \
+  bash "${RESOLVER}" 2>/dev/null || true)"
+if [ "${out}" = "${NEW_MIXED}" ]; then
+  ok "prefers the new layout over a stale old-layout revision in the same root"
+else
+  fail "expected new-layout [${NEW_MIXED}] over the stale old layout, got [${out}]"
 fi
 
 if [ "${FAIL_COUNT}" -gt 0 ]; then

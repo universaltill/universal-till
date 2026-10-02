@@ -8,9 +8,11 @@
 # pre-installed browser was found AND smoke-tested launchable (see
 # smoke-launch.js). Prints nothing on stdout and exits 1 if none is usable,
 # so the caller (docs-shots.sh) falls back to the normal
-# `playwright install --with-deps chromium` path unchanged — this script
-# never touches that path for a developer or CI machine that doesn't set any
-# of the env vars/paths below.
+# `playwright install --with-deps chromium` path unchanged. Since
+# ut-docs#3257 that includes Playwright's own default cache
+# (~/.cache/ms-playwright), so a developer who ran a plain
+# `npx playwright install` is on the reuse path too — the version-mismatch
+# warning below is what tells them their cached browser is behind the pin.
 #
 # Launchability alone says nothing about whether the reused browser is
 # actually the version @playwright/test was written against — a pinned
@@ -54,9 +56,13 @@ try_candidates() {
   return 1
 }
 
-# Globs for the first existing `chromium_headless_shell-*/chrome-linux/
-# headless_shell` under a browsers root. Unlike the full-build install,
-# there's no stable `chromium` convenience symlink for the headless-shell
+# Globs for the first existing headless-shell binary under a browsers root,
+# in either Playwright layout: the current `chromium_headless_shell-*/
+# chrome-headless-shell-<platform>/chrome-headless-shell` (headless shell
+# v1228+: linux64, mac-x64, mac-arm64 — ut-docs#3257), tried first so a
+# stale old-layout revision left beside it doesn't win, then the old
+# `chromium_headless_shell-*/chrome-linux/headless_shell` (still what
+# linux-arm64 uses). Unlike the full-build install, there's no stable `chromium` convenience symlink for the headless-shell
 # variant, and its directory name is revision-suffixed — so this can't be a
 # single fixed path the way the full-chromium candidate is. Never hardcodes
 # a specific revision: whatever's actually on disk is what gets tried, and
@@ -65,7 +71,8 @@ try_candidates() {
 # file does everywhere else in this script.
 find_headless_shell() {
   local browsers_root="$1" match
-  for match in "$browsers_root"/chromium_headless_shell-*/chrome-linux/headless_shell; do
+  for match in "$browsers_root"/chromium_headless_shell-*/chrome-headless-shell-*/chrome-headless-shell \
+    "$browsers_root"/chromium_headless_shell-*/chrome-linux/headless_shell; do
     if [ -e "$match" ]; then
       echo "$match"
       return 0
@@ -123,6 +130,18 @@ fi
 #    launch (no override, no channel) actually uses.
 hs_candidates=()
 [ -n "${PLAYWRIGHT_BROWSERS_PATH:-}" ] && hs_candidates+=("$(find_headless_shell "$PLAYWRIGHT_BROWSERS_PATH" || true)")
+
+# Playwright's own default browsers root when PLAYWRIGHT_BROWSERS_PATH is
+# unset — where a developer's plain `npx playwright install` puts it
+# (ut-docs#3257). Without this, a fresh machine resolved nothing and
+# docs-shots.sh fell through to `playwright install --with-deps`, which hangs
+# on a sudo password prompt in a non-interactive session.
+if [ "$(uname -s)" = "Darwin" ]; then
+  default_cache="${HOME:-}/Library/Caches/ms-playwright"
+else
+  default_cache="${XDG_CACHE_HOME:-${HOME:-}/.cache}/ms-playwright"
+fi
+hs_candidates+=("$(find_headless_shell "$default_cache" || true)")
 
 # The real fallback every actual caller gets. Overridable ONLY when
 # UT_DOCS_SHOTS_TEST=1 is also explicitly set, so resolve-chromium_test.sh
