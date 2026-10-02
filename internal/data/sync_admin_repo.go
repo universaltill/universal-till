@@ -519,6 +519,7 @@ var nonAdminTables = map[string]string{
 	"shrinkage_events":          "pre-tender void/comp/waste event log — append-only per-till history, same reasoning as audit_log/sales",
 	"age_verifications":         "ID-check outcome log for age-restricted sales (ut-docs#3340) — append-only per-till history written with each sale, same reasoning as shrinkage_events/sales",
 	"age_verifications_archive": "archived age_verifications (reset-transactions twin, migration 057) — same reasoning",
+	"shrinkage_events_archive":  "archived shrinkage_events (reset-transactions twin, migration 063, ut-docs#3452) — same reasoning",
 
 	// Resolved classification (ADR-0099, ut-docs#2348, closing the question
 	// ut-docs#1671 deferred): correctly excluded. NOT a pure append-only

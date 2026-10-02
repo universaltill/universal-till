@@ -6460,8 +6460,9 @@ func (r *POSRepo) EraseCustomer(ctx context.Context, id, actorID, blockedActorID
 // shrinkage_events row (item_id FK to items, no ON DELETE action —
 // 035_shrinkage_events.sql) but no sale_lines or stock_movements row, so it
 // looked "never sold" and deleting it hit that FK and rolled back the whole
-// cleanup. Live table only: reset-transactions neither clears nor archives
-// shrinkage_events (no _archive twin exists).
+// cleanup. Since ut-docs#3452 reset-transactions archives shrinkage_events,
+// so the _archive clause follows the same reasoning as the other *_archive
+// clauses above.
 func obsoleteItemsPredicate(includeActive bool) string {
 	activeClause := "is_active = 0\nAND "
 	if includeActive {
@@ -6482,6 +6483,7 @@ AND id NOT IN (SELECT v.item_id FROM item_variants v
 AND id NOT IN (SELECT item_id FROM age_verifications WHERE item_id IS NOT NULL)
 AND id NOT IN (SELECT item_id FROM age_verifications_archive WHERE item_id IS NOT NULL)
 AND id NOT IN (SELECT item_id FROM shrinkage_events WHERE item_id IS NOT NULL)
+AND id NOT IN (SELECT item_id FROM shrinkage_events_archive WHERE item_id IS NOT NULL)
 AND NOT EXISTS (SELECT 1 FROM held_sales h WHERE h.payload LIKE '%"item_id":"' || items.id || '"%')
 AND NOT EXISTS (SELECT 1 FROM held_sales h JOIN item_variants v ON v.item_id = items.id
               WHERE h.payload LIKE '%"variant_id":"' || v.id || '"%')

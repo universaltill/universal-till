@@ -1483,8 +1483,8 @@ func TestRemoveDemoCatalogueKeepsAgeCheckedItem(t *testing.T) {
 	}
 }
 
-// seedShrinkageOnlyEvent records a voided line against itemID. shrinkage_events
-// is live-only (reset-transactions does not archive it).
+// seedShrinkageOnlyEvent records a voided line against itemID in the live
+// shrinkage_events table.
 func seedShrinkageOnlyEvent(t *testing.T, d *db.DB, itemID string) {
 	t.Helper()
 	if _, err := d.DB.Exec(`INSERT INTO shrinkage_events (id, reason_category, item_id, item_name, quantity, unit_price_minor, extended_value_minor, created_at)
@@ -1578,5 +1578,42 @@ func TestRemoveDemoItemRefusesShrinkageItem(t *testing.T) {
 
 	if err := repo.RemoveDemoItem(ctx, "itm003"); !errors.Is(err, ErrDemoItemHasHistory) {
 		t.Fatalf("RemoveDemoItem = %v, want ErrDemoItemHasHistory", err)
+	}
+}
+
+// ut-docs#3452: reset now archives shrinkage_events, so after a reset the
+// demo item's void lives in shrinkage_events_archive. Deleting the item
+// would make that batch unrestorable, so both scripts and the per-item path
+// keep it as "history" — same rule as age_verifications_archive above.
+func TestRemoveDemoCatalogueKeepsArchivedShrinkageItem(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		d := openDemoSeedTestDB(t)
+		ctx := context.Background()
+		repo := NewDemoSeedRepo(d.DB)
+		if err := repo.SeedDemoCatalogue(ctx); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		if strict {
+			seedRealSale(t, d, "own-1", "s-1")
+		}
+		for _, q := range []string{
+			`INSERT INTO reset_batches (id, created_at, sales_count) VALUES ('batch1', '2026-01-01T00:00:00Z', 0)`,
+			`INSERT INTO shrinkage_events_archive (id, reason_category, item_id, item_name, quantity, unit_price_minor, extended_value_minor, order_type, created_at, reset_batch_id)
+			 VALUES ('se-1','void','itm003','Voided item',1,100,100,'','2026-01-01T00:00:00Z','batch1')`,
+		} {
+			if _, err := d.DB.Exec(q); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := repo.RemoveDemoItem(ctx, "itm003"); !errors.Is(err, ErrDemoItemHasHistory) {
+			t.Fatalf("strict=%v RemoveDemoItem = %v, want ErrDemoItemHasHistory", strict, err)
+		}
+		removed, kept, err := repo.RemoveDemoCatalogue(ctx)
+		if err != nil {
+			t.Fatalf("strict=%v RemoveDemoCatalogue: %v", strict, err)
+		}
+		if removed != 51 || len(kept) != 1 || kept[0].ID != "itm003" || kept[0].Reason != KeptReasonHistory {
+			t.Fatalf("strict=%v: removed %d, kept %+v; want 51 removed and itm003/history kept", strict, removed, kept)
+		}
 	}
 }

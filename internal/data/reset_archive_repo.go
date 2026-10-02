@@ -159,6 +159,14 @@ var resetArchiveTables = []resetArchiveTable{
 	// worker_allocations' is: the archive round-trip must keep it, or a
 	// restored row would come back invisible to every date-range report.
 	{"yuzde_usulu_pool_collections", "id, amount_minor, collected_at, basis_note, recorded_by, local_date"},
+	// shrinkage_events (ut-docs#3452, migration 063): the pre-tender
+	// void/comp/waste log. No FK to sales at all (035's header: it records
+	// a basket-line removal before any sale row exists), so its position in
+	// this child-before-parent ordering is not load-bearing either. Its
+	// item_id/register_id FKs point at live catalog/register rows reset
+	// never touches; restore re-inserts against them and turns a removed
+	// item into ErrArchiveReferencesRemoved.
+	{"shrinkage_events", "id, reason_category, item_id, item_name, sku, quantity, unit_price_minor, extended_value_minor, actor_id, approver_id, note, order_type, register_id, created_at"},
 	{"invoices", "id, series, invoice_no, display_no, kind, sale_id, original_invoice_id, customer_name, customer_address, customer_vat_no, seller_json, net_total, tax_total, gross_total, vat_breakdown_json, issued_at, issued_by"},
 	{"payments", "id, sale_id, method_id, amount, currency, reference, change_given, paid_at, tip_amount, tip_recipient, masked_pan, auth_code, terminal_id, trace_id, voucher_id, local_date"},
 	{"sale_links", "id, sale_id, original_sale_id, reason"},
@@ -208,7 +216,10 @@ var resetArchiveTables = []resetArchiveTable{
 // COLLECTION needs no sale/shift/held-sale row either, so a manager who
 // recorded today's pool after a reset would otherwise leave a live
 // collection row that every other check here is blind to.
-var restoreEmptyCheckTables = []string{"sales", "held_sales", "shifts", "stock_movements", "worker_allocations", "yuzde_usulu_pool_collections"}
+// shrinkage_events (ut-docs#3452) joins for the same reason again: a
+// void/comp/waste needs no sale row, so one recorded after the reset would
+// otherwise be merged with the restored batch.
+var restoreEmptyCheckTables = []string{"sales", "held_sales", "shifts", "stock_movements", "worker_allocations", "yuzde_usulu_pool_collections", "shrinkage_events"}
 
 // ResetTransactionHistory clears ALL transactional data — sales, payments,
 // invoices, shifts, held sales, stock movements and the sale-line modifier
@@ -396,8 +407,8 @@ ORDER BY created_at DESC, id DESC LIMIT 200`)
 // restored batch stops existing as an archive and cannot be restored twice
 // — ADR-0042 §2), and audits the restore under actorID. It returns how many
 // sales were restored. Before touching anything it refuses with
-// ErrShopHasTradedSinceReset unless sales, held_sales, shifts AND
-// stock_movements are all empty, with ErrResetBatchNotFound for an unknown
+// ErrShopHasTradedSinceReset unless every restoreEmptyCheckTables table is
+// empty, with ErrResetBatchNotFound for an unknown
 // batch id, and — discovered in independent review — with
 // ErrArchiveReferencesRemoved if a row in the batch points at a catalog/
 // customer record removed after the reset (see that error's doc comment).
