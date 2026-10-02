@@ -4411,6 +4411,28 @@ body.login-screen {
 
 .manual-nav { position: sticky; inset-block-start: .5rem; max-block-size: calc(100vh - 5rem);
               overflow-y: auto; padding-inline-end: .4rem; }
+/* ut-docs#3356: stacked on a phone the tree filled the screen and stayed
+   pinned (sticky + max-block-size), so a tapped topic swapped in below it,
+   out of sight — same class of bug as .items-rail-wrap (#3297). Unpin the
+   nav; while the panel shows a topic hide the whole nav (the back link
+   restores it); while it shows search results hide only the tree, keeping
+   the search box. Only topic articles carry data-topic. */
+.manual-back { display: none; }
+@media (max-width: 52rem) {
+  .manual-nav { position: static; max-block-size: none; overflow: visible; }
+  /* Hiding the tree shifts content the browser had anchored on and it
+     re-scrolls the page past the topic heading after our scroll-to-top
+     (app.js); opt the manual out of scroll anchoring. */
+  .manual { overflow-anchor: none; }
+  .manual:has(#manual-topic[data-topic]) .manual-nav { display: none; }
+  .manual:has(.manual-results) .manual-tree { display: none; }
+  .manual-back { display: inline-flex; align-items: center; gap: .35rem;
+                 min-block-size: 44px; padding-inline: .6rem; margin-block-end: .4rem;
+                 border-radius: .45rem; text-decoration: none; color: inherit; }
+  .manual-back:hover { background: var(--panel, rgba(127,127,127,.12)); }
+  /* No RTL flip for the chevron: U+2039 is bidi-mirrored, so an RTL line
+     already draws it pointing inline-start (a scaleX(-1) would undo that). */
+}
 .manual-search input { inline-size: 100%; padding: .55rem .7rem; font-size: 1rem;
                        min-block-size: 44px; border: 1px solid var(--border); border-radius: .5rem;
                        background: var(--panel, #fff); color: inherit; }
