@@ -284,6 +284,25 @@ func (eb *EventBus) HasSubscribers(eventType string) bool {
 	return len(eb.subscribers[eventType]) > 0
 }
 
+// SubscriberIDs returns the plugin IDs subscribed to an event, in
+// subscription (dispatch) order, de-duplicated, as a fresh slice (nil when
+// nobody is subscribed). Non-exclusive ".ask" hooks use it to tell which
+// plugins an AskFrom winner out-ranked (ut-docs#2955).
+func (eb *EventBus) SubscriberIDs(eventType string) []string {
+	eb.mu.RLock()
+	defer eb.mu.RUnlock()
+	var ids []string
+	seen := make(map[string]bool, len(eb.subscribers[eventType]))
+	for _, sub := range eb.subscribers[eventType] {
+		if seen[sub.PluginID] {
+			continue
+		}
+		seen[sub.PluginID] = true
+		ids = append(ids, sub.PluginID)
+	}
+	return ids
+}
+
 // GetEventMode returns the dispatch mode for an event type
 // Defaults to NonBlocking if not explicitly configured.
 //

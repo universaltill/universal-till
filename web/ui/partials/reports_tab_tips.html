@@ -110,7 +110,7 @@
          100x on any 0-decimal currency (IRR/IRT/IQD/AFN/JPY). -->
     <label>{{ T "reports.tips.form_amount" }} ({{ currency.Display }})
       <input type="text" id="tips-amount" inputmode="decimal" {{ moneypatternlocal currency.Decimals false }} required {{ moneyplaceholderlocal currency.Decimals 0 }}
-             oninput="document.getElementById('tips-amount-minor').value = window.utCurrency.toMinor(this.value)">
+             data-input="minor:tips-amount-minor">
     </label>
     <label>{{ T "reports.tips.form_note" }}
       <input type="text" name="note" placeholder="{{ T "reports.tips.form_note_hint" }}">

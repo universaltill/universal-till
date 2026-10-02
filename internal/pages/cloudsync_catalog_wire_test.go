@@ -576,3 +576,58 @@ func TestCloudSaveItem_NetQuantity(t *testing.T) {
 		t.Fatalf("clear left the pair: %d %v", n, err)
 	}
 }
+
+// save_item_variant (ut-docs#3477): create with the cloud-minted id, the
+// lost-result replay, a barcode conflict naming the owner, deactivate —
+// each audited, and refused on a satellite till.
+const newVariantID = "0b6c9a8e-2222-4222-8222-222222222222"
+
+func TestCloudSaveItemVariant_CreateReplayConflictDeactivate(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	hooks := buildCloudHooks(dp, nil)
+	if hooks.SaveItemVariant == nil {
+		t.Fatal("SaveItemVariant hook not wired")
+	}
+	p := data.VariantSave{ItemID: "itm1", ID: newVariantID, Create: true, Name: sp("Small"), PriceMinor: ip(90), Barcodes: lp("4006381333931")}
+	msg, err := hooks.SaveItemVariant(ctx, p)
+	if err != nil || msg != "created variant Apple Small" {
+		t.Fatalf("create: %q %v", msg, err)
+	}
+	if n := cloudAuditCount(t, dp, "cloud_variant_saved", newVariantID); n != 1 {
+		t.Fatalf("audit rows = %d, want 1", n)
+	}
+	if msg, err := hooks.SaveItemVariant(ctx, p); err != nil || msg != "updated variant Apple Small" {
+		t.Fatalf("replay: %q %v", msg, err)
+	}
+	// The item's own barcode ABC (seedForPages) names its owner.
+	_, err = hooks.SaveItemVariant(ctx, data.VariantSave{ItemID: "itm1", ID: newVariantID, Barcodes: lp("ABC")})
+	if err == nil || err.Error() != "barcode ABC is already used by Apple" {
+		t.Fatalf("conflict: %v", err)
+	}
+	// Another variant's SKU (var1 is ABC-L) names "Apple Large".
+	_, err = hooks.SaveItemVariant(ctx, data.VariantSave{ItemID: "itm1", ID: newVariantID, SKU: sp("ABC-L")})
+	if err == nil || !strings.Contains(err.Error(), "SKU ABC-L is already used by Apple Large") {
+		t.Fatalf("sku conflict: %v", err)
+	}
+	if msg, err := hooks.SaveItemVariant(ctx, data.VariantSave{ItemID: "itm1", ID: newVariantID, Active: bp(false)}); err != nil || msg != "updated variant Apple Small" {
+		t.Fatalf("deactivate: %q %v", msg, err)
+	}
+	var active int
+	if err := dp.Db.QueryRow(`SELECT is_active FROM item_variants WHERE id = ?`, newVariantID).Scan(&active); err != nil || active != 0 {
+		t.Fatalf("is_active = %d %v", active, err)
+	}
+}
+
+func TestCloudSaveItemVariant_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	setReplica(t, dp)
+	_, err := buildCloudHooks(dp, nil).SaveItemVariant(t.Context(), data.VariantSave{ItemID: "itm1", ID: newVariantID, Create: true, Name: sp("X"), PriceMinor: ip(1)})
+	if err == nil || !strings.HasPrefix(err.Error(), "this data is primary-wins synced") {
+		t.Fatalf("replica: %v", err)
+	}
+	var n int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM item_variants WHERE id = ?`, newVariantID).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("a replica wrote the variant (%d, %v)", n, err)
+	}
+}

@@ -24,7 +24,7 @@
     <div class="sale-recorded-actions">
       <button class="btn primary" type="button" data-testid="sale-recorded-new-customer"
               hx-get="/ui/basket" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">{{ T "receipt.new_customer" }}</button>
-      <button class="btn secondary" type="button" onclick="window.location='/refund/{{ .ReceiptNo }}'">↩ {{ T "refund.title" }}</button>
+      <button class="btn secondary" type="button" data-action="go:/refund/{{ .ReceiptNo }}">↩ {{ T "refund.title" }}</button>
     </div>
     <small class="muted">{{ T "receipt.auto_reset" }}</small>
   </div>

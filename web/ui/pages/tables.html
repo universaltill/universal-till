@@ -118,7 +118,7 @@
     </label>
     <div class="modifier-actions">
       <button type="button" class="btn secondary"
-              onclick="var m = document.getElementById('table-add-modal'); m.close(); m.querySelector('form').reset();">
+              data-action="close:table-add-modal reset-form">
         {{ T "common.cancel" }}</button>
       <button type="submit" class="btn primary">{{ T "tables.new.submit" }}</button>
     </div>
@@ -141,7 +141,7 @@
          every other close/cancel control on this page carries real text.
          Existing key, so no language-pack follow-up. */}}
     <button type="button" class="btn secondary" aria-label="{{ T "common.close" }}"
-            onclick="document.getElementById('table-qr-modal').close()"><span aria-hidden="true">✕</span></button>
+            data-action="close:table-qr-modal"><span aria-hidden="true">✕</span></button>
   </div>
   <div id="table-qr-body" style="text-align:center"></div>
 </dialog>
@@ -222,7 +222,7 @@
             {{ if .Enabled }}
             <button type="button" class="btn secondary" data-testid="table-qr-open"
                     hx-get="/api/tables/{{ .ID }}/qr" hx-target="#table-qr-body" hx-swap="innerHTML"
-                    hx-on::after-request="if (event.detail.successful) { document.getElementById('table-qr-modal').show(); }">
+                    data-after-request="ok show:table-qr-modal">
               {{ T "tables.qr.button" }}
             </button>
             {{ end }}
@@ -242,7 +242,7 @@
                  blocking finding) — the this-till/no-claim cases keep the
                  original, shorter wording. */}}
             <form method="post" action="/api/tables/{{ .ID }}/release" class="users-inline"
-                  onsubmit="return confirm('{{ if and .HasLiveClaim (ne .ClaimTillID "") }}{{ printf (T "tables.confirm.release_foreign_till") (or .ClaimTillName (T "tables.claim.unenrolled_till")) }}{{ else }}{{ T "tables.confirm.release" }}{{ end }}')">
+                  data-submit="confirm" data-confirm-text="{{ if and .HasLiveClaim (ne .ClaimTillID "") }}{{ printf (T "tables.confirm.release_foreign_till") (or .ClaimTillName (T "tables.claim.unenrolled_till")) }}{{ else }}{{ T "tables.confirm.release" }}{{ end }}">
               <button type="submit" class="btn secondary">{{ T "tables.release" }}</button>
             </form>
             {{ end }}

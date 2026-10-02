@@ -11,9 +11,8 @@ import (
 // the two can never drift apart: an additional till checks them against its
 // mirror, and the main till re-checks them against the shop's real state.
 
-// isAssignableUserRole is the role allow-list a user can be created with or
-// moved to.
-func isAssignableUserRole(role string) bool {
+// isBuiltinUserRole is the built-in role allow-list, by name.
+func isBuiltinUserRole(role string) bool {
 	switch role {
 	case "cashier", "manager", "admin", "super_admin":
 		return true
@@ -21,8 +20,26 @@ func isAssignableUserRole(role string) bool {
 	return false
 }
 
+// isAssignableUserRole is the role allow-list a user can be created with or
+// moved to: a built-in role, or a custom role (ADR-0128 §3) that exists on
+// this till as origin='cloud'. A custom role's key is only ever a roles row
+// a save_role directive created, so no other name becomes assignable.
+func isAssignableUserRole(ctx context.Context, repo *data.AuthRepo, role string) (bool, error) {
+	if isBuiltinUserRole(role) {
+		return true, nil
+	}
+	origin, found, err := repo.RoleOrigin(ctx, role)
+	if err != nil {
+		return false, err
+	}
+	return found && origin == data.RoleOriginCloud, nil
+}
+
 // canManageUser: admins and super_admins manage everyone but 'system';
-// managers (and anyone else holding user_management) only cashiers. The
+// managers (and anyone else holding user_management, a custom role
+// included) only cashiers. Role names are matched against the built-in
+// names only (ADR-0128 §6), so a user holding a custom role is managed by
+// admin or super_admin only. The
 // users page evaluates it against its resolved acting user, the main till
 // against the actor row it holds (authorizeUserChange).
 func canManageUser(actorRole string, target data.UserRow) bool {

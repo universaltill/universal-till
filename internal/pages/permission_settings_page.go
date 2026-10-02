@@ -55,6 +55,15 @@ func registerPermissionSettings(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
+		customRoles, err := authRepo.ListCustomRoles(r.Context())
+		if err != nil {
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
+			return
+		}
+		isCustom := make(map[string]bool, len(customRoles))
+		for _, ri := range customRoles {
+			isCustom[ri.Role] = true
+		}
 
 		var roles []string
 		seenRole := map[string]bool{}
@@ -134,13 +143,35 @@ func registerPermissionSettings(mux *http.ServeMux, d *common.Deps) {
 			groups = append(groups, other)
 		}
 
+		// Columns: the built-in roles in today's (key) order, then the
+		// custom roles (ADR-0128 §6) by label. A custom role's column is
+		// read-only here: it is edited in my.universaltill.com, and the
+		// POST below refuses it too.
+		var cols []permissionColumn
+		for _, role := range roles {
+			if !isCustom[role] {
+				cols = append(cols, permissionColumn{Role: role})
+			}
+		}
+		// seenRole comes from the matrix (roles CROSS JOIN actions), so a
+		// custom role only lacks it when the till knows no action at all.
+		for _, ri := range customRoles {
+			if seenRole[ri.Role] {
+				label := ri.Label
+				if label == "" {
+					label = ri.Role
+				}
+				cols = append(cols, permissionColumn{Role: ri.Role, Label: label, Cloud: true})
+			}
+		}
+
 		httpx.Render("ui/pages/permissions.html", map[string]any{
 			"title":     httpx.T(locale, "page.title.permissions"),
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
-			"Roles":     roles,
+			"Roles":     cols,
 			"Groups":    groups,
-			"Cols":      len(roles) + 1,
+			"Cols":      len(cols) + 1,
 		})(w, r)
 	})
 
@@ -276,6 +307,15 @@ func registerPermissionSettings(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "permissions.saved"))
 	})
+}
+
+// permissionColumn is one role column of the matrix. A built-in role's
+// header is its users.role.<key> translation; a custom role (Cloud) shows
+// its own Label and read-only cells.
+type permissionColumn struct {
+	Role  string
+	Label string
+	Cloud bool
 }
 
 // permissionChangeSummary renders a human-readable, pre-translated

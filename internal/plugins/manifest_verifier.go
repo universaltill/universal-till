@@ -171,6 +171,11 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 	if err := validateABI3Fields(&manifest); err != nil {
 		result.Errors = append(result.Errors, err.Error())
 	}
+	// Validation-data grants (ut-docs#3226): same refusal as ParseManifest,
+	// since marketplace install and import verify through here.
+	if err := validateValidationPermissions(&manifest); err != nil {
+		result.Errors = append(result.Errors, err.Error())
+	}
 
 	// Checksum verification (if provided in manifest)
 	result.ChecksumVerified = true // Default to true if no checksum in manifest

@@ -163,7 +163,7 @@
   {{ if and (not .ModifierGroups) (not .AttachableGroups) (not .InheritedGroups) }}
   <div class="catalog-detail-modifiers-empty-cta">
     <button type="button" class="btn secondary" id="modifier-empty-goto-modifiers"
-            onclick="return utCatalogGoToModifiers()">{{ T "catalog.modifiers.go_to_modifiers" }}</button>
+            data-action="goto-modifiers">{{ T "catalog.modifiers.go_to_modifiers" }}</button>
   </div>
   {{ end }}
 </div>

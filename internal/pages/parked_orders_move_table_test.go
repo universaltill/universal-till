@@ -100,6 +100,45 @@ func TestParkedOrders_NoMoveControlWithoutTables(t *testing.T) {
 	}
 }
 
+// ut-docs#3325 regression (e2e/tests/held-table-move-2702.spec.ts's third
+// case): html/template strips a leading "data-" before sniffing an
+// attribute's escaping context (html/template/context.go attrType), so the
+// ORIGINAL attribute name here, "data-on-before-request", was treated as a
+// JS-event attribute (it starts with "on" once "data-" is gone) and got
+// JS-string escaping, not plain attribute escaping -- a templated id inside
+// its value came out JSON-quoted. remember-focus:parked-orders-body,parked-
+// move-{{ $id }} rendered as ...,parked-move-&#34;<id>&#34;, so
+// restore-focus's later byId() lookup never matched the real
+// id="parked-move-<id>" summary (no quotes), and focus silently stayed on
+// <body>. Fixed by renaming the whole data-on-* family to data-* (dropping
+// the "on-" infix, e.g. data-before-request) so stripping "data-" no longer
+// leaves anything starting with "on" -- see web/public/inline-actions.js's
+// header. This test pins the fix generally: the never-JS-context id=
+// attribute on the <summary> itself is ground truth for the real id, and
+// data-before-request's copy of it must match byte for byte, whatever it
+// gets renamed to next.
+func TestParkedOrders_MoveOptionRememberFocusIDNotJSEscaped(t *testing.T) {
+	mux, _, _ := seedMoveTableFixture(t)
+	body := parkedOrdersFragment(t, mux)
+	h1 := rowHTML(t, body, "h1")
+
+	start := strings.Index(h1, `id="parked-move-`)
+	if start < 0 {
+		t.Fatalf("no Move table toggle in row h1: %s", h1)
+	}
+	end := strings.Index(h1[start:], `"`+`>`)
+	realID := h1[start+len(`id="`) : start+end]
+	if strings.ContainsAny(realID, `"&`) {
+		t.Fatalf("sanity check failed, got a suspicious id %q", realID)
+	}
+
+	wantFragment := "remember-focus:parked-orders-body," + realID
+	if !strings.Contains(h1, wantFragment) {
+		t.Fatalf("the before-request remember-focus hook must reference the SAME id (%q) the real <summary> carries, "+
+			"byte for byte -- row h1: %s", wantFragment, h1)
+	}
+}
+
 func TestHeldTableMove_FromPopupReRendersPopup(t *testing.T) {
 	_, holdMux, tableOf := seedMoveTableFixture(t)
 	rec := holdTestPost(holdMux, "/api/pos/held/table", "id=h1&table_id=tbl-2&view=parked-orders")

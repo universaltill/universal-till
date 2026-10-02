@@ -18,7 +18,7 @@ import (
 // (keep), and a present field of the wrong shape FAILS the directive
 // instead of reading as absent.
 
-var newCatalogTypes = []string{"save_item", "save_category", "delete_category", "save_modifier_group", "delete_modifier_group", "delete_item", "save_option_set", "delete_option_set"}
+var newCatalogTypes = []string{"save_item", "save_category", "delete_category", "save_modifier_group", "delete_modifier_group", "delete_item", "save_option_set", "delete_option_set", "save_item_variant"}
 
 func TestApplyNewCatalogTypes_NilHookUnsupported(t *testing.T) {
 	for _, typ := range newCatalogTypes {
@@ -294,6 +294,75 @@ func TestApplyDeleteOptionSet(t *testing.T) {
 	}
 }
 
+// save_item_variant (ut-docs#3477): {item_id, variant_id, create?, name?,
+// sku?, price_minor?, active?, barcodes?}; barcodes is the full set as a
+// JSON-encoded string array. A wrong shape fails before the hook runs.
+func TestApplySaveItemVariant(t *testing.T) {
+	var got data.VariantSave
+	calls := 0
+	hooks := Hooks{SaveItemVariant: func(ctx context.Context, p data.VariantSave) (string, error) {
+		calls++
+		got = p
+		return "saved", nil
+	}}
+	for _, c := range []struct {
+		payload map[string]any
+		want    string
+	}{
+		{map[string]any{"variant_id": "v1"}, "missing item_id"},
+		{map[string]any{"item_id": " ", "variant_id": "v1"}, "missing item_id"},
+		{map[string]any{"item_id": "i1"}, "missing variant_id"},
+		{map[string]any{"item_id": "i1", "variant_id": 4.0}, "missing variant_id"},
+		{map[string]any{"item_id": "i1", "variant_id": "v1", "create": "perhaps"}, "bad create"},
+		{map[string]any{"item_id": "i1", "variant_id": "v1", "name": 3.0}, "bad name"},
+		{map[string]any{"item_id": "i1", "variant_id": "v1", "sku": true}, "bad sku"},
+		{map[string]any{"item_id": "i1", "variant_id": "v1", "price_minor": 1.5}, "bad price_minor"},
+		{map[string]any{"item_id": "i1", "variant_id": "v1", "active": 2.0}, "bad active"},
+		{map[string]any{"item_id": "i1", "variant_id": "v1", "barcodes": "[1]"}, "bad barcodes"},
+		{map[string]any{"item_id": "i1", "variant_id": "v1", "barcodes": []any{"A"}}, "bad barcodes"},
+	} {
+		if status, msg := apply(context.Background(), directive{Type: "save_item_variant", Payload: c.payload}, hooks); status != "failed" || msg != c.want {
+			t.Errorf("%v: %q %q, want %q", c.payload, status, msg, c.want)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("a malformed payload reached the hook %d time(s)", calls)
+	}
+	status, msg := apply(context.Background(), directive{Type: "save_item_variant", Payload: map[string]any{
+		"item_id": " i1 ", "variant_id": " v1 ", "create": true, "name": " Large ", "sku": " FW-L ",
+		"price_minor": 380.0, "active": "true", "barcodes": `[" 501 ","502"]`,
+	}}, hooks)
+	if status != "applied" || msg != "saved" {
+		t.Fatalf("good payload: %q %q", status, msg)
+	}
+	if got.ItemID != "i1" || got.ID != "v1" || !got.Create || got.Name == nil || *got.Name != "Large" ||
+		got.SKU == nil || *got.SKU != "FW-L" || got.PriceMinor == nil || *got.PriceMinor != 380 ||
+		got.Active == nil || !*got.Active || got.Barcodes == nil || !reflect.DeepEqual(*got.Barcodes, []string{"501", "502"}) {
+		t.Fatalf("decoded = %+v", got)
+	}
+	// Absent fields stay nil (keep); `[]` clears every barcode.
+	apply(context.Background(), directive{Type: "save_item_variant", Payload: map[string]any{"item_id": "i1", "variant_id": "v1", "barcodes": `[]`}}, hooks)
+	if got.Create || got.Name != nil || got.SKU != nil || got.PriceMinor != nil || got.Active != nil || got.Barcodes == nil || len(*got.Barcodes) != 0 {
+		t.Fatalf("absent fields must be nil and [] an empty replace: %+v", got)
+	}
+	// The hook's error IS the failure text the cloud shows.
+	hooks.SaveItemVariant = func(context.Context, data.VariantSave) (string, error) {
+		return "", errors.New("barcode 501 is already used by Croissant")
+	}
+	if status, msg := apply(context.Background(), directive{Type: "save_item_variant", Payload: map[string]any{"item_id": "i1", "variant_id": "v1", "name": "L"}}, hooks); status != "failed" || msg != "barcode 501 is already used by Croissant" {
+		t.Fatalf("hook refusal: %q %q", status, msg)
+	}
+}
+
+func TestSaveItemVariantDirectiveRegistered(t *testing.T) {
+	if !mainTillOnlyTypes["save_item_variant"] {
+		t.Error("save_item_variant missing from mainTillOnlyTypes")
+	}
+	if !catalogTypes["save_item_variant"] {
+		t.Error("save_item_variant missing from catalogTypes")
+	}
+}
+
 // Both option-set types are main-till only and re-push the catalog
 // snapshot after they apply, like the modifier-group pair.
 func TestOptionSetDirectiveTypesRegistered(t *testing.T) {
@@ -321,7 +390,8 @@ func TestTickSatelliteSkipsMainTillOnlyTypes(t *testing.T) {
 		{"id": "d7", "type": "set_category_order", "payload": map[string]any{"category_ids": `["c1"]`}},
 		{"id": "d8", "type": "save_option_set", "payload": map[string]any{"id": "s1"}},
 		{"id": "d9", "type": "delete_option_set", "payload": map[string]any{"id": "s1"}},
-		{"id": "d10", "type": "set_net_quantity", "payload": map[string]any{"id": "i1", "net_quantity_value": 500.0, "net_quantity_unit": "g"}},
+		{"id": "d10", "type": "save_item_variant", "payload": map[string]any{"item_id": "i1", "variant_id": "v1", "name": "L"}},
+		{"id": "d11", "type": "set_net_quantity", "payload": map[string]any{"id": "i1", "net_quantity_value": 500.0, "net_quantity_unit": "g"}},
 	}}
 	srv := httptest.NewServer(cloud.handler())
 	defer srv.Close()
@@ -339,6 +409,7 @@ func TestTickSatelliteSkipsMainTillOnlyTypes(t *testing.T) {
 		SetCategoryOrder:    func(context.Context, []string) (string, error) { ran++; return "", nil },
 		SaveOptionSet:       func(context.Context, data.OptionSetSave) (string, error) { ran++; return "", nil },
 		DeleteOptionSet:     func(context.Context, string) (string, error) { ran++; return "", nil },
+		SaveItemVariant:     func(context.Context, data.VariantSave) (string, error) { ran++; return "", nil },
 		SetSetting:          func(context.Context, string, string) (string, error) { return "set", nil },
 	}
 	if err := Tick(context.Background(), testCfg(srv.URL), db, hooks); err != nil {

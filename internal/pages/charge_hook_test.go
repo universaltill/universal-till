@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -417,5 +420,189 @@ func TestAskChargePolicy_NoOpinionIsCachedToo(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("declined 3x: plugin ran %d times, want 1 (no-opinion cached)", calls)
+	}
+}
+
+// seedSecondChargePolicyPlugin adds a second country-tax plugin answering
+// charge.policy.ask (own plugin_catalog/plugins/permission/hook rows).
+func seedSecondChargePolicyPlugin(t *testing.T, db *sql.DB) {
+	t.Helper()
+	for _, q := range []string{
+		`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, min_pos_version, api_version, published_at)
+		   VALUES ('com.universaltill.tax-de', '1.0.0', 'DE USt', 'desc', 'go', 'entry', 'url', 'sha', 'auth', 'site', '[]', '0.0.0', '1', datetime('now'))`,
+		`INSERT INTO plugins (id, name, version, entrypoint, is_active) VALUES ('com.universaltill.tax-de', 'DE USt', '1.0.0', 'entry', 1)`,
+		`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+		   VALUES ('perm-charge-de', 'com.universaltill.tax-de', 'events:receive', 1)`,
+		`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+		   VALUES ('hook-charge-de', 'com.universaltill.tax-de', 'charge.policy.ask', 'charge.policy', 1)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("seed second charge policy plugin: %v", err)
+		}
+	}
+}
+
+func subscribeChargePolicyAnswer(t *testing.T, bus *plugins.EventBus, id string) {
+	t.Helper()
+	if _, err := bus.SubscribeWithHandler(context.Background(), id,
+		[]string{"charge.policy.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			return json.RawMessage(`{"service_charge_permitted": true}`), nil
+		}); err != nil {
+		t.Fatalf("subscribe %s: %v", id, err)
+	}
+}
+
+// ut-docs#2955: charge.policy.ask is non-exclusive and the first answerer
+// by id wins; with several answering plugins the ignored ones must be
+// logged (Problems ring via logging.L) once per bus generation.
+func TestAskChargePolicy_MultiAnswerWarnsOncePerGeneration(t *testing.T) {
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+	seedChargePolicyPlugin(t, db)
+	seedSecondChargePolicyPlugin(t, db)
+
+	buf := &syncBuffer{}
+	t.Cleanup(logging.CaptureForTest(buf))
+
+	bus := plugins.SharedBus(db)
+	t.Cleanup(bus.ResetSubscribers)
+	bus.ResetSubscribers()
+	bus.SetEventMode("charge.policy.ask", plugins.Blocking)
+	subscribeChargePolicyAnswer(t, bus, "com.universaltill.tax-de")
+	subscribeChargePolicyAnswer(t, bus, "com.universaltill.tax-uk")
+
+	count := func() int { return strings.Count(buf.String(), "[WARN] charge.policy.ask: using ") }
+
+	asker := &pluginChargePolicyAsker{db: db}
+	for i := 0; i < 4; i++ {
+		if _, ok := asker.AskChargePolicy(); !ok {
+			t.Fatalf("ask %d: expected an answer", i)
+		}
+	}
+	if n := count(); n != 1 {
+		t.Fatalf("warning count = %d, want 1; log:\n%s", n, buf.String())
+	}
+	out := buf.String()
+	if !strings.Contains(out, "using com.universaltill.tax-de's policy; com.universaltill.tax-uk also subscribed but not asked") {
+		t.Fatalf("warning must name winner and ignored plugin, got:\n%s", out)
+	}
+
+	bus.BumpGeneration()
+	if _, ok := asker.AskChargePolicy(); !ok {
+		t.Fatal("ask after bump: expected an answer")
+	}
+	if n := count(); n != 2 {
+		t.Fatalf("after generation bump warning count = %d, want 2; log:\n%s", n, buf.String())
+	}
+}
+
+func TestAskChargePolicy_SingleAnswerNoWarning(t *testing.T) {
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+	seedChargePolicyPlugin(t, db)
+
+	buf := &syncBuffer{}
+	t.Cleanup(logging.CaptureForTest(buf))
+
+	bus := plugins.SharedBus(db)
+	t.Cleanup(bus.ResetSubscribers)
+	bus.ResetSubscribers()
+	bus.SetEventMode("charge.policy.ask", plugins.Blocking)
+	subscribeChargePolicyAnswer(t, bus, "com.universaltill.tax-uk")
+
+	asker := &pluginChargePolicyAsker{db: db}
+	if _, ok := asker.AskChargePolicy(); !ok {
+		t.Fatal("expected an answer")
+	}
+	if strings.Contains(buf.String(), "[WARN] charge.policy.ask:") {
+		t.Fatalf("single subscriber must not warn, got:\n%s", buf.String())
+	}
+}
+
+// ut-docs#2955 review: a subscriber BEFORE the winner declined (empty
+// answer) — nothing of its was overridden, so there is nothing to warn
+// about; the warning names only plugins after the winner, never asked.
+func TestAskChargePolicy_DeclinerBeforeWinnerNoWarning(t *testing.T) {
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+	seedChargePolicyPlugin(t, db)
+	seedSecondChargePolicyPlugin(t, db)
+
+	buf := &syncBuffer{}
+	t.Cleanup(logging.CaptureForTest(buf))
+
+	bus := plugins.SharedBus(db)
+	t.Cleanup(bus.ResetSubscribers)
+	bus.ResetSubscribers()
+	bus.SetEventMode("charge.policy.ask", plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.tax-de",
+		[]string{"charge.policy.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) { return nil, nil }); err != nil {
+		t.Fatalf("subscribe decliner: %v", err)
+	}
+	subscribeChargePolicyAnswer(t, bus, "com.universaltill.tax-uk")
+
+	asker := &pluginChargePolicyAsker{db: db}
+	if _, ok := asker.AskChargePolicy(); !ok {
+		t.Fatal("expected tax-uk's answer")
+	}
+	if strings.Contains(buf.String(), "[WARN] charge.policy.ask:") {
+		t.Fatalf("a decliner before the winner must not be reported as ignored, got:\n%s", buf.String())
+	}
+}
+
+// ut-docs#2955 review: the warn-once gate itself (not the answer cache)
+// must hold when concurrent recomputes all miss the cache in one
+// generation — every handler call waits on a barrier until all callers are
+// inside the ask, so none is served from the cache.
+func TestAskChargePolicy_ConcurrentMissesWarnOnce(t *testing.T) {
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+	seedChargePolicyPlugin(t, db)
+	seedSecondChargePolicyPlugin(t, db)
+
+	buf := &syncBuffer{}
+	t.Cleanup(logging.CaptureForTest(buf))
+
+	bus := plugins.SharedBus(db)
+	t.Cleanup(bus.ResetSubscribers)
+	bus.ResetSubscribers()
+	bus.SetEventMode("charge.policy.ask", plugins.Blocking)
+
+	const callers = 8
+	var arrived sync.WaitGroup
+	arrived.Add(callers)
+	release := make(chan struct{})
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.tax-de",
+		[]string{"charge.policy.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			arrived.Done()
+			<-release
+			return json.RawMessage(`{"service_charge_permitted": true}`), nil
+		}); err != nil {
+		t.Fatalf("subscribe tax-de: %v", err)
+	}
+	subscribeChargePolicyAnswer(t, bus, "com.universaltill.tax-uk")
+
+	asker := &pluginChargePolicyAsker{db: db}
+	var done sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			asker.AskChargePolicy()
+		}()
+	}
+	arrived.Wait() // all callers missed the cache and are inside the ask
+	close(release)
+	done.Wait()
+
+	if n := strings.Count(buf.String(), "[WARN] charge.policy.ask: using "); n != 1 {
+		t.Fatalf("concurrent misses in one generation: warning count = %d, want 1; log:\n%s", n, buf.String())
 	}
 }

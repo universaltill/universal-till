@@ -93,9 +93,10 @@ func TestIndexTender_OneBottomRow(t *testing.T) {
 	}
 
 	// Pay keeps its primary styling and its posOpenPayment() entry point
-	// (the "at pay" order-type gate lives there, ut-docs#2282).
+	// (the "at pay" order-type gate lives there, ut-docs#2282) — reached via
+	// inline-actions.js's open-payment step since ut-docs#3325.
 	pay := openTag(t, footer, `data-testid="payment-open"`)
-	for _, want := range []string{"btn primary", "payment-trigger", `onclick="posOpenPayment()"`} {
+	for _, want := range []string{"btn primary", "payment-trigger", `data-action="open-payment"`} {
 		if !strings.Contains(pay, want) {
 			t.Errorf("Pay button lost %q: %s", want, pay)
 		}

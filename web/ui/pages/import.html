@@ -20,7 +20,7 @@
          - false (standalone page, e.g. a direct GET /import or another
            page's own back-link, ut-docs#2090's #1950/#1955 landings):
            unchanged plain link to /items. -->
-  <a class="btn secondary" href="/items"{{ if .InItemsShell }} onclick="this.closest('dialog').close(); return false;"{{ end }}>← {{ T "nav.catalog" }}</a>
+  <a class="btn secondary" href="/items"{{ if .InItemsShell }} data-action="close-closest"{{ end }}>← {{ T "nav.catalog" }}</a>
 </div>
 
 <div class="card">
@@ -113,8 +113,8 @@
          couldn't even select the file to reach a parse error. -->
     <label>{{ T "import.file" }} <input type="file" name="file" accept=".csv,text/csv,.bkp,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/zip,application/octet-stream" required></label>
     <div style="display:flex; gap:.4rem; margin-top:.5rem">
-      <button class="btn" type="submit" onclick="document.getElementById('import-commit').value='0'">{{ T "import.preview" }}</button>
-      <button class="btn primary" type="submit" onclick="document.getElementById('import-commit').value='1'">{{ T "import.import" }}</button>
+      <button class="btn" type="submit" data-action="set-value:import-commit,0">{{ T "import.preview" }}</button>
+      <button class="btn primary" type="submit" data-action="set-value:import-commit,1">{{ T "import.import" }}</button>
     </div>
   </form>
   {{ end }}

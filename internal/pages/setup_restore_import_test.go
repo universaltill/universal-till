@@ -229,7 +229,7 @@ func TestWizardRestoreImport_SuppressesInteractiveControlsInWizardPreview(t *tes
 		t.Fatalf("wizard preview: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 	wizardBody := rec.Body.String()
-	for _, marker := range []string{`name="row_include_`, `name="use_item_numbers_as_barcodes"`, `onclick="document.getElementById('import-commit')`} {
+	for _, marker := range []string{`name="row_include_`, `name="use_item_numbers_as_barcodes"`, `data-action="set-value:import-commit,`} {
 		if strings.Contains(wizardBody, marker) {
 			t.Fatalf("wizard preview must not render %q, got: %s", marker, wizardBody)
 		}

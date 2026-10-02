@@ -871,6 +871,30 @@ func (r *AuthRepo) DeleteCloudRoleTx(ctx context.Context, tx *sql.Tx, role strin
 	return nil
 }
 
+// ListCustomRoles lists the origin='cloud' roles (ADR-0128 §2), ordered by
+// label (case-insensitively), then key: the order the Permissions and
+// Users pages show them in.
+func (r *AuthRepo) ListCustomRoles(ctx context.Context) ([]RoleInfo, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT role, label, origin FROM roles WHERE origin = 'cloud' ORDER BY label COLLATE NOCASE, role`)
+	if err != nil {
+		return nil, fmt.Errorf("list custom roles: %w", err)
+	}
+	defer rows.Close()
+	var out []RoleInfo
+	for rows.Next() {
+		var ri RoleInfo
+		if err := rows.Scan(&ri.Role, &ri.Label, &ri.Origin); err != nil {
+			return nil, fmt.Errorf("list custom roles: %w", err)
+		}
+		out = append(out, ri)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list custom roles: %w", err)
+	}
+	return out, nil
+}
+
 // RoleOrigin returns role's origin ("builtin" or "cloud"); found is false
 // for an unknown role.
 func (r *AuthRepo) RoleOrigin(ctx context.Context, role string) (origin string, found bool, err error) {

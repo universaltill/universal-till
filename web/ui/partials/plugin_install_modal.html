@@ -7,7 +7,7 @@
 				<h3 class="text-lg font-medium leading-6 text-gray-900" id="modal-title">
 					{{ T "plugins.install.modal.title" }}
 				</h3>
-				<button onclick="closeInstallModal()" class="text-gray-400 hover:text-gray-600">
+				<button data-action="close-install-modal" class="text-gray-400 hover:text-gray-600">
 					<svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
 					</svg>
@@ -45,7 +45,7 @@
 			<!-- Action buttons -->
 			<div class="mt-6 flex justify-end space-x-3" id="modal-actions">
 				<button 
-					onclick="closeInstallModal()"
+					data-action="close-install-modal"
 					class="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400 transition-colors">
 					{{ T "plugins.install.modal.cancel" }}
 				</button>
@@ -149,7 +149,7 @@ function showInstallSuccess(message) {
 	`;
 	document.getElementById('modal-actions').innerHTML = `
 		<button 
-			onclick="closeInstallModal(); UT.reload('plugin-install')"
+			data-action="close-install-modal reload:plugin-install"
 			class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors">
 			${pluginInstallText.done}
 		</button>
@@ -168,7 +168,7 @@ function showInstallError(message) {
 	`;
 	document.getElementById('modal-actions').innerHTML = `
 		<button 
-			onclick="closeInstallModal()"
+			data-action="close-install-modal"
 			class="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400 transition-colors">
 			${pluginInstallText.close}
 		</button>

@@ -766,7 +766,9 @@ func registerDevice(ctx context.Context, m config.MarketplaceConfig, deviceName 
 	deviceID := cur.DeviceID
 	mu.RUnlock()
 	tillID, _, _ := kv.Get(ctx, keySyncTillID)
-	if err := registerDeviceID(ctx, m, deviceID, deviceName, buildinfo.Version, tillID); err != nil {
+	// A till registering its own device never gets a redeem code (the cloud
+	// only mints one for another device with no credential yet).
+	if _, err := registerDeviceID(ctx, m, deviceID, deviceName, buildinfo.Version, tillID); err != nil {
 		return err
 	}
 	if err := kv.Set(ctx, keyDeviceRegistered, deviceID); err != nil {
@@ -780,10 +782,15 @@ func registerDevice(ctx context.Context, m config.MarketplaceConfig, deviceName 
 // (VouchForReplica). tillID is the till's LAN sync id (sync.till_id), sent
 // when known as the stable machine key the cloud uses to merge or retire a
 // physical till's older device rows (ut-docs#2730, #2752).
-func registerDeviceID(ctx context.Context, m config.MarketplaceConfig, deviceID, deviceName, version, tillID string) error {
+//
+// It returns the answer's optional data.redeem_code verbatim (ADR-0116 D3):
+// the one-time code the cloud mints when a device credential vouches for
+// another device that has no credential yet. An empty or undecodable body
+// means no code. The caller validates it; it is never logged here.
+func registerDeviceID(ctx context.Context, m config.MarketplaceConfig, deviceID, deviceName, version, tillID string) (string, error) {
 	storeID, token := m.StoreID, m.MerchantToken
 	if storeID == "" || token == "" {
-		return fmt.Errorf("no store identity yet")
+		return "", fmt.Errorf("no store identity yet")
 	}
 	if deviceName == "" {
 		deviceName = "Till"
@@ -796,26 +803,35 @@ func registerDeviceID(ctx context.Context, m config.MarketplaceConfig, deviceID,
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return err
+		return "", err
 	}
 	url := strings.TrimRight(m.EndpointURL, "/") + "/v1/stores/devices/register"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("device register returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return "", fmt.Errorf("device register returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	logging.L().Infof("enrolment: till registered as device %s under store %s", deviceID, storeID)
-	return nil
+	var answer struct {
+		Data struct {
+			RedeemCode string `json:"redeem_code"`
+		} `json:"data"`
+	}
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
+	if json.Unmarshal(raw, &answer) != nil {
+		return "", nil // an empty or non-JSON body: registered, no code
+	}
+	return answer.Data.RedeemCode, nil
 }
 
 // fetchSigningKey retrieves the marketplace's Ed25519 release-signing public
