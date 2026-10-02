@@ -122,6 +122,19 @@ ut-docs#3052). It never submits for App Store review.
 The server binds every interface so other tills can pair with this one
 (ADR-0033); iOS asks the operator once for **local network** access.
 
+## Bug-report screenshots (ut-docs#3355)
+
+A `WKWebView` has nothing for `getDisplayMedia` to record, so the panel's
+"Take screenshot" used to capture only the system share prompt.
+`UniversalTill/ScreenshotBridge.swift` registers a `utScreenshot`
+script-message handler with reply (page content world): the panel calls
+`window.webkit.messageHandlers.utScreenshot.postMessage('capture')`, hides
+itself for two frames, and gets back `WKWebView.takeSnapshot` of the till
+page as a PNG data URL (or `""` on failure — the same contract as Android's
+`AndroidKiosk.captureScreenshot()`). Only the till origin's main frame is
+answered. `scripts/ci/ios-screenshot-bridge_test.sh` pins the wiring;
+`e2e/tests/ios-screenshot-bridge-3355.spec.ts` drives the panel side.
+
 ## What doesn't port (and what isn't built yet)
 
 - **`runtime:"go"` process plugins don't run** — iOS never lets an app
@@ -133,8 +146,8 @@ The server binds every interface so other tills can pair with this one
   tills; pairing by code / IP address works regardless. Tracked in
   ut-docs#3069.
 - **Android-only bridges have no iOS counterpart yet** — file downloads
-  (exports), the bug-report screenshot, the self-order kiosk lock (Guided
-  Access) and a BLE receipt-printer bridge: ut-docs#3071.
+  (exports), the self-order kiosk lock (Guided Access) and a BLE
+  receipt-printer bridge: ut-docs#3071.
 - **No in-app Bluetooth pairing, by design** (ut-docs#3261): iOS keeps
   scanners and keyboards (HID) for the system and never exposes them to an
   app through Core Bluetooth, so they pair in **Settings → Bluetooth** and

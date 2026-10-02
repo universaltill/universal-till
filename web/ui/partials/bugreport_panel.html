@@ -481,6 +481,28 @@
     // other path hands addScreenshotThumb. Checked FIRST so the bridge wins
     // wherever it exists; on every other platform window.AndroidKiosk is
     // undefined and the two pre-existing branches below run untouched.
+    // Both native shells hand back a data:image/png URL, or "" on failure.
+    function addScreenshotFromDataUrl(dataUrl) {
+      if (!dataUrl) {
+        screenshotBtn.disabled = false;
+        statusEl.textContent = T.screenshotError;
+        return;
+      }
+      fetch(dataUrl).then(function (r) { return r.blob(); }).then(function (blob) {
+        screenshotBtn.disabled = false;
+        addScreenshotThumb(blob);
+      }).catch(function () {
+        screenshotBtn.disabled = false;
+        statusEl.textContent = T.screenshotError;
+      });
+    }
+    // ut-docs#3355: a WKWebView has nothing for getDisplayMedia to record,
+    // so in the iOS app the web path captured only the system share prompt.
+    // The iOS shell registers a native `utScreenshot` handler
+    // (ios/UniversalTill/ScreenshotBridge.swift, WKWebView.takeSnapshot);
+    // postMessage resolves to a data:image/png URL, or "" on failure.
+    var iosScreenshot = window.webkit && window.webkit.messageHandlers &&
+      window.webkit.messageHandlers.utScreenshot;
     if (window.AndroidKiosk && typeof window.AndroidKiosk.captureScreenshot === 'function') {
       screenshotBtn.addEventListener('click', function () {
         screenshotBtn.disabled = true;
@@ -490,17 +512,32 @@
         } catch (e) {
           dataUrl = '';
         }
-        if (!dataUrl) {
-          screenshotBtn.disabled = false;
-          statusEl.textContent = T.screenshotError;
-          return;
+        addScreenshotFromDataUrl(dataUrl);
+      });
+    } else if (iosScreenshot && typeof iosScreenshot.postMessage === 'function') {
+      screenshotBtn.addEventListener('click', function () {
+        screenshotBtn.disabled = true;
+        // On a phone this panel covers most of the screen: hide it for the
+        // shot so the report shows the till, then bring it straight back.
+        // Two frames so the hidden state is painted before the native
+        // snapshot (which also waits for screen updates) is asked for.
+        panel.style.visibility = 'hidden';
+        function restore(dataUrl) {
+          panel.style.visibility = '';
+          addScreenshotFromDataUrl(dataUrl);
         }
-        fetch(dataUrl).then(function (r) { return r.blob(); }).then(function (blob) {
-          screenshotBtn.disabled = false;
-          addScreenshotThumb(blob);
-        }).catch(function () {
-          screenshotBtn.disabled = false;
-          statusEl.textContent = T.screenshotError;
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            var reply;
+            try {
+              reply = iosScreenshot.postMessage('capture');
+            } catch (e) {
+              reply = null;
+            }
+            Promise.resolve(reply).then(function (dataUrl) {
+              restore(typeof dataUrl === 'string' ? dataUrl : '');
+            }, function () { restore(''); });
+          });
         });
       });
     } else if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
