@@ -381,13 +381,16 @@ func ParseXLSX(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbology
 	}
 
 	// Second, RAW pass for the numeric columns only — see the doc comment
-	// above for why the formatted pass alone silently rounds money. Skipped
-	// entirely when the file carries neither column, so a workbook that
-	// needs it doesn't pay for one that doesn't.
+	// above for why the formatted pass alone silently rounds money (a net
+	// quantity too: 250.4 under a "0" format would otherwise be accepted
+	// as a silent 250, and a valid 1000 under "#,##0" rejected as "1,000").
+	// Skipped entirely when the file carries none of these columns, so a
+	// workbook that needs it doesn't pay for one that doesn't.
 	var rawRows [][]string
 	_, hasPrice := idx["price"]
 	_, hasStock := idx["stock"]
-	if hasPrice || hasStock {
+	_, hasNetQty := idx["net_quantity"]
+	if hasPrice || hasStock || hasNetQty {
 		rawRows, rerr = f.GetRows(sheetName, excelize.Options{RawCellValue: true})
 		if rerr != nil {
 			return Result{}, fmt.Errorf("read raw rows: %w", rerr)
@@ -460,6 +463,20 @@ func ParseXLSX(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbology
 				item.TakeawayRateBP, item.HasTakeaway = bp, true
 			} else {
 				item.TakeawayTaxIssue, item.TakeawayTaxIssueRaw = TaxIssueUnparseable, raw
+			}
+		}
+		// Net quantity (ut-docs#3473, same optional, non-blocking shape as
+		// Parse's own handling in catimport.go — see parseNetQuantity):
+		// both cells blank means "none", anything else must validate as a
+		// pair or it is reported, never kept half-set. The value goes
+		// through getNum (raw pass) like price/stock, so a display format
+		// can never round or group it before validation.
+		if rawValue, rawUnit := getNum(rowNo, rec, "net_quantity"), get(rec, "net_quantity_unit"); rawValue != "" || rawUnit != "" {
+			if value, unit, ok := parseNetQuantity(rawValue, rawUnit); ok {
+				item.NetQuantityValue, item.NetQuantityUnit = value, unit
+			} else {
+				item.NetQuantityIssue = NetQuantityIssueInvalid
+				item.NetQuantityIssueRaw = strings.TrimSpace(rawValue + " " + rawUnit)
 			}
 		}
 		switch {
