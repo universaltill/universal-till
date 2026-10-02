@@ -481,10 +481,11 @@ func (g *configReportGate) add(ctx context.Context, d *common.Deps, extra map[st
 	cats := remoteCategoriesReport(ctx, d)
 	groups := remoteModifierGroupsReport(ctx, d)
 	stations := remoteKitchenStationsReport(ctx, d)
-	if cats == nil || groups == nil || stations == nil {
+	optionSets := remoteOptionSetsReport(ctx, d)
+	if cats == nil || groups == nil || stations == nil || optionSets == nil {
 		return
 	}
-	lists := map[string]any{"categories": cats, "modifier_groups": groups, "kitchen_stations": stations}
+	lists := map[string]any{"categories": cats, "modifier_groups": groups, "kitchen_stations": stations, "option_sets": optionSets}
 	// users (reference/till-user-directives.md §5) come from the main till
 	// only: it is the one place user changes are decided (ADR-0115 §1).
 	// Same hash gate and budget as the menu lists.
@@ -772,6 +773,56 @@ func remoteModifierGroupsReport(ctx context.Context, d *common.Deps) []map[strin
 	return out
 }
 
+// remoteOptionSetsReport is the read side for DeviceExtra's `option_sets`
+// (ut-docs#3319), remoteModifierGroupsReport's twin: every option set once,
+// active or not, in the till's own (creation) order, with its values in
+// sort order and the items it is applied to (item_option_sets) — the
+// cross-reference my. needs to disable Delete on a used set and name the
+// items without a second round trip. Off the single
+// ListOptionSetsWithItems read (two queries + one for links, never one per
+// set). Caps reuse the modifier-group ones — sets at remoteReportMaxGroups,
+// values at remoteReportMaxOptions, `items` at remoteReportMaxGroupItems with
+// `items_total` the real count. A read error logs and returns nil (see
+// configReportGate) rather than failing the heartbeat.
+func remoteOptionSetsReport(ctx context.Context, d *common.Deps) []map[string]any {
+	sets, err := data.NewOptionSetRepo(d.Db).ListOptionSetsWithItems(ctx)
+	if err != nil {
+		logging.L().Warnf("cloudsync: option sets report failed: %v", err)
+		return nil
+	}
+	if len(sets) > remoteReportMaxGroups {
+		sets = sets[:remoteReportMaxGroups]
+	}
+	out := make([]map[string]any, 0, len(sets))
+	for _, s := range sets {
+		vals := s.Values
+		if len(vals) > remoteReportMaxOptions {
+			vals = vals[:remoteReportMaxOptions]
+		}
+		values := make([]map[string]any, 0, len(vals))
+		for _, v := range vals {
+			values = append(values, map[string]any{"id": v.ID, "value": v.Value, "sort_order": v.SortOrder})
+		}
+		reported := s.Items
+		if len(reported) > remoteReportMaxGroupItems {
+			reported = reported[:remoteReportMaxGroupItems]
+		}
+		items := make([]map[string]any, 0, len(reported))
+		for _, it := range reported {
+			items = append(items, map[string]any{"id": it.ID, "name": it.Name})
+		}
+		out = append(out, map[string]any{
+			"id":          s.ID,
+			"name":        s.Name,
+			"active":      s.IsActive,
+			"values":      values,
+			"items":       items,
+			"items_total": len(s.Items),
+		})
+	}
+	return out
+}
+
 // remoteKitchenStationsReport is the read side for DeviceExtra's
 // `kitchen_stations` (ut-docs#2472, ADR-0095 Decision 2): id + name of every
 // station, enabled or not, so the cloud's category editor can label the
@@ -979,6 +1030,12 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		},
 		DeleteModifierGroup: func(ctx context.Context, id string) (string, error) {
 			return cloudDeleteModifierGroup(ctx, d, id)
+		},
+		SaveOptionSet: func(ctx context.Context, p data.OptionSetSave) (string, error) {
+			return cloudSaveOptionSet(ctx, d, p)
+		},
+		DeleteOptionSet: func(ctx context.Context, id string) (string, error) {
+			return cloudDeleteOptionSet(ctx, d, id)
 		},
 		// The till user directives (reference/till-user-directives.md §4):
 		// main-till only, PIN opened with the directive key, one

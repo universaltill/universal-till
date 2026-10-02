@@ -18,7 +18,7 @@ import (
 // (keep), and a present field of the wrong shape FAILS the directive
 // instead of reading as absent.
 
-var newCatalogTypes = []string{"save_item", "save_category", "delete_category", "save_modifier_group", "delete_modifier_group", "delete_item"}
+var newCatalogTypes = []string{"save_item", "save_category", "delete_category", "save_modifier_group", "delete_modifier_group", "delete_item", "save_option_set", "delete_option_set"}
 
 func TestApplyNewCatalogTypes_NilHookUnsupported(t *testing.T) {
 	for _, typ := range newCatalogTypes {
@@ -216,6 +216,97 @@ func TestApplyDeleteModifierGroup(t *testing.T) {
 	}
 }
 
+// ut-docs#3319: save_option_set mirrors save_modifier_group's payload
+// conventions — id required, create/name/active presence-aware, and
+// `values` a JSON-encoded array STRING of {id, value}, the full ordered
+// replace (index = sort_order). A malformed field fails the directive.
+func TestApplySaveOptionSet(t *testing.T) {
+	var got data.OptionSetSave
+	calls := 0
+	hooks := Hooks{SaveOptionSet: func(ctx context.Context, p data.OptionSetSave) (string, error) {
+		calls++
+		got = p
+		return "saved", nil
+	}}
+	for _, c := range []struct {
+		payload map[string]any
+		want    string
+	}{
+		{map[string]any{"name": "x"}, "missing id"},
+		{map[string]any{"id": "  "}, "missing id"},
+		{map[string]any{"id": "s1", "create": "perhaps"}, "bad create"},
+		{map[string]any{"id": "s1", "name": 3.0}, "bad name"},
+		{map[string]any{"id": "s1", "active": 2.0}, "bad active"},
+		{map[string]any{"id": "s1", "values": "[{]"}, "bad values"},
+		{map[string]any{"id": "s1", "values": `[{"id":"v1","value":5}]`}, "bad values"},
+		{map[string]any{"id": "s1", "values": `null`}, "bad values"},
+		{map[string]any{"id": "s1", "values": []any{map[string]any{"id": "v1", "value": "S"}}}, "bad values"},
+	} {
+		if status, msg := apply(context.Background(), directive{Type: "save_option_set", Payload: c.payload}, hooks); status != "failed" || msg != c.want {
+			t.Errorf("%v: %q %q, want %q", c.payload, status, msg, c.want)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("a malformed payload reached the hook %d time(s)", calls)
+	}
+	status, msg := apply(context.Background(), directive{Type: "save_option_set", Payload: map[string]any{
+		"id": " s1 ", "create": true, "name": " Size ", "active": "false",
+		"values": `[{"id":" v-s ","value":" S "},{"id":"v-m","value":"M"}]`,
+	}}, hooks)
+	if status != "applied" || msg != "saved" {
+		t.Fatalf("good payload: %q %q", status, msg)
+	}
+	if got.ID != "s1" || !got.Create || got.Name == nil || *got.Name != "Size" || got.Active == nil || *got.Active {
+		t.Fatalf("decoded = %+v", got)
+	}
+	if got.Values == nil || !reflect.DeepEqual(*got.Values, []data.OptionSetValueInput{{ID: "v-s", Value: "S"}, {ID: "v-m", Value: "M"}}) {
+		t.Fatalf("values = %+v", got.Values)
+	}
+	// Absent fields → nil (keep); an empty array is a real "clear every value".
+	apply(context.Background(), directive{Type: "save_option_set", Payload: map[string]any{"id": "s1", "values": `[]`}}, hooks)
+	if got.Create || got.Name != nil || got.Active != nil || got.Values == nil || len(*got.Values) != 0 {
+		t.Fatalf("absent fields must be nil and [] an empty replace: %+v", got)
+	}
+	apply(context.Background(), directive{Type: "save_option_set", Payload: map[string]any{"id": "s1", "name": "Sizes"}}, hooks)
+	if got.Values != nil {
+		t.Fatalf("absent values must be nil (keep every value): %+v", got)
+	}
+}
+
+func TestApplyDeleteOptionSet(t *testing.T) {
+	var gotID string
+	hooks := Hooks{DeleteOptionSet: func(ctx context.Context, id string) (string, error) {
+		gotID = id
+		if id == "used" {
+			return "", errors.New("option set Size is used by 1 item: T-shirt")
+		}
+		return "deleted", nil
+	}}
+	if status, msg := apply(context.Background(), directive{Type: "delete_option_set", Payload: map[string]any{}}, hooks); status != "failed" || msg != "missing id" {
+		t.Fatalf("missing id: %q %q", status, msg)
+	}
+	if status, _ := apply(context.Background(), directive{Type: "delete_option_set", Payload: map[string]any{"id": "s1"}}, hooks); status != "applied" || gotID != "s1" {
+		t.Fatalf("delete: %q", gotID)
+	}
+	// The hook's error IS the failure text the cloud shows (the in-use refusal).
+	if status, msg := apply(context.Background(), directive{Type: "delete_option_set", Payload: map[string]any{"id": "used"}}, hooks); status != "failed" || msg != "option set Size is used by 1 item: T-shirt" {
+		t.Fatalf("in-use refusal: %q %q", status, msg)
+	}
+}
+
+// Both option-set types are main-till only and re-push the catalog
+// snapshot after they apply, like the modifier-group pair.
+func TestOptionSetDirectiveTypesRegistered(t *testing.T) {
+	for _, typ := range []string{"save_option_set", "delete_option_set"} {
+		if !mainTillOnlyTypes[typ] {
+			t.Errorf("%s missing from mainTillOnlyTypes", typ)
+		}
+		if !catalogTypes[typ] {
+			t.Errorf("%s missing from catalogTypes", typ)
+		}
+	}
+}
+
 // §3: on a satellite till (sync.primary_url set) Tick SKIPS the five
 // main-till-only types — no apply and no result post — so the directive
 // stays pending for the main till. Other types still apply as before.
@@ -228,6 +319,8 @@ func TestTickSatelliteSkipsMainTillOnlyTypes(t *testing.T) {
 		{"id": "d5", "type": "delete_modifier_group", "payload": map[string]any{"id": "g1"}},
 		{"id": "d6", "type": "set_setting", "payload": map[string]any{"key": "k", "value": "v"}},
 		{"id": "d7", "type": "set_category_order", "payload": map[string]any{"category_ids": `["c1"]`}},
+		{"id": "d8", "type": "save_option_set", "payload": map[string]any{"id": "s1"}},
+		{"id": "d9", "type": "delete_option_set", "payload": map[string]any{"id": "s1"}},
 	}}
 	srv := httptest.NewServer(cloud.handler())
 	defer srv.Close()
@@ -243,6 +336,8 @@ func TestTickSatelliteSkipsMainTillOnlyTypes(t *testing.T) {
 		SaveModifierGroup:   func(context.Context, data.ModifierGroupSave) (string, error) { ran++; return "", nil },
 		DeleteModifierGroup: func(context.Context, string) (string, error) { ran++; return "", nil },
 		SetCategoryOrder:    func(context.Context, []string) (string, error) { ran++; return "", nil },
+		SaveOptionSet:       func(context.Context, data.OptionSetSave) (string, error) { ran++; return "", nil },
+		DeleteOptionSet:     func(context.Context, string) (string, error) { ran++; return "", nil },
 		SetSetting:          func(context.Context, string, string) (string, error) { return "set", nil },
 	}
 	if err := Tick(context.Background(), testCfg(srv.URL), db, hooks); err != nil {

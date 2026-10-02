@@ -22,6 +22,13 @@ Every generated variant is an ordinary variant: it has its own SKU, price, stock
 4. Press **Generate variants**. One variant is created for every combination (three for Size alone; Size × Colour with three colours gives nine), named like *S* or *S / Red* (values are joined in the order the sets are listed on this page — the order you created them in), each with a generated SKU and the item's current price. Edit any name, SKU or price in the grid afterwards, add barcodes, and set stock as usual.
 5. Added a value later — an *XL*? Press **Generate variants** again on each item that uses the set. Only the missing combinations are created; existing variants are never duplicated, renamed or removed, so it is always safe to run it again.
 
+## Changing or deleting a set
+
+- To rename a set, edit the name at the top of its card and press **Rename**. Two sets can't share a name.
+- To change a value, tap its text on the card, type the new one and press Enter (or tap elsewhere). Use the **↑** and **↓** buttons beside a value to move it earlier or later in the list, and **×** to remove it. Variants you already generated keep their names — edit them in the item's grid if you want them to match.
+- Press **Deactivate** to stop offering a set on items' **Variants** tab without deleting it; its card then says *Inactive*. **Activate** brings it back.
+- A set can only be deleted while no item uses it. Until then its card lists those items under **Used by** (each name opens that item) and **Delete option set** is unavailable: untick the set on each item's **Variants** tab first, then delete it. A deleted (retired) item doesn't count; if it is restored later, apply the set to it again.
+
 ## Good to know
 
 - Option sets are for a **range of real products** (sizes, colours, pack sizes) — each combination is its own stock line. For a choice made at the till that doesn't change what you stock ("extra shot", "no onions"), use **Customization options** on the item instead.

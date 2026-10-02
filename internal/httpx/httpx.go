@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/text/language"
 	"golang.org/x/text/language/display"
@@ -64,6 +65,12 @@ var UpdateInstallBridge = selfupdate.InstallBridgeAvailableNow
 var UpdateAvailable = func() bool { return updates.Current().Available }
 
 var baseFuncs = template.FuncMap{
+	// runelen: a field's `size` attribute must track how many CHARACTERS
+	// will actually show, not how many bytes the string takes (ut-docs#3319
+	// review finding) — Go's builtin `len` on a string is byte length, which
+	// for an fa/ar value makes the field render up to ~2x too wide on an
+	// engine that still honours `size` as a fallback to `field-sizing`.
+	"runelen":         func(s string) int { return utf8.RuneCountInString(s) },
 	"div100":          func(cents int64) float64 { return float64(cents) / 100.0 },
 	"bpPercent":       func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 	"appversion":      func() string { return buildinfo.Version },

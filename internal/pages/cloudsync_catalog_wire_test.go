@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -127,6 +128,90 @@ func TestCloudCategoryHooks_RefusedOnReplica(t *testing.T) {
 	}
 	if _, err := hooks.DeleteCategory(ctx, "cat-r", ""); err == nil {
 		t.Fatal("delete_category must be refused on a replica")
+	}
+}
+
+// ut-docs#3319: save_option_set / delete_option_set through buildCloudHooks
+// — create-with-id, idempotent replay, audit, delete refused while the set
+// is applied to an item (the error names the item), delete once unused,
+// "already deleted" replay, and both refused on a replica.
+func TestCloudSaveAndDeleteOptionSet(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	hooks := buildCloudHooks(dp, nil)
+	if hooks.SaveOptionSet == nil || hooks.DeleteOptionSet == nil {
+		t.Fatal("option-set hooks not wired")
+	}
+	vals := []data.OptionSetValueInput{{ID: "v-s", Value: "S"}, {ID: "v-m", Value: "M"}}
+	msg, err := hooks.SaveOptionSet(ctx, data.OptionSetSave{ID: "set-new", Create: true, Name: sp("Size"), Values: &vals})
+	if err != nil || msg != "created option set Size" {
+		t.Fatalf("create: %q %v", msg, err)
+	}
+	if n := cloudAuditCount(t, dp, "cloud_option_set_saved", "set-new"); n != 1 {
+		t.Fatalf("audit rows = %d", n)
+	}
+	msg, err = hooks.SaveOptionSet(ctx, data.OptionSetSave{ID: "set-new", Create: true, Name: sp("Size"), Values: &vals})
+	if err != nil || msg != "updated option set Size" {
+		t.Fatalf("replay: %q %v", msg, err)
+	}
+	if _, err := hooks.SaveOptionSet(ctx, data.OptionSetSave{ID: "set-missing", Name: sp("Fit")}); err == nil {
+		t.Fatal("an update of an unknown set must fail")
+	}
+
+	repo := data.NewOptionSetRepo(dp.Db)
+	if err := repo.ApplyOptionSetsToItem(ctx, "itm1", []string{"set-new"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = hooks.DeleteOptionSet(ctx, "set-new")
+	if err == nil || !strings.Contains(err.Error(), "Size") || !strings.Contains(err.Error(), "Apple") || !strings.Contains(err.Error(), "1 item") {
+		t.Fatalf("in-use delete must be refused naming the set and its item, got %v", err)
+	}
+	if _, err := repo.GetOptionSet(ctx, "set-new"); err != nil {
+		t.Fatalf("refused delete removed the set: %v", err)
+	}
+	if n := cloudAuditCount(t, dp, "cloud_option_set_deleted", "set-new"); n != 0 {
+		t.Fatalf("a refused delete must not audit, rows = %d", n)
+	}
+
+	if err := repo.ApplyOptionSetsToItem(ctx, "itm1", nil); err != nil {
+		t.Fatal(err)
+	}
+	msg, err = hooks.DeleteOptionSet(ctx, "set-new")
+	if err != nil || msg != "deleted option set Size" {
+		t.Fatalf("delete: %q %v", msg, err)
+	}
+	if n := cloudAuditCount(t, dp, "cloud_option_set_deleted", "set-new"); n != 1 {
+		t.Fatalf("delete audit rows = %d", n)
+	}
+	if msg, err := hooks.DeleteOptionSet(ctx, "set-new"); err != nil || msg != "already deleted" {
+		t.Fatalf("delete replay: %q %v", msg, err)
+	}
+
+	setReplica(t, dp)
+	if _, err := hooks.SaveOptionSet(ctx, data.OptionSetSave{ID: "set-2", Create: true, Name: sp("Colour")}); err == nil {
+		t.Fatal("save_option_set must be refused on a replica")
+	}
+	if _, err := hooks.DeleteOptionSet(ctx, "set-2"); err == nil {
+		t.Fatal("delete_option_set must be refused on a replica")
+	}
+}
+
+// The in-use refusal names at most optionSetInUseMaxNames items, then says
+// how many more — never an unbounded list in a directive result.
+func TestOptionSetInUseMessage_CapsNames(t *testing.T) {
+	items := make([]data.AssignedItem, 0, optionSetInUseMaxNames+3)
+	for i := 0; i < optionSetInUseMaxNames+3; i++ {
+		items = append(items, data.AssignedItem{ID: fmt.Sprintf("i%02d", i), Name: fmt.Sprintf("Item %02d", i)})
+	}
+	msg := optionSetInUseMessage("Size", items)
+	if !strings.Contains(msg, fmt.Sprintf("%d items", len(items))) || !strings.Contains(msg, "and 3 more") {
+		t.Fatalf("msg = %q", msg)
+	}
+	if strings.Contains(msg, fmt.Sprintf("Item %02d", optionSetInUseMaxNames)) {
+		t.Fatalf("msg names more than the cap: %q", msg)
+	}
+	if one := optionSetInUseMessage("Size", items[:1]); strings.Contains(one, "more") || !strings.Contains(one, "1 item:") {
+		t.Fatalf("single-item msg = %q", one)
 	}
 }
 

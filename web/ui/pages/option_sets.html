@@ -17,31 +17,106 @@
 {{ end }}
 
 {{/* ut-docs#1900: the list is its own template so every mutation on this
-     screen (add set, add value) answers with just this fragment
+     screen (add set, add value, and since ut-docs#3319 rename, edit /
+     move / remove a value, activate, delete) answers with just this fragment
      (#option-sets-list, outerHTML swap) — same shape as the item panel's
      #catalog-variants re-render. Same plain stack as modifiers.html rather
      than .catalog-layout's list+editor split (that review's finding: an
      always-empty 360px column at kiosk width). */}}
 {{ define "option_sets_list" }}
 <div id="option-sets-list" class="option-sets-list">
+  {{/* ut-docs#3319: a refusal not tied to one card (the set or value was
+       already gone) shows here, above the cards — including when the
+       refusal left zero sets (the deleted set was the last one), so this
+       check must run regardless of whether .Sets is empty. Review finding:
+       this used to sit inside the "has sets" branch, where a stale tab's
+       refusal on an already-emptied shop rendered no message at all. */}}
+  {{ if and .ErrorMsg (not .ErrorSetID) }}<p class="option-set-error" role="alert">{{ .ErrorMsg }}</p>{{ end }}
   {{ if not .Sets }}
   <div class="card">
     <p class="muted" style="margin:0">{{ T "catalog.option_sets.none" }}</p>
   </div>
   {{ else }}
   {{ range .Sets }}
-  <div class="card option-set-card{{ if not .IsActive }} vg-inactive{{ end }}">
-    <h3 style="margin:.2rem 0">{{ .Name }}</h3>
+  {{ $set := . }}
+  <div class="card option-set-card{{ if not .IsActive }} vg-inactive{{ end }}" data-set-id="{{ .ID }}">
+    {{/* Rename in place (ut-docs#3319). The status tag is text, never
+         colour/opacity alone. */}}
+    <div class="option-set-head">
+      <form class="option-set-rename" hx-post="/api/catalog/option-set/rename" hx-target="#option-sets-list" hx-swap="outerHTML">
+        <input type="hidden" name="optionSetId" value="{{ .ID }}">
+        <input type="text" id="option-set-name-{{ .ID }}" name="name" value="{{ .Name }}" required aria-label="{{ T "catalog.option_sets.name" }}">
+        <button class="btn secondary" type="submit">{{ T "catalog.option_sets.rename" }}</button>
+      </form>
+      <span class="tag option-set-status">{{ if .IsActive }}{{ T "catalog.active" }}{{ else }}{{ T "catalog.option_sets.inactive" }}{{ end }}</span>
+    </div>
+    {{ if and $.ErrorMsg (eq $.ErrorSetID .ID) }}<p class="option-set-error" role="alert">{{ $.ErrorMsg }}</p>{{ end }}
     <div class="muted catalog-detail-label">{{ T "catalog.option_sets.values" }}</div>
     {{ if not .Values }}<p class="muted" style="margin:.2rem 0">{{ T "catalog.option_sets.no_values" }}</p>{{ end }}
-    <div class="chip-row">
-      {{ range .Values }}<span class="chip option-set-chip">{{ .Value }}</span>{{ end }}
-    </div>
+    {{/* Each value is a chip whose text is edited in place (saved on
+         change or Enter) with explicit up / down / remove buttons — NOT
+         drag-to-reorder: this screen runs on the kiosk touchscreen, where a
+         pointerdown/drag handler can swallow the page's scroll gesture (UX
+         note, ut-docs#3319). Stable ids let htmx put focus back on the same
+         control after the list re-renders, so a keyboard user can press
+         "move up" repeatedly. */}}
+    <ol class="chip-row option-set-values">
+      {{ range $i, $v := .Values }}
+      <li class="chip option-set-chip">
+        <form class="option-set-value-edit" hx-post="/api/catalog/option-set-value/update" hx-trigger="submit, change" hx-sync="this:drop" hx-target="#option-sets-list" hx-swap="outerHTML">
+          <input type="hidden" name="optionSetId" value="{{ $set.ID }}">
+          <input type="hidden" name="valueId" value="{{ .ID }}">
+          <input type="text" id="osv-text-{{ .ID }}" name="value" value="{{ .Value }}" size="{{ runelen .Value }}" required maxlength="{{ $.MaxValueLen }}" aria-label="{{ printf (T "catalog.option_sets.edit_value") .Value }}">
+        </form>
+        <button type="button" id="osv-up-{{ .ID }}" class="option-set-chip-btn"{{ if eq $i 0 }} disabled{{ end }}
+                hx-post="/api/catalog/option-set-value/move" hx-vals='{{ jsonVals "optionSetId" $set.ID "valueId" .ID "direction" "up" }}'
+                hx-target="#option-sets-list" hx-swap="outerHTML"
+                aria-label="{{ printf (T "catalog.option_sets.move_up") .Value }}" title="{{ printf (T "catalog.option_sets.move_up") .Value }}">↑</button>
+        <button type="button" id="osv-down-{{ .ID }}" class="option-set-chip-btn"{{ if eq $i $set.LastValueIndex }} disabled{{ end }}
+                hx-post="/api/catalog/option-set-value/move" hx-vals='{{ jsonVals "optionSetId" $set.ID "valueId" .ID "direction" "down" }}'
+                hx-target="#option-sets-list" hx-swap="outerHTML"
+                aria-label="{{ printf (T "catalog.option_sets.move_down") .Value }}" title="{{ printf (T "catalog.option_sets.move_down") .Value }}">↓</button>
+        <button type="button" id="osv-remove-{{ .ID }}" class="option-set-chip-btn"
+                hx-post="/api/catalog/option-set-value/remove" hx-vals='{{ jsonVals "optionSetId" $set.ID "valueId" .ID }}'
+                hx-confirm="{{ T "catalog.option_sets.remove_value_confirm" }}"
+                hx-target="#option-sets-list" hx-swap="outerHTML"
+                aria-label="{{ printf (T "catalog.option_sets.remove_value") .Value }}" title="{{ printf (T "catalog.option_sets.remove_value") .Value }}">×</button>
+      </li>
+      {{ end }}
+    </ol>
     <form class="chip-add" hx-post="/api/catalog/option-set-value" hx-target="#option-sets-list" hx-swap="outerHTML">
       <input type="hidden" name="optionSetId" value="{{ .ID }}">
       <input type="text" name="value" required placeholder="{{ T "catalog.option_sets.value_example" }}">
       <button class="btn secondary" type="submit">{{ T "catalog.option_sets.add_value" }}</button>
     </form>
+
+    {{/* Used by (ut-docs#3319): visible without clicking anything, so the
+         disabled Delete below explains itself instead of reading as broken.
+         Each item links to its editor's Variants tab, where the set is
+         un-applied. */}}
+    {{ if .Items }}
+    <div class="option-set-usedby" id="option-set-usedby-{{ .ID }}">
+      <div class="muted catalog-detail-label">{{ T "catalog.option_sets.used_by" }}</div>
+      <div class="chip-row">
+        {{ range .ShownItems }}<a class="tag option-set-usedby-item" href="/catalog?item={{ .ID }}&amp;tab=variants">{{ .Name }}</a>{{ end }}
+        {{ if .MoreItems }}<span class="muted">{{ printf (T "catalog.option_sets.used_by_more") .MoreItems }}</span>{{ end }}
+      </div>
+      <p class="muted option-set-usedby-hint">{{ T "catalog.option_sets.used_by_hint" }}</p>
+    </div>
+    {{ end }}
+    <div class="option-set-card-footer">
+      <button type="button" class="btn secondary"
+              hx-post="/api/catalog/option-set/active" hx-vals='{{ jsonVals "optionSetId" .ID "isActive" (or (and .IsActive "0") "1") }}'
+              hx-target="#option-sets-list" hx-swap="outerHTML">{{ if .IsActive }}{{ T "catalog.option_sets.deactivate" }}{{ else }}{{ T "catalog.option_sets.activate" }}{{ end }}</button>
+      {{ if .Items }}
+      <button type="button" class="btn secondary option-set-delete-btn" disabled aria-describedby="option-set-usedby-{{ .ID }}">{{ T "catalog.option_sets.delete" }}</button>
+      {{ else }}
+      <button type="button" class="btn secondary option-set-delete-btn"
+              hx-post="/api/catalog/option-set/delete" hx-vals='{{ jsonVals "optionSetId" .ID }}'
+              hx-confirm="{{ T "catalog.option_sets.delete_confirm" }}"
+              hx-target="#option-sets-list" hx-swap="outerHTML">{{ T "catalog.option_sets.delete" }}</button>
+      {{ end }}
+    </div>
   </div>
   {{ end }}
   {{ end }}
