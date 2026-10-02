@@ -1,0 +1,8 @@
+# Reviewed exceptions for scripts/ci/guard-card-data-schema.sh (ADR-0127 §7c).
+# Format: <path> <identifier>  # <reason>   -- the reason is mandatory.
+# Shipped migrations are frozen (ADR-0100), so a hit in one lives here.
+
+# The EC-receipt line (ut-docs#543, #792): scheme + last 4 digits only.
+# pos.validateMaskedPAN refuses any value with more than 4 digits before it
+# reaches the payments row.
+internal/db/migrations/001_init.sql masked_pan  # masked scheme+last4 only, enforced by pos.validateMaskedPAN (#792)

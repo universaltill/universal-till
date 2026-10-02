@@ -103,6 +103,12 @@ jobs:
         run: bash scripts/ci/guard-migration-version-collision.sh
       - name: Migration-version-collision guard regression test
         run: bash scripts/ci/guard-migration-version-collision_test.sh
+      # ADR-0127 §7c (ut-docs#3372): no migration names a card number,
+      # BIN/IIN, CVV/CVC, track data or PIN block -- card data is PSP-vault only.
+      - name: Card-data schema guard
+        run: bash scripts/ci/guard-card-data-schema.sh
+      - name: Card-data schema guard regression test
+        run: bash scripts/ci/guard-card-data-schema_test.sh
       - name: Kiosk-engine isolation guard
         run: bash scripts/ci/guard-kiosk-engine.sh
       - name: Kiosk-engine isolation guard regression test
