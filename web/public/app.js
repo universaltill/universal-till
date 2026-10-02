@@ -3586,3 +3586,111 @@ window.utTabBarFade = function (el) {
     measureBar();
   }
 })();
+
+// utNavBack (ut-docs#3352, ADR-0137): the shell Back in nav.html
+// (a.nav-back). Back returns to the page the operator came from: when this
+// tab has an in-app page before the current one, a tap is history.back();
+// otherwise the link's own href — the page's declared parent
+// (uislot.ParentOf) — is followed as a normal boosted link.
+//
+// "Has an in-app page before this one" is the current history entry's
+// index, stamped into history.state.utNav: 0 for the first till entry of a
+// visit, +1 for each new entry (pushState — htmx's boosted links and pushed
+// panels included —, a #fragment link, a full load from another till page).
+// A traverse or reload lands on an entry that already carries its index.
+// The last index is kept in sessionStorage so a full-page load (a form's
+// redirect) knows where it came from.
+(function () {
+  var KEY = 'ut.navIdx';
+  var mem = null; // sessionStorage can throw (private mode, blocked)
+  function saved() {
+    try { var v = sessionStorage.getItem(KEY); return v === null ? null : parseInt(v, 10); } catch (e) { return mem; }
+  }
+  function save(i) {
+    mem = i;
+    try { sessionStorage.setItem(KEY, String(i)); } catch (e) { /* mem only */ }
+  }
+  function stamped() {
+    var s = history.state;
+    return s && typeof s.utNav === 'number' ? s.utNav : null;
+  }
+  function withIdx(state, i) {
+    return Object.assign({}, state && typeof state === 'object' ? state : {}, { utNav: i });
+  }
+  function next() {
+    var i = stamped();
+    if (i === null) i = saved();
+    return i === null ? 0 : i + 1;
+  }
+  var replace = history.replaceState, push = history.pushState;
+  function stamp(i) {
+    save(i);
+    try { replace.call(history, withIdx(history.state, i), ''); } catch (e) { /* index stays in storage */ }
+  }
+  // replaceState always targets the current entry, so its index carries
+  // over unless the caller sets one — htmx 1.9 rewrites the OUTGOING entry
+  // to {htmx:true} right before every push (saveCurrentPageToHistory).
+  history.replaceState = function (state) {
+    var i = stamped();
+    if (i !== null && (state === null || state === undefined || (typeof state === 'object' && !('utNav' in state)))) {
+      arguments[0] = withIdx(state, i);
+    }
+    return replace.apply(history, arguments);
+  };
+  // pushState makes a new entry, one after the current one — htmx's
+  // boosted navigation and hx-push-url as much as a page script's own.
+  history.pushState = function (state) {
+    var i = next();
+    if (state === null || state === undefined || typeof state === 'object') arguments[0] = withIdx(state, i);
+    var r = push.apply(history, arguments);
+    save(i);
+    return r;
+  };
+
+  // A full load with no index of its own continues the count only when it
+  // came from a till page of this tab (a form's redirect, a fallback link):
+  // a typed URL, a bookmark or a page of another site starts at 0, so Back
+  // can never walk out of the app. Capped by history.length so a
+  // location.replace() can't count an entry that isn't there.
+  function arrive() {
+    var i = stamped();
+    if (i !== null) { save(i); return; }
+    var prev = saved(), sameOrigin = false;
+    try { sameOrigin = !!document.referrer && new URL(document.referrer).origin === location.origin; } catch (e) { /* no referrer */ }
+    if (prev === null || !sameOrigin || history.length <= 1) { stamp(0); return; }
+    stamp(Math.min(prev + 1, history.length - 1));
+  }
+  arrive();
+  window.addEventListener('pageshow', function (e) { if (e.persisted) arrive(); });
+  // A traverse within the document: a stamped entry restores its index; a
+  // new #fragment entry (a plain href="#…" link makes no pushState) gets
+  // the next one.
+  function onEntry() {
+    var i = stamped();
+    if (i !== null) save(i); else stamp(next());
+  }
+  window.addEventListener('popstate', onEntry);
+  window.addEventListener('hashchange', function () { if (stamped() === null) onEntry(); });
+
+  document.addEventListener('click', function (e) {
+    var a = e.target instanceof Element ? e.target.closest('a.nav-back') : null;
+    if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var i = stamped();
+    if (!(i > 0) || history.length <= 1) return; // nothing in-app behind: follow href
+    // Capture phase on document: htmx's boosted handler on the link never
+    // sees this tap.
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    var href = a.href, left = false;
+    function gone() { left = true; }
+    // popstate: a same-document step; beforeunload/pagehide: a
+    // cross-document one has started (before its fetch on a slow till).
+    window.addEventListener('popstate', gone, { once: true });
+    window.addEventListener('beforeunload', gone, { once: true });
+    window.addEventListener('pagehide', gone, { once: true });
+    history.back();
+    // An index that points at nothing (history.back() did nothing) falls
+    // back to the parent.
+    setTimeout(function () { if (!left) window.location.assign(href); }, 1500);
+  }, true);
+})();

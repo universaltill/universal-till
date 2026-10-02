@@ -553,6 +553,10 @@ We'll even link to notable forks in this README! 🎉
 - Generic Windows tablets - Excellent
 - Old laptops/PCs - Excellent
 
+### Navigation
+
+Every page except the sale screen has one **← Back** in the shell (rail or phone top bar) that returns to the page you came from, or — with nothing to go back to — to the page's parent; it works the same in a browser, the Pi kiosk and the iOS/Android apps ([ADR-0137](https://github.com/universaltill/ut-docs/blob/main/adr/0137-shell-back-history-first-parent-fallback.md)). The full page graph, and where Back goes from each page, is in [ut-docs `reference/page-navigation-map.md`](https://github.com/universaltill/ut-docs/blob/main/reference/page-navigation-map.md).
+
 ---
 
 ## 🌍 Internationalization

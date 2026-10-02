@@ -29,6 +29,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/releasenotes"
 	"github.com/universaltill/universal-till/internal/selfupdate"
+	"github.com/universaltill/universal-till/internal/uislot"
 	"github.com/universaltill/universal-till/internal/updates"
 	uiassets "github.com/universaltill/universal-till/web"
 )
@@ -144,6 +145,10 @@ var baseFuncs = template.FuncMap{
 	// (internal/ui, RenderWith) keep this fallback rather than failing to
 	// parse, which is why it lives in the base map at all.
 	"helpHref": func() string { return "/help" },
+	// The nav's Back link target (ADR-0137, ut-docs#3352): the page's
+	// declared parent, "" = no Back. Request-less fallback "" for the same
+	// reason as helpHref above; withHelpHref binds it to the request path.
+	"backHref": func() string { return "" },
 	// Explicit contextual "?" for a SECTION of a page whose route is already
 	// claimed by another topic (the settings cards). Locale-less fallback for
 	// the same reason as helpHref above; FuncsFor overrides it locale-bound.
@@ -306,9 +311,10 @@ func (r *Renderer) Render(w http.ResponseWriter, name string, data any) error {
 // The locale comes from the funcs' own locale-bound "locale" (FuncsFor);
 // DefaultLocale() when the caller built funcs without it.
 func withHelpHref(funcs template.FuncMap, r *http.Request) template.FuncMap {
-	out := make(template.FuncMap, len(funcs)+3)
+	out := make(template.FuncMap, len(funcs)+4)
 	maps.Copy(out, funcs)
 	out["helpHref"] = func() string { return manual.HelpHref(r.URL.Path) }
+	out["backHref"] = func() string { return uislot.ParentOf(r.URL.Path) }
 	locale := DefaultLocale()
 	if f, ok := funcs["locale"].(func() string); ok {
 		locale = f()

@@ -18,7 +18,7 @@ test.beforeEach(async ({ page }) => {
 // With every rail icon now one inline SVG set, the full 11-icon rail must
 // render at one identical box size — lock included, measured here.
 test.describe('nav rail SVG icons: full manager rail incl. lock (ut-docs#1423)', () => {
-  test('all 11 rail icons are SVG and share one rendered box size', async ({ page }) => {
+  test('all 12 rail icons are SVG and share one rendered box size', async ({ page }) => {
     const assertClean = watchConsole(page);
     await ensureOperator(page);
     await page.setViewportSize({ width: 1024, height: 600 });
@@ -29,7 +29,8 @@ test.describe('nav rail SVG icons: full manager rail incl. lock (ut-docs#1423)',
 
     const svgs = page.locator('.nav .nav-toggle-ico svg[data-icon]');
     const n = await svgs.count();
-    expect(n, 'till/menu/inventory/orders/help/bug/users/tag/globe/user/lock').toBe(11);
+    // ut-docs#3352 / ADR-0137: + the shell Back (arrow-left) under the logo.
+    expect(n, 'back/till/menu/inventory/orders/help/bug/users/tag/globe/user/lock').toBe(12);
 
     const boxes: { icon: string; w: number; h: number }[] = [];
     for (let i = 0; i < n; i++) {
@@ -63,7 +64,10 @@ test.describe('nav rail SVG icons: full manager rail incl. lock (ut-docs#1423)',
     await page.goto('/settings');
     await expect(page.locator('.session-lock button.btn-lock')).toBeVisible();
     await expect(page.locator('#bugreport-toggle')).toBeVisible();
-    const tiles = await page.locator('.nav .nav-toggle').evaluateAll((els) =>
+    // The shell Back (ut-docs#3352 / ADR-0137) is an action, not a rail
+    // destination: same width, but deliberately no tile background.
+    const backW = (await page.locator('.nav .nav-back').boundingBox())!.width;
+    const tiles = await page.locator('.nav .nav-toggle:not(.nav-back)').evaluateAll((els) =>
       els
         .filter((e) => (e as HTMLElement).offsetParent !== null)
         .map((e) => {
@@ -74,6 +78,7 @@ test.describe('nav rail SVG icons: full manager rail incl. lock (ut-docs#1423)',
     );
     expect(tiles.length).toBeGreaterThanOrEqual(11);
     const ref = tiles[0];
+    expect(Math.abs(backW - ref.w), `Back width ${backW} vs ${ref.w}`).toBeLessThan(1);
     for (const t of tiles) {
       expect(Math.abs(t.w - ref.w), `${t.tag} ${t.id} width ${t.w} vs ${ref.w}`).toBeLessThan(1);
       expect(t.bg, `${t.tag} ${t.id} background`).toBe(ref.bg);
