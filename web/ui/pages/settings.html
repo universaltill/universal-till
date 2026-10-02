@@ -18,7 +18,7 @@
      Rendered hidden: the script below shows it for /settings with no
      fragment, so a browser without script still gets the full page. -->
 <nav class="settings-home" id="settings-home" aria-label="{{ T "settings.home.label" }}" hidden>
-  <form class="settings-search settings-home-search" role="search" onsubmit="return false">
+  <form class="settings-search settings-home-search" role="search" data-submit="prevent">
     <label class="visually-hidden" for="settings-home-q">{{ T "settings.search.label" }}</label>
     <input id="settings-home-q" type="search" autocomplete="off" placeholder="{{ T "settings.search.placeholder" }}">
   </form>
@@ -40,7 +40,7 @@
   <aside class="settings-nav" id="settings-nav" aria-label="{{ T "settings.nav.label" }}">
     <a class="settings-home-link" id="settings-home-link" href="#" hidden>{{ T "settings.home.back" }}</a>
     <h2 class="settings-cat-title" id="settings-cat-title" tabindex="-1" hidden></h2>
-    <form class="settings-search" role="search" onsubmit="return false">
+    <form class="settings-search" role="search" data-submit="prevent">
       <label class="visually-hidden" for="settings-q">{{ T "settings.search.label" }}</label>
       <input id="settings-q" type="search" autocomplete="off" placeholder="{{ T "settings.search.placeholder" }}">
     </form>
@@ -103,7 +103,7 @@
   <div class="set-divider">
     <fieldset class="set-lock" data-lock-region="settings-auto-register"{{ if index $.lockedRegions "settings-auto-register" }} disabled{{ end }}>
     {{ if index $.lockedRegions "settings-auto-register" }}{{ template "set-lock-note" }}{{ end }}
-    <form hx-post="/api/settings/auto-register" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-auto-register')} } else {document.getElementById('settings-save-error').hidden=false}">
+    <form hx-post="/api/settings/auto-register" hx-swap="none" data-after-request="ok not-html reload:settings-auto-register; fail unhide:settings-save-error">
       <label><input type="checkbox" name="optIn" {{ if eq (index .settingsMap "marketplace.auto_register_opt_in") "true" }}checked{{ end }}> {{ T "settings.enrol.auto_register.label" }}</label>
       <p class="muted">{{ T "settings.enrol.auto_register.help" }}</p>
       <div class="set-gap-s">
@@ -345,7 +345,7 @@
   <h2>{{ T "settings.theme.title" }}</h2>
   {{/* ut-docs#2783: per station, never synced between tills. */}}
   <p class="muted">{{ T "settings.theme.help_per_till" }}</p>
-  <form hx-post="/api/settings/theme" hx-swap="none" hx-on::after-request="if(event.detail.successful){UT.reload('settings-theme')}else{document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/theme" hx-swap="none" data-after-request="ok reload:settings-theme; fail unhide:settings-save-error">
     <select name="theme">
       {{ $current := .theme }}
       {{ range .themes }}
@@ -358,7 +358,7 @@
 <div class="card" id="settings-display">
   <h2>{{ T "settings.display.title" }}</h2>
   <p class="muted">{{ T "settings.display.help" }}</p>
-  <form hx-post="/api/settings/ui-scale" hx-swap="none" hx-on::after-request="if(event.detail.successful){UT.reload('settings-ui-scale')}else{document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/ui-scale" hx-swap="none" data-after-request="ok reload:settings-ui-scale; fail unhide:settings-save-error">
     {{ $scale := .uiScale }}
     <select name="scale">
       <option value="0.7"  {{ if eq $scale "0.7" }}selected{{ end }}>70% — {{ T "settings.display.tiny" }}</option>
@@ -380,7 +380,7 @@
        selector puts the last host detection into words, whatever the
        choice, so an operator who picked a level can still see what Auto
        would use. -->
-  <form hx-post="/api/settings/effects-level" hx-swap="none" hx-on::after-request="if(event.detail.successful){UT.reload('settings-effects-level')}else{document.getElementById('settings-save-error').hidden=false}" class="set-gap" id="settings-effects-level">
+  <form hx-post="/api/settings/effects-level" hx-swap="none" data-after-request="ok reload:settings-effects-level; fail unhide:settings-save-error" class="set-gap" id="settings-effects-level">
     {{ $fx := .fxView }}
     <label class="set-row">{{ T "settings.display.effects" }}
       <select name="level" data-testid="effects-level-select">
@@ -396,7 +396,7 @@
     <p class="muted" data-testid="effects-detected">{{ T "settings.display.effects_detected" }} {{ T (printf "settings.display.effects_name_%s" $fx.Detected) }}{{ if $fx.ReasonParts }} ({{ range $i, $p := $fx.ReasonParts }}{{ if $i }}{{ T "settings.display.effects_reason_sep" }}{{ end }}{{ if $p.Arg }}{{ printf (T $p.Key) $p.Arg }}{{ else }}{{ T $p.Key }}{{ end }}{{ end }}){{ end }}</p>
     {{ end }}
   </form>
-  <form hx-post="/api/settings/osk" hx-swap="none" hx-on::after-request="if(event.detail.successful){UT.reload('settings-osk')}else{document.getElementById('settings-save-error').hidden=false}" class="set-gap">
+  <form hx-post="/api/settings/osk" hx-swap="none" data-after-request="ok reload:settings-osk; fail unhide:settings-save-error" class="set-gap">
     {{ $osk := oskmode }}
     <label class="set-row">{{ T "settings.display.osk" }}
       <select name="mode">
@@ -413,10 +413,10 @@
        default back" affordance for an operator who isn't looking at the
        sell screen right now. width_rem="0" is the exact same reset shape
        the divider's own double-tap/double-click sends -- plain htmx form,
-       same hx-on::after-request reload pattern as ui-scale/osk above,
+       same after-request reload pattern as ui-scale/osk above,
        since THIS control (unlike the live drag) has no basket-loss risk
        to protect against. -->
-  <form hx-post="/api/settings/basket-panel-width" hx-swap="none" hx-on::after-request="if(event.detail.successful){UT.reload('settings-basket-width')}else{document.getElementById('settings-save-error').hidden=false}" class="set-gap">
+  <form hx-post="/api/settings/basket-panel-width" hx-swap="none" data-after-request="ok reload:settings-basket-width; fail unhide:settings-save-error" class="set-gap">
     <input type="hidden" name="width_rem" value="0">
     <p class="muted">{{ T "settings.display.basket_panel_help" }}</p>
     <button class="btn secondary" type="submit" data-testid="basket-panel-reset">{{ T "settings.display.basket_panel_reset_btn" }}</button>
@@ -430,7 +430,7 @@
        forms (#796) — an elevation prompt (text/html) must not trigger the
        unconditional navigate-away that used to sit here, which would
        destroy the just-opened dialog before an operator could even see it. -->
-  <form hx-post="/api/settings/display-mode" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.noteNav('settings-display-mode');window.location.href='/'} } else {document.getElementById('settings-save-error').hidden=false}" class="set-gap">
+  <form hx-post="/api/settings/display-mode" hx-swap="none" data-after-request="ok not-html note-nav:settings-display-mode go:/; fail unhide:settings-save-error" class="set-gap">
     {{ $dmode := index .settingsMap "display.mode" }}
     <label class="set-row">{{ T "settings.display.mode" }}
       <select name="mode">
@@ -450,7 +450,7 @@
          ut-docs#1039, immediately over the shell's live control poll — in
          attach AND spawn mode). macOS (#609)/Windows (#610) still owe real
          implementations — see the pending-note copy below. -->
-    <form id="window-mode-form" hx-post="/api/settings/window-mode" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}" class="set-gap">
+    <form id="window-mode-form" hx-post="/api/settings/window-mode" hx-swap="none" data-after-request="fail unhide:settings-save-error" class="set-gap">
       {{ $windowMode := .windowMode }}
       <label class="set-row">{{ T "settings.display.window_mode_label" }}
         <select name="mode">
@@ -497,8 +497,8 @@
         <input type="checkbox" id="launch-on-startup-cb" name="enabled"
                hx-post="/api/settings/launch-on-startup" hx-trigger="change" hx-swap="none"
                hx-vals="js:{enabled: document.getElementById('launch-on-startup-cb').checked}"
-               hx-on::before-request="document.getElementById('launch-on-startup-msg').textContent=''"
-               hx-on::after-request="if(!event.detail.successful){this.checked=!this.checked;document.getElementById('settings-save-error').hidden=false}"
+               data-before-request="clear-text:launch-on-startup-msg"
+               data-after-request="fail toggle-checked unhide:settings-save-error"
                {{ if .launchOnStartup }}checked{{ end }}>
         {{ T "settings.display.launch_on_startup_label" }}
       </label>
@@ -743,8 +743,8 @@
     <input type="checkbox" id="bcsym-{{ .ID }}"
            hx-post="/api/settings/barcode-symbology" hx-trigger="change" hx-swap="none"
            hx-vals="js:{id: '{{ .ID }}', enabled: document.getElementById('bcsym-{{ .ID }}').checked}"
-           hx-on::before-request="document.getElementById('barcode-symbologies-msg').textContent=''"
-           hx-on::after-request="if(!event.detail.successful){this.checked=!this.checked;document.getElementById('settings-save-error').hidden=false}"
+           data-before-request="clear-text:barcode-symbologies-msg"
+           data-after-request="fail toggle-checked unhide:settings-save-error"
            {{ if .Enabled }}checked{{ end }}>
     {{ T .NameKey }}
   </label>
@@ -786,8 +786,8 @@
     <input type="checkbox" id="catalog-import-barcode-default-cb" name="enabled"
            hx-post="/api/settings/catalog-import-barcode-default" hx-trigger="change" hx-swap="none"
            hx-vals="js:{enabled: document.getElementById('catalog-import-barcode-default-cb').checked}"
-           hx-on::before-request="document.getElementById('catalog-import-barcode-default-msg').textContent=''"
-           hx-on::after-request="if(!event.detail.successful){this.checked=!this.checked;document.getElementById('settings-save-error').hidden=false}"
+           data-before-request="clear-text:catalog-import-barcode-default-msg"
+           data-after-request="fail toggle-checked unhide:settings-save-error"
            {{ if eq (index .settingsMap "catalog_import_barcode_from_sku_default") "1" }}checked{{ end }}>
     {{ T "settings.catalog_import_barcode_default.label" }}
   </label>
@@ -821,8 +821,8 @@
     <input type="checkbox" id="catalog-pre-pack-unit-price-cb" name="enabled"
            hx-post="/api/settings/catalog-pre-pack-unit-price" hx-trigger="change" hx-swap="none"
            hx-vals="js:{enabled: document.getElementById('catalog-pre-pack-unit-price-cb').checked}"
-           hx-on::before-request="document.getElementById('catalog-pre-pack-unit-price-msg').textContent=''"
-           hx-on::after-request="if(!event.detail.successful){this.checked=!this.checked;document.getElementById('settings-save-error').hidden=false}"
+           data-before-request="clear-text:catalog-pre-pack-unit-price-msg"
+           data-after-request="fail toggle-checked unhide:settings-save-error"
            {{ if eq (index .settingsMap "catalog_pre_pack_unit_price_enabled") "1" }}checked{{ end }}>
     {{ T "settings.catalog_pre_pack_unit_price.label" }}
   </label>
@@ -856,7 +856,7 @@
   <h2>{{ T "settings.sell_screen.title" }} {{ helpLink "sell" }}</h2>
   <fieldset class="set-lock" data-lock-region="settings-sell-screen"{{ if index $.lockedRegions "settings-sell-screen" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-sell-screen" }}{{ template "set-lock-note" }}{{ end }}
-  <form id="browsing-mode-form" hx-post="/api/settings/browsing-mode" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}" class="set-gap">
+  <form id="browsing-mode-form" hx-post="/api/settings/browsing-mode" hx-swap="none" data-after-request="fail unhide:settings-save-error" class="set-gap">
     {{ $bm := .browsingMode }}
     <label class="set-row">{{ T "settings.sell_screen.browsing_mode_label" }}
       <select name="mode" id="browsing-mode-select">
@@ -914,8 +914,8 @@
     <input type="checkbox" id="allow-negative-inventory-cb" name="enabled"
            hx-post="/api/settings/allow-negative-inventory" hx-trigger="change" hx-swap="none"
            hx-vals="js:{enabled: document.getElementById('allow-negative-inventory-cb').checked}"
-           hx-on::before-request="document.getElementById('allow-negative-inventory-msg').textContent=''"
-           hx-on::after-request="if(!event.detail.successful){this.checked=!this.checked;document.getElementById('settings-save-error').hidden=false}"
+           data-before-request="clear-text:allow-negative-inventory-msg"
+           data-after-request="fail toggle-checked unhide:settings-save-error"
            {{ if .settings.AllowNegativeInventory }}checked{{ end }}>
     {{ T "settings.stock_tracking.label" }}
   </label>
@@ -1558,7 +1558,7 @@
        none) is the same signal app.js's utPostWithElevation uses. -->
   <fieldset class="set-lock" data-lock-region="settings-retention"{{ if index $.lockedRegions "settings-retention" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-retention" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/report-retention" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-report-retention')} } else {document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/report-retention" hx-swap="none" data-after-request="ok not-html reload:settings-report-retention; fail unhide:settings-save-error">
     {{ $mode := .reportRetentionMode }}
     <label>{{ T "settings.retention.mode_label" }}
       <select name="mode">
@@ -1672,7 +1672,7 @@
        "saved" apart from "needs a manager's PIN" — Content-Type
        (text/html only on the prompt; the real 204 success has none) is
        the same signal the report-retention form above uses. -->
-  <form hx-post="/api/settings/printer" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-printer')} } else {document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/printer" hx-swap="none" data-after-request="ok not-html reload:settings-printer; fail unhide:settings-save-error">
     {{ $p := .printer }}
     <div class="field-pair">
       <label>{{ T "settings.printer.mode" }}
@@ -1887,7 +1887,7 @@
        success reload, which would destroy the just-opened dialog; the real
        success is a bare 204 with no Content-Type. -->
   <form hx-post="/api/settings/till-name" hx-swap="none"
-        hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-till-name')} } else {document.getElementById('settings-save-error').hidden=false}">
+        data-after-request="ok not-html reload:settings-till-name; fail unhide:settings-save-error">
     <label>{{ T "settings.tills.name_label" }}
       <input type="text" name="name" maxlength="60" value="{{ .TillName }}">
     </label>
@@ -1901,7 +1901,7 @@
        this renders on primary AND replica — every till processes its own
        local payouts, so its register identity matters everywhere. -->
   <form hx-post="/api/settings/till-register" hx-swap="none"
-        hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-till-register')} } else {document.getElementById('settings-save-error').hidden=false}">
+        data-after-request="ok not-html reload:settings-till-register; fail unhide:settings-save-error">
     <label>{{ T "settings.tills.register_label" }}
       <select name="register_id" required>
         {{ if not .TillRegisterID }}<option value="" selected disabled>{{ T "settings.tills.register_unset" }}</option>{{ end }}
@@ -1943,7 +1943,7 @@
        (200 + dialog HTML). -->
   <fieldset class="set-lock" data-lock-region="settings-invoice"{{ if index $.lockedRegions "settings-invoice" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-invoice" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/invoice" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-invoice')} } else {document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/invoice" hx-swap="none" data-after-request="ok not-html reload:settings-invoice; fail unhide:settings-save-error">
     <div class="field-pair">
       <label>{{ T "settings.invoice.seller_name" }}
         <input type="text" name="seller_name" value="{{ index .settingsMap "invoice.seller_name" }}"></label>
@@ -1971,7 +1971,7 @@
        real success is a bare 204 with no Content-Type. -->
   <fieldset class="set-lock" data-lock-region="settings-idle-lock"{{ if index $.lockedRegions "settings-idle-lock" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-idle-lock" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/idle-lock" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-idle-lock')} } else {document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/idle-lock" hx-swap="none" data-after-request="ok not-html reload:settings-idle-lock; fail unhide:settings-save-error">
     {{ $idle := .settings.IdleLockMinutes }}
     <select name="minutes">
       <option value="0"  {{ if eq $idle 0 }}selected{{ end }}>{{ T "settings.idle_lock.off" }}</option>
@@ -1995,7 +1995,7 @@
   <p class="muted">{{ T "settings.kiosk_idle_reset.help" }}</p>
   <fieldset class="set-lock" data-lock-region="settings-kiosk-idle-reset"{{ if index $.lockedRegions "settings-kiosk-idle-reset" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-kiosk-idle-reset" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/kiosk-idle-reset" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/kiosk-idle-reset" hx-swap="none" data-after-request="fail unhide:settings-save-error">
     {{ $kioskIdle := .settings.KioskIdleResetSeconds }}
     <select name="seconds">
       <option value="0"   {{ if eq $kioskIdle 0 }}selected{{ end }}>{{ T "settings.kiosk_idle_reset.off" }}</option>
@@ -2018,7 +2018,7 @@
   <h2>{{ T "settings.kiosk.payment_mode" }} {{ helpLink "self-order" }}</h2>
   <fieldset class="set-lock" data-lock-region="settings-kiosk-payment-mode"{{ if index $.lockedRegions "settings-kiosk-payment-mode" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-kiosk-payment-mode" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/kiosk-payment-mode" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/kiosk-payment-mode" hx-swap="none" data-after-request="fail unhide:settings-save-error">
     {{ $kioskPaymentMode := .settings.KioskPaymentMode }}
     <select name="mode">
       <option value="kiosk"   {{ if eq $kioskPaymentMode "kiosk" }}selected{{ end }}>{{ T "settings.kiosk.payment_mode.kiosk" }}</option>
@@ -2037,7 +2037,7 @@
        prompt the instant it appeared. -->
   <fieldset class="set-lock" data-lock-region="settings-telemetry"{{ if index $.lockedRegions "settings-telemetry" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-telemetry" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/telemetry" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-telemetry')} } else {document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/telemetry" hx-swap="none" data-after-request="ok not-html reload:settings-telemetry; fail unhide:settings-save-error">
     <label><input type="checkbox" name="optIn" {{ if eq (index .settingsMap "marketplace.telemetry_opt_in") "true" }}checked{{ end }}> {{ T "settings.telemetry.enable" }}</label>
     <div class="set-gap-s">
       <button class="btn" type="submit">{{ T "settings.telemetry.save" }}</button>
@@ -2061,7 +2061,7 @@
   <p class="muted">{{ T "settings.store_name.help" }}</p>
   <fieldset class="set-lock" data-lock-region="settings-store-name"{{ if index $.lockedRegions "settings-store-name" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-store-name" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/store-name" hx-target="#store-name-msg" hx-swap="innerHTML" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-save')} } else {document.getElementById('store-name-msg').textContent=event.detail.xhr.responseText; document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/store-name" hx-target="#store-name-msg" hx-swap="innerHTML" data-after-request="ok not-html reload:settings-save; fail text-response:store-name-msg unhide:settings-save-error">
     <label for="store-name-input" class="visually-hidden">{{ T "settings.store_name.title" }}</label>
     <input type="text" id="store-name-input" name="store_name" value="{{ .storeName }}" maxlength="80" dir="auto" autocomplete="off" data-testid="store-name-input">
     <button class="btn" type="submit" data-testid="store-name-save">{{ T "common.save" }}</button>
@@ -2078,7 +2078,7 @@
        form — see the till-name form's comment. -->
   <fieldset class="set-lock" data-lock-region="settings-currency"{{ if index $.lockedRegions "settings-currency" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-currency" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/save" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-save')} } else {document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/save" hx-swap="none" data-after-request="ok not-html reload:settings-save; fail unhide:settings-save-error">
     {{ $cur := currency }}
     <select name="currency">
       {{ range currencies }}
@@ -2109,7 +2109,7 @@
   <p class="muted">{{ T "settings.language.help" }}</p>
   <fieldset class="set-lock" data-lock-region="settings-language"{{ if index $.lockedRegions "settings-language" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-language" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/save" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-save')} } else {document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/save" hx-swap="none" data-after-request="ok not-html reload:settings-save; fail unhide:settings-save-error">
     {{ $cur := defaultlocale }}
     <select name="locale">
       {{ range locales }}
@@ -2137,7 +2137,7 @@
   <p class="muted">{{ T "settings.staff_languages.help" }}</p>
   <fieldset class="set-lock" data-lock-region="settings-staff-languages"{{ if index $.lockedRegions "settings-staff-languages" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-staff-languages" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/staff-languages" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-save')} } else {var m=document.getElementById('staff-languages-msg'); m.textContent=event.detail.xhr.status===400?event.detail.xhr.responseText:''; if(event.detail.xhr.status!==400){document.getElementById('settings-save-error').hidden=false}}">
+  <form hx-post="/api/settings/staff-languages" hx-swap="none" data-after-request="ok not-html reload:settings-save; fail status:400 text-response:staff-languages-msg; fail not-status:400 clear-text:staff-languages-msg unhide:settings-save-error">
     {{ $sel := .staffLocaleSet }}{{ $def := .defaultStaffLocale }}
     <fieldset class="staff-lang-list">
       <legend class="visually-hidden">{{ T "settings.staff_languages.title" }}</legend>
@@ -2165,7 +2165,7 @@
   <p class="muted">{{ T "settings.shop_type.service_layout_note" }}</p>
   <fieldset class="set-lock" data-lock-region="settings-shop-type"{{ if index $.lockedRegions "settings-shop-type" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-shop-type" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/shop-type" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/shop-type" hx-swap="none" data-after-request="fail unhide:settings-save-error">
     {{ $stype := .shopType }}
     <select name="shop_type">
       <option value="">—</option>

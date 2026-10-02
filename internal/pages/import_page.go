@@ -1531,7 +1531,10 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				// place -- the URL stays /items throughout (import.html's
 				// own "no URL push" note) -- so pushing one here would be
 				// wrong, not just redundant.
-				fmt.Fprintf(&b, `<button type="button" class="btn primary" onclick="htmx.ajax('GET','/catalog',{target:'#items-panel',swap:'innerHTML'});this.closest('dialog').close()">%s</button>`,
+				// ut-docs#3325: inline-actions.js steps, not an inline
+				// onclick (CSP script-src-attr) — htmx.ajax GET /catalog
+				// into #items-panel, then close this dialog.
+				fmt.Fprintf(&b, `<button type="button" class="btn primary" data-action="ajax-get:/catalog,#items-panel close-closest">%s</button>`,
 					htmlEscape(T("import.view_catalog")))
 			} else {
 				fmt.Fprintf(&b, `<a class="btn primary" href="/catalog">%s</a>`, htmlEscape(T("import.view_catalog")))
@@ -1703,8 +1706,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			// hx-indicator's plain (document-wide) selector does. Without
 			// this, the button most likely to be double-tapped (the one
 			// right after a long preview) would show the busy indicator
-			// but stay clickable.
-			fmt.Fprintf(&b, `<div style="margin-block-start:.8rem"><button class="btn primary" type="submit" form="import-form" hx-disabled-elt="this" onclick="document.getElementById('import-commit').value='1'">%s</button></div>`,
+			// but stay clickable. data-action (inline-actions.js) marks it a
+			// commit — no inline onclick, CSP script-src-attr (ut-docs#3325).
+			fmt.Fprintf(&b, `<div style="margin-block-start:.8rem"><button class="btn primary" type="submit" form="import-form" hx-disabled-elt="this" data-action="set-value:import-commit,1">%s</button></div>`,
 				htmlEscape(T("import.import")))
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

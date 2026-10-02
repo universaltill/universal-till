@@ -765,9 +765,13 @@ func TestRenderReceipt_AskPromptOnlyForAskPolicy(t *testing.T) {
 		}
 	}
 	// The prompt's Print button posts to the same reprint endpoint the
-	// existing Print button uses — no new endpoint.
-	if strings.Count(ask, "/api/print/receipt/R-ASK") != 2 {
-		t.Fatalf("ask policy: expected both the prompt and the existing Print button to post to /api/print/receipt/R-ASK, got:\n%s", ask)
+	// existing Print button uses — no new endpoint. Since ut-docs#3325 the
+	// POST lives in web/public/inline-actions.js (receipt-ask-print /
+	// receipt-print steps, both via reprint()); the markup names the receipt.
+	for _, want := range []string{`data-action="receipt-ask-print:R-ASK"`, `data-action="receipt-print:R-ASK"`} {
+		if !strings.Contains(ask, want) {
+			t.Fatalf("ask policy: expected %q (both Print buttons reprint R-ASK), got:\n%s", want, ask)
+		}
 	}
 	// The existing action row stays.
 	if !strings.Contains(ask, "receipt.new_customer") || !strings.Contains(ask, "receipt.print") {
@@ -779,7 +783,7 @@ func TestRenderReceipt_AskPromptOnlyForAskPolicy(t *testing.T) {
 		if strings.Contains(html, `id="receipt-ask"`) || strings.Contains(html, "receipt.ask.title") {
 			t.Fatalf("policy %q: prompt block must not render, got:\n%s", policy, html)
 		}
-		if strings.Count(html, "/api/print/receipt/R-ASK") != 1 {
+		if strings.Count(html, "receipt-print:R-ASK") != 1 || strings.Contains(html, "receipt-ask-print:") {
 			t.Fatalf("policy %q: exactly the existing Print button expected, got:\n%s", policy, html)
 		}
 	}

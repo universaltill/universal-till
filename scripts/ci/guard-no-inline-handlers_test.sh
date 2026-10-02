@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 #
-# Regression test for guard-no-inline-handlers.sh (ut-docs#3325): proves the
-# guard rejects an inline on*= handler (also at line start, after a Go
-# action or a closing quote, and upper-case) and an hx-on attribute, leaves
-# near-misses alone (`var online =`, hx-on in prose, data-on-*), ignores
-# mentions inside HTML / Go-template / line JS comments (without shifting
-# line numbers), honours exact file:line allowlist entries only (a missing
-# allowlist exempts nothing), rejects an inline-actions.js whose delegation
-# listeners are gone (or only mentioned in comments), and fails closed on
-# missing inputs.
+# Regression test for guard-no-inline-handlers.sh (ut-docs#3325, CSP slice
+# 2): proves the guard rejects every inline-handler shape it exists to keep
+# out of web/ui (an onclick=, one with whitespace before its `=`, an
+# hx-on::after-request=, a legacy hx-on="htmx:..." attribute, an upper-case
+# ONCLICK=, one spelled inside a comment), honours an exact file:line
+# allowlist entry and nothing looser, rejects any data-on* attribute name
+# (html/template JS-escapes those -- the tester-pass regression),
+# rejects a standalone document that never loads inline-actions.js, rejects
+# inline-actions.js with any of its delegated listeners removed (in real
+# code, not just in a comment), and passes both a minimal good fixture set
+# and the real, unmodified repo tree.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -19,23 +21,35 @@ FAIL_COUNT=0
 
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "${TMPDIR}"' EXIT
-OUT="${TMPDIR}/out.txt"
+OUT="${TMPDIR}/guard_out.txt"
 
 GOOD_JS="${TMPDIR}/inline-actions.js"
 cat >"${GOOD_JS}" <<'EOF'
 (function () {
-  document.addEventListener('click', function () {});
+  document.addEventListener('click', function () {}, true);
   document.addEventListener('error', function () {}, true);
-  document.body.addEventListener('htmx:afterRequest', function () {});
-  document.body.addEventListener('htmx:beforeRequest', function () {});
+  document.addEventListener('htmx:afterRequest', function () {}, true);
+  document.addEventListener('htmx:beforeRequest', function () {}, true);
 })();
 EOF
-EMPTY_ALLOW="${TMPDIR}/allow_empty.txt"
-: >"${EMPTY_ALLOW}"
 
+EMPTY_ALLOW="${TMPDIR}/allow_empty.txt"
+printf '# no entries\n' >"${EMPTY_ALLOW}"
+
+# A fresh fixture tree: one standalone document that loads
+# inline-actions.js, plus a converted partial.
 fresh_ui_dir() {
   local dir="${TMPDIR}/ui_$1"
-  mkdir -p "${dir}/partials"
+  mkdir -p "${dir}/layouts" "${dir}/partials"
+  cat >"${dir}/layouts/base.html" <<'EOF'
+<!DOCTYPE html>
+<html><head><script defer src="/public/inline-actions.js?v=1"></script></head><body></body></html>
+EOF
+  cat >"${dir}/partials/ok.html" <<'EOF'
+<button type="button" data-action="close:x-modal">Close</button>
+<form hx-post="/x" data-after-request="ok close:x-modal"></form>
+<img src="/a.png" alt="" data-fallback="hide">
+EOF
   printf '%s' "${dir}"
 }
 
@@ -61,148 +75,120 @@ expect_fail() {
   fi
 }
 
-# Clean markup: data-* attributes only, plus comments that merely MENTION
-# the forbidden attributes (HTML, Go-template and line-JS comments).
 ui_ok="$(fresh_ui_dir ok)"
-cat >"${ui_ok}/partials/clean.html" <<'EOF'
-<!-- the old hx-on::after-request and onclick="x()" lived here -->
-{{/* used to be onclick="close()" —
-     and hx-on::before-request too */}}
-<button type="button" data-action="close-dialog" data-target="#m">x</button>
-<img src="a.png" alt="" data-fallback="hide">
-<script>
-  // hx-on::after-request reload pattern, described in a comment only
-  var x = 1;
-  /* the tile's own
-     hx-on::response-error/send-error, in a block comment */
-</script>
-EOF
-expect_pass "clean markup whose only mentions are in comments" "${ui_ok}" "${GOOD_JS}" "${EMPTY_ALLOW}"
+expect_pass "a converted fixture tree" "${ui_ok}" "${GOOD_JS}" "${EMPTY_ALLOW}"
 
 ui_onclick="$(fresh_ui_dir onclick)"
-cat >"${ui_onclick}/partials/a.html" <<'EOF'
-<button type="button" onclick="document.getElementById('m').close()">x</button>
-EOF
-expect_fail "an inline onclick= handler" "${ui_onclick}" "${GOOD_JS}" "${EMPTY_ALLOW}"
-if grep -qF 'partials/a.html:1' "${OUT}"; then
-  echo "✓ guard names the violating file:line"
-else
-  echo "❌ FAIL: guard output did not name partials/a.html:1" >&2
-  cat "${OUT}" >&2
-  FAIL_COUNT=$((FAIL_COUNT + 1))
-fi
+echo '<button onclick="document.getElementById(&#39;m&#39;).close()">x</button>' >>"${ui_onclick}/partials/ok.html"
+expect_fail "an onclick= attribute" "${ui_onclick}" "${GOOD_JS}" "${EMPTY_ALLOW}"
 
 ui_onerror="$(fresh_ui_dir onerror)"
-printf '<img src="a.png" alt=""\n     onerror="this.style.visibility=%shidden%s">\n' "'" "'" >"${ui_onerror}/partials/img.html"
-expect_fail "a multi-line tag with an inline onerror= handler" "${ui_onerror}" "${GOOD_JS}" "${EMPTY_ALLOW}"
+echo '<img src="/a.png" alt="" onerror="this.style.visibility=&#39;hidden&#39;">' >>"${ui_onerror}/partials/ok.html"
+expect_fail "an onerror= attribute" "${ui_onerror}" "${GOOD_JS}" "${EMPTY_ALLOW}"
 
-# Attribute shapes that have no whitespace in front of the name, or an
-# upper-case name — all valid HTML that CSP still blocks.
-ui_col0="$(fresh_ui_dir col0)"
-printf '<button\nonclick="x()">x</button>\n' >"${ui_col0}/partials/c.html"
-expect_fail "an on*= attribute at the start of a line" "${ui_col0}" "${GOOD_JS}" "${EMPTY_ALLOW}"
-ui_action="$(fresh_ui_dir action)"
-cat >"${ui_action}/partials/t.html" <<'EOF'
-<a href="/items"{{ if .InShell }}onclick="this.closest('dialog').close()"{{ end }}>x</a>
-EOF
-expect_fail "an on*= attribute directly after a Go template action" "${ui_action}" "${GOOD_JS}" "${EMPTY_ALLOW}"
-ui_quote="$(fresh_ui_dir quote)"
-cat >"${ui_quote}/partials/q.html" <<'EOF'
-<button class="btn"onclick="go()">x</button>
-EOF
-expect_fail "an on*= attribute directly after a quoted value" "${ui_quote}" "${GOOD_JS}" "${EMPTY_ALLOW}"
 ui_upper="$(fresh_ui_dir upper)"
-cat >"${ui_upper}/partials/u.html" <<'EOF'
-<button ONCLICK="go()">x</button>
-EOF
-expect_fail "an upper-case ONCLICK= attribute" "${ui_upper}" "${GOOD_JS}" "${EMPTY_ALLOW}"
+echo '<button ONCLICK="go()">x</button>' >>"${ui_upper}/partials/ok.html"
+expect_fail "an upper-case ONCLICK= attribute (HTML attributes are case-insensitive)" "${ui_upper}" "${GOOD_JS}" "${EMPTY_ALLOW}"
 
-# Not handlers: a script variable whose name starts with "on", the bare
-# word hx-on in prose, and the data-* replacements.
-ui_near="$(fresh_ui_dir near)"
-cat >"${ui_near}/partials/n.html" <<'EOF'
-<script>var online = navigator.onLine; var only = 1;</script>
-<p>set hx-on carefully</p>
-<form data-on-after-request="reload" data-action="x"></form>
-EOF
-expect_pass "near-misses (var online =, hx-on in prose, data-on-*)" "${ui_near}" "${GOOD_JS}" "${EMPTY_ALLOW}"
+# HTML allows whitespace around an attribute's `=`; `onclick ="..."` is a
+# live handler the browser runs exactly like `onclick="..."`, so a pattern
+# that only matched the name glued to its `=` was a bypass (ut-docs#3325
+# review).
+ui_space_eq="$(fresh_ui_dir spaceeq)"
+echo '<button onclick ="go()">x</button>' >>"${ui_space_eq}/partials/ok.html"
+expect_fail "an onclick= attribute with a space before its =" "${ui_space_eq}" "${GOOD_JS}" "${EMPTY_ALLOW}"
+
+ui_tab_eq="$(fresh_ui_dir tabeq)"
+printf '<img src="/a.png" alt="" onerror\t="go()">\n' >>"${ui_tab_eq}/partials/ok.html"
+expect_fail "an onerror= attribute with a tab before its =" "${ui_tab_eq}" "${GOOD_JS}" "${EMPTY_ALLOW}"
 
 ui_hxon="$(fresh_ui_dir hxon)"
-cat >"${ui_hxon}/partials/f.html" <<'EOF'
-<form hx-post="/x" hx-on::after-request="if (event.detail.successful) UT.reload('x')"></form>
-EOF
-expect_fail "an hx-on::after-request attribute" "${ui_hxon}" "${GOOD_JS}" "${EMPTY_ALLOW}"
+echo '<form hx-post="/x" hx-on::after-request="this.reset()"></form>' >>"${ui_hxon}/partials/ok.html"
+expect_fail "an hx-on::after-request= attribute" "${ui_hxon}" "${GOOD_JS}" "${EMPTY_ALLOW}"
 
-# Inline handler built inside a <script> string — still a real violation
-# (setup.html/tills.html build pairing buttons this way).
+ui_hxon_legacy="$(fresh_ui_dir hxonlegacy)"
+echo '<button hx-on="htmx:afterRequest: go()">x</button>' >>"${ui_hxon_legacy}/partials/ok.html"
+expect_fail "a legacy hx-on=\"htmx:...\" attribute" "${ui_hxon_legacy}" "${GOOD_JS}" "${EMPTY_ALLOW}"
+
+# The guard is deliberately a raw grep: a handler spelled out in a comment
+# (or in a <script> string literal that builds markup) still fails, so a
+# lexical comment-stripper can never be fooled into hiding a real one.
+ui_comment="$(fresh_ui_dir comment)"
+echo '<!-- the old hx-on::after-request closed it -->' >>"${ui_comment}/partials/ok.html"
+expect_fail "an hx-on mention inside a comment" "${ui_comment}" "${GOOD_JS}" "${EMPTY_ALLOW}"
+
 ui_jsstr="$(fresh_ui_dir jsstr)"
-cat >"${ui_jsstr}/partials/s.html" <<'EOF'
-<script>
-  out.innerHTML = '<button '
-    + 'hx-on::before-request="check()" '
-    + '>go</button>';
-</script>
+cat >>"${ui_jsstr}/partials/ok.html" <<'EOF'
+<script>var html = '<button ' + 'onclick="x()">' + '</button>';</script>
 EOF
-expect_fail "an hx-on attribute built inside a script string" "${ui_jsstr}" "${GOOD_JS}" "${EMPTY_ALLOW}"
+expect_fail "an onclick= built inside a <script> string" "${ui_jsstr}" "${GOOD_JS}" "${EMPTY_ALLOW}"
 
-# A comment BEFORE the violation must not shift its reported line number,
-# or allowlist entries would silently stop matching.
-ui_lines="$(fresh_ui_dir lines)"
-cat >"${ui_lines}/partials/l.html" <<'EOF'
-<!--
-  multi
-  line
--->
-<button onclick="go()">x</button>
-EOF
-expect_fail "a violation after a multi-line comment" "${ui_lines}" "${GOOD_JS}" "${EMPTY_ALLOW}"
-if grep -qF 'partials/l.html:5' "${OUT}"; then
-  echo "✓ comment stripping preserves line numbers"
-else
-  echo "❌ FAIL: expected partials/l.html:5 in guard output" >&2
-  cat "${OUT}" >&2
-  FAIL_COUNT=$((FAIL_COUNT + 1))
-fi
-
-# Exact file:line allowlist: matching entry passes, a stale line does not.
+# Allowlist: the exact file:line passes; the same file on another line,
+# or a bare file name, does not.
 allow_exact="${TMPDIR}/allow_exact.txt"
-printf '# reviewed exception\npartials/l.html:5\n' >"${allow_exact}"
-expect_pass "a violation listed in the allowlist by exact file:line" "${ui_lines}" "${GOOD_JS}" "${allow_exact}"
-allow_stale="${TMPDIR}/allow_stale.txt"
-printf 'partials/l.html:4\n' >"${allow_stale}"
-expect_fail "a violation whose allowlist entry names a different line" "${ui_lines}" "${GOOD_JS}" "${allow_stale}"
-allow_file="${TMPDIR}/allow_file.txt"
-printf 'partials/l.html\n' >"${allow_file}"
-expect_fail "a whole-file (no :line) allowlist entry" "${ui_lines}" "${GOOD_JS}" "${allow_file}"
-expect_fail "a violation with no allowlist file at all (nothing exempt)" "${ui_lines}" "${GOOD_JS}" "${TMPDIR}/no_such_allowlist.txt"
+printf '# reviewed: fixture\nweb/ui/partials/ok.html:4\n' >"${allow_exact}"
+expect_pass "an allowlisted exact file:line" "${ui_onclick}" "${GOOD_JS}" "${allow_exact}"
 
-# inline-actions.js with a delegation listener deleted, or only mentioned in
-# a comment.
+allow_wrong_line="${TMPDIR}/allow_wrong_line.txt"
+printf 'web/ui/partials/ok.html:3\n' >"${allow_wrong_line}"
+expect_fail "an allowlist entry for a different line of the same file" "${ui_onclick}" "${GOOD_JS}" "${allow_wrong_line}"
+
+allow_file_only="${TMPDIR}/allow_file_only.txt"
+printf 'web/ui/partials/ok.html\n' >"${allow_file_only}"
+expect_fail "an allowlist entry naming only the file" "${ui_onclick}" "${GOOD_JS}" "${allow_file_only}"
+
+# A standalone document that never loads inline-actions.js: every data-*
+# hook in it would be dead.
+ui_noload="$(fresh_ui_dir noload)"
+cat >"${ui_noload}/layouts/setup.html" <<'EOF'
+<!DOCTYPE html>
+<html><head><script defer src="/public/vendor/htmx.min.js"></script></head><body></body></html>
+EOF
+expect_fail "a standalone document that never loads inline-actions.js" "${ui_noload}" "${GOOD_JS}" "${EMPTY_ALLOW}"
+
+ui_noload_comment="$(fresh_ui_dir noloadcomment)"
+cat >"${ui_noload_comment}/layouts/setup.html" <<'EOF'
+<!DOCTYPE html>
+<html><head><!-- <script defer src="/public/inline-actions.js"></script> --></head><body></body></html>
+EOF
+expect_fail "a standalone document with inline-actions.js commented out" "${ui_noload_comment}" "${GOOD_JS}" "${EMPTY_ALLOW}"
+
+# A data-on* attribute name: html/template would JS-escape any {{ }} inside
+# it (the ut-docs#3325 tester-pass regression), whatever it is used for.
+ui_data_on="$(fresh_ui_dir dataon)"
+echo '<form hx-post="/x" data-on-after-request="fail unhide:pin-error-1"></form>' >>"${ui_data_on}/partials/ok.html"
+expect_fail "a data-on-after-request= attribute (html/template JS-escapes data-on*)" "${ui_data_on}" "${GOOD_JS}" "${EMPTY_ALLOW}"
+
+ui_data_only="$(fresh_ui_dir dataonly)"
+echo '<div data-only="x"></div>' >>"${ui_data_only}/partials/ok.html"
+expect_fail "a data-only= attribute (strips to \"only\", same \"on\" prefix)" "${ui_data_only}" "${GOOD_JS}" "${EMPTY_ALLOW}"
+
+ui_data_action="$(fresh_ui_dir dataaction)"
+echo '<button data-action="close:x" data-confirm-text="y" data-done-text="z">x</button>' >>"${ui_data_action}/partials/ok.html"
+expect_pass "data-action / data-*-text attributes (no on prefix after data-)" "${ui_data_action}" "${GOOD_JS}" "${EMPTY_ALLOW}"
+
+# inline-actions.js with each delegated listener removed in turn.
 for ev in click error htmx:afterRequest htmx:beforeRequest; do
   js="${TMPDIR}/missing_${ev//:/_}.js"
   grep -vF "'${ev}'" "${GOOD_JS}" >"${js}"
-  expect_fail "inline-actions.js missing its '${ev}' listener" "${ui_ok}" "${js}" "${EMPTY_ALLOW}"
+  expect_fail "inline-actions.js without its '${ev}' listener" "${ui_ok}" "${js}" "${EMPTY_ALLOW}"
 done
+
 commented_js="${TMPDIR}/commented.js"
 cat >"${commented_js}" <<'EOF'
-// document.addEventListener('click', ...)
-// document.addEventListener('error', ..., true)
-/* document.body.addEventListener('htmx:afterRequest', ...)
-   document.body.addEventListener('htmx:beforeRequest', ...) */
+// document.addEventListener('click', f, true);
+// document.addEventListener('error', f, true);
+/* document.addEventListener('htmx:afterRequest', f, true);
+   document.addEventListener('htmx:beforeRequest', f, true); */
 (function () {})();
 EOF
-expect_fail "inline-actions.js whose listeners only appear in comments" "${ui_ok}" "${commented_js}" "${EMPTY_ALLOW}"
-# error must be capture phase: it does not bubble.
-bubble_js="${TMPDIR}/bubble.js"
-sed "s/function () {}, true)/function () {})/" "${GOOD_JS}" >"${bubble_js}"
-expect_fail "inline-actions.js with a non-capture 'error' listener" "${ui_ok}" "${bubble_js}" "${EMPTY_ALLOW}"
+expect_fail "inline-actions.js whose listeners only appear inside comments" "${ui_ok}" "${commented_js}" "${EMPTY_ALLOW}"
 
-expect_fail "a nonexistent UI directory" "${TMPDIR}/nope" "${GOOD_JS}" "${EMPTY_ALLOW}"
-expect_fail "a nonexistent inline-actions.js" "${ui_ok}" "${TMPDIR}/nope.js" "${EMPTY_ALLOW}"
-empty_ui="${TMPDIR}/ui_empty"; mkdir -p "${empty_ui}"
-expect_fail "a UI dir with no templates at all (fail-closed)" "${empty_ui}" "${GOOD_JS}" "${EMPTY_ALLOW}"
+expect_fail "a nonexistent UI directory" "${TMPDIR}/does-not-exist" "${GOOD_JS}" "${EMPTY_ALLOW}"
+expect_fail "a nonexistent inline-actions.js" "${ui_ok}" "${TMPDIR}/does-not-exist.js" "${EMPTY_ALLOW}"
+expect_fail "a nonexistent allowlist" "${ui_ok}" "${GOOD_JS}" "${TMPDIR}/does-not-exist.txt"
 
-# The real tree must pass.
+# The real, unmodified tree must pass.
 expect_pass "the real repo tree"
 
 if [ "${FAIL_COUNT}" -ne 0 ]; then

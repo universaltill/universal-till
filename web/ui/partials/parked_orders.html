@@ -33,7 +33,7 @@
      order or a shop with no free table gets no control. Options post
      view=parked-orders so POST /api/pos/held/table answers with THIS body
      (new table shown, or the occupied toast on top) and fires held-changed
-     for the badge. No hx-on close here: a move keeps the popup open so the
+     for the badge. No after-request close here: a move keeps the popup open so the
      cashier sees where the order went. A native <details>/<summary>, so it
      is keyboard- and screen-reader-operable with no script; the summary
      carries the order's label (visually hidden) so several rows' "Move
@@ -56,10 +56,10 @@
 <div class="tab-bar open-orders-tabs" role="tablist" data-arrow-tabs aria-label="{{ T "open_orders.tabs_label" }}">
   <button type="button" role="tab" id="parked-orders-tab-hold" class="tab{{ if eq $tab "hold" }} active{{ end }}" aria-selected="{{ if eq $tab "hold" }}true{{ else }}false{{ end }}" tabindex="{{ if eq $tab "hold" }}0{{ else }}-1{{ end }}" aria-controls="parked-orders-panel" data-testid="parked-orders-tab-hold"
           hx-get="/ui/parked-orders?tab=hold" hx-target="#parked-orders-body" hx-swap="innerHTML"
-          hx-on::before-request="document.getElementById('parked-orders-body').dataset.focusAfter = 'parked-orders-tab-hold';">{{ T "open_orders.tab.hold" }} <span class="tab-count">{{ qty (len .view.Hold) }}</span></button>
+          data-before-request="remember-focus:parked-orders-body,parked-orders-tab-hold">{{ T "open_orders.tab.hold" }} <span class="tab-count">{{ qty (len .view.Hold) }}</span></button>
   <button type="button" role="tab" id="parked-orders-tab-counter" class="tab{{ if eq $tab "counter" }} active{{ end }}" aria-selected="{{ if eq $tab "counter" }}true{{ else }}false{{ end }}" tabindex="{{ if eq $tab "counter" }}0{{ else }}-1{{ end }}" aria-controls="parked-orders-panel" data-testid="parked-orders-tab-counter"
           hx-get="/ui/parked-orders?tab=counter" hx-target="#parked-orders-body" hx-swap="innerHTML"
-          hx-on::before-request="document.getElementById('parked-orders-body').dataset.focusAfter = 'parked-orders-tab-counter';">{{ T "open_orders.tab.counter" }} <span class="tab-count">{{ qty (len .view.Counter) }}</span></button>
+          data-before-request="remember-focus:parked-orders-body,parked-orders-tab-counter">{{ T "open_orders.tab.counter" }} <span class="tab-count">{{ qty (len .view.Counter) }}</span></button>
 </div>
 {{ if .toast }}<div class="pos-notice {{ .toastLevel }}" id="parked-orders-toast" role="{{ .toastRole }}"><span class="notice-text">{{ .toast }}</span><button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}">✕</button></div>{{ end }}
 <div role="tabpanel" aria-labelledby="parked-orders-tab-{{ $tab }}" hx-vals='{{ jsonVals "tab" $tab }}' id="parked-orders-panel">
@@ -83,7 +83,7 @@
     <button type="button" class="btn secondary parked-order" data-held-id="{{ .ID }}"
             hx-post="/api/pos/resume" hx-vals='{{ jsonVals "id" .ID }}'
             hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-            hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('parked-orders-modal'); if (m && m.open) m.close(); }">
+            data-after-request="ok close:parked-orders-modal">
       <span class="visually-hidden">{{ T "open_orders.resume_row" }}</span>
       <span class="parked-order-label">{{ .Label }}</span>
       {{ if .TableLabel }}<span class="held-chip-table">{{ .TableLabel }}</span>{{ end }}
@@ -99,7 +99,7 @@
         <button type="button" class="btn secondary parked-move-option" data-table-id="{{ .ID }}"
                 hx-post="/api/pos/held/table" hx-vals='{{ jsonVals "id" $id "table_id" .ID "view" "parked-orders" }}'
                 hx-target="#parked-orders-body" hx-swap="innerHTML"
-                hx-on::before-request="document.getElementById('parked-orders-body').dataset.focusAfter = 'parked-move-{{ $id }}';">{{ .Label }}</button>
+                data-before-request="remember-focus:parked-orders-body,parked-move-{{ $id }}">{{ .Label }}</button>
         {{ end }}
       </div>
     </details>

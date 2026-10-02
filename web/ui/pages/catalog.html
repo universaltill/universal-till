@@ -48,18 +48,18 @@
          #1385 bug. So it reuses the .show()/.item-form-modal treatment
          #item-form-modal itself uses for the identical reason.
 
-         hx-on::after-request is also guarded on event.detail.successful
+         The after-request hook is also guarded on success ("ok")
          (independent review, F2) — unguarded, a non-2xx response (e.g. a
          cashier without import_export) still fired .show(), opening an
          empty/erroring modal with no close control reachable on a
          touch-only till (CLAUDE.md §10, ut-docs#1999). Same guard idiom
          already used by catalog_variants.html/self_order_cart.html's own
-         hx-on::after-request calls. Outside the shell (a bare GET
+         after-request hooks. Outside the shell (a bare GET
          /catalog), .InItemsShell is false and this stays a plain icon
          link, unchanged from #2092. -->
     <a id="catalog-import-btn" class="btn secondary btn-icon" href="/import"
        aria-label="{{ T "import.title" }}" title="{{ T "import.title" }}"
-       {{ if .InItemsShell }}hx-get="/import" hx-target="#import-modal" hx-swap="innerHTML" hx-on::after-request="if (event.detail.successful) { document.getElementById('import-modal').show(); }"{{ end }}>
+       {{ if .InItemsShell }}hx-get="/import" hx-target="#import-modal" hx-swap="innerHTML" data-after-request="ok show:import-modal"{{ end }}>
       <span class="btn-ico" aria-hidden="true">{{ icon "upload" }}</span>
     </a>
     <!-- ut-docs#2095: same dialog treatment as Import above, for the
@@ -68,7 +68,7 @@
          button's comment for the full reasoning. -->
     <a id="catalog-taxcodes-btn" class="btn secondary btn-icon" href="/catalog/tax-codes"
        aria-label="{{ T "taxcodes.title" }}" title="{{ T "taxcodes.title" }}"
-       {{ if .InItemsShell }}hx-get="/catalog/tax-codes" hx-target="#tax-codes-modal" hx-swap="innerHTML" hx-on::after-request="if (event.detail.successful) { document.getElementById('tax-codes-modal').show(); }"{{ end }}>
+       {{ if .InItemsShell }}hx-get="/catalog/tax-codes" hx-target="#tax-codes-modal" hx-swap="innerHTML" data-after-request="ok show:tax-codes-modal"{{ end }}>
       <span class="btn-ico" aria-hidden="true">{{ icon "landmark" }}</span>
     </a>
     <button id="catalog-export-btn" class="btn secondary btn-icon"
@@ -87,7 +87,7 @@
          and Escape closing it. Icon-only styling. -->
     <button id="catalog-barcode-backfill-btn" class="btn secondary btn-icon"
             hx-get="/api/catalog/barcode-backfill" hx-target="#barcode-backfill-modal" hx-swap="innerHTML"
-            hx-on::after-request="document.getElementById('barcode-backfill-modal').show()"
+            data-after-request="show:barcode-backfill-modal"
             aria-label="{{ T "catalog.barcode_backfill.btn" }}" title="{{ T "catalog.barcode_backfill.btn" }}">
       <span class="btn-ico" aria-hidden="true">{{ icon "scan-barcode" }}</span>
     </button>
@@ -100,7 +100,7 @@
     {{ if and (not .SyncPrimary) (gt .MissingSKUCount 0) }}
     <button id="catalog-sku-backfill-btn" class="btn secondary btn-icon" style="position:relative"
             hx-get="/api/catalog/sku-backfill" hx-target="#sku-backfill-modal" hx-swap="innerHTML"
-            hx-on::after-request="if (event.detail.successful) { document.getElementById('sku-backfill-modal').show(); }"
+            data-after-request="ok show:sku-backfill-modal"
             aria-label="{{ printf (T "catalog.sku_backfill.btn") .MissingSKUCount }}" title="{{ printf (T "catalog.sku_backfill.btn") .MissingSKUCount }}">
       <span class="btn-ico" aria-hidden="true">{{ icon "sparkles" }}</span>
       <span class="count-badge" aria-hidden="true">{{ .MissingSKUCount }}</span>
@@ -251,7 +251,7 @@
                create/edit wording. -->
           <button class="btn secondary" type="button" id="item-form-reset" hidden
                   aria-label="{{ T "catalog.plus_new" }}" title="{{ T "catalog.plus_new" }}">{{ T "catalog.plus_new" }}</button>
-          <button class="btn secondary" type="button" id="item-form-close-btn" onclick="document.getElementById('item-form-modal').close()"
+          <button class="btn secondary" type="button" id="item-form-close-btn" data-action="close:item-form-modal"
                   aria-label="{{ T "common.close" }}" title="{{ T "common.close" }}">
             <span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span>
             <span class="btn-label">{{ T "common.close" }}</span>

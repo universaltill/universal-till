@@ -24,7 +24,7 @@
 <div id="pairing-notice" class="pairing-notice" role="status" data-fingerprint="{{ .Fingerprint }}">
   <span class="pairing-notice-text">⇅ {{ .Count }} {{ if eq .Count 1 }}{{ T "tills.pairing.notice_device_one" }}{{ else }}{{ T "tills.pairing.notice_device_other" }}{{ end }} {{ T "tills.pairing.notice_waiting" }}</span>
   <a href="/tills">{{ T "tills.pairing.notice_link" }}</a>
-  <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}" onclick="utPairingNoticeDismiss()">✕</button>
+  <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}" data-action="dismiss-pairing-notice">✕</button>
 </div>
 <script>
 (function () {

@@ -56,7 +56,7 @@
     {{ if .HasOpen }}
     <h3>{{ T "shifts.close" }}</h3>
     <form id="close-shift-form" hx-post="/api/shifts/close" hx-swap="innerHTML" hx-target="#shift-result"
-          hx-on::after-request="if (event.detail.successful) UT.refreshRegion(this)">
+          data-after-request="ok refresh-region">
       <input type="hidden" name="shift_id" value="{{ .Current.ID }}">
       <input type="hidden" name="closing_cash" id="closing-cash-minor">
       <!-- ut-docs#1272 (same defect as ut-docs#1249, fixed on #pfand-amount):
@@ -68,12 +68,12 @@
            by 100x on any 0-decimal currency (IRR/IRT/IQD/AFN/JPY). -->
       <label>{{ T "shifts.counted_cash" }} ({{ currency.Display }})
         <input type="text" id="closing-cash" inputmode="decimal" {{ moneypatternlocal currency.Decimals false }} required {{ moneyplaceholderlocal currency.Decimals 0 }}
-               oninput="document.getElementById('closing-cash-minor').value = window.utCurrency.toMinor(this.value)">
+               data-input="minor:closing-cash-minor">
       </label>
       <input type="hidden" name="skim" id="skim-minor">
       <label>{{ T "shifts.skim" }} ({{ currency.Display }}, {{ T "shifts.skim_hint" }})
         <input type="text" id="skim-pounds" inputmode="decimal" {{ moneypatternlocal currency.Decimals false }} {{ moneyplaceholderlocal currency.Decimals 0 }}
-               oninput="document.getElementById('skim-minor').value = this.value === '' ? '' : window.utCurrency.toMinor(this.value)">
+               data-input="minor-or-empty:skim-minor">
       </label>
       <label>{{ T "shifts.reason" }} <input type="text" name="skim_reason" placeholder="{{ T "shifts.skim" }}"></label>
       {{ if .NeedsManagerPIN }}
@@ -112,7 +112,7 @@
              negative, see placeholder. -->
         <label>{{ T "shifts.amount" }} ({{ currency.Display }}, {{ T "shifts.amount_hint" }})
           <input type="text" id="adjust-pounds" inputmode="decimal" {{ moneypatternlocal currency.Decimals true }} required {{ moneyplaceholderlocal currency.Decimals -50 }}
-                 oninput="document.getElementById('adjust-minor').value = window.utCurrency.toMinor(this.value)">
+                 data-input="minor:adjust-minor">
         </label>
         <label>{{ T "shifts.reason" }} <input type="text" name="reason" required></label>
         {{ if .NeedsManagerPIN }}
@@ -126,7 +126,7 @@
     {{ else }}
     <h3>{{ T "shifts.open_new" }}</h3>
     <form id="open-shift-form" hx-post="/api/shifts/open" hx-swap="innerHTML" hx-target="#shift-result"
-          hx-on::after-request="if (event.detail.successful) UT.refreshRegion(this)">
+          data-after-request="ok refresh-region">
       <label>{{ T "shifts.register" }}
         <select name="register_id" required>
           {{ range .Registers }}<option value="{{ .ID }}"{{ if eq .ID $.TillRegisterID }} selected{{ end }}>{{ .Name }}</option>
@@ -137,7 +137,7 @@
       <!-- ut-docs#1272: same fix as above. -->
       <label>{{ T "shifts.opening_cash" }} ({{ currency.Display }}){{ if .HasCarryForward }} — {{ T "shifts.opening_carried" }}{{ end }}
         <input type="text" id="opening-cash" inputmode="decimal" {{ moneypatternlocal currency.Decimals false }} required value="{{ majorlocal .CarryForwardDisplay }}"
-               oninput="document.getElementById('opening-cash-minor').value = window.utCurrency.toMinor(this.value)">
+               data-input="minor:opening-cash-minor">
       </label>
       <button type="submit" class="btn primary" style="width:100%">{{ T "shifts.open_new" }}</button>
     </form>

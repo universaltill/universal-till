@@ -37,7 +37,7 @@
     <p class="muted order-confirmation-tracking-url" style="overflow-wrap: anywhere;">{{ .TrackingURL }}</p>
   </div>
   {{ end }}
-  <button type="button" class="btn primary" onclick="window.location.href='/self-order'">
+  <button type="button" class="btn primary" data-action="go:/self-order">
     {{ T "selforder.confirm.done" }}
   </button>
   <!-- A native <dialog> in its open state makes everything OUTSIDE it

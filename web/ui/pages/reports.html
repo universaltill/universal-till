@@ -18,7 +18,7 @@
   </div>
   {{ if .CustomActive }}
   <form method="get" action="/reports" style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
-    <select name="period" onchange="this.form.submit()">
+    <select name="period" data-change="submit-form">
       <option value=""      {{ if not $period }}selected{{ end }}>{{ T "reports.period.rolling" }}</option>
       <option value="day"   {{ if eq $period "day" }}selected{{ end }}>{{ T "reports.period.day" }}</option>
       <option value="week"  {{ if eq $period "week" }}selected{{ end }}>{{ T "reports.period.week" }}</option>
@@ -26,10 +26,10 @@
       <option value="year"  {{ if eq $period "year" }}selected{{ end }}>{{ T "reports.period.year" }}</option>
     </select>
     {{ if $period }}
-    <input type="date" name="anchor" value="{{ .Anchor }}" onchange="this.form.submit()" aria-label="{{ T "reports.period.anchor" }}">
+    <input type="date" name="anchor" value="{{ .Anchor }}" data-change="submit-form" aria-label="{{ T "reports.period.anchor" }}">
     {{ if .PeriodLabel }}<span class="muted">{{ T .PeriodLabel }}</span>{{ end }}
     {{ else }}
-    <select name="days" onchange="this.form.submit()">
+    <select name="days" data-change="submit-form">
       <option value="1"  {{ if eq .Days 1 }}selected{{ end }}>{{ T "reports.today" }}</option>
       <option value="7"  {{ if eq .Days 7 }}selected{{ end }}>7 {{ T "reports.days" }}</option>
       <option value="14" {{ if eq .Days 14 }}selected{{ end }}>14 {{ T "reports.days" }}</option>
@@ -85,19 +85,18 @@
 {{ $qs := printf "days=%d" .Days }}
 {{ if $period }}{{ $qs = printf "period=%s&anchor=%s" $period .Anchor }}{{ end }}
 {{/* ut-docs#421: the tabs otherwise give the operator (or a screen reader)
-     no cue which report is currently open. hx-on:click runs alongside each
-     button's own hx-get — plain htmx, no new JS framework — to move the
+     no cue which report is currently open. data-action="activate-tab" (inline-
+     actions.js, ut-docs#3325) runs alongside each button's own hx-get to move the
      active/aria-selected state to whichever tab was just clicked, and to
      re-point the panel's aria-labelledby at it so the panel announces which
      tab it belongs to (independent review finding on this same ticket). */}}
-{{ $tabActivate := `document.querySelectorAll('.report-tabs [role=tab]').forEach(b => { b.classList.remove('active'); b.setAttribute('aria-selected', 'false') }); this.classList.add('active'); this.setAttribute('aria-selected', 'true'); document.getElementById('report-tab-panel').setAttribute('aria-labelledby', this.id)` }}
 <div class="report-tabs" role="tablist" style="margin-top:1rem; display:flex; gap:.4rem; flex-wrap:wrap">
-  <button id="report-tab-sales-trend" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/sales-trend?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-on:click="{{ $tabActivate }}">{{ T "reports.tab.sales_trend" }}</button>
-  <button id="report-tab-items" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/items?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-on:click="{{ $tabActivate }}">{{ T "reports.tab.items" }}</button>
-  <button id="report-tab-tax" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/tax?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-on:click="{{ $tabActivate }}">{{ T "reports.tab.tax" }}</button>
-  <button id="report-tab-forecast" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/forecast?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-on:click="{{ $tabActivate }}">{{ T "reports.tab.forecast" }}</button>
-  <button id="report-tab-payments" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/payments?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-on:click="{{ $tabActivate }}">{{ T "reports.tab.payments" }}</button>
-  <button id="report-tab-tips" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/tips?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-on:click="{{ $tabActivate }}">{{ T "reports.tab.tips" }}</button>
+  <button id="report-tab-sales-trend" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/sales-trend?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" data-action="activate-tab:report-tab-panel">{{ T "reports.tab.sales_trend" }}</button>
+  <button id="report-tab-items" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/items?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" data-action="activate-tab:report-tab-panel">{{ T "reports.tab.items" }}</button>
+  <button id="report-tab-tax" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/tax?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" data-action="activate-tab:report-tab-panel">{{ T "reports.tab.tax" }}</button>
+  <button id="report-tab-forecast" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/forecast?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" data-action="activate-tab:report-tab-panel">{{ T "reports.tab.forecast" }}</button>
+  <button id="report-tab-payments" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/payments?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" data-action="activate-tab:report-tab-panel">{{ T "reports.tab.payments" }}</button>
+  <button id="report-tab-tips" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/tips?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" data-action="activate-tab:report-tab-panel">{{ T "reports.tab.tips" }}</button>
   {{/* ut-docs#988: "yüzde usulü" is a Türkiye-only obligation (İş Kanunu
        4857 art. 51), so this tab is gated on the shop's configured country
        (ShowYuzdeUsulu) rather than on a permission -- same shape as the
@@ -105,16 +104,16 @@
        recording lives inside the tab, on `worker_allocation`, shared with
        the Tips tab. */}}
   {{ if .ShowYuzdeUsulu }}
-  <button id="report-tab-yuzde-usulu" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/yuzde-usulu?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-on:click="{{ $tabActivate }}">{{ T "reports.tab.yuzde_usulu" }}</button>
+  <button id="report-tab-yuzde-usulu" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/yuzde-usulu?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" data-action="activate-tab:report-tab-panel">{{ T "reports.tab.yuzde_usulu" }}</button>
   {{ end }}
   {{ if .IsManager }}
-  <button id="report-tab-eod" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/eod?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-on:click="{{ $tabActivate }}">{{ T "reports.tab.eod" }}</button>
+  <button id="report-tab-eod" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/eod?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" data-action="activate-tab:report-tab-panel">{{ T "reports.tab.eod" }}</button>
   {{ end }}
   {{/* ut-docs#1465: gated on void_comp_waste specifically (CanViewShrinkage),
        not the generic IsManager flag above -- same "eod" tab model, a
        distinct permission. */}}
   {{ if .CanViewShrinkage }}
-  <button id="report-tab-shrinkage" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/shrinkage?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-on:click="{{ $tabActivate }}">{{ T "reports.tab.shrinkage" }}</button>
+  <button id="report-tab-shrinkage" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/shrinkage?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" data-action="activate-tab:report-tab-panel">{{ T "reports.tab.shrinkage" }}</button>
   {{ end }}
 </div>
 <div id="report-tab-panel" role="tabpanel" style="margin-top:1rem"></div>

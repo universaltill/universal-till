@@ -179,6 +179,15 @@ func TestImport_PreviewEndsWithReachableImportButton(t *testing.T) {
 	if tableEnd == -1 || buttonAt == -1 || buttonAt < tableEnd {
 		t.Fatalf("repeated Import control must appear after the preview grid, got: %s", got)
 	}
+	// ut-docs#3325: it marks the submit as a commit through inline-
+	// actions.js's set-value step, never an inline onclick (CSP
+	// script-src-attr).
+	if !strings.Contains(got, `data-action="set-value:import-commit,1"`) {
+		t.Fatalf("repeated Import control must set import-commit=1 via data-action, got: %s", got)
+	}
+	if strings.Contains(got, "onclick=") {
+		t.Fatalf("preview response must carry no inline onclick handler (CSP, ut-docs#3325), got: %s", got)
+	}
 }
 
 // TestImport_CategoryCacheFoldsOnlyASCIICase is the ut-docs#1322
@@ -438,13 +447,19 @@ func TestImport_CommitInItemsShellClosesDialogNotBareNavigation(t *testing.T) {
 	if strings.Contains(got, `href="/catalog"`) {
 		t.Fatalf("commit response inside the /items dialog must not offer a bare /catalog navigation, got: %s", got)
 	}
-	if !strings.Contains(got, `this.closest('dialog').close()`) {
+	// ut-docs#3325: both behaviours are inline-actions.js steps now —
+	// ajax-get refetches #items-panel, close-closest closes the dialog —
+	// never an inline onclick (CSP script-src-attr).
+	if strings.Contains(got, "onclick=") {
+		t.Fatalf("commit response must carry no inline onclick handler, got: %s", got)
+	}
+	if !strings.Contains(got, `close-closest"`) {
 		t.Fatalf("commit response inside the /items dialog must offer a dialog-close control, got: %s", got)
 	}
 	// F1 follow-up: closing alone isn't enough (the panel behind the dialog
 	// would go stale) -- this button's own click must also refetch
 	// #items-panel, not just close.
-	if !strings.Contains(got, `htmx.ajax('GET','/catalog',{target:'#items-panel',swap:'innerHTML'})`) {
+	if !strings.Contains(got, `data-action="ajax-get:/catalog,#items-panel close-closest"`) {
 		t.Fatalf("commit response inside the /items dialog must refresh #items-panel on View catalog, got: %s", got)
 	}
 	// The visible label is unchanged -- only the control's behaviour differs.

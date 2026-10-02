@@ -41,7 +41,7 @@
   <div class="kiosk-actions">
     <button class="btn secondary compact" type="button" data-testid="kiosk-checkout-start-phone"
             hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-            onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus({ preventScroll: true });}, 150)">
+            data-action="refocus-scan">
       <span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span> {{ T "kiosk.checkout_start" }}</button>
     {{ if .canManageStock }}<a class="btn secondary compact" data-testid="kiosk-inventory-link-phone" href="/inventory"><span class="btn-ico" aria-hidden="true">{{ icon "package" }}</span> {{ T "kiosk.inventory" }}</a>{{ end }}
   </div>
@@ -74,7 +74,7 @@
          belongs on this after-request handler, same reasoning as New Sale's
          above. -->
     <form hx-post="/api/pos/hold" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace" hx-include="#offline-flag"
-          hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('hold-modal'); m.close(); this.reset(); var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">
+          data-after-request="ok close:hold-modal reset-form no-error-toast close:payment-overlay">
       <h3 id="hold-modal-title">{{ T "hold.modal.title" }}</h3>
       <input type="text" id="hold-label-input" name="label" maxlength="64"
              aria-labelledby="hold-modal-title" placeholder="{{ T "hold.modal.placeholder" }}" autofocus>
@@ -87,7 +87,7 @@
               title="{{ T "osk.toggle" }}" aria-label="{{ T "osk.toggle" }}">⌨️</button>
       <div class="modifier-actions">
         <button type="button" class="btn secondary"
-                onclick="document.getElementById('hold-modal').close(); document.getElementById('hold-label-input').value='';">
+                data-action="close:hold-modal clear-value:hold-label-input">
           {{ T "common.cancel" }}</button>
         <!-- ut-docs#1628 (found reviewing #1625): this submit button's
              visible text is plain "Hold Sale", same as the trigger(s) that
@@ -137,17 +137,17 @@
     <h3 id="order-type-prompt-title">{{ T "basket.order_type.prompt_title" }}</h3>
     <div class="modifier-actions">
       <button type="button" class="btn secondary" data-testid="order-type-prompt-cancel"
-              onclick="document.getElementById('order-type-prompt-modal').close();">
+              data-action="close:order-type-prompt-modal">
         {{ T "common.cancel" }}</button>
       <button type="button" class="btn secondary" data-testid="order-type-prompt-dine-in"
               hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "" }}'
               hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-              hx-on::after-request="if (event.detail.successful) { document.getElementById('order-type-prompt-modal').close(); if (window.posOrderTypePromptResolve) window.posOrderTypePromptResolve(); }">
+              data-after-request="ok close:order-type-prompt-modal order-type-resolve">
         🍽️ {{ T "basket.order_type.dine_in" }}</button>
       <button type="button" class="btn primary" data-testid="order-type-prompt-takeaway"
               hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "takeaway" }}'
               hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-              hx-on::after-request="if (event.detail.successful) { document.getElementById('order-type-prompt-modal').close(); if (window.posOrderTypePromptResolve) window.posOrderTypePromptResolve(); }">
+              data-after-request="ok close:order-type-prompt-modal order-type-resolve">
         🥡 {{ T "basket.order_type.takeaway" }}</button>
     </div>
   </dialog>
@@ -160,7 +160,7 @@
        also cover the basket the cashier is resuming into. -->
   <dialog id="parked-orders-modal" class="modifier-modal parked-orders-modal"
           aria-labelledby="parked-orders-modal-title"
-          onclose="document.getElementById('parked-orders-body').replaceChildren();">
+          data-close="empty:parked-orders-body">
     <h3 id="parked-orders-modal-title">{{ T "open_orders.title" }}</h3>
     {{/* #2702 review: the popup's notice has its OWN id (not #toast-message) and the
          body is emptied on close, so a stale refusal can never be found by the
@@ -168,10 +168,10 @@
          move re-renders the body, focus returns to that order's Move table
          control (the clicked option no longer exists). */}}
     <div id="parked-orders-body"
-         hx-on::after-settle="var id = this.dataset.focusAfter; if (id) { delete this.dataset.focusAfter; var el = document.getElementById(id); if (el) el.focus(); }"></div>
+         data-after-settle="restore-focus"></div>
     <div class="modifier-actions">
       <button type="button" class="btn secondary"
-              onclick="document.getElementById('parked-orders-modal').close();">
+              data-action="close:parked-orders-modal">
         {{ T "common.close" }}</button>
     </div>
   </dialog>
@@ -200,7 +200,7 @@
     <div id="category-items-modal-body" class="category-items-modal-body"></div>
     <div class="modifier-actions">
       <button type="button" class="btn secondary"
-              onclick="document.getElementById('category-items-modal').close();">
+              data-action="close:category-items-modal">
         {{ T "common.close" }}</button>
     </div>
   </dialog>
@@ -452,13 +452,13 @@
            place. -->
       <button type="button" class="btn primary payment-trigger" data-testid="payment-open"
               {{ if eq .payItemCount 0 }}disabled{{ end }}
-              onclick="posOpenPayment()">
+              data-action="open-payment">
         {{ if eq .payItemCount 0 }}{{ T "tender.pay_empty" }}{{ else }}{{ printf (T "tender.pay_with_total") (money .payTotal) }}{{ end }}</button>
       <!-- ut-docs#1629: testid so the payment-overlay focus guard's e2e
            specs address this original directly, not by locale text. -->
       <button class="btn secondary tender-icon-btn" type="button" data-testid="tender-footer-hold"
               title="{{ T "hold.action" }}"
-              onclick="document.getElementById('hold-modal').show(); document.getElementById('hold-label-input').focus();">
+              data-action="show:hold-modal focus:hold-label-input">
         <span class="btn-ico" aria-hidden="true">{{ icon "pause" }}</span><span class="visually-hidden">{{ T "hold.action" }}</span></button>
       <!-- ut-docs#1386: New Sale resets the live basket but sits outside
            #payment-overlay, so a tap here while the overlay is open would
@@ -468,8 +468,8 @@
       <button class="btn secondary tender-icon-btn" type="button" data-testid="kiosk-checkout-start"
               title="{{ T "kiosk.checkout_start" }}"
               hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-              onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus({ preventScroll: true });}, 150)"
-              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">
+              data-action="refocus-scan"
+              data-after-request="ok no-error-toast close:payment-overlay">
         <span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span><span class="visually-hidden">{{ T "kiosk.checkout_start" }}</span></button>
       <!-- ut-docs#2137: the parked-orders popup. Always rendered (a control
            that appears and disappears under the cashier's finger is worse
@@ -491,7 +491,7 @@
       <button type="button" class="btn secondary tender-icon-btn parked-orders-btn" data-testid="parked-orders-open"
               title="{{ T "open_orders.title" }}"
               hx-get="/ui/parked-orders" hx-target="#parked-orders-body" hx-swap="innerHTML"
-              onclick="document.getElementById('parked-orders-modal').show()">
+              data-action="show:parked-orders-modal">
         <span class="btn-ico" aria-hidden="true">{{ icon "clipboard-list" }}</span><span class="visually-hidden">{{ T "open_orders.title" }}</span>
         <span class="count-badge" data-testid="open-orders-badge" data-count="0" hidden
               hx-get="/ui/open-orders-badge" hx-trigger="load, held-changed from:body" hx-target="this" hx-swap="outerHTML"></span></button>
@@ -510,7 +510,7 @@
           <h3 id="payment-overlay-title">{{ T "tender.title" }}</h3>
           <button type="button" class="btn secondary payment-overlay-close" data-testid="payment-close"
                   aria-label="{{ T "common.close" }}"
-                  onclick="document.getElementById('payment-overlay').close()">✕</button>
+                  data-action="close:payment-overlay">✕</button>
         </div>
 
         <div class="tab-bar" role="tablist" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
@@ -531,12 +531,12 @@
             <button class="btn pay-btn{{ if .PluginID }} pay-plugin{{ end }}{{ if eq $i 0 }} pay-default{{ end }}"{{ if eq $i 0 }} data-testid="pay-default"{{ end }} data-method="{{ .ID }}" hx-post="/api/pos/tender"
                     hx-vals='{{ jsonVals "amount" 0 "method" .ID }}' hx-include="#offline-flag"
                     hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-                    hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T .Name }}<span class="fee-hint" data-fee-for="{{ .ID }}"></span></button>
+                    data-after-request="ok no-error-toast close:payment-overlay">{{ T .Name }}<span class="fee-hint" data-fee-for="{{ .ID }}"></span></button>
             {{ else }}
             <button class="btn pay-btn pay-default" data-testid="pay-default" data-method="cash" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-                    hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T "tender.cash" }}</button>
+                    data-after-request="ok no-error-toast close:payment-overlay">{{ T "tender.cash" }}</button>
             <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-                    hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T "tender.card" }}</button>
+                    data-after-request="ok no-error-toast close:payment-overlay">{{ T "tender.card" }}</button>
             {{ end }}
             <!-- Pay with the scanned Gutschein (ut-docs#1833): this button is
                  static markup (present on every page load, like the pay
@@ -559,7 +559,7 @@
             <button class="btn pay-btn" type="button" id="pay-voucher-btn" hidden data-testid="pay-voucher"
                     hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"voucher","voucher_id":""}' hx-include="#offline-flag"
                     hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-                    hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }"></button>
+                    data-after-request="ok no-error-toast close:payment-overlay"></button>
           </div>
           <label class="offline-toggle">
             <input type="checkbox" id="offline-override"> {{ T "kiosk.offline" }}
@@ -676,7 +676,7 @@
       // htmx, never a form submit — so a drag mid-sale can never trigger
       // the page navigation/reload that would lose the in-progress basket
       // (the one hard requirement every other settings control's own
-      // hx-on::after-request reload pattern in this codebase would
+      // after-request reload pattern in this codebase would
       // violate here).
       (function () {
         var divider = document.getElementById('pos-divider');
@@ -1085,12 +1085,12 @@
       <button class="btn secondary" type="button" data-testid="payment-overlay-new-sale"
               aria-label="{{ T "tender.overlay_new_sale_action" }}"
               hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-              onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus({ preventScroll: true });}, 150)"
-              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">
+              data-action="refocus-scan"
+              data-after-request="ok no-error-toast close:payment-overlay">
         <span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span> {{ T "kiosk.checkout_start" }}</button>
       <button class="btn secondary" type="button" data-testid="payment-overlay-hold"
               aria-label="{{ T "tender.overlay_hold_action" }}"
-              onclick="document.getElementById('hold-modal').show(); document.getElementById('hold-label-input').focus();">
+              data-action="show:hold-modal focus:hold-label-input">
         {{ T "hold.action" }}</button>
     </div>
 
@@ -1108,7 +1108,7 @@
            (POST /api/pos/reset) is unchanged. -->
       <button class="btn secondary"
               hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T "tender.new_customer" }}</button>
+              data-after-request="ok no-error-toast close:payment-overlay">{{ T "tender.new_customer" }}</button>
     </div>
       </div>
     </dialog>
