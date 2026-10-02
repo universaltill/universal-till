@@ -807,7 +807,20 @@ func TestCloudSetTillSetting_WhitelistedKeysWrite(t *testing.T) {
 		{common.KeyBrowsingMode, common.BrowsingModeAllFilterChips, common.BrowsingModeAllFilterChips},
 		{common.KeyBrowsingMode, common.BrowsingModeCategoryTabs, common.BrowsingModeCategoryTabs},
 		{data.SaleDisplayNoSchemeKey, data.DisplayNoSchemeLifetimeNoReset, data.DisplayNoSchemeLifetimeNoReset},
+		// ut-docs#3390 (full per-key coverage in cloudsync_wire_3390_test.go).
+		{data.BarcodeEnabledSymbologiesKey, `["EAN13"]`, `["EAN13"]`},
+		{data.CatalogImportBarcodeFromSKUDefaultKey, "true", "1"},
+		{data.CatalogPrePackUnitPriceEnabledKey, "false", "0"},
+		{common.KeyAllowNegativeInventory, "true", "true"},
+		{keyInvoiceSellerName, "Corner Shop Ltd", "Corner Shop Ltd"},
+		{keyInvoiceSellerAddress, "1 High Street", "1 High Street"},
+		{keyInvoiceSellerVATNo, "GB123", "GB123"},
+		{common.KeyIdleLock, "15", "15"},
+		{common.KeyKioskPaymentMode, common.KioskPaymentModeCounter, common.KioskPaymentModeCounter},
+		{common.KeyStaffLocales, "en", "en"},
+		{common.KeyLocale, "en", "en"},
 	}
+	withRealLocales(t)
 	covered := map[string]bool{}
 	for _, c := range cases {
 		msg, err := cloudSetTillSetting(ctx, dp, nil, c.key, c.value)
@@ -1003,8 +1016,9 @@ func TestRemoteTillSettingsReport(t *testing.T) {
 	}
 
 	got := remoteTillSettingsReport(ctx, dp)
-	if len(got) != len(allowedRemoteTillSettingKeys) {
-		t.Fatalf("report has %d keys, want exactly the %d whitelisted: %+v", len(got), len(allowedRemoteTillSettingKeys), got)
+	// ut-docs#3390: plus the read-only keys my. shows.
+	if want := len(allowedRemoteTillSettingKeys) + len(reportedReadOnlyTillSettingKeys); len(got) != want {
+		t.Fatalf("report has %d keys, want exactly the %d whitelisted + read-only: %+v", len(got), want, got)
 	}
 	for key := range allowedRemoteTillSettingKeys {
 		if _, ok := got[key]; !ok {
