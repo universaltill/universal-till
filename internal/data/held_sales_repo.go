@@ -3,6 +3,8 @@ package data
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -455,4 +457,81 @@ func (r *HeldSalesRepo) Delete(ctx context.Context, id string) error {
 		return heldSalesObs.wrapf("delete", "delete held sale %s", err, id)
 	}
 	return nil
+}
+
+// stripCustomerFromHeldSales (ut-docs#3253) removes customerID's link and
+// name from every parked basket that carries it, live and archived: the
+// payload's customer_id/customer_name keys go, and a label that IS the
+// customer's name (the hold handler's label fallback) becomes the park's
+// clock time, the next fallback in that chain. Shared by EraseCustomer (on
+// the primary or a standalone till; bumpUpdatedAt, so a replica's older
+// write-through of the same order loses to the scrubbed one, ADR-0093) and
+// the replica's customers prune (no bump: updated_at there is the
+// primary's clock, which ReconcileWithPrimary compares against).
+func stripCustomerFromHeldSales(ctx context.Context, tx *sql.Tx, customerID string, bumpUpdatedAt bool) error {
+	if customerID == "" {
+		return nil
+	}
+	for _, table := range []string{"held_sales", "held_sales_archive"} {
+		rows, err := tx.QueryContext(ctx, `SELECT rowid, label, payload, created_at FROM `+table+`
+WHERE json_valid(payload) AND json_extract(payload, '$.customer_id') = ?`, customerID)
+		if err != nil {
+			return fmt.Errorf("strip customer from %s: %w", table, err)
+		}
+		type hit struct {
+			rowid                     int64
+			label, payload, createdAt string
+		}
+		var hits []hit
+		for rows.Next() {
+			var h hit
+			if err := rows.Scan(&h.rowid, &h.label, &h.payload, &h.createdAt); err != nil {
+				rows.Close()
+				return fmt.Errorf("strip customer from %s: %w", table, err)
+			}
+			hits = append(hits, h)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("strip customer from %s: %w", table, err)
+		}
+		for _, h := range hits {
+			// RawMessage keeps every other value byte-for-byte (money stays
+			// an integer, never a float64 re-encoding).
+			var m map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(h.payload), &m); err != nil {
+				return fmt.Errorf("strip customer from %s: %w", table, err)
+			}
+			var name string
+			_ = json.Unmarshal(m["customer_name"], &name)
+			delete(m, "customer_id")
+			delete(m, "customer_name")
+			out, err := json.Marshal(m)
+			if err != nil {
+				return fmt.Errorf("strip customer from %s: %w", table, err)
+			}
+			label := h.label
+			if n := strings.TrimSpace(name); n != "" && strings.TrimSpace(label) == n {
+				label = heldSaleClockLabel(h.createdAt)
+			}
+			q := `UPDATE ` + table + ` SET payload = ?, label = ? WHERE rowid = ?`
+			if bumpUpdatedAt && table == "held_sales" {
+				q = `UPDATE held_sales SET payload = ?, label = ?, updated_at = datetime('now') WHERE rowid = ?`
+			}
+			if _, err := tx.ExecContext(ctx, q, string(out), label, h.rowid); err != nil {
+				return fmt.Errorf("strip customer from %s: %w", table, err)
+			}
+		}
+	}
+	return nil
+}
+
+// heldSaleClockLabel is the "15:04" local clock time a park with no typed
+// label and no customer gets (hold_api.go), rebuilt from created_at (UTC).
+func heldSaleClockLabel(createdAt string) string {
+	t, err := time.ParseInLocation(heldSaleTimeLayout, createdAt, time.UTC)
+	if err != nil {
+		return ""
+	}
+	return t.Local().Format("15:04")
 }
