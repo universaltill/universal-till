@@ -362,13 +362,14 @@ func optionalAuth(path string) bool {
 // hx-triggers and fails on an unclassified one, or on a stale entry here.
 var backgroundPollPaths = map[string]bool{
 	// base.html / nav.html shell, on every page.
-	"/ui/main-till-status": true,
-	"/ui/net-status":       true, // status-bar light, fetch every 10 s (ut-docs#3095)
-	"/ui/sync-chip":        true,
-	"/ui/fiscal-chip":      true,
-	"/ui/diagnostics-chip": true,
-	"/ui/pairing-notice":   true,
-	"/ui/theme-sync":       true,
+	"/ui/main-till-status":  true,
+	"/ui/net-status":        true, // status-bar light, fetch every 10 s (ut-docs#3095)
+	"/ui/subscription-chip": true, // status-bar subscription chip, every 60 s (ut-docs#2569)
+	"/ui/sync-chip":         true,
+	"/ui/fiscal-chip":       true,
+	"/ui/diagnostics-chip":  true,
+	"/ui/pairing-notice":    true,
+	"/ui/theme-sync":        true,
 	// Sale screen watchers (#2765, #2858).
 	"/ui/buttons/version":         true,
 	"/ui/open-orders-badge/watch": true,
@@ -439,15 +440,16 @@ func displayBoardRequest(r *http.Request) bool {
 // running (ut-docs#2935 review). TestShellRequestsAreBoardScoped scans the
 // two templates and fails on a shell request missing here.
 var shellGetPaths = map[string]bool{
-	"/ui/main-till-status": true,
-	"/ui/net-status":       true,
-	"/ui/sync-chip":        true,
-	"/ui/fiscal-chip":      true,
-	"/ui/diagnostics-chip": true,
-	"/ui/pairing-notice":   true,
-	"/ui/theme-sync":       true,
-	"/ui/session-chip":     true,
-	"/ui/bugreport-chip":   true,
+	"/ui/main-till-status":  true,
+	"/ui/net-status":        true,
+	"/ui/subscription-chip": true, // ut-docs#2569
+	"/ui/sync-chip":         true,
+	"/ui/fiscal-chip":       true,
+	"/ui/diagnostics-chip":  true,
+	"/ui/pairing-notice":    true,
+	"/ui/theme-sync":        true,
+	"/ui/session-chip":      true,
+	"/ui/bugreport-chip":    true,
 }
 
 var shellPostPaths = map[string]bool{

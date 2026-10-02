@@ -4856,6 +4856,26 @@ body.login-screen {
 }
 .statusbar a.sb-main-till:hover { filter: brightness(0.92); }
 #sb-main-till-mount:empty { display: none; }
+/* ut-docs#2569 (ADR-0060 §6): "Subscription not confirmed" / "Subscription
+   ended" — the same amber pill as sb-main-till (the till still sells; only
+   paid cloud features are paused). Unlike sb-main-till it never wraps: on a
+   1024x600 kiosk bar it shares the row with the connection light and the
+   update/main-till chips, so the text ellipsizes instead (the full label
+   stays the accessible name, the reason is on the Settings card). Logical
+   properties only. */
+#sb-subscription-mount:empty { display: none; }
+#sb-subscription-mount { min-inline-size: 0; display: inline-flex; }
+.statusbar .sb-subscription {
+  color: #451a03; background: var(--warning, #d97706);
+  text-decoration: none; white-space: nowrap; min-inline-size: 0;
+  max-inline-size: 16rem;
+  padding: .05rem .5rem; min-block-size: 2.25rem; align-items: center; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem;
+}
+.statusbar .sb-subscription-text { overflow: hidden; text-overflow: ellipsis; min-inline-size: 0; }
+.statusbar a.sb-subscription:hover { filter: brightness(0.92); }
+.subscription-paused-list { margin-block: .3rem; padding-inline-start: 1.25rem; }
+.subscription-banner p { margin-block: .25rem; }
 /* ut-docs#2742: the replica's one main-till light (main_till_status.html).
    Words carry the state; the dot only repeats it — filled green while
    linked, a hollow ring while polling (sync works, just not instantly).
@@ -5923,7 +5943,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
     border-block-start: 1px solid rgba(255, 255, 255, .15);
   }
   body.sale-screen.nav-drawer-open .statusbar .sb-ver { margin-inline-start: 0; }
-  body.sale-screen.nav-drawer-open .statusbar :is(.sb-update, .sb-enrol, .sb-power, .sb-main-till, .sb-plugin-update, .sb-language-pack-update, .sb-release-notes) { margin-inline-start: 0; }
+  body.sale-screen.nav-drawer-open .statusbar :is(.sb-update, .sb-enrol, .sb-power, .sb-main-till, .sb-subscription, .sb-plugin-update, .sb-language-pack-update, .sb-release-notes) { margin-inline-start: 0; }
   /* ut-docs#3358: every screen's status row paints over the open drawer's
      foot (sale screen: the rule above; elsewhere the page's sticky
      .statusbar), so the drawer reserves the row's measured open height

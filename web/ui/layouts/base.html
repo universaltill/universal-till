@@ -1519,6 +1519,14 @@
         <span class="sb-dot" aria-hidden="true"></span>
         <span class="sb-conn-text">{{ T "status.online" }}</span>
       </span>
+      {{/* ut-docs#2569 (ADR-0060 §6): "Subscription not confirmed" /
+           "Subscription ended" chip, linking to Settings → Subscription.
+           Filled by GET /ui/subscription-chip on load and every 60 s (the
+           entitlement cache only changes on a sync tick); empty body unless
+           stale or lapsed. Managers only — a cashier can't act on it
+           (ut-docs#3079). Same hx-preserve + innerHTML pattern as
+           #sb-main-till-mount. Never a modal, never a sale gate. */}}
+      {{ if allowed "settings" }}<span id="sb-subscription-mount" hx-preserve hx-get="/ui/subscription-chip" hx-trigger="load, every 60s"></span>{{ end }}
       {{/* ut-docs#3079: the three admin links below (/settings#registration,
            /plugins) render only for a viewer who can open their target —
            `allowed` is bound per request (httpx.withHelpHref) to the same
