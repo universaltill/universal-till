@@ -1132,16 +1132,21 @@ type snapshotVariantRow struct {
 }
 
 type snapshotItemRow struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	SKU            string   `json:"sku"`
-	PriceMinor     int64    `json:"price_minor"`
-	CategoryID     string   `json:"category_id"`
-	Color          string   `json:"color"`
-	Active         bool     `json:"active"`
-	IsWeighed      bool     `json:"is_weighed"`
-	StockUntracked bool     `json:"stock_untracked"`
-	Qty            *float64 `json:"qty,omitempty"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	SKU            string `json:"sku"`
+	PriceMinor     int64  `json:"price_minor"`
+	CategoryID     string `json:"category_id"`
+	Color          string `json:"color"`
+	Active         bool   `json:"active"`
+	IsWeighed      bool   `json:"is_weighed"`
+	StockUntracked bool   `json:"stock_untracked"`
+	// AgeRestricted (ut-docs#3340/#3395) lets my.'s catalog views see (and,
+	// in a future change, set) the staff-ID-check flag — read-only on this
+	// side of the wire for now; the cloud's own ingest/display is separate
+	// follow-up work, not this field's concern.
+	AgeRestricted bool     `json:"age_restricted"`
+	Qty           *float64 `json:"qty,omitempty"`
 	// Barcode is the legacy primary barcode, kept for a schema-1 reader.
 	Barcode                   string               `json:"barcode"`
 	Barcodes                  []string             `json:"barcodes"`
@@ -1212,7 +1217,8 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 			ID: it.ID, Name: it.Name, SKU: it.SKU, PriceMinor: it.PriceMinor,
 			CategoryID: it.CategoryID, Color: it.Color, Active: it.Active,
 			IsWeighed: it.IsWeighed, StockUntracked: it.StockUntracked,
-			Barcodes: it.Barcodes, ModifierGroupIDs: it.ModifierGroupIDs,
+			AgeRestricted: it.AgeRestricted,
+			Barcodes:      it.Barcodes, ModifierGroupIDs: it.ModifierGroupIDs,
 			ModifierOptOutIDs: it.ModifierOptOutIDs, EffectiveModifierGroupIDs: it.EffectiveModifierGroupIDs,
 			Variants:    make([]snapshotVariantRow, 0, len(it.Variants)),
 			ImageSHA256: ServedImageSHA256(thumbs[it.ID]),

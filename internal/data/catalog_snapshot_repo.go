@@ -30,6 +30,7 @@ type SnapshotItem struct {
 	Active                    bool
 	IsWeighed                 bool
 	StockUntracked            bool
+	AgeRestricted             bool
 	Barcodes                  []string // primary first
 	ModifierGroupIDs          []string // directly attached, link order
 	ModifierOptOutIDs         []string
@@ -50,7 +51,7 @@ type SnapshotItem struct {
 func (r *CatalogRepo) CatalogSnapshotItems(ctx context.Context) ([]SnapshotItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, name, COALESCE(sku, ''), base_price, COALESCE(category_id, ''), COALESCE(color, ''),
-       is_active, is_weighed, stock_untracked
+       is_active, is_weighed, stock_untracked, age_restricted
 FROM items
 ORDER BY is_active DESC, name, id`)
 	if err != nil {
@@ -59,7 +60,7 @@ ORDER BY is_active DESC, name, id`)
 	var items []SnapshotItem
 	for rows.Next() {
 		var it SnapshotItem
-		if err := rows.Scan(&it.ID, &it.Name, &it.SKU, &it.PriceMinor, &it.CategoryID, &it.Color, &it.Active, &it.IsWeighed, &it.StockUntracked); err != nil {
+		if err := rows.Scan(&it.ID, &it.Name, &it.SKU, &it.PriceMinor, &it.CategoryID, &it.Color, &it.Active, &it.IsWeighed, &it.StockUntracked, &it.AgeRestricted); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("catalog snapshot: items: %w", err)
 		}

@@ -130,8 +130,13 @@ type ImportItem struct {
 	Department  string // enterprise/ERP masters carry a department axis
 	Description string
 	IsWeighed   bool
-	Stock       float64 // opening quantity from the source system
-	HasStock    bool    // the file carried a parseable stock value
+	// AgeRestricted (ut-docs#3340/#3395): mirrors items.age_restricted — the
+	// till only prompts for a staff ID check on these at tender. Unlike
+	// IsWeighed, no other POS system's export has this concept, so it's
+	// only ever recognised when the column header is this till's own.
+	AgeRestricted bool
+	Stock         float64 // opening quantity from the source system
+	HasStock      bool    // the file carried a parseable stock value
 	// TracksStock is the source system's own per-item answer to "should
 	// this item be stock-tracked?", and HasTracksStock says the file
 	// actually carried a parseable one (ut-docs#1843). The two are separate
@@ -250,10 +255,11 @@ var columnSynonyms = map[string][]string{
 	// Department is a distinct axis from category (an ERP master carries both;
 	// a top-level "department" that categories nest under). Kept separate so a
 	// file with only a category leaves department empty.
-	"department":  {"department", "dept"},
-	"description": {"description", "details"},
-	"weighed":     {"sold by weight", "weighed", "sold by weight (y/n)", "weighed (y/n)"},
-	"stock":       {"in stock", "stock", "quantity", "qty", "in_stock", "on_hand", "on hand", "current quantity", "stock quantity", "opening stock"},
+	"department":     {"department", "dept"},
+	"description":    {"description", "details"},
+	"weighed":        {"sold by weight", "weighed", "sold by weight (y/n)", "weighed (y/n)"},
+	"age_restricted": {"age restricted", "age restricted (y/n)"},
+	"stock":          {"in stock", "stock", "quantity", "qty", "in_stock", "on_hand", "on hand", "current quantity", "stock quantity", "opening stock"},
 	// The source system's per-item "is this item stock-tracked at all?"
 	// answer (ut-docs#1843). SumUp's header is "Track inventory? (Yes/No)";
 	// stripTrailingParen's second pass reduces that to "track inventory?",
@@ -586,14 +592,15 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 		rawBarcode := stripCSVDefuse(shopifyFallback(rec, "barcode", "variant_barcode"))
 		dec, barcodeMatched := normalizeBarcode(rawBarcode, enabledSymbologyIDs)
 		item := ImportItem{
-			Name:        name,
-			SKU:         stripCSVDefuse(shopifyFallback(rec, "sku", "variant_sku")),
-			Barcode:     dec.LookupKey,
-			BarcodeType: dec.SymbologyID,
-			Category:    category,
-			Department:  get(rec, "department"),
-			Description: stripCSVDefuse(get(rec, "description")),
-			IsWeighed:   isTruthy(get(rec, "weighed")),
+			Name:          name,
+			SKU:           stripCSVDefuse(shopifyFallback(rec, "sku", "variant_sku")),
+			Barcode:       dec.LookupKey,
+			BarcodeType:   dec.SymbologyID,
+			Category:      category,
+			Department:    get(rec, "department"),
+			Description:   stripCSVDefuse(get(rec, "description")),
+			IsWeighed:     isTruthy(get(rec, "weighed")),
+			AgeRestricted: isTruthy(get(rec, "age_restricted")),
 		}
 		if rawBarcode != "" && !barcodeMatched {
 			item.BarcodeIssue = BarcodeIssueNoSymbologyMatch

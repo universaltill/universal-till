@@ -240,6 +240,30 @@ func TestParseXLSX_PercentFormattedTaxCell(t *testing.T) {
 	}
 }
 
+// TestParseXLSX_AgeRestrictedColumn (ut-docs#3340/#3395): ParseXLSX has its
+// own separate per-row parsing loop from Parse's CSV reader, so a column
+// recognised only by one would silently stay unsupported in the other.
+func TestParseXLSX_AgeRestrictedColumn(t *testing.T) {
+	data := buildXLSX(t, [][]string{
+		{"Name", "Price", "Age restricted"},
+		{"Whisky", "15.00", "Y"},
+		{"Bread", "2.00", "N"},
+	})
+	res, err := ParseXLSX(bytes.NewReader(data), int64(len(data)), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("ParseXLSX: %v", err)
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("got %d items, want 2: %+v", len(res.Items), res.Items)
+	}
+	if !res.Items[0].AgeRestricted {
+		t.Errorf("whisky should be age restricted: %+v", res.Items[0])
+	}
+	if res.Items[1].AgeRestricted {
+		t.Errorf("bread should not be age restricted: %+v", res.Items[1])
+	}
+}
+
 // TestParseXLSX_BlankSeparatorRowSkipped (review finding, ut-docs#1837):
 // encoding/csv drops a blank line, so Parse never produces a row for one;
 // GetRows hands back an empty record instead, which used to become a
