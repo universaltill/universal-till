@@ -1374,6 +1374,92 @@ func TestImport_TakeawayOnlyWithNoDineInRateWarns(t *testing.T) {
 	}
 }
 
+// Real-handler, real-DB proof that a net quantity cell actually lands on
+// the created item (ut-docs#3391/#3403) — unlike the tax-rate columns
+// above, net quantity is written straight onto the item row via
+// pos.ItemInput, not resolved through a lookup table, so the one place a
+// wiring mistake (forgetting to copy the parsed value into the ItemInput
+// literal) would go unnoticed is exactly a test that only exercises the
+// parser (catimport.Parse) without ever committing through the real
+// import handler into a real migrated DB.
+func TestImport_NetQuantityColumnsCommitToDB(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	initAuthTestI18n(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	csv := "Name,SKU,Price,Net quantity,Net quantity unit\n" +
+		"Rice Bag,NQ1,2.00,500,g\n" +
+		"Loose Apple,NQ2,0.30,,\n"
+	body, ct := multipartCSV(t, csv, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	var value sql.NullInt64
+	var unit sql.NullString
+	if err := dp.Db.QueryRow(`SELECT net_quantity_value, net_quantity_unit FROM items WHERE sku = 'NQ1'`).
+		Scan(&value, &unit); err != nil {
+		t.Fatalf("query rice bag: %v", err)
+	}
+	if !value.Valid || value.Int64 != 500 || !unit.Valid || unit.String != "g" {
+		t.Fatalf("net quantity did not reach the DB: value=%v unit=%v", value, unit)
+	}
+
+	var looseValue sql.NullInt64
+	var looseUnit sql.NullString
+	if err := dp.Db.QueryRow(`SELECT net_quantity_value, net_quantity_unit FROM items WHERE sku = 'NQ2'`).
+		Scan(&looseValue, &looseUnit); err != nil {
+		t.Fatalf("query loose apple: %v", err)
+	}
+	if looseValue.Valid || looseUnit.Valid {
+		t.Fatalf("item with blank net-quantity cells must stay unset: value=%v unit=%v", looseValue, looseUnit)
+	}
+}
+
+// Same non-blocking-but-warned shape as the tax cell cases above: a present
+// but invalid net-quantity cell must not fail the row, and must not land on
+// the item either, but the operator must be warned the shelf label won't get
+// a unit price (compliance-sensitive, same reasoning as TaxIssue).
+func TestImport_InvalidNetQuantityCellWarnsButStillImports(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	initAuthTestI18n(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	csv := "Name,SKU,Price,Net quantity,Net quantity unit\n" +
+		"Mystery Jar,NQ3,1.50,abc,g\n"
+	body, ct := multipartCSV(t, csv, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+	resp := rec.Body.String()
+
+	var value sql.NullInt64
+	if err := dp.Db.QueryRow(`SELECT net_quantity_value FROM items WHERE sku = 'NQ3'`).Scan(&value); err != nil {
+		t.Fatalf("item should still be created despite the bad net-quantity cell: %v", err)
+	}
+	if value.Valid {
+		t.Fatalf("invalid net-quantity cell must leave the item with none set, got %v", value.Int64)
+	}
+	if !strings.Contains(resp, "abc/g") {
+		t.Fatalf("row should warn with the raw cell value, got: %s", resp)
+	}
+	if !strings.Contains(resp, `class="row-warn"`) {
+		t.Fatalf("bad-net-quantity row must carry the warned visual treatment, got: %s", resp)
+	}
+}
+
 // A genuine DB-level failure creating the tax code fails the row (like a
 // category-creation failure) — it must not silently import at the wrong rate.
 func TestImport_TaxCodeCreationFailureFailsRow(t *testing.T) {
