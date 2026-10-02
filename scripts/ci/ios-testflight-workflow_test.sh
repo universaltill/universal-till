@@ -26,6 +26,10 @@
 #     before the bind, so the app never reports "dev" (ut-docs#3221);
 #   - the upload is TestFlight only: export method app-store-connect,
 #     destination upload, and no App Store submission tooling.
+#   - after the upload, scripts/asc-testflight-check waits for the build to
+#     be VALID and fails unless an internal group with testers can see it
+#     (ut-docs#3217: a green upload once reached nobody for 6 h); it runs
+#     before the key is removed and is pinned to the app's bundle ID.
 # Self-tested against broken fixtures so each check can actually fail.
 set -euo pipefail
 
@@ -134,6 +138,19 @@ check_wf() {
   if [ -z "$bind" ] || ! grep -qF -- '-ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Version=${MARKETING_VERSION}"' <<<"$bind"; then
     echo "FAIL:gomobile bind does not stamp buildinfo.Version with MARKETING_VERSION (expected exactly -ldflags \"-X github.com/universaltill/universal-till/internal/buildinfo.Version=\${MARKETING_VERSION}\")"
   fi
+  # ut-docs#3217: a step after the export/upload (and before the key is
+  # removed) runs the audience check against the app's bundle ID.
+  local aud aud_at export_at cleanup_at
+  aud="$(awk '/^      - name: /{p = ($0 ~ /^      - name: Check an internal tester can see the build/)} p' "$wf")"
+  aud_at="$(awk '/^      - name: Check an internal tester can see the build/{print NR; exit}' "$wf")"
+  export_at="$(awk '/^      - name: Export and upload/{print NR; exit}' "$wf")"
+  cleanup_at="$(awk '/^      - name: Remove the API key/{print NR; exit}' "$wf")"
+  if [ -z "$aud" ] || [ -z "$export_at" ] || [ -z "$cleanup_at" ] \
+    || ! grep -qF 'go run ./scripts/asc-testflight-check' <<<"$aud" \
+    || ! grep -qF -- '-bundle-id com.universaltill.pos' <<<"$aud" \
+    || [ "$aud_at" -lt "$export_at" ] || [ "$aud_at" -gt "$cleanup_at" ]; then
+    echo "FAIL:no TestFlight audience check (scripts/asc-testflight-check) between the upload and the key cleanup"
+  fi
   # ...and the version must be resolved before the bind runs.
   local resolve_at bind_at
   resolve_at="$(awk '/^      - name: Resolve marketing and build versions/{print NR; exit}' "$wf")"
@@ -170,7 +187,8 @@ YAML
 bad="$(check_wf "$fixture")"
 for want in 'not pinned to a commit SHA' 'archive step is not unsigned' 'forbidden trigger' 'no repository guard' 'macos-26' 'iOS SDK version check' 'self-hosted' \
   'timeout-minutes' 'write permission' 'concurrency' 'secrets expanded inside a run' 'RUNNER_TEMP' \
-  'umask 077' 'if: always()' 'ASC_KEY_P8 printed' 'stamp buildinfo.Version' 'resolved after the gomobile bind'; do
+  'umask 077' 'if: always()' 'ASC_KEY_P8 printed' 'stamp buildinfo.Version' 'resolved after the gomobile bind' \
+  'no TestFlight audience check'; do
   if grep -qF -- "$want" <<<"$bad"; then
     pass "self-test: broken fixture trips '${want}'"
   else

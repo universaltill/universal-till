@@ -4,6 +4,9 @@
   served through RenderPartial.
 */}}
 {{ if .topic }}
+{{/* ut-docs#3356: phone-only (CSS hides it wider) — the tree is hidden while a
+     topic shows, so this swaps the landing + OOB tree back in. */}}
+<a class="manual-back" href="/help" hx-get="/help" hx-target="#manual-panel" hx-push-url="true"><span class="manual-back-chev" aria-hidden="true">‹</span> {{ T "help.nav.label" }}</a>
 <article class="manual-topic" id="manual-topic" data-topic="{{ .topic.ID }}">
   {{ if not .topic.Translated }}
   <p class="manual-untranslated" role="note">{{ T "help.untranslated" }}</p>

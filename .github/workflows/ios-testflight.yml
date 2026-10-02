@@ -57,7 +57,9 @@ jobs:
     # macos-26 = Xcode 26 / iOS 26 SDK: App Store Connect refuses uploads
     # built with an older SDK (ut-docs#3069; the 18.5 SDK on macos-15 was).
     runs-on: macos-26
-    timeout-minutes: 60
+    # 60 for the build and upload + up to 40 waiting for App Store Connect
+    # to process it (the tester check below, ut-docs#3217) + 20 slack.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -196,6 +198,24 @@ jobs:
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID"
           echo "Uploaded $MARKETING_VERSION ($BUILD_NUMBER); App Store Connect processes it before it shows in TestFlight." >> "$GITHUB_STEP_SUMMARY"
+      - name: Check an internal tester can see the build
+        # ut-docs#3217: an upload once went green and reached nobody for 6 h
+        # (no beta group, no testers). Waits for App Store Connect to finish
+        # processing (VALID), then fails unless an internal group with at
+        # least one tester can see this build. Reads the key file written
+        # above; logs nothing secret.
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          go run ./scripts/asc-testflight-check \
+            -key-path "$RUNNER_TEMP/private_keys/AuthKey_$ASC_KEY_ID.p8" \
+            -key-id "$ASC_KEY_ID" -issuer-id "$ASC_ISSUER_ID" \
+            -bundle-id com.universaltill.pos \
+            -version "$MARKETING_VERSION" -build "$BUILD_NUMBER" \
+            -timeout 40m
+          echo "An internal TestFlight group with testers can see $MARKETING_VERSION ($BUILD_NUMBER)." >> "$GITHUB_STEP_SUMMARY"
       - name: Remove the API key and export options
         if: always()
         run: rm -rf "$RUNNER_TEMP/private_keys" "$RUNNER_TEMP/ExportOptions.plist"
