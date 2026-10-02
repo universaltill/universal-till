@@ -146,3 +146,45 @@ func TestImport_InvalidNetQuantityWarnsButStillImports(t *testing.T) {
 		t.Fatalf("bad net-quantity row must carry the warned visual treatment, got: %s", resp)
 	}
 }
+
+// ut-docs#3473: the exact scenario the card describes end to end through
+// the real HTTP handler — a merchant opens this till's own CSV export in a
+// spreadsheet app, saves it as .xlsx, and re-uploads it. Net quantity must
+// survive that round trip exactly like it already does for a re-uploaded
+// CSV (TestExportCSVRoundTripsNetQuantity above).
+func TestImport_XLSXUploadImportsNetQuantity(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	xlsxBytes := buildXLSXForPagesTest(t, [][]string{
+		{"Name", "SKU", "Price", "Net quantity", "Net quantity unit"},
+		{"Ground Coffee", "NQX-1", "6.50", "227", "g"},
+		{"Plain Item", "NQX-2", "1.00", "", ""},
+	})
+	body, ct := multipartFile(t, "catalog.xlsx", xlsxBytes, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	var value int64
+	var unit string
+	if err := dp.Db.QueryRow(`SELECT net_quantity_value, net_quantity_unit FROM items WHERE sku = 'NQX-1'`).Scan(&value, &unit); err != nil {
+		t.Fatalf("imported item should carry a net quantity: %v", err)
+	}
+	if value != 227 || unit != "g" {
+		t.Errorf("net quantity after xlsx import = %d %q, want 227 \"g\"", value, unit)
+	}
+	var noneValue, noneUnit any
+	if err := dp.Db.QueryRow(`SELECT net_quantity_value, net_quantity_unit FROM items WHERE sku = 'NQX-2'`).Scan(&noneValue, &noneUnit); err != nil {
+		t.Fatalf("plain item should be imported: %v", err)
+	}
+	if noneValue != nil || noneUnit != nil {
+		t.Errorf("item without a net quantity must import without one, got %v %v", noneValue, noneUnit)
+	}
+}
