@@ -496,8 +496,9 @@ WHERE json_valid(payload) AND json_extract(payload, '$.customer_id') = ?`, custo
 			return fmt.Errorf("strip customer from %s: %w", table, err)
 		}
 		for _, h := range hits {
-			// RawMessage keeps every other value byte-for-byte (money stays
-			// an integer, never a float64 re-encoding).
+			// RawMessage keeps every other value's JSON as-is, so money stays
+			// an integer and is never re-encoded as a float64. Key order and
+			// HTML escaping may change, which doesn't change the meaning.
 			var m map[string]json.RawMessage
 			if err := json.Unmarshal([]byte(h.payload), &m); err != nil {
 				return fmt.Errorf("strip customer from %s: %w", table, err)

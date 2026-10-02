@@ -109,10 +109,20 @@ func TestAdminApply_ErasedCustomerPinnedBySatelliteSaleBecomesAnonymousShell(t *
 	if err != nil {
 		t.Fatalf("second dump: %v", err)
 	}
-	for i := 0; i < 2; i++ { // the second pull must be a no-op on the shell
-		if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
-			t.Fatalf("apply %d: %v", i+2, err)
-		}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	// A later pull must leave the shell alone: no version bump, so open
+	// sale screens don't refresh on every pull (ut-docs#2875).
+	adminBefore, sellBefore := syncAdminGeneration(t, replica), sellScreenGeneration(t, replica)
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+		t.Fatalf("third apply: %v", err)
+	}
+	if got := syncAdminGeneration(t, replica); got != adminBefore {
+		t.Errorf("re-applying the same bundle moved the admin generation %d -> %d", adminBefore, got)
+	}
+	if got := sellScreenGeneration(t, replica); got != sellBefore {
+		t.Errorf("re-applying the same bundle moved the sell-screen generation %d -> %d", sellBefore, got)
 	}
 
 	var name string
@@ -139,5 +149,47 @@ func TestAdminApply_ErasedCustomerPinnedBySatelliteSaleBecomesAnonymousShell(t *
 	}
 	if _, _, ok := repo.LookupCustomer(ctx, "c1"); ok {
 		t.Errorf("LookupCustomer resolves the anonymous shell")
+	}
+}
+
+// The hard-delete branch: no replica sale pins the customer, so the row goes,
+// and the replica's parked basket for them is stripped all the same.
+func TestAdminApply_ErasedCustomerWithoutSatelliteHistoryStripsParkedBasket(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+	mustExec(t, primary, `INSERT INTO customers (id, name) VALUES ('c1', ?)`, erasedName)
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, replica, `INSERT INTO held_sales (id, label, total_minor, line_count, payload, created_at, updated_at)
+		VALUES ('h1', ?, 1250, 1, ?, '2026-09-02 10:00:00', '2026-09-02 10:00:00')`, erasedName, heldPayloadWithCustomer("c1"))
+	if ok, err := NewPOSRepo(primary.DB).EraseCustomer(ctx, "c1", "", ""); err != nil || !ok {
+		t.Fatalf("erase: ok=%v err=%v", ok, err)
+	}
+	bundle2, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := replica.DB.QueryRow(`SELECT count(*) FROM customers WHERE id='c1'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("customer row should be hard-deleted: n=%d err=%v", n, err)
+	}
+	var label, payload, updated string
+	if err := replica.DB.QueryRow(`SELECT label, payload, updated_at FROM held_sales WHERE id='h1'`).Scan(&label, &payload, &updated); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(label+payload, erasedName) || strings.Contains(payload, `"c1"`) {
+		t.Errorf("replica's parked basket still holds the erased customer: label=%q payload=%s", label, payload)
+	}
+	if updated != "2026-09-02 10:00:00" {
+		t.Errorf("the replica-side strip must not move updated_at (ReconcileWithPrimary compares it): got %s", updated)
 	}
 }
