@@ -1967,6 +1967,8 @@ var ShopWideSettingPrefixes = []string{
 	"kiosk.", "auth.", "reports.", "update.", "setup.",
 	// Barcode handling (data/barcode_settings.go).
 	BarcodeEnabledSymbologiesKey, CatalogImportBarcodeFromSKUDefaultKey,
+	// Pre-pack unit price on shelf labels (data/catalog_settings.go).
+	CatalogPrePackUnitPriceEnabledKey,
 	// The store-level marketplace keys (see PerTillSettingPrefixes' own
 	// comment). Listed key by key: a new marketplace.* key must be
 	// classified on purpose, since most of that family is per-till.

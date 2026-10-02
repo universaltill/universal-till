@@ -24,7 +24,7 @@ import (
 // violation sink, behind UT_CSP_REPORT_ONLY, to inventory what an enforced
 // policy would break before any slice enforces one.
 
-const wantCSPReportOnly = "default-src 'self'; script-src 'self' 'report-sample'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; report-uri /csp-report"
+const wantCSPReportOnly = "default-src 'self'; script-src 'self' 'report-sample' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; report-uri /csp-report"
 
 // syncBuffer is a bytes.Buffer safe for logging.CaptureForTest.
 type syncBuffer struct {
