@@ -709,3 +709,48 @@ func TestEventBus_Unsubscribe_MultiEventTypeSharedChannel(t *testing.T) {
 		t.Error("expected closed channel to return immediately")
 	}
 }
+
+// SubscriberIDs lists the subscribed plugin IDs in dispatch (subscription)
+// order, de-duplicated, as a fresh slice; nil when nobody subscribed
+// (ut-docs#2955).
+func TestEventBus_SubscriberIDs(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	setupAuditLog(t, db)
+
+	ctx := context.Background()
+	bus := NewEventBus(db)
+
+	if ids := bus.SubscriberIDs("sale.completed"); len(ids) != 0 {
+		t.Fatalf("no subscribers: got %v, want empty", ids)
+	}
+
+	for _, pluginID := range []string{"com.test.sub-b", "com.test.sub-a"} {
+		manifest := &Manifest{
+			ID: pluginID, Name: pluginID, Version: "1.0.0", Entrypoint: "./test",
+			Hooks:       []ManifestHook{{Event: "sale.completed", Action: "test.onSale"}},
+			Permissions: []string{"events:receive"},
+		}
+		if err := PersistManifest(ctx, db, manifest, InstallOptions{}); err != nil {
+			t.Fatalf("persist manifest: %v", err)
+		}
+		if err := GrantPermission(ctx, db, pluginID, "events:receive"); err != nil {
+			t.Fatalf("grant permission: %v", err)
+		}
+		if _, err := bus.Subscribe(ctx, pluginID, []string{"sale.completed"}); err != nil {
+			t.Fatalf("subscribe %s: %v", pluginID, err)
+		}
+	}
+
+	ids := bus.SubscriberIDs("sale.completed")
+	if len(ids) != 2 || ids[0] != "com.test.sub-b" || ids[1] != "com.test.sub-a" {
+		t.Fatalf("got %v, want [com.test.sub-b com.test.sub-a] in subscription order", ids)
+	}
+	ids[0] = "mutated"
+	if again := bus.SubscriberIDs("sale.completed"); again[0] != "com.test.sub-b" {
+		t.Fatalf("returned slice aliases bus state: %v", again)
+	}
+	if other := bus.SubscriberIDs("other.event"); len(other) != 0 {
+		t.Fatalf("other event: got %v, want empty", other)
+	}
+}

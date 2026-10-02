@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -80,6 +81,11 @@ type chargePolicyAnswer struct {
 // path that can change an answer: plugin install/update/enable/disable,
 // a plugin_settings save, and permission grant/revoke — see
 // pluginTaxRateAsker's doc comment for the full list.
+//
+// The hook is non-exclusive and the first answering plugin (by plugin id)
+// wins; when more than one plugin is subscribed and a fresh ask yields a
+// parsed answer, a single warning naming the winner and the ignored plugins
+// goes to the operator log, at most once per bus generation (ut-docs#2955).
 type pluginChargePolicyAsker struct {
 	db *sql.DB
 
@@ -87,11 +93,16 @@ type pluginChargePolicyAsker struct {
 	gen    uint64 // bus generation the cache was filled under
 	known  bool
 	cached chargePolicyAnswer
+
+	warned    bool   // a multi-answer warning has been logged...
+	warnedGen uint64 // ...under this bus generation
 }
 
 // AskChargePolicy answers (policy, ok) for the store. ok=false — no
 // subscriber, a clean decline, or a transient failure — always means "apply
-// core's fail-closed default", never an error surface (ADR-0061 D1).
+// core's fail-closed default", never an error surface (ADR-0061 D1). When
+// several plugins answer, the first by id wins and the rest are named in a
+// once-per-generation warning (ut-docs#2955).
 func (a *pluginChargePolicyAsker) AskChargePolicy() (pos.ChargePolicy, bool) {
 	bus := plugins.SharedBus(a.db)
 	if !bus.HasSubscribers(chargePolicyAskEvent) {
@@ -112,7 +123,7 @@ func (a *pluginChargePolicyAsker) AskChargePolicy() (pos.ChargePolicy, bool) {
 	// Ask outside the lock: a blocking wasm ask is milliseconds-to-~100ms,
 	// and holding the lock across it would serialize concurrent recomputes.
 	// A concurrent double-ask of the same generation is benign.
-	resp, ok, err := bus.Ask(context.Background(), chargePolicyAskEvent, chargePolicyAskPayload{})
+	resp, winner, ok, err := bus.AskFrom(context.Background(), chargePolicyAskEvent, chargePolicyAskPayload{})
 	if err != nil {
 		// Transient failure: decline now, uncached, so the next recompute
 		// retries — the fail-closed default applies meanwhile.
@@ -132,12 +143,52 @@ func (a *pluginChargePolicyAsker) AskChargePolicy() (pos.ChargePolicy, bool) {
 	}
 
 	a.mu.Lock()
+	if a.known && gen < a.gen {
+		// A newer generation was cached while this ask ran: this result is
+		// stale — return it to this caller but neither cache nor warn on it,
+		// so the newer generation's cache and warn-once state stand.
+		a.mu.Unlock()
+		return ans.policy, ans.answered
+	}
+	warn := ans.answered && !(a.warned && a.warnedGen == gen)
+	if warn {
+		a.warned, a.warnedGen = true, gen
+	}
 	if a.gen != gen || !a.known {
 		a.gen, a.known = gen, true
 	}
 	a.cached = ans
 	a.mu.Unlock()
+	if warn {
+		warnIgnoredChargePolicyPlugins(bus.SubscriberIDs(chargePolicyAskEvent), winner)
+	}
 	return ans.policy, ans.answered
+}
+
+// warnIgnoredChargePolicyPlugins logs (the caller gates it to once per bus
+// generation) that charge.policy.ask's winner shadowed other subscribed
+// plugins: AskFrom stops at the first answer in subscription order (plugins
+// load by id), so every subscriber after the winner was never asked and any
+// policy it holds is silently unused (ADR-0061 D1, ut-docs#2955). Subscribers
+// before the winner declined, were not permitted or had no handler — nothing
+// of theirs was overridden, so they are not named. No-op when nobody follows
+// the winner (or the subscriber set moved and the winner is no longer in it).
+// Via logging.L so it reaches the operator Problems ring.
+func warnIgnoredChargePolicyPlugins(ids []string, winner string) {
+	var after []string
+	found := false
+	for _, id := range ids {
+		if found {
+			after = append(after, id)
+		} else if id == winner {
+			found = true
+		}
+	}
+	if len(after) == 0 {
+		return
+	}
+	logging.L().Warnf("charge.policy.ask: using %s's policy; %s also subscribed but not asked (first answer in plugin-id order wins, ADR-0061 D1)",
+		winner, strings.Join(after, ", "))
 }
 
 // reservedChargeKey is core's own key for the merchant-rate service-charge
