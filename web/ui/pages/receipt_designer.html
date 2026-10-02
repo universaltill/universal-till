@@ -43,7 +43,10 @@
 
   <div class="card">
     <h3>{{ T "designer.receipt.preview" }}</h3>
-    <pre id="rd-preview" style="background:#fff; color:#111; border:1px dashed #d1d5db; padding:.8rem; font-size:.78rem; line-height:1.25; overflow-x:auto">{{ .Preview }}</pre>
+    {{/* ut-docs#3359: min(.78rem, 2.4vw) shrinks the fixed-width receipt
+         (up to 48 columns) to fit a phone instead of scrolling sideways;
+         from ~460px up it is .78rem as before. */}}
+    <pre id="rd-preview" style="background:#fff; color:#111; border:1px dashed #d1d5db; padding:.8rem; font-size:min(.78rem, 2.4vw); line-height:1.25; overflow-x:auto">{{ .Preview }}</pre>
   </div>
 </div>
 {{ end }}

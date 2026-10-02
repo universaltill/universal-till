@@ -56,6 +56,11 @@ type Line struct {
 	Name   string
 	Qty    string // pre-formatted ("2" / "0.350 kg")
 	Amount string // pre-formatted money
+	// Sub is an optional second detail row printed indented under the
+	// Name/Amount row (ut-docs#3337: an invoice line's unit price excl.
+	// VAT and its VAT rate). Empty — every receipt and label caller —
+	// renders byte-identical to before the field existed.
+	Sub string
 }
 
 // KV is a label/amount pair right-aligned on one row.
@@ -209,11 +214,25 @@ func layoutLine(l Line) []string {
 	if l.Qty != "" && l.Qty != "1" {
 		label = l.Qty + " x " + l.Name
 	}
+	var rows []string
 	if utf8.RuneCountInString(label)+1+utf8.RuneCountInString(l.Amount) <= Width {
-		return []string{kvRow(label, l.Amount)}
+		rows = []string{kvRow(label, l.Amount)}
+	} else {
+		rows = []string{clip(label, Width), kvRow("", l.Amount)}
 	}
-	return []string{clip(label, Width), kvRow("", l.Amount)}
+	// ut-docs#3337: the optional detail row, indented under the line and
+	// word-wrapped (wrapWords), never clipped — it carries the unit price
+	// and VAT rate, which must reach paper whole.
+	if l.Sub != "" {
+		for _, r := range wrapWords(l.Sub, Width-len(subIndent)) {
+			rows = append(rows, subIndent+r)
+		}
+	}
+	return rows
 }
+
+// subIndent prefixes every Line.Sub row.
+const subIndent = "  "
 
 // kvRow right-aligns amount against label on one fixed-width row. Padding is
 // computed from rune count, not byte length — Width tracks visible columns,
@@ -244,6 +263,38 @@ func wrapRunes(s string, max int) []string {
 		r = r[max:]
 	}
 	return append(rows, string(r))
+}
+
+// wrapWords splits s into rows of at most max runes, breaking at spaces
+// so a figure like "20.00%" never splits mid-number; a single word longer
+// than max falls back to wrapRunes' hard wrap. Every non-space character
+// is kept.
+func wrapWords(s string, max int) []string {
+	if max <= 0 || utf8.RuneCountInString(s) <= max {
+		return []string{s}
+	}
+	var rows []string
+	cur := ""
+	for _, w := range strings.Fields(s) {
+		switch {
+		case cur == "":
+			cur = w
+		case utf8.RuneCountInString(cur)+1+utf8.RuneCountInString(w) <= max:
+			cur += " " + w
+		default:
+			rows = append(rows, cur)
+			cur = w
+		}
+		if utf8.RuneCountInString(cur) > max {
+			parts := wrapRunes(cur, max)
+			rows = append(rows, parts[:len(parts)-1]...)
+			cur = parts[len(parts)-1]
+		}
+	}
+	if cur != "" {
+		rows = append(rows, cur)
+	}
+	return rows
 }
 
 // clip truncates s to at most max runes (characters), never bytes — Width
@@ -521,10 +572,13 @@ func RenderText(d Doc) string {
 	return b.String()
 }
 
-// RenderLabel produces one product/shelf label (docs: receipt-printing.md
-// § label printing): name, price big, barcode, cut. Callers concatenate
-// copies.
-func RenderLabel(name, price, code, charset string) []byte {
+// RenderLabelWithUnitPrice produces one product/shelf label (docs:
+// receipt-printing.md § label printing): name, price big, barcode, cut.
+// Callers concatenate copies. unitPrice is an optional extra line
+// (ut-docs#3391, e.g. "£6.67 per kg" for a pre-packed item) printed at
+// normal size under the double-size price — the price line only fits
+// Width/2 characters, too few for both — and omitted entirely when "".
+func RenderLabelWithUnitPrice(name, price, unitPrice, code, charset string) []byte {
 	var b bytes.Buffer
 	enc := func(s string) []byte { return encodeText(s, charset) }
 	b.Write(cmdInit)
@@ -538,6 +592,10 @@ func RenderLabel(name, price, code, charset string) []byte {
 	b.Write(enc(clip(price, Width/2)))
 	b.WriteByte('\n')
 	b.Write(cmdDoubleOff)
+	if unitPrice != "" {
+		b.Write(enc(clip(unitPrice, Width)))
+		b.WriteByte('\n')
+	}
 	barcode(&b, code)
 	b.Write(cmdAlignLeft)
 	b.Write(cmdFeedCut)

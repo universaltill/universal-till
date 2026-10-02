@@ -1437,3 +1437,92 @@ func TestRemoveDemoCatalogueLeavesModifierGroupsIntact(t *testing.T) {
 		})
 	}
 }
+
+// seedRefusedAgeCheck records one REFUSED age_verifications row against
+// itemID (ut-docs#3340) — the shape a till leaves when the cashier refuses
+// an age-restricted item: the verification row exists, but the item never
+// reached sale_lines/stock_movements.
+func seedRefusedAgeCheck(t *testing.T, d *db.DB, itemID string) {
+	t.Helper()
+	for _, q := range []string{
+		`INSERT INTO sales (id, receipt_no, subtotal, total) VALUES ('s-age','R-age',0,0)`,
+		`INSERT INTO age_verifications (id, sale_id, item_id, item_name, outcome, cashier_id, created_at)
+		 VALUES ('av-1','s-age','` + itemID + `','Refused item','refused',NULL,'2026-01-01T00:00:00Z')`,
+	} {
+		if _, err := d.DB.Exec(q); err != nil {
+			t.Fatalf("seed refused age check: %v", err)
+		}
+	}
+}
+
+// ut-docs#3340 review should-fix: "Remove sample data" used to treat a demo
+// item with only a refused ID check as removable, and the item delete then
+// hit age_verifications.item_id's FK (no ON DELETE action), rolling back
+// the WHOLE removal. Both the relaxed (no real history) and strict scripts
+// must keep it as "history" and still remove everything else.
+func TestRemoveDemoCatalogueKeepsAgeCheckedItem(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		d := openDemoSeedTestDB(t)
+		ctx := context.Background()
+		repo := NewDemoSeedRepo(d.DB)
+		if err := repo.SeedDemoCatalogue(ctx); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		if strict {
+			seedRealSale(t, d, "own-1", "s-1")
+		}
+		seedRefusedAgeCheck(t, d, "itm003")
+
+		removed, kept, err := repo.RemoveDemoCatalogue(ctx)
+		if err != nil {
+			t.Fatalf("strict=%v RemoveDemoCatalogue must not fail on an age-checked item: %v", strict, err)
+		}
+		if removed != 51 || len(kept) != 1 || kept[0].ID != "itm003" || kept[0].Reason != KeptReasonHistory {
+			t.Fatalf("strict=%v: removed %d, kept %+v; want 51 removed and itm003/history kept", strict, removed, kept)
+		}
+	}
+}
+
+// Same predicate, archived: after a reset the reference lives in
+// age_verifications_archive, and deleting the item would make that batch
+// unrestorable (ErrArchiveReferencesRemoved).
+func TestRemoveDemoCatalogueKeepsArchivedAgeCheckedItem(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	for _, q := range []string{
+		`INSERT INTO reset_batches (id, created_at, sales_count) VALUES ('batch1', '2026-01-01T00:00:00Z', 1)`,
+		`INSERT INTO age_verifications_archive (id, sale_id, item_id, item_name, outcome, cashier_id, created_at, reset_batch_id)
+		 VALUES ('av-1','sale-x','itm003','Refused item','refused',NULL,'2026-01-01T00:00:00Z','batch1')`,
+	} {
+		if _, err := d.DB.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	removed, kept, err := repo.RemoveDemoCatalogue(ctx)
+	if err != nil {
+		t.Fatalf("RemoveDemoCatalogue: %v", err)
+	}
+	if removed != 51 || len(kept) != 1 || kept[0].ID != "itm003" || kept[0].Reason != KeptReasonHistory {
+		t.Fatalf("removed %d, kept %+v; want 51 removed and itm003/history kept", removed, kept)
+	}
+}
+
+// The per-item "remove anyway" path shares demoItemReasonCaseSQL, so it
+// must refuse an age-checked item as history rather than FK-failing.
+func TestRemoveDemoItemRefusesAgeCheckedItem(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	seedRefusedAgeCheck(t, d, "itm001")
+
+	if err := repo.RemoveDemoItem(ctx, "itm001"); !errors.Is(err, ErrDemoItemHasHistory) {
+		t.Fatalf("RemoveDemoItem = %v, want ErrDemoItemHasHistory", err)
+	}
+}

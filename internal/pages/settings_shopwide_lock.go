@@ -45,6 +45,7 @@ var shopWideLockRegions = map[string]string{
 	"settings-order-type-prompt":              data.OrderTypePromptModeKey,                // POST /api/settings/order-type-prompt
 	"settings-barcode":                        data.BarcodeEnabledSymbologiesKey,          // POST /api/settings/barcode-symbology
 	"settings-catalog-import-barcode-default": data.CatalogImportBarcodeFromSKUDefaultKey, // POST /api/settings/catalog-import-barcode-default
+	"settings-catalog-pre-pack-unit-price":    data.CatalogPrePackUnitPriceEnabledKey,     // POST /api/settings/catalog-pre-pack-unit-price
 	"settings-sell-screen":                    common.KeyBrowsingMode,                     // POST /api/settings/browsing-mode
 	"settings-stock-tracking":                 common.KeyAllowNegativeInventory,           // POST /api/settings/allow-negative-inventory
 	"settings-restore-prompt":                 common.KeyRestorePromptStatus,              // POST /api/settings/dismiss-restore-prompt

@@ -25,7 +25,7 @@ Beim Wiederherstellen werden alle aktuellen Daten durch die gewählte Sicherung 
 Einmal am Tag löscht die Kasse Dateien, die sie nicht mehr braucht, damit der Speicher nicht vollläuft:
 
 - Datensicherungen: die neuesten 14 bleiben erhalten.
-- Die Kopie Ihrer Daten, die beim Wiederherstellen einer Sicherung beiseitegelegt wird: die neuesten 3 bleiben erhalten, keine älter als 30 Tage.
+- Die Kopie Ihrer Daten, die beim Wiederherstellen einer Sicherung beiseitegelegt wird: wird so lange aufbewahrt, wie Sie Verkaufsdaten gesetzlich aufbewahren müssen; danach bleiben nur noch die neuesten 3 erhalten, keine älter als 30 Tage.
 - Problemberichte, die nicht gesendet werden konnten: nach 7 Tagen gelöscht.
 - Heruntergeladene Updates: nach 7 Tagen gelöscht.
 

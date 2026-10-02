@@ -12,6 +12,12 @@ keywords: [menu, navigation, tiles, administration]
 
 Tap **☰ Menu** on the sale screen to open a page of big touch tiles — one for each part of the till. Tap a tile to go there; tap **← Back to sale** at the top of the page — or **Till** in the nav rail, available on any page — to get back to selling. Deposit refund opens in place as a small form instead of navigating away.
 
+## Going back
+
+Every page except the sale screen has a **← Back** button: at the top of the side rail under the logo, or first in the top bar on a phone. It takes you back to the page you came from — Menu → Items → Inventory, then Back, Back returns to Items and then the Menu, whichever way you got there (a Menu tile, the rail, a link on another page). When there is no page to go back to — the till was just started on that page, or you opened it from a bookmark — Back goes one level up instead: an Items section (Catalog, Inventory, …) to **Items**, an Administration page to **Administration**, any other page to the **Menu**, and the Menu to the sale screen. The same button works on the till, a tablet, a phone and in the iPhone app, which has no Back button of its own.
+
+On a phone-sized screen, lists and tables (locations, stock, the audit trail, report tabs and the rest) show as cards, one per row, instead of a grid you would have to scroll sideways: each card shows its first few fields, and **More** on the card shows the rest (**Less** hides them again).
+
 ## Administration
 
 Set-up tiles you touch once and rarely return to — Country settings, Translations, the fiscal register/device page, Locations and Registers — sit behind one **Administration** tile, below the everyday tiles. Tap it to open a page listing them in three groups: Fiscal, Locations, Localization. On a tablet-width screen or wider this opens as a two-pane screen, the same as **Items**: the grouped list stays down the left and the selected destination's own screen shows on the right, so switching between them never leaves the page. On a phone-width screen the two panes stack, and tapping an entry opens its own full screen instead, the same as before. Each of the six destinations is still its own page with its own address — going to one directly or bookmarking it works exactly as before. Users, Kitchen stations and Bluetooth devices stay outside this tile: you manage those more often than a one-time setup.

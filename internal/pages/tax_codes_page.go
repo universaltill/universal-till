@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/taxrate"
@@ -110,6 +111,25 @@ func parsePercentToBP(val string) (int, error) {
 		return 0, fmt.Errorf("invalid rate")
 	}
 	return int(bp), nil
+}
+
+// taxCodeRatesRefusedForCountry reports whether a tax code's rates must be
+// refused for the shop's country (ADR-0136 Decision 8, ut-docs#3309) — a
+// thin caller over fiscal.AllowedTaxRateSetBP, the neutral per-country
+// registry (same shape as RequiresHardGate/RequiresPerSaleDeviceReceipt):
+// this handler carries no jurisdiction knowledge of its own, it just asks
+// whether the shop's country restricts rates at all, and if so, refuses one
+// outside the allowed set. Every country fiscal.AllowedTaxRateSetBP doesn't
+// restrict: never refused here.
+func taxCodeRatesRefusedForCountry(country string, rateBP int, takeawayBP *int) bool {
+	allowed, restricted := fiscal.AllowedTaxRateSetBP(country)
+	if !restricted {
+		return false
+	}
+	if !allowed[rateBP] {
+		return true
+	}
+	return takeawayBP != nil && !allowed[*takeawayBP]
 }
 
 // parseTaxCodeForm validates the shared create/update submission shape:
@@ -258,6 +278,10 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "taxcodes.err.invalid_form", "taxcodes_create_form", err)
 			return
 		}
+		if taxCodeRatesRefusedForCountry(d.CurrentState().Country, rateBP, takeawayBP) {
+			http.Error(w, httpx.T(locale, "taxcodes.err.rate_not_de_fiscal"), http.StatusBadRequest)
+			return
+		}
 		if _, err := repo.CreateTaxCode(r.Context(), name, rateBP, takeawayBP); err != nil {
 			if errors.Is(err, data.ErrTaxCodeNameExists) {
 				http.Error(w, httpx.T(locale, "taxcodes.err.duplicate_name"), http.StatusBadRequest)
@@ -292,6 +316,10 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 			// either. Routed through the localized helper defensively, with no
 			// dedicated regression test for the same reason (ut-docs#945).
 			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "taxcodes.err.invalid_form", "taxcodes_update_form", err)
+			return
+		}
+		if taxCodeRatesRefusedForCountry(d.CurrentState().Country, rateBP, takeawayBP) {
+			http.Error(w, httpx.T(locale, "taxcodes.err.rate_not_de_fiscal"), http.StatusBadRequest)
 			return
 		}
 		active := taxCodeFormActive(r)

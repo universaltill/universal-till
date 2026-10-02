@@ -39,3 +39,19 @@ func TestNewDBusClientFor_LinuxAttemptsRealConnection(t *testing.T) {
 		t.Fatalf("linux must not be treated as an unsupported platform, got %v", err)
 	}
 }
+
+// TestNewDBusClientFor_IOSIsUnsupportedPlatform (ut-docs#3261): iOS has no
+// D-Bus either, and no Bluetooth bridge — iOS keeps HID scanners/keyboards
+// for the system (Core Bluetooth never exposes the HID service to an app),
+// so pairing happens in the iOS Settings app. Before this, "ios" fell
+// through to dbus.ConnectSystemBus and the page told an iPad operator their
+// adapter was missing or the service wasn't running. A registered Android
+// bridge must not leak onto iOS either.
+func TestNewDBusClientFor_IOSIsUnsupportedPlatform(t *testing.T) {
+	SetAndroidBridge(&fakeAndroidBridge{})
+	t.Cleanup(func() { SetAndroidBridge(nil) })
+	_, err := newDBusClientFor("ios")
+	if !errors.Is(err, ErrUnsupportedPlatform) {
+		t.Fatalf("newDBusClientFor(\"ios\") = %v, want ErrUnsupportedPlatform", err)
+	}
+}

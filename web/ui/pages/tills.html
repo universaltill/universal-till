@@ -99,7 +99,11 @@
            the same reason (ut-docs#1540). -->
       <form hx-post="/api/sync/join" hx-include="#pairing-till-name" hx-target="#join-msg" hx-swap="innerHTML"
             hx-on::before-request="var n=document.getElementById('pairing-till-name');n.value=n.value.trim();if(!n.reportValidity()){event.preventDefault();}">
-        <label>{{ T "tills.join_code" }} <input type="text" name="code" placeholder="{{ T "tills.join_code_ph" }}" required></label>
+        {{/* ut-docs#3219: the main till shows a short XXX-XXX code plus its
+             address; both are typed here. The address is ignored when the
+             full (long) code is pasted instead, so it stays optional. */}}
+        <label>{{ T "tills.join_code" }} <input type="text" name="code" placeholder="{{ T "tills.join_code_ph" }}" autocapitalize="characters" autocomplete="off" spellcheck="false" required></label>
+        <label>{{ T "tills.join_address" }} <input type="text" name="address" dir="ltr" placeholder="{{ T "tills.join_address_ph" }}" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false"></label>
         <button class="btn" type="submit">{{ T "tills.join_btn" }}</button>
         <div id="join-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
       </form>
@@ -163,6 +167,7 @@
     resultName: "{{ T "tills.discovery.result_name" }}",
     resultAddress: "{{ T "tills.discovery.result_address" }}",
     error: "{{ T "tills.discovery.error" }}",
+    denied: "{{ T "tills.discovery.denied" }}",
     requestBtn: "{{ T "tills.pairing.request_btn" }}"
   };
   function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
@@ -199,6 +204,9 @@
       .then(function (j) {
         if (!j) return;
         btn.disabled = false;
+        // ut-docs#3218: iOS refused the Local Network permission — say so,
+        // and how to fix it, instead of the generic "could not search".
+        if (j.error && j.error.code === 'local_network_denied') { msg.textContent = i18n.denied; return; }
         var list = (j.data && j.data.primaries) || [];
         if (!list.length) { msg.textContent = i18n.noneFound; return; }
         msg.textContent = '';

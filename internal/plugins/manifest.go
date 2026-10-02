@@ -59,6 +59,49 @@ type Manifest struct {
 	// position, same tags) or the marketplace signer strips them.
 	Provides []string `json:"provides,omitempty"`
 	Markets  []string `json:"markets,omitempty"`
+
+	// ADR-0121 §2 (ut-docs#3155): the ABI-3 fields. All omitempty, so a
+	// manifest without them marshals byte-identically to before and old
+	// signatures verify. Validated in manifest_abi3.go at both install
+	// paths. ut-cloud's internal/signing.CanonicalManifest must mirror
+	// every one (same position, same tags), and the nested types too.
+	WasmABI   int                `json:"wasm_abi,omitempty"` // 0 = DefaultWasmABI
+	Limits    *ManifestLimits    `json:"limits,omitempty"`   // requests; see EffectiveLimits
+	Schedules []ManifestSchedule `json:"schedules,omitempty"`
+	DB        *ManifestDB        `json:"db,omitempty"`
+	Retention *ManifestRetention `json:"retention,omitempty"`
+	ViewsUsed []string           `json:"views_used,omitempty"`
+}
+
+// ManifestLimits are a plugin's resource requests (ADR-0121 §2). 0 means
+// the platform default; the host clamps each to its platform ceiling
+// (EffectiveLimits) and never writes the result back into the manifest.
+type ManifestLimits struct {
+	MemoryMB   int `json:"memory_mb,omitempty"`
+	StorageMB  int `json:"storage_mb,omitempty"`
+	HTTPBodyMB int `json:"http_body_mb,omitempty"`
+	LongCallS  int `json:"long_call_s,omitempty"`
+}
+
+// ManifestSchedule is a periodic tick the host raises for the plugin
+// (ADR-0121 §8; the scheduler is build card 9).
+type ManifestSchedule struct {
+	Event   string `json:"event"`
+	EveryS  int    `json:"every_s"`
+	JitterS int    `json:"jitter_s,omitempty"`
+}
+
+// ManifestDB declares the plugin's own SQLite database (ADR-0121 §4):
+// Migrations is a directory inside the plugin's code tree.
+type ManifestDB struct {
+	Migrations string `json:"migrations"`
+}
+
+// ManifestRetention is how long the plugin's own data must be kept
+// (ADR-0121 §4), with a locale key explaining why.
+type ManifestRetention struct {
+	KeepYears int    `json:"keep_years"`
+	ReasonKey string `json:"reason_key,omitempty"`
 }
 
 // ManifestEntry represents a UI/integration entry
@@ -105,6 +148,12 @@ type ManifestEntry struct {
 	// type simply omits them.
 	Entities    []string `json:"entities,omitempty"`
 	FileFormats []string `json:"file_formats,omitempty"`
+
+	// View names the plugin view this entry renders and Slot the core
+	// content slot it fills (ADR-0121 §7; one of contentSlots). Both
+	// optional; ut-cloud's CanonicalEntry mirrors them.
+	View string `json:"view,omitempty"`
+	Slot string `json:"slot,omitempty"`
 }
 
 // entryConfigJSON renders the config_json blob persisted for one manifest
@@ -231,6 +280,9 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 	// provides/markets are closed-set (ADR-0129): a typo would otherwise
 	// silently match nothing, so it fails here.
 	if err := validateProvidesAndMarkets(&m); err != nil {
+		return nil, err
+	}
+	if err := validateABI3Fields(&m); err != nil {
 		return nil, err
 	}
 
@@ -696,21 +748,40 @@ const FiscalSignStartEvent = "fiscal.sign.start"
 // One member of the FiscalSignExclusiveEvents group.
 const FiscalSignReconcileAskEvent = "fiscal.sign.reconcile.ask"
 
+// FiscalOrderStartEvent is the ADR-0138 Decision 2 order-capture dispatch
+// (ut-docs#3310): fired once per GENUINE new gastro order capture — a first
+// park of a held/table order (internal/pages hold_api.go parkCurrentBasket,
+// never a re-park of an already-held order) and every pay-at-counter kiosk
+// checkout (self_order_shop.go completeCounterOrderCheckout) — so a German
+// signer can open a Bestellung-V1 TSE transaction at the point AEAO zu §146a
+// says the process begins, distinct from the Kassenbeleg-V1 transaction
+// fiscal.sign.start/fiscal.sign.ask cover at tender. Deliberately a SEPARATE
+// event key rather than an earlier fiscal.sign.start (ADR-0138 D1): a
+// different process type with a much longer-lived open window. Dispatched
+// via EventBus.Ask on a background goroutine, best-effort, exactly like
+// FiscalSignStartEvent. Its sibling fiscal.order.cancel is named but NOT
+// built or grouped yet (ADR-0138 D2/D4 — nothing in core cancels an order).
+//
+// One member of the FiscalSignExclusiveEvents group (ADR-0138 D2): only the
+// till's one verified, exclusive signer may answer it.
+const FiscalOrderStartEvent = "fiscal.order.start"
+
 // FiscalSignExclusiveEvents is the ONE exclusivity group ADR-0077 D3 fixes
 // for the fiscal signing extension points: fiscal.sign.ask (the tender-time
-// "finish"), fiscal.sign.start (D1) and fiscal.sign.reconcile.ask (D3).
-// Declaring ANY one of the three while a DIFFERENT active plugin holds ANY
-// one of the three is refused — at persist time by
+// "finish"), fiscal.sign.start (D1) and fiscal.sign.reconcile.ask (D3) —
+// joined by fiscal.order.start (ADR-0138 D2, ut-docs#3310).
+// Declaring ANY one of the four while a DIFFERENT active plugin holds ANY
+// one of the four is refused — at persist time by
 // validateExclusiveHookOwnership below, at enable time by
-// internal/pages' setPluginActiveHandler — because all three hand the
-// answering plugin real sale data or take its answer as authoritative for a
+// internal/pages' setPluginActiveHandler — because all four hand the
+// answering plugin real sale/order data or take its answer as authoritative for a
 // compliance-bearing record. Before this group existed, only the literal
 // fiscal.sign.ask key was checked, so a second plugin declaring only
 // fiscal.sign.start or only fiscal.sign.reconcile.ask passed both checks
 // (the gap ADR-0077 D3 records as found on independent review). Exported so
 // the enable-time check and this package share one definition; a test pins
 // the exact membership.
-var FiscalSignExclusiveEvents = []string{FiscalSignAskEvent, FiscalSignStartEvent, FiscalSignReconcileAskEvent}
+var FiscalSignExclusiveEvents = []string{FiscalSignAskEvent, FiscalSignStartEvent, FiscalSignReconcileAskEvent, FiscalOrderStartEvent}
 
 // DeclaredFiscalSignExclusiveEvent reports the first FiscalSignExclusiveEvents
 // member among hooks (group order), or ("", false) when the manifest declares

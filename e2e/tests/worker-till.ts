@@ -168,6 +168,10 @@ export async function startWorkerTill(parallelIndex: number, opts: { fresh?: boo
     UT_DATA_DIR: dataDir,
     UT_AUTH: 'off',
     UT_LISTEN_ADDR: `127.0.0.1:${port}`,
+    // ut-docs#2913: the report-only CSP logs violations as console errors
+    // by design (watchConsole would fail every spec); only the `csp`
+    // project's till (run-till-csp.sh) turns it on, never an inherited env.
+    UT_CSP_REPORT_ONLY: '0',
   };
   const goOpts: ExecFileSyncOptions = { cwd: REPO_ROOT, env, stdio: ['ignore', 'ignore', 'inherit'] };
 

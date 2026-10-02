@@ -167,6 +167,10 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 	if err := validateProvidesAndMarkets(&manifest); err != nil {
 		result.Errors = append(result.Errors, err.Error())
 	}
+	// ADR-0121 §2, same as ParseManifest (ut-docs#3155).
+	if err := validateABI3Fields(&manifest); err != nil {
+		result.Errors = append(result.Errors, err.Error())
+	}
 
 	// Checksum verification (if provided in manifest)
 	result.ChecksumVerified = true // Default to true if no checksum in manifest

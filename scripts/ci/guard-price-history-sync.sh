@@ -137,6 +137,10 @@ ALLOWED_WRITERS=(
   # Item deletion removes its price rows (pre-#1671; named in the ADR's
   # Context as the "item deletion DELETEs rows" mutation).
   "internal/data/pos_repo.go:CleanupObsoleteItems"
+  # ut-docs#3317: the delete_item directive's one-item twin of the cleanup
+  # (deletes the gone item's own rows only); its caller cloudDeleteItem is
+  # requirePrimaryDirective-gated.
+  "internal/data/item_delete_repo.go:DeleteUnusedItem"
   # Single-demo-item removal mirrors remove_demo.sql's cleanup (ADR-0090).
   "internal/data/demo_seed_repo.go:RemoveDemoItem"
   # ut-docs#2314: execer-based twins of the append pair, sharing the

@@ -10,9 +10,15 @@ internal/data/plugin_repo.go: unreachable func: PluginRepo.InstallPlugin
 internal/data/plugin_repo.go: unreachable func: PluginRepo.ListRevokedPlugins
 internal/data/plugin_repo.go: unreachable func: PluginRepo.UpsertPluginSetting
 internal/data/related_items_repo.go: unreachable func: RelatedItemsRepo.LastRebuilt
+internal/data/user_display_repo.go: unreachable func: NewUserDisplayRepo
+internal/data/user_display_repo.go: unreachable func: UserDisplayRepo.Delete
+internal/data/user_display_repo.go: unreachable func: UserDisplayRepo.Get
+internal/data/user_display_repo.go: unreachable func: UserDisplayRepo.GetAll
+internal/data/user_display_repo.go: unreachable func: UserDisplayRepo.Set
 internal/diagnostics/device_model.go: unreachable func: SetDeviceModel
 internal/diagnostics/events.go: unreachable func: EnumValues
 internal/directivekey/directivekey.go: unreachable func: Store.Path
+internal/discovery/native.go: unreachable func: SetNativeBridge
 internal/discovery/sweep.go: unreachable func: SweepPrinters
 internal/fiscal/tse_credential_store.go: unreachable func: NewSigningDeviceCredentialStoreAt
 internal/fiscal/tse_credential_store.go: unreachable func: SigningDeviceCredentialStore.Path
@@ -31,6 +37,9 @@ internal/manual/manual.go: unreachable func: Library.Locales
 internal/manual/manual.go: unreachable func: Library.MissingTranslations
 internal/manual/manual.go: unreachable func: Library.RouteCovered
 internal/pages/common/deps.go: unreachable func: Deps.WaitForAsyncWork
+internal/pages/common/personal_display.go: unreachable func: Deps.ResolvedBrowsingMode
+internal/pages/common/personal_display.go: unreachable func: Deps.ResolvedTheme
+internal/pages/common/personal_display.go: unreachable func: Deps.personalDisplayValue
 internal/pages/eod_method_tax_bands.go: unreachable func: attachEODMethodTaxBands
 internal/pages/eod_method_tax_bands.go: unreachable func: computeEODMethodTaxBands
 internal/pages/eod_tax_bands.go: unreachable func: attachEODTaxBands
@@ -44,10 +53,10 @@ internal/plugins/ipc.go: unreachable func: EventBus.Subscribe
 internal/plugins/ipc.go: unreachable func: EventBus.Unsubscribe
 internal/plugins/marketplace/catalog_repository.go: unreachable func: CatalogRepository.Filter
 internal/plugins/marketplace/client.go: unreachable func: Client.GetRevocations
-internal/plugins/marketplace/client.go: unreachable func: Client.ReportPluginStatus
 internal/plugins/plugins.go: unreachable func: Manager.CatalogList
 internal/plugins/revocation.go: unreachable func: RevocationChecker.GetRevokedPlugins
 internal/plugins/rollback.go: unreachable func: RollbackManager.GetVersionHistory
+internal/pos/age_restriction.go: unreachable func: DOBBeforeCutoff
 internal/pos/order_status.go: unreachable func: OrderStatusBroadcaster.SubscriberCount
 internal/pos/service.go: unreachable func: Service.ScanQty
 internal/pos/service.go: unreachable func: Service.SetLineOrderType

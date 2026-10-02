@@ -199,12 +199,15 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 	modRepo := data.NewModifierRepo(d.Db)
 
-	// requireManager gates on the "settings" action, same as
-	// tables_page.go/kitchen_stations_page.go — no narrower catalog-admin
-	// action exists yet, and adding one would need its own seed-data
-	// migration (out of scope for this card).
+	// requireManager gates on "catalog_management" (ut-docs#2479):
+	// categories are catalog data, so this page shares one permission with
+	// the designer's category routes (designer_categories_api.go), /items
+	// and /api/catalog/*. Every seeded role holds both this and "settings"
+	// or neither (pinned by internal/db's
+	// TestSeededRoles_SettingsAndCatalogManagementCoOccur), so the switch
+	// from "settings" moved nobody's access.
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
-		if !canPerform(d, r, "settings") {
+		if !canPerform(d, r, "catalog_management") {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return auth.User{}, false
 		}
@@ -224,7 +227,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 	// generic "something went wrong" dialog message, not the specific
 	// translated reason renderCategoryDialogError's own responses carry.
 	requirePageManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
-		if !canPerform(d, r, "settings") {
+		if !canPerform(d, r, "catalog_management") {
 			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
 			return auth.User{}, false
 		}

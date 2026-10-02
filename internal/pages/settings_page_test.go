@@ -341,6 +341,47 @@ func TestCatalogImportBarcodeFromSKUDefaultEndpoint(t *testing.T) {
 	}
 }
 
+// CatalogPrePackUnitPrice (ut-docs#3391) is the shop's opt-in for printing
+// a pre-packed item's unit price on its shelf label. Same manager-gated,
+// elevation-wired, boolean shape as catalog-import-barcode-default above,
+// plus the audit row every settings write leaves.
+func TestCatalogPrePackUnitPriceEndpoint(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	if v, ok, _ := d.Settings.Get(t.Context(), data.CatalogPrePackUnitPriceEnabledKey); ok && v == "1" {
+		t.Fatalf("%s must default off, got %q", data.CatalogPrePackUnitPriceEnabledKey, v)
+	}
+	if rec := postForm(mux, "/api/settings/catalog-pre-pack-unit-price", url.Values{"enabled": {"true"}}, &cashUser); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("cashier catalog-pre-pack-unit-price = %d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
+	}
+	if v, ok, _ := d.Settings.Get(t.Context(), data.CatalogPrePackUnitPriceEnabledKey); ok && v == "1" {
+		t.Fatal("an un-elevated cashier POST turned the setting on")
+	}
+	if rec := postForm(mux, "/api/settings/catalog-pre-pack-unit-price", url.Values{"enabled": {"not-a-bool"}}, &mgrUser); rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed catalog-pre-pack-unit-price = %d, want 400", rec.Code)
+	}
+	if rec := postForm(mux, "/api/settings/catalog-pre-pack-unit-price", url.Values{"enabled": {"true"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("enable catalog-pre-pack-unit-price = %d, want 204", rec.Code)
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), data.CatalogPrePackUnitPriceEnabledKey); v != "1" {
+		t.Fatalf("stored %s = %q, want 1", data.CatalogPrePackUnitPriceEnabledKey, v)
+	}
+	if rec := postForm(mux, "/api/settings/catalog-pre-pack-unit-price", url.Values{"enabled": {"false"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("disable catalog-pre-pack-unit-price = %d, want 204", rec.Code)
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), data.CatalogPrePackUnitPriceEnabledKey); v != "0" {
+		t.Fatalf("stored %s = %q, want 0", data.CatalogPrePackUnitPriceEnabledKey, v)
+	}
+	var n int
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'catalog_pre_pack_unit_price_changed' AND entity_id = ?`, data.CatalogPrePackUnitPriceEnabledKey).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("audit rows = %d, want 2 (one per successful write, none for the refused cashier)", n)
+	}
+}
+
 // recordingWindowController is a WindowController test double that records
 // whether ExitToOS was invoked (so exit-to-os tests can assert the hook was,
 // or for rejected auth was NOT, reached) and every mode ApplyMode was called
@@ -2291,6 +2332,7 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 		{"save", http.MethodPost, "/api/settings/save", url.Values{"currency": {"GBP"}}, gateElevation},
 		{"upsert", http.MethodPost, "/api/settings/upsert", url.Values{"key": {"x"}, "value": {"y"}}, gateElevation},
 		{"catalog-import-barcode-default", http.MethodPost, "/api/settings/catalog-import-barcode-default", url.Values{"enabled": {"true"}}, gateElevation},
+		{"catalog-pre-pack-unit-price", http.MethodPost, "/api/settings/catalog-pre-pack-unit-price", url.Values{"enabled": {"true"}}, gateElevation},
 		{"browsing-mode", http.MethodPost, "/api/settings/browsing-mode", url.Values{"mode": {"strip_overflow"}}, gateElevation},
 	}
 

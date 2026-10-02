@@ -2,6 +2,7 @@ package pages
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"time"
@@ -57,6 +58,15 @@ func discoverPrimariesHandler(d *common.Deps, gate apiGate) http.HandlerFunc {
 			return
 		}
 		candidates, err := discoveryBrowse(r.Context(), discoverBrowseTimeout)
+		if errors.Is(err, discovery.ErrLocalNetworkDenied) {
+			// iOS refused this app the Local Network permission
+			// (ut-docs#3218): a fixable, user-side cause, so the page says
+			// so (tills.discovery.denied) instead of "could not search".
+			writeJSON(w, http.StatusForbidden, map[string]any{"data": nil, "error": map[string]string{
+				"code": discovery.LocalNetworkDeniedCode, "message": "local network access denied",
+			}})
+			return
+		}
 		if err != nil {
 			// Never put the raw driver/network error in the response
 			// (ut-docs#303's standing rule, and ut-docs#538's own AC): log

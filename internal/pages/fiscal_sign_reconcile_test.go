@@ -843,11 +843,12 @@ func TestFiscalSignReconcile_SourceNeverNamesResolvedMarker(t *testing.T) {
 
 // --- §4 enable-time exclusivity group ------------------------------------------
 
-// Every directional pair across the three-event group at ENABLE time: a
+// Every directional pair across the four-event group at ENABLE time: a
 // plugin already holding any one event blocks a different plugin declaring
 // any one, with a 409 naming the owner; the refused plugin stays inactive.
+// fiscal.order.start joined the group with ADR-0138 D2 (ut-docs#3310).
 func TestFiscalSignExclusivity_EnableRefusesEveryDirectionalPair(t *testing.T) {
-	group := []string{fiscalSignAskEvent, fiscalSignStartEvent, fiscalSignReconcileAskEvent}
+	group := []string{fiscalSignAskEvent, fiscalSignStartEvent, fiscalSignReconcileAskEvent, fiscalOrderStartEvent}
 	for _, held := range group {
 		for _, declared := range group {
 			t.Run(held+" blocks "+declared, func(t *testing.T) {

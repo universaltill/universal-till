@@ -11,9 +11,11 @@ import (
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -310,6 +312,27 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 		}
 		doc.Meta = append(meta, doc.Meta...)
 	}
+	// ut-docs#3337: a VAT-registered seller (invoice.seller_vat_no set)
+	// prints its VAT number — and its address, unless the receipt header
+	// already carries it — so the till receipt holds the seller identity a
+	// VAT invoice needs. No VAT number configured = no change at all.
+	// English literals per this renderer's locale note above.
+	seller, _ := sellerConfig(ctx, d)
+	vatRegistered := seller.VATNo != ""
+	if vatRegistered {
+		if seller.Address != "" && !headerHasLine(rd.Header, seller.Address) {
+			doc.Meta = append(doc.Meta, seller.Address)
+		}
+		// ut-docs#3337 review (S1): a shop that already typed its VAT number
+		// into a header line (the only way to print it before this card)
+		// must not get it twice — headerContains is a substring match (the
+		// header line is free text, e.g. "VAT No: GB123456789" or
+		// "VAT GB123456789", never byte-identical to this Meta line the way
+		// the address check above can be).
+		if !headerContains(rd.Header, seller.VATNo) {
+			doc.Meta = append(doc.Meta, "VAT No: "+seller.VATNo)
+		}
+	}
 	// ADR-0073 Decision 7: a MIXED sale marks each line's mode; a uniform
 	// sale prints exactly as before. English literals match this renderer's
 	// existing convention (Latin digits forced regardless of printLocale
@@ -346,6 +369,18 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 		doc.Totals = append(doc.Totals, print.KV{Label: "Service Charge", Amount: money(detail.ServiceCharge)})
 	}
 	doc.Totals = append(doc.Totals, print.KV{Label: "TOTAL", Amount: money(detail.Total), Strong: true})
+	// ut-docs#3337: the per-rate breakdown (gross charged at each VAT rate)
+	// a VAT-registered seller's receipt needs. Deliberately NOT gated by
+	// rd.ShowTax — that toggle keeps hiding only the lump Subtotal/Tax rows
+	// above. Same vatBreakdown the issued invoice uses, so the two agree.
+	if vatRegistered {
+		for _, b := range vatBreakdown(detail) {
+			doc.Totals = append(doc.Totals, print.KV{
+				Label:  fmt.Sprintf("Total incl. VAT %.2f%%", float64(b.RateBP)/100),
+				Amount: money(b.Gross),
+			})
+		}
+	}
 	for _, p := range detail.Payments {
 		doc.Payments = append(doc.Payments, print.KV{Label: strings.ToUpper(p.Method[:1]) + p.Method[1:], Amount: money(p.Amount)})
 		if p.ChangeGiven > 0 {
@@ -726,7 +761,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		if variantID := strings.TrimSpace(r.Form.Get("variant_id")); variantID != "" {
 			var vl data.VariantLabel
 			vl, found, err = data.NewCatalogRepo(d.Db).GetVariantLabel(r.Context(), variantID)
-			label = data.ItemLabel{Name: vl.Name, PriceMinor: vl.PriceMinor, Code: vl.Code}
+			label = data.ItemLabel{Name: vl.Name, PriceMinor: vl.PriceMinor, Code: vl.Code, IsWeighed: vl.IsWeighed}
 		} else {
 			label, found, err = data.NewCatalogRepo(d.Db).GetItemLabel(r.Context(), itemID)
 		}
@@ -762,7 +797,29 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		// Same Latin-digit ESC/POS constraint as buildReceiptDoc/buildEODDoc
 		// above, but the store's own separator/decimal convention rather
 		// than a hardcoded "en" (ut-docs#1130 review finding).
-		one := print.RenderLabel(label.Name, httpx.FormatMoneyLatin(label.PriceMinor, httpx.DefaultLocale()), label.Code, cfg.Charset)
+		priceText := httpx.FormatMoneyLatin(label.PriceMinor, httpx.DefaultLocale())
+		// Price Marking Order 2004 (as amended, commencing 6 Apr 2026):
+		// a weighed item's shelf label must show its unit price, not just
+		// the bare price — ut-docs#3343. The suffix is always the fixed
+		// word "kg", never the item's own free-text `unit` field: review
+		// found that field is "each" on every catalog-imported weighed
+		// item and every hand-entered one too (the catalog form's unit
+		// input has no link to the Sold-by-weight checkbox) — a weighed
+		// item's quantity is kilograms regardless of what `unit` says
+		// (the same convention internal/ui/buttons.go's embedded-weight
+		// decode relies on), so "kg" is the only value that is ever
+		// actually true. Same store-locale choice as priceText above
+		// (not the operator's own browser-cookie `locale`): this prints
+		// on a shop's physical shelf label, not the staff UI.
+		if label.IsWeighed {
+			priceText = fmt.Sprintf(httpx.T(httpx.DefaultLocale(), "catalog.labels.price_per_unit"), priceText, "kg")
+		}
+		// A pre-packed item's unit price (ut-docs#3391) prints as its own
+		// normal-size line below the (possibly already-suffixed) price line
+		// above. prePackUnitPriceText returns "" for a weighed item, so the
+		// two mechanisms never both fire for the same label.
+		one := print.RenderLabelWithUnitPrice(label.Name, priceText,
+			prePackUnitPriceText(r.Context(), d, label), label.Code, cfg.Charset)
 		job := make([]byte, 0, len(one)*copies)
 		for range copies {
 			job = append(job, one...)
@@ -816,4 +873,76 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "journal.reprinted"))
 	})
+}
+
+// headerHasLine reports whether the receipt header already prints line
+// (trimmed, case-insensitive), so a seller address configured both as a
+// receipt header line and for invoicing is not printed twice (ut-docs#3337).
+func headerHasLine(header []string, line string) bool {
+	line = strings.TrimSpace(line)
+	for _, h := range header {
+		if strings.EqualFold(strings.TrimSpace(h), line) {
+			return true
+		}
+	}
+	return false
+}
+
+// headerContains reports whether any receipt header line already contains
+// substr (trimmed, case-insensitive substring — not a whole-line match like
+// headerHasLine, since a shop's own header line is free text, e.g.
+// "VAT No: GB123456789" or "VAT GB123456789"): a VAT-registered shop that
+// already typed its VAT number into a header line (the only way to print it
+// before ut-docs#3337) must not get it twice.
+func headerContains(header []string, substr string) bool {
+	substr = strings.TrimSpace(substr)
+	if substr == "" {
+		return false
+	}
+	substr = strings.ToLower(substr)
+	for _, h := range header {
+		if strings.Contains(strings.ToLower(h), substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// prePackUnitPriceText is a pre-packed item's shelf-label unit price
+// (ut-docs#3391, Price Marking Order 2004 as amended from 6 April 2026),
+// e.g. "£6.67 per kg", or "" when none should print. It prints only when
+// all hold: the item is NOT weighed (a weighed item's per-kg line,
+// ut-docs#3343, is a separate path this setting never touches), the shop
+// has opted in (data.CatalogPrePackUnitPriceEnabledKey = "1"; off by
+// default — shops of 280 m² or less are exempt), and the item has a valid
+// net quantity. g → per kg and ml → per litre (price × 1000 / quantity);
+// ea → per item (price / count). Integer minor units throughout via
+// money.MulDiv, half-up. Store locale for the wording and the money, same
+// as the label's own price line: a shelf label is a shop artifact, not
+// operator chrome. A variant label never carries a net quantity (variants
+// have no column of their own, and inheriting the parent's would print a
+// wrong unit price for a different pack size), so this returns "" there.
+func prePackUnitPriceText(ctx context.Context, d *common.Deps, label data.ItemLabel) string {
+	if label.IsWeighed || !label.NetQuantityValue.Valid || !label.NetQuantityUnit.Valid || label.NetQuantityValue.Int64 <= 0 {
+		return ""
+	}
+	if v, ok, err := d.Settings.Get(ctx, data.CatalogPrePackUnitPriceEnabledKey); err != nil || !ok || v != "1" {
+		return ""
+	}
+	price := money.FromMinor(label.PriceMinor)
+	qty := label.NetQuantityValue.Int64
+	var unit money.Money
+	var unitKey string
+	switch label.NetQuantityUnit.String {
+	case catalogtypes.NetQuantityGrams:
+		unit, unitKey = price.MulDiv(1000, qty), "catalog.labels.unit.kg"
+	case catalogtypes.NetQuantityMillilitres:
+		unit, unitKey = price.MulDiv(1000, qty), "catalog.labels.unit.litre"
+	case catalogtypes.NetQuantityEach:
+		unit, unitKey = price.MulDiv(1, qty), "catalog.labels.unit.item"
+	default:
+		return ""
+	}
+	loc := httpx.DefaultLocale()
+	return fmt.Sprintf(httpx.T(loc, "catalog.labels.price_per_unit"), httpx.FormatMoneyLatin(unit.Minor(), loc), httpx.T(loc, unitKey))
 }

@@ -807,6 +807,41 @@
   });
 })();
 </script>
+<div class="card" id="settings-catalog-pre-pack-unit-price">
+  <!-- ut-docs#3391: Price Marking Order 2004 — whether a pre-packed item's
+       shelf label shows its unit price (per kg / litre / item) from the
+       item's net quantity. Off by default (small-shop exemption, so the
+       shop's own call); a weighed item's per-kg line never reads it.
+       Cloned field-for-field from #settings-catalog-import-barcode-default
+       above. -->
+  <h2>{{ T "settings.catalog_pre_pack_unit_price.title" }} {{ helpLink "catalog" }}</h2>
+  <fieldset class="set-lock" data-lock-region="settings-catalog-pre-pack-unit-price"{{ if index $.lockedRegions "settings-catalog-pre-pack-unit-price" }} disabled{{ end }}>
+  {{ if index $.lockedRegions "settings-catalog-pre-pack-unit-price" }}{{ template "set-lock-note" }}{{ end }}
+  <label style="display:block; margin:.35rem 0">
+    <input type="checkbox" id="catalog-pre-pack-unit-price-cb" name="enabled"
+           hx-post="/api/settings/catalog-pre-pack-unit-price" hx-trigger="change" hx-swap="none"
+           hx-vals="js:{enabled: document.getElementById('catalog-pre-pack-unit-price-cb').checked}"
+           hx-on::before-request="document.getElementById('catalog-pre-pack-unit-price-msg').textContent=''"
+           hx-on::after-request="if(!event.detail.successful){this.checked=!this.checked;document.getElementById('settings-save-error').hidden=false}"
+           {{ if eq (index .settingsMap "catalog_pre_pack_unit_price_enabled") "1" }}checked{{ end }}>
+    {{ T "settings.catalog_pre_pack_unit_price.label" }}
+  </label>
+  <p class="muted">{{ T "settings.catalog_pre_pack_unit_price.hint" }}</p>
+  <div id="catalog-pre-pack-unit-price-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
+  </fieldset>
+</div>
+<script>
+(function () {
+  var cb = document.getElementById('catalog-pre-pack-unit-price-cb');
+  if (!cb) return;
+  var msg = document.getElementById('catalog-pre-pack-unit-price-msg');
+  var T = { saved: "{{ T "settings.display.change_saved" }}" };
+  cb.addEventListener('htmx:afterRequest', function (ev) {
+    var ct = ev.detail.xhr.getResponseHeader('Content-Type') || '';
+    if (ev.detail.successful && ct.indexOf('text/html') === -1) { renderNotice(msg, 'success', T.saved); }
+  });
+})();
+</script>
 <!-- ut-docs#2499: how the sell screen browses items — one closed-enum
      setting (sale.browsing_mode) that replaced the two booleans that used to
      live here (ut-docs#2294's "Show an All tab" and ut-docs#2283's

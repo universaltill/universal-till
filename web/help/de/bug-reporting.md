@@ -21,7 +21,11 @@ Stimmt etwas an der Kasse nicht? Senden Sie einen Bericht — getippt, gesproche
 
 Sie erreichen dies auch über das ☰-Menü über die Kachel Problem melden.
 
+Auf einem Bildschirm in Telefonbreite finden Sie 🐞 Problem melden im ☰-Menü, und das Panel füllt den Bildschirm unter der oberen Leiste aus: große Schaltflächen, die Notiz in einer eigenen Zeile und Bericht speichern darunter. Verschieben lässt es sich dort nicht. Blenden Sie es mit ✕ aus, während Sie das Problem nachstellen, und holen Sie es mit 🐞 samt Entwurf zurück. ☰ bleibt darüber antippbar.
+
 In der Android-Kasse-App erfasst "Screenshot aufnehmen" direkt, was die App gerade anzeigt — keine Berechtigungsabfrage. Auch die Sprachnotiz funktioniert: Beim ersten Aufnehmen fragt Android nach Mikrofonzugriff; einmal erlaubt, starten spätere Aufnahmen sofort (bei Ablehnung wieder aktivieren unter Telefon-Einstellungen → Apps → Universal Till → Berechtigungen). Bildschirmaufzeichnung und das Fotografieren mit der Kamera sind in der Android-App noch nicht verfügbar.
+
+In der iPhone- und iPad-App fragt iOS beim ersten Aufnehmen einer Sprachnotiz nach Mikrofonzugriff; einmal erlaubt, starten spätere Aufnahmen sofort (bei Ablehnung wieder aktivieren unter Einstellungen des Geräts → Universal Till → Mikrofon). Ältere iOS-Versionen können in der App keine Sprachnotizen aufnehmen; die Schaltfläche weist dann darauf hin. "Screenshot aufnehmen" erfasst direkt den Kassenbildschirm, ohne Teilen-Dialog — das Panel blendet sich dafür kurz aus, damit es nicht mit im Bild ist. Bildschirmaufzeichnung ist in der iPhone- und iPad-App noch nicht verfügbar.
 
 Mit ✕ wird das Panel ausgeblendet — Ihr Entwurf bleibt erhalten — bis Sie wieder 🐞 drücken: Es bleibt beim Wechsel zwischen Bildschirmen geschlossen, und die Seite „Problem melden“ öffnet es nicht mehr von selbst. „Verwerfen“ ist die Schaltfläche, die einen Entwurf tatsächlich löscht (mit Rückfrage). Ein Entwurf gilt nur für die aktuelle Kassensitzung; in einen Bericht passen bis zu 12 Screenshots.
 

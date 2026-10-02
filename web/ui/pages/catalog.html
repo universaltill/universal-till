@@ -266,7 +266,10 @@
       <!-- In the pinned head (not at the bottom of the form) so a save or
            error notice is visible at any scroll position. -->
       <div id="item-form-msg" class="muted" aria-live="polite"></div>
-      <div class="tab-bar" role="tablist" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
+      {{/* data-hscroll-ok (ut-docs#3359): below 700px this one-row tab strip
+           swipes sideways by design (app.css .catalog-form-head .tab-bar,
+           ut-docs#2000/#2024, with its own edge fade) — not a table. */}}
+      <div class="tab-bar" role="tablist" data-hscroll-ok @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
         <button type="button" id="item-form-tab-details" class="tab" role="tab" :class="tab === 'details' && 'active'" :aria-selected="tab === 'details'" :tabindex="tab === 'details' ? 0 : -1" aria-controls="item-form-panel-details" @click="select('details')">{{ T "catalog.tab.details" }}</button>
         <button type="button" id="item-form-tab-variants" class="tab" role="tab" :class="tab === 'variants' && 'active'" :aria-selected="tab === 'variants'" :tabindex="tab === 'variants' ? 0 : -1" aria-controls="item-form-panel-variants" @click="select('variants')">{{ T "catalog.variants" }}</button>
         <button type="button" id="item-form-tab-modifiers" class="tab" role="tab" :class="tab === 'modifiers' && 'active'" :aria-selected="tab === 'modifiers'" :tabindex="tab === 'modifiers' ? 0 : -1" aria-controls="item-form-panel-modifiers" @click="select('modifiers')">{{ T "catalog.modifiers.title" }}</button>
@@ -326,6 +329,20 @@
                  Inactive codes are kept selectable, just labeled. -->
             <label>{{ T "catalog.tax_code" }} <select name="taxCode" id="item-tax"><option value="">{{ T "catalog.tax_code.none" }}</option>{{ range .TaxCodes }}<option value="{{ .ID }}">{{ .Name }}{{ if not .IsActive }} ({{ T "catalog.tax_code.inactive" }}){{ end }}</option>{{ end }}</select></label>
           </div>
+          <!-- ut-docs#3391: a pre-packed item's net content, for the shelf
+               label's unit price (Settings → Unit price on pre-packed
+               labels). Blank = none. Disabled, never hidden, while "Sold by
+               weight" is ticked (syncNetQuantity below); a disabled field
+               submits nothing, which the server stores as "none". -->
+          <div class="field-pair">
+            <label>{{ T "catalog.net_quantity" }} <input type="text" inputmode="numeric" pattern="[0-9]*" name="netQuantityValue" id="item-net-qty" aria-describedby="item-net-qty-hint"></label>
+            <label>{{ T "catalog.net_quantity.unit" }} <select name="netQuantityUnit" id="item-net-qty-unit">
+              <option value="g">{{ T "catalog.net_quantity.unit.g" }}</option>
+              <option value="ml">{{ T "catalog.net_quantity.unit.ml" }}</option>
+              <option value="ea">{{ T "catalog.net_quantity.unit.each" }}</option>
+            </select></label>
+          </div>
+          <div id="item-net-qty-hint" class="muted" style="font-size:.82rem; margin:-.3rem 0 .55rem" hidden>{{ T "catalog.net_quantity.disabled_hint" }}</div>
           <div class="field-pair">
             <label>{{ T "catalog.category" }} <select name="categoryId" id="item-category"><option value="">{{ T "catalog.category.none" }}</option>{{ range .Categories }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}</select></label>
             <label>{{ T "catalog.brand" }} <select name="brandId" id="item-brand"><option value="">{{ T "catalog.brand.none" }}</option>{{ range .Brands }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}</select></label>
@@ -354,6 +371,11 @@
           <div class="field-checks">
             <label><input type="checkbox" name="isWeighed" id="item-weighed" value="1"> {{ T "catalog.sold_by_weight" }}</label>
             <label><input type="checkbox" name="stockUntracked" id="item-stock-untracked" value="1"> {{ T "catalog.stock_untracked" }}</label>
+            <!-- ut-docs#3340: the till asks the cashier for an ID check before
+                 a flagged item can be paid for; the self-order kiosk sends
+                 the customer to the counter instead. Same unchecked-submits-
+                 nothing shape as stockUntracked (false is the safe default). -->
+            <label><input type="checkbox" name="ageRestricted" id="item-age-restricted" value="1"> {{ T "catalog.age_restricted" }} {{ helpLink "age-restricted-sales" }}</label>
             <!-- Checkbox semantics: an unchecked box submits nothing, so this
                  pairs it with a hidden isActive=0 (same convention as the
                  variant/modifier-group forms in catalog_variants.html) —
@@ -937,8 +959,20 @@
     }
   }
 
+  // ut-docs#3391: a weighed item has no net quantity — its label always
+  // shows per kg — so the pair is disabled (never hidden) with a one-line
+  // reason while "Sold by weight" is ticked.
+  function syncNetQuantity() {
+    var weighed = document.getElementById('item-weighed').checked;
+    document.getElementById('item-net-qty').disabled = weighed;
+    document.getElementById('item-net-qty-unit').disabled = weighed;
+    document.getElementById('item-net-qty-hint').hidden = !weighed;
+  }
+  document.getElementById('item-weighed').addEventListener('change', syncNetQuantity);
+
   function clearForm() {
     form.reset();
+    syncNetQuantity();
     document.getElementById('item-id').value = '';
     document.getElementById('item-image-url').value = '';
     setColorTiles('');
@@ -1135,7 +1169,11 @@
     document.getElementById('item-brand').value = row.dataset.brand;
     document.getElementById('item-tax').value = row.dataset.tax;
     document.getElementById('item-weighed').checked = row.dataset.weighed === '1';
+    document.getElementById('item-net-qty').value = row.dataset.netQty || '';
+    document.getElementById('item-net-qty-unit').value = row.dataset.netQtyUnit || 'g';
+    syncNetQuantity();
     document.getElementById('item-stock-untracked').checked = row.dataset.stockUntracked === '1';
+    document.getElementById('item-age-restricted').checked = row.dataset.ageRestricted === '1';
     document.getElementById('item-active').checked = true;
     document.getElementById('item-price').value = window.utCurrency.toMajor(parseInt(row.dataset.price || '0', 10));
     document.getElementById('item-color').value = row.dataset.color || '';

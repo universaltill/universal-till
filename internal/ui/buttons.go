@@ -2490,6 +2490,9 @@ func (a PriceResolverAdapter) resolve(ctx context.Context, code string) (pos.Bas
 		TaxRateBP:  row.TaxRateBP,
 		TaxCodeID:  row.TaxCodeID,
 		IsWeighed:  row.IsWeighed,
+		// ut-docs#3340: carried onto the live line so the basket can show
+		// the "needs ID check" badge from the moment the item is rung up.
+		AgeRestricted: row.AgeRestricted,
 	}
 	if row.ImageURL != "" {
 		line.ImageURL = row.ImageURL

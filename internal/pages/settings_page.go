@@ -138,6 +138,29 @@ func demoDataInLiveBasket(cashier, kiosk *pos.Service) demoBasketMatch {
 	return noBasketMatch
 }
 
+// applyDisplayMode persists the per-till device profile ("register",
+// "backoffice" or "self_order"; "register" is stored as "") and updates the
+// live template flags. Shared by POST /api/settings/display-mode and the
+// kiosk-user PIN login (ut-docs#3136), so both switches leave the till in
+// the same state.
+func applyDisplayMode(ctx context.Context, d *common.Deps, rawMode string) error {
+	mode := rawMode
+	if mode == "register" {
+		mode = "" // empty = default register profile
+	}
+	if err := d.Settings.Set(ctx, "display.mode", mode); err != nil {
+		return err
+	}
+	// ut-docs#2099: keep httpx's live "selforder" template flag
+	// (record_dialog.html's status/lock/exit-to-OS withholding, §10) in
+	// step with the mode that was JUST persisted — without this the flag
+	// would only ever reflect the value pages.Init read at boot, stale until
+	// the till restarts. Mirrors httpx.InitOSKMode(mode) in the OSK handler.
+	httpx.InitSelfOrderMode(mode == "self_order")
+	httpx.InitDisplayMode(mode) // ut-docs#2154, same live-update
+	return nil
+}
+
 // settingsAudit writes the audit entry for one settings mutation wired to
 // checkOrElevate (ut-docs#796, mechanism ADR-0052/ut-docs#557): plain
 // InsertAudit attributed to the session user on the allowed path,
@@ -1493,6 +1516,45 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsRespondSaved(w, r, elev)
 	})
 
+	// ut-docs#3391: whether a pre-packed item's shelf label shows its unit
+	// price (per kg / per litre / per item) from its net quantity — Price
+	// Marking Order 2004, opt-in because shops of 280 m² or less are exempt.
+	// Same manager-gated, elevation-wired, persist-a-bool shape as
+	// catalog-import-barcode-default above. Read only by POST
+	// /api/print/labels; a weighed item's per-kg line never consults it.
+	mux.HandleFunc("POST /api/settings/catalog-pre-pack-unit-price", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		_ = r.ParseForm()
+		b, err := strconv.ParseBool(strings.TrimSpace(r.Form.Get("enabled")))
+		if err != nil {
+			http.Error(w, "enabled must be a boolean", http.StatusBadRequest)
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			summaryKey := "elevation.summary.catalog_pre_pack_unit_price_off"
+			if b {
+				summaryKey = "elevation.summary.catalog_pre_pack_unit_price_on"
+			}
+			renderElevationPrompt(w, r, "/api/settings/catalog-pre-pack-unit-price", "#catalog-pre-pack-unit-price-msg",
+				httpx.T(locale, summaryKey),
+				[]elevationHiddenField{{Name: "enabled", Value: r.Form.Get("enabled")}}, elev)
+			return
+		}
+		val := "0"
+		if b {
+			val = "1"
+		}
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{data.CatalogPrePackUnitPriceEnabledKey: val}); err != nil {
+			if !respondSettingsSyncError(w, r, err) {
+				http.Error(w, "could not save", http.StatusInternalServerError)
+			}
+			return
+		}
+		settingsAudit(r, posRepo, elev, "settings", data.CatalogPrePackUnitPriceEnabledKey, "catalog_pre_pack_unit_price_changed", map[string]any{"enabled": b})
+		settingsRespondSaved(w, r, elev)
+	})
+
 	// "Sell items without tracking stock" (ut-docs#1843). Same manager-
 	// gated, elevation-wired, persist-a-bool shape as launch-on-startup
 	// above, but this one changes what the till DOES, not just what it
@@ -1922,21 +1984,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				[]elevationHiddenField{{Name: "mode", Value: mode}}, elev)
 			return
 		}
-		if mode == "register" {
-			mode = "" // empty = default register profile
-		}
-		if err := d.Settings.Set(r.Context(), "display.mode", mode); err != nil {
+		if err := applyDisplayMode(r.Context(), d, rawMode); err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
-		// ut-docs#2099: keep httpx's live "selforder" template flag
-		// (record_dialog.html's status/lock/exit-to-OS withholding, §10)
-		// in step with the mode that was JUST persisted — without this the
-		// flag would only ever reflect the value pages.Init read at boot,
-		// stale until the till restarts. Mirrors httpx.InitOSKMode(mode)
-		// right above the OSK settings handler in this same file.
-		httpx.InitSelfOrderMode(rawMode == "self_order")
-		httpx.InitDisplayMode(rawMode) // ut-docs#2154, same live-update
 		// ut-docs#1259: self_order is customer-facing and auth-exempt
 		// (/self-order, /api/self-order/*) — the browser that just made this
 		// switch must not keep a live session past it, or anyone with

@@ -612,3 +612,54 @@ func TestResolveShortcutLine_ItemIDCodePrefixResolvesNullSKU(t *testing.T) {
 		t.Fatalf("unexpected resolved line: %+v", line)
 	}
 }
+
+// ut-docs#3250: a 0% tax code must reach the engine as "this line HAS a tax
+// code, at 0%" (TaxCodeID set) — not as "no tax code" — because the engine
+// now keys the default-rate fallback on TaxCodeID. A regression guard for
+// the t.id change below; the bug itself is proven in internal/pos.
+func TestResolveShortcutLine_ZeroRateTaxCodeKeepsItsID(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	repo := data.NewPOSRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedTaxCode(t, db, "tax_zero", "Zero rated", 0)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "BREAD", Name: "Bread", BasePrice: 120, TaxCodeID: "tax_zero", IsActive: true})
+
+	line, ok := repo.ResolveShortcutLine(ctx, "BREAD")
+	if !ok {
+		t.Fatal("expected a resolved line")
+	}
+	if line.TaxRateBP != 0 || line.TaxCodeID != "tax_zero" {
+		t.Fatalf("0%% tax code: got (rate %d, code %q), want (0, \"tax_zero\")", line.TaxRateBP, line.TaxCodeID)
+	}
+}
+
+// ut-docs#3250: an item whose tax_code_id points at no tax_codes row (data
+// written before foreign keys were actually enforced) must resolve with NO
+// tax code, so the engine keeps charging the shop default as it always
+// did — never a silent 0% from the LEFT JOIN's COALESCE.
+func TestResolveShortcutLine_DanglingTaxCodeIsNoTaxCode(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	repo := data.NewPOSRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "MUG", Name: "Mug", BasePrice: 900, IsActive: true})
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{`PRAGMA foreign_keys=OFF`, `UPDATE items SET tax_code_id='gone' WHERE id='i1'`, `PRAGMA foreign_keys=ON`} {
+		if _, err := conn.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	_ = conn.Close()
+
+	line, ok := repo.ResolveShortcutLine(ctx, "MUG")
+	if !ok {
+		t.Fatal("expected a resolved line")
+	}
+	if line.TaxCodeID != "" {
+		t.Fatalf("dangling tax_code_id must resolve as no tax code, got %q", line.TaxCodeID)
+	}
+}

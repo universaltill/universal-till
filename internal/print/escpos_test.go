@@ -334,7 +334,7 @@ func TestRenderKitchenTicketCP858EmitsCodepageSelect(t *testing.T) {
 func TestRenderLabelCP858EmitsCodepageSelect(t *testing.T) {
 	sel := []byte{0x1b, 0x74, 0x13}
 
-	out := RenderLabel("Coca-Cola Can 330ml", "€1.40", "5000000000011", "cp858")
+	out := RenderLabelWithUnitPrice("Coca-Cola Can 330ml", "€1.40", "", "5000000000011", "cp858")
 	if !bytes.HasPrefix(out, append(append([]byte{}, cmdInit...), sel...)) {
 		t.Error("cp858 label must emit ESC t 19 immediately after init")
 	}
@@ -342,7 +342,7 @@ func TestRenderLabelCP858EmitsCodepageSelect(t *testing.T) {
 		t.Error("cp858 label price must carry the CP858 euro byte 0xD5")
 	}
 	for _, cs := range []string{"", "utf8", "ascii"} {
-		if bytes.Contains(RenderLabel("X", "1.40", "123", cs), sel) {
+		if bytes.Contains(RenderLabelWithUnitPrice("X", "1.40", "", "123", cs), sel) {
 			t.Errorf("charset %q must not emit a code-page select", cs)
 		}
 	}
@@ -535,7 +535,7 @@ func leadingSpacesStr(t *testing.T, out string, want string) int {
 }
 
 func TestRenderLabel(t *testing.T) {
-	out := RenderLabel("Coca-Cola Can 330ml", "£1.40", "5000000000011", "utf8")
+	out := RenderLabelWithUnitPrice("Coca-Cola Can 330ml", "£1.40", "", "5000000000011", "utf8")
 	if !bytes.HasPrefix(out, cmdInit) || !bytes.HasSuffix(out, cmdFeedCut) {
 		t.Error("label must init and cut")
 	}
@@ -543,6 +543,31 @@ func TestRenderLabel(t *testing.T) {
 		if !bytes.Contains(out, want) {
 			t.Errorf("label missing %q", want)
 		}
+	}
+}
+
+// ut-docs#3391: a pre-packed item's unit price prints on its own normal-
+// size line between the (double-size) pack price and the barcode; an empty
+// unit price prints nothing extra -- the barcode follows the price directly.
+func TestRenderLabelWithUnitPrice(t *testing.T) {
+	plain := RenderLabelWithUnitPrice("Rice 300g", "£2.00", "", "5000000000011", "utf8")
+	afterPrice := append([]byte("£2.00\n"), cmdDoubleOff...)
+	idx := bytes.Index(plain, afterPrice)
+	if idx < 0 {
+		t.Fatalf("plain label must still print the bare price, got %q", plain)
+	}
+	if rest := plain[idx+len(afterPrice):]; !bytes.HasPrefix(rest, []byte{0x1d}) {
+		t.Fatalf("empty unit price must print nothing between the price and the barcode's own commands, got %q", rest)
+	}
+	out := RenderLabelWithUnitPrice("Rice 300g", "£2.00", "£6.67 per kg", "5000000000011", "utf8")
+	want := []byte("£2.00\n")
+	want = append(want, cmdDoubleOff...)
+	want = append(want, []byte("£6.67 per kg\n")...)
+	if !bytes.Contains(out, want) {
+		t.Fatalf("unit price must follow the pack price at normal size, got %q", out)
+	}
+	if bytes.Index(out, []byte("£6.67 per kg")) > bytes.Index(out, []byte("{B")) {
+		t.Fatal("unit price must print above the barcode")
 	}
 }
 
@@ -564,5 +589,78 @@ func TestRenderWrapsLongMetaLines(t *testing.T) {
 				t.Errorf("%s: wrapped line wider than %d: %q", name, Width, l)
 			}
 		}
+	}
+}
+
+// ut-docs#3337: Line.Sub prints as an extra indented row under the
+// Name/Amount row, wrapped (never clipped) to the column width; an empty
+// Sub renders byte-identical to a Line that never had the field.
+func TestLayoutLineSubRow(t *testing.T) {
+	base := Line{Name: "Wine", Qty: "3", Amount: "£36.00"}
+	withSub := base
+	withSub.Sub = "Unit price (excl. VAT): £10.00 - VAT 20.00%"
+
+	plain := layoutLine(base)
+	rows := layoutLine(withSub)
+	if len(rows) <= len(plain) {
+		t.Fatalf("expected Sub to add row(s), got %q", rows)
+	}
+	for i := range plain {
+		if rows[i] != plain[i] {
+			t.Fatalf("Sub must not change the Name/Amount row: got %q, want %q", rows[i], plain[i])
+		}
+	}
+	var parts []string
+	for _, r := range rows[len(plain):] {
+		if !strings.HasPrefix(r, "  ") {
+			t.Fatalf("Sub row must be indented, got %q", r)
+		}
+		if utf8.RuneCountInString(r) > Width {
+			t.Fatalf("Sub row exceeds Width: %q", r)
+		}
+		parts = append(parts, strings.TrimPrefix(r, "  "))
+	}
+	if got := strings.Join(parts, " "); got != withSub.Sub {
+		t.Fatalf("Sub content lost across wrapped rows: got %q, want %q", got, withSub.Sub)
+	}
+	// Breaks at a space: the rate stays whole on one row.
+	if !strings.HasSuffix(rows[len(rows)-1], "20.00%") || strings.Contains(strings.Join(rows, "\n"), "20.\n") {
+		t.Fatalf("expected a word wrap keeping \"20.00%%\" whole, got %q", rows)
+	}
+}
+
+func TestWrapWords(t *testing.T) {
+	cases := []struct {
+		in   string
+		max  int
+		want []string
+	}{
+		{"short", 10, []string{"short"}},
+		{"aa bb cc", 5, []string{"aa bb", "cc"}},
+		{"abcdefghij k", 4, []string{"abcd", "efgh", "ij k"}},
+	}
+	for _, c := range cases {
+		got := wrapWords(c.in, c.max)
+		if strings.Join(got, "|") != strings.Join(c.want, "|") {
+			t.Errorf("wrapWords(%q, %d) = %q, want %q", c.in, c.max, got, c.want)
+		}
+	}
+}
+
+func TestRenderEmptySubIsByteIdentical(t *testing.T) {
+	d := sampleDoc()
+	before := Render(d)
+	for i := range d.Lines {
+		d.Lines[i].Sub = ""
+	}
+	if !bytes.Equal(before, Render(d)) {
+		t.Fatal("an empty Sub must not change the rendered bytes")
+	}
+	d.Lines[0].Sub = "Unit price (excl. VAT): £1.40"
+	if !bytes.Contains(Render(d), []byte("\n  Unit price (excl. VAT): £1.40\n")) {
+		t.Fatal("expected the Sub row in the rendered stream")
+	}
+	if !strings.Contains(RenderText(d), "  Unit price (excl. VAT): £1.40") {
+		t.Fatal("expected the Sub row in the text rendering too")
 	}
 }

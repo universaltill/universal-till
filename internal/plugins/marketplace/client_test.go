@@ -77,29 +77,6 @@ func TestClient_ListPlugins(t *testing.T) {
 	}
 }
 
-func TestClient_ReportPluginStatus_OptOut(t *testing.T) {
-	// Setup client with telemetry disabled
-	cfg := &config.MarketplaceConfig{
-		EndpointURL:       "http://example.com",
-		TelemetryOptIn:    false,
-		RequestTimeoutSec: 30,
-	}
-	tokenClient := &mockTokenClient{token: "test-token"}
-	client := NewClient(cfg, tokenClient)
-
-	// Should not error when telemetry is disabled
-	ctx := context.Background()
-	req := &ReportPluginStatusRequest{
-		Statuses: []PluginStatus{
-			{PluginID: "test", InstalledVersion: "1.0.0"},
-		},
-	}
-	err := client.ReportPluginStatus(ctx, req)
-	if err != nil {
-		t.Errorf("expected no error when telemetry is disabled, got: %v", err)
-	}
-}
-
 func TestClient_IssueDownloadToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

@@ -21,6 +21,13 @@ type ItemInput struct {
 	// Go zero value (false) means "tracked" — see
 	// 013_items_stock_untracked.sql for why that direction matters.
 	StockUntracked bool
+	// AgeRestricted marks an item the merchant only sells after a staff ID
+	// check (ut-docs#3340, 055_items_age_restricted.sql): the till asks the
+	// cashier to record an ID-check outcome before tender, and the
+	// self-order kiosk refuses to take payment for it. Named so its Go zero
+	// value (false) means "unrestricted" — the same safe default the
+	// column's DEFAULT 0 gives every existing item on upgrade.
+	AgeRestricted bool
 	// Color is this item's tile swatch (ut-docs#1901) — one of
 	// ItemColors()' fixed hex values, e.g. "#0f172a", or "" for none.
 	// Renders as the sale-screen tile's solid background for a photo-less
@@ -31,6 +38,37 @@ type ItemInput struct {
 	// it flows into a CSS custom property downstream and an arbitrary
 	// string is not safe to trust there.
 	Color string
+	// NetQuantityValue/NetQuantityUnit are a pre-packed item's net content
+	// (ut-docs#3391, Price Marking Order 2004): grams ("g"), millilitres
+	// ("ml") or a plain count ("ea"). Both nil = none configured; both are
+	// set or neither — ValidNetQuantity is the rule every write path checks.
+	// The shelf label turns them into a unit price (per kg / per litre /
+	// per item) when the shop opts in.
+	NetQuantityValue *int64
+	NetQuantityUnit  *string
+}
+
+// Net-quantity units (items.net_quantity_unit, migration 060's CHECK).
+const (
+	NetQuantityGrams       = "g"
+	NetQuantityMillilitres = "ml"
+	NetQuantityEach        = "ea"
+)
+
+// ValidNetQuantity reports whether a value/unit pair may be stored: both
+// nil (none), or a positive value with one of the three units.
+func ValidNetQuantity(value *int64, unit *string) bool {
+	if value == nil && unit == nil {
+		return true
+	}
+	if value == nil || unit == nil || *value <= 0 {
+		return false
+	}
+	switch *unit {
+	case NetQuantityGrams, NetQuantityMillilitres, NetQuantityEach:
+		return true
+	}
+	return false
 }
 
 // ItemColor is one swatch in the fixed item-color palette (ut-docs#1901).

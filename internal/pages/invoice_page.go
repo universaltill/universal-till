@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -210,6 +211,9 @@ func buildInvoiceDoc(ctx context.Context, d *common.Deps, inv data.InvoiceRow, s
 		issuedAt = httpx.FormatDate(t.Local(), locale)
 	}
 	meta := []string{inv.DisplayNo, T("invoice.for_sale") + " " + sale.ReceiptNo, issuedAt}
+	if supply := timeOfSupply(sale.CreatedAt, inv.IssuedAt, locale); supply != "" {
+		meta = append(meta, T("invoice.time_of_supply")+": "+supply)
+	}
 	if inv.Kind == "credit_note" && inv.OriginalInvoiceID != "" {
 		meta = append(meta, T("invoice.credits")+" "+inv.OriginalInvoiceID)
 	}
@@ -226,6 +230,9 @@ func buildInvoiceDoc(ctx context.Context, d *common.Deps, inv data.InvoiceRow, s
 			Name:   l.Name,
 			Qty:    formatQty(l.Qty),
 			Amount: httpx.FormatMoney(l.LineTotal, locale),
+			// " - ", not the on-screen " · ": an ascii-charset printer
+			// would print the middle dot as '?'.
+			Sub: invoiceLineSub(l, locale, " - "),
 		})
 	}
 	for _, b := range bands {
@@ -359,28 +366,27 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 		// years. Default `from` to the start of the current calendar month;
 		// an explicit ?from=/?to= still overrides this entirely.
 		//
-		// `to` is deliberately left OPEN rather than also defaulted to
-		// "today" (independent review finding): `from`/`to` here are LOCAL
-		// calendar dates (same as the `type="date"` pickers below), but
-		// invoices.IssuedAt is stored as UTC RFC3339 and InvoiceRepo.List/
-		// Totals compare it lexicographically (invoiceRangeBound) — a
-		// `to=today` bound would silently exclude an invoice issued today
-		// whenever the local and UTC calendar dates disagree at that
-		// instant (any timezone west of UTC in the evening; the first ~2h
-		// of a month in a timezone east of UTC, e.g. the Germany pilot).
-		// Leaving `to` open still gets the perf win — List/Totals run an
-		// indexed range scan from `from` instead of an all-time unbounded
-		// one — without ever risking hiding a just-issued invoice.
+		// `to` stays OPEN: an open end can never hide a just-issued
+		// invoice, and List/Totals still get an indexed range scan from
+		// `from`. `from`/`to` are LOCAL calendar dates (the pickers below
+		// show them as typed); invoiceUTCBounds converts both to the UTC
+		// instants issued_at is stored in (ut-docs#3300 — comparing the
+		// local date string directly hid the first local hour(s) of a
+		// month east of UTC).
+		// The register's rows show the issued date in local time too
+		// (`date`, not `dateUTC`), so a row's date always matches the
+		// local day it is filtered under.
 		if from == "" && to == "" {
-			now := reportNow()
+			now := invoiceNow().In(invoiceLoc())
 			from = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Format("2006-01-02")
 		}
-		list, err := invRepo.List(r.Context(), from, to)
+		fromUTC, toUTC := invoiceUTCBounds(from, to)
+		list, err := invRepo.List(r.Context(), fromUTC, toUTC)
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "invoice.error.server", err)
 			return
 		}
-		net, tax, gross, err := invRepo.Totals(r.Context(), from, to)
+		net, tax, gross, err := invRepo.Totals(r.Context(), fromUTC, toUTC)
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "invoice.error.server", err)
 			return
@@ -406,7 +412,8 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 		}
 		from := strings.TrimSpace(r.URL.Query().Get("from"))
 		to := strings.TrimSpace(r.URL.Query().Get("to"))
-		list, err := invRepo.List(r.Context(), from, to)
+		fromUTC, toUTC := invoiceUTCBounds(from, to)
+		list, err := invRepo.List(r.Context(), fromUTC, toUTC)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "invoice.error.server", "invoice", err)
 			return
@@ -472,6 +479,20 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 				Net:  b.Net, Tax: b.Tax, Gross: b.Gross,
 			})
 		}
+		// ut-docs#3337: per-line view carrying the unit-price/rate detail
+		// row, formatted Go-side in the request's locale.
+		locale := httpx.RequestLocale(r)
+		type lineView struct {
+			Name      string
+			Qty       float64
+			LineTotal int64
+			Sub       string
+		}
+		lines := make([]lineView, 0, len(sale.Lines))
+		for _, l := range sale.Lines {
+			lines = append(lines, lineView{Name: l.Name, Qty: l.Qty, LineTotal: l.LineTotal,
+				Sub: invoiceLineSub(l, locale, " · ")})
+		}
 		origDisplay := ""
 		if inv.OriginalInvoiceID != "" {
 			if o, ok, _ := invRepo.ByID(r.Context(), inv.OriginalInvoiceID); ok {
@@ -486,10 +507,66 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 			"Sale":         sale,
 			"Seller":       seller,
 			"Bands":        bands,
+			"Lines":        lines,
+			"TimeOfSupply": timeOfSupply(sale.CreatedAt, inv.IssuedAt, locale),
 			"OrigDisplay":  origDisplay,
 			"IsCreditNote": inv.Kind == "credit_note",
 		})(w, r)
 	})
+}
+
+// invoiceLineUnitNet is a line's unit price excluding VAT:
+// (LineTotal - TaxAmount) / Qty, from the line's RECORDED figures (the same
+// net vatBreakdown bands, ut-docs#3337). Rounded half away from zero — the
+// rule money.Money.MulQty already uses for qty-scaled amounts. ok=false for
+// a zero quantity (nothing to divide by).
+func invoiceLineUnitNet(l data.SaleDetailLine) (int64, bool) {
+	if l.Qty == 0 {
+		return 0, false
+	}
+	return int64(math.Round(float64(l.LineTotal-l.TaxAmount) / l.Qty)), true
+}
+
+// invoiceLineSub is the detail row under an invoice line (ut-docs#3337):
+// unit price excl. VAT and the line's own recorded VAT rate. Shared by the
+// thermal invoice (buildInvoiceDoc) and the on-screen one so both say the
+// same thing; sep differs only because a thermal printer's charset may not
+// carry the middle dot.
+func invoiceLineSub(l data.SaleDetailLine, locale, sep string) string {
+	unit, ok := invoiceLineUnitNet(l)
+	if !ok {
+		return ""
+	}
+	s := httpx.T(locale, "invoice.unit_price") + ": " + httpx.FormatMoney(unit, locale)
+	// ut-docs#3337 review (S2): a discounted line's net÷qty figure is the
+	// post-discount effective price, not the catalogue unit price — label
+	// it rather than let it pass as the undiscounted unit price an
+	// accountant would expect "unit price" to mean.
+	if l.LineDiscount != 0 {
+		s += " (" + httpx.T(locale, "invoice.after_discount") + ")"
+	}
+	return s + sep + httpx.T(locale, "invoice.vat") + " " + fmt.Sprintf("%.2f%%", float64(l.TaxRateBP)/100)
+}
+
+// timeOfSupply returns the sale's own date (the time of supply), formatted
+// exactly as the invoice's issue date is, but only when that formatted date
+// differs from the issue date's — a same-day invoice needs no second date
+// (ut-docs#3337). An unparseable timestamp yields "" rather than a raw,
+// unformatted string the reader can't compare against the issue date.
+func timeOfSupply(saleCreatedAt, issuedAt, locale string) string {
+	sold, err := time.Parse(time.RFC3339, saleCreatedAt)
+	if err != nil {
+		return ""
+	}
+	issued, err := time.Parse(time.RFC3339, issuedAt)
+	if err != nil {
+		return ""
+	}
+	supply := httpx.FormatDate(sold.Local(), locale)
+	if supply == httpx.FormatDate(issued.Local(), locale) {
+		return ""
+	}
+	return supply
 }
 
 func formatQty(q float64) string {
@@ -497,4 +574,34 @@ func formatQty(q float64) string {
 		return fmt.Sprintf("%d", int64(q))
 	}
 	return fmt.Sprintf("%.3g", q)
+}
+
+// invoiceNow / invoiceLoc are the register's clock and the shop's timezone,
+// injectable so tests can pin "00:30 on the 1st in UTC+1" (ut-docs#3300):
+// setting TZ inside a test doesn't move time.Local once it is loaded.
+var (
+	invoiceNow = time.Now // `to` is open, so reportNow's +1s pad buys nothing
+	invoiceLoc = func() *time.Location { return time.Local }
+)
+
+// invoiceUTCBounds turns the register's from/to filters — LOCAL calendar
+// dates, as the type="date" pickers send them — into the UTC RFC3339 bounds
+// invoices.issued_at is stored in (ut-docs#3300). Comparing a local date
+// string against UTC timestamps hid invoices whenever the local and UTC
+// dates disagreed: east of UTC, the first local hour(s) of a day are still
+// the previous UTC date. `from` becomes the UTC instant of local midnight;
+// `to` becomes the last whole second before the NEXT local midnight
+// (AddDate, not +24h, so a 23- or 25-hour DST day is right), which
+// InvoiceRepo's inclusive prefix bound (invoiceRangeBound) then covers to
+// the end of that second. Empty stays open; anything that isn't a plain
+// date passes through unchanged, as before.
+func invoiceUTCBounds(from, to string) (string, string) {
+	loc := invoiceLoc()
+	if d, err := time.ParseInLocation("2006-01-02", from, loc); err == nil {
+		from = d.UTC().Format(time.RFC3339)
+	}
+	if d, err := time.ParseInLocation("2006-01-02", to, loc); err == nil {
+		to = d.AddDate(0, 0, 1).Add(-time.Second).UTC().Format(time.RFC3339)
+	}
+	return from, to
 }

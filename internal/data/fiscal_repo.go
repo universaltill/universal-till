@@ -184,6 +184,59 @@ WHERE sale_id = ?
 	return &s, true, nil
 }
 
+// FiscalOrderStart is the best-effort tx_id/tx_revision round trip captured
+// from a fiscal.order.start dispatch (ADR-0138 D2/D3, ut-docs#3310), stored
+// against the order it was minted for (migration 059). OrderID is the
+// order's own existing id — the held sale's id for a held/table order, the
+// counter order's id (also its held sale's id) for a pay-at-counter order —
+// tagged with OrderKind ("held" | "counter"). A row exists ONLY when a
+// subscribed signer answered {"status":"acknowledged",...}; no row is the
+// honest degraded case, not an error.
+type FiscalOrderStart struct {
+	OrderID    string
+	OrderKind  string
+	TxID       string
+	TxRevision int64
+	// CreatedAt is stamped by the DB on insert; zero on the way in.
+	CreatedAt string
+}
+
+// RecordFiscalOrderStart stores one order's captured start identifier.
+// Idempotent and first-write-wins (INSERT ... ON CONFLICT DO NOTHING on the
+// order_id primary key), same as RecordFiscalSignStart: an order's capture
+// record is never overwritten (ADR-0138 D2, "never silently overwritten").
+func (r *POSRepo) RecordFiscalOrderStart(ctx context.Context, orderID, orderKind, txID string, txRevision int64) error {
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO fiscal_order_starts (order_id, order_kind, tx_id, tx_revision)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(order_id) DO NOTHING
+`, orderID, orderKind, txID, txRevision)
+	if err != nil {
+		return fmt.Errorf("insert fiscal_order_starts: %w", err)
+	}
+	return nil
+}
+
+// GetFiscalOrderStart loads the start identifier captured for an order, if
+// any. (nil, false, nil) when none was captured — not an error: the tender's
+// fiscal.sign.start / fiscal.sign.ask dispatches then omit order_id, exactly
+// as for a sale that never came from a captured order.
+func (r *POSRepo) GetFiscalOrderStart(ctx context.Context, orderID string) (*FiscalOrderStart, bool, error) {
+	var s FiscalOrderStart
+	err := r.db.QueryRowContext(ctx, `
+SELECT order_id, order_kind, tx_id, tx_revision, created_at
+FROM fiscal_order_starts
+WHERE order_id = ?
+`, orderID).Scan(&s.OrderID, &s.OrderKind, &s.TxID, &s.TxRevision, &s.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("select fiscal_order_starts: %w", err)
+	}
+	return &s, true, nil
+}
+
 // FiscalSignReconcileCandidate is one sale the fiscal.sign.reconcile.ask
 // sweep (ADR-0077 D3, ut-docs#1520) may ask about: it completed UNSIGNED at
 // tender time with a backend-level failure, and no reconcile outcome has been

@@ -1161,6 +1161,19 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 // function directly; payment_event_test.go now calls this function
 // directly too, passing requestID="".
 func blockingPaymentEventWithResponseAndID(ctx context.Context, d *common.Deps, method, suffix, requestID string, payload map[string]any) (json.RawMessage, error) {
+	resp, _, err := blockingPaymentEventDispatch(ctx, d, method, suffix, requestID, payload)
+	return resp, err
+}
+
+// blockingPaymentEventDispatch is blockingPaymentEventWithResponseAndID
+// plus whether the event was actually delivered to a subscriber. The
+// tender path needs that distinction (ADR-0136 Decision 2, ut-docs#3309):
+// only a leg whose payment.<key>.authorize really reached a plugin can
+// have captured money that a refused cannot-sign tender must reverse — a
+// hookless/cash leg, or a post-settle-only plugin with no authorize hook,
+// took nothing at tender, so firing a reversal refund for it would send
+// back money that was never taken.
+func blockingPaymentEventDispatch(ctx context.Context, d *common.Deps, method, suffix, requestID string, payload map[string]any) (json.RawMessage, bool, error) {
 	entries, err := data.NewPluginRepo(d.Db).ListPaymentEntries(ctx)
 	if err != nil {
 		// ut-docs#2278: fail closed. Both callers already treat a non-nil
@@ -1171,10 +1184,10 @@ func blockingPaymentEventWithResponseAndID(ctx context.Context, d *common.Deps, 
 		// ListPaymentEntries already wraps its own error with "list payment
 		// entries: ..." — naming the method and this gate here instead of
 		// re-wrapping the identical phrase avoids a doubled-up message.
-		return nil, fmt.Errorf("payment gate: payment-entries lookup for %q: %w", method, err)
+		return nil, false, fmt.Errorf("payment gate: payment-entries lookup for %q: %w", method, err)
 	}
 	if len(entries) == 0 {
-		return nil, nil
+		return nil, false, nil
 	}
 	for _, e := range entries {
 		if e.EntryKey != method || e.TriggerEvent == "" {
@@ -1183,23 +1196,23 @@ func blockingPaymentEventWithResponseAndID(ctx context.Context, d *common.Deps, 
 		event := strings.TrimSuffix(e.TriggerEvent, ".requested") + "." + suffix
 		bus := plugins.SharedBus(d.Db)
 		if !bus.HasSubscribers(event) {
-			return nil, nil
+			return nil, false, nil
 		}
 		payload["plugin_id"] = e.PluginID
 		if requestID == "" {
 			resp, err := bus.PublishAuthorize(ctx, event, payload)
 			if err != nil {
-				return nil, err
+				return nil, true, err
 			}
-			return resp, nil
+			return resp, true, nil
 		}
 		resp, err := bus.PublishAuthorizeWithID(ctx, requestID, event, payload)
 		if err != nil {
-			return nil, err
+			return nil, true, err
 		}
-		return resp, nil
+		return resp, true, nil
 	}
-	return nil, nil
+	return nil, false, nil
 }
 
 // computeRefundTotal mirrors the engine's total math so the refund payment

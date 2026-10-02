@@ -13,11 +13,31 @@ struct TillWebView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
+    static let lockZoomScript = """
+    (function () {
+      var m = document.querySelector('meta[name=viewport]');
+      if (!m) { m = document.createElement('meta'); m.name = 'viewport'; document.head.appendChild(m); }
+      m.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no';
+    })();
+    """
+
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default() // keep the login cookie across launches
         config.allowsInlineMediaPlayback = true // camera barcode viewfinder
+        // The app is a till, not a web page: no pinch-zoom and no zoom-in
+        // when a field takes focus (ut-docs#3350). WKWebView honours the
+        // viewport's scale limits (ignoresViewportScaleLimits stays false);
+        // Safari users keep pinch, since only the app sets this.
+        config.userContentController.addUserScript(WKUserScript(
+            source: Self.lockZoomScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        // Bug-report screenshots (ut-docs#3355): the page world, because the
+        // panel's own script calls it.
+        let screenshots = ScreenshotBridge()
+        config.userContentController.addScriptMessageHandler(
+            screenshots, contentWorld: .page, name: ScreenshotBridge.name)
         let webView = WKWebView(frame: .zero, configuration: config)
+        screenshots.webView = webView
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = false

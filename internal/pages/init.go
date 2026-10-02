@@ -640,6 +640,18 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerCountrySettings(mux, dp)  // per-country defaults (ut-docs#659)
 	registerTranslations(mux, dp, i18n)
 	registerSetup(mux, dp, authSvc)
+	// Report-only CSP (ut-docs#2913): the header and the /csp-report sink
+	// exist only with UT_CSP_REPORT_ONLY on; off, the chain is unchanged.
+	cspWrap := func(h http.Handler) http.Handler { return h }
+	if cfg.CSPReportOnly {
+		// The inventory is settings-tier data (page paths, script samples).
+		registerCSPReport(mux, newCSPReportStore(cspReportMaxEntries), func(r *http.Request) bool {
+			return canPerform(dp, r, "settings")
+		})
+		authSvc.EnableCSPReportSink()
+		cspWrap = cspReportOnlyMiddleware
+		log.Infof("UT_CSP_REPORT_ONLY on — sending Content-Security-Policy-Report-Only, collecting reports at /csp-report")
+	}
 	// Boosted navigation (ADR-0098) is addressed per response, innermost so
 	// auth's own HX-Redirect for an expired session is untouched.
 	boosted := httpx.BoostedNavigation(mux)
@@ -652,11 +664,13 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	}
 	if authDisabled {
 		log.Warnf("UT_AUTH=off — operator login disabled")
-		return recoverMiddleware(demoWrap(boosted)), dp
+		return recoverMiddleware(cspWrap(demoWrap(boosted))), dp
 	}
 	// recoverMiddleware wraps auth.Middleware itself (ut-docs#1271), not just
-	// mux, so a panic anywhere in the chain gets a clean response.
-	return recoverMiddleware(demoWrap(auth.Middleware(boosted, authSvc))), dp
+	// mux, so a panic anywhere in the chain gets a clean response. The CSP
+	// header wrap sits just inside it so login/setup pages, auth redirects
+	// and recovered 500s all carry the header too.
+	return recoverMiddleware(cspWrap(demoWrap(auth.Middleware(boosted, authSvc)))), dp
 }
 
 // newRederiveSettings builds the shared settings re-derive: everything

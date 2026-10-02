@@ -7,17 +7,17 @@
         "headings": 3,
         "numbered_steps": 4,
         "sub_bullets": 3,
-        "top_bullets": 7,
-        "bold_leadins": 2
+        "top_bullets": 8,
+        "bold_leadins": 3
       },
       "english": {
         "headings": 3,
         "numbered_steps": 4,
         "sub_bullets": 3,
-        "top_bullets": 7,
-        "bold_leadins": 3
+        "top_bullets": 8,
+        "bold_leadins": 4
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#3261: English and every locale gained one bold-led iPhone/iPad bullet; the pre-existing bold-lead-in gap is unchanged in size, just shifted."
     },
     {
       "locale": "ar",
@@ -178,17 +178,17 @@
         "headings": 20,
         "numbered_steps": 6,
         "sub_bullets": 0,
-        "top_bullets": 23,
+        "top_bullets": 26,
         "bold_leadins": 10
       },
       "english": {
         "headings": 21,
         "numbered_steps": 6,
         "sub_bullets": 0,
-        "top_bullets": 27,
+        "top_bullets": 30,
         "bold_leadins": 14
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2308: a new heading (basket/products divider resizing) added to English and this locale with a real translation matching the same structure; the pre-existing 1-heading/4-top-bullet/4-bold-leadin gap is unchanged in size, just shifted (16->17 headings, English 17->18). Updated ut-docs#2339: a new heading (rearranging the quick buttons — the jiggle edit mode) added to English and this locale with a real translation matching the same structure; the pre-existing gap is again unchanged in size, just shifted (17->18 headings, English 18->19). Updated ut-docs#2499: a new \"Choosing how items are browsed\" section (one heading, three bold-led bullets) was added to English and this locale in lockstep (headings 19->20 / 18->19, top_bullets 20->23 / 16->19, bold_leadins 10->13 / 6->9); the pre-existing gap is unchanged, just re-recorded at its real current value. Updated ut-docs#3059: a new heading (selling on a phone) added to English and this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2308: a new heading (basket/products divider resizing) added to English and this locale with a real translation matching the same structure; the pre-existing 1-heading/4-top-bullet/4-bold-leadin gap is unchanged in size, just shifted (16->17 headings, English 17->18). Updated ut-docs#2339: a new heading (rearranging the quick buttons — the jiggle edit mode) added to English and this locale with a real translation matching the same structure; the pre-existing gap is again unchanged in size, just shifted (17->18 headings, English 18->19). Updated ut-docs#2499: a new \"Choosing how items are browsed\" section (one heading, three bold-led bullets) was added to English and this locale in lockstep (headings 19->20 / 18->19, top_bullets 20->23 / 16->19, bold_leadins 10->13 / 6->9); the pre-existing gap is unchanged, just re-recorded at its real current value. Updated ut-docs#3059: a new heading (selling on a phone) added to English and this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted. Updated ut-docs#3309 (ADR-0136): the \"When a sale can't be signed at all\" section was rewritten in English and this locale in lockstep, gaining three top-level bullets in each (top_bullets 23->26 / English 27->30); the pre-existing gap is unchanged in size, just shifted."
     },
     {
       "locale": "ar",
@@ -235,17 +235,17 @@
         "headings": 20,
         "numbered_steps": 6,
         "sub_bullets": 0,
-        "top_bullets": 23,
+        "top_bullets": 26,
         "bold_leadins": 10
       },
       "english": {
         "headings": 21,
         "numbered_steps": 6,
         "sub_bullets": 0,
-        "top_bullets": 27,
+        "top_bullets": 30,
         "bold_leadins": 14
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2308: a new heading (basket/products divider resizing) added to English and this locale with a real translation matching the same structure; the pre-existing 1-heading/4-top-bullet/4-bold-leadin gap is unchanged in size, just shifted (16->17 headings, English 17->18). Updated ut-docs#2339: a new heading (rearranging the quick buttons — the jiggle edit mode) added to English and this locale with a real translation matching the same structure; the pre-existing gap is again unchanged in size, just shifted (17->18 headings, English 18->19). Updated ut-docs#2499: a new \"Choosing how items are browsed\" section (one heading, three bold-led bullets) was added to English and this locale in lockstep (headings 19->20 / 18->19, top_bullets 20->23 / 16->19, bold_leadins 10->13 / 6->9); the pre-existing gap is unchanged, just re-recorded at its real current value. Updated ut-docs#3059: a new heading (selling on a phone) added to English and this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2308: a new heading (basket/products divider resizing) added to English and this locale with a real translation matching the same structure; the pre-existing 1-heading/4-top-bullet/4-bold-leadin gap is unchanged in size, just shifted (16->17 headings, English 17->18). Updated ut-docs#2339: a new heading (rearranging the quick buttons — the jiggle edit mode) added to English and this locale with a real translation matching the same structure; the pre-existing gap is again unchanged in size, just shifted (17->18 headings, English 18->19). Updated ut-docs#2499: a new \"Choosing how items are browsed\" section (one heading, three bold-led bullets) was added to English and this locale in lockstep (headings 19->20 / 18->19, top_bullets 20->23 / 16->19, bold_leadins 10->13 / 6->9); the pre-existing gap is unchanged, just re-recorded at its real current value. Updated ut-docs#3059: a new heading (selling on a phone) added to English and this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted. Updated ut-docs#3309 (ADR-0136): the \"When a sale can't be signed at all\" section was rewritten in English and this locale in lockstep, gaining three top-level bullets in each (top_bullets 23->26 / English 27->30); the pre-existing gap is unchanged in size, just shifted."
     },
     {
       "locale": "fa",
@@ -482,17 +482,17 @@
         "headings": 20,
         "numbered_steps": 6,
         "sub_bullets": 0,
-        "top_bullets": 23,
+        "top_bullets": 26,
         "bold_leadins": 10
       },
       "english": {
         "headings": 21,
         "numbered_steps": 6,
         "sub_bullets": 0,
-        "top_bullets": 27,
+        "top_bullets": 30,
         "bold_leadins": 14
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2308: a new heading (basket/products divider resizing) added to English and this locale with a real translation matching the same structure; the pre-existing 1-heading/4-top-bullet/4-bold-leadin gap is unchanged in size, just shifted (16->17 headings, English 17->18). Updated ut-docs#2339: a new heading (rearranging the quick buttons — the jiggle edit mode) added to English and this locale with a real translation matching the same structure; the pre-existing gap is again unchanged in size, just shifted (17->18 headings, English 18->19). Updated ut-docs#2499: a new \"Choosing how items are browsed\" section (one heading, three bold-led bullets) was added to English and this locale in lockstep (headings 19->20 / 18->19, top_bullets 20->23 / 16->19, bold_leadins 10->13 / 6->9); the pre-existing gap is unchanged, just re-recorded at its real current value. Updated ut-docs#3059: a new heading (selling on a phone) added to English and this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2308: a new heading (basket/products divider resizing) added to English and this locale with a real translation matching the same structure; the pre-existing 1-heading/4-top-bullet/4-bold-leadin gap is unchanged in size, just shifted (16->17 headings, English 17->18). Updated ut-docs#2339: a new heading (rearranging the quick buttons — the jiggle edit mode) added to English and this locale with a real translation matching the same structure; the pre-existing gap is again unchanged in size, just shifted (17->18 headings, English 18->19). Updated ut-docs#2499: a new \"Choosing how items are browsed\" section (one heading, three bold-led bullets) was added to English and this locale in lockstep (headings 19->20 / 18->19, top_bullets 20->23 / 16->19, bold_leadins 10->13 / 6->9); the pre-existing gap is unchanged, just re-recorded at its real current value. Updated ut-docs#3059: a new heading (selling on a phone) added to English and this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted. Updated ut-docs#3309 (ADR-0136): the \"When a sale can't be signed at all\" section was rewritten in English and this locale in lockstep, gaining three top-level bullets in each (top_bullets 23->26 / English 27->30); the pre-existing gap is unchanged in size, just shifted."
     },
     {
       "locale": "fa",
@@ -805,17 +805,17 @@
         "headings": 20,
         "numbered_steps": 6,
         "sub_bullets": 0,
-        "top_bullets": 23,
+        "top_bullets": 26,
         "bold_leadins": 10
       },
       "english": {
         "headings": 21,
         "numbered_steps": 6,
         "sub_bullets": 0,
-        "top_bullets": 27,
+        "top_bullets": 30,
         "bold_leadins": 14
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2308: a new heading (basket/products divider resizing) added to English and this locale with a real translation matching the same structure; the pre-existing 1-heading/4-top-bullet/4-bold-leadin gap is unchanged in size, just shifted (16->17 headings, English 17->18). Updated ut-docs#2339: a new heading (rearranging the quick buttons — the jiggle edit mode) added to English and this locale with a real translation matching the same structure; the pre-existing gap is again unchanged in size, just shifted (17->18 headings, English 18->19). Updated ut-docs#2499: a new \"Choosing how items are browsed\" section (one heading, three bold-led bullets) was added to English and this locale in lockstep (headings 19->20 / 18->19, top_bullets 20->23 / 16->19, bold_leadins 10->13 / 6->9); the pre-existing gap is unchanged, just re-recorded at its real current value. Updated ut-docs#3059: a new heading (selling on a phone) added to English and this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2308: a new heading (basket/products divider resizing) added to English and this locale with a real translation matching the same structure; the pre-existing 1-heading/4-top-bullet/4-bold-leadin gap is unchanged in size, just shifted (16->17 headings, English 17->18). Updated ut-docs#2339: a new heading (rearranging the quick buttons — the jiggle edit mode) added to English and this locale with a real translation matching the same structure; the pre-existing gap is again unchanged in size, just shifted (17->18 headings, English 18->19). Updated ut-docs#2499: a new \"Choosing how items are browsed\" section (one heading, three bold-led bullets) was added to English and this locale in lockstep (headings 19->20 / 18->19, top_bullets 20->23 / 16->19, bold_leadins 10->13 / 6->9); the pre-existing gap is unchanged, just re-recorded at its real current value. Updated ut-docs#3059: a new heading (selling on a phone) added to English and this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted. Updated ut-docs#3309 (ADR-0136): the \"When a sale can't be signed at all\" section was rewritten in English and this locale in lockstep, gaining three top-level bullets in each (top_bullets 23->26 / English 27->30); the pre-existing gap is unchanged in size, just shifted."
     },
     {
       "locale": "tr",
@@ -900,17 +900,17 @@
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 8,
-        "bold_leadins": 17
+        "top_bullets": 9,
+        "bold_leadins": 18
       },
       "english": {
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 9,
-        "bold_leadins": 18
+        "top_bullets": 10,
+        "bold_leadins": 19
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1. ut-docs#3097: both English and this locale gained one more bullet (\"Generate missing SKUs\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1. ut-docs#3097: both English and this locale gained one more bullet (\"Generate missing SKUs\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3391: both English and this locale gained one more bullet (\"Unit price on pre-packed labels\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1."
     },
     {
       "locale": "de",
@@ -919,17 +919,17 @@
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 8,
-        "bold_leadins": 17
+        "top_bullets": 9,
+        "bold_leadins": 18
       },
       "english": {
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 9,
-        "bold_leadins": 18
+        "top_bullets": 10,
+        "bold_leadins": 19
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1. ut-docs#3097: both English and this locale gained one more bullet (\"Generate missing SKUs\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1. ut-docs#3097: both English and this locale gained one more bullet (\"Generate missing SKUs\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3391: both English and this locale gained one more bullet (\"Unit price on pre-packed labels\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1."
     },
     {
       "locale": "fa",
@@ -938,17 +938,17 @@
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 8,
-        "bold_leadins": 17
+        "top_bullets": 9,
+        "bold_leadins": 18
       },
       "english": {
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 9,
-        "bold_leadins": 18
+        "top_bullets": 10,
+        "bold_leadins": 19
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1. ut-docs#3097: both English and this locale gained one more bullet (\"Generate missing SKUs\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1. ut-docs#3097: both English and this locale gained one more bullet (\"Generate missing SKUs\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3391: both English and this locale gained one more bullet (\"Unit price on pre-packed labels\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1."
     },
     {
       "locale": "tr",
@@ -957,17 +957,17 @@
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 8,
-        "bold_leadins": 17
+        "top_bullets": 9,
+        "bold_leadins": 18
       },
       "english": {
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 9,
-        "bold_leadins": 18
+        "top_bullets": 10,
+        "bold_leadins": 19
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1. ut-docs#3097: both English and this locale gained one more bullet (\"Generate missing SKUs\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1. ut-docs#3097: both English and this locale gained one more bullet (\"Generate missing SKUs\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1. ut-docs#3391: both English and this locale gained one more bullet (\"Unit price on pre-packed labels\"), translated for real, so the tracked gap is unchanged in size, shifted by a further +1/+1."
     },
     {
       "locale": "ar",

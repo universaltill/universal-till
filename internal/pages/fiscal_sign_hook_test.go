@@ -335,58 +335,54 @@ func TestFiscalSignAsk_UnreachableDeclaredProceedsAndDeclares(t *testing.T) {
 	assertNoFailingSinceStamped(t, dp, "a fiscal.sign.ask failure must never stamp failing-since")
 }
 
-// ut-docs#835: a signer's explicit "cannot-sign" declares proceed-and-declare
-// exactly like "unreachable" does (journal + receipt + operator alert), but
-// on its OWN audit action with different, non-outage wording — the notice
-// must never suggest a connectivity problem that didn't happen. Like every
-// signing failure, the gap is permanent: nothing is queued (ADR-0056).
-func TestFiscalSignAsk_CannotSignDeclaresWithDifferentWording(t *testing.T) {
-	mux, dp := newFiscalSignDeps(t)
+// ut-docs#835, narrowed by ADR-0136 (ut-docs#3309): on the SALE tender path
+// a "cannot-sign" answer is now refused outright (fiscal_sign_cannot_sign_test.go
+// covers that). ADR-0136 changes only completeTender's decision, though —
+// the refund path (POST /api/refund) still proceed-and-declares every
+// failure kind, so a signer refusing a refund's data still lands on its OWN
+// audit action (never the outage one) with non-outage wording in the
+// operator alert. This pins that declareUnsignedFiscalSale's cannot-sign
+// branch is still live for that path.
+func TestFiscalSignAsk_CannotSignOnRefundStillDeclaresWithDifferentWording(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	t.Cleanup(func() { plugins.SharedBus(dp.Db).ResetSubscribers() })
 	logging.ResetRecent()
 	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-cannotsign", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
 		return json.RawMessage(`{"status":"cannot-sign"}`), nil
 	})
-	if _, err := dp.Engine.Scan("ABC"); err != nil {
-		t.Fatal(err)
-	}
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
 
-	rec := fiscalSignTender(t, mux, false)
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("sale must complete despite the signing refusal, got %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("refund must still complete (proceed-and-declare), got %d: %s", rec.Code, rec.Body.String())
 	}
-	var saleID string
-	if err := dp.Db.QueryRow(`SELECT id FROM sales`).Scan(&saleID); err != nil {
-		t.Fatal(err)
+	var refundSaleID string
+	if err := dp.Db.QueryRow(`SELECT id FROM sales WHERE sale_type = 'return'`).Scan(&refundSaleID); err != nil {
+		t.Fatalf("expected a return sale row: %v", err)
 	}
 
 	// (a) its OWN journal marker — never the shared outage one.
-	if n := countAuditRows(t, dp, "unsigned_fiscal_cannot_sign"); n != 1 {
-		t.Fatalf("expected 1 unsigned_fiscal_cannot_sign marker, got %d", n)
+	if n := countAuditRows(t, dp, fiscalSignGapActionCannotSign); n != 1 {
+		t.Fatalf("expected 1 %s marker, got %d", fiscalSignGapActionCannotSign, n)
 	}
-	if n := countAuditRows(t, dp, "unsigned_fiscal_signing"); n != 0 {
+	if n := countAuditRows(t, dp, fiscalSignGapActionSigning); n != 0 {
 		t.Fatalf("cannot-sign must not also write the outage marker, got %d", n)
 	}
 
-	// (b) receipt notice: the cannot-sign wording, never the outage one.
-	if !strings.Contains(rec.Body.String(), "could not be signed as presented") {
-		t.Fatalf("expected the cannot-sign receipt notice, got: %s", rec.Body.String())
-	}
-	if strings.Contains(rec.Body.String(), "TSE unreachable") {
-		t.Fatalf("cannot-sign must not render the outage wording, got: %s", rec.Body.String())
-	}
-
-	// (c) operator alert still fires.
+	// (c) operator alert fires, worded as a refusal, never an outage.
 	foundProblem := false
 	for _, p := range logging.Recent() {
-		if strings.Contains(p.Msg, saleID) && strings.Contains(p.Msg, "UNSIGNED") {
+		if strings.Contains(p.Msg, refundSaleID) && strings.Contains(p.Msg, "could not be signed as presented") {
 			foundProblem = true
 		}
 	}
 	if !foundProblem {
-		t.Fatalf("expected a Problems-ring warning naming sale %s; recent: %+v", saleID, logging.Recent())
+		t.Fatalf("expected a Problems-ring warning naming return %s as not signable; recent: %+v", refundSaleID, logging.Recent())
 	}
-
-	// Nothing queued — the gap is permanent (ADR-0056, ut-docs#839).
 	assertNoFiscalSignRetryQueue(t, dp)
 }
 
@@ -510,13 +506,17 @@ func TestFiscalSignAsk_TimeoutDeclares(t *testing.T) {
 func TestFiscalSignAsk_ZeroPluginTillAllocatesNothing(t *testing.T) {
 	_, dp := newFiscalSignDeps(t)
 	plugins.SharedBus(dp.Db).ResetSubscribers() // belt-and-braces: no leaked subscriber
-	in := pos.SaleInput{Currency: "EUR", Offline: false}
+	// HeldOriginID set: a zero-plugin till tendering a resumed held order
+	// must not pay for the ADR-0138 order_id lookup either.
+	in := pos.SaleInput{Currency: "EUR", Offline: false, HeldOriginID: "hold-1"}
 	allocs := testing.AllocsPerRun(100, func() {
 		// ADR-0077 D1: extended (not a separate test) to also cover
 		// dispatchFiscalSignStart, per the ADR's own instruction — a till
 		// with neither fiscal.sign.start nor fiscal.sign.ask subscribed
 		// must pay for both zero-plugin fast paths combined, still zero
-		// allocs/op.
+		// allocs/op. ADR-0138 D2 (ut-docs#3310) extends it again to the
+		// fiscal.order.start dispatch both order-capture call sites make.
+		dispatchFiscalOrderStart(context.Background(), dp, "hold-1", fiscalOrderKindHeld, false)
 		dispatchFiscalSignStart(context.Background(), dp, &in)
 		res := dispatchFiscalSignAsk(context.Background(), dp, &in)
 		if res.Outcome != fiscalSignNoSigner {

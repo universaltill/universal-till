@@ -26,6 +26,19 @@ A registered VAT number changes the document's own title to a proper
 "Tax Invoice"; leave it blank and a plain invoice is issued instead.
 Clearing the business name later turns the feature back off.
 
+Every invoice line also shows its unit price excluding VAT and the VAT
+rate it was sold at. When the sale took place on an earlier day than the
+invoice is issued, the sale's own date is shown too, as the time of
+supply. With a VAT number filled in, the ordinary till receipt carries
+more VAT detail as well: your VAT number (and your business address,
+unless a receipt header line already shows it) and, under the total, the
+amount charged at each VAT rate. That per-rate list prints even when
+"Show subtotal and tax lines" is switched off in the receipt designer.
+Leave the VAT number blank and receipts print exactly as before. These
+details are there to help; whether your receipts and invoices carry
+everything the rules in your country ask of your business is still for
+you or your accountant to check.
+
 ## Issuing an invoice
 
 1. Find the sale in the Journal and open it.

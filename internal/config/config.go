@@ -55,9 +55,6 @@ type MarketplaceConfig struct {
 	// API version pinning (FR-016)
 	APIVersion string // semver format: "1.2.3"
 
-	// Telemetry opt-in flag (FR-013)
-	TelemetryOptIn bool
-
 	// DevMode mirrors Config.DevMode, co-located here because the
 	// marketplace Client only holds *MarketplaceConfig, not the full
 	// Config — this is what actually gates DevOverrideURL (FR-015).
@@ -196,6 +193,13 @@ type Config struct {
 	// pages.Init and the demo start gate (which refuses Demo with auth off,
 	// ADR-0113 §1.9) see the same value.
 	AuthDisabled bool
+	// CSPReportOnly is UT_CSP_REPORT_ONLY (ut-docs#2913, slice 1): when on,
+	// every response carries a Content-Security-Policy-Report-Only header
+	// and POST /csp-report collects the violations browsers report, so the
+	// policy can be inventoried before a later slice enforces it. Default
+	// off; an unparseable value is off too, like UT_DEV_MODE — a typo never
+	// changes what a production till sends.
+	CSPReportOnly bool
 	// add more fields as needed (DB, SB, etc.)
 }
 
@@ -214,7 +218,7 @@ func Init() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("UT_DEMO=%q is not a boolean: %w", os.Getenv("UT_DEMO"), err)
 	}
-	telemetryOptIn, _ := strconv.ParseBool(getenv("UT_MARKETPLACE_TELEMETRY_OPT_IN", "false"))
+	cspReportOnly, _ := strconv.ParseBool(getenv("UT_CSP_REPORT_ONLY", "false"))
 	healthCheckTimeout, _ := strconv.Atoi(getenv("UT_MARKETPLACE_HEALTH_CHECK_TIMEOUT_SEC", "5"))
 	fallbackTimeout, _ := strconv.Atoi(getenv("UT_MARKETPLACE_FALLBACK_TIMEOUT_SEC", "30"))
 
@@ -222,14 +226,15 @@ func Init() (*Config, error) {
 		StoreName:  getenv("UT_STORE_NAME", DefaultStoreName),
 		ListenAddr: getenv("UT_LISTEN_ADDR", ":8080"),
 		// Env:        getenv("UT_ENV", "local"),
-		DataDir:      dataDir,
-		DBPath:       getenv("UT_DB_PATH", filepath.Join(dataDir, "unitill-pos.db")),
-		LogLevel:     getenv("UT_LOG_LEVEL", "info"),
-		Theme:        getenv("UT_THEME", "monarch"),
-		DevMode:      devMode,
-		Demo:         demo,
-		DemoToken:    os.Getenv("UT_DEMO_TOKEN"),
-		AuthDisabled: auth.Disabled(os.Getenv("UT_AUTH")),
+		DataDir:       dataDir,
+		DBPath:        getenv("UT_DB_PATH", filepath.Join(dataDir, "unitill-pos.db")),
+		LogLevel:      getenv("UT_LOG_LEVEL", "info"),
+		Theme:         getenv("UT_THEME", "monarch"),
+		DevMode:       devMode,
+		Demo:          demo,
+		DemoToken:     os.Getenv("UT_DEMO_TOKEN"),
+		AuthDisabled:  auth.Disabled(os.Getenv("UT_AUTH")),
+		CSPReportOnly: cspReportOnly,
 		Marketplace: MarketplaceConfig{
 			EndpointURL:           getenv("UT_MARKETPLACE_ENDPOINT_URL", "http://127.0.0.1:8081/api"),
 			StoreID:               getenv("UT_MARKETPLACE_STORE_ID", getenv("UT_STORE_NAME", DefaultStoreName)),
@@ -240,7 +245,6 @@ func Init() (*Config, error) {
 			ClientID:              getenv("UT_MARKETPLACE_CLIENT_ID", ""),
 			ClientSecret:          getenv("UT_MARKETPLACE_CLIENT_SECRET", ""),
 			APIVersion:            getenv("UT_MARKETPLACE_API_VERSION", "1.0.0"),
-			TelemetryOptIn:        telemetryOptIn,
 			DevMode:               devMode,
 			DevOverrideURL:        getenv("UT_MARKETPLACE_DEV_OVERRIDE_URL", ""),
 			HealthCheckTimeoutSec: healthCheckTimeout,

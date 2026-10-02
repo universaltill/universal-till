@@ -49,6 +49,13 @@ type SnapshotLine struct {
 	// every line; omitted (0) everywhere else, so the tender path prints
 	// the whole line as before.
 	KitchenSentQty float64 `json:"kitchen_sent_qty,omitempty"`
+	// AgeRestricted (ut-docs#3340) carries BasketLine.AgeRestricted through
+	// hold/resume — including a kiosk pay-at-counter order parked for the
+	// till — so the resumed line shows its "needs ID check" badge straight
+	// away. The ID-check OUTCOME is deliberately not snapshotted: a resumed
+	// basket asks again. Omitted (false) in a payload saved before this
+	// field existed; the tender gate's DB backstop still catches that line.
+	AgeRestricted bool `json:"age_restricted,omitempty"`
 }
 
 // KitchenPendingQty (ut-docs#2703) is how much of l still has to go to the
@@ -233,6 +240,7 @@ func (s *Service) Snapshot() BasketSnapshot {
 			QtyFromCode: l.QtyFromCode, NoMerge: l.NoMerge,
 			OrderType:      l.OrderType,
 			KitchenSentQty: l.KitchenSentQty,
+			AgeRestricted:  l.AgeRestricted,
 		})
 	}
 	return snap
@@ -290,6 +298,7 @@ func (s *Service) RestoreHeld(snap BasketSnapshot, origin HeldOrigin) {
 			QtyFromCode: l.QtyFromCode, NoMerge: l.NoMerge,
 			OrderType:      lineMode,
 			KitchenSentQty: l.KitchenSentQty,
+			AgeRestricted:  l.AgeRestricted,
 		})
 	}
 	s.discountType = snap.DiscountType

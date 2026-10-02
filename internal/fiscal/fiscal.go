@@ -214,6 +214,30 @@ func RequiresPerSaleDeviceReceipt(country string) bool {
 	return country == "TR"
 }
 
+// AllowedTaxRateSetBP returns the basis-point VAT rates country's fiscal
+// signing service can actually sign, and whether country restricts rates at
+// all (restricted=false — every market but Germany today — means "no
+// opinion, don't refuse anything here"). Germany's fiskaly SIGN DE
+// standard_v1 can only place a rate into one of DSFinV-K's five
+// USt-Schlüssel buckets (19% NORMAL, 7% REDUCED_1, 10.7% SPECIAL_RATE_1,
+// 5.5% SPECIAL_RATE_2, 0% NULL; mirrors ut-plugin-tax-de's own
+// fiscalsign.VATRateBucket, the authoritative list) — a tax code saved
+// outside this set would make every sale using it answer fiscal.sign.ask
+// with cannot-sign at tender (ADR-0136, ut-docs#3309). Read by
+// tax_codes_page.go's save handlers so a bad rate is refused at the source,
+// defense in depth alongside BuildReceipt's own check in the plugin (a
+// shop's country can change after codes are saved, and a code can predate
+// this gate). The one-line extension point for the next market with its own
+// fixed signing-rate set.
+func AllowedTaxRateSetBP(country string) (rates map[int]bool, restricted bool) {
+	switch country {
+	case "DE": // core-neutral:allow ADR-0136/ut-docs#3309 fiskaly SIGN DE signing-rate market list, same shape as RequiresHardGate's #2879 entries
+		return map[int]bool{1900: true, 700: true, 1070: true, 550: true, 0: true}, true
+	default:
+		return nil, false
+	}
+}
+
 // EvaluateGate applies ADR-0048 Decision 2, in order. It reads only the
 // local settings store — never the network — and re-checks the override
 // window against now on every call, so expiry needs no background job:

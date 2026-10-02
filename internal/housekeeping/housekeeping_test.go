@@ -123,7 +123,7 @@ func TestRun_RemovesOnlyWhatTheRetentionTableAllows(t *testing.T) {
 		}
 	}
 
-	results := Run(dbPath, testNow)
+	results := Run(dbPath, testNow, 0)
 	for _, r := range results {
 		if r.Err != nil {
 			t.Errorf("%s: %v", r.Kind, r.Err)
@@ -165,8 +165,8 @@ func TestRun_RemovesOnlyWhatTheRetentionTableAllows(t *testing.T) {
 func TestRun_Idempotent(t *testing.T) {
 	root, dbPath := layout(t)
 	put(t, root, "backups/pre-restore-20200101-000000.db", testNow.Add(-60*24*time.Hour))
-	Run(dbPath, testNow)
-	for _, r := range Run(dbPath, testNow) {
+	Run(dbPath, testNow, 0)
+	for _, r := range Run(dbPath, testNow, 0) {
 		if r.Removed != 0 || r.Err != nil {
 			t.Errorf("second run: %s removed %d, err %v", r.Kind, r.Removed, r.Err)
 		}
@@ -184,7 +184,7 @@ func TestRetentionTableCoversEverySweep(t *testing.T) {
 		}
 		rows[r.Kind] = r
 	}
-	for _, res := range Run(dbPath, testNow) {
+	for _, res := range Run(dbPath, testNow, 0) {
 		if _, ok := rows[res.Kind]; !ok {
 			t.Errorf("sweep %q has no retention-table row", res.Kind)
 		}

@@ -46,7 +46,7 @@ func TestBuiltinDefaultsMatchMigrationSeed(t *testing.T) {
 			got.TaxInclusive != want.TaxInclusive ||
 			got.ArchiveMinDays != want.ArchiveMinDays ||
 			got.DefaultLocale != want.DefaultLocale ||
-			// ADR-0124 (ut-docs#3169): 055 sets the column, and the
+			// ADR-0124 (ut-docs#3169): 062 sets the column, and the
 			// compiled value is the read-time floor — both must agree.
 			got.ShadowCustomerDocuments != want.ShadowCustomerDocuments ||
 			!got.IsBuiltin {

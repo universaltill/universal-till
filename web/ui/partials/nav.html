@@ -22,6 +22,19 @@
           aria-label="{{ T "nav.drawer.open" }}" data-label-open="{{ T "nav.drawer.open" }}" data-label-close="{{ T "nav.drawer.close" }}">
     <span class="btn-ico" aria-hidden="true">{{ icon "menu" }}</span>
   </button>
+  {{/* ut-docs#3352 / ADR-0137: one shell Back, on every page but Sell (the
+       root). Outside #nav-drawer so the phone bar always shows it; on the
+       rail it sits under the logo. The href is the page's declared parent
+       (uislot.ParentOf) — the target when there is no in-app page to return
+       to; app.js (utNavBack) turns a tap into history.back() when there is
+       one, so Back returns to where the operator came from. */}}
+  {{- with backHref }}
+  <a href="{{ . }}" class="nav-toggle nav-back" data-testid="nav-back"
+     aria-label="{{ T "common.back" }}" title="{{ T "common.back" }}">
+    <span class="nav-toggle-ico" aria-hidden="true">{{ icon "arrow-left" }}</span>
+    <span class="nav-toggle-label">{{ T "common.back" }}</span>
+  </a>
+  {{- end }}
   <div id="nav-drawer" class="nav-drawer">
   <!-- 2026-08-30 (nav rail, ut-docs#1332): the product owner asked
        repeatedly, comparing directly against a competitor POS (SumUp),

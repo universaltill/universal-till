@@ -1060,3 +1060,53 @@ func TestCategoriesPage_SaveKeepsLinkToDeactivatedGroup(t *testing.T) {
 		t.Fatalf("unticking an ACTIVE group must still remove its link, got %v", links[catID])
 	}
 }
+
+// ut-docs#2479: /categories and its mutation routes gate on
+// catalog_management — the same action as the designer's category routes
+// (designer_categories_api.go) — not on settings. Each half of the test
+// splits the two permissions apart on the manager role and checks that
+// only catalog_management decides access.
+func TestCategoriesPage_GatesOnCatalogManagementNotSettings(t *testing.T) {
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	t.Run("catalog_management without settings is allowed", func(t *testing.T) {
+		mux, d := newCategoriesTestMux(t)
+		if err := data.NewAuthRepo(d.Db).SetRolePermission(t.Context(), nil, "manager", "settings", false); err != nil {
+			t.Fatal(err)
+		}
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/categories", nil), manager)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /categories = %d, want 200", rec.Code)
+		}
+		if rec := postForm(mux, "/api/categories", url.Values{"name": {"Drinks"}}, &manager); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/categories" {
+			t.Fatalf("create: code=%d loc=%q, want 303 /categories", rec.Code, rec.Header().Get("Location"))
+		}
+	})
+
+	t.Run("settings without catalog_management is refused", func(t *testing.T) {
+		mux, d := newCategoriesTestMux(t)
+		if err := data.NewAuthRepo(d.Db).SetRolePermission(t.Context(), nil, "manager", "catalog_management", false); err != nil {
+			t.Fatal(err)
+		}
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/categories", nil), manager)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("GET /categories = %d, want 403", rec.Code)
+		}
+		for _, path := range []string{"/api/categories", "/api/categories/1", "/api/categories/1/active"} {
+			if rec := postForm(mux, path, url.Values{"name": {"Drinks"}, "active": {"0"}}, &manager); rec.Code != http.StatusForbidden {
+				t.Errorf("POST %s = %d, want 403", path, rec.Code)
+			}
+		}
+		req = auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/categories/reorder", strings.NewReader(`{"ids":[]}`)), manager)
+		req.Header.Set("Content-Type", "application/json")
+		rec = httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("POST /api/categories/reorder = %d, want 403", rec.Code)
+		}
+	})
+}

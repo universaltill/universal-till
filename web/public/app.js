@@ -1130,6 +1130,30 @@ document.addEventListener('htmx:afterSwap', function (evt) {
   try { document.title = decodeURIComponent(encoded); } catch (_) {}
 });
 
+// ut-docs#3356: on a phone the manual's tree hides while a topic shows, so a
+// tapped topic swaps in with the page still scrolled to where the tree link
+// was. Scroll back to the top. The document itself scrolls on this page (no
+// inner scroll container) and the fixed top bar already clears the content,
+// so scrollTo(0,0) shows the back link and heading; scrollIntoView on
+// #manual would tuck the back link under that bar. Typing in the search box
+// also swaps #manual-panel; skip that so the page doesn't jump mid-keystroke.
+// After settle, not swap: the browser re-anchors the scroll once the hidden
+// tree leaves the layout, which undid an afterSwap scroll (see also
+// overflow-anchor on .manual in app.css).
+document.addEventListener('htmx:afterSettle', function (evt) {
+  var target = evt.detail && evt.detail.target;
+  if (!target || target.id !== 'manual-panel') return;
+  if (!window.matchMedia('(max-width: 52rem)').matches) return;
+  // Without :has() (app.css) the tree never hides, so the top of the page is
+  // the tree, not the topic — bring the topic into view instead.
+  var hasHas = window.CSS && CSS.supports && CSS.supports('selector(:has(*))');
+  var trig = evt.detail.requestConfig && evt.detail.requestConfig.triggeringEvent;
+  if (trig && trig.type !== 'click') return;
+  requestAnimationFrame(function () {
+    if (hasHas) window.scrollTo(0, 0); else target.scrollIntoView({ block: 'start' });
+  });
+});
+
 // ut-docs#2319: the All grid's "load more" button (buttons.html's
 // all-more-button, hx-swap="outerHTML" on itself) drops keyboard focus to
 // <body> once it retires itself, the same class of bug utTileJiggle's
@@ -1290,6 +1314,38 @@ document.addEventListener('click', function(e){
   if (!e.target.closest || !e.target.closest('.shrinkage-remove')) {
     document.querySelectorAll('.shrinkage-sheet').forEach(function(s){ if (s.open) s.close(); });
     document.querySelectorAll('.shrinkage-remove-toggle[aria-expanded="true"]').forEach(function(b){ b.setAttribute('aria-expanded', 'false'); });
+  }
+});
+
+// Age-restricted ID-check sheet (ut-docs#3340) — the same delegated,
+// non-modal <dialog> idiom as the shrinkage sheet just above (basket.html's
+// own comment): the per-line .age-check-toggle badge opens its sibling
+// .age-check-sheet with .show() (never .showModal(): the status bar and the
+// on-screen keyboard must stay reachable), one sheet at a time; Cancel or a
+// tap outside closes it. The Accept/Refuse buttons inside are plain htmx
+// POSTs that swap the whole basket. A sheet the server wants open (the
+// tender gate, or a just-refused line) opens itself from its own script.
+document.addEventListener('click', function(e){
+  var closeAll = function(){
+    document.querySelectorAll('.age-check-sheet').forEach(function(s){ if (s.open) s.close(); });
+    document.querySelectorAll('.age-check-toggle[aria-expanded="true"]').forEach(function(b){ b.setAttribute('aria-expanded', 'false'); });
+  };
+  var toggle = e.target.closest ? e.target.closest('.age-check-toggle') : null;
+  if (toggle) {
+    var sheet = toggle.nextElementSibling;
+    if (!sheet || !sheet.classList.contains('age-check-sheet')) return;
+    var opening = !sheet.open;
+    closeAll();
+    if (opening) { sheet.show(); toggle.setAttribute('aria-expanded', 'true'); }
+    return;
+  }
+  var cancel = e.target.closest ? e.target.closest('.age-check-sheet-cancel') : null;
+  if (cancel) {
+    closeAll();
+    return;
+  }
+  if (!e.target.closest || !e.target.closest('.age-check')) {
+    closeAll();
   }
 });
 
@@ -1682,20 +1738,18 @@ function initOfflineOverride(updateFn){
 // Camera barcode/QR scan (ut-docs#548): an alternative input mode alongside
 // the wedge/HID scanner path above (never disables or steals focus from it —
 // this is purely an on-demand overlay, opened and closed by the cashier).
-// Decoding is 100% client-side via the browser's native BarcodeDetector — no
-// frame or image is ever sent anywhere, unlike the AI-identify feature above
-// which uploads a still photo by design. Browser support varies, so the
-// button only appears when `BarcodeDetector` actually exists; there is no JS
-// fallback decoder in this pass (ut-docs#548 non-goal — a bundled decode
-// library is separate scope under ADR-0003's vendored-assets rule).
+// Decoding is 100% client-side — no frame or image is ever sent anywhere,
+// unlike the AI-identify feature above which uploads a still photo by
+// design. The browser's native BarcodeDetector is used when it exists;
+// otherwise (WebKit, so every iPhone/iPad including the iOS app, and some
+// Android WebViews — ut-docs#696) a vendored zxing-wasm decoder
+// (web/public/vendor/barcode-detector/, ADR-0003) is lazy-loaded on the
+// first tap. The button therefore always shows: with no camera API at all,
+// tapping it explains why instead of the button silently being absent.
 (function(){
   var openBtn = document.getElementById('barcode-scan-open');
   var overlay = document.getElementById('barcode-scan-overlay');
   if (!openBtn || !overlay || !window.utScan) return;
-  // typeof-check, not `'BarcodeDetector' in window`: a test (or a future
-  // polyfill probe) stubbing the property to undefined must still read as
-  // unsupported, not merely "present".
-  if (typeof window.BarcodeDetector !== 'function') return;
 
   var video = document.getElementById('barcode-scan-video');
   var status = document.getElementById('barcode-scan-status');
@@ -1703,17 +1757,94 @@ function initOfflineOverride(updateFn){
   var msgs = overlay.dataset;
   var stream = null;
   var rafID = null;
-  var detector;
-  try {
-    // Formats this product's wedge scanners actually read (ut-docs#423's
-    // review: "EAN-8/13, UPC, Code-128 SKUs"), plus qr_code for #210-style
-    // self-order use later. An explicit list keeps decode behaviour the
-    // same across browsers rather than however each one's default differs.
-    detector = new BarcodeDetector({ formats: [
-      'ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'qr_code'
-    ] });
-  } catch (e) {
-    return; // constructor throws if the browser can't support any listed format
+  var detector = null;
+  var detectorPromise = null;
+  // Formats this product's wedge scanners actually read (ut-docs#423's
+  // review: "EAN-8/13, UPC, Code-128 SKUs"), plus qr_code for #210-style
+  // self-order use later. An explicit list keeps decode behaviour the
+  // same across browsers rather than however each one's default differs.
+  var FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'qr_code'];
+  var DECODER_DIR = '/public/vendor/barcode-detector/';
+  // Content version of the decoder (ponyfill.js; the wasm is pinned to it by
+  // web/vendor_barcode_decoder_test.go), so both get immutable caching and
+  // an upgrade changes the URL instead of being refetched on every load.
+  var DECODER_QS = overlay.dataset.decoderV ? '?v=' + encodeURIComponent(overlay.dataset.decoderV) : '';
+
+  function nativeDetector(){
+    // typeof-check, not `'BarcodeDetector' in window`: a test stubbing the
+    // property to undefined must still read as unsupported.
+    if (typeof window.BarcodeDetector !== 'function') return null;
+    try {
+      return new window.BarcodeDetector({ formats: FORMATS });
+    } catch (e) {
+      return null; // throws if the browser supports none of FORMATS
+    }
+  }
+
+  function loadVendoredDetector(){
+    return new Promise(function(resolve, reject){
+      function build(){
+        var api = window.BarcodeDetectionAPI;
+        // The ponyfill defaults to fetching its wasm from a CDN; point it at
+        // the copy this till serves itself (offline-first, no third party).
+        // prepareZXingModule resolves only once the wasm is instantiated, so
+        // a missing/broken file surfaces here, not as a silent per-frame
+        // failure later.
+        api.prepareZXingModule({
+          overrides: { locateFile: function(path){ return DECODER_DIR + path + DECODER_QS; } },
+          fireImmediately: true
+        }).then(function(){
+          resolve(new api.BarcodeDetector({ formats: FORMATS }));
+        }, function(err){
+          // Forget the failed instance so the next tap fetches it again.
+          try { api.purgeZXingModule(); } catch (e) { /* nothing to purge */ }
+          reject(err);
+        });
+      }
+      if (window.BarcodeDetectionAPI) { build(); return; }
+      var s = document.createElement('script');
+      s.src = DECODER_DIR + 'ponyfill.js' + DECODER_QS;
+      s.onload = function(){
+        if (window.BarcodeDetectionAPI) { build(); return; }
+        s.remove();
+        reject(new Error('decoder missing'));
+      };
+      s.onerror = function(){
+        s.remove(); // let the next tap retry with a fresh <script>
+        reject(new Error('decoder failed to load'));
+      };
+      document.head.appendChild(s);
+    });
+  }
+
+  // Chromium exposes BarcodeDetector even where the platform service behind
+  // it is missing (e.g. Android without Play services); then every detect()
+  // rejects and scanning would spin forever. getSupportedFormats() resolves
+  // to [] in that case, so only a native detector that reads at least one of
+  // FORMATS is trusted; otherwise the vendored decoder is used.
+  function usableNativeDetector(){
+    var native = nativeDetector();
+    if (!native) return Promise.resolve(null);
+    var probe = window.BarcodeDetector.getSupportedFormats;
+    if (typeof probe !== 'function') return Promise.resolve(native);
+    return Promise.resolve().then(function(){ return probe.call(window.BarcodeDetector); })
+      .then(function(formats){
+        var ok = (formats || []).some(function(f){ return FORMATS.indexOf(f) !== -1; });
+        return ok ? native : null;
+      }, function(){ return null; });
+  }
+
+  function getDetector(){
+    if (detector) return Promise.resolve(detector);
+    if (!detectorPromise) {
+      detectorPromise = usableNativeDetector()
+        .then(function(native){ return native || loadVendoredDetector(); })
+        .then(function(d){ detector = d; return d; }, function(err){
+          detectorPromise = null;
+          throw err;
+        });
+    }
+    return detectorPromise;
   }
 
   openBtn.hidden = false;
@@ -1727,15 +1858,19 @@ function initOfflineOverride(updateFn){
     // ut-docs#1251: same guard as the AI-identify IIFE above — a
     // non-secure-context origin leaves `navigator.mediaDevices` undefined,
     // and calling `.getUserMedia` on it throws synchronously, before the
-    // .catch() below exists to report anything. In practice BarcodeDetector
-    // itself is also secure-context-gated in the browsers that ship it, so
-    // this button is usually already hidden in that case (the typeof check
-    // above) — this guard is defence-in-depth for whatever browser doesn't
-    // tie the two together the same way.
+    // .catch() below exists to report anything. Since ut-docs#696 the
+    // button always shows, so this is the path a plain-http LAN origin
+    // takes: an explanation instead of an uncaught TypeError.
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       setStatus(msgs.msgCameraError);
       return;
     }
+    // Native: resolves at once. Vendored: fetched and compiled on the first
+    // tap, in parallel with the camera start below. The no-op catch only
+    // keeps a failure here from being reported as unhandled when the camera
+    // itself fails first; the .then() below still sees the rejection.
+    var detectorReady = getDetector();
+    detectorReady.catch(function(){});
     navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
       .then(function(s){
         // The cashier can close while the permission prompt / camera start is
@@ -1744,7 +1879,18 @@ function initOfflineOverride(updateFn){
         if (overlay.hidden) { s.getTracks().forEach(function(t){ t.stop(); }); return; }
         stream = s;
         video.srcObject = s;
-        rafID = requestAnimationFrame(scanFrame);
+        detectorReady.then(function(){
+          if (stream !== s) return; // closed (or reopened) meanwhile
+          rafID = requestAnimationFrame(scanFrame);
+        }, function(){
+          if (stream !== s) return;
+          // No decoder means no scanning: release the camera rather than
+          // leave it running behind an overlay that can never match.
+          stream.getTracks().forEach(function(t){ t.stop(); });
+          stream = null;
+          video.srcObject = null;
+          setStatus(msgs.msgCameraError);
+        });
       })
       .catch(function(err){
         if (err && err.name) {
@@ -3424,6 +3570,7 @@ window.utTabBarFade = function (el) {
     var btn = toggleBtn();
     body.classList.toggle('nav-drawer-open', open);
     if (!open) requestAnimationFrame(measureBar);
+    if (open) requestAnimationFrame(measureBar);
     if (btn) {
       btn.setAttribute('aria-expanded', open ? 'true' : 'false');
       btn.setAttribute('aria-label', btn.getAttribute(open ? 'data-label-close' : 'data-label-open') || '');
@@ -3443,10 +3590,15 @@ window.utTabBarFade = function (el) {
     watchSb();
     var sb = document.querySelector('.statusbar');
     // While the drawer is open the row is its foot, not a bar over the
-    // grid: keep the last at-rest value.
+    // grid: keep the last at-rest value of --phone-sb-h.
+    var sh = sb ? sb.getBoundingClientRect().height : 0;
     if (!body.classList.contains('nav-drawer-open')) {
-      var sh = sb ? sb.getBoundingClientRect().height : 0;
       document.documentElement.style.setProperty('--phone-sb-h', sh + 'px');
+    } else {
+      // ut-docs#3358: the open drawer reserves the row's real open height
+      // (--phone-sb-h is its at-rest height, 0 while hidden) so Lock scrolls
+      // clear of it; the statusbar observer keeps this current while open.
+      document.documentElement.style.setProperty('--phone-drawer-sb-h', sh + 'px');
     }
     var basket = document.getElementById('basket');
     if (!basket || body.classList.contains('pos-sheet-open')) return;
@@ -3547,4 +3699,112 @@ window.utTabBarFade = function (el) {
   } else {
     measureBar();
   }
+})();
+
+// utNavBack (ut-docs#3352, ADR-0137): the shell Back in nav.html
+// (a.nav-back). Back returns to the page the operator came from: when this
+// tab has an in-app page before the current one, a tap is history.back();
+// otherwise the link's own href — the page's declared parent
+// (uislot.ParentOf) — is followed as a normal boosted link.
+//
+// "Has an in-app page before this one" is the current history entry's
+// index, stamped into history.state.utNav: 0 for the first till entry of a
+// visit, +1 for each new entry (pushState — htmx's boosted links and pushed
+// panels included —, a #fragment link, a full load from another till page).
+// A traverse or reload lands on an entry that already carries its index.
+// The last index is kept in sessionStorage so a full-page load (a form's
+// redirect) knows where it came from.
+(function () {
+  var KEY = 'ut.navIdx';
+  var mem = null; // sessionStorage can throw (private mode, blocked)
+  function saved() {
+    try { var v = sessionStorage.getItem(KEY); return v === null ? null : parseInt(v, 10); } catch (e) { return mem; }
+  }
+  function save(i) {
+    mem = i;
+    try { sessionStorage.setItem(KEY, String(i)); } catch (e) { /* mem only */ }
+  }
+  function stamped() {
+    var s = history.state;
+    return s && typeof s.utNav === 'number' ? s.utNav : null;
+  }
+  function withIdx(state, i) {
+    return Object.assign({}, state && typeof state === 'object' ? state : {}, { utNav: i });
+  }
+  function next() {
+    var i = stamped();
+    if (i === null) i = saved();
+    return i === null ? 0 : i + 1;
+  }
+  var replace = history.replaceState, push = history.pushState;
+  function stamp(i) {
+    save(i);
+    try { replace.call(history, withIdx(history.state, i), ''); } catch (e) { /* index stays in storage */ }
+  }
+  // replaceState always targets the current entry, so its index carries
+  // over unless the caller sets one — htmx 1.9 rewrites the OUTGOING entry
+  // to {htmx:true} right before every push (saveCurrentPageToHistory).
+  history.replaceState = function (state) {
+    var i = stamped();
+    if (i !== null && (state === null || state === undefined || (typeof state === 'object' && !('utNav' in state)))) {
+      arguments[0] = withIdx(state, i);
+    }
+    return replace.apply(history, arguments);
+  };
+  // pushState makes a new entry, one after the current one — htmx's
+  // boosted navigation and hx-push-url as much as a page script's own.
+  history.pushState = function (state) {
+    var i = next();
+    if (state === null || state === undefined || typeof state === 'object') arguments[0] = withIdx(state, i);
+    var r = push.apply(history, arguments);
+    save(i);
+    return r;
+  };
+
+  // A full load with no index of its own continues the count only when it
+  // came from a till page of this tab (a form's redirect, a fallback link):
+  // a typed URL, a bookmark or a page of another site starts at 0, so Back
+  // can never walk out of the app. Capped by history.length so a
+  // location.replace() can't count an entry that isn't there.
+  function arrive() {
+    var i = stamped();
+    if (i !== null) { save(i); return; }
+    var prev = saved(), sameOrigin = false;
+    try { sameOrigin = !!document.referrer && new URL(document.referrer).origin === location.origin; } catch (e) { /* no referrer */ }
+    if (prev === null || !sameOrigin || history.length <= 1) { stamp(0); return; }
+    stamp(Math.min(prev + 1, history.length - 1));
+  }
+  arrive();
+  window.addEventListener('pageshow', function (e) { if (e.persisted) arrive(); });
+  // A traverse within the document: a stamped entry restores its index; a
+  // new #fragment entry (a plain href="#…" link makes no pushState) gets
+  // the next one.
+  function onEntry() {
+    var i = stamped();
+    if (i !== null) save(i); else stamp(next());
+  }
+  window.addEventListener('popstate', onEntry);
+  window.addEventListener('hashchange', function () { if (stamped() === null) onEntry(); });
+
+  document.addEventListener('click', function (e) {
+    var a = e.target instanceof Element ? e.target.closest('a.nav-back') : null;
+    if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var i = stamped();
+    if (!(i > 0) || history.length <= 1) return; // nothing in-app behind: follow href
+    // Capture phase on document: htmx's boosted handler on the link never
+    // sees this tap.
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    var href = a.href, left = false;
+    function gone() { left = true; }
+    // popstate: a same-document step; beforeunload/pagehide: a
+    // cross-document one has started (before its fetch on a slow till).
+    window.addEventListener('popstate', gone, { once: true });
+    window.addEventListener('beforeunload', gone, { once: true });
+    window.addEventListener('pagehide', gone, { once: true });
+    history.back();
+    // An index that points at nothing (history.back() did nothing) falls
+    // back to the parent.
+    setTimeout(function () { if (!left) window.location.assign(href); }, 1500);
+  }, true);
 })();

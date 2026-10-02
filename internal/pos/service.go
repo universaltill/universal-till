@@ -118,6 +118,17 @@ type Service struct {
 	// Minted lazily by TenderAttemptID on first read after a reset; cleared
 	// by resetLocked so the next, genuinely different basket mints its own.
 	tenderAttemptID string
+	// ageChecks (ut-docs#3340) holds the ID-check outcome the cashier
+	// recorded for each age-restricted ITEM in the current sale, keyed by
+	// ItemID — per item, not per LineKey, so a line that later merges,
+	// splits (SetLineOrderType) or is re-rung keeps its answer for this
+	// customer. ageCheckOrder keeps first-recorded order so the persisted
+	// age_verifications rows read in the order the checks happened.
+	// In-memory only: cleared by resetLocked (a completed/abandoned sale,
+	// or a held sale being resumed), never part of a snapshot — a resumed
+	// basket asks again rather than trusting an answer from another time.
+	ageChecks     map[string]AgeCheck
+	ageCheckOrder []string
 }
 
 type Config struct {
@@ -237,6 +248,12 @@ func effectiveTaxRateBPFor(l BasketLine, taxAsker TaxRateAsker, orderType string
 		}
 		blocked = askerBlocked
 	}
+	// ut-docs#3250: a line WITH a tax code is charged that code's rate, 0%
+	// included (zero-rated, exempt). Only a line with no tax code falls back
+	// to the shop's default — TaxRateBP == 0 alone can't tell the two apart.
+	if l.TaxCodeID != "" {
+		return l.TaxRateBP, blocked
+	}
 	standard := l.TaxRateBP
 	if standard == 0 {
 		standard = defaultRateBP
@@ -327,6 +344,16 @@ type BasketLine struct {
 	// never this. Not on the wire (json:"-"): SnapshotLine carries it
 	// through hold/resume.
 	KitchenSentQty float64 `json:"-"`
+	// AgeRestricted (ut-docs#3340) is the item's items.age_restricted flag,
+	// set by the price resolver when the line is rung up (a variant line
+	// carries its parent item's). The basket shows a "needs ID check" badge
+	// on such a line and the tender path refuses to complete until the
+	// cashier has recorded an accepted ID check for its ItemID
+	// (Service.RecordAgeCheck). The tender path ALSO re-reads the current
+	// flag from the DB as a backstop (MarkAgeRestricted), so a line restored
+	// from a snapshot that predates the flag cannot slip through. Not on
+	// the wire (json:"-"); SnapshotLine carries it through hold/resume.
+	AgeRestricted bool `json:"-"`
 	// modSig/modSigSet (ut-docs#1359) memoize ModifierSignature() so
 	// mergeResolved's per-add scan over every existing line reads a cached
 	// string instead of re-sorting and re-joining that line's Modifiers from
@@ -457,6 +484,20 @@ type Basket struct {
 	// DismissAddByHand only -- deliberately NOT by voiding every line, since
 	// the cashier may be about to add exactly these.
 	AddByHand []ByHandLine `json:"addByHand,omitempty"`
+	// AgeChecks (ut-docs#3340) is the published, read-only copy of the
+	// sale's recorded ID-check outcomes, ItemID -> "accepted"/"refused"
+	// (AgeVerificationOutcome values) — what basket.html reads to render
+	// each restricted line's badge state. Replaced wholesale (never mutated
+	// in place) by RecordAgeCheck, so a Basket copy handed to a renderer
+	// never sees a later write. Not totals-relevant: commitTotalsLocked
+	// never touches it; resetLocked clears it with the rest of s.basket.
+	AgeChecks map[string]string `json:"-"`
+	// AgeCheckOpenKey (ut-docs#3340) is a PER-RESPONSE render hint, never
+	// set on the Service's own basket: the LineKey whose ID-check sheet
+	// should open itself on this render (the tender gate's blocked
+	// response, or a just-refused line showing its "remove the item"
+	// guidance). Handlers set it on their own Basket copy.
+	AgeCheckOpenKey string `json:"-"`
 }
 
 // HasDineInLine reports whether any line is consumed on the premises --
@@ -1496,6 +1537,19 @@ func (s *Service) TenderAttemptID() string {
 	return s.tenderAttemptID
 }
 
+// RotateTenderAttemptID discards the current tender attempt's id so the
+// next TenderAttemptID call mints a fresh one, WITHOUT touching the basket.
+// For a tender refused after its authorized legs were reversed (ADR-0136,
+// ut-docs#3309): the basket is kept for the cashier to fix, but the old
+// authorize requests are spent — a retry must be a new request, never one a
+// provider's own dedupe (ut-docs#1762) could answer with the memoized
+// approval for money that was just sent back.
+func (s *Service) RotateTenderAttemptID() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tenderAttemptID = ""
+}
+
 // resetLocked is Reset's lock-free core — also called by Restore before
 // loading a snapshot. Caller must hold s.mu.
 func (s *Service) resetLocked() {
@@ -1520,6 +1574,11 @@ func (s *Service) resetLocked() {
 	s.tenderAttemptID = ""
 	s.heldOrigin = HeldOrigin{}
 	s.orderDisplayNo = ""
+	// ut-docs#3340: an ID check belongs to ONE sale's customer — never
+	// carried into the next basket. (s.basket = Basket{} above already
+	// clears the published AgeChecks copy.)
+	s.ageChecks = nil
+	s.ageCheckOrder = nil
 	// ut-docs#1833: s.basket = Basket{} above already zeroes
 	// VoucherID/VoucherBalance, same as it does for CustomerID/CustomerName
 	// -- a completed/abandoned sale's pending voucher must never leak into

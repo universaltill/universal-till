@@ -207,6 +207,15 @@ type SaleInput struct {
 	// that replay and stall the replica's journal cursor on a poison entry.
 	LegacyTipCoverage bool
 	Offline           bool
+	// HeldOriginID (ADR-0138 D2, ut-docs#3310) is the id of the held order
+	// this sale's basket was resumed from (Service.HeldOrigin().ID of the
+	// engine actually being tendered — a held/table order's held sale id, or
+	// a pay-at-counter order's id, which is also its held sale id); "" for a
+	// walk-up sale, a refund/return, or a replayed journal. In-memory only:
+	// CompleteSale never persists it. internal/pages reads it to correlate
+	// the tender's fiscal.sign.start/fiscal.sign.ask dispatches with the
+	// order's earlier fiscal.order.start capture (order_id).
+	HeldOriginID string
 	// VoucherIssues (ut-docs#1008) are multi-purpose vouchers sold in this
 	// sale. A voucher is NOT an article: it never becomes a sale_lines row
 	// (the CHECK constraint there requires a catalog identity, and a fake
@@ -221,6 +230,17 @@ type SaleInput struct {
 	// (ut-docs#1053): data.SaleDetail.VoucherIssues rides the wire and
 	// applyJournal reconstructs this field on replay.
 	VoucherIssues []VoucherIssueInput
+	// AgeVerifications (ut-docs#3340) are the ID-check outcomes the cashier
+	// recorded during this sale (Service.AgeChecks) — one
+	// age_verifications row each, written in the SAME transaction as the
+	// sale row and keyed by its real id, so a verification is never
+	// recorded for a sale that never happened. An empty CashierID falls back
+	// to the sale's own CashierID. Every outcome is validated
+	// (ValidAgeVerificationOutcome) before the transaction starts. Only the
+	// live cashier tender path sets this; the kiosk, refunds and LAN-sync
+	// journal replay leave it empty (the log is this till's own record —
+	// it is not carried on the sync journal in this slice).
+	AgeVerifications []AgeCheck
 }
 
 // VoucherIssueInput is one voucher sold in a sale (ut-docs#1008).
@@ -891,6 +911,14 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 	if err := DuplicateVoucherPaymentError(in.Payments); err != nil {
 		return "", err
 	}
+	// ut-docs#3340: refuse an unknown ID-check outcome up front, before
+	// any transaction — never leave the schema CHECK as the only line of
+	// defence (it would fail the whole sale mid-transaction instead).
+	for i, c := range in.AgeVerifications {
+		if !ValidAgeVerificationOutcome(string(c.Outcome)) {
+			return "", fmt.Errorf("age verification %d: invalid outcome %q", i+1, c.Outcome)
+		}
+	}
 	if in.Currency == "" {
 		in.Currency = "GBP"
 	}
@@ -1117,6 +1145,20 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 			// with no charges writes no rows.
 			if err := repo.InsertSaleCharges(ctx, tx, saleID, saleChargeRows(in.Charges)); err != nil {
 				return err
+			}
+			// ut-docs#3340: the ID-check log, in the SAME transaction as the
+			// sale row it references (sales.id exists from InsertSale just
+			// above), with the sale's own timestamp. A failure here rolls the
+			// whole sale back — a restricted item is never sold with its
+			// verification silently missing.
+			for _, c := range in.AgeVerifications {
+				cashier := c.CashierID
+				if cashier == "" {
+					cashier = in.CashierID
+				}
+				if err := repo.InsertAgeVerification(ctx, tx, saleID, c.ItemID, c.ItemName, string(c.Outcome), cashier, now, ""); err != nil {
+					return err
+				}
 			}
 			in.ReceiptNo = receiptNo
 			in.DisplayNo = displayNo

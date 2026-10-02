@@ -16,7 +16,7 @@ A market whose shipped `country_settings` data says
 and issues no customer document. The market is data and the enforcement is
 generic core code; core Go never tests `"PT"` (`guard-core-neutral`).
 
-- **Data.** Migration `055_shadow_customer_documents.sql` (renumbered from 054 after #1572 took 054; CHECK
+- **Data.** Migration `062_shadow_customer_documents.sql` (renumbered 054 → 055 → 062 as #1572 and later main migrations took those numbers; CHECK
   `allowed|forbidden`, PT set to `forbidden`, checksum pinned).
   `builtinCountryDefaults` PT is `forbidden`. That value is a **floor**:
   `BuiltinShadowDocumentsForbidden` needs no I/O, so a missing, pruned or

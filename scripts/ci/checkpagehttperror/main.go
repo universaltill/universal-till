@@ -79,7 +79,7 @@ import (
 // file's own doc comment above for why it's a copy, not a shared import.
 var skippedPrefixes = []string{
 	"/api/", "/ui/", "/ext/", "/v1/", "/plugin-icons/", "/themes/",
-	"/help", "/public/", "/healthz", "/plugin/", "/self-order",
+	"/help", "/public/", "/healthz", "/plugin/", "/self-order", "/csp-report",
 }
 
 func skipRoute(route string) bool {

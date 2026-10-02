@@ -516,6 +516,121 @@ func (g *configReportGate) add(ctx context.Context, d *common.Deps, extra map[st
 	}
 }
 
+// cloudRoleReport is one entry of the main till's `roles` check-in report
+// (ADR-0128 §5, ut-docs#3323): the immutable key, the label (a built-in
+// role's in the till's UI language, a cloud role's as stored), the origin
+// ("builtin" | "cloud") and the granted actions, sorted, never null.
+type cloudRoleReport struct {
+	Role   string   `json:"role"`
+	Label  string   `json:"label"`
+	Origin string   `json:"origin"`
+	Grants []string `json:"grants"`
+}
+
+// rolesReportByteBudget bounds the marshalled roles report. ut-cloud
+// refuses a sync body over 4 MiB, and the gate re-sends a report until a
+// check-in gets through, so an oversized report would fail every heartbeat
+// from then on; it is left out instead (review of ut-docs#3323). A var so
+// tests can shrink it.
+var rolesReportByteBudget = 1 << 20
+
+// builtinRoleLabel is a built-in role's label in locale: its users.role.*
+// key, or the stored label when no key exists (T falls back to the raw key,
+// which must never reach my.).
+func builtinRoleLabel(locale, role, stored string) string {
+	key := "users.role." + role
+	if v := httpx.T(locale, key); v != key {
+		return v
+	}
+	return stored
+}
+
+// rolesReportGate decides, per check-in, whether the main till's `roles` /
+// `permission_actions` report rides along (ADR-0128 §5, ut-docs#3323): only
+// when the admin generation (sync_admin_version) moved since the last
+// report that got through, so the steady state costs nothing. Separate
+// from configReportGate: its trigger is the generation, not a content hash
+// and a refresh period. One per hooks set: add runs in DeviceExtra, commit
+// in AfterTick, both on the check-in goroutine (the mutex covers the rest).
+type rolesReportGate struct {
+	mu sync.Mutex
+	// sent/sentGen: a report got through since process start, built at
+	// generation sentGen. The first check-in after start always sends.
+	sent    bool
+	sentGen int64
+	// pending/pendingGen: this check-in's DeviceExtra carried a report built
+	// at a tracked generation pendingGen, waiting for the outcome.
+	pending    bool
+	pendingGen int64
+}
+
+// add puts roles and permission_actions into extra when they should be
+// sent. The generation is read BEFORE the snapshot, so a change between
+// the two reads moves the generation past the one recorded and the next
+// check-in re-sends. Untracked (no counter row): sent on every check-in.
+// A read error leaves both keys out and logs (the cloud keeps its last
+// copy) — never fails the heartbeat.
+func (g *rolesReportGate) add(ctx context.Context, d *common.Deps, extra map[string]any) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.pending = false
+	gen, tracked := data.NewSyncAdminRepo(d.Db).AdminGeneration(ctx)
+	if tracked && g.sent && gen == g.sentGen {
+		return
+	}
+	roles, actions, err := data.NewAuthRepo(d.Db).RolesReport(ctx)
+	if err != nil {
+		logging.L().Warnf("cloudsync: roles report: %v", err)
+		return
+	}
+	locale := httpx.DefaultLocale()
+	out := make([]cloudRoleReport, 0, len(roles))
+	for _, r := range roles {
+		label := r.Label
+		if r.Origin != data.RoleOriginCloud {
+			label = builtinRoleLabel(locale, r.Role, r.Label)
+		}
+		out = append(out, cloudRoleReport{Role: r.Role, Label: label, Origin: r.Origin, Grants: r.Grants})
+	}
+	raw, err := json.Marshal(map[string]any{"roles": out, "permission_actions": actions})
+	if err != nil || len(raw) > rolesReportByteBudget {
+		// Over budget: leave both keys out, and don't retry until the
+		// generation moves, rather than re-reading every check-in.
+		logging.L().Warnf("cloudsync: roles report is %d bytes (budget %d, err %v); not sent", len(raw), rolesReportByteBudget, err)
+		if tracked {
+			g.sent, g.sentGen = true, gen
+		}
+		return
+	}
+	extra["roles"] = out
+	extra["permission_actions"] = actions
+	g.pending, g.pendingGen = tracked, gen
+}
+
+// commit is AfterTick's half: a check-in that carried a report and got
+// through records its generation; any other outcome leaves the gate as it
+// was, so the next check-in re-sends. "Got through" is contacted && err ==
+// nil, which tick() returns only after the /v1/stores/sync POST was
+// accepted, or when the conditional check-in skipped the POST because this
+// body's state hash (which covers DeviceExtra, this report included)
+// equals the last accepted POST's, i.e. the cloud already holds it.
+func (g *rolesReportGate) commit(_ context.Context, contacted bool, err error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.pending && contacted && err == nil {
+		g.sent, g.sentGen = true, g.pendingGen
+	}
+	g.pending = false
+}
+
+// reset forgets what was sent: called on a satellite, so a till promoted
+// to main till later sends at its first check-in as main.
+func (g *rolesReportGate) reset() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.sent, g.pending = false, false
+}
+
 // capIDs trims an id list to remoteReportMaxIDs.
 func capIDs(ids []string) []string {
 	ids = nonNilIDs(ids)
@@ -705,7 +820,15 @@ func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.C
 func wireCloudLinkHooks(d *common.Deps, hooks *cloudsync.Hooks) {
 	hooks.Kick = d.CloudSyncNow
 	hooks.BeforeTick = func() { d.CloudLink.TickStarting() }
-	hooks.AfterTick = func(_ context.Context, contacted bool, _ error) { d.CloudLink.CheckedIn(contacted) }
+	// Chained, not replaced: buildCloudHooks' own AfterTick (the roles
+	// report gate, ut-docs#3323) still sees every outcome.
+	prev := hooks.AfterTick
+	hooks.AfterTick = func(ctx context.Context, contacted bool, err error) {
+		if prev != nil {
+			prev(ctx, contacted, err)
+		}
+		d.CloudLink.CheckedIn(contacted)
+	}
 	hooks.LinkVersion = d.CloudLink.LinkVersion
 }
 
@@ -714,6 +837,7 @@ func wireCloudLinkHooks(d *common.Deps, hooks *cloudsync.Hooks) {
 // report carries) without starting the sync goroutine.
 func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.Hooks {
 	configGate := &configReportGate{}
+	rolesGate := &rolesReportGate{}
 	// The main till's directive key (reference/till-user-directives.md §1):
 	// created lazily by DeviceExtra at the first check-in as main till,
 	// opened by the user directive hooks.
@@ -847,6 +971,9 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		DeleteCategory: func(ctx context.Context, id, moveItemsTo string) (string, error) {
 			return cloudDeleteCategory(ctx, d, id, moveItemsTo)
 		},
+		DeleteItem: func(ctx context.Context, id string) (string, error) {
+			return cloudDeleteItem(ctx, d, id)
+		},
 		SaveModifierGroup: func(ctx context.Context, p data.ModifierGroupSave) (string, error) {
 			return cloudSaveModifierGroup(ctx, d, p)
 		},
@@ -959,9 +1086,19 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				if name, ok := remoteStoreNameReport(ctx, d); ok {
 					extra["store_name"] = name
 				}
+				// ADR-0128 §5 (ut-docs#3323): roles and permission actions,
+				// for my.'s role editor — only when the admin generation
+				// moved since the last report that got through (see
+				// rolesReportGate).
+				rolesGate.add(ctx, d, extra)
+			} else {
+				rolesGate.reset()
 			}
 			return extra
 		},
+		// Records whether the check-in carrying a roles report got through
+		// (rolesReportGate.commit). wireCloudLinkHooks chains onto it.
+		AfterTick: rolesGate.commit,
 	}
 }
 

@@ -849,8 +849,8 @@ func TestSetupWizardLanguageStepShowsNativeNamesNotBareCodes(t *testing.T) {
 // hand-type or recognise that, and the screen's own copy already says
 // "scan or paste the code here", implying the QR/scan path is the real
 // primary route. The sibling settings-page join form (tills.html) already
-// uses the friendly "tills.join_code_ph" key ("Paste the code shown on the
-// other till"); this page just never got the same treatment
+// uses the friendly "tills.join_code_ph" key (now "Code shown on the main
+// till (e.g. K7P-4XQ)", ut-docs#3219); this page just never got the same treatment
 // (ut-docs#1179, reported on a real Pi 5 second-till setup).
 func TestSetupJoinCodeFieldHasNoRawJSONPlaceholder(t *testing.T) {
 	withOSLocale(t, "", "")
@@ -869,7 +869,8 @@ func TestSetupJoinCodeFieldHasNoRawJSONPlaceholder(t *testing.T) {
 	}
 	// Same non-technical hint the settings-page join form (tills.html) already
 	// uses, so both screens read consistently.
-	if !strings.Contains(body, `name="code" placeholder="Paste the code shown on the other till"`) {
+	// ut-docs#3219: the hint now names the short code's shape.
+	if !strings.Contains(body, `name="code" placeholder="Code shown on the main till (e.g. K7P-4XQ)"`) {
 		t.Error("setup page's join-code field should use the same friendly placeholder " +
 			`as tills.html ("tills.join_code_ph"), not a technical one (ut-docs#1179)`)
 	}

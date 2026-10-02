@@ -156,6 +156,11 @@ func writeDemoRefusal(w http.ResponseWriter, r *http.Request, status int) {
 // demoDeniedRoutes are refused in the demo whatever the allow-list says
 // (ADR-0113 §1.5). Exact mux patterns, grouped by why.
 var demoDeniedRoutes = map[string]bool{
+	// Report-only CSP sink and inventory (ut-docs#2913): a dev/test
+	// inventory aid, only registered with UT_CSP_REPORT_ONLY on — nothing a
+	// demo visitor needs.
+	"POST /csp-report": true,
+	"GET /csp-report":  true,
 	// Plugins: install, update, side-load, rollback, enable/disable, trust and
 	// permission grants, the marketplace, the plugin store, plugin-owned
 	// pages/settings/actions (plugin settings can take endpoints) and the
@@ -393,7 +398,10 @@ var demoAllowedRoutes = map[string]bool{
 	// tender route is shared; card-terminal tenders are a later card),
 	// holds/open orders, tables on the basket, suggestions, modifiers,
 	// vouchers.
-	"/":                                 true,
+	"/": true,
+	// ut-docs#3340: recording an age-restricted line's ID check is part
+	// of ringing up a sale, same as /api/pos/line.
+	"POST /api/pos/age-check":           true,
 	"/api/pos/discount":                 true,
 	"/api/pos/line":                     true,
 	"/api/pos/order-type":               true,
@@ -616,6 +624,7 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/settings/basket-panel-width":             true,
 	"POST /api/settings/browsing-mode":                  true,
 	"POST /api/settings/catalog-import-barcode-default": true,
+	"POST /api/settings/catalog-pre-pack-unit-price":    true,
 	"POST /api/settings/demo-item/{id}/keep":            true,
 	"POST /api/settings/demo-item/{id}/remove":          true,
 	"POST /api/settings/demo-promo/{code}/keep":         true,
