@@ -16,6 +16,13 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   comment-only edits are fine. Add a new `NNN_*.sql` and pin its checksum in
   `internal/db/shipped_migrations_test.go` (the failure message prints it).
 
+## Card data (ADR-0127, `scripts/ci/guard-card-data-schema.sh`)
+- Card data lives only in the PSP's vault: no migration names a card
+  number, BIN/IIN, CVV/CVC, track data or PIN block (last4, brand, expiry,
+  PSP token ids are fine). Reviewed exception: same-line
+  `-- card-data:allow <reason>`; frozen migrations go in
+  `scripts/ci/card-data-schema-allowlist.txt` with a reason (#3372).
+
 ## Offline-first
 - Checkout is never blocked by the network; a full sale completes offline.
 - Offline/sync/install state → status chips/banners, never modal blockers in
