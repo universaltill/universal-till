@@ -510,6 +510,8 @@
   "common.money.invalid_whole": "Tutarı yalnızca rakamlarla, tam sayı olarak girin.",
   "common.no_results": "Eşleşme yok — farklı bir arama deneyin.",
   "common.save": "Kaydet",
+  "common.show_less": "Daha az",
+  "common.show_more": "Daha fazla",
   "common.submit": "Gönder",
   "common.view": "Görüntüle",
   "countrysettings.col.country": "Ülke",

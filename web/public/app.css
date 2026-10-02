@@ -4176,16 +4176,65 @@ body.login-screen {
    table scroll inside its own card rather than stretch the page. */
 .users-list { min-inline-size: 0; }
 .users-list .table { display: block; overflow-x: auto; }
-/* ut-docs#3297: on a phone every wide data table (stock, shifts, audit,
-   translations, tills…) scrolls sideways inside its own box, the same way
-   the users list above always has, instead of dragging the whole page
-   sideways. Fields never grow past their container either. */
+/* ut-docs#3359 (replaces ut-docs#3297's "scroll sideways inside its own
+   box" rule, which the product owner rejected on an iPhone: "we shouldn't
+   scroll to the left and right"): on a phone every data table is a stacked
+   card list. web/public/table-cards.js marks each `main table` with a
+   <thead> as `.t-cards` (not the basket, not data-cards="off", not a table
+   nested in another's cell) and gives every body cell its column header
+   as data-label; these rules do the rest, so above 480px nothing changes.
+   Per card: the first labelled cell is the title (no label), each other
+   cell is "LABEL value" (the label a fixed share of the line, the value
+   beside it, or under it when it is a block such as a form), the
+   header-less row-actions cell sits at the card's end, and a row with more
+   than four labelled cells keeps the rest behind a More/Less toggle. The
+   wrappers that only existed to scroll a wide table sideways stop
+   scrolling at this tier. */
+.t-cards-more { display: none; }
 @media (max-width: 480px) {
-  /* A table that already has its own scroll box (the permissions grid
-     with its pinned column, list cards, inline overflow wrappers) keeps it. */
-  :is(table.table, .card table, table.translations-grid):not(:is(.perm-scroll, .list-scroll, [style*="overflow-x"]) > table):not(.basket table) {
-    display: block; max-inline-size: 100%; overflow-x: auto;
+  table.t-cards, table.t-cards > :is(tbody, tfoot) { display: block; inline-size: 100%; }
+  /* overflow: the generic table rules (and #tax-codes-table / .users-list /
+     .settings-grid / .pairing-table / #open-orders-table) clip or scroll the
+     table; a card list must do neither. The id selectors keep this ahead of
+     those rules' own specificity. */
+  table.t-cards, .users-list table.t-cards, .settings-grid .card table.t-cards,
+  #tax-codes-table table.t-cards, table.t-cards#open-orders-table, .card table.t-cards.perm-table {
+    overflow: visible; background: transparent; border-radius: 0; max-inline-size: 100%;
   }
+  :is(.list-scroll, .perm-scroll, #tax-codes-table):has(> table.t-cards) { overflow-x: visible; }
+  /* Visually hidden, still announced (the labels repeat it per card). */
+  table.t-cards > thead {
+    display: block; position: absolute; inline-size: 1px; block-size: 1px; margin: -1px;
+    padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+  }
+  table.t-cards tr.t-cards-row {
+    display: block; position: relative; margin-block-end: .6rem; padding: .55rem .8rem;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  }
+  table.t-cards tr:not(.t-cards-row) { display: block; }
+  table.t-cards tr[hidden] { display: none; }
+  table.t-cards tr > :is(td, th) {
+    display: block; padding: .25rem 0; border: 0; min-inline-size: 0; max-inline-size: none;
+    text-align: start !important; /* beats inline style="text-align:end" money cells */
+    text-transform: none; letter-spacing: normal; font-size: inherit;
+    overflow-wrap: anywhere; position: static;
+  }
+  table.t-cards tr:not(.t-cards-row) > :is(td, th) { padding: .4rem .2rem; }
+  table.t-cards tr > .t-cards-title { font-weight: 700; padding-block-end: .35rem; color: var(--text); }
+  table.t-cards tr > [data-label]:not(.t-cards-title)::before {
+    content: attr(data-label);
+    display: inline-block; inline-size: 40%; margin-inline-end: .5rem; vertical-align: top;
+    font-size: .75rem; line-height: 1.6; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--muted);
+  }
+  table.t-cards tr > .t-cards-actions:empty { display: none; }
+  table.t-cards tr > .t-cards-actions { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; }
+  table.t-cards tr.t-cards-row:not(.t-cards-open) > .t-cards-extra { display: none; }
+  table.t-cards tr > .t-cards-more { display: block; padding-block-start: .4rem; }
+  /* Buttons keep their words whole (the cell's anywhere-wrap is for data). */
+  table.t-cards :is(button, .btn) { overflow-wrap: normal; }
+  .t-cards-toggle { min-block-size: 2.75rem; }
+  .t-cards-toggle::before { content: attr(data-caption); }
   main :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) { max-inline-size: 100%; box-sizing: border-box; }
 }
 .users-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
@@ -4210,7 +4259,8 @@ body.login-screen {
 .users-form form { display: flex; flex-direction: column; gap: .7rem; }
 @media (max-width: 900px) { .users-layout { grid-template-columns: 1fr; } }
 
-/* Permissions matrix (/users/permissions, ut-docs#3132). The grid scrolls
+/* Permissions matrix (/users/permissions, ut-docs#3132). Above the phone
+   tier (at ≤480px it is a card list, ut-docs#3359 below) the grid scrolls
    sideways inside its own card, never the page; the action column stays
    pinned at the card's inline-start edge while the role columns scroll
    under it, so a checkbox is never read against the wrong action. The
@@ -4238,9 +4288,17 @@ body.login-screen {
 .perm-table .perm-cell { text-align: center; min-inline-size: 4.5rem; }
 .perm-table .perm-group-head { background: var(--surface-2); padding-block: .4rem; }
 .perm-group-label { position: sticky; inset-inline-start: .6rem; }
+/* ut-docs#3359: on a phone the matrix is a card list like every other
+   table (table-cards.js) — one card per action, its description under the
+   title, then one "ROLE ☐" line per role — so nothing pins or scrolls. */
 @media (max-width: 480px) {
-  .perm-table .perm-action { min-inline-size: 9rem; max-inline-size: 11rem; }
-  .perm-table .perm-cell { min-inline-size: 3.5rem; }
+  .perm-table.t-cards .perm-action, .perm-table.t-cards .perm-cell {
+    position: static; min-inline-size: 0; max-inline-size: none; border: 0; background: none;
+  }
+  .perm-table.t-cards tbody th.perm-action { padding: 0 0 .35rem; }
+  .perm-table.t-cards .perm-group-head { background: none; padding: .6rem .2rem .3rem; font-weight: 700; }
+  .perm-table.t-cards .perm-group-label { position: static; }
+  .perm-table.t-cards .perm-cell input[type="checkbox"] { inline-size: 1.4rem; block-size: 1.4rem; vertical-align: middle; }
 }
 
 /* Fiscal register (ut-docs#665) -- one block per business location inside
@@ -4353,6 +4411,28 @@ body.login-screen {
 
 .manual-nav { position: sticky; inset-block-start: .5rem; max-block-size: calc(100vh - 5rem);
               overflow-y: auto; padding-inline-end: .4rem; }
+/* ut-docs#3356: stacked on a phone the tree filled the screen and stayed
+   pinned (sticky + max-block-size), so a tapped topic swapped in below it,
+   out of sight — same class of bug as .items-rail-wrap (#3297). Unpin the
+   nav; while the panel shows a topic hide the whole nav (the back link
+   restores it); while it shows search results hide only the tree, keeping
+   the search box. Only topic articles carry data-topic. */
+.manual-back { display: none; }
+@media (max-width: 52rem) {
+  .manual-nav { position: static; max-block-size: none; overflow: visible; }
+  /* Hiding the tree shifts content the browser had anchored on and it
+     re-scrolls the page past the topic heading after our scroll-to-top
+     (app.js); opt the manual out of scroll anchoring. */
+  .manual { overflow-anchor: none; }
+  .manual:has(#manual-topic[data-topic]) .manual-nav { display: none; }
+  .manual:has(.manual-results) .manual-tree { display: none; }
+  .manual-back { display: inline-flex; align-items: center; gap: .35rem;
+                 min-block-size: 44px; padding-inline: .6rem; margin-block-end: .4rem;
+                 border-radius: .45rem; text-decoration: none; color: inherit; }
+  .manual-back:hover { background: var(--panel, rgba(127,127,127,.12)); }
+  /* No RTL flip for the chevron: U+2039 is bidi-mirrored, so an RTL line
+     already draws it pointing inline-start (a scaleX(-1) would undo that). */
+}
 .manual-search input { inline-size: 100%; padding: .55rem .7rem; font-size: 1rem;
                        min-block-size: 44px; border: 1px solid var(--border); border-radius: .5rem;
                        background: var(--panel, #fff); color: inherit; }
@@ -4464,6 +4544,11 @@ body.login-screen {
 .translations-ref { color: var(--muted); max-inline-size: 18rem; }
 .translations-edit { display: flex; gap: .4rem; }
 .translations-edit input[type="text"] { min-inline-size: 16rem; }
+/* ut-docs#3359: in the phone card the field takes the line beside its
+   Save button instead of forcing 16rem past the screen edge. */
+@media (max-width: 480px) {
+  .translations-edit input[type="text"] { min-inline-size: 0; flex: 1 1 0; }
+}
 /* ut-docs#2014: the infinite-scroll sentinel's loading text and its
    terminal end-of-list replacement, both on the colspan <td> (not the
    <tr> — padding on a table-row box is ignored by every browser, and
@@ -5233,7 +5318,9 @@ body.login-screen {
    inside a 1155px card and the merchant saw a half-empty card. Keeping the
    element a real table and moving overflow onto .list-scroll fills the card
    and still scrolls sideways when the columns genuinely do not fit (360px).
-   Pinned by the (f) case in e2e/tests/categories-record-dialog-2010.spec.ts. */
+   Pinned by the (f) case in e2e/tests/categories-record-dialog-2010.spec.ts.
+   At ≤480px the table is a card list instead and this stops scrolling
+   (ut-docs#3359, the `table.t-cards` block). */
 .list-card .list-scroll { overflow-x: auto; }
 /* nowrap on purpose: at 360px a wrapping actions cell stacked its three icon
    buttons vertically, tripling the row height and clipping them at the card
