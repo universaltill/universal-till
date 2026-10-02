@@ -423,7 +423,7 @@ func DetectFormat(headers []string) string {
 // substring-match a longer, unrelated header.
 func hasExactHeader(headers []string, name string) bool {
 	for _, h := range headers {
-		if strings.ToLower(strings.TrimSpace(strings.TrimPrefix(h, "﻿"))) == name {
+		if strings.ToLower(strings.TrimSpace(strings.TrimPrefix(h, "\uFEFF"))) == name {
 			return true
 		}
 	}
@@ -433,7 +433,7 @@ func hasExactHeader(headers []string, name string) bool {
 // hasColumn reports whether the header row carries a column mapping to field.
 func hasColumn(headers []string, field string) bool {
 	for _, h := range headers {
-		key := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(h, "﻿")))
+		key := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(h, "\uFEFF")))
 		stripped := stripTrailingParen(key)
 		for _, s := range columnSynonyms[field] {
 			if key == s || strings.HasPrefix(key, s+" [") || stripped == s {
@@ -509,7 +509,7 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 	}
 	// Strip a UTF-8 BOM Excel loves to add.
 	if len(headers) > 0 {
-		headers[0] = strings.TrimPrefix(headers[0], "﻿")
+		headers[0] = strings.TrimPrefix(headers[0], "\uFEFF")
 	}
 	res := Result{Format: DetectFormat(headers)}
 	idx := headerIndex(headers)
