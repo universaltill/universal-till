@@ -334,7 +334,7 @@ func TestRenderKitchenTicketCP858EmitsCodepageSelect(t *testing.T) {
 func TestRenderLabelCP858EmitsCodepageSelect(t *testing.T) {
 	sel := []byte{0x1b, 0x74, 0x13}
 
-	out := RenderLabel("Coca-Cola Can 330ml", "€1.40", "5000000000011", "cp858")
+	out := RenderLabelWithUnitPrice("Coca-Cola Can 330ml", "€1.40", "", "5000000000011", "cp858")
 	if !bytes.HasPrefix(out, append(append([]byte{}, cmdInit...), sel...)) {
 		t.Error("cp858 label must emit ESC t 19 immediately after init")
 	}
@@ -342,7 +342,7 @@ func TestRenderLabelCP858EmitsCodepageSelect(t *testing.T) {
 		t.Error("cp858 label price must carry the CP858 euro byte 0xD5")
 	}
 	for _, cs := range []string{"", "utf8", "ascii"} {
-		if bytes.Contains(RenderLabel("X", "1.40", "123", cs), sel) {
+		if bytes.Contains(RenderLabelWithUnitPrice("X", "1.40", "", "123", cs), sel) {
 			t.Errorf("charset %q must not emit a code-page select", cs)
 		}
 	}
@@ -535,7 +535,7 @@ func leadingSpacesStr(t *testing.T, out string, want string) int {
 }
 
 func TestRenderLabel(t *testing.T) {
-	out := RenderLabel("Coca-Cola Can 330ml", "£1.40", "5000000000011", "utf8")
+	out := RenderLabelWithUnitPrice("Coca-Cola Can 330ml", "£1.40", "", "5000000000011", "utf8")
 	if !bytes.HasPrefix(out, cmdInit) || !bytes.HasSuffix(out, cmdFeedCut) {
 		t.Error("label must init and cut")
 	}
@@ -543,6 +543,31 @@ func TestRenderLabel(t *testing.T) {
 		if !bytes.Contains(out, want) {
 			t.Errorf("label missing %q", want)
 		}
+	}
+}
+
+// ut-docs#3391: a pre-packed item's unit price prints on its own normal-
+// size line between the (double-size) pack price and the barcode; an empty
+// unit price prints nothing extra -- the barcode follows the price directly.
+func TestRenderLabelWithUnitPrice(t *testing.T) {
+	plain := RenderLabelWithUnitPrice("Rice 300g", "£2.00", "", "5000000000011", "utf8")
+	afterPrice := append([]byte("£2.00\n"), cmdDoubleOff...)
+	idx := bytes.Index(plain, afterPrice)
+	if idx < 0 {
+		t.Fatalf("plain label must still print the bare price, got %q", plain)
+	}
+	if rest := plain[idx+len(afterPrice):]; !bytes.HasPrefix(rest, []byte{0x1d}) {
+		t.Fatalf("empty unit price must print nothing between the price and the barcode's own commands, got %q", rest)
+	}
+	out := RenderLabelWithUnitPrice("Rice 300g", "£2.00", "£6.67 per kg", "5000000000011", "utf8")
+	want := []byte("£2.00\n")
+	want = append(want, cmdDoubleOff...)
+	want = append(want, []byte("£6.67 per kg\n")...)
+	if !bytes.Contains(out, want) {
+		t.Fatalf("unit price must follow the pack price at normal size, got %q", out)
+	}
+	if bytes.Index(out, []byte("£6.67 per kg")) > bytes.Index(out, []byte("{B")) {
+		t.Fatal("unit price must print above the barcode")
 	}
 }
 
