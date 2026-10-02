@@ -258,9 +258,13 @@ func effectiveTaxRateBPFor(l BasketLine, taxAsker TaxRateAsker, orderType string
 	if standard == 0 {
 		standard = defaultRateBP
 	}
-	if standard == 0 {
-		standard = 2000 // default to 20% if unconfigured
-	}
+	// ut-docs#3392: deliberately NO "defaultRateBP == 0 means unconfigured,
+	// use 20%" fallback here. The default reaching this function is always a
+	// real value — config.Init resolves UT_TAX_RATE (falling back to 20% only
+	// when the string is unreadable) and common.LoadStateChecked / every
+	// settings writer only overwrite it with a value taxrate.ParsePercent
+	// accepted — so 0 is a shop that chose 0% (the US and "Other" presets).
+	// Re-adding such a fallback silently charges those shops 20%.
 	return standard, blocked
 }
 
