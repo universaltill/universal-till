@@ -30,7 +30,10 @@ import (
 
 // cspReportOnlyPolicy is the policy under evaluation. 'report-sample' makes
 // browsers include the first characters of a blocked inline script.
-const cspReportOnlyPolicy = "default-src 'self'; script-src 'self' 'report-sample'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; report-uri /csp-report"
+// 'wasm-unsafe-eval' allows compiling WebAssembly only (not JS eval): the
+// sale screen's vendored barcode decoder needs it (ut-docs#696), so an
+// enforced policy will too.
+const cspReportOnlyPolicy = "default-src 'self'; script-src 'self' 'report-sample' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; report-uri /csp-report"
 
 const (
 	// cspReportMaxBody caps one POST /csp-report body (413 above it).
