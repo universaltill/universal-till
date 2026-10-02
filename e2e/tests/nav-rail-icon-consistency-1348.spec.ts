@@ -25,7 +25,13 @@ test.describe('sale-screen nav rail icon consistency (ut-docs#1348)', () => {
     page,
   }) => {
     await page.goto('/catalog');
-    const help = page.locator('[data-testid="help-hint"]');
+    // Scoped to .nav-toggle, not a bare [data-testid="help-hint"]: that
+    // testid is shared with every contextual {{ helpLink }} elsewhere on
+    // the page (ut-docs#3340 added one inside the catalog item editor's
+    // dialog, present in the DOM even while the dialog is closed), and a
+    // bare locator would hit strict-mode's multiple-match error rather
+    // than this test's own actual subject, the single nav-rail instance.
+    const help = page.locator('a.nav-toggle[data-testid="help-hint"]');
     await expect(help).toBeVisible();
     // The nav-rail instance must NOT carry the low-contrast small-circle
     // class used elsewhere in the app (settings.html etc, via helpLink) —
@@ -39,7 +45,9 @@ test.describe('sale-screen nav rail icon consistency (ut-docs#1348)', () => {
     page,
   }) => {
     await page.goto('/catalog');
-    const help = page.locator('[data-testid="help-hint"]');
+    // See the previous test's comment: scoped to .nav-toggle so this
+    // doesn't collide with a same-page contextual helpLink.
+    const help = page.locator('a.nav-toggle[data-testid="help-hint"]');
     const reference = page.locator('[data-testid="nav-menu"]'); // an ordinary .nav-toggle sibling
     await expect(help).toBeVisible();
     await expect(reference).toBeVisible();
