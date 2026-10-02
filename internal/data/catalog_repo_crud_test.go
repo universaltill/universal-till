@@ -553,6 +553,9 @@ func TestExportRows(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO item_barcodes(barcode, item_id, is_primary) VALUES('999','i1',1)`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(`UPDATE items SET age_restricted = 1 WHERE id = 'i1'`); err != nil {
+		t.Fatal(err)
+	}
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i2", SKU: "S2", Name: "Retired Item", BasePrice: 100, IsActive: false})
 
 	rows, err := repo.ExportRows(ctx)
@@ -563,11 +566,11 @@ func TestExportRows(t *testing.T) {
 		t.Fatalf("expected both active and inactive items exported, got %d", len(rows))
 	}
 	// Active first.
-	if rows[0].Name != "Latte" || rows[0].Barcode != "999" || !rows[0].IsActive {
+	if rows[0].Name != "Latte" || rows[0].Barcode != "999" || !rows[0].IsActive || !rows[0].AgeRestricted {
 		t.Fatalf("unexpected first export row: %+v", rows[0])
 	}
-	if rows[1].IsActive {
-		t.Fatal("expected the retired item to report IsActive=false")
+	if rows[1].IsActive || rows[1].AgeRestricted {
+		t.Fatal("expected the retired item to report IsActive=false, AgeRestricted=false")
 	}
 }
 

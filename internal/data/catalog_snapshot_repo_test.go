@@ -15,7 +15,7 @@ import (
 func TestCatalogSnapshotItems(t *testing.T) {
 	f := newSaveFixture(t)
 	ctx := context.Background()
-	f.exec(t, `UPDATE items SET color = '#b45309', stock_untracked = 1 WHERE id = 'itm1'`)
+	f.exec(t, `UPDATE items SET color = '#b45309', stock_untracked = 1, age_restricted = 1 WHERE id = 'itm1'`)
 	f.exec(t, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-zz-off','SKU-OFF','Aardvark (old)',100,0)`)
 	f.exec(t, `INSERT INTO item_barcodes (barcode, item_id, barcode_type, is_primary) VALUES ('B2','itm1','CODE128',0), ('B1','itm1','CODE128',1)`)
 	f.exec(t, `INSERT INTO item_variants (id, item_id, sku, name, price, is_active) VALUES ('v-l','itm1','SKU1-L','Large',380,1), ('v-s','itm1','SKU1-S','Small',300,0)`)
@@ -49,8 +49,11 @@ func TestCatalogSnapshotItems(t *testing.T) {
 		}
 	}
 	if it.Name != "Flat White" || it.SKU != "SKU1" || it.PriceMinor != 320 || it.CategoryID != "cat1" ||
-		it.Color != "#b45309" || !it.Active || !it.StockUntracked {
+		it.Color != "#b45309" || !it.Active || !it.StockUntracked || !it.AgeRestricted {
 		t.Fatalf("itm1 = %+v", it)
+	}
+	if last := items[len(items)-1]; last.AgeRestricted {
+		t.Fatalf("an item with age_restricted=0 must report false, got %+v", last)
 	}
 	if !reflect.DeepEqual(it.Barcodes, []string{"B1", "B2"}) {
 		t.Fatalf("barcodes = %v, want primary first", it.Barcodes)

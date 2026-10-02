@@ -1268,6 +1268,10 @@ type ExportRow struct {
 	// item has none configured; otherwise both set, as stored.
 	NetQuantityValue *int64  `json:"net_quantity_value"`
 	NetQuantityUnit  *string `json:"net_quantity_unit"`
+	// AgeRestricted (ut-docs#3340/#3395) mirrors items.age_restricted — a
+	// staff ID-check item, same shape as IsWeighed (plain NOT NULL column,
+	// no has-pair needed).
+	AgeRestricted bool `json:"age_restricted"`
 }
 
 // ExportRows reads the whole catalog for export, active items first.
@@ -1286,7 +1290,7 @@ SELECT i.name, COALESCE(i.sku, ''),
        COALESCE((SELECT SUM(v.quantity) FROM inventory v WHERE v.item_id = i.id), 0),
        i.is_active,
        t.rate_basis_points, t.takeaway_rate_basis_points,
-       i.net_quantity_value, i.net_quantity_unit
+       i.net_quantity_value, i.net_quantity_unit, i.age_restricted
 FROM items i LEFT JOIN categories c ON c.id = i.category_id
              LEFT JOIN tax_codes t ON t.id = i.tax_code_id
 ORDER BY i.is_active DESC, i.name`)
@@ -1301,7 +1305,7 @@ ORDER BY i.is_active DESC, i.name`)
 		var nqUnit sql.NullString
 		if err := rows.Scan(&e.Name, &e.SKU, &e.Barcode, &e.PriceMinor, &e.Category,
 			&e.Description, &e.IsWeighed, &e.Stock, &e.IsActive, &rate, &takeaway,
-			&nqValue, &nqUnit); err != nil {
+			&nqValue, &nqUnit, &e.AgeRestricted); err != nil {
 			return nil, err
 		}
 		if nqValue.Valid {

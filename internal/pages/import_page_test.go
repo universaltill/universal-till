@@ -1374,6 +1374,47 @@ func TestImport_TakeawayOnlyWithNoDineInRateWarns(t *testing.T) {
 	}
 }
 
+// Real-handler, real-DB proof that an "Age restricted" cell actually lands
+// on the created item (ut-docs#3340/#3395) — written straight onto the item
+// row via pos.ItemInput, not resolved through a lookup table, so the one
+// place a wiring mistake (forgetting to copy the parsed value into the
+// ItemInput literal) would go unnoticed is exactly a test that only
+// exercises the parser without ever committing through the real import
+// handler into a real migrated DB.
+func TestImport_AgeRestrictedColumnCommitsToDB(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	initAuthTestI18n(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	csv := "Name,SKU,Price,Age restricted\n" +
+		"Whisky,AR1,15.00,Y\n" +
+		"Bread,AR2,2.00,N\n"
+	body, ct := multipartCSV(t, csv, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	var whiskyFlag, breadFlag int
+	if err := dp.Db.QueryRow(`SELECT age_restricted FROM items WHERE sku = 'AR1'`).Scan(&whiskyFlag); err != nil {
+		t.Fatalf("query whisky: %v", err)
+	}
+	if whiskyFlag != 1 {
+		t.Fatalf("age_restricted did not reach the DB for whisky: got %d", whiskyFlag)
+	}
+	if err := dp.Db.QueryRow(`SELECT age_restricted FROM items WHERE sku = 'AR2'`).Scan(&breadFlag); err != nil {
+		t.Fatalf("query bread: %v", err)
+	}
+	if breadFlag != 0 {
+		t.Fatalf("bread must not be age restricted: got %d", breadFlag)
+	}
+}
+
 // A genuine DB-level failure creating the tax code fails the row (like a
 // category-creation failure) — it must not silently import at the wrong rate.
 func TestImport_TaxCodeCreationFailureFailsRow(t *testing.T) {

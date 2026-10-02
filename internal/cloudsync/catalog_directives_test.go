@@ -343,6 +343,9 @@ func TestSnapshotSchema2Shape(t *testing.T) {
 	if _, err := db.Exec(`UPDATE items SET stock_untracked = 1 WHERE id = 'it-0'`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(`UPDATE items SET age_restricted = 1 WHERE id = 'it-1'`); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), db); err != nil {
 		t.Fatal(err)
@@ -360,10 +363,13 @@ func TestSnapshotSchema2Shape(t *testing.T) {
 		t.Fatalf("active items must come first: %v", items)
 	}
 	for _, k := range []string{"id", "name", "sku", "price_minor", "category_id", "color", "active", "is_weighed", "stock_untracked",
-		"barcode", "barcodes", "modifier_group_ids", "modifier_opt_out_ids", "effective_modifier_group_ids", "variants"} {
+		"age_restricted", "barcode", "barcodes", "modifier_group_ids", "modifier_opt_out_ids", "effective_modifier_group_ids", "variants"} {
 		if _, ok := row[k]; !ok {
 			t.Errorf("row missing %q: %v", k, row)
 		}
+	}
+	if row["age_restricted"] != true {
+		t.Fatalf("age_restricted = %v, want true", row["age_restricted"])
 	}
 	if row["barcode"] != "5000000000011" || !reflect.DeepEqual(row["barcodes"], []any{"5000000000011"}) {
 		t.Fatalf("barcodes = %v / %v", row["barcode"], row["barcodes"])

@@ -1001,3 +1001,44 @@ func TestParseShopifyFieldsIgnoredForOtherFormats(t *testing.T) {
 		t.Errorf("generic row picked up shopify-only fields: %+v", it)
 	}
 }
+
+// Age restricted (ut-docs#3340/#3395): this till's own export/import column,
+// same isTruthy Y/N shape as "Sold by weight" — no other POS system in this
+// package's synonym tables has the concept, so it's only ever recognised
+// when the column header is this till's own.
+func TestParseAgeRestrictedColumn(t *testing.T) {
+	csv := "Name,Price,Age restricted\n" +
+		"Whisky,15.00,Y\n" +
+		"Bread,2.00,N\n" +
+		"Milk,1.00,\n"
+	res, err := Parse(strings.NewReader(csv), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(res.Items) != 3 {
+		t.Fatalf("items = %d", len(res.Items))
+	}
+	if !res.Items[0].AgeRestricted {
+		t.Errorf("whisky should be age restricted: %+v", res.Items[0])
+	}
+	if res.Items[1].AgeRestricted {
+		t.Errorf("bread should not be age restricted: %+v", res.Items[1])
+	}
+	if res.Items[2].AgeRestricted {
+		t.Errorf("a blank cell should not be age restricted: %+v", res.Items[2])
+	}
+}
+
+// A file with no age-restricted column at all (every pre-existing fixture)
+// must leave the field false — existing Loyverse/Square imports unchanged.
+func TestParseNoAgeRestrictedColumnLeavesItFalse(t *testing.T) {
+	res, err := Parse(strings.NewReader(loyverseCSV), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for i, it := range res.Items {
+		if it.AgeRestricted {
+			t.Errorf("row %d: age_restricted must stay false without that column: %+v", i, it)
+		}
+	}
+}

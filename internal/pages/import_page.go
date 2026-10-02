@@ -1127,6 +1127,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					// below), so it can't trip CreateItemTx's own check.
 					NetQuantityValue: it.NetQuantityValue,
 					NetQuantityUnit:  it.NetQuantityUnit,
+					AgeRestricted:    it.AgeRestricted,
 				})
 				if err != nil {
 					_ = tx.Rollback()
@@ -1848,7 +1849,7 @@ func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 	// unit is CHECK-constrained by migration 060), so no csvSafe either.
 	_ = cw.Write([]string{"Name", "SKU", "Barcode", "Price", "Category",
 		"Description", "Sold by weight", "In stock", "Active", "Tax rate", "Takeaway tax",
-		"Net quantity", "Net quantity unit"})
+		"Net quantity", "Net quantity unit", "Age restricted"})
 	yn := func(b bool) string {
 		if b {
 			return "Y"
@@ -1871,7 +1872,7 @@ func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 			csvSafe(e.Name), csvSafe(e.SKU), csvSafe(e.Barcode), minorToDecimal(e.PriceMinor, decimals),
 			csvSafe(e.Category), csvSafe(e.Description), yn(e.IsWeighed),
 			strconv.FormatFloat(e.Stock, 'f', -1, 64), yn(e.IsActive),
-			tax, takeaway, nqValue, nqUnit,
+			tax, takeaway, nqValue, nqUnit, yn(e.AgeRestricted),
 		})
 	}
 	cw.Flush()
