@@ -23,6 +23,8 @@ Sie erreichen dies auch über das ☰-Menü über die Kachel Problem melden.
 
 In der Android-Kasse-App erfasst "Screenshot aufnehmen" direkt, was die App gerade anzeigt — keine Berechtigungsabfrage. Auch die Sprachnotiz funktioniert: Beim ersten Aufnehmen fragt Android nach Mikrofonzugriff; einmal erlaubt, starten spätere Aufnahmen sofort (bei Ablehnung wieder aktivieren unter Telefon-Einstellungen → Apps → Universal Till → Berechtigungen). Bildschirmaufzeichnung und das Fotografieren mit der Kamera sind in der Android-App noch nicht verfügbar.
 
+In der iPhone- und iPad-App fragt iOS beim ersten Aufnehmen einer Sprachnotiz nach Mikrofonzugriff; einmal erlaubt, starten spätere Aufnahmen sofort (bei Ablehnung wieder aktivieren unter Einstellungen des Geräts → Universal Till → Mikrofon). Ältere iOS-Versionen können in der App keine Sprachnotizen aufnehmen; die Schaltfläche weist dann darauf hin. Bildschirmaufzeichnung und Screenshots sind in der iPhone- und iPad-App noch nicht verfügbar.
+
 Mit ✕ wird das Panel ausgeblendet — Ihr Entwurf bleibt erhalten — bis Sie wieder 🐞 drücken: Es bleibt beim Wechsel zwischen Bildschirmen geschlossen, und die Seite „Problem melden“ öffnet es nicht mehr von selbst. „Verwerfen“ ist die Schaltfläche, die einen Entwurf tatsächlich löscht (mit Rückfrage). Ein Entwurf gilt nur für die aktuelle Kassensitzung; in einen Bericht passen bis zu 12 Screenshots.
 
 Möchten Sie wissen, was aus einem gesendeten Bericht geworden ist? Siehe [Meine Berichte](/help/my-reports) — jeder von dieser Kasse gesendete Bericht mit seinem aktuellen Status. Manager und Administratoren können sie öffnen; fragen Sie als Kassierer eine dieser Personen.
