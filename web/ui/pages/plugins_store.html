@@ -65,11 +65,21 @@
       {{ range .PermissionBadges }}
       {{ if .SettingKeys }}
       <span class="tag perm-badge" title="{{ T "plugins.permissions.setting_bound_hint" }} ({{ .Name }})">{{ T "plugins.permissions.setting_bound" }} {{ .SettingKeys }}</span>
+      {{ else if .DescKey }}
+      <span class="tag perm-badge">{{ .Name }}</span>
       {{ else }}
       <span class="tag perm-badge" title="{{ T "plugins.store.permission_hint" }}">{{ .Name }}</span>
       {{ end }}
       {{ end }}
     </div>
+    {{ with .PermissionDescriptions }}
+    {{/* ADR-0121 §2 permissions: described in visible text, never a hover-only tooltip (touchscreen till). */}}
+    <ul class="muted perm-desc" style="margin-block:0 .6rem; padding-inline-start:1.1rem; font-size:.78rem; line-height:1.4">
+      {{ range . }}
+      <li class="perm-desc-item"><code dir="ltr">{{ .Name }}</code> — <span>{{ T .DescKey }}</span></li>
+      {{ end }}
+    </ul>
+    {{ end }}
     {{ end }}
     <div style="display:flex; gap:.4rem; align-items:center; margin-bottom:.6rem">
       <span class="tag">{{ T (printf "plugins.type.%s" .Type) }}</span>

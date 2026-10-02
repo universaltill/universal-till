@@ -204,9 +204,11 @@ type ManifestSetting struct {
 	Key          string      `json:"key"`
 	DefaultValue interface{} `json:"default_value,omitempty"`
 	Scope        string      `json:"scope,omitempty"` // global|register|user
-	// Type is ""|SettingTypeSecret (ADR-0082): "secret" masks the value on
-	// the settings page and seals it at rest, regardless of the key name.
-	// Validated in ParseManifest; see secret_settings.go.
+	// Type is ""|SettingTypeSecret|SettingTypeEndpoint. "secret" (ADR-0082)
+	// masks the value on the settings page and seals it at rest, regardless
+	// of the key name; "endpoint" (ADR-0121 §2) only accepts an http(s) URL
+	// when an operator saves it (ValidEndpointURL). Validated in
+	// ParseManifest; see secret_settings.go.
 	Type string `json:"type,omitempty"`
 }
 
@@ -263,13 +265,14 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 				e.Key, e.Type, strings.Join(CanonicalTypes, "|"))
 		}
 	}
-	// Setting types likewise (ADR-0082): "" or "secret" today — an unknown
-	// value is a typo that would otherwise silently leave a credential
-	// unsealed at rest, so it fails here, not at persist time.
+	// Setting types likewise (ADR-0082, ADR-0121 §2): "", "secret" or
+	// "endpoint" — an unknown value is a typo that would otherwise silently
+	// leave a credential unsealed at rest, so it fails here, not at persist
+	// time.
 	for _, s := range m.Settings {
 		if !isValidSettingType(s.Type) {
 			return nil, fmt.Errorf("manifest setting %q has invalid type %q (allowed: %s)",
-				s.Key, s.Type, SettingTypeSecret)
+				s.Key, s.Type, strings.Join([]string{SettingTypeSecret, SettingTypeEndpoint}, "|"))
 		}
 	}
 	// Setting-bound grants (ut-docs#2899) must be well-formed and name keys
@@ -280,6 +283,12 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 	// Validation-data grants (ut-docs#3226) name one exact host; a malformed
 	// or wildcard form is refused rather than silently matching nothing.
 	if err := validateValidationPermissions(&m); err != nil {
+		return nil, err
+	}
+	// Every other permission must be a shape core recognises (ut-docs#3328,
+	// ADR-0121 §2) — an unknown string would otherwise be persisted and
+	// offered to an operator for granting while nothing ever checks it.
+	if err := validatePermissions(&m); err != nil {
 		return nil, err
 	}
 	// provides/markets are closed-set (ADR-0129): a typo would otherwise

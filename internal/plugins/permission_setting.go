@@ -273,11 +273,8 @@ func tcpGrantMatch(ctx context.Context, db *sql.DB, pluginID, addr string) (exac
 				return true, wildcard, nil
 			}
 		case strings.HasPrefix(p, "tcp:"):
-			gh, gp, serr := net.SplitHostPort(strings.TrimPrefix(p, "tcp:"))
-			if serr != nil {
-				continue
-			}
-			if n, perr := strconv.Atoi(gp); perr == nil && n == wantPort && normGrantHost(gh) == want {
+			gh, n, ok := splitTCPGrantAddr(strings.TrimPrefix(p, "tcp:"))
+			if ok && n == wantPort && normGrantHost(gh) == want {
 				return true, wildcard, nil
 			}
 		}
@@ -373,4 +370,20 @@ func validationGrantMatch(ctx context.Context, db *sql.DB, pluginID, host string
 		}
 	}
 	return false, nil
+}
+
+// splitTCPGrantAddr splits the <host>:<port> of an exact tcp:<host>:<port>
+// grant, the inverse of tcpAddr (net.JoinHostPort, so an IPv6 host is
+// bracketed). Shared by tcpGrantMatch and the manifest permission allow-list
+// (isKnownPermission) so both read a grant the same way.
+func splitTCPGrantAddr(addr string) (host string, port int, ok bool) {
+	h, ps, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(ps)
+	if err != nil {
+		return "", 0, false
+	}
+	return h, n, true
 }

@@ -187,6 +187,10 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 				s.Key, s.Type, SettingTypeSecret))
 		}
 	}
+	// Permission allow-list, same as ParseManifest (ut-docs#3328).
+	if err := validatePermissions(&manifest); err != nil {
+		result.Errors = append(result.Errors, err.Error())
+	}
 
 	// Checksum verification (if provided in manifest)
 	result.ChecksumVerified = true // Default to true if no checksum in manifest

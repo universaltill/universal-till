@@ -4,22 +4,87 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/secrets"
 )
 
-// SettingTypeSecret is the one non-empty ManifestSetting.Type value
-// (ADR-0082, ut-docs#1739): the setting holds a credential — masked on the
-// settings page, sealed at rest by internal/data's PluginRepo.
+// SettingTypeSecret (ADR-0082, ut-docs#1739): the setting holds a
+// credential — masked on the settings page, sealed at rest by
+// internal/data's PluginRepo.
 const SettingTypeSecret = "secret"
+
+// SettingTypeEndpoint (ADR-0121 §2, ut-docs#3328): the setting holds an
+// operator-entered http(s)://host[:port][/path] — the address a plugin's
+// http:lan / net:@setting grant reaches. ValidEndpointURL is enforced where
+// an operator saves the value (POST /api/plugins/{id}/settings); a
+// manifest's own default_value is not validated at parse time, the same as
+// every other setting type.
+const SettingTypeEndpoint = "endpoint"
 
 // isValidSettingType is ParseManifest's enum check for ManifestSetting.Type.
 func isValidSettingType(t string) bool {
-	return t == "" || t == SettingTypeSecret
+	return t == "" || t == SettingTypeSecret || t == SettingTypeEndpoint
+}
+
+// ValidEndpointURL reports whether v is http(s)://host[:port][/path]: an
+// absolute http or https URL with a host, an optional port in 1..65535 and
+// an optional path — no userinfo, query or fragment, no surrounding space.
+// Anything else (ftp:, javascript:, a bare host, free text) is refused.
+func ValidEndpointURL(v string) bool {
+	if v == "" || v != strings.TrimSpace(v) {
+		return false
+	}
+	u, err := url.Parse(v)
+	if err != nil || u.Opaque != "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(v, "#") {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	h := u.Hostname()
+	if h == "" {
+		return false
+	}
+	// url.Parse splits the port at the LAST colon, so "erp.lan:8080:80"
+	// parses as host "erp.lan:8080" port "80" and would be accepted — only a
+	// bracketed IPv6 literal may carry a colon inside the host (independent
+	// review, ut-docs#3328).
+	if strings.Contains(h, ":") {
+		if _, err := netip.ParseAddr(h); err != nil {
+			return false
+		}
+	}
+	if p := u.Port(); p != "" {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 1 || n > 65535 {
+			return false
+		}
+	} else if strings.HasSuffix(u.Host, ":") {
+		return false
+	}
+	return true
+}
+
+// SettingDeclaredEndpoint reports whether this manifest declares key with
+// `type: "endpoint"`. Nil-safe, like SettingDeclaredSecret.
+func (m *Manifest) SettingDeclaredEndpoint(key string) bool {
+	if m == nil {
+		return false
+	}
+	for _, s := range m.Settings {
+		if s.Key == key {
+			return s.Type == SettingTypeEndpoint
+		}
+	}
+	return false
 }
 
 // SettingDeclaredSecret reports whether this manifest declares key with
