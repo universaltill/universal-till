@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -208,6 +209,9 @@ func buildInvoiceDoc(ctx context.Context, d *common.Deps, inv data.InvoiceRow, s
 		issuedAt = httpx.FormatDate(t.Local(), locale)
 	}
 	meta := []string{inv.DisplayNo, T("invoice.for_sale") + " " + sale.ReceiptNo, issuedAt}
+	if supply := timeOfSupply(sale.CreatedAt, inv.IssuedAt, locale); supply != "" {
+		meta = append(meta, T("invoice.time_of_supply")+": "+supply)
+	}
 	if inv.Kind == "credit_note" && inv.OriginalInvoiceID != "" {
 		meta = append(meta, T("invoice.credits")+" "+inv.OriginalInvoiceID)
 	}
@@ -224,6 +228,9 @@ func buildInvoiceDoc(ctx context.Context, d *common.Deps, inv data.InvoiceRow, s
 			Name:   l.Name,
 			Qty:    formatQty(l.Qty),
 			Amount: httpx.FormatMoney(l.LineTotal, locale),
+			// " - ", not the on-screen " · ": an ascii-charset printer
+			// would print the middle dot as '?'.
+			Sub: invoiceLineSub(l, locale, " - "),
 		})
 	}
 	for _, b := range bands {
@@ -464,6 +471,20 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 				Net:  b.Net, Tax: b.Tax, Gross: b.Gross,
 			})
 		}
+		// ut-docs#3337: per-line view carrying the unit-price/rate detail
+		// row, formatted Go-side in the request's locale.
+		locale := httpx.RequestLocale(r)
+		type lineView struct {
+			Name      string
+			Qty       float64
+			LineTotal int64
+			Sub       string
+		}
+		lines := make([]lineView, 0, len(sale.Lines))
+		for _, l := range sale.Lines {
+			lines = append(lines, lineView{Name: l.Name, Qty: l.Qty, LineTotal: l.LineTotal,
+				Sub: invoiceLineSub(l, locale, " · ")})
+		}
 		origDisplay := ""
 		if inv.OriginalInvoiceID != "" {
 			if o, ok, _ := invRepo.ByID(r.Context(), inv.OriginalInvoiceID); ok {
@@ -478,10 +499,66 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 			"Sale":         sale,
 			"Seller":       seller,
 			"Bands":        bands,
+			"Lines":        lines,
+			"TimeOfSupply": timeOfSupply(sale.CreatedAt, inv.IssuedAt, locale),
 			"OrigDisplay":  origDisplay,
 			"IsCreditNote": inv.Kind == "credit_note",
 		})(w, r)
 	})
+}
+
+// invoiceLineUnitNet is a line's unit price excluding VAT:
+// (LineTotal - TaxAmount) / Qty, from the line's RECORDED figures (the same
+// net vatBreakdown bands, ut-docs#3337). Rounded half away from zero — the
+// rule money.Money.MulQty already uses for qty-scaled amounts. ok=false for
+// a zero quantity (nothing to divide by).
+func invoiceLineUnitNet(l data.SaleDetailLine) (int64, bool) {
+	if l.Qty == 0 {
+		return 0, false
+	}
+	return int64(math.Round(float64(l.LineTotal-l.TaxAmount) / l.Qty)), true
+}
+
+// invoiceLineSub is the detail row under an invoice line (ut-docs#3337):
+// unit price excl. VAT and the line's own recorded VAT rate. Shared by the
+// thermal invoice (buildInvoiceDoc) and the on-screen one so both say the
+// same thing; sep differs only because a thermal printer's charset may not
+// carry the middle dot.
+func invoiceLineSub(l data.SaleDetailLine, locale, sep string) string {
+	unit, ok := invoiceLineUnitNet(l)
+	if !ok {
+		return ""
+	}
+	s := httpx.T(locale, "invoice.unit_price") + ": " + httpx.FormatMoney(unit, locale)
+	// ut-docs#3337 review (S2): a discounted line's net÷qty figure is the
+	// post-discount effective price, not the catalogue unit price — label
+	// it rather than let it pass as the undiscounted unit price an
+	// accountant would expect "unit price" to mean.
+	if l.LineDiscount != 0 {
+		s += " (" + httpx.T(locale, "invoice.after_discount") + ")"
+	}
+	return s + sep + httpx.T(locale, "invoice.vat") + " " + fmt.Sprintf("%.2f%%", float64(l.TaxRateBP)/100)
+}
+
+// timeOfSupply returns the sale's own date (the time of supply), formatted
+// exactly as the invoice's issue date is, but only when that formatted date
+// differs from the issue date's — a same-day invoice needs no second date
+// (ut-docs#3337). An unparseable timestamp yields "" rather than a raw,
+// unformatted string the reader can't compare against the issue date.
+func timeOfSupply(saleCreatedAt, issuedAt, locale string) string {
+	sold, err := time.Parse(time.RFC3339, saleCreatedAt)
+	if err != nil {
+		return ""
+	}
+	issued, err := time.Parse(time.RFC3339, issuedAt)
+	if err != nil {
+		return ""
+	}
+	supply := httpx.FormatDate(sold.Local(), locale)
+	if supply == httpx.FormatDate(issued.Local(), locale) {
+		return ""
+	}
+	return supply
 }
 
 func formatQty(q float64) string {

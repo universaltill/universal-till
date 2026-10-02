@@ -11,6 +11,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -690,5 +691,136 @@ func TestGetInvoiceByDisplayNo_RendersIssuedInvoice(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "Jane Doe") {
 		t.Fatalf("expected the customer name rendered, got body without it")
+	}
+}
+
+// A discounted line's net÷qty figure is the post-discount effective price,
+// not the catalogue unit price — invoiceLineSub must label it rather than
+// let it pass as an undiscounted "unit price" (review finding S2,
+// ut-docs#3337). A line with no discount gets no such marker (regression
+// guard against always appending it).
+func TestInvoiceLineSub_AfterDiscountMarker(t *testing.T) {
+	discounted := data.SaleDetailLine{
+		Name: "Wine", Qty: 3, TaxRateBP: 2000, TaxAmount: 500,
+		LineTotal: 3000, LineDiscount: 600,
+	}
+	got := invoiceLineSub(discounted, "en", " - ")
+	want := "Unit price (excl. VAT): £8.33 (after discount) - VAT 20.00%"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+
+	undiscounted := data.SaleDetailLine{
+		Name: "Bread", Qty: 2, TaxRateBP: 0, TaxAmount: 0,
+		LineTotal: 300, LineDiscount: 0,
+	}
+	got = invoiceLineSub(undiscounted, "en", " - ")
+	if strings.Contains(got, "after discount") {
+		t.Fatalf("an undiscounted line must not carry the after-discount marker, got %q", got)
+	}
+}
+
+// ut-docs#3337: each invoice line carries its unit price excl. VAT
+// ((LineTotal-TaxAmount)/Qty) and its own recorded VAT rate.
+func TestBuildInvoiceDoc_LineUnitPriceExclVATAndRate(t *testing.T) {
+	_, dp := newInvoiceTestDeps(t)
+	ctx := context.Background()
+	setSeller(t, dp)
+	seedMixedRateSale(t, dp, "sale-mix", "R-MIX", time.Now().UTC().Format(time.RFC3339))
+	sale, _, err := data.NewPOSRepo(dp.Db).GetSaleDetail(ctx, "R-MIX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := issueInvoice(ctx, dp, sale, "invoice", "", "Jane Doe", "", "", "user1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := buildInvoiceDoc(ctx, dp, inv, sale)
+	want := map[string]string{
+		"Bread": "Unit price (excl. VAT): £1.50 - VAT 0.00%",
+		"Wine":  "Unit price (excl. VAT): £10.00 - VAT 20.00%",
+	}
+	if len(doc.Lines) != 2 {
+		t.Fatalf("expected 2 lines, got %+v", doc.Lines)
+	}
+	for _, l := range doc.Lines {
+		if l.Sub != want[l.Name] {
+			t.Fatalf("%s Sub: got %q, want %q", l.Name, l.Sub, want[l.Name])
+		}
+	}
+}
+
+// ut-docs#3337: the time of supply (the sale's own date) prints only when
+// it falls on a different calendar date than the invoice's issue date.
+func TestBuildInvoiceDoc_TimeOfSupplyOnlyWhenDifferentDay(t *testing.T) {
+	_, dp := newInvoiceTestDeps(t)
+	ctx := context.Background()
+	setSeller(t, dp)
+	saleAt := time.Now().Add(-72 * time.Hour).UTC()
+	seedMixedRateSale(t, dp, "sale-old", "R-OLD", saleAt.Format(time.RFC3339))
+	seedMixedRateSale(t, dp, "sale-new", "R-NEW", time.Now().UTC().Format(time.RFC3339))
+	repo := data.NewPOSRepo(dp.Db)
+	locale := httpx.DefaultLocale()
+	supplyLine := "Time of supply: " + httpx.FormatDate(saleAt.Local(), locale)
+
+	old, _, _ := repo.GetSaleDetail(ctx, "R-OLD")
+	invOld, err := issueInvoice(ctx, dp, old, "invoice", "", "Jane Doe", "", "", "user1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta := strings.Join(buildInvoiceDoc(ctx, dp, invOld, old).Meta, "\n"); !strings.Contains(meta, supplyLine) {
+		t.Fatalf("expected %q in Meta for an earlier sale, got %q", supplyLine, meta)
+	}
+
+	same, _, _ := repo.GetSaleDetail(ctx, "R-NEW")
+	invNew, err := issueInvoice(ctx, dp, same, "invoice", "", "Jane Doe", "", "", "user1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta := strings.Join(buildInvoiceDoc(ctx, dp, invNew, same).Meta, "\n"); strings.Contains(meta, "Time of supply") {
+		t.Fatalf("expected no time-of-supply line for a same-day invoice, got %q", meta)
+	}
+}
+
+// ut-docs#3337: the on-screen invoice mirrors both additions.
+func TestGetInvoiceByDisplayNo_UnitPriceRateAndTimeOfSupply(t *testing.T) {
+	mux, dp := newInvoiceTestDeps(t)
+	ctx := context.Background()
+	setSeller(t, dp)
+	saleAt := time.Now().Add(-72 * time.Hour).UTC()
+	seedMixedRateSale(t, dp, "sale-old", "R-OLD", saleAt.Format(time.RFC3339))
+	seedMixedRateSale(t, dp, "sale-new", "R-NEW", time.Now().UTC().Format(time.RFC3339))
+	repo := data.NewPOSRepo(dp.Db)
+
+	get := func(receiptNo string) string {
+		t.Helper()
+		sale, _, err := repo.GetSaleDetail(ctx, receiptNo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inv, err := issueInvoice(ctx, dp, sale, "invoice", "", "Jane Doe", "", "", "user1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/invoice/"+inv.DisplayNo, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	body := get("R-OLD")
+	for _, want := range []string{
+		"Unit price (excl. VAT): £10.00 · VAT 20.00%",
+		"Unit price (excl. VAT): £1.50 · VAT 0.00%",
+		"Time of supply: " + httpx.FormatDate(saleAt.Local(), "en"),
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %q in the on-screen invoice", want)
+		}
+	}
+	if body := get("R-NEW"); strings.Contains(body, "Time of supply") {
+		t.Fatal("expected no time-of-supply line on a same-day invoice")
 	}
 }

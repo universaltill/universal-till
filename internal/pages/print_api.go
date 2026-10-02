@@ -286,6 +286,27 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 		}
 		doc.Meta = append(meta, doc.Meta...)
 	}
+	// ut-docs#3337: a VAT-registered seller (invoice.seller_vat_no set)
+	// prints its VAT number — and its address, unless the receipt header
+	// already carries it — so the till receipt holds the seller identity a
+	// VAT invoice needs. No VAT number configured = no change at all.
+	// English literals per this renderer's locale note above.
+	seller, _ := sellerConfig(ctx, d)
+	vatRegistered := seller.VATNo != ""
+	if vatRegistered {
+		if seller.Address != "" && !headerHasLine(rd.Header, seller.Address) {
+			doc.Meta = append(doc.Meta, seller.Address)
+		}
+		// ut-docs#3337 review (S1): a shop that already typed its VAT number
+		// into a header line (the only way to print it before this card)
+		// must not get it twice — headerContains is a substring match (the
+		// header line is free text, e.g. "VAT No: GB123456789" or
+		// "VAT GB123456789", never byte-identical to this Meta line the way
+		// the address check above can be).
+		if !headerContains(rd.Header, seller.VATNo) {
+			doc.Meta = append(doc.Meta, "VAT No: "+seller.VATNo)
+		}
+	}
 	// ADR-0073 Decision 7: a MIXED sale marks each line's mode; a uniform
 	// sale prints exactly as before. English literals match this renderer's
 	// existing convention (Latin digits forced regardless of printLocale
@@ -322,6 +343,18 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 		doc.Totals = append(doc.Totals, print.KV{Label: "Service Charge", Amount: money(detail.ServiceCharge)})
 	}
 	doc.Totals = append(doc.Totals, print.KV{Label: "TOTAL", Amount: money(detail.Total), Strong: true})
+	// ut-docs#3337: the per-rate breakdown (gross charged at each VAT rate)
+	// a VAT-registered seller's receipt needs. Deliberately NOT gated by
+	// rd.ShowTax — that toggle keeps hiding only the lump Subtotal/Tax rows
+	// above. Same vatBreakdown the issued invoice uses, so the two agree.
+	if vatRegistered {
+		for _, b := range vatBreakdown(detail) {
+			doc.Totals = append(doc.Totals, print.KV{
+				Label:  fmt.Sprintf("Total incl. VAT %.2f%%", float64(b.RateBP)/100),
+				Amount: money(b.Gross),
+			})
+		}
+	}
 	for _, p := range detail.Payments {
 		doc.Payments = append(doc.Payments, print.KV{Label: strings.ToUpper(p.Method[:1]) + p.Method[1:], Amount: money(p.Amount)})
 		if p.ChangeGiven > 0 {
@@ -782,4 +815,37 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "journal.reprinted"))
 	})
+}
+
+// headerHasLine reports whether the receipt header already prints line
+// (trimmed, case-insensitive), so a seller address configured both as a
+// receipt header line and for invoicing is not printed twice (ut-docs#3337).
+func headerHasLine(header []string, line string) bool {
+	line = strings.TrimSpace(line)
+	for _, h := range header {
+		if strings.EqualFold(strings.TrimSpace(h), line) {
+			return true
+		}
+	}
+	return false
+}
+
+// headerContains reports whether any receipt header line already contains
+// substr (trimmed, case-insensitive substring — not a whole-line match like
+// headerHasLine, since a shop's own header line is free text, e.g.
+// "VAT No: GB123456789" or "VAT GB123456789"): a VAT-registered shop that
+// already typed its VAT number into a header line (the only way to print it
+// before ut-docs#3337) must not get it twice.
+func headerContains(header []string, substr string) bool {
+	substr = strings.TrimSpace(substr)
+	if substr == "" {
+		return false
+	}
+	substr = strings.ToLower(substr)
+	for _, h := range header {
+		if strings.Contains(strings.ToLower(h), substr) {
+			return true
+		}
+	}
+	return false
 }
