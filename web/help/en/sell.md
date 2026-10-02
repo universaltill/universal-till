@@ -165,7 +165,17 @@ If your shop has a TSE configured, a small chip near the bottom of the left-hand
 
 ### When a sale can't be signed at all
 
-Separately from an outage, a signing plugin can say that one specific sale can't be signed as it stands — for example a tip or a discount that its signing service can't reconcile into a valid receipt record. This is different from the service being unreachable: it's a property of that one sale. The sale still completes normally, and the same things happen as with an outage — it's flagged in the audit trail and a warning appears in the till's problems list — but the customer receipt notice reads differently: it says the sale could not be signed as presented, not that TSE signing was unavailable, so it never suggests a connectivity problem that didn't happen. As with an outage, this is permanent — the till does not attempt to sign the sale again later.
+Separately from an outage, a signing plugin can say that one specific sale can't be signed as it stands — for example a tip, a discount or a VAT rate that its signing service can't reconcile into a valid receipt record. This is different from the service being unreachable: it's a property of that one sale, so the till does not complete it. Instead:
+
+- the sale is refused at the till — no sale is recorded, nothing is flagged as unsigned, and no receipt is printed;
+- any card payment already taken for it is reversed automatically (if a reversal can't be confirmed, a warning naming that payment appears in the till's problems list — check it with your card provider);
+- the cashier sees a message saying the sale can't be signed as presented, and the basket stays exactly as it was, so you can change the tip, discount or rate and take payment again, or void the sale.
+
+On the self-order kiosk, the customer is asked to see the counter instead.
+
+For German shops the till also refuses to save a tax code whose rate the signing service doesn't recognise (19%, 7%, 10.7%, 5.5% or 0%), so a wrong rate is caught when it's set up rather than at the till.
+
+Refunds are the one exception: a refund the signing plugin can't sign still completes and is recorded the same way as an outage, except that its receipt notice says it could not be signed as presented, not that TSE signing was unavailable.
 
 ### The TSE signature block on receipts
 

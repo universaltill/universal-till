@@ -299,17 +299,23 @@ const (
 	fiscalSignFailedEntry
 	// fiscalSignCannotSign (ut-docs#835): the plugin explicitly declared
 	// this SALE cannot be signed as presented — deterministic, a property
-	// of the sale's own data, not of the backend's reachability. It is
-	// journaled and worded differently (declareUnsignedFiscalSale,
-	// saleFiscalSigningGapKind): never as a connectivity outage, since it
-	// wasn't one.
+	// of the sale's own data, not of the backend's reachability. On the
+	// sale tender path (completeTender) it is REFUSED since ADR-0136
+	// (ut-docs#3309): captured legs reversed, no sale row, no journal
+	// entry. The refund/return completion paths, which ADR-0136 does not
+	// change, still proceed-and-declare it — under its own audit action and
+	// wording (declareUnsignedFiscalSale, saleFiscalSigningGapKind), never
+	// as a connectivity outage, since it wasn't one.
 	fiscalSignCannotSign
 )
 
-// isFailure reports whether the outcome is a signing failure of any kind —
-// the tender path treats all three identically (proceed-and-declare,
-// permanently since ADR-0056/ut-docs#839); the distinct kinds record why
-// signing failed at tender time, useful for future reconciliation work.
+// isFailure reports whether the outcome is a signing failure of any kind.
+// The refund/return completion paths treat all three identically
+// (proceed-and-declare, permanently since ADR-0056/ut-docs#839). The sale
+// tender path intercepts fiscalSignCannotSign BEFORE this is consulted
+// (ADR-0136: refused, not declared), so there only the two backend/entry
+// kinds reach proceed-and-declare. The distinct kinds record why signing
+// failed, useful for reconciliation work (ADR-0077).
 func (o fiscalSignOutcome) isFailure() bool {
 	return o == fiscalSignFailedBackend || o == fiscalSignFailedEntry || o == fiscalSignCannotSign
 }
@@ -859,7 +865,9 @@ func declareUnsignedFiscalSale(ctx context.Context, repo *data.POSRepo, saleID, 
 
 	// (a) Journal marker. Same InsertAudit shape as the unsigned_override
 	// block in completeTender: best-effort after the fact, logged never
-	// fatal. A cannot-sign refusal gets its OWN action name (ut-docs#835),
+	// fatal. A cannot-sign refusal — reachable here only from the refund/
+	// return paths since ADR-0136 made completeTender refuse it outright
+	// — gets its OWN action name (ut-docs#835),
 	// not the shared "unsigned_fiscal_signing" one — saleFiscalSigningGapKind
 	// and both receipt render paths key off this to show wording that never
 	// implies a connectivity outage for a sale that was never going to sign.

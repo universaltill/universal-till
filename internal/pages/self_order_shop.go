@@ -663,6 +663,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			var deviceRequired *fiscalDeviceRequiredError
 			var fiscalNC *fiscalNeverConfiguredError
 			var fiscalTF *fiscalTSEFailingError
+			var cannotSign *fiscalCannotSignError
 			status := http.StatusBadRequest
 			msgKey := "selforder.checkout.failed"
 			switch {
@@ -686,6 +687,14 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 				// anything, so the message points them to the counter.
 				status = http.StatusConflict
 				msgKey = "selforder.checkout.fiscal_blocked"
+			case errors.As(err, &cannotSign):
+				// ADR-0136 (ut-docs#3309): the signer refused this order's
+				// own data (a tip, discount or rate it can't reconcile) and
+				// any captured card leg was already reversed — the anonymous
+				// customer can't fix that themselves, so the copy points
+				// them to the counter, like the hard gate above.
+				status = http.StatusConflict
+				msgKey = "selforder.checkout.fiscal_cannot_sign"
 			}
 			w.WriteHeader(status)
 			renderKioskPaymentPicker(w, r, eng, methods, msgKey)
