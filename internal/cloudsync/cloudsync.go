@@ -192,6 +192,15 @@ type Hooks struct {
 	DeleteCategory      func(ctx context.Context, id, moveItemsTo string) (string, error)
 	SaveModifierGroup   func(ctx context.Context, p data.ModifierGroupSave) (string, error)
 	DeleteModifierGroup func(ctx context.Context, id string) (string, error)
+	// DeleteItem handles "delete_item" {id} (ut-docs#3317): the owner
+	// deleted an item in my., which offers Delete only while the cloud's
+	// copy says the item was never sold. That flag is advisory: the hook
+	// re-checks on the till's own data (never sold, not on a quick button,
+	// not in an open or parked basket) and refuses with the reason —
+	// "sold 14 times — deactivate it instead" — or deletes the item for
+	// good through the catalog cleanup's own repository rule. Main-till
+	// only; idempotent (an item already gone reports "already deleted").
+	DeleteItem func(ctx context.Context, id string) (string, error)
 	// SetCategoryOrder handles "set_category_order" (contract §3.8,
 	// ut-docs#3075): the owner's category order from my., as the full
 	// ordered id list. Main-till only like the five above. The hook
@@ -861,6 +870,15 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			move = *target
 		}
 		msg, err = hooks.DeleteCategory(ctx, id, move)
+	case "delete_item":
+		if hooks.DeleteItem == nil {
+			return "failed", "delete_item is not supported on this till"
+		}
+		id := payload(d.Payload).id()
+		if id == "" {
+			return "failed", "missing id"
+		}
+		msg, err = hooks.DeleteItem(ctx, id)
 	case "save_modifier_group":
 		if hooks.SaveModifierGroup == nil {
 			return "failed", "save_modifier_group is not supported on this till"
@@ -1135,6 +1153,12 @@ type snapshotItemRow struct {
 	// item, "" for none or a built-in icon (contract §3.9 rule 5), so my.
 	// can tell an image it set from one taken on the till.
 	ImageSHA256 string `json:"image_sha256"`
+	// EverSold (ut-docs#3317) is true once the item or one of its variants
+	// has a sale line here (live or archived). my. offers Delete only while
+	// it is false; the cloud keeps it true once any till reported it.
+	// Omitted when the till could not work it out, which the cloud reads as
+	// "no news". Advisory only: delete_item re-checks on the till.
+	EverSold *bool `json:"ever_sold,omitempty"`
 }
 
 // pushSnapshotIfChanged uploads the catalog + on-hand stock when it differs
@@ -1175,6 +1199,13 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 		logging.L().Warnf("cloudsync: snapshot item thumbnails: %v", err)
 		thumbs = nil
 	}
+	// ever_sold (ut-docs#3317). A read error only costs the field, as for
+	// photos above: the cloud keeps what it had.
+	sold, err := data.NewPOSRepo(db).EverSoldItemIDs(ctx)
+	if err != nil {
+		logging.L().Warnf("cloudsync: snapshot ever-sold items: %v", err)
+		sold = nil
+	}
 	rows := make([]snapshotItemRow, 0, len(items))
 	for _, it := range items {
 		row := snapshotItemRow{
@@ -1188,6 +1219,10 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 		}
 		if len(it.Barcodes) > 0 {
 			row.Barcode = it.Barcodes[0]
+		}
+		if sold != nil {
+			v := sold[it.ID]
+			row.EverSold = &v
 		}
 		if !it.StockUntracked {
 			q := qty[it.ID]

@@ -971,6 +971,9 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		DeleteCategory: func(ctx context.Context, id, moveItemsTo string) (string, error) {
 			return cloudDeleteCategory(ctx, d, id, moveItemsTo)
 		},
+		DeleteItem: func(ctx context.Context, id string) (string, error) {
+			return cloudDeleteItem(ctx, d, id)
+		},
 		SaveModifierGroup: func(ctx context.Context, p data.ModifierGroupSave) (string, error) {
 			return cloudSaveModifierGroup(ctx, d, p)
 		},

@@ -7,6 +7,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pos"
 )
 
 // Manage-shop catalog contract §3 (ut-docs
@@ -333,5 +334,126 @@ func TestCloudSetCategoryOrder_Refusals(t *testing.T) {
 	setReplica(t, dp)
 	if _, err := buildCloudHooks(dp, nil).SetCategoryOrder(ctx, []string{"cat-a", "cat-b"}); err == nil {
 		t.Fatal("set_category_order must be refused on a replica")
+	}
+}
+
+// ut-docs#3317: delete_item. my. offers Delete only while the cloud's copy
+// says "never sold", but that copy can be stale: the till decides from its
+// own data, whatever the cloud believed when it queued the directive.
+
+func seedDeleteItem(t *testing.T, dp *common.Deps, id string) {
+	t.Helper()
+	if _, err := dp.Db.Exec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES (?, ?, 'Oat latte', 390, 1)`, id, "SKU-"+id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func itemRowExists(t *testing.T, dp *common.Deps, id string) bool {
+	t.Helper()
+	ok, err := data.NewCatalogRepo(dp.Db).ItemExists(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ok
+}
+
+func TestCloudDeleteItem_DeletesNeverSoldItemAuditsAndReplays(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	hooks := buildCloudHooks(dp, nil)
+	if hooks.DeleteItem == nil {
+		t.Fatal("DeleteItem hook not wired")
+	}
+	seedDeleteItem(t, dp, "del-new")
+	msg, err := hooks.DeleteItem(t.Context(), "del-new")
+	if err != nil || msg != "deleted item Oat latte" {
+		t.Fatalf("delete: %q %v", msg, err)
+	}
+	if itemRowExists(t, dp, "del-new") {
+		t.Fatal("item still on the till")
+	}
+	if n := cloudAuditCount(t, dp, "cloud_item_deleted", "del-new"); n != 1 {
+		t.Fatalf("audit rows = %d, want 1", n)
+	}
+	// A lost result post makes the till apply it again: applied, no
+	// second audit row.
+	if msg, err := hooks.DeleteItem(t.Context(), "del-new"); err != nil || msg != "already deleted" {
+		t.Fatalf("replay: %q %v", msg, err)
+	}
+	if n := cloudAuditCount(t, dp, "cloud_item_deleted", "del-new"); n != 1 {
+		t.Fatalf("audit rows after replay = %d, want 1", n)
+	}
+}
+
+func TestCloudDeleteItem_RefusesSoldItemWhateverTheCloudBelieved(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	seedDeleteItem(t, dp, "del-sold")
+	// The sale happened after my. last saw the catalog: the directive the
+	// owner queued still carries nothing but the id.
+	for _, q := range []string{
+		`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES ('s-del','R-del','completed','sale','GBP',390,0,0,390,datetime('now'))`,
+		`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax) VALUES ('l-del','s-del',1,'del-sold','Oat latte',1,390,0,0,0,390,390)`,
+	} {
+		if _, err := dp.Db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := buildCloudHooks(dp, nil).DeleteItem(t.Context(), "del-sold")
+	if err == nil || err.Error() != "sold once — deactivate it instead" {
+		t.Fatalf("sold: %v", err)
+	}
+	if !itemRowExists(t, dp, "del-sold") {
+		t.Fatal("a sold item was deleted")
+	}
+	if n := cloudAuditCount(t, dp, "cloud_item_deleted", "del-sold"); n != 0 {
+		t.Fatalf("a refused delete was audited as done (%d rows)", n)
+	}
+}
+
+func TestCloudDeleteItem_RefusesQuickButton(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	seedDeleteItem(t, dp, "del-qb")
+	if _, err := dp.Db.Exec(`INSERT INTO shortcut_buttons (barcode, item_id, label, sort_order) VALUES ('QB-del','del-qb','',0)`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := buildCloudHooks(dp, nil).DeleteItem(t.Context(), "del-qb")
+	if err == nil || err.Error() != "it is on a quick button — deactivate it instead" {
+		t.Fatalf("quick button: %v", err)
+	}
+	if !itemRowExists(t, dp, "del-qb") {
+		t.Fatal("an item on a quick button was deleted")
+	}
+}
+
+func TestCloudDeleteItem_RefusesWhileInALiveBasket(t *testing.T) {
+	for _, kiosk := range []bool{false, true} {
+		dp := newCloudSyncTestDeps(t)
+		seedDeleteItem(t, dp, "del-basket")
+		e := pos.NewServiceWithResolver(pos.Config{}, nil)
+		e.AddLineWithModifiers(pos.BasketLine{SKU: "SKU-del-basket", Name: "Oat latte", ItemID: "del-basket", PriceCents: 390}, 1, nil)
+		if kiosk {
+			dp.KioskEngine = e
+		} else {
+			dp.Engine = e
+		}
+		_, err := buildCloudHooks(dp, nil).DeleteItem(t.Context(), "del-basket")
+		if err == nil || err.Error() != "it is in an open basket — deactivate it instead" {
+			t.Fatalf("kiosk=%v: %v", kiosk, err)
+		}
+		if !itemRowExists(t, dp, "del-basket") {
+			t.Fatalf("kiosk=%v: an item in a live basket was deleted", kiosk)
+		}
+	}
+}
+
+func TestCloudDeleteItem_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	seedDeleteItem(t, dp, "del-rep")
+	setReplica(t, dp)
+	_, err := buildCloudHooks(dp, nil).DeleteItem(t.Context(), "del-rep")
+	if err == nil || !strings.HasPrefix(err.Error(), "this data is primary-wins synced") {
+		t.Fatalf("replica: %v", err)
+	}
+	if !itemRowExists(t, dp, "del-rep") {
+		t.Fatal("a replica deleted the item")
 	}
 }

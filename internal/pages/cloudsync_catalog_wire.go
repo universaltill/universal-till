@@ -12,6 +12,7 @@ import (
 	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pos"
 )
 
 // The till-side hooks behind the manage-shop catalog directives (ut-docs
@@ -190,6 +191,62 @@ func cloudDeleteCategory(ctx context.Context, d *common.Deps, id, moveItemsTo st
 		"moved_items": res.MovedItems, "moved_children": res.MovedChildren, "move_items_to": moveItemsTo,
 	})
 	return fmt.Sprintf("deleted category %s (%d items moved, %d subcategories moved up)", res.Name, res.MovedItems, res.MovedChildren), nil
+}
+
+// cloudDeleteItem is the delete_item hook (ut-docs#3317): the till's own
+// data decides, never the cloud's "never sold" flag that made my. offer
+// Delete. The live cashier and kiosk baskets are memory-only, so they are
+// checked here first (the catalog cleanup's own guard shape, one apply
+// wide); the repository then re-checks sales, stock history, quick buttons
+// and parked sales and deletes in one transaction. A refusal is the
+// directive's failure text ("sold 14 times — deactivate it instead").
+func cloudDeleteItem(ctx context.Context, d *common.Deps, id string) (string, error) {
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	inBasket, err := itemInLiveBasket(ctx, d, id)
+	if err != nil {
+		return "", err
+	}
+	if inBasket {
+		return "", &data.ItemInUseError{Reason: data.ItemUseOpenBasket}
+	}
+	res, err := data.NewPOSRepo(d.Db).DeleteUnusedItem(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if res.AlreadyDeleted {
+		return "already deleted", nil
+	}
+	auditCloudDirective(ctx, d, "item", id, "cloud_item_deleted", map[string]any{"name": res.Name})
+	return "deleted item " + res.Name, nil
+}
+
+// itemInLiveBasket reports whether the cashier or the self-order kiosk
+// basket holds a line for itemID or one of its variants.
+func itemInLiveBasket(ctx context.Context, d *common.Deps, itemID string) (bool, error) {
+	repo := data.NewCatalogRepo(d.Db)
+	for _, e := range []*pos.Service{d.Engine, d.KioskEngine} {
+		if e == nil {
+			continue
+		}
+		for _, l := range e.Lines() {
+			if l.ItemID == itemID {
+				return true, nil
+			}
+			if l.VariantID == "" {
+				continue
+			}
+			parent, ok, err := repo.ItemIDForVariant(ctx, l.VariantID)
+			if err != nil {
+				return false, err
+			}
+			if ok && parent == itemID {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func cloudSaveModifierGroup(ctx context.Context, d *common.Deps, p data.ModifierGroupSave) (string, error) {

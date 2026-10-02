@@ -24,6 +24,7 @@ var mainTillOnlyTypes = map[string]bool{
 	"save_item":             true,
 	"save_category":         true,
 	"delete_category":       true,
+	"delete_item":           true, // ut-docs#3317
 	"save_modifier_group":   true,
 	"delete_modifier_group": true,
 	"set_category_order":    true,
@@ -48,7 +49,7 @@ var mainTillOnlyTypes = map[string]bool{
 // snapshot reports: after one of them applies, the same tick pushes the
 // snapshot again (its hash gate keeps an unchanged push free).
 var catalogTypes = map[string]bool{
-	"save_item": true, "save_category": true, "delete_category": true,
+	"save_item": true, "save_category": true, "delete_category": true, "delete_item": true,
 	"save_modifier_group": true, "delete_modifier_group": true, "set_category_order": true,
 	"set_catalog_image": true, "set_price": true, "rename_item": true, "deactivate_item": true, "create_item": true,
 	"add_barcode": true, "update_item_details": true, "adjust_stock": true,
