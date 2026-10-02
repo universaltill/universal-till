@@ -776,6 +776,7 @@
           resultName: "{{ T "tills.discovery.result_name" }}",
           resultAddress: "{{ T "tills.discovery.result_address" }}",
           error: "{{ T "tills.discovery.error" }}",
+          denied: "{{ T "tills.discovery.denied" }}",
           requestBtn: "{{ T "tills.pairing.request_btn" }}"
         };
         function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
@@ -803,6 +804,8 @@
             .then(function (r) { return r.json(); })
             .then(function (j) {
               btn.disabled = false;
+              // ut-docs#3218: iOS refused the Local Network permission.
+              if (j.error && j.error.code === 'local_network_denied') { msg.textContent = i18n.denied; return; }
               var list = (j.data && j.data.primaries) || [];
               if (!list.length) { msg.textContent = i18n.noneFound; return; }
               msg.textContent = '';

@@ -2782,6 +2782,7 @@
   "tills.tls.pinned": "TLS sabitlendi",
   "tills.tls.not_pinned": "TLS sabitlenmedi",
   "tills.link_help": "Bağlantı, sürüm ve kuyruk her 10 saniyede kendiliğinden yenilenir.",
+  "tills.discovery.denied": "Universal Till bu cihazda yerel ağı kullanamıyor. Az önce sorulduysa izin verin ve yeniden arayın; aksi halde cihazın Ayarlar bölümünde Universal Till için Yerel Ağ'ı açın veya bunun yerine bir eşleştirme kodu girin.",
   "tills.discovery.error": "Bu ağ taranamadı.",
   "tills.discovery.find_button": "Bu ağda bir birincil kasa bul",
   "tills.discovery.help": "Bu ağı, kendini zaten yayınlayan bir birincil kasa için tarayın — eşleştirme kodunu elle girmenize gerek kalmaz.",

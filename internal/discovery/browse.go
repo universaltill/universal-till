@@ -149,6 +149,12 @@ func scan[T any](ctx context.Context, timeout time.Duration, serviceName string,
 		return nil, err
 	}
 
+	// A platform shell's own discovery API replaces the raw sockets below
+	// entirely (iOS — see NativeBridge, ut-docs#3218).
+	if b := currentNativeBridge(); b != nil {
+		return nativeScan(ctx, b, timeout, serviceName, parse)
+	}
+
 	if !ipv6Supported() {
 		v4Candidates, v4Err := scanOnce(ctx, timeout, serviceName, true, parse)
 		if v4Err == nil || len(v4Candidates) > 0 {

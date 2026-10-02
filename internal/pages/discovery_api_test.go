@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -152,6 +153,40 @@ func TestDiscoverPrimariesAPI_SurfacesBrowseErrorAs500(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500 when Browse fails, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestDiscoverPrimariesAPI_LocalNetworkDeniedIsItsOwnError — ut-docs#3218:
+// when iOS refuses the Local Network permission the page must be able to tell
+// the operator how to fix it, so the handler answers with the
+// local_network_denied code (in the standard error envelope) rather than the
+// generic plain-text 500, on both the manager and the first-boot route.
+func TestDiscoverPrimariesAPI_LocalNetworkDeniedIsItsOwnError(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newDiscoveryAPITestDeps(t)
+	mux := http.NewServeMux()
+	registerDiscoveryAPI(mux, dp)
+	stubBrowse(t, nil, fmt.Errorf("scan: %w", discovery.ErrLocalNetworkDenied))
+
+	for _, path := range []string{"/api/sync/discover-primaries", "/api/setup/discover-primaries"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s: status = %d, want 403: %s", path, rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Data  any `json:"data"`
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s: body is not JSON: %v: %s", path, err, rec.Body.String())
+		}
+		if body.Error.Code != "local_network_denied" || body.Data != nil {
+			t.Fatalf("%s: body = %s, want data null and error.code local_network_denied", path, rec.Body.String())
+		}
 	}
 }
 

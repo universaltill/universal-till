@@ -109,16 +109,21 @@ ut-docs#3052). It never submits for App Store review.
 The server binds every interface so other tills can pair with this one
 (ADR-0033); iOS asks the operator once for **local network** access.
 
+LAN discovery (finding a main till, being found as one, network printers)
+goes through Apple's Bonjour APIs, not Go's own mDNS sockets: raw multicast
+would need Apple's managed `com.apple.developer.networking.multicast`
+entitlement. `BonjourBridge.swift` implements the Go side's
+`mobile.DiscoveryBridge` — `NWBrowser` to browse (a UDP `NWConnection`
+resolves each result, sending nothing), `DNSServiceRegister` to advertise —
+and `TillServer.start` registers it before the server starts (ut-docs#3218).
+A refused Local Network permission shows its own message on the Tills page
+and the setup wizard, pointing at Settings and at pairing by code.
+
 ## What doesn't port (and what isn't built yet)
 
 - **`runtime:"go"` process plugins don't run** — iOS never lets an app
   spawn another process (same limit as Android, ADR-0023 §2). WASM plugins
   run unchanged (wazero's interpreter).
-- **mDNS discovery needs Apple's multicast entitlement**
-  (`com.apple.developer.networking.multicast`), which is requested per app
-  from Apple — until then an iOS till neither advertises nor finds other
-  tills; pairing by code / IP address works regardless. Tracked in
-  ut-docs#3069.
 - **Android-only bridges have no iOS counterpart yet** — file downloads
   (exports), the bug-report screenshot, the self-order kiosk lock (Guided
   Access) and a BLE receipt-printer bridge: ut-docs#3071.
