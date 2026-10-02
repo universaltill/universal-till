@@ -334,9 +334,13 @@ jobs:
         # plain, so don't run either a second time here. Also excludes
         # internal/pages itself (own step below, ut-docs#1992) for the same
         # margin reason as internal/plugins — see that step's comment — and
-        # internal/enroll (own -race step below, ut-docs#3021).
-        run: go test $(go list ./... | grep -vE '/internal/plugins$|/internal/plugins/(oauth|marketplace)$|/internal/pages$|/internal/enroll$')
-      - name: Test internal/enroll under -race (ut-docs#3021)
+        # internal/enroll, internal/logging and internal/netreach (own -race
+        # step below, ut-docs#3021, ut-docs#3410).
+        run: go test $(go list ./... | grep -vE '/internal/plugins$|/internal/plugins/(oauth|marketplace)$|/internal/pages$|/internal/(enroll|logging|netreach)$')
+      - name: Test internal/enroll, internal/logging, internal/netreach under -race (ut-docs#3021, ut-docs#3410)
+        # internal/logging and internal/netreach join this step (ut-docs#3410):
+        # the recover path reaches the global logger from every background
+        # goroutine, and an unsynchronised L() init race only shows under -race.
         # internal/enroll keeps its identity state (storeIDExplicit,
         # tokenExplicit, cur) in package globals shared with background
         # goroutines (the registration retry loop, the replica vouch loop) —
@@ -348,7 +352,7 @@ jobs:
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
-        run: go test -race -count=1 ./internal/enroll/
+        run: go test -race -count=1 ./internal/enroll/ ./internal/logging/ ./internal/netreach/
       - name: Test (internal/plugins/oauth and /marketplace — ut-docs#1630)
         # Same gap #1626 fixed for internal/plugins itself: the main Test
         # step above runs plain (no -v), so a t.Skip in these subpackages

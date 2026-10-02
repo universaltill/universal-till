@@ -2724,7 +2724,7 @@ type configReportStation struct {
 func TestRemoteConfigReport_EmptyShopGivesEmptyArrays(t *testing.T) {
 	dp := newCloudSyncTestDeps(t)
 	_, decoded := remoteConfigReportJSON(t, dp)
-	for _, key := range []string{"categories", "modifier_groups", "kitchen_stations"} {
+	for _, key := range []string{"categories", "modifier_groups", "kitchen_stations", "option_sets"} {
 		raw, ok := decoded[key]
 		if !ok {
 			t.Fatalf("DeviceExtra key %q missing", key)
@@ -2937,6 +2937,108 @@ func TestRemoteModifierGroupsReport_CapsItemsAndReportsTotal(t *testing.T) {
 	}
 }
 
+// ut-docs#3319: DeviceExtra's `option_sets` — every set once, active or
+// not, in ListOptionSets' creation order, with its values in sort order and
+// the items it is applied to (capped; items_total is the real count) — the
+// cross-reference my. needs to disable delete and name the items without a
+// second round trip.
+type configReportOptionSet struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Active bool   `json:"active"`
+	Values []struct {
+		ID        string `json:"id"`
+		Value     string `json:"value"`
+		SortOrder int    `json:"sort_order"`
+	} `json:"values"`
+	Items []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"items"`
+	ItemsTotal int `json:"items_total"`
+}
+
+func TestRemoteOptionSetsReport_ShapeValuesAndItems(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	repo := data.NewOptionSetRepo(dp.Db)
+	sizeVals := []data.OptionSetValueInput{{ID: "v-l", Value: "L"}, {ID: "v-s", Value: "S"}}
+	if _, err := repo.SaveOptionSet(ctx, data.OptionSetSave{ID: "set-size", Create: true, Name: sp("Size"), Values: &sizeVals}); err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	if _, err := repo.SaveOptionSet(ctx, data.OptionSetSave{ID: "set-colour", Create: true, Name: sp("Colour"), Active: &off}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ApplyOptionSetsToItem(ctx, "itm1", []string{"set-size"}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, decoded := remoteConfigReportJSON(t, dp)
+	var sets []configReportOptionSet
+	decodeReport(t, decoded, "option_sets", &sets)
+	if len(sets) != 2 || sets[0].ID != "set-size" || sets[1].ID != "set-colour" {
+		t.Fatalf("option_sets (creation order) = %+v", sets)
+	}
+	var objs []json.RawMessage
+	decodeReport(t, decoded, "option_sets", &objs)
+	for i, o := range objs {
+		assertExactKeys(t, fmt.Sprintf("option_sets[%d]", i), o, "id", "name", "active", "values", "items", "items_total")
+	}
+	var sizeObj struct {
+		Values []json.RawMessage `json:"values"`
+		Items  []json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(objs[0], &sizeObj); err != nil {
+		t.Fatal(err)
+	}
+	assertExactKeys(t, "option_sets[0].values[0]", sizeObj.Values[0], "id", "value", "sort_order")
+	assertExactKeys(t, "option_sets[0].items[0]", sizeObj.Items[0], "id", "name")
+
+	size := sets[0]
+	if size.Name != "Size" || !size.Active || len(size.Values) != 2 ||
+		size.Values[0].ID != "v-l" || size.Values[0].Value != "L" || size.Values[0].SortOrder != 0 ||
+		size.Values[1].ID != "v-s" || size.Values[1].SortOrder != 1 {
+		t.Fatalf("Size = %+v", size)
+	}
+	if len(size.Items) != 1 || size.Items[0].ID != "itm1" || size.Items[0].Name != "Apple" || size.ItemsTotal != 1 {
+		t.Fatalf("Size.items = %+v total=%d", size.Items, size.ItemsTotal)
+	}
+	colour := sets[1]
+	if colour.Name != "Colour" || colour.Active || colour.ItemsTotal != 0 {
+		t.Fatalf("Colour = %+v", colour)
+	}
+	if !strings.Contains(string(objs[1]), `"values":[]`) || !strings.Contains(string(objs[1]), `"items":[]`) {
+		t.Fatalf("an empty, unused set must report [] lists: %s", objs[1])
+	}
+}
+
+func TestRemoteOptionSetsReport_CapsItemsAndReportsTotal(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	cat := data.NewCatalogRepo(dp.Db)
+	repo := data.NewOptionSetRepo(dp.Db)
+	if _, err := repo.SaveOptionSet(ctx, data.OptionSetSave{ID: "set-big", Create: true, Name: sp("Big")}); err != nil {
+		t.Fatal(err)
+	}
+	total := remoteReportMaxGroupItems + 5
+	for i := 0; i < total; i++ {
+		id := fmt.Sprintf("itm_os_%04d", i)
+		if _, err := cat.CreateItem(ctx, catalogtypes.ItemInput{ID: id, SKU: id, Name: "Cap " + id, BasePrice: 100, IsActive: true}); err != nil {
+			t.Fatalf("create item %s: %v", id, err)
+		}
+		if err := repo.ApplyOptionSetsToItem(ctx, id, []string{"set-big"}); err != nil {
+			t.Fatalf("apply %s: %v", id, err)
+		}
+	}
+	_, decoded := remoteConfigReportJSON(t, dp)
+	var sets []configReportOptionSet
+	decodeReport(t, decoded, "option_sets", &sets)
+	if len(sets) != 1 || len(sets[0].Items) != remoteReportMaxGroupItems || sets[0].ItemsTotal != total {
+		t.Fatalf("items reported = %d (want cap %d), items_total = %d (want %d)", len(sets[0].Items), remoteReportMaxGroupItems, sets[0].ItemsTotal, total)
+	}
+}
+
 // The heartbeat carries the till's ISO 4217 currency (ut-docs#2472) so the
 // cloud panel can format the reported modifier price deltas with the right
 // symbol and scale instead of a bare number.
@@ -2967,7 +3069,7 @@ func TestRemoteConfigReport_ReadErrorOmitsKeys(t *testing.T) {
 	hooks := buildCloudHooks(dp, nil)
 	dp.Db.Close()
 	extra := hooks.DeviceExtra(t.Context())
-	for _, key := range []string{"categories", "modifier_groups", "kitchen_stations"} {
+	for _, key := range []string{"categories", "modifier_groups", "kitchen_stations", "option_sets"} {
 		if v, ok := extra[key]; ok {
 			t.Fatalf("%s present (%v) after a read error; must be omitted so the cloud keeps its copy", key, v)
 		}
@@ -3013,7 +3115,7 @@ func TestRemoteConfigReport_OverBudgetOmits(t *testing.T) {
 		t.Fatalf("create category: %v", err)
 	}
 	extra := buildCloudHooks(dp, nil).DeviceExtra(t.Context())
-	for _, key := range []string{"categories", "modifier_groups", "kitchen_stations"} {
+	for _, key := range []string{"categories", "modifier_groups", "kitchen_stations", "option_sets"} {
 		if _, ok := extra[key]; ok {
 			t.Fatalf("%s sent although the config exceeds the byte budget", key)
 		}

@@ -22,6 +22,13 @@ Jede erzeugte Variante ist eine ganz normale Variante: Sie hat eine eigene SKU, 
 4. Drücken Sie **Varianten erzeugen**. Für jede Kombination wird eine Variante angelegt (drei bei Größe allein; Größe × Farbe mit drei Farben ergibt neun), benannt wie *S* oder *S / Rot* (die Werte werden in der Reihenfolge verbunden, in der die Sets auf dieser Seite aufgeführt sind — der Reihenfolge, in der Sie sie angelegt haben), jeweils mit einer erzeugten SKU und dem aktuellen Preis des Artikels. Danach können Sie Name, SKU oder Preis im Raster wie gewohnt bearbeiten, Barcodes anhängen und den Bestand pflegen.
 5. Später einen Wert ergänzt — ein *XL*? Drücken Sie bei jedem Artikel, der das Set verwendet, erneut **Varianten erzeugen**. Es werden nur die fehlenden Kombinationen angelegt; vorhandene Varianten werden nie dupliziert, umbenannt oder entfernt, sodass ein erneuter Durchlauf immer sicher ist.
 
+## Ein Set ändern oder löschen
+
+- Um ein Set umzubenennen, ändern Sie den Namen oben auf seiner Karte und drücken **Umbenennen**. Zwei Sets können nicht denselben Namen haben.
+- Um einen Wert zu ändern, tippen Sie auf seinen Text auf der Karte, geben den neuen ein und drücken die Eingabetaste (oder tippen woanders hin). Mit den Schaltflächen **↑** und **↓** neben einem Wert verschieben Sie ihn in der Liste nach vorn oder hinten, mit **×** entfernen Sie ihn. Bereits erzeugte Varianten behalten ihre Namen — bearbeiten Sie sie im Raster des Artikels, wenn sie passen sollen.
+- Drücken Sie **Deaktivieren**, damit ein Set im Reiter **Varianten** der Artikel nicht mehr angeboten wird, ohne es zu löschen; seine Karte zeigt dann *Inaktiv*. Mit **Aktivieren** holen Sie es zurück.
+- Ein Set lässt sich nur löschen, solange kein Artikel es verwendet. Bis dahin listet seine Karte diese Artikel unter **Verwendet von** auf (jeder Name öffnet den Artikel), und **Optionsset löschen** ist nicht verfügbar: Entfernen Sie zuerst den Haken beim Set im Reiter **Varianten** jedes Artikels und löschen Sie es dann.
+
 ## Gut zu wissen
 
 - Optionssets sind für eine **Palette echter Produkte** gedacht (Größen, Farben, Packungsgrößen) — jede Kombination ist eine eigene Bestandsposition. Für eine Wahl an der Kasse, die nicht ändert, was Sie auf Lager haben („extra Shot“, „ohne Zwiebeln“), verwenden Sie stattdessen die **Anpassungsoptionen** des Artikels.

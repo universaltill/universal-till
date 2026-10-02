@@ -21,6 +21,8 @@ func TestExportCSVRoundTripsThroughImporter(t *testing.T) {
 			PriceMinor: 120, Category: "Drinks", Description: "Fizzy", Stock: 24},
 		{Name: "Bananas", SKU: "SKU-2", PriceMinor: 95, Category: "Produce",
 			IsWeighed: true, Stock: 12.5},
+		{Name: "Whisky", SKU: "SKU-3", PriceMinor: 1500, Category: "Spirits",
+			AgeRestricted: true, Stock: 6},
 	}
 
 	var b strings.Builder
@@ -30,23 +32,27 @@ func TestExportCSVRoundTripsThroughImporter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse exported CSV: %v", err)
 	}
-	if len(res.Items) != 2 {
-		t.Fatalf("expected 2 items back, got %d", len(res.Items))
+	if len(res.Items) != 3 {
+		t.Fatalf("expected 3 items back, got %d", len(res.Items))
 	}
 	cola := res.Items[0]
 	if cola.Name != "Cola Can 330ml" || cola.SKU != "SKU-1" ||
 		cola.Barcode != "5000112637922" || cola.PriceMinor != 120 ||
-		cola.Category != "Drinks" || cola.Description != "Fizzy" || cola.IsWeighed {
+		cola.Category != "Drinks" || cola.Description != "Fizzy" || cola.IsWeighed ||
+		cola.AgeRestricted {
 		t.Fatalf("cola did not round-trip: %+v", cola)
 	}
-	if !res.Items[1].IsWeighed || res.Items[1].PriceMinor != 95 {
+	if !res.Items[1].IsWeighed || res.Items[1].PriceMinor != 95 || res.Items[1].AgeRestricted {
 		t.Fatalf("weighed item did not round-trip: %+v", res.Items[1])
+	}
+	if !res.Items[2].AgeRestricted || res.Items[2].PriceMinor != 1500 {
+		t.Fatalf("age-restricted item did not round-trip: %+v", res.Items[2])
 	}
 	if !cola.HasStock || cola.Stock != 24 || res.Items[1].Stock != 12.5 {
 		t.Fatalf("stock did not round-trip: %+v / %+v", cola, res.Items[1])
 	}
-	if cola.Issue != "" || res.Items[1].Issue != "" {
-		t.Fatalf("round-trip rows carry issues: %q %q", cola.Issue, res.Items[1].Issue)
+	if cola.Issue != "" || res.Items[1].Issue != "" || res.Items[2].Issue != "" {
+		t.Fatalf("round-trip rows carry issues: %q %q %q", cola.Issue, res.Items[1].Issue, res.Items[2].Issue)
 	}
 }
 

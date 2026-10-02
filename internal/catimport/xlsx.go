@@ -424,14 +424,15 @@ func ParseXLSX(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbology
 		rawBarcode := get(rec, "barcode")
 		dec, barcodeMatched := normalizeBarcode(rawBarcode, enabledSymbologyIDs)
 		item := ImportItem{
-			Name:        get(rec, "name"),
-			SKU:         get(rec, "sku"),
-			Barcode:     dec.LookupKey,
-			BarcodeType: dec.SymbologyID,
-			Category:    get(rec, "category"),
-			Department:  get(rec, "department"),
-			Description: get(rec, "description"),
-			IsWeighed:   isTruthy(get(rec, "weighed")),
+			Name:          get(rec, "name"),
+			SKU:           get(rec, "sku"),
+			Barcode:       dec.LookupKey,
+			BarcodeType:   dec.SymbologyID,
+			Category:      get(rec, "category"),
+			Department:    get(rec, "department"),
+			Description:   get(rec, "description"),
+			IsWeighed:     isTruthy(get(rec, "weighed")),
+			AgeRestricted: isTruthy(get(rec, "age_restricted")),
 		}
 		if rawBarcode != "" && !barcodeMatched {
 			item.BarcodeIssue = BarcodeIssueNoSymbologyMatch

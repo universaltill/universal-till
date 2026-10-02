@@ -365,20 +365,20 @@
       "locale": "fa",
       "topic": "option-sets",
       "signature": {
-        "headings": 3,
+        "headings": 4,
         "numbered_steps": 5,
         "sub_bullets": 0,
-        "top_bullets": 4,
+        "top_bullets": 8,
         "bold_leadins": 1
       },
       "english": {
-        "headings": 3,
+        "headings": 4,
         "numbered_steps": 5,
         "sub_bullets": 0,
-        "top_bullets": 4,
+        "top_bullets": 8,
         "bold_leadins": 0
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#3319: English and every locale gained one section (heading +1, top bullets +4, no bold lead-ins) on renaming, editing, deactivating and deleting a set; the pre-existing bold_leadins gap is unchanged, just shifted (headings 3->4, top_bullets 4->8)."
     },
     {
       "locale": "fa",
@@ -669,20 +669,20 @@
       "locale": "tr",
       "topic": "option-sets",
       "signature": {
-        "headings": 3,
+        "headings": 4,
         "numbered_steps": 5,
         "sub_bullets": 0,
-        "top_bullets": 4,
+        "top_bullets": 8,
         "bold_leadins": 1
       },
       "english": {
-        "headings": 3,
+        "headings": 4,
         "numbered_steps": 5,
         "sub_bullets": 0,
-        "top_bullets": 4,
+        "top_bullets": 8,
         "bold_leadins": 0
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#3319: English and every locale gained one section (heading +1, top bullets +4, no bold lead-ins) on renaming, editing, deactivating and deleting a set; the pre-existing bold_leadins gap is unchanged, just shifted (headings 3->4, top_bullets 4->8)."
     },
     {
       "locale": "tr",

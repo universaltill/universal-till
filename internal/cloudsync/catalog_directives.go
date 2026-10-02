@@ -13,8 +13,9 @@ import (
 // reference/manage-shop-catalog-api.md §3): save_item, save_category,
 // delete_category, save_modifier_group, delete_modifier_group,
 // set_category_order (§3.8, ut-docs#3075), set_catalog_image (§3.9,
-// ut-docs#3076; decode and fetch in catalog_image.go) and set_net_quantity
-// (§3.11, ut-docs#3402; applied through the save_item hook).
+// ut-docs#3076; decode and fetch in catalog_image.go), save_option_set /
+// delete_option_set (ut-docs#3319) and set_net_quantity (§3.12,
+// ut-docs#3402; applied through the save_item hook).
 
 // mainTillOnlyTypes are skipped entirely on a satellite till: no apply and
 // no result post, so the directive stays pending for the main till
@@ -28,6 +29,8 @@ var mainTillOnlyTypes = map[string]bool{
 	"delete_item":           true, // ut-docs#3317
 	"save_modifier_group":   true,
 	"delete_modifier_group": true,
+	"save_option_set":       true,
+	"delete_option_set":     true,
 	"set_category_order":    true,
 	"set_catalog_image":     true,
 	"set_net_quantity":      true, // ut-docs#3402
@@ -53,6 +56,7 @@ var mainTillOnlyTypes = map[string]bool{
 var catalogTypes = map[string]bool{
 	"save_item": true, "save_category": true, "delete_category": true, "delete_item": true,
 	"save_modifier_group": true, "delete_modifier_group": true, "set_category_order": true,
+	"save_option_set": true, "delete_option_set": true,
 	"set_catalog_image": true, "set_net_quantity": true, "set_price": true, "rename_item": true, "deactivate_item": true, "create_item": true,
 	"add_barcode": true, "update_item_details": true, "adjust_stock": true,
 	"upsert_category": true, "update_category": true, "upsert_modifier_group": true,
@@ -186,7 +190,7 @@ func decodeSaveItem(p payload) (data.ItemPatch, string) {
 	return out, ""
 }
 
-// decodeSetNetQuantity reads a set_net_quantity payload (§3.11):
+// decodeSetNetQuantity reads a set_net_quantity payload (§3.12):
 // {id, net_quantity_value, net_quantity_unit} or {id, clear: true}. The
 // patch carries only the id and the pair (or ClearNetQuantity), so the
 // SaveItem path it rides touches nothing else on the item. Like
@@ -290,6 +294,45 @@ func decodeSaveCategory(p payload) (data.CategorySave, string) {
 	}
 	if out.StationIDs, ok = p.optIDs("station_ids"); !ok {
 		return out, "bad station_ids"
+	}
+	return out, ""
+}
+
+// decodeSaveOptionSet reads a save_option_set payload (ut-docs#3319), in
+// decodeSaveModifierGroup's style: `values`, like `options`, is a
+// JSON-encoded array string of {id, value} — the full ordered replace,
+// index = sort_order; absent = keep every value, `[]` = clear them.
+// Bounds and duplicates are the repo's job (OptionSetRepo.SaveOptionSet).
+func decodeSaveOptionSet(p payload) (data.OptionSetSave, string) {
+	out := data.OptionSetSave{ID: p.id()}
+	if out.ID == "" {
+		return out, "missing id"
+	}
+	create, ok := p.optBool("create")
+	if !ok {
+		return out, "bad create"
+	}
+	out.Create = create != nil && *create
+	if out.Name, ok = p.optStr("name"); !ok {
+		return out, "bad name"
+	}
+	if out.Active, ok = p.optBool("active"); !ok {
+		return out, "bad active"
+	}
+	if v, present := p["values"]; present {
+		raw, isStr := v.(string)
+		var decoded []struct {
+			ID    string `json:"id"`
+			Value string `json:"value"`
+		}
+		if !isStr || json.Unmarshal([]byte(raw), &decoded) != nil || decoded == nil {
+			return out, "bad values"
+		}
+		vals := make([]data.OptionSetValueInput, 0, len(decoded))
+		for _, d := range decoded {
+			vals = append(vals, data.OptionSetValueInput{ID: strings.TrimSpace(d.ID), Value: strings.TrimSpace(d.Value)})
+		}
+		out.Values = &vals
 	}
 	return out, ""
 }

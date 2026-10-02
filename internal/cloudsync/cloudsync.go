@@ -201,6 +201,13 @@ type Hooks struct {
 	// good through the catalog cleanup's own repository rule. Main-till
 	// only; idempotent (an item already gone reports "already deleted").
 	DeleteItem func(ctx context.Context, id string) (string, error)
+	// SaveOptionSet / DeleteOptionSet handle "save_option_set" /
+	// "delete_option_set" (ut-docs#3319): main-till only like the
+	// modifier-group pair. Delete refuses a set still applied to an item;
+	// the hook's error text names those items and is the directive's
+	// failure message.
+	SaveOptionSet   func(ctx context.Context, p data.OptionSetSave) (string, error)
+	DeleteOptionSet func(ctx context.Context, id string) (string, error)
 	// SetCategoryOrder handles "set_category_order" (contract §3.8,
 	// ut-docs#3075): the owner's category order from my., as the full
 	// ordered id list. Main-till only like the five above. The hook
@@ -817,7 +824,7 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 		}
 		msg, err = hooks.SaveItem(ctx, p)
 	case "set_net_quantity":
-		// ut-docs#3402 (§3.11): the same repository path, audit row
+		// ut-docs#3402 (§3.12): the same repository path, audit row
 		// (cloud_item_saved) and idempotency as save_item — no own hook.
 		if hooks.SaveItem == nil {
 			return "failed", "set_net_quantity is not supported on this till"
@@ -908,6 +915,24 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing id"
 		}
 		msg, err = hooks.DeleteModifierGroup(ctx, id)
+	case "save_option_set":
+		if hooks.SaveOptionSet == nil {
+			return "failed", "save_option_set is not supported on this till"
+		}
+		p, bad := decodeSaveOptionSet(payload(d.Payload))
+		if bad != "" {
+			return "failed", bad
+		}
+		msg, err = hooks.SaveOptionSet(ctx, p)
+	case "delete_option_set":
+		if hooks.DeleteOptionSet == nil {
+			return "failed", "delete_option_set is not supported on this till"
+		}
+		id := payload(d.Payload).id()
+		if id == "" {
+			return "failed", "missing id"
+		}
+		msg, err = hooks.DeleteOptionSet(ctx, id)
 	case "save_user", "set_user_pin", "deactivate_user":
 		hook := map[string]func(context.Context, UserDirective) (string, error){
 			"save_user": hooks.SaveUser, "set_user_pin": hooks.SetUserPIN, "deactivate_user": hooks.DeactivateUser,
@@ -1143,16 +1168,21 @@ type snapshotVariantRow struct {
 }
 
 type snapshotItemRow struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	SKU            string   `json:"sku"`
-	PriceMinor     int64    `json:"price_minor"`
-	CategoryID     string   `json:"category_id"`
-	Color          string   `json:"color"`
-	Active         bool     `json:"active"`
-	IsWeighed      bool     `json:"is_weighed"`
-	StockUntracked bool     `json:"stock_untracked"`
-	Qty            *float64 `json:"qty,omitempty"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	SKU            string `json:"sku"`
+	PriceMinor     int64  `json:"price_minor"`
+	CategoryID     string `json:"category_id"`
+	Color          string `json:"color"`
+	Active         bool   `json:"active"`
+	IsWeighed      bool   `json:"is_weighed"`
+	StockUntracked bool   `json:"stock_untracked"`
+	// AgeRestricted (ut-docs#3340/#3395) lets my.'s catalog views see (and,
+	// in a future change, set) the staff-ID-check flag — read-only on this
+	// side of the wire for now; the cloud's own ingest/display is separate
+	// follow-up work, not this field's concern.
+	AgeRestricted bool     `json:"age_restricted"`
+	Qty           *float64 `json:"qty,omitempty"`
 	// Barcode is the legacy primary barcode, kept for a schema-1 reader.
 	Barcode                   string               `json:"barcode"`
 	Barcodes                  []string             `json:"barcodes"`
@@ -1223,7 +1253,8 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 			ID: it.ID, Name: it.Name, SKU: it.SKU, PriceMinor: it.PriceMinor,
 			CategoryID: it.CategoryID, Color: it.Color, Active: it.Active,
 			IsWeighed: it.IsWeighed, StockUntracked: it.StockUntracked,
-			Barcodes: it.Barcodes, ModifierGroupIDs: it.ModifierGroupIDs,
+			AgeRestricted: it.AgeRestricted,
+			Barcodes:      it.Barcodes, ModifierGroupIDs: it.ModifierGroupIDs,
 			ModifierOptOutIDs: it.ModifierOptOutIDs, EffectiveModifierGroupIDs: it.EffectiveModifierGroupIDs,
 			Variants:    make([]snapshotVariantRow, 0, len(it.Variants)),
 			ImageSHA256: ServedImageSHA256(thumbs[it.ID]),
