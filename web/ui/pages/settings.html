@@ -64,6 +64,9 @@
 <div class="settings-grid" id="settings-grid">
 <div class="card" id="registration">
   <h2>{{ T "settings.enrol.title" }} {{ helpLink "claim" }}</h2>
+  {{/* ut-docs#2569: cloud sync and browser management pause here when the
+       subscription is stale or lapsed — explained in place, nothing hidden. */}}
+  {{ template "subscription_paused_banner.html" (dict "sub" .subscription "only" "cloud_sync browser_catalog" "tse" false) }}
   {{ if enrolled }}
     <p>✅ {{ T "settings.enrol.registered" }}</p>
     {{ if enrolstore }}<p class="muted">{{ T "settings.enrol.store" }}: <code>{{ enrolstore }}</code></p>{{ end }}
@@ -114,6 +117,17 @@
     </fieldset>
   </div>
 </div>
+{{/* ut-docs#2569 (ADR-0060 §6): Settings → Subscription — plan, status and
+     the paused-features banner (web/ui/partials/subscription_block.html).
+     Manager-only, like #settings-diagnostics below (the sidebar row is
+     filtered the same way in filterSettingsNavForRender). The chip in the
+     status bar links here. */}}
+{{ if .isManager }}
+<div class="card" id="subscription">
+  <h2>{{ T "subscription.title" }} {{ helpLink "claim" }}</h2>
+  {{ template "subscription_block.html" . }}
+</div>
+{{ end }}
 {{ if .canReportIssue }}
 <div class="card" id="settings-issuereport">
   <h2>{{ T "issuereport.title" }}</h2>
@@ -1152,6 +1166,9 @@
   {{ if .tseProvisioning }}
   <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
   <h3 style="margin:0 0 .3rem">{{ T "settings.tse.title" }}</h3>
+  {{/* ut-docs#2569, ADR-0060 §7: managed TSE set-ups and renewals pause
+       with the subscription; a TSE already set up keeps signing. */}}
+  {{ template "subscription_paused_banner.html" (dict "sub" .subscription "only" "managed_tse" "tse" true) }}
   <!-- ut-docs#1174: the block itself moved to
        web/ui/partials/tse_provisioning_block.html (one source of truth —
        the manual-retry endpoint re-renders the same partial for its htmx

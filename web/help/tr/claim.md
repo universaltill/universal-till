@@ -22,3 +22,14 @@ Kurulum sihirbazının son ekranı, kasayı hemen kaydetmek isteyip istemediğin
 
 1. Açarsanız kasa; cihaz kimliğini, mağaza adını, mağaza bölgesini ve yazılım sürümünü (destek, güncellemeler ve lisanslama için kullanılır) Universal Till bulut pazaryerine gönderir ve hemen kaydolur. Adresiniz gönderilmez. O an çevrimdışı mı? Hiçbir şey beklemez, kurulum yine de tamamlanır — ama kasa, eklenti mağazasını açana veya Şimdi kaydol'a basana kadar kayıtsız kalır; yeniden çevrimiçi olduğunuzda Ayarlar → Kasa kaydı bölümünü kontrol edin.
 2. Kapatırsanız kasa yalnızca eklenti mağazasını ilk kullandığınızda veya Şimdi kaydol'a bastığınızda kaydolmaya döner. Kapatmak, daha önce yapılmış bir kaydı asla kaldırmaz.
+
+## Abonelik
+
+Ayarlar → Abonelik (yalnızca yöneticiler) planınızı bu kasanın Universal Till bulutundan en son aldığı haliyle, yenilenme tarihini ve en son ne zaman doğrulandığını gösterir. Kasada satış, fiş ve raporlar her planda ücretsizdir ve abonelik yüzünden asla durmaz.
+
+- Yerel (ücretsiz): yapılacak bir şey yok, kart yalnızca ücretsiz planda olduğunuzu söyler.
+- Etkin: planınız, yenilenme tarihi ve son doğrulama.
+- Abonelik doğrulanmadı: kasa planınızı 7 günden uzun süredir bulutla doğrulayamadı, bu yüzden ücretli özellikler (bulut eşitleme, ürünleri tarayıcıdan yönetme ve yönetilen TSE kurulumu gibi) duraklatıldı. Kasanın internet bağlantısını kontrol edin; bağlandığında kendiliğinden düzelir.
+- Abonelik sona erdi: aboneliğiniz artık etkin değil, bu yüzden ücretli özellikler Universal Till hesabınızdan yenileyene kadar duraklatılır.
+
+Son iki durumda durum çubuğundaki bir işaret bu karta götürür; Kasa kaydı ve Fiş imzalama (TSE) kartları da hangi özelliklerinin duraklatıldığını yerinde gösterir. Hiçbir şey gizlenmez ve önceden kurulmuş bir TSE fişleri imzalamaya devam eder.
