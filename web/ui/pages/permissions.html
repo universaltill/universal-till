@@ -13,7 +13,15 @@
       <thead>
         <tr>
           <th scope="col" class="perm-action">{{ T "permissions.col.action" }}</th>
-          {{ range .Roles }}<th scope="col" class="perm-cell">{{ T (printf "users.role.%s" .) }}</th>{{ end }}
+          {{ range .Roles }}
+          {{ if .Cloud }}
+          {{/* A custom role (ADR-0128 §6): its own label, created and
+               edited in my.universaltill.com, read-only here. */}}
+          <th scope="col" class="perm-cell perm-cloud-role" data-card-label="{{ .Label }}">{{ .Label }} <span class="perm-cloud-note muted">{{ T "permissions.cloud_role_managed" }}</span></th>
+          {{ else }}
+          <th scope="col" class="perm-cell">{{ T (printf "users.role.%s" .Role) }}</th>
+          {{ end }}
+          {{ end }}
         </tr>
       </thead>
       {{ $roles := .Roles }}
@@ -33,10 +41,12 @@
             {{ if .Unlocks }}<span class="perm-unlocks muted">{{ printf (T "permissions.unlocks") .Unlocks }}</span>{{ end }}
           </th>
           {{ range $roles }}
-          {{ $role := . }}
+          {{ $role := .Role }}
           {{ $cell := index $cells $role }}
           <td class="perm-cell">
-            {{ if $cell.Locked }}
+            {{ if .Cloud }}
+            <input type="checkbox" {{ if $cell.Granted }}checked{{ end }} disabled data-cloud-role title="{{ T "permissions.error.cloud_role" }}">
+            {{ else if $cell.Locked }}
             <input type="checkbox" {{ if $cell.Granted }}checked{{ end }} disabled title="{{ T "permissions.lockout_hint" }}">
             {{ else }}
             <input type="checkbox" name="granted" value="1" {{ if $cell.Granted }}checked{{ end }}

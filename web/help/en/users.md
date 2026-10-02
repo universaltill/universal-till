@@ -58,6 +58,8 @@ A super admin can go further than assigning cashier/manager/admin roles — they
 
 The page groups permissions under headings — Sales, Catalog, Stock, Reports, Staff, Settings, Plugins and System — so related ones sit together. Under each permission's name a short line says what it lets a person do, and where it applies an "Unlocks" line lists the menu tiles and left-hand menu entries that appear for a role once it's granted — for example, Reports unlocks the Reports tile. **Refunds** and **Cash adjustments** let a role refund a sale, or take cash out of the drawer (a payout, or a skim to the safe when closing a shift), without a manager PIN; a role without them still can — the refund or shift screen then shows a manager-PIN box, and a manager types their PIN there to approve it on the spot. On a tablet-sized screen the grid scrolls sideways inside its card while the permission names stay in place; on a phone each permission is its own card, with every role's checkbox listed under it.
 
+Shops on the Pro plan can also create their own roles, such as "Shift lead", in my.universaltill.com. Each custom role appears here as an extra column under its own name, marked "Managed in my.universaltill.com". Its checkboxes are read-only on the till: change what a custom role may do in my.universaltill.com, and the change reaches every till on its next sync. A custom role can do exactly what its ticked permissions allow, and nothing more. Where the till asks for a manager's PIN to approve something, a custom role's PIN isn't accepted.
+
 ## Becoming a super admin
 
 Only an existing super admin can create or promote another one — from Users, either pick "super admin" as the role for a brand-new account, or use "Promote to super admin" next to an existing person's name. Both are logged in the audit trail, the same as any other permission-sensitive change, and take effect on that person's next sign-in.
@@ -67,6 +69,8 @@ A shop with no super admin yet (the role didn't exist before this till version) 
 ## Changing or stepping back a role
 
 Every person's row also has a role picker and a "Change role" button, next to their name, visible to admins and super admins — the general way to move anyone between cashier, manager, admin and super admin, in either direction, not just upward. Use it to step a super admin back down to admin (rather than deactivating them, which would also drop their PIN and sign-in history), or to correct a role assigned by mistake. An admin can move people freely between cashier, manager and admin, but can't grant, remove or otherwise touch anyone's super admin role — only a super admin can do that, the same restriction as creating one. A manager can't change anyone's role. You can never leave the till with no admin or no super admin at all — the last one of either is protected the same way the last super admin is protected from deactivation. Logged in the audit trail and takes effect on the person's next sign-in, the same as every other role change here.
+
+An admin or super admin can also give someone a custom role from my.universaltill.com: it is listed by its own name in the same role picker, and in the role picker for a new account. Anyone holding a custom role can be changed only by an admin or super admin; a manager can't. A custom role is never counted as an admin, so it can't be the shop's last admin.
 
 ## Users on a second till
 

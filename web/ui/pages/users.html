@@ -22,9 +22,10 @@
       </thead>
       <tbody>
         {{ range .users }}
+        {{ $u := . }}
         <tr>
           <td>{{ .DisplayName }} <span class="muted">({{ .Username }})</span></td>
-          <td>{{ .Role }}</td>
+          <td>{{ .RoleLabel }}</td>
           <td>{{ if .HasPIN }}{{ T "users.pin_set" }}{{ else }}<span class="muted">{{ T "users.pin_unset" }}</span>{{ end }}</td>
           <td>{{ if .IsActive }}{{ T "users.active" }}{{ else }}<span class="muted">{{ T "users.inactive" }}</span>{{ end }}</td>
           <td class="users-actions">
@@ -97,11 +98,14 @@
                  above — see their shared comment. */}}
             <form hx-post="/api/users/{{ .ID }}/role" hx-target="#user-msg-{{ .ID }}" hx-swap="innerHTML"
                   hx-on::after-request="if ((event.detail.xhr.getResponseHeader('X-UT-Response')||'')==='ok') UT.refreshRegion(this)" class="users-inline">
-              <select name="role">
+              <select name="role" class="users-role-pick">
                 <option value="cashier" {{ if eq .Role "cashier" }}selected{{ end }}>{{ T "users.role.cashier" }}</option>
                 {{ if $.isAdmin }}
                 <option value="manager" {{ if eq .Role "manager" }}selected{{ end }}>{{ T "users.role.manager" }}</option>
                 <option value="admin" {{ if eq .Role "admin" }}selected{{ end }}>{{ T "users.role.admin" }}</option>
+                {{/* Custom roles (ADR-0128 §3): created in my., assigned
+                     here by an admin, like manager/admin. */}}
+                {{ range $.customRoles }}<option value="{{ .Role }}" {{ if eq $u.Role .Role }}selected{{ end }}>{{ if .Label }}{{ .Label }}{{ else }}{{ .Role }}{{ end }}</option>{{ end }}
                 {{ end }}
                 {{ if $.canEditPermissions }}
                 <option value="super_admin" {{ if eq .Role "super_admin" }}selected{{ end }}>{{ T "users.role.super_admin" }}</option>
@@ -136,11 +140,12 @@
       <label>{{ T "users.new.username" }} <input type="text" name="username" required /></label>
       <label>{{ T "users.new.display" }} <input type="text" name="display_name" required /></label>
       <label>{{ T "users.col.role" }}
-        <select name="role">
+        <select name="role" class="users-role-pick">
           <option value="cashier">{{ T "users.role.cashier" }}</option>
           {{ if .isAdmin }}
           <option value="manager">{{ T "users.role.manager" }}</option>
           <option value="admin">{{ T "users.role.admin" }}</option>
+          {{ range .customRoles }}<option value="{{ .Role }}">{{ if .Label }}{{ .Label }}{{ else }}{{ .Role }}{{ end }}</option>{{ end }}
           {{ end }}
           {{ if .canEditPermissions }}
           <option value="super_admin">{{ T "users.role.super_admin" }}</option>
