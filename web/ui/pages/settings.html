@@ -1747,6 +1747,9 @@
         <option value="never" {{ if eq $p.ReceiptPolicy "never" }}selected{{ end }}>{{ T "settings.printer.receipt_policy.never" }}</option>
       </select>
     </label>
+    {{ if .receiptPolicyShadowNote }}
+    <p class="muted" data-testid="receipt-policy-shadow-note" style="margin:.2rem 0 0">{{ T "shadow_documents.banner" }}</p>
+    {{ end }}
     {{ if .receiptPolicyAdvisoryDE }}
     <p class="muted receipt-policy-advisory-de" style="margin:.2rem 0 0">{{ T "settings.printer.receipt_policy.advisory_de" }}</p>
     {{ end }}

@@ -26,17 +26,17 @@
         "headings": 3,
         "numbered_steps": 5,
         "sub_bullets": 0,
-        "top_bullets": 6,
-        "bold_leadins": 2
+        "top_bullets": 7,
+        "bold_leadins": 3
       },
       "english": {
         "headings": 3,
         "numbered_steps": 5,
         "sub_bullets": 0,
-        "top_bullets": 7,
-        "bold_leadins": 2
+        "top_bullets": 8,
+        "bold_leadins": 3
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2187: the record_dialog/list_header conversion reworded \"How to use it\"'s step 5 in both English and this locale so it no longer leads with a bold phrase — bold_leadins shifted from 3 to 2 on both sides in lockstep, no new gap; the tracked top_bullets gap (this locale is missing English's final bullet) is unchanged, just re-recorded at its real current value."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2187: the record_dialog/list_header conversion reworded \"How to use it\"'s step 5 in both English and this locale so it no longer leads with a bold phrase — bold_leadins shifted from 3 to 2 on both sides in lockstep, no new gap; the tracked top_bullets gap (this locale is missing English's final bullet) is unchanged, just re-recorded at its real current value. Updated ut-docs#3169: one bold-led \"Good to know\" bullet (ADR-0124's read-only Customer documents in shadow mode column) added to English and this locale in lockstep (top_bullets +1, bold_leadins +1 on both sides); the pre-existing gap is unchanged, just re-recorded."
     },
     {
       "locale": "ar",
@@ -254,17 +254,17 @@
         "headings": 3,
         "numbered_steps": 0,
         "sub_bullets": 0,
-        "top_bullets": 6,
-        "bold_leadins": 2
+        "top_bullets": 7,
+        "bold_leadins": 3
       },
       "english": {
         "headings": 3,
         "numbered_steps": 5,
         "sub_bullets": 0,
-        "top_bullets": 7,
-        "bold_leadins": 2
+        "top_bullets": 8,
+        "bold_leadins": 3
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2187: the record_dialog/list_header conversion reworded English \"How to use it\"'s step 5 so it no longer leads with a bold phrase, dropping English's own bold_leadins from 3 to 2 — this locale's bold_leadins (already 2, using mid-sentence bold in its own Good-to-know bullets, not a leading one) is unchanged, so that part of the gap closed outright; the tracked numbered_steps gap (this locale's own-numeral ۱./۲. list isn't matched by the guard's Latin-numeral regex) and top_bullets gap are unchanged, just re-recorded against English's real current values."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2187: the record_dialog/list_header conversion reworded English \"How to use it\"'s step 5 so it no longer leads with a bold phrase, dropping English's own bold_leadins from 3 to 2 — this locale's bold_leadins (already 2, using mid-sentence bold in its own Good-to-know bullets, not a leading one) is unchanged, so that part of the gap closed outright; the tracked numbered_steps gap (this locale's own-numeral ۱./۲. list isn't matched by the guard's Latin-numeral regex) and top_bullets gap are unchanged, just re-recorded against English's real current values. Updated ut-docs#3169: one bold-led \"Good to know\" bullet (ADR-0124's read-only Customer documents in shadow mode column) added to English and this locale in lockstep (top_bullets +1, bold_leadins +1 on both sides); the pre-existing gap is unchanged, just re-recorded."
     },
     {
       "locale": "fa",
@@ -577,17 +577,17 @@
         "headings": 3,
         "numbered_steps": 5,
         "sub_bullets": 0,
-        "top_bullets": 6,
-        "bold_leadins": 2
+        "top_bullets": 7,
+        "bold_leadins": 3
       },
       "english": {
         "headings": 3,
         "numbered_steps": 5,
         "sub_bullets": 0,
-        "top_bullets": 7,
-        "bold_leadins": 2
+        "top_bullets": 8,
+        "bold_leadins": 3
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2187: the record_dialog/list_header conversion reworded \"How to use it\"'s step 5 in both English and this locale so it no longer leads with a bold phrase — bold_leadins shifted from 3 to 2 on both sides in lockstep, no new gap; the tracked top_bullets gap (this locale is missing English's final bullet) is unchanged, just re-recorded at its real current value."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2187: the record_dialog/list_header conversion reworded \"How to use it\"'s step 5 in both English and this locale so it no longer leads with a bold phrase — bold_leadins shifted from 3 to 2 on both sides in lockstep, no new gap; the tracked top_bullets gap (this locale is missing English's final bullet) is unchanged, just re-recorded at its real current value. Updated ut-docs#3169: one bold-led \"Good to know\" bullet (ADR-0124's read-only Customer documents in shadow mode column) added to English and this locale in lockstep (top_bullets +1, bold_leadins +1 on both sides); the pre-existing gap is unchanged, just re-recorded."
     },
     {
       "locale": "tr",
@@ -1126,76 +1126,76 @@
       "topic": "printing",
       "signature": {
         "headings": 2,
-        "numbered_steps": 9,
+        "numbered_steps": 10,
         "sub_bullets": 0,
         "top_bullets": 0,
-        "bold_leadins": 1
+        "bold_leadins": 2
       },
       "english": {
         "headings": 6,
-        "numbered_steps": 22,
+        "numbered_steps": 23,
         "sub_bullets": 0,
         "top_bullets": 0,
-        "bold_leadins": 8
+        "bold_leadins": 9
       },
-      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#3169: one bold-led numbered step (shadow mode: no receipt prints) added to English and this locale in lockstep (numbered_steps +1, bold_leadins +1 on both sides); the pre-existing gap is unchanged, just re-recorded. Re-recorded on merging main into #3169's branch: main's 56d14aad2 (weighed-item unit price on shelf labels) added one English-only numbered step, so English 22 -> 23 while this locale stays at 10; that step's translation is ut-docs#341's."
     },
     {
       "locale": "de",
       "topic": "printing",
       "signature": {
         "headings": 2,
-        "numbered_steps": 9,
+        "numbered_steps": 10,
         "sub_bullets": 0,
         "top_bullets": 0,
-        "bold_leadins": 1
+        "bold_leadins": 2
       },
       "english": {
         "headings": 6,
-        "numbered_steps": 22,
+        "numbered_steps": 23,
         "sub_bullets": 0,
         "top_bullets": 0,
-        "bold_leadins": 8
+        "bold_leadins": 9
       },
-      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#3169: one bold-led numbered step (shadow mode: no receipt prints) added to English and this locale in lockstep (numbered_steps +1, bold_leadins +1 on both sides); the pre-existing gap is unchanged, just re-recorded. Re-recorded on merging main into #3169's branch: main's 56d14aad2 (weighed-item unit price on shelf labels) added one English-only numbered step, so English 22 -> 23 while this locale stays at 10; that step's translation is ut-docs#341's."
     },
     {
       "locale": "fa",
       "topic": "printing",
       "signature": {
         "headings": 2,
-        "numbered_steps": 9,
+        "numbered_steps": 10,
         "sub_bullets": 0,
         "top_bullets": 0,
-        "bold_leadins": 1
+        "bold_leadins": 2
       },
       "english": {
         "headings": 6,
-        "numbered_steps": 22,
+        "numbered_steps": 23,
         "sub_bullets": 0,
         "top_bullets": 0,
-        "bold_leadins": 8
+        "bold_leadins": 9
       },
-      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#3169: one bold-led numbered step (shadow mode: no receipt prints) added to English and this locale in lockstep (numbered_steps +1, bold_leadins +1 on both sides); the pre-existing gap is unchanged, just re-recorded. Re-recorded on merging main into #3169's branch: main's 56d14aad2 (weighed-item unit price on shelf labels) added one English-only numbered step, so English 22 -> 23 while this locale stays at 10; that step's translation is ut-docs#341's."
     },
     {
       "locale": "tr",
       "topic": "printing",
       "signature": {
         "headings": 2,
-        "numbered_steps": 9,
+        "numbered_steps": 10,
         "sub_bullets": 0,
         "top_bullets": 0,
-        "bold_leadins": 1
+        "bold_leadins": 2
       },
       "english": {
         "headings": 6,
-        "numbered_steps": 22,
+        "numbered_steps": 23,
         "sub_bullets": 0,
         "top_bullets": 0,
-        "bold_leadins": 8
+        "bold_leadins": 9
       },
-      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#3169: one bold-led numbered step (shadow mode: no receipt prints) added to English and this locale in lockstep (numbered_steps +1, bold_leadins +1 on both sides); the pre-existing gap is unchanged, just re-recorded. Re-recorded on merging main into #3169's branch: main's 56d14aad2 (weighed-item unit price on shelf labels) added one English-only numbered step, so English 22 -> 23 while this locale stays at 10; that step's translation is ut-docs#341's."
     },
     {
       "locale": "de",

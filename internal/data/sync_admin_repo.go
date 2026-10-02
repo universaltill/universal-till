@@ -1069,6 +1069,17 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 					if v, ok := rec["archive_min_days"]; ok && syncedDays(v) < GlobalArchiveMinDays {
 						rec["archive_min_days"] = GlobalArchiveMinDays
 					}
+					// ADR-0124 §1 (ut-docs#3169): the same raw-write
+					// bypass, for shadow_customer_documents — a primary
+					// may tighten a market, never loosen one whose
+					// compiled default is "forbidden". Same "only when
+					// the bundle carries the column" rule; an older
+					// primary's bundle leaves it alone, and the read-time
+					// floor (BuiltinShadowDocumentsForbidden) still
+					// covers that case.
+					if _, ok := rec["shadow_customer_documents"]; ok && BuiltinShadowDocumentsForbidden(fmt.Sprint(rec["code"])) {
+						rec["shadow_customer_documents"] = shadowDocumentsForbidden
+					}
 				}
 				toApply = append(toApply, rec)
 			}

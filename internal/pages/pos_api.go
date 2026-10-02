@@ -2281,6 +2281,37 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 
 		locale := httpx.ResolveLocale(w, r)
 		funcs := httpx.FuncsFor(locale)
+		// writeTenderView swaps the post-tender view into #basket, plus the
+		// recent-sales journal out of band.
+		writeTenderView := func(viewHTML string) {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusOK)
+			journalView, jErr := ui.NewJournalView(funcs)
+			if jErr == nil {
+				entries, err := repo.ListRecentSales(r.Context(), 5)
+				if err == nil {
+					var journalBuf bytes.Buffer
+					_ = journalView.Render(&journalBuf, ui.JournalViewData{Entries: entries, OOB: true})
+					fmt.Fprintf(w, `<div class="basket receipt-view" id="basket">%s</div>%s`, viewHTML, journalBuf.String())
+					return
+				}
+			}
+			fmt.Fprintf(w, `<div class="basket receipt-view" id="basket">%s</div>`, viewHTML)
+		}
+		// ADR-0124 §3: in a market whose shipped data forbids customer
+		// documents from a shadow till, the receipt markup is not rendered
+		// at all — a staff "sale recorded" card replaces it (no lines, no
+		// totals, no fiscal blocks, no print action, no ask prompt). The
+		// sale above is already recorded in full.
+		if customerDocumentsSuppressed(r.Context(), d) {
+			viewHTML, renderErr := renderSaleRecorded(funcs, receiptNo)
+			if renderErr != nil {
+				log.Printf("tender: render sale_recorded: %v", renderErr)
+				viewHTML = `<p class="sale-recorded-reason">` + template.HTMLEscapeString(httpx.T(locale, "shadow_documents.sale_recorded")) + ` ` + template.HTMLEscapeString(receiptNo) + `</p>`
+			}
+			writeTenderView(viewHTML)
+			return
+		}
 		basket := d.Engine.Basket()
 		discountType := basket.DiscountType
 		discountRaw := basket.DiscountRaw
@@ -2364,19 +2395,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			receiptHTML = `<div class="receipt-printer-warning"><span class="receipt-printer-message">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.unavailable")) + `</span><button class="btn secondary receipt-printer-retry" type="button" onclick="window.print()">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.retry")) + `</button></div>`
 		}
 
-		w.Header().Set("Content-Type", "text/html")
-		w.WriteHeader(http.StatusOK)
-		journalView, jErr := ui.NewJournalView(funcs)
-		if jErr == nil {
-			entries, err := repo.ListRecentSales(r.Context(), 5)
-			if err == nil {
-				var journalBuf bytes.Buffer
-				_ = journalView.Render(&journalBuf, ui.JournalViewData{Entries: entries, OOB: true})
-				fmt.Fprintf(w, `<div class="basket receipt-view" id="basket">%s</div>%s`, receiptHTML, journalBuf.String())
-				return
-			}
-		}
-		fmt.Fprintf(w, `<div class="basket receipt-view" id="basket">%s</div>`, receiptHTML)
+		writeTenderView(receiptHTML)
 	})
 
 	// Update sale status: park, void, refund (status string expected).
@@ -2597,6 +2616,7 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 	// (ut-docs#1320) — this runs on every completed sale.
 	t, err := httpx.ClonedTemplate("pages.renderReceipt", "receipt.html", funcs,
 		"ui/partials/receipt.html",
+		"ui/partials/receipt_auto_reset.html",
 	)
 	if err != nil {
 		return "", err

@@ -1,0 +1,33 @@
+{{/* ADR-0124 (ut-docs#3169): the post-tender view in a market whose shipped
+     data forbids customer documents from a shadow till. It replaces
+     partials/receipt.html entirely, so no receipt markup reaches the DOM:
+     a staff card with the receipt number (staff need it for refunds and
+     the journal), the reason, and the same New customer / Refund actions —
+     no lines, no totals, no fiscal blocks, no Print button, no ask prompt.
+     Own sale-recorded-* class names, never receipt-*. The 60 s auto-reset
+     is the shared receipt_auto_reset define, so the flow is identical. */}}
+{{ define "sale_recorded" }}
+<style>
+  .sale-recorded-wrap {max-width: 420px; margin: 0 auto;}
+  .sale-recorded-card {background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: .8rem .9rem; text-align: start;}
+  .sale-recorded-title {margin: 0 0 .5rem; font-size: 1.15rem; color: var(--success);}
+  .sale-recorded-no {margin: .25rem 0; font-size: 1.1rem;}
+  .sale-recorded-no strong {overflow-wrap: anywhere;}
+  .sale-recorded-reason {margin: .5rem 0; overflow-wrap: anywhere;}
+  .sale-recorded-actions {display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 .25rem;}
+</style>
+<div class="sale-recorded-wrap" data-testid="sale-recorded">
+  <div class="sale-recorded-card" role="status">
+    <h2 class="sale-recorded-title"><span aria-hidden="true">✓</span> {{ T "shadow_documents.sale_recorded" }}</h2>
+    <p class="sale-recorded-no"><span class="muted">{{ T "journal.col.receipt" }}:</span> <strong dir="ltr">{{ .ReceiptNo }}</strong></p>
+    <p class="sale-recorded-reason muted"><span aria-hidden="true">ⓘ</span> {{ T "shadow_documents.banner" }}</p>
+    <div class="sale-recorded-actions">
+      <button class="btn primary" type="button" data-testid="sale-recorded-new-customer"
+              hx-get="/ui/basket" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">{{ T "receipt.new_customer" }}</button>
+      <button class="btn secondary" type="button" onclick="window.location='/refund/{{ .ReceiptNo }}'">↩ {{ T "refund.title" }}</button>
+    </div>
+    <small class="muted">{{ T "receipt.auto_reset" }}</small>
+  </div>
+</div>
+{{ template "receipt_auto_reset" . }}
+{{ end }}

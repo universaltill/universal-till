@@ -1004,3 +1004,49 @@ func TestCountrySettingsPage_HtmxSavePreservesNameKeyAndDefaultLocale(t *testing
 		t.Errorf("DE.DefaultLocale after a dialog save = %q, want unchanged de-DE — the dialog carries no locale field", after.DefaultLocale)
 	}
 }
+
+// ADR-0124 (ut-docs#3169): the page shows each market's EFFECTIVE
+// shadow_customer_documents value as read-only text, and the dialog form
+// has no input for it.
+func TestCountrySettingsPage_ShowsShadowDocumentsReadOnly(t *testing.T) {
+	mux, _, d := newCountrySettingsTestMux(t)
+	d.SetState(common.RuntimeState{Country: "PT"})
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+
+	get := func(path string) string {
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, path, nil), mgr)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d", path, rec.Code)
+		}
+		return rec.Body.String()
+	}
+	cell := regexp.MustCompile(`data-testid="country-shadow-documents">([^<]*)<`)
+
+	body := get("/country-settings")
+	if !strings.Contains(body, "Customer documents in shadow mode") {
+		t.Fatal("column header missing")
+	}
+	m := cell.FindAllStringSubmatch(body, -1)
+	if len(m) != 1 || m[0][1] != "Not issued" {
+		t.Fatalf("PT row cells = %v, want one \"Not issued\"", m)
+	}
+	if strings.Contains(body, `name="shadow_customer_documents"`) {
+		t.Fatal("the form must not carry an input for shadow_customer_documents")
+	}
+
+	// The all-countries view: PT is the only forbidden market shipped today.
+	all := cell.FindAllStringSubmatch(get("/country-settings?all=1"), -1)
+	forbidden := 0
+	for _, c := range all {
+		if c[1] == "Not issued" {
+			forbidden++
+		} else if c[1] != "Allowed" {
+			t.Fatalf("unexpected cell text %q", c[1])
+		}
+	}
+	if len(all) < 2 || forbidden != 1 {
+		t.Fatalf("all view: %d rows, %d forbidden; want many rows and exactly 1 forbidden", len(all), forbidden)
+	}
+}
