@@ -63,3 +63,9 @@ iOS share prompt: a WKWebView has nothing for `getDisplayMedia` to record.
 ## Verdict
 
 Safe to merge once `ios-ci` (the Swift compile) and `ci` are green.
+
+## After push
+
+- CI `build` failed on `guard-pipefail-grep-q` (ut-docs#2946). The new guard
+  piped `grep -v` into `grep -q` under `pipefail`. Fixed by using a
+  here-string. I re-ran every build-job guard locally and all pass.

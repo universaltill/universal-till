@@ -14,8 +14,9 @@ import WebKit
 /// URL captured at setup: an in-app restart can move the server to a new
 /// port and reload the same web view there, and the navigation policy
 /// already confines that page to the till origin. The snapshot is of this
-/// web view only, never the rest of the screen or another app. The web view is held weakly — the user content
-/// controller retains this handler, and the web view retains the controller.
+/// web view only, never the rest of the screen or another app. The web view
+/// is held weakly — the user content controller retains this handler, and
+/// the web view retains the controller.
 final class ScreenshotBridge: NSObject, WKScriptMessageHandlerWithReply {
     static let name = "utScreenshot"
 

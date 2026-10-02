@@ -19,7 +19,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 check() {
   local web="$1" bridge="$2" panel="$3" bad=0
   # Code lines only: a commented-out registration must not pass.
-  grep -v '^ *//' "$web" | grep -q 'addScriptMessageHandler(' || { echo "bridge not registered on the web view"; bad=1; }
+  grep -q 'addScriptMessageHandler(' <<<"$(grep -v '^ *//' "$web")" || { echo "bridge not registered on the web view"; bad=1; }
   grep -q 'contentWorld: *\.page' "$web" || { echo "bridge not in the page content world"; bad=1; }
   grep -q 'name: *ScreenshotBridge.name' "$web" || { echo "bridge registered under another name"; bad=1; }
   grep -q '\.webView = webView' "$web" || { echo "bridge never given the web view"; bad=1; }
