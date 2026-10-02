@@ -501,6 +501,8 @@
   "common.money.invalid_whole": "Enter the amount as a whole number, digits only.",
   "common.no_results": "No matches — try a different search.",
   "common.save": "Save",
+  "common.show_less": "Less",
+  "common.show_more": "More",
   "common.submit": "Submit",
   "common.view": "View",
   "countrysettings.col.country": "Country",

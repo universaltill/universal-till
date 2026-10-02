@@ -929,7 +929,10 @@
              long press never arms it -- it sells like a tap), badges are the pencil only, and
              moving is allowed only under a category chip (the fragment's
              data-all-filter marker), saved as that category's own order. */}}
-        <div id="browsing-category-chips" class="filter-chips products-cat-chips" role="group" aria-label="{{ T "filter.category_label" }}">
+        {{/* data-hscroll-ok (ut-docs#3359): on a phone the category pills
+             are one sticky row that swipes sideways by design (app.css,
+             product owner 2026-09-29) — not a table. */}}
+        <div id="browsing-category-chips" class="filter-chips products-cat-chips" data-hscroll-ok role="group" aria-label="{{ T "filter.category_label" }}">
           {{/* ut-docs#3089: carries the pressed chip on the root's own
                buttons-changed/modifiers-changed refresh (its hx-include
                above) -- server-rendered from .Chip so the very first such

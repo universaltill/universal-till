@@ -266,7 +266,10 @@
       <!-- In the pinned head (not at the bottom of the form) so a save or
            error notice is visible at any scroll position. -->
       <div id="item-form-msg" class="muted" aria-live="polite"></div>
-      <div class="tab-bar" role="tablist" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
+      {{/* data-hscroll-ok (ut-docs#3359): below 700px this one-row tab strip
+           swipes sideways by design (app.css .catalog-form-head .tab-bar,
+           ut-docs#2000/#2024, with its own edge fade) — not a table. */}}
+      <div class="tab-bar" role="tablist" data-hscroll-ok @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
         <button type="button" id="item-form-tab-details" class="tab" role="tab" :class="tab === 'details' && 'active'" :aria-selected="tab === 'details'" :tabindex="tab === 'details' ? 0 : -1" aria-controls="item-form-panel-details" @click="select('details')">{{ T "catalog.tab.details" }}</button>
         <button type="button" id="item-form-tab-variants" class="tab" role="tab" :class="tab === 'variants' && 'active'" :aria-selected="tab === 'variants'" :tabindex="tab === 'variants' ? 0 : -1" aria-controls="item-form-panel-variants" @click="select('variants')">{{ T "catalog.variants" }}</button>
         <button type="button" id="item-form-tab-modifiers" class="tab" role="tab" :class="tab === 'modifiers' && 'active'" :aria-selected="tab === 'modifiers'" :tabindex="tab === 'modifiers' ? 0 : -1" aria-controls="item-form-panel-modifiers" @click="select('modifiers')">{{ T "catalog.modifiers.title" }}</button>

@@ -1340,6 +1340,12 @@
          attribute-driven and a no-op on any page without that markup, same
          pattern as record-dialog.js above. -->
     <script defer src="/public/list-reorder.js?v={{ assetv "public/list-reorder.js" }}"></script>
+    <!-- ut-docs#3359: at the phone tier every data table is a card list
+         (app.css `table.t-cards`), never a grid that scrolls sideways —
+         this labels each cell with its column header and adds the More/
+         Less toggle; attribute-driven and a no-op on any page without a
+         table, same pattern as record-dialog.js above. -->
+    <script defer src="/public/table-cards.js?v={{ assetv "public/table-cards.js" }}"></script>
     <!-- ut-docs#2119: the /catalog + /inventory category-filter chip row's
          shared expand()/matches()/bind() logic (parent-includes-children
          tree walk, empty-selection-means-all match, generic chip click
@@ -1369,6 +1375,7 @@
         data-osk="{{ oskmode }}"
         data-order-type-prompt-mode="{{ ordertypepromptmode }}"
         data-notice-dismiss="{{ T "notice.dismiss" }}"
+        data-show-more="{{ T "common.show_more" }}" data-show-less="{{ T "common.show_less" }}"
         data-money-invalid="{{ if eq currency.Decimals 0 }}{{ T "common.money.invalid_whole" }}{{ else }}{{ T "common.money.invalid" }}{{ end }}"
         data-percent-invalid="{{ T "common.money.invalid" }}"
         {{ if idlelocksecs }}data-idle-lock="{{ idlelocksecs }}"{{ end }}>
