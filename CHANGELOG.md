@@ -45,6 +45,17 @@ Release notes for the till. Versions come from the release tag
   **Behaviour change:** after this release those items are charged the
   shop's 0% default. Shops with a non-zero default rate are unaffected, and
   so are items on a tax code. Completed sales are unchanged.
+- **A completed sale can no longer be reopened (ut-docs#3368).**
+  `POST /api/pos/sale/status` used to accept any target status for any
+  sale, so a completed sale could be set back to `open`/`parked` and drop
+  out of every report and Z total. A completed sale can now only be
+  `voided`; `refunded` (counted by no report — real refunds are return
+  sales) and `completed` (only tender completes a sale) are refused as
+  targets; `voided` is final. A refused change answers 409 with nothing
+  changed and no audit row. Voiding through this API now needs the
+  `refund` permission, or a manager's PIN in `override_pin` (the audit row
+  then names the approver and the refused operator). No till screen calls
+  this route.
 - **A 0% tax code is charged 0% (ut-docs#3250).** An item on a tax code
   whose rate is 0% (zero-rated food, an exempt line) was charged the shop's
   default rate, because the sale engine treated a 0% rate the same as "no

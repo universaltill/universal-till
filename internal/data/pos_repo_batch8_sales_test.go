@@ -673,7 +673,7 @@ func TestPOSRepo_UpdateSaleStatus(t *testing.T) {
 	}
 
 	// Non-void transition: status changes, voided_at stays NULL.
-	if err := repo.UpdateSaleStatus(ctx, nil, "sale-st", "refunded"); err != nil {
+	if err := repo.UpdateSaleStatus(ctx, nil, "sale-st", "completed", "refunded"); err != nil {
 		t.Fatalf("UpdateSaleStatus(refunded): %v", err)
 	}
 	status, voidedAt := readStatus()
@@ -683,7 +683,7 @@ func TestPOSRepo_UpdateSaleStatus(t *testing.T) {
 
 	// Voiding stamps voided_at with a parseable UTC timestamp.
 	before := time.Now().UTC().Add(-2 * time.Second)
-	if err := repo.UpdateSaleStatus(ctx, nil, "sale-st", "voided"); err != nil {
+	if err := repo.UpdateSaleStatus(ctx, nil, "sale-st", "refunded", "voided"); err != nil {
 		t.Fatalf("UpdateSaleStatus(voided): %v", err)
 	}
 	status, voidedAt = readStatus()
@@ -699,7 +699,7 @@ func TestPOSRepo_UpdateSaleStatus(t *testing.T) {
 	}
 
 	// Later non-void status keeps the original voided_at (CASE keeps old value).
-	if err := repo.UpdateSaleStatus(ctx, nil, "sale-st", "completed"); err != nil {
+	if err := repo.UpdateSaleStatus(ctx, nil, "sale-st", "voided", "completed"); err != nil {
 		t.Fatal(err)
 	}
 	status, voidedAt2 := readStatus()
@@ -710,8 +710,17 @@ func TestPOSRepo_UpdateSaleStatus(t *testing.T) {
 	// Unknown sale id: an explicit error — fixed 2026-07-30 (was a silent
 	// no-op with no RowsAffected check, so voids of nonexistent sales
 	// "succeeded" and still left an audit row via internal/pos).
-	if err := repo.UpdateSaleStatus(ctx, nil, "no-such-sale", "voided"); err == nil {
-		t.Fatal("UpdateSaleStatus(unknown) = nil, want a not-found error")
+	if err := repo.UpdateSaleStatus(ctx, nil, "no-such-sale", "completed", "voided"); !errors.Is(err, ErrSaleNotFound) {
+		t.Fatalf("UpdateSaleStatus(unknown) = %v, want ErrSaleNotFound", err)
+	}
+
+	// Compare-and-set (ut-docs#3368): a stale fromStatus changes nothing
+	// and says so — distinct from not-found.
+	if err := repo.UpdateSaleStatus(ctx, nil, "sale-st", "open", "parked"); !errors.Is(err, ErrSaleStatusChanged) {
+		t.Fatalf("UpdateSaleStatus(stale from) = %v, want ErrSaleStatusChanged", err)
+	}
+	if status, _ := readStatus(); status != "completed" {
+		t.Fatalf("stale compare-and-set changed status to %q", status)
 	}
 
 	// Transactional path: a rollback discards the status change.
@@ -719,7 +728,7 @@ func TestPOSRepo_UpdateSaleStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.UpdateSaleStatus(ctx, tx, "sale-st", "parked"); err != nil {
+	if err := repo.UpdateSaleStatus(ctx, tx, "sale-st", "completed", "parked"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Rollback(); err != nil {

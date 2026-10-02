@@ -1453,7 +1453,38 @@ func validateVoucherID(id string) error {
 	return nil
 }
 
-// UpdateSaleStatus updates sale.status and writes audit_log. Status expected: open|parked|voided|refunded.
+// ErrSaleStatusTransition is returned when a status change isn't allowed
+// from the sale's current status (ut-docs#3368).
+var ErrSaleStatusTransition = errors.New("sale status transition not allowed")
+
+// saleStatusTransitionAllowed is the one rule for POST /api/pos/sale/status
+// (ut-docs#3368, UK electronic sales suppression rules — Finance Act 2022
+// Sch 14). A sale still being rung up (open/parked) may move between
+// open/parked or be voided. A completed sale may only be voided — audited,
+// cascaded to its issued vouchers and counted as a cancellation — never sent
+// back to open/parked, which would drop it out of every report and Z total
+// that filters on status = 'completed'. "refunded" is never a valid target:
+// a real refund inserts a sale_type='return' sale (refund_page.go), and a
+// sale marked refunded is counted by no report, so setting it would hide the
+// sale too. "completed" is never a valid target either: only tender
+// completes a sale (payments, fiscal signing, receipt). voided — and any
+// refunded row from older data — is terminal; an unknown current status
+// fails closed.
+func saleStatusTransitionAllowed(from, to string) bool {
+	switch from {
+	case "open", "parked":
+		return to == "open" || to == "parked" || to == "voided"
+	case "completed":
+		return to == "voided"
+	default:
+		return false
+	}
+}
+
+// UpdateSaleStatus updates sale.status and writes audit_log. Status expected:
+// open|parked|voided|refunded|completed, and the move must be allowed from the
+// sale's current status (saleStatusTransitionAllowed) — otherwise
+// ErrSaleStatusTransition, with nothing changed and no audit row.
 //
 // Voiding a sale that ISSUED vouchers cascades to them (ut-docs#1008 review,
 // blocker F2): each still-untouched voucher (balance == original_amount) is
@@ -1463,13 +1494,19 @@ func validateVoucherID(id string) error {
 // void FAILS with data.ErrVoucherRedeemedCannotVoid — fail-closed: what an
 // already-spent voucher means for its voided issuing sale is a human
 // decision, not semantics this code invents.
-func UpdateSaleStatus(ctx context.Context, sqlDB *sql.DB, saleID, status, actorID, reason string) error {
+//
+// blockedActorID is set only for a change a manager approved by PIN: actorID
+// is then the approver and blockedActorID the session operator who was
+// refused (audit_log.blocked_actor_id). "" is a plain, unelevated change.
+func UpdateSaleStatus(ctx context.Context, sqlDB *sql.DB, saleID, status, actorID, blockedActorID, reason string) error {
 	if saleID == "" {
 		return errors.New("saleID required")
 	}
 	if status == "" {
 		return errors.New("status required")
 	}
+	// refunded/completed are known values kept here only so a request for
+	// them reaches saleStatusTransitionAllowed and gets the localized 409.
 	switch status {
 	case "open", "parked", "voided", "refunded", "completed":
 	default:
@@ -1477,7 +1514,17 @@ func UpdateSaleStatus(ctx context.Context, sqlDB *sql.DB, saleID, status, actorI
 	}
 	repo := data.NewPOSRepo(sqlDB)
 	err := db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
-		if err := repo.UpdateSaleStatus(ctx, tx, saleID, status); err != nil {
+		from, err := repo.SaleStatus(ctx, tx, saleID)
+		if err != nil {
+			return err
+		}
+		if !saleStatusTransitionAllowed(from, status) {
+			return fmt.Errorf("%w: %s -> %s", ErrSaleStatusTransition, from, status)
+		}
+		if err := repo.UpdateSaleStatus(ctx, tx, saleID, from, status); err != nil {
+			if errors.Is(err, data.ErrSaleStatusChanged) {
+				return fmt.Errorf("%w: %v", ErrSaleStatusTransition, err)
+			}
 			return err
 		}
 		if status == "voided" {
@@ -1485,17 +1532,20 @@ func UpdateSaleStatus(ctx context.Context, sqlDB *sql.DB, saleID, status, actorI
 				return err
 			}
 		}
-		if err := repo.InsertAudit(ctx, tx, actorID, "sale", saleID, status, map[string]any{
+		now := time.Now().UTC().Format(time.RFC3339)
+		payload := map[string]any{
 			"reason":   reason,
 			"status":   status,
-			"ts":       time.Now().UTC().Format(time.RFC3339),
+			"from":     from,
+			"ts":       now,
 			"subtotal": 0,
 			"taxTotal": 0,
 			"total":    0,
-		}, time.Now().UTC().Format(time.RFC3339), ""); err != nil {
-			return err
 		}
-		return nil
+		if blockedActorID != "" {
+			return repo.InsertAuditElevated(ctx, tx, actorID, blockedActorID, "sale", saleID, status, payload, now, "")
+		}
+		return repo.InsertAudit(ctx, tx, actorID, "sale", saleID, status, payload, now, "")
 	})
 	return err
 }

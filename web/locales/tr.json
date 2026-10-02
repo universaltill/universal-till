@@ -1587,6 +1587,7 @@
   "pos.divider.label": "Sepet ve ürün panellerini yeniden boyutlandırmak için sürükleyin. Sıfırlamak için çift dokunun.",
   "pos.error.network": "Bağlantı sorunu — kasa çevrimdışı çalışmaya devam eder.",
   "pos.error.sale_not_found": "Satış bulunamadı",
+  "pos.error.sale_status_transition": "Bu satış bu duruma getirilemez — tamamlanmış bir satış yalnızca iptal edilebilir.",
   "pos.error.server": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
   "pos.error.void_voucher_redeemed": "Bu satışta satılan hediye çeki zaten kullanılmış — satış iptal edilemez",
   "pos.toast.customer_linked": "Müşteri %s bağlandı",

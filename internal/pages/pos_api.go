@@ -2399,11 +2399,15 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// Update sale status: park, void, refund (status string expected).
+	// Which moves are allowed from the sale's current status is
+	// pos.UpdateSaleStatus's rule (ut-docs#3368: a completed sale can only be
+	// voided; never reopened, marked refunded or completed here — 409).
 	mux.HandleFunc("/api/pos/sale/status", func(w http.ResponseWriter, r *http.Request) {
 		type In struct {
-			SaleID string `json:"saleId"`
-			Status string `json:"status"` // open|parked|voided|refunded
-			Reason string `json:"reason,omitempty"`
+			SaleID      string `json:"saleId"`
+			Status      string `json:"status"` // open|parked|voided (refunded/completed are refused)
+			Reason      string `json:"reason,omitempty"`
+			OverridePIN string `json:"override_pin,omitempty"`
 		}
 		var in In
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -2414,7 +2418,26 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "saleId and status required", http.StatusBadRequest)
 			return
 		}
-		if err := pos.UpdateSaleStatus(r.Context(), d.Db, in.SaleID, in.Status, getSessionUserID(r), in.Reason); err != nil {
+		// Voiding is a cancellation the reports count, so it
+		// needs the refund permission or a manager's PIN (ut-docs#3368) —
+		// the same action the refund page gates on. API-only route (no UI
+		// calls it), so a refusal is a plain 403, not a PIN dialog.
+		actorID, blockedActorID := getSessionUserID(r), ""
+		if in.Status == "voided" {
+			elev := checkOrElevate(d, r, "refund", in.OverridePIN)
+			if elev.Outcome == needsElevation {
+				key := elevationErrorKey(elev.Err)
+				if key == "" {
+					key = "common.error.manager_or_admin_required"
+				}
+				common.LocalizedError(w, r, http.StatusForbidden, key)
+				return
+			}
+			if elev.Outcome == elevated {
+				actorID, blockedActorID = elev.ApproverID, elev.ActorID
+			}
+		}
+		if err := pos.UpdateSaleStatus(r.Context(), d.Db, in.SaleID, in.Status, actorID, blockedActorID, in.Reason); err != nil {
 			// ut-docs#944: raw Go error text (a wrapped SQL/engine error, or
 			// ErrSaleNotFound's own "sale not found: <id>") used to reach the
 			// operator verbatim regardless of locale. Not-found gets its own
@@ -2430,6 +2453,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			// needs to know WHY this specific void cannot happen.
 			if errors.Is(err, data.ErrVoucherRedeemedCannotVoid) {
 				common.LogAndLocalizedError(w, r, http.StatusConflict, "pos.error.void_voucher_redeemed", "pos-api", err)
+				return
+			}
+			if errors.Is(err, pos.ErrSaleStatusTransition) {
+				common.LogAndLocalizedError(w, r, http.StatusConflict, "pos.error.sale_status_transition", "pos-api", err)
 				return
 			}
 			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "pos.error.server", "pos-api", err)
