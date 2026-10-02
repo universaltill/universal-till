@@ -95,6 +95,7 @@ ALLOWED_LEGACY_USERNAMES=()
 # plausible is not credited unless it's on this list. See part 3 above.
 ALLOWED_PLAIN_EMAILS=(
   farsid@taskrunnertech.co.uk   # farshidmirza (pipeline owner)
+  pouria.teymuri@gmail.com      # pouria-teimouri — linked to his GitHub account; publishing it in commit metadata is his own choice (ut-docs#3472)
 )
 
 # Matched case-insensitively via $email_lc below — GitHub email matching
