@@ -118,10 +118,15 @@ func PruneBackups(dbPath string, keep int) error {
 // PrunePreRestore removes the pre-restore-<ts>.db copies ApplyPendingRestore
 // sets aside, keeping at most the newest keep and none older than maxAge
 // (whichever removes more), aged by the restore time in the file name. Each copy is a full database, and before
-// ut-docs#3092 nothing ever removed them. It never touches real snapshots
-// (unitill-pos-*) or any other file. Returns the files removed and the bytes
-// freed; a file that can't be removed is skipped.
-func PrunePreRestore(dbPath string, keep int, maxAge time.Duration, now time.Time) (int, int64, error) {
+// ut-docs#3092 nothing ever removed them.
+//
+// Because each copy holds every sale, payment, invoice, Z report and audit
+// row that was live at restore time, a copy no older than minRetain -- the
+// shop's statutory archive floor (ADR-0040, ut-docs#3365) -- is always kept,
+// whatever keep and maxAge say; the caller resolves the floor. It never
+// touches real snapshots (unitill-pos-*) or any other file. Returns the
+// files removed and the bytes freed; a file that can't be removed is skipped.
+func PrunePreRestore(dbPath string, keep int, maxAge time.Duration, now time.Time, minRetain time.Duration) (int, int64, error) {
 	dir, err := BackupDir(dbPath)
 	if err != nil {
 		return 0, 0, err
@@ -152,7 +157,7 @@ func PrunePreRestore(dbPath string, keep int, maxAge time.Duration, now time.Tim
 	sort.Slice(list, func(i, j int) bool { return list[i].ModTime.After(list[j].ModTime) })
 	removed, freed := 0, int64(0)
 	for i, b := range list {
-		if i < keep && now.Sub(b.ModTime) <= maxAge {
+		if (i < keep && now.Sub(b.ModTime) <= maxAge) || now.Sub(b.ModTime) <= minRetain {
 			continue
 		}
 		if os.Remove(filepath.Join(dir, b.Name)) == nil {

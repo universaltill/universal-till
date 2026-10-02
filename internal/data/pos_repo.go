@@ -6295,7 +6295,7 @@ func (r *POSRepo) SearchCustomers(ctx context.Context, q string, limit int) ([]C
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, name, COALESCE(phone,''), COALESCE(email,'')
 FROM customers
-WHERE name LIKE ? OR phone LIKE ? OR email LIKE ?
+WHERE name <> '' AND (name LIKE ? OR phone LIKE ? OR email LIKE ?)
 ORDER BY name LIMIT ?`, like, like, like, limit)
 	if err != nil {
 		return nil, fmt.Errorf("search customers: %w", err)
@@ -6314,8 +6314,13 @@ ORDER BY name LIMIT ?`, like, like, like, limit)
 
 // EraseCustomer removes a customer's personal data (GDPR right to erasure):
 // it unlinks the customer from sales (live AND archived) and promotions
-// (keeping the sales, which are financial records, but anonymous) and
-// deletes the customer row. Audited. Returns false if no such customer.
+// (keeping the sales, which are financial records, but anonymous), strips
+// the customer from parked baskets (live AND archived, ut-docs#3253 —
+// stripCustomerFromHeldSales) and deletes the customer row. Audited.
+// Returns false if no such customer. LAN replicas follow on their next
+// admin pull: the customers prune (sync_admin_repo.go adminTables) deletes
+// the row or, if the replica's own sales pin it, retires it as an
+// anonymous shell and strips the replica's parked baskets the same way.
 //
 // Issued invoices (invoices, invoices_archive) are deliberately NOT touched
 // (ut-docs#2965): their customer_name/customer_address/customer_vat_no are
@@ -6372,6 +6377,9 @@ func (r *POSRepo) EraseCustomer(ctx context.Context, id, actorID, blockedActorID
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {
 			return false, fmt.Errorf("erase customer unlink: %w", err)
 		}
+	}
+	if err := stripCustomerFromHeldSales(ctx, tx, id, true); err != nil {
+		return false, fmt.Errorf("erase customer: %w", err)
 	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM customers WHERE id = ?`, id)
 	if err != nil {
@@ -6864,7 +6872,7 @@ func (r *POSRepo) LookupCustomer(ctx context.Context, code string) (string, stri
 	}
 	row := r.db.QueryRowContext(ctx, `
 SELECT id, name FROM customers
-WHERE lower(id) = lower(?) OR lower(loyalty_no) = lower(?) OR phone = ?
+WHERE name <> '' AND (lower(id) = lower(?) OR lower(loyalty_no) = lower(?) OR phone = ?)
 LIMIT 1
 `, c, c, c)
 	var id, name string

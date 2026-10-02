@@ -73,7 +73,19 @@ type adminTable struct {
 	// the one path that didn't follow that rule (ut-docs#2246) — a still-
 	// behind primary's blank sku kept invalidating item_variants.sku
 	// backfillCodelessSyncedVariants had already fixed, on every poll.
+	scrubOnRetire []scrubCol // PERSONAL-DATA columns blanked on the FK-
+	// blocked retire-in-place (ut-docs#3253): the primary dropped the row
+	// (a GDPR erasure is the only way a customer leaves it), so a replica
+	// that must keep the row for its own sales' FK keeps an empty shell,
+	// never the person. A column listed here is not also mangled by
+	// `unique` — NULL already releases a UNIQUE value.
+	onPrune func(ctx context.Context, tx *sql.Tx, id any) error // runs in
+	// the apply tx after deleteMissing hard-deletes or retires a row of
+	// this table, with the row's (single-column) PK.
 }
+
+// scrubCol is one scrubOnRetire column and the SQL literal it is set to.
+type scrubCol struct{ col, val string }
 
 // adminTables is the shop-wide state a replica mirrors. Deliberately NOT
 // here: inventory/stock (additive movements, D3), sales, sessions,
@@ -122,7 +134,15 @@ var adminTables = []adminTable{
 	// mangle step deleteMissing runs for `unique` columns would have nothing
 	// to free and nothing to protect — only the is_active flag applies.
 	{name: "categories", pk: []string{"id"}, hasIsActive: true},
-	{name: "customers", pk: []string{"id"}, unique: []string{"loyalty_no"}},
+	// ut-docs#3253: a customer the primary erased but this replica's own
+	// sales still reference retires as an anonymous shell (name '' — the
+	// readers in pos_repo.go skip it — and no contact data), and their name
+	// leaves this till's parked baskets too.
+	{name: "customers", pk: []string{"id"}, unique: []string{"loyalty_no"},
+		scrubOnRetire: []scrubCol{{"name", "''"}, {"phone", "NULL"}, {"email", "NULL"}, {"address", "NULL"}, {"loyalty_no", "NULL"}},
+		onPrune: func(ctx context.Context, tx *sql.Tx, id any) error {
+			return stripCustomerFromHeldSales(ctx, tx, fmt.Sprint(id), false)
+		}},
 	// plugin_id is till-local derived state (which plugin installed on THIS
 	// till owns the method) — importing it re-hijacks a repaired built-in
 	// from a not-yet-upgraded primary (ADR-0031).
@@ -1566,6 +1586,11 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 			`DELETE FROM `+t.name+` WHERE `+strings.Join(where, " AND "), args...)
 		if err == nil {
 			logSatelliteDivergencePrune(t, args, "hard-deleted, no history")
+			if t.onPrune != nil {
+				if herr := t.onPrune(ctx, tx, args[0]); herr != nil {
+					return fmt.Errorf("prune %s: %w", t.name, herr)
+				}
+			}
 			continue
 		}
 		// FK-blocked (row referenced by local sales history): retire it in
@@ -1575,8 +1600,14 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 		// already retired: an UPDATE that rewrites the same values still
 		// fires the version triggers, refreshing every open sale screen on
 		// every pull (ut-docs#2875).
-		if t.hasIsActive || len(t.unique) > 0 {
+		if t.hasIsActive || len(t.unique) > 0 || len(t.scrubOnRetire) > 0 {
 			var sets, pending []string
+			scrubbed := map[string]bool{}
+			for _, s := range t.scrubOnRetire {
+				scrubbed[s.col] = true
+				sets = append(sets, s.col+" = "+s.val)
+				pending = append(pending, s.col+" IS NOT "+s.val)
+			}
 			if t.hasIsActive {
 				col := t.activeCol
 				if col == "" {
@@ -1587,6 +1618,9 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 			}
 			pk := t.pk[0]
 			for _, c := range t.unique {
+				if scrubbed[c] {
+					continue
+				}
 				sets = append(sets, fmt.Sprintf(
 					"%s = CASE WHEN %s LIKE '%%~' || %s THEN %s ELSE %s || '~' || %s END",
 					c, c, pk, c, c, pk))
@@ -1599,6 +1633,11 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 			if derr == nil {
 				if n, _ := res.RowsAffected(); n > 0 {
 					logSatelliteDivergencePrune(t, args, "retired in place, has history")
+					if t.onPrune != nil {
+						if herr := t.onPrune(ctx, tx, args[0]); herr != nil {
+							return fmt.Errorf("prune %s: %w", t.name, herr)
+						}
+					}
 				}
 				continue
 			}

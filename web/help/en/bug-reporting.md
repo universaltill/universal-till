@@ -21,6 +21,8 @@ Something wrong with the till? Send a report — typed, spoken, or with a screen
 
 You can also reach it from the ☰ Menu via the Report an issue tile.
 
+On a phone-width screen, 🐞 Report an issue is in the ☰ menu, and the panel fills the screen under the top bar, with large buttons, the note on its own line and Save report under it. It doesn't move there. Press ✕ to hide it while you reproduce the problem, then 🐞 to bring it back with your draft intact. ☰ stays tappable above it.
+
 On the Android till app, "Take screenshot" captures what the app is showing directly — no permission prompt. The voice note works too: the first time you record one, Android asks for microphone access; allow it once and later recordings start straight away (if you refused, turn it back on under the phone's Settings → Apps → Universal Till → Permissions). Screen recording, and taking photos with the camera, aren't available in the Android app yet.
 
 On the iPhone and iPad app, the first time you record a voice note iOS asks for microphone access; allow it and later recordings start straight away (if you refused, turn it back on under the device's Settings → Universal Till → Microphone). Older iOS versions can't record voice notes in the app; the button then says so instead. "Take screenshot" captures the till screen itself, without a share prompt — the panel steps aside for a moment so it isn't in the picture. Screen recording isn't available in the iPhone and iPad app yet.

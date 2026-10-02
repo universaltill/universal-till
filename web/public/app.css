@@ -4229,6 +4229,18 @@ body.login-screen {
   }
   table.t-cards tr > .t-cards-actions:empty { display: none; }
   table.t-cards tr > .t-cards-actions { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; }
+  /* ut-docs#3357: a labelled actions CELL (a real column header, e.g.
+     /orders' "Update") renders its buttons through the page's own
+     .btn-actions div, not .t-cards-actions (that class only reaches a
+     HEADER-LESS cell) -- so it never inherited the flex-wrap this card
+     tier needs. .btn-actions's base rule (`display:flex; gap:.25rem;
+     justify-content:center`) is shared with other, non-card contexts and
+     must stay nowrap there; only override it inside a card. Found by
+     measuring a real order's row at 360px: four one-tap status buttons
+     (Preparing/Ready/Collected/Cancel order) summed past the card's
+     content width and spilled ~21px outside the card border on both
+     sides -- unreadable in exactly the way this ticket exists to fix. */
+  table.t-cards .btn-actions { flex-wrap: wrap; justify-content: flex-start; }
   table.t-cards tr.t-cards-row:not(.t-cards-open) > .t-cards-extra { display: none; }
   table.t-cards tr > .t-cards-more { display: block; padding-block-start: .4rem; }
   /* Buttons keep their words whole (the cell's anywhere-wrap is for data). */
@@ -5209,15 +5221,6 @@ body.login-screen {
   text-align: start;
 }
 .bugreport-panel.open { display: block; }
-@media (max-width: 480px) {
-  /* Restores the pre-rail clearance for the top-bar fallback, which still
-     occupies real vertical space at this width (see .nav's own comment).
-     ut-docs#2364: was a hardcoded 4.6rem (tuned for an old 2-row bar) --
-     the bar now wraps to 3 rows at this width and the panel's head bar
-     opened hidden underneath it. --topbar-h (declared above, kept live by
-     app.js) tracks the bar's REAL height instead of guessing it. */
-  .bugreport-panel { inset-block-start: calc(var(--topbar-h) + .5rem); }
-}
 /* ut-docs#395: draggable so the operator can shift the panel off whatever
    it's covering. touch-action: none stops the kiosk touchscreen's own
    scroll/pan gesture from competing with the drag; user-select: none stops
@@ -5261,6 +5264,59 @@ body.login-screen {
   inline-size: 1.3rem; block-size: 1.3rem; border-radius: 50%; border: 1px solid var(--border, #e2e8f0);
   background: var(--surface, #fff); color: inherit; cursor: pointer; font-size: .7rem; line-height: 1; padding: 0; }
 .bugreport-thumb-remove:hover, .bugreport-thumb-remove:focus-visible { background: var(--surface-2, #f8fafc); }
+/* ut-docs#3353, phone tier: a full-screen sheet, not a floating card. The
+   product owner, on an iPhone: "bug report doesn't have a mobile design".
+   A 26rem card with a drag handle on a 390px screen is a card you can't
+   move out of the way, and its head ate the vertical swipe.
+   - Edge to edge under the top bar (a fixed 56px row at this tier, so
+     --phone-top-h, not the measured --topbar-h whose 12rem default would
+     paint a server-opened /report-issue sheet 192px down first), down to
+     the bottom edge. This replaces ut-docs#2364's offset rule. z-index is
+     BELOW the nav's 60 so ☰ (Lock, exit and status in its drawer) and Back
+     stay tappable over it (CLAUDE.md: status/lock/exit reachable on every
+     surface); the bar never overlaps it because the sheet starts under it.
+   - !important on the insets: a position dragged on a wider layout is
+     restored as inline left/top (ut-docs#2342) and must not move the sheet.
+   - The head stays pinned while the sheet scrolls, so ✕ and Discard are
+     always one tap away; it is no drag handle here (the panel's own
+     pointerdown bails out at this width), so it gives touch back to
+     scrolling.
+   - Every control is a >=44px full-width row; the note gets its own line
+     with Send under it; the padding clears the home indicator and the
+     page's status row (--phone-sb-h, measured by app.js). On the sale
+     screen that row is fixed above the basket bar at z-index 39, under the
+     sheet: while the sheet is open it drops to the bottom edge and rises
+     above it, so an offline/main-till problem stays visible. */
+@media (max-width: 480px) {
+  .bugreport-panel {
+    inset-block: var(--phone-top-h, 56px) 0 !important;
+    inset-inline: 0 !important;
+    inline-size: auto; max-block-size: none;
+    z-index: 59;
+    border: 0; border-radius: 0; box-shadow: none;
+    padding: 0 1rem calc(1rem + var(--phone-sb-h, 0px) + env(safe-area-inset-bottom));
+    overscroll-behavior: contain;
+  }
+  .bugreport-head {
+    position: sticky; inset-block-start: 0; z-index: 1;
+    margin-inline: -1rem; padding-block: .5rem; padding-inline: 1rem .5rem;
+    background: var(--surface, #fff); border-block-end: 1px solid var(--border, #e2e8f0);
+    cursor: auto; touch-action: auto; user-select: auto;
+  }
+  .bugreport-head h2 { font-size: 1.1rem; }
+  .bugreport-head .bugreport-discard, .bugreport-close { min-block-size: 44px; min-inline-size: 44px; }
+  .bugreport-panel > .set-gap-s { margin-block-start: .75rem; }
+  .bugreport-send { flex-direction: column; align-items: stretch; }
+  .bugreport-send textarea { min-block-size: 6rem; }
+  .bugreport-panel .btn:not(.bugreport-discard) { inline-size: 100%; min-block-size: 48px; justify-content: center; }
+  .bugreport-thumb { inline-size: 5.5rem; block-size: 5.5rem; }
+  .bugreport-thumb-remove { inline-size: 2.75rem; block-size: 2.75rem; font-size: .9rem;
+    inset-block-start: -.6rem; inset-inline-end: -.6rem; }
+  /* :has() carries an id's specificity, so the drawer-foot (z 61) and
+     scrim (z 460) lifts are excluded here rather than out-ranked. */
+  html:not(.ut-scrim-on) body.sale-screen:not(.nav-drawer-open):has(#bugreport-panel.open) .statusbar { bottom: 0; z-index: 60; }
+  .bugreport-panel a[href="/my-reports"] { display: inline-flex; align-items: center; min-block-size: 44px; }
+}
 
 /* ADR-0088 / ut-docs#1904: the "Open" link on the Hidden menu tiles page.
    It sits on its own line under the destination name — inline, it read as

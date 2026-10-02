@@ -13,6 +13,7 @@ internal/data/related_items_repo.go: unreachable func: RelatedItemsRepo.LastRebu
 internal/diagnostics/device_model.go: unreachable func: SetDeviceModel
 internal/diagnostics/events.go: unreachable func: EnumValues
 internal/directivekey/directivekey.go: unreachable func: Store.Path
+internal/discovery/native.go: unreachable func: SetNativeBridge
 internal/discovery/sweep.go: unreachable func: SweepPrinters
 internal/fiscal/tse_credential_store.go: unreachable func: NewSigningDeviceCredentialStoreAt
 internal/fiscal/tse_credential_store.go: unreachable func: SigningDeviceCredentialStore.Path

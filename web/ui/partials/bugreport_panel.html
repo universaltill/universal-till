@@ -674,6 +674,12 @@
 
   function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 
+  // ut-docs#3353: on a phone the panel is a full-screen sheet (app.css,
+  // same breakpoint), so it is never dragged there — and a dragged position
+  // saved on a wider layout must survive it untouched (clamping it against
+  // the sheet's full-screen box would rewrite it to the top-left corner).
+  function phoneTier() { return !!(window.matchMedia && window.matchMedia('(max-width: 480px)').matches); }
+
   // Keeping the whole panel inside the viewport is the drag's one hard rule,
   // so it lives in one place: the drag uses it, and so does the resize guard
   // below. On a viewport narrower/shorter than the panel the upper bound goes
@@ -702,7 +708,7 @@
   // resize and on re-open (a resize while it was closed measures 0×0, so the
   // clamp has to be redone once it has a box again).
   function reclampIfDragged() {
-    if (!panel.style.left) return;
+    if (!panel.style.left || phoneTier()) return;
     moveTo(parseFloat(panel.style.left) || 0, parseFloat(panel.style.top) || 0, true);
   }
 
@@ -748,6 +754,9 @@
     // intervening pointer capture elsewhere, which the capture on `head`
     // guarantees here).
     if (e.target.closest('#bugreport-close, #bugreport-discard')) return; // buttons in the head are not drag handles
+    // ut-docs#3353: no drag on the phone sheet — there is nowhere to drag
+    // it, and a drag here would eat the swipe that scrolls it.
+    if (phoneTier()) return;
     if (dragPointerId !== null) return;   // one drag at a time
     if (e.button !== 0) return;           // primary press only; a right-click drag isn't one
     // Suppress the browser's OWN drag gesture before it starts. Without this

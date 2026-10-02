@@ -23,6 +23,9 @@ enum TillServer {
     static func start() throws -> URL {
         let dir = try dataDirectory()
         MobileSetDeviceModel(deviceModel())
+        // Bonjour instead of Go's raw multicast, which iOS refuses without
+        // Apple's multicast entitlement (ut-docs#3218).
+        MobileSetDiscoveryBridge(BonjourBridge.shared)
         var err: NSError?
         let addr = MobileStart(dir, &err)
         if let err = err {
