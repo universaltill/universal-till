@@ -36,6 +36,10 @@ const (
 
 const httpResponseCap = 256 << 10 // response body cap (base64-decoded bytes)
 
+// validationResponseCap is httpResponseCap for a host the plugin holds
+// net:validation:<host> for (ut-docs#3226).
+const validationResponseCap = 8 << 20 // 8 MiB — bounds a WASM guest's validation-data fetch (OCSP/CRL/TSA, PAdES trusted-list XML); real-world CRLs and EU trusted-list files run well under this, and the guest's own linear memory is capped at 64 MiB regardless
+
 // hostState carries the calling plugin's identity into host functions via
 // the per-instantiation context: one host-module registration serves every
 // plugin, in parallel, without shared mutable state.
@@ -201,8 +205,11 @@ func hostStorageSet(ctx context.Context, m api.Module, keyPtr, keyLen, valPtr, v
 
 // hostHTTPRequest performs one outbound HTTP call for the plugin. The URL's
 // hostname must be covered by a granted `net:<host>` permission; https only,
-// except plain http to localhost (dev/Ollama). Runs under the module's
-// event deadline.
+// except plain http to localhost (dev/Ollama). A host named by a
+// net:validation:<host> grant (ut-docs#3226) may also be fetched over plain
+// http, with validationResponseCap instead of httpResponseCap, and is always
+// public-only: it must resolve to a public address, whatever other net:
+// grant the plugin holds for it. Runs under the module's event deadline.
 //
 // Buffer-ABI retry cache (ut-docs#754): per the module's buffer ABI, a
 // guest that undersizes dstCap gets back the FULL response length and is
@@ -260,8 +267,16 @@ func hostHTTPRequest(ctx context.Context, m api.Module, reqPtr, reqLen, dstPtr, 
 	if err != nil || u.Hostname() == "" {
 		return hostErrInvalid
 	}
-	if !hostAllowedScheme(u) {
-		logging.L().Infof("[wasm:%s] http egress denied: host %s: scheme %s (https only; plain http only to loopback)", s.pluginID, u.Hostname(), u.Scheme)
+	// A net:validation:<host> grant (ut-docs#3226) is the only thing that
+	// lets a non-loopback host be fetched over plain http; look it up first
+	// so the scheme rule can take it into account.
+	validation, err := validationGrantMatch(ctx, s.db, s.pluginID, u.Hostname())
+	if err != nil {
+		logEgressDenied(s.pluginID, &egressDeniedError{host: u.Hostname(), reason: "permission lookup failed"})
+		return hostErrDenied
+	}
+	if !hostAllowedScheme(u, validation) {
+		logging.L().Infof("[wasm:%s] http egress denied: host %s: scheme %s (https only; plain http only to loopback or a net:validation: host)", s.pluginID, u.Hostname(), u.Scheme)
 		return hostErrInvalid
 	}
 	// Name check: the plugin holds either the exact host permission
@@ -270,8 +285,10 @@ func hostHTTPRequest(ctx context.Context, m api.Module, reqPtr, reqLen, dstPtr, 
 	// settings, so they declare net:* and are review-gated accordingly.
 	// net:* reaches PUBLIC addresses only; a LAN/loopback target needs the
 	// exact grant — enforced at dial time against the resolved IP, redirects
-	// included (wasm_egress.go, ut-docs#2891).
-	exact, err := netPermission(ctx, s.db, s.pluginID, u.Hostname())
+	// included (wasm_egress.go, ut-docs#2891). A validation grant passes the
+	// name check on its own and is never exact, even alongside net:<host>
+	// for the same host (httpNetPermission).
+	exact, err := httpNetPermission(ctx, s.db, s.pluginID, u.Hostname(), validation)
 	if err != nil {
 		logEgressDenied(s.pluginID, err)
 		return hostErrDenied
@@ -279,6 +296,9 @@ func hostHTTPRequest(ctx context.Context, m api.Module, reqPtr, reqLen, dstPtr, 
 	grants := &egressGrants{exact: map[string]bool{}}
 	if exact {
 		grants.add(u.Hostname())
+	}
+	if validation {
+		grants.addValidation(u.Hostname())
 	}
 	ctx = withEgressGrants(ctx, grants)
 	body, err := base64.StdEncoding.DecodeString(req.BodyB64)
@@ -317,7 +337,7 @@ func hostHTTPRequest(ctx context.Context, m api.Module, reqPtr, reqLen, dstPtr, 
 		return hostErrInternal
 	}
 	defer resp.Body.Close()
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, httpResponseCap))
+	respBody, err := readHTTPResponseBody(resp, grants)
 	if err != nil {
 		return hostErrInternal
 	}
@@ -348,13 +368,32 @@ func hostHTTPRequest(ctx context.Context, m api.Module, reqPtr, reqLen, dstPtr, 
 	return writeGuest(m, dstPtr, dstCap, out)
 }
 
+// readHTTPResponseBody reads resp's body up to the response cap and no
+// further: validationResponseCap when the host that actually answered (the
+// last redirect hop, resp.Request) is one the chain approved through a
+// net:validation: grant (ut-docs#3226), httpResponseCap otherwise.
+func readHTTPResponseBody(resp *http.Response, grants *egressGrants) ([]byte, error) {
+	limit := int64(httpResponseCap)
+	if resp.Request != nil && resp.Request.URL != nil && grants.isValidation(resp.Request.URL.Hostname()) {
+		limit = validationResponseCap
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, limit))
+}
+
 // hostAllowedScheme: https anywhere the permission allows; plain http only
-// to loopback (a self-hosted Ollama or dev service on the till itself).
-func hostAllowedScheme(u *url.URL) bool {
+// to loopback (a self-hosted Ollama or dev service on the till itself) —
+// except that allowPlainPublicHTTP (the host is named by a granted
+// net:validation:<host>, ut-docs#3226) allows plain http to that host too.
+// That host is public-only at dial time (httpNetPermission), so plain http
+// never reaches a non-public address through this exception.
+func hostAllowedScheme(u *url.URL, allowPlainPublicHTTP bool) bool {
 	switch u.Scheme {
 	case "https":
 		return true
 	case "http":
+		if allowPlainPublicHTTP {
+			return true
+		}
 		h := u.Hostname()
 		return h == "localhost" || h == "127.0.0.1" || h == "::1"
 	default:

@@ -277,6 +277,11 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 	if err := validateSettingBoundPermissions(&m); err != nil {
 		return nil, err
 	}
+	// Validation-data grants (ut-docs#3226) name one exact host; a malformed
+	// or wildcard form is refused rather than silently matching nothing.
+	if err := validateValidationPermissions(&m); err != nil {
+		return nil, err
+	}
 	// provides/markets are closed-set (ADR-0129): a typo would otherwise
 	// silently match nothing, so it fails here.
 	if err := validateProvidesAndMarkets(&m); err != nil {

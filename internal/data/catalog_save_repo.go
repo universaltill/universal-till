@@ -82,6 +82,35 @@ type resolvedBarcode struct {
 	raw, key, typ string
 }
 
+// resolveBarcodeSet checks a full barcode set (save_item's or
+// save_item_variant's) and resolves each code to its stored key exactly as
+// AddBarcode does (ADR-0059 §3). It runs outside the write transaction: it
+// reads the shop's enabled symbologies, which these writes never change.
+// owner ("an item", "a variant") words the size refusal.
+func (r *CatalogRepo) resolveBarcodeSet(ctx context.Context, codes []string, owner string) ([]resolvedBarcode, error) {
+	if len(codes) > maxItemBarcodes {
+		return nil, fmt.Errorf("%s can have at most %d barcodes", owner, maxItemBarcodes)
+	}
+	out := make([]resolvedBarcode, 0, len(codes))
+	seen := map[string]bool{}
+	for _, raw := range codes {
+		raw = strings.TrimSpace(raw)
+		if !validBarcodeText(raw) {
+			return nil, fmt.Errorf("barcode %q must be 1–%d printable characters with no spaces", raw, maxBarcodeLen)
+		}
+		dec, enabled, ok := r.matchBarcode(ctx, raw)
+		if !ok {
+			return nil, fmt.Errorf("%w: %q (enabled: %s)", ErrBarcodeNoSymbologyMatch, raw, strings.Join(enabled, ", "))
+		}
+		if seen[dec.LookupKey] {
+			return nil, fmt.Errorf("barcode %s is listed twice", raw)
+		}
+		seen[dec.LookupKey] = true
+		out = append(out, resolvedBarcode{raw: raw, key: dec.LookupKey, typ: strings.ToUpper(dec.SymbologyID)})
+	}
+	return out, nil
+}
+
 // SaveItem applies a save_item directive (contract §3.1) in one
 // transaction: create-with-id or update, full barcode-set replace (the
 // first barcode is the primary; variant barcodes are untouched),
@@ -123,27 +152,9 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 	}
 	var barcodes []resolvedBarcode
 	if p.Barcodes != nil {
-		if len(*p.Barcodes) > maxItemBarcodes {
-			return res, fmt.Errorf("an item can have at most %d barcodes", maxItemBarcodes)
-		}
-		seen := map[string]bool{}
-		for _, raw := range *p.Barcodes {
-			raw = strings.TrimSpace(raw)
-			if !validBarcodeText(raw) {
-				return res, fmt.Errorf("barcode %q must be 1–%d printable characters with no spaces", raw, maxBarcodeLen)
-			}
-			// Resolve to the stored key exactly as AddBarcode does (ADR-0059
-			// §3) — outside the transaction: it reads the shop's enabled
-			// symbologies, which this write never changes.
-			dec, enabled, ok := r.matchBarcode(ctx, raw)
-			if !ok {
-				return res, fmt.Errorf("%w: %q (enabled: %s)", ErrBarcodeNoSymbologyMatch, raw, strings.Join(enabled, ", "))
-			}
-			if seen[dec.LookupKey] {
-				return res, fmt.Errorf("barcode %s is listed twice", raw)
-			}
-			seen[dec.LookupKey] = true
-			barcodes = append(barcodes, resolvedBarcode{raw: raw, key: dec.LookupKey, typ: strings.ToUpper(dec.SymbologyID)})
+		var err error
+		if barcodes, err = r.resolveBarcodeSet(ctx, *p.Barcodes, "an item"); err != nil {
+			return res, err
 		}
 	}
 	for _, list := range []*[]string{p.ModifierGroupIDs, p.ModifierOptOutIDs} {

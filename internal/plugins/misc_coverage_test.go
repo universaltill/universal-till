@@ -308,7 +308,7 @@ func TestHostAllowedScheme(t *testing.T) {
 		if err != nil {
 			t.Fatalf("parse %s: %v", raw, err)
 		}
-		if got := hostAllowedScheme(u); got != want {
+		if got := hostAllowedScheme(u, false); got != want {
 			t.Errorf("hostAllowedScheme(%s) = %v, want %v", raw, got, want)
 		}
 	}
