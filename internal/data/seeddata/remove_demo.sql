@@ -61,6 +61,11 @@ WHERE i.is_sample_data = 1
   -- The _archive clause is the same reset-archive reasoning as above.
   AND NOT EXISTS (SELECT 1 FROM age_verifications av WHERE av.item_id = i.id)
   AND NOT EXISTS (SELECT 1 FROM age_verifications_archive av WHERE av.item_id = i.id)
+  -- shrinkage_events (ut-docs#3394): a demo item that was only ever
+  -- voided/comped/wasted has an item_id FK row there (no ON DELETE action)
+  -- but no sale_lines/stock_movements — same FK-rollback failure as above.
+  -- Live table only: reset-transactions does not archive shrinkage_events.
+  AND NOT EXISTS (SELECT 1 FROM shrinkage_events se WHERE se.item_id = i.id)
   AND NOT EXISTS (SELECT 1 FROM held_sales h
                   WHERE h.payload LIKE '%"item_id":"' || i.id || '"%')
   AND NOT EXISTS (SELECT 1 FROM held_sales h

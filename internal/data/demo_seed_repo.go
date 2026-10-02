@@ -62,7 +62,9 @@ func (r *DemoSeedRepo) SeedDemoCatalogue(ctx context.Context) error {
 //   - ReasonHistory: the item (or a variant) has a live or archived
 //     sale_lines/stock_movements row, or a live or archived
 //     age_verifications row (ut-docs#3340: an ID check — typically a
-//     refusal — recorded against it). Never offered a "remove anyway" —
+//     refusal — recorded against it), or a shrinkage_events row
+//     (ut-docs#3394: a void/comp/waste of it, live only — never archived
+//     by reset-transactions). Never offered a "remove anyway" —
 //     doing so would either FK-fail or silently orphan a restorable
 //     archive batch (ut-docs#1840's own "Do not regress" section). Points
 //     the operator at Catalog cleanup instead (AC4), which handles this
@@ -145,6 +147,7 @@ CASE
 	  OR EXISTS (SELECT 1 FROM stock_movements_archive sm JOIN item_variants v ON v.id = sm.variant_id WHERE v.item_id = i.id)
 	  OR EXISTS (SELECT 1 FROM age_verifications av WHERE av.item_id = i.id)
 	  OR EXISTS (SELECT 1 FROM age_verifications_archive av WHERE av.item_id = i.id)
+	  OR EXISTS (SELECT 1 FROM shrinkage_events se WHERE se.item_id = i.id)
 	THEN 'history'
 	ELSE 'edited'
 END`
@@ -242,7 +245,8 @@ var ErrDemoItemNotFound = errors.New("demo item not found")
 
 // ErrDemoItemHasHistory: RemoveDemoItem was asked to remove an item this
 // package would never remove regardless of mode — it (or a variant) has a
-// live/archived sale, stock movement, or parked basket referencing it.
+// live/archived sale, stock movement, age verification, a shrinkage
+// (void/comp/waste) event, or a parked basket referencing it.
 // Wraps the specific reason (KeptReasonHistory or KeptReasonHeld) so the
 // caller can render the right message rather than a generic refusal.
 var ErrDemoItemHasHistory = errors.New("demo item has trading history")
