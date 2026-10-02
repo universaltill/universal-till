@@ -21,3 +21,15 @@ Release notes for the till. Versions come from the release tag
   `set_user_pin` and `deactivate_user` is the release that ships this entry
   (the first release after **v0.28.0**, which was cut just before this
   merged; v0.28.0 does not contain it).
+
+### Fixed
+
+- **A 0% tax code is charged 0% (ut-docs#3250).** An item on a tax code
+  whose rate is 0% (zero-rated food, an exempt line) was charged the shop's
+  default rate, because the sale engine treated a 0% rate the same as "no
+  tax code". Now only an item with no tax code, or one whose tax code no
+  longer exists, falls back to the default rate. **Behaviour change:** a
+  till with items on a 0% tax code was in practice charging the default VAT
+  on them; after this release those items are charged 0%, which is what the
+  tax code says. A sale parked before the update is re-rated at 0% when it
+  is resumed. Completed sales are unchanged.

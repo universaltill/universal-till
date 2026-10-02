@@ -237,6 +237,12 @@ func effectiveTaxRateBPFor(l BasketLine, taxAsker TaxRateAsker, orderType string
 		}
 		blocked = askerBlocked
 	}
+	// ut-docs#3250: a line WITH a tax code is charged that code's rate, 0%
+	// included (zero-rated, exempt). Only a line with no tax code falls back
+	// to the shop's default — TaxRateBP == 0 alone can't tell the two apart.
+	if l.TaxCodeID != "" {
+		return l.TaxRateBP, blocked
+	}
 	standard := l.TaxRateBP
 	if standard == 0 {
 		standard = defaultRateBP
