@@ -1,3 +1,4 @@
 "CFBundleDisplayName" = "صندوق فروش";
 "NSLocalNetworkUsageDescription" = "صندوق فروش صندوق‌های دیگر فروشگاه شما را از طریق شبکهٔ محلی پیدا می‌کند و با آن‌ها همگام می‌شود.";
 "NSCameraUsageDescription" = "صندوق فروش برای اسکن بارکد از دوربین استفاده می‌کند.";
+"NSMicrophoneUsageDescription" = "صندوق فروش برای ضبط یادداشت صوتی در گزارش یک مشکل از میکروفون استفاده می‌کند.";

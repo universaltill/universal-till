@@ -84,6 +84,11 @@ targets:
           - _pdl-datastream._tcp
         # Barcode scanning with the camera from the web UI.
         NSCameraUsageDescription: Universal Till uses the camera to scan barcodes.
+        # The bug-report panel's voice note (getUserMedia audio). Without it
+        # iOS terminates the app on the first Record tap (ut-docs#3354);
+        # scripts/ci/guard-ios-usage-descriptions.sh ties web capture calls
+        # to these keys.
+        NSMicrophoneUsageDescription: Universal Till uses the microphone to record a voice note for a problem report.
         # Export compliance, answered once here so App Store Connect doesn't
         # hold every TestFlight build on the questionnaire (ut-docs#3069).
         # The till uses only standard, published algorithms from Go's

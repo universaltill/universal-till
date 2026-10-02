@@ -166,15 +166,20 @@
 
     var saveBtn = document.getElementById('ir-save-btn');
 
+    // null when the recorder reports none of the candidates as supported.
     function pickMimeType(candidates) {
       if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return candidates[0];
       for (var i = 0; i < candidates.length; i++) {
         if (MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
       }
-      return candidates[0];
+      return null;
     }
 
-    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    // The stored bundle is audio.webm (internal/issuereport), so only WebM/Ogg
+    // will do. iOS before 26 records MP4 only: say "not available" up front
+    // instead of asking for the microphone and then failing (ut-docs#3354).
+    var VOICE_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg'];
+    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !pickMimeType(VOICE_TYPES)) {
       voiceBtn.disabled = true;
       voiceBtn.textContent = T.voiceUnsupported;
     } else {
@@ -188,7 +193,7 @@
         voiceBtn.disabled = true;
         navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
           voiceStarting = false;
-          var mime = pickMimeType(['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg']);
+          var mime = pickMimeType(VOICE_TYPES);
           try {
             voiceRecorder = new MediaRecorder(stream, { mimeType: mime });
           } catch (e) {
@@ -247,7 +252,7 @@
         navigator.mediaDevices.getDisplayMedia({ video: true }).then(function (stream) {
           screenStarting = false;
           screenStream = stream;
-          var mime = pickMimeType(['video/webm;codecs=vp9', 'video/webm']);
+          var mime = pickMimeType(['video/webm;codecs=vp9', 'video/webm']) || 'video/webm';
           try {
             screenRecorder = new MediaRecorder(stream, { mimeType: mime });
           } catch (e) {

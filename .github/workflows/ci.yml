@@ -197,6 +197,10 @@ jobs:
         run: bash scripts/ci/guard-android-manifest-features.sh
       - name: Android manifest implied-feature guard regression test
         run: bash scripts/ci/guard-android-manifest-features_test.sh
+      - name: iOS usage-description guard (ut-docs#3354)
+        run: bash scripts/ci/guard-ios-usage-descriptions.sh
+      - name: iOS usage-description guard regression test
+        run: bash scripts/ci/guard-ios-usage-descriptions_test.sh
       - name: Android WebView network-state guard (ut-docs#3088)
         run: bash scripts/ci/guard-android-network-state.sh
       - name: Android WebView network-state guard regression test
