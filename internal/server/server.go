@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -212,7 +213,7 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 			var hk housekeeping.Schedule
 			run := func() {
 				runDailyBackup(db, cfg.DBPath)
-				runHousekeeping(&hk, cfg.DBPath, time.Now())
+				runHousekeeping(&hk, db, cfg.DBPath, time.Now())
 			}
 			ticker := time.NewTicker(time.Hour)
 			defer ticker.Stop()
@@ -362,18 +363,45 @@ func runDailyBackup(db *sql.DB, dbPath string) {
 	_ = dbpkg.PruneBackups(dbPath, dbpkg.DefaultBackupKeep)
 }
 
+// maxArchiveRetainDays is the largest archive_min_days that still converts
+// to a positive time.Duration (int64 nanoseconds): math.MaxInt64 / one day,
+// floored. A shop-configured value above this is clamped rather than
+// overflowed (ut-docs#3365 review finding).
+const maxArchiveRetainDays = math.MaxInt64 / int64(24*time.Hour)
+
 // runHousekeeping runs the daily device clean-up when due and logs what it
 // removed. Failures are logged and skipped; nothing here blocks selling.
-func runHousekeeping(s *housekeeping.Schedule, dbPath string, now time.Time) {
+func runHousekeeping(s *housekeeping.Schedule, db *sql.DB, dbPath string, now time.Time) {
 	if !s.Due(now) {
 		return
 	}
 	s.Ran(now)
+	// Pre-restore copies are full databases (sales, payments, Z reports,
+	// audit log), so they are kept for the shop's statutory archive floor
+	// (ADR-0040, ut-docs#3365). On any failure to resolve it, fall back to
+	// the global floor: fail safe toward retaining, never toward deleting.
+	minDays := data.GlobalArchiveMinDays
+	if db != nil {
+		if d, err := data.ResolveArchiveMinDays(context.Background(), db); err == nil {
+			minDays = d
+		} else {
+			log.Printf("[Housekeeping] resolve archive retention: %v (keeping pre-restore copies for %d days)", err, minDays)
+		}
+	}
+	// archive_min_days has no upper bound (only validateCountrySetting's
+	// floor) -- a shop configuring an enormous "never purge" value would
+	// overflow time.Duration (int64 nanoseconds, ~106,751 days) to negative,
+	// which would flip the floor OFF and fail toward deleting instead of
+	// retaining. Clamp instead.
+	if minDays > maxArchiveRetainDays {
+		minDays = maxArchiveRetainDays
+	}
+	minRetain := time.Duration(minDays) * 24 * time.Hour
 	policy := map[string]string{}
 	for _, rule := range housekeeping.Retention() {
 		policy[rule.Kind] = rule.Policy
 	}
-	for _, r := range housekeeping.Run(dbPath, now) {
+	for _, r := range housekeeping.Run(dbPath, now, minRetain) {
 		if r.Err != nil {
 			log.Printf("[Housekeeping] %s: %v", r.Kind, r.Err)
 			continue

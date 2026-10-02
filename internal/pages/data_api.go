@@ -413,6 +413,7 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusNotFound, false, "customer not found")
 			return
 		}
+		forgetCustomerOnBaskets(d, id) // ut-docs#3253
 		respond(w, http.StatusOK, true, "customer erased")
 	})
 

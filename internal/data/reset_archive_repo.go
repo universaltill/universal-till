@@ -517,6 +517,14 @@ func (r *POSRepo) RestoreResetBatch(ctx context.Context, batchID, actorID, block
 	return restored, nil
 }
 
+// ResolveArchiveMinDays reads the shop's chosen country and returns its
+// statutory archive_min_days floor (ADR-0040); see resolveArchiveMinDays.
+// Exported for the device housekeeping job (ut-docs#3365), which must not
+// prune a pre-restore database copy inside that floor.
+func ResolveArchiveMinDays(ctx context.Context, db *sql.DB) (int64, error) {
+	return (&POSRepo{}).resolveArchiveMinDays(ctx, db)
+}
+
 // resolveArchiveMinDays reads the shop's chosen country (settings key
 // StoreCountrySettingsKey) and returns that country's archive_min_days.
 // Falls back to GlobalArchiveMinDays -- ADR-0040's global floor -- when no

@@ -31,7 +31,7 @@ instead.
 Once a day the till removes files it no longer needs, so its disk doesn't fill up:
 
 - Backups: the newest 14 are kept.
-- The copy of your data set aside when you restore a backup: the newest 3 are kept, and none older than 30 days.
+- The copy of your data set aside when you restore a backup: kept for as long as the law requires you to keep sales records; after that, only the newest 3 are kept, and none older than 30 days.
 - Issue reports that couldn't be sent: removed after 7 days.
 - Downloaded updates: removed after 7 days.
 
