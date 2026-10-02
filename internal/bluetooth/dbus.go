@@ -44,7 +44,17 @@ func NewDBusClient() (Client, error) {
 // Android build until ut-docs#1731 lands — keeps the ErrUnsupportedPlatform
 // path exactly as it was: this branch is additive, never a behaviour
 // change for a caller that hasn't wired the bridge.
+//
+// iOS (ut-docs#3261) is unsupported outright, bridge or not: iOS keeps HID
+// scanners and keyboards for the system (Core Bluetooth never exposes the
+// HID service to an app), so they pair in the iOS Settings app and reach
+// the till as typed keys, and Bluetooth printing has no transport on any
+// platform yet. It has no D-Bus either, so falling through to
+// ConnectSystemBus would misreport a healthy radio as missing.
 func newDBusClientFor(goos string) (Client, error) {
+	if goos == "ios" {
+		return nil, ErrUnsupportedPlatform
+	}
 	if goos == "android" {
 		if b := RegisteredAndroidBridge(); b != nil {
 			return newAndroidBridgeClient(b), nil

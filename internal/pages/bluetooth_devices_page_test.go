@@ -263,6 +263,51 @@ func TestBluetoothDevicesPage_UnsupportedPlatformDoesNotBlameHardware(t *testing
 	}
 }
 
+func TestBluetoothDevicesPage_IOSSendsOperatorToSettingsWithNoDeadScan(t *testing.T) {
+	// ut-docs#3261: on an iPhone/iPad the till can neither find nor pair a
+	// scanner (iOS keeps HID devices for the system), so the page must say
+	// where pairing really happens and that Bluetooth printers don't work
+	// there — and must not render a Scan button or an empty "paired devices"
+	// list that would read as "the till looked and found nothing".
+	mux, _ := newBluetoothDevicesTestMux(t)
+	stubBluetooth(t, nil, bluetooth.ErrUnsupportedPlatform)
+	orig := bluetoothPlatform
+	bluetoothPlatform = "ios"
+	t.Cleanup(func() { bluetoothPlatform = orig })
+
+	rec := btGet(mux, "/bluetooth-devices", &btManager)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /bluetooth-devices on iOS = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`data-testid="bluetooth-ios"`, "Settings app", "Wi-Fi or Ethernet", "scales"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("iOS page missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{`id="bt-scan-btn"`, `data-testid="bt-paired-list"`, `data-testid="bluetooth-unsupported"`, `data-testid="bluetooth-unavailable"`, "no need to reach the operating system"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("iOS page must not render %s", unwanted)
+		}
+	}
+}
+
+func TestBluetoothDevicesPage_NonIOSKeepsScanAndOmitsIOSNotice(t *testing.T) {
+	mux, _ := newBluetoothDevicesTestMux(t)
+	stubBluetooth(t, &fakeBluetoothClient{}, nil)
+	orig := bluetoothPlatform
+	bluetoothPlatform = "linux"
+	t.Cleanup(func() { bluetoothPlatform = orig })
+
+	body := btGet(mux, "/bluetooth-devices", &btManager).Body.String()
+	if strings.Contains(body, `data-testid="bluetooth-ios"`) {
+		t.Error("the iOS notice must only show on iOS")
+	}
+	if !strings.Contains(body, `id="bt-scan-btn"`) {
+		t.Error("the Scan button must still render off iOS")
+	}
+}
+
 func TestBluetoothDevicesPage_AccessDeniedShowsPackagingHint(t *testing.T) {
 	mux, _ := newBluetoothDevicesTestMux(t)
 	// The ADR-0078 policy file is missing: distinct notice, since this is

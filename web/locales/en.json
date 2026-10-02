@@ -2990,5 +2990,7 @@
   "settings.store_name.error_required": "Enter your shop’s name. It is printed on every receipt.",
   "settings.store_name.error_too_long": "The shop name can be at most 80 characters.",
   "settings.store_name.error_invalid_chars": "The shop name can’t contain line breaks, tabs or hidden characters.",
-  "elevation.summary.store_name": "Rename the shop to \"%s\"."
+  "elevation.summary.store_name": "Rename the shop to \"%s\".",
+  "bluetoothdevices.ios_system_pairing": "On iPhone and iPad, pair a barcode scanner or keyboard in the Settings app → Bluetooth. Once paired, it types into the till like a keyboard — nothing else to set up here.",
+  "bluetoothdevices.ios_no_printers": "Bluetooth receipt printers and scales can't be used from an iPhone or iPad. Use a network (Wi-Fi or Ethernet) receipt printer instead."
 }
