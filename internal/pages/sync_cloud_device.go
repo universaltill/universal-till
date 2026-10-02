@@ -21,9 +21,18 @@ import (
 // version. The main till registers that device under the store with the
 // store token only it holds (enroll.VouchForReplica) and answers with the
 // store id and device id — never a credential (enroll.Vouch has no token
-// field), so no cloud token ever crosses the LAN. The till id and name sent
-// to the cloud come from this till's own tills table — never from the
-// replica's body.
+// field), so no cloud token ever crosses the LAN. When the replica's device
+// has no credential yet, the answer also carries the cloud's one-time
+// redeem code (ADR-0116 D3): single-use, valid for 10 minutes, bound to the
+// store and that device — not a token. The replica redeems it for its own
+// credential directly with the cloud over TLS. Two residuals (ADR-0116 D3):
+// until ADR-0114's pinned TLS/wss ships, LAN sync is plain HTTP, so a LAN
+// eavesdropper can race the replica to redeem the code (the replica then
+// gets 409 already_redeemed); and this main till holds the code, so a
+// hostile main till could redeem it itself and get the replica's first
+// credential. In both cases the owner sees the extra credential, with its
+// issued_by, on the Tills page. The till id and name sent to the cloud come
+// from this till's own tills table — never from the replica's body.
 //
 // Errors are machine-to-machine codes (the replica logs and retries); no
 // operator ever reads them.
