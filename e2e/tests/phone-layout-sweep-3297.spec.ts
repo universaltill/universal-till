@@ -41,6 +41,27 @@ async function offenders(page: Page) {
   });
 }
 
+// ut-docs#3359: "we shouldn't scroll to the left and right" — not the page
+// (above) and not a box inside it either: a table is a card list at this
+// tier, so any element in the page content that scrolls sideways AND has
+// something to scroll to fails, unless it (or an ancestor) is marked
+// data-hscroll-ok — reserved for the single-row tab strips and chip rows
+// that are meant to swipe, each with a comment saying why.
+async function sideScrollers(page: Page) {
+  return page.evaluate(() => {
+    const out: string[] = [];
+    document.querySelectorAll('main, main *').forEach((el) => {
+      if (!(/(auto|scroll)/.test(getComputedStyle(el).overflowX))) return;
+      if (el.scrollWidth <= el.clientWidth + 1 || !el.clientWidth) return;
+      if (el.closest('[data-hscroll-ok], dialog:not([open]), [hidden]')) return;
+      out.push(`${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}.${String(el.className).trim().split(/\s+/).join('.')} sw=${el.scrollWidth} cw=${el.clientWidth}`);
+    });
+    // The exemption is for tab strips and chip rows, never a table.
+    document.querySelectorAll('[data-hscroll-ok] table, table[data-hscroll-ok]').forEach((t) => out.push(`table inside data-hscroll-ok: ${t.id || t.className}`));
+    return out.slice(0, 5);
+  });
+}
+
 for (const w of [360, 440]) {
   test.describe(`phone ${w}px (ut-docs#3297)`, () => {
     test.use({ viewport: { width: w, height: 800 }, hasTouch: true, isMobile: true });
@@ -53,6 +74,7 @@ for (const w of [360, 440]) {
         const o = await offenders(page);
         expect(o.out, `${r}: ${JSON.stringify(o)}`).toEqual([]);
         expect(o.sw, `${r}: page wider than the screen`).toBeLessThanOrEqual(o.vw + 1);
+        expect(await sideScrollers(page), `${r}: a box inside the page scrolls sideways (ut-docs#3359)`).toEqual([]);
       });
     }
   });
@@ -107,6 +129,53 @@ for (const w of [360, 440]) {
       expect(Math.max(...tops) - Math.min(...tops), `centres ${tops}`).toBeLessThan(4);
       await expect(row.locator('.disc-input')).toHaveValue('');
       await expect(row.locator('.disc-input')).toHaveAttribute('placeholder', /.+/);
+      await page.request.post('/api/pos/reset');
+    });
+  });
+}
+
+// ut-docs#3361: the post-sale receipt (web/ui/partials/receipt.html) is an
+// htmx swap into #basket, never its own GET route, so it can't join the
+// ROUTES sweep above -- this is its guard. The owner reported the
+// rightmost action button (Print / New Customer / Refund) clipped off the
+// right edge at phone width; reproduce the same tender flow phone-sell-3059
+// uses and check every button in the row against the viewport directly,
+// rather than trusting the all-routes sweep to somehow reach a view it
+// structurally cannot.
+for (const w of [360, 440]) {
+  test.describe(`phone ${w}px post-sale receipt actions (ut-docs#3361)`, () => {
+    test.use({ viewport: { width: w, height: 844 }, hasTouch: true, isMobile: true });
+    test(`receipt action row at ${w}px: no button clips past the right edge`, async ({ page }) => {
+      await page.request.post('/api/pos/reset');
+      await page.goto('/');
+      await page.locator('.pos-container .btn-tile[hx-post="/api/pos/scan"]').first().click();
+      await page.locator('.basket-phonebar').click();
+      await page.getByTestId('payment-open').click();
+      await Promise.all([
+        page.waitForResponse((r) => r.url().includes('/api/pos/tender')),
+        page.locator('#payment-overlay').getByTestId('pay-default').click(),
+      ]);
+      await expect(page.locator('#basket.receipt-view')).toBeVisible();
+      // toBeInViewport() only needs partial overlap (its default ratio is
+      // 0), so it would pass a button already clipped most of the way off
+      // -- this needs the exact edges. Review finding (2026-10-02): the
+      // element that actually clips is .pos-container (overflow:hidden in
+      // app.css), not the bare viewport width -- comparing against vw left
+      // a gap between .pos-container's real edge and the viewport where a
+      // button could still visibly clip and this test would miss it.
+      // Compare against .pos-container's own rect on both sides, so this
+      // also catches a left-edge clip in an RTL locale.
+      const info = await page.evaluate(() => {
+        const box = document.querySelector('.pos-container')!.getBoundingClientRect();
+        const rects = Array.from(document.querySelectorAll('.receipt-wrap .actions .btn'))
+          .map((b) => { const r = b.getBoundingClientRect(); return { text: (b.textContent || '').trim(), left: r.left, right: r.right }; });
+        return { boxLeft: box.left, boxRight: box.right, rects };
+      });
+      expect(info.rects.length).toBeGreaterThan(0);
+      for (const r of info.rects) {
+        expect(r.right, `"${r.text}" right=${r.right} containerRight=${info.boxRight}`).toBeLessThanOrEqual(info.boxRight + 1);
+        expect(r.left, `"${r.text}" left=${r.left} containerLeft=${info.boxLeft}`).toBeGreaterThanOrEqual(info.boxLeft - 1);
+      }
       await page.request.post('/api/pos/reset');
     });
   });

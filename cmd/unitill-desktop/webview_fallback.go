@@ -25,7 +25,10 @@ var setupPersistentCookies = func() error { return nil }
 // view's crash/load-failure signals (ut-docs#2991) and returns the stop
 // func that must run on the UI thread before w.Destroy(). A no-op by
 // default; webkit_recovery_linux.go's init() overrides it — the reported
-// dead end (WebKit's built-in "internal error" page) is WebKitGTK's.
+// dead end (WebKit's built-in "internal error" page) is WebKitGTK's. On
+// Linux the same install also routes external links to the default
+// browser (ut-docs#372; webkit_darwin.go does that on macOS): it shares
+// the view lookup and the signal lifetime, so it shares this seam.
 var installWebKitRecovery = func(webview.WebView, string) (stop func()) { return func() {} }
 
 // startSelfReexecWatch re-execs the shell once its own binary on disk was
@@ -87,7 +90,11 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 	// AFTER w.Destroy() above, so LIFO runs it first: the reload scheduler
 	// is closed (no timer can Dispatch any more) and the signals are
 	// disconnected before the view is freed — same ordering reasoning as
-	// ctl.Close below (ut-docs#882 review m1).
+	// ctl.Close below (ut-docs#882 review m1). The same install connects
+	// the external-link decide-policy handler (ut-docs#372), so the first
+	// Navigate is already routed and stopRecovery disconnects it before
+	// Destroy too — no decide-policy can reach Go, or Dispatch a load onto
+	// the view, once the view is being freed.
 	stopRecovery := installWebKitRecovery(w, url)
 	defer stopRecovery()
 

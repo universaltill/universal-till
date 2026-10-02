@@ -177,7 +177,7 @@ To manually test additional scenarios not covered by automation:
 4. Confirm plugin is stopped and disabled
 
 ### Telemetry
-1. Enable telemetry: `UT_MARKETPLACE_TELEMETRY_OPT_IN=true`
+1. Enable telemetry: turn on the plugin-telemetry toggle on the Settings page (stored as the `marketplace.telemetry_opt_in` shop setting)
 2. Perform install/update operations
 3. Check mock marketplace telemetry endpoint for received events
 4. Verify batching (50 events or 5 min interval)

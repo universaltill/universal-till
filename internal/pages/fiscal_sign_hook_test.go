@@ -506,13 +506,17 @@ func TestFiscalSignAsk_TimeoutDeclares(t *testing.T) {
 func TestFiscalSignAsk_ZeroPluginTillAllocatesNothing(t *testing.T) {
 	_, dp := newFiscalSignDeps(t)
 	plugins.SharedBus(dp.Db).ResetSubscribers() // belt-and-braces: no leaked subscriber
-	in := pos.SaleInput{Currency: "EUR", Offline: false}
+	// HeldOriginID set: a zero-plugin till tendering a resumed held order
+	// must not pay for the ADR-0138 order_id lookup either.
+	in := pos.SaleInput{Currency: "EUR", Offline: false, HeldOriginID: "hold-1"}
 	allocs := testing.AllocsPerRun(100, func() {
 		// ADR-0077 D1: extended (not a separate test) to also cover
 		// dispatchFiscalSignStart, per the ADR's own instruction — a till
 		// with neither fiscal.sign.start nor fiscal.sign.ask subscribed
 		// must pay for both zero-plugin fast paths combined, still zero
-		// allocs/op.
+		// allocs/op. ADR-0138 D2 (ut-docs#3310) extends it again to the
+		// fiscal.order.start dispatch both order-capture call sites make.
+		dispatchFiscalOrderStart(context.Background(), dp, "hold-1", fiscalOrderKindHeld, false)
 		dispatchFiscalSignStart(context.Background(), dp, &in)
 		res := dispatchFiscalSignAsk(context.Background(), dp, &in)
 		if res.Outcome != fiscalSignNoSigner {

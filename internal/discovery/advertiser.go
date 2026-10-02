@@ -158,6 +158,12 @@ func (a *Advertiser) startLocked(ctx context.Context) (mdnsServer, error) {
 	if len(ips) == 0 {
 		return nil, ErrNoLANAddress
 	}
+	// On iOS the OS publishes the record (NativeBridge, ut-docs#3218): it
+	// answers with this device's own addresses, so only the instance, port
+	// and TXT are handed over.
+	if b := currentNativeBridge(); b != nil {
+		return startNative(b, id, port, txtRecord(name, id))
+	}
 	zone, err := mdns.NewMDNSService(id, ServiceName, "", mdnsHostName(id), port, ips, txtRecord(name, id))
 	if err != nil {
 		return nil, err

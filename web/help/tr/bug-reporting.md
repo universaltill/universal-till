@@ -21,7 +21,11 @@ Kasada bir sorun mu var? Her ekrandan 🐞 düğmesiyle bir rapor gönderin — 
 
 Panele ☰ Menü'deki "Sorun bildir" kutucuğundan da ulaşabilirsiniz.
 
+Telefon genişliğindeki bir ekranda 🐞 "Sorun bildir" ☰ menüsündedir ve panel üst çubuğun altında tüm ekranı kaplar: büyük düğmeler, kendi satırında not alanı ve altında Raporu kaydet. Orada taşınamaz. Sorunu yeniden oluştururken ✕ ile gizleyin, ardından 🐞 ile taslağınız korunmuş olarak geri getirin. ☰ üstte dokunulabilir kalır.
+
 Android kasa uygulamasında, "Ekran görüntüsü al" uygulamanın gösterdiğini doğrudan yakalar — izin istemez. Sesli not da çalışır: ilk kez kaydettiğinizde Android mikrofon erişimi ister; bir kez izin verin, sonraki kayıtlar hemen başlar (izin vermediyseniz, telefonun Ayarlar → Uygulamalar → Universal Till → İzinler bölümünden tekrar açabilirsiniz). Ekran kaydı ve kamerayla fotoğraf çekme, Android uygulamasında henüz kullanılamıyor.
+
+iPhone ve iPad uygulamasında, ilk kez sesli not kaydettiğinizde iOS mikrofon erişimi ister; izin verin, sonraki kayıtlar hemen başlar (izin vermediyseniz, cihazın Ayarlar → Universal Till → Mikrofon bölümünden tekrar açabilirsiniz). Eski iOS sürümleri uygulamada sesli not kaydedemez; bu durumda düğme bunu belirtir. "Ekran görüntüsü al", paylaşım istemi göstermeden doğrudan kasa ekranını yakalar — panel görüntüde yer almasın diye bir anlığına gizlenir. Ekran kaydı iPhone ve iPad uygulamasında henüz kullanılamıyor.
 
 Paneli ✕ ile kapatmak, taslağınız korunarak, siz yeniden 🐞'e basana kadar gizler: ekranlar arasında geçerken kapalı kalır ve Sorun bildir sayfası artık onu zorla açmaz. Bir taslağı gerçekten silen düğme Vazgeç'tir (önce sorar). Taslak yalnızca geçerli kasa oturumu boyunca saklanır; bir rapora en fazla 12 ekran görüntüsü sığar.
 

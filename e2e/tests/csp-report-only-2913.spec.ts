@@ -10,7 +10,7 @@ import { test, expect } from './fixtures';
 // console error by design, and collecting them is the point.
 
 const POLICY =
-  "default-src 'self'; script-src 'self' 'report-sample'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; report-uri /csp-report";
+  "default-src 'self'; script-src 'self' 'report-sample' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'; report-uri /csp-report";
 
 // The main operator surfaces: the sale screen, catalogue, settings, reports,
 // tables and a few admin pages.

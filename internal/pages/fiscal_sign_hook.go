@@ -114,6 +114,15 @@ type fiscalSignAskPayload struct {
 	// as it ignores any other unrecognized JSON, with zero behavior change.
 	StartedTxID       string `json:"started_tx_id,omitempty"`
 	StartedTxRevision int64  `json:"started_tx_revision,omitempty"`
+	// OrderID (ADR-0138 D2, ut-docs#3310) is the id of the held/table/
+	// pay-at-counter order this sale was tendered from, echoed ONLY when that
+	// order's fiscal.order.start capture persisted a fiscal_order_starts row —
+	// the join key from the order's Bestellung-V1 transaction to this sale's
+	// Kassenbeleg. Omitted for a walk-up sale, a refund/return, an order
+	// captured with no fiscal.order.start subscriber, or a capture whose
+	// round trip never completed — same honestly-degraded omitempty pattern
+	// as StartedTxID above; never a fabricated default.
+	OrderID string `json:"order_id,omitempty"`
 }
 
 type fiscalSignAskPayment struct {
@@ -383,6 +392,9 @@ type fiscalSignStartPayload struct {
 	SaleID    string `json:"sale_id"`
 	SaleType  string `json:"sale_type"`
 	StartedAt string `json:"started_at"`
+	// OrderID — same field, same omission rules, as fiscalSignAskPayload's
+	// (ADR-0138 D2).
+	OrderID string `json:"order_id,omitempty"`
 }
 
 // fiscalSignStartResponse is the JSON a plugin writes to stdout to answer
@@ -452,6 +464,7 @@ func dispatchFiscalSignStart(ctx context.Context, d *common.Deps, in *pos.SaleIn
 		StartedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	saleID := in.SaleID
+	heldOriginID := in.HeldOriginID
 	repo := data.NewPOSRepo(d.Db)
 	d.AsyncWork.Add(1)
 	go func() {
@@ -486,6 +499,9 @@ func dispatchFiscalSignStart(ctx context.Context, d *common.Deps, in *pos.SaleIn
 		// goroutine rather than the request path.
 		askCtx, cancel := context.WithTimeout(context.Background(), fiscalSignStartAsyncTimeout)
 		defer cancel()
+		// ADR-0138 D2: resolved here, on the goroutine, so the order_id
+		// lookup never adds a DB read to the tender path itself.
+		payload.OrderID = fiscalOrderIDFor(askCtx, bus, repo, heldOriginID)
 		resp, ok, err := bus.Ask(askCtx, fiscalSignStartEvent, payload)
 		if err != nil || !ok {
 			return
@@ -521,6 +537,130 @@ func dispatchFiscalSignStart(ctx context.Context, d *common.Deps, in *pos.SaleIn
 			logging.L().Infof("fiscal signing: persist fiscal.sign.start tx_id for sale %s: %v", saleID, err)
 		}
 	}()
+}
+
+// fiscalOrderStartEvent is the ADR-0138 Decision 2 order-capture dispatch
+// point — see plugins.FiscalOrderStartEvent's own doc comment.
+const fiscalOrderStartEvent = plugins.FiscalOrderStartEvent
+
+// order_kind values on the fiscal.order.start wire (ADR-0138 D2): which
+// existing mechanism's own id order_id is. No unifying id space.
+const (
+	fiscalOrderKindHeld    = "held"    // a held/table order (held_sales.id)
+	fiscalOrderKindCounter = "counter" // a pay-at-counter order (kiosk_counter_orders.id)
+)
+
+// fiscalOrderStartAsyncTimeout is fiscalSignStartAsyncTimeout's twin for the
+// fiscal.order.start goroutine: a safety ceiling against a wedged signer, not
+// a budget anything waits on (parking an order or placing a kiosk counter
+// order never waits for this goroutine). A var purely as a test seam.
+var fiscalOrderStartAsyncTimeout = 15 * time.Second
+
+// maxFiscalOrderStartTxIDLen caps the tx_id a fiscal.order.start answer may
+// persist — the same 256-byte cap dispatchFiscalSignStart applies.
+const maxFiscalOrderStartTxIDLen = 256
+
+// fiscalOrderStartPayload is the event payload a subscribing signer receives
+// for fiscal.order.start — deliberately minimal, mirroring
+// fiscalSignStartPayload (ADR-0138 D2): which order, which kind, when.
+type fiscalOrderStartPayload struct {
+	OrderID   string `json:"order_id"`
+	OrderKind string `json:"order_kind"`
+	StartedAt string `json:"started_at"`
+}
+
+// dispatchFiscalOrderStart fires the ADR-0138 Decision 2 fiscal.order.start
+// point once per GENUINE new order capture: parkCurrentBasket's first-park
+// branch (never a re-park) and every completeCounterOrderCheckout. Mirrors
+// dispatchFiscalSignStart exactly, minus the SaleID minting (there is no sale
+// yet at order capture; the order's own existing id is used):
+//
+//   - HasSubscribers first, so a till with no fiscal.order.start subscriber
+//     pays one map lookup under RLock — no allocation, no goroutine
+//     (asserted by TestFiscalOrderStart_ZeroPluginAllocatesNothing).
+//   - Known-offline short-circuit: offline is the request's own declared
+//     offline flag (the #offline-flag / #selforder-offline-flag signal every
+//     fiscal dispatch already threads through, read with formFlagTruthy).
+//   - EventBus.Ask (not Publish — the event name has no ".ask" suffix) on a
+//     goroutine tracked via d.AsyncWork; never blocks the caller (ADR-0003).
+//   - Only {"status":"acknowledged"} with a non-empty, length-capped tx_id
+//     and a non-negative tx_revision is persisted (fiscal_order_starts,
+//     first write wins). Anything else is silently ignored: best-effort,
+//     nothing to declare, no operator alert.
+//
+// ctx is accepted for call-site symmetry with dispatchFiscalSignStart and is
+// unused for the same reason: the goroutine must outlive the request.
+func dispatchFiscalOrderStart(ctx context.Context, d *common.Deps, orderID, orderKind string, offline bool) {
+	bus := plugins.SharedBus(d.Db)
+	if !bus.HasSubscribers(fiscalOrderStartEvent) {
+		return
+	}
+	if offline || orderID == "" {
+		return
+	}
+	payload := fiscalOrderStartPayload{
+		OrderID:   orderID,
+		OrderKind: orderKind,
+		StartedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	repo := data.NewPOSRepo(d.Db)
+	d.AsyncWork.Add(1)
+	go func() {
+		defer logging.RecoverAndLog("pages.fiscalOrderStart")
+		defer d.AsyncWork.Done()
+		// Same deadline semantics as dispatchFiscalSignStart's goroutine
+		// (see the review note there): bounds a ctx-honouring Go handler; a
+		// wasm signer is bounded by WasmRuntime's own per-handler deadline.
+		askCtx, cancel := context.WithTimeout(context.Background(), fiscalOrderStartAsyncTimeout)
+		defer cancel()
+		resp, ok, err := bus.Ask(askCtx, fiscalOrderStartEvent, payload)
+		if err != nil || !ok {
+			return
+		}
+		var parsed fiscalSignStartResponse
+		if json.Unmarshal(resp, &parsed) != nil {
+			return
+		}
+		// Validate before trusting a plugin's answer with a compliance-
+		// bearing record later echoed into every tender of this order
+		// (CLAUDE.md: validate all plugin input) — identical rule to
+		// fiscal.sign.start's.
+		if parsed.Status != "acknowledged" || parsed.TxID == "" ||
+			len(parsed.TxID) > maxFiscalOrderStartTxIDLen || parsed.TxRevision < 0 {
+			return
+		}
+		recCtx, recCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer recCancel()
+		if err := repo.RecordFiscalOrderStart(recCtx, payload.OrderID, payload.OrderKind, parsed.TxID, parsed.TxRevision); err != nil {
+			// Info, not Warn — same reasoning as fiscal.sign.start: a missed
+			// best-effort persist is not operator-actionable.
+			logging.L().Infof("fiscal signing: persist fiscal.order.start tx_id for order %s: %v", payload.OrderID, err)
+		}
+	}()
+}
+
+// fiscalOrderIDFor resolves the order_id a tender's fiscal.sign.start /
+// fiscal.sign.ask payload echoes (ADR-0138 D2): heldOriginID (the sale's
+// carried SaleInput.HeldOriginID) when that order has a fiscal_order_starts
+// row, "" otherwise. Guarded on fiscal.order.start's own HasSubscribers —
+// same review-driven guard dispatchFiscalSignAsk applies to its
+// fiscal_sign_starts read — so a till whose signer never implemented
+// fiscal.order.start never pays a SELECT for a row that cannot exist; and
+// skipped outright for a sale with no origin (every walk-up sale, every
+// refund/return). A read error is logged and degrades to omission.
+func fiscalOrderIDFor(ctx context.Context, bus *plugins.EventBus, repo *data.POSRepo, heldOriginID string) string {
+	if heldOriginID == "" || !bus.HasSubscribers(fiscalOrderStartEvent) {
+		return ""
+	}
+	start, ok, err := repo.GetFiscalOrderStart(ctx, heldOriginID)
+	if err != nil {
+		logging.L().Warnf("fiscal signing: read fiscal.order.start capture for order %s: %v", heldOriginID, err)
+		return ""
+	}
+	if !ok {
+		return ""
+	}
+	return start.OrderID
 }
 
 // dispatchFiscalSignAsk runs the fiscal.sign.ask point for one tender.
@@ -585,6 +725,7 @@ func dispatchFiscalSignAsk(ctx context.Context, d *common.Deps, in *pos.SaleInpu
 			payload.StartedTxRevision = start.TxRevision
 		}
 	}
+	payload.OrderID = fiscalOrderIDFor(ctx, bus, data.NewPOSRepo(d.Db), in.HeldOriginID)
 	return askFiscalSign(ctx, bus, payload)
 }
 

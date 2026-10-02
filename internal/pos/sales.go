@@ -207,6 +207,15 @@ type SaleInput struct {
 	// that replay and stall the replica's journal cursor on a poison entry.
 	LegacyTipCoverage bool
 	Offline           bool
+	// HeldOriginID (ADR-0138 D2, ut-docs#3310) is the id of the held order
+	// this sale's basket was resumed from (Service.HeldOrigin().ID of the
+	// engine actually being tendered — a held/table order's held sale id, or
+	// a pay-at-counter order's id, which is also its held sale id); "" for a
+	// walk-up sale, a refund/return, or a replayed journal. In-memory only:
+	// CompleteSale never persists it. internal/pages reads it to correlate
+	// the tender's fiscal.sign.start/fiscal.sign.ask dispatches with the
+	// order's earlier fiscal.order.start capture (order_id).
+	HeldOriginID string
 	// VoucherIssues (ut-docs#1008) are multi-purpose vouchers sold in this
 	// sale. A voucher is NOT an article: it never becomes a sale_lines row
 	// (the CHECK constraint there requires a catalog identity, and a fake

@@ -73,7 +73,7 @@
          that only opens this dialog — so the #payment-overlay-closing fix
          belongs on this after-request handler, same reasoning as New Sale's
          above. -->
-    <form hx-post="/api/pos/hold" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+    <form hx-post="/api/pos/hold" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace" hx-include="#offline-flag"
           hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('hold-modal'); m.close(); this.reset(); var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">
       <h3 id="hold-modal-title">{{ T "hold.modal.title" }}</h3>
       <input type="text" id="hold-label-input" name="label" maxlength="64"
@@ -365,11 +365,10 @@
       <button class="btn secondary osk-toggle tender-icon-btn" type="button" data-osk-toggle hidden
               title="{{ T "osk.toggle" }}" aria-label="{{ T "osk.toggle" }}">
         <span class="btn-ico" aria-hidden="true">{{ icon "keyboard" }}</span></button>
-      <!-- Camera barcode/QR scan (ut-docs#548): unhidden by app.js only when
-           the browser has a native BarcodeDetector — feature-detection is
-           client-side-only, so the server always renders it hidden and lets
-           JS decide, unlike ai-identify's server-side (API key + online) gate
-           below. Never steals focus from, or disables, the wedge/HID scanner
+      <!-- Camera barcode/QR scan (ut-docs#548): rendered hidden and unhidden
+           by app.js, which always shows it since ut-docs#696 (native
+           BarcodeDetector, else the vendored decoder) — unlike ai-identify's
+           server-side (API key + online) gate below. Never steals focus from, or disables, the wedge/HID scanner
            path (ut-docs#76/#423) — purely additive. Was a 🔳 emoji until
            ut-docs#2702 (emoji-font risk, same class as ut-docs#1859). -->
       <button class="btn secondary tender-icon-btn" type="button" id="barcode-scan-open" hidden
@@ -1107,11 +1106,13 @@
 
 <!-- Camera barcode/QR scan (ut-docs#548): NOT server-side conditional — the
      button/overlay always render (the server can't feature-detect a browser
-     API); app.js unhides the button only when BarcodeDetector exists,
-     client-side. Purely additive, never touches the wedge/HID scanner path
+     API); app.js unhides the button and picks the native BarcodeDetector or
+     the vendored decoder client-side (ut-docs#696). data-decoder-v
+     content-versions the lazy-loaded decoder files so they cache. Purely additive, never touches the wedge/HID scanner path
      (ut-docs#76/#423). No frame ever leaves the device: decode is local,
      the result feeds the same /api/pos/scan submit as any other scan. -->
 <div id="barcode-scan-overlay" class="ai-identify-overlay" hidden
+     data-decoder-v="{{ assetv "public/vendor/barcode-detector/ponyfill.js" }}"
      data-msg-camera-error="{{ T "scan.camera.camera_error" }}"
      data-msg-camera-busy="{{ T "scan.camera.camera_busy" }}"
      data-msg-camera-not-found="{{ T "scan.camera.camera_not_found" }}"

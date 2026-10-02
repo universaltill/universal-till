@@ -1,3 +1,4 @@
 "CFBundleDisplayName" = "Universal Till";
 "NSLocalNetworkUsageDescription" = "Universal Till finds and syncs with the other tills in your shop over the local network.";
 "NSCameraUsageDescription" = "Universal Till uses the camera to scan barcodes.";
+"NSMicrophoneUsageDescription" = "Universal Till uses the microphone to record a voice note for a problem report.";

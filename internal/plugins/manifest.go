@@ -748,21 +748,40 @@ const FiscalSignStartEvent = "fiscal.sign.start"
 // One member of the FiscalSignExclusiveEvents group.
 const FiscalSignReconcileAskEvent = "fiscal.sign.reconcile.ask"
 
+// FiscalOrderStartEvent is the ADR-0138 Decision 2 order-capture dispatch
+// (ut-docs#3310): fired once per GENUINE new gastro order capture — a first
+// park of a held/table order (internal/pages hold_api.go parkCurrentBasket,
+// never a re-park of an already-held order) and every pay-at-counter kiosk
+// checkout (self_order_shop.go completeCounterOrderCheckout) — so a German
+// signer can open a Bestellung-V1 TSE transaction at the point AEAO zu §146a
+// says the process begins, distinct from the Kassenbeleg-V1 transaction
+// fiscal.sign.start/fiscal.sign.ask cover at tender. Deliberately a SEPARATE
+// event key rather than an earlier fiscal.sign.start (ADR-0138 D1): a
+// different process type with a much longer-lived open window. Dispatched
+// via EventBus.Ask on a background goroutine, best-effort, exactly like
+// FiscalSignStartEvent. Its sibling fiscal.order.cancel is named but NOT
+// built or grouped yet (ADR-0138 D2/D4 — nothing in core cancels an order).
+//
+// One member of the FiscalSignExclusiveEvents group (ADR-0138 D2): only the
+// till's one verified, exclusive signer may answer it.
+const FiscalOrderStartEvent = "fiscal.order.start"
+
 // FiscalSignExclusiveEvents is the ONE exclusivity group ADR-0077 D3 fixes
 // for the fiscal signing extension points: fiscal.sign.ask (the tender-time
-// "finish"), fiscal.sign.start (D1) and fiscal.sign.reconcile.ask (D3).
-// Declaring ANY one of the three while a DIFFERENT active plugin holds ANY
-// one of the three is refused — at persist time by
+// "finish"), fiscal.sign.start (D1) and fiscal.sign.reconcile.ask (D3) —
+// joined by fiscal.order.start (ADR-0138 D2, ut-docs#3310).
+// Declaring ANY one of the four while a DIFFERENT active plugin holds ANY
+// one of the four is refused — at persist time by
 // validateExclusiveHookOwnership below, at enable time by
-// internal/pages' setPluginActiveHandler — because all three hand the
-// answering plugin real sale data or take its answer as authoritative for a
+// internal/pages' setPluginActiveHandler — because all four hand the
+// answering plugin real sale/order data or take its answer as authoritative for a
 // compliance-bearing record. Before this group existed, only the literal
 // fiscal.sign.ask key was checked, so a second plugin declaring only
 // fiscal.sign.start or only fiscal.sign.reconcile.ask passed both checks
 // (the gap ADR-0077 D3 records as found on independent review). Exported so
 // the enable-time check and this package share one definition; a test pins
 // the exact membership.
-var FiscalSignExclusiveEvents = []string{FiscalSignAskEvent, FiscalSignStartEvent, FiscalSignReconcileAskEvent}
+var FiscalSignExclusiveEvents = []string{FiscalSignAskEvent, FiscalSignStartEvent, FiscalSignReconcileAskEvent, FiscalOrderStartEvent}
 
 // DeclaredFiscalSignExclusiveEvent reports the first FiscalSignExclusiveEvents
 // member among hooks (group order), or ("", false) when the manifest declares

@@ -6,7 +6,10 @@
 <div class="card perm-card">
   <p class="muted">{{ T "permissions.intro" }}</p>
   <div class="perm-scroll">
-    <table class="table perm-table">
+    {{/* data-cards-collapse="off" (ut-docs#3359): on a phone each action is
+         a card of "ROLE ☐" lines; every role's checkbox is the point of
+         the card, so none of them waits behind More. */}}
+    <table class="table perm-table" data-cards-collapse="off">
       <thead>
         <tr>
           <th scope="col" class="perm-action">{{ T "permissions.col.action" }}</th>

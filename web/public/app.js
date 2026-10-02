@@ -1130,6 +1130,30 @@ document.addEventListener('htmx:afterSwap', function (evt) {
   try { document.title = decodeURIComponent(encoded); } catch (_) {}
 });
 
+// ut-docs#3356: on a phone the manual's tree hides while a topic shows, so a
+// tapped topic swaps in with the page still scrolled to where the tree link
+// was. Scroll back to the top. The document itself scrolls on this page (no
+// inner scroll container) and the fixed top bar already clears the content,
+// so scrollTo(0,0) shows the back link and heading; scrollIntoView on
+// #manual would tuck the back link under that bar. Typing in the search box
+// also swaps #manual-panel; skip that so the page doesn't jump mid-keystroke.
+// After settle, not swap: the browser re-anchors the scroll once the hidden
+// tree leaves the layout, which undid an afterSwap scroll (see also
+// overflow-anchor on .manual in app.css).
+document.addEventListener('htmx:afterSettle', function (evt) {
+  var target = evt.detail && evt.detail.target;
+  if (!target || target.id !== 'manual-panel') return;
+  if (!window.matchMedia('(max-width: 52rem)').matches) return;
+  // Without :has() (app.css) the tree never hides, so the top of the page is
+  // the tree, not the topic — bring the topic into view instead.
+  var hasHas = window.CSS && CSS.supports && CSS.supports('selector(:has(*))');
+  var trig = evt.detail.requestConfig && evt.detail.requestConfig.triggeringEvent;
+  if (trig && trig.type !== 'click') return;
+  requestAnimationFrame(function () {
+    if (hasHas) window.scrollTo(0, 0); else target.scrollIntoView({ block: 'start' });
+  });
+});
+
 // ut-docs#2319: the All grid's "load more" button (buttons.html's
 // all-more-button, hx-swap="outerHTML" on itself) drops keyboard focus to
 // <body> once it retires itself, the same class of bug utTileJiggle's
@@ -1714,20 +1738,18 @@ function initOfflineOverride(updateFn){
 // Camera barcode/QR scan (ut-docs#548): an alternative input mode alongside
 // the wedge/HID scanner path above (never disables or steals focus from it —
 // this is purely an on-demand overlay, opened and closed by the cashier).
-// Decoding is 100% client-side via the browser's native BarcodeDetector — no
-// frame or image is ever sent anywhere, unlike the AI-identify feature above
-// which uploads a still photo by design. Browser support varies, so the
-// button only appears when `BarcodeDetector` actually exists; there is no JS
-// fallback decoder in this pass (ut-docs#548 non-goal — a bundled decode
-// library is separate scope under ADR-0003's vendored-assets rule).
+// Decoding is 100% client-side — no frame or image is ever sent anywhere,
+// unlike the AI-identify feature above which uploads a still photo by
+// design. The browser's native BarcodeDetector is used when it exists;
+// otherwise (WebKit, so every iPhone/iPad including the iOS app, and some
+// Android WebViews — ut-docs#696) a vendored zxing-wasm decoder
+// (web/public/vendor/barcode-detector/, ADR-0003) is lazy-loaded on the
+// first tap. The button therefore always shows: with no camera API at all,
+// tapping it explains why instead of the button silently being absent.
 (function(){
   var openBtn = document.getElementById('barcode-scan-open');
   var overlay = document.getElementById('barcode-scan-overlay');
   if (!openBtn || !overlay || !window.utScan) return;
-  // typeof-check, not `'BarcodeDetector' in window`: a test (or a future
-  // polyfill probe) stubbing the property to undefined must still read as
-  // unsupported, not merely "present".
-  if (typeof window.BarcodeDetector !== 'function') return;
 
   var video = document.getElementById('barcode-scan-video');
   var status = document.getElementById('barcode-scan-status');
@@ -1735,17 +1757,94 @@ function initOfflineOverride(updateFn){
   var msgs = overlay.dataset;
   var stream = null;
   var rafID = null;
-  var detector;
-  try {
-    // Formats this product's wedge scanners actually read (ut-docs#423's
-    // review: "EAN-8/13, UPC, Code-128 SKUs"), plus qr_code for #210-style
-    // self-order use later. An explicit list keeps decode behaviour the
-    // same across browsers rather than however each one's default differs.
-    detector = new BarcodeDetector({ formats: [
-      'ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'qr_code'
-    ] });
-  } catch (e) {
-    return; // constructor throws if the browser can't support any listed format
+  var detector = null;
+  var detectorPromise = null;
+  // Formats this product's wedge scanners actually read (ut-docs#423's
+  // review: "EAN-8/13, UPC, Code-128 SKUs"), plus qr_code for #210-style
+  // self-order use later. An explicit list keeps decode behaviour the
+  // same across browsers rather than however each one's default differs.
+  var FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'qr_code'];
+  var DECODER_DIR = '/public/vendor/barcode-detector/';
+  // Content version of the decoder (ponyfill.js; the wasm is pinned to it by
+  // web/vendor_barcode_decoder_test.go), so both get immutable caching and
+  // an upgrade changes the URL instead of being refetched on every load.
+  var DECODER_QS = overlay.dataset.decoderV ? '?v=' + encodeURIComponent(overlay.dataset.decoderV) : '';
+
+  function nativeDetector(){
+    // typeof-check, not `'BarcodeDetector' in window`: a test stubbing the
+    // property to undefined must still read as unsupported.
+    if (typeof window.BarcodeDetector !== 'function') return null;
+    try {
+      return new window.BarcodeDetector({ formats: FORMATS });
+    } catch (e) {
+      return null; // throws if the browser supports none of FORMATS
+    }
+  }
+
+  function loadVendoredDetector(){
+    return new Promise(function(resolve, reject){
+      function build(){
+        var api = window.BarcodeDetectionAPI;
+        // The ponyfill defaults to fetching its wasm from a CDN; point it at
+        // the copy this till serves itself (offline-first, no third party).
+        // prepareZXingModule resolves only once the wasm is instantiated, so
+        // a missing/broken file surfaces here, not as a silent per-frame
+        // failure later.
+        api.prepareZXingModule({
+          overrides: { locateFile: function(path){ return DECODER_DIR + path + DECODER_QS; } },
+          fireImmediately: true
+        }).then(function(){
+          resolve(new api.BarcodeDetector({ formats: FORMATS }));
+        }, function(err){
+          // Forget the failed instance so the next tap fetches it again.
+          try { api.purgeZXingModule(); } catch (e) { /* nothing to purge */ }
+          reject(err);
+        });
+      }
+      if (window.BarcodeDetectionAPI) { build(); return; }
+      var s = document.createElement('script');
+      s.src = DECODER_DIR + 'ponyfill.js' + DECODER_QS;
+      s.onload = function(){
+        if (window.BarcodeDetectionAPI) { build(); return; }
+        s.remove();
+        reject(new Error('decoder missing'));
+      };
+      s.onerror = function(){
+        s.remove(); // let the next tap retry with a fresh <script>
+        reject(new Error('decoder failed to load'));
+      };
+      document.head.appendChild(s);
+    });
+  }
+
+  // Chromium exposes BarcodeDetector even where the platform service behind
+  // it is missing (e.g. Android without Play services); then every detect()
+  // rejects and scanning would spin forever. getSupportedFormats() resolves
+  // to [] in that case, so only a native detector that reads at least one of
+  // FORMATS is trusted; otherwise the vendored decoder is used.
+  function usableNativeDetector(){
+    var native = nativeDetector();
+    if (!native) return Promise.resolve(null);
+    var probe = window.BarcodeDetector.getSupportedFormats;
+    if (typeof probe !== 'function') return Promise.resolve(native);
+    return Promise.resolve().then(function(){ return probe.call(window.BarcodeDetector); })
+      .then(function(formats){
+        var ok = (formats || []).some(function(f){ return FORMATS.indexOf(f) !== -1; });
+        return ok ? native : null;
+      }, function(){ return null; });
+  }
+
+  function getDetector(){
+    if (detector) return Promise.resolve(detector);
+    if (!detectorPromise) {
+      detectorPromise = usableNativeDetector()
+        .then(function(native){ return native || loadVendoredDetector(); })
+        .then(function(d){ detector = d; return d; }, function(err){
+          detectorPromise = null;
+          throw err;
+        });
+    }
+    return detectorPromise;
   }
 
   openBtn.hidden = false;
@@ -1759,15 +1858,19 @@ function initOfflineOverride(updateFn){
     // ut-docs#1251: same guard as the AI-identify IIFE above — a
     // non-secure-context origin leaves `navigator.mediaDevices` undefined,
     // and calling `.getUserMedia` on it throws synchronously, before the
-    // .catch() below exists to report anything. In practice BarcodeDetector
-    // itself is also secure-context-gated in the browsers that ship it, so
-    // this button is usually already hidden in that case (the typeof check
-    // above) — this guard is defence-in-depth for whatever browser doesn't
-    // tie the two together the same way.
+    // .catch() below exists to report anything. Since ut-docs#696 the
+    // button always shows, so this is the path a plain-http LAN origin
+    // takes: an explanation instead of an uncaught TypeError.
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       setStatus(msgs.msgCameraError);
       return;
     }
+    // Native: resolves at once. Vendored: fetched and compiled on the first
+    // tap, in parallel with the camera start below. The no-op catch only
+    // keeps a failure here from being reported as unhandled when the camera
+    // itself fails first; the .then() below still sees the rejection.
+    var detectorReady = getDetector();
+    detectorReady.catch(function(){});
     navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
       .then(function(s){
         // The cashier can close while the permission prompt / camera start is
@@ -1776,7 +1879,18 @@ function initOfflineOverride(updateFn){
         if (overlay.hidden) { s.getTracks().forEach(function(t){ t.stop(); }); return; }
         stream = s;
         video.srcObject = s;
-        rafID = requestAnimationFrame(scanFrame);
+        detectorReady.then(function(){
+          if (stream !== s) return; // closed (or reopened) meanwhile
+          rafID = requestAnimationFrame(scanFrame);
+        }, function(){
+          if (stream !== s) return;
+          // No decoder means no scanning: release the camera rather than
+          // leave it running behind an overlay that can never match.
+          stream.getTracks().forEach(function(t){ t.stop(); });
+          stream = null;
+          video.srcObject = null;
+          setStatus(msgs.msgCameraError);
+        });
       })
       .catch(function(err){
         if (err && err.name) {

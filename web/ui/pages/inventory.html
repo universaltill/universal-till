@@ -218,7 +218,7 @@
                shifts.html/menu.html/catalog_variants.html's money fields, so
                a future 3-decimal currency (KWD/BHD/OMR) doesn't need this
                call site updated in lockstep with the others. -->
-          <label>{{ T "inventory.cost_optional" }} <input type="text" inputmode="decimal" id="stock-cost" {{ moneypatternlocal currency.Decimals false }}></label>
+          <label>{{ printf (T "inventory.cost_optional") currency.Display }} <input type="text" inputmode="decimal" id="stock-cost" {{ moneypatternlocal currency.Decimals false }}></label>
           <input type="hidden" name="cost_price" id="stock-cost-minor">
         </div>
         <label>{{ T "inventory.reason" }} <input type="text" name="reason" placeholder="{{ T "inventory.reason_placeholder" }}"></label>

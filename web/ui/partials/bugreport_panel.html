@@ -166,15 +166,20 @@
 
     var saveBtn = document.getElementById('ir-save-btn');
 
+    // null when the recorder reports none of the candidates as supported.
     function pickMimeType(candidates) {
       if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported) return candidates[0];
       for (var i = 0; i < candidates.length; i++) {
         if (MediaRecorder.isTypeSupported(candidates[i])) return candidates[i];
       }
-      return candidates[0];
+      return null;
     }
 
-    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    // The stored bundle is audio.webm (internal/issuereport), so only WebM/Ogg
+    // will do. iOS before 26 records MP4 only: say "not available" up front
+    // instead of asking for the microphone and then failing (ut-docs#3354).
+    var VOICE_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg'];
+    if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !pickMimeType(VOICE_TYPES)) {
       voiceBtn.disabled = true;
       voiceBtn.textContent = T.voiceUnsupported;
     } else {
@@ -188,7 +193,7 @@
         voiceBtn.disabled = true;
         navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
           voiceStarting = false;
-          var mime = pickMimeType(['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg']);
+          var mime = pickMimeType(VOICE_TYPES);
           try {
             voiceRecorder = new MediaRecorder(stream, { mimeType: mime });
           } catch (e) {
@@ -247,7 +252,7 @@
         navigator.mediaDevices.getDisplayMedia({ video: true }).then(function (stream) {
           screenStarting = false;
           screenStream = stream;
-          var mime = pickMimeType(['video/webm;codecs=vp9', 'video/webm']);
+          var mime = pickMimeType(['video/webm;codecs=vp9', 'video/webm']) || 'video/webm';
           try {
             screenRecorder = new MediaRecorder(stream, { mimeType: mime });
           } catch (e) {
@@ -476,6 +481,28 @@
     // other path hands addScreenshotThumb. Checked FIRST so the bridge wins
     // wherever it exists; on every other platform window.AndroidKiosk is
     // undefined and the two pre-existing branches below run untouched.
+    // Both native shells hand back a data:image/png URL, or "" on failure.
+    function addScreenshotFromDataUrl(dataUrl) {
+      if (!dataUrl) {
+        screenshotBtn.disabled = false;
+        statusEl.textContent = T.screenshotError;
+        return;
+      }
+      fetch(dataUrl).then(function (r) { return r.blob(); }).then(function (blob) {
+        screenshotBtn.disabled = false;
+        addScreenshotThumb(blob);
+      }).catch(function () {
+        screenshotBtn.disabled = false;
+        statusEl.textContent = T.screenshotError;
+      });
+    }
+    // ut-docs#3355: a WKWebView has nothing for getDisplayMedia to record,
+    // so in the iOS app the web path captured only the system share prompt.
+    // The iOS shell registers a native `utScreenshot` handler
+    // (ios/UniversalTill/ScreenshotBridge.swift, WKWebView.takeSnapshot);
+    // postMessage resolves to a data:image/png URL, or "" on failure.
+    var iosScreenshot = window.webkit && window.webkit.messageHandlers &&
+      window.webkit.messageHandlers.utScreenshot;
     if (window.AndroidKiosk && typeof window.AndroidKiosk.captureScreenshot === 'function') {
       screenshotBtn.addEventListener('click', function () {
         screenshotBtn.disabled = true;
@@ -485,17 +512,32 @@
         } catch (e) {
           dataUrl = '';
         }
-        if (!dataUrl) {
-          screenshotBtn.disabled = false;
-          statusEl.textContent = T.screenshotError;
-          return;
+        addScreenshotFromDataUrl(dataUrl);
+      });
+    } else if (iosScreenshot && typeof iosScreenshot.postMessage === 'function') {
+      screenshotBtn.addEventListener('click', function () {
+        screenshotBtn.disabled = true;
+        // On a phone this panel covers most of the screen: hide it for the
+        // shot so the report shows the till, then bring it straight back.
+        // Two frames so the hidden state is painted before the native
+        // snapshot (which also waits for screen updates) is asked for.
+        panel.style.visibility = 'hidden';
+        function restore(dataUrl) {
+          panel.style.visibility = '';
+          addScreenshotFromDataUrl(dataUrl);
         }
-        fetch(dataUrl).then(function (r) { return r.blob(); }).then(function (blob) {
-          screenshotBtn.disabled = false;
-          addScreenshotThumb(blob);
-        }).catch(function () {
-          screenshotBtn.disabled = false;
-          statusEl.textContent = T.screenshotError;
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            var reply;
+            try {
+              reply = iosScreenshot.postMessage('capture');
+            } catch (e) {
+              reply = null;
+            }
+            Promise.resolve(reply).then(function (dataUrl) {
+              restore(typeof dataUrl === 'string' ? dataUrl : '');
+            }, function () { restore(''); });
+          });
         });
       });
     } else if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
@@ -632,6 +674,12 @@
 
   function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 
+  // ut-docs#3353: on a phone the panel is a full-screen sheet (app.css,
+  // same breakpoint), so it is never dragged there — and a dragged position
+  // saved on a wider layout must survive it untouched (clamping it against
+  // the sheet's full-screen box would rewrite it to the top-left corner).
+  function phoneTier() { return !!(window.matchMedia && window.matchMedia('(max-width: 480px)').matches); }
+
   // Keeping the whole panel inside the viewport is the drag's one hard rule,
   // so it lives in one place: the drag uses it, and so does the resize guard
   // below. On a viewport narrower/shorter than the panel the upper bound goes
@@ -660,7 +708,7 @@
   // resize and on re-open (a resize while it was closed measures 0×0, so the
   // clamp has to be redone once it has a box again).
   function reclampIfDragged() {
-    if (!panel.style.left) return;
+    if (!panel.style.left || phoneTier()) return;
     moveTo(parseFloat(panel.style.left) || 0, parseFloat(panel.style.top) || 0, true);
   }
 
@@ -706,6 +754,9 @@
     // intervening pointer capture elsewhere, which the capture on `head`
     // guarantees here).
     if (e.target.closest('#bugreport-close, #bugreport-discard')) return; // buttons in the head are not drag handles
+    // ut-docs#3353: no drag on the phone sheet — there is nowhere to drag
+    // it, and a drag here would eat the swipe that scrolls it.
+    if (phoneTier()) return;
     if (dragPointerId !== null) return;   // one drag at a time
     if (e.button !== 0) return;           // primary press only; a right-click drag isn't one
     // Suppress the browser's OWN drag gesture before it starts. Without this

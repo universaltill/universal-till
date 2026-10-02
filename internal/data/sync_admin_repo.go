@@ -73,7 +73,19 @@ type adminTable struct {
 	// the one path that didn't follow that rule (ut-docs#2246) — a still-
 	// behind primary's blank sku kept invalidating item_variants.sku
 	// backfillCodelessSyncedVariants had already fixed, on every poll.
+	scrubOnRetire []scrubCol // PERSONAL-DATA columns blanked on the FK-
+	// blocked retire-in-place (ut-docs#3253): the primary dropped the row
+	// (a GDPR erasure is the only way a customer leaves it), so a replica
+	// that must keep the row for its own sales' FK keeps an empty shell,
+	// never the person. A column listed here is not also mangled by
+	// `unique` — NULL already releases a UNIQUE value.
+	onPrune func(ctx context.Context, tx *sql.Tx, id any) error // runs in
+	// the apply tx after deleteMissing hard-deletes or retires a row of
+	// this table, with the row's (single-column) PK.
 }
+
+// scrubCol is one scrubOnRetire column and the SQL literal it is set to.
+type scrubCol struct{ col, val string }
 
 // adminTables is the shop-wide state a replica mirrors. Deliberately NOT
 // here: inventory/stock (additive movements, D3), sales, sessions,
@@ -122,12 +134,29 @@ var adminTables = []adminTable{
 	// mangle step deleteMissing runs for `unique` columns would have nothing
 	// to free and nothing to protect — only the is_active flag applies.
 	{name: "categories", pk: []string{"id"}, hasIsActive: true},
-	{name: "customers", pk: []string{"id"}, unique: []string{"loyalty_no"}},
+	// ut-docs#3253: a customer the primary erased but this replica's own
+	// sales still reference retires as an anonymous shell (name '' — the
+	// readers in pos_repo.go skip it — and no contact data), and their name
+	// leaves this till's parked baskets too.
+	{name: "customers", pk: []string{"id"}, unique: []string{"loyalty_no"},
+		scrubOnRetire: []scrubCol{{"name", "''"}, {"phone", "NULL"}, {"email", "NULL"}, {"address", "NULL"}, {"loyalty_no", "NULL"}},
+		onPrune: func(ctx context.Context, tx *sql.Tx, id any) error {
+			return stripCustomerFromHeldSales(ctx, tx, fmt.Sprint(id), false)
+		}},
 	// plugin_id is till-local derived state (which plugin installed on THIS
 	// till owns the method) — importing it re-hijacks a repaired built-in
 	// from a not-yet-upgraded primary (ADR-0031).
 	{name: "payment_methods", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}, skipCols: []string{"plugin_id"}},
 	{name: "users", pk: []string{"id"}, hasIsActive: true, unique: []string{"username"}},
+	// ut-docs#3149: per-OPERATOR display preferences (theme, browsing mode)
+	// follow the person to every till in the shop — unlike the till-wide
+	// theme key, which is per-station (#2783). FKs onto users(id), so it
+	// sits after users (upserts forward, deletes in reverse). Pure PK-only
+	// rows, no is_active: nothing FKs onto them, so a prune never blocks.
+	// The main till's bundle is authoritative, so the write path must land
+	// on (or write through to) the main till. Its three sync_admin_version
+	// triggers ship in migration 061.
+	{name: "user_display_settings", pk: []string{"user_id", "key"}},
 	// ut-docs#1590: registers and stock_locations became safe to sync once
 	// /registers and /locations gated create/rename/activate to
 	// primary-only (see this var's own top comment for the full trace).
@@ -422,6 +451,7 @@ var nonAdminTables = map[string]string{
 	"invoices":                             "fiscal invoices/credit notes, FK'd to sales — same reasoning",
 	"invoices_archive":                     "archived invoices — same reasoning",
 	"fiscal_sign_starts":                   "in-flight German TSE signing state, keyed 1:1 on sale_id — per-sale, per-till",
+	"fiscal_order_starts":                  "in-flight German TSE order-capture (Bestellung-V1) state from fiscal.order.start (ADR-0138 D3), keyed 1:1 on the order's own id — per-order, per-till, same reasoning as fiscal_sign_starts above; an order captured on one till and tendered on another simply omits order_id (the honest degraded case)",
 	"fiscal_tse_signatures":                "completed TSE signatures, keyed 1:1 on sale_id — per-sale, per-till",
 	"fiscal_tse_reconciled_signatures":     "TSE signatures a fiscal.sign.reconcile.ask sweep confirmed after the fact for a sale that completed unsigned (ADR-0077 D3), keyed 1:1 on sale_id — per-sale, per-till, same reasoning as fiscal_tse_signatures above; kept as its own table so no receipt render path ever reads it (D4)",
 	"fiscal_device_receipts":               "what Turkey's ÖKC device printed for a sale, keyed 1:1 on sale_id — per-sale, per-till, same shape as fiscal_tse_signatures above",
@@ -1565,6 +1595,11 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 			`DELETE FROM `+t.name+` WHERE `+strings.Join(where, " AND "), args...)
 		if err == nil {
 			logSatelliteDivergencePrune(t, args, "hard-deleted, no history")
+			if t.onPrune != nil {
+				if herr := t.onPrune(ctx, tx, args[0]); herr != nil {
+					return fmt.Errorf("prune %s: %w", t.name, herr)
+				}
+			}
 			continue
 		}
 		// FK-blocked (row referenced by local sales history): retire it in
@@ -1574,8 +1609,14 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 		// already retired: an UPDATE that rewrites the same values still
 		// fires the version triggers, refreshing every open sale screen on
 		// every pull (ut-docs#2875).
-		if t.hasIsActive || len(t.unique) > 0 {
+		if t.hasIsActive || len(t.unique) > 0 || len(t.scrubOnRetire) > 0 {
 			var sets, pending []string
+			scrubbed := map[string]bool{}
+			for _, s := range t.scrubOnRetire {
+				scrubbed[s.col] = true
+				sets = append(sets, s.col+" = "+s.val)
+				pending = append(pending, s.col+" IS NOT "+s.val)
+			}
 			if t.hasIsActive {
 				col := t.activeCol
 				if col == "" {
@@ -1586,6 +1627,9 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 			}
 			pk := t.pk[0]
 			for _, c := range t.unique {
+				if scrubbed[c] {
+					continue
+				}
 				sets = append(sets, fmt.Sprintf(
 					"%s = CASE WHEN %s LIKE '%%~' || %s THEN %s ELSE %s || '~' || %s END",
 					c, c, pk, c, c, pk))
@@ -1598,6 +1642,11 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 			if derr == nil {
 				if n, _ := res.RowsAffected(); n > 0 {
 					logSatelliteDivergencePrune(t, args, "retired in place, has history")
+					if t.onPrune != nil {
+						if herr := t.onPrune(ctx, tx, args[0]); herr != nil {
+							return fmt.Errorf("prune %s: %w", t.name, herr)
+						}
+					}
 				}
 				continue
 			}
@@ -1966,6 +2015,8 @@ var ShopWideSettingPrefixes = []string{
 	"kiosk.", "auth.", "reports.", "update.", "setup.",
 	// Barcode handling (data/barcode_settings.go).
 	BarcodeEnabledSymbologiesKey, CatalogImportBarcodeFromSKUDefaultKey,
+	// Pre-pack unit price on shelf labels (data/catalog_settings.go).
+	CatalogPrePackUnitPriceEnabledKey,
 	// The store-level marketplace keys (see PerTillSettingPrefixes' own
 	// comment). Listed key by key: a new marketplace.* key must be
 	// classified on purpose, since most of that family is per-till.

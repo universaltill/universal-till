@@ -311,3 +311,21 @@ func TestHelpIndexKeepsPluginEntryPoint(t *testing.T) {
 		t.Error("plugin entry point does not link to /plugins")
 	}
 }
+
+// ut-docs#3356: on a phone the topic opens below the tree and out of sight,
+// so the topic panel carries a back link that swaps the landing (and the OOB
+// tree) back in. The landing itself has nothing to go back to.
+func TestHelpTopicHTMXHasBackLinkLandingDoesNot(t *testing.T) {
+	mux := helpMux(t)
+	topic := get(t, mux, "/help/catalog", "HX-Request", "true").Body.String()
+	if !strings.Contains(topic, `class="manual-back"`) || !strings.Contains(topic, `hx-get="/help"`) {
+		t.Errorf("topic fragment missing the back link: %s", topic)
+	}
+	landing := get(t, mux, "/help", "HX-Request", "true").Body.String()
+	if strings.Contains(landing, `class="manual-back"`) {
+		t.Error("landing fragment must not carry the back link")
+	}
+	if !strings.Contains(landing, `id="manual-tree"`) {
+		t.Error("landing fragment must carry the OOB tree so the nav reappears")
+	}
+}
