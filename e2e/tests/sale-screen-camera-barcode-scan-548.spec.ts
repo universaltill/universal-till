@@ -49,21 +49,154 @@ async function stubCamera(page: import('@playwright/test').Page) {
   });
 }
 
+// ut-docs#696: a camera stub whose frames show a real EAN-13 (drawn from the
+// standard L/G/R module tables), with BarcodeDetector forced absent so app.js
+// must fall back to the vendored decoder. The canvas is repainted every frame
+// so captureStream() keeps delivering frames to the <video>.
+async function stubCameraShowingEAN13(page: import('@playwright/test').Page, code: string) {
+  await page.addInitScript((code: string) => {
+    Object.defineProperty(window, 'BarcodeDetector', { value: undefined, configurable: true });
+    (window as any).__stopCalls = 0;
+    const L = ['0001101', '0011001', '0010011', '0111101', '0100011', '0110001', '0101111', '0111011', '0110111', '0001011'];
+    const R = L.map((p) => p.replace(/./g, (b) => (b === '0' ? '1' : '0')));
+    const G = R.map((p) => p.split('').reverse().join(''));
+    const PARITY = ['LLLLLL', 'LLGLGG', 'LLGGLG', 'LLGGGL', 'LGLLGG', 'LGGLLG', 'LGGGLL', 'LGLGLG', 'LGLGGL', 'LGGLGL'];
+    const d = code.split('').map(Number);
+    let bits = '101';
+    for (let i = 1; i <= 6; i++) bits += (PARITY[d[0]][i - 1] === 'L' ? L : G)[d[i]];
+    bits += '01010';
+    for (let i = 7; i <= 12; i++) bits += R[d[i]];
+    bits += '101';
+    const module = 4;
+    const quiet = 12 * module;
+    const canvas = document.createElement('canvas');
+    canvas.width = bits.length * module + 2 * quiet;
+    canvas.height = 240;
+    const ctx = canvas.getContext('2d')!;
+    const paint = () => {
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#000';
+      for (let i = 0; i < bits.length; i++) if (bits[i] === '1') ctx.fillRect(quiet + i * module, 20, module, 200);
+      requestAnimationFrame(paint);
+    };
+    paint();
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: async () => {
+          const stream = (canvas as any).captureStream(15);
+          stream.getTracks().forEach((t: MediaStreamTrack) => {
+            const origStop = t.stop.bind(t);
+            t.stop = () => { (window as any).__stopCalls++; origStop(); };
+          });
+          return stream;
+        },
+      },
+    });
+  }, code);
+}
+
 test.describe('camera barcode scan on the sale screen (ut-docs#548)', () => {
   test.afterEach(async ({ page }) => {
     await page.request.post('/api/pos/reset');
   });
 
-  test('hidden entirely when the browser has no BarcodeDetector', async ({ page }) => {
+  // ut-docs#696: WebKit (every iPhone/iPad, incl. the iOS app's WKWebView)
+  // and some Android WebViews have no BarcodeDetector. The button must still
+  // show, and the vendored zxing-wasm decoder (web/public/vendor/
+  // barcode-detector/) decodes for real — no stubbed detector here: the
+  // stubbed camera shows a genuine EAN-13 drawn on a canvas.
+  test('without BarcodeDetector the vendored decoder reads a real barcode, loaded lazily and only from this till (ut-docs#696)', async ({ page, baseURL }) => {
     const assertClean = watchConsole(page);
-    // No stub at all here — app.js's own typeof-check must find nothing.
+    const requests: string[] = [];
+    page.on('request', (r) => requests.push(r.url()));
+    await stubCameraShowingEAN13(page, BARCODE);
+    await page.goto('/');
+
+    const openBtn = page.locator('#barcode-scan-open');
+    await expect(openBtn).toBeVisible();
+    // Lazy: a till that never taps the button never fetches the ~1 MB decoder.
+    expect(requests.filter((u) => u.includes('/vendor/barcode-detector/'))).toEqual([]);
+
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/pos/scan'), { timeout: 20_000 }),
+      openBtn.click(),
+    ]);
+
+    await expect(page.locator('#basket')).toContainText('Coca-Cola 330ml');
+    await expect(page.locator('#barcode-scan-overlay')).toBeHidden();
+    await expect.poll(() => page.evaluate(() => (window as any).__stopCalls)).toBe(1);
+
+    const origin = new URL(baseURL ?? page.url()).origin;
+    // Content-versioned (?v=) so the ~1 MB decoder is cached, not refetched
+    // on every page load (no-cache + no validators on the embed FS).
+    const decoderURLs = requests.filter((u) => u.includes('/public/vendor/barcode-detector/'));
+    expect(decoderURLs.some((u) => /\/ponyfill\.js\?v=\w+/.test(u))).toBe(true);
+    expect(decoderURLs.some((u) => /\/zxing_reader\.wasm\?v=\w+/.test(u))).toBe(true);
+    const wasmResp = await page.request.get(decoderURLs.find((u) => u.includes('zxing_reader.wasm'))!);
+    expect(wasmResp.headers()['content-type']).toBe('application/wasm');
+    expect(wasmResp.headers()['cache-control']).toContain('immutable');
+    // Frames and the decoder never involve another host (no CDN fallback).
+    expect(requests.filter((u) => /^https?:/.test(u) && new URL(u).origin !== origin)).toEqual([]);
+    assertClean();
+  });
+
+  test('without BarcodeDetector, a decoder that fails to load says so instead of scanning silently forever (ut-docs#696)', async ({ page }) => {
+    // Emscripten logs its own failed-instantiation messages; those are the
+    // expected symptom here, any other console error still fails the test.
+    const assertClean = watchConsole(page, /wasm|ArrayBuffer instantiation|Aborted\(/i);
+    await stubCameraShowingEAN13(page, BARCODE);
+    const wasmRoute = '**/public/vendor/barcode-detector/zxing_reader.wasm*';
+    await page.route(wasmRoute, (route) => route.fulfill({ status: 404, body: 'gone' }));
+    await page.goto('/');
+
+    await page.locator('#barcode-scan-open').click();
+    await expect(page.locator('#barcode-scan-status')).toHaveText('Camera unavailable', { timeout: 20_000 });
+    // The camera is not left running behind the error.
+    await expect.poll(() => page.evaluate(() => (window as any).__stopCalls)).toBe(1);
+    await page.locator('#barcode-scan-close').click();
+    await expect(page.locator('#barcode-scan-overlay')).toBeHidden();
+    await expect(page.locator('#basket')).not.toContainText('Coca-Cola 330ml');
+
+    // The failure is not cached: once the file is reachable again, the next
+    // tap loads the decoder and scans.
+    await page.unroute(wasmRoute);
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/pos/scan'), { timeout: 20_000 }),
+      page.locator('#barcode-scan-open').click(),
+    ]);
+    await expect(page.locator('#basket')).toContainText('Coca-Cola 330ml');
+
+    assertClean();
+  });
+
+  // A BarcodeDetector that exists but whose platform service is missing
+  // (Chromium on Android without Play services): getSupportedFormats() is
+  // empty and detect() always rejects. The vendored decoder must take over.
+  test('a native BarcodeDetector that supports none of our formats falls back to the vendored decoder (ut-docs#696)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await stubCameraShowingEAN13(page, BARCODE);
     await page.addInitScript(() => {
-      // Guarantee determinism regardless of what the runner's real Chromium
-      // ships: force the unsupported branch app.js is meant to take.
-      Object.defineProperty(window, 'BarcodeDetector', { value: undefined, configurable: true });
+      (window as any).__nativeDetectCalls = 0;
+      // defineProperty: the camera stub above made the property read-only.
+      Object.defineProperty(window, 'BarcodeDetector', { configurable: true, value: class {
+        static async getSupportedFormats() { return []; }
+        async detect() {
+          (window as any).__nativeDetectCalls++;
+          throw new DOMException('Barcode detection service unavailable.', 'NotSupportedError');
+        }
+      } });
     });
     await page.goto('/');
-    await expect(page.locator('#barcode-scan-open')).toBeHidden();
+
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/pos/scan'), { timeout: 20_000 }),
+      page.locator('#barcode-scan-open').click(),
+    ]);
+    await expect(page.locator('#basket')).toContainText('Coca-Cola 330ml');
+    expect(await page.evaluate(() => (window as any).__nativeDetectCalls)).toBe(0);
+
     assertClean();
   });
 

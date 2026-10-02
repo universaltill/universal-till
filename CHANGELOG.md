@@ -7,6 +7,12 @@ Release notes for the till. Versions come from the release tag
 
 ### Added
 
+- **Camera barcode scan on iPhone and iPad (ut-docs#696).** The sale
+  screen's camera-scan button now shows on every device. Where the browser
+  has no native barcode reader (WebKit, so every iPhone/iPad, and some
+  Android WebViews) a decoder bundled with the till reads the code on the
+  device; nothing is fetched from the internet and no frame leaves the
+  device.
 - **UK age-restricted sales support (ut-docs#3340).** A catalog item can be
   flagged "Age restricted (ID check at the till)". The till gates tendering
   a sale on the cashier recording an ID-check outcome (accepted/refused)
