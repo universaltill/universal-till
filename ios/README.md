@@ -146,8 +146,8 @@ answered. `scripts/ci/ios-screenshot-bridge_test.sh` pins the wiring;
   tills; pairing by code / IP address works regardless. Tracked in
   ut-docs#3069.
 - **Android-only bridges have no iOS counterpart yet** — file downloads
-  (exports), the self-order kiosk lock (Guided
-  Access) and a BLE receipt-printer bridge: ut-docs#3071.
+  (exports), the self-order kiosk lock (Guided Access) and a BLE
+  receipt-printer bridge: ut-docs#3071.
 - **No in-app Bluetooth pairing, by design** (ut-docs#3261): iOS keeps
   scanners and keyboards (HID) for the system and never exposes them to an
   app through Core Bluetooth, so they pair in **Settings → Bluetooth** and
