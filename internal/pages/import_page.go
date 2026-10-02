@@ -1116,6 +1116,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					Description: it.Description, CategoryID: catID,
 					TaxCodeID: taxCodeID,
 					Unit:      "each", IsWeighed: it.IsWeighed, IsActive: true,
+					NetQuantityValue: it.NetQuantityValue, NetQuantityUnit: it.NetQuantityUnit,
 					// ut-docs#1850: the source's own "Track inventory? No"
 					// answer persists onto the created item, not just onto
 					// this row's one-time stock-recording decision below.
@@ -1340,6 +1341,12 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				}
 				if it.TakeawayTaxIssue != "" {
 					warnings = append(warnings, translateTaxIssue(T, it.TakeawayTaxIssue, it.TakeawayTaxIssueRaw))
+				}
+				// Same reasoning as the tax cells above: a dropped net
+				// quantity would silently drop the pre-pack unit price from
+				// the item's shelf label (ut-docs#3391/#3403).
+				if it.NetQuantityIssue != "" {
+					warnings = append(warnings, translateNetQuantityIssue(T, it.NetQuantityIssue, it.NetQuantityIssueRaw))
 				}
 				// A reused source product number was de-duplicated with a
 				// suffix, not dropped (ut-docs#1222) — surfaced the same
@@ -1830,7 +1837,8 @@ func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 	// (ut-docs#512). Blank cells when the item has no tax code / no
 	// takeaway rate — system-formatted percent strings, so no csvSafe.
 	_ = cw.Write([]string{"Name", "SKU", "Barcode", "Price", "Category",
-		"Description", "Sold by weight", "In stock", "Active", "Tax rate", "Takeaway tax"})
+		"Description", "Sold by weight", "In stock", "Active", "Tax rate", "Takeaway tax",
+		"Net quantity", "Net quantity unit"})
 	yn := func(b bool) string {
 		if b {
 			return "Y"
@@ -1845,11 +1853,16 @@ func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 				takeaway = taxrate.FormatPercent(e.TakeawayRateBP)
 			}
 		}
+		netQty, netUnit := "", ""
+		if e.NetQuantityValue != nil && e.NetQuantityUnit != nil {
+			netQty = strconv.FormatInt(*e.NetQuantityValue, 10)
+			netUnit = *e.NetQuantityUnit
+		}
 		_ = cw.Write([]string{
 			csvSafe(e.Name), csvSafe(e.SKU), csvSafe(e.Barcode), minorToDecimal(e.PriceMinor, decimals),
 			csvSafe(e.Category), csvSafe(e.Description), yn(e.IsWeighed),
 			strconv.FormatFloat(e.Stock, 'f', -1, 64), yn(e.IsActive),
-			tax, takeaway,
+			tax, takeaway, netQty, netUnit,
 		})
 	}
 	cw.Flush()
@@ -2098,6 +2111,18 @@ func translateTaxIssue(T func(string) string, code, raw string) string {
 		return fmt.Sprintf(T("import.status.tax_unparseable"), raw)
 	default:
 		log.Printf("[import] unrecognised tax issue reason code %q", code)
+		return T("import.status.unknown_issue")
+	}
+}
+
+// translateNetQuantityIssue is translateBarcodeIssue's counterpart for the
+// (non-blocking) NetQuantityIssue reason code (ut-docs#3391/#3403).
+func translateNetQuantityIssue(T func(string) string, code, raw string) string {
+	switch code {
+	case catimport.NetQuantityIssueInvalid:
+		return fmt.Sprintf(T("import.status.net_quantity_invalid"), raw)
+	default:
+		log.Printf("[import] unrecognised net quantity issue reason code %q", code)
 		return T("import.status.unknown_issue")
 	}
 }

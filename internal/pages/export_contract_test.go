@@ -69,6 +69,7 @@ func TestExportItemRowSchema_PinnedFields(t *testing.T) {
 		"name", "sku", "barcode", "price_minor", "category", "description",
 		"is_weighed", "stock", "is_active", "tax_rate_bp", "has_tax",
 		"takeaway_rate_bp", "has_takeaway",
+		"net_quantity_value,omitempty", "net_quantity_unit,omitempty",
 	})
 }
 

@@ -862,6 +862,7 @@
   "import.status.missing_name": "نام موجود نیست",
   "import.status.missing_name_and_bad_price": "نام موجود نیست و قیمت نامعتبر: %s",
   "import.status.name_already_in_catalog": "نام قبلاً در کاتالوگ موجود است",
+  "import.status.net_quantity_invalid": "مقدار خالص «%s» وارد نشد: خواندن آن به‌صورت عدد مثبت با واحد g، ml یا each ممکن نبود",
   "import.status.not_sellable": "کالای قابل‌فروش نیست (دکمهٔ نوع سفارش)",
   "import.status.ok": "بدون مشکل",
   "import.status.sku_already_in_catalog": "کد کالا (SKU) قبلاً در کاتالوگ موجود است",

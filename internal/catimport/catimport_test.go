@@ -440,6 +440,75 @@ func TestParseNoTaxColumnLeavesTaxUnset(t *testing.T) {
 	}
 }
 
+// Net quantity (ut-docs#3391/#3403, Price Marking Order 2004): optional like
+// tax, and a present-but-invalid cell is non-blocking but reported, same
+// shape as TaxIssue — a dropped net quantity silently losing the pre-pack
+// unit price on labels would be exactly the kind of compliance-sensitive
+// drop TaxIssue exists to make visible.
+const netQuantityCSV = `Name,Price,Net quantity,Net quantity unit
+Cola Can,1.20,330,ml
+Rice Bag,2.00,500,g
+Loose Apple,0.30,,
+Bad Value,1.00,abc,g
+Bad Unit,1.00,500,stone
+`
+
+func TestParseNetQuantityColumns(t *testing.T) {
+	res, err := Parse(strings.NewReader(netQuantityCSV), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(res.Items) != 5 {
+		t.Fatalf("items = %d", len(res.Items))
+	}
+	cola := res.Items[0]
+	if cola.NetQuantityValue == nil || *cola.NetQuantityValue != 330 ||
+		cola.NetQuantityUnit == nil || *cola.NetQuantityUnit != "ml" || cola.NetQuantityIssue != "" {
+		t.Errorf("cola (330 ml) parsed wrong: %+v", cola)
+	}
+	rice := res.Items[1]
+	if rice.NetQuantityValue == nil || *rice.NetQuantityValue != 500 ||
+		rice.NetQuantityUnit == nil || *rice.NetQuantityUnit != "g" {
+		t.Errorf("rice (500 g) parsed wrong: %+v", rice)
+	}
+	// Blank cells: stays unset, no issue — the row imports exactly as before
+	// this column existed.
+	loose := res.Items[2]
+	if loose.NetQuantityValue != nil || loose.NetQuantityUnit != nil || loose.NetQuantityIssue != "" {
+		t.Errorf("blank net-quantity cells must stay silent: %+v", loose)
+	}
+	// A present-but-unparseable value: non-blocking issue, fields stay unset
+	// so the row still imports, just without a net quantity.
+	badValue := res.Items[3]
+	if badValue.NetQuantityValue != nil || badValue.NetQuantityUnit != nil ||
+		badValue.NetQuantityIssue != NetQuantityIssueInvalid || badValue.NetQuantityIssueRaw != "abc/g" {
+		t.Errorf("unparseable net-quantity value must set NetQuantityIssue, not block: %+v", badValue)
+	}
+	if badValue.Issue != "" {
+		t.Errorf("a bad net-quantity cell must never block the row: %+v", badValue)
+	}
+	// A disallowed unit: same non-blocking treatment.
+	badUnit := res.Items[4]
+	if badUnit.NetQuantityValue != nil || badUnit.NetQuantityUnit != nil ||
+		badUnit.NetQuantityIssue != NetQuantityIssueInvalid || badUnit.NetQuantityIssueRaw != "500/stone" {
+		t.Errorf("disallowed net-quantity unit must set NetQuantityIssue: %+v", badUnit)
+	}
+}
+
+// A file with no net-quantity column at all (every pre-existing fixture)
+// must leave the net-quantity fields untouched.
+func TestParseNoNetQuantityColumnLeavesItUnset(t *testing.T) {
+	res, err := Parse(strings.NewReader(loyverseCSV), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for i, it := range res.Items {
+		if it.NetQuantityValue != nil || it.NetQuantityUnit != nil || it.NetQuantityIssue != "" {
+			t.Errorf("row %d: net-quantity fields must stay zero without that column: %+v", i, it)
+		}
+	}
+}
+
 func TestParseTaxRateBP(t *testing.T) {
 	good := map[string]int{
 		"19":    1900,

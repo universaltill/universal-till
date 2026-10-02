@@ -862,6 +862,7 @@
   "import.status.missing_name": "الاسم مفقود",
   "import.status.missing_name_and_bad_price": "الاسم مفقود وسعر غير صالح: %s",
   "import.status.name_already_in_catalog": "الاسم موجود بالفعل في الكتالوج",
+  "import.status.net_quantity_invalid": "الكمية الصافية \"%s\" لم تُستورد: تعذرت قراءتها كرقم موجب بوحدة g أو ml أو each",
   "import.status.not_sellable": "ليس صنفًا قابلًا للبيع (مفتاح نوع الطلب)",
   "import.status.ok": "موافق",
   "import.status.sku_already_in_catalog": "رمز SKU موجود بالفعل في الكتالوج",

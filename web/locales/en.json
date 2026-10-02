@@ -862,6 +862,7 @@
   "import.status.missing_name": "missing name",
   "import.status.missing_name_and_bad_price": "missing name and bad price: %s",
   "import.status.name_already_in_catalog": "name already in catalog",
+  "import.status.net_quantity_invalid": "net quantity \"%s\" not imported: could not be read as a positive number with g, ml or each",
   "import.status.not_sellable": "not a sellable item (order-type toggle)",
   "import.status.ok": "ok",
   "import.status.sku_already_in_catalog": "SKU already in catalog",

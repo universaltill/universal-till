@@ -862,6 +862,7 @@
   "import.status.missing_name": "isim eksik",
   "import.status.missing_name_and_bad_price": "isim eksik ve geçersiz fiyat: %s",
   "import.status.name_already_in_catalog": "ad zaten katalogda mevcut",
+  "import.status.net_quantity_invalid": "\"%s\" net miktarı içe aktarılmadı: g, ml veya each birimiyle pozitif bir sayı olarak okunamadı",
   "import.status.not_sellable": "satılabilir bir ürün değil (sipariş türü anahtarı)",
   "import.status.ok": "tamam",
   "import.status.sku_already_in_catalog": "SKU zaten katalogda mevcut",

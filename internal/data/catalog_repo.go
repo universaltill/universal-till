@@ -1262,6 +1262,11 @@ type ExportRow struct {
 	HasTax         bool `json:"has_tax"`
 	TakeawayRateBP int  `json:"takeaway_rate_bp"`
 	HasTakeaway    bool `json:"has_takeaway"`
+	// NetQuantityValue/NetQuantityUnit (ut-docs#3391/#3403): a pre-packed
+	// item's net content, same nil-pair-means-unset shape as
+	// catalogtypes.ItemInput's own fields — both nil when not configured.
+	NetQuantityValue *int64  `json:"net_quantity_value,omitempty"`
+	NetQuantityUnit  *string `json:"net_quantity_unit,omitempty"`
 }
 
 // ExportRows reads the whole catalog for export, active items first.
@@ -1279,7 +1284,8 @@ SELECT i.name, COALESCE(i.sku, ''),
        i.is_weighed,
        COALESCE((SELECT SUM(v.quantity) FROM inventory v WHERE v.item_id = i.id), 0),
        i.is_active,
-       t.rate_basis_points, t.takeaway_rate_basis_points
+       t.rate_basis_points, t.takeaway_rate_basis_points,
+       i.net_quantity_value, i.net_quantity_unit
 FROM items i LEFT JOIN categories c ON c.id = i.category_id
              LEFT JOIN tax_codes t ON t.id = i.tax_code_id
 ORDER BY i.is_active DESC, i.name`)
@@ -1290,9 +1296,11 @@ ORDER BY i.is_active DESC, i.name`)
 	out := make([]ExportRow, 0)
 	for rows.Next() {
 		var e ExportRow
-		var rate, takeaway sql.NullInt64
+		var rate, takeaway, netQtyValue sql.NullInt64
+		var netQtyUnit sql.NullString
 		if err := rows.Scan(&e.Name, &e.SKU, &e.Barcode, &e.PriceMinor, &e.Category,
-			&e.Description, &e.IsWeighed, &e.Stock, &e.IsActive, &rate, &takeaway); err != nil {
+			&e.Description, &e.IsWeighed, &e.Stock, &e.IsActive, &rate, &takeaway,
+			&netQtyValue, &netQtyUnit); err != nil {
 			return nil, err
 		}
 		if rate.Valid {
@@ -1300,6 +1308,10 @@ ORDER BY i.is_active DESC, i.name`)
 			if takeaway.Valid {
 				e.TakeawayRateBP, e.HasTakeaway = int(takeaway.Int64), true
 			}
+		}
+		if netQtyValue.Valid && netQtyUnit.Valid {
+			v, u := netQtyValue.Int64, netQtyUnit.String
+			e.NetQuantityValue, e.NetQuantityUnit = &v, &u
 		}
 		out = append(out, e)
 	}

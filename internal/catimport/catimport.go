@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/barcode"
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 )
 
 // ErrNoNameColumn is Parse's own reason code (ut-docs#303) for the single
@@ -84,6 +85,14 @@ const (
 	// stock (silently optional), a dropped tax rate is compliance-sensitive
 	// (ut-docs#512), so the drop is reported rather than swallowed.
 	TaxIssueUnparseable = "unparseable"
+
+	// NetQuantityIssueInvalid: a net-quantity cell pair was present but
+	// didn't pass catalogtypes.ValidNetQuantity (not a positive whole
+	// number, or not one of g/ml/each). Non-blocking, same reasoning as
+	// TaxIssueUnparseable — a silently dropped net quantity would silently
+	// drop the Price Marking Order 2004 pre-pack unit price from the
+	// item's shelf label (ut-docs#3391/#3403), so the drop is reported.
+	NetQuantityIssueInvalid = "invalid"
 
 	// SKUIssueDuplicateInFile: an otherwise-clean row's source product
 	// number was already claimed by an earlier row in this same file
@@ -179,6 +188,18 @@ type ImportItem struct {
 	TaxIssueRaw         string
 	TakeawayTaxIssue    string
 	TakeawayTaxIssueRaw string
+	// NetQuantityValue/NetQuantityUnit (ut-docs#3391/#3403, Price Marking
+	// Order 2004 pre-pack unit price): optional, same shape as the tax
+	// pair above — nil/nil means none configured, matching
+	// catalogtypes.ItemInput's own field shape exactly so the pages layer
+	// can copy these straight across with no conversion. NetQuantityIssue/
+	// NetQuantityIssueRaw mirror TaxIssue/TaxIssueRaw for a present cell
+	// that fails catalogtypes.ValidNetQuantity: non-blocking, the row still
+	// imports, just without a net quantity.
+	NetQuantityValue    *int64
+	NetQuantityUnit     *string
+	NetQuantityIssue    string
+	NetQuantityIssueRaw string
 	// SKUIssue/SKUIssueRaw mirror BarcodeIssue/TaxIssue for the source
 	// product number (ut-docs#1222): set (with the original PLU alongside)
 	// when a reused source number was de-duplicated with a suffix rather
@@ -245,6 +266,13 @@ var columnSynonyms = map[string][]string{
 	// below, not by a growing list of literal entries here (ut-docs#587).
 	"tax":          {"tax", "tax %", "tax rate", "vat", "vat %", "vat rate"},
 	"takeaway_tax": {"takeaway tax", "takeaway tax %", "takeaway vat", "takeaway rate", "takeaway tax rate"},
+	// Net quantity (ut-docs#3391/#3403): optional, only this till's own
+	// export writes these two columns today — no other source system in
+	// this package's synonym tables has the concept — so a single literal
+	// entry each is enough; absent ⇒ both fields stay nil, existing
+	// imports unchanged.
+	"net_quantity":      {"net quantity"},
+	"net_quantity_unit": {"net quantity unit"},
 	// square-specific extras used only for detection / variation naming
 	"variation": {"variation name"},
 	"token":     {"token", "handle"},
@@ -619,6 +647,19 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 				item.TakeawayRateBP, item.HasTakeaway = bp, true
 			} else {
 				item.TakeawayTaxIssue, item.TakeawayTaxIssueRaw = TaxIssueUnparseable, raw
+			}
+		}
+		// Net quantity is optional too, same non-blocking-but-reported shape
+		// as the tax columns above (ut-docs#3391/#3403, compliance-sensitive:
+		// it drives the pre-pack unit price on the shelf label).
+		if rawVal, rawUnit := get(rec, "net_quantity"), get(rec, "net_quantity_unit"); rawVal != "" || rawUnit != "" {
+			v, verr := strconv.ParseInt(strings.TrimSpace(rawVal), 10, 64)
+			unit := strings.TrimSpace(strings.ToLower(rawUnit))
+			if verr == nil && catalogtypes.ValidNetQuantity(&v, &unit) {
+				item.NetQuantityValue, item.NetQuantityUnit = &v, &unit
+			} else {
+				item.NetQuantityIssue = NetQuantityIssueInvalid
+				item.NetQuantityIssueRaw = rawVal + "/" + rawUnit
 			}
 		}
 		switch {

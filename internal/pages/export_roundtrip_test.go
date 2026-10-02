@@ -16,9 +16,12 @@ import (
 // a duplicated-logic version of this test could pass while the real
 // exporter silently diverged.
 func TestExportCSVRoundTripsThroughImporter(t *testing.T) {
+	netQty := int64(330)
+	netUnit := "ml"
 	rows := []data.ExportRow{
 		{Name: "Cola Can 330ml", SKU: "SKU-1", Barcode: "5000112637922",
-			PriceMinor: 120, Category: "Drinks", Description: "Fizzy", Stock: 24},
+			PriceMinor: 120, Category: "Drinks", Description: "Fizzy", Stock: 24,
+			NetQuantityValue: &netQty, NetQuantityUnit: &netUnit},
 		{Name: "Bananas", SKU: "SKU-2", PriceMinor: 95, Category: "Produce",
 			IsWeighed: true, Stock: 12.5},
 	}
@@ -38,6 +41,13 @@ func TestExportCSVRoundTripsThroughImporter(t *testing.T) {
 		cola.Barcode != "5000112637922" || cola.PriceMinor != 120 ||
 		cola.Category != "Drinks" || cola.Description != "Fizzy" || cola.IsWeighed {
 		t.Fatalf("cola did not round-trip: %+v", cola)
+	}
+	if cola.NetQuantityValue == nil || *cola.NetQuantityValue != 330 ||
+		cola.NetQuantityUnit == nil || *cola.NetQuantityUnit != "ml" || cola.NetQuantityIssue != "" {
+		t.Fatalf("net quantity did not round-trip: %+v", cola)
+	}
+	if res.Items[1].NetQuantityValue != nil || res.Items[1].NetQuantityUnit != nil {
+		t.Fatalf("unset net quantity should stay unset: %+v", res.Items[1])
 	}
 	if !res.Items[1].IsWeighed || res.Items[1].PriceMinor != 95 {
 		t.Fatalf("weighed item did not round-trip: %+v", res.Items[1])
