@@ -76,9 +76,22 @@ ut-docs#3052). It never submits for App Store review.
 - **Export compliance** is answered in `project.yml`
   (`ITSAppUsesNonExemptEncryption: false` — standard algorithms only), so
   builds don't wait on the questionnaire.
+- **Who sees it:** after the upload the job waits (up to 40 minutes) for
+  App Store Connect to finish processing the build, then **fails** unless
+  an **internal** TestFlight group with at least one tester can see it
+  (automatic distribution on, or the build added to the group) —
+  `scripts/asc-testflight-check` (ut-docs#3217). The error names the
+  missing piece: no internal group, a group with no testers, or no group
+  that can see the build. A processing failure (`FAILED`/`INVALID`) or a
+  build no tester can install (`MISSING_EXPORT_COMPLIANCE`,
+  `PROCESSING_EXCEPTION`) fails it too. Fix it in App Store Connect (step 2
+  below) and re-run. A **timeout** usually just means Apple is slow: the
+  upload stands and still reaches testers once processed, and a re-run
+  uploads a second build — check the TestFlight tab before re-running.
 - `scripts/ci/ios-testflight-workflow_test.sh` (in `ci.yml`) pins the
   trigger, the release.yml dispatch, SHA-pinned actions, the unsigned
-  archive, the repository guard, the hosted runner and the key handling.
+  archive, the repository guard, the hosted runner, the key handling and
+  the tester check.
 
 **Once, in App Store Connect** (the owner):
 
@@ -119,14 +132,27 @@ and `TillServer.start` registers it before the server starts (ut-docs#3218).
 A refused Local Network permission shows its own message on the Tills page
 and the setup wizard, pointing at Settings and at pairing by code.
 
+## Bug-report screenshots (ut-docs#3355)
+
+A `WKWebView` has nothing for `getDisplayMedia` to record, so the panel's
+"Take screenshot" used to capture only the system share prompt.
+`UniversalTill/ScreenshotBridge.swift` registers a `utScreenshot`
+script-message handler with reply (page content world): the panel calls
+`window.webkit.messageHandlers.utScreenshot.postMessage('capture')`, hides
+itself for two frames, and gets back `WKWebView.takeSnapshot` of the till
+page as a PNG data URL (or `""` on failure — the same contract as Android's
+`AndroidKiosk.captureScreenshot()`). Only the till origin's main frame is
+answered. `scripts/ci/ios-screenshot-bridge_test.sh` pins the wiring;
+`e2e/tests/ios-screenshot-bridge-3355.spec.ts` drives the panel side.
+
 ## What doesn't port (and what isn't built yet)
 
 - **`runtime:"go"` process plugins don't run** — iOS never lets an app
   spawn another process (same limit as Android, ADR-0023 §2). WASM plugins
   run unchanged (wazero's interpreter).
 - **Android-only bridges have no iOS counterpart yet** — file downloads
-  (exports), the bug-report screenshot, the self-order kiosk lock (Guided
-  Access) and a BLE receipt-printer bridge: ut-docs#3071.
+  (exports), the self-order kiosk lock (Guided Access) and a BLE
+  receipt-printer bridge: ut-docs#3071.
 - **No in-app Bluetooth pairing, by design** (ut-docs#3261): iOS keeps
   scanners and keyboards (HID) for the system and never exposes them to an
   app through Core Bluetooth, so they pair in **Settings → Bluetooth** and
