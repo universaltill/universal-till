@@ -152,7 +152,17 @@ Hat Ihr Geschäft eine TSE konfiguriert, zeigt ein kleiner Chip unten im linken 
 
 ### Wenn ein Verkauf überhaupt nicht signiert werden kann
 
-Getrennt von einem Ausfall kann ein Signier-Plugin melden, dass sich ein bestimmter Verkauf so, wie er ist, nicht signieren lässt — zum Beispiel ein Trinkgeld oder ein Rabatt, den sein Signierdienst nicht zu einem gültigen Belegdatensatz zusammenführen kann. Das unterscheidet sich davon, dass der Dienst nicht erreichbar ist: Es ist eine Eigenschaft dieses einen Verkaufs. Der Verkauf schließt weiterhin normal ab, und es passiert dasselbe wie bei einem Ausfall — er wird im Prüfprotokoll markiert, und eine Warnung erscheint in der Problemliste der Kasse —, doch der Hinweis auf dem Kundenbeleg liest anders: Er sagt, der Verkauf konnte in der vorgelegten Form nicht signiert werden, nicht, dass die TSE-Signierung nicht verfügbar war, sodass er nie ein Verbindungsproblem suggeriert, das nicht aufgetreten ist. Wie bei einem Ausfall ist dies dauerhaft — die Kasse versucht nicht, den Verkauf später erneut zu signieren.
+Getrennt von einem Ausfall kann ein Signier-Plugin melden, dass sich ein bestimmter Verkauf so, wie er ist, nicht signieren lässt — zum Beispiel ein Trinkgeld, ein Rabatt oder ein Steuersatz, den sein Signierdienst nicht zu einem gültigen Belegdatensatz zusammenführen kann. Das unterscheidet sich davon, dass der Dienst nicht erreichbar ist: Es ist eine Eigenschaft dieses einen Verkaufs, deshalb schließt die Kasse ihn nicht ab. Stattdessen:
+
+- wird der Verkauf an der Kasse abgelehnt — es wird kein Verkauf erfasst, nichts als unsigniert markiert und kein Beleg gedruckt;
+- wird eine dafür bereits erfolgte Kartenzahlung automatisch storniert (lässt sich eine Stornierung nicht bestätigen, erscheint in der Problemliste der Kasse eine Warnung, die diese Zahlung benennt — prüfen Sie sie dann mit Ihrem Kartenanbieter);
+- sieht der Kassierer eine Meldung, dass sich der Verkauf in der vorgelegten Form nicht signieren lässt, und der Warenkorb bleibt genau so erhalten, wie er war: Sie können Trinkgeld, Rabatt oder Steuersatz ändern und erneut kassieren oder den Verkauf stornieren.
+
+Am Selbstbedienungskiosk wird der Kunde stattdessen an die Theke verwiesen.
+
+Für deutsche Geschäfte speichert die Kasse außerdem keinen Steuercode, dessen Satz der Signierdienst nicht kennt (19 %, 7 %, 10,7 %, 5,5 % oder 0 %) — ein falscher Satz fällt so schon beim Einrichten auf und nicht erst an der Kasse.
+
+Die einzige Ausnahme sind Rückerstattungen: Eine Rückerstattung, die das Signier-Plugin nicht signieren kann, wird weiterhin abgeschlossen und wie bei einem Ausfall aufgezeichnet — nur sagt der Hinweis auf dem Beleg, dass sie in der vorgelegten Form nicht signiert werden konnte, nicht, dass die TSE-Signierung nicht verfügbar war.
 
 ### Der TSE-Signaturblock auf Belegen
 

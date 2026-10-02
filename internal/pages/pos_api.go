@@ -81,6 +81,21 @@ func (e *fiscalDeviceRequiredError) Error() string {
 	return "fiscal gate: system-of-record sale declared no fiscal-device payment leg"
 }
 
+// fiscalCannotSignError signals ADR-0136 (ut-docs#3309): the installed
+// fiscal signer answered fiscal.sign.ask with "cannot-sign" — THIS sale's
+// own data (an unreconciled tip, discount or rate) admits no correct Beleg
+// — so the tender is refused outright: no sale row, no journal entry, and
+// any payment leg already captured is reversed before this is returned.
+// Same shape as paymentDeclinedError, and deliberately carries no
+// plugin-originated text (never leaked verbatim, ut-docs#921/#2278); each
+// tender surface maps it to its own localized copy and keeps the basket so
+// the cashier can fix the sale or void it.
+type fiscalCannotSignError struct{}
+
+func (e *fiscalCannotSignError) Error() string {
+	return "fiscal signing: sale cannot be signed as presented"
+}
+
 // fiscalNeverConfiguredError signals the ADR-0048 hard block: a shop in a
 // hard-gated market (fiscal.RequiresHardGate — Germany and, since
 // ut-docs#1208, Turkey) declared itself system-of-record without a
@@ -340,6 +355,10 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// to carry identical content.
 	attemptID := engine.TenderAttemptID()
 	var deviceEvidence *fiscal.DeviceEvidence
+	// capturedLegs records every leg whose payment.<key>.authorize actually
+	// reached a plugin and approved, with that leg's own idempotency key —
+	// what a refused cannot-sign tender must reverse (ADR-0136 Decision 2).
+	var capturedLegs []capturedPaymentLeg
 	for i, p := range payments {
 		amount := p.Amount
 		if p.MethodID == fiscal.MethodKeyOKC {
@@ -371,7 +390,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		}
 		payloadDigest := sha256.Sum256(payloadBytes)
 		requestID := fmt.Sprintf("%s:%d:%x", attemptID, i, payloadDigest[:8])
-		resp, err := blockingPaymentEventWithResponseAndID(ctx, d, p.MethodID, "authorize", requestID, payload)
+		resp, dispatched, err := blockingPaymentEventDispatch(ctx, d, p.MethodID, "authorize", requestID, payload)
 		if err != nil {
 			// ut-docs#2278 review finding: paymentDeclinedError carries no
 			// detail to the operator by design (a plugin-originated decline
@@ -415,10 +434,24 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		// (ut-docs#2571; see applyPluginReportedTip). An absent/malformed/
 		// negative field is ignored, leaving the request's own tip
 		// (typically zero) in place.
+		// captured is exactly the money this leg's plugin took: the amount
+		// the authorize payload asked for (already net of change for the
+		// fiscal-device leg, gross for every other method — whatever was
+		// SENT), plus the tip the reader reports having added on top. It is
+		// recorded here, at the moment of capture, rather than recomputed
+		// later from the mutated PaymentInput (independent review, ADR-0136):
+		// a non-device leg's authorize does not net out ChangeGiven, so
+		// "Amount - ChangeGiven" would under-reverse such a leg by its change.
+		captured := amount
 		if tip, ok := pluginReportedTipAmount(resp); ok {
-			if !applyPluginReportedTip(&payments[i], tip) {
+			if applyPluginReportedTip(&payments[i], tip) {
+				captured = captured.Add(money.FromMinor(tip))
+			} else {
 				log.Printf("tender: ignoring reader-reported tip %d for method %q (attempt %s): a voucher leg or an amount overflow", tip, p.MethodID, requestID)
 			}
+		}
+		if dispatched {
+			capturedLegs = append(capturedLegs, capturedPaymentLeg{index: i, requestID: requestID, amount: captured})
 		}
 	}
 
@@ -456,9 +489,30 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// and never persisted. Orthogonal to the ADR-0048 hard gate at the top
 	// of this function — the gate decides whether a sale may START; this
 	// point signs (or declares) every sale that actually completes, and
-	// fires regardless of the gate's decision. Never blocks or refuses the
-	// sale: any failure lands on the proceed-and-declare surface below.
+	// fires regardless of the gate's decision. A backend-level failure
+	// (unreachable, timeout, known-offline) never refuses the sale — it
+	// lands on the proceed-and-declare surface below. A "cannot-sign"
+	// answer is the one exception (ADR-0136): see right below.
 	signRes := dispatchFiscalSignAsk(ctx, d, &saleInput)
+
+	// ADR-0136 (ut-docs#3309): "cannot-sign" means THIS sale's own data
+	// admits no correct Beleg — not an outage — so it is refused right here,
+	// before any voucher is reserved and before CompleteSale: no sale row, no
+	// audit marker, the basket kept for the cashier to fix or void. The
+	// authorize loop above has already run (ADR-0044 Decision 1's ordering:
+	// a reader's tip is only final on its authorize answer), so every leg it
+	// captured is reversed first. A reversal that fails does not change the
+	// outcome — signing never happened, so nothing may be journaled as a
+	// sale — it becomes a named Problems-ring item for a human instead.
+	if signRes.Outcome == fiscalSignCannotSign {
+		reverseCapturedPaymentLegs(ctx, d, saleInput.Currency, payments, capturedLegs)
+		// The reversed authorizes are spent: the kept basket's next tender
+		// must mint fresh idempotency keys, or a provider deduping on the
+		// old key could replay an approval whose money was just returned.
+		engine.RotateTenderAttemptID()
+		log.Printf("tender refused: fiscal signer answered cannot-sign (%s) — %d captured leg(s) reversed (ADR-0136)", signRes.Reason, len(capturedLegs))
+		return "", &fiscalCannotSignError{}
+	}
 
 	// Cross-till voucher redemption (ut-docs#1668, made atomic by ADR-0084 /
 	// ut-docs#1716): for every tracked voucher payment, RESERVE the
@@ -581,7 +635,8 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 
 	// fiscal.sign.ask proceed-and-declare (ADR-0044/ADR-0041 Decision E):
 	// the sale is already committed — a failed (or known-offline-skipped)
-	// signing dispatch is now DECLARED, never unwound: journal marker,
+	// signing dispatch is now DECLARED, never unwound (a cannot-sign answer
+	// never gets here: it was refused above, ADR-0136): journal marker,
 	// receipt outage notice (derived from that marker by both render
 	// paths), operator Problem. The declaration is permanent — signing is
 	// never re-attempted for a completed sale (ADR-0056, ut-docs#839).
@@ -2143,12 +2198,21 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			// record mode), failing names the owner override.
 			var fiscalNC *fiscalNeverConfiguredError
 			var fiscalTF *fiscalTSEFailingError
-			if errors.As(err, &fiscalNC) || errors.As(err, &fiscalTF) {
+			var cannotSign *fiscalCannotSignError
+			if errors.As(err, &fiscalNC) || errors.As(err, &fiscalTF) || errors.As(err, &cannotSign) {
 				msgKey := "pos.toast.fiscal_never_configured"
 				if errors.As(err, &fiscalTF) {
 					msgKey = "pos.toast.fiscal_tse_failing"
 				}
-				log.Printf("tender rejected: %v (ADR-0048 fiscal hard gate)", err)
+				// ADR-0136 (ut-docs#3309): the signer refused THIS sale's
+				// data — same in-place toast, basket kept, no sale row; the
+				// copy names the fix (tip/discount/rate) or voiding it.
+				if errors.As(err, &cannotSign) {
+					msgKey = "pos.toast.fiscal_cannot_sign"
+					log.Printf("tender rejected: %v (ADR-0136 cannot-sign)", err)
+				} else {
+					log.Printf("tender rejected: %v (ADR-0048 fiscal hard gate)", err)
+				}
 				locale := httpx.ResolveLocale(w, r)
 				funcs := httpx.FuncsFor(locale)
 				b := d.Engine.Basket()
@@ -2833,5 +2897,56 @@ func stockMovementReason(movementType string) string {
 		return "adjustment"
 	default:
 		return movementType
+	}
+}
+
+// capturedPaymentLeg is one tender leg whose payment.<key>.authorize was
+// delivered to a plugin and approved: its position in the tender's
+// payments slice, the per-leg idempotency key completeTender minted for
+// that authorize call (ut-docs#1762), and the exact amount that call
+// captured — the authorize payload's amount plus any tip the reader
+// reported on its answer — recorded at capture time so a reversal sends
+// back precisely what was taken, never a later recomputation.
+type capturedPaymentLeg struct {
+	index     int
+	requestID string
+	amount    money.Money
+}
+
+// reverseCapturedPaymentLegs sends back every captured leg of a tender that
+// is being refused after authorize (ADR-0136 Decision 2): the existing
+// blocking payment.<key>.refund event, with the base refund payload plus
+// two additive fields — reversal:true (this undoes an authorize that never
+// became a sale, not a return against a recorded one) and
+// authorize_request_id (the exact authorize to reverse).
+// original_sale_id/original_receipt are deliberately absent: there is no
+// sale. The amount is capturedPaymentLeg.amount — exactly what that leg's
+// authorize captured (the payload's amount plus a reader-reported tip,
+// ut-docs#2571), never recomputed from the PaymentInput. A method with no
+// .refund subscriber is a clean no-op. A failed or timed-out reversal is
+// warned into the Problems ring naming method, amount and
+// authorize_request_id — an un-reversed capture must reach a human — and
+// never changes the caller's refusal.
+func reverseCapturedPaymentLegs(ctx context.Context, d *common.Deps, currency string, payments []pos.PaymentInput, legs []capturedPaymentLeg) {
+	for _, leg := range legs {
+		p := payments[leg.index]
+		amount := leg.amount
+		// The leg's own currency wins, else the sale's — the same rule
+		// pos.CompleteSale applies when it persists a payment row (the
+		// kiosk path sets currency per payment only).
+		legCurrency := p.Currency
+		if legCurrency == "" {
+			legCurrency = currency
+		}
+		payload := map[string]any{
+			"method":               p.MethodID,
+			"amount":               amount.Minor(),
+			"currency":             legCurrency,
+			"reversal":             true,
+			"authorize_request_id": leg.requestID,
+		}
+		if _, err := blockingPaymentEventWithResponseAndID(ctx, d, p.MethodID, "refund", "", payload); err != nil {
+			logging.L().Warnf("fiscal signing: tender refused as cannot-sign, but reversing captured payment FAILED — method %q, amount %d %s, authorize_request_id %s: %v — check the payment provider and refund manually if the capture stands (ADR-0136, ut-docs#3309)", p.MethodID, amount.Minor(), legCurrency, leg.requestID, err)
+		}
 	}
 }

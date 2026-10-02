@@ -149,6 +149,31 @@ func TestTenderAttemptID_StableUntilResetThenFresh(t *testing.T) {
 	}
 }
 
+// ADR-0136 (ut-docs#3309): RotateTenderAttemptID mints a fresh attempt id
+// for the SAME basket (a refused, reversed tender keeps its basket) without
+// clearing anything else.
+func TestRotateTenderAttemptID_FreshIDBasketKept(t *testing.T) {
+	resolver := &countingResolver{lines: map[string]BasketLine{
+		"ABC": {SKU: "ABC", Name: "Apple", Qty: 1, PriceCents: 100},
+	}}
+	s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver)
+	if _, err := s.Scan("ABC"); err != nil {
+		t.Fatal(err)
+	}
+	first := s.TenderAttemptID()
+	s.RotateTenderAttemptID()
+	second := s.TenderAttemptID()
+	if second == "" || second == first {
+		t.Fatalf("want a fresh non-empty id after rotation, got %q (was %q)", second, first)
+	}
+	if again := s.TenderAttemptID(); again != second {
+		t.Fatalf("rotated id must be stable until the next rotation/reset: %q then %q", second, again)
+	}
+	if n := len(s.Basket().Lines); n != 1 {
+		t.Fatalf("rotation must keep the basket, got %d lines", n)
+	}
+}
+
 // ut-docs#2244: the memoized "no sellable variants" result must have the
 // exact same reset lifetime as scanCache, since it exists to be safely
 // reused across scans within one session and nothing else.

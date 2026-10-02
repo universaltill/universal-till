@@ -152,7 +152,17 @@ Mağazanızda bir TSE yapılandırılmışsa, yan menünün alt kısmına yakın
 
 ### Bir satış hiçbir şekilde imzalanamıyorsa
 
-Kesintiden ayrı olarak, imzalama eklentisi belirli bir satışın olduğu haliyle imzalanamayacağını bildirebilir — örneğin imzalama hizmetinin geçerli bir fiş kaydına dönüştüremediği bir bahşiş veya indirim. Bu, hizmete ulaşılamamasından farklıdır: bu, o tek satışa özgü bir durumdur. Satış yine normal şekilde tamamlanır ve kesintiyle aynı şeyler olur — denetim kaydında işaretlenir ve kasanın sorun listesinde bir uyarı görünür — ama müşteri fişindeki not farklıdır: TSE imzalamanın kullanılamadığını değil, satışın olduğu haliyle imzalanamadığını belirtir, böylece hiçbir zaman yaşanmamış bir bağlantı sorununu ima etmez. Kesintide olduğu gibi, bu kalıcıdır — kasa daha sonra satışı yeniden imzalamayı denemez.
+Kesintiden ayrı olarak, imzalama eklentisi belirli bir satışın olduğu haliyle imzalanamayacağını bildirebilir — örneğin imzalama hizmetinin geçerli bir fiş kaydına dönüştüremediği bir bahşiş, indirim veya KDV oranı. Bu, hizmete ulaşılamamasından farklıdır: bu, o tek satışa özgü bir durumdur ve bu yüzden kasa satışı tamamlamaz. Bunun yerine:
+
+- satış kasada reddedilir — hiçbir satış kaydedilmez, hiçbir şey imzasız olarak işaretlenmez ve fiş basılmaz;
+- bu satış için önceden alınmış bir kart ödemesi otomatik olarak iade edilir (iade onaylanamazsa, kasanın sorun listesinde o ödemeyi belirten bir uyarı görünür — durumu kart sağlayıcınızla kontrol edin);
+- kasiyer, satışın mevcut haliyle imzalanamadığını söyleyen bir mesaj görür ve sepet olduğu gibi kalır; böylece bahşişi, indirimi veya oranı değiştirip ödemeyi yeniden alabilir ya da satışı iptal edebilirsiniz.
+
+Self-servis kioskta ise müşteriden bunun yerine kasaya başvurması istenir.
+
+Almanya'daki mağazalarda kasa ayrıca oranı imzalama hizmetinin tanımadığı bir vergi kodunu (%19, %7, %10,7, %5,5 veya %0 dışında) kaydetmeyi reddeder; böylece yanlış bir oran satış sırasında değil, tanımlanırken fark edilir.
+
+Tek istisna iadelerdir: imzalama eklentisinin imzalayamadığı bir iade yine tamamlanır ve kesintideki gibi kaydedilir; ancak fişindeki not, TSE imzalamanın kullanılamadığını değil, olduğu haliyle imzalanamadığını belirtir.
 
 ### Fişlerdeki TSE imza bloğu
 
