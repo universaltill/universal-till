@@ -80,6 +80,11 @@ expect_pass "the allowlisted pipeline-owner plain email address" \
 expect_pass "the allowlisted plain address, mixed case" \
   'iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii|Farsid@TaskRunnerTech.co.uk|Farshid Mirza'
 
+# ut-docs#3472: @pouria-teimouri's own GitHub-linked address, allowlisted
+# at his request so his local sessions and cloud routines can commit with it.
+expect_pass "pouria-teimouri's allowlisted plain email address" \
+  'llllllllllllllllllllllllllllllllllllllll|pouria.teymuri@gmail.com|Pouria Teimouri'
+
 # A plain (non-noreply) email NOT on the allowlist must be rejected —
 # ut-docs#2103: this branch used to pass any ordinary address unconditionally.
 expect_fail "an unrecognized plain email address (not on ALLOWED_PLAIN_EMAILS)" \
