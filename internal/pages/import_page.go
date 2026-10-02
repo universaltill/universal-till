@@ -1120,6 +1120,13 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					// answer persists onto the created item, not just onto
 					// this row's one-time stock-recording decision below.
 					StockUntracked: it.HasTracksStock && !it.TracksStock,
+
+					// ut-docs#3403: catimport only ever sets this pair after
+					// catalogtypes.ValidNetQuantity accepted it (an invalid
+					// one is left nil and warned about via NetQuantityIssue
+					// below), so it can't trip CreateItemTx's own check.
+					NetQuantityValue: it.NetQuantityValue,
+					NetQuantityUnit:  it.NetQuantityUnit,
 				})
 				if err != nil {
 					_ = tx.Rollback()
@@ -1348,6 +1355,12 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				// silently getting a "-2" SKU with no explanation.
 				if it.SKUIssue != "" {
 					warnings = append(warnings, translateSKUIssue(T, it.SKUIssue, it.SKUIssueRaw))
+				}
+				// A present-but-invalid net quantity imported the item with
+				// none (ut-docs#3403) — warned, never silent, since it also
+				// drops the shelf label's unit price (ut-docs#3391).
+				if it.NetQuantityIssue != "" {
+					warnings = append(warnings, translateNetQuantityIssue(T, it.NetQuantityIssue, it.NetQuantityIssueRaw))
 				}
 				if takeawayOnlyNoDineIn {
 					warnings = append(warnings, T("import.status.tax_takeaway_only"))
@@ -1829,8 +1842,13 @@ func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 	// exactly, so the tax pairing round-trips through export → import
 	// (ut-docs#512). Blank cells when the item has no tax code / no
 	// takeaway rate — system-formatted percent strings, so no csvSafe.
+	// "Net quantity"/"Net quantity unit" do the same for a pre-packed
+	// item's net content (ut-docs#3403): a whole number and its g/ml/ea
+	// unit, both blank when the item has none — system-formatted (the
+	// unit is CHECK-constrained by migration 060), so no csvSafe either.
 	_ = cw.Write([]string{"Name", "SKU", "Barcode", "Price", "Category",
-		"Description", "Sold by weight", "In stock", "Active", "Tax rate", "Takeaway tax"})
+		"Description", "Sold by weight", "In stock", "Active", "Tax rate", "Takeaway tax",
+		"Net quantity", "Net quantity unit"})
 	yn := func(b bool) string {
 		if b {
 			return "Y"
@@ -1845,11 +1863,15 @@ func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 				takeaway = taxrate.FormatPercent(e.TakeawayRateBP)
 			}
 		}
+		nqValue, nqUnit := "", ""
+		if e.NetQuantityValue != nil && e.NetQuantityUnit != nil {
+			nqValue, nqUnit = strconv.FormatInt(*e.NetQuantityValue, 10), *e.NetQuantityUnit
+		}
 		_ = cw.Write([]string{
 			csvSafe(e.Name), csvSafe(e.SKU), csvSafe(e.Barcode), minorToDecimal(e.PriceMinor, decimals),
 			csvSafe(e.Category), csvSafe(e.Description), yn(e.IsWeighed),
 			strconv.FormatFloat(e.Stock, 'f', -1, 64), yn(e.IsActive),
-			tax, takeaway,
+			tax, takeaway, nqValue, nqUnit,
 		})
 	}
 	cw.Flush()
@@ -2124,6 +2146,22 @@ func translateImageIssue(T func(string) string, code, raw string) string {
 		return fmt.Sprintf(T("import.status.image_too_large"), raw)
 	default:
 		log.Printf("[import] unrecognised image issue reason code %q", code)
+		return T("import.status.unknown_issue")
+	}
+}
+
+// translateNetQuantityIssue is translateBarcodeIssue's counterpart for the
+// (non-blocking) NetQuantityIssue reason code (ut-docs#3403). Composed from
+// the catalog form's own translated "Net quantity" label plus the generic
+// import-issue word, so every locale already has the text; raw is the
+// file's own value and unit cells, so the operator sees exactly what was
+// refused.
+func translateNetQuantityIssue(T func(string) string, code, raw string) string {
+	switch code {
+	case catimport.NetQuantityIssueInvalid:
+		return fmt.Sprintf("%s — %s: %s", T("import.status.unknown_issue"), T("catalog.net_quantity"), raw)
+	default:
+		log.Printf("[import] unrecognised net quantity issue reason code %q", code)
 		return T("import.status.unknown_issue")
 	}
 }

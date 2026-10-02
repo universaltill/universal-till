@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/barcode"
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 )
 
 // ErrNoNameColumn is Parse's own reason code (ut-docs#303) for the single
@@ -107,6 +108,16 @@ const (
 	// warning rather than silently dropping the reference.
 	ImageIssueUnresolved = "unresolved"
 	ImageIssueTooLarge   = "too_large"
+
+	// NetQuantityIssueInvalid (ut-docs#3403): the row carried a net-quantity
+	// value and/or unit, but the pair did not pass
+	// catalogtypes.ValidNetQuantity — a value that isn't a positive whole
+	// number, a unit other than g/ml/ea, or one of the two given without
+	// the other. Non-blocking, same pattern as TaxIssue: the row still
+	// imports, just with no net quantity, and the pages layer warns so the
+	// drop is never silent (a missing net quantity also drops the shelf
+	// label's unit price, Price Marking Order 2004, ut-docs#3391).
+	NetQuantityIssueInvalid = "invalid"
 )
 
 // ImportItem is one parsed catalog row, prices in minor units.
@@ -202,6 +213,19 @@ type ImportItem struct {
 	// ImageIssueRaw is the source's own path string. Never blocks the row.
 	ImageIssue    string
 	ImageIssueRaw string
+	// NetQuantityValue/NetQuantityUnit are a pre-packed item's net content
+	// (ut-docs#3403, round-tripping ut-docs#3391's items.net_quantity_*),
+	// in the same shape catalogtypes.ItemInput carries them: both nil when
+	// the file has no net quantity for this row (no column, or both cells
+	// blank), otherwise a pair that already passed
+	// catalogtypes.ValidNetQuantity.
+	NetQuantityValue *int64
+	NetQuantityUnit  *string
+	// NetQuantityIssue/NetQuantityIssueRaw mirror TaxIssue/TaxIssueRaw: set
+	// (with the raw value and unit cells alongside, space-joined) when a
+	// present net quantity didn't validate. Never blocks the row.
+	NetQuantityIssue    string
+	NetQuantityIssueRaw string
 }
 
 // Result is a parsed file.
@@ -245,6 +269,13 @@ var columnSynonyms = map[string][]string{
 	// below, not by a growing list of literal entries here (ut-docs#587).
 	"tax":          {"tax", "tax %", "tax rate", "vat", "vat %", "vat rate"},
 	"takeaway_tax": {"takeaway tax", "takeaway tax %", "takeaway vat", "takeaway rate", "takeaway tax rate"},
+	// Net quantity (ut-docs#3403): a pre-packed item's net content as two
+	// columns, a whole number and its unit (g/ml/ea). "Net quantity" /
+	// "Net quantity unit" are exactly the headers this till's own catalog
+	// export writes (writeCatalogCSV), so export → import round-trips the
+	// pair. Optional: absent or blank ⇒ no net quantity.
+	"net_quantity":      {"net quantity", "net qty", "net content", "net contents"},
+	"net_quantity_unit": {"net quantity unit", "net qty unit", "net content unit", "net contents unit"},
 	// square-specific extras used only for detection / variation naming
 	"variation": {"variation name"},
 	"token":     {"token", "handle"},
@@ -621,6 +652,17 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 				item.TakeawayTaxIssue, item.TakeawayTaxIssueRaw = TaxIssueUnparseable, raw
 			}
 		}
+		// Net quantity (ut-docs#3403): same optional, non-blocking shape as
+		// the tax columns — both cells blank means "none", anything else
+		// must validate as a pair or it is reported, never kept half-set.
+		if rawValue, rawUnit := get(rec, "net_quantity"), get(rec, "net_quantity_unit"); rawValue != "" || rawUnit != "" {
+			if value, unit, ok := parseNetQuantity(rawValue, rawUnit); ok {
+				item.NetQuantityValue, item.NetQuantityUnit = value, unit
+			} else {
+				item.NetQuantityIssue = NetQuantityIssueInvalid
+				item.NetQuantityIssueRaw = strings.TrimSpace(rawValue + " " + rawUnit)
+			}
+		}
 		switch {
 		case item.Name == "" && perr != nil:
 			// ut-docs#1713: both defects present at once — price is already
@@ -841,6 +883,25 @@ func ParseTaxRateBP(s string) (int, error) {
 		return 0, fmt.Errorf("unparseable tax rate %q", s)
 	}
 	return int(math.Round(f * 100)), nil
+}
+
+// parseNetQuantity reads a net-quantity value cell and unit cell
+// (ut-docs#3403) into the pointer pair catalogtypes.ItemInput stores. The
+// value must be a plain whole number; the unit is matched
+// case-insensitively ("ML" reads as "ml"). ok is false unless the pair
+// passes catalogtypes.ValidNetQuantity — the one rule every net-quantity
+// write path checks — so a pair this returns can never be refused later
+// by the catalog repository's own check.
+func parseNetQuantity(rawValue, rawUnit string) (value *int64, unit *string, ok bool) {
+	n, err := strconv.ParseInt(strings.TrimSpace(rawValue), 10, 64)
+	if err != nil {
+		return nil, nil, false
+	}
+	u := strings.ToLower(strings.TrimSpace(rawUnit))
+	if !catalogtypes.ValidNetQuantity(&n, &u) {
+		return nil, nil, false
+	}
+	return &n, &u, true
 }
 
 // normalizeBarcode matches a raw CSV barcode cell against enabledIDs via
