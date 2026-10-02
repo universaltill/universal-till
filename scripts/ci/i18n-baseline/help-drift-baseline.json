@@ -1133,12 +1133,12 @@
       },
       "english": {
         "headings": 6,
-        "numbered_steps": 22,
+        "numbered_steps": 23,
         "sub_bullets": 0,
         "top_bullets": 0,
         "bold_leadins": 9
       },
-      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#3169: one bold-led numbered step (shadow mode: no receipt prints) added to English and this locale in lockstep (numbered_steps +1, bold_leadins +1 on both sides); the pre-existing gap is unchanged, just re-recorded."
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#3169: one bold-led numbered step (shadow mode: no receipt prints) added to English and this locale in lockstep (numbered_steps +1, bold_leadins +1 on both sides); the pre-existing gap is unchanged, just re-recorded. Re-recorded on merging main into #3169's branch: main's 56d14aad2 (weighed-item unit price on shelf labels) added one English-only numbered step, so English 22 -> 23 while this locale stays at 10; that step's translation is ut-docs#341's."
     },
     {
       "locale": "de",
@@ -1152,12 +1152,12 @@
       },
       "english": {
         "headings": 6,
-        "numbered_steps": 22,
+        "numbered_steps": 23,
         "sub_bullets": 0,
         "top_bullets": 0,
         "bold_leadins": 9
       },
-      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#3169: one bold-led numbered step (shadow mode: no receipt prints) added to English and this locale in lockstep (numbered_steps +1, bold_leadins +1 on both sides); the pre-existing gap is unchanged, just re-recorded."
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#3169: one bold-led numbered step (shadow mode: no receipt prints) added to English and this locale in lockstep (numbered_steps +1, bold_leadins +1 on both sides); the pre-existing gap is unchanged, just re-recorded. Re-recorded on merging main into #3169's branch: main's 56d14aad2 (weighed-item unit price on shelf labels) added one English-only numbered step, so English 22 -> 23 while this locale stays at 10; that step's translation is ut-docs#341's."
     },
     {
       "locale": "fa",
@@ -1171,12 +1171,12 @@
       },
       "english": {
         "headings": 6,
-        "numbered_steps": 22,
+        "numbered_steps": 23,
         "sub_bullets": 0,
         "top_bullets": 0,
         "bold_leadins": 9
       },
-      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#3169: one bold-led numbered step (shadow mode: no receipt prints) added to English and this locale in lockstep (numbered_steps +1, bold_leadins +1 on both sides); the pre-existing gap is unchanged, just re-recorded."
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#3169: one bold-led numbered step (shadow mode: no receipt prints) added to English and this locale in lockstep (numbered_steps +1, bold_leadins +1 on both sides); the pre-existing gap is unchanged, just re-recorded. Re-recorded on merging main into #3169's branch: main's 56d14aad2 (weighed-item unit price on shelf labels) added one English-only numbered step, so English 22 -> 23 while this locale stays at 10; that step's translation is ut-docs#341's."
     },
     {
       "locale": "tr",
@@ -1190,12 +1190,12 @@
       },
       "english": {
         "headings": 6,
-        "numbered_steps": 22,
+        "numbered_steps": 23,
         "sub_bullets": 0,
         "top_bullets": 0,
         "bold_leadins": 9
       },
-      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#3169: one bold-led numbered step (shadow mode: no receipt prints) added to English and this locale in lockstep (numbered_steps +1, bold_leadins +1 on both sides); the pre-existing gap is unchanged, just re-recorded."
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#3169: one bold-led numbered step (shadow mode: no receipt prints) added to English and this locale in lockstep (numbered_steps +1, bold_leadins +1 on both sides); the pre-existing gap is unchanged, just re-recorded. Re-recorded on merging main into #3169's branch: main's 56d14aad2 (weighed-item unit price on shelf labels) added one English-only numbered step, so English 22 -> 23 while this locale stays at 10; that step's translation is ut-docs#341's."
     },
     {
       "locale": "de",
