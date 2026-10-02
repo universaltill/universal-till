@@ -1463,3 +1463,170 @@ func TestBuildReceiptDoc_CannotSignPrintsDistinctNoticeAndResolvesClean(t *testi
 		t.Fatalf("a resolved cannot-sign sale must reprint clean (no notice), got %+v", doc.Meta)
 	}
 }
+
+// seedMixedRateSale seeds a tax-inclusive GBP sale with a zero-rated food
+// line (2 x Bread, £3.00, 0%) and a standard-rated line (3 x Wine, £36.00
+// incl. £6.00 VAT, 20%) — the ut-docs#3337 mixed-rate scenario.
+func seedMixedRateSale(t *testing.T, dp *common.Deps, id, receiptNo, createdAt string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 3900, 0, 600, 3900, ?, ?)`, id, receiptNo, createdAt, createdAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES(?, ?, 1, 'itm1', 'Bread', 'BRD', 2, 150, 0, 0, 300, 300),
+      (?, ?, 2, 'itm1', 'Wine', 'WIN', 3, 1200, 2000, 600, 3000, 3600)`,
+		id+"-l1", id, id+"-l2", id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, tip_amount, paid_at) VALUES(?,?,?,?,'GBP',0,0,?)`,
+		id+"-pay", id, "cash", 3900, createdAt); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ut-docs#3337: with a seller VAT number configured, the receipt carries
+// the VAT number and one row per VAT rate — even with receipt.show_tax off,
+// which keeps gating only the lump Subtotal/Tax rows.
+func TestBuildReceiptDoc_SellerVATNoAndPerRateBands(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	ctx := context.Background()
+	setSeller(t, dp)
+	if err := dp.Settings.Set(ctx, keyReceiptShowTax, "false"); err != nil {
+		t.Fatal(err)
+	}
+	seedMixedRateSale(t, dp, "sale-mix", "R-MIX", "2026-09-30T10:00:00Z")
+
+	doc, err := buildReceiptDoc(ctx, dp, "R-MIX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := strings.Join(doc.Meta, "\n")
+	if !strings.Contains(meta, "VAT No: GB123456789") {
+		t.Fatalf("expected the seller VAT number in Meta, got %q", doc.Meta)
+	}
+	if !strings.Contains(meta, "1 High Street") {
+		t.Fatalf("expected the seller address in Meta (not in the receipt header), got %q", doc.Meta)
+	}
+	want := map[string]string{
+		"Total incl. VAT 0.00%":  "£3.00",
+		"Total incl. VAT 20.00%": "£36.00",
+	}
+	for label, amount := range want {
+		found := false
+		for _, kv := range doc.Totals {
+			if kv.Label == label {
+				found = true
+				if kv.Amount != amount {
+					t.Fatalf("%s: got %q, want %q", label, kv.Amount, amount)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("expected a %q totals row, got %+v", label, doc.Totals)
+		}
+	}
+	for _, kv := range doc.Totals {
+		if kv.Label == "Subtotal" || kv.Label == "Tax" {
+			t.Fatalf("show_tax=false must still hide the lump %s row, got %+v", kv.Label, doc.Totals)
+		}
+	}
+}
+
+// The seller address is not repeated when the receipt header already
+// prints it.
+func TestBuildReceiptDoc_SellerAddressNotDuplicatedWhenInHeader(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	ctx := context.Background()
+	setSeller(t, dp)
+	if err := dp.Settings.Set(ctx, keyReceiptHeader1, "1 High Street"); err != nil {
+		t.Fatal(err)
+	}
+	seedMixedRateSale(t, dp, "sale-mix", "R-MIX", "2026-09-30T10:00:00Z")
+	doc, err := buildReceiptDoc(ctx, dp, "R-MIX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range doc.Meta {
+		if m == "1 High Street" {
+			t.Fatalf("seller address already in the header must not repeat in Meta, got %q", doc.Meta)
+		}
+	}
+}
+
+// The seller VAT number is not repeated when the receipt header already
+// prints it, even as free text that isn't byte-identical to the "VAT No: "
+// Meta line (review finding S1, ut-docs#3337).
+func TestBuildReceiptDoc_SellerVATNoNotDuplicatedWhenInHeader(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	ctx := context.Background()
+	setSeller(t, dp)
+	if err := dp.Settings.Set(ctx, keyReceiptHeader1, "VAT No: GB123456789"); err != nil {
+		t.Fatal(err)
+	}
+	seedMixedRateSale(t, dp, "sale-mix", "R-MIX", "2026-09-30T10:00:00Z")
+	doc, err := buildReceiptDoc(ctx, dp, "R-MIX")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range doc.Meta {
+		if strings.Contains(m, "GB123456789") {
+			t.Fatalf("seller VAT number already in the header must not repeat in Meta, got %q", doc.Meta)
+		}
+	}
+}
+
+// Regression guard (ut-docs#3337): with NO seller VAT number configured —
+// even with a seller name/address set for invoicing — the receipt is
+// exactly the pre-change document: same Meta, same Totals, same bytes.
+func TestBuildReceiptDoc_NoSellerVATNoUnchanged(t *testing.T) {
+	for _, showTax := range []string{"true", "false"} {
+		t.Run("show_tax="+showTax, func(t *testing.T) {
+			_, dp := newPrintAPITestDeps(t)
+			ctx := context.Background()
+			if err := dp.Settings.Set(ctx, keyReceiptShowTax, showTax); err != nil {
+				t.Fatal(err)
+			}
+			seedMixedRateSale(t, dp, "sale-mix", "R-MIX", "2026-09-30T10:00:00Z")
+			before, err := buildReceiptDoc(ctx, dp, "R-MIX")
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantDate := httpx.FormatDateTimeLatin(time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC).Local(), httpx.DefaultLocale())
+			if got := strings.Join(before.Meta, "|"); got != "Receipt R-MIX|"+wantDate {
+				t.Fatalf("Meta changed: got %q", got)
+			}
+			var labels []string
+			for _, kv := range before.Totals {
+				labels = append(labels, kv.Label+"="+kv.Amount)
+			}
+			wantTotals := "TOTAL=£39.00"
+			if showTax == "true" {
+				wantTotals = "Subtotal=£39.00,Tax=£6.00,TOTAL=£39.00"
+			}
+			if got := strings.Join(labels, ","); got != wantTotals {
+				t.Fatalf("Totals changed: got %q, want %q", got, wantTotals)
+			}
+			for _, l := range before.Lines {
+				if l.Sub != "" {
+					t.Fatalf("receipt lines must never carry a Sub row, got %+v", l)
+				}
+			}
+			// A seller name/address (invoicing on) without a VAT number
+			// still changes nothing, byte for byte.
+			for k, v := range map[string]string{keyInvoiceSellerName: "Task Runner Ltd", keyInvoiceSellerAddress: "1 High Street"} {
+				if err := dp.Settings.Set(ctx, k, v); err != nil {
+					t.Fatal(err)
+				}
+			}
+			after, err := buildReceiptDoc(ctx, dp, "R-MIX")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(print.Render(before), print.Render(after)) {
+				t.Fatalf("receipt bytes changed with no seller VAT number:\nbefore %+v\nafter  %+v", before, after)
+			}
+		})
+	}
+}

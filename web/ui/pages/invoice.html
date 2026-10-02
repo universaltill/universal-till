@@ -17,6 +17,7 @@
     <div style="text-align:end">
       <p><strong>{{ .Inv.DisplayNo }}</strong></p>
       <p class="muted">{{ date .Inv.IssuedAt }}</p>
+      {{ if .TimeOfSupply }}<p class="muted">{{ T "invoice.time_of_supply" }}: {{ .TimeOfSupply }}</p>{{ end }}
       <p class="muted">{{ T "invoice.for_sale" }} {{ .Sale.ReceiptNo }}</p>
       {{ if .OrigDisplay }}<p class="muted">{{ T "invoice.credits" }} <a href="/invoice/{{ .OrigDisplay }}">{{ .OrigDisplay }}</a></p>{{ end }}
     </div>
@@ -30,8 +31,9 @@
   <table class="table" style="margin-top:.6rem">
     <thead><tr><th>{{ T "catalog.col.name" }}</th><th>{{ T "tender.scan.qty" }}</th><th style="text-align:end">{{ T "catalog.col.price" }}</th></tr></thead>
     <tbody>
-      {{ range .Sale.Lines }}
+      {{ range .Lines }}
       <tr><td>{{ .Name }}</td><td>{{ qty .Qty }}</td><td style="text-align:end">{{ money .LineTotal }}</td></tr>
+      {{ if .Sub }}<tr class="muted"><td colspan="3" style="padding-inline-start:1.5rem; border-top:none; font-size:.9em">{{ .Sub }}</td></tr>{{ end }}
       {{ end }}
     </tbody>
   </table>

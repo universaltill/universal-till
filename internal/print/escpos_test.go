@@ -566,3 +566,76 @@ func TestRenderWrapsLongMetaLines(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#3337: Line.Sub prints as an extra indented row under the
+// Name/Amount row, wrapped (never clipped) to the column width; an empty
+// Sub renders byte-identical to a Line that never had the field.
+func TestLayoutLineSubRow(t *testing.T) {
+	base := Line{Name: "Wine", Qty: "3", Amount: "£36.00"}
+	withSub := base
+	withSub.Sub = "Unit price (excl. VAT): £10.00 - VAT 20.00%"
+
+	plain := layoutLine(base)
+	rows := layoutLine(withSub)
+	if len(rows) <= len(plain) {
+		t.Fatalf("expected Sub to add row(s), got %q", rows)
+	}
+	for i := range plain {
+		if rows[i] != plain[i] {
+			t.Fatalf("Sub must not change the Name/Amount row: got %q, want %q", rows[i], plain[i])
+		}
+	}
+	var parts []string
+	for _, r := range rows[len(plain):] {
+		if !strings.HasPrefix(r, "  ") {
+			t.Fatalf("Sub row must be indented, got %q", r)
+		}
+		if utf8.RuneCountInString(r) > Width {
+			t.Fatalf("Sub row exceeds Width: %q", r)
+		}
+		parts = append(parts, strings.TrimPrefix(r, "  "))
+	}
+	if got := strings.Join(parts, " "); got != withSub.Sub {
+		t.Fatalf("Sub content lost across wrapped rows: got %q, want %q", got, withSub.Sub)
+	}
+	// Breaks at a space: the rate stays whole on one row.
+	if !strings.HasSuffix(rows[len(rows)-1], "20.00%") || strings.Contains(strings.Join(rows, "\n"), "20.\n") {
+		t.Fatalf("expected a word wrap keeping \"20.00%%\" whole, got %q", rows)
+	}
+}
+
+func TestWrapWords(t *testing.T) {
+	cases := []struct {
+		in   string
+		max  int
+		want []string
+	}{
+		{"short", 10, []string{"short"}},
+		{"aa bb cc", 5, []string{"aa bb", "cc"}},
+		{"abcdefghij k", 4, []string{"abcd", "efgh", "ij k"}},
+	}
+	for _, c := range cases {
+		got := wrapWords(c.in, c.max)
+		if strings.Join(got, "|") != strings.Join(c.want, "|") {
+			t.Errorf("wrapWords(%q, %d) = %q, want %q", c.in, c.max, got, c.want)
+		}
+	}
+}
+
+func TestRenderEmptySubIsByteIdentical(t *testing.T) {
+	d := sampleDoc()
+	before := Render(d)
+	for i := range d.Lines {
+		d.Lines[i].Sub = ""
+	}
+	if !bytes.Equal(before, Render(d)) {
+		t.Fatal("an empty Sub must not change the rendered bytes")
+	}
+	d.Lines[0].Sub = "Unit price (excl. VAT): £1.40"
+	if !bytes.Contains(Render(d), []byte("\n  Unit price (excl. VAT): £1.40\n")) {
+		t.Fatal("expected the Sub row in the rendered stream")
+	}
+	if !strings.Contains(RenderText(d), "  Unit price (excl. VAT): £1.40") {
+		t.Fatal("expected the Sub row in the text rendering too")
+	}
+}
