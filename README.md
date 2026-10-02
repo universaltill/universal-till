@@ -320,7 +320,6 @@ UT_MARKETPLACE_STORE_ID=               # Store identifier for entitlement/instal
 UT_MARKETPLACE_DEVICE_ID=              # Device identifier (defaults to hostname)
 UT_MARKETPLACE_CLIENT_SECRET=          # OAuth2 client secret (only if the marketplace enforces auth)
 UT_MARKETPLACE_API_VERSION=1.0.0       # Marketplace API version
-UT_MARKETPLACE_TELEMETRY_OPT_IN=false  # Send usage telemetry to marketplace
 UT_DEV_MODE=false                      # Enable developer mode features
 UT_MARKETPLACE_DEV_OVERRIDE_URL=       # Local marketplace override (dev mode only)
 

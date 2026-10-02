@@ -55,9 +55,6 @@ type MarketplaceConfig struct {
 	// API version pinning (FR-016)
 	APIVersion string // semver format: "1.2.3"
 
-	// Telemetry opt-in flag (FR-013)
-	TelemetryOptIn bool
-
 	// DevMode mirrors Config.DevMode, co-located here because the
 	// marketplace Client only holds *MarketplaceConfig, not the full
 	// Config — this is what actually gates DevOverrideURL (FR-015).
@@ -221,7 +218,6 @@ func Init() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("UT_DEMO=%q is not a boolean: %w", os.Getenv("UT_DEMO"), err)
 	}
-	telemetryOptIn, _ := strconv.ParseBool(getenv("UT_MARKETPLACE_TELEMETRY_OPT_IN", "false"))
 	cspReportOnly, _ := strconv.ParseBool(getenv("UT_CSP_REPORT_ONLY", "false"))
 	healthCheckTimeout, _ := strconv.Atoi(getenv("UT_MARKETPLACE_HEALTH_CHECK_TIMEOUT_SEC", "5"))
 	fallbackTimeout, _ := strconv.Atoi(getenv("UT_MARKETPLACE_FALLBACK_TIMEOUT_SEC", "30"))
@@ -249,7 +245,6 @@ func Init() (*Config, error) {
 			ClientID:              getenv("UT_MARKETPLACE_CLIENT_ID", ""),
 			ClientSecret:          getenv("UT_MARKETPLACE_CLIENT_SECRET", ""),
 			APIVersion:            getenv("UT_MARKETPLACE_API_VERSION", "1.0.0"),
-			TelemetryOptIn:        telemetryOptIn,
 			DevMode:               devMode,
 			DevOverrideURL:        getenv("UT_MARKETPLACE_DEV_OVERRIDE_URL", ""),
 			HealthCheckTimeoutSec: healthCheckTimeout,
