@@ -68,6 +68,7 @@ func resetState() {
 	vouchedDevice = ""
 	mu.Unlock()
 	envPinWarned.Store(false)
+	redeemPinWarned.Store(false)
 	unsavedToken.Store(false)
 }
 
