@@ -1513,6 +1513,45 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsRespondSaved(w, r, elev)
 	})
 
+	// ut-docs#3391: whether a pre-packed item's shelf label shows its unit
+	// price (per kg / per litre / per item) from its net quantity — Price
+	// Marking Order 2004, opt-in because shops of 280 m² or less are exempt.
+	// Same manager-gated, elevation-wired, persist-a-bool shape as
+	// catalog-import-barcode-default above. Read only by POST
+	// /api/print/labels; a weighed item's per-kg line never consults it.
+	mux.HandleFunc("POST /api/settings/catalog-pre-pack-unit-price", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		_ = r.ParseForm()
+		b, err := strconv.ParseBool(strings.TrimSpace(r.Form.Get("enabled")))
+		if err != nil {
+			http.Error(w, "enabled must be a boolean", http.StatusBadRequest)
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			summaryKey := "elevation.summary.catalog_pre_pack_unit_price_off"
+			if b {
+				summaryKey = "elevation.summary.catalog_pre_pack_unit_price_on"
+			}
+			renderElevationPrompt(w, r, "/api/settings/catalog-pre-pack-unit-price", "#catalog-pre-pack-unit-price-msg",
+				httpx.T(locale, summaryKey),
+				[]elevationHiddenField{{Name: "enabled", Value: r.Form.Get("enabled")}}, elev)
+			return
+		}
+		val := "0"
+		if b {
+			val = "1"
+		}
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{data.CatalogPrePackUnitPriceEnabledKey: val}); err != nil {
+			if !respondSettingsSyncError(w, r, err) {
+				http.Error(w, "could not save", http.StatusInternalServerError)
+			}
+			return
+		}
+		settingsAudit(r, posRepo, elev, "settings", data.CatalogPrePackUnitPriceEnabledKey, "catalog_pre_pack_unit_price_changed", map[string]any{"enabled": b})
+		settingsRespondSaved(w, r, elev)
+	})
+
 	// "Sell items without tracking stock" (ut-docs#1843). Same manager-
 	// gated, elevation-wired, persist-a-bool shape as launch-on-startup
 	// above, but this one changes what the till DOES, not just what it
