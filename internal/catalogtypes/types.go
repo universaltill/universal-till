@@ -48,7 +48,7 @@ type ItemInput struct {
 	NetQuantityUnit  *string
 }
 
-// Net-quantity units (items.net_quantity_unit, migration 059's CHECK).
+// Net-quantity units (items.net_quantity_unit, migration 060's CHECK).
 const (
 	NetQuantityGrams       = "g"
 	NetQuantityMillilitres = "ml"

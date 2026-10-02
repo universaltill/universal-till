@@ -26,9 +26,9 @@ label could never carry one.
 
 ## What shipped
 
-- **Migration** `internal/db/migrations/059_items_net_quantity.sql` (renumbered
-  from 055 on rebase — #3340's `055_items_age_restricted.sql` claimed that
-  number first): adds
+- **Migration** `internal/db/migrations/060_items_net_quantity.sql` (renumbered
+  twice on rebase — #3340's `055_items_age_restricted.sql` claimed 055 first,
+  then #3310's `059_fiscal_order_starts.sql` claimed 059 first): adds
   nullable `items.net_quantity_value INTEGER` and `items.net_quantity_unit
   TEXT CHECK (... IN ('g','ml','ea'))`. Both NULL = no net quantity
   configured. Append-only, checksum-pinned, replay-safe.
