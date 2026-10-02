@@ -1293,6 +1293,38 @@ document.addEventListener('click', function(e){
   }
 });
 
+// Age-restricted ID-check sheet (ut-docs#3340) — the same delegated,
+// non-modal <dialog> idiom as the shrinkage sheet just above (basket.html's
+// own comment): the per-line .age-check-toggle badge opens its sibling
+// .age-check-sheet with .show() (never .showModal(): the status bar and the
+// on-screen keyboard must stay reachable), one sheet at a time; Cancel or a
+// tap outside closes it. The Accept/Refuse buttons inside are plain htmx
+// POSTs that swap the whole basket. A sheet the server wants open (the
+// tender gate, or a just-refused line) opens itself from its own script.
+document.addEventListener('click', function(e){
+  var closeAll = function(){
+    document.querySelectorAll('.age-check-sheet').forEach(function(s){ if (s.open) s.close(); });
+    document.querySelectorAll('.age-check-toggle[aria-expanded="true"]').forEach(function(b){ b.setAttribute('aria-expanded', 'false'); });
+  };
+  var toggle = e.target.closest ? e.target.closest('.age-check-toggle') : null;
+  if (toggle) {
+    var sheet = toggle.nextElementSibling;
+    if (!sheet || !sheet.classList.contains('age-check-sheet')) return;
+    var opening = !sheet.open;
+    closeAll();
+    if (opening) { sheet.show(); toggle.setAttribute('aria-expanded', 'true'); }
+    return;
+  }
+  var cancel = e.target.closest ? e.target.closest('.age-check-sheet-cancel') : null;
+  if (cancel) {
+    closeAll();
+    return;
+  }
+  if (!e.target.closest || !e.target.closest('.age-check')) {
+    closeAll();
+  }
+});
+
 // Request failures surface in the client-side slot (#pos-alert) — a server
 // error response or an unreachable server would otherwise fail silently
 // (there was no htmx error handler at all before ut-docs#213). Strings come

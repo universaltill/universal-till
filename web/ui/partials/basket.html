@@ -160,6 +160,59 @@
                       {{ end }}
                     </ul>
                     {{ end }}
+                    {{/* ut-docs#3340: age-restricted line. A PERSISTENT badge
+                         (not a surprise only at Pay) showing the ID-check
+                         state -- "Needs ID check" / "ID checked" / "ID
+                         refused" -- that opens a small non-modal sheet with
+                         two full-text buttons, Accept and Refuse (the text,
+                         not the colour, carries the meaning). Same native
+                         <dialog> + .show() (never .showModal()) +
+                         delegated-click idiom as the shrinkage reason sheet
+                         below: .age-check-toggle/.age-check-sheet/
+                         .age-check-sheet-cancel are handled in app.js, so it
+                         survives every #basket outerHTML swap. Both buttons
+                         POST /api/pos/age-check and swap the whole basket.
+                         $.AgeCheckOpenKey names the one line whose sheet
+                         opens itself on this render -- the tender gate's
+                         blocked response, or a just-refused line that must
+                         show its "remove the item" guidance -- via the same
+                         self-opening script elevation_prompt.html uses. The
+                         toggle's visible text is repeated at the start of
+                         its aria-label so the accessible name contains what
+                         sighted users read. The helpLink beside the prompt
+                         (ut-docs#3340 review) makes the age-restricted-sales
+                         topic reachable from the feature itself, not only
+                         from the catalog checkbox. */}}
+                    {{ if .AgeRestricted }}
+                    {{- $ac := index $.AgeChecks .ItemID -}}
+                    {{- $open := and $.AgeCheckOpenKey (eq $.AgeCheckOpenKey .LineKey) -}}
+                    {{- $badge := T "age_check.badge" -}}
+                    {{- if eq $ac "accepted" }}{{ $badge = T "age_check.badge_accepted" }}{{ else if eq $ac "refused" }}{{ $badge = T "age_check.badge_refused" }}{{ end -}}
+                    <span class="age-check">
+                      <button type="button" class="age-check-toggle{{ if eq $ac "accepted" }} is-accepted{{ else if eq $ac "refused" }} is-refused{{ end }}"
+                              aria-haspopup="dialog" aria-expanded="{{ if $open }}true{{ else }}false{{ end }}"
+                              aria-label="{{ $badge }} — {{ T "age_check.open" }}" data-testid="age-check-toggle">
+                        <span class="btn-ico" aria-hidden="true">{{ if eq $ac "accepted" }}{{ icon "check" }}{{ else }}{{ icon "user" }}{{ end }}</span>
+                        <span>{{ $badge }}</span>
+                      </button>
+                      <dialog class="modifier-modal age-check-sheet" aria-label="{{ T "age_check.prompt" }}"{{ if $open }} data-age-check-autoopen{{ end }}>
+                        <p class="age-check-sheet-prompt">{{ T "age_check.prompt" }} {{ helpLink "age-restricted-sales" }}</p>
+                        <p class="age-check-sheet-item">{{ .Name }}</p>
+                        {{ if eq $ac "refused" }}<p class="age-check-refused-hint" role="alert">{{ T "age_check.refused_hint" }}</p>{{ end }}
+                        <div class="age-check-sheet-actions">
+                          <button type="button" class="btn primary" hx-post="/api/pos/age-check" hx-vals='{{ jsonVals "key" .LineKey "outcome" "accepted" }}' hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">{{ T "age_check.outcome.accepted" }}</button>
+                          <button type="button" class="btn danger" hx-post="/api/pos/age-check" hx-vals='{{ jsonVals "key" .LineKey "outcome" "refused" }}' hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">{{ T "age_check.outcome.refused" }}</button>
+                        </div>
+                        <div class="modifier-actions">
+                          <button type="button" class="btn secondary age-check-sheet-cancel">{{ T "common.cancel" }}</button>
+                        </div>
+                        {{ if $open }}<script>
+                          document.querySelectorAll('.age-check-sheet[open], .shrinkage-sheet[open]').forEach(function (s) { s.close(); });
+                          document.currentScript.closest('dialog').show();
+                        </script>{{ end }}
+                      </dialog>
+                    </span>
+                    {{ end }}
                   </span>
                 </div>
               </td>

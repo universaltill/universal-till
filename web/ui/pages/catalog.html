@@ -354,6 +354,11 @@
           <div class="field-checks">
             <label><input type="checkbox" name="isWeighed" id="item-weighed" value="1"> {{ T "catalog.sold_by_weight" }}</label>
             <label><input type="checkbox" name="stockUntracked" id="item-stock-untracked" value="1"> {{ T "catalog.stock_untracked" }}</label>
+            <!-- ut-docs#3340: the till asks the cashier for an ID check before
+                 a flagged item can be paid for; the self-order kiosk sends
+                 the customer to the counter instead. Same unchecked-submits-
+                 nothing shape as stockUntracked (false is the safe default). -->
+            <label><input type="checkbox" name="ageRestricted" id="item-age-restricted" value="1"> {{ T "catalog.age_restricted" }} {{ helpLink "age-restricted-sales" }}</label>
             <!-- Checkbox semantics: an unchecked box submits nothing, so this
                  pairs it with a hidden isActive=0 (same convention as the
                  variant/modifier-group forms in catalog_variants.html) —
@@ -1136,6 +1141,7 @@
     document.getElementById('item-tax').value = row.dataset.tax;
     document.getElementById('item-weighed').checked = row.dataset.weighed === '1';
     document.getElementById('item-stock-untracked').checked = row.dataset.stockUntracked === '1';
+    document.getElementById('item-age-restricted').checked = row.dataset.ageRestricted === '1';
     document.getElementById('item-active').checked = true;
     document.getElementById('item-price').value = window.utCurrency.toMajor(parseInt(row.dataset.price || '0', 10));
     document.getElementById('item-color').value = row.dataset.color || '';

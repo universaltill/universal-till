@@ -54,6 +54,13 @@ WHERE i.is_sample_data = 1
   AND NOT EXISTS (SELECT 1 FROM stock_movements_archive sm
                   JOIN item_variants v ON v.id = sm.variant_id
                   WHERE v.item_id = i.id)
+  -- age_verifications (ut-docs#3340 review): a demo item an ID check was
+  -- recorded against (typically REFUSED, so it never reached sale_lines/
+  -- stock_movements) still has an item_id FK row there with no ON DELETE
+  -- action — deleting it would fail the FK and roll back the whole removal.
+  -- The _archive clause is the same reset-archive reasoning as above.
+  AND NOT EXISTS (SELECT 1 FROM age_verifications av WHERE av.item_id = i.id)
+  AND NOT EXISTS (SELECT 1 FROM age_verifications_archive av WHERE av.item_id = i.id)
   AND NOT EXISTS (SELECT 1 FROM held_sales h
                   WHERE h.payload LIKE '%"item_id":"' || i.id || '"%')
   AND NOT EXISTS (SELECT 1 FROM held_sales h

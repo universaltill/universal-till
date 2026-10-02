@@ -27,9 +27,35 @@ PRE_UPDATE_BACKUP="$(mktemp)"
 OUT="$(mktemp)"
 cp "${MANIFEST}" "${MANIFEST_BACKUP}"
 
+#
+# Must be a topic the guard actually ROUTES (has non-empty `routes:` front
+# matter) -- NOT just the alphabetically-first *.md file. A reference-only
+# topic (no `routes:`, reached only via helpLink from another page, e.g.
+# age-restricted-sales.md) is correctly invisible to the guard's staleness
+# check, so appending to one would never produce "topic markdown changed"
+# and this test would misreport the (unrelated) surface-staleness message
+# below as a failure (ut-docs#3340 review caught this when such a topic's
+# filename happened to glob-sort first). Mirrors guard-docs-shots.sh's own
+# routed_topics_with_routes() front-matter parse -- keep in lockstep.
 FIRST_TOPIC_MD="$(python3 -c "
-import glob
-print(sorted(glob.glob('web/help/en/*.md'))[0])
+import glob, re
+for path in sorted(glob.glob('web/help/en/*.md')):
+    text = open(path, encoding='utf-8').read().replace('\r\n', '\n')
+    if not text.startswith('---\n'):
+        continue
+    end = text.find('\n---', 4)
+    if end < 0:
+        continue
+    routes = None
+    for line in text[4:end].split('\n'):
+        m = re.match(r'^([A-Za-z_]+):\s*(.*)\$', line.strip())
+        if not m:
+            continue
+        if m.group(1) == 'routes':
+            routes = [s.strip().strip('\"\\'') for s in m.group(2).lstrip('[').rstrip(']').split(',') if s.strip().strip('\"\\'')]
+    if routes:
+        print(path)
+        break
 ")"
 TOPIC_MD_BACKUP="$(mktemp)"
 cp "${FIRST_TOPIC_MD}" "${TOPIC_MD_BACKUP}"

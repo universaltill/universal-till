@@ -72,6 +72,10 @@ type ShortcutLine struct {
 	ImageURL   string
 	Label      string
 	HasVariant bool
+	// AgeRestricted (ut-docs#3340) is the item's items.age_restricted flag
+	// (a variant line carries its parent item's): the till asks for an ID
+	// check before such a line can be paid for.
+	AgeRestricted bool
 }
 
 // SaleLineSnapshot represents stored sale_line fields used by returns.
@@ -6431,6 +6435,17 @@ func (r *POSRepo) EraseCustomer(ctx context.Context, id, actorID, blockedActorID
 // item. Mirrors demoItemReasonCaseSQL's own held_sales payload-LIKE check
 // (demo_seed_repo.go) — same shape, same reasoning, a different removal
 // path.
+//
+// The age_verifications/age_verifications_archive clauses (ut-docs#3340
+// review) close a third gap: an age-restricted item the cashier REFUSED at
+// the till leaves an age_verifications row (item_id FK to items, no ON
+// DELETE action — 056_age_verifications.sql) but no sale_lines or
+// stock_movements row at all, since it never left the basket as a sale. So
+// it looked "never sold", and deleting it hit that FK and rolled back the
+// whole cleanup. An ID-check record is history too: such an item is kept.
+// The archive clause is the same reasoning as the *_archive clauses above
+// (a reset moves the reference into age_verifications_archive, and a later
+// restore would otherwise trip ErrArchiveReferencesRemoved).
 func obsoleteItemsPredicate(includeActive bool) string {
 	activeClause := "is_active = 0\nAND "
 	if includeActive {
@@ -6448,6 +6463,8 @@ AND id NOT IN (SELECT v.item_id FROM item_variants v
               WHERE v.id IN (SELECT variant_id FROM sale_lines_archive WHERE variant_id IS NOT NULL))
 AND id NOT IN (SELECT v.item_id FROM item_variants v
               WHERE v.id IN (SELECT variant_id FROM stock_movements_archive WHERE variant_id IS NOT NULL))
+AND id NOT IN (SELECT item_id FROM age_verifications WHERE item_id IS NOT NULL)
+AND id NOT IN (SELECT item_id FROM age_verifications_archive WHERE item_id IS NOT NULL)
 AND NOT EXISTS (SELECT 1 FROM held_sales h WHERE h.payload LIKE '%"item_id":"' || items.id || '"%')
 AND NOT EXISTS (SELECT 1 FROM held_sales h JOIN item_variants v ON v.item_id = items.id
               WHERE h.payload LIKE '%"variant_id":"' || v.id || '"%')
@@ -8065,7 +8082,10 @@ type shortcutPriceRow struct {
 	// shop default, not the LEFT JOIN's COALESCE'd 0% (ut-docs#3250).
 	TaxCodeID sql.NullString
 	IsWeighed sql.NullInt64
-	Label     sql.NullString
+	// AgeRestricted (ut-docs#3340): items.age_restricted, read by every
+	// resolve tier below so the basket line knows to ask for an ID check.
+	AgeRestricted sql.NullInt64
+	Label         sql.NullString
 }
 
 // scanBarcodeVariantSelect and scanBarcodeItemSelect are ResolveScanLine's
@@ -8079,7 +8099,7 @@ type shortcutPriceRow struct {
 // tier wins.
 const (
 	scanBarcodeVariantSelect = `
-SELECT %d AS tier, i.id, i.name, v.id, v.name, v.price, i.is_weighed,
+SELECT %d AS tier, i.id, i.name, v.id, v.name, v.price, i.is_weighed, i.age_restricted,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(t.rate_basis_points, 0), t.id
 FROM variant_barcodes vb
@@ -8089,7 +8109,7 @@ LEFT JOIN tax_codes t ON t.id = i.tax_code_id
 WHERE vb.barcode = ?
   AND i.is_active = 1 AND v.is_active = 1`
 	scanBarcodeItemSelect = `
-SELECT %d AS tier, i.id, i.name, '', '', i.base_price, i.is_weighed,
+SELECT %d AS tier, i.id, i.name, '', '', i.base_price, i.is_weighed, i.age_restricted,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(t.rate_basis_points, 0), t.id
 FROM item_barcodes ib
@@ -8123,7 +8143,7 @@ func (r *POSRepo) resolveScanBarcodeTiers(ctx context.Context, lookupKey, rawCod
 	row := r.db.QueryRowContext(ctx, "SELECT * FROM ("+query+") ORDER BY tier LIMIT 1", args...)
 	var res shortcutPriceRow
 	var tier int
-	if err := row.Scan(&tier, &res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
+	if err := row.Scan(&tier, &res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
 		return shortcutPriceRow{}, false, false
 	}
 	return res, tier <= 2, true
@@ -8150,7 +8170,7 @@ func (r *POSRepo) resolveItemByID(ctx context.Context, itemID string) (shortcutP
 	// missing SKU is stored as NULL — scanning it raw into a string failed
 	// the Scan and made every such tile read as stale.
 	row := r.db.QueryRowContext(ctx, `
-SELECT i.id, COALESCE(i.sku, ''), i.name, i.base_price, i.is_weighed,
+SELECT i.id, COALESCE(i.sku, ''), i.name, i.base_price, i.is_weighed, i.age_restricted,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(t.rate_basis_points, 0), t.id
 FROM items i
@@ -8159,7 +8179,7 @@ WHERE i.is_active = 1 AND i.id = ?
 LIMIT 1
 `, itemID)
 	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.SKU, &res.ItemName, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
+	if err := row.Scan(&res.ItemID, &res.SKU, &res.ItemName, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
 		// A miss is normal; any other error is a bug that would otherwise
 		// surface only as a "quick button was out of date" toast (#3072).
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -8181,7 +8201,7 @@ LIMIT 1
 // operator-chosen label (Add/SaveButtons) -- unchanged by this fix.
 func (r *POSRepo) resolveShortcut(ctx context.Context, code string) (shortcutPriceRow, bool) {
 	row := r.db.QueryRowContext(ctx, `
-SELECT sb.item_id, sb.label, i.name, i.base_price, i.is_weighed,
+SELECT sb.item_id, sb.label, i.name, i.base_price, i.is_weighed, i.age_restricted,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(t.rate_basis_points, 0), t.id
 FROM shortcut_buttons sb
@@ -8192,7 +8212,7 @@ WHERE sb.barcode = ?
 LIMIT 1
 `, code)
 	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.Label, &res.ItemName, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
+	if err := row.Scan(&res.ItemID, &res.Label, &res.ItemName, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
 		return shortcutPriceRow{}, false
 	}
 	return res, true
@@ -8200,7 +8220,7 @@ LIMIT 1
 
 func (r *POSRepo) resolveSKU(ctx context.Context, sku string) (shortcutPriceRow, bool) {
 	row := r.db.QueryRowContext(ctx, `
-SELECT i.id, i.sku, i.name, i.base_price, i.is_weighed,
+SELECT i.id, i.sku, i.name, i.base_price, i.is_weighed, i.age_restricted,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(t.rate_basis_points, 0), t.id
 FROM items i
@@ -8209,7 +8229,7 @@ WHERE i.is_active = 1 AND i.sku = ?
 LIMIT 1
 `, sku)
 	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.SKU, &res.ItemName, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err == nil {
+	if err := row.Scan(&res.ItemID, &res.SKU, &res.ItemName, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err == nil {
 		return res, true
 	}
 	return r.resolveVariantSKU(ctx, sku)
@@ -8220,7 +8240,7 @@ LIMIT 1
 // variant could not be found by exact-SKU search at all.
 func (r *POSRepo) resolveVariantSKU(ctx context.Context, sku string) (shortcutPriceRow, bool) {
 	row := r.db.QueryRowContext(ctx, `
-SELECT i.id, i.name, v.id, v.name, v.price, i.is_weighed,
+SELECT i.id, i.name, v.id, v.name, v.price, i.is_weighed, i.age_restricted,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(t.rate_basis_points, 0), t.id
 FROM item_variants v
@@ -8231,7 +8251,7 @@ LIMIT 1
 `, sku)
 	var res shortcutPriceRow
 	res.SKU = sku
-	if err := row.Scan(&res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
+	if err := row.Scan(&res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
 		return shortcutPriceRow{}, false
 	}
 	return res, true
@@ -8239,7 +8259,7 @@ LIMIT 1
 
 func (r *POSRepo) resolveNameLike(ctx context.Context, like string) (shortcutPriceRow, bool) {
 	row := r.db.QueryRowContext(ctx, `
-SELECT i.id, i.name, i.base_price, i.is_weighed,
+SELECT i.id, i.name, i.base_price, i.is_weighed, i.age_restricted,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(t.rate_basis_points, 0), t.id
 FROM items i
@@ -8249,7 +8269,7 @@ ORDER BY i.name
 LIMIT 1
 `, like)
 	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.ItemName, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err == nil {
+	if err := row.Scan(&res.ItemID, &res.ItemName, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err == nil {
 		return res, true
 	}
 	return r.resolveVariantNameLike(ctx, like)
@@ -8260,7 +8280,7 @@ LIMIT 1
 // this a variant could not be found by name search at all.
 func (r *POSRepo) resolveVariantNameLike(ctx context.Context, like string) (shortcutPriceRow, bool) {
 	row := r.db.QueryRowContext(ctx, `
-SELECT i.id, i.name, v.id, v.name, v.price, i.is_weighed,
+SELECT i.id, i.name, v.id, v.name, v.price, i.is_weighed, i.age_restricted,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(t.rate_basis_points, 0), t.id
 FROM item_variants v
@@ -8271,7 +8291,7 @@ ORDER BY v.name
 LIMIT 1
 `, like)
 	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
+	if err := row.Scan(&res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
 		return shortcutPriceRow{}, false
 	}
 	return res, true
@@ -8296,6 +8316,8 @@ func (r *POSRepo) toShortcutLine(code string, price int64, row shortcutPriceRow)
 		TaxCodeID:  row.TaxCodeID.String,
 		IsWeighed:  row.IsWeighed.Int64 == 1,
 		HasVariant: row.VariantID != "",
+		// ut-docs#3340: a variant inherits its parent item's restriction.
+		AgeRestricted: row.AgeRestricted.Int64 == 1,
 	}
 	if row.Image.Valid {
 		line.ImageURL = row.Image.String

@@ -1,0 +1,32 @@
+-- 055_items_age_restricted.sql — universaltill/ut-docs#3340 (age-restricted
+-- sales, due-diligence support): a per-item flag marking an item the
+-- merchant only sells after a staff ID check (alcohol, tobacco, vapes,
+-- knives, … — the merchant decides; core ships no list and no age). When a
+-- flagged item is in the till's basket, the cashier must record an ID-check
+-- outcome before tender can complete, and the self-order kiosk refuses to
+-- take payment for it at all (the customer pays at the counter instead).
+--
+-- A new, additive migration — never an edit to 001_init.sql or any other
+-- already-merged file: migrations are frozen the moment they merge
+-- (ADR-0100, TestShippedMigrationsUnchanged), and an edited statement would
+-- brick every upgrading till at boot (verifyAppliedMigrations refuses a
+-- file whose checksum no longer matches its ledger row).
+--
+-- A column on items, not a separate table: it travels with the item
+-- wherever the item goes (admin sync to satellites, backup/export,
+-- restore) with zero extra plumbing — the same reasoning
+-- items.sell_screen_hidden (040), items.color (ut-docs#1901) and
+-- items.stock_untracked (013) already followed. Item-level only: a
+-- category-level flag is an explicit non-goal of ut-docs#3340.
+--
+-- INTEGER 0/1 (SQLite has no BOOLEAN), same convention as every other
+-- items flag column (is_active, is_weighed, stock_untracked,
+-- sell_screen_hidden, ...). Polarity: named so its zero value means
+-- "unrestricted" — NOT NULL DEFAULT 0 leaves every existing item on an
+-- upgrading till exactly as it sold before (no surprise ID prompt on
+-- upgrade), and a Go zero-valued catalogtypes.ItemInput.AgeRestricted
+-- (false) maps to the same safe default. Restricting an item is always an
+-- explicit, later operator action in the item editor, never an upgrade
+-- side effect. Replay-safe: execMigrationStatements skips an ADD COLUMN
+-- whose column already exists (ut-docs#1412).
+ALTER TABLE items ADD COLUMN age_restricted INTEGER NOT NULL DEFAULT 0;

@@ -684,6 +684,28 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	return saleID, nil
 }
 
+// markAgeRestrictedFromDB is the age-restricted-sales backstop
+// (ut-docs#3340): it reads the CURRENT items.age_restricted flag for every
+// item in the cashier's basket, flags any line the resolver didn't
+// (Service.MarkAgeRestricted — e.g. a line resumed from a held sale saved
+// before the item was flagged), and returns the restricted set for
+// pos.UnresolvedAgeRestrictedLine. Local DB only — never the network.
+func markAgeRestrictedFromDB(ctx context.Context, d *common.Deps, repo *data.POSRepo) (map[string]bool, error) {
+	lines := d.Engine.Lines()
+	ids := make([]string, 0, len(lines))
+	for _, l := range lines {
+		ids = append(ids, l.ItemID)
+	}
+	restricted, err := repo.AgeRestrictedItemIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	if len(restricted) > 0 {
+		d.Engine.MarkAgeRestricted(restricted)
+	}
+	return restricted, nil
+}
+
 // classifyTenderError maps a completeTender/CompleteSale failure (declined
 // payment and the fiscal hard gate are handled separately as typed errors
 // before this is ever consulted — see completeTender's callers) to the
@@ -1245,6 +1267,43 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = basketView.Render(w, b)
 	})
 
+	// Age-restricted sales (ut-docs#3340): the cashier records the ID-check
+	// outcome for one restricted basket line (key) — "accepted" or
+	// "refused" — from that line's non-modal sheet (basket.html's
+	// .age-check-sheet). In-memory only (Service.RecordAgeCheck): the
+	// age_verifications row is written later, inside the sale's own
+	// transaction, by pos.CompleteSale — never before the sale exists. No
+	// permission gate: checking ID is every cashier's job. A refusal
+	// re-renders with that line's sheet still open, showing what to do next
+	// (remove the item); an acceptance re-renders with it closed.
+	mux.HandleFunc("POST /api/pos/age-check", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		key := strings.TrimSpace(r.Form.Get("key"))
+		outcome := strings.TrimSpace(r.Form.Get("outcome"))
+		if key == "" || !pos.ValidAgeVerificationOutcome(outcome) {
+			http.Error(w, "invalid age check", http.StatusBadRequest)
+			return
+		}
+		// Same DB backstop as the tender gate, so a line whose flag was lost
+		// on an old held-sale snapshot can still be answered.
+		if _, err := markAgeRestrictedFromDB(r.Context(), d, repo); err != nil {
+			logging.L().Errorf("age check: read age-restricted items: %v", err)
+			http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "pos.toast.tender_failed"), http.StatusInternalServerError)
+			return
+		}
+		b, ok := d.Engine.RecordAgeCheck(key, pos.AgeVerificationOutcome(outcome), getSessionUserID(r))
+		if !ok {
+			http.Error(w, "invalid age check", http.StatusBadRequest)
+			return
+		}
+		if outcome == string(pos.AgeVerificationRefused) {
+			b.AgeCheckOpenKey = key
+		}
+		basketView, _ := ui.NewBasketView(httpx.FuncsFor(httpx.ResolveLocale(w, r)))
+		w.Header().Set("Content-Type", "text/html")
+		_ = basketView.Render(w, b)
+	})
+
 	// Update line qty/discount (htmx-friendly). Same key/code preference as
 	// /api/pos/remove above.
 	mux.HandleFunc("/api/pos/line", func(w http.ResponseWriter, r *http.Request) {
@@ -1553,6 +1612,38 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// line — a customer buying just a gift voucher.
 		if len(lines) == 0 && len(in.IssueVouchers) == 0 {
 			http.Error(w, "no items in basket", http.StatusBadRequest)
+			return
+		}
+
+		// Age-restricted sales (ut-docs#3340): every restricted line needs
+		// an ACCEPTED ID check recorded this sale before tender may
+		// complete — unverified or refused blocks, with no sale row. The
+		// restricted set is re-read from the DB here (the line's own flag
+		// OR the item's current items.age_restricted), so a line restored
+		// from a snapshot that predates the flag cannot slip through; a
+		// failed read fails CLOSED. Same in-place basket re-render as the
+		// tax-blocked rejection below (200, never a modal), plus the
+		// unresolved line's sheet opening itself so the cashier lands on
+		// the next action, not a flat error. Checked before any payment
+		// plugin is ever asked to authorize.
+		restricted, err := markAgeRestrictedFromDB(r.Context(), d, repo)
+		if err != nil {
+			log.Printf("tender rejected: read age-restricted items: %v (ut-docs#3340 fail-closed)", err)
+			http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "pos.toast.tender_failed"), http.StatusInternalServerError)
+			return
+		}
+		ageChecks := d.Engine.AgeChecks()
+		if l, blocked := pos.UnresolvedAgeRestrictedLine(lines, restricted, ageChecks); blocked {
+			locale := httpx.ResolveLocale(w, r)
+			log.Printf("tender rejected: age-restricted line %q has no accepted ID check (ut-docs#3340)", l.Name)
+			b := d.Engine.Basket()
+			b.ToastMessage = fmt.Sprintf(httpx.T(locale, "age_check.tender_blocked"), l.Name)
+			b.ToastLevel = "error"
+			b.AgeCheckOpenKey = l.LineKey
+			basketView, _ := ui.NewBasketView(httpx.FuncsFor(locale))
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusOK)
+			_ = basketView.Render(w, b)
 			return
 		}
 
@@ -2007,6 +2098,9 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			ActorID:                cashierID,
 			Offline:                offline,
 			VoucherIssues:          voucherIssues,
+			// ut-docs#3340: persisted by CompleteSale in the sale's own
+			// transaction, keyed by the real new sale id.
+			AgeVerifications: pos.AgeVerificationsForSale(lines, ageChecks),
 		}
 		saleID, err := completeTender(r.Context(), d, d.Engine, repo, saleInput, payments, getSessionUserID(r), kitchenDeltaFilter(lines))
 		if err != nil {

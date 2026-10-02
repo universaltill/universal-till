@@ -72,13 +72,19 @@ func seedFullSale(t *testing.T, x func(q string, args ...any)) {
 	// round-trip through held_sales_archive is pinned by these tests too.
 	x(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id, updated_at, primary_synced) VALUES ('h1','table 4',200,1,'{}','tbl1','2026-09-15 10:00:00',1)`)
 	x(`INSERT INTO stock_movements (id, item_id, location_id, sale_line_id, type, quantity) VALUES ('sm1','i1','loc_main','l1','sale',-1)`)
+	// ut-docs#3340 (review blocker): age_verifications.sale_id FKs sales with
+	// no ON DELETE action, so one ID-check row is enough to make a reset that
+	// deletes sales before archiving it fail outright — seeded here so every
+	// reset/restore/purge test below pins that ordering, same as sale_charges.
+	x(`INSERT INTO age_verifications (id, sale_id, item_id, item_name, outcome, cashier_id, created_at)
+	   VALUES ('av1','s1','i1','Widget','accepted','u1','2026-01-01T00:00:00Z')`)
 }
 
 // Every live table reset touches (children before parents, matching the
 // archive/delete order) paired with its archive counterpart.
 var resetTables = []string{
 	"invoices", "sale_links", "payments", "sale_discounts",
-	"stock_movements", "sale_line_modifiers", "sale_lines", "sale_charges", "sales",
+	"stock_movements", "sale_line_modifiers", "sale_lines", "sale_charges", "age_verifications", "sales",
 	"held_sales", "shifts",
 }
 
@@ -210,6 +216,7 @@ func TestResetThenRestoreRoundTrip(t *testing.T) {
 		"sales": 2, "sale_lines": 1, "sale_line_modifiers": 1,
 		"sale_discounts": 1, "sale_links": 1, "payments": 1, "invoices": 1,
 		"held_sales": 1, "shifts": 1, "stock_movements": 1, "sale_charges": 1,
+		"age_verifications": 1,
 	}
 	for tbl, want := range wantLive {
 		if c := count(tbl); c != want {
