@@ -10,9 +10,11 @@ import (
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -770,7 +772,12 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		if label.IsWeighed {
 			priceText = fmt.Sprintf(httpx.T(httpx.DefaultLocale(), "catalog.labels.price_per_unit"), priceText, "kg")
 		}
-		one := print.RenderLabel(label.Name, priceText, label.Code, cfg.Charset)
+		// A pre-packed item's unit price (ut-docs#3391) prints as its own
+		// normal-size line below the (possibly already-suffixed) price line
+		// above. prePackUnitPriceText returns "" for a weighed item, so the
+		// two mechanisms never both fire for the same label.
+		one := print.RenderLabelWithUnitPrice(label.Name, priceText,
+			prePackUnitPriceText(r.Context(), d, label), label.Code, cfg.Charset)
 		job := make([]byte, 0, len(one)*copies)
 		for range copies {
 			job = append(job, one...)
@@ -848,4 +855,43 @@ func headerContains(header []string, substr string) bool {
 		}
 	}
 	return false
+}
+
+// prePackUnitPriceText is a pre-packed item's shelf-label unit price
+// (ut-docs#3391, Price Marking Order 2004 as amended from 6 April 2026),
+// e.g. "£6.67 per kg", or "" when none should print. It prints only when
+// all hold: the item is NOT weighed (a weighed item's per-kg line,
+// ut-docs#3343, is a separate path this setting never touches), the shop
+// has opted in (data.CatalogPrePackUnitPriceEnabledKey = "1"; off by
+// default — shops of 280 m² or less are exempt), and the item has a valid
+// net quantity. g → per kg and ml → per litre (price × 1000 / quantity);
+// ea → per item (price / count). Integer minor units throughout via
+// money.MulDiv, half-up. Store locale for the wording and the money, same
+// as the label's own price line: a shelf label is a shop artifact, not
+// operator chrome. A variant label never carries a net quantity (variants
+// have no column of their own, and inheriting the parent's would print a
+// wrong unit price for a different pack size), so this returns "" there.
+func prePackUnitPriceText(ctx context.Context, d *common.Deps, label data.ItemLabel) string {
+	if label.IsWeighed || !label.NetQuantityValue.Valid || !label.NetQuantityUnit.Valid || label.NetQuantityValue.Int64 <= 0 {
+		return ""
+	}
+	if v, ok, err := d.Settings.Get(ctx, data.CatalogPrePackUnitPriceEnabledKey); err != nil || !ok || v != "1" {
+		return ""
+	}
+	price := money.FromMinor(label.PriceMinor)
+	qty := label.NetQuantityValue.Int64
+	var unit money.Money
+	var unitKey string
+	switch label.NetQuantityUnit.String {
+	case catalogtypes.NetQuantityGrams:
+		unit, unitKey = price.MulDiv(1000, qty), "catalog.labels.unit.kg"
+	case catalogtypes.NetQuantityMillilitres:
+		unit, unitKey = price.MulDiv(1000, qty), "catalog.labels.unit.litre"
+	case catalogtypes.NetQuantityEach:
+		unit, unitKey = price.MulDiv(1, qty), "catalog.labels.unit.item"
+	default:
+		return ""
+	}
+	loc := httpx.DefaultLocale()
+	return fmt.Sprintf(httpx.T(loc, "catalog.labels.price_per_unit"), httpx.FormatMoneyLatin(unit.Minor(), loc), httpx.T(loc, unitKey))
 }

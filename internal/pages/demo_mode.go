@@ -624,6 +624,7 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/settings/basket-panel-width":             true,
 	"POST /api/settings/browsing-mode":                  true,
 	"POST /api/settings/catalog-import-barcode-default": true,
+	"POST /api/settings/catalog-pre-pack-unit-price":    true,
 	"POST /api/settings/demo-item/{id}/keep":            true,
 	"POST /api/settings/demo-item/{id}/remove":          true,
 	"POST /api/settings/demo-promo/{code}/keep":         true,

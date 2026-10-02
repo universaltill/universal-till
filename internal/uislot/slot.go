@@ -562,6 +562,7 @@ var CoreSettings = []Entry{
 	{Key: "settings-order-type-prompt", Href: "#settings-order-type-prompt", LabelKey: "settings.order_type_prompt.title", Order: 850, Group: "settings.cat.selling.label"},
 	{Key: "settings-barcode", Href: "#settings-barcode", LabelKey: "settings.barcode.symbologies_title", Order: 900, Group: "settings.cat.advanced.label"},
 	{Key: "settings-catalog-import-barcode-default", Href: "#settings-catalog-import-barcode-default", LabelKey: "settings.catalog_import_barcode_default.title", Order: 1000, Group: "settings.cat.advanced.label"},
+	{Key: "settings-catalog-pre-pack-unit-price", Href: "#settings-catalog-pre-pack-unit-price", LabelKey: "settings.catalog_pre_pack_unit_price.title", Order: 1025, Group: "settings.cat.advanced.label"},
 	{Key: "settings-sell-screen", Href: "#settings-sell-screen", LabelKey: "settings.sell_screen.title", Order: 1050, Group: "settings.cat.selling.label"},
 	{Key: "settings-stock-tracking", Href: "#settings-stock-tracking", LabelKey: "settings.stock_tracking.title", Order: 1100, Group: "settings.cat.selling.label"},
 	{Key: "settings-backup", Href: "#settings-backup", LabelKey: "settings.backup.title", Order: 1200, Group: "settings.cat.backup.label"},
