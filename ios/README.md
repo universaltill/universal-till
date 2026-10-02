@@ -76,9 +76,22 @@ ut-docs#3052). It never submits for App Store review.
 - **Export compliance** is answered in `project.yml`
   (`ITSAppUsesNonExemptEncryption: false` — standard algorithms only), so
   builds don't wait on the questionnaire.
+- **Who sees it:** after the upload the job waits (up to 40 minutes) for
+  App Store Connect to finish processing the build, then **fails** unless
+  an **internal** TestFlight group with at least one tester can see it
+  (automatic distribution on, or the build added to the group) —
+  `scripts/asc-testflight-check` (ut-docs#3217). The error names the
+  missing piece: no internal group, a group with no testers, or no group
+  that can see the build. A processing failure (`FAILED`/`INVALID`) or a
+  build no tester can install (`MISSING_EXPORT_COMPLIANCE`,
+  `PROCESSING_EXCEPTION`) fails it too. Fix it in App Store Connect (step 2
+  below) and re-run. A **timeout** usually just means Apple is slow: the
+  upload stands and still reaches testers once processed, and a re-run
+  uploads a second build — check the TestFlight tab before re-running.
 - `scripts/ci/ios-testflight-workflow_test.sh` (in `ci.yml`) pins the
   trigger, the release.yml dispatch, SHA-pinned actions, the unsigned
-  archive, the repository guard, the hosted runner and the key handling.
+  archive, the repository guard, the hosted runner, the key handling and
+  the tester check.
 
 **Once, in App Store Connect** (the owner):
 
