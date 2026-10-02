@@ -14,7 +14,8 @@ import (
 // delete_category, save_modifier_group, delete_modifier_group,
 // set_category_order (§3.8, ut-docs#3075), set_catalog_image (§3.9,
 // ut-docs#3076; decode and fetch in catalog_image.go) and
-// save_option_set / delete_option_set (ut-docs#3319).
+// save_option_set / delete_option_set (ut-docs#3319) and
+// save_item_variant (ut-docs#3477).
 
 // mainTillOnlyTypes are skipped entirely on a satellite till: no apply and
 // no result post, so the directive stays pending for the main till
@@ -30,6 +31,7 @@ var mainTillOnlyTypes = map[string]bool{
 	"delete_modifier_group": true,
 	"save_option_set":       true,
 	"delete_option_set":     true,
+	"save_item_variant":     true, // ut-docs#3477
 	"set_category_order":    true,
 	"set_catalog_image":     true,
 	// Till user directives (reference/till-user-directives.md §4): only
@@ -54,7 +56,7 @@ var mainTillOnlyTypes = map[string]bool{
 var catalogTypes = map[string]bool{
 	"save_item": true, "save_category": true, "delete_category": true, "delete_item": true,
 	"save_modifier_group": true, "delete_modifier_group": true, "set_category_order": true,
-	"save_option_set": true, "delete_option_set": true,
+	"save_option_set": true, "delete_option_set": true, "save_item_variant": true,
 	"set_catalog_image": true, "set_price": true, "rename_item": true, "deactivate_item": true, "create_item": true,
 	"add_barcode": true, "update_item_details": true, "adjust_stock": true,
 	"upsert_category": true, "update_category": true, "upsert_modifier_group": true,
@@ -290,6 +292,46 @@ func decodeSaveOptionSet(p payload) (data.OptionSetSave, string) {
 			vals = append(vals, data.OptionSetValueInput{ID: strings.TrimSpace(d.ID), Value: strings.TrimSpace(d.Value)})
 		}
 		out.Values = &vals
+	}
+	return out, ""
+}
+
+// decodeSaveItemVariant reads a save_item_variant payload (ut-docs#3477):
+// {item_id, variant_id, create?, name?, sku?, price_minor?, active?,
+// barcodes?}. barcodes, like save_item's, is the full set as a JSON array
+// inside a string field — absent = keep, `[]` = clear. Bounds, conflicts
+// and the create-needs-name/price rules are the repo's job
+// (CatalogRepo.SaveVariant).
+func decodeSaveItemVariant(p payload) (data.VariantSave, string) {
+	var out data.VariantSave
+	str := func(k string) string { s, _ := p[k].(string); return strings.TrimSpace(s) }
+	if out.ItemID = str("item_id"); out.ItemID == "" {
+		return out, "missing item_id"
+	}
+	if out.ID = str("variant_id"); out.ID == "" {
+		return out, "missing variant_id"
+	}
+	create, ok := p.optBool("create")
+	if !ok {
+		return out, "bad create"
+	}
+	out.Create = create != nil && *create
+	for _, f := range []struct {
+		k   string
+		dst **string
+	}{{"name", &out.Name}, {"sku", &out.SKU}} {
+		if *f.dst, ok = p.optStr(f.k); !ok {
+			return out, "bad " + f.k
+		}
+	}
+	if out.PriceMinor, ok = p.optInt("price_minor"); !ok {
+		return out, "bad price_minor"
+	}
+	if out.Active, ok = p.optBool("active"); !ok {
+		return out, "bad active"
+	}
+	if out.Barcodes, ok = p.optIDs("barcodes"); !ok {
+		return out, "bad barcodes"
 	}
 	return out, ""
 }

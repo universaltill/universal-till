@@ -1037,6 +1037,10 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		DeleteOptionSet: func(ctx context.Context, id string) (string, error) {
 			return cloudDeleteOptionSet(ctx, d, id)
 		},
+		// save_item_variant (ut-docs#3477): see cloudSaveItemVariant.
+		SaveItemVariant: func(ctx context.Context, p data.VariantSave) (string, error) {
+			return cloudSaveItemVariant(ctx, d, p)
+		},
 		// The till user directives (reference/till-user-directives.md §4):
 		// main-till only, PIN opened with the directive key, one
 		// transaction each, audited, idempotent. See
