@@ -510,6 +510,8 @@
   "common.money.invalid_whole": "أدخل المبلغ كعدد صحيح بالأرقام فقط.",
   "common.no_results": "لا توجد نتائج مطابقة — جرّب بحثًا مختلفًا.",
   "common.save": "حفظ",
+  "common.show_less": "أقل",
+  "common.show_more": "المزيد",
   "common.submit": "إرسال",
   "common.view": "عرض",
   "countrysettings.col.country": "الدولة",

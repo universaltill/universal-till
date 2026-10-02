@@ -139,7 +139,9 @@
     <span id="table-picker" hx-get="/ui/pos/table-picker" hx-trigger="load" hx-swap="outerHTML"></span>
   </div>
   <div class="basket-scroll">
-    <table>
+    {{/* data-cards="off": the basket has its own phone layout (the grid
+         rows in app.css), not table-cards.js's card list (ut-docs#3359). */}}
+    <table data-cards="off">
       <thead>
         <tr><th>{{ T "basket.col.item" }}</th><th>{{ T "basket.col.qty" }}</th><th>{{ T "basket.col.price" }}</th><th>{{ T "basket.col.total" }}</th><th></th></tr>
       </thead>

@@ -510,6 +510,8 @@
   "common.money.invalid_whole": "مبلغ را فقط با رقم و به صورت عدد صحیح وارد کنید.",
   "common.no_results": "موردی یافت نشد — عبارت دیگری را جستجو کنید.",
   "common.save": "ذخیره",
+  "common.show_less": "کمتر",
+  "common.show_more": "بیشتر",
   "common.submit": "ثبت",
   "common.view": "نمایش",
   "countrysettings.col.country": "کشور",

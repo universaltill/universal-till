@@ -1,7 +1,9 @@
 <!-- "Customers also buy" strip — computed locally from the shop's own sales
      history (related_items table); re-fetched every time the basket partial
      is swapped in, so it always reflects the current basket. -->
-<div id="suggest-strip" class="suggest-strip"{{ if not .Suggestions }} hidden{{ end }}>
+<!-- data-hscroll-ok (ut-docs#3359): a one-row chip strip that swipes
+     sideways so the fixed sale-screen grid holds — not a table. -->
+<div id="suggest-strip" class="suggest-strip" data-hscroll-ok{{ if not .Suggestions }} hidden{{ end }}>
   {{ if .Suggestions }}
     <span class="suggest-title">{{ T "suggest.title" }}</span>
     {{ range .Suggestions }}
