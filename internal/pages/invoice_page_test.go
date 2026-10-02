@@ -456,7 +456,9 @@ func TestGetInvoices_DefaultsToCurrentMonthWhenNoFilterGiven(t *testing.T) {
 // actually produces, and would fail if `to` were ever re-defaulted.
 func TestGetInvoices_DefaultDoesNotHideTodaysInvoiceAcrossTimezones(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	t.Setenv("TZ", "Pacific/Honolulu") // UTC-10 — local calendar date can trail UTC's by a full day
+	// UTC-10 — the local calendar date can trail UTC's by a full day. Pinned
+	// through invoiceLoc: TZ set inside a test doesn't move time.Local.
+	pinInvoiceClock(t, time.Now(), time.FixedZone("UTC-10", -10*3600))
 	mux, dp := newInvoiceTestDeps(t)
 	setSeller(t, dp)
 	seedInvoiceableSale(t, dp, "sale1", "R001", 120, 20)
@@ -822,5 +824,183 @@ func TestGetInvoiceByDisplayNo_UnitPriceRateAndTimeOfSupply(t *testing.T) {
 	}
 	if body := get("R-NEW"); strings.Contains(body, "Time of supply") {
 		t.Fatal("expected no time-of-supply line on a same-day invoice")
+	}
+}
+
+// pinInvoiceClock fixes the invoice register's clock and shop timezone for
+// one test (ut-docs#3300). Setting TZ in a test does not move time.Local
+// once the runtime has loaded it, so the register reads both through
+// injectable vars instead.
+func pinInvoiceClock(t *testing.T, now time.Time, loc *time.Location) {
+	t.Helper()
+	prevNow, prevLoc := invoiceNow, invoiceLoc
+	invoiceNow = func() time.Time { return now }
+	invoiceLoc = func() *time.Location { return loc }
+	t.Cleanup(func() { invoiceNow, invoiceLoc = prevNow, prevLoc })
+}
+
+// plantInvoice stores an invoice with an exact issued_at on its own sale
+// (one invoice per sale; issueInvoice stamps the real clock, so it can't
+// place one at a chosen instant).
+func plantInvoice(t *testing.T, dp *common.Deps, receiptNo, customer, issuedAt string) {
+	t.Helper()
+	seedInvoiceableSale(t, dp, "sale-"+receiptNo, receiptNo, 120, 20)
+	sale, _, err := data.NewPOSRepo(dp.Db).GetSaleDetail(context.Background(), receiptNo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := data.NewInvoiceRepo(dp.Db).Create(context.Background(), data.InvoiceInput{
+		Kind: "invoice", SaleID: sale.ID, CustomerName: customer, SellerJSON: "{}", VATBreakdownJSON: "[]",
+		NetTotal: 100, TaxTotal: 20, GrossTotal: 120, IssuedAt: issuedAt, IssuedBy: "user1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ut-docs#3300: in a timezone east of UTC, the first local hour(s) of a
+// month are still the previous month in UTC. The bare-load default `from`
+// (start of this LOCAL month) was compared as a date string against UTC
+// issued_at, so an invoice issued at 00:20 local on the 1st was hidden.
+func TestGetInvoices_DefaultShowsInvoiceIssuedAfterLocalMidnightOnTheFirst(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	plus1 := time.FixedZone("UTC+1", 3600)
+	// 2026-10-01 00:30 local = 2026-09-30 23:30 UTC.
+	pinInvoiceClock(t, time.Date(2026, 9, 30, 23, 30, 0, 0, time.UTC), plus1)
+	mux, dp := newInvoiceTestDeps(t)
+	setSeller(t, dp)
+	plantInvoice(t, dp, "R001", "This Month Customer", "2026-09-30T23:20:00Z") // 00:20 local, 1 Oct
+	plantInvoice(t, dp, "R002", "Last Month Customer", "2026-09-30T22:50:00Z") // 23:50 local, 30 Sep
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/invoices", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "This Month Customer") {
+		t.Fatalf("an invoice issued at 00:20 local on the 1st must be in this month's default list: %s", body)
+	}
+	if strings.Contains(body, "Last Month Customer") {
+		t.Fatalf("an invoice issued at 23:50 local on the 30th belongs to last month: %s", body)
+	}
+	if !strings.Contains(body, `name="from" value="2026-10-01"`) {
+		t.Fatalf("the from picker must show the LOCAL first of the month (2026-10-01): %s", body)
+	}
+}
+
+// ut-docs#3300 review: the register's Issued column must show the same
+// LOCAL date the row is filtered under — not the UTC date (30 Sep for an
+// invoice issued at 00:20 on 1 Oct in UTC+1). The `date` template helper
+// reads time.Local, so this test swaps it (no t.Parallel in this package).
+func TestGetInvoices_IssuedColumnShowsLocalDate(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	plus1 := time.FixedZone("UTC+1", 3600)
+	prevLocal := time.Local
+	time.Local = plus1
+	t.Cleanup(func() { time.Local = prevLocal })
+	pinInvoiceClock(t, time.Date(2026, 9, 30, 23, 30, 0, 0, time.UTC), plus1)
+	mux, dp := newInvoiceTestDeps(t)
+	setSeller(t, dp)
+	plantInvoice(t, dp, "R001", "This Month Customer", "2026-09-30T23:20:00Z")
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/invoices", nil))
+	body := rec.Body.String()
+	local := httpx.FormatDate(time.Date(2026, 10, 1, 0, 0, 0, 0, plus1), httpx.RequestLocale(httptest.NewRequest(http.MethodGet, "/invoices", nil)))
+	utc := httpx.FormatDate(time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC), httpx.RequestLocale(httptest.NewRequest(http.MethodGet, "/invoices", nil)))
+	if !strings.Contains(body, local) || strings.Contains(body, utc) {
+		t.Fatalf("Issued column must read %q (local), never %q (UTC): %s", local, utc, body)
+	}
+}
+
+// ut-docs#3300: an explicit ?from=/?to= range is a range of LOCAL days —
+// both ends convert to UTC, so a UTC+3 shop's "1 October" covers
+// 2026-09-30T21:00Z up to (not including) 2026-10-01T21:00Z, in the list,
+// the totals and the accountant CSV alike.
+func TestGetInvoices_ExplicitRangeIsLocalDays(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	plus3 := time.FixedZone("UTC+3", 3*3600)
+	pinInvoiceClock(t, time.Date(2026, 10, 2, 9, 0, 0, 0, time.UTC), plus3)
+	mux, dp := newInvoiceTestDeps(t)
+	setSeller(t, dp)
+	plantInvoice(t, dp, "R003", "Before Day", "2026-09-30T20:59:59Z") // 23:59:59 local, 30 Sep
+	plantInvoice(t, dp, "R004", "Day Start", "2026-09-30T21:00:00Z")  // 00:00 local, 1 Oct
+	plantInvoice(t, dp, "R005", "Day End", "2026-10-01T20:59:59Z")    // 23:59:59 local, 1 Oct
+	plantInvoice(t, dp, "R006", "Next Day", "2026-10-01T21:00:00Z")   // 00:00 local, 2 Oct
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/invoices?from=2026-10-01&to=2026-10-01", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, in := range []string{"Day Start", "Day End"} {
+		if !strings.Contains(body, in) {
+			t.Errorf("%q was issued on local 1 October and must be listed", in)
+		}
+	}
+	for _, out := range []string{"Before Day", "Next Day"} {
+		if strings.Contains(body, out) {
+			t.Errorf("%q was not issued on local 1 October and must not be listed", out)
+		}
+	}
+	if !strings.Contains(body, `name="from" value="2026-10-01"`) || !strings.Contains(body, `name="to" value="2026-10-01"`) {
+		t.Errorf("the pickers must keep showing the local dates the user chose: %s", body)
+	}
+
+	from, to := invoiceUTCBounds("2026-10-01", "2026-10-01")
+	net, _, gross, err := data.NewInvoiceRepo(dp.Db).Totals(context.Background(), from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if net != 200 || gross != 240 {
+		t.Errorf("totals for local 1 October = net %d gross %d, want the two in-day invoices (200 / 240)", net, gross)
+	}
+
+	csvRec := httptest.NewRecorder()
+	mux.ServeHTTP(csvRec, httptest.NewRequest(http.MethodGet, "/api/invoices/export?from=2026-10-01&to=2026-10-01", nil))
+	if csvRec.Code != http.StatusOK {
+		t.Fatalf("export: expected 200, got %d: %s", csvRec.Code, csvRec.Body.String())
+	}
+	csvBody := csvRec.Body.String()
+	if !strings.Contains(csvBody, "Day Start") || !strings.Contains(csvBody, "Day End") ||
+		strings.Contains(csvBody, "Before Day") || strings.Contains(csvBody, "Next Day") {
+		t.Errorf("the CSV must cover the same local day as the list: %s", csvBody)
+	}
+}
+
+func TestInvoiceUTCBounds(t *testing.T) {
+	plus1 := time.FixedZone("UTC+1", 3600)
+	minus10 := time.FixedZone("UTC-10", -10*3600)
+	cases := []struct {
+		name             string
+		loc              *time.Location
+		from, to         string
+		wantFrom, wantTo string
+	}{
+		{"east of UTC", plus1, "2026-10-01", "2026-10-31", "2026-09-30T23:00:00Z", "2026-10-31T22:59:59Z"},
+		{"west of UTC", minus10, "2026-10-01", "2026-10-01", "2026-10-01T10:00:00Z", "2026-10-02T09:59:59Z"},
+		{"open ends stay open", plus1, "", "", "", ""},
+		{"non-date input passes through", plus1, "2026-10-01T05:00:00Z", "garbage", "2026-10-01T05:00:00Z", "garbage"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			pinInvoiceClock(t, time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC), c.loc)
+			gotFrom, gotTo := invoiceUTCBounds(c.from, c.to)
+			if gotFrom != c.wantFrom || gotTo != c.wantTo {
+				t.Fatalf("invoiceUTCBounds(%q, %q) = (%q, %q), want (%q, %q)", c.from, c.to, gotFrom, gotTo, c.wantFrom, c.wantTo)
+			}
+		})
+	}
+	// A DST day is 23 or 25 hours long: the bound must be the NEXT local
+	// midnight, not "+24h". Skipped where the zone database is missing.
+	if london, err := time.LoadLocation("Europe/London"); err == nil {
+		pinInvoiceClock(t, time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC), london)
+		// 25 Oct 2026: clocks go back at 02:00 BST, so the day runs
+		// 2026-10-24T23:00Z .. 2026-10-26T00:00Z (exclusive).
+		gotFrom, gotTo := invoiceUTCBounds("2026-10-25", "2026-10-25")
+		if gotFrom != "2026-10-24T23:00:00Z" || gotTo != "2026-10-25T23:59:59Z" {
+			t.Fatalf("DST day bounds = (%q, %q), want (2026-10-24T23:00:00Z, 2026-10-25T23:59:59Z)", gotFrom, gotTo)
+		}
 	}
 }

@@ -358,28 +358,27 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 		// years. Default `from` to the start of the current calendar month;
 		// an explicit ?from=/?to= still overrides this entirely.
 		//
-		// `to` is deliberately left OPEN rather than also defaulted to
-		// "today" (independent review finding): `from`/`to` here are LOCAL
-		// calendar dates (same as the `type="date"` pickers below), but
-		// invoices.IssuedAt is stored as UTC RFC3339 and InvoiceRepo.List/
-		// Totals compare it lexicographically (invoiceRangeBound) — a
-		// `to=today` bound would silently exclude an invoice issued today
-		// whenever the local and UTC calendar dates disagree at that
-		// instant (any timezone west of UTC in the evening; the first ~2h
-		// of a month in a timezone east of UTC, e.g. the Germany pilot).
-		// Leaving `to` open still gets the perf win — List/Totals run an
-		// indexed range scan from `from` instead of an all-time unbounded
-		// one — without ever risking hiding a just-issued invoice.
+		// `to` stays OPEN: an open end can never hide a just-issued
+		// invoice, and List/Totals still get an indexed range scan from
+		// `from`. `from`/`to` are LOCAL calendar dates (the pickers below
+		// show them as typed); invoiceUTCBounds converts both to the UTC
+		// instants issued_at is stored in (ut-docs#3300 — comparing the
+		// local date string directly hid the first local hour(s) of a
+		// month east of UTC).
+		// The register's rows show the issued date in local time too
+		// (`date`, not `dateUTC`), so a row's date always matches the
+		// local day it is filtered under.
 		if from == "" && to == "" {
-			now := reportNow()
+			now := invoiceNow().In(invoiceLoc())
 			from = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Format("2006-01-02")
 		}
-		list, err := invRepo.List(r.Context(), from, to)
+		fromUTC, toUTC := invoiceUTCBounds(from, to)
+		list, err := invRepo.List(r.Context(), fromUTC, toUTC)
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "invoice.error.server", err)
 			return
 		}
-		net, tax, gross, err := invRepo.Totals(r.Context(), from, to)
+		net, tax, gross, err := invRepo.Totals(r.Context(), fromUTC, toUTC)
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "invoice.error.server", err)
 			return
@@ -405,7 +404,8 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 		}
 		from := strings.TrimSpace(r.URL.Query().Get("from"))
 		to := strings.TrimSpace(r.URL.Query().Get("to"))
-		list, err := invRepo.List(r.Context(), from, to)
+		fromUTC, toUTC := invoiceUTCBounds(from, to)
+		list, err := invRepo.List(r.Context(), fromUTC, toUTC)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "invoice.error.server", "invoice", err)
 			return
@@ -566,4 +566,34 @@ func formatQty(q float64) string {
 		return fmt.Sprintf("%d", int64(q))
 	}
 	return fmt.Sprintf("%.3g", q)
+}
+
+// invoiceNow / invoiceLoc are the register's clock and the shop's timezone,
+// injectable so tests can pin "00:30 on the 1st in UTC+1" (ut-docs#3300):
+// setting TZ inside a test doesn't move time.Local once it is loaded.
+var (
+	invoiceNow = time.Now // `to` is open, so reportNow's +1s pad buys nothing
+	invoiceLoc = func() *time.Location { return time.Local }
+)
+
+// invoiceUTCBounds turns the register's from/to filters — LOCAL calendar
+// dates, as the type="date" pickers send them — into the UTC RFC3339 bounds
+// invoices.issued_at is stored in (ut-docs#3300). Comparing a local date
+// string against UTC timestamps hid invoices whenever the local and UTC
+// dates disagreed: east of UTC, the first local hour(s) of a day are still
+// the previous UTC date. `from` becomes the UTC instant of local midnight;
+// `to` becomes the last whole second before the NEXT local midnight
+// (AddDate, not +24h, so a 23- or 25-hour DST day is right), which
+// InvoiceRepo's inclusive prefix bound (invoiceRangeBound) then covers to
+// the end of that second. Empty stays open; anything that isn't a plain
+// date passes through unchanged, as before.
+func invoiceUTCBounds(from, to string) (string, string) {
+	loc := invoiceLoc()
+	if d, err := time.ParseInLocation("2006-01-02", from, loc); err == nil {
+		from = d.UTC().Format(time.RFC3339)
+	}
+	if d, err := time.ParseInLocation("2006-01-02", to, loc); err == nil {
+		to = d.AddDate(0, 0, 1).Add(-time.Second).UTC().Format(time.RFC3339)
+	}
+	return from, to
 }
