@@ -69,3 +69,27 @@ Safe to merge once `ios-ci` (the Swift compile) and `ci` are green.
 - CI `build` failed on `guard-pipefail-grep-q` (ut-docs#2946). The new guard
   piped `grep -v` into `grep -q` under `pipefail`. Fixed by using a
   here-string. I re-ran every build-job guard locally and all pass.
+
+## Rebase onto main (2026-10-02, sweep)
+
+The PR went `CONFLICTING` after ut-docs#3354 merged. That change touched the
+same help topic and added a sentence saying screenshots are not available
+in the iPhone and iPad app. The help text merged cleanly but contradicted
+this PR; only the docs-shots manifest showed a conflict.
+
+- Resolution: in all five locales, the iOS paragraph now says that "Take
+  screenshot" captures the till screen itself and that only screen recording
+  is unavailable. The manifest was regenerated with
+  `e2e/tests-docs/write-manifest.js`.
+- Independent review of the resolution, on a different model (Fable):
+  no blockers. It raised one minor finding: fa/ar did not describe the new
+  iOS behaviour. That is now **fixed**, with a sentence added in both. It
+  also raised one nit: the iOS sentence sat in the Android paragraph. That
+  is now **fixed**, and the sentence is in the iOS paragraph.
+- Re-run on the rebased head: `guard-docs-shots`, `guard-help-drift`,
+  `guard-help-topics`, `guard-i18n`, `guard-compliance-claims`,
+  `guard-competitor-naming`, `guard-no-showmodal`, `guard-pipefail-grep-q`,
+  `guard-ios-usage-descriptions`, `ios-screenshot-bridge_test` and
+  `go build ./...` all pass. The e2e specs `ios-screenshot-bridge-3355`,
+  `bugreport-voice-mime-3354`, `android-screenshot-bridge-1435` and
+  `bugreport-panel` pass (27 tests).
