@@ -199,7 +199,7 @@ const (
 // does -- a second, slightly different parking code path is exactly how the
 // #1381 dine-in/takeaway fix or the #1918 stable-identity upsert would end
 // up covered on one path and not the other.
-func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, typedLabel, locale string, autoPark bool) error {
+func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, typedLabel, locale string, autoPark, offline bool) error {
 	snap := d.Engine.Snapshot()
 	payload, err := json.Marshal(snap)
 	if err != nil {
@@ -275,6 +275,19 @@ func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSales
 		}
 		held.ID = fmt.Sprintf("hold-%d", time.Now().UnixNano())
 		held.Label = label
+		// ADR-0138 D2 (ut-docs#3310): a FIRST park is a genuine new gastro
+		// order capture (held and table orders alike) — fire
+		// fiscal.order.start once, keyed on the freshly minted held.ID.
+		// Only in this branch: a re-park (origin non-zero, above) is the
+		// same order put down again and never re-fires it, so the order's
+		// capture record is never silently overwritten. Non-blocking (a
+		// background goroutine) and independent of the write below, the
+		// same posture fiscal.sign.start has relative to the authorize loop;
+		// offline is the request's declared offline flag (false for an
+		// auto-park, whose resume request carries none — the dispatch is
+		// background-only either way, so that costs at most a bounded
+		// wasted round trip, never a blocked park).
+		dispatchFiscalOrderStart(ctx, d, held.ID, fiscalOrderKindHeld, offline)
 	}
 	if _, err := heldSaleWriteThrough(ctx, d, repo, held, claimed); err != nil {
 		return err
@@ -373,7 +386,7 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 		// must never discard whatever the cashier already had rung up,
 		// and this reuses the existing, well-tested Hold path rather
 		// than adding a second concurrent-basket concept to the engine.
-		if err := parkCurrentBasket(ctx, d, repo, "", locale, true); err != nil {
+		if err := parkCurrentBasket(ctx, d, repo, "", locale, true, false); err != nil {
 			if claimed {
 				heldSaleGiveBack(ctx, d, repo, held)
 			}
@@ -614,7 +627,12 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		// accepted for a live basket's claim, not a new one. A healthy
 		// till's routine ~30s admin-sync poll keeps last_seen_at fresh
 		// throughout an ordinary hold, however long the table sits parked.
-		if err := parkCurrentBasket(ctx, d, repo, typed, locale, false); err != nil {
+		// ADR-0138 D2: the hold form hx-includes the sale screen's
+		// #offline-flag, read with the same convention /api/pos/tender uses
+		// (manual offline_override first, then the navigator.onLine flag),
+		// so a known-offline till skips the fiscal.order.start dispatch.
+		offline := formFlagTruthy(r.Form.Get("offline_override")) || formFlagTruthy(r.Form.Get("offline"))
+		if err := parkCurrentBasket(ctx, d, repo, typed, locale, false, offline); err != nil {
 			renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
 			return
 		}

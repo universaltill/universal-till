@@ -422,6 +422,7 @@ var nonAdminTables = map[string]string{
 	"invoices":                             "fiscal invoices/credit notes, FK'd to sales — same reasoning",
 	"invoices_archive":                     "archived invoices — same reasoning",
 	"fiscal_sign_starts":                   "in-flight German TSE signing state, keyed 1:1 on sale_id — per-sale, per-till",
+	"fiscal_order_starts":                  "in-flight German TSE order-capture (Bestellung-V1) state from fiscal.order.start (ADR-0138 D3), keyed 1:1 on the order's own id — per-order, per-till, same reasoning as fiscal_sign_starts above; an order captured on one till and tendered on another simply omits order_id (the honest degraded case)",
 	"fiscal_tse_signatures":                "completed TSE signatures, keyed 1:1 on sale_id — per-sale, per-till",
 	"fiscal_tse_reconciled_signatures":     "TSE signatures a fiscal.sign.reconcile.ask sweep confirmed after the fact for a sale that completed unsigned (ADR-0077 D3), keyed 1:1 on sale_id — per-sale, per-till, same reasoning as fiscal_tse_signatures above; kept as its own table so no receipt render path ever reads it (D4)",
 	"fiscal_device_receipts":               "what Turkey's ÖKC device printed for a sale, keyed 1:1 on sale_id — per-sale, per-till, same shape as fiscal_tse_signatures above",
