@@ -816,6 +816,17 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", bad
 		}
 		msg, err = hooks.SaveItem(ctx, p)
+	case "set_net_quantity":
+		// ut-docs#3402 (§3.11): the same repository path, audit row
+		// (cloud_item_saved) and idempotency as save_item — no own hook.
+		if hooks.SaveItem == nil {
+			return "failed", "set_net_quantity is not supported on this till"
+		}
+		p, bad := decodeSetNetQuantity(payload(d.Payload))
+		if bad != "" {
+			return "failed", bad
+		}
+		msg, err = hooks.SaveItem(ctx, p)
 	case "save_category":
 		if hooks.SaveCategory == nil {
 			return "failed", "save_category is not supported on this till"

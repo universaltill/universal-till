@@ -563,3 +563,103 @@ func TestSaveItem_CreateUntrackedHasNoInventoryRow(t *testing.T) {
 		t.Fatalf("inventory rows = %s, want 0 for a stock-untracked item", n)
 	}
 }
+
+// ut-docs#3402: the cloud-managed catalog sets an item's net quantity
+// through SaveItem (the set_net_quantity directive). The pair travels
+// together; ClearNetQuantity removes it; a patch that carries neither
+// leaves an already-set pair alone.
+func TestSaveItem_NetQuantitySetUpdateKeepClear(t *testing.T) {
+	f := newSaveFixture(t)
+	ctx := context.Background()
+	nq := func() string {
+		return f.str(t, `SELECT COALESCE(CAST(net_quantity_value AS TEXT), '-') || '|' || COALESCE(net_quantity_unit, '-') FROM items WHERE id = 'itm1'`)
+	}
+	res, err := f.catalog.SaveItem(ctx, data.ItemPatch{ID: "itm1", NetQuantityValue: i64p(500), NetQuantityUnit: strp("g")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := nq(); got != "500|g" {
+		t.Fatalf("set: net quantity = %s, want 500|g", got)
+	}
+	if !reflect.DeepEqual(res.Changed, sl("net_quantity")) {
+		t.Fatalf("set: changed = %v, want [net_quantity]", res.Changed)
+	}
+	// Replay (lost result post): same state, no error.
+	if _, err := f.catalog.SaveItem(ctx, data.ItemPatch{ID: "itm1", NetQuantityValue: i64p(500), NetQuantityUnit: strp("g")}); err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if _, err := f.catalog.SaveItem(ctx, data.ItemPatch{ID: "itm1", NetQuantityValue: i64p(750), NetQuantityUnit: strp("ml")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := nq(); got != "750|ml" {
+		t.Fatalf("update: net quantity = %s, want 750|ml", got)
+	}
+	// A save that carries no net-quantity field must not clear the pair.
+	res, err = f.catalog.SaveItem(ctx, data.ItemPatch{ID: "itm1", Name: strp("Flat White 2")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := nq(); got != "750|ml" {
+		t.Fatalf("unrelated save: net quantity = %s, want it kept at 750|ml", got)
+	}
+	for _, c := range res.Changed {
+		if c == "net_quantity" {
+			t.Fatalf("unrelated save reported net_quantity changed: %v", res.Changed)
+		}
+	}
+	res, err = f.catalog.SaveItem(ctx, data.ItemPatch{ID: "itm1", ClearNetQuantity: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := nq(); got != "-|-" {
+		t.Fatalf("clear: net quantity = %s, want none", got)
+	}
+	if !reflect.DeepEqual(res.Changed, sl("net_quantity")) {
+		t.Fatalf("clear: changed = %v, want [net_quantity]", res.Changed)
+	}
+	// Clearing an item that has none is an idempotent no-op success.
+	if _, err := f.catalog.SaveItem(ctx, data.ItemPatch{ID: "itm1", ClearNetQuantity: true}); err != nil {
+		t.Fatalf("clear again: %v", err)
+	}
+}
+
+func TestSaveItem_NetQuantityCreate(t *testing.T) {
+	f := newSaveFixture(t)
+	ctx := context.Background()
+	if _, err := f.catalog.SaveItem(ctx, data.ItemPatch{ID: "n-nq", Create: true, Name: strp("Rice 1kg"), PriceMinor: i64p(250), NetQuantityValue: i64p(1000), NetQuantityUnit: strp("g")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.str(t, `SELECT net_quantity_value || '|' || net_quantity_unit FROM items WHERE id = 'n-nq'`); got != "1000|g" {
+		t.Fatalf("create: net quantity = %s, want 1000|g", got)
+	}
+}
+
+func TestSaveItem_NetQuantityInvalidPairRefused(t *testing.T) {
+	f := newSaveFixture(t)
+	ctx := context.Background()
+	if _, err := f.catalog.SaveItem(ctx, data.ItemPatch{ID: "itm1", NetQuantityValue: i64p(330), NetQuantityUnit: strp("ml")}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name string
+		p    data.ItemPatch
+	}{
+		{"value without unit", data.ItemPatch{ID: "itm1", NetQuantityValue: i64p(500)}},
+		{"unit without value", data.ItemPatch{ID: "itm1", NetQuantityUnit: strp("g")}},
+		{"empty unit", data.ItemPatch{ID: "itm1", NetQuantityValue: i64p(500), NetQuantityUnit: strp("")}},
+		{"unknown unit", data.ItemPatch{ID: "itm1", NetQuantityValue: i64p(500), NetQuantityUnit: strp("kg")}},
+		{"zero value", data.ItemPatch{ID: "itm1", NetQuantityValue: i64p(0), NetQuantityUnit: strp("g")}},
+		{"negative value", data.ItemPatch{ID: "itm1", NetQuantityValue: i64p(-5), NetQuantityUnit: strp("g")}},
+		{"clear and set together", data.ItemPatch{ID: "itm1", ClearNetQuantity: true, NetQuantityValue: i64p(500), NetQuantityUnit: strp("g")}},
+	} {
+		// The name change riding along must be rolled back too.
+		c.p.Name = strp("Changed")
+		_, err := f.catalog.SaveItem(ctx, c.p)
+		if !errors.Is(err, data.ErrInvalidNetQuantity) {
+			t.Errorf("%s: err = %v, want ErrInvalidNetQuantity", c.name, err)
+		}
+	}
+	if got := f.str(t, `SELECT name || '|' || net_quantity_value || '|' || net_quantity_unit FROM items WHERE id = 'itm1'`); got != "Flat White|330|ml" {
+		t.Fatalf("a refused save changed the row: %s", got)
+	}
+}
