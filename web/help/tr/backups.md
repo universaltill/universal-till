@@ -30,7 +30,7 @@ yerine pencereyi kapatıp Universal Till'i yeniden açın.
 Kasa, diski dolmasın diye günde bir kez artık gerekmeyen dosyaları siler:
 
 - Yedekler: en yeni 14 yedek tutulur.
-- Bir yedeği geri yüklerken kenara ayrılan veri kopyası: en yeni 3 kopya tutulur, hiçbiri 30 günden eski olmaz.
+- Bir yedeği geri yüklerken kenara ayrılan veri kopyası: satış kayıtlarını yasal olarak saklamanız gereken süre boyunca tutulur; bu süre dolduktan sonra yalnızca en yeni 3 kopya tutulur, hiçbiri 30 günden eski olmaz.
 - Gönderilemeyen sorun bildirimleri: 7 gün sonra silinir.
 - İndirilen güncellemeler: 7 gün sonra silinir.
 
