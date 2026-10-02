@@ -822,3 +822,58 @@ func TestLooksLikeXLSXZip(t *testing.T) {
 		t.Errorf("LooksLikeXLSXZip(empty non-xlsx zip) = true, want false")
 	}
 }
+
+// TestParseXLSX_ShopifyRejected (ut-docs#3381): ParseXLSX has none of
+// Parse's Shopify carry-forward/image-row-skip/variant-naming logic (that
+// lives only in Parse's CSV loop, ut-docs#3284), so a Shopify products
+// export re-saved as .xlsx must not be silently run through the generic
+// per-row loop — which would misparse every row (continuation rows read as
+// bogus items, variant rows never get their option-value-qualified name)
+// while still reporting success, with only the Format label now correctly
+// saying "shopify". Same "reject, never guess" rule ErrXLSXMergedCells
+// already applies to a different unreadable shape.
+func TestParseXLSX_ShopifyRejected(t *testing.T) {
+	data := buildXLSX(t, [][]string{
+		{"Handle", "Title", "Variant SKU", "Variant Price"},
+		{"cold-brew", "Cold Brew Coffee", "SH-CB-1", "3.50"},
+	})
+	_, err := ParseXLSX(bytes.NewReader(data), int64(len(data)), 2, testEnabledIDs, false)
+	if !errors.Is(err, ErrXLSXShopifyUnsupported) {
+		t.Errorf("err = %v, want ErrXLSXShopifyUnsupported", err)
+	}
+}
+
+// TestParseXLSX_ShopifyRejectedBeforeMergeCheck: the shopify rejection
+// must win even when the workbook also has a merge that would otherwise
+// trigger ErrXLSXMergedCells — one clear, specific message beats two
+// whole-file rejections racing on the same unsupported file.
+func TestParseXLSX_ShopifyRejectedBeforeMergeCheck(t *testing.T) {
+	f := excelize.NewFile()
+	defer f.Close()
+	for cell, v := range map[string]string{
+		"A1": "Handle", "B1": "Title", "C1": "Variant SKU", "D1": "Variant Price",
+		"A2": "cold-brew", "B2": "Cold Brew Coffee", "C2": "SH-CB-1", "D2": "3.50",
+	} {
+		if err := f.SetCellStr("Sheet1", cell, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// C1:D1, not A1:B1: a merge clears every cell but its top-left, so
+	// merging over B1 would blank "Title" and the generic path would stop
+	// at ErrNoNameColumn before ever reaching the merge check. C1:D1 keeps
+	// Handle/Title/Variant SKU intact (still detected "shopify", still has
+	// a name column) while overlapping the header row inside the imported
+	// column range, so without the shopify check this file really does
+	// reach rejectMergedCells and fail with ErrXLSXMergedCells.
+	if err := f.MergeCell("Sheet1", "C1", "D1"); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if _, err := f.WriteTo(&buf); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ParseXLSX(bytes.NewReader(buf.Bytes()), int64(buf.Len()), 2, testEnabledIDs, false)
+	if !errors.Is(err, ErrXLSXShopifyUnsupported) {
+		t.Errorf("err = %v, want ErrXLSXShopifyUnsupported (not ErrXLSXMergedCells)", err)
+	}
+}

@@ -12,10 +12,10 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
-// ErrXLSXLegacyUnsupported/ErrXLSXMergedCells are ParseXLSX's own
-// whole-file reason codes (ut-docs#1837), same pattern as
-// ErrNoNameColumn/ErrBkp*: a stable sentinel so the pages layer can show a
-// specific, translated message instead of raw parser text on the
+// ErrXLSXLegacyUnsupported/ErrXLSXMergedCells/ErrXLSXShopifyUnsupported are
+// ParseXLSX's own whole-file reason codes (ut-docs#1837, #3381), same
+// pattern as ErrNoNameColumn/ErrBkp*: a stable sentinel so the pages layer
+// can show a specific, translated message instead of raw parser text on the
 // operator's screen (ut-docs#303's rule).
 var (
 	// ErrXLSXLegacyUnsupported: AC6 — legacy binary .xls is explicitly not
@@ -41,6 +41,21 @@ var (
 	// rejectMergedCells' own doc comment for exactly where the line is
 	// drawn and why.
 	ErrXLSXMergedCells = errors.New("this workbook uses merged cells, which cannot be read reliably")
+	// ErrXLSXShopifyUnsupported (ut-docs#3381): ParseXLSX shares
+	// DetectFormat with Parse, so a Shopify products export re-saved as
+	// .xlsx is correctly detected Format == "shopify" — but ParseXLSX's
+	// own row loop below has none of Parse's Shopify-specific carry-
+	// forward/image-row-skip/variant-naming logic (ut-docs#3284, CSV-only).
+	// Running such a file through the generic loop anyway would silently
+	// misparse every row (a variant continuation row reads as a bogus
+	// item, Title/option values never get combined) while still reporting
+	// success — the exact "guess instead of reject" shape
+	// ErrXLSXMergedCells already refuses for a different unreadable
+	// layout. Shopify only exports CSV natively (a merchant must manually
+	// re-save as .xlsx to hit this at all), so porting the full row logic
+	// isn't worth it yet; reject explicitly and point the operator at the
+	// CSV export instead.
+	ErrXLSXShopifyUnsupported = errors.New("shopify catalog exports as .xlsx are not supported — upload the .csv export instead")
 )
 
 // xlsxMaxUnzipSize bounds the TOTAL uncompressed size of every member of
@@ -345,6 +360,9 @@ func ParseXLSX(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbology
 		headers[0] = strings.TrimPrefix(headers[0], "\uFEFF") // parity with Parse's BOM strip
 	}
 	res := Result{Format: DetectFormat(headers), SheetName: sheetName}
+	if res.Format == "shopify" {
+		return Result{}, ErrXLSXShopifyUnsupported
+	}
 	idx := headerIndex(headers)
 	if _, ok := idx["name"]; !ok {
 		return Result{}, ErrNoNameColumn

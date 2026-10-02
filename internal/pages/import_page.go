@@ -520,6 +520,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			case errors.Is(err, catimport.ErrXLSXMergedCells):
 				http.Error(w, T("import.error.xlsx_merged_cells"), http.StatusBadRequest)
 				return
+			case errors.Is(err, catimport.ErrXLSXShopifyUnsupported):
+				http.Error(w, T("import.error.xlsx_shopify_unsupported"), http.StatusBadRequest)
+				return
 			case errors.Is(err, catimport.ErrBkpMissingFiles), errors.Is(err, catimport.ErrBkpInvalidMeta), errors.Is(err, catimport.ErrBkpTooLarge):
 				// The upload looked like a ZIP but isn't a recognisable
 				// .bkp backup — log the real detail, never raw text on the
