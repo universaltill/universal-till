@@ -31,7 +31,13 @@ struct TillWebView: UIViewRepresentable {
         // Safari users keep pinch, since only the app sets this.
         config.userContentController.addUserScript(WKUserScript(
             source: Self.lockZoomScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        // Bug-report screenshots (ut-docs#3355): the page world, because the
+        // panel's own script calls it.
+        let screenshots = ScreenshotBridge()
+        config.userContentController.addScriptMessageHandler(
+            screenshots, contentWorld: .page, name: ScreenshotBridge.name)
         let webView = WKWebView(frame: .zero, configuration: config)
+        screenshots.webView = webView
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = false
