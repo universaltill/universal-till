@@ -561,3 +561,59 @@ func TestIssueReportDisplayStatusKey(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#3291: a device joined to the shop (sync.primary_url set) that has
+// no cloud credential of its own yet gets one through its main till's vouch
+// (ADR-0116 D3), so its report sends by itself once that lands. It must not
+// be told to "finish enrolling" (it is joined) nor flagged as failing.
+func TestMyReportsPage_JoinedDeviceNotRegisteredStaysPending(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, db := newMyReportsTestMux(t)
+	if err := settings.NewStore(db).Set(t.Context(), "sync.primary_url", "http://192.168.1.10:8080"); err != nil {
+		t.Fatalf("set primary_url: %v", err)
+	}
+	id, err := issuereport.Save("sent from the phone", "", []byte("a"), nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := issuereport.RecordUploadFailure(id, issuereport.UploadFailReasonNotRegistered); err != nil {
+		t.Fatalf("RecordUploadFailure: %v", err)
+	}
+
+	body := getMyReports(t, mux).Body.String()
+	if strings.Contains(body, "finish enrolling") || strings.Contains(body, "Couldn&#39;t send") {
+		t.Fatalf("a joined device must not be told to enrol or shown as failing: %s", body)
+	}
+	if !strings.Contains(body, "Saved here, waiting to send") || !strings.Contains(body, "from the main till") {
+		t.Fatalf("expected pending with the joined-device reason, got: %s", body)
+	}
+}
+
+// ut-docs#3291 review: a joined device whose main till never vouches (an
+// unregistered or too-old main till, an unreachable LAN) must not wait
+// silently forever — past the threshold it fails, with advice about the
+// main till, still never "finish enrolling".
+func TestMyReportsPage_JoinedDeviceNotRegisteredFailsPastThreshold(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, db := newMyReportsTestMux(t)
+	if err := settings.NewStore(db).Set(t.Context(), "sync.primary_url", "http://192.168.1.10:8080"); err != nil {
+		t.Fatalf("set primary_url: %v", err)
+	}
+	id, err := issuereport.Save("phone stuck without access", "", []byte("a"), nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	for i := 0; i < issuereport.UploadFailingThreshold; i++ {
+		if _, err := issuereport.RecordUploadFailure(id, issuereport.UploadFailReasonNotRegistered); err != nil {
+			t.Fatalf("RecordUploadFailure #%d: %v", i, err)
+		}
+	}
+
+	body := getMyReports(t, mux).Body.String()
+	if strings.Contains(body, "finish enrolling") || strings.Contains(body, "from the main till. The report sends") {
+		t.Fatalf("expected the joined failing reason only, got: %s", body)
+	}
+	if !strings.Contains(body, "Couldn&#39;t send") || !strings.Contains(body, "registered with the cloud and up to date") {
+		t.Fatalf("expected failing with the joined-device reason, got: %s", body)
+	}
+}
