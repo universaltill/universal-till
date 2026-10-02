@@ -68,15 +68,17 @@ SELECT COUNT(DISTINCT sale_id) FROM (
 )`
 
 // itemStockHistorySQL: stock movements (live or archived) or a recorded
-// void/comp/waste for the item or its variants. Takes the item id five
-// times. shrinkage_events.item_id has no cascade, so it would block the
-// delete anyway.
+// void/comp/waste (live or archived, ut-docs#3452) for the item or its
+// variants. Takes the item id six times. shrinkage_events.item_id has no
+// cascade, so it would block the delete anyway; the archived row would
+// make its reset batch unrestorable (ErrArchiveReferencesRemoved).
 const itemStockHistorySQL = `
 SELECT EXISTS (SELECT 1 FROM stock_movements WHERE item_id = ?)
     OR EXISTS (SELECT 1 FROM stock_movements WHERE variant_id IN (SELECT id FROM item_variants WHERE item_id = ?))
     OR EXISTS (SELECT 1 FROM stock_movements_archive WHERE item_id = ?)
     OR EXISTS (SELECT 1 FROM stock_movements_archive WHERE variant_id IN (SELECT id FROM item_variants WHERE item_id = ?))
-    OR EXISTS (SELECT 1 FROM shrinkage_events WHERE item_id = ?)`
+    OR EXISTS (SELECT 1 FROM shrinkage_events WHERE item_id = ?)
+    OR EXISTS (SELECT 1 FROM shrinkage_events_archive WHERE item_id = ?)`
 
 // itemParkedSQL: a held (parked) sale or open tab, live or archived, with a
 // line for the item or one of its variants — the same payload match
@@ -132,7 +134,7 @@ func (r *POSRepo) DeleteUnusedItem(ctx context.Context, itemID string) (ItemDele
 		n      int
 		reason string
 	}{
-		{itemStockHistorySQL, 5, ItemUseStockHistory},
+		{itemStockHistorySQL, 6, ItemUseStockHistory},
 		{`SELECT EXISTS (SELECT 1 FROM shortcut_buttons WHERE item_id = ?)`, 1, ItemUseQuickButton},
 		{itemParkedSQL, 4, ItemUseOpenBasket},
 	} {

@@ -333,6 +333,14 @@ for the most shrinkage value, so a pattern (one item dropped constantly,
 one line comped every shift) is visible without digging through the
 audit log.
 
+Settings → Data → **Clear transaction history** moves these records into
+the reset archive together with the sales, so voids, comps and waste rung
+up while you were training before going live leave this report too.
+Restoring that archive brings them back, as long as no void, comp or
+waste has been recorded since the reset either. While a batch is archived, an
+item it mentions is still kept by **Catalog cleanup** and **Remove sample
+data**; once you delete the batch permanently, those tools can remove it.
+
 ## Seeing every till's sales (Journal)
 
 The Journal page (the receipts/sync list, off the sale screen) shows every
