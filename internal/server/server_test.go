@@ -27,6 +27,7 @@ import (
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // stubTokenProvider satisfies oauth.TokenProvider. Auth is optional on the
@@ -926,7 +927,9 @@ func TestOpenSetupPage_WaitsForListener(t *testing.T) {
 
 // ut-docs#3092: the hourly backup loop runs housekeeping at most once per
 // housekeeping.Interval — a pre-restore copy past its age limit goes on the
-// first call; one added later survives until the next interval.
+// first call; one added later survives until the next interval. With no
+// database the statutory floor falls back to GlobalArchiveMinDays (10
+// years, ut-docs#3365), so the fixtures are named (and aged) from 2010.
 func TestRunHousekeeping_OncePerInterval(t *testing.T) {
 	root := t.TempDir()
 	origData, origPending := paths.DataDir(), issuereport.PendingDir
@@ -951,18 +954,112 @@ func TestRunHousekeeping_OncePerInterval(t *testing.T) {
 		return p
 	}
 	var s housekeeping.Schedule
-	first := aged("pre-restore-20200101-000000.db")
-	runHousekeeping(&s, dbPath, now)
+	first := aged("pre-restore-20100101-000000.db")
+	runHousekeeping(&s, nil, dbPath, now)
 	if _, err := os.Stat(first); !os.IsNotExist(err) {
 		t.Fatal("first run kept an expired pre-restore copy")
 	}
-	second := aged("pre-restore-20200102-000000.db")
-	runHousekeeping(&s, dbPath, now.Add(time.Hour))
+	second := aged("pre-restore-20100102-000000.db")
+	runHousekeeping(&s, nil, dbPath, now.Add(time.Hour))
 	if _, err := os.Stat(second); err != nil {
 		t.Fatal("ran again within the interval")
 	}
-	runHousekeeping(&s, dbPath, now.Add(housekeeping.Interval))
+	runHousekeeping(&s, nil, dbPath, now.Add(housekeeping.Interval))
 	if _, err := os.Stat(second); !os.IsNotExist(err) {
 		t.Fatal("did not run after a full interval")
+	}
+}
+
+// ut-docs#3365: a pre-restore copy is a full former database (sales,
+// payments, Z reports, audit log). runHousekeeping keeps every copy inside
+// the shop country's archive_min_days floor, resolved from the live DB, even
+// past housekeeping.PreRestoreMaxAge; a copy past the floor still goes.
+func TestRunHousekeeping_KeepsPreRestoreCopiesInsideStatutoryFloor(t *testing.T) {
+	root := t.TempDir()
+	origData, origPending := paths.DataDir(), issuereport.PendingDir
+	paths.Init(root)
+	issuereport.PendingDir = filepath.Join(root, "issue-reports", "pending")
+	t.Cleanup(func() { paths.Init(origData); issuereport.PendingDir = origPending })
+	dbPath := filepath.Join(root, "unitill-pos.db")
+	d, err := appdb.Open(testsupport.MigratedDBFile(t, "hk_floor.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	// A 60-day floor: between PreRestoreMaxAge (30) and the 3650-day
+	// fallback, so the test proves the resolved value is the one applied.
+	for _, q := range []string{
+		`UPDATE country_settings SET archive_min_days = 60 WHERE code = 'GB'`,
+		`INSERT INTO settings (key, value) VALUES ('store.country', 'GB')`,
+	} {
+		if _, err := d.DB.Exec(q); err != nil {
+			t.Fatalf("seed %q: %v", q, err)
+		}
+	}
+	dir, err := appdb.BackupDir(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	write := func(name string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	inside := write("pre-restore-20260819-120000.db")  // 40 days: past maxAge, inside the floor
+	outside := write("pre-restore-20260630-120000.db") // 90 days: past both
+
+	var s housekeeping.Schedule
+	runHousekeeping(&s, d.DB, dbPath, now)
+	if _, err := os.Stat(inside); err != nil {
+		t.Error("pre-restore copy inside the statutory floor was removed")
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Error("pre-restore copy past the statutory floor was kept")
+	}
+}
+
+// ut-docs#3365 review finding: archive_min_days has no upper bound (only
+// validateCountrySetting's floor), so a shop configuring an absurdly large
+// "never purge" value must not overflow time.Duration (int64 nanoseconds,
+// ~106,751 days) to a negative minRetain -- which would flip the floor OFF
+// and delete a copy it was meant to protect, exactly backwards from
+// "fail safe toward retaining, never toward deleting".
+func TestRunHousekeeping_ClampsAbsurdArchiveRetentionInsteadOfOverflowing(t *testing.T) {
+	root := t.TempDir()
+	origData, origPending := paths.DataDir(), issuereport.PendingDir
+	paths.Init(root)
+	issuereport.PendingDir = filepath.Join(root, "issue-reports", "pending")
+	t.Cleanup(func() { paths.Init(origData); issuereport.PendingDir = origPending })
+	dbPath := filepath.Join(root, "unitill-pos.db")
+	d, err := appdb.Open(testsupport.MigratedDBFile(t, "hk_floor_overflow.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	for _, q := range []string{
+		`UPDATE country_settings SET archive_min_days = 999999999 WHERE code = 'GB'`,
+		`INSERT INTO settings (key, value) VALUES ('store.country', 'GB')`,
+	} {
+		if _, err := d.DB.Exec(q); err != nil {
+			t.Fatalf("seed %q: %v", q, err)
+		}
+	}
+	dir, err := appdb.BackupDir(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	inside := filepath.Join(dir, "pre-restore-20260819-120000.db") // 40 days old
+	if err := os.WriteFile(inside, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var s housekeeping.Schedule
+	runHousekeeping(&s, d.DB, dbPath, now)
+	if _, err := os.Stat(inside); err != nil {
+		t.Error("an absurd archive_min_days overflowed minRetain negative and deleted a protected copy")
 	}
 }
