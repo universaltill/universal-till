@@ -1114,13 +1114,11 @@ func FuncsFor(locale string) template.FuncMap {
 		}
 	}
 	// {{ dateUTC .IssuedAt }}: FormatDate's date-ordering/digit-shape
-	// convention, WITHOUT the Local() conversion `date` above applies —
-	// for a value compared/filtered elsewhere in UTC (e.g. invoices.html's
-	// register list, whose from/to range is deliberately compared against
-	// the raw UTC IssuedAt string — see invoice_page.go's own comment on
-	// why `to` is left open). Using `date`'s Local conversion there would
-	// show a calendar date that can legitimately disagree with which
-	// from/to bucket the row is actually in.
+	// convention, WITHOUT the Local() conversion `date` above applies — for
+	// a value whose UTC calendar date is what matters. The invoice register
+	// used it while its from/to filter compared local dates against raw UTC
+	// strings; since ut-docs#3300 that filter works in local days, so the
+	// register shows `date` and this helper has no template user left.
 	funcs["dateUTC"] = func(v string) string {
 		parsed, err := time.Parse(time.RFC3339, v)
 		if err != nil {
