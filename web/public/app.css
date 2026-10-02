@@ -4819,6 +4819,14 @@ body.login-screen {
    a unix kiosk with no browser to send a link to) isn't clickable, and
    shouldn't invite a click it can't act on. */
 .statusbar :is(a, button).sb-update:hover { background: #22c55e; }
+/* ut-docs#2733: the stuck-auto-update chip is a <span> whose remedy text is
+   the link (arrow-up already leads to /plugins) — keep the chip's own dark
+   ink instead of the status bar's link colour (green on green). */
+.statusbar .sb-update a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.statusbar .sb-update a:hover { color: #000; }
+/* Its link IS the remedy, so it may wrap rather than clip at phone width
+   (.sb-item is nowrap); min-width: 0 lets the flex item shrink to wrap. */
+.statusbar .sb-update.is-stuck { white-space: normal; min-width: 0; border-radius: .75rem; }
 /* Quiet hint shown until the till is connected to the marketplace —
    registration is OPTIONAL (ADR-0015), so no alarm colors, no urgency. */
 .statusbar .sb-enrol {
@@ -5910,7 +5918,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
     padding-block: .2rem; font-size: .8rem;
   }
   body.sale-screen.pos-sheet-open .statusbar { bottom: 0; }
-  html:not(.ut-scrim-on) body.sale-screen:not(.nav-drawer-open) .statusbar:not(:has(.sb-conn.is-offline, .sb-main-till, .sb-power)) { display: none; }
+  html:not(.ut-scrim-on) body.sale-screen:not(.nav-drawer-open) .statusbar:not(:has(.sb-conn.is-offline, .sb-main-till, .sb-power, .sb-update.is-stuck)) { display: none; }
   /* In the open drawer: its foot, one item per line, above the backdrop
      (the nav's stacking context is z-index 60). The drawer pads its end by
      the row's height so the last link scrolls clear of it. */

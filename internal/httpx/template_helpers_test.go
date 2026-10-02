@@ -2,6 +2,8 @@ package httpx
 
 import (
 	"encoding/json"
+	"fmt"
+	"html"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
@@ -355,6 +357,58 @@ func TestBaseLayoutUpdateChipHasNoLinkWhenDownloadLinkNotActionable(t *testing.T
 	}
 	if strings.Contains(body, `id="sb-update-btn"`) {
 		t.Fatalf("expected no in-app self-apply button either when canselfupdate is false, got %.500s", body)
+	}
+}
+
+// ut-docs#2733: a linux till with auto-update on, an update waiting and an
+// install tree it can't write used to show the same "isn't available for this
+// install" chip as a till that never auto-updates — while Settings still said
+// "Update automatically". In that combination the chip must say the till
+// can't install updates by itself and lead to what to do: a real link to the
+// Software updates help topic (no hover on a touchscreen, same as the PSU
+// chip), same-origin so it is no kiosk dead end.
+func TestBaseLayoutUpdateChipSaysWhenAutoUpdateIsStuck(t *testing.T) {
+	for _, stuck := range []bool{true, false} {
+		t.Run(fmt.Sprintf("stuck=%v", stuck), func(t *testing.T) {
+			InitI18n(realI18n(t), "en")
+			funcs := FuncsFor("en")
+			funcs["updateavailable"] = func() bool { return true }
+			funcs["canselfupdate"] = func() bool { return false }
+			funcs["updatedownloadlink"] = func() bool { return false }
+			funcs["updateinstallbridge"] = func() bool { return false }
+			funcs["autoupdatestuck"] = func() bool { return stuck }
+			funcs["latestversion"] = func() string { return "9.9.9" }
+			r, err := NewRenderer(
+				filepath.Join("web", "ui", "layouts", "base.html"),
+				filepath.Join("web", "ui", "pages", "pin.html"),
+				funcs,
+			)
+			if err != nil {
+				t.Fatalf("NewRenderer: %v", err)
+			}
+			w := httptest.NewRecorder()
+			data := map[string]any{"title": "Change PIN", "theme": "", "menuItems": nil, "errKey": ""}
+			if err := r.Render(w, "base", data); err != nil {
+				t.Fatalf("Render: %v", err)
+			}
+			body := w.Body.String()
+			stuckText := T("en", "status.update_auto_blocked")
+			if stuckText == "status.update_auto_blocked" {
+				t.Fatal("status.update_auto_blocked missing from en.json")
+			}
+			if got := strings.Contains(body, html.EscapeString(stuckText)); got != stuck {
+				t.Fatalf("stuck chip text shown = %v, want %v", got, stuck)
+			}
+			if got := strings.Contains(body, `class="sb-item sb-update is-stuck"`); got != stuck {
+				t.Fatalf("is-stuck marker (keeps the phone sale screen's status row visible) = %v, want %v", got, stuck)
+			}
+			if got := strings.Contains(body, `data-testid="sb-update-stuck" href="/help/updates"`); got != stuck {
+				t.Fatalf("link to the updates help topic = %v, want %v", got, stuck)
+			}
+			if !stuck && !strings.Contains(body, "available for this install") {
+				t.Fatalf("expected the unchanged unavailable_here chip when not stuck")
+			}
+		})
 	}
 }
 

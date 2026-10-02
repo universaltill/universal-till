@@ -40,6 +40,20 @@ func Current() Status {
 	return Status{}
 }
 
+// autoUpdateStuck is published by the auto-update scheduler (internal/pages,
+// ut-docs#2733): auto-update is on and an update is waiting, but this install
+// can't apply it itself, so the nightly attempt is silently skipped. The
+// status-bar chip reads it through httpx's autoupdatestuck template func —
+// same request-free, offline-safe shape as Current().
+var autoUpdateStuck atomic.Bool
+
+// SetAutoUpdateStuck records the scheduler's latest stuck decision.
+func SetAutoUpdateStuck(v bool) { autoUpdateStuck.Store(v) }
+
+// AutoUpdateStuck reports the scheduler's latest stuck decision (false until
+// its first tick).
+func AutoUpdateStuck() bool { return autoUpdateStuck.Load() }
+
 // CheckNow performs one synchronous check (the Settings "Check for updates"
 // button) and returns the freshest status. A failed check leaves the
 // previously known status in place — the caller can tell it failed by

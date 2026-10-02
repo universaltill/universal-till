@@ -137,6 +137,27 @@ func Supported() bool {
 	return true
 }
 
+// LinuxInstallUnwritable reports whether this is a linux install whose shape
+// could self-update (not apt's /usr prefix, a locatable binary) but whose
+// binary directory or working directory the till can't write — the one case
+// "reinstall the .deb" fixes, since its postinstall restores the ownership
+// (ut-docs#2733, #151). Every other reason Supported() says no gets the
+// generic message instead. Probes the disk like Supported() does.
+func LinuxInstallUnwritable() bool {
+	if hostGOOS != "linux" {
+		return false
+	}
+	exe, err := osExecutable()
+	if err != nil || !supportedFor(exe, hostGOOS) {
+		return false
+	}
+	if !dirWritable(filepath.Dir(exe)) {
+		return true
+	}
+	cwd, err := os.Getwd()
+	return err == nil && cwd != filepath.Dir(exe) && !dirWritable(cwd)
+}
+
 // DownloadLinkActionable reports whether a user on this OS can get the new
 // version themselves by clicking a website download link — the single
 // source of truth shared by the Settings-page fallback
