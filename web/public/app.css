@@ -5677,6 +5677,12 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   .nav-drawer .nav-toggle,
   .nav .nav-drawer button.nav-toggle { justify-content: flex-start; inline-size: 100%; min-height: 48px; }
   .nav-drawer .nav-rail-only { display: flex; }
+  /* ut-docs#3358: the manager links (Users/Promotions/Translations) are
+     dropped from the sale/menu RAIL to keep it short, but the drawer is a
+     scrollable column — an administrator needs them there on every screen.
+     `body` matches the specificity of the body.sale-screen/menu-screen
+     hide rules; this block comes later, so it wins. */
+  body .nav-drawer .session-admin-link { display: flex; }
   /* ut-docs#3297: the Lock button, a row like every other drawer item. */
   .nav-drawer .btn-lock { padding: .5rem .75rem; }
   body.nav-drawer-open .nav-drawer-backdrop {
@@ -5720,8 +5726,12 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   }
   body.sale-screen.nav-drawer-open .statusbar .sb-ver { margin-inline-start: 0; }
   body.sale-screen.nav-drawer-open .statusbar :is(.sb-update, .sb-enrol, .sb-power, .sb-main-till, .sb-plugin-update, .sb-language-pack-update, .sb-release-notes) { margin-inline-start: 0; }
-  body.sale-screen.nav-drawer-open .nav-drawer {
-    padding-block-end: calc(var(--phone-sb-h, 0px) + .75rem);
+  /* ut-docs#3358: every screen's status row paints over the open drawer's
+     foot (sale screen: the rule above; elsewhere the page's sticky
+     .statusbar), so the drawer reserves the row's measured open height
+     (app.js utNavDrawer) and Lock always scrolls clear of it. */
+  body.nav-drawer-open .nav-drawer {
+    padding-block-end: calc(var(--phone-drawer-sb-h, var(--phone-sb-h, 0px)) + .75rem);
   }
   /* ...and, like everywhere else, it stays above #ut-scrim while a dialog
      is open (status stays reachable; base rule html.ut-scrim-on .statusbar). */

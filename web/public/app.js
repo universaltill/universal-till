@@ -3456,6 +3456,7 @@ window.utTabBarFade = function (el) {
     var btn = toggleBtn();
     body.classList.toggle('nav-drawer-open', open);
     if (!open) requestAnimationFrame(measureBar);
+    if (open) requestAnimationFrame(measureBar);
     if (btn) {
       btn.setAttribute('aria-expanded', open ? 'true' : 'false');
       btn.setAttribute('aria-label', btn.getAttribute(open ? 'data-label-close' : 'data-label-open') || '');
@@ -3475,10 +3476,15 @@ window.utTabBarFade = function (el) {
     watchSb();
     var sb = document.querySelector('.statusbar');
     // While the drawer is open the row is its foot, not a bar over the
-    // grid: keep the last at-rest value.
+    // grid: keep the last at-rest value of --phone-sb-h.
+    var sh = sb ? sb.getBoundingClientRect().height : 0;
     if (!body.classList.contains('nav-drawer-open')) {
-      var sh = sb ? sb.getBoundingClientRect().height : 0;
       document.documentElement.style.setProperty('--phone-sb-h', sh + 'px');
+    } else {
+      // ut-docs#3358: the open drawer reserves the row's real open height
+      // (--phone-sb-h is its at-rest height, 0 while hidden) so Lock scrolls
+      // clear of it; the statusbar observer keeps this current while open.
+      document.documentElement.style.setProperty('--phone-drawer-sb-h', sh + 'px');
     }
     var basket = document.getElementById('basket');
     if (!basket || body.classList.contains('pos-sheet-open')) return;
