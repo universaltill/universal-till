@@ -808,6 +808,7 @@
   "import.error.stage_expired": "Bu önizlemenin süresi doldu — önce yeniden Önizleme'ye, ardından İçe aktar'a basın.",
   "import.error.xlsx_legacy_unsupported": "Bu eski tip bir Excel dosyası (.xls). Lütfen .xlsx veya CSV olarak kaydedip tekrar deneyin.",
   "import.error.xlsx_merged_cells": "Bu çalışma kitabı, güvenilir biçimde okunamayan birleştirilmiş hücreler içeriyor. Birleştirmeyi kaldırın (veya CSV olarak dışa aktarın) ve tekrar deneyin.",
+  "import.error.xlsx_shopify_unsupported": "Shopify katalog dışa aktarımının Excel dosyası biçimi henüz desteklenmiyor — bunun yerine .csv dışa aktarımını yükleyin.",
   "import.export_btn": "Katalog CSV’sini İndirilenler’e kaydet",
   "import.export_download_started": "İndirme başladı — bildirimlerinizi veya Dosyalar uygulamasını kontrol edin.",
   "import.export_help": "Verileriniz size aittir: adlar, SKU'lar, barkodlar, fiyatlar, kategoriler ve stok dâhil tüm kataloğu CSV olarak indirin. Dosya doğrudan herhangi bir Universal Till'e (ve CSV okuyan diğer sistemlere) geri aktarılır.",

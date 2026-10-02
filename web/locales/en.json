@@ -808,6 +808,7 @@
   "import.error.stage_expired": "This preview has expired — press Preview again, then Import.",
   "import.error.xlsx_legacy_unsupported": "This is an old-style Excel file (.xls). Save it as .xlsx or CSV, then try again.",
   "import.error.xlsx_merged_cells": "This workbook uses merged cells, which can't be read reliably. Remove the merged cells (or export as CSV) and try again.",
+  "import.error.xlsx_shopify_unsupported": "Shopify catalog exports as an Excel file aren't supported yet — upload the .csv export instead.",
   "import.export_btn": "Save catalog CSV to Downloads",
   "import.export_download_started": "Download started — check your notifications or Files app.",
   "import.export_help": "Your data is yours: download the whole catalog — names, SKUs, barcodes, prices, categories and stock — as a CSV. The file imports straight back into any Universal Till (and into other systems that read CSV).",

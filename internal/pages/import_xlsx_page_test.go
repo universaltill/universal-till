@@ -249,3 +249,42 @@ func TestImport_LegacyXLSRejectedWithSpecificMessage(t *testing.T) {
 		t.Fatalf("body should tell the operator to save as .xlsx or CSV, got: %s", rec.Body.String())
 	}
 }
+
+// TestImport_ShopifyXLSXRejectedWithSpecificMessage (ut-docs#3381): a
+// Shopify products export re-saved as .xlsx gets its own specific message
+// pointing the operator at the .csv export, never the generic invalid_file
+// message or a silently broken "successful" import.
+func TestImport_ShopifyXLSXRejectedWithSpecificMessage(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	f := excelize.NewFile()
+	defer f.Close()
+	for cell, v := range map[string]string{
+		"A1": "Handle", "B1": "Title", "C1": "Variant SKU", "D1": "Variant Price",
+		"A2": "cold-brew", "B2": "Cold Brew Coffee", "C2": "SH-CB-1", "D2": "3.50",
+	} {
+		if err := f.SetCellStr("Sheet1", cell, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var buf bytes.Buffer
+	if _, err := f.WriteTo(&buf); err != nil {
+		t.Fatal(err)
+	}
+
+	body, ct := multipartFile(t, "shopify.xlsx", buf.Bytes(), nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Shopify") || !strings.Contains(rec.Body.String(), "csv") {
+		t.Fatalf("body should tell the operator to upload the .csv export instead, got: %s", rec.Body.String())
+	}
+}
