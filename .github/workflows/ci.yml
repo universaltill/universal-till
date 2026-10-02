@@ -81,6 +81,8 @@ jobs:
         run: bash scripts/ci/ios-testflight-workflow_test.sh
       - name: iOS app shell locks page zoom — wiring test (ut-docs#3350)
         run: bash scripts/ci/ios-webview-zoom_test.sh
+      - name: iOS bug-report screenshot bridge — wiring test (ut-docs#3355)
+        run: bash scripts/ci/ios-screenshot-bridge_test.sh
       - name: e2e launchers never open a browser (ut-docs#2704)
         run: bash scripts/ci/guard-e2e-no-browser.sh
       - name: e2e no-browser guard regression test

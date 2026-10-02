@@ -4229,6 +4229,18 @@ body.login-screen {
   }
   table.t-cards tr > .t-cards-actions:empty { display: none; }
   table.t-cards tr > .t-cards-actions { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; }
+  /* ut-docs#3357: a labelled actions CELL (a real column header, e.g.
+     /orders' "Update") renders its buttons through the page's own
+     .btn-actions div, not .t-cards-actions (that class only reaches a
+     HEADER-LESS cell) -- so it never inherited the flex-wrap this card
+     tier needs. .btn-actions's base rule (`display:flex; gap:.25rem;
+     justify-content:center`) is shared with other, non-card contexts and
+     must stay nowrap there; only override it inside a card. Found by
+     measuring a real order's row at 360px: four one-tap status buttons
+     (Preparing/Ready/Collected/Cancel order) summed past the card's
+     content width and spilled ~21px outside the card border on both
+     sides -- unreadable in exactly the way this ticket exists to fix. */
+  table.t-cards .btn-actions { flex-wrap: wrap; justify-content: flex-start; }
   table.t-cards tr.t-cards-row:not(.t-cards-open) > .t-cards-extra { display: none; }
   table.t-cards tr > .t-cards-more { display: block; padding-block-start: .4rem; }
   /* Buttons keep their words whole (the cell's anywhere-wrap is for data). */
