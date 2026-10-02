@@ -1122,6 +1122,10 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				// The till's UI language tag, for the cloud's status bar
 				// ("EUR · de-DE", manage-shop catalog contract §3.6).
 				"locale": httpx.DefaultLocale(),
+				// ut-docs#3479: the devices this till knows it drives, for
+				// my.'s Tills graph. Per till, main or additional. See
+				// remotePeripheralsReport.
+				"peripherals": remotePeripheralsReport(ctx, d),
 			}
 			// ut-docs#2472 (ADR-0095 Decision 2, read side): the applied
 			// menu configuration — categories with their modifier-group and
