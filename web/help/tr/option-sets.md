@@ -27,7 +27,7 @@ Oluşturulan her varyant sıradan bir varyanttır: kendi SKU'su, fiyatı, stoku 
 - Bir seti yeniden adlandırmak için kartının üstündeki adı düzenleyin ve **Yeniden adlandır**a basın. İki set aynı adı taşıyamaz.
 - Bir değeri değiştirmek için karttaki metnine dokunun, yenisini yazın ve Enter'a basın (ya da başka bir yere dokunun). Bir değerin yanındaki **↑** ve **↓** düğmeleriyle onu listede öne veya arkaya taşıyın, **×** ile kaldırın. Daha önce oluşturduğunuz varyantlar adlarını korur — eşleşmelerini istiyorsanız ürünün tablosunda düzenleyin.
 - Bir seti silmeden ürünlerin **Varyantlar** sekmesinde sunulmasını durdurmak için **Devre dışı bırak**a basın; kartında artık *Devre dışı* yazar. **Etkinleştir** onu geri getirir.
-- Bir set yalnızca hiçbir ürün onu kullanmıyorken silinebilir. O zamana kadar kartı bu ürünleri **Kullanan ürünler** altında listeler (her ad o ürünü açar) ve **Seçenek setini sil** kullanılamaz: önce her ürünün **Varyantlar** sekmesinde setin işaretini kaldırın, sonra silin.
+- Bir set yalnızca hiçbir ürün onu kullanmıyorken silinebilir. O zamana kadar kartı bu ürünleri **Kullanan ürünler** altında listeler (her ad o ürünü açar) ve **Seçenek setini sil** kullanılamaz: önce her ürünün **Varyantlar** sekmesinde setin işaretini kaldırın, sonra silin. Silinmiş (devre dışı) bir ürün sayılmaz; daha sonra geri getirilirse seti ona yeniden uygulayın.
 
 ## Bilmekte fayda var
 

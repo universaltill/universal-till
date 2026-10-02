@@ -712,6 +712,51 @@ func TestOptionSetRepo_DeleteOptionSetIfUnused_RefusesInUseNamesItems(t *testing
 	}
 }
 
+// A retired item (DeactivateItem) is unreachable from /catalog, so its
+// link can't be removed there: it must not keep the set un-deletable, nor
+// appear in the used-by lists (ut-docs#3319 review). Deleting the set then
+// cascades the retired item's link away.
+func TestOptionSetRepo_DeleteOptionSetIfUnused_RetiredItemsDoNotBlock(t *testing.T) {
+	d := openOptionSetTestDB(t)
+	ctx := context.Background()
+	repo := data.NewOptionSetRepo(d.DB)
+	seedOptionSetItem(t, d, "tee", "T-shirt", 1500)
+	seedOptionSetItem(t, d, "hood", "Hoodie", 3000)
+	sizeID, _ := repo.CreateOptionSet(ctx, "Size")
+	for _, it := range []string{"tee", "hood"} {
+		if err := repo.ApplyOptionSetsToItem(ctx, it, []string{sizeID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := data.NewCatalogRepo(d.DB).DeactivateItem(ctx, "hood"); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := repo.ItemsUsingOptionSet(ctx, sizeID)
+	if err != nil || len(items) != 1 || items[0].ID != "tee" {
+		t.Fatalf("ItemsUsingOptionSet = %+v err=%v, want only the active T-shirt", items, err)
+	}
+	usage, err := repo.ListOptionSetsWithItems(ctx)
+	if err != nil || len(usage) != 1 || len(usage[0].Items) != 1 || usage[0].Items[0].ID != "tee" {
+		t.Fatalf("ListOptionSetsWithItems = %+v err=%v, want only the active T-shirt", usage, err)
+	}
+	if found, err := repo.DeleteOptionSetIfUnused(ctx, sizeID); !errors.Is(err, data.ErrOptionSetInUse) || found {
+		t.Fatalf("still used by an active item: found=%v err=%v, want ErrOptionSetInUse", found, err)
+	}
+
+	if err := data.NewCatalogRepo(d.DB).DeactivateItem(ctx, "tee"); err != nil {
+		t.Fatal(err)
+	}
+	found, err := repo.DeleteOptionSetIfUnused(ctx, sizeID)
+	if err != nil || !found {
+		t.Fatalf("only retired items left: found=%v err=%v, want deleted", found, err)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM item_option_sets WHERE option_set_id = ?`, sizeID).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("retired items' links must cascade with the set, count=%d err=%v", n, err)
+	}
+}
+
 // SaveOptionSet is the directive's one call: create-with-id, then a patch
 // where nil keeps a field.
 func TestOptionSetRepo_SaveOptionSet_CreateWithIDAndPatch(t *testing.T) {

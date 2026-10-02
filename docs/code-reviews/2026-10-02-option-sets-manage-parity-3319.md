@@ -160,3 +160,38 @@ directive pair that lets my. drive it, mirroring the existing
 - `internal/netreach`'s `TestPanickingProbeStillClearsInFlight` under
   `-race` is a pre-existing flake, confirmed reproducing identically on an
   untouched `main` checkout — not this branch's doing, not re-fixed here.
+
+## Addendum — 2026-10-02 sweep (lane:cloud-54): retired items no longer block a delete
+
+**Finding (reported on the PR after the original review):** `DeleteOptionSetIfUnused`
+refused while `item_option_sets` had *any* row for the set, including links
+to retired items (`items.is_active = 0`). `/catalog` lists only active
+items, so such a link could never be removed on the till and the set became
+permanently un-deletable — on my. too, which gates Delete on `items_total`.
+
+**Fix:** `ItemsUsingOptionSet`, `ListOptionSetsWithItems` and the in-use
+check now count active items only; deleting the set cascades any retired
+item's link away (`item_option_sets ON DELETE CASCADE`). Regression test
+`TestOptionSetRepo_DeleteOptionSetIfUnused_RetiredItemsDoNotBlock` (red
+before the fix: `ItemsUsingOptionSet` returned the retired Hoodie too;
+green after). Help topic (en/ar/fa/tr) says a retired item doesn't count and
+must have the set re-applied if restored; manifest topic hashes recomputed
+(text only, no screenshot changes).
+
+**Independent review (Fable, different model from the Opus 5.5 author):**
+no blockers. Verified the cascade removes only `item_variant_options`
+provenance — `item_variants` rows, sales and stock are untouched, the same
+outcome as the existing unapply-then-delete path. Reactivation is possible
+only from my. (`save_item{active:true}`); such an item comes back with its
+variants but without the set — accepted and documented in the method
+comment and the manual. Should-fixes (this record, the manual) and the
+comment nits (`ErrOptionSetInUse` wording, `AssignedItem.IsActive` constant
+here, provenance note) applied. Modifier groups intentionally keep listing
+retired items (they delete unconditionally).
+
+**Merge of `main`:** only conflict was `web/help/img/manifest.json`
+`surface_sha256`; both sides' screenshots/topic hashes merged cleanly, so
+the combined surface hash was recomputed (`Docs-Shots-Unchanged: true`).
+`guard-docs-shots`, `guard-help-drift`, `guard-help-topics` pass.
+
+**Verdict:** safe to merge once CI is green.

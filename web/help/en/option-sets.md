@@ -27,7 +27,7 @@ Every generated variant is an ordinary variant: it has its own SKU, price, stock
 - To rename a set, edit the name at the top of its card and press **Rename**. Two sets can't share a name.
 - To change a value, tap its text on the card, type the new one and press Enter (or tap elsewhere). Use the **↑** and **↓** buttons beside a value to move it earlier or later in the list, and **×** to remove it. Variants you already generated keep their names — edit them in the item's grid if you want them to match.
 - Press **Deactivate** to stop offering a set on items' **Variants** tab without deleting it; its card then says *Inactive*. **Activate** brings it back.
-- A set can only be deleted while no item uses it. Until then its card lists those items under **Used by** (each name opens that item) and **Delete option set** is unavailable: untick the set on each item's **Variants** tab first, then delete it.
+- A set can only be deleted while no item uses it. Until then its card lists those items under **Used by** (each name opens that item) and **Delete option set** is unavailable: untick the set on each item's **Variants** tab first, then delete it. A deleted (retired) item doesn't count; if it is restored later, apply the set to it again.
 
 ## Good to know
 

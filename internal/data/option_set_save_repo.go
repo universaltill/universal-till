@@ -37,7 +37,7 @@ var (
 )
 
 // ErrOptionSetInUse reports that DeleteOptionSetIfUnused refused: at least
-// one item has the set applied (item_option_sets). The schema would cascade
+// one active item has the set applied (item_option_sets). The schema would cascade
 // those links away silently, so the refusal is explicit; callers name the
 // items with ItemsUsingOptionSet.
 var ErrOptionSetInUse = errors.New("option set is applied to at least one item")
@@ -333,14 +333,18 @@ func (r *OptionSetRepo) GetOptionSet(ctx context.Context, id string) (OptionSetV
 	return s, nil
 }
 
-// ItemsUsingOptionSet returns the items the set is applied to
-// (item_option_sets), by name then id. IsActive is the item's own flag.
+// ItemsUsingOptionSet returns the active items the set is applied to
+// (item_option_sets), by name then id. A retired item's link is left out:
+// /catalog can't reach it to unapply the set, so it must neither be listed
+// as "used by" nor block a delete (ut-docs#3319). AssignedItem.IsActive is
+// therefore always true here (the struct is shared with modifier groups,
+// which do list retired items).
 func (r *OptionSetRepo) ItemsUsingOptionSet(ctx context.Context, id string) ([]AssignedItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT i.id, i.name, i.is_active
 FROM item_option_sets ios
 JOIN items i ON i.id = ios.item_id
-WHERE ios.option_set_id = ?
+WHERE ios.option_set_id = ? AND i.is_active = 1
 ORDER BY i.name, i.id`, strings.TrimSpace(id))
 	if err != nil {
 		return nil, fmt.Errorf("items using option set: %w", err)
@@ -362,9 +366,10 @@ ORDER BY i.name, i.id`, strings.TrimSpace(id))
 	return out, nil
 }
 
-// ListOptionSetsWithItems is ListOptionSets plus each set's items — one more
-// query for every link (item_option_sets JOIN items), joined in Go, never
-// one query per set.
+// ListOptionSetsWithItems is ListOptionSets plus each set's active items
+// (retired ones left out, as in ItemsUsingOptionSet) — one more query for
+// every link (item_option_sets JOIN items), joined in Go, never one query
+// per set.
 func (r *OptionSetRepo) ListOptionSetsWithItems(ctx context.Context) ([]OptionSetAdmin, error) {
 	sets, err := r.ListOptionSets(ctx)
 	if err != nil {
@@ -383,6 +388,7 @@ func (r *OptionSetRepo) ListOptionSetsWithItems(ctx context.Context) ([]OptionSe
 SELECT ios.option_set_id, i.id, i.name, i.is_active
 FROM item_option_sets ios
 JOIN items i ON i.id = ios.item_id
+WHERE i.is_active = 1
 ORDER BY ios.option_set_id, i.name, i.id`)
 	if err != nil {
 		return nil, fmt.Errorf("option set items: %w", err)
@@ -406,8 +412,13 @@ ORDER BY ios.option_set_id, i.name, i.id`)
 	return out, nil
 }
 
-// DeleteOptionSetIfUnused deletes a set (its values cascade) only when no
-// item has it applied; otherwise ErrOptionSetInUse and nothing is written.
+// DeleteOptionSetIfUnused deletes a set (its values, and any retired item's
+// link, cascade) only when no active item has it applied; otherwise
+// ErrOptionSetInUse and nothing is written. A retired item's variants
+// generated from the set keep their item_variants rows (sales and stock
+// still point at them); only their item_variant_options provenance goes,
+// the same as unapplying the set on the Variants tab and then deleting it.
+// An item reactivated later (my.'s save_item) comes back without the set.
 // The check and the delete share one transaction so an apply can't slip in
 // between. Reports whether there was a set to delete — false, nil is the
 // "already deleted" replay answer, like ModifierRepo.DeleteGroupIfExists.
@@ -421,7 +432,7 @@ func (r *OptionSetRepo) DeleteOptionSetIfUnused(ctx context.Context, id string) 
 		return false, fmt.Errorf("delete option set: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	inUse, err := rowExists(ctx, tx, `SELECT 1 FROM item_option_sets WHERE option_set_id = ? LIMIT 1`, id)
+	inUse, err := rowExists(ctx, tx, `SELECT 1 FROM item_option_sets ios JOIN items i ON i.id = ios.item_id WHERE ios.option_set_id = ? AND i.is_active = 1 LIMIT 1`, id)
 	if err != nil {
 		return false, fmt.Errorf("delete option set: usage check: %w", err)
 	}
