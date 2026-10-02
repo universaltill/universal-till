@@ -24,7 +24,7 @@ var permissionGroups = []permissionGroup{
 	{Key: "stock", Actions: []string{"stock_management", "stock_location_management"}},
 	{Key: "reports", Actions: []string{"reports", "eod_report", "audit"}},
 	{Key: "staff", Actions: []string{"user_management", "permission_management"}},
-	{Key: "settings", Actions: []string{"settings", "sync_management", "data_management"}},
+	{Key: "settings", Actions: []string{"settings", "sync_management", "data_management", "personal_display"}},
 	{Key: "plugins", Actions: []string{"plugin_management"}},
 	{Key: "system", Actions: []string{"issue_reporting"}},
 }
