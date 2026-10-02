@@ -39,9 +39,12 @@ test('refund form: a dropped connection shows a visible message, not a dead butt
   await expect(page.locator('#basket.receipt-view')).toBeVisible();
 
   // The receipt view's own "Refund" button navigates straight to
-  // /refund/<receiptNo> — selecting on the onclick target (not the
-  // localized button text) keeps this independent of locale.
-  await page.locator('button[onclick*="/refund/"]').click();
+  // /refund/<receiptNo> — selecting on the navigation target (not the
+  // localized button text) keeps this independent of locale. ut-docs#3325:
+  // was onclick="window.location='/refund/...'"; the CSP slice-2 conversion
+  // moved it to data-action="go:/refund/..." (web/public/inline-actions.js),
+  // same URL, same selector shape, just a different attribute name.
+  await page.locator('button[data-action*="go:/refund/"]').click();
   await expect(page.locator('#refund-form')).toBeVisible();
 
   await page.route('**/api/refund', (route) => route.abort());

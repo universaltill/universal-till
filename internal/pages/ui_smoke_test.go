@@ -411,6 +411,11 @@ VALUES ('com.tax.plugin', 'receipt_legal', '', 'Receipt Legal', '', 'receipt_tem
 	if !strings.Contains(body, "receipt-printer-warning") || !strings.Contains(body, "receipt-printer-retry") {
 		t.Fatalf("expected printer fallback in response, got: %s", body)
 	}
+	// ut-docs#3325: the retry is inline-actions.js's print step, not an
+	// inline onclick (CSP script-src-attr).
+	if strings.Contains(body, "onclick=") || !strings.Contains(body, `data-action="print"`) {
+		t.Fatalf("printer fallback must use data-action=\"print\", no inline onclick, got: %s", body)
+	}
 }
 
 // seedForPages inserts minimal fixture-specific rows for page rendering, on

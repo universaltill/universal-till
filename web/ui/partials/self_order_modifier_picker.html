@@ -1,7 +1,7 @@
 <div class="modifier-picker">
   <h3>{{ .ItemName }}</h3>
   <form hx-post="/api/self-order/scan-with-modifiers" hx-target="#selforder-cart" hx-swap="outerHTML"
-        hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('selforder-modal'); m.close(); m.innerHTML=''; }">
+        data-after-request="ok close-clear:selforder-modal">
     <input type="hidden" name="code" value="{{ .Code }}">
     <input type="hidden" name="itemId" value="{{ .ItemID }}">
     {{ if .Variants }}
@@ -36,7 +36,7 @@
     {{ end }}
     <div class="modifier-actions">
       <button type="button" class="btn secondary"
-              onclick="var m = document.getElementById('selforder-modal'); m.close(); m.innerHTML='';">
+              data-action="close-clear:selforder-modal">
         {{ T "modifiers.cancel" }}
       </button>
       <button type="submit" class="btn primary">{{ T "modifiers.add_to_cart" }}</button>

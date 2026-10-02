@@ -15,9 +15,11 @@ func TestUsersShiftsSwapRegionNotReload(t *testing.T) {
 		file    string
 		anchors []string
 	}{
-		{"web/ui/pages/users.html", []string{`data-ut-refresh="#users-list"`, `id="users-list"`, "UT.refreshRegion(this)"}},
-		{"web/ui/pages/shifts.html", []string{`<div id="shifts-page" data-ut-refresh="#shifts-page">`, "UT.refreshRegion(this)"}},
-		{"web/ui/partials/elevation_prompt.html", []string{"UT.refreshRegion(t)"}},
+		// ut-docs#3325: the calls live in web/public/inline-actions.js's
+		// refresh-region / elevation-done steps (pinned below).
+		{"web/ui/pages/users.html", []string{`data-ut-refresh="#users-list"`, `id="users-list"`, "ut-ok refresh-region"}},
+		{"web/ui/pages/shifts.html", []string{`<div id="shifts-page" data-ut-refresh="#shifts-page">`, "ok refresh-region"}},
+		{"web/ui/partials/elevation_prompt.html", []string{`data-after-request="elevation-done"`}},
 	}
 	for _, c := range cases {
 		b, err := os.ReadFile(c.file)
@@ -41,6 +43,17 @@ func TestUsersShiftsSwapRegionNotReload(t *testing.T) {
 	if !strings.Contains(string(js), "UT.refreshRegion = function") {
 		t.Error("web/public/app.js: UT.refreshRegion helper missing")
 	}
+	// The steps the templates above name (refresh-region, elevation-done)
+	// are what actually call it (ut-docs#3325).
+	acts, err := os.ReadFile("web/public/inline-actions.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range []string{"UT.refreshRegion(ctx.el)", "UT.refreshRegion(t)"} {
+		if !strings.Contains(string(acts), a) {
+			t.Errorf("web/public/inline-actions.js: missing %q", a)
+		}
+	}
 }
 
 // ut-docs#2762 slice 2: Bluetooth Pair/Forget refresh only the paired
@@ -51,7 +64,7 @@ func TestBluetoothBackfillSwapRegionNotReload(t *testing.T) {
 		anchors []string
 	}{
 		{"web/ui/pages/bluetooth_devices.html", []string{`id="bt-paired" data-ut-refresh="#bt-paired"`, `id="bt-layout"`, "UT.refreshRegion(pairedMsg())"}},
-		{"web/ui/partials/catalog_barcode_backfill.html", []string{"UT.refreshRegion(this)"}},
+		{"web/ui/partials/catalog_barcode_backfill.html", []string{"close:barcode-backfill-modal refresh-region"}},
 		{"web/ui/pages/catalog.html", []string{`data-ut-refresh="#catalog-table"`, "'ut:region-refreshed'"}},
 		{"web/ui/partials/catalog_table.html", []string{`id="catalog-table"`}},
 	}

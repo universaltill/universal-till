@@ -238,6 +238,14 @@ jobs:
         run: bash scripts/ci/guard-autofill-suppression.sh
       - name: Autofill-suppression guard regression test
         run: bash scripts/ci/guard-autofill-suppression_test.sh
+      # ut-docs#3325 (CSP slice 2 of #2913): no onclick=/onerror=/hx-on in
+      # web/ui -- they live in web/public/inline-actions.js as delegated
+      # data-action / data-after-request / ... listeners (never data-on-*:
+      # html/template would JS-escape those), ahead of the enforced CSP (#3327).
+      - name: No-inline-handlers guard
+        run: bash scripts/ci/guard-no-inline-handlers.sh
+      - name: No-inline-handlers guard regression test
+        run: bash scripts/ci/guard-no-inline-handlers_test.sh
       - name: On-screen keyboard guard
         run: bash scripts/ci/guard-osk-loaded.sh
       - name: On-screen keyboard guard regression test

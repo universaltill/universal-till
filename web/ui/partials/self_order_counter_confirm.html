@@ -15,7 +15,7 @@
     </button>
   </form>
   <button type="button" class="btn secondary"
-          onclick="var m = document.getElementById('selforder-modal'); m.close(); m.innerHTML='';">
+          data-action="close-clear:selforder-modal">
     {{ T "modifiers.cancel" }}
   </button>
   <!-- A native <dialog> in its open state makes everything OUTSIDE it

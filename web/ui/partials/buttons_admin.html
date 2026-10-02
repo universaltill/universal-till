@@ -124,7 +124,7 @@ document.body.addEventListener('htmx:afterRequest', function(evt) {
             hx-target="#buttons-add-error"
             hx-swap="innerHTML"
             hx-vals='{{ .AddVals }}'
-            hx-on="htmx:afterRequest: if(event.detail.successful){document.getElementById('search-results').style.display='none';}">
+            data-after-request="ok hide-display:search-results">
       {{ if .Image }}<img class="thumb" src="{{ .Image }}" alt="{{ .Name }}" />{{ end }}
       <span class="text">
         <strong>{{ .Name }}</strong><br/>

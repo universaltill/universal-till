@@ -6,7 +6,7 @@
      app.js empties a closed picker before its own GET. */}}
   <h3>{{ .ItemName }}</h3>
   <form hx-post="/api/pos/scan-with-modifiers" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-        hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('modifier-modal'); m.close(); }">
+        data-after-request="ok close:modifier-modal">
     <input type="hidden" name="code" value="{{ .Code }}">
     <input type="hidden" name="itemId" value="{{ .ItemID }}">
     <input type="hidden" name="qty" value="{{ .Qty }}">
@@ -42,7 +42,7 @@
     {{ end }}
     <div class="modifier-actions">
       <button type="button" class="btn secondary"
-              onclick="document.getElementById('modifier-modal').close();">
+              data-action="close:modifier-modal">
         {{ T "modifiers.cancel" }}
       </button>
       <button type="submit" class="btn primary">{{ T "modifiers.add_to_cart" }}</button>

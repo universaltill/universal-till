@@ -51,7 +51,7 @@
        own before — a successful retry swapped its confirmation into
        HxTarget but left the dialog sitting open over what, on users.html's
        4 sites, is now a stale row (the outer form's own reload only fires
-       from ITS OWN hx-on::after-request, never from a submit through this
+       from ITS OWN after-request hook, never from a submit through this
        separate dialog form). X-UT-Response (elevation.go's
        renderElevationPrompt / users_page.go's usersRespondOK|Error — see
        users.html's own comment on the same header) tells the three
@@ -76,7 +76,7 @@
        closes the dialog (itself already a strict improvement over never
        closing at all) but never auto-refreshes — no worse than before. */}}
   <form hx-post="{{ .Action }}" hx-target="{{ .HxTarget }}" hx-swap="innerHTML"
-        hx-on::after-request="var xr=(event.detail.xhr.getResponseHeader('X-UT-Response')||''); if (xr!=='elevation-prompt'){ this.closest('dialog').close(); if (xr==='ok'){ var t=null; try { t=document.querySelector(this.getAttribute('hx-target')); } catch (e) {} var f=t&&t.closest('form[data-ut-reset-on-ok]'); if (f) f.reset(); UT.refreshRegion(t); } }">
+        data-after-request="elevation-done">
     <h3>{{ T "elevation.prompt_title" }} {{ helpLink "elevation" }}</h3>
     <p class="muted">{{ T "elevation.prompt_help" }}</p>
     {{ if .Summary }}<p class="elevation-summary">{{ .Summary }}</p>{{ end }}
@@ -99,7 +99,7 @@
     {{ if .ErrKey }}<div class="login-error">{{ T .ErrKey }}</div>{{ end }}
     <div class="modifier-actions">
       <button type="button" class="btn secondary"
-              onclick="this.closest('dialog').close();">
+              data-action="close-closest">
         {{ T "common.cancel" }}
       </button>
       <button type="submit" class="btn primary">{{ T "elevation.submit" }}</button>

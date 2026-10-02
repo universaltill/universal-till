@@ -94,7 +94,7 @@ func TestSKUBackfillCommit_AssignsThenPreviewEmpty(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "Assigned 2 SKU(s).") {
 		t.Fatalf("result must report the count: %s", rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "UT.refreshRegion(this)") {
+	if !strings.Contains(rec.Body.String(), "close:sku-backfill-modal refresh-region") {
 		t.Fatalf("result Close must refresh the catalog grid: %s", rec.Body.String())
 	}
 	if n := missingSKUCount(t, db); n != 0 {
