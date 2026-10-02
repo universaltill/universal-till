@@ -1483,6 +1483,43 @@ func TestRemoveDemoCatalogueKeepsAgeCheckedItem(t *testing.T) {
 	}
 }
 
+// seedShrinkageOnlyEvent records a voided line against itemID. shrinkage_events
+// is live-only (reset-transactions does not archive it).
+func seedShrinkageOnlyEvent(t *testing.T, d *db.DB, itemID string) {
+	t.Helper()
+	if _, err := d.DB.Exec(`INSERT INTO shrinkage_events (id, reason_category, item_id, item_name, quantity, unit_price_minor, extended_value_minor, created_at)
+		VALUES ('se-1','void','` + itemID + `','Voided item',1,100,100,'2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed shrinkage event: %v", err)
+	}
+}
+
+// ut-docs#3394: a demo item that was only ever voided/comped/wasted has a
+// shrinkage_events row (item_id FK, no ON DELETE action) but no sale_lines/
+// stock_movements, so "Remove sample data" tried to delete it and the FK
+// rolled back the whole removal. Both scripts must keep it as "history".
+func TestRemoveDemoCatalogueKeepsShrinkageItem(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		d := openDemoSeedTestDB(t)
+		ctx := context.Background()
+		repo := NewDemoSeedRepo(d.DB)
+		if err := repo.SeedDemoCatalogue(ctx); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		if strict {
+			seedRealSale(t, d, "own-1", "s-1")
+		}
+		seedShrinkageOnlyEvent(t, d, "itm003")
+
+		removed, kept, err := repo.RemoveDemoCatalogue(ctx)
+		if err != nil {
+			t.Fatalf("strict=%v RemoveDemoCatalogue must not fail on a shrinkage item: %v", strict, err)
+		}
+		if removed != 51 || len(kept) != 1 || kept[0].ID != "itm003" || kept[0].Reason != KeptReasonHistory {
+			t.Fatalf("strict=%v: removed %d, kept %+v; want 51 removed and itm003/history kept", strict, removed, kept)
+		}
+	}
+}
+
 // Same predicate, archived: after a reset the reference lives in
 // age_verifications_archive, and deleting the item would make that batch
 // unrestorable (ErrArchiveReferencesRemoved).
@@ -1523,6 +1560,23 @@ func TestRemoveDemoItemRefusesAgeCheckedItem(t *testing.T) {
 	seedRefusedAgeCheck(t, d, "itm001")
 
 	if err := repo.RemoveDemoItem(ctx, "itm001"); !errors.Is(err, ErrDemoItemHasHistory) {
+		t.Fatalf("RemoveDemoItem = %v, want ErrDemoItemHasHistory", err)
+	}
+}
+
+// ut-docs#3394 review: the single-item "remove anyway" path shares
+// demoItemReasonCaseSQL, so a shrinkage-only demo item must be refused with
+// ErrDemoItemHasHistory, not a raw FOREIGN KEY failure.
+func TestRemoveDemoItemRefusesShrinkageItem(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	seedShrinkageOnlyEvent(t, d, "itm003")
+
+	if err := repo.RemoveDemoItem(ctx, "itm003"); !errors.Is(err, ErrDemoItemHasHistory) {
 		t.Fatalf("RemoveDemoItem = %v, want ErrDemoItemHasHistory", err)
 	}
 }

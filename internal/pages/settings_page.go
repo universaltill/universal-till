@@ -787,7 +787,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// drift here degrades to the old extra round trip, never to a
 			// bypass.
 			"androidUpdateSessionAuth": androidUpdateSessionAuthorizes(d, r),
-			"printer":                  printerConfig(r.Context(), d),
+			"printer":                  printerConfigForSettings(r.Context(), d),
+			// ADR-0124: the receipt policy above is the shop's stored choice;
+			// in a forbidden market the till still prints nothing, and says so.
+			"receiptPolicyShadowNote": customerDocumentsSuppressed(r.Context(), d),
 			// ADR-0089 addendum (2026-09-16, ut-docs#2286): Decision 3's DE
 			// lock is rescinded — German shops choose freely among the three
 			// policies. This only decides whether the factual advisory shows

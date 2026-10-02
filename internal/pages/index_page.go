@@ -216,9 +216,11 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			"aiIdentify":           aiService(r.Context(), d).Enabled(),
 			"fiscalOverrideActive": fiscalOverrideActive,
 			"fiscalOverrideUntil":  fiscalOverrideUntil,
-			"tseKickoffRejected":   tseRejectedView,
-			"payItemCount":         payItemCount,
-			"payTotal":             payTotal,
+			// ADR-0124 §4: staff always see why no receipt appears.
+			"shadowDocumentsSuppressed": customerDocumentsSuppressed(r.Context(), d),
+			"tseKickoffRejected":        tseRejectedView,
+			"payItemCount":              payItemCount,
+			"payTotal":                  payTotal,
 			// ut-docs#2308: the basket/products divider's persisted position
 			// (0 = unset, use app.css's own built-in split) — see
 			// common.RuntimeState.BasketPanelWidthRem's own doc comment.

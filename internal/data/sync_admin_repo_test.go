@@ -1986,6 +1986,48 @@ func TestAdminApplyCountrySettings_ClampsArchiveMinDaysToGlobalFloor(t *testing.
 	}
 }
 
+// TestAdminApplyCountrySettings_RatchetsShadowCustomerDocuments is ADR-0124
+// §1 (ut-docs#3169): ApplyAdmin writes columns raw, so a buggy, rolled-back
+// or crafted primary bundle could otherwise turn a market whose compiled
+// default is "forbidden" back to "allowed" on a satellite. An incoming
+// "allowed" for such a code is written as "forbidden"; every other code
+// passes through exactly as sent, in both directions.
+func TestAdminApplyCountrySettings_RatchetsShadowCustomerDocuments(t *testing.T) {
+	ctx := context.Background()
+	replica := openMigratedDB(t, "replica.db")
+
+	row := func(code, nameKey, shadow string) map[string]any {
+		return map[string]any{
+			"code": code, "name_key": nameKey, "currency": "EUR",
+			"currency_symbol": "", "tax_rate_bp": int64(2000), "tax_inclusive": int64(1),
+			"archive_min_days": int64(GlobalArchiveMinDays), "is_builtin": int64(1),
+			"updated_at": "2026-10-01T00:00:00Z", "default_locale": "",
+			"shadow_customer_documents": shadow,
+		}
+	}
+	bundle := AdminBundle{Tables: map[string][]map[string]any{
+		"country_settings": {
+			row("PT", "setup.country.pt", "allowed"),   // must be ratcheted
+			row("FR", "setup.country.fr", "allowed"),   // passes through
+			row("ES", "setup.country.es", "forbidden"), // passes through (tightening is fine)
+		},
+	}}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	want := map[string]string{"PT": "forbidden", "FR": "allowed", "ES": "forbidden"}
+	for code, w := range want {
+		var got string
+		if err := replica.QueryRow(`SELECT shadow_customer_documents FROM country_settings WHERE code = ?`, code).Scan(&got); err != nil {
+			t.Fatalf("%s: %v", code, err)
+		}
+		if got != w {
+			t.Errorf("%s: shadow_customer_documents = %q after sync, want %q", code, got, w)
+		}
+	}
+}
+
 // ADR-0099 Decision 2 (ut-docs#2348, resolving ut-docs#1671): price_history
 // stays OUT of adminTables, so a satellite that already holds an open
 // price_history row (ends_at IS NULL) for an item/variant keeps charging

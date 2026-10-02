@@ -9,6 +9,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -38,6 +39,11 @@ type countryRow struct {
 	data.CountrySetting
 	TaxRatePct string // basis points rendered back as a percent for the form
 	AtFloor    bool
+	// ShadowDocumentsForbidden is ADR-0124's EFFECTIVE per-market value —
+	// the stored row or the compiled builtin floor — shown read-only so an
+	// operator can see why a shadow till issues no customer documents.
+	// The form has no input for it; Upsert ignores it anyway.
+	ShadowDocumentsForbidden bool
 }
 
 // countrySettingsRedirectTarget carries the "all=1" view state through a
@@ -184,6 +190,8 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 				CountrySetting: c,
 				TaxRatePct:     formatBPAsPercent(c.TaxRateBP),
 				AtFloor:        c.ArchiveMinDays == data.GlobalArchiveMinDays,
+				ShadowDocumentsForbidden: c.ShadowCustomerDocuments == fiscal.ShadowDocumentsForbidden ||
+					data.BuiltinShadowDocumentsForbidden(c.Code),
 			})
 		}
 		countrySettingsData := map[string]any{
