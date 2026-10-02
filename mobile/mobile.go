@@ -26,11 +26,12 @@
 // types (strings, ints, bools, []byte, error, and a few others — no generics,
 // no complex struct fields crossing directly) — this package's exported
 // surface is deliberately minimal for that reason: three lifecycle
-// functions plus one setter, SetBluetoothBridge, whose argument is the one
-// exported interface type declared IN this package, BluetoothBridge
-// (ADR-0080). It must be declared here rather than merely referenced from
-// internal/bluetooth: gobind only binds types from the package named on its
-// command line, so a type from an unbound package compiles and builds a
+// functions plus a few setters; SetBluetoothBridge and SetDiscoveryBridge
+// take the exported interface types declared IN this package,
+// BluetoothBridge (ADR-0080) and DiscoveryBridge (ut-docs#3218). Each must
+// be declared here rather than merely referenced from its internal
+// package (internal/bluetooth, internal/discovery): gobind only binds
+// types from the package named on its command line, so a type from an unbound package compiles and builds a
 // green .aar while silently dropping the function that referenced it (see
 // BluetoothBridge's own doc comment for how this was found). The interface
 // is itself built from bind-safe types only (string/int64/error), and the
@@ -69,6 +70,7 @@ import (
 	"github.com/universaltill/universal-till/internal/app"
 	"github.com/universaltill/universal-till/internal/bluetooth"
 	"github.com/universaltill/universal-till/internal/diagnostics"
+	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/listenport"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/procrestart"
@@ -506,6 +508,35 @@ type BluetoothBridge interface {
 // verification were the separate follow-up ut-docs#1731.
 func SetBluetoothBridge(b BluetoothBridge) {
 	bluetooth.SetAndroidBridge(b)
+}
+
+// DiscoveryBridge is the gomobile-bind-visible mirror of
+// discovery.NativeBridge (ut-docs#3218), declared here for the same reason as
+// BluetoothBridge above: gobind binds only types declared in ./mobile. The
+// iOS shell implements it in Swift (BonjourBridge.swift: NWBrowser to browse,
+// DNSServiceRegister to advertise), because hashicorp/mdns's raw multicast
+// sockets need an Apple entitlement the app does not have. Kept structurally
+// identical to discovery.NativeBridge, so SetDiscoveryBridge passes its
+// argument straight through; a mismatch is a compile error there.
+type DiscoveryBridge interface {
+	// Browse runs one bounded browse for serviceType and returns JSON:
+	// {"entries":[{"name","host","port","txt":["k=v",…]}],"error":""}.
+	// error is "local_network_denied" when the Local Network permission
+	// was refused.
+	Browse(serviceType string, timeoutMillis int64) string
+	// Advertise publishes instance under serviceType on port; txtJSON is a
+	// JSON array of "key=value" strings. Returns "" on success.
+	Advertise(instance, serviceType string, port int64, txtJSON string) string
+	// StopAdvertising withdraws the advertisement, if any.
+	StopAdvertising()
+}
+
+// SetDiscoveryBridge registers the platform's own service-discovery API with
+// internal/discovery (ut-docs#3218). The iOS shell calls it once, before
+// MobileStart, so the first advertisement already goes through Bonjour.
+// Passing nil un-registers, restoring the hashicorp/mdns default.
+func SetDiscoveryBridge(b DiscoveryBridge) {
+	discovery.SetNativeBridge(b) // a nil DiscoveryBridge converts to a nil NativeBridge
 }
 
 // SetDeviceModel registers the on-device hardware model string (Android's

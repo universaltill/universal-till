@@ -77,8 +77,8 @@ targets:
         # with this one (ADR-0033, ut-docs#1256) and advertises over mDNS.
         # Texts are translated in <lang>.lproj/InfoPlist.strings.
         NSLocalNetworkUsageDescription: Universal Till finds and syncs with the other tills in your shop over the local network.
-        # Go's mDNS uses raw multicast, so the real gate is the multicast
-        # entitlement (README); these are declared for completeness.
+        # Discovery goes through Bonjour (BonjourBridge.swift, ut-docs#3218),
+        # which may browse and advertise only the types declared here.
         NSBonjourServices:
           - _unitill-sync._tcp
           - _pdl-datastream._tcp

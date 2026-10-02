@@ -16,6 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/bluetooth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/listenport"
 	"github.com/universaltill/universal-till/internal/procrestart"
 	"github.com/universaltill/universal-till/internal/recovery"
@@ -886,5 +887,37 @@ func TestStart_PortTakenByAnHTTPServer_RetriesInsteadOfTrustingIt(t *testing.T) 
 	resp.Body.Close()
 	if resp.Header.Get("X-Foreign") != "" {
 		t.Fatal("the returned address is served by the port's other holder, not the till")
+	}
+}
+
+// DiscoveryBridge and discovery.NativeBridge must stay method-for-method
+// identical (ut-docs#3218): SetDiscoveryBridge relies on structural
+// conversion, and the Swift shell implements the gobind protocol of the
+// former. Both directions, so a method added to either side alone fails here.
+var (
+	_ discovery.NativeBridge = DiscoveryBridge(nil)
+	_ DiscoveryBridge        = discovery.NativeBridge(nil)
+)
+
+type stubDiscoveryBridge struct{ browsed string }
+
+func (s *stubDiscoveryBridge) Browse(serviceType string, _ int64) string {
+	s.browsed = serviceType
+	return `{"entries":[{"name":"m","host":"192.168.1.136","port":8080,"txt":["id=main","name=Shop"]}],"error":""}`
+}
+func (s *stubDiscoveryBridge) Advertise(string, string, int64, string) string { return "" }
+func (s *stubDiscoveryBridge) StopAdvertising()                               {}
+
+func TestSetDiscoveryBridge_RoutesDiscoveryThroughIt(t *testing.T) {
+	stub := &stubDiscoveryBridge{}
+	SetDiscoveryBridge(stub)
+	t.Cleanup(func() { SetDiscoveryBridge(nil) })
+
+	got, err := discovery.Browse(context.Background(), time.Second)
+	if err != nil {
+		t.Fatalf("discovery.Browse: %v", err)
+	}
+	if stub.browsed != discovery.ServiceName || len(got) != 1 || got[0].TillID != "main" {
+		t.Fatalf("Browse = %+v (bridge asked for %q); want the bridge's one till", got, stub.browsed)
 	}
 }
