@@ -133,3 +133,50 @@ for (const w of [360, 440]) {
     });
   });
 }
+
+// ut-docs#3361: the post-sale receipt (web/ui/partials/receipt.html) is an
+// htmx swap into #basket, never its own GET route, so it can't join the
+// ROUTES sweep above -- this is its guard. The owner reported the
+// rightmost action button (Print / New Customer / Refund) clipped off the
+// right edge at phone width; reproduce the same tender flow phone-sell-3059
+// uses and check every button in the row against the viewport directly,
+// rather than trusting the all-routes sweep to somehow reach a view it
+// structurally cannot.
+for (const w of [360, 440]) {
+  test.describe(`phone ${w}px post-sale receipt actions (ut-docs#3361)`, () => {
+    test.use({ viewport: { width: w, height: 844 }, hasTouch: true, isMobile: true });
+    test(`receipt action row at ${w}px: no button clips past the right edge`, async ({ page }) => {
+      await page.request.post('/api/pos/reset');
+      await page.goto('/');
+      await page.locator('.pos-container .btn-tile[hx-post="/api/pos/scan"]').first().click();
+      await page.locator('.basket-phonebar').click();
+      await page.getByTestId('payment-open').click();
+      await Promise.all([
+        page.waitForResponse((r) => r.url().includes('/api/pos/tender')),
+        page.locator('#payment-overlay').getByTestId('pay-default').click(),
+      ]);
+      await expect(page.locator('#basket.receipt-view')).toBeVisible();
+      // toBeInViewport() only needs partial overlap (its default ratio is
+      // 0), so it would pass a button already clipped most of the way off
+      // -- this needs the exact edges. Review finding (2026-10-02): the
+      // element that actually clips is .pos-container (overflow:hidden in
+      // app.css), not the bare viewport width -- comparing against vw left
+      // a gap between .pos-container's real edge and the viewport where a
+      // button could still visibly clip and this test would miss it.
+      // Compare against .pos-container's own rect on both sides, so this
+      // also catches a left-edge clip in an RTL locale.
+      const info = await page.evaluate(() => {
+        const box = document.querySelector('.pos-container')!.getBoundingClientRect();
+        const rects = Array.from(document.querySelectorAll('.receipt-wrap .actions .btn'))
+          .map((b) => { const r = b.getBoundingClientRect(); return { text: (b.textContent || '').trim(), left: r.left, right: r.right }; });
+        return { boxLeft: box.left, boxRight: box.right, rects };
+      });
+      expect(info.rects.length).toBeGreaterThan(0);
+      for (const r of info.rects) {
+        expect(r.right, `"${r.text}" right=${r.right} containerRight=${info.boxRight}`).toBeLessThanOrEqual(info.boxRight + 1);
+        expect(r.left, `"${r.text}" left=${r.left} containerLeft=${info.boxLeft}`).toBeGreaterThanOrEqual(info.boxLeft - 1);
+      }
+      await page.request.post('/api/pos/reset');
+    });
+  });
+}
