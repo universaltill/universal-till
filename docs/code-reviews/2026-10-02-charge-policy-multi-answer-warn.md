@@ -46,3 +46,6 @@
   log line only).
 
 **Verdict:** safe to merge.
+- CI `guard-docs-shots.sh` tripped on the `internal/pages/*.go` edit; the
+  change renders no pixel (a log line + an asker field), so the surface hash
+  was refreshed with `update-docs-shots-surface-hash.sh` (`Docs-Shots-Unchanged: true`).
