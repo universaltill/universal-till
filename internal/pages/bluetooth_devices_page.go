@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"runtime"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
@@ -61,6 +62,13 @@ const scanCallTimeout = discoverBluetoothTimeout + 15*time.Second
 // seam-for-testability pattern as discoveryBrowsePrinters — handler tests
 // substitute a fake; there is no Bluetooth adapter (or system bus) in CI.
 var newBluetoothClient = bluetooth.NewDBusClient
+
+// bluetoothPlatform is runtime.GOOS, a var only so tests can render the
+// iPhone/iPad variant of the page (ut-docs#3261): there the till cannot
+// scan or pair at all — iOS pairs scanners/keyboards in its own Settings
+// app — so the page sends the operator there instead of offering a Scan
+// button that can never work.
+var bluetoothPlatform = runtime.GOOS
 
 // registerBluetoothDevices wires the page and its four JSON endpoints.
 func registerBluetoothDevices(mux *http.ServeMux, d *common.Deps) {
@@ -246,6 +254,7 @@ func registerBluetoothDevices(mux *http.ServeMux, d *common.Deps) {
 			"adapterOff":         adapterOff,
 			"permissionRequired": permissionRequired,
 			"errKey":             errKey,
+			"ios":                bluetoothPlatform == "ios",
 		})(w, r)
 	})
 

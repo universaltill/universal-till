@@ -2990,5 +2990,7 @@
   "settings.store_name.error_required": "Dükkânınızın adını girin. Her fişe basılır.",
   "settings.store_name.error_too_long": "Dükkân adı en fazla 80 karakter olabilir.",
   "settings.store_name.error_invalid_chars": "Dükkân adı satır sonu, sekme veya gizli karakter içeremez.",
-  "elevation.summary.store_name": "Dükkânı \"%s\" olarak yeniden adlandır."
+  "elevation.summary.store_name": "Dükkânı \"%s\" olarak yeniden adlandır.",
+  "bluetoothdevices.ios_system_pairing": "iPhone ve iPad'de barkod okuyucuyu veya klavyeyi Ayarlar uygulaması → Bluetooth bölümünden eşleştirin. Eşleştirildikten sonra kasaya klavye gibi yazar — burada başka bir ayar gerekmez.",
+  "bluetoothdevices.ios_no_printers": "Bluetooth fiş yazıcıları ve teraziler iPhone veya iPad'den kullanılamaz. Bunun yerine ağ (Wi-Fi veya Ethernet) fiş yazıcısı kullanın."
 }

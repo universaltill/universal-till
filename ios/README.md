@@ -120,7 +120,13 @@ The server binds every interface so other tills can pair with this one
   tills; pairing by code / IP address works regardless. Tracked in
   ut-docs#3069.
 - **Android-only bridges have no iOS counterpart yet** — file downloads
-  (exports), the bug-report screenshot, the self-order kiosk lock (Guided
-  Access) and Bluetooth printers/scanners: ut-docs#3071.
+  (exports), the bug-report screenshot and the self-order kiosk lock
+  (Guided Access): ut-docs#3071.
+- **No in-app Bluetooth pairing, by design** (ut-docs#3261): iOS keeps
+  scanners and keyboards (HID) for the system and never exposes them to an
+  app through Core Bluetooth, so they pair in **Settings → Bluetooth** and
+  type into the WebView like a keyboard. The Bluetooth devices page says so
+  on iOS instead of offering a Scan button. Bluetooth receipt printing has
+  no transport on any platform yet.
 - **Not device-checked yet** — offline sale, rotation, long background,
   pairing on a real iPhone/iPad: ut-docs#3070.

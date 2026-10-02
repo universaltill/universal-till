@@ -2990,5 +2990,7 @@
   "settings.store_name.error_required": "نام فروشگاه خود را وارد کنید. روی هر رسید چاپ می‌شود.",
   "settings.store_name.error_too_long": "نام فروشگاه حداکثر می‌تواند ۸۰ نویسه باشد.",
   "settings.store_name.error_invalid_chars": "نام فروشگاه نمی‌تواند شکست خط، تب یا نویسه‌های پنهان داشته باشد.",
-  "elevation.summary.store_name": "تغییر نام فروشگاه به «%s»."
+  "elevation.summary.store_name": "تغییر نام فروشگاه به «%s».",
+  "bluetoothdevices.ios_system_pairing": "در iPhone و iPad، بارکدخوان یا صفحه‌کلید را در برنامهٔ Settings ← Bluetooth جفت کنید. پس از جفت شدن، مانند یک صفحه‌کلید در صندوق تایپ می‌کند — اینجا تنظیم دیگری لازم نیست.",
+  "bluetoothdevices.ios_no_printers": "چاپگرهای رسید و ترازوهای بلوتوثی را نمی‌توان از iPhone یا iPad استفاده کرد. به جای آن از چاپگر رسید شبکه‌ای (Wi-Fi یا Ethernet) استفاده کنید."
 }

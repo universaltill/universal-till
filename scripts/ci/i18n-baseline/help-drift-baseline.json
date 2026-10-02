@@ -7,17 +7,17 @@
         "headings": 3,
         "numbered_steps": 4,
         "sub_bullets": 3,
-        "top_bullets": 7,
-        "bold_leadins": 2
+        "top_bullets": 8,
+        "bold_leadins": 3
       },
       "english": {
         "headings": 3,
         "numbered_steps": 4,
         "sub_bullets": 3,
-        "top_bullets": 7,
-        "bold_leadins": 3
+        "top_bullets": 8,
+        "bold_leadins": 4
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#3261: English and every locale gained one bold-led iPhone/iPad bullet; the pre-existing bold-lead-in gap is unchanged in size, just shifted."
     },
     {
       "locale": "ar",
