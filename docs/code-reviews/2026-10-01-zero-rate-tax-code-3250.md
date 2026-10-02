@@ -96,3 +96,12 @@ whole build-job guard list was then run; all pass except
 lacks (no shell script is touched).
 
 **Verdict:** safe to merge.
+
+## Addendum: release note (follow-up PR)
+
+The v0.30.16 owner-facing notes were merged before this fix but the release
+had not been dispatched, so it ships from a `main` that includes the fix. A
+follow-up PR adds a "Fixed" bullet to `web/release-notes/*/v0.30.16.md` in
+all five languages, saying what changes for a shop with 0% tax codes. Text
+checked against the existing bullets in each file (terminology, no PR or
+card numbers, placeholders none). Self-reviewed: notes only, no code.
