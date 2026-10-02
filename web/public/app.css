@@ -4288,6 +4288,10 @@ body.login-screen {
 .users-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
 .users-inline { display: inline-flex; gap: .35rem; margin: 0; }
 .users-inline input { width: 7.5rem; }
+/* ut-docs#3324: a custom role's label is the shop's own text (up to 40
+   characters); cap the role picker so a long one can't push the row's
+   Change role button out of the card. */
+.users-inline select.users-role-pick { max-inline-size: 9rem; }
 /* Rename-field inputs (locations/registers "name" text input) hold longer,
    free-text names than the other .users-inline inputs (PIN, printer
    address, search, the country_settings checkbox) — a fixed 7.5rem clips
@@ -4334,6 +4338,9 @@ body.login-screen {
 .perm-desc, .perm-unlocks { display: block; font-size: .8rem; line-height: 1.35; margin-block-start: .15rem; }
 .perm-unlocks { font-weight: 600; }
 .perm-table .perm-cell { text-align: center; min-inline-size: 4.5rem; }
+/* ut-docs#3324: a custom role's column (ADR-0128 §6) says, under its
+   label, where it is edited; its cells are disabled. */
+.perm-cloud-note { display: block; font-size: .75rem; font-weight: 400; text-transform: none; letter-spacing: normal; }
 .perm-table .perm-group-head { background: var(--surface-2); padding-block: .4rem; }
 .perm-group-label { position: sticky; inset-inline-start: .6rem; }
 /* ut-docs#3359: on a phone the matrix is a card list like every other

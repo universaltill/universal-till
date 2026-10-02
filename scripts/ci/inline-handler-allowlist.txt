@@ -1,0 +1,7 @@
+# Reviewed exceptions to scripts/ci/guard-no-inline-handlers.sh (ut-docs#3325).
+#
+# One `web/ui/<path>:<line>` per line, exactly as `grep -rn` prints it from
+# the repo root. Each entry needs a same-file comment in the template
+# explaining why that handler cannot move to web/public/inline-actions.js.
+# Shrink-only: an entry here is a script-src-attr violation the enforced CSP
+# (ut-docs#3327) will block.

@@ -19,6 +19,8 @@
          can't be app.js. No text inputs on this screen today, but a future
          one is covered without needing to remember this file. -->
     <script defer src="/public/autofill.js?v={{ assetv "public/autofill.js" }}"></script>
+    <!-- ut-docs#3325: data-action / data-* hooks (see base.html). -->
+    <script defer src="/public/inline-actions.js?v={{ assetv "public/inline-actions.js" }}"></script>
   </head>
   <body class="selforder-screen{{ if kiosk }} kiosk{{ end }}" data-kiosk-idle-reset="{{ .idleResetSecs }}">
     <a class="selforder-exit" href="/login?next=kiosk" aria-label="{{ T "selforder.exit" }}"><span aria-hidden="true">🔒</span></a>
@@ -47,7 +49,7 @@
       <h1>{{ T "selforder.table_busy.title" }}</h1>
       <p class="selforder-hint">{{ T "selforder.table_busy.hint" }}</p>
       {{ end }}
-      <button type="button" class="btn primary selforder-start" onclick="location.reload()">
+      <button type="button" class="btn primary selforder-start" data-action="reload-page">
         {{ T "selforder.table_busy.retry" }}
       </button>
       {{ else }}

@@ -83,18 +83,38 @@ func ApplyRotatedCredential(ctx context.Context, kv Settings, deviceID, token st
 		retryUnsaved(ctx, kv)
 		return
 	}
-	// Memory first: the cloud answers this pair once, so even if the write
-	// below fails, this process uses the new credential and retries saving.
+	if adoptOwnCredential(ctx, kv, token, "") {
+		log.Infof("enrolment: this till now uses its own cloud credential (device %s, ADR-0116 D4)", own)
+	}
+}
+
+// adoptOwnCredential makes token — this till's own cloud credential, which
+// the cloud hands out exactly once (a D4 rotation, or a D3 redemption) —
+// the live bearer and saves it under marketplace.token. Memory first: even
+// if the write fails, this process uses the new credential and the write is
+// retried (retryUnsaved). storeID, when non-empty, fills an empty in-memory
+// store id (never persisted: marketplace.store_id is shop-wide and owned by
+// the admin sync) so the till counts as registered without a restart; an
+// env-pinned store id is left alone. The caller has validated token and
+// checked the env pin. Reports whether the token was saved. Never logs the
+// token.
+func adoptOwnCredential(ctx context.Context, kv Settings, token, storeID string) bool {
 	mu.Lock()
 	cur.Token = token
+	if storeID != "" && cur.StoreID == "" && !storeIDExplicit {
+		cur.StoreID = storeID
+		if displayStoreID == "" {
+			displayStoreID = storeID
+		}
+	}
 	mu.Unlock()
 	unsavedToken.Store(true)
 	if err := kv.Set(ctx, keyToken, token); err != nil {
-		log.Warnf("enrolment: this till's new cloud credential is in use but not yet saved (will retry on the next sync): %v", err)
-		return
+		logging.L().Warnf("enrolment: this till's new cloud credential is in use but not yet saved (will retry on the next sync): %v", err)
+		return false
 	}
 	unsavedToken.Store(false)
-	log.Infof("enrolment: this till now uses its own cloud credential (device %s, ADR-0116 D4)", own)
+	return true
 }
 
 // RetryUnsavedCredential is retryUnsaved for the check-in tick, which runs

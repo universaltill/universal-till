@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
@@ -117,23 +118,35 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
+		// Custom roles (ADR-0128 §3, §6) show by label and are offered in
+		// the role pickers of an admin or super_admin (assigning one needs
+		// an admin, like manager/admin).
+		customRoles, err := repo.ListCustomRoles(r.Context())
+		if err != nil {
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
+			return
+		}
+		locale := httpx.RequestLocale(r)
 		type row struct {
 			data.UserRow
-			HasPIN  bool
-			CanEdit bool
+			HasPIN    bool
+			CanEdit   bool
+			RoleLabel string
 		}
 		rows := make([]row, 0, len(users))
 		for _, u := range users {
 			if u.ID == "system" {
 				continue // service identity, not an operator
 			}
-			rows = append(rows, row{UserRow: u, HasPIN: u.PinHash != "", CanEdit: canManage(actor, u)})
+			rows = append(rows, row{UserRow: u, HasPIN: u.PinHash != "", CanEdit: canManage(actor, u),
+				RoleLabel: userRoleLabel(locale, u.Role, customRoles)})
 		}
 		httpx.Render("ui/pages/users.html", map[string]any{
-			"title":     httpx.T(httpx.RequestLocale(r), "page.title.users"),
-			"theme":     d.CurrentState().Theme,
-			"menuItems": d.MenuSnapshot(),
-			"users":     rows,
+			"title":       httpx.T(locale, "page.title.users"),
+			"theme":       d.CurrentState().Theme,
+			"menuItems":   d.MenuSnapshot(),
+			"users":       rows,
+			"customRoles": customRoles,
 			// super_admin is the top of the role hierarchy (canManage
 			// above already treats it that way) — it must see at least
 			// what a plain admin sees, including the manager/admin role
@@ -155,7 +168,10 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		username, display, role := r.PostFormValue("username"), r.PostFormValue("display_name"), r.PostFormValue("role")
-		if !isAssignableUserRole(role) {
+		if ok, err := isAssignableUserRole(r.Context(), repo, role); err != nil || !ok {
+			if err != nil {
+				logging.L().Errorf("create user: role check: %v", err)
+			}
 			usersRespondError(w, r, "users.error.role")
 			return
 		}
@@ -173,7 +189,7 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if elev.Outcome == needsElevation {
 			locale := httpx.ResolveLocale(w, r)
 			renderElevationPrompt(w, r, "/api/users", "#new-user-msg",
-				fmt.Sprintf(httpx.T(locale, "elevation.summary.user_create"), display, userRoleLabel(locale, role)),
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.user_create"), display, userRoleLabel(locale, role, customRolesForLabels(r.Context(), repo, role))),
 				[]elevationHiddenField{
 					{Name: "username", Value: username},
 					{Name: "display_name", Value: display},
@@ -515,7 +531,10 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		_ = r.ParseForm()
 		newRole := r.PostFormValue("role")
-		if !isAssignableUserRole(newRole) {
+		if ok, err := isAssignableUserRole(r.Context(), repo, newRole); err != nil || !ok {
+			if err != nil {
+				logging.L().Errorf("role change for user %s: role check: %v", target.ID, err)
+			}
 			usersRespondError(w, r, "users.error.role")
 			return
 		}
@@ -535,8 +554,10 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		elev := checkOrElevate(d, r, "user_management", r.PostFormValue("override_pin"))
 		if elev.Outcome == needsElevation {
 			locale := httpx.ResolveLocale(w, r)
+			custom := customRolesForLabels(r.Context(), repo, target.Role, newRole)
 			renderElevationPrompt(w, r, r.URL.Path, "#user-msg-"+target.ID,
-				fmt.Sprintf(httpx.T(locale, "elevation.summary.user_role_change"), target.DisplayName, userRoleLabel(locale, target.Role), userRoleLabel(locale, newRole)),
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.user_role_change"), target.DisplayName,
+					userRoleLabel(locale, target.Role, custom), userRoleLabel(locale, newRole, custom)),
 				[]elevationHiddenField{{Name: "role", Value: newRole}}, elev)
 			return
 		}
@@ -565,8 +586,10 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		} else if actingUser.Role != "admin" && actingUser.Role != "super_admin" {
 			// The newRole==target.Role return above already guarantees this
 			// branch is only reached when at least one side is manager/admin
-			// (both being "cashier" would mean they're equal) — so the actor
-			// check alone is the whole condition; ut-docs#766 review finding 4.
+			// or a custom role (both being "cashier" would mean they're
+			// equal) — so the actor check alone is the whole condition;
+			// ut-docs#766 review finding 4. A custom role is assigned and
+			// removed by admins only, like manager/admin (ADR-0128 §6).
 			http.Error(w, "only admins change managers or admins", http.StatusForbidden)
 			return
 		}
@@ -666,8 +689,35 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 // users.role.%s key and T()-falls-back-to-the-raw-key-if-missing shape
 // permission_settings_page.go's own permissionChangeSummary already uses
 // for the identical problem on the permissions matrix.
-func userRoleLabel(locale, role string) string {
-	return httpx.T(locale, fmt.Sprintf("users.role.%s", role))
+//
+// A custom role (ADR-0128 §2) shows its own label, verbatim, from custom
+// (AuthRepo.ListCustomRoles); a role this till doesn't know shows its key.
+func userRoleLabel(locale, role string, custom []data.RoleInfo) string {
+	if isBuiltinUserRole(role) {
+		return httpx.T(locale, fmt.Sprintf("users.role.%s", role))
+	}
+	for _, ri := range custom {
+		if ri.Role == role && ri.Label != "" {
+			return ri.Label
+		}
+	}
+	return role
+}
+
+// customRolesForLabels is ListCustomRoles for an elevation summary: a read
+// error only costs the custom label (the key shows instead), never the
+// request.
+func customRolesForLabels(ctx context.Context, repo *data.AuthRepo, role ...string) []data.RoleInfo {
+	for _, r := range role {
+		if !isBuiltinUserRole(r) {
+			custom, err := repo.ListCustomRoles(ctx)
+			if err != nil {
+				logging.L().Warnf("users: list custom roles for a label: %v", err)
+			}
+			return custom
+		}
+	}
+	return nil
 }
 
 // usersRespondError writes a translated inline error into the request's own

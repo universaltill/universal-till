@@ -68,8 +68,11 @@ type fakePrimary struct {
 	// entitlement, when set, rides in the answer as the main till's
 	// cached entitlement (ut-docs#2792).
 	entitlement map[string]string
-	lastReqMu   sync.Mutex
-	lastReq     map[string]string
+	// redeemCode, when set, rides in the answer as the cloud's one-time
+	// redeem code for the replica (ADR-0116 D3).
+	redeemCode string
+	lastReqMu  sync.Mutex
+	lastReq    map[string]string
 }
 
 func newFakePrimary(t *testing.T, fail int32, failCode int) *fakePrimary {
@@ -98,6 +101,9 @@ func newFakePrimary(t *testing.T, fail int32, failCode int) *fakePrimary {
 		}
 		if p.entitlement != nil {
 			data["entitlement"] = p.entitlement
+		}
+		if p.redeemCode != "" {
+			data["redeem_code"] = p.redeemCode
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
 	})
@@ -139,9 +145,10 @@ func TestInitReplicaWithCopiedIdentityMintsOwnDevice(t *testing.T) {
 		t.Fatalf("copied registration markers survived: registered=%q enrolled_at=%q", kv.get(keyDeviceRegistered), kv.get(keyEnrolledAt))
 	}
 	// A copy of the store token that already reached this replica stays
-	// until the cloud can issue per-device tokens (see replica.go's file
-	// comment): wiping it revokes nothing — the main till's copy is the same
-	// credential — and would only cut this till off the cloud.
+	// until the replica gets its own credential (redemption or rotation, see
+	// replica.go's file comment): wiping it revokes nothing — the main
+	// till's copy is the same credential — and would only cut this till off
+	// the cloud.
 	if kv.get(keyToken) != "store-token" {
 		t.Fatalf("token=%q, want the legacy copy kept", kv.get(keyToken))
 	}

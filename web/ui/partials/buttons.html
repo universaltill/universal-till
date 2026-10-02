@@ -154,7 +154,7 @@
          plain HTML attribute (a literal ' survives as &#39;, which the
          DOM decodes back to ' before Alpine parses it), NOT as a JS
          string, since html/template doesn't recognize x-data/:class/
-         @click as JS-attribute contexts the way it does onclick=. Safe
+         @click as JS-attribute contexts the way it does inline on* handlers. Safe
          ONLY because every CategoryGroup.ID this template ever receives
          is a server-generated uuid.NewString() (CatalogRepo.
          EnsureCategory / EnsureCategoryUnder) or one of the fixed
@@ -367,7 +367,7 @@
         body.innerHTML = '';
         /* Review finding (ut-docs#2499): a loading line until the tile's
            hx-get swaps the real body in, and (the tile's own
-           hx-on::response-error/send-error) an error line if it fails --
+           data-response-error/-send-error) an error line if it fails --
            never a silently blank popup. Translated text rides on the
            tile's data-* attributes, set via textContent. */
         const status = document.createElement('p');
@@ -895,8 +895,8 @@
                   data-cat-name="{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}"
                   data-loading-text="{{ T "common.loading" }}" data-error-text="{{ T "common.error.server" }}"
                   hx-get="/ui/buttons/category?id={{ .ID }}" hx-target="#category-items-modal-body" hx-swap="innerHTML"
-                  hx-on::response-error="document.getElementById('category-items-modal-body').textContent = this.dataset.errorText"
-                  hx-on::send-error="document.getElementById('category-items-modal-body').textContent = this.dataset.errorText"
+                  data-response-error="error-text:category-items-modal-body"
+                  data-send-error="error-text:category-items-modal-body"
                   @click="openCategoryPopup($el)">
             {{ if .ImageURL }}<img class="category-tile-img" src="{{ imgv .ImageURL }}" alt="" loading="lazy">{{ end }}
             <span class="category-tile-name">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</span>
@@ -1563,7 +1563,7 @@
        retargeted onto #basket, so the picker opens only when the swap
        really landed in #modifier-modal. Same in product-tile-result.
        ut-docs#3000: that open is ONE delegated htmx:afterRequest listener
-       in app.js (it used to be an hx-on::after-request on every such tile),
+       in app.js (it used to be an inline after-request handler on every such tile),
        and the tiles carry no hx-trigger: click is htmx's default for a
        <button>. */}}
   <button

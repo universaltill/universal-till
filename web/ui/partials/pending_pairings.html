@@ -54,12 +54,12 @@
                placeholder="{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}">
         <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/approve" hx-include="#pin-{{ .ID }}" hx-swap="none"
               hx-indicator="#pair-busy-{{ .ID }}" hx-disabled-elt="find button[type=submit]"
-              hx-on::after-request="if(!event.detail.successful){document.getElementById('pin-error-{{ .ID }}').hidden=false}">
+              data-after-request="fail unhide:pin-error-{{ .ID }}">
           <button class="btn primary" type="submit">{{ T "tills.pairing.approve_btn" }}</button>
         </form>
         <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/deny" hx-include="#pin-{{ .ID }}" hx-swap="none"
               hx-indicator="#pair-busy-{{ .ID }}" hx-disabled-elt="find button[type=submit]"
-              hx-on::after-request="if(!event.detail.successful){document.getElementById('pin-error-{{ .ID }}').hidden=false}">
+              data-after-request="fail unhide:pin-error-{{ .ID }}">
           <button class="btn secondary" type="submit">{{ T "tills.pairing.deny_btn" }}</button>
         </form>
         <span id="pair-busy-{{ .ID }}" class="htmx-indicator muted" role="status">{{ T "tills.pairing.processing" }}</span>

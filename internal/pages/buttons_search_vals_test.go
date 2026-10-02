@@ -14,8 +14,10 @@ import (
 // posting it to /api/buttons/add.
 var hxValsRe = regexp.MustCompile(`hx-vals='([^']*)'`)
 
-// hxOnRe extracts the hx-on attribute on the same search-result button.
-var hxOnRe = regexp.MustCompile(`hx-on="([^"]*)"`)
+// hxOnRe extracts the after-request hook (web/public/inline-actions.js,
+// ut-docs#3325 — it was an inline hx-on attribute) on the same
+// search-result button.
+var hxOnRe = regexp.MustCompile(`data-after-request="([^"]*)"`)
 
 // TestButtonsSearchHxValsSurvivesQuotedNames guards the add-as-button flow
 // for items whose name (or barcode/image path) contains a double quote:
@@ -117,12 +119,12 @@ func TestButtonsSearchHxValsFallsBackToSKUForBarcodeLessItem(t *testing.T) {
 // TestButtonsSearchResultHidesDropdownOnlyOnSuccess (ut-docs#1220) pins the
 // client half of the fix, which no Go test otherwise reaches. The reported
 // symptom was not the 400 itself but that the 400 looked like a success:
-// the search-result button's hx-on hid the dropdown on htmx:afterRequest
+// the search-result button's after-request hook hid the dropdown
 // unconditionally, so a rejected add closed the dropdown, showed nothing,
-// and read as a dead tap. The hide must now be gated on
-// event.detail.successful (htmx sets it on the afterRequest detail — false
-// for a 4xx/5xx, undefined on a transport failure, both falsy), so on a
-// failure the dropdown stays open next to the error message.
+// and read as a dead tap. The hide must now be gated on the `ok` guard
+// step (inline-actions.js: event.detail.successful — false for a 4xx/5xx,
+// undefined on a transport failure, both falsy), so on a failure the
+// dropdown stays open next to the error message.
 func TestButtonsSearchResultHidesDropdownOnlyOnSuccess(t *testing.T) {
 	mux, d := newButtonsMux(t)
 
@@ -136,18 +138,26 @@ func TestButtonsSearchResultHidesDropdownOnlyOnSuccess(t *testing.T) {
 	}
 	m := hxOnRe.FindStringSubmatch(rec.Body.String())
 	if m == nil {
-		t.Fatalf("no hx-on attribute on the search result: %s", rec.Body.String())
+		t.Fatalf("no data-after-request hook on the search result: %s", rec.Body.String())
 	}
 	handler := html.UnescapeString(m[1])
-	gate := strings.Index(handler, "event.detail.successful")
+	steps := strings.Fields(handler)
+	gate, hide := -1, -1
+	for i, s := range steps {
+		if s == "ok" && gate == -1 {
+			gate = i
+		}
+		if s == "hide-display:search-results" {
+			hide = i
+		}
+	}
 	if gate == -1 {
-		t.Fatalf("hx-on does not gate on event.detail.successful: %q", handler)
+		t.Fatalf("after-request hook does not gate on the ok (successful) guard: %q", handler)
 	}
-	hide := strings.Index(handler, "display='none'")
 	if hide == -1 {
-		t.Fatalf("hx-on no longer hides the search dropdown at all: %q", handler)
+		t.Fatalf("after-request hook no longer hides the search dropdown at all: %q", handler)
 	}
-	if hide < gate {
-		t.Fatalf("hx-on hides the dropdown before checking event.detail.successful — a failed add would close it silently again: %q", handler)
+	if hide < gate || strings.Contains(handler, ";") {
+		t.Fatalf("after-request hook hides the dropdown outside the ok guard — a failed add would close it silently again: %q", handler)
 	}
 }
