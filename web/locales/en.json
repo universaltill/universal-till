@@ -1572,6 +1572,7 @@
   "pos.divider.label": "Drag to resize the basket and products panels. Double-tap to reset.",
   "pos.error.network": "Connection problem — the till keeps working offline.",
   "pos.error.sale_not_found": "Sale not found",
+  "pos.error.sale_status_transition": "This sale can't be changed to that status — a completed sale can only be voided.",
   "pos.error.server": "Something went wrong. Please try again.",
   "pos.error.void_voucher_redeemed": "This sale sold a voucher that has already been used — it cannot be voided",
   "pos.toast.customer_linked": "Customer %s linked",

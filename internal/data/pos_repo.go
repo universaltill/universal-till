@@ -6655,20 +6655,45 @@ func (r *POSRepo) CleanupObsoleteItems(ctx context.Context, actorID, blockedActo
 // exist — callers distinguish it (404) from validation failures (400).
 var ErrSaleNotFound = errors.New("sale not found")
 
-func (r *POSRepo) UpdateSaleStatus(ctx context.Context, tx *sql.Tx, saleID, status string) error {
+// ErrSaleStatusChanged reports that the sale's status was no longer
+// fromStatus when UpdateSaleStatus ran (a concurrent change) — the
+// compare-and-set matched no row although the sale exists (ut-docs#3368).
+var ErrSaleStatusChanged = errors.New("sale status changed concurrently")
+
+// SaleStatus returns a sale's current status, or ErrSaleNotFound.
+func (r *POSRepo) SaleStatus(ctx context.Context, tx *sql.Tx, saleID string) (string, error) {
+	var status string
+	err := r.exec(tx).QueryRowContext(ctx, `SELECT status FROM sales WHERE id = ?`, saleID).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("sale status: %w: %s", ErrSaleNotFound, saleID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("sale status: %w", err)
+	}
+	return status, nil
+}
+
+// UpdateSaleStatus moves a sale from fromStatus to status — a
+// compare-and-set, so a transition the caller validated against a status
+// read earlier can't land on a sale that changed in between (ut-docs#3368).
+// Which transitions are allowed is internal/pos's rule, not this method's.
+func (r *POSRepo) UpdateSaleStatus(ctx context.Context, tx *sql.Tx, saleID, fromStatus, status string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := r.exec(tx).ExecContext(ctx, `
 UPDATE sales
 SET status = ?,
     voided_at = CASE WHEN ? = 'voided' THEN ? ELSE voided_at END,
     voided_local_date = CASE WHEN ? = 'voided' THEN date(?, 'localtime') ELSE voided_local_date END
-WHERE id = ?
-`, status, status, now, status, now, saleID)
+WHERE id = ? AND status = ?
+`, status, status, now, status, now, saleID, fromStatus)
 	if err != nil {
 		return fmt.Errorf("update sale status: %w", err)
 	}
 	if n, rerr := res.RowsAffected(); rerr == nil && n == 0 {
-		return fmt.Errorf("update sale status: %w: %s", ErrSaleNotFound, saleID)
+		if _, serr := r.SaleStatus(ctx, tx, saleID); serr != nil {
+			return fmt.Errorf("update sale status: %w", serr)
+		}
+		return fmt.Errorf("update sale status: %w: %s", ErrSaleStatusChanged, saleID)
 	}
 	return nil
 }

@@ -661,7 +661,7 @@ func TestUpdateSaleStatus_VoidCascadesToUntouchedVoucher(t *testing.T) {
 		t.Fatalf("before void: issued = %d/%d, want 1/2000", sum.IssuedCount, sum.IssuedMinor)
 	}
 
-	if err := UpdateSaleStatus(ctx, sqlDB, saleID, "voided", "", "test void"); err != nil {
+	if err := UpdateSaleStatus(ctx, sqlDB, saleID, "voided", "", "", "test void"); err != nil {
 		t.Fatalf("void sale: %v", err)
 	}
 
@@ -716,7 +716,7 @@ func TestUpdateSaleStatus_VoidRefusedWhenVoucherAlreadyRedeemed(t *testing.T) {
 		t.Fatalf("redemption sale: %v", err)
 	}
 
-	err = UpdateSaleStatus(ctx, sqlDB, issueSaleID, "voided", "", "test void")
+	err = UpdateSaleStatus(ctx, sqlDB, issueSaleID, "voided", "", "", "test void")
 	if !errors.Is(err, data.ErrVoucherRedeemedCannotVoid) {
 		t.Fatalf("voiding the issuing sale of a spent voucher: err = %v, want ErrVoucherRedeemedCannotVoid", err)
 	}

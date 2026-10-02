@@ -2209,6 +2209,7 @@ func TestTenderHandler_SimulatedFailureAuditWriteFailureShowsLocalizedMessageNot
 // key, 404) -- exercised separately since they're reached by different
 // preconditions (a broken table vs. a saleID nothing matches).
 func TestSaleStatusHandler_DBFailureShowsLocalizedMessageNotRawError(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // void/refund need the refund permission since ut-docs#3368; not what this test checks
 	mux, dp := newPOSTestDeps(t)
 	if _, err := dp.Db.Exec(`DROP TABLE sales`); err != nil {
 		t.Fatalf("drop sales: %v", err)
@@ -2232,6 +2233,7 @@ func TestSaleStatusHandler_DBFailureShowsLocalizedMessageNotRawError(t *testing.
 }
 
 func TestSaleStatusHandler_UnknownSaleIDShowsLocalizedNotFoundNotRawError(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // void/refund need the refund permission since ut-docs#3368; not what this test checks
 	mux, _ := newPOSTestDeps(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/pos/sale/status",

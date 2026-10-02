@@ -44,6 +44,7 @@ func setupStatusDB(t *testing.T) *sql.DB {
 }
 
 func TestStatusEndpoint_ParkAndVoid(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // void/refund need the refund permission since ut-docs#3368; not what this test checks
 	db := setupStatusDB(t)
 	defer db.Close()
 	dp := &common.Deps{Db: db, State: common.RuntimeState{Currency: "GBP", TaxRateBP: 2000}}
@@ -87,6 +88,7 @@ func TestStatusEndpoint_ParkAndVoid(t *testing.T) {
 }
 
 func TestStatusEndpoint_RecordsSessionOperatorAsActor(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // void/refund need the refund permission since ut-docs#3368; not what this test checks
 	db := setupStatusDB(t)
 	defer db.Close()
 	dp := &common.Deps{Db: db, State: common.RuntimeState{Currency: "GBP", TaxRateBP: 2000}}
@@ -114,6 +116,7 @@ func TestStatusEndpoint_RecordsSessionOperatorAsActor(t *testing.T) {
 }
 
 func TestStatusEndpoint_UnknownSaleFailsAndWritesNoAudit(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // void/refund need the refund permission since ut-docs#3368; not what this test checks
 	db := setupStatusDB(t)
 	defer db.Close()
 	dp := &common.Deps{Db: db, State: common.RuntimeState{Currency: "GBP", TaxRateBP: 2000}}
