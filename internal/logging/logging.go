@@ -99,11 +99,13 @@ func Init() {
 	})
 }
 
-// L returns the global logger. It calls Init() lazily if needed.
+// L returns the global logger, initialising it on first use. It is safe for
+// concurrent use: it always goes through Init, so once.Do is the
+// synchronisation point and every caller sees the write to defaultLogger.
+// Do not add an unsynchronised `defaultLogger == nil` fast path — that is a
+// data race against the initialising goroutine (ut-docs#3410).
 func L() *Logger {
-	if defaultLogger == nil {
-		Init()
-	}
+	Init() // once.Do is the synchronisation point: every caller sees the write (ut-docs#3410)
 	return defaultLogger
 }
 
