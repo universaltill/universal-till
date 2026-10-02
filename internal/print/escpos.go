@@ -572,18 +572,12 @@ func RenderText(d Doc) string {
 	return b.String()
 }
 
-// RenderLabel produces one product/shelf label (docs: receipt-printing.md
-// § label printing): name, price big, barcode, cut. Callers concatenate
-// copies.
-func RenderLabel(name, price, code, charset string) []byte {
-	return RenderLabelWithUnitPrice(name, price, "", code, charset)
-}
-
-// RenderLabelWithUnitPrice is RenderLabel plus an optional unit-price line
+// RenderLabelWithUnitPrice produces one product/shelf label (docs:
+// receipt-printing.md § label printing): name, price big, barcode, cut.
+// Callers concatenate copies. unitPrice is an optional extra line
 // (ut-docs#3391, e.g. "£6.67 per kg" for a pre-packed item) printed at
-// normal size under the double-size price: the price line only fits
-// Width/2 characters, too few for both. An empty unitPrice renders exactly
-// RenderLabel's bytes.
+// normal size under the double-size price — the price line only fits
+// Width/2 characters, too few for both — and omitted entirely when "".
 func RenderLabelWithUnitPrice(name, price, unitPrice, code, charset string) []byte {
 	var b bytes.Buffer
 	enc := func(s string) []byte { return encodeText(s, charset) }
