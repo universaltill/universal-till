@@ -224,6 +224,16 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	if saleInput.DisplayNo == "" {
 		saleInput.DisplayNo = engine.OrderDisplayNo()
 	}
+	// ADR-0138 D2 (ut-docs#3310): carry the held order this basket was
+	// resumed from — read off THIS engine (the kiosk's own engine on a kiosk
+	// checkout, never d.Engine), before engine.Reset() below clears it — so
+	// the fiscal.sign.start/fiscal.sign.ask dispatches can echo the order's
+	// fiscal.order.start capture as order_id. A held/table order and a
+	// recalled pay-at-counter order both land here through resumeHeldSale's
+	// RestoreHeld, with HeldOrigin.ID = the order's own id.
+	if saleInput.HeldOriginID == "" {
+		saleInput.HeldOriginID = engine.HeldOrigin().ID
+	}
 	// DE+TR fiscal-signing-device hard gate (ADR-0048, ut-docs#715, fiscal.RequiresHardGate) — evaluated BEFORE the
 	// payment.<key>.authorize loop: "never configured" needs no plugin
 	// round trip, just local settings reads (never the network — a till

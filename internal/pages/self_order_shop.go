@@ -917,6 +917,16 @@ func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *com
 		http.Error(w, "failed to place order", http.StatusInternalServerError)
 		return
 	}
+	// ADR-0138 D2 (ut-docs#3310): every pay-at-counter checkout is a genuine
+	// new order capture (a fresh kiosk_counter_orders id) — fire
+	// fiscal.order.start once, keyed on the order's own id (also its held
+	// sale's id, so a later recall-and-tender correlates through the same
+	// HeldOrigin.ID lookup a held/table order uses). Fired as soon as the
+	// order row exists, non-blocking, independent of the print/park below.
+	// offline is the kiosk's #selforder-offline-flag, hx-included into this
+	// checkout form (same signal the kiosk card checkout threads into
+	// SaleInput.Offline).
+	dispatchFiscalOrderStart(ctx, d, order.ID, fiscalOrderKindCounter, formFlagTruthy(r.Form.Get("offline")))
 
 	snap.DisplayNo = order.DisplayNo
 	// Printed before parking so the held payload records the real outcome.

@@ -73,7 +73,7 @@
          that only opens this dialog — so the #payment-overlay-closing fix
          belongs on this after-request handler, same reasoning as New Sale's
          above. -->
-    <form hx-post="/api/pos/hold" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+    <form hx-post="/api/pos/hold" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace" hx-include="#offline-flag"
           hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('hold-modal'); m.close(); this.reset(); var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">
       <h3 id="hold-modal-title">{{ T "hold.modal.title" }}</h3>
       <input type="text" id="hold-label-input" name="label" maxlength="64"
