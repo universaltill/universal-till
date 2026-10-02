@@ -2,6 +2,7 @@ package diagnostics
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -187,11 +188,90 @@ var secrets = map[string]string{
 	"authorization":  "Bearer eyJhbGciOiJIUzI1NiJ9.c2VjcmV0.c2ln",
 }
 
+// leakedSecret reports the name of the first secret found in a marshaled
+// event, or "" if none. The "at" stamp is machine-generated, so it must be a
+// valid RFC3339Nano timestamp and is excluded from the scan: its nanosecond
+// digits can spell a secret like the PIN "4321" by chance (ut-docs#3432). A
+// missing, non-string or unparsable "at" is an error, not a skip, so the
+// exclusion cannot hide a secret.
+func leakedSecret(marshaled []byte) (string, error) {
+	var m map[string]any
+	if err := json.Unmarshal(marshaled, &m); err != nil {
+		return "", err
+	}
+	at, ok := m["at"].(string)
+	if !ok {
+		return "", fmt.Errorf("event \"at\" is missing or not a string: %s", marshaled)
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, at)
+	if err != nil {
+		return "", fmt.Errorf("event \"at\" is not a timestamp: %w", err)
+	}
+	if at != parsed.UTC().Format(time.RFC3339Nano) {
+		return "", fmt.Errorf("event \"at\" is not the canonical UTC form marshal writes: %q", at)
+	}
+	delete(m, "at")
+	rest, err := json.Marshal(m)
+	if err != nil {
+		return "", err
+	}
+	for name, s := range secrets {
+		if strings.Contains(string(rest), s) {
+			return name, nil
+		}
+	}
+	return "", nil
+}
+
 func assertNoSecret(t *testing.T, marshaled []byte) {
 	t.Helper()
-	for name, s := range secrets {
-		if strings.Contains(string(marshaled), s) {
-			t.Fatalf("emitted event leaks the %s secret: %s", name, marshaled)
+	name, err := leakedSecret(marshaled)
+	if err != nil {
+		t.Fatalf("cannot scan emitted event: %v", err)
+	}
+	if name != "" {
+		t.Fatalf("emitted event leaks the %s secret: %s", name, marshaled)
+	}
+}
+
+// The "at" stamp's nanosecond digits may contain a secret substring by pure
+// chance; that must not read as a leak, while the same digits in any other
+// field (or in a tampered "at") still must (ut-docs#3432).
+func TestAssertNoSecret_IgnoresTimestampDigits(t *testing.T) {
+	unlucky := time.Date(2026, 10, 2, 8, 5, 56, 664321540, time.UTC)
+	lucky := time.Date(2026, 10, 2, 8, 5, 56, 123000000, time.UTC)
+	ev := TaxProvenance{TaxCodeID: "tc-7", From: ProvenanceCatalogSuggestion, To: ProvenanceActiveOverride}
+
+	raw, err := marshal(ev, unlucky)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), secrets["pin"]) {
+		t.Fatalf("guard: timestamp no longer contains the pin digits, test is vacuous: %s", raw)
+	}
+	if name, err := leakedSecret(raw); err != nil || name != "" {
+		t.Fatalf("leakedSecret(%s) = %q, %v; want no leak", raw, name, err)
+	}
+
+	leaky, err := marshal(TaxProvenance{TaxCodeID: secrets["pin"], From: ProvenanceCatalogSuggestion, To: ProvenanceActiveOverride}, lucky)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(lucky.AppendFormat(nil, time.RFC3339Nano)), secrets["pin"]) {
+		t.Fatalf("guard: lucky timestamp contains the pin digits")
+	}
+	if name, err := leakedSecret(leaky); err != nil || name != "pin" {
+		t.Fatalf("leakedSecret(%s) = %q, %v; want pin leak", leaky, name, err)
+	}
+
+	for _, bad := range []string{
+		`{"at":"not-a-time-4321","type":"tax_provenance"}`,
+		`{"at":4321,"type":"tax_provenance"}`,
+		`{"type":"tax_provenance"}`,
+		`{"at":"2026-10-02T09:05:56.66432154+01:00","type":"tax_provenance"}`,
+	} {
+		if name, err := leakedSecret([]byte(bad)); err == nil {
+			t.Fatalf("leakedSecret(%s) = %q, nil; want an error for a bad \"at\"", bad, name)
 		}
 	}
 }
