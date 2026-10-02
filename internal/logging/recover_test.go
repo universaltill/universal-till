@@ -15,8 +15,8 @@ func TestRecoverAndLogRecoversAndLogsRedacted(t *testing.T) {
 	const secret = "s3cr3t-Merchant-T0ken"
 
 	var buf syncBuffer
+	L() // make sure once.Do has run, so it never overwrites our swap — and prev is never nil (ut-docs#3410)
 	prev := defaultLogger
-	L() // make sure once.Do has run, so it never overwrites our swap
 	defaultLogger = &Logger{level: Info, log: log.New(redactingWriter{w: &buf}, "", 0)}
 	t.Cleanup(func() { defaultLogger = prev })
 	ResetRecent()
@@ -50,8 +50,8 @@ func TestRecoverAndLogRecoversAndLogsRedacted(t *testing.T) {
 // A goroutine that returns normally logs nothing.
 func TestRecoverAndLogNoPanicIsSilent(t *testing.T) {
 	var buf syncBuffer
-	prev := defaultLogger
 	L()
+	prev := defaultLogger
 	defaultLogger = &Logger{level: Debug, log: log.New(&buf, "", 0)}
 	t.Cleanup(func() { defaultLogger = prev })
 
