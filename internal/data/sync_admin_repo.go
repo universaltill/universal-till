@@ -148,6 +148,15 @@ var adminTables = []adminTable{
 	// from a not-yet-upgraded primary (ADR-0031).
 	{name: "payment_methods", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}, skipCols: []string{"plugin_id"}},
 	{name: "users", pk: []string{"id"}, hasIsActive: true, unique: []string{"username"}},
+	// ut-docs#3149: per-OPERATOR display preferences (theme, browsing mode)
+	// follow the person to every till in the shop — unlike the till-wide
+	// theme key, which is per-station (#2783). FKs onto users(id), so it
+	// sits after users (upserts forward, deletes in reverse). Pure PK-only
+	// rows, no is_active: nothing FKs onto them, so a prune never blocks.
+	// The main till's bundle is authoritative, so the write path must land
+	// on (or write through to) the main till. Its three sync_admin_version
+	// triggers ship in migration 061.
+	{name: "user_display_settings", pk: []string{"user_id", "key"}},
 	// ut-docs#1590: registers and stock_locations became safe to sync once
 	// /registers and /locations gated create/rename/activate to
 	// primary-only (see this var's own top comment for the full trace).
