@@ -1130,6 +1130,30 @@ document.addEventListener('htmx:afterSwap', function (evt) {
   try { document.title = decodeURIComponent(encoded); } catch (_) {}
 });
 
+// ut-docs#3356: on a phone the manual's tree hides while a topic shows, so a
+// tapped topic swaps in with the page still scrolled to where the tree link
+// was. Scroll back to the top. The document itself scrolls on this page (no
+// inner scroll container) and the fixed top bar already clears the content,
+// so scrollTo(0,0) shows the back link and heading; scrollIntoView on
+// #manual would tuck the back link under that bar. Typing in the search box
+// also swaps #manual-panel; skip that so the page doesn't jump mid-keystroke.
+// After settle, not swap: the browser re-anchors the scroll once the hidden
+// tree leaves the layout, which undid an afterSwap scroll (see also
+// overflow-anchor on .manual in app.css).
+document.addEventListener('htmx:afterSettle', function (evt) {
+  var target = evt.detail && evt.detail.target;
+  if (!target || target.id !== 'manual-panel') return;
+  if (!window.matchMedia('(max-width: 52rem)').matches) return;
+  // Without :has() (app.css) the tree never hides, so the top of the page is
+  // the tree, not the topic — bring the topic into view instead.
+  var hasHas = window.CSS && CSS.supports && CSS.supports('selector(:has(*))');
+  var trig = evt.detail.requestConfig && evt.detail.requestConfig.triggeringEvent;
+  if (trig && trig.type !== 'click') return;
+  requestAnimationFrame(function () {
+    if (hasHas) window.scrollTo(0, 0); else target.scrollIntoView({ block: 'start' });
+  });
+});
+
 // ut-docs#2319: the All grid's "load more" button (buttons.html's
 // all-more-button, hx-swap="outerHTML" on itself) drops keyboard focus to
 // <body> once it retires itself, the same class of bug utTileJiggle's
