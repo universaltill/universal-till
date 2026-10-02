@@ -2,6 +2,7 @@ package cloudsync
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"reflect"
 	"testing"
@@ -17,7 +18,7 @@ import (
 // (keep), and a present field of the wrong shape FAILS the directive
 // instead of reading as absent.
 
-var newCatalogTypes = []string{"save_item", "save_category", "delete_category", "save_modifier_group", "delete_modifier_group"}
+var newCatalogTypes = []string{"save_item", "save_category", "delete_category", "save_modifier_group", "delete_modifier_group", "delete_item"}
 
 func TestApplyNewCatalogTypes_NilHookUnsupported(t *testing.T) {
 	for _, typ := range newCatalogTypes {
@@ -129,6 +130,32 @@ func TestApplyDeleteCategory(t *testing.T) {
 	}
 	if status, _ := apply(context.Background(), directive{Type: "delete_category", Payload: map[string]any{"id": "c1"}}, hooks); status != "applied" || gotID != "c1" || gotMove != "" {
 		t.Fatalf("default target: %q %q", gotID, gotMove)
+	}
+}
+
+// ut-docs#3317: delete_item {id} reaches the hook with the id only — the
+// hook (the till's own data) decides whether the item may go; a refusal is
+// the directive's failure text, verbatim.
+func TestApplyDeleteItem(t *testing.T) {
+	var gotID string
+	hooks := Hooks{DeleteItem: func(ctx context.Context, id string) (string, error) {
+		gotID = id
+		if id == "sold" {
+			return "", errors.New("sold 14 times — deactivate it instead")
+		}
+		return "deleted item Latte", nil
+	}}
+	if status, msg := apply(context.Background(), directive{Type: "delete_item", Payload: map[string]any{}}, hooks); status != "failed" || msg != "missing id" {
+		t.Fatalf("missing id: %q %q", status, msg)
+	}
+	if status, msg := apply(context.Background(), directive{Type: "delete_item", Payload: map[string]any{"id": " i1 "}}, hooks); status != "applied" || msg != "deleted item Latte" || gotID != "i1" {
+		t.Fatalf("delete: %q %q %q", status, msg, gotID)
+	}
+	if status, msg := apply(context.Background(), directive{Type: "delete_item", Payload: map[string]any{"id": "sold"}}, hooks); status != "failed" || msg != "sold 14 times — deactivate it instead" {
+		t.Fatalf("refused: %q %q", status, msg)
+	}
+	if !mainTillOnlyTypes["delete_item"] || !catalogTypes["delete_item"] {
+		t.Fatal("delete_item must be main-till only and re-push the catalog snapshot")
 	}
 }
 
@@ -410,5 +437,54 @@ func TestSetCategoryOrderIsMainTillOnlyCatalogType(t *testing.T) {
 	}
 	if !catalogTypes["set_category_order"] {
 		t.Error("set_category_order not in catalogTypes")
+	}
+}
+
+// ut-docs#3317: every snapshot row says whether the item was ever sold
+// (itself or a variant), so my. can offer Delete only for a never-sold
+// item. A first sale changes the snapshot, so it is pushed again.
+func TestSnapshotReportsEverSold(t *testing.T) {
+	cloud := &fakeCloud{}
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	d := openMigratedDB(t, "cloudsync.db")
+	for _, q := range []string{
+		`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('es-sold','ES1','Sold',100,1)`,
+		`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('es-new','ES2','New',100,1)`,
+	} {
+		if _, err := d.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	everSold := func(snap map[string]any) map[string]any {
+		out := map[string]any{}
+		for _, r := range snap["items"].([]any) {
+			m := r.(map[string]any)
+			out[m["id"].(string)] = m["ever_sold"]
+		}
+		return out
+	}
+	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), d.DB); err != nil {
+		t.Fatal(err)
+	}
+	if got := everSold(cloud.snapshots[0]); got["es-sold"] != false || got["es-new"] != false {
+		t.Fatalf("before any sale: %v / %v", got["es-sold"], got["es-new"])
+	}
+	for _, q := range []string{
+		`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES ('s-es','R-es','completed','sale','GBP',100,0,0,100,datetime('now'))`,
+		`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax) VALUES ('l-es','s-es',1,'es-sold','Sold',1,100,0,0,0,100,100)`,
+	} {
+		if _, err := d.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), d.DB); err != nil {
+		t.Fatal(err)
+	}
+	if len(cloud.snapshots) != 2 {
+		t.Fatalf("snapshots = %d, want 2 (a first sale changes the snapshot)", len(cloud.snapshots))
+	}
+	if got := everSold(cloud.snapshots[1]); got["es-sold"] != true || got["es-new"] != false {
+		t.Fatalf("after a sale: %v / %v", got["es-sold"], got["es-new"])
 	}
 }
