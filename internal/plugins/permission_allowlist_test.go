@@ -39,6 +39,10 @@ func TestIsKnownPermission(t *testing.T) {
 		"view:sales_by_day", "view:sales", "view:audit", "ui:slot:reports.panels", "ui:slot:admin.pages",
 		// net:/tcp: hosts in every form normGrantHost canonicalises
 		"net:API.Stripe.com", "net:erp.lan.", "net:münchen.example", "net:erp_lan", "net:10.0.0.5", "net:[fe80::1]",
+		// net:validation:<host> (ut-docs#3226, ADR-0121 amendment 2026-10-02):
+		// a narrower grant shape sharing the "net:" prefix — must not be
+		// swallowed or refused by the generic net:<host> case.
+		"net:validation:kassensichv-middleware.fiskaly.com", "net:validation:10.0.0.5", "net:validation:[fe80::1]",
 	}
 	for _, p := range known {
 		if !isKnownPermission(p) {
@@ -60,6 +64,8 @@ func TestIsKnownPermission(t *testing.T) {
 		// view:<class> is an identifier; ui:slot:<slot> is a content slot
 		// (ADR-0121 §5, §7) — the sale screen has none.
 		"view:foo bar", "view:a:b", "view:sales.by_day.v1", "ui:slot:checkout.sidebar", "ui:slot:x y",
+		// net:validation:<host> malformed forms (ParseValidationPermission).
+		"net:validation:", "net:validation:*", "net:validation:host:443", "net:validation:a/b",
 	}
 	for _, p := range unknown {
 		if isKnownPermission(p) {
