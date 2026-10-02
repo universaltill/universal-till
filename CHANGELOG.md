@@ -38,6 +38,13 @@ Release notes for the till. Versions come from the release tag
 
 ### Fixed
 
+- **A 0% shop default tax rate is charged 0% (ut-docs#3392).** A shop whose
+  default tax rate is set to 0% (the US and "Other" presets, or any shop
+  that chose 0%) was charged 20% on every item with no tax code of its own,
+  because the sale engine treated a 0% default as "not configured".
+  **Behaviour change:** after this release those items are charged the
+  shop's 0% default. Shops with a non-zero default rate are unaffected, and
+  so are items on a tax code. Completed sales are unchanged.
 - **A 0% tax code is charged 0% (ut-docs#3250).** An item on a tax code
   whose rate is 0% (zero-rated food, an exempt line) was charged the shop's
   default rate, because the sale engine treated a 0% rate the same as "no
