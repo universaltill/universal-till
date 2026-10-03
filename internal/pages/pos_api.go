@@ -1577,9 +1577,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// Reset basket for new customer. The table it had picked is free again
-	// (ut-docs#1390) -- captured before Reset clears it.
+	// (ut-docs#1390) -- captured before Reset clears it. ut-docs#3423: so is
+	// a resumed held/table/counter order's identity -- its held_sales row is
+	// already gone (resumeHeldSale), so the discard is recorded before Reset
+	// forgets which order this was.
 	mux.HandleFunc("/api/pos/reset", func(w http.ResponseWriter, r *http.Request) {
 		tableToRelease := d.Engine.TableID()
+		recordResumedOrderDiscard(r.Context(), d, repo, auth.UserID(r))
 		d.Engine.Reset()
 		releaseTableClaim(r.Context(), d, repo, tableToRelease)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
