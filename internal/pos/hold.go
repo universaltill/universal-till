@@ -180,6 +180,14 @@ type HeldOrigin struct {
 	// to a local, never-claimed row): that re-park's own local-only
 	// fallback keeps the ordinary MAX-sticky Upsert behaviour, unchanged.
 	Claimed bool
+	// PrimarySynced (ut-docs#3621) records that the row this basket was
+	// resumed from was a confirmed mirror of an order the primary holds.
+	// Resuming it while the primary was unreachable claims nothing
+	// (Claimed false), so the primary STILL holds the order; a local-only
+	// re-park must re-insert the row as a confirmed mirror, or it would read
+	// as an outage-parked order this till alone owns -- and a Cancel during
+	// the outage would act on it while the primary's copy lives on.
+	PrimarySynced bool
 }
 
 // IsZero reports whether this basket has no held-sale origin, i.e. it was

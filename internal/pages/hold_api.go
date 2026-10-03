@@ -254,6 +254,12 @@ func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSales
 			held.Label = typedLabel
 		}
 		held.CreatedAt = origin.CreatedAt
+		// ut-docs#3621: an order resumed from a confirmed mirror without a
+		// claim (the primary was unreachable) is still held by the primary,
+		// so a local-only re-park keeps it a confirmed mirror. A claimed
+		// order is this till's alone (ut-docs#3034 above). Every path that
+		// reaches the primary sets the flag itself.
+		held.PrimarySynced = origin.PrimarySynced && !origin.Claimed
 	} else {
 		label := typedLabel
 		if label == "" {
@@ -351,6 +357,12 @@ const (
 	// stale held row left behind by a failed delete) -- cancelling the row
 	// would leave the live copy tenderable, so it is refused untouched.
 	cancelFailed
+	// cancelMainTillUnreachable (ut-docs#3621): a replica whose main till
+	// can't be reached holds only a mirror (primary_synced) of an order the
+	// primary still owns. Cancelling the mirror would let the order come
+	// back on reconnect and be cancelled -- audited, fiscal.order.cancel
+	// dispatched -- a second time, so it is refused untouched.
+	cancelMainTillUnreachable
 )
 
 // cancelHeldSale is the explicit "Cancel order" for a held, table or
@@ -360,9 +372,17 @@ const (
 //
 // Same authority handling as resumeHeldSale, minus the restore: the order is
 // CLAIMED off the shop's authority (heldSaleClaimForResume -- cross-till
-// safe, so two tills can never both act on it, and an order resumed or
-// cancelled elsewhere since the list was drawn is refused as not found),
-// then dropped instead of restored. Its table claim is released (the order
+// safe whenever the authority answers, and an order resumed or cancelled
+// elsewhere since the list was drawn is refused as not found), then dropped
+// instead of restored. Unlike resume, cancel does NOT fall back to a
+// primary_synced mirror while the main till is unreachable (ut-docs#3621):
+// resume must keep a sale moving offline (ADR-0003, ADR-0093's accepted
+// bounded-outage limit), but a cancel can wait, and acting on a copy the
+// primary still owns would only bring the order back on reconnect. An
+// order first parked during the outage (primary_synced=0) exists only here
+// and still cancels locally; an order resumed and re-parked during the
+// outage keeps its mirror flag (HeldOrigin.PrimarySynced), so it is refused
+// too. Its table claim is released (the order
 // no longer occupies it), a held_sale/cancel audit row is written in the
 // same shape as the #3423 discard row, and fiscal.order.cancel (ADR-0138
 // D2) is dispatched from the same place. No stock moves: a held order's
@@ -380,9 +400,19 @@ func cancelHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 	if d.Engine.HeldOrigin().ID == id {
 		return cancelFailed
 	}
-	held, found, _ := heldSaleClaimForResume(ctx, d, repo, id)
+	held, found, claimed := heldSaleClaimForResume(ctx, d, repo, id)
 	if !found {
 		return cancelNotFound
+	}
+	// Found but not claimed, on a primary_synced row: only the fallback for
+	// a primary that gave no usable answer returns that (a reachable primary
+	// that no longer lists a synced mirror is already refused as not found
+	// above). "No usable answer" is mostly a transport failure, but also a
+	// non-200 or malformed reply (claimHeldSaleOnPrimary's ok=false) --
+	// refusing is the safe direction for all of them; the next successful
+	// reconcile settles the mirror either way.
+	if !claimed && held.PrimarySynced {
+		return cancelMainTillUnreachable
 	}
 	// The claim already removed the order from the authority; only a
 	// replica's local copy is left (a no-op when there is none).
@@ -539,7 +569,7 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 	// handler below). Remembered on the engine, not by skipping the
 	// Delete below: the row still goes away while the order is live,
 	// exactly as before, and comes back under the same id on re-park.
-	d.Engine.RestoreHeld(snap, pos.HeldOrigin{ID: held.ID, Label: held.Label, CreatedAt: held.CreatedAt, Claimed: claimed})
+	d.Engine.RestoreHeld(snap, pos.HeldOrigin{ID: held.ID, Label: held.Label, CreatedAt: held.CreatedAt, Claimed: claimed, PrimarySynced: held.PrimarySynced})
 	restoredTable := d.Engine.TableID()
 	if restoredTable != "" && restoredTable != prevTable {
 		if claimed, err := claimTableWriteThrough(ctx, d, posRepo, restoredTable, false); err != nil || !claimed {
@@ -843,6 +873,8 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 				w.Header().Set("HX-Redirect", "/open-orders?tab="+tab+"&msg=open_orders.cancel.done")
 			case cancelNotFound:
 				w.Header().Set("HX-Redirect", "/open-orders?tab="+tab+"&err=hold.error.not_found")
+			case cancelMainTillUnreachable:
+				w.Header().Set("HX-Redirect", "/open-orders?tab="+tab+"&err=open_orders.cancel.error.main_till_unreachable")
 			default:
 				w.Header().Set("HX-Redirect", "/open-orders?tab="+tab+"&err=open_orders.cancel.error.live")
 			}
@@ -858,6 +890,8 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		case cancelNotFound:
 			w.Header().Set("HX-Trigger", "held-changed")
 			renderParkedOrdersPopup(w, r, d, repo, posRepo, httpx.T(locale, "hold.error.not_found"), "error")
+		case cancelMainTillUnreachable:
+			renderParkedOrdersPopup(w, r, d, repo, posRepo, httpx.T(locale, "open_orders.cancel.error.main_till_unreachable"), "error")
 		default:
 			renderParkedOrdersPopup(w, r, d, repo, posRepo, httpx.T(locale, "open_orders.cancel.error.live"), "error")
 		}

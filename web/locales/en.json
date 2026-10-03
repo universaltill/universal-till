@@ -1248,6 +1248,7 @@
   "open_orders.cancel.confirm_named": "Cancel order %s? It is removed from open orders and this cannot be undone.",
   "open_orders.cancel.done": "Order cancelled",
   "open_orders.cancel.error.live": "That order is open on the sale screen right now. Finish it there, or tap New Sale to put it back on hold first.",
+  "open_orders.cancel.error.main_till_unreachable": "Can't reach the main till — this order is still open there. Cancel it when the main till is back, or cancel it on the main till.",
   "open_orders.tabs_label": "Which orders to show",
   "open_orders.tab.hold": "On hold",
   "open_orders.tab.counter": "Pay at the counter",

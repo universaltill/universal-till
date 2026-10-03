@@ -1263,6 +1263,7 @@
   "open_orders.cancel.confirm_named": "هل تريد إلغاء الطلب %s؟ ستتم إزالته من الطلبات المفتوحة ولا يمكن التراجع عن هذا الإجراء.",
   "open_orders.cancel.done": "أُلغي الطلب",
   "open_orders.cancel.error.live": "هذا الطلب مفتوح على شاشة البيع الآن. أكمله هناك، أو اضغط «بيع جديد» لتعليقه أولًا.",
+  "open_orders.cancel.error.main_till_unreachable": "الصندوق الأساسي غير قابل للوصول — هذا الطلب لا يزال مفتوحًا هناك. ألغِه عند عودة الصندوق الأساسي، أو ألغِه على الصندوق الأساسي.",
   "open_orders.tabs_label": "الطلبات المعروضة",
   "open_orders.tab.hold": "معلّق",
   "open_orders.tab.counter": "الدفع عند الكاشير",

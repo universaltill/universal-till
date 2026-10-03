@@ -1263,6 +1263,7 @@
   "open_orders.cancel.confirm_named": "%s siparişi iptal edilsin mi? Açık siparişlerden kaldırılır ve bu işlem geri alınamaz.",
   "open_orders.cancel.done": "Sipariş iptal edildi",
   "open_orders.cancel.error.live": "Bu sipariş şu anda satış ekranında açık. Orada tamamlayın ya da önce yeniden bekletmek için Yeni satış'a dokunun.",
+  "open_orders.cancel.error.main_till_unreachable": "Ana kasaya ulaşılamıyor — bu sipariş orada hâlâ açık. Ana kasa geri geldiğinde iptal edin ya da ana kasada iptal edin.",
   "open_orders.tabs_label": "Gösterilecek siparişler",
   "open_orders.tab.hold": "Beklemede",
   "open_orders.tab.counter": "Kasada ödenecek",

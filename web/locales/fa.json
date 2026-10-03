@@ -1263,6 +1263,7 @@
   "open_orders.cancel.confirm_named": "سفارش %s لغو شود؟ از سفارش‌های باز حذف می‌شود و این کار قابل بازگشت نیست.",
   "open_orders.cancel.done": "سفارش لغو شد",
   "open_orders.cancel.error.live": "این سفارش همین حالا در صفحهٔ فروش باز است. آن را همان‌جا تمام کنید، یا «فروش جدید» را بزنید تا اول دوباره نگه داشته شود.",
+  "open_orders.cancel.error.main_till_unreachable": "به صندوق اصلی دسترسی نیست — این سفارش هنوز آنجا باز است. وقتی صندوق اصلی برگشت لغوش کنید، یا آن را روی صندوق اصلی لغو کنید.",
   "open_orders.tabs_label": "سفارش‌هایی که نمایش داده شود",
   "open_orders.tab.hold": "در انتظار",
   "open_orders.tab.counter": "پرداخت در صندوق",
