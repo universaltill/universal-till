@@ -23,3 +23,13 @@ The setup wizard's last screen asks once whether to register the till right away
 
 1. Turn it on and the till sends its device ID, store name, shop region and software version to the Universal Till cloud marketplace (used for support, updates and licensing) and registers straight away. Your address is not sent. Offline just then? Nothing is held up and setup still finishes — but the till stays unregistered until you open the plugin store or press Register now, so check Settings → Till registration once you are back online.
 2. Turn it off and the till goes back to registering only when you first use the plugin store or press Register now. Turning it off never removes a registration that already happened.
+
+## When the cloud stops accepting this till
+
+If the cloud refuses this till's credential three times in a row, a chip appears in the status bar. It never blocks a sale: the till keeps selling offline, tries the cloud again once an hour, and keeps everything it still has to send on the till until it is connected again. The chip says one of three things:
+
+- **Removed from the shop's cloud account**: the shop's owner removed this till from the store online.
+- **This till needs pairing again**: the till's cloud credential no longer works, so the till must be paired with the shop again.
+- **Register as a new store**: the store has no owner account, so the till can't be paired. Register it again as a new store; only the old fleet history is lost.
+
+A manager can tap the chip to open Settings → Till registration. The chip goes away after the next successful contact with the cloud.
