@@ -66,6 +66,10 @@ var (
 	// restart time to reach the browser before the process image is
 	// replaced — same value selfupdate.Apply uses for the same reason.
 	reexecDelay = 1500 * time.Millisecond
+	// sleep waits out reexecDelay. A seam so tests can hold the delay open
+	// and assert structurally — "Restart returned while the delay is still
+	// pending" — instead of racing a wall clock (ut-docs#3497).
+	sleep = time.Sleep
 )
 
 // beforeRestart runs concurrently with Restart's flush-delay sleep — started
@@ -175,7 +179,7 @@ func scheduleRestart(what string, restart func() error) {
 				beforeRestart(context.Background())
 			}()
 		}
-		time.Sleep(reexecDelay)
+		sleep(reexecDelay)
 		if hookDone != nil {
 			<-hookDone
 		}
