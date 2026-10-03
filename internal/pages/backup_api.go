@@ -149,8 +149,11 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		_ = db.PruneBackups(dbPath, db.DefaultBackupKeep)
 		auditNow("backup_created", map[string]any{"file": filepath.Base(path)})
-		// Reload so the list shows the new snapshot.
-		w.Header().Set("HX-Refresh", "true")
+		// The Backup card refreshes itself so the list shows the new
+		// snapshot (ut-docs#2904): settings.html's button keys
+		// "ut-ok refresh-region" on this header, and the elevation dialog's
+		// elevation-done step does the same on the approved retry.
+		w.Header().Set("X-UT-Response", "ok")
 		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "settings.backup.done"))
 	})
 

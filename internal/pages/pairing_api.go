@@ -232,12 +232,14 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "till_pairing", id, "pairing_approved",
 			nil, time.Now().UTC().Format(time.RFC3339), "")
-		// Additive for the approve/deny UI (ut-docs#185): htmx does a full
-		// page reload on this header regardless of body content, refreshing
-		// both the pending-request list and the Enrolled Tills table. The
-		// JSON body/status contract below is unchanged — #184's own tests
-		// still pass as-is.
-		w.Header().Set("HX-Refresh", "true")
+		// No HX-Refresh (ut-docs#2904): pending_pairings.html's forms
+		// refresh only the Tills page's pairing card on a 2xx
+		// (data-after-request "ok refresh-region"); the Enrolled Tills
+		// table only changes once the replica actually enrols, and it
+		// re-renders itself on a main till. tills-changed makes the nav
+		// sync-chip dot and the pairing notice (30s polls) re-fetch now, as
+		// the reload used to. JSON contract unchanged (#184).
+		w.Header().Set("HX-Trigger", "tills-changed")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"status": "approved"}, "error": nil})
 	})
@@ -256,7 +258,7 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "till_pairing", id, "pairing_denied",
 			nil, time.Now().UTC().Format(time.RFC3339), "")
-		w.Header().Set("HX-Refresh", "true")
+		w.Header().Set("HX-Trigger", "tills-changed") // see approve above
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"status": "denied"}, "error": nil})
 	})

@@ -974,8 +974,16 @@
        already manager-only, checkStepUp's own precondition), but is
        itself step-up elevation-wired behind it since ut-docs#1860
        (ADR-0087) — see the form below. -->
+  {{/* ut-docs#2904: Backup now refreshes only this region (keeping
+       #backup-msg's ✓) so the list shows the new snapshot — no full-page
+       reload. Inside the card, never the card itself: the section switcher
+       holds the card element (same as every settings-*-region). And
+       #restore-msg stays OUTSIDE it: backup_restore_staged.html wires its
+       Restart button with an inline script, which a region swap never
+       re-runs. */}}
+  <div id="settings-backup-region" data-ut-refresh="#settings-backup-region">
   <div class="set-row set-below">
-    <button class="btn" hx-post="/api/backup/now" hx-target="#backup-msg" hx-swap="innerHTML">{{ T "settings.backup.now" }}</button>
+    <button class="btn" hx-post="/api/backup/now" hx-target="#backup-msg" hx-swap="innerHTML" data-after-request="ut-ok refresh-region">{{ T "settings.backup.now" }}</button>
     <span id="backup-msg" aria-live="polite"></span>
   </div>
   {{ if .isManager }}
@@ -1009,6 +1017,9 @@
   {{ else }}
   <p class="muted">{{ T "settings.backup.none_yet" }}</p>
   {{ end }}
+  {{ end }}
+  </div>
+  {{ if .isManager }}
   <!-- ut-docs#1613: deliberately OUTSIDE the `.backups` branch above — a
        restore staged in an earlier visit is a persistent, on-disk fact
        (db.PendingRestore) independent of whatever the snapshot list looks

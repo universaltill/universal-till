@@ -187,8 +187,13 @@ func TestBackupNow_CreatesRealSnapshotAndAudits(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec.Header().Get("HX-Refresh") != "true" {
-		t.Fatalf("expected HX-Refresh: true so the settings page reloads the new snapshot, got %q", rec.Header().Get("HX-Refresh"))
+	// ut-docs#2904: the settings page refreshes only #settings-backup
+	// (ut-ok refresh-region), keyed on X-UT-Response: ok — no full reload.
+	if got := rec.Header().Get("HX-Refresh"); got != "" {
+		t.Fatalf("backup must not force a full page reload (ut-docs#2904), got HX-Refresh %q", got)
+	}
+	if got := rec.Header().Get("X-UT-Response"); got != "ok" {
+		t.Fatalf("expected X-UT-Response: ok so the backup card refreshes its list, got %q", got)
 	}
 	if !strings.Contains(rec.Body.String(), "✓") {
 		t.Fatalf("expected a success indicator, got: %s", rec.Body.String())

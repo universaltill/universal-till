@@ -1424,7 +1424,7 @@
          otherwise coexist as nested duplicate ids, and the partial's own
          dismiss script (getElementById('pairing-notice')) would resolve to
          this outer, dataset-less placeholder instead of the real banner. -->
-    <div id="pairing-notice-mount" hx-get="/ui/pairing-notice" hx-trigger="load, every 30s" hx-preserve></div>
+    <div id="pairing-notice-mount" hx-get="/ui/pairing-notice" hx-trigger="load, every 30s, tills-changed from:body" hx-preserve></div>
     <!-- ut-docs#2343: theme-sync poll, every 30s from every open page.
          hx-swap="none" -- GET /ui/theme-sync's response is an OOB swap of
          THIS div's own id (id="theme-sync-poll", carrying the live theme
