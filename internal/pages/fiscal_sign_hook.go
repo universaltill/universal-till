@@ -641,6 +641,77 @@ func dispatchFiscalOrderStart(ctx context.Context, d *common.Deps, orderID, orde
 	}()
 }
 
+// fiscalOrderCancelEvent is the ADR-0138 Decision 2 order-cancel dispatch
+// point (ut-docs#3582) — see plugins.FiscalOrderCancelEvent's own doc comment.
+const fiscalOrderCancelEvent = plugins.FiscalOrderCancelEvent
+
+// fiscalOrderCancelAsyncTimeout is fiscalOrderStartAsyncTimeout's twin for
+// the fiscal.order.cancel goroutine: a safety ceiling against a wedged
+// signer, never a budget the cancel waits on. A var purely as a test seam.
+var fiscalOrderCancelAsyncTimeout = 15 * time.Second
+
+// fiscalOrderCancelPayload is the reserved ADR-0138 D2 wire shape for
+// fiscal.order.cancel: which order, the TSE transaction fiscal.order.start
+// opened for it (when one was captured on this till — omitted, not sent
+// empty, otherwise), and when it was cancelled. Deliberately as minimal as
+// fiscalOrderStartPayload.
+type fiscalOrderCancelPayload struct {
+	OrderID     string `json:"order_id"`
+	TxID        string `json:"tx_id,omitempty"`
+	TxRevision  int64  `json:"tx_revision,omitempty"`
+	CancelledAt string `json:"cancelled_at"`
+}
+
+// dispatchFiscalOrderCancel fires fiscal.order.cancel once per explicit
+// cashier cancel of a held, table or pay-at-counter order (POST
+// /api/pos/held/cancel, hold_api.go — the same place its held_sale/cancel
+// audit row is written). Same shape as dispatchFiscalOrderStart:
+//
+//   - HasSubscribers first, so a till with no fiscal.order.cancel subscriber
+//     pays one map lookup under RLock — no allocation, no goroutine and no
+//     fiscal_order_starts read (TestFiscalOrderCancel_ZeroPluginAllocatesNothing).
+//   - Known-offline short-circuit on the request's declared offline flag.
+//   - The order's captured start (GetFiscalOrderStart) is read inside the
+//     goroutine, never on the request path, and only exists when a signer
+//     answered this order's fiscal.order.start on this till.
+//   - EventBus.Ask on a goroutine tracked via d.AsyncWork; never blocks the
+//     cancel (ADR-0003). Best-effort (ADR-0138 D2: same failure policy as
+//     fiscal.sign.start): the answer is not persisted, a failure is not
+//     declared and raises no operator alert.
+//
+// ctx is unused for the same reason as dispatchFiscalOrderStart's: the
+// goroutine must outlive the request.
+func dispatchFiscalOrderCancel(ctx context.Context, d *common.Deps, orderID string, offline bool) {
+	bus := plugins.SharedBus(d.Db)
+	if !bus.HasSubscribers(fiscalOrderCancelEvent) {
+		return
+	}
+	if offline || orderID == "" {
+		return
+	}
+	cancelledAt := time.Now().UTC().Format(time.RFC3339)
+	repo := data.NewPOSRepo(d.Db)
+	d.AsyncWork.Add(1)
+	go func() {
+		defer logging.RecoverAndLog("pages.fiscalOrderCancel")
+		defer d.AsyncWork.Done()
+		askCtx, cancel := context.WithTimeout(context.Background(), fiscalOrderCancelAsyncTimeout)
+		defer cancel()
+		payload := fiscalOrderCancelPayload{OrderID: orderID, CancelledAt: cancelledAt}
+		if start, ok, err := repo.GetFiscalOrderStart(askCtx, orderID); err != nil {
+			logging.L().Infof("fiscal signing: read fiscal.order.start capture for cancelled order %s: %v", orderID, err)
+		} else if ok {
+			payload.TxID = start.TxID
+			payload.TxRevision = start.TxRevision
+		}
+		if _, ok, err := bus.Ask(askCtx, fiscalOrderCancelEvent, payload); err != nil || !ok {
+			// Info, not Warn — same reasoning as fiscal.order.start: nothing
+			// is declared for a best-effort order event.
+			logging.L().Infof("fiscal signing: fiscal.order.cancel for order %s not acknowledged (ok=%v): %v", orderID, ok, err)
+		}
+	}()
+}
+
 // fiscalOrderIDFor resolves the order_id a tender's fiscal.sign.start /
 // fiscal.sign.ask payload echoes (ADR-0138 D2): heldOriginID (the sale's
 // carried SaleInput.HeldOriginID) when that order has a fiscal_order_starts

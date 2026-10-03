@@ -39,18 +39,38 @@
      orders were held sales -- .Legacy) posts to /open-orders/counter/open,
      which prices it from the current catalog and then resumes it the same
      way. Legacy rows show what was ordered (.Items) and no total -- it
-     stored none. */}}
+     stored none.
+
+     ut-docs#3582: each held row also carries Cancel order, beside (not
+     inside) the row's resume button -- an icon-only trash button at the
+     46px floor, .btn secondary like catalog's own delete (icon, never
+     colour alone), its accessible name and tooltip naming the order. A
+     native hx-confirm (catalog delete's pattern) names the order and says
+     it cannot be undone. POST /api/pos/held/cancel (hold_api.go), gated on
+     void_comp_waste: the shared elevation dialog's hint lands in
+     #open-orders-hint; the real answer is an htmx redirect back to this tab
+     with a one-shot ?msg= banner (or ?err= on refusal). Legacy counter rows
+     are not held sales and get an empty spacer instead, so the columns stay
+     aligned with the header's own actions cell. */}}
 <div class="page-head">
   <h1>{{ T "open_orders.title" }}</h1>
   <a class="btn primary btn-touch" href="{{ .backToSaleURL }}">← {{ T "menu.back_to_sale" }}</a>
 </div>
 {{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+{{ if .msgKey }}
+<div class="pos-notice success" role="status" data-testid="open-orders-notice">
+  <span class="notice-text">{{ T .msgKey }}</span>
+  <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}">✕</button>
+</div>
+{{ end }}
 <nav class="tab-bar open-orders-tabs" aria-label="{{ T "open_orders.tabs_label" }}">
   <a class="tab{{ if eq .view.Tab "hold" }} active{{ end }}" href="/open-orders?tab=hold" data-testid="open-orders-tab-hold"{{ if eq .view.Tab "hold" }} aria-current="page"{{ end }}>{{ T "open_orders.tab.hold" }} <span class="tab-count">{{ qty (len .view.Hold) }}</span></a>
   <a class="tab{{ if eq .view.Tab "counter" }} active{{ end }}" href="/open-orders?tab=counter" data-testid="open-orders-tab-counter"{{ if eq .view.Tab "counter" }} aria-current="page"{{ end }}>{{ T "open_orders.tab.counter" }} <span class="tab-count">{{ qty (len .view.Counter) }}</span></a>
 </nav>
+<div id="open-orders-hint" class="open-orders-hint" aria-live="polite"></div>
 <div class="card users-list">
   {{ $orders := .view.Rows }}
+  {{ $tab := .view.Tab }}
   {{ if not $orders }}
   <p class="muted" data-testid="open-orders-empty">{{ if eq .view.Tab "counter" }}{{ T "open_orders.counter.empty" }}{{ else }}{{ T "open_orders.empty" }}{{ end }}</p>
   {{ else }}
@@ -62,12 +82,13 @@
         <th class="open-order-cell-lines">{{ T "open_orders.col.lines" }}</th>
         <th class="open-order-cell-total">{{ T "open_orders.col.total" }}</th>
         <th class="open-order-cell-age">{{ T "open_orders.col.age" }}</th>
+        <th class="open-order-cell-actions"><span class="visually-hidden">{{ T "open_orders.col.actions" }}</span></th>
       </tr>
     </thead>
     <tbody>
       {{ range $orders }}
       <tr {{ if .Legacy }}data-counter-id{{ else }}data-held-id{{ end }}="{{ .ID }}">
-        <td colspan="5">
+        <td colspan="6">
           <form method="post" action="{{ if .Legacy }}/open-orders/counter/open{{ else }}/open-orders/resume{{ end }}">
             <input type="hidden" name="id" value="{{ .ID }}">
             <button type="submit" class="open-order-row-btn" data-testid="open-order-row">
@@ -79,6 +100,18 @@
               <span class="open-order-cell open-order-cell-age">{{ .AgeText }}</span>
             </button>
           </form>
+          {{ if .Legacy }}
+          <span class="open-order-cancel-spacer" aria-hidden="true"></span>
+          {{ else }}
+          <button type="button" class="btn secondary open-order-cancel" data-testid="open-order-cancel"
+                  aria-label="{{ printf (T "open_orders.cancel.action_named") .Label }}"
+                  title="{{ printf (T "open_orders.cancel.action_named") .Label }}"
+                  hx-post="/api/pos/held/cancel" hx-vals='{{ jsonVals "id" .ID "view" "page" "tab" $tab }}'
+                  hx-confirm="{{ printf (T "open_orders.cancel.confirm_named") .Label }}"
+                  hx-target="#open-orders-hint" hx-swap="innerHTML">
+            <span class="btn-ico" aria-hidden="true">{{ icon "trash-2" }}</span>
+          </button>
+          {{ end }}
         </td>
       </tr>
       {{ end }}

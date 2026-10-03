@@ -51,7 +51,20 @@
      order (.Legacy, never a held sale -- so data-counter-id, not
      data-held-id, which callers resume via /api/pos/resume) is a plain form post to
      /open-orders/counter/open -- a full navigation, since it lands on the
-     sale screen reloaded, possibly with an "add by hand" notice. */}}
+     sale screen reloaded, possibly with an "add by hand" notice.
+
+     ut-docs#3582: each held row also carries Cancel order -- an icon-only
+     trash button (catalog delete's look: .btn secondary + trash-2, never
+     colour alone), its accessible name and tooltip naming the order. A
+     native hx-confirm (catalog's own pattern, no custom modal) states the
+     order and that it cannot be undone. It posts to POST
+     /api/pos/held/cancel, gated on void_comp_waste; a cashier without it
+     gets the shared elevation dialog, whose small hint lands in
+     #parked-orders-hint below rather than over the list. The real answer
+     re-targets itself to this whole body (the list without that order, a
+     "cancelled" toast, or the empty state). Focus goes back to the active
+     tab, since the row it was on is gone. A legacy counter order (never a
+     held sale) has no Cancel: opening it converts it into one first. */}}
 {{ $tab := .view.Tab }}
 <div class="tab-bar open-orders-tabs" role="tablist" data-arrow-tabs aria-label="{{ T "open_orders.tabs_label" }}">
   <button type="button" role="tab" id="parked-orders-tab-hold" class="tab{{ if eq $tab "hold" }} active{{ end }}" aria-selected="{{ if eq $tab "hold" }}true{{ else }}false{{ end }}" tabindex="{{ if eq $tab "hold" }}0{{ else }}-1{{ end }}" aria-controls="parked-orders-panel" data-testid="parked-orders-tab-hold"
@@ -63,6 +76,7 @@
 </div>
 {{ if .toast }}<div class="pos-notice {{ .toastLevel }}" id="parked-orders-toast" role="{{ .toastRole }}"><span class="notice-text">{{ .toast }}</span><button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}">✕</button></div>{{ end }}
 <div role="tabpanel" aria-labelledby="parked-orders-tab-{{ $tab }}" hx-vals='{{ jsonVals "tab" $tab }}' id="parked-orders-panel">
+<div id="parked-orders-hint" class="parked-orders-hint" aria-live="polite"></div>
 {{ if not .orders }}
 <p class="muted" data-testid="parked-orders-empty">{{ if eq $tab "counter" }}{{ T "open_orders.counter.empty" }}{{ else }}{{ T "open_orders.empty" }}{{ end }}</p>
 {{ else }}
@@ -88,6 +102,16 @@
       <span class="parked-order-label">{{ .Label }}</span>
       {{ if .TableLabel }}<span class="held-chip-table">{{ .TableLabel }}</span>{{ end }}
       <span class="parked-order-meta">{{ .LineCount }} × · {{ money .Total }} · {{ .AgeText }}</span>
+    </button>
+    <button type="button" class="btn secondary parked-order-cancel" data-testid="parked-order-cancel" data-cancel-id="{{ .ID }}"
+            aria-label="{{ printf (T "open_orders.cancel.action_named") .Label }}"
+            title="{{ printf (T "open_orders.cancel.action_named") .Label }}"
+            hx-post="/api/pos/held/cancel" hx-vals='{{ jsonVals "id" .ID "view" "parked-orders" }}'
+            hx-include="#offline-flag"
+            hx-confirm="{{ printf (T "open_orders.cancel.confirm_named") .Label }}"
+            hx-target="#parked-orders-hint" hx-swap="innerHTML"
+            data-before-request="remember-focus:parked-orders-body,parked-orders-tab-{{ $tab }}">
+      <span class="btn-ico" aria-hidden="true">{{ icon "trash-2" }}</span>
     </button>
     {{ end }}
     {{ if .MoveTargets }}

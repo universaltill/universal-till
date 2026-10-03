@@ -3811,6 +3811,27 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
   .open-order-row-btn .open-order-cell-label { flex: 1 1 100%; white-space: normal; }
   .open-order-row-btn .open-order-cell-table:empty { display: none; }
 }
+/* ut-docs#3582: Cancel order beside each held row, on the page and in the
+   popup -- an icon-only square at the 46px touch floor in every mode (never
+   smaller in kiosk than on desktop, ut-docs#161). On the page the <td>
+   (overriding its display:block above, which existed only to stretch the
+   one row button) lays the resume button and Cancel side by side; the
+   header's actions cell is 46px minus the header row's own .5rem gap, so
+   the five data columns still start where their headers do (the row
+   button's inline padding sits inside it, the header's on the row). A
+   legacy row's spacer keeps the same width. Logical properties only (RTL). */
+#open-orders-table td { display: flex; align-items: stretch; }
+#open-orders-table td > form { flex: 1 1 auto; min-inline-size: 0; }
+.open-order-cancel, .open-order-cancel-spacer {
+  flex: 0 0 46px; min-block-size: 46px; min-inline-size: 46px; margin: 0;
+  border-bottom: 1px solid var(--border);
+}
+.open-order-cancel { display: inline-flex; align-items: center; justify-content: center; padding: 0; border-radius: 0; }
+#open-orders-table tbody tr:last-child .open-order-cancel,
+#open-orders-table tbody tr:last-child .open-order-cancel-spacer { border-bottom: none; }
+.open-order-cell-actions { flex: 0 0 calc(46px - .5rem); }
+.parked-order-cancel { flex: 0 0 auto; min-block-size: 46px; min-inline-size: 46px; display: inline-flex; align-items: center; justify-content: center; }
+.open-orders-hint:empty, .parked-orders-hint:empty { display: none; }
 .parked-order-form { flex: 1; display: flex; margin: 0; }
 .parked-order-form > .parked-order { flex: 1; min-height: 46px; display: flex; align-items: center; gap: .5rem; text-align: start; }
 

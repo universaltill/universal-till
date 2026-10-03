@@ -148,15 +148,27 @@ func TestOpenOrdersPage_RowsAreRealResumeButtons(t *testing.T) {
 	// JavaScript off (that, not the tag name, is what ut-docs#826's gate is
 	// about). Checked over the <tbody> only, so the base layout's own
 	// scripts/htmx wiring can't satisfy or break it.
+	//
+	// ut-docs#3582: the row now also carries a Cancel order button BESIDE the
+	// resume form, which is an htmx control on purpose (native hx-confirm,
+	// then the void_comp_waste elevation prompt). The no-script rule is
+	// about resuming, so it is checked over the resume <form> itself; the
+	// row's inline handlers stay banned everywhere in the <tbody>.
 	tbody := body[strings.Index(body, "<tbody>"):strings.Index(body, "</tbody>")]
-	for _, banned := range []string{"onclick", "onmousedown", "ontouchstart", "hx-post", "hx-get", "data-record-open"} {
+	for _, banned := range []string{"onclick", "onmousedown", "ontouchstart", "data-record-open"} {
 		if strings.Contains(tbody, banned) {
 			t.Fatalf("a row must resume without script, found %q in the rows: %s", banned, tbody)
 		}
 	}
+	resumeForm := tbody[strings.Index(tbody, "<form"):strings.Index(tbody, "</form>")]
+	for _, banned := range []string{"hx-post", "hx-get"} {
+		if strings.Contains(resumeForm, banned) {
+			t.Fatalf("resuming must not depend on htmx, found %q in the resume form: %s", banned, resumeForm)
+		}
+	}
 	// And the control must be the row itself, not a widget tucked into one
 	// cell: one <td colspan> spanning every column, holding the button.
-	if !strings.Contains(tbody, `<td colspan="5">`) {
+	if !strings.Contains(tbody, `<td colspan="6">`) {
 		t.Fatalf("expected the whole row to be the control (one full-width cell), got: %s", tbody)
 	}
 }

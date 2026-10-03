@@ -520,8 +520,10 @@ func TestFiscalSignAsk_ZeroPluginTillAllocatesNothing(t *testing.T) {
 		// with neither fiscal.sign.start nor fiscal.sign.ask subscribed
 		// must pay for both zero-plugin fast paths combined, still zero
 		// allocs/op. ADR-0138 D2 (ut-docs#3310) extends it again to the
-		// fiscal.order.start dispatch both order-capture call sites make.
+		// fiscal.order.start dispatch both order-capture call sites make,
+		// and ut-docs#3582 to the fiscal.order.cancel one Cancel order makes.
 		dispatchFiscalOrderStart(context.Background(), dp, "hold-1", fiscalOrderKindHeld, false)
+		dispatchFiscalOrderCancel(context.Background(), dp, "hold-1", false)
 		dispatchFiscalSignStart(context.Background(), dp, &in)
 		res := dispatchFiscalSignAsk(context.Background(), dp, &in)
 		if res.Outcome != fiscalSignNoSigner {
