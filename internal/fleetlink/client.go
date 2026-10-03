@@ -369,8 +369,8 @@ func (c *Client) Run(ctx context.Context) {
 		t, ok := c.opts.Target(ctx)
 		switch {
 		case !ok || t.BaseURL == "" || t.Bearer == "":
-			c.setMode(ModeIdle)
 			c.clearOutage()
+			c.setMode(ModeIdle)
 			delay = c.opts.RecheckEvery
 		case c.isRevoked(t):
 			c.setMode(ModeRevoked)
@@ -404,13 +404,13 @@ func (c *Client) attempt(ctx context.Context, t Target, attempt int) (time.Durat
 		c.markRevoked(ctx, t)
 		return c.opts.RecheckEvery, 0
 	case err != nil:
-		c.setMode(ModeConnecting)
 		c.markAttemptFailed()
+		c.setMode(ModeConnecting)
 		attempt++
 		return c.backoff(attempt), attempt
 	case level < 1:
+		c.clearOutage() // it answered: reachable, whatever it offers
 		c.setMode(ModePolling)
-		c.clearOutage()               // it answered: reachable, whatever it offers
 		return c.opts.RecheckEvery, 0 // an older main till: poll as today (§11)
 	}
 	c.markAnswered()
