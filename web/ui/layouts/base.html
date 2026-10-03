@@ -1572,6 +1572,16 @@
         {{ else if updatedownloadlink }}
         <a class="sb-item sb-update" href="https://www.universaltill.com/download"
            rel="noopener" target="_blank" hx-boost="false"><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</a>
+        {{ else if autoupdatestuck }}
+        <!-- ut-docs#2733: auto-update is on but this linux install can't
+             apply it (install tree not writable by the till), so it is
+             silently skipped every night. Say so and lead to the fix: a
+             same-origin link to the help topic (no kiosk dead end; the hint
+             in title="" has no hover on a touchscreen, same as sb-power).
+             The link wraps the text only: arrow-up already leads to /plugins
+             (icons_test: one glyph, one destination). .is-stuck keeps the
+             row visible on the phone sale screen, like sb-power. -->
+        <span class="sb-item sb-update is-stuck"><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;<a data-testid="sb-update-stuck" href="/help/updates" title="{{ T "settings.update.auto_blocked" }}">{{ T "status.update_auto_blocked" }}</a></span>
         {{ else }}
         <!-- ut-docs#159: on a unix kiosk (fullscreen, no browser chrome) a
              website link is a dead end with no way out — state it plainly

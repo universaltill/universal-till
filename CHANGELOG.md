@@ -38,6 +38,15 @@ Release notes for the till. Versions come from the release tag
 
 ### Fixed
 
+- **A Linux till that can't update itself now says so (ut-docs#2733).** With
+  automatic updates on (the default) and an update waiting, a till whose
+  install folder it can't write — a .deb install whose ownership broke —
+  skipped the nightly update silently, forever, while Settings still said
+  "Update automatically". The status-bar update chip now says the till
+  can't install the update by itself and links to Help → Software updates
+  (reinstall the latest .deb); Settings → Software update → Check now shows
+  the same. A chip, never a dialog; additional tills keep their own
+  follow chip.
 - **A 0% shop default tax rate is charged 0% (ut-docs#3392).** A shop whose
   default tax rate is set to 0% (the US and "Other" presets, or any shop
   that chose 0%) was charged 20% on every item with no tax code of its own,

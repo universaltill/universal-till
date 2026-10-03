@@ -55,6 +55,12 @@ var (
 	// this seam or the guard built on it -- an explicit user action stays
 	// available even on a dev build; only the unattended scheduler defers.
 	autoUpdateBuildVersion = func() string { return buildinfo.Version }
+	// updateCheckNow backs Settings' POST /api/update/check.
+	updateCheckNow = updates.CheckNow
+	// autoUpdateGOOS is runtime.GOOS for the stuck decision (ut-docs#2733).
+	autoUpdateGOOS = runtime.GOOS
+	// autoUpdateInstallUnwritable: the .deb-fixable cause (ut-docs#2733).
+	autoUpdateInstallUnwritable = selfupdate.LinuxInstallUnwritable
 )
 
 // autoUpdateWindow bounds how late a catch-up can still fire. eodDue's
@@ -187,6 +193,7 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 		v, _, _ := d.Settings.Get(ctx, key)
 		return strings.TrimSpace(v)
 	}
+	updates.SetAutoUpdateStuck(autoUpdateStuckWith(get, now))
 	// A replica follows its main till's exact version instead (ut-docs#2738):
 	// the nightly "latest" could run it ahead of its main till.
 	if get("sync.primary_url") != "" {
@@ -229,6 +236,57 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 	if err := autoUpdateApply(ctx, autoUpdateIdle(d)); err != nil {
 		logging.L().Errorf("auto-update: %v", err)
 	}
+}
+
+// autoUpdateStuckFor decides whether this till's nightly auto-update is
+// silently stuck (ut-docs#2733): a linux main/standalone till with auto-update
+// effectively on and an update waiting, whose install folder its service user
+// can't write (the .deb postinstall chown, ut-docs#151), so Supported() is
+// false and autoUpdateTick skips every night. A replica is excluded — its
+// follow chip already reports an unsupported install (ut-docs#2738) — and so
+// are other platforms, whose chips already offer their own remedy.
+// unwritable is selfupdate.LinuxInstallUnwritable (not !Supported(): an apt
+// /usr install is unsupported for a reason a .deb reinstall doesn't fix); it
+// is called only when every cheap input says yes, because it probes the disk.
+func autoUpdateStuckFor(goos string, enabled, available, replica bool, unwritable func() bool) bool {
+	if goos != "linux" || !enabled || !available || replica {
+		return false
+	}
+	return unwritable()
+}
+
+// autoUpdateUnwritableTTL bounds how often the scheduler's 30 s tick re-probes
+// the install folder (two temp-file writes on an SD card): a fix or a breakage
+// shows up on the chip within this long. Settings' Check now probes fresh.
+const autoUpdateUnwritableTTL = 10 * time.Minute
+
+var autoUpdateUnwritableCache struct {
+	sync.Mutex
+	at    time.Time
+	value bool
+}
+
+// cachedInstallUnwritable is autoUpdateInstallUnwritable at most once per TTL.
+func cachedInstallUnwritable(now time.Time) bool {
+	c := &autoUpdateUnwritableCache
+	c.Lock()
+	defer c.Unlock()
+	if c.at.IsZero() || now.Sub(c.at) >= autoUpdateUnwritableTTL || now.Before(c.at) {
+		c.value, c.at = autoUpdateInstallUnwritable(), now
+	}
+	return c.value
+}
+
+// autoUpdateStuckWith is autoUpdateStuckFor over this till's settings and the
+// cached release status. A "dev" build never auto-applies (ut-docs#369), so
+// it is never "stuck" either.
+func autoUpdateStuckWith(get func(string) string, now time.Time) bool {
+	if autoUpdateBuildVersion() == "dev" {
+		return false
+	}
+	enabled, _ := autoUpdateSchedule(get)
+	return autoUpdateStuckFor(autoUpdateGOOS, enabled, autoUpdateCurrent().Available,
+		get("sync.primary_url") != "", func() bool { return cachedInstallUnwritable(now) })
 }
 
 // StartAutoUpdateScheduler runs the background unattended-update loop (docs:
@@ -566,7 +624,7 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "manager only", http.StatusForbidden)
 			return
 		}
-		st := updates.CheckNow(r.Context())
+		st := updateCheckNow(r.Context())
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		switch {
@@ -576,7 +634,8 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(w, `<span>✓ %s (v%s)</span>`,
 				html.EscapeString(httpx.T(locale, "settings.update.up_to_date")),
 				html.EscapeString(buildinfo.Version))
-		case selfupdate.Supported():
+		case autoUpdateSupported():
+			updates.SetAutoUpdateStuck(false) // ut-docs#2733: fixed since the last tick
 			// The status-bar update button also appears on the next page
 			// load; this inline one applies immediately.
 			fmt.Fprintf(w, `<span>⬆ v%s — </span><button class="btn primary" hx-post="/api/update/apply" hx-swap="none" hx-confirm="%s">%s</button>`,
@@ -584,7 +643,26 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 				html.EscapeString(httpx.T(locale, "settings.update.apply_confirm")),
 				html.EscapeString(httpx.T(locale, "status.update_now")))
 		default:
-			fmt.Fprint(w, updateUnavailableHTML(locale, st.Latest, runtime.GOOS))
+			get := func(key string) string {
+				if d.Settings == nil {
+					return ""
+				}
+				v, _, _ := d.Settings.Get(r.Context(), key)
+				return strings.TrimSpace(v)
+			}
+			// ut-docs#2733: auto-update is on but can never apply here —
+			// say so and what to do, and refresh the status chip now
+			// rather than on the scheduler's next tick.
+			if enabled, _ := autoUpdateSchedule(get); autoUpdateBuildVersion() != "dev" &&
+				autoUpdateStuckFor(autoUpdateGOOS, enabled, true, get("sync.primary_url") != "", autoUpdateInstallUnwritable) {
+				updates.SetAutoUpdateStuck(true)
+				fmt.Fprintf(w, `<span>⬆ %s v%s — %s</span>`,
+					html.EscapeString(httpx.T(locale, "status.update_available")),
+					html.EscapeString(st.Latest),
+					html.EscapeString(httpx.T(locale, "settings.update.auto_blocked")))
+				return
+			}
+			fmt.Fprint(w, updateUnavailableHTML(locale, st.Latest, autoUpdateGOOS))
 		}
 	})
 
