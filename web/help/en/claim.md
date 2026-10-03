@@ -24,6 +24,13 @@ The setup wizard's last screen asks once whether to register the till right away
 1. Turn it on and the till sends its device ID, store name, shop region and software version to the Universal Till cloud marketplace (used for support, updates and licensing) and registers straight away. Your address is not sent. Offline just then? Nothing is held up and setup still finishes — but the till stays unregistered until you open the plugin store or press Register now, so check Settings → Till registration once you are back online.
 2. Turn it off and the till goes back to registering only when you first use the plugin store or press Register now. Turning it off never removes a registration that already happened.
 
+## Cloud sync is part of the paid plans
+
+Registering and claiming are free, and so is the plugin store. Keeping the till in sync with your online account (sales figures, the product list, changes made on the shop's cloud manage page) is part of the paid plans. While the shop is not on one, the till does not contact the cloud in the background at all, and Settings → Till registration says that cloud sync is off.
+
+1. Once the shop is on a paid plan, the till finds out the next time someone on it registers it, pairs it, installs a plugin or generates a claim code. You can also press **Check for a paid plan** in Settings → Till registration (a manager or admin approves it). Cloud sync then starts within a minute and keeps running by itself.
+2. If the plan ends, cloud sync stops after the till's next check-in. Selling never depends on it: every sale works offline either way.
+
 ## When the cloud stops accepting this till
 
 If the cloud refuses this till's credential three times in a row, a chip appears in the status bar. It never blocks a sale: the till keeps selling offline, tries the cloud again once an hour, and keeps everything it still has to send on the till until it is connected again. The chip says one of three things:

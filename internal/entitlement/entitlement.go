@@ -185,6 +185,35 @@ func EffectivePlan(ctx context.Context, r Reader, now time.Time) Plan {
 	return PlanLocal
 }
 
+// SyncAllowed is ADR-0148 §1's gate on the periodic cloud check-in
+// (POST /v1/stores/sync and everything that rides the tick): true only
+// when the last cloud-confirmed entitlement block is present (a parsable
+// last_confirmed_at), says subscription_status = active, and its plan
+// allows CapCloudSync. No cache, an unreadable cache, lapsed/none, local
+// or an unknown plan → false (fail closed).
+//
+// Deliberately NO Grace/staleness check, unlike EffectivePlan: a paid till
+// that was offline longer than Grace must still be allowed to check in and
+// re-confirm (ADR-0148 "Alternatives considered"). EffectivePlan's grace
+// keeps governing what the paid features themselves do. NEVER a sale gate
+// (package doc).
+func SyncAllowed(ctx context.Context, r Reader) bool {
+	get := func(k string) string {
+		v, ok, err := r.Get(ctx, k)
+		if err != nil || !ok {
+			return ""
+		}
+		return strings.TrimSpace(v)
+	}
+	if _, err := time.Parse(time.RFC3339, get(KeyLastConfirmedAt)); err != nil {
+		return false
+	}
+	if get(KeySubscriptionStatus) != StatusActive {
+		return false
+	}
+	return Allows(Plan(get(KeyPlan)), CapCloudSync)
+}
+
 // CloudLink is ADR-0117 §2's till-side read of the cached cloud_link tier
 // and mode, mirroring EffectivePlan's staleness rule exactly: the cached
 // value is honoured only while last_confirmed_at (the same timestamp

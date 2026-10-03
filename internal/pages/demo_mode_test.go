@@ -183,6 +183,7 @@ func TestDemoAlwaysDeniedSurfaces(t *testing.T) {
 		"POST /api/settings/display-mode",
 		"POST /api/sync/enroll",
 		"POST /api/enrol/now",
+		"POST /api/enrol/check-plan",
 		"GET /api/sync/snapshot",
 		"POST /api/setup/join",
 		"GET /self-order",

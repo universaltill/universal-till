@@ -24,6 +24,13 @@ Kurulum sihirbazının son ekranı, kasayı hemen kaydetmek isteyip istemediğin
 1. Açarsanız kasa; cihaz kimliğini, mağaza adını, mağaza bölgesini ve yazılım sürümünü (destek, güncellemeler ve lisanslama için kullanılır) Universal Till bulut pazaryerine gönderir ve hemen kaydolur. Adresiniz gönderilmez. O an çevrimdışı mı? Hiçbir şey beklemez, kurulum yine de tamamlanır — ama kasa, eklenti mağazasını açana veya Şimdi kaydol'a basana kadar kayıtsız kalır; yeniden çevrimiçi olduğunuzda Ayarlar → Kasa kaydı bölümünü kontrol edin.
 2. Kapatırsanız kasa yalnızca eklenti mağazasını ilk kullandığınızda veya Şimdi kaydol'a bastığınızda kaydolmaya döner. Kapatmak, daha önce yapılmış bir kaydı asla kaldırmaz.
 
+## Bulut eşitlemesi ücretli planlara dahildir
+
+Kayıt ve sahiplenme ücretsizdir, eklenti mağazası da öyle. Kasayı çevrimiçi hesabınızla eşitlenmiş tutmak (satış rakamları, ürün listesi, mağazanın bulut yönetim sayfasında yapılan değişiklikler) ücretli planlara dahildir. Mağaza ücretli bir planda değilken kasa arka planda buluta hiç bağlanmaz ve Ayarlar → Kasa kaydı bulut eşitlemesinin kapalı olduğunu söyler.
+
+1. Mağaza ücretli bir plana geçtiğinde kasa bunu, birisi o kasada bir sonraki kez kayıt, eşleştirme, eklenti kurma veya sahiplenme kodu oluşturma yaptığında öğrenir. Ayarlar → Kasa kaydı bölümünde **Ücretli planı kontrol et** düğmesine de basabilirsiniz (bir yönetici veya admin onaylar). Bulut eşitlemesi bir dakika içinde başlar ve kendiliğinden çalışmaya devam eder.
+2. Plan sona ererse bulut eşitlemesi kasanın bir sonraki yoklamasından sonra durur. Satış hiçbir zaman buna bağlı değildir: her satış her durumda çevrimdışı çalışır.
+
 ## Bulut bu kasayı artık kabul etmediğinde
 
 Bulut bu kasanın kimlik bilgisini art arda üç kez reddederse durum çubuğunda bir uyarı görünür. Uyarı hiçbir satışı engellemez: kasa çevrimdışı satışa devam eder, buluta saatte bir yeniden bağlanmayı dener ve göndermesi gereken her şeyi yeniden bağlanana kadar kasada tutar. Uyarı şu üçünden birini söyler:

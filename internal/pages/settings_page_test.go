@@ -2315,6 +2315,7 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 		{"enrol-claim-code", http.MethodPost, "/api/enrol/claim-code", nil, gateElevation},
 		{"enrol-now", http.MethodPost, "/api/enrol/now", nil, gateElevation},
 		{"enrol-pair", http.MethodPost, "/api/enrol/pair", nil, gateElevation},
+		{"enrol-check-plan", http.MethodPost, "/api/enrol/check-plan", nil, gateElevation},
 		{"enrol-devices", http.MethodGet, "/api/enrol/devices", nil, gateForbiddenSpan},
 		{"idle-lock", http.MethodPost, "/api/settings/idle-lock", url.Values{"minutes": {"10"}}, gateElevation},
 		{"kiosk-idle-reset", http.MethodPost, "/api/settings/kiosk-idle-reset", url.Values{"seconds": {"30"}}, gateElevation},
