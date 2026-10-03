@@ -649,7 +649,11 @@ keep installing — nothing checks them. Don't use them in a new plugin.
 
 A setting declared `"type": "endpoint"` holds an operator-entered
 `http(s)://host[:port][/path]`; the settings page refuses anything else
-(`"type": "secret"` masks and seals a credential, ADR-0082).
+(`"type": "secret"` masks and seals a credential, ADR-0082). A manifest's own
+`default_value` for an `"endpoint"` setting is checked the same way at
+install time (ut-docs#3552): a non-empty default must be a valid http(s) URL
+or the manifest is rejected; an absent or empty-string (`""`) default is
+fine — the operator sets it later.
 
 ### 5. Data Protection
 
