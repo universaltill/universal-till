@@ -79,6 +79,7 @@ var notSettingsKeyConsts = map[string]string{
 	"pages.reservedChargeKey":   "a charge-hook line key",
 	"ui.designerErrorServerKey": "an i18n message key",
 	"pos.ServiceChargeKey":      "a sale charge-line key",
+	"cloudsync.LANAddressKey":   "a cloud device-report field, not a setting (ut-docs#2774)",
 }
 
 // settingsKeyShape is what a settings key (or a key-family prefix built by

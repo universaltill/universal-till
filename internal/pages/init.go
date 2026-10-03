@@ -555,6 +555,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	dp.NetReach = netreach.New(netreach.Options{Endpoint: cfg.Marketplace.EndpointURL, Ctx: bgCtx})
 	registerNetStatus(mux, dp)
 	dp.PrimaryWatch = discovery.NewPrimaryWatch(dp.Settings, discovery.Browse)
+	// ut-docs#2774: when mDNS finds nothing, ask the cloud where the main
+	// till is — a candidate for the same proof, never a shortcut.
+	dp.PrimaryWatch.SetCloudLookup(discovery.NewCloudLookup(primaryWatchCloudCredentials(dp)))
 	// ADR-0114 (ut-docs#2735): this till's side of the main-till link. Built
 	// before StartSyncPull, which reads its link state for the polling floor.
 	dp.LinkClient = newSyncLinkClient(dp, fleetlink.DefaultClientOptions())
