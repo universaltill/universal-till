@@ -171,10 +171,13 @@ func fiscalHookManifest(id, event string) *Manifest {
 // extends every table-driven case below to it: each directional pair now
 // includes a plugin declaring ONLY fiscal.order.start being refused while a
 // different plugin holds any other member (and vice versa).
-var fiscalSignGroupEvents = []string{"fiscal.sign.ask", "fiscal.sign.start", "fiscal.sign.reconcile.ask", "fiscal.order.start"}
+//
+// ut-docs#3582 adds fiscal.order.cancel as the fifth, in the change that
+// first dispatches it (ADR-0138 D2).
+var fiscalSignGroupEvents = []string{"fiscal.sign.ask", "fiscal.sign.start", "fiscal.sign.reconcile.ask", "fiscal.order.start", "fiscal.order.cancel"}
 
-// Every directional pair across the group (held × declared, 16 combinations
-// including the four same-event ones): a different plugin is refused, the
+// Every directional pair across the group (held × declared, 25 combinations
+// including the five same-event ones): a different plugin is refused, the
 // refusal names the owner, and the refused install rolls back entirely.
 func TestPersistManifest_FiscalSignGroupRefusesEveryDirectionalPair(t *testing.T) {
 	for _, held := range fiscalSignGroupEvents {
@@ -245,7 +248,7 @@ func TestPersistManifest_FiscalSignGroupSelfUpdateNotAConflict(t *testing.T) {
 // start-only or reconcile-only manifest refuses the persist with the
 // check's own error.
 func TestPersistManifest_FiscalSignGroupFailsClosedOnDBError(t *testing.T) {
-	for _, ev := range []string{"fiscal.sign.start", "fiscal.sign.reconcile.ask", "fiscal.order.start"} {
+	for _, ev := range []string{"fiscal.sign.start", "fiscal.sign.reconcile.ask", "fiscal.order.start", "fiscal.order.cancel"} {
 		t.Run(ev, func(t *testing.T) {
 			d := openRealDB(t)
 			mustExecSQL(t, d, `DROP TABLE plugin_hooks`)
@@ -260,11 +263,11 @@ func TestPersistManifest_FiscalSignGroupFailsClosedOnDBError(t *testing.T) {
 	}
 }
 
-// The exported group is exactly the four events ADR-0077 D3 and ADR-0138 D2
-// name — a fifth event silently added here would widen single-ownership
+// The exported group is exactly the five events ADR-0077 D3 and ADR-0138 D2
+// name — another event silently added here would widen single-ownership
 // enforcement without an ADR; a dropped one would silently reopen the gap.
-// fiscal.order.cancel (ADR-0138 D2) is deliberately NOT a member yet: it is
-// reserved but undispatched, and joins in the change that first dispatches it.
+// fiscal.order.cancel (ADR-0138 D2) joined with its first dispatch
+// (ut-docs#3582).
 func TestFiscalSignExclusiveEvents_IsExactlyTheADR0077And0137Group(t *testing.T) {
 	got := strings.Join(FiscalSignExclusiveEvents, ",")
 	want := strings.Join(fiscalSignGroupEvents, ",")
