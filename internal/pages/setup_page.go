@@ -329,6 +329,11 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// check yet — we'll install it when you're online" note and button.
 		taxPlugin, _ := setupInstallableTaxPlugin(r.Context(), d, tseProvisionCountry)
 		data["installableTaxPlugin"] = taxPlugin
+		// ut-docs#3244: no tile to render (no catalog match), but the
+		// operator's consent is still queued — step 3 says so.
+		if taxPlugin == nil {
+			data["taxPluginQueued"] = setupTaxPluginQueued(r.Context(), d, tseProvisionCountry)
+		}
 		// tax_plugin_pending: set by POST /api/setup/tax-plugin's failure
 		// redirect (query param, not stored state) — shows the "still
 		// installing in the background" note once, on the page that

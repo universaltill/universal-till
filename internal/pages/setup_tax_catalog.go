@@ -239,6 +239,39 @@ func setupInstallableTaxPlugin(ctx context.Context, d *common.Deps, country stri
 	return &installableTaxPlugin{Country: strings.ToUpper(strings.TrimSpace(country)), ListingID: listingID}, false
 }
 
+// setupTaxPluginQueued reports whether the operator's consent to this
+// country's fiscal plugin is still waiting on the #591 pending list with no
+// active local tax plugin for that country (ut-docs#3244). Step 3 renders its
+// tile only from a catalog match, so with a reachable catalog that publishes
+// no listing (#3210 keeps the spec pending then) the step would otherwise say
+// nothing about the plugin. Read errors log and return false: this only adds a note,
+// and the Settings chip stays the durable signal.
+func setupTaxPluginQueued(ctx context.Context, d *common.Deps, country string) bool {
+	locale, ok := countryTaxLocale[strings.ToUpper(strings.TrimSpace(country))]
+	if !ok {
+		return false
+	}
+	installed, err := data.NewPluginRepo(d.Db).HasActiveEntryTypeForMarket(ctx, "tax", country)
+	if err != nil {
+		logging.L().Warnf("setup wizard: queued tax note suppressed (local tax plugin check failed): %v", err)
+		return false
+	}
+	if installed {
+		return false
+	}
+	pending, err := loadPendingBasePlugins(ctx, d)
+	if err != nil {
+		logging.L().Warnf("setup wizard: queued tax note suppressed (pending list unreadable): %v", err)
+		return false
+	}
+	for _, spec := range pending {
+		if spec.CanonicalType == "tax" && spec.Locale == locale {
+			return true
+		}
+	}
+	return false
+}
+
 // setupTaxPluginInstallHandler is POST /api/setup/tax-plugin (ut-docs#1180):
 // the wizard's explicit "install the fiscal plugin" action. Auth-exempt on
 // the same first-boot-only window as POST /api/setup/language —
