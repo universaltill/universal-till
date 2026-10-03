@@ -653,6 +653,9 @@ jobs:
           exit 1
       - name: Install E2E dependencies
         working-directory: tests/e2e
+        # Playwright < 1.61 hangs after the browser download on Node 26
+        # (ut-docs#3595); cap it so a hang fails fast, not at the 6h limit.
+        timeout-minutes: 15
         # ut-docs#1933: `playwright install --with-deps` shells out to
         # apt-get, which hits the same intermittent "Hash Sum mismatch"
         # against this runner image's pre-configured Google Chrome repo as
