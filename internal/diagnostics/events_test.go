@@ -130,6 +130,12 @@ type badKindTypeMismatch struct {
 type badUnexported struct {
 	secret string //nolint:unused // the whole point: the checker must see it
 }
+type badReservedAt struct {
+	At string `json:"at" diag:"id"`
+}
+type badReservedType struct {
+	Type string `json:"type" diag:"id"`
+}
 
 func (badUntagged) eventType() string         { return "plugin_ask" }
 func (badTextKind) eventType() string         { return "plugin_ask" }
@@ -138,6 +144,8 @@ func (badRawBytes) eventType() string         { return "plugin_ask" }
 func (badNested) eventType() string           { return "plugin_ask" }
 func (badKindTypeMismatch) eventType() string { return "plugin_ask" }
 func (badUnexported) eventType() string       { return "plugin_ask" }
+func (badReservedAt) eventType() string       { return "plugin_ask" }
+func (badReservedType) eventType() string     { return "plugin_ask" }
 
 func TestCheckEventShape_RejectsViolatingStructs(t *testing.T) {
 	cases := []struct {
@@ -152,6 +160,8 @@ func TestCheckEventShape_RejectsViolatingStructs(t *testing.T) {
 		{"nested map", badNested{}, "must be string"},
 		{"count declared on a string", badKindTypeMismatch{}, "must be an integer"},
 		{"unexported field", badUnexported{}, "unexported"},
+		{"reserved json name at", badReservedAt{}, "reserved"},
+		{"reserved json name type", badReservedType{}, "reserved"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

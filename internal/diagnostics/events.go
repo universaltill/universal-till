@@ -290,6 +290,9 @@ func checkEventShape(typ reflect.Type) []string {
 	for i := 0; i < typ.NumField(); i++ {
 		f := typ.Field(i)
 		where := typ.Name() + "." + f.Name
+		if name := jsonName(f); name == "at" || name == "type" {
+			problems = append(problems, fmt.Sprintf("%s: json name %q is reserved by the event envelope (marshal writes it after decode) and cannot be used as a field name", where, name))
+		}
 		if !f.IsExported() {
 			problems = append(problems, where+": unexported field — every field must be a declared, exported wire field")
 			continue
