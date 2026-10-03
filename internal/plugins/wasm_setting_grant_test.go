@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -402,4 +404,64 @@ func TestHTTPSettingBoundGrant(t *testing.T) {
 			t.Fatalf("new host after the move: %v", res)
 		}
 	})
+}
+
+// ut-docs#3514: marketplace install and import verify through VerifyManifest,
+// not ParseManifest — the setting-bound grant check must run there too.
+func TestVerifyManifest_RefusesMalformedSettingBoundGrant(t *testing.T) {
+	mv, err := NewManifestVerifier("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := `{"id":"t.p","name":"T","version":"1.0.0","runtime":"wasm","entrypoint":"./plugin.wasm","canonical_type":"integration","device_arch":"any","settings":[{"key":"url"},{"key":"host"},{"key":"port"}],"permissions":`
+	write := func(perms string) string {
+		p := filepath.Join(t.TempDir(), "manifest.json")
+		if err := os.WriteFile(p, []byte(base+perms+`}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	bad := map[string]string{
+		`["net:@setting:nope"]`:          "does not declare",
+		`["net:@setting:"]`:              "empty or padded",
+		`["net:@setting:url:port"]`:      "expected 1 setting key",
+		`["tcp:@setting:host"]`:          "expected 2 setting key",
+		`["tcp:@setting:host:port:url"]`: "expected 2 setting key",
+		`["tcp:@setting:host:"]`:         "empty or padded",
+		`["net:@bogus"]`:                 "unknown form",
+	}
+	for perms, want := range bad {
+		if _, err := mv.VerifyManifest(write(perms)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: VerifyManifest should refuse with %q, got %v", perms, want, err)
+		}
+	}
+	for _, ok := range []string{`["net:@setting:url"]`, `["tcp:@setting:host:port"]`} {
+		if _, err := mv.VerifyManifest(write(ok)); err != nil {
+			t.Errorf("%s: valid setting-bound grant refused: %v", ok, err)
+		}
+	}
+}
+
+// ut-docs#3514: same setting-type enum as ParseManifest (ADR-0082).
+func TestVerifyManifest_RefusesUnknownSettingType(t *testing.T) {
+	mv, err := NewManifestVerifier("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(typ string) string {
+		p := filepath.Join(t.TempDir(), "manifest.json")
+		m := `{"id":"t.p","name":"T","version":"1.0.0","runtime":"wasm","entrypoint":"./plugin.wasm","canonical_type":"integration","device_arch":"any","settings":[{"key":"k","type":"` + typ + `"}]}`
+		if err := os.WriteFile(p, []byte(m), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	if _, err := mv.VerifyManifest(write("secrett")); err == nil || !strings.Contains(err.Error(), `invalid type "secrett"`) {
+		t.Errorf("unknown setting type should be refused, got %v", err)
+	}
+	for _, ok := range []string{"secret", ""} {
+		if _, err := mv.VerifyManifest(write(ok)); err != nil {
+			t.Errorf("type %q refused: %v", ok, err)
+		}
+	}
 }
