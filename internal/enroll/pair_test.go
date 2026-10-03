@@ -336,6 +336,12 @@ func TestPairRefusedLeavesIdentityCleared(t *testing.T) {
 	if tok := Effective(cfg).Marketplace.MerchantToken; tok != "" {
 		t.Fatal("the old token is still in use after the identity was cleared")
 	}
+	if sid := Effective(cfg).Marketplace.StoreID; sid != "" {
+		t.Fatalf("Effective store id = %q after a refused pair, want \"\" (stale startup copy %q)", sid, pairOldStore)
+	}
+	if sid, _ := currentStoreAuth(cfg.Marketplace); sid != "" {
+		t.Fatalf("currentStoreAuth store id = %q after a refused pair, want \"\" (stale startup copy %q)", sid, pairOldStore)
+	}
 	assertPairSecretsNotLogged(t, logs)
 }
 
@@ -503,6 +509,9 @@ func TestPairReplicaMatchingStore(t *testing.T) {
 	}
 	if !st.Registered || st.StoreID != pairStore {
 		t.Fatalf("status = %+v, want registered under %s", st, pairStore)
+	}
+	if sid := Effective(cfg).Marketplace.StoreID; sid != pairStore {
+		t.Fatalf("Effective store id = %q, want the replica's synced %q kept", sid, pairStore)
 	}
 	assertPairSecretsNotLogged(t, logs)
 }
