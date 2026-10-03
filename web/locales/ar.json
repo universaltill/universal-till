@@ -555,7 +555,7 @@
   "countrysettings.error.delete": "تعذّر حذف هذه الدولة.",
   "countrysettings.error.retention_invalid": "أدخل مدة الحفظ بعدد أيام صحيح.",
   "countrysettings.error.save": "تعذّر حفظ هذه الدولة.",
-  "countrysettings.error.tax_invalid": "أدخل نسبة ضريبة تساوي صفرًا أو أكثر.",
+  "countrysettings.error.tax_invalid": "أدخل نسبة ضريبة بين 0 و100.",
   "countrysettings.intro": "العملة ونسبة الضريبة والحد الأدنى لمدة حفظ الأرشيف الافتراضية لكل دولة. ستصبح هذه القيم الإعدادات الابتدائية لمتجر جديد بمجرد أن يقرأ الإعداد من هذا الجدول — أما الآن، فتعديل دولة هنا لا يغيّر أي متجر يعمل بالفعل.",
   "countrysettings.new.submit": "إضافة دولة",
   "countrysettings.new.title": "إضافة دولة",

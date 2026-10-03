@@ -555,7 +555,7 @@
   "countrysettings.error.delete": "Could not delete this country.",
   "countrysettings.error.retention_invalid": "Enter the retention period as a whole number of days.",
   "countrysettings.error.save": "Could not save this country.",
-  "countrysettings.error.tax_invalid": "Enter a tax rate of zero or more.",
+  "countrysettings.error.tax_invalid": "Enter a tax rate between 0 and 100.",
   "countrysettings.intro": "Default currency, tax rate and archive-retention floor for each country. These become a new shop's starting values once setup reads from this table — for now, editing a country here does not change any shop already running.",
   "countrysettings.new.submit": "Add country",
   "countrysettings.new.title": "Add a country",

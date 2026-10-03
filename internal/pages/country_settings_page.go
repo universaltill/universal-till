@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/taxrate"
 )
 
 // localeSafeToPreset decides whether a country's own DefaultLocale
@@ -328,6 +330,13 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 
 // formatBPAsPercent renders basis points as a percent string for the form,
 // trimming a trailing ".00" so whole rates read as "19" not "19.00".
+//
+// Deliberately NOT internal/taxrate.FormatPercent (ut-docs#3301): that one
+// trims every trailing zero in the fraction ("8.50" -> "8.5"), but this
+// page's row display keeps both decimal places for a genuinely fractional
+// rate by design, pinned by e2e/tests/country-settings-record-dialog-2187.spec.ts
+// ("12.5" saved -> "12.50%" shown). Only the parse side (the actual
+// accept/reject drift risk the card is about) is unified below.
 func formatBPAsPercent(bp int64) string {
 	s := strconv.FormatFloat(float64(bp)/100, 'f', 2, 64)
 	s = strings.TrimSuffix(s, ".00")
@@ -336,14 +345,22 @@ func formatBPAsPercent(bp int64) string {
 
 // parsePercentAsBP converts the form's percent input to basis points. Storage
 // is basis points (the repo's rule for rates); only this boundary knows about
-// percent.
+// percent. Delegates to the canonical internal/taxrate.ParsePercent
+// (ut-docs#3301) — the same parser the shop default rate uses — so the two
+// forms can't drift on what they accept; a negative, "1e3" or "NaN" is
+// refused, and a decimal comma ("7,5") is integer arithmetic, never float.
+// Review finding, ut-docs#3301: the old httpx.ParsePercentBP-based wrapper
+// enforced no upper bound of its own, so a country's tax rate could be saved
+// above 100%; taxrate.ParsePercent's MaxBP (0–100%, inclusive) now refuses
+// it, like the shop default rate and tax codes already do.
 func parsePercentAsBP(v string) (int64, error) {
 	v = strings.TrimSpace(v)
 	if v == "" {
 		return 0, nil
 	}
-	// ut-docs#2954: ParsePercentBP accepts a decimal comma ("7,5") and is
-	// integer arithmetic, so 8.5% is exactly 850 bp with no float rounding;
-	// a negative, "1e3" or "NaN" is refused.
-	return httpx.ParsePercentBP(v)
+	bp, ok := taxrate.ParsePercent(v)
+	if !ok {
+		return 0, fmt.Errorf("invalid percent %q", v)
+	}
+	return int64(bp), nil
 }
