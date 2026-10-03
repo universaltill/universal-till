@@ -24,7 +24,7 @@ Satış ekranında görünen hızlı satış düğmelerini, ürün ızgarasını
 
 ## Bilmekte fayda var
 
-- Hızlı satış düğmeleri, gizleme/gizliliği kaldırma ve kategoriler mağaza genelindedir ve her zaman **ana kasadan** yönetilir: katılmış bir kasada bir düğme eklemek, gizlemek, kaldırmak veya yeniden sıralamak ya da bir kategoriyi değiştirmek, yalnızca yerel olarak geçerli olacak bir değişikliği kabul etmek yerine sizi ana kasaya yönlendiren bir mesaj gösterir.
+- Hızlı satış düğmeleri, gizleme/gizliliği kaldırma ve kategoriler mağaza genelindedir: **ana kasa** bunları tüm kasalar için tutar. Katılmış bir kasada bir düğme eklemek, gizlemek, kaldırmak veya yeniden sıralamak ya da bir kategoriyi değiştirmek ana kasaya gönderilir; ana kasa buna yetkili olup olmadığınızı kontrol eder (katılmış kasada girilen bir yönetici PIN'i de geçerlidir), kaydeder ve tüm kasalara iletir — hiçbir şey yalnızca katılmış kasada kaydedilmez. Ana kasaya ulaşılamazsa değişiklik bir mesajla reddedilir ve hiçbir şey değişmez; ana kasa geri geldiğinde tekrar yapın.
 - Satış ekranı kopyası her etkin ürünü otomatik olarak gösterir, gizli olanları yerlerinde soluk gri olarak — yepyeni bir kategori, ürünlerinden biri etkinleşir etkinleşmez, hiçbir manuel adım olmadan şeritte görünür. Alttaki Kategoriler listesi yine de her zaman her kategoriyi gösterir.
 - Bu sayfadaki kutucuklar asla bir şey satmaz: burada birine dokunmak hiçbir sepete bir şey eklemez. Onlarla ilgili diğer her şey — renk, fiyat, resim, sıra — kasiyerlerin gördüğüdür.
 - Kataloğunuzda henüz etkin ürün yok mu? Izgara "Henüz ürün yok." gösterir — başlamak için Katalog'da ilk ürününüzü ekleyin.

@@ -197,7 +197,7 @@ func (r *CatalogRepo) SaveVariant(ctx context.Context, p VariantSave) (VariantSa
 			cur.active = *p.Active
 			res.Changed = append(res.Changed, "active")
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE item_variants SET name = ?, sku = ?, price = ?, is_active = ? WHERE id = ?`,
+		if _, err := tx.ExecContext(ctx, `UPDATE item_variants SET name = ?, sku = ?, price = ?, is_active = ?, updated_at = datetime('now') WHERE id = ?`,
 			cur.name, nullableString(cur.sku), cur.price, boolToInt(cur.active), p.ID); err != nil {
 			if isUniqueViolation(err) {
 				return res, variantSKUTakenError(ctx, tx, cur.sku, p.ID)

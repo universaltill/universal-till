@@ -336,12 +336,14 @@ func TestCatalogModifiersPanel_ShowsDeactivatedGroupsForReactivation(t *testing.
 	}
 }
 
-// ut-docs#1667: item_modifier_groups/item_modifier_options are now synced
-// shop-wide (sync_admin_repo.go's adminTables), so a write accepted on a
-// satellite would silently vanish on the next admin pull — both mutation
-// endpoints must refuse up front instead, same pattern as
-// TestRegistersPage_MutationsRefusedOnReplica.
-func TestCatalogModifiersPanel_MutationsRefusedOnReplica(t *testing.T) {
+// ut-docs#1667 / ut-docs#2817: item_modifier_groups/item_modifier_options
+// are synced shop-wide (sync_admin_repo.go's adminTables), so a write
+// accepted locally on an additional till would silently vanish on the next
+// admin pull. Both mutation endpoints write through to the main till
+// instead (item_replica_gate_test.go covers that path); with the main till
+// unreachable (here: no sync bearer) they are refused and nothing changes
+// locally.
+func TestCatalogModifiersPanel_MutationsRefusedOnReplicaWhileMainUnreachable(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
 	defer db.Close()
@@ -362,18 +364,18 @@ func TestCatalogModifiersPanel_MutationsRefusedOnReplica(t *testing.T) {
 	mux := http.NewServeMux()
 	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}, Settings: st})
 
-	wantMsg := "manage Modifiers on the primary till" // ut-docs#2211 rename
+	wantMsg := "Can't reach the main till" // ut-docs#2817: written through, main till unreachable (no sync bearer)
 
 	groupForm := "panelItem=itm1&itemId=itm1&name=Extras&isActive=1&minSelect=0&maxSelect=2"
 	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group", strings.NewReader(groupForm))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("create group on replica: want 409, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("create group on replica: want 502, got %d: %s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), wantMsg) {
-		t.Fatalf("create group on replica: body missing the localized replica_use_primary message, got %q", rec.Body.String())
+		t.Fatalf("create group on replica: body missing the localized main-till-unreachable message, got %q", rec.Body.String())
 	}
 	var count int
 	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_group_links WHERE item_id = 'itm1'`).Scan(&count); err != nil {
@@ -401,11 +403,11 @@ func TestCatalogModifiersPanel_MutationsRefusedOnReplica(t *testing.T) {
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec2 := httptest.NewRecorder()
 	mux.ServeHTTP(rec2, req2)
-	if rec2.Code != http.StatusConflict {
-		t.Fatalf("update group on replica: want 409, got %d: %s", rec2.Code, rec2.Body.String())
+	if rec2.Code != http.StatusBadGateway {
+		t.Fatalf("update group on replica: want 502, got %d: %s", rec2.Code, rec2.Body.String())
 	}
 	if !strings.Contains(rec2.Body.String(), wantMsg) {
-		t.Fatalf("update group on replica: body missing the localized replica_use_primary message, got %q", rec2.Body.String())
+		t.Fatalf("update group on replica: body missing the localized main-till-unreachable message, got %q", rec2.Body.String())
 	}
 	var groupName string
 	if err := db.QueryRow(`SELECT name FROM item_modifier_groups WHERE id = 'grp-existing'`).Scan(&groupName); err != nil || groupName != "Extras" {
@@ -417,11 +419,11 @@ func TestCatalogModifiersPanel_MutationsRefusedOnReplica(t *testing.T) {
 	req3.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec3 := httptest.NewRecorder()
 	mux.ServeHTTP(rec3, req3)
-	if rec3.Code != http.StatusConflict {
-		t.Fatalf("create option on replica: want 409, got %d: %s", rec3.Code, rec3.Body.String())
+	if rec3.Code != http.StatusBadGateway {
+		t.Fatalf("create option on replica: want 502, got %d: %s", rec3.Code, rec3.Body.String())
 	}
 	if !strings.Contains(rec3.Body.String(), wantMsg) {
-		t.Fatalf("create option on replica: body missing the localized replica_use_primary message, got %q", rec3.Body.String())
+		t.Fatalf("create option on replica: body missing the localized main-till-unreachable message, got %q", rec3.Body.String())
 	}
 	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_options WHERE group_id = 'grp-existing'`).Scan(&count); err != nil {
 		t.Fatalf("count options: %v", err)
@@ -435,11 +437,11 @@ func TestCatalogModifiersPanel_MutationsRefusedOnReplica(t *testing.T) {
 	req4.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec4 := httptest.NewRecorder()
 	mux.ServeHTTP(rec4, req4)
-	if rec4.Code != http.StatusConflict {
-		t.Fatalf("update option on replica: want 409, got %d: %s", rec4.Code, rec4.Body.String())
+	if rec4.Code != http.StatusBadGateway {
+		t.Fatalf("update option on replica: want 502, got %d: %s", rec4.Code, rec4.Body.String())
 	}
 	if !strings.Contains(rec4.Body.String(), wantMsg) {
-		t.Fatalf("update option on replica: body missing the localized replica_use_primary message, got %q", rec4.Body.String())
+		t.Fatalf("update option on replica: body missing the localized main-till-unreachable message, got %q", rec4.Body.String())
 	}
 	var optName string
 	if err := db.QueryRow(`SELECT name FROM item_modifier_options WHERE id = 'opt-existing'`).Scan(&optName); err != nil || optName != "Extra shot" {
@@ -654,9 +656,10 @@ func TestModifierGroupAttach_RefusesStalePickerSubmission(t *testing.T) {
 }
 
 // Attach/detach are catalog mutations synced shop-wide (ut-docs#1667), same
-// as create/update — both must refuse on a replica, same convention as
-// TestCatalogModifiersPanel_MutationsRefusedOnReplica.
-func TestModifierGroupAttachDetach_RefusedOnReplica(t *testing.T) {
+// as create/update — both are written through to the main till
+// (ut-docs#2817) and, with it unreachable, refused with no local write, same
+// convention as TestCatalogModifiersPanel_MutationsRefusedOnReplicaWhileMainUnreachable.
+func TestModifierGroupAttachDetach_RefusedOnReplicaWhileMainUnreachable(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
 	defer db.Close()
@@ -679,8 +682,8 @@ func TestModifierGroupAttachDetach_RefusedOnReplica(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("attach on replica: want 409, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("attach on replica: want 502, got %d: %s", rec.Code, rec.Body.String())
 	}
 	var linkCount int
 	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_group_links WHERE group_id = 'g-milk'`).Scan(&linkCount); err != nil || linkCount != 1 {
@@ -692,8 +695,8 @@ func TestModifierGroupAttachDetach_RefusedOnReplica(t *testing.T) {
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec2 := httptest.NewRecorder()
 	mux.ServeHTTP(rec2, req2)
-	if rec2.Code != http.StatusConflict {
-		t.Fatalf("detach on replica: want 409, got %d: %s", rec2.Code, rec2.Body.String())
+	if rec2.Code != http.StatusBadGateway {
+		t.Fatalf("detach on replica: want 502, got %d: %s", rec2.Code, rec2.Body.String())
 	}
 	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_group_links WHERE group_id = 'g-milk'`).Scan(&linkCount); err != nil || linkCount != 1 {
 		t.Fatalf("detach must not unlink on a replica: count=%d err=%v", linkCount, err)

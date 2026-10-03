@@ -24,7 +24,7 @@ Arrange the quick-sale buttons, product grid and categories shown on the sale sc
 
 ## Good to know
 
-- Quick-sale buttons, hides/unhides and categories are shop-wide and always managed from the **main till**: on a joined till, adding, hiding, removing, reordering a button, or changing a category, shows a message pointing you back to the main till, rather than accepting a change that would only apply locally.
+- Quick-sale buttons, hides/unhides and categories are shop-wide: the **main till** keeps them for every till. On a joined till, adding, hiding, removing or reordering a button, or changing a category, is sent to the main till, which checks that you're allowed to (a manager's PIN entered on the joined till counts), saves it and passes it on to every till — nothing is saved only on the joined till. If the main till can't be reached, the change is refused with a message and nothing changes; make it again when the main till is back.
 - The sale-screen copy shows every active item automatically, with hidden ones greyed out in their spot — a brand-new category appears in the strip the moment one of its items is active, with no manual step. The Categories list further down always shows every category regardless.
 - Tiles on this page never sell anything: tapping one here doesn't add it to any basket. Everything else about them — colour, price, picture, order — is what cashiers see.
 - No active items in your catalog yet? The grid shows "No products yet." — add your first item in the Catalog to get started.

@@ -245,6 +245,12 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// shop-wide settings change on an additional till is refused as
 		// "can't reach the main till".
 		"/api/sync/settings/apply",
+		// ut-docs#2817: the main-till catalogue write-through an additional
+		// till's catalogue handlers call (internal/pages/catalogsync).
+		// Bearer-authed in the handler (syncTill). Missing here, every
+		// catalogue change on an additional till is refused as "can't reach
+		// the main till".
+		"/api/sync/catalog/apply",
 		// ut-docs#1668: the primary-side cross-till voucher lookup a
 		// replica's fetchVoucherFromPrimary (voucher_sync_proxy.go) proxies
 		// to. Bearer-authed in the handler (syncTill), same as

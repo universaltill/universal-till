@@ -203,8 +203,9 @@ func TestModifierGroupDelete_RemovesGroupEverywhere(t *testing.T) {
 
 // All three new routes are catalog mutations of admin-synced tables and
 // must refuse on a replica, same convention as every other group mutation
-// (TestModifierGroupAttachDetach_RefusedOnReplica).
-func TestModifierGroupCategoryAndDelete_RefusedOnReplica(t *testing.T) {
+// (TestModifierGroupAttachDetach_RefusedOnReplicaWhileMainUnreachable;
+// since ut-docs#2817 written through to the main till, unreachable here).
+func TestModifierGroupCategoryAndDelete_RefusedOnReplicaWhileMainUnreachable(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
 	defer db.Close()
@@ -229,8 +230,8 @@ func TestModifierGroupCategoryAndDelete_RefusedOnReplica(t *testing.T) {
 		{"/api/catalog/modifier-group/delete", "groupId=g1"},
 		{"/api/catalog/modifier-group", "name=Standalone&isActive=1&minSelect=0&maxSelect=1"},
 	} {
-		if rec := postModifiers(t, mux, tc.path, tc.form); rec.Code != http.StatusConflict {
-			t.Fatalf("%s on replica: want 409, got %d: %s", tc.path, rec.Code, rec.Body.String())
+		if rec := postModifiers(t, mux, tc.path, tc.form); rec.Code != http.StatusBadGateway {
+			t.Fatalf("%s on replica: want 502, got %d: %s", tc.path, rec.Code, rec.Body.String())
 		}
 	}
 	var n int

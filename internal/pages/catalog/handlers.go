@@ -30,6 +30,7 @@ import (
 	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/logging"
 	productlookup "github.com/universaltill/universal-till/internal/lookup"
+	"github.com/universaltill/universal-till/internal/pages/catalogsync"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pages/itemsnav"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -108,22 +109,25 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	modRepo := data.NewModifierRepo(d.Db)
 	lookupClient := newLookupClient()
 
-	// requirePrimary gates catalog mutation on this till being the primary
-	// (ut-docs#1667, extended by ut-docs#1689): item_modifier_groups/
+	// Catalogue write-through (ut-docs#2817). item_modifier_groups/
 	// item_modifier_options/items/item_variants/item_barcodes/
 	// variant_barcodes are all synced shop-wide (sync_admin_repo.go's
-	// adminTables) via a one-way primary-wins pull, so a write accepted on a
-	// satellite would silently vanish (a new row deleted, an edit reverted)
-	// on the very next admin pull — refuse it up front instead, same pattern
-	// as registers_page.go's requirePrimary. Unlike that page's full-page
-	// redirect, these handlers return an HTMX fragment, so the refusal is a
-	// plain localized error response like this file's own validation
-	// branches (e.g. catalog.error.invalid_request) rather than a redirect.
-	// The message key is a parameter (not hardcoded) because
+	// adminTables) via a one-way main-till-wins pull, so a write accepted
+	// locally on an additional till would silently vanish on the next admin
+	// pull. The item, variant, barcode and modifier mutation routes below
+	// therefore call catalogsync.Forward where they used to refuse: on a
+	// till that follows a main till it sends the save to the main till's
+	// /api/sync/catalog/apply (which runs this same handler there) and
+	// relays the answer, or refuses with the "main till unreachable" /
+	// "changed on another till" message; on the main till it returns false
+	// and the handler writes locally as before.
+	//
+	// requirePrimary is the pre-#2817 hard refusal (ut-docs#1667/#1689),
+	// kept for the routes outside #2817's scope: option sets, kitchen
+	// routing, the bulk delete of unassigned modifier groups and the bulk
+	// barcode/SKU backfills. The message key is a parameter because
 	// "manage customization options" only reads correctly for the modifier
-	// group/option routes below — the item/variant/barcode routes ut-docs#1689
-	// added use their own, more general "manage the catalog" key instead of
-	// silently reusing wording that doesn't fit them.
+	// routes.
 	requirePrimary := func(w http.ResponseWriter, r *http.Request, key string) bool {
 		if d.SyncPrimaryURL(r.Context()) != "" {
 			common.LocalizedError(w, r, http.StatusConflict, key)
@@ -606,7 +610,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requireCatalogManagement(w, r) {
 			return
 		}
-		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+		if catalogsync.Forward(w, r, d, catalogsync.PlainRefuser) {
 			return
 		}
 		_ = r.ParseForm()
@@ -648,7 +652,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requireCatalogManagement(w, r) {
 			return
 		}
-		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+		if catalogsync.Forward(w, r, d, catalogsync.PlainRefuser) {
 			return
 		}
 		_ = r.ParseForm()
@@ -686,7 +690,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requireCatalogManagement(w, r) {
 			return
 		}
-		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+		if catalogsync.Forward(w, r, d, catalogsync.PlainRefuser) {
 			return
 		}
 		_ = r.ParseForm()
@@ -795,6 +799,13 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			}
 			data.MergeMapInto(currentPrices, p)
 		}
+		// ut-docs#2817: each card's updated_at, the item editor's conflict
+		// base for the catalogue write-through. Best-effort: without it a
+		// save falls back to this till's own copy of the stamp.
+		updatedAts, err := repo.ActiveItemUpdatedAts(r.Context())
+		if err != nil {
+			log.Printf("[catalog] item updated_at: %v", err)
+		}
 		// ut-docs#2090: whether this render is an /items-shell fragment
 		// swap (true) or a bare/standalone page (false) — catalog.html's
 		// own Modifiers/Option-sets top-action buttons and their
@@ -810,13 +821,14 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"title":                 httpx.T(httpx.RequestLocale(r), "nav.catalog"),
 			"menuItems":             d.MenuSnapshot(),
 			"theme":                 d.CurrentState().Theme,
-			"Rows":                  buildCatalogRows(items, barcodes, variants, thumbnails, currentPrices),
+			"Rows":                  buildCatalogRows(items, barcodes, variants, thumbnails, currentPrices, updatedAts),
 			"Categories":            cats,
 			"CategoryFilterOptions": categoryFilterOptions,
 			"CategoryNodesJSON":     categoryFilterNodesJSON(categoryFilterOptions),
 			"Brands":                brands,
 			"TaxCodes":              taxCodes,
 			"SyncPrimary":           d.SyncPrimaryURL(r.Context()),
+			"SyncUnreachable":       d.MainTillUnreachable != nil && d.MainTillUnreachable(r.Context()),
 			"MissingSKUCount":       missingSKUCount,
 			"BuiltinIconGroups":     catimport.BuiltinIconGroups(),
 			"ItemColors":            catalogtypes.ItemColors(),
@@ -1275,7 +1287,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requireCatalogManagement(w, r) {
 			return
 		}
-		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+		if catalogsync.Forward(w, r, d, catalogsync.PlainRefuser) {
 			return
 		}
 		_ = r.ParseForm()
@@ -1348,7 +1360,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requireCatalogManagement(w, r) {
 			return
 		}
-		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+		if catalogsync.Forward(w, r, d, catalogsync.PlainRefuser) {
 			return
 		}
 		_ = r.ParseForm()
@@ -1390,7 +1402,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requireCatalogManagement(w, r) {
 			return
 		}
-		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+		if catalogsync.Forward(w, r, d, catalogsync.PlainRefuser) {
 			return
 		}
 		_ = r.ParseForm()
@@ -1415,7 +1427,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requireCatalogManagement(w, r) {
 			return
 		}
-		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+		if catalogsync.Forward(w, r, d, catalogsync.PlainRefuser) {
 			return
 		}
 		_ = r.ParseForm()
@@ -1520,7 +1532,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requireCatalogManagement(w, r) {
 			return
 		}
-		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
+		if catalogsync.Forward(w, r, d, catalogsync.PlainRefuser) {
 			return
 		}
 		_ = r.ParseForm()
@@ -1586,7 +1598,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requireCatalogManagement(w, r) {
 			return
 		}
-		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
+		if catalogsync.Forward(w, r, d, catalogsync.PlainRefuser) {
 			return
 		}
 		_ = r.ParseForm()
@@ -1657,7 +1669,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requireCatalogManagement(w, r) {
 			return
 		}
-		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
+		if catalogsync.Forward(w, r, d, catalogsync.PlainRefuser) {
 			return
 		}
 		_ = r.ParseForm()
@@ -1773,7 +1785,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requireCatalogManagement(w, r) {
 			return
 		}
-		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
+		if catalogsync.Forward(w, r, d, catalogsync.PlainRefuser) {
 			return
 		}
 		_ = r.ParseForm()
@@ -1811,7 +1823,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			if !requireCatalogManagement(w, r) {
 				return
 			}
-			if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
+			if catalogsync.Forward(w, r, d, catalogsync.PlainRefuser) {
 				return
 			}
 			_ = r.ParseForm()
@@ -1856,7 +1868,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requireCatalogManagement(w, r) {
 			return
 		}
-		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
+		if catalogsync.Forward(w, r, d, catalogsync.PlainRefuser) {
 			return
 		}
 		_ = r.ParseForm()
@@ -2030,7 +2042,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requireCatalogManagement(w, r) {
 			return
 		}
-		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+		if catalogsync.Forward(w, r, d, catalogsync.PlainRefuser) {
 			return
 		}
 		_ = r.ParseForm()
@@ -2300,7 +2312,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requireCatalogManagement(w, r) {
 			return
 		}
-		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+		if catalogsync.Forward(w, r, d, catalogsync.PlainRefuser) {
 			return
 		}
 		_ = r.ParseForm()
@@ -2371,7 +2383,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requireCatalogManagement(w, r) {
 			return
 		}
-		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+		if catalogsync.Forward(w, r, d, catalogsync.PlainRefuser) {
 			return
 		}
 		_ = r.ParseForm()

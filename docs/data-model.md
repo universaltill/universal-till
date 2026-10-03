@@ -217,6 +217,7 @@ erDiagram
         int    sort_order
         string icon
         int    sell_screen_hidden
+        string updated_at
     }
 
     brands {
@@ -264,6 +265,7 @@ erDiagram
         int    price
         int    cost_price
         boolean is_active
+        string updated_at
     }
 
     variant_barcodes {
@@ -619,6 +621,7 @@ erDiagram
         string item_id
         string label
         string image_path
+        string updated_at
     }
 
     %% Relationships

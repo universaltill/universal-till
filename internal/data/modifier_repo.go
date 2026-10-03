@@ -1028,7 +1028,7 @@ func (r *ModifierRepo) UpdateGroup(ctx context.Context, id, name string, require
 	}
 	_, err := r.db.ExecContext(ctx, `
 UPDATE item_modifier_groups
-SET name = ?, required = ?, min_select = ?, max_select = ?, sort_order = ?, is_active = ?
+SET name = ?, required = ?, min_select = ?, max_select = ?, sort_order = ?, is_active = ?, updated_at = datetime('now')
 WHERE id = ?
 `, name, req, minSelect, maxSelect, sortOrder, active, id)
 	if err != nil {

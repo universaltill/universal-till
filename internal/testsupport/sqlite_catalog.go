@@ -25,7 +25,7 @@ func NewCatalogTestDB(t *testing.T) *sql.DB {
 		// age_restricted (migration 055, ut-docs#3340): the price
 		// resolver's every lookup tier reads it onto the basket line.
 		`CREATE TABLE items (id TEXT PRIMARY KEY, sku TEXT UNIQUE, name TEXT NOT NULL, description TEXT, category_id TEXT, brand_id TEXT, unit TEXT NOT NULL DEFAULT 'each', base_price INTEGER NOT NULL, cost_price INTEGER, tax_code_id TEXT, lead_time_days INTEGER NOT NULL DEFAULT 0, reorder_level INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1, is_weighed INTEGER NOT NULL DEFAULT 0, is_sample_data INTEGER NOT NULL DEFAULT 0, stock_untracked INTEGER NOT NULL DEFAULT 0, sell_screen_hidden INTEGER NOT NULL DEFAULT 0, sell_screen_removed INTEGER NOT NULL DEFAULT 0, age_restricted INTEGER NOT NULL DEFAULT 0, color TEXT, updated_at TEXT, net_quantity_value INTEGER, net_quantity_unit TEXT);`,
-		`CREATE TABLE item_variants (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, sku TEXT UNIQUE, name TEXT NOT NULL, price INTEGER NOT NULL, cost_price INTEGER, is_active INTEGER NOT NULL DEFAULT 1);`,
+		`CREATE TABLE item_variants (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, sku TEXT UNIQUE, name TEXT NOT NULL, price INTEGER NOT NULL, cost_price INTEGER, is_active INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT '');`,
 		`CREATE TABLE item_barcodes (barcode TEXT PRIMARY KEY, item_id TEXT NOT NULL, barcode_type TEXT, is_primary INTEGER NOT NULL DEFAULT 0);`,
 		`CREATE TABLE variant_barcodes (barcode TEXT PRIMARY KEY, variant_id TEXT NOT NULL, barcode_type TEXT, is_primary INTEGER NOT NULL DEFAULT 0);`,
 		`CREATE TABLE item_images (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, path TEXT NOT NULL, role TEXT DEFAULT 'thumbnail', sort_order INTEGER NOT NULL DEFAULT 0);`,
@@ -35,7 +35,7 @@ func NewCatalogTestDB(t *testing.T) *sql.DB {
 		// the ON CONFLICT clause outright ("does not match any PRIMARY KEY
 		// or UNIQUE constraint") rather than silently not enforcing it.
 		`CREATE UNIQUE INDEX ux_item_images_thumbnail_once ON item_images (item_id, role);`,
-		`CREATE TABLE shortcut_buttons (barcode TEXT PRIMARY KEY, item_id TEXT NOT NULL, label TEXT NOT NULL, image_path TEXT, sort_order INTEGER NOT NULL DEFAULT 0);`,
+		`CREATE TABLE shortcut_buttons (barcode TEXT PRIMARY KEY, item_id TEXT NOT NULL, label TEXT NOT NULL, image_path TEXT, sort_order INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '');`,
 		// No stock_locations table on purpose — TestCreateItem_SucceedsWithoutStockLocationsTable
 		// guards CreateItem/CreateVariant's best-effort inventory-row creation
 		// against exactly this schema shape. inventory itself is still here
@@ -46,10 +46,10 @@ func NewCatalogTestDB(t *testing.T) *sql.DB {
 		`CREATE TABLE sale_lines (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_no INTEGER NOT NULL, item_id TEXT, variant_id TEXT, name_snapshot TEXT NOT NULL, quantity REAL NOT NULL DEFAULT 1, unit_price INTEGER NOT NULL DEFAULT 0, order_type TEXT NOT NULL DEFAULT '');`,
 		`CREATE TABLE related_items (item_id TEXT NOT NULL, related_item_id TEXT NOT NULL, support INTEGER NOT NULL, score REAL NOT NULL, updated_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY (item_id, related_item_id));`,
 		`CREATE TABLE price_history (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, price INTEGER NOT NULL, starts_at TEXT NOT NULL, ends_at TEXT, CHECK ((item_id IS NOT NULL AND variant_id IS NULL) OR (item_id IS NULL AND variant_id IS NOT NULL)));`,
-		`CREATE TABLE categories (id TEXT PRIMARY KEY, name TEXT NOT NULL, parent_id TEXT, sort_order INTEGER NOT NULL DEFAULT 0, color TEXT, is_active INTEGER NOT NULL DEFAULT 1, image_path TEXT, icon TEXT, sell_screen_hidden INTEGER NOT NULL DEFAULT 0);`,
+		`CREATE TABLE categories (id TEXT PRIMARY KEY, name TEXT NOT NULL, parent_id TEXT, sort_order INTEGER NOT NULL DEFAULT 0, color TEXT, is_active INTEGER NOT NULL DEFAULT 1, image_path TEXT, icon TEXT, sell_screen_hidden INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL DEFAULT '');`,
 		`CREATE TABLE brands (id TEXT PRIMARY KEY, name TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE tax_codes (id TEXT PRIMARY KEY, name TEXT NOT NULL, rate_basis_points INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, takeaway_rate_basis_points INTEGER);`,
-		`CREATE TABLE item_modifier_groups (id TEXT PRIMARY KEY, name TEXT NOT NULL, required INTEGER NOT NULL DEFAULT 0, min_select INTEGER NOT NULL DEFAULT 0, max_select INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1);`,
+		`CREATE TABLE item_modifier_groups (id TEXT PRIMARY KEY, name TEXT NOT NULL, required INTEGER NOT NULL DEFAULT 0, min_select INTEGER NOT NULL DEFAULT 0, max_select INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL DEFAULT '');`,
 		// ut-docs#2399: the group_id FK (with its ON DELETE CASCADE, 001_init.sql /
 		// migration 034) was missing from this fixture — a hard group delete
 		// left its options behind here while the real schema cascades them.

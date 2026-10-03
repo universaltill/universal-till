@@ -158,6 +158,7 @@ func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 			"Locations":             locations,
 			"ItemsJSON":             template.JS(pickerJSON),
 			"SyncPrimary":           d.SyncPrimaryURL(r.Context()),
+			"SyncUnreachable":       d.MainTillUnreachable != nil && d.MainTillUnreachable(r.Context()),
 			"CategoryFilterOptions": categoryFilterOptions,
 			"CategoryNodesJSON":     inventoryCategoryNodesJSON(categoryFilterOptions),
 		}

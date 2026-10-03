@@ -531,6 +531,10 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// below take the same hook.
 	rederiveSettings := newRederiveSettings(dp, authDisabled, i18n)
 	registerSyncSettings(mux, dp, rederiveSettings) // additional-till shop-wide settings write-through, main-till side (ut-docs#2791)
+	dp.MainTillUnreachable = func(ctx context.Context) bool {
+		return tillFollowsMain(ctx, dp) && replicaLinkView(ctx, dp).State == linkUnreachable
+	}
+	registerSyncCatalog(mux, dp) // additional-till catalogue write-through, main-till side (ut-docs#2817); dispatches into the catalogue handlers on this same mux
 	syncAdminRepo := registerSyncAdmin(mux, dp)
 	// ADR-0114 (ut-docs#2734): the main-till link. Set before the server
 	// accepts requests; the revoke handler and every NudgeLink change point

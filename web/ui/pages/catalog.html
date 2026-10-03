@@ -141,7 +141,7 @@
 <dialog id="tax-codes-modal" class="item-form-modal" aria-labelledby="catalog-taxcodes-btn"></dialog>
 
 {{ if .SyncPrimary }}
-<div class="sync-banner">⚠ {{ T "sync.banner_replica" }}
+<div class="sync-banner" role="status">⚠ {{ if .SyncUnreachable }}{{ T "sync.banner_replica_main_till_unreachable" }}{{ else }}{{ T "sync.banner_replica_write_through" }}{{ end }}
   {{ if crossdevicelinkactionable }}
   <a href="{{ .SyncPrimary }}/catalog" target="_blank" rel="noopener" hx-boost="false">{{ T "sync.banner_open_primary" }}</a>
   {{ else }}
@@ -283,6 +283,11 @@
       <div class="tab-panel" id="item-form-panel-details" role="tabpanel" aria-labelledby="item-form-tab-details" x-show="tab === 'details'">
         <form id="item-form" autocomplete="off">
           <input type="hidden" name="id" id="item-id">
+          {{/* ut-docs#2817: the updated_at of the card this dialog loaded —
+               on an additional till the save travels to the main till,
+               which refuses it as a conflict if the item changed there
+               since. Ignored by a save made on the main till itself. */}}
+          <input type="hidden" name="base_updated_at" id="item-base-updated-at">
           <input type="hidden" name="price" id="item-price-minor">
           <input type="hidden" name="imageUrl" id="item-image-url">
           <div class="field-pair">
@@ -974,6 +979,7 @@
     form.reset();
     syncNetQuantity();
     document.getElementById('item-id').value = '';
+    document.getElementById('item-base-updated-at').value = '';
     document.getElementById('item-image-url').value = '';
     setColorTiles('');
     setMode(false);
@@ -1158,6 +1164,7 @@
   // both funnel through here so the two entry points can never drift.
   function openCatalogRow(row) {
     document.getElementById('item-id').value = row.dataset.id;
+    document.getElementById('item-base-updated-at').value = row.dataset.updatedAt || '';
     document.getElementById('item-barcode').value = '';
     document.getElementById('item-image-url').value = '';
     document.getElementById('autofill-msg').textContent = '';
@@ -1336,6 +1343,13 @@
         // existing item never hit it, because clearForm() is skipped when
         // `editing`.
         if (!editing) clearForm();
+        // ut-docs#2817: the save re-rendered this item's card with its new
+        // updated_at — take it as the base for a further save from this
+        // still-open dialog, or that save would read as a conflict.
+        if (editing) {
+          var savedRow = document.getElementById('catalog-row-' + document.getElementById('item-id').value);
+          if (savedRow) document.getElementById('item-base-updated-at').value = savedRow.dataset.updatedAt || '';
+        }
         renderNotice(msg, 'success', NOTICE_MSG.itemFormSaved);
         filterRows();
         // ut-docs#1901 UX fix: the form is now a full-screen dialog, not

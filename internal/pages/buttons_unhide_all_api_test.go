@@ -123,8 +123,9 @@ func TestButtonsAPI_UnhideAll_ElevatedPINWritesAuditRow(t *testing.T) {
 	}
 }
 
-// Same replica refusal as TestButtonsAPI_HideUnhideDeleteItemRefusedOnReplica.
-func TestButtonsAPI_UnhideAllRefusedOnReplica(t *testing.T) {
+// Same main-till-unreachable refusal as
+// TestButtonsAPI_HideUnhideDeleteItemRefusedOnReplicaWhileMainUnreachable.
+func TestButtonsAPI_UnhideAllRefusedOnReplicaWhileMainUnreachable(t *testing.T) {
 	mux, d := newButtonsMux(t)
 	if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
 		t.Fatalf("set primary_url: %v", err)
@@ -133,11 +134,11 @@ func TestButtonsAPI_UnhideAllRefusedOnReplica(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := postForm(mux, "/api/buttons/unhide-all", url.Values{}, nil)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("unhide-all on replica: want 409, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("unhide-all on replica: want 502, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "manage quick-sale buttons on the primary till") {
-		t.Fatalf("unhide-all on replica: missing replica_use_primary message, got %q", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "Can't reach the main till") {
+		t.Fatalf("unhide-all on replica: missing main-till-unreachable message, got %q", rec.Body.String())
 	}
 	var hidden int
 	if err := d.Db.QueryRow(`SELECT sell_screen_hidden FROM items WHERE id='itm1'`).Scan(&hidden); err != nil || hidden != 1 {
