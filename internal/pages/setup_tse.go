@@ -31,6 +31,7 @@ import (
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -112,7 +113,7 @@ const (
 // tseHTTPClient is the client for both cloud fiscal endpoints. Its own
 // timeout is a backstop; the wizard-time attempt is additionally bounded by
 // tseKickoffAttemptTimeout via context.
-var tseHTTPClient = &http.Client{Timeout: 15 * time.Second}
+var tseHTTPClient = netaccess.NewClient(15 * time.Second)
 
 // validGermanTaxNumber loosely validates a German Steuernummer or USt-IdNr —
 // a format hint, deliberately not over-validation (ut-docs#802 item 1): the

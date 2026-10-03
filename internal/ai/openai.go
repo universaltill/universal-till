@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // openaiProvider is the second OPTIONAL hosted backend (UT_AI_PROVIDER=openai,
@@ -37,7 +39,7 @@ func newOpenAIProvider(apiKey, visionModel, askModel string) *openaiProvider {
 		visionModel: visionModel,
 		askModel:    askModel,
 		baseURL:     "https://api.openai.com/v1",
-		client:      &http.Client{}, // per-call deadline comes from the caller's ctx
+		client:      netaccess.NewClient(0), // per-call deadline comes from the caller's ctx
 	}
 }
 

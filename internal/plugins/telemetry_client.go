@@ -11,6 +11,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // pluginStatusWire mirrors cloud.proto's PluginStatus message field-for-field
@@ -53,7 +54,7 @@ func NewTelemetryClient(db *sql.DB, marketplaceURL, deviceID, merchantID, storeI
 		deviceID:       deviceID,
 		merchantID:     merchantID,
 		storeID:        storeID,
-		httpClient:     &http.Client{Timeout: 30 * time.Second},
+		httpClient:     netaccess.NewClient(30 * time.Second),
 	}
 }
 

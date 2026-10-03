@@ -34,6 +34,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/updates"
 )
 
@@ -81,6 +82,11 @@ var (
 // parent (ut-docs#1616). No-op by default: a caller with nothing to clean up
 // (e.g. every test in this package) never needs to set it.
 var beforeRestart = func(context.Context) {}
+
+// outboundClient replaces http.DefaultClient (same zero timeout, same
+// default transport) so the public demo till refuses these requests
+// (ADR-0113 §1.6, ut-docs#2795).
+var outboundClient = netaccess.NewClient(0)
 
 // SetBeforeRestart registers the hook above. Call once at startup — from
 // internal/app.Run, the only place that holds the plugin Supervisor —
@@ -535,7 +541,7 @@ func fetchRelease(ctx context.Context, version string) (*ghRelease, error) {
 	defer cancel()
 	req, _ := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := outboundClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -557,7 +563,7 @@ func download(ctx context.Context, url, dst string) error {
 	reqCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := outboundClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -578,7 +584,7 @@ func checksumFor(ctx context.Context, url, name string) (string, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := outboundClient.Do(req)
 	if err != nil {
 		return "", err
 	}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // MarketplaceReporter reports POS-side install state transitions back to the
@@ -34,7 +35,7 @@ func NewMarketplaceReporter(baseURL, token string) *MarketplaceReporter {
 	return &MarketplaceReporter{
 		baseURL: baseURL,
 		token:   strings.TrimSpace(token),
-		client:  &http.Client{Timeout: 10 * time.Second},
+		client:  netaccess.NewClient(10 * time.Second),
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/paths"
 )
 
@@ -59,9 +60,7 @@ func NewTokenClient(cfg *config.MarketplaceConfig) *TokenClient {
 	return &TokenClient{
 		cfg:       cfg,
 		cachePath: paths.Plugins("auth", "token.json"),
-		client: &http.Client{
-			Timeout: 10 * time.Second,
-		},
+		client:    netaccess.NewClient(10 * time.Second),
 	}
 }
 

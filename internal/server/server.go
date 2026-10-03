@@ -565,7 +565,7 @@ func openSetupPage(listenAddr string) {
 	// Wait up to ~5s for the server to start accepting connections.
 	addr := net.JoinHostPort(host, port)
 	for range 50 {
-		conn, derr := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		conn, derr := net.DialTimeout("tcp", addr, 200*time.Millisecond) // netaccess:allow loopback probe of this till's own listener before opening the local browser
 		if derr == nil {
 			_ = conn.Close()
 			break

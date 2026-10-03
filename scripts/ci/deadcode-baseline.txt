@@ -36,6 +36,7 @@ internal/manual/manual.go: unreachable func: Library.IDs
 internal/manual/manual.go: unreachable func: Library.Locales
 internal/manual/manual.go: unreachable func: Library.MissingTranslations
 internal/manual/manual.go: unreachable func: Library.RouteCovered
+internal/netaccess/netaccess.go: unreachable func: ObserveServices
 internal/pages/common/deps.go: unreachable func: Deps.WaitForAsyncWork
 internal/pages/common/personal_display.go: unreachable func: Deps.ResolvedBrowsingMode
 internal/pages/common/personal_display.go: unreachable func: Deps.ResolvedTheme

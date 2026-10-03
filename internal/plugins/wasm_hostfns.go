@@ -17,6 +17,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // Host functions v2 (docs: architecture/wasm-runtime.md). Guests import
@@ -235,6 +236,12 @@ func hostHTTPRequest(ctx context.Context, m api.Module, reqPtr, reqLen, dstPtr, 
 	s, ok := stateFrom(ctx)
 	if !ok {
 		return hostErrInternal
+	}
+	// The public demo till has no outbound network (ADR-0113 §1.6): every
+	// http egress is permission denied, whatever the plugin was granted.
+	if netaccess.Demo() {
+		logging.L().Infof("[wasm:%s] http egress denied: demo mode (ADR-0113)", s.pluginID)
+		return hostErrDenied
 	}
 	raw, ok := readGuest(m, reqPtr, reqLen)
 	if !ok {

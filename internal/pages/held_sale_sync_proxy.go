@@ -11,6 +11,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -54,7 +55,7 @@ import (
 // are taps that re-render the basket in place, and the page render must
 // never block on a blackholed primary -- both must degrade to the local
 // path in well under a second, never make the till feel frozen.
-var heldSaleProxyClient = &http.Client{Timeout: 800 * time.Millisecond}
+var heldSaleProxyClient = netaccess.NewClient(800 * time.Millisecond)
 
 // heldSaleTimeLayout is the UTC text shape held_sales.created_at /
 // updated_at use (SQLite's datetime('now')), so a Go-formatted timestamp

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -57,7 +58,7 @@ var (
 // orderStreamClient is the bridge's client. Timeout MUST stay 0: a long-lived
 // stream has no overall deadline — liveness is the idle cutoff above (reset
 // on every byte, so a heartbeat is enough), not a whole-request timeout.
-var orderStreamClient = &http.Client{Timeout: 0}
+var orderStreamClient = netaccess.NewClient(0)
 
 // StartOrderStatusStreamBridge launches the replica-side bridge. Wired in
 // internal/pages/init.go alongside StartTSEProvisionRetry/StartCloudSync;

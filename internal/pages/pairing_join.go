@@ -14,6 +14,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/procrestart"
 )
@@ -178,7 +179,7 @@ func validPrimaryBaseURL(raw string) bool {
 // anyway — two disconnected states would be the bug, not the fix.
 func registerPairingJoinAPI(mux *http.ServeMux, d *common.Deps) {
 	rp := &replicaPairing{}
-	client := &http.Client{Timeout: pairJoinHTTPTimeout}
+	client := netaccess.NewClient(pairJoinHTTPTimeout)
 
 	mux.HandleFunc("POST /api/sync/pair-start", pairStartHandler(d, rp, client, managerGate(d), "/api/sync/pair-status"))
 	mux.HandleFunc("GET /api/sync/pair-status", pairStatusHandler(d, rp, client, managerGate(d), "/api/sync/pair-status"))

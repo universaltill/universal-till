@@ -17,6 +17,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // releasesURL is a var (not const) purely as a test seam: tests point it at a
@@ -31,6 +32,11 @@ type Status struct {
 }
 
 var state atomic.Value // Status
+
+// outboundClient replaces http.DefaultClient (same zero timeout, same
+// default transport) so the public demo till refuses these requests
+// (ADR-0113 §1.6, ut-docs#2795).
+var outboundClient = netaccess.NewClient(0)
 
 // Current returns the last checked status (zero value before the first check).
 func Current() Status {
@@ -123,7 +129,7 @@ func checkOnce(ctx context.Context) {
 		return
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := outboundClient.Do(req)
 	if err != nil {
 		return
 	}

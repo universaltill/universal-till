@@ -19,6 +19,7 @@ import (
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -69,7 +70,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		req.URL.RawQuery = q.Encode()
 
-		client := &http.Client{}
+		client := netaccess.NewClient(0)
 		resp, err := client.Do(req)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("marketplace request failed: %v", err), http.StatusInternalServerError)

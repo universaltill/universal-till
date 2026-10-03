@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // ollamaProvider talks to a self-hosted Ollama server (/api/chat) running an
@@ -29,7 +31,7 @@ func newOllamaProvider(endpoint, model, askModel string) *ollamaProvider {
 		endpoint: strings.TrimSuffix(endpoint, "/"),
 		model:    model,
 		askModel: askModel,
-		client:   &http.Client{}, // per-call deadline comes from the caller's ctx
+		client:   netaccess.NewClient(0), // per-call deadline comes from the caller's ctx
 	}
 }
 

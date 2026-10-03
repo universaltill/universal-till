@@ -31,7 +31,7 @@ import (
 // the coverage gap this closes.
 var (
 	netInterfaces = net.Interfaces
-	probeDial     = net.Dial
+	probeDial     = net.Dial // netaccess:allow UDP connect for a route lookup only — nothing is ever sent (see probeTargets)
 )
 
 // probeTargets are dialled in order when enumeration yields nothing. The mDNS

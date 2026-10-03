@@ -16,6 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -44,11 +45,9 @@ const linkProbeTimeout = 5 * time.Second
 // picked up on the next attempt.
 func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.Client {
 	posRepo := data.NewPOSRepo(d.Db)
-	probeClient := &http.Client{
-		Timeout: linkProbeTimeout,
-		// The bearer goes to the main till's address only.
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
+	probeClient := netaccess.NewClient(linkProbeTimeout)
+	// The bearer goes to the main till's address only.
+	probeClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	get := func(ctx context.Context, k string) string {
 		v, _, _ := d.Settings.Get(ctx, k)
 		return strings.TrimSpace(v)

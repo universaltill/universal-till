@@ -55,6 +55,7 @@ import (
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // Settings is the key/value persistence enrolment needs; *settings.Store
@@ -159,7 +160,7 @@ var (
 	attemptSem = make(chan struct{}, 1)
 
 	// Overridable in tests.
-	httpClient  = &http.Client{Timeout: 15 * time.Second}
+	httpClient  = netaccess.NewClient(15 * time.Second)
 	retryDelays = []time.Duration{30 * time.Second, 2 * time.Minute, 5 * time.Minute, 15 * time.Minute, 30 * time.Minute}
 )
 
