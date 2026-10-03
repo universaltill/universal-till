@@ -8,6 +8,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -60,4 +61,35 @@ func deviceNameOrDefault(ctx context.Context, d *common.Deps, locale string) str
 		return name
 	}
 	return httpx.T(locale, "setup.till_name.default")
+}
+
+// errTillNameTaken is tillNameTaken's refusal, shown to the operator as
+// sync.error.name_taken — the pairing-time message for the same rule.
+var errTillNameTaken = errors.New("another till in this shop already uses this name")
+
+// tillNameTaken reports whether renaming THIS till to name would give it a
+// name another till in the shop already uses (ut-docs#3308), with the
+// pairing-time fold (TillsRepo.NameTaken: trimmed, case-insensitive,
+// ut-docs#1264). The other tills are, on the main till, its enrolled
+// tills; on a joined till, its synced tills roster minus its own row
+// (sync.till_id) plus the main till's name (till.name there, or the
+// default the main till reports, read in the default locale as enrolment
+// does). Local data only, so it works offline.
+//
+// A case change of this till's own current name is never "taken": the
+// name is still its own, even if a duplicate already exists from before
+// this rule.
+func tillNameTaken(ctx context.Context, d *common.Deps, name string) (bool, error) {
+	if strings.EqualFold(strings.TrimSpace(enroll.DeviceName(ctx, d.Settings)), strings.TrimSpace(name)) {
+		return false, nil
+	}
+	exceptID := ""
+	if tillFollowsMain(ctx, d) {
+		if strings.EqualFold(tillNameOrDefault(ctx, d, httpx.DefaultLocale()), strings.TrimSpace(name)) {
+			return true, nil
+		}
+		exceptID, _, _ = d.Settings.Get(ctx, "sync.till_id")
+		exceptID = strings.TrimSpace(exceptID)
+	}
+	return data.NewTillsRepo(d.Db).NameTakenExcept(ctx, name, exceptID)
 }

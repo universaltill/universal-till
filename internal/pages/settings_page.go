@@ -2735,7 +2735,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// This till's own display name (ut-docs#396), shown in Settings and
 	// reported to the cloud (enroll.DeviceName). The main till's /tills page
 	// shows it for the main till only; a joined till's row there keeps its
-	// pairing-time name until ut-docs#3294.
+	// pairing-time name until ut-docs#3294. A name another till in the shop
+	// uses is refused (ut-docs#3308).
 	mux.HandleFunc("POST /api/settings/till-name", func(w http.ResponseWriter, r *http.Request) {
 		// No rejecting validation here (the name is only trimmed/
 		// truncated), so the gate stays first, exactly as before —
@@ -2745,6 +2746,21 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// Mirrors the field's own maxlength server-side (maxTillNameRunes,
 		// shared with the cloud rename_till hook, which refuses instead).
 		name := truncateTillName(r.Form.Get("name"))
+		// ut-docs#3308: a name another till in the shop already uses is
+		// refused, before the elevation gate (ut-docs#557 convention: a
+		// value refused anyway must not burn an approver's PIN entry).
+		// 422, the status the form shows inline (#till-name-msg).
+		if name != "" {
+			taken, err := tillNameTaken(r.Context(), d, name)
+			if err != nil {
+				http.Error(w, "could not save", http.StatusInternalServerError)
+				return
+			}
+			if taken {
+				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "sync.error.name_taken"), http.StatusUnprocessableEntity)
+				return
+			}
+		}
 		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
 			locale := httpx.ResolveLocale(w, r)

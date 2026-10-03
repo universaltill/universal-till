@@ -1940,8 +1940,10 @@
        success refresh, which would destroy the just-opened dialog; the real
        success is a bare 204 with no Content-Type. -->
   <div id="settings-till-name-region" data-ut-refresh="#settings-till-name-region" data-ut-saved-msg="#till-name-msg">
+  <!-- ut-docs#3308: a name another till in the shop uses comes back 422
+       with its translated reason, shown inline like the retention form's 409. -->
   <form hx-post="/api/settings/till-name" hx-swap="none"
-        data-after-request="ok not-html refresh-region; fail unhide:settings-save-error">
+        data-after-request="ok not-html refresh-region; status:422 text-response:till-name-msg; fail not-status:422 unhide:settings-save-error">
     <label>{{ T "settings.tills.name_label" }}
       <input type="text" name="name" maxlength="60" value="{{ .TillName }}">
     </label>
