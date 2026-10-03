@@ -73,7 +73,7 @@ func (r *CatalogRepo) assignMissingItemSKUs(ctx context.Context, commit bool) ([
 		}
 		// Reading through tx means each item sees the SKUs assigned to the
 		// ones before it, so two blank items never get the same SKU.
-		sku, err := nextItemSKU(ctx, tx, cat)
+		sku, err := nextItemSKU(ctx, tx, cat, nil)
 		if err != nil {
 			return nil, fmt.Errorf("backfill item skus: generate for %s: %w", it.id, err)
 		}
