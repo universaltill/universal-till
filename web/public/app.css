@@ -3707,6 +3707,17 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    takes a second row of ITS OWN <li> (so it can only read as this order's),
    and Cancel keeps its column on row 1. */
 .parked-orders-list > li > .parked-move[open] { grid-column: 1 / -1; grid-row: 2; }
+/* ut-docs#3622: with .parked-move[open] vacating column 2's row-1 track,
+   that track's auto width (per-<li> grid, not shared across rows) can
+   collapse toward 0, and the order button's own minmax(0, 1fr) column
+   grows to absorb the freed space -- widening right up to where the
+   toggle sat closed. A second tap meant to close the panel then lands on
+   the order button instead and resumes it. Rather than chase exact track
+   sizing, make the order's own resume target inert while ITS row's panel
+   is open: a tap anywhere it may have shifted to does nothing, never
+   resumes. (An engine without :has() just keeps the pre-#3622 behaviour.) */
+.parked-orders-list > li:has(> .parked-move[open]) > .parked-order,
+.parked-orders-list > li:has(> .parked-move[open]) > .parked-order-form { pointer-events: none; }
 .parked-move-placeholder { visibility: hidden; min-height: 46px; display: inline-flex; align-items: center; }
 .parked-move > summary { list-style: none; min-height: 46px; display: inline-flex; align-items: center; cursor: pointer; }
 .parked-move > summary::-webkit-details-marker { display: none; }
