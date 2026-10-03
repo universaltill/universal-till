@@ -13,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/ui"
@@ -312,6 +313,54 @@ func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSales
 	// since that changes WHICH table is occupied.
 	d.Engine.Reset()
 	return nil
+}
+
+// recordResumedOrderDiscard (ut-docs#3423) leaves an audit_log row
+// (entity_type "held_sale", action "discard", entity_id = the order's held
+// id) when the live basket about to be cleared is a resumed held, table or
+// pay-at-counter order that still has lines (priced or "add by hand"). By
+// then the order has already left held_sales -- resumeHeldSale deletes (or,
+// cross-till, claims) its row the moment it is restored -- so without this
+// a New Sale tap dropped it with no held row, no sale and no audit entry. A basket that was never
+// parked, or one the cashier voided down to nothing (removeLocked /
+// removeLineLocked clear the origin, and each priced line void is already
+// audited on its own), records nothing. Best-effort: a failed write is
+// logged and never blocks the reset (offline-first -- clearing the basket
+// must always work). This is the one place a resumed order is abandoned, so
+// a future explicit cancel and fiscal.order.cancel hook in alongside it.
+func recordResumedOrderDiscard(ctx context.Context, d *common.Deps, posRepo *data.POSRepo, actorID string) {
+	origin := d.Engine.HeldOrigin()
+	if origin.IsZero() {
+		return
+	}
+	// Gate on the snapshot, not HasItems(): a kiosk pay-at-counter order
+	// whose lines all failed to match the catalog resumes with no priced
+	// lines, only "add by hand" ones (open_orders_counter.go), and is just
+	// as much an order New Sale would otherwise drop.
+	snap := d.Engine.Snapshot()
+	if len(snap.Lines) == 0 && len(snap.AddByHand) == 0 {
+		return
+	}
+	// held_sales stores its times as "2006-01-02 15:04:05" UTC text; the
+	// audit payload carries ISO-8601 like every other API date (falls back
+	// to the raw value if it ever doesn't parse).
+	firstParked := origin.CreatedAt
+	if t, err := time.Parse("2006-01-02 15:04:05", origin.CreatedAt); err == nil {
+		firstParked = t.UTC().Format(time.RFC3339)
+	}
+	payload := map[string]any{
+		"label":           origin.Label,
+		"total_minor":     snap.Total.Minor(),
+		"line_count":      len(snap.Lines),
+		"by_hand_count":   len(snap.AddByHand),
+		"table_id":        snap.TableID,
+		"display_no":      snap.DisplayNo,
+		"first_parked_at": firstParked,
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := posRepo.InsertAudit(ctx, nil, actorID, "held_sale", origin.ID, "discard", payload, now, ""); err != nil {
+		logging.L().Errorf("record discard of resumed order %s: %v", origin.ID, err)
+	}
 }
 
 // resumeHeldSale resumes held sale `id` into the live basket. ut-docs#1919:
