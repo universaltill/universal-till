@@ -176,13 +176,29 @@ getrennt von der obigen 10-jährigen Berichtsaufbewahrung und ändert sie nicht.
 Wählen Sie unter Einstellungen → Berichtsaufbewahrung, wo Berichte
 aufbewahrt werden:
 
-- **Nur diese Kasse** — funktioniert schon heute, keine zusätzliche
-  Einrichtung nötig. Berichtsarchive sind klein (wenige KB pro
-  abgeschlossenem Tag), sodass 10 Jahre davon die Festplatte einer modernen
-  Kasse nicht füllen.
-- **Nur Cloud** / **Kasse + Cloud** — angezeigt für eine künftige Version,
-  sobald Cloud-Speicher und ein Geschäftsabonnement verfügbar sind; noch
-  nicht auswählbar.
+- **Nur diese Kasse** — keine zusätzliche Einrichtung nötig.
+  Berichtsarchive sind klein (wenige KB pro abgeschlossenem Tag), sodass
+  10 Jahre davon die Festplatte einer modernen Kasse nicht füllen.
+- **Nur Cloud** / **Kasse + Cloud** — benötigen ein aktives Abonnement mit
+  Cloud-Backup; ohne ein solches werden sie angezeigt, aber mit „benötigt ein
+  aktives Abonnement“ markiert. Die Hauptkasse lädt jeden archivierten
+  Bericht im Hintergrund etwa alle 10 Minuten, den ältesten zuerst, in das
+  Cloud-Konto Ihres Geschäfts hoch. Bei **Nur Cloud** wird ein Bericht von
+  der Kasse entfernt, sobald die Cloud ihn bestätigt hat; bei **Kasse +
+  Cloud** behält die Kasse ihn zusätzlich die vollen 10 Jahre.
+
+Die Kasse behält immer ihren neuesten Tagesabschlussbericht, auch wenn die
+Cloud ihn bereits hat, damit der nächste Tagesabschluss die Z-Nummernfolge
+fortsetzt und dort beginnt, wo der letzte endete. Zusätzliche Kassen
+behalten ihre eigenen Berichte unabhängig von der Einstellung 10 Jahre lang;
+nur die Hauptkasse lädt hoch.
+
+Solange der Cloud-Speicher aktiv ist, zeigt dieselbe Karte, wie viele
+Berichte noch auf das Hochladen warten. Lehnt die Cloud das Hochladen ab,
+weil das Abonnement nicht aktiv ist, zeigt die Karte „Hochladen in die Cloud
+abgelehnt“ und die Statusleiste **Berichts-Upload abgelehnt**. Es wird nichts
+gelöscht: Die Berichte bleiben auf der Kasse und werden automatisch
+hochgeladen, sobald das Abonnement wieder aktiv ist.
 
 Dieselbe Seite zeigt **wie weit Ihre Aufzeichnungen zurückreichen** (frühester
 bis letzter archivierter Bericht und wie viele) und eine **Export**-Schaltfläche

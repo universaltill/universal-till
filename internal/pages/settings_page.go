@@ -607,12 +607,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		// ADR-0040 (ut-docs#571 card 1): the current retention mode
 		// (defaulting to "till", same fallback the prune step itself uses)
-		// and how far back the archive goes, for the new Report Retention
+		// and how far back the archive goes, for the Report Retention
 		// card. Non-fatal on error, same reasoning as exportEntries above.
 		reportRetentionMode, _, _ := d.Settings.Get(r.Context(), common.KeyReportRetentionMode)
 		if reportRetentionMode == "" {
 			reportRetentionMode = common.ReportRetentionModeTill
 		}
+		// ADR-0147 (ut-docs#574): whether cloud/both may be chosen, and on
+		// the main till in an uploading mode, the pending count and a
+		// standing 402 refusal.
+		reportArchiveCloud := loadReportArchiveCloudStatus(r.Context(), d, reportRetentionMode, time.Now())
 		reportArchiveCoverage, coverageErr := data.NewPOSRepo(d.Db).ReportArchiveCoverage(r.Context())
 		if coverageErr != nil {
 			logging.L().Errorf("report archive coverage: %v", coverageErr)
@@ -823,6 +827,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"ShowQuarantineSection":  showQuarantineSection,
 			"reportRetentionMode":    reportRetentionMode,
 			"reportArchiveCoverage":  reportArchiveCoverage,
+			"reportArchiveCloud":     reportArchiveCloud,
 			"shopType":               shopType,
 			"shopTypes":              setupShopTypes,
 			"storeName":              storeNameForCard(all[common.KeyStoreName]),  // ut-docs#3115
@@ -3074,6 +3079,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		if credentialSettingKey(key) {
 			http.Error(w, "this setting cannot be edited here", http.StatusForbidden)
+			return
+		}
+		// ADR-0147 §1 (ut-docs#574): the retention mode decides when local
+		// legal records are deleted, so it changes only through
+		// POST /api/settings/report-retention — its validation, the
+		// cloud_backup gate, elevation and audit. A raw upsert would skip all
+		// four.
+		if key == common.KeyReportRetentionMode {
+			common.LocalizedError(w, r, http.StatusForbidden, "settings.retention.err_use_retention_card")
 			return
 		}
 		// ut-docs#244: validate before persisting, not just before reflecting

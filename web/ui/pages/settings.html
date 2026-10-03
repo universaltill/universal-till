@@ -1588,13 +1588,18 @@
   <div id="settings-retention-region" data-ut-refresh="#settings-retention-region" data-ut-saved-msg="#retention-msg">
   <fieldset class="set-lock" data-lock-region="settings-retention"{{ if index $.lockedRegions "settings-retention" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-retention" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/report-retention" hx-swap="none" data-after-request="ok not-html refresh-region; fail unhide:settings-save-error">
+  <!-- ut-docs#574 (ADR-0147 §1): cloud/both are selectable only while this
+       till's cached entitlement includes cloud_backup; otherwise they stay
+       visible but disabled, with the reason in words. The server enforces
+       the same gate (409 + translated reason, shown in #retention-msg). -->
+  <form hx-post="/api/settings/report-retention" hx-swap="none" data-after-request="ok not-html refresh-region; status:409 text-response:retention-msg; fail not-status:409 unhide:settings-save-error">
     {{ $mode := .reportRetentionMode }}
+    {{ $cloudOK := .reportArchiveCloud.CloudAllowed }}
     <label>{{ T "settings.retention.mode_label" }}
       <select name="mode">
         <option value="till"  {{ if eq $mode "till" }}selected{{ end }}>{{ T "settings.retention.mode_till" }}</option>
-        <option value="cloud" disabled {{ if eq $mode "cloud" }}selected{{ end }}>{{ T "settings.retention.mode_cloud" }} ({{ T "settings.retention.mode_coming_soon" }})</option>
-        <option value="both"  disabled {{ if eq $mode "both" }}selected{{ end }}>{{ T "settings.retention.mode_both" }} ({{ T "settings.retention.mode_coming_soon" }})</option>
+        <option value="cloud" {{ if and (not $cloudOK) (ne $mode "cloud") }}disabled {{ end }}{{ if eq $mode "cloud" }}selected{{ end }}>{{ T "settings.retention.mode_cloud" }}{{ if not $cloudOK }} ({{ T "settings.retention.mode_needs_subscription" }}){{ end }}</option>
+        <option value="both" {{ if and (not $cloudOK) (ne $mode "both") }}disabled {{ end }}{{ if eq $mode "both" }}selected{{ end }}>{{ T "settings.retention.mode_both" }}{{ if not $cloudOK }} ({{ T "settings.retention.mode_needs_subscription" }}){{ end }}</option>
       </select>
     </label>
     <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
@@ -1606,6 +1611,16 @@
     <span id="retention-msg" aria-live="polite"></span>
   </form>
   </fieldset>
+  {{ if .reportArchiveCloud.Show }}
+  <!-- ut-docs#574 (ADR-0147 §2): main till, mode cloud/both — how many
+       archived reports still wait for the cloud, and a standing refusal
+       (402: subscription not active). Words, never colour alone; the same
+       refusal shows as a status-bar chip on every page. -->
+  <p data-testid="retention-pending">{{ printf (T "settings.retention.pending_uploads") .reportArchiveCloud.Pending }}</p>
+  {{ if .reportArchiveCloud.Refused }}
+  <p class="notice-block-warn" role="status" data-testid="retention-refused"><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T "settings.retention.upload_refused" }}</p>
+  {{ end }}
+  {{ end }}
   </div>
   <p class="muted">{{ T "settings.retention.capacity_advisory" }}</p>
   {{ if .isManager }}

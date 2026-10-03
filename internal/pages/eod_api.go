@@ -793,14 +793,22 @@ func reportRetentionCutoff(now time.Time) string {
 	return now.AddDate(-10, 0, 0).Format("2006-01-02")
 }
 
-// pruneReportArchive runs the till-mode age-based prune once per calendar
-// day. Mode "cloud"/"both" is a pure no-op here (card 4 wires those, per
-// ADR-0040's follow-up cards) — this card only implements till-mode
-// pruning, and never invents a cloud delete predicate it can't actually
-// honor yet. lastPruneDay is only advanced past a run that either (a) had
-// nothing to do (non-till mode) or (b) actually pruned successfully — a
-// transient DB error is retried on the next tick rather than silently
-// skipped for the rest of the day.
+// pruneReportArchive runs the report_archive prune once per calendar day
+// (ADR-0040 §2 as amended by ADR-0147 §4). The predicate depends on the
+// till and the retention mode:
+//
+//	main till, till  → rows older than 10 years
+//	main till, cloud → rows the cloud has acked (any age)
+//	main till, both  → rows acked AND older than 10 years
+//	replica, any     → rows older than 10 years
+//
+// Only the main till uploads (cloudsync.pushReportArchives), so only it
+// ever sets cloud_acked_at; a replica's own Z archive is pruned by age in
+// every mode. Every predicate keeps each kind's newest and highest-Z row
+// (data.reportArchiveKeepClause), so the Z chain survives. An unknown mode
+// value prunes like till — never more than the 10-year floor allows.
+// lastPruneDay is only advanced past a successful run — a transient DB
+// error is retried on the next tick rather than skipped for the day.
 func pruneReportArchive(ctx context.Context, d *common.Deps, repo *data.POSRepo, now time.Time, lastPruneDay *string) {
 	today := now.Format("2006-01-02")
 	if !reportPruneDue(today, *lastPruneDay) {
@@ -811,21 +819,27 @@ func pruneReportArchive(ctx context.Context, d *common.Deps, repo *data.POSRepo,
 	if mode == "" {
 		mode = common.ReportRetentionModeTill
 	}
-	if mode != common.ReportRetentionModeTill {
-		// cloud/both: nothing to prune yet (no cloud_acked_at is ever set by
-		// this card) — mark today handled so the scheduler doesn't re-check
-		// every tick, then move on.
-		*lastPruneDay = today
-		return
-	}
+	mainTill := reportArchiveOnMainTill(ctx, d)
 	cutoff := reportRetentionCutoff(now)
-	n, err := repo.PruneReportArchiveOlderThan(ctx, cutoff)
+	var n int64
+	var err error
+	predicate := "age"
+	switch {
+	case mainTill && mode == common.ReportRetentionModeCloud:
+		predicate = "acked"
+		n, err = repo.PruneReportArchiveAcked(ctx)
+	case mainTill && mode == common.ReportRetentionModeBoth:
+		predicate = "acked_and_age"
+		n, err = repo.PruneReportArchiveAckedOlderThan(ctx, cutoff)
+	default:
+		n, err = repo.PruneReportArchiveOlderThan(ctx, cutoff)
+	}
 	if err != nil {
 		logging.L().Errorf("report archive prune: %v", err)
 		return
 	}
 	*lastPruneDay = today
-	logging.L().Infof("report archive pruned: %d row(s) older than %s", n, cutoff)
+	logging.L().Infof("report archive pruned: %d row(s) (mode %s, %s, cutoff %s)", n, mode, predicate, cutoff)
 	if n > 0 {
 		// This permanently destroys rows ADR-0040 itself designates a
 		// retained legal record -- unlike a manager-triggered action (e.g.
@@ -834,10 +848,20 @@ func pruneReportArchive(ctx context.Context, d *common.Deps, repo *data.POSRepo,
 		// the rows are already gone either way, so a failed audit write
 		// logs but doesn't retry/block the scheduler.
 		if err := repo.InsertAudit(ctx, nil, "system", "report_archive", cutoff, "report_archive_pruned",
-			map[string]any{"rows_deleted": n, "cutoff": cutoff}, time.Now().UTC().Format(time.RFC3339), ""); err != nil {
+			map[string]any{"rows_deleted": n, "cutoff": cutoff, "mode": mode, "predicate": predicate, "main_till": mainTill},
+			time.Now().UTC().Format(time.RFC3339), ""); err != nil {
 			logging.L().Errorf("report archive prune: audit write failed: %v", err)
 		}
 	}
+}
+
+// reportArchiveOnMainTill reports whether this till is the shop's main (or
+// only) till: no sync.primary_url — the same test cloudsync's Tick uses for
+// its main-till-only uploads, so the till that uploads and the till that
+// prunes on the ack are always the same one.
+func reportArchiveOnMainTill(ctx context.Context, d *common.Deps) bool {
+	v, _, _ := d.Settings.Get(ctx, "sync.primary_url")
+	return strings.TrimSpace(v) == ""
 }
 
 // eodSchedulerTick is StartEODScheduler's per-tick body, pulled out to a
@@ -1312,61 +1336,10 @@ const maxReportArchiveExportRange = time.Duration(maxReportArchiveExportRangeDay
 func registerReportArchiveAPI(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewPOSRepo(d.Db)
 
-	// Mode setting: only "till" is accepted. This card (ADR-0040 card 1)
-	// implements no cloud gate at all — nothing uploads or acks a report
-	// yet — so silently accepting "cloud"/"both" here would tell the shop
-	// their reports are protected by a mechanism that doesn't exist. The
-	// UI renders cloud/both as visible-but-disabled for the same reason;
-	// this is the server-side half of that guarantee.
-	mux.HandleFunc("POST /api/settings/report-retention", func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		mode := strings.TrimSpace(r.Form.Get("mode"))
-		if mode != common.ReportRetentionModeTill {
-			http.Error(w, "cloud/both report retention isn't implemented yet — only till is available", http.StatusBadRequest)
-			return
-		}
-		// Mutating + audit-writing (ut-docs#794): validated above, gated
-		// below, same as every other site in this file. hx-swap="none" here
-		// too (settings.html reloads the page itself on success via
-		// hx-on::after-request) — HxTarget points at a dedicated
-		// #retention-msg span added purely for the elevation retry.
-		elev := checkOrElevate(d, r, "eod_report", r.Form.Get("override_pin"))
-		if elev.Outcome == needsElevation {
-			locale := httpx.ResolveLocale(w, r)
-			modeLabel := httpx.T(locale, fmt.Sprintf("settings.retention.mode_%s", mode))
-			renderElevationPrompt(w, r, "/api/settings/report-retention", "#retention-msg",
-				fmt.Sprintf(httpx.T(locale, "elevation.summary.report_retention"), modeLabel),
-				[]elevationHiddenField{{Name: "mode", Value: mode}}, elev)
-			return
-		}
-		actorID := elev.ActorID
-		if elev.Outcome == elevated {
-			actorID = elev.ApproverID
-		}
-		// ut-docs#2997: shop-wide -- through the main till on an additional
-		// till; a refusal writes nothing and is not audited.
-		if err := saveShopSettings(r.Context(), d, elev, map[string]string{common.KeyReportRetentionMode: mode}); err != nil {
-			if respondSettingsSyncError(w, r, err) {
-				return
-			}
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "eod.err.retention_save_failed", "eod_retention_save", err)
-			return
-		}
-		now := time.Now().UTC().Format(time.RFC3339)
-		payload := map[string]any{"mode": mode}
-		if elev.Outcome == elevated {
-			_ = repo.InsertAuditElevated(r.Context(), nil, actorID, elev.ActorID, "report", "-", "report_retention_mode_changed", payload, now, "")
-			// ut-docs#794 review finding (should-fix): same reasoning as
-			// /api/settings/eod above — a 204 never swaps under htmx, so the
-			// dialog retry (no reload of its own, unlike the plain-session
-			// form below) needs a real body to confirm anything happened.
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(httpx.ResolveLocale(w, r), "elevation.approved"))
-			return
-		}
-		_ = repo.InsertAudit(r.Context(), nil, actorID, "report", "-", "report_retention_mode_changed", payload, now, "")
-		w.WriteHeader(http.StatusNoContent)
-	})
+	// The mode setting lives in report_retention_api.go (ADR-0147 §1): its
+	// subscription gate reads internal/entitlement, which this sale-path
+	// file must never import (ADR-0060 §5/§7, salepath_imports_test.go).
+	registerReportRetentionModeAPI(mux, d, repo)
 
 	// Bounded date-range export of the archive (ADR-0040 §7) — a shop
 	// handing an auditor its retained reports. CSV: one row per archived
