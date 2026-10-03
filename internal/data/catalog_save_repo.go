@@ -41,13 +41,17 @@ const (
 // non-nil one is set. Barcodes, ModifierGroupIDs and ModifierOptOutIDs are
 // FULL sets (an empty list clears).
 type ItemPatch struct {
-	ID                string
-	Create            bool
-	Name              *string
-	PriceMinor        *int64
-	SKU               *string
-	CategoryID        *string
-	Color             *string
+	ID         string
+	Create     bool
+	Name       *string
+	PriceMinor *int64
+	SKU        *string
+	CategoryID *string
+	Color      *string
+	// Icon is the item's icon id (ut-docs#3584, items.icon): "" clears it.
+	// One picture per item (SetItemPicture): a non-empty icon replaces the
+	// item's thumbnail, the same rule as CategorySave.Icon.
+	Icon              *string
 	Barcodes          *[]string
 	Active            *bool
 	IsWeighed         *bool
@@ -72,6 +76,10 @@ type ItemSaveResult struct {
 	Name    string
 	// Changed lists the patch's fields that were present, for the audit row.
 	Changed []string
+	// ClearedImagePath is the thumbnail path a non-empty icon replaced
+	// (ut-docs#3584, as CategorySaveResult's), "" when none was cleared —
+	// the caller deletes a superseded upload's file.
+	ClearedImagePath string
 }
 
 // validBarcodeText reports whether code is 1–64 printable ASCII characters
@@ -159,6 +167,13 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 			return res, fmt.Errorf("colour %q is not one of the palette colours", c)
 		}
 		p.Color = &c
+	}
+	if p.Icon != nil {
+		ic := strings.TrimSpace(*p.Icon)
+		if ic != "" && !iconid.ValidFormat(ic) {
+			return res, fmt.Errorf("icon %q is not a valid icon id", ic)
+		}
+		p.Icon = &ic
 	}
 	var barcodes []resolvedBarcode
 	if p.Barcodes != nil {
@@ -324,6 +339,12 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 		}
 	}
 
+	if p.Icon != nil {
+		if err := saveItemIconTx(ctx, tx, p.ID, *p.Icon, &res); err != nil {
+			return res, err
+		}
+		res.Changed = append(res.Changed, "icon")
+	}
 	if p.Barcodes != nil {
 		if err := replaceItemBarcodesTx(ctx, tx, p.ID, barcodes); err != nil {
 			return res, err
@@ -365,6 +386,36 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 	}
 	res.Name = cur.Name
 	return res, nil
+}
+
+// saveItemIconTx applies save_item's icon (ut-docs#3584) with the
+// one-picture rule SaveCategory applies to a category's (ut-docs#2717): an
+// icon set from my. replaces whatever thumbnail the till had — a library
+// tile or an uploaded photo — or it would stay hidden behind it on the sale
+// screen. A cleared icon ("") leaves an uploaded photo alone, but a library
+// tile in the thumbnail row IS the item's icon (it renders and is reported
+// as its id), so clearing the icon clears that tile too.
+func saveItemIconTx(ctx context.Context, tx *sql.Tx, itemID, icon string, res *ItemSaveResult) error {
+	var thumb string
+	err := tx.QueryRowContext(ctx, `SELECT path FROM item_images WHERE item_id = ? AND role = 'thumbnail' LIMIT 1`, itemID).Scan(&thumb)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("save item: read thumbnail: %w", err)
+	}
+	keep := thumb
+	if icon != "" && thumb != "" {
+		res.ClearedImagePath, keep = thumb, ""
+	} else if icon == "" && iconid.IDForAssetPath(thumb) != "" {
+		keep = ""
+	}
+	if keep != "" && keep == thumb {
+		// The photo stays: write only the icon column, leaving the
+		// thumbnail row (and the sell-screen generation it drives) alone.
+		if _, err := tx.ExecContext(ctx, `UPDATE items SET icon = NULL WHERE id = ?`, itemID); err != nil {
+			return fmt.Errorf("save item: icon: %w", err)
+		}
+		return nil
+	}
+	return setItemPictureExec(ctx, tx, itemID, keep, icon)
 }
 
 // skuTakenError names the item that already holds sku.

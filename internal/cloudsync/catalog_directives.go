@@ -165,7 +165,7 @@ func decodeSaveItem(p payload) (data.ItemPatch, string) {
 	for _, f := range []struct {
 		k   string
 		dst **string
-	}{{"name", &out.Name}, {"sku", &out.SKU}, {"category_id", &out.CategoryID}, {"color", &out.Color}} {
+	}{{"name", &out.Name}, {"sku", &out.SKU}, {"category_id", &out.CategoryID}, {"color", &out.Color}, {"icon", &out.Icon}} {
 		if *f.dst, ok = p.optStr(f.k); !ok {
 			return out, "bad " + f.k
 		}

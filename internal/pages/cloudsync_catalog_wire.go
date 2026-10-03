@@ -43,6 +43,12 @@ func cloudSaveItem(ctx context.Context, d *common.Deps, p data.ItemPatch) (strin
 		}
 		return "", err
 	}
+	// ut-docs#3584: an icon from my. replaced the item's uploaded photo —
+	// remove the file, as the till's own icon picker does
+	// (removeUploadedThumbnail). A replaced library tile has no file.
+	if res.ClearedImagePath != "" && safeCategoryID(p.ID) && res.ClearedImagePath == catalog.ItemThumbURL(p.ID) {
+		catalog.RemoveItemUpload(p.ID)
+	}
 	auditCloudDirective(ctx, d, "item", p.ID, "cloud_item_saved", map[string]any{"created": res.Created, "changed": res.Changed})
 	if res.Created {
 		return "created " + res.Name, nil
@@ -425,6 +431,12 @@ func cloudSetCatalogImage(ctx context.Context, d *common.Deps, img cloudsync.Cat
 		if current, _, err = repo.ItemThumbnailPath(ctx, img.ID); err != nil {
 			return "", err
 		}
+		// ut-docs#3584: an icon id is the item's picture too.
+		icon, err := repo.ItemIcon(ctx, img.ID)
+		if err != nil {
+			return "", err
+		}
+		current += icon
 	} else {
 		c, ok, err := repo.CategoryPicture(ctx, img.ID)
 		if err != nil {

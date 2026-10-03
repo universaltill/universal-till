@@ -35,6 +35,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/itemsnav"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/ui"
 )
 
 // modifierAdminItem is the template data shape modifier_group_admin.html
@@ -774,6 +775,8 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			missingSKUCount = 0
 		}
 		thumbnails, _ := repo.ItemThumbnails(r.Context())
+		// ut-docs#3584: an item with no image shows its icon id (my.).
+		icons, _ := repo.ItemIcons(r.Context())
 		// ut-docs#2314: the catalog list/edit form must show each item's
 		// CURRENT EFFECTIVE price (price_history-resolved), not raw
 		// base_price, same resolution ItemVariantsForSale/the sale-screen
@@ -821,7 +824,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"title":                 httpx.T(httpx.RequestLocale(r), "nav.catalog"),
 			"menuItems":             d.MenuSnapshot(),
 			"theme":                 d.CurrentState().Theme,
-			"Rows":                  buildCatalogRows(items, barcodes, variants, thumbnails, currentPrices, updatedAts),
+			"Rows":                  buildCatalogRows(items, barcodes, variants, thumbnails, icons, currentPrices, updatedAts),
 			"Categories":            cats,
 			"CategoryFilterOptions": categoryFilterOptions,
 			"CategoryNodesJSON":     categoryFilterNodesJSON(categoryFilterOptions),
@@ -2179,10 +2182,24 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// this (it already calls icon-state on item select and after every
 		// upload/icon pick), versioned like the catalog row's <img>.
 		thumbnailURL := ""
-		if path, hasPath, err := repo.ItemThumbnailPath(r.Context(), itemID); err != nil {
+		path, hasPath, err := repo.ItemThumbnailPath(r.Context(), itemID)
+		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
-		} else if hasPath {
+		}
+		// ut-docs#3584: an icon id my. set (no thumbnail row) is the
+		// item's built-in icon here too — preselect its library tile.
+		if !hasPath {
+			icon, err := repo.ItemIcon(r.Context(), itemID)
+			if err != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
+				return
+			}
+			if path = ui.ItemThumb("", icon); path != "" {
+				hasPath = true
+			}
+		}
+		if hasPath {
 			thumbnailURL = httpx.ImgVersion(path)
 			isCustom = true
 			for _, ic := range catimport.BuiltinIcons() {
@@ -2776,6 +2793,13 @@ func ClearItemPicture(ctx context.Context, repo *data.CatalogRepo, itemID string
 // (no "/", "\" or "." — see the path-traversal guard on the /icon route)
 // before it ever reaches this function.
 func removeUploadedThumbnail(itemID string) {
+	RemoveItemUpload(itemID)
+}
+
+// RemoveItemUpload is removeUploadedThumbnail for the save_item directive
+// (ut-docs#3584): an icon from my. replaced the item's uploaded photo.
+// itemID must already be validated (no "/", "\" or ".").
+func RemoveItemUpload(itemID string) {
 	path := itemThumbFile(itemID)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		log.Printf("[catalog] remove superseded upload for %s: %v", itemID, err)

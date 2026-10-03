@@ -53,6 +53,7 @@ func TestApplySaveItem(t *testing.T) {
 		{map[string]any{"id": "i1", "modifier_group_ids": `{"a":1}`}, "bad modifier_group_ids"},
 		{map[string]any{"id": "i1", "modifier_opt_out_ids": 5.0}, "bad modifier_opt_out_ids"},
 		{map[string]any{"id": "i1", "color": false}, "bad color"},
+		{map[string]any{"id": "i1", "icon": 4.0}, "bad icon"},
 	} {
 		status, msg := apply(context.Background(), directive{Type: "save_item", Payload: c.payload}, hooks)
 		if status != "failed" || msg != c.want {
@@ -66,7 +67,7 @@ func TestApplySaveItem(t *testing.T) {
 	// Every field, numbers as strings/floats, unknown fields ignored.
 	status, msg := apply(context.Background(), directive{Type: "save_item", Payload: map[string]any{
 		"id": " i1 ", "create": true, "name": "Latte", "price_minor": "360", "sku": "HD-3",
-		"category_id": "", "color": "#b45309", "barcodes": `["111","222"]`, "active": "true",
+		"category_id": "", "color": "#b45309", "icon": "lucide:beer", "barcodes": `["111","222"]`, "active": "true",
 		"is_weighed": false, "stock_untracked": true, "modifier_group_ids": `["g1"]`,
 		"modifier_opt_out_ids": `[]`, "a_field_from_a_newer_cloud": "ignored",
 	}}, hooks)
@@ -74,14 +75,14 @@ func TestApplySaveItem(t *testing.T) {
 		t.Fatalf("full: %q %q", status, msg)
 	}
 	if got.ID != "i1" || !got.Create || *got.Name != "Latte" || *got.PriceMinor != 360 || *got.SKU != "HD-3" ||
-		*got.CategoryID != "" || *got.Color != "#b45309" || !reflect.DeepEqual(*got.Barcodes, []string{"111", "222"}) ||
+		*got.CategoryID != "" || *got.Color != "#b45309" || got.Icon == nil || *got.Icon != "lucide:beer" || !reflect.DeepEqual(*got.Barcodes, []string{"111", "222"}) ||
 		!*got.Active || *got.IsWeighed || !*got.StockUntracked || !reflect.DeepEqual(*got.ModifierGroupIDs, []string{"g1"}) ||
 		got.ModifierOptOutIDs == nil || len(*got.ModifierOptOutIDs) != 0 {
 		t.Fatalf("decoded = %+v", got)
 	}
 	// Absent fields are nil (keep), never zero values.
 	status, _ = apply(context.Background(), directive{Type: "save_item", Payload: map[string]any{"id": "i1", "price_minor": 380.0}}, hooks)
-	if status != "applied" || got.Create || got.Name != nil || got.Barcodes != nil || got.Active != nil || *got.PriceMinor != 380 {
+	if status != "applied" || got.Create || got.Name != nil || got.Icon != nil || got.Barcodes != nil || got.Active != nil || *got.PriceMinor != 380 {
 		t.Fatalf("partial: %+v", got)
 	}
 }

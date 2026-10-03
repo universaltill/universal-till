@@ -47,6 +47,7 @@ import (
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/ui"
 )
 
 // catalogRowVM is one catalog card's view model (catalog_row.html's dot).
@@ -84,7 +85,7 @@ type catalogRowVM struct {
 // same items slice, but ItemCurrentPrices' own contract allows it) leaves
 // the item's raw base_price as configured, same fallback ItemCurrentPrices'
 // own callers already use.
-func buildCatalogRows(items []catalogtypes.ItemInput, barcodes map[string][]string, variants map[string][]data.VariantView, thumbnails map[string]string, currentPrices map[string]int64, updatedAts map[string]string) []catalogRowVM {
+func buildCatalogRows(items []catalogtypes.ItemInput, barcodes map[string][]string, variants map[string][]data.VariantView, thumbnails, icons map[string]string, currentPrices map[string]int64, updatedAts map[string]string) []catalogRowVM {
 	rows := make([]catalogRowVM, 0, len(items))
 	for _, itm := range items {
 		if price, ok := currentPrices[itm.ID]; ok {
@@ -92,7 +93,7 @@ func buildCatalogRows(items []catalogtypes.ItemInput, barcodes map[string][]stri
 		}
 		rows = append(rows, catalogRowVM{
 			Item: itm, Barcodes: barcodes[itm.ID], Variants: variants[itm.ID],
-			ImageURL: thumbnails[itm.ID], UpdatedAt: updatedAts[itm.ID],
+			ImageURL: ui.ItemThumb(thumbnails[itm.ID], icons[itm.ID]), UpdatedAt: updatedAts[itm.ID],
 		})
 	}
 	return rows
@@ -171,6 +172,12 @@ func writeCatalogRowOOB(w io.Writer, r *http.Request, repo *data.CatalogRepo, fu
 	if err != nil {
 		return err
 	}
+	// ut-docs#3584: same icon fallback as buildCatalogRows.
+	icon, err := repo.ItemIcon(ctx, itemID)
+	if err != nil {
+		return err
+	}
+	thumbURL = ui.ItemThumb(thumbURL, icon)
 	// ut-docs#2314: same override buildCatalogRows applies at first paint —
 	// the row this mutation just re-renders (including the just-saved
 	// item's own row, so a save that changed the price reflects the

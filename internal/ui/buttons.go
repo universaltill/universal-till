@@ -443,6 +443,36 @@ func CategoryThumb(imagePath, icon string) string {
 	return categoryImageURL(iconid.AssetPath(id))
 }
 
+// ItemThumb is CategoryThumb for an item tile (ut-docs#3584): one picture
+// per item (iconid.Resolve over its item_images thumbnail path and its
+// items.icon id). A photo or the generic tile is shown as-is (as item tiles
+// always have been — a missing file hides itself in the template); else
+// the icon id is drawn through the till's icon registry, an unknown or
+// malformed id as the neutral fallback, never the raw value. "" = no
+// picture: the tile falls back to its colour swatch.
+func ItemThumb(imagePath, icon string) string {
+	path, id := iconid.Resolve(imagePath, icon)
+	if path != "" {
+		return path
+	}
+	return iconid.AssetPath(id)
+}
+
+// itemIcons is CatalogRepo.ItemIcons for the tile loaders: a read error
+// only costs the icon fallback (tiles keep their photo or swatch), logged
+// and reported as degraded so the render is not cached.
+func (s *ButtonStore) itemIcons(ctx context.Context, what string) (map[string]string, bool) {
+	if s.catalogRepo == nil {
+		return nil, false
+	}
+	icons, err := s.catalogRepo.ItemIcons(ctx)
+	if err != nil {
+		logging.L().Warnf("ui: %s item icons failed, icon-only tiles fall back to no picture: %v", what, err)
+		return nil, true
+	}
+	return icons, false
+}
+
 // isCategoryAncestor reports whether id is an ancestor of candidateID,
 // walking candidateID's ParentID chain upward. A local seen-set bounds the
 // walk even if the data has a cycle not involving id itself, so this
@@ -910,6 +940,8 @@ func (s *ButtonStore) loadAllActive(ctx context.Context) (_ []Button, degraded b
 		logging.L().Warnf("ui: load all-active items thumbnails failed, tiles fall back to no image: %v", err)
 		degraded = true
 	}
+	icons, iconsDegraded := s.itemIcons(ctx, "load all-active")
+	degraded = degraded || iconsDegraded
 	// The next three lookups are chunked (ut-docs#2318): SQLite's bind-
 	// variable ceiling (32766) is well within plausible active-catalog
 	// sizes when called unchunked with the WHOLE id set —
@@ -1008,7 +1040,7 @@ func (s *ButtonStore) loadAllActive(ctx context.Context) (_ []Button, degraded b
 			Label:        it.Name,
 			Code:         code,
 			ItemID:       it.ID,
-			ImageURL:     thumbs[it.ID],
+			ImageURL:     ItemThumb(thumbs[it.ID], icons[it.ID]),
 			Price:        price,
 			HasModifiers: hasMods[it.ID],
 			HasVariants:  hasVariants[it.ID],
@@ -1076,6 +1108,7 @@ func (s *ButtonStore) SearchSellable(ctx context.Context, q string, limit int) (
 			logging.L().Warnf("ui: search-sellable sell-screen-flag lookup failed, no result offers add-to-quick-buttons: %v", err)
 		}
 	}
+	icons, _ := s.itemIcons(ctx, "search-sellable")
 	out := make([]Button, 0, len(results))
 	for _, r := range results {
 		code := resolvableTileCode(r.Barcode, r.SKU, r.ItemID, enabledIDs)
@@ -1087,7 +1120,7 @@ func (s *ButtonStore) SearchSellable(ctx context.Context, q string, limit int) (
 			Label:        r.Name,
 			Code:         code,
 			ItemID:       r.ItemID,
-			ImageURL:     r.Image,
+			ImageURL:     ItemThumb(r.Image, icons[r.ItemID]),
 			Price:        price,
 			HasModifiers: hasMods[r.ItemID],
 			HasVariants:  hasVariants[r.ItemID],
@@ -1197,6 +1230,8 @@ func (s *ButtonStore) loadWith(ctx context.Context, allActive []Button) (_ []But
 			degraded = true
 		}
 	}
+	icons, iconsDegraded := s.itemIcons(ctx, "load quick-button")
+	degraded = degraded || iconsDegraded
 	var out []Button
 	seen := make(map[string]bool, len(rows))
 	for _, b := range rows {
@@ -1212,7 +1247,7 @@ func (s *ButtonStore) loadWith(ctx context.Context, allActive []Button) (_ []But
 			Label:        b.Label,
 			Code:         b.Barcode,
 			ItemID:       b.ItemID,
-			ImageURL:     b.ImageURL,
+			ImageURL:     ItemThumb(b.ImageURL, icons[b.ItemID]),
 			Price:        price,
 			HasModifiers: hasMods[b.ItemID],
 			HasVariants:  hasVariants[b.ItemID],

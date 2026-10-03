@@ -2679,9 +2679,14 @@ func (r *CatalogRepo) EnsureDefaultThumbnail(ctx context.Context, itemID, path s
 	// a second INSERT a constraint violation instead of a silent duplicate;
 	// OR IGNORE turns that violation into exactly this function's own
 	// "already has a thumbnail — never overwrite it" no-op.
+	//
+	// ut-docs#3584: an item that already shows an icon id (items.icon) has
+	// a picture too, so the placeholder skips it — one picture per item.
 	if _, err := r.db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO item_images (id, item_id, path, role) VALUES (?, ?, ?, 'thumbnail')`,
-		uuid.NewString(), itemID, path,
+		`INSERT OR IGNORE INTO item_images (id, item_id, path, role)
+		 SELECT ?, ?, ?, 'thumbnail'
+		 WHERE NOT EXISTS (SELECT 1 FROM items WHERE id = ? AND COALESCE(icon, '') <> '')`,
+		uuid.NewString(), itemID, path, itemID,
 	); err != nil {
 		return fmt.Errorf("insert placeholder thumbnail: %w", err)
 	}
@@ -2724,9 +2729,65 @@ func (r *CatalogRepo) ItemThumbnailFor(ctx context.Context, itemID string) (stri
 // an imported item's placeholder icon, forever, with no in-app way to
 // clear it. See internal/data/shortcuts_repo.go's own doc comment for the
 // same gap independently observed from the shortcuts-button angle.
+//
+// ut-docs#3584: an item has one picture, so this goes through
+// SetItemPicture — the photo or library tile replaces any icon id my. set
+// (items.icon is cleared in the same transaction).
 func (r *CatalogRepo) SetItemThumbnail(ctx context.Context, itemID, path string) error {
 	if itemID == "" || path == "" {
 		return errors.New("itemID and path required")
+	}
+	return r.SetItemPicture(ctx, itemID, path, "")
+}
+
+// SetItemPicture stores an item's one picture (ut-docs#3584, the item
+// counterpart of SetCategoryPicture's ut-docs#2717 rule): an image path in
+// its item_images thumbnail row (an uploaded photo's
+// /public/assets/items/<id>/thumb.png, or a library tile the till's picker
+// chose) OR an icon id in items.icon ("lucide:beer", contract §0.12) — the
+// other side is cleared in the same transaction, so the last writer wins
+// whether it is this till's editor or a save_item directive from my. Both
+// "" clears the picture (no thumbnail row, NULL icon). A malformed icon id
+// is refused; an unknown item is ErrItemNotFound. Validating the path (a
+// written upload, a library key) is the handler's job.
+func (r *CatalogRepo) SetItemPicture(ctx context.Context, itemID, imagePath, icon string) error {
+	imagePath, icon = strings.TrimSpace(imagePath), strings.TrimSpace(icon)
+	if icon != "" && !iconid.ValidFormat(icon) {
+		return fmt.Errorf("icon %q is not a valid icon id", icon)
+	}
+	if imagePath != "" && icon != "" {
+		return errors.New("an item has one picture: an image path or an icon id, not both")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("set item picture: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := setItemPictureExec(ctx, tx, itemID, imagePath, icon); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("set item picture: commit: %w", err)
+	}
+	return nil
+}
+
+// setItemPictureExec is SetItemPicture's write, on a caller-held
+// transaction (SaveItem's): items.icon, then the thumbnail row — upserted
+// for a path, deleted otherwise.
+func setItemPictureExec(ctx context.Context, ex execer, itemID, imagePath, icon string) error {
+	res, err := ex.ExecContext(ctx, `UPDATE items SET icon = ? WHERE id = ?`, nullableString(icon), itemID)
+	if err != nil {
+		return fmt.Errorf("set item picture: icon: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrItemNotFound
+	}
+	if imagePath == "" {
+		if _, err := ex.ExecContext(ctx, `DELETE FROM item_images WHERE item_id = ? AND role = 'thumbnail'`, itemID); err != nil {
+			return fmt.Errorf("set item picture: clear thumbnail: %w", err)
+		}
+		return nil
 	}
 	// A single atomic upsert (ut-docs#1871): the old UPDATE-then-INSERT let
 	// two concurrent calls for the same item both see the UPDATE affect 0
@@ -2735,14 +2796,46 @@ func (r *CatalogRepo) SetItemThumbnail(ctx context.Context, itemID, path string)
 	// answered nondeterministically. ON CONFLICT makes the whole
 	// check-and-write one statement, so no interleaving of a second
 	// concurrent call can land between the check and the write.
-	if _, err := r.db.ExecContext(ctx,
+	if _, err := ex.ExecContext(ctx,
 		`INSERT INTO item_images (id, item_id, path, role) VALUES (?, ?, ?, 'thumbnail')
 		 ON CONFLICT(item_id, role) DO UPDATE SET path = excluded.path`,
-		uuid.NewString(), itemID, path,
+		uuid.NewString(), itemID, imagePath,
 	); err != nil {
 		return fmt.Errorf("upsert thumbnail: %w", err)
 	}
 	return nil
+}
+
+// ItemIcons returns every item's icon id (items.icon, migration 066,
+// ut-docs#3584), active or not, keyed by item id; an item with no icon is
+// absent. The batched counterpart of ItemIcon for tile lists (sale screen,
+// self-order kiosk, catalog list), alongside ItemThumbnails. Untrusted on
+// read: callers render an id only through iconid.AssetPath.
+func (r *CatalogRepo) ItemIcons(ctx context.Context) (map[string]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, icon FROM items WHERE icon IS NOT NULL AND icon <> ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, icon string
+		if err := rows.Scan(&id, &icon); err != nil {
+			return nil, err
+		}
+		out[id] = icon
+	}
+	return out, rows.Err()
+}
+
+// ItemIcon returns one item's icon id, "" for none or no such item.
+func (r *CatalogRepo) ItemIcon(ctx context.Context, itemID string) (string, error) {
+	var icon string
+	err := r.db.QueryRowContext(ctx, `SELECT COALESCE(icon, '') FROM items WHERE id = ?`, itemID).Scan(&icon)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return icon, err
 }
 
 // ItemThumbnails returns every item's current thumbnail path, active or not
@@ -2804,13 +2897,14 @@ func (r *CatalogRepo) ItemThumbnailPath(ctx context.Context, itemID string) (pat
 // afterward, so this deletes rather than updates. A no-op, not an error,
 // when the item already has no thumbnail row (a double-click, a stale
 // picker state).
+//
+// ut-docs#3584: "no picture" clears an icon id my. set too (SetItemPicture
+// with both ""), the way the category editor's "No image" does.
 func (r *CatalogRepo) ClearItemThumbnail(ctx context.Context, itemID string) error {
 	if itemID == "" {
 		return errors.New("itemID required")
 	}
-	if _, err := r.db.ExecContext(ctx,
-		`DELETE FROM item_images WHERE item_id = ? AND role = 'thumbnail'`, itemID,
-	); err != nil {
+	if err := r.SetItemPicture(ctx, itemID, "", ""); err != nil && !errors.Is(err, ErrItemNotFound) {
 		return fmt.Errorf("clear thumbnail: %w", err)
 	}
 	return nil
