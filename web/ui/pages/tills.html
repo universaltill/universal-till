@@ -112,7 +112,9 @@
   {{ end }}
   </div>
 
-  <div class="card">
+  {{/* ut-docs#2904: approve/deny (pending_pairings.html) refresh this card
+       only; the fresh copy's load trigger re-fetches the list. */}}
+  <div class="card" id="tills-pairing-card" data-ut-refresh="#tills-pairing-card">
     <h3>{{ T "tills.pairing.title" }}</h3>
     <p class="muted">{{ T "tills.pairing.help" }}</p>
     <div hx-get="/ui/tills/pending-pairings" hx-trigger="load" hx-swap="outerHTML"></div>
@@ -141,7 +143,7 @@
          operator's focus is inside the table (a keyboard user on Revoke
          would lose it to the swap — same shape as tables.html's
          [!window.tablesEditing] filter). */}}
-    <div id="tills-roster"{{ if .LinkInfo }} hx-get="/ui/tills/roster" hx-trigger="every 10s [!document.activeElement || !document.getElementById('tills-roster').contains(document.activeElement)]" hx-swap="innerHTML"{{ end }}>
+    <div id="tills-roster" data-ut-refresh="#tills-roster"{{ if .LinkInfo }} hx-get="/ui/tills/roster" hx-trigger="every 10s [!document.activeElement || !document.getElementById('tills-roster').contains(document.activeElement)]" hx-swap="innerHTML"{{ end }}>
       {{ template "tills_roster.html" . }}
     </div>
   </div>

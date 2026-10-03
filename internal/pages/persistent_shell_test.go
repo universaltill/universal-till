@@ -73,7 +73,7 @@ func TestPersistentShell_RailChipsArePreserved(t *testing.T) {
 			t.Errorf("nav.html #%s lacks hx-preserve", id)
 		}
 	}
-	if !strings.Contains(readBaseHTML(t), `id="pairing-notice-mount" hx-get="/ui/pairing-notice" hx-trigger="load, every 30s" hx-preserve`) {
+	if !strings.Contains(readBaseHTML(t), `id="pairing-notice-mount" hx-get="/ui/pairing-notice" hx-trigger="load, every 30s, tills-changed from:body" hx-preserve`) {
 		t.Error("base.html #pairing-notice-mount lacks hx-preserve")
 	}
 }

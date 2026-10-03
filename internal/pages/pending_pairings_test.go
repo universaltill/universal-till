@@ -190,7 +190,7 @@ func TestPendingPairingsUI_RendersWrongPINFeedbackWiring(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `data-after-request="fail unhide:pin-error-`) {
+	if !strings.Contains(body, `; fail unhide:pin-error-`) {
 		t.Fatalf("expected a wrong-PIN feedback handler wired on the approve/deny forms, got: %s", body)
 	}
 	if !strings.Contains(body, "hidden") {
@@ -334,7 +334,7 @@ func TestPairingNoticeMount_KeepsPollingAndUsesADistinctID(t *testing.T) {
 	if strings.Contains(tag, `hx-swap="outerHTML"`) {
 		t.Fatalf("the pairing-notice placeholder must NOT use hx-swap=\"outerHTML\" — an empty poll response would destroy the element along with its own hx-trigger, permanently stopping all future polling. Got: %s", tag)
 	}
-	if !strings.Contains(tag, `hx-trigger="load, every 30s"`) {
+	if !strings.Contains(tag, `hx-trigger="load, every 30s, tills-changed from:body"`) {
 		t.Fatalf("expected the placeholder to keep polling every 30s, got: %s", tag)
 	}
 	// The rendered partial's own root also uses id="pairing-notice"
@@ -350,11 +350,12 @@ func TestPairingNoticeMount_KeepsPollingAndUsesADistinctID(t *testing.T) {
 	}
 }
 
-// --- Additive HX-Refresh header on the existing approve/deny handlers
-// (#184) — must not change their JSON contract, only add a header on
-// success. ---
+// --- No full-page reload on the approve/deny handlers (ut-docs#2904):
+// pending_pairings.html refreshes only its own card via refresh-region,
+// so a success must NOT carry HX-Refresh (htmx would reload the whole
+// page regardless). The #184 JSON contract is unchanged. ---
 
-func TestApprovePairRequest_SetsHXRefreshOnSuccess(t *testing.T) {
+func TestApprovePairRequest_NoHXRefreshOnSuccess(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _, _ := newPairingAPITestDeps(t)
 
@@ -374,12 +375,17 @@ func TestApprovePairRequest_SetsHXRefreshOnSuccess(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 approving, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec.Header().Get("HX-Refresh") != "true" {
-		t.Fatalf("expected HX-Refresh: true on a successful approve, got %q", rec.Header().Get("HX-Refresh"))
+	if got := rec.Header().Get("HX-Refresh"); got != "" {
+		t.Fatalf("a successful approve must not force a full reload (ut-docs#2904), got HX-Refresh %q", got)
+	}
+	// Without the reload, the nav sync-chip dot and the pairing notice
+	// (30s polls) re-fetch on this event instead (ut-docs#2904).
+	if got := rec.Header().Get("HX-Trigger"); got != "tills-changed" {
+		t.Fatalf("expected HX-Trigger: tills-changed on a successful approve, got %q", got)
 	}
 }
 
-func TestDenyPairRequest_SetsHXRefreshOnSuccess(t *testing.T) {
+func TestDenyPairRequest_NoHXRefreshOnSuccess(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _, _ := newPairingAPITestDeps(t)
 
@@ -399,8 +405,13 @@ func TestDenyPairRequest_SetsHXRefreshOnSuccess(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 denying, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec.Header().Get("HX-Refresh") != "true" {
-		t.Fatalf("expected HX-Refresh: true on a successful deny, got %q", rec.Header().Get("HX-Refresh"))
+	if got := rec.Header().Get("HX-Refresh"); got != "" {
+		t.Fatalf("a successful deny must not force a full reload (ut-docs#2904), got HX-Refresh %q", got)
+	}
+	// Without the reload, the nav sync-chip dot and the pairing notice
+	// (30s polls) re-fetch on this event instead (ut-docs#2904).
+	if got := rec.Header().Get("HX-Trigger"); got != "tills-changed" {
+		t.Fatalf("expected HX-Trigger: tills-changed on a successful deny, got %q", got)
 	}
 }
 

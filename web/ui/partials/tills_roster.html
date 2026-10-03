@@ -82,8 +82,9 @@
            render there: a replica's local DELETE would revert on the next
            admin-bundle pull. The handler enforces this independently. */}}
       {{ if not $.SyncPrimary }}
+      {{/* ut-docs#2904: refresh only #tills-roster (tills.html) on success. */}}
       <button class="btn secondary" hx-post="/api/sync/tills/{{ .ID }}/revoke"
-                  hx-confirm="{{ T "tills.revoke_confirm" }}">{{ T "tills.revoke" }}</button>
+                  hx-confirm="{{ T "tills.revoke_confirm" }}" data-after-request="ok refresh-region:tills-roster">{{ T "tills.revoke" }}</button>
       {{ end }}
       </td>
     </tr>

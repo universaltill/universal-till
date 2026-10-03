@@ -266,6 +266,14 @@ func TestSyncEnrollTokenAndEnroll_FullPairingFlow(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204 revoking, got %d: %s", rec.Code, rec.Body.String())
 	}
+	// ut-docs#2904: tills_roster.html refreshes only #tills-roster — no
+	// full-page reload.
+	if got := rec.Header().Get("HX-Refresh"); got != "" {
+		t.Fatalf("revoke must not force a full page reload (ut-docs#2904), got HX-Refresh %q", got)
+	}
+	if got := rec.Header().Get("HX-Trigger"); got != "tills-changed" {
+		t.Fatalf("expected HX-Trigger: tills-changed so the sync chip re-fetches, got %q", got)
+	}
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/sync/ping", nil)
 	req.Header.Set("Authorization", "Bearer "+enrollResp.Data.Bearer)

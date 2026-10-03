@@ -30,10 +30,10 @@
              a slow/LAN-flaky connection saw the button just sit there and
              reasonably assumed nothing happened. "find button[type=submit]"
              scopes hx-disabled-elt to THIS form's own button, not the
-             sibling approve/deny form's. The eventual full-page reload
-             (HX-Refresh) still does the real confirming — refreshing this
-             list AND the Enrolled Tills table — this indicator is only for
-             the gap before that response comes back.
+             sibling approve/deny form's. On success "ok refresh-region"
+             re-renders only tills.html's #tills-pairing-card (ut-docs#2904,
+             no full-page reload) — that does the real confirming; this
+             indicator is only for the gap before the response comes back.
 
              The PIN box names its own device so two pending rows can't be
              confused, with the FIXED half first in both the placeholder and
@@ -54,12 +54,12 @@
                placeholder="{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}">
         <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/approve" hx-include="#pin-{{ .ID }}" hx-swap="none"
               hx-indicator="#pair-busy-{{ .ID }}" hx-disabled-elt="find button[type=submit]"
-              data-after-request="fail unhide:pin-error-{{ .ID }}">
+              data-after-request="ok refresh-region:tills-pairing-card; fail unhide:pin-error-{{ .ID }}">
           <button class="btn primary" type="submit">{{ T "tills.pairing.approve_btn" }}</button>
         </form>
         <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/deny" hx-include="#pin-{{ .ID }}" hx-swap="none"
               hx-indicator="#pair-busy-{{ .ID }}" hx-disabled-elt="find button[type=submit]"
-              data-after-request="fail unhide:pin-error-{{ .ID }}">
+              data-after-request="ok refresh-region:tills-pairing-card; fail unhide:pin-error-{{ .ID }}">
           <button class="btn secondary" type="submit">{{ T "tills.pairing.deny_btn" }}</button>
         </form>
         <span id="pair-busy-{{ .ID }}" class="htmx-indicator muted" role="status">{{ T "tills.pairing.processing" }}</span>
