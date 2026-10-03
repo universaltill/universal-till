@@ -86,8 +86,8 @@ func storeCategoryPhoto(ctx context.Context, repo *data.CatalogRepo, id string, 
 	return repo.SetCategoryPicture(ctx, id, categoryThumbURL(id), icon)
 }
 
-// clearCategoryPicture is the dialog's "No image" and set_catalog_image's
-// clear: the image path is cleared and the uploaded file removed, while
+// clearCategoryPicture is set_catalog_image's clear (my.'s "remove the
+// image"): the image path is cleared and the uploaded file removed, while
 // the stored icon id is kept (ut-docs#3585), so the category goes back to
 // showing its icon rather than losing both.
 func clearCategoryPicture(ctx context.Context, repo *data.CatalogRepo, id string) error {
@@ -96,6 +96,17 @@ func clearCategoryPicture(ctx context.Context, repo *data.CatalogRepo, id string
 		return err
 	}
 	if err := repo.SetCategoryPicture(ctx, id, "", icon); err != nil {
+		return err
+	}
+	removeCategoryUpload(id)
+	return nil
+}
+
+// clearCategoryPictureFully is the till dialog's "No image" — its
+// one-of-three choice (photo / none / icon) means no picture at all, so
+// both columns are cleared (icon included) and the uploaded file removed.
+func clearCategoryPictureFully(ctx context.Context, repo *data.CatalogRepo, id string) error {
+	if err := repo.SetCategoryPicture(ctx, id, "", ""); err != nil {
 		return err
 	}
 	removeCategoryUpload(id)
@@ -584,13 +595,13 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 
 	// saveCategoryImage applies the dialog's image choice after the row
 	// itself is saved (ut-docs#2500). An upload stores its path and KEEPS
-	// the stored icon id, and "No image" clears the path (and the upload's
-	// file) while keeping the icon (ut-docs#3585: both columns may be set;
-	// the image shows, else the icon). A library pick still stores its icon
-	// id and clears the path and the superseded upload's file
-	// (ut-docs#2717), as this dialog's one-of-three choice says. Returns
-	// the audit label ("" = unchanged) and false after answering the
-	// request itself.
+	// the stored icon id (ut-docs#3585: both columns may be set; the image
+	// shows, else the icon). The dialog's other two choices are unchanged
+	// (ut-docs#2717): "No image" clears both columns and the upload's file
+	// (clearCategoryPictureFully), and a library pick stores its icon id
+	// and clears the path and the superseded upload's file. Returns the
+	// audit label ("" = unchanged) and false after answering the request
+	// itself.
 	saveCategoryImage := func(w http.ResponseWriter, r *http.Request, id string, f categoryForm) (string, bool) {
 		switch {
 		case f.photo != nil:
@@ -601,7 +612,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			}
 			return "upload", true
 		case f.icon == "none":
-			if err := clearCategoryPicture(r.Context(), catRepo, id); err != nil {
+			if err := clearCategoryPictureFully(r.Context(), catRepo, id); err != nil {
 				renderCategoryDialogError(w, r, "categories.error.update", 0)
 				return "", false
 			}

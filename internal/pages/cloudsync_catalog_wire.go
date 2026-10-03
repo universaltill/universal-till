@@ -85,12 +85,8 @@ func cloudSaveCategory(ctx context.Context, d *common.Deps, p data.CategorySave)
 	if err != nil {
 		return "", err
 	}
-	// ut-docs#2717: an icon from my. replaced the category's uploaded
-	// photo — remove the file, as the till's own editor does when an icon
-	// replaces an upload. A replaced library tile has no file of its own.
-	if res.ClearedImagePath != "" && safeCategoryID(p.ID) && res.ClearedImagePath == categoryThumbURL(p.ID) {
-		removeCategoryUpload(p.ID)
-	}
+	// An icon from my. no longer replaces an uploaded photo (ut-docs#3585:
+	// SaveCategory keeps it), so there is no superseded file to remove.
 	auditCloudDirective(ctx, d, "category", p.ID, "cloud_category_saved", map[string]any{"created": res.Created, "changed": res.Changed})
 	if res.Created {
 		return "created category " + res.Name, nil

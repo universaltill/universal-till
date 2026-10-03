@@ -48,7 +48,7 @@ func main() {
 		if err != nil {
 			fatalf("save_category: %v", err)
 		}
-		fmt.Printf("updated category %s (cleared image %q)\n", res.Name, res.ClearedImagePath)
+		fmt.Printf("updated category %s\n", res.Name)
 	case "legacy-path":
 		if err := repo.SetCategoryPicture(ctx, id, value, ""); err != nil {
 			fatalf("set picture: %v", err)

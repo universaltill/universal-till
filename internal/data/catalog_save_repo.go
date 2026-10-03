@@ -513,10 +513,6 @@ type CategorySaveResult struct {
 	Created bool
 	Name    string
 	Changed []string
-	// ClearedImagePath is the image_path a non-empty icon replaced
-	// (ut-docs#2717: one picture per category), "" when none was cleared —
-	// the caller deletes a superseded upload's file.
-	ClearedImagePath string
 }
 
 type catNode struct {
@@ -708,16 +704,17 @@ FROM categories WHERE id = ?`, p.ID).Scan(&name, &parent, &color, &icon, &imageP
 	if p.Icon != nil {
 		icon = *p.Icon
 		res.Changed = append(res.Changed, "icon")
-		// One picture per category, last writer wins (ut-docs#2717): an
-		// icon set from my. replaces whatever image the till had — a
-		// library tile or an uploaded photo — or it would stay hidden
-		// behind it on the sale screen. A cleared icon ("") leaves an
-		// uploaded photo alone -- but a legacy library tile in image_path
-		// IS the category's icon (it renders and is reported as its id),
-		// so clearing the icon clears that tile too (#2717 review).
-		if icon != "" && imagePath != "" {
-			res.ClearedImagePath, imagePath = imagePath, ""
-		} else if icon == "" && iconid.IDForAssetPath(imagePath) != "" {
+		// A legacy library tile in image_path IS the category's old icon
+		// (ut-docs#2717): a new icon replaces it (iconid.Resolve already
+		// draws the icon over a tile), and clearing the icon clears a tile
+		// that has an id too (#2717 review). An uploaded photo is kept
+		// either way (ut-docs#3585): a category may have a photo and an
+		// icon, the photo shown and the icon its fallback.
+		if icon != "" {
+			if path, _ := iconid.Resolve(imagePath, icon); path == "" {
+				imagePath = ""
+			}
+		} else if iconid.IDForAssetPath(imagePath) != "" {
 			imagePath = ""
 		}
 	}

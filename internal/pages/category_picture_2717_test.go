@@ -8,16 +8,16 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 )
 
-// ut-docs#2717: a save_category directive whose icon replaces an uploaded
-// photo, driven through buildCloudHooks exactly as Tick does. The row keeps
-// one picture (the icon) and the superseded photo's file is removed, the
-// same as the till's own editor does when an icon replaces an upload.
-func TestCloudSaveCategory_IconReplacesUploadedPhoto(t *testing.T) {
+// ut-docs#3585 (was #2717's "icon replaces the photo"): a save_category
+// directive that changes the icon of a category with an uploaded photo,
+// driven through buildCloudHooks exactly as Tick does, keeps the photo —
+// row and file — and stores the new icon under it.
+func TestCloudSaveCategory_IconKeepsUploadedPhoto(t *testing.T) {
 	dp := newCloudSyncTestDeps(t)
 	dataDir := useTempDataDir(t)
 	ctx := t.Context()
 	const id = "cat-2717"
-	if _, err := dp.Db.Exec(`INSERT INTO categories (id, name, image_path) VALUES (?, 'Breakfast', ?)`, id, categoryThumbURL(id)); err != nil {
+	if _, err := dp.Db.Exec(`INSERT INTO categories (id, name, image_path, icon) VALUES (?, 'Breakfast', ?, 'lucide:coffee')`, id, categoryThumbURL(id)); err != nil {
 		t.Fatal(err)
 	}
 	file := filepath.Join(dataDir, "public", "assets", "categories", id, "thumb.png")
@@ -35,11 +35,11 @@ func TestCloudSaveCategory_IconReplacesUploadedPhoto(t *testing.T) {
 	if err := dp.Db.QueryRow(`SELECT COALESCE(image_path,'-')||'|'||COALESCE(icon,'-') FROM categories WHERE id = ?`, id).Scan(&got); err != nil {
 		t.Fatal(err)
 	}
-	if got != "-|lucide:egg-fried" {
-		t.Fatalf("row = %q, want the photo cleared and the icon set", got)
+	if want := categoryThumbURL(id) + "|lucide:egg-fried"; got != want {
+		t.Fatalf("row = %q, want %q (the photo kept, the icon changed)", got, want)
 	}
-	if _, err := os.Stat(file); !os.IsNotExist(err) {
-		t.Fatalf("the superseded upload must be removed, stat err=%v", err)
+	if _, err := os.Stat(file); err != nil {
+		t.Fatalf("the photo's file must be kept, stat err=%v", err)
 	}
 }
 
