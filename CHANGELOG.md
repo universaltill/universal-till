@@ -47,6 +47,15 @@ Release notes for the till. Versions come from the release tag
   (reinstall the latest .deb); Settings → Software update → Check now shows
   the same. A chip, never a dialog; additional tills keep their own
   follow chip.
+
+- **A queued tax plugin no longer retries forever once one is already on the
+  till (ut-docs#3511).** A fiscal plugin queued during setup, before a tax
+  plugin for the country arrived by file or with a restored backup, kept
+  being retried in the background and kept its Settings reminder up. The
+  retry now sees the local plugin, drops the queued one without touching the
+  catalog, and never installs a second fiscal plugin; if that local check
+  itself fails, the entry simply stays queued for the next attempt.
+
 - **A 0% shop default tax rate is charged 0% (ut-docs#3392).** A shop whose
   default tax rate is set to 0% (the US and "Other" presets, or any shop
   that chose 0%) was charged 20% on every item with no tax code of its own,
