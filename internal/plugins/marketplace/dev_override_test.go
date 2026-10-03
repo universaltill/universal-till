@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 func newHealthyServer(t *testing.T) *httptest.Server {
@@ -180,7 +181,9 @@ func TestNewClient_CloudTLSNeverBypassedByDevOverrideConfig(t *testing.T) {
 		t.Fatal("expected the unreachable dev override to fail its health check")
 	}
 
-	transport, ok := client.cloudClient.Transport.(*http.Transport)
+	// BaseTransport: cloudClient is a netaccess client (ADR-0113 §1.6); pin
+	// the TLS config of the transport it actually delegates to.
+	transport, ok := netaccess.BaseTransport(client.cloudClient.Transport).(*http.Transport)
 	if !ok || transport.TLSClientConfig == nil {
 		return // no custom TLS config at all means verification is on (default)
 	}

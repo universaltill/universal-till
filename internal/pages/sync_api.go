@@ -25,6 +25,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/lanip"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -921,7 +922,7 @@ func primaryURLFromAddress(address string) (string, bool) {
 // decode, just the two values decodeEnrollCode would have produced.
 func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name string) (string, error) {
 	base := strings.TrimSuffix(primaryURL, "/")
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := netaccess.NewClient(60 * time.Second)
 
 	body, _ := json.Marshal(map[string]string{"token": token, "name": name})
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,

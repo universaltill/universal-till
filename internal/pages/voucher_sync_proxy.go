@@ -11,6 +11,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -69,7 +70,7 @@ import (
 // than orderProxyClient's 3s (a background 15s poll, not a blocking tap) —
 // a blackholed primary must not make a voucher tender feel frozen for long,
 // but a slow-not-dead LAN link should still get its answer.
-var voucherProxyClient = &http.Client{Timeout: 2 * time.Second}
+var voucherProxyClient = netaccess.NewClient(2 * time.Second)
 
 // voucherFromSyncRow converts the wire form back to data.Voucher.
 func voucherFromSyncRow(row syncVoucherRow) data.Voucher {

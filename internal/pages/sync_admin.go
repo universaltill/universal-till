@@ -13,6 +13,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/secrets"
@@ -393,7 +394,7 @@ const (
 // (ut-docs#153) — the caller must pass bgCtx (not ctx), same requirement as
 // StartCloudSync. d.LinkClient, when used, must be set before this runs.
 func StartSyncPull(ctx context.Context, d *common.Deps, refresh func(context.Context), wg *sync.WaitGroup) {
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := netaccess.NewClient(60 * time.Second)
 	startSyncPullLoop(ctx, d, wg, syncPullEvery, syncPullEveryLinked, func() { syncPullTick(ctx, d, client, refresh) })
 }
 

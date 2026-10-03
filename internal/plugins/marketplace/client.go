@@ -17,6 +17,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/plugins/oauth"
 )
 
@@ -57,10 +58,7 @@ func NewClient(cfg *config.MarketplaceConfig, tokenClient oauth.TokenProvider) *
 		cloudTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 		log.Printf("[WARN] Skipping TLS verification for development endpoint: %s", cfg.EndpointURL)
 	}
-	cloudClient := &http.Client{
-		Timeout:   time.Duration(cfg.RequestTimeoutSec) * time.Second,
-		Transport: cloudTransport,
-	}
+	cloudClient := netaccess.NewClientWithTransport(time.Duration(cfg.RequestTimeoutSec)*time.Second, cloudTransport)
 
 	var devClient *http.Client
 	devOverrideActive := false
@@ -78,10 +76,7 @@ func NewClient(cfg *config.MarketplaceConfig, tokenClient oauth.TokenProvider) *
 				devTransport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 				log.Printf("[WARN] Skipping TLS verification for dev override endpoint: %s", cfg.DevOverrideURL)
 			}
-			devClient = &http.Client{
-				Timeout:   time.Duration(cfg.RequestTimeoutSec) * time.Second,
-				Transport: devTransport,
-			}
+			devClient = netaccess.NewClientWithTransport(time.Duration(cfg.RequestTimeoutSec)*time.Second, devTransport)
 
 			devOverrideActive = devOverrideHealthy(devClient, cfg.DevOverrideURL, healthCheckTimeout(cfg))
 			if devOverrideActive {

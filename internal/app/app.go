@@ -14,7 +14,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -31,6 +30,7 @@ import (
 	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -93,6 +93,12 @@ func Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// ADR-0113 §1.6 (ut-docs#2795): on the public demo till every outbound
+	// client and dial built by internal/netaccess denies, and every network
+	// service start below is skipped. Set before anything can make a request;
+	// cleared on return so a later Run in the same process starts clean.
+	netaccess.SetDemo(cfg.Demo)
+	defer netaccess.SetDemo(false)
 
 	// Rotating, redacted log file under <data dir>/logs (ut-docs#2720): a
 	// Windows GUI launch discards stdout, so without this a field till
@@ -315,7 +321,7 @@ func Run(ctx context.Context) error {
 		pluginManager.Close(closeCtx)
 	}()
 
-	enroll.Init(bgCtx, cfg, settingsStore, &wg)
+	netaccess.StartService("cloud enrolment", func() { enroll.Init(bgCtx, cfg, settingsStore, &wg) })
 
 	// The one line that makes a field report diagnosable (ut-docs#2720):
 	// version, OS, data dir, pos.env used, cloud host, enrolment, role.
@@ -332,29 +338,36 @@ func Run(ctx context.Context) error {
 	// on) and declines on a primary/standalone till, which then self-
 	// generates; a replica fetches the primary's key once and persists it.
 	// paths.Data("secrets", ...) — never cwd-relative (ADR-0003).
-	secrets.SetDefault(secrets.NewKeyStore(pages.SecretsKeyFetcher(settingsStore, &http.Client{Timeout: 15 * time.Second})))
+	secrets.SetDefault(secrets.NewKeyStore(pages.SecretsKeyFetcher(settingsStore, netaccess.NewClient(15*time.Second))))
 
 	pluginManager, err = plugins.Init(ctx, cfg, database.DB)
 	if err != nil {
 		return err
 	}
 
+	// A nil catalogRepo also keeps server.Start's marketplace background
+	// jobs (catalog sync, telemetry, revocation checks) from starting — so
+	// skipping it on a demo till skips all three.
 	var catalogRepo *marketplace.CatalogRepository
 	if cfg.Marketplace.EndpointURL != "" {
-		tokenClient := oauth.NewTokenClient(&cfg.Marketplace)
-		marketplaceClient := marketplace.NewClient(&cfg.Marketplace, tokenClient)
-		catalogRepo, err = marketplace.NewCatalogRepository(marketplaceClient, paths.Plugins("cache"))
+		netaccess.StartService("marketplace catalog, revocation and telemetry", func() {
+			tokenClient := oauth.NewTokenClient(&cfg.Marketplace)
+			marketplaceClient := marketplace.NewClient(&cfg.Marketplace, tokenClient)
+			catalogRepo, err = marketplace.NewCatalogRepository(marketplaceClient, paths.Plugins("cache"))
+		})
 		if err != nil {
 			return err
 		}
-		log.Infof("Marketplace catalog repository initialized (endpoint: %s)", cfg.Marketplace.EndpointURL)
+		if catalogRepo != nil {
+			log.Infof("Marketplace catalog repository initialized (endpoint: %s)", cfg.Marketplace.EndpointURL)
+		}
 	} else {
 		log.Warnf("Marketplace not configured (UT_MARKETPLACE_ENDPOINT_URL not set)")
 	}
 
-	updates.Start(bgCtx, &wg)
-	pihealth.Start(bgCtx, &wg)
-	alerts.Start(bgCtx, cfg, database.DB, &wg)
+	netaccess.StartService("self-update check", func() { updates.Start(bgCtx, &wg) })
+	pihealth.Start(bgCtx, &wg) // local power-supply check only, no network
+	netaccess.StartService("alerts", func() { alerts.Start(bgCtx, cfg, database.DB, &wg) })
 
 	// LAN till discovery (ADR-0033 part 1, ut-docs#264): advertise this
 	// till over mDNS while — and only while — it's a primary. The role
@@ -377,7 +390,7 @@ func Run(ctx context.Context) error {
 	discoveryAuth := auth.NewService(database.DB)
 	discoveryRoleCheck := discovery.GateOnFirstBoot(discovery.RoleCheckFromSettings(discoverySettings), discoveryAuth)
 	discoveryAdvertiser := discovery.NewAdvertiser(discoverySettings, discoveryRoleCheck, listenPort(cfg.ListenAddr))
-	discoveryAdvertiser.Start(bgCtx, &wg)
+	netaccess.StartService("mDNS advertising", func() { discoveryAdvertiser.Start(bgCtx, &wg) })
 
 	supervisor := plugins.NewSupervisor(database.DB)
 	// Wire the restart-time plugin-stop hook BEFORE pagesInit, not after

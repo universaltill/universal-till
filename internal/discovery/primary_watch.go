@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // Re-discovery of a replica's main till (ut-docs#2722).
@@ -171,16 +172,15 @@ type BrowseFunc func(ctx context.Context, timeout time.Duration) ([]Candidate, e
 // NewPrimaryWatch builds a watch over settings that looks for a moved main
 // till with browse (production passes Browse).
 func NewPrimaryWatch(settings WatchSettings, browse BrowseFunc) *PrimaryWatch {
+	client := netaccess.NewClient(5 * time.Second)
+	// A candidate must answer itself; a redirect could bounce the challenge
+	// somewhere else entirely.
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &PrimaryWatch{
 		settings: settings,
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-			// A candidate must answer itself; a redirect could bounce the
-			// challenge somewhere else entirely.
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		},
-		browse: browse,
-		now:    time.Now,
+		client:   client,
+		browse:   browse,
+		now:      time.Now,
 	}
 }
 

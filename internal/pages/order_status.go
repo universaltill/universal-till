@@ -16,6 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -295,7 +296,7 @@ func applyOrderStatusCore(ctx context.Context, d *common.Deps, receiptNo, next, 
 // syncPushTick's 30s: /ui/orders is polled every 15s and the one-tap POST is
 // a live tap on the floor — a slow/absent primary must degrade to the local
 // path in a moment, never make the page feel stuck.
-var orderProxyClient = &http.Client{Timeout: 3 * time.Second}
+var orderProxyClient = netaccess.NewClient(3 * time.Second)
 
 // replicaSyncTarget reports whether this till is a replica that can call its
 // primary: base URL (no trailing slash) + bearer, ok=false when either is

@@ -47,6 +47,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 const maxPluginRedirects = 5
@@ -222,12 +224,13 @@ type egressDialer struct {
 }
 
 func defaultEgressDialer() *egressDialer {
-	nd := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	// netaccess.DialContext: refuses every dial on the demo till (ADR-0113).
+	nd := netaccess.DialContext(10*time.Second, 30*time.Second)
 	return &egressDialer{
 		lookup: func(ctx context.Context, host string) ([]net.IP, error) {
 			return net.DefaultResolver.LookupIP(ctx, "ip", host)
 		},
-		dial: nd.DialContext,
+		dial: nd,
 		localIPs: func() []net.IP {
 			addrs, err := net.InterfaceAddrs()
 			if err != nil {
@@ -344,11 +347,9 @@ func newPluginHTTPClient(d *egressDialer, tlsCfg *tls.Config) *http.Client {
 		MaxResponseHeaderBytes: 64 << 10,
 		DisableKeepAlives:      true, // never share a connection across grants
 	}
-	return &http.Client{
-		Transport:     tr,
-		Timeout:       2 * time.Minute, // backstop; the event deadline is usually tighter
-		CheckRedirect: checkPluginRedirect,
-	}
+	c := netaccess.NewClientWithTransport(2*time.Minute, tr) // timeout is a backstop; the event deadline is usually tighter
+	c.CheckRedirect = checkPluginRedirect
+	return c
 }
 
 // defaultPluginHTTPClient serves every plugin's http_request in production.

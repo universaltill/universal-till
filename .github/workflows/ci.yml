@@ -95,6 +95,12 @@ jobs:
         run: bash scripts/ci/guard-data-access.sh
       - name: Data-access policy guard regression test
         run: bash scripts/ci/guard-data-access_test.sh
+      # ADR-0113 §1.6 (ut-docs#2795): every outbound HTTP client and raw dial
+      # is built by internal/netaccess, so the demo till can deny them all.
+      - name: Outbound-network (netaccess) guard
+        run: bash scripts/ci/guard-netaccess.sh
+      - name: Outbound-network (netaccess) guard regression test
+        run: bash scripts/ci/guard-netaccess_test.sh
       - name: price_history sync-classification guard
         run: bash scripts/ci/guard-price-history-sync.sh
       - name: price_history sync-classification guard regression test

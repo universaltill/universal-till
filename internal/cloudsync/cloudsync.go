@@ -32,6 +32,7 @@ import (
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -42,7 +43,7 @@ var (
 	// a DEDICATED clone of http.DefaultTransport (ut-docs#2588), not the
 	// default transport itself — see newHTTPTransport's own doc comment for
 	// why the default's pooling knobs were the wrong fit here.
-	httpClient = &http.Client{Timeout: 30 * time.Second, Transport: newHTTPTransport()}
+	httpClient = netaccess.NewClientWithTransport(30*time.Second, newHTTPTransport())
 	started    = time.Now()
 	// tickIntervalNS/firstDelayNS back the two interval knobs below.
 	// atomic.Int64 (nanoseconds), not plain vars: Start()'s loop reads them
