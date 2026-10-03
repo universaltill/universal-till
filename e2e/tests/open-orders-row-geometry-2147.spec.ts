@@ -80,9 +80,22 @@ test.describe('/open-orders row geometry + accessible name (ut-docs#2147)', () =
       // The row fills the list, not ~75% of it (the other measured bug --
       // .users-list .table's display:block escape hatch shrink-to-fit the
       // table box, leaving roughly a quarter of every row untappable).
+      //
+      // ut-docs#3582: a held row now carries TWO adjacent controls -- the
+      // resume button and a fixed 46px Cancel order button at its end -- so
+      // the resume button alone is no longer ~the whole row (0.947 at
+      // 1024x600, less at 360px: exactly the 46px column). What this check
+      // guards is unchanged: no part of the row is dead, untappable space.
+      // So it asserts the two controls TOGETHER fill the table, that Cancel
+      // sits flush against the resume button (no gap between them), and
+      // that Cancel is only the 46px target -- the resume button never
+      // gives up more than that column.
       const rowBox = (await row.boundingBox())!;
       const tableBox = (await page.locator('#open-orders-table').boundingBox())!;
-      expect(rowBox.width / tableBox.width).toBeGreaterThan(0.95);
+      const cancelBox = (await page.locator('#open-orders-table tbody .open-order-cancel').first().boundingBox())!;
+      expect(cancelBox.width, 'Cancel order is a fixed 46px column').toBeLessThanOrEqual(47);
+      expect(Math.abs(cancelBox.x - (rowBox.x + rowBox.width)), 'Cancel sits flush against the resume button').toBeLessThanOrEqual(1);
+      expect((rowBox.width + cancelBox.width) / tableBox.width).toBeGreaterThan(0.95);
 
       // No page-level horizontal overflow introduced by this list at the
       // documented floors.

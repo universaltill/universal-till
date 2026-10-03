@@ -364,8 +364,8 @@ export async function deactivateAllTables(page: Page) {
 // ut-docs#2128: held sales are persistent DB state (hold_api.go), not
 // per-test/per-context like the live sale `/api/pos/reset` clears -- a spec
 // that asserts an exact held-sales count needs a clean slate first, and
-// there is no bulk-clear endpoint. Resume (loads it into the live basket)
-// then reset (discards the basket) for whatever's left, one at a time.
+// there is no bulk-clear endpoint. clearAllHeldSales below cancels whatever
+// is left, one at a time (ut-docs#3582).
 // ut-docs#2702: the sale screen's held-sales strip is gone, so the ids come
 // from the parked-orders popup's own fragment (GET /ui/parked-orders, one
 // data-held-id per parked order) -- read over HTTP, no DOM timing involved.
@@ -377,24 +377,11 @@ export async function listHeldSaleIds(page: Page): Promise<string[]> {
 }
 
 export async function clearAllHeldSales(page: Page) {
-  const MAX_ITERATIONS = 20; // real held-sale counts in these specs are 0-3;
-  // 20 is headroom -- hitting it means a resume is silently failing to
-  // actually clear the row, not that there were ever this many.
-  for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const ids = await listHeldSaleIds(page);
-    if (ids.length === 0) return;
-    // form-encoded, not JSON: the handler reads it via r.ParseForm()/
-    // r.Form.Get("id") (hold_api.go), same as the real hx-vals-driven POST.
-    await page.request.post('/api/pos/resume', { form: { id: ids[0] } });
-    await page.request.post('/api/pos/reset');
-  }
-  // Every iteration ran and a held sale is still there: resume is silently
-  // not clearing it (hold_api.go deliberately swallows a failed
-  // repo.Get/Delete rather than erroring -- "a stale row is the lesser
-  // evil") -- surface that instead of leaving the caller to wonder why its
-  // held-sales count assertion doesn't match.
-  const stuck = await listHeldSaleIds(page).catch(() => []);
-  throw new Error(`clearAllHeldSales: gave up after ${MAX_ITERATIONS} iterations, still stuck on ${stuck[0] ?? '(unreadable)'}`);
+  // ut-docs#3582: delegates to drainParkedOrders, which cancels each order
+  // through POST /api/pos/held/cancel. The old resume-then-reset loop
+  // stopped draining anything once New Sale started re-parking a resumed
+  // order instead of discarding it.
+  await drainParkedOrders(page.request);
 }
 
 // The bottom-of-page card form — the pre-#1025 add path. Scoped to it
@@ -462,28 +449,29 @@ export async function closeItemForm(page: Page) {
 // parked-orders-popup-2137.spec.ts's own) that specifically wants a drained
 // state mid-file, not just at the file's first test.
 //
-// Resume is the only thing that deletes a held row (there is deliberately no
-// bulk-delete endpoint; going around it via SQL would exercise a path the
-// product does not have), so draining means resuming each one in turn and
-// resetting the basket it lands in.
+// ut-docs#3582: draining CANCELS each order through the product's own
+// explicit Cancel order (POST /api/pos/held/cancel, view=page -- answered
+// with an HX-Redirect, no fragment to parse). It used to resume each order
+// and rely on New Sale (/api/pos/reset) discarding it, but New Sale now
+// re-parks a resumed order with items, so that loop put every order straight
+// back. Cancel is gated on void_comp_waste: the e2e operator session (or
+// UT_AUTH=off) has it; a session that would get the PIN prompt instead is
+// reported by name rather than looping to the round cap.
 //
-// Fails fast on a row resume cannot clear. `/api/pos/resume` returns
-// hold.error.failed WITHOUT deleting the row when the stored payload does not
-// unmarshal into a BasketSnapshot (internal/pages/hold_api.go -- the handler
-// returns before its own repo.Delete), and repo.Delete's error is swallowed
-// on the success path too. Either way the same id comes back every round, so
-// looping blindly to a round cap would burn the cap and then report "still
-// finding parked orders", which reads as unbounded generation rather than one
-// specific unresumable row. Naming the id and the toast is the difference
-// between a diagnosable failure and a confusing one.
+// Fails fast on a row cancel cannot clear: the same id coming back after a
+// cancel means the till refused it, and the redirect target says why.
+//
 // Takes an APIRequestContext (e.g. `page.request`, or the top-level `request`
 // fixture) rather than a Page -- every call this makes is a plain HTTP
 // request with no need for a browser page, and e2e/tests/fixtures.ts's own
 // resetPosOncePerFile auto-fixture (ut-docs#2141) only ever has `request`,
 // not `page`, available to it.
 export async function drainParkedOrders(request: APIRequestContext) {
-  let lastID = '';
+  const cancelled = new Set<string>();
+  const openedLegacy = new Set<string>();
   for (let round = 0; round < 50; round++) {
+    // Clears the live basket; a resumed order still in it is re-parked by
+    // this (ut-docs#3582) and so drained on a later round like any other.
     await request.post('/api/pos/reset').catch(() => {});
     // ut-docs#2703 (reopened): the popup has two tabs (On hold / Pay at the
     // counter) and renders one at a time, so both are read.
@@ -504,31 +492,34 @@ export async function drainParkedOrders(request: APIRequestContext) {
     const id = body.match(/data-held-id="([^"]+)"/)?.[1];
     if (!id) {
       // A legacy pay-at-counter order (placed before such orders were held
-      // sales) is not a held sale: opening it converts it into one and
-      // resumes it into the basket, which the next round's reset clears.
+      // sales) is not a held sale and has no Cancel: opening it converts it
+      // into one and resumes it into the basket; the next round's reset
+      // re-parks it as a held sale, which is then cancelled.
       const legacy = body.match(/data-counter-id="([^"]+)"/)?.[1];
       if (!legacy) return;
-      if (legacy === lastID) {
+      if (openedLegacy.has(legacy)) {
         throw new Error(`drainParkedOrders: legacy counter order ${legacy} survived being opened`);
       }
-      lastID = legacy;
+      openedLegacy.add(legacy);
       await request.post('/open-orders/counter/open', { form: { id: legacy }, maxRedirects: 0 });
       continue;
     }
-    if (id === lastID) {
-      // Quote the refusal's own toast rather than the whole basket partial it
-      // is wrapped in -- the partial leads with ~200 chars of markup and
-      // whitespace, so a blind slice of it shows the caller nothing.
-      const refusal = await (await request.post('/api/pos/resume', { form: { id } })).text();
-      const toast = refusal.match(/class="notice-text">([^<]*)</)?.[1]?.trim() ?? '(no toast in response)';
+    if (cancelled.has(id)) {
+      throw new Error(`drainParkedOrders: held order ${id} survived being cancelled, so it can never be drained`);
+    }
+    cancelled.add(id);
+    // form-encoded: the handler reads r.ParseForm()/r.Form.Get (hold_api.go).
+    const res = await request.post('/api/pos/held/cancel', { form: { id, view: 'page', tab: 'hold' } });
+    if (res.headers()['x-ut-response'] === 'elevation-prompt') {
       throw new Error(
-        `drainParkedOrders: held order ${id} survived a resume, so it can never be ` +
-          `drained (a payload that fails to unmarshal is refused WITHOUT deleting ` +
-          `the row -- internal/pages/hold_api.go). The till answered: ${toast}`,
+        `drainParkedOrders: cancelling held order ${id} asked for a manager PIN -- ` +
+          `this session lacks void_comp_waste, so it cannot drain parked orders`,
       );
     }
-    lastID = id;
-    await request.post('/api/pos/resume', { form: { id } });
+    const redirect = res.headers()['hx-redirect'] ?? '';
+    if (!res.ok() || !redirect.includes('msg=open_orders.cancel.done')) {
+      throw new Error(`drainParkedOrders: cancel of held order ${id} answered ${res.status()} (HX-Redirect: ${redirect || 'none'})`);
+    }
   }
   throw new Error('drainParkedOrders: more than 50 parked orders; refusing to loop further');
 }
