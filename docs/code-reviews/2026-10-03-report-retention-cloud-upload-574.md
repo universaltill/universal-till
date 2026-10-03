@@ -49,6 +49,7 @@
 | 4 | nit | Only the requesting till applies the gate. The main till's `/api/sync/settings/apply` does not re-gate. | Accepted. This conforms to ADR-0147 §1, and the replica's cache is relayed from the main till. |
 | 5 | nit | After a reactivation with nothing pending, the refusal clears only on the next 2xx, which can take up to a day. | Accepted. This is what ADR-0147 §2 says. |
 | 6 | nit | There are now two status-bar pollers, each every 60 s. | Accepted. The cost is small. |
+| T1 | blocker (Tester) | `POST /api/settings/upsert` wrote `store.report_retention_mode` directly. That skipped validation, the cloud_backup gate, elevation and audit; `both` and `nonsense` were both stored while lapsed. | **Fixed.** Upsert now refuses the key with a translated 403 that points to the Retention card. Test: `TestSettingsUpsert_RefusesReportRetentionMode`, seen failing (204) without the fix. |
 
 The reviewer judged these correct:
 - the data-integrity core: the keep clause, NULL `z_number`, rows kept per kind, and the prune/ack race;
@@ -67,7 +68,23 @@ No file writes, and no cwd-relative paths.
 
 ## Verified beyond automated tests
 
-See the close-out comment on ut-docs#574 for the Tester's driven run: a real till against a locally run ut-cloud, the lapse scenario, and screenshots.
+The Tester ran a real till build against a real `ut-cloud` `cmd/cloud` build (SQLite and a `file://` blob store, at 127.0.0.1). The steps:
+
+1. Real enrolment, then subscription active through the admin route. The entitlement cache filled from the sync.
+2. Mode set to `cloud`, then an EOD close. The natural throttled round uploaded the row: the cloud row is `(eod, 2026-10-03T07-42-55Z)`, the blob is present, and `cloud_acked_at` is set.
+3. Subscription lapsed, then a second close. That close needed one direct backdate of row 1, to get past the once-a-day guard. The upload got 402 (in both the cloud and till logs), and the refusal key was set.
+4. The prune removed acked row 1 and kept row 2, which is un-acked, newest and highest-Z.
+5. The chip and the card warning rendered, and a change into `both` got 409.
+6. Reactivated: the next round uploaded row 2, and the chip and warning cleared.
+
+Screenshots were read for the refused and cleared states and the sale screen, in en light and dark, fa (RTL) and de, at 1280×800 and 1024×600. No clipping, overlap or horizontal scroll was found, and the chip sits on the inline-start side in RTL.
+
+Not verified live:
+- a `+02:00` offset period (the run was in UTC; unit tests cover it);
+- mode `both`;
+- a replica till;
+- 4xx and 5xx skips;
+- auth-on views.
 
 ## Verdict
 
