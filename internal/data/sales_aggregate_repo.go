@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/money"
@@ -28,11 +29,14 @@ import (
 //     EODReport.Gross sum. Returns are NOT subtracted inside a bucket; they
 //     travel as refund counts (and net out in by_payment_method, which
 //     mirrors EODMethod In − Out).
+//   - no-sale drawer opens (ut-docs#2558) come from no_sale_events, keyed
+//     by the same business-date and till rules (noSaleTillKeyExpr).
 
 // tillKeyExpr resolves a sale's rollup till key; its one '?' is selfTill.
 const tillKeyExpr = `COALESCE(NULLIF(s.till_id, ''), NULLIF(s.register_id, ''), ?)`
 
-// SalesAggregateKey is one (business date, till) that has sales to roll up.
+// SalesAggregateKey is one (business date, till) that has sales (or no-sale
+// drawer opens) to roll up.
 type SalesAggregateKey struct {
 	BusinessDate string
 	TillID       string
@@ -71,15 +75,18 @@ type SalesAggregateItem struct {
 // SalesAggregateCashier is one cashier's (sales.cashier_id — an id, never a
 // name) figures for the day. Net/Count/ItemQty cover completed sale-type
 // sales; Refunds counts completed returns, Voids voided sales (on their
-// void day), Discounts discounted sales.
+// void day), Discounts discounted sales, NoSaleOpens the cashier's no-sale
+// drawer opens (no_sale_events.actor_id, ut-docs#2558) — a cashier whose
+// only activity was opening the drawer still gets a bucket.
 type SalesAggregateCashier struct {
-	StaffID   string
-	Net       money.Money
-	Count     int
-	ItemQty   float64
-	Refunds   int
-	Voids     int
-	Discounts int
+	StaffID     string
+	Net         money.Money
+	Count       int
+	ItemQty     float64
+	Refunds     int
+	Voids       int
+	Discounts   int
+	NoSaleOpens int
 }
 
 // SalesAggregate is one (business date, till) rollup. Cashiers is nil
@@ -93,6 +100,7 @@ type SalesAggregate struct {
 	RefundCount   int
 	VoidCount     int
 	DiscountCount int
+	NoSaleCount   int
 }
 
 // discountedSaleExpr is true for a sale carrying any discount: a whole-sale
@@ -104,8 +112,8 @@ const discountedSaleExpr = `(s.discount_total > 0 OR EXISTS (SELECT 1 FROM sale_
 const voidDayExpr = `COALESCE(s.voided_local_date, s.local_date)`
 
 // SalesAggregateKeys lists every (business date, till) in [from, to]
-// (YYYY-MM-DD, inclusive) that has a completed sale or a void, ordered by
-// date then till.
+// (YYYY-MM-DD, inclusive) that has a completed sale, a void or a no-sale
+// drawer open, ordered by date then till.
 func (r *POSRepo) SalesAggregateKeys(ctx context.Context, from, to, selfTill string) ([]SalesAggregateKey, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT d, t FROM (
@@ -116,8 +124,12 @@ SELECT d, t FROM (
   SELECT `+voidDayExpr+` AS d, `+tillKeyExpr+` AS t
   FROM sales s
   WHERE s.status = 'voided' AND `+voidDayExpr+` BETWEEN date(?) AND date(?)
+  UNION
+  SELECT e.local_date AS d, `+noSaleTillKeyExpr+` AS t
+  FROM no_sale_events e
+  WHERE e.local_date BETWEEN date(?) AND date(?)
 )
-ORDER BY d, t`, selfTill, from, to, selfTill, from, to)
+ORDER BY d, t`, selfTill, from, to, selfTill, from, to, selfTill, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("sales aggregate keys: %w", err)
 	}
@@ -275,15 +287,41 @@ WHERE s.status = 'voided' AND `+voidDayExpr+` = date(?) AND `+tillKeyExpr+` = ?`
 	if err != nil {
 		return agg, fmt.Errorf("sales aggregate voids: %w", err)
 	}
+	noSale, err := r.NoSaleOpensForTill(ctx, day, tillID, selfTill)
+	if err != nil {
+		return agg, err
+	}
+	agg.NoSaleCount = noSale.Total
 
 	if withCashiers {
 		cashiers, err := r.salesAggregateCashiers(ctx, day, tillID, selfTill)
 		if err != nil {
 			return agg, err
 		}
-		agg.Cashiers = cashiers
+		agg.Cashiers = mergeNoSaleOpens(cashiers, noSale.ByActor)
 	}
 	return agg, nil
+}
+
+// mergeNoSaleOpens sets each cashier's NoSaleOpens and appends a bucket for
+// every actor who only opened the drawer, keeping the staff-id order.
+func mergeNoSaleOpens(cashiers []SalesAggregateCashier, byActor map[string]int) []SalesAggregateCashier {
+	seen := make(map[string]bool, len(cashiers))
+	for i := range cashiers {
+		cashiers[i].NoSaleOpens = byActor[cashiers[i].StaffID]
+		seen[cashiers[i].StaffID] = true
+	}
+	added := false
+	for actor, n := range byActor {
+		if !seen[actor] {
+			cashiers = append(cashiers, SalesAggregateCashier{StaffID: actor, NoSaleOpens: n})
+			added = true
+		}
+	}
+	if added {
+		sort.Slice(cashiers, func(i, j int) bool { return cashiers[i].StaffID < cashiers[j].StaffID })
+	}
+	return cashiers
 }
 
 // salesAggregateCashiers is the by_cashier breakdown: ids only — the users

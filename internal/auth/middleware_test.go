@@ -399,3 +399,19 @@ func (b *lockedLogBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+// ut-docs#2558: POST /api/pos/no-sale opens the cash drawer. It must never
+// be reachable without a session — not exempt, and rejected 401 by the
+// middleware itself before its handler's cash_adjustment gate runs.
+func TestNoSaleRouteIsNotExempt(t *testing.T) {
+	if exempt("/api/pos/no-sale") {
+		t.Fatal("/api/pos/no-sale must NOT be exempt")
+	}
+	reached := false
+	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached = true }), nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/pos/no-sale", strings.NewReader(`{}`)))
+	if reached || rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no-session POST /api/pos/no-sale: reached=%v status=%d, want 401 and not reached", reached, rec.Code)
+	}
+}

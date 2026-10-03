@@ -233,9 +233,8 @@ func buildSalesAggregate(ctx context.Context, repo *data.POSRepo, storeID string
 		ByVATRate:       []salesAggVATBucket{},
 		RefundCount:     agg.RefundCount,
 		VoidCount:       agg.VoidCount,
-		// No-sale drawer opens are not recorded by the till yet (follow-up).
-		NoSaleCount:   0,
-		DiscountCount: agg.DiscountCount,
+		NoSaleCount:     agg.NoSaleCount, // "No sale" drawer opens (no_sale_events, ut-docs#2558)
+		DiscountCount:   agg.DiscountCount,
 	}
 	for _, h := range agg.Hourly {
 		up.Hourly = append(up.Hourly, salesAggHourBucket{Hour: h.Hour, NetSalesMinor: h.Net.Minor(), SalesCount: h.Count})
@@ -244,7 +243,8 @@ func buildSalesAggregate(ctx context.Context, repo *data.POSRepo, storeID string
 		b := salesAggCashierBucket{
 			StaffID: c.StaffID, NetSalesMinor: c.Net.Minor(), SalesCount: c.Count,
 			Refunds: c.Refunds, Voids: c.Voids, Discounts: c.Discounts,
-			// no_sale_opens / hours_on_till: not derivable yet (see card).
+			NoSaleOpens: c.NoSaleOpens,
+			// hours_on_till: not derivable yet (see card).
 		}
 		if c.Count > 0 {
 			b.AvgSaleMinor = c.Net.MulDiv(1, int64(c.Count)).Minor()

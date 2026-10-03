@@ -323,10 +323,12 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/update/apply":             true,
 	"POST /api/update/check":             true,
 	// Printers (set-up and every print), kitchen-station create/edit (they
-	// carry a printer host) and printer discovery.
+	// carry a printer host), printer discovery and the "No sale" drawer kick
+	// (ut-docs#2558 — it drives the printer's drawer connector).
 	"POST /api/kitchen-stations":                   true,
 	"POST /api/kitchen-stations/discover-printers": true,
 	"POST /api/kitchen-stations/{id}":              true,
+	"POST /api/pos/no-sale":                        true,
 	"POST /api/print/kitchen":                      true,
 	"POST /api/print/labels":                       true,
 	"POST /api/print/receipt/{receiptNo}":          true,
