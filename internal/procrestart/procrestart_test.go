@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 )
 
 // These tests mutate the package-level seams (osExecutable, reexecFn,
-// reexecDelay) — the same hermetic convention internal/selfupdate's own
+// reexecDelay, sleep) — the same hermetic convention internal/selfupdate's own
 // tests use — so a test can observe the scheduled re-exec WITHOUT ever
 // letting a real syscall.Exec replace the test binary mid-run.
 
@@ -21,9 +22,52 @@ func stubSeams(t *testing.T) (reexecd chan string) {
 	reexecFn = func(path string) error { reexecd <- path; return nil }
 	reexecDelay = 5 * time.Millisecond
 	t.Cleanup(func() {
-		osExecutable, reexecFn, reexecDelay = oldExec, oldReexec, oldDelay
+		osExecutable, reexecDelay = oldExec, oldDelay
+		// A failed test can leave a scheduled goroutine parked mid-restart;
+		// once holdSleep's cleanup wakes it, it must never reach the real
+		// syscall.Exec and replace the test binary.
+		if t.Failed() {
+			reexecFn = func(string) error { return nil }
+			return
+		}
+		reexecFn = oldReexec
 	})
 	return reexecd
+}
+
+// holdSleep replaces the flush-delay sleep with one that blocks until the
+// test calls release, reporting the duration it was asked to wait on slept.
+// While it is held, "Restart() has returned" and "the hook has started" are
+// facts about ordering, not about how fast a loaded CI runner is — the old
+// `time.Since(start) >= reexecDelay` check failed whenever the runner took
+// longer than the 5 ms stub delay to get back from Restart() (ut-docs#3497).
+func holdSleep(t *testing.T) (slept <-chan time.Duration, release func()) {
+	t.Helper()
+	ch := make(chan time.Duration, 4)
+	gate := make(chan struct{})
+	var once sync.Once
+	release = func() { once.Do(func() { close(gate) }) }
+	old := sleep
+	sleep = func(d time.Duration) { ch <- d; <-gate }
+	t.Cleanup(func() {
+		release() // never strand the scheduled goroutine
+		sleep = old
+	})
+	return ch, release
+}
+
+// restartReturns calls Restart() and fails the test if it hasn't returned
+// within a generous bound. Used with holdSleep: the delay is held open, so a
+// Restart() that waited on it (or ran the re-exec inline) never returns.
+func restartReturns(t *testing.T) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() { Restart(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Restart() did not return while the flush delay was still pending — it must schedule, not wait")
+	}
 }
 
 // Supported() is purely the build-tag decision (reexec_unix.go vs
@@ -41,17 +85,24 @@ func TestSupportedMatchesGOOS(t *testing.T) {
 // AFTER reexecDelay hand the running executable's path to reexecFn.
 func TestRestartSchedulesDelayedReexecOfOwnExecutable(t *testing.T) {
 	reexecd := stubSeams(t)
+	slept, release := holdSleep(t)
 
-	start := time.Now()
-	Restart()
-	if time.Since(start) >= reexecDelay {
-		t.Fatalf("Restart() blocked for %v — it must schedule, not wait", time.Since(start))
+	restartReturns(t)
+	select {
+	case d := <-slept:
+		if d != reexecDelay {
+			t.Fatalf("flush delay = %v, want reexecDelay (%v)", d, reexecDelay)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Restart() never started the flush delay")
 	}
 	select {
 	case <-reexecd:
-		t.Fatal("re-exec fired synchronously inside Restart(); it must be delayed so the HTTP response can flush")
+		t.Fatal("re-exec fired before the flush delay ended; it must be delayed so the HTTP response can flush")
 	default:
 	}
+
+	release()
 
 	select {
 	case exe := <-reexecd:
@@ -95,9 +146,11 @@ func TestRestartRunsBeforeRestartHookBeforeReexec(t *testing.T) {
 
 	var order []string
 	hookRan := make(chan struct{})
+	hookGate := make(chan struct{})
 	SetBeforeRestart(func(ctx context.Context) {
 		order = append(order, "hook")
 		close(hookRan)
+		<-hookGate // still running when the flush delay ends
 	})
 	oldReexec := reexecFn
 	reexecFn = func(path string) error {
@@ -107,17 +160,25 @@ func TestRestartRunsBeforeRestartHookBeforeReexec(t *testing.T) {
 	}
 	t.Cleanup(func() { reexecFn = oldReexec })
 
-	start := time.Now()
-	Restart()
-	if time.Since(start) >= reexecDelay {
-		t.Fatalf("Restart() blocked for %v — it must schedule, not wait", time.Since(start))
-	}
+	_, release := holdSleep(t)
+	restartReturns(t)
 
 	select {
 	case <-hookRan:
 	case <-time.After(2 * time.Second):
+		close(hookGate)
 		t.Fatal("beforeRestart hook never ran")
 	}
+	// End the flush delay while the hook is still running: the re-exec must
+	// keep waiting for the hook, not just for the delay.
+	release()
+	select {
+	case <-reexecd:
+		close(hookGate)
+		t.Fatal("re-exec fired while the beforeRestart hook was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(hookGate)
 	select {
 	case <-reexecd:
 	case <-time.After(2 * time.Second):
@@ -139,25 +200,24 @@ func TestRestartRunsBeforeRestartHookBeforeReexec(t *testing.T) {
 func TestRestartHookStartsConcurrentlyNotAfterSleep(t *testing.T) {
 	reexecd := stubSeams(t)
 	t.Cleanup(func() { SetBeforeRestart(nil) })
-	reexecDelay = 200 * time.Millisecond
 
-	hookStarted := make(chan time.Time, 1)
+	hookStarted := make(chan struct{}, 1)
 	SetBeforeRestart(func(context.Context) {
-		hookStarted <- time.Now()
+		hookStarted <- struct{}{}
 	})
 
-	start := time.Now()
-	Restart()
+	// The flush delay is held open for the whole wait below: a hook that
+	// only starts once the delay ends can never be observed here.
+	_, release := holdSleep(t)
+	restartReturns(t)
 
 	select {
-	case startedAt := <-hookStarted:
-		if elapsed := startedAt.Sub(start); elapsed >= reexecDelay {
-			t.Fatalf("beforeRestart hook started %v after Restart() — it must start "+
-				"concurrently with the flush delay, not after it", elapsed)
-		}
+	case <-hookStarted:
 	case <-time.After(2 * time.Second):
-		t.Fatal("beforeRestart hook never started")
+		t.Fatal("beforeRestart hook did not start while the flush delay was pending — " +
+			"it must start concurrently with the delay, not after it")
 	}
+	release()
 
 	select {
 	case <-reexecd:
