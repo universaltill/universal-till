@@ -188,6 +188,13 @@ func (c *Client) doWithFallback(ctx context.Context, send func(ctx context.Conte
 
 // doRequest performs an authenticated HTTP request with API version metadata.
 func (c *Client) doRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+	return c.doRequestAs(ctx, method, path, body, "")
+}
+
+// doRequestAs is doRequest with cloudBearer — the till's ADR-0116 device
+// credential — taking the place of the OAuth token, but only on a request
+// to the configured cloud endpoint: a dev override never receives it.
+func (c *Client) doRequestAs(ctx context.Context, method, path string, body io.Reader, cloudBearer string) (*http.Response, error) {
 	// Auth is optional: when marketplace OAuth2 credentials are not configured
 	// (or the marketplace has auth disabled), proceed unauthenticated.
 	token, tokenErr := c.tokenClient.GetToken(ctx)
@@ -225,9 +232,14 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
 
-		// Add OAuth2 bearer token when present
-		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
+		// The device credential (cloud endpoint only), else the OAuth2
+		// bearer token when present. Never logged.
+		bearer := token
+		if cloudBearer != "" && endpoint == c.cfg.EndpointURL {
+			bearer = cloudBearer
+		}
+		if bearer != "" {
+			req.Header.Set("Authorization", "Bearer "+bearer)
 		}
 		// Add API version metadata per FR-016
 		req.Header.Set("x-marketplace-api-version", c.cfg.APIVersion)
@@ -744,7 +756,10 @@ func (c *Client) IssueDownloadToken(ctx context.Context, req *IssueDownloadToken
 		return nil, fmt.Errorf("failed to marshal download request: %w", err)
 	}
 
-	resp, err := c.doRequest(ctx, http.MethodPost, "/v1/downloads/tokens", bytes.NewReader(body))
+	// ADR-0120 Phase 2 F1 (ut-docs#2930): the cloud issues a paid plugin
+	// only to a till that sends its device credential, and takes the
+	// merchant from that store, not from the body.
+	resp, err := c.doRequestAs(ctx, http.MethodPost, "/v1/downloads/tokens", bytes.NewReader(body), strings.TrimSpace(c.cfg.MerchantToken))
 	if err != nil {
 		return nil, err
 	}
