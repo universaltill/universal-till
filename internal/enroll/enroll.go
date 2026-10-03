@@ -421,14 +421,16 @@ func Effective(cfg *config.Config) config.Config {
 	mu.RLock()
 	defer mu.RUnlock()
 	// After Pair, the live identity wins over Init's startup copy in cfg
-	// unless the environment pinned it (identityReplaced).
+	// unless the environment pinned it (identityReplaced). The store id
+	// follows the same rule, including when Pair cleared it (a refused pair
+	// on a main till must not keep reporting the startup store).
 	if m.DeviceID == "" || (identityReplaced && !deviceIDExplicit) {
 		m.DeviceID = cur.DeviceID
 	}
 	if m.ClientID == "" || (identityReplaced && !explicitConfigured) {
 		m.ClientID = cur.MerchantID
 	}
-	if cur.StoreID != "" && !storeIDExplicit {
+	if (cur.StoreID != "" || identityReplaced) && !storeIDExplicit {
 		m.StoreID = cur.StoreID
 	}
 	if m.PublicKey == "" {
@@ -766,7 +768,7 @@ func currentStoreAuth(m config.MarketplaceConfig) (string, string) {
 	mu.RLock()
 	defer mu.RUnlock()
 	storeID := m.StoreID
-	if cur.StoreID != "" && !storeIDExplicit {
+	if (cur.StoreID != "" || identityReplaced) && !storeIDExplicit {
 		storeID = cur.StoreID
 	}
 	return storeID, liveToken(m.MerchantToken)
