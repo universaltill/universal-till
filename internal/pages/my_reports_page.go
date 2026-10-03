@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -76,7 +78,8 @@ type myReportRow struct {
 	// Failing and FailReasonKey are set only for a still-pending bundle
 	// (ut-docs#637) that has crossed issuereport.UploadFailingThreshold, or
 	// failed for a reason that can't self-resolve by waiting (an
-	// unregistered till).
+	// unregistered till). A joined device still waiting for its own cloud
+	// credential (ut-docs#3291) carries a FailReasonKey without Failing.
 	Failing       bool
 	FailReasonKey string
 }
@@ -159,6 +162,21 @@ func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 		if perr != nil {
 			logging.L().Warnf("my-reports: listing pending issue reports: %v", perr)
 		}
+		// ut-docs#3291: a joined device (it has a main till) gets its own
+		// cloud credential through the main till's vouch (ADR-0116 D3), so
+		// "not registered" there is normally just waiting: never "finish
+		// enrolling". It stays "waiting" while the main till has vouched
+		// (the redeem is in flight) or for the first few failures; past
+		// that it is flagged, since the main till may be unenrolled, too
+		// old or unreachable. A settings read failure falls back to the
+		// old text.
+		vouched := enroll.CurrentStatus().ViaMainTill
+		joined := false
+		if d.Settings != nil {
+			if v, _, serr := d.Settings.Get(r.Context(), "sync.primary_url"); serr == nil {
+				joined = strings.TrimSpace(v) != ""
+			}
+		}
 		pendingRows := make([]myReportRow, 0, len(pending))
 		for _, b := range pending {
 			// A successful upload's Discard normally removes the bundle from
@@ -180,6 +198,14 @@ func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 				ImageCount:     len(b.ImagePaths),
 			}
 			switch {
+			case b.Meta.UploadFailReason == issuereport.UploadFailReasonNotRegistered && joined &&
+				(vouched || b.Meta.UploadFailCount < issuereport.UploadFailingThreshold):
+				row.StatusKey = "issuereport.status.pending"
+				row.FailReasonKey = "issuereport.status.pending_reason.joined_awaiting_credential"
+			case b.Meta.UploadFailReason == issuereport.UploadFailReasonNotRegistered && joined:
+				row.Failing = true
+				row.StatusKey = "issuereport.status.failing"
+				row.FailReasonKey = "issuereport.status.failing_reason.joined_no_access"
 			case b.Meta.UploadFailReason == issuereport.UploadFailReasonNotRegistered:
 				// Can't self-resolve by waiting — needs the shop owner to
 				// finish enrolment — so flag it from the very first failed

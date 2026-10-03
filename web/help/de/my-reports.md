@@ -20,8 +20,8 @@ Hat diese Kasse mehr als 100 Berichte gesendet, weist eine Zeile unter der Einle
 
 Die Status bedeuten:
 
-- **Hier gespeichert, wartet auf Versand** — auf dieser Kasse erfasst, noch nicht hochgeladen (normal, während das Geschäft offline ist).
-- **Konnte nicht gesendet werden** — dieser Bericht scheitert seit einer Weile beim Hochladen; darunter erscheint ein kurzer Grund (zum Beispiel die noch nicht abgeschlossene Aufnahme dieser Kasse). Er ist weiterhin gespeichert, und die Kasse versucht es automatisch weiter — nichts geht verloren.
+- **Hier gespeichert, wartet auf Versand** — auf dieser Kasse erfasst, noch nicht hochgeladen (normal, während das Geschäft offline ist). Auf einem Handy oder Tablet, das dem Geschäft beigetreten ist, kann darunter stehen, dass es noch auf seinen eigenen Cloud-Zugang von der Hauptkasse wartet — der Bericht wird danach von selbst gesendet.
+- **Konnte nicht gesendet werden** — dieser Bericht scheitert seit einer Weile beim Hochladen; darunter erscheint ein kurzer Grund (zum Beispiel die noch nicht abgeschlossene Aufnahme dieser Kasse oder — auf einem beigetretenen Handy oder Tablet — die Bitte zu prüfen, ob die Hauptkasse eingeschaltet, online, registriert und aktuell ist). Er ist weiterhin gespeichert, und die Kasse versucht es automatisch weiter — nichts geht verloren.
 - **Gesendet, wartet auf Prüfung** — von dieser Kasse hochgeladen; die Cloud hat noch nichts Weiteres gemeldet.
 - **Empfangen / Wird transkribiert / Bereit zur Prüfung** — der Bericht wird verarbeitet (Sprachnotizen werden automatisch transkribiert).
 - **Auf GitHub abgelegt** — er wurde zu einem verfolgten Vorgang, und wir wissen noch nicht, was daraus geworden ist. Dieser Status aktualisiert sich automatisch zu einem der drei folgenden, sobald wir es wissen.

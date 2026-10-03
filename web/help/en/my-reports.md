@@ -20,8 +20,8 @@ If this till has sent more than 100 reports, a line under the intro tells you ho
 
 The statuses mean:
 
-- **Saved here, waiting to send** — captured on this till, not uploaded yet (normal while the shop is offline).
-- **Couldn't send** — this report has been failing to upload for a while; a short reason appears underneath it (for example, finishing this till's enrolment). It's still saved and the till keeps retrying automatically — nothing is lost.
+- **Saved here, waiting to send** — captured on this till, not uploaded yet (normal while the shop is offline). On a phone or tablet joined to the shop, a short note underneath can say it is waiting for its own cloud access from the main till — the report sends by itself once that arrives.
+- **Couldn't send** — this report has been failing to upload for a while; a short reason appears underneath it (for example, finishing this till's enrolment, or — on a joined phone or tablet — checking that the main till is on, online, registered and up to date). It's still saved and the till keeps retrying automatically — nothing is lost.
 - **Sent, awaiting review** — uploaded from this till; the cloud hasn't reported anything further yet.
 - **Received / Transcribing / Ready for review** — the report is being processed (voice notes are transcribed automatically).
 - **Filed on GitHub** — it became a tracked issue, and we don't yet know what has happened to it. This status updates automatically to one of the three below once we do.
