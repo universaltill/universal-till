@@ -157,7 +157,7 @@ func validateABI3Fields(m *Manifest) error {
 
 	for i, s := range m.Schedules {
 		if !scheduleEventRe.MatchString(s.Event) {
-			return fmt.Errorf("manifest schedules[%d].event %q must be dot-separated lower-case segments, like <plugin>.<name>", i, s.Event)
+			return fmt.Errorf("manifest schedules[%d].event %q must be dot-separated lower-case segments, like <plugin-id>.<name>", i, s.Event)
 		}
 		if root, _, _ := strings.Cut(s.Event, "."); coreEventRoots[root] {
 			return fmt.Errorf("manifest schedules[%d].event %q is in core's %q namespace; a plugin may not raise core events (ADR-0121 §2)", i, s.Event, root)
