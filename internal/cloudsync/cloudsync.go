@@ -257,6 +257,16 @@ type Hooks struct {
 	// enroll.DeviceName reads for this till's role, audited. An unchanged
 	// name is applied with no write.
 	RenameTill func(ctx context.Context, name string) (string, error)
+	// PrintReport handles "print_report" (ut-docs#2537): print a report
+	// the cloud already computed on this till's receipt printer. Tick
+	// already skipped it unless its device_id is this till's own, so it
+	// applies on the main till and on an additional till alike; apply has
+	// decoded and bounded the payload (decodePrintReport). The hook
+	// (pages.cloudPrintReport) only lays it out and prints — it never
+	// recomputes — and returns an error (the directive's failure message)
+	// when no printer is configured or the print fails, never a silent
+	// "applied".
+	PrintReport func(ctx context.Context, r PrintReport) (string, error)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can
 	// render a real design picker instead of a raw key/value form). Keys must
@@ -436,12 +446,17 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 			}
 			continue
 		}
-		if reason := renameTillSkipReason(d); reason != "" {
-			// ut-docs#3272: a rename_till names one device. One addressed
-			// to another till (or to none) stays pending for its target —
-			// no apply, no result post. Logged once per directive id; an
-			// own id not known yet is not remembered, so the real reason
-			// is still logged once the id is known.
+		reason := renameTillSkipReason(d)
+		if reason == "" {
+			reason = printReportSkipReason(d)
+		}
+		if reason != "" {
+			// ut-docs#3272: a rename_till names one device, as does a
+			// print_report (ut-docs#2537). One addressed to another till
+			// (or to none) stays pending for its target — no apply, no
+			// result post. Logged once per directive id; an own id not
+			// known yet is not remembered, so the real reason is still
+			// logged once the id is known.
 			if ownDeviceID() == "" {
 				logging.L().Infof("cloudsync: directive %s (%s) skipped: %s", d.ID, d.Type, reason)
 			} else if firstRenameSkip(d.ID) {
@@ -681,6 +696,16 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing name"
 		}
 		msg, err = hooks.RenameTill(ctx, name)
+	case "print_report":
+		if hooks.PrintReport == nil {
+			return "failed", "print_report is not supported on this till"
+		}
+		// device_id was checked in Tick (printReportSkipReason).
+		r, bad := decodePrintReport(d)
+		if bad != "" {
+			return "failed", bad
+		}
+		msg, err = hooks.PrintReport(ctx, r)
 	case "upsert_category":
 		if hooks.UpsertCategory == nil {
 			return "failed", "upsert_category is not supported on this till"

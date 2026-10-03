@@ -1198,6 +1198,12 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		RenameTill: func(ctx context.Context, name string) (string, error) {
 			return cloudRenameTill(ctx, d, name)
 		},
+		// print_report (ut-docs#2537): print a cloud-computed report on
+		// this till; Tick already checked it names this device. See
+		// cloudPrintReport.
+		PrintReport: func(ctx context.Context, r cloudsync.PrintReport) (string, error) {
+			return cloudPrintReport(ctx, d, r)
+		},
 		InstallPlugin: func(ctx context.Context, listingID string) (string, error) {
 			return cloudInstallPlugin(ctx, d, listingID)
 		},
