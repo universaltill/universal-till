@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/paths"
 )
 
@@ -273,6 +274,59 @@ func TestCategoryImage_UploadAndClearKeepTheIcon(t *testing.T) {
 	// the write reports not found).
 	if err := clearCategoryPicture(ctx, repo, "nope"); !errors.Is(err, data.ErrCategoryNotFound) {
 		t.Fatalf("clear unknown id: %v, want ErrCategoryNotFound", err)
+	}
+}
+
+// TestCategoryImage_UploadOverLegacyTileKeepsTheTilesIcon covers a pre-#2717
+// row (ut-docs#3585 review finding #2): an older till stored a library pick
+// as image_path with icon left NULL. storedCategoryIcon must read that
+// tile's own id, not "", or uploading a photo over such a row erases the
+// tile's identity for good — no column is left holding it once image_path
+// is overwritten with the new photo's path — breaking "remove the image
+// shows the icon again" for exactly the row shape iconid.Resolve's own doc
+// comment says exists in production.
+func TestCategoryImage_UploadOverLegacyTileKeepsTheTilesIcon(t *testing.T) {
+	_, d := newCategoriesTestMux(t)
+	useTempDataDir(t)
+	ctx := t.Context()
+	repo := data.NewCatalogRepo(d.Db)
+	id, err := repo.CreateCategory(ctx, "Beers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tilePath := iconid.AssetPath("lucide:beer")
+	if tilePath == "" {
+		t.Fatal("lucide:beer has no library tile; pick a different id")
+	}
+	// The legacy shape: image_path is the tile, icon column is NULL/"".
+	if err := repo.SetCategoryPicture(ctx, id, tilePath, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(tinyPNG(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storeCategoryPhoto(ctx, repo, id, img); err != nil {
+		t.Fatalf("storeCategoryPhoto: %v", err)
+	}
+	c, ok, err := repo.CategoryPicture(ctx, id)
+	if err != nil || !ok {
+		t.Fatalf("CategoryPicture: ok=%v err=%v", ok, err)
+	}
+	if c.ImagePath != categoryThumbURL(id) || c.Icon != "lucide:beer" {
+		t.Fatalf("after upload over a legacy tile = (%q, %q), want the photo and the tile's own id carried into icon", c.ImagePath, c.Icon)
+	}
+
+	if err := clearCategoryPicture(ctx, repo, id); err != nil {
+		t.Fatalf("clearCategoryPicture: %v", err)
+	}
+	c, ok, err = repo.CategoryPicture(ctx, id)
+	if err != nil || !ok {
+		t.Fatalf("CategoryPicture: ok=%v err=%v", ok, err)
+	}
+	if c.ImagePath != "" || c.Icon != "lucide:beer" {
+		t.Fatalf("after clear = (%q, %q), want no image and the tile's id now the real icon", c.ImagePath, c.Icon)
 	}
 }
 

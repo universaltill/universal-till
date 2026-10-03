@@ -113,13 +113,22 @@ func clearCategoryPictureFully(ctx context.Context, repo *data.CatalogRepo, id s
 	return nil
 }
 
-// storedCategoryIcon is the category's current icon column, so a write of
-// its image can carry it through unchanged. An unknown category gives "":
-// the SetCategoryPicture that follows reports ErrCategoryNotFound itself.
+// storedCategoryIcon is the category's current icon, so a write of its
+// image can carry it through unchanged. A pre-#2717 row with no icon column
+// set but a legacy library tile in image_path (ut-docs#3585 review finding
+// #2) reports that tile's own id — iconid.Resolve already treats it as the
+// category's icon for display, so overwriting the photo must preserve it
+// the same way, or uploading a photo over such a row loses the tile's
+// identity for good (no column left remembers it once image_path is
+// replaced). An unknown category gives "": the SetCategoryPicture that
+// follows reports ErrCategoryNotFound itself.
 func storedCategoryIcon(ctx context.Context, repo *data.CatalogRepo, id string) (string, error) {
 	cur, _, err := repo.CategoryPicture(ctx, id)
 	if err != nil {
 		return "", err
+	}
+	if cur.Icon == "" {
+		return iconid.IDForAssetPath(cur.ImagePath), nil
 	}
 	return cur.Icon, nil
 }

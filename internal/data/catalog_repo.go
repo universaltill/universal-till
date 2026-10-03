@@ -1344,9 +1344,10 @@ type CategoryNode struct {
 	// ImagePath (ut-docs#2500) is the category's image as a /public/...
 	// path — an uploaded photo, the id-less generic library tile, or (on
 	// rows written before ut-docs#2717, when a library pick stored its
-	// path) a built-in icon — or "" for none. A category has one picture:
-	// writers keep only one of ImagePath/Icon, and iconid.Resolve decides
-	// for older rows holding both. Whether an uploaded file is actually
+	// path) a built-in icon — or "" for none. ImagePath and Icon may both
+	// be set (ut-docs#3585): the image displays, the icon is its fallback
+	// once the image is removed — iconid.Resolve/EffectiveIcon decide
+	// which one a reader sees. Whether an uploaded file is actually
 	// present on THIS till is the renderer's question, not the repo's.
 	ImagePath string
 	// Icon (manage-shop catalog contract §0.12, migration 041) is an icon
@@ -1662,9 +1663,10 @@ func (r *CatalogRepo) SetCategoryPicture(ctx context.Context, id, imagePath, ico
 	return nil
 }
 
-// CategoryPictureRow is a category's name and its one picture: an image
-// path (an uploaded photo, or a library tile an older till stored as a
-// path) or an icon id.
+// CategoryPictureRow is a category's name, its image path (an uploaded
+// photo, or a library tile an older till stored as a path) and its icon id
+// — both may be set at once (ut-docs#3585); iconid.Resolve decides which
+// one displays.
 type CategoryPictureRow struct {
 	Name      string
 	ImagePath string
