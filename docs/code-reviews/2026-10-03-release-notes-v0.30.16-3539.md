@@ -5,7 +5,7 @@
 ## What shipped
 `web/release-notes/{en,de,tr,fa,ar}/v0.30.16.md` extended with the shop-visible
 changes merged to `main` since the note was last written (2026-10-02 06:48 UTC,
-merge `0383fd31e`): 7 New, 8 Improved, 14 Fixed bullets, same count, order and
+merge `0383fd31e`): 7 New, 8 Improved, 15 Fixed bullets, same count, order and
 meaning in all five languages; date bumped to 2026-10-03. Content only — no code.
 
 Deliberately left out (not shop-visible yet or not owner-facing): CSP slice 2,
@@ -21,6 +21,8 @@ checks, CI/test-only merges.
 | 3–9 | minor/nit | Translated UI names not matching the locale strings (de Optionssets, Verkaufshistorie löschen, Retoure; fa دسترسی‌ها, مجموعه‌های گزینه, پاک‌کردن تاریخچهٔ تراکنش; ar استرجاع) | Fixed |
 | 10 | nit | en "New customer" → "New Customer" (UI label) | Fixed |
 | 11 | nit | Pre-packed unit-price setting is not country-gated; "(UK)" names the legal driver | Accepted — matches the existing UK shelf-label bullet |
+
+A 15th Fixed bullet (duplicate till names refused, merged after the review) was added afterwards; it restates that merge's own help text.
 
 Reviewer traced each of the 29 added English bullets to its merge and found no
 omission among user-facing merges.
