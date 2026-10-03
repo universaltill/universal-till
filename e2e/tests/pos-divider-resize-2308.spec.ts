@@ -210,7 +210,9 @@ test.describe('sell-screen basket/products divider (ut-docs#2308)', () => {
       page.waitForResponse((r) => r.url().includes('/api/settings/basket-panel-width')),
       resetBtn.click(),
     ]);
-    await page.waitForEvent('load');
+    // ut-docs#2902: the reset refreshes only its own region (no page
+    // reload) and says it saved.
+    await expect(page.locator('#basket-panel-msg .pos-notice.success')).toBeVisible();
 
     await page.goto('/');
     const restored = await basketWidth(page);
