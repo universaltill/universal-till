@@ -1041,3 +1041,35 @@ func TestTillsRepo_BearerHashByID(t *testing.T) {
 		t.Fatalf("BearerHashByID touched last_seen_at: %+v", list)
 	}
 }
+
+// TestTillsRepo_NameTakenExcept covers the rename-time check (ut-docs#3308):
+// a joined till's synced roster holds its own row too, so its rename skips
+// that row by id — and only that row.
+func TestTillsRepo_NameTakenExcept(t *testing.T) {
+	repo := newTillsTestDB(t)
+	ctx := context.Background()
+	self, err := repo.InsertTill(ctx, "Back Office", "hash-self")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.InsertTill(ctx, "Terrace", "hash-terrace"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, except string
+		want         bool
+	}{
+		{"back office", self, false}, // its own row is skipped
+		{"back office", "", true},    // NameTaken's view: every row counts
+		{" TERRACE ", self, true},    // a sibling, case-insensitively and trimmed
+		{"Patio", self, false},
+	} {
+		got, err := repo.NameTakenExcept(ctx, tc.name, tc.except)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tc.want {
+			t.Errorf("NameTakenExcept(%q, except=%q) = %v, want %v", tc.name, tc.except, got, tc.want)
+		}
+	}
+}

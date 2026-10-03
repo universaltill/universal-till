@@ -82,15 +82,25 @@ FROM tills ORDER BY enrolled_at DESC`)
 // a duplicate against the primary but not against a sibling. A shop has a
 // handful of tills, so reading the column is cheap.
 func (r *TillsRepo) NameTaken(ctx context.Context, name string) (bool, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT name FROM tills`)
+	return r.NameTakenExcept(ctx, name, "")
+}
+
+// NameTakenExcept is NameTaken skipping the row whose id is exceptID (none
+// when blank): a joined till's synced roster holds its own row, which its
+// own rename must not collide with (ut-docs#3308).
+func (r *TillsRepo) NameTakenExcept(ctx context.Context, name, exceptID string) (bool, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, name FROM tills`)
 	if err != nil {
 		return false, fmt.Errorf("till name taken: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var existing string
-		if err := rows.Scan(&existing); err != nil {
+		var id, existing string
+		if err := rows.Scan(&id, &existing); err != nil {
 			return false, fmt.Errorf("scan till name: %w", err)
+		}
+		if exceptID != "" && id == exceptID {
+			continue
 		}
 		if strings.EqualFold(strings.TrimSpace(existing), strings.TrimSpace(name)) {
 			return true, nil

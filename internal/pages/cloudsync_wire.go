@@ -449,6 +449,14 @@ func cloudRenameTill(ctx context.Context, d *common.Deps, raw string) (string, e
 	if enroll.DeviceName(ctx, d.Settings) == name {
 		return "name unchanged", nil
 	}
+	// ut-docs#3308: never a name another till in the shop uses. ut-cloud
+	// refuses that before queueing; this is the till's own check, against
+	// the roster it holds (the cloud's view can be behind it).
+	if taken, err := tillNameTaken(ctx, d, name); err != nil {
+		return "", err
+	} else if taken {
+		return "", errTillNameTaken
+	}
 	key := "till.name"
 	if tillFollowsMain(ctx, d) {
 		key = "sync.till_name"
