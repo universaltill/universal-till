@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
 
 // ADR-0129 §2/§3 (ut-docs#3281): an installed plugin's declared `provides`
@@ -98,6 +99,39 @@ LIMIT 1
 		return "", "", false, pluginObs.wrap("capability_provider_owner", err)
 	}
 	return id, name, true, nil
+}
+
+// HasActiveEntryTypeForMarket reports whether an active plugin with an
+// active entry of canonical type entryType is meant for market (ISO 3166-1
+// alpha-2, matched upper-cased): its persisted `markets` list it, or it has
+// none, which means every market (ADR-0129 §3). The setup wizard asks this
+// offline, when there is no catalog listing id to look up, before offering
+// a fiscal plugin the till may already have — sideloaded, restored with a
+// DB, or a wizard re-run after a reset (ut-docs#3211). Neutral by design: a
+// type and a market, never a plugin id or a country list (#2848).
+//
+// It relies on the plugin owning an active entry of that ADR-0002 type
+// (ut-plugin-tax-de declares a `tax` entry); a fiscal plugin with only
+// other entry types is invisible here. install_state is deliberately not
+// filtered: a 'broken' active plugin still counts as present — a second
+// install would collide with ADR-0129's fiscal exclusivity, and the broken
+// one is surfaced (and tax fails closed) elsewhere.
+func (r *PluginRepo) HasActiveEntryTypeForMarket(ctx context.Context, entryType, market string) (bool, error) {
+	var found bool
+	err := r.db.QueryRowContext(ctx, `
+SELECT EXISTS (
+  SELECT 1
+  FROM plugins p
+  JOIN plugin_entries pe ON pe.plugin_id = p.id
+  WHERE pe.type = ? AND pe.is_active = 1 AND p.is_active = 1
+    AND (NOT EXISTS (SELECT 1 FROM plugin_markets m WHERE m.plugin_id = p.id)
+         OR EXISTS (SELECT 1 FROM plugin_markets m WHERE m.plugin_id = p.id AND m.market = ?))
+)
+`, entryType, strings.ToUpper(strings.TrimSpace(market))).Scan(&found)
+	if err != nil {
+		return false, pluginObs.wrap("has_active_entry_type_for_market", err)
+	}
+	return found, nil
 }
 
 func scanStrings(rows *sql.Rows, op string) ([]string, error) {
