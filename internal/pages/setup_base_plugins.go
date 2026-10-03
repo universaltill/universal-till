@@ -197,6 +197,42 @@ func addPendingBasePlugins(ctx context.Context, d *common.Deps, specs []basePlug
 // pending (ut-docs#3210). A language spec keeps the silent nil no-op.
 var errBasePluginNotPublished = errors.New("no matching listing published in the catalog")
 
+// taxSpecSatisfiedLocally reports whether a tax spec is already met by an
+// active local plugin with a `tax` entry meant for any country whose
+// countryTaxLocale value is spec.Locale (its markets list that country, or it
+// has none = every market). ut-docs#3211 stopped the wizard queuing such a
+// spec; one queued BEFORE a sideload or DB restore stays on the #591 pending
+// list, and without this the retry would keep trying to install a second
+// fiscal plugin (ADR-0129 exclusivity) and the Settings chip would never
+// clear (ut-docs#3511). Neutral: reuses countryTaxLocale, no plugin ids or
+// country list of its own (#2848). A spec carries only a locale, so if a
+// second country ever maps to the same locale, a plugin for either satisfies
+// it — revisit this if countryTaxLocale grows such a pair.
+//
+// A DB error is returned, not swallowed: unlike setupInstallableTaxPlugin,
+// whose fail-open only shows the operator a prompt, failing open here would
+// be an unattended second fiscal install — the very bug. The caller keeps the
+// spec pending and the next tick asks again.
+func taxSpecSatisfiedLocally(ctx context.Context, d *common.Deps, spec basePluginSpec) (bool, error) {
+	if spec.CanonicalType != "tax" {
+		return false, nil
+	}
+	repo := data.NewPluginRepo(d.Db)
+	for country, locale := range countryTaxLocale {
+		if !strings.EqualFold(locale, spec.Locale) {
+			continue
+		}
+		installed, err := repo.HasActiveEntryTypeForMarket(ctx, "tax", country)
+		if err != nil {
+			return false, fmt.Errorf("check local tax plugin for %s: %w", country, err)
+		}
+		if installed {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // resolveAndInstallBasePlugin resolves spec against the marketplace catalog
 // and installs the highest-semver matching listing through the existing
 // Ed25519-verified install path (cloudInstallPluginVersion) — never a second
@@ -212,6 +248,9 @@ var errBasePluginNotPublished = errors.New("no matching listing published in the
 // a retry or a second wizard run) or a non-nil error describing why the
 // spec should stay pending for the next attempt — including
 // errBasePluginNotPublished for a tax spec with no listing (ut-docs#3210).
+// A tax spec is also nil ("already satisfied", no catalog call at all) when
+// an active local tax plugin already covers its locale, and an error when
+// that local check itself fails (ut-docs#3511).
 //
 // Pages through the full result under the same ctx deadline as a single
 // page (ut-docs#2133): this used to read only page 1 of ListPlugins, unlike
@@ -225,6 +264,13 @@ var errBasePluginNotPublished = errors.New("no matching listing published in the
 // Bounded by setupBasePluginMaxPages so a malformed/hostile server can't
 // loop forever.
 func resolveAndInstallBasePlugin(ctx context.Context, d *common.Deps, spec basePluginSpec) error {
+	// ut-docs#3511: checked before any marketplace client or catalog fetch, so
+	// a till that already has its fiscal plugin never tries a second one.
+	if satisfied, err := taxSpecSatisfiedLocally(ctx, d, spec); err != nil {
+		return err
+	} else if satisfied {
+		return nil
+	}
 	// enroll.Effective, NOT EnsureRegistered (ut-docs#2964 review): looking
 	// the pack up is a browse, and ADR-0015 lets only a real download/install
 	// mint the shop's cloud store identity. Since basePluginsForCountry

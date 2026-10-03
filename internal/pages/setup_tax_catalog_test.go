@@ -1138,3 +1138,118 @@ func TestSetupInstallableTaxPlugin_LocalCheckErrorStillPrompts(t *testing.T) {
 		t.Fatalf("expected the offline tile when the local check errors, got %+v", plugin)
 	}
 }
+
+// --- ut-docs#3511: a pending tax spec is satisfied by an active local plugin ---
+
+// A tax spec queued before a sideload / DB restore stays on the #591 pending
+// list. The retry must recognise the local tax plugin for the spec's locale
+// and drop the spec WITHOUT browsing the catalog or installing a second
+// fiscal plugin (ADR-0129 exclusivity).
+func TestBasePluginRetryTick_TaxSpecDroppedWhenLocalTaxPluginActive(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		markets []string
+	}{
+		{"no markets means every market", nil},
+		{"markets list the spec's country", []string{"DE"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetTaxCatalogForTest(t)
+			_, dp := newRealDBDeps(t)
+			initTestPaths(t)
+			// Reachable and it DOES publish a DE tax listing: only the
+			// local-satisfaction check can keep it from being installed.
+			mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+			mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+			dp.Cfg.Marketplace = mkt.config()
+			seedLocalTaxPlugin(t, dp, "com.example.sideloaded-tax", tc.markets...)
+
+			taxSpec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+			if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{taxSpec}); err != nil {
+				t.Fatal(err)
+			}
+
+			basePluginRetryTick(t.Context(), dp)
+
+			pending, err := loadPendingBasePlugins(t.Context(), dp)
+			if err != nil {
+				t.Fatalf("loadPendingBasePlugins: %v", err)
+			}
+			if len(pending) != 0 {
+				t.Fatalf("pending after the tick = %+v, want the satisfied tax spec dropped", pending)
+			}
+			if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); active {
+				t.Fatal("a second fiscal plugin must not be installed over the local one")
+			}
+			// resolveAndInstallBasePlugin browses with no capability filter.
+			if n := mkt.catalogHitsFor(""); n != 0 {
+				t.Fatalf("catalog was browsed %d time(s); the local check must come first", n)
+			}
+			if n := mkt.downloadTokenHits(); n != 0 {
+				t.Fatalf("download token requested %d time(s); nothing may be installed", n)
+			}
+		})
+	}
+}
+
+// A local tax plugin meant only for another country does not satisfy a DE
+// spec: it stays pending (here the catalog is unreachable).
+func TestBasePluginRetryTick_TaxSpecStaysPendingWhenLocalTaxPluginIsForOtherMarket(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	_, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	deadMarketplace(t, dp)
+	seedLocalTaxPlugin(t, dp, "com.example.fr-tax", "FR")
+
+	taxSpec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{taxSpec}); err != nil {
+		t.Fatal(err)
+	}
+
+	basePluginRetryTick(t.Context(), dp)
+
+	pending, err := loadPendingBasePlugins(t.Context(), dp)
+	if err != nil {
+		t.Fatalf("loadPendingBasePlugins: %v", err)
+	}
+	if len(pending) != 1 || pending[0] != taxSpec {
+		t.Fatalf("pending after the tick = %+v, want %+v kept", pending, taxSpec)
+	}
+}
+
+// The local check failing (here: plugin_markets gone) must not fail open into
+// an unattended install — that would be the second fiscal plugin this card
+// prevents. The spec stays pending for the next tick.
+func TestBasePluginRetryTick_TaxSpecStaysPendingWhenLocalCheckErrors(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	_, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+	seedLocalTaxPlugin(t, dp, "com.example.sideloaded-tax")
+	if _, err := dp.Db.ExecContext(t.Context(), `DROP TABLE plugin_markets`); err != nil {
+		t.Fatalf("drop plugin_markets: %v", err)
+	}
+
+	taxSpec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{taxSpec}); err != nil {
+		t.Fatal(err)
+	}
+
+	basePluginRetryTick(t.Context(), dp)
+
+	pending, err := loadPendingBasePlugins(t.Context(), dp)
+	if err != nil {
+		t.Fatalf("loadPendingBasePlugins: %v", err)
+	}
+	if len(pending) != 1 || pending[0] != taxSpec {
+		t.Fatalf("pending after the tick = %+v, want %+v kept", pending, taxSpec)
+	}
+	if n := mkt.catalogHitsFor(""); n != 0 {
+		t.Fatalf("catalog was browsed %d time(s) after the local check failed", n)
+	}
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); active {
+		t.Fatal("a failed local check must not lead to a second fiscal install")
+	}
+}
