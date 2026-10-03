@@ -72,3 +72,43 @@ test.describe('category icon from my. replaces a library tile on the sale screen
     assertClean();
   });
 });
+
+// ut-docs#3585: the tile case above (an icon directive replacing a legacy
+// library tile in image_path) is NOT the only shape a save_category
+// directive can hit now that a category's photo and icon are independent
+// columns — a category can hold a REAL uploaded photo and an icon at the
+// same time, image wins. Pinned here, same real-browser/real-till pattern
+// as the tile case: a save_category {icon} landing under an uploaded photo
+// must leave the sale screen showing the photo, not fall back to the icon
+// underneath it.
+test.describe('category photo survives an icon directive on the sale screen (ut-docs#3585)', () => {
+  test.afterEach(() => {
+    // Hand the worker till back with no picture on Drinks.
+    if (process.env.UT_E2E_WORKER_DATA_DIR) categoryPicture('legacy-path', '');
+  });
+
+  test('a save_category icon directive under an uploaded photo keeps the photo showing', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    test.skip(!process.env.UT_E2E_WORKER_DATA_DIR, 'needs a worker till this run spawned (its data dir); a reused server has none');
+    await page.setViewportSize({ width: 1024, height: 600 });
+
+    // A real uploaded photo (not a library tile) with no icon yet.
+    categoryPicture('photo', '');
+    await page.goto('/');
+    const photoSrc = new RegExp(`/public/assets/categories/${CAT}/thumb\\.png`);
+    const img = await tabImage(page);
+    await expect(img).toHaveAttribute('src', photoSrc);
+    await expect
+      .poll(() => img.evaluate((el) => (el as HTMLImageElement).complete && (el as HTMLImageElement).naturalWidth > 0))
+      .toBe(true);
+
+    // my. sets an icon under that photo (save_category {icon}) — before
+    // ut-docs#3585 this silently wiped image_path and the tile would show
+    // the icon instead; now both columns are kept and the photo still wins
+    // (iconid.Resolve).
+    categoryPicture('directive', 'lucide:egg-fried');
+    await page.reload();
+    await expect(await tabImage(page)).toHaveAttribute('src', photoSrc);
+    assertClean();
+  });
+});
