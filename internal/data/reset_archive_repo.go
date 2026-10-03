@@ -167,6 +167,9 @@ var resetArchiveTables = []resetArchiveTable{
 	// never touches; restore re-inserts against them and turns a removed
 	// item into ErrArchiveReferencesRemoved.
 	{"shrinkage_events", "id, reason_category, item_id, item_name, sku, quantity, unit_price_minor, extended_value_minor, actor_id, approver_id, note, order_type, register_id, created_at"},
+	// no_sale_events (ut-docs#2558, migration 064): the "No sale" drawer-open
+	// log. No FKs at all, so its position here is not load-bearing.
+	{"no_sale_events", "id, created_at, local_date, register_id, till_id, actor_id, approver_id, reason"},
 	{"invoices", "id, series, invoice_no, display_no, kind, sale_id, original_invoice_id, customer_name, customer_address, customer_vat_no, seller_json, net_total, tax_total, gross_total, vat_breakdown_json, issued_at, issued_by"},
 	{"payments", "id, sale_id, method_id, amount, currency, reference, change_given, paid_at, tip_amount, tip_recipient, masked_pan, auth_code, terminal_id, trace_id, voucher_id, local_date"},
 	{"sale_links", "id, sale_id, original_sale_id, reason"},
@@ -218,8 +221,9 @@ var resetArchiveTables = []resetArchiveTable{
 // collection row that every other check here is blind to.
 // shrinkage_events (ut-docs#3452) joins for the same reason again: a
 // void/comp/waste needs no sale row, so one recorded after the reset would
-// otherwise be merged with the restored batch.
-var restoreEmptyCheckTables = []string{"sales", "held_sales", "shifts", "stock_movements", "worker_allocations", "yuzde_usulu_pool_collections", "shrinkage_events"}
+// otherwise be merged with the restored batch. no_sale_events (ut-docs#2558)
+// likewise: a "No sale" drawer open needs no sale row.
+var restoreEmptyCheckTables = []string{"sales", "held_sales", "shifts", "stock_movements", "worker_allocations", "yuzde_usulu_pool_collections", "shrinkage_events", "no_sale_events"}
 
 // ResetTransactionHistory clears ALL transactional data — sales, payments,
 // invoices, shifts, held sales, stock movements and the sale-line modifier

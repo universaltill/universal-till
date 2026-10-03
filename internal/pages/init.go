@@ -494,6 +494,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerButtonsAPI(mux, dp)
 	registerDesignerCategoriesAPI(mux, dp) // Designer category CRUD (ut-docs#2174)
 	registerPOSAPI(mux, dp)
+	registerNoSaleAPI(mux, dp)       // "No sale" drawer open (ut-docs#2558)
 	registerVoucherAPI(mux, dp)      // voucher liability balance query (ut-docs#1008)
 	registerFiscalAPI(mux, dp)       // German TSE hard-gate owner override (ADR-0048)
 	registerPOSModifiersAPI(mux, dp) // item customization step, ADR-0020

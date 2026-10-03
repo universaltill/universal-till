@@ -73,6 +73,13 @@ as `CODE128` so internal PLU/keypad codes remain supported.
 - `sales_aggregate_uploads` — which daily per-till sales rollups the cloud
   has accepted (content-hash ledger for the ADR-0111 upload,
   ut-docs#2535; migration 038)
+- `no_sale_events` — "No sale" cash-drawer opens (`POST /api/pos/no-sale`,
+  gated by the `cash_adjustment` permission or a manager PIN; recorded only
+  after the drawer kick reached the printer). Append-only; `local_date` and
+  the till key (`till_id`, else `register_id`) follow the sales rules, so
+  the ADR-0111 rollup reports them as `no_sale_count` and
+  `by_cashier[].no_sale_opens` (ut-docs#2558; migration 064, with its
+  `no_sale_events_archive` reset twin)
 
 ### 5. Shifts & audit
 

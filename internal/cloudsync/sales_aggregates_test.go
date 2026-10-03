@@ -396,3 +396,79 @@ func TestTickSalesAggregates_RegisteredPrimaryOnly(t *testing.T) {
 		}
 	})
 }
+
+// ut-docs#2558: no-sale drawer opens (no_sale_events) fill no_sale_count and
+// by_cashier.no_sale_opens. A cashier whose only activity on a (day, till)
+// was opening the drawer still gets a by_cashier bucket, and a (day, till)
+// with no sales at all but a no-sale still gets a rollup.
+func TestPushSalesAggregates_NoSaleOpens(t *testing.T) {
+	noAggThrottle(t)
+	cloud := &aggCloud{}
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	f := seedAggFixture(t, "agg-no-sale.db")
+	ctx := context.Background()
+	if err := data.NewSettingsRepo(f.db).Set(ctx, "reports.cloud_staff_breakdown", "true"); err != nil {
+		t.Fatal(err)
+	}
+	aggExec(t, f.db, `INSERT INTO users (id, username, display_name) VALUES ('u2', 'bob', 'Bob Example')`)
+	repo := data.NewPOSRepo(f.db)
+	for _, e := range []data.NoSaleEvent{
+		{CreatedAt: aggAt(f.todayT), RegisterID: "reg-A", ActorID: "u1"},
+		{CreatedAt: aggAt(f.todayT.Add(time.Hour)), RegisterID: "reg-A", ActorID: "u1"},
+		{CreatedAt: aggAt(f.todayT.Add(2 * time.Hour)), RegisterID: "reg-A", ActorID: "u2"}, // u2 rang no sale today
+		{CreatedAt: aggAt(f.todayT), RegisterID: "reg-B", ActorID: "u2"},                    // a till with no sales at all
+	} {
+		if _, err := repo.InsertNoSaleEvent(ctx, nil, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pushSalesAggregates(ctx, testCfg(srv.URL), f.db)
+
+	byKey := map[string]map[string]any{}
+	for _, p := range cloud.since(0) {
+		byKey[p.body["business_date"].(string)+"/"+p.body["till_id"].(string)] = p.body
+	}
+	if len(byKey) != 3 {
+		t.Fatalf("rollups = %d (%v), want 3: yesterday/reg-A, today/reg-A, today/reg-B", len(byKey), keysOf(byKey))
+	}
+	cashiers := func(b map[string]any) map[string]map[string]any {
+		out := map[string]map[string]any{}
+		for _, c := range b["by_cashier"].([]any) {
+			m := c.(map[string]any)
+			out[m["staff_id"].(string)] = m
+		}
+		return out
+	}
+
+	a := byKey[f.today+"/reg-A"]
+	if a == nil || a["no_sale_count"] != float64(3) {
+		t.Fatalf("today/reg-A no_sale_count = %v, want 3", a["no_sale_count"])
+	}
+	cs := cashiers(a)
+	if len(cs) != 2 || cs["u1"]["no_sale_opens"] != float64(2) || cs["u1"]["sales_count"] != float64(1) ||
+		cs["u2"]["no_sale_opens"] != float64(1) || cs["u2"]["sales_count"] != float64(0) || cs["u2"]["avg_sale_minor"] != float64(0) {
+		t.Fatalf("today/reg-A by_cashier = %v", cs)
+	}
+
+	b := byKey[f.today+"/reg-B"]
+	if b == nil || b["no_sale_count"] != float64(1) || len(b["hourly"].([]any)) != 0 {
+		t.Fatalf("today/reg-B (no sales, one no-sale) = %v", b)
+	}
+	if cs := cashiers(b); len(cs) != 1 || cs["u2"]["no_sale_opens"] != float64(1) {
+		t.Fatalf("today/reg-B by_cashier = %v", cs)
+	}
+
+	if y := byKey[f.prevDay+"/reg-A"]; y == nil || y["no_sale_count"] != float64(0) {
+		t.Fatalf("yesterday/reg-A no_sale_count = %v, want 0", y)
+	}
+}
+
+func keysOf(m map[string]map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
