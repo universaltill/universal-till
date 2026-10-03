@@ -91,3 +91,96 @@ func TestBluetoothBackfillSwapRegionNotReload(t *testing.T) {
 		t.Error("web/public/app.js: UT.refreshRegion must dispatch ut:region-refreshed")
 	}
 }
+
+// ut-docs#2902: Settings forms whose change is local to their own card
+// refresh only a region around that form; the forms that restyle or
+// re-label the whole shell keep their reload. Regions sit INSIDE the
+// .card, never on it: the section switcher holds references to the card
+// elements, and a replaced card would fall out of its nav.
+func TestSettingsSwapRegionNotReload(t *testing.T) {
+	b, err := os.ReadFile("web/ui/pages/settings.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	swapped := []struct{ post, region string }{
+		{"/api/settings/basket-panel-width", "settings-basket-width-region"},
+		{"/api/settings/report-retention", "settings-retention-region"},
+		{"/api/settings/printer", "settings-printer-region"},
+		{"/api/settings/till-name", "settings-till-name-region"},
+		{"/api/settings/till-register", "settings-till-register-region"},
+		{"/api/settings/invoice", "settings-invoice-region"},
+		{"/api/settings/telemetry", "settings-telemetry-region"},
+		{"/api/settings/store-name", "settings-store-name-region"},
+	}
+	for _, c := range swapped {
+		anchor := `id="` + c.region + `" data-ut-refresh="#` + c.region + `" data-ut-saved-msg="#`
+		at := strings.Index(s, anchor)
+		if at < 0 {
+			t.Errorf("settings.html: missing region %q", anchor)
+			continue
+		}
+		form := formTag(t, s, c.post)
+		if strings.Contains(form, "reload:") {
+			t.Errorf("settings.html: %s still reloads the page: %s", c.post, form)
+		}
+		if !strings.Contains(form, "ok not-html refresh-region") {
+			t.Errorf("settings.html: %s must refresh its region behind the not-html guard: %s", c.post, form)
+		}
+		if fi := strings.Index(s, form); fi < at {
+			t.Errorf("settings.html: %s's form is not inside #%s", c.post, c.region)
+		}
+	}
+	// The whole shell changes for these: theme/scale/effects/OSK restyle it,
+	// currency/language/staff languages re-format or re-label it, the
+	// idle-lock timeout is read once from <body data-idle-lock>, and opting
+	// in to auto-register registers now, which drops the status bar's
+	// "Register till" chip.
+	kept := map[string]string{
+		"/api/settings/auto-register":   "reload:settings-auto-register",
+		"/api/settings/theme":           "reload:settings-theme",
+		"/api/settings/ui-scale":        "reload:settings-ui-scale",
+		"/api/settings/effects-level":   "reload:settings-effects-level",
+		"/api/settings/osk":             "reload:settings-osk",
+		"/api/settings/idle-lock":       "reload:settings-idle-lock",
+		"/api/settings/staff-languages": "reload:settings-save",
+	}
+	for post, want := range kept {
+		if form := formTag(t, s, post); !strings.Contains(form, want) {
+			t.Errorf("settings.html: %s must keep %q: %s", post, want, form)
+		}
+	}
+	if n := strings.Count(s, `hx-post="/api/settings/save" hx-swap="none" data-after-request="ok not-html reload:settings-save;`); n != 2 {
+		t.Errorf("settings.html: currency and language must both keep reload:settings-save, found %d", n)
+	}
+	if strings.Contains(s, `class="card" data-ut-refresh`) || strings.Contains(s, `class="card settings-wide" data-ut-refresh`) {
+		t.Error("settings.html: a .card must never be a refresh region (the section switcher holds card references)")
+	}
+	// A swap re-renders identical content, so the switcher says "Saved." in
+	// the region's data-ut-saved-msg span and drops the stale search index.
+	for _, a := range []string{"grid.addEventListener('ut:region-refreshed'", "index = null;", `T "settings.display.change_saved"`, `id="basket-panel-msg"`} {
+		if !strings.Contains(s, a) {
+			t.Errorf("settings.html: missing %q", a)
+		}
+	}
+	// The printer region holds the discovery button; its listener must
+	// survive a swap, so it is delegated from the card, not bound once.
+	if strings.Contains(s, "getElementById('printer-discover-btn')") || !strings.Contains(s, "closest('#printer-discover-btn')") {
+		t.Error("settings.html: printer discovery must use a delegated listener that survives the region swap")
+	}
+}
+
+// formTag returns the opening <form …> tag that posts to path.
+func formTag(t *testing.T, s, path string) string {
+	t.Helper()
+	i := strings.Index(s, `hx-post="`+path+`"`)
+	if i < 0 {
+		t.Fatalf("settings.html: no form posts to %s", path)
+	}
+	start := strings.LastIndex(s[:i], "<form")
+	end := strings.Index(s[i:], ">")
+	if start < 0 || end < 0 {
+		t.Fatalf("settings.html: malformed form for %s", path)
+	}
+	return s[start : i+end+1]
+}

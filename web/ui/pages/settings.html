@@ -123,7 +123,9 @@
        for every session (ut-docs#867 convention). Same Content-Type reload
        guard as the telemetry form — a 200 elevation prompt (text/html) must
        not trigger the success reload. Toggling ON also registers now,
-       best-effort; toggling OFF never deregisters anything. -->
+       best-effort; toggling OFF never deregisters anything. It keeps the
+       full reload (ut-docs#2902 review): registering changes the shell's
+       status bar too (the "Register till" chip, base.html .sb-enrol). -->
   <div class="set-divider">
     <fieldset class="set-lock" data-lock-region="settings-auto-register"{{ if index $.lockedRegions "settings-auto-register" }} disabled{{ end }}>
     {{ if index $.lockedRegions "settings-auto-register" }}{{ template "set-lock-note" }}{{ end }}
@@ -437,14 +439,17 @@
        default back" affordance for an operator who isn't looking at the
        sell screen right now. width_rem="0" is the exact same reset shape
        the divider's own double-tap/double-click sends -- plain htmx form,
-       same after-request reload pattern as ui-scale/osk above,
+       refreshing only its own region on success (ut-docs#2902),
        since THIS control (unlike the live drag) has no basket-loss risk
        to protect against. -->
-  <form hx-post="/api/settings/basket-panel-width" hx-swap="none" data-after-request="ok reload:settings-basket-width; fail unhide:settings-save-error" class="set-gap">
+  <div id="settings-basket-width-region" data-ut-refresh="#settings-basket-width-region" data-ut-saved-msg="#basket-panel-msg">
+  <form hx-post="/api/settings/basket-panel-width" hx-swap="none" data-after-request="ok not-html refresh-region; fail unhide:settings-save-error" class="set-gap">
     <input type="hidden" name="width_rem" value="0">
     <p class="muted">{{ T "settings.display.basket_panel_help" }}</p>
     <button class="btn secondary" type="submit" data-testid="basket-panel-reset">{{ T "settings.display.basket_panel_reset_btn" }}</button>
+    <span id="basket-panel-msg" aria-live="polite"></span>
   </form>
+  </div>
   <!-- ut-docs#867: the display-mode/window-mode/launch-on-startup forms below
        render unconditionally — all three POST to elevation-wired endpoints
        (checkOrElevate), so the server-side PIN dialog is the authorization
@@ -1576,13 +1581,14 @@
   <!-- ut-docs#794 review finding (blocker): checkOrElevate's needsElevation
        response is ALSO a 2xx (200 + the elevation dialog HTML), so plain
        event.detail.successful can't distinguish "saved" from "needs a
-       manager's PIN" — the reload below would fire immediately and destroy
+       manager's PIN" — the refresh below would fire immediately and destroy
        the just-opened dialog before anyone could use it. Content-Type
        (text/html only on the elevation prompt; the real 204 success has
        none) is the same signal app.js's utPostWithElevation uses. -->
+  <div id="settings-retention-region" data-ut-refresh="#settings-retention-region" data-ut-saved-msg="#retention-msg">
   <fieldset class="set-lock" data-lock-region="settings-retention"{{ if index $.lockedRegions "settings-retention" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-retention" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/report-retention" hx-swap="none" data-after-request="ok not-html reload:settings-report-retention; fail unhide:settings-save-error">
+  <form hx-post="/api/settings/report-retention" hx-swap="none" data-after-request="ok not-html refresh-region; fail unhide:settings-save-error">
     {{ $mode := .reportRetentionMode }}
     <label>{{ T "settings.retention.mode_label" }}
       <select name="mode">
@@ -1593,13 +1599,14 @@
     </label>
     <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
     <!-- ut-docs#794: hx-swap="none" above means this form's own response
-         is never swapped anywhere (the page just reloads on success) — but
+         is never swapped anywhere (its region refreshes on success) — but
          checkOrElevate's dialog retry (elevation_prompt.html) still needs a
          real hx-target to land its response in, so this span exists purely
          for that. -->
     <span id="retention-msg" aria-live="polite"></span>
   </form>
   </fieldset>
+  </div>
   <p class="muted">{{ T "settings.retention.capacity_advisory" }}</p>
   {{ if .isManager }}
   <p>
@@ -1696,7 +1703,8 @@
        "saved" apart from "needs a manager's PIN" — Content-Type
        (text/html only on the prompt; the real 204 success has none) is
        the same signal the report-retention form above uses. -->
-  <form hx-post="/api/settings/printer" hx-swap="none" data-after-request="ok not-html reload:settings-printer; fail unhide:settings-save-error">
+  <div id="settings-printer-region" data-ut-refresh="#settings-printer-region" data-ut-saved-msg="#printer-settings-msg">
+  <form hx-post="/api/settings/printer" hx-swap="none" data-after-request="ok not-html refresh-region; fail unhide:settings-save-error">
     {{ $p := .printer }}
     <div class="field-pair">
       <label>{{ T "settings.printer.mode" }}
@@ -1818,6 +1826,7 @@
          endpoint isn't part of this mechanism (ut-docs#866). -->
     <span id="printer-settings-msg" aria-live="polite"></span>
   </form>
+  </div>
 </div>
 {{ if .isManager }}
 <script>
@@ -1828,12 +1837,11 @@
   // printer candidates, not station-specific ones, so no new API is added.
   // Plain fetch(), no htmx, same as the kitchen-stations version: a
   // candidate only fills a form field on tap, it never auto-submits.
-  var btn = document.getElementById('printer-discover-btn');
-  if (!btn) return;
-  var msg = document.getElementById('printer-discover-msg');
-  var out = document.getElementById('printer-discover-results');
-  var addressInput = document.getElementById('printer-address-input');
-  var kitchenInput = document.getElementById('printer-kitchen-addr-input');
+  // ut-docs#2902: the button lives in #settings-printer-region, which a save
+  // replaces (UT.refreshRegion), so the listener is delegated from the card
+  // (which stays) and every element is looked up per click.
+  var card = document.getElementById('settings-printer');
+  if (!card) return;
   var i18n = {
     searching: "{{ T "settings.printer.discover.searching" }}",
     noneFound: "{{ T "settings.printer.discover.none_found" }}",
@@ -1843,7 +1851,13 @@
     useKitchen: "{{ T "settings.printer.discover.use_kitchen" }}"
   };
   function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
-  btn.addEventListener('click', function () {
+  card.addEventListener('click', function (ev) {
+    var btn = ev.target.closest ? ev.target.closest('#printer-discover-btn') : null;
+    if (!btn) return;
+    var msg = document.getElementById('printer-discover-msg');
+    var out = document.getElementById('printer-discover-results');
+    var addressInput = document.getElementById('printer-address-input');
+    var kitchenInput = document.getElementById('printer-kitchen-addr-input');
     btn.disabled = true;
     msg.textContent = i18n.searching;
     out.innerHTML = '';
@@ -1908,10 +1922,11 @@
        never till.name (which there holds the main till's name). -->
   <!-- ut-docs#796: same Content-Type reload guard as the report-retention
        form above — a 200 elevation prompt (text/html) must not trigger the
-       success reload, which would destroy the just-opened dialog; the real
+       success refresh, which would destroy the just-opened dialog; the real
        success is a bare 204 with no Content-Type. -->
+  <div id="settings-till-name-region" data-ut-refresh="#settings-till-name-region" data-ut-saved-msg="#till-name-msg">
   <form hx-post="/api/settings/till-name" hx-swap="none"
-        data-after-request="ok not-html reload:settings-till-name; fail unhide:settings-save-error">
+        data-after-request="ok not-html refresh-region; fail unhide:settings-save-error">
     <label>{{ T "settings.tills.name_label" }}
       <input type="text" name="name" maxlength="60" value="{{ .TillName }}">
     </label>
@@ -1920,12 +1935,14 @@
          report-retention form's identical span). -->
     <span id="till-name-msg" aria-live="polite"></span>
   </form>
+  </div>
   <!-- This till's register identity (ut-docs#268): which register's shift a
        payout (e.g. Pfandrückgabe) lands on. Like the till-name field above,
        this renders on primary AND replica — every till processes its own
        local payouts, so its register identity matters everywhere. -->
+  <div id="settings-till-register-region" data-ut-refresh="#settings-till-register-region" data-ut-saved-msg="#till-register-msg">
   <form hx-post="/api/settings/till-register" hx-swap="none"
-        data-after-request="ok not-html reload:settings-till-register; fail unhide:settings-save-error">
+        data-after-request="ok not-html refresh-region; fail unhide:settings-save-error">
     <label>{{ T "settings.tills.register_label" }}
       <select name="register_id" required>
         {{ if not .TillRegisterID }}<option value="" selected disabled>{{ T "settings.tills.register_unset" }}</option>{{ end }}
@@ -1936,6 +1953,7 @@
     <span id="till-register-msg" aria-live="polite"></span>
     <p class="muted">{{ T "settings.tills.register_help" }}</p>
   </form>
+  </div>
   <p class="muted">{{ T "settings.tills.help" }}</p>
   <a class="btn primary" href="/tills">{{ T "settings.tills.open" }}</a>
   {{ if .ShowQuarantineSection }}
@@ -1965,9 +1983,10 @@
   <!-- ut-docs#794 review finding: same Content-Type reload guard as the
        report-retention form above — the elevation prompt is itself a 2xx
        (200 + dialog HTML). -->
+  <div id="settings-invoice-region" data-ut-refresh="#settings-invoice-region" data-ut-saved-msg="#invoice-settings-msg">
   <fieldset class="set-lock" data-lock-region="settings-invoice"{{ if index $.lockedRegions "settings-invoice" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-invoice" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/invoice" hx-swap="none" data-after-request="ok not-html reload:settings-invoice; fail unhide:settings-save-error">
+  <form hx-post="/api/settings/invoice" hx-swap="none" data-after-request="ok not-html refresh-region; fail unhide:settings-save-error">
     <div class="field-pair">
       <label>{{ T "settings.invoice.seller_name" }}
         <input type="text" name="seller_name" value="{{ index .settingsMap "invoice.seller_name" }}"></label>
@@ -1983,6 +2002,7 @@
     <span id="invoice-settings-msg" aria-live="polite"></span>
   </form>
   </fieldset>
+  </div>
 </div>
 <!-- ut-docs#867: idle-lock, kiosk-idle-reset and telemetry below are all
      elevation-wired — their cards render for every session. -->
@@ -2059,9 +2079,10 @@
   <!-- ut-docs#865: same Content-Type reload guard as idle-lock above — the
        unconditional reload previously here would destroy an elevation
        prompt the instant it appeared. -->
+  <div id="settings-telemetry-region" data-ut-refresh="#settings-telemetry-region" data-ut-saved-msg="#telemetry-msg">
   <fieldset class="set-lock" data-lock-region="settings-telemetry"{{ if index $.lockedRegions "settings-telemetry" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-telemetry" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/telemetry" hx-swap="none" data-after-request="ok not-html reload:settings-telemetry; fail unhide:settings-save-error">
+  <form hx-post="/api/settings/telemetry" hx-swap="none" data-after-request="ok not-html refresh-region; fail unhide:settings-save-error">
     <label><input type="checkbox" name="optIn" {{ if eq (index .settingsMap "marketplace.telemetry_opt_in") "true" }}checked{{ end }}> {{ T "settings.telemetry.enable" }}</label>
     <div class="set-gap-s">
       <button class="btn" type="submit">{{ T "settings.telemetry.save" }}</button>
@@ -2069,6 +2090,7 @@
     </div>
   </form>
   </fieldset>
+  </div>
 </div>
 <!-- ut-docs#3115: the shop's name (store.name), editable after setup.
      Elevation-wired like Shop type below, so it renders for every session.
@@ -2078,20 +2100,22 @@
      hx-target: a refused name answers 400 with an HTML fragment that
      app.js swaps into #store-name-msg (no page-wide error banner); the
      elevation prompt's hint lands there too. A save answers 204 and the
-     page reloads to show it; any other failure (e.g. the main till is
+     region refreshes to show it (ut-docs#2902); any other failure (e.g. the main till is
      unreachable from an additional till) shows its message there. -->
 <div class="card" id="settings-store-name">
   <h2>{{ T "settings.store_name.title" }}</h2>
   <p class="muted">{{ T "settings.store_name.help" }}</p>
+  <div id="settings-store-name-region" data-ut-refresh="#settings-store-name-region" data-ut-saved-msg="#store-name-msg">
   <fieldset class="set-lock" data-lock-region="settings-store-name"{{ if index $.lockedRegions "settings-store-name" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-store-name" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/store-name" hx-target="#store-name-msg" hx-swap="innerHTML" data-after-request="ok not-html reload:settings-save; fail text-response:store-name-msg unhide:settings-save-error">
+  <form hx-post="/api/settings/store-name" hx-target="#store-name-msg" hx-swap="innerHTML" data-after-request="ok not-html refresh-region; fail text-response:store-name-msg unhide:settings-save-error">
     <label for="store-name-input" class="visually-hidden">{{ T "settings.store_name.title" }}</label>
     <input type="text" id="store-name-input" name="store_name" value="{{ .storeName }}" maxlength="80" dir="auto" autocomplete="off" data-testid="store-name-input">
     <button class="btn" type="submit" data-testid="store-name-save">{{ T "common.save" }}</button>
     <span id="store-name-msg" aria-live="polite" data-testid="store-name-msg"></span>
   </form>
   </fieldset>
+  </div>
 </div>
 <!-- ut-docs#867: currency and shop-type post to elevation-wired endpoints —
      both cards render for every session. -->
@@ -2622,6 +2646,18 @@
   // is reachable through one of these element kinds without per-control
   // markup changes.
   var index = null;
+  // ut-docs#2902: a save that swapped a region (UT.refreshRegion) replaced
+  // the nodes the search index points at, so rebuild it on the next
+  // keystroke; and since the region re-renders identical content, say
+  // "Saved." in the region's own message span (data-ut-saved-msg).
+  var savedText = "{{ T "settings.display.change_saved" }}";
+  grid.addEventListener('ut:region-refreshed', function (ev) {
+    index = null;
+    var r = ev.target;
+    var sel = r && r.getAttribute ? r.getAttribute('data-ut-saved-msg') : null;
+    var m = sel ? r.querySelector(sel) : null;
+    if (m && typeof renderNotice === 'function') renderNotice(m, 'success', savedText);
+  });
   function buildIndex() {
     index = [];
     navItems.forEach(function (item) {
