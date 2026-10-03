@@ -75,7 +75,15 @@
        all on their own success/refusal responses, so for them this still
        closes the dialog (itself already a strict improvement over never
        closing at all) but never auto-refreshes — no worse than before. */}}
+  {{/* ut-docs#3523 review: hx-sync + hx-disabled-elt — this dialog IS the
+       retry for actions that are not idempotent (POST /api/enrol/pair
+       clears the till's cloud identity before its single-use code is
+       spent), and htmx's default is to queue a second submit of the same
+       form behind the in-flight one, so a double-tap on Approve would
+       replay the action. Dropping the duplicate and greying the button
+       while the request runs is harmless to every other site. */}}
   <form hx-post="{{ .Action }}" hx-target="{{ .HxTarget }}" hx-swap="innerHTML"
+        hx-sync="this:drop" hx-disabled-elt="find button[type=submit]"
         data-after-request="elevation-done">
     <h3>{{ T "elevation.prompt_title" }} {{ helpLink "elevation" }}</h3>
     <p class="muted">{{ T "elevation.prompt_help" }}</p>

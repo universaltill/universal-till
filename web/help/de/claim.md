@@ -4,7 +4,7 @@ title: Geschäftsregistrierung & Beanspruchung
 section: Verbinden & erweitern
 order: 320
 summary: Die Registrierung verbindet Ihre Kasse mit dem Universal-Till-Marktplatz; die Beanspruchung verknüpft das Geschäft mit IHREM Konto, sodass Sie das Online-Backoffice (Meine Geschäfte, Flottenübersicht) und kostenpflichtige Funktionen erhalten.
-keywords: [registrieren, beanspruchen, cloud, marktplatz, geschäft]
+keywords: [registrieren, beanspruchen, cloud, marktplatz, geschäft, koppeln, kopplungscode, neu koppeln]
 ---
 
 # Geschäftsregistrierung & Beanspruchung
@@ -33,3 +33,12 @@ Lehnt die Cloud die Zugangsdaten dieser Kasse dreimal hintereinander ab, erschei
 - **Als neues Geschäft registrieren**: Das Geschäft hat kein Inhaberkonto, daher kann die Kasse nicht gekoppelt werden. Registrieren Sie sie neu als neues Geschäft; nur der alte Kassenverlauf geht verloren.
 
 Ein Manager öffnet mit einem Tipp auf den Hinweis Einstellungen → Kassenregistrierung. Der Hinweis verschwindet nach dem nächsten erfolgreichen Kontakt mit der Cloud.
+
+## Mit einem Geschäft koppeln (und neu koppeln)
+
+Verwenden Sie dies, wenn das Geschäft bereits in der Universal-Till-Cloud existiert und diese Kasse ihm beitreten soll, oder wenn eine Kasse aus dem Cloud-Konto des Geschäfts entfernt wurde bzw. meldet, dass sie neu gekoppelt werden muss.
+
+1. Wählen Sie im Cloud-Konto des Geschäfts „Kasse hinzufügen oder neu koppeln“, um einen Kopplungscode zu erhalten (8 Zeichen, 15 Minuten gültig, einmal verwendbar).
+2. Öffnen Sie an dieser Kasse Einstellungen → Kassenregistrierung → Mit einem Geschäft koppeln, geben Sie den Code ein und tippen Sie auf „Koppeln“. Ein Manager oder Administrator bestätigt den Vorgang.
+3. Die Kasse ersetzt nur ihre eigene Cloud-Verbindung: Sie erhält eine neue Geräte-ID und eigene Zugangsdaten. Verkäufe, Artikel und Einstellungen bleiben auf der Kasse, und der Verkauf funktioniert die ganze Zeit offline weiter.
+4. Auf einer verbundenen Kasse muss der Code vom selben Geschäft stammen wie ihre Hauptkasse; ein Code für ein anderes Geschäft wird abgelehnt und nichts ändert sich. Nach einem abgelehnten oder abgelaufenen Code bleibt die Kasse unregistriert, bis Sie sie mit einem neuen Code koppeln.

@@ -110,7 +110,7 @@ type identity struct {
 }
 
 var (
-	// mu guards cur and every var below it through tokenExplicit, plus
+	// mu guards cur and every var below it through identityReplaced, plus
 	// vouchedDevice (ut-docs#3021).
 	mu  sync.RWMutex
 	cur identity
@@ -129,6 +129,15 @@ var (
 	// this till after boot (ADR-0116 D4, ut-docs#2769), which the startup
 	// copy in cfg would otherwise shadow until a restart.
 	tokenExplicit bool
+	// deviceIDExplicit records whether UT_MARKETPLACE_DEVICE_ID pinned the
+	// device id.
+	deviceIDExplicit bool
+	// identityReplaced: Pair (ADR-0116 D5, ut-docs#3523) replaced this
+	// till's cloud identity after boot, so the startup copy Init filled into
+	// cfg (device id, merchant id, token) is stale: Effective and
+	// currentStoreAuth report the live values instead — even when empty, as
+	// after a refused pairing code — unless the environment pinned them.
+	identityReplaced bool
 	// vouchedDevice is the device id this replica's main till registered in
 	// the cloud on its behalf (ut-docs#2753); empty when none. The replica
 	// holds no store token, so Status.Registered stays false — this is what
@@ -281,6 +290,7 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	clientIDExplicit := cfg.Marketplace.ClientID != ""
 	// Same for the merchant token: only the environment can have set it yet.
 	tokenExplicitLocal := cfg.Marketplace.MerchantToken != ""
+	deviceIDExplicitLocal := cfg.Marketplace.DeviceID != ""
 
 	get := func(key string) string {
 		v, _, err := kv.Get(ctx, key)
@@ -322,6 +332,8 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	explicitConfigured = clientIDExplicit
 	storeIDExplicit = storeIDExplicitLocal
 	tokenExplicit = tokenExplicitLocal
+	deviceIDExplicit = deviceIDExplicitLocal
+	identityReplaced = false
 	vouchedDevice = vouched
 	if clientIDExplicit {
 		displayStoreID = cfg.Marketplace.StoreID
@@ -408,10 +420,12 @@ func Effective(cfg *config.Config) config.Config {
 	m := &out.Marketplace
 	mu.RLock()
 	defer mu.RUnlock()
-	if m.DeviceID == "" {
+	// After Pair, the live identity wins over Init's startup copy in cfg
+	// unless the environment pinned it (identityReplaced).
+	if m.DeviceID == "" || (identityReplaced && !deviceIDExplicit) {
 		m.DeviceID = cur.DeviceID
 	}
-	if m.ClientID == "" {
+	if m.ClientID == "" || (identityReplaced && !explicitConfigured) {
 		m.ClientID = cur.MerchantID
 	}
 	if cur.StoreID != "" && !storeIDExplicit {
@@ -426,9 +440,10 @@ func Effective(cfg *config.Config) config.Config {
 
 // liveToken is the bearer to send given the caller's (possibly startup)
 // copy: the env-pinned token when there is one, else the live persisted
-// token, else the copy. Callers hold mu (read).
+// token, else the copy — never the copy once Pair replaced the identity
+// (identityReplaced). Callers hold mu (read).
 func liveToken(copyToken string) string {
-	if copyToken == "" || (!tokenExplicit && cur.Token != "") {
+	if copyToken == "" || (!tokenExplicit && (cur.Token != "" || identityReplaced)) {
 		return cur.Token
 	}
 	return copyToken

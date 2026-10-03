@@ -4,6 +4,7 @@ title: Mağaza kaydı ve sahiplenme
 section: Bağlantı ve eklentiler
 order: 320
 summary: Kayıt, kasanızı Universal Till marketplace'e bağlar; sahiplenme mağazayı SİZİN hesabınıza bağlar — çevrimiçi yönetim (Mağazalarım, kasa filosu) ve ücretli özellikler böyle açılır.
+keywords: [kayıt, sahiplenme, bulut, marketplace, mağaza, eşleştirme, eşleştirme kodu, yeniden eşleştirme]
 ---
 
 # Mağaza kaydı ve sahiplenme
@@ -32,3 +33,12 @@ Bulut bu kasanın kimlik bilgisini art arda üç kez reddederse durum çubuğund
 - **Yeni mağaza olarak kaydol**: mağazanın sahip hesabı yok, bu yüzden kasa eşleştirilemez. Kasayı yeni bir mağaza olarak yeniden kaydedin; yalnızca eski cihaz geçmişi kaybolur.
 
 Bir yönetici uyarıya dokunarak Ayarlar → Kasa kaydı'nı açabilir. Uyarı, bulutla bir sonraki başarılı bağlantıdan sonra kaybolur.
+
+## Bir mağazayla eşleştirme (ve yeniden eşleştirme)
+
+Mağaza Universal Till bulutunda zaten varsa ve bu kasanın ona katılması gerekiyorsa ya da bir kasa mağazanın bulut hesabından kaldırıldıysa veya yeniden eşleştirilmesi gerektiğini söylüyorsa bunu kullanın.
+
+1. Mağazanın bulut hesabında «Kasa ekle veya yeniden eşleştir»i seçerek bir eşleştirme kodu alın (8 karakter, 15 dakika geçerli, tek kullanımlık).
+2. Bu kasada Ayarlar → Kasa kaydı → Bir mağazayla eşleştir'i açın, kodu girin ve Eşleştir'e basın. Bir yönetici veya admin onaylar.
+3. Kasa yalnızca kendi bulut bağlantısını değiştirir: yeni bir cihaz kimliği ve kendine ait bir kimlik bilgisi alır. Satışlar, ürünler ve ayarlar kasada kalır; satış bu süre boyunca çevrimdışı çalışmaya devam eder.
+4. Katılmış bir kasada kod, ana kasasıyla aynı mağazadan gelmelidir; başka bir mağazanın kodu reddedilir ve hiçbir şey değişmez. Reddedilen veya süresi dolmuş bir koddan sonra kasa, yeni bir kodla eşleştirene kadar kayıtsız kalır.

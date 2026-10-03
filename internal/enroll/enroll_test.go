@@ -65,6 +65,8 @@ func resetState() {
 	explicitConfigured = false
 	displayStoreID = ""
 	tokenExplicit = false
+	deviceIDExplicit = false
+	identityReplaced = false
 	vouchedDevice = ""
 	mu.Unlock()
 	envPinWarned.Store(false)

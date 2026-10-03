@@ -94,6 +94,30 @@
       <span id="enrol-msg" aria-live="polite"></span>
     </div>
   {{ end }}
+  <!-- ADR-0116 D5/D6 (ut-docs#3523): "Pair with a shop". Unconditional: it is
+       the way back for an unpaired, revoked or retired till whatever its
+       registration state, and the POST is elevation-wired (ut-docs#867). -->
+  <div class="set-divider">
+    <h3 style="margin:0 0 .3rem">{{ T "settings.enrol.pair_title" }}</h3>
+    <p class="muted">{{ T "settings.enrol.pair_help" }}</p>
+    <!-- Pair is destructive and not idempotent: it clears this till's cloud
+         identity before the (single-use) code reaches the cloud, so a second
+         submit of the same code — a double-tap on the touchscreen, which htmx
+         would otherwise queue behind the in-flight request (hx-trigger's
+         default queue is "last") — would wipe the identity the first one just
+         adopted and then be refused. hx-sync drops the duplicate, hx-disabled-elt
+         greys the button while the call runs, and the indicator is the loading
+         state (ux-guidelines: every action has one). Same trio as
+         partials/pending_pairings.html. -->
+    <form class="set-row" hx-post="/api/enrol/pair" hx-target="#pair-msg" hx-swap="innerHTML"
+          hx-sync="this:drop" hx-disabled-elt="find button[type=submit]" hx-indicator="#pair-busy">
+      <label class="visually-hidden" for="pair-code">{{ T "settings.enrol.pair_title" }}</label>
+      <input type="text" id="pair-code" name="code" placeholder="{{ T "settings.enrol.pair_placeholder" }}" autocapitalize="characters" autocomplete="off" spellcheck="false" required>
+      <button class="btn btn-touch" type="submit">{{ T "settings.enrol.pair_btn" }}</button>
+      <span id="pair-busy" class="htmx-indicator muted" role="status">{{ T "settings.enrol.pair_busy" }}</span>
+    </form>
+    <div id="pair-msg" aria-live="polite" class="set-gap-s"></div>
+  </div>
   <!-- ADR-0071 (ut-docs#879): the setup wizard's eager-registration opt-in,
        changeable afterwards. Elevation-wired endpoint, so the card renders
        for every session (ut-docs#867 convention). Same Content-Type reload
