@@ -213,7 +213,8 @@ func hasFile(r *http.Request) bool {
 // refused. In memory only and bounded: entries expire after
 // recentSavesTTL (many admin pulls), the oldest is dropped past
 // recentSavesMax records, and a restart forgets everything (the next pull
-// makes the re-rendered stamps current again).
+// makes the re-rendered stamps current again). Entries are keyed per main
+// till URL, so tests (each pair on its own httptest server) never share one.
 var recentSaves = &savedStamps{m: map[string]*savedStamp{}, now: time.Now}
 
 const (
@@ -300,13 +301,6 @@ func (s *savedStamps) evict(now time.Time) {
 	if len(s.m) >= recentSavesMax && oldestKey != "" {
 		delete(s.m, oldestKey)
 	}
-}
-
-// ResetRecentSaves forgets every remembered save. For tests.
-func ResetRecentSaves() {
-	recentSaves.mu.Lock()
-	defer recentSaves.mu.Unlock()
-	recentSaves.m = map[string]*savedStamp{}
 }
 
 func cloneValues(v url.Values) url.Values {

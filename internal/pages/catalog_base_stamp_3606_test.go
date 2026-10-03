@@ -11,7 +11,6 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/pages/catalogsync"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -188,8 +187,6 @@ func TestCatalogWriteThrough_CategoryStaleLoadedStampRefusedAfterPull(t *testing
 
 func TestCatalogWriteThrough_DesignerSecondSaveIsNotASelfConflict(t *testing.T) {
 	p := newCatalogWriteThroughPair(t)
-	catalogsync.ResetRecentSaves()
-	t.Cleanup(catalogsync.ResetRecentSaves)
 	// What the Designer rendered (and re-renders after buttons-changed,
 	// from this till's copy, until the pull lands).
 	shown, _, err := data.NewCatalogRepo(p.replica.dp.Db).CatalogUpdatedAt(t.Context(), data.CatalogKindCategory, "cat1")
@@ -223,8 +220,6 @@ func TestCatalogWriteThrough_DesignerSecondSaveIsNotASelfConflict(t *testing.T) 
 // main till after that is.
 func TestCatalogWriteThrough_DesignerThirdSaveIsNotASelfConflict(t *testing.T) {
 	p := newCatalogWriteThroughPair(t)
-	catalogsync.ResetRecentSaves()
-	t.Cleanup(catalogsync.ResetRecentSaves)
 	mainStamp := func() string {
 		v, _, err := data.NewCatalogRepo(p.main.dp.Db).CatalogUpdatedAt(t.Context(), data.CatalogKindCategory, "cat1")
 		if err != nil || v == "" {
