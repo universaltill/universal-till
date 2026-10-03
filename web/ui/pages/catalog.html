@@ -1330,6 +1330,9 @@
     // so the delayed auto-close below (search "auto-close") can tell
     // whether this is still the same dialog session that just saved.
     var savingSession = formSession;
+    // ut-docs#3606: the stamp this save sends, so the Variants tab's item
+    // panel forms that showed the same stamp can follow the save below.
+    var sentBase = document.getElementById('item-base-updated-at').value;
     htmx.ajax('POST', url, { source: '#item-form', target: '#catalog-table', swap: 'none' })
       .then(function () {
         submit.disabled = false;
@@ -1348,7 +1351,13 @@
         // still-open dialog, or that save would read as a conflict.
         if (editing) {
           var savedRow = document.getElementById('catalog-row-' + document.getElementById('item-id').value);
-          if (savedRow) document.getElementById('item-base-updated-at').value = savedRow.dataset.updatedAt || '';
+          if (savedRow) {
+            document.getElementById('item-base-updated-at').value = savedRow.dataset.updatedAt || '';
+            // ut-docs#3606: the Variants tab's cost / lead time / reorder
+            // level forms edit the same item row — the ones that showed the
+            // stamp this save replaced take the new one too.
+            followItemStamp(document.getElementById('item-id').value, sentBase, savedRow.dataset.updatedAt || '');
+          }
         }
         renderNotice(msg, 'success', NOTICE_MSG.itemFormSaved);
         filterRows();
@@ -1900,6 +1909,41 @@
   search.addEventListener('input', filterRows);
   document.body.addEventListener('htmx:afterSwap', function (ev) {
     if (ev.detail.target && ev.detail.target.id === 'catalog-table') filterRows();
+  });
+  // ut-docs#3606: one item row, three places holding its updated_at — the
+  // card (data-updated-at, what the editor loads), the editor's own
+  // base_updated_at, and the Variants tab's item panel forms (cost, lead
+  // time, reorder level). A save from any of them advances the stamp; the
+  // others follow ONLY if they showed the stamp that save sent (the main
+  // till accepted it, so they were current up to this till's own save) —
+  // never on a plain panel load, which would hide a change made on the
+  // main till since the card was rendered.
+  function followItemStamp(itemID, sent, next) {
+    if (!itemID || !sent || !next || sent === next) return;
+    if (document.getElementById('item-id').value === itemID) {
+      var base = document.getElementById('item-base-updated-at');
+      if (base.value === sent) base.value = next;
+    }
+    var row = document.getElementById('catalog-row-' + itemID);
+    if (row && row.dataset.updatedAt === sent) row.dataset.updatedAt = next;
+    var panel = document.getElementById('catalog-variants');
+    if (panel && panel.dataset.itemId === itemID) {
+      if (panel.dataset.itemUpdatedAt === sent) panel.dataset.itemUpdatedAt = next;
+      panel.querySelectorAll('input[data-item-stamp]').forEach(function (el) {
+        if (el.value === sent) el.value = next;
+      });
+    }
+  }
+  document.body.addEventListener('htmx:afterSwap', function (ev) {
+    var d = ev.detail || {};
+    if (!d.target || d.target.id !== 'catalog-variants' || !d.xhr || d.xhr.status >= 300) return;
+    var cfg = d.requestConfig || {};
+    if (String(cfg.verb || '').toLowerCase() !== 'post' || !d.elt || !d.elt.querySelector || !d.elt.querySelector('input[data-item-stamp]')) return;
+    var params = cfg.parameters || {};
+    var sent = typeof params.get === 'function' ? params.get('base_updated_at') : params.base_updated_at;
+    var panel = document.getElementById('catalog-variants');
+    if (!panel) return;
+    followItemStamp(panel.dataset.itemId || '', sent || '', panel.dataset.itemUpdatedAt || '');
   });
   // ut-docs#2762: the barcode backfill's Close swaps a freshly rendered
   // #catalog-table in (UT.refreshRegion) — re-apply the typed filter to it.

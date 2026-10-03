@@ -25,6 +25,10 @@ func TestResolve(t *testing.T) {
 		// First non-empty of the listed form fields.
 		{"POST", "/api/catalog/barcode", url.Values{"panelItem": {"itm2"}}, true, "POST /api/catalog/barcode", "itm2"},
 		{"POST", "/api/catalog/barcode", url.Values{"itemId": {"itm1"}, "panelItem": {"itm2"}}, true, "POST /api/catalog/barcode", "itm1"},
+		// ut-docs#3606: buttons/add is checked on the item's button row
+		// (the one AddButton writes), whatever code is posted.
+		{"POST", "/api/buttons/add", url.Values{"code": {"NEWCODE"}, "itemId": {"itm1"}}, true, "POST /api/buttons/add", "itm1"},
+		{"POST", "/api/buttons/add", url.Values{"code": {"NEWCODE"}, "item_id": {"itm2"}}, true, "POST /api/buttons/add", "itm2"},
 		// Not travelling: wrong method, unknown route, an empty wildcard,
 		// photo upload routes, out-of-scope routes.
 		{"GET", "/api/catalog/item/update", nil, false, "", ""},
@@ -46,6 +50,7 @@ func TestRoutes_KindsAreKnownToTheConflictCheck(t *testing.T) {
 	known := map[string]bool{
 		data.CatalogKindItem: true, data.CatalogKindVariant: true, data.CatalogKindCategory: true,
 		data.CatalogKindButton: true, data.CatalogKindModifierGroup: true,
+		data.CatalogKindItemButton: true,
 	}
 	seen := map[string]bool{}
 	for _, rt := range Routes {
@@ -59,5 +64,12 @@ func TestRoutes_KindsAreKnownToTheConflictCheck(t *testing.T) {
 		if rt.Conflict && rt.IDFrom == "" {
 			t.Errorf("%s: a conflict-checked route must name its record", rt.Pattern)
 		}
+	}
+}
+
+func TestRoutes_ButtonAddIsCheckedOnTheItemsButtonRow(t *testing.T) {
+	rt, _, ok := Resolve("POST", "/api/buttons/add", url.Values{"itemId": {"itm1"}})
+	if !ok || rt.Kind != data.CatalogKindItemButton || !rt.Conflict {
+		t.Fatalf("buttons/add route = %+v, want kind %q, conflict-checked", rt, data.CatalogKindItemButton)
 	}
 }

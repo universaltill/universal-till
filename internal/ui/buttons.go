@@ -582,6 +582,9 @@ type DesignerCategoryVM struct {
 	// the stored image/icon, "" when there is none (swatch, then
 	// placeholder).
 	Thumb string
+	// UpdatedAt (ut-docs#3606) is the category's updated_at as read; the
+	// edit form sends it back as the write-through's base_updated_at.
+	UpdatedAt string
 }
 
 // pruneEmptyCategoryGroup drops child branches with no buttons AND no
@@ -2002,6 +2005,7 @@ func (h *ButtonsHTTP) renderList(w http.ResponseWriter, r *http.Request, chipPar
 				ItemCount:   c.ItemCount,
 				ButtonCount: counts[c.ID],
 				Thumb:       CategoryThumb(c.ImagePath, c.Icon),
+				UpdatedAt:   c.UpdatedAt,
 			})
 		}
 		palette = catalogtypes.ItemColors()

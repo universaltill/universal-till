@@ -391,3 +391,38 @@ func TestSyncCatalogApply_MountedAtTheForwardPath(t *testing.T) {
 		t.Fatalf("catalogsync.ApplyPath = %q, but registerSyncCatalog mounts /api/sync/catalog/apply", catalogsync.ApplyPath)
 	}
 }
+
+// ut-docs#3606: /api/buttons/add re-labels the item's EXISTING button row
+// (ShortcutsRepo.AddButton) when one exists under a different code, so the
+// conflict check must look at that row — not at the posted code, which
+// names no row at all ("not found" skipped the check entirely).
+func TestSyncCatalogApply_ButtonAddConflictCheckedOnTheRelabelledRow(t *testing.T) {
+	m := newSyncCatalogMain(t)
+	if _, err := m.dp.Db.Exec(`UPDATE shortcut_buttons SET updated_at = '2026-01-01 09:00:00' WHERE barcode = 'SKU1'`); err != nil {
+		t.Fatal(err)
+	}
+	in := catalogsync.ApplyRequest{
+		Method: http.MethodPost, Path: "/api/buttons/add",
+		Form:          url.Values{"label": {"Flat White XL"}, "code": {"NEWCODE"}, "itemId": {"itm1"}},
+		BaseUpdatedAt: "2026-01-01 08:00:00",
+		ActorID:       "m-1",
+	}
+	wantSyncCatalogError(t, postSyncCatalogApply(m.mux, in, syncCatalogBearer), http.StatusConflict, catalogsync.CodeConflict)
+	var label string
+	if err := m.dp.Db.QueryRow(`SELECT label FROM shortcut_buttons WHERE barcode = 'SKU1'`).Scan(&label); err != nil || label != "Flat White" {
+		t.Fatalf("conflicting add re-labelled the row: %q (%v)", label, err)
+	}
+	in.BaseUpdatedAt = "2026-01-01 09:00:00"
+	rec := postSyncCatalogApply(m.mux, in, syncCatalogBearer)
+	out := decodeSyncCatalog(t, rec)
+	if rec.Code != http.StatusOK || out.Data == nil || out.Data.Status >= 300 {
+		t.Fatalf("fresh-base add = %d %q", rec.Code, rec.Body.String())
+	}
+	var stamp string
+	if err := m.dp.Db.QueryRow(`SELECT label, updated_at FROM shortcut_buttons WHERE barcode = 'SKU1'`).Scan(&label, &stamp); err != nil || label != "Flat White XL" {
+		t.Fatalf("add did not re-label the existing row: %q (%v)", label, err)
+	}
+	if out.Data.Entity != data.CatalogKindItemButton || out.Data.EntityID != "itm1" || out.Data.UpdatedAt != stamp {
+		t.Fatalf("answer = %+v, want the re-labelled row (item itm1, stamp %q)", out.Data, stamp)
+	}
+}

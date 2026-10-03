@@ -94,11 +94,14 @@ var Routes = []Route{
 	{Pattern: "POST /api/designer/categories/reorder", Kind: data.CatalogKindCategory},
 	{Pattern: "POST /api/designer/categories/{id}", Kind: data.CatalogKindCategory, IDFrom: "path:id", Conflict: true},
 	{Pattern: "POST /api/designer/categories/{id}/active", Kind: data.CatalogKindCategory, IDFrom: "path:id"},
-	// Quick-sale buttons (buttons_api.go). /api/buttons/add re-labels an
-	// existing button, so it is conflict-checked on the button row.
+	// Quick-sale buttons (buttons_api.go). /api/buttons/add re-labels the
+	// item's existing button row whatever code is posted
+	// (ShortcutsRepo.AddButton), so it is conflict-checked on THAT row,
+	// found by item id (ut-docs#3606; the posted code named no row and
+	// skipped the check).
 	{Pattern: "POST /api/buttons/reorder", Kind: data.CatalogKindButton},
 	{Pattern: "POST /api/buttons/recategorize", Kind: data.CatalogKindItem, IDFrom: "form:item_id,itemId"},
-	{Pattern: "POST /api/buttons/add", Kind: data.CatalogKindButton, IDFrom: "form:code", Conflict: true},
+	{Pattern: "POST /api/buttons/add", Kind: data.CatalogKindItemButton, IDFrom: "form:itemId,item_id", Conflict: true},
 	{Pattern: "POST /api/buttons/remove", Kind: data.CatalogKindButton, IDFrom: "form:code"},
 	{Pattern: "POST /api/buttons/hide", Kind: data.CatalogKindItem, IDFrom: "form:item_id,itemId"},
 	{Pattern: "POST /api/buttons/unhide", Kind: data.CatalogKindItem, IDFrom: "form:item_id,itemId"},

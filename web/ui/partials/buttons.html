@@ -1181,6 +1181,11 @@
       <p class="designer-cat-msg" id="designer-cat-msg-{{ $c.ID }}" role="status" aria-live="polite"></p>
       <form class="designer-cat-form" id="designer-cat-form-{{ $c.ID }}" x-show="editing" x-cloak
             hx-post="/api/designer/categories/{{ $c.ID }}" hx-target="#designer-cat-msg-{{ $c.ID }}" hx-swap="innerHTML" autocomplete="off">
+        {{/* ut-docs#3606: the category's updated_at as rendered — on an
+             additional till the save travels to the main till, which
+             refuses it as a conflict if the category changed there since.
+             A save answers buttons-changed, which re-renders this form. */}}
+        <input type="hidden" name="base_updated_at" value="{{ $c.UpdatedAt }}">
         <label class="designer-cat-field">{{ T "categories.col.name" }}
           <input type="text" name="name" value="{{ $c.Name }}" required placeholder="{{ T "categories.create_placeholder" }}">
         </label>

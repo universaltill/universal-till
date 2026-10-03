@@ -126,6 +126,11 @@
     <div class="card modifier-card{{ if not .IsActive }} vg-inactive{{ end }}{{ if and (not .Categories) (not .Items) }} modifier-card-unassigned{{ end }}" data-group-id="{{ .ID }}">
       <form hx-post="/api/catalog/modifier-group" hx-target="#modifiers-list" hx-swap="outerHTML" class="modifier-admin-group-row">
         <input type="hidden" name="id" value="{{ .ID }}">
+        {{/* ut-docs#3606: the group's updated_at as rendered — on an
+             additional till the save travels to the main till, which
+             refuses it as a conflict if the group changed there since.
+             The save re-renders this list, so the stamp follows it. */}}
+        <input type="hidden" name="base_updated_at" value="{{ .UpdatedAt }}">
         <input type="text" name="name" value="{{ .Name }}" required placeholder="{{ T "catalog.modifiers.group_name" }}">
         <label><input type="checkbox" name="required" value="1" {{ if .Required }}checked{{ end }}> {{ T "catalog.modifiers.required" }}</label>
         <label>{{ T "catalog.modifiers.min" }} <input type="number" name="minSelect" value="{{ .MinSelect }}" min="0" style="max-inline-size:4rem"></label>

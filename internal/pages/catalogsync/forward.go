@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
@@ -81,7 +82,8 @@ func Forward(w http.ResponseWriter, r *http.Request, d *common.Deps, refuse Refu
 // nothing, not even the body -- on a till that follows no main till.
 func ForwardElevated(w http.ResponseWriter, r *http.Request, d *common.Deps, approverID string, refuse Refuser) bool {
 	ctx := r.Context()
-	if d.SyncPrimaryURL(ctx) == "" {
+	mainURL := d.SyncPrimaryURL(ctx)
+	if mainURL == "" {
 		return false
 	}
 	if refuse == nil {
@@ -133,17 +135,23 @@ func ForwardElevated(w http.ResponseWriter, r *http.Request, d *common.Deps, app
 			in.Headers[h] = v
 		}
 	}
+	// shown is the record's stamp as the operator's form showed it; what
+	// travels may be the main till's newer stamp from this till's own
+	// previous save of the record (recentSaves).
+	shown := ""
 	if route.Conflict && id != "" {
-		in.BaseUpdatedAt = strings.TrimSpace(form.Get("base_updated_at"))
-		if in.BaseUpdatedAt == "" && d.Db != nil {
-			// The editor did not carry the stamp it loaded: this till's
-			// own copy is what the editor showed (the admin pull keeps it
-			// equal to the main till's value until someone changes it
-			// there).
+		shown = strings.TrimSpace(form.Get("base_updated_at"))
+		if shown == "" && d.Db != nil {
+			// The form did not carry the stamp it loaded (ut-docs#3606:
+			// only /api/buttons/add, whose add-from-search result shows
+			// no button record): this till's own copy is what the screen
+			// showed (the admin pull keeps it equal to the main till's
+			// value until someone changes it there).
 			if v, found, err := data.NewCatalogRepo(d.Db).CatalogUpdatedAt(ctx, route.Kind, id); err == nil && found {
-				in.BaseUpdatedAt = v
+				shown = v
 			}
 		}
+		in.BaseUpdatedAt = recentSaves.base(mainURL, route.Kind, id, shown)
 	}
 
 	answer, err := applyOnMain(ctx, d, in)
@@ -154,6 +162,9 @@ func ForwardElevated(w http.ResponseWriter, r *http.Request, d *common.Deps, app
 		}
 		refuse(w, r, se.HTTPStatus(), se.MessageKey())
 		return true
+	}
+	if in.BaseUpdatedAt != "" && answer.Status < 400 && answer.EntityID == id && answer.UpdatedAt != "" {
+		recentSaves.remember(mainURL, route.Kind, id, in.BaseUpdatedAt, answer.UpdatedAt)
 	}
 	for _, h := range ForwardedResponseHeaders {
 		if v, ok := answer.Headers[h]; ok {
@@ -183,6 +194,119 @@ func hasFile(r *http.Request) bool {
 		}
 	}
 	return false
+}
+
+// recentSaves is this till's memory of its own successful conflict-checked
+// write-throughs (ut-docs#3606). A screen re-rendered from this till's own
+// copy right after a save -- the Designer's buttons-changed refresh, the
+// /categories redirect -- shows a stamp the admin pull has not yet caught
+// up from (about a second), so saving the same record again from it would
+// read on the main till as a conflict with this till's own previous save.
+// Forward therefore keeps, per main till and record, the unbroken chain of
+// stamps this till's own accepted saves moved the record past, and the
+// main till's stamp after the latest of them; a later save whose form shows
+// any stamp in that chain sends the latest instead. The chain restarts
+// whenever a save's base is not the remembered latest stamp (someone else
+// changed the record in between), so it only ever spans changes made by
+// this till: a form showing anything else (a change made on the main till
+// or another till since) is sent as shown, and a real conflict is still
+// refused. In memory only and bounded: entries expire after
+// recentSavesTTL (many admin pulls), the oldest is dropped past
+// recentSavesMax records, and a restart forgets everything (the next pull
+// makes the re-rendered stamps current again).
+var recentSaves = &savedStamps{m: map[string]*savedStamp{}, now: time.Now}
+
+const (
+	// recentSavesMax bounds recentSaves: far more records than one
+	// operator edits between two admin pulls.
+	recentSavesMax = 512
+	// recentSavesChain bounds one record's chain of superseded stamps.
+	recentSavesChain = 16
+	// recentSavesTTL: by then the admin pull has made every re-rendered
+	// stamp current many times over.
+	recentSavesTTL = 10 * time.Minute
+)
+
+type savedStamp struct {
+	past   []string // stamps this till's own saves moved past, oldest first
+	latest string   // the main till's stamp after the latest of them
+	at     time.Time
+}
+
+type savedStamps struct {
+	mu  sync.Mutex
+	m   map[string]*savedStamp
+	now func() time.Time
+}
+
+func savedStampKey(main, kind, id string) string { return main + "\x00" + kind + "\x00" + id }
+
+// base is the base_updated_at to send for a save whose form showed shown.
+func (s *savedStamps) base(main, kind, id, shown string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.m[savedStampKey(main, kind, id)]
+	if !ok || shown == "" || s.now().Sub(e.at) > recentSavesTTL {
+		return shown
+	}
+	for _, p := range e.past {
+		if p == shown {
+			return e.latest
+		}
+	}
+	return shown
+}
+
+// remember records a successful save that sent sent as its base and left
+// the record at saved on the main till.
+func (s *savedStamps) remember(main, kind, id, sent, saved string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	key := savedStampKey(main, kind, id)
+	e, ok := s.m[key]
+	if !ok || e.latest != sent || now.Sub(e.at) > recentSavesTTL {
+		// No chain to extend: the main till accepted sent, so this
+		// till's save is the only change since it.
+		if !ok {
+			s.evict(now)
+		}
+		e = &savedStamp{}
+		s.m[key] = e
+	}
+	e.past = append(e.past, sent)
+	if len(e.past) > recentSavesChain {
+		e.past = e.past[len(e.past)-recentSavesChain:]
+	}
+	e.latest, e.at = saved, now
+}
+
+// evict makes room for one more record: expired entries go first, then the
+// oldest one. Called with s.mu held.
+func (s *savedStamps) evict(now time.Time) {
+	if len(s.m) < recentSavesMax {
+		return
+	}
+	oldestKey, oldest := "", now
+	for k, e := range s.m {
+		if now.Sub(e.at) > recentSavesTTL {
+			delete(s.m, k)
+			continue
+		}
+		if !e.at.After(oldest) {
+			oldestKey, oldest = k, e.at
+		}
+	}
+	if len(s.m) >= recentSavesMax && oldestKey != "" {
+		delete(s.m, oldestKey)
+	}
+}
+
+// ResetRecentSaves forgets every remembered save. For tests.
+func ResetRecentSaves() {
+	recentSaves.mu.Lock()
+	defer recentSaves.mu.Unlock()
+	recentSaves.m = map[string]*savedStamp{}
 }
 
 func cloneValues(v url.Values) url.Values {
