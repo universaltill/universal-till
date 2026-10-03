@@ -2,6 +2,7 @@ package pages
 
 import (
 	"bytes"
+	"errors"
 	"html"
 	"image"
 	"image/color"
@@ -17,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/paths"
 )
 
@@ -92,8 +94,9 @@ func TestCategoryImage_CreateWithIconEditWithUploadThenIconThenNone(t *testing.T
 	if _, err := data.NewModifierRepo(d.Db).CreateGroup(ctx, "g-milk", "Milk", false, 0, 1, 0); err != nil {
 		t.Fatal(err)
 	}
-	// ut-docs#2717: the picture is image_path|icon — one of the two, never
-	// both. A library pick stores the icon id; an upload the path.
+	// The picture is image_path|icon. A library pick stores the icon id and
+	// clears the path (ut-docs#2717); an upload stores the path and keeps
+	// the icon (ut-docs#3585).
 	readImage := func(id string) string {
 		t.Helper()
 		var p string
@@ -134,13 +137,15 @@ func TestCategoryImage_CreateWithIconEditWithUploadThenIconThenNone(t *testing.T
 	if _, err := os.Stat(file); err != nil {
 		t.Fatalf("uploaded thumb not written at %s: %v", file, err)
 	}
-	if got := readImage(id); got != "/public/assets/categories/"+id+"/thumb.png|" {
-		t.Fatalf("edit with upload stored %q, want the path and the icon cleared", got)
+	// ut-docs#3585: the upload keeps the stored icon (the image shows; the
+	// icon is what the category falls back to).
+	if got := readImage(id); got != "/public/assets/categories/"+id+"/thumb.png|lucide:coffee" {
+		t.Fatalf("edit with upload stored %q, want the path and the icon kept", got)
 	}
 
 	// A plain Save with icon "" (keep) leaves the upload alone.
 	rec = postCategoryMultipart(t, mux, "/api/categories/"+id, []catPart{{"name", "Coffee Bar"}, {"icon", ""}}, nil, manager)
-	if rec.Code != http.StatusOK || readImage(id) != "/public/assets/categories/"+id+"/thumb.png|" {
+	if rec.Code != http.StatusOK || readImage(id) != "/public/assets/categories/"+id+"/thumb.png|lucide:coffee" {
 		t.Fatalf("keep: code=%d image=%q", rec.Code, readImage(id))
 	}
 
@@ -160,13 +165,32 @@ func TestCategoryImage_CreateWithIconEditWithUploadThenIconThenNone(t *testing.T
 	}
 
 	// "none" clears the picture — both columns, so an icon my. set can't
-	// linger behind it either.
+	// linger behind it either. This is the dialog's own one-of-three
+	// choice; only the cloud's set_catalog_image clear keeps the icon
+	// (ut-docs#3585, TestCloudSetCatalogImage_CategorySetClear).
 	if _, err := d.Db.Exec(`UPDATE categories SET icon = 'lucide:soup' WHERE id = ?`, id); err != nil {
 		t.Fatal(err)
 	}
 	rec = postCategoryMultipart(t, mux, "/api/categories/"+id, []catPart{{"name", "Coffee Bar"}, {"icon", "none"}}, nil, manager)
 	if rec.Code != http.StatusOK || readImage(id) != "|" {
 		t.Fatalf("none: code=%d image=%q", rec.Code, readImage(id))
+	}
+
+	// "none" over an uploaded photo AND an icon clears both and removes
+	// the file.
+	rec = postCategoryMultipart(t, mux, "/api/categories/"+id, []catPart{{"name", "Coffee Bar"}}, tinyPNG(t), manager)
+	if _, err := d.Db.Exec(`UPDATE categories SET icon = 'lucide:soup' WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK || readImage(id) != "/public/assets/categories/"+id+"/thumb.png|lucide:soup" {
+		t.Fatalf("re-upload: code=%d image=%q", rec.Code, readImage(id))
+	}
+	rec = postCategoryMultipart(t, mux, "/api/categories/"+id, []catPart{{"name", "Coffee Bar"}, {"icon", "none"}}, nil, manager)
+	if rec.Code != http.StatusOK || readImage(id) != "|" {
+		t.Fatalf("none over photo + icon: code=%d image=%q, want both cleared", rec.Code, readImage(id))
+	}
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Fatalf("none must remove the upload, stat err=%v", err)
 	}
 
 	// The list row carries the current picture for the dialog's picker:
@@ -193,6 +217,116 @@ func TestCategoryImage_CreateWithIconEditWithUploadThenIconThenNone(t *testing.T
 		if !strings.Contains(body, want) {
 			t.Errorf("GET /categories missing %s", want)
 		}
+	}
+}
+
+// ut-docs#3585: the image write-path helpers (storeCategoryPhoto: the
+// dialog's upload and set_catalog_image's apply; clearCategoryPicture:
+// set_catalog_image's clear) keep the stored icon: icon X set → upload a photo → icon still X → clear the photo → icon
+// still X and no image path, and the uploaded file is removed.
+func TestCategoryImage_UploadAndClearKeepTheIcon(t *testing.T) {
+	_, d := newCategoriesTestMux(t)
+	dataDir := useTempDataDir(t)
+	ctx := t.Context()
+	repo := data.NewCatalogRepo(d.Db)
+	id, err := repo.CreateCategory(ctx, "Beers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetCategoryPicture(ctx, id, "", "lucide:beer"); err != nil {
+		t.Fatal(err)
+	}
+	read := func() data.CategoryPictureRow {
+		t.Helper()
+		c, ok, err := repo.CategoryPicture(ctx, id)
+		if err != nil || !ok {
+			t.Fatalf("CategoryPicture: ok=%v err=%v", ok, err)
+		}
+		return c
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(tinyPNG(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storeCategoryPhoto(ctx, repo, id, img); err != nil {
+		t.Fatalf("storeCategoryPhoto: %v", err)
+	}
+	if c := read(); c.ImagePath != categoryThumbURL(id) || c.Icon != "lucide:beer" {
+		t.Fatalf("after upload = (%q, %q), want the photo and the icon kept", c.ImagePath, c.Icon)
+	}
+	file := filepath.Join(dataDir, "public", "assets", "categories", id, "thumb.png")
+	if _, err := os.Stat(file); err != nil {
+		t.Fatalf("thumb not written: %v", err)
+	}
+
+	if err := clearCategoryPicture(ctx, repo, id); err != nil {
+		t.Fatalf("clearCategoryPicture: %v", err)
+	}
+	if c := read(); c.ImagePath != "" || c.Icon != "lucide:beer" {
+		t.Fatalf("after clear = (%q, %q), want no image and the icon kept", c.ImagePath, c.Icon)
+	}
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Fatalf("cleared upload must be removed, stat err=%v", err)
+	}
+
+	// An unknown category is still refused (the icon read finds nothing,
+	// the write reports not found).
+	if err := clearCategoryPicture(ctx, repo, "nope"); !errors.Is(err, data.ErrCategoryNotFound) {
+		t.Fatalf("clear unknown id: %v, want ErrCategoryNotFound", err)
+	}
+}
+
+// TestCategoryImage_UploadOverLegacyTileKeepsTheTilesIcon covers a pre-#2717
+// row (ut-docs#3585 review finding #2): an older till stored a library pick
+// as image_path with icon left NULL. storedCategoryIcon must read that
+// tile's own id, not "", or uploading a photo over such a row erases the
+// tile's identity for good — no column is left holding it once image_path
+// is overwritten with the new photo's path — breaking "remove the image
+// shows the icon again" for exactly the row shape iconid.Resolve's own doc
+// comment says exists in production.
+func TestCategoryImage_UploadOverLegacyTileKeepsTheTilesIcon(t *testing.T) {
+	_, d := newCategoriesTestMux(t)
+	useTempDataDir(t)
+	ctx := t.Context()
+	repo := data.NewCatalogRepo(d.Db)
+	id, err := repo.CreateCategory(ctx, "Beers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tilePath := iconid.AssetPath("lucide:beer")
+	if tilePath == "" {
+		t.Fatal("lucide:beer has no library tile; pick a different id")
+	}
+	// The legacy shape: image_path is the tile, icon column is NULL/"".
+	if err := repo.SetCategoryPicture(ctx, id, tilePath, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(tinyPNG(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storeCategoryPhoto(ctx, repo, id, img); err != nil {
+		t.Fatalf("storeCategoryPhoto: %v", err)
+	}
+	c, ok, err := repo.CategoryPicture(ctx, id)
+	if err != nil || !ok {
+		t.Fatalf("CategoryPicture: ok=%v err=%v", ok, err)
+	}
+	if c.ImagePath != categoryThumbURL(id) || c.Icon != "lucide:beer" {
+		t.Fatalf("after upload over a legacy tile = (%q, %q), want the photo and the tile's own id carried into icon", c.ImagePath, c.Icon)
+	}
+
+	if err := clearCategoryPicture(ctx, repo, id); err != nil {
+		t.Fatalf("clearCategoryPicture: %v", err)
+	}
+	c, ok, err = repo.CategoryPicture(ctx, id)
+	if err != nil || !ok {
+		t.Fatalf("CategoryPicture: ok=%v err=%v", ok, err)
+	}
+	if c.ImagePath != "" || c.Icon != "lucide:beer" {
+		t.Fatalf("after clear = (%q, %q), want no image and the tile's id now the real icon", c.ImagePath, c.Icon)
 	}
 }
 

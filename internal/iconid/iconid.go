@@ -74,13 +74,14 @@ func IDForAssetPath(path string) string {
 // generic tile — and id the icon to draw when path is "" or this till
 // cannot serve it (a photo's file does not travel over LAN sync).
 //
-//   - A set icon beats a library tile. Writers now keep only one of the
-//     two columns, so both being set means a row from before #2717: a
+//   - A set icon beats a library tile. Writers replace a tile when they
+//     set an icon, so both being set means a row from before #2717: a
 //     library pick on the till with a later icon from my. over it — the
 //     pilot's case, where the newer icon must show.
 //   - A library tile with no icon reads as the tile's own id.
-//   - An uploaded photo wins over an icon (again a pre-#2717 row); the icon
-//     stays the fallback for a till without the photo's file.
+//   - An uploaded photo wins over an icon (ut-docs#3585: writers keep both
+//     columns); the icon stays the fallback once the photo is removed, and
+//     for a till without the photo's file.
 func Resolve(imagePath, icon string) (path, id string) {
 	libID, isLib := libraryPaths[imagePath]
 	switch {

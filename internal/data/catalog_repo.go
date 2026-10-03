@@ -1344,9 +1344,10 @@ type CategoryNode struct {
 	// ImagePath (ut-docs#2500) is the category's image as a /public/...
 	// path — an uploaded photo, the id-less generic library tile, or (on
 	// rows written before ut-docs#2717, when a library pick stored its
-	// path) a built-in icon — or "" for none. A category has one picture:
-	// writers keep only one of ImagePath/Icon, and iconid.Resolve decides
-	// for older rows holding both. Whether an uploaded file is actually
+	// path) a built-in icon — or "" for none. ImagePath and Icon may both
+	// be set (ut-docs#3585): the image displays, the icon is its fallback
+	// once the image is removed — iconid.Resolve/EffectiveIcon decide
+	// which one a reader sees. Whether an uploaded file is actually
 	// present on THIS till is the renderer's question, not the repo's.
 	ImagePath string
 	// Icon (manage-shop catalog contract §0.12, migration 041) is an icon
@@ -1635,22 +1636,21 @@ func (r *CatalogRepo) UpdateCategoryWithHidden(ctx context.Context, id, name, co
 	return nil
 }
 
-// SetCategoryPicture stores a category's one picture (ut-docs#2500,
-// #2717): an image path (an uploaded photo's
-// /public/assets/categories/<id>/thumb.png, or the id-less generic
-// library tile) OR an icon id ("lucide:beer", contract §0.12) — the other
-// column is cleared in the same UPDATE, so the last writer wins whether it
-// is this till's editor or a save_category directive from my. Both ""
-// clears the picture (NULL, NULL). A malformed icon id is refused; an
-// unknown category is ErrCategoryNotFound. Validating the path (a written
-// upload, a library key) is the handler's job.
+// SetCategoryPicture writes a category's two picture columns in one UPDATE
+// (ut-docs#2500, #2717, #3585): the image path (an uploaded photo's
+// /public/assets/categories/<id>/thumb.png, or the id-less generic library
+// tile) and the icon id ("lucide:beer", contract §0.12). Both may be set at
+// once — a category can keep an icon underneath its photo — and each ""
+// stores NULL in that column, so a caller that wants to keep one column
+// passes its current value (see CategoryPicture). Which one is displayed
+// (the image wins, else the icon) is decided by the iconid package
+// (iconid.Resolve / EffectiveIcon), not here. A malformed icon id is
+// refused; an unknown category is ErrCategoryNotFound. Validating the path
+// (a written upload, a library key) is the handler's job.
 func (r *CatalogRepo) SetCategoryPicture(ctx context.Context, id, imagePath, icon string) error {
 	imagePath, icon = strings.TrimSpace(imagePath), strings.TrimSpace(icon)
 	if icon != "" && !iconid.ValidFormat(icon) {
 		return fmt.Errorf("icon %q is not a valid icon id", icon)
-	}
-	if imagePath != "" && icon != "" {
-		return errors.New("a category has one picture: an image path or an icon id, not both")
 	}
 	res, err := r.db.ExecContext(ctx, `UPDATE categories SET image_path = ?, icon = ?, updated_at = datetime('now') WHERE id = ?`,
 		nullableString(imagePath), nullableString(icon), id)
@@ -1663,9 +1663,10 @@ func (r *CatalogRepo) SetCategoryPicture(ctx context.Context, id, imagePath, ico
 	return nil
 }
 
-// CategoryPictureRow is a category's name and its one picture: an image
-// path (an uploaded photo, or a library tile an older till stored as a
-// path) or an icon id.
+// CategoryPictureRow is a category's name, its image path (an uploaded
+// photo, or a library tile an older till stored as a path) and its icon id
+// — both may be set at once (ut-docs#3585); iconid.Resolve decides which
+// one displays.
 type CategoryPictureRow struct {
 	Name      string
 	ImagePath string

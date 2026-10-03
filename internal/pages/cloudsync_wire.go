@@ -951,7 +951,11 @@ func remoteCategoriesReport(ctx context.Context, d *common.Deps) []map[string]an
 			// screen actually draws (ut-docs#2717): a library tile an
 			// older till stored as a path reports as its id, a photo as
 			// "" — so my. shows what the till shows.
-			"icon":                iconid.EffectiveIcon(c.ImagePath, c.Icon),
+			"icon": iconid.EffectiveIcon(c.ImagePath, c.Icon),
+			// icon_stored is the raw icon column, set even while a photo
+			// hides it (icon above is the displayed one), so my.'s picker
+			// shows the icon actually stored (ut-docs#3585).
+			"icon_stored":         c.Icon,
 			"show_on_sale_screen": !c.SellScreenHidden,
 			"sort_order":          c.SortOrder,
 			"active":              c.IsActive,
