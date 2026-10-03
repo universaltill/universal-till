@@ -862,8 +862,9 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// immediately before the payment.<key>.refund webhook below —
 		// mirroring completeTender's ordering (pos_api.go): after every
 		// earlier check capable of refusing the refund outright (quantity/
-		// discount/service-charge validation above), before the one
-		// remaining step that can still fail (the provider webhook).
+		// discount/service-charge validation above), before the provider
+		// webhook. A later cannot-sign refusal (ADR-0146) leaves this start
+		// unfinished, the same accepted outcome as a provider decline.
 		// Firing any earlier (e.g. right after the ADR-0048 gate, before
 		// this request's own line/quantity/discount validation) would start
 		// a TSE-side transaction for a refund a plain input mistake was
@@ -954,7 +955,11 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			digest := sha256.Sum256(digestBytes)
 			requestID = fmt.Sprintf("%s:%x", refundAttemptID, digest[:8])
 		}
-		refundResp, blocked := blockingPaymentEventWithResponseAndID(r.Context(), d, method, "refund", requestID, refundPayload)
+		// refundDelivered (ADR-0146, ut-docs#3408): whether a
+		// payment.<key>.refund subscriber really ran, i.e. whether money has
+		// already moved electronically by the time fiscal.sign.ask answers
+		// below. Only then can a cannot-sign answer not be refused.
+		refundResp, refundDelivered, blocked := blockingPaymentEventDispatch(r.Context(), d, method, "refund", requestID, refundPayload)
 		if blocked != nil {
 			// ut-docs#950: `blocked` is a plugin-originated error -- whatever
 			// text a third-party payment plugin's payment.<key>.refund hook
@@ -1033,9 +1038,10 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// the gate check. Dispatched here, after the payment-provider refund
 		// webhook above has resolved and saleInput is final, mirroring
 		// completeTender's own ordering (pos_api.go) exactly: after any
-		// payment-provider interaction, before CompleteSale persists. Never
-		// blocks or refuses the refund — any failure lands on the
-		// proceed-and-declare surface below, same as a sale's.
+		// payment-provider interaction, before CompleteSale persists. A
+		// cannot-sign answer is refused just below when no money has moved
+		// yet (ADR-0146); every other failure lands on the
+		// proceed-and-declare surface further down, same as a sale's.
 		// saleInput.SaleType is already "return" (set above), so
 		// buildFiscalSignPayload's SaleType field (contract 1.6.0,
 		// ut-docs#1203) lets a signer tell this apart from a sale of the
@@ -1043,6 +1049,20 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		// this dispatch (universal-till PR #594, closed unmerged; see
 		// docs/code-reviews/2026-09-03-fiscal-sign-refund-return-dispatch-1405.md).
 		signRes := dispatchFiscalSignAsk(r.Context(), d, &saleInput)
+
+		// ADR-0146 Decision 1 (ut-docs#3408, amends ADR-0136 Decision 0): a
+		// cannot-sign answer is a property of this refund's own data, not an
+		// outage, so it is refused like a sale's (ADR-0136) — but only
+		// while no money has moved electronically: cash or a method with no
+		// payment.<key>.refund subscriber. The cashier hands cash over only
+		// after this request succeeds, so a refusal re-collects nothing. A
+		// refund a provider already sent back keeps proceed-and-declare
+		// below (ADR-0146 Decision 3, ut-docs#3556).
+		if signRes.Outcome == fiscalSignCannotSign && !refundDelivered {
+			common.LogAndLocalizedError(w, r, http.StatusConflict, "refund.error.fiscal_cannot_sign", "refund",
+				errors.New("fiscal signer answered cannot-sign for a refund with no money moved yet (ADR-0146)"))
+			return
+		}
 
 		saleID, err := pos.CompleteSale(r.Context(), d.Db, saleInput)
 		if err != nil {
