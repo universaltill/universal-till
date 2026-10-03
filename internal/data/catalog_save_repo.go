@@ -54,6 +54,16 @@ type ItemPatch struct {
 	StockUntracked    *bool
 	ModifierGroupIDs  *[]string
 	ModifierOptOutIDs *[]string
+	// NetQuantityValue/NetQuantityUnit set a pre-packed item's net content
+	// (ut-docs#3402, the set_net_quantity directive). They travel as a
+	// pair: either non-nil means the patch sets BOTH, and the pair must
+	// pass catalogtypes.ValidNetQuantity. Both nil = keep the stored pair.
+	NetQuantityValue *int64
+	NetQuantityUnit  *string
+	// ClearNetQuantity removes the stored pair (both columns NULL). It is
+	// its own flag because nil already means "keep"; combining it with
+	// either net-quantity field is refused.
+	ClearNetQuantity bool
 }
 
 // ItemSaveResult reports what SaveItem did.
@@ -161,6 +171,12 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 		if list != nil && len(*list) > maxItemModifierGroups {
 			return res, fmt.Errorf("an item can have at most %d modifier groups", maxItemModifierGroups)
 		}
+	}
+	setNetQuantity := p.NetQuantityValue != nil || p.NetQuantityUnit != nil
+	if setNetQuantity && (p.ClearNetQuantity || !catalogtypes.ValidNetQuantity(p.NetQuantityValue, p.NetQuantityUnit)) {
+		// updateItemExec checks the pair again; this fails fast, before
+		// the write lock, like every other field here.
+		return res, ErrInvalidNetQuantity
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -270,6 +286,16 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 	if p.StockUntracked != nil {
 		cur.StockUntracked = *p.StockUntracked
 		res.Changed = append(res.Changed, "stock_untracked")
+	}
+	if setNetQuantity {
+		// The pair travels together: a patch carrying it replaces both.
+		cur.NetQuantityValue = p.NetQuantityValue
+		cur.NetQuantityUnit = p.NetQuantityUnit
+		res.Changed = append(res.Changed, "net_quantity")
+	} else if p.ClearNetQuantity {
+		cur.NetQuantityValue = nil
+		cur.NetQuantityUnit = nil
+		res.Changed = append(res.Changed, "net_quantity")
 	}
 	deactivate := false
 	if p.Active != nil {

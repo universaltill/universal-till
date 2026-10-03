@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -175,6 +176,9 @@ type installableTaxPlugin struct {
 //   - the catalog is unreachable with nothing cached: an Offline tile, true
 //     (ut-docs#1512 — the operator is still prompted; the install is queued
 //     for when the till is online).
+//   - an active local plugin with a tax entry is meant for this country
+//     (ADR-0129 markets, none = every market): nil, false, online or
+//     offline, checked before the catalog (ut-docs#3211).
 //   - no CanonicalType=="tax" listing declares the mapped locale: nil, false.
 //   - the best match is already installed and active: nil, false — this is
 //     what makes the tile disappear the moment install actually lands.
@@ -182,6 +186,19 @@ func setupInstallableTaxPlugin(ctx context.Context, d *common.Deps, country stri
 	locale, ok := countryTaxLocale[strings.ToUpper(strings.TrimSpace(country))]
 	if !ok {
 		return nil, false
+	}
+
+	// ut-docs#3211: ask the till itself first whether an active tax plugin
+	// for this country is already here — sideloaded from a file, a restored
+	// DB, or a wizard re-run after a reset. Offline there is no listing id for
+	// the install-status check below, and online that check only knows
+	// marketplace installs, so without this the tile showed and its consent
+	// or Skip queued a spurious second fiscal install. A read error fails
+	// open to still prompting, same posture as the install-status check.
+	if installed, err := data.NewPluginRepo(d.Db).HasActiveEntryTypeForMarket(ctx, "tax", country); err == nil && installed {
+		return nil, false
+	} else if err != nil {
+		logging.L().Warnf("setup wizard: local tax plugin check failed (still prompting): %v", err)
 	}
 
 	entries, fetched := setupTaxCatalogEntries(ctx, d)

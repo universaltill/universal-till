@@ -391,6 +391,7 @@ func TestTickSatelliteSkipsMainTillOnlyTypes(t *testing.T) {
 		{"id": "d8", "type": "save_option_set", "payload": map[string]any{"id": "s1"}},
 		{"id": "d9", "type": "delete_option_set", "payload": map[string]any{"id": "s1"}},
 		{"id": "d10", "type": "save_item_variant", "payload": map[string]any{"item_id": "i1", "variant_id": "v1", "name": "L"}},
+		{"id": "d11", "type": "set_net_quantity", "payload": map[string]any{"id": "i1", "net_quantity_value": 500.0, "net_quantity_unit": "g"}},
 	}}
 	srv := httptest.NewServer(cloud.handler())
 	defer srv.Close()
@@ -658,5 +659,88 @@ func TestSnapshotReportsEverSold(t *testing.T) {
 	}
 	if got := everSold(cloud.snapshots[1]); got["es-sold"] != true || got["es-new"] != false {
 		t.Fatalf("after a sale: %v / %v", got["es-sold"], got["es-new"])
+	}
+}
+
+// ut-docs#3402 (contract §3.12): set_net_quantity rides the save_item
+// repository path — it decodes to a data.ItemPatch carrying only the id and
+// the net-quantity pair (or ClearNetQuantity) and calls the SaveItem hook,
+// so it shares save_item's audit row and idempotency. No new hook.
+func TestApplySetNetQuantity(t *testing.T) {
+	if status, msg := apply(context.Background(), directive{Type: "set_net_quantity", Payload: map[string]any{"id": "i1", "clear": true}}, Hooks{}); status != "failed" || msg != "set_net_quantity is not supported on this till" {
+		t.Fatalf("nil hook: %q %q", status, msg)
+	}
+	var calls int
+	var got data.ItemPatch
+	hooks := Hooks{SaveItem: func(ctx context.Context, p data.ItemPatch) (string, error) {
+		calls++
+		got = p
+		if p.NetQuantityUnit != nil && *p.NetQuantityUnit == "kg" {
+			// Stands in for the repository's ValidNetQuantity refusal.
+			return "", data.ErrInvalidNetQuantity
+		}
+		return "updated Rice", nil
+	}}
+	for _, c := range []struct {
+		payload map[string]any
+		want    string
+	}{
+		{map[string]any{"net_quantity_value": 500.0, "net_quantity_unit": "g"}, "missing id"},
+		{map[string]any{"id": " ", "net_quantity_value": 500.0, "net_quantity_unit": "g"}, "missing id"},
+		{map[string]any{"id": "i1"}, "missing net_quantity_value"},
+		{map[string]any{"id": "i1", "clear": false}, "missing net_quantity_value"},
+		{map[string]any{"id": "i1", "net_quantity_unit": "g"}, "missing net_quantity_value"},
+		{map[string]any{"id": "i1", "net_quantity_value": 500.0}, "missing net_quantity_unit"},
+		{map[string]any{"id": "i1", "net_quantity_value": 500.0, "net_quantity_unit": " "}, "missing net_quantity_unit"},
+		{map[string]any{"id": "i1", "net_quantity_value": 1.5, "net_quantity_unit": "g"}, "bad net_quantity_value"},
+		{map[string]any{"id": "i1", "net_quantity_value": "lots", "net_quantity_unit": "g"}, "bad net_quantity_value"},
+		{map[string]any{"id": "i1", "net_quantity_value": 500.0, "net_quantity_unit": 1.0}, "bad net_quantity_unit"},
+		{map[string]any{"id": "i1", "clear": "maybe"}, "bad clear"},
+		{map[string]any{"id": "i1", "clear": true, "net_quantity_value": 500.0}, "net_quantity_value and clear cannot both be set"},
+		{map[string]any{"id": "i1", "clear": true, "net_quantity_unit": "g"}, "net_quantity_value and clear cannot both be set"},
+	} {
+		if status, msg := apply(context.Background(), directive{Type: "set_net_quantity", Payload: c.payload}, hooks); status != "failed" || msg != c.want {
+			t.Errorf("%v: %q %q, want failed %q", c.payload, status, msg, c.want)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("hook ran %d times for refused payloads", calls)
+	}
+
+	// Set: numbers as float or string, the patch carries ONLY id + pair, so
+	// SaveItem touches nothing else on the item.
+	status, msg := apply(context.Background(), directive{Type: "set_net_quantity", Payload: map[string]any{
+		"id": " i1 ", "net_quantity_value": "500", "net_quantity_unit": " g ", "name": "ignored: not this directive's field",
+	}}, hooks)
+	if status != "applied" || msg != "updated Rice" {
+		t.Fatalf("set: %q %q", status, msg)
+	}
+	want := data.ItemPatch{ID: "i1", NetQuantityValue: got.NetQuantityValue, NetQuantityUnit: got.NetQuantityUnit}
+	if got.NetQuantityValue == nil || *got.NetQuantityValue != 500 || got.NetQuantityUnit == nil || *got.NetQuantityUnit != "g" || !reflect.DeepEqual(got, want) {
+		t.Fatalf("set decoded = %+v", got)
+	}
+
+	// Clear: only the flag.
+	if status, msg := apply(context.Background(), directive{Type: "set_net_quantity", Payload: map[string]any{"id": "i1", "clear": true}}, hooks); status != "applied" || msg != "updated Rice" {
+		t.Fatalf("clear: %q %q", status, msg)
+	}
+	if !reflect.DeepEqual(got, data.ItemPatch{ID: "i1", ClearNetQuantity: true}) {
+		t.Fatalf("clear decoded = %+v", got)
+	}
+
+	// An invalid pair (here an unknown unit) is refused by the repository
+	// and fails the directive with its text.
+	if status, msg := apply(context.Background(), directive{Type: "set_net_quantity", Payload: map[string]any{"id": "i1", "net_quantity_value": 1.0, "net_quantity_unit": "kg"}}, hooks); status != "failed" || msg != "invalid net quantity" {
+		t.Fatalf("invalid pair: %q %q", status, msg)
+	}
+}
+
+// §3.12: set_net_quantity is main-till only and a catalog type.
+func TestSetNetQuantityIsMainTillOnlyCatalogType(t *testing.T) {
+	if !mainTillOnlyTypes["set_net_quantity"] {
+		t.Error("set_net_quantity not in mainTillOnlyTypes")
+	}
+	if !catalogTypes["set_net_quantity"] {
+		t.Error("set_net_quantity not in catalogTypes")
 	}
 }
