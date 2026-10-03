@@ -2470,7 +2470,7 @@ func insertItemRow(ctx context.Context, q dbExecutor, in *catalogtypes.ItemInput
 	autoSKU := isBlankSKU(in.SKU)
 	for attempt := 1; ; attempt++ {
 		if autoSKU {
-			sku, err := nextItemSKU(ctx, q, in.CategoryID)
+			sku, err := nextItemSKU(ctx, q, in.CategoryID, nil)
 			if err != nil {
 				return fmt.Errorf("generate item sku: %w", err)
 			}
