@@ -311,6 +311,96 @@ func TestResumeHandler_AutoParksBusyBasketThenResumes(t *testing.T) {
 	}
 }
 
+// TestResumeHandler_AutoParksByHandOnlyBasketThenResumes (ut-docs#3586): the
+// busy check gated on HasItems() (priced lines only), so a live basket that
+// was itself resumed from a kiosk pay-at-counter order with zero priced
+// lines -- only "add by hand" entries, open_orders_counter.go -- read as
+// NOT busy. Resuming a second order over it skipped the auto-park and
+// RestoreHeld overwrote it: the order vanished with no held row, no sale
+// and no audit entry.
+func TestResumeHandler_AutoParksByHandOnlyBasketThenResumes(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	// The live basket is a by-hand-only order, as if just resumed from a
+	// kiosk pay-at-counter order none of whose lines matched the catalog.
+	dp.Engine.RestoreHeld(pos.BasketSnapshot{
+		AddByHand: []pos.ByHandLine{{Name: "Latte", Qty: 2}},
+		DisplayNo: "C-12",
+	}, pos.HeldOrigin{ID: "hold-byhand-1", Label: "C-12 · Takeaway", CreatedAt: "2026-01-01 10:00:00"})
+
+	// A second, distinct held order to resume into.
+	if _, err := dp.Db.Exec(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id, created_at) VALUES
+ ('hold-target','Table 4',0,0,'{"lines":[{"sku":"ABC","name":"ABC","qty":1,"price_cents":100}],"total":100}','',datetime('now'))`); err != nil {
+		t.Fatalf("seed target held row: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/resume", strings.NewReader("id=hold-target"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), httpx.T("en", "hold.toast.parked_and_resumed")) {
+		t.Fatalf("expected the parked-and-resumed toast (the by-hand order was busy and had to be auto-parked), got: %s", rec.Body.String())
+	}
+	if dp.Engine.HeldOrigin().ID != "hold-target" {
+		t.Fatalf("expected the live basket's held origin to be hold-target, got %+v", dp.Engine.HeldOrigin())
+	}
+
+	// The by-hand-only order must not be lost: it is parked, under its OWN
+	// id, still carrying its add-by-hand line -- never overwritten by
+	// hold-target.
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM held_sales`).Scan(&count); err != nil {
+		t.Fatalf("query held_sales: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly one held row (the auto-parked by-hand order), got %d", count)
+	}
+	var autoParkedID, payload string
+	if err := dp.Db.QueryRow(`SELECT id, payload FROM held_sales`).Scan(&autoParkedID, &payload); err != nil {
+		t.Fatalf("expected the auto-parked row: %v", err)
+	}
+	if autoParkedID != "hold-byhand-1" {
+		t.Fatalf("expected the auto-parked row to keep its own id hold-byhand-1 (not overwrite hold-target), got %q", autoParkedID)
+	}
+	if !strings.Contains(payload, `"name":"Latte"`) {
+		t.Fatalf("expected the auto-parked payload to still carry its add-by-hand line, got %q", payload)
+	}
+}
+
+// TestHoldHandler_ByHandOnlyBasketIsNotRejectedAsEmpty (ut-docs#3586): the
+// empty-basket refusal gated on HasItems() (priced lines only) too, so a
+// cashier who tapped Hold on a resumed by-hand-only order got the
+// empty-basket error instead of it being parked.
+func TestHoldHandler_ByHandOnlyBasketIsNotRejectedAsEmpty(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	dp.Engine.RestoreHeld(pos.BasketSnapshot{
+		AddByHand: []pos.ByHandLine{{Name: "Latte", Qty: 2}},
+		DisplayNo: "C-12",
+	}, pos.HeldOrigin{ID: "hold-byhand-1", Label: "C-12 · Takeaway", CreatedAt: "2026-01-01 10:00:00"})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/hold", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), httpx.T("en", "hold.error.empty")) {
+		t.Fatalf("expected the by-hand-only basket to be held, not rejected as empty: %s", rec.Body.String())
+	}
+	if dp.Engine.HeldOrigin().ID != "" {
+		t.Fatalf("expected the live basket to be cleared after hold, got origin %+v", dp.Engine.HeldOrigin())
+	}
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM held_sales WHERE id = 'hold-byhand-1'`).Scan(&count); err != nil {
+		t.Fatalf("query held_sales: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected the by-hand-only order to be re-parked under its own id, got %d matching rows", count)
+	}
+}
+
 // TestResumeHandler_BusyBasketNotParkedWhenTargetMissing (ut-docs#1919): the
 // live basket is only ever parked once the resume is known to be able to
 // proceed -- an unknown target must not cost the cashier their in-progress
