@@ -1750,6 +1750,7 @@
   "refund.col.refund_qty": "İade adedi",
   "refund.col.remaining": "İade edilebilir",
   "refund.col.sold": "Satılan",
+  "refund.error.fiscal_cannot_sign": "İade tamamlanmadı: mali imza hizmeti bu iadeyi bu haliyle imzalayamıyor, bu yüzden hiçbir tutar iade edilmedi. Orijinal satışın vergi oranını veya indirimini kontrol edin ya da bir yöneticiye sorun.",
   "refund.error.fiscal_device_no_receipt": "Yazar kasa bu iade için fiş onayı vermedi — tekrar denemeden önce cihazı kontrol edin",
   "refund.error.fiscal_never_configured": "İade tamamlanmadı: bu mağaza, ülkesinin yasal kayıt sistemine göre gerçek satışları kaydedecek şekilde ayarlı, ancak yapılandırılmış bir mali imza cihazı yok, bu yüzden kasa bu iadeyi kaydetmeyecek. Ülkenizin gerektirdiği mali imza cihazını kurun — kendi donanımınızı, kendi bulut hesabınızı veya (varsa) yönetilen bir aboneliği kullanabilirsiniz; ya da hazır olana kadar mağazayı gerçek satış modundan çıkarması için bir yöneticiden isteyin.",
   "refund.error.fiscal_tse_failing": "İade tamamlanmadı: mağazanın mali imza cihazı şu anda arızalı olarak bildirilmiş durumda; bu yüzden kasa bu iadeyi kaydetmeyecek. Mağaza sahibi (yönetici) süreli ve geçici bir geçersiz kılma verebilir ya da cihaz tekrar çalıştığında yeniden deneyin.",

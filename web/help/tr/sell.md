@@ -162,7 +162,7 @@ Self-servis kioskta ise müşteriden bunun yerine kasaya başvurması istenir.
 
 Almanya'daki mağazalarda kasa ayrıca oranı imzalama hizmetinin tanımadığı bir vergi kodunu (%19, %7, %10,7, %5,5 veya %0 dışında) kaydetmeyi reddeder; böylece yanlış bir oran satış sırasında değil, tanımlanırken fark edilir.
 
-Tek istisna iadelerdir: imzalama eklentisinin imzalayamadığı bir iade yine tamamlanır ve kesintideki gibi kaydedilir; ancak fişindeki not, TSE imzalamanın kullanılamadığını değil, olduğu haliyle imzalanamadığını belirtir.
+Henüz para hareket etmediği sürece iadeler ve geri almalar da aynı kurala uyar: imzalama eklentisinin imzalayamadığı bir nakit iade veya Envanter sayfasından yapılan bir geri alma, hiçbir tutarın iade edilmediğini söyleyen bir mesajla reddedilir — orijinal satışın vergi oranını veya indirimini kontrol edin. Tek istisna, kart veya başka bir ödeme sağlayıcısı üzerinden geri ödenen iadedir: imzalama eklentisi yanıt verdiğinde sağlayıcı parayı zaten geri göndermiştir, bu yüzden bu iade yine tamamlanır ve kesintideki gibi kaydedilir; ancak fişindeki not, TSE imzalamanın kullanılamadığını değil, olduğu haliyle imzalanamadığını belirtir.
 
 ### Fişlerdeki TSE imza bloğu
 

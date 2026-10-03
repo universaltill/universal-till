@@ -162,7 +162,7 @@ Am Selbstbedienungskiosk wird der Kunde stattdessen an die Theke verwiesen.
 
 Für deutsche Geschäfte speichert die Kasse außerdem keinen Steuercode, dessen Satz der Signierdienst nicht kennt (19 %, 7 %, 10,7 %, 5,5 % oder 0 %) — ein falscher Satz fällt so schon beim Einrichten auf und nicht erst an der Kasse.
 
-Die einzige Ausnahme sind Rückerstattungen: Eine Rückerstattung, die das Signier-Plugin nicht signieren kann, wird weiterhin abgeschlossen und wie bei einem Ausfall aufgezeichnet — nur sagt der Hinweis auf dem Beleg, dass sie in der vorgelegten Form nicht signiert werden konnte, nicht, dass die TSE-Signierung nicht verfügbar war.
+Für Rückerstattungen und Rücknahmen gilt dieselbe Regel, solange noch kein Geld geflossen ist: Eine Bar-Rückerstattung oder eine Rücknahme über die Seite Lager, die das Signier-Plugin nicht signieren kann, wird mit einer Meldung abgelehnt, dass nichts erstattet wurde — prüfen Sie den Steuersatz oder Rabatt des ursprünglichen Verkaufs. Die einzige Ausnahme ist eine Rückerstattung über eine Karte oder einen anderen Zahlungsanbieter: Der Anbieter hat das Geld bereits zurückgezahlt, wenn das Signier-Plugin antwortet, daher wird diese Rückerstattung weiterhin abgeschlossen und wie bei einem Ausfall aufgezeichnet — nur sagt der Hinweis auf dem Beleg, dass sie in der vorgelegten Form nicht signiert werden konnte, und nicht, dass die TSE-Signatur nicht verfügbar war.
 
 ### Der TSE-Signaturblock auf Belegen
 

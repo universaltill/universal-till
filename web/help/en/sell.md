@@ -175,7 +175,7 @@ On the self-order kiosk, the customer is asked to see the counter instead.
 
 For German shops the till also refuses to save a tax code whose rate the signing service doesn't recognise (19%, 7%, 10.7%, 5.5% or 0%), so a wrong rate is caught when it's set up rather than at the till.
 
-Refunds are the one exception: a refund the signing plugin can't sign still completes and is recorded the same way as an outage, except that its receipt notice says it could not be signed as presented, not that TSE signing was unavailable.
+Refunds and returns follow the same rule while no money has moved yet: a cash refund, or a return from the Inventory page, that the signing plugin can't sign is refused with a message saying nothing was refunded — check the original sale's tax rate or discount. The one exception is a refund paid back through a card or other payment provider: the provider has already sent the money back by the time the signing plugin answers, so that refund still completes and is recorded the same way as an outage, except that its receipt notice says it could not be signed as presented, not that TSE signing was unavailable.
 
 ### The TSE signature block on receipts
 

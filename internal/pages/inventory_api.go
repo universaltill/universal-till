@@ -687,13 +687,25 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 		// completeTender's ordering (pos_api.go): after any payment-provider
 		// interaction (none on this path — the return always pays via the
 		// fixed "cash" method above, so there is no provider webhook to wait
-		// on), before CompleteSale persists. Never blocks or refuses the
-		// return — any failure lands on the proceed-and-declare surface
-		// below. returnInput.SaleType is already "return" (set above), so
+		// on), before CompleteSale persists. A cannot-sign answer is
+		// refused just below (ADR-0146); every other failure lands on the
+		// proceed-and-declare surface further down. returnInput.SaleType is already "return" (set above), so
 		// buildFiscalSignPayload's SaleType field (contract 1.6.0,
 		// ut-docs#1203) lets a signer tell this apart from a sale of the
 		// same amount.
 		signRes := dispatchFiscalSignAsk(ctx, dp, &returnInput)
+
+		// ADR-0146 Decision 1 (ut-docs#3408, amends ADR-0136 Decision 0): a
+		// cannot-sign answer is a property of this return's own data, not an
+		// outage, so it is refused like a sale's (ADR-0136). This return
+		// always pays cash with no provider webhook, and the cashier hands
+		// the cash over only after this request succeeds, so nothing has
+		// moved and the refusal re-collects nothing.
+		if signRes.Outcome == fiscalSignCannotSign {
+			log.Printf("inventory return rejected: fiscal signer answered cannot-sign (ADR-0146)")
+			respondReturnError(w, r, http.StatusConflict, httpx.T(httpx.ResolveLocale(w, r), "refund.error.fiscal_cannot_sign"))
+			return
+		}
 
 		returnSaleID, err := pos.CompleteSale(ctx, dp.Db, returnInput)
 		if err != nil {
