@@ -63,7 +63,9 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   same-line `// i18n:ignore` (#205, #453).
 - RTL: `dir` comes from the locale (`httpx.IsRTL`); use logical CSS
   properties (`margin-inline-start`, `text-align: start`), never left/right.
-- A new `en.json` key needs follow-up PRs in `ut-plugin-language-{de,es}`.
+- A new `en.json` key needs follow-up PRs in every `ut-plugin-language-*`
+  pack `scripts/ci/check-lang-pack-drift.sh` checks — see that script's
+  `PACKS` array for the current list; never hard-code pack names here.
   `lang-pack-drift.yml` blocks on `push` to `main` and is advisory on PRs
   touching `en.json` (its `::warning::` names the pack repos — #1857); it is
   `paths:`-scoped, so its absence on other PRs is normal. Never make it a
