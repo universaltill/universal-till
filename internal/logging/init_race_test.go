@@ -12,17 +12,17 @@ import (
 // outside once.Do races with the write inside it.
 func TestLConcurrentFirstUseIsRaceFree(t *testing.T) {
 	L() // make sure prev is non-nil
-	prev := defaultLogger
+	prev := defaultLogger.Load()
 	prevWriter := log.Writer()
 	prevFlags := log.Flags()
 	t.Cleanup(func() {
-		defaultLogger = prev
+		defaultLogger.Store(prev)
 		log.SetOutput(prevWriter)
 		log.SetFlags(prevFlags)
 	})
 
 	once = sync.Once{}
-	defaultLogger = nil
+	defaultLogger.Store(nil)
 
 	const n = 16
 	start := make(chan struct{})

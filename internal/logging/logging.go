@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/clock"
@@ -63,9 +64,12 @@ type Logger struct {
 	log   *log.Logger
 }
 
-// global logger instance and once-init
+// global logger instance and once-init. defaultLogger is an atomic.Pointer
+// so every read and write of the variable itself is synchronised, not only
+// the once.Do callback: a goroutine already inside L() must not race a
+// swap of the logger (ut-docs#3513).
 var (
-	defaultLogger *Logger
+	defaultLogger atomic.Pointer[Logger]
 	once          sync.Once
 )
 
@@ -90,12 +94,13 @@ func Init() {
 			log.SetOutput(redactingWriter{w: os.Stderr})
 		}
 
-		defaultLogger = &Logger{
+		l := &Logger{
 			level: lvl,
 			log:   base,
 		}
+		defaultLogger.Store(l)
 
-		defaultLogger.Infof("logging initialised with level=%s", lvl.String())
+		l.Infof("logging initialised with level=%s", lvl.String())
 	})
 }
 
@@ -106,7 +111,7 @@ func Init() {
 // data race against the initialising goroutine (ut-docs#3410).
 func L() *Logger {
 	Init() // once.Do is the synchronisation point: every caller sees the write (ut-docs#3410)
-	return defaultLogger
+	return defaultLogger.Load()
 }
 
 // Problem is one recent warn/error line, kept in memory so the cloud sync
