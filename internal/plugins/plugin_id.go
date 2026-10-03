@@ -50,6 +50,12 @@ func validatePluginID(id string) error {
 	if len(id) > maxPluginIDLen || !pluginIDPattern.MatchString(id) || strings.Contains(id, "..") || windowsUnsafe(id) {
 		return fmt.Errorf("invalid plugin id %q (lower-case letters, digits, '.', '_' and '-' only, starting with a letter or digit, at most %d characters)", id, maxPluginIDLen)
 	}
+	// A plugin's event namespace is its id (ADR-0121 §2, 2026-10-03
+	// amendment, ut-docs#3329), so an id starting with a core event root
+	// would let the plugin raise core events.
+	if root, _, _ := strings.Cut(id, "."); coreEventRoots[root] {
+		return fmt.Errorf("invalid plugin id %q: %q is a core event namespace (sale, fiscal, ui, payment, tax, catalog, …) — a plugin id cannot start with one", id, root)
+	}
 	return nil
 }
 

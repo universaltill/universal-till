@@ -100,10 +100,11 @@ func isContentSlot(s string) bool {
 const minScheduleEveryS = 30
 
 // coreEventRoots are the first segments of core's own events and Ask
-// points. ADR-0121 §2: a plugin can never raise a core event. Which prefix
-// a plugin MAY use is ut-docs#3329; until it is decided, a schedule event
-// that starts with a core root is refused, so no manifest signed today can
-// tick a core event once the scheduler (build card 9) lands.
+// points. ADR-0121 §2: a plugin can never raise a core event. A plugin's
+// own namespace is its manifest id (2026-10-03 amendment, ut-docs#3329):
+// a schedule event must start with `<id>.`, and validatePluginID refuses an
+// id whose first segment is one of these roots. The core-root check on a
+// schedule event stays as a second, clearer guard.
 var coreEventRoots = map[string]bool{
 	"basket": true, "catalog": true, "cloud": true, "cloudsync": true,
 	"customer": true, "device": true, "eod": true, "erp": true,
@@ -118,8 +119,9 @@ var coreEventRoots = map[string]bool{
 
 var (
 	// scheduleEventRe: at least two dot-separated lower-case segments
-	// (`tax_de.tse_retry.tick`).
-	scheduleEventRe = regexp.MustCompile(`^[a-z0-9_]+(\.[a-z0-9_]+)+$`)
+	// (`com.universaltill.tax-de.tse_retry.tick`). Segments allow `-` so
+	// any plugin id is a valid event prefix (own-id rule, ut-docs#3329).
+	scheduleEventRe = regexp.MustCompile(`^[a-z0-9_-]+(\.[a-z0-9_-]+)+$`)
 	// migrationsDirRe: the characters a migrations directory may use.
 	migrationsDirRe = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
 	// coreViewNameRe: a versioned core read view (ADR-0121 §5),
@@ -159,6 +161,9 @@ func validateABI3Fields(m *Manifest) error {
 		}
 		if root, _, _ := strings.Cut(s.Event, "."); coreEventRoots[root] {
 			return fmt.Errorf("manifest schedules[%d].event %q is in core's %q namespace; a plugin may not raise core events (ADR-0121 §2)", i, s.Event, root)
+		}
+		if prefix := m.ID + "."; !strings.HasPrefix(s.Event, prefix) {
+			return fmt.Errorf("manifest schedules[%d].event %q must start with this plugin's own id (%q) — ADR-0121 §2", i, s.Event, prefix)
 		}
 		if s.EveryS < minScheduleEveryS {
 			return fmt.Errorf("manifest schedules[%d].every_s must be at least %d (got %d)", i, minScheduleEveryS, s.EveryS)
