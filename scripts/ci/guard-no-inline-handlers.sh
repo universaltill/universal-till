@@ -53,19 +53,49 @@
 # e2e/tests/csp-report-only-2913.spec.ts, whose violation inventory must
 # no longer list script-src-attr.
 #
+# 5. internal/pages/*.go sometimes hand-builds HTML (fmt.Fprintf/
+#    b.WriteString with a backtick or quoted string) outside any web/ui
+#    template, so invariant 1's scan can't see it (ut-docs#3506 -- #3510's
+#    own Dev investigation found and fixed three live instances of this
+#    without adding a guard against a fourth). Same violation class, but a
+#    narrower pattern than invariant 1's: it requires a quote right after
+#    `=` (`on[a-z]+="..."`, `on[a-z]+ ="..."`, `hx-on...="..."`) so it catches
+#    the HTML shape a real browser runs as a handler, but deliberately never
+#    matches the unrelated `el.onclick=function(){...}` DOM-property
+#    assignment Go code also writes inside <script> blocks (that one's a
+#    script-src concern for #3327, not script-src-attr -- #3506's own
+#    finding) and never a comment merely mentioning hx-on/onclick in prose
+#    (invariant 1's bare "hx-on" substring alternative would false-fire on
+#    internal/pages' own doc comments, e.g. "fires from hx-on::after-request
+#    AFTER ..." -- this check intentionally doesn't reuse that alternative).
+#    Skips `_test.go` (fixtures/test subjects, not rendered pages -- same
+#    carve-out as guard-plugin-menu-read.sh). Allowlist: same file as
+#    invariant 1's, keys written as internal/pages/<path>:<line>.
+#
+#    Alpine.js x-on:/@click directives are explicitly OUT of scope here too,
+#    for both web/ui and internal/pages: none exist anywhere in the repo
+#    (checked at the time of this decision, ut-docs#3506) and they aren't a
+#    script-src-attr violation under CSP3's 'unsafe-hashes'/'unsafe-eval'
+#    model the way onclick= is, so adding detection now would guard against
+#    a shape that may never need the same treatment. If one lands, #3327
+#    (CSP slice 4 enforcement) is where its CSP fit gets decided first.
+#
 # Explicit arguments run it against fixtures (guard-no-inline-handlers_test.sh):
-# $1 = UI dir, $2 = inline-actions.js, $3 = allowlist. Allowlist keys are
-# always written as web/ui/<path relative to the UI dir>:<line>.
+# $1 = UI dir, $2 = inline-actions.js, $3 = allowlist, $4 = internal/pages
+# dir. Allowlist keys are written as web/ui/<path relative to the UI
+# dir>:<line> or internal/pages/<path relative to the pages dir>:<line>.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 UI_DIR="${ROOT_DIR}/web/ui"
 ACTIONS_JS="${ROOT_DIR}/web/public/inline-actions.js"
 ALLOWLIST="${ROOT_DIR}/scripts/ci/inline-handler-allowlist.txt"
+PAGES_DIR="${ROOT_DIR}/internal/pages"
 
 if [ "$#" -ge 1 ]; then UI_DIR="$1"; fi
 if [ "$#" -ge 2 ]; then ACTIONS_JS="$2"; fi
 if [ "$#" -ge 3 ]; then ALLOWLIST="$3"; fi
+if [ "$#" -ge 4 ]; then PAGES_DIR="$4"; fi
 
 if [ ! -d "$UI_DIR" ]; then
   echo "❌ inline-handler guard: ${UI_DIR} does not exist" >&2
@@ -77,6 +107,10 @@ if [ ! -f "$ACTIONS_JS" ]; then
 fi
 if [ ! -f "$ALLOWLIST" ]; then
   echo "❌ inline-handler guard: ${ALLOWLIST} does not exist" >&2
+  exit 1
+fi
+if [ ! -d "$PAGES_DIR" ]; then
+  echo "❌ inline-handler guard: ${PAGES_DIR} does not exist" >&2
   exit 1
 fi
 
@@ -124,6 +158,56 @@ while IFS= read -r hit; do
   echo "   ${key}: ${rest#*:}" >&2
   failed=1
 done <<<"$hits"
+
+# ---- 1b. no inline handlers in internal/pages/*.go hand-built markup ------
+# Deliberately narrower than $PATTERN above (invariant 5 in the header):
+# requires a quote right after `=` (an optional `\` first, since an
+# interpreted Go string's source text has `onclick=\"...\"`, backslash then
+# quote, where a backtick string just has `onclick="..."`), so
+# `el.onclick=function(){...}` (a script-src, not script-src-attr, concern)
+# never matches, and never reuses the bare "hx-on" substring alternative, so
+# a doc comment that merely names an hx-on attribute doesn't either.
+# Known residual gaps, not detected (independent review, ut-docs#3506): a
+# handler built via %q/string concatenation rather than a literal quote, an
+# unquoted attribute value, and a false positive on an ordinary Go
+# assignment whose identifier happens to start with "on" and is followed by
+# `= "..."` (e.g. `cfg.OnboardingStep = "x"` -- none exist in this repo
+# today; allowlist or rename if one ever does rather than loosen this).
+PAGES_PATTERN="hx-on[a-zA-Z:-]*[[:space:]]*=[[:space:]]*\\\\?[\"']|(^|[^a-zA-Z0-9_-])on[a-z]+[[:space:]]*=[[:space:]]*\\\\?[\"']"
+PAGES_DIR="${PAGES_DIR%/}"
+rc=0
+# No pipe to a second grep here (ut-docs#3506 review): under `pipefail`, a
+# `| grep -v` for the _test.go carve-out would make the *trailing* grep's
+# exit code win, masking a real scan error (rc=2) from the first grep as
+# rc=1 and silently skipping the guard-failure branch below. `--exclude`
+# does the carve-out inside the one grep instead.
+page_hits="$(grep -rniE --include='*.go' --exclude='*_test.go' "${PAGES_PATTERN}" "$PAGES_DIR")" || rc=$?
+if [ "$rc" -gt 1 ]; then
+  echo "❌ inline-handler guard: grep failed (exit ${rc}) scanning ${PAGES_DIR}" >&2
+  exit 1
+fi
+printed_pages_header=0
+while IFS= read -r hit; do
+  [ -n "$hit" ] || continue
+  path="${hit#"$PAGES_DIR"/}"
+  file="${path%%:*}"
+  rest="${path#*:}"
+  line="${rest%%:*}"
+  key="internal/pages/${file}:${line}"
+  if [ -n "$allowed" ] && grep -qxF -- "$key" <<<"$allowed"; then
+    continue
+  fi
+  if [ "$printed_pages_header" -eq 0 ]; then
+    echo "❌ inline-handler guard: inline event handlers found in internal/pages/*.go hand-built markup (ut-docs#3506)." >&2
+    echo "   Same class invariant 1 catches in web/ui: an HTML onclick=/on*=/hx-on" >&2
+    echo "   attribute, this time built by Go code (fmt.Fprintf/b.WriteString) outside" >&2
+    echo "   any template. Move it to a data-action/data-* hook read by" >&2
+    echo "   web/public/inline-actions.js instead." >&2
+    printed_pages_header=1
+  fi
+  echo "   ${key}: ${rest#*:}" >&2
+  failed=1
+done <<<"$page_hits"
 
 # ---- 2. every standalone document loads inline-actions.js ------------------
 strip_html_comments() { perl -0777 -pe 's/<!--.*?-->//gs; s/\{\{\/\*.*?\*\/\}\}//gs' "$1"; }
@@ -189,4 +273,4 @@ if [ "$failed" -ne 0 ]; then
   exit 1
 fi
 
-echo "✓ inline-handler guard: no inline handlers in web/ui, ${checked} standalone document(s) load inline-actions.js, delegation intact"
+echo "✓ inline-handler guard: no inline handlers in web/ui or internal/pages/*.go, ${checked} standalone document(s) load inline-actions.js, delegation intact"

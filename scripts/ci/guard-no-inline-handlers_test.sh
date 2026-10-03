@@ -11,6 +11,13 @@
 # inline-actions.js with any of its delegated listeners removed (in real
 # code, not just in a comment), and passes both a minimal good fixture set
 # and the real, unmodified repo tree.
+#
+# Also covers the internal/pages/*.go hand-built-markup check (ut-docs#3506):
+# rejects a Go-built onclick="..."/hx-on...="..." the same way, honours an
+# internal/pages/<path>:<line> allowlist entry, skips _test.go, and -- the
+# two deliberate false-positive carve-outs invariant 5's header explains --
+# never flags an unquoted `el.onclick=function(){...}` DOM-property
+# assignment or a comment that merely names hx-on/onclick in prose.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -75,8 +82,23 @@ expect_fail() {
   fi
 }
 
+# A fresh internal/pages/*.go fixture tree: one clean handler file.
+fresh_pages_dir() {
+  local dir="${TMPDIR}/pages_$1"
+  mkdir -p "${dir}"
+  cat >"${dir}/ok_page.go" <<'EOF'
+package pages
+
+func render() string {
+	return `<button data-action="close:x-modal">ok</button>`
+}
+EOF
+  printf '%s' "${dir}"
+}
+
 ui_ok="$(fresh_ui_dir ok)"
-expect_pass "a converted fixture tree" "${ui_ok}" "${GOOD_JS}" "${EMPTY_ALLOW}"
+pages_ok="$(fresh_pages_dir ok)"
+expect_pass "a converted fixture tree" "${ui_ok}" "${GOOD_JS}" "${EMPTY_ALLOW}" "${pages_ok}"
 
 ui_onclick="$(fresh_ui_dir onclick)"
 echo '<button onclick="document.getElementById(&#39;m&#39;).close()">x</button>' >>"${ui_onclick}/partials/ok.html"
@@ -166,6 +188,101 @@ expect_fail "a data-only= attribute (strips to \"only\", same \"on\" prefix)" "$
 ui_data_action="$(fresh_ui_dir dataaction)"
 echo '<button data-action="close:x" data-confirm-text="y" data-done-text="z">x</button>' >>"${ui_data_action}/partials/ok.html"
 expect_pass "data-action / data-*-text attributes (no on prefix after data-)" "${ui_data_action}" "${GOOD_JS}" "${EMPTY_ALLOW}"
+
+# ---- internal/pages/*.go hand-built markup (ut-docs#3506) ------------------
+
+pages_onclick="$(fresh_pages_dir onclick)"
+cat >>"${pages_onclick}/handler.go" <<'EOF'
+package pages
+
+func render2() string {
+	return `<button onclick="doThing()">x</button>`
+}
+EOF
+expect_fail "a Go-built onclick= attribute in internal/pages" "${ui_ok}" "${GOOD_JS}" "${EMPTY_ALLOW}" "${pages_onclick}"
+
+pages_hxon="$(fresh_pages_dir hxon)"
+cat >>"${pages_hxon}/handler.go" <<'EOF'
+package pages
+
+func render3() string {
+	return `<div hx-on::click="foo()"></div>`
+}
+EOF
+expect_fail "a Go-built hx-on::click= attribute in internal/pages" "${ui_ok}" "${GOOD_JS}" "${EMPTY_ALLOW}" "${pages_hxon}"
+
+# An interpreted (double-quoted) Go string's source text has a backslash
+# between the `=` and the quote (`onclick=\"...\"`), unlike a backtick
+# string's `onclick="..."` -- independent review finding, ut-docs#3506.
+pages_onclick_escaped="$(fresh_pages_dir onclickescaped)"
+cat >>"${pages_onclick_escaped}/handler.go" <<'EOF'
+package pages
+
+func render6() string {
+	return "<button onclick=\"doThing()\">x</button>"
+}
+EOF
+expect_fail "a Go-built onclick=\\\"...\\\" attribute (interpreted string, escaped quote)" "${ui_ok}" "${GOOD_JS}" "${EMPTY_ALLOW}" "${pages_onclick_escaped}"
+
+pages_hxon_escaped="$(fresh_pages_dir hxonescaped)"
+cat >>"${pages_hxon_escaped}/handler.go" <<'EOF'
+package pages
+
+func render7() string {
+	return "<div hx-on::click=\"foo()\"></div>"
+}
+EOF
+expect_fail "a Go-built hx-on::click=\\\"...\\\" attribute (interpreted string, escaped quote)" "${ui_ok}" "${GOOD_JS}" "${EMPTY_ALLOW}" "${pages_hxon_escaped}"
+
+# The deliberate false-positive carve-out (invariant 5's header, #3506's own
+# finding): an unquoted DOM-property assignment inside a <script> block is a
+# script-src concern for #3327, not script-src-attr -- never flagged here.
+pages_jsprop="$(fresh_pages_dir jsprop)"
+cat >>"${pages_jsprop}/handler.go" <<'EOF'
+package pages
+
+func render4() string {
+	return `<script>el.onclick=function(){rl();};</script>`
+}
+EOF
+expect_pass "an unquoted el.onclick=function(){} DOM-property assignment (script-src, not script-src-attr)" "${ui_ok}" "${GOOD_JS}" "${EMPTY_ALLOW}" "${pages_jsprop}"
+
+# The other deliberate carve-out: a doc comment that merely names an hx-on/
+# onclick attribute in prose, with no `=`, is not a live handler.
+pages_comment="$(fresh_pages_dir comment)"
+cat >>"${pages_comment}/handler.go" <<'EOF'
+package pages
+
+// fires from hx-on::after-request AFTER this response lands, not an inline
+// onclick (CSP script-src-attr) handler.
+func render5() string {
+	return `<button data-action="close:x">x</button>`
+}
+EOF
+expect_pass "a comment merely naming hx-on/onclick in prose (no =)" "${ui_ok}" "${GOOD_JS}" "${EMPTY_ALLOW}" "${pages_comment}"
+
+# _test.go is a test subject/fixture, not a rendered page -- same carve-out
+# as guard-plugin-menu-read.sh.
+pages_testfile="$(fresh_pages_dir testfile)"
+cat >"${pages_testfile}/handler_test.go" <<'EOF'
+package pages
+
+func fixtureHTML() string {
+	return `<button onclick="doThing()">x</button>`
+}
+EOF
+expect_pass "an onclick= attribute inside a _test.go fixture (excluded)" "${ui_ok}" "${GOOD_JS}" "${EMPTY_ALLOW}" "${pages_testfile}"
+
+# Allowlist: internal/pages/<path>:<line>, same exact-match rules as web/ui.
+pages_allow_exact="${TMPDIR}/pages_allow_exact.txt"
+printf '# reviewed: fixture\ninternal/pages/handler.go:4\n' >"${pages_allow_exact}"
+expect_pass "an allowlisted exact internal/pages file:line" "${ui_ok}" "${GOOD_JS}" "${pages_allow_exact}" "${pages_onclick}"
+
+pages_allow_wrong_line="${TMPDIR}/pages_allow_wrong_line.txt"
+printf 'internal/pages/handler.go:3\n' >"${pages_allow_wrong_line}"
+expect_fail "an internal/pages allowlist entry for a different line of the same file" "${ui_ok}" "${GOOD_JS}" "${pages_allow_wrong_line}" "${pages_onclick}"
+
+expect_fail "a nonexistent internal/pages dir" "${ui_ok}" "${GOOD_JS}" "${EMPTY_ALLOW}" "${TMPDIR}/does-not-exist-pages"
 
 # inline-actions.js with each delegated listener removed in turn.
 for ev in click error htmx:afterRequest htmx:beforeRequest; do
