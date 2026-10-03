@@ -38,6 +38,13 @@ Release notes for the till. Versions come from the release tag
 
 ### Fixed
 
+- **Opening another order no longer loses an "add by hand" counter order
+  (ut-docs#3586).** A pay-at-the-counter order with no items the till could
+  price (only lines listed to add by hand) counted as an empty basket. If the
+  cashier then opened another order, that order was not held first: it was
+  replaced, with no held entry and no sale. Tapping **Hold** on it also showed
+  the "basket is empty" error. Both now treat it as a real order: opening
+  another order holds it first under its own name, and **Hold** parks it.
 - **Marketplace installs check plugin settings like the importer does
   (ut-docs#3514).** A marketplace-installed plugin whose manifest has a
   malformed setting-bound permission (`net:@setting:`/`tcp:@setting:`, or

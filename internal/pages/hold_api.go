@@ -379,13 +379,18 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 		return resumeOK
 	}
 	parkedPrior := false
-	if d.Engine.HasItems() {
+	if d.Engine.HasItemsOrByHand() {
 		// ut-docs#1919: park-current-then-open, decided over a true
 		// two-basket engine model as the right-sized fix for this
 		// pipeline's own scope discipline -- switching to another order
 		// must never discard whatever the cashier already had rung up,
 		// and this reuses the existing, well-tested Hold path rather
 		// than adding a second concurrent-basket concept to the engine.
+		// ut-docs#3586: HasItems() alone missed a kiosk pay-at-counter
+		// order whose lines are all "add by hand" (zero priced lines) --
+		// resuming a second order over it skipped this auto-park and
+		// RestoreHeld overwrote it with no held row, no sale and no
+		// audit entry.
 		if err := parkCurrentBasket(ctx, d, repo, "", locale, true, false); err != nil {
 			if claimed {
 				heldSaleGiveBack(ctx, d, repo, held)
@@ -609,7 +614,11 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/pos/hold", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		locale := httpx.ResolveLocale(w, r)
-		if !d.Engine.HasItems() {
+		// ut-docs#3586: HasItems() alone refused to hold a resumed kiosk
+		// pay-at-counter order whose lines are all "add by hand" (zero
+		// priced lines) -- a cashier tapping Hold on exactly that order
+		// got the empty-basket error instead of parking it.
+		if !d.Engine.HasItemsOrByHand() {
 			renderBasket(w, r, httpx.T(locale, "hold.error.empty"), "error")
 			return
 		}
