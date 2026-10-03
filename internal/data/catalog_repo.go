@@ -736,6 +736,9 @@ type VariantEditView struct {
 	CostMinor  int64 // cost price, 0 = unset (margin report input)
 	IsActive   bool
 	Barcodes   []string
+	// UpdatedAt is the variant's updated_at as read (ut-docs#3606): the
+	// variant form sends it back as the write-through's base_updated_at.
+	UpdatedAt string
 }
 
 // VariantLabel is what a shelf/product label needs for ONE variant: the
@@ -814,7 +817,7 @@ SELECT v.id, v.name, TRIM(COALESCE(v.sku, '')),
           ORDER BY datetime(ph.starts_at) DESC, ph.rowid DESC LIMIT 1),
          v.price
        ),
-       COALESCE(v.cost_price, 0), v.is_active
+       COALESCE(v.cost_price, 0), v.is_active, COALESCE(v.updated_at, '')
 FROM item_variants v WHERE v.item_id = ? ORDER BY v.is_active DESC, v.name`, itemID)
 	if err != nil {
 		return nil, err
@@ -824,7 +827,7 @@ FROM item_variants v WHERE v.item_id = ? ORDER BY v.is_active DESC, v.name`, ite
 	byID := map[string]int{}
 	for rows.Next() {
 		var v VariantEditView
-		if err := rows.Scan(&v.ID, &v.Name, &v.SKU, &v.PriceMinor, &v.CostMinor, &v.IsActive); err != nil {
+		if err := rows.Scan(&v.ID, &v.Name, &v.SKU, &v.PriceMinor, &v.CostMinor, &v.IsActive, &v.UpdatedAt); err != nil {
 			return nil, err
 		}
 		v.SKU = stripRetireMangle(v.ID, v.SKU)
@@ -1486,6 +1489,10 @@ type CategoryAdminRow struct {
 	ImagePath        string // ut-docs#2500, see CategoryNode.ImagePath
 	Icon             string // migration 041, see CategoryNode.Icon
 	SellScreenHidden bool   // migration 041, see CategoryNode.SellScreenHidden
+	// UpdatedAt is the category's updated_at as read (ut-docs#3606): the
+	// /categories dialog and the Designer's form send it back as the
+	// write-through's base_updated_at.
+	UpdatedAt string
 }
 
 // ListCategoriesForAdmin returns every category (active and inactive, so a
@@ -1497,7 +1504,8 @@ func (r *CatalogRepo) ListCategoriesForAdmin(ctx context.Context) ([]CategoryAdm
 SELECT c.id, c.name, COALESCE(c.parent_id, ''), c.sort_order, COALESCE(c.color, ''), c.is_active,
        COUNT(i.id) AS item_count,
        COUNT(CASE WHEN i.sell_screen_hidden = 0 AND i.sell_screen_removed = 0 THEN i.id END) AS visible_item_count,
-       COALESCE(c.image_path, ''), COALESCE(c.icon, ''), c.sell_screen_hidden
+       COALESCE(c.image_path, ''), COALESCE(c.icon, ''), c.sell_screen_hidden,
+       COALESCE(c.updated_at, '')
 FROM categories c
 LEFT JOIN items i ON i.category_id = c.id AND i.is_active = 1
 GROUP BY c.id
@@ -1510,7 +1518,7 @@ ORDER BY c.sort_order, c.name`)
 	for rows.Next() {
 		var c CategoryAdminRow
 		var active int
-		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &active, &c.ItemCount, &c.VisibleItemCount, &c.ImagePath, &c.Icon, &c.SellScreenHidden); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &active, &c.ItemCount, &c.VisibleItemCount, &c.ImagePath, &c.Icon, &c.SellScreenHidden, &c.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("list categories for admin: %w", err)
 		}
 		c.IsActive = active == 1

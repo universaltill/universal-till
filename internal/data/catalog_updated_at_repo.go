@@ -19,6 +19,13 @@ const (
 	CatalogKindCategory      = "category"
 	CatalogKindButton        = "button"
 	CatalogKindModifierGroup = "modifier_group"
+	// CatalogKindItemButton is the shortcut_buttons row an item's quick
+	// button add writes, looked up by ITEM id (ut-docs#3606):
+	// ShortcutsRepo.AddButton re-labels the item's existing row (the first
+	// by sort_order, barcode) whatever code is posted, so the posted code
+	// may name no row at all. Same ORDER BY/LIMIT as AddButton's own
+	// lookup; no row means the add inserts one (nothing to conflict on).
+	CatalogKindItemButton = "item_button"
 )
 
 // catalogUpdatedAtQueries is a fixed allow-list: the kind picks a whole
@@ -29,6 +36,7 @@ var catalogUpdatedAtQueries = map[string]string{
 	CatalogKindCategory:      `SELECT updated_at FROM categories WHERE id = ?`,
 	CatalogKindButton:        `SELECT updated_at FROM shortcut_buttons WHERE barcode = ?`,
 	CatalogKindModifierGroup: `SELECT updated_at FROM item_modifier_groups WHERE id = ?`,
+	CatalogKindItemButton:    `SELECT updated_at FROM shortcut_buttons WHERE item_id = ? ORDER BY sort_order, barcode LIMIT 1`,
 }
 
 // CatalogUpdatedAt returns the row's current updated_at, ok=false when no

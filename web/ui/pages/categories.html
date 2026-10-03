@@ -81,6 +81,7 @@
           data-record-action="/api/categories/{{ .ID }}"
           data-record-destructive-action="/api/categories/{{ .ID }}/active"
           data-field-name="{{ .Name }}"
+          data-field-base_updated_at="{{ .UpdatedAt }}"
           data-field-color="{{ .Color }}"
           data-groups="{{ .Groups }}"
           data-stations="{{ .Stations }}"
@@ -415,6 +416,12 @@
 <form id="category-form" method="post" action="/api/categories" autocomplete="off"
       enctype="multipart/form-data" hx-encoding="multipart/form-data"
       hx-boost="true" hx-target="#category-dialog-msg" hx-swap="innerHTML">
+  {{/* ut-docs#3606: the opened row's updated_at (its
+       data-field-base_updated_at, prefilled by record-dialog.js; blank for
+       create) — on an additional till the save travels to the main till,
+       which refuses it as a conflict if the category changed there since.
+       Ignored by a save made on the main till itself. */}}
+  <input type="hidden" name="base_updated_at">
   <label>{{ T "categories.col.name" }}
     <input type="text" name="name" required placeholder="{{ T "categories.create_placeholder" }}" />
   </label>

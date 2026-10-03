@@ -309,8 +309,15 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				// the per-variant-row fallback when a variant has no photo
 				// of its own).
 				itemImg, _ := repo.ItemThumbnailFor(r.Context(), itemID)
+				// ut-docs#3606: the item panel forms send the item's stamp
+				// as rendered (base_updated_at), like the item editor.
+				itemUpdatedAt, _, err := repo.CatalogUpdatedAt(r.Context(), data.CatalogKindItem, itemID)
+				if err != nil {
+					log.Printf("[catalog] item updated_at for the variants panel: %v", err)
+				}
 				pdata = map[string]any{
 					"ItemID":               itemID,
+					"ItemUpdatedAt":        itemUpdatedAt,
 					"ItemName":             label.Name,
 					"ItemImageURL":         itemImg,
 					"Variants":             variants,
