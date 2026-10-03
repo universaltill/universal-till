@@ -256,6 +256,7 @@ var demoDeniedRoutes = map[string]bool{
 	"GET /ui/tills/roster":                      true, // the denied /tills page's polled roster (ADR-0114 §10)
 	"POST /api/enrol/claim-code":                true,
 	"POST /api/enrol/now":                       true,
+	"POST /api/enrol/pair":                      true,
 	"POST /api/settings/auto-register":          true,
 	"POST /api/settings/telemetry":              true,
 	"POST /api/setup/join":                      true,

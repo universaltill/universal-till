@@ -1147,6 +1147,52 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			httpx.T(locale, "settings.enrol.registered"), status.StoreID)
 	})
 
+	// "Pair with a shop" (ADR-0116 D5/D6, ut-docs#3523): the owner mints a
+	// pairing code in their cloud account; this till clears its own cloud
+	// identity, takes a fresh device id and pairs with that shop. Same
+	// always-200 HTMX shape and elevation gate as POST /api/enrol/now. The
+	// code is a credential: never logged or audited (the audit row carries
+	// the store id only).
+	mux.HandleFunc("POST /api/enrol/pair", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = r.ParseForm()
+		code := strings.TrimSpace(r.Form.Get("code"))
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			// The dialog's form is the retry, so it carries the code.
+			renderElevationPrompt(w, r, "/api/enrol/pair", "#pair-msg",
+				httpx.T(locale, "elevation.summary.enrol_pair"),
+				[]elevationHiddenField{{Name: "code", Value: code}}, elev)
+			return
+		}
+		status, err := enroll.Pair(r.Context(), d.Cfg, d.Settings, code)
+		// The two refusals an operator can act on get their own translated
+		// message; everything else is the generic failure plus the reason.
+		switch {
+		case errors.Is(err, enroll.ErrPairStoreMismatch):
+			fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
+				html.EscapeString(httpx.T(locale, "settings.enrol.pair_store_mismatch")))
+			return
+		case errors.Is(err, enroll.ErrPairReplicaNoStore):
+			fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
+				html.EscapeString(httpx.T(locale, "settings.enrol.pair_replica_no_store")))
+			return
+		}
+		if err != nil || !status.Registered {
+			reason := httpx.T(locale, "settings.enrol.not_registered")
+			if err != nil {
+				reason = err.Error()
+			}
+			fmt.Fprintf(w, `<span class="error">❌ %s: %s</span>`,
+				html.EscapeString(httpx.T(locale, "settings.enrol.pair_failed")), html.EscapeString(reason))
+			return
+		}
+		settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "paired", map[string]any{"store_id": status.StoreID})
+		fmt.Fprintf(w, `<span>✅ %s <code>%s</code></span>`,
+			html.EscapeString(httpx.T(locale, "settings.enrol.pair_success")), html.EscapeString(status.StoreID))
+	})
+
 	// The store's fleet: every till registered under this store. Lazy-loaded
 	// (a marketplace call) so it never blocks the settings page; failure just
 	// shows "unavailable" — offline-first.

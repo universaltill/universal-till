@@ -4,7 +4,7 @@ title: Store registration & claiming
 section: Connecting & extending
 order: 320
 summary: Registering connects your till to the Universal Till marketplace; claiming links the store to YOUR account so you get the online back-office (My stores, fleet view) and paid features.
-keywords: [register, claim, cloud, marketplace, store]
+keywords: [register, claim, cloud, marketplace, store, pair, pairing code, re-pair]
 ---
 
 # Store registration & claiming
@@ -32,4 +32,13 @@ If the cloud refuses this till's credential three times in a row, a chip appears
 - **This till needs pairing again**: the till's cloud credential no longer works, so the till must be paired with the shop again.
 - **Register as a new store**: the store has no owner account, so the till can't be paired. Register it again as a new store; only the old fleet history is lost.
 
-A manager can tap the chip to open Settings → Till registration. The chip goes away after the next successful contact with the cloud.
+A manager can tap the chip to open Settings → Till registration, straight to Pair with a shop below. The chip goes away after the next successful contact with the cloud.
+
+## Pair with a shop (and re-pairing)
+
+Use this when the shop already exists in the Universal Till cloud and this till should join it, or when a till was removed from the shop's cloud account or says it needs pairing again.
+
+1. In the shop's cloud account, choose "Add or re-pair a till" to get a pairing code (8 characters, valid 15 minutes, single use).
+2. On this till, open Settings → Till registration → Pair with a shop, enter the code and press Pair. A manager or admin approves it.
+3. The till replaces only its own cloud connection: it takes a new device ID and a credential of its own. Sales, products and settings stay on the till, and selling keeps working offline the whole time.
+4. On a joined till, the code must come from the same shop as its main till; a code for another shop is refused and nothing changes. A refused or expired code leaves the till unregistered until you pair it with a fresh code.
