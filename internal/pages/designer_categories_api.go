@@ -11,6 +11,7 @@ import (
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/pages/catalogsync"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -71,17 +72,22 @@ func registerDesignerCategoriesAPI(mux *http.ServeMux, d *common.Deps) {
 	}
 
 	// gate: catalog_management (see the file comment) plus the same
-	// primary-till check every categories/buttons mutation makes — the
-	// categories table syncs shop-wide from the primary (adminTables,
-	// sync_admin_repo.go), so a write accepted on a satellite would vanish
-	// on the next admin pull with no indication to the manager.
+	// main-till routing every categories/buttons mutation makes — the
+	// categories table syncs shop-wide from the main till (adminTables,
+	// sync_admin_repo.go), so a write accepted locally on an additional
+	// till would vanish on the next admin pull; it is written through to
+	// the main till instead (ut-docs#2817).
 	gate := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 		if !canPerform(d, r, "catalog_management") {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return auth.User{}, false
 		}
-		if d.SyncPrimaryURL(r.Context()) != "" {
-			fail(w, r, http.StatusConflict, "categories.error.replica_use_primary", 0)
+		// ut-docs#2817: on an additional till the save is written through
+		// to the main till (which runs this same handler) and answered
+		// here; refusals use this API's own error shape.
+		if catalogsync.Forward(w, r, d, func(w http.ResponseWriter, r *http.Request, status int, key string) {
+			fail(w, r, status, key, 0)
+		}) {
 			return auth.User{}, false
 		}
 		u, _ := auth.FromContext(r.Context())

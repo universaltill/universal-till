@@ -319,7 +319,7 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 		// with it. Reactivating never revives variants (their own state is
 		// not recoverable from here); the operator reactivates those one by
 		// one in the item editor.
-		if _, err := tx.ExecContext(ctx, `UPDATE item_variants SET is_active = 0 WHERE item_id = ?`, p.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE item_variants SET is_active = 0, updated_at = datetime('now') WHERE item_id = ?`, p.ID); err != nil {
 			return res, fmt.Errorf("save item: deactivate variants: %w", err)
 		}
 	}
@@ -675,7 +675,7 @@ FROM categories WHERE id = ?`, p.ID).Scan(&name, &parent, &color, &icon, &imageP
 		res.Changed = append(res.Changed, "show_on_sale_screen")
 	}
 	if _, err := tx.ExecContext(ctx, `
-UPDATE categories SET name = ?, parent_id = ?, color = ?, icon = ?, image_path = ?, sell_screen_hidden = ? WHERE id = ?`,
+UPDATE categories SET name = ?, parent_id = ?, color = ?, icon = ?, image_path = ?, sell_screen_hidden = ?, updated_at = datetime('now') WHERE id = ?`,
 		name, nullableString(parent), nullableString(color), nullableString(icon), nullableString(imagePath), boolToInt(hidden), p.ID); err != nil {
 		return res, fmt.Errorf("save category: row: %w", err)
 	}
@@ -748,13 +748,13 @@ func (r *CatalogRepo) DeleteCategoryMoving(ctx context.Context, id, moveItemsTo 
 			return res, fmt.Errorf("the items cannot move to the category being deleted or one of its subcategories")
 		}
 	}
-	out, err := tx.ExecContext(ctx, `UPDATE categories SET parent_id = ? WHERE parent_id = ?`, nullableString(parent), id)
+	out, err := tx.ExecContext(ctx, `UPDATE categories SET parent_id = ?, updated_at = datetime('now') WHERE parent_id = ?`, nullableString(parent), id)
 	if err != nil {
 		return res, fmt.Errorf("delete category: re-parent: %w", err)
 	}
 	n, _ := out.RowsAffected()
 	res.MovedChildren = int(n)
-	out, err = tx.ExecContext(ctx, `UPDATE items SET category_id = ? WHERE category_id = ?`, nullableString(moveItemsTo), id)
+	out, err = tx.ExecContext(ctx, `UPDATE items SET category_id = ?, updated_at = datetime('now') WHERE category_id = ?`, nullableString(moveItemsTo), id)
 	if err != nil {
 		return res, fmt.Errorf("delete category: move items: %w", err)
 	}
@@ -763,7 +763,7 @@ func (r *CatalogRepo) DeleteCategoryMoving(ctx context.Context, id, moveItemsTo 
 	for _, q := range []string{
 		`DELETE FROM category_modifier_group_links WHERE category_id = ?`,
 		`DELETE FROM category_station_routes WHERE category_id = ?`,
-		`UPDATE categories SET is_active = 0 WHERE id = ?`,
+		`UPDATE categories SET is_active = 0, updated_at = datetime('now') WHERE id = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {
 			return res, fmt.Errorf("delete category: %w", err)

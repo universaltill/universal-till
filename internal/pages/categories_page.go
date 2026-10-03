@@ -22,6 +22,7 @@ import (
 	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/pages/catalog"
+	"github.com/universaltill/universal-till/internal/pages/catalogsync"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pages/itemsnav"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -235,36 +236,31 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		return u, true
 	}
 
-	// requirePrimary gates the dialog's own mutations (create/rename/active,
-	// hx-boosted since ut-docs#2020 — not plain forms any more) on this
-	// till being the primary (ut-docs#1585 family): categories syncs
+	// writeLocally decides where the dialog's own mutations (create/rename/
+	// active, hx-boosted since ut-docs#2020) are written. categories syncs
 	// shop-wide as an admin table (adminTables, sync_admin_repo.go) via a
-	// one-way primary-wins pull, so a write accepted on a satellite would
-	// silently vanish on the very next admin pull -- refuse it up front
-	// instead, same pattern as tables_page.go/locations_page.go's
-	// requirePrimary.
-	requirePrimary := func(w http.ResponseWriter, r *http.Request) bool {
-		if d.SyncPrimaryURL(r.Context()) != "" {
-			renderCategoryDialogError(w, r, "categories.error.replica_use_primary", 0)
-			return false
-		}
-		return true
+	// one-way main-till-wins pull, so a write accepted locally on an
+	// additional till would vanish on the next pull. Since ut-docs#2817 the
+	// additional till writes it through to the main till instead
+	// (catalogsync.Forward: the main till runs this same handler and its
+	// answer is relayed); before, it refused (categories.error.
+	// replica_use_primary). true = this till is the main (or a stand-alone)
+	// till: carry on locally. false = the request was already answered —
+	// written through, or refused in the dialog's own error shape (main till
+	// unreachable, a conflict, a photo upload, which never travels).
+	writeLocally := func(w http.ResponseWriter, r *http.Request) bool {
+		return !catalogsync.Forward(w, r, d, func(w http.ResponseWriter, r *http.Request, _ int, key string) {
+			renderCategoryDialogError(w, r, key, 0)
+		})
 	}
 
-	// requirePrimaryFetch is requirePrimary's counterpart for the reorder
-	// route below, which is JS fetch-driven (categories.html's own script),
-	// not a plain form post: a redirect there would just be followed
-	// silently by fetch and read back as a 200 "success", hiding the refusal
-	// from the reorder JS's res.ok check. Answers with a status + localized
-	// body instead, same shape as buttons_api.go's own reorder endpoint gate
-	// (409, so the client can tell "you're on a replica" apart from a
-	// generic failure).
-	requirePrimaryFetch := func(w http.ResponseWriter, r *http.Request) bool {
-		if d.SyncPrimaryURL(r.Context()) != "" {
-			common.LocalizedError(w, r, http.StatusConflict, "categories.error.replica_use_primary")
-			return false
-		}
-		return true
+	// writeLocallyFetch is writeLocally's counterpart for the reorder route
+	// below, which is JS fetch-driven (categories.html's own script), not a
+	// plain form post: a refusal answers with a status + localized body
+	// (502 main till unreachable, 409 refused/conflict) so the reorder JS's
+	// res.ok check sees it.
+	writeLocallyFetch := func(w http.ResponseWriter, r *http.Request) bool {
+		return !catalogsync.Forward(w, r, d, catalogsync.PlainRefuser)
 	}
 
 	audit := func(r *http.Request, actorID, targetID, action string) {
@@ -603,7 +599,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		if !ok {
 			return
 		}
-		if !requirePrimary(w, r) {
+		if !writeLocally(w, r) {
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, categoryUploadMaxBytes)
@@ -639,7 +635,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		if !ok {
 			return
 		}
-		if !requirePrimary(w, r) {
+		if !writeLocally(w, r) {
 			return
 		}
 		id := r.PathValue("id")
@@ -686,7 +682,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		if !ok {
 			return
 		}
-		if !requirePrimary(w, r) {
+		if !writeLocally(w, r) {
 			return
 		}
 		id := r.PathValue("id")
@@ -727,7 +723,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		if !ok {
 			return
 		}
-		if !requirePrimaryFetch(w, r) {
+		if !writeLocallyFetch(w, r) {
 			return
 		}
 		// categories.html's reorder script posts FormData (multipart) —

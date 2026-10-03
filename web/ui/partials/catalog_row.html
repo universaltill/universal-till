@@ -30,6 +30,7 @@
 {{ define "catalog_row" }}<button type="button" class="catalog-row btn-tile{{ if and .Item.Color (not .ImageURL) }} tile-colored{{ end }}"
     id="catalog-row-{{ .Item.ID }}"{{ if .OOB }} hx-swap-oob="true"{{ end }}
     data-id="{{ .Item.ID }}" data-name="{{ .Item.Name }}" data-sku="{{ .Item.SKU }}"
+    data-updated-at="{{ .UpdatedAt }}"
     data-description="{{ .Item.Description }}" data-unit="{{ .Item.Unit }}"
     data-weighed="{{ if .Item.IsWeighed }}1{{ else }}0{{ end }}"
     data-net-qty="{{ with .Item.NetQuantityValue }}{{ . }}{{ end }}"

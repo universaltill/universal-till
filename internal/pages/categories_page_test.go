@@ -304,7 +304,11 @@ func TestCategoriesPage_HtmxSuccessAnswersWithHXRedirectNotBareRedirect(t *testi
 // ut-docs#1585 family: categories syncs shop-wide as an admin table, so a
 // satellite-created/edited row would silently vanish on the next admin
 // pull -- every mutation route must refuse on a replica instead.
-func TestCategoriesPage_MutationsRefusedOnReplica(t *testing.T) {
+// ut-docs#2817: on an additional till the dialog's saves are written through
+// to the main till (catalog_write_through_test.go covers the success path);
+// with the main till unreachable (no sync bearer here) each is refused with
+// the localized message and nothing changes locally.
+func TestCategoriesPage_MutationsRefusedOnReplicaWhileMainUnreachable(t *testing.T) {
 	mux, d := newCategoriesTestMux(t)
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
 
@@ -313,7 +317,7 @@ func TestCategoriesPage_MutationsRefusedOnReplica(t *testing.T) {
 	}
 
 	rec := postForm(mux, "/api/categories", url.Values{"name": {"Satellite Category"}}, &manager)
-	if rec.Header().Get("Location") != "/categories?err=categories.error.replica_use_primary" {
+	if rec.Header().Get("Location") != "/categories?err=catalog.sync.main_till_unreachable" {
 		t.Fatalf("create on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
 	}
 	var count int
@@ -330,19 +334,23 @@ func TestCategoriesPage_MutationsRefusedOnReplica(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec = postForm(mux, "/api/categories/cat-x", url.Values{"name": {"Renamed"}}, &manager)
-	if rec.Header().Get("Location") != "/categories?err=categories.error.replica_use_primary" {
+	if rec.Header().Get("Location") != "/categories?err=catalog.sync.main_till_unreachable" {
 		t.Fatalf("rename on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
 	}
 	rec = postForm(mux, "/api/categories/cat-x/active", url.Values{"active": {"0"}}, &manager)
-	if rec.Header().Get("Location") != "/categories?err=categories.error.replica_use_primary" {
+	if rec.Header().Get("Location") != "/categories?err=catalog.sync.main_till_unreachable" {
 		t.Fatalf("deactivate on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
 	}
 	// Reorder is fetch-driven JS, not a plain form post — it must answer
-	// with a status (409, matching buttons_api.go's own reorder gate), not a
-	// redirect a fetch would silently follow and read back as success.
+	// with a status (502 main till unreachable), not a redirect a fetch
+	// would silently follow and read back as success.
 	rec = postForm(mux, "/api/categories/reorder", url.Values{"ids": {"cat-x"}}, &manager)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("reorder on replica: code=%d, want 409", rec.Code)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("reorder on replica: code=%d, want 502", rec.Code)
+	}
+	var name string
+	if err := d.Db.QueryRow(`SELECT name FROM categories WHERE id = 'cat-x'`).Scan(&name); err != nil || name != "Existing" {
+		t.Fatalf("rename must not be written locally: %q %v", name, err)
 	}
 }
 

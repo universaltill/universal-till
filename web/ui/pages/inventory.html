@@ -36,7 +36,7 @@
 </div>
 
 {{ if .SyncPrimary }}
-<div class="sync-banner">⚠ {{ T "sync.banner_replica" }}
+<div class="sync-banner" role="status">⚠ {{ if .SyncUnreachable }}{{ T "sync.banner_replica_main_till_unreachable" }}{{ else }}{{ T "sync.banner_replica_write_through" }}{{ end }}
   {{ if crossdevicelinkactionable }}
   <a href="{{ .SyncPrimary }}/inventory" target="_blank" rel="noopener" hx-boost="false">{{ T "sync.banner_open_primary" }}</a>
   {{ else }}

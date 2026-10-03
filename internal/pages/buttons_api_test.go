@@ -506,15 +506,15 @@ func TestButtonsStoreErrorsSurfaceAs500(t *testing.T) {
 	}
 }
 
-// ut-docs#1697: shortcut_buttons syncs shop-wide as an admin table
-// (adminTables, sync_admin_repo.go) via a one-way primary-wins pull, so a
-// write accepted on a satellite would silently vanish -- a reorder
-// reverted, an added/removed button undone -- on the very next admin pull.
-// All three mutating routes must refuse on a replica with a clear,
-// localized 409, same pattern as catalog/handlers.go's
-// TestCatalogItemMutations_RefusedOnReplica (same defect class as
-// ut-docs#1689/#1667/#1590/#1546).
-func TestButtonsAPI_MutationsRefusedOnReplica(t *testing.T) {
+// ut-docs#1697 / ut-docs#2817: shortcut_buttons syncs shop-wide as an admin
+// table (adminTables, sync_admin_repo.go) via a one-way main-till-wins pull,
+// so a write accepted locally on an additional till would silently vanish
+// on the next admin pull. Since ut-docs#2817 the save is written through to
+// the main till (catalog_write_through_test.go covers the success path);
+// this till's main till ("http://primary.example", no sync bearer yet) can't
+// be reached, so all three mutating routes are refused with the localized
+// "change it when the main till is reachable" 502 and nothing changes here.
+func TestButtonsAPI_MutationsRefusedOnReplicaWhileMainUnreachable(t *testing.T) {
 	mux, d := newButtonsMux(t)
 	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES ('ABC','Existing','itm1',0),('ZZZ','Other','itm1',1)`); err != nil {
 		t.Fatalf("seed buttons: %v", err)
@@ -523,15 +523,17 @@ func TestButtonsAPI_MutationsRefusedOnReplica(t *testing.T) {
 		t.Fatalf("set primary_url: %v", err)
 	}
 
-	const wantMsg = "manage quick-sale buttons on the primary till"
+	// ut-docs#2817: written through to the main till, which can't be
+	// reached here (no sync bearer) -> refused, nothing written locally.
+	const wantMsg = "Can't reach the main till"
 	assertRefused := func(t *testing.T, label string, rec *httptest.ResponseRecorder) {
 		t.Helper()
-		if rec.Code != http.StatusConflict {
-			t.Errorf("%s on replica: want 409, got %d: %s", label, rec.Code, rec.Body.String())
+		if rec.Code != http.StatusBadGateway {
+			t.Errorf("%s on replica: want 502, got %d: %s", label, rec.Code, rec.Body.String())
 			return
 		}
 		if !strings.Contains(rec.Body.String(), wantMsg) {
-			t.Errorf("%s on replica: body missing the localized replica_use_primary message, got %q", label, rec.Body.String())
+			t.Errorf("%s on replica: body missing the localized main-till-unreachable message, got %q", label, rec.Body.String())
 		}
 	}
 

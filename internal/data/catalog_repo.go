@@ -1590,7 +1590,7 @@ func (r *CatalogRepo) RenameCategory(ctx context.Context, id, name string) error
 	if name == "" {
 		return ErrCategoryNameRequired
 	}
-	res, err := r.db.ExecContext(ctx, `UPDATE categories SET name = ? WHERE id = ?`, name, id)
+	res, err := r.db.ExecContext(ctx, `UPDATE categories SET name = ?, updated_at = datetime('now') WHERE id = ?`, name, id)
 	if err != nil {
 		return fmt.Errorf("rename category: %w", err)
 	}
@@ -1624,7 +1624,7 @@ func (r *CatalogRepo) UpdateCategoryWithHidden(ctx context.Context, id, name, co
 	if hidden != nil {
 		hiddenArg = boolToInt(*hidden)
 	}
-	res, err := r.db.ExecContext(ctx, `UPDATE categories SET name = ?, color = ?, sell_screen_hidden = COALESCE(?, sell_screen_hidden) WHERE id = ?`,
+	res, err := r.db.ExecContext(ctx, `UPDATE categories SET name = ?, color = ?, sell_screen_hidden = COALESCE(?, sell_screen_hidden), updated_at = datetime('now') WHERE id = ?`,
 		name, nullableString(strings.TrimSpace(color)), hiddenArg, id)
 	if err != nil {
 		return fmt.Errorf("update category: %w", err)
@@ -1652,7 +1652,7 @@ func (r *CatalogRepo) SetCategoryPicture(ctx context.Context, id, imagePath, ico
 	if imagePath != "" && icon != "" {
 		return errors.New("a category has one picture: an image path or an icon id, not both")
 	}
-	res, err := r.db.ExecContext(ctx, `UPDATE categories SET image_path = ?, icon = ? WHERE id = ?`,
+	res, err := r.db.ExecContext(ctx, `UPDATE categories SET image_path = ?, icon = ?, updated_at = datetime('now') WHERE id = ?`,
 		nullableString(imagePath), nullableString(icon), id)
 	if err != nil {
 		return fmt.Errorf("set category picture: %w", err)
@@ -1758,7 +1758,7 @@ func (r *CatalogRepo) UpdateCategoryPartial(ctx context.Context, id string, p Ca
 		color = strings.TrimSpace(*p.Color)
 	}
 
-	if _, err := tx.ExecContext(ctx, `UPDATE categories SET name = ?, color = ? WHERE id = ?`,
+	if _, err := tx.ExecContext(ctx, `UPDATE categories SET name = ?, color = ?, updated_at = datetime('now') WHERE id = ?`,
 		name, nullableString(color), id); err != nil {
 		return res, fmt.Errorf("update category partial: row: %w", err)
 	}
@@ -1920,7 +1920,7 @@ func (r *CatalogRepo) SetCategoryActive(ctx context.Context, id string, active b
 	if active {
 		v = 1
 	}
-	res, err := r.db.ExecContext(ctx, `UPDATE categories SET is_active = ? WHERE id = ?`, v, id)
+	res, err := r.db.ExecContext(ctx, `UPDATE categories SET is_active = ?, updated_at = datetime('now') WHERE id = ?`, v, id)
 	if err != nil {
 		return fmt.Errorf("set category active: %w", err)
 	}
@@ -2002,7 +2002,7 @@ func (r *CatalogRepo) setCategorySortOrder(ctx context.Context, orderedIDs []str
 	}
 	full := append(append(make([]string, 0, len(orderedIDs)+len(missing)), orderedIDs...), missing...)
 
-	stmt, err := tx.PrepareContext(ctx, `UPDATE categories SET sort_order = ? WHERE id = ?`)
+	stmt, err := tx.PrepareContext(ctx, `UPDATE categories SET sort_order = ?, updated_at = datetime('now') WHERE id = ?`)
 	if err != nil {
 		return fmt.Errorf("set category sort order: %w", err)
 	}
@@ -2119,7 +2119,7 @@ func (r *CatalogRepo) DeactivateItem(ctx context.Context, itemID string) error {
 	// check -- an unknown id or one that's already inactive must refuse
 	// with ErrItemNotFound, not silently no-op (its own doc comment has the
 	// full rationale; this is the jiggle-mode trash badge's own repo call).
-	res, err := r.db.ExecContext(ctx, `UPDATE items SET is_active = 0 WHERE id = ? AND is_active = 1`, itemID)
+	res, err := r.db.ExecContext(ctx, `UPDATE items SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND is_active = 1`, itemID)
 	if err != nil {
 		return fmt.Errorf("deactivate item: %w", err)
 	}
@@ -2128,7 +2128,7 @@ func (r *CatalogRepo) DeactivateItem(ctx context.Context, itemID string) error {
 	} else if n == 0 {
 		return ErrItemNotFound
 	}
-	if _, err := r.db.ExecContext(ctx, `UPDATE item_variants SET is_active = 0 WHERE item_id = ?`, itemID); err != nil {
+	if _, err := r.db.ExecContext(ctx, `UPDATE item_variants SET is_active = 0, updated_at = datetime('now') WHERE item_id = ?`, itemID); err != nil {
 		return fmt.Errorf("deactivate item variants: %w", err)
 	}
 	return nil
@@ -2174,7 +2174,7 @@ func (r *CatalogRepo) SetSellScreenHidden(ctx context.Context, itemID string, hi
 	// ut-docs#2541 review finding 4: AND is_active = 1 -- an unknown id or
 	// an already-inactive item's id must refuse, not silently no-op (see
 	// ErrItemNotFound's own doc comment).
-	res, err := r.db.ExecContext(ctx, `UPDATE items SET sell_screen_hidden = ? WHERE id = ? AND is_active = 1`, v, itemID)
+	res, err := r.db.ExecContext(ctx, `UPDATE items SET sell_screen_hidden = ?, updated_at = datetime('now') WHERE id = ? AND is_active = 1`, v, itemID)
 	if err != nil {
 		return fmt.Errorf("set sell screen hidden: %w", err)
 	}
@@ -2205,7 +2205,7 @@ func (r *CatalogRepo) RemoveFromSellScreen(ctx context.Context, itemID string) e
 		return fmt.Errorf("remove from sell screen: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	res, err := tx.ExecContext(ctx, `UPDATE items SET sell_screen_removed = 1, sell_screen_hidden = 0 WHERE id = ? AND is_active = 1`, itemID)
+	res, err := tx.ExecContext(ctx, `UPDATE items SET sell_screen_removed = 1, sell_screen_hidden = 0, updated_at = datetime('now') WHERE id = ? AND is_active = 1`, itemID)
 	if err != nil {
 		return fmt.Errorf("remove from sell screen: %w", err)
 	}
@@ -2290,7 +2290,7 @@ func (r *CatalogRepo) SetItemCategory(ctx context.Context, itemID, categoryID st
 // an unhidden item returns to its kept row's position, or as an implicit
 // tile (ut-docs#2541).
 func (r *CatalogRepo) UnhideAllSellScreen(ctx context.Context) (int, error) {
-	res, err := r.db.ExecContext(ctx, `UPDATE items SET sell_screen_hidden = 0 WHERE sell_screen_hidden = 1 AND sell_screen_removed = 0 AND is_active = 1`)
+	res, err := r.db.ExecContext(ctx, `UPDATE items SET sell_screen_hidden = 0, updated_at = datetime('now') WHERE sell_screen_hidden = 1 AND sell_screen_removed = 0 AND is_active = 1`)
 	if err != nil {
 		return 0, fmt.Errorf("unhide all sell screen: %w", err)
 	}
@@ -2358,7 +2358,7 @@ func (r *CatalogRepo) DeactivateVariant(ctx context.Context, variantID string) e
 	if variantID == "" {
 		return errors.New("variantID required")
 	}
-	if _, err := r.db.ExecContext(ctx, `UPDATE item_variants SET is_active = 0 WHERE id = ?`, variantID); err != nil {
+	if _, err := r.db.ExecContext(ctx, `UPDATE item_variants SET is_active = 0, updated_at = datetime('now') WHERE id = ?`, variantID); err != nil {
 		return fmt.Errorf("deactivate variant: %w", err)
 	}
 	return nil
@@ -2874,7 +2874,7 @@ func (r *CatalogRepo) SetItemPrice(ctx context.Context, itemID string, priceMino
 		return nil
 	}
 
-	res, err = tx.ExecContext(ctx, `UPDATE item_variants SET price = ? WHERE id = ? AND is_active = 1`, priceMinor, itemID)
+	res, err = tx.ExecContext(ctx, `UPDATE item_variants SET price = ?, updated_at = datetime('now') WHERE id = ? AND is_active = 1`, priceMinor, itemID)
 	if err != nil {
 		return fmt.Errorf("set variant price: %w", err)
 	}
@@ -2921,7 +2921,7 @@ func (r *CatalogRepo) SetItemName(ctx context.Context, id, name string) error {
 	if n, _ := res.RowsAffected(); n > 0 {
 		return nil
 	}
-	res, err = r.db.ExecContext(ctx, `UPDATE item_variants SET name = ? WHERE id = ? AND is_active = 1`, name, id)
+	res, err = r.db.ExecContext(ctx, `UPDATE item_variants SET name = ?, updated_at = datetime('now') WHERE id = ? AND is_active = 1`, name, id)
 	if err != nil {
 		return fmt.Errorf("set variant name: %w", err)
 	}
@@ -3158,7 +3158,8 @@ SET sku = COALESCE(NULLIF(?, ''), sku),
     age_restricted = ?,
     color = ?,
     net_quantity_value = ?,
-    net_quantity_unit = ?
+    net_quantity_unit = ?,
+    updated_at = datetime('now')
 WHERE id = ?
 `, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked), boolToInt(in.AgeRestricted), nullableString(in.Color), nullableInt64(in.NetQuantityValue), nullable(in.NetQuantityUnit), in.ID)
 	if err != nil {
@@ -3307,7 +3308,8 @@ SET sku = COALESCE(NULLIF(?, ''), sku),
     name = ?,
     price = ?,
     cost_price = ?,
-    is_active = ?
+    is_active = ?,
+    updated_at = datetime('now')
 WHERE id = ?
 `, nullableString(in.SKU), in.Name, in.Price, nullableInt64(in.CostPrice), active, in.ID)
 	if err != nil {

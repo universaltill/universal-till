@@ -211,28 +211,30 @@ func TestButtonsAPI_HideUnhideDeleteItem_ElevationSummaryFallsBackToIDWhenLookup
 	}
 }
 
-// TestButtonsAPI_HideUnhideDeleteItemRefusedOnReplica (ut-docs#2541 review
-// finding 6): hide/unhide/delete-item all write to shop-wide admin state
-// (items.sell_screen_hidden/is_active, shortcut_buttons) just like
-// add/remove/reorder, so they need the exact same replica refusal
-// TestButtonsAPI_MutationsRefusedOnReplica already pins for those routes --
-// a write accepted on a satellite would silently vanish on the next admin
-// pull (ut-docs#1697 and its own cited defect class).
-func TestButtonsAPI_HideUnhideDeleteItemRefusedOnReplica(t *testing.T) {
+// TestButtonsAPI_HideUnhideDeleteItemRefusedOnReplicaWhileMainUnreachable
+// (ut-docs#2541 review finding 6, ut-docs#2817): hide/unhide/delete-item all
+// write to shop-wide admin state (items.sell_screen_hidden/is_active,
+// shortcut_buttons) just like add/remove/reorder, so they go through the
+// same main-till write-through -- and, with the main till unreachable, the
+// same refusal with no local write --
+// TestButtonsAPI_MutationsRefusedOnReplicaWhileMainUnreachable pins.
+func TestButtonsAPI_HideUnhideDeleteItemRefusedOnReplicaWhileMainUnreachable(t *testing.T) {
 	mux, d := newButtonsMux(t)
 	if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
 		t.Fatalf("set primary_url: %v", err)
 	}
 
-	const wantMsg = "manage quick-sale buttons on the primary till"
+	// ut-docs#2817: written through to the main till, which can't be
+	// reached here (no sync bearer) -> refused, nothing written locally.
+	const wantMsg = "Can't reach the main till"
 	assertRefused := func(t *testing.T, label string, rec *httptest.ResponseRecorder) {
 		t.Helper()
-		if rec.Code != http.StatusConflict {
-			t.Errorf("%s on replica: want 409, got %d: %s", label, rec.Code, rec.Body.String())
+		if rec.Code != http.StatusBadGateway {
+			t.Errorf("%s on replica: want 502, got %d: %s", label, rec.Code, rec.Body.String())
 			return
 		}
 		if !strings.Contains(rec.Body.String(), wantMsg) {
-			t.Errorf("%s on replica: body missing the localized replica_use_primary message, got %q", label, rec.Body.String())
+			t.Errorf("%s on replica: body missing the localized main-till-unreachable message, got %q", label, rec.Body.String())
 		}
 	}
 

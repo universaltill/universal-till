@@ -242,6 +242,14 @@ type Deps struct {
 	// would close it; tracked as a follow-up rather than fixed inline here.
 	AsyncWork sync.WaitGroup
 
+	// MainTillUnreachable reports whether this till follows a main till it
+	// currently can't reach, from the status chip's cached link state (no
+	// network probe). pages.Init sets it; nil (tests, a bare Deps) means
+	// "not known to be unreachable". The catalogue pages use it to say up
+	// front that a change can be made once the main till is back
+	// (ut-docs#2817) — the catalogue write-through refuses it either way.
+	MainTillUnreachable func(context.Context) bool
+
 	// sellCacheOnce/sellCache back SellScreenCache below (ut-docs#2989).
 	sellCacheOnce sync.Once
 	sellCache     *ui.SellScreenCache
@@ -464,6 +472,25 @@ func (d *Deps) SyncPrimaryURL(ctx context.Context) string {
 	}
 	v, _, _ := d.Settings.Get(ctx, "sync.primary_url")
 	return strings.TrimSpace(v)
+}
+
+// SyncTarget reports whether this till follows a main till it can call:
+// the main till's base URL (no trailing slash) and this till's sync bearer,
+// ok=false when either is missing (a half-enrolled till). The one
+// definition behind every additional-till -> main-till call (the pages
+// package's replicaSyncTarget and the catalogue write-through,
+// internal/pages/catalogsync).
+func (d *Deps) SyncTarget(ctx context.Context) (base, bearer string, ok bool) {
+	primary := d.SyncPrimaryURL(ctx)
+	if primary == "" || d.Settings == nil {
+		return "", "", false
+	}
+	b, _, _ := d.Settings.Get(ctx, "sync.bearer")
+	b = strings.TrimSpace(b)
+	if b == "" {
+		return "", "", false
+	}
+	return strings.TrimSuffix(primary, "/"), b, true
 }
 
 // ReloadPlugins is THE way to refresh plugin-derived state after any plugin

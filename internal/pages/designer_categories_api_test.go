@@ -2,6 +2,7 @@ package pages
 
 import (
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"strings"
@@ -240,7 +241,9 @@ func TestDesignerCategoriesAPI_Reorder(t *testing.T) {
 // the primary (adminTables), so a satellite must refuse every mutation up
 // front — same requirePrimary contract as /api/categories/* and
 // /api/buttons/*.
-func TestDesignerCategoriesAPI_ReplicaRefused(t *testing.T) {
+// ut-docs#2817: written through to the main till, unreachable here (no sync
+// bearer) -> refused with the localized message, nothing persisted.
+func TestDesignerCategoriesAPI_ReplicaRefusedWhileMainUnreachable(t *testing.T) {
 	mux, d := newDesignerCategoriesMux(t)
 	seedDesignerCategories(t, d)
 	if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.local"); err != nil {
@@ -248,10 +251,10 @@ func TestDesignerCategoriesAPI_ReplicaRefused(t *testing.T) {
 	}
 	mgr := auth.User{ID: "m1", Role: "manager"}
 	rec := postForm(mux, "/api/designer/categories", url.Values{"name": {"Nope"}}, &mgr)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("replica create = %d, want 409: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("replica create = %d, want 502: %s", rec.Code, rec.Body.String())
 	}
-	if want := httpx.T("en", "categories.error.replica_use_primary"); !strings.Contains(rec.Body.String(), want) {
+	if want := html.EscapeString(httpx.T("en", "catalog.sync.main_till_unreachable")); !strings.Contains(rec.Body.String(), want) {
 		t.Fatalf("replica body = %q, want %q", rec.Body.String(), want)
 	}
 	var n int

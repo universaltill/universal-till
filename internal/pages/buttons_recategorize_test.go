@@ -119,15 +119,17 @@ func TestButtonsRecategorize_ElevatedPINMovesAndAudits(t *testing.T) {
 	}
 }
 
-func TestButtonsRecategorize_RefusedOnReplica(t *testing.T) {
+// ut-docs#2817: on an additional till the move is written through to the
+// main till, unreachable here (no sync bearer) -> refused, nothing moved.
+func TestButtonsRecategorize_RefusedOnReplicaWhileMainUnreachable(t *testing.T) {
 	mux, d := newButtonsMux(t)
 	seedRecategorize(t, d)
 	if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
 		t.Fatal(err)
 	}
 	rec := postForm(mux, "/api/buttons/recategorize", url.Values{"item_id": {"rc-item"}, "category_id": {"rc-food"}}, nil)
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "manage quick-sale buttons on the primary till") {
-		t.Fatalf("replica: want the localized 409, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "Can't reach the main till") {
+		t.Fatalf("replica: want the localized 502, got %d: %s", rec.Code, rec.Body.String())
 	}
 	if got := rcCategory(t, d); got.String != "rc-drinks" {
 		t.Fatalf("replica moved the item to %q", got.String)

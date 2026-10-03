@@ -302,16 +302,7 @@ var orderProxyClient = netaccess.NewClient(3 * time.Second)
 // primary: base URL (no trailing slash) + bearer, ok=false when either is
 // missing (a half-enrolled till behaves local-only, silently).
 func replicaSyncTarget(ctx context.Context, d *common.Deps) (base, bearer string, ok bool) {
-	primary := d.SyncPrimaryURL(ctx)
-	if primary == "" || d.Settings == nil {
-		return "", "", false
-	}
-	b, _, _ := d.Settings.Get(ctx, "sync.bearer")
-	b = strings.TrimSpace(b)
-	if b == "" {
-		return "", "", false
-	}
-	return strings.TrimSuffix(primary, "/"), b, true
+	return d.SyncTarget(ctx)
 }
 
 // fetchOrdersFromPrimary tries GET /api/sync/orders on the primary. ok=false
