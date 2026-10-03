@@ -3674,6 +3674,10 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    viewport -- a till with a dozen parked tables must still show its Close
    button. */
 .parked-orders-modal { min-width: min(30rem, 92vw); }
+/* ut-docs#3582: each row now carries Cancel order beside Move table, so the
+   popup gets more room than .modifier-modal's 28rem -- at the 1024x600
+   kiosk floor a labelled table order otherwise wrapped to three lines. */
+#parked-orders-modal.parked-orders-modal { max-width: 42rem; }
 /* ut-docs#2702 review: a non-modal show() dialog is positioned in flow by the
    UA sheet, so at 360px the sale screen's positioned tender controls painted
    over its Close button -- worse once a row's Move table options open. Same
@@ -3681,13 +3685,29 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    550 and #osk's 1000), with its own scroll so Close stays reachable. */
 #parked-orders-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; max-block-size: 84vh; overflow-y: auto; }
 .parked-orders-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; max-height: 60vh; overflow-y: auto; }
-.parked-orders-list > li { display: flex; flex-wrap: wrap; gap: .5rem; }
+/* ut-docs#3582: one fixed column grid per row -- the order | the Move table
+   slot | the 46px Cancel order target -- placed explicitly, so Cancel sits
+   in the same column on every row whether or not that row can move (a row
+   without Move table gets an invisible same-size placeholder whenever any
+   row in the list has one, parked_orders.html). Before this the row was a
+   wrapping flexbox and Move table / the trash button landed wherever the
+   leftover width let them. */
+.parked-orders-list > li { display: grid; grid-template-columns: minmax(0, 1fr) auto 46px; gap: .5rem; align-items: stretch; }
+.parked-orders-list > li > .parked-order,
+.parked-orders-list > li > .parked-order-form { grid-column: 1; grid-row: 1; min-inline-size: 0; }
+.parked-orders-list > li > .parked-move,
+.parked-orders-list > li > .parked-move-placeholder { grid-column: 2; grid-row: 1; }
+.parked-orders-list > li > .parked-order-cancel,
+.parked-orders-list > li > .parked-order-cancel-spacer { grid-column: 3; grid-row: 1; }
 /* ut-docs#2702 review: Move table on each popup row (ut-docs#820). Closed,
    it is a compact button beside the row; open, it takes a row of its own so
    the free-table options wrap under the order they move. Every target keeps
    the 46px floor (.btn-touch); logical properties only (RTL). */
-.parked-move { flex: 0 0 auto; }
-.parked-move[open] { flex-basis: 100%; }
+/* Open, the free-table options need the full width: the whole <details>
+   takes a second row of ITS OWN <li> (so it can only read as this order's),
+   and Cancel keeps its column on row 1. */
+.parked-orders-list > li > .parked-move[open] { grid-column: 1 / -1; grid-row: 2; }
+.parked-move-placeholder { visibility: hidden; min-height: 46px; display: inline-flex; align-items: center; }
 .parked-move > summary { list-style: none; min-height: 46px; display: inline-flex; align-items: center; cursor: pointer; }
 .parked-move > summary::-webkit-details-marker { display: none; }
 .parked-move-options { display: flex; flex-wrap: wrap; gap: .5rem; margin-block-start: .5rem; }
@@ -3695,7 +3715,31 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
 /* Whole-row target at the product's documented 46px floor (.btn-touch): the
    cashier taps this with a finger, and the label alone is a few characters
    wide. text-align/margin-inline keep it correct under RTL. */
-.parked-orders-list > li > .parked-order { flex: 1; min-height: 46px; display: flex; align-items: center; gap: .5rem; text-align: start; }
+.parked-orders-list > li > .parked-order { min-height: 46px; display: flex; align-items: center; gap: .5rem; text-align: start; }
+/* The order's label stays on one line (ellipsized, full text still in the
+   accessible name and on /open-orders) -- a label wrapping to three lines
+   made each row a different height at 1024x600. */
+.parked-order-label { flex: 1 1 auto; min-inline-size: 5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.parked-order-label .open-order-items { white-space: normal; }
+/* The label keeps a 5rem floor (it is how the cashier recognises the
+   order, same reasoning as /open-orders' own label floor); under pressure
+   the merchant-named table chip is what truncates. */
+.parked-order .held-chip-table { flex: 0 1 auto; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 40rem) {
+  /* Three columns cannot share 360-390px: the order takes the row's whole
+     first line and Move table + Cancel sit on a second line, still in their
+     own fixed columns (Cancel always last), with a divider between orders
+     so that line reads as part of the order above it. */
+  .parked-orders-list > li { padding-block-end: .5rem; border-block-end: 1px solid var(--border); }
+  .parked-orders-list > li:last-child { border-block-end: none; padding-block-end: 0; }
+  .parked-orders-list > li > .parked-order,
+  .parked-orders-list > li > .parked-order-form { grid-column: 1 / -1; }
+  .parked-orders-list > li > .parked-move,
+  .parked-orders-list > li > .parked-move-placeholder,
+  .parked-orders-list > li > .parked-order-cancel,
+  .parked-orders-list > li > .parked-order-cancel-spacer { grid-row: 2; }
+  .parked-orders-list > li > .parked-move[open] { grid-row: 3; }
+}
 .parked-order-meta { margin-inline-start: auto; opacity: .8; white-space: nowrap; }
 /* .held-chip-table has never had a rule of its own (it rendered as bare text
    on the strip too). It now also appears here, so give it the quiet chip
@@ -3830,9 +3874,9 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
 #open-orders-table tbody tr:last-child .open-order-cancel,
 #open-orders-table tbody tr:last-child .open-order-cancel-spacer { border-bottom: none; }
 .open-order-cell-actions { flex: 0 0 calc(46px - .5rem); }
-.parked-order-cancel { flex: 0 0 auto; min-block-size: 46px; min-inline-size: 46px; display: inline-flex; align-items: center; justify-content: center; }
+.parked-order-cancel { min-block-size: 46px; min-inline-size: 46px; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
 .open-orders-hint:empty, .parked-orders-hint:empty { display: none; }
-.parked-order-form { flex: 1; display: flex; margin: 0; }
+.parked-order-form { display: flex; margin: 0; }
 .parked-order-form > .parked-order { flex: 1; min-height: 46px; display: flex; align-items: center; gap: .5rem; text-align: start; }
 
 /* The dialog itself: a slide-in panel anchored to the inline-end edge

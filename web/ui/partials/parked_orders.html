@@ -80,6 +80,10 @@
 {{ if not .orders }}
 <p class="muted" data-testid="parked-orders-empty">{{ if eq $tab "counter" }}{{ T "open_orders.counter.empty" }}{{ else }}{{ T "open_orders.empty" }}{{ end }}</p>
 {{ else }}
+{{/* ut-docs#3582: rows are a fixed three-column grid (app.css). When any
+     row can move tables, every row without Move table gets an invisible
+     placeholder of the same size, so the columns line up row to row. */}}
+{{ $anyMove := false }}{{ range .orders }}{{ if .MoveTargets }}{{ $anyMove = true }}{{ end }}{{ end }}
 <ul class="parked-orders-list">
   {{ range .orders }}
   <li>
@@ -103,16 +107,6 @@
       {{ if .TableLabel }}<span class="held-chip-table">{{ .TableLabel }}</span>{{ end }}
       <span class="parked-order-meta">{{ .LineCount }} × · {{ money .Total }} · {{ .AgeText }}</span>
     </button>
-    <button type="button" class="btn secondary parked-order-cancel" data-testid="parked-order-cancel" data-cancel-id="{{ .ID }}"
-            aria-label="{{ printf (T "open_orders.cancel.action_named") .Label }}"
-            title="{{ printf (T "open_orders.cancel.action_named") .Label }}"
-            hx-post="/api/pos/held/cancel" hx-vals='{{ jsonVals "id" .ID "view" "parked-orders" }}'
-            hx-include="#offline-flag"
-            hx-confirm="{{ printf (T "open_orders.cancel.confirm_named") .Label }}"
-            hx-target="#parked-orders-hint" hx-swap="innerHTML"
-            data-before-request="remember-focus:parked-orders-body,parked-orders-tab-{{ $tab }}">
-      <span class="btn-ico" aria-hidden="true">{{ icon "trash-2" }}</span>
-    </button>
     {{ end }}
     {{ if .MoveTargets }}
     {{ $id := .ID }}
@@ -127,6 +121,22 @@
         {{ end }}
       </div>
     </details>
+    {{ else if $anyMove }}
+    <span class="btn secondary parked-move-placeholder" aria-hidden="true">{{ T "basket.table.move" }}</span>
+    {{ end }}
+    {{ if .Legacy }}
+    <span class="parked-order-cancel-spacer" aria-hidden="true"></span>
+    {{ else }}
+    <button type="button" class="btn secondary parked-order-cancel" data-testid="parked-order-cancel" data-cancel-id="{{ .ID }}"
+            aria-label="{{ printf (T "open_orders.cancel.action_named") .Label }}"
+            title="{{ printf (T "open_orders.cancel.action_named") .Label }}"
+            hx-post="/api/pos/held/cancel" hx-vals='{{ jsonVals "id" .ID "view" "parked-orders" }}'
+            hx-include="#offline-flag"
+            hx-confirm="{{ printf (T "open_orders.cancel.confirm_named") .Label }}"
+            hx-target="#parked-orders-hint" hx-swap="innerHTML"
+            data-before-request="remember-focus:parked-orders-body,parked-orders-tab-{{ $tab }}">
+      <span class="btn-ico" aria-hidden="true">{{ icon "trash-2" }}</span>
+    </button>
     {{ end }}
   </li>
   {{ end }}
