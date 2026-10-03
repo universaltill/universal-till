@@ -165,6 +165,79 @@ func TestClient_StatusRecordsAFailedAttemptAndForgetsItOnAnAnswer(t *testing.T) 
 	}
 }
 
+// The state is written before the mode is published (ut-docs#3590): a
+// Status() reader must never see the new mode beside the old outage. The
+// test holds c.smu, so a client that publishes the mode first reaches it
+// while the outage is still recorded; one that writes the state first
+// blocks on smu and leaves the mode alone.
+func holdStateLockWhileWatching(t *testing.T, c *Client, flip func(), published LinkMode) {
+	t.Helper()
+	early := false
+	func() {
+		c.smu.Lock()
+		defer c.smu.Unlock()
+		flip()
+		deadline := time.Now().Add(300 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			if LinkMode(c.mode.Load()) == published {
+				early = true
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	if early {
+		t.Fatalf("mode %d was published while the outage was still recorded (state must be written first)", published)
+	}
+}
+
+func TestClient_PollingIsPublishedOnlyAfterTheOutageIsCleared(t *testing.T) {
+	cfg := fastConfig()
+	tt := &testTarget{}
+	tt.set(Target{BaseURL: "http://127.0.0.1:1", Bearer: "good-till-2"})
+	var down atomic.Bool
+	down.Store(true)
+	opts := fastClientOptions(cfg, tt, &clientRec{}, advertised())
+	opts.Probe = func(context.Context, Target) (int, error) {
+		if down.Load() {
+			return 0, errors.New("dial tcp: connection refused")
+		}
+		return 0, nil // answered, but an older main till: no link
+	}
+	c := NewClient(opts)
+	c.markLinkLost(time.Now().Add(-time.Minute))
+	startClient(t, c)
+	waitFor(t, "failed attempt recorded", func() bool { return !c.Status().FailedAt.IsZero() })
+
+	holdStateLockWhileWatching(t, c, func() { down.Store(false) }, ModePolling)
+
+	waitFor(t, "polling after an answer", func() bool { return c.Status().Mode == ModePolling })
+	if s := c.Status(); !s.FailedAt.IsZero() || !s.LostAt.IsZero() {
+		t.Fatalf("status = %+v: want FailedAt and LostAt cleared", s)
+	}
+}
+
+func TestClient_IdleIsPublishedOnlyAfterTheOutageIsCleared(t *testing.T) {
+	cfg := fastConfig()
+	tt := &testTarget{}
+	tt.set(Target{BaseURL: "http://127.0.0.1:1", Bearer: "good-till-2"})
+	opts := fastClientOptions(cfg, tt, &clientRec{}, advertised())
+	// Revoked is the one state whose loop never takes c.smu, so Run keeps
+	// rechecking the target (every RecheckEvery) while the test holds it.
+	opts.Probe = func(context.Context, Target) (int, error) { return 0, ErrUnauthorized }
+	c := NewClient(opts)
+	c.markLinkLost(time.Now().Add(-time.Minute))
+	startClient(t, c)
+	waitFor(t, "revoked", func() bool { return LinkMode(c.mode.Load()) == ModeRevoked })
+
+	holdStateLockWhileWatching(t, c, func() { tt.set(Target{}) }, ModeIdle)
+
+	waitFor(t, "idle once the target is gone", func() bool { return LinkMode(c.mode.Load()) == ModeIdle })
+	if s := c.Status(); !s.LostAt.IsZero() {
+		t.Fatalf("status = %+v: want LostAt cleared", s)
+	}
+}
+
 func TestClient_StatusIsNotLinkedOnceFramesStopEvenBeforeThePeerCloses(t *testing.T) {
 	c := NewClient(ClientOptions{Config: Config{PeerTimeout: 12 * time.Second}})
 	p := newPeer(c, c.cfg, "r", "main", newFakeConn())
