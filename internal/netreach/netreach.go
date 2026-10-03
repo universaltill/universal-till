@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 const (
@@ -109,7 +110,12 @@ func New(o Options) *Monitor {
 		m.ctx = context.Background()
 	}
 	if m.client == nil {
-		m.client = http.DefaultClient
+		// netaccess.NewClient(0) replaces http.DefaultClient (same zero
+		// timeout, same default transport) so the public demo till refuses
+		// this request too, in addition to Enabled()'s own demo check below
+		// — defence in depth (ADR-0113 §1.6, ut-docs#2795 review finding
+		// F1, ut-docs#3588).
+		m.client = netaccess.NewClient(0)
 	}
 	if m.now == nil {
 		m.now = time.Now
@@ -150,8 +156,11 @@ func isLoopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// Enabled reports whether this Monitor probes anything.
-func (m *Monitor) Enabled() bool { return m != nil && m.probeURL != "" }
+// Enabled reports whether this Monitor probes anything. False on the public
+// demo till (ADR-0113 §1.6, ut-docs#3588): checked live, not just at
+// construction, so the guarantee holds even if a Monitor is ever built
+// before netaccess.SetDemo runs at boot.
+func (m *Monitor) Enabled() bool { return m != nil && m.probeURL != "" && !netaccess.Demo() }
 
 // Status returns the cached state immediately. When the result is stale
 // (older than the TTL, or never probed) and no probe is running, it starts
