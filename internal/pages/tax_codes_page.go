@@ -86,9 +86,10 @@ func taxCodeFormActive(r *http.Request) bool {
 }
 
 // parsePercentToBP parses a percent string ("19", "19.5") into basis
-// points for a tax code's rate. internal/taxrate.ParsePercent (ut-docs#3259,
-// the shop default rate's parser) accepts the same grammar and range; this
-// handler keeps its own error-returning wrapper over httpx.ParsePercentBP. Rejects
+// points for a tax code's rate, through the canonical
+// internal/taxrate.ParsePercent (ut-docs#3301; it was its own wrapper over
+// httpx.ParsePercentBP until then) -- the same parser the shop default rate
+// uses, so the two forms can't drift on what they accept. Rejects
 // unparseable, non-finite, negative, and >100% (>10000bp) input as a
 // basic sanity bound (ut-docs#259) -- not a real limit on any real tax
 // regime, just a guard against a fat-fingered entry silently persisting.
@@ -100,17 +101,14 @@ func taxCodeFormActive(r *http.Request) bool {
 // ut-docs#259: this originally rejected `bp >= 10000`, so entering exactly
 // 100 was refused with a message that claimed 100 was allowed, and a code
 // the CSV importer would happily create could not be re-entered by hand.
+// taxrate.ParsePercent's own MaxBP bound (0-10000, inclusive) already
+// enforces this.
 func parsePercentToBP(val string) (int, error) {
-	// ut-docs#2954: ParsePercentBP -- integer grammar, '.' or ',' decimal
-	// separator, at most two fraction digits -- instead of
-	// strconv.ParseFloat, which refused a German "7,5" and needed NaN/Inf
-	// and float->int overflow guards ("1e300", ut-docs#259) that this
-	// grammar can't produce (at most 15 whole digits).
-	bp, err := httpx.ParsePercentBP(val)
-	if err != nil || bp > 10000 {
+	bp, ok := taxrate.ParsePercent(val)
+	if !ok {
 		return 0, fmt.Errorf("invalid rate")
 	}
-	return int(bp), nil
+	return bp, nil
 }
 
 // taxCodeRatesRefusedForCountry reports whether a tax code's rates must be

@@ -6,8 +6,10 @@ import { watchConsole } from './helpers';
 // hand-typed dot-only pattern, so a German/Turkish keyboard's "1,5" was
 // blocked by native validation in the device OS language. They now carry
 // {{ percentpatternlocal }} (comma-tolerant + data-money-local) and the
-// server reads them with httpx.ParsePercentBP. Stored values are read back
-// from the server.
+// server reads them with the same comma-tolerant integer grammar (promotion
+// and payment-fee percent via httpx.ParsePercentBP; country-settings and
+// tax-code rates via internal/taxrate.ParsePercent as of ut-docs#3301).
+// Stored values are read back from the server.
 
 test.describe('Percent inputs: decimal comma (ut-docs#2954)', () => {
   test('a promotion percent of "1,5" saves as 150 bp', async ({ page }) => {

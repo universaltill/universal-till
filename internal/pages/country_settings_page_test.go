@@ -478,7 +478,11 @@ func TestCountrySettingsPageDeleteRestoresBuiltin(t *testing.T) {
 // Percent → basis points is the one lossy-looking conversion in this page;
 // 8.5% must not land on 849 through float truncation.
 func TestParsePercentAsBPRounding(t *testing.T) {
-	cases := map[string]int64{"0": 0, "": 0, "7": 700, "19": 1900, "8.5": 850, "2.25": 225, "0.01": 1}
+	// "19." (trailing separator, no fraction digits) is accepted because
+	// ut-docs#3301 routes this through the shared internal/taxrate.ParsePercent,
+	// the same parser the shop default rate uses -- pinned here so the two
+	// forms can't silently drift apart again.
+	cases := map[string]int64{"0": 0, "": 0, "7": 700, "19": 1900, "8.5": 850, "2.25": 225, "0.01": 1, "19.": 1900, "100": 10000}
 	for in, want := range cases {
 		got, err := parsePercentAsBP(in)
 		if err != nil {
@@ -494,6 +498,16 @@ func TestParsePercentAsBPRounding(t *testing.T) {
 	}
 	if _, err := parsePercentAsBP("abc"); err == nil {
 		t.Error("non-numeric percent should error")
+	}
+	// ut-docs#3301 review finding: httpx.ParsePercentBP (the old parser) had
+	// no upper bound of its own ("range checks are the caller's", and this
+	// handler added none) -- a country's tax rate could be saved above 100%.
+	// internal/taxrate.ParsePercent's MaxBP now refuses it; pinned so this
+	// doesn't silently regress back to unbounded.
+	for _, over := range []string{"100.01", "150"} {
+		if _, err := parsePercentAsBP(over); err == nil {
+			t.Errorf("parsePercentAsBP(%q) should error (over 100%%)", over)
+		}
 	}
 }
 

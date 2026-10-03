@@ -291,7 +291,8 @@
        NOT type="number" -- a number input silently resets .value to "" on
        a momentarily-invalid decimal string while osk.js types it in
        (e2e/tests/osk-decimal-admin-fields-1275.spec.ts pins this field by
-       name). Non-negativity is enforced server-side (parsePercentAsBP). */}}
+       name). The 0-100% range is enforced server-side (parsePercentAsBP,
+       ut-docs#3301). */}}
   {{/* Sensible CREATE defaults (mirroring the pre-#2187 "Add a country"
        card exactly): a plain HTML `value` attribute, unlike a hidden
        input's, IS what record-dialog.js's own form.reset() restores on

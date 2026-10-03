@@ -23,8 +23,11 @@ import (
 // percent inputs kept a hand-typed dot-only pattern and a server-side
 // strconv.ParseFloat, so a German/Turkish keyboard's "1,5" was refused in
 // the device OS language (and "1e3" was accepted). Every percent field's
-// value is now read by httpx.ParsePercentBP, so no template may keep the
-// hand-typed dot-only decimal pattern on a percent field.
+// value is now read by the same comma-tolerant integer grammar (promotion
+// and payment-fee percent via httpx.ParsePercentBP directly; country-settings
+// and tax-code rates via internal/taxrate.ParsePercent as of ut-docs#3301,
+// which shares that grammar), so no template may keep the hand-typed
+// dot-only decimal pattern on a percent field.
 func TestPercentTemplates_NoDotOnlyPattern(t *testing.T) {
 	chdirRoot(t)
 	percentField := regexp.MustCompile(`name="(value_percent|percent|tax_rate_pct|rate|takeawayRate)"`)
@@ -167,6 +170,19 @@ func TestTaxCodes_RateAcceptsDecimalComma(t *testing.T) {
 		if bp, err := parsePercentToBP(bad); err == nil {
 			t.Errorf("parsePercentToBP(%q) = %d, want an error", bad, bp)
 		}
+	}
+}
+
+// ut-docs#3301: parsePercentToBP now routes through the shared
+// internal/taxrate.ParsePercent, the same parser the shop default rate and
+// country settings use, instead of its own httpx.ParsePercentBP wrapper. A
+// trailing separator with no fraction digits ("19.") is accepted by that
+// shared parser (taxrate.TestParsePercent's own "harmless" case) where the
+// old httpx-based wrapper refused it -- pinned here so the three forms stay
+// in agreement rather than drifting apart again.
+func TestTaxCodes_RateAcceptsTrailingSeparator(t *testing.T) {
+	if bp, err := parsePercentToBP("19."); err != nil || bp != 1900 {
+		t.Errorf("parsePercentToBP(%q) = %d, %v; want 1900, nil", "19.", bp, err)
 	}
 }
 

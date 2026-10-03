@@ -555,7 +555,7 @@
   "countrysettings.error.delete": "Bu ülke silinemedi.",
   "countrysettings.error.retention_invalid": "Saklama süresini tam gün sayısı olarak girin.",
   "countrysettings.error.save": "Bu ülke kaydedilemedi.",
-  "countrysettings.error.tax_invalid": "Sıfır veya daha büyük bir vergi oranı girin.",
+  "countrysettings.error.tax_invalid": "0 ile 100 arasında bir vergi oranı girin.",
   "countrysettings.intro": "Her ülke için varsayılan para birimi, vergi oranı ve arşiv saklama alt sınırı. Kurulum bu tablodan okumaya başladığında yeni bir dükkânın başlangıç değerleri olacaklar — şimdilik burada bir ülkeyi düzenlemek zaten çalışan bir dükkânı etkilemez.",
   "countrysettings.new.submit": "Ülke ekle",
   "countrysettings.new.title": "Ülke ekle",
