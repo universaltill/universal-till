@@ -586,9 +586,9 @@ func (m *SessionBasketManager) SetConfig(cfg Config) {
 }
 
 // HasItems reports whether any live session's basket holds at least one
-// item — the sessions' twin of the `d.KioskEngine.Basket().ItemCount() > 0`
-// check the unattended-update scheduler uses to avoid restarting the till
-// under a customer mid-order.
+// item — the sessions' twin of the `d.KioskEngine.HasItemsOrByHand()` check
+// (ut-docs#3596) the unattended-update scheduler uses to avoid restarting
+// the till under a customer mid-order.
 func (m *SessionBasketManager) HasItems() bool {
 	if m == nil {
 		return false
