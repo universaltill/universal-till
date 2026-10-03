@@ -1635,22 +1635,21 @@ func (r *CatalogRepo) UpdateCategoryWithHidden(ctx context.Context, id, name, co
 	return nil
 }
 
-// SetCategoryPicture stores a category's one picture (ut-docs#2500,
-// #2717): an image path (an uploaded photo's
-// /public/assets/categories/<id>/thumb.png, or the id-less generic
-// library tile) OR an icon id ("lucide:beer", contract §0.12) — the other
-// column is cleared in the same UPDATE, so the last writer wins whether it
-// is this till's editor or a save_category directive from my. Both ""
-// clears the picture (NULL, NULL). A malformed icon id is refused; an
-// unknown category is ErrCategoryNotFound. Validating the path (a written
-// upload, a library key) is the handler's job.
+// SetCategoryPicture writes a category's two picture columns in one UPDATE
+// (ut-docs#2500, #2717, #3585): the image path (an uploaded photo's
+// /public/assets/categories/<id>/thumb.png, or the id-less generic library
+// tile) and the icon id ("lucide:beer", contract §0.12). Both may be set at
+// once — a category can keep an icon underneath its photo — and each ""
+// stores NULL in that column, so a caller that wants to keep one column
+// passes its current value (see CategoryPicture). Which one is displayed
+// (the image wins, else the icon) is decided by the iconid package
+// (iconid.Resolve / EffectiveIcon), not here. A malformed icon id is
+// refused; an unknown category is ErrCategoryNotFound. Validating the path
+// (a written upload, a library key) is the handler's job.
 func (r *CatalogRepo) SetCategoryPicture(ctx context.Context, id, imagePath, icon string) error {
 	imagePath, icon = strings.TrimSpace(imagePath), strings.TrimSpace(icon)
 	if icon != "" && !iconid.ValidFormat(icon) {
 		return fmt.Errorf("icon %q is not a valid icon id", icon)
-	}
-	if imagePath != "" && icon != "" {
-		return errors.New("a category has one picture: an image path or an icon id, not both")
 	}
 	res, err := r.db.ExecContext(ctx, `UPDATE categories SET image_path = ?, icon = ?, updated_at = datetime('now') WHERE id = ?`,
 		nullableString(imagePath), nullableString(icon), id)
