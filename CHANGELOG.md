@@ -38,6 +38,15 @@ Release notes for the till. Versions come from the release tag
 
 ### Fixed
 
+- **Marketplace installs check plugin settings like the importer does
+  (ut-docs#3514).** A marketplace-installed plugin whose manifest has a
+  malformed setting-bound permission (`net:@setting:`/`tcp:@setting:`, or
+  one naming a setting it doesn't declare) or an unknown setting type (a
+  typo of `secret`, which would have stored that value unsealed) is now
+  refused at install with the same message the importer gives, instead of
+  installing and silently granting nothing. Installed plugins are not
+  re-checked.
+
 - **A Linux till that can't update itself now says so (ut-docs#2733).** With
   automatic updates on (the default) and an update waiting, a till whose
   install folder it can't write — a .deb install whose ownership broke —

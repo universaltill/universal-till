@@ -176,6 +176,17 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 	if err := validateValidationPermissions(&manifest); err != nil {
 		result.Errors = append(result.Errors, err.Error())
 	}
+	// Setting-bound grants, same as ParseManifest (ut-docs#3514).
+	if err := validateSettingBoundPermissions(&manifest); err != nil {
+		result.Errors = append(result.Errors, err.Error())
+	}
+	// Setting-type enum, same as ParseManifest (ADR-0082, ut-docs#3514).
+	for _, s := range manifest.Settings {
+		if !isValidSettingType(s.Type) {
+			result.Errors = append(result.Errors, fmt.Sprintf("manifest setting %q has invalid type %q (allowed: %s)",
+				s.Key, s.Type, SettingTypeSecret))
+		}
+	}
 
 	// Checksum verification (if provided in manifest)
 	result.ChecksumVerified = true // Default to true if no checksum in manifest
