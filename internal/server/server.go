@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	dbpkg "github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/housekeeping"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -44,8 +45,9 @@ func NewBackgroundJobs(catalogRepo *marketplace.CatalogRepository, db *sql.DB, s
 		revocationChecker = plugins.NewRevocationChecker(db, cfg.Marketplace.EndpointURL, supervisor)
 	}
 
-	telemetryClient := plugins.NewTelemetryClient(db, cfg.Marketplace.EndpointURL,
-		marketplace.DeviceIDFromConfig(&cfg.Marketplace), cfg.Marketplace.ClientID, cfg.Marketplace.StoreID)
+	telemetryClient := plugins.NewTelemetryClient(db, func() plugins.TelemetryIdentity {
+		return telemetryIdentity(cfg)
+	})
 
 	return &BackgroundJobs{
 		catalogRepo:         catalogRepo,
@@ -57,6 +59,28 @@ func NewBackgroundJobs(catalogRepo *marketplace.CatalogRepository, db *sql.DB, s
 		retryBaseDelay:      1 * time.Second,
 		logger:              logger,
 		cfg:                 cfg,
+	}
+}
+
+// telemetryIdentity is who the telemetry tick reports as, read per tick
+// through enroll.Effective: the startup cfg has no store or credential on a
+// till that enrols or pairs after boot. The device id is the one the
+// credential was minted for (enroll's live id, as cloudsync sends), so an
+// env-pinned UT_MARKETPLACE_DEVICE_ID can't cause a 403 device_mismatch.
+// MerchantID is wire compatibility only; the cloud takes it from the
+// credential.
+func telemetryIdentity(cfg *config.Config) plugins.TelemetryIdentity {
+	m := enroll.Effective(cfg).Marketplace
+	deviceID := enroll.CurrentStatus().DeviceID
+	if deviceID == "" {
+		deviceID = marketplace.DeviceIDFromConfig(&m)
+	}
+	return plugins.TelemetryIdentity{
+		EndpointURL: m.EndpointURL,
+		DeviceID:    deviceID,
+		MerchantID:  m.ClientID,
+		StoreID:     m.StoreID,
+		Token:       m.MerchantToken,
 	}
 }
 
@@ -90,7 +114,7 @@ func (bj *BackgroundJobs) Start(ctx context.Context, wg *sync.WaitGroup) {
 		}
 	}()
 
-	// Telemetry reporting job (stub for T024)
+	// Telemetry reporting job
 	wg.Add(1)
 	go func() {
 		defer logging.RecoverAndLog("server.telemetry")

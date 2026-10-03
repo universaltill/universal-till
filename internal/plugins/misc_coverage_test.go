@@ -346,7 +346,7 @@ func TestPluginHasNetPermission(t *testing.T) {
 func TestLoadOptInStatus(t *testing.T) {
 	db := managerTestDB(t)
 	ctx := context.Background()
-	tc := NewTelemetryClient(db, "http://127.0.0.1:0", "d", "m", "s")
+	tc := NewTelemetryClient(db, fixedIdentity("http://127.0.0.1:0", "d", "m", "s", "t"))
 
 	// Unset → disabled.
 	if err := tc.loadOptInStatus(ctx); err != nil {
