@@ -21,16 +21,19 @@ type SnapshotVariant struct {
 // SnapshotItem is one item of the catalog snapshot (schema 2). Every list
 // is non-nil (the wire shape is [] never null).
 type SnapshotItem struct {
-	ID                        string
-	Name                      string
-	SKU                       string
-	PriceMinor                int64
-	CategoryID                string
-	Color                     string
-	Active                    bool
-	IsWeighed                 bool
-	StockUntracked            bool
-	AgeRestricted             bool
+	ID             string
+	Name           string
+	SKU            string
+	PriceMinor     int64
+	CategoryID     string
+	Color          string
+	Active         bool
+	IsWeighed      bool
+	StockUntracked bool
+	AgeRestricted  bool
+	// Icon is items.icon as stored (ut-docs#3584), "" for none; the push
+	// reports iconid.EffectiveIcon of it and the thumbnail path.
+	Icon                      string
 	Barcodes                  []string // primary first
 	ModifierGroupIDs          []string // directly attached, link order
 	ModifierOptOutIDs         []string
@@ -51,7 +54,7 @@ type SnapshotItem struct {
 func (r *CatalogRepo) CatalogSnapshotItems(ctx context.Context) ([]SnapshotItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, name, COALESCE(sku, ''), base_price, COALESCE(category_id, ''), COALESCE(color, ''),
-       is_active, is_weighed, stock_untracked, age_restricted
+       is_active, is_weighed, stock_untracked, age_restricted, COALESCE(icon, '')
 FROM items
 ORDER BY is_active DESC, name, id`)
 	if err != nil {
@@ -60,7 +63,7 @@ ORDER BY is_active DESC, name, id`)
 	var items []SnapshotItem
 	for rows.Next() {
 		var it SnapshotItem
-		if err := rows.Scan(&it.ID, &it.Name, &it.SKU, &it.PriceMinor, &it.CategoryID, &it.Color, &it.Active, &it.IsWeighed, &it.StockUntracked, &it.AgeRestricted); err != nil {
+		if err := rows.Scan(&it.ID, &it.Name, &it.SKU, &it.PriceMinor, &it.CategoryID, &it.Color, &it.Active, &it.IsWeighed, &it.StockUntracked, &it.AgeRestricted, &it.Icon); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("catalog snapshot: items: %w", err)
 		}

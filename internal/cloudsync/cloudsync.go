@@ -31,6 +31,7 @@ import (
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/entitlement"
+	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -1241,6 +1242,11 @@ type snapshotItemRow struct {
 	// item, "" for none or a built-in icon (contract §3.9 rule 5), so my.
 	// can tell an image it set from one taken on the till.
 	ImageSHA256 string `json:"image_sha256"`
+	// Icon (ut-docs#3584) is the icon id the item shows, "" for none, a
+	// photo or the generic tile — iconid.EffectiveIcon of its thumbnail
+	// path and items.icon, the same read the category report uses
+	// (ut-docs#2717), so my. draws and preselects what the till draws.
+	Icon string `json:"icon"`
 	// EverSold (ut-docs#3317) is true once the item or one of its variants
 	// has a sale line here (live or archived). my. offers Delete only while
 	// it is false; the cloud keeps it true once any till reported it.
@@ -1305,6 +1311,7 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 			ModifierOptOutIDs: it.ModifierOptOutIDs, EffectiveModifierGroupIDs: it.EffectiveModifierGroupIDs,
 			Variants:    make([]snapshotVariantRow, 0, len(it.Variants)),
 			ImageSHA256: ServedImageSHA256(thumbs[it.ID]),
+			Icon:        iconid.EffectiveIcon(thumbs[it.ID], it.Icon),
 		}
 		if len(it.Barcodes) > 0 {
 			row.Barcode = it.Barcodes[0]
