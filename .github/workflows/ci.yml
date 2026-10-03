@@ -8,7 +8,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: '1.25' }
+        with: { go-version: '1.27' }
       - uses: actions/setup-node@v4
         # Needed only by the docs-shots cross-check below (ut-docs#370),
         # which shells out to the real e2e/tests-docs/lib.js rather than
@@ -16,7 +16,7 @@ jobs:
         # with the other fast guards and actually fails fast — not after
         # `needs: build` gates it behind the whole e2e job.
         with:
-          node-version: '20'
+          node-version: '26'
       - name: Prep Go cache dirs
         run: |
           mkdir -p "${RUNNER_TEMP}/gobuildcache"
@@ -46,13 +46,15 @@ jobs:
         # that needs GTK/WebKit dev headers, same as the desktop-shell
         # job below, to lint it under the `desktop` tag it actually ships
         # with rather than produce false positives on per-platform stubs).
-        # v6 only supports golangci-lint v1; the v2.5.0 pinned below (and
-        # .golangci.yml's own `version: "2"` config schema) needs v8+
+        # v6 only supports golangci-lint v1; the v2.x pinned below (and
+        # .golangci.yml's own `version: "2"` config schema) needs v8+; v2.14.0 + v9 for Go 1.27 (ut-docs#3595)
         # (independent review, ut-docs#1565: v6 would have made this gate
         # unable to run at all, caught before it ever reached real CI).
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.5.0
+          version: v2.14.0
+      - name: macOS minimum vs Go toolchain guard
+        run: bash scripts/ci/guard-macos-min-version.sh && bash scripts/ci/guard-macos-min-version_test.sh
       - name: Shellcheck version guard
         run: bash scripts/ci/guard-shellcheck-version.sh
       - name: Shellcheck version guard regression test
@@ -540,7 +542,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: '1.25' }
+        with: { go-version: '1.27' }
       - name: Install GTK/WebKit dev headers
         # ut-docs#1933: apt-get update against this runner image's
         # pre-configured Google Chrome repo intermittently fails with a
@@ -565,9 +567,9 @@ jobs:
           CGO_ENABLED: 1
         run: go vet -tags desktop ./cmd/unitill-desktop
       - name: Lint unitill-desktop (golangci-lint, unused, desktop build tag)
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.5.0
+          version: v2.14.0
           args: --config=.golangci-desktop.yml --build-tags=desktop ./cmd/unitill-desktop/...
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
@@ -611,10 +613,10 @@ jobs:
         if: env.DOCS_READ_TOKEN == ''
         run: echo "::warning::DOCS_READ_TOKEN secret not set — ut-docs is private, docs-hub e2e specs will be skipped"
       - uses: actions/setup-go@v5
-        with: { go-version: '1.25' }
+        with: { go-version: '1.27' }
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '26'
       - name: Seed E2E database
         run: UT_DB_PATH=./data/e2e.db go run ./scripts/e2e_seed/main.go
       - name: Start app
@@ -682,7 +684,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: '1.25' }
+        with: { go-version: '1.27' }
       - name: Download Pact FFI
         run: |
           curl -L -o /tmp/libpact_ffi.so.gz \
