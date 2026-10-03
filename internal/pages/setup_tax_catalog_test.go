@@ -1253,3 +1253,49 @@ func TestBasePluginRetryTick_TaxSpecStaysPendingWhenLocalCheckErrors(t *testing.
 		t.Fatal("a failed local check must not lead to a second fiscal install")
 	}
 }
+
+// --- ut-docs#3244: step 3 keeps the queued note without a catalog match ---
+
+// #3210 keeps a consented tax/de spec pending when the catalog is reachable
+// but publishes no DE tax listing. The tile is rendered only from a catalog
+// match, so step 3 used to say nothing about the fiscal plugin at all; it
+// must still show the queued note (and no Install button — there is nothing
+// to install yet; the background retry already holds the consent).
+func TestSetupGETShowsQueuedTaxNoteWhenCatalogHasNoListing(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		pending     []basePluginSpec
+		sideloaded  bool
+		wantPending bool
+	}{
+		{"pending tax spec", []basePluginSpec{{CanonicalType: "tax", Locale: "de"}}, false, true},
+		{"nothing pending", nil, false, false},
+		{"only a language spec pending", []basePluginSpec{{CanonicalType: "language", Locale: "de"}}, false, false},
+		{"pending but a local tax plugin is active", []basePluginSpec{{CanonicalType: "tax", Locale: "de"}}, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetTaxCatalogForTest(t)
+			resetSetupLanguageCatalog()
+			t.Cleanup(resetSetupLanguageCatalog)
+			withOSLocale(t, "", "") // see TestSetupGETResumesStep3ForTaxCountry's comment
+			mux, dp := newRealDBDeps(t)
+			initTestPaths(t)
+			mkt := newFakeMarketplace(t, map[string]string{}) // reachable, no DE tax listing
+			dp.Cfg.Marketplace = mkt.config()
+			if tc.sideloaded {
+				seedLocalTaxPlugin(t, dp, "com.example.sideloaded-tax")
+			}
+			if err := savePendingBasePlugins(t.Context(), dp, tc.pending); err != nil {
+				t.Fatal(err)
+			}
+
+			body := getSetup(mux, "", "").Body.String()
+			if got := strings.Contains(body, "data-tax-plugin-pending"); got != tc.wantPending {
+				t.Errorf("queued note shown = %v, want %v", got, tc.wantPending)
+			}
+			if strings.Contains(body, `action="/api/setup/tax-plugin"`) {
+				t.Error("no catalog match: step 3 must not offer an Install button")
+			}
+		})
+	}
+}
