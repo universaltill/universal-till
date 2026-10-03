@@ -438,7 +438,9 @@ func TestBackgroundJobsStart_TelemetryFailureIsLoggedNotFatal(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	bj := &BackgroundJobs{
-		telemetryClient:     plugins.NewTelemetryClient(sqlDB, "http://127.0.0.1:1", "dev", "merchant", "store"),
+		telemetryClient: plugins.NewTelemetryClient(sqlDB, func() plugins.TelemetryIdentity {
+			return plugins.TelemetryIdentity{EndpointURL: "http://127.0.0.1:1", DeviceID: "dev", MerchantID: "merchant", StoreID: "store", Token: "tok"}
+		}),
 		cfg:                 &config.Config{},
 		logger:              log.New(logBuf, "", 0),
 		catalogSyncInterval: time.Hour,
@@ -1061,5 +1063,16 @@ func TestRunHousekeeping_ClampsAbsurdArchiveRetentionInsteadOfOverflowing(t *tes
 	runHousekeeping(&s, d.DB, dbPath, now)
 	if _, err := os.Stat(inside); err != nil {
 		t.Error("an absurd archive_min_days overflowed minRetain negative and deleted a protected copy")
+	}
+}
+
+// Before enrolment there is no live device id, so the telemetry identity
+// falls back to the configured one, and carries the live store/credential
+// read through enroll.Effective (ut-docs#3561).
+func TestTelemetryIdentityFallsBackToConfiguredDevice(t *testing.T) {
+	cfg := &config.Config{Marketplace: config.MarketplaceConfig{EndpointURL: "http://cloud.test/api", DeviceID: "till-x", StoreID: "store-x", MerchantToken: "tok-x"}}
+	id := telemetryIdentity(cfg)
+	if id.EndpointURL != "http://cloud.test/api" || id.DeviceID != "till-x" || id.StoreID != "store-x" || id.Token != "tok-x" {
+		t.Fatalf("telemetryIdentity = %+v", id)
 	}
 }

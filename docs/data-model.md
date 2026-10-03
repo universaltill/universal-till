@@ -713,10 +713,11 @@ data/plugins/
 - Exponential backoff on failures (max 3 retries)
 
 **Telemetry Upload** (5 min interval)
-- Batches plugin lifecycle events (install, update, enable/disable)
+- Sends one snapshot of the active installed plugins per tick (no queue:
+  a failed send is logged and dropped; the next tick sends a fresh one)
 - Honors `settings.marketplace.telemetry_opt_in` flag
-- Queues events offline, syncs when connected
-- Max 50 events per batch
+- Reads the live enrolled identity each tick (`enroll.Effective`); skipped
+  until the till has a store id and a device credential
 
 **Revocation Sync** (30 min interval)
 - Checks marketplace revocation feed
@@ -743,8 +744,10 @@ data/plugins/
 - Includes revocation reason and timestamp
 
 **Telemetry Endpoint**
-- `POST /v1/telemetry`
-- Accepts batched event arrays
+- `POST /v1/telemetry/report` with `Authorization: Bearer <device credential>`
+  (the ADR-0116 per-device token, ut-docs#3561)
+- The cloud binds the report to the credential's store and device; a
+  missing or refused credential gets 401, another device's id gets 403
 - Returns 200 OK on successful ingestion
 
 ### Security Features
