@@ -20,8 +20,8 @@ Bu kasa 100'den fazla rapor gönderdiyse, girişin altında kaç tanesinin göst
 
 Durumların anlamı:
 
-- **Burada kaydedildi, gönderim bekleniyor** — bu kasada kaydedildi, henüz yüklenmedi (mağaza çevrimdışıyken normaldir).
-- **Gönderilemedi** — bu rapor bir süredir yüklenemiyor; altında kısa bir neden görünür (örneğin bu kasanın kaydının tamamlanması gerekiyor). Yine de kayıtlıdır ve kasa otomatik olarak yeniden denemeye devam eder — hiçbir şey kaybolmaz.
+- **Burada kaydedildi, gönderim bekleniyor** — bu kasada kaydedildi, henüz yüklenmedi (mağaza çevrimdışıyken normaldir). Mağazaya katılmış bir telefon veya tablette, altında kendi bulut erişimini ana kasadan beklediğini söyleyen kısa bir not görünebilir — bu erişim gelince rapor kendiliğinden gönderilir.
+- **Gönderilemedi** — bu rapor bir süredir yüklenemiyor; altında kısa bir neden görünür (örneğin bu kasanın kaydının tamamlanması gerekiyor ya da — katılmış bir telefon veya tablette — ana kasanın açık, çevrimiçi, kayıtlı ve güncel olduğunun kontrol edilmesi). Yine de kayıtlıdır ve kasa otomatik olarak yeniden denemeye devam eder — hiçbir şey kaybolmaz.
 - **Gönderildi, inceleme bekliyor** — bu kasadan yüklendi; bulut henüz bir gelişme bildirmedi.
 - **Alındı / Yazıya dökülüyor / İncelemeye hazır** — rapor işleniyor (sesli notlar otomatik olarak yazıya dökülür).
 - **GitHub'a kaydedildi** — takip edilen bir kayda dönüştü ve durumu henüz bilinmiyor. Öğrenildiğinde bu durum aşağıdaki üç durumdan birine otomatik olarak güncellenir.
