@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/taxrate"
@@ -118,11 +119,12 @@ const (
 	// per-platform cards.
 	KeyLaunchOnStartup = "display.launch_on_startup"
 	// KeyReportRetentionMode is the per-shop report_archive retention
-	// destination (ADR-0040): "till" | "cloud" | "both". Till-writable
-	// locally until card 4 lands, at which point write ownership moves to
-	// the cloud sync response and this key becomes a read-only replica.
-	// Empty/unset means "till" (the only mode this card actually implements).
-	KeyReportRetentionMode = "store.report_retention_mode"
+	// destination (ADR-0040): "till" | "cloud" | "both", empty meaning
+	// "till". It stays till-owned (ADR-0147 §1, #3390): written only through
+	// POST /api/settings/report-retention, reported read-only to the cloud.
+	// Defined in internal/data so internal/cloudsync (the uploader) reads
+	// the same key without importing a page package.
+	KeyReportRetentionMode = data.ReportRetentionModeKey
 	// KeyRestorePromptStatus tracks the setup wizard's "restore from
 	// another POS?" step (ut-docs#617): empty/unset means the operator
 	// answered No, or never deferred; RestorePromptStatusDeferred means
@@ -190,10 +192,14 @@ const (
 // (including empty) is treated as "nothing to resume."
 const RestorePromptStatusDeferred = "deferred"
 
-// ReportRetentionModeTill is the default/fallback report_retention_mode
-// value, and the only mode this card (ADR-0040 card 1) actually prunes for
-// -- "cloud"/"both" are visible-but-inert until card 4 wires the cloud side.
-const ReportRetentionModeTill = "till"
+// Report retention modes (KeyReportRetentionMode values). Till is the
+// default/fallback; cloud and both upload to the cloud and need an active
+// subscription with cloud_backup to be chosen (ADR-0147 §1).
+const (
+	ReportRetentionModeTill  = data.ReportRetentionModeTill
+	ReportRetentionModeCloud = data.ReportRetentionModeCloud
+	ReportRetentionModeBoth  = data.ReportRetentionModeBoth
+)
 
 // DefaultIdleLockMinutes locks an unattended till after 10 minutes unless
 // configured otherwise (docs: pos-auth.md idle auto-lock).

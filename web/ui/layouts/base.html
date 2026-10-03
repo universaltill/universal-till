@@ -1514,6 +1514,15 @@
            otherwise. Same hx-preserve + default innerHTML swap as
            #sb-main-till-mount above. -->
       <span id="sb-cloud-auth-mount" hx-preserve hx-get="/ui/cloud-auth-chip" hx-trigger="load, every 60s"></span>
+      <!-- ut-docs#574 (ADR-0147): the cloud refused the archived-report
+           upload (subscription not active) — "Report upload refused"
+           (web/ui/partials/report_archive_chip.html). Main till, retention
+           mode cloud/both only. A status chip, never a modal: reports stay
+           on this till and upload once the subscription is active again.
+           Filled by GET /ui/report-archive-chip on load and every 60 s (the
+           uploader retries every ~10 min); empty body otherwise. Same
+           hx-preserve + default innerHTML swap as #sb-cloud-auth-mount. -->
+      <span id="sb-report-archive-mount" hx-preserve hx-get="/ui/report-archive-chip" hx-trigger="load, every 60s"></span>
       <!-- The network light: navigator.onLine, plus the till's own probe
            of its cloud host (ut-docs#3095). navigator.onLine only means a
            network interface is up, so on Wi-Fi whose router has no

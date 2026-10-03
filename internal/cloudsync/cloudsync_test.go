@@ -61,6 +61,8 @@ type fakeCloud struct {
 	snapshots  []map[string]any
 	tracking   []map[string]any
 	aggregates []map[string]any
+	// reportArchives records POST /v1/stores/report-archives (ADR-0147).
+	reportArchives []map[string]any
 	// entitlement, when non-nil, is sent verbatim as the sync response's
 	// data.entitlement (ADR-0060 §3); nil = an old cloud that omits it.
 	entitlement json.RawMessage
@@ -108,6 +110,14 @@ func (f *fakeCloud) handler() http.Handler {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		f.mu.Lock()
 		f.aggregates = append(f.aggregates, body)
+		f.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"ok": true}})
+	})
+	mux.HandleFunc("/v1/stores/report-archives", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		f.reportArchives = append(f.reportArchives, body)
 		f.mu.Unlock()
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"ok": true}})
 	})

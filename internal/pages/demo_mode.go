@@ -439,15 +439,16 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /open-orders/counter/open":    true,
 	// Status chips every page loads (local reads only; denying them would
 	// stamp the demo message into the nav).
-	"GET /ui/bugreport-chip":   true,
-	"GET /ui/cloud-auth-chip":  true,
-	"GET /ui/diagnostics-chip": true,
-	"GET /ui/fiscal-chip":      true,
-	"GET /ui/main-till-status": true,
-	"GET /ui/net-status":       true,
-	"GET /ui/pairing-notice":   true,
-	"GET /ui/plugin-buttons":   true,
-	"GET /ui/sync-chip":        true,
+	"GET /ui/bugreport-chip":      true,
+	"GET /ui/cloud-auth-chip":     true,
+	"GET /ui/diagnostics-chip":    true,
+	"GET /ui/fiscal-chip":         true,
+	"GET /ui/main-till-status":    true,
+	"GET /ui/net-status":          true,
+	"GET /ui/pairing-notice":      true,
+	"GET /ui/plugin-buttons":      true,
+	"GET /ui/report-archive-chip": true,
+	"GET /ui/sync-chip":           true,
 	// Catalogue browse and edit, Designer, buttons, categories, modifiers,
 	// option sets, inventory, tax codes (form edits; uploads are blocked by
 	// the multipart file filter).
