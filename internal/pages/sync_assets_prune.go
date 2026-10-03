@@ -93,11 +93,18 @@ func newAssetPruner(d *common.Deps) *assetPruner {
 	}
 }
 
-// anyBasketHasItems reports whether a sale is in progress on this till:
-// the cashier's basket, the kiosk's, or any table-QR guest session's.
+// anyBasketHasItems reports whether a sale is in progress on this till: the
+// cashier's basket, the kiosk's, or any table-QR guest session's. Engine and
+// KioskEngine use HasItemsOrByHand (ut-docs#3586, ut-docs#3607), not
+// HasItems: a resumed kiosk pay-at-counter order whose lines all missed the
+// catalog holds only "add by hand" entries, and HasItems() alone reads that
+// as an empty basket, which would let the pruner remove an asset mid-sale.
+// SelfOrderSessions.HasItems() is left on priced-lines-only: a table-QR
+// session's own *Service never receives AddByHand (RestoreHeld's only
+// caller always targets d.Engine), so this gap cannot reach it today.
 func anyBasketHasItems(d *common.Deps) bool {
-	return (d.Engine != nil && d.Engine.HasItems()) ||
-		(d.KioskEngine != nil && d.KioskEngine.HasItems()) ||
+	return (d.Engine != nil && d.Engine.HasItemsOrByHand()) ||
+		(d.KioskEngine != nil && d.KioskEngine.HasItemsOrByHand()) ||
 		d.SelfOrderSessions.HasItems()
 }
 
