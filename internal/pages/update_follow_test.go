@@ -327,6 +327,34 @@ func TestFollowTick_RestartGateReadsTheLiveBasket(t *testing.T) {
 	}
 }
 
+// ut-docs#3596: a resumed kiosk pay-at-counter order can be live with zero
+// priced lines and only "add by hand" ones (ut-docs#3586) — its held_sales
+// row was already claimed and deleted on resume, so it exists only in this
+// basket. The restart gate must still treat it as busy, same as a
+// priced-line basket, or an unattended auto-update loses the order outright.
+func TestFollowTick_RestartGateReadsByHandOnlyBasketAsBusy(t *testing.T) {
+	dp := newFollowReplicaDeps(t, "1.4.0")
+	stubFollowSeams(t, "1.3.0", true, nil)
+	var gate func() bool
+	autoUpdateApplyVersion = func(_ context.Context, _ string, idle func() bool) error {
+		gate = idle
+		return nil
+	}
+
+	autoUpdateTick(t.Context(), dp, tickNow)
+	if gate == nil {
+		t.Fatal("the follow applied without a restart gate")
+	}
+
+	dp.Engine.RestoreHeld(pos.BasketSnapshot{
+		AddByHand: []pos.ByHandLine{{Name: "Latte", Qty: 2}},
+		DisplayNo: "C-12",
+	}, pos.HeldOrigin{ID: "hold-byhand-1", Label: "C-12 · Takeaway", CreatedAt: "2026-01-01 10:00:00"})
+	if gate() {
+		t.Fatal("gate says idle with a by-hand-only basket — the restart would lose the order")
+	}
+}
+
 // selfupdate.Supported() probes the disk (a temp file in the exe dir and the
 // cwd), and the status-bar chip polls every 5 s on every till. It must only
 // run when a replica's target is actually newer (ut-docs#2738 review).
