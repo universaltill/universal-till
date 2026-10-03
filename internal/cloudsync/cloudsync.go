@@ -1415,11 +1415,15 @@ func post(ctx context.Context, cfg *config.Config, path string, payload []byte) 
 	buf := new(bytes.Buffer)
 	_, _ = buf.ReadFrom(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, &statusError{
+		se := &statusError{
 			Path:       path,
 			StatusCode: resp.StatusCode,
 			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
 		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			se.Code, _ = parseCloudErrorEnvelope(buf.Bytes())
+		}
+		return nil, se
 	}
 	return buf.Bytes(), nil
 }
@@ -1450,6 +1454,12 @@ type statusError struct {
 	// 429/503 (see retryAfterHint), so a caller never has to guess whether
 	// parsing was worth doing for this particular status.
 	RetryAfter time.Duration
+	// Code is a 401's machine code from the {error:{code}} envelope
+	// (ADR-0116 D6: device_revoked, token_retired or unauthorized), ""
+	// when the body isn't the envelope. Decoded for 401 only — every other
+	// status leaves it empty, so no existing caller's view changes. Start's
+	// scheduler counts consecutive 401s (schedule.go's authTracker).
+	Code string
 }
 
 func (e *statusError) Error() string {
@@ -1530,7 +1540,14 @@ func Start(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks, wg 
 			if hooks.AfterTick != nil {
 				hooks.AfterTick(ctx, contacted, err)
 			}
-			// A nil channel never fires: no kicks while backing off.
+			// A nil channel never fires: no kicks while backing off. That
+			// includes the flat hourly wait of an ADR-0116 D6 lock-out
+			// (schedule.go's authTracker): a credential written while the
+			// till waits — a pairing, a re-registration — is first tried on
+			// the next hourly tick, and the status chip stays until that tick
+			// succeeds. The "Pair with a shop" screen (ut-docs#3523) is where
+			// an earlier wake belongs; a cloud nudge can't be it, the link
+			// itself is refused on a 401.
 			kick := hooks.Kick
 			if err != nil {
 				kick = nil

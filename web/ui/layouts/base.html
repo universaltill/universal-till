@@ -1504,6 +1504,16 @@
            innerHTML swap as nav.html's #sync-chip: the response is the
            chip itself, never an OOB swap of this element. -->
       <span id="sb-main-till-mount" hx-preserve hx-get="/ui/main-till-status" hx-trigger="load, every 5s"></span>
+      <!-- ADR-0116 D6 (ut-docs#3524): the cloud refused this till's
+           credential 3 times in a row — "Removed from the shop's cloud
+           account" / "This till needs pairing again" / "Register as a new
+           store" (web/ui/partials/cloud_auth_chip.html). A status chip,
+           never a modal: the till keeps selling offline and retries the
+           cloud hourly. Filled by GET /ui/cloud-auth-chip on load and every
+           60 s (the lock-out only changes on an hourly tick); empty body
+           otherwise. Same hx-preserve + default innerHTML swap as
+           #sb-main-till-mount above. -->
+      <span id="sb-cloud-auth-mount" hx-preserve hx-get="/ui/cloud-auth-chip" hx-trigger="load, every 60s"></span>
       <!-- The network light: navigator.onLine, plus the till's own probe
            of its cloud host (ut-docs#3095). navigator.onLine only means a
            network interface is up, so on Wi-Fi whose router has no

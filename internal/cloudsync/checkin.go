@@ -198,12 +198,18 @@ func getCheckin(ctx context.Context, endpoint, storeID, token string, known bool
 		drainBody(resp)
 		return http.StatusOK, *body.Data.LinkVersion, nil
 	case http.StatusUnauthorized, http.StatusTooManyRequests, http.StatusServiceUnavailable:
-		drainBody(resp)
-		return resp.StatusCode, 0, &statusError{
+		se := &statusError{
 			Path:       path,
 			StatusCode: resp.StatusCode,
 			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
 		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			// ADR-0116 D6: the 401's machine code. decodeCloudError's read
+			// is bounded exactly like drainBody's.
+			se.Code = decodeCloudError(resp).Code
+		}
+		drainBody(resp)
+		return resp.StatusCode, 0, se
 	default:
 		drainBody(resp)
 		return resp.StatusCode, 0, nil

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math/rand/v2"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -141,6 +142,11 @@ type scheduler struct {
 	// goroutine-safe top-level Float64 in production, a stub in tests.
 	rng   func() float64
 	fails int
+	// auth is the 401 streak (ADR-0116 D6), kept apart from fails: fails
+	// mixes every failure kind, the streak counts only 401s. Production
+	// shares the package-level tillAuth so the web layer can read it; nil
+	// (a test's bare scheduler) leaves the generic backoff alone.
+	auth *authTracker
 }
 
 // newSchedulerFn is what Start calls; a var so a test can stub the random
@@ -148,7 +154,7 @@ type scheduler struct {
 var newSchedulerFn = newScheduler
 
 func newScheduler() *scheduler {
-	return &scheduler{rng: rand.Float64}
+	return &scheduler{rng: rand.Float64, auth: tillAuth}
 }
 
 // firstWait is the jittered wait before Start's very first tick (design
@@ -165,7 +171,15 @@ func (s *scheduler) firstWait() time.Duration {
 // point 2), raised to a Retry-After hint when the failure carries one
 // (design point 3) — never lowered by one, since the backoff is itself a
 // floor the cloud's own hint can only extend.
+//
+// ADR-0116 D6 overrides all of that while the till is locked out (3
+// consecutive 401s): every wait is a flat authRetryWait until a tick
+// succeeds, whatever the failure in between (a 503 or a dead network
+// neither ends the lock-out nor speeds it up).
 func (s *scheduler) next(tickErr error) time.Duration {
+	if s.auth != nil {
+		s.auth.observe(tickErr)
+	}
 	if tickErr == nil {
 		s.fails = 0
 		return jitteredWait(tickInterval(), s.rng())
@@ -175,5 +189,96 @@ func (s *scheduler) next(tickErr error) time.Duration {
 	if ra := retryAfterHint(tickErr); ra > d {
 		d = ra
 	}
+	if s.auth != nil && s.auth.lockedOut() {
+		return authRetryWait
+	}
 	return d
+}
+
+// ADR-0116 D6 (ut-docs#3524): after authLockoutAfter consecutive 401s on a
+// till-auth endpoint (the check-in GET and the sync POST — the two calls
+// whose error is the tick's) the till keeps selling offline, calls the
+// cloud only every authRetryWait, and shows a status chip until a tick
+// succeeds again (pairing gives it a working credential).
+const (
+	authLockoutAfter = 3
+	authRetryWait    = time.Hour
+)
+
+// The 401 machine codes ADR-0116 D6 names. Any other code — or none, from
+// an older cloud or a proxy's 401 — reads as AuthCodeUnauthorized.
+const (
+	AuthCodeDeviceRevoked = "device_revoked"
+	AuthCodeTokenRetired  = "token_retired"
+	AuthCodeUnauthorized  = "unauthorized"
+)
+
+// authTracker is the consecutive-401 streak. Start's goroutine writes it
+// (through scheduler.next) while page handlers read it (AuthChipStatus), so
+// it has its own lock. In memory like the check-in state: a restarted till
+// starts at zero and re-learns its lock-out within three ticks.
+type authTracker struct {
+	mu    sync.Mutex
+	fails int
+	code  string // the latest 401's normalised code
+}
+
+// tillAuth is the tracker Start's scheduler feeds and AuthChipStatus reads.
+var tillAuth = &authTracker{}
+
+// observe folds one tick's outcome into the streak: a success resets it, a
+// 401 extends it, anything else (503 auth_unavailable, 429, 5xx, transport)
+// is neutral — it says nothing about the credential.
+func (a *authTracker) observe(tickErr error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if tickErr == nil {
+		a.fails, a.code = 0, ""
+		return
+	}
+	var se *statusError
+	if !errors.As(tickErr, &se) || se.StatusCode != http.StatusUnauthorized {
+		return
+	}
+	a.fails++
+	a.code = normaliseAuthCode(se.Code)
+}
+
+func (a *authTracker) lockedOut() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.fails >= authLockoutAfter
+}
+
+func (a *authTracker) status() AuthChip {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.fails < authLockoutAfter {
+		return AuthChip{}
+	}
+	return AuthChip{Show: true, Code: a.code}
+}
+
+func normaliseAuthCode(code string) string {
+	switch code {
+	case AuthCodeDeviceRevoked, AuthCodeTokenRetired:
+		return code
+	default:
+		return AuthCodeUnauthorized
+	}
+}
+
+// AuthChip is what the web layer needs for ADR-0116 D6's status chip: Show
+// once the till is locked out, and the latest 401's code (one of the
+// AuthCode* constants). Whether the store is claimed or anonymous is the
+// caller's to decide — it changes the chip's words, not the lock-out.
+type AuthChip struct {
+	Show bool
+	Code string
+}
+
+// AuthChipStatus reports the cloud-credential chip's state for this till.
+// A local read; it never touches the network.
+func AuthChipStatus() AuthChip {
+	return tillAuth.status()
 }

@@ -540,6 +540,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncQuarantinePage(mux, dp) // ut-docs#1133: quarantined LAN-sync journal entries, primary-only admin panel (ADR-0065 follow-up)
 	registerPrimaryProof(mux, dp)       // main till answers a moved-till challenge (ut-docs#2722)
 	registerMainTillStatus(mux, dp)     // replica's main-till connectivity chip (ut-docs#2722, #2742)
+	registerCloudAuthChip(mux, dp)      // refused cloud credential chip (ADR-0116 D6, ut-docs#3524)
 	registerTillsRoster(mux, dp)        // Tills page roster, live link per till (ut-docs#2742)
 	// ut-docs#3095: the status-bar light's cloud reachability. Probes run
 	// lazily on /ui/net-status polls, each bounded by netreach's 5 s

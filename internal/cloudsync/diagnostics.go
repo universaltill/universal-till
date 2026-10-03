@@ -49,16 +49,29 @@ const cloudErrorMaxBytes = 64 << 10
 func decodeCloudError(resp *http.Response) *CloudError {
 	ce := &CloudError{Status: resp.StatusCode}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, cloudErrorMaxBytes))
+	ce.Code, ce.Message = parseCloudErrorEnvelope(body)
+	return ce
+}
+
+// parseCloudErrorEnvelope reads ut-cloud's {error:{code,message}} envelope
+// from an already-read error body; both are "" for a body that isn't the
+// envelope. The body is cut at cloudErrorMaxBytes first, so a caller that
+// read more (post buffers the whole answer) parses no more than
+// decodeCloudError would.
+func parseCloudErrorEnvelope(body []byte) (code, message string) {
+	if len(body) > cloudErrorMaxBytes {
+		body = body[:cloudErrorMaxBytes]
+	}
 	var env struct {
 		Error struct {
 			Code    string `json:"code"`
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if json.Unmarshal(body, &env) == nil {
-		ce.Code, ce.Message = env.Error.Code, env.Error.Message
+	if json.Unmarshal(body, &env) != nil {
+		return "", ""
 	}
-	return ce
+	return env.Error.Code, env.Error.Message
 }
 
 // postJSON is post() with the error envelope decoded: a non-2xx answer

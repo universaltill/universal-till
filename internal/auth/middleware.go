@@ -363,6 +363,7 @@ func optionalAuth(path string) bool {
 var backgroundPollPaths = map[string]bool{
 	// base.html / nav.html shell, on every page.
 	"/ui/main-till-status": true,
+	"/ui/cloud-auth-chip":  true, // refused cloud credential (ADR-0116 D6, ut-docs#3524)
 	"/ui/net-status":       true, // status-bar light, fetch every 10 s (ut-docs#3095)
 	"/ui/sync-chip":        true,
 	"/ui/fiscal-chip":      true,
@@ -440,6 +441,7 @@ func displayBoardRequest(r *http.Request) bool {
 // two templates and fails on a shell request missing here.
 var shellGetPaths = map[string]bool{
 	"/ui/main-till-status": true,
+	"/ui/cloud-auth-chip":  true,
 	"/ui/net-status":       true,
 	"/ui/sync-chip":        true,
 	"/ui/fiscal-chip":      true,
