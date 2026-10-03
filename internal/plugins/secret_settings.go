@@ -24,9 +24,11 @@ const SettingTypeSecret = "secret"
 // SettingTypeEndpoint (ADR-0121 §2, ut-docs#3328): the setting holds an
 // operator-entered http(s)://host[:port][/path] — the address a plugin's
 // http:lan / net:@setting grant reaches. ValidEndpointURL is enforced where
-// an operator saves the value (POST /api/plugins/{id}/settings); a
-// manifest's own default_value is not validated at parse time, the same as
-// every other setting type.
+// an operator saves the value (POST /api/plugins/{id}/settings), and
+// (ut-docs#3552) a manifest's own non-empty default_value is validated the
+// same way in both install paths (ParseManifest and VerifyManifest) — a
+// nil or empty-string default is left alone (the no-default-yet
+// convention shared with secret-typed settings).
 const SettingTypeEndpoint = "endpoint"
 
 // isValidSettingType is ParseManifest's enum check for ManifestSetting.Type.
@@ -71,6 +73,39 @@ func ValidEndpointURL(v string) bool {
 		return false
 	}
 	return true
+}
+
+// validateSettingDefaults rejects a manifest whose "endpoint"-typed setting
+// declares a non-empty default_value that is not a valid http(s) URL
+// (ut-docs#3552). ValidEndpointURL is otherwise only enforced when an
+// operator saves the value (POST /api/plugins/{id}/settings) —
+// PersistManifest persists DefaultValue verbatim into plugin_settings at
+// install/update time (manifest.go), so an invalid default would otherwise
+// reach the row unchecked. Absent AND empty-string ("", the same
+// no-default-yet convention already used for secret-typed settings, e.g.
+// the Stripe/SumUp fixtures) are both left alone — only a non-empty,
+// non-URL value is rejected. A non-string default_value (number/bool/
+// object) is rejected too: an endpoint setting's value is always a URL
+// string.
+func validateSettingDefaults(m *Manifest) error {
+	for _, s := range m.Settings {
+		if s.Type != SettingTypeEndpoint || s.DefaultValue == nil {
+			continue
+		}
+		dv, ok := s.DefaultValue.(string)
+		if !ok {
+			return fmt.Errorf("manifest setting %q has invalid default_value %v for type %q: must be an http(s) URL string",
+				s.Key, s.DefaultValue, SettingTypeEndpoint)
+		}
+		if dv == "" {
+			continue
+		}
+		if !ValidEndpointURL(dv) {
+			return fmt.Errorf("manifest setting %q has invalid default_value %q for type %q: must be an http(s) URL",
+				s.Key, dv, SettingTypeEndpoint)
+		}
+	}
+	return nil
 }
 
 // SettingDeclaredEndpoint reports whether this manifest declares key with

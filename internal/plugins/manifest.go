@@ -275,6 +275,12 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 				s.Key, s.Type, strings.Join([]string{SettingTypeSecret, SettingTypeEndpoint}, "|"))
 		}
 	}
+	// An "endpoint"-typed setting's default_value, if present and non-empty,
+	// must itself be a valid http(s) URL (ut-docs#3552) — PersistManifest
+	// persists it unchecked otherwise.
+	if err := validateSettingDefaults(&m); err != nil {
+		return nil, err
+	}
 	// Setting-bound grants (ut-docs#2899) must be well-formed and name keys
 	// this manifest declares.
 	if err := validateSettingBoundPermissions(&m); err != nil {
