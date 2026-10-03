@@ -13,7 +13,9 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
+	"github.com/universaltill/universal-till/internal/pos"
 )
 
 // ut-docs#2785: a photo deleted on the main till used to stay on every
@@ -227,6 +229,41 @@ func TestPrune_BatchIsBoundedPerPull(t *testing.T) {
 		if exists(h.replicaFile("items", fmt.Sprintf("itm%03d/thumb.png", i))) {
 			t.Fatalf("expected the rest pruned on the next pull, itm%03d left", i)
 		}
+	}
+}
+
+// anyBasketHasItems must treat a resumed by-hand-only order (ut-docs#3586's
+// shape) as a sale in progress, same as ut-docs#3596 fixed for the
+// unattended-restart gate -- otherwise the replica asset pruner reads a
+// resumed kiosk pay-at-counter order whose lines all missed the catalog as
+// "idle" and could prune an asset mid-sale.
+func TestAnyBasketHasItems_ByHandOnlyEngineBasketCountsAsBusy(t *testing.T) {
+	d := &common.Deps{Engine: pos.NewServiceWithResolver(pos.Config{}, stubResolver{})}
+	d.Engine.RestoreHeld(pos.BasketSnapshot{
+		AddByHand: []pos.ByHandLine{{Name: "Latte", Qty: 2}},
+	}, pos.HeldOrigin{ID: "hold-byhand-1"})
+	if !anyBasketHasItems(d) {
+		t.Fatal("expected a by-hand-only Engine basket to count as busy")
+	}
+}
+
+func TestAnyBasketHasItems_ByHandOnlyKioskBasketCountsAsBusy(t *testing.T) {
+	d := &common.Deps{KioskEngine: pos.NewServiceWithResolver(pos.Config{}, stubResolver{})}
+	d.KioskEngine.RestoreHeld(pos.BasketSnapshot{
+		AddByHand: []pos.ByHandLine{{Name: "Latte", Qty: 2}},
+	}, pos.HeldOrigin{ID: "hold-byhand-2"})
+	if !anyBasketHasItems(d) {
+		t.Fatal("expected a by-hand-only KioskEngine basket to count as busy")
+	}
+}
+
+func TestAnyBasketHasItems_EmptyIsNotBusy(t *testing.T) {
+	d := &common.Deps{
+		Engine:      pos.NewServiceWithResolver(pos.Config{}, stubResolver{}),
+		KioskEngine: pos.NewServiceWithResolver(pos.Config{}, stubResolver{}),
+	}
+	if anyBasketHasItems(d) {
+		t.Fatal("expected an empty basket to not count as busy")
 	}
 }
 
