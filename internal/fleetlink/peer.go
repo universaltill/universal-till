@@ -84,6 +84,13 @@ type Peer struct {
 	// Set by the reader before it returns; read after run returns.
 	readErr error  // why the reader stopped (carries the peer's close code)
 	peerBye string // the reason in the peer's bye, if it said one
+
+	// readDone is closed once the reader has returned. writeFailed is the
+	// writer's own: its last write failed on a broken transport, so frames
+	// the peer sent before it closed (its bye) may still be unread
+	// (ut-docs#3571).
+	readDone    chan struct{}
+	writeFailed bool
 }
 
 // peerHost is the side-specific half of a Peer: Hub on the main till,
@@ -126,6 +133,7 @@ func newPeer(host peerHost, cfg Config, idPrefix, tillID string, conn Conn) *Pee
 		pending:  map[string]chan Envelope{},
 		outSem:   make(chan struct{}, cfg.MaxInFlight),
 		inSem:    make(chan struct{}, cfg.MaxInFlight),
+		readDone: make(chan struct{}),
 	}
 	p.touch(time.Now())
 	return p
@@ -328,6 +336,7 @@ func (p *Peer) run() {
 		p.writeLoop()
 	}()
 	p.readLoop()
+	close(p.readDone)
 	p.shutdown(CloseNormal, "closed", "")
 	<-writerDone
 	p.cancel()
@@ -485,11 +494,21 @@ func (p *Peer) replyError(replyTo, code string, retryable bool) {
 // writeLoop is the link's only writer and the only place that closes the
 // Conn.
 func (p *Peer) writeLoop() {
-	defer func() { p.conn.Close(p.closeCode, p.closeReason) }()
+	helloSent := false
+	defer func() {
+		// Only after our hello went out: a bye belongs to an established
+		// link, and draining a failed handshake would only widen the
+		// window for a hello that flaps the link up and down (#3571 review).
+		if p.writeFailed && helloSent {
+			p.drainReader()
+		}
+		p.conn.Close(p.closeCode, p.closeReason)
+	}()
 
 	if !p.writeMsg(TypeHello, p.host.helloFor(p.ctx, p.tillID)) {
 		return
 	}
+	helloSent = true
 
 	ping := time.NewTicker(p.cfg.PingInterval)
 	defer ping.Stop()
@@ -574,11 +593,28 @@ func (p *Peer) write(b []byte) bool {
 		if ctx.Err() == context.DeadlineExceeded {
 			p.shutdown(CloseSlow, "write timeout", "")
 		} else {
+			p.writeFailed = true
 			p.shutdown(CloseNormal, "write failed", "")
 		}
 		return false
 	}
 	return true
+}
+
+// drainReader gives the reader a short, bounded window to finish before the
+// writer closes the Conn after a failed write. A main till that says bye
+// and drops its socket can fail the replica's in-flight ping before the
+// replica's reader has taken the bye that already arrived; closing at once
+// would discard it and report a planned restart as a lost link. A real
+// drop still ends as lost: its reader errors at once, or the window
+// passes (ADR-0114 §4; ut-docs#3571).
+func (p *Peer) drainReader() {
+	t := time.NewTimer(min(p.cfg.WriteTimeout, time.Second))
+	defer t.Stop()
+	select {
+	case <-p.readDone:
+	case <-t.C:
+	}
 }
 
 func (p *Peer) writeBye() {
