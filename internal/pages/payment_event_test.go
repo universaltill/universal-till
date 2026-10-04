@@ -49,9 +49,20 @@ func TestBlockingPaymentEventGate(t *testing.T) {
 	ctx := context.Background()
 	bus := plugins.SharedBus(db)
 
-	// No subscriber yet → no gate.
-	if _, err := blockingPaymentEventWithResponseAndID(ctx, d, "stripe", "refund", "", map[string]any{"amount": int64(100)}); err != nil {
-		t.Fatalf("no-subscriber gate: %v", err)
+	// ut-docs#3633: the plugin DECLARES payment.stripe.refund but nothing
+	// is subscribed (its module never loaded) → fail closed, never "no
+	// gate": the provider that must send the money back was never asked.
+	if _, err := blockingPaymentEventWithResponseAndID(ctx, d, "stripe", "refund", "", map[string]any{"amount": int64(100)}); err == nil {
+		t.Fatal("a declared-but-unloaded provider hook must block, not pass through")
+	}
+	// A hook-less payment plugin (post-settle only, qrpay-shaped: an entry,
+	// no payment.<key>.refund/.authorize hook) is still never gated.
+	mustExec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e2', 'com.universaltill.payment-stripe', 'qrpay', 'QR', 'payment', 'payment.qrpay.requested', 1)`)
+	for _, suffix := range []string{"refund", "authorize"} {
+		if _, dispatched, err := blockingPaymentEventDispatch(ctx, d, "qrpay", suffix, "", map[string]any{"amount": int64(100)}); err != nil || dispatched {
+			t.Fatalf("hook-less method must pass through untouched on %s: dispatched=%v err=%v", suffix, dispatched, err)
+		}
 	}
 
 	// Subscribe a blocking handler that approves, then declines.

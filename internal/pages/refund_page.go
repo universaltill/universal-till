@@ -1149,10 +1149,12 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 
 // blockingPaymentEventWithResponseAndID publishes `payment.<key>.<suffix>`
 // for the method's owning payment plugin and BLOCKS on the result: (nil,
-// nil) when the method has no payment entry or no subscriber (cash stays
-// cash), the plugin's raw response when it approves, and a non-nil error
-// when it declines OR the payment-entries lookup itself failed
-// (ut-docs#2278) — the caller must treat either case as a decline and stop
+// nil) when the method has no payment entry, or its plugin never declared
+// the hook (cash stays cash), the plugin's raw response when it approves,
+// and a non-nil error when it declines, when it declares the hook but has
+// no live subscriber (not loaded — ut-docs#3633), OR the payment-entries
+// lookup itself failed (ut-docs#2278) — the caller must treat any of these
+// as a decline and stop
 // the sale/refund (fail closed), never as "nothing to report", since on a
 // lookup failure this gate can no longer tell whether the method WOULD have
 // been vetoed. The response is what lets a gate read back plugin-reported
@@ -1216,6 +1218,23 @@ func blockingPaymentEventDispatch(ctx context.Context, d *common.Deps, method, s
 		event := strings.TrimSuffix(e.TriggerEvent, ".requested") + "." + suffix
 		bus := plugins.SharedBus(d.Db)
 		if !bus.HasSubscribers(event) {
+			// ut-docs#3633: "no subscriber" means "nothing to check" only
+			// for a genuinely hook-less method (a post-settle-only plugin
+			// such as qrpay, which never declared payment.<key>.<suffix>).
+			// A plugin that DECLARES the hook but has no live subscription
+			// — its module failed to load (install_state='broken', #368),
+			// the wasm runtime isn't running, or a Sync is mid-resubscribe
+			// — expects to be asked and cannot be: proceeding would
+			// complete the sale (and print the receipt) on a card tender
+			// that never authorized. Fail closed, and treat a failed
+			// lookup the same way (#2278's rule for this gate).
+			declared, err := data.NewPluginRepo(d.Db).HasActiveHook(ctx, e.PluginID, event)
+			if err != nil {
+				return nil, false, fmt.Errorf("payment gate: hook lookup for %q: %w", event, err)
+			}
+			if declared {
+				return nil, false, fmt.Errorf("payment gate: plugin %s declares %s but is not loaded", e.PluginID, event)
+			}
 			return nil, false, nil
 		}
 		payload["plugin_id"] = e.PluginID
