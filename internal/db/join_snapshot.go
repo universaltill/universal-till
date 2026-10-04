@@ -123,12 +123,15 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 
 // TillCloudIdentityPrefixes are the settings that make up ONE till's cloud
 // identity: its device id and registration markers (marketplace.device_*),
-// its cloud credential (marketplace.token*) and when it enrolled. They never
-// leave a till over the LAN — not in the join snapshot (RedactedJoinSnapshot)
-// and not in the admin bundle (data.PerTillSettingPrefixes, which covers
-// these; TestPerTillSettingsCoverTillCloudIdentity) — ut-docs#2730. The
-// store-level marketplace keys (store_id, merchant_id, …) still travel.
-var TillCloudIdentityPrefixes = []string{"marketplace.device_", "marketplace.token", "marketplace.enrolled_at"}
+// its cloud credential (marketplace.token*), when it enrolled, and the id
+// the cloud knows its device row by once promoted back to main
+// (till_identity.cloud_id, data.TillIdentityCloudIDSettingsKey, ut-docs#3307).
+// They never leave a till over the LAN — not in the join snapshot
+// (RedactedJoinSnapshot) and not in the admin bundle
+// (data.PerTillSettingPrefixes, which covers these;
+// TestPerTillSettingsCoverTillCloudIdentity) — ut-docs#2730. The store-level
+// marketplace keys (store_id, merchant_id, …) still travel.
+var TillCloudIdentityPrefixes = []string{"marketplace.device_", "marketplace.token", "marketplace.enrolled_at", "till_identity."}
 
 // DeleteTillCloudIdentity removes every TillCloudIdentityPrefixes row from
 // the settings table behind exec: the join-snapshot copy served to a joining

@@ -638,6 +638,14 @@ const (
 	ReleaseNotesSeenVersionSettingsKey = "release_notes.seen_version"
 )
 
+// TillIdentityCloudIDSettingsKey is the id the cloud knows THIS till's device
+// row by, kept after a joined till is promoted back to main/standalone
+// (ut-docs#3307). ClearReplicaIdentity copies sync.till_id here before it
+// wipes sync.*, and discovery.ReportedTillID reports it when no sync.till_id
+// is set. Per till, like sync.* itself: synced, it would hand every replica
+// the same id.
+const TillIdentityCloudIDSettingsKey = "till_identity.cloud_id"
+
 // PerTillSettingPrefixes are settings that belong to ONE till, never synced:
 // the replica's own sync identity/cursors, its printer, its screen, its own
 // end-of-day schedule (a replica Z-report would only cover local data), and
@@ -713,6 +721,11 @@ var PerTillSettingPrefixes = []string{
 	// whether its release notes were seen (AppVersionSettingsKey above).
 	// "app.version" as a prefix also covers app.version_first_run_at.
 	AppVersionSettingsKey, "release_notes.",
+	// ut-docs#3307: this till's own kept cloud id
+	// (TillIdentityCloudIDSettingsKey) — per till like sync.*, which it
+	// outlives: a once-joined till promoted back to main keeps reporting the
+	// sync.till_id it was known by. Synced, every replica would get the same id.
+	"till_identity.",
 }
 
 func perTillSetting(key string) bool {
