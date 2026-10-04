@@ -125,6 +125,7 @@ func planCheckin(ctx context.Context, cfg *config.Config, settings *data.Setting
 	status, newVersion, err := getCheckin(ctx, m.EndpointURL, m.StoreID, m.MerchantToken, known, version)
 	switch {
 	case err != nil:
+		cachePlanRequired(ctx, settings, err)
 		return plan, err
 	case status == http.StatusNotModified:
 		confirmEntitlement(ctx, settings, now)
@@ -165,8 +166,10 @@ func (p checkinPlan) done(cfg *config.Config) {
 
 // getCheckin runs the conditional GET. It returns the status for
 // 200/304/unusable answers, and an error for the answers that must fail the
-// tick as the POST's would: 401, 429, 503 (statusError, so the scheduler
-// sees Retry-After) and transport errors. A 200 without a readable
+// tick as the POST's would: 401, 402, 429, 503 (statusError, so the
+// scheduler sees Retry-After) and transport errors. A 402 plan_required
+// (ut-docs#3624) carries the body's entitlement block for planCheckin to
+// cache. A 200 without a readable
 // link_version comes back as status 0 (treated like an old cloud).
 func getCheckin(ctx context.Context, endpoint, storeID, token string, known bool, version int64) (status int, linkVersion int64, err error) {
 	const path = "/v1/stores/checkin"
@@ -210,6 +213,15 @@ func getCheckin(ctx context.Context, endpoint, storeID, token string, known bool
 		}
 		drainBody(resp)
 		return resp.StatusCode, 0, se
+	case http.StatusPaymentRequired:
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, cloudErrorMaxBytes))
+		drainBody(resp)
+		return resp.StatusCode, 0, &statusError{
+			Path:        path,
+			StatusCode:  resp.StatusCode,
+			RetryAfter:  parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
+			Entitlement: planRequiredEntitlement(body),
+		}
 	default:
 		drainBody(resp)
 		return resp.StatusCode, 0, nil

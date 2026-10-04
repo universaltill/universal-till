@@ -1172,6 +1172,7 @@ func pushSync(ctx context.Context, cfg *config.Config, settings *data.SettingsRe
 	})
 	body, err := post(ctx, cfg, "/v1/stores/sync", payload)
 	if err != nil {
+		cachePlanRequired(ctx, settings, err)
 		return nil, err
 	}
 	if req.hasStop {
@@ -1231,6 +1232,50 @@ func cacheEntitlement(ctx context.Context, settings *data.SettingsRepo, raw json
 	}
 	if err := settings.SetMany(ctx, kv); err != nil {
 		logging.L().Warnf("cloudsync: entitlement cache not updated (will retry next tick): %v", err)
+	}
+}
+
+// planRequiredEntitlement pulls data.entitlement out of a 402
+// plan_required body (ut-docs#3624), raw like pushSync keeps a 200's, so
+// cacheEntitlement validates it the same way. Bounded like
+// parseCloudErrorEnvelope; nil when the body isn't the envelope or carries
+// no block (an older cloud's 402, a proxy's page).
+func planRequiredEntitlement(body []byte) json.RawMessage {
+	if len(body) > cloudErrorMaxBytes {
+		body = body[:cloudErrorMaxBytes]
+	}
+	var env struct {
+		Data struct {
+			Entitlement json.RawMessage `json:"entitlement"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &env) != nil {
+		return nil
+	}
+	return env.Data.Entitlement
+}
+
+// planRequired reports whether err is the cloud's 402 refusal of the
+// check-in for a store without an active paid plan (ADR-0148 follow-up,
+// ut-docs#3624). errors.As, so it survives wrapping.
+func planRequired(err error) (*statusError, bool) {
+	var se *statusError
+	if errors.As(err, &se) && se.StatusCode == http.StatusPaymentRequired {
+		return se, true
+	}
+	return nil, false
+}
+
+// cachePlanRequired caches a 402 plan_required's entitlement block exactly
+// as a 200's would be (cacheEntitlement: validated, best-effort), so the
+// refusal itself tells this till it is not on a paid plan and ADR-0148's
+// gate stops the periodic check-in from the next tick. The tick still
+// fails with the 402 — that is what lets the scheduler honour its
+// Retry-After (retryAfterHint) — but quietly: logTickError does not report
+// it as a problem and authTracker ignores it. Any other error: no-op.
+func cachePlanRequired(ctx context.Context, settings *data.SettingsRepo, err error) {
+	if se, ok := planRequired(err); ok && settings != nil {
+		cacheEntitlement(ctx, settings, se.Entitlement, time.Now())
 	}
 }
 
@@ -1496,8 +1541,11 @@ func post(ctx context.Context, cfg *config.Config, path string, payload []byte) 
 			StatusCode: resp.StatusCode,
 			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
 		}
-		if resp.StatusCode == http.StatusUnauthorized {
+		switch resp.StatusCode {
+		case http.StatusUnauthorized:
 			se.Code, _ = parseCloudErrorEnvelope(buf.Bytes())
+		case http.StatusPaymentRequired:
+			se.Entitlement = planRequiredEntitlement(buf.Bytes())
 		}
 		return nil, se
 	}
@@ -1527,7 +1575,7 @@ type statusError struct {
 	// RetryAfter is the response's Retry-After header, parsed by
 	// parseRetryAfter (0 when absent/invalid/past) — ut-docs#2588. Captured
 	// for every non-200 status; Start's scheduler only ACTS on it for
-	// 429/503 (see retryAfterHint), so a caller never has to guess whether
+	// 402/429/503 (see retryAfterHint), so a caller never has to guess whether
 	// parsing was worth doing for this particular status.
 	RetryAfter time.Duration
 	// Code is a 401's machine code from the {error:{code}} envelope
@@ -1536,6 +1584,13 @@ type statusError struct {
 	// status leaves it empty, so no existing caller's view changes. Start's
 	// scheduler counts consecutive 401s (schedule.go's authTracker).
 	Code string
+	// Entitlement is a 402 plan_required's ADR-0060 block, raw from the
+	// body's data.entitlement (ADR-0148 follow-up, ut-docs#3624): the cloud
+	// refuses sync and check-in for a store without an active paid plan
+	// and says what the plan is, so the till caches it (cachePlanRequired)
+	// and its own ADR-0148 gate takes over. Decoded for 402 only; empty for
+	// every other status and when the body carries no block.
+	Entitlement json.RawMessage
 }
 
 func (e *statusError) Error() string {
@@ -1571,6 +1626,22 @@ func parseRetryAfter(h string, now time.Time) time.Duration {
 		}
 	}
 	return 0
+}
+
+// logTickError logs a failed tick for Start. A warning lands in the
+// problems ring (logging.Recent) that the back-office panel and the
+// heartbeat's problems feed show; the cloud's 402 plan_required is not a
+// problem but a plan the shop is on (ADR-0148 §5: no warning, no
+// sync-error chip), so it is logged at INFO instead.
+func logTickError(err error) {
+	if err == nil {
+		return
+	}
+	if se, ok := planRequired(err); ok {
+		logging.L().Infof("cloudsync: cloud sync is part of the paid plans; this store is not on one (%s answered 402), checking again in %s", se.Path, retryAfterHint(err))
+		return
+	}
+	logging.L().Warnf("cloudsync: tick failed (will retry): %v", err)
 }
 
 // Start runs the sync loop: first tick shortly after boot (give enrolment a
@@ -1610,9 +1681,7 @@ func Start(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks, wg 
 				hooks.BeforeTick()
 			}
 			contacted, err := tick(ctx, cfg, db, hooks)
-			if err != nil {
-				logging.L().Warnf("cloudsync: tick failed (will retry): %v", err)
-			}
+			logTickError(err)
 			if hooks.AfterTick != nil {
 				hooks.AfterTick(ctx, contacted, err)
 			}
