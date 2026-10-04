@@ -18,7 +18,7 @@ jobs:
           go-version-file: go.mod
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
       # ut-docs#2345: cache the Playwright browser download between runs.
       # `npx playwright install` below no-ops the ~150MB Chromium fetch on
       # a hit (its `--with-deps` apt step is idempotent and cheap either

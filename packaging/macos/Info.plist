@@ -19,7 +19,7 @@
   <key>CFBundleIconFile</key>
   <string>AppIcon</string>
   <key>LSMinimumSystemVersion</key>
-  <string>11.0</string>
+  <string>13.0</string>
   <key>NSHighResolutionCapable</key>
   <true/>
   <!-- The AI plugin scans items with the camera; macOS requires a usage
