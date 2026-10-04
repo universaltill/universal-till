@@ -1,0 +1,28 @@
+{{/* ut-docs#2569 (ADR-0060 §6): the shared "paid features are paused"
+     banner. Input: (dict "sub" <subscriptionView> "only" "<cap> <cap>")
+     — "only" (space-separated capability names, optional) limits the list
+     to the surface's own capabilities, and the banner renders only when at
+     least one of them is paused (Paused is empty unless the subscription is
+     stale or lapsed). "tse" adds the ADR-0060 §7 line: a TSE already set up
+     keeps signing. Degrades in place: it explains, it never hides or
+     disables the surface it sits on. The paused features are a list, not a
+     joined string — joining words is locale grammar. */}}
+{{ $paused := .sub.PausedOnly .only }}
+{{ if $paused }}
+<div class="notice-block-warn subscription-banner" role="status" data-testid="subscription-paused" data-sub-state="{{ .sub.State }}">
+  <p><strong><span aria-hidden="true">⚠</span> {{ if eq .sub.State "lapsed" }}{{ T "subscription.banner.lapsed.title" }}{{ else }}{{ T "subscription.banner.stale.title" }}{{ end }}</strong></p>
+  <ul class="subscription-paused-list">
+    {{ range $paused }}<li data-cap="{{ . }}">{{ T (printf "subscription.cap.%s" .) }}</li>{{ end }}
+  </ul>
+  {{ if eq .sub.State "lapsed" }}
+  <p>{{ T "subscription.banner.lapsed.why" }}</p>
+  {{/* ADR-0148 §3: a replica registered through its main till learns the
+       renewal from the main till, which is where the button is. */}}
+  <p>{{ if enrolledviamain }}{{ T "subscription.banner.lapsed.fix_via_main" }}{{ else }}{{ T "subscription.banner.lapsed.fix" }}{{ end }}</p>
+  {{ else }}
+  <p>{{ T "subscription.banner.stale.why" }}</p>
+  <p>{{ T "subscription.banner.stale.fix" }}</p>
+  {{ end }}
+  {{ if .tse }}<p data-testid="subscription-tse-keeps-signing">{{ T "subscription.banner.tse_keeps_signing" }}</p>{{ end }}
+</div>
+{{ end }}

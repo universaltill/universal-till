@@ -4947,6 +4947,26 @@ body.login-screen {
 }
 .statusbar a.sb-main-till:hover { filter: brightness(0.92); }
 #sb-main-till-mount:empty { display: none; }
+/* ut-docs#2569 (ADR-0060 §6): "Subscription not confirmed" / "Subscription
+   ended" — the same amber pill as sb-main-till (the till still sells; only
+   paid cloud features are paused). Unlike sb-main-till it never wraps: on a
+   1024x600 kiosk bar it shares the row with the connection light and the
+   update/main-till chips, so the text ellipsizes instead (the full label
+   stays the accessible name, the reason is on the Settings card). Logical
+   properties only. */
+#sb-subscription-mount:empty { display: none; }
+#sb-subscription-mount { min-inline-size: 0; display: inline-flex; }
+.statusbar .sb-subscription {
+  color: #451a03; background: var(--warning, #d97706);
+  text-decoration: none; white-space: nowrap; min-inline-size: 0;
+  max-inline-size: 16rem;
+  padding: .05rem .5rem; min-block-size: 2.25rem; align-items: center; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem;
+}
+.statusbar .sb-subscription-text { overflow: hidden; text-overflow: ellipsis; min-inline-size: 0; }
+.statusbar a.sb-subscription:hover { filter: brightness(0.92); }
+.subscription-paused-list { margin-block: .3rem; padding-inline-start: 1.25rem; }
+.subscription-banner p { margin-block: .25rem; }
 /* ADR-0116 D6 (ut-docs#3524): the cloud refused this till's credential 3
    times in a row (cloud_auth_chip.html). Same amber pill as sb-main-till:
    the till still sells offline, but the cloud waits for pairing. Wraps for
@@ -6038,7 +6058,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
     border-block-start: 1px solid rgba(255, 255, 255, .15);
   }
   body.sale-screen.nav-drawer-open .statusbar .sb-ver { margin-inline-start: 0; }
-  body.sale-screen.nav-drawer-open .statusbar :is(.sb-update, .sb-enrol, .sb-power, .sb-main-till, .sb-cloud-auth, .sb-report-archive, .sb-plugin-update, .sb-language-pack-update, .sb-release-notes) { margin-inline-start: 0; }
+  body.sale-screen.nav-drawer-open .statusbar :is(.sb-update, .sb-enrol, .sb-power, .sb-main-till, .sb-subscription, .sb-cloud-auth, .sb-report-archive, .sb-plugin-update, .sb-language-pack-update, .sb-release-notes) { margin-inline-start: 0; }
   /* ut-docs#3358: every screen's status row paints over the open drawer's
      foot (sale screen: the rule above; elsewhere the page's sticky
      .statusbar), so the drawer reserves the row's measured open height

@@ -453,6 +453,7 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /ui/pairing-notice":      true,
 	"GET /ui/plugin-buttons":      true,
 	"GET /ui/report-archive-chip": true,
+	"GET /ui/subscription-chip":   true, // ut-docs#2569, beside GET /api/entitlement
 	"GET /ui/sync-chip":           true,
 	// Catalogue browse and edit, Designer, buttons, categories, modifiers,
 	// option sets, inventory, tax codes (form edits; uploads are blocked by

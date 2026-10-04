@@ -1,0 +1,21 @@
+{{/* ut-docs#2569 (ADR-0060 §6): Settings → Subscription card body. The
+     card shell (#subscription, manager-only) and its <h2> live in
+     settings.html. Reads .subscription (pages.subscriptionView): plan,
+     status, "Renews" (active plans only, display only — ADR-0060 §5), last
+     confirmation, and the unfiltered paused banner when stale or lapsed.
+     A free shop gets one plain line: core selling is free on every plan.
+     No renew link yet — the billing portal is ut-docs#678. */}}
+{{ with .subscription }}
+<div class="subscription-block" data-testid="subscription-block" data-sub-state="{{ .State }}">
+  <p class="subscription-plan">
+    {{ T "subscription.plan_label" }} <strong>{{ T (printf "subscription.plan.%s" .Plan) }}</strong>
+    {{- if eq .State "active" }} · {{ T "subscription.status.active" }}
+    {{- else if eq .State "lapsed" }} · {{ T (printf "subscription.status.%s" .Status) }}
+    {{- else if eq .State "stale" }} · {{ T "subscription.chip.stale" }}{{ end }}
+  </p>
+  {{ if .Renews }}<p data-testid="subscription-renews">{{ printf (T "subscription.renews") .Renews }}</p>{{ end }}
+  {{ if .LastConfirmed }}<p class="muted" data-testid="subscription-last-confirmed">{{ printf (T "subscription.last_confirmed") .LastConfirmed }}</p>{{ end }}
+  {{ if eq .State "free" }}<p class="muted" data-testid="subscription-free-note">{{ T "subscription.free_note" }}</p>{{ end }}
+</div>
+{{ template "subscription_paused_banner.html" (dict "sub" . "only" "" "tse" false) }}
+{{ end }}

@@ -1380,6 +1380,11 @@ var renderFiles = []string{
 	// ADR-0092 §7 / ut-docs#2169: same reasoning — the diagnostic-mode
 	// card body is re-rendered standalone by the activate/stop handlers.
 	"ui/partials/diagnostics_block.html",
+	// ut-docs#2569: settings.html includes the Subscription card body and
+	// the shared paused banner (also used on #registration and beside the
+	// TSE block) by file name.
+	"ui/partials/subscription_block.html",
+	"ui/partials/subscription_paused_banner.html",
 	// ut-docs#1613: same reasoning — POST /api/backup/restore's success
 	// response AND settings.html's own page render (when a restore is
 	// already staged from an earlier visit) both need this exact markup,

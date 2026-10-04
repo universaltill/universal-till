@@ -1,0 +1,15 @@
+{{/* ut-docs#2569 (ADR-0060 §6): the subscription chip, rendered by
+     GET /ui/subscription-chip (subscription_ui.go) into base.html's
+     #sb-subscription-mount — only for a viewer who can open Settings, and
+     only when the subscription is stale (not confirmed for more than the
+     grace period) or lapsed. Words first, with a ⚠ glyph, so the meaning is
+     never carried by colour alone; the reason lives in title="" and on the
+     Settings card it links to (a tooltip has no hover on a touchscreen).
+     No role="alert": the 60 s poll must not be re-announced. The text
+     ellipsizes on a narrow bar (app.css .sb-subscription) and never wraps
+     it to a second line. */}}
+<a class="sb-item sb-subscription is-{{ .state }}" href="/settings#subscription" data-testid="sb-subscription" data-sub-state="{{ .state }}"
+   title="{{ if eq .state "lapsed" }}{{ T "subscription.chip.lapsed_title" }}{{ else }}{{ T "subscription.chip.stale_title" }}{{ end }}">
+  <span class="sb-subscription-ico" aria-hidden="true">⚠</span>
+  <span class="sb-subscription-text">{{ if eq .state "lapsed" }}{{ T "subscription.chip.lapsed" }}{{ else }}{{ T "subscription.chip.stale" }}{{ end }}</span>
+</a>

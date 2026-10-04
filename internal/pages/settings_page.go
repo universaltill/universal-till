@@ -438,6 +438,7 @@ func disableDemoRowButtonsScript(rowClass string) string {
 func filterSettingsNavForRender(rows []settingsnav.Row, isManager, canReportIssue, hasPayMethods, showDataCard bool) []settingsnav.Row {
 	hiddenThisRequest := map[string]bool{
 		"settings-issuereport": !canReportIssue, // ut-docs#3135: same action as /report-issue
+		"subscription":         !isManager,      // ut-docs#2569, ADR-0060 §6
 		"settings-diagnostics": !isManager,      // ADR-0092 §7, ut-docs#2169
 		"settings-menulayout":  !isManager,
 		"settings-payments":    !hasPayMethods,
@@ -787,6 +788,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// GET /settings too. Gate it so a cashier gets the zero-value
 			// view instead (review finding on ut-docs#2169, ut-docs#2235).
 			"diagnostics": diagnosticsViewIfManager(r.Context(), d, locale, isManager),
+			// ut-docs#2569 (ADR-0060 §6): the Subscription card and the
+			// paused banners on #registration and the TSE block. Settings
+			// KV reads only — no network, and never a gate.
+			"subscription": subscriptionViewFor(r.Context(), d.Settings, time.Now(), locale),
 			// ut-docs#1537: will the Android install endpoint accept this
 			// caller's session on its own, or is it going to demand a PIN?
 			// Rendered up front so a cashier (or anyone on a self-order kiosk)

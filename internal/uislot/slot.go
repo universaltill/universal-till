@@ -537,6 +537,11 @@ var SettingsCategories = []Category{
 // below stays the template's card order.
 var CoreSettings = []Entry{
 	{Key: "registration", Href: "#registration", LabelKey: "settings.enrol.title", Order: 100, Group: "settings.cat.devices.label"},
+	// ut-docs#2569 (ADR-0060 §6): Subscription, manager-only, right after
+	// Till registration in settings.html — beside the cloud link whose paid
+	// features it explains; filtered from a cashier's sidebar like
+	// settings-diagnostics.
+	{Key: "subscription", Href: "#subscription", LabelKey: "subscription.nav", Order: 150, Group: "settings.cat.devices.label"},
 	{Key: "settings-issuereport", Href: "#settings-issuereport", LabelKey: "issuereport.title", Order: 200, Group: "settings.cat.advanced.label"},
 	// ADR-0092 §7 / ut-docs#2169: diagnostic mode (activation code entry,
 	// "ON since" copy, local stop). Manager-only card right after
