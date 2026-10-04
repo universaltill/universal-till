@@ -409,6 +409,11 @@ func (r *recordingWindowController) ApplyMode(mode string) error {
 // window_state_api_test.go), so there's nothing meaningful to record here.
 func (r *recordingWindowController) RecordInputHeartbeat() error { return nil }
 
+// ReleaseKiosk only satisfies the interface (ut-docs#3466): no settings-page
+// handler calls it — the kiosk_unlock directive has its own spy in
+// cloudsync_kiosk_unlock_test.go.
+func (r *recordingWindowController) ReleaseKiosk() error { return nil }
+
 // Exit-to-os (ut-docs#608 scaffold) requires a LIVE manager PIN — an existing
 // manager session (isManagerOrAuthOff) is not enough — mirroring the
 // blank-PIN-lockout fix in shifts_api.go's cash-adjustment/payout handlers.
@@ -2908,6 +2913,7 @@ type erroringWindowController struct{ exitErr error }
 func (e erroringWindowController) ExitToOS() error             { return e.exitErr }
 func (e erroringWindowController) ApplyMode(m string) error    { return nil }
 func (e erroringWindowController) RecordInputHeartbeat() error { return nil }
+func (e erroringWindowController) ReleaseKiosk() error         { return nil }
 
 // TestExitToOSEndpoint_NotConfirmedIsAuditedAndDistinct (review of
 // ut-docs#1039, finding 3): when a shell was attached and the exit WAS

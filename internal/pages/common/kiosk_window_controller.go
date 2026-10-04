@@ -78,6 +78,11 @@ func runSystemctlKiosk(verb string) error {
 // (review of ut-docs#1039, blocker 1).
 func (KioskSystemdWindowController) ExitToOS() error { return ErrNoOSDesktop }
 
+// ReleaseKiosk gives the same answer as ExitToOS (ADR-0142 D3): the cage
+// appliance has no OS desktop to release the screen to. The kiosk_unlock
+// handler reports it as reason kiosk_appliance.
+func (KioskSystemdWindowController) ReleaseKiosk() error { return ErrNoOSDesktop }
+
 // ApplyMode enables+starts unitill-kiosk.service for "kiosk" mode, and
 // disables+stops it for any other mode — replacing the file-touch-only
 // /etc/unitill/no-kiosk opt-out (still honoured as a documented manual

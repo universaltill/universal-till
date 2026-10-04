@@ -84,6 +84,11 @@ func NewHTTPWindowControllerFromEnv() (WindowController, bool) {
 // ExitToOS asks the shell to leave kiosk/fullscreen now.
 func (c HTTPWindowController) ExitToOS() error { return c.post("/exit-to-os", nil) }
 
+// ReleaseKiosk refuses (ADR-0142 D3): self-order on a desktop shell pins
+// nothing at OS level, and /exit-to-os would switch the shell to normal
+// mode for good, with no self-heal.
+func (HTTPWindowController) ReleaseKiosk() error { return ErrKioskReleaseNotSupported }
+
 // ApplyMode asks the shell to apply mode to its native window now, for a
 // live (not next-launch) Settings toggle.
 func (c HTTPWindowController) ApplyMode(mode string) error {

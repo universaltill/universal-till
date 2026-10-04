@@ -427,6 +427,7 @@ type recordingHeartbeatController struct {
 
 func (r *recordingHeartbeatController) ExitToOS() error             { return nil }
 func (r *recordingHeartbeatController) ApplyMode(mode string) error { return nil }
+func (r *recordingHeartbeatController) ReleaseKiosk() error         { return nil }
 func (r *recordingHeartbeatController) RecordInputHeartbeat() error {
 	r.calls++
 	return r.err

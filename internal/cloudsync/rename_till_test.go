@@ -57,8 +57,8 @@ func TestTickRenameTillOnlyForOwnDevice(t *testing.T) {
 	orig := ownDeviceID
 	ownDeviceID = func() string { return "dev-self" }
 	t.Cleanup(func() { ownDeviceID = orig })
-	resetRenameSkipLog()
-	t.Cleanup(resetRenameSkipLog)
+	resetTargetSkipLog()
+	t.Cleanup(resetTargetSkipLog)
 
 	for _, role := range []struct {
 		name    string
@@ -130,13 +130,13 @@ func TestTickRenameTillSkippedWhenOwnIDUnknown(t *testing.T) {
 	}
 }
 
-func TestRenameSkipLoggedOncePerDirective(t *testing.T) {
-	resetRenameSkipLog()
-	t.Cleanup(resetRenameSkipLog)
-	if !firstRenameSkip("r1") || firstRenameSkip("r1") {
+func TestTargetSkipLoggedOncePerDirective(t *testing.T) {
+	resetTargetSkipLog()
+	t.Cleanup(resetTargetSkipLog)
+	if !firstTargetSkip("r1") || firstTargetSkip("r1") {
 		t.Fatal("r1 must be reported on its first skip only")
 	}
-	if !firstRenameSkip("r2") {
+	if !firstTargetSkip("r2") {
 		t.Fatal("a different directive must be reported")
 	}
 }
