@@ -36,6 +36,7 @@ internal/manual/manual.go: unreachable func: Library.IDs
 internal/manual/manual.go: unreachable func: Library.Locales
 internal/manual/manual.go: unreachable func: Library.MissingTranslations
 internal/manual/manual.go: unreachable func: Library.RouteCovered
+internal/netaccess/netaccess.go: unreachable func: ObserveServices
 internal/pages/common/deps.go: unreachable func: Deps.WaitForAsyncWork
 internal/pages/common/personal_display.go: unreachable func: Deps.ResolvedBrowsingMode
 internal/pages/common/personal_display.go: unreachable func: Deps.ResolvedTheme
@@ -57,6 +58,7 @@ internal/plugins/plugins.go: unreachable func: Manager.CatalogList
 internal/plugins/revocation.go: unreachable func: RevocationChecker.GetRevokedPlugins
 internal/plugins/rollback.go: unreachable func: RollbackManager.GetVersionHistory
 internal/pos/age_restriction.go: unreachable func: DOBBeforeCutoff
+internal/pos/hold.go: unreachable func: Service.HasItems
 internal/pos/order_status.go: unreachable func: OrderStatusBroadcaster.SubscriberCount
 internal/pos/service.go: unreachable func: Service.ScanQty
 internal/pos/service.go: unreachable func: Service.SetLineOrderType

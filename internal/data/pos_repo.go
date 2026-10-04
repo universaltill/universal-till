@@ -3585,10 +3585,10 @@ GROUP BY p.sale_id, p.method_id ORDER BY p.sale_id, p.method_id`, sargs...)
 //
 // "Gapless" describes allocation: no number is ever skipped or handed out
 // twice while the rows exist. Age-based retention still applies on top --
-// PruneReportArchiveOlderThan (ADR-0040 §2) deletes old rows, so the
-// surviving sequence can start above 1, and in the one pathological case
-// where it removes every numbered row of a kind (a till dormant for the
-// whole 10-year window) the next close restarts at 1.
+// PruneReportArchiveOlderThan (ADR-0040 §2) and the cloud-ack prunes delete
+// old rows, so the surviving sequence can start above 1. Every prune keeps
+// each kind's highest-Z and newest row (ADR-0147 §4,
+// reportArchiveKeepClause), so the next close always continues the chain.
 //
 // A duplicate (kind, period) is absorbed by DO NOTHING before any row is
 // written, so it consumes no number and reports created=false, not an
@@ -3863,8 +3863,13 @@ func (r *POSRepo) HasArchivedReport(ctx context.Context, kind, period string) (b
 // same "YYYY-MM-DD" format and no date parsing happens here. A single
 // DELETE statement, never read-then-delete, so a prune can't race an
 // in-flight archive write. Returns the number of rows removed.
+//
+// ADR-0147 §4: each kind's newest row and highest-Z row are kept even when
+// they are past the cutoff (reportArchiveKeepClause), so a till that has not
+// closed for ten years still numbers its next Z and bounds its window.
+// This is the predicate for mode till and for every replica, in every mode.
 func (r *POSRepo) PruneReportArchiveOlderThan(ctx context.Context, cutoff string) (int64, error) {
-	res, err := r.db.ExecContext(ctx, `DELETE FROM report_archive WHERE period < ?`, cutoff)
+	res, err := r.db.ExecContext(ctx, `DELETE FROM report_archive WHERE period < ?`+reportArchiveKeepClause, cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("prune report archive: %w", err)
 	}

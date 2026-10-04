@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // DownloadManager handles resumable plugin artifact downloads with checksum verification
@@ -44,10 +45,8 @@ type DownloadResult struct {
 // NewDownloadManager creates a new download manager
 func NewDownloadManager(tmpDir string) *DownloadManager {
 	return &DownloadManager{
-		tmpDir: tmpDir,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Minute, // long timeout for large plugins
-		},
+		tmpDir:         tmpDir,
+		httpClient:     netaccess.NewClient(30 * time.Minute), // long timeout for large plugins
 		maxRetries:     5,
 		retryBackoff:   2 * time.Second,
 		downloadBudget: 500 * 1024 * 1024, // 500 MB default

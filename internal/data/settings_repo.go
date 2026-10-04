@@ -224,6 +224,15 @@ func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
 // keep reporting the OLD main till's name forever. Blank, the till falls
 // back to its translated default name (every reader trims) and
 // enroll.DeviceName reports "" (ut-docs#3030).
+//
+// sync.till_id gets the same copy-before-wipe, in the same transaction: it is
+// the id the cloud knows this till's device row by, so a non-blank (trimmed)
+// sync.till_id is copied into the per-till TillIdentityCloudIDSettingsKey,
+// which discovery.ReportedTillID reports once sync.till_id is gone — the
+// promoted till keeps its cloud identity instead of reappearing under a
+// different id (ut-docs#3307). Unlike till.name, a blank sync.till_id writes
+// nothing: there is no id to keep, and a cloud id kept by an earlier
+// promotion must not be clobbered.
 func (r *SettingsRepo) ClearReplicaIdentity(ctx context.Context) error {
 	var err error
 	done := settingsObs.trace("clear_replica_identity")
@@ -255,6 +264,26 @@ ON CONFLICT(key) DO UPDATE SET
 	updated_at = excluded.updated_at
 `, strings.TrimSpace(tillName), time.Now().UTC()); err != nil {
 		return settingsObs.wrapf("clear_replica_identity", "set setting %s", err, "till.name")
+	}
+
+	var tillID string
+	err = tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'sync.till_id'`).Scan(&tillID)
+	if err != nil && err != sql.ErrNoRows {
+		return settingsObs.wrapf("clear_replica_identity", "read sync.till_id", err)
+	}
+	if err == sql.ErrNoRows {
+		err = nil
+	}
+	if tillID = strings.TrimSpace(tillID); tillID != "" {
+		if _, err = tx.ExecContext(ctx, `
+INSERT INTO settings (key, value, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET
+	value = excluded.value,
+	updated_at = excluded.updated_at
+`, TillIdentityCloudIDSettingsKey, tillID, time.Now().UTC()); err != nil {
+			return settingsObs.wrapf("clear_replica_identity", "set setting %s", err, TillIdentityCloudIDSettingsKey)
+		}
 	}
 
 	if _, err = tx.ExecContext(ctx,

@@ -1,0 +1,18 @@
+-- 066_items_icon.sql — ut-docs#3584: an item can have a built-in icon set
+-- from my. (the manage-shop save_item directive, contract §3.1), the same
+-- way a category can since 041's categories.icon.
+--
+-- icon: an icon id string "namespace:name" (e.g. "lucide:beer") or NULL for
+-- none. Never SVG, a URL or markup — the till only ever renders ids its own
+-- icon registry knows (internal/iconid); anything else falls back to a
+-- neutral built-in glyph. Separate from the item's item_images thumbnail
+-- row (a /public/... path: an uploaded photo or a library tile picked on
+-- the till). An item has ONE picture (ut-docs#2717's rule, extended to
+-- items): writers keep only one of the thumbnail row and this column
+-- (CatalogRepo.SetItemPicture).
+--
+-- items is an admin-synced table dumped whole-row (sync_admin_repo.go), and
+-- 047's trigger bumps the sell-screen generation on any items UPDATE, so
+-- the column reaches satellite tills and the tile cache with no other
+-- change.
+ALTER TABLE items ADD COLUMN icon TEXT;

@@ -9,7 +9,7 @@
     "test:e2e:report": "playwright show-report"
   },
   "devDependencies": {
-    "@playwright/test": "^1.46.0",
+    "@playwright/test": "^1.63.0",
     "typescript": "^5.5.4"
   }
 }

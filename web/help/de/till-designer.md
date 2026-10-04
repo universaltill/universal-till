@@ -24,7 +24,7 @@ Ordnen Sie die Schnellwahltasten, das Produktraster und die Kategorien an, die a
 
 ## Gut zu wissen
 
-- Schnellwahltasten, Aus-/Einblenden und Kategorien gelten geschäftsweit und werden immer von der **Hauptkasse** aus verwaltet: An einer beigetretenen Kasse zeigt das Hinzufügen, Ausblenden, Entfernen oder Neuanordnen einer Schaltfläche, oder das Ändern einer Kategorie, eine Meldung, die Sie zur Hauptkasse zurückverweist, statt eine nur lokal gültige Änderung anzunehmen.
+- Schnellwahltasten, Aus-/Einblenden und Kategorien gelten geschäftsweit: Die **Hauptkasse** führt sie für alle Kassen. An einer beigetretenen Kasse wird das Hinzufügen, Ausblenden, Entfernen oder Neuanordnen einer Schaltfläche oder das Ändern einer Kategorie an die Hauptkasse gesendet, die prüft, ob Sie das dürfen (die an der beigetretenen Kasse eingegebene PIN eines Managers zählt), es speichert und an alle Kassen weitergibt — nichts wird nur an der beigetretenen Kasse gespeichert. Ist die Hauptkasse nicht erreichbar, wird die Änderung mit einer Meldung abgelehnt und nichts ändert sich; nehmen Sie sie erneut vor, sobald die Hauptkasse wieder da ist.
 - Die Kopie des Verkaufsbildschirms zeigt automatisch jeden aktiven Artikel, ausgeblendete ausgegraut an ihrem Platz — eine ganz neue Kategorie erscheint in der Leiste, sobald einer ihrer Artikel aktiv ist, ohne manuellen Schritt. Die Kategorienliste weiter unten zeigt trotzdem immer jede Kategorie.
 - Kacheln auf dieser Seite verkaufen nie etwas: Sie hier anzutippen legt nichts in einen Warenkorb. Alles andere an ihnen — Farbe, Preis, Bild, Reihenfolge — ist das, was Kassierer sehen.
 - Noch keine aktiven Artikel in Ihrem Katalog? Das Raster zeigt „Noch keine Produkte.“ — legen Sie Ihren ersten Artikel im Katalog an, um zu starten.

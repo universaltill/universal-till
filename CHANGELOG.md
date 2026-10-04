@@ -38,6 +38,40 @@ Release notes for the till. Versions come from the release tag
 
 ### Fixed
 
+- **Opening another order no longer loses an "add by hand" counter order
+  (ut-docs#3586).** A pay-at-the-counter order with no items the till could
+  price (only lines listed to add by hand) counted as an empty basket. If the
+  cashier then opened another order, that order was not held first: it was
+  replaced, with no held entry and no sale. Tapping **Hold** on it also showed
+  the "basket is empty" error. Both now treat it as a real order: opening
+  another order holds it first under its own name, and **Hold** parks it.
+- **Marketplace installs check plugin settings like the importer does
+  (ut-docs#3514).** A marketplace-installed plugin whose manifest has a
+  malformed setting-bound permission (`net:@setting:`/`tcp:@setting:`, or
+  one naming a setting it doesn't declare) or an unknown setting type (a
+  typo of `secret`, which would have stored that value unsealed) is now
+  refused at install with the same message the importer gives, instead of
+  installing and silently granting nothing. Installed plugins are not
+  re-checked.
+
+- **A Linux till that can't update itself now says so (ut-docs#2733).** With
+  automatic updates on (the default) and an update waiting, a till whose
+  install folder it can't write — a .deb install whose ownership broke —
+  skipped the nightly update silently, forever, while Settings still said
+  "Update automatically". The status-bar update chip now says the till
+  can't install the update by itself and links to Help → Software updates
+  (reinstall the latest .deb); Settings → Software update → Check now shows
+  the same. A chip, never a dialog; additional tills keep their own
+  follow chip.
+
+- **A queued tax plugin no longer retries forever once one is already on the
+  till (ut-docs#3511).** A fiscal plugin queued during setup, before a tax
+  plugin for the country arrived by file or with a restored backup, kept
+  being retried in the background and kept its Settings reminder up. The
+  retry now sees the local plugin, drops the queued one without touching the
+  catalog, and never installs a second fiscal plugin; if that local check
+  itself fails, the entry simply stays queued for the next attempt.
+
 - **A 0% shop default tax rate is charged 0% (ut-docs#3392).** A shop whose
   default tax rate is set to 0% (the US and "Other" presets, or any shop
   that chose 0%) was charged 20% on every item with no tax code of its own,

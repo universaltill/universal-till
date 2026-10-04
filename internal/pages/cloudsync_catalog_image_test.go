@@ -147,9 +147,10 @@ func TestCloudSetCatalogImage_CategorySetClear(t *testing.T) {
 	if err != nil || msg != "image set on category Drinks" {
 		t.Fatalf("set: %q %v", msg, err)
 	}
-	// One picture per category (ut-docs#2717): the photo replaces the icon.
-	if p, icon := categoryImagePath(t, dp, "cat-1"); p != "/public/assets/categories/cat-1/thumb.png" || icon != "" {
-		t.Fatalf("category picture = %q / %q", p, icon)
+	// ut-docs#3585: the photo is stored alongside the icon, which is kept
+	// (the till shows the image; the icon is the fallback).
+	if p, icon := categoryImagePath(t, dp, "cat-1"); p != "/public/assets/categories/cat-1/thumb.png" || icon != "lucide:coffee" {
+		t.Fatalf("category picture = %q / %q, want the photo and the icon kept", p, icon)
 	}
 	file := paths.Data("public", "assets", "categories", "cat-1", "thumb.png")
 	if _, err := os.Stat(file); err != nil {
@@ -158,21 +159,25 @@ func TestCloudSetCatalogImage_CategorySetClear(t *testing.T) {
 	if n := cloudAuditCount(t, dp, "cloud_catalog_image_set", "cat-1"); n != 1 {
 		t.Fatalf("audit rows = %d", n)
 	}
-	// The categories report carries the served photo's sha (rule 5).
-	var shaByID = map[string]any{}
+	// The categories report carries the served photo's sha (rule 5), the
+	// effective icon ("": the photo shows) and the stored one (ut-docs#3585).
+	var reported map[string]any
 	for _, c := range remoteCategoriesReport(ctx, dp) {
-		shaByID[c["id"].(string)] = c["image_sha256"]
+		if c["id"] == "cat-1" {
+			reported = c
+		}
 	}
-	if shaByID["cat-1"] != shaHex(body) {
-		t.Fatalf("categories report image_sha256 = %v", shaByID["cat-1"])
+	if reported["image_sha256"] != shaHex(body) || reported["icon"] != "" || reported["icon_stored"] != "lucide:coffee" {
+		t.Fatalf("categories report = image_sha256 %v, icon %v, icon_stored %v", reported["image_sha256"], reported["icon"], reported["icon_stored"])
 	}
 
 	msg, err = hooks.SetCatalogImage(ctx, cloudsync.CatalogImage{Entity: "category", ID: "cat-1", Clear: true})
 	if err != nil || msg != "image removed from category Drinks" {
 		t.Fatalf("clear: %q %v", msg, err)
 	}
-	if p, icon := categoryImagePath(t, dp, "cat-1"); p != "" || icon != "" {
-		t.Fatalf("after clear = %q / %q", p, icon)
+	// Clearing the image falls back to the kept icon (ut-docs#3585).
+	if p, icon := categoryImagePath(t, dp, "cat-1"); p != "" || icon != "lucide:coffee" {
+		t.Fatalf("after clear = %q / %q, want no image and the icon kept", p, icon)
 	}
 	if _, err := os.Stat(file); !os.IsNotExist(err) {
 		t.Fatalf("clear left the file: %v", err)

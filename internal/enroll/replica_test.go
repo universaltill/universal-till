@@ -68,8 +68,11 @@ type fakePrimary struct {
 	// entitlement, when set, rides in the answer as the main till's
 	// cached entitlement (ut-docs#2792).
 	entitlement map[string]string
-	lastReqMu   sync.Mutex
-	lastReq     map[string]string
+	// redeemCode, when set, rides in the answer as the cloud's one-time
+	// redeem code for the replica (ADR-0116 D3).
+	redeemCode string
+	lastReqMu  sync.Mutex
+	lastReq    map[string]string
 }
 
 func newFakePrimary(t *testing.T, fail int32, failCode int) *fakePrimary {
@@ -98,6 +101,9 @@ func newFakePrimary(t *testing.T, fail int32, failCode int) *fakePrimary {
 		}
 		if p.entitlement != nil {
 			data["entitlement"] = p.entitlement
+		}
+		if p.redeemCode != "" {
+			data["redeem_code"] = p.redeemCode
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
 	})
@@ -139,9 +145,10 @@ func TestInitReplicaWithCopiedIdentityMintsOwnDevice(t *testing.T) {
 		t.Fatalf("copied registration markers survived: registered=%q enrolled_at=%q", kv.get(keyDeviceRegistered), kv.get(keyEnrolledAt))
 	}
 	// A copy of the store token that already reached this replica stays
-	// until the cloud can issue per-device tokens (see replica.go's file
-	// comment): wiping it revokes nothing — the main till's copy is the same
-	// credential — and would only cut this till off the cloud.
+	// until the replica gets its own credential (redemption or rotation, see
+	// replica.go's file comment): wiping it revokes nothing — the main
+	// till's copy is the same credential — and would only cut this till off
+	// the cloud.
 	if kv.get(keyToken) != "store-token" {
 		t.Fatalf("token=%q, want the legacy copy kept", kv.get(keyToken))
 	}
@@ -491,33 +498,29 @@ func TestReplicaWithoutTokenStoresMainTillsEntitlement(t *testing.T) {
 }
 
 // The relay's guards, driven directly so a wrong write can't hide behind
-// loop timing: a replica holding a store token (its own cloud sync is the
-// fresher source), an invalid block, and a relayed confirmation older than
-// the one already held all keep the replica's cache.
+// loop timing: an invalid block and a relayed confirmation older than the
+// one already held (e.g. the replica's own fresher check-in) keep the
+// replica's cache.
 func TestApplyRelayedEntitlementKeepsCache(t *testing.T) {
 	valid := &entitlement.Cached{Plan: "pro", SubscriptionStatus: "active", LastConfirmedAt: "2026-09-20T10:00:00Z"}
-	for name, tc := range map[string]struct {
-		c        *entitlement.Cached
-		ownToken bool
-	}{
-		"own token": {valid, true},
-		"invalid":   {&entitlement.Cached{Plan: "platinum", SubscriptionStatus: "active", LastConfirmedAt: "2026-09-20T10:00:00Z"}, false},
-		"older":     {&entitlement.Cached{Plan: "pro", SubscriptionStatus: "active", LastConfirmedAt: "2026-09-19T10:00:00Z"}, false},
+	for name, c := range map[string]*entitlement.Cached{
+		"invalid": {Plan: "platinum", SubscriptionStatus: "active", LastConfirmedAt: "2026-09-20T10:00:00Z"},
+		"older":   {Plan: "pro", SubscriptionStatus: "active", LastConfirmedAt: "2026-09-19T10:00:00Z"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			kv := newFakeKV()
 			_ = kv.Set(context.Background(), "entitlement.plan", "shop")
 			_ = kv.Set(context.Background(), "entitlement.last_confirmed_at", "2026-09-19T12:00:00Z")
-			applyRelayedEntitlement(context.Background(), kv, tc.c, tc.ownToken)
+			applyRelayedEntitlement(context.Background(), kv, c)
 			if got := kv.get("entitlement.plan"); got != "shop" {
 				t.Fatalf("entitlement.plan = %q, want the replica's own cache kept", got)
 			}
 		})
 	}
-	// Control: the same valid, newer block without a token is applied.
+	// Control: a valid, newer block is applied.
 	kv := newFakeKV()
 	_ = kv.Set(context.Background(), "entitlement.last_confirmed_at", "2026-09-19T12:00:00Z")
-	applyRelayedEntitlement(context.Background(), kv, valid, false)
+	applyRelayedEntitlement(context.Background(), kv, valid)
 	if kv.get("entitlement.plan") != "pro" || kv.get("entitlement.last_confirmed_at") != "2026-09-20T10:00:00Z" {
 		t.Fatalf("a valid, newer relay was not applied: plan=%q confirmed=%q", kv.get("entitlement.plan"), kv.get("entitlement.last_confirmed_at"))
 	}

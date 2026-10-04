@@ -18,7 +18,7 @@
      Rendered hidden: the script below shows it for /settings with no
      fragment, so a browser without script still gets the full page. -->
 <nav class="settings-home" id="settings-home" aria-label="{{ T "settings.home.label" }}" hidden>
-  <form class="settings-search settings-home-search" role="search" onsubmit="return false">
+  <form class="settings-search settings-home-search" role="search" data-submit="prevent">
     <label class="visually-hidden" for="settings-home-q">{{ T "settings.search.label" }}</label>
     <input id="settings-home-q" type="search" autocomplete="off" placeholder="{{ T "settings.search.placeholder" }}">
   </form>
@@ -40,7 +40,7 @@
   <aside class="settings-nav" id="settings-nav" aria-label="{{ T "settings.nav.label" }}">
     <a class="settings-home-link" id="settings-home-link" href="#" hidden>{{ T "settings.home.back" }}</a>
     <h2 class="settings-cat-title" id="settings-cat-title" tabindex="-1" hidden></h2>
-    <form class="settings-search" role="search" onsubmit="return false">
+    <form class="settings-search" role="search" data-submit="prevent">
       <label class="visually-hidden" for="settings-q">{{ T "settings.search.label" }}</label>
       <input id="settings-q" type="search" autocomplete="off" placeholder="{{ T "settings.search.placeholder" }}">
     </form>
@@ -71,9 +71,24 @@
     <p>✅ {{ T "settings.enrol.registered" }}</p>
     {{ if enrolstore }}<p class="muted">{{ T "settings.enrol.store" }}: <code>{{ enrolstore }}</code></p>{{ end }}
     {{ if enroldevice }}<p class="muted">{{ T "settings.enrol.device" }}: <code>{{ enroldevice }}</code></p>{{ end }}
+    {{/* ADR-0148 (ut-docs#3615): the fleet list is a cloud call
+         (enroll.Fleet), so an unpaid till does not load it. */}}
+    {{ if not .cloudSyncOff }}
     <div hx-get="/api/enrol/devices" hx-trigger="load" hx-swap="innerHTML" class="set-gap-s">
       <span class="muted">{{ T "settings.enrol.fleet_loading" }}</span>
     </div>
+    {{ end }}
+    {{/* ADR-0148 §5 (ut-docs#3615): only a paid store checks in with the
+         cloud. Elevation-wired like Register now (ut-docs#867). */}}
+    {{ if .cloudSyncOff }}
+    <div class="set-divider">
+      <p class="muted">{{ T "settings.enrol.cloud_sync_off" }}</p>
+      <div class="set-row">
+        <button class="btn btn-touch" hx-post="/api/enrol/check-plan" hx-target="#check-plan-msg" hx-swap="innerHTML">{{ T "settings.enrol.check_plan_btn" }}</button>
+        <span id="check-plan-msg" aria-live="polite"></span>
+      </div>
+    </div>
+    {{ end }}
     <!-- ut-docs#867: unconditional — the POST is elevation-wired (checkOrElevate),
          so a denied session gets the in-place PIN dialog, not a hidden form. -->
     <div class="set-divider">
@@ -88,6 +103,9 @@
     <p>✅ {{ T "settings.enrol.registered_via_main" }}</p>
     {{ if enrolstore }}<p class="muted">{{ T "settings.enrol.store" }}: <code>{{ enrolstore }}</code></p>{{ end }}
     {{ if enroldevice }}<p class="muted">{{ T "settings.enrol.device" }}: <code>{{ enroldevice }}</code></p>{{ end }}
+    {{/* No "cloud sync is off" notice here (ADR-0148, ut-docs#3615): a till
+         registered through its main till never checks in itself, so its
+         own entitlement cache stays empty whatever the shop pays. */}}
   {{ else }}
     <p>⚠️ {{ T "settings.enrol.not_registered" }}</p>
     <p class="muted">{{ T "settings.enrol.benefits" }}</p>
@@ -97,16 +115,42 @@
       <span id="enrol-msg" aria-live="polite"></span>
     </div>
   {{ end }}
+  <!-- ADR-0116 D5/D6 (ut-docs#3523): "Pair with a shop". Unconditional: it is
+       the way back for an unpaired, revoked or retired till whatever its
+       registration state, and the POST is elevation-wired (ut-docs#867). -->
+  <div class="set-divider">
+    <h3 style="margin:0 0 .3rem">{{ T "settings.enrol.pair_title" }}</h3>
+    <p class="muted">{{ T "settings.enrol.pair_help" }}</p>
+    <!-- Pair is destructive and not idempotent: it clears this till's cloud
+         identity before the (single-use) code reaches the cloud, so a second
+         submit of the same code — a double-tap on the touchscreen, which htmx
+         would otherwise queue behind the in-flight request (hx-trigger's
+         default queue is "last") — would wipe the identity the first one just
+         adopted and then be refused. hx-sync drops the duplicate, hx-disabled-elt
+         greys the button while the call runs, and the indicator is the loading
+         state (ux-guidelines: every action has one). Same trio as
+         partials/pending_pairings.html. -->
+    <form class="set-row" hx-post="/api/enrol/pair" hx-target="#pair-msg" hx-swap="innerHTML"
+          hx-sync="this:drop" hx-disabled-elt="find button[type=submit]" hx-indicator="#pair-busy">
+      <label class="visually-hidden" for="pair-code">{{ T "settings.enrol.pair_title" }}</label>
+      <input type="text" id="pair-code" name="code" placeholder="{{ T "settings.enrol.pair_placeholder" }}" autocapitalize="characters" autocomplete="off" spellcheck="false" required>
+      <button class="btn btn-touch" type="submit">{{ T "settings.enrol.pair_btn" }}</button>
+      <span id="pair-busy" class="htmx-indicator muted" role="status">{{ T "settings.enrol.pair_busy" }}</span>
+    </form>
+    <div id="pair-msg" aria-live="polite" class="set-gap-s"></div>
+  </div>
   <!-- ADR-0071 (ut-docs#879): the setup wizard's eager-registration opt-in,
        changeable afterwards. Elevation-wired endpoint, so the card renders
        for every session (ut-docs#867 convention). Same Content-Type reload
        guard as the telemetry form — a 200 elevation prompt (text/html) must
        not trigger the success reload. Toggling ON also registers now,
-       best-effort; toggling OFF never deregisters anything. -->
+       best-effort; toggling OFF never deregisters anything. It keeps the
+       full reload (ut-docs#2902 review): registering changes the shell's
+       status bar too (the "Register till" chip, base.html .sb-enrol). -->
   <div class="set-divider">
     <fieldset class="set-lock" data-lock-region="settings-auto-register"{{ if index $.lockedRegions "settings-auto-register" }} disabled{{ end }}>
     {{ if index $.lockedRegions "settings-auto-register" }}{{ template "set-lock-note" }}{{ end }}
-    <form hx-post="/api/settings/auto-register" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-auto-register')} } else {document.getElementById('settings-save-error').hidden=false}">
+    <form hx-post="/api/settings/auto-register" hx-swap="none" data-after-request="ok not-html reload:settings-auto-register; fail unhide:settings-save-error">
       <label><input type="checkbox" name="optIn" {{ if eq (index .settingsMap "marketplace.auto_register_opt_in") "true" }}checked{{ end }}> {{ T "settings.enrol.auto_register.label" }}</label>
       <p class="muted">{{ T "settings.enrol.auto_register.help" }}</p>
       <div class="set-gap-s">
@@ -359,7 +403,7 @@
   <h2>{{ T "settings.theme.title" }}</h2>
   {{/* ut-docs#2783: per station, never synced between tills. */}}
   <p class="muted">{{ T "settings.theme.help_per_till" }}</p>
-  <form hx-post="/api/settings/theme" hx-swap="none" hx-on::after-request="if(event.detail.successful){UT.reload('settings-theme')}else{document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/theme" hx-swap="none" data-after-request="ok reload:settings-theme; fail unhide:settings-save-error">
     <select name="theme">
       {{ $current := .theme }}
       {{ range .themes }}
@@ -372,7 +416,7 @@
 <div class="card" id="settings-display">
   <h2>{{ T "settings.display.title" }}</h2>
   <p class="muted">{{ T "settings.display.help" }}</p>
-  <form hx-post="/api/settings/ui-scale" hx-swap="none" hx-on::after-request="if(event.detail.successful){UT.reload('settings-ui-scale')}else{document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/ui-scale" hx-swap="none" data-after-request="ok reload:settings-ui-scale; fail unhide:settings-save-error">
     {{ $scale := .uiScale }}
     <select name="scale">
       <option value="0.7"  {{ if eq $scale "0.7" }}selected{{ end }}>70% — {{ T "settings.display.tiny" }}</option>
@@ -394,7 +438,7 @@
        selector puts the last host detection into words, whatever the
        choice, so an operator who picked a level can still see what Auto
        would use. -->
-  <form hx-post="/api/settings/effects-level" hx-swap="none" hx-on::after-request="if(event.detail.successful){UT.reload('settings-effects-level')}else{document.getElementById('settings-save-error').hidden=false}" class="set-gap" id="settings-effects-level">
+  <form hx-post="/api/settings/effects-level" hx-swap="none" data-after-request="ok reload:settings-effects-level; fail unhide:settings-save-error" class="set-gap" id="settings-effects-level">
     {{ $fx := .fxView }}
     <label class="set-row">{{ T "settings.display.effects" }}
       <select name="level" data-testid="effects-level-select">
@@ -410,7 +454,7 @@
     <p class="muted" data-testid="effects-detected">{{ T "settings.display.effects_detected" }} {{ T (printf "settings.display.effects_name_%s" $fx.Detected) }}{{ if $fx.ReasonParts }} ({{ range $i, $p := $fx.ReasonParts }}{{ if $i }}{{ T "settings.display.effects_reason_sep" }}{{ end }}{{ if $p.Arg }}{{ printf (T $p.Key) $p.Arg }}{{ else }}{{ T $p.Key }}{{ end }}{{ end }}){{ end }}</p>
     {{ end }}
   </form>
-  <form hx-post="/api/settings/osk" hx-swap="none" hx-on::after-request="if(event.detail.successful){UT.reload('settings-osk')}else{document.getElementById('settings-save-error').hidden=false}" class="set-gap">
+  <form hx-post="/api/settings/osk" hx-swap="none" data-after-request="ok reload:settings-osk; fail unhide:settings-save-error" class="set-gap">
     {{ $osk := oskmode }}
     <label class="set-row">{{ T "settings.display.osk" }}
       <select name="mode">
@@ -427,14 +471,17 @@
        default back" affordance for an operator who isn't looking at the
        sell screen right now. width_rem="0" is the exact same reset shape
        the divider's own double-tap/double-click sends -- plain htmx form,
-       same hx-on::after-request reload pattern as ui-scale/osk above,
+       refreshing only its own region on success (ut-docs#2902),
        since THIS control (unlike the live drag) has no basket-loss risk
        to protect against. -->
-  <form hx-post="/api/settings/basket-panel-width" hx-swap="none" hx-on::after-request="if(event.detail.successful){UT.reload('settings-basket-width')}else{document.getElementById('settings-save-error').hidden=false}" class="set-gap">
+  <div id="settings-basket-width-region" data-ut-refresh="#settings-basket-width-region" data-ut-saved-msg="#basket-panel-msg">
+  <form hx-post="/api/settings/basket-panel-width" hx-swap="none" data-after-request="ok not-html refresh-region; fail unhide:settings-save-error" class="set-gap">
     <input type="hidden" name="width_rem" value="0">
     <p class="muted">{{ T "settings.display.basket_panel_help" }}</p>
     <button class="btn secondary" type="submit" data-testid="basket-panel-reset">{{ T "settings.display.basket_panel_reset_btn" }}</button>
+    <span id="basket-panel-msg" aria-live="polite"></span>
   </form>
+  </div>
   <!-- ut-docs#867: the display-mode/window-mode/launch-on-startup forms below
        render unconditionally — all three POST to elevation-wired endpoints
        (checkOrElevate), so the server-side PIN dialog is the authorization
@@ -444,7 +491,7 @@
        forms (#796) — an elevation prompt (text/html) must not trigger the
        unconditional navigate-away that used to sit here, which would
        destroy the just-opened dialog before an operator could even see it. -->
-  <form hx-post="/api/settings/display-mode" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.noteNav('settings-display-mode');window.location.href='/'} } else {document.getElementById('settings-save-error').hidden=false}" class="set-gap">
+  <form hx-post="/api/settings/display-mode" hx-swap="none" data-after-request="ok not-html note-nav:settings-display-mode go:/; fail unhide:settings-save-error" class="set-gap">
     {{ $dmode := index .settingsMap "display.mode" }}
     <label class="set-row">{{ T "settings.display.mode" }}
       <select name="mode">
@@ -464,7 +511,7 @@
          ut-docs#1039, immediately over the shell's live control poll — in
          attach AND spawn mode). macOS (#609)/Windows (#610) still owe real
          implementations — see the pending-note copy below. -->
-    <form id="window-mode-form" hx-post="/api/settings/window-mode" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}" class="set-gap">
+    <form id="window-mode-form" hx-post="/api/settings/window-mode" hx-swap="none" data-after-request="fail unhide:settings-save-error" class="set-gap">
       {{ $windowMode := .windowMode }}
       <label class="set-row">{{ T "settings.display.window_mode_label" }}
         <select name="mode">
@@ -511,8 +558,8 @@
         <input type="checkbox" id="launch-on-startup-cb" name="enabled"
                hx-post="/api/settings/launch-on-startup" hx-trigger="change" hx-swap="none"
                hx-vals="js:{enabled: document.getElementById('launch-on-startup-cb').checked}"
-               hx-on::before-request="document.getElementById('launch-on-startup-msg').textContent=''"
-               hx-on::after-request="if(!event.detail.successful){this.checked=!this.checked;document.getElementById('settings-save-error').hidden=false}"
+               data-before-request="clear-text:launch-on-startup-msg"
+               data-after-request="fail toggle-checked unhide:settings-save-error"
                {{ if .launchOnStartup }}checked{{ end }}>
         {{ T "settings.display.launch_on_startup_label" }}
       </label>
@@ -757,8 +804,8 @@
     <input type="checkbox" id="bcsym-{{ .ID }}"
            hx-post="/api/settings/barcode-symbology" hx-trigger="change" hx-swap="none"
            hx-vals="js:{id: '{{ .ID }}', enabled: document.getElementById('bcsym-{{ .ID }}').checked}"
-           hx-on::before-request="document.getElementById('barcode-symbologies-msg').textContent=''"
-           hx-on::after-request="if(!event.detail.successful){this.checked=!this.checked;document.getElementById('settings-save-error').hidden=false}"
+           data-before-request="clear-text:barcode-symbologies-msg"
+           data-after-request="fail toggle-checked unhide:settings-save-error"
            {{ if .Enabled }}checked{{ end }}>
     {{ T .NameKey }}
   </label>
@@ -800,8 +847,8 @@
     <input type="checkbox" id="catalog-import-barcode-default-cb" name="enabled"
            hx-post="/api/settings/catalog-import-barcode-default" hx-trigger="change" hx-swap="none"
            hx-vals="js:{enabled: document.getElementById('catalog-import-barcode-default-cb').checked}"
-           hx-on::before-request="document.getElementById('catalog-import-barcode-default-msg').textContent=''"
-           hx-on::after-request="if(!event.detail.successful){this.checked=!this.checked;document.getElementById('settings-save-error').hidden=false}"
+           data-before-request="clear-text:catalog-import-barcode-default-msg"
+           data-after-request="fail toggle-checked unhide:settings-save-error"
            {{ if eq (index .settingsMap "catalog_import_barcode_from_sku_default") "1" }}checked{{ end }}>
     {{ T "settings.catalog_import_barcode_default.label" }}
   </label>
@@ -835,8 +882,8 @@
     <input type="checkbox" id="catalog-pre-pack-unit-price-cb" name="enabled"
            hx-post="/api/settings/catalog-pre-pack-unit-price" hx-trigger="change" hx-swap="none"
            hx-vals="js:{enabled: document.getElementById('catalog-pre-pack-unit-price-cb').checked}"
-           hx-on::before-request="document.getElementById('catalog-pre-pack-unit-price-msg').textContent=''"
-           hx-on::after-request="if(!event.detail.successful){this.checked=!this.checked;document.getElementById('settings-save-error').hidden=false}"
+           data-before-request="clear-text:catalog-pre-pack-unit-price-msg"
+           data-after-request="fail toggle-checked unhide:settings-save-error"
            {{ if eq (index .settingsMap "catalog_pre_pack_unit_price_enabled") "1" }}checked{{ end }}>
     {{ T "settings.catalog_pre_pack_unit_price.label" }}
   </label>
@@ -870,7 +917,7 @@
   <h2>{{ T "settings.sell_screen.title" }} {{ helpLink "sell" }}</h2>
   <fieldset class="set-lock" data-lock-region="settings-sell-screen"{{ if index $.lockedRegions "settings-sell-screen" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-sell-screen" }}{{ template "set-lock-note" }}{{ end }}
-  <form id="browsing-mode-form" hx-post="/api/settings/browsing-mode" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}" class="set-gap">
+  <form id="browsing-mode-form" hx-post="/api/settings/browsing-mode" hx-swap="none" data-after-request="fail unhide:settings-save-error" class="set-gap">
     {{ $bm := .browsingMode }}
     <label class="set-row">{{ T "settings.sell_screen.browsing_mode_label" }}
       <select name="mode" id="browsing-mode-select">
@@ -928,8 +975,8 @@
     <input type="checkbox" id="allow-negative-inventory-cb" name="enabled"
            hx-post="/api/settings/allow-negative-inventory" hx-trigger="change" hx-swap="none"
            hx-vals="js:{enabled: document.getElementById('allow-negative-inventory-cb').checked}"
-           hx-on::before-request="document.getElementById('allow-negative-inventory-msg').textContent=''"
-           hx-on::after-request="if(!event.detail.successful){this.checked=!this.checked;document.getElementById('settings-save-error').hidden=false}"
+           data-before-request="clear-text:allow-negative-inventory-msg"
+           data-after-request="fail toggle-checked unhide:settings-save-error"
            {{ if .settings.AllowNegativeInventory }}checked{{ end }}>
     {{ T "settings.stock_tracking.label" }}
   </label>
@@ -959,8 +1006,16 @@
        already manager-only, checkStepUp's own precondition), but is
        itself step-up elevation-wired behind it since ut-docs#1860
        (ADR-0087) — see the form below. -->
+  {{/* ut-docs#2904: Backup now refreshes only this region (keeping
+       #backup-msg's ✓) so the list shows the new snapshot — no full-page
+       reload. Inside the card, never the card itself: the section switcher
+       holds the card element (same as every settings-*-region). And
+       #restore-msg stays OUTSIDE it: backup_restore_staged.html wires its
+       Restart button with an inline script, which a region swap never
+       re-runs. */}}
+  <div id="settings-backup-region" data-ut-refresh="#settings-backup-region">
   <div class="set-row set-below">
-    <button class="btn" hx-post="/api/backup/now" hx-target="#backup-msg" hx-swap="innerHTML">{{ T "settings.backup.now" }}</button>
+    <button class="btn" hx-post="/api/backup/now" hx-target="#backup-msg" hx-swap="innerHTML" data-after-request="ut-ok refresh-region">{{ T "settings.backup.now" }}</button>
     <span id="backup-msg" aria-live="polite"></span>
   </div>
   {{ if .isManager }}
@@ -994,6 +1049,9 @@
   {{ else }}
   <p class="muted">{{ T "settings.backup.none_yet" }}</p>
   {{ end }}
+  {{ end }}
+  </div>
+  {{ if .isManager }}
   <!-- ut-docs#1613: deliberately OUTSIDE the `.backups` branch above — a
        restore staged in an earlier visit is a persistent, on-disk fact
        (db.PendingRestore) independent of whatever the snapshot list looks
@@ -1569,30 +1627,47 @@
   <!-- ut-docs#794 review finding (blocker): checkOrElevate's needsElevation
        response is ALSO a 2xx (200 + the elevation dialog HTML), so plain
        event.detail.successful can't distinguish "saved" from "needs a
-       manager's PIN" — the reload below would fire immediately and destroy
+       manager's PIN" — the refresh below would fire immediately and destroy
        the just-opened dialog before anyone could use it. Content-Type
        (text/html only on the elevation prompt; the real 204 success has
        none) is the same signal app.js's utPostWithElevation uses. -->
+  <div id="settings-retention-region" data-ut-refresh="#settings-retention-region" data-ut-saved-msg="#retention-msg">
   <fieldset class="set-lock" data-lock-region="settings-retention"{{ if index $.lockedRegions "settings-retention" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-retention" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/report-retention" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-report-retention')} } else {document.getElementById('settings-save-error').hidden=false}">
+  <!-- ut-docs#574 (ADR-0147 §1): cloud/both are selectable only while this
+       till's cached entitlement includes cloud_backup; otherwise they stay
+       visible but disabled, with the reason in words. The server enforces
+       the same gate (409 + translated reason, shown in #retention-msg). -->
+  <form hx-post="/api/settings/report-retention" hx-swap="none" data-after-request="ok not-html refresh-region; status:409 text-response:retention-msg; fail not-status:409 unhide:settings-save-error">
     {{ $mode := .reportRetentionMode }}
+    {{ $cloudOK := .reportArchiveCloud.CloudAllowed }}
     <label>{{ T "settings.retention.mode_label" }}
       <select name="mode">
         <option value="till"  {{ if eq $mode "till" }}selected{{ end }}>{{ T "settings.retention.mode_till" }}</option>
-        <option value="cloud" disabled {{ if eq $mode "cloud" }}selected{{ end }}>{{ T "settings.retention.mode_cloud" }} ({{ T "settings.retention.mode_coming_soon" }})</option>
-        <option value="both"  disabled {{ if eq $mode "both" }}selected{{ end }}>{{ T "settings.retention.mode_both" }} ({{ T "settings.retention.mode_coming_soon" }})</option>
+        <option value="cloud" {{ if and (not $cloudOK) (ne $mode "cloud") }}disabled {{ end }}{{ if eq $mode "cloud" }}selected{{ end }}>{{ T "settings.retention.mode_cloud" }}{{ if not $cloudOK }} ({{ T "settings.retention.mode_needs_subscription" }}){{ end }}</option>
+        <option value="both" {{ if and (not $cloudOK) (ne $mode "both") }}disabled {{ end }}{{ if eq $mode "both" }}selected{{ end }}>{{ T "settings.retention.mode_both" }}{{ if not $cloudOK }} ({{ T "settings.retention.mode_needs_subscription" }}){{ end }}</option>
       </select>
     </label>
     <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
     <!-- ut-docs#794: hx-swap="none" above means this form's own response
-         is never swapped anywhere (the page just reloads on success) — but
+         is never swapped anywhere (its region refreshes on success) — but
          checkOrElevate's dialog retry (elevation_prompt.html) still needs a
          real hx-target to land its response in, so this span exists purely
          for that. -->
     <span id="retention-msg" aria-live="polite"></span>
   </form>
   </fieldset>
+  {{ if .reportArchiveCloud.Show }}
+  <!-- ut-docs#574 (ADR-0147 §2): main till, mode cloud/both — how many
+       archived reports still wait for the cloud, and a standing refusal
+       (402: subscription not active). Words, never colour alone; the same
+       refusal shows as a status-bar chip on every page. -->
+  <p data-testid="retention-pending">{{ printf (T "settings.retention.pending_uploads") .reportArchiveCloud.Pending }}</p>
+  {{ if .reportArchiveCloud.Refused }}
+  <p class="notice-block-warn" role="status" data-testid="retention-refused"><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T "settings.retention.upload_refused" }}</p>
+  {{ end }}
+  {{ end }}
+  </div>
   <p class="muted">{{ T "settings.retention.capacity_advisory" }}</p>
   {{ if .isManager }}
   <p>
@@ -1689,7 +1764,8 @@
        "saved" apart from "needs a manager's PIN" — Content-Type
        (text/html only on the prompt; the real 204 success has none) is
        the same signal the report-retention form above uses. -->
-  <form hx-post="/api/settings/printer" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-printer')} } else {document.getElementById('settings-save-error').hidden=false}">
+  <div id="settings-printer-region" data-ut-refresh="#settings-printer-region" data-ut-saved-msg="#printer-settings-msg">
+  <form hx-post="/api/settings/printer" hx-swap="none" data-after-request="ok not-html refresh-region; fail unhide:settings-save-error">
     {{ $p := .printer }}
     <div class="field-pair">
       <label>{{ T "settings.printer.mode" }}
@@ -1811,6 +1887,7 @@
          endpoint isn't part of this mechanism (ut-docs#866). -->
     <span id="printer-settings-msg" aria-live="polite"></span>
   </form>
+  </div>
 </div>
 {{ if .isManager }}
 <script>
@@ -1821,12 +1898,11 @@
   // printer candidates, not station-specific ones, so no new API is added.
   // Plain fetch(), no htmx, same as the kitchen-stations version: a
   // candidate only fills a form field on tap, it never auto-submits.
-  var btn = document.getElementById('printer-discover-btn');
-  if (!btn) return;
-  var msg = document.getElementById('printer-discover-msg');
-  var out = document.getElementById('printer-discover-results');
-  var addressInput = document.getElementById('printer-address-input');
-  var kitchenInput = document.getElementById('printer-kitchen-addr-input');
+  // ut-docs#2902: the button lives in #settings-printer-region, which a save
+  // replaces (UT.refreshRegion), so the listener is delegated from the card
+  // (which stays) and every element is looked up per click.
+  var card = document.getElementById('settings-printer');
+  if (!card) return;
   var i18n = {
     searching: "{{ T "settings.printer.discover.searching" }}",
     noneFound: "{{ T "settings.printer.discover.none_found" }}",
@@ -1836,7 +1912,13 @@
     useKitchen: "{{ T "settings.printer.discover.use_kitchen" }}"
   };
   function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
-  btn.addEventListener('click', function () {
+  card.addEventListener('click', function (ev) {
+    var btn = ev.target.closest ? ev.target.closest('#printer-discover-btn') : null;
+    if (!btn) return;
+    var msg = document.getElementById('printer-discover-msg');
+    var out = document.getElementById('printer-discover-results');
+    var addressInput = document.getElementById('printer-address-input');
+    var kitchenInput = document.getElementById('printer-kitchen-addr-input');
     btn.disabled = true;
     msg.textContent = i18n.searching;
     out.innerHTML = '';
@@ -1901,10 +1983,13 @@
        never till.name (which there holds the main till's name). -->
   <!-- ut-docs#796: same Content-Type reload guard as the report-retention
        form above — a 200 elevation prompt (text/html) must not trigger the
-       success reload, which would destroy the just-opened dialog; the real
+       success refresh, which would destroy the just-opened dialog; the real
        success is a bare 204 with no Content-Type. -->
+  <div id="settings-till-name-region" data-ut-refresh="#settings-till-name-region" data-ut-saved-msg="#till-name-msg">
+  <!-- ut-docs#3308: a name another till in the shop uses comes back 422
+       with its translated reason, shown inline like the retention form's 409. -->
   <form hx-post="/api/settings/till-name" hx-swap="none"
-        hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-till-name')} } else {document.getElementById('settings-save-error').hidden=false}">
+        data-after-request="ok not-html refresh-region; status:422 text-response:till-name-msg; fail not-status:422 unhide:settings-save-error">
     <label>{{ T "settings.tills.name_label" }}
       <input type="text" name="name" maxlength="60" value="{{ .TillName }}">
     </label>
@@ -1913,12 +1998,14 @@
          report-retention form's identical span). -->
     <span id="till-name-msg" aria-live="polite"></span>
   </form>
+  </div>
   <!-- This till's register identity (ut-docs#268): which register's shift a
        payout (e.g. Pfandrückgabe) lands on. Like the till-name field above,
        this renders on primary AND replica — every till processes its own
        local payouts, so its register identity matters everywhere. -->
+  <div id="settings-till-register-region" data-ut-refresh="#settings-till-register-region" data-ut-saved-msg="#till-register-msg">
   <form hx-post="/api/settings/till-register" hx-swap="none"
-        hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-till-register')} } else {document.getElementById('settings-save-error').hidden=false}">
+        data-after-request="ok not-html refresh-region; fail unhide:settings-save-error">
     <label>{{ T "settings.tills.register_label" }}
       <select name="register_id" required>
         {{ if not .TillRegisterID }}<option value="" selected disabled>{{ T "settings.tills.register_unset" }}</option>{{ end }}
@@ -1929,6 +2016,7 @@
     <span id="till-register-msg" aria-live="polite"></span>
     <p class="muted">{{ T "settings.tills.register_help" }}</p>
   </form>
+  </div>
   <p class="muted">{{ T "settings.tills.help" }}</p>
   <a class="btn primary" href="/tills">{{ T "settings.tills.open" }}</a>
   {{ if .ShowQuarantineSection }}
@@ -1958,9 +2046,10 @@
   <!-- ut-docs#794 review finding: same Content-Type reload guard as the
        report-retention form above — the elevation prompt is itself a 2xx
        (200 + dialog HTML). -->
+  <div id="settings-invoice-region" data-ut-refresh="#settings-invoice-region" data-ut-saved-msg="#invoice-settings-msg">
   <fieldset class="set-lock" data-lock-region="settings-invoice"{{ if index $.lockedRegions "settings-invoice" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-invoice" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/invoice" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-invoice')} } else {document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/invoice" hx-swap="none" data-after-request="ok not-html refresh-region; fail unhide:settings-save-error">
     <div class="field-pair">
       <label>{{ T "settings.invoice.seller_name" }}
         <input type="text" name="seller_name" value="{{ index .settingsMap "invoice.seller_name" }}"></label>
@@ -1976,6 +2065,7 @@
     <span id="invoice-settings-msg" aria-live="polite"></span>
   </form>
   </fieldset>
+  </div>
 </div>
 <!-- ut-docs#867: idle-lock, kiosk-idle-reset and telemetry below are all
      elevation-wired — their cards render for every session. -->
@@ -1988,7 +2078,7 @@
        real success is a bare 204 with no Content-Type. -->
   <fieldset class="set-lock" data-lock-region="settings-idle-lock"{{ if index $.lockedRegions "settings-idle-lock" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-idle-lock" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/idle-lock" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-idle-lock')} } else {document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/idle-lock" hx-swap="none" data-after-request="ok not-html reload:settings-idle-lock; fail unhide:settings-save-error">
     {{ $idle := .settings.IdleLockMinutes }}
     <select name="minutes">
       <option value="0"  {{ if eq $idle 0 }}selected{{ end }}>{{ T "settings.idle_lock.off" }}</option>
@@ -2012,7 +2102,7 @@
   <p class="muted">{{ T "settings.kiosk_idle_reset.help" }}</p>
   <fieldset class="set-lock" data-lock-region="settings-kiosk-idle-reset"{{ if index $.lockedRegions "settings-kiosk-idle-reset" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-kiosk-idle-reset" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/kiosk-idle-reset" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/kiosk-idle-reset" hx-swap="none" data-after-request="fail unhide:settings-save-error">
     {{ $kioskIdle := .settings.KioskIdleResetSeconds }}
     <select name="seconds">
       <option value="0"   {{ if eq $kioskIdle 0 }}selected{{ end }}>{{ T "settings.kiosk_idle_reset.off" }}</option>
@@ -2035,7 +2125,7 @@
   <h2>{{ T "settings.kiosk.payment_mode" }} {{ helpLink "self-order" }}</h2>
   <fieldset class="set-lock" data-lock-region="settings-kiosk-payment-mode"{{ if index $.lockedRegions "settings-kiosk-payment-mode" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-kiosk-payment-mode" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/kiosk-payment-mode" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/kiosk-payment-mode" hx-swap="none" data-after-request="fail unhide:settings-save-error">
     {{ $kioskPaymentMode := .settings.KioskPaymentMode }}
     <select name="mode">
       <option value="kiosk"   {{ if eq $kioskPaymentMode "kiosk" }}selected{{ end }}>{{ T "settings.kiosk.payment_mode.kiosk" }}</option>
@@ -2052,9 +2142,10 @@
   <!-- ut-docs#865: same Content-Type reload guard as idle-lock above — the
        unconditional reload previously here would destroy an elevation
        prompt the instant it appeared. -->
+  <div id="settings-telemetry-region" data-ut-refresh="#settings-telemetry-region" data-ut-saved-msg="#telemetry-msg">
   <fieldset class="set-lock" data-lock-region="settings-telemetry"{{ if index $.lockedRegions "settings-telemetry" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-telemetry" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/telemetry" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-telemetry')} } else {document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/telemetry" hx-swap="none" data-after-request="ok not-html refresh-region; fail unhide:settings-save-error">
     <label><input type="checkbox" name="optIn" {{ if eq (index .settingsMap "marketplace.telemetry_opt_in") "true" }}checked{{ end }}> {{ T "settings.telemetry.enable" }}</label>
     <div class="set-gap-s">
       <button class="btn" type="submit">{{ T "settings.telemetry.save" }}</button>
@@ -2062,6 +2153,7 @@
     </div>
   </form>
   </fieldset>
+  </div>
 </div>
 <!-- ut-docs#3115: the shop's name (store.name), editable after setup.
      Elevation-wired like Shop type below, so it renders for every session.
@@ -2071,20 +2163,22 @@
      hx-target: a refused name answers 400 with an HTML fragment that
      app.js swaps into #store-name-msg (no page-wide error banner); the
      elevation prompt's hint lands there too. A save answers 204 and the
-     page reloads to show it; any other failure (e.g. the main till is
+     region refreshes to show it (ut-docs#2902); any other failure (e.g. the main till is
      unreachable from an additional till) shows its message there. -->
 <div class="card" id="settings-store-name">
   <h2>{{ T "settings.store_name.title" }}</h2>
   <p class="muted">{{ T "settings.store_name.help" }}</p>
+  <div id="settings-store-name-region" data-ut-refresh="#settings-store-name-region" data-ut-saved-msg="#store-name-msg">
   <fieldset class="set-lock" data-lock-region="settings-store-name"{{ if index $.lockedRegions "settings-store-name" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-store-name" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/store-name" hx-target="#store-name-msg" hx-swap="innerHTML" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-save')} } else {document.getElementById('store-name-msg').textContent=event.detail.xhr.responseText; document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/store-name" hx-target="#store-name-msg" hx-swap="innerHTML" data-after-request="ok not-html refresh-region; fail text-response:store-name-msg unhide:settings-save-error">
     <label for="store-name-input" class="visually-hidden">{{ T "settings.store_name.title" }}</label>
     <input type="text" id="store-name-input" name="store_name" value="{{ .storeName }}" maxlength="80" dir="auto" autocomplete="off" data-testid="store-name-input">
     <button class="btn" type="submit" data-testid="store-name-save">{{ T "common.save" }}</button>
     <span id="store-name-msg" aria-live="polite" data-testid="store-name-msg"></span>
   </form>
   </fieldset>
+  </div>
 </div>
 <!-- ut-docs#867: currency and shop-type post to elevation-wired endpoints —
      both cards render for every session. -->
@@ -2095,7 +2189,7 @@
        form — see the till-name form's comment. -->
   <fieldset class="set-lock" data-lock-region="settings-currency"{{ if index $.lockedRegions "settings-currency" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-currency" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/save" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-save')} } else {document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/save" hx-swap="none" data-after-request="ok not-html reload:settings-save; fail unhide:settings-save-error">
     {{ $cur := currency }}
     <select name="currency">
       {{ range currencies }}
@@ -2126,7 +2220,7 @@
   <p class="muted">{{ T "settings.language.help" }}</p>
   <fieldset class="set-lock" data-lock-region="settings-language"{{ if index $.lockedRegions "settings-language" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-language" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/save" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-save')} } else {document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/save" hx-swap="none" data-after-request="ok not-html reload:settings-save; fail unhide:settings-save-error">
     {{ $cur := defaultlocale }}
     <select name="locale">
       {{ range locales }}
@@ -2154,7 +2248,7 @@
   <p class="muted">{{ T "settings.staff_languages.help" }}</p>
   <fieldset class="set-lock" data-lock-region="settings-staff-languages"{{ if index $.lockedRegions "settings-staff-languages" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-staff-languages" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/staff-languages" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-save')} } else {var m=document.getElementById('staff-languages-msg'); m.textContent=event.detail.xhr.status===400?event.detail.xhr.responseText:''; if(event.detail.xhr.status!==400){document.getElementById('settings-save-error').hidden=false}}">
+  <form hx-post="/api/settings/staff-languages" hx-swap="none" data-after-request="ok not-html reload:settings-save; fail status:400 text-response:staff-languages-msg; fail not-status:400 clear-text:staff-languages-msg unhide:settings-save-error">
     {{ $sel := .staffLocaleSet }}{{ $def := .defaultStaffLocale }}
     <fieldset class="staff-lang-list">
       <legend class="visually-hidden">{{ T "settings.staff_languages.title" }}</legend>
@@ -2182,7 +2276,7 @@
   <p class="muted">{{ T "settings.shop_type.service_layout_note" }}</p>
   <fieldset class="set-lock" data-lock-region="settings-shop-type"{{ if index $.lockedRegions "settings-shop-type" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-shop-type" }}{{ template "set-lock-note" }}{{ end }}
-  <form hx-post="/api/settings/shop-type" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/shop-type" hx-swap="none" data-after-request="fail unhide:settings-save-error">
     {{ $stype := .shopType }}
     <select name="shop_type">
       <option value="">—</option>
@@ -2615,6 +2709,18 @@
   // is reachable through one of these element kinds without per-control
   // markup changes.
   var index = null;
+  // ut-docs#2902: a save that swapped a region (UT.refreshRegion) replaced
+  // the nodes the search index points at, so rebuild it on the next
+  // keystroke; and since the region re-renders identical content, say
+  // "Saved." in the region's own message span (data-ut-saved-msg).
+  var savedText = "{{ T "settings.display.change_saved" }}";
+  grid.addEventListener('ut:region-refreshed', function (ev) {
+    index = null;
+    var r = ev.target;
+    var sel = r && r.getAttribute ? r.getAttribute('data-ut-saved-msg') : null;
+    var m = sel ? r.querySelector(sel) : null;
+    if (m && typeof renderNotice === 'function') renderNotice(m, 'success', savedText);
+  });
   function buildIndex() {
     index = [];
     navItems.forEach(function (item) {

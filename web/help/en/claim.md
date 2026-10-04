@@ -4,7 +4,7 @@ title: Store registration & claiming
 section: Connecting & extending
 order: 320
 summary: Registering connects your till to the Universal Till marketplace; claiming links the store to YOUR account so you get the online back-office (My stores, fleet view) and paid features.
-keywords: [register, claim, cloud, marketplace, store, subscription, plan]
+keywords: [register, claim, cloud, marketplace, store, subscription, plan, pair, pairing code, re-pair]
 ---
 
 # Store registration & claiming
@@ -34,3 +34,29 @@ Settings → Subscription (managers only) shows your plan as this till last hear
 - Subscription ended: your subscription is no longer active, so paid features are paused until you renew it in your Universal Till account.
 
 In the last two cases a chip in the status bar links to this card, and Till registration and Receipt signing (TSE) say in place which of their features are paused. Nothing is hidden, and a TSE that is already set up keeps signing receipts.
+
+## Cloud sync is part of the paid plans
+
+Registering and claiming are free, and so is the plugin store. Keeping the till in sync with your online account (sales figures, the product list, changes made on the shop's cloud manage page) is part of the paid plans. While the shop is not on one, the till does not contact the cloud in the background at all, and Settings → Till registration says that cloud sync is off.
+
+1. Once the shop is on a paid plan, the till finds out the next time someone on it registers it, pairs it, installs a plugin or generates a claim code. You can also press **Check for a paid plan** in Settings → Till registration (a manager or admin approves it). Cloud sync then starts within a minute and keeps running by itself.
+2. If the plan ends, cloud sync stops after the till's next check-in. Selling never depends on it: every sale works offline either way.
+
+## When the cloud stops accepting this till
+
+If the cloud refuses this till's credential three times in a row, a chip appears in the status bar. It never blocks a sale: the till keeps selling offline, tries the cloud again once an hour, and keeps everything it still has to send on the till until it is connected again. The chip says one of three things:
+
+- **Removed from the shop's cloud account**: the shop's owner removed this till from the store online.
+- **This till needs pairing again**: the till's cloud credential no longer works, so the till must be paired with the shop again.
+- **Register as a new store**: the store has no owner account, so the till can't be paired. Register it again as a new store; only the old fleet history is lost.
+
+A manager can tap the chip to open Settings → Till registration, straight to Pair with a shop below. The chip goes away after the next successful contact with the cloud.
+
+## Pair with a shop (and re-pairing)
+
+Use this when the shop already exists in the Universal Till cloud and this till should join it, or when a till was removed from the shop's cloud account or says it needs pairing again.
+
+1. In the shop's cloud account, choose "Add or re-pair a till" to get a pairing code (8 characters, valid 15 minutes, single use).
+2. On this till, open Settings → Till registration → Pair with a shop, enter the code and press Pair. A manager or admin approves it.
+3. The till replaces only its own cloud connection: it takes a new device ID and a credential of its own. Sales, products and settings stay on the till, and selling keeps working offline the whole time.
+4. On a joined till, the code must come from the same shop as its main till; a code for another shop is refused and nothing changes. A refused or expired code leaves the till unregistered until you pair it with a fresh code.

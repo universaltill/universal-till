@@ -171,6 +171,32 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 	if err := validateABI3Fields(&manifest); err != nil {
 		result.Errors = append(result.Errors, err.Error())
 	}
+	// Validation-data grants (ut-docs#3226): same refusal as ParseManifest,
+	// since marketplace install and import verify through here.
+	if err := validateValidationPermissions(&manifest); err != nil {
+		result.Errors = append(result.Errors, err.Error())
+	}
+	// Setting-bound grants, same as ParseManifest (ut-docs#3514).
+	if err := validateSettingBoundPermissions(&manifest); err != nil {
+		result.Errors = append(result.Errors, err.Error())
+	}
+	// Setting-type enum, same as ParseManifest (ADR-0082, ut-docs#3514).
+	for _, s := range manifest.Settings {
+		if !isValidSettingType(s.Type) {
+			result.Errors = append(result.Errors, fmt.Sprintf("manifest setting %q has invalid type %q (allowed: %s)",
+				s.Key, s.Type, strings.Join([]string{SettingTypeSecret, SettingTypeEndpoint}, "|")))
+		}
+	}
+	// Endpoint-typed setting defaults, same as ParseManifest (ut-docs#3552):
+	// this path persists DefaultValue via PersistManifest too, so it needs
+	// the same gate.
+	if err := validateSettingDefaults(&manifest); err != nil {
+		result.Errors = append(result.Errors, err.Error())
+	}
+	// Permission allow-list, same as ParseManifest (ut-docs#3328).
+	if err := validatePermissions(&manifest); err != nil {
+		result.Errors = append(result.Errors, err.Error())
+	}
 
 	// Checksum verification (if provided in manifest)
 	result.ChecksumVerified = true // Default to true if no checksum in manifest

@@ -245,6 +245,12 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// shop-wide settings change on an additional till is refused as
 		// "can't reach the main till".
 		"/api/sync/settings/apply",
+		// ut-docs#2817: the main-till catalogue write-through an additional
+		// till's catalogue handlers call (internal/pages/catalogsync).
+		// Bearer-authed in the handler (syncTill). Missing here, every
+		// catalogue change on an additional till is refused as "can't reach
+		// the main till".
+		"/api/sync/catalog/apply",
 		// ut-docs#1668: the primary-side cross-till voucher lookup a
 		// replica's fetchVoucherFromPrimary (voucher_sync_proxy.go) proxies
 		// to. Bearer-authed in the handler (syncTill), same as
@@ -398,4 +404,20 @@ func (b *lockedLogBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+// ut-docs#2558: POST /api/pos/no-sale opens the cash drawer. It must never
+// be reachable without a session — not exempt, and rejected 401 by the
+// middleware itself before its handler's cash_adjustment gate runs.
+func TestNoSaleRouteIsNotExempt(t *testing.T) {
+	if exempt("/api/pos/no-sale") {
+		t.Fatal("/api/pos/no-sale must NOT be exempt")
+	}
+	reached := false
+	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached = true }), nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/pos/no-sale", strings.NewReader(`{}`)))
+	if reached || rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no-session POST /api/pos/no-sale: reached=%v status=%d, want 401 and not reached", reached, rec.Code)
+	}
 }

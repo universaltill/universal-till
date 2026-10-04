@@ -407,6 +407,10 @@ type ModifierGroupAdmin struct {
 	ModifierGroup
 	Categories []AssignedCategory
 	Items      []AssignedItem
+	// UpdatedAt is the group's updated_at as read (ut-docs#3606): the
+	// /modifiers group form sends it back as the write-through's
+	// base_updated_at.
+	UpdatedAt string
 }
 
 // ListAllModifierGroupsWithAssignments returns every modifier group in the
@@ -422,7 +426,7 @@ type ModifierGroupAdmin struct {
 // never one query per group.
 func (r *ModifierRepo) ListAllModifierGroupsWithAssignments(ctx context.Context) ([]ModifierGroupAdmin, error) {
 	groupRows, err := r.db.QueryContext(ctx, `
-SELECT g.id, g.name, g.required, g.min_select, g.max_select, g.sort_order, g.is_active
+SELECT g.id, g.name, g.required, g.min_select, g.max_select, g.sort_order, g.is_active, COALESCE(g.updated_at, '')
 FROM item_modifier_groups g
 ORDER BY g.name, g.id`)
 	if err != nil {
@@ -434,7 +438,7 @@ ORDER BY g.name, g.id`)
 	for groupRows.Next() {
 		var g ModifierGroupAdmin
 		var required, active int
-		if err := groupRows.Scan(&g.ID, &g.Name, &required, &g.MinSelect, &g.MaxSelect, &g.SortOrder, &active); err != nil {
+		if err := groupRows.Scan(&g.ID, &g.Name, &required, &g.MinSelect, &g.MaxSelect, &g.SortOrder, &active, &g.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan modifier group: %w", err)
 		}
 		g.Required = required == 1
@@ -1028,7 +1032,7 @@ func (r *ModifierRepo) UpdateGroup(ctx context.Context, id, name string, require
 	}
 	_, err := r.db.ExecContext(ctx, `
 UPDATE item_modifier_groups
-SET name = ?, required = ?, min_select = ?, max_select = ?, sort_order = ?, is_active = ?
+SET name = ?, required = ?, min_select = ?, max_select = ?, sort_order = ?, is_active = ?, updated_at = datetime('now')
 WHERE id = ?
 `, name, req, minSelect, maxSelect, sortOrder, active, id)
 	if err != nil {

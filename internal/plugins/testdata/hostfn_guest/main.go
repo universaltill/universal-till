@@ -91,6 +91,10 @@ func main() {
 		runHTTPRetryThenRepeat(event.Payload.URL)
 		return
 	}
+	if event.Payload.Mode == "http_len" {
+		runHTTPLen(event.Payload.URL)
+		return
+	}
 
 	// Storage round-trip.
 	setCode := set("greeting", []byte("hello from wasm"))
@@ -303,6 +307,46 @@ func runHTTPRetryThenRepeat(url string) {
 	})
 	if code := set("results", results); code != 0 {
 		fmt.Fprintf(os.Stderr, "storing results failed: %d\n", code)
+		os.Exit(1)
+	}
+	fmt.Println(string(results))
+}
+
+// runHTTPLen (ut-docs#3226) fetches one URL through the buffer ABI the way a
+// real guest fetching a large CRL would — a 4-byte probe returns the full
+// length, then a retry into a buffer that size — and records only the
+// status and the DECODED body length, so the host-side test can pin the
+// response cap without round-tripping megabytes through plugin storage.
+func runHTTPLen(url string) {
+	reqJSON, _ := json.Marshal(map[string]any{"method": "GET", "url": url, "body_b64": ""})
+	rp, rl := ptrOf(reqJSON)
+	probe := make([]byte, 4)
+	pp, pc := ptrOf(probe)
+	code := httpRequest(rp, rl, pp, pc)
+	res := map[string]any{"http_code": code}
+	if code > 0 {
+		buf := make([]byte, code)
+		bp, bc := ptrOf(buf)
+		code2 := httpRequest(rp, rl, bp, bc)
+		res["http_code"] = code2
+		if code2 == code {
+			var resp struct {
+				Status  int    `json:"status"`
+				BodyB64 string `json:"body_b64"`
+			}
+			if err := json.Unmarshal(buf, &resp); err == nil {
+				n := len(resp.BodyB64) / 4 * 3
+				for i := len(resp.BodyB64) - 1; i >= 0 && resp.BodyB64[i] == '='; i-- {
+					n--
+				}
+				res["http_status"] = resp.Status
+				res["body_len"] = n
+			}
+		}
+	}
+	results, _ := json.Marshal(res)
+	if c := set("results", results); c != 0 {
+		fmt.Fprintf(os.Stderr, "storing results failed: %d\n", c)
 		os.Exit(1)
 	}
 	fmt.Println(string(results))

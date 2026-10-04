@@ -21,9 +21,10 @@ import (
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
-var httpClient = &http.Client{Timeout: 15 * time.Second}
+var httpClient = netaccess.NewClient(15 * time.Second)
 
 // firstDelayNS/tickIntervalNS back Start's two interval knobs (nanoseconds,
 // atomic.Int64 rather than plain vars for the same reason as cloudsync's

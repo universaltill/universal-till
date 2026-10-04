@@ -121,7 +121,7 @@ jobs:
           go-version-file: go.mod
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
       # Cache the Playwright browser download between runs, same pattern as
       # e2e.yml.
       - uses: actions/cache@v4

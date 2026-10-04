@@ -98,7 +98,7 @@
            reportValidity() guard the discover button already needs for
            the same reason (ut-docs#1540). -->
       <form hx-post="/api/sync/join" hx-include="#pairing-till-name" hx-target="#join-msg" hx-swap="innerHTML"
-            hx-on::before-request="var n=document.getElementById('pairing-till-name');n.value=n.value.trim();if(!n.reportValidity()){event.preventDefault();}">
+            data-before-request="trim-validate:pairing-till-name">
         {{/* ut-docs#3219: the main till shows a short XXX-XXX code plus its
              address; both are typed here. The address is ignored when the
              full (long) code is pasted instead, so it stays optional. */}}
@@ -112,7 +112,9 @@
   {{ end }}
   </div>
 
-  <div class="card">
+  {{/* ut-docs#2904: approve/deny (pending_pairings.html) refresh this card
+       only; the fresh copy's load trigger re-fetches the list. */}}
+  <div class="card" id="tills-pairing-card" data-ut-refresh="#tills-pairing-card">
     <h3>{{ T "tills.pairing.title" }}</h3>
     <p class="muted">{{ T "tills.pairing.help" }}</p>
     <div hx-get="/ui/tills/pending-pairings" hx-trigger="load" hx-swap="outerHTML"></div>
@@ -141,7 +143,7 @@
          operator's focus is inside the table (a keyboard user on Revoke
          would lose it to the swap — same shape as tables.html's
          [!window.tablesEditing] filter). */}}
-    <div id="tills-roster"{{ if .LinkInfo }} hx-get="/ui/tills/roster" hx-trigger="every 10s [!document.activeElement || !document.getElementById('tills-roster').contains(document.activeElement)]" hx-swap="innerHTML"{{ end }}>
+    <div id="tills-roster" data-ut-refresh="#tills-roster"{{ if .LinkInfo }} hx-get="/ui/tills/roster" hx-trigger="every 10s [!document.activeElement || !document.getElementById('tills-roster').contains(document.activeElement)]" hx-swap="innerHTML"{{ end }}>
       {{ template "tills_roster.html" . }}
     </div>
   </div>
@@ -224,7 +226,7 @@
             // reportValidity() call to actually surface to the operator.
             // Trimming in place first is what makes a whitespace-only
             // entry fail `required` instead of cancelling silently.
-            + 'hx-on::before-request="var n=document.getElementById(\'pairing-till-name\');n.value=n.value.trim();if(!n.reportValidity()){event.preventDefault();}" '
+            + 'data-before-request="trim-validate:pairing-till-name" '
             + 'hx-target="#pairing-status-host" hx-swap="innerHTML">' + esc(i18n.requestBtn) + '</button></li>';
         }).join('') + '</ul>';
         htmx.process(out);

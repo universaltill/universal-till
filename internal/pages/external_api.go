@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -13,7 +14,7 @@ import (
 // menu-plugin host can't pin the handling goroutine indefinitely
 // (ut-docs#912) — same 60s bound used elsewhere for outbound HTTP, e.g.
 // sync_admin.go's StartSyncPull client.
-var externalProxyClient = &http.Client{Timeout: 60 * time.Second}
+var externalProxyClient = netaccess.NewClient(60 * time.Second)
 
 // registerExternalProxy proxies external menu plugins defined in the plugin manager.
 func registerExternalProxy(mux *http.ServeMux, d *common.Deps) {

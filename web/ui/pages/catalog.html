@@ -48,18 +48,18 @@
          #1385 bug. So it reuses the .show()/.item-form-modal treatment
          #item-form-modal itself uses for the identical reason.
 
-         hx-on::after-request is also guarded on event.detail.successful
+         The after-request hook is also guarded on success ("ok")
          (independent review, F2) — unguarded, a non-2xx response (e.g. a
          cashier without import_export) still fired .show(), opening an
          empty/erroring modal with no close control reachable on a
          touch-only till (CLAUDE.md §10, ut-docs#1999). Same guard idiom
          already used by catalog_variants.html/self_order_cart.html's own
-         hx-on::after-request calls. Outside the shell (a bare GET
+         after-request hooks. Outside the shell (a bare GET
          /catalog), .InItemsShell is false and this stays a plain icon
          link, unchanged from #2092. -->
     <a id="catalog-import-btn" class="btn secondary btn-icon" href="/import"
        aria-label="{{ T "import.title" }}" title="{{ T "import.title" }}"
-       {{ if .InItemsShell }}hx-get="/import" hx-target="#import-modal" hx-swap="innerHTML" hx-on::after-request="if (event.detail.successful) { document.getElementById('import-modal').show(); }"{{ end }}>
+       {{ if .InItemsShell }}hx-get="/import" hx-target="#import-modal" hx-swap="innerHTML" data-after-request="ok show:import-modal"{{ end }}>
       <span class="btn-ico" aria-hidden="true">{{ icon "upload" }}</span>
     </a>
     <!-- ut-docs#2095: same dialog treatment as Import above, for the
@@ -68,7 +68,7 @@
          button's comment for the full reasoning. -->
     <a id="catalog-taxcodes-btn" class="btn secondary btn-icon" href="/catalog/tax-codes"
        aria-label="{{ T "taxcodes.title" }}" title="{{ T "taxcodes.title" }}"
-       {{ if .InItemsShell }}hx-get="/catalog/tax-codes" hx-target="#tax-codes-modal" hx-swap="innerHTML" hx-on::after-request="if (event.detail.successful) { document.getElementById('tax-codes-modal').show(); }"{{ end }}>
+       {{ if .InItemsShell }}hx-get="/catalog/tax-codes" hx-target="#tax-codes-modal" hx-swap="innerHTML" data-after-request="ok show:tax-codes-modal"{{ end }}>
       <span class="btn-ico" aria-hidden="true">{{ icon "landmark" }}</span>
     </a>
     <button id="catalog-export-btn" class="btn secondary btn-icon"
@@ -87,7 +87,7 @@
          and Escape closing it. Icon-only styling. -->
     <button id="catalog-barcode-backfill-btn" class="btn secondary btn-icon"
             hx-get="/api/catalog/barcode-backfill" hx-target="#barcode-backfill-modal" hx-swap="innerHTML"
-            hx-on::after-request="document.getElementById('barcode-backfill-modal').show()"
+            data-after-request="show:barcode-backfill-modal"
             aria-label="{{ T "catalog.barcode_backfill.btn" }}" title="{{ T "catalog.barcode_backfill.btn" }}">
       <span class="btn-ico" aria-hidden="true">{{ icon "scan-barcode" }}</span>
     </button>
@@ -100,7 +100,7 @@
     {{ if and (not .SyncPrimary) (gt .MissingSKUCount 0) }}
     <button id="catalog-sku-backfill-btn" class="btn secondary btn-icon" style="position:relative"
             hx-get="/api/catalog/sku-backfill" hx-target="#sku-backfill-modal" hx-swap="innerHTML"
-            hx-on::after-request="if (event.detail.successful) { document.getElementById('sku-backfill-modal').show(); }"
+            data-after-request="ok show:sku-backfill-modal"
             aria-label="{{ printf (T "catalog.sku_backfill.btn") .MissingSKUCount }}" title="{{ printf (T "catalog.sku_backfill.btn") .MissingSKUCount }}">
       <span class="btn-ico" aria-hidden="true">{{ icon "sparkles" }}</span>
       <span class="count-badge" aria-hidden="true">{{ .MissingSKUCount }}</span>
@@ -141,7 +141,7 @@
 <dialog id="tax-codes-modal" class="item-form-modal" aria-labelledby="catalog-taxcodes-btn"></dialog>
 
 {{ if .SyncPrimary }}
-<div class="sync-banner">⚠ {{ T "sync.banner_replica" }}
+<div class="sync-banner" role="status">⚠ {{ if .SyncUnreachable }}{{ T "sync.banner_replica_main_till_unreachable" }}{{ else }}{{ T "sync.banner_replica_write_through" }}{{ end }}
   {{ if crossdevicelinkactionable }}
   <a href="{{ .SyncPrimary }}/catalog" target="_blank" rel="noopener" hx-boost="false">{{ T "sync.banner_open_primary" }}</a>
   {{ else }}
@@ -251,7 +251,7 @@
                create/edit wording. -->
           <button class="btn secondary" type="button" id="item-form-reset" hidden
                   aria-label="{{ T "catalog.plus_new" }}" title="{{ T "catalog.plus_new" }}">{{ T "catalog.plus_new" }}</button>
-          <button class="btn secondary" type="button" id="item-form-close-btn" onclick="document.getElementById('item-form-modal').close()"
+          <button class="btn secondary" type="button" id="item-form-close-btn" data-action="close:item-form-modal"
                   aria-label="{{ T "common.close" }}" title="{{ T "common.close" }}">
             <span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span>
             <span class="btn-label">{{ T "common.close" }}</span>
@@ -283,6 +283,11 @@
       <div class="tab-panel" id="item-form-panel-details" role="tabpanel" aria-labelledby="item-form-tab-details" x-show="tab === 'details'">
         <form id="item-form" autocomplete="off">
           <input type="hidden" name="id" id="item-id">
+          {{/* ut-docs#2817: the updated_at of the card this dialog loaded —
+               on an additional till the save travels to the main till,
+               which refuses it as a conflict if the item changed there
+               since. Ignored by a save made on the main till itself. */}}
+          <input type="hidden" name="base_updated_at" id="item-base-updated-at">
           <input type="hidden" name="price" id="item-price-minor">
           <input type="hidden" name="imageUrl" id="item-image-url">
           <div class="field-pair">
@@ -974,6 +979,7 @@
     form.reset();
     syncNetQuantity();
     document.getElementById('item-id').value = '';
+    document.getElementById('item-base-updated-at').value = '';
     document.getElementById('item-image-url').value = '';
     setColorTiles('');
     setMode(false);
@@ -1158,6 +1164,7 @@
   // both funnel through here so the two entry points can never drift.
   function openCatalogRow(row) {
     document.getElementById('item-id').value = row.dataset.id;
+    document.getElementById('item-base-updated-at').value = row.dataset.updatedAt || '';
     document.getElementById('item-barcode').value = '';
     document.getElementById('item-image-url').value = '';
     document.getElementById('autofill-msg').textContent = '';
@@ -1323,6 +1330,9 @@
     // so the delayed auto-close below (search "auto-close") can tell
     // whether this is still the same dialog session that just saved.
     var savingSession = formSession;
+    // ut-docs#3606: the stamp this save sends, so the Variants tab's item
+    // panel forms that showed the same stamp can follow the save below.
+    var sentBase = document.getElementById('item-base-updated-at').value;
     htmx.ajax('POST', url, { source: '#item-form', target: '#catalog-table', swap: 'none' })
       .then(function () {
         submit.disabled = false;
@@ -1336,6 +1346,19 @@
         // existing item never hit it, because clearForm() is skipped when
         // `editing`.
         if (!editing) clearForm();
+        // ut-docs#2817: the save re-rendered this item's card with its new
+        // updated_at — take it as the base for a further save from this
+        // still-open dialog, or that save would read as a conflict.
+        if (editing) {
+          var savedRow = document.getElementById('catalog-row-' + document.getElementById('item-id').value);
+          if (savedRow) {
+            document.getElementById('item-base-updated-at').value = savedRow.dataset.updatedAt || '';
+            // ut-docs#3606: the Variants tab's cost / lead time / reorder
+            // level forms edit the same item row — the ones that showed the
+            // stamp this save replaced take the new one too.
+            followItemStamp(document.getElementById('item-id').value, sentBase, savedRow.dataset.updatedAt || '');
+          }
+        }
         renderNotice(msg, 'success', NOTICE_MSG.itemFormSaved);
         filterRows();
         // ut-docs#1901 UX fix: the form is now a full-screen dialog, not
@@ -1886,6 +1909,41 @@
   search.addEventListener('input', filterRows);
   document.body.addEventListener('htmx:afterSwap', function (ev) {
     if (ev.detail.target && ev.detail.target.id === 'catalog-table') filterRows();
+  });
+  // ut-docs#3606: one item row, three places holding its updated_at — the
+  // card (data-updated-at, what the editor loads), the editor's own
+  // base_updated_at, and the Variants tab's item panel forms (cost, lead
+  // time, reorder level). A save from any of them advances the stamp; the
+  // others follow ONLY if they showed the stamp that save sent (the main
+  // till accepted it, so they were current up to this till's own save) —
+  // never on a plain panel load, which would hide a change made on the
+  // main till since the card was rendered.
+  function followItemStamp(itemID, sent, next) {
+    if (!itemID || !sent || !next || sent === next) return;
+    if (document.getElementById('item-id').value === itemID) {
+      var base = document.getElementById('item-base-updated-at');
+      if (base.value === sent) base.value = next;
+    }
+    var row = document.getElementById('catalog-row-' + itemID);
+    if (row && row.dataset.updatedAt === sent) row.dataset.updatedAt = next;
+    var panel = document.getElementById('catalog-variants');
+    if (panel && panel.dataset.itemId === itemID) {
+      if (panel.dataset.itemUpdatedAt === sent) panel.dataset.itemUpdatedAt = next;
+      panel.querySelectorAll('input[data-item-stamp]').forEach(function (el) {
+        if (el.value === sent) el.value = next;
+      });
+    }
+  }
+  document.body.addEventListener('htmx:afterSwap', function (ev) {
+    var d = ev.detail || {};
+    if (!d.target || d.target.id !== 'catalog-variants' || !d.xhr || d.xhr.status >= 300) return;
+    var cfg = d.requestConfig || {};
+    if (String(cfg.verb || '').toLowerCase() !== 'post' || !d.elt || !d.elt.querySelector || !d.elt.querySelector('input[data-item-stamp]')) return;
+    var params = cfg.parameters || {};
+    var sent = typeof params.get === 'function' ? params.get('base_updated_at') : params.base_updated_at;
+    var panel = document.getElementById('catalog-variants');
+    if (!panel) return;
+    followItemStamp(panel.dataset.itemId || '', sent || '', panel.dataset.itemUpdatedAt || '');
   });
   // ut-docs#2762: the barcode backfill's Close swaps a freshly rendered
   // #catalog-table in (UT.refreshRegion) — re-apply the typed filter to it.

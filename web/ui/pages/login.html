@@ -18,6 +18,8 @@
          comment for why this can't be app.js (standalone document, no
          layout to load it for us). -->
     <script defer src="/public/osk.js?v={{ assetv "public/osk.js" }}"></script>
+    <!-- ut-docs#3325: data-action / data-* hooks (see base.html). -->
+    <script defer src="/public/inline-actions.js?v={{ assetv "public/inline-actions.js" }}"></script>
   </head>
   <body class="login-screen{{ if kiosk }} kiosk{{ end }}" data-osk="{{ oskmode }}">
     <main class="login-card">

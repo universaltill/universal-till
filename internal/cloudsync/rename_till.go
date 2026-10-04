@@ -28,6 +28,13 @@ func renameTillSkipReason(d directive) string {
 	if d.Type != "rename_till" {
 		return ""
 	}
+	return ownDeviceSkipReason(d)
+}
+
+// ownDeviceSkipReason is the device check of every device-targeted type
+// (rename_till, print_report — ut-docs#2537): "" when d's payload
+// device_id is this till's own, else why it must be skipped.
+func ownDeviceSkipReason(d directive) string {
 	target, _ := d.Payload["device_id"].(string)
 	target = strings.TrimSpace(target)
 	self := strings.TrimSpace(ownDeviceID())

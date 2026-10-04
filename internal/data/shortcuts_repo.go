@@ -165,7 +165,7 @@ func (r *ShortcutsRepo) UpdateOrder(ctx context.Context, codes []string) error {
 	if err != nil {
 		return shortcutsObs.wrap("update_order", err)
 	}
-	stmt, err := tx.PrepareContext(ctx, `UPDATE shortcut_buttons SET sort_order = ? WHERE barcode = ?`)
+	stmt, err := tx.PrepareContext(ctx, `UPDATE shortcut_buttons SET sort_order = ?, updated_at = datetime('now') WHERE barcode = ?`)
 	if err != nil {
 		tx.Rollback()
 		return shortcutsObs.wrap("update_order", err)
@@ -225,7 +225,7 @@ ON CONFLICT(barcode) DO NOTHING`)
 		}
 		insertStmt.Close()
 	}
-	orderStmt, oerr := tx.PrepareContext(ctx, `UPDATE shortcut_buttons SET sort_order = ? WHERE barcode = ?`)
+	orderStmt, oerr := tx.PrepareContext(ctx, `UPDATE shortcut_buttons SET sort_order = ?, updated_at = datetime('now') WHERE barcode = ?`)
 	if oerr != nil {
 		tx.Rollback()
 		err = shortcutsObs.wrap("materialize_and_reorder", oerr)
@@ -295,12 +295,12 @@ func (r *ShortcutsRepo) AddButton(ctx context.Context, b ShortcutButton) error {
 	var existing string
 	switch qerr := tx.QueryRowContext(ctx, `SELECT barcode FROM shortcut_buttons WHERE item_id = ? ORDER BY sort_order, barcode LIMIT 1`, b.ItemID).Scan(&existing); {
 	case qerr == nil:
-		_, err = tx.ExecContext(ctx, `UPDATE shortcut_buttons SET label = ?, image_path = ? WHERE barcode = ?`,
+		_, err = tx.ExecContext(ctx, `UPDATE shortcut_buttons SET label = ?, image_path = ?, updated_at = datetime('now') WHERE barcode = ?`,
 			b.Label, nullIfEmptyButton(b.ImageURL), existing)
 	case errors.Is(qerr, sql.ErrNoRows):
 		_, err = tx.ExecContext(ctx, `INSERT INTO shortcut_buttons(barcode,label,item_id,image_path,sort_order)
 VALUES(?,?,?,?, (SELECT COALESCE(MAX(sort_order)+1, 0) FROM shortcut_buttons))
-ON CONFLICT(barcode) DO UPDATE SET label=excluded.label, item_id=excluded.item_id, image_path=excluded.image_path`,
+ON CONFLICT(barcode) DO UPDATE SET label=excluded.label, item_id=excluded.item_id, image_path=excluded.image_path, updated_at=datetime('now')`,
 			b.Barcode, b.Label, b.ItemID, nullIfEmptyButton(b.ImageURL))
 	default:
 		err = qerr
@@ -309,7 +309,7 @@ ON CONFLICT(barcode) DO UPDATE SET label=excluded.label, item_id=excluded.item_i
 		err = shortcutsObs.wrap("add_button", err)
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE items SET sell_screen_hidden = 0, sell_screen_removed = 0 WHERE id = ?`, b.ItemID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE items SET sell_screen_hidden = 0, sell_screen_removed = 0, updated_at = datetime('now') WHERE id = ?`, b.ItemID); err != nil {
 		err = shortcutsObs.wrap("add_button", err)
 		return err
 	}

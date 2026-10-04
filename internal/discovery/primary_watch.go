@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // Re-discovery of a replica's main till (ut-docs#2722).
@@ -37,6 +38,18 @@ import (
 // which the main till stored at pairing and never shares (PrimaryProof). Only
 // then does sync.primary_url change. The bearer itself is never sent to a
 // candidate, and a mismatch or failed proof never switches anything.
+//
+// A second candidate source (ut-docs#2774): mDNS does not cross every shop
+// network (Wi-Fi client isolation, a VLAN between the tills, multicast
+// filtered by the router). The main till reports its LAN host:port on its
+// cloud check-in, and when a browse finds nothing usable the replica asks
+// the cloud — as its own enrolled device, on this same rate-limited path —
+// where its store's main till is (cloud_lookup.go). That answer is one more
+// candidate in the SAME list, through the SAME proof: the cloud is never
+// trusted to set sync.primary_url, so a stale, wrong or hostile answer costs
+// one refused challenge and nothing else. The cloud is not asked while the
+// LAN offers a candidate, and an old cloud without the endpoint leaves the
+// mDNS-only behaviour exactly as it was.
 
 // PrimaryTillIDSettingKey holds the main till's discovery id (its
 // lan_discovery.till_id, the "id=" in its mDNS TXT record) as this replica
@@ -156,6 +169,9 @@ type PrimaryWatch struct {
 	// Seams for tests.
 	browse BrowseFunc
 	now    func() time.Time
+	// cloudLookup is the cloud-assisted candidate source (ut-docs#2774);
+	// nil = mDNS only. Set once at wiring, before the pull loop starts.
+	cloudLookup CloudLookupFunc
 
 	mu            sync.Mutex
 	failures      int
@@ -171,17 +187,22 @@ type BrowseFunc func(ctx context.Context, timeout time.Duration) ([]Candidate, e
 // NewPrimaryWatch builds a watch over settings that looks for a moved main
 // till with browse (production passes Browse).
 func NewPrimaryWatch(settings WatchSettings, browse BrowseFunc) *PrimaryWatch {
+	client := netaccess.NewClient(5 * time.Second)
+	// A candidate must answer itself; a redirect could bounce the challenge
+	// somewhere else entirely.
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &PrimaryWatch{
 		settings: settings,
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-			// A candidate must answer itself; a redirect could bounce the
-			// challenge somewhere else entirely.
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		},
-		browse: browse,
-		now:    time.Now,
+		client:   client,
+		browse:   browse,
+		now:      time.Now,
 	}
+}
+
+// SetCloudLookup adds the cloud as a fallback candidate source (ut-docs#2774).
+// Call before the pull loop starts; nil keeps re-discovery mDNS-only.
+func (w *PrimaryWatch) SetCloudLookup(fn CloudLookupFunc) {
+	w.cloudLookup = fn
 }
 
 func (w *PrimaryWatch) get(ctx context.Context, key string) string {
@@ -294,10 +315,7 @@ func (w *PrimaryWatch) rediscover(ctx context.Context) (oldURL, newURL string, e
 		// only: matching candidates go first, and the proof decides.
 		expected = w.get(ctx, TillIDSettingKey)
 	}
-	cands, err := w.browse(ctx, browseTimeout)
-	if err != nil && len(cands) == 0 {
-		return oldURL, "", err
-	}
+	cands, browseErr := w.browse(ctx, browseTimeout)
 	ordered := make([]Candidate, 0, len(cands))
 	var others []Candidate
 	for _, c := range cands {
@@ -312,12 +330,30 @@ func (w *PrimaryWatch) rediscover(ctx context.Context) (oldURL, newURL string, e
 		}
 	}
 	ordered = append(ordered, others...)
+	var fromCloud string
+	if len(ordered) == 0 {
+		// Nothing usable on the LAN: ask the cloud (ut-docs#2774). Its answer
+		// joins the list as an ordinary candidate and must pass the proof.
+		fromCloud = w.cloudCandidate(ctx, oldURL)
+		if fromCloud != "" {
+			ordered = append(ordered, Candidate{TillID: expected, BaseURL: fromCloud})
+		} else if browseErr != nil {
+			return oldURL, "", browseErr
+		}
+	}
 	for i, c := range ordered {
 		if i >= maxProofAttempts {
 			break
 		}
 		id, perr := w.challenge(ctx, c.BaseURL, c.TillID)
 		if perr != nil {
+			if c.BaseURL == fromCloud {
+				// The cloud's answer did not prove itself: a stale record, a
+				// re-installed main till — or a wrong cloud answer. Never
+				// switch; say so where an operator can see it.
+				logging.L().WarnProblemf(MainTillProblemKey, "sync: the cloud reported this shop's main till at %s but it did not prove it holds this till's pairing (%v) — not switching", c.BaseURL, perr)
+				continue
+			}
 			if c.TillID == expected {
 				// Claims to be our main till but can't prove it: a stale
 				// record, a re-installed main till (new pairing needed) — or
@@ -334,6 +370,33 @@ func (w *PrimaryWatch) rediscover(ctx context.Context) (oldURL, newURL string, e
 		return oldURL, c.BaseURL, nil
 	}
 	return oldURL, "", errNoMatch
+}
+
+// cloudCandidate asks the cloud lookup, if any, for the main till's address
+// and returns it as a candidate base URL — "" when there is no lookup, no
+// usable answer, or the answer is the address that is already failing. Any
+// failure is info-level: an old or unreachable cloud is just "no candidate".
+func (w *PrimaryWatch) cloudCandidate(ctx context.Context, oldURL string) string {
+	if w.cloudLookup == nil {
+		return ""
+	}
+	addr, err := w.cloudLookup(ctx)
+	if err != nil {
+		logging.L().Infof("sync: could not ask the cloud where the main till is (%v) — looking on this network only", err)
+		return ""
+	}
+	if addr == "" {
+		return ""
+	}
+	u := cloudCandidateURL(addr)
+	if u == "" {
+		logging.L().Infof("sync: ignoring the cloud's main-till address %q — not an IP:port", addr)
+		return ""
+	}
+	if u == strings.TrimSuffix(oldURL, "/") {
+		return "" // the address that is already failing
+	}
+	return u
 }
 
 // challenge asks baseURL to prove it is this replica's main till. wantID,

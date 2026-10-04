@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // Transport delivers rendered bytes to a physical printer.
@@ -97,7 +98,7 @@ func NewTransport(c Config) (Transport, error) {
 // connection to the printer. It's a package-level var (rather than a call
 // to net.Dialer.DialContext inline) purely so tests can substitute a fake
 // dialer to simulate connect failures/retries without a real listener.
-var dialFn = (&net.Dialer{Timeout: 5 * time.Second}).DialContext
+var dialFn = netaccess.DialContext(5*time.Second, 0)
 
 // destLocks holds one 1-buffered channel per printer destination, used as
 // a ctx-aware mutex (ut-docs#2287). Most ESC/POS network printers, and raw

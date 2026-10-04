@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // ErrNotFound means every source answered but none knows the barcode.
@@ -60,7 +62,7 @@ type Client struct {
 // NewClient builds a lookup client; nil arguments select the defaults.
 func NewClient(hc *http.Client, sources []Source) *Client {
 	if hc == nil {
-		hc = &http.Client{Timeout: 6 * time.Second}
+		hc = netaccess.NewClient(6 * time.Second)
 	}
 	if len(sources) == 0 {
 		sources = DefaultSources()

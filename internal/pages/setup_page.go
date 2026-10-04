@@ -57,7 +57,7 @@ func autoRegisterForSetup(ctx context.Context, d *common.Deps, optIn bool) {
 	}
 	attemptCtx, cancel := context.WithTimeout(ctx, autoRegisterAttemptTimeout)
 	defer cancel()
-	enroll.EnsureRegistered(attemptCtx, d.Cfg, d.Settings)
+	checkinAfterRegistration(d, enroll.EnsureRegistered(attemptCtx, d.Cfg, d.Settings)) // ADR-0148 §2
 }
 
 // setupCountry prefills currency + tax for the wizard's country step (docs
@@ -329,6 +329,11 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// check yet — we'll install it when you're online" note and button.
 		taxPlugin, _ := setupInstallableTaxPlugin(r.Context(), d, tseProvisionCountry)
 		data["installableTaxPlugin"] = taxPlugin
+		// ut-docs#3244: no tile to render (no catalog match), but the
+		// operator's consent is still queued — step 3 says so.
+		if taxPlugin == nil {
+			data["taxPluginQueued"] = setupTaxPluginQueued(r.Context(), d, tseProvisionCountry)
+		}
 		// tax_plugin_pending: set by POST /api/setup/tax-plugin's failure
 		// redirect (query param, not stored state) — shows the "still
 		// installing in the background" note once, on the page that

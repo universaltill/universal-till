@@ -204,9 +204,11 @@ type ManifestSetting struct {
 	Key          string      `json:"key"`
 	DefaultValue interface{} `json:"default_value,omitempty"`
 	Scope        string      `json:"scope,omitempty"` // global|register|user
-	// Type is ""|SettingTypeSecret (ADR-0082): "secret" masks the value on
-	// the settings page and seals it at rest, regardless of the key name.
-	// Validated in ParseManifest; see secret_settings.go.
+	// Type is ""|SettingTypeSecret|SettingTypeEndpoint. "secret" (ADR-0082)
+	// masks the value on the settings page and seals it at rest, regardless
+	// of the key name; "endpoint" (ADR-0121 §2) only accepts an http(s) URL
+	// when an operator saves it (ValidEndpointURL). Validated in
+	// ParseManifest; see secret_settings.go.
 	Type string `json:"type,omitempty"`
 }
 
@@ -263,18 +265,36 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 				e.Key, e.Type, strings.Join(CanonicalTypes, "|"))
 		}
 	}
-	// Setting types likewise (ADR-0082): "" or "secret" today — an unknown
-	// value is a typo that would otherwise silently leave a credential
-	// unsealed at rest, so it fails here, not at persist time.
+	// Setting types likewise (ADR-0082, ADR-0121 §2): "", "secret" or
+	// "endpoint" — an unknown value is a typo that would otherwise silently
+	// leave a credential unsealed at rest, so it fails here, not at persist
+	// time.
 	for _, s := range m.Settings {
 		if !isValidSettingType(s.Type) {
 			return nil, fmt.Errorf("manifest setting %q has invalid type %q (allowed: %s)",
-				s.Key, s.Type, SettingTypeSecret)
+				s.Key, s.Type, strings.Join([]string{SettingTypeSecret, SettingTypeEndpoint}, "|"))
 		}
+	}
+	// An "endpoint"-typed setting's default_value, if present and non-empty,
+	// must itself be a valid http(s) URL (ut-docs#3552) — PersistManifest
+	// persists it unchecked otherwise.
+	if err := validateSettingDefaults(&m); err != nil {
+		return nil, err
 	}
 	// Setting-bound grants (ut-docs#2899) must be well-formed and name keys
 	// this manifest declares.
 	if err := validateSettingBoundPermissions(&m); err != nil {
+		return nil, err
+	}
+	// Validation-data grants (ut-docs#3226) name one exact host; a malformed
+	// or wildcard form is refused rather than silently matching nothing.
+	if err := validateValidationPermissions(&m); err != nil {
+		return nil, err
+	}
+	// Every other permission must be a shape core recognises (ut-docs#3328,
+	// ADR-0121 §2) — an unknown string would otherwise be persisted and
+	// offered to an operator for granting while nothing ever checks it.
+	if err := validatePermissions(&m); err != nil {
 		return nil, err
 	}
 	// provides/markets are closed-set (ADR-0129): a typo would otherwise
@@ -759,21 +779,37 @@ const FiscalSignReconcileAskEvent = "fiscal.sign.reconcile.ask"
 // event key rather than an earlier fiscal.sign.start (ADR-0138 D1): a
 // different process type with a much longer-lived open window. Dispatched
 // via EventBus.Ask on a background goroutine, best-effort, exactly like
-// FiscalSignStartEvent. Its sibling fiscal.order.cancel is named but NOT
-// built or grouped yet (ADR-0138 D2/D4 — nothing in core cancels an order).
+// FiscalSignStartEvent. Its sibling is FiscalOrderCancelEvent below.
 //
 // One member of the FiscalSignExclusiveEvents group (ADR-0138 D2): only the
 // till's one verified, exclusive signer may answer it.
 const FiscalOrderStartEvent = "fiscal.order.start"
 
+// FiscalOrderCancelEvent is FiscalOrderStartEvent's sibling (ADR-0138 D2,
+// first dispatched by ut-docs#3582): fired once when a cashier explicitly
+// cancels a held, table or pay-at-counter order (internal/pages
+// hold_api.go's POST /api/pos/held/cancel), so a German signer can cancel
+// the Bestellung-V1 TSE transaction fiscal.order.start opened for it.
+// Never fired for a resume, a re-park, a tender or any sync cleanup -- only
+// for the one cashier action that abandons an order. Reserved wire shape:
+// {"order_id","tx_id","tx_revision","cancelled_at"} (tx_* omitted when no
+// start was captured). Dispatched via EventBus.Ask on a background
+// goroutine, best-effort, exactly like FiscalOrderStartEvent; nothing is
+// persisted from the answer.
+//
+// One member of the FiscalSignExclusiveEvents group: ADR-0138 D2 has it join
+// "in the same change that first dispatches it".
+const FiscalOrderCancelEvent = "fiscal.order.cancel"
+
 // FiscalSignExclusiveEvents is the ONE exclusivity group ADR-0077 D3 fixes
 // for the fiscal signing extension points: fiscal.sign.ask (the tender-time
 // "finish"), fiscal.sign.start (D1) and fiscal.sign.reconcile.ask (D3) —
-// joined by fiscal.order.start (ADR-0138 D2, ut-docs#3310).
-// Declaring ANY one of the four while a DIFFERENT active plugin holds ANY
-// one of the four is refused — at persist time by
+// joined by fiscal.order.start (ADR-0138 D2, ut-docs#3310) and
+// fiscal.order.cancel (ADR-0138 D2, ut-docs#3582).
+// Declaring ANY one of the group while a DIFFERENT active plugin holds ANY
+// one of the group is refused — at persist time by
 // validateExclusiveHookOwnership below, at enable time by
-// internal/pages' setPluginActiveHandler — because all four hand the
+// internal/pages' setPluginActiveHandler — because all of them hand the
 // answering plugin real sale/order data or take its answer as authoritative for a
 // compliance-bearing record. Before this group existed, only the literal
 // fiscal.sign.ask key was checked, so a second plugin declaring only
@@ -781,7 +817,7 @@ const FiscalOrderStartEvent = "fiscal.order.start"
 // (the gap ADR-0077 D3 records as found on independent review). Exported so
 // the enable-time check and this package share one definition; a test pins
 // the exact membership.
-var FiscalSignExclusiveEvents = []string{FiscalSignAskEvent, FiscalSignStartEvent, FiscalSignReconcileAskEvent, FiscalOrderStartEvent}
+var FiscalSignExclusiveEvents = []string{FiscalSignAskEvent, FiscalSignStartEvent, FiscalSignReconcileAskEvent, FiscalOrderStartEvent, FiscalOrderCancelEvent}
 
 // DeclaredFiscalSignExclusiveEvent reports the first FiscalSignExclusiveEvents
 // member among hooks (group order), or ("", false) when the manifest declares

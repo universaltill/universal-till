@@ -621,18 +621,39 @@ client := &http.Client{
 
 ### 4. Permissions
 
-Declare all permissions in manifest.json:
+Declare all permissions in manifest.json. The till refuses to install a
+manifest declaring a permission it does not recognise (ut-docs#3328 — the
+allow-list is `internal/plugins/permission_allowlist.go`):
 
 ```json
 {
-  "permissions": [
-    "network",      // Make external HTTP requests
-    "storage",      // Store local data
-    "hardware",     // Access USB/serial devices
-    "sensitive_data" // Access customer/payment data
-  ]
+  "permissions": ["events:receive", "sales:read", "net:api.example.com", "storage"]
 }
 ```
+
+| Permission | Grants |
+|---|---|
+| `storage` | the plugin's key/value store |
+| `events:receive` | event delivery to the plugin's hooks |
+| `payments:reconciliation` | payment details on `sale.completed` |
+| `devices:printer` | marks the plugin as providing a printer |
+| `<entity>:read` / `<entity>:write` | read/write one data entity (`sales:read`, `items:read`, `inventory:read`, …) |
+| `net:<host>` / `net:*` | HTTPS to that host (a DNS name or IP literal — no wildcard pattern, scheme, port or path) / any public host |
+| `tcp:<host>:<port>` / `tcp:*` | a raw TCP socket to that address (same host rule; IPv6 bracketed) / any public address |
+| `net:@setting:<urlKey>`, `tcp:@setting:<hostKey>:<portKey>` | the address an admin saves in those settings (ut-docs#2899) |
+| `http:lan`, `http:stream`, `db:own`, `blob:own`, `schedule`, `cloud:directive`, `secret:write`, `ui:page`, `view:<class>`, `ui:slot:<slot>` | ADR-0121 §2 (ABI 3); the plugin store explains each to the operator in plain words. `view:<class>` names a class of core read views (`view:sales`, `view:inventory`, `view:audit` — ADR-0121 §5; the view itself goes in `views_used`). `ui:slot:<slot>` names one of the §7 content slots (`item.edit.actions`, `reports.panels`, `setup.wizard.steps`, `eod.footer`, `settings.sections`, `admin.pages`), the same set an entry's `slot` is checked against. |
+
+`storage.local.<n>KB|MB|GB` and the dotted `ui.locale`, `ui.theme`, `ui.page`,
+`ai.configure`, `pos.tender` are accepted only so already-published plugins
+keep installing — nothing checks them. Don't use them in a new plugin.
+
+A setting declared `"type": "endpoint"` holds an operator-entered
+`http(s)://host[:port][/path]`; the settings page refuses anything else
+(`"type": "secret"` masks and seals a credential, ADR-0082). A manifest's own
+`default_value` for an `"endpoint"` setting is checked the same way at
+install time (ut-docs#3552): a non-empty default must be a valid http(s) URL
+or the manifest is rejected; an absent or empty-string (`""`) default is
+fine — the operator sets it later.
 
 ### 5. Data Protection
 

@@ -72,6 +72,61 @@ func TestPendingPairingsUI_ListsPendingWithMatchingVerificationCode(t *testing.T
 	}
 }
 
+// ut-docs#3325 regression: Go's html/template strips a "data-" prefix when
+// deciding an attribute's escaping context (html/template/context.go
+// attrType), so the ORIGINAL attribute name here, "data-on-after-request",
+// was sniffed the same as "onclick" (it starts with "on" once "data-" is
+// gone) and got JS-string escaping, not plain attribute escaping. A
+// templated id inside that attribute value came out JSON-quoted as a result
+// -- unhide:pin-error-{{ .ID }} rendered as unhide:pin-error-&#34;<id>&#34;,
+// which inline-actions.js's unhide step then fed to
+// document.getElementById("pin-error-\"<id>\"") -- always nil, so a
+// wrong-PIN approve/deny never unhid its #pin-error-<id> message. Fixed by
+// renaming the whole data-on-* family to data-* (dropping the "on-" infix,
+// e.g. data-after-request) so stripping "data-" no longer leaves anything
+// starting with "on" -- see web/public/inline-actions.js's header. This
+// test pins the fix generally: the plain id= attribute (never JS-context)
+// is ground truth for what the real DOM id is, and the after-request hook's
+// copy of that same id must render identically, byte for byte, whatever the
+// attribute carrying it is named.
+func TestPendingPairingsUI_AfterRequestAttrIDNotJSEscaped(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+	registerPendingPairingsUI(mux, dp)
+
+	postPairRequest(t, mux, "Kitchen Till", commitOf("ui-secret-1"), "10.0.0.30:1234")
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/tills/pending-pairings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	// The never-JS-context id= attribute on the error paragraph is ground
+	// truth for the real DOM id.
+	start := strings.Index(body, `id="pin-error-`)
+	if start < 0 {
+		t.Fatalf("no pin-error element in: %s", body)
+	}
+	valStart := start + len(`id="`)
+	end := strings.Index(body[valStart:], `"`)
+	if end < 0 {
+		t.Fatalf("unterminated id attribute in: %s", body)
+	}
+	realID := body[valStart : valStart+end]
+	if strings.ContainsAny(realID, `"&`) {
+		t.Fatalf("sanity check failed, got a suspicious id %q", realID)
+	}
+
+	wantFragment := "unhide:" + realID
+	if !strings.Contains(body, wantFragment) {
+		t.Fatalf("the after-request unhide hook must reference the SAME id (%q) the real element carries, "+
+			"byte for byte -- got the fragment around it: %.200q\nfull body: %s", wantFragment, body, body)
+	}
+}
+
 func TestPendingPairingsUI_EmptyStateWhenNonePending(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, _ := newPairingAPITestDeps(t)
@@ -107,8 +162,20 @@ func TestPendingPairingsUI_EmptyStateWhenNonePending(t *testing.T) {
 // the manager with zero visible feedback (htmx doesn't swap non-2xx
 // responses). This can't be tested via the approve/deny endpoint's own
 // response (that's correctly unchanged, still a 403) — it's the FORM
-// markup that must carry an hx-on::after-request handler wired to a
-// visible error element.
+// markup that must carry an after-request hook (data-after-request,
+// web/public/inline-actions.js since ut-docs#3325) wired to a visible
+// error element.
+//
+// ut-docs#3325 follow-up: this originally asserted the OLD attribute name
+// (data-on-after-request) with only a strings.Contains PREFIX check on its
+// value, which stayed green even though html/template's JS-context
+// sniffing (triggered by "data-on-" -> "on-after-request" starting with
+// "on" once "data-" is stripped) was corrupting the id inside it -- a test
+// that would not have failed if the bug it claims to verify were present is
+// not a real test. Renamed to the fixed attribute (data-after-request,
+// chosen specifically because it does NOT start with "on" after "data-" is
+// stripped); TestPendingPairingsUI_AfterRequestAttrIDNotJSEscaped is the
+// test that actually proves the id inside it is not corrupted.
 func TestPendingPairingsUI_RendersWrongPINFeedbackWiring(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, _ := newPairingAPITestDeps(t)
@@ -123,7 +190,7 @@ func TestPendingPairingsUI_RendersWrongPINFeedbackWiring(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "hx-on::after-request") {
+	if !strings.Contains(body, `; fail unhide:pin-error-`) {
 		t.Fatalf("expected a wrong-PIN feedback handler wired on the approve/deny forms, got: %s", body)
 	}
 	if !strings.Contains(body, "hidden") {
@@ -267,7 +334,7 @@ func TestPairingNoticeMount_KeepsPollingAndUsesADistinctID(t *testing.T) {
 	if strings.Contains(tag, `hx-swap="outerHTML"`) {
 		t.Fatalf("the pairing-notice placeholder must NOT use hx-swap=\"outerHTML\" — an empty poll response would destroy the element along with its own hx-trigger, permanently stopping all future polling. Got: %s", tag)
 	}
-	if !strings.Contains(tag, `hx-trigger="load, every 30s"`) {
+	if !strings.Contains(tag, `hx-trigger="load, every 30s, tills-changed from:body"`) {
 		t.Fatalf("expected the placeholder to keep polling every 30s, got: %s", tag)
 	}
 	// The rendered partial's own root also uses id="pairing-notice"
@@ -283,11 +350,12 @@ func TestPairingNoticeMount_KeepsPollingAndUsesADistinctID(t *testing.T) {
 	}
 }
 
-// --- Additive HX-Refresh header on the existing approve/deny handlers
-// (#184) — must not change their JSON contract, only add a header on
-// success. ---
+// --- No full-page reload on the approve/deny handlers (ut-docs#2904):
+// pending_pairings.html refreshes only its own card via refresh-region,
+// so a success must NOT carry HX-Refresh (htmx would reload the whole
+// page regardless). The #184 JSON contract is unchanged. ---
 
-func TestApprovePairRequest_SetsHXRefreshOnSuccess(t *testing.T) {
+func TestApprovePairRequest_NoHXRefreshOnSuccess(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _, _ := newPairingAPITestDeps(t)
 
@@ -307,12 +375,17 @@ func TestApprovePairRequest_SetsHXRefreshOnSuccess(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 approving, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec.Header().Get("HX-Refresh") != "true" {
-		t.Fatalf("expected HX-Refresh: true on a successful approve, got %q", rec.Header().Get("HX-Refresh"))
+	if got := rec.Header().Get("HX-Refresh"); got != "" {
+		t.Fatalf("a successful approve must not force a full reload (ut-docs#2904), got HX-Refresh %q", got)
+	}
+	// Without the reload, the nav sync-chip dot and the pairing notice
+	// (30s polls) re-fetch on this event instead (ut-docs#2904).
+	if got := rec.Header().Get("HX-Trigger"); got != "tills-changed" {
+		t.Fatalf("expected HX-Trigger: tills-changed on a successful approve, got %q", got)
 	}
 }
 
-func TestDenyPairRequest_SetsHXRefreshOnSuccess(t *testing.T) {
+func TestDenyPairRequest_NoHXRefreshOnSuccess(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _, _ := newPairingAPITestDeps(t)
 
@@ -332,8 +405,13 @@ func TestDenyPairRequest_SetsHXRefreshOnSuccess(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 denying, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec.Header().Get("HX-Refresh") != "true" {
-		t.Fatalf("expected HX-Refresh: true on a successful deny, got %q", rec.Header().Get("HX-Refresh"))
+	if got := rec.Header().Get("HX-Refresh"); got != "" {
+		t.Fatalf("a successful deny must not force a full reload (ut-docs#2904), got HX-Refresh %q", got)
+	}
+	// Without the reload, the nav sync-chip dot and the pairing notice
+	// (30s polls) re-fetch on this event instead (ut-docs#2904).
+	if got := rec.Header().Get("HX-Trigger"); got != "tills-changed" {
+		t.Fatalf("expected HX-Trigger: tills-changed on a successful deny, got %q", got)
 	}
 }
 

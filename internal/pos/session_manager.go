@@ -586,9 +586,17 @@ func (m *SessionBasketManager) SetConfig(cfg Config) {
 }
 
 // HasItems reports whether any live session's basket holds at least one
-// item — the sessions' twin of the `d.KioskEngine.Basket().ItemCount() > 0`
-// check the unattended-update scheduler uses to avoid restarting the till
-// under a customer mid-order.
+// item — the sessions' twin of the `d.KioskEngine.HasItemsOrByHand()` check
+// (ut-docs#3596) the unattended-update scheduler uses to avoid restarting
+// the till under a customer mid-order.
+//
+// Deliberately priced-lines-only, unlike Service.HasItemsOrByHand
+// (ut-docs#3607): a session's own *Service is only ever freshly minted by
+// this manager's factory or reused via BindTable's mover path, and neither
+// calls Service.RestoreHeld — the only place AddByHand gets populated — so
+// an "add by hand" entry cannot reach a session's basket today. If a future
+// change ever restores a held sale into a session's Service, this needs
+// revisiting.
 func (m *SessionBasketManager) HasItems() bool {
 	if m == nil {
 		return false

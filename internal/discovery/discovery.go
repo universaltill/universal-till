@@ -23,6 +23,14 @@ import (
 // discovery identity.
 const TillIDSettingKey = "lan_discovery.till_id"
 
+// SettingsReader is the minimal settings access TillID and ReportedTillID
+// need — satisfied by *data.SettingsRepo and by test doubles that don't
+// want the real data layer.
+type SettingsReader interface {
+	Get(ctx context.Context, key string) (string, bool, error)
+	GetOrCreate(ctx context.Context, key, defaultValue string) (string, error)
+}
+
 // TillID returns this till's LAN-discovery id, generating and persisting a
 // fresh uuid the first time it's called (get-or-create) — every caller,
 // across the whole process and across restarts, must see the same value,
@@ -42,7 +50,7 @@ const TillIDSettingKey = "lan_discovery.till_id"
 // call (this is polled every 30s by the manager's pending-pairings view)
 // would be pure waste; the race this whole function exists to close only
 // happens on the absent path anyway.
-func TillID(ctx context.Context, settings *data.SettingsRepo) (string, error) {
+func TillID(ctx context.Context, settings SettingsReader) (string, error) {
 	if v, ok, err := settings.Get(ctx, TillIDSettingKey); err != nil {
 		return "", err
 	} else if ok {
@@ -53,6 +61,37 @@ func TillID(ctx context.Context, settings *data.SettingsRepo) (string, error) {
 		return "", err
 	}
 	return v, nil
+}
+
+// syncTillIDSettingKey mirrors enroll's keySyncTillID and cloudsync's inline
+// "sync.till_id": the id a joined till was given by its main till's roster.
+const syncTillIDSettingKey = "sync.till_id"
+
+// ReportedTillID is the one id a till reports upstream as its own till_id —
+// the cloud heartbeat (cloudsync) and both registration bodies (enroll) —
+// so the cloud's device row carries a stable machine key (ut-docs#3307):
+//
+//   - joined: sync.till_id, the id its main till's roster knows it by;
+//   - once joined, now promoted back to main/standalone:
+//     data.TillIdentityCloudIDSettingsKey, the sync.till_id that
+//     data.SettingsRepo.ClearReplicaIdentity kept, so the cloud row's id
+//     does not change under it;
+//   - never joined: this till's own LAN id (TillID). It is this machine's own
+//     identity, so minting it here (get-or-create) is safe.
+//
+// Every value is trimmed; a blank tier falls through to the next.
+func ReportedTillID(ctx context.Context, settings SettingsReader) (string, error) {
+	for _, key := range []string{syncTillIDSettingKey, data.TillIdentityCloudIDSettingsKey} {
+		v, ok, err := settings.Get(ctx, key)
+		if err != nil {
+			return "", err
+		}
+		if v = strings.TrimSpace(v); ok && v != "" {
+			return v, nil
+		}
+	}
+	id, err := TillID(ctx, settings)
+	return strings.TrimSpace(id), err
 }
 
 // RoleCheckFromSettings builds a RoleCheck (see advertiser.go) backed by a

@@ -16,26 +16,42 @@
 //     it on every pull), so the marker — not a comparison with the main
 //     till's id, which a replica cannot know offline — is what detects it.
 //     Local only; never needs the network.
+//
 //  2. Vouch (replicaLoop): the replica asks its main till over the
 //     authenticated LAN sync channel (POST /api/sync/cloud-device, sync
 //     bearer) to register the replica's own device id + version under the
 //     store. The main till does that with the store token only IT holds.
 //
+//  3. Redeem (redeem.go, ADR-0116 D3, ut-docs#2769): when the replica's
+//     device has no cloud credential yet, the cloud's devices/register
+//     answer to the main till carries a one-time redeem code; the main till
+//     relays only that code, and the replica exchanges it for its OWN device
+//     credential directly with the cloud over TLS
+//     (POST /v1/stores/devices/redeem), keeping it in marketplace.token.
+//
 // Security (the reason for this shape): NO cloud credential ever crosses the
-// LAN. The vouch answer type (Vouch) has no token field, and the replica
-// only ever persists the device registration marker from it, so even a buggy
-// or hostile main till cannot plant a credential. Today's cloud has one
-// token per store and no per-device token; giving a replica its own cloud
-// credential needs the cloud to issue per-device tokens (follow-up card) —
-// until then a fresh replica has none and the main till speaks for it.
+// LAN. The vouch answer type (Vouch) has no token field — at most a redeem
+// code, which is single-use, valid for 10 minutes, bound to (store, device)
+// and not a token — and the replica persists only the device registration
+// marker from it, plus the credential the CLOUD returns for the code, so
+// even a buggy or hostile main till cannot plant a credential. Residuals
+// (ADR-0116 D3): until ADR-0114's pinned TLS/wss, LAN sync is plain HTTP, so
+// a LAN eavesdropper can race the replica to redeem (the replica gets 409
+// already_redeemed and keeps what it has); and the main till sees the code,
+// so a hostile main till could redeem it itself and get the replica's first
+// credential. Either shows on the Tills page as a credential issued_by the
+// vouching till. A replica whose code was not redeemed (old cloud, env-pinned
+// token, refused redeem) has no credential of its own and the main till
+// speaks for it.
 //
 // A replica that already holds a copy of the store token (pre-fix fleets)
 // keeps it: removing a copy revokes nothing (it is the same credential the
 // main till still uses), and it would cut that replica's own heartbeat,
-// directives and uploads off the cloud. The real remedy is rotation to
-// per-device tokens, which the cloud follow-up enables. With a pre-fix main
-// till (no vouch endpoint) such a replica registers its own device id with
-// that token, so the cloud still sees a distinct device.
+// directives and uploads off the cloud. The remedy is its own credential —
+// by redemption above, or by D4 rotation (rotate.go) — which replaces the
+// copy in marketplace.token. With a pre-fix main till (no vouch endpoint)
+// such a replica registers its own device id with that token, so the cloud
+// still sees a distinct device.
 //
 // None of this ever blocks selling: every step is best-effort and retried.
 package enroll
@@ -98,9 +114,10 @@ var (
 )
 
 // Vouch is the main till's answer to a replica: which store the replica's
-// device is now registered under. It deliberately has NO credential field —
-// that is what keeps a token off the LAN (file comment); the JSON wire shape
-// of POST /api/sync/cloud-device's data.
+// device is now registered under, plus at most a one-time redeem code. It
+// deliberately has NO credential field — that is what keeps a token off the
+// LAN (file comment); the JSON wire shape of POST /api/sync/cloud-device's
+// data.
 type Vouch struct {
 	StoreID  string `json:"store_id"`
 	DeviceID string `json:"device_id"`
@@ -109,6 +126,12 @@ type Vouch struct {
 	// it only drives paid cloud surfaces, never a sale (ADR-0060 §5), and a
 	// main till already decides every other admin setting a replica runs on.
 	Entitlement *entitlement.Cached `json:"entitlement,omitempty"`
+	// RedeemCode is the cloud's one-time code for the replica's device
+	// (ADR-0116 D3), relayed verbatim when devices/register returned one.
+	// Not a credential: the replica exchanges it for its own token directly
+	// with the cloud (redeemOwnCredential); it is single-use, expires in
+	// 10 minutes and is bound to (store, device). Empty (omitted) otherwise.
+	RedeemCode string `json:"redeem_code,omitempty"`
 }
 
 // ReplicaRequest is what the main till knows about the asking replica. TillID
@@ -175,14 +198,22 @@ func repairCopiedIdentity(ctx context.Context, kv Settings, get func(string) str
 // the registration marker is persisted — never anything credential-like, and
 // never the store id (store-level, it arrives with the admin sync).
 func applyVouch(ctx context.Context, m config.MarketplaceConfig, kv Settings, v Vouch) error {
+	_, err := applyVouchRedeem(ctx, m, kv, v)
+	return err
+}
+
+// applyVouchRedeem is applyVouch that also reports whether redeeming the
+// relayed code failed transiently (redeemOwnCredential), so replicaAttempt
+// can ask again soon for a fresh code.
+func applyVouchRedeem(ctx context.Context, m config.MarketplaceConfig, kv Settings, v Vouch) (retryRedeem bool, err error) {
 	mu.RLock()
 	deviceID := cur.DeviceID
 	mu.RUnlock()
 	if v.DeviceID != deviceID {
-		return fmt.Errorf("enrol: main till vouched for device %q, this till is %q", v.DeviceID, deviceID)
+		return false, fmt.Errorf("enrol: main till vouched for device %q, this till is %q", v.DeviceID, deviceID)
 	}
 	if err := kv.Set(ctx, keyDeviceRegistered, deviceID); err != nil {
-		return fmt.Errorf("enrol: persist %s: %w", keyDeviceRegistered, err)
+		return false, fmt.Errorf("enrol: persist %s: %w", keyDeviceRegistered, err)
 	}
 	// ut-docs#2753: only while still a replica — a vouch answer that lands
 	// after POST /api/sync/promote (which clears sync.primary_url, then
@@ -197,22 +228,34 @@ func applyVouch(ctx context.Context, m config.MarketplaceConfig, kv Settings, v 
 			logging.L().Warnf("enrolment: persist enrolled_at: %v", err)
 		}
 	}
-	_, token := currentStoreAuth(m)
-	applyRelayedEntitlement(ctx, kv, v.Entitlement, token != "")
-	return nil
+	// ADR-0116 D3: a one-time redeem code from the main till lets this
+	// replica fetch its OWN credential straight from the cloud. Outside mu
+	// (network call), and best-effort: the vouch above is already recorded
+	// whatever the cloud says.
+	retryUnsaved(ctx, kv)
+	retryRedeem = redeemOwnCredential(ctx, m, kv, v, deviceID)
+	// Applied whether or not this replica now holds its own token
+	// (ADR-0148, ut-docs#3615): its own check-in is gated on this very
+	// cache, so a token-holding replica that skipped the relay would never
+	// sync. Its own check-in, once running, stays the fresher source by
+	// the newer-confirmation-wins rule in applyRelayedEntitlement.
+	applyRelayedEntitlement(ctx, kv, v.Entitlement)
+	return retryRedeem, nil
 }
 
 // applyRelayedEntitlement stores the main till's entitlement cache on a
-// replica with no cloud token of its own (ut-docs#2792). A replica that
-// holds a store token (a pre-#2730 copy, or one from the environment) runs
-// its own cloud sync, which is the fresher source — the relay would fight
-// it, so it is skipped. Best-effort: an invalid block keeps the replica's
-// cache, as does a relayed confirmation older than the one already held (two
-// vouch answers landing out of order, or a re-pointed replica); a failed
+// replica (ut-docs#2792), including one that holds its own store token:
+// ADR-0148 gates that replica's own check-in on this cache, so the relay is
+// what first lets it sync (ut-docs#3615). Its own check-in, once running, is
+// not fought: a relayed confirmation older than the one already held is
+// dropped. Best-effort: an invalid block keeps the replica's cache, as does
+// a relayed confirmation older than the one already held (two vouch answers
+// landing out of order, a re-pointed replica, or the replica's own fresher
+// check-in); a failed
 // write is logged and retried on the next vouch. last_confirmed_at is written
 // last so a partial write never looks freshly confirmed.
-func applyRelayedEntitlement(ctx context.Context, kv Settings, c *entitlement.Cached, ownToken bool) {
-	if c == nil || ownToken {
+func applyRelayedEntitlement(ctx context.Context, kv Settings, c *entitlement.Cached) {
+	if c == nil {
 		return
 	}
 	vals, err := c.RelayValues()
@@ -266,8 +309,14 @@ func replicaAttempt(ctx context.Context, m config.MarketplaceConfig, kv Settings
 	v, err := src.RequestVouch(ctx, deviceID, buildinfo.Version)
 	switch {
 	case err == nil:
-		if aerr := applyVouch(ctx, m, kv, v); aerr != nil {
+		retryRedeem, aerr := applyVouchRedeem(ctx, m, kv, v)
+		if aerr != nil {
 			log.Infof("enrolment: record main till's vouch failed (will retry): %v", aerr)
+			return backoff, false
+		}
+		if retryRedeem {
+			// The relayed code expires in 10 minutes; the next vouch
+			// brings a fresh one (ADR-0116 D3).
 			return backoff, false
 		}
 		return vouchInterval, true
@@ -406,9 +455,22 @@ func VouchForReplica(ctx context.Context, cfg *config.Config, req ReplicaRequest
 		req.Version = req.Version[:64]
 	}
 	m.StoreID, m.MerchantToken = storeID, token
-	if err := registerDeviceID(ctx, m, req.DeviceID, req.DeviceName, req.Version, req.TillID); err != nil {
+	code, err := registerDeviceID(ctx, m, req.DeviceID, req.DeviceName, req.Version, req.TillID)
+	if err != nil {
 		return Vouch{}, err
 	}
 	logging.L().Infof("enrolment: registered replica till %s as device %s under store %s", req.TillID, req.DeviceID, storeID)
-	return Vouch{StoreID: storeID, DeviceID: req.DeviceID}, nil
+	v := Vouch{StoreID: storeID, DeviceID: req.DeviceID}
+	// ADR-0116 D3: relay the cloud's one-time redeem code — never a token —
+	// so the replica can redeem its own credential directly with the cloud.
+	// A malformed code is dropped (the replica's redeem would only fail),
+	// and never logged.
+	switch {
+	case code == "":
+	case validRedeemCode(code):
+		v.RedeemCode = code
+	default:
+		logging.L().Warnf("enrolment: the cloud's redeem code for replica device %s is malformed (length %d); not relayed (ADR-0116 D3)", req.DeviceID, len(code))
+	}
+	return v, nil
 }

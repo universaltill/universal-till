@@ -157,9 +157,13 @@ func followTarget(ctx context.Context, d *common.Deps) string {
 // autoUpdateBusy: an unattended restart would destroy an open basket. Both
 // engines (ut-docs#449) and table-QR sessions (ADR-0103, ut-docs#2261);
 // d.KioskEngine is nil in some test harnesses, HasItems is nil-safe.
+// HasItemsOrByHand(), not ItemCount() (ut-docs#3596): a resumed kiosk
+// pay-at-counter order can be live with zero priced lines and only "add by
+// hand" ones (ut-docs#3586) — its held_sales row is already gone, so an
+// unattended restart that treats it as idle loses the order outright.
 func autoUpdateBusy(d *common.Deps) bool {
-	return d.Engine.Basket().ItemCount() > 0 ||
-		(d.KioskEngine != nil && d.KioskEngine.Basket().ItemCount() > 0) ||
+	return d.Engine.HasItemsOrByHand() ||
+		(d.KioskEngine != nil && d.KioskEngine.HasItemsOrByHand()) ||
 		d.SelfOrderSessions.HasItems()
 }
 

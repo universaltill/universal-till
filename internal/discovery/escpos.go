@@ -5,6 +5,8 @@ import (
 	"net"
 	"strings"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // ESC/POS real-time status query: DLE EOT n, n=1 (printer status).
@@ -51,8 +53,7 @@ func validESCPOSStatus(b byte) bool {
 // dialProbe is a seam over net.Dialer.DialContext so the probe and the sweep
 // can be driven deterministically in tests, without binding real listeners.
 var dialProbe = func(ctx context.Context, addr string, timeout time.Duration) (net.Conn, error) {
-	d := net.Dialer{Timeout: timeout}
-	return d.DialContext(ctx, "tcp", addr)
+	return netaccess.DialContext(timeout, 0)(ctx, "tcp", addr)
 }
 
 // Listens reports whether anything accepts a TCP connection at addr. It

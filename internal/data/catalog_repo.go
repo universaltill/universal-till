@@ -736,6 +736,9 @@ type VariantEditView struct {
 	CostMinor  int64 // cost price, 0 = unset (margin report input)
 	IsActive   bool
 	Barcodes   []string
+	// UpdatedAt is the variant's updated_at as read (ut-docs#3606): the
+	// variant form sends it back as the write-through's base_updated_at.
+	UpdatedAt string
 }
 
 // VariantLabel is what a shelf/product label needs for ONE variant: the
@@ -814,7 +817,7 @@ SELECT v.id, v.name, TRIM(COALESCE(v.sku, '')),
           ORDER BY datetime(ph.starts_at) DESC, ph.rowid DESC LIMIT 1),
          v.price
        ),
-       COALESCE(v.cost_price, 0), v.is_active
+       COALESCE(v.cost_price, 0), v.is_active, COALESCE(v.updated_at, '')
 FROM item_variants v WHERE v.item_id = ? ORDER BY v.is_active DESC, v.name`, itemID)
 	if err != nil {
 		return nil, err
@@ -824,7 +827,7 @@ FROM item_variants v WHERE v.item_id = ? ORDER BY v.is_active DESC, v.name`, ite
 	byID := map[string]int{}
 	for rows.Next() {
 		var v VariantEditView
-		if err := rows.Scan(&v.ID, &v.Name, &v.SKU, &v.PriceMinor, &v.CostMinor, &v.IsActive); err != nil {
+		if err := rows.Scan(&v.ID, &v.Name, &v.SKU, &v.PriceMinor, &v.CostMinor, &v.IsActive, &v.UpdatedAt); err != nil {
 			return nil, err
 		}
 		v.SKU = stripRetireMangle(v.ID, v.SKU)
@@ -1344,9 +1347,10 @@ type CategoryNode struct {
 	// ImagePath (ut-docs#2500) is the category's image as a /public/...
 	// path — an uploaded photo, the id-less generic library tile, or (on
 	// rows written before ut-docs#2717, when a library pick stored its
-	// path) a built-in icon — or "" for none. A category has one picture:
-	// writers keep only one of ImagePath/Icon, and iconid.Resolve decides
-	// for older rows holding both. Whether an uploaded file is actually
+	// path) a built-in icon — or "" for none. ImagePath and Icon may both
+	// be set (ut-docs#3585): the image displays, the icon is its fallback
+	// once the image is removed — iconid.Resolve/EffectiveIcon decide
+	// which one a reader sees. Whether an uploaded file is actually
 	// present on THIS till is the renderer's question, not the repo's.
 	ImagePath string
 	// Icon (manage-shop catalog contract §0.12, migration 041) is an icon
@@ -1485,6 +1489,10 @@ type CategoryAdminRow struct {
 	ImagePath        string // ut-docs#2500, see CategoryNode.ImagePath
 	Icon             string // migration 041, see CategoryNode.Icon
 	SellScreenHidden bool   // migration 041, see CategoryNode.SellScreenHidden
+	// UpdatedAt is the category's updated_at as read (ut-docs#3606): the
+	// /categories dialog and the Designer's form send it back as the
+	// write-through's base_updated_at.
+	UpdatedAt string
 }
 
 // ListCategoriesForAdmin returns every category (active and inactive, so a
@@ -1496,7 +1504,8 @@ func (r *CatalogRepo) ListCategoriesForAdmin(ctx context.Context) ([]CategoryAdm
 SELECT c.id, c.name, COALESCE(c.parent_id, ''), c.sort_order, COALESCE(c.color, ''), c.is_active,
        COUNT(i.id) AS item_count,
        COUNT(CASE WHEN i.sell_screen_hidden = 0 AND i.sell_screen_removed = 0 THEN i.id END) AS visible_item_count,
-       COALESCE(c.image_path, ''), COALESCE(c.icon, ''), c.sell_screen_hidden
+       COALESCE(c.image_path, ''), COALESCE(c.icon, ''), c.sell_screen_hidden,
+       COALESCE(c.updated_at, '')
 FROM categories c
 LEFT JOIN items i ON i.category_id = c.id AND i.is_active = 1
 GROUP BY c.id
@@ -1509,7 +1518,7 @@ ORDER BY c.sort_order, c.name`)
 	for rows.Next() {
 		var c CategoryAdminRow
 		var active int
-		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &active, &c.ItemCount, &c.VisibleItemCount, &c.ImagePath, &c.Icon, &c.SellScreenHidden); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &active, &c.ItemCount, &c.VisibleItemCount, &c.ImagePath, &c.Icon, &c.SellScreenHidden, &c.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("list categories for admin: %w", err)
 		}
 		c.IsActive = active == 1
@@ -1590,7 +1599,7 @@ func (r *CatalogRepo) RenameCategory(ctx context.Context, id, name string) error
 	if name == "" {
 		return ErrCategoryNameRequired
 	}
-	res, err := r.db.ExecContext(ctx, `UPDATE categories SET name = ? WHERE id = ?`, name, id)
+	res, err := r.db.ExecContext(ctx, `UPDATE categories SET name = ?, updated_at = datetime('now') WHERE id = ?`, name, id)
 	if err != nil {
 		return fmt.Errorf("rename category: %w", err)
 	}
@@ -1624,7 +1633,7 @@ func (r *CatalogRepo) UpdateCategoryWithHidden(ctx context.Context, id, name, co
 	if hidden != nil {
 		hiddenArg = boolToInt(*hidden)
 	}
-	res, err := r.db.ExecContext(ctx, `UPDATE categories SET name = ?, color = ?, sell_screen_hidden = COALESCE(?, sell_screen_hidden) WHERE id = ?`,
+	res, err := r.db.ExecContext(ctx, `UPDATE categories SET name = ?, color = ?, sell_screen_hidden = COALESCE(?, sell_screen_hidden), updated_at = datetime('now') WHERE id = ?`,
 		name, nullableString(strings.TrimSpace(color)), hiddenArg, id)
 	if err != nil {
 		return fmt.Errorf("update category: %w", err)
@@ -1635,24 +1644,23 @@ func (r *CatalogRepo) UpdateCategoryWithHidden(ctx context.Context, id, name, co
 	return nil
 }
 
-// SetCategoryPicture stores a category's one picture (ut-docs#2500,
-// #2717): an image path (an uploaded photo's
-// /public/assets/categories/<id>/thumb.png, or the id-less generic
-// library tile) OR an icon id ("lucide:beer", contract §0.12) — the other
-// column is cleared in the same UPDATE, so the last writer wins whether it
-// is this till's editor or a save_category directive from my. Both ""
-// clears the picture (NULL, NULL). A malformed icon id is refused; an
-// unknown category is ErrCategoryNotFound. Validating the path (a written
-// upload, a library key) is the handler's job.
+// SetCategoryPicture writes a category's two picture columns in one UPDATE
+// (ut-docs#2500, #2717, #3585): the image path (an uploaded photo's
+// /public/assets/categories/<id>/thumb.png, or the id-less generic library
+// tile) and the icon id ("lucide:beer", contract §0.12). Both may be set at
+// once — a category can keep an icon underneath its photo — and each ""
+// stores NULL in that column, so a caller that wants to keep one column
+// passes its current value (see CategoryPicture). Which one is displayed
+// (the image wins, else the icon) is decided by the iconid package
+// (iconid.Resolve / EffectiveIcon), not here. A malformed icon id is
+// refused; an unknown category is ErrCategoryNotFound. Validating the path
+// (a written upload, a library key) is the handler's job.
 func (r *CatalogRepo) SetCategoryPicture(ctx context.Context, id, imagePath, icon string) error {
 	imagePath, icon = strings.TrimSpace(imagePath), strings.TrimSpace(icon)
 	if icon != "" && !iconid.ValidFormat(icon) {
 		return fmt.Errorf("icon %q is not a valid icon id", icon)
 	}
-	if imagePath != "" && icon != "" {
-		return errors.New("a category has one picture: an image path or an icon id, not both")
-	}
-	res, err := r.db.ExecContext(ctx, `UPDATE categories SET image_path = ?, icon = ? WHERE id = ?`,
+	res, err := r.db.ExecContext(ctx, `UPDATE categories SET image_path = ?, icon = ?, updated_at = datetime('now') WHERE id = ?`,
 		nullableString(imagePath), nullableString(icon), id)
 	if err != nil {
 		return fmt.Errorf("set category picture: %w", err)
@@ -1663,9 +1671,10 @@ func (r *CatalogRepo) SetCategoryPicture(ctx context.Context, id, imagePath, ico
 	return nil
 }
 
-// CategoryPictureRow is a category's name and its one picture: an image
-// path (an uploaded photo, or a library tile an older till stored as a
-// path) or an icon id.
+// CategoryPictureRow is a category's name, its image path (an uploaded
+// photo, or a library tile an older till stored as a path) and its icon id
+// — both may be set at once (ut-docs#3585); iconid.Resolve decides which
+// one displays.
 type CategoryPictureRow struct {
 	Name      string
 	ImagePath string
@@ -1758,7 +1767,7 @@ func (r *CatalogRepo) UpdateCategoryPartial(ctx context.Context, id string, p Ca
 		color = strings.TrimSpace(*p.Color)
 	}
 
-	if _, err := tx.ExecContext(ctx, `UPDATE categories SET name = ?, color = ? WHERE id = ?`,
+	if _, err := tx.ExecContext(ctx, `UPDATE categories SET name = ?, color = ?, updated_at = datetime('now') WHERE id = ?`,
 		name, nullableString(color), id); err != nil {
 		return res, fmt.Errorf("update category partial: row: %w", err)
 	}
@@ -1920,7 +1929,7 @@ func (r *CatalogRepo) SetCategoryActive(ctx context.Context, id string, active b
 	if active {
 		v = 1
 	}
-	res, err := r.db.ExecContext(ctx, `UPDATE categories SET is_active = ? WHERE id = ?`, v, id)
+	res, err := r.db.ExecContext(ctx, `UPDATE categories SET is_active = ?, updated_at = datetime('now') WHERE id = ?`, v, id)
 	if err != nil {
 		return fmt.Errorf("set category active: %w", err)
 	}
@@ -2002,7 +2011,7 @@ func (r *CatalogRepo) setCategorySortOrder(ctx context.Context, orderedIDs []str
 	}
 	full := append(append(make([]string, 0, len(orderedIDs)+len(missing)), orderedIDs...), missing...)
 
-	stmt, err := tx.PrepareContext(ctx, `UPDATE categories SET sort_order = ? WHERE id = ?`)
+	stmt, err := tx.PrepareContext(ctx, `UPDATE categories SET sort_order = ?, updated_at = datetime('now') WHERE id = ?`)
 	if err != nil {
 		return fmt.Errorf("set category sort order: %w", err)
 	}
@@ -2119,7 +2128,7 @@ func (r *CatalogRepo) DeactivateItem(ctx context.Context, itemID string) error {
 	// check -- an unknown id or one that's already inactive must refuse
 	// with ErrItemNotFound, not silently no-op (its own doc comment has the
 	// full rationale; this is the jiggle-mode trash badge's own repo call).
-	res, err := r.db.ExecContext(ctx, `UPDATE items SET is_active = 0 WHERE id = ? AND is_active = 1`, itemID)
+	res, err := r.db.ExecContext(ctx, `UPDATE items SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND is_active = 1`, itemID)
 	if err != nil {
 		return fmt.Errorf("deactivate item: %w", err)
 	}
@@ -2128,7 +2137,7 @@ func (r *CatalogRepo) DeactivateItem(ctx context.Context, itemID string) error {
 	} else if n == 0 {
 		return ErrItemNotFound
 	}
-	if _, err := r.db.ExecContext(ctx, `UPDATE item_variants SET is_active = 0 WHERE item_id = ?`, itemID); err != nil {
+	if _, err := r.db.ExecContext(ctx, `UPDATE item_variants SET is_active = 0, updated_at = datetime('now') WHERE item_id = ?`, itemID); err != nil {
 		return fmt.Errorf("deactivate item variants: %w", err)
 	}
 	return nil
@@ -2174,7 +2183,7 @@ func (r *CatalogRepo) SetSellScreenHidden(ctx context.Context, itemID string, hi
 	// ut-docs#2541 review finding 4: AND is_active = 1 -- an unknown id or
 	// an already-inactive item's id must refuse, not silently no-op (see
 	// ErrItemNotFound's own doc comment).
-	res, err := r.db.ExecContext(ctx, `UPDATE items SET sell_screen_hidden = ? WHERE id = ? AND is_active = 1`, v, itemID)
+	res, err := r.db.ExecContext(ctx, `UPDATE items SET sell_screen_hidden = ?, updated_at = datetime('now') WHERE id = ? AND is_active = 1`, v, itemID)
 	if err != nil {
 		return fmt.Errorf("set sell screen hidden: %w", err)
 	}
@@ -2205,7 +2214,7 @@ func (r *CatalogRepo) RemoveFromSellScreen(ctx context.Context, itemID string) e
 		return fmt.Errorf("remove from sell screen: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	res, err := tx.ExecContext(ctx, `UPDATE items SET sell_screen_removed = 1, sell_screen_hidden = 0 WHERE id = ? AND is_active = 1`, itemID)
+	res, err := tx.ExecContext(ctx, `UPDATE items SET sell_screen_removed = 1, sell_screen_hidden = 0, updated_at = datetime('now') WHERE id = ? AND is_active = 1`, itemID)
 	if err != nil {
 		return fmt.Errorf("remove from sell screen: %w", err)
 	}
@@ -2290,7 +2299,7 @@ func (r *CatalogRepo) SetItemCategory(ctx context.Context, itemID, categoryID st
 // an unhidden item returns to its kept row's position, or as an implicit
 // tile (ut-docs#2541).
 func (r *CatalogRepo) UnhideAllSellScreen(ctx context.Context) (int, error) {
-	res, err := r.db.ExecContext(ctx, `UPDATE items SET sell_screen_hidden = 0 WHERE sell_screen_hidden = 1 AND sell_screen_removed = 0 AND is_active = 1`)
+	res, err := r.db.ExecContext(ctx, `UPDATE items SET sell_screen_hidden = 0, updated_at = datetime('now') WHERE sell_screen_hidden = 1 AND sell_screen_removed = 0 AND is_active = 1`)
 	if err != nil {
 		return 0, fmt.Errorf("unhide all sell screen: %w", err)
 	}
@@ -2358,7 +2367,7 @@ func (r *CatalogRepo) DeactivateVariant(ctx context.Context, variantID string) e
 	if variantID == "" {
 		return errors.New("variantID required")
 	}
-	if _, err := r.db.ExecContext(ctx, `UPDATE item_variants SET is_active = 0 WHERE id = ?`, variantID); err != nil {
+	if _, err := r.db.ExecContext(ctx, `UPDATE item_variants SET is_active = 0, updated_at = datetime('now') WHERE id = ?`, variantID); err != nil {
 		return fmt.Errorf("deactivate variant: %w", err)
 	}
 	return nil
@@ -2470,7 +2479,7 @@ func insertItemRow(ctx context.Context, q dbExecutor, in *catalogtypes.ItemInput
 	autoSKU := isBlankSKU(in.SKU)
 	for attempt := 1; ; attempt++ {
 		if autoSKU {
-			sku, err := nextItemSKU(ctx, q, in.CategoryID)
+			sku, err := nextItemSKU(ctx, q, in.CategoryID, nil)
 			if err != nil {
 				return fmt.Errorf("generate item sku: %w", err)
 			}
@@ -2679,9 +2688,14 @@ func (r *CatalogRepo) EnsureDefaultThumbnail(ctx context.Context, itemID, path s
 	// a second INSERT a constraint violation instead of a silent duplicate;
 	// OR IGNORE turns that violation into exactly this function's own
 	// "already has a thumbnail — never overwrite it" no-op.
+	//
+	// ut-docs#3584: an item that already shows an icon id (items.icon) has
+	// a picture too, so the placeholder skips it — one picture per item.
 	if _, err := r.db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO item_images (id, item_id, path, role) VALUES (?, ?, ?, 'thumbnail')`,
-		uuid.NewString(), itemID, path,
+		`INSERT OR IGNORE INTO item_images (id, item_id, path, role)
+		 SELECT ?, ?, ?, 'thumbnail'
+		 WHERE NOT EXISTS (SELECT 1 FROM items WHERE id = ? AND COALESCE(icon, '') <> '')`,
+		uuid.NewString(), itemID, path, itemID,
 	); err != nil {
 		return fmt.Errorf("insert placeholder thumbnail: %w", err)
 	}
@@ -2724,9 +2738,65 @@ func (r *CatalogRepo) ItemThumbnailFor(ctx context.Context, itemID string) (stri
 // an imported item's placeholder icon, forever, with no in-app way to
 // clear it. See internal/data/shortcuts_repo.go's own doc comment for the
 // same gap independently observed from the shortcuts-button angle.
+//
+// ut-docs#3584: an item has one picture, so this goes through
+// SetItemPicture — the photo or library tile replaces any icon id my. set
+// (items.icon is cleared in the same transaction).
 func (r *CatalogRepo) SetItemThumbnail(ctx context.Context, itemID, path string) error {
 	if itemID == "" || path == "" {
 		return errors.New("itemID and path required")
+	}
+	return r.SetItemPicture(ctx, itemID, path, "")
+}
+
+// SetItemPicture stores an item's one picture (ut-docs#3584, the item
+// counterpart of SetCategoryPicture's ut-docs#2717 rule): an image path in
+// its item_images thumbnail row (an uploaded photo's
+// /public/assets/items/<id>/thumb.png, or a library tile the till's picker
+// chose) OR an icon id in items.icon ("lucide:beer", contract §0.12) — the
+// other side is cleared in the same transaction, so the last writer wins
+// whether it is this till's editor or a save_item directive from my. Both
+// "" clears the picture (no thumbnail row, NULL icon). A malformed icon id
+// is refused; an unknown item is ErrItemNotFound. Validating the path (a
+// written upload, a library key) is the handler's job.
+func (r *CatalogRepo) SetItemPicture(ctx context.Context, itemID, imagePath, icon string) error {
+	imagePath, icon = strings.TrimSpace(imagePath), strings.TrimSpace(icon)
+	if icon != "" && !iconid.ValidFormat(icon) {
+		return fmt.Errorf("icon %q is not a valid icon id", icon)
+	}
+	if imagePath != "" && icon != "" {
+		return errors.New("an item has one picture: an image path or an icon id, not both")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("set item picture: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := setItemPictureExec(ctx, tx, itemID, imagePath, icon); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("set item picture: commit: %w", err)
+	}
+	return nil
+}
+
+// setItemPictureExec is SetItemPicture's write, on a caller-held
+// transaction (SaveItem's): items.icon, then the thumbnail row — upserted
+// for a path, deleted otherwise.
+func setItemPictureExec(ctx context.Context, ex execer, itemID, imagePath, icon string) error {
+	res, err := ex.ExecContext(ctx, `UPDATE items SET icon = ? WHERE id = ?`, nullableString(icon), itemID)
+	if err != nil {
+		return fmt.Errorf("set item picture: icon: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrItemNotFound
+	}
+	if imagePath == "" {
+		if _, err := ex.ExecContext(ctx, `DELETE FROM item_images WHERE item_id = ? AND role = 'thumbnail'`, itemID); err != nil {
+			return fmt.Errorf("set item picture: clear thumbnail: %w", err)
+		}
+		return nil
 	}
 	// A single atomic upsert (ut-docs#1871): the old UPDATE-then-INSERT let
 	// two concurrent calls for the same item both see the UPDATE affect 0
@@ -2735,14 +2805,46 @@ func (r *CatalogRepo) SetItemThumbnail(ctx context.Context, itemID, path string)
 	// answered nondeterministically. ON CONFLICT makes the whole
 	// check-and-write one statement, so no interleaving of a second
 	// concurrent call can land between the check and the write.
-	if _, err := r.db.ExecContext(ctx,
+	if _, err := ex.ExecContext(ctx,
 		`INSERT INTO item_images (id, item_id, path, role) VALUES (?, ?, ?, 'thumbnail')
 		 ON CONFLICT(item_id, role) DO UPDATE SET path = excluded.path`,
-		uuid.NewString(), itemID, path,
+		uuid.NewString(), itemID, imagePath,
 	); err != nil {
 		return fmt.Errorf("upsert thumbnail: %w", err)
 	}
 	return nil
+}
+
+// ItemIcons returns every item's icon id (items.icon, migration 066,
+// ut-docs#3584), active or not, keyed by item id; an item with no icon is
+// absent. The batched counterpart of ItemIcon for tile lists (sale screen,
+// self-order kiosk, catalog list), alongside ItemThumbnails. Untrusted on
+// read: callers render an id only through iconid.AssetPath.
+func (r *CatalogRepo) ItemIcons(ctx context.Context) (map[string]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, icon FROM items WHERE icon IS NOT NULL AND icon <> ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, icon string
+		if err := rows.Scan(&id, &icon); err != nil {
+			return nil, err
+		}
+		out[id] = icon
+	}
+	return out, rows.Err()
+}
+
+// ItemIcon returns one item's icon id, "" for none or no such item.
+func (r *CatalogRepo) ItemIcon(ctx context.Context, itemID string) (string, error) {
+	var icon string
+	err := r.db.QueryRowContext(ctx, `SELECT COALESCE(icon, '') FROM items WHERE id = ?`, itemID).Scan(&icon)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return icon, err
 }
 
 // ItemThumbnails returns every item's current thumbnail path, active or not
@@ -2804,13 +2906,14 @@ func (r *CatalogRepo) ItemThumbnailPath(ctx context.Context, itemID string) (pat
 // afterward, so this deletes rather than updates. A no-op, not an error,
 // when the item already has no thumbnail row (a double-click, a stale
 // picker state).
+//
+// ut-docs#3584: "no picture" clears an icon id my. set too (SetItemPicture
+// with both ""), the way the category editor's "No image" does.
 func (r *CatalogRepo) ClearItemThumbnail(ctx context.Context, itemID string) error {
 	if itemID == "" {
 		return errors.New("itemID required")
 	}
-	if _, err := r.db.ExecContext(ctx,
-		`DELETE FROM item_images WHERE item_id = ? AND role = 'thumbnail'`, itemID,
-	); err != nil {
+	if err := r.SetItemPicture(ctx, itemID, "", ""); err != nil && !errors.Is(err, ErrItemNotFound) {
 		return fmt.Errorf("clear thumbnail: %w", err)
 	}
 	return nil
@@ -2874,7 +2977,7 @@ func (r *CatalogRepo) SetItemPrice(ctx context.Context, itemID string, priceMino
 		return nil
 	}
 
-	res, err = tx.ExecContext(ctx, `UPDATE item_variants SET price = ? WHERE id = ? AND is_active = 1`, priceMinor, itemID)
+	res, err = tx.ExecContext(ctx, `UPDATE item_variants SET price = ?, updated_at = datetime('now') WHERE id = ? AND is_active = 1`, priceMinor, itemID)
 	if err != nil {
 		return fmt.Errorf("set variant price: %w", err)
 	}
@@ -2921,7 +3024,7 @@ func (r *CatalogRepo) SetItemName(ctx context.Context, id, name string) error {
 	if n, _ := res.RowsAffected(); n > 0 {
 		return nil
 	}
-	res, err = r.db.ExecContext(ctx, `UPDATE item_variants SET name = ? WHERE id = ? AND is_active = 1`, name, id)
+	res, err = r.db.ExecContext(ctx, `UPDATE item_variants SET name = ?, updated_at = datetime('now') WHERE id = ? AND is_active = 1`, name, id)
 	if err != nil {
 		return fmt.Errorf("set variant name: %w", err)
 	}
@@ -3158,7 +3261,8 @@ SET sku = COALESCE(NULLIF(?, ''), sku),
     age_restricted = ?,
     color = ?,
     net_quantity_value = ?,
-    net_quantity_unit = ?
+    net_quantity_unit = ?,
+    updated_at = datetime('now')
 WHERE id = ?
 `, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked), boolToInt(in.AgeRestricted), nullableString(in.Color), nullableInt64(in.NetQuantityValue), nullable(in.NetQuantityUnit), in.ID)
 	if err != nil {
@@ -3307,7 +3411,8 @@ SET sku = COALESCE(NULLIF(?, ''), sku),
     name = ?,
     price = ?,
     cost_price = ?,
-    is_active = ?
+    is_active = ?,
+    updated_at = datetime('now')
 WHERE id = ?
 `, nullableString(in.SKU), in.Name, in.Price, nullableInt64(in.CostPrice), active, in.ID)
 	if err != nil {

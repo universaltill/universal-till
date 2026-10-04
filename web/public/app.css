@@ -3674,6 +3674,10 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    viewport -- a till with a dozen parked tables must still show its Close
    button. */
 .parked-orders-modal { min-width: min(30rem, 92vw); }
+/* ut-docs#3582: each row now carries Cancel order beside Move table, so the
+   popup gets more room than .modifier-modal's 28rem -- at the 1024x600
+   kiosk floor a labelled table order otherwise wrapped to three lines. */
+#parked-orders-modal.parked-orders-modal { max-width: 42rem; }
 /* ut-docs#2702 review: a non-modal show() dialog is positioned in flow by the
    UA sheet, so at 360px the sale screen's positioned tender controls painted
    over its Close button -- worse once a row's Move table options open. Same
@@ -3681,13 +3685,40 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    550 and #osk's 1000), with its own scroll so Close stays reachable. */
 #parked-orders-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; max-block-size: 84vh; overflow-y: auto; }
 .parked-orders-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; max-height: 60vh; overflow-y: auto; }
-.parked-orders-list > li { display: flex; flex-wrap: wrap; gap: .5rem; }
+/* ut-docs#3582: one fixed column grid per row -- the order | the Move table
+   slot | the 46px Cancel order target -- placed explicitly, so Cancel sits
+   in the same column on every row whether or not that row can move (a row
+   without Move table gets an invisible same-size placeholder whenever any
+   row in the list has one, parked_orders.html). Before this the row was a
+   wrapping flexbox and Move table / the trash button landed wherever the
+   leftover width let them. */
+.parked-orders-list > li { display: grid; grid-template-columns: minmax(0, 1fr) auto 46px; gap: .5rem; align-items: stretch; }
+.parked-orders-list > li > .parked-order,
+.parked-orders-list > li > .parked-order-form { grid-column: 1; grid-row: 1; min-inline-size: 0; }
+.parked-orders-list > li > .parked-move,
+.parked-orders-list > li > .parked-move-placeholder { grid-column: 2; grid-row: 1; }
+.parked-orders-list > li > .parked-order-cancel,
+.parked-orders-list > li > .parked-order-cancel-spacer { grid-column: 3; grid-row: 1; }
 /* ut-docs#2702 review: Move table on each popup row (ut-docs#820). Closed,
    it is a compact button beside the row; open, it takes a row of its own so
    the free-table options wrap under the order they move. Every target keeps
    the 46px floor (.btn-touch); logical properties only (RTL). */
-.parked-move { flex: 0 0 auto; }
-.parked-move[open] { flex-basis: 100%; }
+/* Open, the free-table options need the full width: the whole <details>
+   takes a second row of ITS OWN <li> (so it can only read as this order's),
+   and Cancel keeps its column on row 1. */
+.parked-orders-list > li > .parked-move[open] { grid-column: 1 / -1; grid-row: 2; }
+/* ut-docs#3622: with .parked-move[open] vacating column 2's row-1 track,
+   that track's auto width (per-<li> grid, not shared across rows) can
+   collapse toward 0, and the order button's own minmax(0, 1fr) column
+   grows to absorb the freed space -- widening right up to where the
+   toggle sat closed. A second tap meant to close the panel then lands on
+   the order button instead and resumes it. Rather than chase exact track
+   sizing, make the order's own resume target inert while ITS row's panel
+   is open: a tap anywhere it may have shifted to does nothing, never
+   resumes. (An engine without :has() just keeps the pre-#3622 behaviour.) */
+.parked-orders-list > li:has(> .parked-move[open]) > .parked-order,
+.parked-orders-list > li:has(> .parked-move[open]) > .parked-order-form { pointer-events: none; }
+.parked-move-placeholder { visibility: hidden; min-height: 46px; display: inline-flex; align-items: center; }
 .parked-move > summary { list-style: none; min-height: 46px; display: inline-flex; align-items: center; cursor: pointer; }
 .parked-move > summary::-webkit-details-marker { display: none; }
 .parked-move-options { display: flex; flex-wrap: wrap; gap: .5rem; margin-block-start: .5rem; }
@@ -3695,7 +3726,31 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
 /* Whole-row target at the product's documented 46px floor (.btn-touch): the
    cashier taps this with a finger, and the label alone is a few characters
    wide. text-align/margin-inline keep it correct under RTL. */
-.parked-orders-list > li > .parked-order { flex: 1; min-height: 46px; display: flex; align-items: center; gap: .5rem; text-align: start; }
+.parked-orders-list > li > .parked-order { min-height: 46px; display: flex; align-items: center; gap: .5rem; text-align: start; }
+/* The order's label stays on one line (ellipsized, full text still in the
+   accessible name and on /open-orders) -- a label wrapping to three lines
+   made each row a different height at 1024x600. */
+.parked-order-label { flex: 1 1 auto; min-inline-size: 5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.parked-order-label .open-order-items { white-space: normal; }
+/* The label keeps a 5rem floor (it is how the cashier recognises the
+   order, same reasoning as /open-orders' own label floor); under pressure
+   the merchant-named table chip is what truncates. */
+.parked-order .held-chip-table { flex: 0 1 auto; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 40rem) {
+  /* Three columns cannot share 360-390px: the order takes the row's whole
+     first line and Move table + Cancel sit on a second line, still in their
+     own fixed columns (Cancel always last), with a divider between orders
+     so that line reads as part of the order above it. */
+  .parked-orders-list > li { padding-block-end: .5rem; border-block-end: 1px solid var(--border); }
+  .parked-orders-list > li:last-child { border-block-end: none; padding-block-end: 0; }
+  .parked-orders-list > li > .parked-order,
+  .parked-orders-list > li > .parked-order-form { grid-column: 1 / -1; }
+  .parked-orders-list > li > .parked-move,
+  .parked-orders-list > li > .parked-move-placeholder,
+  .parked-orders-list > li > .parked-order-cancel,
+  .parked-orders-list > li > .parked-order-cancel-spacer { grid-row: 2; }
+  .parked-orders-list > li > .parked-move[open] { grid-row: 3; }
+}
 .parked-order-meta { margin-inline-start: auto; opacity: .8; white-space: nowrap; }
 /* .held-chip-table has never had a rule of its own (it rendered as bare text
    on the strip too). It now also appears here, so give it the quiet chip
@@ -3811,7 +3866,28 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
   .open-order-row-btn .open-order-cell-label { flex: 1 1 100%; white-space: normal; }
   .open-order-row-btn .open-order-cell-table:empty { display: none; }
 }
-.parked-order-form { flex: 1; display: flex; margin: 0; }
+/* ut-docs#3582: Cancel order beside each held row, on the page and in the
+   popup -- an icon-only square at the 46px touch floor in every mode (never
+   smaller in kiosk than on desktop, ut-docs#161). On the page the <td>
+   (overriding its display:block above, which existed only to stretch the
+   one row button) lays the resume button and Cancel side by side; the
+   header's actions cell is 46px minus the header row's own .5rem gap, so
+   the five data columns still start where their headers do (the row
+   button's inline padding sits inside it, the header's on the row). A
+   legacy row's spacer keeps the same width. Logical properties only (RTL). */
+#open-orders-table td { display: flex; align-items: stretch; }
+#open-orders-table td > form { flex: 1 1 auto; min-inline-size: 0; }
+.open-order-cancel, .open-order-cancel-spacer {
+  flex: 0 0 46px; min-block-size: 46px; min-inline-size: 46px; margin: 0;
+  border-bottom: 1px solid var(--border);
+}
+.open-order-cancel { display: inline-flex; align-items: center; justify-content: center; padding: 0; border-radius: 0; }
+#open-orders-table tbody tr:last-child .open-order-cancel,
+#open-orders-table tbody tr:last-child .open-order-cancel-spacer { border-bottom: none; }
+.open-order-cell-actions { flex: 0 0 calc(46px - .5rem); }
+.parked-order-cancel { min-block-size: 46px; min-inline-size: 46px; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.open-orders-hint:empty, .parked-orders-hint:empty { display: none; }
+.parked-order-form { display: flex; margin: 0; }
 .parked-order-form > .parked-order { flex: 1; min-height: 46px; display: flex; align-items: center; gap: .5rem; text-align: start; }
 
 /* The dialog itself: a slide-in panel anchored to the inline-end edge
@@ -4288,6 +4364,10 @@ body.login-screen {
 .users-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
 .users-inline { display: inline-flex; gap: .35rem; margin: 0; }
 .users-inline input { width: 7.5rem; }
+/* ut-docs#3324: a custom role's label is the shop's own text (up to 40
+   characters); cap the role picker so a long one can't push the row's
+   Change role button out of the card. */
+.users-inline select.users-role-pick { max-inline-size: 9rem; }
 /* Rename-field inputs (locations/registers "name" text input) hold longer,
    free-text names than the other .users-inline inputs (PIN, printer
    address, search, the country_settings checkbox) — a fixed 7.5rem clips
@@ -4334,6 +4414,9 @@ body.login-screen {
 .perm-desc, .perm-unlocks { display: block; font-size: .8rem; line-height: 1.35; margin-block-start: .15rem; }
 .perm-unlocks { font-weight: 600; }
 .perm-table .perm-cell { text-align: center; min-inline-size: 4.5rem; }
+/* ut-docs#3324: a custom role's column (ADR-0128 §6) says, under its
+   label, where it is edited; its cells are disabled. */
+.perm-cloud-note { display: block; font-size: .75rem; font-weight: 400; text-transform: none; letter-spacing: normal; }
 .perm-table .perm-group-head { background: var(--surface-2); padding-block: .4rem; }
 .perm-group-label { position: sticky; inset-inline-start: .6rem; }
 /* ut-docs#3359: on a phone the matrix is a card list like every other
@@ -4819,6 +4902,14 @@ body.login-screen {
    a unix kiosk with no browser to send a link to) isn't clickable, and
    shouldn't invite a click it can't act on. */
 .statusbar :is(a, button).sb-update:hover { background: #22c55e; }
+/* ut-docs#2733: the stuck-auto-update chip is a <span> whose remedy text is
+   the link (arrow-up already leads to /plugins) — keep the chip's own dark
+   ink instead of the status bar's link colour (green on green). */
+.statusbar .sb-update a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.statusbar .sb-update a:hover { color: #000; }
+/* Its link IS the remedy, so it may wrap rather than clip at phone width
+   (.sb-item is nowrap); min-width: 0 lets the flex item shrink to wrap. */
+.statusbar .sb-update.is-stuck { white-space: normal; min-width: 0; border-radius: .75rem; }
 /* Quiet hint shown until the till is connected to the marketplace —
    registration is OPTIONAL (ADR-0015), so no alarm colors, no urgency. */
 .statusbar .sb-enrol {
@@ -4876,6 +4967,30 @@ body.login-screen {
 .statusbar a.sb-subscription:hover { filter: brightness(0.92); }
 .subscription-paused-list { margin-block: .3rem; padding-inline-start: 1.25rem; }
 .subscription-banner p { margin-block: .25rem; }
+/* ADR-0116 D6 (ut-docs#3524): the cloud refused this till's credential 3
+   times in a row (cloud_auth_chip.html). Same amber pill as sb-main-till:
+   the till still sells offline, but the cloud waits for pairing. Wraps for
+   the same reason (a sentence, long in some locales). */
+.statusbar .sb-cloud-auth {
+  color: #451a03; background: var(--warning, #d97706);
+  text-decoration: none; white-space: normal;
+  padding: .05rem .5rem; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem;
+}
+.statusbar a.sb-cloud-auth[href]:hover { filter: brightness(0.92); }
+#sb-cloud-auth-mount:empty { display: none; }
+/* ut-docs#574 (ADR-0147): the cloud refused the archived-report upload
+   (report_archive_chip.html). Same amber pill as sb-cloud-auth: the till
+   still sells and keeps every report; the upload waits for an active
+   subscription. Wraps for the same reason (a sentence in some locales). */
+.statusbar .sb-report-archive {
+  color: #451a03; background: var(--warning, #d97706);
+  text-decoration: none; white-space: normal;
+  padding: .05rem .5rem; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem;
+}
+.statusbar a.sb-report-archive[href]:hover { filter: brightness(0.92); }
+#sb-report-archive-mount:empty { display: none; }
 /* ut-docs#2742: the replica's one main-till light (main_till_status.html).
    Words carry the state; the dot only repeats it — filled green while
    linked, a hollow ring while polling (sync works, just not instantly).
@@ -5919,8 +6034,8 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
      cost the grid a row for information that is fine one tap away -- it
      moves to the foot of the ☰ drawer (the approved mock-up's layout). A
      problem still shows on the sale screen itself (offline-first: offline
-     state is never hidden): no internet, main till not reachable, or an
-     underpowered supply bring the row back just above the pay bar (or, in
+     state is never hidden): no internet, main till not reachable, a
+     refused cloud credential (ADR-0116 D6) or an underpowered supply bring the row back just above the pay bar (or, in
      the open sheet, at the very bottom, with Pay pinned above it). So does
      an open dialog: the scrim covers ☰, and status must stay reachable
      (html.ut-scrim-on lifts the row above it, below). app.js re-measures
@@ -5930,7 +6045,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
     padding-block: .2rem; font-size: .8rem;
   }
   body.sale-screen.pos-sheet-open .statusbar { bottom: 0; }
-  html:not(.ut-scrim-on) body.sale-screen:not(.nav-drawer-open) .statusbar:not(:has(.sb-conn.is-offline, .sb-main-till, .sb-power)) { display: none; }
+  html:not(.ut-scrim-on) body.sale-screen:not(.nav-drawer-open) .statusbar:not(:has(.sb-conn.is-offline, .sb-main-till, .sb-cloud-auth, .sb-report-archive, .sb-power, .sb-update.is-stuck)) { display: none; }
   /* In the open drawer: its foot, one item per line, above the backdrop
      (the nav's stacking context is z-index 60). The drawer pads its end by
      the row's height so the last link scrolls clear of it. */
@@ -5943,7 +6058,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
     border-block-start: 1px solid rgba(255, 255, 255, .15);
   }
   body.sale-screen.nav-drawer-open .statusbar .sb-ver { margin-inline-start: 0; }
-  body.sale-screen.nav-drawer-open .statusbar :is(.sb-update, .sb-enrol, .sb-power, .sb-main-till, .sb-subscription, .sb-plugin-update, .sb-language-pack-update, .sb-release-notes) { margin-inline-start: 0; }
+  body.sale-screen.nav-drawer-open .statusbar :is(.sb-update, .sb-enrol, .sb-power, .sb-main-till, .sb-subscription, .sb-cloud-auth, .sb-report-archive, .sb-plugin-update, .sb-language-pack-update, .sb-release-notes) { margin-inline-start: 0; }
   /* ut-docs#3358: every screen's status row paints over the open drawer's
      foot (sale screen: the rule above; elsewhere the page's sticky
      .statusbar), so the drawer reserves the row's measured open height

@@ -807,7 +807,20 @@ func TestCloudSetTillSetting_WhitelistedKeysWrite(t *testing.T) {
 		{common.KeyBrowsingMode, common.BrowsingModeAllFilterChips, common.BrowsingModeAllFilterChips},
 		{common.KeyBrowsingMode, common.BrowsingModeCategoryTabs, common.BrowsingModeCategoryTabs},
 		{data.SaleDisplayNoSchemeKey, data.DisplayNoSchemeLifetimeNoReset, data.DisplayNoSchemeLifetimeNoReset},
+		// ut-docs#3390 (full per-key coverage in cloudsync_wire_3390_test.go).
+		{data.BarcodeEnabledSymbologiesKey, `["EAN13"]`, `["EAN13"]`},
+		{data.CatalogImportBarcodeFromSKUDefaultKey, "true", "1"},
+		{data.CatalogPrePackUnitPriceEnabledKey, "false", "0"},
+		{common.KeyAllowNegativeInventory, "true", "true"},
+		{keyInvoiceSellerName, "Corner Shop Ltd", "Corner Shop Ltd"},
+		{keyInvoiceSellerAddress, "1 High Street", "1 High Street"},
+		{keyInvoiceSellerVATNo, "GB123", "GB123"},
+		{common.KeyIdleLock, "15", "15"},
+		{common.KeyKioskPaymentMode, common.KioskPaymentModeCounter, common.KioskPaymentModeCounter},
+		{common.KeyStaffLocales, "en", "en"},
+		{common.KeyLocale, "en", "en"},
 	}
+	withRealLocales(t)
 	covered := map[string]bool{}
 	for _, c := range cases {
 		msg, err := cloudSetTillSetting(ctx, dp, nil, c.key, c.value)
@@ -1003,8 +1016,9 @@ func TestRemoteTillSettingsReport(t *testing.T) {
 	}
 
 	got := remoteTillSettingsReport(ctx, dp)
-	if len(got) != len(allowedRemoteTillSettingKeys) {
-		t.Fatalf("report has %d keys, want exactly the %d whitelisted: %+v", len(got), len(allowedRemoteTillSettingKeys), got)
+	// ut-docs#3390: plus the read-only keys my. shows.
+	if want := len(allowedRemoteTillSettingKeys) + len(reportedReadOnlyTillSettingKeys); len(got) != want {
+		t.Fatalf("report has %d keys, want exactly the %d whitelisted + read-only: %+v", len(got), want, got)
 	}
 	for key := range allowedRemoteTillSettingKeys {
 		if _, ok := got[key]; !ok {
@@ -2735,6 +2749,48 @@ func TestRemoteConfigReport_EmptyShopGivesEmptyArrays(t *testing.T) {
 	}
 }
 
+// ut-docs#3585: the categories report carries icon_stored — the raw icon
+// column — next to icon (the effective, displayed one). With a photo set
+// icon is "" but icon_stored still names the icon underneath, so my.'s
+// picker can show it; a legacy library tile with no icon reports icon as
+// the tile's id but icon_stored "".
+func TestRemoteCategoriesReport_ReportsTheStoredIcon(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	if _, err := dp.Db.Exec(`DELETE FROM categories`); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO categories (id, name, sort_order, image_path, icon) VALUES ('photo', 'Photo', 0, '/public/assets/categories/photo/thumb.png', 'lucide:soup')`,
+		`INSERT INTO categories (id, name, sort_order, image_path, icon) VALUES ('icon', 'Icon', 1, NULL, 'lucide:leaf')`,
+		`INSERT INTO categories (id, name, sort_order, image_path, icon) VALUES ('tile', 'Tile', 2, '/public/assets/category-icons/beer.svg', NULL)`,
+		`INSERT INTO categories (id, name, sort_order, image_path, icon) VALUES ('none', 'None', 3, NULL, NULL)`,
+	} {
+		if _, err := dp.Db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	type pair struct{ icon, stored string }
+	want := map[string]pair{
+		"photo": {"", "lucide:soup"},
+		"icon":  {"lucide:leaf", "lucide:leaf"},
+		"tile":  {"lucide:beer", ""},
+		"none":  {"", ""},
+	}
+	got := map[string]pair{}
+	for _, c := range remoteCategoriesReport(t.Context(), dp) {
+		stored, ok := c["icon_stored"].(string)
+		if !ok {
+			t.Fatalf("category %v: icon_stored missing or not a string: %#v", c["id"], c["icon_stored"])
+		}
+		got[c["id"].(string)] = pair{c["icon"].(string), stored}
+	}
+	for id, w := range want {
+		if got[id] != w {
+			t.Errorf("category %s reports (icon, icon_stored) = %+v, want %+v", id, got[id], w)
+		}
+	}
+}
+
 // One of everything, linked every way the contract carries: a child
 // category with a colour, two modifier groups linked to the parent in an
 // explicit order, options with a price delta, a direct item link, and a
@@ -2818,7 +2874,9 @@ func TestRemoteConfigReport_CategoriesGroupsStationsLinked(t *testing.T) {
 		assertExactKeys(t, fmt.Sprintf("categories[%d]", i), o,
 			"id", "name", "parent_id", "color", "icon", "show_on_sale_screen", "sort_order", "active", "modifier_group_ids", "station_ids",
 			// contract §3.9 rule 5 (ut-docs#3139)
-			"image_sha256")
+			"image_sha256",
+			// contract §3.6: the raw stored icon (ut-docs#3585)
+			"icon_stored")
 	}
 	byID := map[string]configReportCategory{}
 	for _, c := range cats {

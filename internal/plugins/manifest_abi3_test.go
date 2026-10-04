@@ -17,7 +17,7 @@ import (
 func TestParseManifest_ABI3FieldsRoundTrip(t *testing.T) {
 	src := manifestWith(`,"wasm_abi":2,
 		"limits":{"memory_mb":64,"storage_mb":50,"http_body_mb":8,"long_call_s":180},
-		"schedules":[{"event":"tax_de.tse_retry.tick","every_s":300,"jitter_s":60}],
+		"schedules":[{"event":"t.p.tse_retry.tick","every_s":300,"jitter_s":60}],
 		"db":{"migrations":"db/migrations"},
 		"retention":{"keep_years":10,"reason_key":"plugin.tax_de.retention_reason"},
 		"views_used":["sales.by_day.v1","items.top.v1"],
@@ -29,7 +29,7 @@ func TestParseManifest_ABI3FieldsRoundTrip(t *testing.T) {
 	if m.WasmABI != 2 || m.Limits == nil || m.Limits.MemoryMB != 64 || m.Limits.LongCallS != 180 {
 		t.Fatalf("wasm_abi/limits not parsed: %+v %+v", m.WasmABI, m.Limits)
 	}
-	if len(m.Schedules) != 1 || m.Schedules[0].Event != "tax_de.tse_retry.tick" || m.Schedules[0].EveryS != 300 || m.Schedules[0].JitterS != 60 {
+	if len(m.Schedules) != 1 || m.Schedules[0].Event != "t.p.tse_retry.tick" || m.Schedules[0].EveryS != 300 || m.Schedules[0].JitterS != 60 {
 		t.Fatalf("schedules not parsed: %+v", m.Schedules)
 	}
 	if m.DB == nil || m.DB.Migrations != "db/migrations" {
@@ -77,16 +77,19 @@ func TestParseManifest_ABI3Refusals(t *testing.T) {
 		{"negative body", `,"limits":{"http_body_mb":-5}`, "limits.http_body_mb"},
 		{"negative long call", `,"limits":{"long_call_s":-5}`, "limits.long_call_s"},
 		{"schedule without event", `,"schedules":[{"every_s":60}]`, "schedules[0].event"},
-		{"schedule event single segment", `,"schedules":[{"event":"tick","every_s":60}]`, "schedules[0].event"},
-		{"schedule event upper case", `,"schedules":[{"event":"Tax.Tick","every_s":60}]`, "schedules[0].event"},
-		{"schedule zero interval", `,"schedules":[{"event":"t.tick","every_s":0}]`, "every_s must be at least 30"},
-		{"schedule under 30 s", `,"schedules":[{"event":"t.tick","every_s":29}]`, "every_s must be at least 30"},
-		{"schedule jitter over interval", `,"schedules":[{"event":"t.tick","every_s":60,"jitter_s":61}]`, "jitter_s"},
+		{"schedule event single segment", `,"schedules":[{"event":"tick","every_s":60}]`, "dot-separated lower-case segments"},
+		{"schedule event upper case", `,"schedules":[{"event":"Tax.Tick","every_s":60}]`, "dot-separated lower-case segments"},
+		{"schedule zero interval", `,"schedules":[{"event":"t.p.tick","every_s":0}]`, "every_s must be at least 30"},
+		{"schedule under 30 s", `,"schedules":[{"event":"t.p.tick","every_s":29}]`, "every_s must be at least 30"},
+		{"schedule jitter over interval", `,"schedules":[{"event":"t.p.tick","every_s":60,"jitter_s":61}]`, "jitter_s"},
 		{"schedule raises a sale event", `,"schedules":[{"event":"sale.completed","every_s":60}]`, "core's \"sale\" namespace"},
 		{"schedule raises a fiscal ask", `,"schedules":[{"event":"fiscal.sign.ask","every_s":60}]`, "core's \"fiscal\" namespace"},
 		{"schedule raises a ui event", `,"schedules":[{"event":"ui.view.ask","every_s":60}]`, "core's \"ui\" namespace"},
 		{"schedule raises a payment authorize", `,"schedules":[{"event":"payment.card.authorize","every_s":60}]`, "core's \"payment\" namespace"},
-		{"schedule negative jitter", `,"schedules":[{"event":"t.tick","every_s":60,"jitter_s":-1}]`, "jitter_s must be between"},
+		{"schedule raises another plugin's event", `,"schedules":[{"event":"other.tick","every_s":60}]`, "must start with this plugin's own id (\"t.p.\")"},
+		{"schedule shares only the id's first segment", `,"schedules":[{"event":"t.tick","every_s":60}]`, "must start with this plugin's own id"},
+		{"schedule id prefix without a dot", `,"schedules":[{"event":"t.pq.tick","every_s":60}]`, "must start with this plugin's own id"},
+		{"schedule negative jitter", `,"schedules":[{"event":"t.p.tick","every_s":60,"jitter_s":-1}]`, "jitter_s must be between"},
 		{"db without migrations", `,"db":{}`, "db.migrations"},
 		{"db absolute path", `,"db":{"migrations":"/etc/migrations"}`, "db.migrations"},
 		{"db escapes plugin tree", `,"db":{"migrations":"../../core"}`, "db.migrations"},
@@ -121,7 +124,7 @@ func TestParseManifest_ABI3AcceptsEdges(t *testing.T) {
 		`,"wasm_abi":0`,
 		`,"limits":{}`,
 		`,"limits":{"memory_mb":100000}`, // over the ceiling: clamped, not refused
-		`,"schedules":[{"event":"t.tick","every_s":30,"jitter_s":30}]`,
+		`,"schedules":[{"event":"t.p.tick","every_s":30,"jitter_s":30}]`,
 		`,"db":{"migrations":"./db/migrations"}`,
 		`,"retention":{"keep_years":0}`,
 		`,"views_used":["audit.summary.v12"]`,
@@ -134,6 +137,43 @@ func TestParseManifest_ABI3AcceptsEdges(t *testing.T) {
 		extra := `,"entries":[{"type":"page","key":"p","label":"P","route":"/plugin/t/p","slot":"` + slot + `"}]`
 		if _, err := ParseManifest(strings.NewReader(manifestWith(extra))); err != nil {
 			t.Fatalf("slot %q refused: %v", slot, err)
+		}
+	}
+}
+
+// Real plugin ids use hyphens (com.universaltill.tax-de); the own-id
+// prefix rule makes the id the event prefix, so the event format must
+// accept every character an id may contain (ut-docs#3329).
+func TestParseManifest_ScheduleEventWithHyphenatedID(t *testing.T) {
+	src := `{"id":"com.universaltill.tax-de","name":"T","version":"1.0.0","runtime":"none",` +
+		`"schedules":[{"event":"com.universaltill.tax-de.tse_retry.tick","every_s":300}]}`
+	m, err := ParseManifest(strings.NewReader(src))
+	if err != nil {
+		t.Fatalf("hyphenated own-id schedule refused: %v", err)
+	}
+	if len(m.Schedules) != 1 || m.Schedules[0].Event != "com.universaltill.tax-de.tse_retry.tick" {
+		t.Fatalf("schedules not parsed: %+v", m.Schedules)
+	}
+}
+
+// ADR-0121 2026-10-03 amendment (ut-docs#3329): a plugin's event namespace
+// is its manifest id, so an id may never start with a core event root.
+func TestParseManifest_RefusesIDInCoreEventNamespace(t *testing.T) {
+	for _, id := range []string{"sale", "sale.myplugin", "fiscal.de", "ui.x", "payment.card", "tax.de.tse"} {
+		src := `{"id":"` + id + `","name":"T","version":"1.0.0","runtime":"none"}`
+		_, err := ParseManifest(strings.NewReader(src))
+		if err == nil {
+			t.Fatalf("id %q in a core event namespace accepted", id)
+		}
+		root, _, _ := strings.Cut(id, ".")
+		if !strings.Contains(err.Error(), "core event namespace") || !strings.Contains(err.Error(), `"`+root+`"`) {
+			t.Fatalf("id %q: error %q does not name the core namespace %q", id, err, root)
+		}
+	}
+	for _, id := range []string{"t.p", "com.universaltill.ut-faq", "tax_de", "sales_tools.x", "com.sale"} {
+		src := `{"id":"` + id + `","name":"T","version":"1.0.0","runtime":"none"}`
+		if _, err := ParseManifest(strings.NewReader(src)); err != nil {
+			t.Fatalf("id %q refused: %v", id, err)
 		}
 	}
 }

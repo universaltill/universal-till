@@ -107,10 +107,12 @@ func TestPfandDialogStaysKeyboardReachableAndUsesEnglishLabel(t *testing.T) {
 		t.Fatalf("GET /menu: %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `getElementById('pfand-modal').show()`) {
+	// ut-docs#3325: the opener is inline-actions.js's show-keep-focus step,
+	// which calls the non-modal show().
+	if !strings.Contains(body, `show-keep-focus:pfand-modal`) {
 		t.Fatal("Pfandrückgabe opener must use show() so the custom keyboard remains reachable")
 	}
-	if strings.Contains(body, `getElementById('pfand-modal').showModal()`) {
+	if strings.Contains(body, `show-modal:pfand-modal`) || strings.Contains(body, `getElementById('pfand-modal').showModal()`) {
 		t.Fatal("Pfandrückgabe opener must not use showModal(), which makes the custom keyboard inert")
 	}
 	if !strings.Contains(body, "Deposit refund") {

@@ -367,7 +367,7 @@ func TestButtonsHTTPList_CategoryTilePopupHasLoadingAndErrorStates(t *testing.T)
 	mustContainAll(t, body,
 		`data-loading-text="common.loading"`,
 		`data-error-text="common.error.server"`,
-		`hx-on::response-error=`,
-		`hx-on::send-error=`,
+		`data-response-error="error-text:category-items-modal-body"`,
+		`data-send-error="error-text:category-items-modal-body"`,
 	)
 }

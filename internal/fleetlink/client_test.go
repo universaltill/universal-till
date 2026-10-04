@@ -67,13 +67,16 @@ func (h *swapHarness) currentHub() *Hub {
 	return h.hub
 }
 
-// restart closes the hub (every link gets bye "shutdown") and starts a new one.
+// restart starts a new hub, then closes the old one (every link gets bye
+// "shutdown"). New first, because a redial that landed on the closed old hub
+// would get its 503 with a 30 s Retry-After, and the client rightly waits
+// that out (ut-docs#3570).
 func (h *swapHarness) restart() {
-	old := h.currentHub()
-	old.Close()
 	h.mu.Lock()
+	old := h.hub
 	h.hub = NewHub(HubOptions{Config: h.cfg, Hello: testHello})
 	h.mu.Unlock()
+	old.Close()
 }
 
 // clientRec records every callback the client makes.
@@ -262,7 +265,7 @@ func TestClient_ReconnectsAfterMainTillRestartWithoutCountingAFailure(t *testing
 	startClient(t, c)
 	waitFor(t, "linked", c.Linked)
 
-	h.restart() // bye "shutdown", then a fresh hub on the same address
+	h.restart() // a fresh hub on the same address, then bye "shutdown" from the old one
 	waitFor(t, "relinked to the restarted main till", func() bool {
 		return h.currentHub().Peer("till-2") != nil && c.Linked()
 	})

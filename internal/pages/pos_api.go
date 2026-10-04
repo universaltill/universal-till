@@ -1578,12 +1578,41 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 
 	// Reset basket for new customer. The table it had picked is free again
 	// (ut-docs#1390) -- captured before Reset clears it.
+	//
+	// ut-docs#3582 (follow-up to #3423, which only audited the drop): a
+	// resumed held/table/pay-at-counter order that still has lines (priced
+	// or "add by hand") is RE-PARKED under its own identity instead of
+	// dropped -- parkCurrentBasket, the same path a manual Hold and
+	// resumeHeldSale's #1919 auto-park take, which also keeps its table
+	// claim (the parked order's occupancy, ut-docs#1704), so nothing is
+	// released here for it. Getting rid of an order is now the explicit,
+	// permission-gated Cancel order (hold_api.go). A resumed order with
+	// nothing in it has nothing to lose and is still just cleared. If the
+	// re-park itself fails the order stays live in the basket with an error
+	// toast rather than being lost.
 	mux.HandleFunc("/api/pos/reset", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		funcs := httpx.FuncsFor(locale)
+		basketView, _ := ui.NewBasketView(funcs)
+		if origin := d.Engine.HeldOrigin(); !origin.IsZero() && d.Engine.HasItemsOrByHand() {
+			if err := parkCurrentBasket(r.Context(), d, data.NewHeldSalesRepo(d.Db), "", locale, false, false); err != nil {
+				logging.L().Errorf("new sale: re-park resumed order %s: %v", origin.ID, err)
+				b := d.Engine.Basket()
+				b.ToastMessage = httpx.T(locale, "hold.error.failed")
+				b.ToastLevel = "error"
+				_ = basketView.Render(w, &b)
+				return
+			}
+			w.Header().Set("HX-Trigger", "held-changed")
+			b, _ := d.Engine.Scan("")
+			b.ToastMessage = fmt.Sprintf(httpx.T(locale, "hold.toast.reparked"), origin.Label)
+			b.ToastLevel = "success"
+			_ = basketView.Render(w, b)
+			return
+		}
 		tableToRelease := d.Engine.TableID()
 		d.Engine.Reset()
 		releaseTableClaim(r.Context(), d, repo, tableToRelease)
-		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		basketView, _ := ui.NewBasketView(funcs)
 		b, _ := d.Engine.Scan("")
 		_ = basketView.Render(w, b)
 	})
@@ -2392,7 +2421,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			storeNameOrDefault(r.Context(), d), receiptDesignFromSettings(r.Context(), d), tableLabelForReceipt, issuedVouchers, printerCfg.ReceiptPolicy, receiptEvidence)
 		if renderErr != nil {
 			printerUnavailable = true
-			receiptHTML = `<div class="receipt-printer-warning"><span class="receipt-printer-message">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.unavailable")) + `</span><button class="btn secondary receipt-printer-retry" type="button" onclick="window.print()">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.retry")) + `</button></div>`
+			receiptHTML = `<div class="receipt-printer-warning"><span class="receipt-printer-message">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.unavailable")) + `</span><button class="btn secondary receipt-printer-retry" type="button" data-action="print">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.retry")) + `</button></div>`
 		}
 
 		writeTenderView(receiptHTML)

@@ -102,6 +102,84 @@ func TestTillID_ReturnsExistingValueWithoutOverwriting(t *testing.T) {
 	}
 }
 
+// ut-docs#3307: ReportedTillID's three tiers — sync.till_id (joined), then
+// the kept cloud id (once joined, now promoted), then this till's own LAN id.
+func TestReportedTillID_PrefersSyncTillID(t *testing.T) {
+	settings := openTestSettings(t)
+	ctx := context.Background()
+	for k, v := range map[string]string{
+		"sync.till_id":                      "  roster-id  ",
+		data.TillIdentityCloudIDSettingsKey: "kept-id",
+		TillIDSettingKey:                    "lan-id",
+	} {
+		if err := settings.Set(ctx, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := ReportedTillID(ctx, settings)
+	if err != nil || got != "roster-id" {
+		t.Fatalf("ReportedTillID = %q, %v; want %q", got, err, "roster-id")
+	}
+}
+
+func TestReportedTillID_FallsBackToCloudIDWhenNoSyncTillID(t *testing.T) {
+	for _, syncTillID := range []*string{nil, ptr("   ")} {
+		settings := openTestSettings(t)
+		ctx := context.Background()
+		if syncTillID != nil {
+			if err := settings.Set(ctx, "sync.till_id", *syncTillID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := settings.Set(ctx, data.TillIdentityCloudIDSettingsKey, " kept-id "); err != nil {
+			t.Fatal(err)
+		}
+		if err := settings.Set(ctx, TillIDSettingKey, "lan-id"); err != nil {
+			t.Fatal(err)
+		}
+		got, err := ReportedTillID(ctx, settings)
+		if err != nil || got != "kept-id" {
+			t.Fatalf("ReportedTillID = %q, %v; want %q", got, err, "kept-id")
+		}
+	}
+}
+
+func TestReportedTillID_CloudIDDoesNotMintLANID(t *testing.T) {
+	settings := openTestSettings(t)
+	ctx := context.Background()
+	if err := settings.Set(ctx, data.TillIdentityCloudIDSettingsKey, "kept-id"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReportedTillID(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok, _ := settings.Get(ctx, TillIDSettingKey); ok {
+		t.Fatalf("tier 2 must not mint a LAN id, got %q", v)
+	}
+}
+
+func TestReportedTillID_MintsLANIDWhenNeitherSet(t *testing.T) {
+	settings := openTestSettings(t)
+	ctx := context.Background()
+	if err := settings.Set(ctx, data.TillIdentityCloudIDSettingsKey, "  "); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReportedTillID(ctx, settings)
+	if err != nil || got == "" {
+		t.Fatalf("ReportedTillID = %q, %v; want a minted id", got, err)
+	}
+	lan, err := TillID(ctx, settings)
+	if err != nil || lan != got {
+		t.Fatalf("expected the LAN id %q (TillID), got %q (err %v)", lan, got, err)
+	}
+	again, _ := ReportedTillID(ctx, settings)
+	if again != got {
+		t.Fatalf("expected a stable id, got %q then %q", got, again)
+	}
+}
+
+func ptr(s string) *string { return &s }
+
 // ut-docs#271: on a genuinely fresh DB, two concurrent first callers (e.g.
 // the advertiser's tick and an incoming pairing request racing at boot) must
 // converge on the same till id, not each mint and persist their own with

@@ -54,7 +54,7 @@
     {{ T "catalog.barcode_backfill.confirm_btn" }}
   </button>
   {{ end }}
-  <button class="btn secondary" type="button" onclick="document.getElementById('barcode-backfill-modal').close()">{{ T "common.close" }}</button>
+  <button class="btn secondary" type="button" data-action="close:barcode-backfill-modal">{{ T "common.close" }}</button>
 </div>
 {{ end }}
 
@@ -75,6 +75,6 @@
        comment) so the catalog grid picks up the newly-assigned barcodes.
        ut-docs#2762: only #catalog-table is re-fetched and swapped (the
        dialog's data-ut-refresh, catalog.html), not the whole page. */}}
-  <button class="btn secondary" type="button" onclick="document.getElementById('barcode-backfill-modal').close(); UT.refreshRegion(this)">{{ T "common.close" }}</button>
+  <button class="btn secondary" type="button" data-action="close:barcode-backfill-modal refresh-region">{{ T "common.close" }}</button>
 </div>
 {{ end }}

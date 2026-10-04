@@ -14,6 +14,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // Raw TCP transport for local-hardware/device plugins (ut-docs#542,
@@ -189,6 +190,12 @@ func hostTCPOpen(ctx context.Context, m api.Module, hostPtr, hostLen, port, time
 	s, ok := stateFrom(ctx)
 	if !ok {
 		return hostErrInternal
+	}
+	// The public demo till has no outbound network (ADR-0113 §1.6): every
+	// tcp egress is permission denied, whatever the plugin was granted.
+	if netaccess.Demo() {
+		logging.L().Infof("[wasm:%s] tcp egress denied: demo mode (ADR-0113)", s.pluginID)
+		return hostErrDenied
 	}
 	hostRaw, ok := readGuest(m, hostPtr, hostLen)
 	if !ok || len(hostRaw) == 0 {

@@ -9,6 +9,7 @@ import (
 	"log"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/universaltill/universal-till/internal/barcode"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/clock"
 	"github.com/universaltill/universal-till/internal/cloudsync"
@@ -114,6 +116,33 @@ var allowedRemoteTillSettingKeys = map[string]bool{
 	data.OrderTypePromptModeKey: true,
 	common.KeyBrowsingMode:      true,
 	data.SaleDisplayNoSchemeKey: true,
+	// ut-docs#3390 (BA/Architect decision table on the card): the rest of
+	// the till's Settings cards a shop owner may change from my. Each is
+	// shop-wide (refuseShopWideDirectiveOnAdditionalTill) and validated
+	// below exactly as its own Settings form validates it.
+	data.BarcodeEnabledSymbologiesKey:          true, // settings-barcode
+	data.CatalogImportBarcodeFromSKUDefaultKey: true, // settings-catalog-import-barcode-default
+	data.CatalogPrePackUnitPriceEnabledKey:     true, // settings-catalog-pre-pack-unit-price
+	common.KeyAllowNegativeInventory:           true, // settings-stock-tracking
+	keyInvoiceSellerName:                       true, // settings-invoice
+	keyInvoiceSellerAddress:                    true, // settings-invoice
+	keyInvoiceSellerVATNo:                      true, // settings-invoice
+	common.KeyIdleLock:                         true, // settings-idle-lock
+	common.KeyKioskPaymentMode:                 true, // settings-kiosk-payment-mode
+	common.KeyLocale:                           true, // settings-language
+	common.KeyStaffLocales:                     true, // settings-staff-languages
+}
+
+// reportedReadOnlyTillSettingKeys are reported to the cloud so my. can show
+// them, but are never remote-writable (ut-docs#3390): shortening retention
+// deletes records (the legal minimums and the confirm live at the till), the
+// currency changes the meaning of every price and report, and the shop type
+// drives tax/fiscal defaults. Never add one of these to
+// allowedRemoteTillSettingKeys without superseding that decision.
+var reportedReadOnlyTillSettingKeys = []string{
+	common.KeyReportRetentionMode, // settings-retention
+	common.KeyCurrency,            // settings-currency
+	common.KeyShopType,            // settings-shop-type
 }
 
 // cloudSetTillSetting is the set_till_setting hook: whitelist check, then the
@@ -131,6 +160,10 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 	if err := refuseShopWideDirectiveOnAdditionalTill(ctx, d, key); err != nil {
 		return "", err
 	}
+	// The prior value, for the audit row an applied change writes (review
+	// of ut-docs#3390: a remote setting change has no operator at the till,
+	// so — like rename_till and the quick-button layout — it is audited).
+	oldValue, _, _ := d.Settings.Get(ctx, key)
 	value = strings.TrimSpace(value)
 	switch key {
 	case keyPrinterReceiptPolicy:
@@ -192,6 +225,78 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 		if value != data.DisplayNoSchemeTradingPeriodReset && value != data.DisplayNoSchemeLifetimeNoReset {
 			return "", fmt.Errorf("%s must be one of trading_period_reset, lifetime_no_reset", key)
 		}
+	case data.BarcodeEnabledSymbologiesKey:
+		// settings-barcode (ut-docs#3390): the whole set at once, as the JSON
+		// id list the checklist stores. Mirrors POST
+		// /api/settings/barcode-symbology per id: every id must be in the
+		// registry, and the set may never be empty
+		// (ErrEmptyBarcodeSymbologySet). The write goes through
+		// SettingsRepo.Set, which drops the scan path's cached set.
+		v, err := remoteBarcodeSymbologySet(value)
+		if err != nil {
+			return "", fmt.Errorf("%s: %w", key, err)
+		}
+		value = v
+	case data.CatalogImportBarcodeFromSKUDefaultKey, data.CatalogPrePackUnitPriceEnabledKey:
+		// settings-catalog-import-barcode-default / -pre-pack-unit-price:
+		// mirrors their handlers — strconv.ParseBool, stored "1"/"0".
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return "", fmt.Errorf("%s must be true or false", key)
+		}
+		value = "0"
+		if b {
+			value = "1"
+		}
+	case common.KeyAllowNegativeInventory:
+		// settings-stock-tracking: mirrors /api/settings/allow-negative-
+		// inventory — strconv.ParseBool, stored as SaveState writes it. It
+		// lives in RuntimeState: the re-derive below makes CompleteSale's
+		// stock guard see it.
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return "", fmt.Errorf("%s must be true or false", key)
+		}
+		value = strconv.FormatBool(b)
+	case keyInvoiceSellerName, keyInvoiceSellerAddress, keyInvoiceSellerVATNo:
+		// settings-invoice: mirrors POST /api/settings/invoice — free text,
+		// trimmed, blank clears (a blank seller name turns invoices off).
+	case common.KeyIdleLock:
+		// settings-idle-lock: mirrors /api/settings/idle-lock, 0..480. The
+		// re-derive below applies it to the auth service and the client
+		// idle timer, as that handler does.
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 480 {
+			return "", fmt.Errorf("%s must be between 0 and 480 minutes", key)
+		}
+		value = strconv.Itoa(n)
+	case common.KeyKioskPaymentMode:
+		// settings-kiosk-payment-mode: mirrors /api/settings/kiosk-payment-
+		// mode — kiosk or counter, refused otherwise.
+		if value != common.KioskPaymentModeKiosk && value != common.KioskPaymentModeCounter {
+			return "", fmt.Errorf("%s must be kiosk or counter", key)
+		}
+	case common.KeyLocale:
+		// settings-language: mirrors the Language card on /api/settings/save
+		// — the locale must be installed on this till. That handler drops an
+		// unknown one silently; a remote result says why nothing changed.
+		if !slices.Contains(httpx.AvailableLocales(), value) {
+			return "", fmt.Errorf("%s: language %q is not installed on this till", key, value)
+		}
+		msg, err := cloudSetShopLocale(ctx, d, rederive, value)
+		if err == nil {
+			auditRemoteTillSetting(ctx, d, key, oldValue, value)
+		}
+		return msg, err
+	case common.KeyStaffLocales:
+		// settings-staff-languages: mirrors /api/settings/staff-languages —
+		// a comma-separated list, each matched to an installed locale, not
+		// empty, the shop default always in it, stored in installed order.
+		v, err := remoteStaffLocales(value)
+		if err != nil {
+			return "", fmt.Errorf("%s: %w", key, err)
+		}
+		value = v
 	default:
 		// Unreachable while this switch covers every whitelisted key — and
 		// that is exactly the point (review of ut-docs#2289). A key added
@@ -207,6 +312,7 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 	if err := d.Settings.Set(ctx, key, value); err != nil {
 		return "", err
 	}
+	auditRemoteTillSetting(ctx, d, key, oldValue, value)
 	if key == data.OrderTypePromptModeKey {
 		httpx.InitOrderTypePromptMode(value)
 	}
@@ -214,6 +320,110 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 		rederive(ctx)
 	}
 	return key + " = " + value, nil
+}
+
+// auditRemoteTillSetting records an applied set_till_setting under the
+// "system" actor (auditCloudDirective): entity "settings", the key, the
+// value before and after. Every remote-writable key is shop configuration a
+// shop owner sees on its Settings card (no secrets), so both values are
+// recorded as-is.
+func auditRemoteTillSetting(ctx context.Context, d *common.Deps, key, oldValue, newValue string) {
+	auditCloudDirective(ctx, d, "settings", key, "cloud_till_setting_set", map[string]any{
+		"key": key, "old": oldValue, "new": newValue, "via": "cloud",
+	})
+}
+
+// remoteBarcodeSymbologySet validates a set_till_setting value for the
+// barcode symbology set: a JSON array of registry ids, none unknown, none
+// repeated, at least one. Returns the canonical JSON (registry order).
+func remoteBarcodeSymbologySet(raw string) (string, error) {
+	var ids []string
+	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+		return "", errors.New(`must be a JSON list of barcode type ids, e.g. ["EAN13","CODE128"]`)
+	}
+	picked := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := barcode.Default().Lookup(id); !ok {
+			return "", fmt.Errorf("unknown barcode type %q", id)
+		}
+		if picked[id] {
+			return "", fmt.Errorf("barcode type %q is listed more than once", id)
+		}
+		picked[id] = true
+	}
+	if len(picked) == 0 {
+		return "", data.ErrEmptyBarcodeSymbologySet
+	}
+	out := make([]string, 0, len(picked))
+	for _, id := range barcode.Default().IDs() {
+		if picked[id] {
+			out = append(out, id)
+		}
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// remoteStaffLocales validates a set_till_setting value for the staff
+// languages exactly as POST /api/settings/staff-languages does, the list
+// arriving comma-separated instead of as repeated form fields.
+func remoteStaffLocales(raw string) (string, error) {
+	available := httpx.AvailableLocales()
+	picked := map[string]bool{}
+	for _, v := range strings.Split(raw, ",") {
+		if strings.TrimSpace(v) == "" {
+			continue
+		}
+		m := httpx.MatchLocale(v, available)
+		if m == "" {
+			return "", fmt.Errorf("language %q is not installed on this till", strings.TrimSpace(v))
+		}
+		picked[m] = true
+	}
+	if len(picked) == 0 {
+		return "", errors.New("select at least one language")
+	}
+	if def := httpx.DefaultStaffLocale(); def != "" && !picked[def] {
+		return "", fmt.Errorf("the shop's default language (%s) can't be removed from the list", def)
+	}
+	ordered := make([]string, 0, len(picked))
+	for _, a := range available {
+		if picked[a] {
+			ordered = append(ordered, a)
+		}
+	}
+	return strings.Join(ordered, ","), nil
+}
+
+// cloudSetShopLocale applies an already-validated shop language the way the
+// Settings Language card does on a main till (POST /api/settings/save with
+// locale): store.locale and the explicit-choice mark in one write (no
+// country change may re-derive it afterwards, ut-docs#1074), then every
+// browser's ut_lang override retired (ut-docs#2135), then the re-derive
+// that republishes the default locale. The caller has already refused an
+// additional till (shop-wide key).
+func cloudSetShopLocale(ctx context.Context, d *common.Deps, rederive func(context.Context), locale string) (string, error) {
+	// settings-write:allow a cloud set_till_setting directive: shop-wide, so this runs only on a main till (refuseShopWideDirectiveOnAdditionalTill, ut-docs#2998)
+	if err := d.Settings.SetMany(ctx, map[string]string{
+		common.KeyLocale:          locale,
+		common.KeyLocaleConfirmed: "true",
+	}); err != nil {
+		return "", err
+	}
+	retireLocaleOverrides(ctx, d.Settings)
+	if rederive != nil {
+		rederive(ctx)
+	} else {
+		httpx.SetDefaultLocale(locale)
+	}
+	return common.KeyLocale + " = " + locale, nil
 }
 
 // cloudRenameTill is the rename_till hook (ut-docs#3272): the owner renamed
@@ -239,6 +449,14 @@ func cloudRenameTill(ctx context.Context, d *common.Deps, raw string) (string, e
 	if enroll.DeviceName(ctx, d.Settings) == name {
 		return "name unchanged", nil
 	}
+	// ut-docs#3308: never a name another till in the shop uses. ut-cloud
+	// refuses that before queueing; this is the till's own check, against
+	// the roster it holds (the cloud's view can be behind it).
+	if taken, err := tillNameTaken(ctx, d, name); err != nil {
+		return "", err
+	} else if taken {
+		return "", errTillNameTaken
+	}
 	key := "till.name"
 	if tillFollowsMain(ctx, d) {
 		key = "sync.till_name"
@@ -261,13 +479,53 @@ func cloudRenameTill(ctx context.Context, d *common.Deps, raw string) (string, e
 // till-settings forms pre-fill from this so the merchant sees applied state,
 // not just what was queued. Only whitelisted keys are ever reported; nothing
 // else in the settings table rides along.
+//
+// ut-docs#3390: the read-only keys (reportedReadOnlyTillSettingKeys) ride
+// along too, and the keys added then report the value the till actually
+// applies — the default where nothing is stored — since my. renders them
+// as checkboxes and checklists, where "" would read as "off".
 func remoteTillSettingsReport(ctx context.Context, d *common.Deps) map[string]string {
-	out := make(map[string]string, len(allowedRemoteTillSettingKeys))
+	out := make(map[string]string, len(allowedRemoteTillSettingKeys)+len(reportedReadOnlyTillSettingKeys))
 	for key := range allowedRemoteTillSettingKeys {
 		v, _, _ := d.Settings.Get(ctx, key)
 		out[key] = v
 	}
+	for _, key := range reportedReadOnlyTillSettingKeys {
+		v, _, _ := d.Settings.Get(ctx, key)
+		out[key] = v
+	}
+	st := d.CurrentState()
+	if ids, err := data.NewSettingsRepo(d.Db).EnabledBarcodeSymbologies(ctx); err == nil {
+		if b, err := json.Marshal(ids); err == nil {
+			out[data.BarcodeEnabledSymbologiesKey] = string(b)
+		}
+	}
+	for _, key := range []string{data.CatalogImportBarcodeFromSKUDefaultKey, data.CatalogPrePackUnitPriceEnabledKey} {
+		if out[key] != "1" {
+			out[key] = "0" // absent reads as off (data/barcode_settings.go)
+		}
+	}
+	out[common.KeyAllowNegativeInventory] = strconv.FormatBool(st.AllowNegativeInventory)
+	out[common.KeyIdleLock] = strconv.Itoa(st.IdleLockMinutes)
+	out[common.KeyKioskPaymentMode] = common.ClampKioskPaymentMode(st.KioskPaymentMode)
+	out[common.KeyLocale] = httpx.DefaultLocale()
+	out[common.KeyStaffLocales] = strings.Join(httpx.StaffLocalesFor(out[common.KeyStaffLocales], httpx.DefaultLocale(), httpx.AvailableLocales()), ",")
+	out[common.KeyCurrency] = st.Currency
+	if out[common.KeyReportRetentionMode] == "" {
+		out[common.KeyReportRetentionMode] = common.ReportRetentionModeTill // unset means "till"
+	}
 	return out
+}
+
+// remoteTillSettingOptions is the choice list my. offers for a setting whose
+// options exist only on the till (ut-docs#3390): the languages installed
+// here, for the shop language and the staff languages.
+func remoteTillSettingOptions() map[string][]string {
+	locales := slices.Clone(httpx.AvailableLocales())
+	return map[string][]string{
+		common.KeyLocale:       locales,
+		common.KeyStaffLocales: slices.Clone(locales),
+	}
 }
 
 // cloudSetQuickButtonLayout is the set_quick_button_layout hook: reorders
@@ -693,7 +951,11 @@ func remoteCategoriesReport(ctx context.Context, d *common.Deps) []map[string]an
 			// screen actually draws (ut-docs#2717): a library tile an
 			// older till stored as a path reports as its id, a photo as
 			// "" — so my. shows what the till shows.
-			"icon":                iconid.EffectiveIcon(c.ImagePath, c.Icon),
+			"icon": iconid.EffectiveIcon(c.ImagePath, c.Icon),
+			// icon_stored is the raw icon column, set even while a photo
+			// hides it (icon above is the displayed one), so my.'s picker
+			// shows the icon actually stored (ut-docs#3585).
+			"icon_stored":         c.Icon,
 			"show_on_sale_screen": !c.SellScreenHidden,
 			"sort_order":          c.SortOrder,
 			"active":              c.IsActive,
@@ -940,6 +1202,12 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		RenameTill: func(ctx context.Context, name string) (string, error) {
 			return cloudRenameTill(ctx, d, name)
 		},
+		// print_report (ut-docs#2537): print a cloud-computed report on
+		// this till; Tick already checked it names this device. See
+		// cloudPrintReport.
+		PrintReport: func(ctx context.Context, r cloudsync.PrintReport) (string, error) {
+			return cloudPrintReport(ctx, d, r)
+		},
 		InstallPlugin: func(ctx context.Context, listingID string) (string, error) {
 			return cloudInstallPlugin(ctx, d, listingID)
 		},
@@ -1037,6 +1305,10 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		DeleteOptionSet: func(ctx context.Context, id string) (string, error) {
 			return cloudDeleteOptionSet(ctx, d, id)
 		},
+		// save_item_variant (ut-docs#3477): see cloudSaveItemVariant.
+		SaveItemVariant: func(ctx context.Context, p data.VariantSave) (string, error) {
+			return cloudSaveItemVariant(ctx, d, p)
+		},
 		// The till user directives (reference/till-user-directives.md §4):
 		// main-till only, PIN opened with the directive key, one
 		// transaction each, audited, idempotent. See
@@ -1107,6 +1379,9 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				// remote-configurable setting, for the portal's
 				// forms.
 				"till_settings": remoteTillSettingsReport(ctx, d),
+				// ut-docs#3390: the choices for the settings whose options
+				// only the till knows (its installed languages).
+				"till_setting_options": remoteTillSettingOptions(),
 				// The applied quick-sale button layout (barcode + label, in
 				// sort order), for the cloud's layout panel to pre-fill from
 				// real state rather than only what was queued. See
@@ -1122,6 +1397,10 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				// The till's UI language tag, for the cloud's status bar
 				// ("EUR · de-DE", manage-shop catalog contract §3.6).
 				"locale": httpx.DefaultLocale(),
+				// ut-docs#3479: the devices this till knows it drives, for
+				// my.'s Tills graph. Per till, main or additional. See
+				// remotePeripheralsReport.
+				"peripherals": remotePeripheralsReport(ctx, d),
 			}
 			// ut-docs#2472 (ADR-0095 Decision 2, read side): the applied
 			// menu configuration — categories with their modifier-group and
@@ -1142,6 +1421,12 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				// Settings → My shop reaches my. See remoteStoreNameReport.
 				if name, ok := remoteStoreNameReport(ctx, d); ok {
 					extra["store_name"] = name
+				}
+				// ut-docs#2774: where replicas reach this main till on the
+				// LAN, for their cloud-assisted re-discovery. See
+				// mainTillLANAddress.
+				if addr, ok := mainTillLANAddress(d); ok {
+					extra[cloudsync.LANAddressKey] = addr
 				}
 				// ADR-0128 §5 (ut-docs#3323): roles and permission actions,
 				// for my.'s role editor — only when the admin generation

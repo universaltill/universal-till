@@ -64,9 +64,13 @@ var (
 )
 
 // cloudAssignableUserRole is the role allow-list a cloud directive may set:
-// the users page's list without super_admin.
-func cloudAssignableUserRole(role string) bool {
-	return role != "super_admin" && isAssignableUserRole(role)
+// the users page's list (custom roles included, ADR-0128 §3) without
+// super_admin.
+func cloudAssignableUserRole(ctx context.Context, repo *data.AuthRepo, role string) (bool, error) {
+	if role == "super_admin" {
+		return false, nil
+	}
+	return isAssignableUserRole(ctx, repo, role)
 }
 
 // isBuiltInUser: 'system' is never an operator; 'kiosk' is the PIN-less
@@ -109,7 +113,11 @@ func applyCloudUserDirective(ctx context.Context, d *common.Deps, keys *directiv
 		if *u.Role == "super_admin" {
 			return "", errors.New(msgUserProtected)
 		}
-		if !cloudAssignableUserRole(*u.Role) {
+		ok, err := cloudAssignableUserRole(ctx, repo, *u.Role)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
 			return "", fmt.Errorf(msgUserBadRole, *u.Role)
 		}
 	}
@@ -157,6 +165,18 @@ func applyCloudUserDirective(ctx context.Context, d *common.Deps, keys *directiv
 	}
 	if found && cur.Role == "super_admin" {
 		return "", errors.New(msgUserProtected)
+	}
+	// A custom role (ADR-0128 §3) must still exist under the write lock:
+	// delete_role refuses only while a user holds the role, so it could
+	// have run between phase 1 and here.
+	if u.Role != nil && !isBuiltinUserRole(*u.Role) {
+		ri, ok, err := repo.GetRoleTx(ctx, tx, *u.Role)
+		if err != nil {
+			return "", err
+		}
+		if !ok || ri.Origin != data.RoleOriginCloud {
+			return "", fmt.Errorf(msgUserBadRole, *u.Role)
+		}
 	}
 	if !found && !(u.Type == "save_user" && u.Create) {
 		return "", fmt.Errorf(msgUserMissing, u.UserID)

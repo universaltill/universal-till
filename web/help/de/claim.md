@@ -4,7 +4,7 @@ title: Geschäftsregistrierung & Beanspruchung
 section: Verbinden & erweitern
 order: 320
 summary: Die Registrierung verbindet Ihre Kasse mit dem Universal-Till-Marktplatz; die Beanspruchung verknüpft das Geschäft mit IHREM Konto, sodass Sie das Online-Backoffice (Meine Geschäfte, Flottenübersicht) und kostenpflichtige Funktionen erhalten.
-keywords: [registrieren, beanspruchen, cloud, marktplatz, geschäft, abonnement, tarif]
+keywords: [registrieren, beanspruchen, cloud, marktplatz, geschäft, abonnement, tarif, koppeln, kopplungscode, neu koppeln]
 ---
 
 # Geschäftsregistrierung & Beanspruchung
@@ -34,3 +34,29 @@ Einstellungen → Abonnement (nur für Manager) zeigt Ihren Tarif so, wie diese 
 - Abonnement beendet: Ihr Abonnement ist nicht mehr aktiv, daher sind kostenpflichtige Funktionen pausiert, bis Sie es in Ihrem Universal-Till-Konto verlängern.
 
 In den beiden letzten Fällen führt ein Hinweis in der Statusleiste zu dieser Karte, und Kassenregistrierung sowie Belegsignierung (TSE) zeigen direkt an, welche ihrer Funktionen pausiert sind. Nichts wird ausgeblendet, und eine bereits eingerichtete TSE signiert weiterhin Belege.
+
+## Die Cloud-Synchronisierung gehört zu den kostenpflichtigen Tarifen
+
+Registrieren und Beanspruchen sind kostenlos, ebenso der Plugin-Store. Die Kasse mit Ihrem Online-Konto synchron zu halten (Umsatzzahlen, Artikelliste, Änderungen auf der Cloud-Verwaltungsseite des Geschäfts) gehört zu den kostenpflichtigen Tarifen. Solange das Geschäft keinen davon hat, nimmt die Kasse im Hintergrund überhaupt keinen Kontakt zur Cloud auf, und Einstellungen → Kassenregistrierung zeigt an, dass die Cloud-Synchronisierung aus ist.
+
+1. Sobald das Geschäft einen kostenpflichtigen Tarif hat, erfährt die Kasse das, wenn jemand an ihr das nächste Mal registriert, koppelt, ein Plugin installiert oder einen Beanspruchungscode erzeugt. Sie können auch unter Einstellungen → Kassenregistrierung auf **Nach einem kostenpflichtigen Tarif suchen** tippen (ein Manager oder Admin bestätigt das). Die Cloud-Synchronisierung startet dann innerhalb einer Minute und läuft von selbst weiter.
+2. Endet der Tarif, stoppt die Cloud-Synchronisierung nach dem nächsten Abgleich der Kasse mit der Cloud. Der Verkauf hängt nie davon ab: Jeder Verkauf funktioniert so oder so offline.
+
+## Wenn die Cloud diese Kasse nicht mehr annimmt
+
+Lehnt die Cloud die Zugangsdaten dieser Kasse dreimal hintereinander ab, erscheint ein Hinweis in der Statusleiste. Er blockiert nie einen Verkauf: Die Kasse verkauft offline weiter, versucht es einmal pro Stunde erneut bei der Cloud und behält alles, was sie noch senden muss, bis sie wieder verbunden ist. Der Hinweis lautet:
+
+- **Aus dem Cloud-Konto des Geschäfts entfernt**: Der Inhaber hat diese Kasse online aus dem Geschäft entfernt.
+- **Diese Kasse muss neu gekoppelt werden**: Die Cloud-Zugangsdaten der Kasse gelten nicht mehr; die Kasse muss erneut mit dem Geschäft gekoppelt werden.
+- **Als neues Geschäft registrieren**: Das Geschäft hat kein Inhaberkonto, daher kann die Kasse nicht gekoppelt werden. Registrieren Sie sie neu als neues Geschäft; nur der alte Kassenverlauf geht verloren.
+
+Ein Manager öffnet mit einem Tipp auf den Hinweis Einstellungen → Kassenregistrierung. Der Hinweis verschwindet nach dem nächsten erfolgreichen Kontakt mit der Cloud.
+
+## Mit einem Geschäft koppeln (und neu koppeln)
+
+Verwenden Sie dies, wenn das Geschäft bereits in der Universal-Till-Cloud existiert und diese Kasse ihm beitreten soll, oder wenn eine Kasse aus dem Cloud-Konto des Geschäfts entfernt wurde bzw. meldet, dass sie neu gekoppelt werden muss.
+
+1. Wählen Sie im Cloud-Konto des Geschäfts „Kasse hinzufügen oder neu koppeln“, um einen Kopplungscode zu erhalten (8 Zeichen, 15 Minuten gültig, einmal verwendbar).
+2. Öffnen Sie an dieser Kasse Einstellungen → Kassenregistrierung → Mit einem Geschäft koppeln, geben Sie den Code ein und tippen Sie auf „Koppeln“. Ein Manager oder Administrator bestätigt den Vorgang.
+3. Die Kasse ersetzt nur ihre eigene Cloud-Verbindung: Sie erhält eine neue Geräte-ID und eigene Zugangsdaten. Verkäufe, Artikel und Einstellungen bleiben auf der Kasse, und der Verkauf funktioniert die ganze Zeit offline weiter.
+4. Auf einer verbundenen Kasse muss der Code vom selben Geschäft stammen wie ihre Hauptkasse; ein Code für ein anderes Geschäft wird abgelehnt und nichts ändert sich. Nach einem abgelehnten oder abgelaufenen Code bleibt die Kasse unregistriert, bis Sie sie mit einem neuen Code koppeln.

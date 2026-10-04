@@ -145,6 +145,9 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 			// passthrough -- an unrecognised query value must not render
 			// verbatim in the banner.
 			"errKey": httpx.QueryErrKey(r),
+			// ut-docs#3582: the one-shot "Order cancelled" banner a cancel's
+			// htmx redirect lands with -- same QueryMsgKey validation.
+			"msgKey": httpx.QueryMsgKey(r),
 		})(w, r)
 	})
 

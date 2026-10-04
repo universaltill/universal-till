@@ -1366,6 +1366,14 @@
          pull (polls GET /ui/buttons/version while visible) — a no-op on any
          page without the sale-screen grid, same pattern as above. -->
     <script defer src="/public/sell-screen-watch.js?v={{ assetv "public/sell-screen-watch.js" }}"></script>
+    <!-- ut-docs#3325 (CSP slice 2): every former inline event handler and
+         htmx attribute handler as delegated, capture-phase
+         listeners driven by data-action / data-* / data-fallback. LAST on
+         purpose: its capture listeners must register after app.js's and
+         list-reorder.js's click swallowers, so those still win, exactly as
+         they did over the inline attributes (header comment in the file;
+         scripts/ci/guard-no-inline-handlers.sh). -->
+    <script defer src="/public/inline-actions.js?v={{ assetv "public/inline-actions.js" }}"></script>
   </head>
   <body class="{{ if kiosk }}kiosk{{ end }}{{ if .saleScreen }} sale-screen{{ end }}{{ if .menuScreen }} menu-screen{{ end }}"
         data-shell-classes="{{ if kiosk }}kiosk{{ end }}{{ if .saleScreen }} sale-screen{{ end }}{{ if .menuScreen }} menu-screen{{ end }}"
@@ -1416,7 +1424,7 @@
          otherwise coexist as nested duplicate ids, and the partial's own
          dismiss script (getElementById('pairing-notice')) would resolve to
          this outer, dataset-less placeholder instead of the real banner. -->
-    <div id="pairing-notice-mount" hx-get="/ui/pairing-notice" hx-trigger="load, every 30s" hx-preserve></div>
+    <div id="pairing-notice-mount" hx-get="/ui/pairing-notice" hx-trigger="load, every 30s, tills-changed from:body" hx-preserve></div>
     <!-- ut-docs#2343: theme-sync poll, every 30s from every open page.
          hx-swap="none" -- GET /ui/theme-sync's response is an OOB swap of
          THIS div's own id (id="theme-sync-poll", carrying the live theme
@@ -1496,6 +1504,25 @@
            innerHTML swap as nav.html's #sync-chip: the response is the
            chip itself, never an OOB swap of this element. -->
       <span id="sb-main-till-mount" hx-preserve hx-get="/ui/main-till-status" hx-trigger="load, every 5s"></span>
+      <!-- ADR-0116 D6 (ut-docs#3524): the cloud refused this till's
+           credential 3 times in a row — "Removed from the shop's cloud
+           account" / "This till needs pairing again" / "Register as a new
+           store" (web/ui/partials/cloud_auth_chip.html). A status chip,
+           never a modal: the till keeps selling offline and retries the
+           cloud hourly. Filled by GET /ui/cloud-auth-chip on load and every
+           60 s (the lock-out only changes on an hourly tick); empty body
+           otherwise. Same hx-preserve + default innerHTML swap as
+           #sb-main-till-mount above. -->
+      <span id="sb-cloud-auth-mount" hx-preserve hx-get="/ui/cloud-auth-chip" hx-trigger="load, every 60s"></span>
+      <!-- ut-docs#574 (ADR-0147): the cloud refused the archived-report
+           upload (subscription not active) — "Report upload refused"
+           (web/ui/partials/report_archive_chip.html). Main till, retention
+           mode cloud/both only. A status chip, never a modal: reports stay
+           on this till and upload once the subscription is active again.
+           Filled by GET /ui/report-archive-chip on load and every 60 s (the
+           uploader retries every ~10 min); empty body otherwise. Same
+           hx-preserve + default innerHTML swap as #sb-cloud-auth-mount. -->
+      <span id="sb-report-archive-mount" hx-preserve hx-get="/ui/report-archive-chip" hx-trigger="load, every 60s"></span>
       <!-- The network light: navigator.onLine, plus the till's own probe
            of its cloud host (ut-docs#3095). navigator.onLine only means a
            network interface is up, so on Wi-Fi whose router has no
@@ -1572,6 +1599,16 @@
         {{ else if updatedownloadlink }}
         <a class="sb-item sb-update" href="https://www.universaltill.com/download"
            rel="noopener" target="_blank" hx-boost="false"><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</a>
+        {{ else if autoupdatestuck }}
+        <!-- ut-docs#2733: auto-update is on but this linux install can't
+             apply it (install tree not writable by the till), so it is
+             silently skipped every night. Say so and lead to the fix: a
+             same-origin link to the help topic (no kiosk dead end; the hint
+             in title="" has no hover on a touchscreen, same as sb-power).
+             The link wraps the text only: arrow-up already leads to /plugins
+             (icons_test: one glyph, one destination). .is-stuck keeps the
+             row visible on the phone sale screen, like sb-power. -->
+        <span class="sb-item sb-update is-stuck"><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;<a data-testid="sb-update-stuck" href="/help/updates" title="{{ T "settings.update.auto_blocked" }}">{{ T "status.update_auto_blocked" }}</a></span>
         {{ else }}
         <!-- ut-docs#159: on a unix kiosk (fullscreen, no browser chrome) a
              website link is a dead end with no way out — state it plainly

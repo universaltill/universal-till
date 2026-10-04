@@ -45,7 +45,11 @@ import (
 // isn't declared secret would risk sealing nothing when it should have
 // sealed — this was ut-docs#1739's review blocker (a manifest read failure
 // silently stored a live credential in cleartext with a 200 OK).
-func secretSettingCheck(ctx context.Context, d *common.Deps, pluginID string) (isSecret func(key string) bool, declaredSecret func(key string) bool, resolved bool) {
+//
+// declaredEndpoint reads the manifest's `type: "endpoint"` declarations
+// (ADR-0121 §2, ut-docs#3328) off the same manifest read, so the POST
+// handler can validate those values before it writes anything.
+func secretSettingCheck(ctx context.Context, d *common.Deps, pluginID string) (isSecret, declaredSecret, declaredEndpoint func(key string) bool, resolved bool) {
 	manifest, _, err := plugins.InstalledManifest(ctx, d.Db, pluginID)
 	resolved = err == nil
 	if err != nil {
@@ -58,7 +62,10 @@ func secretSettingCheck(ctx context.Context, d *common.Deps, pluginID string) (i
 	declaredSecret = func(key string) bool {
 		return manifest.SettingDeclaredSecret(key)
 	}
-	return isSecret, declaredSecret, resolved
+	declaredEndpoint = func(key string) bool {
+		return manifest.SettingDeclaredEndpoint(key)
+	}
+	return isSecret, declaredSecret, declaredEndpoint, resolved
 }
 
 // isTaxRateOverridesKey reports whether a plugin setting is a per-tax-code
@@ -319,7 +326,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		// Display only — safe to degrade to the heuristic if the manifest
 		// can't be resolved right now, per secretSettingCheck's doc comment.
-		isSecret, _, _ := secretSettingCheck(r.Context(), d, pluginID)
+		isSecret, _, _, _ := secretSettingCheck(r.Context(), d, pluginID)
 		var views []settingView
 		for _, row := range rows {
 			v := unwrapSettingValue(row.ValueJSON)
@@ -381,7 +388,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
 			return
 		}
-		isSecret, declaredSecret, resolved := secretSettingCheck(r.Context(), d, pluginID)
+		isSecret, declaredSecret, declaredEndpoint, resolved := secretSettingCheck(r.Context(), d, pluginID)
 		if !resolved {
 			// Fail closed (ADR-0082, ut-docs#1739 review blocker): an
 			// unresolved manifest could be hiding a `type: "secret"`
@@ -403,6 +410,22 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 		// would leave earlier keys' upserts committed with no generation bump
 		// and no audit row — a sibling setting half-saved while the plugin
 		// keeps serving cached answers (ut-docs#190 review finding).
+		// Same rule for `type: "endpoint"` settings (ADR-0121 §2,
+		// ut-docs#3328): a non-blank value must be http(s)://host[:port][/path]
+		// — checked for every row before the first write. Blank clears it.
+		for _, row := range rows {
+			if !declaredEndpoint(row.Key) {
+				continue
+			}
+			form, ok := r.Form["setting_"+row.Key]
+			if !ok || len(form) == 0 {
+				continue
+			}
+			if val := strings.TrimSpace(form[0]); val != "" && !plugins.ValidEndpointURL(val) {
+				http.Error(w, fmt.Sprintf(httpx.T(locale, "plugins.settings.invalid_endpoint"), row.Key), http.StatusBadRequest)
+				return
+			}
+		}
 		typedOverrides := map[string]map[string]int{}
 		if r.Form.Get("setting_takeaway_typed") == "1" {
 			for _, row := range rows {

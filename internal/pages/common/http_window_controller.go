@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // EnvDesktopControlAddr/EnvDesktopControlToken are the env vars
@@ -75,7 +77,7 @@ func NewHTTPWindowControllerFromEnv() (WindowController, bool) {
 	return HTTPWindowController{
 		addr:   addr,
 		token:  strings.TrimSpace(os.Getenv(EnvDesktopControlToken)),
-		client: &http.Client{Timeout: httpWindowControllerTimeout},
+		client: netaccess.NewClient(httpWindowControllerTimeout),
 	}, true
 }
 

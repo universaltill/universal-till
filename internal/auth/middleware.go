@@ -136,6 +136,13 @@ func exempt(path string) bool {
 		// shop-wide settings change on an additional till is refused as
 		// "can't reach the main till". TestSyncPullPathsAreExempt pins it.
 		"/api/sync/settings/apply",
+		// ut-docs#2817: the main-till catalogue write-through an additional
+		// till's catalogue handlers call (internal/pages/catalogsync).
+		// syncTill-authed in the handler like settings/apply. Omitting it
+		// 401s every call, and every catalogue change on an additional till
+		// is refused as "can't reach the main till".
+		// TestSyncPullPathsAreExempt pins it.
+		"/api/sync/catalog/apply",
 		// ADR-0082 (ut-docs#1739): the primary-side one-shot fetch of the
 		// shop-scoped plugin-settings encryption key a replica's KeyStore
 		// makes on first use (internal/pages/sync_admin.go, SecretsKeyFetcher).
@@ -362,14 +369,16 @@ func optionalAuth(path string) bool {
 // hx-triggers and fails on an unclassified one, or on a stale entry here.
 var backgroundPollPaths = map[string]bool{
 	// base.html / nav.html shell, on every page.
-	"/ui/main-till-status":  true,
-	"/ui/net-status":        true, // status-bar light, fetch every 10 s (ut-docs#3095)
-	"/ui/subscription-chip": true, // status-bar subscription chip, every 60 s (ut-docs#2569)
-	"/ui/sync-chip":         true,
-	"/ui/fiscal-chip":       true,
-	"/ui/diagnostics-chip":  true,
-	"/ui/pairing-notice":    true,
-	"/ui/theme-sync":        true,
+	"/ui/main-till-status":    true,
+	"/ui/net-status":          true, // status-bar light, fetch every 10 s (ut-docs#3095)
+	"/ui/subscription-chip":   true, // status-bar subscription chip, every 60 s (ut-docs#2569)
+	"/ui/sync-chip":           true,
+	"/ui/fiscal-chip":         true,
+	"/ui/diagnostics-chip":    true,
+	"/ui/pairing-notice":      true,
+	"/ui/theme-sync":          true,
+	"/ui/cloud-auth-chip":     true, // refused cloud credential (ADR-0116 D6, ut-docs#3524)
+	"/ui/report-archive-chip": true, // refused report upload (ADR-0147, ut-docs#574)
 	// Sale screen watchers (#2765, #2858).
 	"/ui/buttons/version":         true,
 	"/ui/open-orders-badge/watch": true,
@@ -440,16 +449,18 @@ func displayBoardRequest(r *http.Request) bool {
 // running (ut-docs#2935 review). TestShellRequestsAreBoardScoped scans the
 // two templates and fails on a shell request missing here.
 var shellGetPaths = map[string]bool{
-	"/ui/main-till-status":  true,
-	"/ui/net-status":        true,
-	"/ui/subscription-chip": true, // ut-docs#2569
-	"/ui/sync-chip":         true,
-	"/ui/fiscal-chip":       true,
-	"/ui/diagnostics-chip":  true,
-	"/ui/pairing-notice":    true,
-	"/ui/theme-sync":        true,
-	"/ui/session-chip":      true,
-	"/ui/bugreport-chip":    true,
+	"/ui/main-till-status":    true,
+	"/ui/net-status":          true,
+	"/ui/subscription-chip":   true, // ut-docs#2569
+	"/ui/sync-chip":           true,
+	"/ui/fiscal-chip":         true,
+	"/ui/diagnostics-chip":    true,
+	"/ui/pairing-notice":      true,
+	"/ui/theme-sync":          true,
+	"/ui/session-chip":        true,
+	"/ui/bugreport-chip":      true,
+	"/ui/cloud-auth-chip":     true,
+	"/ui/report-archive-chip": true,
 }
 
 var shellPostPaths = map[string]bool{

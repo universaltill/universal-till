@@ -42,6 +42,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"golang.org/x/net/idna"
 
@@ -272,14 +273,117 @@ func tcpGrantMatch(ctx context.Context, db *sql.DB, pluginID, addr string) (exac
 				return true, wildcard, nil
 			}
 		case strings.HasPrefix(p, "tcp:"):
-			gh, gp, serr := net.SplitHostPort(strings.TrimPrefix(p, "tcp:"))
-			if serr != nil {
-				continue
-			}
-			if n, perr := strconv.Atoi(gp); perr == nil && n == wantPort && normGrantHost(gh) == want {
+			gh, n, ok := splitTCPGrantAddr(strings.TrimPrefix(p, "tcp:"))
+			if ok && n == wantPort && normGrantHost(gh) == want {
 				return true, wildcard, nil
 			}
 		}
 	}
 	return false, wildcard, nil
+}
+
+// Validation-data grants (ut-docs#3226, ADR-0121 amendment 2026-10-02).
+//
+//	net:validation:<host>   one named host, exact — no wildcard, no @setting
+//
+// A PAdES-B-LTA seal (ADR-0132 §5) embeds OCSP responses, CRLs and a
+// timestamp. Those are served almost always over plain http:// (the data is
+// itself signed) and a CRL or EU trusted list can exceed http_request's
+// 256 KiB cap. For a host named this way — and only that host —
+// http_request allows plain http and reads up to validationResponseCap.
+// It is NOT an exact grant at dial time: the host must still resolve to a
+// public address (as under net:*), so the relaxation never reaches the LAN,
+// loopback or a metadata address. It never widens netGrantMatch either: an
+// ordinary net:<host> or net:* grant keeps https-only and the 256 KiB cap.
+const netValidationPrefix = "net:validation:"
+
+// ParseValidationPermission reports whether perm is a validation-data grant
+// (any net:validation:…) and, if well-formed, its normalised host. A
+// net:validation: string with no host, a wildcard, a port, a scheme, a path
+// or padding is isValidation=true with an error, so a manifest carrying it
+// is refused instead of silently granting nothing (or something broader).
+func ParseValidationPermission(perm string) (host string, isValidation bool, err error) {
+	if !strings.HasPrefix(perm, netValidationPrefix) {
+		return "", false, nil
+	}
+	raw := strings.TrimPrefix(perm, netValidationPrefix)
+	bad := func(why string) (string, bool, error) {
+		return "", true, fmt.Errorf("permission %q: %s (use net:validation:<host>, one exact host)", perm, why)
+	}
+	switch {
+	case raw == "":
+		return bad("no host")
+	case strings.IndexFunc(raw, unicode.IsSpace) >= 0:
+		return bad("padded or contains whitespace")
+	case strings.HasPrefix(raw, "[") != strings.HasSuffix(raw, "]"):
+		return bad("unbalanced brackets")
+	case strings.Contains(raw, "*"):
+		return bad("wildcards are not allowed")
+	case strings.ContainsAny(raw, "/@?#"):
+		return bad("a host only — no scheme, path, query or setting reference")
+	}
+	if strings.HasPrefix(raw, "[") {
+		// Brackets (balanced, checked above) only ever wrap an IPv6 literal.
+		if a, perr := netip.ParseAddr(raw[1 : len(raw)-1]); perr != nil || !a.Is6() {
+			return bad("brackets must wrap an IPv6 address")
+		}
+	} else if strings.Contains(raw, ":") {
+		// Only an IP literal may contain a colon — never host:port.
+		if _, perr := netip.ParseAddr(raw); perr != nil {
+			return bad("a host only — no port")
+		}
+	}
+	h := normGrantHost(raw)
+	if h == "" {
+		return bad("no host")
+	}
+	return h, true, nil
+}
+
+// validateValidationPermissions refuses a manifest whose net:validation:
+// permission is malformed.
+func validateValidationPermissions(m *Manifest) error {
+	for _, p := range m.Permissions {
+		if _, is, err := ParseValidationPermission(p); is && err != nil {
+			return fmt.Errorf("manifest %w", err)
+		}
+	}
+	return nil
+}
+
+// validationGrantMatch reports whether the plugin holds a granted, well-formed
+// net:validation:<host> for exactly host (after normalisation). Separate from
+// netGrantMatch on purpose: it unlocks plain http and the larger response
+// cap only, never the exact/LAN half of the egress policy.
+func validationGrantMatch(ctx context.Context, db *sql.DB, pluginID, host string) (bool, error) {
+	perms, err := grantedPermissions(ctx, db, pluginID)
+	if err != nil {
+		return false, err
+	}
+	want := normGrantHost(host)
+	if want == "" {
+		return false, nil
+	}
+	for _, p := range perms {
+		if h, is, perr := ParseValidationPermission(p); is && perr == nil && h == want {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// splitTCPGrantAddr splits the <host>:<port> of an exact tcp:<host>:<port>
+// grant, the inverse of tcpAddr (net.JoinHostPort, so an IPv6 host is
+// bracketed). Shared by tcpGrantMatch and the manifest permission allow-list
+// (isKnownPermission) so both read a grant the same way.
+func splitTCPGrantAddr(addr string) (host string, port int, ok bool) {
+	h, ps, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(ps)
+	if err != nil {
+		return "", 0, false
+	}
+	return h, n, true
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // RevocationEntry represents one revoked plugin, decoded exactly as
@@ -66,10 +67,8 @@ func NewRevocationChecker(db *sql.DB, marketplaceURL string, supervisor *Supervi
 	return &RevocationChecker{
 		db:             db,
 		marketplaceURL: marketplaceURL,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-		supervisor: supervisor,
+		httpClient:     netaccess.NewClient(30 * time.Second),
+		supervisor:     supervisor,
 	}
 }
 

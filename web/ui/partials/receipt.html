@@ -213,7 +213,7 @@
     {{ if .PrinterUnavailable }}
     <div class="receipt-printer-warning">
       <span class="receipt-printer-message">{{ T "receipt.printer.unavailable" }}</span>
-      <button class="btn secondary receipt-printer-retry" type="button" onclick="window.print()">{{ T "receipt.printer.retry" }}</button>
+      <button class="btn secondary receipt-printer-retry" type="button" data-action="print">{{ T "receipt.printer.retry" }}</button>
     </div>
     {{ end }}
     {{ if eq .ReceiptPolicy "ask" }}
@@ -234,8 +234,8 @@
     <div class="receipt-ask" id="receipt-ask" role="group" aria-label="{{ T "receipt.ask.title" }}">
       <div class="receipt-ask-title">{{ T "receipt.ask.title" }}</div>
       <div class="receipt-ask-actions">
-        <button class="btn primary" type="button" onclick="var el=document.getElementById('receipt-ask');fetch('/api/print/receipt/{{ .ReceiptNo }}',{method:'POST'}).then(function(r){el.hidden=true;if(!r.ok&&r.status!==451){window.print();}}).catch(function(){el.hidden=true;window.print();})">{{ T "receipt.ask.paper" }}</button>
-        <button class="btn secondary" type="button" onclick="document.getElementById('receipt-ask').hidden=true">{{ T "receipt.ask.none" }}</button>
+        <button class="btn primary" type="button" data-action="receipt-ask-print:{{ .ReceiptNo }}">{{ T "receipt.ask.paper" }}</button>
+        <button class="btn secondary" type="button" data-action="hide:receipt-ask">{{ T "receipt.ask.none" }}</button>
       </div>
     </div>
     {{ end }}
@@ -245,10 +245,10 @@
          on it. In a suppressed market this partial is not rendered at all
          (sale_recorded.html replaces it); this is defence in depth. */}}
     <div class="actions">
-      <button class="btn primary" onclick="var b=this;fetch('/api/print/receipt/{{ .ReceiptNo }}',{method:'POST'}).then(function(r){if(r.ok){b.textContent='✓ {{ T "receipt.print" }}';}else if(r.status===451){b.disabled=true;}else{window.print();}}).catch(function(){window.print();})">{{ T "receipt.print" }}</button>
+      <button class="btn primary" data-action="receipt-print:{{ .ReceiptNo }}" data-done-text="✓ {{ T "receipt.print" }}">{{ T "receipt.print" }}</button>
       <button class="btn secondary" type="button" data-testid="receipt-new-customer"
               hx-get="/ui/basket" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">{{ T "receipt.new_customer" }}</button>
-      <button class="btn secondary" onclick="window.location='/refund/{{ .ReceiptNo }}'">↩ {{ T "refund.title" }}</button>
+      <button class="btn secondary" data-action="go:/refund/{{ .ReceiptNo }}">↩ {{ T "refund.title" }}</button>
     </div>
     <small>{{ T "receipt.auto_reset" }}</small>
   </div>

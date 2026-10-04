@@ -14,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -127,25 +128,104 @@ func TestPruneReportArchive_TillModePastCutoffDeletesOldRows(t *testing.T) {
 	}
 }
 
-func TestPruneReportArchive_CloudModeIsNoOpThisCard(t *testing.T) {
-	dp := newEODTestDeps(t)
+// ADR-0147 §4 (ut-docs#574): the predicate depends on the till and the
+// mode. seedPruneRows archives four rows: two old (2010, 2011), two recent
+// (2026-01-01, 2026-02-01, the newest), and acks the ones listed.
+func seedPruneRows(t *testing.T, dp *common.Deps, acked ...string) *data.POSRepo {
+	t.Helper()
 	repo := data.NewPOSRepo(dp.Db)
-
-	if _, err := repo.ArchiveReport(t.Context(), "eod", "2010-01-01", []byte(`{}`), "", "", time.Time{}); err != nil {
-		t.Fatalf("seed old archive: %v", err)
+	for _, p := range []string{"2010-01-01", "2011-01-01", "2026-01-01", "2026-02-01"} {
+		if _, err := repo.ArchiveReport(t.Context(), "eod", p, []byte(`{}`), "", "", time.Time{}); err != nil {
+			t.Fatalf("seed archive %s: %v", p, err)
+		}
 	}
+	for _, p := range acked {
+		if _, err := dp.Db.Exec(`UPDATE report_archive SET cloud_acked_at = '2026-10-01T00:00:00Z' WHERE period = ?`, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return repo
+}
+
+func assertArchivePeriods(t *testing.T, repo *data.POSRepo, want map[string]bool) {
+	t.Helper()
+	for p, keep := range want {
+		has, err := repo.HasArchivedReport(t.Context(), "eod", p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if has != keep {
+			t.Errorf("period %s present=%v, want %v", p, has, keep)
+		}
+	}
+}
+
+func lastPruneAudit(t *testing.T, dp *common.Deps) map[string]any {
+	t.Helper()
+	var raw string
+	if err := dp.Db.QueryRow(`SELECT data_json FROM audit_log WHERE action = 'report_archive_pruned' ORDER BY created_at DESC LIMIT 1`).Scan(&raw); err != nil {
+		t.Fatalf("no report_archive_pruned audit row: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func TestPruneReportArchive_MainTillCloudModePrunesAckedAnyAge(t *testing.T) {
+	dp := newEODTestDeps(t)
+	repo := seedPruneRows(t, dp, "2010-01-01", "2026-01-01")
 	if err := dp.Settings.Set(t.Context(), common.KeyReportRetentionMode, "cloud"); err != nil {
 		t.Fatal(err)
 	}
-
 	lastPruneDay := ""
-	pruneReportArchive(t.Context(), dp, repo, time.Now(), &lastPruneDay)
-
-	if has, err := repo.HasArchivedReport(t.Context(), "eod", "2010-01-01"); err != nil || !has {
-		t.Fatalf("cloud mode must not prune anything in this card, got has=%v err=%v", has, err)
+	pruneReportArchive(t.Context(), dp, repo, time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC), &lastPruneDay)
+	// Acked rows go whatever their age; the old un-acked 2011 row stays
+	// (not yet in the cloud), and so does the newest row.
+	assertArchivePeriods(t, repo, map[string]bool{"2010-01-01": false, "2011-01-01": true, "2026-01-01": false, "2026-02-01": true})
+	if lastPruneDay != "2026-08-12" {
+		t.Fatalf("lastPruneDay = %q", lastPruneDay)
 	}
-	if lastPruneDay == "" {
-		t.Fatal("expected lastPruneDay still advanced (gate applies regardless of mode) even though nothing was pruned")
+	if a := lastPruneAudit(t, dp); a["mode"] != "cloud" || a["rows_deleted"] != float64(2) {
+		t.Fatalf("audit payload = %v, want mode=cloud rows_deleted=2", a)
+	}
+}
+
+func TestPruneReportArchive_MainTillBothModePrunesAckedAndOld(t *testing.T) {
+	dp := newEODTestDeps(t)
+	repo := seedPruneRows(t, dp, "2010-01-01", "2026-01-01")
+	if err := dp.Settings.Set(t.Context(), common.KeyReportRetentionMode, "both"); err != nil {
+		t.Fatal(err)
+	}
+	lastPruneDay := ""
+	pruneReportArchive(t.Context(), dp, repo, time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC), &lastPruneDay)
+	assertArchivePeriods(t, repo, map[string]bool{"2010-01-01": false, "2011-01-01": true, "2026-01-01": true, "2026-02-01": true})
+	if a := lastPruneAudit(t, dp); a["mode"] != "both" {
+		t.Fatalf("audit payload = %v, want mode=both", a)
+	}
+}
+
+// A replica never uploads, so it never gates on cloud_acked_at: age only, in
+// every mode (ADR-0147 §2/§4).
+func TestPruneReportArchive_ReplicaPrunesByAgeInEveryMode(t *testing.T) {
+	for _, mode := range []string{"till", "cloud", "both"} {
+		t.Run(mode, func(t *testing.T) {
+			dp := newEODTestDeps(t)
+			repo := seedPruneRows(t, dp, "2026-01-01")
+			if err := dp.Settings.Set(t.Context(), "sync.primary_url", "http://10.0.0.2:8080"); err != nil {
+				t.Fatal(err)
+			}
+			if err := dp.Settings.Set(t.Context(), common.KeyReportRetentionMode, mode); err != nil {
+				t.Fatal(err)
+			}
+			lastPruneDay := ""
+			pruneReportArchive(t.Context(), dp, repo, time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC), &lastPruneDay)
+			assertArchivePeriods(t, repo, map[string]bool{"2010-01-01": false, "2011-01-01": false, "2026-01-01": true, "2026-02-01": true})
+			if a := lastPruneAudit(t, dp); a["mode"] != mode || a["main_till"] != false {
+				t.Fatalf("audit payload = %v, want mode=%s main_till=false", a, mode)
+			}
+		})
 	}
 }
 
@@ -1195,14 +1275,29 @@ func TestPostSettingsReportRetention_AcceptsTillPersists(t *testing.T) {
 	}
 }
 
-// This card (ut-docs#571 card 1) implements NO cloud gate at all -- selecting
-// cloud/both must be rejected outright with a 400, not silently accepted, per
-// the card's explicit scope carve-out.
-func TestPostSettingsReportRetention_RejectsCloudAndBoth(t *testing.T) {
+// ADR-0147 §1 (ut-docs#574): cloud/both need this till's cached
+// entitlement to allow cloud_backup; without it the request is refused
+// with a translated 409 and nothing is written. Unknown values stay 400.
+func TestPostSettingsReportRetention_CloudAndBothNeedSubscription(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newEODAPITestMux(t)
 
-	for _, mode := range []string{"cloud", "both", "bogus", ""} {
+	for _, mode := range []string{"cloud", "both"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/settings/report-retention", strings.NewReader("mode="+mode))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("mode=%q without a subscription: expected 409, got %d: %s", mode, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "needs an active subscription") {
+			t.Fatalf("mode=%q: body = %q, want the translated needs-subscription reason", mode, rec.Body.String())
+		}
+		if val, _, _ := dp.Settings.Get(t.Context(), common.KeyReportRetentionMode); val == mode {
+			t.Fatalf("mode=%q: persisted without a subscription", mode)
+		}
+	}
+	for _, mode := range []string{"bogus", ""} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/api/settings/report-retention", strings.NewReader("mode="+mode))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -1210,12 +1305,47 @@ func TestPostSettingsReportRetention_RejectsCloudAndBoth(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("mode=%q: expected 400, got %d: %s", mode, rec.Code, rec.Body.String())
 		}
-		val, _, err := dp.Settings.Get(t.Context(), common.KeyReportRetentionMode)
-		if err != nil {
-			t.Fatal(err)
+	}
+
+	// A lapsed (or stale) cache is the same refusal: fail closed.
+	seedRetentionEntitlement(t, dp, "shop", "lapsed", time.Now())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/report-retention", strings.NewReader("mode=cloud"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("lapsed subscription: expected 409, got %d", rec.Code)
+	}
+}
+
+func TestPostSettingsReportRetention_CloudAndBothAcceptedWithCloudBackup(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newEODAPITestMux(t)
+	seedRetentionEntitlement(t, dp, "shop", "active", time.Now())
+
+	for _, mode := range []string{"cloud", "both", "till"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/settings/report-retention", strings.NewReader("mode="+mode))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("mode=%q with cloud_backup: expected 204, got %d: %s", mode, rec.Code, rec.Body.String())
 		}
-		if val == mode && mode != "" {
-			t.Fatalf("mode=%q: must not have been persisted", mode)
+		if val, _, _ := dp.Settings.Get(t.Context(), common.KeyReportRetentionMode); val != mode {
+			t.Fatalf("mode=%q: persisted %q", mode, val)
+		}
+	}
+}
+
+func seedRetentionEntitlement(t *testing.T, dp *common.Deps, plan, status string, confirmed time.Time) {
+	t.Helper()
+	for k, v := range map[string]string{
+		entitlement.KeyPlan:               plan,
+		entitlement.KeySubscriptionStatus: status,
+		entitlement.KeyLastConfirmedAt:    confirmed.UTC().Format(time.RFC3339),
+	} {
+		if err := dp.Settings.Set(t.Context(), k, v); err != nil {
+			t.Fatal(err)
 		}
 	}
 }
@@ -1501,5 +1631,33 @@ func TestPostReportArchiveExport_ArchivedReportsInRangeErrorIsLocalized(t *testi
 	}
 	if strings.Contains(rec.Body.String(), "no such table") {
 		t.Fatalf("archive export error body leaked raw SQL error text: %q", rec.Body.String())
+	}
+}
+
+// ADR-0147 §1 / review finding 1: a lapse never resets the mode, so a shop
+// already in cloud/both can re-save that same mode (its card still submits
+// it); only a change into cloud/both is gated.
+func TestPostSettingsReportRetention_LapsedShopCanResaveCurrentMode(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newEODAPITestMux(t)
+	if err := dp.Settings.Set(t.Context(), common.KeyReportRetentionMode, "cloud"); err != nil {
+		t.Fatal(err)
+	}
+	seedRetentionEntitlement(t, dp, "shop", "lapsed", time.Now())
+	post := func(mode string) int {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/settings/report-retention", strings.NewReader("mode="+mode))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		mux.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := post("cloud"); code != http.StatusNoContent {
+		t.Fatalf("re-saving the current mode while lapsed: expected 204, got %d", code)
+	}
+	if code := post("both"); code != http.StatusConflict {
+		t.Fatalf("changing to another cloud mode while lapsed: expected 409, got %d", code)
+	}
+	if val, _, _ := dp.Settings.Get(t.Context(), common.KeyReportRetentionMode); val != "cloud" {
+		t.Fatalf("mode = %q, want cloud unchanged", val)
 	}
 }

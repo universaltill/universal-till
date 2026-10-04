@@ -16,9 +16,9 @@ func TestRecoverAndLogRecoversAndLogsRedacted(t *testing.T) {
 
 	var buf syncBuffer
 	L() // make sure once.Do has run, so it never overwrites our swap — and prev is never nil (ut-docs#3410)
-	prev := defaultLogger
-	defaultLogger = &Logger{level: Info, log: log.New(redactingWriter{w: &buf}, "", 0)}
-	t.Cleanup(func() { defaultLogger = prev })
+	prev := defaultLogger.Load()
+	defaultLogger.Store(&Logger{level: Info, log: log.New(redactingWriter{w: &buf}, "", 0)})
+	t.Cleanup(func() { defaultLogger.Store(prev) })
 	ResetRecent()
 	t.Cleanup(ResetRecent)
 
@@ -51,9 +51,9 @@ func TestRecoverAndLogRecoversAndLogsRedacted(t *testing.T) {
 func TestRecoverAndLogNoPanicIsSilent(t *testing.T) {
 	var buf syncBuffer
 	L()
-	prev := defaultLogger
-	defaultLogger = &Logger{level: Debug, log: log.New(&buf, "", 0)}
-	t.Cleanup(func() { defaultLogger = prev })
+	prev := defaultLogger.Load()
+	defaultLogger.Store(&Logger{level: Debug, log: log.New(&buf, "", 0)})
+	t.Cleanup(func() { defaultLogger.Store(prev) })
 
 	done := make(chan struct{})
 	go func() {

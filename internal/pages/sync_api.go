@@ -25,6 +25,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/lanip"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -638,7 +639,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// (adminTables), so .Tills on a replica's own /tills page is no
 		// longer always empty — without this check a replica could revoke
 		// a sibling row in its OWN local copy (a real DELETE, so it looks
-		// like it worked, HX-Refresh and all), while the shop-wide roster
+		// like it worked, the row vanishing and all), while the shop-wide roster
 		// on the primary is untouched: the row just reappears on the next
 		// ~30s admin-bundle pull. Revocation is a primary-authoritative
 		// write, same rule ADR-0011 §2 already states for catalog/settings
@@ -659,7 +660,10 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", id, "till_revoked",
 			nil, time.Now().UTC().Format(time.RFC3339), "")
-		w.Header().Set("HX-Refresh", "true")
+		// No HX-Refresh (ut-docs#2904): the Revoke button refreshes only
+		// #tills-roster (tills_roster.html, "ok refresh-region");
+		// tills-changed re-fetches the nav sync chip at once.
+		w.Header().Set("HX-Trigger", "tills-changed")
 		w.WriteHeader(http.StatusNoContent)
 	})
 
@@ -921,7 +925,7 @@ func primaryURLFromAddress(address string) (string, bool) {
 // decode, just the two values decodeEnrollCode would have produced.
 func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name string) (string, error) {
 	base := strings.TrimSuffix(primaryURL, "/")
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := netaccess.NewClient(60 * time.Second)
 
 	body, _ := json.Marshal(map[string]string{"token": token, "name": name})
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,

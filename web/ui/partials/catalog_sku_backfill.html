@@ -29,7 +29,7 @@
     {{ T "catalog.sku_backfill.confirm_btn" }}
   </button>
   {{ end }}
-  <button class="btn secondary" type="button" onclick="document.getElementById('sku-backfill-modal').close()">{{ T "common.close" }}</button>
+  <button class="btn secondary" type="button" data-action="close:sku-backfill-modal">{{ T "common.close" }}</button>
 </div>
 {{ end }}
 
@@ -41,6 +41,6 @@
        ut-docs#2762) so the grid shows the new SKUs, and removes the
        "Generate missing SKUs (N)" button, whose count is now stale — the
        next page load re-reads it. */}}
-  <button class="btn secondary" type="button" onclick="var b = document.getElementById('catalog-sku-backfill-btn'); if (b) b.remove(); document.getElementById('sku-backfill-modal').close(); UT.refreshRegion(this)">{{ T "common.close" }}</button>
+  <button class="btn secondary" type="button" data-action="remove:catalog-sku-backfill-btn close:sku-backfill-modal refresh-region">{{ T "common.close" }}</button>
 </div>
 {{ end }}

@@ -28,6 +28,11 @@ package plugins
 // No proxy is consulted (a proxy would move the dial off the checked IP) and
 // connections are never pooled, so a connection dialled for one plugin's
 // explicit LAN grant can never be reused by another plugin's request.
+//
+// net:validation:<host> (ut-docs#3226, permission_setting.go) passes the name
+// check and allows plain http for that one host, but is never exact here —
+// not even alongside net:<host> for the same host: it must resolve to a
+// public address.
 
 import (
 	"context"
@@ -42,6 +47,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 const maxPluginRedirects = 5
@@ -159,9 +166,14 @@ func isPublicIP(ip net.IP) bool {
 // addresses may be dialled. hostHTTPRequest seeds it; CheckRedirect adds each
 // redirect target it approves. One chain runs sequentially, but the mutex
 // keeps it safe should the transport ever dial concurrently.
+//
+// validation records the hosts in the chain approved through a
+// net:validation:<host> grant (ut-docs#3226) — they pick the response cap,
+// and play no part in the dial-time IP rule.
 type egressGrants struct {
-	mu    sync.Mutex
-	exact map[string]bool
+	mu         sync.Mutex
+	exact      map[string]bool
+	validation map[string]bool
 }
 
 type egressGrantsKey struct{}
@@ -176,6 +188,21 @@ func (g *egressGrants) has(host string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.exact[normGrantHost(host)]
+}
+
+func (g *egressGrants) addValidation(host string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.validation == nil {
+		g.validation = map[string]bool{}
+	}
+	g.validation[normGrantHost(host)] = true
+}
+
+func (g *egressGrants) isValidation(host string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.validation[normGrantHost(host)]
 }
 
 func withEgressGrants(ctx context.Context, g *egressGrants) context.Context {
@@ -197,12 +224,13 @@ type egressDialer struct {
 }
 
 func defaultEgressDialer() *egressDialer {
-	nd := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	// netaccess.DialContext: refuses every dial on the demo till (ADR-0113).
+	nd := netaccess.DialContext(10*time.Second, 30*time.Second)
 	return &egressDialer{
 		lookup: func(ctx context.Context, host string) ([]net.IP, error) {
 			return net.DefaultResolver.LookupIP(ctx, "ip", host)
 		},
-		dial: nd.DialContext,
+		dial: nd,
 		localIPs: func() []net.IP {
 			addrs, err := net.InterfaceAddrs()
 			if err != nil {
@@ -319,11 +347,9 @@ func newPluginHTTPClient(d *egressDialer, tlsCfg *tls.Config) *http.Client {
 		MaxResponseHeaderBytes: 64 << 10,
 		DisableKeepAlives:      true, // never share a connection across grants
 	}
-	return &http.Client{
-		Transport:     tr,
-		Timeout:       2 * time.Minute, // backstop; the event deadline is usually tighter
-		CheckRedirect: checkPluginRedirect,
-	}
+	c := netaccess.NewClientWithTransport(2*time.Minute, tr) // timeout is a backstop; the event deadline is usually tighter
+	c.CheckRedirect = checkPluginRedirect
+	return c
 }
 
 // defaultPluginHTTPClient serves every plugin's http_request in production.
@@ -337,24 +363,53 @@ func checkPluginRedirect(req *http.Request, via []*http.Request) error {
 		return fmt.Errorf("stopped after %d redirects", maxPluginRedirects)
 	}
 	host := req.URL.Hostname()
-	if !hostAllowedScheme(req.URL) {
-		return &egressDeniedError{host: host, reason: "redirect to scheme " + req.URL.Scheme}
-	}
 	ctx := req.Context()
 	s, ok := stateFrom(ctx)
+	// Each hop's own net:validation: grant (ut-docs#3226) decides whether
+	// plain http is allowed for it — never the previous hop's.
+	validation := false
+	if ok {
+		v, err := validationGrantMatch(ctx, s.db, s.pluginID, host)
+		if err != nil {
+			return &egressDeniedError{host: host, reason: "permission lookup failed"}
+		}
+		validation = v
+	}
+	if !hostAllowedScheme(req.URL, validation) {
+		return &egressDeniedError{host: host, reason: "redirect to scheme " + req.URL.Scheme}
+	}
 	if !ok {
 		return &egressDeniedError{host: host, reason: "no plugin context"}
 	}
-	exact, err := netPermission(ctx, s.db, s.pluginID, host)
+	exact, err := httpNetPermission(ctx, s.db, s.pluginID, host, validation)
 	if err != nil {
 		return err
 	}
-	if exact {
-		if g := egressGrantsFrom(ctx); g != nil {
+	if g := egressGrantsFrom(ctx); g != nil {
+		if exact {
 			g.add(host)
+		}
+		if validation {
+			g.addValidation(host)
 		}
 	}
 	return nil
+}
+
+// httpNetPermission is the name check for http_request and each of its
+// redirect hops. Without a validation grant it is exactly netPermission.
+// With one (validation: the plugin holds net:validation:<host>, ut-docs#3226)
+// the name check has passed and exact is ALWAYS false — even when an
+// ordinary net:<host> / net:@setting grant also covers the host. The request
+// may be plain http, and an exact grant would let it reach a non-public
+// address: that is ADR-0121's unbuilt http:lan (ut-docs#3156), never this
+// grant's. A host named by net:validation: is therefore public-only for
+// every http_request, https included.
+func httpNetPermission(ctx context.Context, db *sql.DB, pluginID, host string, validation bool) (exact bool, err error) {
+	if !validation {
+		return netPermission(ctx, db, pluginID, host)
+	}
+	return false, nil
 }
 
 // netPermission checks the name half of the policy: the plugin must hold

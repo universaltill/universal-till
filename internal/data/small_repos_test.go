@@ -774,6 +774,95 @@ func TestSettingsRepo_ClearReplicaIdentityKeepsOwnTillName(t *testing.T) {
 	})
 }
 
+// TestSettingsRepo_ClearReplicaIdentityKeepsCloudID covers ut-docs#3307:
+// promoting a replica deletes sync.till_id, the id the cloud knows this till's
+// device row by. Before the delete it is copied into the per-till
+// TillIdentityCloudIDSettingsKey so the promoted till keeps reporting the same
+// id (discovery.ReportedTillID). Unlike till.name, a blank sync.till_id never
+// writes a blank cloud id: there is nothing to keep, and an existing kept id
+// from an earlier promotion must survive.
+func TestSettingsRepo_ClearReplicaIdentityKeepsCloudID(t *testing.T) {
+	newRepo := func(t *testing.T) *SettingsRepo {
+		t.Helper()
+		dbc, err := sql.Open("sqlite", ":memory:")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = dbc.Close() })
+		if _, err := dbc.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`); err != nil {
+			t.Fatal(err)
+		}
+		return NewSettingsRepo(dbc)
+	}
+	ctx := context.Background()
+
+	t.Run("sync.till_id copied into the kept cloud id (trimmed)", func(t *testing.T) {
+		repo := newRepo(t)
+		if err := repo.Set(ctx, "sync.till_id", "  roster-till-7  "); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.Set(ctx, TillIdentityCloudIDSettingsKey, "older-id"); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.ClearReplicaIdentity(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if val, ok, err := repo.Get(ctx, TillIdentityCloudIDSettingsKey); err != nil || !ok || val != "roster-till-7" {
+			t.Fatalf("expected %s = %q, got val=%q ok=%v err=%v", TillIdentityCloudIDSettingsKey, "roster-till-7", val, ok, err)
+		}
+		if _, ok, _ := repo.Get(ctx, "sync.till_id"); ok {
+			t.Fatal("expected sync.till_id cleared")
+		}
+	})
+
+	for _, blank := range []struct {
+		name string
+		set  bool
+		val  string
+	}{{"missing", false, ""}, {"whitespace-only", true, "   "}} {
+		t.Run(blank.name+" sync.till_id keeps an existing cloud id", func(t *testing.T) {
+			repo := newRepo(t)
+			if blank.set {
+				if err := repo.Set(ctx, "sync.till_id", blank.val); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := repo.Set(ctx, TillIdentityCloudIDSettingsKey, "kept-id"); err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.ClearReplicaIdentity(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if val, ok, err := repo.Get(ctx, TillIdentityCloudIDSettingsKey); err != nil || !ok || val != "kept-id" {
+				t.Fatalf("expected kept cloud id untouched, got val=%q ok=%v err=%v", val, ok, err)
+			}
+		})
+
+		t.Run(blank.name+" sync.till_id and no cloud id creates no row", func(t *testing.T) {
+			repo := newRepo(t)
+			if blank.set {
+				if err := repo.Set(ctx, "sync.till_id", blank.val); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := repo.ClearReplicaIdentity(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if val, ok, err := repo.Get(ctx, TillIdentityCloudIDSettingsKey); err != nil || ok {
+				t.Fatalf("expected no %s row, got val=%q ok=%v err=%v", TillIdentityCloudIDSettingsKey, val, ok, err)
+			}
+		})
+	}
+}
+
+// TestTillIdentityCloudIDIsPerTill: the kept cloud id belongs to one till
+// and must never ride the admin sync to another (ut-docs#3307).
+func TestTillIdentityCloudIDIsPerTill(t *testing.T) {
+	if !perTillSetting(TillIdentityCloudIDSettingsKey) {
+		t.Fatalf("%s must be per-till (PerTillSettingPrefixes)", TillIdentityCloudIDSettingsKey)
+	}
+}
+
 func TestInvoiceRepo_List(t *testing.T) {
 	dbo, err := db.Open(testsupport.MigratedDBFile(t, "invoices.db"))
 	if err != nil {
@@ -1039,5 +1128,37 @@ func TestTillsRepo_BearerHashByID(t *testing.T) {
 	list, _ := repo.ListTills(ctx)
 	if len(list) != 1 || list[0].LastSeenAt != "" {
 		t.Fatalf("BearerHashByID touched last_seen_at: %+v", list)
+	}
+}
+
+// TestTillsRepo_NameTakenExcept covers the rename-time check (ut-docs#3308):
+// a joined till's synced roster holds its own row too, so its rename skips
+// that row by id — and only that row.
+func TestTillsRepo_NameTakenExcept(t *testing.T) {
+	repo := newTillsTestDB(t)
+	ctx := context.Background()
+	self, err := repo.InsertTill(ctx, "Back Office", "hash-self")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.InsertTill(ctx, "Terrace", "hash-terrace"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, except string
+		want         bool
+	}{
+		{"back office", self, false}, // its own row is skipped
+		{"back office", "", true},    // NameTaken's view: every row counts
+		{" TERRACE ", self, true},    // a sibling, case-insensitively and trimmed
+		{"Patio", self, false},
+	} {
+		got, err := repo.NameTakenExcept(ctx, tc.name, tc.except)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tc.want {
+			t.Errorf("NameTakenExcept(%q, except=%q) = %v, want %v", tc.name, tc.except, got, tc.want)
+		}
 	}
 }

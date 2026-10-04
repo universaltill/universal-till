@@ -14,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -46,7 +47,7 @@ import (
 // table pick re-renders the basket in place on the floor and the release
 // sites sit on tender/reset/hold — a blackholed primary must degrade to the
 // local path in well under a second, never make the till feel frozen.
-var tableClaimProxyClient = &http.Client{Timeout: 800 * time.Millisecond}
+var tableClaimProxyClient = netaccess.NewClient(800 * time.Millisecond)
 
 // postTableClaimOnPrimary is the shared bearer-authed form POST behind the
 // three proxies below. ok=false on ANY failure; a 200 with a decodable

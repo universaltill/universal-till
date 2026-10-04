@@ -4,7 +4,15 @@
      list — so no .card chrome (a bordered box inside a full-screen form
      read as a box-in-a-box). Every form here still targets #catalog-variants
      with outerHTML, unchanged. */}}
-<div class="catalog-detail" id="catalog-variants">
+{{/* ut-docs#3606: every form below that edits an existing record carries
+     that record's updated_at as rendered, in base_updated_at — on an
+     additional till the save travels to the main till, which refuses it
+     as a conflict if the record changed there since (ignored by a save
+     made on the main till itself). The item panel forms (cost, lead time,
+     reorder level) edit the ITEM row, so they carry the item's stamp,
+     which the root also names (data-item-updated-at) for catalog.html to
+     keep the item editor's own base in step after a panel save. */}}
+<div class="catalog-detail" id="catalog-variants"{{ if .ItemID }} data-item-id="{{ .ItemID }}" data-item-updated-at="{{ .ItemUpdatedAt }}"{{ end }}>
   {{ if not .ItemID }}
   <p class="muted" style="margin:0">{{ T "catalog.variants.pick_hint" }}</p>
   {{ else }}
@@ -16,7 +24,7 @@
              source of truth as every other ImageURL consumer in this app
              (basket.html, buttons.html, catalog_row.html) — not a disk-path
              guess. */}}
-        {{ if .ItemImageURL }}<img class="thumb" src="{{ imgv .ItemImageURL }}" alt="" onerror="this.style.display='none'">{{ else }}<div class="thumb" aria-hidden="true"></div>{{ end }}
+        {{ if .ItemImageURL }}<img class="thumb" src="{{ imgv .ItemImageURL }}" alt="" data-fallback="none">{{ else }}<div class="thumb" aria-hidden="true"></div>{{ end }}
         {{/* ut-docs#1956: the dialog's own #item-form-title already shows
              the item name; a second visible heading right under it was
              redundant. Kept for assistive tech (and for the thumb's
@@ -46,6 +54,7 @@
       <div class="muted catalog-detail-label">{{ T "catalog.cost_price" }}</div>
       <form class="chip-add" hx-post="/api/catalog/item-cost" hx-target="#catalog-variants" hx-swap="outerHTML">
         <input type="hidden" name="panelItem" value="{{ .ItemID }}">
+        <input type="hidden" name="base_updated_at" value="{{ .ItemUpdatedAt }}" data-item-stamp>
         <!-- ut-docs#1284: type="number" corrupts a decimal typed via the
              kiosk OSK (see index.html's split-tender amount field). The
              /api/catalog/item-cost handler parses this raw string
@@ -59,6 +68,7 @@
       <div class="muted catalog-detail-label">{{ T "catalog.lead_time_days" }}</div>
       <form class="chip-add" hx-post="/api/catalog/item-lead-time" hx-target="#catalog-variants" hx-swap="outerHTML">
         <input type="hidden" name="panelItem" value="{{ .ItemID }}">
+        <input type="hidden" name="base_updated_at" value="{{ .ItemUpdatedAt }}" data-item-stamp>
         <input type="number" name="leadTimeDays" step="1" min="0" style="max-inline-size:7rem"
                value="{{ if .LeadTimeDays }}{{ .LeadTimeDays }}{{ end }}"
                placeholder="0" title="{{ T "catalog.lead_time_days_hint" }}">
@@ -67,6 +77,7 @@
       <div class="muted catalog-detail-label">{{ T "catalog.reorder_level" }}</div>
       <form class="chip-add" hx-post="/api/catalog/item-reorder-level" hx-target="#catalog-variants" hx-swap="outerHTML">
         <input type="hidden" name="panelItem" value="{{ .ItemID }}">
+        <input type="hidden" name="base_updated_at" value="{{ .ItemUpdatedAt }}" data-item-stamp>
         <input type="number" name="reorderLevel" step="1" min="0" style="max-inline-size:7rem"
                value="{{ if .ReorderLevel }}{{ .ReorderLevel }}{{ end }}"
                placeholder="0" title="{{ T "catalog.reorder_level_hint" }}">
@@ -115,6 +126,7 @@
       <form id="vf-{{ .ID }}" hidden hx-post="/api/catalog/variant" hx-target="#catalog-variants" hx-swap="outerHTML">
         <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
         <input type="hidden" name="id" value="{{ .ID }}">
+        <input type="hidden" name="base_updated_at" value="{{ .UpdatedAt }}">
         <input type="hidden" name="itemId" value="{{ $.ItemID }}">
         <input type="hidden" name="isActive" value="0">
         <input type="hidden" name="price" value="{{ .PriceMinor }}">
@@ -158,9 +170,9 @@
             {{ $variantThumb := printf "/public/assets/items/%s/variants/%s/thumb.png" $.ItemID .ID }}
             {{ if imgExists $variantThumb }}
             <img src="{{ imgv $variantThumb }}" alt=""
-                 onerror="if(!this.dataset.fb){this.dataset.fb=1;{{ if $.ItemImageURL }}this.src='{{ imgv $.ItemImageURL }}';{{ else }}this.style.visibility='hidden';{{ end }}}else{this.style.visibility='hidden';}">
+                 data-fallback="src"{{ if $.ItemImageURL }} data-fallback-src="{{ imgv $.ItemImageURL }}"{{ end }}>
             {{ else if $.ItemImageURL }}
-            <img src="{{ imgv $.ItemImageURL }}" alt="" onerror="this.style.visibility='hidden'">
+            <img src="{{ imgv $.ItemImageURL }}" alt="" data-fallback="hide">
             {{ else }}
             <div class="thumb-ph" aria-hidden="true"></div>
             {{ end }}
@@ -169,7 +181,7 @@
               <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
               <input type="hidden" name="variant_id" value="{{ .ID }}">
               <label title="{{ T "catalog.variant_image" }}"><span class="btn-ico" aria-hidden="true">{{ icon "camera" }}</span><input type="file" name="image" accept="image/png,image/jpeg"
-                     onchange="this.form.requestSubmit()"></label>
+                     data-change="request-submit"></label>
             </form>
           </div>
           <input form="vf-{{ .ID }}" type="text" name="name" value="{{ .Name }}" required>

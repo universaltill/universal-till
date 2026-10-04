@@ -1,0 +1,18 @@
+{{/* ADR-0116 D6 (ut-docs#3524): this till's cloud credential was refused
+     3 times in a row. Rendered by GET /ui/cloud-auth-chip
+     (cloud_auth_chip.go) into the status bar's #sb-cloud-auth-mount on
+     every page, the sale screen included — a status chip, never a modal:
+     the till keeps selling offline and retries the cloud hourly.
+       revoked  — device_revoked: "Removed from the shop's cloud account"
+       repair   — token_retired / unauthorized on a claimed store
+       register — the same on an anonymous store (no owner, no pairing code)
+     Words first, never colour alone. Only a viewer who may open Settings
+     gets a link (an <a> with no href is plain text), so a cashier never
+     gets one that 403s; the explanation is in the title for everyone.
+     The link goes to Settings → Registration until the "Pair with a shop"
+     screen (ut-docs#3523) exists. */}}
+<a {{ if .canManage }}href="/settings#registration" {{ end }}class="sb-item sb-cloud-auth is-{{ .variant }}" data-testid="sb-cloud-auth" data-cloud-auth="{{ .variant }}"
+   title="{{ T "status.cloud_auth.hint" }}">
+  <span class="btn-ico" aria-hidden="true">{{ icon "sparkles" }}</span>
+  <span class="sb-cloud-auth-text">{{ if eq .variant "revoked" }}{{ T "status.cloud_auth.revoked" }}{{ else if eq .variant "repair" }}{{ T "status.cloud_auth.needs_pairing" }}{{ else }}{{ T "status.cloud_auth.register_new" }}{{ end }}</span>
+</a>

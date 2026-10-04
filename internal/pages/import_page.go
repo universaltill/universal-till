@@ -873,9 +873,35 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			Failed    bool     // commit-time failure (category/department/item creation)
 			Idx       int      // stable 0-based row index for this parse (ut-docs#601) — field names row_include_<Idx> etc.
 			FixFields []string // "name"/"price", in order, when the row's issue is forceable with inline correction field(s), else nil — ut-docs#1713: a row can need both at once
+			// GeneratedSKU is the SKU an importable row with no SKU of its
+			// own will get, predicted on preview only (ut-docs#3098) and
+			// rendered as the editable row_sku_<Idx> field; "" otherwise.
+			GeneratedSKU string
 		}
 		var rows []rowView
 		importable := 0
+		// ut-docs#3098: predict blank-SKU rows' SKUs on an interactive-capable
+		// preview only. Nothing is written between predictions, so
+		// skuReserved (this request only — never shared, never persisted)
+		// carries each prediction into the next, and is seeded with every
+		// code the file itself carries so no row is offered a SKU another
+		// row of the same file will claim at commit. Not on commit: the
+		// commit reads the operator's row_sku_<i> instead, and predicting
+		// there would re-add per-row category lookups the per-run caches
+		// exist to avoid (TestImport_CategoryAndTaxCodeLookupsAreCachedPerRun).
+		predictSKUs := !commit && !wizardPreview
+		var skuReserved map[string]bool
+		if predictSKUs {
+			skuReserved = map[string]bool{}
+			for _, it := range res.Items {
+				if it.SKU != "" {
+					skuReserved[it.SKU] = true
+				}
+				if it.Barcode != "" {
+					skuReserved[it.Barcode] = true
+				}
+			}
+		}
 		for i, it := range res.Items {
 			status := T("import.status.ok")
 			skipped := false
@@ -912,7 +938,19 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			if !skipped {
 				importable++
 			}
-			rows = append(rows, rowView{ImportItem: it, Status: status, Skipped: skipped, Idx: i, FixFields: fixFields})
+			generatedSKU := ""
+			if predictSKUs && !skipped && it.SKU == "" {
+				// Same department/category nesting the commit loop
+				// resolves below; a failed prediction only loses the
+				// field — commit still generates the SKU as before.
+				if sku, err := repo.PreviewItemSKU(r.Context(), it.Department, it.Category, skuReserved); err != nil {
+					log.Printf("[import] preview sku for row %d: %v", i, err)
+				} else {
+					generatedSKU = sku
+					skuReserved[sku] = true
+				}
+			}
+			rows = append(rows, rowView{ImportItem: it, Status: status, Skipped: skipped, Idx: i, FixFields: fixFields, GeneratedSKU: generatedSKU})
 		}
 
 		// ut-docs#601: a preview stages the upload so the follow-up commit
@@ -1103,6 +1141,20 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				// writes until they're committed, and folding it in would
 				// mean re-implementing #304's race protection here (see the
 				// card's own discussion of why that's out of scope).
+				// ut-docs#3098: a row with no SKU of its own was shown a
+				// generated one in the preview's row_sku_<i> field. Kept or
+				// edited → it is this row's explicit SKU (a clash is the
+				// usual "already in catalog" skip below); cleared → it.SKU
+				// stays blank and the insert generates one, as before.
+				// Staged commits only, same as the row_include_<i>
+				// corrections: only they map row indexes back reliably.
+				usedPreviewSKU := false
+				if usingStaged && it.SKU == "" {
+					if sku := strings.TrimSpace(r.FormValue(fmt.Sprintf("row_sku_%d", i))); sku != "" {
+						it.SKU = sku
+						usedPreviewSKU = true
+					}
+				}
 				tx, err := d.Db.BeginTx(r.Context(), nil)
 				if err != nil {
 					log.Printf("[import] begin transaction for item %q: %v", it.Name, err)
@@ -1381,12 +1433,17 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 						Location: locID,
 					})
 				}
+				createdStatus := T("import.status.created")
+				if usedPreviewSKU {
+					// AC3 (ut-docs#3098): name the SKU the row actually got.
+					createdStatus = fmt.Sprintf(T("import.status.created_generated_sku"), it.SKU)
+				}
 				if len(warnings) > 0 {
-					rows[i].Status = T("import.status.created") + "; " + strings.Join(warnings, "; ")
+					rows[i].Status = createdStatus + "; " + strings.Join(warnings, "; ")
 					rows[i].Warned = true
 					warned++
 				} else {
-					rows[i].Status = T("import.status.created")
+					rows[i].Status = createdStatus
 				}
 				created++
 			}
@@ -1531,7 +1588,10 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				// place -- the URL stays /items throughout (import.html's
 				// own "no URL push" note) -- so pushing one here would be
 				// wrong, not just redundant.
-				fmt.Fprintf(&b, `<button type="button" class="btn primary" onclick="htmx.ajax('GET','/catalog',{target:'#items-panel',swap:'innerHTML'});this.closest('dialog').close()">%s</button>`,
+				// ut-docs#3325: inline-actions.js steps, not an inline
+				// onclick (CSP script-src-attr) — htmx.ajax GET /catalog
+				// into #items-panel, then close this dialog.
+				fmt.Fprintf(&b, `<button type="button" class="btn primary" data-action="ajax-get:/catalog,#items-panel close-closest">%s</button>`,
 					htmlEscape(T("import.view_catalog")))
 			} else {
 				fmt.Fprintf(&b, `<a class="btn primary" href="/catalog">%s</a>`, htmlEscape(T("import.view_catalog")))
@@ -1665,6 +1725,15 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					}
 				}
 			}
+			if interactive && !row.Skipped && row.GeneratedSKU != "" {
+				// ut-docs#3098: the SKU this row will get, editable before
+				// commit. Same shape as the row_name_/row_price_ inputs:
+				// form-associated, logical properties only (RTL).
+				label := T("import.preview.sku_generated")
+				statusHTML += fmt.Sprintf(
+					`<label for="row-sku-%d" style="display:block;margin-block-start:.3rem">%s</label><input type="text" id="row-sku-%d" name="row_sku_%d" form="import-form" value="%s" aria-label="%s" autocomplete="off" spellcheck="false" style="display:block;max-width:12rem">`,
+					row.Idx, htmlEscape(label), row.Idx, row.Idx, htmlEscape(row.GeneratedSKU), htmlEscape(label))
+			}
 			fmt.Fprintf(&b, `<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
 				cls, htmlEscape(row.Name), httpx.FormatMoney(row.PriceMinor, locale),
 				htmlEscape(row.Barcode), htmlEscape(row.Category), statusHTML)
@@ -1703,8 +1772,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			// hx-indicator's plain (document-wide) selector does. Without
 			// this, the button most likely to be double-tapped (the one
 			// right after a long preview) would show the busy indicator
-			// but stay clickable.
-			fmt.Fprintf(&b, `<div style="margin-block-start:.8rem"><button class="btn primary" type="submit" form="import-form" hx-disabled-elt="this" onclick="document.getElementById('import-commit').value='1'">%s</button></div>`,
+			// but stay clickable. data-action (inline-actions.js) marks it a
+			// commit — no inline onclick, CSP script-src-attr (ut-docs#3325).
+			fmt.Fprintf(&b, `<div style="margin-block-start:.8rem"><button class="btn primary" type="submit" form="import-form" hx-disabled-elt="this" data-action="set-value:import-commit,1">%s</button></div>`,
 				htmlEscape(T("import.import")))
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1805,7 +1875,7 @@ func barcodelessCatalog(res catimport.Result) bool {
 
 // confirmCarriedOverrideField matches exactly the per-row problem-grid
 // field names the commit handler reads (row_include_<i>, row_name_<i>,
-// row_price_<i>) plus the barcode opt-in checkbox (use_item_numbers_as_barcodes,
+// row_price_<i>, row_sku_<i> — ut-docs#3098) plus the barcode opt-in checkbox (use_item_numbers_as_barcodes,
 // ut-docs#1224) — the only request fields renderImportCurrencyConfirm ever
 // reflects back into the prompt's HTML. An allow-list on purpose, same
 // stance as forceableImportIssue: any other submitted field name never
@@ -1821,7 +1891,7 @@ func barcodelessCatalog(res catimport.Result) bool {
 // live, driving this exact sequence in a real browser (ut-docs#1224 tester
 // note) — the item imported with no barcode despite the box being ticked,
 // before this fix.
-var confirmCarriedOverrideField = regexp.MustCompile(`^(row_(include|name|price)_[0-9]+|use_item_numbers_as_barcodes)$`)
+var confirmCarriedOverrideField = regexp.MustCompile(`^(row_(include|name|price|sku)_[0-9]+|use_item_numbers_as_barcodes)$`)
 
 // writeCatalogCSV is G22b's catalog export writer. The CSV round-trips
 // with our own importer (column names come from its synonym table), so

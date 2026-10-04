@@ -54,14 +54,18 @@ import (
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // Settings is the key/value persistence enrolment needs; *settings.Store
-// satisfies it.
+// satisfies it. GetOrCreate makes it a discovery.SettingsReader too, so the
+// till id it reports resolves through discovery.ReportedTillID (ut-docs#3307).
 type Settings interface {
 	Get(ctx context.Context, key string) (string, bool, error)
 	Set(ctx context.Context, key, value string) error
+	GetOrCreate(ctx context.Context, key, defaultValue string) (string, error)
 }
 
 // Settings keys holding the enrolled identity.
@@ -110,7 +114,7 @@ type identity struct {
 }
 
 var (
-	// mu guards cur and every var below it through tokenExplicit, plus
+	// mu guards cur and every var below it through identityReplaced, plus
 	// vouchedDevice (ut-docs#3021).
 	mu  sync.RWMutex
 	cur identity
@@ -129,6 +133,15 @@ var (
 	// this till after boot (ADR-0116 D4, ut-docs#2769), which the startup
 	// copy in cfg would otherwise shadow until a restart.
 	tokenExplicit bool
+	// deviceIDExplicit records whether UT_MARKETPLACE_DEVICE_ID pinned the
+	// device id.
+	deviceIDExplicit bool
+	// identityReplaced: Pair (ADR-0116 D5, ut-docs#3523) replaced this
+	// till's cloud identity after boot, so the startup copy Init filled into
+	// cfg (device id, merchant id, token) is stale: Effective and
+	// currentStoreAuth report the live values instead — even when empty, as
+	// after a refused pairing code — unless the environment pinned them.
+	identityReplaced bool
 	// vouchedDevice is the device id this replica's main till registered in
 	// the cloud on its behalf (ut-docs#2753); empty when none. The replica
 	// holds no store token, so Status.Registered stays false — this is what
@@ -150,7 +163,7 @@ var (
 	attemptSem = make(chan struct{}, 1)
 
 	// Overridable in tests.
-	httpClient  = &http.Client{Timeout: 15 * time.Second}
+	httpClient  = netaccess.NewClient(15 * time.Second)
 	retryDelays = []time.Duration{30 * time.Second, 2 * time.Minute, 5 * time.Minute, 15 * time.Minute, 30 * time.Minute}
 )
 
@@ -281,6 +294,7 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	clientIDExplicit := cfg.Marketplace.ClientID != ""
 	// Same for the merchant token: only the environment can have set it yet.
 	tokenExplicitLocal := cfg.Marketplace.MerchantToken != ""
+	deviceIDExplicitLocal := cfg.Marketplace.DeviceID != ""
 
 	get := func(key string) string {
 		v, _, err := kv.Get(ctx, key)
@@ -322,6 +336,8 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	explicitConfigured = clientIDExplicit
 	storeIDExplicit = storeIDExplicitLocal
 	tokenExplicit = tokenExplicitLocal
+	deviceIDExplicit = deviceIDExplicitLocal
+	identityReplaced = false
 	vouchedDevice = vouched
 	if clientIDExplicit {
 		displayStoreID = cfg.Marketplace.StoreID
@@ -408,13 +424,17 @@ func Effective(cfg *config.Config) config.Config {
 	m := &out.Marketplace
 	mu.RLock()
 	defer mu.RUnlock()
-	if m.DeviceID == "" {
+	// After Pair, the live identity wins over Init's startup copy in cfg
+	// unless the environment pinned it (identityReplaced). The store id
+	// follows the same rule, including when Pair cleared it (a refused pair
+	// on a main till must not keep reporting the startup store).
+	if m.DeviceID == "" || (identityReplaced && !deviceIDExplicit) {
 		m.DeviceID = cur.DeviceID
 	}
-	if m.ClientID == "" {
+	if m.ClientID == "" || (identityReplaced && !explicitConfigured) {
 		m.ClientID = cur.MerchantID
 	}
-	if cur.StoreID != "" && !storeIDExplicit {
+	if (cur.StoreID != "" || identityReplaced) && !storeIDExplicit {
 		m.StoreID = cur.StoreID
 	}
 	if m.PublicKey == "" {
@@ -426,9 +446,10 @@ func Effective(cfg *config.Config) config.Config {
 
 // liveToken is the bearer to send given the caller's (possibly startup)
 // copy: the env-pinned token when there is one, else the live persisted
-// token, else the copy. Callers hold mu (read).
+// token, else the copy — never the copy once Pair replaced the identity
+// (identityReplaced). Callers hold mu (read).
 func liveToken(copyToken string) string {
-	if copyToken == "" || (!tokenExplicit && cur.Token != "") {
+	if copyToken == "" || (!tokenExplicit && (cur.Token != "" || identityReplaced)) {
 		return cur.Token
 	}
 	return copyToken
@@ -543,12 +564,12 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 		fields["region"] = region
 	}
 	// Best-effort like region: the cloud merges/retires older rows by the
-	// till's LAN sync id (ut-docs#2802). Only a joined till holds
-	// sync.till_id (set at join), and a joined till registers through
-	// registerOnReplica, so today this is empty on every path that reaches
-	// here. It is sent so the row carries it if that ever changes; the main
-	// till's own id on its cloud row is a separate card.
-	if tid, _, err := kv.Get(ctx, keySyncTillID); err == nil && strings.TrimSpace(tid) != "" {
+	// till's stable id (ut-docs#2802). A joined till registers through
+	// registerOnReplica, so a till reaching here is a main/standalone one: it
+	// reports the cloud id it kept from an earlier join, else its own LAN id
+	// (discovery.ReportedTillID, ut-docs#3307) — the same id its heartbeat
+	// carries.
+	if tid, err := discovery.ReportedTillID(ctx, kv); err == nil && strings.TrimSpace(tid) != "" {
 		fields["till_id"] = strings.TrimSpace(tid)
 	}
 	payload, err := json.Marshal(fields)
@@ -751,7 +772,7 @@ func currentStoreAuth(m config.MarketplaceConfig) (string, string) {
 	mu.RLock()
 	defer mu.RUnlock()
 	storeID := m.StoreID
-	if cur.StoreID != "" && !storeIDExplicit {
+	if (cur.StoreID != "" || identityReplaced) && !storeIDExplicit {
 		storeID = cur.StoreID
 	}
 	return storeID, liveToken(m.MerchantToken)
@@ -765,8 +786,10 @@ func registerDevice(ctx context.Context, m config.MarketplaceConfig, deviceName 
 	mu.RLock()
 	deviceID := cur.DeviceID
 	mu.RUnlock()
-	tillID, _, _ := kv.Get(ctx, keySyncTillID)
-	if err := registerDeviceID(ctx, m, deviceID, deviceName, buildinfo.Version, tillID); err != nil {
+	tillID, _ := discovery.ReportedTillID(ctx, kv) // best-effort: "" on error
+	// A till registering its own device never gets a redeem code (the cloud
+	// only mints one for another device with no credential yet).
+	if _, err := registerDeviceID(ctx, m, deviceID, deviceName, buildinfo.Version, tillID); err != nil {
 		return err
 	}
 	if err := kv.Set(ctx, keyDeviceRegistered, deviceID); err != nil {
@@ -777,13 +800,20 @@ func registerDevice(ctx context.Context, m config.MarketplaceConfig, deviceName 
 
 // registerDeviceID is the /v1/stores/devices/register call for any device id
 // — this till's own (registerDevice) or a replica's the main till vouches for
-// (VouchForReplica). tillID is the till's LAN sync id (sync.till_id), sent
-// when known as the stable machine key the cloud uses to merge or retire a
-// physical till's older device rows (ut-docs#2730, #2752).
-func registerDeviceID(ctx context.Context, m config.MarketplaceConfig, deviceID, deviceName, version, tillID string) error {
+// (VouchForReplica). tillID is the till's stable id, sent when known as the
+// machine key the cloud uses to merge or retire a physical till's older
+// device rows (ut-docs#2730, #2752): for this till's own device, the
+// discovery.ReportedTillID resolution (sync.till_id, else the kept cloud id,
+// else its LAN id — ut-docs#3307); for a vouched replica, its sync.till_id.
+//
+// It returns the answer's optional data.redeem_code verbatim (ADR-0116 D3):
+// the one-time code the cloud mints when a device credential vouches for
+// another device that has no credential yet. An empty or undecodable body
+// means no code. The caller validates it; it is never logged here.
+func registerDeviceID(ctx context.Context, m config.MarketplaceConfig, deviceID, deviceName, version, tillID string) (string, error) {
 	storeID, token := m.StoreID, m.MerchantToken
 	if storeID == "" || token == "" {
-		return fmt.Errorf("no store identity yet")
+		return "", fmt.Errorf("no store identity yet")
 	}
 	if deviceName == "" {
 		deviceName = "Till"
@@ -796,26 +826,35 @@ func registerDeviceID(ctx context.Context, m config.MarketplaceConfig, deviceID,
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return err
+		return "", err
 	}
 	url := strings.TrimRight(m.EndpointURL, "/") + "/v1/stores/devices/register"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("device register returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return "", fmt.Errorf("device register returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	logging.L().Infof("enrolment: till registered as device %s under store %s", deviceID, storeID)
-	return nil
+	var answer struct {
+		Data struct {
+			RedeemCode string `json:"redeem_code"`
+		} `json:"data"`
+	}
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
+	if json.Unmarshal(raw, &answer) != nil {
+		return "", nil // an empty or non-JSON body: registered, no code
+	}
+	return answer.Data.RedeemCode, nil
 }
 
 // fetchSigningKey retrieves the marketplace's Ed25519 release-signing public

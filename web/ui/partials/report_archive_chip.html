@@ -1,0 +1,15 @@
+{{/* ut-docs#574 (ADR-0147 §1/§2): the cloud refused this shop's archived
+     report upload with 402 subscription_inactive. Rendered by
+     GET /ui/report-archive-chip (report_archive_status.go) into the status
+     bar's #sb-report-archive-mount on every page, only on the main till and
+     only in retention mode cloud or both. A status chip, never a modal: the
+     till keeps every report locally (nothing un-acked is ever pruned) and
+     retries every ~10 minutes; the next accepted upload clears it.
+     Words first, never colour alone. Only a viewer who may open Settings
+     gets a link (an <a> with no href is plain text), so a cashier never
+     gets one that 403s; the explanation is in the title for everyone. */}}
+<a {{ if .canManage }}href="/settings#settings-retention" {{ end }}class="sb-item sb-report-archive" data-testid="sb-report-archive"
+   title="{{ T "status.report_archive.hint" }}">
+  <span class="btn-ico" aria-hidden="true">{{ icon "folder-input" }}</span>
+  <span class="sb-report-archive-text">{{ T "status.report_archive.refused" }}</span>
+</a>

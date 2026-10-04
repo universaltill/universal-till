@@ -8,6 +8,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -43,7 +44,7 @@ import (
 // single basket edit for 3 full seconds; checkout itself still completes
 // either way (offline-first unchanged), but a shorter budget keeps a dead
 // primary from making the whole till feel frozen on the hot path.
-var tablesProxyClient = &http.Client{Timeout: 800 * time.Millisecond}
+var tablesProxyClient = netaccess.NewClient(800 * time.Millisecond)
 
 // syncTableRow is the wire form of one data.TableWithState — the shape GET
 // /api/sync/tables returns and a replica decodes back into the same type

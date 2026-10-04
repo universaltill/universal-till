@@ -16,6 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/pages/catalogsync"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/ui"
 )
@@ -126,24 +127,18 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = posRepo.InsertAuditElevated(r.Context(), nil, actorID, blockedActorID, "shortcut_button", targetID, action, payload, now, "")
 	}
 
-	// requirePrimary gates the reorder/add/remove routes below on this till
-	// being the primary (same defect class as ut-docs#1689/#1667/#1590/
-	// #1546): shortcut_buttons is synced shop-wide as an admin table
-	// (adminTables, sync_admin_repo.go) via a one-way primary-wins pull, so
-	// a write accepted on a satellite would silently vanish -- a reorder
-	// reverted, an added/removed button undone -- on the very next admin
-	// pull, with no indication to the manager who made the change. Refuse
-	// it up front instead, same pattern as catalog/handlers.go's
-	// requirePrimary: these routes return an HTMX fragment or a bare
-	// status, not a full page, so the refusal is a plain localized error
-	// response (409) rather than a redirect.
-	requirePrimary := func(w http.ResponseWriter, r *http.Request) bool {
-		if d.SyncPrimaryURL(r.Context()) != "" {
-			common.LocalizedError(w, r, http.StatusConflict, "designer.error.replica_use_primary")
-			return false
-		}
-		return true
-	}
+	// Catalogue write-through (ut-docs#2817): shortcut_buttons and the items'
+	// sell-screen flags are synced shop-wide as admin tables (adminTables,
+	// sync_admin_repo.go) via a one-way main-till-wins pull, so a write
+	// accepted locally on an additional till would vanish on the next admin
+	// pull. Every mutation route below therefore runs its own permission /
+	// PIN-elevation check here first, then -- on a till that follows a main
+	// till -- hands the save to catalogsync.ForwardElevated, which sends it
+	// (with the approver, never the PIN) to the main till's
+	// /api/sync/catalog/apply and relays the main till's answer. On the main
+	// till ForwardElevated returns false and the handler writes locally, as
+	// before. Until ut-docs#2817 these routes refused on an additional till
+	// (requirePrimary, 409 designer.error.replica_use_primary).
 
 	// UI fragment
 	mux.HandleFunc("/ui/buttons", func(w http.ResponseWriter, r *http.Request) {
@@ -269,9 +264,6 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 	// codes arrive in display order, the FULL global list, exactly once per
 	// edit session (on Done), never per drag step.
 	mux.HandleFunc("POST /api/buttons/reorder", func(w http.ResponseWriter, r *http.Request) {
-		if !requirePrimary(w, r) {
-			return
-		}
 		// The Designer posts FormData (multipart) — ParseForm alone ignores
 		// multipart bodies, which silently dropped every reorder.
 		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
@@ -313,6 +305,9 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			renderElevationPrompt(w, r, "/api/buttons/reorder", "#buttons-add-error",
 				httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.buttons_reorder"),
 				hidden, elev)
+			return
+		}
+		if catalogsync.ForwardElevated(w, r, d, elev.ApproverID, catalogsync.PlainRefuser) {
 			return
 		}
 		var err error
@@ -366,9 +361,6 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 	// till only, 204 + HX-Trigger + X-UT-Sell-Version on success, the
 	// dual-attribution audit only when a PIN approved it.
 	mux.HandleFunc("POST /api/buttons/recategorize", func(w http.ResponseWriter, r *http.Request) {
-		if !requirePrimary(w, r) {
-			return
-		}
 		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
 			_ = r.ParseMultipartForm(1 << 20)
 		} else {
@@ -393,6 +385,9 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			renderElevationPrompt(w, r, "/api/buttons/recategorize", "#buttons-add-error",
 				fmt.Sprintf(httpx.T(locale, "elevation.summary.buttons_recategorize"), buttonsElevationItemName(r.Context(), d, itemID), catName),
 				[]elevationHiddenField{{Name: "item_id", Value: itemID}, {Name: "category_id", Value: categoryID}}, elev)
+			return
+		}
+		if catalogsync.ForwardElevated(w, r, d, elev.ApproverID, catalogsync.PlainRefuser) {
 			return
 		}
 		err := data.NewCatalogRepo(d.Db).SetItemCategory(r.Context(), itemID, categoryID)
@@ -425,9 +420,6 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 
 	// Admin add/remove
 	mux.HandleFunc("/api/buttons/add", func(w http.ResponseWriter, r *http.Request) {
-		if !requirePrimary(w, r) {
-			return
-		}
 		// ut-docs#2312: parsed here (ahead of ui.ButtonsHTTP.Add's own,
 		// idempotent ParseForm call below) so the elevation check has
 		// label/code/itemId/imageUrl to mirror as hidden fields on the
@@ -453,6 +445,9 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 				}, elev)
 			return
 		}
+		if catalogsync.ForwardElevated(w, r, d, elev.ApproverID, catalogsync.PlainRefuser) {
+			return
+		}
 		// ut-docs#2174: no renderer — Add answers an empty 200 + HX-Trigger
 		// now (see ui.ButtonsHTTP.Add), the Designer's live replica
 		// re-fetches itself off that header.
@@ -468,9 +463,6 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("/api/buttons/remove", func(w http.ResponseWriter, r *http.Request) {
-		if !requirePrimary(w, r) {
-			return
-		}
 		// ut-docs#2312: parsed here (ahead of ui.ButtonsHTTP.Remove's own,
 		// idempotent ParseForm call below) so the elevation check has the
 		// code/itemId to mirror as hidden fields on the dialog's retry.
@@ -492,6 +484,9 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 				[]elevationHiddenField{{Name: "code", Value: code}, {Name: "itemId", Value: itemID}}, elev)
 			return
 		}
+		if catalogsync.ForwardElevated(w, r, d, elev.ApproverID, catalogsync.PlainRefuser) {
+			return
+		}
 		// ut-docs#2174: no renderer -- same as /api/buttons/add above.
 		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore}
 		// ut-docs#2358: same rationale as /api/buttons/add above -- audit
@@ -509,9 +504,6 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 	// gating/elevation/audit pattern as /api/buttons/remove above, itemId
 	// only (no code to resolve from).
 	mux.HandleFunc("/api/buttons/hide", func(w http.ResponseWriter, r *http.Request) {
-		if !requirePrimary(w, r) {
-			return
-		}
 		_ = r.ParseForm()
 		itemID := r.Form.Get("itemId")
 		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
@@ -519,6 +511,9 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			renderElevationPrompt(w, r, "/api/buttons/hide", "#buttons-add-error",
 				fmt.Sprintf(httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.buttons_hide"), buttonsElevationItemName(r.Context(), d, itemID)),
 				[]elevationHiddenField{{Name: "itemId", Value: itemID}}, elev)
+			return
+		}
+		if catalogsync.ForwardElevated(w, r, d, elev.ApproverID, catalogsync.PlainRefuser) {
 			return
 		}
 		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore}
@@ -533,9 +528,6 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 	// the flag), so this route is mainly the "Hidden from sell screen"
 	// section's own Unhide button.
 	mux.HandleFunc("/api/buttons/unhide", func(w http.ResponseWriter, r *http.Request) {
-		if !requirePrimary(w, r) {
-			return
-		}
 		_ = r.ParseForm()
 		itemID := r.Form.Get("itemId")
 		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
@@ -543,6 +535,9 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			renderElevationPrompt(w, r, "/api/buttons/unhide", "#buttons-add-error",
 				fmt.Sprintf(httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.buttons_unhide"), buttonsElevationItemName(r.Context(), d, itemID)),
 				[]elevationHiddenField{{Name: "itemId", Value: itemID}}, elev)
+			return
+		}
+		if catalogsync.ForwardElevated(w, r, d, elev.ApproverID, catalogsync.PlainRefuser) {
 			return
 		}
 		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore}
@@ -563,14 +558,14 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
-		if !requirePrimary(w, r) {
-			return
-		}
 		_ = r.ParseForm()
 		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
 			renderElevationPrompt(w, r, "/api/buttons/unhide-all", "#buttons-add-error",
 				httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.buttons_unhide_all"), nil, elev)
+			return
+		}
+		if catalogsync.ForwardElevated(w, r, d, elev.ApproverID, catalogsync.PlainRefuser) {
 			return
 		}
 		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore}
@@ -593,9 +588,6 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 	// never the old deactivation.
 	removeFromGrid := func(route string) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			if !requirePrimary(w, r) {
-				return
-			}
 			_ = r.ParseForm()
 			itemID := r.Form.Get("itemId")
 			elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
@@ -603,6 +595,9 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 				renderElevationPrompt(w, r, route, "#buttons-add-error",
 					fmt.Sprintf(httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.buttons_remove"), buttonsElevationItemName(r.Context(), d, itemID)),
 					[]elevationHiddenField{{Name: "itemId", Value: itemID}}, elev)
+				return
+			}
+			if catalogsync.ForwardElevated(w, r, d, elev.ApproverID, catalogsync.PlainRefuser) {
 				return
 			}
 			btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore}

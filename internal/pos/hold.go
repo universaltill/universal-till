@@ -180,6 +180,14 @@ type HeldOrigin struct {
 	// to a local, never-claimed row): that re-park's own local-only
 	// fallback keeps the ordinary MAX-sticky Upsert behaviour, unchanged.
 	Claimed bool
+	// PrimarySynced (ut-docs#3621) records that the row this basket was
+	// resumed from was a confirmed mirror of an order the primary holds.
+	// Resuming it while the primary was unreachable claims nothing
+	// (Claimed false), so the primary STILL holds the order; a local-only
+	// re-park must re-insert the row as a confirmed mirror, or it would read
+	// as an outage-parked order this till alone owns -- and a Cancel during
+	// the outage would act on it while the primary's copy lives on.
+	PrimarySynced bool
 }
 
 // IsZero reports whether this basket has no held-sale origin, i.e. it was
@@ -203,11 +211,24 @@ func (s *Service) OrderDisplayNo() string {
 	return s.orderDisplayNo
 }
 
-// HasItems reports whether the current basket has any lines.
+// HasItems reports whether the current basket has any priced lines.
 func (s *Service) HasItems() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.lines) > 0
+}
+
+// HasItemsOrByHand reports whether the current basket has any priced lines
+// OR any "add by hand" entries (ut-docs#3586). A kiosk pay-at-counter order
+// whose lines all failed to match the catalog resumes with zero priced
+// lines and only AddByHand ones (open_orders_counter.go) -- HasItems() alone
+// is false for it, even though it is still a real order a caller must not
+// treat as an empty basket: resumeHeldSale's busy check and POST
+// /api/pos/hold's empty-basket refusal both need this, not just HasItems().
+func (s *Service) HasItemsOrByHand() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.lines) > 0 || len(s.basket.AddByHand) > 0
 }
 
 // Snapshot captures the current basket so it can be held and later restored.

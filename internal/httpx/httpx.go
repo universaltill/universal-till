@@ -77,6 +77,11 @@ var baseFuncs = template.FuncMap{
 	"updateavailable": func() bool { return UpdateAvailable() },
 	"latestversion":   func() string { return updates.Current().Latest },
 	"canselfupdate":   func() bool { return selfupdate.Supported() },
+	// autoupdatestuck: auto-update is on and an update is waiting, but this
+	// linux install can't apply it itself (ut-docs#2733) — the chip then says
+	// so and links to what to do instead of the generic unavailable_here.
+	// Published by internal/pages' auto-update scheduler every tick.
+	"autoupdatestuck": func() bool { return updates.AutoUpdateStuck() },
 	// releasenoticeversion: the version the after-update "what's new" chip
 	// announces ("v0.30.6"), or "" (ut-docs#3091). Always "" in self-order
 	// kiosk mode — a customer never sees it; base.html also gates it on

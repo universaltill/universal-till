@@ -401,3 +401,41 @@ func TestApplyReplicaIdentityClearsInheritedTillLocalState(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#3307 (review finding): defence at the sink, like the device id and
+// store token above — a snapshot from a main till that was itself once
+// joined carries that till's kept cloud id (till_identity.cloud_id). The
+// joiner must never inherit it: discovery.ReportedTillID would report the
+// main till's own id whenever this till's sync.till_id is blank, and the
+// cloud would retire or flag the main till's device row.
+func TestApplyReplicaIdentityClearsInheritedCloudID(t *testing.T) {
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init("") })
+
+	path := filepath.Join(t.TempDir(), "data", "unitill-pos.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+	if _, err := d.Exec(`INSERT INTO settings (key, value) VALUES ('till_identity.cloud_id', 'main-kept-id')`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := StageReplicaIdentity(path, ReplicaIdentity{
+		PrimaryURL: "http://primary.local", TillID: "till-2", Bearer: "b",
+		ReceiptPrefix: "T2-", TillName: "Back lane", DeviceID: "till-replica-xyz",
+	}); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if applied, err := ApplyReplicaIdentity(d.DB, path); err != nil || !applied {
+		t.Fatalf("apply: applied=%v err=%v", applied, err)
+	}
+	var n int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = 'till_identity.cloud_id'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("the main till's kept cloud id survived the join (rows=%d err=%v)", n, err)
+	}
+	var tid string
+	if err := d.QueryRow(`SELECT value FROM settings WHERE key = 'sync.till_id'`).Scan(&tid); err != nil || tid != "till-2" {
+		t.Fatalf("sync.till_id = %q (err %v), want till-2", tid, err)
+	}
+}

@@ -20,7 +20,7 @@
          - false (standalone page, e.g. a direct GET /catalog/tax-codes or
            another page's own back-link, ut-docs#2090's #1950/#1955
            landings): unchanged plain link to /items. -->
-  <a class="btn secondary" href="/items"{{ if .InItemsShell }} onclick="this.closest('dialog').close(); return false;"{{ end }}>← {{ T "nav.catalog" }}</a>
+  <a class="btn secondary" href="/items"{{ if .InItemsShell }} data-action="close-closest"{{ end }}>← {{ T "nav.catalog" }}</a>
 </div>
 
 <div class="catalog-layout">

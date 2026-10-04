@@ -215,11 +215,27 @@ above.
 
 In Settings → Report Retention, choose where reports are kept:
 
-- **This till only** — works today, no extra setup. Report archives are
-  small (a few KB per closed day), so keeping 10 years of them won't fill a
-  modern till's disk.
-- **Cloud only** / **Till + cloud** — shown for a future release once cloud
-  storage and a shop subscription are available; not selectable yet.
+- **This till only** — no extra setup. Report archives are small (a few KB
+  per closed day), so keeping 10 years of them won't fill a modern till's
+  disk.
+- **Cloud only** / **Till + cloud** — need an active subscription that
+  includes cloud backup; without one they are shown but marked "needs an
+  active subscription". The main till uploads each archived report to your
+  shop's cloud account in the background, about every 10 minutes, oldest
+  first. With **Cloud only**, a report is removed from the till once the
+  cloud has confirmed it; with **Till + cloud**, the till also keeps it for
+  the full 10 years.
+
+The till always keeps its most recent end-of-day report, even after the
+cloud has it, so the next day-end report continues the Z-number sequence
+and starts where the last one ended. Additional tills keep their own
+reports for 10 years whatever the setting; only the main till uploads.
+
+While cloud storage is on, the same card shows how many reports are still
+waiting to upload. If the cloud refuses the upload because the
+subscription is not active, the card shows "Cloud upload refused" and the
+status bar shows **Report upload refused**. Nothing is deleted: reports stay
+on the till and upload automatically once the subscription is active again.
 
 The same page shows **how far back your records go** (earliest to latest
 archived report, and how many) and an **export** button — pick a date

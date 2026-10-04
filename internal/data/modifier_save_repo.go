@@ -139,7 +139,7 @@ func (r *ModifierRepo) SaveGroup(ctx context.Context, p ModifierGroupSave) (Modi
 		return res, errors.New("a required modifier group must ask for at least 1 choice")
 	}
 	if exists {
-		if _, err := tx.ExecContext(ctx, `UPDATE item_modifier_groups SET name = ?, required = ?, min_select = ?, max_select = ? WHERE id = ?`,
+		if _, err := tx.ExecContext(ctx, `UPDATE item_modifier_groups SET name = ?, required = ?, min_select = ?, max_select = ?, updated_at = datetime('now') WHERE id = ?`,
 			name, boolToInt(required), minSel, maxSel, p.ID); err != nil {
 			return res, fmt.Errorf("save modifier group: update: %w", err)
 		}

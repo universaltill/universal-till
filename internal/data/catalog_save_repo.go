@@ -41,19 +41,33 @@ const (
 // non-nil one is set. Barcodes, ModifierGroupIDs and ModifierOptOutIDs are
 // FULL sets (an empty list clears).
 type ItemPatch struct {
-	ID                string
-	Create            bool
-	Name              *string
-	PriceMinor        *int64
-	SKU               *string
-	CategoryID        *string
-	Color             *string
+	ID         string
+	Create     bool
+	Name       *string
+	PriceMinor *int64
+	SKU        *string
+	CategoryID *string
+	Color      *string
+	// Icon is the item's icon id (ut-docs#3584, items.icon): "" clears it.
+	// One picture per item (SetItemPicture): a non-empty icon replaces the
+	// item's thumbnail, the same rule as CategorySave.Icon.
+	Icon              *string
 	Barcodes          *[]string
 	Active            *bool
 	IsWeighed         *bool
 	StockUntracked    *bool
 	ModifierGroupIDs  *[]string
 	ModifierOptOutIDs *[]string
+	// NetQuantityValue/NetQuantityUnit set a pre-packed item's net content
+	// (ut-docs#3402, the set_net_quantity directive). They travel as a
+	// pair: either non-nil means the patch sets BOTH, and the pair must
+	// pass catalogtypes.ValidNetQuantity. Both nil = keep the stored pair.
+	NetQuantityValue *int64
+	NetQuantityUnit  *string
+	// ClearNetQuantity removes the stored pair (both columns NULL). It is
+	// its own flag because nil already means "keep"; combining it with
+	// either net-quantity field is refused.
+	ClearNetQuantity bool
 }
 
 // ItemSaveResult reports what SaveItem did.
@@ -62,6 +76,10 @@ type ItemSaveResult struct {
 	Name    string
 	// Changed lists the patch's fields that were present, for the audit row.
 	Changed []string
+	// ClearedImagePath is the thumbnail path a non-empty icon replaced
+	// (ut-docs#3584, as CategorySaveResult's), "" when none was cleared —
+	// the caller deletes a superseded upload's file.
+	ClearedImagePath string
 }
 
 // validBarcodeText reports whether code is 1–64 printable ASCII characters
@@ -80,6 +98,35 @@ func validBarcodeText(code string) bool {
 
 type resolvedBarcode struct {
 	raw, key, typ string
+}
+
+// resolveBarcodeSet checks a full barcode set (save_item's or
+// save_item_variant's) and resolves each code to its stored key exactly as
+// AddBarcode does (ADR-0059 §3). It runs outside the write transaction: it
+// reads the shop's enabled symbologies, which these writes never change.
+// owner ("an item", "a variant") words the size refusal.
+func (r *CatalogRepo) resolveBarcodeSet(ctx context.Context, codes []string, owner string) ([]resolvedBarcode, error) {
+	if len(codes) > maxItemBarcodes {
+		return nil, fmt.Errorf("%s can have at most %d barcodes", owner, maxItemBarcodes)
+	}
+	out := make([]resolvedBarcode, 0, len(codes))
+	seen := map[string]bool{}
+	for _, raw := range codes {
+		raw = strings.TrimSpace(raw)
+		if !validBarcodeText(raw) {
+			return nil, fmt.Errorf("barcode %q must be 1–%d printable characters with no spaces", raw, maxBarcodeLen)
+		}
+		dec, enabled, ok := r.matchBarcode(ctx, raw)
+		if !ok {
+			return nil, fmt.Errorf("%w: %q (enabled: %s)", ErrBarcodeNoSymbologyMatch, raw, strings.Join(enabled, ", "))
+		}
+		if seen[dec.LookupKey] {
+			return nil, fmt.Errorf("barcode %s is listed twice", raw)
+		}
+		seen[dec.LookupKey] = true
+		out = append(out, resolvedBarcode{raw: raw, key: dec.LookupKey, typ: strings.ToUpper(dec.SymbologyID)})
+	}
+	return out, nil
 }
 
 // SaveItem applies a save_item directive (contract §3.1) in one
@@ -121,35 +168,30 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 		}
 		p.Color = &c
 	}
+	if p.Icon != nil {
+		ic := strings.TrimSpace(*p.Icon)
+		if ic != "" && !iconid.ValidFormat(ic) {
+			return res, fmt.Errorf("icon %q is not a valid icon id", ic)
+		}
+		p.Icon = &ic
+	}
 	var barcodes []resolvedBarcode
 	if p.Barcodes != nil {
-		if len(*p.Barcodes) > maxItemBarcodes {
-			return res, fmt.Errorf("an item can have at most %d barcodes", maxItemBarcodes)
-		}
-		seen := map[string]bool{}
-		for _, raw := range *p.Barcodes {
-			raw = strings.TrimSpace(raw)
-			if !validBarcodeText(raw) {
-				return res, fmt.Errorf("barcode %q must be 1–%d printable characters with no spaces", raw, maxBarcodeLen)
-			}
-			// Resolve to the stored key exactly as AddBarcode does (ADR-0059
-			// §3) — outside the transaction: it reads the shop's enabled
-			// symbologies, which this write never changes.
-			dec, enabled, ok := r.matchBarcode(ctx, raw)
-			if !ok {
-				return res, fmt.Errorf("%w: %q (enabled: %s)", ErrBarcodeNoSymbologyMatch, raw, strings.Join(enabled, ", "))
-			}
-			if seen[dec.LookupKey] {
-				return res, fmt.Errorf("barcode %s is listed twice", raw)
-			}
-			seen[dec.LookupKey] = true
-			barcodes = append(barcodes, resolvedBarcode{raw: raw, key: dec.LookupKey, typ: strings.ToUpper(dec.SymbologyID)})
+		var err error
+		if barcodes, err = r.resolveBarcodeSet(ctx, *p.Barcodes, "an item"); err != nil {
+			return res, err
 		}
 	}
 	for _, list := range []*[]string{p.ModifierGroupIDs, p.ModifierOptOutIDs} {
 		if list != nil && len(*list) > maxItemModifierGroups {
 			return res, fmt.Errorf("an item can have at most %d modifier groups", maxItemModifierGroups)
 		}
+	}
+	setNetQuantity := p.NetQuantityValue != nil || p.NetQuantityUnit != nil
+	if setNetQuantity && (p.ClearNetQuantity || !catalogtypes.ValidNetQuantity(p.NetQuantityValue, p.NetQuantityUnit)) {
+		// updateItemExec checks the pair again; this fails fast, before
+		// the write lock, like every other field here.
+		return res, ErrInvalidNetQuantity
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -260,6 +302,16 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 		cur.StockUntracked = *p.StockUntracked
 		res.Changed = append(res.Changed, "stock_untracked")
 	}
+	if setNetQuantity {
+		// The pair travels together: a patch carrying it replaces both.
+		cur.NetQuantityValue = p.NetQuantityValue
+		cur.NetQuantityUnit = p.NetQuantityUnit
+		res.Changed = append(res.Changed, "net_quantity")
+	} else if p.ClearNetQuantity {
+		cur.NetQuantityValue = nil
+		cur.NetQuantityUnit = nil
+		res.Changed = append(res.Changed, "net_quantity")
+	}
 	deactivate := false
 	if p.Active != nil {
 		deactivate = cur.IsActive && !*p.Active
@@ -282,11 +334,17 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 		// with it. Reactivating never revives variants (their own state is
 		// not recoverable from here); the operator reactivates those one by
 		// one in the item editor.
-		if _, err := tx.ExecContext(ctx, `UPDATE item_variants SET is_active = 0 WHERE item_id = ?`, p.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE item_variants SET is_active = 0, updated_at = datetime('now') WHERE item_id = ?`, p.ID); err != nil {
 			return res, fmt.Errorf("save item: deactivate variants: %w", err)
 		}
 	}
 
+	if p.Icon != nil {
+		if err := saveItemIconTx(ctx, tx, p.ID, *p.Icon, &res); err != nil {
+			return res, err
+		}
+		res.Changed = append(res.Changed, "icon")
+	}
 	if p.Barcodes != nil {
 		if err := replaceItemBarcodesTx(ctx, tx, p.ID, barcodes); err != nil {
 			return res, err
@@ -328,6 +386,36 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 	}
 	res.Name = cur.Name
 	return res, nil
+}
+
+// saveItemIconTx applies save_item's icon (ut-docs#3584) with the
+// one-picture rule SaveCategory applies to a category's (ut-docs#2717): an
+// icon set from my. replaces whatever thumbnail the till had — a library
+// tile or an uploaded photo — or it would stay hidden behind it on the sale
+// screen. A cleared icon ("") leaves an uploaded photo alone, but a library
+// tile in the thumbnail row IS the item's icon (it renders and is reported
+// as its id), so clearing the icon clears that tile too.
+func saveItemIconTx(ctx context.Context, tx *sql.Tx, itemID, icon string, res *ItemSaveResult) error {
+	var thumb string
+	err := tx.QueryRowContext(ctx, `SELECT path FROM item_images WHERE item_id = ? AND role = 'thumbnail' LIMIT 1`, itemID).Scan(&thumb)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("save item: read thumbnail: %w", err)
+	}
+	keep := thumb
+	if icon != "" && thumb != "" {
+		res.ClearedImagePath, keep = thumb, ""
+	} else if icon == "" && iconid.IDForAssetPath(thumb) != "" {
+		keep = ""
+	}
+	if keep != "" && keep == thumb {
+		// The photo stays: write only the icon column, leaving the
+		// thumbnail row (and the sell-screen generation it drives) alone.
+		if _, err := tx.ExecContext(ctx, `UPDATE items SET icon = NULL WHERE id = ?`, itemID); err != nil {
+			return fmt.Errorf("save item: icon: %w", err)
+		}
+		return nil
+	}
+	return setItemPictureExec(ctx, tx, itemID, keep, icon)
 }
 
 // skuTakenError names the item that already holds sku.
@@ -425,10 +513,6 @@ type CategorySaveResult struct {
 	Created bool
 	Name    string
 	Changed []string
-	// ClearedImagePath is the image_path a non-empty icon replaced
-	// (ut-docs#2717: one picture per category), "" when none was cleared —
-	// the caller deletes a superseded upload's file.
-	ClearedImagePath string
 }
 
 type catNode struct {
@@ -620,16 +704,17 @@ FROM categories WHERE id = ?`, p.ID).Scan(&name, &parent, &color, &icon, &imageP
 	if p.Icon != nil {
 		icon = *p.Icon
 		res.Changed = append(res.Changed, "icon")
-		// One picture per category, last writer wins (ut-docs#2717): an
-		// icon set from my. replaces whatever image the till had — a
-		// library tile or an uploaded photo — or it would stay hidden
-		// behind it on the sale screen. A cleared icon ("") leaves an
-		// uploaded photo alone -- but a legacy library tile in image_path
-		// IS the category's icon (it renders and is reported as its id),
-		// so clearing the icon clears that tile too (#2717 review).
-		if icon != "" && imagePath != "" {
-			res.ClearedImagePath, imagePath = imagePath, ""
-		} else if icon == "" && iconid.IDForAssetPath(imagePath) != "" {
+		// A legacy library tile in image_path IS the category's old icon
+		// (ut-docs#2717): a new icon replaces it (iconid.Resolve already
+		// draws the icon over a tile), and clearing the icon clears a tile
+		// that has an id too (#2717 review). An uploaded photo is kept
+		// either way (ut-docs#3585): a category may have a photo and an
+		// icon, the photo shown and the icon its fallback.
+		if icon != "" {
+			if path, _ := iconid.Resolve(imagePath, icon); path == "" {
+				imagePath = ""
+			}
+		} else if iconid.IDForAssetPath(imagePath) != "" {
 			imagePath = ""
 		}
 	}
@@ -638,7 +723,7 @@ FROM categories WHERE id = ?`, p.ID).Scan(&name, &parent, &color, &icon, &imageP
 		res.Changed = append(res.Changed, "show_on_sale_screen")
 	}
 	if _, err := tx.ExecContext(ctx, `
-UPDATE categories SET name = ?, parent_id = ?, color = ?, icon = ?, image_path = ?, sell_screen_hidden = ? WHERE id = ?`,
+UPDATE categories SET name = ?, parent_id = ?, color = ?, icon = ?, image_path = ?, sell_screen_hidden = ?, updated_at = datetime('now') WHERE id = ?`,
 		name, nullableString(parent), nullableString(color), nullableString(icon), nullableString(imagePath), boolToInt(hidden), p.ID); err != nil {
 		return res, fmt.Errorf("save category: row: %w", err)
 	}
@@ -711,13 +796,13 @@ func (r *CatalogRepo) DeleteCategoryMoving(ctx context.Context, id, moveItemsTo 
 			return res, fmt.Errorf("the items cannot move to the category being deleted or one of its subcategories")
 		}
 	}
-	out, err := tx.ExecContext(ctx, `UPDATE categories SET parent_id = ? WHERE parent_id = ?`, nullableString(parent), id)
+	out, err := tx.ExecContext(ctx, `UPDATE categories SET parent_id = ?, updated_at = datetime('now') WHERE parent_id = ?`, nullableString(parent), id)
 	if err != nil {
 		return res, fmt.Errorf("delete category: re-parent: %w", err)
 	}
 	n, _ := out.RowsAffected()
 	res.MovedChildren = int(n)
-	out, err = tx.ExecContext(ctx, `UPDATE items SET category_id = ? WHERE category_id = ?`, nullableString(moveItemsTo), id)
+	out, err = tx.ExecContext(ctx, `UPDATE items SET category_id = ?, updated_at = datetime('now') WHERE category_id = ?`, nullableString(moveItemsTo), id)
 	if err != nil {
 		return res, fmt.Errorf("delete category: move items: %w", err)
 	}
@@ -726,7 +811,7 @@ func (r *CatalogRepo) DeleteCategoryMoving(ctx context.Context, id, moveItemsTo 
 	for _, q := range []string{
 		`DELETE FROM category_modifier_group_links WHERE category_id = ?`,
 		`DELETE FROM category_station_routes WHERE category_id = ?`,
-		`UPDATE categories SET is_active = 0 WHERE id = ?`,
+		`UPDATE categories SET is_active = 0, updated_at = datetime('now') WHERE id = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {
 			return res, fmt.Errorf("delete category: %w", err)

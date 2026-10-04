@@ -43,6 +43,12 @@ func cloudSaveItem(ctx context.Context, d *common.Deps, p data.ItemPatch) (strin
 		}
 		return "", err
 	}
+	// ut-docs#3584: an icon from my. replaced the item's uploaded photo —
+	// remove the file, as the till's own icon picker does
+	// (removeUploadedThumbnail). A replaced library tile has no file.
+	if res.ClearedImagePath != "" && safeCategoryID(p.ID) && res.ClearedImagePath == catalog.ItemThumbURL(p.ID) {
+		catalog.RemoveItemUpload(p.ID)
+	}
 	auditCloudDirective(ctx, d, "item", p.ID, "cloud_item_saved", map[string]any{"created": res.Created, "changed": res.Changed})
 	if res.Created {
 		return "created " + res.Name, nil
@@ -79,12 +85,8 @@ func cloudSaveCategory(ctx context.Context, d *common.Deps, p data.CategorySave)
 	if err != nil {
 		return "", err
 	}
-	// ut-docs#2717: an icon from my. replaced the category's uploaded
-	// photo — remove the file, as the till's own editor does when an icon
-	// replaces an upload. A replaced library tile has no file of its own.
-	if res.ClearedImagePath != "" && safeCategoryID(p.ID) && res.ClearedImagePath == categoryThumbURL(p.ID) {
-		removeCategoryUpload(p.ID)
-	}
+	// An icon from my. no longer replaces an uploaded photo (ut-docs#3585:
+	// SaveCategory keeps it), so there is no superseded file to remove.
 	auditCloudDirective(ctx, d, "category", p.ID, "cloud_category_saved", map[string]any{"created": res.Created, "changed": res.Changed})
 	if res.Created {
 		return "created category " + res.Name, nil
@@ -279,6 +281,31 @@ func cloudDeleteModifierGroup(ctx context.Context, d *common.Deps, id string) (s
 	return "deleted modifier group", nil
 }
 
+// cloudSaveItemVariant is the save_item_variant hook (ut-docs#3477): one
+// CatalogRepo.SaveVariant transaction — create with the cloud-minted id,
+// edit, barcode-set replace, deactivate/reactivate. A barcode conflict
+// names the other item or variant, as save_item's does.
+func cloudSaveItemVariant(ctx context.Context, d *common.Deps, p data.VariantSave) (string, error) {
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	repo := data.NewCatalogRepo(d.Db)
+	res, err := repo.SaveVariant(ctx, p)
+	if err != nil {
+		var conflict *data.BarcodeConflictError
+		if errors.As(err, &conflict) {
+			return "", barcodeTakenError(ctx, repo, conflict)
+		}
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "item_variant", p.ID, "cloud_variant_saved", map[string]any{"item_id": p.ItemID, "created": res.Created, "changed": res.Changed})
+	label := strings.TrimSpace(res.ItemName + " " + res.Name)
+	if res.Created {
+		return "created variant " + label, nil
+	}
+	return "updated variant " + label, nil
+}
+
 // optionSetInUseMaxNames caps how many item names the delete_option_set
 // refusal lists before "and N more": the result is one line the cloud shows
 // verbatim, and the full list already rides the option_sets report.
@@ -400,6 +427,12 @@ func cloudSetCatalogImage(ctx context.Context, d *common.Deps, img cloudsync.Cat
 		if current, _, err = repo.ItemThumbnailPath(ctx, img.ID); err != nil {
 			return "", err
 		}
+		// ut-docs#3584: an icon id is the item's picture too.
+		icon, err := repo.ItemIcon(ctx, img.ID)
+		if err != nil {
+			return "", err
+		}
+		current += icon
 	} else {
 		c, ok, err := repo.CategoryPicture(ctx, img.ID)
 		if err != nil {

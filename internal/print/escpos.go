@@ -123,11 +123,7 @@ func Render(d Doc) []byte {
 		b.Write(cmd) // once per document, before any text (ut-docs#1243)
 	}
 	if d.KickDrawer {
-		if d.DrawerPin == 5 {
-			b.Write(cmdKickDrawerPin5)
-		} else {
-			b.Write(cmdKickDrawer)
-		}
+		b.Write(DrawerKickBytes(d.DrawerPin))
 	}
 
 	b.Write(cmdAlignMid)

@@ -73,6 +73,13 @@ as `CODE128` so internal PLU/keypad codes remain supported.
 - `sales_aggregate_uploads` — which daily per-till sales rollups the cloud
   has accepted (content-hash ledger for the ADR-0111 upload,
   ut-docs#2535; migration 038)
+- `no_sale_events` — "No sale" cash-drawer opens (`POST /api/pos/no-sale`,
+  gated by the `cash_adjustment` permission or a manager PIN; recorded only
+  after the drawer kick reached the printer). Append-only; `local_date` and
+  the till key (`till_id`, else `register_id`) follow the sales rules, so
+  the ADR-0111 rollup reports them as `no_sale_count` and
+  `by_cashier[].no_sale_opens` (ut-docs#2558; migration 064, with its
+  `no_sale_events_archive` reset twin)
 
 ### 5. Shifts & audit
 
@@ -210,6 +217,7 @@ erDiagram
         int    sort_order
         string icon
         int    sell_screen_hidden
+        string updated_at
     }
 
     brands {
@@ -257,6 +265,7 @@ erDiagram
         int    price
         int    cost_price
         boolean is_active
+        string updated_at
     }
 
     variant_barcodes {
@@ -612,6 +621,7 @@ erDiagram
         string item_id
         string label
         string image_path
+        string updated_at
     }
 
     %% Relationships
@@ -703,10 +713,11 @@ data/plugins/
 - Exponential backoff on failures (max 3 retries)
 
 **Telemetry Upload** (5 min interval)
-- Batches plugin lifecycle events (install, update, enable/disable)
+- Sends one snapshot of the active installed plugins per tick (no queue:
+  a failed send is logged and dropped; the next tick sends a fresh one)
 - Honors `settings.marketplace.telemetry_opt_in` flag
-- Queues events offline, syncs when connected
-- Max 50 events per batch
+- Reads the live enrolled identity each tick (`enroll.Effective`); skipped
+  until the till has a store id and a device credential
 
 **Revocation Sync** (30 min interval)
 - Checks marketplace revocation feed
@@ -733,8 +744,10 @@ data/plugins/
 - Includes revocation reason and timestamp
 
 **Telemetry Endpoint**
-- `POST /v1/telemetry`
-- Accepts batched event arrays
+- `POST /v1/telemetry/report` with `Authorization: Bearer <device credential>`
+  (the ADR-0116 per-device token, ut-docs#3561)
+- The cloud binds the report to the credential's store and device; a
+  missing or refused credential gets 401, another device's id gets 403
 - Returns 200 OK on successful ingestion
 
 ### Security Features

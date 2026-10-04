@@ -65,14 +65,16 @@ func isBlankSKU(sku string) bool { return strings.TrimSpace(sku) == "" }
 
 // nextItemSKU returns the SKU a new item in categoryID (nil or "" for none)
 // should get. It reads through q so a caller inside a transaction sees its
-// own earlier inserts.
-func nextItemSKU(ctx context.Context, q skuQueryer, categoryID *string) (string, error) {
+// own earlier inserts. reserved holds codes to treat as taken although they
+// are not in the database yet — the import preview's earlier predictions
+// in the same request (ut-docs#3098). Every real insert passes nil.
+func nextItemSKU(ctx context.Context, q skuQueryer, categoryID *string, reserved map[string]bool) (string, error) {
 	cat := ""
 	if categoryID != nil {
 		cat = strings.TrimSpace(*categoryID)
 	}
 	if cat != "" {
-		sku, ok, err := nextNumericCategorySKU(ctx, q, cat)
+		sku, ok, err := nextNumericCategorySKU(ctx, q, cat, reserved)
 		if err != nil || ok {
 			return sku, err
 		}
@@ -91,12 +93,12 @@ func nextItemSKU(ctx context.Context, q skuQueryer, categoryID *string) (string,
 			return "", fmt.Errorf("sku category name: %w", err)
 		}
 	}
-	return nextPrefixedSKU(ctx, q, prefix)
+	return nextPrefixedSKU(ctx, q, prefix, reserved)
 }
 
 // nextNumericCategorySKU applies rule 1. ok is false when the category has
 // no plain numeric SKU (or the next one would outgrow maxNumericSKUDigits).
-func nextNumericCategorySKU(ctx context.Context, q skuQueryer, categoryID string) (sku string, ok bool, err error) {
+func nextNumericCategorySKU(ctx context.Context, q skuQueryer, categoryID string, reserved map[string]bool) (sku string, ok bool, err error) {
 	rows, err := q.QueryContext(ctx, `
 SELECT sku FROM items
 WHERE category_id = ? AND sku IS NOT NULL AND sku <> ''
@@ -131,7 +133,7 @@ WHERE category_id = ? AND sku IS NOT NULL AND sku <> ''
 		if len(cand) > maxNumericSKUDigits {
 			return "", false, nil
 		}
-		taken, err := skuTaken(ctx, q, cand)
+		taken, err := skuTaken(ctx, q, cand, reserved)
 		if err != nil {
 			return "", false, err
 		}
@@ -144,7 +146,7 @@ WHERE category_id = ? AND sku IS NOT NULL AND sku <> ''
 
 // nextPrefixedSKU applies rule 2: PREFIX-NNNN, one past the highest number
 // already used with this prefix.
-func nextPrefixedSKU(ctx context.Context, q skuQueryer, prefix string) (string, error) {
+func nextPrefixedSKU(ctx context.Context, q skuQueryer, prefix string, reserved map[string]bool) (string, error) {
 	lead := prefix + "-"
 	// prefix is [A-Z0-9] only, so it needs no LIKE escaping; the GLOB keeps
 	// only an all-digit remainder (LIKE alone is case-insensitive and would
@@ -172,7 +174,7 @@ WHERE sku GLOB ? AND substr(sku, ?) NOT GLOB '*[^0-9]*' AND length(sku) BETWEEN 
 	}
 	for n := maxVal + 1; n <= maxVal+maxSKUProbe; n++ {
 		cand := fmt.Sprintf("%s%0*d", lead, skuSeqWidth, n)
-		taken, err := skuTaken(ctx, q, cand)
+		taken, err := skuTaken(ctx, q, cand, reserved)
 		if err != nil {
 			return "", err
 		}
@@ -184,8 +186,12 @@ WHERE sku GLOB ? AND substr(sku, ?) NOT GLOB '*[^0-9]*' AND length(sku) BETWEEN 
 }
 
 // skuTaken reports whether code is already an item/variant SKU or a
-// barcode (see the file comment for why barcodes count).
-func skuTaken(ctx context.Context, q skuQueryer, code string) (bool, error) {
+// barcode (see the file comment for why barcodes count), or is in reserved
+// (nil-safe: a nil map reserves nothing).
+func skuTaken(ctx context.Context, q skuQueryer, code string, reserved map[string]bool) (bool, error) {
+	if reserved[code] {
+		return true, nil
+	}
 	var n int
 	err := q.QueryRowContext(ctx, `
 SELECT EXISTS(SELECT 1 FROM items WHERE sku = ?)

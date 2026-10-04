@@ -22,6 +22,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/netreach"
 	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -494,6 +495,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerButtonsAPI(mux, dp)
 	registerDesignerCategoriesAPI(mux, dp) // Designer category CRUD (ut-docs#2174)
 	registerPOSAPI(mux, dp)
+	registerNoSaleAPI(mux, dp)       // "No sale" drawer open (ut-docs#2558)
 	registerVoucherAPI(mux, dp)      // voucher liability balance query (ut-docs#1008)
 	registerFiscalAPI(mux, dp)       // German TSE hard-gate owner override (ADR-0048)
 	registerPOSModifiersAPI(mux, dp) // item customization step, ADR-0020
@@ -530,6 +532,10 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// below take the same hook.
 	rederiveSettings := newRederiveSettings(dp, authDisabled, i18n)
 	registerSyncSettings(mux, dp, rederiveSettings) // additional-till shop-wide settings write-through, main-till side (ut-docs#2791)
+	dp.MainTillUnreachable = func(ctx context.Context) bool {
+		return tillFollowsMain(ctx, dp) && replicaLinkView(ctx, dp).State == linkUnreachable
+	}
+	registerSyncCatalog(mux, dp) // additional-till catalogue write-through, main-till side (ut-docs#2817); dispatches into the catalogue handlers on this same mux
 	syncAdminRepo := registerSyncAdmin(mux, dp)
 	// ADR-0114 (ut-docs#2734): the main-till link. Set before the server
 	// accepts requests; the revoke handler and every NudgeLink change point
@@ -541,6 +547,8 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncQuarantinePage(mux, dp) // ut-docs#1133: quarantined LAN-sync journal entries, primary-only admin panel (ADR-0065 follow-up)
 	registerPrimaryProof(mux, dp)       // main till answers a moved-till challenge (ut-docs#2722)
 	registerMainTillStatus(mux, dp)     // replica's main-till connectivity chip (ut-docs#2722, #2742)
+	registerCloudAuthChip(mux, dp)      // refused cloud credential chip (ADR-0116 D6, ut-docs#3524)
+	registerReportArchiveChip(mux, dp)  // refused report upload chip (ADR-0147, ut-docs#574)
 	registerTillsRoster(mux, dp)        // Tills page roster, live link per till (ut-docs#2742)
 	// ut-docs#3095: the status-bar light's cloud reachability. Probes run
 	// lazily on /ui/net-status polls, each bounded by netreach's 5 s
@@ -548,6 +556,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	dp.NetReach = netreach.New(netreach.Options{Endpoint: cfg.Marketplace.EndpointURL, Ctx: bgCtx})
 	registerNetStatus(mux, dp)
 	dp.PrimaryWatch = discovery.NewPrimaryWatch(dp.Settings, discovery.Browse)
+	// ut-docs#2774: when mDNS finds nothing, ask the cloud where the main
+	// till is — a candidate for the same proof, never a shortcut.
+	dp.PrimaryWatch.SetCloudLookup(discovery.NewCloudLookup(primaryWatchCloudCredentials(dp)))
 	// ADR-0114 (ut-docs#2735): this till's side of the main-till link. Built
 	// before StartSyncPull, which reads its link state for the polling floor.
 	dp.LinkClient = newSyncLinkClient(dp, fleetlink.DefaultClientOptions())
@@ -555,23 +566,26 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// server accepts requests; the sale path reads dp.CloudLink.
 	dp.CloudSyncNow = make(chan struct{}, 1)
 	dp.CloudLink = newCloudLinkClient(dp)
-	StartSyncPush(bgCtx, dp, wg)                            // replica journal loop (ADR-0011 D3); joined by app.Run's drain
-	StartSyncLink(bgCtx, dp, wg, syncAdminRepo)             // main-till link: admin-change watch + bye on shutdown (ADR-0114); joined by app.Run's drain
-	StartSyncPull(bgCtx, dp, rederiveSettings, wg)          // joined by app.Run's drain
-	StartSyncLinkClient(bgCtx, dp, wg)                      // replica side of the main-till link (ADR-0114); joined by app.Run's drain
-	StartHeldOrderClaimReaffirm(bgCtx, dp, wg)              // periodic held-order table-claim re-affirm (ut-docs#1724); joined by app.Run's drain
-	StartSelfOrderSessionSweep(bgCtx, dp, wg)               // evict idle table-QR self-order sessions (ADR-0103 D5, ut-docs#2261); joined by app.Run's drain
-	StartShopTypeLayoutReconcile(bgCtx, dp, wg)             // builtin layout follows a pulled/remote shop_type between sales (ut-docs#2793); joined by app.Run's drain
-	StartCloudSync(bgCtx, dp, rederiveSettings, wg)         // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain
-	StartCloudLink(bgCtx, dp, wg)                           // ADR-0117 main-till cloud link on the realtime tier; joined by app.Run's drain
-	StartEODScheduler(bgCtx, dp, wg)                        // background Z-report (docs: G30); joined by app.Run's drain
-	StartAutoUpdateScheduler(bgCtx, dp, wg)                 // background unattended update (ut-docs#79); joined by app.Run's drain
-	StartPluginUpdateScheduler(bgCtx, dp, wg)               // background installed-plugin update check + language-pack auto-apply (ut-docs#1953); joined by app.Run's drain
-	StartFiscalSignReconcileSweep(bgCtx, dp, wg)            // periodic fiscal.sign.reconcile.ask sweep over backend-failure unsigned sales (ADR-0077 D3, ut-docs#1520); joined by app.Run's drain
-	backfillLocaleConfirmedForDivergedPendingTills(ctx, dp) // ut-docs#1892: one-time backfill before any pending language install can silently override a pre-#1074 manual locale choice
-	StartBasePluginRetry(bgCtx, dp, wg)                     // retry country base-plugin auto-install while offline (ut-docs#591); joined by app.Run's drain
-	StartTSEProvisionRetry(bgCtx, dp, wg)                   // retry German TSE provisioning kickoff while offline (ADR-0053, ut-docs#802); joined by app.Run's drain
-	StartOrderStatusStreamBridge(bgCtx, dp, wg)             // replica: hold the primary's order-status SSE stream open and republish locally (ADR-0079, ut-docs#1571); joined by app.Run's drain
+	// Network services start through netaccess.StartService, which skips them
+	// on the public demo till (ADR-0113 §1.6, ut-docs#2795); the local loops
+	// (EOD, sweeps, reconciles) and the main till's inbound link hub always run.
+	netaccess.StartService("LAN sync push", func() { StartSyncPush(bgCtx, dp, wg) })                                  // replica journal loop (ADR-0011 D3); joined by app.Run's drain
+	StartSyncLink(bgCtx, dp, wg, syncAdminRepo)                                                                       // main-till link: admin-change watch + bye on shutdown (ADR-0114); joined by app.Run's drain
+	netaccess.StartService("LAN sync pull", func() { StartSyncPull(bgCtx, dp, rederiveSettings, wg) })                // joined by app.Run's drain
+	netaccess.StartService("main-till link client", func() { StartSyncLinkClient(bgCtx, dp, wg) })                    // replica side of the main-till link (ADR-0114); joined by app.Run's drain
+	netaccess.StartService("held-order table-claim re-affirm", func() { StartHeldOrderClaimReaffirm(bgCtx, dp, wg) }) // periodic held-order table-claim re-affirm (ut-docs#1724); joined by app.Run's drain
+	StartSelfOrderSessionSweep(bgCtx, dp, wg)                                                                         // evict idle table-QR self-order sessions (ADR-0103 D5, ut-docs#2261); joined by app.Run's drain
+	StartShopTypeLayoutReconcile(bgCtx, dp, wg)                                                                       // builtin layout follows a pulled/remote shop_type between sales (ut-docs#2793); joined by app.Run's drain
+	netaccess.StartService("cloud sync", func() { StartCloudSync(bgCtx, dp, rederiveSettings, wg) })                  // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain
+	netaccess.StartService("cloud link", func() { StartCloudLink(bgCtx, dp, wg) })                                    // ADR-0117 main-till cloud link on the realtime tier; joined by app.Run's drain
+	StartEODScheduler(bgCtx, dp, wg)                                                                                  // background Z-report (docs: G30); joined by app.Run's drain
+	netaccess.StartService("auto-update scheduler", func() { StartAutoUpdateScheduler(bgCtx, dp, wg) })               // background unattended update (ut-docs#79); joined by app.Run's drain
+	netaccess.StartService("plugin update scheduler", func() { StartPluginUpdateScheduler(bgCtx, dp, wg) })           // background installed-plugin update check + language-pack auto-apply (ut-docs#1953); joined by app.Run's drain
+	StartFiscalSignReconcileSweep(bgCtx, dp, wg)                                                                      // periodic fiscal.sign.reconcile.ask sweep over backend-failure unsigned sales (ADR-0077 D3, ut-docs#1520); joined by app.Run's drain
+	backfillLocaleConfirmedForDivergedPendingTills(ctx, dp)                                                           // ut-docs#1892: one-time backfill before any pending language install can silently override a pre-#1074 manual locale choice
+	netaccess.StartService("base-plugin auto-install retry", func() { StartBasePluginRetry(bgCtx, dp, wg) })          // retry country base-plugin auto-install while offline (ut-docs#591); joined by app.Run's drain
+	netaccess.StartService("TSE provisioning retry", func() { StartTSEProvisionRetry(bgCtx, dp, wg) })                // retry German TSE provisioning kickoff while offline (ADR-0053, ut-docs#802); joined by app.Run's drain
+	netaccess.StartService("order-status stream bridge", func() { StartOrderStatusStreamBridge(bgCtx, dp, wg) })      // replica: hold the primary's order-status SSE stream open and republish locally (ADR-0079, ut-docs#1571); joined by app.Run's drain
 	// ADR-0079: release every open order-status SSE stream (browser
 	// EventSources, and on a primary the replicas' bridges) the instant
 	// shutdown begins — server.Start's own Shutdown fires on this same

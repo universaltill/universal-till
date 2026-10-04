@@ -29,9 +29,12 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
+	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/entitlement"
+	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -42,7 +45,7 @@ var (
 	// a DEDICATED clone of http.DefaultTransport (ut-docs#2588), not the
 	// default transport itself — see newHTTPTransport's own doc comment for
 	// why the default's pooling knobs were the wrong fit here.
-	httpClient = &http.Client{Timeout: 30 * time.Second, Transport: newHTTPTransport()}
+	httpClient = netaccess.NewClientWithTransport(30*time.Second, newHTTPTransport())
 	started    = time.Now()
 	// tickIntervalNS/firstDelayNS back the two interval knobs below.
 	// atomic.Int64 (nanoseconds), not plain vars: Start()'s loop reads them
@@ -208,6 +211,12 @@ type Hooks struct {
 	// failure message.
 	SaveOptionSet   func(ctx context.Context, p data.OptionSetSave) (string, error)
 	DeleteOptionSet func(ctx context.Context, id string) (string, error)
+	// SaveItemVariant handles "save_item_variant" (ut-docs#3477): an
+	// item's variant added, edited, deactivated or reactivated from my.
+	// Main-till only like the catalog hooks above; one transaction
+	// (CatalogRepo.SaveVariant), audited, idempotent. A variant is never
+	// deleted — active=false retires it.
+	SaveItemVariant func(ctx context.Context, p data.VariantSave) (string, error)
 	// SetCategoryOrder handles "set_category_order" (contract §3.8,
 	// ut-docs#3075): the owner's category order from my., as the full
 	// ordered id list. Main-till only like the five above. The hook
@@ -250,6 +259,16 @@ type Hooks struct {
 	// enroll.DeviceName reads for this till's role, audited. An unchanged
 	// name is applied with no write.
 	RenameTill func(ctx context.Context, name string) (string, error)
+	// PrintReport handles "print_report" (ut-docs#2537): print a report
+	// the cloud already computed on this till's receipt printer. Tick
+	// already skipped it unless its device_id is this till's own, so it
+	// applies on the main till and on an additional till alike; apply has
+	// decoded and bounded the payload (decodePrintReport). The hook
+	// (pages.cloudPrintReport) only lays it out and prints — it never
+	// recomputes — and returns an error (the directive's failure message)
+	// when no printer is configured or the print fails, never a silent
+	// "applied".
+	PrintReport func(ctx context.Context, r PrintReport) (string, error)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can
 	// render a real design picker instead of a raw key/value form). Keys must
@@ -275,8 +294,8 @@ type Hooks struct {
 	// AfterTick, when non-nil, is told each check-in's outcome on Start's
 	// goroutine (the cloud link re-reads its tier and role after every
 	// check-in, ADR-0117 §1). contacted is true only when the check-in
-	// really reached the cloud — false for an unregistered till's skip and
-	// for a failed POST — so only a real contact lifts the link's "wait for
+	// really reached the cloud — false for an unregistered till's skip, an
+	// unpaid till's gated skip (ADR-0148) and for a failed POST — so only a real contact lifts the link's "wait for
 	// the next check-in". It must not block.
 	AfterTick func(ctx context.Context, contacted bool, err error)
 	// LinkVersion, when non-nil, returns the newest link_version the cloud
@@ -314,7 +333,8 @@ type ModifierGroupOption struct {
 // tick runs one full sync round (heartbeat up, directives down, apply,
 // report) and says whether the cloud was really contacted: true
 // once the /v1/stores/sync POST succeeded, false for an unregistered
-// till's early return (nil error, no contact) and for any failure.
+// till's early return or an unpaid till's gated one (ADR-0148; nil error,
+// no contact) and for any failure.
 func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (contacted bool, err error) {
 	// Issue-report uploads (ADR-0022, spec 012) get a chance on EVERY tick,
 	// before the registration/connectivity gates below — ut-docs#637 review:
@@ -341,10 +361,18 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		return false, nil // not registered — nothing further to sync
 	}
 
+	settings := data.NewSettingsRepo(db)
+	// ADR-0148 (ut-docs#3615): only a paid store checks in periodically; an
+	// unpaid one only inside an operator window. A gated tick is quiet: no
+	// network, no warning, not an error (the scheduler keeps its normal
+	// cadence and no sync-error chip appears).
+	if !syncAllowedFn(ctx, settings) && !operatorWindowOpen(operatorNow()) {
+		return false, nil
+	}
+
 	// ADR-0117 §3 (ut-docs#2827): the conditional check-in decides whether
 	// this tick needs the full POST. The body is built first because its
 	// till-state part is what the hash covers.
-	settings := data.NewSettingsRepo(db)
 	req := buildSyncRequest(ctx, cfg, settings, hooks)
 	sum, hashErr := stateHash(req.devices)
 	plan, err := planCheckin(ctx, cfg, settings, sum, hashErr != nil, hooks.LinkVersion)
@@ -392,6 +420,12 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		// would double-report its own sales. Throttled and self-logging;
 		// never fails the tick.
 		pushSalesAggregates(ctx, cfg, db)
+		// Archived reports (ADR-0147 §2, ut-docs#574): only in retention
+		// mode cloud/both, and only from the main till — report_archive is
+		// per-till and not synced, so a replica uploading too would need a
+		// till key on the cloud row (a follow-up). Throttled and
+		// self-logging; never fails the tick.
+		pushReportArchives(ctx, cfg, db)
 	}
 	// Image fetches share one budget per tick: after the first
 	// transport-level failure (errImageFetchUnreachable) no further fetch is
@@ -423,12 +457,17 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 			}
 			continue
 		}
-		if reason := renameTillSkipReason(d); reason != "" {
-			// ut-docs#3272: a rename_till names one device. One addressed
-			// to another till (or to none) stays pending for its target —
-			// no apply, no result post. Logged once per directive id; an
-			// own id not known yet is not remembered, so the real reason
-			// is still logged once the id is known.
+		reason := renameTillSkipReason(d)
+		if reason == "" {
+			reason = printReportSkipReason(d)
+		}
+		if reason != "" {
+			// ut-docs#3272: a rename_till names one device, as does a
+			// print_report (ut-docs#2537). One addressed to another till
+			// (or to none) stays pending for its target — no apply, no
+			// result post. Logged once per directive id; an own id not
+			// known yet is not remembered, so the real reason is still
+			// logged once the id is known.
 			if ownDeviceID() == "" {
 				logging.L().Infof("cloudsync: directive %s (%s) skipped: %s", d.ID, d.Type, reason)
 			} else if firstRenameSkip(d.ID) {
@@ -668,6 +707,16 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing name"
 		}
 		msg, err = hooks.RenameTill(ctx, name)
+	case "print_report":
+		if hooks.PrintReport == nil {
+			return "failed", "print_report is not supported on this till"
+		}
+		// device_id was checked in Tick (printReportSkipReason).
+		r, bad := decodePrintReport(d)
+		if bad != "" {
+			return "failed", bad
+		}
+		msg, err = hooks.PrintReport(ctx, r)
 	case "upsert_category":
 		if hooks.UpsertCategory == nil {
 			return "failed", "upsert_category is not supported on this till"
@@ -823,6 +872,17 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", bad
 		}
 		msg, err = hooks.SaveItem(ctx, p)
+	case "set_net_quantity":
+		// ut-docs#3402 (§3.12): the same repository path, audit row
+		// (cloud_item_saved) and idempotency as save_item — no own hook.
+		if hooks.SaveItem == nil {
+			return "failed", "set_net_quantity is not supported on this till"
+		}
+		p, bad := decodeSetNetQuantity(payload(d.Payload))
+		if bad != "" {
+			return "failed", bad
+		}
+		msg, err = hooks.SaveItem(ctx, p)
 	case "save_category":
 		if hooks.SaveCategory == nil {
 			return "failed", "save_category is not supported on this till"
@@ -922,6 +982,15 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing id"
 		}
 		msg, err = hooks.DeleteOptionSet(ctx, id)
+	case "save_item_variant":
+		if hooks.SaveItemVariant == nil {
+			return "failed", "save_item_variant is not supported on this till"
+		}
+		p, bad := decodeSaveItemVariant(payload(d.Payload))
+		if bad != "" {
+			return "failed", bad
+		}
+		msg, err = hooks.SaveItemVariant(ctx, p)
 	case "save_user", "set_user_pin", "deactivate_user":
 		hook := map[string]func(context.Context, UserDirective) (string, error){
 			"save_user": hooks.SaveUser, "set_user_pin": hooks.SetUserPIN, "deactivate_user": hooks.DeactivateUser,
@@ -992,6 +1061,12 @@ func modifierGroupOptions(raw any) ([]ModifierGroupOption, error) {
 	return out, nil
 }
 
+// LANAddressKey is the device-report key carrying a main till's LAN
+// host:port (ut-docs#2774), for a replica's cloud-assisted re-discovery
+// (discovery.CloudLookupPath). Contributed through Hooks.DeviceExtra;
+// buildSyncRequest keeps it only on a role "primary" report.
+const LANAddressKey = "lan_address"
+
 // syncRequest is the /v1/stores/sync body before it is sent: built every
 // tick (the check-in hashes its device part), sent only when the check-in
 // says so.
@@ -1011,8 +1086,9 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 	if name == "" {
 		name = "Till"
 	}
+	isReplica := strings.TrimSpace(get("sync.primary_url")) != ""
 	role := "primary"
-	if strings.TrimSpace(get("sync.primary_url")) != "" {
+	if isReplica {
 		role = "replica"
 	}
 	if strings.TrimSpace(get("display.mode")) == "backoffice" {
@@ -1033,9 +1109,16 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 		"role":      role,
 		"health":    health,
 	}
-	// Read-only (never mint via discovery.TillID): the cloud merges/retires
-	// this machine's older device rows by it (ut-docs#2802).
-	if tid := strings.TrimSpace(get("sync.till_id")); tid != "" {
+	// The cloud merges/retires this machine's older device rows by it
+	// (ut-docs#2802), and a main till's row needs one too (ut-docs#3307):
+	// sync.till_id when joined, else the cloud id kept at promotion, else this
+	// machine's own LAN id. That last tier may mint — the same
+	// lan_discovery.till_id this machine already advertises, through the same
+	// race-safe GetOrCreate in discovery.TillID. Best-effort: a failed read
+	// leaves till_id off this heartbeat, never the heartbeat itself.
+	if tid, err := discovery.ReportedTillID(ctx, settings); err != nil {
+		logging.L().Warnf("cloudsync: resolve till id: %v", err)
+	} else if tid = strings.TrimSpace(tid); tid != "" {
 		device["till_id"] = tid
 	}
 	if hooks.DeviceExtra != nil {
@@ -1044,6 +1127,19 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 				device[k] = v
 			}
 		}
+	}
+	// ut-docs#2774: only a main till (no sync.primary_url — ADR-0011's single
+	// source of truth, same rule as discovery.RoleCheckFromSettings) tells
+	// the cloud where it is on the LAN. Gated on isReplica, not the reported
+	// "role" string: display.mode=="backoffice" overwrites role to
+	// "backoffice" even for a till that has no primary_url and so IS the
+	// actual main till on the LAN (ut-docs#2774 code review) — such a till
+	// must still report, or its replicas get no cloud-assisted lookup. A
+	// till that is both an actual replica (primary_url set) and in
+	// backoffice display mode must still never report (it is not the
+	// source of truth, whatever it's labelled for the cloud UI).
+	if isReplica {
+		delete(device, LANAddressKey)
 	}
 	// A LOCAL diagnostic-mode stop (ADR-0092 §1, ut-docs#2169) is reported
 	// best-effort here — on the device record of the very next heartbeat,
@@ -1183,6 +1279,11 @@ type snapshotItemRow struct {
 	// item, "" for none or a built-in icon (contract §3.9 rule 5), so my.
 	// can tell an image it set from one taken on the till.
 	ImageSHA256 string `json:"image_sha256"`
+	// Icon (ut-docs#3584) is the icon id the item shows, "" for none, a
+	// photo or the generic tile — iconid.EffectiveIcon of its thumbnail
+	// path and items.icon, the same read the category report uses
+	// (ut-docs#2717), so my. draws and preselects what the till draws.
+	Icon string `json:"icon"`
 	// EverSold (ut-docs#3317) is true once the item or one of its variants
 	// has a sale line here (live or archived). my. offers Delete only while
 	// it is false; the cloud keeps it true once any till reported it.
@@ -1247,6 +1348,7 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 			ModifierOptOutIDs: it.ModifierOptOutIDs, EffectiveModifierGroupIDs: it.EffectiveModifierGroupIDs,
 			Variants:    make([]snapshotVariantRow, 0, len(it.Variants)),
 			ImageSHA256: ServedImageSHA256(thumbs[it.ID]),
+			Icon:        iconid.EffectiveIcon(thumbs[it.ID], it.Icon),
 		}
 		if len(it.Barcodes) > 0 {
 			row.Barcode = it.Barcodes[0]
@@ -1389,11 +1491,15 @@ func post(ctx context.Context, cfg *config.Config, path string, payload []byte) 
 	buf := new(bytes.Buffer)
 	_, _ = buf.ReadFrom(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, &statusError{
+		se := &statusError{
 			Path:       path,
 			StatusCode: resp.StatusCode,
 			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
 		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			se.Code, _ = parseCloudErrorEnvelope(buf.Bytes())
+		}
+		return nil, se
 	}
 	return buf.Bytes(), nil
 }
@@ -1424,6 +1530,12 @@ type statusError struct {
 	// 429/503 (see retryAfterHint), so a caller never has to guess whether
 	// parsing was worth doing for this particular status.
 	RetryAfter time.Duration
+	// Code is a 401's machine code from the {error:{code}} envelope
+	// (ADR-0116 D6: device_revoked, token_retired or unauthorized), ""
+	// when the body isn't the envelope. Decoded for 401 only — every other
+	// status leaves it empty, so no existing caller's view changes. Start's
+	// scheduler counts consecutive 401s (schedule.go's authTracker).
+	Code string
 }
 
 func (e *statusError) Error() string {
@@ -1504,19 +1616,35 @@ func Start(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks, wg 
 			if hooks.AfterTick != nil {
 				hooks.AfterTick(ctx, contacted, err)
 			}
-			// A nil channel never fires: no kicks while backing off.
-			kick := hooks.Kick
-			if err != nil {
-				kick = nil
-			}
+			// No kicks while backing off. That includes the flat hourly
+			// wait of an ADR-0116 D6 lock-out (schedule.go's authTracker): a
+			// credential written while the till waits — a pairing, a
+			// re-registration — is first tried on the next hourly tick, and
+			// the status chip stays until that tick succeeds. The "Pair with
+			// a shop" screen (ut-docs#3523) is where an earlier wake belongs;
+			// a cloud nudge can't be it, the link itself is refused on a 401.
+			// Exception (ADR-0148, ut-docs#3615): a kick that arrives while an
+			// operator check-in window is open is an operator action on this
+			// till, and it ends the backoff — otherwise an unpaid till whose
+			// window check-in failed once would wait out the backoff, long
+			// past its window. A kick outside a window is consumed and the
+			// wait goes on; the check-in the wait ends in satisfies it.
 			timer := time.NewTimer(sched.next(err))
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return
-			case <-timer.C:
-			case <-kick:
-				timer.Stop()
+		wait:
+			for {
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+					break wait
+				case <-hooks.Kick:
+					if err != nil && !operatorWindowOpen(operatorNow()) {
+						continue
+					}
+					timer.Stop()
+					break wait
+				}
 			}
 		}
 	}()

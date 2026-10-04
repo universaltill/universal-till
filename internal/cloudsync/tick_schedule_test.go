@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // ut-docs#2588: jittered tick / backoff-on-failure / Retry-After / dedicated
@@ -298,9 +300,11 @@ func TestConnectionReuseAcrossTicks(t *testing.T) {
 // microseconds, nowhere near 90s. Assert the package transport's own knob
 // directly so a revert back to the default transport fails HERE.
 func TestTransportIdleTimeoutOutlivesProductionTick(t *testing.T) {
-	tr, ok := httpClient.Transport.(*http.Transport)
+	// BaseTransport: httpClient is a netaccess client (ADR-0113 §1.6) whose
+	// Transport is the demo-mode guard around this package's own transport.
+	tr, ok := netaccess.BaseTransport(httpClient.Transport).(*http.Transport)
 	if !ok || tr == nil {
-		t.Fatalf("httpClient.Transport = %#v, want a *http.Transport", httpClient.Transport)
+		t.Fatalf("httpClient's base transport = %#v, want a *http.Transport", netaccess.BaseTransport(httpClient.Transport))
 	}
 	maxJitteredTick := time.Duration(float64(2*time.Minute) * 1.2) // 144s
 	if tr.IdleConnTimeout <= maxJitteredTick {

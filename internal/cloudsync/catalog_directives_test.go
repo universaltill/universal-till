@@ -18,7 +18,7 @@ import (
 // (keep), and a present field of the wrong shape FAILS the directive
 // instead of reading as absent.
 
-var newCatalogTypes = []string{"save_item", "save_category", "delete_category", "save_modifier_group", "delete_modifier_group", "delete_item", "save_option_set", "delete_option_set"}
+var newCatalogTypes = []string{"save_item", "save_category", "delete_category", "save_modifier_group", "delete_modifier_group", "delete_item", "save_option_set", "delete_option_set", "save_item_variant"}
 
 func TestApplyNewCatalogTypes_NilHookUnsupported(t *testing.T) {
 	for _, typ := range newCatalogTypes {
@@ -53,6 +53,7 @@ func TestApplySaveItem(t *testing.T) {
 		{map[string]any{"id": "i1", "modifier_group_ids": `{"a":1}`}, "bad modifier_group_ids"},
 		{map[string]any{"id": "i1", "modifier_opt_out_ids": 5.0}, "bad modifier_opt_out_ids"},
 		{map[string]any{"id": "i1", "color": false}, "bad color"},
+		{map[string]any{"id": "i1", "icon": 4.0}, "bad icon"},
 	} {
 		status, msg := apply(context.Background(), directive{Type: "save_item", Payload: c.payload}, hooks)
 		if status != "failed" || msg != c.want {
@@ -66,7 +67,7 @@ func TestApplySaveItem(t *testing.T) {
 	// Every field, numbers as strings/floats, unknown fields ignored.
 	status, msg := apply(context.Background(), directive{Type: "save_item", Payload: map[string]any{
 		"id": " i1 ", "create": true, "name": "Latte", "price_minor": "360", "sku": "HD-3",
-		"category_id": "", "color": "#b45309", "barcodes": `["111","222"]`, "active": "true",
+		"category_id": "", "color": "#b45309", "icon": "lucide:beer", "barcodes": `["111","222"]`, "active": "true",
 		"is_weighed": false, "stock_untracked": true, "modifier_group_ids": `["g1"]`,
 		"modifier_opt_out_ids": `[]`, "a_field_from_a_newer_cloud": "ignored",
 	}}, hooks)
@@ -74,14 +75,14 @@ func TestApplySaveItem(t *testing.T) {
 		t.Fatalf("full: %q %q", status, msg)
 	}
 	if got.ID != "i1" || !got.Create || *got.Name != "Latte" || *got.PriceMinor != 360 || *got.SKU != "HD-3" ||
-		*got.CategoryID != "" || *got.Color != "#b45309" || !reflect.DeepEqual(*got.Barcodes, []string{"111", "222"}) ||
+		*got.CategoryID != "" || *got.Color != "#b45309" || got.Icon == nil || *got.Icon != "lucide:beer" || !reflect.DeepEqual(*got.Barcodes, []string{"111", "222"}) ||
 		!*got.Active || *got.IsWeighed || !*got.StockUntracked || !reflect.DeepEqual(*got.ModifierGroupIDs, []string{"g1"}) ||
 		got.ModifierOptOutIDs == nil || len(*got.ModifierOptOutIDs) != 0 {
 		t.Fatalf("decoded = %+v", got)
 	}
 	// Absent fields are nil (keep), never zero values.
 	status, _ = apply(context.Background(), directive{Type: "save_item", Payload: map[string]any{"id": "i1", "price_minor": 380.0}}, hooks)
-	if status != "applied" || got.Create || got.Name != nil || got.Barcodes != nil || got.Active != nil || *got.PriceMinor != 380 {
+	if status != "applied" || got.Create || got.Name != nil || got.Icon != nil || got.Barcodes != nil || got.Active != nil || *got.PriceMinor != 380 {
 		t.Fatalf("partial: %+v", got)
 	}
 }
@@ -294,6 +295,75 @@ func TestApplyDeleteOptionSet(t *testing.T) {
 	}
 }
 
+// save_item_variant (ut-docs#3477): {item_id, variant_id, create?, name?,
+// sku?, price_minor?, active?, barcodes?}; barcodes is the full set as a
+// JSON-encoded string array. A wrong shape fails before the hook runs.
+func TestApplySaveItemVariant(t *testing.T) {
+	var got data.VariantSave
+	calls := 0
+	hooks := Hooks{SaveItemVariant: func(ctx context.Context, p data.VariantSave) (string, error) {
+		calls++
+		got = p
+		return "saved", nil
+	}}
+	for _, c := range []struct {
+		payload map[string]any
+		want    string
+	}{
+		{map[string]any{"variant_id": "v1"}, "missing item_id"},
+		{map[string]any{"item_id": " ", "variant_id": "v1"}, "missing item_id"},
+		{map[string]any{"item_id": "i1"}, "missing variant_id"},
+		{map[string]any{"item_id": "i1", "variant_id": 4.0}, "missing variant_id"},
+		{map[string]any{"item_id": "i1", "variant_id": "v1", "create": "perhaps"}, "bad create"},
+		{map[string]any{"item_id": "i1", "variant_id": "v1", "name": 3.0}, "bad name"},
+		{map[string]any{"item_id": "i1", "variant_id": "v1", "sku": true}, "bad sku"},
+		{map[string]any{"item_id": "i1", "variant_id": "v1", "price_minor": 1.5}, "bad price_minor"},
+		{map[string]any{"item_id": "i1", "variant_id": "v1", "active": 2.0}, "bad active"},
+		{map[string]any{"item_id": "i1", "variant_id": "v1", "barcodes": "[1]"}, "bad barcodes"},
+		{map[string]any{"item_id": "i1", "variant_id": "v1", "barcodes": []any{"A"}}, "bad barcodes"},
+	} {
+		if status, msg := apply(context.Background(), directive{Type: "save_item_variant", Payload: c.payload}, hooks); status != "failed" || msg != c.want {
+			t.Errorf("%v: %q %q, want %q", c.payload, status, msg, c.want)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("a malformed payload reached the hook %d time(s)", calls)
+	}
+	status, msg := apply(context.Background(), directive{Type: "save_item_variant", Payload: map[string]any{
+		"item_id": " i1 ", "variant_id": " v1 ", "create": true, "name": " Large ", "sku": " FW-L ",
+		"price_minor": 380.0, "active": "true", "barcodes": `[" 501 ","502"]`,
+	}}, hooks)
+	if status != "applied" || msg != "saved" {
+		t.Fatalf("good payload: %q %q", status, msg)
+	}
+	if got.ItemID != "i1" || got.ID != "v1" || !got.Create || got.Name == nil || *got.Name != "Large" ||
+		got.SKU == nil || *got.SKU != "FW-L" || got.PriceMinor == nil || *got.PriceMinor != 380 ||
+		got.Active == nil || !*got.Active || got.Barcodes == nil || !reflect.DeepEqual(*got.Barcodes, []string{"501", "502"}) {
+		t.Fatalf("decoded = %+v", got)
+	}
+	// Absent fields stay nil (keep); `[]` clears every barcode.
+	apply(context.Background(), directive{Type: "save_item_variant", Payload: map[string]any{"item_id": "i1", "variant_id": "v1", "barcodes": `[]`}}, hooks)
+	if got.Create || got.Name != nil || got.SKU != nil || got.PriceMinor != nil || got.Active != nil || got.Barcodes == nil || len(*got.Barcodes) != 0 {
+		t.Fatalf("absent fields must be nil and [] an empty replace: %+v", got)
+	}
+	// The hook's error IS the failure text the cloud shows.
+	hooks.SaveItemVariant = func(context.Context, data.VariantSave) (string, error) {
+		return "", errors.New("barcode 501 is already used by Croissant")
+	}
+	if status, msg := apply(context.Background(), directive{Type: "save_item_variant", Payload: map[string]any{"item_id": "i1", "variant_id": "v1", "name": "L"}}, hooks); status != "failed" || msg != "barcode 501 is already used by Croissant" {
+		t.Fatalf("hook refusal: %q %q", status, msg)
+	}
+}
+
+func TestSaveItemVariantDirectiveRegistered(t *testing.T) {
+	if !mainTillOnlyTypes["save_item_variant"] {
+		t.Error("save_item_variant missing from mainTillOnlyTypes")
+	}
+	if !catalogTypes["save_item_variant"] {
+		t.Error("save_item_variant missing from catalogTypes")
+	}
+}
+
 // Both option-set types are main-till only and re-push the catalog
 // snapshot after they apply, like the modifier-group pair.
 func TestOptionSetDirectiveTypesRegistered(t *testing.T) {
@@ -321,6 +391,8 @@ func TestTickSatelliteSkipsMainTillOnlyTypes(t *testing.T) {
 		{"id": "d7", "type": "set_category_order", "payload": map[string]any{"category_ids": `["c1"]`}},
 		{"id": "d8", "type": "save_option_set", "payload": map[string]any{"id": "s1"}},
 		{"id": "d9", "type": "delete_option_set", "payload": map[string]any{"id": "s1"}},
+		{"id": "d10", "type": "save_item_variant", "payload": map[string]any{"item_id": "i1", "variant_id": "v1", "name": "L"}},
+		{"id": "d11", "type": "set_net_quantity", "payload": map[string]any{"id": "i1", "net_quantity_value": 500.0, "net_quantity_unit": "g"}},
 	}}
 	srv := httptest.NewServer(cloud.handler())
 	defer srv.Close()
@@ -338,6 +410,7 @@ func TestTickSatelliteSkipsMainTillOnlyTypes(t *testing.T) {
 		SetCategoryOrder:    func(context.Context, []string) (string, error) { ran++; return "", nil },
 		SaveOptionSet:       func(context.Context, data.OptionSetSave) (string, error) { ran++; return "", nil },
 		DeleteOptionSet:     func(context.Context, string) (string, error) { ran++; return "", nil },
+		SaveItemVariant:     func(context.Context, data.VariantSave) (string, error) { ran++; return "", nil },
 		SetSetting:          func(context.Context, string, string) (string, error) { return "set", nil },
 	}
 	if err := Tick(context.Background(), testCfg(srv.URL), db, hooks); err != nil {
@@ -587,5 +660,88 @@ func TestSnapshotReportsEverSold(t *testing.T) {
 	}
 	if got := everSold(cloud.snapshots[1]); got["es-sold"] != true || got["es-new"] != false {
 		t.Fatalf("after a sale: %v / %v", got["es-sold"], got["es-new"])
+	}
+}
+
+// ut-docs#3402 (contract §3.12): set_net_quantity rides the save_item
+// repository path — it decodes to a data.ItemPatch carrying only the id and
+// the net-quantity pair (or ClearNetQuantity) and calls the SaveItem hook,
+// so it shares save_item's audit row and idempotency. No new hook.
+func TestApplySetNetQuantity(t *testing.T) {
+	if status, msg := apply(context.Background(), directive{Type: "set_net_quantity", Payload: map[string]any{"id": "i1", "clear": true}}, Hooks{}); status != "failed" || msg != "set_net_quantity is not supported on this till" {
+		t.Fatalf("nil hook: %q %q", status, msg)
+	}
+	var calls int
+	var got data.ItemPatch
+	hooks := Hooks{SaveItem: func(ctx context.Context, p data.ItemPatch) (string, error) {
+		calls++
+		got = p
+		if p.NetQuantityUnit != nil && *p.NetQuantityUnit == "kg" {
+			// Stands in for the repository's ValidNetQuantity refusal.
+			return "", data.ErrInvalidNetQuantity
+		}
+		return "updated Rice", nil
+	}}
+	for _, c := range []struct {
+		payload map[string]any
+		want    string
+	}{
+		{map[string]any{"net_quantity_value": 500.0, "net_quantity_unit": "g"}, "missing id"},
+		{map[string]any{"id": " ", "net_quantity_value": 500.0, "net_quantity_unit": "g"}, "missing id"},
+		{map[string]any{"id": "i1"}, "missing net_quantity_value"},
+		{map[string]any{"id": "i1", "clear": false}, "missing net_quantity_value"},
+		{map[string]any{"id": "i1", "net_quantity_unit": "g"}, "missing net_quantity_value"},
+		{map[string]any{"id": "i1", "net_quantity_value": 500.0}, "missing net_quantity_unit"},
+		{map[string]any{"id": "i1", "net_quantity_value": 500.0, "net_quantity_unit": " "}, "missing net_quantity_unit"},
+		{map[string]any{"id": "i1", "net_quantity_value": 1.5, "net_quantity_unit": "g"}, "bad net_quantity_value"},
+		{map[string]any{"id": "i1", "net_quantity_value": "lots", "net_quantity_unit": "g"}, "bad net_quantity_value"},
+		{map[string]any{"id": "i1", "net_quantity_value": 500.0, "net_quantity_unit": 1.0}, "bad net_quantity_unit"},
+		{map[string]any{"id": "i1", "clear": "maybe"}, "bad clear"},
+		{map[string]any{"id": "i1", "clear": true, "net_quantity_value": 500.0}, "net_quantity_value and clear cannot both be set"},
+		{map[string]any{"id": "i1", "clear": true, "net_quantity_unit": "g"}, "net_quantity_value and clear cannot both be set"},
+	} {
+		if status, msg := apply(context.Background(), directive{Type: "set_net_quantity", Payload: c.payload}, hooks); status != "failed" || msg != c.want {
+			t.Errorf("%v: %q %q, want failed %q", c.payload, status, msg, c.want)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("hook ran %d times for refused payloads", calls)
+	}
+
+	// Set: numbers as float or string, the patch carries ONLY id + pair, so
+	// SaveItem touches nothing else on the item.
+	status, msg := apply(context.Background(), directive{Type: "set_net_quantity", Payload: map[string]any{
+		"id": " i1 ", "net_quantity_value": "500", "net_quantity_unit": " g ", "name": "ignored: not this directive's field",
+	}}, hooks)
+	if status != "applied" || msg != "updated Rice" {
+		t.Fatalf("set: %q %q", status, msg)
+	}
+	want := data.ItemPatch{ID: "i1", NetQuantityValue: got.NetQuantityValue, NetQuantityUnit: got.NetQuantityUnit}
+	if got.NetQuantityValue == nil || *got.NetQuantityValue != 500 || got.NetQuantityUnit == nil || *got.NetQuantityUnit != "g" || !reflect.DeepEqual(got, want) {
+		t.Fatalf("set decoded = %+v", got)
+	}
+
+	// Clear: only the flag.
+	if status, msg := apply(context.Background(), directive{Type: "set_net_quantity", Payload: map[string]any{"id": "i1", "clear": true}}, hooks); status != "applied" || msg != "updated Rice" {
+		t.Fatalf("clear: %q %q", status, msg)
+	}
+	if !reflect.DeepEqual(got, data.ItemPatch{ID: "i1", ClearNetQuantity: true}) {
+		t.Fatalf("clear decoded = %+v", got)
+	}
+
+	// An invalid pair (here an unknown unit) is refused by the repository
+	// and fails the directive with its text.
+	if status, msg := apply(context.Background(), directive{Type: "set_net_quantity", Payload: map[string]any{"id": "i1", "net_quantity_value": 1.0, "net_quantity_unit": "kg"}}, hooks); status != "failed" || msg != "invalid net quantity" {
+		t.Fatalf("invalid pair: %q %q", status, msg)
+	}
+}
+
+// §3.12: set_net_quantity is main-till only and a catalog type.
+func TestSetNetQuantityIsMainTillOnlyCatalogType(t *testing.T) {
+	if !mainTillOnlyTypes["set_net_quantity"] {
+		t.Error("set_net_quantity not in mainTillOnlyTypes")
+	}
+	if !catalogTypes["set_net_quantity"] {
+		t.Error("set_net_quantity not in catalogTypes")
 	}
 }

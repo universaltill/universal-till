@@ -78,6 +78,16 @@ func (k *memKV) Get(_ context.Context, key string) (string, bool, error) {
 	return v, ok, nil
 }
 
+func (k *memKV) GetOrCreate(_ context.Context, key, defaultValue string) (string, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if v, ok := k.m[key]; ok {
+		return v, nil
+	}
+	k.m[key] = defaultValue
+	return defaultValue, nil
+}
+
 func (k *memKV) Set(_ context.Context, key, value string) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -276,5 +286,48 @@ func TestSyncCloudDevice_RelaysMainTillsEntitlement(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(rec.Body.String()), "token") {
 		t.Fatalf("answer carries a credential: %s", rec.Body.String())
+	}
+}
+
+// ADR-0116 D3 (ut-docs#2769): the cloud's one-time redeem code for the
+// replica's device reaches the replica through this handler — and still
+// nothing token-shaped does.
+func TestSyncCloudDevice_RelaysRedeemCode(t *testing.T) {
+	dp := newMigratedSyncDeps(t, "primary.db")
+	if _, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Back office", hashBearer("token-abc")); err != nil {
+		t.Fatalf("enrol till: %v", err)
+	}
+	code := strings.Repeat("c0de", 16)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/stores/devices/register", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer main-store-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
+			"device_count": 2, "redeem_code": code, "redeem_expires_at": "2026-10-02T10:10:00Z",
+		}})
+	})
+	cloud := httptest.NewServer(mux)
+	t.Cleanup(cloud.Close)
+	dp.Cfg = enrolMainTill(t, cloud.URL)
+	h := http.NewServeMux()
+	registerSyncCloudDevice(h, dp)
+
+	rec := postCloudDevice(t, h, "token-abc", "till-replica")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Data["redeem_code"] != code {
+		t.Fatalf("redeem_code = %v, want the cloud's code: %s", out.Data["redeem_code"], rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "main-store-token") || strings.Contains(rec.Body.String(), "token\"") {
+		t.Fatalf("vouch answer carries a token: %s", rec.Body.String())
 	}
 }

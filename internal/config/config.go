@@ -43,9 +43,10 @@ type MarketplaceConfig struct {
 	PublicKey   string
 	// UploadToken authenticates the install-intent status-report endpoint.
 	UploadToken string
-	// MerchantToken is this merchant's portal token; sent as a bearer on the
-	// entitlements endpoint when the marketplace enforces merchant auth
-	// (docs repo: architecture/marketplace-merchant-auth.md).
+	// MerchantToken is this till's cloud credential (ADR-0116 per-device
+	// token since rotation; read it through enroll.Effective). Sent as the
+	// bearer on till-facing cloud routes, including the plugin
+	// download-token request (ut-docs#2930).
 	MerchantToken string
 
 	// OAuth2 client credentials for marketplace authentication (FR-018)

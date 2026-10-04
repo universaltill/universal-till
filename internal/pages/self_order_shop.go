@@ -21,6 +21,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/print"
+	"github.com/universaltill/universal-till/internal/ui"
 )
 
 // shopItem is one tile on the kiosk browse grid. Deliberately a distinct
@@ -119,6 +120,7 @@ func loadShopItems(ctx context.Context, d *common.Deps) ([]shopItem, error) {
 		data.MergeMapInto(currentPrices, p)
 	}
 	thumbnails, _ := repo.ItemThumbnails(ctx) // best-effort: a read error just means every tile falls back to no-image, same as a missing row
+	icons, _ := repo.ItemIcons(ctx)           // ut-docs#3584, same best-effort: an icon-only tile falls back to no image
 
 	// ut-docs#2497: same round-trip-with-the-scan-resolver requirement as
 	// ui.ButtonStore.LoadAllActive/SearchSellable (see their comment for
@@ -167,7 +169,8 @@ func loadShopItems(ctx context.Context, d *common.Deps) ([]shopItem, error) {
 			// /public/assets/items/<id>/thumb.png. thumbnails[it.ID] is ""
 			// for an item with no thumbnail row at all — the grid template's
 			// onerror already hides a tile whose ImageURL 404s/is empty.
-			ImageURL: thumbnails[it.ID],
+			// ut-docs#3584: an item with no image shows its icon id.
+			ImageURL: ui.ItemThumb(thumbnails[it.ID], icons[it.ID]),
 		})
 	}
 	return out, nil

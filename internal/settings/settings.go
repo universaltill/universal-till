@@ -25,6 +25,13 @@ func (s *Store) Set(ctx context.Context, key, value string) error {
 	return s.repo.Set(ctx, key, value)
 }
 
+// GetOrCreate is data.SettingsRepo.GetOrCreate: the stored value, or
+// defaultValue persisted atomically when the key is absent. It makes Store an
+// enroll.Settings / discovery.SettingsReader (ut-docs#3307).
+func (s *Store) GetOrCreate(ctx context.Context, key, defaultValue string) (string, error) {
+	return s.repo.GetOrCreate(ctx, key, defaultValue)
+}
+
 // GetByPrefix returns every key/value pair whose key starts with prefix, in
 // one query — see SettingsRepo.GetByPrefix.
 func (s *Store) GetByPrefix(ctx context.Context, prefix string) (map[string]string, error) {

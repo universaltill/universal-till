@@ -17,6 +17,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/paths"
 )
 
@@ -47,7 +48,7 @@ var catalogImageFetchTimeout = 60 * time.Second
 // catalogImageClient shares httpClient's pooled transport but not its 30 s
 // whole-request timeout: an 11 MiB body on a slow shop line may need longer,
 // and catalogImageFetchTimeout's context bounds it instead.
-var catalogImageClient = &http.Client{Transport: httpClient.Transport}
+var catalogImageClient = netaccess.NewClientWithTransport(0, netaccess.BaseTransport(httpClient.Transport))
 
 var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 

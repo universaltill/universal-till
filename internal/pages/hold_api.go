@@ -13,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/ui"
@@ -253,6 +254,12 @@ func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSales
 			held.Label = typedLabel
 		}
 		held.CreatedAt = origin.CreatedAt
+		// ut-docs#3621: an order resumed from a confirmed mirror without a
+		// claim (the primary was unreachable) is still held by the primary,
+		// so a local-only re-park keeps it a confirmed mirror. A claimed
+		// order is this till's alone (ut-docs#3034 above). Every path that
+		// reaches the primary sets the flag itself.
+		held.PrimarySynced = origin.PrimarySynced && !origin.Claimed
 	} else {
 		label := typedLabel
 		if label == "" {
@@ -312,6 +319,132 @@ func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSales
 	// since that changes WHICH table is occupied.
 	d.Engine.Reset()
 	return nil
+}
+
+// heldOrderAuditPayload is the one data_json shape every held_sale audit
+// row carries (ut-docs#3423 introduced it for the New Sale discard; since
+// ut-docs#3582 the explicit Cancel order writes it too): enough to tell an
+// auditor which order went, what it was worth and how long it had been
+// open, without the full basket. createdAt is the order's held_sales
+// created_at ("2006-01-02 15:04:05" UTC text, kept across re-parks since
+// ut-docs#1918), re-emitted as ISO-8601 like every other API date (the raw
+// value if it ever doesn't parse).
+func heldOrderAuditPayload(label, createdAt string, totalMinor int64, lineCount int, snap pos.BasketSnapshot, tableID string) map[string]any {
+	firstParked := createdAt
+	if t, err := time.Parse("2006-01-02 15:04:05", createdAt); err == nil {
+		firstParked = t.UTC().Format(time.RFC3339)
+	}
+	return map[string]any{
+		"label":           label,
+		"total_minor":     totalMinor,
+		"line_count":      lineCount,
+		"by_hand_count":   len(snap.AddByHand),
+		"table_id":        tableID,
+		"display_no":      snap.DisplayNo,
+		"first_parked_at": firstParked,
+	}
+}
+
+// cancelOutcome is cancelHeldSale's result; each surface reports it its own
+// way (the sale-screen popup re-renders its body with a toast, /open-orders
+// redirects with ?msg= / ?err=).
+type cancelOutcome int
+
+const (
+	cancelOK cancelOutcome = iota
+	cancelNotFound
+	// cancelFailed: the order is the one live in the basket right now (a
+	// stale held row left behind by a failed delete) -- cancelling the row
+	// would leave the live copy tenderable, so it is refused untouched.
+	cancelFailed
+	// cancelMainTillUnreachable (ut-docs#3621): a replica whose main till
+	// can't be reached holds only a mirror (primary_synced) of an order the
+	// primary still owns. Cancelling the mirror would let the order come
+	// back on reconnect and be cancelled -- audited, fiscal.order.cancel
+	// dispatched -- a second time, so it is refused untouched.
+	cancelMainTillUnreachable
+)
+
+// cancelHeldSale is the explicit "Cancel order" for a held, table or
+// pay-at-counter order (ut-docs#3582). The caller has already passed the
+// void_comp_waste gate (checkOrElevate); elev carries who acted and, when a
+// manager PIN cleared the gate, who approved it.
+//
+// Same authority handling as resumeHeldSale, minus the restore: the order is
+// CLAIMED off the shop's authority (heldSaleClaimForResume -- cross-till
+// safe whenever the authority answers, and an order resumed or cancelled
+// elsewhere since the list was drawn is refused as not found), then dropped
+// instead of restored. Unlike resume, cancel does NOT fall back to a
+// primary_synced mirror while the main till is unreachable (ut-docs#3621):
+// resume must keep a sale moving offline (ADR-0003, ADR-0093's accepted
+// bounded-outage limit), but a cancel can wait, and acting on a copy the
+// primary still owns would only bring the order back on reconnect. An
+// order first parked during the outage (primary_synced=0) exists only here
+// and still cancels locally; an order resumed and re-parked during the
+// outage keeps its mirror flag (HeldOrigin.PrimarySynced), so it is refused
+// too. Its table claim is released (the order
+// no longer occupies it), a held_sale/cancel audit row is written in the
+// same shape as the #3423 discard row, and fiscal.order.cancel (ADR-0138
+// D2) is dispatched from the same place. No stock moves: a held order's
+// stock was never committed (the card's own non-goal).
+//
+// The audit and dispatch are best-effort and never fail the cancel (the
+// order is already gone from the authority by then) -- same posture as
+// every other audit write on the sale screen.
+func cancelHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, posRepo *data.POSRepo, id string, elev elevationCheck, offline bool) cancelOutcome {
+	if id == "" {
+		return cancelNotFound
+	}
+	// Same stacked-hop budget as resume (claim + table release).
+	ctx = withCrossTillHotPathTimeout(ctx)
+	if d.Engine.HeldOrigin().ID == id {
+		return cancelFailed
+	}
+	held, found, claimed := heldSaleClaimForResume(ctx, d, repo, id)
+	if !found {
+		return cancelNotFound
+	}
+	// Found but not claimed, on a primary_synced row: only the fallback for
+	// a primary that gave no usable answer returns that (a reachable primary
+	// that no longer lists a synced mirror is already refused as not found
+	// above). "No usable answer" is mostly a transport failure, but also a
+	// non-200 or malformed reply (claimHeldSaleOnPrimary's ok=false) --
+	// refusing is the safe direction for all of them; the next successful
+	// reconcile settles the mirror either way.
+	if !claimed && held.PrimarySynced {
+		return cancelMainTillUnreachable
+	}
+	// The claim already removed the order from the authority; only a
+	// replica's local copy is left (a no-op when there is none).
+	if err := repo.Delete(ctx, id); err != nil {
+		logging.L().Errorf("cancel held order %s: drop local copy: %v", id, err)
+	}
+	// The held_sales.table_id column is the authoritative table
+	// (ut-docs#820), not the payload. Never release a table the live basket
+	// itself is sitting on (it cannot be this order's -- IsTableFree keeps
+	// two orders off one table -- but the guard costs nothing).
+	if held.TableID != "" && held.TableID != d.Engine.TableID() {
+		releaseTableClaim(ctx, d, posRepo, held.TableID)
+	}
+	// A corrupt payload still cancels -- Cancel is exactly how such an
+	// order gets cleared -- it only loses the by-hand count / display no.
+	var snap pos.BasketSnapshot
+	if err := json.Unmarshal([]byte(held.Payload), &snap); err != nil {
+		logging.L().Infof("cancel held order %s: decode payload for audit: %v", id, err)
+	}
+	payload := heldOrderAuditPayload(held.Label, held.CreatedAt, held.TotalMinor, held.LineCount, snap, held.TableID)
+	now := time.Now().UTC().Format(time.RFC3339)
+	var err error
+	if elev.Outcome == elevated {
+		err = posRepo.InsertAuditElevated(ctx, nil, elev.ApproverID, elev.ActorID, "held_sale", held.ID, "cancel", payload, now, "")
+	} else {
+		err = posRepo.InsertAudit(ctx, nil, elev.ActorID, "held_sale", held.ID, "cancel", payload, now, "")
+	}
+	if err != nil {
+		logging.L().Errorf("record cancel of held order %s: %v", held.ID, err)
+	}
+	dispatchFiscalOrderCancel(ctx, d, held.ID, offline)
+	return cancelOK
 }
 
 // resumeHeldSale resumes held sale `id` into the live basket. ut-docs#1919:
@@ -379,13 +512,18 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 		return resumeOK
 	}
 	parkedPrior := false
-	if d.Engine.HasItems() {
+	if d.Engine.HasItemsOrByHand() {
 		// ut-docs#1919: park-current-then-open, decided over a true
 		// two-basket engine model as the right-sized fix for this
 		// pipeline's own scope discipline -- switching to another order
 		// must never discard whatever the cashier already had rung up,
 		// and this reuses the existing, well-tested Hold path rather
 		// than adding a second concurrent-basket concept to the engine.
+		// ut-docs#3586: HasItems() alone missed a kiosk pay-at-counter
+		// order whose lines are all "add by hand" (zero priced lines) --
+		// resuming a second order over it skipped this auto-park and
+		// RestoreHeld overwrote it with no held row, no sale and no
+		// audit entry.
 		if err := parkCurrentBasket(ctx, d, repo, "", locale, true, false); err != nil {
 			if claimed {
 				heldSaleGiveBack(ctx, d, repo, held)
@@ -431,7 +569,7 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 	// handler below). Remembered on the engine, not by skipping the
 	// Delete below: the row still goes away while the order is live,
 	// exactly as before, and comes back under the same id on re-park.
-	d.Engine.RestoreHeld(snap, pos.HeldOrigin{ID: held.ID, Label: held.Label, CreatedAt: held.CreatedAt, Claimed: claimed})
+	d.Engine.RestoreHeld(snap, pos.HeldOrigin{ID: held.ID, Label: held.Label, CreatedAt: held.CreatedAt, Claimed: claimed, PrimarySynced: held.PrimarySynced})
 	restoredTable := d.Engine.TableID()
 	if restoredTable != "" && restoredTable != prevTable {
 		if claimed, err := claimTableWriteThrough(ctx, d, posRepo, restoredTable, false); err != nil || !claimed {
@@ -609,7 +747,11 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/pos/hold", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		locale := httpx.ResolveLocale(w, r)
-		if !d.Engine.HasItems() {
+		// ut-docs#3586: HasItems() alone refused to hold a resumed kiosk
+		// pay-at-counter order whose lines are all "add by hand" (zero
+		// priced lines) -- a cashier tapping Hold on exactly that order
+		// got the empty-basket error instead of parking it.
+		if !d.Engine.HasItemsOrByHand() {
 			renderBasket(w, r, httpx.T(locale, "hold.error.empty"), "error")
 			return
 		}
@@ -672,6 +814,87 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/pos/add-by-hand/dismiss", func(w http.ResponseWriter, r *http.Request) {
 		d.Engine.DismissAddByHand()
 		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// Cancel a held, table or pay-at-counter order (ut-docs#3582) -- from
+	// the sale screen's parked-orders popup (view=parked-orders) or the
+	// /open-orders page (view=page). Both controls carry a native
+	// hx-confirm first (catalog delete's pattern), so this only ever runs
+	// after the cashier confirmed. Gated on void_comp_waste through
+	// checkOrElevate, the same gate (and the same PIN prompt) voiding a
+	// priced basket line uses: a cashier without it gets the existing
+	// elevation dialog, which re-POSTs here with override_pin. Both the
+	// controls and that retry target a small hint element (#parked-orders-hint
+	// / #open-orders-hint), so the prompt's hint never replaces the list;
+	// the real answer then re-targets itself -- the popup body re-rendered
+	// with a toast, or an htmx redirect back to the page's own tab.
+	mux.HandleFunc("POST /api/pos/held/cancel", func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		locale := httpx.ResolveLocale(w, r)
+		_ = r.ParseForm()
+		id := strings.TrimSpace(r.Form.Get("id"))
+		onPage := r.Form.Get("view") == "page"
+		tab := openOrdersTabHold
+		if r.Form.Get("tab") == openOrdersTabCounter {
+			tab = openOrdersTabCounter
+		}
+		offlineRaw := r.Form.Get("offline")
+		offline := formFlagTruthy(r.Form.Get("offline_override")) || formFlagTruthy(offlineRaw)
+		hint := "#parked-orders-hint"
+		if onPage {
+			hint = "#open-orders-hint"
+		}
+
+		elev := checkOrElevate(d, r, "void_comp_waste", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			// Name the order in the approver's summary, read the same
+			// non-destructive, primary-first way the table move does --
+			// never from the request, so the approver sees what is really
+			// being cancelled.
+			label := id
+			if held, found := heldSaleForResume(ctx, d, repo, id); found && held.Label != "" {
+				label = held.Label
+			}
+			view := "parked-orders"
+			if onPage {
+				view = "page"
+			}
+			renderElevationPrompt(w, r, "/api/pos/held/cancel", hint,
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.cancel_order"), label),
+				[]elevationHiddenField{{Name: "id", Value: id}, {Name: "view", Value: view}, {Name: "tab", Value: tab}, {Name: "offline", Value: offlineRaw}},
+				elev)
+			return
+		}
+
+		outcome := cancelHeldSale(ctx, d, repo, posRepo, id, elev, offline)
+		if onPage {
+			switch outcome {
+			case cancelOK:
+				w.Header().Set("HX-Redirect", "/open-orders?tab="+tab+"&msg=open_orders.cancel.done")
+			case cancelNotFound:
+				w.Header().Set("HX-Redirect", "/open-orders?tab="+tab+"&err=hold.error.not_found")
+			case cancelMainTillUnreachable:
+				w.Header().Set("HX-Redirect", "/open-orders?tab="+tab+"&err=open_orders.cancel.error.main_till_unreachable")
+			default:
+				w.Header().Set("HX-Redirect", "/open-orders?tab="+tab+"&err=open_orders.cancel.error.live")
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.Header().Set("HX-Retarget", "#parked-orders-body")
+		w.Header().Set("HX-Reswap", "innerHTML")
+		switch outcome {
+		case cancelOK:
+			w.Header().Set("HX-Trigger", "held-changed")
+			renderParkedOrdersPopup(w, r, d, repo, posRepo, httpx.T(locale, "open_orders.cancel.done"), "success")
+		case cancelNotFound:
+			w.Header().Set("HX-Trigger", "held-changed")
+			renderParkedOrdersPopup(w, r, d, repo, posRepo, httpx.T(locale, "hold.error.not_found"), "error")
+		case cancelMainTillUnreachable:
+			renderParkedOrdersPopup(w, r, d, repo, posRepo, httpx.T(locale, "open_orders.cancel.error.main_till_unreachable"), "error")
+		default:
+			renderParkedOrdersPopup(w, r, d, repo, posRepo, httpx.T(locale, "open_orders.cancel.error.live"), "error")
+		}
 	})
 
 	// Held-sales strip: chips the cashier taps to resume.

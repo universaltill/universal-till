@@ -335,15 +335,16 @@ func TestFiscalSignAsk_UnreachableDeclaredProceedsAndDeclares(t *testing.T) {
 	assertNoFailingSinceStamped(t, dp, "a fiscal.sign.ask failure must never stamp failing-since")
 }
 
-// ut-docs#835, narrowed by ADR-0136 (ut-docs#3309): on the SALE tender path
-// a "cannot-sign" answer is now refused outright (fiscal_sign_cannot_sign_test.go
-// covers that). ADR-0136 changes only completeTender's decision, though —
-// the refund path (POST /api/refund) still proceed-and-declares every
-// failure kind, so a signer refusing a refund's data still lands on its OWN
-// audit action (never the outage one) with non-outage wording in the
+// ut-docs#835, narrowed by ADR-0136 (ut-docs#3309) and ADR-0146
+// (ut-docs#3408): a "cannot-sign" answer is refused on the sale tender path
+// (fiscal_sign_cannot_sign_test.go) and on a refund/return where no money
+// has moved yet (refund_cannot_sign_test.go). A refund whose
+// payment.<key>.refund hook already sent the money back still
+// proceed-and-declares (ADR-0146 Decision 3, ut-docs#3556), landing on its
+// OWN audit action (never the outage one) with non-outage wording in the
 // operator alert. This pins that declareUnsignedFiscalSale's cannot-sign
 // branch is still live for that path.
-func TestFiscalSignAsk_CannotSignOnRefundStillDeclaresWithDifferentWording(t *testing.T) {
+func TestFiscalSignAsk_CannotSignOnProviderRefundStillDeclaresWithDifferentWording(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, _ := newRefundTestDeps(t)
 	t.Cleanup(func() { plugins.SharedBus(dp.Db).ResetSubscribers() })
@@ -351,14 +352,18 @@ func TestFiscalSignAsk_CannotSignOnRefundStillDeclaresWithDifferentWording(t *te
 	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-cannotsign", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
 		return json.RawMessage(`{"status":"cannot-sign"}`), nil
 	})
+	refunds, _ := seedCannotSignCardPlugin(t, dp, nil)
 	_, receiptNo := seedCompletedSaleForRefund(t, dp)
 
-	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2"))
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2&method=demopay"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("refund must still complete (proceed-and-declare), got %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("a provider-backed refund must still complete (proceed-and-declare), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := len(refunds()); n != 1 {
+		t.Fatalf("the provider's payment.demopay.refund must have run exactly once, got %d", n)
 	}
 	var refundSaleID string
 	if err := dp.Db.QueryRow(`SELECT id FROM sales WHERE sale_type = 'return'`).Scan(&refundSaleID); err != nil {
@@ -515,8 +520,10 @@ func TestFiscalSignAsk_ZeroPluginTillAllocatesNothing(t *testing.T) {
 		// with neither fiscal.sign.start nor fiscal.sign.ask subscribed
 		// must pay for both zero-plugin fast paths combined, still zero
 		// allocs/op. ADR-0138 D2 (ut-docs#3310) extends it again to the
-		// fiscal.order.start dispatch both order-capture call sites make.
+		// fiscal.order.start dispatch both order-capture call sites make,
+		// and ut-docs#3582 to the fiscal.order.cancel one Cancel order makes.
 		dispatchFiscalOrderStart(context.Background(), dp, "hold-1", fiscalOrderKindHeld, false)
+		dispatchFiscalOrderCancel(context.Background(), dp, "hold-1", false)
 		dispatchFiscalSignStart(context.Background(), dp, &in)
 		res := dispatchFiscalSignAsk(context.Background(), dp, &in)
 		if res.Outcome != fiscalSignNoSigner {
