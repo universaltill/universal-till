@@ -1257,6 +1257,18 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		UpsertCategory: func(ctx context.Context, id, name, color string) (string, error) {
 			return cloudUpsertCategory(ctx, d, id, name, color)
 		},
+		// Stock locations from my. (ut-docs#3383): the same POSRepo calls
+		// and guards locations_page.go makes, main-till only, audited,
+		// idempotent. See cloudCreateStockLocation.
+		CreateStockLocation: func(ctx context.Context, name string) (string, error) {
+			return cloudCreateStockLocation(ctx, d, name)
+		},
+		RenameStockLocation: func(ctx context.Context, id, name string) (string, error) {
+			return cloudRenameStockLocation(ctx, d, id, name)
+		},
+		SetStockLocationActive: func(ctx context.Context, id string, active bool) (string, error) {
+			return cloudSetStockLocationActive(ctx, d, id, active)
+		},
 		// update_category (ut-docs#2354): partial edit of an existing
 		// category + its modifier-group and kitchen-station links, picked
 		// from what the till last reported (#2472). See cloudUpdateCategory.
@@ -1995,6 +2007,170 @@ func cloudUpsertCategory(ctx context.Context, d *common.Deps, id, name, color st
 	}
 	auditCloudDirective(ctx, d, "category", id, "cloud_category_updated", map[string]any{"name": name, "color": color})
 	return "updated category " + name, nil
+}
+
+// --- stock locations from my. (ut-docs#3383) ---
+//
+// cloudCreateStockLocation, cloudRenameStockLocation and
+// cloudSetStockLocationActive are the create_stock_location /
+// rename_stock_location / set_stock_location_active hooks: the my. stock
+// locations node's writes, through the same POSRepo calls
+// locations_page.go's three POST handlers make, behind the same checks
+// (name required; deactivate refused while the location holds stock or has
+// an active register, or when it is the last active one). Audited like that
+// page's own audit() closure — entity "stock_location", the same action
+// names — under the "system" actor (auditCloudDirective), so a cloud change
+// is told apart from an operator's.
+//
+// Directives are at-least-once, so each hook is idempotent: a create whose
+// name an active location already has (case-insensitive) is a no-op
+// success, as is a rename to the current name or a location already in the
+// asked-for state — no write, no audit row. stock_locations is
+// primary-wins synced (sync_admin_repo.go's adminTables), so every real
+// write is gated by requirePrimaryDirective like the catalog hooks; Tick
+// also only applies these types on the main till.
+//
+// stock_locations.name is UNIQUE (001_init.sql) and a retired location
+// keeps its name, so a create or rename to a name ANY other location has —
+// retired ones included, compared case-insensitively so no near-duplicate
+// row lands either — is refused the way the /locations page refuses the
+// same duplicate (locations.error.create / rename); the merchant
+// reactivates the retired one instead. The cloud checks the same rule
+// against the last snapshot; this is the authoritative re-check.
+//
+// Refusals reuse the /locations page's own keys (locations.error.*),
+// rendered in English like every other directive result message, so my.
+// shows the till's own wording rather than a generic error.
+
+// stockLocationRefusal is a refusal in the locations page's own words.
+func stockLocationRefusal(key string) error {
+	return errors.New(httpx.T("en", key))
+}
+
+// findStockLocation returns the admin row for id, or an error naming it.
+func findStockLocation(locs []data.StockLocationAdmin, id string) (data.StockLocationAdmin, error) {
+	for _, l := range locs {
+		if l.ID == id {
+			return l, nil
+		}
+	}
+	return data.StockLocationAdmin{}, fmt.Errorf("stock location %s not found", id)
+}
+
+// stockLocationNamed returns the location — any state — whose name is name
+// (case-insensitive), other than selfID ("" for a create), and whether
+// there is one.
+func stockLocationNamed(locs []data.StockLocationAdmin, selfID, name string) (data.StockLocationAdmin, bool) {
+	for _, l := range locs {
+		if l.ID != selfID && strings.EqualFold(strings.TrimSpace(l.Name), name) {
+			return l, true
+		}
+	}
+	return data.StockLocationAdmin{}, false
+}
+
+func cloudCreateStockLocation(ctx context.Context, d *common.Deps, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", stockLocationRefusal("locations.error.required")
+	}
+	repo := data.NewPOSRepo(d.Db)
+	locs, err := repo.ListStockLocationsForAdmin(ctx)
+	if err != nil {
+		return "", err
+	}
+	if l, ok := stockLocationNamed(locs, "", name); ok {
+		if l.IsActive {
+			return "stock location " + l.Name + " already exists", nil
+		}
+		return "", stockLocationRefusal("locations.error.create")
+	}
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	id, err := repo.CreateStockLocation(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "stock_location", id, "stock_location_create", nil)
+	return "created stock location " + name, nil
+}
+
+func cloudRenameStockLocation(ctx context.Context, d *common.Deps, id, name string) (string, error) {
+	id, name = strings.TrimSpace(id), strings.TrimSpace(name)
+	if name == "" {
+		return "", stockLocationRefusal("locations.error.required")
+	}
+	repo := data.NewPOSRepo(d.Db)
+	locs, err := repo.ListStockLocationsForAdmin(ctx)
+	if err != nil {
+		return "", err
+	}
+	loc, err := findStockLocation(locs, id)
+	if err != nil {
+		return "", err
+	}
+	if loc.Name == name {
+		return "stock location " + name + " unchanged", nil
+	}
+	if _, taken := stockLocationNamed(locs, id, name); taken {
+		return "", stockLocationRefusal("locations.error.rename")
+	}
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	if err := repo.RenameStockLocation(ctx, id, name); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "stock_location", id, "stock_location_rename", nil)
+	return "renamed stock location to " + name, nil
+}
+
+func cloudSetStockLocationActive(ctx context.Context, d *common.Deps, id string, active bool) (string, error) {
+	id = strings.TrimSpace(id)
+	repo := data.NewPOSRepo(d.Db)
+	locs, err := repo.ListStockLocationsForAdmin(ctx)
+	if err != nil {
+		return "", err
+	}
+	loc, err := findStockLocation(locs, id)
+	if err != nil {
+		return "", err
+	}
+	if loc.IsActive == active {
+		if active {
+			return "stock location " + loc.Name + " already active", nil
+		}
+		return "stock location " + loc.Name + " already inactive", nil
+	}
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	if !active {
+		inUse, err := repo.StockLocationInUse(ctx, id)
+		if err != nil {
+			return "", err
+		}
+		if inUse {
+			return "", stockLocationRefusal("locations.error.in_use")
+		}
+		n, err := repo.CountActiveStockLocations(ctx)
+		if err != nil {
+			return "", err
+		}
+		if n <= 1 {
+			return "", stockLocationRefusal("locations.error.last_location")
+		}
+	}
+	if err := repo.SetStockLocationActive(ctx, id, active); err != nil {
+		return "", err
+	}
+	if active {
+		auditCloudDirective(ctx, d, "stock_location", id, "stock_location_activate", nil)
+		return "activated stock location " + loc.Name, nil
+	}
+	auditCloudDirective(ctx, d, "stock_location", id, "stock_location_deactivate", nil)
+	return "deactivated stock location " + loc.Name, nil
 }
 
 // cloudUpdateCategory is the update_category hook (ut-docs#2354): a partial
