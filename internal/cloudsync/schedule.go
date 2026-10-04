@@ -110,9 +110,12 @@ func backoffWait(base, maxCap time.Duration, n int, r float64) time.Duration {
 const retryAfterClamp = time.Hour
 
 // retryAfterHint extracts a usable Retry-After wait from a Tick failure,
-// but only for the two status codes that carry a real "come back later"
+// but only for the status codes that carry a real "come back later"
 // contract — 429 Too Many Requests and 503 Service Unavailable (design
-// point 3). Any other status's RetryAfter is ignored even if it happens to
+// point 3), and 402 plan_required, the cloud's refusal of the check-in for
+// a store without an active paid plan (ADR-0148 follow-up, ut-docs#3624:
+// it answers Retry-After 3600, so one refusal parks the loop for the
+// hour). Any other status's RetryAfter is ignored even if it happens to
 // be set. Returns 0 when there is nothing to honour. errors.As, so the
 // hint survives if a caller ever wraps post's error.
 func retryAfterHint(err error) time.Duration {
@@ -120,7 +123,9 @@ func retryAfterHint(err error) time.Duration {
 	if !errors.As(err, &se) {
 		return 0
 	}
-	if se.StatusCode != http.StatusTooManyRequests && se.StatusCode != http.StatusServiceUnavailable {
+	switch se.StatusCode {
+	case http.StatusTooManyRequests, http.StatusServiceUnavailable, http.StatusPaymentRequired:
+	default:
 		return 0
 	}
 	ra := se.RetryAfter
