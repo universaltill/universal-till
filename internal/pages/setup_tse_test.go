@@ -1387,3 +1387,55 @@ func TestTSEProvisioningSettingsActions_RefusedOnReplica(t *testing.T) {
 		t.Fatalf("replica rewrote the provisioning state: %q -> %q", before, after)
 	}
 }
+
+// ADR-0148 §2 review (ut-docs#3615): the operator window follows an
+// operator action only. The background retry ticker's accepted kickoff
+// (actor tseSystemActor) must not open one — nobody acted on this till —
+// while a manager's manual retry that is accepted does.
+func TestTSEKickoffOpensOperatorWindowOnlyForAnOperator(t *testing.T) {
+	seed := func(t *testing.T, d *common.Deps) {
+		t.Helper()
+		if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{
+			Status: tseStatusPendingKickoff, Country: "DE",
+			Identity: tseBusinessIdentity{LegalName: "L", OwnerName: "O", TaxNumber: "DE123456789", Address: "A"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Run("background retry", func(t *testing.T) {
+		windows := recordWindows(t)
+		_, _, d := newFullAuthDeps(t)
+		initTestPaths(t)
+		seed(t, d)
+		cloud := newFakeTSECloud(t)
+		configureTSECloud(d, cloud.server.URL)
+		tseProvisionRetryTick(t.Context(), d)
+		if st, _ := loadTSEProvisioningState(t.Context(), d); st == nil || st.Status != tseStatusAwaitingReady {
+			t.Fatalf("precondition: kickoff not accepted: %+v", st)
+		}
+		if w := windows(); len(w) != 0 {
+			t.Fatalf("the background retry opened an operator window %v; only an operator action may", w)
+		}
+	})
+	t.Run("manager retry", func(t *testing.T) {
+		windows := recordWindows(t)
+		_, _, d := newFullAuthDeps(t)
+		initTestPaths(t)
+		seed(t, d)
+		cloud := newFakeTSECloud(t)
+		configureTSECloud(d, cloud.server.URL)
+		tseKickoffAttempt(t.Context(), d, mustLoadTSEState(t, d), "m1")
+		if w := windows(); len(w) != 1 || w[0] != operatorCheckinWindow {
+			t.Fatalf("windows = %v, want [%v] after a manager's accepted kickoff", w, operatorCheckinWindow)
+		}
+	})
+}
+
+func mustLoadTSEState(t *testing.T, d *common.Deps) *tseProvisioningState {
+	t.Helper()
+	st, err := loadTSEProvisioningState(t.Context(), d)
+	if err != nil || st == nil {
+		t.Fatalf("load TSE state: %v (%v)", err, st)
+	}
+	return st
+}

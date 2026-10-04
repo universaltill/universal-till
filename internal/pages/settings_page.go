@@ -24,6 +24,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/data/seeddata"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -771,6 +772,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"fxView":         effectsLevelViewFrom(all),
 			"isManager":      isManager,
 			"canReportIssue": canReportIssue,
+			// ADR-0148 §5: the registration card says plainly that cloud
+			// sync is off (and offers "Check for a paid plan") while the
+			// cached entitlement doesn't allow the periodic check-in.
+			"cloudSyncOff": !entitlement.SyncAllowed(r.Context(), d.Settings),
 			// ADR-0092 §7 / ut-docs#2169: the diagnostic-mode card's state
 			// (web/ui/partials/diagnostics_block.html). Only computed for a
 			// manager: #settings-diagnostics (settings.html) is the ONLY
@@ -1090,6 +1095,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		settingsAudit(r, posRepo, elev, "enrollment", "-", "claim_code_generated", nil)
+		// ADR-0148 §2: check in for the code's lifetime, so a claim (and a
+		// paid plan behind it) reaches this till without a background poll.
+		requestOperatorCheckin(d, claimCheckinWindow)
 		// QR of the claim URL: the owner scans it and claims FROM THEIR
 		// PHONE — the only escape hatch on shells that can't open an
 		// external browser (Pi kiosk, windows/linux webview).
@@ -1142,6 +1150,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "enrol_now_registered", map[string]any{"store_id": status.StoreID})
+		requestOperatorCheckin(d, operatorCheckinWindow) // ADR-0148 §2
 		if !status.Registered {
 			// ut-docs#2753: a replica its main till registered — no store
 			// token of its own, but registered.
@@ -1150,6 +1159,40 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		fmt.Fprintf(w, `<span>✅ %s — <code>%s</code></span>`,
 			httpx.T(locale, "settings.enrol.registered"), status.StoreID)
+	})
+
+	// "Check for a paid plan" (ADR-0148 §2, ut-docs#3615): only a paid store
+	// checks in periodically, so an unpaid till learns that the shop moved
+	// to a paid plan only when an operator asks. This opens the short
+	// operator check-in window and kicks the loop; the check-in caches the
+	// cloud's entitlement block, and a paid answer turns the periodic loop
+	// on. Same always-200 HTMX shape and elevation gate as POST
+	// /api/enrol/now.
+	mux.HandleFunc("POST /api/enrol/check-plan", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = r.ParseForm()
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/enrol/check-plan", "#check-plan-msg",
+				httpx.T(locale, "elevation.summary.enrol_check_plan"), nil, elev)
+			return
+		}
+		// A till that cannot check in itself — not registered, or a
+		// replica registered through its main till (no store token of its
+		// own) — says so instead of "Checking…" for a check-in that never
+		// runs (tick needs the same three fields).
+		if m := enroll.Effective(d.Cfg).Marketplace; m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
+			key := "settings.enrol.not_registered"
+			if enroll.CurrentStatus().ViaMainTill {
+				key = "settings.enrol.registered_via_main"
+			}
+			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, key)))
+			return
+		}
+		requestOperatorCheckin(d, operatorCheckinWindow)
+		settingsAudit(r, posRepo, elev, "enrollment", "-", "check_plan_requested", nil)
+		fmt.Fprintf(w, `<span>✅ %s</span>`, html.EscapeString(httpx.T(locale, "settings.enrol.check_plan_sent")))
 	})
 
 	// "Pair with a shop" (ADR-0116 D5/D6, ut-docs#3523): the owner mints a
@@ -1194,6 +1237,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "paired", map[string]any{"store_id": status.StoreID})
+		requestOperatorCheckin(d, operatorCheckinWindow) // ADR-0148 §2
 		fmt.Fprintf(w, `<span>✅ %s <code>%s</code></span>`,
 			html.EscapeString(httpx.T(locale, "settings.enrol.pair_success")), html.EscapeString(status.StoreID))
 	})
@@ -1272,7 +1316,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// SETTING saved — registration status stays this page's
 			// enrolment card's job, refreshed by the success reload.
 			attemptCtx, cancel := context.WithTimeout(r.Context(), autoRegisterAttemptTimeout)
-			enroll.EnsureRegistered(attemptCtx, d.Cfg, d.Settings)
+			checkinAfterRegistration(d, enroll.EnsureRegistered(attemptCtx, d.Cfg, d.Settings)) // ADR-0148 §2
 			cancel()
 		}
 		settingsRespondSaved(w, r, elev)

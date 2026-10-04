@@ -293,8 +293,8 @@ type Hooks struct {
 	// AfterTick, when non-nil, is told each check-in's outcome on Start's
 	// goroutine (the cloud link re-reads its tier and role after every
 	// check-in, ADR-0117 §1). contacted is true only when the check-in
-	// really reached the cloud — false for an unregistered till's skip and
-	// for a failed POST — so only a real contact lifts the link's "wait for
+	// really reached the cloud — false for an unregistered till's skip, an
+	// unpaid till's gated skip (ADR-0148) and for a failed POST — so only a real contact lifts the link's "wait for
 	// the next check-in". It must not block.
 	AfterTick func(ctx context.Context, contacted bool, err error)
 	// LinkVersion, when non-nil, returns the newest link_version the cloud
@@ -332,7 +332,8 @@ type ModifierGroupOption struct {
 // tick runs one full sync round (heartbeat up, directives down, apply,
 // report) and says whether the cloud was really contacted: true
 // once the /v1/stores/sync POST succeeded, false for an unregistered
-// till's early return (nil error, no contact) and for any failure.
+// till's early return or an unpaid till's gated one (ADR-0148; nil error,
+// no contact) and for any failure.
 func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (contacted bool, err error) {
 	// Issue-report uploads (ADR-0022, spec 012) get a chance on EVERY tick,
 	// before the registration/connectivity gates below — ut-docs#637 review:
@@ -359,10 +360,18 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		return false, nil // not registered — nothing further to sync
 	}
 
+	settings := data.NewSettingsRepo(db)
+	// ADR-0148 (ut-docs#3615): only a paid store checks in periodically; an
+	// unpaid one only inside an operator window. A gated tick is quiet: no
+	// network, no warning, not an error (the scheduler keeps its normal
+	// cadence and no sync-error chip appears).
+	if !syncAllowedFn(ctx, settings) && !operatorWindowOpen(operatorNow()) {
+		return false, nil
+	}
+
 	// ADR-0117 §3 (ut-docs#2827): the conditional check-in decides whether
 	// this tick needs the full POST. The body is built first because its
 	// till-state part is what the hash covers.
-	settings := data.NewSettingsRepo(db)
 	req := buildSyncRequest(ctx, cfg, settings, hooks)
 	sum, hashErr := stateHash(req.devices)
 	plan, err := planCheckin(ctx, cfg, settings, sum, hashErr != nil, hooks.LinkVersion)
@@ -1599,26 +1608,35 @@ func Start(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks, wg 
 			if hooks.AfterTick != nil {
 				hooks.AfterTick(ctx, contacted, err)
 			}
-			// A nil channel never fires: no kicks while backing off. That
-			// includes the flat hourly wait of an ADR-0116 D6 lock-out
-			// (schedule.go's authTracker): a credential written while the
-			// till waits — a pairing, a re-registration — is first tried on
-			// the next hourly tick, and the status chip stays until that tick
-			// succeeds. The "Pair with a shop" screen (ut-docs#3523) is where
-			// an earlier wake belongs; a cloud nudge can't be it, the link
-			// itself is refused on a 401.
-			kick := hooks.Kick
-			if err != nil {
-				kick = nil
-			}
+			// No kicks while backing off. That includes the flat hourly
+			// wait of an ADR-0116 D6 lock-out (schedule.go's authTracker): a
+			// credential written while the till waits — a pairing, a
+			// re-registration — is first tried on the next hourly tick, and
+			// the status chip stays until that tick succeeds. The "Pair with
+			// a shop" screen (ut-docs#3523) is where an earlier wake belongs;
+			// a cloud nudge can't be it, the link itself is refused on a 401.
+			// Exception (ADR-0148, ut-docs#3615): a kick that arrives while an
+			// operator check-in window is open is an operator action on this
+			// till, and it ends the backoff — otherwise an unpaid till whose
+			// window check-in failed once would wait out the backoff, long
+			// past its window. A kick outside a window is consumed and the
+			// wait goes on; the check-in the wait ends in satisfies it.
 			timer := time.NewTimer(sched.next(err))
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return
-			case <-timer.C:
-			case <-kick:
-				timer.Stop()
+		wait:
+			for {
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+					break wait
+				case <-hooks.Kick:
+					if err != nil && !operatorWindowOpen(operatorNow()) {
+						continue
+					}
+					timer.Stop()
+					break wait
+				}
 			}
 		}
 	}()

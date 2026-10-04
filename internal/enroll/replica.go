@@ -234,24 +234,28 @@ func applyVouchRedeem(ctx context.Context, m config.MarketplaceConfig, kv Settin
 	// whatever the cloud says.
 	retryUnsaved(ctx, kv)
 	retryRedeem = redeemOwnCredential(ctx, m, kv, v, deviceID)
-	// After any redemption: a replica that now holds its own token runs its
-	// own cloud sync, so the relayed entitlement is skipped.
-	_, token := currentStoreAuth(m)
-	applyRelayedEntitlement(ctx, kv, v.Entitlement, token != "")
+	// Applied whether or not this replica now holds its own token
+	// (ADR-0148, ut-docs#3615): its own check-in is gated on this very
+	// cache, so a token-holding replica that skipped the relay would never
+	// sync. Its own check-in, once running, stays the fresher source by
+	// the newer-confirmation-wins rule in applyRelayedEntitlement.
+	applyRelayedEntitlement(ctx, kv, v.Entitlement)
 	return retryRedeem, nil
 }
 
 // applyRelayedEntitlement stores the main till's entitlement cache on a
-// replica with no cloud token of its own (ut-docs#2792). A replica that
-// holds a store token (a pre-#2730 copy, or one from the environment) runs
-// its own cloud sync, which is the fresher source — the relay would fight
-// it, so it is skipped. Best-effort: an invalid block keeps the replica's
-// cache, as does a relayed confirmation older than the one already held (two
-// vouch answers landing out of order, or a re-pointed replica); a failed
+// replica (ut-docs#2792), including one that holds its own store token:
+// ADR-0148 gates that replica's own check-in on this cache, so the relay is
+// what first lets it sync (ut-docs#3615). Its own check-in, once running, is
+// not fought: a relayed confirmation older than the one already held is
+// dropped. Best-effort: an invalid block keeps the replica's cache, as does
+// a relayed confirmation older than the one already held (two vouch answers
+// landing out of order, a re-pointed replica, or the replica's own fresher
+// check-in); a failed
 // write is logged and retried on the next vouch. last_confirmed_at is written
 // last so a partial write never looks freshly confirmed.
-func applyRelayedEntitlement(ctx context.Context, kv Settings, c *entitlement.Cached, ownToken bool) {
-	if c == nil || ownToken {
+func applyRelayedEntitlement(ctx context.Context, kv Settings, c *entitlement.Cached) {
+	if c == nil {
 		return
 	}
 	vals, err := c.RelayValues()

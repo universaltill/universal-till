@@ -2,8 +2,8 @@
 
 ## Prerequisites
 
-- Node.js 18+ (for Playwright)
-- Go 1.25 (to run the app)
+- Node.js 26+ (for Playwright)
+- Go 1.27 (to run the app)
 
 ## Quick Start
 

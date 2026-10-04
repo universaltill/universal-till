@@ -287,7 +287,14 @@
       var d = ctx.detail;
       if (d && d.target && d.target.id === id) { d.shouldSwap = true; d.isError = false; }
     },
-    'refresh-region': function (ctx) { if (window.UT && UT.refreshRegion) UT.refreshRegion(ctx.el); },
+    // refresh-region:<id> names the region outright (ut-docs#2904): a
+    // poll that swapped the carrier out mid-request leaves it detached,
+    // and a detached element can't find its region by closest().
+    'refresh-region': function (ctx, id) {
+      if (!window.UT || !UT.refreshRegion) return;
+      var r = id ? document.getElementById(id) : null;
+      UT.refreshRegion(r || ctx.el);
+    },
     'reload': function (ctx, key) { if (window.UT && UT.reload) UT.reload(key); else location.reload(); },
     'note-nav': function (ctx, key) { if (window.UT && UT.noteNav) UT.noteNav(key); },
     'ajax-get': function (ctx, arg, args) {

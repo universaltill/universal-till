@@ -49,7 +49,8 @@ func TestUsersShiftsSwapRegionNotReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, a := range []string{"UT.refreshRegion(ctx.el)", "UT.refreshRegion(t)"} {
+	// refresh-region falls back to ctx.el when no region id is named (ut-docs#2904).
+	for _, a := range []string{"UT.refreshRegion(r || ctx.el)", "UT.refreshRegion(t)"} {
 		if !strings.Contains(string(acts), a) {
 			t.Errorf("web/public/inline-actions.js: missing %q", a)
 		}
@@ -183,4 +184,81 @@ func formTag(t *testing.T, s, path string) string {
 		t.Fatalf("settings.html: malformed form for %s", path)
 	}
 	return s[start : i+end+1]
+}
+
+// ut-docs#2904: pairing approve/deny, till revoke and Backup now refresh
+// only their own card instead of the handler forcing HX-Refresh. The
+// handler half is pinned by the per-handler tests (pending_pairings_test,
+// sync_api_test, backup_api_test); this pins the template half.
+func TestPairingRevokeBackupSwapRegionNotReload(t *testing.T) {
+	cases := []struct {
+		file    string
+		anchors []string
+	}{
+		{"web/ui/pages/tills.html", []string{
+			`id="tills-pairing-card" data-ut-refresh="#tills-pairing-card"`,
+			`id="tills-roster" data-ut-refresh="#tills-roster"`,
+		}},
+		{"web/ui/partials/pending_pairings.html", []string{
+			`data-after-request="ok refresh-region:tills-pairing-card; fail unhide:pin-error-{{ .ID }}"`,
+		}},
+		{"web/ui/partials/tills_roster.html", []string{
+			`hx-post="/api/sync/tills/{{ .ID }}/revoke"`,
+			`data-after-request="ok refresh-region:tills-roster"`,
+		}},
+		{"web/ui/pages/settings.html", []string{
+			`<div id="settings-backup-region" data-ut-refresh="#settings-backup-region">`,
+			`hx-post="/api/backup/now" hx-target="#backup-msg" hx-swap="innerHTML" data-after-request="ut-ok refresh-region"`,
+		}},
+		// The handlers' HX-Trigger: tills-changed replaces what the reload
+		// used to do for these two 30s polls.
+		{"web/ui/partials/nav.html", []string{
+			`id="sync-chip" hx-preserve hx-get="/ui/sync-chip" hx-trigger="load, every 30s, tills-changed from:body"`,
+		}},
+		{"web/ui/layouts/base.html", []string{
+			`id="pairing-notice-mount" hx-get="/ui/pairing-notice" hx-trigger="load, every 30s, tills-changed from:body"`,
+		}},
+	}
+	for _, c := range cases {
+		b, err := os.ReadFile(c.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := string(b)
+		for _, a := range c.anchors {
+			if !strings.Contains(s, a) {
+				t.Errorf("%s: missing %q", c.file, a)
+			}
+		}
+	}
+	// The backup region sits inside the card (the section switcher holds
+	// the card element) and ends before #restore-msg (the staged-restore
+	// partial's inline script would not re-run after a region swap).
+	b, err := os.ReadFile("web/ui/pages/settings.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	if strings.Contains(s, `id="settings-backup" data-ut-refresh`) {
+		t.Error("settings.html: #settings-backup itself must not be a refresh region")
+	}
+	card := strings.Index(s, `id="settings-backup"`)
+	region := strings.Index(s, `id="settings-backup-region"`)
+	restore := strings.Index(s, `id="restore-msg"`)
+	if card < 0 || region < card || restore < region {
+		t.Fatalf("settings.html: want card < region < #restore-msg, got %d %d %d", card, region, restore)
+	}
+	// The region's own closing tag must come before #restore-msg: count
+	// <div opens vs </div> closes from the region start to #restore-msg.
+	seg := s[region:restore]
+	if opens, closes := strings.Count(seg, "<div"), strings.Count(seg, "</div>"); closes < opens {
+		t.Errorf("settings.html: #restore-msg is inside #settings-backup-region (%d <div vs %d </div>)", opens, closes)
+	}
+	acts, err := os.ReadFile("web/public/inline-actions.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(acts), "UT.refreshRegion(r || ctx.el)") {
+		t.Error("web/public/inline-actions.js: refresh-region:<id> must resolve the named region")
+	}
 }

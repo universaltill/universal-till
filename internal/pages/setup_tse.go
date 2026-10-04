@@ -324,6 +324,16 @@ func tseKickoffAttempt(ctx context.Context, d *common.Deps, st *tseProvisioningS
 			auditTSEProvisioning(ctx, d, actorID, st.Status, st.ErrorCode)
 		}
 		logging.L().Infof("tse provisioning: kickoff accepted, awaiting fiscal_tse_ready directive")
+		// ADR-0148 §2: managed-TSE setup is an operator action, and the
+		// fiscal_tse_ready directive arrives on a check-in. Opened on a
+		// manager's accepted kickoff only. Never for tseSystemActor: the
+		// background retry is no operator action (an accepted kickoff
+		// hours later must not open a window nobody asked for), and the
+		// setup wizard's own attempt already sits inside the window its
+		// registration opened (autoRegisterForSetup).
+		if actorID != tseSystemActor {
+			requestOperatorCheckin(d, operatorCheckinWindow)
+		}
 	case err == nil && tseKickoffRejected(status):
 		// Loud and specific, never a silent half-provisioned state:
 		// retrying the identical request cannot succeed for these codes
