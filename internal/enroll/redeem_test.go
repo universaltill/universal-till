@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/entitlement"
 )
 
 // ut-docs#2769 slice 2, ADR-0116 D3: a replica gets its OWN cloud
@@ -553,5 +554,31 @@ func TestPromotedTillDoesNotRedeemLateVouch(t *testing.T) {
 	}
 	if n := cloud.calls.Load(); n != 0 {
 		t.Fatalf("redeem calls = %d, want 0 after promotion", n)
+	}
+}
+
+// ADR-0148 (ut-docs#3615) review blocker: a replica that redeems its own
+// credential still needs the main till's relayed entitlement. Its own
+// check-in is gated on that very cache (paid-only sync), so skipping the
+// relay because it now holds a token left the cache empty and the
+// replica's sync gated for ever.
+func TestReplicaRedeemingOwnCredentialStillGetsRelayedEntitlement(t *testing.T) {
+	cloud := newFakeRedeemCloud(t)
+	kv, _ := bootReplica(t, rdmStore, "")
+	m := replicaMarket(cloud.srv.URL)
+	v := vouchWithCode()
+	v.Entitlement = &entitlement.Cached{Plan: "pro", SubscriptionStatus: "active", LastConfirmedAt: "2026-09-20T10:00:00Z"}
+
+	if err := applyVouch(context.Background(), m, kv, v); err != nil {
+		t.Fatalf("applyVouch: %v", err)
+	}
+	if _, tok := currentStoreAuth(m); tok != rdmToken {
+		t.Fatalf("precondition: replica did not redeem its own credential (token %q)", tok)
+	}
+	if got := kv.get(entitlement.KeyPlan); got != "pro" {
+		t.Fatalf("%s = %q after redeeming own credential, want the relayed %q", entitlement.KeyPlan, got, "pro")
+	}
+	if got := kv.get(entitlement.KeyLastConfirmedAt); got != "2026-09-20T10:00:00Z" {
+		t.Fatalf("%s = %q, want the relayed confirmation", entitlement.KeyLastConfirmedAt, got)
 	}
 }

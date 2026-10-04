@@ -498,33 +498,29 @@ func TestReplicaWithoutTokenStoresMainTillsEntitlement(t *testing.T) {
 }
 
 // The relay's guards, driven directly so a wrong write can't hide behind
-// loop timing: a replica holding a store token (its own cloud sync is the
-// fresher source), an invalid block, and a relayed confirmation older than
-// the one already held all keep the replica's cache.
+// loop timing: an invalid block and a relayed confirmation older than the
+// one already held (e.g. the replica's own fresher check-in) keep the
+// replica's cache.
 func TestApplyRelayedEntitlementKeepsCache(t *testing.T) {
 	valid := &entitlement.Cached{Plan: "pro", SubscriptionStatus: "active", LastConfirmedAt: "2026-09-20T10:00:00Z"}
-	for name, tc := range map[string]struct {
-		c        *entitlement.Cached
-		ownToken bool
-	}{
-		"own token": {valid, true},
-		"invalid":   {&entitlement.Cached{Plan: "platinum", SubscriptionStatus: "active", LastConfirmedAt: "2026-09-20T10:00:00Z"}, false},
-		"older":     {&entitlement.Cached{Plan: "pro", SubscriptionStatus: "active", LastConfirmedAt: "2026-09-19T10:00:00Z"}, false},
+	for name, c := range map[string]*entitlement.Cached{
+		"invalid": {Plan: "platinum", SubscriptionStatus: "active", LastConfirmedAt: "2026-09-20T10:00:00Z"},
+		"older":   {Plan: "pro", SubscriptionStatus: "active", LastConfirmedAt: "2026-09-19T10:00:00Z"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			kv := newFakeKV()
 			_ = kv.Set(context.Background(), "entitlement.plan", "shop")
 			_ = kv.Set(context.Background(), "entitlement.last_confirmed_at", "2026-09-19T12:00:00Z")
-			applyRelayedEntitlement(context.Background(), kv, tc.c, tc.ownToken)
+			applyRelayedEntitlement(context.Background(), kv, c)
 			if got := kv.get("entitlement.plan"); got != "shop" {
 				t.Fatalf("entitlement.plan = %q, want the replica's own cache kept", got)
 			}
 		})
 	}
-	// Control: the same valid, newer block without a token is applied.
+	// Control: a valid, newer block is applied.
 	kv := newFakeKV()
 	_ = kv.Set(context.Background(), "entitlement.last_confirmed_at", "2026-09-19T12:00:00Z")
-	applyRelayedEntitlement(context.Background(), kv, valid, false)
+	applyRelayedEntitlement(context.Background(), kv, valid)
 	if kv.get("entitlement.plan") != "pro" || kv.get("entitlement.last_confirmed_at") != "2026-09-20T10:00:00Z" {
 		t.Fatalf("a valid, newer relay was not applied: plan=%q confirmed=%q", kv.get("entitlement.plan"), kv.get("entitlement.last_confirmed_at"))
 	}

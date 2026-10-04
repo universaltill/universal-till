@@ -68,9 +68,24 @@
     <p>✅ {{ T "settings.enrol.registered" }}</p>
     {{ if enrolstore }}<p class="muted">{{ T "settings.enrol.store" }}: <code>{{ enrolstore }}</code></p>{{ end }}
     {{ if enroldevice }}<p class="muted">{{ T "settings.enrol.device" }}: <code>{{ enroldevice }}</code></p>{{ end }}
+    {{/* ADR-0148 (ut-docs#3615): the fleet list is a cloud call
+         (enroll.Fleet), so an unpaid till does not load it. */}}
+    {{ if not .cloudSyncOff }}
     <div hx-get="/api/enrol/devices" hx-trigger="load" hx-swap="innerHTML" class="set-gap-s">
       <span class="muted">{{ T "settings.enrol.fleet_loading" }}</span>
     </div>
+    {{ end }}
+    {{/* ADR-0148 §5 (ut-docs#3615): only a paid store checks in with the
+         cloud. Elevation-wired like Register now (ut-docs#867). */}}
+    {{ if .cloudSyncOff }}
+    <div class="set-divider">
+      <p class="muted">{{ T "settings.enrol.cloud_sync_off" }}</p>
+      <div class="set-row">
+        <button class="btn btn-touch" hx-post="/api/enrol/check-plan" hx-target="#check-plan-msg" hx-swap="innerHTML">{{ T "settings.enrol.check_plan_btn" }}</button>
+        <span id="check-plan-msg" aria-live="polite"></span>
+      </div>
+    </div>
+    {{ end }}
     <!-- ut-docs#867: unconditional — the POST is elevation-wired (checkOrElevate),
          so a denied session gets the in-place PIN dialog, not a hidden form. -->
     <div class="set-divider">
@@ -85,6 +100,9 @@
     <p>✅ {{ T "settings.enrol.registered_via_main" }}</p>
     {{ if enrolstore }}<p class="muted">{{ T "settings.enrol.store" }}: <code>{{ enrolstore }}</code></p>{{ end }}
     {{ if enroldevice }}<p class="muted">{{ T "settings.enrol.device" }}: <code>{{ enroldevice }}</code></p>{{ end }}
+    {{/* No "cloud sync is off" notice here (ADR-0148, ut-docs#3615): a till
+         registered through its main till never checks in itself, so its
+         own entitlement cache stays empty whatever the shop pays. */}}
   {{ else }}
     <p>⚠️ {{ T "settings.enrol.not_registered" }}</p>
     <p class="muted">{{ T "settings.enrol.benefits" }}</p>
