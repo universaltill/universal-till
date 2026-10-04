@@ -401,3 +401,38 @@ func TestRedactedJoinSnapshot_StripsTillCloudIdentity(t *testing.T) {
 		t.Errorf("LIVE DB token mutated: %q (err %v)", live, err)
 	}
 }
+
+// ut-docs#3307 (review finding): till_identity.cloud_id is the id the cloud
+// knows THIS till's device row by, kept when a joined till is promoted back
+// to main. It is one till's cloud identity, the family TillCloudIdentityPrefixes
+// exists for (ut-docs#2730): served to a joining replica it would make that
+// replica report the main till's own id the moment its sync.till_id is
+// blank, and the cloud would then retire or flag the main till's row. The
+// join snapshot strips it; the live DB keeps it.
+func TestRedactedJoinSnapshot_StripsTillIdentityCloudID(t *testing.T) {
+	path := testDBPath(t)
+	d := openTest(t, path)
+	if _, err := d.Exec(`INSERT INTO settings (key, value) VALUES ('till_identity.cloud_id', 'main-kept-id')`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	copyPath, cleanup, err := RedactedJoinSnapshot(d.DB, path)
+	if err != nil {
+		t.Fatalf("RedactedJoinSnapshot: %v", err)
+	}
+	defer cleanup()
+
+	cdb, err := sql.Open("sqlite", copyPath)
+	if err != nil {
+		t.Fatalf("open copy: %v", err)
+	}
+	defer cdb.Close()
+	var n int
+	if err := cdb.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = 'till_identity.cloud_id'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("till_identity.cloud_id still in the join snapshot (rows=%d err=%v)", n, err)
+	}
+	var live string
+	if err := d.QueryRow(`SELECT value FROM settings WHERE key = 'till_identity.cloud_id'`).Scan(&live); err != nil || live != "main-kept-id" {
+		t.Errorf("LIVE DB till_identity.cloud_id mutated: %q (err %v)", live, err)
+	}
+}

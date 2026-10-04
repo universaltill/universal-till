@@ -54,15 +54,18 @@ import (
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // Settings is the key/value persistence enrolment needs; *settings.Store
-// satisfies it.
+// satisfies it. GetOrCreate makes it a discovery.SettingsReader too, so the
+// till id it reports resolves through discovery.ReportedTillID (ut-docs#3307).
 type Settings interface {
 	Get(ctx context.Context, key string) (string, bool, error)
 	Set(ctx context.Context, key, value string) error
+	GetOrCreate(ctx context.Context, key, defaultValue string) (string, error)
 }
 
 // Settings keys holding the enrolled identity.
@@ -561,12 +564,12 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 		fields["region"] = region
 	}
 	// Best-effort like region: the cloud merges/retires older rows by the
-	// till's LAN sync id (ut-docs#2802). Only a joined till holds
-	// sync.till_id (set at join), and a joined till registers through
-	// registerOnReplica, so today this is empty on every path that reaches
-	// here. It is sent so the row carries it if that ever changes; the main
-	// till's own id on its cloud row is a separate card.
-	if tid, _, err := kv.Get(ctx, keySyncTillID); err == nil && strings.TrimSpace(tid) != "" {
+	// till's stable id (ut-docs#2802). A joined till registers through
+	// registerOnReplica, so a till reaching here is a main/standalone one: it
+	// reports the cloud id it kept from an earlier join, else its own LAN id
+	// (discovery.ReportedTillID, ut-docs#3307) — the same id its heartbeat
+	// carries.
+	if tid, err := discovery.ReportedTillID(ctx, kv); err == nil && strings.TrimSpace(tid) != "" {
 		fields["till_id"] = strings.TrimSpace(tid)
 	}
 	payload, err := json.Marshal(fields)
@@ -783,7 +786,7 @@ func registerDevice(ctx context.Context, m config.MarketplaceConfig, deviceName 
 	mu.RLock()
 	deviceID := cur.DeviceID
 	mu.RUnlock()
-	tillID, _, _ := kv.Get(ctx, keySyncTillID)
+	tillID, _ := discovery.ReportedTillID(ctx, kv) // best-effort: "" on error
 	// A till registering its own device never gets a redeem code (the cloud
 	// only mints one for another device with no credential yet).
 	if _, err := registerDeviceID(ctx, m, deviceID, deviceName, buildinfo.Version, tillID); err != nil {
@@ -797,9 +800,11 @@ func registerDevice(ctx context.Context, m config.MarketplaceConfig, deviceName 
 
 // registerDeviceID is the /v1/stores/devices/register call for any device id
 // — this till's own (registerDevice) or a replica's the main till vouches for
-// (VouchForReplica). tillID is the till's LAN sync id (sync.till_id), sent
-// when known as the stable machine key the cloud uses to merge or retire a
-// physical till's older device rows (ut-docs#2730, #2752).
+// (VouchForReplica). tillID is the till's stable id, sent when known as the
+// machine key the cloud uses to merge or retire a physical till's older
+// device rows (ut-docs#2730, #2752): for this till's own device, the
+// discovery.ReportedTillID resolution (sync.till_id, else the kept cloud id,
+// else its LAN id — ut-docs#3307); for a vouched replica, its sync.till_id.
 //
 // It returns the answer's optional data.redeem_code verbatim (ADR-0116 D3):
 // the one-time code the cloud mints when a device credential vouches for

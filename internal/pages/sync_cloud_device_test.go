@@ -78,6 +78,16 @@ func (k *memKV) Get(_ context.Context, key string) (string, bool, error) {
 	return v, ok, nil
 }
 
+func (k *memKV) GetOrCreate(_ context.Context, key, defaultValue string) (string, error) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if v, ok := k.m[key]; ok {
+		return v, nil
+	}
+	k.m[key] = defaultValue
+	return defaultValue, nil
+}
+
 func (k *memKV) Set(_ context.Context, key, value string) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()

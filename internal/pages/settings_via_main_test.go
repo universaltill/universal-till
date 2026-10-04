@@ -70,3 +70,6 @@ type emptyKV struct{}
 
 func (emptyKV) Get(_ context.Context, _ string) (string, bool, error) { return "", false, nil }
 func (emptyKV) Set(_ context.Context, _, _ string) error              { return nil }
+
+// GetOrCreate stores nothing (Set is a no-op too): it hands back the default.
+func (emptyKV) GetOrCreate(_ context.Context, _, def string) (string, error) { return def, nil }

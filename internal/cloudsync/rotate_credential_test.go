@@ -169,5 +169,6 @@ func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 // writes are dropped).
 type emptyKV struct{}
 
-func (emptyKV) Get(context.Context, string) (string, bool, error) { return "", false, nil }
-func (emptyKV) Set(context.Context, string, string) error         { return nil }
+func (emptyKV) Get(context.Context, string) (string, bool, error)            { return "", false, nil }
+func (emptyKV) Set(context.Context, string, string) error                    { return nil }
+func (emptyKV) GetOrCreate(_ context.Context, _, def string) (string, error) { return def, nil }

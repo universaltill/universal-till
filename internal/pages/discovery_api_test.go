@@ -285,7 +285,7 @@ func TestDiscoverPrimariesAPI_FailsOpenWhenOwnTillIDLookupErrors(t *testing.T) {
 	}, nil)
 
 	origTillID := discoveryTillID
-	discoveryTillID = func(ctx context.Context, settings *data.SettingsRepo) (string, error) {
+	discoveryTillID = func(ctx context.Context, settings discovery.SettingsReader) (string, error) {
 		return "", errors.New("settings db unavailable")
 	}
 	t.Cleanup(func() { discoveryTillID = origTillID })

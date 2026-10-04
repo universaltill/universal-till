@@ -69,7 +69,8 @@ func TestBuildSyncRequestDeviceNameReplicaWithNoOwnNameDefaultsToTill(t *testing
 	}
 }
 
-// ut-docs#2802: the heartbeat reports sync.till_id when set, never mints one.
+// ut-docs#2802: the heartbeat reports sync.till_id when set (tier 1 of
+// discovery.ReportedTillID, ut-docs#3307).
 func TestBuildSyncRequestReportsTillID(t *testing.T) {
 	db := testDB(t)
 	settings := data.NewSettingsRepo(db)
@@ -83,7 +84,11 @@ func TestBuildSyncRequestReportsTillID(t *testing.T) {
 	}
 }
 
-func TestBuildSyncRequestOmitsUnsetTillID(t *testing.T) {
+// ut-docs#3307: a main till with no sync.till_id reports its own LAN id. It
+// is minted only through discovery.TillID (lan_discovery.till_id), the one
+// source of truth — the value reported is exactly the stored LAN id, and a
+// second heartbeat reports the same id.
+func TestBuildSyncRequestUnsetTillIDReportsLANID(t *testing.T) {
 	for name, seed := range map[string]string{"unset": "", "whitespace": "  "} {
 		t.Run(name, func(t *testing.T) {
 			db := testDB(t)
@@ -95,12 +100,36 @@ func TestBuildSyncRequestOmitsUnsetTillID(t *testing.T) {
 				}
 			}
 			req := buildSyncRequest(ctx, testCfg(""), settings, Hooks{})
-			if _, has := req.devices[0]["till_id"]; has {
-				t.Fatalf("till_id present: %v", req.devices[0])
+			got, _ := req.devices[0]["till_id"].(string)
+			if got == "" {
+				t.Fatalf("till_id missing: %v", req.devices[0])
 			}
-			if _, minted, _ := settings.Get(ctx, discovery.TillIDSettingKey); minted {
-				t.Fatalf("heartbeat minted a LAN till id (%s)", discovery.TillIDSettingKey)
+			lan, ok, _ := settings.Get(ctx, discovery.TillIDSettingKey)
+			if !ok || lan != got {
+				t.Fatalf("till_id = %q, want the stored %s %q (ok=%v)", got, discovery.TillIDSettingKey, lan, ok)
+			}
+			again := buildSyncRequest(ctx, testCfg(""), settings, Hooks{})
+			if again.devices[0]["till_id"] != got {
+				t.Fatalf("till_id not stable: %q then %v", got, again.devices[0]["till_id"])
 			}
 		})
+	}
+}
+
+// ut-docs#3307: a till promoted back to main after being joined keeps
+// reporting the cloud id it was known by, and mints no fresh LAN id.
+func TestBuildSyncRequestReportsKeptCloudID(t *testing.T) {
+	db := testDB(t)
+	settings := data.NewSettingsRepo(db)
+	ctx := context.Background()
+	if err := settings.Set(ctx, data.TillIdentityCloudIDSettingsKey, "kept-id"); err != nil {
+		t.Fatal(err)
+	}
+	req := buildSyncRequest(ctx, testCfg(""), settings, Hooks{})
+	if got := req.devices[0]["till_id"]; got != "kept-id" {
+		t.Fatalf("till_id = %v, want kept-id", got)
+	}
+	if v, minted, _ := settings.Get(ctx, discovery.TillIDSettingKey); minted {
+		t.Fatalf("heartbeat minted a LAN till id %q despite a kept cloud id", v)
 	}
 }

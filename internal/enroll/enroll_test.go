@@ -35,6 +35,18 @@ func (f *fakeKV) Set(_ context.Context, key, value string) error {
 	return nil
 }
 
+// GetOrCreate mirrors data.SettingsRepo.GetOrCreate: the stored value if
+// present, else defaultValue stored and returned.
+func (f *fakeKV) GetOrCreate(_ context.Context, key, defaultValue string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if v, ok := f.m[key]; ok {
+		return v, nil
+	}
+	f.m[key] = defaultValue
+	return defaultValue, nil
+}
+
 func (f *fakeKV) get(key string) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -827,30 +839,85 @@ func TestInitWritesExplicitFlagsUnderMu(t *testing.T) {
 	<-done
 }
 
-// ut-docs#2802: register() sends sync.till_id when known, nothing otherwise.
+// ut-docs#2802, #3307: register() sends discovery.ReportedTillID — the
+// joined till's sync.till_id, else a kept cloud id, else this till's own LAN id.
 func TestRegisterSendsTillID(t *testing.T) {
-	for name, seed := range map[string]string{"set": "till-abc", "unset": "", "whitespace": "  "} {
+	for name, tc := range map[string]struct {
+		seed map[string]string
+		want string // "" = the minted LAN id
+	}{
+		"set":           {seed: map[string]string{keySyncTillID: "till-abc", "till_identity.cloud_id": "kept-id"}, want: "till-abc"},
+		"kept cloud id": {seed: map[string]string{keySyncTillID: "  ", "till_identity.cloud_id": "kept-id"}, want: "kept-id"},
+		"unset":         {seed: map[string]string{}},
+		"whitespace":    {seed: map[string]string{keySyncTillID: "  "}},
+	} {
 		t.Run(name, func(t *testing.T) {
 			resetState()
 			var gotBody map[string]any
 			srv := registerTestServer(t, &gotBody)
 			kv := newFakeKV()
-			if seed != "" {
-				if err := kv.Set(context.Background(), keySyncTillID, seed); err != nil {
-					t.Fatal(err)
-				}
+			for k, v := range tc.seed {
+				kv.m[k] = v
 			}
 			m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
 			if err := register(context.Background(), m, "Corner Shop", kv); err != nil {
 				t.Fatalf("register: %v", err)
 			}
-			got, has := gotBody["till_id"]
-			if name == "set" {
-				if got != "till-abc" {
-					t.Fatalf("till_id = %v, want till-abc", got)
+			want := tc.want
+			if want == "" {
+				want = kv.get("lan_discovery.till_id")
+				if want == "" {
+					t.Fatal("expected the LAN id minted through discovery.TillID")
 				}
-			} else if has {
-				t.Fatalf("till_id present: %#v", gotBody)
+			}
+			if got := gotBody["till_id"]; got != want {
+				t.Fatalf("till_id = %v, want %q", got, want)
+			}
+		})
+	}
+}
+
+// ut-docs#3307: a main till registering its own device under its store sends
+// the same resolved id as the heartbeat and /stores/register.
+func TestRegisterDeviceSendsReportedTillID(t *testing.T) {
+	for name, tc := range map[string]struct {
+		seed map[string]string
+		want string // "" = the minted LAN id
+	}{
+		"sync.till_id":  {seed: map[string]string{keySyncTillID: "till-abc"}, want: "till-abc"},
+		"kept cloud id": {seed: map[string]string{"till_identity.cloud_id": "kept-id"}, want: "kept-id"},
+		"neither":       {seed: map[string]string{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resetState()
+			var gotBody map[string]any
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/v1/stores/devices/register", func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewDecoder(r.Body).Decode(&gotBody)
+				w.WriteHeader(http.StatusOK)
+			})
+			srv := httptest.NewServer(mux)
+			t.Cleanup(srv.Close)
+			kv := newFakeKV()
+			for k, v := range tc.seed {
+				kv.m[k] = v
+			}
+			mu.Lock()
+			cur.DeviceID = "dev-1"
+			mu.Unlock()
+			m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api", StoreID: "store-1", MerchantToken: "tok"}
+			if err := registerDevice(context.Background(), m, "Front", kv); err != nil {
+				t.Fatalf("registerDevice: %v", err)
+			}
+			want := tc.want
+			if want == "" {
+				want = kv.get("lan_discovery.till_id")
+				if want == "" {
+					t.Fatal("expected the LAN id minted through discovery.TillID")
+				}
+			}
+			if got := gotBody["till_id"]; got != want {
+				t.Fatalf("till_id = %v, want %q", got, want)
 			}
 		})
 	}

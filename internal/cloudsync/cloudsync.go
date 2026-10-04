@@ -29,6 +29,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
+	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/iconid"
@@ -1108,9 +1109,16 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 		"role":      role,
 		"health":    health,
 	}
-	// Read-only (never mint via discovery.TillID): the cloud merges/retires
-	// this machine's older device rows by it (ut-docs#2802).
-	if tid := strings.TrimSpace(get("sync.till_id")); tid != "" {
+	// The cloud merges/retires this machine's older device rows by it
+	// (ut-docs#2802), and a main till's row needs one too (ut-docs#3307):
+	// sync.till_id when joined, else the cloud id kept at promotion, else this
+	// machine's own LAN id. That last tier may mint — the same
+	// lan_discovery.till_id this machine already advertises, through the same
+	// race-safe GetOrCreate in discovery.TillID. Best-effort: a failed read
+	// leaves till_id off this heartbeat, never the heartbeat itself.
+	if tid, err := discovery.ReportedTillID(ctx, settings); err != nil {
+		logging.L().Warnf("cloudsync: resolve till id: %v", err)
+	} else if tid = strings.TrimSpace(tid); tid != "" {
 		device["till_id"] = tid
 	}
 	if hooks.DeviceExtra != nil {
