@@ -29,6 +29,7 @@ import (
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/iconid"
+	"github.com/universaltill/universal-till/internal/kiosk"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -1208,6 +1209,12 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		PrintReport: func(ctx context.Context, r cloudsync.PrintReport) (string, error) {
 			return cloudPrintReport(ctx, d, r)
 		},
+		// kiosk_unlock (ut-docs#3466, ADR-0142 D3): release this till's
+		// self-order kiosk pin, only in self-order mode. See
+		// cloudKioskUnlock.
+		KioskUnlock: func(ctx context.Context, directiveID, createdBy string) (string, error) {
+			return cloudKioskUnlock(ctx, d, directiveID, createdBy)
+		},
 		InstallPlugin: func(ctx context.Context, listingID string) (string, error) {
 			return cloudInstallPlugin(ctx, d, listingID)
 		},
@@ -1413,6 +1420,17 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				// my.'s Tills graph. Per till, main or additional. See
 				// remotePeripheralsReport.
 				"peripherals": remotePeripheralsReport(ctx, d),
+				// ADR-0142 D5 (ut-docs#3466): whether this till is a
+				// self-order kiosk (its own display.mode) and whether its
+				// native shell intends to hold the OS pin (pushed by
+				// MainActivity through mobile.SetKioskPinned on every
+				// engage and release; always false off Android). It is the
+				// shell's intent, not an OS-confirmed pin: startLockTask()
+				// only requests one, and an unprovisioned device may
+				// refuse the system dialog. my. offers Unlock kiosk only
+				// when the latest check-in says self_order.
+				"self_order":   inSelfOrderMode(ctx, d),
+				"kiosk_pinned": kiosk.KioskPinned(),
 			}
 			// ut-docs#2472 (ADR-0095 Decision 2, read side): the applied
 			// menu configuration — categories with their modifier-group and

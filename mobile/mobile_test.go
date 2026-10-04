@@ -17,6 +17,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/discovery"
+	"github.com/universaltill/universal-till/internal/kiosk"
 	"github.com/universaltill/universal-till/internal/listenport"
 	"github.com/universaltill/universal-till/internal/procrestart"
 	"github.com/universaltill/universal-till/internal/recovery"
@@ -919,5 +920,43 @@ func TestSetDiscoveryBridge_RoutesDiscoveryThroughIt(t *testing.T) {
 	}
 	if stub.browsed != discovery.ServiceName || len(got) != 1 || got[0].TillID != "main" {
 		t.Fatalf("Browse = %+v (bridge asked for %q); want the bridge's one till", got, stub.browsed)
+	}
+}
+
+type stubKioskBridge struct{ calls int }
+
+func (s *stubKioskBridge) ReleaseKiosk() error { s.calls++; return nil }
+
+// ut-docs#3466 (ADR-0142 D3): MainActivity registers its gomobile
+// KioskBridge in onResume and clears it (null) in onPause. The registered
+// object is what AndroidNativeWindowController.ReleaseKiosk reaches through
+// internal/kiosk — the same object, not a wrapper.
+func TestSetKioskBridge_RegistersWithKioskPackage(t *testing.T) {
+	t.Cleanup(func() { SetKioskBridge(nil) })
+	stub := &stubKioskBridge{}
+	SetKioskBridge(stub)
+	got := kiosk.RegisteredBridge()
+	if got != kiosk.Bridge(stub) {
+		t.Fatalf("kiosk.RegisteredBridge() = %#v, want the stub", got)
+	}
+	if err := got.ReleaseKiosk(); err != nil || stub.calls != 1 {
+		t.Fatalf("ReleaseKiosk via the registered bridge: %v, calls=%d", err, stub.calls)
+	}
+	SetKioskBridge(nil)
+	if got := kiosk.RegisteredBridge(); got != nil {
+		t.Fatalf("after SetKioskBridge(nil): %#v, want nil", got)
+	}
+}
+
+// ADR-0142 D5: native code pushes the pin state on every engage/release.
+func TestSetKioskPinned_ForwardsToKioskPackage(t *testing.T) {
+	t.Cleanup(func() { SetKioskPinned(false) })
+	SetKioskPinned(true)
+	if !kiosk.KioskPinned() {
+		t.Fatal("kiosk.KioskPinned() = false after SetKioskPinned(true)")
+	}
+	SetKioskPinned(false)
+	if kiosk.KioskPinned() {
+		t.Fatal("kiosk.KioskPinned() = true after SetKioskPinned(false)")
 	}
 }

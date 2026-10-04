@@ -21,6 +21,10 @@ type fakeFallbackController struct {
 }
 
 func (f *fakeFallbackController) ExitToOS() error { f.exitCalls++; return f.exitErr }
+
+// ReleaseKiosk satisfies the interface (ut-docs#3466); ShellPollWindowController
+// never delegates it to the fallback.
+func (f *fakeFallbackController) ReleaseKiosk() error { return nil }
 func (f *fakeFallbackController) ApplyMode(mode string) error {
 	f.applyCalls = append(f.applyCalls, mode)
 	return nil

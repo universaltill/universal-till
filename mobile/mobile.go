@@ -26,9 +26,10 @@
 // types (strings, ints, bools, []byte, error, and a few others — no generics,
 // no complex struct fields crossing directly) — this package's exported
 // surface is deliberately minimal for that reason: three lifecycle
-// functions plus a few setters; SetBluetoothBridge and SetDiscoveryBridge
-// take the exported interface types declared IN this package,
-// BluetoothBridge (ADR-0080) and DiscoveryBridge (ut-docs#3218). Each must
+// functions plus a few setters; SetBluetoothBridge, SetDiscoveryBridge and
+// SetKioskBridge take the exported interface types declared IN this package,
+// BluetoothBridge (ADR-0080), DiscoveryBridge (ut-docs#3218) and KioskBridge
+// (ut-docs#3466). Each must
 // be declared here rather than merely referenced from its internal
 // package (internal/bluetooth, internal/discovery): gobind only binds
 // types from the package named on its command line, so a type from an unbound package compiles and builds a
@@ -71,6 +72,7 @@ import (
 	"github.com/universaltill/universal-till/internal/bluetooth"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/discovery"
+	"github.com/universaltill/universal-till/internal/kiosk"
 	"github.com/universaltill/universal-till/internal/listenport"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/procrestart"
@@ -548,6 +550,47 @@ func SetDiscoveryBridge(b DiscoveryBridge) {
 // restoring that default.
 func SetDeviceModel(model string) {
 	diagnostics.SetDeviceModel(model)
+}
+
+// KioskBridge is the gomobile-bind-visible mirror of kiosk.Bridge
+// (ut-docs#3466, ADR-0142 D3), declared HERE for the same reason as
+// BluetoothBridge above: gobind binds only types declared in the package
+// named on its command line (./mobile), and a parameter type from an
+// unbound package makes it silently skip the whole function — exit 0, a
+// green .aar, and no setKioskBridge for Kotlin to call
+// (scripts/ci/guard-gobind-skip.sh is the guard for that class). Kept
+// structurally identical to kiosk.Bridge, so SetKioskBridge passes its
+// argument straight through; a mismatch is a compile error there.
+//
+// It is the Go→native half of the remote kiosk_unlock directive: the Go
+// cloudsync loop, not the WebView, calls it, so it works while the page the
+// kiosk shows is broken. Unlike BluetoothBridge (registered once by
+// TillService), MainActivity owns it — Lock Task, the release window and
+// loadUrl are Activity state — registering it in onResume and clearing it
+// (null) in onPause. The call arrives on a Go goroutine; the
+// implementation switches to the UI thread itself.
+type KioskBridge interface {
+	// ReleaseKiosk releases the self-order Lock Task pin, opens the
+	// release window and loads /login. A returned error is the
+	// directive's failure reason.
+	ReleaseKiosk() error
+}
+
+// SetKioskBridge registers MainActivity's KioskBridge with internal/kiosk,
+// where AndroidNativeWindowController.ReleaseKiosk reads it (that package
+// cannot import this one: mobile → app → pages). Passing nil (Kotlin null,
+// from onPause) un-registers it; a kiosk_unlock arriving then fails with
+// reason no_shell.
+func SetKioskBridge(b KioskBridge) {
+	kiosk.SetBridge(b) // a nil KioskBridge converts to a nil kiosk.Bridge
+}
+
+// SetKioskPinned records the self-order pin state MainActivity now intends
+// (ut-docs#3466, ADR-0142 D5), mirroring SetDeviceModel's shape: Kotlin
+// calls it from engageKioskLock (true) and releaseKioskLock (false), and
+// the check-in reports it as DeviceExtra's kiosk_pinned.
+func SetKioskPinned(pinned bool) {
+	kiosk.SetKioskPinned(pinned)
 }
 
 // defaultListenPort is the port a till with nothing persisted asks for

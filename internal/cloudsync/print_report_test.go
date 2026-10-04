@@ -47,14 +47,14 @@ func TestPrintReportSkipReason(t *testing.T) {
 		"blank device":       {d(""), "addressed to another till"},
 		"absent device":      {d(nil), "addressed to another till"},
 		"non-string device":  {d(7.0), "addressed to another till"},
-		"other type":         {directive{Type: "rename_till", Payload: map[string]any{"device_id": "dev-other"}}, ""},
+		"untargeted type":    {directive{Type: "set_setting", Payload: map[string]any{"device_id": "dev-other"}}, ""},
 	} {
-		if got := printReportSkipReason(tc.d); got != tc.want {
+		if got := deviceTargetSkipReason(tc.d); got != tc.want {
 			t.Errorf("%s: %q, want %q", name, got, tc.want)
 		}
 	}
 	ownDeviceID = func() string { return "" }
-	if got := printReportSkipReason(d("dev-self")); got != "this till's own device id is not known yet" {
+	if got := deviceTargetSkipReason(d("dev-self")); got != "this till's own device id is not known yet" {
 		t.Fatalf("own id unknown: %q", got)
 	}
 }
@@ -152,8 +152,8 @@ func TestTickPrintReportOnlyForOwnDevice(t *testing.T) {
 	orig := ownDeviceID
 	ownDeviceID = func() string { return "dev-self" }
 	t.Cleanup(func() { ownDeviceID = orig })
-	resetRenameSkipLog()
-	t.Cleanup(resetRenameSkipLog)
+	resetTargetSkipLog()
+	t.Cleanup(resetTargetSkipLog)
 
 	for _, role := range []struct {
 		name    string

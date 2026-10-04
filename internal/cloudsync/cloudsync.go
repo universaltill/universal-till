@@ -284,6 +284,18 @@ type Hooks struct {
 	// when no printer is configured or the print fails, never a silent
 	// "applied".
 	PrintReport func(ctx context.Context, r PrintReport) (string, error)
+	// KioskUnlock handles "kiosk_unlock" (ut-docs#3466, ADR-0142 D3): the
+	// owner (or staff admin, both with step-up) asked from the cloud to
+	// release THIS till's self-order kiosk pin. Payload {device_id} only;
+	// Tick already skipped it unless device_id is this till's own, so it
+	// applies on a main and an additional till alike (not main-till only,
+	// D1). directiveID and createdBy are the directive's own id and
+	// created_by, for the till's audit row. The hook
+	// (pages.cloudKioskUnlock) re-checks display.mode = self_order itself —
+	// the cloud's own check is a UX guard, this is the boundary — and
+	// returns the refusal reason (not_self_order, kiosk_appliance,
+	// not_supported, no_shell) as its error.
+	KioskUnlock func(ctx context.Context, directiveID, createdBy string) (string, error)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can
 	// render a real design picker instead of a raw key/value form). Keys must
@@ -472,20 +484,17 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 			}
 			continue
 		}
-		reason := renameTillSkipReason(d)
-		if reason == "" {
-			reason = printReportSkipReason(d)
-		}
-		if reason != "" {
-			// ut-docs#3272: a rename_till names one device, as does a
-			// print_report (ut-docs#2537). One addressed to another till
-			// (or to none) stays pending for its target — no apply, no
-			// result post. Logged once per directive id; an own id not
-			// known yet is not remembered, so the real reason is still
-			// logged once the id is known.
+		if reason := deviceTargetSkipReason(d); reason != "" {
+			// A device-targeted directive (rename_till ut-docs#3272,
+			// print_report ut-docs#2537, kiosk_unlock ut-docs#3466 —
+			// deviceTargetedTypes) addressed to another till (or to none)
+			// stays pending for its target — no apply, no result post.
+			// Logged once per directive id; an own id not known yet is not
+			// remembered, so the real reason is still logged once the id
+			// is known.
 			if ownDeviceID() == "" {
 				logging.L().Infof("cloudsync: directive %s (%s) skipped: %s", d.ID, d.Type, reason)
-			} else if firstRenameSkip(d.ID) {
+			} else if firstTargetSkip(d.ID) {
 				logging.L().Infof("cloudsync: directive %s (%s) skipped: %s", d.ID, d.Type, reason)
 			}
 			continue
@@ -716,7 +725,7 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 		if hooks.RenameTill == nil {
 			return "failed", "rename_till is not supported on this till"
 		}
-		// device_id was checked in Tick (renameTillSkipReason).
+		// device_id was checked in Tick (deviceTargetSkipReason).
 		name := str("name")
 		if name == "" {
 			return "failed", "missing name"
@@ -726,12 +735,20 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 		if hooks.PrintReport == nil {
 			return "failed", "print_report is not supported on this till"
 		}
-		// device_id was checked in Tick (printReportSkipReason).
+		// device_id was checked in Tick (deviceTargetSkipReason).
 		r, bad := decodePrintReport(d)
 		if bad != "" {
 			return "failed", bad
 		}
 		msg, err = hooks.PrintReport(ctx, r)
+	case "kiosk_unlock":
+		if hooks.KioskUnlock == nil {
+			return "failed", "kiosk_unlock is not supported on this till"
+		}
+		// device_id — the payload's only field — was checked in Tick
+		// (deviceTargetSkipReason). The id and created_by the till audits
+		// come from the directive itself (ADR-0142 D3).
+		msg, err = hooks.KioskUnlock(ctx, d.ID, d.CreatedBy)
 	case "upsert_category":
 		if hooks.UpsertCategory == nil {
 			return "failed", "upsert_category is not supported on this till"

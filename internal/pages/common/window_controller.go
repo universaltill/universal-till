@@ -1,5 +1,21 @@
 package common
 
+import "errors"
+
+// ErrKioskReleaseNotSupported is ReleaseKiosk's answer on the desktop shells
+// (Windows/macOS/Linux) and the bare-Deps no-op (ut-docs#3466, ADR-0142
+// D3): self-order there pins nothing at OS level, so there is no pin to
+// release — and reusing ExitToOS would permanently switch the shell to
+// normal mode, with no self-heal. Its text is the kiosk_unlock directive's
+// result reason, a contract with ut-cloud and my.
+var ErrKioskReleaseNotSupported = errors.New("not_supported")
+
+// ErrNoKioskShell is ReleaseKiosk's answer on Android when MainActivity has
+// no KioskBridge registered — it registers one in onResume and clears it in
+// onPause, so this means the Activity is not in the foreground (ADR-0142
+// D3, result reason no_shell; the cloud does not retry it).
+var ErrNoKioskShell = errors.New("no_shell")
+
 // WindowController is the host-OS hook for the till's own window/process —
 // exiting kiosk/fullscreen to the OS desktop, and applying a window-mode
 // change. This card (ut-docs#608) built the interface and a no-op stub;
@@ -29,6 +45,16 @@ type WindowController interface {
 	// enough to disturb the caller; a platform with nowhere meaningful to
 	// record this is a documented no-op returning nil, not an error.
 	RecordInputHeartbeat() error
+
+	// ReleaseKiosk releases the self-order kiosk's OS-level pin now, for a
+	// remote kiosk_unlock directive (ut-docs#3466, ADR-0142 D3). It is
+	// never reached through the WebView, so it works while the page shown
+	// is broken. Only the Android native shell has such a pin (#1508);
+	// every other platform refuses with a sentinel the directive handler
+	// maps to its result reason: ErrNoOSDesktop on the Pi kiosk appliance
+	// (kiosk_appliance), ErrKioskReleaseNotSupported on the desktop shells
+	// (not_supported). The caller has already checked display.mode.
+	ReleaseKiosk() error
 }
 
 // NoopWindowController is a do-nothing WindowController kept for bare-Deps
@@ -42,3 +68,8 @@ type NoopWindowController struct{}
 func (NoopWindowController) ExitToOS() error             { return nil }
 func (NoopWindowController) ApplyMode(mode string) error { return nil }
 func (NoopWindowController) RecordInputHeartbeat() error { return nil }
+
+// ReleaseKiosk refuses: there is no platform behind this controller to
+// release a pin on, and a silent nil would report an unlock that never
+// happened.
+func (NoopWindowController) ReleaseKiosk() error { return ErrKioskReleaseNotSupported }

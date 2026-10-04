@@ -182,13 +182,25 @@ What's implemented now, all in `MainActivity`:
   (ut-docs#1507, a *deliberate* `guard-page-http-error.sh` exception —
   the wizard has no operator layout to render an escape link into) with
   Home/Recents both blocked by a pin that should never have engaged
-  there. **Not yet done** (split out of ut-docs#1508's own acceptance
-  criteria and tracked as its own card, ut-docs#1513): a physical-button
-  and remote unlock path for
-  self-order specifically, so an operator isn't limited to the documented
-  unpin gesture below or a working web UI even while genuinely
-  self-order-pinned — both need new cross-repo design (a hardware
-  decision, and an ut-cloud-side remote channel) out of scope for this fix.
+  there. The physical-button route was dropped (ut-docs#1513); the
+  **remote unlock** is below.
+- **Remote unlock from my. (ut-docs#3466, ADR-0142).** The shop owner (or
+  staff admin), with step-up, sends a device-targeted `kiosk_unlock`
+  directive. The Go cloudsync loop receives it — not the WebView, so a
+  broken self-order page does not matter — and the till refuses it unless
+  its own `display.mode` is `self_order`. Go then calls the gomobile
+  `mobile.KioskBridge` that `MainActivity` registers in `onResume` and
+  clears in `onPause` (`RemoteUnlockBridge`; not the JS `KioskBridge`).
+  On the UI thread it releases the pin as `exitLockdown()` does, opens a
+  **release window** and loads `/login`. While the window is open,
+  `onPageFinished` does not re-pin on `/self-order*`; it closes on the
+  first navigation outside `/login`, `/settings*` and `/self-order*`, or
+  after 15 minutes, and the next `/self-order` load pins again. With the
+  Activity backgrounded there is no bridge and my. shows `no_shell`.
+  `engageKioskLock`/`releaseKioskLock` push the intended pin state to Go
+  (`Mobile.setKioskPinned`), reported on check-in as `kiosk_pinned`.
+  Instrumented test: `app/src/androidTest/.../RemoteKioskUnlockTest.kt`
+  (`./gradlew connectedDebugAndroidTest`, needs a set-up till).
 - **Immersive full-screen** (androidx `WindowInsetsControllerCompat`)
   hides the status and navigation bars as a cosmetic second layer,
   **in every mode, self-order or not** — a swipe reveals them
@@ -475,6 +487,19 @@ follow-up on real hardware**, whoever has the TECLAST P50T next:
     something else re-checks (a resume, or the next `/self-order`
     navigation). That gap is expected, and is what a Device-Owner pin
     (which cannot be unpinned at all) would remove.
+
+**ut-docs#3466 (remote unlock) device check** — not yet run on hardware;
+the session that wrote it had no Android SDK:
+
+15. With the till in self-order mode and pinned, on a page broken on
+    purpose (e.g. `/self-order/__broken__`), send **Unlock kiosk** from
+    my. — within one check-in (about 2.5 minutes) confirm the pin drops,
+    the bars return and the WebView shows `/login`; my. shows `applied`.
+16. Without signing in, go back to `/self-order` — confirm it stays
+    unpinned for up to 15 minutes, then pins again on the next
+    `/self-order` load after that.
+17. Background the app (Home) and send **Unlock kiosk** again — confirm
+    my. shows `failed` / `no_shell` and nothing changes on the till.
 
 ## Camera, microphone and screenshots (ut-docs#1435)
 

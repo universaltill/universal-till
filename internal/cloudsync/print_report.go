@@ -13,8 +13,8 @@ import (
 // as a print.Doc and prints it on its own receipt printer.
 //
 // Where the pieces live follows the existing directive architecture: this
-// package owns the dispatch — the device check (printReportSkipReason,
-// run by Tick before apply, like renameTillSkipReason), the payload decode
+// package owns the dispatch — the device check (deviceTargetSkipReason,
+// run by Tick before apply, as for every device-targeted type), the payload decode
 // (decodePrintReport) and the result post (apply's status/message, sent by
 // Tick's postResult like every other type) — while the side effect is a
 // Hooks func implemented in internal/pages (cloudPrintReport), which
@@ -59,17 +59,6 @@ type PrintReportKPI struct {
 type PrintReportRow struct {
 	Label  string
 	Values []string
-}
-
-// printReportSkipReason reports why this till must skip d, or "" to apply
-// it: a print_report whose device_id is blank or another till's, or one
-// that arrives before this till knows its own id. Any other type is not
-// its business ("").
-func printReportSkipReason(d directive) string {
-	if d.Type != "print_report" {
-		return ""
-	}
-	return ownDeviceSkipReason(d)
 }
 
 // decodePrintReport reads d's payload, refusing (a non-empty reason) any

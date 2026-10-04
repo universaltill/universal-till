@@ -97,6 +97,11 @@ func (c *ShellPollWindowController) ExitToOS() error {
 	return nil
 }
 
+// ReleaseKiosk refuses (ADR-0142 D3), attached or not: self-order on a
+// desktop shell pins nothing at OS level, and its only fallback is the
+// desktop HTTP controller, which refuses the same way.
+func (c *ShellPollWindowController) ReleaseKiosk() error { return ErrKioskReleaseNotSupported }
+
 // RecordInputHeartbeat forwards to the spawn-mode fallback control channel
 // when one exists (ut-docs#1329, split from #1228's input-freeze
 // incident). Unlike ApplyMode above, this is unconditional — never gated

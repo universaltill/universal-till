@@ -34,6 +34,10 @@ android {
         // derives it deterministically from the semver tag.
         versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
         versionName = (project.findProperty("versionName") as String?) ?: "0.1.0-dev"
+        // ut-docs#3466: runs src/androidTest (connectedDebugAndroidTest, on a
+        // device or emulator — not part of android-ci.yml's compile-only
+        // assembleDebug gate).
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -209,4 +213,10 @@ dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.core:core-ktx:1.15.0")
+
+    // ut-docs#3466 (ADR-0142, #1508 AC3): the instrumented remote-unlock
+    // regression test. Device/emulator only (connectedDebugAndroidTest).
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }

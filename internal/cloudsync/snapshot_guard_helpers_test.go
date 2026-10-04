@@ -15,8 +15,8 @@ func satelliteSkipLoggedLen() int {
 	return len(satelliteSkipLog.seen)
 }
 
-func resetRenameSkipLog() {
-	renameSkipLog.mu.Lock()
-	defer renameSkipLog.mu.Unlock()
-	renameSkipLog.seen = nil
+func resetTargetSkipLog() {
+	targetSkipLog.mu.Lock()
+	defer targetSkipLog.mu.Unlock()
+	targetSkipLog.seen = nil
 }

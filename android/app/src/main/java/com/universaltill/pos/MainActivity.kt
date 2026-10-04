@@ -25,6 +25,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Base64
 import android.util.Log
@@ -46,6 +47,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.VisibleForTesting
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
@@ -59,6 +61,11 @@ import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import mobile.Mobile
+// Aliased: this Activity already has an unrelated inner class named
+// KioskBridge (the @JavascriptInterface exitLockdown() bridge), which would
+// shadow the gomobile-bound interface's simple name inside this file.
+import mobile.KioskBridge as GoKioskBridge
 
 /**
  * Native shell (ADR-0023, spec 013 Phase 2): binds to [TillService] — which
@@ -361,6 +368,93 @@ class MainActivity : AppCompatActivity() {
     // manager-facing pages for exactly that reason; onResume has to agree
     // with it.
     private var kioskPinned = false
+
+    /**
+     * ut-docs#3466 (ADR-0142 D3): the remote-unlock release window. 0 when
+     * closed; otherwise the [SystemClock.elapsedRealtime] instant it closes
+     * by itself. A `kiosk_unlock` directive opens it ([releaseForRemoteUnlock]);
+     * while it is open, onPageFinished does NOT re-pin on `/self-order*`, so
+     * whoever unlocked has time to sign in on `/login` and change what they
+     * need. It closes on the first navigation to a page that is neither
+     * `/login`, `/settings*` nor `/self-order*` (someone signed in and moved
+     * on — #1508's rules already release there), or after
+     * [REMOTE_UNLOCK_WINDOW_MS]. After that the next `/self-order` load pins
+     * again, so an unlock nobody follows up on heals itself. Monotonic clock
+     * on purpose: a wall-clock change must not stretch the window.
+     *
+     * Not saved across an Activity recreation, like [kioskPinned] itself: a
+     * recreated Activity starts with the window closed, the safe direction.
+     */
+    private var remoteUnlockWindowUntil = 0L
+
+    private fun remoteUnlockWindowOpen(): Boolean =
+        remoteUnlockWindowUntil != 0L && SystemClock.elapsedRealtime() < remoteUnlockWindowUntil
+
+    /**
+     * ut-docs#3466 (ADR-0142 D3): the gomobile-bound `mobile.KioskBridge`
+     * — the Go→native half of the remote `kiosk_unlock` directive. NOT the
+     * [KioskBridge] inner class above (that one is the JS→native
+     * `@JavascriptInterface` bridge for exitLockdown() and friends; this one
+     * is never reachable from any page). The Go cloudsync loop calls it
+     * through AndroidNativeWindowController.ReleaseKiosk after the till's
+     * own display.mode check, so it works while the WebView shows a broken
+     * page.
+     *
+     * Registered in [onResume], cleared in [onPause]: Lock Task, the release
+     * window and loadUrl are Activity state, so only a foreground Activity
+     * may answer — a backgrounded one leaves no bridge, and Go reports
+     * `no_shell`.
+     *
+     * The call arrives on a Go goroutine's thread; the work runs on the UI
+     * thread, and this thread waits for it (bounded) so the directive's
+     * `applied` means the pin really was released, not merely queued — the
+     * same latch shape as captureScreenshot. A thrown exception reaches Go
+     * as the directive's failure reason.
+     */
+    private inner class RemoteUnlockBridge : GoKioskBridge {
+        override fun releaseKiosk() {
+            val done = CountDownLatch(1)
+            val failure = AtomicReference<Throwable?>(null)
+            runOnUiThread {
+                try {
+                    releaseForRemoteUnlock()
+                } catch (t: Throwable) {
+                    failure.set(t)
+                } finally {
+                    done.countDown()
+                }
+            }
+            if (!done.await(REMOTE_UNLOCK_UI_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                throw Exception("ui_thread_timeout")
+            }
+            failure.get()?.let { throw Exception("release_failed: ${it.message ?: it.javaClass.simpleName}") }
+        }
+    }
+
+    @VisibleForTesting
+    internal val remoteUnlockBridge: GoKioskBridge = RemoteUnlockBridge()
+
+    /** Test-only view of the intended pin state ([kioskPinned]). */
+    @VisibleForTesting
+    internal fun kioskPinnedForTest(): Boolean = kioskPinned
+
+    /** Test-only view of [remoteUnlockWindowOpen]. */
+    @VisibleForTesting
+    internal fun remoteUnlockWindowOpenForTest(): Boolean = remoteUnlockWindowOpen()
+
+    /**
+     * UI thread only. The remote unlock itself (ADR-0142 D3): the same
+     * release exitLockdown() performs, then the release window, then
+     * `/login` — where any next step needs a manager PIN. Loading `/login`
+     * also replaces whatever broken page the kiosk was stuck on.
+     */
+    private fun releaseForRemoteUnlock() {
+        releaseKioskLock()
+        clearImmersiveMode()
+        remoteUnlockWindowUntil = SystemClock.elapsedRealtime() + REMOTE_UNLOCK_WINDOW_MS
+        Log.i(TAG, "self-order kiosk released by a remote kiosk_unlock; release window open")
+        allowedHost?.let { webView.loadUrl("http://$it/login") }
+    }
 
     /**
      * The native side of the server's existing "exit to OS" escape hatch
@@ -960,6 +1054,9 @@ class MainActivity : AppCompatActivity() {
      */
     private fun engageKioskLock() {
         kioskPinned = true
+        // ut-docs#3466 (ADR-0142 D5): the check-in reports this as
+        // kiosk_pinned.
+        Mobile.setKioskPinned(true)
         // ut-docs#1639 (independent review): [pinConfirmed] is scoped to ONE
         // pin intent, as its own doc says, and this line starts a new one.
         // Without the reset, a kiosk that was pinned, unpinned by the
@@ -1011,6 +1108,7 @@ class MainActivity : AppCompatActivity() {
     /** Releases Lock Task / screen-pinning. Same never-crash posture as [engageKioskLock]. */
     private fun releaseKioskLock() {
         kioskPinned = false
+        Mobile.setKioskPinned(false) // ut-docs#3466, see engageKioskLock
         pinConfirmed = false
         cancelPendingPinCheck()
         hidePinWarning()
@@ -1482,13 +1580,22 @@ class MainActivity : AppCompatActivity() {
                         // "/self-orders"-style route that has nothing to do
                         // with the customer-facing kiosk.
                         val selfOrder = path == "/self-order" || path.startsWith("/self-order/")
+                        // ut-docs#3466 (ADR-0142 D3): a remote kiosk_unlock's
+                        // release window keeps /self-order* unpinned until
+                        // it closes — see [remoteUnlockWindowUntil].
                         when {
                             managerFacing -> { /* lock state unchanged; exitLockdown() owns it */ }
+                            selfOrder && remoteUnlockWindowOpen() -> {
+                                Log.i(TAG, "self-order page left unpinned: remote unlock release window open")
+                                applyImmersiveMode()
+                            }
                             selfOrder -> {
+                                remoteUnlockWindowUntil = 0L
                                 engageKioskLock()
                                 applyImmersiveMode()
                             }
                             else -> {
+                                remoteUnlockWindowUntil = 0L
                                 releaseKioskLock()
                                 applyImmersiveMode()
                             }
@@ -1745,6 +1852,10 @@ class MainActivity : AppCompatActivity() {
         super.onPause()
         activityResumed = false
         cancelPendingPinCheck()
+        // ut-docs#3466 (ADR-0142 D3): a backgrounded Activity cannot answer
+        // a remote unlock; Go reports no_shell until onResume registers the
+        // bridge again.
+        Mobile.setKioskBridge(null)
     }
 
     override fun onResume() {
@@ -1753,6 +1864,9 @@ class MainActivity : AppCompatActivity() {
         // are what re-arms the pin poll, and [schedulePinCheck] refuses
         // while this is false.
         activityResumed = true
+        // ut-docs#3466 (ADR-0142 D3): only the foreground Activity answers
+        // a remote kiosk_unlock; cleared again in onPause.
+        Mobile.setKioskBridge(remoteUnlockBridge)
         // ut-docs#1254/#1508: re-assert the OS-bar-hidden state on every
         // resume unconditionally — the FIRST call on a cold launch and
         // every later one, even if exitLockdown() granted an unlock
@@ -1956,5 +2070,15 @@ class MainActivity : AppCompatActivity() {
         // up with "". A copy normally completes within one frame; 5s is
         // "something is genuinely wrong", not a tuning knob.
         private const val SCREENSHOT_TIMEOUT_SECONDS = 5L
+
+        // ut-docs#3466 (ADR-0142 D3): how long a remote kiosk_unlock keeps
+        // /self-order* from re-pinning, unless a navigation elsewhere closes
+        // it first. Matches the cloud's 15-minute directive expiry.
+        private const val REMOTE_UNLOCK_WINDOW_MS = 15L * 60L * 1000L
+
+        // ut-docs#3466: how long RemoteUnlockBridge's Go thread waits for the
+        // UI-thread release. The release is a few synchronous calls; 5s is
+        // "the main thread is wedged", not a tuning knob.
+        private const val REMOTE_UNLOCK_UI_TIMEOUT_SECONDS = 5L
     }
 }

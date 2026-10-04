@@ -1,5 +1,7 @@
 package common
 
+import "github.com/universaltill/universal-till/internal/kiosk"
+
 // AndroidNativeWindowController is the WindowController for the Android
 // native shell (ut-docs#1254, ADR-0023). Unlike the desktop/Pi platforms,
 // there is no separate OS window to hand back — the embedded Go server
@@ -33,3 +35,18 @@ func (AndroidNativeWindowController) ApplyMode(mode string) error { return nil }
 // record. Same "nothing to touch on this platform" reasoning as ApplyMode
 // above.
 func (AndroidNativeWindowController) RecordInputHeartbeat() error { return nil }
+
+// ReleaseKiosk is the remote kiosk_unlock path (ut-docs#3466, ADR-0142 D3):
+// the opposite direction to ExitToOS above — Go calls native code, through
+// the gomobile KioskBridge MainActivity registers in onResume and clears in
+// onPause (kept in internal/kiosk, which this package can import and
+// package mobile cannot be). No bridge means the Activity is not in the
+// foreground: ErrNoKioskShell (reason no_shell). Otherwise the bridge's own
+// error, if any, is the result reason.
+func (AndroidNativeWindowController) ReleaseKiosk() error {
+	b := kiosk.RegisteredBridge()
+	if b == nil {
+		return ErrNoKioskShell
+	}
+	return b.ReleaseKiosk()
+}
