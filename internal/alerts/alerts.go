@@ -107,10 +107,7 @@ func runningOutCount(ctx context.Context, db *sql.DB) (int, error) {
 // pushDigest sends today's low-stock digest to the marketplace when the till
 // is registered and something is actually running out.
 func pushDigest(ctx context.Context, cfg *config.Config, db *sql.DB) error {
-	eff := enroll.Effective(cfg)
-	m := eff.Marketplace
-	storeID, token := m.StoreID, m.MerchantToken
-	if m.EndpointURL == "" || storeID == "" || token == "" {
+	if !enroll.HasCredentials(cfg) {
 		return nil // not registered — nothing to push
 	}
 	n, err := runningOutCount(ctx, db)
@@ -132,7 +129,7 @@ func pushDigest(ctx context.Context, cfg *config.Config, db *sql.DB) error {
 func pushNotify(ctx context.Context, cfg *config.Config, typ string, body map[string]any) error {
 	eff := enroll.Effective(cfg)
 	m := eff.Marketplace
-	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
+	if !enroll.CredentialsComplete(m) {
 		return nil
 	}
 	payload, _ := json.Marshal(map[string]any{

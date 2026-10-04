@@ -336,6 +336,93 @@ func TestInitExplicitConfigWinsAndSkipsEnrolment(t *testing.T) {
 	}
 }
 
+// TestCurrentStatusRegisteredForEnvPinnedStoreAndTokenNoClientID is
+// ut-docs#3637: a till with an env-pinned store id + token but no client
+// id already has a usable cloud identity — the sync loop and the
+// check-plan handler both resolve Effective(cfg) to a non-empty endpoint/
+// store/token and tick — but CurrentStatus().Registered (Settings' chip
+// and the check-plan button's gate) used to check only explicitConfigured
+// (client id) or a KV-persisted identity, missing this case entirely.
+// Pre-seeding keyDeviceRegistered as this device's own id keeps Init from
+// kicking off a background device-registration attempt, so the assertion
+// below is checking Init's synchronous identity bookkeeping, not a race
+// against that goroutine.
+func TestCurrentStatusRegisteredForEnvPinnedStoreAndTokenNoClientID(t *testing.T) {
+	resetState()
+	srv, calls := testMarketplace(t, 0)
+	kv := newFakeKV()
+	seed := map[string]string{
+		keyDeviceID:         "till-fixed",
+		keyDeviceRegistered: "till-fixed",
+	}
+	for k, v := range seed {
+		_ = kv.Set(context.Background(), k, v)
+	}
+	cfg := freshConfig(srv.URL)
+	cfg.Marketplace.StoreID = "store-env"
+	cfg.Marketplace.MerchantToken = "token-env"
+	cfg.Marketplace.PublicKey = strings.Repeat("ab", 32)
+	t.Setenv("UT_MARKETPLACE_STORE_ID", "store-env")
+
+	initForTest(t, cfg, kv)
+
+	if !HasCredentials(cfg) {
+		t.Fatalf("HasCredentials = false for an env-pinned store id + token")
+	}
+	if got := CurrentStatus(); !got.Registered {
+		t.Fatalf("CurrentStatus() = %+v, want Registered true for an env-pinned store id + token with no client id", got)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if *calls != 0 {
+		t.Fatalf("register called %d times for an already-device-registered, env-pinned till", *calls)
+	}
+}
+
+// TestHasCredentialsRequiresEndpoint: an env-pinned store id + token with
+// no marketplace endpoint at all is not a usable cloud identity whatever
+// credentialsReady says — Effective never derives EndpointURL from
+// anything but cfg, so HasCredentials must check it independently.
+func TestHasCredentialsRequiresEndpoint(t *testing.T) {
+	resetState()
+	kv := newFakeKV()
+	cfg := &config.Config{
+		StoreName: "Corner Shop",
+		Marketplace: config.MarketplaceConfig{
+			StoreID:       "store-env",
+			MerchantToken: "token-env",
+			PublicKey:     strings.Repeat("ab", 32),
+		},
+	}
+	t.Setenv("UT_MARKETPLACE_STORE_ID", "store-env")
+
+	initForTest(t, cfg, kv)
+
+	if HasCredentials(cfg) {
+		t.Fatalf("HasCredentials = true with no marketplace endpoint configured")
+	}
+}
+
+// TestCredentialsCompleteNeedsAllThree: the already-resolved form of
+// HasCredentials — call sites that go on to use m's endpoint/store/token
+// guard on that same m, so it must reject any one field missing.
+func TestCredentialsCompleteNeedsAllThree(t *testing.T) {
+	full := config.MarketplaceConfig{EndpointURL: "https://m.example", StoreID: "s", MerchantToken: "t"}
+	if !CredentialsComplete(full) {
+		t.Fatalf("CredentialsComplete(%+v) = false, want true", full)
+	}
+	for _, clear := range []func(*config.MarketplaceConfig){
+		func(m *config.MarketplaceConfig) { m.EndpointURL = "" },
+		func(m *config.MarketplaceConfig) { m.StoreID = "" },
+		func(m *config.MarketplaceConfig) { m.MerchantToken = "" },
+	} {
+		m := full
+		clear(&m)
+		if CredentialsComplete(m) {
+			t.Fatalf("CredentialsComplete(%+v) = true, want false", m)
+		}
+	}
+}
+
 // Lazy registration retries per interaction: a failed attempt leaves the till
 // unregistered and the next EnsureRegistered tries again.
 func TestEnsureRegisteredRetriesAcrossAttempts(t *testing.T) {

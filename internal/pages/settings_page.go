@@ -1187,7 +1187,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// replica registered through its main till (no store token of its
 		// own) — says so instead of "Checking…" for a check-in that never
 		// runs (tick needs the same three fields).
-		if m := enroll.Effective(d.Cfg).Marketplace; m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
+		if !enroll.HasCredentials(d.Cfg) {
 			key := "settings.enrol.not_registered"
 			if enroll.CurrentStatus().ViaMainTill {
 				key = "settings.enrol.registered_via_main"

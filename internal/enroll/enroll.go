@@ -207,18 +207,64 @@ type Status struct {
 	DeviceID    string
 }
 
+// credentialsReady reports whether this till has a store id and merchant
+// token it can use right now — explicit (env-pinned) or persisted. It is
+// CurrentStatus().Registered's credential test (HasCredentials does NOT use
+// it; see there). CurrentStatus used to check only the persisted
+// (cur.StoreID/cur.Token) case, missing an env-pinned store id + token with
+// no client id — such a till already ticks (the sync loop and check-plan
+// handler resolve Effective(cfg) to a usable identity) but Settings showed
+// "not registered" (ut-docs#3637). Unlike HasCredentials it ignores the
+// endpoint, and it never counts Effective's store-NAME fallback for
+// cfg.Marketplace.StoreID as a store id (an env-pinned token with no store
+// id at all reads as registered to HasCredentials but not here). Callers
+// hold mu (read).
+func credentialsReady() bool {
+	return (storeIDExplicit || cur.StoreID != "") && (tokenExplicit || cur.Token != "")
+}
+
 // CurrentStatus returns the live registration state. Explicitly configured
 // tills (env identity) count as registered.
 func CurrentStatus() Status {
 	mu.RLock()
 	defer mu.RUnlock()
-	registered := explicitConfigured || (cur.StoreID != "" && cur.Token != "")
+	registered := explicitConfigured || credentialsReady()
 	return Status{
 		Registered:  registered,
 		ViaMainTill: !registered && vouchedDevice != "" && vouchedDevice == cur.DeviceID,
 		StoreID:     displayStoreID,
 		DeviceID:    cur.DeviceID,
 	}
+}
+
+// HasCredentials reports whether cfg's effective marketplace identity
+// (Effective(cfg)) has everything needed to call the cloud: an endpoint, a
+// store id and a merchant token. Many call sites (the sync loop's gate,
+// the check-plan handler, Fleet, diagnostics, issue reports, TSE
+// provisioning...) each ran their own copy of this same three-field check
+// against Effective(cfg).Marketplace; this and CredentialsComplete (for a
+// caller already holding the resolved config) are the one shared predicate
+// behind all of them, so they can't drift apart again (ut-docs#3637).
+//
+// Deliberately re-resolves through Effective(cfg) rather than reusing
+// credentialsReady's package-level flags: those flags are only ever set by
+// Init, so a cfg built directly (common in tests, and anywhere a caller
+// hands enroll a *config.Config that never went through Init/Pair) would
+// read as having no credentials even when its own Marketplace fields are
+// fully populated. Effective(cfg) already does the right thing for that
+// case — it falls back to cfg's own fields whenever nothing overrides them.
+func HasCredentials(cfg *config.Config) bool {
+	return CredentialsComplete(Effective(cfg).Marketplace)
+}
+
+// CredentialsComplete is HasCredentials' test applied to a marketplace
+// config the caller has ALREADY resolved (Effective, EnsureRegistered).
+// A caller that goes on to use m's endpoint/store/token must guard on m
+// itself rather than on HasCredentials(cfg): the latter resolves Effective
+// a second time, and a Pair or token rotation in between could let the
+// guard pass while the request is built from the other, stale copy.
+func CredentialsComplete(m config.MarketplaceConfig) bool {
+	return m.EndpointURL != "" && m.StoreID != "" && m.MerchantToken != ""
 }
 
 // ForgetReplicaVouch drops the "registered through the main till" state.
@@ -737,7 +783,7 @@ type Device struct {
 func Fleet(ctx context.Context, cfg *config.Config) ([]Device, error) {
 	eff := Effective(cfg)
 	m := eff.Marketplace
-	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
+	if !CredentialsComplete(m) {
 		return nil, fmt.Errorf("till is not registered")
 	}
 	endpoint := strings.TrimRight(m.EndpointURL, "/") + "/v1/stores/devices?store_id=" + url.QueryEscape(m.StoreID)
