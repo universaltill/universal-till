@@ -259,6 +259,7 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 		// that needs a store identity, so enrol here if the till hasn't yet.
 		// The effective config fills any fields the operator didn't set.
 		effCfg := enroll.EnsureRegistered(ctx, d.Cfg, d.Settings)
+		checkinAfterRegistration(d, effCfg) // ADR-0148 §2: an operator's install
 		client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
 		installer, err := plugins.NewMarketplaceInstaller(&effCfg, client, d.Db)
 		if err != nil {
@@ -732,6 +733,7 @@ func applyPluginUpdate(ctx context.Context, d *common.Deps, pluginID string) (fr
 	}
 
 	effCfg := enroll.EnsureRegistered(ctx, d.Cfg, d.Settings)
+	checkinAfterRegistration(d, effCfg) // ADR-0148 §2: an operator's update (handleUpdatePlugin)
 	client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
 	installer, err := plugins.NewMarketplaceInstaller(&effCfg, client, d.Db)
 	if err != nil {

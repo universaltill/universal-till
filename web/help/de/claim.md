@@ -24,6 +24,13 @@ Der letzte Bildschirm des Einrichtungsassistenten fragt einmalig, ob die Kasse s
 1. Schalten Sie es ein, sendet die Kasse ihre Geräte-ID, den Geschäftsnamen, die Region und die Softwareversion an den Universal-Till-Cloud-Marktplatz (verwendet für Support, Updates und Lizenzierung) und registriert sich sofort. Ihre Adresse wird nicht gesendet. Sind Sie in diesem Moment offline? Es entsteht keine Verzögerung, und die Einrichtung wird trotzdem abgeschlossen — die Kasse bleibt jedoch unregistriert, bis Sie den Plugin-Store öffnen oder „Jetzt registrieren“ drücken. Prüfen Sie daher Einstellungen → Kassenregistrierung, sobald Sie wieder online sind.
 2. Schalten Sie es aus, registriert sich die Kasse erst wieder, wenn Sie zum ersten Mal den Plugin-Store nutzen oder „Jetzt registrieren“ drücken. Das Ausschalten entfernt niemals eine bereits erfolgte Registrierung.
 
+## Die Cloud-Synchronisierung gehört zu den kostenpflichtigen Tarifen
+
+Registrieren und Beanspruchen sind kostenlos, ebenso der Plugin-Store. Die Kasse mit Ihrem Online-Konto synchron zu halten (Umsatzzahlen, Artikelliste, Änderungen auf der Cloud-Verwaltungsseite des Geschäfts) gehört zu den kostenpflichtigen Tarifen. Solange das Geschäft keinen davon hat, nimmt die Kasse im Hintergrund überhaupt keinen Kontakt zur Cloud auf, und Einstellungen → Kassenregistrierung zeigt an, dass die Cloud-Synchronisierung aus ist.
+
+1. Sobald das Geschäft einen kostenpflichtigen Tarif hat, erfährt die Kasse das, wenn jemand an ihr das nächste Mal registriert, koppelt, ein Plugin installiert oder einen Beanspruchungscode erzeugt. Sie können auch unter Einstellungen → Kassenregistrierung auf **Nach einem kostenpflichtigen Tarif suchen** tippen (ein Manager oder Admin bestätigt das). Die Cloud-Synchronisierung startet dann innerhalb einer Minute und läuft von selbst weiter.
+2. Endet der Tarif, stoppt die Cloud-Synchronisierung nach dem nächsten Abgleich der Kasse mit der Cloud. Der Verkauf hängt nie davon ab: Jeder Verkauf funktioniert so oder so offline.
+
 ## Wenn die Cloud diese Kasse nicht mehr annimmt
 
 Lehnt die Cloud die Zugangsdaten dieser Kasse dreimal hintereinander ab, erscheint ein Hinweis in der Statusleiste. Er blockiert nie einen Verkauf: Die Kasse verkauft offline weiter, versucht es einmal pro Stunde erneut bei der Cloud und behält alles, was sie noch senden muss, bis sie wieder verbunden ist. Der Hinweis lautet:

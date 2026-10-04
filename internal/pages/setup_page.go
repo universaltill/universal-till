@@ -57,7 +57,7 @@ func autoRegisterForSetup(ctx context.Context, d *common.Deps, optIn bool) {
 	}
 	attemptCtx, cancel := context.WithTimeout(ctx, autoRegisterAttemptTimeout)
 	defer cancel()
-	enroll.EnsureRegistered(attemptCtx, d.Cfg, d.Settings)
+	checkinAfterRegistration(d, enroll.EnsureRegistered(attemptCtx, d.Cfg, d.Settings)) // ADR-0148 §2
 }
 
 // setupCountry prefills currency + tax for the wizard's country step (docs
