@@ -192,9 +192,7 @@ func uploadPendingIssueReports(ctx context.Context, cfg *config.Config, db *sql.
 // /my-reports simply keeps showing the last-known statuses (offline-first —
 // the page itself never touches the network).
 func pullIssueReportStatuses(ctx context.Context, cfg *config.Config, db *sql.DB) {
-	eff := enroll.Effective(cfg)
-	m := eff.Marketplace
-	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
+	if !enroll.HasCredentials(cfg) {
 		return // not registered — nothing to pull
 	}
 
@@ -240,7 +238,7 @@ func pullIssueReportStatuses(ctx context.Context, cfg *config.Config, db *sql.DB
 func pullIssueReportStatusesPage(ctx context.Context, cfg *config.Config, db *sql.DB, limit, offset int) (fetched, total int, err error) {
 	eff := enroll.Effective(cfg)
 	m := eff.Marketplace
-	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
+	if !enroll.CredentialsComplete(m) {
 		return 0, 0, errNotRegistered
 	}
 
@@ -307,7 +305,7 @@ func pullIssueReportStatusesPage(ctx context.Context, cfg *config.Config, db *sq
 func uploadIssueReport(ctx context.Context, cfg *config.Config, b issuereport.Bundle) error {
 	eff := enroll.Effective(cfg)
 	m := eff.Marketplace
-	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
+	if !enroll.CredentialsComplete(m) {
 		return errNotRegistered
 	}
 

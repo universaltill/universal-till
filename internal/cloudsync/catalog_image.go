@@ -133,7 +133,7 @@ func decodeCatalogImage(p payload) (CatalogImage, string) {
 // in my. retries it: the cloud does not re-send a failed directive itself.
 func fetchCatalogImage(ctx context.Context, cfg *config.Config, sum string) ([]byte, error) {
 	m := enroll.Effective(cfg).Marketplace
-	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
+	if !enroll.CredentialsComplete(m) {
 		return nil, errors.New("this till is not connected to the cloud")
 	}
 	if !sha256Hex.MatchString(sum) {

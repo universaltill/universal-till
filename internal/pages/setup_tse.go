@@ -300,7 +300,7 @@ func startTSEProvisioningForSetup(ctx context.Context, d *common.Deps, country s
 func tseKickoffAttempt(ctx context.Context, d *common.Deps, st *tseProvisioningState, actorID string) {
 	effCfg := enroll.EnsureRegistered(ctx, d.Cfg, d.Settings)
 	m := effCfg.Marketplace
-	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
+	if !enroll.CredentialsComplete(m) {
 		logging.L().Infof("tse provisioning: till not registered with the cloud yet, will retry")
 		return // stays pending_kickoff
 	}
@@ -451,7 +451,7 @@ func applyFiscalTSEReady(ctx context.Context, d *common.Deps) (string, error) {
 
 	eff := enroll.Effective(d.Cfg)
 	m := eff.Marketplace
-	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
+	if !enroll.CredentialsComplete(m) {
 		return "", fmt.Errorf("till is not registered with the cloud")
 	}
 	payload, err := json.Marshal(map[string]string{"store_id": m.StoreID})

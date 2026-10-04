@@ -114,7 +114,7 @@ func ActivateDiagnostics(ctx context.Context, cfg *config.Config, code string) (
 	}
 	eff := enroll.Effective(cfg)
 	m := eff.Marketplace
-	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
+	if !enroll.CredentialsComplete(m) {
 		return "", errNotRegistered
 	}
 	body, err := postJSON(ctx, cfg, "/v1/stores/diagnostics/activate", map[string]string{
@@ -179,7 +179,7 @@ func uploadPendingDiagnostics(ctx context.Context, cfg *config.Config, db *sql.D
 	}
 	eff := enroll.Effective(cfg)
 	m := eff.Marketplace
-	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
+	if !enroll.CredentialsComplete(m) {
 		return // not registered — the queue simply waits (bounded by diagnostics' own caps)
 	}
 	skipSession := map[string]bool{}

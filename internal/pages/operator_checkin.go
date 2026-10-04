@@ -5,6 +5,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/cloudsync"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -43,10 +44,11 @@ func requestOperatorCheckin(d *common.Deps, window time.Duration) {
 // checkinAfterRegistration is requestOperatorCheckin for the
 // enroll.EnsureRegistered call sites: only when eff (the effective config
 // the call returned) is really registered, the same three fields the
-// check-in itself needs.
+// check-in itself needs. It tests eff as given (enroll.CredentialsComplete)
+// rather than re-resolving through enroll.HasCredentials(d.Cfg), so it
+// judges exactly the config its caller just got back.
 func checkinAfterRegistration(d *common.Deps, eff config.Config) {
-	m := eff.Marketplace
-	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
+	if !enroll.CredentialsComplete(eff.Marketplace) {
 		return
 	}
 	requestOperatorCheckin(d, operatorCheckinWindow)

@@ -382,9 +382,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// events), and the upload self-guards on registration inside.
 	uploadPendingDiagnostics(ctx, cfg, db)
 
-	eff := enroll.Effective(cfg)
-	m := eff.Marketplace
-	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
+	if !enroll.HasCredentials(cfg) {
 		return false, nil // not registered — nothing further to sync
 	}
 

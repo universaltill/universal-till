@@ -104,7 +104,7 @@ const (
 // these three run in; only the reason (for the status row) depends on it.
 func cloudLinkGate(ctx context.Context, cfg *config.Config, s entitlement.Reader, now time.Time) (cloudlink.Target, cloudLinkGateReason) {
 	m := enroll.Effective(cfg).Marketplace
-	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
+	if !enroll.CredentialsComplete(m) {
 		return cloudlink.Target{}, gateUnenrolled
 	}
 	if v, _, _ := s.Get(ctx, "sync.primary_url"); strings.TrimSpace(v) != "" {
