@@ -31,7 +31,7 @@ Ayarlar → Abonelik (yalnızca yöneticiler) planınızı bu kasanın Universal
 - Yerel (ücretsiz): yapılacak bir şey yok, kart yalnızca ücretsiz planda olduğunuzu söyler.
 - Etkin: planınız, yenilenme tarihi ve son doğrulama.
 - Abonelik doğrulanmadı: kasa planınızı 7 günden uzun süredir bulutla doğrulayamadı, bu yüzden ücretli özellikler (bulut eşitleme, ürünleri tarayıcıdan yönetme ve yönetilen TSE kurulumu gibi) duraklatıldı. Kasanın internet bağlantısını kontrol edin; bağlandığında kendiliğinden düzelir.
-- Abonelik sona erdi: aboneliğiniz artık etkin değil, bu yüzden ücretli özellikler Universal Till hesabınızdan yenileyene kadar duraklatılır. Ardından Ayarlar → Kasa kaydı bölümünde “Ücretli plan var mı diye kontrol et” düğmesine basın: aboneliği sona ermiş bir kasa artık buluta kendiliğinden bağlanmaz, yenilemeyi bu şekilde öğrenir.
+- Abonelik sona erdi: aboneliğiniz artık etkin değil, bu yüzden ücretli özellikler Universal Till hesabınızdan yenileyene kadar duraklatılır. Ardından Ayarlar → Kasa kaydı bölümünde “Ücretli plan var mı diye kontrol et” düğmesine basın: aboneliği sona ermiş bir kasa artık buluta kendiliğinden bağlanmaz, yenilemeyi en hızlı bu şekilde öğrenir. Ana kasa üzerinden kayıtlı bir kasada düğmeye ana kasada basın: bu kasa yenilemeyi oradan alır.
 
 Son iki durumda durum çubuğundaki bir işaret bu karta götürür; Kasa kaydı ve Fiş imzalama (TSE) kartları da hangi özelliklerinin duraklatıldığını yerinde gösterir. Hiçbir şey gizlenmez ve önceden kurulmuş bir TSE fişleri imzalamaya devam eder.
 

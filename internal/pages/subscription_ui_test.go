@@ -254,26 +254,42 @@ func TestSettingsSubscriptionBanner_RegistrationFiltered(t *testing.T) {
 // out (one message per fact) but still names browser management. A stale
 // till is still "active", so it keeps checking in and the banner keeps
 // cloud sync. The lapsed fix line points at the button: after renewing, the
-// till only learns the new plan when it checks in.
+// till only learns the new plan when it checks in. A replica registered
+// through its main till has no such button (ADR-0148 §3: it learns the
+// renewal from the main till's relay), so its lapsed line points at the
+// main till instead.
 func TestSettingsSubscriptionBanner_RegisteredLapsedNoDuplicateCloudSync(t *testing.T) {
 	for _, tc := range []struct {
+		name          string
 		seed          string
+		viaMain       bool
 		wantSyncOff   bool
 		wantCloudSync bool
+		wantFix       string
 	}{
-		{"lapsed", true, false},
-		{"stale", false, true},
+		{"lapsed", "lapsed", false, true, false, "Check for a paid plan in Settings → Till registration. Selling"},
+		{"stale", "stale", false, false, true, ""},
+		{"lapsed via main till", "lapsed", true, false, true, "Check for a paid plan in Settings → Till registration on the main till"},
 	} {
-		t.Run(tc.seed, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			mux, _, d := newFullAuthDeps(t)
 			ctx := t.Context()
-			if err := d.Settings.SetMany(ctx, map[string]string{
-				"marketplace.store_id": "store-2569", "marketplace.token": "tok-2569",
-			}); err != nil {
+			seedReg := map[string]string{"marketplace.store_id": "store-2569", "marketplace.token": "tok-2569"}
+			if tc.viaMain {
+				seedReg = map[string]string{
+					"sync.primary_url":              "http://127.0.0.1:1",
+					"marketplace.device_id":         "till-replica-2569",
+					"marketplace.device_registered": "till-replica-2569",
+				}
+			}
+			if err := d.Settings.SetMany(ctx, seedReg); err != nil {
 				t.Fatal(err)
 			}
 			enroll.Init(ctx, &config.Config{}, d.Settings, &sync.WaitGroup{})
 			t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
+			if got := enroll.CurrentStatus().ViaMainTill; got != tc.viaMain {
+				t.Fatalf("precondition: ViaMainTill = %v, want %v", got, tc.viaMain)
+			}
 			seedEntitlement(t, d, subscriptionSeed(tc.seed))
 
 			body := getSettingsAs(t, mux, mgrUser)
@@ -287,10 +303,10 @@ func TestSettingsSubscriptionBanner_RegisteredLapsedNoDuplicateCloudSync(t *test
 			if got := strings.Contains(reg, `data-cap="cloud_sync"`); got != tc.wantCloudSync {
 				t.Errorf("banner lists cloud_sync = %v, want %v:\n%s", got, tc.wantCloudSync, reg)
 			}
-			if tc.seed == "lapsed" {
+			if tc.wantFix != "" {
 				card := cardSection(t, body, "subscription")
-				if !strings.Contains(card, "Check for a paid plan") {
-					t.Errorf("lapsed fix line must point at Check for a paid plan:\n%s", card)
+				if !strings.Contains(card, tc.wantFix) {
+					t.Errorf("lapsed fix line must say %q:\n%s", tc.wantFix, card)
 				}
 			}
 		})

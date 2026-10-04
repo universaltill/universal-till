@@ -3121,6 +3121,7 @@
   "subscription.banner.lapsed.title": "Paid features are paused",
   "subscription.banner.lapsed.why": "Your subscription is no longer active.",
   "subscription.banner.lapsed.fix": "Renew it in your Universal Till account, then press Check for a paid plan in Settings → Till registration. Selling on this till is not affected.",
+  "subscription.banner.lapsed.fix_via_main": "Renew it in your Universal Till account, then press Check for a paid plan in Settings → Till registration on the main till. This till gets the renewal from the main till. Selling on this till is not affected.",
   "subscription.banner.tse_keeps_signing": "A TSE that is already set up keeps signing receipts. Only renewals and new set-ups are paused.",
   "subscription.cap.cloud_backup": "Cloud backup",
   "subscription.cap.cloud_sync": "Cloud sync",

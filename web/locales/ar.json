@@ -3121,6 +3121,7 @@
   "subscription.banner.lapsed.title": "أُوقفت الميزات المدفوعة مؤقتًا",
   "subscription.banner.lapsed.why": "اشتراكك لم يعد نشطًا.",
   "subscription.banner.lapsed.fix": "جدّده من حسابك في Universal Till، ثم اضغط «التحقق من وجود خطة مدفوعة» في الإعدادات ← تسجيل الصندوق. البيع على هذا الصندوق لا يتأثر.",
+  "subscription.banner.lapsed.fix_via_main": "جدّده من حسابك في Universal Till، ثم اضغط «التحقق من وجود خطة مدفوعة» في الإعدادات ← تسجيل الصندوق على الصندوق الرئيسي. يتلقى هذا الصندوق التجديد من الصندوق الرئيسي. البيع على هذا الصندوق لا يتأثر.",
   "subscription.banner.tse_keeps_signing": "جهاز TSE المُعدّ مسبقًا يواصل توقيع الإيصالات. يتوقف مؤقتًا التجديد والإعداد الجديد فقط.",
   "subscription.cap.cloud_backup": "النسخ الاحتياطي السحابي",
   "subscription.cap.cloud_sync": "المزامنة السحابية",

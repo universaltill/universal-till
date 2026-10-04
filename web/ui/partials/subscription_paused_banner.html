@@ -16,7 +16,9 @@
   </ul>
   {{ if eq .sub.State "lapsed" }}
   <p>{{ T "subscription.banner.lapsed.why" }}</p>
-  <p>{{ T "subscription.banner.lapsed.fix" }}</p>
+  {{/* ADR-0148 §3: a replica registered through its main till learns the
+       renewal from the main till, which is where the button is. */}}
+  <p>{{ if enrolledviamain }}{{ T "subscription.banner.lapsed.fix_via_main" }}{{ else }}{{ T "subscription.banner.lapsed.fix" }}{{ end }}</p>
   {{ else }}
   <p>{{ T "subscription.banner.stale.why" }}</p>
   <p>{{ T "subscription.banner.stale.fix" }}</p>

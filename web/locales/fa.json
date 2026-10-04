@@ -3121,6 +3121,7 @@
   "subscription.banner.lapsed.title": "امکانات پولی موقتاً متوقف شده‌اند",
   "subscription.banner.lapsed.why": "اشتراک شما دیگر فعال نیست.",
   "subscription.banner.lapsed.fix": "آن را در حساب Universal Till خود تمدید کنید، سپس در تنظیمات ← ثبت صندوق روی «بررسی وجود طرح پولی» بزنید. فروش روی این صندوق تحت تأثیر قرار نمی‌گیرد.",
+  "subscription.banner.lapsed.fix_via_main": "آن را در حساب Universal Till خود تمدید کنید، سپس روی صندوق اصلی در تنظیمات ← ثبت صندوق روی «بررسی وجود طرح پولی» بزنید. این صندوق تمدید را از صندوق اصلی می‌گیرد. فروش روی این صندوق تحت تأثیر قرار نمی‌گیرد.",
   "subscription.banner.tse_keeps_signing": "TSE که از قبل راه‌اندازی شده به امضای رسیدها ادامه می‌دهد. فقط تمدید و راه‌اندازی جدید موقتاً متوقف شده‌اند.",
   "subscription.cap.cloud_backup": "پشتیبان‌گیری ابری",
   "subscription.cap.cloud_sync": "همگام‌سازی ابری",
