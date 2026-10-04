@@ -1422,6 +1422,12 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				if name, ok := remoteStoreNameReport(ctx, d); ok {
 					extra["store_name"] = name
 				}
+				// ut-docs#2774: where replicas reach this main till on the
+				// LAN, for their cloud-assisted re-discovery. See
+				// mainTillLANAddress.
+				if addr, ok := mainTillLANAddress(d); ok {
+					extra[cloudsync.LANAddressKey] = addr
+				}
 				// ADR-0128 §5 (ut-docs#3323): roles and permission actions,
 				// for my.'s role editor — only when the admin generation
 				// moved since the last report that got through (see

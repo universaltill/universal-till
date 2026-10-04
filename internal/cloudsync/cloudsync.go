@@ -1060,6 +1060,12 @@ func modifierGroupOptions(raw any) ([]ModifierGroupOption, error) {
 	return out, nil
 }
 
+// LANAddressKey is the device-report key carrying a main till's LAN
+// host:port (ut-docs#2774), for a replica's cloud-assisted re-discovery
+// (discovery.CloudLookupPath). Contributed through Hooks.DeviceExtra;
+// buildSyncRequest keeps it only on a role "primary" report.
+const LANAddressKey = "lan_address"
+
 // syncRequest is the /v1/stores/sync body before it is sent: built every
 // tick (the check-in hashes its device part), sent only when the check-in
 // says so.
@@ -1079,8 +1085,9 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 	if name == "" {
 		name = "Till"
 	}
+	isReplica := strings.TrimSpace(get("sync.primary_url")) != ""
 	role := "primary"
-	if strings.TrimSpace(get("sync.primary_url")) != "" {
+	if isReplica {
 		role = "replica"
 	}
 	if strings.TrimSpace(get("display.mode")) == "backoffice" {
@@ -1112,6 +1119,19 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 				device[k] = v
 			}
 		}
+	}
+	// ut-docs#2774: only a main till (no sync.primary_url — ADR-0011's single
+	// source of truth, same rule as discovery.RoleCheckFromSettings) tells
+	// the cloud where it is on the LAN. Gated on isReplica, not the reported
+	// "role" string: display.mode=="backoffice" overwrites role to
+	// "backoffice" even for a till that has no primary_url and so IS the
+	// actual main till on the LAN (ut-docs#2774 code review) — such a till
+	// must still report, or its replicas get no cloud-assisted lookup. A
+	// till that is both an actual replica (primary_url set) and in
+	// backoffice display mode must still never report (it is not the
+	// source of truth, whatever it's labelled for the cloud UI).
+	if isReplica {
+		delete(device, LANAddressKey)
 	}
 	// A LOCAL diagnostic-mode stop (ADR-0092 §1, ut-docs#2169) is reported
 	// best-effort here — on the device record of the very next heartbeat,
