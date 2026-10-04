@@ -1,13 +1,17 @@
 package pages
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pages/settingsnav"
@@ -241,6 +245,55 @@ func TestSettingsSubscriptionBanner_RegistrationFiltered(t *testing.T) {
 		if body := getSettingsAs(t, mux, mgrUser); strings.Contains(body, `data-testid="subscription-paused"`) {
 			t.Fatalf("%s: no banner expected anywhere on /settings", seed)
 		}
+	}
+}
+
+// ADR-0148 (ut-docs#3615) stops a lapsed till's cloud check-ins, so on a
+// registered till #registration already says "Cloud sync is off" with the
+// Check for a paid plan button. The paused banner then leaves cloud sync
+// out (one message per fact) but still names browser management. A stale
+// till is still "active", so it keeps checking in and the banner keeps
+// cloud sync. The lapsed fix line points at the button: after renewing, the
+// till only learns the new plan when it checks in.
+func TestSettingsSubscriptionBanner_RegisteredLapsedNoDuplicateCloudSync(t *testing.T) {
+	for _, tc := range []struct {
+		seed          string
+		wantSyncOff   bool
+		wantCloudSync bool
+	}{
+		{"lapsed", true, false},
+		{"stale", false, true},
+	} {
+		t.Run(tc.seed, func(t *testing.T) {
+			mux, _, d := newFullAuthDeps(t)
+			ctx := t.Context()
+			if err := d.Settings.SetMany(ctx, map[string]string{
+				"marketplace.store_id": "store-2569", "marketplace.token": "tok-2569",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			enroll.Init(ctx, &config.Config{}, d.Settings, &sync.WaitGroup{})
+			t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
+			seedEntitlement(t, d, subscriptionSeed(tc.seed))
+
+			body := getSettingsAs(t, mux, mgrUser)
+			reg := cardSection(t, body, "registration")
+			if got := strings.Contains(reg, "Cloud sync is off."); got != tc.wantSyncOff {
+				t.Fatalf("cloud-sync-off notice = %v, want %v:\n%s", got, tc.wantSyncOff, reg)
+			}
+			if !strings.Contains(reg, `data-testid="subscription-paused"`) || !strings.Contains(reg, `data-cap="browser_catalog"`) {
+				t.Fatalf("#registration banner must still name browser management:\n%s", reg)
+			}
+			if got := strings.Contains(reg, `data-cap="cloud_sync"`); got != tc.wantCloudSync {
+				t.Errorf("banner lists cloud_sync = %v, want %v:\n%s", got, tc.wantCloudSync, reg)
+			}
+			if tc.seed == "lapsed" {
+				card := cardSection(t, body, "subscription")
+				if !strings.Contains(card, "Check for a paid plan") {
+					t.Errorf("lapsed fix line must point at Check for a paid plan:\n%s", card)
+				}
+			}
+		})
 	}
 }
 

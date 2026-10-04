@@ -31,7 +31,7 @@ Einstellungen → Abonnement (nur für Manager) zeigt Ihren Tarif so, wie diese 
 - Lokal (kostenlos): Nichts zu tun, die Karte zeigt nur, dass Sie den kostenlosen Tarif nutzen.
 - Aktiv: Ihr Tarif, das Verlängerungsdatum und die letzte Bestätigung.
 - Abonnement nicht bestätigt: Die Kasse konnte Ihren Tarif seit mehr als 7 Tagen nicht bei der Cloud bestätigen, daher sind kostenpflichtige Funktionen (etwa Cloud-Synchronisierung, Artikelverwaltung im Browser und die Einrichtung der verwalteten TSE) pausiert. Prüfen Sie die Internetverbindung der Kasse; der Hinweis verschwindet von selbst, sobald sie verbunden ist.
-- Abonnement beendet: Ihr Abonnement ist nicht mehr aktiv, daher sind kostenpflichtige Funktionen pausiert, bis Sie es in Ihrem Universal-Till-Konto verlängern.
+- Abonnement beendet: Ihr Abonnement ist nicht mehr aktiv, daher sind kostenpflichtige Funktionen pausiert, bis Sie es in Ihrem Universal-Till-Konto verlängern. Tippen Sie danach unter Einstellungen → Kassenregistrierung auf „Nach einem kostenpflichtigen Tarif suchen“: Eine Kasse mit beendetem Abonnement meldet sich nicht mehr von selbst bei der Cloud, so erfährt sie von der Verlängerung.
 
 In den beiden letzten Fällen führt ein Hinweis in der Statusleiste zu dieser Karte, und Kassenregistrierung sowie Belegsignierung (TSE) zeigen direkt an, welche ihrer Funktionen pausiert sind. Nichts wird ausgeblendet, und eine bereits eingerichtete TSE signiert weiterhin Belege.
 

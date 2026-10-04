@@ -3120,7 +3120,7 @@
   "subscription.banner.stale.fix": "Kasanın internet bağlantısını kontrol edin. Bağlandığında bu uyarı kendiliğinden kalkar. Bu kasada satış etkilenmez.",
   "subscription.banner.lapsed.title": "Ücretli özellikler duraklatıldı",
   "subscription.banner.lapsed.why": "Aboneliğiniz artık etkin değil.",
-  "subscription.banner.lapsed.fix": "Universal Till hesabınızdan yenileyin. Bu kasada satış etkilenmez.",
+  "subscription.banner.lapsed.fix": "Universal Till hesabınızdan yenileyin, ardından Ayarlar → Kasa kaydı bölümünde “Ücretli plan var mı diye kontrol et” düğmesine basın. Bu kasada satış etkilenmez.",
   "subscription.banner.tse_keeps_signing": "Önceden kurulmuş bir TSE fişleri imzalamaya devam eder. Yalnızca yenilemeler ve yeni kurulumlar duraklatıldı.",
   "subscription.cap.cloud_backup": "Bulut yedekleme",
   "subscription.cap.cloud_sync": "Bulut eşitleme",
