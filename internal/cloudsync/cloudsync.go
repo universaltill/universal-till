@@ -138,6 +138,21 @@ type Hooks struct {
 	// attachment are deliberately out of scope here (need the read-side
 	// StoreSnapshot extension ADR-0095 Decision 2 hasn't shipped yet).
 	UpsertCategory func(ctx context.Context, id, name, color string) (string, error)
+	// CreateStockLocation, RenameStockLocation and SetStockLocationActive
+	// handle "create_stock_location" {name}, "rename_stock_location"
+	// {location_id, name} and "set_stock_location_active" {location_id,
+	// active} (ut-docs#3383): the stock locations node in my. Main-till only
+	// (stock_locations is primary-wins synced, like the catalog), through
+	// the same POSRepo calls the till's own /locations admin page makes,
+	// audited and idempotent — an existing active location of the same
+	// name, a rename to the current name or a location already in the
+	// asked-for state applies with no write. Deactivating refuses with the
+	// locations page's own wording (locations.error.in_use /
+	// last_location), which becomes the directive's failure message. See
+	// pages.cloudCreateStockLocation & co.
+	CreateStockLocation    func(ctx context.Context, name string) (string, error)
+	RenameStockLocation    func(ctx context.Context, id, name string) (string, error)
+	SetStockLocationActive func(ctx context.Context, id string, active bool) (string, error)
 	// UpdateCategory handles the "update_category" directive (ut-docs#2354):
 	// a partial edit of an EXISTING category from the cloud's category
 	// editor, which picks from the categories/groups/stations the till last
@@ -729,6 +744,40 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing name"
 		}
 		msg, err = hooks.UpsertCategory(ctx, str("id"), name, str("color"))
+	case "create_stock_location":
+		if hooks.CreateStockLocation == nil {
+			return "failed", "create_stock_location is not supported on this till"
+		}
+		name := str("name")
+		if name == "" {
+			return "failed", "missing name"
+		}
+		msg, err = hooks.CreateStockLocation(ctx, name)
+	case "rename_stock_location":
+		if hooks.RenameStockLocation == nil {
+			return "failed", "rename_stock_location is not supported on this till"
+		}
+		id := str("location_id")
+		name := str("name")
+		if id == "" || name == "" {
+			return "failed", "missing location_id or name"
+		}
+		msg, err = hooks.RenameStockLocation(ctx, id, name)
+	case "set_stock_location_active":
+		if hooks.SetStockLocationActive == nil {
+			return "failed", "set_stock_location_active is not supported on this till"
+		}
+		id := str("location_id")
+		if id == "" {
+			return "failed", "missing location_id"
+		}
+		// Required, never defaulted: an absent flag must not read as
+		// "deactivate".
+		active, ok := payload(d.Payload).optBool("active")
+		if !ok || active == nil {
+			return "failed", "missing or invalid active"
+		}
+		msg, err = hooks.SetStockLocationActive(ctx, id, *active)
 	case "update_category":
 		if hooks.UpdateCategory == nil {
 			return "failed", "update_category is not supported on this till"
@@ -1337,6 +1386,14 @@ type snapshotItemRow struct {
 	EverSold *bool `json:"ever_sold,omitempty"`
 }
 
+// snapshotStockLocationRow is one stock location in the catalog snapshot's
+// additive stock_locations field (ut-docs#3383).
+type snapshotStockLocationRow struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	IsActive bool   `json:"is_active"`
+}
+
 // pushSnapshotIfChanged uploads the catalog + on-hand stock when it differs
 // from what the cloud already has (tracked via a content hash in settings).
 // Schema 2 (contract §3.7): every item, inactive included, with its full
@@ -1413,7 +1470,22 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 		}
 		rows = append(rows, row)
 	}
-	payload, _ := json.Marshal(map[string]any{"store_id": m.StoreID, "schema": snapshotSchema, "items": rows})
+	body := map[string]any{"store_id": m.StoreID, "schema": snapshotSchema, "items": rows}
+	// Stock locations (ut-docs#3383): every location, inactive included,
+	// for my.'s stock locations node. Part of the hashed payload, so a
+	// locations-only change pushes too. A read error leaves the field out
+	// — the cloud then keeps what it had — rather than sending an empty
+	// list that would read as "this shop has no locations".
+	if locs, err := data.NewPOSRepo(db).ListStockLocationsForAdmin(ctx); err != nil {
+		logging.L().Warnf("cloudsync: snapshot stock locations: %v", err)
+	} else {
+		out := make([]snapshotStockLocationRow, 0, len(locs))
+		for _, l := range locs {
+			out = append(out, snapshotStockLocationRow{ID: l.ID, Name: l.Name, IsActive: l.IsActive})
+		}
+		body["stock_locations"] = out
+	}
+	payload, _ := json.Marshal(body)
 
 	sum := sha256.Sum256(payload)
 	hash := hex.EncodeToString(sum[:])

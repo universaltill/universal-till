@@ -50,6 +50,11 @@ var mainTillOnlyTypes = map[string]bool{
 	// the main till — the till that applies it spends the single-use
 	// credential handoff and keeps the credential on its own disk.
 	"fiscal_tse_ready": true,
+	// Stock locations from my. (ut-docs#3383): stock_locations is
+	// primary-wins synced, so only the main till applies them.
+	"create_stock_location":     true,
+	"rename_stock_location":     true,
+	"set_stock_location_active": true,
 }
 
 // catalogTypes are the directive types that change what the catalog
@@ -62,6 +67,8 @@ var catalogTypes = map[string]bool{
 	"set_catalog_image": true, "set_net_quantity": true, "set_price": true, "rename_item": true, "deactivate_item": true, "create_item": true,
 	"add_barcode": true, "update_item_details": true, "adjust_stock": true,
 	"upsert_category": true, "update_category": true, "upsert_modifier_group": true,
+	// The snapshot carries stock_locations too (ut-docs#3383).
+	"create_stock_location": true, "rename_stock_location": true, "set_stock_location_active": true,
 }
 
 // payload is a presence-aware reader over a directive's payload: every
