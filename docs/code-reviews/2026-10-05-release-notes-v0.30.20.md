@@ -18,6 +18,8 @@
 
 The guided sale-screen tour (ut-docs#3710, merged in #1710 while this PR was open) gets a "New" item. Its wording uses each locale's own `tour.*` strings: Next, Skip tour, Help, "Take the tour". The German wording comes from `web/help/de/guided-tour.md`.
 
+Then the shorter first-time setup (ut-docs#3709, merged in #1711) gets an "Improved" item. Its wording uses the `import.welcome.*`/`import.sample.*` strings each locale shipped, and the German comes from `web/help/de`.
+
 ## Findings (all terminology; content matched en in every locale)
 
 All fixed:
