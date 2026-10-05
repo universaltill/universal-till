@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page, Locator } from '@playwright/test';
-import { ensureOperator, ADMIN_PIN, setBrowsingMode } from './helpers';
+import { ensureOperator, ADMIN_PIN, setBrowsingMode, markTourDone } from './helpers';
 
 // ut-docs#2534 (owner rule): editing from the all_filter_chips All grid is
 // for an admin, a manager, or a role holding catalog_management only. A
@@ -56,6 +56,7 @@ async function loginWithPin(page: Page, pin: string): Promise<void> {
   }
   await page.locator('button[type=submit].pin-key').click();
   await page.waitForURL((u) => !u.pathname.includes('/login'));
+  await markTourDone(page); // ut-docs#3710: a new operator would get the guided tour
 }
 
 async function longPress(tile: Locator) {

@@ -571,7 +571,10 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/reports/worker-allocations/pool-collections": true,
 	// ut-docs#3091: dismiss the after-update "what's new" chip (a per-till
 	// seen marker, nothing reaches the network).
-	"POST /api/release-notes/seen":        true,
+	"POST /api/release-notes/seen": true,
+	// ut-docs#3710: the visitor finished or skipped the sale-screen tour
+	// (their own tour.done.<user> key on their own instance).
+	"POST /api/tour/done":                 true,
 	"POST /api/settings/eod":              true,
 	"POST /api/settings/invoice":          true,
 	"POST /api/settings/report-retention": true,

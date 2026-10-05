@@ -341,6 +341,27 @@ export async function ensureOperator(page: Page) {
     await page.locator('button[type=submit].pin-key').click();
     await page.waitForURL((u) => !u.pathname.includes('/login'));
   }
+  await markTourDone(page);
+}
+
+// ut-docs#3710: the sale screen starts a guided tour (web/public/tour.js) the
+// first time each signed-in operator opens "/". Specs that aren't about the
+// tour mark it done for the session's user right after logging in, so no
+// balloon covers a control or takes focus from the scan field. Records only
+// this session's user (POST /api/tour/done); a no-op 401 on the default
+// (UT_AUTH=off) till, which never auto-starts the tour anyway. If the page
+// already open is a sale screen that was going to run it, it is reloaded
+// without — the tour may still be waiting for the page to settle.
+// sale-screen-guided-tour-3710.spec.ts is the one spec that wants the tour.
+export async function markTourDone(page: Page) {
+  await page.request.post('/api/tour/done');
+  let u: URL;
+  try { u = new URL(page.url()); } catch { return; }
+  if (u.pathname !== '/') return;
+  if (await page.locator('#ut-tour-steps[data-start="1"]').count()) {
+    u.searchParams.delete('tour');
+    await page.goto(u.pathname + u.search);
+  }
 }
 
 // /tables floor-plan test hygiene (ut-docs#826/#1025/#1170/#1173): every one
