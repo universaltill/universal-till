@@ -288,7 +288,7 @@ func TestItemEditorSavesSwapNotReload(t *testing.T) {
 	}
 	for _, a := range []string{
 		`<form id="item-form" autocomplete="off">`,
-		"ev.preventDefault();",
+		"form.addEventListener('submit', function (ev) {\n    ev.preventDefault();",
 		"htmx.ajax('POST', url, { source: '#item-form', target: '#catalog-table', swap: 'none' })",
 		"renderNotice(msg, 'success', NOTICE_MSG.itemFormSaved)",
 	} {
@@ -305,16 +305,21 @@ func TestItemEditorSavesSwapNotReload(t *testing.T) {
 	}
 	variantForms := 0
 	for _, f := range forms {
-		tag := f[:strings.Index(f, ">")]
+		end := strings.Index(f, ">")
+		closing := strings.Index(f, "</form>")
+		if end < 0 || closing < 0 {
+			t.Fatalf("catalog_variants.html: unterminated <form near %.60q", f)
+		}
+		tag := f[:end]
 		if !strings.Contains(tag, "hx-post=") {
 			t.Errorf("catalog_variants.html: <form%s> has no hx-post — it would post the whole page", tag)
 		}
 		if strings.Contains(tag, `hx-post="/api/catalog/variant"`) {
 			variantForms++
-			if !strings.Contains(tag, `hx-target="#catalog-variants" hx-swap="outerHTML"`) {
+			if !strings.Contains(tag, `hx-target="#catalog-variants"`) || !strings.Contains(tag, `hx-swap="outerHTML"`) {
 				t.Errorf("catalog_variants.html: variant form must swap #catalog-variants: <form%s>", tag)
 			}
-			if !strings.Contains(f[:strings.Index(f, "</form>")], `name="panelItem"`) {
+			if !strings.Contains(f[:closing], `name="panelItem"`) {
 				t.Errorf("catalog_variants.html: variant form without panelItem gets a row OOB, not the panel: <form%s>", tag)
 			}
 		}

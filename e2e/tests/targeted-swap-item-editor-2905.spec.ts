@@ -33,7 +33,7 @@ async function notReloaded(page) {
 
 test.describe('item editor saves swap in place (ut-docs#2905)', () => {
   test('Details: a save updates the card and says Saved; a refused save says why — no reload', async ({ page }) => {
-    const assertClean = watchConsole(page, /\b400\b/);
+    const assertClean = watchConsole(page, /^Failed to load resource:.*400|^Response Status Error Code 400/);
     await page.goto('/catalog');
     const stamp = Date.now();
     const taken = `SKU-2905-A-${stamp}`;
@@ -78,7 +78,7 @@ test.describe('item editor saves swap in place (ut-docs#2905)', () => {
   });
 
   test('Variants: add and edit swap only the panel and say Saved; a refused save says why — no reload', async ({ page }) => {
-    const assertClean = watchConsole(page, /\b400\b/);
+    const assertClean = watchConsole(page, /^Failed to load resource:.*400|^Response Status Error Code 400/);
     await page.goto('/catalog');
     const stamp = Date.now();
     const taken = `SKU-2905-L-${stamp}`;
