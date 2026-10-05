@@ -712,6 +712,11 @@ var PerTillSettingPrefixes = []string{
 	// till snapshot moved the admin fingerprint (the #2792 churn). install.*
 	// is this machine's one-time OS provisioning marker (internal/app).
 	"diagnostics.", "cloudsync.", "install.",
+	// ut-docs#3673 (ADR-0148 amendment §2): this till's last answered unpaid
+	// check-in (version + local date). Already under "cloudsync." above;
+	// named so it stays per-till if that family is ever narrowed. Also in
+	// db.TillCloudIdentityPrefixes, so the join snapshot strips it too.
+	"cloudsync.unpaid_checkin.",
 	// ut-docs#2998: this till's own base-plugin install-retry queue
 	// (pages/setup_base_plugins.go). Plugins install per machine; synced,
 	// the main till's queue overwrote a replica's at every pull. A full key

@@ -31,15 +31,15 @@ Ayarlar → Abonelik (yalnızca yöneticiler) planınızı bu kasanın Universal
 - Yerel (ücretsiz): yapılacak bir şey yok, kart yalnızca ücretsiz planda olduğunuzu söyler.
 - Etkin: planınız, ödendiği son tarih ve son doğrulama.
 - Abonelik doğrulanmadı: kasa planınızı 7 günden uzun süredir bulutla doğrulayamadı, bu yüzden ücretli özellikler (bulut eşitleme, ürünleri tarayıcıdan yönetme ve yönetilen TSE kurulumu gibi) duraklatıldı. Kasanın internet bağlantısını kontrol edin; bağlandığında kendiliğinden düzelir.
-- Abonelik sona erdi: aboneliğiniz artık etkin değil, bu yüzden ücretli özellikler Universal Till hesabınızdan yenileyene kadar duraklatılır. Ardından Ayarlar → Kasa kaydı bölümünde “Ücretli plan var mı diye kontrol et” düğmesine basın: aboneliği sona ermiş bir kasa artık buluta kendiliğinden bağlanmaz, yenilemeyi en hızlı bu şekilde öğrenir. Ana kasa üzerinden kayıtlı bir kasada düğmeye ana kasada basın: bu kasa yenilemeyi oradan alır.
+- Abonelik sona erdi: aboneliğiniz artık etkin değil, bu yüzden ücretli özellikler Universal Till hesabınızdan yenileyene kadar duraklatılır. Ardından Ayarlar → Kasa kaydı bölümünde “Ücretli plan var mı diye kontrol et” düğmesine basın: aboneliği sona ermiş bir kasa buluta kendiliğinden yalnızca her gün ilk açıldığında bağlanır, yenilemeyi en hızlı bu şekilde öğrenir. Ana kasa üzerinden kayıtlı bir kasada düğmeye ana kasada basın: bu kasa yenilemeyi oradan alır.
 
 Son iki durumda durum çubuğundaki bir işaret bu karta götürür; Kasa kaydı ve Fiş imzalama (TSE) kartları da hangi özelliklerinin duraklatıldığını yerinde gösterir. Hiçbir şey gizlenmez ve önceden kurulmuş bir TSE fişleri imzalamaya devam eder.
 
 ## Bulut eşitlemesi ücretli planlara dahildir
 
-Kayıt ve sahiplenme ücretsizdir, eklenti mağazası da öyle. Kasayı çevrimiçi hesabınızla eşitlenmiş tutmak (satış rakamları, ürün listesi, mağazanın bulut yönetim sayfasında yapılan değişiklikler) ücretli planlara dahildir. Mağaza ücretli bir planda değilken kasa arka planda buluta hiç bağlanmaz ve Ayarlar → Kasa kaydı bulut eşitlemesinin kapalı olduğunu söyler.
+Kayıt ve sahiplenme ücretsizdir, eklenti mağazası da öyle. Kasayı çevrimiçi hesabınızla eşitlenmiş tutmak (satış rakamları, ürün listesi, mağazanın bulut yönetim sayfasında yapılan değişiklikler) ücretli planlara dahildir. Mağaza ücretli bir planda değilken kasa bulutla eşitleme yapmaz ve Ayarlar → Kasa kaydı bulut eşitlemesinin kapalı olduğunu söyler. Kasa buluta yalnızca kısaca bilgi verir: kurulduğunda, bir güncellemeden sonra ve her gün ilk açıldığında.
 
-1. Mağaza ücretli bir plana geçtiğinde kasa bunu, birisi o kasada bir sonraki kez kayıt, eşleştirme, eklenti kurma veya sahiplenme kodu oluşturma yaptığında öğrenir. Ayarlar → Kasa kaydı bölümünde **Ücretli planı kontrol et** düğmesine de basabilirsiniz (bir yönetici veya admin onaylar). Bulut eşitlemesi bir dakika içinde başlar ve kendiliğinden çalışmaya devam eder.
+1. Mağaza ücretli bir plana geçtiğinde kasa bunu yeni bir günde ilk açıldığında ya da daha önce, birisi o kasada kayıt, eşleştirme, eklenti kurma veya sahiplenme kodu oluşturma yaptığında öğrenir. Ayarlar → Kasa kaydı bölümünde **Ücretli planı kontrol et** düğmesine de basabilirsiniz (bir yönetici veya admin onaylar). Bulut eşitlemesi bir dakika içinde başlar ve kendiliğinden çalışmaya devam eder.
 2. Plan sona ererse bulut eşitlemesi kasanın bir sonraki yoklamasından sonra durur. Satış hiçbir zaman buna bağlı değildir: her satış her durumda çevrimdışı çalışır.
 
 ## Bulut bu kasayı artık kabul etmediğinde

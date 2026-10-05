@@ -22,8 +22,10 @@ import (
 //
 // The owner's my. "Add or re-pair a till" mints a short, single-use pairing
 // code bound to the store. On the till, Settings → Cloud → "Pair with a
-// shop" (Pair) clears exactly this till's cloud identity — the
-// db.TillCloudIdentityPrefixes keys, plus store_id / merchant_id on a main
+// shop" (Pair) clears exactly this till's cloud identity — the credential
+// and device keys of db.TillCloudIdentityPrefixes (its own wipe list below;
+// the unpaid check-in markers stay, and Pair's own check-in re-records
+// them), plus store_id / merchant_id on a main
 // or standalone till; never the pinned signing key (ADR-0006) or the
 // store-level preferences — mints a fresh device id and posts the code to
 // POST /v1/stores/pair — unauthenticated, the code is the only credential —

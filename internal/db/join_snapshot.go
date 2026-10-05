@@ -131,7 +131,12 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 // (data.PerTillSettingPrefixes, which covers these;
 // TestPerTillSettingsCoverTillCloudIdentity) — ut-docs#2730. The store-level
 // marketplace keys (store_id, merchant_id, …) still travel.
-var TillCloudIdentityPrefixes = []string{"marketplace.device_", "marketplace.token", "marketplace.enrolled_at", "till_identity."}
+//
+// cloudsync.unpaid_checkin.* (ut-docs#3673, ADR-0148 amendment §2) is the
+// version and date of this till's last answered unpaid check-in: what the
+// cloud last saw of this device. Copied to a joining replica, the main
+// till's markers would cancel the replica's own first-run check-in.
+var TillCloudIdentityPrefixes = []string{"marketplace.device_", "marketplace.token", "marketplace.enrolled_at", "till_identity.", "cloudsync.unpaid_checkin."}
 
 // DeleteTillCloudIdentity removes every TillCloudIdentityPrefixes row from
 // the settings table behind exec: the join-snapshot copy served to a joining

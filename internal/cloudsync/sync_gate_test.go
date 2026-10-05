@@ -20,17 +20,20 @@ import (
 // inside an operator check-in window. A gated tick makes NO network call
 // and is not an error.
 
-// useRealSyncGate swaps TestMain's always-open gate for the production one
-// and closes the operator window, both restored/closed again afterwards so
-// no other test sees this test's state.
+// useRealSyncGate swaps TestMain's always-open gate for the production one,
+// closes the operator window and disarms the start-up check-in (a Start
+// test cancelled before its first tick leaves it armed), all restored/
+// closed again afterwards so no other test sees this test's state.
 func useRealSyncGate(t *testing.T) {
 	t.Helper()
 	prev := syncAllowedFn
 	syncAllowedFn = entitlement.SyncAllowed
 	resetOperatorWindow()
+	disarmStartupCheckin()
 	t.Cleanup(func() {
 		syncAllowedFn = prev
 		resetOperatorWindow()
+		disarmStartupCheckin()
 	})
 }
 
