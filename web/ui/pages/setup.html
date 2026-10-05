@@ -42,12 +42,16 @@
          business-identity validation errors return to 3, everything else to
          the PIN step. The server resolves that, a tax-plugin install
          round-trip (ut-docs#1180 — back to step 3, not step 1) and the
-         plain first-render case into one startStep. -->
-    <main class="setup-card" x-data="{ step: {{ .startStep }}, last: 8,
+         plain first-render case into one startStep.
+         ut-docs#3709: no sample-data control and no restore step any more —
+         finishing lands on /import?welcome=1, which offers importing a
+         file, loading sample data, or skipping. Steps: 1 language,
+         2 country, 3 business identity (DE), 4 shop name, 5 shop type,
+         6 admin PIN, 7 done. -->
+    <main class="setup-card" x-data="{ step: {{ .startStep }}, last: 7,
                                        country: '{{ .detectedCountry }}', currency: '{{ .detectedCurrency }}',
                                        tax: '{{ .detectedTaxRate }}', taxinc: '{{ if .detectedTaxInclusive }}on{{ else }}off{{ end }}',
-                                       currencyTouched: false,
-                                       restoreAsking: false, restoreChoice: '', restoreStagedId: '' }">
+                                       currencyTouched: false }">
       <img class="login-logo" src="/public/assets/logo/unitill-logo.svg" alt="Universal Till" />
       <div class="setup-dots" aria-hidden="true">
         <template x-for="i in last"><span class="setup-dot" :class="{ active: i <= step }"></span></template>
@@ -294,7 +298,7 @@
              while it is blank, and POST /api/setup refuses a blank or
              placeholder name ("My Store") server-side. aria-required, not
              required: a native required on a field hidden by x-show would
-             silently block the final submit on step 8. -->
+             silently block the final submit on step 7. -->
         <section x-show="step === 4" x-cloak data-step="4" x-data="{ storeName: '' }"
                  x-init="storeName = $el.querySelector('input[name=store_name]').value">
           <h1>{{ T "setup.store.title" }}</h1>
@@ -317,15 +321,14 @@
           </div>
         </section>
 
-        <!-- Step 5 · shop type + sample-data opt-in (ut-docs#539; taxonomy
-             per ADR-0026 — the same six options the marketing site's
-             solutions pages use, not a new list). The starter catalogue is
-             the same generic one whichever type is chosen. -->
+        <!-- Step 5 · shop type (ut-docs#539; taxonomy per ADR-0026 — the
+             same six options the marketing site's solutions pages use, not a
+             new list). -->
         <!-- ut-docs#1095: was a native <select> — same touch problem as the
              country step above. Only 6 options (ADR-0026), short enough to
              show every tile directly, no "show all" toggle needed. Its own
-             local x-data (shopType), same nested-scope pattern step 6 below
-             already uses for `asking`/`choice`. -->
+             local x-data (shopType), nested inside the root step-nav
+             x-data. -->
         <section x-show="step === 5" x-cloak data-step="5" x-data="{ shopType: '' }">
           <h1>{{ T "setup.shop_type.title" }}</h1>
           <p class="muted">{{ T "setup.shop_type.hint" }}</p>
@@ -335,74 +338,14 @@
             <button type="button" class="picker-tile" data-value="{{ . }}" :aria-pressed="shopType === '{{ . }}'" @click="shopType = '{{ . }}'">{{ T (printf "setup.shop_type.%s" .) }}</button>
             {{ end }}
           </div>
-          <label class="set-row" style="margin-top:.6rem">
-            <input type="checkbox" name="demo_data">
-            {{ T "setup.demo_data.label" }}
-          </label>
-          <p class="muted">{{ T "setup.demo_data.hint" }}</p>
           <div class="setup-nav">
             <button type="button" class="btn secondary" @click="step = 4">{{ T "setup.back" }}</button>
             <button type="button" class="btn primary" @click="step = 6">{{ T "setup.next" }}</button>
           </div>
         </section>
 
-        <!-- Step 6 · restore from another POS? (ut-docs#617). Purely a UI
-             choice — no network call, never blocks the wizard. "No" costs
-             one tap; "Yes" reveals the only real option today (generic
-             CSV/Excel, straight into the existing /import flow) plus an
-             honest "no named-system plugins yet" note rather than a
-             fabricated vendor list; "Later" is resumable from Settings →
-             Data (settings.html).
-             Review (B1): `choice` used to double as BOTH the panel
-             selector and the answer, so the CSV/Excel sub-panel
-             (x-show="choice === 'ask'") hid itself the instant its own
-             radio set choice to 'csv_excel' — the one button that could
-             carry that answer forward became enabled at exactly the
-             moment its container vanished, with no way back in (the
-             radio was already checked, so re-tapping it fired no
-             `change`). `asking` now owns which panel is shown; `choice`
-             only ever holds the answer. -->
-        <!-- ut-docs#1168: asking/choice/stagedId moved up to the root
-             x-data (as restoreAsking/restoreChoice/restoreStagedId) — the
-             real upload/preview form lives in its own section AFTER the
-             wizard's closing </form> below (nested forms are dropped by the
-             HTML parser, same reason step 1's language-install buttons and
-             step 3's tax-plugin button live out there), and it needs to
-             react to the same choice this section sets. -->
+        <!-- Step 6 · admin PIN -->
         <section x-show="step === 6" x-cloak data-step="6">
-          <h1>{{ T "setup.restore.title" }}</h1>
-          <p class="muted">{{ T "setup.restore.hint" }}</p>
-          <input type="hidden" name="restore_choice" :value="restoreChoice">
-          <input type="hidden" name="staged_import_id" :value="restoreStagedId">
-          <div x-show="!restoreAsking">
-            <div class="setup-nav">
-              <button type="button" class="btn primary" @click="restoreChoice = 'no'; step = 7">{{ T "setup.restore.no" }}</button>
-              <button type="button" class="btn secondary" @click="restoreAsking = true" style="margin-top:.4rem">{{ T "setup.restore.yes" }}</button>
-              <button type="button" class="btn secondary" @click="restoreChoice = 'later'; step = 7" style="margin-top:.4rem">{{ T "setup.restore.later" }}</button>
-            </div>
-            <div class="setup-nav">
-              <button type="button" class="btn secondary" @click="step = 5">{{ T "setup.back" }}</button>
-            </div>
-          </div>
-          <div x-show="restoreAsking">
-            <label class="set-row">
-              <input type="radio" value="csv_excel" @change="restoreChoice = 'csv_excel'">
-              {{ T "setup.restore.csv_excel" }}
-            </label>
-            <!-- Back/Next for this panel only show BEFORE the radio is
-                 picked — the out-of-form section below (x-show="step === 6
-                 && restoreChoice === 'csv_excel'") takes over Browse/
-                 Preview/Back/Next the moment it is, so the operator never
-                 sees two "Next" buttons at once. -->
-            <div class="setup-nav" x-show="restoreChoice !== 'csv_excel'">
-              <button type="button" class="btn secondary" @click="restoreAsking = false; restoreChoice = ''; restoreStagedId = ''">{{ T "setup.back" }}</button>
-              <button type="button" class="btn primary" disabled>{{ T "setup.next" }}</button>
-            </div>
-          </div>
-        </section>
-
-        <!-- Step 7 · admin PIN -->
-        <section x-show="step === 7" x-cloak data-step="7">
           <h1>{{ T "auth.setup.title" }}</h1>
           <p class="muted">{{ T "auth.setup.hint" }}</p>
           <label>{{ T "auth.setup.pin" }}
@@ -412,28 +355,28 @@
             <input type="password" name="pin_confirm" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8">
           </label>
           <div class="setup-nav">
-            <button type="button" class="btn secondary" @click="step = 6">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" @click="step = 8">{{ T "setup.next" }}</button>
+            <button type="button" class="btn secondary" @click="step = 5">{{ T "setup.back" }}</button>
+            <button type="button" class="btn primary" @click="step = 7">{{ T "setup.next" }}</button>
           </div>
         </section>
 
-        <!-- Step 8 · done -->
-        <section x-show="step === 8" x-cloak data-step="8">
+        <!-- Step 7 · done -->
+        <section x-show="step === 7" x-cloak data-step="7">
           <h1>{{ T "setup.done.title" }}</h1>
           <p class="muted">{{ T "setup.done.hint" }}</p>
           <!-- ADR-0071 (ut-docs#879): explicit, opt-in-gated eager store
                registration — asked once, on the wizard's last screen, NOT
                pre-ticked. On yes, POST /api/setup makes one best-effort,
                time-boxed registration attempt; on no (the default) the till
-               keeps today's lazy registration (ADR-0015). Same labelled-
-               checkbox idiom as step 5's demo_data control. -->
+               keeps today's lazy registration (ADR-0015). Same
+               labelled-checkbox idiom as the rest of the wizard. -->
           <label class="set-row" style="margin-top:.6rem">
             <input type="checkbox" name="auto_register">
             {{ T "setup.auto_register.label" }}
           </label>
           <p class="muted">{{ T "setup.auto_register.hint" }}</p>
           <div class="setup-nav">
-            <button type="button" class="btn secondary" @click="step = 7">{{ T "setup.back" }}</button>
+            <button type="button" class="btn secondary" @click="step = 6">{{ T "setup.back" }}</button>
             <button type="submit" class="btn primary">{{ T "setup.finish" }}</button>
           </div>
         </section>
@@ -475,165 +418,6 @@
         <input type="hidden" name="country" value="{{ .installableTaxPlugin.Country }}">
       </form>
       {{ end }}
-
-      <!-- ut-docs#1168: step 6's real Browse/Preview control — outside the
-           wizard's own <form> on purpose, same reasoning as the install
-           forms just above (nested forms are dropped by the HTML parser).
-           Posts straight to /api/import (preview only, commit is never set
-           here — see POST /api/import's own comment on why that's safe
-           auth-exempt during first boot), reusing that endpoint's existing
-           preview machinery byte-for-byte: id="import-form" matches what
-           the returned fragment's own hidden inputs/buttons target via
-           form= (see import.html), so the problem-grid and currency-confirm
-           controls a normal preview can produce work identically here.
-           Actual commit is deliberately NOT offered from this panel: country/
-           currency aren't saved until the wizard's final submit, so
-           committing here could label prices under the wrong currency. The
-           preview's staged_id is captured into restoreStagedId (script
-           below) and rides the wizard's own hidden staged_import_id field
-           instead — setup_page.go's POST /api/setup replays it as a real
-           commit once state is saved and the admin session exists,
-           falling back to /import?staged_id=... if that fails. -->
-      <section x-show="step === 6 && restoreChoice === 'csv_excel'" x-cloak data-step="6-upload">
-        <h2>{{ T "setup.restore.upload_title" }}</h2>
-        <p class="muted">{{ T "import.help" }}</p>
-        <!-- ut-docs#1515: hx-indicator + hx-disabled-elt — ut-docs#1510 added
-             exactly this pattern to import.html's own upload form but missed
-             this one, so the wizard's Preview button on a real .bkp (up to
-             thousands of receipt PDFs to parse past) went dead with no
-             feedback at all, inviting a second tap. Same selector shape,
-             own busy element below (a distinct id from import.html's
-             #import-busy — the two never render on the same page, but
-             reusing the id would still be a document-wide htmx-indicator
-             match on the wrong element if that ever changed). -->
-        <form id="import-form" hx-post="/api/import" hx-target="#setup-restore-result" hx-swap="innerHTML" enctype="multipart/form-data"
-              hx-indicator="#setup-restore-busy" hx-disabled-elt="find button[type=submit]">
-          <input type="hidden" name="commit" value="0">
-          <!-- ut-docs#1168 review: tells POST /api/import to suppress the
-               problem-grid/barcode-opt-in controls and the repeated Import
-               button it would otherwise render into #setup-restore-result —
-               none of them are wired to anything here (there's no
-               #import-commit element for their onclick handler to find, and
-               committing mid-wizard could label prices under a
-               not-yet-saved currency). The full interactive pipeline is
-               still there, unsuppressed, once the operator reaches /import
-               for real. -->
-          <input type="hidden" name="wizard" value="1">
-          <!-- Kept in sync with import.html's own accept= — ut-docs#1247
-               (.bkp) and ut-docs#1837 (.xlsx), same reasoning: a UX hint
-               only, never trusted server-side (see import_page.go). -->
-          <label>{{ T "import.file" }} <input type="file" name="file" accept=".csv,text/csv,.bkp,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/zip,application/octet-stream" required></label>
-          <button class="btn primary" type="submit" style="margin-top:.5rem">{{ T "import.preview" }}</button>
-        </form>
-        <!-- Touch-legible on purpose, same treatment as import.html's own
-             #import-busy (ut-docs#1510 review: "not a 12px inline
-             spinner") — hidden by app.css's .htmx-indicator rule until
-             htmx marks the form busy. -->
-        <div id="setup-restore-busy" class="htmx-indicator" style="margin-top:.6rem; font-size:1.05rem; font-weight:600">
-          <span class="animate-spin" aria-hidden="true">⏳</span> {{ T "import.busy" }}
-        </div>
-        <div id="setup-restore-result" style="margin-top:.8rem; overflow-x:auto"></div>
-        <p class="muted" x-show="restoreStagedId !== ''" data-setup-preview-ready>{{ T "setup.restore.preview_ready" }}</p>
-        <!-- ut-docs#1515: a detected/pre-filled country's currency is correct
-             far more often than not, so step 2's tile is rarely clicked —
-             but ut-docs#970's own review made currencyTouched the one signal
-             that guards auto-confirming a currency (commitStagedImportForSetup
-             in setup_page.go: "ONLY attempted when currencyTouched"). Silently
-             auto-committing here regardless would reopen exactly the bug that
-             review closed. So when a preview is staged and the operator never
-             explicitly touched currency, ask for one explicit confirmation
-             right here: checking it sets the SAME currencyTouched flag step
-             2's tile click sets, so the wizard's final submit auto-commits
-             exactly as if they'd clicked the tile. Leaving it unchecked is
-             still safe — Next stays disabled rather than silently dropping
-             them on /import with no explanation, which is what ut-docs#1515
-             reported.
-             Independent review (ut-docs#1515), finding 1 (blocker): also
-             gated on `currency !== ''` — country/currency detection can
-             match no seeded country at all (this till's own CI host is one
-             such case), leaving `currency` blank. Asking the operator to
-             confirm a currency that isn't even shown, then marking the till
-             "confirmed" against an empty string, would reopen the exact
-             ut-docs#970 hole this control exists to close: setup_page.go's
-             `v != "" && IsKnownCurrency(v)` never actually sets
-             KeyCurrencyConfirmed for a blank currency, but
-             commitStagedImportForSetup's own gate doesn't check that —
-             only currencyTouched — so it would still run. With nothing to
-             confirm, this now falls back to exactly the pre-existing
-             behaviour instead: Next stays enabled, and an unconfirmed
-             currency lands the operator on /import with the explanatory
-             message below (import.staged_from_setup_confirm_currency)
-             rather than a silent one. -->
-        <div x-data="{ neededConfirm: false }" x-init="$watch('restoreStagedId', (v) => { if (v !== '' && !currencyTouched && currency !== '') neededConfirm = true })">
-          <!-- Independent review, finding 7: a plain
-               `x-show="!currencyTouched"` here made this block vanish the
-               INSTANT its own checkbox set currencyTouched — the same
-               self-hiding-container class this file's own step 6 review
-               (ut-docs#617, comment above on "asking" vs "choice") already
-               fixed once. `neededConfirm` is a one-way latch, set the
-               moment a preview first stages while currency is genuinely
-               unconfirmed, and never cleared — so this stays on screen as a
-               visible record of what was confirmed instead of disappearing,
-               and the checkbox reflects (:checked) rather than only sets
-               (@change) currencyTouched, so unchecking it after the fact is
-               still possible (and correctly re-disables Next below). -->
-          <!-- Second review round: the latch is deliberately NOT the only
-               condition. `neededConfirm` is never cleared, but step 6's Back
-               button (below) resets restoreStagedId to '' — so on a
-               Back-then-"Yes"-again round trip the panel re-shows with
-               nothing staged, and a latch-only x-show would leave this
-               warn block asking to confirm a currency for a file that is no
-               longer staged, while its own explanatory hint <p> below
-               (which does test restoreStagedId) stays hidden — the two
-               visibly disagreeing. Pairing the latch with the same
-               "something is actually staged" test keeps them in sync and
-               still satisfies finding 7: ticking the box changes only
-               currencyTouched, never restoreStagedId, so the block does
-               not vanish out from under the operator the way the original
-               x-show="!currencyTouched" did. -->
-          <div x-show="neededConfirm && restoreStagedId !== ''" class="notice-block-warn" style="margin-top:.6rem" data-setup-confirm-currency>
-            <label style="display:flex; align-items:center; gap:.4rem">
-              <span class="row-warn-icon" aria-hidden="true">⚠</span>
-              <input type="checkbox" :checked="currencyTouched" @change="currencyTouched = $event.target.checked">
-              <span>{{ T "setup.restore.confirm_currency" }} <strong x-text="currency"></strong></span>
-            </label>
-          </div>
-        </div>
-        <p class="muted" x-show="restoreStagedId !== '' && !currencyTouched && currency !== ''" data-setup-confirm-currency-hint>{{ T "setup.restore.confirm_currency_hint" }}</p>
-        <div class="setup-nav">
-          <button type="button" class="btn secondary" @click="restoreAsking = false; restoreChoice = ''; restoreStagedId = ''">{{ T "setup.back" }}</button>
-          <button type="button" class="btn primary" :disabled="restoreStagedId !== '' && !currencyTouched && currency !== ''" @click="step = 7">{{ T "setup.next" }}</button>
-        </div>
-      </section>
-      <script>
-      // ut-docs#1168: a successful preview's response embeds
-      // <input name="staged_id" ... form="import-form"> (import_page.go) —
-      // capture it into the wizard's own Alpine state so it rides the
-      // final /api/setup submit as staged_import_id. Delegated to #setup-
-      // restore-result specifically so a re-preview (superseding the
-      // previous staged copy server-side, see discardStagedCatalogUpload)
-      // correctly overwrites the previous value rather than leaving it
-      // stale.
-      document.getElementById('setup-restore-result').addEventListener('htmx:afterSwap', function () {
-        var staged = document.querySelector('#setup-restore-result input[name="staged_id"]');
-        var root = document.querySelector('main.setup-card');
-        if (staged && root && window.Alpine) {
-          window.Alpine.$data(root).restoreStagedId = staged.value;
-        }
-      });
-      // ut-docs#1168 review: a rejected/unrecognised file (wrong format, a
-      // corrupt .bkp, …) returns a non-2xx status with the translated
-      // reason as its plain-text body (import_page.go's T("import.error.*")
-      // calls) — htmx does not swap a non-2xx response on its own (same
-      // pattern shifts.html's own htmx:responseError handler exists for),
-      // so without this the operator gets no feedback at all: an empty
-      // #setup-restore-result and no clue why Preview did nothing.
-      document.body.addEventListener('htmx:responseError', function (ev) {
-        var target = ev.detail && ev.detail.target;
-        if (!target || target.id !== 'setup-restore-result') return;
-        target.innerHTML = '<p class="login-error">' + (ev.detail.xhr.responseText || '') + '</p>';
-      });
-      </script>
 
       <!-- Alternate path: join an existing shop (ADR-0011 D2). The primary's
            QR code enrols this till and copies the whole shop over. -->

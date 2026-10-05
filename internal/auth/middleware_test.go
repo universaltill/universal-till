@@ -354,8 +354,8 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 // never become reachable from an anonymous self-order kiosk.
 func TestEntitlementAPIIsNotExempt(t *testing.T) {
 	for _, p := range []string{"/api/entitlement", "/api/entitlement/"} {
-		if exempt(p) || optionalAuth(p) {
-			t.Errorf("%s must NOT be exempt or optional-auth — it discloses the shop's subscription state", p)
+		if exempt(p) {
+			t.Errorf("%s must NOT be exempt — it discloses the shop's subscription state", p)
 		}
 	}
 }

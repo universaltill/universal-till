@@ -400,7 +400,7 @@ func TestSettingScope_Classification(t *testing.T) {
 		{ReleaseNotesSeenVersionSettingsKey, SettingPerTill},
 		// ut-docs#2950: reviewed and kept shop-wide (reasons at
 		// ShopWideSettingPrefixes).
-		{"setup.restore_prompt_status", SettingShopWide},
+		{"setup.completed", SettingShopWide},
 		{"lan_discovery.till_id", SettingShopWide},
 		{"fiscal.tse_provisioning_state", SettingShopWide},
 		{"till.name", SettingShopWide},

@@ -8,8 +8,8 @@
   <p class="muted">{{ T "vouchers_import.help" }}</p>
   <!-- enctype="multipart/form-data" even on the confirm step (ut-docs#1834):
        POST /api/vouchers/import's first step is r.ParseMultipartForm, which
-       rejects a plain urlencoded body outright — same reasoning import.html
-       documents for its own restore-resume form. The preview fragment
+       rejects a plain urlencoded body outright, so every form posting to
+       it must send multipart. The preview fragment
        (swapped into #vouchers-import-result below) renders its OWN
        "Confirm import" form carrying the exact uploaded bytes back as a
        hidden base64 field, so this outer form only ever previews. -->

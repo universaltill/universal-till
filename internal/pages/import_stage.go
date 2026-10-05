@@ -1,24 +1,16 @@
 package pages
 
 import (
-	"bytes"
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
-	"mime/multipart"
-	"net/http"
-	"net/http/httptest"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/catimport"
-	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // Preview-time staging for POST /api/import (ut-docs#601): a preview
@@ -132,62 +124,6 @@ func discardStagedCatalogUpload(id string) {
 	}
 }
 
-// commitStagedImportForSetup (ut-docs#1168) replays a preview the operator
-// ran on the setup wizard's restore step as a real POST /api/import commit,
-// once the wizard has actually saved the chosen country/currency and minted
-// the admin session — reusing the exact commit codepath (dedup, audit,
-// problem handling) via one in-process ServeHTTP call rather than
-// duplicating any of it. auth.WithUser stands in for the auth middleware
-// that normally resolves the session cookie before a handler runs — this
-// call goes straight to the unwrapped mux, bypassing that middleware
-// entirely, so canPerform would otherwise see no session at all.
-//
-// Best-effort, like every other post-setup side effect in setup_page.go
-// (autoRegisterForSetup, installBasePluginsForSetup, ...): false just tells
-// the caller to fall back to sending the operator to /import?staged_id=...
-// to finish by hand. The staged copy is untouched by a non-2xx response —
-// takeStagedCatalogUpload/restageCatalogUpload (above) only ever consume it
-// on the way to a real attempt, and confirm_currency is supplied up front so
-// that detour shouldn't fire here anyway.
-func commitStagedImportForSetup(ctx context.Context, mux *http.ServeMux, adminUser auth.User, stagedID, currencyCode string) bool {
-	var body bytes.Buffer
-	mw := multipart.NewWriter(&body)
-	_ = mw.WriteField("commit", "1")
-	_ = mw.WriteField("staged_id", stagedID)
-	_ = mw.WriteField("confirm_currency", currencyCode)
-	if err := mw.Close(); err != nil {
-		logging.L().Errorf("setup wizard: build staged-import commit request: %v", err)
-		return false
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/api/import", &body)
-	if err != nil {
-		logging.L().Errorf("setup wizard: build staged-import commit request: %v", err)
-		return false
-	}
-	req.Header.Set("Content-Type", mw.FormDataContentType())
-	req = auth.WithUser(req, adminUser)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	// ut-docs#1168 review: status 200 alone isn't proof anything was
-	// actually committed — the ut-docs#970 currency-confirm detour
-	// (renderImportCurrencyConfirm) also answers with a 200 HTML fragment
-	// when confirm_currency is missing/rejected, and a re-preview-instead-
-	// of-commit response would too. ut-docs#2112 review (F2): this used to
-	// match on `href="/catalog"`, which was only ever true because the
-	// commit summary's "View catalog" control happened to always be a link
-	// — once it could also render as a dialog-close button
-	// (in_items_shell="1", never the case for this wizard request, which
-	// never sets that field), that match would have gone silently false on
-	// a genuinely successful commit. data-import-committed="1" marks the
-	// real commit summary div unconditionally, regardless of which control
-	// it renders — see its own comment in import_page.go.
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `data-import-committed="1"`) {
-		logging.L().Errorf("setup wizard: staged import %s did not commit (code %d): %s", stagedID, rec.Code, rec.Body.String())
-		return false
-	}
-	return true
-}
-
 // importCommitLock (ut-docs#1510) closes the one duplicate-import gap
 // takeStagedCatalogUpload's exclusivity doesn't cover: a DIRECT commit —
 // "Import" pressed without ever previewing first, so there is no staged_id
@@ -209,6 +145,20 @@ var (
 	importCommitMu   sync.Mutex
 	importCommitLock = map[string]time.Time{}
 )
+
+// sampleDataMu serialises POST /api/import/sample-data's "already loaded?"
+// check, seed and audit (ut-docs#3709 review N1). Unlike importCommitLock,
+// which rejects a same-content duplicate, this one waits: the second of two
+// concurrent taps then finds the data loaded and says so, rather than both
+// seeding and both auditing sample_data_loaded. The seed takes well under a
+// second, so a waiting request is never held long.
+var sampleDataMu sync.Mutex
+
+// sampleDataAfterCountSync is a test-only seam, nil in every real build:
+// called while sampleDataMu is held, right after the "already loaded?" read,
+// so TestImportSampleData_ConcurrentLoadsAuditOnce can park one request
+// there and prove a concurrent one cannot get past the same read.
+var sampleDataAfterCountSync func()
 
 // importCommitLockTTL bounds how long a hash may be held: normally released
 // by the handler's own defer the moment its commit finishes, this is only

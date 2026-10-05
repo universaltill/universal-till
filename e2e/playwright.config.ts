@@ -11,7 +11,8 @@ const PREINSTALLED_CHROMIUM = '/opt/pw-browsers/chromium';
 const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREINSTALLED_CHROMIUM } : {};
 
 // Three tills under test:
-//  - the DEFAULT project: auth off, demo catalog seeded by the migrations
+//  - the DEFAULT project: auth off, demo catalog seeded by run-till.sh
+//    (go run ./e2e/seed_demo — the migrations stopped seeding it, #539)
 //    — every spec except AUTH_ONLY_SPECS/AI_IDENTIFY_ONLY_SPECS drives this
 //    one directly.
 //  - the AUTH project: auth ON, a genuinely fresh install — only

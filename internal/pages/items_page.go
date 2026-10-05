@@ -71,9 +71,7 @@ func registerItemsPage(mux *http.ServeMux, d *common.Deps) {
 // through the SAME mux this handler is registered on, and returns the htmx
 // fragment body that handler renders — reusing its exact data-fetch and
 // template logic instead of duplicating any of it here, which would drift
-// the moment that handler's own query/columns changed. Same in-process
-// sub-request idiom as import_stage.go's commitStagedImportForSetup
-// (ut-docs#1168): mux is the raw, not-yet-auth-wrapped mux app.Init passes
+// the moment that handler's own query/columns changed. mux is the raw, not-yet-auth-wrapped mux app.Init passes
 // to every registerXxxPage call, so the caller's own session (r's context)
 // is carried over explicitly via auth.WithUser rather than relying on
 // middleware that this call bypasses. Locale/theme/other cookies ride along
@@ -88,8 +86,7 @@ func registerItemsPage(mux *http.ServeMux, d *common.Deps) {
 // fa/whatever was actually requested (ut-docs#2114).
 //
 // On any non-200 (a permission gate this user doesn't clear, a DB error),
-// logs the real status/body server-side (same logging.L().Errorf pattern as
-// import_stage.go's commitStagedImportForSetup) and returns a translated,
+// logs the real status/body server-side and returns a translated,
 // visible fallback card instead of silently rendering nothing — ux-
 // guidelines.md is explicit that no user-facing action gets a silent
 // failure, and AC #3 ("the right panel is never empty on arrival") would

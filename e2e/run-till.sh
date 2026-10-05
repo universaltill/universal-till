@@ -19,7 +19,7 @@ cd "$ROOT"
 go run ./e2e/seed_faq
 
 # Restores the demo catalogue the specs scan (ut-docs#539 made it opt-in;
-# this runs the same seed the setup wizard's checkbox runs).
+# this runs the same catalogue seed as the import page's "Load sample data").
 go run ./e2e/seed_demo
 
 # Build once, then run the BINARY (not `go run`) from INSIDE the fresh data
