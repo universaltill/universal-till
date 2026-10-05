@@ -16,7 +16,7 @@ const ROUTES = ['/', '/admin', '/audit', '/backoffice', '/bluetooth-devices', '/
   '/receipt-designer', '/registers', '/report-issue', '/reports', '/settings', '/settings/menu', '/shifts',
   '/tables', '/tills', '/translations', '/users', '/users/permissions'];
 
-// What pokes past the viewport's end edge, outermost first, skipping
+// What pokes past either viewport edge, outermost first, skipping
 // anything inside a box that scrolls or clips horizontally within the
 // viewport (a tab strip, a table's own scroll card) — those are reachable.
 async function offenders(page: Page) {
@@ -24,18 +24,25 @@ async function offenders(page: Page) {
     const vw = document.documentElement.clientWidth;
     const reachable = (el: Element) => {
       for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
-        if (/(auto|scroll|hidden|clip)/.test(getComputedStyle(p).overflowX) && p.getBoundingClientRect().right <= vw + 1) return true;
+        // ut-docs#3653: only a box that SCROLLS makes its overflow
+        // reachable. hidden/clip (table.table is overflow:hidden) just cuts
+        // the controls off — the #3359 review's accepted finding 4, and
+        // exactly how the promotions edit form went missing.
+        if (/(auto|scroll)/.test(getComputedStyle(p).overflowX) && p.getBoundingClientRect().right <= vw + 1) return true;
       }
       return false;
     };
     const out: string[] = [];
     document.querySelectorAll('main *, .page *, .content *').forEach((el) => {
       const r = el.getBoundingClientRect();
-      if (!r.width || !r.height || r.right <= vw + 1 || reachable(el)) return;
+      // ut-docs#3653: both edges. A flex-end row too wide for its box
+      // spills past the inline-START edge (left in LTR), which a right-only
+      // check never saw.
+      if (!r.width || !r.height || (r.right <= vw + 1 && r.left >= -1) || reachable(el)) return;
       if (el.closest('dialog:not([open]), #osk, [hidden]')) return;
       const s = getComputedStyle(el);
       if (s.visibility === 'hidden' || s.position === 'fixed') return;
-      out.push(`${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}.${String(el.className).trim().split(/\s+/)[0]} right=${Math.round(r.right)}`);
+      out.push(`${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}.${String(el.className).trim().split(/\s+/)[0]} left=${Math.round(r.left)} right=${Math.round(r.right)}`);
     });
     return { vw, sw: document.documentElement.scrollWidth, out: out.slice(0, 5) };
   });
@@ -61,6 +68,24 @@ async function sideScrollers(page: Page) {
     return out.slice(0, 5);
   });
 }
+
+// ut-docs#3653: a list page swept empty proves nothing about its rows.
+// /promotions and /kitchen-stations have no demo data, and both carry a
+// per-row inline edit form that ran off the phone card's start edge, so
+// give each one row to lay out. The handlers answer every outcome with a
+// 303 (errors as ?err=…), so check the redirect itself, not the followed
+// 200 — a drifted field name must fail here, not quietly sweep an empty list.
+test.beforeAll(async ({ request }) => {
+  const seeds: [string, Record<string, string>, string][] = [
+    ['/api/promotions', { code: 'SWEEP3653', type: 'percent', value_percent: '10', description: 'Phone sweep row', starts_at: '2026-01-01', ends_at: '2026-12-31', customer_id: '' }, '/promotions'],
+    ['/api/kitchen-stations', { name: 'Sweep station 3653', destination_type: 'printer', printer_address: '192.0.2.10:9100' }, '/kitchen-stations'],
+  ];
+  for (const [url, form, back] of seeds) {
+    const r = await request.post(url, { form, maxRedirects: 0 });
+    expect(r.status(), url).toBe(303);
+    expect(r.headers().location, url).toBe(back);
+  }
+});
 
 for (const w of [360, 440]) {
   test.describe(`phone ${w}px (ut-docs#3297)`, () => {
