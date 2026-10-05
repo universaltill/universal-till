@@ -178,6 +178,10 @@ async function ensureOperator(page: Page) {
     await page.locator('button[type=submit].pin-key').click();
     await page.waitForURL((u) => !u.pathname.includes('/login'));
   }
+  // ut-docs#3710: never capture the sale screen's first-visit guided tour —
+  // mark it done for this operator (same as e2e/tests/helpers.ts
+  // markTourDone); every capture below opens its page fresh.
+  await page.request.post('/api/tour/done');
   await expect(page.locator('#basket')).toBeVisible();
 }
 

@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { ADMIN_PIN, watchConsole, fieldGeometry, expectStacked, setOskMode } from './helpers';
+import { ADMIN_PIN, watchConsole, fieldGeometry, expectStacked, setOskMode, markTourDone } from './helpers';
 
 // ut-docs#2223: this spec is exempt from tests/fixtures.ts (see
 // scripts/ci/guard-e2e-fixtures-import.sh), so it does not inherit the
@@ -541,6 +541,10 @@ test.describe.serial('first-boot setup and PIN login', () => {
       page.locator('button[type=submit]', { hasText: 'Start selling' }).click(),
     ]);
     await expect(page.locator('.catalog-row[data-name="Wizard Restore Widget"]')).toBeVisible();
+    // ut-docs#3710: the admin the wizard just created would get the sale
+    // screen's guided tour on "/" — its own spec covers it; the serial tests
+    // below drive the sale screen and Lock with no balloon in the way.
+    await markTourDone(page);
 
     // Leave the session on the till's home screen, where the next serial
     // test expects it (same convention as the change-PIN test below).

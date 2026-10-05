@@ -405,6 +405,9 @@ func TestSettingScope_Classification(t *testing.T) {
 		{"fiscal.tse_provisioning_state", SettingShopWide},
 		{"till.name", SettingShopWide},
 		{"menu.restored_keys", SettingShopWide},
+		// ut-docs#3710: a user finished the guided tour — users are
+		// shop-wide, so is whether each one has seen it.
+		{TourDoneSettingsKey("u1"), SettingShopWide},
 		{"no_such_family.key", SettingUnclassified},
 		{"", SettingUnclassified},
 	} {
