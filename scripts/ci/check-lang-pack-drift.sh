@@ -45,8 +45,8 @@
 # still being checked -- every pack always gets a real answer, never one
 # skipped just because an earlier one broke.
 #
-# PACKS below already lists all three known external packs (de, es, pt);
-# a new pack later is still a one-line edit to PACKS below.
+# PACKS below lists every known external pack; adding one is a one-line
+# edit.
 #
 # Usage: scripts/ci/check-lang-pack-drift.sh
 set -euo pipefail
