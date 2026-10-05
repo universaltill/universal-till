@@ -4452,6 +4452,23 @@ body.login-screen {
    this selector can't touch it. */
 @media (max-width: 480px) {
   .fiscal-register-group .users-inline { flex-wrap: wrap; }
+  /* ut-docs#3653: the same overflow inside a phone card's actions cell.
+     That cell is flex-end, so a non-wrapping inline edit form wider than
+     the card (promotions: type, value, description, two dates, Save
+     ≈ 715px) spilled past the card's inline-START edge and its first
+     controls were cut off by the table's overflow:hidden. /kitchen-stations
+     had the same defect. table-cards.js puts .t-cards on tables at every
+     width, but this block is ≤480px only, so the desktop /users row
+     (#898) is untouched. */
+  table.t-cards .t-cards-actions .users-inline {
+    flex-wrap: wrap; justify-content: flex-end; min-inline-size: 0; max-inline-size: 100%;
+  }
+  /* Once wrapped, let the fields fill their line, and keep a date wide
+     enough to show its year (7.5rem cut it off at "31/12/202").
+     min-inline-size, not width: it outranks the templates' inline
+     style="width:…" without !important. */
+  table.t-cards .t-cards-actions .users-inline :is(input, select) { flex: 1 1 auto; }
+  table.t-cards .t-cards-actions .users-inline input[type="date"] { min-inline-size: 9.75rem; }
 }
 
 /* Camera identify overlay (opened on demand from the scan row) */

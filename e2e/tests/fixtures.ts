@@ -118,9 +118,10 @@ export const test = base.extend<{ resetPosOncePerFile: void }, WorkerOpts>({
   // Ordering caveat (found in review, ut-docs#1315): this is a test-scoped
   // auto fixture, and Playwright runs `test.beforeAll` BEFORE test-scoped
   // fixtures — so the reset fires after any `test.beforeAll` a spec might
-  // add, not before it. No default-project spec uses `beforeAll` today
-  // (verified: only the exempt login.spec.ts does), so there's no live
-  // bug, but don't seed basket OR held-order state meant to survive the
+  // add, not before it. Two default-project specs use `beforeAll`
+  // (phone-layout-sweep-3297, phone-promotions-3653, ut-docs#3653) to seed
+  // promotion / kitchen-station rows — fine, this reset never touches
+  // those — but don't seed basket OR held-order state meant to survive the
   // whole file in a `beforeAll` (ut-docs#2141 widened what this reset
   // clears — see below) — either would be silently wiped before the first
   // test runs.
