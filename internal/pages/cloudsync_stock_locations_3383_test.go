@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -78,9 +79,9 @@ func TestCloudCreateStockLocation_CreatesOnceAndAudits(t *testing.T) {
 
 // stock_locations.name is UNIQUE on the till (001_init.sql), inactive rows
 // included, so a create whose name a RETIRED location has is refused in the
-// /locations page's own words (locations.error.create — what an operator
-// sees for the same duplicate at the till), not with the raw constraint
-// error, and writes nothing (review of ut-docs#3383).
+// /locations page's own words, naming the retired location so the operator
+// knows to reactivate it (locations.error.create_retired, ut-docs#3652), not
+// with the raw constraint error, and writes nothing (review of ut-docs#3383).
 func TestCloudCreateStockLocation_RefusesRetiredNameInPageWords(t *testing.T) {
 	dp := newCloudSyncTestDeps(t)
 	ctx := t.Context()
@@ -95,8 +96,8 @@ func TestCloudCreateStockLocation_RefusesRetiredNameInPageWords(t *testing.T) {
 	before := len(stockLocationsByName(t, dp))
 
 	_, err = cloudCreateStockLocation(ctx, dp, "back room")
-	want := httpx.T("en", "locations.error.create")
-	if want == "locations.error.create" || err == nil || err.Error() != want {
+	want := fmt.Sprintf(httpx.T("en", "locations.error.create_retired"), "Back room")
+	if strings.HasPrefix(want, "locations.error.create_retired") || err == nil || err.Error() != want {
 		t.Fatalf("create over a retired name: err = %v, want the locations page's text %q", err, want)
 	}
 	if got := len(stockLocationsByName(t, dp)); got != before {
@@ -108,8 +109,10 @@ func TestCloudCreateStockLocation_RefusesRetiredNameInPageWords(t *testing.T) {
 }
 
 // A rename to a name any OTHER location has (active or retired, any case)
-// is refused in the page's own words (locations.error.rename) and writes
-// nothing; a case-only change of the location's own name is a real rename.
+// is refused in the page's own words and writes nothing: an ACTIVE clash with
+// the generic locations.error.rename, a RETIRED clash with
+// locations.error.rename_retired naming that location (ut-docs#3652); a
+// case-only change of the location's own name is a real rename.
 func TestCloudRenameStockLocation_RefusesTakenName(t *testing.T) {
 	dp := newCloudSyncTestDeps(t)
 	ctx := t.Context()
@@ -138,10 +141,19 @@ func TestCloudRenameStockLocation_RefusesTakenName(t *testing.T) {
 	if mainName == "" {
 		t.Fatal("seed has no loc_main")
 	}
-	for _, taken := range []string{mainName, strings.ToUpper(mainName), "Old shed", "old SHED"} {
-		_, err := cloudRenameStockLocation(ctx, dp, id, taken)
-		if err == nil || err.Error() != want {
-			t.Fatalf("rename to %q: err = %v, want %q", taken, err, want)
+	wantRetired := fmt.Sprintf(httpx.T("en", "locations.error.rename_retired"), "Old shed")
+	if strings.HasPrefix(wantRetired, "locations.error.rename_retired") {
+		t.Fatal("locations.error.rename_retired has no English text")
+	}
+	for _, c := range []struct{ taken, want string }{
+		{mainName, want},                  // active clash: generic text, unchanged
+		{strings.ToUpper(mainName), want}, // active clash, other case
+		{"Old shed", wantRetired},         // retired clash: names it
+		{"old SHED", wantRetired},         // retired clash, other case
+	} {
+		_, err := cloudRenameStockLocation(ctx, dp, id, c.taken)
+		if err == nil || err.Error() != c.want {
+			t.Fatalf("rename to %q: err = %v, want %q", c.taken, err, c.want)
 		}
 	}
 	if _, ok := stockLocationsByName(t, dp)["Back room"]; !ok {

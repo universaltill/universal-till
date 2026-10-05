@@ -2053,7 +2053,10 @@ func cloudUpsertCategory(ctx context.Context, d *common.Deps, id, name, color st
 // retired ones included, compared case-insensitively so no near-duplicate
 // row lands either — is refused the way the /locations page refuses the
 // same duplicate (locations.error.create / rename); the merchant
-// reactivates the retired one instead. The cloud checks the same rule
+// reactivates the retired one instead. A RETIRED clash gets its own key
+// naming the retired location (locations.error.create_retired /
+// rename_retired, ut-docs#3652) so the merchant knows to reactivate it; an
+// ACTIVE clash keeps the generic key. The cloud checks the same rule
 // against the last snapshot; this is the authoritative re-check.
 //
 // Refusals reuse the /locations page's own keys (locations.error.*),
@@ -2063,6 +2066,12 @@ func cloudUpsertCategory(ctx context.Context, d *common.Deps, id, name, color st
 // stockLocationRefusal is a refusal in the locations page's own words.
 func stockLocationRefusal(key string) error {
 	return errors.New(httpx.T("en", key))
+}
+
+// stockLocationRefusalf is a refusal in the locations page's own words, with
+// a format argument (the retired location's name) — ut-docs#3652.
+func stockLocationRefusalf(key string, args ...any) error {
+	return errors.New(fmt.Sprintf(httpx.T("en", key), args...))
 }
 
 // findStockLocation returns the admin row for id, or an error naming it.
@@ -2101,7 +2110,7 @@ func cloudCreateStockLocation(ctx context.Context, d *common.Deps, name string) 
 		if l.IsActive {
 			return "stock location " + l.Name + " already exists", nil
 		}
-		return "", stockLocationRefusal("locations.error.create")
+		return "", stockLocationRefusalf("locations.error.create_retired", l.Name)
 	}
 	if err := requirePrimaryDirective(ctx, d); err != nil {
 		return "", err
@@ -2131,8 +2140,11 @@ func cloudRenameStockLocation(ctx context.Context, d *common.Deps, id, name stri
 	if loc.Name == name {
 		return "stock location " + name + " unchanged", nil
 	}
-	if _, taken := stockLocationNamed(locs, id, name); taken {
-		return "", stockLocationRefusal("locations.error.rename")
+	if l, taken := stockLocationNamed(locs, id, name); taken {
+		if l.IsActive {
+			return "", stockLocationRefusal("locations.error.rename")
+		}
+		return "", stockLocationRefusalf("locations.error.rename_retired", l.Name)
 	}
 	if err := requirePrimaryDirective(ctx, d); err != nil {
 		return "", err
