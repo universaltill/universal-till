@@ -188,6 +188,18 @@ type StockAdjustedEvent struct {
 	AdjustedAt time.Time `json:"adjusted_at"`
 }
 
+// CustomerErasedEvent is the payload published on "customer.erased"
+// (ut-docs#3435, ADR-0121 §2's neutral-event seam) after a GDPR erasure:
+// on the till where an operator erased the customer, and on every replica
+// whose admin pull prunes that customer. Plugins that keep their own copy of
+// a customer (loyalty, CRM, integration connectors) are expected to delete
+// it on receipt — the host guarantees delivery to events:receive
+// subscribers, not what a plugin's own code does with it. The id only:
+// never the name or contact data, which are exactly what was erased.
+type CustomerErasedEvent struct {
+	CustomerID string `json:"customer_id"`
+}
+
 // EventHandler executes a blocking handler for an event; returning a non-nil
 // error signals rollback/failure. The returned json.RawMessage is the
 // handler's answer for "ask" style hooks (EventBus.Ask) where a plugin
@@ -208,6 +220,7 @@ func NewEventBus(db *sql.DB) *EventBus {
 	// Non-blocking (default): Most events should not block the core transaction
 	eb.eventModes["sale.completed"] = NonBlocking
 	eb.eventModes["stock.adjusted"] = NonBlocking
+	eb.eventModes["customer.erased"] = NonBlocking
 	eb.eventModes["sale.viewed"] = NonBlocking
 	eb.eventModes["inventory.adjusted"] = NonBlocking
 	eb.eventModes["report.generated"] = NonBlocking
@@ -790,6 +803,11 @@ func redactCardPresentFields(ev SaleCompletedEvent) SaleCompletedEvent {
 // PublishStockAdjusted is a helper to publish stock.adjusted events
 func (eb *EventBus) PublishStockAdjusted(ctx context.Context, stockEvent StockAdjustedEvent) (string, error) {
 	return eb.Publish(ctx, "stock.adjusted", stockEvent)
+}
+
+// PublishCustomerErased is a helper to publish customer.erased events.
+func (eb *EventBus) PublishCustomerErased(ctx context.Context, ev CustomerErasedEvent) (string, error) {
+	return eb.Publish(ctx, "customer.erased", ev)
 }
 
 // Unsubscribe removes one plugin's subscriptions and closes its channel.

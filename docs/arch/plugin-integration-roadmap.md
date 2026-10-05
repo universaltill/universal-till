@@ -11,6 +11,7 @@ picked up in dependency order. Updated 2026-07-16.
 | --- | --- | --- |
 | `sale.completed` event (rich payload) | ✅ | ERP/webhook connectors |
 | `stock.adjusted` event | ✅ | inventory sync connectors |
+| `customer.erased` event (`{customer_id}` only; primary + replicas, ut-docs#3435) | ✅ | loyalty/CRM/integration plugins deleting their copy |
 | `payment.<key>.authorize` (blocking, pre-tender) | ✅ | payment terminals |
 | `settings_get` + `net:*` host functions | ✅ | any configurable connector |
 | Plugin storage (offline queue) | ✅ | connectors' retry queues |
