@@ -3110,7 +3110,7 @@
   "subscription.status.active": "Active",
   "subscription.status.lapsed": "Ended",
   "subscription.status.none": "No subscription",
-  "subscription.renews": "Renews %s",
+  "subscription.renews": "Paid until %s",
   "subscription.last_confirmed": "Last confirmed %s",
   "subscription.free_note": "You're on the free Local plan. Selling, receipts and reports on this till are free on every plan.",
   "subscription.chip.stale": "Subscription not confirmed",

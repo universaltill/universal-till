@@ -211,6 +211,15 @@ func TestSettingsSubscriptionCard_RenewsDateIsLocalized(t *testing.T) {
 	if !strings.Contains(card, "2026") {
 		t.Fatalf("no formatted renewal date in the card:\n%s", card)
 	}
+	// ut-docs#3461: the card must never claim a future renewal — an active
+	// plan cancelled at period end still shows this date, and it is only
+	// ever an end date, not a guaranteed renewal.
+	if !strings.Contains(card, "Paid until") {
+		t.Fatalf("card does not say 'Paid until':\n%s", card)
+	}
+	if strings.Contains(card, "Renews") {
+		t.Fatalf("card wrongly claims a renewal:\n%s", card)
+	}
 }
 
 // The banner names only the surface's own capabilities: #registration

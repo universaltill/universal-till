@@ -3110,7 +3110,7 @@
   "subscription.status.active": "Etkin",
   "subscription.status.lapsed": "Sona erdi",
   "subscription.status.none": "Abonelik yok",
-  "subscription.renews": "Yenilenme: %s",
+  "subscription.renews": "Ödendiği son tarih: %s",
   "subscription.last_confirmed": "Son doğrulama: %s",
   "subscription.free_note": "Ücretsiz Yerel plandasınız. Bu kasada satış, fiş ve raporlar her planda ücretsizdir.",
   "subscription.chip.stale": "Abonelik doğrulanmadı",

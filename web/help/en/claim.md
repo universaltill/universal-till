@@ -26,10 +26,10 @@ The setup wizard's last screen asks once whether to register the till right away
 
 ## Subscription
 
-Settings → Subscription (managers only) shows your plan as this till last heard it from the Universal Till cloud, its renewal date and when it was last confirmed. Selling, receipts and reports on the till are free on every plan and never stop because of the subscription.
+Settings → Subscription (managers only) shows your plan as this till last heard it from the Universal Till cloud, the date it is paid until and when it was last confirmed. Selling, receipts and reports on the till are free on every plan and never stop because of the subscription.
 
 - Local (free): nothing to do, the card just says you are on the free plan.
-- Active: your plan, its renewal date and the last confirmation.
+- Active: your plan, the date it is paid until and the last confirmation.
 - Subscription not confirmed: the till couldn't confirm your plan with the cloud for more than 7 days, so paid features (such as cloud sync, managing products from a browser and managed TSE set-up) are paused. Check the till's internet connection; this clears by itself once it connects.
 - Subscription ended: your subscription is no longer active, so paid features are paused until you renew it in your Universal Till account. Then press Check for a paid plan in Settings → Till registration: a till whose subscription has ended no longer checks in with the cloud by itself, so pressing it is the quickest way it learns about the renewal. On a till registered through the main till, press it on the main till: this till gets the renewal from there.
 
