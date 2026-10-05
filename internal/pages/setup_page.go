@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -160,11 +159,6 @@ func wizardCountryCodes(countries []setupCountry) []string {
 	return codes
 }
 
-// registerSetup wires the first-boot wizard: language → country (prefills
-// currency/tax) → shop name → shop type → restore-from-another-POS?
-// (ut-docs#617) → admin PIN → done. Every step has a sane default; both
-// routes refuse to run once an operator exists (they are auth-exempt for
-// exactly that window).
 // keyStoreNameRequired is the wizard error for a blank or placeholder shop
 // name; it re-opens the wizard on the shop-name step (ut-docs#3096).
 const keyStoreNameRequired = "setup.error.store_name_required"
@@ -184,13 +178,19 @@ func isRefusedStoreName(r *http.Request, name string) bool {
 		strings.EqualFold(strings.TrimSpace(name), httpx.T(httpx.RequestLocale(r), "setup.store.placeholder"))
 }
 
+// registerSetup wires the first-boot wizard: language → country (prefills
+// currency/tax) → business identity (DE only) → shop name → shop type →
+// admin PIN → done. Every step has a sane default; both routes refuse to run
+// once an operator exists (they are auth-exempt for exactly that window).
+// Finishing lands on /import?welcome=1 (ut-docs#3709), where the new shop
+// picks how to fill its catalog: import a file, load sample data, or skip.
 func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	posRepo := data.NewPOSRepo(d.Db)
 
 	renderWizard := func(w http.ResponseWriter, r *http.Request, errKey string, langUnavailableCode string) {
 		// Best-effort, matching every other failure this wizard already
-		// tolerates below (locale persist, restore prompt, plugin install,
-		// demo seed) — first boot must never become UNDOABLE because of a
+		// tolerates below (locale persist, plugin install, store
+		// registration) — first boot must never become UNDOABLE because of a
 		// transient/edge-case DB read (offline-first's "never blocked"
 		// posture extends here too, per review finding N2). The builtin
 		// defaults are the exact values setupCountries used to hardcode, so
@@ -352,11 +352,11 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		data["taxPluginSkipped"] = taxPluginSkipAck
 		// Which step an error re-render lands on: business-identity errors
 		// (setup.error.tse_*) belong to step 3, everything else (PIN, save)
-		// to the PIN step (7). On a POST re-render the identity fields the
+		// to the PIN step (6). On a POST re-render the identity fields the
 		// operator already typed are echoed back so a tax-number typo
 		// doesn't cost them the whole step (the template attribute-escapes
 		// these; same trust level as the country echo above).
-		errStep := 7
+		errStep := 6
 		if strings.HasPrefix(errKey, "setup.error.tse_") {
 			errStep = 3
 		}
@@ -470,7 +470,8 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			if code != "" && !catalogHasCode {
 				langUnavailableCode = code
 				// Best-effort, per this wizard's standing pattern (see the
-				// demo-data seed below): a failed write here must never block
+				// base-plugin install in POST /api/setup): a failed write
+				// here must never block
 				// rendering the wizard itself. Recorded for ut-docs#589's
 				// child 3 (auto-file a board ticket for a missing language).
 				if err := d.Settings.Set(r.Context(), "setup.detected_lang_unavailable", code); err != nil {
@@ -517,21 +518,6 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		_ = r.ParseForm()
 
-		// Restore-from-another-POS step (ut-docs#617): a pure UI/settings
-		// choice, no network call — never blocks setup, offline-first is a
-		// non-issue here by construction. "later" persists a flag so
-		// Settings → Data can offer a resume link; "csv_excel" just changes
-		// where the wizard lands post-setup, straight into the existing
-		// /import flow instead of home. Anything else (including "no" and
-		// the unset default) is a no-op.
-		restoreChoice := strings.TrimSpace(r.PostFormValue("restore_choice"))
-		// ut-docs#1168: set only when the operator actually browsed to a
-		// file and previewed it inline on this step (web/ui/pages/setup.html
-		// captures the staged_id the preview response embeds) — empty means
-		// either "no"/"later"/never previewed, all of which keep today's
-		// behaviour exactly.
-		stagedImportID := strings.TrimSpace(r.PostFormValue("staged_import_id"))
-
 		pin, pin2 := r.PostFormValue("pin"), r.PostFormValue("pin_confirm")
 		if auth.ValidatePINFormat(pin) != nil {
 			renderWizard(w, r, "auth.error.pin_format", "")
@@ -573,13 +559,8 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// Locale/currency/tax — same application path as /api/settings/save.
 		st := d.CurrentState()
 		// web/ui/pages/setup.html's currencyTouched only flips true on a
-		// genuine @change on the country select — see the ut-docs#970
-		// comment just below for why a submitted non-blank currency alone
-		// proves nothing. Named here (not just inlined) because
-		// commitStagedImportForSetup, further down, reuses the exact same
-		// signal for the exact same reason (ut-docs#1168 review, finding
-		// 2): it must never confirm a currency the operator never actually
-		// chose.
+		// genuine tap on a country tile — see the ut-docs#970 comment just
+		// below for why a submitted non-blank currency alone proves nothing.
 		currencyTouched := r.Form.Get("currency_touched") == "1"
 		if v := strings.TrimSpace(r.Form.Get("currency")); v != "" && httpx.IsKnownCurrency(v) {
 			st.Currency = v
@@ -727,22 +708,13 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
 		_ = posRepo.InsertAudit(r.Context(), nil, adminID, "user", adminID, "first_boot_setup",
-			map[string]string{"via": "wizard", "country": st.Country, "currency": st.Currency, "restore_choice": restoreChoice}, now, "")
+			map[string]string{"via": "wizard", "country": st.Country, "currency": st.Currency}, now, "")
 		setSessionCookie(w, token, int(auth.SessionTTL.Seconds()))
 
-		// Best-effort, same posture as the demo-data seed below: a failed
-		// write here must never block wizard completion.
-		if restoreChoice == "later" {
-			if err := d.Settings.Set(r.Context(), common.KeyRestorePromptStatus, common.RestorePromptStatusDeferred); err != nil {
-				logging.L().Errorf("setup wizard: persist restore-prompt deferred: %v", err)
-			}
-		}
-
-		// Country base-plugin auto-install (ut-docs#591): best-effort, same
-		// posture as restoreChoice/demo-data above — persists the pending
-		// list before any network attempt, then makes one short-timeout
-		// synchronous attempt; either way this never blocks or fails the
-		// wizard's own response. A no-op for a country with nothing mapped.
+		// Country base-plugin auto-install (ut-docs#591): best-effort —
+		// persists the pending list before any network attempt, then makes
+		// one short-timeout synchronous attempt; either way this never
+		// blocks or fails the wizard's own response. A no-op for a country with nothing mapped.
 		installBasePluginsForSetup(r.Context(), d, st.Country)
 
 		// Eager store registration on explicit opt-in (ADR-0071, ut-docs#879):
@@ -765,100 +737,25 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// operational credential (applyFiscalTSEReady).
 		startTSEProvisioningForSetup(r.Context(), d, st.Country, tseIdentity)
 
-		// Sample-data opt-in (ut-docs#539, extended to customers/promos by
-		// ut-docs#567): checkbox default is unchecked. Best-effort by
-		// design — the same reasoning as offline-first's "checkout is
-		// never blocked by the network" extends to first boot: a failed
-		// sample seed must never block wizard completion, so log and
-		// continue rather than erroring after setup already succeeded.
-		if r.Form.Get("demo_data") == "on" {
-			seedDemoDataForSetup(r.Context(), d.Db)
-		}
-		// ut-docs#617/#1168: "csv/excel" lands the new operator straight in
-		// the catalog importer instead of home — no detour through
-		// Settings/Catalog navigation. Every other choice keeps today's
-		// behaviour. When the operator also previewed a file inline on this
-		// step, try to finish the job for them: country/currency are saved
-		// and the admin session now exists (both happened above), so the
-		// preview can be replayed as a real commit — the same job the
-		// operator would otherwise do by hand on /import a moment later.
-		// Best-effort: a failed auto-commit falls back to exactly today's
-		// "/import" detour, plus the staged_id so the already-previewed file
-		// is one click away instead of a re-upload.
+		// ut-docs#3709: the wizard always lands on the import page's welcome
+		// mode, where the new shop picks how to fill its catalog (import a
+		// file, load sample data, or skip). Sample data and importing used
+		// to be wizard steps; both now live on /import only.
 		//
-		// ONLY attempted when currencyTouched (ut-docs#1168 review, finding
-		// 2, blocker): the operator's country pick is the only thing that
-		// stands in for the real ut-docs#970 currency-confirm prompt here,
-		// and that pick started PRE-FILLED from OS locale detection, not a
-		// choice — a completed wizard's currency is "confirmed" only if
-		// they actually touched it. Auto-committing under an untouched
-		// (guessed) currency would silently label every imported price
-		// under it AND mark the till's currency confirmed for good,
-		// suppressing every future manual import's real prompt too —
-		// reversing #970's own review finding on the one path built to
-		// avoid exactly that. When untouched, skip straight to the normal
-		// fallback below: the operator hits /import, presses the real
-		// Import button, and gets the genuine confirm prompt like anyone
-		// else would.
-		redirectTo := "/"
-		if restoreChoice == "csv_excel" {
-			redirectTo = "/import"
-			if stagedImportID != "" {
-				redirectTo = "/import?staged_id=" + url.QueryEscape(stagedImportID)
-				if adminUser, ok := svc.Resolve(r.Context(), token); currencyTouched && ok &&
-					commitStagedImportForSetup(r.Context(), mux, adminUser, stagedImportID, st.Currency) {
-					// ut-docs#1168 review (nit): no page currently reads an
-					// ?imported= query param, so land on the plain page
-					// rather than promising an affordance that doesn't
-					// exist yet.
-					redirectTo = "/catalog"
-				}
-			}
-		}
-		// ut-docs#1174 item D: a definitive rejection during the wizard's own
-		// synchronous attempt (not_configured / subscription_inactive are
-		// exactly this — fast synchronous cloud answers, not flakiness) is
-		// surfaced to the operator immediately, on the page this redirect
-		// lands on, instead of waiting to be found in Settings. Carried as a
-		// query param — no stored state, same posture as install_pending /
-		// tax_plugin_pending above; the landing page re-checks the REAL
-		// stored state before rendering anything (index_page.go), so the
-		// param can never conjure a warning that isn't true. A kickoff still
-		// pending/transient at this point deliberately adds nothing — the
-		// background ticker plus Settings already cover it.
-		//
-		// Restricted to redirectTo == "/" (independent review, ut-docs#1174
-		// follow-up): only index_page.go ever reads this param — appending it
-		// to /import or /catalog (the csv_excel branch above) produced a dead
-		// marker that no page rendered, silently dropping the surfacing this
-		// item exists to provide. Settings still shows the failure regardless
-		// of which page the wizard lands on. Checked first (before the load)
-		// so the csv_excel branches skip the extra settings read entirely.
-		if redirectTo == "/" {
-			if st, err := loadTSEProvisioningState(r.Context(), d); err == nil && st != nil && st.Status == tseStatusKickoffRejected {
-				// redirectTo is exactly "/" on this branch, never already
-				// carrying a "?" — no separator logic needed.
-				redirectTo = "/?tse_setup=rejected"
-			}
+		// ut-docs#1174 item D: a definitive TSE kickoff rejection during the
+		// wizard's own synchronous attempt (not_configured /
+		// subscription_inactive — fast synchronous cloud answers, not
+		// flakiness) wins over the welcome page: it is a legal notice, and
+		// only the sale screen renders it (index_page.go re-checks the REAL
+		// stored state before rendering, so the param can never conjure a
+		// warning that isn't true). Carried as a query param, no stored
+		// state. A kickoff still pending/transient adds nothing — the
+		// background ticker plus Settings already cover it, and /import
+		// stays reachable from the catalog's Import button.
+		redirectTo := "/import?welcome=1"
+		if st, err := loadTSEProvisioningState(r.Context(), d); err == nil && st != nil && st.Status == tseStatusKickoffRejected {
+			redirectTo = "/?tse_setup=rejected"
 		}
 		http.Redirect(w, r, redirectTo, http.StatusSeeOther)
 	})
-}
-
-// seedDemoDataForSetup is the setup wizard's sample-data opt-in: the demo
-// catalogue plus the demo customers/promo codes, best-effort (logs, never
-// fails the wizard). After a successful catalogue seed it re-runs the
-// German tax plugin's takeaway reconcile (ut-docs#167): the café items'
-// dine-in/takeaway tax code lands AFTER installBasePluginsForSetup, which
-// may already have activated — and reconciled — that plugin.
-func seedDemoDataForSetup(ctx context.Context, db *sql.DB) {
-	seedRepo := data.NewDemoSeedRepo(db)
-	if err := seedRepo.SeedDemoCatalogue(ctx); err != nil {
-		logging.L().Errorf("setup wizard: seed demo catalogue: %v", err)
-	} else {
-		reconcileTaxDeTakeawayOverridesIfActive(ctx, db)
-	}
-	if err := seedRepo.SeedDemoCustomersPromos(ctx); err != nil {
-		logging.L().Errorf("setup wizard: seed demo customers/promos: %v", err)
-	}
 }

@@ -14,10 +14,10 @@ import (
 
 // ut-docs#167: the demo catalogue's café items (Caffè Latte itm051, SKU-0051)
 // sit on a tax code pinning a dine-in/takeaway pair (20% / 5%). The setup
-// wizard installs the country's base plugins BEFORE it seeds the demo
-// catalogue, so on a till whose German tax plugin activated synchronously
-// the activation reconcile (ut-docs#1370) has already run — without the
-// café code in it. The post-seed reconcile must add it, and a demo latte
+// wizard installs the country's base plugins long BEFORE the shop loads
+// sample data from /import (ut-docs#3709), so on a till whose German tax
+// plugin activated synchronously the activation reconcile (ut-docs#1370) has
+// already run — without the café code in it. The post-seed reconcile must add it, and a demo latte
 // must then really ring at two different VAT amounts through the whole real
 // chain: signed wasm tax plugin, its settings_get read, the plugin-backed
 // asker, and the POS handlers — through to the completed sale's lines.
@@ -30,10 +30,13 @@ func TestDemoSeedCafeLatte_RealChain_DineInVsTakeawayTax(t *testing.T) {
 	// production comes from the same setting — align it here too.
 	fx.dp.dp.UpdateState(func(st *common.RuntimeState) { st.TaxInclusive = true })
 
-	// The wizard's own sample-data step (setup_page.go), not the pieces.
-	seedDemoDataForSetup(ctx, database)
+	// The import page's own sample-data load (POST /api/import/sample-data's
+	// helper), not the pieces.
+	if err := loadSampleData(ctx, database); err != nil {
+		t.Fatalf("loadSampleData: %v", err)
+	}
 	if got := storedTakeawayOverridesDB(t, database)["tax_demo_cafe"]; got != 500 {
-		t.Fatalf("takeaway_rate_overrides[tax_demo_cafe] = %d after the wizard's demo seed, want 500", got)
+		t.Fatalf("takeaway_rate_overrides[tax_demo_cafe] = %d after loading sample data, want 500", got)
 	}
 
 	// Dine-in: 20% inside the €3.20 tax-inclusive gross = €0.53.

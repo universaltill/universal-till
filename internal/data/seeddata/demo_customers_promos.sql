@@ -1,8 +1,8 @@
 -- Demo customers + promo codes (ut-docs#567) — the opt-in "sample data"
 -- companions to demo_catalogue.sql (ut-docs#539): same 3 customers and 3
 -- promo codes 001_init.sql used to seed unconditionally, now inserted only
--- on request (the setup wizard's sample-data checkbox — the only caller;
--- Settings → Data only ever removes sample data, it has no re-seed
+-- on request (the import page's "Load sample data" button, ut-docs#3709 —
+-- the only caller; Settings → Data only ever removes sample data, it has no re-seed
 -- action), every row flagged is_sample_data = 1. INSERT OR IGNORE
 -- throughout, so it's idempotent and never fails on an operator's
 -- clashing row.

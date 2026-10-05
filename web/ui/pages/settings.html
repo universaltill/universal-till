@@ -1068,16 +1068,16 @@
 </div>
 
 <!-- ut-docs#867 review nit: with every guard below false (no demo sample,
-     no pending base plugin, no deferred restore prompt) a non-manager
+     no pending base plugin) a non-manager
      session would otherwise get an empty card containing only this
      heading — gate the whole card on "isManager OR any of the
      elevation-wired sub-features actually has something to show". -->
-{{ if or .isManager (gt .sampleCount 0) .pendingBasePlugins .restorePromptDeferred }}
+{{ if or .isManager (gt .sampleCount 0) .pendingBasePlugins }}
 <div class="card" id="settings-data">
   <h2>🧹 {{ T "settings.data.title" }} {{ helpLink "display" }}</h2>
-  <!-- ut-docs#867: the three elevation-wired actions in this card
-       (remove-demo-catalogue, dismiss-restore-prompt,
-       dismiss-pending-base-plugin) render unconditionally, each behind its
+  <!-- ut-docs#867: the elevation-wired actions in this card
+       (remove-demo-catalogue, dismiss-pending-base-plugin) render
+       unconditionally, each behind its
        own DATA guard exactly as before. ut-docs#1841 (ADR-0087) moved
        reset-transactions, archive restore/purge and catalog cleanup off
        their old flat typed-word confirmation onto the step-up elevation
@@ -1164,36 +1164,6 @@
   <a class="btn secondary" href="/settings/vouchers/import">{{ T "settings.data.vouchers_import_btn" }}</a>
   {{ end }}
 
-  {{ if .restorePromptDeferred }}
-  <div id="restore-resume-block">
-    <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
-    <h3 style="margin:0 0 .3rem">{{ T "settings.data.restore_title" }}</h3>
-    <p class="muted">{{ T "settings.data.restore_help" }}</p>
-    {{ if index $.lockedRegions "settings-restore-prompt" }}{{ template "set-lock-note" }}{{ end }}
-    <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
-      {{/* Resume is a plain link to /import, not a settings write: kept
-           outside the lock (a disabled fieldset never disables an <a>). */}}
-      <a class="btn primary" href="/import" data-testid="restore-resume">{{ T "settings.data.restore_resume_btn" }}</a>
-      <fieldset class="set-lock" data-lock-region="settings-restore-prompt"{{ if index $.lockedRegions "settings-restore-prompt" }} disabled{{ end }}>
-      <button class="btn secondary" data-testid="restore-dismiss"
-              hx-post="/api/settings/dismiss-restore-prompt"
-              hx-target="#restore-resume-block" hx-swap="outerHTML"
-              hx-disabled-elt="this">{{ T "settings.data.restore_dismiss_btn" }}</button>
-      </fieldset>
-      <!-- ut-docs#865 review finding F1: the elevation dialog's retry form
-           always hx-swap="innerHTML"s into its own hxTarget
-           (elevation_prompt.html) — pointing that at #restore-resume-block
-           (the SAME node the button's own outerHTML swap can remove) meant
-           a denial's hint span replaced the whole block, leaving the
-           retry's own hx-target pointing at nothing and the approver's PIN
-           submit firing no request (htmx:targetError). A dedicated span,
-           same as remove-demo-catalogue's #demo-remove-msg precedent,
-           gives the hint somewhere harmless to land. -->
-      <span id="restore-resume-msg" aria-live="polite"></span>
-    </div>
-  </div>
-  {{ end }}
-
   {{ if .pendingBasePlugins }}
   <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
   <h3 style="margin:0 0 .3rem">{{ T "setup.base_plugins.title" }}</h3>
@@ -1218,10 +1188,10 @@
             hx-vals='{{ jsonVals "canonical_type" .CanonicalType "locale" .Locale }}'
             hx-target="closest .chip-row" hx-swap="outerHTML"
             hx-disabled-elt="this">{{ T "setup.base_plugins.dismiss_btn" }}</button>
-    <!-- ut-docs#865 review finding F1: same reasoning as
-         #restore-resume-msg above — the elevation dialog's own retry
-         hx-target must be a node the button's own outerHTML removal can't
-         make disappear out from under it. -->
+    <!-- ut-docs#865 review finding F1: a separate message span, outside the
+         chip row — the elevation dialog's own retry hx-target must be a
+         node the button's own outerHTML removal can't make disappear out
+         from under it. -->
     <span id="pending-plugin-msg-{{ .CanonicalType }}" aria-live="polite"></span>
   </div>
   {{ end }}

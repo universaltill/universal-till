@@ -205,6 +205,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/data/export":         true,
 	"POST /api/data/import":         true,
 	"POST /api/import":              true,
+	"POST /api/import/sample-data":  true,
 	"POST /api/vouchers/import":     true,
 	// Backups: create, save-copy, download (a flagged demo database never
 	// leaves the demo), restore, and restart.
@@ -650,7 +651,6 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/settings/demo-promo/{code}/keep":         true,
 	"POST /api/settings/demo-promo/{code}/remove":       true,
 	"POST /api/settings/dismiss-pending-base-plugin":    true,
-	"POST /api/settings/dismiss-restore-prompt":         true,
 	"POST /api/settings/dismiss-tse-provisioning":       true,
 	"POST /api/settings/idle-lock":                      true,
 	"POST /api/settings/order-no-scheme":                true,

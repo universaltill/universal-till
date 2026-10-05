@@ -4154,6 +4154,21 @@ tr.row-warn td { background: var(--warning-tint); }
 .notice-block-success { background: var(--success-tint); border: 1px solid var(--success-tint-border);
   border-radius: var(--radius); padding: .7rem .9rem; margin-block-end: .6rem; }
 
+/* ut-docs#3709: /import?welcome=1 — the three ways a new shop starts
+   (import a file / load sample data / skip). A grid of option cards on wide
+   screens, stacked on a phone; each card's action sits at its foot so the
+   buttons line up across the row. Logical properties only (RTL). */
+.import-welcome { margin-block-end: 1rem; }
+.import-welcome h2 { margin-block: 0 .3rem; }
+.import-welcome-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: .75rem; margin-block-start: .6rem; }
+.import-welcome-option { display: flex; flex-direction: column; gap: .5rem;
+  border: 1px solid var(--border); border-radius: var(--radius); padding: .8rem .9rem; }
+.import-welcome-option h3 { margin: 0; }
+.import-welcome-option p { margin: 0; flex: 1; }
+.import-welcome-actions, .import-sample-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+.import-welcome-actions .btn, .import-sample-actions .btn { flex: 1 1 auto; }
+
 /* ---------- Kiosk mode (dedicated till: UT_KIOSK=1) ----------
    Touch-first: bigger targets, no text selection or tap highlights, no
    accidental pinch zoom. Pair with a fullscreen browser (chromium --kiosk);

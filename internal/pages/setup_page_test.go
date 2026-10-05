@@ -104,7 +104,7 @@ func TestSetupWizardHappyPath(t *testing.T) {
 		"tax_rate_pct": {"20"},
 		"store_name":   {"Corner Shop"},
 	}, nil)
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/import?welcome=1" {
 		t.Fatalf("wizard setup: code=%d loc=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
 	}
 	cookie := sessionCookie(rec)
@@ -322,7 +322,7 @@ func TestSetupWizardCreatesDefaultRegister(t *testing.T) {
 		"tax_rate_pct": {"20"},
 		"store_name":   {"Corner Shop"},
 	}, nil)
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/import?welcome=1" {
 		t.Fatalf("wizard setup: code=%d loc=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
 	}
 
@@ -351,7 +351,7 @@ func TestSetupWizardTillName(t *testing.T) {
 		"store_name":   {"Corner Shop"},
 		"till_name":    {"Front Register"},
 	}, nil)
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/import?welcome=1" {
 		t.Fatalf("wizard setup with till_name: code=%d loc=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
 	}
 	if name, ok, _ := d.Settings.Get(t.Context(), "till.name"); !ok || name != "Front Register" {
@@ -373,7 +373,7 @@ func TestSetupWizardBlankTillNameDoesNotErrorAndDefaultsOnRead(t *testing.T) {
 		"store_name":   {"Corner Shop"},
 		// till_name intentionally omitted.
 	}, nil)
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/import?welcome=1" {
 		t.Fatalf("wizard setup without till_name: code=%d loc=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
 	}
 	if _, ok, _ := d.Settings.Get(t.Context(), "till.name"); ok {
@@ -384,72 +384,31 @@ func TestSetupWizardBlankTillNameDoesNotErrorAndDefaultsOnRead(t *testing.T) {
 	}
 }
 
-// ut-docs#617: "No" (or simply omitting restore_choice, the default) must be
-// a pure no-op — the redirect and the deferred flag both stay exactly as
-// they are for every other wizard submission.
-func TestSetupWizardRestoreNoIsNoOp(t *testing.T) {
-	mux, _, d := newFullAuthDeps(t)
-
-	rec := postForm(mux, "/api/setup", url.Values{
-		"pin":            {"2468"},
-		"pin_confirm":    {"2468"},
-		"store_name":     {"Test Shop"},
-		"country":        {"GB"},
-		"currency":       {"GBP"},
-		"tax_rate_pct":   {"20"},
-		"restore_choice": {"no"},
-	}, nil)
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
-		t.Fatalf("wizard setup restore=no: code=%d loc=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
-	}
-	if _, ok, _ := d.Settings.Get(t.Context(), common.KeyRestorePromptStatus); ok {
-		t.Fatalf("restore prompt status should stay unset after 'no'")
-	}
-}
-
-// "Later" persists the deferred flag so Settings → Data can offer a resume
-// link, but must not change where the wizard lands — same "/" as any other
-// completed setup.
-func TestSetupWizardRestoreLaterPersistsDeferredFlag(t *testing.T) {
-	mux, _, d := newFullAuthDeps(t)
-
-	rec := postForm(mux, "/api/setup", url.Values{
-		"pin":            {"2468"},
-		"pin_confirm":    {"2468"},
-		"store_name":     {"Test Shop"},
-		"country":        {"GB"},
-		"currency":       {"GBP"},
-		"tax_rate_pct":   {"20"},
-		"restore_choice": {"later"},
-	}, nil)
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
-		t.Fatalf("wizard setup restore=later: code=%d loc=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
-	}
-	if v, ok, _ := d.Settings.Get(t.Context(), common.KeyRestorePromptStatus); !ok || v != common.RestorePromptStatusDeferred {
-		t.Fatalf("restore prompt status = %q ok=%v, want %q", v, ok, common.RestorePromptStatusDeferred)
-	}
-}
-
-// "CSV/Excel" lands the new operator straight in the existing catalog
-// importer instead of home — no detour through Settings/Catalog navigation
-// — and, being immediate rather than deferred, does NOT set the resume flag.
-func TestSetupWizardRestoreCSVExcelRedirectsToImport(t *testing.T) {
-	mux, _, d := newFullAuthDeps(t)
-
-	rec := postForm(mux, "/api/setup", url.Values{
-		"pin":            {"2468"},
-		"pin_confirm":    {"2468"},
-		"store_name":     {"Test Shop"},
-		"country":        {"GB"},
-		"currency":       {"GBP"},
-		"tax_rate_pct":   {"20"},
-		"restore_choice": {"csv_excel"},
-	}, nil)
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/import" {
-		t.Fatalf("wizard setup restore=csv_excel: code=%d loc=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
-	}
-	if _, ok, _ := d.Settings.Get(t.Context(), common.KeyRestorePromptStatus); ok {
-		t.Fatalf("restore prompt status should stay unset after an immediate csv_excel choice")
+// ut-docs#3709: the wizard's restore step is gone. Whatever a stale form
+// still posts for it (restore_choice, staged_import_id) is ignored: no
+// deferred-prompt flag is written, no import is attempted, and the wizard
+// lands on the import page's welcome mode like every other completion.
+func TestSetupWizardIgnoresRetiredRestoreFields(t *testing.T) {
+	for _, choice := range []string{"no", "later", "csv_excel"} {
+		t.Run(choice, func(t *testing.T) {
+			mux, _, d := newFullAuthDeps(t)
+			rec := postForm(mux, "/api/setup", url.Values{
+				"pin":              {"2468"},
+				"pin_confirm":      {"2468"},
+				"store_name":       {"Test Shop"},
+				"country":          {"GB"},
+				"currency":         {"GBP"},
+				"tax_rate_pct":     {"20"},
+				"restore_choice":   {choice},
+				"staged_import_id": {"does-not-exist"},
+			}, nil)
+			if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/import?welcome=1" {
+				t.Fatalf("wizard setup restore_choice=%s: code=%d loc=%q body=%s", choice, rec.Code, rec.Header().Get("Location"), rec.Body.String())
+			}
+			if v, ok, _ := d.Settings.Get(t.Context(), "setup.restore_prompt_status"); ok && v != "" {
+				t.Fatalf("setup.restore_prompt_status = %q, want unset", v)
+			}
+		})
 	}
 }
 

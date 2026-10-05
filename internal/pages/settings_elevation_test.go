@@ -473,45 +473,11 @@ func TestSettingsElevation_Slice2Sites_DenyAndElevate(t *testing.T) {
 	}
 }
 
-// dismiss-restore-prompt keeps its own empty-200-body removal convention
-// (hx-swap="outerHTML" on the direct-allowed path, unchanged) rather than
+// dismiss-pending-base-plugin keeps its own empty-200-body removal
+// convention (hx-swap="outerHTML" on the direct-allowed path) rather than
 // settingsRespondSaved's "✓" confirmation span, so it needs its own
-// assertions instead of the "✓" check the cases above share.
-func TestDismissRestorePrompt_ElevationFlow(t *testing.T) {
-	mux, _, d := newFullAuthDeps(t)
-	mgrID, cashierID := seedElevationUsers(t, d)
-	cashier := auth.User{ID: cashierID, Role: "cashier"}
-	if err := d.Settings.Set(t.Context(), common.KeyRestorePromptStatus, common.RestorePromptStatusDeferred); err != nil {
-		t.Fatal(err)
-	}
-
-	// Deny, no PIN: prompt, status unchanged.
-	rec := postForm(mux, "/api/settings/dismiss-restore-prompt", url.Values{}, &cashier)
-	assertElevationPrompt(t, "dismiss-restore-prompt", rec.Code, rec.Body.String())
-	if v, _, _ := d.Settings.Get(t.Context(), common.KeyRestorePromptStatus); v != common.RestorePromptStatusDeferred {
-		t.Fatalf("denied dismiss changed the status to %q", v)
-	}
-
-	// Valid approver PIN: dismissed, dual-attributed audit. X-UT-Response: ok
-	// (ut-docs#796 review finding #4's same fix, applied here) is what makes
-	// the dialog's own script reload instead of leaving the block's
-	// innerHTML-swapped-empty wrapper on screen.
-	rec = postForm(mux, "/api/settings/dismiss-restore-prompt", url.Values{"override_pin": {"555222"}}, &cashier)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("elevated dismiss = %d, want 200", rec.Code)
-	}
-	if rec.Header().Get("X-UT-Response") != "ok" {
-		t.Fatalf("elevated dismiss X-UT-Response = %q, want ok", rec.Header().Get("X-UT-Response"))
-	}
-	if v, _, _ := d.Settings.Get(t.Context(), common.KeyRestorePromptStatus); v != "" {
-		t.Fatalf("elevated dismiss did not clear the status, got %q", v)
-	}
-	assertElevatedAudit(t, d, "restore_prompt_dismissed", mgrID, cashierID)
-}
-
-// dismiss-pending-base-plugin — same empty-200-body convention as
-// dismiss-restore-prompt above, seeded with one real pending plugin so the
-// removal itself is provable, not just the gate.
+// assertions — seeded with one real pending plugin so the removal itself is
+// provable, not just the gate.
 func TestDismissPendingBasePlugin_ElevationFlow(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	mgrID, cashierID := seedElevationUsers(t, d)
