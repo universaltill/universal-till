@@ -436,3 +436,36 @@ func TestRedactedJoinSnapshot_StripsTillIdentityCloudID(t *testing.T) {
 		t.Errorf("LIVE DB till_identity.cloud_id mutated: %q (err %v)", live, err)
 	}
 }
+
+// ut-docs#3673 (ADR-0148 amendment §2): cloudsync.unpaid_checkin.* records
+// THIS till's last answered unpaid check-in. Served to a joining replica,
+// the main till's markers would make the replica skip its own first-run
+// start-up check-in. The join snapshot strips them; the live DB keeps them.
+func TestRedactedJoinSnapshot_StripsUnpaidCheckinMarkers(t *testing.T) {
+	path := testDBPath(t)
+	d := openTest(t, path)
+	for _, k := range []string{"cloudsync.unpaid_checkin.version", "cloudsync.unpaid_checkin.date"} {
+		if _, err := d.Exec(`INSERT INTO settings (key, value) VALUES (?, 'main')`, k); err != nil {
+			t.Fatalf("seed %s: %v", k, err)
+		}
+	}
+
+	copyPath, cleanup, err := RedactedJoinSnapshot(d.DB, path)
+	if err != nil {
+		t.Fatalf("RedactedJoinSnapshot: %v", err)
+	}
+	defer cleanup()
+
+	cdb, err := sql.Open("sqlite", copyPath)
+	if err != nil {
+		t.Fatalf("open copy: %v", err)
+	}
+	defer cdb.Close()
+	var n int
+	if err := cdb.QueryRow(`SELECT COUNT(*) FROM settings WHERE key LIKE 'cloudsync.unpaid\_checkin.%' ESCAPE '\'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("unpaid check-in markers still in the join snapshot (rows=%d err=%v)", n, err)
+	}
+	if err := d.QueryRow(`SELECT COUNT(*) FROM settings WHERE key LIKE 'cloudsync.unpaid\_checkin.%' ESCAPE '\'`).Scan(&n); err != nil || n != 2 {
+		t.Errorf("LIVE DB markers mutated: rows=%d (err %v), want 2", n, err)
+	}
+}

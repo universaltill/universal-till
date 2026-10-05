@@ -389,6 +389,9 @@ func TestSettingScope_Classification(t *testing.T) {
 		// ut-docs#2950: one till's own state.
 		{"diagnostics.active", SettingPerTill},
 		{"cloudsync.snapshot_hash", SettingPerTill},
+		// ut-docs#3673: this till's last answered unpaid check-in.
+		{"cloudsync.unpaid_checkin.version", SettingPerTill},
+		{"cloudsync.unpaid_checkin.date", SettingPerTill},
 		{"install.desktop_kiosk_overlay_provisioned", SettingPerTill},
 		// ut-docs#3091: each till runs its own binary, so which version it
 		// runs, since when, and whether its notes were seen are its own.
