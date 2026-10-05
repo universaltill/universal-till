@@ -1,9 +1,9 @@
 // Command seed_demo restores the demo ("sample data") catalogue into a
 // throwaway e2e till. Since ut-docs#539 the catalogue is opt-in (migration
-// 036 removes it; the setup wizard checkbox re-seeds it), so the e2e specs
-// that scan demo barcodes (5000000000012 etc.) no longer get it from the
-// migrations for free — this seeds exactly what the wizard's opt-in path
-// seeds (internal/data/seeddata, the single source of truth).
+// 036 removes it; the import page's "Load sample data" button re-seeds it,
+// ut-docs#3709), so the e2e specs that scan demo barcodes (5000000000012
+// etc.) no longer get it from the migrations for free — this seeds the same
+// catalogue (internal/data/seeddata, the single source of truth).
 package main
 
 import (

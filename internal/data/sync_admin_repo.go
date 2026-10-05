@@ -2076,10 +2076,8 @@ var ShopWideSettingPrefixes = []string{
 	// - lan_discovery.till_id on a replica IS the main till's discovery id,
 	//   which only a primary advertises; a pre-#2722 replica's re-discovery
 	//   uses it as its hint (discovery.PrimaryWatch.rediscover).
-	// Under setup. and fiscal. above, also kept: setup.restore_prompt_status
-	// (the "import from another POS" offer is the shop's catalogue, which
-	// only the main till owns) and fiscal.tse_provisioning_state (ADR-0053
-	// provisions one TSE per store, from the main till's wizard).
+	// Under fiscal. above, also kept: fiscal.tse_provisioning_state
+	// (ADR-0053 provisions one TSE per store, from the main till's wizard).
 	"till.name",
 	"menu.",
 	"lan_discovery.",

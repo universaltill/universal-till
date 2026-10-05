@@ -20,7 +20,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
@@ -88,30 +87,36 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			http.Redirect(w, r, "/catalog", http.StatusSeeOther)
 			return
 		}
-		// ut-docs#1168: a setup-wizard preview that couldn't be auto-committed
-		// (see commitStagedImportForSetup) lands the now-logged-in operator
-		// here instead of a bare /import, so the file they already browsed to
-		// and previewed is still one click away rather than a re-upload.
-		stagedID := strings.TrimSpace(r.URL.Query().Get("staged_id"))
-		// ut-docs#1515: distinguish WHY a staged preview landed here instead
-		// of committing itself — the overwhelmingly common reason is
-		// ut-docs#970's currencyTouched gate (see commitStagedImportForSetup),
-		// not a transient failure, and the operator deserves the real reason
-		// rather than a bare "press Import" with no explanation. Read the
-		// same flag POST /api/import itself gates on; a settings-read error
-		// fails safe here too (shows the explanatory message rather than
-		// silently claiming the currency is fine).
-		currencyUnconfirmed := false
-		if stagedID != "" {
-			confirmedVal, _, cerr := d.Settings.Get(r.Context(), common.KeyCurrencyConfirmed)
-			currencyUnconfirmed = cerr != nil || confirmedVal != "true"
+		// ut-docs#2095: inside the /items shell this page is a closable
+		// dialog (see InItemsShell below).
+		inItemsShell := httpx.IsFragmentSwap(w, r)
+		// ut-docs#3709: the setup wizard lands here with ?welcome=1 — the
+		// three ways to start (import a file, load sample data, skip). Only
+		// on the standalone page: the /items Import dialog is reached from a
+		// catalog the operator is already working in.
+		welcome := r.URL.Query().Get("welcome") == "1" && !inItemsShell
+		// The Sample data card (load / already loaded) renders in both
+		// modes — inside the /items dialog it is how a shop that skipped
+		// the welcome finds sample data later; its result's "Go to catalog"
+		// link is a full navigation to /items, which reloads the catalog
+		// list behind the dialog. A count read failure just hides the card
+		// (logged); the import itself never depends on it.
+		sampleCount, sampleLoaded, sampleErr := sampleDataState(r.Context(), d.Db)
+		if sampleErr != nil {
+			logging.L().Errorf("import page: count sample data: %v", sampleErr)
 		}
 		importData := map[string]any{
-			"title":               httpx.T(httpx.RequestLocale(r), "page.title.import"),
-			"theme":               d.CurrentState().Theme,
-			"menuItems":           d.MenuSnapshot(),
-			"stagedID":            stagedID,
-			"currencyUnconfirmed": currencyUnconfirmed,
+			"title":           httpx.T(httpx.RequestLocale(r), "page.title.import"),
+			"theme":           d.CurrentState().Theme,
+			"menuItems":       d.MenuSnapshot(),
+			"welcome":         welcome,
+			"showSampleCard":  sampleErr == nil,
+			"sampleItemCount": sampleCount,
+			"sampleLoaded":    sampleLoaded,
+			// ut-docs#3709 review S2: a satellite till cannot load sample
+			// data (POST /api/import/sample-data refuses it) — the card
+			// says to use the main till instead of offering the button.
+			"sampleOnReplica": d.SyncPrimaryURL(r.Context()) != "",
 			// ut-docs#2095: /import is NOT an /items rail section (unlike
 			// /catalog, /modifiers, /catalog/option-sets, ut-docs#2090) --
 			// Catalog's Import button opens it as a closable dialog overlay
@@ -122,13 +127,69 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			// content block and do NOT also OOB-swap the rail: the rail
 			// sits behind the dialog, unchanged, for the whole time the
 			// dialog is open.
-			"InItemsShell": httpx.IsFragmentSwap(w, r),
+			"InItemsShell": inItemsShell,
 		}
-		if httpx.IsFragmentSwap(w, r) {
+		if inItemsShell {
 			httpx.RenderContentFragment("ui/pages/import.html", importData)(w, r)
 			return
 		}
 		httpx.Render("ui/pages/import.html", importData)(w, r)
+	})
+
+	// ut-docs#3709: the import page's "Load sample data" button (it used to
+	// be a setup-wizard checkbox). Same import_export gate as the importer
+	// itself; idempotent — once the whole sample set exists it reports that
+	// and seeds nothing (the seed SQL is INSERT OR IGNORE anyway). The
+	// check + seed + audit run under sampleDataMu so two concurrent taps
+	// cannot both seed and both audit. Returns an htmx fragment for
+	// #sample-data-msg.
+	mux.HandleFunc("POST /api/import/sample-data", func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "import_export") {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return
+		}
+		locale := httpx.ResolveLocale(w, r)
+		T := httpx.FuncsFor(locale)["T"].(func(string) string)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		// ut-docs#3709 review S2: sample items, customers and promotions
+		// are shop-wide rows a satellite pulls from the main till
+		// (sync_admin_repo.go's adminTables), so loading them here would be
+		// reverted by the next admin pull — same gate, same 409 + rendered
+		// notice as POST /api/import's commit (text/html, so app.js's
+		// force-swap shows it in #sample-data-msg).
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			w.WriteHeader(http.StatusConflict)
+			httpx.RenderNotice(w, locale, "error", "import.error.replica_use_primary")
+			return
+		}
+		sampleDataMu.Lock()
+		defer sampleDataMu.Unlock()
+		_, loaded, err := sampleDataState(r.Context(), d.Db)
+		if err != nil {
+			logging.L().Errorf("import sample data: count sample data: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			writeSampleDataError(w, T)
+			return
+		}
+		if sampleDataAfterCountSync != nil {
+			sampleDataAfterCountSync()
+		}
+		if loaded {
+			writeSampleDataResult(w, T, "data-sample-already", T("import.sample.already_loaded"))
+			return
+		}
+		if err := loadSampleData(r.Context(), d.Db); err != nil {
+			logging.L().Errorf("import sample data: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			writeSampleDataError(w, T)
+			return
+		}
+		after, _ := data.NewDemoSeedRepo(d.Db).SampleItemCount(r.Context())
+		if err := posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "demo_data", "-", "sample_data_loaded",
+			map[string]any{"items": after}, time.Now().UTC().Format(time.RFC3339), ""); err != nil {
+			logging.L().Errorf("import sample data: audit: %v", err)
+		}
+		writeSampleDataResult(w, T, "data-sample-loaded", fmt.Sprintf(T("import.sample.success"), after))
 	})
 
 	mux.HandleFunc("GET /api/catalog/export", func(w http.ResponseWriter, r *http.Request) {
@@ -208,62 +269,15 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/import", func(w http.ResponseWriter, r *http.Request) {
-		usedFirstBootExemption := false
 		if !canPerform(d, r, "import_export") {
-			// ut-docs#1168: the setup wizard's restore step lets a migrating
-			// shop browse to their export/backup file and preview it inline,
-			// before any admin account exists — same auth-exempt,
-			// NeedsFirstBoot-gated tier as POST /api/setup/join and friends
-			// (setup_page.go). NeedsFirstBoot flips false the instant the
-			// wizard's own PIN step creates the admin account, so this
-			// window is exactly as narrow as every other first-boot
-			// exemption, and commitStagedImportForSetup (below) is the only
-			// caller that ever actually commits through this exemption —
-			// the wizard's own upload panel only ever previews (commit=0).
-			//
-			// Deliberately narrower than a bare NeedsFirstBoot check: that
-			// method only asks "does any PIN-bearing user exist in the DB
-			// at all", which says nothing about THIS request. An already-
-			// authenticated-but-insufficiently-privileged request (a
-			// cashier session denied import_export above) must still be
-			// denied even in the rare state where no user has a PIN set
-			// yet — auth.FromContext resolving a session at all is proof
-			// this request isn't the anonymous, pre-admin wizard case this
-			// exemption exists for. A nil AuthSvc (some minimal test/embed
-			// setups never wire one) fails closed the same way canPerform
-			// already does elsewhere in this file.
-			if _, hasSession := auth.FromContext(r.Context()); hasSession || d.AuthSvc == nil {
-				common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
-				return
-			}
-			firstBoot, ferr := d.AuthSvc.NeedsFirstBoot(r.Context())
-			if ferr != nil || !firstBoot {
-				common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
-				return
-			}
-			usedFirstBootExemption = true
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return
 		}
 		if err := r.ParseMultipartForm(20 << 20); err != nil {
 			common.LocalizedError(w, r, http.StatusBadRequest, "common.error.invalid_upload")
 			return
 		}
 		commit := r.FormValue("commit") == "1"
-		// ut-docs#1168: the first-boot exemption above covers PREVIEW ONLY.
-		// The wizard's own upload panel never sends commit=1 — its
-		// preview's staged_id instead rides the wizard's final submit and
-		// is replayed as a real commit by commitStagedImportForSetup
-		// (import_stage.go), by which point the request carries the
-		// just-created admin's identity via auth.WithUser and never needs
-		// this exemption at all. Checked here, after the parse, rather
-		// than by peeking at commit's value earlier: an early r.FormValue
-		// call would parse under Go's default 32MB memory cap instead of
-		// this handler's explicit 20MB one below, and ParseMultipartForm
-		// no-ops on an already-parsed request — silently widening the
-		// size cap for every caller, not just this exemption.
-		if usedFirstBootExemption && commit {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
-			return
-		}
 		// Resolved up front (ut-docs#303, hoisted earlier still by
 		// ut-docs#1696 so the replica gate right below can render a real
 		// notice instead of a plain-text body): every row status below is
@@ -280,10 +294,8 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		// satellite till would have every row it created/attached silently
 		// reverted on the next admin pull — hundreds of rows at once,
 		// larger blast radius than any single-item edit. Refuse up front,
-		// before touching the multipart body/staged upload (usedFirst
-		// BootExemption above already guarantees a real commit here is
-		// never the pre-admin setup wizard, which never has a primary_url
-		// set yet anyway). Preview (commit=0) writes nothing and stays
+		// before touching the multipart body/staged upload. Preview
+		// (commit=0) writes nothing and stays
 		// unblocked, same as every other page's requirePrimary gate only
 		// covering mutation routes, not reads.
 		//
@@ -302,21 +314,6 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderNotice(w, locale, "error", "import.error.replica_use_primary")
 			return
 		}
-		// ut-docs#1168: suppress the interactive problem-grid/barcode-
-		// opt-in controls and the repeated bottom Import button (below) on
-		// a preview served to the wizard's own upload panel (setup.html
-		// sends wizard=1) — none of them are safe to act on there.
-		// Country/currency aren't saved until the wizard's own final
-		// submit, so a same-session commit from this preview (the bottom
-		// button's whole purpose) could label prices under a stale
-		// currency; the row-level corrections those controls capture
-		// (row_include_*, use_item_numbers_as_barcodes) are never
-		// forwarded by commitStagedImportForSetup for the same reason — it
-		// only ever replays a bare commit, once real state is saved. The
-		// operator still gets the full interactive pipeline, unsuppressed,
-		// on /import — either via the auto-commit's own fallback
-		// (staged_id) or by finishing setup and importing again for real.
-		wizardPreview := r.FormValue("wizard") == "1"
 		stagedID := strings.TrimSpace(r.FormValue("staged_id"))
 
 		// Which bytes does this request act on? (ut-docs#601)
@@ -486,18 +483,12 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		// preview's hidden staged_id field, forged by stagedFormID below —
 		// see its own comment) and not a commit (a direct, never-previewed
 		// commit must behave exactly as before this card, matching
-		// TestImport_BarcodelessCatalog_DirectCommit_NoGate). Suppressed on
-		// a wizard preview too: that render never shows the checkbox at all
-		// (the gate below is itself !wizardPreview-gated), and its eventual
-		// real commit (commitStagedImportForSetup) never forwards this field
-		// regardless — this only avoids the wizard's OWN preview table
-		// silently showing derived barcodes with no checkbox to explain why.
-		// This can only ever ADD a tick to what the raw form value already
+		// TestImport_BarcodelessCatalog_DirectCommit_NoGate). This can only ever ADD a tick to what the raw form value already
 		// computed above — it never clears one an explicit submission set,
 		// and it plays no part at all in a commit that already has its own
 		// real field to read (a ticked-and-resubmitted preview, or a bare
 		// commit, both read their own r.FormValue untouched by this block).
-		if !useItemNumbersAsBarcodes && !commit && !wizardPreview && stagedID == "" {
+		if !useItemNumbersAsBarcodes && !commit && stagedID == "" {
 			if def, found, derr := settingsRepo.Get(r.Context(), data.CatalogImportBarcodeFromSKUDefaultKey); derr == nil && found && def == "1" {
 				useItemNumbersAsBarcodes = true
 			}
@@ -889,7 +880,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		// commit reads the operator's row_sku_<i> instead, and predicting
 		// there would re-add per-row category lookups the per-run caches
 		// exist to avoid (TestImport_CategoryAndTaxCodeLookupsAreCachedPerRun).
-		predictSKUs := !commit && !wizardPreview
+		predictSKUs := !commit
 		var skuReserved map[string]bool
 		if predictSKUs {
 			skuReserved = map[string]bool{}
@@ -1539,12 +1530,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			// independent marker that this IS the real commit summary (not
 			// the ut-docs#970 currency-confirm gate's own .notice-block-warn
 			// div, renderImportCurrencyConfirm below -- the two classes
-			// already overlap on failed>0). ut-docs#2112 review (F2):
-			// commitStagedImportForSetup's own success sentinel used to
-			// match on `href="/catalog"`, which broke the moment this
-			// summary could ALSO render as a button (in_items_shell="1") --
-			// this attribute is present either way, so that sentinel no
-			// longer depends on which control this block happens to render.
+			// already overlap on failed>0). Present whichever "View
+			// catalog" control (link or dialog-close button,
+			// in_items_shell) the block renders (ut-docs#2112 review, F2).
 			fmt.Fprintf(&b, `<div class="%s" data-import-committed="1">`, successClass)
 			fmt.Fprintf(&b, `<p><strong>%s</strong></p>`, fmt.Sprintf(htmlEscape(T("import.commit_success")), created))
 			fmt.Fprintf(&b, `<p>%s: %d — %s: %d — %s: %d`,
@@ -1641,7 +1629,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			//    offering the choice in that rare failure is the safe
 			//    degradation; the import itself still proceeds, barcode-
 			//    less, exactly as before this card.
-			if !wizardPreview && stagedFormID != "" && (barcodelessCatalog(res) || useItemNumbersAsBarcodes) {
+			if stagedFormID != "" && (barcodelessCatalog(res) || useItemNumbersAsBarcodes) {
 				checkedAttr := ""
 				if useItemNumbersAsBarcodes {
 					checkedAttr = " checked"
@@ -1671,7 +1659,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		// preview whose upload actually staged (ut-docs#601). Never on a
 		// commit response: the grid's whole point is deciding what the NEXT
 		// commit does.
-		interactive := !commit && stagedFormID != "" && !wizardPreview
+		interactive := !commit && stagedFormID != ""
 		writeRow := func(row rowView) {
 			// A warned row must be visually distinct from BOTH a clean row
 			// and a failed/skipped one — a status pill/icon, not just the
@@ -1753,7 +1741,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(&b, `<tr><td colspan="5" class="muted">… %d more</td></tr>`, len(plainRows)-plainShown)
 		}
 		b.WriteString(`</tbody></table>`)
-		if !commit && !wizardPreview {
+		if !commit {
 			// ut-docs#1171: a long preview (the product owner's real
 			// 217-item .bkp ran to 209+ rows plus this "… N more"
 			// truncation) otherwise strands the operator at the bottom
@@ -1816,8 +1804,7 @@ func renderImportCurrencyConfirm(w http.ResponseWriter, T func(string) string, s
 	// ut-docs#970 review (F4): picking a different currency here switches
 	// the till's live currency, same as the Settings currency card — same
 	// warning that card already carries (no new locale key needed), because
-	// the till isn't necessarily empty (the setup wizard's starter catalogue,
-	// or a prior confirmed-currency import, may already hold priced items).
+	// the till isn't necessarily empty (loaded sample data, or a prior confirmed-currency import, may already hold priced items).
 	fmt.Fprintf(&b, `<p>%s</p>`, htmlEscape(T("settings.currency.warning")))
 	b.WriteString(`<label>` + htmlEscape(T("settings.currency.title")) + ` <select name="confirm_currency" id="import-confirm-currency" form="import-form">`)
 	for _, c := range httpx.Currencies() {
@@ -2070,12 +2057,76 @@ func reconcileTaxDeTakeawayOverridesIfActivated(ctx context.Context, db *sql.DB,
 	}
 }
 
+// loadSampleData seeds the sample catalogue plus the sample customers and
+// promo codes (every row is_sample_data = 1, removable from Settings → Data).
+// After a successful catalogue seed it re-runs the German tax plugin's
+// takeaway reconcile (ut-docs#167): the café items' dine-in/takeaway tax code
+// lands long after the setup wizard's installBasePluginsForSetup may already
+// have activated — and reconciled — that plugin. Both seeds are idempotent
+// (INSERT OR IGNORE); the first error is returned after both were tried.
+func loadSampleData(ctx context.Context, db *sql.DB) error {
+	seedRepo := data.NewDemoSeedRepo(db)
+	catErr := seedRepo.SeedDemoCatalogue(ctx)
+	if catErr == nil {
+		reconcileTaxDeTakeawayOverridesIfActive(ctx, db)
+	}
+	cpErr := seedRepo.SeedDemoCustomersPromos(ctx)
+	if catErr != nil {
+		return fmt.Errorf("seed sample catalogue: %w", catErr)
+	}
+	if cpErr != nil {
+		return fmt.Errorf("seed sample customers/promos: %w", cpErr)
+	}
+	return nil
+}
+
+// sampleDataState reports the sample items present and whether the sample
+// set counts as loaded. Loaded means sample items AND sample customers/
+// promotions exist (ut-docs#3709 review S3): loadSampleData's seed steps
+// are separate transactions, so a load that seeded the catalogue but failed
+// on customers/promotions must be retryable instead of reading "already
+// loaded" forever. Every step is INSERT OR IGNORE, so the retry re-runs all
+// of them safely.
+func sampleDataState(ctx context.Context, db *sql.DB) (items int, loaded bool, err error) {
+	seedRepo := data.NewDemoSeedRepo(db)
+	items, err = seedRepo.SampleItemCount(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	if items == 0 {
+		return 0, false, nil
+	}
+	custPromo, err := seedRepo.SampleCustomerPromoCount(ctx)
+	if err != nil {
+		return items, false, err
+	}
+	return items, custPromo > 0, nil
+}
+
+// writeSampleDataResult renders POST /api/import/sample-data's outcome:
+// the message plus the two next steps (catalog, sell screen). marker is a
+// stable data- attribute (data-sample-loaded / data-sample-already) tests
+// and e2e key on instead of translated text.
+func writeSampleDataResult(w io.Writer, T func(string) string, marker, msg string) {
+	fmt.Fprintf(w, `<div class="notice-block-success" role="status" %s="1"><p>%s</p><div class="import-sample-actions">`+
+		`<a class="btn primary" href="/items">%s</a><a class="btn secondary" href="/">%s</a></div></div>`,
+		marker, htmlEscape(msg), htmlEscape(T("import.sample.go_catalog")), htmlEscape(T("import.sample.start_selling")))
+}
+
+// writeSampleDataError tells the operator the load failed and what to do
+// next, and puts the button back so they can try again.
+func writeSampleDataError(w io.Writer, T func(string) string) {
+	fmt.Fprintf(w, `<div class="notice-block-warn" role="alert"><p>%s</p></div>`+
+		`<button type="button" class="btn primary" hx-post="/api/import/sample-data" hx-target="#sample-data-msg" hx-swap="innerHTML" hx-disabled-elt="this" data-testid="sample-data-load">%s</button>`,
+		htmlEscape(T("import.sample.error")), htmlEscape(T("import.sample.load_btn")))
+}
+
 // reconcileTaxDeTakeawayOverridesIfActive runs the same add-only reconcile
 // for a path that pins takeaway rates on tax codes while the German tax
-// plugin may ALREADY be active — the setup wizard's demo seed (ut-docs#167):
-// the wizard installs the country's base plugins before it seeds, so a
-// synchronous tax-de install has already reconciled without the demo café
-// code. Installed-but-disabled or not installed: nothing to do now — the
+// plugin may ALREADY be active — loading sample data (ut-docs#167,
+// loadSampleData): the setup wizard installs the country's base plugins
+// long before the shop loads sample data from /import, so a synchronous
+// tax-de install has already reconciled without the demo café code. Installed-but-disabled or not installed: nothing to do now — the
 // activation reconcile covers the code when the plugin is enabled or
 // installed later. Best-effort: logs, never fails the caller.
 func reconcileTaxDeTakeawayOverridesIfActive(ctx context.Context, db *sql.DB) {

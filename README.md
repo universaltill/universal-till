@@ -211,7 +211,8 @@ double-click `run-unitill.bat`.
 
 All downloads: https://github.com/universaltill/universal-till/releases —
 then open http://localhost:8080; the first-boot wizard sets language,
-currency and the admin PIN.
+currency and the admin PIN, then opens the Import page, where you import
+your products from a file, load sample data to try the till, or skip.
 
 ### Option 2: Build from Source
 

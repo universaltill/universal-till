@@ -173,6 +173,7 @@ func TestDemoAlwaysDeniedSurfaces(t *testing.T) {
 		"/plugins/store",
 		"/v1/install/intents",
 		"POST /api/import",
+		"POST /api/import/sample-data",
 		"POST /api/data/import",
 		"POST /api/backup/restore",
 		"POST /api/backup/now",

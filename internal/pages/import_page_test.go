@@ -376,6 +376,59 @@ func TestImport_CommitRefusedOnReplica(t *testing.T) {
 	}
 }
 
+// TestImportSampleData_RefusedOnReplica covers ut-docs#3709 review S2: the
+// sample catalogue, customers and promotions are shop-wide rows a satellite
+// till pulls from the main till (sync_admin_repo.go's adminTables), so
+// sample data loaded on a satellite would be reverted by its next admin
+// pull. POST /api/import/sample-data refuses up front with the same 409 +
+// rendered notice POST /api/import's commit gate uses (text/html, so
+// app.js's force-swap shows it in #sample-data-msg), and GET /import shows
+// that notice in the Sample data card instead of the Load button.
+func TestImportSampleData_RefusedOnReplica(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	if err := dp.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("set primary_url: %v", err)
+	}
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/import/sample-data", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("sample data on replica: code %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Fatalf("sample data on replica Content-Type = %q, want text/html", ct)
+	}
+	if !strings.Contains(rec.Body.String(), `class="pos-notice error"`) || !strings.Contains(rec.Body.String(), "primary") {
+		t.Fatalf("sample data on replica body = %q, want the rendered replica_use_primary notice", rec.Body.String())
+	}
+	seedRepo := data.NewDemoSeedRepo(dp.Db)
+	if n, _ := seedRepo.SampleItemCount(t.Context()); n != 0 {
+		t.Fatalf("sample data must not be written on a replica, found %d sample items", n)
+	}
+	if n, _ := seedRepo.SampleCustomerPromoCount(t.Context()); n != 0 {
+		t.Fatalf("sample data must not be written on a replica, found %d sample customers/promos", n)
+	}
+
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/import", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /import on replica = %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-testid="sample-data-card"`) {
+		t.Fatalf("GET /import on replica: no Sample data card")
+	}
+	if strings.Contains(body, `hx-post="/api/import/sample-data"`) {
+		t.Error("GET /import on replica still offers the Load sample data button")
+	}
+	if !strings.Contains(body, `data-sample-replica="1"`) {
+		t.Error("GET /import on replica: the Sample data card does not carry the use-the-main-till notice")
+	}
+}
+
 // TestImport_CommitShowsDistinctSuccessSummaryWithCatalogLink covers
 // ut-docs#1171: the product owner, importing a real 217-item .bkp on the Pi
 // till, couldn't tell the commit had actually happened — the result read

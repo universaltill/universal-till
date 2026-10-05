@@ -21,9 +21,8 @@ test.beforeEach(async ({ page }) => {
 //
 // This needs the `auth` project (real session, real PIN login) — the
 // default project's UT_AUTH=off till has no session to expire at all.
-// Runs against a bare first-boot till (no demo catalog, per
-// ensureOperator's own setup-wizard walkthrough leaving "demo_data"
-// unchecked): hold/scan are driven through the real DOM forms, which is
+// Runs against a bare first-boot till (no demo catalog — the setup wizard
+// never loads sample data since ut-docs#3709): hold/scan are driven through the real DOM forms, which is
 // enough to prove the fix, since the auth middleware short-circuits
 // BEFORE the handler (and therefore before any catalog/basket lookup)
 // ever runs — session validity is checked first, unconditionally. Resume

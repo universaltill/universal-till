@@ -18,7 +18,7 @@ export UT_DATA_DIR="$DATA_DIR" UT_AUTH=off UT_LISTEN_ADDR=127.0.0.1:8098 UT_CSP_
 
 cd "$ROOT"
 # The demo catalogue the sale screen and Items page render (ut-docs#539
-# made it opt-in; same seed the setup wizard's checkbox runs). Talks to the
+# made it opt-in; same catalogue the import page's "Load sample data" seeds). Talks to the
 # DB directly (internal/db.Open), unaffected by the CWD concern below.
 go run ./e2e/seed_demo
 
