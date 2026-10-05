@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { ensureOperator } from './helpers';
+import { ensureOperator, markTourDone } from './helpers';
 
 // ut-docs#3079 (security, P1): a cashier is sale-only. Before this card a
 // cashier saw Reports/Settings/Plugins on the Menu grid, Stock on the nav
@@ -42,6 +42,7 @@ async function loginAsCashier(page: Page): Promise<void> {
   }
   await page.locator('button[type=submit].pin-key').click();
   await page.waitForURL((u) => !u.pathname.includes('/login'));
+  await markTourDone(page); // ut-docs#3710: a new operator would get the guided tour
 }
 
 test.describe('Cashier is sale-only (ut-docs#3079)', () => {

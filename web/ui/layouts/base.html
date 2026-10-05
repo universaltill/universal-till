@@ -1366,6 +1366,10 @@
          pull (polls GET /ui/buttons/version while visible) — a no-op on any
          page without the sale-screen grid, same pattern as above. -->
     <script defer src="/public/sell-screen-watch.js?v={{ assetv "public/sell-screen-watch.js" }}"></script>
+    <!-- ut-docs#3710: the sale screen's guided tour. Runs only when the page
+         carries web/ui/partials/tour.html's #ut-tour-steps with data-start="1"
+         — a no-op everywhere else, same pattern as above. -->
+    <script defer src="/public/tour.js?v={{ assetv "public/tour.js" }}"></script>
     <!-- ut-docs#3325 (CSP slice 2): every former inline event handler and
          htmx attribute handler as delegated, capture-phase
          listeners driven by data-action / data-* / data-fallback. LAST on

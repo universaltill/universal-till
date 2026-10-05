@@ -638,6 +638,20 @@ const (
 	ReleaseNotesSeenVersionSettingsKey = "release_notes.seen_version"
 )
 
+// TourDoneSettingsKeyPrefix + a user id records that this user finished or
+// skipped the sale-screen guided tour (ut-docs#3710), so it never starts on
+// its own for them again. Classified shop-wide, like the users table it
+// keys on, but written locally (no write-through — a cashier lacks the
+// settings permission on the main till): a marker written on the main till
+// reaches every satellite via the admin pull, one written on a satellite
+// stays on that till, so the tour may be offered once per satellite.
+const TourDoneSettingsKeyPrefix = "tour.done."
+
+// TourDoneSettingsKey is the settings key for one user's finished tour.
+func TourDoneSettingsKey(userID string) string {
+	return TourDoneSettingsKeyPrefix + userID
+}
+
 // TillIdentityCloudIDSettingsKey is the id the cloud knows THIS till's device
 // row by, kept after a joined till is promoted back to main/standalone
 // (ut-docs#3307). ClearReplicaIdentity copies sync.till_id here before it
@@ -2069,6 +2083,8 @@ var ShopWideSettingPrefixes = []string{
 	"till.name",
 	"menu.",
 	"lan_discovery.",
+	// ut-docs#3710: tour.done.<user id> — per user, and users are shop-wide.
+	"tour.",
 }
 
 // SettingScope classifies a settings key. Per-till wins over shop-wide.

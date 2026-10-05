@@ -1634,6 +1634,9 @@ func NewRenderer(layout, page, partial string, funcs template.FuncMap) (*Rendere
 		// ut-docs#2179's original comment on this line also said "parse
 		// time", which independent review caught as inaccurate).
 		"ui/partials/pos_alert.html",
+		// ut-docs#3710: index.html's content block (executed through
+		// "base" by the same test) includes {{ define "tour" }}.
+		"ui/partials/tour.html",
 		stripWebPrefix(partial),
 	)
 	if err != nil {
