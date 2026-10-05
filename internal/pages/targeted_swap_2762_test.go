@@ -262,3 +262,69 @@ func TestPairingRevokeBackupSwapRegionNotReload(t *testing.T) {
 		t.Error("web/public/inline-actions.js: refresh-region:<id> must resolve the named region")
 	}
 }
+
+// ut-docs#2905: the item editor's Details and Variants saves are targeted
+// swaps, never a page post or reload. Details goes through htmx.ajax with
+// swap:none (the server answers with the one card's OOB fragment,
+// ut-docs#1363); every Variants form re-renders only #catalog-variants,
+// and the panel says Saved (ut-docs#2815). No form in either may fall back
+// to a native submit (no hx-post = the browser posts and navigates).
+func TestItemEditorSavesSwapNotReload(t *testing.T) {
+	cat, err := os.ReadFile("web/ui/pages/catalog.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars, err := os.ReadFile("web/ui/partials/catalog_variants.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, v := string(cat), string(vars)
+	for _, s := range []struct{ file, text string }{{"catalog.html", c}, {"catalog_variants.html", v}} {
+		for _, bad := range []string{"location.reload()", "UT.reload("} {
+			if strings.Contains(s.text, bad) {
+				t.Errorf("%s calls %s; swap the changed region instead", s.file, bad)
+			}
+		}
+	}
+	for _, a := range []string{
+		`<form id="item-form" autocomplete="off">`,
+		"form.addEventListener('submit', function (ev) {\n    ev.preventDefault();",
+		"htmx.ajax('POST', url, { source: '#item-form', target: '#catalog-table', swap: 'none' })",
+		"renderNotice(msg, 'success', NOTICE_MSG.itemFormSaved)",
+	} {
+		if !strings.Contains(c, a) {
+			t.Errorf("catalog.html: missing %q", a)
+		}
+	}
+	if !strings.Contains(v, `data-testid="variant-saved"`) {
+		t.Error(`catalog_variants.html: missing the variant-saved status line`)
+	}
+	forms := strings.Split(v, "<form")[1:]
+	if len(forms) == 0 {
+		t.Fatal("catalog_variants.html: no forms found")
+	}
+	variantForms := 0
+	for _, f := range forms {
+		end := strings.Index(f, ">")
+		closing := strings.Index(f, "</form>")
+		if end < 0 || closing < 0 {
+			t.Fatalf("catalog_variants.html: unterminated <form near %.60q", f)
+		}
+		tag := f[:end]
+		if !strings.Contains(tag, "hx-post=") {
+			t.Errorf("catalog_variants.html: <form%s> has no hx-post — it would post the whole page", tag)
+		}
+		if strings.Contains(tag, `hx-post="/api/catalog/variant"`) {
+			variantForms++
+			if !strings.Contains(tag, `hx-target="#catalog-variants"`) || !strings.Contains(tag, `hx-swap="outerHTML"`) {
+				t.Errorf("catalog_variants.html: variant form must swap #catalog-variants: <form%s>", tag)
+			}
+			if !strings.Contains(f[:closing], `name="panelItem"`) {
+				t.Errorf("catalog_variants.html: variant form without panelItem gets a row OOB, not the panel: <form%s>", tag)
+			}
+		}
+	}
+	if variantForms < 2 {
+		t.Errorf("catalog_variants.html: want the edit and add variant forms, found %d", variantForms)
+	}
+}
