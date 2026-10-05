@@ -171,3 +171,42 @@ func TestSyncPullTick_PublishesCustomerErasedForPrimaryErasure(t *testing.T) {
 		t.Fatalf("a later pull re-published customer.erased for %v", again)
 	}
 }
+
+// ut-docs#3435 review: "Remove sample data" on the primary deletes the demo
+// customers too, and every replica's next pull prunes them — but that is not
+// a GDPR erasure, so no plugin may be told customer.erased for them. A real
+// erasure riding the same pull is still published.
+func TestSyncPullTick_SampleCustomerRemovalPublishesNoErasure(t *testing.T) {
+	primary := newPullTestPrimary(t)
+	ctx := t.Context()
+	if err := data.NewDemoSeedRepo(primary.dp.Db).SeedDemoCustomersPromos(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := primary.dp.Db.ExecContext(ctx, `INSERT INTO customers(id,name,phone) VALUES('c-real','Real Person','555')`); err != nil {
+		t.Fatal(err)
+	}
+	replica := newPullTestReplica(t, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+	syncPullTick(ctx, replica, client, func(context.Context) {})
+	if _, _, ok := data.NewPOSRepo(replica.Db).LookupCustomer(ctx, "cust-001"); !ok {
+		t.Fatal("first pull did not bring the demo customers to the replica")
+	}
+	ch := subscribeCustomerErased(t, replica.Db)
+
+	if _, kept, _, err := data.NewDemoSeedRepo(primary.dp.Db).RemoveDemoCustomersPromos(ctx); err != nil || len(kept) != 0 {
+		t.Fatalf("remove demo customers on primary: kept=%v err=%v", kept, err)
+	}
+	if ok, err := data.NewPOSRepo(primary.dp.Db).EraseCustomer(ctx, "c-real", "", ""); err != nil || !ok {
+		t.Fatalf("erase c-real on primary: ok=%v err=%v", ok, err)
+	}
+	syncPullTick(ctx, replica, client, func(context.Context) {})
+	if _, _, ok := data.NewPOSRepo(replica.Db).LookupCustomer(ctx, "cust-001"); ok {
+		t.Fatal("the pull did not prune the removed demo customers from the replica")
+	}
+
+	got := receiveCustomerErased(t, ch, 1, 2*time.Second)
+	got = append(got, receiveCustomerErased(t, ch, 0, 300*time.Millisecond)...)
+	if len(got) != 1 || got[0] != "c-real" {
+		t.Fatalf("replica plugin received customer.erased for %v, want exactly [c-real]", got)
+	}
+}

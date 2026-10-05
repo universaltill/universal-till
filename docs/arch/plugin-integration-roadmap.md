@@ -3,7 +3,7 @@
 Operationalizes the **plugin-first** rule: everything vertical- or country-
 specific ships as a plugin on a core seam. This is the single map of the plugin
 ecosystem — what exists, what's planned, and what unblocks each — so work can be
-picked up in dependency order. Updated 2026-07-16.
+picked up in dependency order. Updated 2026-10-05.
 
 ## Core seams that plugins ride (built)
 

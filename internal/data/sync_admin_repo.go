@@ -933,7 +933,9 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 type AdminApplyResult struct {
 	// ErasedCustomerIDs are the customers this apply pruned — hard-deleted,
 	// or newly retired as an anonymous shell — because the primary no longer
-	// has them, which only a GDPR erasure there causes (ut-docs#3253). A
+	// has them, i.e. a GDPR erasure there. Sample-data customers
+	// (is_sample_data = 1) are excluded: the primary's "Remove sample data"
+	// also deletes them, and that is not an erasure (ut-docs#3435). A
 	// customer already retired by an earlier pull is not reported again.
 	// The sync pull publishes customer.erased for each (ut-docs#3435).
 	ErasedCustomerIDs []string
@@ -1058,13 +1060,24 @@ func (r *SyncAdminRepo) applyAdmin(ctx context.Context, bundle AdminBundle, res 
 		if t.name == "role_permissions" {
 			skipPrune = rolePermissionSkew
 		}
+		// Snapshot sample-data customers before the prune deletes them: the
+		// primary's "Remove sample data" drops those too, and that is not a
+		// GDPR erasure (ut-docs#3435).
+		var sampleCustomers map[string]bool
+		if t.name == "customers" {
+			if sampleCustomers, err = sampleCustomerIDs(ctx, tx); err != nil {
+				return err
+			}
+		}
 		pruned, err := deleteMissing(ctx, tx, t, recs, skipPrune)
 		if err != nil {
 			return err
 		}
 		if t.name == "customers" {
 			for _, id := range pruned {
-				res.ErasedCustomerIDs = append(res.ErasedCustomerIDs, fmt.Sprint(id))
+				if sid := fmt.Sprint(id); !sampleCustomers[sid] {
+					res.ErasedCustomerIDs = append(res.ErasedCustomerIDs, sid)
+				}
 			}
 		}
 	}
@@ -1611,6 +1624,29 @@ func logSatelliteDivergencePrune(t adminTable, args []any, action string) {
 		return
 	}
 	logging.L().Infof("sync pull: pruned pre-existing satellite-local %s row %v (%s) — see %s: a row created directly on a satellite before that fix is expected to disappear on the first sync after upgrading", t.name, args, action, card)
+}
+
+// sampleCustomerIDs returns the ids of this till's sample-data (demo)
+// customers, so applyAdmin can tell a sample-data removal on the primary
+// apart from a GDPR erasure (ut-docs#3435).
+func sampleCustomerIDs(ctx context.Context, tx *sql.Tx) (map[string]bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM customers WHERE is_sample_data = 1`)
+	if err != nil {
+		return nil, fmt.Errorf("list sample customers: %w", err)
+	}
+	defer rows.Close()
+	ids := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("list sample customers: %w", err)
+		}
+		ids[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list sample customers: %w", err)
+	}
+	return ids, nil
 }
 
 // deleteMissing prunes rows this table's PK set no longer includes in the
