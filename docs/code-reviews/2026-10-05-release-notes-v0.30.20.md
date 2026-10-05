@@ -14,6 +14,10 @@
 - **Drafted by:** Opus 5.5 (lane:cloud-54).
 - **Reviewed by:** Sonnet 5, a different model.
 
+## Added after main moved
+
+The guided sale-screen tour (ut-docs#3710, merged in #1710 while this PR was open) gets a "New" item. Its wording uses each locale's own `tour.*` strings: Next, Skip tour, Help, "Take the tour". The German wording comes from `web/help/de/guided-tour.md`.
+
 ## Findings (all terminology; content matched en in every locale)
 
 All fixed:
