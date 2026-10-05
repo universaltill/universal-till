@@ -26,10 +26,10 @@ Kurulum sihirbazının son ekranı, kasayı hemen kaydetmek isteyip istemediğin
 
 ## Abonelik
 
-Ayarlar → Abonelik (yalnızca yöneticiler) planınızı bu kasanın Universal Till bulutundan en son aldığı haliyle, yenilenme tarihini ve en son ne zaman doğrulandığını gösterir. Kasada satış, fiş ve raporlar her planda ücretsizdir ve abonelik yüzünden asla durmaz.
+Ayarlar → Abonelik (yalnızca yöneticiler) planınızı bu kasanın Universal Till bulutundan en son aldığı haliyle, hangi tarihe kadar ödendiğini ve en son ne zaman doğrulandığını gösterir. Kasada satış, fiş ve raporlar her planda ücretsizdir ve abonelik yüzünden asla durmaz.
 
 - Yerel (ücretsiz): yapılacak bir şey yok, kart yalnızca ücretsiz planda olduğunuzu söyler.
-- Etkin: planınız, yenilenme tarihi ve son doğrulama.
+- Etkin: planınız, ödendiği son tarih ve son doğrulama.
 - Abonelik doğrulanmadı: kasa planınızı 7 günden uzun süredir bulutla doğrulayamadı, bu yüzden ücretli özellikler (bulut eşitleme, ürünleri tarayıcıdan yönetme ve yönetilen TSE kurulumu gibi) duraklatıldı. Kasanın internet bağlantısını kontrol edin; bağlandığında kendiliğinden düzelir.
 - Abonelik sona erdi: aboneliğiniz artık etkin değil, bu yüzden ücretli özellikler Universal Till hesabınızdan yenileyene kadar duraklatılır. Ardından Ayarlar → Kasa kaydı bölümünde “Ücretli plan var mı diye kontrol et” düğmesine basın: aboneliği sona ermiş bir kasa artık buluta kendiliğinden bağlanmaz, yenilemeyi en hızlı bu şekilde öğrenir. Ana kasa üzerinden kayıtlı bir kasada düğmeye ana kasada basın: bu kasa yenilemeyi oradan alır.
 

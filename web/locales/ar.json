@@ -3110,7 +3110,7 @@
   "subscription.status.active": "نشط",
   "subscription.status.lapsed": "منتهٍ",
   "subscription.status.none": "لا يوجد اشتراك",
-  "subscription.renews": "يتجدد في %s",
+  "subscription.renews": "مدفوع حتى %s",
   "subscription.last_confirmed": "آخر تأكيد: %s",
   "subscription.free_note": "أنت على الخطة المحلية المجانية. البيع والإيصالات والتقارير على هذا الصندوق مجانية في كل الخطط.",
   "subscription.chip.stale": "الاشتراك غير مؤكد",

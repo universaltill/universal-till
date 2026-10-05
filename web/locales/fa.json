@@ -3110,7 +3110,7 @@
   "subscription.status.active": "فعال",
   "subscription.status.lapsed": "پایان‌یافته",
   "subscription.status.none": "بدون اشتراک",
-  "subscription.renews": "تمدید در %s",
+  "subscription.renews": "پرداخت‌شده تا %s",
   "subscription.last_confirmed": "آخرین تأیید: %s",
   "subscription.free_note": "شما روی طرح رایگان محلی هستید. فروش، رسید و گزارش‌ها روی این صندوق در همه طرح‌ها رایگان است.",
   "subscription.chip.stale": "اشتراک تأیید نشده",
