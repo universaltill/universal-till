@@ -414,6 +414,9 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		forgetCustomerOnBaskets(d, id) // ut-docs#3253
+		// ut-docs#3435: plugins holding their own copy of the customer
+		// (loyalty, CRM) are told to delete it. Id only; non-blocking.
+		_, _ = plugins.SharedBus(d.Db).PublishCustomerErased(r.Context(), plugins.CustomerErasedEvent{CustomerID: id})
 		respond(w, http.StatusOK, true, "customer erased")
 	})
 

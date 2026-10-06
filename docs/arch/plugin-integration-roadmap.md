@@ -3,7 +3,7 @@
 Operationalizes the **plugin-first** rule: everything vertical- or country-
 specific ships as a plugin on a core seam. This is the single map of the plugin
 ecosystem — what exists, what's planned, and what unblocks each — so work can be
-picked up in dependency order. Updated 2026-07-16.
+picked up in dependency order. Updated 2026-10-05.
 
 ## Core seams that plugins ride (built)
 
@@ -11,6 +11,7 @@ picked up in dependency order. Updated 2026-07-16.
 | --- | --- | --- |
 | `sale.completed` event (rich payload) | ✅ | ERP/webhook connectors |
 | `stock.adjusted` event | ✅ | inventory sync connectors |
+| `customer.erased` event (`{customer_id}` only; primary + replicas, ut-docs#3435) | ✅ | loyalty/CRM/integration plugins deleting their copy |
 | `payment.<key>.authorize` (blocking, pre-tender) | ✅ | payment terminals |
 | `settings_get` + `net:*` host functions | ✅ | any configurable connector |
 | Plugin storage (offline queue) | ✅ | connectors' retry queues |

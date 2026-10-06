@@ -94,7 +94,7 @@ func TestAdminApply_ErasedCustomerPinnedBySatelliteSaleBecomesAnonymousShell(t *
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	// The replica sold to the customer and parked a basket for them.
@@ -109,13 +109,13 @@ func TestAdminApply_ErasedCustomerPinnedBySatelliteSaleBecomesAnonymousShell(t *
 	if err != nil {
 		t.Fatalf("second dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle2)); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
 	// A later pull must leave the shell alone: no version bump, so open
 	// sale screens don't refresh on every pull (ut-docs#2875).
 	adminBefore, sellBefore := syncAdminGeneration(t, replica), sellScreenGeneration(t, replica)
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle2)); err != nil {
 		t.Fatalf("third apply: %v", err)
 	}
 	if got := syncAdminGeneration(t, replica); got != adminBefore {
@@ -163,7 +163,7 @@ func TestAdminApply_ErasedCustomerWithoutSatelliteHistoryStripsParkedBasket(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatal(err)
 	}
 	mustExec(t, replica, `INSERT INTO held_sales (id, label, total_minor, line_count, payload, created_at, updated_at)
@@ -175,7 +175,7 @@ func TestAdminApply_ErasedCustomerWithoutSatelliteHistoryStripsParkedBasket(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle2)); err != nil {
 		t.Fatal(err)
 	}
 	var n int

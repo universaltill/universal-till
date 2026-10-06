@@ -20,7 +20,7 @@ func TestAdminDumpApplyRoundTrip_CategoryImagePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DumpAdmin: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("ApplyAdmin: %v", err)
 	}
 	var got string

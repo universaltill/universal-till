@@ -59,7 +59,7 @@ func TestApplyAdmin_InvalidatesBarcodeSymbologyCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatal(err)
 	}
 	if ids, _ := repo.EnabledBarcodeSymbologies(ctx); !slices.Equal(ids, []string{"CODE39"}) {

@@ -146,7 +146,7 @@ func TestUserDisplaySettings_AdminDumpApplyRoundTrip(t *testing.T) {
 	if _, ok := bundle.Tables["user_display_settings"]; !ok {
 		t.Fatal("user_display_settings missing from the admin dump")
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	if v, ok, err := NewUserDisplayRepo(replica.DB).Get(ctx, "u-alice", "theme"); err != nil || !ok || v != "dark" {
@@ -160,7 +160,7 @@ func TestUserDisplaySettings_AdminDumpApplyRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle2)); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
 	if v, ok, err := NewUserDisplayRepo(replica.DB).Get(ctx, "u-alice", "theme"); err != nil || ok {

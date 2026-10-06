@@ -149,7 +149,7 @@ func TestAdminApplyLargeTableBatchesAcrossMultipleChunks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
 
@@ -184,7 +184,7 @@ func TestAdminApplyLargeTableBatchesAcrossMultipleChunks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle2)); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
 	if err := replica.QueryRow(`SELECT COUNT(*) FROM tax_codes`).Scan(&count); err != nil {
@@ -242,7 +242,7 @@ func TestAdminApplyINSERTCountDoesNotGrowLinearlyWithRowCount(t *testing.T) {
 
 		counter := new(int64)
 		countingDB := openCountingConnMatching(t, replicaPath, counter, "INSERT")
-		if err := NewSyncAdminRepo(countingDB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		if _, err := NewSyncAdminRepo(countingDB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 			t.Fatalf("apply (n=%d): %v", n, err)
 		}
 		return atomic.LoadInt64(counter)

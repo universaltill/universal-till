@@ -516,7 +516,8 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 	syncAssets(ctx, client, primary, bearer, newAssetPruner(d))
 	if !out.Data.Unchanged {
 		basketCustomers := basketCustomersKnown(ctx, d, posRepo) // ut-docs#3253
-		if err := adminRepo.ApplyAdmin(ctx, out.Data.Bundle); err != nil {
+		applied, err := adminRepo.ApplyAdminWithResult(ctx, out.Data.Bundle)
+		if err != nil {
 			logging.L().Errorf("sync pull: apply failed: %v", err)
 			// ut-docs#807: sync.last_contact_at deliberately NOT set here.
 			// It backs the sync chip's freshness signal (withinLast check
@@ -532,6 +533,11 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 			return
 		}
 		forgetCustomersGoneSince(ctx, d, posRepo, basketCustomers)
+		// ut-docs#3435: a customer the primary erased reaches this till's
+		// plugins too — the replica half of the erase handler's publish.
+		for _, id := range applied.ErasedCustomerIDs {
+			_, _ = plugins.SharedBus(d.Db).PublishCustomerErased(ctx, plugins.CustomerErasedEvent{CustomerID: id})
+		}
 		_ = d.Settings.Set(ctx, "sync.pull_version", out.Data.Version)
 		_ = d.Settings.Set(ctx, "sync.last_pull_at", now)
 		_ = posRepo.InsertAudit(ctx, nil, "system", "till", get("sync.till_id"), "admin_pulled",
