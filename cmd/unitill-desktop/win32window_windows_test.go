@@ -133,7 +133,9 @@ func TestReconcileStartupShortcutRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}
-	if !strings.EqualFold(filepath.Clean(target), filepath.Clean(exe)) {
+	// os.Executable may answer with an 8.3 short path (RUNNER~1 on GitHub's
+	// runners); the shortcut stores the long one. Compare the long forms.
+	if !strings.EqualFold(longPath(t, target), longPath(t, exe)) {
 		t.Errorf("shortcut target = %q, want %q", target, exe)
 	}
 	// Enabled again (every launch): rewritten, still valid.
@@ -184,4 +186,18 @@ func TestWin32MaximizedFromFullscreenRestoresToAFittedRect(t *testing.T) {
 	if got := windowRect(t, hwnd); got != before {
 		t.Errorf("restored rect after maximized = %+v, want the pre-fullscreen %+v", got, before)
 	}
+}
+
+func longPath(t *testing.T, p string) string {
+	t.Helper()
+	in, err := windows.UTF16PtrFromString(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]uint16, 32767)
+	n, err := windows.GetLongPathName(in, &buf[0], uint32(len(buf)))
+	if n == 0 {
+		t.Fatalf("GetLongPathName(%q): %v", p, err)
+	}
+	return filepath.Clean(windows.UTF16ToString(buf[:n]))
 }

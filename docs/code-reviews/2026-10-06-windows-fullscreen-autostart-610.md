@@ -50,6 +50,12 @@ The reviewer independently confirmed the COM vtable slots, struct sizes (WINDOWP
 - **Not verified:** a real reboot or sign-in starting the till from the Startup shortcut (only the shortcut's presence and target were checked), touch input, multi-monitor hardware, real amd64 hardware.
 - `go test ./...`: all green except `mobile`'s `TestStart_ListensOnAllInterfacesButReturnsLoopbackAddress`. It times out dialling this Mac's 172.27.x interface (environmental, and `mobile/` is untouched); it passed in this session's earlier full run.
 
+## CI follow-ups on the PR
+
+- `desktop-shell` deadcode baseline: the pure Win32 helpers had no caller in the Linux desktop build. They are now tagged `!desktop || windows`, so plain `go test` on any OS still runs them.
+- `windows-shell` (first run on windows-latest): 10 of 11 tests passed. `TestReconcileStartupShortcutRoundTrip` compared the `.lnk` target with `os.Executable()`, which returned an 8.3 short path (`RUNNER~1`). The test now compares `GetLongPathName` forms. This was a test-only problem; the shortcut stores a valid long path. Re-run on the VM: PASS.
+- `build`: guard-docs-shots needed the display topic re-shot (the help prose changed). `make docs-shots` changed only the four `display.png` files and the manifest.
+
 ## Verdict
 
 Safe to merge once CI is green, including the new `windows-shell` job and the mingw step.

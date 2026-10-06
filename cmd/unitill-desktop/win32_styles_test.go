@@ -1,3 +1,5 @@
+//go:build !desktop || windows
+
 package main
 
 import "testing"

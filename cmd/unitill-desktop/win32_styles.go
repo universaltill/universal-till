@@ -1,7 +1,11 @@
+//go:build !desktop || windows
+
 // Pure Win32 window-style arithmetic for the Windows window modes
-// (ut-docs#610) — deliberately free of any OS build tag, like window_mode.go,
-// so `go test ./...` exercises it on every OS. win32window_windows.go applies
-// the result with user32.
+// (ut-docs#610) — free of any OS tag in untagged builds, like window_mode.go,
+// so `go test ./...` exercises it on every OS. Excluded only from non-Windows
+// desktop builds, where nothing calls it (the deadcode baseline guard runs
+// the Linux desktop build). win32window_windows.go applies the result with
+// user32.
 package main
 
 // Win32 window styles (WinUser.h). Spelled out here rather than taken from
