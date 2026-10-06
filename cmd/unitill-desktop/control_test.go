@@ -568,4 +568,10 @@ func TestShellPollContractsMatchCommonPackage(t *testing.T) {
 	if shellPollDowngradeAfter != common.ShellAttachedWindow {
 		t.Errorf("shellPollDowngradeAfter = %s, common.ShellAttachedWindow = %s — the two sides must give up on each other on the same clock", shellPollDowngradeAfter, common.ShellAttachedWindow)
 	}
+	// ut-docs#610: the shell holds its next poll up to shellApplyAckWait for
+	// the apply to finish, and that poll carries the exit-to-os ack — so it
+	// must leave room inside the server's own wait for the ack.
+	if shellApplyAckWait >= common.ShellExitAckTimeout {
+		t.Errorf("shellApplyAckWait = %s must be below common.ShellExitAckTimeout = %s", shellApplyAckWait, common.ShellExitAckTimeout)
+	}
 }

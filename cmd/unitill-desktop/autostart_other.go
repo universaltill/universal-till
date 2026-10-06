@@ -1,10 +1,9 @@
-//go:build desktop && !linux
+//go:build desktop && !linux && !windows
 
 package main
 
-// reconcileAutostart is a no-op on non-Linux desktop shells (ut-docs#611
-// covers Linux only) — macOS (LaunchAgent) and Windows (Run key/Startup
-// shortcut) autostart wiring is #609/#610's own scope.
+// reconcileAutostart is a no-op on macOS until ut-docs#609 wires its
+// LaunchAgent; Linux and Windows (ut-docs#610) have real ones.
 func reconcileAutostart(enabled bool) error {
 	return nil
 }

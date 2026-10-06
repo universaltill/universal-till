@@ -327,7 +327,7 @@ jobs:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
           GOOS: windows
-        run: go vet ./internal/procjob/ ./internal/db/
+        run: go vet ./internal/procjob/ ./internal/db/ ./cmd/unitill-desktop/
       - name: Windows exe carries the app icon + VERSIONINFO (ut-docs#2786)
         # The release's goreleaser pre-build hook, end to end: winres.sh
         # writes the .syso, a cross-compiled unitill-pos.exe links it, and
@@ -589,6 +589,45 @@ jobs:
           GOCACHE: ${{ runner.temp }}/gobuildcache
           CGO_ENABLED: 1
         run: bash scripts/ci/guard-deadcode-baseline_test.sh
+      - name: Install mingw-w64 (Windows desktop shell cross-build)
+        # ut-docs#610: the `desktop && windows` files (window_mode_windows.go,
+        # autostart_windows.go, webview2_windows.go) were compiled only by
+        # release.yml. Same toolchain and EventToken.h fix as release.yml's
+        # "Install mingw-w64 (Windows desktop shell)" step — keep them in sync.
+        run: |
+          bash scripts/ci/retry-with-backoff.sh 3 5 --clear-apt-lists -- sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
+          INC=/usr/x86_64-w64-mingw32/include
+          test -f "$INC/eventtoken.h" || { echo "::error::mingw eventtoken.h missing"; exit 1; }
+          sudo ln -sf "$INC/eventtoken.h" "$INC/EventToken.h"
+      - name: Build unitill-desktop.exe (desktop build tag, mingw cross)
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+          CGO_ENABLED: 1
+          GOOS: windows
+          GOARCH: amd64
+          CC: x86_64-w64-mingw32-gcc
+          CXX: x86_64-w64-mingw32-g++
+        run: go build -tags desktop -o "$RUNNER_TEMP/unitill-desktop.exe" ./cmd/unitill-desktop
+
+  windows-shell:
+    # ut-docs#610: the Windows window modes and Startup-folder autostart are
+    # pure-Go user32/COM code (win32window_windows.go, shelllink_windows.go),
+    # tagged `windows` but not `desktop`, so they run here on a real Windows
+    # desktop against a plain CreateWindowEx window and a real .lnk — no
+    # WebView2 build needed. Public repo: GitHub-hosted runner only.
+    runs-on: windows-latest
+    needs: build
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.27' }
+      - name: Vet unitill-desktop (windows)
+        run: go vet ./cmd/unitill-desktop/
+      - name: Win32 window modes + startup shortcut
+        run: go test -v -count=1 -run "Win32|StartupShortcut" ./cmd/unitill-desktop/
 
   e2e:
     runs-on: ubuntu-latest
