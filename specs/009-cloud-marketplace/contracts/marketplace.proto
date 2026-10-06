@@ -24,7 +24,11 @@ service TelemetryService {
 message ListPluginsRequest {
   string locale = 1;
   string device_arch = 2;         // e.g., linux/arm64
-  repeated string capability = 3; // filter by canonical plugin types or capabilities
+  // Filter by plugin type: a listing's plugin_type, from the ADR-0002
+  // canonical taxonomy (internal/plugins.CanonicalTypes). Despite the name,
+  // NOT a device/runtime capability — mirrors ut-cloud's cloud.proto
+  // comment (ut-docs#852, #980).
+  repeated string capability = 3;
   string page_token = 4;
 }
 

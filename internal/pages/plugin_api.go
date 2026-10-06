@@ -53,6 +53,10 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		deviceArch := fmt.Sprintf("%s/%s", osFilter, archFilter)
+		// "capability" filters by plugin type — a listing's plugin_type from
+		// the ADR-0002 taxonomy (plugins.CanonicalTypes), forwarded verbatim
+		// to the marketplace's ListPluginsRequest.capability. Despite the
+		// name it is NOT a device/runtime capability (ut-docs#852, #980).
 		capability := r.URL.Query().Get("capability")
 
 		// Call marketplace HTTP API (use new config field)
