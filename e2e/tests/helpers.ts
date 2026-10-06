@@ -317,29 +317,49 @@ export async function ensureOperator(page: Page) {
     await page.locator('input[name=store_name]').fill('Demo Shop');
     // Step numbers from here on: data-step="3" is the Germany-only business-
     // identity step (ADR-0053/ut-docs#802) — this flow picks GB, so the
-    // wizard jumps 2 -> 4, same skip login.spec.ts's own walkthrough
-    // accounts for. This helper previously used step(3)/step(4)/step(5)/
-    // step(6)/step(7) here, off by one against the real data-step values
-    // ever since #802 inserted the identity step — invisible because
-    // nothing on the "default" (auth-off) project ever reaches /setup, so
-    // this branch was untested dead code; fixed while the country tile
-    // swap above already required touching this function.
+    // wizard jumps 2 -> 4. Since ut-docs#3709 the wizard has seven steps:
+    // 4 shop name, 5 shop type, 6 admin PIN, 7 done (no sample-data
+    // control, no restore step), and finishing lands on
+    // /import?welcome=1.
     await step(4).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop name
-    await step(5).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop type + demo data
-    await step(6).locator('.setup-nav button.primary', { hasText: 'No' }).click(); // restore from another POS? — No
-    await step(7).locator('input[name=pin]').fill(ADMIN_PIN);
-    await step(7).locator('input[name=pin_confirm]').fill(ADMIN_PIN);
-    await step(7).locator('.setup-nav button', { hasText: 'Next' }).click(); // PIN
+    await step(5).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop type
+    await step(6).locator('input[name=pin]').fill(ADMIN_PIN);
+    await step(6).locator('input[name=pin_confirm]').fill(ADMIN_PIN);
+    await step(6).locator('.setup-nav button', { hasText: 'Next' }).click(); // PIN
     await Promise.all([
       page.waitForURL((u) => !u.pathname.includes('/setup')),
-      step(8).locator('button[type=submit]', { hasText: 'Start selling' }).click(),
+      step(7).locator('button[type=submit]', { hasText: 'Start selling' }).click(),
     ]);
+    // The wizard now lands on /import?welcome=1 (ut-docs#3709); callers
+    // have always been handed the sale screen, so keep doing that.
+    await page.goto('/');
   } else if (page.url().includes('/login')) {
     for (const d of ADMIN_PIN.split('')) {
       await page.locator('.pin-pad button').getByText(d, { exact: true }).click();
     }
     await page.locator('button[type=submit].pin-key').click();
     await page.waitForURL((u) => !u.pathname.includes('/login'));
+  }
+  await markTourDone(page);
+}
+
+// ut-docs#3710: the sale screen starts a guided tour (web/public/tour.js) the
+// first time each signed-in operator opens "/". Specs that aren't about the
+// tour mark it done for the session's user right after logging in, so no
+// balloon covers a control or takes focus from the scan field. Records only
+// this session's user (POST /api/tour/done); a no-op 401 on the default
+// (UT_AUTH=off) till, which never auto-starts the tour anyway. If the page
+// already open is a sale screen that was going to run it, it is reloaded
+// without — the tour may still be waiting for the page to settle.
+// sale-screen-guided-tour-3710.spec.ts is the one spec that wants the tour.
+export async function markTourDone(page: Page) {
+  await page.request.post('/api/tour/done');
+  let u: URL;
+  try { u = new URL(page.url()); } catch { return; }
+  if (u.pathname !== '/') return;
+  if (await page.locator('#ut-tour-steps[data-start="1"]').count()) {
+    u.searchParams.delete('tour');
+    await page.goto(u.pathname + u.search);
   }
 }
 

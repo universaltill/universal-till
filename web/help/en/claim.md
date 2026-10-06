@@ -31,15 +31,15 @@ Settings → Subscription (managers only) shows your plan as this till last hear
 - Local (free): nothing to do, the card just says you are on the free plan.
 - Active: your plan, the date it is paid until and the last confirmation.
 - Subscription not confirmed: the till couldn't confirm your plan with the cloud for more than 7 days, so paid features (such as cloud sync, managing products from a browser and managed TSE set-up) are paused. Check the till's internet connection; this clears by itself once it connects.
-- Subscription ended: your subscription is no longer active, so paid features are paused until you renew it in your Universal Till account. Then press Check for a paid plan in Settings → Till registration: a till whose subscription has ended no longer checks in with the cloud by itself, so pressing it is the quickest way it learns about the renewal. On a till registered through the main till, press it on the main till: this till gets the renewal from there.
+- Subscription ended: your subscription is no longer active, so paid features are paused until you renew it in your Universal Till account. Then press Check for a paid plan in Settings → Till registration: a till whose subscription has ended checks in with the cloud by itself only when it is first started each day, so pressing it is the quickest way it learns about the renewal. On a till registered through the main till, press it on the main till: this till gets the renewal from there.
 
 In the last two cases a chip in the status bar links to this card, and Till registration and Receipt signing (TSE) say in place which of their features are paused. Nothing is hidden, and a TSE that is already set up keeps signing receipts.
 
 ## Cloud sync is part of the paid plans
 
-Registering and claiming are free, and so is the plugin store. Keeping the till in sync with your online account (sales figures, the product list, changes made on the shop's cloud manage page) is part of the paid plans. While the shop is not on one, the till does not contact the cloud in the background at all, and Settings → Till registration says that cloud sync is off.
+Registering and claiming are free, and so is the plugin store. Keeping the till in sync with your online account (sales figures, the product list, changes made on the shop's cloud manage page) is part of the paid plans. While the shop is not on one, the till does not sync with the cloud, and Settings → Till registration says that cloud sync is off. It only checks in briefly when it is installed, after an update, and when it is first started each day.
 
-1. Once the shop is on a paid plan, the till finds out the next time someone on it registers it, pairs it, installs a plugin or generates a claim code. You can also press **Check for a paid plan** in Settings → Till registration (a manager or admin approves it). Cloud sync then starts within a minute and keeps running by itself.
+1. Once the shop is on a paid plan, the till finds out when it is next started on a new day, or sooner when someone on it registers it, pairs it, installs a plugin or generates a claim code. You can also press **Check for a paid plan** in Settings → Till registration (a manager or admin approves it). Cloud sync then starts within a minute and keeps running by itself.
 2. If the plan ends, cloud sync stops after the till's next check-in. Selling never depends on it: every sale works offline either way.
 
 ## When the cloud stops accepting this till

@@ -10,8 +10,10 @@ import * as path from 'path';
 // are committed assets, embedded into the binary by web/embed.go's
 // `//go:embed help`. Route-less topics are skipped on purpose (follow-up
 // card). Screens are captured against the same throwaway till servers as the
-// e2e suite: fresh DB, demo catalog seeded deterministically by the
-// migrations.
+// e2e suite: fresh DB, demo catalog seeded deterministically by
+// e2e/run-till.sh (go run ./e2e/seed_demo) — the migrations stopped seeding
+// it in ut-docs#539. The AUTH till (8092) gets no sample data: the wizard
+// below never loads any (ut-docs#3709).
 const { repoRoot, LOCALES, routedTopics } = require('./lib');
 
 const imgRoot = path.join(repoRoot, 'web', 'help', 'img');
@@ -238,12 +240,11 @@ async function ensureFullEffects(page: Page) {
 async function ensureOperator(page: Page) {
   await page.goto('/');
   if (page.url().includes('/setup')) {
-    // ut-docs#617 inserted a new step 5 whose default panel has no "Next"
-    // button at all (No / Yes / Later instead) — the old flat click
-    // sequence of bare `.setup-nav button:visible` presses would have
-    // hunted for a "Next" that isn't there at that point. Scoped to each
-    // numbered section (data-step, set on every <section> in setup.html)
-    // rather than trying to keep the flat sequence in sync by count.
+    // Scoped to each numbered section (data-step, set on every <section>
+    // in setup.html) rather than a flat sequence of `.setup-nav button`
+    // presses kept in sync by count. Seven steps since ut-docs#3709: 1
+    // language, 2 country, 3 business identity (DE only), 4 shop name, 5
+    // shop type, 6 admin PIN, 7 done.
     const step = (n: number) => page.locator(`[data-step="${n}"]`);
     await step(1).locator('.setup-nav button', { hasText: 'Next' }).click(); // language
     // ut-docs#1095: country is a tile picker now, not a <select> — reveal
@@ -259,15 +260,17 @@ async function ensureOperator(page: Page) {
     await step(2).locator('.setup-nav button', { hasText: 'Next' }).click(); // country
     await page.locator('input[name=store_name]').fill('Demo Shop');
     await step(4).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop name (step 3 is the DE-only business-identity step — GB skips it)
-    await step(5).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop type + demo data (ut-docs#539, both optional)
-    await step(6).locator('.setup-nav button.primary', { hasText: 'No' }).click(); // restore from another POS? (ut-docs#617) — No, starting fresh
-    await step(7).locator('input[name=pin]').fill(ADMIN_PIN);
-    await step(7).locator('input[name=pin_confirm]').fill(ADMIN_PIN);
-    await step(7).locator('.setup-nav button', { hasText: 'Next' }).click(); // PIN
+    await step(5).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop type (optional, ut-docs#539)
+    await step(6).locator('input[name=pin]').fill(ADMIN_PIN);
+    await step(6).locator('input[name=pin_confirm]').fill(ADMIN_PIN);
+    await step(6).locator('.setup-nav button', { hasText: 'Next' }).click(); // PIN
     await Promise.all([
       page.waitForURL((u) => !u.pathname.includes('/setup')),
-      step(8).locator('button[type=submit]', { hasText: 'Start selling' }).click(),
+      step(7).locator('button[type=submit]', { hasText: 'Start selling' }).click(),
     ]);
+    // The wizard lands on /import?welcome=1 (ut-docs#3709); the shots
+    // start from the sale screen.
+    await page.goto('/');
   } else if (page.url().includes('/login')) {
     for (const d of ADMIN_PIN.split('')) {
       await page.locator('.pin-pad button').getByText(d, { exact: true }).click();
@@ -275,6 +278,10 @@ async function ensureOperator(page: Page) {
     await page.locator('button[type=submit].pin-key').click();
     await page.waitForURL((u) => !u.pathname.includes('/login'));
   }
+  // ut-docs#3710: never capture the sale screen's first-visit guided tour —
+  // mark it done for this operator (same as e2e/tests/helpers.ts
+  // markTourDone); every capture below opens its page fresh.
+  await page.request.post('/api/tour/done');
   await expect(page.locator('#basket')).toBeVisible();
 }
 

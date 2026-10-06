@@ -1,0 +1,39 @@
+{{ define "tour" -}}
+{{/* ut-docs#3710: the sale screen's guided tour. web/public/tour.js reads
+     this element (on load and after every boosted navigation that brings
+     the sale screen back) and runs the tour when data-start="1" — set by
+     index_page.go for a signed-in operator who hasn't finished it yet, or
+     for /?tour=1 (Help → "Take the tour").
+     Each step's "targets" are tried in order and the first one that is on
+     screen wins; a step with none on screen (a role, a layout or a screen
+     width that doesn't show it) is skipped, and a step with no targets at
+     all is a centred card (the welcome and the closing step). The first
+     target of the menu and basket steps is the phone-width control
+     (☰ / the basket bar), hidden above 480px.
+     Strings are bare T calls: inside a JSON script html/template
+     writes each one as a quoted, escaped JSON string. */}}
+<script type="application/json" id="ut-tour-steps" data-start="{{ if .tourStart }}1{{ else }}0{{ end }}">
+{
+  "labels": {
+    "next": {{ T "tour.next" }},
+    "back": {{ T "tour.back" }},
+    "done": {{ T "tour.done" }},
+    "skip": {{ T "tour.skip" }},
+    "counter": {{ T "tour.counter" }}
+  },
+  "steps": [
+    {"id": "intro", "title": {{ T "tour.intro.title" }}, "body": {{ T "tour.intro.body" }}},
+    {"id": "nav", "targets": [".nav-drawer-toggle", ".nav-primary"], "title": {{ T "tour.nav.title" }}, "body": {{ T "tour.nav.body" }}},
+    {"id": "products", "targets": [".products"], "title": {{ T "tour.products.title" }}, "body": {{ T "tour.products.body" }}},
+    {"id": "search", "targets": ["#products-search", ".products-strip-search"], "title": {{ T "tour.search.title" }}, "body": {{ T "tour.search.body" }}},
+    {"id": "basket", "targets": ["[data-testid=basket-phonebar]", "#basket"], "title": {{ T "tour.basket.title" }}, "body": {{ T "tour.basket.body" }}},
+    {"id": "pay", "targets": ["[data-testid=payment-open]"], "title": {{ T "tour.pay.title" }}, "body": {{ T "tour.pay.body" }}},
+    {"id": "parked", "targets": ["[data-testid=parked-orders-open]"], "title": {{ T "tour.parked.title" }}, "body": {{ T "tour.parked.body" }}},
+    {"id": "status", "targets": ["#sb-conn"], "title": {{ T "tour.status.title" }}, "body": {{ T "tour.status.body" }}},
+    {"id": "help", "targets": ["[data-testid=help-hint]"], "title": {{ T "tour.help.title" }}, "body": {{ T "tour.help.body" }}},
+    {"id": "session", "targets": ["#session-chip .session-chip"], "title": {{ T "tour.session.title" }}, "body": {{ T "tour.session.body" }}},
+    {"id": "end", "title": {{ T "tour.end.title" }}, "body": {{ T "tour.end.body" }}}
+  ]
+}
+</script>
+{{- end }}

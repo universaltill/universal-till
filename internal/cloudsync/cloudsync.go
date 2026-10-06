@@ -383,31 +383,60 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	uploadPendingDiagnostics(ctx, cfg, db)
 
 	if !enroll.HasCredentials(cfg) {
+		// No store identity at start, no start-up check-in this run
+		// (ADR-0148 amendment §1; ADR-0015's lazy registration unchanged).
+		disarmStartupCheckin()
 		return false, nil // not registered — nothing further to sync
 	}
 
 	settings := data.NewSettingsRepo(db)
 	// ADR-0148 (ut-docs#3615): only a paid store checks in periodically; an
-	// unpaid one only inside an operator window. A gated tick is quiet: no
-	// network, no warning, not an error (the scheduler keeps its normal
-	// cadence and no sync-error chip appears).
-	if !syncAllowedFn(ctx, settings) && !operatorWindowOpen(operatorNow()) {
+	// unpaid one only inside an operator window, or once at start-up when
+	// its version or the local date changed since its last answered
+	// check-in (amendment, ut-docs#3673; takeStartupCheckin). A gated
+	// tick is quiet: no network, no warning, not an error (the scheduler
+	// keeps its normal cadence and no sync-error chip appears).
+	now := operatorNow()
+	windowSeen := operatorDeadlineNS.Load()
+	unpaid := !syncAllowedFn(ctx, settings)
+	if unpaid && !takeStartupCheckin(ctx, settings, now) && !operatorWindowOpen(now) {
 		return false, nil
 	}
 
 	// ADR-0117 §3 (ut-docs#2827): the conditional check-in decides whether
 	// this tick needs the full POST. The body is built first because its
-	// till-state part is what the hash covers.
+	// till-state part is what the hash covers. An unpaid check-in skips the
+	// GET and POSTs (planUnpaidCheckin).
 	req := buildSyncRequest(ctx, cfg, settings, hooks)
 	sum, hashErr := stateHash(req.devices)
-	plan, err := planCheckin(ctx, cfg, settings, sum, hashErr != nil, hooks.LinkVersion)
-	if err != nil {
+	var plan checkinPlan
+	if unpaid {
+		plan = planUnpaidCheckin(ctx, settings, sum)
+	} else if plan, err = planCheckin(ctx, cfg, settings, sum, hashErr != nil, hooks.LinkVersion); err != nil {
+		if _, ok := planRequired(err); ok {
+			// A lapse learned from the GET is this start's contact: no
+			// start-up check-in follows it (amendment §4).
+			closeOperatorWindow(windowSeen)
+			disarmStartupCheckin()
+		}
 		return false, err
 	}
 	var dirs []directive
 	if plan.post {
 		dirs, err = pushSync(ctx, cfg, settings, req)
+		_, refused := planRequired(err)
+		if unpaid && (err == nil || refused) {
+			// Only a 2xx or a 402 records the unpaid check-in: the cloud saw
+			// this till (amendment §2). Any other answer, or none, records
+			// nothing; the next trigger tries again.
+			recordUnpaidCheckin(ctx, settings, now)
+		}
 		if err != nil {
+			if refused {
+				// No retry until the next trigger (§4).
+				closeOperatorWindow(windowSeen)
+				disarmStartupCheckin()
+			}
 			return false, err
 		}
 		plan.done(cfg)
@@ -1719,13 +1748,21 @@ func parseRetryAfter(h string, now time.Time) time.Duration {
 // problems ring (logging.Recent) that the back-office panel and the
 // heartbeat's problems feed show; the cloud's 402 plan_required is not a
 // problem but a plan the shop is on (ADR-0148 §5: no warning, no
-// sync-error chip), so it is logged at INFO instead.
+// sync-error chip), so it is logged at INFO instead. After a 402 an
+// unpaid till asks again only at its next trigger (amendment §4,
+// ut-docs#3673), never on a timer.
 func logTickError(err error) {
 	if err == nil {
 		return
 	}
 	if se, ok := planRequired(err); ok {
-		logging.L().Infof("cloudsync: cloud sync is part of the paid plans; this store is not on one (%s answered 402), checking again in %s", se.Path, retryAfterHint(err))
+		next := "at the next start-up or operator action"
+		if se.Entitlement == nil {
+			// No block to cache: the till still believes it is paid and
+			// keeps honouring Retry-After (ADR-0148 amendment §4).
+			next = "in " + retryAfterHint(err).String()
+		}
+		logging.L().Infof("cloudsync: cloud sync is part of the paid plans; this store is not on one (%s answered 402); checking again %s", se.Path, next)
 		return
 	}
 	logging.L().Warnf("cloudsync: tick failed (will retry): %v", err)
@@ -1741,6 +1778,9 @@ func logTickError(err error) {
 // goroutine registers on wg so app.Run's shutdown drain can prove it exited
 // before the database closes (same join shape as updates/alerts/enroll).
 func Start(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks, wg *sync.WaitGroup) {
+	// An unpaid till's start-up check-in (ADR-0148 amendment, ut-docs#3673)
+	// is armed here, before the goroutine, for the first hour of this run.
+	armStartupCheckin()
 	wg.Add(1)
 	go func() {
 		defer logging.RecoverAndLog("cloudsync.loop")

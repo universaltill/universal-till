@@ -125,12 +125,6 @@ const (
 	// Defined in internal/data so internal/cloudsync (the uploader) reads
 	// the same key without importing a page package.
 	KeyReportRetentionMode = data.ReportRetentionModeKey
-	// KeyRestorePromptStatus tracks the setup wizard's "restore from
-	// another POS?" step (ut-docs#617): empty/unset means the operator
-	// answered No, or never deferred; RestorePromptStatusDeferred means
-	// they picked "Later" and Settings → Data should offer a resume link
-	// straight into /import until they either use it or dismiss it.
-	KeyRestorePromptStatus = "setup.restore_prompt_status"
 	// KeyCurrencyConfirmed marks that an operator has explicitly chosen the
 	// till's currency at least once — via the setup wizard, Settings, or the
 	// import currency-confirmation prompt (ut-docs#970) — as opposed to it
@@ -186,11 +180,6 @@ const (
 	// it.
 	KeyPendingFiscalSignRetries = "fiscal.pending_sign_retries"
 )
-
-// RestorePromptStatusDeferred is the only KeyRestorePromptStatus value the
-// wizard/Settings pair actually branches on (ut-docs#617) — any other value
-// (including empty) is treated as "nothing to resume."
-const RestorePromptStatusDeferred = "deferred"
 
 // Report retention modes (KeyReportRetentionMode values). Till is the
 // default/fallback; cloud and both upload to the cloud and need an active

@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page, Locator } from '@playwright/test';
-import { ensureOperator, ADMIN_PIN, setBrowsingMode } from './helpers';
+import { ensureOperator, ADMIN_PIN, setBrowsingMode, markTourDone } from './helpers';
 
 // ut-docs#2312: the sell-screen quick-button grid's jiggle edit mode
 // (ut-docs#2339, replacing the retired #2285 long-press sheet) exposes a
@@ -98,6 +98,7 @@ async function loginAsCashier(page: Page): Promise<void> {
   }
   await page.locator('button[type=submit].pin-key').click();
   await page.waitForURL((u) => !u.pathname.includes('/login'));
+  await markTourDone(page); // ut-docs#3710: a new operator would get the guided tour
 }
 
 test.describe('Jiggle-mode edit gated by catalog_management for a cashier (ut-docs#2312)', () => {

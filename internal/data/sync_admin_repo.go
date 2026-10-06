@@ -638,6 +638,20 @@ const (
 	ReleaseNotesSeenVersionSettingsKey = "release_notes.seen_version"
 )
 
+// TourDoneSettingsKeyPrefix + a user id records that this user finished or
+// skipped the sale-screen guided tour (ut-docs#3710), so it never starts on
+// its own for them again. Classified shop-wide, like the users table it
+// keys on, but written locally (no write-through — a cashier lacks the
+// settings permission on the main till): a marker written on the main till
+// reaches every satellite via the admin pull, one written on a satellite
+// stays on that till, so the tour may be offered once per satellite.
+const TourDoneSettingsKeyPrefix = "tour.done."
+
+// TourDoneSettingsKey is the settings key for one user's finished tour.
+func TourDoneSettingsKey(userID string) string {
+	return TourDoneSettingsKeyPrefix + userID
+}
+
 // TillIdentityCloudIDSettingsKey is the id the cloud knows THIS till's device
 // row by, kept after a joined till is promoted back to main/standalone
 // (ut-docs#3307). ClearReplicaIdentity copies sync.till_id here before it
@@ -712,6 +726,11 @@ var PerTillSettingPrefixes = []string{
 	// till snapshot moved the admin fingerprint (the #2792 churn). install.*
 	// is this machine's one-time OS provisioning marker (internal/app).
 	"diagnostics.", "cloudsync.", "install.",
+	// ut-docs#3673 (ADR-0148 amendment §2): this till's last answered unpaid
+	// check-in (version + local date). Already under "cloudsync." above;
+	// named so it stays per-till if that family is ever narrowed. Also in
+	// db.TillCloudIdentityPrefixes, so the join snapshot strips it too.
+	"cloudsync.unpaid_checkin.",
 	// ut-docs#2998: this till's own base-plugin install-retry queue
 	// (pages/setup_base_plugins.go). Plugins install per machine; synced,
 	// the main till's queue overwrote a replica's at every pull. A full key
@@ -2128,13 +2147,13 @@ var ShopWideSettingPrefixes = []string{
 	// - lan_discovery.till_id on a replica IS the main till's discovery id,
 	//   which only a primary advertises; a pre-#2722 replica's re-discovery
 	//   uses it as its hint (discovery.PrimaryWatch.rediscover).
-	// Under setup. and fiscal. above, also kept: setup.restore_prompt_status
-	// (the "import from another POS" offer is the shop's catalogue, which
-	// only the main till owns) and fiscal.tse_provisioning_state (ADR-0053
-	// provisions one TSE per store, from the main till's wizard).
+	// Under fiscal. above, also kept: fiscal.tse_provisioning_state
+	// (ADR-0053 provisions one TSE per store, from the main till's wizard).
 	"till.name",
 	"menu.",
 	"lan_discovery.",
+	// ut-docs#3710: tour.done.<user id> — per user, and users are shop-wide.
+	"tour.",
 }
 
 // SettingScope classifies a settings key. Per-till wins over shop-wide.

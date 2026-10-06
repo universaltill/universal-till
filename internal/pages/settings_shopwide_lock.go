@@ -48,7 +48,6 @@ var shopWideLockRegions = map[string]string{
 	"settings-catalog-pre-pack-unit-price":    data.CatalogPrePackUnitPriceEnabledKey,     // POST /api/settings/catalog-pre-pack-unit-price
 	"settings-sell-screen":                    common.KeyBrowsingMode,                     // POST /api/settings/browsing-mode
 	"settings-stock-tracking":                 common.KeyAllowNegativeInventory,           // POST /api/settings/allow-negative-inventory
-	"settings-restore-prompt":                 common.KeyRestorePromptStatus,              // POST /api/settings/dismiss-restore-prompt
 	"settings-retention":                      common.KeyReportRetentionMode,              // POST /api/settings/report-retention
 	"settings-invoice":                        keyInvoiceSellerName,                       // POST /api/settings/invoice (invoice.seller_*)
 	"settings-idle-lock":                      common.KeyIdleLock,                         // POST /api/settings/idle-lock

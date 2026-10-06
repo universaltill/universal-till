@@ -324,37 +324,6 @@ func exempt(path string) bool {
 	return false
 }
 
-// Middleware gates every route behind a live session. An htmx-driven request
-// (HX-Request: true) always gets HX-Redirect to /login — a real browser
-// navigation — regardless of path, /api/* included: htmx discards a JSON
-// error body on a non-2xx response and fires htmx:responseError instead, so
-// a bare JSON 401 under /api/* left hold/resume/scan/tender rendering the
-// generic "something went wrong" banner on top of a still-fully-rendered
-// sale screen with no indication the operator needed to sign back in
-// (ut-docs#2144). Only a NON-htmx caller under /api/* (mobile/sync clients)
-// gets the 401 JSON contract; a plain browser page load gets the ordinary
-// 303 redirect. The operator lands in the context.
-// optionalAuth paths are reachable WITHOUT a session but must still receive
-// one when the caller has it. This is a distinct tier from exempt(), and the
-// distinction is not cosmetic: exempt() returns before the cookie is ever
-// read, so a path listed there can never see who is calling.
-//
-// ut-docs#1516: /api/import was put in exempt() by ut-docs#1509 to unblock the
-// first-boot wizard restore, and that silently broke the ordinary case — a
-// signed-in manager pressing Import reached import_page.go with no user in
-// context, so canPerform failed, the handler's hasSession check saw nothing,
-// NeedsFirstBoot was false on a configured till, and the answer was 403
-// "manager or admin required". htmx does not swap non-2xx, so the operator saw
-// the spinner flash and nothing else. Import is the one route that genuinely
-// needs both halves: anonymous during first boot (preview only, gated by the
-// handler's NeedsFirstBoot branch) and session-aware afterwards.
-//
-// Anything added here MUST authorise itself in the handler — this tier only
-// promises "no 401 from the middleware", never "no authorisation required".
-func optionalAuth(path string) bool {
-	return path == "/api/import"
-}
-
 // backgroundPollPaths are the GETs a page makes on a timer, not because
 // anyone touched the till (ut-docs#2901). The middleware resolves them with
 // ResolveNoTouch: they still get 401 + HX-Redirect once the session is
@@ -509,6 +478,16 @@ func exemptRequest(r *http.Request, svc *Service) bool {
 		r.Method == http.MethodPost && r.URL.Path == "/csp-report"
 }
 
+// Middleware gates every route behind a live session. An htmx-driven request
+// (HX-Request: true) always gets HX-Redirect to /login — a real browser
+// navigation — regardless of path, /api/* included: htmx discards a JSON
+// error body on a non-2xx response and fires htmx:responseError instead, so
+// a bare JSON 401 under /api/* left hold/resume/scan/tender rendering the
+// generic "something went wrong" banner on top of a still-fully-rendered
+// sale screen with no indication the operator needed to sign back in
+// (ut-docs#2144). Only a NON-htmx caller under /api/* (mobile/sync clients)
+// gets the 401 JSON contract; a plain browser page load gets the ordinary
+// 303 redirect. The operator lands in the context.
 func Middleware(next http.Handler, svc *Service) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if exempt(r.URL.Path) || exemptRequest(r, svc) {
@@ -522,13 +501,6 @@ func Middleware(next http.Handler, svc *Service) http.Handler {
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u)))
 				return
 			}
-		}
-		// Resolved above when a valid cookie was present; reaching here with
-		// an optional-auth path means there is no usable session, which is a
-		// legitimate state for it rather than a 401.
-		if optionalAuth(r.URL.Path) {
-			next.ServeHTTP(w, r)
-			return
 		}
 		// ut-docs#2144: this must NOT catch an htmx-driven /api/* request --
 		// htmx discards a JSON error body on a non-2xx response (fires

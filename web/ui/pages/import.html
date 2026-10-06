@@ -23,39 +23,44 @@
   <a class="btn secondary" href="/items"{{ if .InItemsShell }} data-action="close-closest"{{ end }}>← {{ T "nav.catalog" }}</a>
 </div>
 
-<div class="card">
+{{ if .welcome }}
+<!-- ut-docs#3709: the setup wizard lands here (?welcome=1). The three ways
+     a new shop starts, explained in plain words; each option card's action
+     jumps to the card below that does it (or leaves the page). Never
+     rendered inside the /items Import dialog (import_page.go). Nothing here
+     autofocuses: no keyboard pops up on a touch till. -->
+<section class="card import-welcome" data-testid="import-welcome" aria-labelledby="import-welcome-title">
+  <h2 id="import-welcome-title">{{ T "import.welcome.title" }}</h2>
+  <p class="muted">{{ T "import.welcome.intro" }}</p>
+  <div class="import-welcome-grid">
+    <div class="import-welcome-option" data-welcome-option="file">
+      <h3>{{ T "import.welcome.file.title" }}</h3>
+      <p>{{ T "import.welcome.file.body" }}</p>
+      <div class="import-welcome-actions">
+        <a class="btn primary" href="#import-card">{{ T "import.welcome.file.action" }}</a>
+      </div>
+    </div>
+    <div class="import-welcome-option" data-welcome-option="sample">
+      <h3>{{ T "import.welcome.sample.title" }}</h3>
+      <p>{{ T "import.welcome.sample.body" }}</p>
+      <div class="import-welcome-actions">
+        <a class="btn primary" href="#sample-data-card">{{ T "import.welcome.sample.action" }}</a>
+      </div>
+    </div>
+    <div class="import-welcome-option" data-welcome-option="skip">
+      <h3>{{ T "import.welcome.skip.title" }}</h3>
+      <p>{{ T "import.welcome.skip.body" }}</p>
+      <div class="import-welcome-actions">
+        <a class="btn primary" href="/">{{ T "import.sample.start_selling" }}</a>
+        <a class="btn secondary" href="/items">{{ T "import.welcome.skip.items" }}</a>
+      </div>
+    </div>
+  </div>
+</section>
+{{ end }}
+
+<div class="card" id="import-card">
   <p class="muted">{{ T "import.help" }}</p>
-  {{ if .stagedID }}
-  <!-- ut-docs#1168: the operator already browsed to and previewed this exact
-       file on the setup wizard's restore step — the wizard couldn't commit
-       it itself (see commitStagedImportForSetup's own comment for why that
-       can fail) so it sent them here with the preview's staged_id instead of
-       making them re-upload and re-preview. No file input, no Preview
-       button: staged_id only ever reaches this page already previewed, and
-       repreviewing here isn't wired (the preview path always expects a
-       fresh `file` field). Same "nothing saved until Import" contract as
-       every other commit on this page — this is a convenience, not a
-       bypass; the operator still presses Import for real. -->
-  {{ if .currencyUnconfirmed }}
-  <!-- ut-docs#1515: the common reason a staged wizard preview lands here at
-       all is ut-docs#970's own safety gate — the operator's country/
-       currency step was pre-filled correctly (OS locale detection) and
-       never explicitly touched, so setup_page.go's commitStagedImportForSetup
-       is deliberately never even attempted (see its own "ONLY attempted
-       when currencyTouched" comment) rather than silently confirming a
-       currency nobody chose. The generic import.staged_from_setup message
-       below doesn't say why an extra step is needed here — this one does,
-       so pressing Import isn't a mystery second click. -->
-  <p class="muted" data-setup-staged-import-unconfirmed-currency>{{ T "import.staged_from_setup_confirm_currency" }}</p>
-  {{ else }}
-  <p class="muted" data-setup-staged-import>{{ T "import.staged_from_setup" }}</p>
-  {{ end }}
-  <!-- enctype="multipart/form-data" even with no file input (review
-       finding): POST /api/import's very first step is
-       r.ParseMultipartForm — htmx posts a plain form urlencoded unless the
-       form itself declares multipart, and ParseMultipartForm rejects a
-       urlencoded body outright (ErrNotMultipart -> 400), which silently
-       broke this exact "press Import" button before this fix. -->
   <!-- ut-docs#1510: hx-indicator + hx-disabled-elt — a real pilot import
        (217 items/22 categories, plus thousands of receipt PDFs to parse
        past in a .bkp) can leave the screen looking inert for a real
@@ -63,39 +68,24 @@
        exists to stop. "find button[type=submit]" disables every submit
        button IN THIS FORM while a request from either one is in flight —
        Preview and Import share the one form, so neither can be pressed
-       again mid-request, whichever one the operator pressed first. Same
-       pattern as setup.html's join-form indicator. hx-indicator uses a
-       plain selector, resolved document-wide by htmx, so the button that
-       reappears after a preview (below, server-rendered, form="import-form",
-       living OUTSIDE this <form> in the swapped #import-result div) still
-       shows the busy indicator — but "find" resolves relative to the FORM
-       (form.querySelector), so hx-disabled-elt does NOT reach a button
-       outside it: that repeated button gets its own hx-disabled-elt="this"
-       right on itself (see import_page.go, where it's rendered) instead of
-       inheriting this form's. Independent review, ut-docs#1510: confirmed
-       against the vendored htmx source before writing this down as fact,
-       not assumed. -->
-  <form id="import-form" hx-post="/api/import" hx-target="#import-result" hx-swap="innerHTML" enctype="multipart/form-data"
-        hx-indicator="#import-busy" hx-disabled-elt="find button[type=submit]">
-    <input type="hidden" name="commit" value="1">
-    <input type="hidden" name="staged_id" value="{{ .stagedID }}">
-    <!-- ut-docs#2112: the POST handler has no other way to tell "this
-         request came from the /items dialog" from "this came from the
-         standalone /import page" -- both submit via the same hx-post form,
-         so httpx.IsFragmentSwap(w, r) on the POST itself is true either
-         way (an hx-post carries HX-Request:true regardless of how the page
-         around it was loaded). Threading .InItemsShell through as a form
-         field, the same way `commit`/`staged_id` already ride along, is
-         what lets the commit response's own "View catalog" link/button
-         decide correctly (see import_page.go's success summary). -->
-    <input type="hidden" name="in_items_shell" value="{{ if .InItemsShell }}1{{ else }}0{{ end }}">
-    <button class="btn primary" type="submit">{{ T "import.import" }}</button>
-  </form>
-  {{ else }}
+       again mid-request, whichever one the operator pressed first.
+       hx-indicator uses a plain selector, resolved document-wide by htmx,
+       so the button that reappears after a preview (server-rendered,
+       form="import-form", living OUTSIDE this <form> in the swapped
+       #import-result div) still shows the busy indicator — but "find"
+       resolves relative to the FORM, so hx-disabled-elt does NOT reach a
+       button outside it: that repeated button gets its own
+       hx-disabled-elt="this" (see import_page.go, where it's rendered). -->
   <form id="import-form" hx-post="/api/import" hx-target="#import-result" hx-swap="innerHTML" enctype="multipart/form-data"
         hx-indicator="#import-busy" hx-disabled-elt="find button[type=submit]">
     <input type="hidden" name="commit" id="import-commit" value="0">
-    <!-- ut-docs#2112: see the sibling form above -- same reason. -->
+    <!-- ut-docs#2112: the POST handler has no other way to tell "this
+         request came from the /items dialog" from "this came from the
+         standalone /import page" -- an hx-post carries HX-Request:true
+         regardless of how the page around it was loaded. Threading
+         .InItemsShell through as a form field is what lets the commit
+         response's own "View catalog" link/button decide correctly (see
+         import_page.go's success summary). -->
     <input type="hidden" name="in_items_shell" value="{{ if .InItemsShell }}1{{ else }}0{{ end }}">
     <!-- ut-docs#1247: accept is a UX hint only (the server sniffs real
          content, never trusts extension/MIME — see catimport.ParseBkp /
@@ -117,7 +107,6 @@
       <button class="btn primary" type="submit" data-action="set-value:import-commit,1">{{ T "import.import" }}</button>
     </div>
   </form>
-  {{ end }}
   <!-- Touch-legible on purpose (ut-docs#1510 review: "not a 12px inline
        spinner") — this is the only feedback the operator gets that
        anything happened at all while a big file parses. Hidden by
@@ -146,6 +135,38 @@ document.getElementById('import-result').addEventListener('change', function (e)
   });
 });
 </script>
+
+{{ if .showSampleCard }}
+<!-- ut-docs#3709: sample data moved here from the setup wizard. None
+     loaded → explanation + Load button (POST /api/import/sample-data swaps
+     its result, with links on to the catalog and the sell screen, into
+     #sample-data-msg in place of the button). Already loaded → say so and
+     point to Settings → Data, where it is removed. Rendered in the /items
+     Import dialog too: its links are full navigations, so "Go to catalog"
+     reloads the catalog list behind the dialog. "Loaded" means the
+     catalogue AND the sample customers/promos are there: a half-finished
+     load still offers the button so it can be retried. A satellite till
+     cannot load it (shop-wide rows the main till owns), so it gets the
+     use-the-main-till notice instead of the button. -->
+<div class="card" id="sample-data-card" data-testid="sample-data-card" style="margin-top:1rem">
+  <h3>{{ T "import.sample.title" }}</h3>
+  {{ if .sampleLoaded }}
+  <p class="muted" data-sample-present="1">{{ printf (T "import.sample.present") .sampleItemCount }}</p>
+  <div class="import-sample-actions">
+    <a class="btn secondary" href="/settings#settings-data">{{ T "import.sample.settings_link" }}</a>
+  </div>
+  {{ else if .sampleOnReplica }}
+  <p class="muted">{{ T "import.sample.help" }}</p>
+  <div class="pos-notice info" role="status" data-sample-replica="1"><span class="notice-text">{{ T "import.error.replica_use_primary" }}</span></div>
+  {{ else }}
+  <p class="muted">{{ T "import.sample.help" }}</p>
+  <div id="sample-data-msg" aria-live="polite">
+    <button type="button" class="btn primary" hx-post="/api/import/sample-data" hx-target="#sample-data-msg" hx-swap="innerHTML"
+            hx-disabled-elt="this" data-testid="sample-data-load">{{ T "import.sample.load_btn" }}</button>
+  </div>
+  {{ end }}
+</div>
+{{ end }}
 
 <div class="card" style="margin-top:1rem">
   <h3>{{ T "import.export_title" }}</h3>

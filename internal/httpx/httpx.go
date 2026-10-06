@@ -1444,6 +1444,9 @@ var renderFiles = []string{
 	// gets it for free — same riding-along mechanism as admin_tree.html
 	// above, just referenced from the layout rather than a specific page.
 	"ui/partials/pos_alert.html",
+	// ut-docs#3710: index.html's content block includes the guided tour's
+	// steps by its {{ define "tour" }} name.
+	"ui/partials/tour.html",
 }
 
 // ut-docs#2020: web/ui/partials/record_dialog_msg.html is deliberately NOT
