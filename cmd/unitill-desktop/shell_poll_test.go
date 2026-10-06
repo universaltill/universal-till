@@ -284,9 +284,9 @@ func TestWatchShellMode_SurvivesConnectionFailure(t *testing.T) {
 // it) — an untagged build, like macOS and Windows today, must NOT advertise
 // a capability it lacks, or the server would serve it a chrome-hiding mode
 // it can never leave. The value shellAppliesWindowMode itself must take is
-// platform-dependent (true only under desktop&&linux), so that half of the
-// assertion lives behind the build-tag-selected helper in
-// window_mode_gate_other_test.go / window_mode_gate_linux_test.go — the
+// platform-dependent (true only under desktop&&linux and desktop&&windows),
+// so that half of the assertion lives behind the build-tag-selected helper
+// in window_mode_gate_other_test.go / window_mode_gate_live_test.go — the
 // rest of this test (the HTTP round trip) is genuinely platform-independent
 // and stays here, common to both builds.
 func TestShellAppliesWindowModeGatesTheAdvertise(t *testing.T) {
@@ -335,8 +335,11 @@ func mustParseQuery(t *testing.T, raw string) url.Values {
 // pending apply is not re-dispatched when the server repeats the same mode
 // (a wedged loop must not accumulate queued closures).
 func TestWatchShellMode_AppliedAdvancesOnlyOnRealAck(t *testing.T) {
-	oldDelay := shellPollRetryDelay
+	oldDelay, oldAckWait := shellPollRetryDelay, shellApplyAckWait
 	shellPollRetryDelay = 10 * time.Millisecond
+	// This test never acks, so don't let each apply hold the loop for the
+	// production ack wait.
+	shellApplyAckWait = 10 * time.Millisecond
 
 	ps := &pollServer{t: t, release: make(chan struct{})}
 	ps.script = []struct {
@@ -361,7 +364,7 @@ func TestWatchShellMode_AppliedAdvancesOnlyOnRealAck(t *testing.T) {
 			close(ps.release)
 		}
 		<-watcherDone
-		shellPollRetryDelay = oldDelay
+		shellPollRetryDelay, shellApplyAckWait = oldDelay, oldAckWait
 	}()
 	go func() {
 		watchShellMode(ctx, srv.Client(), srv.URL, "normal", 1, func(mode string, done func()) {
@@ -498,4 +501,48 @@ func TestWatchShellMode_NoDowngradeWhenWindowIsNormal(t *testing.T) {
 		close(done)
 	}()
 	time.Sleep(300 * time.Millisecond)
+}
+
+// TestWatchShellMode_NextPollCarriesTheAckOfASwiftApply (ut-docs#610): the
+// poll right after a mode change must already acknowledge it when the
+// window applies quickly. Before the fix the loop fired that poll straight
+// away, carrying the OLD applied=, and the ack only travelled on the poll
+// after it — up to shellPollWaitSeconds later — so the server's 3 s
+// exit-to-os WaitApplied answered 503 although the window had come back
+// (seen on the Windows VM).
+func TestWatchShellMode_NextPollCarriesTheAckOfASwiftApply(t *testing.T) {
+	ps := &pollServer{t: t, release: make(chan struct{})}
+	ps.script = []struct {
+		mode string
+		rev  uint64
+	}{{"normal", 2}}
+	srv := httptest.NewServer(http.HandlerFunc(ps.handler))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	watcherDone := make(chan struct{})
+	defer func() {
+		cancel()
+		close(ps.release)
+		<-watcherDone
+	}()
+	go func() {
+		watchShellMode(ctx, srv.Client(), srv.URL, "kiosk", 1, func(mode string, done func()) {
+			// A UI thread that applies within a few tens of milliseconds.
+			time.AfterFunc(50*time.Millisecond, done)
+		})
+		close(watcherDone)
+	}()
+
+	deadline := time.After(3 * time.Second)
+	for len(ps.queries()) < 2 {
+		select {
+		case <-deadline:
+			t.Fatalf("never saw the second poll: %v", ps.queries())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if got := mustParseQuery(t, ps.queries()[1]).Get("applied"); got != "normal" {
+		t.Fatalf("poll after the change carried applied=%q, want normal — the ack must ride the very next poll", got)
+	}
 }

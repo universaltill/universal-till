@@ -38,9 +38,10 @@ func flagsForWindowMode(mode string) windowModeFlags {
 }
 
 // shellAppliesWindowMode reports whether THIS build's applyWindowMode does
-// anything real. False by default; window_mode_linux.go's init() sets it
-// true — the only platform with a real implementation today (macOS never
-// wired one, ut-docs#609; Windows's is an empty stub, ut-docs#610). It
+// anything real. False by default; window_mode_linux.go's and
+// window_mode_windows.go's init() set it true — the platforms with a real
+// implementation (Windows since ut-docs#610; macOS never wired one,
+// ut-docs#609). It
 // gates both the ?control=live advertisement on fetchShellPrefs and
 // starting watchShellMode at all (ADR-0064, ut-docs#1039): control=live is
 // a capability CLAIM — "I will really apply what you tell me, and I can

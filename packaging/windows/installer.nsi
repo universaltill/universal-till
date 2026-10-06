@@ -101,6 +101,13 @@ Section "Universal Till" SecMain
   SectionIn RO
   SetOutPath "$INSTDIR"
   !insertmacro StopRunningTill
+  ; Fresh install or upgrade? Decided before File /r puts the exe there. The
+  ; in-app updater re-runs this installer (/S) for every update, and an
+  ; existing till's owner already chose its window mode and autostart, so
+  ; only a fresh install seeds them below (ut-docs#610 review).
+  StrCpy $2 "fresh"
+  IfFileExists "$INSTDIR\${EXENAME}" 0 +2
+    StrCpy $2 "upgrade"
   ; Everything the goreleaser Windows archive contains: the exe, web/ assets,
   ; README, LICENSE, pos.env.example, and the .bat launcher.
   File /r "${SRCDIR}\*.*"
@@ -113,6 +120,28 @@ Section "Universal Till" SecMain
   CreateShortcut "$SMPROGRAMS\${APPNAME}\${APPNAME}.lnk" "$INSTDIR\${SHELLEXE}" "" "$INSTDIR\${SHELLEXE}" 0
   CreateShortcut "$DESKTOP\${APPNAME}.lnk" "$INSTDIR\${SHELLEXE}" "" "$INSTDIR\${SHELLEXE}" 0
   CreateShortcut "$SMPROGRAMS\${APPNAME}\Uninstall ${APPNAME}.lnk" "$INSTDIR\uninstall.exe"
+
+  StrCmp $2 "upgrade" desktop_defaults_done
+  ; Fullscreen at login by default, fresh installs only (ut-docs#610,
+  ; ut-docs reference/desktop-kiosk-overlay-macos-windows.md): a Startup-folder
+  ; shortcut named exactly like the one unitill-desktop's reconcileAutostart
+  ; (shelllink_windows.go) owns from then on, then the same
+  ; provision-desktop-kiosk-defaults subcommand the .deb runs, which seeds
+  ; window_mode=kiosk + launch_on_startup=true once (a settings marker makes
+  ; a reinstall over kept data a no-op) and records it in the audit trail. The
+  ; staged flag is read back from the file system, never assumed. cwd is
+  ; $INSTDIR (SetOutPath), so the subcommand reads the same pos.env and data
+  ; directory as the till.
+  CreateShortcut "$SMSTARTUP\${APPNAME}.lnk" "$INSTDIR\${SHELLEXE}" "" "$INSTDIR\${SHELLEXE}" 0
+  StrCpy $1 "false"
+  IfFileExists "$SMSTARTUP\${APPNAME}.lnk" 0 +2
+    StrCpy $1 "true"
+  DetailPrint "Setting up fullscreen and start-at-login defaults…"
+  nsExec::ExecToLog '"$INSTDIR\${EXENAME}" provision-desktop-kiosk-defaults --trigger=windows-installer --autostart-staged=$1'
+  Pop $0
+  StrCmp $0 "0" +2 0
+    DetailPrint "Could not set the display defaults ($0); the till opens in a normal window until you change it in Settings."
+  desktop_defaults_done:
 
   ; Add/Remove Programs entry (per-user hive).
   WriteRegStr HKCU "Software\UniversalTill" "InstallDir" "$INSTDIR"
@@ -144,6 +173,7 @@ Section "Uninstall"
   RMDir /r "$INSTDIR\web"
 
   Delete "$DESKTOP\${APPNAME}.lnk"
+  Delete "$SMSTARTUP\${APPNAME}.lnk"
   RMDir /r "$SMPROGRAMS\${APPNAME}"
 
   DeleteRegKey HKCU "${UNINSTKEY}"

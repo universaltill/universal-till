@@ -63,6 +63,15 @@ var shellPollRetryDelay = 2 * time.Second
 // package var so tests can shrink it.
 var shellPollDowngradeAfter = 60 * time.Second
 
+// shellApplyAckWait bounds how long the loop waits, after handing a new mode
+// to apply, for done() before it sends the next poll (ut-docs#610). That
+// poll then already carries applied=<new mode>, inside the server's
+// exit-to-os WaitApplied window (3 s), instead of one long-poll later. A
+// wedged UI thread costs one such wait, then polling goes on with the old
+// applied= — it still never acks a window that did not change. A package
+// var so tests can shrink it.
+var shellApplyAckWait = 2 * time.Second
+
 // isChromeHidingMode mirrors the server's common.IsChromeHiding via this
 // binary's own flag table: a mode whose window hides the OS chrome
 // (undecorated fullscreen) is the only kind the outage watchdog must
@@ -116,13 +125,18 @@ func watchShellMode(ctx context.Context, client *http.Client, baseURL string, in
 		defer mu.Unlock()
 		return lastApplied
 	}
-	requestApply := func(mode string) {
+	// requestApply returns a channel closed once done() fired.
+	requestApply := func(mode string) <-chan struct{} {
 		lastRequested = mode
+		applied := make(chan struct{})
+		var once sync.Once
 		apply(mode, func() {
 			mu.Lock()
 			lastApplied = mode
 			mu.Unlock()
+			once.Do(func() { close(applied) })
 		})
+		return applied
 	}
 	var failingSince time.Time
 	backoff := func() bool { // false = ctx cancelled, stop
@@ -191,7 +205,13 @@ func watchShellMode(ctx context.Context, client *http.Client, baseURL string, in
 			mode = "normal"
 		}
 		if mode != lastRequested {
-			requestApply(mode)
+			ack := time.NewTimer(shellApplyAckWait)
+			select {
+			case <-requestApply(mode):
+			case <-ack.C:
+			case <-ctx.Done():
+			}
+			ack.Stop()
 		}
 		// A healthy answer needs no backoff — the next request parks in
 		// the server's own long-poll hold, so this loop is not a busy one.

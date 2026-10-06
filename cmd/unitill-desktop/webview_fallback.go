@@ -129,9 +129,8 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 	// best-effort-and-log convention #611's own review accepted for
 	// OS-level apply failures (settings_page.go's own comment on the
 	// window-mode handler spells out that tradeoff for this specific
-	// path). On Windows, applyWindowMode is still #610's own no-op stub,
-	// so this wiring is inert there today but needs no further change once
-	// #610 lands a real implementation.
+	// path). On macOS applyWindowMode is still ut-docs#609's no-op stub,
+	// so this wiring is inert there until #609 lands.
 	if ctl != nil {
 		defer ctl.Close()
 		ctl.SetOps(desktopWindowOps(w, ctl))
@@ -168,10 +167,10 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 	// (.deb: the server is a systemd service this process never spawned —
 	// the topology where ut-docs#882's env handoff could not exist) and in
 	// spawn mode; showWindow is shared by both branches of main, which is
-	// what makes that automatic. Gated on shellAppliesWindowMode (real GTK
-	// apply on Linux only — Windows reaches this file too but its
-	// applyWindowMode is still ut-docs#610's empty stub, and it must not
-	// claim control=live and be served a kiosk mode it can't leave).
+	// what makes that automatic. Gated on shellAppliesWindowMode (a real
+	// apply: GTK on Linux, Win32 on Windows since ut-docs#610 — a platform
+	// without one must not claim control=live and be served a kiosk mode it
+	// can't leave).
 	//
 	// The deferred cancel-and-JOIN is registered after defer w.Destroy()
 	// and defer ctl.Close() above, so LIFO runs it FIRST when showWindow
