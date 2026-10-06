@@ -31,7 +31,7 @@ func TestAdminApply_BrandRetiredInPlace_DisplayNameUnmangled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -50,7 +50,7 @@ func TestAdminApply_BrandRetiredInPlace_DisplayNameUnmangled(t *testing.T) {
 	// re-pull doesn't double-mangle the name into something the strip can't
 	// undo.
 	for i := range 2 {
-		if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+		if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle2)); err != nil {
 			t.Fatalf("apply #%d after primary delete: %v", i+1, err)
 		}
 	}
@@ -108,7 +108,7 @@ func TestAdminApply_TaxCodeRetiredInPlace_DisplayNameUnmangled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -122,7 +122,7 @@ func TestAdminApply_TaxCodeRetiredInPlace_DisplayNameUnmangled(t *testing.T) {
 		t.Fatalf("second dump: %v", err)
 	}
 	for i := range 2 {
-		if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+		if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle2)); err != nil {
 			t.Fatalf("apply #%d after primary delete: %v", i+1, err)
 		}
 	}
@@ -175,7 +175,7 @@ func TestAdminApply_UserRetiredInPlace_DisplayUsernameUnmangled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -189,7 +189,7 @@ func TestAdminApply_UserRetiredInPlace_DisplayUsernameUnmangled(t *testing.T) {
 		t.Fatalf("second dump: %v", err)
 	}
 	for i := range 2 {
-		if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+		if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle2)); err != nil {
 			t.Fatalf("apply #%d after primary delete: %v", i+1, err)
 		}
 	}
@@ -264,7 +264,7 @@ func TestAdminApply_RetiredLocationAndRegisterNamesUnmangledInStockAndFiscalRead
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -283,7 +283,7 @@ func TestAdminApply_RetiredLocationAndRegisterNamesUnmangledInStockAndFiscalRead
 	if err != nil {
 		t.Fatalf("second dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle2)); err != nil {
 		t.Fatalf("apply after primary delete: %v", err)
 	}
 

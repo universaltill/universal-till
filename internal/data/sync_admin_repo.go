@@ -938,15 +938,6 @@ func (r *SyncAdminRepo) scanAdmin(ctx context.Context) (AdminBundle, error) {
 	return bundle, nil
 }
 
-// ApplyAdmin makes this till's admin state match the bundle, in one
-// transaction: first delete rows the primary no longer has (children
-// first; sales-referenced rows fall back to is_active=0), then upsert
-// everything. Tables absent from the bundle are left untouched.
-func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) error {
-	_, err := r.ApplyAdminWithResult(ctx, bundle)
-	return err
-}
-
 // AdminApplyResult reports what a committed ApplyAdminWithResult changed
 // that a caller outside the data layer must act on.
 type AdminApplyResult struct {
@@ -960,8 +951,11 @@ type AdminApplyResult struct {
 	ErasedCustomerIDs []string
 }
 
-// ApplyAdminWithResult is ApplyAdmin that also reports what it changed. The
-// result is only meaningful when err is nil (the transaction committed).
+// ApplyAdminWithResult makes this till's admin state match the bundle, in
+// one transaction: first delete rows the primary no longer has (children
+// first; sales-referenced rows fall back to is_active=0), then upsert
+// everything. Tables absent from the bundle are left untouched. The result
+// is only meaningful when err is nil (the transaction committed).
 func (r *SyncAdminRepo) ApplyAdminWithResult(ctx context.Context, bundle AdminBundle) (AdminApplyResult, error) {
 	var res AdminApplyResult
 	if err := r.applyAdmin(ctx, bundle, &res); err != nil {

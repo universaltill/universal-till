@@ -192,7 +192,7 @@ func TestAdminSync_DoesNotImportPaymentMethodPluginOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
