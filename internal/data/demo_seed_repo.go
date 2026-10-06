@@ -358,7 +358,7 @@ func (r *DemoSeedRepo) IsSampleItem(ctx context.Context, itemID string) (bool, e
 // SeedDemoCustomersPromos (re)inserts the 3 demo customers + 3 demo promo
 // codes (ut-docs#567), every row flagged is_sample_data = 1. Idempotent
 // (INSERT OR IGNORE) and atomic — the opt-in companion to
-// SeedDemoCatalogue, run by the same setup-wizard checkbox.
+// SeedDemoCatalogue, run by the same "Load sample data" button on /import.
 func (r *DemoSeedRepo) SeedDemoCustomersPromos(ctx context.Context) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {

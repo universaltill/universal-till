@@ -389,6 +389,9 @@ func TestSettingScope_Classification(t *testing.T) {
 		// ut-docs#2950: one till's own state.
 		{"diagnostics.active", SettingPerTill},
 		{"cloudsync.snapshot_hash", SettingPerTill},
+		// ut-docs#3673: this till's last answered unpaid check-in.
+		{"cloudsync.unpaid_checkin.version", SettingPerTill},
+		{"cloudsync.unpaid_checkin.date", SettingPerTill},
 		{"install.desktop_kiosk_overlay_provisioned", SettingPerTill},
 		// ut-docs#3091: each till runs its own binary, so which version it
 		// runs, since when, and whether its notes were seen are its own.
@@ -397,11 +400,14 @@ func TestSettingScope_Classification(t *testing.T) {
 		{ReleaseNotesSeenVersionSettingsKey, SettingPerTill},
 		// ut-docs#2950: reviewed and kept shop-wide (reasons at
 		// ShopWideSettingPrefixes).
-		{"setup.restore_prompt_status", SettingShopWide},
+		{"setup.completed", SettingShopWide},
 		{"lan_discovery.till_id", SettingShopWide},
 		{"fiscal.tse_provisioning_state", SettingShopWide},
 		{"till.name", SettingShopWide},
 		{"menu.restored_keys", SettingShopWide},
+		// ut-docs#3710: a user finished the guided tour — users are
+		// shop-wide, so is whether each one has seen it.
+		{TourDoneSettingsKey("u1"), SettingShopWide},
 		{"no_such_family.key", SettingUnclassified},
 		{"", SettingUnclassified},
 	} {

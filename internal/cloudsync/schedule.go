@@ -113,10 +113,14 @@ const retryAfterClamp = time.Hour
 // but only for the status codes that carry a real "come back later"
 // contract — 429 Too Many Requests and 503 Service Unavailable (design
 // point 3), and 402 plan_required, the cloud's refusal of the check-in for
-// a store without an active paid plan (ADR-0148 follow-up, ut-docs#3624:
-// it answers Retry-After 3600, so one refusal parks the loop for the
-// hour). Any other status's RetryAfter is ignored even if it happens to
-// be set. Returns 0 when there is nothing to honour. errors.As, so the
+// a store without an active paid plan (ADR-0148 follow-up, ut-docs#3624,
+// Retry-After 3600). For an unpaid till that wait only ends in a gated
+// tick, which makes no call: it asks again at its next start-up or
+// operator action, never on a timer (ADR-0148 amendment §4,
+// ut-docs#3673). The hint still matters for a till whose cache says paid
+// and whose 402 carries no entitlement block (an older cloud, a proxy):
+// that is the paid path, and it keeps honouring Retry-After. Any other
+// status's RetryAfter is ignored even if it happens to be set. Returns 0 when there is nothing to honour. errors.As, so the
 // hint survives if a caller ever wraps post's error.
 func retryAfterHint(err error) time.Duration {
 	var se *statusError

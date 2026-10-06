@@ -83,14 +83,13 @@ func TestImportHelpCopy_NamesEveryAutoDetectedFormat(t *testing.T) {
 // extension that attribute lists beyond plain CSV -- concretely, ".bkp" --
 // in English, so a locale drifting away from English (the German pack's
 // import.file dropped it down to "(CSV)" with no .bkp at all) is at least
-// caught for the base locale this repo ships. Checked against BOTH
-// import.html and setup.html, which the bug report showed carry the
-// identical accept list -- if they ever diverge, that's worth knowing too.
+// caught for the base locale this repo ships. import.html is the only file
+// picker since the setup wizard's restore step went away (ut-docs#3709).
 func TestImportFileFormats_MatchTheRealFilePicker(t *testing.T) {
 	chdirRoot(t)
 
 	const marker = `accept="`
-	for _, path := range []string{"web/ui/pages/import.html", "web/ui/pages/setup.html"} {
+	for _, path := range []string{"web/ui/pages/import.html"} {
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)

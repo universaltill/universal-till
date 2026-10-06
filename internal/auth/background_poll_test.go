@@ -251,7 +251,10 @@ func TestEveryPollerIsClassified(t *testing.T) {
 	// idle-lock timer itself (app.js, no request) and sell-screen-watch.js
 	// (VERSION_URL, checked above). A new setInterval anywhere else in
 	// web/public must be looked at, and its poll path classified.
-	jsTimers := map[string]bool{"app.js": true, "sell-screen-watch.js": true}
+	// tour.js (ut-docs#3710): its setInterval only re-checks the DOM while
+	// the guided tour is open (a dialog opened, the target moved) and never
+	// talks to the server — reviewed, nothing to classify.
+	jsTimers := map[string]bool{"app.js": true, "sell-screen-watch.js": true, "tour.js": true}
 	entries, err := os.ReadDir(filepath.Join(root, "web", "public"))
 	if err != nil {
 		t.Fatalf("read web/public: %v", err)

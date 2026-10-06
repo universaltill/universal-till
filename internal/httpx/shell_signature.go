@@ -29,6 +29,7 @@ var HeadAssets = []string{
 	"public/icon-picker-filter.js", // ut-docs#2506: built-in icon picker search
 	"public/bugreport-draft.js",    // ut-docs#2342: the bug-report draft store
 	"public/sell-screen-watch.js",  // ut-docs#2765: open sale screen live catalog refresh
+	"public/tour.js",               // ut-docs#3710: sale-screen guided tour
 	"public/inline-actions.js",     // ut-docs#3325: delegated data-action/data-* hooks (no inline handlers, CSP)
 }
 

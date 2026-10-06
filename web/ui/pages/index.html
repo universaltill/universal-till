@@ -1139,6 +1139,9 @@
   </div>
 </div>
 
+{{/* ut-docs#3710: the guided tour's steps (web/ui/partials/tour.html). */}}
+{{ template "tour" . }}
+
 {{ if .aiIdentify }}
 <!-- Camera identify (assistive; opened on demand, never blocks checkout).
      Message strings ride on data-* so app.js stays locale-free. -->

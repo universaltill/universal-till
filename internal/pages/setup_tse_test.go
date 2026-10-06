@@ -1206,7 +1206,8 @@ func TestSetupWizardDE_RejectedKickoffSurfacesInline(t *testing.T) {
 }
 
 // A transient (still pending) kickoff adds no marker and no banner — the
-// background ticker plus Settings already cover it.
+// background ticker plus Settings already cover it — so the wizard lands on
+// the import page's welcome mode like any other completion (ut-docs#3709).
 func TestSetupWizardDE_PendingKickoffDoesNotSurfaceInline(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	restoreCurrencyAfter(t)
@@ -1219,8 +1220,8 @@ func TestSetupWizardDE_PendingKickoffDoesNotSurfaceInline(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("wizard: code=%d", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/" {
-		t.Fatalf("Location = %q, want plain / for a still-pending kickoff", loc)
+	if loc := rec.Header().Get("Location"); loc != "/import?welcome=1" {
+		t.Fatalf("Location = %q, want /import?welcome=1 for a still-pending kickoff", loc)
 	}
 }
 

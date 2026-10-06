@@ -352,7 +352,7 @@ func TestAdminDumpApplyRoundTrip_TillLocalStateNeverSyncs(t *testing.T) {
 		"install.desktop_kiosk_overlay_provisioned",
 	}
 	shopWide := []string{
-		"setup.restore_prompt_status", "lan_discovery.till_id",
+		"setup.completed", "lan_discovery.till_id",
 		"fiscal.tse_provisioning_state", "till.name", "menu.restored_keys",
 	}
 	for _, k := range perTill {

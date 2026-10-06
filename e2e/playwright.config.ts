@@ -11,7 +11,8 @@ const PREINSTALLED_CHROMIUM = '/opt/pw-browsers/chromium';
 const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREINSTALLED_CHROMIUM } : {};
 
 // Three tills under test:
-//  - the DEFAULT project: auth off, demo catalog seeded by the migrations
+//  - the DEFAULT project: auth off, demo catalog seeded by run-till.sh
+//    (go run ./e2e/seed_demo — the migrations stopped seeding it, #539)
 //    — every spec except AUTH_ONLY_SPECS/AI_IDENTIFY_ONLY_SPECS drives this
 //    one directly.
 //  - the AUTH project: auth ON, a genuinely fresh install — only
@@ -58,8 +59,11 @@ const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREI
 // (auth-off) project has no session model for at all.
 // sell-all-grid-jiggle-locked-cashier-2534.spec.ts (ut-docs#2534) likewise
 // logs in as its own cashier to prove the All grid never arms for one.
+// sale-screen-guided-tour-3710.spec.ts (ut-docs#3710) does too: the
+// sale-screen tour is remembered per signed-in user, and auth-off never
+// auto-starts it. It must sort after login.spec.ts (first-boot wizard).
 const AUTH_ONLY_SPECS =
-  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|sell-tile-jiggle-mode-locked-cashier-2312|session-idle-lock-loop-3005|sale-only-cashier-3079|sell-all-grid-jiggle-locked-cashier-2534|phone-drawer-admin-3297|phone-drawer-admin-links-3358|session-display-board-idle-2935|session-kiosk-pin-mode-3136)\.spec\.ts$/;
+  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|sell-tile-jiggle-mode-locked-cashier-2312|session-idle-lock-loop-3005|sale-only-cashier-3079|sell-all-grid-jiggle-locked-cashier-2534|phone-drawer-admin-3297|phone-drawer-admin-links-3358|session-display-board-idle-2935|session-kiosk-pin-mode-3136|sale-screen-guided-tour-3710)\.spec\.ts$/;
 
 // ut-docs#1559: the ai.identify overlay's own err.name branching coverage
 // needs the dedicated ai-identify project/server below — see the comment

@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { ADMIN_PIN, watchConsole, fieldGeometry, expectStacked, setOskMode } from './helpers';
+import { ADMIN_PIN, watchConsole, fieldGeometry, expectStacked, setOskMode, markTourDone } from './helpers';
 
 // ut-docs#2223: this spec is exempt from tests/fixtures.ts (see
 // scripts/ci/guard-e2e-fixtures-import.sh), so it does not inherit the
@@ -267,30 +267,25 @@ test.describe.serial('first-boot setup and PIN login', () => {
       await p.locator('input[name=store_name]').fill('Rerender Test Shop');
       await step(4).locator('.setup-nav button', { hasText: 'Next' }).click();
       await step(5).locator('.setup-nav button', { hasText: 'Next' }).click();
-      await step(6).locator('.setup-nav button.primary', { hasText: 'No' }).click();
       // A deliberately mismatched PIN forces a server re-render with
       // detectedCountry='GB' (the operator's own prior pick, per the
       // renderWizard POST branch) — never a real detection, but the exact
       // same initial x-data shape a real one would produce.
-      await step(7).locator('input[name=pin]').fill('1234');
-      await step(7).locator('input[name=pin_confirm]').fill('9999');
-      // Step 7's "Next" only advances Alpine's `step` to 8 client-side —
+      await step(6).locator('input[name=pin]').fill('1234');
+      await step(6).locator('input[name=pin_confirm]').fill('9999');
+      // Step 6's "Next" only advances Alpine's `step` to 7 client-side —
       // the actual POST (and therefore the mismatch validation) fires on
-      // step 8's real form submit button.
-      await step(7).locator('.setup-nav button', { hasText: 'Next' }).click();
-      await step(8).locator('button[type=submit]', { hasText: 'Start selling' }).click();
+      // step 7's real form submit button.
+      await step(6).locator('.setup-nav button', { hasText: 'Next' }).click();
+      await step(7).locator('button[type=submit]', { hasText: 'Start selling' }).click();
       await p.waitForLoadState('networkidle');
       await expect(p.locator('.login-error')).toContainText(/PIN/i);
 
-      // The re-rendered page opens on the PIN step (errStep=7); walk back
+      // The re-rendered page opens on the PIN step (errStep=6); walk back
       // to the country step through the real Back buttons — Alpine state,
       // not a URL — so this exercises the actual navigation path, not a
       // shortcut into internal state.
-      await step(7).locator('.setup-nav button', { hasText: 'Back' }).click(); // -> restore (6)
-      // Step 6 has TWO "Back" buttons in the DOM (the default panel's and
-      // the "Yes, restoring" sub-panel's, x-show-toggled) — :visible scopes
-      // to the one actually shown, avoiding a strict-mode violation.
-      await step(6).locator('.setup-nav button:visible', { hasText: 'Back' }).click(); // -> shop type (5)
+      await step(6).locator('.setup-nav button', { hasText: 'Back' }).click(); // -> shop type (5)
       await step(5).locator('.setup-nav button', { hasText: 'Back' }).click(); // -> shop name (4)
       await step(4).locator('.setup-nav button', { hasText: 'Back' }).click(); // -> country (2), GB isn't DE
 
@@ -395,12 +390,12 @@ test.describe.serial('first-boot setup and PIN login', () => {
   });
 
   test('completing the wizard creates the admin PIN and logs in', async () => {
-    // ut-docs#617 inserted a new step 5 whose default panel has no "Next"
-    // button at all (No / Yes / Later instead) — the old flat click
-    // sequence of bare `.setup-nav button:visible` presses would have
-    // hunted for a "Next" that isn't there at that point. Scoped to each
-    // numbered section (data-step, set on every <section> in setup.html)
-    // rather than trying to keep the flat sequence in sync by count.
+    // Scoped to each numbered section (data-step, set on every <section>
+    // in setup.html) rather than a flat sequence of `.setup-nav button`
+    // presses kept in sync by count. Seven steps since ut-docs#3709: 1
+    // language, 2 country, 3 business identity (DE only), 4 shop name, 5
+    // shop type, 6 admin PIN, 7 done — no sample-data control, no restore
+    // step.
     const step = (n: number) => page.locator(`[data-step="${n}"]`);
 
     // Step 1 · language — just advance.
@@ -435,115 +430,121 @@ test.describe.serial('first-boot setup and PIN login', () => {
     await expect(storeNext).toBeEnabled();
     await storeNext.click();
 
-    // Step 5 · shop type + sample-data opt-in (ut-docs#539). Pick a type
-    // (tile picker, not a <select> — ut-docs#1095); leave the sample-data
-    // checkbox at its unchecked default — the auth project is "a genuinely
-    // fresh install", and a fresh install must end up with an empty
-    // catalogue unless the operator opts in.
+    // Step 5 · shop type (ut-docs#539; tile picker — ut-docs#1095). The
+    // sample-data checkbox that used to sit here is gone (ut-docs#3709):
+    // a fresh install ends up with an empty catalogue, and sample data is
+    // offered on the import page instead (asserted below).
     await step(5).locator('button.picker-tile[data-value="cafe"]').click();
-    await expect(page.locator('input[name=demo_data]:visible')).not.toBeChecked();
+    await expect(page.locator('input[name=demo_data]')).toHaveCount(0);
     await step(5).locator('.setup-nav button', { hasText: 'Next' }).click();
 
-    // Step 6 · restore from another POS? (ut-docs#617) — "No" for this
-    // first pass through. ut-docs#1515's real target (below) needs
-    // currencyTouched FALSE with a genuinely non-blank currency, which a
-    // tile click can't produce (clicking GB above already set it true).
-    // Real OS locale detection can't be forced from here (the till reads
-    // it from the process environment at Go-detectCountry time, not
-    // anything Playwright controls) — so, same technique as "a detected
-    // country shows alone at first" above: force a mismatched-PIN
-    // server re-render, which re-renders the wizard with detectedCountry/
-    // detectedCurrency baked in from GB/GBP (whatever was just submitted)
-    // while currencyTouched — root x-data state, reset on any fresh page
-    // load — starts false again. That deterministically reproduces the
-    // exact "correctly pre-filled, never clicked" real-world state this
-    // card is about.
-    await step(6).locator('.setup-nav button.primary', { hasText: 'No' }).click();
-    await step(7).locator('input[name=pin]').fill('1234');
-    await step(7).locator('input[name=pin_confirm]').fill('9999');
-    await step(7).locator('.setup-nav button', { hasText: 'Next' }).click();
-    await step(8).locator('button[type=submit]', { hasText: 'Start selling' }).click();
+    // Step 6 · admin PIN — a deliberately mismatched one first: the server
+    // re-renders the wizard on the PIN step (errStep=6) with the
+    // operator's own country/currency kept, not re-detected.
+    await step(6).locator('input[name=pin]').fill('1234');
+    await step(6).locator('input[name=pin_confirm]').fill('9999');
+    await step(6).locator('.setup-nav button', { hasText: 'Next' }).click();
+    await step(7).locator('button[type=submit]', { hasText: 'Start selling' }).click();
     await page.waitForLoadState('networkidle');
     await expect(page.locator('.login-error')).toContainText(/PIN/i);
-
-    // Re-rendered page opens on the PIN step (errStep=7) — one Back click
-    // reaches the restore step directly (root x-data, so country/currency
-    // are already GB/GBP regardless of which step is showing).
-    await step(7).locator('.setup-nav button', { hasText: 'Back' }).click(); // -> restore (6)
+    await expect(step(6).locator('input[name=pin]')).toBeVisible();
     await expect(page.locator('input[name=currency]')).toHaveValue('GBP');
 
-    // Step 6, second pass · drives the Yes -> CSV/Excel sub-picker -> Next
-    // path deliberately, not the simpler "No" default: this is the path
-    // the review found unreachable (B1 — `choice` doubled as both the
-    // panel selector and the answer, so the CSV/Excel panel hid itself the
-    // instant its own radio was picked, and re-entering Yes left Next
-    // permanently disabled since the radio was already checked and firing
-    // no further `change`). Real coverage for that fix, and for the
-    // "no detour through Settings/Catalog" acceptance criterion below.
-    // ut-docs#1168: the CSV/Excel picker's own in-panel Next (a static
-    // `disabled` button, never re-enabled) now exists only to disappear
-    // the moment the radio is picked — control passes to a real
-    // Browse/Preview panel, `[data-step="6-upload"]`, which lives OUTSIDE
-    // `[data-step="6"]` (nested forms are dropped by the HTML parser, see
-    // that section's own doc comment) and carries its own Next.
-    await step(6).locator('.setup-nav button.secondary', { hasText: 'Yes' }).click();
-    const csvPanel = step(6).locator('label.set-row', { hasText: 'CSV' });
-    await expect(csvPanel).toBeVisible();
-    const oldNextBtn = step(6).locator('.setup-nav button.primary', { hasText: 'Next' });
-    await expect(oldNextBtn).toBeDisabled();
-    await csvPanel.locator('input[type=radio]').check();
-    await expect(oldNextBtn).toBeHidden(); // the bug: picking the radio used to leave this whole panel (Next included) on screen instead of handing off
-    const uploadPanel = page.locator('[data-step="6-upload"]');
-    await expect(uploadPanel).toBeVisible();
-    const nextBtn = uploadPanel.locator('.setup-nav button.primary', { hasText: 'Next' });
-    await expect(nextBtn).toBeEnabled(); // nothing staged yet — never blocked on an empty restore
+    // The re-render starts currencyTouched false again (root x-data, reset
+    // on any page load), so finishing from here would leave the till's
+    // currency unconfirmed (ut-docs#970) and every later spec's catalogue
+    // import on this shared AUTH till would stop at the currency prompt.
+    // Walk back to the country step through the real Back buttons and tap
+    // GB again — the explicit choice that confirms the currency.
+    await step(6).locator('.setup-nav button', { hasText: 'Back' }).click(); // -> shop type (5)
+    await step(5).locator('.setup-nav button', { hasText: 'Back' }).click(); // -> shop name (4)
+    await step(4).locator('.setup-nav button', { hasText: 'Back' }).click(); // -> country (2), GB isn't DE
+    await step(2).locator('h1').waitFor();
+    if (await showAllCountriesBtn.isVisible()) await showAllCountriesBtn.click();
+    await step(2).locator('button.picker-tile[value="GB"]').click();
+    await expect(page.locator('input[name=currency_touched]')).toHaveValue('1');
+    await step(2).locator('.setup-nav button', { hasText: 'Next' }).click();
+    await expect(storeName).toHaveValue('E2E Test Shop'); // kept across the re-render (ut-docs#3096)
+    await step(4).locator('.setup-nav button', { hasText: 'Next' }).click();
+    await step(5).locator('.setup-nav button', { hasText: 'Next' }).click();
 
-    // ut-docs#1515: actually browse to and preview a real file here — the
-    // Go-level tests (setup_restore_import_test.go) cover the server side
-    // of this flow byte-for-byte, but only a real browser exercises the
-    // client half: the htmx:afterSwap listener capturing staged_id into
-    // Alpine's restoreStagedId, and the new currency-confirm checkbox
-    // actually flipping currencyTouched. currencyTouched is false here
-    // (the mismatched-PIN re-render reset it) with a real, non-blank
-    // currency (GBP) — the exact scenario this card fixes — so Next must
-    // now REFUSE to proceed once a file is staged: silently landing on
-    // /import with no explanation is exactly the bug ut-docs#1515 reports.
-    await uploadPanel.locator('input[type=file]').setInputFiles({
-      name: 'wizard-restore-1515.csv',
-      mimeType: 'text/csv',
-      buffer: Buffer.from('Name,SKU,Barcode,Price,Category,In stock\nWizard Restore Widget,WRW1515,,4.50,Snacks,3\n'),
-    });
-    await Promise.all([
-      page.waitForResponse((r) => r.url().includes('/api/import')),
-      uploadPanel.locator('button[type=submit]', { hasText: 'Preview' }).click(),
-    ]);
-    await expect(page.locator('[data-setup-preview-ready]')).toBeVisible();
-    await expect(nextBtn).toBeDisabled(); // staged + currency never confirmed — must not silently proceed
-
-    const confirmCurrency = page.locator('[data-setup-confirm-currency]');
-    await expect(confirmCurrency).toBeVisible();
-    await confirmCurrency.locator('input[type=checkbox]').check();
-    await expect(nextBtn).toBeEnabled(); // explicit confirmation given — same currencyTouched flag a tile click sets
-    await nextBtn.click();
-
-    // Step 7 · admin PIN — this time a matching one.
+    // A matching PIN this time.
     await expect(page.locator('input[name=pin]')).toHaveAttribute('autocomplete', /^off-/);
-    await step(7).locator('input[name=pin]').fill('482913');
-    await step(7).locator('input[name=pin_confirm]').fill('482913');
-    await step(7).locator('.setup-nav button', { hasText: 'Next' }).click();
+    await step(6).locator('input[name=pin]').fill('482913');
+    await step(6).locator('input[name=pin_confirm]').fill('482913');
+    await step(6).locator('.setup-nav button', { hasText: 'Next' }).click();
 
-    // Step 8 · finish — real form submit. ut-docs#1515 (AC1): confirming
-    // the currency on the upload panel must be enough to auto-commit the
-    // staged import — the operator reaches a stocked catalog directly,
-    // never a detour through /import to press one more button.
+    // Step 7 · finish — real form submit. ut-docs#3709: the wizard lands on
+    // the import page's welcome mode, which explains the three ways to
+    // start (import a file / load sample data / skip).
     await Promise.all([
-      page.waitForURL((u) => u.pathname === '/catalog'),
+      page.waitForURL((u) => u.pathname === '/import' && u.searchParams.get('welcome') === '1'),
       page.locator('button[type=submit]', { hasText: 'Start selling' }).click(),
     ]);
-    await expect(page.locator('.catalog-row[data-name="Wizard Restore Widget"]')).toBeVisible();
+    const welcome = page.locator('[data-testid="import-welcome"]');
+    await expect(welcome).toBeVisible();
+    for (const option of ['file', 'sample', 'skip']) {
+      await expect(welcome.locator(`[data-welcome-option="${option}"]`)).toBeVisible();
+    }
+    // Nothing on the welcome page grabs focus (no keyboard pops up on a
+    // touch till).
+    expect(await page.evaluate(() => document.activeElement?.tagName)).toBe('BODY');
+
+    // The fresh catalogue really is empty: no SAMPLE item anywhere yet.
+    await page.goto('/catalog');
+    await expect(page.locator('.sample-badge')).toHaveCount(0);
+    // ut-docs#3710: the admin the wizard just created would get the sale
+    // screen's guided tour on "/" — its own spec covers it; the serial tests
+    // below drive the sale screen and Lock with no balloon in the way.
+    await markTourDone(page);
 
     // Leave the session on the till's home screen, where the next serial
     // test expects it (same convention as the change-PIN test below).
+    await page.goto('/');
+    await expect(page.locator('#basket')).toBeVisible();
+  });
+
+  // ut-docs#3709: the import page's Sample data card loads the sample
+  // catalogue (it used to be a wizard checkbox), once — and its result links
+  // on to the catalog, which then shows the SAMPLE-marked items. Removes
+  // the sample data again at the end (Settings → Data's own endpoint) so
+  // the rest of the AUTH project's specs keep their empty catalogue.
+  test('the import page loads sample data once, and the catalog shows it marked SAMPLE', async () => {
+    await page.goto('/import?welcome=1');
+    await page.locator('[data-welcome-option="sample"] a', { hasText: 'Go to sample data' }).click();
+    const card = page.locator('[data-testid="sample-data-card"]');
+    await expect(card).toBeInViewport();
+    await Promise.all([
+      page.waitForResponse((r) => r.url().endsWith('/api/import/sample-data') && r.status() === 200),
+      card.locator('[data-testid="sample-data-load"]').click(),
+    ]);
+    const loaded = card.locator('[data-sample-loaded="1"]');
+    await expect(loaded).toBeVisible();
+    await expect(loaded.locator('a[href="/"]', { hasText: 'Start selling' })).toBeVisible();
+
+    try {
+      await Promise.all([
+        page.waitForURL((u) => u.pathname === '/items'),
+        loaded.locator('a[href="/items"]', { hasText: 'Go to catalog' }).click(),
+      ]);
+      await expect(page.locator('.sample-badge', { hasText: 'SAMPLE' }).first()).toBeVisible();
+
+      // Coming back: the card now says it is loaded and points to Settings
+      // → Data — no second Load button, and a direct second POST adds
+      // nothing (the server answers "already loaded").
+      await page.goto('/import');
+      await expect(card.locator('[data-sample-present="1"]')).toBeVisible();
+      await expect(card.locator('a[href="/settings#settings-data"]')).toBeVisible();
+      await expect(card.locator('[data-testid="sample-data-load"]')).toHaveCount(0);
+      const again = await page.request.post('/api/import/sample-data');
+      expect(again.status()).toBe(200);
+      expect(await again.text()).toContain('data-sample-already="1"');
+    } finally {
+      const removed = await page.request.post('/api/settings/remove-demo-catalogue');
+      expect(removed.ok(), `remove sample data (status ${removed.status()})`).toBe(true);
+    }
+    await page.goto('/catalog');
+    await expect(page.locator('.sample-badge')).toHaveCount(0);
     await page.goto('/');
     await expect(page.locator('#basket')).toBeVisible();
   });

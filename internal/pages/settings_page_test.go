@@ -2332,7 +2332,6 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 		{"shop-type", http.MethodPost, "/api/settings/shop-type", url.Values{"shop_type": {""}}, gateElevation},
 		{"store-name", http.MethodPost, "/api/settings/store-name", url.Values{"store_name": {"Corner Café"}}, gateElevation},
 		{"remove-demo-catalogue", http.MethodPost, "/api/settings/remove-demo-catalogue", nil, gateElevation},
-		{"dismiss-restore-prompt", http.MethodPost, "/api/settings/dismiss-restore-prompt", nil, gateElevation},
 		{"dismiss-pending-base-plugin", http.MethodPost, "/api/settings/dismiss-pending-base-plugin", url.Values{"canonical_type": {"x"}}, gateElevation},
 		{"till-name", http.MethodPost, "/api/settings/till-name", url.Values{"name": {"X"}}, gateElevation},
 		{"till-register", http.MethodPost, "/api/settings/till-register", url.Values{"register_id": {"regA"}}, gateElevation},
@@ -2434,8 +2433,7 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 	// Seed the DATA-availability guards (not permission guards — those must
 	// survive ut-docs#867 untouched) so every guarded un-gated site actually
 	// renders: a payment method ({{ if .payMethods }}), a sample catalogue
-	// item ({{ if gt .sampleCount 0 }}), a deferred restore prompt
-	// ({{ if .restorePromptDeferred }}), a pending base plugin
+	// item ({{ if gt .sampleCount 0 }}), a pending base plugin
 	// ({{ range .pendingBasePlugins }}), and a register for the picker.
 	// payment_methods (already seeded with cash/card/gift) and items come
 	// from the real migrations openPagesTestDB now runs (ut-docs#1657/#1677)
@@ -2447,9 +2445,6 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 		if _, err := d.Db.Exec(s); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if err := d.Settings.Set(t.Context(), common.KeyRestorePromptStatus, common.RestorePromptStatusDeferred); err != nil {
-		t.Fatal(err)
 	}
 	if err := savePendingBasePlugins(t.Context(), d, []basePluginSpec{{CanonicalType: "language", Locale: "de"}}); err != nil {
 		t.Fatal(err)
@@ -2476,7 +2471,6 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 		`hx-post="/api/settings/payments-fee"`,       // payments fee rows
 		`hx-post="/api/backup/now"`,                  // backup card: only the Backup-now button
 		`data-testid="demo-remove"`,                  // data card (kept sampleCount guard)
-		`data-testid="restore-dismiss"`,              // data card (kept restorePromptDeferred guard)
 		`data-testid="pending-base-plugin-dismiss"`,  // data card (kept pendingBasePlugins guard)
 		`hx-post="/api/settings/report-retention"`,   // retention card: mode form only
 		`hx-post="/api/settings/till-name"`,          // tills card: this till's own name

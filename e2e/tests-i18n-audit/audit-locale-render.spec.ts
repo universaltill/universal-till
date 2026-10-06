@@ -162,15 +162,16 @@ async function ensureOperator(page: Page) {
     await step(2).locator('.setup-nav button', { hasText: 'Next' }).click(); // country
     await page.locator('input[name=store_name]').fill('Demo Shop');
     await step(4).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop name (GB skips step 3)
-    await step(5).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop type + demo data
-    await step(6).locator('.setup-nav button.primary', { hasText: 'No' }).click(); // restore from another POS? No
-    await step(7).locator('input[name=pin]').fill(ADMIN_PIN);
-    await step(7).locator('input[name=pin_confirm]').fill(ADMIN_PIN);
-    await step(7).locator('.setup-nav button', { hasText: 'Next' }).click(); // PIN
+    await step(5).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop type
+    await step(6).locator('input[name=pin]').fill(ADMIN_PIN);
+    await step(6).locator('input[name=pin_confirm]').fill(ADMIN_PIN);
+    await step(6).locator('.setup-nav button', { hasText: 'Next' }).click(); // PIN
     await Promise.all([
       page.waitForURL((u) => !u.pathname.includes('/setup')),
-      step(8).locator('button[type=submit]', { hasText: 'Start selling' }).click(),
+      step(7).locator('button[type=submit]', { hasText: 'Start selling' }).click(),
     ]);
+    // The wizard lands on /import?welcome=1 (ut-docs#3709).
+    await page.goto('/');
   } else if (page.url().includes('/login')) {
     for (const d of ADMIN_PIN.split('')) {
       await page.locator('.pin-pad button').getByText(d, { exact: true }).click();
@@ -178,6 +179,10 @@ async function ensureOperator(page: Page) {
     await page.locator('button[type=submit].pin-key').click();
     await page.waitForURL((u) => !u.pathname.includes('/login'));
   }
+  // ut-docs#3710: never capture the sale screen's first-visit guided tour —
+  // mark it done for this operator (same as e2e/tests/helpers.ts
+  // markTourDone); every capture below opens its page fresh.
+  await page.request.post('/api/tour/done');
   await expect(page.locator('#basket')).toBeVisible();
 }
 

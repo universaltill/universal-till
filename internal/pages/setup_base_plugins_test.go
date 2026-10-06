@@ -1193,7 +1193,7 @@ func TestSettingsDismissPendingBasePluginEndpoint(t *testing.T) {
 	}
 
 	form := url.Values{"canonical_type": {"language"}, "locale": {"de"}}
-	// ut-docs#865: elevation prompt, not a flat 403 (same as dismiss-restore-prompt).
+	// ut-docs#865: a cashier gets the elevation prompt, not a flat 403.
 	rec := postForm(mux, "/api/settings/dismiss-pending-base-plugin", form, &cashUser)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "elevation-dialog") {
 		t.Fatalf("cashier dismiss: code=%d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())

@@ -12,6 +12,12 @@
   <p class="manual-untranslated" role="note">{{ T "help.untranslated" }}</p>
   {{ end }}
   {{ .topic.HTML }}
+  {{/* ut-docs#3710: the sale screen's "?" opens the Selling topic, so the
+       tour's restart sits there and on its own topic as well as on the
+       landing page below. */}}
+  {{ if or (eq .topic.ID "sell") (eq .topic.ID "guided-tour") }}
+  <p class="manual-tour-link"><a class="btn" data-testid="help-take-tour" href="/?tour=1&amp;stay=1">{{ T "tour.restart.button" }}</a></p>
+  {{ end }}
 </article>
 {{ else }}
 <article class="manual-topic manual-intro" id="manual-topic">
@@ -28,6 +34,14 @@
        immediately visible — so it belongs on the landing view, not inside the
        plugins topic. It also can't live in a locale's own plugins.md topic,
        since topic Markdown renders through goldmark without html.WithUnsafe. */}}
+  {{/* ut-docs#3710: restart the sale screen's guided tour any time.
+       stay=1 keeps a back-office-mode till on the sale screen (index_page.go
+       saleScreenReturnURL) instead of redirecting a manager to /backoffice. */}}
+  <div class="card manual-tour">
+    <h2>{{ T "tour.restart.title" }}</h2>
+    <p>{{ T "tour.restart.description" }}</p>
+    <a class="btn" data-testid="help-take-tour" href="/?tour=1&amp;stay=1">{{ T "tour.restart.button" }}</a>
+  </div>
   <div class="card manual-plugins">
     <h2>{{ T "help.plugins" }}</h2>
     <p>{{ T "help.plugins_description" }}</p>

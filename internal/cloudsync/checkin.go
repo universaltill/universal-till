@@ -148,6 +148,18 @@ func planCheckin(ctx context.Context, cfg *config.Config, settings *data.Setting
 	}
 }
 
+// planUnpaidCheckin is the plan of a check-in the ADR-0148 gate let through
+// only for its start-up or operator-window exception (amendment §3,
+// ut-docs#3673): no conditional GET, which would 402 before the cloud saw
+// this till's version; POST the device report straight away. No version,
+// so done records only the POST's time and state hash.
+func planUnpaidCheckin(ctx context.Context, settings *data.SettingsRepo, stateSum [sha256.Size]byte) checkinPlan {
+	if settings != nil {
+		enroll.RetryUnsavedCredential(ctx, settings)
+	}
+	return checkinPlan{post: true, sum: stateSum}
+}
+
 // done records a successful POST (called only after pushSync succeeded).
 func (p checkinPlan) done(cfg *config.Config) {
 	m := enroll.Effective(cfg).Marketplace

@@ -14,7 +14,11 @@ import (
 // check-in window and kicks the loop, so an unpaid till learns of a paid
 // plan (or a claim) without any background poll. Not opened by a
 // cloud-link nudge or a main till's relayed check-in (ADR-0148 §3): those
-// are not operator actions on this till.
+// are not operator actions on this till. Amendment 2026-10-05
+// (ut-docs#3673): a 402 plan_required closes the window (no retry until the
+// next operator action or start-up), and an unpaid till also checks in once
+// at start-up after an install, an update or the first start of the day
+// (internal/cloudsync's start-up check-in, not this window).
 
 const (
 	// operatorCheckinWindow follows Register now, a pairing, a registering

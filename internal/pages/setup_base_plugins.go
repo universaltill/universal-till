@@ -124,7 +124,7 @@ const (
 // BEFORE any network attempt (so the list survives even if the process dies
 // mid-request), then makes one best-effort, time-boxed synchronous attempt
 // to resolve+install right here. Mirrors this same handler's other
-// best-effort steps (restore-choice, demo-data seed) — a failure here must
+// best-effort steps (auto-register, TSE kickoff) — a failure here must
 // never delay or fail the wizard's own response, so every error is logged
 // and swallowed.
 func installBasePluginsForSetup(ctx context.Context, d *common.Deps, country string) {

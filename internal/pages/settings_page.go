@@ -562,10 +562,6 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		sampleCustomerPromoCount, _ := demoSeedRepo.SampleCustomerPromoCount(r.Context())
 		sampleCount := sampleItemCount + sampleCustomerPromoCount
 		shopType, _, _ := d.Settings.Get(r.Context(), common.KeyShopType)
-		// Restore-from-another-POS resume prompt (ut-docs#617): only shown
-		// when the wizard's "Later" choice left it deferred; best-effort
-		// like shopType above, same posture.
-		restorePromptStatus, _, _ := d.Settings.Get(r.Context(), common.KeyRestorePromptStatus)
 		// Country base-plugin auto-install (ut-docs#591): whatever the setup
 		// wizard's own attempt and the background retry haven't installed
 		// yet, so the merchant can see it's happening (or failing) and
@@ -745,7 +741,6 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// it follows that page's own action, not "settings".
 		canReportIssue := canPerform(d, r, issueReportingAction)
 		pendingBasePluginRows := pendingBasePluginViews(pendingBasePlugins)
-		restorePromptDeferred := restorePromptStatus == common.RestorePromptStatusDeferred
 		// ut-docs#1913: the same four conditions that gate whether
 		// settings-issuereport/settings-menulayout/settings-payments/
 		// settings-data/settings-all actually RENDER their `.card` this
@@ -756,7 +751,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// (TestSettingsPage_DataCardHiddenFromCashierWhenNothingPending's
 		// whole point: the heading text must not appear in the body at
 		// all, not merely be visually hidden).
-		showDataCard := isManager || sampleCount > 0 || len(pendingBasePluginRows) > 0 || restorePromptDeferred
+		showDataCard := isManager || sampleCount > 0 || len(pendingBasePluginRows) > 0
 		settingsNav := filterSettingsNavForRender(
 			settingsnav.Resolve(locale, d.SettingsAmendmentsSnapshot()),
 			isManager, canReportIssue, len(payMethods) > 0, showDataCard,
@@ -843,7 +838,6 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"storeName":              storeNameForCard(all[common.KeyStoreName]),  // ut-docs#3115
 			"staffLocaleSet":         staffLocaleSet(all[common.KeyStaffLocales]), // ut-docs#3086
 			"defaultStaffLocale":     httpx.DefaultStaffLocale(),
-			"restorePromptDeferred":  restorePromptDeferred,
 			"pendingBasePlugins":     pendingBasePluginRows,
 			"tseProvisioning":        tseProvisioningViewFor(tseState),
 			"tseRetryable":           tseProvisioningRetryable(tseState),
@@ -2423,8 +2417,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// dedicated #demo-item-msg-<id> span is BOTH the button's own hx-target
 	// AND the elevation prompt's hxTarget (unlike dismiss-pending-base-
 	// plugin's #chip-row/#chip-row-msg split above), so a first-time
-	// elevation hint can never wipe out the row's own retry target the way
-	// ut-docs#865 finding F1 hit #restore-resume-block.
+	// elevation hint can never wipe out the row's own retry target
+	// (ut-docs#865 finding F1: a retry target the button's own swap
+	// removes leaves the elevation dialog nowhere to retry into).
 	//
 	// ut-docs#1840 review findings F2/F3, both fixed here:
 	//   - F3: the id is checked against IsSampleItem BEFORE checkOrElevate
@@ -2600,63 +2595,21 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		fmt.Fprintf(w, `<span>✓ %s</span>%s`, httpx.T(locale, "settings.data.demo_promo_kept"), disableDemoRowButtonsScript(".demo-kept-promo"))
 	})
 
-	// Dismiss the "restore from another POS?" resume prompt (ut-docs#617)
-	// without importing anything — an explicit "no thanks," not just
-	// ignoring it forever. hx-swap="outerHTML" on the whole block, so an
-	// empty 200 body removes it; 204 wouldn't swap (see remove-demo-
-	// catalogue's comment above on why 2xx-with-body is used for hx-swap
-	// targets).
-	// ut-docs#865: checkOrElevate/InsertAuditElevated (#557/#796). hxTarget
-	// is the dedicated #restore-resume-msg span, NOT #restore-resume-block
-	// itself — review finding F1: the block is what the button's own
-	// hx-swap="outerHTML" removes, and the dialog's retry form always
-	// innerHTML-swaps into hxTarget (elevation_prompt.html's fixed
-	// hx-swap); pointing it at a node the denial hint had just replaced
-	// left the retry's own hx-target resolving to nothing — htmx bails
-	// with htmx:targetError instead of ever sending the approver's PIN.
-	// X-UT-Response: ok, set inline below (not via settingsRespondSaved,
-	// which this handler doesn't call — it keeps the pre-existing bare
-	// empty-200-body success shape), makes the dialog's own script reload
-	// the page on the elevated path instead of leaving a stale msg span —
-	// same fix #796's review made for till-name/till-register/save (a
-	// missing X-UT-Response: ok left stale values after approval).
-	mux.HandleFunc("POST /api/settings/dismiss-restore-prompt", func(w http.ResponseWriter, r *http.Request) {
-		locale := httpx.ResolveLocale(w, r)
-		_ = r.ParseForm()
-		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
-		if elev.Outcome == needsElevation {
-			renderElevationPrompt(w, r, "/api/settings/dismiss-restore-prompt", "#restore-resume-msg",
-				httpx.T(locale, "elevation.summary.dismiss_restore_prompt"), nil, elev)
-			return
-		}
-		if err := saveShopSettings(r.Context(), d, elev, map[string]string{common.KeyRestorePromptStatus: ""}); err != nil {
-			if !respondSettingsSyncError(w, r, err) {
-				http.Error(w, "could not save", http.StatusInternalServerError)
-			}
-			return
-		}
-		settingsAudit(r, posRepo, elev, "settings", common.KeyRestorePromptStatus, "restore_prompt_dismissed", nil)
-		if elev.Outcome == elevated {
-			w.Header().Set("X-UT-Response", "ok")
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	})
-
 	// Dismiss one still-pending country base-plugin auto-install
 	// (ut-docs#591) without installing it — "a merchant can decline/remove
 	// anything auto-installed" for the not-yet-installed case. hx-swap
-	// "outerHTML" on the chip itself, same reasoning as the restore-prompt
-	// dismiss above: an empty 200 body removes just that chip.
+	// "outerHTML" on the chip itself: an empty 200 body removes just that
+	// chip (204 wouldn't swap).
 	// ut-docs#865: checkOrElevate/InsertAuditElevated (#557/#796). hxTarget
 	// is this chip's own dedicated #pending-plugin-msg-<canonical_type>
-	// span (review finding F1 — same "don't point the retry at a node the
-	// button's own outerHTML removal can make vanish" reasoning as
-	// dismiss-restore-prompt above), NOT the chip-row itself, via a CSS
+	// span (review finding F1 — don't point the retry at a node the
+	// button's own outerHTML removal can make vanish), NOT the chip-row itself, via a CSS
 	// attribute selector rather than "#id" since canonical_type could
 	// contain characters a bare #id selector would need escaping for (the
 	// shipped catalogue only ever produces "language" today —
-	// setup_base_plugins.go). Same X-UT-Response: ok reasoning as
-	// dismiss-restore-prompt above.
+	// setup_base_plugins.go). X-UT-Response: ok on the elevated path makes
+	// the dialog's own script reload the page instead of leaving a stale msg
+	// span (the same fix #796's review made for till-name/till-register/save).
 	// ut-docs#868: canonical_type/locale are now validated against the
 	// currently-pending list BEFORE checkOrElevate (this file's own
 	// established convention — till-register/payments-fee): previously

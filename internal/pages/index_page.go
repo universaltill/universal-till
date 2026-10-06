@@ -15,6 +15,7 @@ import (
 )
 
 func registerIndex(mux *http.ServeMux, d *common.Deps) {
+	registerTour(mux, d) // ut-docs#3710: the sale-screen guided tour's "done"
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/help" {
 			renderHelpPage(w, r, d, "")
@@ -239,6 +240,9 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			// stock_management-gated /inventory — a cashier (sale-only)
 			// doesn't get it, same as the rail's Stock entry.
 			"canManageStock": canPerform(d, r, "stock_management"),
+			// ut-docs#3710: start the guided tour (web/ui/partials/tour.html)
+			// — a signed-in operator who hasn't finished it, or ?tour=1.
+			"tourStart": tourShouldStart(r.Context(), d, r),
 		}
 		httpx.Render("ui/pages/index.html", data)(w, r)
 	})

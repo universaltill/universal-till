@@ -4154,6 +4154,21 @@ tr.row-warn td { background: var(--warning-tint); }
 .notice-block-success { background: var(--success-tint); border: 1px solid var(--success-tint-border);
   border-radius: var(--radius); padding: .7rem .9rem; margin-block-end: .6rem; }
 
+/* ut-docs#3709: /import?welcome=1 — the three ways a new shop starts
+   (import a file / load sample data / skip). A grid of option cards on wide
+   screens, stacked on a phone; each card's action sits at its foot so the
+   buttons line up across the row. Logical properties only (RTL). */
+.import-welcome { margin-block-end: 1rem; }
+.import-welcome h2 { margin-block: 0 .3rem; }
+.import-welcome-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: .75rem; margin-block-start: .6rem; }
+.import-welcome-option { display: flex; flex-direction: column; gap: .5rem;
+  border: 1px solid var(--border); border-radius: var(--radius); padding: .8rem .9rem; }
+.import-welcome-option h3 { margin: 0; }
+.import-welcome-option p { margin: 0; flex: 1; }
+.import-welcome-actions, .import-sample-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+.import-welcome-actions .btn, .import-sample-actions .btn { flex: 1 1 auto; }
+
 /* ---------- Kiosk mode (dedicated till: UT_KIOSK=1) ----------
    Touch-first: bigger targets, no text selection or tap highlights, no
    accidental pinch zoom. Pair with a fullscreen browser (chromium --kiosk);
@@ -6294,3 +6309,50 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   .pos-container .btn-tile .tile-price,
   .pos-container .btn-tile.tile-colored .tile-price { color: var(--muted); font-size: .85rem; }
 }
+
+/* ---------- Guided tour (ut-docs#3710, web/public/tour.js) ----------
+   .ut-tour-ring is the highlight AND the backdrop: a box exactly over the
+   target whose huge spread shadow dims everything else (a centred step
+   gives it no size, so the whole screen dims). Both it and the balloon sit
+   above the page, nav rail and status bar (z 470/480) but under the
+   on-screen keyboard (#osk, 1000); the tour never runs while a
+   popup (>= 500) is open. The ring is visual only (pointer-events: none):
+   the status bar, Lock and exit-to-OS stay reachable through it and a tap
+   on the dimmed area never dismisses the tour. tour.js positions both from
+   getBoundingClientRect (physical px, right in RTL too), so nothing here
+   sets a horizontal inset; the balloon's own content uses logical
+   properties. Reduced motion: the global prefers-reduced-motion block
+   above already drops the fade. */
+.ut-tour-ring {
+  position: fixed; z-index: 470; pointer-events: none;
+  border-radius: var(--radius);
+  box-shadow: 0 0 0 3px var(--accent), 0 0 0 200vmax var(--ut-scrim);
+}
+.ut-tour-ring.is-centred { box-shadow: 0 0 0 200vmax var(--ut-scrim); }
+.ut-tour-balloon {
+  position: fixed; z-index: 480;
+  inline-size: max-content; max-inline-size: min(340px, calc(100vw - 32px));
+  border-radius: var(--radius-lg);
+  background: var(--surface); color: var(--text);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, .28), 0 2px 6px rgba(15, 23, 42, .18);
+  text-align: start;
+  animation: ut-tour-in .15s ease-out;
+}
+@keyframes ut-tour-in { from { opacity: 0; } to { opacity: 1; } }
+.ut-tour-arrow {
+  position: absolute; inline-size: 14px; block-size: 14px;
+  background: var(--surface); transform: rotate(45deg); pointer-events: none;
+}
+.ut-tour-arrow[hidden] { display: none; }
+.ut-tour-content {
+  position: relative; max-block-size: calc(100dvh - 16px); overflow-y: auto;
+  padding: 1rem 1rem .85rem; border-radius: var(--radius-lg);
+}
+.ut-tour-title { margin: 0 0 .35rem; font-size: 1.05rem; font-weight: 700; color: var(--text); }
+.ut-tour-body { margin: 0 0 .85rem; font-size: .95rem; line-height: 1.45; color: var(--text); overflow-wrap: anywhere; }
+.ut-tour-foot { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.ut-tour-counter { color: var(--muted); font-size: .85rem; font-variant-numeric: tabular-nums; margin-inline-end: auto; }
+.ut-tour-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-inline-start: auto; }
+.ut-tour-actions .btn { min-block-size: 44px; min-inline-size: 44px; padding-block: .5rem; padding-inline: .9rem; font-size: .95rem; }
+.ut-tour-actions .btn[hidden] { display: none; }
+.manual-tour { margin-block-end: 1rem; }

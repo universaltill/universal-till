@@ -639,31 +639,28 @@ func TestSetupWizardEndpointsClearTheSessionWall(t *testing.T) {
 			t.Errorf("wizard endpoint %s = %d, want 200 — a first-boot till has no "+
 				"operators, so it can never hold a session; add it to the exempt "+
 				"switch in middleware.go (its handler must gate itself with "+
-				"NeedsFirstBoot, as /api/import and /api/setup/* all do)", ep, rec.Code)
+				"NeedsFirstBoot, as /api/setup/* all do)", ep, rec.Code)
 		}
 	}
 }
 
-// ut-docs#1516 — regression introduced by ut-docs#1509. /api/import was added
-// to exempt(), but exempt() short-circuits BEFORE the session cookie is
-// resolved, so a signed-in manager reached import_page.go with no user in
-// context at all: canPerform failed, the handler's hasSession check saw
-// nothing, NeedsFirstBoot was false on a configured till, and the operator
-// got 403 "manager or admin required" for the ordinary, authenticated import
-// they are fully entitled to perform. htmx does not swap non-2xx, so on the
-// real till the spinner flashed and nothing appeared.
-//
-// /api/import is not like the other exempt paths. Those either authenticate
-// themselves out-of-band (bearer tokens on /api/sync/*, a live manager PIN on
-// /api/settings/exit-to-os) or are first-boot-only. This one needs BOTH: it
-// must be reachable with no session during first boot, and it must still see
-// the session when there is one. That is optional auth, not exemption.
-func TestImportKeepsTheSessionWhileStayingReachableAtFirstBoot(t *testing.T) {
+// ut-docs#1516 / ut-docs#3709: /api/import used to be "optional auth" so the
+// setup wizard could preview an anonymous first-boot restore. ut-docs#3709
+// removed that wizard step, so /api/import is now an ordinary session route:
+// a signed-in manager's request must carry the user (canPerform authorises
+// it), and a request with no usable session must get the same contract as
+// every other /api/* route -- HX-Redirect to /login for an htmx caller
+// (ut-docs#2144: htmx never swaps a non-2xx body, so without the redirect the
+// operator sees nothing), a 401 JSON body otherwise. It must never reach the
+// handler anonymously.
+func TestImportRequiresASession(t *testing.T) {
 	db := openAuthTestDB(t)
 	svc := NewService(db)
 
+	var reached bool
 	var sawUser *User
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
 		if u, ok := FromContext(r.Context()); ok {
 			cp := u
 			sawUser = &cp
@@ -672,32 +669,52 @@ func TestImportKeepsTheSessionWhileStayingReachableAtFirstBoot(t *testing.T) {
 	})
 	h := Middleware(inner, svc)
 
-	// 1. No session (first boot): must still reach the handler, which then
-	//    applies its own NeedsFirstBoot gate.
+	// 1. No session, htmx POST (the import screen's own form): HX-Redirect.
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/import", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("anonymous POST /api/import = %d, want 200 (first-boot restore must reach the handler)", rec.Code)
+	req := httptest.NewRequest(http.MethodPost, "/api/import", nil)
+	req.Header.Set("HX-Request", "true")
+	h.ServeHTTP(rec, req)
+	if reached {
+		t.Fatal("anonymous htmx POST /api/import reached the handler — it must be session-gated")
 	}
-	if sawUser != nil {
-		t.Errorf("anonymous request carried a user: %+v", *sawUser)
+	if rec.Code != http.StatusUnauthorized || rec.Header().Get("HX-Redirect") != "/login" {
+		t.Fatalf("anonymous htmx POST /api/import = %d, HX-Redirect %q; want 401 + HX-Redirect /login (ut-docs#2144)",
+			rec.Code, rec.Header().Get("HX-Redirect"))
 	}
 
-	// 2. Signed in: the handler MUST see the session, or canPerform can never
-	//    authorise a manager's ordinary import.
+	// 2. Expired/garbage cookie, htmx POST: same contract.
+	reached = false
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/import", nil)
+	req.Header.Set("HX-Request", "true")
+	req.AddCookie(&http.Cookie{Name: CookieName, Value: "expired-or-revoked"})
+	h.ServeHTTP(rec, req)
+	if reached || rec.Header().Get("HX-Redirect") != "/login" {
+		t.Fatalf("expired-session htmx POST /api/import: reached=%v HX-Redirect=%q; want blocked + /login",
+			reached, rec.Header().Get("HX-Redirect"))
+	}
+
+	// 3. No session, non-htmx client: the /api/* 401 JSON contract.
+	reached = false
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/import", nil))
+	if reached || rec.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous POST /api/import: reached=%v code=%d; want blocked with 401", reached, rec.Code)
+	}
+
+	// 4. Signed in: the handler MUST see the session, or canPerform can never
+	//    authorise a manager's ordinary import (ut-docs#1516).
 	seedOperator(t, db, "boss", "manager", "4321")
 	token := loginFor(t, svc, "4321")
-	sawUser = nil
 	rec = httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/import", nil)
+	req = httptest.NewRequest(http.MethodPost, "/api/import", nil)
 	req.AddCookie(&http.Cookie{Name: CookieName, Value: token})
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("signed-in POST /api/import = %d, want 200", rec.Code)
 	}
 	if sawUser == nil {
-		t.Fatal("signed-in POST /api/import reached the handler with NO user in context — " +
-			"exempt() skips cookie resolution; /api/import needs optional auth, not exemption")
+		t.Fatal("signed-in POST /api/import reached the handler with NO user in context")
 	}
 }
 
