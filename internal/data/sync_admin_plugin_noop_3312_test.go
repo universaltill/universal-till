@@ -33,7 +33,7 @@ func seedPluginNoopPrimary(t *testing.T, primary, replica *db.DB) {
 func applyFirst(t *testing.T, rrepo *SyncAdminRepo, bundle AdminBundle) {
 	t.Helper()
 	ctx := context.Background()
-	if err := rrepo.ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := rrepo.ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
 }
@@ -56,7 +56,7 @@ func TestApplyAdmin_IdenticalPluginBundleMovesNoVersion(t *testing.T) {
 	applyFirst(t, rrepo, bundle)
 	before := syncAdminGeneration(t, replica)
 
-	if err := rrepo.ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := rrepo.ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
 	if got := syncAdminGeneration(t, replica); got != before {
@@ -90,7 +90,7 @@ func TestApplyAdmin_PluginRowChangesStillApply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump after changes: %v", err)
 	}
-	if err := rrepo.ApplyAdmin(ctx, wireTrip(t, changed)); err != nil {
+	if _, err := rrepo.ApplyAdminWithResult(ctx, wireTrip(t, changed)); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
 	// One UPDATE (ps1) + one DELETE (ps2) + one DELETE (entry-2) + one
@@ -129,7 +129,7 @@ func TestApplyAdmin_LocalGlobalPluginSettingWithOtherIDIsReplaced(t *testing.T) 
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply must not abort on a same-key, different-id local global row: %v", err)
 	}
 	var id, v string
@@ -165,7 +165,7 @@ func TestApplyAdmin_PluginSettingsSwappedKeysApply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump after swap: %v", err)
 	}
-	if err := rrepo.ApplyAdmin(ctx, wireTrip(t, swapped)); err != nil {
+	if _, err := rrepo.ApplyAdminWithResult(ctx, wireTrip(t, swapped)); err != nil {
 		t.Fatalf("apply after swap: %v", err)
 	}
 	for id, key := range map[string]string{"ps1": "mode", "ps2": "currency"} {

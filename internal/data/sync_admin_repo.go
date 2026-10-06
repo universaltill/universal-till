@@ -938,11 +938,33 @@ func (r *SyncAdminRepo) scanAdmin(ctx context.Context) (AdminBundle, error) {
 	return bundle, nil
 }
 
-// ApplyAdmin makes this till's admin state match the bundle, in one
-// transaction: first delete rows the primary no longer has (children
+// AdminApplyResult reports what a committed ApplyAdminWithResult changed
+// that a caller outside the data layer must act on.
+type AdminApplyResult struct {
+	// ErasedCustomerIDs are the customers this apply pruned — hard-deleted,
+	// or newly retired as an anonymous shell — because the primary no longer
+	// has them, i.e. a GDPR erasure there. Sample-data customers
+	// (is_sample_data = 1) are excluded: the primary's "Remove sample data"
+	// also deletes them, and that is not an erasure (ut-docs#3435). A
+	// customer already retired by an earlier pull is not reported again.
+	// The sync pull publishes customer.erased for each (ut-docs#3435).
+	ErasedCustomerIDs []string
+}
+
+// ApplyAdminWithResult makes this till's admin state match the bundle, in
+// one transaction: first delete rows the primary no longer has (children
 // first; sales-referenced rows fall back to is_active=0), then upsert
-// everything. Tables absent from the bundle are left untouched.
-func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) error {
+// everything. Tables absent from the bundle are left untouched. The result
+// is only meaningful when err is nil (the transaction committed).
+func (r *SyncAdminRepo) ApplyAdminWithResult(ctx context.Context, bundle AdminBundle) (AdminApplyResult, error) {
+	var res AdminApplyResult
+	if err := r.applyAdmin(ctx, bundle, &res); err != nil {
+		return AdminApplyResult{}, err
+	}
+	return res, nil
+}
+
+func (r *SyncAdminRepo) applyAdmin(ctx context.Context, bundle AdminBundle, res *AdminApplyResult) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("apply admin: %w", err)
@@ -1051,8 +1073,25 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 		if t.name == "role_permissions" {
 			skipPrune = rolePermissionSkew
 		}
-		if err := deleteMissing(ctx, tx, t, recs, skipPrune); err != nil {
+		// Snapshot sample-data customers before the prune deletes them: the
+		// primary's "Remove sample data" drops those too, and that is not a
+		// GDPR erasure (ut-docs#3435).
+		var sampleCustomers map[string]bool
+		if t.name == "customers" {
+			if sampleCustomers, err = sampleCustomerIDs(ctx, tx); err != nil {
+				return err
+			}
+		}
+		pruned, err := deleteMissing(ctx, tx, t, recs, skipPrune)
+		if err != nil {
 			return err
+		}
+		if t.name == "customers" {
+			for _, id := range pruned {
+				if sid := fmt.Sprint(id); !sampleCustomers[sid] {
+					res.ErasedCustomerIDs = append(res.ErasedCustomerIDs, sid)
+				}
+			}
 		}
 	}
 
@@ -1600,6 +1639,29 @@ func logSatelliteDivergencePrune(t adminTable, args []any, action string) {
 	logging.L().Infof("sync pull: pruned pre-existing satellite-local %s row %v (%s) — see %s: a row created directly on a satellite before that fix is expected to disappear on the first sync after upgrading", t.name, args, action, card)
 }
 
+// sampleCustomerIDs returns the ids of this till's sample-data (demo)
+// customers, so applyAdmin can tell a sample-data removal on the primary
+// apart from a GDPR erasure (ut-docs#3435).
+func sampleCustomerIDs(ctx context.Context, tx *sql.Tx) (map[string]bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM customers WHERE is_sample_data = 1`)
+	if err != nil {
+		return nil, fmt.Errorf("list sample customers: %w", err)
+	}
+	defer rows.Close()
+	ids := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("list sample customers: %w", err)
+		}
+		ids[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list sample customers: %w", err)
+	}
+	return ids, nil
+}
+
 // deleteMissing prunes rows this table's PK set no longer includes in the
 // bundle. skipPrune, if non-nil, is consulted for each row that would
 // otherwise be pruned and additionally protects it when it returns true —
@@ -1609,7 +1671,8 @@ func logSatelliteDivergencePrune(t adminTable, args []any, action string) {
 // row" (real same-version drift; must still prune, or a satellite-local
 // grant survives forever — see ApplyAdmin's own comment for why this
 // distinction matters).
-func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[string]any, skipPrune func(rec map[string]any) bool) error {
+func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[string]any, skipPrune func(rec map[string]any) bool) ([]any, error) {
+	var pruned []any
 	keep := make(map[string]bool, len(recs))
 	for _, rec := range recs {
 		keep[pkOf(t, rec)] = true
@@ -1617,12 +1680,12 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 	rows, err := tx.QueryContext(ctx,
 		`SELECT `+strings.Join(t.pk, ", ")+` FROM `+t.name)
 	if err != nil {
-		return fmt.Errorf("prune %s: %w", t.name, err)
+		return nil, fmt.Errorf("prune %s: %w", t.name, err)
 	}
 	existing, err := scanGenericCols(rows, t.pk)
 	rows.Close()
 	if err != nil {
-		return fmt.Errorf("prune %s: %w", t.name, err)
+		return nil, fmt.Errorf("prune %s: %w", t.name, err)
 	}
 	for _, rec := range existing {
 		if keep[pkOf(t, rec)] {
@@ -1641,9 +1704,10 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 			`DELETE FROM `+t.name+` WHERE `+strings.Join(where, " AND "), args...)
 		if err == nil {
 			logSatelliteDivergencePrune(t, args, "hard-deleted, no history")
+			pruned = append(pruned, args[0])
 			if t.onPrune != nil {
 				if herr := t.onPrune(ctx, tx, args[0]); herr != nil {
-					return fmt.Errorf("prune %s: %w", t.name, herr)
+					return nil, fmt.Errorf("prune %s: %w", t.name, herr)
 				}
 			}
 			continue
@@ -1688,9 +1752,10 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 			if derr == nil {
 				if n, _ := res.RowsAffected(); n > 0 {
 					logSatelliteDivergencePrune(t, args, "retired in place, has history")
+					pruned = append(pruned, args[0])
 					if t.onPrune != nil {
 						if herr := t.onPrune(ctx, tx, args[0]); herr != nil {
-							return fmt.Errorf("prune %s: %w", t.name, herr)
+							return nil, fmt.Errorf("prune %s: %w", t.name, herr)
 						}
 					}
 				}
@@ -1699,7 +1764,7 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 		}
 		logging.L().Warnf("sync pull: cannot prune %s %v (kept): %v", t.name, args, err)
 	}
-	return nil
+	return pruned, nil
 }
 
 // stripRetireMangle undoes deleteMissing's uniqueness-freeing "<name>~<id>"

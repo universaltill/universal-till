@@ -82,7 +82,7 @@ func TestEntitlementNeverAppliedFromAdminBundle(t *testing.T) {
 	}
 	legacy := wireTrip(t, bundle)
 	legacy.Tables["settings"] = append(legacy.Tables["settings"], map[string]any{"key": entitlement.KeyPlan, "value": "chain", "updated_at": "2026-09-25T14:00:00Z"})
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, legacy); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, legacy); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	var v string

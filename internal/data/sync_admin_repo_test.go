@@ -153,7 +153,7 @@ func TestAdminDumpApplyRoundTrip(t *testing.T) {
 		}
 	}
 
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -196,7 +196,7 @@ func TestAdminDumpApplyRoundTrip(t *testing.T) {
 	if drift.Fingerprint() == bundle.Fingerprint() {
 		t.Fatal("fingerprint did not change with content")
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, drift)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, drift)); err != nil {
 		t.Fatalf("drift apply: %v", err)
 	}
 	if err := replica.QueryRow(`SELECT name FROM items WHERE id = 'itm1'`).Scan(&name); err != nil || name != "Cola 330ml" {
@@ -244,7 +244,7 @@ func TestAdminDumpApplyRoundTrip_TillRegisterIDNeverSyncs(t *testing.T) {
 		}
 	}
 
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	var v string
@@ -259,7 +259,7 @@ func TestAdminDumpApplyRoundTrip_TillRegisterIDNeverSyncs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump replica: %v", err)
 	}
-	if err := NewSyncAdminRepo(primary.DB).ApplyAdmin(ctx, wireTrip(t, replicaBundle)); err != nil {
+	if _, err := NewSyncAdminRepo(primary.DB).ApplyAdminWithResult(ctx, wireTrip(t, replicaBundle)); err != nil {
 		t.Fatalf("apply to primary: %v", err)
 	}
 	if err := primary.QueryRow(`SELECT value FROM settings WHERE key = 'sync.till_register_id'`).Scan(&v); err != nil || v != "regA" {
@@ -293,7 +293,7 @@ func TestAdminDumpApplyRoundTrip_FiscalPendingSignRetriesNeverSyncs(t *testing.T
 		}
 	}
 
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	var n int
@@ -318,7 +318,7 @@ func TestAdminDumpApplyRoundTrip_AutoUpdateLastAttemptNeverSyncs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	var n int
@@ -374,7 +374,7 @@ func TestAdminDumpApplyRoundTrip_TillLocalStateNeverSyncs(t *testing.T) {
 			}
 		}
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	for _, k := range perTill {
@@ -399,7 +399,7 @@ func TestAdminDumpApplyRoundTrip_TillLocalStateNeverSyncs(t *testing.T) {
 	legacy.Tables["settings"] = append(append([]map[string]any{}, bundle.Tables["settings"]...),
 		map[string]any{"key": "diagnostics.active", "value": "main"},
 		map[string]any{"key": "cloudsync.snapshot_hash", "value": "main"})
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, legacy)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, legacy)); err != nil {
 		t.Fatalf("apply legacy bundle: %v", err)
 	}
 	for _, k := range []string{"diagnostics.active", "cloudsync.snapshot_hash"} {
@@ -440,7 +440,7 @@ func TestAdminDumpApplyRoundTrip_ThemeIsPerTillAndNeverSyncs(t *testing.T) {
 	legacy := wireTrip(t, bundle)
 	legacy.Tables["settings"] = append(legacy.Tables["settings"], map[string]any{"key": "theme", "value": "monarch", "updated_at": "2026-09-25T16:05:28Z"})
 	for i := 0; i < 3; i++ { // repeated pulls, as the 30 s drift loop does
-		if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, legacy); err != nil {
+		if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, legacy); err != nil {
 			t.Fatalf("apply %d: %v", i, err)
 		}
 	}
@@ -479,7 +479,7 @@ func TestAdminDumpApplyRoundTrip_TillsRosterRedactsBearerHash(t *testing.T) {
 		}
 	}
 
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -542,7 +542,7 @@ func TestAdminApplyTills_RedactsPreExistingBearerHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -576,7 +576,7 @@ func TestAdminApplyTills_RedactsPreExistingLastSeenAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -645,7 +645,7 @@ func TestAdminApplyRetiresFKPinnedSKUSquatter(t *testing.T) {
 	// Apply TWICE: the second pass proves the mangle is idempotent and the
 	// retired row no longer poisons subsequent pulls.
 	for i := range 2 {
-		if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 			t.Fatalf("apply #%d: %v", i+1, err)
 		}
 	}
@@ -703,7 +703,7 @@ func TestAdminSyncSharedPluginSettings(t *testing.T) {
 
 	// Apply twice: the second pass proves delete-then-insert is idempotent.
 	for i := range 2 {
-		if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 			t.Fatalf("apply #%d: %v", i+1, err)
 		}
 	}
@@ -742,7 +742,7 @@ func TestAdminSyncSharedPluginSettings(t *testing.T) {
 	if drift.Fingerprint() == bundle.Fingerprint() {
 		t.Fatal("fingerprint did not change with plugin setting content")
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, drift)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, drift)); err != nil {
 		t.Fatalf("drift apply: %v", err)
 	}
 	_ = replica.QueryRow(`SELECT COUNT(*) FROM plugin_settings WHERE plugin_id = 'com.ut.stripe' AND key = 'currency'`).Scan(&n)
@@ -788,7 +788,7 @@ func TestAdminSyncSharedPluginSettingsDedupesDuplicateGlobalRowsInBundle(t *test
 		},
 	}}
 
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -829,7 +829,7 @@ func TestAdminSyncSharedPluginSettingsDedupeTiebreaksOnIDWhenUpdatedAtTies(t *te
 		},
 	}}
 
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	var id string
@@ -859,7 +859,7 @@ func TestAdminApplyDeactivatesUndeletable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	var active int
@@ -898,7 +898,7 @@ func TestAdminDumpApplyRoundTrip_FloorPlanAndKitchenRouting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, bundle); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -935,7 +935,7 @@ func TestAdminDumpApplyRoundTrip_FloorPlanAndKitchenRouting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle2); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, bundle2); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
 	var n int
@@ -962,7 +962,7 @@ func TestAdminDumpApplyRoundTrip_KitchenStationPrinterAddressStaysLocal(t *testi
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, bundle); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -1010,7 +1010,7 @@ func TestAdminDumpApplyRoundTrip_RolePermissions(t *testing.T) {
 	// asserts on, so it must cross the same JSON hop a real replica sees
 	// (numbers becoming float64) — every other ApplyAdmin call in this file
 	// does the same (see wireTrip's own doc comment above).
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -1056,7 +1056,7 @@ func TestAdminDumpApplyRoundTrip_RolePermissions_SurvivesReplicaAheadOfPrimarySk
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -1115,7 +1115,7 @@ func TestAdminDumpApplyRoundTrip_RolePermissions_PrunesSameVersionLocalDrift(t *
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -1148,7 +1148,7 @@ func TestAdminApply_TableRetiredInPlaceWhenFKBlockedBySatelliteSaleHistory(t *te
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, bundle); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -1161,7 +1161,7 @@ func TestAdminApply_TableRetiredInPlaceWhenFKBlockedBySatelliteSaleHistory(t *te
 	if err != nil {
 		t.Fatalf("second dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle2); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, bundle2); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
 
@@ -1207,7 +1207,7 @@ func TestAdminDumpApplyRoundTrip_RegistersAndStockLocations(t *testing.T) {
 		t.Fatal("registers must appear in the admin dump now — ut-docs#1590 gated creation primary-only, making it safe to sync")
 	}
 
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -1228,7 +1228,7 @@ func TestAdminDumpApplyRoundTrip_RegistersAndStockLocations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle2)); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
 	var n int
@@ -1269,7 +1269,7 @@ func TestAdminDumpApplyRoundTrip_ItemModifiers(t *testing.T) {
 	// it) — items already syncs via adminTables, exercised elsewhere; seed
 	// it directly here since this test is scoped to the modifier tables.
 	mustExec(t, replica, `INSERT INTO items (id, name, base_price) VALUES ('itm1', 'Flat White', 320)`)
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -1289,7 +1289,7 @@ func TestAdminDumpApplyRoundTrip_ItemModifiers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle2)); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
 	var optActive int
@@ -1305,7 +1305,7 @@ func TestAdminDumpApplyRoundTrip_ItemModifiers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("third dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle3)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle3)); err != nil {
 		t.Fatalf("third apply: %v", err)
 	}
 	var n int
@@ -1397,7 +1397,7 @@ func TestAdminDumpApplyRoundTrip_ModifierGroupLinks(t *testing.T) {
 			t.Fatalf("%s must appear in the admin dump — it is in adminTables", tbl)
 		}
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle1)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle1)); err != nil {
 		t.Fatalf("apply 1: %v", err)
 	}
 
@@ -1429,7 +1429,7 @@ func TestAdminDumpApplyRoundTrip_ModifierGroupLinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump 2: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle2)); err != nil {
 		t.Fatalf("apply 2: %v", err)
 	}
 	if err := replica.QueryRow(`SELECT COUNT(*) FROM item_modifier_group_links WHERE item_id='itm1' AND group_id='grp1'`).Scan(&n); err != nil || n != 0 {
@@ -1450,7 +1450,7 @@ func TestAdminDumpApplyRoundTrip_ModifierGroupLinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump 3: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle3)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle3)); err != nil {
 		t.Fatalf("apply 3: %v", err)
 	}
 	if err := replica.QueryRow(`SELECT COUNT(*) FROM category_modifier_group_links WHERE category_id='cat1' AND group_id='grp2'`).Scan(&n); err != nil || n != 0 {
@@ -1474,7 +1474,7 @@ func TestAdminApply_RegisterRetiredInPlaceWhenFKBlockedBySatelliteShiftHistory(t
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, bundle); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -1489,7 +1489,7 @@ func TestAdminApply_RegisterRetiredInPlaceWhenFKBlockedBySatelliteShiftHistory(t
 		t.Fatalf("second dump: %v", err)
 	}
 	logs := captureLogs(t)
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle2); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, bundle2); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
 
@@ -1549,7 +1549,7 @@ func TestAdminApply_StockLocationRetiredInPlaceWhenFKBlockedBySatelliteInventory
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, bundle); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -1564,7 +1564,7 @@ func TestAdminApply_StockLocationRetiredInPlaceWhenFKBlockedBySatelliteInventory
 		t.Fatalf("second dump: %v", err)
 	}
 	logs := captureLogs(t)
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle2); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, bundle2); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
 
@@ -1649,7 +1649,7 @@ func TestAdminApply_RegisterHardDeletedPreExistingLogsWarning(t *testing.T) {
 	mustExec(t, replica, `INSERT INTO registers (id, name, is_active) VALUES ('reg-orphan', 'Satellite Local', 1)`)
 
 	logs := captureLogs(t)
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, bundle); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -1676,7 +1676,7 @@ func TestAdminApply_StockLocationHardDeletedPreExistingLogsWarning(t *testing.T)
 	mustExec(t, replica, `INSERT INTO stock_locations (id, name, is_active) VALUES ('loc-orphan', 'Satellite Local', 1)`)
 
 	logs := captureLogs(t)
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, bundle); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -1714,7 +1714,7 @@ func TestAdminApply_ItemModifierGroupHardDeletedPreExistingLogsWarning(t *testin
 	mustExec(t, replica, `INSERT INTO item_modifier_groups (id, name, required, min_select, max_select, sort_order, is_active) VALUES ('grp-orphan', 'Satellite Local', 0, 0, 1, 0, 1)`)
 
 	logs := captureLogs(t)
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, bundle); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -1748,7 +1748,7 @@ func TestAdminApply_OrdinaryTablePruneDoesNotLogSatelliteDivergenceWarning(t *te
 	mustExec(t, replica, `INSERT INTO tax_codes (id, name, rate_basis_points, is_active) VALUES ('tax-orphan', 'Local Rate', 0, 1)`)
 
 	logs := captureLogs(t)
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, bundle); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -1819,7 +1819,7 @@ func TestAdminDumpApplyRoundTrip_FiscalRegisterStorage(t *testing.T) {
 		t.Fatalf("dump should carry exactly the one real tax-de entry, got %d: %+v", len(recs), recs)
 	}
 
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -1862,7 +1862,7 @@ func TestAdminDumpApplyRoundTrip_FiscalRegisterStorage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle2)); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
 	var n int
@@ -1911,7 +1911,7 @@ func TestAdminDumpApplyRoundTrip_CountrySettings(t *testing.T) {
 		t.Fatal("country_settings must appear in the admin dump now — ut-docs#1669")
 	}
 
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -1939,7 +1939,7 @@ func TestAdminDumpApplyRoundTrip_CountrySettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("final dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, final)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, final)); err != nil {
 		t.Fatalf("final apply: %v", err)
 	}
 	var n int
@@ -1973,7 +1973,7 @@ func TestAdminApplyCountrySettings_ClampsArchiveMinDaysToGlobalFloor(t *testing.
 		},
 	}}
 
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -2012,7 +2012,7 @@ func TestAdminApplyCountrySettings_RatchetsShadowCustomerDocuments(t *testing.T)
 			row("ES", "setup.country.es", "forbidden"), // passes through (tightening is fine)
 		},
 	}}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -2096,7 +2096,7 @@ func TestAdminApply_InvalidatesStaleOpenPriceHistory(t *testing.T) {
 	if _, ok := bundle.Tables["price_history"]; ok {
 		t.Fatal("price_history must NOT travel in the admin bundle (ADR-0099 Decision 1)")
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -2201,7 +2201,7 @@ func TestAdminDumpApplyRoundTrip_MarketplaceIdentityNeverSyncs(t *testing.T) {
 	for k, v := range perTill {
 		legacy.Tables["settings"] = append(legacy.Tables["settings"], map[string]any{"key": k, "value": v[0]})
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, legacy); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, legacy); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	for k, v := range perTill {
@@ -2257,7 +2257,7 @@ func TestAdminDumpApplyRoundTrip_EffectsLevelIsPerTill(t *testing.T) {
 			t.Fatalf("%s leaked into the admin dump", k)
 		}
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	for _, k := range keys {
@@ -2293,7 +2293,7 @@ func TestAdminDumpApplyRoundTrip_UpdateFollowKeysNeverSync(t *testing.T) {
 	bundle.Tables["settings"] = append(bundle.Tables["settings"],
 		map[string]any{"key": "update.follow_attempted", "value": "1.4.0"},
 		map[string]any{"key": "update.follow_error", "value": "failed:download"})
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	var n int

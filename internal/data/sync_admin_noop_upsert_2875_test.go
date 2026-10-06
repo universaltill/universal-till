@@ -42,12 +42,12 @@ func TestApplyAdmin_IdenticalBundleTwiceMovesNoVersion(t *testing.T) {
 		t.Fatalf("dump: %v", err)
 	}
 	rrepo := NewSyncAdminRepo(replica.DB)
-	if err := rrepo.ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := rrepo.ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
 	adminBefore, sellBefore := syncAdminGeneration(t, replica), sellScreenGeneration(t, replica)
 
-	if err := rrepo.ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := rrepo.ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
 	if got := syncAdminGeneration(t, replica); got != adminBefore {
@@ -70,7 +70,7 @@ func TestApplyAdmin_SettingOnlyChangeMovesAdminNotSellVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := rrepo.ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := rrepo.ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
 	adminBefore, sellBefore := syncAdminGeneration(t, replica), sellScreenGeneration(t, replica)
@@ -80,7 +80,7 @@ func TestApplyAdmin_SettingOnlyChangeMovesAdminNotSellVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump after setting change: %v", err)
 	}
-	if err := rrepo.ApplyAdmin(ctx, wireTrip(t, changed)); err != nil {
+	if _, err := rrepo.ApplyAdminWithResult(ctx, wireTrip(t, changed)); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
 	if got := sellScreenGeneration(t, replica); got != sellBefore {
@@ -110,7 +110,7 @@ func TestApplyAdmin_RealChangesStillApply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := rrepo.ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := rrepo.ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
 	mustExec(t, replica, `UPDATE tills SET bearer_hash = 'leaked' WHERE id = 'till-a'`)
@@ -121,7 +121,7 @@ func TestApplyAdmin_RealChangesStillApply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump after price change: %v", err)
 	}
-	if err := rrepo.ApplyAdmin(ctx, wireTrip(t, changed)); err != nil {
+	if _, err := rrepo.ApplyAdminWithResult(ctx, wireTrip(t, changed)); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
 	var price int64
@@ -156,7 +156,7 @@ func TestApplyAdmin_AlreadyRetiredRowMovesNoVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := rrepo.ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := rrepo.ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
 	mustExec(t, replica, `INSERT INTO stock_locations (id, name) VALUES ('loc-local', 'Local Store')`)
@@ -168,7 +168,7 @@ func TestApplyAdmin_AlreadyRetiredRowMovesNoVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump after delete: %v", err)
 	}
-	if err := rrepo.ApplyAdmin(ctx, wireTrip(t, deleted)); err != nil {
+	if _, err := rrepo.ApplyAdminWithResult(ctx, wireTrip(t, deleted)); err != nil {
 		t.Fatalf("retire apply: %v", err)
 	}
 	var active int
@@ -181,7 +181,7 @@ func TestApplyAdmin_AlreadyRetiredRowMovesNoVersion(t *testing.T) {
 	}
 	adminBefore, sellBefore := syncAdminGeneration(t, replica), sellScreenGeneration(t, replica)
 
-	if err := rrepo.ApplyAdmin(ctx, wireTrip(t, deleted)); err != nil {
+	if _, err := rrepo.ApplyAdminWithResult(ctx, wireTrip(t, deleted)); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
 	if got := syncAdminGeneration(t, replica); got != adminBefore {

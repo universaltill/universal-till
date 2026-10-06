@@ -71,7 +71,7 @@ func pullAdmin(t *testing.T, primary, replica *db.DB) {
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 }
@@ -165,7 +165,7 @@ func TestAdminSync_OlderPrimaryBundleWithoutLabelOriginApplies(t *testing.T) {
 		delete(rec, "origin")
 		delete(rec, "label")
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, bundle); err != nil {
 		t.Fatalf("apply older-shape bundle: %v", err)
 	}
 	var label, origin string
@@ -192,7 +192,7 @@ func TestAdminSync_BundleWithoutRolesPrunesNoRole(t *testing.T) {
 	}
 	bundle = wireTrip(t, bundle)
 	delete(bundle.Tables, "roles")
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, bundle); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	if n := countRows(t, replica, `SELECT COUNT(*) FROM roles WHERE role = ?`, syncTestCloudRole); n != 1 {
@@ -216,7 +216,7 @@ func TestAdminSync_EmptyRolesTablePrunesNoRole(t *testing.T) {
 	}
 	bundle = wireTrip(t, bundle)
 	bundle.Tables["roles"] = []map[string]any{}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, bundle); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	if n := countRows(t, replica, `SELECT COUNT(*) FROM roles WHERE role = ?`, syncTestCloudRole); n != 1 {

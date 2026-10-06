@@ -45,7 +45,7 @@ func TestApplyAdmin_BackfillsCodelessSyncedVariant(t *testing.T) {
 		t.Fatalf("dump: %v", err)
 	}
 
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -88,7 +88,7 @@ func TestApplyAdmin_BackfillsCodelessSyncedVariant(t *testing.T) {
 	// STABLE across repeats, not just ever-present: a shelf label printed
 	// from the replica between two polls must keep scanning.
 	first := *sku
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("re-apply: %v", err)
 	}
 	var again *string
@@ -123,7 +123,7 @@ func TestApplyAdmin_RealSKUStillOverwritesBackfilledOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
@@ -142,7 +142,7 @@ func TestApplyAdmin_RealSKUStillOverwritesBackfilledOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump 2: %v", err)
 	}
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle2)); err != nil {
 		t.Fatalf("apply 2: %v", err)
 	}
 
@@ -189,7 +189,7 @@ func TestApplyAdmin_BackfillsRevivedRetireMangledVariant(t *testing.T) {
 		t.Fatalf("dump: %v", err)
 	}
 
-	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 
