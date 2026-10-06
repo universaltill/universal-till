@@ -174,7 +174,9 @@ jobs:
       - name: Core-neutral guard regression test
         run: bash scripts/ci/guard-core-neutral_test.sh
       - name: Manual screenshot freshness guard
-        run: bash scripts/ci/guard-docs-shots.sh
+        run: bash scripts/ci/run-docs-shots-guard.sh
+      - name: Manual screenshot freshness guard wrapper regression test
+        run: bash scripts/ci/run-docs-shots-guard_test.sh
       - name: Manual screenshot freshness guard regression test
         run: bash scripts/ci/guard-docs-shots_test.sh
       - name: "Manual screenshot freshness guard: Python/JS cross-check (ut-docs#370)"
