@@ -33,7 +33,12 @@ type SnapshotItem struct {
 	AgeRestricted  bool
 	// Icon is items.icon as stored (ut-docs#3584), "" for none; the push
 	// reports iconid.EffectiveIcon of it and the thumbnail path.
-	Icon                      string
+	Icon string
+	// NetQuantityValue/NetQuantityUnit are items.net_quantity_value/unit
+	// as stored (ut-docs#3504, migration 060), both nil when NULL; the
+	// push sends them only as a catalogtypes.ValidNetQuantity pair.
+	NetQuantityValue          *int64
+	NetQuantityUnit           *string
 	Barcodes                  []string // primary first
 	ModifierGroupIDs          []string // directly attached, link order
 	ModifierOptOutIDs         []string
@@ -54,7 +59,8 @@ type SnapshotItem struct {
 func (r *CatalogRepo) CatalogSnapshotItems(ctx context.Context) ([]SnapshotItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, name, COALESCE(sku, ''), base_price, COALESCE(category_id, ''), COALESCE(color, ''),
-       is_active, is_weighed, stock_untracked, age_restricted, COALESCE(icon, '')
+       is_active, is_weighed, stock_untracked, age_restricted, COALESCE(icon, ''),
+       net_quantity_value, net_quantity_unit
 FROM items
 ORDER BY is_active DESC, name, id`)
 	if err != nil {
@@ -63,9 +69,19 @@ ORDER BY is_active DESC, name, id`)
 	var items []SnapshotItem
 	for rows.Next() {
 		var it SnapshotItem
-		if err := rows.Scan(&it.ID, &it.Name, &it.SKU, &it.PriceMinor, &it.CategoryID, &it.Color, &it.Active, &it.IsWeighed, &it.StockUntracked, &it.AgeRestricted, &it.Icon); err != nil {
+		var nqValue sql.NullInt64
+		var nqUnit sql.NullString
+		if err := rows.Scan(&it.ID, &it.Name, &it.SKU, &it.PriceMinor, &it.CategoryID, &it.Color, &it.Active, &it.IsWeighed, &it.StockUntracked, &it.AgeRestricted, &it.Icon, &nqValue, &nqUnit); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("catalog snapshot: items: %w", err)
+		}
+		if nqValue.Valid {
+			v := nqValue.Int64
+			it.NetQuantityValue = &v
+		}
+		if nqUnit.Valid {
+			u := nqUnit.String
+			it.NetQuantityUnit = &u
 		}
 		items = append(items, it)
 	}

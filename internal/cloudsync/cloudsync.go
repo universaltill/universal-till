@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
@@ -1428,6 +1429,18 @@ type snapshotItemRow struct {
 	// Omitted when the till could not work it out, which the cloud reads as
 	// "no news". Advisory only: delete_item re-checks on the till.
 	EverSold *bool `json:"ever_sold,omitempty"`
+	// NetQuantity (ut-docs#3504) is a pre-packed item's net content
+	// (items.net_quantity_value/unit, ut-docs#3391), so my. can show and
+	// edit it. Omitted when the item has none, or when the stored pair is
+	// not a catalogtypes.ValidNetQuantity one — never half a pair.
+	NetQuantity *snapshotNetQuantity `json:"net_quantity,omitempty"`
+}
+
+// snapshotNetQuantity is an item's net quantity on the wire (ut-docs#3504):
+// a positive whole Value in Unit "g", "ml" or "ea".
+type snapshotNetQuantity struct {
+	Value int64  `json:"value"`
+	Unit  string `json:"unit"`
 }
 
 // snapshotStockLocationRow is one stock location in the catalog snapshot's
@@ -1506,6 +1519,9 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 		if !it.StockUntracked {
 			q := qty[it.ID]
 			row.Qty = &q
+		}
+		if it.NetQuantityValue != nil && it.NetQuantityUnit != nil && catalogtypes.ValidNetQuantity(it.NetQuantityValue, it.NetQuantityUnit) {
+			row.NetQuantity = &snapshotNetQuantity{Value: *it.NetQuantityValue, Unit: *it.NetQuantityUnit}
 		}
 		for _, v := range it.Variants {
 			row.Variants = append(row.Variants, snapshotVariantRow{
