@@ -22,6 +22,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/lanip"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -55,6 +56,13 @@ type enrolTokens struct {
 	// shortFailures counts failed short-code attempts since the last code
 	// was issued or the last budget purge.
 	shortFailures int
+	// roles maps a live long token to the till role the manager chose for
+	// the till it will enrol (ut-docs#2781) — on the pairing-code card, or
+	// on the approve-to-pair card (which mints its token here too). Absent
+	// means additional. Lazily created, like short. In memory with the
+	// token itself: a restart loses both, so the role can never outlive
+	// the credential it was chosen for.
+	roles map[string]string
 }
 
 const (
@@ -109,41 +117,77 @@ func (e *enrolTokens) issueWithShort() (long, short string) {
 	return long, short
 }
 
+// setRole records the till role chosen for a live long token
+// (ut-docs#2781). The caller validates role (parseTillRole); additional is
+// the default and needs no entry.
+func (e *enrolTokens) setRole(long, role string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if _, live := e.tokens[long]; !live || role == data.TillRoleAdditional {
+		return
+	}
+	if e.roles == nil {
+		e.roles = map[string]string{}
+	}
+	e.roles[long] = role
+}
+
+// takeRoleLocked removes and returns long's chosen role (additional when
+// none was recorded).
+func (e *enrolTokens) takeRoleLocked(long string) string {
+	role, ok := e.roles[long]
+	delete(e.roles, long)
+	if !ok {
+		return data.TillRoleAdditional
+	}
+	return role
+}
+
 // consume validates and burns a long token (one-time), and its short twin.
 func (e *enrolTokens) consume(tok string) bool {
+	_, ok := e.consumeWithRole(tok)
+	return ok
+}
+
+// consumeWithRole is consume, also handing back the till role chosen for
+// the token (ut-docs#2781).
+func (e *enrolTokens) consumeWithRole(tok string) (string, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	exp, ok := e.tokens[tok]
 	delete(e.tokens, tok)
+	role := e.takeRoleLocked(tok)
 	for s, l := range e.short {
 		if l == tok {
 			delete(e.short, s)
 		}
 	}
-	return ok && time.Now().Before(exp)
+	return role, ok && time.Now().Before(exp)
 }
 
-// consumeShort validates and burns a short code (already normalised by
-// normaliseShortCode) together with its long twin. A miss counts against the
+// consumeShortWithRole validates and burns a short code (already
+// normalised by normaliseShortCode) together with its long twin, handing
+// back the till role chosen for it (ut-docs#2781). A miss counts against the
 // shop-wide failure budget; reaching it invalidates the live short code
 // (never its long twin), then starts the count again.
-func (e *enrolTokens) consumeShort(code string) bool {
+func (e *enrolTokens) consumeShortWithRole(code string) (string, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if long, ok := e.short[code]; ok {
 		delete(e.short, code)
 		exp, live := e.tokens[long]
 		delete(e.tokens, long)
+		role := e.takeRoleLocked(long)
 		// A real code that merely expired is a person re-typing a stale
 		// code, not a guess: refuse it without spending the budget.
-		return live && time.Now().Before(exp)
+		return role, live && time.Now().Before(exp)
 	}
 	e.shortFailures++
 	if e.shortFailures >= shortCodeFailureBudget {
 		e.short = map[string]string{}
 		e.shortFailures = 0
 	}
-	return false
+	return data.TillRoleAdditional, false
 }
 
 // pruneLocked drops expired tokens (and their short twins) so the maps stay
@@ -152,6 +196,7 @@ func (e *enrolTokens) pruneLocked(now time.Time) {
 	for tok, exp := range e.tokens {
 		if !now.Before(exp) {
 			delete(e.tokens, tok)
+			delete(e.roles, tok)
 		}
 	}
 	for s, l := range e.short {
@@ -391,7 +436,16 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			return
 		}
 		_ = r.ParseForm()
+		// ut-docs#2781: on this path there is no later approval step, so
+		// the new till's role is chosen here, on the card that mints the
+		// code, and travels with the token to POST /api/sync/enroll.
+		role, ok := parseTillRole(r.Form.Get("role"))
+		if !ok {
+			common.LocalizedError(w, r, http.StatusBadRequest, "tills.role.error.invalid")
+			return
+		}
 		tok, short := tokens.issueWithShort()
+		tokens.setRole(tok, role)
 		// The replica needs OUR address as it sees us; take the Host the
 		// manager's browser used (LAN address), overridable via the form.
 		primaryURL := strings.TrimSpace(r.Form.Get("url"))
@@ -479,19 +533,28 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// ut-docs#3219: a short pairing code (typed by hand, 30 bits) is
 		// rate-limited per source and spends the shop-wide failure budget;
 		// a long token is neither, exactly as before.
+		//
+		// ut-docs#2781: both join methods converge here — the role the
+		// manager chose (on the pairing-code card, or at approval) rides
+		// the token, so the till is created with it.
 		presented := strings.TrimSpace(in.Token)
+		var role string
 		if short, isShort := normaliseShortCode(presented); isShort {
 			if !shortCodeLimiter.allow(sourceOf(r)) {
 				http.Error(w, "too many pairing attempts; wait a minute and try again", http.StatusTooManyRequests)
 				return
 			}
-			if !tokens.consumeShort(short) {
+			var ok bool
+			if role, ok = tokens.consumeShortWithRole(short); !ok {
 				http.Error(w, "invalid or expired enrolment token", http.StatusForbidden)
 				return
 			}
-		} else if !tokens.consume(presented) {
-			http.Error(w, "invalid or expired enrolment token", http.StatusForbidden)
-			return
+		} else {
+			var ok bool
+			if role, ok = tokens.consumeWithRole(presented); !ok {
+				http.Error(w, "invalid or expired enrolment token", http.StatusForbidden)
+				return
+			}
 		}
 		name := strings.TrimSpace(in.Name)
 		if name == "" {
@@ -526,7 +589,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		raw := make([]byte, 32)
 		_, _ = rand.Read(raw)
 		bearer := hex.EncodeToString(raw)
-		tillID, err := repo.InsertTill(r.Context(), name, hashBearer(bearer))
+		tillID, err := repo.InsertTill(r.Context(), name, hashBearer(bearer), role)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
@@ -565,7 +628,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			registerID, registerName = "", ""
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, "system", "till", tillID, "till_enrolled",
-			map[string]any{"name": name, "register_id": registerID, "register_name": registerName},
+			map[string]any{"name": name, "register_id": registerID, "register_name": registerName, "role": role},
 			time.Now().UTC().Format(time.RFC3339), "")
 		// The primary is till 1; replicas number from 2 (receipt prefixes).
 		tillNo := 2
@@ -580,6 +643,9 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 				"shop_name":   storeNameOrDefault(r.Context(), d),
 				"till_no":     tillNo,
 				"register_id": registerID,
+				// ut-docs#2781: the replica persists it as sync.till_role
+				// (db.ApplyReplicaIdentity).
+				"role": role,
 			},
 			"error": nil,
 		})
@@ -663,6 +729,54 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// No HX-Refresh (ut-docs#2904): the Revoke button refreshes only
 		// #tills-roster (tills_roster.html, "ok refresh-region");
 		// tills-changed re-fetches the nav sync chip at once.
+		w.Header().Set("HX-Trigger", "tills-changed")
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// Change a joined till's role (ut-docs#2781; manager, primary only) —
+	// the same gate, the same primary-only refusal and the same
+	// tills-changed convention as revoke above. tills.role is the single
+	// source of truth: the change moves sync_admin_version (migration 067),
+	// so the till learns it on its next admin pull or link nudge
+	// (reconcileOwnTillRole) and reports it in its next link hello.
+	mux.HandleFunc("POST /api/sync/tills/{id}/role", func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "sync_management") {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return
+		}
+		// Same reason as revoke: a replica's local write would revert on
+		// the next admin-bundle pull (ADR-0011 §2).
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			http.Error(w, "change a till's role on the primary till", http.StatusConflict)
+			return
+		}
+		_ = r.ParseForm()
+		role, ok := parseTillRole(r.Form.Get("role"))
+		if !ok || strings.TrimSpace(r.Form.Get("role")) == "" {
+			common.LocalizedError(w, r, http.StatusBadRequest, "tills.role.error.invalid")
+			return
+		}
+		id := r.PathValue("id")
+		prev, found, err := repo.RoleByID(r.Context(), id)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
+			return
+		}
+		if !found {
+			common.LocalizedError(w, r, http.StatusNotFound, "tills.role.error.not_found")
+			return
+		}
+		changed, err := repo.UpdateRole(r.Context(), id, role)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
+			return
+		}
+		if changed {
+			_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", id, "till_role_changed",
+				map[string]any{"from": prev, "to": role}, time.Now().UTC().Format(time.RFC3339), "")
+			// Linked tills pull now rather than at their next poll.
+			d.NudgeLink(fleetlink.ScopeAdmin)
+		}
 		w.Header().Set("HX-Trigger", "tills-changed")
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -948,6 +1062,9 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name strin
 			// The register the primary auto-provisioned for this till
 			// (ut-docs#894); empty from an older primary.
 			RegisterID string `json:"register_id"`
+			// The role the manager chose for this till (ut-docs#2781);
+			// empty from an older primary, which means additional.
+			Role string `json:"role"`
 		} `json:"data"`
 	}
 	if resp.StatusCode == http.StatusNotFound {
@@ -1000,6 +1117,7 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name strin
 		TillName:      name,
 		DeviceID:      "till-" + hex.EncodeToString(draw),
 		RegisterID:    out.Data.RegisterID,
+		Role:          out.Data.Role,
 	}); err != nil {
 		return "", &joinError{kind: joinErrStageIdentityFailed, detail: err.Error()}
 	}
