@@ -519,6 +519,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerDiscoveryAPI(mux, dp)                     // ADR-0033 part 1/3
 	registerPairingJoinAPI(mux, dp)                   // ADR-0033 part 3/3 (replica side)
 	registerPendingPairingsUI(mux, dp)                // ADR-0033 part 3/3 (primary side)
+	registerJoinNoticeUI(mux, dp)                     // ADR-0033 amendment: standalone till offers to join a found main till (ut-docs#2721)
 	registerSyncSales(mux, dp)
 	registerSyncOrders(mux, dp)      // cross-till orders board, primary side (ut-docs#1350)
 	registerSyncTables(mux, dp)      // cross-till table occupancy, read-only, primary side (ut-docs#1392)
@@ -559,6 +560,10 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// ut-docs#2774: when mDNS finds nothing, ask the cloud where the main
 	// till is — a candidate for the same proof, never a shortcut.
 	dp.PrimaryWatch.SetCloudLookup(discovery.NewCloudLookup(primaryWatchCloudCredentials(dp)))
+	// ut-docs#2721: a standalone till's look for a main till to join. No
+	// ticker of its own — the LAN sync pull loop (StartSyncPull, every 30s
+	// on every till) ticks it while sync.primary_url is empty.
+	dp.JoinWatch = discovery.NewJoinWatch(dp.Settings, discovery.Browse)
 	// ADR-0114 (ut-docs#2735): this till's side of the main-till link. Built
 	// before StartSyncPull, which reads its link state for the polling floor.
 	dp.LinkClient = newSyncLinkClient(dp, fleetlink.DefaultClientOptions())
