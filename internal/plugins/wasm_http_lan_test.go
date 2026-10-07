@@ -325,3 +325,77 @@ func TestAuditDeclaredDenialOnlyForDeclaredPermission(t *testing.T) {
 		t.Fatalf("declared-but-ungranted http:lan wrote %d audit rows, want 1", n)
 	}
 }
+
+// ADR-0121 §3 (owner decision ut-docs#3794): on the http path an exact grant
+// reaches a LAN address only with http:lan, and loopback only for a loopback
+// host name; tcp_open's exact rule (needsHTTPLAN false) is unchanged.
+func TestEgressDialerHTTPLANRule(t *testing.T) {
+	d := (&egressEnv{}).dialer()
+	cases := []struct {
+		host string
+		ip   string
+		pol  egressPolicy
+		ok   bool
+	}{
+		{"192.168.1.20", "192.168.1.20", egressPolicy{exact: true, needsHTTPLAN: true}, false},
+		{"erp.example.com", "10.0.0.5", egressPolicy{exact: true, needsHTTPLAN: true}, false},
+		{"fe80::1", "fe80::1", egressPolicy{exact: true, needsHTTPLAN: true}, false},
+		{"192.168.1.20", "192.168.1.20", egressPolicy{exact: true}, true}, // http:lan held, or tcp_open
+		{"localhost", "127.0.0.1", egressPolicy{exact: true, needsHTTPLAN: true}, true},
+		{"LOCALHOST.", "127.0.0.1", egressPolicy{exact: true, needsHTTPLAN: true}, true},
+		{"127.0.0.1", "127.0.0.1", egressPolicy{exact: true, needsHTTPLAN: true}, true},
+		{"[::1]", "::1", egressPolicy{exact: true, needsHTTPLAN: true}, true},
+		{"::1", "::ffff:127.0.0.1", egressPolicy{exact: true, needsHTTPLAN: true}, true},
+		{"loop.example.com", "127.0.0.1", egressPolicy{exact: true, needsHTTPLAN: true}, false},
+		{"localhost", "192.168.1.20", egressPolicy{exact: true, needsHTTPLAN: true}, false},
+		{"api.example.com", "93.184.216.34", egressPolicy{exact: true, needsHTTPLAN: true}, true},
+		{"api.example.com", "93.184.216.34", egressPolicy{needsHTTPLAN: true}, true},
+	}
+	for _, c := range cases {
+		err := d.check(c.host, net.ParseIP(c.ip), 443, c.pol)
+		if c.ok && err != nil {
+			t.Errorf("check(%s→%s, %+v) = %v, want allowed", c.host, c.ip, c.pol, err)
+		}
+		if !c.ok {
+			var de *egressDeniedError
+			if !errors.As(err, &de) || de.missingPerm != permHTTPLAN {
+				t.Errorf("check(%s→%s, %+v) = %v, want denied for missing http:lan", c.host, c.ip, c.pol, err)
+			}
+		}
+	}
+}
+
+// A dial refused for the missing http:lan is audited naming it — even for a
+// plugin that never declared it (ut-docs#3794: the operator must see why a
+// LAN connector stopped); a refusal for any other reason writes no http:lan
+// row.
+func TestEgressDialerAuditsMissingHTTPLAN(t *testing.T) {
+	d := hostfnTestDB(t)
+	const pluginID = "com.test.auditdial"
+	seedPlugin(t, d, pluginID)
+	ctx := context.Background()
+	count := func() int {
+		t.Helper()
+		var n int
+		if err := d.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action = 'permission_denied' AND entity_id = ? AND data_json LIKE '%http:lan%'`, pluginID).Scan(&n); err != nil {
+			t.Fatalf("count audit rows: %v", err)
+		}
+		return n
+	}
+	g := &egressGrants{exact: map[string]bool{}}
+	g.record("192.168.1.20", httpHopDecision{exact: true})
+	dctx := withEgressGrants(withHostState(ctx, &hostState{pluginID: pluginID, db: d}), g)
+	dialer := (&egressEnv{}).dialer()
+	if _, err := dialer.DialContext(dctx, "tcp", "192.168.1.20:443"); !errors.Is(err, errEgressDenied) {
+		t.Fatalf("LAN dial without http:lan = %v, want egress denied", err)
+	}
+	if n := count(); n != 1 {
+		t.Fatalf("missing http:lan wrote %d audit rows, want 1", n)
+	}
+	if _, err := dialer.DialContext(dctx, "tcp", "10.9.9.9:443"); !errors.Is(err, errEgressDenied) {
+		t.Fatalf("ungranted LAN dial = %v, want egress denied", err)
+	}
+	if n := count(); n != 1 {
+		t.Fatalf("a non-http:lan refusal wrote an http:lan audit row (%d rows)", n)
+	}
+}

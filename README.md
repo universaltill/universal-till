@@ -438,14 +438,16 @@ no code, just files. Hardware/device plugins needing raw OS access (USB,
 serial) run as a supervised process (`runtime: "go"`), the minority case.
 A manifest that omits `runtime` gets the WASM sandbox, never a process. Each
 WASM instance is capped at 64 MiB of memory, and `http_request` checks the
-resolved IP at connect time: `net:*` reaches public addresses only, a LAN or
-loopback target needs its exact `net:<host>` grant, and the till's own port is
-never reachable (redirects included). `tcp_open` follows the same rule:
+resolved IP at connect time: `net:*` reaches public addresses only, a LAN
+target needs its exact `net:<host>` grant **and** `http:lan`, loopback needs
+`net:localhost` (or a loopback IP literal), and the till's own port is never
+reachable (redirects included; ADR-0121 §3, ut-docs#3794). `tcp_open` keeps the exact-grant rule, without `http:lan`:
 `tcp:*` reaches public addresses only, a LAN or loopback device needs its
 exact `tcp:<host>:<port>` grant. For a target an admin configures after
-install, a manifest declares `net:@setting:<urlKey>` or
-`tcp:@setting:<hostKey>:<portKey>`: the address currently saved in those
-settings counts as the exact grant (ut-docs#2899). Cloud-metadata addresses
+install, a manifest declares `net:@setting:<urlKey>` (plus `http:lan` if that
+address may be on the shop network) or `tcp:@setting:<hostKey>:<portKey>`:
+the address currently saved in those settings counts as the exact grant
+(ut-docs#2899). Cloud-metadata addresses
 (`169.254.169.254`, `fd00:ec2::254`, in any mapped form) are never reachable,
 whatever the grant. With `http:lan` a plugin may use plain `http` to a host it
 holds an exact grant for, or to the host of one of its own `"type": "endpoint"`

@@ -168,6 +168,7 @@ func TestHTTPEgress(t *testing.T) {
 	tlsSrv.StartTLS()
 	defer tlsSrv.Close()
 	tlsAddr := tlsSrv.Listener.Addr().String()
+	tlsURL := tlsSrv.URL
 	tillPort, _ := strconv.Atoi(mustPort(t, till.URL))
 
 	env := &egressEnv{
@@ -176,6 +177,7 @@ func TestHTTPEgress(t *testing.T) {
 			"other.example.com":  {"93.184.216.35"},
 			"rebind.example.com": {"10.1.2.3"},
 			"localhost":          {"127.0.0.1"},
+			"loop.example.com":   {"127.0.0.1"},
 		},
 		route: map[string]string{
 			"93.184.216.34": tlsAddr, "93.184.216.35": tlsAddr,
@@ -197,7 +199,15 @@ func TestHTTPEgress(t *testing.T) {
 		{name: "exact public host", perms: []string{"net:api.example.com"}, url: "https://api.example.com/ok", wantStatus: 200},
 		{name: "net:* refuses RFC1918 10.x literal", perms: []string{"net:*"}, url: "https://10.0.0.5/ok", wantCode: hostErrDenied, noHit: &tlsHits},
 		{name: "net:* refuses RFC1918 192.168.x literal", perms: []string{"net:*"}, url: "https://192.168.1.20/ok", wantCode: hostErrDenied, noHit: &tlsHits},
-		{name: "explicit net:192.168.1.50 allowed", perms: []string{"net:192.168.1.50"}, url: "https://192.168.1.50/ok", wantStatus: 200},
+		// ADR-0121 §3 (owner decision ut-docs#3794): a LAN address needs
+		// http:lan on top of the exact grant; loopback needs a loopback name.
+		{name: "explicit net:192.168.1.50 + http:lan allowed", perms: []string{"net:192.168.1.50", "http:lan"}, url: "https://192.168.1.50/ok", wantStatus: 200},
+		{name: "explicit net:192.168.1.50 without http:lan refused", perms: []string{"net:192.168.1.50"}, url: "https://192.168.1.50/ok", wantCode: hostErrDenied, noHit: &tlsHits},
+		{name: "exact public name resolving to a LAN IP refused without http:lan", perms: []string{"net:rebind.example.com"}, url: "https://rebind.example.com/ok", wantCode: hostErrDenied, noHit: &tlsHits},
+		{name: "exact public name resolving to a LAN IP allowed with http:lan", perms: []string{"net:rebind.example.com", "http:lan"}, url: "https://rebind.example.com/ok", wantStatus: 200},
+		{name: "exact non-loopback name resolving to loopback refused without http:lan", perms: []string{"net:loop.example.com"}, url: "https://loop.example.com:" + mustPort(t, tlsURL) + "/ok", wantCode: hostErrDenied, noHit: &tlsHits},
+		{name: "exact non-loopback name resolving to loopback allowed with http:lan", perms: []string{"net:loop.example.com", "http:lan"}, url: "https://loop.example.com:" + mustPort(t, tlsURL) + "/ok", wantStatus: 200},
+		{name: "explicit net:127.0.0.1 reaches loopback without http:lan", perms: []string{"net:127.0.0.1"}, url: "http://127.0.0.1:" + mustPort(t, loop.URL) + "/x", wantStatus: 200},
 		{name: "DNS rebinding to a private IP under net:*", perms: []string{"net:*"}, url: "https://rebind.example.com/ok", wantCode: hostErrDenied, noHit: &tlsHits},
 		{name: "net:* refuses plain http loopback", perms: []string{"net:*"}, url: loop.URL + "/x", wantCode: hostErrDenied, noHit: &loopHits},
 		{name: "redirect from allowed https host to http://127.0.0.1 under net:*", perms: []string{"net:*"}, url: "https://api.example.com/to-loopback", wantCode: hostErrDenied, noHit: &loopHits},
