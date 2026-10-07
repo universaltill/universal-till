@@ -963,7 +963,7 @@ func TestClaimTableForTill_StaleOwnerIsExpiredAndTakenOver(t *testing.T) {
 	}
 }
 
-// The PRIMARY's own live basket claims with till_id="" (ClaimTable, the
+// The PRIMARY's own live basket claims with till_id=” (ClaimTable, the
 // unchanged local path — same this-till convention as sales.till_id). That
 // row must NEVER be auto-expired by ClaimTableForTill: the primary is, by
 // construction, always "online" with itself, and it has no tills row of its
@@ -998,15 +998,15 @@ func TestClaimTableForTill_NeverExpiresThisTillLocalClaim(t *testing.T) {
 }
 
 // TestClaimTableForTill_LocalOwnClaimIsRetakenAndRefreshed (ut-docs#1704,
-// independent review 2026-09-07): tillID="" re-claiming a till_id="" row it
+// independent review 2026-09-07): tillID="" re-claiming a till_id=” row it
 // already holds must succeed (claimed=true) and refresh claimed_at, the same
 // "own-claim" re-take ClaimTableForTill already gave a REAL till id — before
-// this fix, the `till_id != ""` guard blocked the own-claim disjunct from
-// EVER matching tillID="" itself, so INSERT OR IGNORE silently no-op'd on
+// this fix, the `till_id != ”` guard blocked the own-claim disjunct from
+// EVER matching tillID=” itself, so INSERT OR IGNORE silently no-op'd on
 // the pre-existing row and reported claimed=false for a claim that in fact
-// already stood. tillID="" is not only ever the primary's own live basket —
+// already stood. tillID=” is not only ever the primary's own live basket —
 // claimTableWriteThrough's local fallback branch has always called this with
-// tillID="" too, and a held order's claim (ut-docs#1704) is now kept alive
+// tillID=” too, and a held order's claim (ut-docs#1704) is now kept alive
 // through the whole park rather than re-claimed from scratch on resume, so
 // this path is newly reachable against an already-self-held row.
 func TestClaimTableForTill_LocalOwnClaimIsRetakenAndRefreshed(t *testing.T) {
@@ -1055,7 +1055,7 @@ func TestClaimTableForTill_LocalOwnClaimIsRetakenAndRefreshed(t *testing.T) {
 }
 
 // ReleaseTableClaimForTill deletes only the calling till's own claim: another
-// till's row (or the primary's own local "" row) is left alone, and releasing
+// till's row (or the primary's own local ” row) is left alone, and releasing
 // with nothing to release is a no-op, not an error — same convention as
 // ReleaseTableClaim.
 func TestReleaseTableClaimForTill_OnlyDeletesOwnClaim(t *testing.T) {
@@ -1233,5 +1233,8 @@ func TestReleaseAllTableClaimsForTill_EmptyTillIDIsNoOp(t *testing.T) {
 	}
 	if err := repo.ReleaseAllTableClaimsForTill(ctx, "", nil); err != nil {
 		t.Fatalf("ReleaseAllTableClaimsForTill(\"\"): %v", err)
+	}
+	if owner, ok := claimTillOf(t, dbo, id); !ok || owner != "" {
+		t.Fatalf("an empty till id must never release the local '' claim, got %q (ok=%v)", owner, ok)
 	}
 }
