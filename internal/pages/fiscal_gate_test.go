@@ -902,3 +902,79 @@ func TestFiscalSettings_OwnerCountryChangeClearsAndAuditsPosture(t *testing.T) {
 		t.Fatalf("posture clear must be audited on the posture key: ok=%v err=%v", ok, err)
 	}
 }
+
+// ut-docs#3808: the override keys are shop-wide and the admin bundle is
+// main-till-wins, so a grant written locally on an additional till was
+// silently reverted by its next pull — the operator saw "granted" and the
+// tender gate re-blocked minutes later. An additional till now refuses the
+// grant up front (409, translated, nothing stored, nothing audited), even
+// for an owner session with a valid owner PIN; the grant belongs on the
+// main till, which every till follows on its next pull.
+func TestFiscalOverride_RefusedOnAdditionalTill(t *testing.T) {
+	mux, dp := newFiscalTestDeps(t)
+	seedFailingConfiguredTSE(t, dp)
+	ctx := context.Background()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatal(err)
+	}
+	adminHash, err := auth.HashPIN("135790")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx,
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES ('adm2','adm2','Owner',?, 'admin')`,
+		adminHash); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		user auth.User
+		body string
+	}{
+		{"owner session", auth.User{ID: "user1", Role: "admin"}, validOverrideBody("")},
+		{"cashier with owner PIN", auth.User{ID: "cash1", Role: "cashier"}, validOverrideBody(`,"owner_pin":"135790"`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := grantOverride(t, mux, tc.user, tc.body)
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("expected 409 on an additional till, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if want := en("settings.error.change_on_main_till"); !strings.Contains(rec.Body.String(), want) {
+				t.Fatalf("expected the translated main-till message %q, got: %s", want, rec.Body.String())
+			}
+		})
+	}
+
+	// Locale-aware, not an English literal.
+	faReq := httptest.NewRequest(http.MethodPost, "/api/fiscal/signing-override?lang=fa", strings.NewReader(validOverrideBody("")))
+	faReq.Header.Set("Content-Type", "application/json")
+	faReq.Header.Set("Accept", "application/json")
+	faReq = auth.WithUser(faReq, auth.User{ID: "user1", Role: "admin"})
+	faRec := httptest.NewRecorder()
+	mux.ServeHTTP(faRec, faReq)
+	if want := httpx.T("fa", "settings.error.change_on_main_till"); faRec.Code != http.StatusConflict || !strings.Contains(faRec.Body.String(), want) {
+		t.Fatalf("expected 409 with the Farsi main-till message %q, got %d: %s", want, faRec.Code, faRec.Body.String())
+	}
+
+	// Nothing a later pull could revert: no window stored, no grant audited,
+	// and the sale stays blocked.
+	for _, k := range []string{fiscal.KeyOverrideUntil, fiscal.KeyOverrideReason, fiscal.KeyOverrideActor} {
+		if v, ok, _ := dp.Settings.Get(ctx, k); ok && v != "" {
+			t.Fatalf("%s must not be stored on an additional till, got %q", k, v)
+		}
+	}
+	var n int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_type='fiscal_override'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("expected no fiscal_override audit rows on an additional till, got %d", n)
+	}
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatal(err)
+	}
+	if rec := fiscalTender(t, mux); countSales(t, dp) != 0 {
+		t.Fatalf("the tender must stay blocked on an additional till, body: %s", rec.Body.String())
+	}
+}
