@@ -744,6 +744,42 @@ func TestBuildMenu(t *testing.T) {
 	}
 }
 
+// A page entry under a core-reserved route (ut-docs#3786) gets no menu
+// tile: findPageEntry refuses to dispatch it, so the tile would open a 404.
+// Install and rollback refuse such a route now; this covers a plugin
+// installed before that check existed (ut-docs#3817).
+func TestBuildMenu_SkipsReservedRoutes(t *testing.T) {
+	base := []MenuItem{{Href: "/", Label: "Home"}}
+	pm := &plugins.Manager{
+		MenuPlugins: map[string]plugins.MenuPlugin{
+			"guide":  {Route: "/help/vendor/guide", Label: "Vendor guide"},
+			"exact":  {Route: "/settings", Label: "Shadow settings"},
+			"faq":    {Route: "/plugin/faq", Label: "FAQ"},
+			"helpix": {Route: "/helpix", Label: "Not reserved"}, // prefix match is per segment
+		},
+	}
+
+	got := BuildMenu(base, pm)
+
+	hrefs := map[string]bool{}
+	for _, it := range got[1:] {
+		hrefs[it.Href] = true
+	}
+	for _, reserved := range []string{"/help/vendor/guide", "/settings"} {
+		if hrefs[reserved] {
+			t.Errorf("BuildMenu kept a tile for reserved route %q: %+v", reserved, got)
+		}
+	}
+	for _, kept := range []string{"/plugin/faq", "/helpix"} {
+		if !hrefs[kept] {
+			t.Errorf("BuildMenu dropped the tile for %q: %+v", kept, got)
+		}
+	}
+	if len(got) != 3 {
+		t.Errorf("BuildMenu returned %d items, want 3 (base + /plugin/faq + /helpix): %+v", len(got), got)
+	}
+}
+
 // BuildMenu must not write into the caller's backing array — a naive
 // `items := base` (rather than a fresh copy) would only be caught if base
 // has spare capacity, since Go's append reuses backing storage when it

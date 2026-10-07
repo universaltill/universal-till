@@ -635,9 +635,16 @@ func StateKV(ctx context.Context, store *settings.Store, st RuntimeState) map[st
 func BuildMenu(base []MenuItem, pm *plugins.Manager) []MenuItem {
 	items := append([]MenuItem{}, base...)
 	for _, p := range pm.MenuPlugins {
-		if p.Route != "" && p.Label != "" {
-			items = append(items, MenuItem{Href: p.Route, Label: p.Label, Icon: p.Icon})
+		if p.Route == "" || p.Label == "" {
+			continue
 		}
+		// ut-docs#3817: no tile under a core-reserved route — findPageEntry
+		// never dispatches one, so the tile would open a 404. Covers a plugin
+		// installed before install time refused such a route (ut-docs#3786).
+		if _, reserved := plugins.ReservedPageRoutePrefix(p.Route); reserved {
+			continue
+		}
+		items = append(items, MenuItem{Href: p.Route, Label: p.Label, Icon: p.Icon})
 	}
 	return items
 }

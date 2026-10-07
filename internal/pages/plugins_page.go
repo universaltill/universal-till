@@ -40,6 +40,11 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 		docsRouteByPlugin := map[string]string{}
 		if entries, err := data.NewPluginRepo(d.Db).ListPageEntries(ctx); err == nil {
 			for _, e := range entries {
+				// ut-docs#3817: a docs route under a core-reserved prefix is
+				// never dispatched (findPageEntry), so it gets no button.
+				if _, reserved := plugins.ReservedPageRoutePrefix(e.Route); reserved {
+					continue
+				}
 				if e.EntryKey == plugins.DocsEntryKey && e.Route != "" {
 					if _, seen := docsRouteByPlugin[e.PluginID]; !seen {
 						docsRouteByPlugin[e.PluginID] = e.Route

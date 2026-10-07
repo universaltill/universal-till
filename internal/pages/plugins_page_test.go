@@ -100,6 +100,31 @@ func TestPluginsPage_DocsEntryExposesDocsRoute(t *testing.T) {
 	}
 }
 
+// A "docs" entry under a core-reserved route (ut-docs#3786) gets no Docs
+// button: findPageEntry never dispatches it, so the button would open a 404.
+// Covers a plugin installed before install time refused such a route
+// (ut-docs#3817).
+func TestPluginsPage_ReservedDocsRouteHidesDocsRoute(t *testing.T) {
+	d := pluginsManagerTestDeps(t)
+
+	seedTestPlugin(t, d.Db, "com.x.legacy", "Legacy Docs", "1.0.0")
+	if _, err := d.Db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label) VALUES('e1','com.x.legacy','page','docs','/help/vendor/guide','How this works')`); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerPluginsPage(mux, d)
+
+	items := pluginsManagerJSON(t, mux)
+	got, ok := items["com.x.legacy"]
+	if !ok {
+		t.Fatalf("plugin com.x.legacy missing from manager payload: %+v", items)
+	}
+	if got.DocsRoute != "" {
+		t.Errorf("docsRoute = %q, want empty for a docs entry under a reserved route", got.DocsRoute)
+	}
+}
+
 // A plugin with no "docs" page entry (even if it has other page entries)
 // gets an empty docsRoute — the template hides the Docs button, so there is
 // never a button that opens an empty page.
