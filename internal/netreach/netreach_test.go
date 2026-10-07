@@ -101,8 +101,8 @@ func TestProbeURL(t *testing.T) {
 }
 
 func TestDefaults(t *testing.T) {
-	if DefaultTimeout != 5*time.Second || DefaultTTL != 10*time.Second {
-		t.Fatalf("defaults = timeout %v ttl %v, want 5s / 10s", DefaultTimeout, DefaultTTL)
+	if DefaultTimeout != 5*time.Second || DefaultTTL != 60*time.Second {
+		t.Fatalf("defaults = timeout %v ttl %v, want 5s / 60s (ADR-0148 audit item 2)", DefaultTimeout, DefaultTTL)
 	}
 }
 
@@ -200,15 +200,19 @@ func TestTTLRespected(t *testing.T) {
 	m := newTestMonitor(t, srv.URL+"/api", clk, srv.Client())
 	m.Status()
 	waitSettled(t, m, Reachable)
-	clk.Add(9 * time.Second)
+	// The status bar polls every 10 s; none of the polls inside the 60 s
+	// TTL may reach the cloud (ADR-0148 audit item 2, ut-docs#3625).
 	for i := 0; i < 5; i++ {
+		clk.Add(10 * time.Second)
 		m.Status()
 	}
+	clk.Add(DefaultTTL - 51*time.Second) // 59 s since the probe
+	m.Status()
 	time.Sleep(30 * time.Millisecond)
 	if n := hits.Load(); n != 1 {
 		t.Fatalf("re-probed within the TTL: %d hits, want 1", n)
 	}
-	clk.Add(2 * time.Second) // 11 s since the probe
+	clk.Add(2 * time.Second) // 61 s since the probe
 	if st := m.Status(); st != Reachable {
 		t.Fatalf("stale Status = %v, want the cached Reachable while re-probing", st)
 	}
@@ -284,7 +288,7 @@ func TestPanickingProbeStillClearsInFlight(t *testing.T) {
 	m := newTestMonitor(t, "https://cloud.example.test/api", clk, &http.Client{Transport: tr})
 	m.Status()
 	waitSettled(t, m, Unreachable)
-	clk.Add(11 * time.Second)
+	clk.Add(DefaultTTL + time.Second)
 	m.Status()
 	deadline := time.Now().Add(5 * time.Second)
 	for tr.calls.Load() < 2 && time.Now().Before(deadline) {

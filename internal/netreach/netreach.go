@@ -34,8 +34,10 @@ import (
 const (
 	// DefaultTimeout bounds one probe, and so the background goroutine.
 	DefaultTimeout = 5 * time.Second
-	// DefaultTTL is how long a probe result is fresh.
-	DefaultTTL = 10 * time.Second
+	// DefaultTTL is how long a probe result is fresh. The status bar polls
+	// every 10 s, so this — not the poll — sets how often a till calls our
+	// cloud: 60 s, not 10 s, is ADR-0148's audit item 2 (ut-docs#3625).
+	DefaultTTL = 60 * time.Second
 	// healthPath is ut-cloud's unauthenticated liveness endpoint.
 	healthPath = "/healthz"
 	// maxDrain caps how much of a probe response body is read.

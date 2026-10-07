@@ -288,6 +288,8 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusBadRequest, "listing_id required")
 			return
 		}
+		// The signing key is fetched lazily (ADR-0148 audit item 3).
+		enroll.EnsureSigningKey(r.Context(), d.Cfg, d.Settings)
 		installer, _, err := storeInstaller(d)
 		if err != nil {
 			respond(w, http.StatusInternalServerError, "marketplace not configured")
