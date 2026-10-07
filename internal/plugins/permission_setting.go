@@ -30,7 +30,8 @@ package plugins
 // that page for everything else a manager session can do.
 // Everything else of the #2891 egress policy still applies:
 // the till's own listen port is never reachable, redirects re-check the new
-// host, and plain http goes to loopback only.
+// host, and plain http goes to loopback only — or, with http:lan
+// (ut-docs#3156), to the setting's host on a LAN address (admitHTTPHop).
 
 import (
 	"context"

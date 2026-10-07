@@ -226,7 +226,7 @@ func hostTCPOpen(ctx context.Context, m api.Module, hostPtr, hostLen, port, time
 	// out anyway can still outlive the event that's supposed to bound it.
 	dialCtx, cancel := context.WithTimeout(ctx, clampTCPTimeoutMs(timeoutMs, maxTCPDialTimeoutMs))
 	defer cancel()
-	conn, ip, err := tcpEgressDialer.dialChecked(dialCtx, "tcp", addr, exact)
+	conn, ip, err := tcpEgressDialer.dialChecked(dialCtx, "tcp", addr, egressPolicy{exact: exact})
 	if err != nil {
 		if errors.Is(err, errEgressDenied) {
 			logEgressDenied(s.pluginID, err)

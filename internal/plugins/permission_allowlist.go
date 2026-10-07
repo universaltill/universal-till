@@ -22,7 +22,9 @@ var exactPermissions = map[string]bool{
 	"tcp:*":                   true, // wasm_tcp.go public-only wildcard
 	"devices:printer":         true, // data.PluginRepo.HasActivePrinterCapability
 
-	// ADR-0121 §2. Runtime enforcement lands with the §3 build cards.
+	// ADR-0121 §2. Runtime enforcement lands with the §3 build cards;
+	// http:lan and http:stream are enforced (ut-docs#3156, wasm_egress.go
+	// admitHTTPHop, wasm_httpstream.go).
 	"http:lan":        true,
 	"http:stream":     true,
 	"db:own":          true,

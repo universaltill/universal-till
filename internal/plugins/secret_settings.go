@@ -122,6 +122,38 @@ func (m *Manifest) SettingDeclaredEndpoint(key string) bool {
 	return false
 }
 
+// endpointSettingHostMatch reports whether host is the host of the value
+// currently stored in one of the plugin's own settings its installed
+// manifest declares `type: "endpoint"` (ADR-0121 §2) — under http:lan such a
+// host counts as an exact grant (admitHTTPHop). Resolved on every call, like
+// net:@setting, so changing the setting moves the grant. A stored value that
+// is not a valid endpoint URL (ValidEndpointURL) grants nothing; a plugin
+// with no manifest on disk declares nothing (InstalledManifest ok=false).
+func endpointSettingHostMatch(ctx context.Context, db *sql.DB, pluginID, host string) (bool, error) {
+	want := normGrantHost(host)
+	if want == "" {
+		return false, nil
+	}
+	m, ok, err := InstalledManifest(ctx, db, pluginID)
+	if err != nil || !ok {
+		return false, err
+	}
+	for _, st := range m.Settings {
+		if st.Type != SettingTypeEndpoint {
+			continue
+		}
+		v, ok := pluginSettingString(ctx, db, pluginID, st.Key)
+		if !ok || !ValidEndpointURL(v) {
+			continue
+		}
+		u, err := url.Parse(v)
+		if err == nil && normGrantHost(u.Hostname()) == want {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // SettingDeclaredSecret reports whether this manifest declares key with
 // `type: "secret"`. Nil-safe (a plugin whose manifest could not be read
 // simply declares nothing — the key-name heuristic still applies).

@@ -71,6 +71,10 @@ type WasmRuntime struct {
 	wg sync.WaitGroup
 }
 
+// onHostState, when set (tests only), sees each event's hostState so a test
+// can assert what the event left behind (e.g. no open http:stream handle).
+var onHostState func(*hostState)
+
 // exportTimeout is the deadline granted to the export/report event class
 // (ut-docs#221) instead of the blanket w.timeout every other ".ask" event
 // uses. Gathering real sales/tax/payment data and building an actual export
@@ -656,7 +660,14 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 		return nil, fmt.Errorf("module not loaded: %s", pluginID)
 	}
 	// Host functions ("ut" module) resolve the caller through this state.
-	cctx = withHostState(cctx, &hostState{pluginID: pluginID, db: db, httpClient: w.httpClient})
+	hs := &hostState{pluginID: pluginID, db: db, httpClient: w.httpClient}
+	// http:stream handles never outlive the event (ADR-0121 §3): closed
+	// however the guest ends — success, error, deadline or trap.
+	defer hs.streams.closeAll()
+	if onHostState != nil {
+		onHostState(hs)
+	}
+	cctx = withHostState(cctx, hs)
 
 	var stdout, stderr bytes.Buffer
 	cfg := wazero.NewModuleConfig().

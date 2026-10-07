@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -26,13 +27,17 @@ import (
 //
 // Buffer ABI: data-returning calls write min(len, dstCap) bytes and return
 // the FULL length — a guest seeing len > cap retries with a bigger buffer.
-// Negative returns: -1 not found, -2 permission denied, -3 internal error,
-// -4 invalid/too large.
+// Negative returns: -1 not found (incl. an unknown or closed handle),
+// -2 permission denied, -3 internal error (incl. a timed-out read), -4
+// invalid/too large, -5 quota exceeded (ADR-0121 §3: e.g. an http:stream
+// body over limits.http_body_mb), -6 busy (too many open handles).
 const (
 	hostErrNotFound = -1
 	hostErrDenied   = -2
 	hostErrInternal = -3
 	hostErrInvalid  = -4
+	hostErrQuota    = -5
+	hostErrBusy     = -6
 )
 
 const httpResponseCap = 256 << 10 // response body cap (base64-decoded bytes)
@@ -58,6 +63,15 @@ type hostState struct {
 	// cross-plugin leakage. See hostHTTPRequest for why this exists.
 	httpCacheReq  []byte
 	httpCacheResp []byte
+
+	// streams are this event's http:stream handles (wasm_httpstream.go) —
+	// per event, never process-wide; handleEvent closes them all when the
+	// event returns.
+	streams httpStreams
+	// httpBodyLimit is the http:stream byte cap from the manifest's
+	// limits.http_body_mb, resolved once per event (streamLimit).
+	limitOnce     sync.Once
+	httpBodyLimit int64
 }
 
 type hostStateKey struct{}
@@ -110,6 +124,11 @@ func instantiateHostModule(ctx context.Context, rt wazero.Runtime) error {
 		NewFunctionBuilder().WithFunc(hostImportFileSize).Export("import_file_size").
 		NewFunctionBuilder().WithFunc(hostImportFileRead).Export("import_file_read").
 		NewFunctionBuilder().WithFunc(hostImportFileClose).Export("import_file_close").
+		NewFunctionBuilder().WithFunc(hostHTTPOpen).Export("http_open").
+		NewFunctionBuilder().WithFunc(hostHTTPWrite).Export("http_write").
+		NewFunctionBuilder().WithFunc(hostHTTPStatus).Export("http_status").
+		NewFunctionBuilder().WithFunc(hostHTTPRead).Export("http_read").
+		NewFunctionBuilder().WithFunc(hostHTTPClose).Export("http_close").
 		Instantiate(ctx)
 	return err
 }
@@ -206,7 +225,9 @@ func hostStorageSet(ctx context.Context, m api.Module, keyPtr, keyLen, valPtr, v
 
 // hostHTTPRequest performs one outbound HTTP call for the plugin. The URL's
 // hostname must be covered by a granted `net:<host>` permission; https only,
-// except plain http to localhost (dev/Ollama). A host named by a
+// except plain http to localhost (dev/Ollama), and — with http:lan
+// (ADR-0121 §2, ut-docs#3156) — plain http to an exactly granted or
+// endpoint-setting host on a non-public address (admitHTTPHop). A host named by a
 // net:validation:<host> grant (ut-docs#3226) may also be fetched over plain
 // http, with validationResponseCap instead of httpResponseCap, and is always
 // public-only: it must resolve to a public address, whatever other net:
@@ -237,10 +258,7 @@ func hostHTTPRequest(ctx context.Context, m api.Module, reqPtr, reqLen, dstPtr, 
 	if !ok {
 		return hostErrInternal
 	}
-	// The public demo till has no outbound network (ADR-0113 §1.6): every
-	// http egress is permission denied, whatever the plugin was granted.
-	if netaccess.Demo() {
-		logging.L().Infof("[wasm:%s] http egress denied: demo mode (ADR-0113)", s.pluginID)
+	if httpEgressDemoDenied(s) {
 		return hostErrDenied
 	}
 	raw, ok := readGuest(m, reqPtr, reqLen)
@@ -270,42 +288,9 @@ func hostHTTPRequest(ctx context.Context, m api.Module, reqPtr, reqLen, dstPtr, 
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return hostErrInvalid
 	}
-	u, err := url.Parse(req.URL)
-	if err != nil || u.Hostname() == "" {
-		return hostErrInvalid
-	}
-	// A net:validation:<host> grant (ut-docs#3226) is the only thing that
-	// lets a non-loopback host be fetched over plain http; look it up first
-	// so the scheme rule can take it into account.
-	validation, err := validationGrantMatch(ctx, s.db, s.pluginID, u.Hostname())
-	if err != nil {
-		logEgressDenied(s.pluginID, &egressDeniedError{host: u.Hostname(), reason: "permission lookup failed"})
-		return hostErrDenied
-	}
-	if !hostAllowedScheme(u, validation) {
-		logging.L().Infof("[wasm:%s] http egress denied: host %s: scheme %s (https only; plain http only to loopback or a net:validation: host)", s.pluginID, u.Hostname(), u.Scheme)
-		return hostErrInvalid
-	}
-	// Name check: the plugin holds either the exact host permission
-	// (net:<host>) or the wildcard (net:*). Configurable connectors (ERP
-	// webhooks, ADR-0014) don't know their target host until install-time
-	// settings, so they declare net:* and are review-gated accordingly.
-	// net:* reaches PUBLIC addresses only; a LAN/loopback target needs the
-	// exact grant — enforced at dial time against the resolved IP, redirects
-	// included (wasm_egress.go, ut-docs#2891). A validation grant passes the
-	// name check on its own and is never exact, even alongside net:<host>
-	// for the same host (httpNetPermission).
-	exact, err := httpNetPermission(ctx, s.db, s.pluginID, u.Hostname(), validation)
-	if err != nil {
-		logEgressDenied(s.pluginID, err)
-		return hostErrDenied
-	}
-	grants := &egressGrants{exact: map[string]bool{}}
-	if exact {
-		grants.add(u.Hostname())
-	}
-	if validation {
-		grants.addValidation(u.Hostname())
+	u, grants, code := admitHTTPRequest(ctx, s, req.URL)
+	if code != 0 {
+		return code
 	}
 	ctx = withEgressGrants(ctx, grants)
 	body, err := base64.StdEncoding.DecodeString(req.BodyB64)
@@ -375,6 +360,51 @@ func hostHTTPRequest(ctx context.Context, m api.Module, reqPtr, reqLen, dstPtr, 
 	return writeGuest(m, dstPtr, dstCap, out)
 }
 
+// httpEgressDemoDenied: the public demo till has no outbound network
+// (ADR-0113 §1.6) — every http egress is permission denied, whatever the
+// plugin was granted.
+func httpEgressDemoDenied(s *hostState) bool {
+	if netaccess.Demo() {
+		logging.L().Infof("[wasm:%s] http egress denied: demo mode (ADR-0113)", s.pluginID)
+		return true
+	}
+	return false
+}
+
+// admitHTTPRequest is the precheck http_request and http_open share: the URL
+// must parse with a host, and its first hop must pass admitHTTPHop (scheme
+// rule + name check: net:<host>, net:@setting, net:*, net:validation:,
+// http:lan). It returns the URL and the request chain's egressGrants seeded
+// with that hop's decision — the dialer enforces the IP rule against them,
+// redirects add theirs (checkPluginRedirect) — or a hostErr* code, already
+// logged.
+//
+// Configurable connectors (ERP webhooks, ADR-0014) that don't know their
+// target host until install-time settings declare net:* (review-gated) or a
+// setting-bound grant. net:* reaches PUBLIC addresses only; a LAN/loopback
+// target needs the exact grant — enforced at dial time against the resolved
+// IP, redirects included (wasm_egress.go, ut-docs#2891). A validation grant
+// passes the name check on its own and is never exact, even alongside
+// net:<host> for the same host (ut-docs#3226).
+func admitHTTPRequest(ctx context.Context, s *hostState, rawURL string) (*url.URL, *egressGrants, int32) {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Hostname() == "" {
+		return nil, nil, hostErrInvalid
+	}
+	d, code, err := admitHTTPHop(ctx, s, u)
+	switch {
+	case code == hostErrInvalid:
+		logging.L().Infof("[wasm:%s] http egress denied: host %s: scheme %s (https only; plain http only to loopback, a net:validation: host, or an exactly granted LAN host under http:lan)", s.pluginID, u.Hostname(), u.Scheme)
+		return nil, nil, code
+	case code != 0:
+		logEgressDenied(s.pluginID, err)
+		return nil, nil, code
+	}
+	grants := &egressGrants{exact: map[string]bool{}}
+	grants.record(u.Hostname(), d)
+	return u, grants, 0
+}
+
 // readHTTPResponseBody reads resp's body up to the response cap and no
 // further: validationResponseCap when the host that actually answered (the
 // last redirect hop, resp.Request) is one the chain approved through a
@@ -388,11 +418,12 @@ func readHTTPResponseBody(resp *http.Response, grants *egressGrants) ([]byte, er
 }
 
 // hostAllowedScheme: https anywhere the permission allows; plain http only
-// to loopback (a self-hosted Ollama or dev service on the till itself) —
+// (http:lan aside — admitHTTPHop) to loopback (a self-hosted Ollama or dev service on the till itself) —
 // except that allowPlainPublicHTTP (the host is named by a granted
 // net:validation:<host>, ut-docs#3226) allows plain http to that host too.
-// That host is public-only at dial time (httpNetPermission), so plain http
-// never reaches a non-public address through this exception.
+// That host is public-only at dial time (admitHTTPHop never makes it
+// exact), so plain http never reaches a non-public address through this
+// exception.
 func hostAllowedScheme(u *url.URL, allowPlainPublicHTTP bool) bool {
 	switch u.Scheme {
 	case "https":
