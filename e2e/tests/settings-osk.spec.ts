@@ -119,6 +119,25 @@ test('the scan-row toggle opens and closes the OSK', async ({ page }) => {
   assertClean();
 });
 
+// ut-docs#3807: the toggle ships hidden and osk.js revealed it once, at
+// document load. Sell -> Menu -> Sell swaps #ut-page (ADR-0098), so the
+// returning sell page's toggle stayed hidden.
+test('the scan-row toggle survives Sell -> Menu -> Sell (ut-docs#3807)', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  await setOskMode(page, 'on');
+  await page.goto('/');
+  await expect(page.locator('.scan-row [data-osk-toggle]')).toBeVisible();
+  await page.getByTestId('nav-menu').click();
+  await expect(page).toHaveURL(/\/menu$/);
+  await page.getByTestId('nav-till').click();
+  await expect(page).toHaveURL(/\/$/);
+  const toggle = page.locator('.scan-row [data-osk-toggle]');
+  await expect(toggle).toBeVisible();
+  await toggle.click();
+  await expect(page.locator('#osk')).toBeVisible();
+  assertClean();
+});
+
 // ut-docs#1048: ut-docs#1022 suppressed the native keyboard everywhere the
 // OSK is active, which left the hold-sale naming dialog's autofocused
 // #hold-label-input with no visible way to open a keyboard (per ut-docs#155,
