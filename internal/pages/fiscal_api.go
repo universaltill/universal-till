@@ -257,6 +257,7 @@ func createSigningOverride(dp *common.Deps) http.HandlerFunc {
 			respondFiscalError(w, r, http.StatusInternalServerError, "settings store unavailable")
 			return
 		}
+		// settings-write:allow known gap: on an additional till the next admin pull reverts this grant; the main-till apply refuses a non-empty override, so the fix is a design call (ut-docs#3808)
 		if err := store.SetMany(ctx, map[string]string{
 			fiscal.KeyOverrideUntil:  until.Format(time.RFC3339),
 			fiscal.KeyOverrideReason: strings.TrimSpace(req.Reason),

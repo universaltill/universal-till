@@ -3069,7 +3069,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			if localeGeneration >= 0 {
 				// Already written through with the save (ut-docs#2948).
 				httpx.SetLocaleGeneration(localeGeneration)
-			} else {
+			} else if !follows {
+				// On a till that follows one, a failed generation read
+				// skipped the bump: a local one would only be reverted by
+				// the next pull (ut-docs#2999).
 				retireLocaleOverrides(r.Context(), d.Settings)
 			}
 		}

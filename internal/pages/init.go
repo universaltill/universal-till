@@ -752,6 +752,10 @@ func newRederiveSettings(dp *common.Deps, authDisabled bool, i18n *config.I18n) 
 		// reload — cached ".ask" answers must not survive that
 		// (ut-docs#222 review finding).
 		plugins.SharedBus(dp.Db).BumpGeneration()
+		// menu.restored_keys is shop-wide (ut-docs#2999): a restore applied
+		// from an additional till, or pulled from the main till, must reach
+		// the cached Menu amendments, not only the settings row.
+		dp.ReloadMenuAmendments(c)
 	}
 }
 

@@ -555,6 +555,7 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) erro
 	// are operator-paced, one operator per till) and accepted rather than
 	// wrapped in an explicit store-level transaction for two single-key
 	// reads.
+	// settings-write:allow the helper itself: every caller in internal/pages is guarded for common.SaveState (ut-docs#2979)
 	return store.SetMany(ctx, StateKV(ctx, store, st))
 }
 
@@ -670,9 +671,11 @@ func RestoredMenuKeys(ctx context.Context, s *settings.Store) map[string]bool {
 	return out
 }
 
-// SaveRestoredMenuKeys writes MenuRestoredKeysSetting, sorted so the stored
-// value is stable regardless of restore order.
-func SaveRestoredMenuKeys(ctx context.Context, s *settings.Store, keys map[string]bool) error {
+// EncodeRestoredMenuKeys is the MenuRestoredKeysSetting value for keys,
+// sorted so the stored value is stable regardless of restore order. The
+// key is shop-wide: the caller persists it through the main-till
+// write-through (saveShopSettings, ut-docs#2999), never a local Set.
+func EncodeRestoredMenuKeys(keys map[string]bool) (string, error) {
 	list := make([]string, 0, len(keys))
 	for k, on := range keys {
 		if on {
@@ -682,9 +685,9 @@ func SaveRestoredMenuKeys(ctx context.Context, s *settings.Store, keys map[strin
 	sort.Strings(list)
 	raw, err := json.Marshal(list)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return s.Set(ctx, MenuRestoredKeysSetting, string(raw))
+	return string(raw), nil
 }
 
 // BuildMenuAmendments is BuildMenu's sibling for ADR-0088: the amendments
