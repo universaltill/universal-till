@@ -80,6 +80,8 @@ func TestSyncManagementEndpoints_RealSessionGatesByRole(t *testing.T) {
 		{name: "tills page", method: http.MethodGet, path: "/tills", denyCode: http.StatusSeeOther}, // deny = redirect, not 403
 		{name: "enroll-token", method: http.MethodPost, path: "/api/sync/enroll-token", denyCode: http.StatusForbidden},
 		{name: "tills revoke", method: http.MethodPost, path: "/api/sync/tills/some-till/revoke", denyCode: http.StatusForbidden},
+		// ut-docs#2781: same gate as revoke.
+		{name: "tills role", method: http.MethodPost, path: "/api/sync/tills/some-till/role", denyCode: http.StatusForbidden, body: "role=satellite"},
 		// ut-docs#557 review Fix 4: /api/sync/promote now validates its body
 		// (confirm=="PROMOTE", and that this till IS actually a replica)
 		// BEFORE ever checking elevation — so, unlike the other cases here,

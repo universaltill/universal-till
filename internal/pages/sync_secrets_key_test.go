@@ -57,7 +57,7 @@ func TestSyncSecretsKeyAPI_RejectsUnauthorized(t *testing.T) {
 func TestSyncSecretsKeyAPI_ReturnsKeyGeneratingOnFirstCall(t *testing.T) {
 	dp := newMigratedSyncDeps(t, "primary.db")
 	ctx := t.Context()
-	if _, err := data.NewTillsRepo(dp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc")); err != nil {
+	if _, err := data.NewTillsRepo(dp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("enrol till: %v", err)
 	}
 	ks := withFreshSecretsStore(t)
@@ -173,7 +173,7 @@ func TestSecretsKeyFetcher_FetchesFromPrimaryWithBearer(t *testing.T) {
 // key on disk and can open a value the primary sealed.
 func TestSecretsKey_ReplicaOpensValueSealedByPrimary(t *testing.T) {
 	dp := newMigratedSyncDeps(t, "primary.db")
-	if _, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Replica 1", hashBearer("token-abc")); err != nil {
+	if _, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Replica 1", hashBearer("token-abc"), data.TillRoleAdditional); err != nil {
 		t.Fatal(err)
 	}
 	primaryStore := withFreshSecretsStore(t)

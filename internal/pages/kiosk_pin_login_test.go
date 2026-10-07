@@ -210,3 +210,30 @@ func TestKioskPINLogin_OtherModesUntouchedByOrdinaryLogin(t *testing.T) {
 		})
 	}
 }
+
+// ut-docs#2781: on a satellite till the kiosk's lock link still signs staff
+// in, but never switches the till out of the self-order kiosk — the only
+// profile a satellite may run. The person lands on Settings, signed in.
+func TestKioskPINLogin_SatelliteStaysAKiosk(t *testing.T) {
+	dp, _, h := kioskLoginHarness(t)
+	if err := dp.Settings.Set(t.Context(), "sync.till_role", "satellite"); err != nil {
+		t.Fatal(err)
+	}
+	if rec := kioskPostLogin(h, "9090", "", nil); rec.Header().Get("Location") != "/self-order" {
+		t.Fatalf("setup: kiosk login → %q", rec.Header().Get("Location"))
+	}
+	rec := kioskPostLogin(h, "4321", "kiosk", nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings" {
+		t.Fatalf("login = %d → %q, want 303 → /settings", rec.Code, rec.Header().Get("Location"))
+	}
+	if got := kioskDisplayMode(t, dp); got != "self_order" {
+		t.Fatalf("display.mode = %q, want a satellite to stay self_order", got)
+	}
+	if c := kioskSessionCookie(rec); c == nil || c.Value == "" {
+		t.Fatal("the manager must still be signed in")
+	}
+	var n int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action='kiosk_mode_exited'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("kiosk_mode_exited audit rows = %d (err %v), want 0", n, err)
+	}
+}

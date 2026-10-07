@@ -246,9 +246,10 @@ func (h *Hub) Nudge(scopes ...Scope) {
 // CloudCheckinEvery. Satellites and links whose hello hasn't arrived are
 // skipped: only a replica runs a cloud check-in. Accepted gap: a replica
 // that (re)connects in the ~100 ms before its hello lands misses that one
-// relay; its own 2-minute check-in covers it (latency only). A future
-// satellite client must set its hello Role explicitly — an empty Role is
-// reported as "replica" by Client.helloFor.
+// relay; its own 2-minute check-in covers it (latency only). A satellite
+// sets its hello Role explicitly (ut-docs#2781: pages.linkHelloRole reports
+// the till's tills.role); an empty Role is still reported as "replica" by
+// Client.helloFor, as a safety default.
 func (h *Hub) RelayCloudCheckin(scopes []string, linkVersion int64) {
 	h.mu.Lock()
 	peers := make([]*Peer, 0, len(h.peers))

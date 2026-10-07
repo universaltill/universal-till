@@ -46,7 +46,7 @@ func TestHeldOrderClaimReaffirmTick_RecoversADeletedClaimWithinOneTick(t *testin
 	if err != nil {
 		t.Fatalf("CreateTable: %v", err)
 	}
-	if _, err := data.NewTillsRepo(dbase.DB).InsertTill(ctx, "Replica", hashBearer("b-123")); err != nil {
+	if _, err := data.NewTillsRepo(dbase.DB).InsertTill(ctx, "Replica", hashBearer("b-123"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("seed till: %v", err)
 	}
 	// No table_claims row seeded at all -- simulating exactly the state a
@@ -104,10 +104,10 @@ func TestHeldOrderClaimReaffirmTick_CannotEvictALiveTillsLegitimateClaim(t *test
 	if err != nil {
 		t.Fatalf("CreateTable: %v", err)
 	}
-	if _, err := data.NewTillsRepo(dbase.DB).InsertTill(ctx, "Replica", hashBearer("b-123")); err != nil {
+	if _, err := data.NewTillsRepo(dbase.DB).InsertTill(ctx, "Replica", hashBearer("b-123"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("seed till: %v", err)
 	}
-	otherTillID, err := data.NewTillsRepo(dbase.DB).InsertTill(ctx, "Other", hashBearer("b-456"))
+	otherTillID, err := data.NewTillsRepo(dbase.DB).InsertTill(ctx, "Other", hashBearer("b-456"), data.TillRoleAdditional)
 	if err != nil {
 		t.Fatalf("seed other till: %v", err)
 	}

@@ -20,17 +20,71 @@ type TillRow struct {
 	Name       string
 	EnrolledAt string
 	LastSeenAt string
+	Role       string // TillRoleAdditional | TillRoleSatellite (ut-docs#2781)
 }
 
-// InsertTill enrols a replica; the caller hashes the bearer.
-func (r *TillsRepo) InsertTill(ctx context.Context, name, bearerHash string) (string, error) {
+// A joined till's manager-assigned role (ut-docs#2781, migration 067).
+// Until ut-docs#1154 a satellite is ADR-0020's counter-pay kiosk: order
+// capture only, never a register or back office (ADR-0086).
+const (
+	TillRoleAdditional = "additional"
+	TillRoleSatellite  = "satellite"
+)
+
+// ValidTillRole reports whether role is one tills.role accepts (the
+// migration's CHECK, enforced here first so a caller gets a plain error).
+func ValidTillRole(role string) bool {
+	return role == TillRoleAdditional || role == TillRoleSatellite
+}
+
+// InsertTill enrols a replica with the role a manager chose before pairing
+// (ut-docs#2781; TillRoleAdditional is today's default); the caller hashes
+// the bearer. An unknown role is refused.
+func (r *TillsRepo) InsertTill(ctx context.Context, name, bearerHash, role string) (string, error) {
+	if !ValidTillRole(role) {
+		return "", fmt.Errorf("insert till: unknown role %q", role)
+	}
 	id := uuid.NewString()
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO tills (id, name, bearer_hash) VALUES (?, ?, ?)`, id, name, bearerHash)
+		`INSERT INTO tills (id, name, bearer_hash, role) VALUES (?, ?, ?, ?)`, id, name, bearerHash, role)
 	if err != nil {
 		return "", fmt.Errorf("insert till: %w", err)
 	}
 	return id, nil
+}
+
+// UpdateRole sets an enrolled till's role (ut-docs#2781). Like UpdateName it
+// writes only on a real change, so a repeated save never bumps
+// sync_admin_version (migration 067's role trigger); changed says whether
+// it did. An unknown role is refused.
+func (r *TillsRepo) UpdateRole(ctx context.Context, id, role string) (bool, error) {
+	if !ValidTillRole(role) {
+		return false, fmt.Errorf("update till role: unknown role %q", role)
+	}
+	res, err := r.db.ExecContext(ctx, `UPDATE tills SET role = ? WHERE id = ? AND role IS NOT ?`, role, id, role)
+	if err != nil {
+		return false, fmt.Errorf("update till role: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("update till role: %w", err)
+	}
+	return n > 0, nil
+}
+
+// RoleByID returns one till's role; ok is false when no such till is
+// enrolled. On a joined till this reads its synced copy of the roster —
+// how a till learns its own role after an admin pull (ut-docs#2781).
+// Deliberately does NOT touch last_seen_at.
+func (r *TillsRepo) RoleByID(ctx context.Context, id string) (role string, ok bool, err error) {
+	err = r.db.QueryRowContext(ctx, `SELECT role FROM tills WHERE id = ?`, id).Scan(&role)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("till role: %w", err)
+	}
+	return role, true, nil
 }
 
 // UpdateName sets an enrolled till's display name to the name that till
@@ -53,7 +107,7 @@ func (r *TillsRepo) UpdateName(ctx context.Context, id, name string) (bool, erro
 // ListTills returns enrolled tills, newest first.
 func (r *TillsRepo) ListTills(ctx context.Context) ([]TillRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, enrolled_at, COALESCE(last_seen_at, '')
+SELECT id, name, enrolled_at, COALESCE(last_seen_at, ''), role
 FROM tills ORDER BY enrolled_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list tills: %w", err)
@@ -62,7 +116,7 @@ FROM tills ORDER BY enrolled_at DESC`)
 	var out []TillRow
 	for rows.Next() {
 		var t TillRow
-		if err := rows.Scan(&t.ID, &t.Name, &t.EnrolledAt, &t.LastSeenAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.EnrolledAt, &t.LastSeenAt, &t.Role); err != nil {
 			return nil, fmt.Errorf("scan till: %w", err)
 		}
 		out = append(out, t)
