@@ -438,7 +438,7 @@ func TestJoinPrimary_ShortCodeNeedsAddress(t *testing.T) {
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	r := httptest.NewRequest(http.MethodPost, "/api/sync/join", nil)
 	for _, addr := range []string{"", "   "} {
-		_, err := joinPrimary(r, replica, "K7P-4XQ", addr, "Till 2")
+		_, err := joinPrimary(r, replica, "K7P-4XQ", addr, "Till 2", "additional")
 		if k := joinKind(t, err); k != joinErrNeedAddress {
 			t.Fatalf("address %q: kind = %v, want joinErrNeedAddress", addr, k)
 		}
@@ -452,7 +452,7 @@ func TestJoinPrimary_ShortCodeRejectsBadAddress(t *testing.T) {
 		"ftp://x", "http://x/path", "http://x?y=1", "http://u:p@x", "http://", "://x", "x y",
 		"192.168.1.10:8080#", "192.168.1.10:8080?",
 	} {
-		_, err := joinPrimary(r, replica, "K7P-4XQ", addr, "Till 2")
+		_, err := joinPrimary(r, replica, "K7P-4XQ", addr, "Till 2", "additional")
 		if k := joinKind(t, err); k != joinErrBadAddress {
 			t.Errorf("address %q: kind = %v, want joinErrBadAddress", addr, k)
 		}
@@ -462,7 +462,7 @@ func TestJoinPrimary_ShortCodeRejectsBadAddress(t *testing.T) {
 func TestJoinPrimary_GarbageCodeStillBadCode(t *testing.T) {
 	replica, _ := newSyncDepsWithPath(t, "replica.db")
 	r := httptest.NewRequest(http.MethodPost, "/api/sync/join", nil)
-	_, err := joinPrimary(r, replica, "not-a-code", "192.168.1.10:8080", "Till 2")
+	_, err := joinPrimary(r, replica, "not-a-code", "192.168.1.10:8080", "Till 2", "additional")
 	if k := joinKind(t, err); k != joinErrBadCode {
 		t.Fatalf("kind = %v, want joinErrBadCode", k)
 	}
@@ -554,7 +554,7 @@ func TestCompleteJoin_Maps429ToTooManyAttempts(t *testing.T) {
 
 	replica, replicaPath := newSyncDepsWithPath(t, "replica.db")
 	r := httptest.NewRequest(http.MethodPost, "/api/sync/join", nil)
-	_, err := completeJoin(r, replica, srv.URL, "K7P4XQ", "Till 2")
+	_, err := completeJoin(r, replica, srv.URL, "K7P4XQ", "Till 2", "additional")
 	if k := joinKind(t, err); k != joinErrTooManyAttempts {
 		t.Fatalf("kind = %v, want joinErrTooManyAttempts", k)
 	}

@@ -29,6 +29,7 @@
 <table class="table tills-roster">
   <thead><tr>
     <th>{{ T "tills.col_name" }}</th>
+    <th>{{ T "tills.col_role" }}{{ if not .SyncPrimary }} {{ helpLink "multitill" }}{{ end }}</th>
     {{ if .LinkInfo }}<th>{{ T "tills.col_link" }}</th><th>{{ T "tills.col_version" }}</th>{{ end }}
     <th>{{ T "tills.col_enrolled" }}</th><th>{{ T "tills.col_seen" }}</th><th></th>
   </tr></thead>
@@ -43,6 +44,7 @@
       {{ else }}
       <td>{{ .PrimaryTillName }} <span class="muted">({{ T "tills.this_till" }})</span></td>
       {{ end }}
+      <td>—</td>
       {{ if .LinkInfo }}<td>—</td><td>{{ .MainVersion }}</td>{{ end }}
       <td>—</td>
       {{/* ut-docs#2722: on a replica, when THIS till last reached the main
@@ -54,8 +56,23 @@
     {{ end }}
     {{ range .Tills }}
     <tr data-till-id="{{ .ID }}"{{ with .Link }} data-link="{{ if .Linked }}up{{ else }}down{{ end }}"{{ end }}>
-      <td>{{ .Name }}{{ if eq .ID $.ThisTillID }} <span class="muted">({{ T "tills.this_till" }})</span>{{ end }}
-        {{ with .Link }}{{ if eq .Role "replica" }}<br><small class="muted">{{ T "tills.role.replica" }}</small>{{ else if eq .Role "satellite" }}<br><small class="muted">{{ T "tills.role.satellite" }}</small>{{ end }}{{ end }}</td>
+      <td>{{ .Name }}{{ if eq .ID $.ThisTillID }} <span class="muted">({{ T "tills.this_till" }})</span>{{ end }}</td>
+      {{/* ut-docs#2781: the till's role as the main till's roster holds it
+           (tills.role) — authoritative, unlike the link hello's role, which
+           every joined till still reports as "replica" until ut-docs#2741.
+           Change role is a main-till write like Revoke, so it renders only
+           there; it flips to the other of the two roles after a confirm
+           naming both, since the till is likely in use right now. */}}
+      <td>
+        {{ if eq .Role "satellite" }}{{ T "tills.role.satellite" }}{{ else }}{{ T "tills.role.replica" }}{{ end }}
+        {{ if not $.SyncPrimary }}
+        {{ $to := "satellite" }}{{ $toLabel := T "tills.role.satellite" }}
+        {{ if eq .Role "satellite" }}{{ $to = "additional" }}{{ $toLabel = T "tills.role.replica" }}{{ end }}
+        <br><button class="btn secondary" hx-post="/api/tills/{{ .ID }}/role" hx-vals='{{ jsonVals "role" $to }}'
+                    hx-confirm="{{ printf (T "tills.role.change_confirm") .Name $toLabel }}"
+                    data-after-request="ok refresh-region:tills-roster">{{ T "tills.role.change_btn" }}</button>
+        {{ end }}
+      </td>
       {{ with .Link }}
       <td>
         {{ if .Linked }}<span class="tag ok">{{ T "tills.link.up" }}</span>{{ else }}<span class="tag">{{ T "tills.link.down" }}</span>{{ end }}

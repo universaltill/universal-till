@@ -30,6 +30,12 @@ type adminBundleResponse struct {
 	Version   string           `json:"version"`
 	Unchanged bool             `json:"unchanged"`
 	Bundle    data.AdminBundle `json:"bundle"`
+	// Role is the REQUESTING till's own role on the main till's roster
+	// (ut-docs#2781: additional | satellite), sent on every answer,
+	// unchanged polls included — the joined till keeps it as
+	// sync.till_role (rememberOwnTillRole). Empty from an older main till.
+	// fleetlink.Hello.Role is not wired for this yet (ut-docs#2741).
+	Role string `json:"role"`
 }
 
 // stockBundleResponse is the wire shape of GET /api/sync/stock (D3b).
@@ -130,7 +136,8 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 	// Primary side: admin-state bundle. `?have=` lets a replica poll
 	// cheaply — matching fingerprint returns no body worth applying.
 	mux.HandleFunc("GET /api/sync/admin", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := syncTill(r, tills); !ok {
+		till, ok := syncTill(r, tills)
+		if !ok {
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
 			return
@@ -146,7 +153,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_admin", err)
 			return
 		}
-		resp := adminBundleResponse{Version: fp}
+		resp := adminBundleResponse{Version: fp, Role: till.Role}
 		if r.URL.Query().Get("have") == fp {
 			resp.Unchanged = true
 		} else {
@@ -512,6 +519,9 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 		logging.L().Errorf("sync pull: bad response: %v", err)
 		return
 	}
+	// ut-docs#2781: this till's role as the main till holds it, on every
+	// answer (unchanged or not).
+	rememberOwnTillRole(ctx, d, out.Data.Role)
 	// The main till answered here; the asset sync and apply below can take
 	// up to the client timeout, and a contact stamped after them would read
 	// as contact after a link loss noticed meanwhile (ut-docs#2915 review).

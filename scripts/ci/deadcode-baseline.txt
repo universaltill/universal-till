@@ -1,6 +1,8 @@
 cmd/unitill-desktop/control.go: unreachable func: controlServer.LastInputAt
 internal/bluetooth/android_bridge.go: unreachable func: SetAndroidBridge
 internal/config/i18n.go: unreachable func: NewI18n
+internal/data/pairing_repo.go: unreachable func: PairingRepo.Approve
+internal/data/pairing_repo.go: unreachable func: PairingRepo.CreatePendingRequest
 internal/data/plugin_provides_repo.go: unreachable func: PluginRepo.PluginsProviding
 internal/data/plugin_repo.go: unreachable func: PluginRepo.CatalogPage
 internal/data/plugin_repo.go: unreachable func: PluginRepo.DeleteStorage
@@ -10,6 +12,7 @@ internal/data/plugin_repo.go: unreachable func: PluginRepo.InstallPlugin
 internal/data/plugin_repo.go: unreachable func: PluginRepo.ListRevokedPlugins
 internal/data/plugin_repo.go: unreachable func: PluginRepo.UpsertPluginSetting
 internal/data/related_items_repo.go: unreachable func: RelatedItemsRepo.LastRebuilt
+internal/data/tills_repo.go: unreachable func: TillsRepo.InsertTill
 internal/data/user_display_repo.go: unreachable func: NewUserDisplayRepo
 internal/data/user_display_repo.go: unreachable func: UserDisplayRepo.Delete
 internal/data/user_display_repo.go: unreachable func: UserDisplayRepo.Get

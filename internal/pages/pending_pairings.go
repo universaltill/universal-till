@@ -41,6 +41,7 @@ func registerPendingPairingsUI(mux *http.ServeMux, d *common.Deps) {
 			ID               string
 			DeviceName       string
 			VerificationCode string
+			RequestedRole    string // ut-docs#2781: preselects the card's role select
 		}
 		rows := make([]row, 0, len(list))
 		for _, p := range list {
@@ -48,6 +49,7 @@ func registerPendingPairingsUI(mux *http.ServeMux, d *common.Deps) {
 				ID:               p.ID,
 				DeviceName:       p.DeviceName,
 				VerificationCode: derivedVerificationCode(p.Commitment, primaryTillID),
+				RequestedRole:    p.RequestedRole,
 			})
 		}
 		httpx.RenderPartial("ui/partials/pending_pairings.html", map[string]any{"Pending": rows})(w, r)

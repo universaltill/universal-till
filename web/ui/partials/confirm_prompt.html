@@ -1,0 +1,45 @@
+{{/* confirm_prompt.html — a plain, PIN-less confirm dialog (ut-docs#2781),
+     rendered by confirm_prompt.go's renderConfirmPrompt. A clone of
+     elevation_prompt.html's wiring (read that file's doc comment for the
+     why of each piece):
+
+       1. A small hint that lands in the triggering action's own hx-target.
+       2. The dialog itself, OOB-swapped into the empty
+          <dialog id="confirm-modal"> placeholder base.html renders beside
+          #elevation-modal, so its <form> is never nested inside the
+          triggering one.
+
+     Self-opening with dialog.show() — NOT showModal(), which would make the
+     status bar and the on-screen keyboard inert (CLAUDE.md,
+     guard-no-showmodal.sh); base.html's popup hooks put #ut-scrim behind
+     it. Closing is close(), never remove(), so the next prompt's OOB swap
+     still finds the id.
+
+     Data: Action / HxTarget / Hidden as elevation_prompt.html (the dialog's
+     form IS the confirmed retry, Hidden carrying the original fields plus
+     the caller's confirming one), Title / Body / Confirm (pre-translated
+     text), HelpTopic (a manual topic for the title's "?", or empty).
+
+     data-after-request="elevation-done" is reused as-is: a re-prompt (an
+     elevation prompt or another confirm) replaced this dialog by OOB swap
+     already; anything else is terminal — close the dialog so the answer
+     swapped into HxTarget is visible. */}}
+<span class="elevation-hint muted">{{ .Title }}</span>
+<dialog id="confirm-modal" class="modifier-modal confirm-dialog" hx-swap-oob="true">
+  <form hx-post="{{ .Action }}" hx-target="{{ .HxTarget }}" hx-swap="innerHTML"
+        hx-sync="this:drop" hx-disabled-elt="find button[type=submit]"
+        data-after-request="elevation-done">
+    <h3>{{ .Title }}{{ with .HelpTopic }} {{ helpLink . }}{{ end }}</h3>
+    <p>{{ .Body }}</p>
+    {{ range .Hidden }}
+    <input type="hidden" name="{{ .Name }}" value="{{ .Value }}">
+    {{ end }}
+    <div class="modifier-actions">
+      <button type="button" class="btn secondary" data-action="close-closest">{{ T "common.cancel" }}</button>
+      <button type="submit" class="btn primary" autofocus>{{ .Confirm }}</button>
+    </div>
+  </form>
+  <script>
+    document.currentScript.closest('dialog').show();
+  </script>
+</dialog>

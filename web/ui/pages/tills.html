@@ -84,6 +84,16 @@
          "<field> is required" wording the rest of the app already uses
          (locations/registers/taxcodes .error.required). */}}
     <p id="pairing-till-name-error" class="field-error-msg" role="alert" hidden>{{ T "tills.pairing.error.name_required_field" }}</p>
+    {{/* ut-docs#2781: "Join as" — the role this till asks to join as. Shared
+         by both tabs like the name above (hx-include'd by id); the main till's
+         manager can still change it on the approval card or later on Tills. */}}
+    <fieldset class="join-role" id="pairing-join-role">
+      <legend>{{ T "tills.join_role.label" }}</legend>
+      <label><input type="radio" name="role" value="additional" checked> {{ T "tills.role.replica" }}
+        <small class="muted">{{ T "tills.join_role.additional_help" }}</small></label>
+      <label><input type="radio" name="role" value="satellite"> {{ T "tills.role.satellite" }}
+        <small class="muted">{{ T "tills.join_role.satellite_help" }}</small></label>
+    </fieldset>
     <div class="tab-panel" id="tills-panel-discover" role="tabpanel" aria-labelledby="tills-tab-discover" x-show="tab === 'discover'">
       <p class="muted">{{ T "tills.discovery.help" }}</p>
       <button id="discover-btn" class="btn secondary" type="button">{{ T "tills.discovery.find_button" }}</button>
@@ -97,7 +107,7 @@
            longer natively checked on submit — same explicit
            reportValidity() guard the discover button already needs for
            the same reason (ut-docs#1540). -->
-      <form hx-post="/api/sync/join" hx-include="#pairing-till-name" hx-target="#join-msg" hx-swap="innerHTML"
+      <form hx-post="/api/sync/join" hx-include="#pairing-till-name, #pairing-join-role" hx-target="#join-msg" hx-swap="innerHTML"
             data-before-request="trim-validate:pairing-till-name">
         {{/* ut-docs#3219: the main till shows a short XXX-XXX code plus its
              address; both are typed here. The address is ignored when the
@@ -219,7 +229,7 @@
           return '<li style="padding:.3rem 0">' + esc(p.name)
             + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + esc(p.till_id) + addrPart + '</span> '
             + '<button type="button" class="btn secondary" hx-post="/api/sync/pair-start" '
-            + 'hx-vals="' + escAttr(vals) + '" hx-include="#pairing-till-name" '
+            + 'hx-vals="' + escAttr(vals) + '" hx-include="#pairing-till-name, #pairing-join-role" '
             // ut-docs#1540: same required-field guard as the setup wizard's
             // discovery button — this one lives outside a <form> too, so
             // the input's own `required` attribute needs an explicit

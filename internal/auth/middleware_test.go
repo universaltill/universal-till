@@ -285,6 +285,14 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// entry every replica is 401'd here and never gets its own cloud
 		// identity.
 		"/api/sync/cloud-device",
+		// ut-docs#2781: a joined till reporting its own new role (Settings →
+		// Self-order kiosk → "Make satellite", internal/pages/till_role.go's
+		// reportOwnRoleToMain). Bearer-authed in the handler (syncTill), and
+		// it can only move the caller's own row. Missing here, every
+		// make-satellite confirm on an additional till is refused as "can't
+		// reach the main till" while the main till is right there — found
+		// in review, the /api/sync/stock failure class again.
+		"/api/sync/till-role",
 	} {
 		if !exempt(p) {
 			t.Errorf("%s is not exempt — this middleware will 401 it before the "+

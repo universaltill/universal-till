@@ -139,6 +139,9 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 		var in struct {
 			DeviceName string `json:"device_name"`
 			Commitment string `json:"commitment"`
+			// ut-docs#2781: the role the till asks to join as; absent
+			// (an older till) means an additional till.
+			Role string `json:"role"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -150,7 +153,12 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			http.Error(w, "device_name and a valid sha256 commitment are required", http.StatusBadRequest)
 			return
 		}
-		id, err := repo.CreatePendingRequest(r.Context(), in.DeviceName, in.Commitment, pairingRequestTTL)
+		role, ok := tillRoleFromForm(in.Role)
+		if !ok {
+			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
+			return
+		}
+		id, err := repo.CreatePendingRequestWithRole(r.Context(), in.DeviceName, in.Commitment, role, pairingRequestTTL)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "pairing_api", err)
 			return
@@ -182,6 +190,7 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			DeviceName       string `json:"device_name"`
 			RequestedAt      string `json:"requested_at"`
 			VerificationCode string `json:"verification_code"`
+			RequestedRole    string `json:"requested_role"` // ut-docs#2781
 		}
 		out := make([]pendingOut, 0, len(list))
 		for _, p := range list {
@@ -190,6 +199,7 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 				DeviceName:       p.DeviceName,
 				RequestedAt:      p.RequestedAt,
 				VerificationCode: derivedVerificationCode(p.Commitment, primaryTillID),
+				RequestedRole:    p.RequestedRole,
 			})
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -213,6 +223,15 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			return
 		}
 		id := r.PathValue("id")
+		// ut-docs#2781: the manager's final role for the till (the card's
+		// role select). Absent keeps the role the till asked for; it is
+		// what /api/sync/enroll then enrols the till as (RoleForToken).
+		_ = r.ParseForm()
+		finalRole := strings.TrimSpace(r.Form.Get("role"))
+		if finalRole != "" && !data.ValidTillRole(finalRole) {
+			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
+			return
+		}
 		if _, exists, err := repo.GetByID(r.Context(), id); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "pairing_api", err)
 			return
@@ -221,7 +240,7 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			return
 		}
 		tok := tokens.issue()
-		if err := repo.Approve(r.Context(), id, tok, pairingRequestTTL); err != nil {
+		if err := repo.ApproveWithRole(r.Context(), id, tok, finalRole, pairingRequestTTL); err != nil {
 			tokens.consume(tok) // burn the now-orphaned token; don't leak a live credential
 			if errors.Is(err, data.ErrNotPending) {
 				http.Error(w, "pending pairing already resolved", http.StatusConflict)
@@ -230,8 +249,12 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "pairing_api", err)
 			return
 		}
+		var approvedPayload any
+		if finalRole != "" {
+			approvedPayload = map[string]any{"role": finalRole}
+		}
 		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "till_pairing", id, "pairing_approved",
-			nil, time.Now().UTC().Format(time.RFC3339), "")
+			approvedPayload, time.Now().UTC().Format(time.RFC3339), "")
 		// No HX-Refresh (ut-docs#2904): pending_pairings.html's forms
 		// refresh only the Tills page's pairing card on a 2xx
 		// (data-after-request "ok refresh-region"); the Enrolled Tills

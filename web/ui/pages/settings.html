@@ -497,7 +497,12 @@
        forms (#796) — an elevation prompt (text/html) must not trigger the
        unconditional navigate-away that used to sit here, which would
        destroy the just-opened dialog before an operator could even see it. -->
-  <form hx-post="/api/settings/display-mode" hx-swap="none" data-after-request="ok not-html note-nav:settings-display-mode go:/; fail unhide:settings-save-error" class="set-gap">
+  <!-- ut-docs#2781: a satellite till refuses Register/Back office with a
+       specific 400 — shown in #display-mode-msg (text-response), not the
+       generic save-failed bubble, which stays for every other failure. An
+       additional till choosing Self-order gets the make-a-satellite confirm
+       dialog first (text/html, so not-html keeps the page here). -->
+  <form hx-post="/api/settings/display-mode" hx-swap="none" data-after-request="ok not-html note-nav:settings-display-mode go:/; fail status:400 text-response:display-mode-msg; fail not-status:400 unhide:settings-save-error" class="set-gap">
     {{ $dmode := index .settingsMap "display.mode" }}
     <label class="set-row">{{ T "settings.display.mode" }}
       <select name="mode">

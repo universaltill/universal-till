@@ -74,6 +74,7 @@ type pendingJoinState struct {
 	primaryURL    string
 	primaryTillID string
 	deviceName    string
+	role          string // ut-docs#2781: the role this till asked to join as
 	requestSecret string
 	commitment    string
 	requestedAt   time.Time
@@ -305,6 +306,13 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, "tills.pairing.error.invalid_address"))
 			return
 		}
+		// ut-docs#2781: the "Join as" choice. Only a hand-made request can
+		// send anything but the two radio values, so a plain 400 is enough.
+		role, ok := tillRoleFromForm(r.Form.Get("role"))
+		if !ok {
+			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
+			return
+		}
 
 		raw := make([]byte, 32)
 		_, _ = rand.Read(raw)
@@ -312,7 +320,7 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 		sum := sha256.Sum256([]byte(secret))
 		commitment := hex.EncodeToString(sum[:])
 
-		body, _ := json.Marshal(map[string]string{"device_name": name, "commitment": commitment})
+		body, _ := json.Marshal(map[string]string{"device_name": name, "commitment": commitment, "role": role})
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
 			baseURL+"/api/sync/pair-request", strings.NewReader(string(body)))
 		if err != nil {
@@ -355,6 +363,7 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 			primaryURL:    baseURL,
 			primaryTillID: primaryTillID,
 			deviceName:    name,
+			role:          role,
 			requestSecret: secret,
 			commitment:    commitment,
 			requestedAt:   pairingJoinNow(),
@@ -445,7 +454,7 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 			return
 		}
 
-		shopName, err := completeJoin(r, d, state.primaryURL, out.Data.Token, state.deviceName)
+		shopName, err := completeJoin(r, d, state.primaryURL, out.Data.Token, state.deviceName, state.role)
 		if err != nil {
 			next := *state
 			// friendlyJoinError, not err.Error(): completeJoin's failures are

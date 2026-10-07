@@ -2071,12 +2071,78 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		rawMode := mode
 		modeLabel := httpx.T(locale, "settings.display.mode_"+mode)
+		// ut-docs#2781: the device profile follows this till's role
+		// (till_role.go), checked like validation — before the elevation
+		// gate, so a refusal never costs an approver's PIN. A satellite
+		// can't be a register or back office: a specific 400 that
+		// settings.html shows beside the form (text-response), not the
+		// generic save-failed bubble. An additional till turning into a
+		// kiosk is allowed, but it means becoming a satellite, so ask first;
+		// confirm_satellite=1 is the dialog's own confirmed retry.
+		role := ownTillRole(r.Context(), d)
+		if role == data.TillRoleSatellite && rawMode != "self_order" {
+			http.Error(w, httpx.T(locale, "settings.display.satellite_mode_blocked"), http.StatusBadRequest)
+			return
+		}
+		makeSatellite := role == data.TillRoleAdditional && rawMode == "self_order"
+		if makeSatellite && r.Form.Get("confirm_satellite") != "1" {
+			renderConfirmPrompt(w, r, confirmPrompt{
+				Action:    "/api/settings/display-mode",
+				HxTarget:  "#display-mode-msg",
+				Title:     httpx.T(locale, "confirm.make_satellite_title"),
+				Body:      httpx.T(locale, "confirm.make_satellite_body"),
+				Confirm:   httpx.T(locale, "confirm.make_satellite_confirm"),
+				HelpTopic: "multitill",
+				Hidden: []elevationHiddenField{
+					{Name: "mode", Value: mode},
+					{Name: "confirm_satellite", Value: "1"},
+				},
+			})
+			return
+		}
 		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
+			hidden := []elevationHiddenField{{Name: "mode", Value: mode}}
+			if makeSatellite {
+				hidden = append(hidden, elevationHiddenField{Name: "confirm_satellite", Value: "1"})
+			}
 			renderElevationPrompt(w, r, "/api/settings/display-mode", "#display-mode-msg",
 				fmt.Sprintf(httpx.T(locale, "elevation.summary.display_mode"), modeLabel),
-				[]elevationHiddenField{{Name: "mode", Value: mode}}, elev)
+				hidden, elev)
 			return
+		}
+		if makeSatellite {
+			// The main till's roster holds the role: tell it first, and
+			// change nothing here if it can't be told — otherwise the next
+			// admin pull would quietly make this an additional till again.
+			// 200 + X-UT-Response "refused" so the message swaps into
+			// #display-mode-msg and the confirm dialog closes over it.
+			if err := reportOwnRoleToMain(r.Context(), d, data.TillRoleSatellite); err != nil {
+				logging.L().Infof("till role: make satellite refused, main till not told: %v", err)
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.Header().Set("X-UT-Response", "refused")
+				fmt.Fprintf(w, `<span class="error" role="alert">%s</span>`,
+					html.EscapeString(httpx.T(locale, "settings.error.main_till_unreachable")))
+				return
+			}
+			// Here too: this till's own role, its row in the synced roster
+			// (when the snapshot brought one) and the same role_changed
+			// audit row the Tills page writes, attributed to whoever
+			// confirmed (the approver, once elevated).
+			rememberOwnTillRole(r.Context(), d, data.TillRoleSatellite)
+			actor := elev.ActorID
+			if elev.Outcome == elevated {
+				actor = elev.ApproverID
+			}
+			if actor == "" {
+				actor = "system" // UT_AUTH=off: no session to attribute
+			}
+			tillID, _, _ := d.Settings.Get(r.Context(), "sync.till_id")
+			tillID = strings.TrimSpace(tillID)
+			if _, _, err := data.NewTillsRepo(d.Db).SetRole(r.Context(), tillID, data.TillRoleSatellite); err != nil {
+				logging.L().Errorf("till role: local roster row: %v", err)
+			}
+			auditRoleChange(r.Context(), posRepo, actor, tillID, role, data.TillRoleSatellite)
 		}
 		if err := applyDisplayMode(r.Context(), d, rawMode); err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
@@ -2132,6 +2198,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			setSessionCookie(w, "", -1)
 		}
 		settingsAudit(r, posRepo, elev, "settings", "display.mode", "display_mode_changed", map[string]any{"mode": rawMode})
+		if makeSatellite {
+			// ut-docs#2781: this answer goes to the confirm dialog's own form,
+			// not the settings form whose after-request navigates home — so
+			// navigate from here, as that form would have.
+			w.Header().Set("HX-Redirect", "/")
+		}
 		settingsRespondSaved(w, r, elev)
 	})
 
@@ -3159,6 +3231,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// — refuse it with the same message the dedicated handler gives.
 		if key == common.KeyBrowsingMode && common.ClampBrowsingMode(value) != value {
 			http.Error(w, "mode must be one of category_tabs, all_filter_chips, strip_overflow", http.StatusBadRequest)
+			return
+		}
+		// ut-docs#2781: no side door around the dedicated display-mode
+		// handler's satellite gate.
+		if key == "display.mode" && value != "self_order" && ownTillRole(r.Context(), d) == data.TillRoleSatellite {
+			http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "settings.display.satellite_mode_blocked"), http.StatusBadRequest)
 			return
 		}
 		// ADR-0083 (ut-docs#1767): the two signing-device posture keys are
