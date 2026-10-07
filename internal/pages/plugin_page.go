@@ -58,6 +58,9 @@ func registerPluginPages(mux *http.ServeMux, d *common.Deps) {
 			http.NotFound(w, r)
 			return
 		}
+		if !pluginPageMethodAllowed(w, r) {
+			return
+		}
 		renderPluginPage(w, r, d, entry)
 	})
 
@@ -108,6 +111,18 @@ func registerPluginPages(mux *http.ServeMux, d *common.Deps) {
 		}
 		http.NotFound(w, r)
 	})
+}
+
+// pluginPageMethodAllowed gates a matched plugin page route: pages are
+// read-only (sandboxed, no forms), so only GET and HEAD render (ut-docs#3789).
+// Otherwise it writes 405 with Allow and returns false.
+func pluginPageMethodAllowed(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		return true
+	}
+	w.Header().Set("Allow", "GET, HEAD")
+	http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+	return false
 }
 
 // findPageEntry resolves the active plugin page entry registered at the

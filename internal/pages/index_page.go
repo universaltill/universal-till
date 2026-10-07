@@ -27,6 +27,9 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 		// the home page.
 		if r.URL.Path != "/" {
 			if entry, ok := findPageEntry(r, d); ok {
+				if !pluginPageMethodAllowed(w, r) {
+					return
+				}
 				renderPluginPage(w, r, d, entry)
 				return
 			}
