@@ -129,11 +129,13 @@ func TestSyncAdminVersion_TillsColumnSetPinsTheGatedTrigger(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate tills columns: %v", err)
 	}
-	want := []string{"bearer_hash", "enrolled_at", "id", "last_seen_at", "name"}
+	// role (ut-docs#2781) travels and has its own gated trigger in
+	// migration 067 (trg_sync_admin_version_tills_role_upd).
+	want := []string{"bearer_hash", "enrolled_at", "id", "last_seen_at", "name", "role"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("tills columns = %v, want %v — migration 022's gated tills UPDATE trigger\n"+
 			"(WHEN NOT (OLD.name IS NEW.name AND OLD.enrolled_at IS NEW.enrolled_at))\n"+
-			"only covers name/enrolled_at; see this test's doc comment for what to do", got, want)
+			"only covers name/enrolled_at, and 067's only role; see this test's doc comment for what to do", got, want)
 	}
 }
 
@@ -171,6 +173,17 @@ func TestSyncAdminVersion_TillAuthTouchDoesNotBump(t *testing.T) {
 	mustExec(t, d, `UPDATE tills SET name = 'Replica One', last_seen_at = '2026-09-10 12:01:00' WHERE id = 'till-a'`)
 	if got := syncAdminGeneration(t, d); got != base+1 {
 		t.Fatalf("no-op name write bumped generation to %d, want %d", got, base+1)
+	}
+
+	// ut-docs#2781: a role change travels (migration 067's trigger), a
+	// same-role write does not.
+	mustExec(t, d, `UPDATE tills SET role = 'satellite' WHERE id = 'till-a'`)
+	if got := syncAdminGeneration(t, d); got != base+2 {
+		t.Fatalf("role change: generation -> %d, want %d", got, base+2)
+	}
+	mustExec(t, d, `UPDATE tills SET role = 'satellite', last_seen_at = '2026-09-10 12:02:00' WHERE id = 'till-a'`)
+	if got := syncAdminGeneration(t, d); got != base+2 {
+		t.Fatalf("no-op role write bumped generation to %d, want %d", got, base+2)
 	}
 }
 

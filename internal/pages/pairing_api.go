@@ -207,7 +207,18 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 	// repo.Approve's compare-and-swap succeeds — issuing it first and
 	// approving second would leak a live, unburnt token into the
 	// enrolTokens store on a lost race (concurrent approve/deny/expiry).
+	//
+	// ut-docs#2781: the approval card also carries the role the manager
+	// picks for the new till (default additional). It rides the issued
+	// token to POST /api/sync/enroll, which creates the till with it —
+	// validated before the PIN check, so a bad value never burns a PIN try.
 	mux.HandleFunc("POST /api/sync/pair-requests/{id}/approve", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		role, roleOK := parseTillRole(r.Form.Get("role"))
+		if !roleOK {
+			common.LocalizedError(w, r, http.StatusBadRequest, "tills.role.error.invalid")
+			return
+		}
 		actorID, ok := authorizePairingManager(w, r, svc)
 		if !ok {
 			return
@@ -221,6 +232,7 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			return
 		}
 		tok := tokens.issue()
+		tokens.setRole(tok, role)
 		if err := repo.Approve(r.Context(), id, tok, pairingRequestTTL); err != nil {
 			tokens.consume(tok) // burn the now-orphaned token; don't leak a live credential
 			if errors.Is(err, data.ErrNotPending) {
@@ -231,7 +243,7 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			return
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "till_pairing", id, "pairing_approved",
-			nil, time.Now().UTC().Format(time.RFC3339), "")
+			map[string]any{"role": role}, time.Now().UTC().Format(time.RFC3339), "")
 		// No HX-Refresh (ut-docs#2904): pending_pairings.html's forms
 		// refresh only the Tills page's pairing card on a 2xx
 		// (data-after-request "ok refresh-region"); the Enrolled Tills

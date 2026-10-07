@@ -39,7 +39,7 @@ func newSyncOrdersTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *db.DB) 
 // must present.
 func seedSyncOrdersTill(t *testing.T, dp *common.Deps, name, bearer string) {
 	t.Helper()
-	if _, err := data.NewTillsRepo(dp.Db).InsertTill(context.Background(), name, hashBearer(bearer)); err != nil {
+	if _, err := data.NewTillsRepo(dp.Db).InsertTill(context.Background(), name, hashBearer(bearer), data.TillRoleAdditional); err != nil {
 		t.Fatal(err)
 	}
 }
