@@ -40,6 +40,7 @@ func initAuthTestI18n(t *testing.T) {
 func newFullAuthDeps(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps) {
 	t.Helper()
 	chdirRoot(t)
+	pinCurrency(t, "GBP") // handlers under test may InitCurrency(non-GBP); undone at test end
 	initAuthTestI18n(t)
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
