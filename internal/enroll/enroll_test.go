@@ -3,10 +3,12 @@ package enroll
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -84,7 +86,12 @@ func resetState() {
 	envPinWarned.Store(false)
 	redeemPinWarned.Store(false)
 	unsavedToken.Store(false)
+	signingKeyHits.Store(0)
 }
+
+// signingKeyHits counts testMarketplace's signing-key requests, so a test
+// can prove a boot makes none (ADR-0148 audit item 3, ut-docs#3625).
+var signingKeyHits atomic.Int32
 
 // testMarketplace serves the register + signing-key endpoints the way the real
 // marketplace mounts them: register under the /api base, signing-key on the
@@ -113,7 +120,11 @@ func testMarketplace(t *testing.T, failures int) (*httptest.Server, *int) {
 			"token":       "tok-123",
 		}})
 	})
+	mux.HandleFunc("/api/v1/stores/devices/register", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{}})
+	})
 	mux.HandleFunc("/ui/api/signing-key", func(w http.ResponseWriter, _ *http.Request) {
+		signingKeyHits.Add(1)
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{
 			"algorithm":      "ed25519",
 			"public_key_hex": strings.Repeat("ab", 32),
@@ -122,6 +133,24 @@ func testMarketplace(t *testing.T, failures int) (*httptest.Server, *int) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, calls
+}
+
+// seedEnrolledStore persists a main till that has a store identity but whose
+// own device is not yet registered under it — the one case Init still starts
+// its background loop for (needDevice).
+func seedEnrolledStore(t *testing.T, kv Settings) {
+	t.Helper()
+	for k, v := range map[string]string{
+		keyDeviceID:   "till-existing",
+		keyStoreID:    "store-old",
+		keyMerchantID: "store-old",
+		keyToken:      "tok-old",
+		keyPublicKey:  strings.Repeat("cd", 32),
+	} {
+		if err := kv.Set(context.Background(), k, v); err != nil {
+			t.Fatalf("seed %s: %v", k, err)
+		}
+	}
 }
 
 // initForTest runs Init with a context cancelled at test cleanup and waits
@@ -164,8 +193,9 @@ func freshConfig(endpoint string) *config.Config {
 }
 
 // Registration is LAZY (multi-store / paid cloud are the paid tier): a fresh
-// till boot mints a device id and fetches the signing key but must NOT create
-// a store; the first plugin download/install (EnsureRegistered) does.
+// till boot mints a device id but must NOT create a store or fetch the
+// signing key (ADR-0148 audit item 3, ut-docs#3625); the first plugin
+// download/install (EnsureRegistered) does.
 func TestInitFreshTillDoesNotRegisterStore(t *testing.T) {
 	resetState()
 	srv, calls := testMarketplace(t, 0)
@@ -182,9 +212,14 @@ func TestInitFreshTillDoesNotRegisterStore(t *testing.T) {
 		t.Fatalf("cfg.DeviceID = %q, want %q", cfg.Marketplace.DeviceID, deviceID)
 	}
 
-	// The signing key still arrives (plugins must verify), the store doesn't.
-	waitFor(t, "signing key", func() bool { return kv.get(keyPublicKey) != "" })
+	// Neither the store nor the signing key is fetched at boot.
 	time.Sleep(50 * time.Millisecond)
+	if n := signingKeyHits.Load(); n != 0 {
+		t.Fatalf("signing key fetched %d times at boot; it must be lazy", n)
+	}
+	if kv.get(keyPublicKey) != "" {
+		t.Fatal("signing key persisted at boot")
+	}
 	if *calls != 0 {
 		t.Fatalf("register called %d times at boot; registration must be lazy", *calls)
 	}
@@ -446,7 +481,7 @@ func TestEnsureRegisteredRetriesAcrossAttempts(t *testing.T) {
 	}
 }
 
-func TestInitKeylessExplicitTillStillFetchesSigningKey(t *testing.T) {
+func TestInitKeylessExplicitTillFetchesSigningKeyOnlyWhenAsked(t *testing.T) {
 	resetState()
 	srv, calls := testMarketplace(t, 0)
 	kv := newFakeKV()
@@ -455,13 +490,56 @@ func TestInitKeylessExplicitTillStillFetchesSigningKey(t *testing.T) {
 
 	initForTest(t, cfg, kv)
 
-	waitFor(t, "signing key", func() bool { return kv.get(keyPublicKey) != "" })
 	time.Sleep(50 * time.Millisecond)
+	if n := signingKeyHits.Load(); n != 0 {
+		t.Fatalf("signing key fetched %d times at boot; it must be lazy", n)
+	}
+
+	// The first plugin action fetches it; later ones reuse it.
+	for i := 0; i < 2; i++ {
+		if eff := EnsureSigningKey(context.Background(), cfg, kv); eff.Marketplace.PublicKey != strings.Repeat("ab", 32) {
+			t.Fatalf("call %d: effective public key = %q", i, eff.Marketplace.PublicKey)
+		}
+	}
+	if n := signingKeyHits.Load(); n != 1 {
+		t.Fatalf("signing-key requests = %d, want 1", n)
+	}
+	if kv.get(keyPublicKey) != strings.Repeat("ab", 32) {
+		t.Fatal("lazily fetched key not persisted")
+	}
 	if *calls != 0 {
 		t.Fatalf("register called %d times despite explicit merchant", *calls)
 	}
-	if eff := Effective(cfg); eff.Marketplace.PublicKey != strings.Repeat("ab", 32) {
-		t.Fatalf("effective public key = %q", eff.Marketplace.PublicKey)
+}
+
+// EnsureSigningKey never calls out when the key is already known (operator
+// pinned or persisted) or when no marketplace is configured, and a failed
+// fetch returns a keyless config instead of an error — the verifier then
+// refuses marketplace bundles as it always did without a key.
+func TestEnsureSigningKeyNoCallWhenKnownOrUnconfigured(t *testing.T) {
+	resetState()
+	srv, _ := testMarketplace(t, 0)
+	kv := newFakeKV()
+
+	pinned := freshConfig(srv.URL)
+	pinned.Marketplace.PublicKey = strings.Repeat("ef", 32)
+	if got := EnsureSigningKey(context.Background(), pinned, kv).Marketplace.PublicKey; got != strings.Repeat("ef", 32) {
+		t.Fatalf("pinned key replaced: %q", got)
+	}
+	noEndpoint := &config.Config{}
+	if got := EnsureSigningKey(context.Background(), noEndpoint, kv).Marketplace.PublicKey; got != "" {
+		t.Fatalf("key without a marketplace: %q", got)
+	}
+	if n := signingKeyHits.Load(); n != 0 {
+		t.Fatalf("signing-key requests = %d, want 0", n)
+	}
+
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(down.Close)
+	if got := EnsureSigningKey(context.Background(), freshConfig(down.URL), kv).Marketplace.PublicKey; got != "" {
+		t.Fatalf("key after a failed fetch: %q", got)
 	}
 }
 
@@ -480,7 +558,10 @@ func TestInit_BackgroundLoopJoinsOnCancel(t *testing.T) {
 	resetState()
 	reqReceived := make(chan struct{})
 	mux := http.NewServeMux()
-	mux.HandleFunc("/ui/api/signing-key", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/stores/devices/register", func(w http.ResponseWriter, r *http.Request) {
+		// Drain the POST body first: net/http only watches for a client
+		// disconnect (cancelling r.Context) once the body has been read.
+		_, _ = io.Copy(io.Discard, r.Body)
 		close(reqReceived)
 		<-r.Context().Done() // never respond on its own — only ctx cancel ends this
 	})
@@ -495,6 +576,7 @@ func TestInit_BackgroundLoopJoinsOnCancel(t *testing.T) {
 	t.Cleanup(srv.CloseClientConnections)
 
 	kv := newFakeKV()
+	seedEnrolledStore(t, kv)
 	cfg := freshConfig(srv.URL)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -505,7 +587,7 @@ func TestInit_BackgroundLoopJoinsOnCancel(t *testing.T) {
 	select {
 	case <-reqReceived:
 	case <-time.After(2 * time.Second):
-		t.Fatal("background loop never reached the signing-key request")
+		t.Fatal("background loop never reached the device-register request")
 	}
 
 	waitDone := make(chan struct{})
@@ -891,9 +973,9 @@ func TestRegisterNowRespectsCallerContextWhenAttemptSlotHeld(t *testing.T) {
 // The background loop (run, started by Init) must still eventually
 // acquire the attempt slot once it frees — the fix must not turn its
 // effectively-blocking wait into a give-up, only make it interruptible by
-// ctx. Holds the slot so Init's loop (which needs the signing key, since
-// no PublicKey is configured) starts out queued behind it, then confirms
-// the loop's fetch completes once the slot is released. Exercises run()
+// ctx. Holds the slot so Init's loop (which must register this device
+// under its store) starts out queued behind it, then confirms the loop's
+// registration completes once the slot is released. Exercises run()
 // itself, not RegisterNow — a prior version of this test called
 // EnsureRegistered directly and never invoked Init at all, so it silently
 // tested nothing about the background loop (0% coverage on run(), per an
@@ -902,6 +984,7 @@ func TestBackgroundLoopStillAcquiresAttemptSlotOnceFree(t *testing.T) {
 	resetState()
 	srv, _ := testMarketplace(t, 0)
 	kv := newFakeKV()
+	seedEnrolledStore(t, kv)
 	cfg := freshConfig(srv.URL)
 
 	if !acquireAttempt(context.Background()) {
@@ -913,7 +996,7 @@ func TestBackgroundLoopStillAcquiresAttemptSlotOnceFree(t *testing.T) {
 	}()
 
 	initForTest(t, cfg, kv)
-	waitFor(t, "signing key", func() bool { return kv.get(keyPublicKey) != "" })
+	waitFor(t, "device registered", func() bool { return kv.get(keyDeviceRegistered) == "till-existing" })
 }
 
 // The other half of ut-docs#1298's fix to run(): acquireAttempt(ctx) must
@@ -933,7 +1016,8 @@ func TestBackgroundLoopExitsPromptlyWhenCancelledWhileQueuedOnAttemptSlot(t *tes
 
 	srv, _ := testMarketplace(t, 0)
 	kv := newFakeKV()
-	cfg := freshConfig(srv.URL) // no PublicKey configured -> Init's loop needs the key
+	seedEnrolledStore(t, kv) // device not yet registered -> Init's loop runs
+	cfg := freshConfig(srv.URL)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	var wg sync.WaitGroup
@@ -1090,5 +1174,29 @@ func TestRegisterDeviceSendsReportedTillID(t *testing.T) {
 				t.Fatalf("till_id = %v, want %q", got, want)
 			}
 		})
+	}
+}
+
+// EnsureSigningKey is bounded by lazyKeyTimeout: on a black-holed network a
+// file import must not wait out the 15 s client timeout (review of
+// ut-docs#3625). The handler never answers on its own.
+func TestEnsureSigningKeyBoundedByLazyTimeout(t *testing.T) {
+	resetState()
+	old := lazyKeyTimeout
+	lazyKeyTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { lazyKeyTimeout = old })
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(srv.CloseClientConnections)
+
+	start := time.Now()
+	eff := EnsureSigningKey(context.Background(), freshConfig(srv.URL), newFakeKV())
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("EnsureSigningKey took %v, want about lazyKeyTimeout", elapsed)
+	}
+	if eff.Marketplace.PublicKey != "" {
+		t.Fatalf("key after a timed-out fetch: %q", eff.Marketplace.PublicKey)
 	}
 }

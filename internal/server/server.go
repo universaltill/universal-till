@@ -25,21 +25,22 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
-// BackgroundJobs manages periodic marketplace tasks
+// BackgroundJobs manages periodic marketplace tasks. There is deliberately no
+// catalog-sync job: the marketplace catalog refreshes only when an operator
+// opens a page that shows it (CatalogRepository.GetOrFetch) — ADR-0148 audit
+// item 1, ut-docs#3625. A 15-minute ticker used to re-fetch it forever for any
+// till that had browsed the marketplace once, paid or not.
 type BackgroundJobs struct {
-	catalogRepo         *marketplace.CatalogRepository
-	revocationChecker   *plugins.RevocationChecker
-	telemetryClient     *plugins.TelemetryClient
-	catalogSyncInterval time.Duration
-	telemetryInterval   time.Duration
-	revocationInterval  time.Duration
-	retryBaseDelay      time.Duration // first catalog-sync retry backoff step
-	logger              *log.Logger
-	cfg                 *config.Config
+	revocationChecker  *plugins.RevocationChecker
+	telemetryClient    *plugins.TelemetryClient
+	telemetryInterval  time.Duration
+	revocationInterval time.Duration
+	logger             *log.Logger
+	cfg                *config.Config
 }
 
 // NewBackgroundJobs creates a background job scheduler
-func NewBackgroundJobs(catalogRepo *marketplace.CatalogRepository, db *sql.DB, supervisor *plugins.Supervisor, cfg *config.Config, logger *log.Logger) *BackgroundJobs {
+func NewBackgroundJobs(db *sql.DB, supervisor *plugins.Supervisor, cfg *config.Config, logger *log.Logger) *BackgroundJobs {
 	var revocationChecker *plugins.RevocationChecker
 	if cfg.Marketplace.EndpointURL != "" {
 		revocationChecker = plugins.NewRevocationChecker(db, cfg.Marketplace.EndpointURL, supervisor)
@@ -50,15 +51,12 @@ func NewBackgroundJobs(catalogRepo *marketplace.CatalogRepository, db *sql.DB, s
 	})
 
 	return &BackgroundJobs{
-		catalogRepo:         catalogRepo,
-		revocationChecker:   revocationChecker,
-		telemetryClient:     telemetryClient,
-		catalogSyncInterval: 15 * time.Minute,
-		telemetryInterval:   5 * time.Minute,
-		revocationInterval:  30 * time.Minute,
-		retryBaseDelay:      1 * time.Second,
-		logger:              logger,
-		cfg:                 cfg,
+		revocationChecker:  revocationChecker,
+		telemetryClient:    telemetryClient,
+		telemetryInterval:  5 * time.Minute,
+		revocationInterval: 30 * time.Minute,
+		logger:             logger,
+		cfg:                cfg,
 	}
 }
 
@@ -88,32 +86,6 @@ func telemetryIdentity(cfg *config.Config) plugins.TelemetryIdentity {
 // goroutine has fully exited (ctx cancelled), so a caller waiting on wg
 // never returns while one of these could still be mid-sync/mid-write.
 func (bj *BackgroundJobs) Start(ctx context.Context, wg *sync.WaitGroup) {
-	// Catalog sync job (T011) - LOCAL-FIRST: Only sync when cache is stale
-	// User must explicitly refresh via UI to fetch from marketplace
-	wg.Add(1)
-	go func() {
-		defer logging.RecoverAndLog("server.catalogSync")
-		defer wg.Done()
-		ticker := time.NewTicker(bj.catalogSyncInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				// Only sync if cache exists and is stale (not first fetch)
-				if bj.catalogRepo != nil {
-					locale, deviceArch := bj.catalogKey()
-					_, isStale, err := bj.catalogRepo.Get(locale, deviceArch)
-					if err == nil && isStale {
-						bj.logger.Println("[Scheduler] cache is stale, syncing catalog")
-						bj.syncCatalog(ctx)
-					}
-				}
-			}
-		}
-	}()
-
 	// Telemetry reporting job
 	wg.Add(1)
 	go func() {
@@ -159,55 +131,6 @@ func (bj *BackgroundJobs) Start(ctx context.Context, wg *sync.WaitGroup) {
 	}()
 }
 
-// catalogKey is the (locale, arch) catalog snapshot the scheduler keeps
-// fresh — the same key its staleness check reads (ut-docs#2674). The catalog
-// is arch-filtered server-side; request the architecture this till actually
-// runs on — same value every interactive path sends (plugins_store_page,
-// cloudsync_wire, plugin_api). A hardcoded arch here made an arm64 till's
-// scheduler overwrite the cache with an amd64-filtered catalog.
-func (bj *BackgroundJobs) catalogKey() (locale, deviceArch string) {
-	locale, _ = marketplace.TillCatalogKey(bj.cfg.DefaultLocale)
-	return locale, deviceArchOf()
-}
-
-// syncCatalog fetches the latest catalog from marketplace with exponential backoff
-func (bj *BackgroundJobs) syncCatalog(ctx context.Context) {
-	if bj.catalogRepo == nil {
-		return
-	}
-
-	locale, deviceArch := bj.catalogKey()
-
-	maxRetries := 3
-	baseDelay := bj.retryBaseDelay
-	if baseDelay <= 0 {
-		baseDelay = 1 * time.Second
-	}
-
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		_, err := bj.catalogRepo.Fetch(ctx, locale, deviceArch)
-		if err == nil {
-			bj.logger.Printf("[Scheduler] catalog sync successful")
-			return
-		}
-
-		// Exponential backoff; bail out promptly on shutdown instead of
-		// sleeping through it.
-		if attempt < maxRetries-1 {
-			delay := baseDelay * time.Duration(1<<uint(attempt))
-			bj.logger.Printf("[Scheduler] catalog sync failed (attempt %d/%d): %v, retrying in %v",
-				attempt+1, maxRetries, err, delay)
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(delay):
-			}
-		} else {
-			bj.logger.Printf("[Scheduler] catalog sync failed after %d attempts: %v", maxRetries, err)
-		}
-	}
-}
-
 // Start boots the HTTP server and every background job it owns. wg is marked
 // Done, per job/goroutine, once each has fully exited (ctx cancelled) —
 // including this function's own graceful-shutdown goroutine — so a caller
@@ -215,13 +138,13 @@ func (bj *BackgroundJobs) syncCatalog(ctx context.Context) {
 // safely assume nothing Start ever spawned is still touching db/supervisor
 // once both have happened. wg must not be nil.
 func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalogRepo *marketplace.CatalogRepository, db *sql.DB, supervisor *plugins.Supervisor, wg *sync.WaitGroup) error {
-	// Start background jobs if catalog repository is configured. Start()
-	// itself only launches goroutines and returns immediately, so it doesn't
-	// need its own wrapping goroutine — jobs' own 3 goroutines register with
-	// wg directly.
+	// Start background jobs if a marketplace (catalog repository) is
+	// configured. Start() itself only launches goroutines and returns
+	// immediately, so it doesn't need its own wrapping goroutine — jobs' own 2
+	// goroutines register with wg directly.
 	if catalogRepo != nil {
 		logger := log.New(log.Writer(), "[BackgroundJobs] ", log.LstdFlags)
-		jobs := NewBackgroundJobs(catalogRepo, db, supervisor, cfg, logger)
+		jobs := NewBackgroundJobs(db, supervisor, cfg, logger)
 		jobs.Start(ctx, wg)
 	}
 
@@ -363,13 +286,6 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	}
 	return nil
 }
-
-// deviceArchOf reports the os/arch pair this till runs on. A package var so
-// tests can pin a sentinel value: on linux/amd64 CI the real runtime value is
-// indistinguishable from the historical hardcoded "linux/amd64" default this
-// code once had, so a pass-through test needs a sentinel to catch a
-// re-hardcoding on every platform.
-var deviceArchOf = marketplace.DeviceArch
 
 // runDailyBackup snapshots the local DB unless a backup newer than 24h
 // already exists, then prunes old snapshots to the newest DefaultBackupKeep.

@@ -11,8 +11,10 @@
 // checkout (offline-first).
 //
 // The marketplace's Ed25519 signing key (needed to verify plugin bundles) is
-// fetched alongside enrolment when UT_MARKETPLACE_PUBLIC_KEY is not set, and
-// persisted on first sight — a later key change never silently replaces it.
+// fetched alongside enrolment, or lazily by EnsureSigningKey at the first
+// plugin install/update/import (ADR-0148 audit item 3), when
+// UT_MARKETPLACE_PUBLIC_KEY is not set, and persisted on first sight — a
+// later key change never silently replaces it.
 //
 // This LAZY behavior is ADR-0015's deliberate decision (2026-07-17), and it
 // is still the default. ADR-0026 (2026-07-28) separately proposed moving
@@ -150,21 +152,25 @@ var (
 	vouchedDevice string
 
 	// attemptSem serializes registration attempts (background loop + the
-	// Settings "Register now" button) so the marketplace never sees two
-	// concurrent registers from one till — a 1-buffered channel rather than
+	// Settings "Register now" button, EnsureSigningKey) so the marketplace
+	// never sees two concurrent registers from one till — a 1-buffered
+	// channel rather than
 	// a plain sync.Mutex so an acquire can also observe a caller's context
 	// (ut-docs#1298). RegisterNow's callers bind a single attempt with a
 	// short context.WithTimeout (5s in practice) expecting that to cap the
 	// worst case; a plain mutex would let a caller queue behind the
 	// background loop's own longer-bounded (~15s httpClient.Timeout)
-	// signing-key fetch, roughly quadrupling the intended wait on a
+	// device registration, roughly quadrupling the intended wait on a
 	// black-holed network. Acquire/release only through acquireAttempt/
 	// releaseAttempt below — never send/receive on this channel directly.
 	attemptSem = make(chan struct{}, 1)
 
 	// Overridable in tests.
-	httpClient  = netaccess.NewClient(15 * time.Second)
-	retryDelays = []time.Duration{30 * time.Second, 2 * time.Minute, 5 * time.Minute, 15 * time.Minute, 30 * time.Minute}
+	httpClient = netaccess.NewClient(15 * time.Second)
+	// lazyKeyTimeout bounds EnsureSigningKey's wait (slot + fetch), the same
+	// 5 s RegisterNow's interactive callers use.
+	lazyKeyTimeout = 5 * time.Second
+	retryDelays    = []time.Duration{30 * time.Second, 2 * time.Minute, 5 * time.Minute, 15 * time.Minute, 30 * time.Minute}
 )
 
 // acquireAttempt blocks until attemptSem is acquired or ctx is done,
@@ -416,12 +422,13 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	}
 	// Store registration is deliberately NOT started here: it is lazy
 	// (EnsureRegistered / RegisterNow) — a till that never uses the
-	// marketplace never creates a store. The background loop only fetches
-	// the signing key (required to verify any plugin bundle) and — for a
-	// replica that joined a shop and inherited its store identity —
-	// registers this device under the shared store (one store, many
-	// devices).
-	needKey := m.PublicKey == ""
+	// marketplace never creates a store. The signing-key fetch is lazy too
+	// (EnsureSigningKey, ADR-0148 audit item 3, ut-docs#3625): a till that
+	// never installs, updates or imports a plugin never calls out for it.
+	// The background loop only registers this device under the shop's
+	// store, for a main till that already has a store identity (one store,
+	// many devices).
+	//
 	// A replica's device registration goes through its main till
 	// (replicaLoop, ut-docs#2730); only a main/standalone till registers its
 	// own device under the store here.
@@ -435,15 +442,48 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 			replicaLoop(ctx, *m, kv)
 		}()
 	}
-	if !needKey && !needDevice {
+	if !needDevice {
 		return
 	}
 	wg.Add(1)
 	go func() {
 		defer logging.RecoverAndLog("enroll.run")
 		defer wg.Done()
-		run(ctx, *m, deviceName, kv, needKey, needDevice)
+		run(ctx, *m, deviceName, kv)
 	}()
+}
+
+// EnsureSigningKey returns the effective config, first fetching the
+// marketplace's release-signing key when neither the operator nor an earlier
+// fetch supplied one. The fetch is lazy (ADR-0148 audit item 3, ut-docs#3625):
+// call it only as part of an action that verifies a plugin bundle — install,
+// update, store install, file import, a cloud-pushed install — never as a
+// standalone background fetch. It waits at most lazyKeyTimeout, so an
+// offline till's import is not held for the full client timeout. Failure is
+// non-fatal: the returned config simply has no key, and the caller's
+// verifier refuses a marketplace bundle the way it always has without one.
+// The next action retries.
+func EnsureSigningKey(ctx context.Context, cfg *config.Config, kv Settings) config.Config {
+	eff := Effective(cfg)
+	if eff.Marketplace.PublicKey != "" || eff.Marketplace.EndpointURL == "" {
+		return eff
+	}
+	ctx, cancel := context.WithTimeout(ctx, lazyKeyTimeout)
+	defer cancel()
+	if !acquireAttempt(ctx) {
+		return eff // timed out while a RegisterNow or the device loop held the slot
+	}
+	defer releaseAttempt()
+	// A RegisterNow holding the slot may have fetched it meanwhile.
+	mu.RLock()
+	haveKey := cur.PublicKey != ""
+	mu.RUnlock()
+	if !haveKey {
+		if err := fetchSigningKey(ctx, eff.Marketplace.EndpointURL, kv); err != nil {
+			logging.L().Infof("enrolment: lazy signing-key fetch failed (next plugin action retries): %v", err)
+		}
+	}
+	return Effective(cfg)
 }
 
 // EnsureRegistered returns the effective config, first enrolling the till
@@ -501,42 +541,24 @@ func liveToken(copyToken string) string {
 	return copyToken
 }
 
-// run retries the signing-key fetch and/or the device-under-store
-// registration until both succeed or the till shuts down. Best-effort by
-// design: the till is fully usable offline the whole time.
-func run(ctx context.Context, m config.MarketplaceConfig, deviceName string, kv Settings, needKey, needDevice bool) {
+// run retries the device-under-store registration until it succeeds or the
+// till shuts down. Best-effort by design: the till is fully usable offline
+// the whole time.
+func run(ctx context.Context, m config.MarketplaceConfig, deviceName string, kv Settings) {
 	log := logging.L()
 	for attempt := 0; ; attempt++ {
 		if !acquireAttempt(ctx) {
 			return // ctx done while waiting for a concurrent RegisterNow to finish
 		}
-		// A RegisterNow call may have fetched the key between waits.
-		mu.RLock()
-		if cur.PublicKey != "" {
-			needKey = false
-		}
-		mu.RUnlock()
-		if needKey {
-			if err := fetchSigningKey(ctx, m.EndpointURL, kv); err != nil {
-				log.Infof("enrolment: fetch marketplace signing key failed (will retry): %v", err)
-			} else {
-				needKey = false
-			}
-		}
 		// Register this device under the shop's store. The store token —
 		// shared by every till in the shop — authenticates the call.
-		if needDevice {
-			m.StoreID, m.MerchantToken = currentStoreAuth(m)
-			if err := registerDevice(ctx, m, deviceName, kv); err != nil {
-				log.Infof("enrolment: register device under store failed (will retry): %v", err)
-			} else {
-				needDevice = false
-			}
-		}
+		m.StoreID, m.MerchantToken = currentStoreAuth(m)
+		err := registerDevice(ctx, m, deviceName, kv)
 		releaseAttempt()
-		if !needKey && !needDevice {
+		if err == nil {
 			return
 		}
+		log.Infof("enrolment: register device under store failed (will retry): %v", err)
 		delay := retryDelays[len(retryDelays)-1]
 		if attempt < len(retryDelays) {
 			delay = retryDelays[attempt]

@@ -200,6 +200,8 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 		// The effective config fills any fields the operator didn't set.
 		effCfg := enroll.EnsureRegistered(ctx, d.Cfg, d.Settings)
 		checkinAfterRegistration(d, effCfg) // ADR-0148 §2: an operator's install
+		// The signing key is fetched lazily (ADR-0148 audit item 3).
+		effCfg = enroll.EnsureSigningKey(ctx, d.Cfg, d.Settings)
 		client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
 		installer, err := plugins.NewMarketplaceInstaller(&effCfg, client, d.Db)
 		if err != nil {
@@ -674,6 +676,8 @@ func applyPluginUpdate(ctx context.Context, d *common.Deps, pluginID string) (fr
 
 	effCfg := enroll.EnsureRegistered(ctx, d.Cfg, d.Settings)
 	checkinAfterRegistration(d, effCfg) // ADR-0148 §2: an operator's update (handleUpdatePlugin)
+	// The signing key is fetched lazily (ADR-0148 audit item 3).
+	effCfg = enroll.EnsureSigningKey(ctx, d.Cfg, d.Settings)
 	client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
 	installer, err := plugins.NewMarketplaceInstaller(&effCfg, client, d.Db)
 	if err != nil {
@@ -1039,8 +1043,10 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 		// bundle carrying a signature is actually verified against it — CLAUDE.md:
 		// "Never run an unverified plugin." When no key is configured (dev/offline
 		// default) the verifier has nothing to check and unsigned bundles import,
-		// preserving offline provisioning.
-		verifier, err := plugins.NewManifestVerifier(d.Cfg.Marketplace.PublicKey)
+		// preserving offline provisioning. The key is fetched lazily here
+		// (ADR-0148 audit item 3): an import is a plugin interaction, and the
+		// effective config also carries a key fetched after boot.
+		verifier, err := plugins.NewManifestVerifier(enroll.EnsureSigningKey(ctx, d.Cfg, d.Settings).Marketplace.PublicKey)
 		if err != nil {
 			log.Printf("Warning: failed to create verifier: %v", err)
 			verifier = nil // Allow import without verification in dev-mode

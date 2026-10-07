@@ -1578,7 +1578,9 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 		ListingID: listingID,
 		State:     plugins.InstallStateRequested,
 	})
-	effCfg := enroll.EnsureRegistered(ctx, d.Cfg, d.Settings)
+	_ = enroll.EnsureRegistered(ctx, d.Cfg, d.Settings)
+	// The signing key is fetched lazily (ADR-0148 audit item 3).
+	effCfg := enroll.EnsureSigningKey(ctx, d.Cfg, d.Settings)
 	client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
 	installer, err := plugins.NewMarketplaceInstaller(&effCfg, client, d.Db)
 	if err != nil {

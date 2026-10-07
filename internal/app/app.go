@@ -346,8 +346,8 @@ func Run(ctx context.Context) error {
 	}
 
 	// A nil catalogRepo also keeps server.Start's marketplace background
-	// jobs (catalog sync, telemetry, revocation checks) from starting — so
-	// skipping it on a demo till skips all three.
+	// jobs (telemetry, revocation checks) from starting — so skipping it on
+	// a demo till skips both.
 	var catalogRepo *marketplace.CatalogRepository
 	if cfg.Marketplace.EndpointURL != "" {
 		netaccess.StartService("marketplace catalog, revocation and telemetry", func() {

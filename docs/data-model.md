@@ -706,11 +706,13 @@ data/plugins/
 
 ### Background Jobs
 
-**Catalog Sync** (15 min interval)
-- Fetches latest plugin catalog from marketplace
-- Updates local cache at `data/plugins/cache/`
-- Only runs when existing cache is stale
-- Exponential backoff on failures (max 3 retries)
+**Catalog refresh** (no background job — ADR-0148 audit item 1, ut-docs#3625)
+- The catalog is fetched only when an operator opens a page that shows it
+  (`CatalogRepository.GetOrFetch`); a 15-minute ticker used to re-fetch it
+  forever for any till that had browsed the marketplace once
+- No cache yet: fetched synchronously; stale cache (older than 15 min):
+  served at once and refreshed once in the background
+- Cached at `data/plugins/cache/`
 
 **Telemetry Upload** (5 min interval)
 - Sends one snapshot of the active installed plugins per tick (no queue:

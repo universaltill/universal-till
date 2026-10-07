@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
@@ -12,10 +13,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -420,5 +424,56 @@ func TestStoreAPI_InstallFromStagedBundleSucceeds(t *testing.T) {
 	// The staged bundle was consumed by the successful install.
 	if _, err := os.Stat(bundlePath); !os.IsNotExist(err) {
 		t.Fatalf("staged bundle should be removed after install")
+	}
+}
+
+// TestStoreAPI_InstallFetchesSigningKeyLazily pins ADR-0148 audit item 3
+// (ut-docs#3625): no boot-time fetch pins the marketplace signing key any
+// more, so the install itself must fetch it. A till with an endpoint but no
+// key installs a signed staged bundle, the key is fetched exactly once, and
+// a second install reuses it. Without the lazy fetch this install fails
+// "marketplace public key not configured".
+func TestStoreAPI_InstallFetchesSigningKeyLazily(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	m, pubHex := signedAssetOnlyManifest(t, "com.test.lazykey", "Lazy Key Plugin")
+
+	var keyHits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ui/api/signing-key" {
+			http.NotFound(w, r)
+			return
+		}
+		keyHits.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{
+			"algorithm":      "ed25519",
+			"public_key_hex": pubHex,
+		}})
+	}))
+	t.Cleanup(srv.Close)
+	// The fetched key lives in enroll's package state; reset it so no later
+	// test sees it.
+	enroll.Init(t.Context(), &config.Config{}, emptyKV{}, &sync.WaitGroup{})
+	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, emptyKV{}, &sync.WaitGroup{}) })
+
+	mux, d := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: srv.URL + "/api"})
+
+	stageSignedStoreBundle(t, m, "lst-lazy")
+	rec := postForm(mux, "/api/plugins/store/install", url.Values{"listing_id": {"lst-lazy"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("store install = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if _, ok := d.Pm.Installed["com.test.lazykey"]; !ok {
+		t.Fatal("plugin not installed after the lazy key fetch")
+	}
+	if n := keyHits.Load(); n != 1 {
+		t.Fatalf("signing-key requests = %d, want 1", n)
+	}
+
+	stageSignedStoreBundle(t, m, "lst-lazy")
+	if rec := postForm(mux, "/api/plugins/store/install", url.Values{"listing_id": {"lst-lazy"}}, nil); rec.Code != http.StatusOK {
+		t.Fatalf("second store install = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if n := keyHits.Load(); n != 1 {
+		t.Fatalf("signing-key requests after a second install = %d, want 1 (key reused)", n)
 	}
 }

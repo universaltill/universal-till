@@ -3,8 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -16,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,50 +23,8 @@ import (
 	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
-	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
-
-// stubTokenProvider satisfies oauth.TokenProvider. Auth is optional on the
-// catalog endpoint, so returning an error means "proceed unauthenticated".
-type stubTokenProvider struct{}
-
-func (stubTokenProvider) GetToken(context.Context) (string, error) {
-	return "", fmt.Errorf("no token in tests")
-}
-
-func (stubTokenProvider) ClearCache() error { return nil }
-
-// newTestCatalogRepo builds a real CatalogRepository against a local httptest
-// marketplace. Hermetic: loopback only, cache under t.TempDir.
-func newTestCatalogRepo(t *testing.T, serverURL string) *marketplace.CatalogRepository {
-	t.Helper()
-	cfg := &config.MarketplaceConfig{
-		EndpointURL:       serverURL,
-		APIVersion:        "1.0.0",
-		RequestTimeoutSec: 5,
-	}
-	client := marketplace.NewClient(cfg, stubTokenProvider{})
-	repo, err := marketplace.NewCatalogRepository(client, t.TempDir())
-	if err != nil {
-		t.Fatalf("NewCatalogRepository: %v", err)
-	}
-	return repo
-}
-
-// catalogServer is an httptest marketplace catalog endpoint that records the
-// `arch` query param of every request it serves.
-func catalogServer(t *testing.T) (*httptest.Server, chan string) {
-	t.Helper()
-	archSeen := make(chan string, 16)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		archSeen <- r.URL.Query().Get("device_arch")
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"plugins": []any{}})
-	}))
-	t.Cleanup(srv.Close)
-	return srv, archSeen
-}
 
 // syncBuffer is a mutex-guarded buffer so a background goroutine's logger can
 // be read by the test without a data race.
@@ -90,276 +45,29 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-// The background catalog sync must request the catalog for the architecture
-// the till is actually running on — the same runtime.GOOS/runtime.GOARCH every
-// interactive path (plugins_store_page, cloudsync_wire, plugin_api) sends. A
-// hardcoded arch means an arm64 till's scheduler overwrites the cache with an
-// amd64-filtered catalog.
-func TestSyncCatalog_SendsRealDeviceArch(t *testing.T) {
-	// Pass-through half, sentinel-pinned: on linux/amd64 CI the real runtime
-	// arch equals the historical hardcoded "linux/amd64", so asserting the
-	// runtime value alone would be blind to a re-hardcoding there. The
-	// sentinel proves syncCatalog sends exactly what deviceArchOf returns,
-	// on every platform.
-	oldArch := deviceArchOf
-	deviceArchOf = func() string { return "sentinelos/sentinelarch" }
-	t.Cleanup(func() { deviceArchOf = oldArch })
-
-	srv, archSeen := catalogServer(t)
-	bj := &BackgroundJobs{
-		catalogRepo: newTestCatalogRepo(t, srv.URL),
-		cfg:         &config.Config{DefaultLocale: "en-US"},
-		logger:      log.New(io.Discard, "", 0),
-	}
-
-	bj.syncCatalog(context.Background())
-
-	select {
-	case got := <-archSeen:
-		if got != "sentinelos/sentinelarch" {
-			t.Fatalf("background sync requested arch %q, want the deviceArchOf value to pass through verbatim", got)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("no catalog request reached the marketplace")
-	}
-}
-
-// The default deviceArchOf computes from the actual runtime, matching what
-// every interactive path sends. (Red on any non-amd64-linux box if someone
-// re-hardcodes it; the sentinel test above covers the pass-through on CI.)
-func TestDeviceArchOf_ReportsRuntime(t *testing.T) {
-	want := runtime.GOOS + "/" + runtime.GOARCH
-	if got := deviceArchOf(); got != want {
-		t.Fatalf("deviceArchOf() = %q, want %q", got, want)
-	}
-}
-
 // Revocation checking only exists when a marketplace endpoint is configured —
 // without one there is nothing to poll.
 func TestNewBackgroundJobs_RevocationCheckerGatedOnEndpoint(t *testing.T) {
 	logger := log.New(io.Discard, "", 0)
 
-	noEndpoint := NewBackgroundJobs(nil, nil, nil, &config.Config{}, logger)
+	noEndpoint := NewBackgroundJobs(nil, nil, &config.Config{}, logger)
 	if noEndpoint.revocationChecker != nil {
 		t.Fatal("revocation checker created without a marketplace endpoint")
 	}
 	if noEndpoint.telemetryClient == nil {
 		t.Fatal("telemetry client should always be constructed")
 	}
-	if noEndpoint.retryBaseDelay <= 0 {
-		t.Fatalf("retryBaseDelay not initialised: %v", noEndpoint.retryBaseDelay)
-	}
 
 	cfg := &config.Config{}
 	cfg.Marketplace.EndpointURL = "http://127.0.0.1:1"
-	withEndpoint := NewBackgroundJobs(nil, nil, nil, cfg, logger)
+	withEndpoint := NewBackgroundJobs(nil, nil, cfg, logger)
 	if withEndpoint.revocationChecker == nil {
 		t.Fatal("revocation checker missing despite a configured endpoint")
 	}
 }
 
-// A till with no marketplace configured has a nil catalog repo — the sync must
-// be a quiet no-op, not a panic.
-func TestSyncCatalog_NilRepoIsNoop(t *testing.T) {
-	bj := &BackgroundJobs{
-		cfg:    &config.Config{},
-		logger: log.New(io.Discard, "", 0),
-	}
-	bj.syncCatalog(context.Background()) // must not panic
-}
-
-// A failing marketplace is retried exactly 3 times with backoff, then given up
-// on with a logged failure — never an infinite loop, never a crash.
-func TestSyncCatalog_RetriesWithBackoffThenGivesUp(t *testing.T) {
-	requests := make(chan struct{}, 16)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests <- struct{}{}
-		http.Error(w, "boom", http.StatusInternalServerError)
-	}))
-	t.Cleanup(srv.Close)
-
-	logBuf := &syncBuffer{}
-	bj := &BackgroundJobs{
-		catalogRepo:    newTestCatalogRepo(t, srv.URL),
-		cfg:            &config.Config{DefaultLocale: "en-US"},
-		logger:         log.New(logBuf, "", 0),
-		retryBaseDelay: time.Millisecond,
-	}
-
-	bj.syncCatalog(context.Background())
-
-	if got := len(requests); got != 3 {
-		t.Fatalf("marketplace saw %d requests, want exactly 3 attempts", got)
-	}
-	if !strings.Contains(logBuf.String(), "catalog sync failed after 3 attempts") {
-		t.Fatalf("final failure not logged; log was:\n%s", logBuf.String())
-	}
-}
-
-// A transient failure recovers on retry: fail once, succeed on attempt 2, stop.
-func TestSyncCatalog_SucceedsAfterRetry(t *testing.T) {
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if calls.Add(1) == 1 {
-			http.Error(w, "boom", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"plugins": []any{}})
-	}))
-	t.Cleanup(srv.Close)
-
-	logBuf := &syncBuffer{}
-	bj := &BackgroundJobs{
-		catalogRepo:    newTestCatalogRepo(t, srv.URL),
-		cfg:            &config.Config{DefaultLocale: "en-US"},
-		logger:         log.New(logBuf, "", 0),
-		retryBaseDelay: time.Millisecond,
-	}
-
-	bj.syncCatalog(context.Background())
-
-	if got := calls.Load(); got != 2 {
-		t.Fatalf("marketplace saw %d requests, want 2 (fail, then success)", got)
-	}
-	if !strings.Contains(logBuf.String(), "catalog sync successful") {
-		t.Fatalf("success not logged; log was:\n%s", logBuf.String())
-	}
-}
-
-// Shutdown during the retry backoff must abort promptly instead of sleeping
-// through the remaining delay.
-func TestSyncCatalog_AbortsBackoffOnShutdown(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "boom", http.StatusInternalServerError)
-	}))
-	t.Cleanup(srv.Close)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	bj := &BackgroundJobs{
-		catalogRepo:    newTestCatalogRepo(t, srv.URL),
-		cfg:            &config.Config{DefaultLocale: "en-US"},
-		logger:         log.New(io.Discard, "", 0),
-		retryBaseDelay: time.Hour, // without the ctx-aware backoff this would hang
-	}
-
-	done := make(chan struct{})
-	go func() {
-		bj.syncCatalog(ctx)
-		close(done)
-	}()
-	time.Sleep(50 * time.Millisecond) // let attempt 1 fail and enter backoff
-	cancel()
-
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("syncCatalog did not abort its backoff on context cancel")
-	}
-}
-
-// plantSnapshot writes a catalog snapshot file directly into the repo's cache
-// dir with the given age, so tests control staleness without network calls.
-// It deliberately writes the pre-ut-docs#2674 single catalog-snapshot.json,
-// so these scheduler tests also cover a till upgraded with only that file:
-// the repository still serves it for the one key it recorded.
-func plantSnapshot(t *testing.T, cacheDir string, fetchedAt time.Time) {
-	t.Helper()
-	snap := map[string]any{
-		"plugins":          []any{},
-		"snapshot_version": 1,
-		"fetched_at":       fetchedAt,
-		"locale":           "en-US",
-		"device_arch":      runtime.GOOS + "/" + runtime.GOARCH,
-	}
-	raw, err := json.Marshal(snap)
-	if err != nil {
-		t.Fatalf("marshal snapshot: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(cacheDir, "catalog-snapshot.json"), raw, 0o644); err != nil {
-		t.Fatalf("write snapshot: %v", err)
-	}
-}
-
-func newTestCatalogRepoAt(t *testing.T, serverURL, cacheDir string) *marketplace.CatalogRepository {
-	t.Helper()
-	cfg := &config.MarketplaceConfig{
-		EndpointURL:       serverURL,
-		APIVersion:        "1.0.0",
-		RequestTimeoutSec: 5,
-	}
-	client := marketplace.NewClient(cfg, stubTokenProvider{})
-	repo, err := marketplace.NewCatalogRepository(client, cacheDir)
-	if err != nil {
-		t.Fatalf("NewCatalogRepository: %v", err)
-	}
-	return repo
-}
-
-// LOCAL-FIRST: the scheduler only re-fetches when a cached catalog exists AND
-// has gone stale — and once refreshed, the now-fresh cache stops further
-// fetches until it ages again.
-func TestBackgroundJobsStart_SyncsWhenStaleThenStops(t *testing.T) {
-	srv, archSeen := catalogServer(t)
-	cacheDir := t.TempDir()
-	plantSnapshot(t, cacheDir, time.Now().Add(-time.Hour)) // stale (>15m)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	bj := &BackgroundJobs{
-		catalogRepo:         newTestCatalogRepoAt(t, srv.URL, cacheDir),
-		cfg:                 &config.Config{DefaultLocale: "en-US"},
-		logger:              log.New(io.Discard, "", 0),
-		catalogSyncInterval: 20 * time.Millisecond,
-		telemetryInterval:   time.Hour,
-		revocationInterval:  time.Hour,
-		retryBaseDelay:      time.Millisecond,
-	}
-	bj.Start(ctx, &sync.WaitGroup{})
-
-	select {
-	case <-archSeen:
-	case <-time.After(5 * time.Second):
-		t.Fatal("stale cache never triggered a catalog sync")
-	}
-	// The sync refreshed the cache; further ticks must NOT fetch again.
-	time.Sleep(150 * time.Millisecond)
-	select {
-	case <-archSeen:
-		t.Fatal("scheduler kept fetching after the cache was refreshed — local-first violated")
-	default:
-	}
-}
-
-// A fresh cache is left alone entirely.
-func TestBackgroundJobsStart_SkipsWhenFresh(t *testing.T) {
-	srv, archSeen := catalogServer(t)
-	cacheDir := t.TempDir()
-	plantSnapshot(t, cacheDir, time.Now()) // fresh
-
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	bj := &BackgroundJobs{
-		catalogRepo:         newTestCatalogRepoAt(t, srv.URL, cacheDir),
-		cfg:                 &config.Config{DefaultLocale: "en-US"},
-		logger:              log.New(io.Discard, "", 0),
-		catalogSyncInterval: 20 * time.Millisecond,
-		telemetryInterval:   time.Hour,
-		revocationInterval:  time.Hour,
-		retryBaseDelay:      time.Millisecond,
-	}
-	bj.Start(ctx, &sync.WaitGroup{})
-
-	time.Sleep(200 * time.Millisecond)
-	select {
-	case <-archSeen:
-		t.Fatal("fresh cache triggered a catalog sync")
-	default:
-	}
-}
-
 // Context cancellation stops the scheduler loops: with a permanently failing
-// marketplace the cache stays stale (requests keep flowing), until cancel.
+// marketplace the revocation poll keeps firing, until cancel.
 func TestBackgroundJobsStart_CancelStopsLoops(t *testing.T) {
 	requests := make(chan struct{}, 256)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -370,19 +78,15 @@ func TestBackgroundJobsStart_CancelStopsLoops(t *testing.T) {
 		http.Error(w, "boom", http.StatusInternalServerError)
 	}))
 	t.Cleanup(srv.Close)
-	cacheDir := t.TempDir()
-	plantSnapshot(t, cacheDir, time.Now().Add(-time.Hour))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 	bj := &BackgroundJobs{
-		catalogRepo:         newTestCatalogRepoAt(t, srv.URL, cacheDir),
-		cfg:                 &config.Config{DefaultLocale: "en-US"},
-		logger:              log.New(io.Discard, "", 0),
-		catalogSyncInterval: 20 * time.Millisecond,
-		telemetryInterval:   time.Hour,
-		revocationInterval:  time.Hour,
-		retryBaseDelay:      time.Millisecond,
+		revocationChecker:  plugins.NewRevocationChecker(nil, srv.URL, nil),
+		cfg:                &config.Config{},
+		logger:             log.New(io.Discard, "", 0),
+		telemetryInterval:  time.Hour,
+		revocationInterval: 20 * time.Millisecond,
 	}
 	bj.Start(ctx, &wg)
 
@@ -393,7 +97,7 @@ func TestBackgroundJobsStart_CancelStopsLoops(t *testing.T) {
 	}
 
 	// Before cancel: wg must NOT already be at zero (a missing wg.Add on any
-	// of the 3 job goroutines would let Wait return instantly, vacuously
+	// of the 2 job goroutines would let Wait return instantly, vacuously
 	// "passing" the check below without ever tracking them).
 	if waitWithin(&wg, 150*time.Millisecond) {
 		t.Fatal("wg.Wait() returned before ctx was even cancelled — job goroutines not tracked")
@@ -401,7 +105,7 @@ func TestBackgroundJobsStart_CancelStopsLoops(t *testing.T) {
 
 	cancel()
 
-	// Deterministic proof the 3 job goroutines actually exited (not just a
+	// Deterministic proof the 2 job goroutines actually exited (not just a
 	// timing-based inference from silence on the requests channel below).
 	if !waitWithin(&wg, 5*time.Second) {
 		t.Fatal("BackgroundJobs goroutines did not join wg within 5s of context cancel")
@@ -441,11 +145,10 @@ func TestBackgroundJobsStart_TelemetryFailureIsLoggedNotFatal(t *testing.T) {
 		telemetryClient: plugins.NewTelemetryClient(sqlDB, func() plugins.TelemetryIdentity {
 			return plugins.TelemetryIdentity{EndpointURL: "http://127.0.0.1:1", DeviceID: "dev", MerchantID: "merchant", StoreID: "store", Token: "tok"}
 		}),
-		cfg:                 &config.Config{},
-		logger:              log.New(logBuf, "", 0),
-		catalogSyncInterval: time.Hour,
-		telemetryInterval:   20 * time.Millisecond,
-		revocationInterval:  time.Hour,
+		cfg:                &config.Config{},
+		logger:             log.New(logBuf, "", 0),
+		telemetryInterval:  20 * time.Millisecond,
+		revocationInterval: time.Hour,
 	}
 	bj.Start(ctx, &sync.WaitGroup{})
 
@@ -476,12 +179,11 @@ func TestBackgroundJobsStart_RevocationTickPollsFeed(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	bj := &BackgroundJobs{
-		revocationChecker:   plugins.NewRevocationChecker(nil, srv.URL, nil),
-		cfg:                 &config.Config{},
-		logger:              log.New(logBuf, "", 0),
-		catalogSyncInterval: time.Hour,
-		telemetryInterval:   time.Hour,
-		revocationInterval:  20 * time.Millisecond,
+		revocationChecker:  plugins.NewRevocationChecker(nil, srv.URL, nil),
+		cfg:                &config.Config{},
+		logger:             log.New(logBuf, "", 0),
+		telemetryInterval:  time.Hour,
+		revocationInterval: 20 * time.Millisecond,
 	}
 	bj.Start(ctx, &sync.WaitGroup{})
 
