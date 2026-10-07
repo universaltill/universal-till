@@ -635,8 +635,10 @@ var reservedPageRoutePrefixes = []string{
 // (route == prefix, or route starts with prefix+"/"). Exact and
 // case-sensitive, mirroring findPageEntry's exact route match, so /apix is
 // not reserved. Install/rollback refuse such a route
-// (validatePageEntryRoutes); internal/pages' findPageEntry also skips one
-// at dispatch, for a plugin installed before the check existed.
+// (validatePageEntryRoutes); for a plugin installed before the check
+// existed, internal/pages' findPageEntry skips one at dispatch, and
+// common.BuildMenu and the Plugins page's Docs button skip it too, so no
+// tile or button leads to that 404 (ut-docs#3817).
 func ReservedPageRoutePrefix(route string) (string, bool) {
 	for _, p := range reservedPageRoutePrefixes {
 		if route == p || strings.HasPrefix(route, p+"/") {
