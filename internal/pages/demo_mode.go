@@ -453,6 +453,7 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /ui/net-status":          true,
 	"GET /ui/join-notice":         true, // ut-docs#2721; always empty in the demo (no LAN browse)
 	"GET /ui/pairing-notice":      true,
+	"GET /ui/shop-name-notice":    true, // ut-docs#3114
 	"GET /ui/plugin-buttons":      true,
 	"GET /ui/report-archive-chip": true,
 	"GET /ui/subscription-chip":   true, // ut-docs#2569, beside GET /api/entitlement

@@ -333,6 +333,7 @@
       if (window.utCatalogGoToModifiers && window.utCatalogGoToModifiers() === false) preventDefault(ctx);
     },
     'dismiss-pairing-notice': function () { if (window.utPairingNoticeDismiss) window.utPairingNoticeDismiss(); },
+    'dismiss-shop-name-notice': function () { if (window.utShopNameNoticeDismiss) window.utShopNameNoticeDismiss(); }, // ut-docs#3114
     'close-install-modal': function () { if (window.closeInstallModal) window.closeInstallModal(); },
     // receipt.html's "ask" prompt: Print hides the prompt BEFORE any
     // window.print() fallback, so the question never lands on paper.
