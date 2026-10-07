@@ -11,6 +11,17 @@ import (
 	"github.com/universaltill/universal-till/internal/secrets"
 )
 
+// pinCurrency sets the process-global active currency (httpx.InitCurrency)
+// for this test and re-inits it to the GBP baseline when it ends (ut-docs#970
+// convention; ut-docs#3819). Handlers that persist a currency (setup wizard,
+// settings save/upsert, import commit) call InitCurrency themselves, so the
+// shared deps helpers pin GBP through this and the leak is undone per test.
+func pinCurrency(t *testing.T, code string) {
+	t.Helper()
+	httpx.InitCurrency(code)
+	t.Cleanup(func() { httpx.InitCurrency("GBP") })
+}
+
 // TestMain wires real i18n once for this package's whole test binary, and
 // chdirs to the repo root (needed to resolve "web/locales" and template
 // paths — same computation ui_smoke_test.go's chdirRoot does per-test).

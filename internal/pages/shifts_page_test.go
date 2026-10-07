@@ -20,6 +20,7 @@ import (
 func newShiftsPageTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Helper()
 	chdirRoot(t)
+	pinCurrency(t, "GBP") // the page tests assert "£…"; don't rely on another test's global
 	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
 	if err != nil {
 		t.Fatalf("load i18n: %v", err)

@@ -132,6 +132,7 @@ func buildRealDBTemplate() ([]byte, error) {
 func newRealDBDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Helper()
 	chdirRoot(t)
+	pinCurrency(t, "GBP") // the setup wizard InitCurrency("EUR")s; undone at test end
 	initAuthTestI18n(t)
 	path := filepath.Join(t.TempDir(), "demo-optin.db")
 	if err := os.WriteFile(path, realDBTemplate(t), 0o600); err != nil {
