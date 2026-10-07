@@ -74,20 +74,11 @@ type reportWindow struct {
 }
 
 // parseBusinessDayStart parses a "reports.business_day_start" setting value
-// ("HH:MM", validated by eod_api.go's eodTimeRe — the same pattern the EOD
-// schedule time uses). Empty or malformed input defaults to midnight (0, 0)
-// — calendar-midnight behavior, unchanged from before this setting existed.
+// ("HH:MM", the same pattern eod_api.go's eodTimeRe validates). Empty or
+// malformed input defaults to midnight (0, 0). One implementation, shared
+// with the sales.by_day.v1 core read view (data.ParseBusinessDayStart).
 func parseBusinessDayStart(hhmm string) (hour, minute int) {
-	if hhmm == "" || !eodTimeRe.MatchString(hhmm) {
-		return 0, 0
-	}
-	parts := strings.SplitN(hhmm, ":", 2)
-	h, err1 := strconv.Atoi(parts[0])
-	m, err2 := strconv.Atoi(parts[1])
-	if err1 != nil || err2 != nil {
-		return 0, 0
-	}
-	return h, m
+	return data.ParseBusinessDayStart(hhmm)
 }
 
 // businessDateFor returns the calendar date t's instant belongs to, treating

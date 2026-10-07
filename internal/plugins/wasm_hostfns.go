@@ -72,6 +72,15 @@ type hostState struct {
 	// limits.http_body_mb, resolved once per event (streamLimit).
 	limitOnce     sync.Once
 	httpBodyLimit int64
+
+	// viewCalls counts this event's view_query calls (viewCallsPerEvent);
+	// viewsUsed is the installed manifest's views_used, resolved once per
+	// event (wasm_views.go) — it only changes on reinstall, which reloads
+	// the module. viewsOK is false when no manifest could be read.
+	viewCalls int
+	viewsOnce sync.Once
+	viewsUsed []string
+	viewsOK   bool
 }
 
 type hostStateKey struct{}
@@ -129,6 +138,7 @@ func instantiateHostModule(ctx context.Context, rt wazero.Runtime) error {
 		NewFunctionBuilder().WithFunc(hostHTTPStatus).Export("http_status").
 		NewFunctionBuilder().WithFunc(hostHTTPRead).Export("http_read").
 		NewFunctionBuilder().WithFunc(hostHTTPClose).Export("http_close").
+		NewFunctionBuilder().WithFunc(hostViewQuery).Export("view_query").
 		Instantiate(ctx)
 	return err
 }
