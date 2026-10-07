@@ -61,3 +61,12 @@ on a till and unchanged by this diff.
 Out of scope, filed: ut-docs#3812 (category tile names break mid-word at 360px).
 
 **Verdict:** safe to merge.
+
+## Addendum — docs-shots surface hash
+
+CI's `guard-docs-shots` flagged the `web/public/**` change. Regenerating the
+manual on this branch and on `origin/main` on the same machine gave
+byte-identical PNGs except `en/inventory.png`, which differs only by the
+LAN "Found a main till on this network" banner (mDNS discovery of a real
+till during one run) — environment, not this diff. So the surface hash was
+refreshed without new screenshots (`Docs-Shots-Unchanged: true`).
