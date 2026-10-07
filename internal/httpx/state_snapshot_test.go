@@ -10,11 +10,11 @@ import (
 // TestSnapshotState_RestoresEveryPublishedGlobal pins ut-docs#3822: a test
 // in another package that drives a settings/setup handler changes these
 // process-wide values, and the next test in a shuffled run inherited them
-// (lang="tr", ui-scale 1.5, a key-less translator, ...). SnapshotState's
+// (lang="tr", ui-scale 1.5, a key-less translator, ...). SnapshotStateForTests'
 // restore must put every one of them back, and stay reusable.
 func TestSnapshotState_RestoresEveryPublishedGlobal(t *testing.T) {
 	// Run against a known baseline, and leave the package as it was.
-	outer := SnapshotState()
+	outer := SnapshotStateForTests()
 	t.Cleanup(outer)
 	InitI18n(nil, "en")
 	InitCurrency("GBP")
@@ -31,7 +31,7 @@ func TestSnapshotState_RestoresEveryPublishedGlobal(t *testing.T) {
 	InitRailAmendments(nil)
 	InitRailVisibility(nil)
 
-	baseline := SnapshotState()
+	baseline := SnapshotStateForTests()
 	wantTV := TranslationsVersion()
 	cross, bridge, avail := CrossDeviceLinkActionable, UpdateInstallBridge, UpdateAvailable
 
@@ -107,16 +107,5 @@ func TestSnapshotState_RestoresEveryPublishedGlobal(t *testing.T) {
 		if CrossDeviceLinkActionable() != cross() || UpdateInstallBridge() != bridge() || UpdateAvailable() != avail() {
 			t.Errorf("round %d: platform seams not restored", round)
 		}
-	}
-}
-
-// A value never published before the snapshot is restored to its zero
-// value, which every getter in this package reads as its documented default.
-func TestSnapshotState_UnsetValueRestoresToDefault(t *testing.T) {
-	if got := restoreValue(nil, ""); got != "" {
-		t.Fatalf("restoreValue(nil, zero) = %v, want the zero value", got)
-	}
-	if got := restoreValue("on", ""); got != "on" {
-		t.Fatalf("restoreValue(prev, zero) = %v, want prev", got)
 	}
 }

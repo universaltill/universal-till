@@ -11,7 +11,7 @@ Observed leaks: the default locale (`lang="tr"`, Arabic copy), a translator
 replaced by `nil` (raw keys such as `basket.table.occupied`), UI scale 1.5, OSK
 mode, and the `CrossDeviceLinkActionable` platform seam.
 
-- `internal/httpx/state_snapshot.go`: `SnapshotState()` captures every value
+- `internal/httpx/state_snapshot.go`: `SnapshotStateForTests()` captures every value
   the package publishes and returns a reusable restore func. That covers the
   translator, default locale, currency, UI scale, OSK, effects, order-type
   prompt, idle lock, locale generation, kiosk, self-order, display mode, theme,
@@ -35,9 +35,10 @@ mode, and the `CrossDeviceLinkActionable` platform seam.
 | # | Severity | Finding | Outcome |
 |---|---|---|---|
 | 1 | minor | The seam assertion stubbed every seam to `true`. On windows/darwin `DownloadLinkActionableNow()` is already true, so a dropped seam restore would pass there | Fixed: each stub returns the opposite of the baseline; the mutation check fails on linux with the restore removed |
-| 2 | minor | `SnapshotState` lists the globals by hand, so a new `Init*` global would escape it silently | Fixed (comment): the `var (` block in `httpx.go` now says every published value must be added to `SnapshotState`. A grep guard is not worth its code for this |
+| 2 | minor | `SnapshotStateForTests` lists the globals by hand, so a new `Init*` global would escape it silently | Fixed (comment): the `var (` block in `httpx.go` now says every published value must be added to `SnapshotStateForTests`. A grep guard is not worth its code for this |
 | 3 | nit | A few tests set a global before a helper that now calls `chdirRoot` (`money_prefill_locale_2818_test.go`, `rederive_cached_settings_test.go`, `export_save_notice_test.go`, `till_role_test.go`, `open_orders_page_test.go`), so those pins are now dead code | Accepted: every one sets exactly the baseline value, so each test still tests what it claims |
 | 4 | nit | Restore puts back which translator is wired, not that translator's overlay state | Fixed (doc comment). No current test installs an overlay into the shared translator |
+| 5 | CI | `guard-deadcode-baseline` (desktop-shell job) flagged `SnapshotState` and `restoreValue`: they are reachable only from `_test.go`, which `deadcode -test=false` cannot see | Fixed: renamed to `SnapshotStateForTests` (the `ResetCacheForTests` convention), inlined `restoreValue`, and added the one documented baseline entry the guard's header prescribes for test-only helpers. The local guard run no longer flags it |
 
 The reviewer checked several risks and found none:
 - Every mutable httpx global is covered. `i18nEpoch` is monotonic and comes back with the restored translator.

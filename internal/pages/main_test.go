@@ -65,7 +65,7 @@ func TestMain(m *testing.M) {
 		panic("TestMain: load locales: " + err.Error())
 	}
 	httpx.InitI18n(i18n, "en")
-	pagesGlobalsBaseline = httpx.SnapshotState()
+	pagesGlobalsBaseline = httpx.SnapshotStateForTests()
 	// ADR-0082 (ut-docs#1739): the plugin-settings repository seals a
 	// credential-named setting on every write and refuses the write when no
 	// key store is registered — so the settings-page tests (which seed
