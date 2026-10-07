@@ -329,17 +329,21 @@ func TestHTTPSettingBoundGrant(t *testing.T) {
 		noHit      *atomic.Int32
 	}
 	cases := []tc{
-		{name: "configured LAN ERP", perms: []string{bound}, setting: "https://192.168.1.50/hook", url: "https://192.168.1.50/ok", wantStatus: 200},
-		{name: "configured LAN ERP by name", perms: []string{bound}, setting: "https://erp.example.com/hook", url: "https://erp.example.com/ok", wantStatus: 200},
-		{name: "setting normalised (case, trailing dot)", perms: []string{bound}, setting: "https://ERP.Example.COM./hook", url: "https://erp.example.com/ok", wantStatus: 200},
-		{name: "another LAN host refused", perms: []string{bound, "net:*"}, setting: "https://192.168.1.50/hook", url: "https://10.0.0.5/ok", noHit: &tlsHits},
-		{name: "redirect from the configured host to another LAN host refused", perms: []string{bound, "net:*"}, setting: "https://192.168.1.50/hook", url: "https://192.168.1.50/to-other-lan"},
-		{name: "redirect within the configured host allowed", perms: []string{bound}, setting: "https://192.168.1.50/hook", url: "https://192.168.1.50/to-self", wantStatus: 200},
+		// A LAN address needs http:lan on top of the setting-bound grant
+		// (ADR-0121 §3, ut-docs#3794).
+		{name: "configured LAN ERP", perms: []string{bound, "http:lan"}, setting: "https://192.168.1.50/hook", url: "https://192.168.1.50/ok", wantStatus: 200},
+		{name: "configured LAN ERP refused without http:lan", perms: []string{bound}, setting: "https://192.168.1.50/hook", url: "https://192.168.1.50/ok", noHit: &tlsHits},
+		{name: "configured LAN ERP by name", perms: []string{bound, "http:lan"}, setting: "https://erp.example.com/hook", url: "https://erp.example.com/ok", wantStatus: 200},
+		{name: "configured LAN ERP by name refused without http:lan", perms: []string{bound, "net:*"}, setting: "https://erp.example.com/hook", url: "https://erp.example.com/ok", noHit: &tlsHits},
+		{name: "setting normalised (case, trailing dot)", perms: []string{bound, "http:lan"}, setting: "https://ERP.Example.COM./hook", url: "https://erp.example.com/ok", wantStatus: 200},
+		{name: "another LAN host refused", perms: []string{bound, "net:*", "http:lan"}, setting: "https://192.168.1.50/hook", url: "https://10.0.0.5/ok", noHit: &tlsHits},
+		{name: "redirect from the configured host to another LAN host refused", perms: []string{bound, "net:*", "http:lan"}, setting: "https://192.168.1.50/hook", url: "https://192.168.1.50/to-other-lan"},
+		{name: "redirect within the configured host allowed", perms: []string{bound, "http:lan"}, setting: "https://192.168.1.50/hook", url: "https://192.168.1.50/to-self", wantStatus: 200},
 		{name: "public host not granted by the setting alone", perms: []string{bound}, setting: "https://192.168.1.50/hook", url: "https://api.example.com/ok", noHit: &tlsHits},
 		{name: "public host still reachable under net:*", perms: []string{bound, "net:*"}, setting: "https://192.168.1.50/hook", url: "https://api.example.com/ok", wantStatus: 200},
 		{name: "till's own port refused even when configured", perms: []string{bound}, setting: "http://localhost:" + strconv.Itoa(tillPort) + "/", url: "http://localhost:" + strconv.Itoa(tillPort) + "/x", noHit: &tillHits},
 		{name: "unparseable setting grants nothing", perms: []string{bound}, setting: "192.168.1.50", url: "https://192.168.1.50/ok", noHit: &tlsHits},
-		{name: "exact net grant compared case-insensitively", perms: []string{"net:ERP.example.com"}, url: "https://erp.example.com/ok", wantStatus: 200},
+		{name: "exact net grant compared case-insensitively", perms: []string{"net:ERP.example.com", "http:lan"}, url: "https://erp.example.com/ok", wantStatus: 200},
 	}
 	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -386,6 +390,7 @@ func TestHTTPSettingBoundGrant(t *testing.T) {
 		seedPlugin(t, d, pluginID)
 		grantPerm(t, d, pluginID, "storage")
 		grantPerm(t, d, pluginID, bound)
+		grantPerm(t, d, pluginID, "http:lan")
 		setPluginSetting(t, d, pluginID, "endpoint_url", "https://192.168.1.50/hook")
 		w := NewWasmRuntime(t.TempDir())
 		w.httpClient = env.client(pool)

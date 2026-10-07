@@ -18,6 +18,12 @@ package plugins
 //     net:@setting:<urlKey> / tcp:@setting:<hostKey>:<portKey> naming the
 //     address an admin configured (permission_setting.go, ut-docs#2899).
 //     net:* and tcp:* grant public addresses only;
+//   - http_request / http_open additionally need http:lan for a non-public
+//     address (ADR-0121 §3, owner decision ut-docs#3794): an exact net:
+//     grant alone reaches public addresses and loopback only, and loopback
+//     only when the host asked for is itself a loopback name (localhost,
+//     127.0.0.0/8, ::1 — Ollama on the till). A refusal for the missing
+//     http:lan is audited, naming it. tcp_open keeps its exact tcp: rule;
 //   - the till's own listen port on loopback or on one of its own addresses
 //     is always refused, whatever the permission — a plugin must never be
 //     able to drive the till's own API;
@@ -50,6 +56,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -75,6 +82,9 @@ type egressDeniedError struct {
 	host   string
 	ip     string
 	reason string
+	// missingPerm names the permission whose absence caused the refusal,
+	// when one would have allowed it — the dialer audits it (ut-docs#3794).
+	missingPerm string
 }
 
 func (e *egressDeniedError) Error() string {
@@ -191,6 +201,7 @@ type egressGrants struct {
 	exact      map[string]bool
 	validation map[string]bool
 	lanOnly    map[string]bool
+	httpLAN    map[string]bool
 }
 
 type egressGrantsKey struct{}
@@ -237,6 +248,24 @@ func (g *egressGrants) isLANOnly(host string) bool {
 	return g.lanOnly[normGrantHost(host)]
 }
 
+func (g *egressGrants) setHTTPLAN(host string, on bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.httpLAN == nil {
+		g.httpLAN = map[string]bool{}
+	}
+	g.httpLAN[normGrantHost(host)] = on
+}
+
+// hasHTTPLAN reports whether the hop to host was admitted by a plugin
+// holding http:lan (ut-docs#3794) — what lets an exact grant reach a
+// non-loopback LAN address.
+func (g *egressGrants) hasHTTPLAN(host string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.httpLAN[normGrantHost(host)]
+}
+
 // record stores one approved hop's decision.
 func (g *egressGrants) record(host string, d httpHopDecision) {
 	if d.exact {
@@ -246,6 +275,7 @@ func (g *egressGrants) record(host string, d httpHopDecision) {
 		g.addValidation(host)
 	}
 	g.setLANOnly(host, d.lanOnly)
+	g.setHTTPLAN(host, d.httpLAN)
 }
 
 func withEgressGrants(ctx context.Context, g *egressGrants) context.Context {
@@ -292,25 +322,38 @@ func defaultEgressDialer() *egressDialer {
 }
 
 // DialContext is the http.Transport hook: the exact grant for the host comes
-// from the request chain's egressGrants.
+// from the request chain's egressGrants. Every dial here is http_request or
+// http_open, so a non-loopback LAN address also needs http:lan
+// (needsHTTPLAN, ut-docs#3794); a refusal for it is audited.
 func (d *egressDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	var pol egressPolicy
+	pol := egressPolicy{needsHTTPLAN: true}
 	if host, _, err := net.SplitHostPort(addr); err == nil {
 		if g := egressGrantsFrom(ctx); g != nil {
-			pol = egressPolicy{exact: g.has(host), lanOnly: g.isLANOnly(host)}
+			pol = egressPolicy{exact: g.has(host), lanOnly: g.isLANOnly(host), needsHTTPLAN: !g.hasHTTPLAN(host)}
 		}
 	}
 	conn, _, err := d.dialChecked(ctx, network, addr, pol)
+	var de *egressDeniedError
+	if errors.As(err, &de) && de.missingPerm != "" {
+		if s, ok := stateFrom(ctx); ok {
+			// Detached from the dial's deadline so a refusal near the event
+			// deadline is still audited.
+			_ = CheckPermission(context.WithoutCancel(ctx), s.db, s.pluginID, de.missingPerm) // audit the denial
+		}
+	}
 	return conn, err
 }
 
 // egressPolicy is what the caller holds for the host being dialled: exact
 // (the exact permission for it, the only thing that unlocks a non-public
-// address) and lanOnly (it was admitted as plain http only through http:lan,
-// so it must dial a non-public address).
+// address), lanOnly (it was admitted as plain http only through http:lan,
+// so it must dial a non-public address) and needsHTTPLAN (the http rule,
+// ADR-0121 §3: the plugin lacks http:lan, so exact unlocks loopback for a
+// loopback host name only — never a LAN address; tcp_open leaves it false).
 type egressPolicy struct {
-	exact   bool
-	lanOnly bool
+	exact        bool
+	lanOnly      bool
+	needsHTTPLAN bool
 }
 
 // dialChecked resolves addr itself, checks every candidate IP, and connects
@@ -374,6 +417,10 @@ func (d *egressDialer) check(host string, ip net.IP, port int, pol egressPolicy)
 	if !public && !pol.exact {
 		return deny("non-public address needs the exact permission for " + host)
 	}
+	if !public && pol.needsHTTPLAN && !(isLoopbackIP(ip) && isLoopbackHostName(host)) {
+		return &egressDeniedError{host: host, ip: ip.String(),
+			reason: "non-public address needs the " + permHTTPLAN + " permission", missingPerm: permHTTPLAN}
+	}
 	if public && pol.lanOnly {
 		return deny("plain http under http:lan is LAN-only")
 	}
@@ -405,6 +452,25 @@ func isCloudMetadataIP(ip net.IP) bool {
 		}
 	}
 	return a == metadataIPv4 || a == metadataIPv6
+}
+
+// isLoopbackIP reports whether ip is a loopback address, looking through
+// the IPv4-mapped form (::ffff:127.0.0.1).
+func isLoopbackIP(ip net.IP) bool {
+	a, ok := netip.AddrFromSlice(ip)
+	return ok && a.Unmap().IsLoopback()
+}
+
+// isLoopbackHostName reports whether the host a plugin asked for names the
+// till itself: "localhost" or a loopback IP literal. Only such a host may
+// reach loopback without http:lan (ADR-0121 §3, ut-docs#3794) — a LAN or
+// public name that resolves to loopback may not.
+func isLoopbackHostName(host string) bool {
+	if strings.EqualFold(strings.TrimSuffix(host, "."), "localhost") {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && isLoopbackIP(ip)
 }
 
 func (d *egressDialer) isTillAddress(ip net.IP) bool {
@@ -473,9 +539,10 @@ func checkPluginRedirect(req *http.Request, via []*http.Request) error {
 // httpHopDecision is admitHTTPHop's verdict for one request hop: exact (the
 // dialer may reach a non-public address), validation (a net:validation:
 // host, ut-docs#3226), lanOnly (admitted only through http:lan — the dialer
-// must reach a non-public address).
+// must reach a non-public address), httpLAN (the plugin holds http:lan, so
+// exact also unlocks a LAN address, not just loopback — ut-docs#3794).
 type httpHopDecision struct {
-	exact, validation, lanOnly bool
+	exact, validation, lanOnly, httpLAN bool
 }
 
 // admitHTTPHop is the scheme rule and the name check for one hop of
@@ -495,9 +562,11 @@ type httpHopDecision struct {
 //     net:@setting) or the host must be an endpoint setting's; the hop is
 //     LAN-only. Without http:lan it is a scheme refusal, exactly as before.
 //
-// http:lan is probed from the granted list (no audit row for a plugin that
-// never asked for it); a request it would have admitted but which is refused
-// for its absence is audited through CheckPermission.
+// http:lan is probed from the granted list (no audit row at the name check
+// for a plugin that never asked for it); a plain-http request it would have
+// admitted but which is refused for its absence is audited through
+// CheckPermission, and the dialer audits a LAN dial refused for its absence,
+// declared or not (ut-docs#3794).
 func admitHTTPHop(ctx context.Context, s *hostState, u *url.URL) (httpHopDecision, int32, error) {
 	host := u.Hostname()
 	lookupFailed := func() (httpHopDecision, int32, error) {
@@ -522,20 +591,20 @@ func admitHTTPHop(ctx context.Context, s *hostState, u *url.URL) (httpHopDecisio
 	if err != nil {
 		return lookupFailed()
 	}
-	lan, endpoint := false, false
-	if plainLAN || !exact {
-		perms, err := grantedPermissions(ctx, s.db, s.pluginID)
+	// http:lan is probed for every hop, exact ones included: it decides
+	// whether the exact grant reaches a LAN address (ut-docs#3794).
+	endpoint := false
+	perms, err := grantedPermissions(ctx, s.db, s.pluginID)
+	if err != nil {
+		return lookupFailed()
+	}
+	lan := containsString(perms, permHTTPLAN)
+	if lan && !exact {
+		endpoint, err = endpointSettingHostMatch(ctx, s.db, s.pluginID, host)
 		if err != nil {
-			return lookupFailed()
-		}
-		lan = containsString(perms, permHTTPLAN)
-		if lan && !exact {
-			endpoint, err = endpointSettingHostMatch(ctx, s.db, s.pluginID, host)
-			if err != nil {
-				// An unreadable manifest declares no endpoint (fail closed).
-				logging.L().Warnf("[wasm:%s] endpoint settings unreadable: %v", s.pluginID, err)
-				endpoint = false
-			}
+			// An unreadable manifest declares no endpoint (fail closed).
+			logging.L().Warnf("[wasm:%s] endpoint settings unreadable: %v", s.pluginID, err)
+			endpoint = false
 		}
 	}
 	if plainLAN {
@@ -546,16 +615,16 @@ func admitHTTPHop(ctx context.Context, s *hostState, u *url.URL) (httpHopDecisio
 		if !exact && !endpoint {
 			return httpHopDecision{}, hostErrInvalid, nil
 		}
-		return httpHopDecision{exact: true, lanOnly: true}, 0, nil
+		return httpHopDecision{exact: true, lanOnly: true, httpLAN: true}, 0, nil
 	}
 	switch {
 	case exact:
-		return httpHopDecision{exact: true}, 0, nil
+		return httpHopDecision{exact: true, httpLAN: lan}, 0, nil
 	case endpoint:
 		// The endpoint grant unlocks the LAN only; a net:* the plugin also
 		// holds still covers public addresses, so the hop is LAN-only only
 		// without it (review finding, ut-docs#3156).
-		return httpHopDecision{exact: true, lanOnly: !wildcard}, 0, nil
+		return httpHopDecision{exact: true, lanOnly: !wildcard, httpLAN: true}, 0, nil
 	case wildcard:
 		return httpHopDecision{}, 0, nil
 	}
