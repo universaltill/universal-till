@@ -1448,6 +1448,16 @@
          request to expire unseen. Nothing swaps this element but the form
          itself. -->
     <div id="join-notice-status" class="join-notice-status" aria-live="polite"></div>
+    <!-- ut-docs#3114: "Name your shop" banner while store.name is still a
+         placeholder ("My Store", blank...) -- GET /ui/shop-name-notice
+         (shop_name_notice.go), empty for a cashier or once the shop is
+         named. Same rules as the pairing-notice mount above: default
+         innerHTML swap (an outerHTML swap of an empty poll would destroy
+         the placeholder and its trigger), a mount id distinct from the
+         partial's own #shop-name-notice root, and hx-preserve so boosted
+         navigation keeps it (and its poll) instead of re-creating it. A
+         rename changes rarely, so 60s is plenty. -->
+    <div id="shop-name-notice-mount" hx-get="/ui/shop-name-notice" hx-trigger="load, every 60s" hx-preserve></div>
     <!-- ut-docs#2343: theme-sync poll, every 30s from every open page.
          hx-swap="none" -- GET /ui/theme-sync's response is an OOB swap of
          THIS div's own id (id="theme-sync-poll", carrying the live theme

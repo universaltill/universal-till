@@ -3133,6 +3133,8 @@
   "settings.store_name.error_required": "أدخل اسم متجرك. يُطبع على كل إيصال.",
   "settings.store_name.error_too_long": "يمكن أن يتكوّن اسم المتجر من 80 حرفًا كحدٍّ أقصى.",
   "settings.store_name.error_invalid_chars": "لا يمكن أن يحتوي اسم المتجر على فواصل أسطر أو علامات جدولة أو أحرف مخفية.",
+  "shop_name_notice.title": "سمِّ متجرك: لا يزال يحمل اسمًا مؤقتًا على الإيصالات.",
+  "shop_name_notice.cta": "الانتقال إلى الإعدادات",
   "elevation.summary.store_name": "إعادة تسمية المتجر إلى \"%s\".",
   "bluetoothdevices.ios_system_pairing": "على iPhone وiPad، قم بإقران قارئ الباركود أو لوحة المفاتيح من تطبيق الإعدادات ← Bluetooth. بعد الإقران يكتب في الصندوق مثل لوحة المفاتيح — لا حاجة لأي إعداد آخر هنا.",
   "bluetoothdevices.ios_no_printers": "لا يمكن استخدام طابعات الإيصالات والموازين عبر Bluetooth من iPhone أو iPad. استخدم طابعة إيصالات شبكية (Wi-Fi أو Ethernet) بدلاً منها.",

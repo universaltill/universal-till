@@ -346,6 +346,7 @@ var backgroundPollPaths = map[string]bool{
 	"/ui/diagnostics-chip":    true,
 	"/ui/pairing-notice":      true,
 	"/ui/join-notice":         true, // ambient join-discovery notice (ut-docs#2721)
+	"/ui/shop-name-notice":    true, // "Name your shop" banner, every 60 s (ut-docs#3114)
 	"/ui/theme-sync":          true,
 	"/ui/cloud-auth-chip":     true, // refused cloud credential (ADR-0116 D6, ut-docs#3524)
 	"/ui/report-archive-chip": true, // refused report upload (ADR-0147, ut-docs#574)
@@ -427,6 +428,7 @@ var shellGetPaths = map[string]bool{
 	"/ui/diagnostics-chip":    true,
 	"/ui/pairing-notice":      true,
 	"/ui/join-notice":         true, // ut-docs#2721
+	"/ui/shop-name-notice":    true, // "Name your shop" banner, every 60 s (ut-docs#3114)
 	"/ui/theme-sync":          true,
 	"/ui/session-chip":        true,
 	"/ui/bugreport-chip":      true,

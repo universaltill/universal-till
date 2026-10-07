@@ -1,0 +1,33 @@
+{{/* ut-docs#3114: a legacy till still named "My Store" (or blank, or the
+     cloud's "Universal Till store") nudges a manager to name the shop.
+     Same shape and conventions as pairing_notice.html: mounted from
+     base.html as a placeholder <div hx-get> polled on every page; GET
+     /ui/shop-name-notice (shop_name_notice.go) renders nothing for a
+     cashier or once a real name is saved, so the next poll removes this
+     banner on its own. A status banner, never a modal — it must never
+     block the sale flow.
+
+     Dismissal is per browser session: the button sets a fixed
+     sessionStorage flag (same try/catch pattern as pairing_notice.html).
+     No fingerprint is needed — the notice either applies or it doesn't —
+     and a new session starts with empty sessionStorage, so the notice
+     comes back until the shop is actually named. */}}
+<div id="shop-name-notice" class="pairing-notice shop-name-notice" role="status">
+  <span class="pairing-notice-text">{{ T "shop_name_notice.title" }}</span>
+  <a href="/settings">{{ T "shop_name_notice.cta" }}</a>
+  <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}" data-action="dismiss-shop-name-notice">✕</button>
+</div>
+<script>
+(function () {
+  var KEY = 'ut-shop-name-notice-dismissed';
+  var el = document.getElementById('shop-name-notice');
+  if (!el) return;
+  var dismissed;
+  try { dismissed = sessionStorage.getItem(KEY); } catch (e) { dismissed = null; }
+  if (dismissed) { el.hidden = true; }
+  window.utShopNameNoticeDismiss = function () {
+    try { sessionStorage.setItem(KEY, '1'); } catch (e) {}
+    el.hidden = true;
+  };
+})();
+</script>
