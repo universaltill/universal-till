@@ -2821,6 +2821,11 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    physical keyboard. */
 #elevation-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
 .elevation-summary { font-weight: 600; margin-block: .4rem .6rem; }
+/* Satellite-role confirm dialog (ut-docs#2781): same non-modal treatment
+   as #elevation-modal above (cloned from it, minus the PIN field) — it
+   needs the identical fixed position + z-index, which .modifier-modal
+   alone does not provide (ut-docs#2873's scrim sweep caught the gap). */
+#confirm-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
 /* Tap-to-add table dialog (ut-docs#1025): same non-modal treatment as
    #hold-modal/#pfand-modal/#elevation-modal above and for the identical
    reason — its label field is what a kiosk operator types the new table's
