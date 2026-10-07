@@ -515,8 +515,8 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 	// The main till answered here; the asset sync and apply below can take
 	// up to the client timeout, and a contact stamped after them would read
 	// as contact after a link loss noticed meanwhile (ut-docs#2915 review).
-	answeredAt := time.Now()
-	now := answeredAt.UTC().Format(time.RFC3339)
+	answesredAt := time.Now()
+	now := answesredAt.UTC().Format(time.RFC3339)
 	// Files ride alongside the row data: item and category photos can change
 	// without moving the admin fingerprint, so this runs every tick
 	// (the manifest is cheap; only missing/changed files download).
@@ -558,9 +558,16 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 	// (ADR-0114) refreshes last_contact_at between its 5-min pulls only
 	// while this is recent (refreshLinkContact), so a link over a stuck
 	// pull cannot keep the chip green.
-	recordMainContact(ctx, d, answeredAt)
+	recordMainContact(ctx, d, answesredAt)
 	_ = d.Settings.Set(ctx, "sync.last_pull_ok_at", now)
 	primaryContactOK(ctx, d)
+
+	// ut-docs#2781: this till learns its role from its own row in the
+	// synced roster (tills.role rides the admin bundle) and re-applies the
+	// satellite device-profile gate. Every good pull, not only a changed
+	// one: two settings reads and one row lookup, and it also corrects a
+	// profile that drifted between pulls.
+	reconcileOwnTillRole(ctx, d)
 
 	// ut-docs#460 — the plugin set follows the primary. Best-effort like
 	// everything else in this tick: syncPullPlugins logs and returns on any
