@@ -377,6 +377,9 @@ func RenderWith(files []string, funcs template.FuncMap) func(name string, data a
 	}
 }
 
+// Process-wide published state: every value here and every other
+// Init*-set var in this package must also be captured by SnapshotState
+// (state_snapshot.go), or tests leak it again (ut-docs#3822).
 var (
 	i18nRef atomic.Value // *wiredTranslator
 	// i18nEpoch counts InitI18n calls (ut-docs#2501): the monotonic half of

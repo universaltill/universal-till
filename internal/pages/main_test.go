@@ -22,6 +22,26 @@ func pinCurrency(t *testing.T, code string) {
 	t.Cleanup(func() { httpx.InitCurrency("GBP") })
 }
 
+// pagesGlobalsBaseline is every httpx process-global as TestMain left it
+// (real i18n, "en", unset currency = GBP, ...) — ut-docs#3822.
+var pagesGlobalsBaseline func()
+
+// resetProcessGlobals puts every httpx process-global back to TestMain's
+// baseline now and again when this test ends (ut-docs#3822). Handlers under
+// test publish settings there (the setup wizard's locale, a settings save's
+// UI scale or OSK mode, a cloud set_setting), and nothing undid them, so a
+// shuffled run rendered the next test in lang="tr" or with a key-less
+// translator. chdirRoot (the first call of nearly every handler test and
+// shared deps helper) calls it, so those tests start from the baseline —
+// whatever a helper-less test before them left behind — and clean up after
+// themselves; openPagesTestDB adds the exit reset alone. Set a global for
+// your test AFTER chdirRoot (or a helper that calls it), or it is reset.
+func resetProcessGlobals(t *testing.T) {
+	t.Helper()
+	pagesGlobalsBaseline()
+	t.Cleanup(pagesGlobalsBaseline)
+}
+
 // TestMain wires real i18n once for this package's whole test binary, and
 // chdirs to the repo root (needed to resolve "web/locales" and template
 // paths — same computation ui_smoke_test.go's chdirRoot does per-test).
@@ -45,6 +65,7 @@ func TestMain(m *testing.M) {
 		panic("TestMain: load locales: " + err.Error())
 	}
 	httpx.InitI18n(i18n, "en")
+	pagesGlobalsBaseline = httpx.SnapshotState()
 	// ADR-0082 (ut-docs#1739): the plugin-settings repository seals a
 	// credential-named setting on every write and refuses the write when no
 	// key store is registered — so the settings-page tests (which seed
