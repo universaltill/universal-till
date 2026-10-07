@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -206,6 +207,9 @@ func TestPersistManifest_RejectsReservedPageRoutes(t *testing.T) {
 		"/api/x", "/api/plugins/marketplace", "/ui/foo", "/v1/bar",
 		"/public/x.js", "/ext/y", "/plugin-icons/a/b/c", "/api",
 		"/self-order/promo", "/themes/a/b", "/o/x/y",
+		// ut-docs#3791: core namespaces with {wildcard} children.
+		"/help/a/b", "/orders/a/b", "/journal/a/b", "/plugins/a/b",
+		"/refund/a/b", "/invoice/a/b", "/kitchen-display/a/b",
 	} {
 		t.Run(route, func(t *testing.T) {
 			d := openRealDB(t)
@@ -228,7 +232,7 @@ func TestPersistManifest_RejectsReservedPageRoutes(t *testing.T) {
 }
 
 func TestPersistManifest_AcceptsOrdinaryPageRoutes(t *testing.T) {
-	for i, route := range []string{"/faq", "/plugin/docs", "/apix", "/uix/z"} {
+	for i, route := range []string{"/faq", "/plugin/docs", "/plugin/faq", "/apix", "/uix/z", "/helpdesk", "/plugin/x/y"} {
 		d := openRealDB(t)
 		id := "com.ordinary.route"
 		if err := PersistManifest(context.Background(), d.DB, routeManifest(id, "okey", route), InstallOptions{}); err != nil {
@@ -251,7 +255,11 @@ func TestReservedPageRoutePrefix(t *testing.T) {
 		{"/o/x/y", "/o", true},
 		{"/themes/a/b", "/themes", true},
 		{"/apix", "", false},
-		{"/orders", "", false},
+		{"/help/a/b", "/help", true},
+		{"/orders", "/orders", true},
+		{"/plugins/x/settings", "/plugins", true},
+		{"/plugin/faq", "", false},
+		{"/helpdesk", "", false},
 		{"/o-not-really", "", false},
 		{"/API/x", "", false},
 		{"/faq", "", false},
@@ -291,5 +299,60 @@ func TestReservedPageRoutesCoverAuthExemptNamespaces(t *testing.T) {
 		if _, ok := ReservedPageRoutePrefix(probe); !ok {
 			t.Errorf("%s is auth-exempt but not a reserved page route — add its namespace to reservedPageRoutePrefixes", probe)
 		}
+	}
+}
+
+// handlePatternRe matches a literal ServeMux pattern registered with
+// Handle/HandleFunc, with or without a method: `mux.HandleFunc("GET /a/{b}", …)`.
+var handlePatternRe = regexp.MustCompile(`\.Handle(?:Func)?\(\s*"(?:[A-Z]+ +)?(/[^"]*)"`)
+
+// TestReservedPageRoutesCoverWildcardNamespaces pins reservedPageRoutePrefixes
+// against core's real mux registrations (ut-docs#3791): a pattern with a
+// {wildcard} child (GET /help/{topic}) leaves deeper paths (/help/a/b)
+// unclaimed, so they fall through to the "/" catch-all that renders plugin
+// pages — a plugin route there would shadow a core namespace. Every
+// non-test file under internal/ is scanned, so a new core {wildcard} route
+// fails here until its first segment is reserved.
+//
+// Literal patterns only (independent review, ut-docs#3791): a pattern built
+// from a variable (`"POST "+discovery.ProofPath`) is invisible here. Today
+// every such registration resolves under /api, already reserved — but a new
+// one under a fresh root would not be caught, so check it by hand.
+func TestReservedPageRoutesCoverWildcardNamespaces(t *testing.T) {
+	root := ".." // internal/
+	seen := 0
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, m := range handlePatternRe.FindAllStringSubmatch(string(src), -1) {
+			pattern := m[1]
+			if !strings.Contains(pattern, "{") {
+				continue
+			}
+			seg, _, _ := strings.Cut(strings.TrimPrefix(pattern, "/"), "/")
+			if seg == "" || strings.HasPrefix(seg, "{") {
+				continue // root-level wildcard (/{$}): no namespace to reserve
+			}
+			seen++
+			probe := "/" + seg + "/zz-plugin-probe/x"
+			if _, ok := ReservedPageRoutePrefix(probe); !ok {
+				t.Errorf("%s registers %q, but /%s is not in reservedPageRoutePrefixes — a plugin page at %s would shadow it", path, pattern, seg, probe)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seen == 0 {
+		t.Fatal("found no {wildcard} mux patterns under internal/ — the scan is broken, not the list")
 	}
 }

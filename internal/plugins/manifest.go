@@ -609,11 +609,19 @@ func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql
 // core subtrees (defense-in-depth — the mux never lets their children reach
 // the catch-all); /self-order, /o, /themes are auth-exempt (auth.exempt), so
 // a plugin page there would reach anonymous customers and the kiosk.
+// /help, /orders, /journal, /plugins, /refund, /invoice, /kitchen-display
+// have {wildcard} children (GET /help/{topic}), so a deeper path
+// (/help/a/b) is unclaimed and would fall through to the catch-all inside
+// core's namespace (ut-docs#3791).
 // Exact core routes (e.g. /settings) need no entry — the mux's more
 // specific pattern already beats the "/" catch-all that renders plugin
 // pages. TestReservedPageRoutesCoverAuthExemptNamespaces pins the
-// auth-exempt half.
-var reservedPageRoutePrefixes = []string{"/api", "/ui", "/v1", "/public", "/ext", "/plugin-icons", "/self-order", "/o", "/themes"}
+// auth-exempt half; TestReservedPageRoutesCoverWildcardNamespaces pins the
+// wildcard half against the real mux registrations.
+var reservedPageRoutePrefixes = []string{
+	"/api", "/ui", "/v1", "/public", "/ext", "/plugin-icons", "/self-order", "/o", "/themes",
+	"/help", "/orders", "/journal", "/plugins", "/refund", "/invoice", "/kitchen-display",
+}
 
 // ReservedPageRoutePrefix returns the core-reserved prefix route falls under
 // (route == prefix, or route starts with prefix+"/"). Exact and
