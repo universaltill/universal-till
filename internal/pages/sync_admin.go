@@ -515,8 +515,8 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 	// The main till answered here; the asset sync and apply below can take
 	// up to the client timeout, and a contact stamped after them would read
 	// as contact after a link loss noticed meanwhile (ut-docs#2915 review).
-	answesredAt := time.Now()
-	now := answesredAt.UTC().Format(time.RFC3339)
+	answeredAt := time.Now()
+	now := answeredAt.UTC().Format(time.RFC3339)
 	// Files ride alongside the row data: item and category photos can change
 	// without moving the admin fingerprint, so this runs every tick
 	// (the manifest is cheap; only missing/changed files download).
@@ -558,7 +558,7 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 	// (ADR-0114) refreshes last_contact_at between its 5-min pulls only
 	// while this is recent (refreshLinkContact), so a link over a stuck
 	// pull cannot keep the chip green.
-	recordMainContact(ctx, d, answesredAt)
+	recordMainContact(ctx, d, answeredAt)
 	_ = d.Settings.Set(ctx, "sync.last_pull_ok_at", now)
 	primaryContactOK(ctx, d)
 
