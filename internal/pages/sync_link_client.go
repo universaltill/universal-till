@@ -70,8 +70,11 @@ func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.
 	}
 	opts.Hello = func(ctx context.Context) fleetlink.Hello {
 		return fleetlink.Hello{
-			TillID:       get(ctx, "sync.till_id"),
-			Role:         "replica",
+			TillID: get(ctx, "sync.till_id"),
+			// ut-docs#2781: "satellite" when the main till recorded this
+			// till as one (its own sync.till_role, learnt from tills.role),
+			// else "replica" — reported, never decided here.
+			Role:         linkHelloRole(ctx, d),
 			Version:      buildinfo.Version,
 			Platform:     runtime.GOOS + "/" + runtime.GOARCH,
 			SyncProtocol: fleetlink.SyncProtocolLevel,

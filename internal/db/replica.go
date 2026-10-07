@@ -38,7 +38,22 @@ type ReplicaIdentity struct {
 	// during enrolment (ut-docs#894). Empty when joining an older primary
 	// that doesn't auto-provision.
 	RegisterID string `json:"register_id"`
+	// Role is the role a manager chose for this till on the main till
+	// before pairing (ut-docs#2781): "additional" or "satellite". Empty
+	// from an older main till, which means "additional".
+	Role string `json:"role"`
 }
+
+// Per-till settings keys for a joined till's role (ut-docs#2781), under
+// "sync." so admin pulls never carry them (data.PerTillSettingPrefixes) and
+// a promotion clears them with the rest of the sync identity.
+// TillRoleSettingsKey is this till's effective role; TillRoleMainSettingsKey
+// the role the main till's roster last gave it (pages.reconcileOwnTillRole
+// follows a change there, and only a change).
+const (
+	TillRoleSettingsKey     = "sync.till_role"
+	TillRoleMainSettingsKey = "sync.till_role_main"
+)
 
 // ReplicaIdentityPath locates the identity file for a DB path.
 func ReplicaIdentityPath(dbPath string) string {
@@ -140,6 +155,26 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 		// (internal/enroll.repairCopiedIdentity) keeps it.
 		if err := set("marketplace.device_till_id", id.TillID); err != nil {
 			return false, fmt.Errorf("apply identity device till: %w", err)
+		}
+	}
+	// ut-docs#2781: this till's role, as the main till recorded it at
+	// enrolment. A satellite may only run as the self-order kiosk (ADR-0020
+	// counter-pay, ADR-0086), so it starts in that profile whatever
+	// display.mode the snapshot carried; an additional till keeps today's
+	// behaviour. Anything but "satellite" (an older main till sends nothing)
+	// is "additional".
+	role := "additional"
+	if id.Role == "satellite" {
+		role = "satellite"
+	}
+	for _, k := range []string{TillRoleSettingsKey, TillRoleMainSettingsKey} {
+		if err := set(k, role); err != nil {
+			return false, fmt.Errorf("apply identity %s: %w", k, err)
+		}
+	}
+	if role == "satellite" {
+		if err := set("display.mode", "self_order"); err != nil {
+			return false, fmt.Errorf("apply satellite display mode: %w", err)
 		}
 	}
 	// Sales before the join came in the snapshot — push only what THIS

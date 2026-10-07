@@ -218,7 +218,7 @@ func TestJoinNoticeUI_EmptyOnMainTillWithReplicas(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, _ := newPairingAPITestDeps(t)
 	registerJoinNoticeUI(mux, dp)
-	if _, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "test-2721-replica", "x"); err != nil {
+	if _, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "test-2721-replica", "x", data.TillRoleAdditional); err != nil {
 		t.Fatal(err)
 	}
 	withJoinCandidate(t, dp, discovery.Candidate{Name: "test-2721-new-till", TillID: "55555555-5555-4555-8555-555555555555", BaseURL: "http://192.168.1.30:37673"})
