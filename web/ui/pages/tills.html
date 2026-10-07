@@ -27,7 +27,16 @@
   {{ if not .SyncPrimary }}
     <h3>{{ T "tills.add" }}</h3>
     <p class="muted">{{ T "tills.add_help" }}</p>
-    <button class="btn primary" hx-post="/api/sync/enroll-token" hx-target="#till-qr" hx-swap="innerHTML">{{ T "tills.show_qr" }}</button>
+    {{/* ut-docs#2781: this path has no later approval step, so the new
+         till's role is chosen here, before the code is minted; it rides the
+         one-time token to POST /api/sync/enroll. */}}
+    <label class="set-row">{{ T "tills.role.label" }}
+      <select id="enrol-role" name="role">
+        <option value="additional" selected>{{ T "tills.role.replica" }}</option>
+        <option value="satellite">{{ T "tills.role.satellite" }}</option>
+      </select>
+    </label>
+    <button class="btn primary" hx-post="/api/sync/enroll-token" hx-include="#enrol-role" hx-target="#till-qr" hx-swap="innerHTML">{{ T "tills.show_qr" }}</button>
     <div id="till-qr" style="margin-top:.6rem"></div>
   {{ end }}
   {{/* ut-docs#1548: "join an existing shop" competing for attention with

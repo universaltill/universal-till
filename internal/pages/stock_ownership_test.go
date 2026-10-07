@@ -231,7 +231,7 @@ func TestTwoTills_SameLastUnit_BothSalesSucceed_StockNegative_OneProblem(t *test
 
 	// Primary till, with the replica enrolled, serving the journal endpoint.
 	primaryMux, primaryDp := newSyncSalesTestDeps(t)
-	tillID, err := data.NewTillsRepo(primaryDp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc"))
+	tillID, err := data.NewTillsRepo(primaryDp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc"), data.TillRoleAdditional)
 	if err != nil {
 		t.Fatalf("enrol till: %v", err)
 	}

@@ -51,7 +51,7 @@ func newSyncLinkFixture(t *testing.T) *syncLinkFixture {
 
 func (f *syncLinkFixture) enrol(t *testing.T, name, bearer string) string {
 	t.Helper()
-	id, err := data.NewTillsRepo(f.dp.Db).InsertTill(context.Background(), name, hashBearer(bearer))
+	id, err := data.NewTillsRepo(f.dp.Db).InsertTill(context.Background(), name, hashBearer(bearer), data.TillRoleAdditional)
 	if err != nil {
 		t.Fatal(err)
 	}
