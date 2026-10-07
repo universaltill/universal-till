@@ -20,17 +20,86 @@ type TillRow struct {
 	Name       string
 	EnrolledAt string
 	LastSeenAt string
+	// Role is TillRoleAdditional or TillRoleSatellite (migration 067,
+	// ut-docs#2781). Until #1154 a satellite has no runtime behaviour of its
+	// own: the role labels the till and gates its device profile.
+	Role string
 }
 
-// InsertTill enrols a replica; the caller hashes the bearer.
+// Till roles (ut-docs#2781): the values tills.role and
+// pending_pairings.requested_role accept (migration 067's CHECK).
+const (
+	TillRoleAdditional = "additional"
+	TillRoleSatellite  = "satellite"
+)
+
+// ValidTillRole reports whether role is one of the two till roles.
+func ValidTillRole(role string) bool {
+	return role == TillRoleAdditional || role == TillRoleSatellite
+}
+
+// InsertTill enrols a replica as an additional till; the caller hashes the
+// bearer.
 func (r *TillsRepo) InsertTill(ctx context.Context, name, bearerHash string) (string, error) {
+	return r.InsertTillWithRole(ctx, name, bearerHash, TillRoleAdditional)
+}
+
+// InsertTillWithRole enrols a replica with the given role (ut-docs#2781);
+// the caller hashes the bearer and has validated the role.
+func (r *TillsRepo) InsertTillWithRole(ctx context.Context, name, bearerHash, role string) (string, error) {
+	if !ValidTillRole(role) {
+		return "", fmt.Errorf("insert till: invalid role %q", role)
+	}
 	id := uuid.NewString()
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO tills (id, name, bearer_hash) VALUES (?, ?, ?)`, id, name, bearerHash)
+		`INSERT INTO tills (id, name, bearer_hash, role) VALUES (?, ?, ?, ?)`, id, name, bearerHash, role)
 	if err != nil {
 		return "", fmt.Errorf("insert till: %w", err)
 	}
 	return id, nil
+}
+
+// RoleByID returns an enrolled till's role; ok is false for an unknown id.
+func (r *TillsRepo) RoleByID(ctx context.Context, id string) (role string, ok bool, err error) {
+	err = r.db.QueryRowContext(ctx, `SELECT role FROM tills WHERE id = ?`, id).Scan(&role)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("till role: %w", err)
+	}
+	return role, true, nil
+}
+
+// SetRole changes an enrolled till's role (ut-docs#2781) and returns the
+// role it had before. ok is false for an unknown id. Writing the same role
+// back is a no-op: migration 067's trigger bumps sync_admin_version only on
+// a real change. The caller validates the role.
+func (r *TillsRepo) SetRole(ctx context.Context, id, role string) (old string, ok bool, err error) {
+	if !ValidTillRole(role) {
+		return "", false, fmt.Errorf("set till role: invalid role %q", role)
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", false, fmt.Errorf("set till role: %w", err)
+	}
+	defer tx.Rollback()
+	err = tx.QueryRowContext(ctx, `SELECT role FROM tills WHERE id = ?`, id).Scan(&old)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("set till role: %w", err)
+	}
+	if old != role {
+		if _, err = tx.ExecContext(ctx, `UPDATE tills SET role = ? WHERE id = ?`, role, id); err != nil {
+			return "", false, fmt.Errorf("set till role: %w", err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return "", false, fmt.Errorf("set till role: %w", err)
+	}
+	return old, true, nil
 }
 
 // UpdateName sets an enrolled till's display name to the name that till
@@ -53,7 +122,7 @@ func (r *TillsRepo) UpdateName(ctx context.Context, id, name string) (bool, erro
 // ListTills returns enrolled tills, newest first.
 func (r *TillsRepo) ListTills(ctx context.Context) ([]TillRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, enrolled_at, COALESCE(last_seen_at, '')
+SELECT id, name, enrolled_at, COALESCE(last_seen_at, ''), role
 FROM tills ORDER BY enrolled_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list tills: %w", err)
@@ -62,7 +131,7 @@ FROM tills ORDER BY enrolled_at DESC`)
 	var out []TillRow
 	for rows.Next() {
 		var t TillRow
-		if err := rows.Scan(&t.ID, &t.Name, &t.EnrolledAt, &t.LastSeenAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Name, &t.EnrolledAt, &t.LastSeenAt, &t.Role); err != nil {
 			return nil, fmt.Errorf("scan till: %w", err)
 		}
 		out = append(out, t)
@@ -116,9 +185,9 @@ func (r *TillsRepo) NameTakenExcept(ctx context.Context, name, exceptID string) 
 func (r *TillsRepo) TillByBearerHash(ctx context.Context, bearerHash string) (TillRow, bool, error) {
 	var t TillRow
 	err := r.db.QueryRowContext(ctx, `
-SELECT id, name, enrolled_at, COALESCE(last_seen_at, '')
+SELECT id, name, enrolled_at, COALESCE(last_seen_at, ''), role
 FROM tills WHERE bearer_hash = ?`, bearerHash).
-		Scan(&t.ID, &t.Name, &t.EnrolledAt, &t.LastSeenAt)
+		Scan(&t.ID, &t.Name, &t.EnrolledAt, &t.LastSeenAt, &t.Role)
 	if err == sql.ErrNoRows {
 		return TillRow{}, false, nil
 	}

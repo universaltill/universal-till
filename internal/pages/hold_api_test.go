@@ -69,7 +69,7 @@ func newHoldTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	if _, err := db.Exec(`CREATE TABLE table_claims (table_id TEXT PRIMARY KEY REFERENCES tables(id), claimed_at TEXT NOT NULL, till_id TEXT NOT NULL DEFAULT '');`); err != nil {
 		t.Fatalf("create table_claims: %v", err)
 	}
-	if _, err := db.Exec(`CREATE TABLE tills (id TEXT PRIMARY KEY, name TEXT NOT NULL, bearer_hash TEXT UNIQUE, enrolled_at TEXT NOT NULL DEFAULT (datetime('now')), last_seen_at TEXT);`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE tills (id TEXT PRIMARY KEY, name TEXT NOT NULL, bearer_hash TEXT UNIQUE, enrolled_at TEXT NOT NULL DEFAULT (datetime('now')), last_seen_at TEXT, role TEXT NOT NULL DEFAULT 'additional');`); err != nil {
 		t.Fatalf("create tills: %v", err)
 	}
 	// ut-docs#2703 (reopened): Open orders' "Pay at the counter" tab also

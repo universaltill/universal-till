@@ -7,12 +7,21 @@
      viewport, forcing the operator to scroll the WHOLE PAGE sideways just
      to reach Approve. -->
 <table class="table pairing-table">
-  <thead><tr><th>{{ T "tills.pairing.device_label" }}</th><th>{{ T "tills.pairing.code_label" }}</th><th></th></tr></thead>
+  <thead><tr><th>{{ T "tills.pairing.device_label" }}</th><th>{{ T "tills.pairing.code_label" }}</th><th>{{ T "tills.col_role" }}</th><th></th></tr></thead>
   <tbody>
     {{ range .Pending }}
     <tr>
       <td>{{ .DeviceName }}</td>
       <td style="font-weight:bold; letter-spacing:.15em">{{ .VerificationCode }}</td>
+      {{/* ut-docs#2781: the role the till asked to join as, which the
+           manager can change before approving. Outside both forms like the
+           PIN box below, so Approve pulls it in via hx-include. */}}
+      <td>
+        <select name="role" id="role-{{ .ID }}" aria-label="{{ T "tills.col_role" }} — {{ .DeviceName }}">
+          <option value="additional"{{ if ne .RequestedRole "satellite" }} selected{{ end }}>{{ T "tills.role.replica" }}</option>
+          <option value="satellite"{{ if eq .RequestedRole "satellite" }} selected{{ end }}>{{ T "tills.role.satellite" }}</option>
+        </select>
+      </td>
       <td>
         <!-- ut-docs#1548: ONE manager-PIN input per pending request, not
              one per form. Before this, Approve and Deny were two separate
@@ -52,7 +61,7 @@
         <input type="password" name="manager_pin" id="pin-{{ .ID }}" inputmode="numeric" autocomplete="off"
                aria-label="{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}"
                placeholder="{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}">
-        <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/approve" hx-include="#pin-{{ .ID }}" hx-swap="none"
+        <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/approve" hx-include="#pin-{{ .ID }}, #role-{{ .ID }}" hx-swap="none"
               hx-indicator="#pair-busy-{{ .ID }}" hx-disabled-elt="find button[type=submit]"
               data-after-request="ok refresh-region:tills-pairing-card; fail unhide:pin-error-{{ .ID }}">
           <button class="btn primary" type="submit">{{ T "tills.pairing.approve_btn" }}</button>

@@ -898,6 +898,15 @@ body.sale-screen .session-admin-link { display: none; }
    e2e/tests/tills-pairing-layout-1548.spec.ts seeds a real pending request
    precisely so it fails on that, rather than measuring an empty list. */
 .pairing-table { display: block; overflow-x: auto; }
+/* ut-docs#2781: the roster gained a Role column and a per-till Change role
+   button; with the link/version columns and a long (tr/ar) label it can
+   outgrow a 1024px kiosk the same way — same escape hatch, scrolling the
+   table instead of the page. */
+.tills-roster { display: block; overflow-x: auto; }
+/* "Join as" choice on the join forms (tills.html, setup.html). */
+.join-role { border: 0; padding: 0; margin-block: .6rem; }
+.join-role label { display: block; margin-block: .3rem; }
+.join-role small { display: block; margin-inline-start: 1.6rem; }
 /* Narrow the manager-PIN box from the ~245px an `input`'s default size=20
    plus this sheet's padding gives it, so the device/code columns keep more
    of the row. NOT about the placeholder: an <input> never grows to fit its

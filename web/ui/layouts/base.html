@@ -2029,6 +2029,10 @@
          permission_settings_page.go) and an extra closed, empty <dialog> on
          pages that never trigger it costs nothing. -->
     <dialog id="elevation-modal" class="modifier-modal"></dialog>
+    <!-- ut-docs#2781: the PIN-less confirm dialog (confirm_prompt.go's
+         renderConfirmPrompt), OOB-swapped in here for the same no-nested-
+         form reason as #elevation-modal above. -->
+    <dialog id="confirm-modal" class="modifier-modal"></dialog>
     <!-- ut-docs#2873: the ONE shared backdrop behind every non-modal popup
          (a .show() dialog, a UT.popupOpened() panel). Shown and hidden only
          by the popup hooks in the first inline script above; app.css

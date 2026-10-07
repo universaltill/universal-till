@@ -338,6 +338,7 @@ func syncTill(r *http.Request, repo *data.TillsRepo) (data.TillRow, bool) {
 func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	repo := data.NewTillsRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
+	pairingRepo := data.NewPairingRepo(d.Db)
 	tokens := &enrolTokens{tokens: map[string]time.Time{}}
 	// ut-docs#3219: short pairing codes are only 30 bits, so each source
 	// gets 5 tries a minute at /api/sync/enroll (long tokens stay
@@ -469,12 +470,21 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		var in struct {
 			Token string `json:"token"`
 			Name  string `json:"name"`
+			// ut-docs#2781: the role the joining till chose; absent (an
+			// older till) means an additional till.
+			Role string `json:"role"`
 		}
 		if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
 			_ = json.NewDecoder(r.Body).Decode(&in)
 		} else {
 			_ = r.ParseForm()
-			in.Token, in.Name = r.Form.Get("token"), r.Form.Get("name")
+			in.Token, in.Name, in.Role = r.Form.Get("token"), r.Form.Get("name"), r.Form.Get("role")
+		}
+		// Validated before the one-time token is spent below.
+		role, ok := tillRoleFromForm(in.Role)
+		if !ok {
+			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
+			return
 		}
 		// ut-docs#3219: a short pairing code (typed by hand, 30 bits) is
 		// rate-limited per source and spends the shop-wide failure budget;
@@ -523,10 +533,18 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 				fmt.Errorf("till name %q already in use", name))
 			return
 		}
+		// An approve-to-pair token carries the manager's final role from the
+		// approval card (ut-docs#2781), which wins over the till's own.
+		if approved, ok, err := pairingRepo.RoleForToken(r.Context(), presented); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
+			return
+		} else if ok {
+			role = approved
+		}
 		raw := make([]byte, 32)
 		_, _ = rand.Read(raw)
 		bearer := hex.EncodeToString(raw)
-		tillID, err := repo.InsertTill(r.Context(), name, hashBearer(bearer))
+		tillID, err := repo.InsertTillWithRole(r.Context(), name, hashBearer(bearer), role)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
@@ -565,7 +583,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			registerID, registerName = "", ""
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, "system", "till", tillID, "till_enrolled",
-			map[string]any{"name": name, "register_id": registerID, "register_name": registerName},
+			map[string]any{"name": name, "register_id": registerID, "register_name": registerName, "role": role},
 			time.Now().UTC().Format(time.RFC3339), "")
 		// The primary is till 1; replicas number from 2 (receipt prefixes).
 		tillNo := 2
@@ -580,6 +598,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 				"shop_name":   storeNameOrDefault(r.Context(), d),
 				"till_no":     tillNo,
 				"register_id": registerID,
+				"role":        role,
 			},
 			"error": nil,
 		})
@@ -730,9 +749,14 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			return
 		}
 		_ = r.ParseForm()
+		role, ok := tillRoleFromForm(r.Form.Get("role")) // ut-docs#2781
+		if !ok {
+			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
+			return
+		}
 		shopName, err := joinPrimary(r, d,
 			strings.TrimSpace(r.Form.Get("code")), strings.TrimSpace(r.Form.Get("address")),
-			strings.TrimSpace(r.Form.Get("name")))
+			strings.TrimSpace(r.Form.Get("name")), role)
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
@@ -761,9 +785,14 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			return
 		}
 		_ = r.ParseForm()
+		role, ok := tillRoleFromForm(r.Form.Get("role")) // ut-docs#2781
+		if !ok {
+			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
+			return
+		}
 		shopName, err := joinPrimary(r, d,
 			strings.TrimSpace(r.Form.Get("code")), strings.TrimSpace(r.Form.Get("address")),
-			strings.TrimSpace(r.Form.Get("name")))
+			strings.TrimSpace(r.Form.Get("name")), role)
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
@@ -872,9 +901,9 @@ func friendlyJoinError(locale string, err error) string {
 // carries the main till's URL, so address is ignored) or, since
 // ut-docs#3219, the short XXX-XXX code, which needs the main till's address
 // typed alongside it.
-func joinPrimary(r *http.Request, d *common.Deps, code, address, name string) (string, error) {
+func joinPrimary(r *http.Request, d *common.Deps, code, address, name, role string) (string, error) {
 	if primaryURL, token, err := decodeEnrollCode(code); err == nil {
-		return completeJoin(r, d, primaryURL, token, name)
+		return completeJoin(r, d, primaryURL, token, name, role)
 	}
 	short, ok := normaliseShortCode(code)
 	if !ok {
@@ -887,7 +916,7 @@ func joinPrimary(r *http.Request, d *common.Deps, code, address, name string) (s
 	if !ok {
 		return "", &joinError{kind: joinErrBadAddress}
 	}
-	return completeJoin(r, d, primaryURL, short, name)
+	return completeJoin(r, d, primaryURL, short, name, role)
 }
 
 // primaryURLFromAddress turns the address a person typed next to a short
@@ -923,11 +952,11 @@ func primaryURLFromAddress(address string) (string, bool) {
 // (ut-docs#185) can drive it directly with a (primaryURL, token) pair it
 // already holds — that flow never has an encodeEnrollCode-packed code to
 // decode, just the two values decodeEnrollCode would have produced.
-func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name string) (string, error) {
+func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role string) (string, error) {
 	base := strings.TrimSuffix(primaryURL, "/")
 	client := netaccess.NewClient(60 * time.Second)
 
-	body, _ := json.Marshal(map[string]string{"token": token, "name": name})
+	body, _ := json.Marshal(map[string]string{"token": token, "name": name, "role": role})
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
 		base+"/api/sync/enroll", strings.NewReader(string(body)))
 	if err != nil {
@@ -948,6 +977,9 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name strin
 			// The register the primary auto-provisioned for this till
 			// (ut-docs#894); empty from an older primary.
 			RegisterID string `json:"register_id"`
+			// The role the main till enrolled this till as (ut-docs#2781);
+			// empty from an older main till.
+			Role string `json:"role"`
 		} `json:"data"`
 	}
 	if resp.StatusCode == http.StatusNotFound {
@@ -1000,6 +1032,7 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name strin
 		TillName:      name,
 		DeviceID:      "till-" + hex.EncodeToString(draw),
 		RegisterID:    out.Data.RegisterID,
+		TillRole:      out.Data.Role,
 	}); err != nil {
 		return "", &joinError{kind: joinErrStageIdentityFailed, detail: err.Error()}
 	}

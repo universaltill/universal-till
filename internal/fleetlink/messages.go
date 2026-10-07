@@ -64,7 +64,7 @@ type Cursors struct {
 // (§7) fill them; null means "not offered by this build".
 type Hello struct {
 	TillID       string  `json:"till_id"`
-	Role         string  `json:"role"` // "main" | "replica" | "satellite"
+	Role         string  `json:"role"` // "main" | "replica" | "satellite"; a joined till's stored role (additional|satellite, ut-docs#2781) comes from GET /api/sync/admin's role until #2741 wires it here
 	Version      string  `json:"version"`
 	Platform     string  `json:"platform"`
 	SyncProtocol int     `json:"sync_protocol"`

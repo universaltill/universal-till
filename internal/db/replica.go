@@ -38,6 +38,10 @@ type ReplicaIdentity struct {
 	// during enrolment (ut-docs#894). Empty when joining an older primary
 	// that doesn't auto-provision.
 	RegisterID string `json:"register_id"`
+	// TillRole is the role the main till enrolled this till as
+	// (ut-docs#2781: additional | satellite), kept as sync.till_role. Empty
+	// when joining an older main till: the first admin pull fills it in.
+	TillRole string `json:"till_role,omitempty"`
 }
 
 // ReplicaIdentityPath locates the identity file for a DB path.
@@ -101,6 +105,11 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 	} {
 		if err := set(k, v); err != nil {
 			return false, fmt.Errorf("apply identity %s: %w", k, err)
+		}
+	}
+	if id.TillRole != "" {
+		if err := set("sync.till_role", id.TillRole); err != nil {
+			return false, fmt.Errorf("apply identity sync.till_role: %w", err)
 		}
 	}
 	// This till may already have minted its own plugin-settings secrets key

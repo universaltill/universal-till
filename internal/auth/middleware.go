@@ -161,6 +161,15 @@ func exempt(path string) bool {
 		// every replica and leave it without its own cloud identity.
 		// TestSyncPullPathsAreExempt pins this entry.
 		"/api/sync/cloud-device",
+		// ut-docs#2781: a joined till reporting its own new role to the main
+		// till (internal/pages/till_role.go, reportOwnRoleToMain — the
+		// Settings → Self-order kiosk → "Make satellite" confirm). syncTill-
+		// authed in the handler like users/apply, and it can only move the
+		// caller's own tills row. Omitting it 401s every call, and every
+		// make-satellite confirm on an additional till is refused as "can't
+		// reach the main till" -- the /api/sync/stock failure class again.
+		// TestSyncPullPathsAreExempt pins it.
+		"/api/sync/till-role",
 		"/api/setup/join",
 		"/api/setup/discover-primaries", "/api/setup/pair-start", "/api/setup/pair-status",
 		// ut-docs#1550: the wizard's "joined — restarting" trigger, the

@@ -382,7 +382,7 @@ func newTillsTestDB(t *testing.T) *TillsRepo {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = dbc.Close() })
-	if _, err := dbc.Exec(`CREATE TABLE tills (id TEXT PRIMARY KEY, name TEXT NOT NULL, bearer_hash TEXT NOT NULL UNIQUE, enrolled_at TEXT NOT NULL DEFAULT (datetime('now')), last_seen_at TEXT)`); err != nil {
+	if _, err := dbc.Exec(`CREATE TABLE tills (id TEXT PRIMARY KEY, name TEXT NOT NULL, bearer_hash TEXT NOT NULL UNIQUE, enrolled_at TEXT NOT NULL DEFAULT (datetime('now')), last_seen_at TEXT, role TEXT NOT NULL DEFAULT 'additional')`); err != nil {
 		t.Fatal(err)
 	}
 	return NewTillsRepo(dbc)
