@@ -82,9 +82,24 @@
            render there: a replica's local DELETE would revert on the next
            admin-bundle pull. The handler enforces this independently. */}}
       {{ if not $.SyncPrimary }}
+      {{/* ut-docs#2781: this till's role (tills.role, the single source of
+           truth — the till learns a change at its next pull). Primary-only
+           like revoke, for the same reason; the handler enforces it too. */}}
+      <form class="till-role-form" style="display:inline" hx-post="/api/sync/tills/{{ .ID }}/role" hx-swap="none"
+            data-after-request="ok refresh-region:tills-roster">
+        <select name="role" aria-label="{{ T "tills.role.label" }} — {{ .Name }}">
+          <option value="additional" {{ if ne .Role "satellite" }}selected{{ end }}>{{ T "tills.role.replica" }}</option>
+          <option value="satellite" {{ if eq .Role "satellite" }}selected{{ end }}>{{ T "tills.role.satellite" }}</option>
+        </select>
+        <button class="btn secondary" type="submit">{{ T "tills.role.save" }}</button>
+      </form>
       {{/* ut-docs#2904: refresh only #tills-roster (tills.html) on success. */}}
       <button class="btn secondary" hx-post="/api/sync/tills/{{ .ID }}/revoke"
                   hx-confirm="{{ T "tills.revoke_confirm" }}" data-after-request="ok refresh-region:tills-roster">{{ T "tills.revoke" }}</button>
+      {{ else }}
+      {{/* A joined till's roster is read-only: its role is shown, not
+           offered (ut-docs#2781). */}}
+      <small class="muted">{{ if eq .Role "satellite" }}{{ T "tills.role.satellite" }}{{ else }}{{ T "tills.role.replica" }}{{ end }}</small>
       {{ end }}
       </td>
     </tr>

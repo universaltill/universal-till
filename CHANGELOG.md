@@ -7,6 +7,17 @@ Release notes for the till. Versions come from the release tag
 
 ### Added
 
+- **Till roles: additional or satellite (ut-docs#2781).** A manager picks a
+  joined till's role on the main till before it is created — on the
+  pairing-code card, or next to Approve for a request found on the network —
+  and can change it later on the Tills page (`POST /api/sync/tills/{id}/role`,
+  audited as `till_role_changed`). The role is stored in `tills.role`
+  (migration 067), reaches the till with its next sync, and is reported in
+  its link hello. Until ut-docs#1154 a satellite is the counter-pay
+  self-order kiosk only (ADR-0020, ADR-0086): register and back office are
+  refused, and a satellite found on either is switched back to the kiosk
+  (audited as `display_mode_forced`). Choosing the kiosk on an additional
+  joined till asks "Make this a satellite?" first.
 - **Camera barcode scan on iPhone and iPad (ut-docs#696).** The sale
   screen's camera-scan button now shows on every device. Where the browser
   has no native barcode reader (WebKit, so every iPhone/iPad, and some
