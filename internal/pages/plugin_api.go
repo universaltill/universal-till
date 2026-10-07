@@ -19,7 +19,6 @@ import (
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
-	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -29,69 +28,6 @@ import (
 )
 
 func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
-	// Marketplace: list available binaries from marketplace service
-	mux.HandleFunc("/api/plugins/marketplace", func(w http.ResponseWriter, r *http.Request) {
-		// ut-docs#3079 review: plugin_management only (#2675 removes it).
-		if !canPerform(d, r, "plugin_management") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
-			return
-		}
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		// Get current OS and architecture
-		osFilter := r.URL.Query().Get("os")
-		archFilter := r.URL.Query().Get("arch")
-
-		if osFilter == "" {
-			osFilter = runtime.GOOS
-		}
-		if archFilter == "" {
-			archFilter = runtime.GOARCH
-		}
-
-		deviceArch := fmt.Sprintf("%s/%s", osFilter, archFilter)
-		// "capability" filters by plugin type — a listing's plugin_type from
-		// the ADR-0002 taxonomy (plugins.CanonicalTypes), forwarded verbatim
-		// to the marketplace's ListPluginsRequest.capability. Despite the
-		// name it is NOT a device/runtime capability (ut-docs#852, #980).
-		capability := r.URL.Query().Get("capability")
-
-		// Call marketplace HTTP API (use new config field)
-		marketplaceURL := d.Cfg.Marketplace.EndpointURL + "/v1/catalog/plugins"
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, marketplaceURL, nil)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to create request: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		q := req.URL.Query()
-		q.Set("device_arch", deviceArch)
-		if capability != "" {
-			q.Set("capability", capability)
-		}
-		req.URL.RawQuery = q.Encode()
-
-		client := netaccess.NewClient(0)
-		resp, err := client.Do(req)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("marketplace request failed: %v", err), http.StatusInternalServerError)
-			return
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			http.Error(w, fmt.Sprintf("marketplace returned status %d", resp.StatusCode), resp.StatusCode)
-			return
-		}
-
-		// Forward marketplace response to client
-		w.Header().Set("Content-Type", "application/json")
-		io.Copy(w, resp.Body)
-	})
-
 	// Grant/revoke permissions
 	mux.HandleFunc("/api/plugins/permissions/grant", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

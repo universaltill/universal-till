@@ -48,7 +48,6 @@ var saleOnlyRoutes = []saleOnlyRoute{
 	{http.MethodGet, "/api/inventory/low-stock", "", []int{http.StatusOK}},
 	{http.MethodPost, "/api/settings/theme", "", []int{http.StatusOK, http.StatusNoContent, http.StatusSeeOther}},
 	{http.MethodGet, "/api/plugins/check-updates", "", []int{http.StatusOK, http.StatusServiceUnavailable, http.StatusInternalServerError, http.StatusBadGateway}},
-	{http.MethodGet, "/api/plugins/marketplace", "", []int{http.StatusOK, http.StatusServiceUnavailable, http.StatusInternalServerError, http.StatusBadGateway}},
 }
 
 func newSaleOnlyMux(t *testing.T) *http.ServeMux {

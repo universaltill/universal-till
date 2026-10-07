@@ -28,7 +28,7 @@ The plugin host infrastructure is complete and production-ready for integration 
 
 ### API Endpoints
 
-1. `GET /api/plugins/marketplace` - List plugins from marketplace service
+1. ~~`GET /api/plugins/marketplace`~~ - REMOVED (ut-docs#2675): unused raw proxy; the store pages use `marketplace.CatalogRepository`
 2. `POST /api/plugins/install` - Download and install plugin with checksum verification
 3. `POST /api/plugins/permissions/grant` - Grant capability to plugin
 4. `POST /api/plugins/permissions/revoke` - Revoke capability from plugin

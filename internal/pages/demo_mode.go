@@ -162,10 +162,9 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /csp-report": true,
 	"GET /csp-report":  true,
 	// Plugins: install, update, side-load, rollback, enable/disable, trust and
-	// permission grants, the marketplace, the plugin store, plugin-owned
+	// permission grants, the plugin store, plugin-owned
 	// pages/settings/actions (plugin settings can take endpoints) and the
 	// marketplace v1 protocol stub (ADR-0113 §1.5).
-	"/api/plugins/marketplace":                        true,
 	"/api/plugins/permissions/grant":                  true,
 	"/api/plugins/permissions/revoke":                 true,
 	"/api/plugins/trust":                              true,
