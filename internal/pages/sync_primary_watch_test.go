@@ -48,7 +48,7 @@ func postProofAt(t *testing.T, mux http.Handler, body, host, localAddr string) *
 func TestPrimaryProofAPI_AnswersForAnEnrolledTill(t *testing.T) {
 	dp := newMigratedSyncDeps(t, "primary.db")
 	ctx := t.Context()
-	tillID, err := data.NewTillsRepo(dp.Db).InsertTill(ctx, "Back office", hashBearer("token-abc"))
+	tillID, err := data.NewTillsRepo(dp.Db).InsertTill(ctx, "Back office", hashBearer("token-abc"), data.TillRoleAdditional)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestPrimaryProofAPI_AnswersForAnEnrolledTill(t *testing.T) {
 func TestPrimaryProofAPI_RefusesUnknownTillBadInputAndReplicas(t *testing.T) {
 	dp := newMigratedSyncDeps(t, "primary.db")
 	ctx := t.Context()
-	tillID, _ := data.NewTillsRepo(dp.Db).InsertTill(ctx, "Back office", hashBearer("token-abc"))
+	tillID, _ := data.NewTillsRepo(dp.Db).InsertTill(ctx, "Back office", hashBearer("token-abc"), data.TillRoleAdditional)
 	mux := http.NewServeMux()
 	registerPrimaryProof(mux, dp)
 
@@ -119,7 +119,7 @@ func TestPrimaryProofAPI_RefusesUnknownTillBadInputAndReplicas(t *testing.T) {
 // sign it.
 func TestPrimaryProofAPI_OnlyAnswersForItsOwnAddress(t *testing.T) {
 	dp := newMigratedSyncDeps(t, "primary.db")
-	tillID, _ := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Back office", hashBearer("token-abc"))
+	tillID, _ := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Back office", hashBearer("token-abc"), data.TillRoleAdditional)
 	mux := http.NewServeMux()
 	registerPrimaryProof(mux, dp)
 	body := `{"till_id":"` + tillID + `","nonce":"` + testNonce + `"}`
@@ -187,7 +187,7 @@ func TestReplicaWithStaleURL_RecoversEndToEnd(t *testing.T) {
 	chdirRoot(t)
 	primary := newMigratedSyncDeps(t, "primary.db")
 	ctx := t.Context()
-	tillID, err := data.NewTillsRepo(primary.Db).InsertTill(ctx, "Back office", hashBearer("token-abc"))
+	tillID, err := data.NewTillsRepo(primary.Db).InsertTill(ctx, "Back office", hashBearer("token-abc"), data.TillRoleAdditional)
 	if err != nil {
 		t.Fatal(err)
 	}

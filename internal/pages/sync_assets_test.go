@@ -102,7 +102,7 @@ func newAssetsPrimaryMux(t *testing.T) *http.ServeMux {
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
-	if _, err := data.NewTillsRepo(db).InsertTill(context.Background(), "Replica 1", hashBearer("tok-assets")); err != nil {
+	if _, err := data.NewTillsRepo(db).InsertTill(context.Background(), "Replica 1", hashBearer("tok-assets"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("enrol till: %v", err)
 	}
 	mux := http.NewServeMux()

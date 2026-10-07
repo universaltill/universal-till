@@ -127,7 +127,7 @@ func TestSyncCloudDevice_RejectsUnauthorized(t *testing.T) {
 
 func TestSyncCloudDevice_RegistersReplicaWithoutHandingOverToken(t *testing.T) {
 	dp := newMigratedSyncDeps(t, "primary.db")
-	tillID, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Back office", hashBearer("token-abc"))
+	tillID, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Back office", hashBearer("token-abc"), data.TillRoleAdditional)
 	if err != nil {
 		t.Fatalf("enrol till: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestSyncCloudDevice_RegistersReplicaWithoutHandingOverToken(t *testing.T) {
 
 func TestSyncCloudDevice_Refusals(t *testing.T) {
 	dp := newMigratedSyncDeps(t, "primary.db")
-	if _, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Back office", hashBearer("token-abc")); err != nil {
+	if _, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Back office", hashBearer("token-abc"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("enrol till: %v", err)
 	}
 	cloud, _ := fakeCloud(t)
@@ -201,7 +201,7 @@ func TestSyncCloudDevice_RateLimitedPerTill(t *testing.T) {
 	dp := newMigratedSyncDeps(t, "primary.db")
 	repo := data.NewTillsRepo(dp.Db)
 	for _, tl := range [][2]string{{"Back office", "token-abc"}, {"Bar", "token-bar"}} {
-		if _, err := repo.InsertTill(t.Context(), tl[0], hashBearer(tl[1])); err != nil {
+		if _, err := repo.InsertTill(t.Context(), tl[0], hashBearer(tl[1]), data.TillRoleAdditional); err != nil {
 			t.Fatalf("enrol till: %v", err)
 		}
 	}
@@ -232,7 +232,7 @@ func TestSyncCloudDevice_RateLimitedPerTill(t *testing.T) {
 
 func TestSyncCloudDevice_MainTillNotRegistered(t *testing.T) {
 	dp := newMigratedSyncDeps(t, "primary.db")
-	if _, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Back office", hashBearer("token-abc")); err != nil {
+	if _, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Back office", hashBearer("token-abc"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("enrol till: %v", err)
 	}
 	cfg := &config.Config{Marketplace: config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:1/api", PublicKey: strings.Repeat("ab", 32)}}
@@ -251,7 +251,7 @@ func TestSyncCloudDevice_MainTillNotRegistered(t *testing.T) {
 // no credential in it.
 func TestSyncCloudDevice_RelaysMainTillsEntitlement(t *testing.T) {
 	dp := newMigratedSyncDeps(t, "primary.db")
-	if _, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Back office", hashBearer("token-abc")); err != nil {
+	if _, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Back office", hashBearer("token-abc"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("enrol till: %v", err)
 	}
 	cloud, _ := fakeCloud(t)
@@ -294,7 +294,7 @@ func TestSyncCloudDevice_RelaysMainTillsEntitlement(t *testing.T) {
 // nothing token-shaped does.
 func TestSyncCloudDevice_RelaysRedeemCode(t *testing.T) {
 	dp := newMigratedSyncDeps(t, "primary.db")
-	if _, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Back office", hashBearer("token-abc")); err != nil {
+	if _, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Back office", hashBearer("token-abc"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("enrol till: %v", err)
 	}
 	code := strings.Repeat("c0de", 16)

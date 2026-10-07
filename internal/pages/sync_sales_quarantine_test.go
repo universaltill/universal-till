@@ -160,7 +160,7 @@ func TestRegisterSyncSales_QuarantinedEntryDoesNotBlockRestOfBatch(t *testing.T)
 	repo := data.NewPOSRepo(dp.Db)
 
 	tills := data.NewTillsRepo(dp.Db)
-	if _, err := tills.InsertTill(ctx, "Quarantine Test Till", hashBearer("token-quarantine")); err != nil {
+	if _, err := tills.InsertTill(ctx, "Quarantine Test Till", hashBearer("token-quarantine"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("enroll till: %v", err)
 	}
 
@@ -221,7 +221,7 @@ func TestRegisterSyncSales_QuarantinedEntryDoesNotBlockRestOfBatch(t *testing.T)
 func TestSyncPushTick_QuarantinedEntryAdvancesCursor(t *testing.T) {
 	primaryMux, primaryDp := newSyncSalesTestDeps(t)
 	ctx := context.Background()
-	if _, err := data.NewTillsRepo(primaryDp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc")); err != nil {
+	if _, err := data.NewTillsRepo(primaryDp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("enrol till: %v", err)
 	}
 	server := httptest.NewServer(primaryMux)
