@@ -177,6 +177,18 @@ func createSigningOverride(dp *common.Deps) http.HandlerFunc {
 			return
 		}
 
+		// ut-docs#3808: the override keys are shop-wide (data.SettingScope)
+		// and the admin bundle is main-till-wins, so a grant written here on
+		// an additional till would be silently reverted by its next pull —
+		// and the main-till write-through (/api/sync/settings/apply) refuses
+		// a non-empty override by design. Refuse up front instead, before
+		// any PIN is asked for: the grant belongs on the main till, which
+		// every till follows on its next pull.
+		if tillFollowsMain(ctx, dp) {
+			respondFiscalError(w, r, http.StatusConflict, httpx.T(httpx.ResolveLocale(w, r), "settings.error.change_on_main_till"))
+			return
+		}
+
 		// Actor: an owner (admin/super_admin) session authorizes itself; any
 		// other role needs an owner's PIN, and that owner becomes the audit
 		// actor. canPerform consults the fiscal_tse_override permission,
@@ -257,7 +269,7 @@ func createSigningOverride(dp *common.Deps) http.HandlerFunc {
 			respondFiscalError(w, r, http.StatusInternalServerError, "settings store unavailable")
 			return
 		}
-		// settings-write:allow known gap: on an additional till the next admin pull reverts this grant; the main-till apply refuses a non-empty override, so the fix is a design call (ut-docs#3808)
+		// settings-write:allow signing override: main till only, gated by tillFollowsMain above (ut-docs#3808)
 		if err := store.SetMany(ctx, map[string]string{
 			fiscal.KeyOverrideUntil:  until.Format(time.RFC3339),
 			fiscal.KeyOverrideReason: strings.TrimSpace(req.Reason),
