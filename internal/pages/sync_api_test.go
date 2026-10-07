@@ -567,10 +567,10 @@ func TestSyncSnapshot_RedactsOtherTillsBearerHash(t *testing.T) {
 	ctx := context.Background()
 	tillsRepo := data.NewTillsRepo(primary.Db)
 	callerBearer := "tok-caller"
-	if _, err := tillsRepo.InsertTill(ctx, "Caller Till", hashBearer(callerBearer)); err != nil {
+	if _, err := tillsRepo.InsertTill(ctx, "Caller Till", hashBearer(callerBearer), data.TillRoleAdditional); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tillsRepo.InsertTill(ctx, "Sibling Till", hashBearer("tok-sibling")); err != nil {
+	if _, err := tillsRepo.InsertTill(ctx, "Sibling Till", hashBearer("tok-sibling"), data.TillRoleAdditional); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1021,7 +1021,7 @@ func TestTillsPage_ListsEnrolledTills(t *testing.T) {
 	mux, dp := newSyncAPITestDeps(t)
 	ctx := context.Background()
 	tillsRepo := data.NewTillsRepo(dp.Db)
-	if _, err := tillsRepo.InsertTill(ctx, "Front Till", hashBearer("tok-abc")); err != nil {
+	if _, err := tillsRepo.InsertTill(ctx, "Front Till", hashBearer("tok-abc"), data.TillRoleAdditional); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1099,11 +1099,11 @@ func TestTillsPage_TagsThisTillWithinSyncedRosterOnAReplica(t *testing.T) {
 	mux, dp := newSyncAPITestDeps(t)
 	ctx := context.Background()
 	tillsRepo := data.NewTillsRepo(dp.Db)
-	selfID, err := tillsRepo.InsertTill(ctx, "Back Counter", hashBearer("tok-self"))
+	selfID, err := tillsRepo.InsertTill(ctx, "Back Counter", hashBearer("tok-self"), data.TillRoleAdditional)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tillsRepo.InsertTill(ctx, "Till 3", hashBearer("tok-sibling")); err != nil {
+	if _, err := tillsRepo.InsertTill(ctx, "Till 3", hashBearer("tok-sibling"), data.TillRoleAdditional); err != nil {
 		t.Fatal(err)
 	}
 	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://192.168.1.10:8080"); err != nil {
@@ -1138,7 +1138,7 @@ func TestTillsPage_HidesRevokeButtonOnAReplica(t *testing.T) {
 	mux, dp := newSyncAPITestDeps(t)
 	ctx := context.Background()
 	tillsRepo := data.NewTillsRepo(dp.Db)
-	if _, err := tillsRepo.InsertTill(ctx, "Till 3", hashBearer("tok-sibling")); err != nil {
+	if _, err := tillsRepo.InsertTill(ctx, "Till 3", hashBearer("tok-sibling"), data.TillRoleAdditional); err != nil {
 		t.Fatal(err)
 	}
 	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://192.168.1.10:8080"); err != nil {
@@ -1160,7 +1160,7 @@ func TestRevokeTill_RejectedOnAReplica(t *testing.T) {
 	mux, dp := newSyncAPITestDeps(t)
 	ctx := context.Background()
 	tillsRepo := data.NewTillsRepo(dp.Db)
-	id, err := tillsRepo.InsertTill(ctx, "Till 3", hashBearer("tok-sibling"))
+	id, err := tillsRepo.InsertTill(ctx, "Till 3", hashBearer("tok-sibling"), data.TillRoleAdditional)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1537,7 +1537,7 @@ func TestSyncEnroll_RejectsDuplicateSiblingName(t *testing.T) {
 	mux, dp := newSyncAPITestDeps(t)
 	ctx := context.Background()
 	tillsRepo := data.NewTillsRepo(dp.Db)
-	if _, err := tillsRepo.InsertTill(ctx, "Till 2", hashBearer("tok-sibling")); err != nil {
+	if _, err := tillsRepo.InsertTill(ctx, "Till 2", hashBearer("tok-sibling"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("seed sibling till: %v", err)
 	}
 
@@ -1593,7 +1593,7 @@ func TestSyncEnroll_UniqueNameStillSucceeds(t *testing.T) {
 	mux, dp := newSyncAPITestDeps(t)
 	ctx := context.Background()
 	tillsRepo := data.NewTillsRepo(dp.Db)
-	if _, err := tillsRepo.InsertTill(ctx, "Till 2", hashBearer("tok-sibling-2")); err != nil {
+	if _, err := tillsRepo.InsertTill(ctx, "Till 2", hashBearer("tok-sibling-2"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("seed sibling till: %v", err)
 	}
 
@@ -1640,7 +1640,7 @@ func TestSyncSnapshot_BackupDirFailureIsLocalized(t *testing.T) {
 
 	tillsRepo := data.NewTillsRepo(dp.Db)
 	bearer := "tok-snapshot-fail"
-	if _, err := tillsRepo.InsertTill(context.Background(), "Snapshot Till", hashBearer(bearer)); err != nil {
+	if _, err := tillsRepo.InsertTill(context.Background(), "Snapshot Till", hashBearer(bearer), data.TillRoleAdditional); err != nil {
 		t.Fatalf("seed till: %v", err)
 	}
 
@@ -1670,7 +1670,7 @@ func TestRevokeTill_DeleteFailureIsLocalized(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newSyncAPITestDeps(t)
 	tillsRepo := data.NewTillsRepo(dp.Db)
-	id, err := tillsRepo.InsertTill(context.Background(), "Revoke Fail Till", hashBearer("tok-revoke-fail"))
+	id, err := tillsRepo.InsertTill(context.Background(), "Revoke Fail Till", hashBearer("tok-revoke-fail"), data.TillRoleAdditional)
 	if err != nil {
 		t.Fatalf("seed till: %v", err)
 	}
