@@ -325,7 +325,7 @@ func TestInit_HeldOrderClaimSurvivesReleaseAllEvenWhenBootReclaimFails(t *testin
 	if err != nil {
 		t.Fatalf("CreateTable: %v", err)
 	}
-	tillID, err := data.NewTillsRepo(dbase.DB).InsertTill(ctx, "Replica", hashBearer("b-123"))
+	tillID, err := data.NewTillsRepo(dbase.DB).InsertTill(ctx, "Replica", hashBearer("b-123"), data.TillRoleAdditional)
 	if err != nil {
 		t.Fatalf("seed till: %v", err)
 	}
