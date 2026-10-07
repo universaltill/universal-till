@@ -210,6 +210,9 @@ func TestPersistManifest_RejectsReservedPageRoutes(t *testing.T) {
 		// ut-docs#3791: core namespaces with {wildcard} children.
 		"/help/a/b", "/orders/a/b", "/journal/a/b", "/plugins/a/b",
 		"/refund/a/b", "/invoice/a/b", "/kitchen-display/a/b",
+		// ut-docs#3818: core namespaces with only literal multi-segment
+		// children (no {wildcard}, no subtree catch-all).
+		"/settings/vendor-x", "/catalog/zz", "/users/zz", "/open-orders/zz", "/recovery/zz",
 	} {
 		t.Run(route, func(t *testing.T) {
 			d := openRealDB(t)
@@ -258,6 +261,12 @@ func TestReservedPageRoutePrefix(t *testing.T) {
 		{"/help/a/b", "/help", true},
 		{"/orders", "/orders", true},
 		{"/plugins/x/settings", "/plugins", true},
+		{"/settings/vendor-x", "/settings", true},
+		{"/catalog/zz", "/catalog", true},
+		{"/users/zz", "/users", true},
+		{"/open-orders/zz", "/open-orders", true},
+		{"/recovery/zz", "/recovery", true},
+		{"/settingsx", "", false},
 		{"/plugin/faq", "", false},
 		{"/helpdesk", "", false},
 		{"/o-not-really", "", false},
@@ -354,5 +363,58 @@ func TestReservedPageRoutesCoverWildcardNamespaces(t *testing.T) {
 	}
 	if seen == 0 {
 		t.Fatal("found no {wildcard} mux patterns under internal/ — the scan is broken, not the list")
+	}
+}
+
+// TestReservedPageRoutesCoverLiteralChildNamespaces is the literal sibling
+// of TestReservedPageRoutesCoverWildcardNamespaces (ut-docs#3818): a root
+// that registers only literal multi-segment children (/settings/menu) and
+// an exact-match root (/settings) — no {wildcard}, no subtree "/settings/"
+// — leaves every other child (/settings/vendor-x) unclaimed, so it falls
+// through to the "/" catch-all that renders plugin pages inside core's
+// namespace. Every non-test file under internal/ is scanned, so a new
+// literal child under a fresh root fails here until that root is reserved.
+//
+// Skipped: patterns with { (the wildcard test's job); "/" and patterns
+// ending in "/" (a ServeMux subtree match already claims everything below
+// it); single-segment patterns (/admin — an exact core route beats the
+// catch-all for its own path and claims nothing below). Same literal-only
+// limit as the wildcard test: a pattern built from a variable is invisible.
+func TestReservedPageRoutesCoverLiteralChildNamespaces(t *testing.T) {
+	root := ".." // internal/
+	seen := 0
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, m := range handlePatternRe.FindAllStringSubmatch(string(src), -1) {
+			pattern := m[1]
+			if strings.Contains(pattern, "{") || strings.HasSuffix(pattern, "/") {
+				continue
+			}
+			seg, rest, multi := strings.Cut(strings.TrimPrefix(pattern, "/"), "/")
+			if seg == "" || !multi || rest == "" {
+				continue // single-segment exact route: claims nothing below it
+			}
+			seen++
+			probe := "/" + seg + "/zz-plugin-probe/x"
+			if _, ok := ReservedPageRoutePrefix(probe); !ok {
+				t.Errorf("%s registers %q, but /%s is not in reservedPageRoutePrefixes — a plugin page at %s would shadow it", path, pattern, seg, probe)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seen == 0 {
+		t.Fatal("found no literal multi-segment mux patterns under internal/ — the scan is broken, not the list")
 	}
 }

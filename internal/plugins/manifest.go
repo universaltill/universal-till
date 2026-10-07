@@ -613,14 +613,22 @@ func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql
 // have {wildcard} children (GET /help/{topic}), so a deeper path
 // (/help/a/b) is unclaimed and would fall through to the catch-all inside
 // core's namespace (ut-docs#3791).
-// Exact core routes (e.g. /settings) need no entry — the mux's more
-// specific pattern already beats the "/" catch-all that renders plugin
-// pages. TestReservedPageRoutesCoverAuthExemptNamespaces pins the
-// auth-exempt half; TestReservedPageRoutesCoverWildcardNamespaces pins the
-// wildcard half against the real mux registrations.
+// /settings, /catalog, /users, /open-orders, /recovery register only
+// literal multi-segment children (/settings/menu, /catalog/tax-codes) and
+// no subtree catch-all of their own, so any other child
+// (/settings/vendor-x) is unclaimed and falls through to the catch-all the
+// same way — the wildcard shape without a {wildcard} segment (ut-docs#3818).
+// A single-segment exact core route (e.g. /admin) needs no entry — the
+// mux's more specific pattern already beats the "/" catch-all that renders
+// plugin pages, and it has no children to shadow.
+// TestReservedPageRoutesCoverAuthExemptNamespaces pins the auth-exempt
+// half; TestReservedPageRoutesCoverWildcardNamespaces and
+// TestReservedPageRoutesCoverLiteralChildNamespaces pin the wildcard and
+// literal-child halves against the real mux registrations.
 var reservedPageRoutePrefixes = []string{
 	"/api", "/ui", "/v1", "/public", "/ext", "/plugin-icons", "/self-order", "/o", "/themes",
 	"/help", "/orders", "/journal", "/plugins", "/refund", "/invoice", "/kitchen-display",
+	"/settings", "/catalog", "/users", "/open-orders", "/recovery",
 }
 
 // ReservedPageRoutePrefix returns the core-reserved prefix route falls under
