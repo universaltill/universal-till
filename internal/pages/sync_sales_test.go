@@ -605,7 +605,7 @@ func TestSyncSalesAPI_RejectsOversizedBatch(t *testing.T) {
 	mux, dp := newSyncSalesTestDeps(t)
 	ctx := context.Background()
 	tillsRepo := data.NewTillsRepo(dp.Db)
-	_, err := tillsRepo.InsertTill(ctx, "Replica 1", hashBearer("token-abc"))
+	_, err := tillsRepo.InsertTill(ctx, "Replica 1", hashBearer("token-abc"), data.TillRoleAdditional)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -625,7 +625,7 @@ func TestSyncSalesAPI_AppliesBatchAndReportsAppliedSkipped(t *testing.T) {
 	mux, dp := newSyncSalesTestDeps(t)
 	ctx := context.Background()
 	tillsRepo := data.NewTillsRepo(dp.Db)
-	_, err := tillsRepo.InsertTill(ctx, "Replica 1", hashBearer("token-abc"))
+	_, err := tillsRepo.InsertTill(ctx, "Replica 1", hashBearer("token-abc"), data.TillRoleAdditional)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -757,7 +757,7 @@ INSERT INTO payments(id, sale_id, method_id, amount, currency, paid_at) VALUES(?
 func TestSyncPushTick_PushesLocalSalesAndAdvancesCursor(t *testing.T) {
 	primaryMux, primaryDp := newSyncSalesTestDeps(t)
 	ctx := context.Background()
-	if _, err := data.NewTillsRepo(primaryDp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc")); err != nil {
+	if _, err := data.NewTillsRepo(primaryDp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("enrol till: %v", err)
 	}
 	server := httptest.NewServer(primaryMux)
@@ -801,7 +801,7 @@ func TestSyncPushTick_PushesLocalSalesAndAdvancesCursor(t *testing.T) {
 func TestSyncPushTick_RejectedResponse_CursorNotAdvanced(t *testing.T) {
 	primaryMux, primaryDp := newSyncSalesTestDeps(t)
 	ctx := context.Background()
-	if _, err := data.NewTillsRepo(primaryDp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc")); err != nil {
+	if _, err := data.NewTillsRepo(primaryDp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("enrol till: %v", err)
 	}
 	server := httptest.NewServer(primaryMux)

@@ -409,7 +409,7 @@ func TestTablesPage_RenderShowsClaimTillIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTable T3: %v", err)
 	}
-	onlineTillID, err := data.NewTillsRepo(d.Db).InsertTill(t.Context(), "Terrace till", "hash-online")
+	onlineTillID, err := data.NewTillsRepo(d.Db).InsertTill(t.Context(), "Terrace till", "hash-online", data.TillRoleAdditional)
 	if err != nil {
 		t.Fatalf("InsertTill online: %v", err)
 	}
@@ -426,7 +426,7 @@ func TestTablesPage_RenderShowsClaimTillIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTable T4: %v", err)
 	}
-	staleTillID, err := data.NewTillsRepo(d.Db).InsertTill(t.Context(), "Kitchen till", "hash-stale")
+	staleTillID, err := data.NewTillsRepo(d.Db).InsertTill(t.Context(), "Kitchen till", "hash-stale", data.TillRoleAdditional)
 	if err != nil {
 		t.Fatalf("InsertTill stale: %v", err)
 	}
@@ -577,7 +577,7 @@ func TestTablesPage_ReleaseWarnsOnRecentlySeenOtherTill(t *testing.T) {
 		t.Fatalf("CreateTable: %v", err)
 	}
 
-	tillID, err := data.NewTillsRepo(d.Db).InsertTill(t.Context(), "Kitchen-2", "hash1")
+	tillID, err := data.NewTillsRepo(d.Db).InsertTill(t.Context(), "Kitchen-2", "hash1", data.TillRoleAdditional)
 	if err != nil {
 		t.Fatalf("InsertTill: %v", err)
 	}
