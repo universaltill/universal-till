@@ -129,8 +129,9 @@ func respondSettingsSyncFragment(w http.ResponseWriter, r *http.Request, err err
 }
 
 // respondSettingsSyncError answers a failed write-through on a handler
-// whose error shape is an http.Error text body (the upsert card renders
-// it): 403 forbidden, 409 for any other main-till refusal, 502 when the
+// whose error shape is a text body (the upsert card renders it; every
+// other Settings card's save-error step shows it next to the card, which is
+// why it goes out through httpx.RefuseText — ut-docs#2982): 403 forbidden, 409 for any other main-till refusal, 502 when the
 // main till could not be reached. False when err is not a write-through
 // failure.
 func respondSettingsSyncError(w http.ResponseWriter, r *http.Request, err error) bool {
@@ -138,7 +139,7 @@ func respondSettingsSyncError(w http.ResponseWriter, r *http.Request, err error)
 	if !ok {
 		return false
 	}
-	http.Error(w, settingsSyncMessage(r, w, se), settingsSyncStatus(se))
+	httpx.RefuseText(w, settingsSyncMessage(r, w, se), settingsSyncStatus(se))
 	return true
 }
 

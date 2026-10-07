@@ -69,7 +69,8 @@
 // So hx-on's
 //     if (event.detail.successful) { UT.reload('x') }
 //     else { document.getElementById('settings-save-error').hidden = false }
-// is  data-after-request="ok reload:x; fail unhide:settings-save-error".
+// is  data-after-request="ok reload:x; fail unhide:settings-save-error"
+// (Settings now uses `fail save-error:settings-save-error`, ut-docs#2982).
 // An unknown step name stops its chain and warns once (fail closed): a typo
 // must not half-run a sequence. Steps only ever take ids / keys / same-
 // origin paths, so injected markup carrying these attributes can't run
@@ -136,6 +137,24 @@
   // it never falls back to window.print().
   function reprint(no) {
     return fetch('/api/print/receipt/' + encodeURIComponent(no), { method: 'POST' });
+  }
+  // Where the save-error step's line goes: right after the posting form;
+  // a form-less carrier (a lone checkbox) uses its card.
+  function saveErrorAnchor(el) {
+    return formOf(el) || el.closest('.card') || el;
+  }
+  // That anchor's line: the card's last child, else the next sibling.
+  function saveErrorLine(anchor) {
+    if (anchor.classList.contains('card')) return anchor.querySelector(':scope > .save-error-inline');
+    var next = anchor.nextElementSibling;
+    return next && next.classList.contains('save-error-inline') ? next : null;
+  }
+  // A new save from the same card drops the previous attempt's reason.
+  function clearSaveError(start) {
+    var carrier = start && start.closest && start.closest('[data-after-request*="save-error:"]');
+    if (!carrier) return;
+    var line = saveErrorLine(saveErrorAnchor(carrier));
+    if (line) line.remove();
   }
 
   // name -> function(ctx, arg, args). ctx = { el, event, detail }.
@@ -213,6 +232,45 @@
     'text-response': function (ctx, id) {
       var el = byId(id), x = xhrOf(ctx);
       if (el) el.textContent = (x && x.responseText) || '';
+    },
+    // ut-docs#2982: a failed Settings save. A refusal the server marked
+    // X-UT-Response: refused (httpx.RefuseText — already translated, meant
+    // for the operator) goes into a role=alert line right after the form
+    // that made the request (one card can hold several forms:
+    // #settings-display has seven), and replaces the generic banners the
+    // same response raised. Anything else — an unmarked text body is an
+    // untranslated developer string ("could not save"), HTML, empty, a
+    // network error — unhides #<bannerId> exactly as `unhide:<bannerId>`
+    // did. That form's next request clears the line (htmx:beforeRequest
+    // below).
+    'save-error': function (ctx, bannerId) {
+      var banner = byId(bannerId);
+      var x = xhrOf(ctx);
+      var text = (x && header(ctx, 'X-UT-Response') === 'refused' &&
+        header(ctx, 'Content-Type').indexOf('text/plain') === 0 && (x.responseText || '').trim()) || '';
+      var anchor = saveErrorAnchor(ctx.el);
+      if (!text || !anchor.isConnected) {
+        if (banner) banner.hidden = false;
+        return;
+      }
+      var line = saveErrorLine(anchor);
+      if (!line) {
+        line = document.createElement('p');
+        line.className = 'login-error save-error-inline';
+        line.setAttribute('role', 'alert');
+        line.setAttribute('data-testid', 'save-error-inline');
+        if (anchor.classList.contains('card')) anchor.appendChild(line);
+        else anchor.insertAdjacentElement('afterend', line);
+      }
+      line.textContent = text;
+      if (banner) banner.hidden = true;
+      // app.js's htmx:responseError already raised the generic "server
+      // error" alert for this non-2xx; the specific reason supersedes it.
+      var alertBox = byId('pos-alert');
+      var alertText = alertBox && alertBox.querySelector('.notice-text');
+      if (alertBox && !alertBox.hidden && alertText && alertText.textContent === (alertBox.dataset.msgServer || '')) {
+        alertBox.hidden = true;
+      }
     },
     // The carrier's own data-error-text into #id (category popup tiles).
     'error-text': function (ctx, id) {
@@ -447,6 +505,7 @@
     var detail = ev.detail || {};
     // The same object htmx later dispatches htmx:afterRequest with.
     try { detail[SRC] = ev.target; } catch (e) { /* no replay for this one */ }
+    clearSaveError(ev.target);
     dispatch(ev.target, 'data-before-request', ev, detail);
   }, true);
   document.addEventListener('htmx:afterRequest', function (ev) {

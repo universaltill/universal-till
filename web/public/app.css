@@ -4250,6 +4250,9 @@ body.login-screen {
   color: var(--muted, #94a3b8); font-size: .72rem; letter-spacing: .02em;
 }
 .login-error { color: var(--danger, #c0392b); font-weight: 600; min-height: 1.3rem; }
+/* ut-docs#2982: inline-actions.js's save-error step — a refused Settings
+   save's reason, right after the form that made the request. */
+.save-error-inline { margin-block: .5rem 0; text-align: start; }
 .pin-dots { display: flex; gap: .45rem; justify-content: center; margin-bottom: 1.1rem; }
 .pin-dot {
   width: .8rem; height: .8rem; border-radius: 50%;
