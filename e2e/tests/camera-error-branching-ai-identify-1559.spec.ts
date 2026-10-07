@@ -98,4 +98,61 @@ test.describe('ai.identify camera error branching on err.name (ut-docs#1559)', (
 
     assertClean();
   });
+
+  // ut-docs#3807: Sell -> Menu -> Sell swaps #ut-page (ADR-0098); the
+  // returning sell page's server-hidden button must be shown and wired again.
+  test('the button survives Sell -> Menu -> Sell and still opens the camera (ut-docs#3807)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await stubCameraReject(page, 'NotFoundError', 'Requested device not found');
+    await page.goto('/');
+    await expect(page.locator('#ai-identify-open')).toBeVisible();
+    await page.getByTestId('nav-menu').click();
+    await expect(page).toHaveURL(/\/menu$/);
+    await page.getByTestId('nav-till').click();
+    await expect(page).toHaveURL(/\/$/);
+
+    await page.locator('#ai-identify-open').click();
+    await expect(page.locator('#ai-identify-overlay')).toBeVisible();
+    await expect(page.locator('#ai-identify-status')).toHaveText(
+      'No camera found on this device.',
+    );
+    assertClean();
+  });
+
+  // ut-docs#3807 review: the camera can arrive after the cashier has left
+  // (permission prompt answered late). It must be stopped, not kept alive in
+  // the previous page's detached overlay.
+  test('a camera granted after leaving Sell is released (ut-docs#3807)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.addInitScript(() => {
+      (window as any).__stopCalls = 0;
+      const canvas = document.createElement('canvas');
+      canvas.width = 10;
+      canvas.height = 10;
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: {
+          getUserMedia: () => new Promise((resolve) => {
+            (window as any).__grant = () => {
+              const stream = (canvas as any).captureStream();
+              stream.getTracks().forEach((t: MediaStreamTrack) => {
+                const origStop = t.stop.bind(t);
+                t.stop = () => { (window as any).__stopCalls++; origStop(); };
+              });
+              resolve(stream);
+            };
+          }),
+        },
+      });
+    });
+    await page.goto('/');
+    await page.locator('#ai-identify-open').click();
+    await expect.poll(() => page.evaluate(() => typeof (window as any).__grant)).toBe('function');
+    // The overlay covers the rail; a programmatic click is the same shell nav.
+    await page.evaluate(() => (document.querySelector('[data-testid="nav-menu"]') as HTMLElement).click());
+    await expect(page).toHaveURL(/\/menu$/);
+    await page.evaluate(() => (window as any).__grant());
+    await expect.poll(() => page.evaluate(() => (window as any).__stopCalls)).toBe(1);
+    assertClean();
+  });
 });

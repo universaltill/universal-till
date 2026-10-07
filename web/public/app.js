@@ -1565,13 +1565,38 @@ function initOfflineOverride(updateFn){
   document.addEventListener('htmx:configRequest', updateOfflineFlag);
 })();
 
+// ut-docs#3807: the sell page's camera buttons (AI identify, barcode scan)
+// render hidden; the bind functions below unhide and wire them. A menu link
+// swaps #ut-page instead of loading a new document (ADR-0098), so a binding
+// made once at load was lost on Sell -> Menu -> Sell, and never made when the
+// till opened on another page. Each bind runs at load and on every htmx:load
+// and returns { btn, close, onNetwork } for the button it wired, or null when
+// the page has none. A binding whose button left the document is closed
+// first, which releases a camera left open when the cashier navigates away.
+function utSellCamera(bind){
+  var current = null;
+  function sync(){
+    if (current && current.btn.isConnected) return;
+    if (current) { current.close(); current = null; }
+    current = bind();
+  }
+  function network(){ if (current && current.onNetwork) current.onNetwork(); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', sync);
+  else sync();
+  document.addEventListener('htmx:load', sync);
+  window.addEventListener('online', network);
+  window.addEventListener('offline', network);
+}
+
 // Camera identify (AI-assisted; strictly optional). The button only shows
 // when the server rendered it (UT_AI_API_KEY set) AND the till is online —
 // barcode scan stays the primary path and never waits on this.
-(function(){
+// ut-docs#3807: bound per sell page, not once per document — see
+// utSellCamera above.
+utSellCamera(function(){
   var openBtn = document.getElementById('ai-identify-open');
   var overlay = document.getElementById('ai-identify-overlay');
-  if (!openBtn || !overlay) return;
+  if (!openBtn || !overlay) return null;
 
   var video = document.getElementById('ai-identify-video');
   var results = document.getElementById('ai-identify-results');
@@ -1587,8 +1612,6 @@ function initOfflineOverride(updateFn){
     openBtn.hidden = !navigator.onLine;
     if (!navigator.onLine && !overlay.hidden) close();
   }
-  window.addEventListener('online', updateVisibility);
-  window.addEventListener('offline', updateVisibility);
   updateVisibility();
 
   function setStatus(text){ status.textContent = text || ''; }
@@ -1615,7 +1638,14 @@ function initOfflineOverride(updateFn){
       return;
     }
     navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-      .then(function(s){ stream = s; video.srcObject = s; })
+      .then(function(s){
+        // Closed (or the page left, ut-docs#3807) while the camera was still
+        // starting: release it rather than keep it alive behind a hidden or
+        // detached overlay. Same guard as the barcode scan below.
+        if (overlay.hidden) { s.getTracks().forEach(function(t){ t.stop(); }); return; }
+        stream = s;
+        video.srcObject = s;
+      })
       .catch(function(err){
         if (err && err.name) {
           switch (err.name) {
@@ -1733,7 +1763,8 @@ function initOfflineOverride(updateFn){
   captureBtn.addEventListener('click', identify);
   retakeBtn.addEventListener('click', retake);
   closeBtn.addEventListener('click', close);
-})();
+  return { btn: openBtn, close: close, onNetwork: updateVisibility };
+});
 
 // Camera barcode/QR scan (ut-docs#548): an alternative input mode alongside
 // the wedge/HID scanner path above (never disables or steals focus from it —
@@ -1747,16 +1778,9 @@ function initOfflineOverride(updateFn){
 // first tap. The button therefore always shows: with no camera API at all,
 // tapping it explains why instead of the button silently being absent.
 (function(){
-  var openBtn = document.getElementById('barcode-scan-open');
-  var overlay = document.getElementById('barcode-scan-overlay');
-  if (!openBtn || !overlay || !window.utScan) return;
-
-  var video = document.getElementById('barcode-scan-video');
-  var status = document.getElementById('barcode-scan-status');
-  var closeBtn = document.getElementById('barcode-scan-close');
-  var msgs = overlay.dataset;
-  var stream = null;
-  var rafID = null;
+  if (!window.utScan) return;
+  // The decoder outlives any one sell page (ut-docs#3807): fetched once per
+  // document, whichever page bound it.
   var detector = null;
   var detectorPromise = null;
   // Formats this product's wedge scanners actually read (ut-docs#423's
@@ -1768,7 +1792,8 @@ function initOfflineOverride(updateFn){
   // Content version of the decoder (ponyfill.js; the wasm is pinned to it by
   // web/vendor_barcode_decoder_test.go), so both get immutable caching and
   // an upgrade changes the URL instead of being refetched on every load.
-  var DECODER_QS = overlay.dataset.decoderV ? '?v=' + encodeURIComponent(overlay.dataset.decoderV) : '';
+  // Read from the overlay's data-decoder-v at bind time.
+  var DECODER_QS = '';
 
   function nativeDetector(){
     // typeof-check, not `'BarcodeDetector' in window`: a test stubbing the
@@ -1847,106 +1872,121 @@ function initOfflineOverride(updateFn){
     return detectorPromise;
   }
 
-  openBtn.hidden = false;
+  utSellCamera(function(){
+    var openBtn = document.getElementById('barcode-scan-open');
+    var overlay = document.getElementById('barcode-scan-overlay');
+    if (!openBtn || !overlay) return null;
 
-  function setStatus(text){ status.textContent = text || ''; }
+    var video = document.getElementById('barcode-scan-video');
+    var status = document.getElementById('barcode-scan-status');
+    var closeBtn = document.getElementById('barcode-scan-close');
+    var msgs = overlay.dataset;
+    var stream = null;
+    var rafID = null;
+    if (msgs.decoderV) DECODER_QS = '?v=' + encodeURIComponent(msgs.decoderV);
 
-  function open(){
-    if (!overlay.hidden) return; // already open (button keeps focus; Space/Enter re-fires it)
-    overlay.hidden = false;
-    setStatus(msgs.msgScanning);
-    // ut-docs#1251: same guard as the AI-identify IIFE above — a
-    // non-secure-context origin leaves `navigator.mediaDevices` undefined,
-    // and calling `.getUserMedia` on it throws synchronously, before the
-    // .catch() below exists to report anything. Since ut-docs#696 the
-    // button always shows, so this is the path a plain-http LAN origin
-    // takes: an explanation instead of an uncaught TypeError.
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setStatus(msgs.msgCameraError);
-      return;
-    }
-    // Native: resolves at once. Vendored: fetched and compiled on the first
-    // tap, in parallel with the camera start below. The no-op catch only
-    // keeps a failure here from being reported as unhandled when the camera
-    // itself fails first; the .then() below still sees the rejection.
-    var detectorReady = getDetector();
-    detectorReady.catch(function(){});
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-      .then(function(s){
-        // The cashier can close while the permission prompt / camera start is
-        // still pending — never leave an orphaned live camera behind a hidden
-        // overlay (nor let it scan and ring up a line the cashier can't see).
-        if (overlay.hidden) { s.getTracks().forEach(function(t){ t.stop(); }); return; }
-        stream = s;
-        video.srcObject = s;
-        detectorReady.then(function(){
-          if (stream !== s) return; // closed (or reopened) meanwhile
-          rafID = requestAnimationFrame(scanFrame);
-        }, function(){
-          if (stream !== s) return;
-          // No decoder means no scanning: release the camera rather than
-          // leave it running behind an overlay that can never match.
-          stream.getTracks().forEach(function(t){ t.stop(); });
-          stream = null;
-          video.srcObject = null;
-          setStatus(msgs.msgCameraError);
-        });
-      })
-      .catch(function(err){
-        if (err && err.name) {
-          switch (err.name) {
-            case 'NotFoundError':
-            case 'OverconstrainedError':
-              setStatus(msgs.msgCameraNotFound);
-              break;
-            case 'NotAllowedError':
-            case 'SecurityError':
-              setStatus(msgs.msgCameraPermissionDenied);
-              break;
-            case 'NotReadableError':
-              setStatus(msgs.msgCameraBusy);
-              break;
-            default:
-              setStatus(msgs.msgCameraError);
+    openBtn.hidden = false;
+
+    function setStatus(text){ status.textContent = text || ''; }
+
+    function open(){
+      if (!overlay.hidden) return; // already open (button keeps focus; Space/Enter re-fires it)
+      overlay.hidden = false;
+      setStatus(msgs.msgScanning);
+      // ut-docs#1251: same guard as the AI-identify IIFE above — a
+      // non-secure-context origin leaves `navigator.mediaDevices` undefined,
+      // and calling `.getUserMedia` on it throws synchronously, before the
+      // .catch() below exists to report anything. Since ut-docs#696 the
+      // button always shows, so this is the path a plain-http LAN origin
+      // takes: an explanation instead of an uncaught TypeError.
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setStatus(msgs.msgCameraError);
+        return;
+      }
+      // Native: resolves at once. Vendored: fetched and compiled on the first
+      // tap, in parallel with the camera start below. The no-op catch only
+      // keeps a failure here from being reported as unhandled when the camera
+      // itself fails first; the .then() below still sees the rejection.
+      var detectorReady = getDetector();
+      detectorReady.catch(function(){});
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+        .then(function(s){
+          // The cashier can close while the permission prompt / camera start is
+          // still pending — never leave an orphaned live camera behind a hidden
+          // overlay (nor let it scan and ring up a line the cashier can't see).
+          if (overlay.hidden) { s.getTracks().forEach(function(t){ t.stop(); }); return; }
+          stream = s;
+          video.srcObject = s;
+          detectorReady.then(function(){
+            if (stream !== s) return; // closed (or reopened) meanwhile
+            rafID = requestAnimationFrame(scanFrame);
+          }, function(){
+            if (stream !== s) return;
+            // No decoder means no scanning: release the camera rather than
+            // leave it running behind an overlay that can never match.
+            stream.getTracks().forEach(function(t){ t.stop(); });
+            stream = null;
+            video.srcObject = null;
+            setStatus(msgs.msgCameraError);
+          });
+        })
+        .catch(function(err){
+          if (err && err.name) {
+            switch (err.name) {
+              case 'NotFoundError':
+              case 'OverconstrainedError':
+                setStatus(msgs.msgCameraNotFound);
+                break;
+              case 'NotAllowedError':
+              case 'SecurityError':
+                setStatus(msgs.msgCameraPermissionDenied);
+                break;
+              case 'NotReadableError':
+                setStatus(msgs.msgCameraBusy);
+                break;
+              default:
+                setStatus(msgs.msgCameraError);
+            }
+          } else {
+            setStatus(msgs.msgCameraError);
           }
-        } else {
-          setStatus(msgs.msgCameraError);
-        }
-      });
-  }
+        });
+    }
 
-  function close(){
-    overlay.hidden = true;
-    if (rafID) { cancelAnimationFrame(rafID); rafID = null; }
-    if (stream) { stream.getTracks().forEach(function(t){ t.stop(); }); stream = null; }
-    video.srcObject = null;
-  }
+    function close(){
+      overlay.hidden = true;
+      if (rafID) { cancelAnimationFrame(rafID); rafID = null; }
+      if (stream) { stream.getTracks().forEach(function(t){ t.stop(); }); stream = null; }
+      video.srcObject = null;
+    }
 
-  function scanFrame(){
-    if (!stream) return;
-    detector.detect(video)
-      .then(function(codes){
-        // close() nulls `stream`; a detect() already in flight when the
-        // cashier closed must not ring up a line after the overlay is gone.
-        if (!stream) return;
-        if (codes && codes.length) {
-          var code = codes[0].rawValue;
-          close();
-          if (code) window.utScan.submit(code, window.utScan.input());
-          return;
-        }
-        rafID = requestAnimationFrame(scanFrame);
-      })
-      .catch(function(){
-        // A transient per-frame decode error shouldn't kill the session —
-        // keep scanning until the cashier closes the overlay themselves.
-        if (!stream) return;
-        rafID = requestAnimationFrame(scanFrame);
-      });
-  }
+    function scanFrame(){
+      if (!stream) return;
+      detector.detect(video)
+        .then(function(codes){
+          // close() nulls `stream`; a detect() already in flight when the
+          // cashier closed must not ring up a line after the overlay is gone.
+          if (!stream) return;
+          if (codes && codes.length) {
+            var code = codes[0].rawValue;
+            close();
+            if (code) window.utScan.submit(code, window.utScan.input());
+            return;
+          }
+          rafID = requestAnimationFrame(scanFrame);
+        })
+        .catch(function(){
+          // A transient per-frame decode error shouldn't kill the session —
+          // keep scanning until the cashier closes the overlay themselves.
+          if (!stream) return;
+          rafID = requestAnimationFrame(scanFrame);
+        });
+    }
 
-  openBtn.addEventListener('click', open);
-  closeBtn.addEventListener('click', close);
+    openBtn.addEventListener('click', open);
+    closeBtn.addEventListener('click', close);
+    return { btn: openBtn, close: close };
+  });
 })();
 
 // Idle auto-lock, client half (docs: pos-auth.md). The server revokes an idle

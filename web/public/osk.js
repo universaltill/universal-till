@@ -826,4 +826,7 @@
     for (var i = 0; i < btns.length; i++) btns[i].hidden = !enabled;
   }
   updateToggles();
+  // ut-docs#3807: a menu link swaps #ut-page (ADR-0098), bringing the sell
+  // page's toggle back hidden; reveal it again on every swap.
+  document.addEventListener('htmx:load', updateToggles);
 })();

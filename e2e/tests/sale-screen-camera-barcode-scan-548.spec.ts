@@ -444,4 +444,59 @@ test.describe('camera barcode scan on the sale screen (ut-docs#548)', () => {
 
     assertClean();
   });
+
+  // ut-docs#3807: the product owner went Sell -> Menu -> Sell and the scan
+  // button was gone. A menu link is a boosted #ut-page swap (ADR-0098), so
+  // the sell page's fresh, server-hidden button needs binding again; app.js
+  // only ran once, at the first document load.
+  test('Sell -> Menu -> Sell keeps the scan button, wired once (ut-docs#3807)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await stubCamera(page);
+    await page.goto('/');
+    await expect(page.locator('#barcode-scan-open')).toBeVisible();
+
+    for (let i = 0; i < 2; i++) {
+      await page.getByTestId('nav-menu').click();
+      await expect(page).toHaveURL(/\/menu$/);
+      await page.getByTestId('nav-till').click();
+      await expect(page).toHaveURL(/\/$/);
+    }
+
+    const openBtn = page.locator('#barcode-scan-open');
+    await expect(openBtn).toBeVisible();
+    await openBtn.click();
+    await expect(page.locator('#barcode-scan-overlay')).toBeVisible();
+    // One tap, one camera: re-binding never stacks listeners.
+    await page.waitForTimeout(100);
+    expect(await page.evaluate(() => (window as any).__gumCalls)).toBe(1);
+    await page.locator('#barcode-scan-close').click();
+    await expect.poll(() => page.evaluate(() => (window as any).__stopCalls)).toBe(1);
+
+    assertClean();
+  });
+
+  test('a till first opened on another page still gets the scan button on Sell (ut-docs#3807)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await stubCamera(page);
+    await page.goto('/menu');
+    await page.getByTestId('nav-till').click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.locator('#barcode-scan-open')).toBeVisible();
+    assertClean();
+  });
+
+  test('leaving Sell with the scanner open releases the camera (ut-docs#3807)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await stubCamera(page);
+    await page.goto('/');
+    await page.locator('#barcode-scan-open').click();
+    await expect.poll(() => page.evaluate(() => (window as any).__gumCalls)).toBe(1);
+    await expect.poll(() => page.evaluate(() => !!document.querySelector<HTMLVideoElement>('#barcode-scan-video')?.srcObject)).toBe(true);
+    // The overlay covers the rail; a programmatic click is the shell nav
+    // an idle-lock, a hardware Back or a deep link would also trigger.
+    await page.evaluate(() => (document.querySelector('[data-testid="nav-menu"]') as HTMLElement).click());
+    await expect(page).toHaveURL(/\/menu$/);
+    await expect.poll(() => page.evaluate(() => (window as any).__stopCalls)).toBe(1);
+    assertClean();
+  });
 });
