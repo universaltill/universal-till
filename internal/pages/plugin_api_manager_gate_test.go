@@ -187,24 +187,27 @@ func TestPluginStoreEndpoints_RealSessionGatesByRole(t *testing.T) {
 	}
 }
 
-// The read-only catalog-browsing and update-check endpoints must NOT be
-// manager-gated — a cashier browsing the marketplace or checking for
-// updates is harmless and shouldn't need a manager PIN.
-// ut-docs#3079 reversed this: the cashier is sale-only, so the marketplace
-// proxy (like /plugins/store) now needs plugin_management.
-func TestPluginCatalogBrowsing_RequiresPluginManagement(t *testing.T) {
-	chdirRoot(t)
-	db := openPagesTestDB(t)
-	defer db.Close()
-
-	dp := &common.Deps{Cfg: &config.Config{}, Db: db}
+// ut-docs#2675: the raw /api/plugins/marketplace proxy was removed (the store
+// pages use marketplace.CatalogRepository). Through the real route set
+// (registerPluginAPI + the "/" catch-all in registerIndex) the path must now
+// be an unknown route, for any role.
+func TestMarketplaceProxyRoute_Removed(t *testing.T) {
+	dp := newDesignerTestDeps(t)
+	dp.Menu = baseMenu
+	t.Setenv("UT_AUTH", "on")
 	mux := http.NewServeMux()
+	registerIndex(mux, dp)
 	registerPluginAPI(mux, dp)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/plugins/marketplace", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("marketplace browsing with no session = %d, want 403", rec.Code)
+	for _, role := range []string{"", "cashier", "manager", "admin"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/plugins/marketplace", nil)
+		if role != "" {
+			req = auth.WithUser(req, auth.User{ID: "u-" + role, Role: role})
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("GET /api/plugins/marketplace role=%q = %d, want 404 (route removed, ut-docs#2675)", role, rec.Code)
+		}
 	}
 }

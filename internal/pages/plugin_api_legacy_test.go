@@ -4,11 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -18,10 +16,9 @@ import (
 
 // --- helpers for the legacy inline handlers in registerPluginAPI ----------
 //
-// These endpoints (/api/plugins/marketplace, permissions grant/revoke,
-// trust) predate the T017 lifecycle handlers and are not wired to any UI
-// template. They still ship, so their contract (gates, validation, error
-// mapping) is pinned here.
+// These endpoints (permissions grant/revoke, trust) predate the T017
+// lifecycle handlers and are not wired to any UI template. They still
+// ship, so their contract (gates, validation, error mapping) is pinned here.
 //
 // /api/plugins/upload and /api/plugins/marketplace/install used to live
 // here too. Both were known half-implementations (ut-docs QUEUE-ARCHIVE.md,
@@ -45,14 +42,12 @@ type legacyCatalogPlugin struct {
 }
 
 // legacyMarketplaceStub serves /v1/catalog/plugins with the given entries and
-// /artifact/<listing_id> with the given payloads, recording catalog queries.
-func legacyMarketplaceStub(t *testing.T, plugins []legacyCatalogPlugin, artifacts map[string][]byte) (*httptest.Server, *url.Values) {
+// /artifact/<listing_id> with the given payloads.
+func legacyMarketplaceStub(t *testing.T, plugins []legacyCatalogPlugin, artifacts map[string][]byte) *httptest.Server {
 	t.Helper()
-	var lastQuery url.Values
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/catalog/plugins":
-			lastQuery = r.URL.Query()
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{"plugins": plugins})
 		case strings.HasPrefix(r.URL.Path, "/artifact/"):
@@ -68,7 +63,7 @@ func legacyMarketplaceStub(t *testing.T, plugins []legacyCatalogPlugin, artifact
 		}
 	}))
 	t.Cleanup(srv.Close)
-	return srv, &lastQuery
+	return srv
 }
 
 // sha256Hex is a shared test helper (also used by sync_plugins_test.go).
@@ -89,84 +84,6 @@ func newLegacyMux(t *testing.T, endpointURL string) (*http.ServeMux, *common.Dep
 	mux := http.NewServeMux()
 	registerPluginAPI(mux, d)
 	return mux, d
-}
-
-// --- /api/plugins/marketplace (catalog proxy) -----------------------------
-
-func TestLegacyMarketplaceList_ForwardsCatalogAndArch(t *testing.T) {
-	t.Setenv("UT_AUTH", "off")
-	srv, lastQuery := legacyMarketplaceStub(t, []legacyCatalogPlugin{
-		{ListingID: "com.test.a", Name: "Plugin A", Version: "1.0.0"},
-	}, nil)
-	mux, _ := newLegacyMux(t, srv.URL)
-
-	// Default arch: the till's own GOOS/GOARCH.
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/plugins/marketplace", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET marketplace = %d, want 200 (%s)", rec.Code, rec.Body.String())
-	}
-	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
-		t.Fatalf("Content-Type = %q, want application/json", ct)
-	}
-	if !strings.Contains(rec.Body.String(), "Plugin A") {
-		t.Fatalf("catalog body not forwarded: %s", rec.Body.String())
-	}
-	wantArch := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
-	if got := lastQuery.Get("device_arch"); got != wantArch {
-		t.Fatalf("device_arch = %q, want %q", got, wantArch)
-	}
-	if lastQuery.Get("capability") != "" {
-		t.Fatalf("capability sent without being asked: %q", lastQuery.Get("capability"))
-	}
-
-	// Explicit os/arch/capability filters pass through.
-	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/plugins/marketplace?os=linux&arch=arm64&capability=payment", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("filtered GET = %d, want 200", rec.Code)
-	}
-	if got := lastQuery.Get("device_arch"); got != "linux/arm64" {
-		t.Fatalf("device_arch = %q, want linux/arm64", got)
-	}
-	if got := lastQuery.Get("capability"); got != "payment" {
-		t.Fatalf("capability = %q, want payment", got)
-	}
-}
-
-func TestLegacyMarketplaceList_MethodAndUpstreamErrors(t *testing.T) {
-	t.Setenv("UT_AUTH", "off")
-
-	// Wrong method.
-	srv, _ := legacyMarketplaceStub(t, nil, nil)
-	mux, _ := newLegacyMux(t, srv.URL)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/plugins/marketplace", nil))
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("POST marketplace = %d, want 405", rec.Code)
-	}
-
-	// Upstream non-200 status propagates.
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "catalog down", http.StatusBadGateway)
-	}))
-	t.Cleanup(upstream.Close)
-	mux2, _ := newLegacyMux(t, upstream.URL)
-	rec = httptest.NewRecorder()
-	mux2.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/plugins/marketplace", nil))
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("upstream 502 propagated as %d, want 502", rec.Code)
-	}
-
-	// Unreachable marketplace: 500 with an error message.
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	dead.Close() // now guaranteed-unreachable URL
-	mux3, _ := newLegacyMux(t, dead.URL)
-	rec = httptest.NewRecorder()
-	mux3.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/plugins/marketplace", nil))
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("unreachable marketplace = %d, want 500", rec.Code)
-	}
 }
 
 // --- /api/plugins/upload and /api/plugins/marketplace/install: removed ----
@@ -200,7 +117,7 @@ func TestLegacyInstallEndpoints_Removed(t *testing.T) {
 		Name:      "Would Install Plugin",
 		Version:   "1.0.0",
 	}}
-	srv, _ := legacyMarketplaceStub(t, pluginsList, map[string][]byte{"com.test.wouldinstall": artifact})
+	srv := legacyMarketplaceStub(t, pluginsList, map[string][]byte{"com.test.wouldinstall": artifact})
 	pluginsList[0].ArtifactURL = srv.URL + "/artifact/com.test.wouldinstall"
 	pluginsList[0].SHA256 = sha256Hex(artifact)
 	mux, _ := newLegacyMux(t, srv.URL)
@@ -224,7 +141,7 @@ func TestLegacyInstallEndpoints_Removed(t *testing.T) {
 
 func TestLegacyPermissions_GrantRevoke(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	srv, _ := legacyMarketplaceStub(t, nil, nil)
+	srv := legacyMarketplaceStub(t, nil, nil)
 	mux, d := newLegacyMux(t, srv.URL)
 	seedInstalledPlugin(t, d.Db, "com.test.perms", "1.0.0")
 
@@ -304,7 +221,7 @@ func TestLegacyPermissions_GrantRevoke(t *testing.T) {
 
 func TestLegacyTrustLevel_UpdateAndValidation(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	srv, _ := legacyMarketplaceStub(t, nil, nil)
+	srv := legacyMarketplaceStub(t, nil, nil)
 	mux, d := newLegacyMux(t, srv.URL)
 	seedInstalledPlugin(t, d.Db, "com.test.trust", "1.0.0")
 
@@ -351,7 +268,7 @@ func TestLegacyTrustLevel_UpdateAndValidation(t *testing.T) {
 // (inventory_api_test.go) uses to force a real url.ParseQuery failure.
 func TestLegacyPermissionsAndTrust_MalformedFormBodyIsLocalized(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	srv, _ := legacyMarketplaceStub(t, nil, nil)
+	srv := legacyMarketplaceStub(t, nil, nil)
 
 	cases := []struct {
 		name string

@@ -178,7 +178,7 @@ The mock server provides these test plugins:
 
 ### POS Plugin API
 
-- `GET /api/plugins/marketplace` - List plugins from marketplace (proxies to marketplace service)
+- ~~`GET /api/plugins/marketplace`~~ - REMOVED (ut-docs#2675): unused raw proxy; the store pages use `marketplace.CatalogRepository`
 - `POST /api/plugins/install` - Install plugin by ID (downloads from marketplace)
 - `POST /api/plugins/permissions/grant` - Grant permission to plugin
 - `POST /api/plugins/permissions/revoke` - Revoke permission from plugin
