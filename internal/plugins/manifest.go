@@ -567,12 +567,22 @@ func validatePageEntryKeys(ctx context.Context, repo *data.PluginRepo, tx *sql.T
 // close, just intra-plugin instead of cross-plugin. Checked the same way
 // validatePaymentEntryKeys' seenKeys/seenLabels catches the analogous
 // within-manifest case for payment entries.
+//
+// A route under a core-reserved namespace (reservedPageRoutePrefixes) is
+// refused too (ut-docs#3786): any path no core mux pattern claims falls
+// through to the "/" catch-all, which renders a plugin page for an exact
+// route match — so without this a signed plugin could render a page at an
+// unrouted /api/*, /ui/* or /v1/* path and shadow a core namespace, or
+// under an auth-exempt one (/self-order/*) and reach anonymous customers.
 func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql.Tx, pluginID string, entries []ManifestEntry) error {
 	var checkRoutes []string
 	seenRoutes := make(map[string]bool, len(entries))
 	for _, e := range entries {
 		if e.Type != "page" || e.Route == "" {
 			continue
+		}
+		if prefix, ok := ReservedPageRoutePrefix(e.Route); ok {
+			return fmt.Errorf("page entry route %q is under the core-reserved prefix %q/ — plugin pages may not shadow core namespaces; pick a different route (e.g. under /plugin/)", e.Route, prefix)
 		}
 		if seenRoutes[e.Route] {
 			return fmt.Errorf("page entry route %q is used by more than one entry in this manifest — pick distinct routes", e.Route)
@@ -592,6 +602,32 @@ func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql
 	}
 	c := conflicts[0]
 	return fmt.Errorf("page entry route %q is already provided by plugin %s — pick a different route", c.Route, c.Owner)
+}
+
+// reservedPageRoutePrefixes are the namespaces core owns (ut-docs#3786):
+// /api, /ui, /v1 carry core's handlers; /public, /ext, /plugin-icons are
+// core subtrees (defense-in-depth — the mux never lets their children reach
+// the catch-all); /self-order, /o, /themes are auth-exempt (auth.exempt), so
+// a plugin page there would reach anonymous customers and the kiosk.
+// Exact core routes (e.g. /settings) need no entry — the mux's more
+// specific pattern already beats the "/" catch-all that renders plugin
+// pages. TestReservedPageRoutesCoverAuthExemptNamespaces pins the
+// auth-exempt half.
+var reservedPageRoutePrefixes = []string{"/api", "/ui", "/v1", "/public", "/ext", "/plugin-icons", "/self-order", "/o", "/themes"}
+
+// ReservedPageRoutePrefix returns the core-reserved prefix route falls under
+// (route == prefix, or route starts with prefix+"/"). Exact and
+// case-sensitive, mirroring findPageEntry's exact route match, so /apix is
+// not reserved. Install/rollback refuse such a route
+// (validatePageEntryRoutes); internal/pages' findPageEntry also skips one
+// at dispatch, for a plugin installed before the check existed.
+func ReservedPageRoutePrefix(route string) (string, bool) {
+	for _, p := range reservedPageRoutePrefixes {
+		if route == p || strings.HasPrefix(route, p+"/") {
+			return p, true
+		}
+	}
+	return "", false
 }
 
 // validatePageEntryIcon enforces the install-time half of ut-docs#1734

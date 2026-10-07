@@ -508,3 +508,33 @@ func TestPluginPage_RouteCollisionRejectedAtInstall_FirstPluginStillServes(t *te
 		t.Errorf("the rejected second plugin's content leaked into the response: %s", body[:min(400, len(body))])
 	}
 }
+
+// ut-docs#3786: a plugin installed before install-time refused core-reserved
+// routes may still carry one in plugin_entries; findPageEntry must not
+// dispatch it (here an auth-exempt /self-order child, which would otherwise
+// render the POS chrome to walk-up kiosk customers).
+func TestFindPageEntry_SkipsLegacyReservedRoute(t *testing.T) {
+	db := openRealSchemaPagesDB(t)
+	m := &plugins.Manifest{
+		ID: "com.legacy.reserved", Name: "Legacy Reserved", Version: "1.0.0", Entrypoint: "./main.wasm",
+		Entries: []plugins.ManifestEntry{{Type: "page", Key: "promo", Label: "Promo", Route: "/plugin/legacy-promo"}},
+	}
+	if err := plugins.PersistManifest(t.Context(), db, m, plugins.InstallOptions{}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	// Simulate the pre-#3786 row: install-time would now refuse this route.
+	if _, err := db.Exec(`UPDATE plugin_entries SET route = '/self-order/promo' WHERE plugin_id = 'com.legacy.reserved'`); err != nil {
+		t.Fatal(err)
+	}
+	d := &common.Deps{Db: db}
+	if e, ok := findPageEntry(httptest.NewRequest(http.MethodGet, "/self-order/promo", nil), d); ok {
+		t.Fatalf("findPageEntry dispatched reserved route to %s", e.PluginID)
+	}
+	// An ordinary route is still served.
+	if _, err := db.Exec(`UPDATE plugin_entries SET route = '/faq-legacy' WHERE plugin_id = 'com.legacy.reserved'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := findPageEntry(httptest.NewRequest(http.MethodGet, "/faq-legacy", nil), d); !ok {
+		t.Fatal("findPageEntry no longer dispatches an ordinary route")
+	}
+}

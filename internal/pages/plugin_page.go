@@ -133,6 +133,11 @@ func findPageEntry(r *http.Request, d *common.Deps) (data.PageEntryRow, bool) {
 		return data.PageEntryRow{}, false
 	}
 	for _, e := range entries {
+		// ut-docs#3786: never dispatch under a core-reserved namespace, even
+		// for a plugin installed before install-time refused such a route.
+		if _, reserved := plugins.ReservedPageRoutePrefix(e.Route); reserved {
+			continue
+		}
 		if e.Route != "" && e.Route == r.URL.Path {
 			return e, true
 		}
