@@ -582,22 +582,43 @@ func shopName(ctx context.Context, cfg *config.Config, kv Settings) string {
 	return ""
 }
 
+// countryCode normalises a stored country setting to an upper-case ISO
+// 3166-1 alpha-2 code, or "" when it is not exactly two ASCII letters A-Z.
+// It validates shape only; deciding which countries are served is the
+// cloud's job (ut-docs#3849).
+func countryCode(v string) string {
+	c := strings.ToUpper(strings.TrimSpace(v))
+	if len(c) != 2 {
+		return ""
+	}
+	for i := 0; i < 2; i++ {
+		if c[i] < 'A' || c[i] > 'Z' {
+			return ""
+		}
+	}
+	return c
+}
+
 // register performs the anonymous enrolment call and persists the returned
 // identity (ADR-0013 layer 1; marketplace handler: /api/v1/stores/register).
-// The shop's chosen country (StoreCountrySettingsKey, read from kv) is
+// The shop's chosen country (StoreCountrySettingsKey, read once from kv) is
 // mapped to a region (regionForCountry); when it maps to one, that region
 // rides along in the payload so a fresh German till lands in the right
-// merchant region with no extra setup step. A failed/absent settings read is
-// treated as "no signal" — best-effort, same tolerant pattern used elsewhere
-// in this file — and never fails registration.
+// merchant region with no extra setup step. The same country is also sent as
+// an ISO 3166-1 alpha-2 "country" (countryCode) when it is well-formed, so
+// the cloud can refuse enrolment for countries it does not serve
+// (ut-docs#3849); the till holds no country list itself. A failed/absent
+// settings read is treated as "no signal" — best-effort, same tolerant
+// pattern used elsewhere in this file — and never fails registration.
 func register(ctx context.Context, m config.MarketplaceConfig, storeName string, kv Settings) error {
 	mu.RLock()
 	deviceID := cur.DeviceID
 	mu.RUnlock()
 
-	var region string
-	if country, _, err := kv.Get(ctx, StoreCountrySettingsKey); err == nil {
-		region = regionForCountry(country)
+	var region, country string
+	if v, _, err := kv.Get(ctx, StoreCountrySettingsKey); err == nil {
+		region = regionForCountry(v)
+		country = countryCode(v)
 	}
 
 	fields := map[string]string{
@@ -608,6 +629,9 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 	}
 	if region != "" {
 		fields["region"] = region
+	}
+	if country != "" {
+		fields["country"] = country
 	}
 	// Best-effort like region: the cloud merges/retires older rows by the
 	// till's stable id (ut-docs#2802). A joined till registers through

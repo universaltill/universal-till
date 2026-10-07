@@ -607,6 +607,89 @@ func TestRegisterSendsRegionForGermanCountry(t *testing.T) {
 	}
 }
 
+// The shop's country is also sent as an ISO 3166-1 alpha-2 "country" so the
+// cloud can refuse enrolment for countries it does not serve (ut-docs#3849).
+func TestRegisterSendsCountryNormalised(t *testing.T) {
+	cases := []struct {
+		name, seed, wantCountry, wantRegion string
+	}{
+		{"lowercase gb", "gb", "GB", ""},
+		{"padded de", " de ", "DE", "de"},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			resetState()
+			var gotBody map[string]any
+			srv := registerTestServer(t, &gotBody)
+			kv := newFakeKV()
+			if err := kv.Set(context.Background(), StoreCountrySettingsKey, c.seed); err != nil {
+				t.Fatalf("seed country: %v", err)
+			}
+			m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
+			if err := register(context.Background(), m, "Corner Shop", kv); err != nil {
+				t.Fatalf("register: %v", err)
+			}
+			if got := gotBody["country"]; got != c.wantCountry {
+				t.Fatalf("country = %v, want %q (payload %#v)", got, c.wantCountry, gotBody)
+			}
+			if c.wantRegion == "" {
+				if _, ok := gotBody["region"]; ok {
+					t.Fatalf("unexpected region: %#v", gotBody)
+				}
+			} else if got := gotBody["region"]; got != c.wantRegion {
+				t.Fatalf("region = %v, want %q", got, c.wantRegion)
+			}
+		})
+	}
+}
+
+func TestRegisterOmitsCountryWhenUnsetOrInvalid(t *testing.T) {
+	cases := []struct {
+		name    string
+		seed    bool
+		country string
+	}{
+		{"unset", false, ""},
+		{"empty", true, ""},
+		{"three letters", true, "DEU"},
+		{"digit", true, "1A"},
+		{"unicode", true, "Ü1"},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			resetState()
+			var gotBody map[string]any
+			srv := registerTestServer(t, &gotBody)
+			kv := newFakeKV()
+			if c.seed {
+				if err := kv.Set(context.Background(), StoreCountrySettingsKey, c.country); err != nil {
+					t.Fatalf("seed country: %v", err)
+				}
+			}
+			m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
+			if err := register(context.Background(), m, "Corner Shop", kv); err != nil {
+				t.Fatalf("register: %v", err)
+			}
+			if _, ok := gotBody["country"]; ok {
+				t.Fatalf("payload has country for %q: %#v", c.country, gotBody)
+			}
+		})
+	}
+}
+
+func TestCountryCode(t *testing.T) {
+	for in, want := range map[string]string{
+		"GB": "GB", "gb": "GB", " de ": "DE", "": "", "  ": "", "D": "",
+		"DEU": "", "1A": "", "Ü1": "", "ÜÜ": "", "G-": "",
+	} {
+		if got := countryCode(in); got != want {
+			t.Errorf("countryCode(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // A non-German country, and an unset country, must both produce the exact
 // same payload as before this change: no "region" key present at all.
 func TestRegisterOmitsRegionForNonGermanCountry(t *testing.T) {
