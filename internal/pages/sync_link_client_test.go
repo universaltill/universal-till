@@ -354,7 +354,7 @@ func TestReplicaLink_ReconnectsAfterTheMainTillRestarts(t *testing.T) {
 	m := &restartableMain{dp: newSyncPairingGateTestDeps(t)}
 	m.start(t)
 	t.Cleanup(func() { m.stop() })
-	tillID, err := data.NewTillsRepo(m.dp.Db).InsertTill(context.Background(), "Till 2", hashBearer("token-abc"))
+	tillID, err := data.NewTillsRepo(m.dp.Db).InsertTill(context.Background(), "Till 2", hashBearer("token-abc"), data.TillRoleAdditional)
 	if err != nil {
 		t.Fatal(err)
 	}
