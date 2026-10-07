@@ -215,9 +215,9 @@ func postPair(ctx context.Context, endpoint, code, deviceID, deviceName, version
 	}
 	var ok struct {
 		Data struct {
-			StoreID    string `json:"store_id"`
-			MerchantID string `json:"merchant_id"`
-			Token      string `json:"token"`
+			StoreID     string `json:"store_id"`
+			MerchantID  string `json:"merchant_id"`
+			DeviceToken string `json:"device_token"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &ok); err != nil {
@@ -229,8 +229,8 @@ func postPair(ctx context.Context, endpoint, code, deviceID, deviceName, version
 		return "", "", "", fmt.Errorf("%w: no store", errPairAnswerRejected)
 	case strings.TrimSpace(d.MerchantID) == "":
 		return "", "", "", fmt.Errorf("%w: no merchant", errPairAnswerRejected)
-	case !validRotatedToken(d.Token):
-		return "", "", "", fmt.Errorf("%w: malformed credential (length %d)", errPairAnswerRejected, len(d.Token))
+	case !validRotatedToken(d.DeviceToken):
+		return "", "", "", fmt.Errorf("%w: malformed credential (length %d)", errPairAnswerRejected, len(d.DeviceToken))
 	}
-	return d.StoreID, d.MerchantID, d.Token, nil
+	return d.StoreID, d.MerchantID, d.DeviceToken, nil
 }
