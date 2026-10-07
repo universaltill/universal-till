@@ -152,12 +152,6 @@ func (r *httpStreams) closeAll() {
 	}
 }
 
-func (r *httpStreams) count() int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return len(r.open)
-}
-
 // streamLimit is this event's http:stream byte cap, read lazily (once per
 // event) from the plugin's installed manifest.
 func (s *hostState) streamLimit(ctx context.Context) int64 {

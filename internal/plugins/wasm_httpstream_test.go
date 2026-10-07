@@ -512,3 +512,10 @@ func TestHTTPStreamLimitBytes(t *testing.T) {
 		}
 	}
 }
+
+// count is the number of open handles (test-only: production never needs it).
+func (r *httpStreams) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.open)
+}
