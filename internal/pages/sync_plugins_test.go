@@ -653,7 +653,7 @@ func newSyncPluginsPrimary(t *testing.T, mkt *fakeMarketplace) *syncPluginsPrima
 	var dp *common.Deps
 	withPaths(dataDir, func() { dp = newMigratedSyncDeps(t, "primary.db") })
 	dp.Cfg.Marketplace = mkt.config()
-	if _, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Replica 1", hashBearer("token-abc")); err != nil {
+	if _, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Replica 1", hashBearer("token-abc"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("enrol till: %v", err)
 	}
 	p := &syncPluginsPrimary{dp: dp, dataDir: dataDir}
