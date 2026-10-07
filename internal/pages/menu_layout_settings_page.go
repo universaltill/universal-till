@@ -171,6 +171,10 @@ func amendedMenuRows(d *common.Deps) []amendedMenuRow {
 // echoed back as text.
 var menuLayoutErrorKeys = map[string]bool{
 	"menulayout.error.unknown_key": true,
+	// A refused main-till write-through (settingsSyncMessageKey).
+	"settings.error.main_till_unreachable": true,
+	"settings.error.main_till_refused":     true,
+	"settings.error.change_on_main_till":   true,
 }
 
 func registerMenuLayoutSettings(mux *http.ServeMux, d *common.Deps) {
@@ -227,7 +231,19 @@ func registerMenuLayoutSettings(mux *http.ServeMux, d *common.Deps) {
 			} else {
 				delete(restored, key)
 			}
-			if err := common.SaveRestoredMenuKeys(ctx, d.Settings, restored); err != nil {
+			// menu.restored_keys is shop-wide: on a till that follows a main
+			// till it goes through the main till, or the next admin pull
+			// would revert it (ut-docs#2999).
+			raw, err := common.EncodeRestoredMenuKeys(restored)
+			if err == nil {
+				err = saveShopSettings(ctx, d, elevationCheck{Outcome: allowed, ActorID: getSessionUserID(r)},
+					map[string]string{common.MenuRestoredKeysSetting: raw})
+			}
+			if se, ok := settingsSyncFailure(err); ok {
+				http.Redirect(w, r, "/settings/menu?err="+settingsSyncMessageKey(se), http.StatusSeeOther)
+				return
+			}
+			if err != nil {
 				logging.L().Errorf("menu layout: save restored keys: %v", err)
 				httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 				return

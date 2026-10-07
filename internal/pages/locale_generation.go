@@ -35,6 +35,7 @@ func retireLocaleOverrides(ctx context.Context, store *settings.Store) {
 	// choice moves to 1 and retires every override recorded before it.
 	n, _ := strconv.ParseInt(current, 10, 64)
 	n++
+	// settings-write:allow main till or pre-join only: on a till that follows one, every caller sends the bump through saveShopSettings with the locale instead (ut-docs#2948, #2999)
 	if err := store.Set(ctx, common.KeyLocaleGeneration, strconv.FormatInt(n, 10)); err != nil {
 		logging.L().Errorf("settings: write %s: %v", common.KeyLocaleGeneration, err)
 		return

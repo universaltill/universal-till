@@ -28,11 +28,15 @@ import (
 //   - in settingsWriteGuardFileAllowlist below (main-till-only or pre-join
 //     code, each with its reason).
 //
-// Flagged calls: <x>.Settings.Set( / <x>.Settings.SetMany(,
-// common.SaveState(, SetEnabledBarcodeSymbologies(,
-// SetBarcodeSymbologyEnabled(. Writes through other receivers (a local
-// `store` variable, common.SaveRestoredMenuKeys) are not recognised -- keep
-// new code on d.Settings so this guard sees it.
+// Flagged calls: Set( / SetMany( on any receiver that holds the settings
+// store -- <x>.Settings, a parameter, variable or struct field typed
+// *settings.Store, a variable assigned from one of those, or a value of a
+// package interface type with a Set/SetMany method (ut-docs#2999: the
+// store's type, not the field name; internal/pages/common's own helpers
+// are scanned too) -- plus common.SaveState(, SetEnabledBarcodeSymbologies(
+// and SetBarcodeSymbologyEnabled(. The tracking is syntactic (no type checker):
+// a store reached through a function's return value, a map or a package
+// variable is not recognised.
 
 // settingsWriteGuardFileAllowlist: files whose direct writes are reviewed
 // as a whole. Keep it tight -- prefer a per-line annotation.
@@ -92,11 +96,62 @@ func f(d *common.Deps, k string) {
 	_ = d.Settings.Set(ctx, keyShop, "x") // settings-write:allow
 }
 `
+	// ut-docs#2999: the store's type, not the field name -- a write through
+	// any variable, parameter, struct field or package interface that holds
+	// the settings store.
+	src2 := `package pages
+
+import (
+	"context"
+
+	st "github.com/universaltill/universal-till/internal/settings"
+	"github.com/universaltill/universal-till/internal/pages/common"
+)
+
+type kvWriter interface {
+	Get(ctx context.Context, key string) (string, bool, error)
+	Set(ctx context.Context, key, value string) error
+}
+
+type kvReader interface {
+	Get(ctx context.Context, key string) (string, bool, error)
+}
+
+type holder struct {
+	store *st.Store
+	other *otherCache
+}
+
+func g(ctx context.Context, store *st.Store, kv kvWriter, rd kvReader, h *holder, d *common.Deps) {
+	_ = store.Set(ctx, keyShop, "x")                          // flagged: *settings.Store parameter
+	_ = store.Set(ctx, keyLocalPrinter, "x")                  // per-till const
+	s := d.Settings
+	_ = s.SetMany(ctx, map[string]string{keyShop: "x"})       // flagged: alias of d.Settings
+	_ = kv.Set(ctx, keyShop, "x")                             // flagged: interface with Set
+	_ = kv.Set(ctx, keyLocalPrinter, "x")                     // per-till const
+	_ = h.store.Set(ctx, keyShop, "x")                        // flagged: struct field of the store type
+	var v *st.Store
+	_ = v.Set(ctx, keyShop, "x")                              // flagged: var of the store type
+	_ = h.other.Set(ctx, keyShop, "x")                        // not a settings store
+	w.Header().Set("Content-Type", "text/html")               // not a settings store
+	_ = rd.Get(ctx, keyShop)                                  // a read
+	fn := func(inner *st.Store) {
+		_ = inner.Set(ctx, keyShop, "x")                      // flagged: closure parameter
+	}
+	_ = fn
+}
+`
 	if err := os.WriteFile(filepath.Join(dir, "bad.go"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "bad2.go"), []byte(src2), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	got := scanSettingsWrites(t, dir)
-	wantLines := []string{"bad.go:12:", "bad.go:13:", "bad.go:14:", "bad.go:15:", "bad.go:16:", "bad.go:24:"}
+	wantLines := []string{
+		"bad.go:12:", "bad.go:13:", "bad.go:14:", "bad.go:15:", "bad.go:16:", "bad.go:24:",
+		"bad2.go:25:", "bad2.go:28:", "bad2.go:29:", "bad2.go:31:", "bad2.go:33:", "bad2.go:38:",
+	}
 	if len(got) != len(wantLines) {
 		t.Fatalf("violations = %d, want %d:\n%s", len(got), len(wantLines), strings.Join(got, "\n"))
 	}
@@ -170,6 +225,15 @@ func splitFileLine(s string) (string, int) {
 type constResolver struct {
 	modPath, modRoot string
 	pkgs             map[string]map[string]constDef // dir -> name -> def
+	storeDecls       map[string]storeDecls          // dir -> settings-store-typed declarations
+}
+
+// storeDecls are a package's own declarations that hold the settings store:
+// interface types with a Set or SetMany method (what *settings.Store is
+// passed as), and struct fields typed *settings.Store or such an interface.
+type storeDecls struct {
+	ifaces map[string]bool
+	fields map[string]bool
 }
 
 type constDef struct {
@@ -206,7 +270,7 @@ func newConstResolver(t *testing.T) *constResolver {
 			break
 		}
 	}
-	return &constResolver{modPath: mod, modRoot: root, pkgs: map[string]map[string]constDef{}}
+	return &constResolver{modPath: mod, modRoot: root, pkgs: map[string]map[string]constDef{}, storeDecls: map[string]storeDecls{}}
 }
 
 func fileImports(f *ast.File) map[string]string {
@@ -316,6 +380,168 @@ func (c *constResolver) perTill(e ast.Expr, dir string, imps map[string]string) 
 	return ok && data.SettingScope(k) == data.SettingPerTill
 }
 
+// isSettingsStorePtr reports whether e is *settings.Store (this module's
+// internal/settings, under whatever name the file imports it).
+func (c *constResolver) isSettingsStorePtr(e ast.Expr, imps map[string]string) bool {
+	star, ok := e.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := star.X.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Store" {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	return ok && imps[pkg.Name] == c.modPath+"/internal/settings"
+}
+
+// isStoreType reports whether the type expression e holds the settings
+// store: *settings.Store, or a package interface type with Set/SetMany.
+func (c *constResolver) isStoreType(e ast.Expr, dir string, imps map[string]string) bool {
+	if c.isSettingsStorePtr(e, imps) {
+		return true
+	}
+	id, ok := e.(*ast.Ident)
+	return ok && c.stores(dir).ifaces[id.Name]
+}
+
+// stores parses (once) dir's store-holding interface types and struct
+// fields.
+func (c *constResolver) stores(dir string) storeDecls {
+	dir = filepath.Clean(dir)
+	if sd, ok := c.storeDecls[dir]; ok {
+		return sd
+	}
+	sd := storeDecls{ifaces: map[string]bool{}, fields: map[string]bool{}}
+	c.storeDecls[dir] = sd
+	entries, _ := os.ReadDir(dir)
+	fset := token.NewFileSet()
+	var files []*ast.File
+	for _, e := range entries {
+		n := e.Name()
+		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join(dir, n), nil, parser.SkipObjectResolution)
+		if err != nil {
+			continue
+		}
+		files = append(files, f)
+	}
+	// Interfaces first: a struct field may be typed by one.
+	for _, f := range files {
+		for _, decl := range f.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				ts := spec.(*ast.TypeSpec)
+				it, ok := ts.Type.(*ast.InterfaceType)
+				if !ok {
+					continue
+				}
+				for _, m := range it.Methods.List {
+					for _, n := range m.Names {
+						if n.Name == "Set" || n.Name == "SetMany" {
+							sd.ifaces[ts.Name.Name] = true
+						}
+					}
+				}
+			}
+		}
+	}
+	for _, f := range files {
+		imps := fileImports(f)
+		ast.Inspect(f, func(n ast.Node) bool {
+			st, ok := n.(*ast.StructType)
+			if !ok {
+				return true
+			}
+			for _, fl := range st.Fields.List {
+				if c.isStoreType(fl.Type, dir, imps) {
+					for _, n := range fl.Names {
+						sd.fields[n.Name] = true
+					}
+				}
+			}
+			return true
+		})
+	}
+	return sd
+}
+
+// storeIdents returns the names a function declaration binds to the
+// settings store: parameters (its closures' included) and variables typed
+// as one, and variables assigned from a store expression. Shadowing is
+// ignored -- a same-named non-store variable is flagged, and takes an
+// allow tag.
+func (c *constResolver) storeIdents(fn *ast.FuncDecl, dir string, imps map[string]string) map[string]bool {
+	set := map[string]bool{}
+	addFields := func(fl *ast.FieldList) {
+		if fl == nil {
+			return
+		}
+		for _, f := range fl.List {
+			if c.isStoreType(f.Type, dir, imps) {
+				for _, n := range f.Names {
+					set[n.Name] = true
+				}
+			}
+		}
+	}
+	addFields(fn.Recv)
+	// Assignments can chain (a := d.Settings; b := a), so repeat until no
+	// new name appears.
+	for grew := true; grew; {
+		before := len(set)
+		ast.Inspect(fn, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.FuncType:
+				addFields(x.Params)
+			case *ast.ValueSpec:
+				if x.Type != nil && c.isStoreType(x.Type, dir, imps) {
+					for _, n := range x.Names {
+						set[n.Name] = true
+					}
+				}
+				for i, v := range x.Values {
+					if i < len(x.Names) && c.isStoreExpr(v, dir, set) {
+						set[x.Names[i].Name] = true
+					}
+				}
+			case *ast.AssignStmt:
+				if len(x.Lhs) != len(x.Rhs) {
+					return true
+				}
+				for i, l := range x.Lhs {
+					if id, ok := l.(*ast.Ident); ok && c.isStoreExpr(x.Rhs[i], dir, set) {
+						set[id.Name] = true
+					}
+				}
+			}
+			return true
+		})
+		grew = len(set) > before
+	}
+	return set
+}
+
+// isStoreExpr reports whether e evaluates to the settings store:
+// <x>.Settings (common.Deps' field), <x>.<a store-typed struct field>, or
+// a name already bound to the store.
+func (c *constResolver) isStoreExpr(e ast.Expr, dir string, idents map[string]bool) bool {
+	switch x := e.(type) {
+	case *ast.ParenExpr:
+		return c.isStoreExpr(x.X, dir, idents)
+	case *ast.Ident:
+		return idents[x.Name]
+	case *ast.SelectorExpr:
+		return x.Sel.Name == "Settings" || c.stores(dir).fields[x.Sel.Name]
+	}
+	return false
+}
+
 func (c *constResolver) scanFile(t *testing.T, path, shown string) []string {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -352,7 +578,7 @@ func (c *constResolver) scanFile(t *testing.T, path, shown string) []string {
 		}
 	}
 	var out []string
-	ast.Inspect(f, func(n ast.Node) bool {
+	check := func(n ast.Node, idents map[string]bool) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
@@ -364,8 +590,7 @@ func (c *constResolver) scanFile(t *testing.T, path, shown string) []string {
 		what := ""
 		switch sel.Sel.Name {
 		case "Set", "SetMany":
-			inner, ok := sel.X.(*ast.SelectorExpr)
-			if !ok || inner.Sel.Name != "Settings" || len(call.Args) < 2 {
+			if !c.isStoreExpr(sel.X, dir, idents) || len(call.Args) < 2 {
 				return true
 			}
 			if sel.Sel.Name == "Set" && c.perTill(call.Args[1], dir, imps) {
@@ -374,7 +599,7 @@ func (c *constResolver) scanFile(t *testing.T, path, shown string) []string {
 			if sel.Sel.Name == "SetMany" && c.perTillMap(call.Args[1], dir, imps) {
 				return true
 			}
-			what = "Settings." + sel.Sel.Name + " with a key that is not a per-till constant"
+			what = "settings store " + sel.Sel.Name + " with a key that is not a per-till constant"
 		case "SaveState":
 			if id, ok := sel.X.(*ast.Ident); !ok || id.Name != "common" {
 				return true
@@ -391,7 +616,14 @@ func (c *constResolver) scanFile(t *testing.T, path, shown string) []string {
 		}
 		out = append(out, shown+":"+strconv.Itoa(line)+": "+what)
 		return true
-	})
+	}
+	for _, decl := range f.Decls {
+		idents := map[string]bool{}
+		if fn, ok := decl.(*ast.FuncDecl); ok {
+			idents = c.storeIdents(fn, dir, imps)
+		}
+		ast.Inspect(decl, func(n ast.Node) bool { return check(n, idents) })
+	}
 	return out
 }
 
