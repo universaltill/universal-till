@@ -2081,7 +2081,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// confirm_satellite=1 is the dialog's own confirmed retry.
 		role := ownTillRole(r.Context(), d)
 		if role == data.TillRoleSatellite && rawMode != "self_order" {
-			http.Error(w, httpx.T(locale, "settings.display.satellite_mode_blocked"), http.StatusBadRequest)
+			httpx.RefuseText(w, httpx.T(locale, "settings.display.satellite_mode_blocked"), http.StatusBadRequest)
 			return
 		}
 		makeSatellite := role == data.TillRoleAdditional && rawMode == "self_order"
@@ -2336,17 +2336,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// "de-DE" mean the installed "de".
 			v = httpx.MatchLocale(v, available)
 			if v == "" {
-				http.Error(w, httpx.T(locale, "settings.staff_languages.error_unknown"), http.StatusBadRequest)
+				httpx.RefuseText(w, httpx.T(locale, "settings.staff_languages.error_unknown"), http.StatusBadRequest)
 				return
 			}
 			picked[v] = true
 		}
 		if len(picked) == 0 {
-			http.Error(w, httpx.T(locale, "settings.staff_languages.error_empty"), http.StatusBadRequest)
+			httpx.RefuseText(w, httpx.T(locale, "settings.staff_languages.error_empty"), http.StatusBadRequest)
 			return
 		}
 		if def := httpx.DefaultStaffLocale(); def != "" && !picked[def] {
-			http.Error(w, httpx.T(locale, "settings.staff_languages.error_default"), http.StatusBadRequest)
+			httpx.RefuseText(w, httpx.T(locale, "settings.staff_languages.error_default"), http.StatusBadRequest)
 			return
 		}
 		ordered := make([]string, 0, len(picked))
@@ -2756,12 +2756,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		if tseProvisioningDismissBlocked(st) {
 			locale := httpx.ResolveLocale(w, r)
-			http.Error(w, httpx.T(locale, "settings.tse.dismiss_blocked"), http.StatusConflict)
+			httpx.RefuseText(w, httpx.T(locale, "settings.tse.dismiss_blocked"), http.StatusConflict)
 			return
 		}
 		if err := saveTSEProvisioningState(r.Context(), d, nil); errors.Is(err, errTSENotMainTill) {
 			locale := httpx.ResolveLocale(w, r)
-			http.Error(w, httpx.T(locale, "settings.error.change_on_main_till"), http.StatusConflict)
+			httpx.RefuseText(w, httpx.T(locale, "settings.error.change_on_main_till"), http.StatusConflict)
 			return
 		} else if err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
@@ -2791,12 +2791,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		st, err := retryTSEProvisioning(r.Context(), d, settingsActorID(r))
 		if errors.Is(err, errNoTSERetry) {
 			locale := httpx.ResolveLocale(w, r)
-			http.Error(w, httpx.T(locale, "settings.tse.nothing_to_retry"), http.StatusConflict)
+			httpx.RefuseText(w, httpx.T(locale, "settings.tse.nothing_to_retry"), http.StatusConflict)
 			return
 		}
 		if errors.Is(err, errTSENotMainTill) {
 			locale := httpx.ResolveLocale(w, r)
-			http.Error(w, httpx.T(locale, "settings.error.change_on_main_till"), http.StatusConflict)
+			httpx.RefuseText(w, httpx.T(locale, "settings.error.change_on_main_till"), http.StatusConflict)
 			return
 		}
 		if err != nil {
@@ -2831,7 +2831,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			if taken {
-				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "sync.error.name_taken"), http.StatusUnprocessableEntity)
+				httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), "sync.error.name_taken"), http.StatusUnprocessableEntity)
 				return
 			}
 		}
@@ -3195,7 +3195,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				// RENDERED to the operator (settings.html's All-settings
 				// card surfaces a refused upsert), so an English-only
 				// literal would show through in every locale.
-				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "settings.service_charge.invalid_rate"), http.StatusBadRequest)
+				httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), "settings.service_charge.invalid_rate"), http.StatusBadRequest)
 				return
 			}
 			// ut-docs#962: a service-charge/cover line on a bill has been
@@ -3208,7 +3208,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// whatever reaches there regardless, e.g. a rate saved before
 			// the shop's country was set to TR).
 			if bp > 0 && common.ServiceChargeForbidden(d.CurrentState().Country) {
-				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "settings.service_charge.tr_forbidden"), http.StatusBadRequest)
+				httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), "settings.service_charge.tr_forbidden"), http.StatusBadRequest)
 				return
 			}
 		}
@@ -3219,7 +3219,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if key == common.KeyTaxRate {
 			bp, ok := taxrate.ParsePercent(value)
 			if !ok {
-				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "taxcodes.err.invalid_rate"), http.StatusBadRequest)
+				httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), "taxcodes.err.invalid_rate"), http.StatusBadRequest)
 				return
 			}
 			value = taxrate.FormatPercent(bp)
@@ -3236,7 +3236,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// ut-docs#2781: no side door around the dedicated display-mode
 		// handler's satellite gate.
 		if key == "display.mode" && value != "self_order" && ownTillRole(r.Context(), d) == data.TillRoleSatellite {
-			http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "settings.display.satellite_mode_blocked"), http.StatusBadRequest)
+			httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), "settings.display.satellite_mode_blocked"), http.StatusBadRequest)
 			return
 		}
 		// ADR-0083 (ut-docs#1767): the two signing-device posture keys are
