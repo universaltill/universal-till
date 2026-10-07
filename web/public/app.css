@@ -3481,9 +3481,20 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
   border-color: var(--success-tint-border); }
 .pos-notice.error { background: var(--danger-tint); color: var(--danger);
   border-color: var(--danger-tint-border); }
+/* Touch-target floor (ut-docs#2721 UX finding): the ✕ used to measure
+   ~28x22px. It is now a real 44x44 box (min-height/min-width in px, so it
+   holds at every --fluid-fs/--ui-scale), glyph centred. The negative block
+   margin (-11px each side, 22px net) keeps its contribution to the row's
+   height at the old 22px, so every notice that shares this class
+   (.pos-notice on the sale screen, .pairing-notice/.join-notice in
+   base.html) keeps its height: the extra hit area hangs into the notice's
+   own .55rem block padding, where nothing else is tappable. Fixed here,
+   once, not per notice. */
 .notice-dismiss { flex: 0 0 auto; background: transparent; border: none;
   color: inherit; font: inherit; font-size: 1rem; cursor: pointer;
-  padding: .15rem .4rem; border-radius: 6px; min-height: 0; line-height: 1; }
+  padding: 0 .4rem; border-radius: 6px; line-height: 1;
+  min-height: 44px; min-width: 44px; margin-block: -11px;
+  display: inline-flex; align-items: center; justify-content: center; }
 .notice-dismiss:hover { background: rgba(15, 23, 42, .08); }
 #pos-alert { margin-block-end: .6rem; }
 
@@ -4281,6 +4292,19 @@ body.login-screen {
 .pairing-notice[hidden] { display: none; }
 .pairing-notice-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .pairing-notice a { color: inherit; font-weight: 700; text-decoration: underline; }
+/* ut-docs#2721: the standalone till's "join this shop's main till" notice
+   reuses .pairing-notice's look; its inline name + Link form wraps under
+   the text on a narrow screen, and pair-start's progress shows below. */
+.join-notice { flex-wrap: wrap; }
+.join-notice-form { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: 0; }
+.join-notice-form input[type="text"] { width: auto; min-width: 8rem; margin: 0; }
+.join-notice-label { margin: 0; font-weight: 600; color: inherit; }
+/* The candidate's name (a <bdi>, join_notice.go) moves to the next line
+   as one unit instead of breaking at its hyphens inside fa/ar copy
+   ("test-" / "2721-main"); it still breaks if it alone is wider than the
+   line, so a long name can't overflow a 360px screen. */
+.join-notice-name { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
+.join-notice-status:not(:empty) { padding: .55rem 1rem; border-block-end: 1px solid rgba(37, 99, 235, .3); }
 
 /* Operator chip + lock button in the nav: a column, in the rail and in
    the phone ☰ drawer alike (ut-docs#3297 removed the old top bar's

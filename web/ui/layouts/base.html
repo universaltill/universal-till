@@ -1429,6 +1429,25 @@
          dismiss script (getElementById('pairing-notice')) would resolve to
          this outer, dataset-less placeholder instead of the real banner. -->
     <div id="pairing-notice-mount" hx-get="/ui/pairing-notice" hx-trigger="load, every 30s, tills-changed from:body" hx-preserve></div>
+    <!-- ut-docs#2721: the standalone till's mirror of the notice above —
+         "found this shop's main till, link this till?" (join_notice.go /
+         join_notice.html). Same innerHTML-swap placeholder shape and the
+         same reasons (an outerHTML swap of an empty poll would kill the
+         polling; the mount id differs from the partial's #join-notice).
+         No extra trigger event: dismiss targets this mount directly and its
+         empty response clears it. -->
+    <div id="join-notice-mount" hx-get="/ui/join-notice" hx-trigger="load, every 30s" hx-preserve></div>
+    <!-- The notice's "Link this till" form targets THIS sibling, outside
+         the mount (review finding, ut-docs#2721): the join completes only
+         while pairing_wait.html's own 15s pair-status poll keeps running
+         (pairStatusHandler fetches the token and runs completeJoin), and
+         the mount above is innerHTML-swapped with an EMPTY body whenever
+         GET /ui/join-notice has nothing to show -- a lossy 5-minute mDNS
+         rebrowse or a lapsed manager session mid-approval would otherwise
+         delete the in-flight waiting fragment and leave the approved
+         request to expire unseen. Nothing swaps this element but the form
+         itself. -->
+    <div id="join-notice-status" class="join-notice-status" aria-live="polite"></div>
     <!-- ut-docs#2343: theme-sync poll, every 30s from every open page.
          hx-swap="none" -- GET /ui/theme-sync's response is an OOB swap of
          THIS div's own id (id="theme-sync-poll", carrying the live theme

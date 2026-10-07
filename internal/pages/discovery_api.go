@@ -14,9 +14,11 @@ import (
 
 // LAN till discovery (ADR-0033 part 1, universaltill/ut-docs#264): a manager
 // on the Tills page can ask "is there a primary already on this network?"
-// on demand — a bounded, per-click scan, never an ambient/background
-// browser. Selecting a result to actually join is a separate future card
-// (#185); this endpoint only surfaces read-only candidates.
+// on demand — a bounded, per-click scan. (The one ambient browse is a
+// standalone till's rate-limited discovery.JoinWatch, ADR-0033 amendment /
+// ut-docs#2721 — join_notice.go; not this endpoint.) Joining a result is
+// pairing_join.go's pair-start; this endpoint only surfaces read-only
+// candidates.
 
 // discoverBrowseTimeout bounds the LAN scan this endpoint runs per request.
 const discoverBrowseTimeout = 4 * time.Second

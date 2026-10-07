@@ -468,7 +468,14 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 		return strings.TrimSpace(v)
 	}
 	primary, bearer := get("sync.primary_url"), get("sync.bearer")
-	if primary == "" || bearer == "" {
+	if primary == "" {
+		// Standalone till: nothing to pull, but this loop runs on every
+		// till, so it also drives the ambient look for a main till to join
+		// (ut-docs#2721; rate-limited inside JoinWatch, nil-safe).
+		d.JoinWatch.Tick(ctx)
+		return
+	}
+	if bearer == "" {
 		return
 	}
 	url := strings.TrimSuffix(primary, "/") + "/api/sync/admin?have=" + get("sync.pull_version")
