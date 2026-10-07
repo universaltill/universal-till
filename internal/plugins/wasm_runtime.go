@@ -664,6 +664,8 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 	// http:stream handles never outlive the event (ADR-0121 §3): closed
 	// however the guest ends — success, error, deadline or trap.
 	defer hs.streams.closeAll()
+	// So do blob handles; an uncommitted put leaves nothing behind.
+	defer hs.blobs.closeAll()
 	if onHostState != nil {
 		onHostState(hs)
 	}
