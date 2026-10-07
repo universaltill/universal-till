@@ -33,7 +33,7 @@ func TestSyncChip_CashierGetsStatusNotLink(t *testing.T) {
 				if err := dp.Settings.Set(ctx, "till.name", "Front Till"); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := data.NewTillsRepo(dp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-3079")); err != nil {
+				if _, err := data.NewTillsRepo(dp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-3079"), data.TillRoleAdditional); err != nil {
 					t.Fatal(err)
 				}
 			}

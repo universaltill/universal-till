@@ -23,11 +23,11 @@ func joinedTillWithRoster(t *testing.T, dp *common.Deps) {
 	t.Helper()
 	ctx := t.Context()
 	repo := data.NewTillsRepo(dp.Db)
-	self, err := repo.InsertTill(ctx, "Back Office", "hash-self")
+	self, err := repo.InsertTill(ctx, "Back Office", "hash-self", data.TillRoleAdditional)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.InsertTill(ctx, "Terrace", "hash-terrace"); err != nil {
+	if _, err := repo.InsertTill(ctx, "Terrace", "hash-terrace", data.TillRoleAdditional); err != nil {
 		t.Fatal(err)
 	}
 	for k, v := range map[string]string{
@@ -48,7 +48,7 @@ func TestTillNameEndpoint_MainTillRefusesASiblingsName(t *testing.T) {
 	if err := d.Settings.Set(ctx, "till.name", "Front"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := data.NewTillsRepo(d.Db).InsertTill(ctx, "Terrace", "hash-terrace"); err != nil {
+	if _, err := data.NewTillsRepo(d.Db).InsertTill(ctx, "Terrace", "hash-terrace", data.TillRoleAdditional); err != nil {
 		t.Fatal(err)
 	}
 
@@ -115,7 +115,7 @@ func TestCloudRenameTill_RefusesANameAnotherTillUses(t *testing.T) {
 		if err := dp.Settings.Set(ctx, "till.name", "Front"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := data.NewTillsRepo(dp.Db).InsertTill(ctx, "Terrace", "hash-terrace"); err != nil {
+		if _, err := data.NewTillsRepo(dp.Db).InsertTill(ctx, "Terrace", "hash-terrace", data.TillRoleAdditional); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := cloudRenameTill(ctx, dp, "terrace"); err == nil {

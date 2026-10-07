@@ -52,7 +52,14 @@
         <input type="password" name="manager_pin" id="pin-{{ .ID }}" inputmode="numeric" autocomplete="off"
                aria-label="{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}"
                placeholder="{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}">
-        <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/approve" hx-include="#pin-{{ .ID }}" hx-swap="none"
+        {{/* ut-docs#2781: the new till's role, chosen at approval time —
+             only Approve includes it (Deny creates no till). Same
+             outside-the-form + hx-include technique as the PIN box. */}}
+        <select name="role" id="role-{{ .ID }}" aria-label="{{ T "tills.role.label" }} — {{ .DeviceName }}">
+          <option value="additional" selected>{{ T "tills.role.replica" }}</option>
+          <option value="satellite">{{ T "tills.role.satellite" }}</option>
+        </select>
+        <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/approve" hx-include="#pin-{{ .ID }}, #role-{{ .ID }}" hx-swap="none"
               hx-indicator="#pair-busy-{{ .ID }}" hx-disabled-elt="find button[type=submit]"
               data-after-request="ok refresh-region:tills-pairing-card; fail unhide:pin-error-{{ .ID }}">
           <button class="btn primary" type="submit">{{ T "tills.pairing.approve_btn" }}</button>

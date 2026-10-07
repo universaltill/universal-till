@@ -24,7 +24,7 @@ func TestReplicaRecoversViaCloudLookupThroughTheRealProof(t *testing.T) {
 	chdirRoot(t)
 	primary := newMigratedSyncDeps(t, "primary.db")
 	ctx := t.Context()
-	tillID, err := data.NewTillsRepo(primary.Db).InsertTill(ctx, "Back office", hashBearer("token-abc"))
+	tillID, err := data.NewTillsRepo(primary.Db).InsertTill(ctx, "Back office", hashBearer("token-abc"), data.TillRoleAdditional)
 	if err != nil {
 		t.Fatal(err)
 	}
