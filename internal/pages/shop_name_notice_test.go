@@ -2,10 +2,12 @@ package pages
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -56,6 +58,40 @@ func TestShopNameNoticeUI_ShownToManagerForPlaceholderName(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestShopNameNoticeUI_NeverShownOnSaleScreen (ut-docs#3114 review finding,
+// real e2e regression): unlike the pairing/join notices this is modelled
+// on — present only for the rare till mid-pairing — a placeholder store
+// name is the common case, so this banner is on every poll. Mounted the
+// same way on "/" as every other page, its height pushed the sale
+// screen's basket/tile-grid/totals-row layouts (phone-sell-3059,
+// portrait-tablet-sale-3050, tablet-tier-totals-416, phone-width-
+// layout-413, sale-screen-213) out of the exact viewport height they
+// budget for. The offline-first "never block the sale flow" rule means
+// the sale screen gets none of this banner.
+func TestShopNameNoticeUI_NeverShownOnSaleScreen(t *testing.T) {
+	mux := shopNameNoticeMux(t, "My Store")
+	rec := getWithUserFromPage(mux, "/ui/shop-name-notice", &mgrUser, "/")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("the sale screen must never show the notice even for a placeholder name, got: %s", rec.Body.String())
+	}
+}
+
+// getWithUserFromPage is getWithUser plus the HX-Current-URL header htmx
+// sends on every poll, so a handler can tell which page mounted it.
+func getWithUserFromPage(mux *http.ServeMux, path string, user *auth.User, currentURL string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Header.Set("HX-Current-URL", "http://till.local"+currentURL)
+	if user != nil {
+		req = auth.WithUser(req, *user)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
 }
 
 func TestShopNameNoticeUI_EmptyForRealName(t *testing.T) {
