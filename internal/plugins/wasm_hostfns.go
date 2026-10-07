@@ -139,6 +139,7 @@ func instantiateHostModule(ctx context.Context, rt wazero.Runtime) error {
 		NewFunctionBuilder().WithFunc(hostHTTPRead).Export("http_read").
 		NewFunctionBuilder().WithFunc(hostHTTPClose).Export("http_close").
 		NewFunctionBuilder().WithFunc(hostViewQuery).Export("view_query").
+		NewFunctionBuilder().WithFunc(hostSecretSet).Export("secret_set").
 		Instantiate(ctx)
 	return err
 }
