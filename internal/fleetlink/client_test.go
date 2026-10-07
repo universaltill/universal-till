@@ -547,3 +547,42 @@ func TestClient_BackoffRestartsAfterAnEstablishedLink(t *testing.T) {
 		t.Fatal("attempt did not return after the link dropped")
 	}
 }
+
+// ut-docs#2781: a satellite till sets its hello Role explicitly (the role
+// its main till recorded for it, reported by pages.linkHelloRole). The
+// client must carry it as-is — helloFor's "replica" default is only for a
+// hello with no Role at all — so the main till's hub sees a satellite and,
+// for one, never relays it the replica-only cloud check-in.
+func TestClient_SatelliteHelloReportsItsRole(t *testing.T) {
+	cfg := fastConfig()
+	h := newSwapHarness(t, cfg)
+	tt := &testTarget{}
+	tt.set(Target{BaseURL: h.srv.URL, Bearer: "good-till-2"})
+	rec := &clientRec{}
+	opts := fastClientOptions(cfg, tt, rec, advertised())
+	opts.Hello = func(context.Context) Hello {
+		return Hello{TillID: "till-2", Role: "satellite", Version: "v1.0.0", SyncProtocol: SyncProtocolLevel}
+	}
+	c := NewClient(opts)
+	startClient(t, c)
+
+	waitFor(t, "linked", c.Linked)
+	hub := h.currentHub()
+	p := hub.Peer("till-2")
+	if p == nil {
+		t.Fatal("hub has no link for till-2")
+	}
+	waitFor(t, "satellite hello at the main till", func() bool { _, ok := p.Hello(); return ok })
+	if got, _ := p.Hello(); got.Role != "satellite" {
+		t.Fatalf("hello role at the main till = %q, want satellite", got.Role)
+	}
+	var info PeerInfo
+	for _, pi := range hub.Peers() {
+		if pi.TillID == "till-2" {
+			info = pi
+		}
+	}
+	if !info.HasHello || info.Hello.Role != "satellite" {
+		t.Fatalf("roster view of the peer = %+v, want a satellite hello", info)
+	}
+}

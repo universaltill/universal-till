@@ -439,3 +439,58 @@ func TestApplyReplicaIdentityClearsInheritedCloudID(t *testing.T) {
 		t.Fatalf("sync.till_id = %q (err %v), want till-2", tid, err)
 	}
 }
+
+// ut-docs#2781: the role a manager chose on the main till before pairing
+// travels in the enrol response and is persisted here as this till's own
+// sync.till_role (plus sync.till_role_main, the value last learned from the
+// main till). A satellite starts life as the self-order kiosk — the only
+// device profile it may run — whatever display.mode the snapshot carried.
+// An older main till sends no role: the till is an additional one, its
+// display mode untouched (today's behaviour).
+func TestApplyReplicaIdentityPersistsTillRole(t *testing.T) {
+	for _, tc := range []struct {
+		name, role, wantRole, wantMode string
+	}{
+		{"satellite", "satellite", "satellite", "self_order"},
+		{"additional", "additional", "additional", "backoffice"},
+		{"older main till", "", "additional", "backoffice"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			paths.Init(t.TempDir())
+			t.Cleanup(func() { paths.Init("") })
+			path := filepath.Join(t.TempDir(), "data", "unitill-pos.db")
+			d, err := Open(path)
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			defer d.Close()
+			// The snapshot's display.mode (whatever the main till runs as).
+			if _, err := d.Exec(`INSERT INTO settings (key, value) VALUES ('display.mode', 'backoffice')`); err != nil {
+				t.Fatal(err)
+			}
+			if err := StageReplicaIdentity(path, ReplicaIdentity{
+				PrimaryURL: "http://primary.local", TillID: "till-2", Bearer: "b",
+				ReceiptPrefix: "T2-", TillName: "Kiosk", Role: tc.role,
+			}); err != nil {
+				t.Fatalf("stage: %v", err)
+			}
+			if applied, err := ApplyReplicaIdentity(d.DB, path); err != nil || !applied {
+				t.Fatalf("apply: applied=%v err=%v", applied, err)
+			}
+			get := func(key string) string {
+				var v string
+				_ = d.QueryRow(`SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
+				return v
+			}
+			if got := get("sync.till_role"); got != tc.wantRole {
+				t.Fatalf("sync.till_role = %q, want %q", got, tc.wantRole)
+			}
+			if got := get("sync.till_role_main"); got != tc.wantRole {
+				t.Fatalf("sync.till_role_main = %q, want %q", got, tc.wantRole)
+			}
+			if got := get("display.mode"); got != tc.wantMode {
+				t.Fatalf("display.mode = %q, want %q", got, tc.wantMode)
+			}
+		})
+	}
+}

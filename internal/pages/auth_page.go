@@ -230,7 +230,11 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// screen. A plain /login from another browser on the LAN (a manager
 		// checking reports from a phone) leaves the kiosk alone; back-office
 		// and register tills keep their mode.
-		if next == "kiosk" && inSelfOrderMode(r.Context(), d) {
+		//
+		// ut-docs#2781: never on a satellite till — the self-order kiosk is
+		// the only profile it may run (applyDisplayMode would refuse the
+		// switch). The person is still signed in and lands on Settings.
+		if next == "kiosk" && inSelfOrderMode(r.Context(), d) && !tillIsSatellite(r.Context(), d) {
 			if err := applyDisplayMode(r.Context(), d, "register"); err != nil {
 				svc.Logout(r.Context(), token)
 				loginUnavailable(w, r, next, err)
