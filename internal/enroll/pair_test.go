@@ -69,7 +69,9 @@ func newFakePairCloud(t *testing.T) *fakePairCloud {
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": map[string]string{"code": errOut, "message": "nope"}})
 		default:
 			if answer == nil {
-				answer = map[string]any{"store_id": pairStore, "merchant_id": pairMerchant, "token": pairToken}
+				// The shape ut-cloud's POST /v1/stores/pair handler answers
+				// (ADR-0116: the credential is data.device_token).
+				answer = map[string]any{"store_id": pairStore, "merchant_id": pairMerchant, "device_id": "till-new", "device_token": pairToken}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": answer, "error": nil})
 		}
@@ -199,10 +201,10 @@ func TestPostPairRejectsBadAnswers(t *testing.T) {
 		raw    string
 	}{
 		"malformed JSON":    {raw: `{"data":`},
-		"missing store_id":  {answer: map[string]any{"merchant_id": pairMerchant, "token": pairToken}},
-		"missing merchant":  {answer: map[string]any{"store_id": pairStore, "token": pairToken}},
-		"malformed token":   {answer: map[string]any{"store_id": pairStore, "merchant_id": pairMerchant, "token": "short"}},
-		"token with spaces": {answer: map[string]any{"store_id": pairStore, "merchant_id": pairMerchant, "token": "9a1b9a1b 9a1b9a1b9a1b9a1b"}},
+		"missing store_id":  {answer: map[string]any{"merchant_id": pairMerchant, "device_token": pairToken}},
+		"missing merchant":  {answer: map[string]any{"store_id": pairStore, "device_token": pairToken}},
+		"malformed token":   {answer: map[string]any{"store_id": pairStore, "merchant_id": pairMerchant, "device_token": "short"}},
+		"token with spaces": {answer: map[string]any{"store_id": pairStore, "merchant_id": pairMerchant, "device_token": "9a1b9a1b 9a1b9a1b9a1b9a1b"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cloud := newFakePairCloud(t)
@@ -218,6 +220,42 @@ func TestPostPairRejectsBadAnswers(t *testing.T) {
 				t.Fatalf("error carries a secret: %v", err)
 			}
 		})
+	}
+}
+
+// ut-docs#3754: the till decoded data.token while ut-cloud's /pair handler
+// (internal/httpapi/handlers/stores_pair.go) answers data.device_token, so
+// every real pairing failed with "malformed credential (length 0)". This
+// fixture is the cloud handler's envelope byte-for-byte in shape.
+func TestPostPairAcceptsCloudHandlerEnvelope(t *testing.T) {
+	cloud := newFakePairCloud(t)
+	cloud.set(func(c *fakePairCloud) {
+		c.raw = `{"data":{"store_id":"` + pairStore + `","merchant_id":"` + pairMerchant +
+			`","device_id":"till-new","device_token":"` + pairToken + `"},"error":null}`
+	})
+	store, merchant, token, err := postPair(context.Background(), cloud.srv.URL+"/api", pairCode, "till-new", "", "dev")
+	if err != nil {
+		t.Fatalf("postPair on the cloud handler's real envelope: %v", err)
+	}
+	if store != pairStore || merchant != pairMerchant || token != pairToken {
+		t.Fatalf("postPair = (%q, %q, %q), want (%q, %q, data.device_token)", store, merchant, token, pairStore, pairMerchant)
+	}
+}
+
+// The pre-fix key no longer counts: an answer carrying the credential only
+// under data.token has no device_token, so it is rejected as an empty
+// credential rather than accidentally accepted.
+func TestPostPairRejectsLegacyTokenKey(t *testing.T) {
+	cloud := newFakePairCloud(t)
+	cloud.set(func(c *fakePairCloud) {
+		c.answer = map[string]any{"store_id": pairStore, "merchant_id": pairMerchant, "token": pairToken}
+	})
+	_, _, token, err := postPair(context.Background(), cloud.srv.URL+"/api", pairCode, "till-new", "", "dev")
+	if !errors.Is(err, errPairAnswerRejected) || !strings.Contains(err.Error(), "malformed credential (length 0)") {
+		t.Fatalf("postPair err = %v, want errPairAnswerRejected with malformed credential (length 0)", err)
+	}
+	if token != "" {
+		t.Fatalf("postPair returned a token %q with an error", token)
 	}
 }
 

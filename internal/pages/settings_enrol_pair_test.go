@@ -43,8 +43,9 @@ func newPairCloud(t *testing.T) (*httptest.Server, *atomic.Int32) {
 			_, _ = w.Write([]byte(`{"error":{"code":"code_invalid"}}`))
 			return
 		}
+		// ut-cloud's handler shape: the credential is data.device_token (ADR-0116).
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{
-			"store_id": pairPageStore, "merchant_id": pairPageStore, "token": pairPageToken,
+			"store_id": pairPageStore, "merchant_id": pairPageStore, "device_id": body["device_id"], "device_token": pairPageToken,
 		}})
 	})
 	srv := httptest.NewServer(mux)
