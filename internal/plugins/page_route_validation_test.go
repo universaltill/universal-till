@@ -2,10 +2,14 @@ package plugins
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/universaltill/universal-till/internal/auth"
 )
 
 // Install-time guard against ut-docs#499: internal/pages/plugin_page.go's
@@ -191,5 +195,101 @@ VALUES ('com.rb.route', '1.0.0', 'RB Route', 'wasm', './main.wasm', 'https://exa
 	}
 	if n != 1 {
 		t.Fatalf("failed rollback must leave current entries intact, found %d", n)
+	}
+}
+
+// ut-docs#3786: a plugin page may not claim a route under a subtree
+// namespace core owns — the `/` catch-all would render it where clients
+// expect a core API/asset response.
+func TestPersistManifest_RejectsReservedPageRoutes(t *testing.T) {
+	for _, route := range []string{
+		"/api/x", "/api/plugins/marketplace", "/ui/foo", "/v1/bar",
+		"/public/x.js", "/ext/y", "/plugin-icons/a/b/c", "/api",
+		"/self-order/promo", "/themes/a/b", "/o/x/y",
+	} {
+		t.Run(route, func(t *testing.T) {
+			d := openRealDB(t)
+			err := PersistManifest(context.Background(), d.DB, routeManifest("com.reserved.route", "rkey", route), InstallOptions{})
+			if err == nil {
+				t.Fatalf("PersistManifest accepted a page entry on core-reserved route %q", route)
+			}
+			if !strings.Contains(err.Error(), route) || !strings.Contains(err.Error(), "core-reserved") {
+				t.Fatalf("error should name the route and say core-reserved, got: %v", err)
+			}
+			var n int
+			if err := d.DB.QueryRow(`SELECT COUNT(*) FROM plugins WHERE id = 'com.reserved.route'`).Scan(&n); err != nil {
+				t.Fatal(err)
+			}
+			if n != 0 {
+				t.Fatalf("rejected plugin left %d plugins row(s), want 0 (transaction must roll back)", n)
+			}
+		})
+	}
+}
+
+func TestPersistManifest_AcceptsOrdinaryPageRoutes(t *testing.T) {
+	for i, route := range []string{"/faq", "/plugin/docs", "/apix", "/uix/z"} {
+		d := openRealDB(t)
+		id := "com.ordinary.route"
+		if err := PersistManifest(context.Background(), d.DB, routeManifest(id, "okey", route), InstallOptions{}); err != nil {
+			t.Fatalf("case %d: ordinary route %q must install: %v", i, route, err)
+		}
+	}
+}
+
+func TestReservedPageRoutePrefix(t *testing.T) {
+	cases := []struct {
+		route  string
+		prefix string
+		ok     bool
+	}{
+		{"/api", "/api", true},
+		{"/api/x", "/api", true},
+		{"/plugin-icons/a/b", "/plugin-icons", true},
+		{"/self-order", "/self-order", true},
+		{"/self-order/promo", "/self-order", true},
+		{"/o/x/y", "/o", true},
+		{"/themes/a/b", "/themes", true},
+		{"/apix", "", false},
+		{"/orders", "", false},
+		{"/o-not-really", "", false},
+		{"/API/x", "", false},
+		{"/faq", "", false},
+		{"/plugin/docs", "", false},
+		{"/", "", false},
+		{"", "", false},
+	}
+	for _, c := range cases {
+		p, ok := ReservedPageRoutePrefix(c.route)
+		if p != c.prefix || ok != c.ok {
+			t.Errorf("ReservedPageRoutePrefix(%q) = (%q, %v), want (%q, %v)", c.route, p, ok, c.prefix, c.ok)
+		}
+	}
+}
+
+// TestReservedPageRoutesCoverAuthExemptNamespaces pins the auth-exempt half
+// of reservedPageRoutePrefixes (ut-docs#3786 review): a plugin page under a
+// namespace auth.Middleware lets through without a session would render the
+// POS chrome to anonymous customers (and on the self-order kiosk). Each
+// probe is a child path no core pattern claims, so it would reach the "/"
+// catch-all; if the real middleware exempts it, it must be reserved. A new
+// exempt prefix needs its probe added here.
+func TestReservedPageRoutesCoverAuthExemptNamespaces(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	mw := auth.Middleware(next, nil)
+	for _, ns := range []string{
+		"/api", "/api/auth", "/api/self-order", "/api/sync", "/ui", "/v1", "/public", "/ext",
+		"/plugin-icons", "/self-order", "/o", "/themes", "/plugin", "/help", "/orders",
+		"/settings", "/setup", "/login", "/healthz", "/kitchen-display", "/journal", "/recovery",
+	} {
+		probe := ns + "/zz-plugin-probe/x"
+		rec := httptest.NewRecorder()
+		mw.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, probe, nil))
+		if rec.Code != http.StatusTeapot {
+			continue // session-gated: not anonymous-reachable
+		}
+		if _, ok := ReservedPageRoutePrefix(probe); !ok {
+			t.Errorf("%s is auth-exempt but not a reserved page route — add its namespace to reservedPageRoutePrefixes", probe)
+		}
 	}
 }
