@@ -57,9 +57,13 @@ type Deps struct {
 	// Driven by the replica pull loop; read by the main-till status chip.
 	// Nil in tests that don't exercise it — every reader must allow that.
 	PrimaryWatch *discovery.PrimaryWatch
-	State        RuntimeState
-	BaseMenu     []MenuItem
-	Menu         []MenuItem
+	// JoinWatch looks for a main till a STANDALONE till could join
+	// (ut-docs#2721). Ticked by the same pull loop while sync.primary_url
+	// is empty; read by GET /ui/join-notice. Nil-safe (demo mode, tests).
+	JoinWatch *discovery.JoinWatch
+	State     RuntimeState
+	BaseMenu  []MenuItem
+	Menu      []MenuItem
 	// MenuAmendments are the Menu-slot amendments in force (ADR-0088):
 	// every active `layout` plugin's, minus the entries the merchant
 	// restored from Settings → Hidden menu tiles. Rebuilt beside Menu in

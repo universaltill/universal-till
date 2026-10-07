@@ -1,0 +1,41 @@
+{{/* ut-docs#2721 (ADR-0033 amendment): a STANDALONE till found a shop's
+     main till on this network (discovery.JoinWatch, ticked by the pull
+     loop) and offers to link to it from any page. The standalone-till
+     mirror of pairing_notice.html (the main till's "someone wants to pair"
+     notice): mounted by base.html's #join-notice-mount placeholder, filled
+     by GET /ui/join-notice (join_notice.go), empty body when there is
+     nothing to offer.
+
+     "Link this till" is the Tills page's own "Request to pair" (tills.html
+     discovery results): the SAME POST /api/sync/pair-start with the same
+     base_url / till_id / name fields, so the join still needs the
+     verification code and a manager's approval on the main till.
+
+     Dismiss is permanent and server-side (POST /ui/join-notice/dismiss sets
+     sync.join_banner_dismissed) — deliberately NOT pairing_notice.html's
+     sessionStorage dismiss, which is meant to come back for a new request.
+
+     .Banner is built in join_notice.go: the translated copy with the
+     candidate's name wrapped in <bdi> (both HTML-escaped there), so a Latin
+     name stays intact inside fa/ar text. The name field has a VISIBLE label
+     (the Tills page's own tills.pairing.your_till_name), not a placeholder.
+
+     The mount re-polls every 30s with an innerHTML swap; hx-preserve keeps
+     the till name being typed across those polls. The pairing progress
+     (pair-start's waiting fragment, which polls pair-status itself and is
+     what actually completes the join) goes to #join-notice-status, which
+     base.html hosts OUTSIDE the mount so an empty re-poll (candidate gone,
+     session lapsed) can never delete it mid-approval. */}}
+<div id="join-notice" class="pairing-notice join-notice" role="status">
+  <span class="pairing-notice-text">⇄ {{ .Banner }}</span>
+  <form class="join-notice-form" hx-post="/api/sync/pair-start" hx-target="#join-notice-status" hx-swap="innerHTML"
+        data-before-request="trim-validate:join-notice-name">
+    <input type="hidden" name="base_url" value="{{ .BaseURL }}">
+    <input type="hidden" name="till_id" value="{{ .TillID }}">
+    <label class="join-notice-label" for="join-notice-name">{{ T "tills.pairing.your_till_name" }}</label>
+    <input type="text" id="join-notice-name" name="name" required hx-preserve>
+    <button type="submit" class="btn secondary">{{ T "tills.discovery.ambient.link" }}</button>
+  </form>
+  <button type="button" class="notice-dismiss" aria-label="{{ T "tills.discovery.ambient.dismiss" }}" title="{{ T "tills.discovery.ambient.dismiss" }}"
+          hx-post="/ui/join-notice/dismiss" hx-target="#join-notice-mount" hx-swap="innerHTML">✕</button>
+</div>

@@ -293,6 +293,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/sync/users/apply":                true,
 	"POST /api/sync/vouchers/{id}/redeem":       true,
 	"POST /api/sync/vouchers/{id}/release":      true,
+	"POST /ui/join-notice/dismiss":              true, // ut-docs#2721: writes sync.join_banner_dismissed
 	// First-run setup wizard and first-owner creation (the demo template is
 	// already set up).
 	"GET /setup":           true,
@@ -450,6 +451,7 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /ui/fiscal-chip":         true,
 	"GET /ui/main-till-status":    true,
 	"GET /ui/net-status":          true,
+	"GET /ui/join-notice":         true, // ut-docs#2721; always empty in the demo (no LAN browse)
 	"GET /ui/pairing-notice":      true,
 	"GET /ui/plugin-buttons":      true,
 	"GET /ui/report-archive-chip": true,
