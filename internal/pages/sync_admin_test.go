@@ -80,7 +80,7 @@ func TestSyncAdminAPI_RejectsUnauthorized(t *testing.T) {
 func TestSyncAdminAPI_FullBundleThenUnchangedOnMatchingFingerprint(t *testing.T) {
 	dp := newMigratedSyncDeps(t, "primary.db")
 	ctx := t.Context()
-	if _, err := data.NewTillsRepo(dp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc")); err != nil {
+	if _, err := data.NewTillsRepo(dp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("enrol till: %v", err)
 	}
 	if _, err := data.NewCatalogRepo(dp.Db).CreateItem(ctx, catalogtypes.ItemInput{
@@ -228,7 +228,7 @@ func TestSyncChip_PrimaryModeWithTills(t *testing.T) {
 		t.Fatalf("set till.name: %v", err)
 	}
 	tills := data.NewTillsRepo(dp.Db)
-	if _, err := tills.InsertTill(ctx, "Replica 1", hashBearer("token-abc")); err != nil {
+	if _, err := tills.InsertTill(ctx, "Replica 1", hashBearer("token-abc"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("enrol till: %v", err)
 	}
 
@@ -321,7 +321,7 @@ func TestSyncChip_PrimaryModeStaleTillAloneShowsNoBadge(t *testing.T) {
 	tills := data.NewTillsRepo(dp.Db)
 	// Never authenticated -> last_seen_at NULL -> stale, the same state a
 	// satellite powered down overnight reaches.
-	if _, err := tills.InsertTill(ctx, "Replica 1", hashBearer("token-stale")); err != nil {
+	if _, err := tills.InsertTill(ctx, "Replica 1", hashBearer("token-stale"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("enrol till: %v", err)
 	}
 
@@ -363,10 +363,10 @@ func TestSyncChip_PrimaryModeWithMultipleTills(t *testing.T) {
 	initPagesI18n(t)
 	ctx := t.Context()
 	tills := data.NewTillsRepo(dp.Db)
-	if _, err := tills.InsertTill(ctx, "Replica 1", hashBearer("token-1")); err != nil {
+	if _, err := tills.InsertTill(ctx, "Replica 1", hashBearer("token-1"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("enrol till 1: %v", err)
 	}
-	if _, err := tills.InsertTill(ctx, "Replica 2", hashBearer("token-2")); err != nil {
+	if _, err := tills.InsertTill(ctx, "Replica 2", hashBearer("token-2"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("enrol till 2: %v", err)
 	}
 
@@ -436,7 +436,7 @@ func TestSyncChip_PrimaryModeWarnsAndLinksToQuarantineWhenEntriesExist(t *testin
 		t.Fatalf("set till.name: %v", err)
 	}
 	tills := data.NewTillsRepo(dp.Db)
-	tillID, err := tills.InsertTill(ctx, "Replica 1", hashBearer("token-abc"))
+	tillID, err := tills.InsertTill(ctx, "Replica 1", hashBearer("token-abc"), data.TillRoleAdditional)
 	if err != nil {
 		t.Fatalf("enrol till: %v", err)
 	}
@@ -575,7 +575,7 @@ func newPullTestPrimary(t *testing.T) *pullTestPrimary {
 	t.Helper()
 	dp := newMigratedSyncDeps(t, "primary.db")
 	ctx := t.Context()
-	if _, err := data.NewTillsRepo(dp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc")); err != nil {
+	if _, err := data.NewTillsRepo(dp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc"), data.TillRoleAdditional); err != nil {
 		t.Fatalf("enrol till: %v", err)
 	}
 	p := &pullTestPrimary{dp: dp}

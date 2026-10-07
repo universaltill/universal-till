@@ -288,6 +288,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/sync/tables/release":             true,
 	"POST /api/sync/tables/release-all":         true,
 	"POST /api/sync/tills/{id}/revoke":          true,
+	"POST /api/sync/tills/{id}/role":            true,
 	"POST /api/sync/settings/apply":             true,
 	"POST /api/sync/catalog/apply":              true,
 	"POST /api/sync/users/apply":                true,
