@@ -21,7 +21,13 @@ package plugins
 //   - the till's own listen port on loopback or on one of its own addresses
 //     is always refused, whatever the permission — a plugin must never be
 //     able to drive the till's own API;
-//   - the unspecified address (0.0.0.0, ::) is always refused.
+//   - the unspecified address (0.0.0.0, ::) is always refused;
+//   - a cloud-metadata address (169.254.169.254, fd00:ec2::254, in any
+//     IPv4-mapped / NAT64 / 6to4 spelling) is always refused, whatever the
+//     permission — exact grants and http:lan included (ADR-0121 §3);
+//   - a host admitted as plain http only because the plugin holds http:lan
+//     (ADR-0121 §2, ut-docs#3156) is LAN-only: it must dial a non-public
+//     address, so http:lan can never send plain http across the internet.
 //
 // Redirects re-apply the scheme rule, the permission check for the new host
 // and (through the same dialer) the IP rule, capped at maxPluginRedirects.
@@ -37,21 +43,27 @@ package plugins
 import (
 	"context"
 	"crypto/tls"
-	"database/sql"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 const maxPluginRedirects = 5
+
+// permHTTPLAN (ADR-0121 §2, ut-docs#3156): plain http to an exactly granted
+// or endpoint-setting host on a non-public address (admitHTTPHop).
+const permHTTPLAN = "http:lan"
 
 // errEgressDenied marks a request the egress policy refused (as opposed to a
 // network failure); hostHTTPRequest maps it to hostErrDenied.
@@ -170,10 +182,15 @@ func isPublicIP(ip net.IP) bool {
 // validation records the hosts in the chain approved through a
 // net:validation:<host> grant (ut-docs#3226) — they pick the response cap,
 // and play no part in the dial-time IP rule.
+//
+// lanOnly records the hosts admitted only through http:lan (ut-docs#3156):
+// the dialer refuses a public address for them. Set per hop (setLANOnly), so
+// a later hop to the same host decides for itself.
 type egressGrants struct {
 	mu         sync.Mutex
 	exact      map[string]bool
 	validation map[string]bool
+	lanOnly    map[string]bool
 }
 
 type egressGrantsKey struct{}
@@ -203,6 +220,32 @@ func (g *egressGrants) isValidation(host string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.validation[normGrantHost(host)]
+}
+
+func (g *egressGrants) setLANOnly(host string, on bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.lanOnly == nil {
+		g.lanOnly = map[string]bool{}
+	}
+	g.lanOnly[normGrantHost(host)] = on
+}
+
+func (g *egressGrants) isLANOnly(host string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.lanOnly[normGrantHost(host)]
+}
+
+// record stores one approved hop's decision.
+func (g *egressGrants) record(host string, d httpHopDecision) {
+	if d.exact {
+		g.add(host)
+	}
+	if d.validation {
+		g.addValidation(host)
+	}
+	g.setLANOnly(host, d.lanOnly)
 }
 
 func withEgressGrants(ctx context.Context, g *egressGrants) context.Context {
@@ -251,23 +294,32 @@ func defaultEgressDialer() *egressDialer {
 // DialContext is the http.Transport hook: the exact grant for the host comes
 // from the request chain's egressGrants.
 func (d *egressDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	exact := false
+	var pol egressPolicy
 	if host, _, err := net.SplitHostPort(addr); err == nil {
 		if g := egressGrantsFrom(ctx); g != nil {
-			exact = g.has(host)
+			pol = egressPolicy{exact: g.has(host), lanOnly: g.isLANOnly(host)}
 		}
 	}
-	conn, _, err := d.dialChecked(ctx, network, addr, exact)
+	conn, _, err := d.dialChecked(ctx, network, addr, pol)
 	return conn, err
+}
+
+// egressPolicy is what the caller holds for the host being dialled: exact
+// (the exact permission for it, the only thing that unlocks a non-public
+// address) and lanOnly (it was admitted as plain http only through http:lan,
+// so it must dial a non-public address).
+type egressPolicy struct {
+	exact   bool
+	lanOnly bool
 }
 
 // dialChecked resolves addr itself, checks every candidate IP, and connects
 // only to an allowed one — by IP, so what is dialled is what was checked.
-// exact is whether the caller holds the exact permission for this host
+// pol.exact is whether the caller holds the exact permission for this host
 // (net:<host> for http_request, tcp:<host>:<port> for tcp_open) — the only
-// thing that unlocks a non-public address. It also returns the IP it
-// checked and connected to.
-func (d *egressDialer) dialChecked(ctx context.Context, network, addr string, exact bool) (net.Conn, net.IP, error) {
+// thing that unlocks a non-public address; pol.lanOnly refuses a public one.
+// It also returns the IP it checked and connected to.
+func (d *egressDialer) dialChecked(ctx context.Context, network, addr string, pol egressPolicy) (net.Conn, net.IP, error) {
 	host, portStr, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, nil, err
@@ -290,7 +342,7 @@ func (d *egressDialer) dialChecked(ctx context.Context, network, addr string, ex
 	}
 	var firstErr error
 	for _, ip := range ips {
-		if err := d.check(host, ip, port, exact); err != nil {
+		if err := d.check(host, ip, port, pol); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -305,20 +357,54 @@ func (d *egressDialer) dialChecked(ctx context.Context, network, addr string, ex
 	return nil, nil, firstErr
 }
 
-func (d *egressDialer) check(host string, ip net.IP, port int, exact bool) error {
+func (d *egressDialer) check(host string, ip net.IP, port int, pol egressPolicy) error {
 	deny := func(reason string) error {
 		return &egressDeniedError{host: host, ip: ip.String(), reason: reason}
 	}
 	if ip.IsUnspecified() {
 		return deny("unspecified address")
 	}
+	if isCloudMetadataIP(ip) {
+		return deny("cloud metadata address")
+	}
 	if tp := d.tillPort(); tp != 0 && port == tp && d.isTillAddress(ip) {
 		return deny("the till's own listen port")
 	}
-	if !isPublicIP(ip) && !exact {
+	public := isPublicIP(ip)
+	if !public && !pol.exact {
 		return deny("non-public address needs the exact permission for " + host)
 	}
+	if public && pol.lanOnly {
+		return deny("plain http under http:lan is LAN-only")
+	}
 	return nil
+}
+
+var (
+	metadataIPv4 = netip.MustParseAddr("169.254.169.254")
+	metadataIPv6 = netip.MustParseAddr("fd00:ec2::254")
+)
+
+// isCloudMetadataIP reports whether ip is a cloud instance-metadata address
+// (169.254.169.254, or AWS's IPv6 fd00:ec2::254). Like isPublicIP it looks
+// through the IPv4-mapped, NAT64 and 6to4 forms, so no spelling of the
+// metadata address slips past the always-refused rule.
+func isCloudMetadataIP(ip net.IP) bool {
+	a, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+	a = a.Unmap()
+	if a.Is6() {
+		b := a.As16()
+		switch {
+		case nat64Prefix.Contains(a):
+			a = netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})
+		case sixToFour.Contains(a):
+			a = netip.AddrFrom4([4]byte{b[2], b[3], b[4], b[5]})
+		}
+	}
+	return a == metadataIPv4 || a == metadataIPv6
 }
 
 func (d *egressDialer) isTillAddress(ip net.IP) bool {
@@ -356,8 +442,8 @@ func newPluginHTTPClient(d *egressDialer, tlsCfg *tls.Config) *http.Client {
 var defaultPluginHTTPClient = newPluginHTTPClient(defaultEgressDialer(), nil)
 
 // checkPluginRedirect re-applies the scheme rule and the permission check to
-// each redirect target; the IP rule follows through the dialer, using the
-// grant recorded here.
+// each redirect target (admitHTTPHop, the same rule as the first hop); the IP
+// rule follows through the dialer, using the grant recorded here.
 func checkPluginRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= maxPluginRedirects {
 		return fmt.Errorf("stopped after %d redirects", maxPluginRedirects)
@@ -365,69 +451,133 @@ func checkPluginRedirect(req *http.Request, via []*http.Request) error {
 	host := req.URL.Hostname()
 	ctx := req.Context()
 	s, ok := stateFrom(ctx)
-	// Each hop's own net:validation: grant (ut-docs#3226) decides whether
-	// plain http is allowed for it — never the previous hop's.
-	validation := false
-	if ok {
-		v, err := validationGrantMatch(ctx, s.db, s.pluginID, host)
-		if err != nil {
-			return &egressDeniedError{host: host, reason: "permission lookup failed"}
-		}
-		validation = v
-	}
-	if !hostAllowedScheme(req.URL, validation) {
-		return &egressDeniedError{host: host, reason: "redirect to scheme " + req.URL.Scheme}
-	}
 	if !ok {
 		return &egressDeniedError{host: host, reason: "no plugin context"}
 	}
-	exact, err := httpNetPermission(ctx, s.db, s.pluginID, host, validation)
-	if err != nil {
-		return err
+	// Each hop's own grants decide — never the previous hop's: its
+	// net:validation: grant (ut-docs#3226) or http:lan + exact grant
+	// (ut-docs#3156) for plain http, its own name check.
+	d, code, err := admitHTTPHop(ctx, s, req.URL)
+	if code != 0 {
+		if err != nil {
+			return err
+		}
+		return &egressDeniedError{host: host, reason: "redirect to scheme " + req.URL.Scheme}
 	}
 	if g := egressGrantsFrom(ctx); g != nil {
-		if exact {
-			g.add(host)
-		}
-		if validation {
-			g.addValidation(host)
-		}
+		g.record(host, d)
 	}
 	return nil
 }
 
-// httpNetPermission is the name check for http_request and each of its
-// redirect hops. Without a validation grant it is exactly netPermission.
-// With one (validation: the plugin holds net:validation:<host>, ut-docs#3226)
-// the name check has passed and exact is ALWAYS false — even when an
-// ordinary net:<host> / net:@setting grant also covers the host. The request
-// may be plain http, and an exact grant would let it reach a non-public
-// address: that is ADR-0121's unbuilt http:lan (ut-docs#3156), never this
-// grant's. A host named by net:validation: is therefore public-only for
-// every http_request, https included.
-func httpNetPermission(ctx context.Context, db *sql.DB, pluginID, host string, validation bool) (exact bool, err error) {
-	if !validation {
-		return netPermission(ctx, db, pluginID, host)
-	}
-	return false, nil
+// httpHopDecision is admitHTTPHop's verdict for one request hop: exact (the
+// dialer may reach a non-public address), validation (a net:validation:
+// host, ut-docs#3226), lanOnly (admitted only through http:lan — the dialer
+// must reach a non-public address).
+type httpHopDecision struct {
+	exact, validation, lanOnly bool
 }
 
-// netPermission checks the name half of the policy: the plugin must hold
-// net:<host>, a net:@setting:<urlKey> whose stored URL names this host
-// (ut-docs#2899), or net:*. exact reports either of the first two — only an
-// exact grant unlocks non-public addresses at dial time. Hosts are compared
-// normalised (normGrantHost). Only a genuine denial is audited.
-func netPermission(ctx context.Context, db *sql.DB, pluginID, host string) (exact bool, err error) {
-	exact, wildcard, err := netGrantMatch(ctx, db, pluginID, host)
+// admitHTTPHop is the scheme rule and the name check for one hop of
+// http_request or http_open, redirects included. code is 0 (admitted),
+// hostErrInvalid (scheme refused — err nil) or hostErrDenied (permission
+// refused — err says why, for the log).
+//
+//   - A net:validation:<host> host (ut-docs#3226) keeps the amendment's
+//     rules unchanged: http or https, never exact, public-only — http:lan
+//     plays no part.
+//   - https, and plain http to loopback: the name check as before
+//     (net:<host>, net:@setting, net:*). With http:lan, the host of one of
+//     the plugin's own `type: "endpoint"` settings also passes, as an exact
+//     grant — LAN-only, since only http:lan admitted it.
+//   - plain http to any other host (ADR-0121 §2 http:lan): the plugin must
+//     hold http:lan AND an exact grant for the host (net:<host>,
+//     net:@setting) or the host must be an endpoint setting's; the hop is
+//     LAN-only. Without http:lan it is a scheme refusal, exactly as before.
+//
+// http:lan is probed from the granted list (no audit row for a plugin that
+// never asked for it); a request it would have admitted but which is refused
+// for its absence is audited through CheckPermission.
+func admitHTTPHop(ctx context.Context, s *hostState, u *url.URL) (httpHopDecision, int32, error) {
+	host := u.Hostname()
+	lookupFailed := func() (httpHopDecision, int32, error) {
+		return httpHopDecision{}, hostErrDenied, &egressDeniedError{host: host, reason: "permission lookup failed"}
+	}
+	validation, err := validationGrantMatch(ctx, s.db, s.pluginID, host)
 	if err != nil {
-		return false, &egressDeniedError{host: host, reason: "permission lookup failed"}
+		return lookupFailed()
 	}
-	if exact {
-		return true, nil
+	if validation {
+		if !hostAllowedScheme(u, true) {
+			return httpHopDecision{}, hostErrInvalid, nil
+		}
+		// A validation grant is never exact: public addresses only.
+		return httpHopDecision{validation: true}, 0, nil
 	}
-	if wildcard {
-		return false, nil
+	plainLAN := u.Scheme == "http" && !hostAllowedScheme(u, false)
+	if !plainLAN && !hostAllowedScheme(u, false) {
+		return httpHopDecision{}, hostErrInvalid, nil
 	}
-	_ = CheckPermission(ctx, db, pluginID, "net:"+host) // audit the denial
-	return false, &egressDeniedError{host: host, reason: "no net:" + host + ", matching net:@setting or net:* permission"}
+	exact, wildcard, err := netGrantMatch(ctx, s.db, s.pluginID, host)
+	if err != nil {
+		return lookupFailed()
+	}
+	lan, endpoint := false, false
+	if plainLAN || !exact {
+		perms, err := grantedPermissions(ctx, s.db, s.pluginID)
+		if err != nil {
+			return lookupFailed()
+		}
+		lan = containsString(perms, permHTTPLAN)
+		if lan && !exact {
+			endpoint, err = endpointSettingHostMatch(ctx, s.db, s.pluginID, host)
+			if err != nil {
+				// An unreadable manifest declares no endpoint (fail closed).
+				logging.L().Warnf("[wasm:%s] endpoint settings unreadable: %v", s.pluginID, err)
+				endpoint = false
+			}
+		}
+	}
+	if plainLAN {
+		if !lan {
+			auditDeclaredDenial(ctx, s, permHTTPLAN)
+			return httpHopDecision{}, hostErrInvalid, nil
+		}
+		if !exact && !endpoint {
+			return httpHopDecision{}, hostErrInvalid, nil
+		}
+		return httpHopDecision{exact: true, lanOnly: true}, 0, nil
+	}
+	switch {
+	case exact:
+		return httpHopDecision{exact: true}, 0, nil
+	case endpoint:
+		// The endpoint grant unlocks the LAN only; a net:* the plugin also
+		// holds still covers public addresses, so the hop is LAN-only only
+		// without it (review finding, ut-docs#3156).
+		return httpHopDecision{exact: true, lanOnly: !wildcard}, 0, nil
+	case wildcard:
+		return httpHopDecision{}, 0, nil
+	}
+	_ = CheckPermission(ctx, s.db, s.pluginID, "net:"+host) // audit the denial
+	return httpHopDecision{}, hostErrDenied, &egressDeniedError{host: host, reason: "no net:" + host + ", matching net:@setting or net:* permission"}
+}
+
+// auditDeclaredDenial audits a refusal for perm only when the plugin
+// declared it (it is in the manifest but not granted): a plugin that never
+// asked for perm gets a plain refusal, so a mistyped http:// URL in a poll
+// loop cannot flood the audit log (review finding, ut-docs#3156).
+func auditDeclaredDenial(ctx context.Context, s *hostState, perm string) {
+	if _, declared, err := data.NewPluginRepo(s.db).CheckPermission(ctx, s.pluginID, perm); err == nil && declared {
+		_ = CheckPermission(ctx, s.db, s.pluginID, perm)
+	}
+}
+
+func containsString(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }

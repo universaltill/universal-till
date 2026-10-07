@@ -445,7 +445,13 @@ never reachable (redirects included). `tcp_open` follows the same rule:
 exact `tcp:<host>:<port>` grant. For a target an admin configures after
 install, a manifest declares `net:@setting:<urlKey>` or
 `tcp:@setting:<hostKey>:<portKey>`: the address currently saved in those
-settings counts as the exact grant (ut-docs#2899).
+settings counts as the exact grant (ut-docs#2899). Cloud-metadata addresses
+(`169.254.169.254`, `fd00:ec2::254`, in any mapped form) are never reachable,
+whatever the grant. With `http:lan` a plugin may use plain `http` to a host it
+holds an exact grant for, or to the host of one of its own `"type": "endpoint"`
+settings — only on a LAN address; `http:stream` adds the handle-based
+`http_open`/`http_write`/`http_status`/`http_read`/`http_close` for streamed
+bodies up to the manifest's `limits.http_body_mb` (ADR-0121, ut-docs#3156).
 
 **See [PLUGIN_GUIDELINES.md](docs/plugin_guidelines.md) for complete documentation.**
 
