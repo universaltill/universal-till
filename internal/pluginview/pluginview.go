@@ -46,9 +46,6 @@ var (
 	numberRe = regexp.MustCompile(`^-?[0-9]{1,18}(\.[0-9]{1,9})?$`)
 )
 
-// ValidName reports whether s is a valid action / field name.
-func ValidName(s string) bool { return nameRe.MatchString(s) }
-
 // Context is what the validator checks a document against: the answering
 // plugin's own locale keys and its own page-entry routes.
 type Context struct {

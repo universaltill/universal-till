@@ -66,3 +66,9 @@ Safe to merge once CI is green. A new `en.json` key means `lang-pack-drift` goes
 The first CI `build` hung in `TestWasmHandleEvent_UIAnswerStdoutCapped_3160` until the job was cancelled after 1 h 45 min. The test's uncapped case used a non-`.ask` event type. For those, `wasmResultLogLine` logs the whole answer, so a 2 MiB answer became a single 2,097,291-character `go test -v` line, and the runner spent over an hour streaming it.
 
 **Fix:** the uncapped case now uses `export.requested.ask`, the real large-answer event, whose log line is bounded by `maxAskLogBytes`. The longest output line is now 147 characters. The test still asserts the full 2 MiB answer comes back uncapped.
+
+## Sweep follow-up (lane:cloud-54, same branch)
+
+- **Rebase onto `main`:** the branch conflicted with main, so CI never started. The only conflict was in the generated `web/help/img/manifest.json`. It was resolved by keeping main's topic hashes and taking this branch's `plugins` topic hashes, the only topic it changes. `surface_sha256` was then recomputed with `update-docs-shots-surface-hash.sh`. No screenshot changes: main's inventory/sell pages and this branch's plugin page don't overlap. `guard-docs-shots.sh` passes.
+- **`desktop-shell` red:** `guard-deadcode-baseline.sh` flagged `pluginview.ValidName` as unreachable. It had no callers: validation uses `nameRe` directly. It is removed rather than baselined.
+- **Re-verified locally after rebase:** `go build ./...`, `go vet`, `go test` for `internal/plugins`, `internal/pluginview`, `internal/pages/...` and `internal/httpx`, plus the i18n, help, data-access, no-showmodal, core-neutral and kiosk-engine guards. All are green. CI on the rebased head was green apart from `desktop-shell`.
