@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-
-	"github.com/universaltill/universal-till/web"
 )
 
 // ut-docs#3940: a release ships its notes as release-notes.json so a till
@@ -23,56 +21,6 @@ func bundleJSON(t *testing.T, files map[string]string) []byte {
 		t.Fatal(err)
 	}
 	return b
-}
-
-func TestBundle_RoundTripsThroughLoadBundle(t *testing.T) {
-	b, err := Bundle(testFS(), "rn")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var shape struct {
-		Format int               `json:"format"`
-		Files  map[string]string `json:"files"`
-	}
-	if err := json.Unmarshal(b, &shape); err != nil {
-		t.Fatalf("bundle is not JSON: %v", err)
-	}
-	if shape.Format != 1 || len(shape.Files) != 5 {
-		t.Fatalf("bundle = format %d, %d files; want format 1, 5 files", shape.Format, len(shape.Files))
-	}
-	if _, ok := shape.Files["de/v0.30.6.md"]; !ok {
-		t.Fatalf("bundle keys must be <locale>/<file>.md relative to the root, got %v", shape.Files)
-	}
-	lib, err := LoadBundle(b)
-	if err != nil {
-		t.Fatalf("LoadBundle(Bundle()) = %v", err)
-	}
-	want, _ := Load(testFS(), "rn")
-	if strings.Join(lib.versions, ",") != strings.Join(want.versions, ",") {
-		t.Fatalf("versions %v, want %v", lib.versions, want.versions)
-	}
-	n, ok := lib.Get("de", "v0.30.6")
-	if !ok || !n.Translated || !strings.Contains(string(n.HTML), "Etwas Neues") {
-		t.Fatalf("German note lost in the round trip: %+v", n)
-	}
-}
-
-func TestBundle_RealNotesRoundTrip(t *testing.T) {
-	b, err := Bundle(web.ReleaseNotesFS, Root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := LoadBundle(b); err != nil {
-		t.Fatalf("the embedded notes must bundle and load back: %v", err)
-	}
-}
-
-func TestBundle_RefusesMalformedSource(t *testing.T) {
-	fsys := testFS()
-	fsys["rn/en/v2.0.0.md"] = note("v2.0.1", "2026-01-01", "## New\n\n- x\n")
-	if _, err := Bundle(fsys, "rn"); err == nil {
-		t.Fatal("Bundle must refuse notes Load would refuse")
-	}
 }
 
 func TestLoadBundle_RejectsMalformedInput(t *testing.T) {

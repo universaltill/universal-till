@@ -7,7 +7,8 @@ newest first, in the till's locale, with English as the per-note fallback.
 
 - **Source.** `release.yml` builds a `release-notes.json` asset
   (`go run ./scripts/release-notes-bundle`: every `web/release-notes/**`
-  file in every locale). goreleaser attaches it through
+  file in every locale, checked against the till's own loader before it is
+  written). goreleaser attaches it through
   `release.extra_files` and lists it in `checksum.extra_files`, so the
   `checksums` job still finds every asset in `checksums.txt`.
 - **Discovery.** `internal/updates.checkOnce` records the asset URL
@@ -59,6 +60,17 @@ Security (reviewed, no findings):
 - The bundle loader rejects unknown fields, trailing data, more than 5000
   entries, traversal, absolute paths and backslashes.
 - The cache mutex serialises only notes fetches, never page renders.
+
+**CI follow-up (desktop-shell → deadcode baseline):**
+`releasenotes.Bundle` could be reached only from the
+`scripts/release-notes-bundle` tool, and that tool isn't a deadcode root,
+so the guard reported a new unreachable func. The writer moved into the
+tool, which now loads its output back with `releasenotes.LoadBundle`
+before writing. The till binary carries no writer, and the baseline is
+unchanged.
+
+Its tests moved too (`scripts/release-notes-bundle/main_test.go`). The
+refusal test fails when that load-back is disabled.
 
 **Verified beyond unit tests:** Playwright `incoming-notes` passed (2/2).
 Screenshots were taken and looked at, with notes and with the fallback, at

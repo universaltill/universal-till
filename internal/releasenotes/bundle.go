@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"sort"
 	"strings"
 )
@@ -28,29 +27,6 @@ const maxBundleEntries = 5000
 type bundleDoc struct {
 	Format int               `json:"format"`
 	Files  map[string]string `json:"files"`
-}
-
-// Bundle serialises every note under root into the release asset. It refuses
-// notes Load would refuse, so a release never ships a bundle no till can read.
-func Bundle(fsys fs.FS, root string) ([]byte, error) {
-	files, err := readSources(fsys, root)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := build(files); err != nil {
-		return nil, err
-	}
-	doc := bundleDoc{Format: BundleFormat, Files: make(map[string]string, len(files))}
-	for _, f := range files {
-		doc.Files[f.path()] = string(f.raw)
-	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetIndent("", " ")
-	if err := enc.Encode(doc); err != nil { // map keys encode sorted: stable output
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }
 
 // LoadBundle parses a downloaded release-notes.json. It fails closed on any
