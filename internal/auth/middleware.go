@@ -48,6 +48,9 @@ func exempt(path string) bool {
 	// TestSyncPullPathsAreExempt pins the list against the client.
 	switch path {
 	case "/api/sync/enroll", "/api/sync/ping", "/api/sync/snapshot", "/api/sync/sales", "/api/sync/admin",
+		// ut-docs#3562: the replica push tick's no-sale journal, syncTill-
+		// authed in the handler like /api/sync/sales.
+		"/api/sync/no-sales",
 		"/api/sync/stock", "/api/sync/plugins", "/api/sync/assets", "/api/sync/assets/file",
 		// ut-docs#2566: uploaded category photos, the categories scope of
 		// the same bearer-authed asset surface (sync_assets.go).

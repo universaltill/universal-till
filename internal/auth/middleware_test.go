@@ -147,6 +147,8 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		"/api/sync/ping",
 		"/api/sync/snapshot",
 		"/api/sync/sales",
+		// ut-docs#3562: the replica push tick's no-sale journal.
+		"/api/sync/no-sales",
 		"/api/sync/admin",
 		"/api/sync/stock",
 		// ut-docs#460: the replica pull tick's plugin-set poll. Missing at

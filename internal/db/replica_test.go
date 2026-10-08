@@ -439,3 +439,45 @@ func TestApplyReplicaIdentityClearsInheritedCloudID(t *testing.T) {
 		t.Fatalf("sync.till_id = %q (err %v), want till-2", tid, err)
 	}
 }
+
+// ut-docs#3562: the join snapshot carries the primary's own no_sale_events
+// (till_id empty, so they look local). Applying the replica identity must
+// start the no-sale journal cursor at the join — like sync.push_cursor for
+// sales — or the replica pushes the primary's opens back under its own
+// till id, re-inserting any the primary has since archived.
+func TestApplyReplicaIdentityStartsNoSalePushCursorAtJoin(t *testing.T) {
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init("") })
+
+	path := filepath.Join(t.TempDir(), "data", "unitill-pos.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+
+	inherited := "2026-01-02T03:04:05Z"
+	if _, err := d.Exec(`INSERT INTO no_sale_events (id, created_at) VALUES ('primary-open', ?)`, inherited); err != nil {
+		t.Fatalf("seed inherited open: %v", err)
+	}
+	if err := StageReplicaIdentity(path, ReplicaIdentity{
+		PrimaryURL: "http://primary.local", TillID: "till-2", Bearer: "b", ReceiptPrefix: "T2-",
+	}); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if applied, err := ApplyReplicaIdentity(d.DB, path); err != nil || !applied {
+		t.Fatalf("apply: applied=%v err=%v", applied, err)
+	}
+
+	var cursor string
+	_ = d.QueryRow(`SELECT value FROM settings WHERE key = 'sync.no_sale_push_cursor'`).Scan(&cursor)
+	at, id, ok := strings.Cut(cursor, "|")
+	if !ok || id != "" || at <= inherited {
+		t.Fatalf("sync.no_sale_push_cursor = %q, want \"<join time>|\" after the inherited open %s", cursor, inherited)
+	}
+	var n int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM no_sale_events
+WHERE (till_id IS NULL OR till_id = '') AND (created_at > ? OR (created_at = ? AND id > ?))`, at, at, id).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("inherited opens past the join cursor = %d (err %v), want 0", n, err)
+	}
+}
