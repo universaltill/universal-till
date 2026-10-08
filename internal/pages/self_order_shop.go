@@ -428,6 +428,12 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		if orderType == pos.OrderTypeTakeaway && eng.TableID() != "" {
 			orderType = ""
 		}
+		// ut-docs#3632: a shop with the order type switched off (no eat-in)
+		// has no takeaway either -- same clamp, same reason: the cart hides
+		// the toggle under Off, but this anonymous surface can't trust that.
+		if httpx.OrderTypeOff() {
+			orderType = ""
+		}
 		eng.SetOrderType(orderType)
 		renderKioskCart(w, r, d, eng)
 	})

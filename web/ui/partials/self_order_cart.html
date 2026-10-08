@@ -13,7 +13,7 @@
        gets to confirm they scanned the right table's code. */}}
   {{ if .Basket.TableLabel }}
   <p class="muted selforder-order-type">{{ T "basket.table.label" }} {{ .Basket.TableLabel }}</p>
-  {{ else }}
+  {{ else if ne ordertypepromptmode "off" }}{{/* ut-docs#3632: no toggle when the shop has the order type off */}}
   <div class="order-type-toggle selforder-order-type" role="group" aria-label="{{ T "selforder.order_type.label" }}">
     <button type="button" class="btn btn-touch{{ if eq .Basket.OrderType "takeaway" }} secondary{{ end }}"
             aria-pressed="{{ if ne .Basket.OrderType "takeaway" }}true{{ else }}false{{ end }}"

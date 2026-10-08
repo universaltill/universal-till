@@ -195,7 +195,7 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 		// exactly what receipt_designer.go's save does.
 	case data.OrderTypePromptModeKey:
 		// Mirrors /api/settings/order-type-prompt (settings_page.go): must be
-		// one of the three modes. Unlike that generic /api/settings door's
+		// one of the four modes. Unlike that generic /api/settings door's
 		// OWN OrderTypePromptModeKey case (which leans on
 		// InitOrderTypePromptMode's own fallback-to-"top" and skips
 		// validation), this hook fails closed like every other case here —
@@ -205,8 +205,8 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 		// too since ut-docs#2790 (publishCachedSettings), and the explicit
 		// live-republish after the Set stays so a nil rederive still takes
 		// effect.
-		if value != data.OrderTypePromptModeTop && value != data.OrderTypePromptModeBeforeItem && value != data.OrderTypePromptModeAtPay {
-			return "", fmt.Errorf("%s must be one of top, before_item, at_pay", key)
+		if !validOrderTypePromptMode(value) {
+			return "", fmt.Errorf("%s must be one of top, before_item, at_pay, off", key)
 		}
 	case common.KeyBrowsingMode:
 		// Mirrors /api/settings/browsing-mode (settings_page.go): must be

@@ -109,7 +109,11 @@
          basket they land on is mixed) -- a single tap still normalizes
          such a basket back to one uniform type. Only the STATUS chip
          (informational, no action of its own) and the per-line buttons
-         (the cashier-facing control being withdrawn) are gone. -->
+         (the cashier-facing control being withdrawn) are gone.
+         ut-docs#3632: not rendered at all when the shop has the order type
+         switched off (sale.order_type_prompt = "off" -- no eat-in, e.g. an
+         off-licence or a barber); the table button next to it stays. -->
+    {{ if ne ordertypepromptmode "off" }}
     <div class="order-type-toggle-group" role="radiogroup" aria-label="{{ T "basket.order_type.label" }}">
       <button type="button" class="order-type-option{{ if eq .OrderType "" }} is-active{{ end }}"
               role="radio" aria-checked="{{ if eq .OrderType "" }}true{{ else }}false{{ end }}"
@@ -126,6 +130,7 @@
         <span class="order-type-ico" aria-hidden="true">🥡</span> {{ if eq .OrderType "mixed" }}{{ T "basket.order_type.all_takeaway" }}{{ else }}{{ T "basket.order_type.takeaway" }}{{ end }}
       </button>
     </div>
+    {{ end }}
     <!-- Table assignment (ut-docs#820, ADR-0054): was an always-expanded
          inline strip (current table + clear + every free table listed) --
          collapsed into a single button next to the switch (product owner,

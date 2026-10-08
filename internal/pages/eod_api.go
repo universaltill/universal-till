@@ -501,9 +501,11 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	// Fixed English labels, same as "Uncategorized"/"Unattributed" above —
 	// this printed report is not localized (see GUTSCHEINE/STORNOS's own
 	// fixed-vocabulary precedent below).
-	if len(rep.OrderTypes) > 0 {
+	// ut-docs#3632: omitted for a shop with the order type switched off
+	// when every row is dine-in (eodOrderTypesForDisplay).
+	if orderTypes := eodOrderTypesForDisplay(rep.OrderTypes); len(orderTypes) > 0 {
 		doc.Footer = append(doc.Footer, "", "BY ORDER TYPE")
-		for _, o := range rep.OrderTypes {
+		for _, o := range orderTypes {
 			name := "Dine in"
 			if o.OrderType == pos.OrderTypeTakeaway {
 				name = "Takeaway"

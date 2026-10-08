@@ -3345,7 +3345,9 @@ window.utTabBarFade = function (el) {
   // is the one to continue) and skips only the open call.
   function showOrderTypePromptModal(onChosen) {
     var modal = document.getElementById('order-type-prompt-modal');
-    if (!modal) { onChosen(); return; }
+    // ut-docs#3632: "off" (a shop with no eat-in) never asks -- the modal
+    // isn't even rendered then, but a stale DOM must not ask either.
+    if (!modal || promptMode() === 'off') { onChosen(); return; }
     choiceMade = false;
     // Arm the resolve BEFORE the already-open guard below (independent
     // review, ut-docs#2371): the prompt now opens unprompted at sale start,

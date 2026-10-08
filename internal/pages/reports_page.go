@@ -589,7 +589,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 							row.ArticleGroups = rep.ArticleGroups
 							row.Articles = rep.Articles
 							row.Operators = rep.Operators
-							row.OrderTypes = rep.OrderTypes
+							row.OrderTypes = eodOrderTypesForDisplay(rep.OrderTypes) // ut-docs#3632
 							row.FiscalDevice = rep.FiscalDevice
 							if rep.Day == "" {
 								row.From, row.To = rep.From, rep.To

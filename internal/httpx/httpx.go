@@ -544,7 +544,7 @@ func effectsLevelVal() string {
 	return fxlevel.Full
 }
 
-var orderTypePromptMode atomic.Value // string: top|before_item|at_pay
+var orderTypePromptMode atomic.Value // string: top|before_item|at_pay|off
 
 // InitOrderTypePromptMode publishes the dine-in/takeaway prompt placement
 // (ut-docs#2282, data.OrderTypePromptMode* constants) to templates
@@ -555,7 +555,7 @@ var orderTypePromptMode atomic.Value // string: top|before_item|at_pay
 // "top", the documented default -- same fail-safe shape as InitOSKMode.
 func InitOrderTypePromptMode(mode string) {
 	switch mode {
-	case "before_item", "at_pay":
+	case "before_item", "at_pay", "off": // "off": ut-docs#3632, a shop with no eat-in
 	default:
 		mode = "top"
 	}
@@ -568,6 +568,12 @@ func orderTypePromptModeVal() string {
 	}
 	return "top"
 }
+
+// OrderTypeOff reports whether the shop runs with the dine-in/takeaway
+// choice switched off entirely (sale.order_type_prompt = "off",
+// ut-docs#3632): no toggle, no intercept modal, takeaway refused, and the
+// tax.rate.ask payload says "none" instead of "" for a line's order type.
+func OrderTypeOff() bool { return orderTypePromptModeVal() == "off" }
 
 // idleLockSecs drives the cosmetic client-side idle timer (data-idle-lock on
 // <body>); 0/unset renders no attribute. The server-side check in auth.Service

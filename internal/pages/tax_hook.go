@@ -11,6 +11,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -34,8 +35,19 @@ type taxRateAskPayload struct {
 	ItemID    string `json:"item_id"`
 	TaxCodeID string `json:"tax_code_id"`
 	TaxRateBP int    `json:"tax_rate_bp"`
+	// OrderType is "" (dine-in), "takeaway", or taxAskOrderTypeNone
+	// ("none") when the shop has the order type switched off.
 	OrderType string `json:"order_type"`
 }
+
+// taxAskOrderTypeNone is the order_type a tax.rate.ask payload carries for
+// a line in a shop that has no consumption mode at all
+// (sale.order_type_prompt = "off", ut-docs#3632 -- an off-licence, a
+// barber, a retail shop): there is no dine-in/takeaway distinction to make,
+// so a plugin should apply the item's own rate. "" keeps meaning dine-in
+// for every existing shop, unchanged, and "takeaway" is still sent as-is
+// (a legacy held sale or a synced peer can carry one even under Off).
+const taxAskOrderTypeNone = "none"
 
 // taxRateAskResponse is the JSON a plugin writes to stdout to answer.
 type taxRateAskResponse struct {
@@ -175,11 +187,15 @@ func (a *pluginTaxRateAsker) AskTaxRateBP(l pos.BasketLine, orderType string) (i
 		// binary is broken" (fail closed).
 		return 0, false, a.taxAuthorityBroken(gen)
 	}
+	askOrderType := orderType
+	if askOrderType == "" && httpx.OrderTypeOff() {
+		askOrderType = taxAskOrderTypeNone // ut-docs#3632
+	}
 	payload := taxRateAskPayload{
 		ItemID:    l.ItemID,
 		TaxCodeID: l.TaxCodeID,
 		TaxRateBP: l.TaxRateBP,
-		OrderType: orderType,
+		OrderType: askOrderType,
 	}
 
 	a.mu.Lock()

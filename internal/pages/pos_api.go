@@ -1466,6 +1466,16 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		if r.Form.Get("order_type") == pos.OrderTypeTakeaway {
 			orderType = pos.OrderTypeTakeaway
 		}
+		// ut-docs#3632: a shop with the order type switched off has no
+		// takeaway to switch to -- refuse rather than silently putting a
+		// takeaway rate on a shop that never sells to eat in. Dine-in ("")
+		// stays accepted below (a harmless no-op on an all-"" basket).
+		if orderType == pos.OrderTypeTakeaway && httpx.OrderTypeOff() {
+			writeJSON(w, http.StatusConflict, map[string]any{"data": nil, "error": map[string]string{
+				"code": "order_type_off", "message": httpx.T(httpx.ResolveLocale(w, r), "pos.error.order_type_off"),
+			}})
+			return
+		}
 		// Switching to Takeaway clears the basket's table inside
 		// SetOrderType (ut-docs#1355); the persisted claim on it has to go
 		// the same way or the table reads occupied with nothing on it

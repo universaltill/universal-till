@@ -675,6 +675,9 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 					logging.L().Warnf("setup: could not reload plugins after shop_type layout sync: %v", err)
 				}
 			}
+			// ut-docs#3632: a retail/service shop has no eat-in, so it
+			// starts with the dine-in/takeaway choice switched off.
+			applyShopTypeOrderTypeDefault(r.Context(), d, v)
 		}
 		if err := d.Settings.Set(r.Context(), "setup.completed", "true"); err != nil {
 			http.Error(w, "setup failed", http.StatusInternalServerError)

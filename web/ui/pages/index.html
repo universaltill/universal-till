@@ -132,7 +132,11 @@
        when the receipt after a tender is left, page load) via app.js's
        maybePromptAtSaleStart, and Cancel/Escape (base.html's
        data-ut-escape-close handler) suppress just that sale-start nag for
-       the rest of the sale, not the per-item/per-Pay gates above. -->
+       the rest of the sale, not the per-item/per-Pay gates above.
+       ut-docs#3632: not rendered when the order type is switched off
+       ("off"), so nothing can ever open it -- app.js's
+       showOrderTypePromptModal() passes straight through without it. -->
+  {{ if ne ordertypepromptmode "off" }}
   <dialog id="order-type-prompt-modal" class="modifier-modal" aria-labelledby="order-type-prompt-title" data-ut-escape-close>
     <h3 id="order-type-prompt-title">{{ T "basket.order_type.prompt_title" }}</h3>
     <div class="modifier-actions">
@@ -151,6 +155,7 @@
         🥡 {{ T "basket.order_type.takeaway" }}</button>
     </div>
   </dialog>
+  {{ end }}
 
   <!-- ut-docs#2137: opened non-modally with .show(), same reasoning as
        #hold-modal and #payment-overlay above -- showModal()'s inert-outside

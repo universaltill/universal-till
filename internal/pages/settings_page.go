@@ -970,7 +970,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// Dine-in/takeaway prompt placement (ut-docs#2282): WHEN/WHERE the sale
 	// screen asks the cashier -- top of basket (always visible, the
 	// pre-this-card default), before the first item lands in an empty
-	// basket, or deferred until Pay. Same elevation+audit shape as
+	// basket, deferred until Pay, or never ("off", ut-docs#3632: a shop
+	// with no eat-in). Same elevation+audit shape as
 	// order-no-scheme just above, and the same live-republish-after-write
 	// pattern as display-mode (further down this file): the setting must
 	// take effect on THIS till immediately, not just after a restart.
@@ -979,8 +980,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_ = r.ParseForm()
 		mode := strings.TrimSpace(r.Form.Get("mode"))
-		if mode != data.OrderTypePromptModeTop && mode != data.OrderTypePromptModeBeforeItem && mode != data.OrderTypePromptModeAtPay {
-			http.Error(w, "mode must be top, before_item, or at_pay", http.StatusBadRequest)
+		if !validOrderTypePromptMode(mode) {
+			http.Error(w, "mode must be top, before_item, at_pay, or off", http.StatusBadRequest)
 			return
 		}
 		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
@@ -3578,7 +3579,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// sale screen's data-order-type-prompt-mode attribute (and so
 			// the intercept behaviour it drives) stays stale on THIS till
 			// until it restarts. InitOrderTypePromptMode already falls back
-			// to "top" for anything not one of the three valid values, so no
+			// to "top" for anything not one of the four valid values, so no
 			// extra validation is needed here.
 			httpx.InitOrderTypePromptMode(value)
 		}
