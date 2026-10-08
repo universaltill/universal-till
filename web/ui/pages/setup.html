@@ -375,6 +375,11 @@
             {{ T "setup.auto_register.label" }}
           </label>
           <p class="muted">{{ T "setup.auto_register.hint" }}</p>
+          {{/* ADR-0121 §7 (ut-docs#3872): plugin panels (setup.wizard.steps),
+               rendered inline by the handler (renderSetupSlot) and
+               read-only: the wizard is auth-exempt, plugin routes are not,
+               so they carry no forms (safe inside this <form>). */}}
+          {{ if .pluginSlot }}{{ .pluginSlot }}{{ end }}
           <div class="setup-nav">
             <button type="button" class="btn secondary" @click="step = 6">{{ T "setup.back" }}</button>
             <button type="submit" class="btn primary">{{ T "setup.finish" }}</button>

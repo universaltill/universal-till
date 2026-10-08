@@ -2336,6 +2336,10 @@ type PageEntryRow struct {
 	// file fields accept (ut-docs#3793), unpacked from config_json's
 	// "upload_max_mb"; 0 = the view accepts no uploads.
 	UploadMaxMB int
+	// Slot is the core content slot this entry's view also fills (ADR-0121
+	// §7, ut-docs#3872), unpacked from config_json's "content_slot" key;
+	// "" when the entry is a page only.
+	Slot string
 }
 
 // pageEntryUploadMaxMB is plugins.MaxUploadMaxMB (validated at install);
@@ -2369,13 +2373,16 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 			return nil, pluginObs.wrap("list_page_entries", err)
 		}
 		if row.ConfigJSON != "" {
-			// A malformed blob just means "no view" (a static page).
+			// A malformed blob just means "no view" (a static page) and
+			// no slot.
 			var cfg struct {
 				View        string          `json:"view"`
 				UploadMaxMB json.RawMessage `json:"upload_max_mb"`
+				Slot        string          `json:"content_slot"`
 			}
 			if json.Unmarshal([]byte(row.ConfigJSON), &cfg) == nil {
 				row.View = cfg.View
+				row.Slot = cfg.Slot
 				var mb float64
 				if len(cfg.UploadMaxMB) > 0 && json.Unmarshal(cfg.UploadMaxMB, &mb) == nil && mb == math.Trunc(mb) && mb >= 1 && mb <= pageEntryUploadMaxMB {
 					row.UploadMaxMB = int(mb)

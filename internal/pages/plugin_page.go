@@ -51,7 +51,9 @@ type contentBundle struct {
 //   - GET /plugin/...              -> the page a 'page' entry registered at that route
 //   - GET /ui/plugin-buttons       -> partial listing installed 'button' entries
 //   - POST /api/plugins/entries/{plugin}/{key}/action -> publish the button's event
+//   - GET /ui/slot/{slot}          -> a content slot's plugin panels (plugin_slot.go)
 func registerPluginPages(mux *http.ServeMux, d *common.Deps) {
+	registerPluginSlots(mux, d)
 	mux.HandleFunc("/plugin/", func(w http.ResponseWriter, r *http.Request) {
 		entry, ok := findPageEntry(r, d)
 		if !ok {

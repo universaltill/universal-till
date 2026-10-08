@@ -88,6 +88,21 @@ type pluginViewBody struct {
 	Job         *pluginJobPoll
 	JobBusy     bool
 	JobGone     bool
+	// Target is the id of the element this body is drawn in and its
+	// actions/poll swap into: "" for the page's own #plugin-view, or a
+	// content slot panel's id (ut-docs#3872, pluginSlotPanelIDRe).
+	Target string
+	// ReadOnly draws no actions or forms (setup.wizard.steps: the wizard
+	// is auth-exempt, /plugin/ routes are not -- ut-docs#3872).
+	ReadOnly bool
+}
+
+// TargetID is the id actions, forms and the job poll target.
+func (b pluginViewBody) TargetID() string {
+	if b.Target == "" {
+		return "plugin-view"
+	}
+	return b.Target
 }
 
 // pluginJobPoll is what pluginview_poll renders.
@@ -109,6 +124,16 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 	_, isPoll := r.URL.Query()[pluginJobParam]
 	isPoll = isPoll && r.Method != http.MethodPost
 	fragment := httpx.IsFragmentSwap(w, r)
+	// An action or poll from a content slot panel (ut-docs#3872) answers
+	// into that panel: htmx names it in HX-Target. Anything else -- no
+	// header, an id that is not a slot panel's, or a request answered with
+	// the whole page -- is the page's own container, so a request can
+	// never point the answer at core markup.
+	inSlot := false
+	if t := r.Header.Get("HX-Target"); htmx && (r.Method == http.MethodPost || (isPoll && fragment)) && pluginSlotPanelIDRe.MatchString(t) {
+		body.Target = t
+		inSlot = true
+	}
 
 	var doc *pluginview.Document
 	var redirect string
@@ -205,7 +230,15 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 
 	title := httpx.T(locale, entry.Label)
 	docTitle := body.View.Title != ""
-	if docTitle {
+	if inSlot {
+		// A slot panel's heading is the body's own title (pluginview_slot),
+		// kept on a failed, busy or job answer too so the operator still
+		// sees which plugin's panel it is (ut-docs#3872 review).
+		if !docTitle {
+			body.View.Title = title
+		}
+		docTitle = false
+	} else if docTitle {
 		title = body.View.Title
 		body.View.Title = "" // shown once, as the page heading
 	}
@@ -343,10 +376,18 @@ func askPluginAction(ctx context.Context, d *common.Deps, entry data.PageEntryRo
 	return ans, vctx, payload, err
 }
 
-// askPluginUI checks ui:page, then asks exactly the entry's plugin, bounded
-// by pluginViewTimeout even if a handler ignores its context.
+// askPluginUI checks ui:page, then asks exactly the entry's plugin,
+// bounded by pluginViewTimeout (a view page or an action).
 func askPluginUI(ctx context.Context, d *common.Deps, entry data.PageEntryRow, event string, payload map[string]any) ([]byte, pluginview.Context, error) {
-	if err := plugins.CheckPermission(ctx, d.Db, entry.PluginID, pluginViewPermission); err != nil {
+	return askPluginUIAs(ctx, d, entry, pluginViewPermission, pluginViewTimeout, event, payload)
+}
+
+// askPluginUIAs checks perm, then asks exactly the entry's plugin, bounded
+// by timeout even if a handler ignores its context. A page asks under
+// ui:page (askPluginUI); a content slot under ui:slot:<slot>
+// (contentSlotPanels, ut-docs#3872).
+func askPluginUIAs(ctx context.Context, d *common.Deps, entry data.PageEntryRow, perm string, timeout time.Duration, event string, payload map[string]any) ([]byte, pluginview.Context, error) {
+	if err := plugins.CheckPermission(ctx, d.Db, entry.PluginID, perm); err != nil {
 		return nil, pluginview.Context{}, err
 	}
 	vctx, err := pluginViewContext(ctx, d, entry.PluginID)
@@ -355,7 +396,7 @@ func askPluginUI(ctx context.Context, d *common.Deps, entry data.PageEntryRow, e
 	}
 	// A file field is only valid on an entry that declared its size cap.
 	vctx.Uploads = entry.UploadMaxMB > 0
-	actx, cancel := context.WithTimeout(ctx, pluginViewTimeout)
+	actx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	type result struct {
 		raw []byte

@@ -458,6 +458,7 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /ui/pairing-notice":      true,
 	"GET /ui/shop-name-notice":    true, // ut-docs#3114
 	"GET /ui/plugin-buttons":      true,
+	"GET /ui/slot/{slot}":         true, // ut-docs#3872: core pages' content-slot placeholders; a demo installs no plugins, so it answers empty (panel actions post to /plugin/..., denied above)
 	"GET /ui/report-archive-chip": true,
 	"GET /ui/subscription-chip":   true, // ut-docs#2569, beside GET /api/entitlement
 	"GET /ui/sync-chip":           true,

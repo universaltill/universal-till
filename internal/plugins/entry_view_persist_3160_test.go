@@ -43,6 +43,10 @@ func TestPersistManifest_PageEntryViewRoundtrip_3160(t *testing.T) {
 	if got["home"].View != "views.home" {
 		t.Fatalf("home view = %q, want views.home (row %+v)", got["home"].View, got["home"])
 	}
+	// ut-docs#3872: the slot comes back too.
+	if got["home"].Slot != "reports.panels" || got["plain"].Slot != "" {
+		t.Fatalf("slot = %q / %q, want reports.panels / none", got["home"].Slot, got["plain"].Slot)
+	}
 	if got["plain"].View != "" {
 		t.Fatalf("plain entry must have no view, got %q", got["plain"].View)
 	}
