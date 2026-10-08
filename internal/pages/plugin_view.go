@@ -134,6 +134,20 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 		body.Target = t
 		inSlot = true
 	}
+	// A panel is drawn under ui:slot:<slot> (contentSlotPanels), so its
+	// actions run under that same grant, not ui:page (ut-docs#3963). No
+	// slot target, or an entry with no slot, stays on ui:page.
+	actionPerm := pluginViewPermission
+	if inSlot && entry.Slot != "" {
+		actionPerm = "ui:slot:" + entry.Slot
+		// /plugin/ routes need only a session; a panel's action is also
+		// gated by its host screen, as GET /ui/slot/{slot} is (fail
+		// closed: setup.wizard.steps has no gate and draws no actions).
+		if gate, ok := pluginSlotGates[entry.Slot]; r.Method == http.MethodPost && (!ok || !gate(d, r)) {
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+	}
 
 	var doc *pluginview.Document
 	var redirect string
@@ -183,7 +197,7 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 		var ans pluginview.ActionAnswer
 		var vctx pluginview.Context
 		var payload map[string]any
-		ans, vctx, payload, err = askPluginAction(r.Context(), d, entry, locale, sub, ups)
+		ans, vctx, payload, err = askPluginAction(r.Context(), d, entry, actionPerm, locale, sub, ups)
 		switch {
 		case err != nil:
 		case ans.Job != "":
@@ -351,8 +365,9 @@ func askPluginView(ctx context.Context, d *common.Deps, entry data.PageEntryRow,
 }
 
 // askPluginAction asks ui.action.ask; it also returns the validation
-// context and the payload, which a job answer reuses (startPluginJob).
-func askPluginAction(ctx context.Context, d *common.Deps, entry data.PageEntryRow, locale string, sub pluginview.Submission, ups []pluginUpload) (pluginview.ActionAnswer, pluginview.Context, map[string]any, error) {
+// context and the payload, which a job answer reuses (startPluginJob). It
+// checks perm: ui:page, or ui:slot:<slot> for a slot panel's action.
+func askPluginAction(ctx context.Context, d *common.Deps, entry data.PageEntryRow, perm, locale string, sub pluginview.Submission, ups []pluginUpload) (pluginview.ActionAnswer, pluginview.Context, map[string]any, error) {
 	invalid := sub.Invalid
 	if invalid == nil {
 		invalid = []string{}
@@ -368,7 +383,7 @@ func askPluginAction(ctx context.Context, d *common.Deps, entry data.PageEntryRo
 		"upload_handles": ups,
 		"locale":         locale,
 	}
-	raw, vctx, err := askPluginUI(ctx, d, entry, pluginActionAskEvent, payload)
+	raw, vctx, err := askPluginUIAs(ctx, d, entry, perm, pluginViewTimeout, pluginActionAskEvent, payload)
 	if err != nil {
 		return pluginview.ActionAnswer{}, vctx, nil, err
 	}

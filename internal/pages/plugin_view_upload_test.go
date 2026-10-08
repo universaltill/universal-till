@@ -382,3 +382,38 @@ func TestPluginViewUpload_FilenameLabel_3793(t *testing.T) {
 		}
 	}
 }
+
+// A file posted from a content slot panel runs under ui:slot:<slot> alone:
+// the plugin holds no ui:page (ut-docs#3963).
+func TestPluginViewUpload_IntoSlotPanel_3963(t *testing.T) {
+	isolateTemp(t)
+	t.Setenv("UT_AUTH", "off") // the slot's host gate has its own test
+	h := newViewHarness(t)
+	if _, err := h.d.Db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label,config_json) VALUES ('v6',?,'page','slotup',?,'Slot upload',?)`,
+		viewPluginID, uploadRoute, `{"view":"views.upload","content_slot":"reports.panels","upload_max_mb":1}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.d.Db.Exec(`UPDATE plugin_permissions SET granted = 0 WHERE plugin_id = ? AND permission = 'ui:page'`, viewPluginID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.d.Db.Exec(`INSERT INTO plugin_permissions(id,plugin_id,permission,granted) VALUES('slotup',?,'ui:slot:reports.panels',1)`, viewPluginID); err != nil {
+		t.Fatal(err)
+	}
+	h.answerWith(`{"document":{"version":1,"components":[{"type":"notice","level":"info","text":{"literal":"Saved"}},{"type":"button","action":"again","label":{"literal":"Again"}}]}}`)
+
+	body, ct := multipartPost(t, map[string]string{"_action": "identify"}, []uploadPart{{"photo", "cat.png", pngBytes(2000)}})
+	req := httptest.NewRequest(http.MethodPost, uploadRoute, body)
+	req.Header.Set("Content-Type", ct)
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-Target", "plugin-slot-reports-panels-0")
+	rec := httptest.NewRecorder()
+	h.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Saved") || !strings.Contains(rec.Body.String(), `hx-target="#plugin-slot-reports-panels-0"`) {
+		t.Fatalf("POST = %d:\n%s", rec.Code, rec.Body.String())
+	}
+	ups := lastUploads(t, h.lastPay)
+	if len(ups) != 1 || ups[0].Field != "photo" || ups[0].Filename != "cat.png" || ups[0].Size != 2000 {
+		t.Fatalf("upload_handles = %+v", ups)
+	}
+	assertNoStaged(t)
+}
