@@ -34,6 +34,7 @@ func (s stubResolver) Resolve(code string) (pos.BasketLine, bool) {
 // chdir to repo root so templates resolve during tests.
 func chdirRoot(t *testing.T) {
 	t.Helper()
+	resetProcessGlobals(t) // ut-docs#3822: most handler tests start here
 	_, file, _, _ := runtime.Caller(0)
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	if err := os.Chdir(root); err != nil {
@@ -58,6 +59,9 @@ func chdirRoot(t *testing.T) {
 // the mechanism and measured cost.
 func openPagesTestDB(t *testing.T) *sql.DB {
 	t.Helper()
+	// ut-docs#3822: undo on exit only — callers set test globals between
+	// chdirRoot (which already reset them on entry) and this call.
+	t.Cleanup(pagesGlobalsBaseline)
 	path := filepath.Join(t.TempDir(), "pages_test.db")
 	if err := os.WriteFile(path, realDBTemplate(t), 0o600); err != nil {
 		t.Fatalf("clone template db: %v", err)

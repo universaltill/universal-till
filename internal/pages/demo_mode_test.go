@@ -224,6 +224,7 @@ const testDemoToken = "0123456789abcdef0123456789abcdef"
 // reports whether the inner handler executed.
 func demoTestHandler(t *testing.T) (http.Handler, *bool, *string) {
 	t.Helper()
+	resetProcessGlobals(t)    // ut-docs#3822: undo the nil translator below
 	httpx.InitI18n(nil, "en") // no translator: T answers the key itself
 	ran := new(bool)
 	gotName := new(string)
@@ -303,6 +304,7 @@ func TestDemoMiddleware_Token(t *testing.T) {
 // empty header. (The start gate refuses an empty token already; this is the
 // middleware not relying on that.)
 func TestDemoMiddleware_EmptyConfiguredTokenNeverMatches(t *testing.T) {
+	resetProcessGlobals(t) // ut-docs#3822: undo the nil translator below
 	httpx.InitI18n(nil, "en")
 	ran := false
 	mux := http.NewServeMux()

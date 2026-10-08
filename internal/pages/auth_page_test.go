@@ -297,10 +297,10 @@ func TestLoginAndSetupLoadOnScreenKeyboard(t *testing.T) {
 // suite structurally cannot see. Mirrors TestLoginAndSetupLoadOnScreenKeyboard
 // just above (same two-page, first-boot-then-login shape).
 func TestLoginAndSetupUseFluidUIScaleCSSVariable(t *testing.T) {
-	httpx.InitUIScale(1.3)
-	t.Cleanup(func() { httpx.InitUIScale(1.0) })
 	withOSLocale(t, "", "")
 	mux, _, _ := newAuthTestMux(t)
+	httpx.InitUIScale(1.3) // after the helper: chdirRoot resets globals (ut-docs#3822)
+	t.Cleanup(func() { httpx.InitUIScale(1.0) })
 
 	assertUIScale := func(label string, rec *httptest.ResponseRecorder) {
 		t.Helper()
