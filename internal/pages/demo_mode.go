@@ -227,7 +227,9 @@ var demoDeniedRoutes = map[string]bool{
 	// and a plugin job; its poll has no job to find in a demo.
 	"GET /api/pos/identify/plugin":  true,
 	"POST /api/pos/identify/plugin": true,
-	"POST /api/reports/ask":         true,
+	// Its suggestion thumbnails (ut-docs#3957): a plugin's blob store.
+	"GET /api/pos/identify/plugin/thumb": true,
+	"POST /api/reports/ask":              true,
 	// Cloud enrolment, registration, telemetry and LAN
 	// sync/pairing/discovery/link (all /api/sync/*, /api/setup/*, the Tills
 	// pages).

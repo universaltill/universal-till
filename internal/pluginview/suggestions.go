@@ -8,6 +8,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/universaltill/universal-till/internal/plugins"
 )
 
 // suggestions (ADR-0121 §7, ut-docs#3873; format: ut-docs
@@ -15,7 +17,10 @@ import (
 // screen. A list of candidates, each with a label, an optional detail and
 // exactly one core-defined effect — add_to_basket {sku, qty} (core posts
 // the SKU through the normal /api/pos/scan path) or apply_fields {field:
-// value} onto a core form whose field names are a fixed allow-list. It
+// value} onto a core form whose field names are a fixed allow-list — and
+// an optional thumbnail, the name of a blob in the answering plugin's own
+// store (blob:own, ut-docs#3957; core serves it, see
+// internal/pages/plugin_identify.go). It
 // only renders inside a core seam (Context.Seam); a plugin page or slot
 // refuses it. A plugin never writes core data this way: it proposes, the
 // operator commits.
@@ -75,9 +80,12 @@ type Suggestions struct {
 }
 
 type Suggestion struct {
-	Label  Text   `json:"label"`
-	Detail *Text  `json:"detail,omitempty"`
-	Effect Effect `json:"effect"`
+	Label  Text  `json:"label"`
+	Detail *Text `json:"detail,omitempty"`
+	// Thumbnail names a blob in the answering plugin's own store; a
+	// pointer so an explicit "" is refused rather than read as absent.
+	Thumbnail *string `json:"thumbnail,omitempty"`
+	Effect    Effect  `json:"effect"`
 }
 
 // Effect is exactly one of AddToBasket or ApplyFields.
@@ -92,9 +100,12 @@ type AddToBasket struct {
 }
 
 // ViewSuggestion is one prepared candidate: SKU/Qty for add_to_basket,
-// Fields (strings, price as int64 minor units) for apply_fields.
+// Fields (strings, price as int64 minor units) for apply_fields, and the
+// plugin's own blob name for a thumbnail ("" = none). The thumbnail is
+// only a name: the seam resolves it against the answering plugin's store.
 type ViewSuggestion struct {
 	Label, Detail string
+	Thumbnail     string
 	SKU           string
 	Qty           int
 	Fields        map[string]any
@@ -140,6 +151,9 @@ func (v *validator) suggestions(where string, s *Suggestions) {
 		v.text(w+".label", it.Label)
 		if it.Detail != nil {
 			v.text(w+".detail", *it.Detail)
+		}
+		if it.Thumbnail != nil && !plugins.ValidBlobName(*it.Thumbnail) {
+			v.fail("%s.thumbnail must be the name of one of your blobs ([a-z0-9._-], 1–128 characters)", w)
 		}
 		e := it.Effect
 		if (e.AddToBasket != nil) == (e.ApplyFields != nil) {
@@ -244,6 +258,9 @@ func prepareSuggestions(s *Suggestions, t func(Text) string) []ViewSuggestion {
 		vs := ViewSuggestion{Label: t(it.Label)}
 		if it.Detail != nil {
 			vs.Detail = t(*it.Detail)
+		}
+		if it.Thumbnail != nil {
+			vs.Thumbnail = *it.Thumbnail
 		}
 		if a := it.Effect.AddToBasket; a != nil {
 			vs.SKU = a.SKU

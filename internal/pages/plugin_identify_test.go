@@ -5,9 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"html"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -18,6 +22,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
 )
@@ -487,5 +492,173 @@ func TestIndex_PluginIdentifyButton_3873(t *testing.T) {
 	}
 	if strings.Contains(body, `id="ai-identify-open"`) || strings.Contains(body, `id="ai-identify-overlay"`) {
 		t.Fatal("two camera-identify buttons: the built-in one must step aside for the plugin's")
+	}
+}
+
+// ut-docs#3957: a suggestion's thumbnail is a blob in the answering
+// plugin's own store. Core shows it only when it is a real image there, via
+// a URL core signs; the route serves nothing else.
+
+var identifyThumbRe = regexp.MustCompile(`<img src="(/api/pos/identify/plugin/thumb\?[^"]+)"`)
+
+// thumbHarness: the identify harness with a data root holding blobs and
+// the view plugin granted blob:own.
+func thumbHarness(t *testing.T) (*identifyHarness, string) {
+	t.Helper()
+	h := newIdentifyHarness(t)
+	root := t.TempDir()
+	prev := paths.DataDir()
+	paths.Init(root)
+	t.Cleanup(func() { paths.Init(prev) })
+	if _, err := h.d.Db.Exec(`INSERT INTO plugin_permissions(id,plugin_id,permission,granted) VALUES(?,?,'blob:own',1)`, viewPluginID+"blob", viewPluginID); err != nil {
+		t.Fatal(err)
+	}
+	return h, root
+}
+
+func putTestBlob(t *testing.T, root, pluginID, name string, content []byte) {
+	t.Helper()
+	dir := filepath.Join(root, "plugin-data", pluginID, "blobs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+var thumbPNG = append([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"), bytes.Repeat([]byte{7}, 100)...)
+
+func thumbAnswer(items ...string) string {
+	return `{"document":{"version":1,"components":[{"type":"suggestions","items":[` + strings.Join(items, ",") + `]}]}}`
+}
+
+func thumbItem(sku, thumb string) string {
+	return `{"label":{"literal":"` + sku + `"},"thumbnail":"` + thumb + `","effect":{"add_to_basket":{"sku":"` + sku + `"}}}`
+}
+
+func TestPluginIdentify_Thumbnail_3957(t *testing.T) {
+	h, root := thumbHarness(t)
+	putTestBlob(t, root, viewPluginID, "oat.png", thumbPNG)
+	putTestBlob(t, root, viewPluginID, "notes.png", []byte("plain text, not an image"))
+	putTestBlob(t, root, viewPluginID, "page.svg", []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`))
+	putTestBlob(t, root, viewPluginID, "huge.png", append(append([]byte{}, thumbPNG...), make([]byte, identifyThumbMaxBytes)...))
+	putTestBlob(t, root, "com.test.other", "foreign.png", thumbPNG)
+	// TEA-1 has a catalog photo: a broken thumbnail falls back to it.
+	if _, err := h.d.Db.Exec(`INSERT INTO items(id,sku,name,base_price,is_active) VALUES ('itm-tea','TEA-1','Tea',250,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.d.Db.Exec(`INSERT INTO item_images (id, item_id, path, role) VALUES ('img-tea','itm-tea','/public/assets/category-icons/coffee.svg','thumbnail')`); err != nil {
+		t.Fatal(err)
+	}
+	h.answer(thumbAnswer(
+		thumbItem("OAT", "oat.png"),
+		thumbItem("MISSING", "nope.png"),
+		thumbItem("TEXT", "notes.png"),
+		thumbItem("SVG", "page.svg"),
+		thumbItem("HUGE", "huge.png"),
+		// Another plugin's blob name: always looked up in the answering
+		// plugin's own store, so it is simply missing there.
+		thumbItem("FOREIGN", "foreign.png"),
+		thumbItem("TEA-1", "nope.png"),
+	))
+	rec := h.pollUntilDone(h.start())
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("done poll = %d:\n%s", rec.Code, body)
+	}
+	// Every candidate still renders: a bad thumbnail never breaks the list.
+	if n := strings.Count(body, "data-identify-pick"); n != 7 {
+		t.Fatalf("%d buttons, want 7:\n%s", n, body)
+	}
+	thumbs := identifyThumbRe.FindAllStringSubmatch(body, -1)
+	if len(thumbs) != 1 {
+		t.Fatalf("%d plugin thumbnails, want exactly oat.png's:\n%s", len(thumbs), body)
+	}
+	if !strings.Contains(body, `/public/assets/category-icons/coffee.svg`) {
+		t.Errorf("TEA-1's missing thumbnail should fall back to the catalog photo:\n%s", body)
+	}
+	src := html.UnescapeString(thumbs[0][1])
+	if !strings.Contains(src, "n=oat.png") || !strings.Contains(src, "p="+url.QueryEscape(viewPluginID)) {
+		t.Fatalf("the one thumbnail is %s, want oat.png of %s", src, viewPluginID)
+	}
+	img := h.do(http.MethodGet, src, nil, false)
+	if img.Code != http.StatusOK || !bytes.Equal(img.Body.Bytes(), thumbPNG) {
+		t.Fatalf("GET %s = %d (%d bytes), want the PNG", src, img.Code, img.Body.Len())
+	}
+	for k, want := range map[string]string{
+		"Content-Type":            "image/png",
+		"X-Content-Type-Options":  "nosniff",
+		"Content-Security-Policy": "default-src 'none'; sandbox",
+		"Cache-Control":           "private, no-store",
+	} {
+		if got := img.Header().Get(k); got != want {
+			t.Errorf("%s = %q, want %q", k, got, want)
+		}
+	}
+	if head := h.do(http.MethodHead, src, nil, false); head.Code != http.StatusOK || head.Body.Len() != 0 {
+		t.Errorf("HEAD = %d with %d body bytes", head.Code, head.Body.Len())
+	}
+
+	// The URL is good for exactly the pair core signed.
+	u, err := url.Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tamper := func(k, v string) string {
+		q := u.Query()
+		q.Set(k, v)
+		return identifyThumbRoute + "?" + q.Encode()
+	}
+	for name, path := range map[string]string{
+		"another blob, same signature":   tamper("n", "page.svg"),
+		"another plugin, same signature": tamper("p", "com.test.other"),
+		"forged signature":               tamper("s", strings.Repeat("0", 64)),
+		"no signature":                   tamper("s", ""),
+		"traversal":                      tamper("n", "../../com.test.other/blobs/foreign.png"),
+		"bare route":                     identifyThumbRoute,
+	} {
+		if rec := h.do(http.MethodGet, path, nil, false); rec.Code != http.StatusNotFound {
+			t.Errorf("%s: GET %s = %d, want 404", name, path, rec.Code)
+		}
+	}
+	// A correctly signed URL for a blob that is not an image is still
+	// refused: the route re-checks, it does not trust the page.
+	if rec := h.do(http.MethodGet, identifyThumbURL(viewPluginID, "page.svg"), nil, false); rec.Code != http.StatusNotFound {
+		t.Errorf("signed svg = %d, want 404", rec.Code)
+	}
+	// Even signed, another plugin's blob is served only if that plugin may
+	// serve blobs (com.test.other holds no blob:own).
+	if rec := h.do(http.MethodGet, identifyThumbURL("com.test.other", "foreign.png"), nil, false); rec.Code != http.StatusNotFound {
+		t.Errorf("signed foreign blob without blob:own = %d, want 404", rec.Code)
+	}
+
+	// Revoking blob:own stops the served URL at once and drops the
+	// thumbnail from the next result.
+	if _, err := h.d.Db.Exec(`UPDATE plugin_permissions SET granted=0 WHERE plugin_id=? AND permission='blob:own'`, viewPluginID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := h.do(http.MethodGet, src, nil, false); rec.Code != http.StatusNotFound {
+		t.Errorf("after revoking blob:own: GET = %d, want 404", rec.Code)
+	}
+	h.answer(thumbAnswer(thumbItem("OAT", "oat.png")))
+	body = h.pollUntilDone(h.start()).Body.String()
+	if identifyThumbRe.MatchString(body) || !strings.Contains(body, "data-identify-pick") {
+		t.Errorf("after revoking blob:own the candidate must render without its thumbnail:\n%s", body)
+	}
+}
+
+func TestPluginIdentify_ThumbnailDisabledPlugin_3957(t *testing.T) {
+	h, root := thumbHarness(t)
+	putTestBlob(t, root, viewPluginID, "oat.png", thumbPNG)
+	src := identifyThumbURL(viewPluginID, "oat.png")
+	if rec := h.do(http.MethodGet, src, nil, false); rec.Code != http.StatusOK {
+		t.Fatalf("active plugin: GET = %d, want 200", rec.Code)
+	}
+	if _, err := h.d.Db.Exec(`UPDATE plugins SET is_active=0 WHERE id=?`, viewPluginID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := h.do(http.MethodGet, src, nil, false); rec.Code != http.StatusNotFound {
+		t.Errorf("disabled plugin: GET = %d, want 404", rec.Code)
 	}
 }

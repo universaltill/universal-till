@@ -2,13 +2,19 @@ package pages
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -30,10 +36,23 @@ import (
 // only), and each suggestion renders as a button posting its SKU through
 // the normal /api/pos/scan path. Closing the overlay stops the poll, so the
 // job is abandoned (pluginJobUnpolledTTL) and a late result dropped.
+//
+// A suggestion may name a thumbnail: a blob in the answering plugin's own
+// store (blob:own, ut-docs#3957). Core shows it only if the blob is a real
+// JPEG, PNG or WebP image there now; otherwise the button keeps the catalog
+// item's photo (or none) and the list never breaks. The image URL core
+// emits is signed (identifyThumbURL) with a key that lives only in this
+// process, so the thumbnail route serves exactly the (plugin, blob) pairs
+// core itself put on a page — never a blob anyone names by hand, never
+// another plugin's, and nothing after a restart.
 
 const (
 	identifyEvent = "catalog.identify"
 	identifyRoute = "/api/pos/identify/plugin"
+	// identifyThumbRoute serves a suggestion's plugin-blob thumbnail.
+	identifyThumbRoute = "/api/pos/identify/plugin/thumb"
+	// identifyThumbMaxBytes caps a thumbnail blob: a list icon, not a photo.
+	identifyThumbMaxBytes = 1 << 20
 	// identifyMaxPhotoBytes caps the photo (the overlay sends a ≤1024 px
 	// JPEG, far below it).
 	identifyMaxPhotoBytes = 8 << 20
@@ -84,9 +103,11 @@ type identifyResult struct {
 	Matches []identifyMatch
 }
 
+// identifyMatch is one suggestion button. ThumbURL (the plugin's blob)
+// wins over ImageURL (the catalog item's photo).
 type identifyMatch struct {
-	Label, Detail, SKU, ImageURL string
-	Qty                          int
+	Label, Detail, SKU, ImageURL, ThumbURL string
+	Qty                                    int
 }
 
 var (
@@ -102,6 +123,87 @@ func registerPluginIdentify(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /api/pos/identify/plugin", func(w http.ResponseWriter, r *http.Request) {
 		servePluginIdentifyPoll(w, r, d)
 	})
+	mux.HandleFunc("GET /api/pos/identify/plugin/thumb", func(w http.ResponseWriter, r *http.Request) {
+		servePluginIdentifyThumb(w, r, d)
+	})
+}
+
+// identifyThumbKey signs thumbnail URLs; random per process.
+var identifyThumbKey = func() []byte {
+	k := make([]byte, 32)
+	_, _ = rand.Read(k) // crypto/rand.Read never fails (it crashes instead)
+	return k
+}()
+
+func identifyThumbSig(pluginID, name string) string {
+	m := hmac.New(sha256.New, identifyThumbKey)
+	m.Write([]byte(pluginID))
+	m.Write([]byte{0})
+	m.Write([]byte(name))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
+// identifyThumbURL is the signed URL of pluginID's blob name.
+func identifyThumbURL(pluginID, name string) string {
+	q := url.Values{"p": {pluginID}, "n": {name}, "s": {identifyThumbSig(pluginID, name)}}
+	return identifyThumbRoute + "?" + q.Encode()
+}
+
+// identifyThumbAllowed: the plugin is still installed and active and
+// still holds blob:own — revoking either stops its thumbnails at once.
+// Plain reads, like identifyPluginID: an image per suggestion is no
+// denial worth an audit row.
+func identifyThumbAllowed(ctx context.Context, d *common.Deps, pluginID string) bool {
+	repo := data.NewPluginRepo(d.Db)
+	if _, active, err := repo.GetActivePluginVersion(ctx, pluginID); err != nil || !active {
+		return false
+	}
+	granted, exists, err := repo.CheckPermission(ctx, pluginID, "blob:own")
+	return err == nil && exists && granted
+}
+
+// servePluginIdentifyThumb serves one signed (plugin, blob) pair as an
+// image: sniffed type, never sniffed again by the browser, and inert even
+// if opened as a page. Every refusal is the same 404.
+func servePluginIdentifyThumb(w http.ResponseWriter, r *http.Request, d *common.Deps) {
+	q := r.URL.Query()
+	pluginID, name, sig := q.Get("p"), q.Get("n"), q.Get("s")
+	want := identifyThumbSig(pluginID, name)
+	if !hmac.Equal([]byte(sig), []byte(want)) || !identifyThumbAllowed(r.Context(), d, pluginID) {
+		http.NotFound(w, r)
+		return
+	}
+	f, ctype, size, err := plugins.OpenBlobImage(pluginID, name, identifyThumbMaxBytes)
+	if err != nil {
+		logging.L().Infof("plugin identify %s: thumbnail %q: %v", pluginID, name, err)
+		http.NotFound(w, r)
+		return
+	}
+	defer func() { _ = f.Close() }()
+	h := w.Header()
+	h.Set("Content-Type", ctype)
+	h.Set("Content-Length", strconv.FormatInt(size, 10))
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	h.Set("Cache-Control", "private, no-store")
+	w.WriteHeader(http.StatusOK)
+	if r.Method == http.MethodHead {
+		return
+	}
+	_, _ = io.CopyN(w, f, size)
+}
+
+// identifyThumbFor is the thumbnail URL for pluginID's blob name, or ""
+// when the blob is missing, too large or not an image. The caller has
+// already checked identifyThumbAllowed.
+func identifyThumbFor(pluginID, name string) string {
+	f, _, _, err := plugins.OpenBlobImage(pluginID, name, identifyThumbMaxBytes)
+	if err != nil {
+		logging.L().Infof("plugin identify %s: no thumbnail %q: %v", pluginID, name, err)
+		return ""
+	}
+	_ = f.Close()
+	return identifyThumbURL(pluginID, name)
 }
 
 func renderIdentify(w http.ResponseWriter, r *http.Request, status int, name string, data any) {
@@ -284,7 +386,8 @@ func servePluginIdentifyPoll(w http.ResponseWriter, r *http.Request, d *common.D
 	// the identify plugin (a DB read, and an audit row per skipped plugin).
 	var snap pluginJobSnapshot
 	ok := false
-	if pluginID, found := pluginJobs.owner(jobID, identifyRoute); found {
+	pluginID, found := pluginJobs.owner(jobID, identifyRoute)
+	if found {
 		snap, ok = pluginJobs.poll(jobID, pluginID, identifyRoute, r.Method != http.MethodHead)
 	}
 	switch {
@@ -305,16 +408,18 @@ func servePluginIdentifyPoll(w http.ResponseWriter, r *http.Request, d *common.D
 		// job; the reason is in the log.
 		renderIdentify(w, r, http.StatusOK, "identify_notice", identifyNotice{"ai.identify.error", "warn"})
 	default:
-		renderIdentify(w, r, http.StatusOK, "identify_result", identifyResultFor(r.Context(), d, snap.doc.Prepare(locale)))
+		renderIdentify(w, r, http.StatusOK, "identify_result", identifyResultFor(r.Context(), d, pluginID, snap.doc.Prepare(locale)))
 	}
 }
 
 // identifyResultFor builds the overlay's result: the document's text and
-// notices, and one button per suggestion, with the catalog photo of the
+// notices, and one button per suggestion, with pluginID's own thumbnail
+// blob when it names one that checks out, else the catalog photo of the
 // item its SKU resolves to (the same resolution /api/pos/scan makes).
-func identifyResultFor(ctx context.Context, d *common.Deps, v pluginview.View) identifyResult {
+func identifyResultFor(ctx context.Context, d *common.Deps, pluginID string, v pluginview.View) identifyResult {
 	var res identifyResult
 	repo := data.NewPOSRepo(d.Db)
+	thumbsChecked, thumbsAllowed := false, false
 	for _, c := range v.Components {
 		switch c.Type {
 		case "text", "notice":
@@ -325,6 +430,14 @@ func identifyResultFor(ctx context.Context, d *common.Deps, v pluginview.View) i
 					continue // apply_fields: never at this seam (refused)
 				}
 				m := identifyMatch{Label: s.Label, Detail: s.Detail, SKU: s.SKU, Qty: s.Qty}
+				if s.Thumbnail != "" {
+					if !thumbsChecked {
+						thumbsChecked, thumbsAllowed = true, identifyThumbAllowed(ctx, d, pluginID)
+					}
+					if thumbsAllowed {
+						m.ThumbURL = identifyThumbFor(pluginID, s.Thumbnail)
+					}
+				}
 				if line, ok := repo.ResolveShortcutLine(ctx, s.SKU); ok {
 					m.ImageURL = line.ImageURL
 				}

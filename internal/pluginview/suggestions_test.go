@@ -48,6 +48,29 @@ func TestSuggestions_ValidInSeam_3873(t *testing.T) {
 	}
 }
 
+// A candidate may name a thumbnail: a blob in the answering plugin's own
+// store (#3957). Validation checks only the name; core resolves it against
+// that plugin's store when it renders.
+func TestSuggestions_Thumbnail_3957(t *testing.T) {
+	raw := sugg(`{"label":{"literal":"Oat"},"thumbnail":"oat-latte_1.png","effect":{"add_to_basket":{"sku":"OL-1"}}},` + basketItem)
+	d, err := DecodeViewAnswer([]byte(raw), seamCtx(SeamSellIdentify))
+	if err != nil {
+		t.Fatalf("thumbnail refused: %v", err)
+	}
+	s := d.Prepare("en").Components[0].Suggestions
+	if s[0].Thumbnail != "oat-latte_1.png" || s[1].Thumbnail != "" {
+		t.Fatalf("thumbnails = %q, %q; want oat-latte_1.png and none", s[0].Thumbnail, s[1].Thumbnail)
+	}
+	// The item form's apply_fields candidates may carry one too.
+	if _, err := DecodeViewAnswer([]byte(sugg(`{"label":{"literal":"Oat"},"thumbnail":"a.webp","effect":{"apply_fields":{"name":"Oat"}}}`)), seamCtx(SeamItemForm)); err != nil {
+		t.Fatalf("thumbnail on apply_fields refused: %v", err)
+	}
+	// 128 bytes is the longest name.
+	if _, err := DecodeViewAnswer([]byte(sugg(`{"label":{"literal":"x"},"thumbnail":"`+strings.Repeat("a", 128)+`","effect":{"add_to_basket":{"sku":"A"}}}`)), seamCtx(SeamSellIdentify)); err != nil {
+		t.Fatalf("128-byte thumbnail name refused: %v", err)
+	}
+}
+
 func TestSuggestions_Refusals_3873(t *testing.T) {
 	many := strings.TrimSuffix(strings.Repeat(basketItem+",", MaxSuggestions+1), ",")
 	long := strings.Repeat("a", MaxStringBytes+1)
@@ -57,6 +80,9 @@ func TestSuggestions_Refusals_3873(t *testing.T) {
 	}
 	basket := func(b string) string {
 		return sugg(`{"label":{"literal":"x"},"effect":{"add_to_basket":` + b + `}}`)
+	}
+	thumb := func(v string) string {
+		return sugg(`{"label":{"literal":"x"},"thumbnail":` + v + `,"effect":{"add_to_basket":{"sku":"A"}}}`)
 	}
 	sell, form := seamCtx(SeamSellIdentify), seamCtx(SeamItemForm)
 	cases := []struct {
@@ -77,7 +103,16 @@ func TestSuggestions_Refusals_3873(t *testing.T) {
 		// Items.
 		{"no items", sugg(``), sell, "items"},
 		{"too many items", sugg(many), sell, "items"},
-		{"thumbnail (follow-up #3957)", sugg(`{"label":{"literal":"x"},"thumbnail":"blob:1","effect":{"add_to_basket":{"sku":"A"}}}`), sell, "unknown field"},
+		// thumbnail (#3957): one blob name in the plugin's own store.
+		{"thumbnail with a scheme", thumb(`"blob:1"`), sell, "thumbnail"},
+		{"thumbnail path", thumb(`"../other/x.png"`), sell, "thumbnail"},
+		{"thumbnail url", thumb(`"https://evil/x.png"`), sell, "thumbnail"},
+		{"thumbnail upper case", thumb(`"X.PNG"`), sell, "thumbnail"},
+		{"thumbnail dot-dot", thumb(`".."`), sell, "thumbnail"},
+		{"thumbnail empty", thumb(`""`), sell, "thumbnail"},
+		{"thumbnail too long", thumb(`"` + strings.Repeat("a", 129) + `"`), sell, "thumbnail"},
+		{"thumbnail not a string", thumb(`1`), sell, "thumbnail"},
+		{"thumbnail object", thumb(`{"blob":"x.png"}`), sell, "thumbnail"},
 		{"unknown item field", sugg(`{"label":{"literal":"x"},"href":"https://evil","effect":{"add_to_basket":{"sku":"A"}}}`), sell, "unknown field"},
 		{"no label", sugg(`{"effect":{"add_to_basket":{"sku":"A"}}}`), sell, "exactly one"},
 		{"foreign label key", sugg(`{"label":{"key":"nav.home"},"effect":{"add_to_basket":{"sku":"A"}}}`), sell, "own locale bundle"},

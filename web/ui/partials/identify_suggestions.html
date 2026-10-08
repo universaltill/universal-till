@@ -24,7 +24,9 @@
 
 {{/* One button per add_to_basket candidate, posting exactly like the
      "customers also buy" chip (web/ui/partials/suggestions.html). app.js
-     closes the overlay once the scan request completes. */}}
+     closes the overlay once the scan request completes. The image is the
+     plugin's own thumbnail blob (a core-signed URL, ut-docs#3957) when it
+     named one that checks out, else the catalog item's photo. */}}
 {{ define "identify_result" }}
 <div class="plugin-identify-result">
   {{- range .Texts }}
@@ -37,7 +39,8 @@
     <button type="button" class="btn ai-match" data-identify-pick title="{{ T "suggest.add" }}"
             hx-post="/api/pos/scan" hx-vals='{{ jsonVals "code" .SKU "qty" .Qty }}'
             hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
-      {{- if .ImageURL }}<img src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
+      {{- if .ThumbURL }}<img src="{{ .ThumbURL }}" alt="" loading="lazy" />
+      {{- else if .ImageURL }}<img src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
       <span class="ai-match-text"><span class="ai-match-label">{{ .Label }}</span>
       {{- if .Detail }}<span class="ai-match-detail">{{ .Detail }}</span>{{ end }}</span>
     </button>
