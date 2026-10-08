@@ -43,7 +43,11 @@ func TestWasmHandleEvent_UIAnswerStdoutCapped_3160(t *testing.T) {
 			t.Errorf("%s: err = %v, want it to name the size cap", typ, err)
 		}
 	}
-	ev := Event{ID: "ev-other", Type: "com.test.bigview.other", Timestamp: time.Now(), Payload: json.RawMessage(`{}`)}
+	// The uncapped case uses export.requested.ask, the real large-answer
+	// event: its result log line is bounded (maxAskLogBytes). A non-.ask
+	// type would log the whole 2 MiB answer as one line, which the CI
+	// runner took over an hour to stream (#3160 CI, build cancelled).
+	ev := Event{ID: "ev-other", Type: "export.requested.ask", Timestamp: time.Now(), Payload: json.RawMessage(`{}`)}
 	resp, err := w.HandleEvent(context.Background(), pluginID, ev)
 	if err != nil {
 		t.Fatalf("non-ui event: %v", err)

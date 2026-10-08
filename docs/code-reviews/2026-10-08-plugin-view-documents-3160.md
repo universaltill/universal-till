@@ -60,3 +60,9 @@ Tester / UX findings:
 ## Verdict
 
 Safe to merge once CI is green. A new `en.json` key means `lang-pack-drift` goes red on `main` until the de/es/pt pack PRs merge in the same cycle.
+
+## CI follow-up (same branch)
+
+The first CI `build` hung in `TestWasmHandleEvent_UIAnswerStdoutCapped_3160` until the job was cancelled after 1 h 45 min. The test's uncapped case used a non-`.ask` event type. For those, `wasmResultLogLine` logs the whole answer, so a 2 MiB answer became a single 2,097,291-character `go test -v` line, and the runner spent over an hour streaming it.
+
+**Fix:** the uncapped case now uses `export.requested.ask`, the real large-answer event, whose log line is bounded by `maxAskLogBytes`. The longest output line is now 147 characters. The test still asserts the full 2 MiB answer comes back uncapped.
