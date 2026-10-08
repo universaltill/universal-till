@@ -154,6 +154,46 @@ var dynamicPollURLs = map[string][]string{
 	"web/ui/partials/order_tracking_status.html": {"/o/tok/status"},
 }
 
+// requestPollers are templated pollers whose path is a plugin's own route,
+// so they are classified per request (pluginJobPoll), not by path: each
+// entry is one URL the template resolves to.
+var requestPollers = map[string]string{
+	// A running plugin job's poll (ADR-0121 §8, ut-docs#3908).
+	"web/ui/partials/pluginview/poll.html": "/plugin/demo?_job=0123456789abcdef0123456789abcdef",
+}
+
+// TestPluginJobPollNeverExtendsTheSession: a plugin job's 1 s poll
+// (GET <plugin route>?_job=<id>) is timer-driven, so it must not keep an
+// untouched till signed in (ut-docs#3908, #2901). The plugin page itself,
+// and an action posted to it, still do.
+func TestPluginJobPollNeverExtendsTheSession(t *testing.T) {
+	db, h, token := pollRig(t)
+	setLastSeen(t, db, 9*time.Minute)
+	for i := 0; i < 3; i++ {
+		if rec := htmxGet(h, requestPollers["web/ui/partials/pluginview/poll.html"], token); rec.Code != http.StatusOK {
+			t.Fatalf("job poll: got %d, want 200", rec.Code)
+		}
+	}
+	if ago := lastSeenAgo(t, db); ago < 9*time.Minute-5*time.Second {
+		t.Fatalf("a plugin job poll extended the session: last_seen %v ago, want ~9m", ago)
+	}
+	for _, p := range []string{"/plugin/demo", "/plugin/demo?q=tea", "/ui/sync-chip-not-a-plugin?_job=1"} {
+		setLastSeen(t, db, 9*time.Minute)
+		htmxGet(h, p, token)
+		if ago := lastSeenAgo(t, db); ago > time.Minute {
+			t.Errorf("%s is a real request but did not extend the session (last_seen %v ago)", p, ago)
+		}
+	}
+	setLastSeen(t, db, 9*time.Minute)
+	req := httptest.NewRequest(http.MethodPost, "/plugin/demo?_job=x", nil)
+	req.Header.Set("HX-Request", "true")
+	req.AddCookie(&http.Cookie{Name: CookieName, Value: token})
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if ago := lastSeenAgo(t, db); ago > time.Minute {
+		t.Errorf("a POST to a plugin page is a real action but did not extend the session (last_seen %v ago)", ago)
+	}
+}
+
 // TestEveryPollerIsClassified is the guard behind backgroundPoll's
 // "every new poller must be added" rule: each timer-driven hx-get in the
 // templates and pages (and sell-screen-watch.js's fetch poll) must be
@@ -207,6 +247,12 @@ func TestEveryPollerIsClassified(t *testing.T) {
 					m[1] = m[2]
 				}
 				if strings.Contains(m[1], "{{") {
+					if u, ok := requestPollers[rel]; ok {
+						if !pluginJobPoll(httptest.NewRequest(http.MethodGet, u, nil)) {
+							t.Errorf("%s: poll %s is not classified as a background poll (pluginJobPoll)", rel, u)
+						}
+						continue
+					}
 					dyn, ok := dynamicPollURLs[rel]
 					if !ok {
 						t.Errorf("%s: templated poll URL %q — list what it resolves to in dynamicPollURLs", rel, m[1])
