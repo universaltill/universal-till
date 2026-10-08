@@ -1438,6 +1438,7 @@
   "plugin.job.gone": "Bu görev artık mevcut değil — siz yokken bitmiş olabilir. Hâlâ gerekiyorsa yeniden başlatın.",
   "plugin.job.refresh": "İlerlemeyi kontrol et",
   "plugin.job.running": "Üzerinde çalışılıyor…",
+  "plugin.view.action_failed": "Bu işlem tamamlanamadı. Girdikleriniz hâlâ burada — birazdan tekrar deneyin.",
   "plugin.view.unavailable": "Bu eklenti sayfası şu anda gösterilemiyor. Birazdan tekrar deneyin — kasanın geri kalanı çalışmaya devam ediyor.",
   "plugins.buttons.title": "Eklenti işlemleri",
   "plugins.current_version": "Mevcut sürüm:",

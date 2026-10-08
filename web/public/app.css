@@ -6419,6 +6419,10 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
    keep the till's 46px touch floor (.btn-touch). Notices are inline and
    persist -- not .pos-notice, whose info level auto-expires. */
 .plugin-view { display: flex; flex-direction: column; gap: 1rem; }
+/* An action's failure notice above the view (ut-docs#3879); takes no space
+   while empty. */
+.plugin-view-alert { margin-block-end: 1rem; }
+.plugin-view-alert:empty { display: none; }
 .plugin-view-title, .plugin-view-heading { margin: 0; }
 .plugin-view-text { margin: 0; overflow-wrap: anywhere; }
 .plugin-view-notice { padding: .55rem .8rem; border-radius: var(--radius);

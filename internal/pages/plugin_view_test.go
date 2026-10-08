@@ -279,7 +279,7 @@ func TestPluginView_Redirect_3160(t *testing.T) {
 	if rec.Header().Get("HX-Redirect") != "" {
 		t.Fatal("redirected to another plugin's route")
 	}
-	assertUnavailable(t, rec, http.StatusBadGateway)
+	assertActionFailed(t, rec, http.StatusBadGateway, "plugin.view.action_failed")
 }
 
 func TestPluginView_TimeoutRendersNotice_3160(t *testing.T) {
@@ -319,7 +319,7 @@ func TestPluginView_BrokenAnswersRenderNotice_3160(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h.answerWith(raw)
 			assertUnavailable(t, h.do(http.MethodGet, "/plugin/views", nil, false), http.StatusOK)
-			assertUnavailable(t, h.do(http.MethodPost, "/plugin/views", url.Values{"_action": {"x"}}, true), http.StatusBadGateway)
+			assertActionFailed(t, h.do(http.MethodPost, "/plugin/views", url.Values{"_action": {"x"}}, true), http.StatusBadGateway, "plugin.view.action_failed")
 		})
 	}
 	t.Run("plugin error", func(t *testing.T) {
@@ -346,7 +346,7 @@ func TestPluginView_BrokenAnswersRenderNotice_3160(t *testing.T) {
 	})
 	t.Run("bad form", func(t *testing.T) {
 		h.answerWith(viewDocument)
-		assertUnavailable(t, h.do(http.MethodPost, "/plugin/views", url.Values{"_action": {"../admin"}}, true), http.StatusBadRequest)
+		assertActionFailed(t, h.do(http.MethodPost, "/plugin/views", url.Values{"_action": {"../admin"}}, true), http.StatusBadRequest, "plugin.view.action_failed")
 	})
 }
 
@@ -502,4 +502,222 @@ func TestPluginView_JobParamReserved_3908(t *testing.T) {
 	if _, ok := got["_job"]; ok || got["a"] != "1" || len(got) != 1 {
 		t.Fatalf("params = %v, want only a=1", got)
 	}
+}
+
+// ut-docs#3879: a failed action must not cost the operator their input.
+
+// answerByEvent answers ui.view.ask and ui.action.ask differently.
+func (h *viewHarness) answerByEvent(view, action func() (json.RawMessage, error)) {
+	h.mu.Lock()
+	h.answer = func(ev plugins.Event) (json.RawMessage, error) {
+		if ev.Type == pluginViewAskEvent {
+			return view()
+		}
+		return action()
+	}
+	h.mu.Unlock()
+}
+
+func fixedAnswer(raw string) func() (json.RawMessage, error) {
+	return func() (json.RawMessage, error) { return json.RawMessage(raw), nil }
+}
+
+func failingAnswer() (json.RawMessage, error) { return nil, context.DeadlineExceeded }
+
+// oobAlertRe matches the out-of-band #plugin-view-alert slot.
+var oobAlertRe = regexp.MustCompile(`<div id="plugin-view-alert"[^>]*hx-swap-oob="[^"]+"[^>]*>`)
+
+// assertActionFailed: an htmx action failure leaves the view as it is
+// (HX-Reswap: none) and only fills the alert slot out of band.
+func assertActionFailed(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int, key string) {
+	t.Helper()
+	if rec.Code != wantStatus {
+		t.Fatalf("status = %d, want %d", rec.Code, wantStatus)
+	}
+	if got := rec.Header().Get("HX-Reswap"); got != "none" {
+		t.Errorf("HX-Reswap = %q, want none (the form must stay)", got)
+	}
+	body := rec.Body.String()
+	if !oobAlertRe.MatchString(body) {
+		t.Fatalf("no out-of-band plugin-view-alert in:\n%s", body)
+	}
+	assertNotice(t, rec, key)
+	for _, bad := range []string{"<form", "plugin-view-poll", `id="plugin-view"`, "<html"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("failure answer carries %q; only the alert may change:\n%s", bad, body)
+		}
+	}
+}
+
+func TestPluginView_HtmxActionFailureKeepsForm_3879(t *testing.T) {
+	h := newViewHarness(t)
+	h.answerByEvent(fixedAnswer(viewDocument), failingAnswer)
+	form := url.Values{"_action": {"save"}, "note": {"hi"}}
+	assertActionFailed(t, h.do(http.MethodPost, "/plugin/views", form, true), http.StatusBadGateway, "plugin.view.action_failed")
+
+	// An invalid answer and an unreadable form fail the same way.
+	h.answerWith(`{"document":`)
+	assertActionFailed(t, h.do(http.MethodPost, "/plugin/views", form, true), http.StatusBadGateway, "plugin.view.action_failed")
+	assertActionFailed(t, h.do(http.MethodPost, "/plugin/views", url.Values{"_action": {"../admin"}}, true), http.StatusBadRequest, "plugin.view.action_failed")
+}
+
+func TestPluginView_HtmxActionTimeoutKeepsForm_3879(t *testing.T) {
+	h := newViewHarness(t)
+	orig := pluginViewTimeout
+	pluginViewTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { pluginViewTimeout = orig })
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	h.mu.Lock()
+	h.answer = func(plugins.Event) (json.RawMessage, error) {
+		<-release
+		return json.RawMessage(viewDocument), nil
+	}
+	h.mu.Unlock()
+	assertActionFailed(t, h.do(http.MethodPost, "/plugin/views", url.Values{"_action": {"save"}}, true), http.StatusBadGateway, "plugin.view.action_failed")
+}
+
+func TestPluginView_HtmxJobBusyKeepsForm_3879(t *testing.T) {
+	h := newJobHarness(t)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	h.blockingJob(release)
+	h.startJob(true)
+	h.startJob(true)
+	rec := h.do(http.MethodPost, "/plugin/views", url.Values{"_action": {"identify"}, "note": {"tea"}}, true)
+	assertActionFailed(t, rec, http.StatusTooManyRequests, "plugin.job.busy")
+}
+
+// A successful htmx answer (document, job poll) and every htmx poll answer
+// clear a stale failure notice out of band.
+func TestPluginView_HtmxSuccessClearsAlert_3879(t *testing.T) {
+	emptyAlert := regexp.MustCompile(`<div id="plugin-view-alert"[^>]*hx-swap-oob="[^"]+"[^>]*></div>`)
+	h := newViewHarness(t)
+	h.answerWith(`{"document":{"version":1,"components":[{"type":"text","text":{"literal":"ok"}}]}}`)
+	rec := h.do(http.MethodPost, "/plugin/views", url.Values{"_action": {"save"}}, true)
+	if rec.Code != http.StatusOK || !emptyAlert.MatchString(rec.Body.String()) {
+		t.Fatalf("htmx success = %d, no empty out-of-band alert:\n%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("HX-Reswap") != "" {
+		t.Error("a successful answer must swap the view")
+	}
+
+	jh := newJobHarness(t)
+	jh.onJob(func(context.Context, plugins.Event) (json.RawMessage, error) {
+		return json.RawMessage(`{"document":{"version":1,"components":[{"type":"text","text":{"literal":"done"}}]}}`), nil
+	})
+	id, rec := jh.startJob(true)
+	if !emptyAlert.MatchString(rec.Body.String()) {
+		t.Fatalf("job start answer has no empty out-of-band alert:\n%s", rec.Body.String())
+	}
+	if rec := jh.pollUntil(id); !emptyAlert.MatchString(rec.Body.String()) {
+		t.Fatalf("poll answer has no empty out-of-band alert:\n%s", rec.Body.String())
+	}
+}
+
+// The full page carries the (empty) slot the out-of-band swaps target,
+// directly above the view.
+func TestPluginView_PageHasAlertSlot_3879(t *testing.T) {
+	h := newViewHarness(t)
+	h.answerWith(viewDocument)
+	body := h.do(http.MethodGet, "/plugin/views", nil, false).Body.String()
+	slot := strings.Index(body, `id="plugin-view-alert"`)
+	view := strings.Index(body, `id="plugin-view"`)
+	if slot < 0 || view < slot {
+		t.Fatalf("alert slot missing or not above the view (slot %d, view %d)", slot, view)
+	}
+	if !regexp.MustCompile(`<div id="plugin-view-alert" class="plugin-view-alert" aria-live="polite"></div>`).MatchString(body) {
+		t.Errorf("slot must be an empty polite live region:\n%s", body[slot-5:view])
+	}
+}
+
+const refillDocument = `{"document":{"version":1,"components":[
+	{"type":"form","action":"save","submit":{"literal":"Save"},"fields":[
+		{"name":"note","label":{"literal":"Note"},"kind":"text","value":"default note"},
+		{"name":"mode","label":{"literal":"Mode"},"kind":"select","options":[{"value":"a","label":{"literal":"A"}},{"value":"b","label":{"literal":"B"}}],"value":"a"},
+		{"name":"on","label":{"literal":"On"},"kind":"toggle","value":true},
+		{"name":"api_key","label":{"literal":"Key"},"kind":"secret"}]}]}}`
+
+func assertRefilledPage(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int, key string) {
+	t.Helper()
+	if rec.Code != wantStatus {
+		t.Fatalf("status = %d, want %d", rec.Code, wantStatus)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "<html") {
+		t.Fatal("no-JS failure must render the whole page")
+	}
+	assertNotice(t, rec, key)
+	slot := strings.Index(body, `id="plugin-view-alert"`)
+	notice := strings.Index(body, template.HTMLEscapeString(httpx.T("en", key)))
+	view := strings.Index(body, `id="plugin-view"`)
+	if slot < 0 || notice < slot || view < notice {
+		t.Fatalf("notice must sit in the alert slot above the view (slot %d, notice %d, view %d)", slot, notice, view)
+	}
+	for _, want := range []string{
+		`name="note" value="typed &lt;b&gt;"`,
+		`<option value="b" selected>`,
+		`type="password" name="api_key" value=""`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("refilled page missing %q", want)
+		}
+	}
+	if strings.Contains(body, "s3cret") {
+		t.Fatal("a posted secret was written back into the page")
+	}
+	if strings.Contains(body, `name="on" value="true" checked`) {
+		t.Error("an unposted toggle must come back unchecked")
+	}
+}
+
+func TestPluginView_NoJSActionFailureRefillsForm_3879(t *testing.T) {
+	h := newViewHarness(t)
+	h.answerByEvent(fixedAnswer(refillDocument), failingAnswer)
+	form := url.Values{"_action": {"save"}, "_kind.on": {"toggle"}, "note": {"typed <b>"}, "mode": {"b"}, "api_key": {"s3cret"}}
+	rec := h.do(http.MethodPost, "/plugin/views", form, false)
+	assertRefilledPage(t, rec, http.StatusOK, "plugin.view.action_failed")
+	if h.lastEv.Type != pluginViewAskEvent {
+		t.Fatalf("last ask = %s, want the view re-asked", h.lastEv.Type)
+	}
+	if p, _ := h.lastPay["params"].(map[string]any); len(p) != 0 {
+		t.Errorf("re-ask params = %v, want none", h.lastPay["params"])
+	}
+}
+
+func TestPluginView_NoJSUnreadableFormShowsViewUnfilled_3879(t *testing.T) {
+	h := newViewHarness(t)
+	h.answerByEvent(fixedAnswer(refillDocument), failingAnswer)
+	rec := h.do(http.MethodPost, "/plugin/views", url.Values{"_action": {"../admin"}, "note": {"typed"}}, false)
+	// The no-JS page answers 200, as it always has (only the htmx answers
+	// carry the failure status).
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	assertNotice(t, rec, "plugin.view.action_failed")
+	if !strings.Contains(rec.Body.String(), `name="note" value="default note"`) {
+		t.Error("an unreadable post must show the view as the plugin drew it, refilling nothing")
+	}
+}
+
+func TestPluginView_NoJSReaskFailsShowsNoticeAlone_3879(t *testing.T) {
+	h := newViewHarness(t)
+	h.answerByEvent(failingAnswer, failingAnswer)
+	rec := h.do(http.MethodPost, "/plugin/views", url.Values{"_action": {"save"}, "note": {"x"}}, false)
+	assertUnavailable(t, rec, http.StatusOK)
+	if strings.Contains(rec.Body.String(), "<form class=\"card plugin-view-form\"") {
+		t.Fatal("no view to show, yet a form was rendered")
+	}
+}
+
+func TestPluginView_NoJSJobBusyRefillsForm_3879(t *testing.T) {
+	h := newJobHarness(t)
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	h.blockingJob(release)
+	h.startJob(true)
+	h.startJob(true)
+	h.answerByEvent(fixedAnswer(refillDocument), fixedAnswer(`{"job":{"event":"`+viewJobEvent+`"}}`))
+	form := url.Values{"_action": {"save"}, "_kind.on": {"toggle"}, "note": {"typed <b>"}, "mode": {"b"}, "api_key": {"s3cret"}}
+	assertRefilledPage(t, h.do(http.MethodPost, "/plugin/views", form, false), http.StatusOK, "plugin.job.busy")
 }

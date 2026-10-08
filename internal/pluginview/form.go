@@ -25,6 +25,9 @@ type Submission struct {
 	// Invalid names fields whose typed value core could not read (a money
 	// or number field outside its grammar); they are left out of Values.
 	Invalid []string
+	// Posted is the raw post as read, kept only to refill the form when
+	// the action fails (View.Refill, ut-docs#3879); never sent anywhere.
+	Posted map[string][]string
 }
 
 // DecodeForm reads a posted plugin view form. Core's own fields: _action
@@ -33,7 +36,7 @@ type Submission struct {
 // document. They come from the operator's page, so they are hints: the
 // plugin still validates every value it receives.
 func DecodeForm(vals map[string][]string, decimals int, currency string) (Submission, error) {
-	s := Submission{Values: map[string]any{}}
+	s := Submission{Values: map[string]any{}, Posted: vals}
 	if len(vals) > MaxFormValues {
 		return s, fmt.Errorf("form has %d fields (max %d)", len(vals), MaxFormValues)
 	}

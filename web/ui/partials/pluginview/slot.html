@@ -8,6 +8,7 @@
 <div class="plugin-slot" data-slot="{{ .Slot }}">
 {{- range .Panels }}
   <section class="card plugin-slot-panel">
+    {{ template "pluginview_alert" (dict "ID" (printf "%s-alert" .ID)) }}
     <div id="{{ .ID }}" class="plugin-view">
 {{ template "pluginview_body" .Body }}
     </div>
