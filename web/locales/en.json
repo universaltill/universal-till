@@ -1531,6 +1531,7 @@
   "plugins.permissions.desc.blob_own": "Store its own files privately (e.g. images or documents it generates).",
   "plugins.permissions.desc.cloud_directive": "Receive instructions sent to it from your Universal Till cloud account.",
   "plugins.permissions.desc.db_own": "Store its own data privately — never your sales or customer data.",
+  "plugins.permissions.desc.device_info": "Read this till's device ID, local network addresses and time zone (e.g. for tax authority fraud-prevention headers).",
   "plugins.permissions.desc.http_lan": "Connect to devices on your shop's local network (e.g. a receipt printer or card reader).",
   "plugins.permissions.desc.http_stream": "Send and receive larger data over the internet in a continuous stream.",
   "plugins.permissions.desc.schedule": "Run on a repeating schedule in the background.",

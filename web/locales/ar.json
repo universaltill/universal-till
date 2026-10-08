@@ -1546,6 +1546,7 @@
   "plugins.permissions.desc.blob_own": "يخزّن ملفاته الخاصة بشكل منفصل وخاص (مثل الصور أو المستندات التي ينشئها).",
   "plugins.permissions.desc.cloud_directive": "يتلقى تعليمات تُرسل إليه من حسابك السحابي في Universal Till.",
   "plugins.permissions.desc.db_own": "يخزّن بياناته الخاصة بشكل منفصل وخاص — وليس بيانات مبيعاتك أو عملائك أبدًا.",
+  "plugins.permissions.desc.device_info": "يقرأ معرّف جهاز هذا الصندوق وعناوين الشبكة المحلية والمنطقة الزمنية (مثلًا لترويسات منع الاحتيال التي تطلبها مصلحة الضرائب).",
   "plugins.permissions.desc.http_lan": "يتصل بالأجهزة على الشبكة المحلية لمتجرك (مثل طابعة الإيصالات أو قارئ البطاقات).",
   "plugins.permissions.desc.http_stream": "يرسل ويستقبل بيانات أكبر حجمًا عبر الإنترنت في تدفق مستمر.",
   "plugins.permissions.desc.schedule": "يعمل في الخلفية وفق جدول زمني متكرر.",

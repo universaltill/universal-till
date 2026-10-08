@@ -661,6 +661,14 @@ func TourDoneSettingsKey(userID string) string {
 // the same id.
 const TillIdentityCloudIDSettingsKey = "till_identity.cloud_id"
 
+// DeviceInfoIDSettingsKey holds the stable device id the device_id_get host
+// function hands a plugin holding device-info (ADR-0140, ut-docs#3862): a
+// v4 UUID minted on first use and never reset — not on a marketplace
+// re-pair, and never derived from or linked to marketplace.device_id. Per
+// till ("till_identity." in PerTillSettingPrefixes and
+// db.TillCloudIdentityPrefixes): synced, two tills would report the same id.
+const DeviceInfoIDSettingsKey = "till_identity.device_info_id"
+
 // PerTillSettingPrefixes are settings that belong to ONE till, never synced:
 // the replica's own sync identity/cursors, its printer, its screen, its own
 // end-of-day schedule (a replica Z-report would only cover local data), and
@@ -745,6 +753,8 @@ var PerTillSettingPrefixes = []string{
 	// (TillIdentityCloudIDSettingsKey) — per till like sync.*, which it
 	// outlives: a once-joined till promoted back to main keeps reporting the
 	// sync.till_id it was known by. Synced, every replica would get the same id.
+	// Also covers DeviceInfoIDSettingsKey (ADR-0140, ut-docs#3862), this
+	// till's device_id_get identity.
 	"till_identity.",
 }
 

@@ -173,6 +173,9 @@ func instantiateHostModule(ctx context.Context, rt wazero.Runtime) error {
 		NewFunctionBuilder().WithFunc(hostBlobList).Export("blob_list").
 		NewFunctionBuilder().WithFunc(hostEventPublish).Export("event_publish").
 		NewFunctionBuilder().WithFunc(hostJobProgress).Export("job_progress").
+		NewFunctionBuilder().WithFunc(hostDeviceIDGet).Export("device_id_get").
+		NewFunctionBuilder().WithFunc(hostDeviceLocalIPsGet).Export("device_local_ips_get").
+		NewFunctionBuilder().WithFunc(hostDeviceTimezoneGet).Export("device_timezone_get").
 		Instantiate(ctx)
 	return err
 }

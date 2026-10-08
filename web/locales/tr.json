@@ -1546,6 +1546,7 @@
   "plugins.permissions.desc.blob_own": "Kendi dosyalarını gizli olarak saklar (ör. oluşturduğu görseller veya belgeler).",
   "plugins.permissions.desc.cloud_directive": "Universal Till bulut hesabınızdan kendisine gönderilen talimatları alır.",
   "plugins.permissions.desc.db_own": "Kendi verilerini gizli olarak saklar — satış veya müşteri verilerinizi asla değil.",
+  "plugins.permissions.desc.device_info": "Bu kasanın cihaz kimliğini, yerel ağ adreslerini ve saat dilimini okur (ör. vergi idaresinin dolandırıcılık önleme başlıkları için).",
   "plugins.permissions.desc.http_lan": "Mağazanızın yerel ağındaki cihazlara bağlanır (ör. fiş yazıcısı veya kart okuyucu).",
   "plugins.permissions.desc.http_stream": "İnternet üzerinden daha büyük verileri sürekli bir akış halinde gönderir ve alır.",
   "plugins.permissions.desc.schedule": "Arka planda yinelenen bir zamanlamayla çalışır.",
