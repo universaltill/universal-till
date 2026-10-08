@@ -77,6 +77,8 @@ __debug*
 # Runtime plugin data (installed plugins, catalog cache, auth tokens)
 data/plugins/
 data/backups/
+# WASM compile cache (ut-docs#3912); any data/ dir a test run defaults to
+**/data/wasm-cache/
 unitill-pos-setup-*.exe
 /unitill-desktop
 /unitill-uninstall

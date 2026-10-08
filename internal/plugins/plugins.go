@@ -190,7 +190,7 @@ func Init(ctx context.Context, cfg *config.Config, db *sql.DB) (*Manager, error)
 		Installed:   make(map[string]Plugin),
 		Catalog:     make(map[string]CatalogEntry),
 		db:          db,
-		Wasm:        NewWasmRuntime(paths.Plugins()),
+		Wasm:        NewWasmRuntimeWithCache(paths.Plugins(), paths.Data("wasm-cache")),
 	}
 
 	if err := m.loadCatalog(ctx, repo); err != nil {

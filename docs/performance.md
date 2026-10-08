@@ -81,6 +81,29 @@ picked up through the database's own counters.
   tiles go stale. Benchmark:
   `go test ./internal/ui -run '^$' -bench 'BenchmarkButtonsList_'`.
 
+## WASM plugin compile cache (ut-docs#3912)
+Compiling a WASM plugin takes ~10 s per plugin on a Pi 4. The till keeps
+wazero's compiled code in `<data dir>/wasm-cache`
+(`internal/plugins/wasm_compile_cache.go`), so a restart reads it back
+instead of recompiling (dev Mac, test guest: 14 s compile → 0.4 s hit).
+
+- **Log**: one line per load —
+  `wasm load <id>@<ver>: compiled|cache hit|compiled without cache in <dur>` —
+  plus `wasm compile cache: on at …` / `off (…)` once, at the first compile
+  (a till with no WASM plugin never creates the dir).
+- **Bounded**: `index.json` maps each plugin to its entry; every plugin sync
+  deletes entries no installed plugin uses (removed, old version; a disabled
+  plugin keeps its entry so re-enabling it does not recompile),
+  temp leftovers, and other wazero versions' dirs. A cache hit the index
+  can't name skips that orphan sweep for the sync rather than risk a live
+  entry.
+- **Never breaks a plugin**: if wazero fails only because of the cache
+  (corrupt entry, disk full, read-only), the module is compiled again
+  without it, the cache is wiped and stays off until restart. A cache dir
+  that can't be created means no cache, logged once.
+- **Off on Android/iOS**: they run wazero's interpreter, which has no
+  compiled code to cache.
+
 ## Offline smoke (sale flow)
 ```bash
 go run ./scripts/smoke-offline-sale/main.go               # uses ./data/smoke-offline-sale.db
