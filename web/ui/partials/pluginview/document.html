@@ -7,6 +7,11 @@
 {{ define "pluginview_body" }}
 {{- if .Unavailable }}
 <div class="plugin-view-notice warn" role="status">{{ T "plugin.view.unavailable" }}</div>
+{{- else if .JobBusy }}
+<div class="plugin-view-notice warn" role="status">{{ T "plugin.job.busy" }}</div>
+{{- else if .JobGone }}
+<div class="plugin-view-notice warn" role="status">{{ T "plugin.job.gone" }}</div>
+{{- else if .Job }}{{ template "pluginview_poll" . }}
 {{- else }}
 {{- if .View.Title }}<h2 class="plugin-view-title">{{ .View.Title }}</h2>{{ end }}
 {{- $route := .Route }}

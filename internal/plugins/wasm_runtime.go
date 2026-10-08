@@ -636,6 +636,15 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 	}
 	timeout := w.timeoutForEvent(pluginID, ev)
 	salePath := isSalePathCall(ev) // a published event (hop > 0) never is
+	answerCap := answerCapFor(ev.Type)
+	job, isJob := JobFrom(ctx)
+	if isJob {
+		// A job (ADR-0121 §8, wasm_job.go): its own deadline, never the
+		// reserved sale-path slot, and a view-document answer cap.
+		timeout = job.deadline()
+		salePath = false
+		answerCap = maxUIAnswerBytes
+	}
 
 	input := map[string]any{
 		"id":        ev.ID,
@@ -688,6 +697,9 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 	}
 	// Host functions ("ut" module) resolve the caller through this state.
 	hs := &hostState{pluginID: pluginID, db: db, httpClient: w.httpClient, hop: ev.Hop, publishRate: w.publishRate}
+	if isJob {
+		hs.jobProgress = job.Progress
+	}
 	// http:stream handles never outlive the event (ADR-0121 §3): closed
 	// however the guest ends — success, error, deadline or trap.
 	defer hs.streams.closeAll()
@@ -708,7 +720,7 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 	cctx = withHostState(cctx, hs)
 
 	var stderr bytes.Buffer
-	stdout := &cappedBuffer{max: answerCapFor(ev.Type)}
+	stdout := &cappedBuffer{max: answerCap}
 	cfg := wazero.NewModuleConfig().
 		WithName(""). // anonymous: parallel instantiations must not collide
 		WithStdin(bytes.NewReader(in)).

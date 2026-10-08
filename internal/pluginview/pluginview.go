@@ -17,6 +17,7 @@ import (
 	"regexp"
 
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/plugins"
 )
 
 // Version is the only document version this till renders.
@@ -47,11 +48,17 @@ var (
 )
 
 // Context is what the validator checks a document against: the answering
-// plugin's own locale keys and its own page-entry routes.
+// plugin's id (a job event must be in its namespace), its own locale keys
+// and its own page-entry routes.
 type Context struct {
+	PluginID  string
 	OwnKeys   map[string]bool
 	OwnRoutes []string
 }
+
+// MaxJobEventBytes caps a job answer's event name (the same bound
+// event_publish puts on a published type).
+const MaxJobEventBytes = 256
 
 // Text is a locale key from the plugin's own bundle, or a literal core
 // escapes — exactly one.
@@ -220,6 +227,22 @@ type rawDocument struct {
 type answer struct {
 	Document *rawDocument `json:"document,omitempty"`
 	Redirect *string      `json:"redirect,omitempty"`
+	Job      *jobAnswer   `json:"job,omitempty"`
+}
+
+// jobAnswer is {"job": {"event": "<plugin-id>.<name>"}} (ADR-0121 §8,
+// ut-docs#3908): run the plugin's own event as a job.
+type jobAnswer struct {
+	Event string `json:"event"`
+}
+
+// ActionAnswer is a decoded ui.action.ask answer: exactly one of Document,
+// Redirect (one of the plugin's own routes) or Job (an event in the
+// plugin's own namespace) is set.
+type ActionAnswer struct {
+	Document *Document
+	Redirect string
+	Job      string
 }
 
 // strictDecode decodes exactly one JSON value into v, refusing unknown
@@ -236,57 +259,96 @@ func strictDecode(b []byte, v any) error {
 	return nil
 }
 
-func decodeAnswer(raw []byte, c Context) (*Document, *string, error) {
+// decodeAnswer decodes one answer; jobOK says whether a job shape is
+// allowed (only a ui.action.ask answer may start one).
+func decodeAnswer(raw []byte, c Context, jobOK bool) (ActionAnswer, error) {
 	if len(raw) > MaxDocumentBytes {
-		return nil, nil, fmt.Errorf("answer exceeds %d bytes (%d)", MaxDocumentBytes, len(raw))
+		return ActionAnswer{}, fmt.Errorf("answer exceeds %d bytes (%d)", MaxDocumentBytes, len(raw))
 	}
 	var a answer
 	if err := strictDecode(raw, &a); err != nil {
-		return nil, nil, fmt.Errorf("answer json: %w", err)
+		return ActionAnswer{}, fmt.Errorf("answer json: %w", err)
 	}
-	if a.Document != nil && a.Redirect != nil {
-		return nil, nil, errors.New("answer has both document and redirect")
+	n := 0
+	for _, set := range []bool{a.Document != nil, a.Redirect != nil, a.Job != nil} {
+		if set {
+			n++
+		}
 	}
-	if a.Redirect != nil {
-		return nil, a.Redirect, nil
+	if n > 1 {
+		return ActionAnswer{}, errors.New("answer must have exactly one of document, redirect or job")
 	}
-	if a.Document == nil {
-		return nil, nil, errors.New("answer has no document")
+	switch {
+	case a.Job != nil:
+		if !jobOK {
+			return ActionAnswer{}, errors.New("this answer may not start a job")
+		}
+		if err := checkJobEvent(c.PluginID, a.Job.Event); err != nil {
+			return ActionAnswer{}, err
+		}
+		return ActionAnswer{Job: a.Job.Event}, nil
+	case a.Redirect != nil:
+		for _, r := range c.OwnRoutes {
+			if r != "" && *a.Redirect == r {
+				return ActionAnswer{Redirect: r}, nil
+			}
+		}
+		return ActionAnswer{}, fmt.Errorf("redirect %q is not one of this plugin's own page routes", *a.Redirect)
+	case a.Document == nil:
+		return ActionAnswer{}, errors.New("answer has no document")
 	}
 	d, err := buildDocument(a.Document, c)
-	return d, nil, err
+	if err != nil {
+		return ActionAnswer{}, err
+	}
+	return ActionAnswer{Document: d}, nil
+}
+
+// checkJobEvent: the job event is in the answering plugin's own namespace
+// (ADR-0121 §2, ut-docs#3329) — never a core event, never another
+// plugin's.
+func checkJobEvent(pluginID, event string) error {
+	if pluginID == "" {
+		return errors.New("job answer: no plugin id to check the event namespace against")
+	}
+	if len(event) > MaxJobEventBytes {
+		return fmt.Errorf("job event exceeds %d bytes", MaxJobEventBytes)
+	}
+	if err := plugins.CheckPluginEventName(pluginID, event); err != nil {
+		return fmt.Errorf("job event %q: %w", event, err)
+	}
+	return nil
 }
 
 // DecodeViewAnswer decodes and validates a ui.view.ask answer:
 // {"document": {...}}.
 func DecodeViewAnswer(raw []byte, c Context) (*Document, error) {
-	d, redirect, err := decodeAnswer(raw, c)
+	a, err := decodeAnswer(raw, c, false)
 	if err != nil {
 		return nil, err
 	}
-	if redirect != nil {
+	if a.Document == nil {
 		return nil, errors.New("a ui.view.ask answer must be a document, not a redirect")
 	}
-	return d, nil
+	return a.Document, nil
 }
 
 // DecodeActionAnswer decodes and validates a ui.action.ask answer: a
-// document, or {"redirect": route} where route is exactly one of the same
-// plugin's own page-entry routes.
-func DecodeActionAnswer(raw []byte, c Context) (*Document, string, error) {
-	d, redirect, err := decodeAnswer(raw, c)
+// document, {"redirect": route} where route is exactly one of the same
+// plugin's own page-entry routes, or {"job": {"event": name}} where name
+// is in the plugin's own event namespace (ADR-0121 §8).
+func DecodeActionAnswer(raw []byte, c Context) (ActionAnswer, error) {
+	return decodeAnswer(raw, c, true)
+}
+
+// DecodeJobResult decodes a job's own answer: a document or a redirect,
+// exactly like an action answer, but never another job.
+func DecodeJobResult(raw []byte, c Context) (*Document, string, error) {
+	a, err := decodeAnswer(raw, c, false)
 	if err != nil {
 		return nil, "", err
 	}
-	if redirect == nil {
-		return d, "", nil
-	}
-	for _, r := range c.OwnRoutes {
-		if r != "" && *redirect == r {
-			return nil, r, nil
-		}
-	}
-	return nil, "", fmt.Errorf("redirect %q is not one of this plugin's own page routes", *redirect)
+	return a.Document, a.Redirect, nil
 }
 
 func buildDocument(rd *rawDocument, c Context) (*Document, error) {

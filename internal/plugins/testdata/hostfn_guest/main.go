@@ -35,6 +35,9 @@ func secretSet(kPtr, kLen, vPtr, vLen uint32) int32
 //go:wasmimport ut event_publish
 func eventPublish(tPtr, tLen, pPtr, pLen uint32) int32
 
+//go:wasmimport ut job_progress
+func jobProgress(pct, kPtr, kLen uint32) int32
+
 func ptrOf(b []byte) (uint32, uint32) {
 	if len(b) == 0 {
 		return 0, 0
@@ -81,6 +84,10 @@ func main() {
 			// publish / publish_fail modes (ut-docs#3871).
 			PublishType    string          `json:"publish_type"`
 			PublishPayload json.RawMessage `json:"publish_payload"`
+			// sleep / job_progress modes (ut-docs#3908).
+			SleepMS     int    `json:"sleep_ms"`
+			Pct         uint32 `json:"pct"`
+			ProgressKey string `json:"progress_key"`
 		} `json:"payload"`
 	}
 	_ = json.Unmarshal(raw, &event)
@@ -100,6 +107,19 @@ func main() {
 		if event.Payload.Mode == "publish_fail" {
 			os.Exit(1)
 		}
+		return
+	}
+	if event.Payload.Mode == "sleep" {
+		// A long call (ADR-0121 §8): sleep, then answer.
+		time.Sleep(time.Duration(event.Payload.SleepMS) * time.Millisecond)
+		fmt.Println(`{"slept":true}`)
+		return
+	}
+	if event.Payload.Mode == "job_progress" {
+		// job_progress (ADR-0121 §3/§8): print the host's return code.
+		kp, kl := ptrOf([]byte(event.Payload.ProgressKey))
+		code := jobProgress(event.Payload.Pct, kp, kl)
+		fmt.Printf("{\"progress_code\":%d}\n", code)
 		return
 	}
 	if event.Payload.Mode == "http_retry" {

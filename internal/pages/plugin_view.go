@@ -61,6 +61,7 @@ var pluginViewFiles = []string{
 	filepath.Join("web", "ui", "partials", "pluginview", "document.html"),
 	filepath.Join("web", "ui", "partials", "pluginview", "data.html"),
 	filepath.Join("web", "ui", "partials", "pluginview", "controls.html"),
+	filepath.Join("web", "ui", "partials", "pluginview", "poll.html"),
 }
 
 // pluginViewMethodAllowed gates a view entry: GET/HEAD ask for the view,
@@ -76,11 +77,25 @@ func pluginViewMethodAllowed(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-// pluginViewBody is what pluginview_body renders.
+// pluginViewBody is what pluginview_body renders: the view, the
+// unavailable notice, a running job's poll, or a job notice (busy: the
+// plugin already runs its maximum jobs; gone: the polled job is unknown,
+// expired or not this route's).
 type pluginViewBody struct {
 	Route       string
 	View        pluginview.View
 	Unavailable bool
+	Job         *pluginJobPoll
+	JobBusy     bool
+	JobGone     bool
+}
+
+// pluginJobPoll is what pluginview_poll renders.
+type pluginJobPoll struct {
+	ID      string
+	HasPct  bool // false: indeterminate progress (nothing reported yet)
+	Pct     int
+	Message string // the plugin's job_progress message, translated; "" = core's
 }
 
 // errPluginNoAnswer: the plugin is not subscribed, or declined to answer.
@@ -91,19 +106,66 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 	htmx := r.Header.Get("HX-Request") == "true"
 	body := pluginViewBody{Route: entry.Route}
 	failStatus := http.StatusBadGateway
+	_, isPoll := r.URL.Query()[pluginJobParam]
+	isPoll = isPoll && r.Method != http.MethodPost
+	fragment := httpx.IsFragmentSwap(w, r)
 
 	var doc *pluginview.Document
 	var redirect string
 	var err error
-	if r.Method == http.MethodPost {
+	switch {
+	case isPoll:
+		// A job's poll (ADR-0121 §8): never asks the plugin.
+		snap, ok := pluginJobs.poll(r.URL.Query().Get(pluginJobParam), entry.PluginID, entry.Route, r.Method != http.MethodHead)
+		switch {
+		case !ok:
+			body.JobGone = true
+		case snap.state == pluginJobRunning && snap.unchanged && htmx && fragment:
+			// Nothing new since the last poll: 204, so htmx swaps nothing
+			// and the poll's live region (and its every-1s trigger) stays
+			// put instead of being re-announced every second. The no-JS
+			// page (no HX-Request) always renders.
+			w.Header().Set("Cache-Control", "no-store")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		case snap.state == pluginJobRunning:
+			body.Job = &pluginJobPoll{ID: r.URL.Query().Get(pluginJobParam), HasPct: snap.pct >= 0, Pct: snap.pct}
+			if snap.key != "" {
+				body.Job.Message = httpx.T(locale, snap.key)
+			}
+		case snap.state == pluginJobFailed:
+			err = errors.New("job failed (reason logged when it ended)")
+		default:
+			doc, redirect = snap.doc, snap.redirect
+		}
+	case r.Method == http.MethodPost:
 		var sub pluginview.Submission
 		sub, err = readPluginViewForm(w, r)
 		if err != nil {
 			failStatus = http.StatusBadRequest
-		} else {
-			doc, redirect, err = askPluginAction(r.Context(), d, entry, locale, sub)
+			break
 		}
-	} else {
+		var ans pluginview.ActionAnswer
+		var vctx pluginview.Context
+		var payload map[string]any
+		ans, vctx, payload, err = askPluginAction(r.Context(), d, entry, locale, sub)
+		switch {
+		case err != nil:
+		case ans.Job != "":
+			var id string
+			id, err = startPluginJob(r.Context(), d, entry, ans.Job, payload, vctx)
+			switch {
+			case errors.Is(err, errPluginJobBusy):
+				err = nil
+				body.JobBusy = true
+				failStatus = http.StatusTooManyRequests
+			case err == nil:
+				body.Job = &pluginJobPoll{ID: id}
+			}
+		default:
+			doc, redirect = ans.Document, ans.Redirect
+		}
+	default:
 		doc, err = askPluginView(r.Context(), d, entry, locale, pluginViewParams(r))
 	}
 
@@ -116,12 +178,18 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 		http.Redirect(w, r, redirect, http.StatusSeeOther)
 		return
 	}
-	if err != nil {
+	switch {
+	case err != nil:
 		// The reason stays in the log; the operator sees a translated notice.
 		logging.L().Warnf("plugin view %s %q (%s %s): %v", entry.PluginID, entry.View, r.Method, entry.Route, err)
 		body.Unavailable = true
-	} else {
+	case doc != nil:
 		body.View = doc.Prepare(locale)
+	}
+	failed := body.Unavailable || body.JobBusy
+	if isPoll {
+		// A poll answer always replaces the poll, whatever happened.
+		failed = false
 	}
 
 	title := httpx.T(locale, entry.Label)
@@ -132,9 +200,12 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 	}
 	funcs := httpx.FuncsFor(locale)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if isPoll {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 
-	if r.Method == http.MethodPost && htmx {
-		if body.Unavailable {
+	if htmx && (r.Method == http.MethodPost || (isPoll && fragment)) {
+		if failed {
 			w.WriteHeader(failStatus)
 		}
 		httpx.RenderWith(pluginViewFiles, funcs)("pluginview_body", body)(w, r)
@@ -151,8 +222,8 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 		"menuItems": d.MenuSnapshot(),
 		"pv":        body,
 	}
-	if httpx.IsFragmentSwap(w, r) {
-		if body.Unavailable {
+	if fragment {
+		if failed {
 			w.WriteHeader(failStatus)
 		}
 		httpx.RenderWith(pluginViewFiles, funcs)("content", page)(w, r)
@@ -172,6 +243,9 @@ func pluginViewParams(r *http.Request) map[string]string {
 	sort.Strings(keys)
 	out := map[string]string{}
 	for _, k := range keys {
+		if k == pluginJobParam {
+			continue // core's job poll parameter (ADR-0121 §8), never the plugin's
+		}
 		if len(out) == pluginViewMaxParams {
 			break
 		}
@@ -200,7 +274,7 @@ func pluginViewContext(ctx context.Context, d *common.Deps, pluginID string) (pl
 	if err != nil {
 		return pluginview.Context{}, err
 	}
-	c := pluginview.Context{OwnKeys: pluginOwnLocaleKeys(d, pluginID)}
+	c := pluginview.Context{PluginID: pluginID, OwnKeys: pluginOwnLocaleKeys(d, pluginID)}
 	for _, e := range entries {
 		if e.PluginID != pluginID || e.Route == "" {
 			continue
@@ -225,23 +299,27 @@ func askPluginView(ctx context.Context, d *common.Deps, entry data.PageEntryRow,
 	return pluginview.DecodeViewAnswer(raw, vctx)
 }
 
-func askPluginAction(ctx context.Context, d *common.Deps, entry data.PageEntryRow, locale string, sub pluginview.Submission) (*pluginview.Document, string, error) {
+// askPluginAction asks ui.action.ask; it also returns the validation
+// context and the payload, which a job answer reuses (startPluginJob).
+func askPluginAction(ctx context.Context, d *common.Deps, entry data.PageEntryRow, locale string, sub pluginview.Submission) (pluginview.ActionAnswer, pluginview.Context, map[string]any, error) {
 	invalid := sub.Invalid
 	if invalid == nil {
 		invalid = []string{}
 	}
-	raw, vctx, err := askPluginUI(ctx, d, entry, pluginActionAskEvent, map[string]any{
+	payload := map[string]any{
 		"view":           entry.View,
 		"action":         sub.Action,
 		"form":           sub.Values,
 		"invalid":        invalid,
 		"upload_handles": []string{},
 		"locale":         locale,
-	})
-	if err != nil {
-		return nil, "", err
 	}
-	return pluginview.DecodeActionAnswer(raw, vctx)
+	raw, vctx, err := askPluginUI(ctx, d, entry, pluginActionAskEvent, payload)
+	if err != nil {
+		return pluginview.ActionAnswer{}, vctx, nil, err
+	}
+	ans, err := pluginview.DecodeActionAnswer(raw, vctx)
+	return ans, vctx, payload, err
 }
 
 // askPluginUI checks ui:page, then asks exactly the entry's plugin, bounded

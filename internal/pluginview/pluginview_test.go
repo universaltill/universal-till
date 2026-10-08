@@ -6,6 +6,7 @@ import (
 )
 
 var testCtx = Context{
+	PluginID:  "com.demo",
 	OwnKeys:   map[string]bool{"plugin.demo.title": true, "plugin.demo.hello": true},
 	OwnRoutes: []string{"/plugin/demo", "/plugin/demo/other"},
 }
@@ -111,21 +112,80 @@ func TestDecodeViewAnswer_Refusals(t *testing.T) {
 }
 
 func TestDecodeActionAnswer(t *testing.T) {
-	if _, to, err := DecodeActionAnswer([]byte(`{"redirect":"/plugin/demo/other"}`), testCtx); err != nil || to != "/plugin/demo/other" {
-		t.Fatalf("own route redirect = %q, %v", to, err)
+	if a, err := DecodeActionAnswer([]byte(`{"redirect":"/plugin/demo/other"}`), testCtx); err != nil || a.Redirect != "/plugin/demo/other" {
+		t.Fatalf("own route redirect = %q, %v", a.Redirect, err)
 	}
 	for _, bad := range []string{"/plugin/other", "/settings", "https://evil.example/plugin/demo", "//evil.example", "/plugin/demo/other?x=1", ""} {
 		raw := `{"redirect":"` + bad + `"}`
-		if _, _, err := DecodeActionAnswer([]byte(raw), testCtx); err == nil {
+		if _, err := DecodeActionAnswer([]byte(raw), testCtx); err == nil {
 			t.Errorf("redirect to %q accepted", bad)
 		}
 	}
-	if _, _, err := DecodeActionAnswer([]byte(`{"redirect":"/plugin/demo","document":{"version":1,"components":[]}}`), testCtx); err == nil {
+	if _, err := DecodeActionAnswer([]byte(`{"redirect":"/plugin/demo","document":{"version":1,"components":[]}}`), testCtx); err == nil {
 		t.Error("redirect AND document accepted")
 	}
-	d, to, err := DecodeActionAnswer([]byte(doc(`{"type":"text","text":{"literal":"done"}}`)), testCtx)
-	if err != nil || to != "" || d == nil {
-		t.Fatalf("document answer = %v %q %v", d, to, err)
+	a, err := DecodeActionAnswer([]byte(doc(`{"type":"text","text":{"literal":"done"}}`)), testCtx)
+	if err != nil || a.Redirect != "" || a.Document == nil || a.Job != "" {
+		t.Fatalf("document answer = %+v %v", a, err)
+	}
+}
+
+// ADR-0121 §8 (ut-docs#3908): {"job":{"event":"<plugin-id>.<name>"}} runs
+// the plugin's own event as a job; exactly one answer shape, strictly.
+func TestDecodeActionAnswer_Job_3908(t *testing.T) {
+	a, err := DecodeActionAnswer([]byte(`{"job":{"event":"com.demo.identify"}}`), testCtx)
+	if err != nil || a.Job != "com.demo.identify" || a.Document != nil || a.Redirect != "" {
+		t.Fatalf("job answer = %+v, %v", a, err)
+	}
+	for name, raw := range map[string]string{
+		"foreign namespace":  `{"job":{"event":"com.other.identify"}}`,
+		"prefix lookalike":   `{"job":{"event":"com.demox.identify"}}`,
+		"bare plugin id":     `{"job":{"event":"com.demo"}}`,
+		"core event":         `{"job":{"event":"sale.completed"}}`,
+		"ui ask":             `{"job":{"event":"ui.action.ask"}}`,
+		"upper case":         `{"job":{"event":"com.demo.Identify"}}`,
+		"space":              `{"job":{"event":"com.demo.a b"}}`,
+		"empty event":        `{"job":{"event":""}}`,
+		"no event":           `{"job":{}}`,
+		"null job":           `{"job":null}`,
+		"too long":           `{"job":{"event":"com.demo.` + strings.Repeat("a", 300) + `"}}`,
+		"unknown job field":  `{"job":{"event":"com.demo.identify","deadline_s":900}}`,
+		"unknown top field":  `{"job":{"event":"com.demo.identify"},"poll_ms":10}`,
+		"job and document":   `{"job":{"event":"com.demo.identify"},"document":{"version":1,"components":[]}}`,
+		"job and redirect":   `{"job":{"event":"com.demo.identify"},"redirect":"/plugin/demo"}`,
+		"event not a string": `{"job":{"event":1}}`,
+		"job is a string":    `{"job":"com.demo.identify"}`,
+		"trailing data":      `{"job":{"event":"com.demo.identify"}} {}`,
+	} {
+		if a, err := DecodeActionAnswer([]byte(raw), testCtx); err == nil {
+			t.Errorf("%s: accepted as %+v", name, a)
+		}
+	}
+	// Without a plugin id to check the namespace against, refuse.
+	if _, err := DecodeActionAnswer([]byte(`{"job":{"event":"com.demo.identify"}}`), Context{OwnKeys: testCtx.OwnKeys}); err == nil {
+		t.Error("job accepted with no plugin id in the context")
+	}
+	// A view answer is never a job.
+	if _, err := DecodeViewAnswer([]byte(`{"job":{"event":"com.demo.identify"}}`), testCtx); err == nil {
+		t.Error("ui.view.ask answer accepted a job")
+	}
+}
+
+// A job's own answer is a normal action answer: a document or a redirect,
+// never another job.
+func TestDecodeJobResult_3908(t *testing.T) {
+	d, to, err := DecodeJobResult([]byte(doc(`{"type":"text","text":{"literal":"done"}}`)), testCtx)
+	if err != nil || d == nil || to != "" {
+		t.Fatalf("document result = %v %q %v", d, to, err)
+	}
+	if _, to, err := DecodeJobResult([]byte(`{"redirect":"/plugin/demo/other"}`), testCtx); err != nil || to != "/plugin/demo/other" {
+		t.Fatalf("redirect result = %q %v", to, err)
+	}
+	if _, _, err := DecodeJobResult([]byte(`{"redirect":"/plugin/other"}`), testCtx); err == nil {
+		t.Error("job result redirect to another plugin's route accepted")
+	}
+	if _, _, err := DecodeJobResult([]byte(`{"job":{"event":"com.demo.identify"}}`), testCtx); err == nil {
+		t.Error("job result chaining another job accepted")
 	}
 }
 

@@ -99,6 +99,9 @@ type hostState struct {
 	// published buffers this instance's accepted event_publish calls;
 	// handleEvent flushes them to the bus only after the instance exits.
 	published []Event
+	// jobProgress is the job_progress sink when this call is a job
+	// (WithJob, wasm_job.go); nil otherwise.
+	jobProgress func(pct int, key string) error
 }
 
 type hostStateKey struct{}
@@ -166,6 +169,7 @@ func instantiateHostModule(ctx context.Context, rt wazero.Runtime) error {
 		NewFunctionBuilder().WithFunc(hostBlobDelete).Export("blob_delete").
 		NewFunctionBuilder().WithFunc(hostBlobList).Export("blob_list").
 		NewFunctionBuilder().WithFunc(hostEventPublish).Export("event_publish").
+		NewFunctionBuilder().WithFunc(hostJobProgress).Export("job_progress").
 		Instantiate(ctx)
 	return err
 }

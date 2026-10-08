@@ -372,6 +372,17 @@ var backgroundPollPaths = map[string]bool{
 
 func backgroundPoll(path string) bool { return backgroundPollPaths[path] }
 
+// pluginJobPoll reports whether r is a plugin job's poll (ADR-0121 §8,
+// ut-docs#3908): a GET/HEAD of a plugin page route carrying _job, sent by
+// core's poll component about every second. Its path is the plugin's own
+// route, so it is matched per request rather than listed above.
+func pluginJobPoll(r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	return strings.HasPrefix(r.URL.Path, "/plugin/") && r.URL.Query().Has("_job")
+}
+
 // Display boards (ut-docs#2935): screens meant to be watched rather than
 // touched — the order-status board (/orders) and the per-station kitchen
 // display (/kitchen-display/{id}). Their pollers never extend a session,
@@ -509,7 +520,7 @@ func Middleware(next http.Handler, svc *Service) http.Handler {
 		}
 		if c, err := r.Cookie(CookieName); err == nil {
 			p := r.URL.Path
-			touch := !backgroundPoll(p) && !displayBoardPoll(p) && p != "/api/orders/stream"
+			touch := !backgroundPoll(p) && !pluginJobPoll(r) && !displayBoardPoll(p) && p != "/api/orders/stream"
 			if u, ok := svc.ResolveFor(r.Context(), c.Value, touch, displayBoardRequest(r)); ok {
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u)))
 				return

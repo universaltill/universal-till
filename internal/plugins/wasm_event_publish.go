@@ -270,3 +270,10 @@ func (w *WasmRuntime) flushPublished(ctx context.Context, db *sql.DB, hs *hostSt
 func isSalePathCall(ev Event) bool {
 	return ev.Hop == 0 && isSalePathEvent(ev.Type)
 }
+
+// CheckPluginEventName is checkPluginEventName for callers outside this
+// package — a ui.action.ask job answer (ADR-0121 §8, ut-docs#3908) names
+// an event under the same own-namespace rule.
+func CheckPluginEventName(pluginID, event string) error {
+	return checkPluginEventName(pluginID, event)
+}
