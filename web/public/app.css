@@ -1203,6 +1203,12 @@ body.kiosk .option-set-card-footer .btn { min-block-size: 2.75rem; }
              border-color: var(--warning-tint-border); vertical-align: middle;
              white-space: normal; }
 a.chip-warn { text-decoration: none; }
+/* ut-docs#3243: a neutral status sentence in a chip (the Settings pending
+   base-plugin note) — same words-not-codes reset as .chip-warn, without the
+   warning tint. Without it the sentence ran off the card on one monospace
+   line at 1024px and on a phone. */
+.chip-note { font-family: inherit; text-transform: none; letter-spacing: normal;
+             white-space: normal; border-radius: .6rem; font-size: .85rem; }
 .chip-add { display: inline-flex; gap: .35rem; align-items: center; margin-block-start: .45rem;
             flex-wrap: wrap; }
 .chip-add input[type="text"] { inline-size: 10rem; min-inline-size: 0; padding: .3rem .5rem; }

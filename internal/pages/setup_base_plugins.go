@@ -1,11 +1,13 @@
 package pages
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -185,6 +187,9 @@ func addPendingBasePlugins(ctx context.Context, d *common.Deps, specs []basePlug
 		seen[s] = true
 		pending = append(pending, s)
 		changed = true
+		// ut-docs#3243: a freshly queued spec has had no attempt yet, so it
+		// must not inherit a reason recorded for an earlier queueing.
+		setBasePluginNotPublished(ctx, d, s, false)
 	}
 	if !changed {
 		return nil
@@ -196,6 +201,11 @@ func addPendingBasePlugins(ctx context.Context, d *common.Deps, specs []basePlug
 // answered but has no listing for this spec" for a tax spec, which stays
 // pending (ut-docs#3210). A language spec keeps the silent nil no-op.
 var errBasePluginNotPublished = errors.New("no matching listing published in the catalog")
+
+// errBasePluginCatalogUnreachable wraps a failed catalog fetch, so the
+// not-published bookkeeping (ut-docs#3243) can tell "offline" apart from
+// every other failure.
+var errBasePluginCatalogUnreachable = errors.New("catalog unreachable")
 
 // taxSpecSatisfiedLocally reports whether a tax spec is already met by an
 // active local plugin with a `tax` entry meant for any country whose
@@ -263,7 +273,10 @@ func taxSpecSatisfiedLocally(ctx context.Context, d *common.Deps, spec basePlugi
 // single-page fetch would silently install nothing and report no error.
 // Bounded by setupBasePluginMaxPages so a malformed/hostile server can't
 // loop forever.
-func resolveAndInstallBasePlugin(ctx context.Context, d *common.Deps, spec basePluginSpec) error {
+func resolveAndInstallBasePlugin(ctx context.Context, d *common.Deps, spec basePluginSpec) (err error) {
+	// ut-docs#3243: every attempt, from any caller, records whether it ended
+	// "not published" so the Settings chip can tell that apart from offline.
+	defer func() { recordBasePluginAttempt(ctx, d, spec, err) }()
 	// ut-docs#3511: checked before any marketplace client or catalog fetch, so
 	// a till that already has its fiscal plugin never tries a second one.
 	if satisfied, err := taxSpecSatisfiedLocally(ctx, d, spec); err != nil {
@@ -286,7 +299,7 @@ func resolveAndInstallBasePlugin(ctx context.Context, d *common.Deps, spec baseP
 	for page := 0; page < setupBasePluginMaxPages; page++ {
 		resp, err := client.ListPlugins(ctx, &marketplace.ListPluginsRequest{Locale: spec.Locale, PageToken: pageToken})
 		if err != nil {
-			return fmt.Errorf("catalog unreachable: %w", err)
+			return fmt.Errorf("%w: %w", errBasePluginCatalogUnreachable, err)
 		}
 		all = append(all, resp.Plugins...)
 		if resp.NextPageToken == "" {
@@ -676,6 +689,108 @@ func savePendingBasePlugins(ctx context.Context, d *common.Deps, specs []basePlu
 	return d.Settings.Set(ctx, common.KeyPendingBasePlugins, string(raw))
 }
 
+// loadBasePluginsNotPublished reads common.KeyBasePluginsNotPublished as a
+// set (ut-docs#3243). Display-only: an unreadable value logs and reads as
+// empty, so the chip falls back to its generic "installing" copy.
+func loadBasePluginsNotPublished(ctx context.Context, d *common.Deps) map[basePluginSpec]bool {
+	raw, ok, err := d.Settings.Get(ctx, common.KeyBasePluginsNotPublished)
+	if err != nil {
+		logging.L().Warnf("base plugins: read not-published list: %v", err)
+		return nil
+	}
+	if !ok || strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var specs []basePluginSpec
+	if err := json.Unmarshal([]byte(raw), &specs); err != nil {
+		logging.L().Warnf("base plugins: not-published list unreadable: %v", err)
+		return nil
+	}
+	set := make(map[basePluginSpec]bool, len(specs))
+	for _, s := range specs {
+		set[s] = true
+	}
+	return set
+}
+
+// basePluginsNotPublishedMu serialises setBasePluginNotPublished's
+// read-modify-write across the retry tick, the wizard and Settings' dismiss.
+var basePluginsNotPublishedMu sync.Mutex
+
+// setBasePluginNotPublished adds or removes spec from the not-published set,
+// writing only when membership actually changes (the retry runs every few
+// minutes). Best-effort: a failed write logs, never fails the caller. Uses
+// context.WithoutCancel so an attempt that ended on its own deadline (the
+// wizard's time-boxed try) still records its outcome.
+func setBasePluginNotPublished(ctx context.Context, d *common.Deps, spec basePluginSpec, notPublished bool) {
+	basePluginsNotPublishedMu.Lock()
+	defer basePluginsNotPublishedMu.Unlock()
+	ctx = context.WithoutCancel(ctx)
+	if notPublished {
+		// Only a spec that is still pending gets a reason: an attempt that
+		// was in flight when the operator dismissed it must not leave an
+		// orphan mark behind (review of ut-docs#3243).
+		pending, err := loadPendingBasePlugins(ctx, d)
+		if err != nil || !slices.Contains(pending, spec) {
+			return
+		}
+	}
+	set := loadBasePluginsNotPublished(ctx, d)
+	if set[spec] == notPublished {
+		return
+	}
+	if set == nil {
+		set = map[basePluginSpec]bool{}
+	}
+	if notPublished {
+		set[spec] = true
+	} else {
+		delete(set, spec)
+	}
+	specs := make([]basePluginSpec, 0, len(set))
+	for s := range set {
+		specs = append(specs, s)
+	}
+	slices.SortFunc(specs, func(a, b basePluginSpec) int {
+		return cmp.Or(cmp.Compare(a.CanonicalType, b.CanonicalType), cmp.Compare(a.Locale, b.Locale))
+	})
+	raw := ""
+	if len(specs) > 0 {
+		b, err := json.Marshal(specs)
+		if err != nil {
+			logging.L().Warnf("base plugins: encode not-published list: %v", err)
+			return
+		}
+		raw = string(b)
+	}
+	if err := d.Settings.Set(ctx, common.KeyBasePluginsNotPublished, raw); err != nil {
+		logging.L().Warnf("base plugins: persist not-published list: %v", err)
+	}
+}
+
+// recordBasePluginAttempt stores one attempt's catalog outcome for spec:
+// "not published" for errBasePluginNotPublished (a tax spec the reachable
+// catalog has no listing for, ut-docs#3210), cleared on success or an
+// unreachable catalog. Anything else — a cancelled attempt (shutdown), a
+// local DB error, an install failure — says nothing new about the catalog
+// and leaves the recorded reason as it was. Language specs never stay
+// pending on a missing listing, so they are never recorded.
+func recordBasePluginAttempt(ctx context.Context, d *common.Deps, spec basePluginSpec, err error) {
+	if spec.CanonicalType != "tax" {
+		return
+	}
+	switch {
+	case errors.Is(err, errBasePluginNotPublished):
+		setBasePluginNotPublished(ctx, d, spec, true)
+	case err == nil:
+		setBasePluginNotPublished(ctx, d, spec, false)
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		// Says nothing about the catalog.
+	case errors.Is(err, errBasePluginCatalogUnreachable):
+		setBasePluginNotPublished(ctx, d, spec, false)
+	}
+}
+
 // basePluginRetryTick is one pass of the background retry: read whatever is
 // still pending, attempt each once more, and remove exactly what installed.
 // Silent-and-retry on failure, same posture as internal/updates' checkOnce —
@@ -757,6 +872,10 @@ type pendingBasePluginView struct {
 	CanonicalType string
 	Locale        string
 	LocaleUpper   string
+	// NotPublished: the last attempt reached the catalog and it has no
+	// listing for this spec yet (ut-docs#3243) — the chip says so instead of
+	// suggesting the till is offline.
+	NotPublished bool
 }
 
 // pendingBasePluginViews maps the persisted specs to their Settings-page
@@ -766,13 +885,14 @@ type pendingBasePluginView struct {
 // (dismissPendingBasePlugin below), satisfying "a merchant can decline
 // anything auto-installed" for the not-yet-installed case; once a plugin IS
 // installed, the existing uninstall flow already covers removal.
-func pendingBasePluginViews(specs []basePluginSpec) []pendingBasePluginView {
+func pendingBasePluginViews(specs []basePluginSpec, notPublished map[basePluginSpec]bool) []pendingBasePluginView {
 	views := make([]pendingBasePluginView, 0, len(specs))
 	for _, s := range specs {
 		views = append(views, pendingBasePluginView{
 			CanonicalType: s.CanonicalType,
 			Locale:        s.Locale,
 			LocaleUpper:   strings.ToUpper(s.Locale),
+			NotPublished:  notPublished[s],
 		})
 	}
 	return views
@@ -794,7 +914,15 @@ func dismissPendingBasePlugin(ctx context.Context, d *common.Deps, canonicalType
 		}
 		remaining = append(remaining, s)
 	}
-	return savePendingBasePlugins(ctx, d, remaining)
+	if err := savePendingBasePlugins(ctx, d, remaining); err != nil {
+		return err
+	}
+	// ut-docs#3243: forget the spec's "not published" reason. After the
+	// pending-list write, so an attempt finishing concurrently either saw
+	// the spec still pending (and is cleared here) or sees it gone and
+	// records nothing (setBasePluginNotPublished).
+	setBasePluginNotPublished(ctx, d, basePluginSpec{CanonicalType: canonicalType, Locale: locale}, false)
+	return nil
 }
 
 // StartBasePluginRetry launches the background half of the country

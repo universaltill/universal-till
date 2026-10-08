@@ -1,6 +1,9 @@
 package pages
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -996,8 +999,8 @@ func TestBasePluginRetryTick_TaxSpecStaysPendingWhenCatalogHasNoTaxListing(t *te
 		t.Fatalf("pending after the tick = %+v, want only %+v (tax stays, language no-op drops)", pending, taxSpec)
 	}
 	// The Settings chip is {{ range .pendingBasePlugins }} over exactly this list.
-	if views := pendingBasePluginViews(pending); len(views) != 1 || views[0].CanonicalType != "tax" || views[0].LocaleUpper != "DE" {
-		t.Fatalf("Settings chip views = %+v, want one tax/DE entry", views)
+	if views := pendingBasePluginViews(pending, loadBasePluginsNotPublished(t.Context(), dp)); len(views) != 1 || views[0].CanonicalType != "tax" || views[0].LocaleUpper != "DE" || !views[0].NotPublished {
+		t.Fatalf("Settings chip views = %+v, want one not-published tax/DE entry (ut-docs#3243)", views)
 	}
 
 	// The listing is published later: the same retry installs it and clears
@@ -1011,6 +1014,9 @@ func TestBasePluginRetryTick_TaxSpecStaysPendingWhenCatalogHasNoTaxListing(t *te
 	}
 	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); !active {
 		t.Fatal("expected the retry to install the fiscal plugin once it is published")
+	}
+	if got := loadBasePluginsNotPublished(t.Context(), dp); len(got) != 0 {
+		t.Fatalf("the install must clear the not-published reason, got %+v", got)
 	}
 }
 
@@ -1297,5 +1303,177 @@ func TestSetupGETShowsQueuedTaxNoteWhenCatalogHasNoListing(t *testing.T) {
 				t.Error("no catalog match: step 3 must not offer an Install button")
 			}
 		})
+	}
+}
+
+// --- ut-docs#3243: say "not published yet", not "installing… if you're offline" ---
+
+// A consented tax/de spec that the reachable catalog has no listing for is
+// not "installing in the background … if you're offline" — the till is
+// online and may wait days. The retry records why the spec is still pending,
+// and the Settings chip says the plugin isn't in the catalog yet; an
+// unreachable catalog keeps today's offline copy.
+func TestSettingsPendingTaxChipSaysNotPublishedWhenCatalogHasNoListing(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	taxSpec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{taxSpec}); err != nil {
+		t.Fatal(err)
+	}
+	getSettings := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+		req = auth.WithUser(req, mgrUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /settings = %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+	offlineCopy := "if you&#39;re offline"
+	notPublishedCopy := "isn&#39;t in the plugin catalog yet"
+
+	// Reachable catalog, no DE tax listing.
+	mkt := newFakeMarketplace(t, map[string]string{})
+	mkt.setCatalog()
+	dp.Cfg.Marketplace = mkt.config()
+	basePluginRetryTick(t.Context(), dp)
+	body := getSettings()
+	if !strings.Contains(body, notPublishedCopy) {
+		t.Errorf("not-published tax spec: chip must say the plugin isn't in the catalog yet")
+	}
+	if strings.Contains(body, offlineCopy) {
+		t.Errorf("not-published tax spec: chip must not claim the till may be offline")
+	}
+
+	// The catalog becomes unreachable: the next attempt's reason replaces
+	// the recorded one, and the chip goes back to the offline copy.
+	deadMarketplace(t, dp)
+	basePluginRetryTick(t.Context(), dp)
+	body = getSettings()
+	if !strings.Contains(body, offlineCopy) {
+		t.Errorf("unreachable catalog: chip must keep the offline copy")
+	}
+	if strings.Contains(body, notPublishedCopy) {
+		t.Errorf("unreachable catalog: a stale not-published reason must be cleared")
+	}
+}
+
+// Dismissing the pending spec forgets its recorded reason, so a later
+// re-queue (country change, wizard re-run) never inherits a stale one.
+func TestDismissPendingBasePluginForgetsNotPublishedReason(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	_, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	taxSpec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{taxSpec}); err != nil {
+		t.Fatal(err)
+	}
+	mkt := newFakeMarketplace(t, map[string]string{})
+	mkt.setCatalog()
+	dp.Cfg.Marketplace = mkt.config()
+	basePluginRetryTick(t.Context(), dp)
+	if got := loadBasePluginsNotPublished(t.Context(), dp); !got[taxSpec] {
+		t.Fatalf("expected tax/de recorded as not published, got %+v", got)
+	}
+	if err := dismissPendingBasePlugin(t.Context(), dp, "tax", "de"); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadBasePluginsNotPublished(t.Context(), dp); got[taxSpec] {
+		t.Fatalf("dismiss must forget the not-published reason, got %+v", got)
+	}
+}
+
+// Step 3's queued branch renders only when the catalog answered with no
+// listing, so it says exactly that instead of "still installing".
+func TestSetupGETQueuedTaxNoteSaysNotPublished(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	resetSetupLanguageCatalog()
+	t.Cleanup(resetSetupLanguageCatalog)
+	withOSLocale(t, "", "") // see TestSetupGETResumesStep3ForTaxCountry's comment
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{}) // reachable, no DE tax listing
+	dp.Cfg.Marketplace = mkt.config()
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{{CanonicalType: "tax", Locale: "de"}}); err != nil {
+		t.Fatal(err)
+	}
+	body := getSetup(mux, "", "").Body.String()
+	if !strings.Contains(body, "isn&#39;t in the plugin catalog yet") {
+		t.Error("queued note without a catalog match must say the plugin isn't in the catalog yet")
+	}
+	if strings.Contains(body, "Still installing the tax plugin") {
+		t.Error("queued note without a catalog match must not say it is still installing")
+	}
+}
+
+// An offline re-render of step 3 after the operator already consented (the
+// spec is on the pending list, no tax_plugin_pending query param — e.g. a
+// reload) shows the queued note, not a fresh "Install when online" offer
+// with no sign the consent was kept.
+func TestSetupGETOfflineRerenderAfterConsentShowsQueuedNote(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	withOSLocale(t, "", "") // see TestSetupGETResumesStep3ForTaxCountry's comment
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	deadMarketplace(t, dp)
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{{CanonicalType: "tax", Locale: "de"}}); err != nil {
+		t.Fatal(err)
+	}
+	body := getSetup(mux, "?tax_country=DE", "").Body.String()
+	if !strings.Contains(body, "data-tax-plugin-queued") {
+		t.Error("offline re-render after consent must show the queued note")
+	}
+	if strings.Contains(body, "data-tax-plugin-offline") {
+		t.Error("the queued note replaces the offline note, not both")
+	}
+}
+
+// Review finding (ut-docs#3243): an attempt that was already in flight when
+// the operator dismissed the spec must not leave a "not published" reason
+// behind, and re-queuing a spec starts with no recorded reason — otherwise
+// an offline re-queue would show "isn't in the catalog yet" before any
+// attempt was made.
+func TestNotPublishedReasonNotOrphanedByDismissRaceOrInheritedOnRequeue(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	_, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	taxSpec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+
+	// The attempt finishes after the spec was dismissed: nothing is recorded.
+	recordBasePluginAttempt(t.Context(), dp, taxSpec, errBasePluginNotPublished)
+	if got := loadBasePluginsNotPublished(t.Context(), dp); got[taxSpec] {
+		t.Fatalf("a not-pending spec must not be recorded as not published, got %+v", got)
+	}
+
+	// A stale reason already on disk is dropped when the spec is queued again.
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{taxSpec}); err != nil {
+		t.Fatal(err)
+	}
+	recordBasePluginAttempt(t.Context(), dp, taxSpec, errBasePluginNotPublished)
+	if got := loadBasePluginsNotPublished(t.Context(), dp); !got[taxSpec] {
+		t.Fatalf("a pending spec must be recorded, got %+v", got)
+	}
+	if err := savePendingBasePlugins(t.Context(), dp, nil); err != nil { // dropped without the dismiss path
+		t.Fatal(err)
+	}
+	if err := addPendingBasePlugins(t.Context(), dp, []basePluginSpec{taxSpec}); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadBasePluginsNotPublished(t.Context(), dp); got[taxSpec] {
+		t.Fatalf("re-queuing must clear a stale not-published reason, got %+v", got)
+	}
+
+	// A cancelled attempt (shutdown mid-fetch) leaves a correct reason alone.
+	recordBasePluginAttempt(t.Context(), dp, taxSpec, errBasePluginNotPublished)
+	recordBasePluginAttempt(t.Context(), dp, taxSpec, fmt.Errorf("%w: %w", errBasePluginCatalogUnreachable, context.Canceled))
+	if got := loadBasePluginsNotPublished(t.Context(), dp); !got[taxSpec] {
+		t.Fatalf("a cancelled attempt must not clear the recorded reason, got %+v", got)
+	}
+	// A genuinely unreachable catalog does clear it.
+	recordBasePluginAttempt(t.Context(), dp, taxSpec, fmt.Errorf("%w: %w", errBasePluginCatalogUnreachable, errors.New("dial tcp: connection refused")))
+	if got := loadBasePluginsNotPublished(t.Context(), dp); got[taxSpec] {
+		t.Fatalf("an unreachable catalog must clear the reason, got %+v", got)
 	}
 }

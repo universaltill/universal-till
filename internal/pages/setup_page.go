@@ -333,6 +333,11 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// operator's consent is still queued — step 3 says so.
 		if taxPlugin == nil {
 			data["taxPluginQueued"] = setupTaxPluginQueued(r.Context(), d, tseProvisionCountry)
+		} else if taxPlugin.Offline && setupTaxPluginQueued(r.Context(), d, tseProvisionCountry) {
+			// ut-docs#3243: offline, and the operator already consented (a
+			// reload, or a resume without the redirect's query param) —
+			// show the queued note, not a fresh "Install when online" offer.
+			data["taxPluginPending"] = true
 		}
 		// tax_plugin_pending: set by POST /api/setup/tax-plugin's failure
 		// redirect (query param, not stored state) — shows the "still
