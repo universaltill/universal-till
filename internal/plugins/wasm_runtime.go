@@ -16,7 +16,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/tetratelabs/wazero"
-	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 	"github.com/tetratelabs/wazero/sys"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -47,19 +46,29 @@ func SharedBus(db *sql.DB) *EventBus {
 // docs architecture/wasm-runtime.md). Modules are WASI commands: compiled
 // once at load, instantiated per event with the event JSON on stdin.
 type WasmRuntime struct {
-	mu         sync.Mutex
-	rt         wazero.Runtime
-	modules    map[string]wazero.CompiledModule // plugin id → compiled module
-	versions   map[string]string                // plugin id → compiled version
-	timeout    time.Duration
-	netTimeout time.Duration   // wider deadline for plugins holding net:*
-	hasNet     map[string]bool // plugin id → granted net:* permission
-	hasTCP     map[string]bool // plugin id → granted tcp:* permission (raw device transport)
-	httpClient *http.Client    // http_request egress client; nil → defaultPluginHTTPClient
-	db         *sql.DB         // for host functions; set by Sync
-	baseDir    string
-	unsubGen   int           // bumped per sync so stale handlers no-op
-	calls      *wasmCallGate // concurrent-call caps, sale-path slot reserved (ut-docs#3154)
+	mu       sync.Mutex
+	rt       wazero.Runtime
+	modules  map[string]wazero.CompiledModule // plugin id → compiled module
+	versions map[string]string                // plugin id → compiled version
+	// Persistent compile cache (ut-docs#3912, wasm_compile_cache.go). rt
+	// never uses it; cachedRT does, built when the cache in cacheDir is
+	// first opened. modRT is the runtime each module was compiled in
+	// (instances must be made there); absent → rt.
+	cacheDir    string // "" = no cache
+	cacheOpened bool
+	cache       *wasmCompileCache // nil = none (or not opened yet)
+	cachedRT    wazero.Runtime
+	modRT       map[string]wazero.Runtime
+	lastLoad    map[string]wasmLoadOutcome // plugin id → how its module was last obtained
+	timeout     time.Duration
+	netTimeout  time.Duration   // wider deadline for plugins holding net:*
+	hasNet      map[string]bool // plugin id → granted net:* permission
+	hasTCP      map[string]bool // plugin id → granted tcp:* permission (raw device transport)
+	httpClient  *http.Client    // http_request egress client; nil → defaultPluginHTTPClient
+	db          *sql.DB         // for host functions; set by Sync
+	baseDir     string
+	unsubGen    int           // bumped per sync so stale handlers no-op
+	calls       *wasmCallGate // concurrent-call caps, sale-path slot reserved (ut-docs#3154)
 	// publishRate is event_publish's per-plugin token bucket (ut-docs#3871).
 	publishRate *publishRateLimiter
 	// bus, when set (tests), receives published events instead of SharedBus.
@@ -199,39 +208,18 @@ func (w *WasmRuntime) timeoutForEvent(pluginID string, ev Event) time.Duration {
 // memory.grow past it returns -1 inside the guest; the till keeps running.
 const wasmMemoryLimitPages = 1024
 
-// NewWasmRuntime creates the runtime; baseDir is the plugin install root
-// (e.g. ./data/plugins).
+// NewWasmRuntime creates the runtime without a persistent compile cache;
+// baseDir is the plugin install root (e.g. ./data/plugins). Production uses
+// NewWasmRuntimeWithCache.
 func NewWasmRuntime(baseDir string) *WasmRuntime {
-	ctx := context.Background()
-	// WithCloseOnContextDone(true) (ut-docs#504 review finding): wazero
-	// disables this by default, meaning HandleEvent's per-call
-	// context.WithTimeout (timeoutFor) was computed but never actually
-	// enforced — a guest stuck in a CPU-bound loop (buggy or malicious
-	// plugin.wasm) ran forever regardless of the deadline. That was always
-	// latent, but ut-docs#504's fix (EventBus.publish holds eb.mu.RLock
-	// across a Blocking handler's call, closing the shutdown/Reload
-	// channel-close race) turned "one wedged handler hangs one publish
-	// call" into "one wedged handler wedges the entire bus" — including
-	// HasSubscribers/Generation on the checkout tax-rate-ask path
-	// (internal/pages/tax_hook.go) and every future ResetSubscribers
-	// (Manager.Reload/Close), since Go's RWMutex blocks new readers once a
-	// writer is pending. Enabling this makes the timeout this code already
-	// computes and applies actually terminate the guest module, bounding
-	// that hold — matching wazero's own documented guidance for untrusted
-	// guests.
-	rt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().
-		WithCloseOnContextDone(true).
-		WithMemoryLimitPages(wasmMemoryLimitPages))
-	wasi_snapshot_preview1.MustInstantiate(ctx, rt)
-	if err := instantiateHostModule(ctx, rt); err != nil {
-		// Modules that import "ut" will fail to instantiate; log, don't crash.
-		logging.L().Errorf("wasm host module: %v", err)
-	}
+	rt := newPluginRuntime(nil)
 	drainCtx, drainStop := context.WithCancel(context.Background())
 	return &WasmRuntime{
 		rt:          rt,
 		modules:     map[string]wazero.CompiledModule{},
 		versions:    map[string]string{},
+		modRT:       map[string]wazero.Runtime{},
+		lastLoad:    map[string]wasmLoadOutcome{},
 		timeout:     2 * time.Second,
 		netTimeout:  10 * time.Second,
 		hasNet:      map[string]bool{},
@@ -276,6 +264,11 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			_ = mod.Close(context.Background())
 			delete(w.modules, id)
 			delete(w.versions, id)
+			delete(w.modRT, id)
+			delete(w.lastLoad, id)
+			if w.cache != nil {
+				w.cache.forget(id)
+			}
 			delete(w.hasNet, id)
 			delete(w.hasTCP, id)
 			w.publishRate.forget(id)
@@ -426,6 +419,24 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 				stateChanged = true
 			}
 		}
+	}
+
+	// Keep the compile cache to the installed plugins' entries
+	// (ut-docs#3912): a disabled plugin keeps its entry, so re-enabling it
+	// on a Pi does not recompile; an uninstall drops it.
+	// On a query error the prune is skipped: it must never guess.
+	if ids, err := repo.ListWasmPluginIDs(ctx); err != nil {
+		logging.L().Errorf("wasm compile cache: list plugins, prune skipped: %v", err)
+	} else {
+		installed := make(map[string]bool, len(ids))
+		for _, id := range ids {
+			installed[id] = true
+		}
+		w.mu.Lock()
+		if w.cache != nil {
+			w.cache.prune(installed)
+		}
+		w.mu.Unlock()
 	}
 
 	if stateChanged {
@@ -584,10 +595,12 @@ func (w *WasmRuntime) load(pluginID, version, path string) error {
 	if err != nil {
 		return fmt.Errorf("read module: %w", err)
 	}
-	compiled, err := w.rt.CompileModule(context.Background(), raw)
+	start := time.Now()
+	compiled, rt, outcome, err := w.compile(pluginID, version, raw)
 	if err != nil {
 		return fmt.Errorf("compile module: %w", err)
 	}
+	logging.L().Infof("wasm load %s@%s: %s in %s", pluginID, version, outcome, time.Since(start).Round(time.Millisecond))
 	if old, ok := w.modules[pluginID]; ok {
 		_ = old.Close(context.Background())
 		// ut-docs#606 item 2: Sync's own module-drop loop only force-closes
@@ -603,6 +616,8 @@ func (w *WasmRuntime) load(pluginID, version, path string) error {
 	}
 	w.modules[pluginID] = compiled
 	w.versions[pluginID] = version
+	w.modRT[pluginID] = rt
+	w.lastLoad[pluginID] = outcome
 	return nil
 }
 
@@ -690,6 +705,10 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 	// dropped or replaced the module.
 	w.mu.Lock()
 	compiled, ok := w.modules[pluginID]
+	rt := w.rt
+	if r, has := w.modRT[pluginID]; has {
+		rt = r
+	}
 	db := w.db
 	w.mu.Unlock()
 	if !ok {
@@ -738,7 +757,7 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 		WithSysNanotime().
 		WithSysNanosleep()
 
-	_, runErr := w.rt.InstantiateModule(cctx, compiled, cfg)
+	_, runErr := rt.InstantiateModule(cctx, compiled, cfg)
 	if out := strings.TrimSpace(stderr.String()); out != "" {
 		logging.L().Infof("[wasm:%s] %s", pluginID, out)
 	}

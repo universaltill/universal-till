@@ -146,6 +146,31 @@ func TestPluginRepo_ListInstalledPlugins_ActiveOnly(t *testing.T) {
 	}
 }
 
+// ListWasmPluginIDs returns every installed wasm plugin, active or not: the
+// WASM compile cache keeps a disabled plugin's entry (ut-docs#3912).
+func TestPluginRepo_ListWasmPluginIDs_IncludesInactive(t *testing.T) {
+	ctx := context.Background()
+	db := newPluginRepoTestDB(t)
+	repo := NewPluginRepo(db)
+
+	for _, q := range []string{
+		`INSERT INTO plugins(id,name,version,runtime,is_active) VALUES('w-on','A','1.0','wasm',1)`,
+		`INSERT INTO plugins(id,name,version,runtime,is_active) VALUES('w-off','B','1.0','wasm',0)`,
+		`INSERT INTO plugins(id,name,version,runtime,is_active) VALUES('go-on','C','1.0','go',1)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	ids, err := repo.ListWasmPluginIDs(ctx)
+	if err != nil {
+		t.Fatalf("ListWasmPluginIDs: %v", err)
+	}
+	if strings.Join(ids, ",") != "w-off,w-on" {
+		t.Fatalf("ids = %v, want [w-off w-on]", ids)
+	}
+}
+
 func TestPluginRepo_ListThemeEntries(t *testing.T) {
 	ctx := context.Background()
 	db := newPluginRepoTestDB(t)

@@ -1546,6 +1546,26 @@ ORDER BY name COLLATE NOCASE
 	return res, rows.Err()
 }
 
+// ListWasmPluginIDs returns the id of every installed wasm plugin, active
+// or disabled, ordered by id. The WASM compile cache prunes against it, so
+// a disabled plugin keeps its compiled entry (ut-docs#3912).
+func (r *PluginRepo) ListWasmPluginIDs(ctx context.Context) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id FROM plugins WHERE runtime = 'wasm' ORDER BY id`)
+	if err != nil {
+		return nil, pluginObs.wrap("list_wasm_ids", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, pluginObs.wrap("list_wasm_ids", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (r *PluginRepo) ListInstalledPlugins(ctx context.Context) ([]InstalledPluginRow, error) {
 	// ORDER BY id (ut-docs#628 follow-up): WasmRuntime.Sync iterates this
 	// result and processes plugins in whatever order it returns, so an
