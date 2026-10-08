@@ -37,8 +37,13 @@ type SnapshotItem struct {
 	// NetQuantityValue/NetQuantityUnit are items.net_quantity_value/unit
 	// as stored (ut-docs#3504, migration 060), both nil when NULL; the
 	// push sends them only as a catalogtypes.ValidNetQuantity pair.
-	NetQuantityValue          *int64
-	NetQuantityUnit           *string
+	NetQuantityValue *int64
+	NetQuantityUnit  *string
+	// SellScreen (ut-docs#3015) is "hidden" (items.sell_screen_hidden),
+	// "removed" (items.sell_screen_removed — removed wins when both are
+	// set, as in SellScreenStates) or "" when the item is on the sell
+	// screen.
+	SellScreen                string
 	Barcodes                  []string // primary first
 	ModifierGroupIDs          []string // directly attached, link order
 	ModifierOptOutIDs         []string
@@ -60,7 +65,7 @@ func (r *CatalogRepo) CatalogSnapshotItems(ctx context.Context) ([]SnapshotItem,
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, name, COALESCE(sku, ''), base_price, COALESCE(category_id, ''), COALESCE(color, ''),
        is_active, is_weighed, stock_untracked, age_restricted, COALESCE(icon, ''),
-       net_quantity_value, net_quantity_unit
+       net_quantity_value, net_quantity_unit, sell_screen_hidden, sell_screen_removed
 FROM items
 ORDER BY is_active DESC, name, id`)
 	if err != nil {
@@ -71,7 +76,8 @@ ORDER BY is_active DESC, name, id`)
 		var it SnapshotItem
 		var nqValue sql.NullInt64
 		var nqUnit sql.NullString
-		if err := rows.Scan(&it.ID, &it.Name, &it.SKU, &it.PriceMinor, &it.CategoryID, &it.Color, &it.Active, &it.IsWeighed, &it.StockUntracked, &it.AgeRestricted, &it.Icon, &nqValue, &nqUnit); err != nil {
+		var hidden, removed bool
+		if err := rows.Scan(&it.ID, &it.Name, &it.SKU, &it.PriceMinor, &it.CategoryID, &it.Color, &it.Active, &it.IsWeighed, &it.StockUntracked, &it.AgeRestricted, &it.Icon, &nqValue, &nqUnit, &hidden, &removed); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("catalog snapshot: items: %w", err)
 		}
@@ -82,6 +88,12 @@ ORDER BY is_active DESC, name, id`)
 		if nqUnit.Valid {
 			u := nqUnit.String
 			it.NetQuantityUnit = &u
+		}
+		switch {
+		case removed:
+			it.SellScreen = "removed"
+		case hidden:
+			it.SellScreen = "hidden"
 		}
 		items = append(items, it)
 	}
