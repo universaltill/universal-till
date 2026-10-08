@@ -118,8 +118,8 @@ func TestShiftsPage_OpenShiftShowsCurrentAndHistory(t *testing.T) {
 		t.Fatalf("expected the closed shift's expected cash in history, got: %s", body)
 	}
 	// Variance = counted(1200) - expected(1500) = -300 minor units;
-	// FormatMoney hugs the symbol to the number, so GBP renders this "£-3.00".
-	if !strings.Contains(body, "£-3.00") {
+	// FormatMoney leads with the sign, so GBP renders this "-£3.00" (ut-docs#3880).
+	if !strings.Contains(body, "-£3.00") {
 		t.Fatalf("expected the closed shift's variance in history, got: %s", body)
 	}
 }

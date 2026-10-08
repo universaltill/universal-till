@@ -705,9 +705,9 @@ func respondCloseSuccess(w http.ResponseWriter, r *http.Request, data ShiftClose
 		// with the amounts interpolated into a locale template rather than
 		// baked into the English sentence.
 		locale := httpx.ResolveLocale(w, r)
-		expected := httpx.FormatMoney(data.ExpectedCash, locale)
-		actual := httpx.FormatMoney(data.ClosingCash, locale)
-		variance := httpx.FormatMoney(data.Variance, locale)
+		expected := httpx.FormatMoneyDisplay(data.ExpectedCash, locale)
+		actual := httpx.FormatMoneyDisplay(data.ClosingCash, locale)
+		variance := httpx.FormatMoneyDisplay(data.Variance, locale)
 		var msg string
 		if data.Skim != 0 {
 			// ut-docs#1006 review finding 9: the HTML path (what the close
@@ -715,8 +715,8 @@ func respondCloseSuccess(w http.ResponseWriter, r *http.Request, data ShiftClose
 			// figures the JSON path already returned — an operator who just
 			// skimmed the drawer got no on-screen confirmation of the new
 			// float they left it on.
-			skim := httpx.FormatMoney(-data.Skim, locale)
-			newFloat := httpx.FormatMoney(data.NewFloat, locale)
+			skim := httpx.FormatMoneyDisplay(-data.Skim, locale)
+			newFloat := httpx.FormatMoneyDisplay(data.NewFloat, locale)
 			msg = fmt.Sprintf(httpx.T(locale, "shifts.close_success_with_skim"), expected, actual, variance, skim, newFloat)
 		} else {
 			msg = fmt.Sprintf(httpx.T(locale, "shifts.close_success"), expected, actual, variance)

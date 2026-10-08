@@ -325,6 +325,25 @@ func FormatMoneyLatin(minor int64, locale string) string {
 	return formatMoney(minor, locale, false)
 }
 
+// FormatMoneyDisplay is FormatMoney for on-screen HTML text: in an RTL
+// locale a negative amount whose symbol leads ("-¥۳۰۰", "-KWD ۰٫۵۰") is
+// wrapped in a left-to-right isolate (U+2066 ... U+2069) so it displays as
+// one unit with the sign left of the symbol for every currency
+// (ut-docs#3880) -- CLDR's fa format does the same with an LRM. Unwrapped,
+// the bidi algorithm gives "-" and a symbol like "¥" the paragraph's RTL
+// direction, so "-¥۳۰۰" showed as "۳۰۰¥-" while "-KWD ..." kept another
+// order. A suffix amount ("-۱۲٬۳۴۵ ریال") already reads sign-first right to
+// left with the word where a positive amount has it, so it is left alone.
+// Screen only: print paths (the ESC/POS raster has no bidi handling) keep
+// FormatMoney / FormatMoneyLatin, which never emit bidi controls.
+func FormatMoneyDisplay(minor int64, locale string) string {
+	s := FormatMoney(minor, locale)
+	if minor < 0 && IsRTL(locale) && !ActiveCurrency().Suffix {
+		return "\u2066" + s + "\u2069"
+	}
+	return s
+}
+
 func formatMoney(minor int64, locale string, digitShape bool) string {
 	c := ActiveCurrency()
 	neg := minor < 0
@@ -341,21 +360,29 @@ func formatMoney(minor int64, locale string, digitShape bool) string {
 		}
 		num = fmt.Sprintf("%d.%0*d", minor/pow, c.Decimals, minor%pow)
 	}
-	if neg {
-		num = "-" + num
-	}
 	num = formatGrouped(num, locale)
 	if digitShape {
 		num = LocalizeDigits(num, locale)
 	}
-	if c.Suffix {
-		return num + " " + c.Display
+	var out string
+	switch {
+	case c.Suffix:
+		out = num + " " + c.Display
+	// single-rune symbols hug the number; words/codes get one space (the
+	// unknown-code fallback's Display already ends in one -- trimmed so it
+	// is not doubled, matching utCurrency.format's "XYZ 1.99")
+	case len([]rune(strings.TrimSpace(c.Display))) > 1:
+		out = strings.TrimSpace(c.Display) + " " + num
+	default:
+		out = c.Display + num
 	}
-	// single-rune symbols hug the number; words/codes get a space
-	if len([]rune(strings.TrimSpace(c.Display))) > 1 {
-		return c.Display + " " + num
+	// ut-docs#3880: the sign leads the whole amount, symbol included
+	// ("-£42.50", "-¥300", "-42,50 €"), as CLDR formats a negative currency
+	// in every locale this product ships -- never "£-42.50".
+	if neg {
+		out = "-" + out
 	}
-	return c.Display + num
+	return out
 }
 
 // FormatQty renders a sale-line quantity following locale's grouping/

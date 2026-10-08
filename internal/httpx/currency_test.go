@@ -14,7 +14,20 @@ func TestFormatMoney(t *testing.T) {
 		// 2-decimal symbol prefix
 		{"GBP", "en-US", 123, "£1.23"},
 		{"GBP", "en-US", 1234567, "£12,345.67"},
-		{"GBP", "en-US", -50, "£-0.50"},
+		// ut-docs#3880: the sign leads the whole amount, symbol included
+		// (CLDR en/ja/tr: "-£42.50", "-¥300"), never "£-0.50".
+		{"GBP", "en-US", -50, "-£0.50"},
+		{"GBP", "en-GB", -4250, "-£42.50"},
+		{"GBP", "en-US", -1234567, "-£12,345.67"},
+		{"EUR", "de-DE", -4250, "-€42,50"},
+		{"EUR", "de-DE", -123456, "-€1.234,56"},
+		{"TRY", "tr-TR", -4250, "-₺42,50"},
+		{"JPY", "en-US", -300, "-¥300"},
+		{"JPY", "fa", -300, "-¥۳۰۰"},
+		{"JPY", "ar", -300, "-¥٣٠٠"},
+		{"KWD", "fa", -50, "-KWD ۰٫۵۰"},
+		{"IRR", "fa", -12345, "-۱۲٬۳۴۵ ریال"},
+		{"XYZ", "en-US", -199, "-XYZ 1.99"},
 		// rial: no subunit, word AFTER the number (renders left of the
 		// digits in RTL text), Persian digits under a fa locale
 		{"IRR", "fa", 12345, "۱۲٬۳۴۵ ریال"},
@@ -24,12 +37,47 @@ func TestFormatMoney(t *testing.T) {
 		// 0-decimal prefix currency
 		{"JPY", "en-US", 1500, "¥1,500"},
 		// unknown code falls back to CODE + 2 decimals
-		{"XYZ", "en-US", 199, "XYZ  1.99"},
+		{"XYZ", "en-US", 199, "XYZ 1.99"},
 	}
 	for _, c := range cases {
 		InitCurrency(c.code)
 		if got := FormatMoney(c.minor, c.locale); got != c.want {
 			t.Errorf("FormatMoney(%d) %s/%s = %q, want %q", c.minor, c.code, c.locale, got, c.want)
+		}
+	}
+	InitCurrency("GBP")
+}
+
+// ut-docs#3880: on screen, an RTL locale renders a negative prefix-symbol
+// amount as one left-to-right unit (LRI ... PDI) so the sign sits left of
+// the symbol for every currency, the way CLDR's fa format forces LTR with
+// an LRM. Without the isolate the bidi algorithm resolves "-" and "¥" to
+// the paragraph's RTL direction and "¥-۳۰۰" displayed as "۳۰۰-¥" while
+// "KWD -۰٫۰۵" kept its order. A suffix amount ("-۱۲٬۳۴۵ ریال") already
+// reads sign-first right to left with the word where a positive amount has
+// it, so it is never wrapped; nor is an LTR locale or a positive amount.
+// FormatMoney itself stays free of bidi controls: it also feeds the ESC/POS
+// invoice raster, which has no bidi handling.
+func TestFormatMoneyDisplay(t *testing.T) {
+	const lri, pdi = "\u2066", "\u2069"
+	cases := []struct {
+		code, locale string
+		minor        int64
+		want         string
+	}{
+		{"JPY", "fa", -300, lri + "-¥۳۰۰" + pdi},
+		{"JPY", "ar", -300, lri + "-¥٣٠٠" + pdi},
+		{"KWD", "fa", -50, lri + "-KWD ۰٫۵۰" + pdi},
+		{"GBP", "fa-IR", -4250, lri + "-£۴۲٫۵۰" + pdi},
+		{"IRR", "fa", -12345, "-۱۲٬۳۴۵ ریال"},
+		{"JPY", "fa", 300, "¥۳۰۰"},
+		{"GBP", "en-GB", -4250, "-£42.50"},
+		{"EUR", "de-DE", -4250, "-€42,50"},
+	}
+	for _, c := range cases {
+		InitCurrency(c.code)
+		if got := FormatMoneyDisplay(c.minor, c.locale); got != c.want {
+			t.Errorf("FormatMoneyDisplay(%d) %s/%s = %q, want %q", c.minor, c.code, c.locale, got, c.want)
 		}
 	}
 	InitCurrency("GBP")
@@ -471,5 +519,19 @@ func TestPercentPatternLocalAttr(t *testing.T) {
 	want := `pattern="[0-9]+([.,][0-9]{1,2})?" data-money-local="percent"`
 	if got := string(PercentPatternLocalAttr()); got != want {
 		t.Fatalf("PercentPatternLocalAttr() = %q, want %q", got, want)
+	}
+}
+
+// ut-docs#3880: {{ money }} is screen-only, so it is the display variant —
+// a negative prefix amount in an RTL locale comes back isolated.
+func TestMoneyTemplateFuncUsesDisplayVariant(t *testing.T) {
+	InitCurrency("JPY")
+	defer InitCurrency("GBP")
+	money := FuncsFor("fa")["money"].(func(any) string)
+	if got, want := money(int64(-300)), "⁦-¥۳۰۰⁩"; got != want {
+		t.Errorf("money(-300) under fa = %q, want %q", got, want)
+	}
+	if got, want := FuncsFor("en")["money"].(func(any) string)(int64(-300)), "-¥300"; got != want {
+		t.Errorf("money(-300) under en = %q, want %q", got, want)
 	}
 }

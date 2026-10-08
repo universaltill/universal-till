@@ -1004,7 +1004,7 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		fmt.Fprintf(w, `<span>✓ %s — %s %s</span>`, httpx.T(locale, "reports.eod.done"),
-			httpx.T(locale, "reports.eod.net"), httpx.FormatMoney(rep.Net, locale))
+			httpx.T(locale, "reports.eod.net"), httpx.FormatMoneyDisplay(rep.Net, locale))
 	})
 
 	// Reprint an archived report.

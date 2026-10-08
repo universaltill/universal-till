@@ -305,10 +305,10 @@ func TestReportsPage_NetGoesNegativeWhenRefundsExceedSales(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "£-1.00") {
-		t.Fatalf("expected the negative net £-1.00, got: %s", body)
+	if !strings.Contains(body, "-£1.00") {
+		t.Fatalf("expected the negative net -£1.00, got: %s", body)
 	}
-	if !strings.Contains(body, `kpi-value stock-low">£-1.00`) {
+	if !strings.Contains(body, `kpi-value stock-low">-£1.00`) {
 		t.Fatalf("expected the negative net KPI to carry the stock-low treatment, got: %s", body)
 	}
 }
