@@ -244,6 +244,12 @@ jobs:
           INC=/usr/x86_64-w64-mingw32/include
           test -f "$INC/eventtoken.h" || { echo "::error::mingw eventtoken.h missing"; exit 1; }
           sudo ln -sf "$INC/eventtoken.h" "$INC/EventToken.h"
+      # ut-docs#3867: build the signature verifier before the signing
+      # identity logs in, so upstream's build code never runs next to it.
+      - name: Build osslsigncode (pinned commit)
+        run: |
+          sudo apt-get update
+          bash packaging/windows/install-osslsigncode.sh
       - name: Azure login (OIDC, signing identity)
         uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
         with:
@@ -352,6 +358,12 @@ jobs:
           done
           echo "::error::release $TAG does not exist — goreleaser failed before creating it; re-run goreleaser first"
           exit 1
+      # ut-docs#3867: build the signature verifier before the signing
+      # identity logs in, so upstream's build code never runs next to it.
+      - name: Build osslsigncode (pinned commit)
+        run: |
+          sudo apt-get update
+          bash packaging/windows/install-osslsigncode.sh
       - name: Azure login (OIDC, signing identity)
         uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
         with:
