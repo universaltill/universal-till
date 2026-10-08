@@ -53,10 +53,13 @@ func inventoryCategoryNodesJSON(nodes []data.CategoryNode) template.JS {
 // stockLevelsForDisplay computes the /inventory table's rows and the
 // running-out count — shared by the full page render and the
 // stock-updated-triggered partial refresh (registerInventoryPage's
-// /ui/inventory/stock-table), so both use identical logic.
+// /ui/inventory/stock-table), so both use identical logic. ut-docs#3631:
+// every active, stock-tracked item is listed (an item never received shows
+// qty 0 at Main), since tapping a row is now the only way into the
+// receive/adjust dialog.
 func stockLevelsForDisplay(ctx context.Context, d *common.Deps) ([]stockRow, int) {
 	posRepo := data.NewPOSRepo(d.Db)
-	rawLevels, _ := posRepo.ListStockLevels(ctx)
+	rawLevels, _ := posRepo.ListStockLevelsIncludingUnstocked(ctx)
 	// Sell-rate prediction (28-day average): "this item runs out in ~N
 	// days at the current rate". Best-effort — no history, no column. The
 	// +1s pad keeps a sale committed in this SAME wall-clock second inside
@@ -177,7 +180,7 @@ func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// Stock-levels table, on its own so it can be refreshed in place after a
-	// receive/adjust/override/return (see writeHTMLStockChanged's
+	// receive/adjust (see writeHTMLStockChanged's
 	// HX-Trigger: stock-updated, which the table in inventory.html listens
 	// for) without a full page reload.
 	mux.HandleFunc("/ui/inventory/stock-table", func(w http.ResponseWriter, r *http.Request) {

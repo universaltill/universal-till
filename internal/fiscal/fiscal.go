@@ -23,10 +23,9 @@
 // completion path:
 //
 //   - the shared cashier/kiosk tender path (internal/pages.completeTender);
-//   - the till's own refund screen (POST /api/refund, refund_page.go);
-//   - the inventory page's return form (POST /api/inventory/return,
-//     inventory_api.go) — a refund/return is aufzeichnungspflichtig under
-//     KassenSichV the same as a sale (ut-docs#731);
+//   - the till's own refund screen (POST /api/refund, refund_page.go) — a
+//     refund/return is aufzeichnungspflichtig under KassenSichV the same as
+//     a sale (ut-docs#731);
 //   - the Shifts page's cash adjustment/payout form
 //     (POST /api/shifts/adjustment, shifts_api.go), on a negative amount
 //     only — cash actually leaving the drawer, the same scope its

@@ -40,10 +40,6 @@ var saleOnlyRoutes = []saleOnlyRoute{
 	// handler's own 503 — i.e. past the gate.
 	{http.MethodGet, "/plugins/store", "", []int{http.StatusOK, http.StatusServiceUnavailable}},
 	{http.MethodPost, "/api/inventory/receipt", "", []int{http.StatusBadRequest}},
-	// The override handler's own actor lookup refuses the synthetic
-	// manager (no users row) with its own 403 "user not found" — past this
-	// gate, which the message check below tells apart.
-	{http.MethodPost, "/api/inventory/override", "", []int{http.StatusForbidden}},
 	// Review of this card: the same data/writes, left ungated.
 	{http.MethodGet, "/api/inventory/low-stock", "", []int{http.StatusOK}},
 	{http.MethodPost, "/api/settings/theme", "", []int{http.StatusOK, http.StatusNoContent, http.StatusSeeOther}},

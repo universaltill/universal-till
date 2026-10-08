@@ -3,8 +3,8 @@ package pos
 // The AggregateInventory / CheckNegativeInventory calls below go to POSRepo
 // directly. This package's same-named wrappers in inventory.go had no
 // production caller (unlike their siblings RecordStockMovement /
-// RecordNegativeInventoryOverride / GetLowStockItems, which
-// internal/pages/inventory_api.go and cloudsync_wire.go do call) and were
+// GetLowStockItems, which internal/pages/inventory_api.go and
+// cloudsync_wire.go do call) and were
 // removed by the ut-docs#1566 dead-code burn-down.
 
 import (
@@ -192,81 +192,6 @@ func TestCheckNegativeInventory_Insufficient(t *testing.T) {
 	err = data.NewPOSRepo(db).CheckNegativeInventory(ctx, tx, "loc1", "item1", "", 50)
 	if err == nil {
 		t.Fatal("expected error for insufficient stock")
-	}
-}
-
-func TestRecordNegativeInventoryOverride(t *testing.T) {
-	ctx := context.Background()
-	db := testDB(t)
-	defer db.Close()
-
-	execSQL(t, db, `INSERT INTO users (id, username, pin_hash, role, created_at) VALUES ('mgr1', 'manager', '', 'manager', datetime('now'))`)
-
-	overrideID, err := RecordNegativeInventoryOverride(ctx, db, OverrideNegativeInventory{
-		ActorID:    "mgr1",
-		Reason:     "customer emergency order",
-		ItemID:     "item1",
-		LocationID: "loc1",
-		QtyBefore:  5,
-	})
-	if err != nil {
-		t.Fatalf("RecordNegativeInventoryOverride failed: %v", err)
-	}
-	if overrideID == "" {
-		t.Fatal("expected overrideID")
-	}
-
-	var action string
-	err = db.QueryRowContext(ctx, `SELECT action FROM audit_log WHERE id = ?`, overrideID).Scan(&action)
-	if err != nil {
-		t.Fatalf("query audit_log: %v", err)
-	}
-	if action != "negative_inventory_override" {
-		t.Errorf("expected action 'negative_inventory_override', got %q", action)
-	}
-}
-
-func TestRecordNegativeInventoryOverride_MissingReason(t *testing.T) {
-	ctx := context.Background()
-	db := testDB(t)
-	defer db.Close()
-
-	execSQL(t, db, `INSERT INTO users (id, username, pin_hash, role, created_at) VALUES ('mgr1', 'manager', '', 'manager', datetime('now'))`)
-
-	_, err := RecordNegativeInventoryOverride(ctx, db, OverrideNegativeInventory{
-		ActorID:    "mgr1",
-		Reason:     "", // Missing reason
-		ItemID:     "item1",
-		LocationID: "loc1",
-		QtyBefore:  5,
-	})
-	if err == nil {
-		t.Fatal("expected error for missing reason")
-	}
-	want := "reason required"
-	if err.Error() != want {
-		t.Errorf("expected error %q, got %q", want, err.Error())
-	}
-}
-
-func TestRecordNegativeInventoryOverride_MissingActorID(t *testing.T) {
-	ctx := context.Background()
-	db := testDB(t)
-	defer db.Close()
-
-	_, err := RecordNegativeInventoryOverride(ctx, db, OverrideNegativeInventory{
-		ActorID:    "", // Missing actor
-		Reason:     "test",
-		ItemID:     "item1",
-		LocationID: "loc1",
-		QtyBefore:  5,
-	})
-	if err == nil {
-		t.Fatal("expected error for missing actorID")
-	}
-	want := "actorID required"
-	if err.Error() != want {
-		t.Errorf("expected error %q, got %q", want, err.Error())
 	}
 }
 

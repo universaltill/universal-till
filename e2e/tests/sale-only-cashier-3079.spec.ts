@@ -93,8 +93,9 @@ test.describe('Cashier is sale-only (ut-docs#3079)', () => {
       await expect(page.locator('[data-testid="nav-till"]')).toBeVisible();
     }
 
-    // The two stock writes that had no check at all.
-    for (const path of ['/api/inventory/receipt', '/api/inventory/override']) {
+    // The stock write that had no check at all (its override sibling was
+    // removed in ut-docs#3631).
+    for (const path of ['/api/inventory/receipt']) {
       const resp = await page.request.post(path, { form: { item_id: 'x', location_id: 'x', quantity: '1', type: 'receive' } });
       expect(resp.status(), `cashier POST ${path}`).toBe(403);
     }

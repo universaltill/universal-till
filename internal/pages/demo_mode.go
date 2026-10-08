@@ -502,7 +502,6 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /api/catalog/modifier-groups-panel":        true,
 	"GET /api/catalog/variant-options":              true,
 	"GET /api/inventory/low-stock":                  true,
-	"GET /api/inventory/return/lines":               true,
 	"GET /catalog/option-sets":                      true,
 	"GET /catalog/tax-codes":                        true,
 	"GET /categories":                               true,
@@ -535,9 +534,7 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/designer/categories/reorder":         true,
 	"POST /api/designer/categories/{id}":            true,
 	"POST /api/designer/categories/{id}/active":     true,
-	"POST /api/inventory/override":                  true,
 	"POST /api/inventory/receipt":                   true,
-	"POST /api/inventory/return":                    true,
 	// Orders, kitchen display and routing (staff side, local).
 	"GET /api/orders/stream":               true,
 	"GET /kitchen-display/{station_id}":    true,

@@ -7,7 +7,7 @@ summary: Tracks on-hand quantities per item and variant, and what a sale, refund
 routes: [/inventory, /locations, /ui/inventory/stock-table]
 # /locations is never screenshotted (docs-shots only captures routes[0]) —
 # accepted gap, see e2e/tests-docs/lib.js's routedTopics() comment (ut-docs#900).
-keywords: [stock, goods, receipt, delivery, adjustment, override, return, locations, transfer, low stock, reorder, count]
+keywords: [stock, goods, receipt, delivery, adjustment, return, locations, transfer, low stock, reorder, count]
 ---
 
 # Stock & inventory
@@ -16,19 +16,11 @@ Tracks on-hand quantities per item and variant, at each of your stock locations.
 
 ## How to use it
 
-1. Open Inventory to see current stock levels — one row per item (or variant) and stock location.
-2. Tap a stock row to open the receive/adjust popup prefilled with that row's item and location, or use the **+** button beside the search box for a blank one you fill in yourself. Record a delivery with goods-in; use an adjustment for waste, breakage or count corrections — enter a negative quantity to remove stock (on a touch till, tap the on-screen keyboard's "-" key first). Check the **Location** field before saving: it always targets the location shown, not "wherever this item normally sits" — saving against the wrong location creates a brand-new stock row for that item there instead of changing the row you meant, and the two then sit side by side in the table under the same item name.
+1. Open Inventory to see current stock levels — one row per item (or variant) and stock location. Every active, stock-tracked item is listed, even one you have never received any stock of: it shows 0 at your **Main** location until you record some.
+2. Tap a stock row to open the receive/adjust popup prefilled with that row's item and location — there is no separate add button; use the search box or the category filter to find the item, then tap its row. Record a delivery with goods-in; use an adjustment for waste, breakage or count corrections — enter a negative quantity to remove stock (on a touch till, tap the on-screen keyboard's "-" key first). Check the **Location** field before saving: it always targets the location shown, not "wherever this item normally sits" — saving against the wrong location creates a brand-new stock row for that item there instead of changing the row you meant, and the two then sit side by side in the table under the same item name.
 3. The inventory page predicts how many days of stock remain and suggests how much to order, from that row's own last 28 days of sales — an item's row from its own direct sales, a variant's row from that variant's own sales, never each other's — see **Low-stock alerts** below for exactly what this needs to work. The reports page carries the same alert as a chip too.
 4. Stock locations are shop-wide and always managed from the **main till** — see **Stock locations** below for creating, activating/deactivating and moving stock between them.
 5. Tap the filter icon beside the search box to open the category list, then tap a category to narrow the list to items in that category — tapping a category that has sub-categories includes their items too. It combines with the search box; tap **All categories** to clear it.
-
-## Manager override — negative stock
-
-The **Manager override — negative stock** panel is a paper trail, not a stock adjustment. Filling in an item, its location, the quantity you found, a reason, and — for a cashier — a manager PIN writes an entry to the audit log recording that a manager approved letting this item run negative here, and why; a manager or admin can authorize their own without a PIN. It does **not** itself change the item's stock number, and it does not unblock a sale that's currently being refused for insufficient stock. To actually change how much stock is on hand, use the receive/adjust popup above instead — an adjustment there needs no manager PIN and is never blocked by low or negative stock. Use this panel afterwards, or alongside it, to put an authorized reason on record.
-
-## Processing a return from here
-
-The **Process a return** panel puts stock back and records a cash return against an original receipt, without going through the full Refund screen. Type the original receipt number and, once the till finds it, pick which lines and how many of each you're taking back — each line shows how many are still returnable, which drops once part of it has already been returned or refunded (through here or through Refund) so you can never take back more than was actually sold. Add a reason and press **Process Return**.
 
 ## How a sale and a refund change stock
 

@@ -12,6 +12,14 @@ import { watchConsole } from './helpers';
 
 const DIALOG = '#stock-dialog';
 
+// ut-docs#3631: the page-head "+" (blank-open) button is gone — every
+// active, stock-tracked item now has a row, so a row tap is the only way
+// into the dialog. Variant rows are display-only (ut-docs#2082), so tap an
+// item-level one.
+async function openFromFirstItemRow(page: import('@playwright/test').Page) {
+  await page.locator('#stock-table .stock-row[data-variant=""]').first().locator('td').first().click();
+}
+
 test.describe('inventory stock-row dialog (ut-docs#2011)', () => {
   test('(a) tapping a stock row opens the dialog prefilled, with quantity left blank', async ({ page }) => {
     const assertClean = watchConsole(page);
@@ -41,35 +49,17 @@ test.describe('inventory stock-row dialog (ut-docs#2011)', () => {
     assertClean();
   });
 
-  test('(b) the header "Add stock" button opens the dialog blank, for an item not in the visible list', async ({ page }) => {
-    const assertClean = watchConsole(page);
-    await page.goto('/inventory');
-    const dlg = page.locator(DIALOG);
-
-    const addBtn = page.locator('#stock-dialog-open');
-    await expect(addBtn).toHaveAttribute('aria-label', /.+/);
-    await expect(addBtn).toHaveAttribute('title', /.+/);
-    await expect(addBtn).toHaveText(''); // icon-only
-
-    await addBtn.click();
-    await expect(dlg).toBeVisible();
-    await expect(page.locator('#stock-item-search')).toHaveValue('');
-    await expect(page.locator('#stock-item-id')).toHaveValue('');
-    await expect(page.locator('#stock-dialog-context')).toBeHidden();
-    assertClean();
-  });
-
   test('(c) Escape and the explicit Close button both dismiss the dialog', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/inventory');
     const dlg = page.locator(DIALOG);
 
-    await page.locator('#stock-dialog-open').click();
+    await openFromFirstItemRow(page);
     await expect(dlg).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(dlg).toBeHidden();
 
-    await page.locator('#stock-dialog-open').click();
+    await openFromFirstItemRow(page);
     await expect(dlg).toBeVisible();
     await page.locator('#stock-dialog-close').click();
     await expect(dlg).toBeHidden();
@@ -190,7 +180,7 @@ test.describe('inventory stock-row dialog (ut-docs#2011)', () => {
       const assertClean = watchConsole(page);
       await page.setViewportSize({ width: vp.width, height: vp.height });
       await page.goto('/inventory');
-      await page.locator('#stock-dialog-open').click();
+      await openFromFirstItemRow(page);
 
       const dlg = page.locator(DIALOG);
       await expect(dlg).toBeVisible();

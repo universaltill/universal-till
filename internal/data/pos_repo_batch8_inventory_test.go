@@ -1,8 +1,8 @@
 package data
 
 // Coverage batch 8 — POSRepo inventory/stock group:
-// AggregateInventory, CheckNegativeInventory, RecordNegativeInventoryOverride,
-// GetLowStockItems, ListStockLocations, ListStockLevels, CurrentQty.
+// AggregateInventory, CheckNegativeInventory, GetLowStockItems,
+// ListStockLocations, ListStockLevels, CurrentQty.
 //
 // The init migration seeds demo data: 3 stock locations (loc_back "Back
 // Store", loc_main "Main Store", loc_wh "Warehouse"), ~50 items and ~62
@@ -13,7 +13,6 @@ package data
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -170,124 +169,6 @@ func TestCheckNegativeInventory_Batch8(t *testing.T) {
 	}
 	if err := repo.CheckNegativeInventory(ctx, tx, "loc_main", "", "b8-chkv", 3); err == nil || !strings.Contains(err.Error(), "b8-chkv") {
 		t.Fatalf("variant over: want error naming variant, got %v", err)
-	}
-}
-
-func TestRecordNegativeInventoryOverride_Batch8(t *testing.T) {
-	d, repo := openB8InvDB(t)
-	ctx := context.Background()
-
-	if _, err := repo.RecordNegativeInventoryOverride(ctx, OverrideNegativeInventory{Reason: "r"}); err == nil || !strings.Contains(err.Error(), "actorID required") {
-		t.Fatalf("missing actor: got %v", err)
-	}
-	if _, err := repo.RecordNegativeInventoryOverride(ctx, OverrideNegativeInventory{ActorID: "system"}); err == nil || !strings.Contains(err.Error(), "reason required") {
-		t.Fatalf("missing reason: got %v", err)
-	}
-
-	// Item-level override — 'system' user is seeded by migration 003 and
-	// satisfies audit_log's actor FK.
-	id, err := repo.RecordNegativeInventoryOverride(ctx, OverrideNegativeInventory{
-		ActorID: "system", Reason: "manager approved oversell",
-		ItemID: "b8-item", LocationID: "loc_main", QtyBefore: -2.5,
-	})
-	if err != nil || id == "" {
-		t.Fatalf("override: id=%q err=%v", id, err)
-	}
-
-	var actorID, entityType, entityID, action, dataJSON string
-	row := d.DB.QueryRow(`SELECT actor_id, entity_type, entity_id, action, data_json FROM audit_log WHERE id = ?`, id)
-	if err := row.Scan(&actorID, &entityType, &entityID, &action, &dataJSON); err != nil {
-		t.Fatalf("audit row missing: %v", err)
-	}
-	if actorID != "system" || entityType != "inventory" || action != "negative_inventory_override" {
-		t.Fatalf("audit identity fields wrong: actor=%q type=%q action=%q", actorID, entityType, action)
-	}
-	if entityID != "loc_main:b8-item" {
-		t.Fatalf("entity_id: got %q, want loc_main:b8-item", entityID)
-	}
-	var payload struct {
-		Reason   string `json:"reason"`
-		Snapshot struct {
-			ItemID     string  `json:"item_id"`
-			VariantID  string  `json:"variant_id"`
-			LocationID string  `json:"location_id"`
-			QtyBefore  float64 `json:"qty_before"`
-		} `json:"snapshot"`
-	}
-	if err := json.Unmarshal([]byte(dataJSON), &payload); err != nil {
-		t.Fatalf("data_json not valid JSON: %v (%s)", err, dataJSON)
-	}
-	if payload.Reason != "manager approved oversell" {
-		t.Fatalf("reason: got %q", payload.Reason)
-	}
-	if payload.Snapshot.ItemID != "b8-item" || payload.Snapshot.LocationID != "loc_main" || payload.Snapshot.QtyBefore != -2.5 {
-		t.Fatalf("snapshot wrong: %+v", payload.Snapshot)
-	}
-
-	// Variant-level override: entity_id falls back to the variant id.
-	id2, err := repo.RecordNegativeInventoryOverride(ctx, OverrideNegativeInventory{
-		ActorID: "system", Reason: "variant oversell",
-		VariantID: "b8-var", LocationID: "loc_back", QtyBefore: 0,
-	})
-	if err != nil {
-		t.Fatalf("variant override: %v", err)
-	}
-	var entityID2 string
-	if err := d.DB.QueryRow(`SELECT entity_id FROM audit_log WHERE id = ?`, id2).Scan(&entityID2); err != nil {
-		t.Fatalf("variant audit row: %v", err)
-	}
-	if entityID2 != "loc_back:b8-var" {
-		t.Fatalf("variant entity_id: got %q, want loc_back:b8-var", entityID2)
-	}
-}
-
-// TestRecordNegativeInventoryOverride_RequestedBy_Batch8 covers ut-docs#780's
-// dual-attribution fix directly at the repo layer: RequestedBy, set when it
-// differs from ActorID, must land in the payload; left unset (or equal to
-// ActorID) it must not appear at all.
-func TestRecordNegativeInventoryOverride_RequestedBy_Batch8(t *testing.T) {
-	d, repo := openB8InvDB(t)
-	ctx := context.Background()
-
-	id, err := repo.RecordNegativeInventoryOverride(ctx, OverrideNegativeInventory{
-		ActorID: "system", RequestedBy: "blocked-cashier", Reason: "manager approved oversell",
-		ItemID: "b8-item", LocationID: "loc_main", QtyBefore: -2.5,
-	})
-	if err != nil || id == "" {
-		t.Fatalf("override: id=%q err=%v", id, err)
-	}
-	var dataJSON string
-	if err := d.DB.QueryRow(`SELECT data_json FROM audit_log WHERE id = ?`, id).Scan(&dataJSON); err != nil {
-		t.Fatalf("audit row missing: %v", err)
-	}
-	var payload struct {
-		RequestedBy string `json:"requested_by"`
-	}
-	if err := json.Unmarshal([]byte(dataJSON), &payload); err != nil {
-		t.Fatalf("data_json not valid JSON: %v (%s)", err, dataJSON)
-	}
-	if payload.RequestedBy != "blocked-cashier" {
-		t.Fatalf("requested_by: got %q, want blocked-cashier (%s)", payload.RequestedBy, dataJSON)
-	}
-
-	// Same actor authorizing their own override: no requested_by key.
-	id2, err := repo.RecordNegativeInventoryOverride(ctx, OverrideNegativeInventory{
-		ActorID: "system", RequestedBy: "system", Reason: "self-approved",
-		ItemID: "b8-item", LocationID: "loc_main", QtyBefore: 1,
-	})
-	if err != nil {
-		t.Fatalf("self-approved override: %v", err)
-	}
-	var dataJSON2 string
-	if err := d.DB.QueryRow(`SELECT data_json FROM audit_log WHERE id = ?`, id2).Scan(&dataJSON2); err != nil {
-		t.Fatalf("audit row missing: %v", err)
-	}
-	var raw map[string]any
-	if err := json.Unmarshal([]byte(dataJSON2), &raw); err != nil {
-		t.Fatalf("data_json not valid JSON: %v (%s)", err, dataJSON2)
-	}
-	if _, present := raw["requested_by"]; present {
-		t.Fatalf("expected no requested_by key when RequestedBy == ActorID, got %s", dataJSON2)
 	}
 }
 

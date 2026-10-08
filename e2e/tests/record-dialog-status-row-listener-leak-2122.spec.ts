@@ -65,7 +65,7 @@ test.describe('record-dialog.js status-row listener leak (ut-docs#2122)', () => 
     // real navigation).
     for (let i = 0; i < 4; i++) {
       await inventoryLink.click();
-      await expect(page.locator('#stock-dialog-open')).toBeVisible();
+      await expect(page.locator('#stock-levels-card')).toBeVisible();
       // The status-row element only exists on the /categories fragment —
       // confirms this cycle is genuinely destroying and recreating it,
       // not just leaving it in place hidden.

@@ -338,8 +338,8 @@ type CashAdjustmentResponse struct {
 // aufzeichnungspflichtig event under KassenSichV a refund is, and had never
 // been swept into the gate because it doesn't call pos.CompleteSale. On a
 // block, writes the refusal response itself and returns ok=false so the
-// caller can just `return`. Localized copy, not raw sentinel text — reuses
-// CreateReturn's own fix for the same defect class (ut-docs#731 review
+// caller can just `return`. Localized copy, not raw sentinel text — the
+// refund flow's fix for the same defect class (ut-docs#731 review
 // finding B1: a settings-store read failure inside EvaluateGate is an
 // internal fault, not a fiscal posture, so it gets the honest 500/server
 // copy, not "no TSE configured").
@@ -366,7 +366,7 @@ func enforceCashAdjustmentFiscalGate(dp *common.Deps, w http.ResponseWriter, r *
 }
 
 // auditCashAdjustmentOverride writes the same per-completion
-// unsigned_override audit marker completeTender/CreateReturn write for a
+// unsigned_override audit marker completeTender/the refund flow write for a
 // sale/return taken during an active TSE-override window (ADR-0048
 // Decision 3) — the journal must show exactly which money-moving
 // completions, payouts included, were taken unsigned. Best-effort after the

@@ -154,7 +154,7 @@ func evaluateFiscalGate(ctx context.Context, d *common.Deps) (fiscal.Gate, error
 // money-moving completion path, not just completeTender's own sale/kiosk
 // tender: a refund moves real money and is aufzeichnungspflichtig under
 // KassenSichV the same as a sale (ut-docs#731, decided 2026-08-18), so the
-// refund page and CreateReturn route through this exact check rather than a
+// refund page routes through this exact check rather than a
 // separately maintained copy that could silently drift from it. The
 // returned Gate is valid even on a nil error so a caller can still inspect
 // gate.Decision == fiscal.AllowedWithOverride to write its own per-completion

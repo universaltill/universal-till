@@ -151,26 +151,6 @@ type StockMovementInput struct {
 	ActorID    string
 }
 
-// OverrideNegativeInventory captures a manager override allowing negative inventory with audit.
-type OverrideNegativeInventory struct {
-	ActorID string
-	// RequestedBy is the originally-blocked user who asked for the
-	// override, when different from ActorID (a cashier whose action a
-	// manager's PIN then approved). Equal to ActorID when the actor
-	// authorized their own override directly — the caller isn't required
-	// to leave it empty in that case; the payload check below only emits
-	// requested_by when it actually differs. ut-docs#780: without this, a
-	// PIN-approved override's audit row reads as if the approving manager
-	// performed the action directly, and the original actor's identity is
-	// lost.
-	RequestedBy string
-	Reason      string
-	ItemID      string
-	VariantID   string
-	LocationID  string
-	QtyBefore   float64
-}
-
 // LowStockItem represents an item with low stock.
 type LowStockItem struct {
 	ItemID       string  `json:"item_id"`
@@ -681,45 +661,6 @@ func (r *POSRepo) RecordStockMovementSavepoint(ctx context.Context, tx *sql.Tx, 
 		logging.L().Warnf("pos: record stock movement: release savepoint after success failed: %v", err)
 	}
 	return id, nil
-}
-
-// RecordNegativeInventoryOverride writes an audit entry noting the override.
-func (r *POSRepo) RecordNegativeInventoryOverride(ctx context.Context, override OverrideNegativeInventory) (string, error) {
-	if override.ActorID == "" {
-		return "", errors.New("actorID required")
-	}
-	if override.Reason == "" {
-		return "", errors.New("reason required")
-	}
-
-	overrideID := uuid.NewString()
-	snapshot := map[string]any{
-		"item_id":     override.ItemID,
-		"variant_id":  override.VariantID,
-		"location_id": override.LocationID,
-		"qty_before":  override.QtyBefore,
-	}
-	payload := map[string]any{
-		"reason":   override.Reason,
-		"snapshot": snapshot,
-	}
-	// Dual attribution (ut-docs#780), same convention as fiscal_api.go's
-	// createSigningOverride: only recorded when it actually differs from the
-	// audit actor, so a self-authorized override's payload stays as-is.
-	if override.RequestedBy != "" && override.RequestedBy != override.ActorID {
-		payload["requested_by"] = override.RequestedBy
-	}
-	payloadJSON, _ := json.Marshal(payload)
-
-	now := time.Now().UTC().Format(time.RFC3339)
-	if _, err := r.db.ExecContext(ctx, `
-INSERT INTO audit_log (id, actor_id, entity_type, entity_id, action, data_json, created_at)
-VALUES (?, ?, 'inventory', ?, 'negative_inventory_override', ?, ?)
-`, overrideID, override.ActorID, fmt.Sprintf("%s:%s", override.LocationID, valueOrDefault(override.ItemID, override.VariantID)), string(payloadJSON), now); err != nil {
-		return "", fmt.Errorf("insert override audit: %w", err)
-	}
-
-	return overrideID, nil
 }
 
 // GetLowStockItems returns all items where current inventory is below
@@ -4713,6 +4654,91 @@ ORDER BY i.name, sl.name`)
 		return nil, err
 	}
 	return append(items, variants...), nil
+}
+
+// ListStockLevelsIncludingUnstocked is ListStockLevels plus a zero-quantity
+// row for every active, stock-tracked item (and every active variant of
+// one) that has no inventory row yet — the /inventory page's list only
+// (stockLevelsForDisplay). ut-docs#3631: the page-head "+" button that used
+// to be the only way to receive an item never stocked before is gone, so
+// every such item must be listed for the operator to tap its row instead.
+//
+// ListStockLevels itself stays unchanged: export, cloudsync, alerts,
+// reports, core views and the assistant all read it and must keep seeing
+// real inventory rows only.
+//
+// The zero rows follow the same ADR-0043 rules as the real ones: an item
+// with any ACTIVE variant is stocked per variant, so it never gets a parent
+// zero row (ut-docs#2082) — each of its active variants without an
+// inventory row gets one instead. They carry the shop's Main location (the
+// same lookup EnsureStockLocation uses, restricted to an active location)
+// so the receive dialog's location select prefills; with no active Main
+// location the location stays empty. The combined slice is re-sorted by
+// name, variant name, then location name so the zero rows sit among the
+// real ones rather than trailing at the end.
+func (r *POSRepo) ListStockLevelsIncludingUnstocked(ctx context.Context) ([]LowStockItem, error) {
+	levels, err := r.ListStockLevels(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var mainID, mainName string
+	err = r.db.QueryRowContext(ctx, `
+SELECT id, name FROM stock_locations
+WHERE is_active = 1 AND (name = 'Main' OR id = 'loc_main')
+ORDER BY id LIMIT 1`).Scan(&mainID, &mainName)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("query main stock location: %w", err)
+	}
+	mainName = stripRetireMangle(mainID, mainName)
+
+	// The variant branch uses NOT IN, not a correlated NOT EXISTS: the only
+	// inventory index is (item_id, variant_id, location_id) and variant
+	// rows carry item_id NULL, so a per-variant probe would scan inventory
+	// once per variant; NOT IN builds its set once (ut-docs#3631 review).
+	rows, err := r.db.QueryContext(ctx, `
+SELECT i.id, i.name, COALESCE(i.sku, ''), '', '',
+       COALESCE(i.reorder_level, 0), COALESCE(i.lead_time_days, 0), COALESCE(i.category_id, '')
+FROM items i
+WHERE i.is_active = 1
+  AND i.stock_untracked = 0
+  AND NOT EXISTS (SELECT 1 FROM inventory inv WHERE inv.item_id = i.id)
+  AND NOT EXISTS (SELECT 1 FROM item_variants v WHERE v.item_id = i.id AND v.is_active = 1)
+UNION ALL
+SELECT i.id, i.name, COALESCE(v.sku, ''), v.id, v.name,
+       COALESCE(i.reorder_level, 0), COALESCE(i.lead_time_days, 0), COALESCE(i.category_id, '')
+FROM item_variants v
+JOIN items i ON i.id = v.item_id
+WHERE i.is_active = 1 AND v.is_active = 1
+  AND i.stock_untracked = 0
+  AND v.id NOT IN (SELECT variant_id FROM inventory WHERE variant_id IS NOT NULL)`)
+	if err != nil {
+		return nil, fmt.Errorf("query unstocked items: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		item := LowStockItem{LocationID: mainID, LocationName: mainName}
+		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.VariantID, &item.VariantName,
+			&item.ReorderLevel, &item.LeadTimeDays, &item.CategoryID); err != nil {
+			return nil, fmt.Errorf("scan unstocked item: %w", err)
+		}
+		levels = append(levels, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate unstocked items: %w", err)
+	}
+
+	sort.SliceStable(levels, func(a, b int) bool {
+		la, lb := levels[a], levels[b]
+		if x, y := strings.ToLower(la.Name), strings.ToLower(lb.Name); x != y {
+			return x < y
+		}
+		if x, y := strings.ToLower(la.VariantName), strings.ToLower(lb.VariantName); x != y {
+			return x < y
+		}
+		return strings.ToLower(la.LocationName) < strings.ToLower(lb.LocationName)
+	})
+	return levels, nil
 }
 
 // variantStockLevels is ListStockLevels' variant-scoped counterpart, the

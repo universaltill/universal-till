@@ -980,13 +980,13 @@
         "bold_leadins": 0
       },
       "english": {
-        "headings": 10,
+        "headings": 8,
         "numbered_steps": 10,
         "sub_bullets": 0,
         "top_bullets": 3,
         "bold_leadins": 3
       },
-      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more numbered step (a new category-filter tip in \"How to use it\") — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing step-count gap this entry already tracked is unchanged in size, just shifted by +1/+1."
+      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more numbered step (a new category-filter tip in \"How to use it\") — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing step-count gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#3631: English dropped its \"Manager override — negative stock\" and \"Processing a return from here\" sections (both panels were removed from the page), headings 10->8; this locale never had them, so the tracked gap narrows by 2 headings, unchanged otherwise."
     },
     {
       "locale": "de",
@@ -999,13 +999,13 @@
         "bold_leadins": 0
       },
       "english": {
-        "headings": 10,
+        "headings": 8,
         "numbered_steps": 10,
         "sub_bullets": 0,
         "top_bullets": 3,
         "bold_leadins": 3
       },
-      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more numbered step (a new category-filter tip in \"How to use it\") — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing step-count gap this entry already tracked is unchanged in size, just shifted by +1/+1."
+      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more numbered step (a new category-filter tip in \"How to use it\") — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing step-count gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#3631: English dropped its \"Manager override — negative stock\" and \"Processing a return from here\" sections (both panels were removed from the page), headings 10->8; this locale never had them, so the tracked gap narrows by 2 headings, unchanged otherwise."
     },
     {
       "locale": "fa",
@@ -1018,13 +1018,13 @@
         "bold_leadins": 0
       },
       "english": {
-        "headings": 10,
+        "headings": 8,
         "numbered_steps": 10,
         "sub_bullets": 0,
         "top_bullets": 3,
         "bold_leadins": 3
       },
-      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more numbered step (a new category-filter tip in \"How to use it\") — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing step-count gap this entry already tracked is unchanged in size, just shifted by +1/+1."
+      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more numbered step (a new category-filter tip in \"How to use it\") — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing step-count gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#3631: English dropped its \"Manager override — negative stock\" and \"Processing a return from here\" sections (both panels were removed from the page), headings 10->8; this locale never had them, so the tracked gap narrows by 2 headings, unchanged otherwise."
     },
     {
       "locale": "tr",
@@ -1037,13 +1037,13 @@
         "bold_leadins": 0
       },
       "english": {
-        "headings": 10,
+        "headings": 8,
         "numbered_steps": 10,
         "sub_bullets": 0,
         "top_bullets": 3,
         "bold_leadins": 3
       },
-      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more numbered step (a new category-filter tip in \"How to use it\") — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing step-count gap this entry already tracked is unchanged in size, just shifted by +1/+1."
+      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more numbered step (a new category-filter tip in \"How to use it\") — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing step-count gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#3631: English dropped its \"Manager override — negative stock\" and \"Processing a return from here\" sections (both panels were removed from the page), headings 10->8; this locale never had them, so the tracked gap narrows by 2 headings, unchanged otherwise."
     },
     {
       "locale": "ar",
