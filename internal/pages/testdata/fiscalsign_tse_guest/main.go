@@ -9,17 +9,22 @@
 // bare approval remaining valid is itself part of the 1.1.0 contract).
 // This is NOT a real signer (no fiskaly, no network, fixed canned values):
 // it exists purely to exercise core's evidence plumbing.
+// Built on the Go guest SDK (ADR-0121 F4, ut-docs#3951).
 package main
 
-import "fmt"
+import "github.com/universaltill/universal-till/sdk/plugin"
+
+const answer = `{"status":"approved","tse":{` +
+	`"transaction_number":4711,` +
+	`"signature_counter":12345,` +
+	`"serial_number":"TSE-TEST-SERIAL-1",` +
+	`"start_time":"2026-08-15T10:31:00Z",` +
+	`"log_time":"2026-08-15T10:31:02Z",` +
+	`"signature":"TESTSIGBASE64==",` +
+	`"signature_algorithm":"ecdsa-plain-SHA256"}}`
 
 func main() {
-	fmt.Print(`{"status":"approved","tse":{` +
-		`"transaction_number":4711,` +
-		`"signature_counter":12345,` +
-		`"serial_number":"TSE-TEST-SERIAL-1",` +
-		`"start_time":"2026-08-15T10:31:00Z",` +
-		`"log_time":"2026-08-15T10:31:02Z",` +
-		`"signature":"TESTSIGBASE64==",` +
-		`"signature_algorithm":"ecdsa-plain-SHA256"}}`)
+	plugin.Run(plugin.Handlers{
+		"*": func(plugin.Event) (any, error) { return []byte(answer), nil },
+	})
 }

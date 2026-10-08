@@ -6,10 +6,15 @@
 // no unsigned_fiscal_signing marker — through the REAL wazero runtime, same
 // shape as testdata/taxask_guest. This is NOT a real signer (no fiskaly, no
 // network): it exists purely to exercise core's dispatch/outcome plumbing.
+// Built on the Go guest SDK (ADR-0121 F4, ut-docs#3951).
 package main
 
-import "fmt"
+import "github.com/universaltill/universal-till/sdk/plugin"
 
 func main() {
-	fmt.Print(`{"status":"approved"}`)
+	plugin.Run(plugin.Handlers{
+		"*": func(plugin.Event) (any, error) {
+			return []byte(`{"status":"approved"}`), nil
+		},
+	})
 }

@@ -22,9 +22,13 @@ package main
 
 import (
 	"fmt"
+
+	"github.com/universaltill/universal-till/sdk/plugin"
 )
 
 func main() {
-	const token = "tok_live_abc123" // small: proves the embedded-JSON-string path, not the size path
-	fmt.Printf(`{"approved":true,"provider":"{\"auth_token\":\"%s\"}"}`+"\n", token)
+	plugin.Run(plugin.Handlers{"*": func(plugin.Event) (any, error) {
+		const token = "tok_live_abc123" // small: proves the embedded-JSON-string path, not the size path
+		return []byte(fmt.Sprintf(`{"approved":true,"provider":"{\"auth_token\":\"%s\"}"}`+"\n", token)), nil
+	}})
 }

@@ -8,50 +8,29 @@
 // approves (exit 0) only when a value is present. The host-side test drives
 // it through the real POST /api/pos/tender handler to prove an unconfigured
 // payment plugin can never complete a sale or print a receipt.
+// Built on the Go guest SDK (ADR-0121 F4, ut-docs#3951): plugin.SettingsGet
+// honours the buffer ABI's grow-and-retry, so a long value never reads as
+// empty.
 package main
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"strings"
-	"unsafe"
+
+	"github.com/universaltill/universal-till/sdk/plugin"
 )
 
-//go:wasmimport ut settings_get
-func settingsGet(kPtr, kLen, dstPtr, dstCap uint32) int32
-
-func ptrOf(b []byte) (uint32, uint32) {
-	if len(b) == 0 {
-		return 0, 0
+// authorize's verdict depends only on the setting, never on the event.
+func authorize(plugin.Event) (any, error) {
+	v, err := plugin.SettingsGet("stripe_secret_key")
+	if err != nil || strings.TrimSpace(v) == "" {
+		fmt.Fprintln(os.Stderr, "payment plugin not configured: stripe_secret_key is unset")
+		return nil, plugin.ExitCode(2)
 	}
-	return uint32(uintptr(unsafe.Pointer(&b[0]))), uint32(len(b))
-}
-
-// readSetting returns the plain setting value, or "" when the host reports
-// it unset (any negative code) — the buffer ABI's "call again with a bigger
-// buffer" is honoured so a long key never reads as empty.
-func readSetting(key string) string {
-	kp, kl := ptrOf([]byte(key))
-	buf := make([]byte, 256)
-	bp, bc := ptrOf(buf)
-	n := settingsGet(kp, kl, bp, bc)
-	if n > int32(len(buf)) {
-		buf = make([]byte, n)
-		bp, bc = ptrOf(buf)
-		n = settingsGet(kp, kl, bp, bc)
-	}
-	if n <= 0 || n > int32(len(buf)) {
-		return ""
-	}
-	return string(buf[:n])
+	return []byte("{\"approved\":true}\n"), nil
 }
 
 func main() {
-	_, _ = io.ReadAll(os.Stdin) // the event; this guest's verdict depends only on its setting
-	if strings.TrimSpace(readSetting("stripe_secret_key")) == "" {
-		fmt.Fprintln(os.Stderr, "payment plugin not configured: stripe_secret_key is unset")
-		os.Exit(2)
-	}
-	fmt.Println(`{"approved":true}`)
+	plugin.Run(plugin.Handlers{"*": authorize})
 }

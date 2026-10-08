@@ -12,9 +12,13 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+
+	"github.com/universaltill/universal-till/sdk/plugin"
 )
 
 func main() {
-	content := []byte(strings.Repeat("A", 5000))
-	fmt.Printf(`{"ok":true,"content_b64":"%s"}`+"\n", base64.StdEncoding.EncodeToString(content))
+	plugin.Run(plugin.Handlers{"*": func(plugin.Event) (any, error) {
+		content := []byte(strings.Repeat("A", 5000))
+		return []byte(fmt.Sprintf(`{"ok":true,"content_b64":"%s"}`+"\n", base64.StdEncoding.EncodeToString(content))), nil
+	}})
 }

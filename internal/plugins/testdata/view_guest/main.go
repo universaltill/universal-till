@@ -9,17 +9,20 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
-	"os"
+	"runtime"
 	"unsafe"
+
+	"github.com/universaltill/universal-till/sdk/plugin"
 )
 
-//go:wasmimport ut storage_set
-func storageSet(kPtr, kLen, vPtr, vLen uint32) int32
-
+// raw on purpose: the "cap" mode hands the host a caller-chosen, undersized
+// dstCap to observe the buffer ABI itself (full length back, prefix
+// written); plugin.ViewQuery always retries at the full size.
+//
 //go:wasmimport ut view_query
-func viewQuery(namePtr, nameLen, argsPtr, argsLen, dstPtr, dstCap uint32) int32
+func rawViewQuery(namePtr, nameLen, argsPtr, argsLen, dstPtr, dstCap uint32) int32
 
 func ptrOf(b []byte) (uint32, uint32) {
 	if len(b) == 0 {
@@ -28,47 +31,78 @@ func ptrOf(b []byte) (uint32, uint32) {
 	return uint32(uintptr(unsafe.Pointer(&b[0]))), uint32(len(b))
 }
 
+type viewPayload struct {
+	View   string `json:"view"`
+	Args   string `json:"args"`
+	Cap    int    `json:"cap"`
+	Repeat int    `json:"repeat"`
+}
+
+// code maps an SDK error back to the host's negative return code.
+func code(err error) int32 {
+	var e *plugin.Error
+	if errors.As(err, &e) {
+		return e.Code
+	}
+	return -3
+}
+
 func main() {
-	raw, _ := io.ReadAll(os.Stdin)
-	var event struct {
-		Payload struct {
-			View   string `json:"view"`
-			Args   string `json:"args"`
-			Cap    int    `json:"cap"`
-			Repeat int    `json:"repeat"`
-		} `json:"payload"`
-	}
-	_ = json.Unmarshal(raw, &event)
-	p := event.Payload
-	if p.Cap == 0 {
-		p.Cap = 512 << 10
-	}
+	plugin.Run(plugin.Handlers{"*": handle})
+}
 
-	name := []byte(p.View)
-	args := []byte(p.Args)
-	dst := make([]byte, p.Cap)
-	np, nl := ptrOf(name)
-	ap, al := ptrOf(args)
-	dp, dc := ptrOf(dst)
-	code := viewQuery(np, nl, ap, al, dp, dc)
-	codes := []int32{code}
-	for i := 1; i < p.Repeat; i++ {
-		codes = append(codes, viewQuery(np, nl, ap, al, dp, dc))
-	}
+func handle(ev plugin.Event) (any, error) {
+	var p viewPayload
+	_ = ev.Decode(&p)
 
-	written := ""
-	if code > 0 {
-		n := int(code)
-		if n > len(dst) {
-			n = len(dst)
+	var first int32
+	var written string
+	var codes []int32
+	if p.Cap > 0 {
+		first, written = rawCappedQuery(p.View, p.Args, p.Cap)
+		codes = []int32{first}
+	} else {
+		var args any // nil: the SDK sends {}
+		if p.Args != "" {
+			args = json.RawMessage(p.Args)
 		}
-		written = string(dst[:n])
+		calls := max(p.Repeat, 1)
+		for i := range calls {
+			out, err := plugin.ViewQuery(p.View, args)
+			c := int32(len(out))
+			if err != nil {
+				c = code(err)
+			}
+			if i == 0 {
+				first = c
+				if err == nil {
+					written = string(out)
+				}
+			}
+			codes = append(codes, c)
+		}
 	}
-	out, _ := json.Marshal(map[string]any{"code": code, "codes": codes, "result": written})
-	kp, kl := ptrOf([]byte("results"))
-	vp, vl := ptrOf(out)
-	if c := storageSet(kp, kl, vp, vl); c != 0 {
-		fmt.Fprintf(os.Stderr, "storing results failed: %d\n", c)
-		os.Exit(1)
+
+	out, _ := json.Marshal(map[string]any{"code": first, "codes": codes, "result": written})
+	if err := plugin.StorageSet("results", out); err != nil {
+		return nil, fmt.Errorf("storing results failed: %w", err)
 	}
+	return nil, nil
+}
+
+// rawCappedQuery is one view_query into a capBytes-byte buffer: the host's
+// return (the full length, or a negative code) and the bytes it wrote.
+func rawCappedQuery(view, args string, capBytes int) (int32, string) {
+	name, a, dst := []byte(view), []byte(args), make([]byte, capBytes)
+	np, nl := ptrOf(name)
+	ap, al := ptrOf(a)
+	dp, dc := ptrOf(dst)
+	c := rawViewQuery(np, nl, ap, al, dp, dc)
+	runtime.KeepAlive(name)
+	runtime.KeepAlive(a)
+	runtime.KeepAlive(dst)
+	if c <= 0 {
+		return c, ""
+	}
+	return c, string(dst[:min(int(c), len(dst))])
 }

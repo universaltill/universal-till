@@ -11,6 +11,7 @@ out=out
 mkdir -p "$out"
 
 GOOS=wasip1 GOARCH=wasm go build -o "$out/go-command.wasm" ./guests/command
+GOOS=wasip1 GOARCH=wasm go build -o "$out/go-sdk-command.wasm" ./guests/sdkcommand
 GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o "$out/go-reactor.wasm" ./guests/reactor
 if command -v tinygo >/dev/null; then
 	tinygo build -target=wasip1 -no-debug -o "$out/tinygo-command.wasm" ./guests/command

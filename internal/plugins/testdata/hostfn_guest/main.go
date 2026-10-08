@@ -1,51 +1,51 @@
 //go:build wasip1
 
-// Test guest for the "ut" host functions (docs: wasm-runtime.md v2).
-// Reads the event from stdin, exercises storage + http, and records every
-// outcome in plugin storage so the host-side test can assert on it.
+// Test guest for the "ut" host functions (docs: wasm-runtime.md v2), built on
+// the Go guest SDK (ADR-0121 F4, ut-docs#3951) so the host tests exercise the
+// SDK's bindings. Reads the event, exercises storage + http, and records
+// every outcome in plugin storage so the host-side test can assert on it.
+//
+// Codes reported: 0 for success, the host's negative code for a failure —
+// except where a field is documented as a length (settings_get, the raw
+// http_request probes).
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
-	"os"
+	"runtime"
 	"time"
 	"unsafe"
+
+	"github.com/universaltill/universal-till/sdk/plugin"
 )
 
-//go:wasmimport ut log_write
-func logWrite(ptr, n uint32)
-
-//go:wasmimport ut storage_get
-func storageGet(kPtr, kLen, dstPtr, dstCap uint32) int32
-
-//go:wasmimport ut storage_set
-func storageSet(kPtr, kLen, vPtr, vLen uint32) int32
-
+// raw on purpose: the SDK's HTTP always starts with a large buffer, so it
+// cannot make the deliberately undersized (4-byte) buffer-ABI probe the
+// ut-docs#754 retry-cache tests need.
+//
 //go:wasmimport ut http_request
-func httpRequest(rPtr, rLen, dstPtr, dstCap uint32) int32
+func rawHTTPRequest(rPtr, rLen, dstPtr, dstCap uint32) int32
 
-//go:wasmimport ut settings_get
-func settingsGet(kPtr, kLen, dstPtr, dstCap uint32) int32
-
-//go:wasmimport ut secret_set
-func secretSet(kPtr, kLen, vPtr, vLen uint32) int32
-
-//go:wasmimport ut event_publish
-func eventPublish(tPtr, tLen, pPtr, pLen uint32) int32
-
+// raw on purpose: the SDK clamps pct to 0–100 guest-side, so it cannot send
+// the out-of-range pct that proves the host clamps too.
+//
 //go:wasmimport ut job_progress
-func jobProgress(pct, kPtr, kLen uint32) int32
+func rawJobProgress(pct, kPtr, kLen uint32) int32
 
+// raw on purpose: the device_info mode with a "cap" probes the buffer ABI
+// with a deliberately small buffer; the SDK's wrappers never send one.
+//
 //go:wasmimport ut device_id_get
-func deviceIDGet(dstPtr, dstCap uint32) int32
+func rawDeviceIDGet(dstPtr, dstCap uint32) int32
 
 //go:wasmimport ut device_local_ips_get
-func deviceLocalIPsGet(dstPtr, dstCap uint32) int32
+func rawDeviceLocalIPsGet(dstPtr, dstCap uint32) int32
 
 //go:wasmimport ut device_timezone_get
-func deviceTimezoneGet(dstPtr, dstCap uint32) int32
+func rawDeviceTimezoneGet(dstPtr, dstCap uint32) int32
 
 func ptrOf(b []byte) (uint32, uint32) {
 	if len(b) == 0 {
@@ -54,162 +54,156 @@ func ptrOf(b []byte) (uint32, uint32) {
 	return uint32(uintptr(unsafe.Pointer(&b[0]))), uint32(len(b))
 }
 
-func set(key string, val []byte) int32 {
-	kp, kl := ptrOf([]byte(key))
-	vp, vl := ptrOf(val)
-	return storageSet(kp, kl, vp, vl)
-}
-
-func get(key string) ([]byte, int32) {
-	kp, kl := ptrOf([]byte(key))
-	buf := make([]byte, 64*1024)
+// httpRaw is one raw http_request call into a buffer of dstCap bytes.
+func httpRaw(req []byte, dstCap int) (int32, []byte) {
+	buf := make([]byte, dstCap)
+	rp, rl := ptrOf(req)
 	bp, bc := ptrOf(buf)
-	n := storageGet(kp, kl, bp, bc)
-	if n < 0 {
-		return nil, n
-	}
-	return buf[:n], n
+	n := rawHTTPRequest(rp, rl, bp, bc)
+	runtime.KeepAlive(req)
+	runtime.KeepAlive(buf)
+	return n, buf
 }
 
-func logf(format string, args ...any) {
-	msg := []byte(fmt.Sprintf(format, args...))
-	p, n := ptrOf(msg)
-	logWrite(p, n)
+// code maps an SDK result back to the host's numeric return: 0 for success,
+// the negative host code for a *plugin.Error, -3 for any other failure.
+func code(err error) int32 {
+	var e *plugin.Error
+	if errors.As(err, &e) {
+		return e.Code
+	}
+	if err != nil {
+		return -3
+	}
+	return 0
 }
 
-func main() {
-	raw, _ := io.ReadAll(os.Stdin)
-	var event struct {
-		Payload struct {
-			URL     string   `json:"url"`
-			Mode    string   `json:"mode"`
-			URLs    []string `json:"urls"`
-			Method  string   `json:"method"`       // default GET
-			BodyB64 string   `json:"body_b64"`     // request body, base64
-			Key     string   `json:"key"`          // secret_set mode
-			Value   string   `json:"value"`        // secret_set mode
-			Size    int      `json:"size"`         // secret_set mode: value of this many bytes instead
-			BadUTF8 bool     `json:"invalid_utf8"` // secret_set mode: send a non-UTF-8 value
-			// publish / publish_fail modes (ut-docs#3871).
-			PublishType    string          `json:"publish_type"`
-			PublishPayload json.RawMessage `json:"publish_payload"`
-			// sleep / job_progress modes (ut-docs#3908).
-			SleepMS     int    `json:"sleep_ms"`
-			Pct         uint32 `json:"pct"`
-			ProgressKey string `json:"progress_key"`
-			// device_info mode (ADR-0140): destination buffer size, 0 → 4096.
-			Cap int `json:"cap"`
-		} `json:"payload"`
-	}
-	_ = json.Unmarshal(raw, &event)
-	if event.Payload.Method == "" {
-		event.Payload.Method = "GET"
-	}
-	logf("guest running, url=%s mode=%s", event.Payload.URL, event.Payload.Mode)
+type payload struct {
+	URL     string   `json:"url"`
+	Mode    string   `json:"mode"`
+	URLs    []string `json:"urls"`
+	Method  string   `json:"method"`       // default GET
+	BodyB64 string   `json:"body_b64"`     // request body, base64
+	Key     string   `json:"key"`          // secret_set mode
+	Value   string   `json:"value"`        // secret_set mode
+	Size    int      `json:"size"`         // secret_set mode: value of this many bytes instead
+	BadUTF8 bool     `json:"invalid_utf8"` // secret_set mode: send a non-UTF-8 value
+	// publish / publish_fail modes (ut-docs#3871).
+	PublishType    string          `json:"publish_type"`
+	PublishPayload json.RawMessage `json:"publish_payload"`
+	// sleep / job_progress modes (ut-docs#3908).
+	SleepMS     int    `json:"sleep_ms"`
+	Pct         uint32 `json:"pct"`
+	ProgressKey string `json:"progress_key"`
+	// device_info mode (ADR-0140): a small destination buffer for the
+	// buffer-ABI probe; 0 → the SDK wrappers.
+	Cap int `json:"cap"`
+}
 
-	if event.Payload.Mode == "publish" || event.Payload.Mode == "publish_fail" {
+func main() { plugin.Run(plugin.Handlers{"*": handle}) }
+
+// store records results under "results"; a failure ends the module with
+// exit 1 (Run prints the error to stderr).
+func store(results []byte) error {
+	if err := plugin.StorageSet("results", results); err != nil {
+		return fmt.Errorf("storing results failed: %d", code(err))
+	}
+	return nil
+}
+
+// storeAndPrint is store, then the results as the answer.
+func storeAndPrint(results []byte) (any, error) {
+	if err := store(results); err != nil {
+		return nil, err
+	}
+	return append(results, '\n'), nil
+}
+
+func handle(ev plugin.Event) (any, error) {
+	var p payload
+	_ = ev.Decode(&p)
+	if p.Method == "" {
+		p.Method = "GET"
+	}
+	plugin.Logf("guest running, url=%s mode=%s", p.URL, p.Mode)
+
+	switch p.Mode {
+	case "publish", "publish_fail":
 		// event_publish (ADR-0121 §3): print the host's return code; in
 		// publish_fail mode exit non-zero afterwards — the host must still
 		// deliver what it accepted.
-		tp, tl := ptrOf([]byte(event.Payload.PublishType))
-		pp, pl := ptrOf(event.Payload.PublishPayload)
-		code := eventPublish(tp, tl, pp, pl)
-		fmt.Printf("{\"publish_code\":%d}\n", code)
-		if event.Payload.Mode == "publish_fail" {
-			os.Exit(1)
+		c := code(plugin.EventPublish(p.PublishType, p.PublishPayload))
+		out := []byte(fmt.Sprintf("{\"publish_code\":%d}\n", c))
+		if p.Mode == "publish_fail" {
+			return out, plugin.ExitCode(1)
 		}
-		return
-	}
-	if event.Payload.Mode == "sleep" {
+		return out, nil
+	case "sleep":
 		// A long call (ADR-0121 §8): sleep, then answer.
-		time.Sleep(time.Duration(event.Payload.SleepMS) * time.Millisecond)
-		fmt.Println(`{"slept":true}`)
-		return
-	}
-	if event.Payload.Mode == "job_progress" {
+		time.Sleep(time.Duration(p.SleepMS) * time.Millisecond)
+		return []byte("{\"slept\":true}\n"), nil
+	case "job_progress":
 		// job_progress (ADR-0121 §3/§8): print the host's return code.
-		kp, kl := ptrOf([]byte(event.Payload.ProgressKey))
-		code := jobProgress(event.Payload.Pct, kp, kl)
-		fmt.Printf("{\"progress_code\":%d}\n", code)
-		return
-	}
-	if event.Payload.Mode == "http_retry" {
-		runHTTPRetry(event.Payload.URL)
-		return
-	}
-	if event.Payload.Mode == "http_retry_diff" {
-		runHTTPRetryDiff(event.Payload.URLs)
-		return
-	}
-	if event.Payload.Mode == "http_repeat_same" {
-		runHTTPRepeatSame(event.Payload.URL)
-		return
-	}
-	if event.Payload.Mode == "http_retry_then_repeat" {
-		runHTTPRetryThenRepeat(event.Payload.URL)
-		return
-	}
-	if event.Payload.Mode == "clock" {
-		runClock()
-		return
-	}
-	if event.Payload.Mode == "secret_set" {
-		val := []byte(event.Payload.Value)
-		if event.Payload.Size > 0 {
-			val = make([]byte, event.Payload.Size)
+		var c int32
+		if p.Pct > 100 {
+			k := []byte(p.ProgressKey)
+			kp, kl := ptrOf(k)
+			c = rawJobProgress(p.Pct, kp, kl)
+			runtime.KeepAlive(k)
+		} else {
+			c = code(plugin.JobProgress(int(p.Pct), p.ProgressKey))
+		}
+		return []byte(fmt.Sprintf("{\"progress_code\":%d}\n", c)), nil
+	case "http_retry":
+		return runHTTPRetry(p.URL)
+	case "http_retry_diff":
+		return runHTTPRetryDiff(p.URLs)
+	case "http_repeat_same":
+		return runHTTPRepeatSame(p.URL)
+	case "http_retry_then_repeat":
+		return runHTTPRetryThenRepeat(p.URL)
+	case "clock":
+		return nil, runClock()
+	case "secret_set":
+		val := []byte(p.Value)
+		if p.Size > 0 {
+			val = make([]byte, p.Size)
 			for i := range val {
 				val[i] = 'x'
 			}
 		}
-		if event.Payload.BadUTF8 {
+		if p.BadUTF8 {
 			val = []byte{0xff, 0xfe, 'x'}
 		}
-		runSecretSet(event.Payload.Key, val)
-		return
-	}
-	if event.Payload.Mode == "device_info" {
-		runDeviceInfo(event.Payload.Cap)
-		return
-	}
-	if event.Payload.Mode == "http_len" {
-		runHTTPLen(event.Payload.URL)
-		return
+		return nil, runSecretSet(p.Key, val)
+	case "http_len":
+		return runHTTPLen(p.URL)
+	case "device_info":
+		return nil, runDeviceInfo(p.Cap)
 	}
 
 	// Storage round-trip.
-	setCode := set("greeting", []byte("hello from wasm"))
-	got, _ := get("greeting")
+	setCode := code(plugin.StorageSet("greeting", []byte("hello from wasm")))
+	got, _ := plugin.StorageGet("greeting")
 	roundtrip := string(got) == "hello from wasm"
 
 	// HTTP call (host enforces net:<host> permission).
-	reqJSON, _ := json.Marshal(map[string]any{
-		"method": event.Payload.Method, "url": event.Payload.URL, "body_b64": event.Payload.BodyB64,
-	})
-	rp, rl := ptrOf(reqJSON)
-	buf := make([]byte, 300*1024)
-	bp, bc := ptrOf(buf)
-	httpCode := httpRequest(rp, rl, bp, bc)
 	httpStatus := 0
 	httpBody := ""
-	if httpCode > 0 {
-		var resp struct {
-			Status  int    `json:"status"`
-			BodyB64 string `json:"body_b64"`
-		}
-		if err := json.Unmarshal(buf[:httpCode], &resp); err == nil {
-			httpStatus = resp.Status
-			httpBody = resp.BodyB64
-		}
+	reqBody, _ := base64.StdEncoding.DecodeString(p.BodyB64)
+	resp, err := plugin.HTTP(plugin.HTTPRequest{Method: p.Method, URL: p.URL, Body: reqBody})
+	httpCode := code(err)
+	if err == nil {
+		httpStatus = resp.Status
+		httpBody = base64.StdEncoding.EncodeToString(resp.Body)
 	}
 
-	// Read a plugin setting via the settings_get host function.
-	skp, skl := ptrOf([]byte("endpoint"))
-	sbuf := make([]byte, 4096)
-	sbp, sbc := ptrOf(sbuf)
-	sCode := settingsGet(skp, skl, sbp, sbc)
-	settingVal := ""
-	if sCode > 0 {
-		settingVal = string(sbuf[:sCode])
+	// Read a plugin setting via settings_get: the code is the value's
+	// length, as the buffer ABI returns it.
+	settingVal, err := plugin.SettingsGet("endpoint")
+	sCode := int32(len(settingVal))
+	if err != nil {
+		sCode = code(err)
 	}
 
 	results, _ := json.Marshal(map[string]any{
@@ -221,11 +215,27 @@ func main() {
 		"setting_code": sCode,
 		"setting_val":  settingVal,
 	})
-	if code := set("results", results); code != 0 {
-		fmt.Fprintf(os.Stderr, "storing results failed: %d\n", code)
-		os.Exit(1)
+	return storeAndPrint(results)
+}
+
+// getRequest is the request bytes every raw-probe mode sends, identical
+// across the probe and its retries.
+func getRequest(url string) []byte {
+	req, _ := json.Marshal(map[string]any{"method": "GET", "url": url, "body_b64": ""})
+	return req
+}
+
+func bodyOf(n int32, buf []byte) string {
+	if n <= 0 || int(n) > len(buf) {
+		return ""
 	}
-	fmt.Println(string(results))
+	var resp struct {
+		BodyB64 string `json:"body_b64"`
+	}
+	if err := json.Unmarshal(buf[:n], &resp); err != nil {
+		return ""
+	}
+	return resp.BodyB64
 }
 
 // runHTTPRetry is the ut-docs#754 proof: it issues ONE http_request call
@@ -236,38 +246,28 @@ func main() {
 // enough this time. The host-side test counts real HTTP hits at the
 // server, so a fixed cache correctly serves the second call without
 // touching the network again — while an unfixed host would hit the server
-// twice for what the guest sees as one logical call.
-func runHTTPRetry(url string) {
-	reqJSON, _ := json.Marshal(map[string]any{"method": "GET", "url": url, "body_b64": ""})
-	rp, rl := ptrOf(reqJSON)
-
-	smallBuf := make([]byte, 4)
-	sp, sc := ptrOf(smallBuf)
-	firstCode := httpRequest(rp, rl, sp, sc)
-
-	bigBuf := make([]byte, 64*1024)
-	bp, bc := ptrOf(bigBuf)
-	secondCode := httpRequest(rp, rl, bp, bc)
-
-	secondBody := ""
-	if secondCode > 0 {
-		var resp struct {
-			BodyB64 string `json:"body_b64"`
-		}
-		if err := json.Unmarshal(bigBuf[:secondCode], &resp); err == nil {
-			secondBody = resp.BodyB64
-		}
-	}
+// twice for what the guest sees as one logical call. Both calls are raw:
+// the retry must reuse the probe's exact bytes.
+func runHTTPRetry(url string) (any, error) {
+	req := getRequest(url)
+	firstCode, _ := httpRaw(req, 4)
+	secondCode, buf := httpRaw(req, 64*1024)
 	results, _ := json.Marshal(map[string]any{
 		"first_code":  firstCode,
 		"second_code": secondCode,
-		"second_body": secondBody,
+		"second_body": bodyOf(secondCode, buf),
 	})
-	if code := set("results", results); code != 0 {
-		fmt.Fprintf(os.Stderr, "storing results failed: %d\n", code)
-		os.Exit(1)
+	return storeAndPrint(results)
+}
+
+// sdkGet is one adequately-buffered GET through the SDK: its code (0 or the
+// host's error) and the base64 body.
+func sdkGet(url string) (int32, string) {
+	resp, err := plugin.HTTP(plugin.HTTPRequest{Method: "GET", URL: url})
+	if err != nil {
+		return code(err), ""
 	}
-	fmt.Println(string(results))
+	return 0, base64.StdEncoding.EncodeToString(resp.Body)
 }
 
 // runHTTPRetryDiff is the false-positive guard for the #754 cache: TWO
@@ -275,32 +275,15 @@ func runHTTPRetry(url string) {
 // sized buffer up front — never an undersized-buffer retry. Both must
 // reach the server: the cache must key on the exact request bytes, not
 // just "the plugin made an http_request call before."
-func runHTTPRetryDiff(urls []string) {
+func runHTTPRetryDiff(urls []string) (any, error) {
 	results := map[string]any{}
 	for i, u := range urls {
-		reqJSON, _ := json.Marshal(map[string]any{"method": "GET", "url": u, "body_b64": ""})
-		rp, rl := ptrOf(reqJSON)
-		buf := make([]byte, 64*1024)
-		bp, bc := ptrOf(buf)
-		code := httpRequest(rp, rl, bp, bc)
-		body := ""
-		if code > 0 {
-			var resp struct {
-				BodyB64 string `json:"body_b64"`
-			}
-			if err := json.Unmarshal(buf[:code], &resp); err == nil {
-				body = resp.BodyB64
-			}
-		}
-		results[fmt.Sprintf("code_%d", i)] = code
+		c, body := sdkGet(u)
+		results[fmt.Sprintf("code_%d", i)] = c
 		results[fmt.Sprintf("body_%d", i)] = body
 	}
 	out, _ := json.Marshal(results)
-	if code := set("results", out); code != 0 {
-		fmt.Fprintf(os.Stderr, "storing results failed: %d\n", code)
-		os.Exit(1)
-	}
-	fmt.Println(string(out))
+	return storeAndPrint(out)
 }
 
 // runHTTPRepeatSame is the ut-docs#754 review's F1 false-positive guard: it
@@ -310,40 +293,16 @@ func runHTTPRetryDiff(urls []string) {
 // cache exists for, and both calls must reach the server: caching every
 // successful call unconditionally (the review's original diff) silently
 // collapsed exactly this into one live call.
-func runHTTPRepeatSame(url string) {
-	reqJSON, _ := json.Marshal(map[string]any{"method": "GET", "url": url, "body_b64": ""})
-	rp, rl := ptrOf(reqJSON)
-
-	call := func() (int32, string) {
-		buf := make([]byte, 64*1024)
-		bp, bc := ptrOf(buf)
-		code := httpRequest(rp, rl, bp, bc)
-		body := ""
-		if code > 0 {
-			var resp struct {
-				BodyB64 string `json:"body_b64"`
-			}
-			if err := json.Unmarshal(buf[:code], &resp); err == nil {
-				body = resp.BodyB64
-			}
-		}
-		return code, body
-	}
-
-	firstCode, firstBody := call()
-	secondCode, secondBody := call()
-
+func runHTTPRepeatSame(url string) (any, error) {
+	firstCode, firstBody := sdkGet(url)
+	secondCode, secondBody := sdkGet(url)
 	results, _ := json.Marshal(map[string]any{
 		"first_code":  firstCode,
 		"first_body":  firstBody,
 		"second_code": secondCode,
 		"second_body": secondBody,
 	})
-	if code := set("results", results); code != 0 {
-		fmt.Fprintf(os.Stderr, "storing results failed: %d\n", code)
-		os.Exit(1)
-	}
-	fmt.Println(string(results))
+	return storeAndPrint(results)
 }
 
 // runHTTPRetryThenRepeat proves the cache clears once fully served: an
@@ -351,91 +310,44 @@ func runHTTPRepeatSame(url string) {
 // big-buffer retry with the SAME bytes (hit, clears the cache since this
 // buffer holds the whole response) — then a THIRD call, same bytes, big
 // buffer again. That third call is not part of any pending retry; the
-// cache must already be empty, so it goes out for real.
-func runHTTPRetryThenRepeat(url string) {
-	reqJSON, _ := json.Marshal(map[string]any{"method": "GET", "url": url, "body_b64": ""})
-	rp, rl := ptrOf(reqJSON)
-
-	smallBuf := make([]byte, 4)
-	sp, sc := ptrOf(smallBuf)
-	firstCode := httpRequest(rp, rl, sp, sc)
-
-	callBig := func() (int32, string) {
-		buf := make([]byte, 64*1024)
-		bp, bc := ptrOf(buf)
-		code := httpRequest(rp, rl, bp, bc)
-		body := ""
-		if code > 0 {
-			var resp struct {
-				BodyB64 string `json:"body_b64"`
-			}
-			if err := json.Unmarshal(buf[:code], &resp); err == nil {
-				body = resp.BodyB64
-			}
-		}
-		return code, body
-	}
-	secondCode, secondBody := callBig()
-	thirdCode, thirdBody := callBig()
-
+// cache must already be empty, so it goes out for real. All raw: every
+// call must carry the probe's exact bytes.
+func runHTTPRetryThenRepeat(url string) (any, error) {
+	req := getRequest(url)
+	firstCode, _ := httpRaw(req, 4)
+	secondCode, buf2 := httpRaw(req, 64*1024)
+	thirdCode, buf3 := httpRaw(req, 64*1024)
 	results, _ := json.Marshal(map[string]any{
 		"first_code":  firstCode,
 		"second_code": secondCode,
-		"second_body": secondBody,
+		"second_body": bodyOf(secondCode, buf2),
 		"third_code":  thirdCode,
-		"third_body":  thirdBody,
+		"third_body":  bodyOf(thirdCode, buf3),
 	})
-	if code := set("results", results); code != 0 {
-		fmt.Fprintf(os.Stderr, "storing results failed: %d\n", code)
-		os.Exit(1)
-	}
-	fmt.Println(string(results))
+	return storeAndPrint(results)
 }
 
-// runHTTPLen (ut-docs#3226) fetches one URL through the buffer ABI the way a
-// real guest fetching a large CRL would — a 4-byte probe returns the full
-// length, then a retry into a buffer that size — and records only the
-// status and the DECODED body length, so the host-side test can pin the
+// runHTTPLen (ut-docs#3226) fetches one URL the way a real guest fetching a
+// large CRL would — through the SDK, whose buffer-ABI retry (first buffer
+// too small → one retry at the reported size, served from the host's
+// cache) carries a body past its first buffer — and records only the
+// status and the decoded body length, so the host-side test can pin the
 // response cap without round-tripping megabytes through plugin storage.
-func runHTTPLen(url string) {
-	reqJSON, _ := json.Marshal(map[string]any{"method": "GET", "url": url, "body_b64": ""})
-	rp, rl := ptrOf(reqJSON)
-	probe := make([]byte, 4)
-	pp, pc := ptrOf(probe)
-	code := httpRequest(rp, rl, pp, pc)
-	res := map[string]any{"http_code": code}
-	if code > 0 {
-		buf := make([]byte, code)
-		bp, bc := ptrOf(buf)
-		code2 := httpRequest(rp, rl, bp, bc)
-		res["http_code"] = code2
-		if code2 == code {
-			var resp struct {
-				Status  int    `json:"status"`
-				BodyB64 string `json:"body_b64"`
-			}
-			if err := json.Unmarshal(buf, &resp); err == nil {
-				n := len(resp.BodyB64) / 4 * 3
-				for i := len(resp.BodyB64) - 1; i >= 0 && resp.BodyB64[i] == '='; i-- {
-					n--
-				}
-				res["http_status"] = resp.Status
-				res["body_len"] = n
-			}
-		}
+func runHTTPLen(url string) (any, error) {
+	resp, err := plugin.HTTP(plugin.HTTPRequest{Method: "GET", URL: url})
+	res := map[string]any{"http_code": code(err)}
+	if err == nil {
+		res["http_status"] = resp.Status
+		res["body_len"] = len(resp.Body)
 	}
 	results, _ := json.Marshal(res)
-	if c := set("results", results); c != 0 {
-		fmt.Fprintf(os.Stderr, "storing results failed: %d\n", c)
-		os.Exit(1)
-	}
-	fmt.Println(string(results))
+	return storeAndPrint(results)
 }
 
 // runClock reports what the guest sees as wall and monotonic time
 // (ADR-0121 §3: WASI clock_time_get must return the host's real clocks, not
 // wazero's fake 2022-01-01 epoch).
-func runClock() {
+func runClock() error {
 	start := time.Now()
 	wall := start.UnixNano()
 	time.Sleep(20 * time.Millisecond)
@@ -444,60 +356,67 @@ func runClock() {
 		"wall_unix_nano": wall,
 		"elapsed_nano":   elapsed.Nanoseconds(),
 	})
-	if code := set("results", results); code != 0 {
-		fmt.Fprintf(os.Stderr, "storing results failed: %d\n", code)
-		os.Exit(1)
-	}
+	return store(results)
 }
 
 // runSecretSet calls secret_set(key, val), then reads the key back through
-// settings_get, and records both codes.
-func runSecretSet(key string, val []byte) {
-	kp, kl := ptrOf([]byte(key))
-	vp, vl := ptrOf(val)
-	code := secretSet(kp, kl, vp, vl)
-	sbuf := make([]byte, 128*1024)
-	sbp, sbc := ptrOf(sbuf)
-	getCode := settingsGet(kp, kl, sbp, sbc)
-	got := ""
-	if getCode > 0 {
-		got = string(sbuf[:getCode])
+// settings_get, and records both codes (get_code is the value's length on
+// success, as the buffer ABI returns it).
+func runSecretSet(key string, val []byte) error {
+	secretCode := code(plugin.SecretSet(key, string(val)))
+	got, err := plugin.SettingsGet(key)
+	getCode := int32(len(got))
+	if err != nil {
+		getCode = code(err)
 	}
 	results, _ := json.Marshal(map[string]any{
-		"secret_code": code,
+		"secret_code": secretCode,
 		"get_code":    getCode,
 		"get_val":     got,
 	})
-	if c := set("results", results); c != 0 {
-		fmt.Fprintf(os.Stderr, "storing results failed: %d\n", c)
-		os.Exit(1)
-	}
+	return store(results)
 }
 
-// runDeviceInfo calls device_id_get, device_local_ips_get and
-// device_timezone_get (ADR-0140) with a dstCap-byte buffer and records each
-// return code and, when it fit, the bytes written.
-func runDeviceInfo(dstCap int) {
-	if dstCap <= 0 {
-		dstCap = 4096
-	}
+// runDeviceInfo records device_id_get, device_local_ips_get and
+// device_timezone_get (ADR-0140): each return code (the value's length, or
+// the host's error) and, on success, the value. With cap > 0 it calls raw
+// with a cap-byte buffer, so the code is the host's full length.
+func runDeviceInfo(dstCap int) error {
 	results := map[string]any{}
-	for name, fn := range map[string]func(uint32, uint32) int32{
-		"id":       deviceIDGet,
-		"ips":      deviceLocalIPsGet,
-		"timezone": deviceTimezoneGet,
-	} {
-		buf := make([]byte, dstCap)
-		bp, bc := ptrOf(buf)
-		code := fn(bp, bc)
-		results[name+"_code"] = code
-		if code > 0 && int(code) <= dstCap {
-			results[name+"_val"] = string(buf[:code])
+	if dstCap > 0 {
+		for name, fn := range map[string]func(uint32, uint32) int32{
+			"id": rawDeviceIDGet, "ips": rawDeviceLocalIPsGet, "timezone": rawDeviceTimezoneGet,
+		} {
+			buf := make([]byte, dstCap)
+			bp, bc := ptrOf(buf)
+			c := fn(bp, bc)
+			runtime.KeepAlive(buf)
+			results[name+"_code"] = c
+			if c > 0 && int(c) <= dstCap {
+				results[name+"_val"] = string(buf[:c])
+			}
 		}
+	} else {
+		record := func(name, val string, err error) {
+			if err != nil {
+				results[name+"_code"] = code(err)
+				return
+			}
+			results[name+"_code"] = len(val)
+			results[name+"_val"] = val
+		}
+		id, err := plugin.DeviceID()
+		record("id", id, err)
+		ips, err := plugin.DeviceLocalIPs()
+		var ipsJSON string
+		if err == nil {
+			b, _ := json.Marshal(ips)
+			ipsJSON = string(b)
+		}
+		record("ips", ipsJSON, err)
+		tz, err := plugin.DeviceTimezone()
+		record("timezone", tz, err)
 	}
 	out, _ := json.Marshal(results)
-	if c := set("results", out); c != 0 {
-		fmt.Fprintf(os.Stderr, "storing results failed: %d\n", c)
-		os.Exit(1)
-	}
+	return store(out)
 }

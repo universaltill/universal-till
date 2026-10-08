@@ -57,7 +57,9 @@ Every plugin declares a `runtime` in its manifest:
   anything else that targets WASM. The module gets no capabilities by
   default — the manifest's `permissions` array (e.g. `net:api.stripe.com`,
   `pos.tender`, `storage`) is what the host grants. This is what payment,
-  integration, and most other logic plugins use.
+  integration, and most other logic plugins use. Go plugins use the guest SDK
+  [`sdk/plugin`](../sdk/plugin/README.md) for the event loop and every host
+  call, and unit-test with its fake host.
 - **`"none"`** — asset-only: content bundles, themes, language packs. No
   code runs at all; the till renders/serves the files directly.
 - **`"go"`** — a separately supervised OS process. Reserved for hardware/

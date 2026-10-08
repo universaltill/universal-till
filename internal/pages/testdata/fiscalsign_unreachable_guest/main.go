@@ -6,10 +6,15 @@
 // path (sale completes anyway, journal marker, receipt outage notice,
 // operator Problem — permanent, never re-signed, ADR-0056/ut-docs#839)
 // through the REAL wazero runtime. Counterpart of testdata/fiscalsign_guest.
+// Built on the Go guest SDK (ADR-0121 F4, ut-docs#3951).
 package main
 
-import "fmt"
+import "github.com/universaltill/universal-till/sdk/plugin"
 
 func main() {
-	fmt.Print(`{"status":"unreachable"}`)
+	plugin.Run(plugin.Handlers{
+		"*": func(plugin.Event) (any, error) {
+			return []byte(`{"status":"unreachable"}`), nil
+		},
+	})
 }
