@@ -57,6 +57,10 @@ type Context struct {
 	// Uploads: the entry declared config.upload_max_mb (ut-docs#3793), so
 	// its forms may have file fields.
 	Uploads bool
+	// Seam: the core screen the document renders in (ut-docs#3873); ""
+	// is a plugin page or slot. In a seam only text, notice and
+	// suggestions are allowed, and never a redirect or job answer.
+	Seam Seam
 }
 
 // ValidFieldName reports whether s is a valid form field name (a file
@@ -123,16 +127,17 @@ func (c *Cell) UnmarshalJSON(b []byte) error {
 // Component is one entry of a document's flat component list. Exactly the
 // field matching Type is set.
 type Component struct {
-	Type       string
-	Heading    *Heading
-	Text       *TextBlock
-	Notice     *Notice
-	StatTiles  *StatTiles
-	Table      *Table
-	List       *List
-	EmptyState *EmptyState
-	Button     *Button
-	Form       *Form
+	Type        string
+	Heading     *Heading
+	Text        *TextBlock
+	Notice      *Notice
+	StatTiles   *StatTiles
+	Table       *Table
+	List        *List
+	EmptyState  *EmptyState
+	Button      *Button
+	Form        *Form
+	Suggestions *Suggestions
 }
 
 type Heading struct {
@@ -285,6 +290,9 @@ func decodeAnswer(raw []byte, c Context, jobOK bool) (ActionAnswer, error) {
 	if n > 1 {
 		return ActionAnswer{}, errors.New("answer must have exactly one of document, redirect or job")
 	}
+	if err := checkSeamAnswer(c, a); err != nil {
+		return ActionAnswer{}, err
+	}
 	switch {
 	case a.Job != nil:
 		if !jobOK {
@@ -421,6 +429,9 @@ func decodeComponent(raw json.RawMessage) (Component, error) {
 	case "form":
 		c.Form = &Form{}
 		target = c.Form
+	case "suggestions":
+		c.Suggestions = &Suggestions{}
+		target = c.Suggestions
 	default:
 		return Component{}, fmt.Errorf("unknown component type %q", head.Type)
 	}
@@ -487,6 +498,7 @@ func (v *validator) cell(where string, c Cell, want string) {
 }
 
 func (v *validator) component(where string, c Component) {
+	v.seamComponent(where, c.Type)
 	switch c.Type {
 	case "heading":
 		v.text(where+".text", c.Heading.Text)
@@ -562,6 +574,8 @@ func (v *validator) component(where string, c Component) {
 		}
 	case "form":
 		v.form(where, c.Form)
+	case "suggestions":
+		v.suggestions(where, c.Suggestions)
 	}
 }
 

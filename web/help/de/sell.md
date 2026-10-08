@@ -67,6 +67,8 @@ Unter den Warenkorbsummen kann eine Zeile mit Vorschlagschips erscheinen, basier
 
 Die Leiste zeigt überhaupt nichts an — nicht einmal ein leeres Feld —, wann immer es nichts vorzuschlagen gibt: ein leerer Warenkorb, ein Warenkorb mit Artikeln ohne starkes gemeinsames Verkaufsmuster, oder wenn die Abfrage selbst aus irgendeinem Grund fehlschlägt. Sie blockiert oder unterbricht nie einen Verkauf; behandeln Sie sie als Hinweis, nicht als Schritt, den Sie befolgen müssen.
 
+Ein Plugin kann der Scanzeile außerdem „Per Kamera erkennen“ hinzufügen (das Kamerasymbol). Tippen Sie darauf, richten Sie die Kamera auf das Produkt und tippen Sie auf „Aufnehmen“: Die Kasse zeigt einen Fortschrittsbalken, während das Plugin ermittelt, um welches Produkt es sich handelt, und listet dann seine Treffer auf. Tippen Sie auf einen Treffer, um ihn genau so zum Warenkorb hinzuzufügen, als hätten Sie ihn gescannt. Sie können das Fenster jederzeit schließen und weiterverkaufen — die Antwort des Plugins wird dann einfach verworfen. Barcode-Scan und Suche bleiben daneben immer verfügbar.
+
 ## Statuschips im Seitenmenü
 
 Mehrere kleine Chips unten im linken Menü zeigen Ihnen auf einen Blick, was mit der Kasse los ist — keiner davon blockiert den Verkaufsbildschirm:

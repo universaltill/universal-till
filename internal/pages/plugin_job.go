@@ -258,6 +258,34 @@ func (r *pluginJobRegistry) abandon(id string) bool {
 	return true
 }
 
+// owner returns the plugin a job on route belongs to: false when the id
+// is unknown, expired or another route's.
+func (r *pluginJobRegistry) owner(id, route string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	j, ok := r.jobs[id]
+	if !ok || j.route != route {
+		return "", false
+	}
+	return j.pluginID, true
+}
+
+// cancelRunning cancels and forgets pluginID's running jobs on route (a
+// late result is then dropped by finish) and reports how many.
+func (r *pluginJobRegistry) cancelRunning(pluginID, route string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for id, j := range r.jobs {
+		if j.pluginID == pluginID && j.route == route && j.state == pluginJobRunning {
+			j.cancel()
+			delete(r.jobs, id)
+			n++
+		}
+	}
+	return n
+}
+
 // poll returns the job's state for pluginID's entry route: false when the
 // id is unknown, expired, or belongs to another plugin or route. Every
 // poll refreshes the job's last-polled time. A finished job is handed out

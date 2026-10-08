@@ -500,6 +500,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerFiscalAPI(mux, dp)       // German TSE hard-gate owner override (ADR-0048)
 	registerPOSModifiersAPI(mux, dp) // item customization step, ADR-0020
 	registerAIAPI(mux, dp)
+	registerPluginIdentify(mux, dp) // catalog.identify camera seam (ADR-0121 §7, ut-docs#3873)
 	registerAskAPI(mux, dp)
 	registerPrintAPI(mux, dp)
 	registerKitchenPrintAPI(mux, dp)

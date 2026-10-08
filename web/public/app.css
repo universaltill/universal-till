@@ -4596,6 +4596,15 @@ body.login-screen {
   border-radius: 6px;
 }
 .ai-identify-status { min-block-size: 1.2rem; color: var(--muted, #667); }
+/* ut-docs#3873: the plugin catalog.identify seam's result (poll,
+   suggestions, notices; web/ui/partials/identify_suggestions.html). */
+.plugin-identify-results { display: flex; flex-direction: column; gap: 0.5rem; }
+.plugin-identify-result { display: flex; flex-direction: column; gap: 0.5rem; }
+.plugin-identify-result .ai-match { min-block-size: 3rem; }
+.ai-match-text { display: flex; flex-direction: column; align-items: flex-start; min-inline-size: 0; }
+.ai-match-label { overflow-wrap: anywhere; }
+/* The button's own text colour: --muted on the accent fill was 1.9:1. */
+.ai-match-detail { font-size: 0.85em; font-weight: 400; color: inherit; overflow-wrap: anywhere; }
 .ai-identify-controls { display: flex; gap: 0.5rem; justify-content: flex-end; }
 
 /* Beginner guide (/help) — large readable steps, two-column on wide screens */

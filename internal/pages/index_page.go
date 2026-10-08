@@ -212,9 +212,13 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			// rides on top of the face value, under inclusive it is already
 			// inside it. app.js needs the mode to quote the same figure
 			// pos_api.go/computeSaleTotals will demand.
-			"taxInclusive":         d.CurrentState().TaxInclusive,
-			"payMethods":           gridMethods,
-			"aiIdentify":           aiService(r.Context(), d).Enabled(),
+			"taxInclusive": d.CurrentState().TaxInclusive,
+			"payMethods":   gridMethods,
+			"aiIdentify":   aiService(r.Context(), d).Enabled(),
+			// ut-docs#3873: a plugin answers catalog.identify — the sell
+			// screen shows core's identify seam instead of the built-in AI
+			// button (one camera-identify button).
+			"pluginIdentify":       identifyPluginID(r.Context(), d) != "",
 			"fiscalOverrideActive": fiscalOverrideActive,
 			"fiscalOverrideUntil":  fiscalOverrideUntil,
 			// ADR-0124 §4: staff always see why no receipt appears.
