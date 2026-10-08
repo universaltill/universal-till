@@ -4,6 +4,8 @@
 #   bash tools/wasmbench/build.sh [path/to/real-plugin.wasm]
 # TinyGo guests are built only when `tinygo` is on PATH.
 set -euo pipefail
+# Resolve the plugin path before the cd below, so a relative one works.
+plugin=${1:+$(cd "$(dirname "$1")" && pwd)/$(basename "$1")}
 cd "$(dirname "$0")"
 out=out
 mkdir -p "$out"
@@ -16,8 +18,8 @@ if command -v tinygo >/dev/null; then
 else
 	echo "build.sh: tinygo not on PATH; skipping TinyGo guests" >&2
 fi
-if [[ $# -gt 0 ]]; then
-	cp "$1" "$out/real-plugin.wasm"
+if [[ -n $plugin ]]; then
+	cp "$plugin" "$out/real-plugin.wasm"
 fi
 
 # Pure Go host binaries: no cgo, so android/arm64 needs no NDK and runs from

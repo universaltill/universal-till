@@ -1,0 +1,45 @@
+# XcodeGen spec for the iOS WASM bench app (ut-docs#3918): runs the
+# wasmbench measurement in-process on an iPhone/iPad, where wazero has only
+# its interpreter. A local debug build for a cabled device (devicectl); it
+# never ships, never goes to TestFlight and isn't part of the till app.
+# Build and run: tools/wasmbench/ios/run.sh (usage in its header).
+name: WasmBench
+options:
+  bundleIdPrefix: com.universaltill
+  deploymentTarget:
+    iOS: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  WasmBench:
+    type: application
+    platform: iOS
+    sources:
+      - path: WasmBench
+      # The guests build.sh writes, copied into the bundle as one folder.
+      - path: ../out/modules
+        type: folder
+        buildPhase: resources
+    dependencies:
+      # mobilebench, from gomobile bind (run.sh): static, link don't embed.
+      - framework: ../out/Mobilebench.xcframework
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.universaltill.wasmbench
+        PRODUCT_NAME: WasmBench
+        TARGETED_DEVICE_FAMILY: "1,2"
+        OTHER_LDFLAGS: ["-lresolv"]
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_STYLE: Automatic
+    info:
+      path: WasmBench/Info.plist
+      properties:
+        CFBundleDisplayName: WasmBench
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}

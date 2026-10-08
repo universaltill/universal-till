@@ -1,4 +1,4 @@
-package main
+package bench
 
 import (
 	"context"
@@ -28,7 +28,7 @@ func buildGuest(t *testing.T, pkg string, extra ...string) []byte {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "guest.wasm")
 	args := append([]string{"build"}, extra...)
-	args = append(args, "-o", out, "./guests/"+pkg)
+	args = append(args, "-o", out, "../guests/"+pkg)
 	cmd := exec.Command("go", args...)
 	cmd.Env = append(os.Environ(), "GOOS=wasip1", "GOARCH=wasm")
 	if b, err := cmd.CombinedOutput(); err != nil {
