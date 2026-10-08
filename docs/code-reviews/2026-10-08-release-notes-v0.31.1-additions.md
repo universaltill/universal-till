@@ -21,6 +21,10 @@ Both lines were checked against the code: the slot hosts, the 2 s skip, and the 
 
 `guard-release-notes.sh v0.31.1`, the compliance-claims guard and the competitor-naming guard pass.
 
+## Added after review
+
+universal-till#1771 (ut-docs#3873, the plugin photo-identify button on the sell screen) merged while this PR waited. One more "New" line was added in five languages. It reuses the UI's own `ai.identify.button` label in each language and the close-out's facts: the button shows only when a plugin hooks it, and it replaces the built-in one. It is mechanical in the same pattern, so there was no second review.
+
 ## Verdict
 
 Safe to merge, then dispatch `release.yml -f bump=patch`.
