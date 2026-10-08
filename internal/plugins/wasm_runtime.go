@@ -60,6 +60,10 @@ type WasmRuntime struct {
 	baseDir    string
 	unsubGen   int           // bumped per sync so stale handlers no-op
 	calls      *wasmCallGate // concurrent-call caps, sale-path slot reserved (ut-docs#3154)
+	// publishRate is event_publish's per-plugin token bucket (ut-docs#3871).
+	publishRate *publishRateLimiter
+	// bus, when set (tests), receives published events instead of SharedBus.
+	bus *EventBus
 	// queueWait bounds how long a queued non-blocking event waits for a
 	// call slot before its run deadline starts (ut-docs#3171).
 	queueWait time.Duration
@@ -147,13 +151,7 @@ func isPaymentGateClassEvent(eventType string) bool {
 // floor — import's floor is far larger than export's, so these are checked
 // as two separate floors rather than one shared "data transfer class").
 func (w *WasmRuntime) timeoutFor(pluginID, eventType string) time.Duration {
-	w.mu.Lock()
-	timeout := w.timeout
-	netPermitted := w.hasNet[pluginID] || w.hasTCP[pluginID]
-	if netPermitted {
-		timeout = w.netTimeout // room for the http_request / tcp_* host calls
-	}
-	w.mu.Unlock()
+	timeout, netPermitted := w.baseTimeout(pluginID)
 	// paymentGateTimeout only widens a NET/TCP-PERMITTED plugin's own
 	// authorize/refund deadline (ut-docs#1762) — a plugin with neither
 	// permission can't reach a card/fiscal device or gateway at all, so an
@@ -169,6 +167,28 @@ func (w *WasmRuntime) timeoutFor(pluginID, eventType string) time.Duration {
 		timeout = importTimeout
 	}
 	return timeout
+}
+
+// baseTimeout is pluginID's deadline before any event-class floor: w.timeout,
+// or w.netTimeout for a plugin holding net:* or tcp:*.
+func (w *WasmRuntime) baseTimeout(pluginID string) (time.Duration, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.hasNet[pluginID] || w.hasTCP[pluginID] {
+		return w.netTimeout, true // room for the http_request / tcp_* host calls
+	}
+	return w.timeout, false
+}
+
+// timeoutForEvent is timeoutFor for one event: a plugin-published event
+// (hop > 0, ADR-0121 §3) is ordinary work and gets no event-class floor
+// (payment gate, export, import), whatever its name.
+func (w *WasmRuntime) timeoutForEvent(pluginID string, ev Event) time.Duration {
+	if ev.Hop > 0 {
+		timeout, _ := w.baseTimeout(pluginID)
+		return timeout
+	}
+	return w.timeoutFor(pluginID, ev.Type)
 }
 
 // wasmMemoryLimitPages caps every plugin instance's linear memory
@@ -209,18 +229,19 @@ func NewWasmRuntime(baseDir string) *WasmRuntime {
 	}
 	drainCtx, drainStop := context.WithCancel(context.Background())
 	return &WasmRuntime{
-		rt:         rt,
-		modules:    map[string]wazero.CompiledModule{},
-		versions:   map[string]string{},
-		timeout:    2 * time.Second,
-		netTimeout: 10 * time.Second,
-		hasNet:     map[string]bool{},
-		hasTCP:     map[string]bool{},
-		baseDir:    baseDir,
-		calls:      newWasmCallGate(wasmConcurrencyLimits(goruntime.GOOS)),
-		queueWait:  queuedEventWait,
-		drainCtx:   drainCtx,
-		drainStop:  drainStop,
+		rt:          rt,
+		modules:     map[string]wazero.CompiledModule{},
+		versions:    map[string]string{},
+		timeout:     2 * time.Second,
+		netTimeout:  10 * time.Second,
+		hasNet:      map[string]bool{},
+		hasTCP:      map[string]bool{},
+		baseDir:     baseDir,
+		calls:       newWasmCallGate(wasmConcurrencyLimits(goruntime.GOOS)),
+		publishRate: newPublishRateLimiter(time.Now),
+		queueWait:   queuedEventWait,
+		drainCtx:    drainCtx,
+		drainStop:   drainStop,
 	}
 }
 
@@ -257,6 +278,7 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			delete(w.versions, id)
 			delete(w.hasNet, id)
 			delete(w.hasTCP, id)
+			w.publishRate.forget(id)
 			// A dropped plugin must never leak an open device socket.
 			tcpConns.CloseAll(id)
 			// ... nor a staged import file — CloseAll here also removes
@@ -612,14 +634,19 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 	if !ok {
 		return nil, fmt.Errorf("module not loaded: %s", pluginID)
 	}
-	timeout := w.timeoutFor(pluginID, ev.Type)
+	timeout := w.timeoutForEvent(pluginID, ev)
+	salePath := isSalePathCall(ev) // a published event (hop > 0) never is
 
-	in, err := json.Marshal(map[string]any{
+	input := map[string]any{
 		"id":        ev.ID,
 		"type":      ev.Type,
 		"timestamp": ev.Timestamp.UTC().Format(time.RFC3339),
 		"payload":   json.RawMessage(ev.Payload),
-	})
+	}
+	if ev.Hop > 0 {
+		input["hop"] = ev.Hop // core events (hop 0) keep their exact shape
+	}
+	in, err := json.Marshal(input)
 	if err != nil {
 		return nil, fmt.Errorf("encode event: %w", err)
 	}
@@ -629,7 +656,7 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 	var cancel context.CancelFunc
 	if queueWait > 0 {
 		qctx, qcancel := context.WithTimeout(ctx, queueWait)
-		release, err = w.calls.acquire(qctx, pluginID, isSalePathEvent(ev.Type))
+		release, err = w.calls.acquire(qctx, pluginID, salePath)
 		qcancel()
 		if err != nil {
 			return nil, fmt.Errorf("wasm handler: %s had no free call slot within %s: %w", pluginID, queueWait, err)
@@ -642,7 +669,7 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 		cctx, cancel = context.WithTimeout(ctx, timeout)
 		// Waiting for a slot counts against the call's own deadline, so a
 		// saturated plugin fails the call instead of queueing forever.
-		release, err = w.calls.acquire(cctx, pluginID, isSalePathEvent(ev.Type))
+		release, err = w.calls.acquire(cctx, pluginID, salePath)
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("wasm handler: %s has too many calls in flight: %w", pluginID, err)
@@ -660,12 +687,21 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 		return nil, fmt.Errorf("module not loaded: %s", pluginID)
 	}
 	// Host functions ("ut" module) resolve the caller through this state.
-	hs := &hostState{pluginID: pluginID, db: db, httpClient: w.httpClient}
+	hs := &hostState{pluginID: pluginID, db: db, httpClient: w.httpClient, hop: ev.Hop, publishRate: w.publishRate}
 	// http:stream handles never outlive the event (ADR-0121 §3): closed
 	// however the guest ends — success, error, deadline or trap.
 	defer hs.streams.closeAll()
 	// So do blob handles; an uncommitted put leaves nothing behind.
 	defer hs.blobs.closeAll()
+	// event_publish delivery is asynchronous (ADR-0121 §3): what the guest
+	// published is enqueued only now that the instance has exited, however
+	// it ended — the host already answered 0 for each event. The call slot
+	// is released first (release is idempotent), so the flush's audit
+	// writes never hold one.
+	defer func() {
+		release()
+		w.flushPublished(ctx, db, hs)
+	}()
 	if onHostState != nil {
 		onHostState(hs)
 	}

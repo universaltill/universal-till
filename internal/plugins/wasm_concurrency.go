@@ -39,9 +39,11 @@ func isSalePathEvent(eventType string) bool {
 // levels, a sale-path call while one does. A call that can't be admitted
 // waits for a release or its own deadline.
 //
-// No host function raises another plugin event today. When ADR-0121's
-// event_publish lands, a synchronous same-plugin chain needs as many
-// ordinary slots as its depth (mobile has one) — design it async.
+// event_publish (ADR-0121 §3, ut-docs#3871) is asynchronous by design: a
+// published event is enqueued only after the publishing instance exits and
+// runs off the subscriber's drainer as ordinary work (hop > 0 is never
+// sale-path — isSalePathCall), so a publish chain never waits on a slot
+// while holding one and can't starve checkout (mobile has one ordinary slot).
 type wasmCallGate struct {
 	mu        sync.Mutex
 	perCap    int

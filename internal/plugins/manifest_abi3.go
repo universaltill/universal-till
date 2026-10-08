@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"regexp"
@@ -156,14 +157,14 @@ func validateABI3Fields(m *Manifest) error {
 	}
 
 	for i, s := range m.Schedules {
-		if !scheduleEventRe.MatchString(s.Event) {
+		switch err := checkPluginEventName(m.ID, s.Event); {
+		case errors.Is(err, errEventNameMalformed):
 			return fmt.Errorf("manifest schedules[%d].event %q must be dot-separated lower-case segments, like <plugin-id>.<name>", i, s.Event)
-		}
-		if root, _, _ := strings.Cut(s.Event, "."); coreEventRoots[root] {
+		case errors.Is(err, errEventNameCoreRoot):
+			root, _, _ := strings.Cut(s.Event, ".")
 			return fmt.Errorf("manifest schedules[%d].event %q is in core's %q namespace; a plugin may not raise core events (ADR-0121 §2)", i, s.Event, root)
-		}
-		if prefix := m.ID + "."; !strings.HasPrefix(s.Event, prefix) {
-			return fmt.Errorf("manifest schedules[%d].event %q must start with this plugin's own id (%q) — ADR-0121 §2", i, s.Event, prefix)
+		case errors.Is(err, errEventNameForeign):
+			return fmt.Errorf("manifest schedules[%d].event %q must start with this plugin's own id (%q) — ADR-0121 §2", i, s.Event, m.ID+".")
 		}
 		if s.EveryS < minScheduleEveryS {
 			return fmt.Errorf("manifest schedules[%d].every_s must be at least %d (got %d)", i, minScheduleEveryS, s.EveryS)

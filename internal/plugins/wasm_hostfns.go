@@ -30,7 +30,9 @@ import (
 // Negative returns: -1 not found (incl. an unknown or closed handle),
 // -2 permission denied, -3 internal error (incl. a timed-out read), -4
 // invalid/too large, -5 quota exceeded (ADR-0121 §3: e.g. an http:stream
-// body over limits.http_body_mb), -6 busy (too many open handles).
+// body over limits.http_body_mb; an event_publish over the per-plugin rate
+// of 20/s burst 40, or dropped at the hop-3 depth limit —
+// wasm_event_publish.go), -6 busy (too many open handles).
 const (
 	hostErrNotFound = -1
 	hostErrDenied   = -2
@@ -89,6 +91,14 @@ type hostState struct {
 	// (blobQuota).
 	blobQuotaOnce  sync.Once
 	blobQuotaBytes int64
+	// hop is the handled event's hop count (0 = raised by core); an
+	// event_publish from this instance is hop+1 (wasm_event_publish.go).
+	hop int
+	// publishRate is the runtime's per-plugin event_publish token bucket.
+	publishRate *publishRateLimiter
+	// published buffers this instance's accepted event_publish calls;
+	// handleEvent flushes them to the bus only after the instance exits.
+	published []Event
 }
 
 type hostStateKey struct{}
@@ -155,6 +165,7 @@ func instantiateHostModule(ctx context.Context, rt wazero.Runtime) error {
 		NewFunctionBuilder().WithFunc(hostBlobRead).Export("blob_read").
 		NewFunctionBuilder().WithFunc(hostBlobDelete).Export("blob_delete").
 		NewFunctionBuilder().WithFunc(hostBlobList).Export("blob_list").
+		NewFunctionBuilder().WithFunc(hostEventPublish).Export("event_publish").
 		Instantiate(ctx)
 	return err
 }
