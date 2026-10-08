@@ -243,3 +243,32 @@ func TestViewQueryPerEventCallCap(t *testing.T) {
 		t.Fatalf("first call of a new event = %d, want a result", c)
 	}
 }
+
+// catalog.items.v1 (ADR-0149 §6, ut-docs#3698) runs through the same gate:
+// view:inventory and views_used, or a denial the audit log records.
+func TestViewQueryCatalogItems(t *testing.T) {
+	guest := buildViewGuest(t)
+	const pluginID = "com.test.views.catalog"
+	withInstalledManifest(t, pluginID, viewsManifest(pluginID, "catalog.items.v1"))
+	w := newViewRuntime(t, guest, pluginID)
+
+	d := viewDB(t, pluginID, "view:inventory")
+	if _, err := d.Exec(`INSERT INTO items(id, sku, name, base_price) VALUES('cv-1', 'OL-1', 'Oat latte', 350)`); err != nil {
+		t.Fatal(err)
+	}
+	res := runGuestPayload(t, w, d, pluginID, map[string]any{"view": "catalog.items.v1", "args": `{"limit":10}`})
+	want := `[{"id":"cv-1","sku":"OL-1","name":"Oat latte","category_id":"","category":"","price_minor":350,"unit":"each","weighed":false,"active":true}]`
+	if code := viewCode(t, res); code != len(want) || res["result"] != want {
+		t.Fatalf("view_query = %d %v, want %s", code, res["result"], want)
+	}
+
+	d = viewDB(t, pluginID, "view:sales")
+	before := countDenials(t, d, pluginID)
+	res = runGuestPayload(t, w, d, pluginID, map[string]any{"view": "catalog.items.v1"})
+	if code := viewCode(t, res); code != hostErrDenied {
+		t.Fatalf("without view:inventory = %d, want %d", code, hostErrDenied)
+	}
+	if countDenials(t, d, pluginID) <= before {
+		t.Fatal("the denial was not audited")
+	}
+}

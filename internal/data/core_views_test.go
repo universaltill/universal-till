@@ -16,9 +16,11 @@ func TestCoreViewRegistry_FirstSet(t *testing.T) {
 		"payments.breakdown.v1": "view:sales",
 		"stock.levels.v1":       "view:inventory",
 		"audit.summary.v1":      "view:audit",
+		// ADR-0149 §6 (ut-docs#3698) extends ADR-0121 §5's first set.
+		"catalog.items.v1": "view:inventory",
 	}
 	if len(coreViews) != len(want) {
-		t.Fatalf("%d views registered, want the %d of ADR-0121 §5", len(coreViews), len(want))
+		t.Fatalf("%d views registered, want the %d of ADR-0121 §5 + ADR-0149 §6", len(coreViews), len(want))
 	}
 	for name, perm := range want {
 		v, ok := LookupCoreView(name)
@@ -172,6 +174,7 @@ func TestCoreViewRowShapesArePinned(t *testing.T) {
 		{"payments.breakdown.v1", MethodTotal{}, "method count amount"},
 		{"stock.levels.v1", LowStockItem{}, "item_id name sku location_id location_name current_qty reorder_level lead_time_days variant_id? variant_name? category_id? not_stocked_here?"},
 		{"audit.summary.v1", AuditActionCount{}, "actor_id entity_type action count"},
+		{"catalog.items.v1", CatalogViewItem{}, "id sku name category_id category price_minor unit weighed active"},
 	}
 	for _, p := range pinned {
 		var keys []string
