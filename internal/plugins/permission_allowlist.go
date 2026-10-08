@@ -34,6 +34,11 @@ var exactPermissions = map[string]bool{
 	"secret:write":    true,
 	"ui:page":         true,
 
+	// ADR-0140 (ut-docs#3862): ★ review-gated, read-only device identity —
+	// wasm_device_info.go device_id_get / device_local_ips_get /
+	// device_timezone_get. Bare: no wildcard or parameter form.
+	"device-info": true,
+
 	// Grandfathered: dotted names published plugin repos declare
 	// (ut-plugin-language-* ui.locale, ut-plugin-theme*/themes ui.theme,
 	// ut-plugin-faq ui.page, ut-plugin-integration-ai ai.configure,

@@ -132,6 +132,11 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 // TestPerTillSettingsCoverTillCloudIdentity) — ut-docs#2730. The store-level
 // marketplace keys (store_id, merchant_id, …) still travel.
 //
+// till_identity.* also covers till_identity.device_info_id
+// (data.DeviceInfoIDSettingsKey, ADR-0140, ut-docs#3862), the stable id
+// device_id_get hands a plugin: copied to a joining replica, two tills would
+// report the same device id.
+//
 // cloudsync.unpaid_checkin.* (ut-docs#3673, ADR-0148 amendment §2) is the
 // version and date of this till's last answered unpaid check-in: what the
 // cloud last saw of this device. Copied to a joining replica, the main

@@ -43,6 +43,8 @@ func TestIsKnownPermission(t *testing.T) {
 		// a narrower grant shape sharing the "net:" prefix — must not be
 		// swallowed or refused by the generic net:<host> case.
 		"net:validation:kassensichv-middleware.fiskaly.com", "net:validation:10.0.0.5", "net:validation:[fe80::1]",
+		// ADR-0140 (ut-docs#3862): bare, read-only device identity.
+		"device-info",
 	}
 	for _, p := range known {
 		if !isKnownPermission(p) {
@@ -66,6 +68,9 @@ func TestIsKnownPermission(t *testing.T) {
 		"view:foo bar", "view:a:b", "view:sales.by_day.v1", "ui:slot:checkout.sidebar", "ui:slot:x y",
 		// net:validation:<host> malformed forms (ParseValidationPermission).
 		"net:validation:", "net:validation:*", "net:validation:host:443", "net:validation:a/b",
+		// device-info (ADR-0140) has no wildcard or parameter form, and
+		// names are case-sensitive.
+		"device-info:*", "Device-Info", "device-info:x", "device_info", "device-info ",
 	}
 	for _, p := range unknown {
 		if isKnownPermission(p) {

@@ -24,6 +24,8 @@ func TestDescribePermission_ADR0121DescKeys(t *testing.T) {
 		"schedule":               "plugins.permissions.desc.schedule",
 		"cloud:directive":        "plugins.permissions.desc.cloud_directive",
 		"secret:write":           "plugins.permissions.desc.secret_write",
+		// ADR-0140 (ut-docs#3862).
+		"device-info": "plugins.permissions.desc.device_info",
 	}
 	for perm, key := range want {
 		b := describePermission(perm)
@@ -40,7 +42,7 @@ func TestDescribePermission_ADR0121DescKeys(t *testing.T) {
 		}
 	}
 	for _, perm := range []string{"storage", "net:api.stripe.com", "tcp:*", "sales:read",
-		"tcp:@setting:okc.host:okc.port", "pos.tender", "view:", "ui:slot:", "ui:page:x"} {
+		"tcp:@setting:okc.host:okc.port", "pos.tender", "view:", "ui:slot:", "ui:page:x", "device-info:*"} {
 		if b := describePermission(perm); b.DescKey != "" {
 			t.Errorf("describePermission(%q).DescKey = %q, want empty", perm, b.DescKey)
 		}

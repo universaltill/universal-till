@@ -38,6 +38,15 @@ func eventPublish(tPtr, tLen, pPtr, pLen uint32) int32
 //go:wasmimport ut job_progress
 func jobProgress(pct, kPtr, kLen uint32) int32
 
+//go:wasmimport ut device_id_get
+func deviceIDGet(dstPtr, dstCap uint32) int32
+
+//go:wasmimport ut device_local_ips_get
+func deviceLocalIPsGet(dstPtr, dstCap uint32) int32
+
+//go:wasmimport ut device_timezone_get
+func deviceTimezoneGet(dstPtr, dstCap uint32) int32
+
 func ptrOf(b []byte) (uint32, uint32) {
 	if len(b) == 0 {
 		return 0, 0
@@ -88,6 +97,8 @@ func main() {
 			SleepMS     int    `json:"sleep_ms"`
 			Pct         uint32 `json:"pct"`
 			ProgressKey string `json:"progress_key"`
+			// device_info mode (ADR-0140): destination buffer size, 0 → 4096.
+			Cap int `json:"cap"`
 		} `json:"payload"`
 	}
 	_ = json.Unmarshal(raw, &event)
@@ -154,6 +165,10 @@ func main() {
 			val = []byte{0xff, 0xfe, 'x'}
 		}
 		runSecretSet(event.Payload.Key, val)
+		return
+	}
+	if event.Payload.Mode == "device_info" {
+		runDeviceInfo(event.Payload.Cap)
 		return
 	}
 	if event.Payload.Mode == "http_len" {
@@ -454,6 +469,34 @@ func runSecretSet(key string, val []byte) {
 		"get_val":     got,
 	})
 	if c := set("results", results); c != 0 {
+		fmt.Fprintf(os.Stderr, "storing results failed: %d\n", c)
+		os.Exit(1)
+	}
+}
+
+// runDeviceInfo calls device_id_get, device_local_ips_get and
+// device_timezone_get (ADR-0140) with a dstCap-byte buffer and records each
+// return code and, when it fit, the bytes written.
+func runDeviceInfo(dstCap int) {
+	if dstCap <= 0 {
+		dstCap = 4096
+	}
+	results := map[string]any{}
+	for name, fn := range map[string]func(uint32, uint32) int32{
+		"id":       deviceIDGet,
+		"ips":      deviceLocalIPsGet,
+		"timezone": deviceTimezoneGet,
+	} {
+		buf := make([]byte, dstCap)
+		bp, bc := ptrOf(buf)
+		code := fn(bp, bc)
+		results[name+"_code"] = code
+		if code > 0 && int(code) <= dstCap {
+			results[name+"_val"] = string(buf[:code])
+		}
+	}
+	out, _ := json.Marshal(results)
+	if c := set("results", out); c != 0 {
 		fmt.Fprintf(os.Stderr, "storing results failed: %d\n", c)
 		os.Exit(1)
 	}

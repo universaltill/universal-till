@@ -2231,6 +2231,27 @@ func TestPerTillSettingsCoverTillCloudIdentity(t *testing.T) {
 	}
 }
 
+// ADR-0140 (ut-docs#3862): the device_id_get identity belongs to ONE till.
+// Never admin-synced (two tills would answer with the same id) and stripped
+// from the join snapshot like the rest of the till's cloud identity.
+func TestDeviceInfoIDSettingsKeyIsPerTill(t *testing.T) {
+	if !perTillSetting(DeviceInfoIDSettingsKey) {
+		t.Errorf("%s is not per-till (PerTillSettingPrefixes): the admin sync would carry it", DeviceInfoIDSettingsKey)
+	}
+	covered := false
+	for _, p := range db.TillCloudIdentityPrefixes {
+		if strings.HasPrefix(DeviceInfoIDSettingsKey, p) {
+			covered = true
+		}
+	}
+	if !covered {
+		t.Errorf("%s is not under any db.TillCloudIdentityPrefixes entry: the join snapshot would copy it to a replica", DeviceInfoIDSettingsKey)
+	}
+	if strings.HasPrefix(DeviceInfoIDSettingsKey, "marketplace.") {
+		t.Errorf("%s must not live under marketplace.* (re-pair rewrites those)", DeviceInfoIDSettingsKey)
+	}
+}
+
 // ADR-0119 §1 (ut-docs#2859): the visual effects level and its host
 // detection belong to one till's hardware. They never leave it in an admin
 // dump, and an admin pull never overwrites them.

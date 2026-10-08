@@ -38,6 +38,7 @@ var permissionDescKeys = map[string]string{
 	"schedule":        "plugins.permissions.desc.schedule",
 	"cloud:directive": "plugins.permissions.desc.cloud_directive",
 	"secret:write":    "plugins.permissions.desc.secret_write",
+	"device-info":     "plugins.permissions.desc.device_info", // ADR-0140
 }
 
 // permissionDescKey is the DescKey for name: an exact ADR-0121 §2 name, or
