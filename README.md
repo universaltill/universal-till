@@ -454,6 +454,11 @@ holds an exact grant for, or to the host of one of its own `"type": "endpoint"`
 settings — only on a LAN address; `http:stream` adds the handle-based
 `http_open`/`http_write`/`http_status`/`http_read`/`http_close` for streamed
 bodies up to the manifest's `limits.http_body_mb` (ADR-0121, ut-docs#3156).
+A plugin reads core data only through `view_query` on a named, versioned core
+read view (`sales.by_day.v1`, `items.top.v1`, `payments.breakdown.v1`,
+`stock.levels.v1`, `audit.summary.v1`). It must list the view in its
+manifest's `views_used` and hold the view's `view:<class>` grant (ADR-0121 §5,
+ut-docs#3158).
 
 **See [PLUGIN_GUIDELINES.md](docs/plugin_guidelines.md) for complete documentation.**
 
