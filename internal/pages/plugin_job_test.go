@@ -610,3 +610,12 @@ func TestPluginJob_UnfetchedResultsCapped_3908(t *testing.T) {
 		}
 	}
 }
+
+// running counts pluginID's running jobs (test helper; production reads
+// the count under its own lock in reserve).
+func (r *pluginJobRegistry) running(pluginID string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	mine, _ := r.runningLocked(pluginID)
+	return mine
+}

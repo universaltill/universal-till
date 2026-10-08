@@ -136,14 +136,6 @@ func newPluginJobID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// running counts pluginID's running jobs.
-func (r *pluginJobRegistry) running(pluginID string) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	mine, _ := r.runningLocked(pluginID)
-	return mine
-}
-
 // runningLocked counts pluginID's running jobs and all running jobs.
 func (r *pluginJobRegistry) runningLocked(pluginID string) (mine, all int) {
 	for _, j := range r.jobs {
