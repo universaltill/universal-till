@@ -61,6 +61,12 @@ var (
 	autoUpdateGOOS = runtime.GOOS
 	// autoUpdateInstallUnwritable: the .deb-fixable cause (ut-docs#2733).
 	autoUpdateInstallUnwritable = selfupdate.LinuxInstallUnwritable
+	// GET /api/update/notes (ut-docs#3940): the cached release status, the
+	// lazy release-notes download, and whether a website link is actionable
+	// on this OS — seams so tests never reach the network.
+	updateNotesCurrent      = updates.Current
+	updateIncomingNotes     = updates.IncomingNotes
+	updateNotesDownloadLink = selfupdate.DownloadLinkActionableNow
 )
 
 // autoUpdateWindow bounds how late a catch-up can still fire. eodDue's
@@ -622,6 +628,41 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 		now := time.Now().UTC().Format(time.RFC3339)
 		_ = data.NewPOSRepo(d.Db).InsertAudit(r.Context(), nil, approver.ID, "update", "android", "update_authorized", map[string]any{"via": "pin"}, now, "")
 		respondUpdateApply(w, http.StatusOK, true, "authorized")
+	})
+
+	// ut-docs#3940: the incoming version's release notes, loaded into
+	// Settings → Software update (hx-trigger="load") above the install
+	// controls. Same gate as apply/check, checked before anything else so a
+	// cashier's request never reaches the network. No update waiting → an
+	// empty 200 (nothing to show). A failed download renders "Release notes
+	// unavailable" — never an error status, and never in the way of Install.
+	mux.HandleFunc("GET /api/update/notes", func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "plugin_management") {
+			http.Error(w, "manager only", http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		st := updateNotesCurrent()
+		if !st.Available {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		locale := httpx.ResolveLocale(w, r)
+		view := map[string]any{"Notes": []releaseNoteView(nil), "ReleaseURL": ""}
+		notes, err := updateIncomingNotes(r.Context(), st, locale, buildinfo.Version)
+		if err != nil {
+			logging.L().Debugf("update notes: %v", err)
+			// The release page only where a website link leads somewhere
+			// (Windows/macOS — not a unix kiosk, ut-docs#147), and only an
+			// https one.
+			if updateNotesDownloadLink() && strings.HasPrefix(st.URL, "https://") {
+				view["ReleaseURL"] = st.URL
+			}
+		} else {
+			view["Notes"] = releaseNoteViews(notes, locale)
+		}
+		httpx.RenderPartial("ui/partials/update_incoming_notes.html", view)(w, r)
 	})
 
 	mux.HandleFunc("POST /api/update/check", func(w http.ResponseWriter, r *http.Request) {

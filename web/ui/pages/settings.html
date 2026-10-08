@@ -211,6 +211,18 @@
 <div class="card" id="settings-update">
   <h2>{{ T "settings.update.title" }} {{ helpLink "updates" }}</h2>
   <p class="muted">Universal Till v{{ appversion }}{{ if updateavailable }} &mdash; &#11014;&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}{{ end }}</p>
+  {{/* ut-docs#3940: the incoming version's release notes, ABOVE the install
+       controls, so a manager reads what changes before installing. Loaded
+       lazily (the till downloads the release's notes only now); GET
+       /api/update/notes refuses anyone without plugin_management too. */}}
+  {{ if and updateavailable (allowed "plugin_management") }}
+  <section id="incoming-release-notes-card" data-testid="incoming-release-notes-card">
+    <h3>{{ printf (T "settings.update.incoming_title") (print "v" latestversion) }}</h3>
+    <div id="incoming-release-notes" hx-get="/api/update/notes" hx-trigger="load" hx-swap="innerHTML">
+      <p class="muted">{{ T "settings.update.notes_loading" }}</p>
+    </div>
+  </section>
+  {{ end }}
   {{ if and updateinstallbridge updateavailable }}
   <!-- ut-docs#1545: gated on updateavailable, not just on the platform. The
        PIN box and Download button used to render on every Android till
@@ -297,6 +309,10 @@
       // holds; no {once} needed, it settles once per load.
       var panel = document.querySelector('[hx-get="/api/enrol/devices"]');
       if (panel) { panel.addEventListener('htmx:afterSettle', reveal); }
+      // ut-docs#3940: the incoming release notes load late too, directly
+      // above this form in the same card — re-apply after they settle.
+      var notes = document.getElementById('incoming-release-notes');
+      if (notes) { notes.addEventListener('htmx:afterSettle', reveal); }
       setTimeout(reveal, 800);
     }
     var msg = document.getElementById('android-update-msg');

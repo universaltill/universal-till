@@ -91,6 +91,12 @@ const DIAGNOSTICS_ONLY_SPECS = /diagnostic-mode-indicator-2169\.spec\.ts$/;
 // one-time what's-new chip shows — never in the shared default till.
 const RELEASE_NOTES_ONLY_SPECS = /release-notes-3091\.spec\.ts$/;
 
+// ut-docs#3940: the incoming-release-notes spec needs a till that sees an
+// update on offer — pointed at a local fake releases API
+// (run-till-incoming-notes.sh, fake-release-server.mjs on 8100) — never the
+// shared default till, whose status bar would then show an update chip.
+const INCOMING_NOTES_ONLY_SPECS = /incoming-release-notes-3940\.spec\.ts$/;
+
 // ut-docs#2913: the report-only CSP spec drives a till started with
 // UT_CSP_REPORT_ONLY=1 (run-till-csp.sh). With the flag on, every page logs
 // its report-only violations as console errors by design, which would trip
@@ -197,6 +203,12 @@ export default defineConfig<{}, WorkerOptions>({
       reuseExistingServer: !process.env.CI,
     },
     {
+      command: 'bash ./run-till-incoming-notes.sh',
+      url: 'http://127.0.0.1:8099/healthz',
+      timeout: 120_000,
+      reuseExistingServer: !process.env.CI,
+    },
+    {
       command: 'bash ./run-till-csp.sh',
       url: 'http://127.0.0.1:8098/healthz',
       timeout: 120_000,
@@ -206,7 +218,7 @@ export default defineConfig<{}, WorkerOptions>({
   projects: [
     {
       name: 'default',
-      testIgnore: [AUTH_ONLY_SPECS, AI_IDENTIFY_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS, RELEASE_NOTES_ONLY_SPECS, CSP_ONLY_SPECS],
+      testIgnore: [AUTH_ONLY_SPECS, AI_IDENTIFY_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS, RELEASE_NOTES_ONLY_SPECS, INCOMING_NOTES_ONLY_SPECS, CSP_ONLY_SPECS],
       use: {
         // No static baseURL: the `workerServerURL` fixture supplies this
         // worker's own server (9091 + parallelIndex) — see the note above
@@ -267,6 +279,17 @@ export default defineConfig<{}, WorkerOptions>({
       workers: STATIC_SERVER_WORKERS,
       use: {
         baseURL: 'http://127.0.0.1:8097',
+        trace: 'retain-on-failure',
+        screenshot: 'only-on-failure',
+        launchOptions,
+      },
+    },
+    {
+      name: 'incoming-notes',
+      testMatch: INCOMING_NOTES_ONLY_SPECS,
+      workers: STATIC_SERVER_WORKERS,
+      use: {
+        baseURL: 'http://127.0.0.1:8099',
         trace: 'retain-on-failure',
         screenshot: 'only-on-failure',
         launchOptions,

@@ -35,6 +35,7 @@ After an update, the till tells you what changed — in plain words, in the till
 2. The first time a manager or admin opens the till after an update, a small "Updated to … — see what's new" note appears in the status bar. Tap it to read the notes, or tap × to hide it. It never gets in the way of selling and it shows only once.
 3. Cashiers never see this note, and neither do customers at a self-order kiosk. A newly installed till doesn't show it either.
 4. The notes are built into the till, so they work without an internet connection. If a note isn't translated into your language yet, it's shown in English.
+5. Before you install an update, Settings → Software update shows a manager or admin what the new version brings: the notes for every version the update includes, newest first, in the till's language where translated and in English otherwise. These notes are downloaded only when you open that page. If they can't be loaded, the till says "Release notes unavailable" — on Windows and Mac with a link to the release page — and you can still install the update as usual.
 
 ## On an Android till
 

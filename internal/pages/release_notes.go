@@ -106,6 +106,12 @@ type releaseNoteView struct {
 func aboutView(ctx context.Context, store settingsKV, locale string) map[string]any {
 	firstRun, _, _ := store.Get(ctx, data.AppVersionFirstRunAtSettingsKey)
 	notes := releasenotes.Builtin().Recent(locale, buildinfo.Version, aboutRecentNotes)
+	return map[string]any{"FirstRunAt": firstRun, "Notes": releaseNoteViews(notes, locale)}
+}
+
+// releaseNoteViews maps notes to what the About card and the incoming-notes
+// partial (ut-docs#3940) render.
+func releaseNoteViews(notes []*releasenotes.Note, locale string) []releaseNoteView {
 	views := make([]releaseNoteView, 0, len(notes))
 	for _, n := range notes {
 		views = append(views, releaseNoteView{
@@ -115,7 +121,7 @@ func aboutView(ctx context.Context, store settingsKV, locale string) map[string]
 			Translated: n.Translated,
 		})
 	}
-	return map[string]any{"FirstRunAt": firstRun, "Notes": views}
+	return views
 }
 
 // registerReleaseNotes wires the chip's dismiss. Called from registerSettings

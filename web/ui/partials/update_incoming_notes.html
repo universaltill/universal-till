@@ -1,0 +1,16 @@
+{{/* ut-docs#3940: GET /api/update/notes — the incoming version's release
+     notes, swapped into Settings → Software update (#incoming-release-notes)
+     above the install controls. Same markup as the About card's notes
+     (settings.html #settings-about): h4 per version, the release's own
+     "## New" etc. as h5. .Notes is newest first. When they could not be
+     loaded the till says so; installing is unaffected. .ReleaseURL is set
+     only where a website link is actionable (Windows/macOS). */}}
+{{ range .Notes }}
+<section class="release-note" data-testid="incoming-release-note" data-version="{{ .Version }}"{{ if not .Translated }} lang="en" dir="ltr"{{ end }}>
+  <h4><bdi dir="ltr">{{ .Version }}</bdi> <span class="muted">&middot; {{ .DateText }}</span></h4>
+  {{ if not .Translated }}<p class="muted release-note-fallback" dir="auto">{{ T "settings.about.english_only" }}</p>{{ end }}
+  {{ .HTML }}
+</section>
+{{ else }}
+<p class="muted" data-testid="incoming-notes-unavailable">{{ T "settings.update.notes_unavailable" }}{{ with .ReleaseURL }} &mdash; <a href="{{ . }}" target="_blank" rel="noopener" hx-boost="false">{{ T "settings.update.notes_release_page" }}</a>{{ end }}</p>
+{{ end }}

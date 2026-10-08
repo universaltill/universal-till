@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -20,15 +21,43 @@ import (
 	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
-// releasesURL is a var (not const) purely as a test seam: tests point it at a
-// local httptest server so no test ever talks to the real GitHub API.
-var releasesURL = "https://api.github.com/repos/universaltill/universal-till/releases/latest"
+// defaultReleasesURL is the public GitHub Releases API for this repo.
+const defaultReleasesURL = "https://api.github.com/repos/universaltill/universal-till/releases/latest"
+
+// releasesURL is what the check polls: the default, or an operator override
+// from UT_UPDATE_RELEASES_URL (read once at start-up) — for an air-gapped
+// till pointed at a local mirror of the releases API, and for the e2e
+// harness's fake release server (ut-docs#3940). It only decides where the
+// till LEARNS about a release and its release notes: internal/selfupdate
+// downloads the update itself from its own fixed URL, unaffected. Also a
+// test seam: tests point it at a local httptest server so no test ever
+// talks to the real GitHub API.
+var releasesURL = releasesURLFromEnv()
+
+// releasesURLFromEnv reads UT_UPDATE_RELEASES_URL; anything but an absolute
+// http(s) URL is ignored and the default is used (Start logs that — this
+// runs at package init, before logging is configured).
+func releasesURLFromEnv() string {
+	v := strings.TrimSpace(os.Getenv("UT_UPDATE_RELEASES_URL"))
+	if v == "" {
+		return defaultReleasesURL
+	}
+	u, err := url.Parse(v)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return defaultReleasesURL
+	}
+	return v
+}
 
 // Status is the latest known release info.
 type Status struct {
 	Available bool   // a newer version than this build exists
 	Latest    string // e.g. "0.1.3"
 	URL       string // the release page
+	// NotesURL is the release's release-notes.json asset (ut-docs#3940), or
+	// "" when the release has none or it is not on an allowed host
+	// (notesURLAllowed).
+	NotesURL string
 }
 
 var state atomic.Value // Status
@@ -76,6 +105,9 @@ func CheckNow(ctx context.Context) Status {
 func Start(ctx context.Context, wg *sync.WaitGroup) {
 	if !enabledFromEnv() {
 		return
+	}
+	if v := strings.TrimSpace(os.Getenv("UT_UPDATE_RELEASES_URL")); v != "" && releasesURL == defaultReleasesURL {
+		logging.L().Warnf("updates: ignoring UT_UPDATE_RELEASES_URL %q: not an absolute http(s) URL", v)
 	}
 	wg.Add(1)
 	go func() {
@@ -140,6 +172,10 @@ func checkOnce(ctx context.Context) {
 	var rel struct {
 		TagName string `json:"tag_name"`
 		HTMLURL string `json:"html_url"`
+		Assets  []struct {
+			Name string `json:"name"`
+			URL  string `json:"browser_download_url"`
+		} `json:"assets"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
 		return
@@ -148,10 +184,18 @@ func checkOnce(ctx context.Context) {
 	if latest == "" {
 		return
 	}
+	notesURL := ""
+	for _, a := range rel.Assets {
+		if a.Name == NotesAssetName && notesURLAllowed(a.URL) {
+			notesURL = a.URL
+			break
+		}
+	}
 	state.Store(Status{
 		Available: Newer(latest, buildinfo.Version),
 		Latest:    latest,
 		URL:       rel.HTMLURL,
+		NotesURL:  notesURL,
 	})
 }
 
