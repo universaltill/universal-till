@@ -93,8 +93,10 @@ func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.
 	opts.Report = func(ctx context.Context) fleetlink.Report {
 		depth, _ := posRepo.CountLocalSalesSince(ctx, get(ctx, "sync.push_cursor"))
 		return fleetlink.Report{
-			Version:        buildinfo.Version,
-			UpdateState:    "idle", // #2726 fills the fleet-update states
+			Version: buildinfo.Version,
+			// What the follow is doing about the main till's version
+			// (ut-docs#2945); a change is sent at the next on-change check.
+			UpdateState:    followReportState(followInputsOf(ctx, d)),
 			PushQueueDepth: depth,
 			TLSPinned:      false, // #2736
 			// This till's own name (sync.till_name), so the main till's
@@ -139,6 +141,15 @@ func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.
 		case d.CloudSyncNow <- struct{}{}:
 		default: // a check-in is already pending (or no loop: nil channel)
 		}
+	}
+	opts.OnFleet = func(_ context.Context, f fleetlink.FleetPayload) {
+		// "Update now" from the main till's Tills page (ut-docs#2945):
+		// only ever to the version its own hello on this link names.
+		var mainVersion string
+		if d.LinkClient != nil {
+			mainVersion = d.LinkClient.Status().MainVersion
+		}
+		onFleetUpdate(f, mainVersion)
 	}
 	opts.OnLost = func(ctx context.Context, cause string) {
 		primaryContactFailed(ctx, d, cause)

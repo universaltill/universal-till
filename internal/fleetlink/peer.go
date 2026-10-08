@@ -63,6 +63,11 @@ type Peer struct {
 	checkin     *CloudCheckinPayload
 	lastCheckin time.Time
 
+	// A pending fleet frame (ut-docs#2945): the latest target wins, never
+	// queued per press (§8).
+	fmu   sync.Mutex
+	fleet *FleetPayload
+
 	idPrefix string
 	seq      atomic.Uint64
 
@@ -220,6 +225,25 @@ func (p *Peer) checkinPending() bool {
 	p.cmu.Lock()
 	defer p.cmu.Unlock()
 	return p.checkin != nil
+}
+
+// markFleet replaces the pending fleet frame (latest target wins) and
+// wakes the writer. Non-blocking.
+func (p *Peer) markFleet(f FleetPayload) {
+	f.Target = clip(f.Target, maxReportField)
+	p.fmu.Lock()
+	p.fleet = &f
+	p.fmu.Unlock()
+	p.poke()
+}
+
+// takeFleet returns and clears the pending fleet frame (writer only).
+func (p *Peer) takeFleet() *FleetPayload {
+	p.fmu.Lock()
+	defer p.fmu.Unlock()
+	f := p.fleet
+	p.fleet = nil
+	return f
 }
 
 func (p *Peer) poke() {
@@ -553,6 +577,11 @@ func (p *Peer) flush() bool {
 	}
 	if c := p.takeCheckin(time.Now()); c != nil {
 		if !p.writeMsg(TypeCloudCheckin, c) {
+			return false
+		}
+	}
+	if f := p.takeFleet(); f != nil {
+		if !p.writeMsg(TypeFleet, f) {
 			return false
 		}
 	}

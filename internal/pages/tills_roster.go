@@ -26,11 +26,14 @@ type tillPeerView struct {
 	Role        string // "replica" | "satellite" | "" (unknown)
 	Version     string
 	VersionCmp  string // "same" | "older" | "newer" | "" (not comparable)
-	UpdateState string // "idle" | "waiting-safe-moment" | "downloading" | "failed" | ""
+	UpdateState string // "idle" | "waiting-safe-moment" | "downloading" | "manual" (failed:unsupported) | "failed" | ""
 	UpdateCode  string // the failed:<code> detail, sanitised
-	HasReport   bool
-	QueueDepth  int
-	TLSPinned   bool
+	// CanUpdateNow offers "Update now" (ut-docs#2945): linked, behind this
+	// till, and not already installing, waiting or needing the installer.
+	CanUpdateNow bool
+	HasReport    bool
+	QueueDepth   int
+	TLSPinned    bool
 }
 
 // tillRosterRow is an enrolled till plus, on a main till, its link.
@@ -67,6 +70,11 @@ func tillPeerViewOf(p fleetlink.PeerInfo, mainVersion string, now time.Time) til
 			v.UpdateState = state
 		case "failed":
 			v.UpdateState, v.UpdateCode = state, safeToken(code, 32)
+			if v.UpdateCode == "unsupported" {
+				// That till can't replace itself (ut-docs#2945): it needs
+				// the installer, so no retry button.
+				v.UpdateState, v.UpdateCode = "manual", ""
+			}
 		}
 	}
 	if releaseVersion(v.Version) && releaseVersion(mainVersion) {
@@ -78,6 +86,11 @@ func tillPeerViewOf(p fleetlink.PeerInfo, mainVersion string, now time.Time) til
 		default:
 			v.VersionCmp = "same"
 		}
+	}
+	switch v.UpdateState {
+	case "downloading", "waiting-safe-moment", "manual":
+	default:
+		v.CanUpdateNow = v.Linked && v.VersionCmp == "older"
 	}
 	return v
 }

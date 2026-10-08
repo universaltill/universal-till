@@ -309,6 +309,11 @@ func StartAutoUpdateScheduler(ctx context.Context, d *common.Deps, wg *sync.Wait
 				return
 			case <-ticker.C:
 				autoUpdateTick(ctx, d, time.Now())
+			case <-followKick:
+				// An "Update now" from the main till (ut-docs#2945): run
+				// the tick now on this same goroutine, so a press never
+				// races an attempt already in progress.
+				autoUpdateTick(ctx, d, time.Now())
 			}
 		}
 	}()
