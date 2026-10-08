@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 	"unsafe"
 )
 
@@ -27,6 +28,9 @@ func httpRequest(rPtr, rLen, dstPtr, dstCap uint32) int32
 
 //go:wasmimport ut settings_get
 func settingsGet(kPtr, kLen, dstPtr, dstCap uint32) int32
+
+//go:wasmimport ut secret_set
+func secretSet(kPtr, kLen, vPtr, vLen uint32) int32
 
 func ptrOf(b []byte) (uint32, uint32) {
 	if len(b) == 0 {
@@ -65,8 +69,12 @@ func main() {
 			URL     string   `json:"url"`
 			Mode    string   `json:"mode"`
 			URLs    []string `json:"urls"`
-			Method  string   `json:"method"`   // default GET
-			BodyB64 string   `json:"body_b64"` // request body, base64
+			Method  string   `json:"method"`       // default GET
+			BodyB64 string   `json:"body_b64"`     // request body, base64
+			Key     string   `json:"key"`          // secret_set mode
+			Value   string   `json:"value"`        // secret_set mode
+			Size    int      `json:"size"`         // secret_set mode: value of this many bytes instead
+			BadUTF8 bool     `json:"invalid_utf8"` // secret_set mode: send a non-UTF-8 value
 		} `json:"payload"`
 	}
 	_ = json.Unmarshal(raw, &event)
@@ -89,6 +97,24 @@ func main() {
 	}
 	if event.Payload.Mode == "http_retry_then_repeat" {
 		runHTTPRetryThenRepeat(event.Payload.URL)
+		return
+	}
+	if event.Payload.Mode == "clock" {
+		runClock()
+		return
+	}
+	if event.Payload.Mode == "secret_set" {
+		val := []byte(event.Payload.Value)
+		if event.Payload.Size > 0 {
+			val = make([]byte, event.Payload.Size)
+			for i := range val {
+				val[i] = 'x'
+			}
+		}
+		if event.Payload.BadUTF8 {
+			val = []byte{0xff, 0xfe, 'x'}
+		}
+		runSecretSet(event.Payload.Key, val)
 		return
 	}
 	if event.Payload.Mode == "http_len" {
@@ -350,4 +376,46 @@ func runHTTPLen(url string) {
 		os.Exit(1)
 	}
 	fmt.Println(string(results))
+}
+
+// runClock reports what the guest sees as wall and monotonic time
+// (ADR-0121 §3: WASI clock_time_get must return the host's real clocks, not
+// wazero's fake 2022-01-01 epoch).
+func runClock() {
+	start := time.Now()
+	wall := start.UnixNano()
+	time.Sleep(20 * time.Millisecond)
+	elapsed := time.Since(start)
+	results, _ := json.Marshal(map[string]any{
+		"wall_unix_nano": wall,
+		"elapsed_nano":   elapsed.Nanoseconds(),
+	})
+	if code := set("results", results); code != 0 {
+		fmt.Fprintf(os.Stderr, "storing results failed: %d\n", code)
+		os.Exit(1)
+	}
+}
+
+// runSecretSet calls secret_set(key, val), then reads the key back through
+// settings_get, and records both codes.
+func runSecretSet(key string, val []byte) {
+	kp, kl := ptrOf([]byte(key))
+	vp, vl := ptrOf(val)
+	code := secretSet(kp, kl, vp, vl)
+	sbuf := make([]byte, 128*1024)
+	sbp, sbc := ptrOf(sbuf)
+	getCode := settingsGet(kp, kl, sbp, sbc)
+	got := ""
+	if getCode > 0 {
+		got = string(sbuf[:getCode])
+	}
+	results, _ := json.Marshal(map[string]any{
+		"secret_code": code,
+		"get_code":    getCode,
+		"get_val":     got,
+	})
+	if c := set("results", results); c != 0 {
+		fmt.Fprintf(os.Stderr, "storing results failed: %d\n", c)
+		os.Exit(1)
+	}
 }

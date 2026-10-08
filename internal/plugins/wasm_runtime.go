@@ -675,7 +675,17 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 		WithStdin(bytes.NewReader(in)).
 		WithStdout(&stdout).
 		WithStderr(&stderr).
-		WithArgs("plugin.wasm", ev.Type)
+		WithArgs("plugin.wasm", ev.Type).
+		// Real wall and monotonic clocks for WASI clock_time_get (ADR-0121
+		// §3, ut-docs#3159). Without these, wazero hands the guest a fake
+		// fixed epoch (2022-01-01), which silently defeats every token-expiry
+		// check a plugin makes. Pure .ask hooks still must not use time —
+		// enforced by review and contract tests, not here. Real nanosleep
+		// too: with real clocks but wazero's no-op sleep, a guest
+		// time.Sleep would busy-spin a CPU core until the deadline passed.
+		WithSysWalltime().
+		WithSysNanotime().
+		WithSysNanosleep()
 
 	_, runErr := w.rt.InstantiateModule(cctx, compiled, cfg)
 	if out := strings.TrimSpace(stderr.String()); out != "" {
