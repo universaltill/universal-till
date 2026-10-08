@@ -491,3 +491,126 @@ func TestPluginSlot_FailedActionKeepsPanelHeading_3872(t *testing.T) {
 		t.Fatalf("failed page action must not grow a heading inside #plugin-view:\n%s", body)
 	}
 }
+
+// postSlotAction posts the panel's refresh action to the views entry, with
+// htmx's HX-Target when target is set.
+func (h *slotHarness) postSlotAction(target string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/plugin/views/panel", strings.NewReader(url.Values{"_action": {"refresh"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	if target != "" {
+		req.Header.Set("HX-Target", target)
+	}
+	rec := httptest.NewRecorder()
+	h.mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func (h *slotHarness) revokePerm(perm string) {
+	h.t.Helper()
+	if _, err := h.d.Db.Exec(`UPDATE plugin_permissions SET granted = 0 WHERE plugin_id = ? AND permission = ?`, viewPluginID, perm); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+// A plugin holding only ui:slot:<slot> (no ui:page) draws its panel, so the
+// panel's actions run under that same grant (ut-docs#3963).
+func TestPluginSlot_SlotOnlyPluginActionRuns_3963(t *testing.T) {
+	h := newSlotHarness(t)
+	h.answerWith(slotDoc("SAVED"))
+	h.revokePerm("ui:page")
+
+	rec := h.postSlotAction("plugin-slot-reports-panels-0")
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, "SAVED") || !strings.Contains(body, `hx-target="#plugin-slot-reports-panels-0"`) {
+		t.Fatalf("slot-only action = %d:\n%s", rec.Code, body)
+	}
+	if h.lastEv.Type != pluginActionAskEvent {
+		t.Fatalf("plugin was asked %q, want %s", h.lastEv.Type, pluginActionAskEvent)
+	}
+
+	// The same post without a slot target is a page action: ui:page is
+	// missing, so it is refused and the plugin is not asked.
+	h.lastEv = plugins.Event{}
+	for _, target := range []string{"", "plugin-view", "pos-alert"} {
+		assertUnavailable(t, h.postSlotAction(target), http.StatusBadGateway)
+	}
+	if h.lastEv.Type != "" {
+		t.Fatal("a page action without ui:page was asked")
+	}
+}
+
+// A panel's action needs ui:slot:<its slot>, not another slot's grant, and
+// not ui:page alone (ut-docs#3963).
+func TestPluginSlot_ActionNeedsOwnSlotPermission_3963(t *testing.T) {
+	h := newSlotHarness(t)
+	h.answerWith(slotDoc("SAVED"))
+	h.revokePerm("ui:page")
+	h.revokePerm("ui:slot:reports.panels")
+	if _, err := h.d.Db.Exec(`INSERT INTO plugin_permissions(id,plugin_id,permission,granted) VALUES('y',?,'ui:slot:eod.footer',1)`, viewPluginID); err != nil {
+		t.Fatal(err)
+	}
+	assertUnavailable(t, h.postSlotAction("plugin-slot-reports-panels-0"), http.StatusBadGateway)
+	if h.lastEv.Type != "" {
+		t.Fatal("ui:slot:eod.footer let a reports.panels action through")
+	}
+
+	// ui:page alone does not run a panel action either (the panel is never
+	// drawn without the slot grant).
+	if _, err := h.d.Db.Exec(`UPDATE plugin_permissions SET granted = 1 WHERE plugin_id = ? AND permission = 'ui:page'`, viewPluginID); err != nil {
+		t.Fatal(err)
+	}
+	assertUnavailable(t, h.postSlotAction("plugin-slot-reports-panels-0"), http.StatusBadGateway)
+	if h.lastEv.Type != "" {
+		t.Fatal("ui:page alone ran a slot panel action")
+	}
+}
+
+// /plugin/ routes need only a session, so a panel's action is also gated by
+// its host screen's permission, as the slot route is: a role that never
+// sees the panel cannot run it (403, plugin not asked; ut-docs#3963).
+func TestPluginSlot_ActionNeedsHostGate_3963(t *testing.T) {
+	h := newSlotHarness(t)
+	h.answerWith(slotDoc("SAVED"))
+	h.d.AuthSvc = auth.NewService(h.d.Db) // real role_permissions lookups
+	t.Setenv("UT_AUTH", "on")
+	post := func(u auth.User) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/plugin/views/panel", strings.NewReader(url.Values{"_action": {"refresh"}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("HX-Request", "true")
+		req.Header.Set("HX-Target", "plugin-slot-reports-panels-0")
+		req = auth.WithUser(req, u)
+		rec := httptest.NewRecorder()
+		h.mux.ServeHTTP(rec, req)
+		return rec
+	}
+	rec := post(auth.User{ID: "c1", Role: "cashier"})
+	if rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "SAVED") {
+		t.Fatalf("cashier slot action = %d, want 403 and no answer:\n%s", rec.Code, rec.Body.String())
+	}
+	if h.lastEv.Type != "" {
+		t.Fatal("a slot action without the host screen's permission asked the plugin")
+	}
+	if rec := post(auth.User{ID: "a1", Role: "admin"}); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "SAVED") {
+		t.Fatalf("admin slot action = %d:\n%s", rec.Code, rec.Body.String())
+	}
+}
+
+// A slot with no host gate (setup.wizard.steps, drawn read-only) refuses a
+// slot-targeted action: fail closed, 403, plugin not asked (ut-docs#3963).
+func TestPluginSlot_ActionWithoutGateRefused_3963(t *testing.T) {
+	h := newSlotHarness(t)
+	h.answerWith(slotDoc("SAVED"))
+	if _, err := h.d.Db.Exec(`UPDATE plugin_entries SET config_json = '{"view":"views.panel","content_slot":"setup.wizard.steps"}' WHERE id = 's1'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.d.Db.Exec(`INSERT INTO plugin_permissions(id,plugin_id,permission,granted) VALUES('w',?,'ui:slot:setup.wizard.steps',1)`, viewPluginID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := h.postSlotAction("plugin-slot-setup-wizard-steps-0"); rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "SAVED") {
+		t.Fatalf("setup.wizard.steps action = %d, want 403:\n%s", rec.Code, rec.Body.String())
+	}
+	if h.lastEv.Type != "" {
+		t.Fatal("a slot action with no host gate asked the plugin")
+	}
+}

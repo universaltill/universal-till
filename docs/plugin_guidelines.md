@@ -562,7 +562,10 @@ holds up the screen. Panels are drawn in (plugin id, entry key) order, at
 most 8 per slot. The five signed-in slots load lazily from
 `GET /ui/slot/{slot}`, gated by the host screen's permission (`admin.pages`
 also needs `reports`, ADR-0149 §6). A panel's actions post to the entry's
-own route, as on its page, and answer into that panel only. The setup
+own route, as on its page, and answer into that panel only; they are
+checked against the same `ui:slot:<slot>` grant (so a slot-only plugin
+needs no `ui:page`) and, posted from the panel, the host screen's
+permission (ut-docs#3963). The setup
 wizard draws `setup.wizard.steps` inline and read-only (no buttons or
 forms: the wizard runs before anyone signs in). Details:
 [`plugin-views.md` → Content slots](https://github.com/universaltill/ut-docs/blob/main/reference/plugin-views.md#content-slots).
