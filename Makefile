@@ -1,5 +1,5 @@
 BIN=unitill-pos
-VERSION?=0.1.0
+VERSION?=0.1.0-dev
 # internal/buildinfo.Version is the symbol the app actually reads (see that
 # package's doc comment) — "main.version" doesn't exist anywhere in this
 # codebase, so `-X main.version=...` used to be a silent no-op: `go build`
@@ -8,6 +8,17 @@ VERSION?=0.1.0
 # as older than every release — with auto-update on, the till would
 # silently replace a freshly built/deployed binary with the latest GitHub
 # release minutes later (ut-docs#369, found deploying a field hotfix).
+#
+# The default is "0.1.0-dev", not "dev" and not a bare "0.1.0":
+#  - not "dev": keep the stamping #369 added. "0.1.0-dev" ranks like 0.1.0
+#    in updates.Newer (any newer release beats it, and a 0.1.0 release beats
+#    its own -dev prerelease), so it is no more protected from auto-update
+#    than 0.1.0 was: a field deploy still passes an explicit VERSION=x.y.z.
+#  - not "0.1.0": marketplace releaseVersion accepts only dotted numbers, so
+#    the "-dev" suffix makes it omit host_version and skip the local
+#    min_host_version filter. A bare 0.1.0 would silently hide every plugin
+#    listing needing a newer till from a dev build (ut-docs#2700).
+# internal/plugins/marketplace/dev_build_version_test.go pins all of this.
 LDFLAGS=-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=$(VERSION)
 
 .PHONY: build run test test-race-plugins test-race-pages test-race-data e2e e2e-seed docs-shots docs-shots-determinism prune-worktrees
