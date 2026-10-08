@@ -674,3 +674,125 @@ func TestPluginSlot_RevokedGrantAuditedOnce_3945(t *testing.T) {
 		t.Fatalf("permission_denied audit rows after 5 loads = %d, want 1", n)
 	}
 }
+
+// slotRouteReq issues one request to a slot entry's own /plugin/ route as u.
+func (h *slotHarness) slotRouteReq(u auth.User, method, path string, form url.Values, hdr map[string]string) *httptest.ResponseRecorder {
+	h.t.Helper()
+	var req *http.Request
+	if form != nil {
+		req = httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	} else {
+		req = httptest.NewRequest(method, path, nil)
+	}
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	req = auth.WithUser(req, u)
+	rec := httptest.NewRecorder()
+	h.mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// A page entry that declares a content slot is gated by that slot's host
+// screen on EVERY request to its route -- plain GET/HEAD, fragment, job poll,
+// a POST with no or a forged HX-Target -- not only a slot-targeted POST, so a
+// role that never sees the panel cannot view or run it by hand (ut-docs#3973).
+func TestPluginSlot_RouteNeedsHostGate_3973(t *testing.T) {
+	h := newSlotHarness(t)
+	h.answerWith(slotDoc("SAVED"))
+	// The plugin also holds ui:page, so only the host gate can refuse.
+	if _, err := h.d.Db.Exec(`INSERT OR REPLACE INTO plugin_permissions(id,plugin_id,permission,granted) VALUES('pg',?,'ui:page',1)`, viewPluginID); err != nil {
+		t.Fatal(err)
+	}
+	h.d.AuthSvc = auth.NewService(h.d.Db)
+	t.Setenv("UT_AUTH", "on")
+	cashier := auth.User{ID: "c1", Role: "cashier"}
+	admin := auth.User{ID: "a1", Role: "admin"}
+	const route = "/plugin/views/panel"
+	hx := map[string]string{"HX-Request": "true"}
+	forged := map[string]string{"HX-Request": "true", "HX-Target": "plugin-view"}
+	act := url.Values{"_action": {"refresh"}}
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		form   url.Values
+		hdr    map[string]string
+		ask    string
+	}{
+		{"GET page", http.MethodGet, route, nil, nil, pluginViewAskEvent},
+		{"GET fragment", http.MethodGet, route, nil, hx, pluginViewAskEvent},
+		{"HEAD", http.MethodHead, route, nil, nil, pluginViewAskEvent},
+		{"POST no target", http.MethodPost, route, act, hx, pluginActionAskEvent},
+		{"POST forged target", http.MethodPost, route, act, forged, pluginActionAskEvent},
+		{"job poll", http.MethodGet, route + "?" + pluginJobParam + "=x", nil, hx, ""},
+	}
+	for _, c := range cases {
+		h.lastEv = plugins.Event{}
+		rec := h.slotRouteReq(cashier, c.method, c.path, c.form, c.hdr)
+		if rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "SAVED") {
+			t.Errorf("cashier %s = %d, want 403 and no plugin content:\n%s", c.name, rec.Code, rec.Body.String())
+		}
+		if h.lastEv.Type != "" {
+			t.Errorf("cashier %s asked the plugin (%s)", c.name, h.lastEv.Type)
+		}
+		if c.ask == "" || c.method == http.MethodHead {
+			continue
+		}
+		h.lastEv = plugins.Event{}
+		rec = h.slotRouteReq(admin, c.method, c.path, c.form, c.hdr)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "SAVED") || h.lastEv.Type != c.ask {
+			t.Errorf("admin %s = %d (asked %q, want %s):\n%s", c.name, rec.Code, h.lastEv.Type, c.ask, rec.Body.String())
+		}
+	}
+	h.lastEv = plugins.Event{}
+	if rec := h.slotRouteReq(admin, http.MethodHead, route, nil, nil); rec.Code != http.StatusOK {
+		t.Errorf("admin HEAD = %d, want 200", rec.Code)
+	}
+	// A cashier who navigates there gets requirePage's translated error
+	// page, not a bare text/plain "Forbidden".
+	rec := h.slotRouteReq(cashier, http.MethodGet, route, nil, nil)
+	if b := rec.Body.String(); rec.Code != http.StatusForbidden || !strings.Contains(b, "<html") || !strings.Contains(b, "Manager or admin required") {
+		t.Errorf("cashier page 403 = %d, want the translated error page:\n%s", rec.Code, b)
+	}
+
+	// A slot entry with no view (static content) is gated too.
+	if _, err := h.d.Db.Exec(`UPDATE plugin_entries SET config_json = '{"content_slot":"reports.panels"}' WHERE id = 's1'`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := h.slotRouteReq(cashier, http.MethodGet, route, nil, nil); rec.Code != http.StatusForbidden {
+		t.Errorf("cashier GET of a view-less slot entry = %d, want 403", rec.Code)
+	}
+	if rec := h.slotRouteReq(admin, http.MethodGet, route, nil, nil); rec.Code != http.StatusOK {
+		t.Errorf("admin GET of a view-less slot entry = %d, want 200", rec.Code)
+	}
+}
+
+// A slot with no host gate (setup.wizard.steps) is drawn inline by the wizard
+// only: its /plugin/ route is 403 for everyone, admin included, and the plugin
+// is not asked; the wizard's own draw is unaffected (ut-docs#3973).
+func TestPluginSlot_UngatedSlotRoute403_3973(t *testing.T) {
+	h := newSlotHarness(t)
+	h.answerWith(slotDoc("WIZ"))
+	if _, err := h.d.Db.Exec(`UPDATE plugin_entries SET config_json = '{"view":"views.panel","content_slot":"setup.wizard.steps"}' WHERE id = 's1'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.d.Db.Exec(`INSERT INTO plugin_permissions(id,plugin_id,permission,granted) VALUES('w',?,'ui:slot:setup.wizard.steps',1)`, viewPluginID); err != nil {
+		t.Fatal(err)
+	}
+	h.d.AuthSvc = auth.NewService(h.d.Db)
+	t.Setenv("UT_AUTH", "on")
+	rec := h.slotRouteReq(auth.User{ID: "a1", Role: "admin"}, http.MethodGet, "/plugin/views/panel", nil, nil)
+	if rec.Code != http.StatusForbidden || strings.Contains(rec.Body.String(), "WIZ") {
+		t.Fatalf("admin GET of a setup.wizard.steps route = %d, want 403:\n%s", rec.Code, rec.Body.String())
+	}
+	if h.lastEv.Type != "" {
+		t.Fatal("an ungated slot route asked the plugin")
+	}
+	html := renderSetupSlot(httptest.NewRequest(http.MethodGet, "/setup", nil), h.d, "en")
+	if !strings.Contains(string(html), "WIZ") {
+		t.Fatalf("the wizard's inline draw broke:\n%s", html)
+	}
+}

@@ -564,10 +564,12 @@ most 8 per slot. The five signed-in slots load lazily from
 also needs `reports`, ADR-0149 §6). A panel's actions post to the entry's
 own route, as on its page, and answer into that panel only; they are
 checked against the same `ui:slot:<slot>` grant (so a slot-only plugin
-needs no `ui:page`) and, posted from the panel, the host screen's
-permission (ut-docs#3963). The setup
-wizard draws `setup.wizard.steps` inline and read-only (no buttons or
-forms: the wizard runs before anyone signs in). Details:
+needs no `ui:page`). Every request to a slot entry's own route -- its
+page, a poll, any action -- also needs the host screen's permission, or
+the till answers 403 without asking the plugin (ut-docs#3963,
+ut-docs#3973). The setup wizard draws `setup.wizard.steps` inline and
+read-only (no buttons or forms: the wizard runs before anyone signs in),
+so that entry's route is 403 for everyone. Details:
 [`plugin-views.md` → Content slots](https://github.com/universaltill/ut-docs/blob/main/reference/plugin-views.md#content-slots).
 
 ### Camera identify: `catalog.identify` (ADR-0121 §7)

@@ -161,13 +161,6 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 	actionPerm := pluginViewPermission
 	if inSlot && entry.Slot != "" {
 		actionPerm = "ui:slot:" + entry.Slot
-		// /plugin/ routes need only a session; a panel's action is also
-		// gated by its host screen, as GET /ui/slot/{slot} is (fail
-		// closed: setup.wizard.steps has no gate and draws no actions).
-		if gate, ok := pluginSlotGates[entry.Slot]; r.Method == http.MethodPost && (!ok || !gate(d, r)) {
-			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-			return
-		}
 	}
 
 	var doc *pluginview.Document

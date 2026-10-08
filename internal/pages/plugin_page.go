@@ -119,6 +119,19 @@ func registerPluginPages(mux *http.ServeMux, d *common.Deps) {
 func servePluginEntry(w http.ResponseWriter, r *http.Request, d *common.Deps, entry data.PageEntryRow) {
 	w.Header().Set("Content-Security-Policy", pluginPageCSP)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// /plugin/ routes need only a session, so an entry that declares a
+	// content slot is gated by that slot's host screen on every request to
+	// its route (page, poll, action; any HX-Target), as GET /ui/slot/{slot}
+	// is, before the plugin is asked (ut-docs#3973). Fail closed:
+	// setup.wizard.steps has no gate (drawn inline, read-only by the
+	// wizard), so its route is 403 for everyone. The 403 is requirePage's
+	// error page, rail intact.
+	if entry.Slot != "" {
+		if gate, ok := pluginSlotGates[entry.Slot]; !ok || !gate(d, r) {
+			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
+			return
+		}
+	}
 	// ADR-0121 §7 (ut-docs#3160): a view entry is drawn by core from the
 	// plugin's view document, and POST runs its actions. Only under
 	// /plugin/ -- §7 lets core-generated hx-* target only /plugin/...; a
