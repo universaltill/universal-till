@@ -61,6 +61,9 @@
 # under scripts/ci/.
 set -euo pipefail
 
+# Generated from ut-docs developers/*.json — never edit the lists by hand;
+# run `python3 ut-docs/scripts/devs.py guards` from the folder holding the
+# checkouts, and a local cycle start reports a stale copy (ut-docs#3821).
 # Known real GitHub accounts allowed to author commits here, as
 # "<numeric-id>  # <login, for humans reading this list only>". The ID is
 # what's actually checked. Get a contributor's real numeric ID from
@@ -68,10 +71,12 @@ set -euo pipefail
 # from a noreply address alone, which is exactly the class of mistake this
 # guard exists to catch.
 ALLOWED_IDS=(
-  4035824   # farshidmirza (Farshid Mirza — product owner / pipeline identity)
-  35641125  # pouria-teimouri
+  # devs:allowed-ids
   3191028   # ugurozsahin
-  111438931 # mahshid76 (web surfaces + market:pt, onboarded #2578; ut-docs#2953)
+  4035824   # farshidmirza
+  35641125  # pouria-teimouri
+  111438931 # mahshid76
+  # /devs:allowed-ids
 )
 
 # Older-style GitHub noreply addresses carry no numeric-ID prefix
@@ -93,9 +98,13 @@ ALLOWED_LEGACY_USERNAMES=()
 # active contributor to this repo. Default-deny, same posture as
 # ALLOWED_IDS/ALLOWED_LEGACY_USERNAMES above — an email that merely looks
 # plausible is not credited unless it's on this list. See part 3 above.
+# Each address listed is published in commit metadata by that developer's
+# own choice (ut-docs#3472).
 ALLOWED_PLAIN_EMAILS=(
-  farsid@taskrunnertech.co.uk   # farshidmirza (pipeline owner)
-  pouria.teymuri@gmail.com      # pouria-teimouri — linked to his GitHub account; publishing it in commit metadata is his own choice (ut-docs#3472)
+  # devs:allowed-plain-emails
+  farsid@taskrunnertech.co.uk   # farshidmirza
+  pouria.teymuri@gmail.com   # pouria-teimouri
+  # /devs:allowed-plain-emails
 )
 
 # Matched case-insensitively via $email_lc below — GitHub email matching
