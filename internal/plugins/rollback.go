@@ -342,6 +342,11 @@ func (rm *RollbackManager) rollback(ctx context.Context, pluginID, targetVersion
 		return err
 	}
 
+	// So do its schedules (ADR-0121 §8, ut-docs#3161).
+	if err := persistSchedules(ctx, repo, tx, pluginID, manifest); err != nil {
+		return err
+	}
+
 	// Create audit log entry
 	auditData := map[string]interface{}{
 		"plugin_id":       pluginID,

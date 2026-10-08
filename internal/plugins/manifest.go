@@ -1186,6 +1186,12 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 		return err
 	}
 
+	// 2c. Schedules (ADR-0121 §8, ut-docs#3161): replaced on every
+	// install/update, so a tick a new version drops stops at the next Sync.
+	if err := persistSchedules(ctx, repo, tx, m.ID, m); err != nil {
+		return err
+	}
+
 	// 3. Insert settings with defaults
 	var settingRows []data.PluginSettingRow
 	for _, s := range m.Settings {

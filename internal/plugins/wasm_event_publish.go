@@ -265,10 +265,10 @@ func (w *WasmRuntime) flushPublished(ctx context.Context, db *sql.DB, hs *hostSt
 }
 
 // isSalePathCall reports whether ev may take a reserved sale-path slot: a
-// sale-path type raised by core (hop 0). A plugin-published event is
-// ordinary work, whatever its name.
+// sale-path type raised by core (hop 0). A plugin-published event and a
+// schedule tick (ADR-0121 §2/§8) are ordinary work, whatever their name.
 func isSalePathCall(ev Event) bool {
-	return ev.Hop == 0 && isSalePathEvent(ev.Type)
+	return ev.Hop == 0 && !ev.Scheduled && isSalePathEvent(ev.Type)
 }
 
 // CheckPluginEventName is checkPluginEventName for callers outside this

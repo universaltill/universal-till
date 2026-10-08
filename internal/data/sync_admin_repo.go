@@ -478,6 +478,7 @@ var nonAdminTables = map[string]string{
 	"plugin_hooks":          "plugin-contributed hooks — recreated on re-install, not synced",
 	"plugin_provides":       "one installed plugin's declared capabilities (ADR-0129) — recreated on re-install, not synced",
 	"plugin_markets":        "one installed plugin's declared markets (ADR-0129) — recreated on re-install, not synced",
+	"plugin_schedules":      "one installed plugin's declared schedule ticks (ADR-0121 §8) — recreated on re-install, not synced",
 	"plugin_install_status": "install-progress bookkeeping — SyncPluginsRepo's own source table",
 	"plugin_permissions":    "granted permissions for one installed plugin instance — recreated on re-install",
 

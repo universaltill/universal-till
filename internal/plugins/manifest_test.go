@@ -711,6 +711,16 @@ func setupTestDB(t *testing.T) *sql.DB {
 		PRIMARY KEY (plugin_id, market),
 		FOREIGN KEY (plugin_id) REFERENCES plugins (id) ON DELETE CASCADE
 	);
+
+	-- migration 068 (ADR-0121 §8, ut-docs#3161)
+	CREATE TABLE plugin_schedules (
+		plugin_id TEXT NOT NULL,
+		event TEXT NOT NULL,
+		every_s INTEGER NOT NULL,
+		jitter_s INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (plugin_id, event),
+		FOREIGN KEY (plugin_id) REFERENCES plugins (id) ON DELETE CASCADE
+	);
 	`
 
 	if _, err := db.Exec(schema); err != nil {
