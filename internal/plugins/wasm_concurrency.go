@@ -17,6 +17,20 @@ func wasmConcurrencyLimits(goos string) (perPlugin, global int) {
 	return 4, 16
 }
 
+// JobCaps returns how many plugin jobs (ADR-0121 §8, ut-docs#3908) may
+// run at once per plugin and across all plugins on goos, derived from the
+// call gate's slots so the knowledge stays here. A job holds one ordinary
+// slot for its whole run, so per plugin it may take at most perPlugin-1
+// (one ordinary slot stays free for the plugin's own page asks; the
+// reserved sale-path slot is never a job's) and never more than two;
+// across plugins at most (global-1)/2, half of the ordinary slots. Mobile:
+// 1 and 3; desktop: 2 and 7. A job past either cap is refused, never
+// queued — a queued job would wait for a slot with its deadline ticking.
+func JobCaps(goos string) (perPlugin, global int) {
+	per, glob := wasmConcurrencyLimits(goos)
+	return max(min(2, per-1), 1), max((glob-1)/2, 1)
+}
+
 // isSalePathEvent reports whether eventType may use the slot reserved per
 // plugin and globally, so a plugin (or all plugins) saturated by ordinary
 // work can never block checkout. ADR-0121 §2: any ".ask" / ".authorize"

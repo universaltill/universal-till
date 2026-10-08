@@ -512,6 +512,24 @@ forms post an action name back to your entry's route. You never supply a
 URL, script or style. A slow, broken or invalid answer shows an
 "unavailable" notice and blocks nothing else.
 
+An action that may take longer than an event's deadline (2 s, 10 s with
+`net:*`) answers `{"job": {"event": "<your-plugin-id>.<name>"}}` instead.
+The event must be in your own namespace and in your `hooks`. The till
+answers the operator at once with a progress poll, then sends you that
+event with the action's payload plus `job_id`. The deadline is your
+`limits.long_call_s` (at most 300 s), and a job never runs on the sale
+path. Report progress with the `job_progress(pct, msg_key)` host function
+(ABI 3; `msg_key` from your own locale bundle; outside a job it returns
+`-1`, and a foreign key returns `-4`). Answer with a document or a
+redirect, as for an action. You can run at most two jobs at once (one on
+Android/iOS), and the till also caps jobs across all plugins; a job past
+either cap is refused with a "try again later" notice, never queued. A job
+nobody polls for about 15 s is cancelled, and a result nobody fetches
+within about 30 s is dropped; at most four unfetched results are kept
+per plugin (a fifth drops the oldest). The query parameter `_job` is
+reserved for the till's poll: it is never passed to your view as a
+`params` entry, so don't use it in your own links.
+
 The format, limits and payloads are in
 [`ut-docs/reference/plugin-views.md`](https://github.com/universaltill/ut-docs/blob/main/reference/plugin-views.md).
 

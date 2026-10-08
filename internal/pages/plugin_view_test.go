@@ -493,3 +493,13 @@ func TestPluginView_ActionTitleUpdatesHeading_3160(t *testing.T) {
 		t.Fatalf("page heading has no plugin-view-title id")
 	}
 }
+
+// _job is core's poll parameter (ADR-0121 §8, ut-docs#3908): it never
+// reaches the plugin as a view param.
+func TestPluginView_JobParamReserved_3908(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/plugin/views?_job=abc&a=1", nil)
+	got := pluginViewParams(r)
+	if _, ok := got["_job"]; ok || got["a"] != "1" || len(got) != 1 {
+		t.Fatalf("params = %v, want only a=1", got)
+	}
+}
