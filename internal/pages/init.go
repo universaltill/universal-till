@@ -523,6 +523,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerJoinNoticeUI(mux, dp)                     // ADR-0033 amendment: standalone till offers to join a found main till (ut-docs#2721)
 	registerShopNameNoticeUI(mux, dp)                 // ut-docs#3114: "Name your shop" banner while store.name is a placeholder
 	registerSyncSales(mux, dp)
+	registerSyncNoSales(mux, dp)     // ut-docs#3562: replica no-sale opens (LAN sync D3)
 	registerSyncOrders(mux, dp)      // cross-till orders board, primary side (ut-docs#1350)
 	registerSyncTables(mux, dp)      // cross-till table occupancy, read-only, primary side (ut-docs#1392)
 	registerSyncTablesClaim(mux, dp) // cross-till table-claim write-through, primary side (ut-docs#1703)

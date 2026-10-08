@@ -156,6 +156,14 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 	if err := set("sync.push_cursor", nowUTC()); err != nil {
 		return false, fmt.Errorf("apply identity cursor: %w", err)
 	}
+	// Same for the primary's no-sale drawer opens (ut-docs#3562): they came
+	// in the snapshot with an empty till_id, so without this the replica
+	// would journal them back to the primary as its own. The cursor is
+	// "<created_at>|<id>" (pages.parseNoSalePushCursor); an empty id sorts
+	// before every real one at the join instant.
+	if err := set("sync.no_sale_push_cursor", nowUTC()+"|"); err != nil {
+		return false, fmt.Errorf("apply identity no-sale cursor: %w", err)
+	}
 	// The snapshot carried the primary's own register identity
 	// (sync.till_register_id, ut-docs#268) baked into its settings row —
 	// this replica must NOT start life believing it's the primary's

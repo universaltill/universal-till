@@ -279,6 +279,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/sync/held-sales/delete":          true,
 	"POST /api/sync/held-sales/upsert":          true,
 	"POST /api/sync/join":                       true,
+	"POST /api/sync/no-sales":                   true, // ut-docs#3562: replica no-sale journal
 	"POST /api/sync/orders/{receipt_no}/status": true,
 	"POST /api/sync/pair-request":               true,
 	"POST /api/sync/pair-requests/{id}/approve": true,

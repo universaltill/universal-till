@@ -79,7 +79,11 @@ as `CODE128` so internal PLU/keypad codes remain supported.
   the till key (`till_id`, else `register_id`) follow the sales rules, so
   the ADR-0111 rollup reports them as `no_sale_count` and
   `by_cashier[].no_sale_opens` (ut-docs#2558; migration 064, with its
-  `no_sale_events_archive` reset twin)
+  `no_sale_events_archive` reset twin). A replica journals its own opens
+  to the main till over LAN sync D3 (`POST /api/sync/no-sales`, cursor
+  `sync.no_sale_push_cursor`), where they are stored with `till_id` = the
+  reporting till's `tills.id`, so the main till's rollup counts every
+  till's opens once (ut-docs#3562)
 
 ### 5. Shifts & audit
 
