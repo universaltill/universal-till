@@ -1773,6 +1773,162 @@ utSellCamera(function(){
   return { btn: openBtn, close: close, onNetwork: updateVisibility };
 });
 
+// Plugin camera identify (ADR-0121 §7 catalog.identify seam, ut-docs#3873).
+// Rendered instead of the AI button above when an installed plugin answers
+// catalog.identify. The photo is posted once; the till answers at once with
+// a poll (htmx re-asks every second) while the plugin works as a job, then
+// with the plugin's suggestions — buttons that post the SKU to
+// /api/pos/scan exactly like a scan. The overlay is a plain fixed div, never
+// a modal: the cashier can close it any time and keep selling. Closing (or
+// retaking) clears the results, which removes the poll, so the job is
+// abandoned and a late result dropped. Strings ride on data-* attributes.
+utSellCamera(function(){
+  var openBtn = document.getElementById('plugin-identify-open');
+  var overlay = document.getElementById('plugin-identify-overlay');
+  if (!openBtn || !overlay) return null;
+
+  var video = document.getElementById('plugin-identify-video');
+  var results = document.getElementById('plugin-identify-results');
+  var status = document.getElementById('plugin-identify-status');
+  var captureBtn = document.getElementById('plugin-identify-capture');
+  var retakeBtn = document.getElementById('plugin-identify-retake');
+  var closeBtn = document.getElementById('plugin-identify-close');
+  var msgs = overlay.dataset;
+  var stream = null;
+  // Bumped whenever the results are cleared (close, retake, a new capture):
+  // an answer that arrives for an older generation is ignored.
+  var gen = 0;
+
+  openBtn.hidden = false;
+
+  function setStatus(text){ status.textContent = text || ''; }
+
+  function clearResults(){
+    gen++;
+    results.innerHTML = '';
+  }
+
+  function showCapture(){
+    captureBtn.hidden = false;
+    retakeBtn.hidden = true;
+    video.hidden = false;
+  }
+
+  function open(){
+    overlay.hidden = false;
+    clearResults();
+    setStatus('');
+    showCapture();
+    // Same non-secure-context guard as the AI overlay (ut-docs#1251).
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setStatus(msgs.msgCameraError);
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      .then(function(s){
+        if (overlay.hidden) { s.getTracks().forEach(function(t){ t.stop(); }); return; }
+        stream = s;
+        video.srcObject = s;
+      })
+      .catch(function(err){
+        switch (err && err.name) {
+          case 'NotFoundError':
+          case 'OverconstrainedError':
+            setStatus(msgs.msgCameraNotFound);
+            break;
+          case 'NotAllowedError':
+          case 'SecurityError':
+            setStatus(msgs.msgCameraPermissionDenied);
+            break;
+          case 'NotReadableError':
+            setStatus(msgs.msgCameraBusy);
+            break;
+          default:
+            setStatus(msgs.msgCameraError);
+        }
+      });
+  }
+
+  function close(){
+    overlay.hidden = true;
+    clearResults();
+    setStatus('');
+    if (stream) { stream.getTracks().forEach(function(t){ t.stop(); }); stream = null; }
+    video.srcObject = null;
+  }
+
+  // Bound the upload client-side: max 1024px long edge, JPEG.
+  function capture(cb){
+    var w = video.videoWidth, h = video.videoHeight;
+    if (!w || !h) { setStatus(msgs.msgCameraError); return; }
+    var scale = Math.min(1, 1024 / Math.max(w, h));
+    var canvas = document.createElement('canvas');
+    canvas.width = Math.round(w * scale);
+    canvas.height = Math.round(h * scale);
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(cb, 'image/jpeg', 0.85);
+  }
+
+  function identify(){
+    capture(function(blob){
+      if (!blob) { setStatus(msgs.msgError); return; }
+      clearResults();
+      var mine = gen;
+      setStatus('');
+      captureBtn.hidden = true;
+      retakeBtn.hidden = false;
+      // The live picture steps aside for the progress and the matches: at
+      // the 1024x600 floor it would push them and Close below the fold.
+      // The stream stays open, so Retake shows it again at once.
+      video.hidden = true;
+      var fd = new FormData();
+      fd.append('photo', blob, 'capture.jpg');
+      fetch('/api/pos/identify/plugin', { method: 'POST', body: fd, credentials: 'same-origin' })
+        .then(function(r){
+          // A lost session redirects to /login: never paint that page here.
+          if (r.redirected) throw new Error('redirected');
+          // Only the seam's own answers (the poll, or its notice for a
+          // refused photo, a busy plugin, no plugin, a failed start) are
+          // painted; any other body (a proxy or crash page) is an error.
+          if (!r.ok && [400, 404, 413, 429, 502, 503].indexOf(r.status) < 0) throw new Error('status ' + r.status);
+          return r.text();
+        })
+        .then(function(html){
+          if (mine !== gen || overlay.hidden) return; // closed or retaken meanwhile
+          results.innerHTML = html;
+          if (window.htmx) window.htmx.process(results);
+        })
+        .catch(function(){
+          if (mine === gen && !overlay.hidden) setStatus(msgs.msgError);
+        });
+    });
+  }
+
+  function retake(){
+    clearResults();
+    setStatus('');
+    showCapture();
+  }
+
+  // A poll answer that lands after the overlay closed is never swapped in.
+  overlay.addEventListener('htmx:beforeSwap', function(ev){
+    if (overlay.hidden && ev.detail) ev.detail.shouldSwap = false;
+  });
+  // A tapped suggestion added its line through /api/pos/scan: done.
+  overlay.addEventListener('htmx:afterRequest', function(ev){
+    var t = ev.target;
+    // Only once the scan answered: a tap lost to the network leaves the
+    // matches on screen to tap again.
+    if (t && t.hasAttribute && t.hasAttribute('data-identify-pick') && ev.detail && ev.detail.successful) close();
+  });
+
+  openBtn.addEventListener('click', open);
+  captureBtn.addEventListener('click', identify);
+  retakeBtn.addEventListener('click', retake);
+  closeBtn.addEventListener('click', close);
+  return { btn: openBtn, close: close };
+});
+
 // Camera barcode/QR scan (ut-docs#548): an alternative input mode alongside
 // the wedge/HID scanner path above (never disables or steals focus from it —
 // this is purely an on-demand overlay, opened and closed by the cashier).

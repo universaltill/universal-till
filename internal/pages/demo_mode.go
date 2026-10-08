@@ -223,7 +223,11 @@ var demoDeniedRoutes = map[string]bool{
 	"GET /api/catalog/lookup":        true,
 	"POST /api/pos/identify":         true,
 	"POST /api/pos/identify/confirm": true,
-	"POST /api/reports/ask":          true,
+	// The plugin camera-identify seam (ut-docs#3873): a photo upload
+	// and a plugin job; its poll has no job to find in a demo.
+	"GET /api/pos/identify/plugin":  true,
+	"POST /api/pos/identify/plugin": true,
+	"POST /api/reports/ask":         true,
 	// Cloud enrolment, registration, telemetry and LAN
 	// sync/pairing/discovery/link (all /api/sync/*, /api/setup/*, the Tills
 	// pages).

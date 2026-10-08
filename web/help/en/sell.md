@@ -78,6 +78,8 @@ A row of suggestion chips can appear under the basket totals, based on what tend
 
 The strip shows nothing at all — not even an empty box — whenever there's nothing to suggest: an empty basket, a basket of items with no strong sales pattern together, or if the lookup itself fails for any reason. It never blocks or interrupts a sale; treat it as a hint, not a step you need to act on.
 
+A plugin can also add "Identify by camera" to the scan row (the camera icon). Tap it, point the camera at the product and tap Capture: the till shows a progress bar while the plugin works out what it is, then lists its matches. Tap a match to add it to the basket exactly as if you had scanned it. You can close the window at any time and keep selling — the plugin's answer is then simply dropped. Barcode scanning and search always stay available alongside it.
+
 ## Status chips in the side menu
 
 Several small chips near the bottom of the left-hand menu tell you, at a glance, what's going on with the till — none of them block the sale screen:

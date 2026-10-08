@@ -1,0 +1,50 @@
+{{/* The sell screen's camera-identify seam (ADR-0121 §7, ut-docs#3873;
+     format: ut-docs reference/plugin-views.md). Fragments app.js puts into
+     #plugin-identify-results: the running job's poll, the plugin's
+     suggestions, or a notice. Every value is a plain string html/template
+     escapes; every hx-* URL is core's own (the poll's id is 32 hex
+     characters set by core). The poll's timer GET never extends the
+     operator session (auth.pluginJobPoll); removing it (close, retake)
+     stops the polling, so the job is abandoned and its result dropped. */}}
+{{ define "identify_poll" }}
+<div class="plugin-view-poll plugin-identify-poll" data-identify-poll role="status" aria-live="polite"
+     hx-get="/api/pos/identify/plugin?_job={{ .ID }}" hx-trigger="every 1s" hx-swap="outerHTML">
+  <span id="plugin-identify-poll-msg" class="plugin-view-poll-msg">{{ if .Message }}{{ .Message }}{{ else }}{{ T "plugin.job.running" }}{{ end }}</span>
+  {{- if .HasPct }}
+  <progress class="plugin-view-poll-bar" max="100" value="{{ .Pct }}" aria-labelledby="plugin-identify-poll-msg">{{ .Pct }}%</progress>
+  {{- else }}
+  <progress class="plugin-view-poll-bar" max="100" aria-labelledby="plugin-identify-poll-msg"></progress>
+  {{- end }}
+</div>
+{{ end }}
+
+{{ define "identify_notice" }}
+<div class="plugin-view-notice {{ .Level }}" role="status">{{ T .Key }}</div>
+{{ end }}
+
+{{/* One button per add_to_basket candidate, posting exactly like the
+     "customers also buy" chip (web/ui/partials/suggestions.html). app.js
+     closes the overlay once the scan request completes. */}}
+{{ define "identify_result" }}
+<div class="plugin-identify-result">
+  {{- range .Texts }}
+  {{- if eq .Type "notice" }}<div class="plugin-view-notice {{ .Level }}" role="{{ if eq .Level "error" }}alert{{ else }}status{{ end }}">{{ .Text }}</div>
+  {{- else }}<p class="plugin-view-text">{{ .Text }}</p>{{ end }}
+  {{- end }}
+  {{- if .Matches }}
+  <div class="ai-identify-results">
+    {{- range .Matches }}
+    <button type="button" class="btn ai-match" data-identify-pick title="{{ T "suggest.add" }}"
+            hx-post="/api/pos/scan" hx-vals='{{ jsonVals "code" .SKU "qty" .Qty }}'
+            hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
+      {{- if .ImageURL }}<img src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
+      <span class="ai-match-text"><span class="ai-match-label">{{ .Label }}</span>
+      {{- if .Detail }}<span class="ai-match-detail">{{ .Detail }}</span>{{ end }}</span>
+    </button>
+    {{- end }}
+  </div>
+  {{- else }}
+  <div class="plugin-view-notice info" role="status">{{ T "ai.identify.no_match" }}</div>
+  {{- end }}
+</div>
+{{ end }}

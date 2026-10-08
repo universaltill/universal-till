@@ -567,6 +567,27 @@ wizard draws `setup.wizard.steps` inline and read-only (no buttons or
 forms: the wizard runs before anyone signs in). Details:
 [`plugin-views.md` → Content slots](https://github.com/universaltill/ut-docs/blob/main/reference/plugin-views.md#content-slots).
 
+### Camera identify: `catalog.identify` (ADR-0121 §7)
+
+A plugin that recognises products from a photo subscribes to
+`catalog.identify` (hook it, and hold `events:receive`). The sell screen
+then shows core's own "Identify by camera" button and overlay (in place
+of the built-in AI one; if several plugins answer, the lexically first
+plugin id wins). The overlay posts one photo (JPEG, PNG or WebP, at most
+8 MiB) and the till runs `catalog.identify` as a **job** on your plugin:
+the payload is `{"upload_handles": [{"field": "photo", "handle", "filename",
+"size", "content_type"}], "locale", "job_id"}` — read the photo with
+`upload_open`/`upload_read` as above and report `job_progress` while you
+work. Answer with a document holding only `text`, `notice` and one
+`suggestions` component whose items use the `add_to_basket {sku, qty}`
+effect (qty 1–999, default 1); the cashier taps one to add it through the
+normal scan path. Anything else — another component, an `apply_fields`
+effect, a redirect or a job — is refused and the overlay says identify
+failed. `suggestions` is refused on your own plugin pages and slots: it
+only renders in a core seam. The cashier can close the overlay at any
+time; the job is then dropped. Format and limits:
+[`ut-docs/reference/plugin-views.md`](https://github.com/universaltill/ut-docs/blob/main/reference/plugin-views.md).
+
 ### Scheduled work (ADR-0121 §8)
 
 A wasm plugin has no background threads. For periodic work (a retry

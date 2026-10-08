@@ -39,6 +39,8 @@ type ViewComponent struct {
 	// Multipart: the form has a file field, so it posts
 	// multipart/form-data (ut-docs#3793).
 	Multipart bool
+	// suggestions (ut-docs#3873)
+	Suggestions []ViewSuggestion
 }
 
 type ViewTile struct{ Label, Value string }
@@ -132,6 +134,8 @@ func (d *Document) Prepare(locale string) View {
 					vc.Multipart = true
 				}
 			}
+		case "suggestions":
+			vc.Suggestions = prepareSuggestions(c.Suggestions, t)
 		}
 		v.Components = append(v.Components, vc)
 	}

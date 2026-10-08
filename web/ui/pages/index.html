@@ -390,7 +390,15 @@
       <button class="btn secondary tender-icon-btn" type="button" id="barcode-scan-open" hidden
               title="{{ T "scan.camera.button" }}" aria-label="{{ T "scan.camera.button" }}">
         <span class="btn-ico" aria-hidden="true">{{ icon "scan-barcode" }}</span></button>
-      {{ if .aiIdentify }}
+      {{ if .pluginIdentify }}
+      <!-- ut-docs#3873: a plugin answers catalog.identify (ADR-0121 §7
+           seam) — core's own identify button, same look and label as the
+           built-in AI one, which then steps aside (one camera-identify
+           button). Rendered hidden; app.js unhides it. -->
+      <button class="btn secondary tender-icon-btn" type="button" id="plugin-identify-open" hidden
+              title="{{ T "ai.identify.button" }}" aria-label="{{ T "ai.identify.button" }}">
+        <span class="btn-ico" aria-hidden="true">{{ icon "camera" }}</span></button>
+      {{ else if .aiIdentify }}
       <!-- ut-docs#1859: was a bare 📷 emoji (platform-color-emoji-font
            risk, guard-emoji-font.sh's class of problem) -- an explicit
            aria-label is added here (unlike title alone) to match the
@@ -1147,7 +1155,32 @@
 {{/* ut-docs#3710: the guided tour's steps (web/ui/partials/tour.html). */}}
 {{ template "tour" . }}
 
-{{ if .aiIdentify }}
+{{ if .pluginIdentify }}
+<!-- Plugin camera identify (ADR-0121 §7 catalog.identify seam,
+     ut-docs#3873): a plain fixed overlay, never a modal, so the status bar
+     stays live. The photo runs as a plugin job; the poll and the plugin's
+     suggestions (web/ui/partials/identify_suggestions.html) land in
+     #plugin-identify-results. Closing it drops the job. Message strings
+     ride on data-* so app.js stays locale-free. -->
+<div id="plugin-identify-overlay" class="ai-identify-overlay" hidden
+     data-msg-error="{{ T "ai.identify.error" }}"
+     data-msg-camera-error="{{ T "ai.identify.camera_error" }}"
+     data-msg-camera-busy="{{ T "ai.identify.camera_busy" }}"
+     data-msg-camera-not-found="{{ T "ai.identify.camera_not_found" }}"
+     data-msg-camera-permission-denied="{{ T "ai.identify.camera_permission_denied" }}">
+  <div class="ai-identify-panel">
+    <h3>{{ T "ai.identify.title" }}</h3>
+    <video id="plugin-identify-video" class="camera-overlay-video" autoplay playsinline muted></video>
+    <div id="plugin-identify-results" class="plugin-identify-results"></div>
+    <div id="plugin-identify-status" class="ai-identify-status" aria-live="polite"></div>
+    <div class="ai-identify-controls">
+      <button type="button" class="btn primary" id="plugin-identify-capture">{{ T "ai.identify.capture" }}</button>
+      <button type="button" class="btn secondary" id="plugin-identify-retake" hidden>{{ T "ai.identify.retake" }}</button>
+      <button type="button" class="btn secondary" id="plugin-identify-close">{{ T "ai.identify.close" }}</button>
+    </div>
+  </div>
+</div>
+{{ else if .aiIdentify }}
 <!-- Camera identify (assistive; opened on demand, never blocks checkout).
      Message strings ride on data-* so app.js stays locale-free. -->
 <div id="ai-identify-overlay" class="ai-identify-overlay" hidden

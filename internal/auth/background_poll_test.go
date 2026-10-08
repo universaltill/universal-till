@@ -160,6 +160,40 @@ var dynamicPollURLs = map[string][]string{
 var requestPollers = map[string]string{
 	// A running plugin job's poll (ADR-0121 §8, ut-docs#3908).
 	"web/ui/partials/pluginview/poll.html": "/plugin/demo?_job=0123456789abcdef0123456789abcdef",
+	// The sell screen's catalog.identify job poll (ut-docs#3873).
+	"web/ui/partials/identify_suggestions.html": "/api/pos/identify/plugin?_job=0123456789abcdef0123456789abcdef",
+}
+
+// TestIdentifyJobPollNeverExtendsTheSession: the sell screen's identify
+// overlay polls its plugin job every second (ut-docs#3873); like a plugin
+// page's job poll it must not keep an untouched till signed in. Posting the
+// photo is a real action and still does.
+func TestIdentifyJobPollNeverExtendsTheSession(t *testing.T) {
+	db, h, token := pollRig(t)
+	setLastSeen(t, db, 9*time.Minute)
+	for i := 0; i < 3; i++ {
+		if rec := htmxGet(h, requestPollers["web/ui/partials/identify_suggestions.html"], token); rec.Code != http.StatusOK {
+			t.Fatalf("identify poll: got %d, want 200", rec.Code)
+		}
+	}
+	if ago := lastSeenAgo(t, db); ago < 9*time.Minute-5*time.Second {
+		t.Fatalf("an identify job poll extended the session: last_seen %v ago, want ~9m", ago)
+	}
+	for _, p := range []string{"/api/pos/identify/plugin", "/api/pos/identify?_job=x", "/api/pos/identify/plugin/x?_job=x"} {
+		setLastSeen(t, db, 9*time.Minute)
+		htmxGet(h, p, token)
+		if ago := lastSeenAgo(t, db); ago > time.Minute {
+			t.Errorf("%s is a real request but did not extend the session (last_seen %v ago)", p, ago)
+		}
+	}
+	setLastSeen(t, db, 9*time.Minute)
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/identify/plugin?_job=x", nil)
+	req.Header.Set("HX-Request", "true")
+	req.AddCookie(&http.Cookie{Name: CookieName, Value: token})
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if ago := lastSeenAgo(t, db); ago > time.Minute {
+		t.Errorf("posting the identify photo is a real action but did not extend the session (last_seen %v ago)", ago)
+	}
 }
 
 // TestPluginJobPollNeverExtendsTheSession: a plugin job's 1 s poll

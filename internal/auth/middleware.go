@@ -375,13 +375,22 @@ func backgroundPoll(path string) bool { return backgroundPollPaths[path] }
 // pluginJobPoll reports whether r is a plugin job's poll (ADR-0121 §8,
 // ut-docs#3908): a GET/HEAD of a plugin page route carrying _job, sent by
 // core's poll component about every second. Its path is the plugin's own
-// route, so it is matched per request rather than listed above.
+// route, so it is matched per request rather than listed above. The sell
+// screen's catalog.identify overlay polls its job the same way on core's
+// own seam route (ut-docs#3873).
 func pluginJobPoll(r *http.Request) bool {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		return false
 	}
-	return strings.HasPrefix(r.URL.Path, "/plugin/") && r.URL.Query().Has("_job")
+	if !r.URL.Query().Has("_job") {
+		return false
+	}
+	return strings.HasPrefix(r.URL.Path, "/plugin/") || r.URL.Path == identifyJobPollPath
 }
+
+// identifyJobPollPath is the catalog.identify seam's job poll route
+// (internal/pages/plugin_identify.go).
+const identifyJobPollPath = "/api/pos/identify/plugin"
 
 // Display boards (ut-docs#2935): screens meant to be watched rather than
 // touched — the order-status board (/orders) and the per-station kitchen
