@@ -643,3 +643,29 @@ export async function openPhoneDrawer(page: Page) {
     await expect.poll(() => page.locator('#nav-drawer').evaluate((el) => getComputedStyle(el).transform)).toBe('none');
   }
 }
+
+// ut-docs#3247: the state of the page-wide #pos-alert banner as it stood
+// right after the request to `pathFragment` finished (htmx:afterRequest).
+// Asserting on the live element is racy: app.js's self-heal hides the
+// banner on the next unrelated 2xx (status poll), so a banner the card
+// wrongly left up can vanish before the assertion polls. Call BEFORE
+// page.goto; returns a getter for `{ hidden }` (null until the request ran).
+export async function recordAlertAfterRequest(page: Page, pathFragment: string) {
+  await page.addInitScript((frag) => {
+    document.addEventListener('DOMContentLoaded', () => {
+      document.body.addEventListener('htmx:afterRequest', (ev: any) => {
+        const p = (ev.detail && ev.detail.pathInfo && (ev.detail.pathInfo.finalRequestPath || ev.detail.pathInfo.requestPath)) || '';
+        if (p.indexOf(frag) === -1) return;
+        // Read synchronously: inline-actions.js runs data-after-request in
+        // the capture phase on document, so it has already finished here,
+        // and no later 2xx can have self-healed the banner yet.
+        const box = document.getElementById('pos-alert');
+        (window as any).__alertAfter = { hidden: !box || box.hidden };
+      });
+    });
+  }, pathFragment);
+  return async (): Promise<boolean> => {
+    await page.waitForFunction(() => (window as any).__alertAfter !== undefined);
+    return page.evaluate(() => (window as any).__alertAfter.hidden);
+  };
+}

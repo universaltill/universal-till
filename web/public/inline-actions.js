@@ -156,6 +156,18 @@
     var line = saveErrorLine(saveErrorAnchor(carrier));
     if (line) line.remove();
   }
+  // ut-docs#3247: app.js's htmx:responseError raises the generic page-wide
+  // "server error" alert (#pos-alert) for every non-2xx. A step that has put
+  // the server's own specific reason on screen takes it back down — but only
+  // while it is still that generic message, never another alert (a network
+  // error, a caller's own text) that happens to be showing.
+  function hideGenericServerAlert() {
+    var alertBox = byId('pos-alert');
+    var alertText = alertBox && alertBox.querySelector('.notice-text');
+    if (alertBox && !alertBox.hidden && alertText && alertText.textContent === (alertBox.dataset.msgServer || '')) {
+      alertBox.hidden = true;
+    }
+  }
 
   // name -> function(ctx, arg, args). ctx = { el, event, detail }.
   // Returning false (guards only) skips the rest of the chain.
@@ -229,9 +241,14 @@
     'clear-value': function (ctx, id) { var el = byId(id); if (el) el.value = ''; },
     'set-value': function (ctx, arg, args) { var el = byId(args[0]); if (el) el.value = args.length > 1 ? args[1] : ''; },
     // A failed request's body as the message (store name, staff languages).
+    // ut-docs#3247: a non-empty reason supersedes the generic "server error"
+    // alert app.js raised for the same non-2xx; an empty body leaves it up
+    // (the operator has nothing else to read).
     'text-response': function (ctx, id) {
       var el = byId(id), x = xhrOf(ctx);
-      if (el) el.textContent = (x && x.responseText) || '';
+      var text = (x && x.responseText) || '';
+      if (el) el.textContent = text;
+      if (el && text.trim()) hideGenericServerAlert();
     },
     // ut-docs#2982: a failed Settings save. A refusal the server marked
     // X-UT-Response: refused (httpx.RefuseText — already translated, meant
@@ -266,11 +283,7 @@
       if (banner) banner.hidden = true;
       // app.js's htmx:responseError already raised the generic "server
       // error" alert for this non-2xx; the specific reason supersedes it.
-      var alertBox = byId('pos-alert');
-      var alertText = alertBox && alertBox.querySelector('.notice-text');
-      if (alertBox && !alertBox.hidden && alertText && alertText.textContent === (alertBox.dataset.msgServer || '')) {
-        alertBox.hidden = true;
-      }
+      hideGenericServerAlert();
     },
     // The carrier's own data-error-text into #id (category popup tiles).
     'error-text': function (ctx, id) {

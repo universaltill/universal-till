@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, recordAlertAfterRequest } from './helpers';
 
 // ut-docs#3308: renaming this till to a name another till in the shop
 // already uses comes back 422 with the translated reason, which shows next
@@ -13,6 +13,7 @@ test('settings: a till name already in use is refused inline', async ({ page }) 
   await page.route('**/api/settings/till-name', (r) => r.fulfill({
     status: 422, contentType: 'text/plain; charset=utf-8', body: reason + '\n',
   }));
+  const alertHiddenAfter = await recordAlertAfterRequest(page, '/api/settings/till-name');
   await page.goto('/settings?lang=en#settings-tills');
   const tn = page.locator('#settings-till-name-region');
   await tn.locator('input[name="name"]').fill('Terrace 3308');
@@ -22,6 +23,9 @@ test('settings: a till name already in use is refused inline', async ({ page }) 
   ]);
   await expect(page.locator('#till-name-msg')).toContainText(reason);
   await expect(page.locator('#settings-save-error')).toBeHidden();
+  // ut-docs#3247: nor the page-wide generic server-error banner.
+  expect(await alertHiddenAfter()).toBe(true);
+  await expect(page.locator('#pos-alert')).toBeHidden();
   await expect(tn.locator('input[name="name"]')).toHaveValue('Terrace 3308');
   assertClean();
 });
