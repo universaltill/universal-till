@@ -23,9 +23,11 @@ func wasmConcurrencyLimits(goos string) (perPlugin, global int) {
 // point and "fiscal.sign.*" (plus ".refund", the payment gate's other
 // half). The export/import data transfers are ".ask" by name but run for
 // up to 30 s / 5 min; they are job-like work, and letting them hold the
-// reserved slot would defeat it, so they stay ordinary.
+// reserved slot would defeat it, so they stay ordinary. So do the "ui.*"
+// asks (ui.view.ask / ui.action.ask, ut-docs#3160): ADR-0121 §2 says
+// "ui.* calls ... never take a reserved slot".
 func isSalePathEvent(eventType string) bool {
-	if isExportClassEvent(eventType) || isImportClassEvent(eventType) {
+	if strings.HasPrefix(eventType, "ui.") || isExportClassEvent(eventType) || isImportClassEvent(eventType) {
 		return false
 	}
 	return strings.HasSuffix(eventType, ".ask") ||

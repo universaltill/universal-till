@@ -2307,6 +2307,10 @@ type PageEntryRow struct {
 	Label         string
 	Route         string
 	ConfigJSON    string
+	// View is the plugin view document this page renders (ADR-0121 §7,
+	// ut-docs#3160), unpacked from config_json's "view" key; "" for a
+	// static/content page.
+	View string
 }
 
 // ListPageEntries returns active page entries from active plugins.
@@ -2334,6 +2338,15 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 		var row PageEntryRow
 		if err := rows.Scan(&row.PluginID, &row.PluginName, &row.PluginVersion, &row.EntryKey, &row.Label, &row.Route, &row.ConfigJSON); err != nil {
 			return nil, pluginObs.wrap("list_page_entries", err)
+		}
+		if row.ConfigJSON != "" {
+			// A malformed blob just means "no view" (a static page).
+			var cfg struct {
+				View string `json:"view"`
+			}
+			if json.Unmarshal([]byte(row.ConfigJSON), &cfg) == nil {
+				row.View = cfg.View
+			}
 		}
 		res = append(res, row)
 	}

@@ -166,11 +166,15 @@ type ManifestEntry struct {
 // nothing to persist (matches the previous behaviour for config-less
 // entries). Used by both PersistManifest and Rollback so the two persist
 // paths cannot drift.
+//
+// ADR-0121 §7 (ut-docs#3160): View is folded under "view" (read back as
+// data.PageEntryRow.View) and Slot under "content_slot" -- not "slot",
+// which is a layout entry's own config key (uislot.ParseAmendmentsJSON).
 func entryConfigJSON(e ManifestEntry) string {
-	if len(e.Config) == 0 && len(e.Entities) == 0 && len(e.FileFormats) == 0 {
+	if len(e.Config) == 0 && len(e.Entities) == 0 && len(e.FileFormats) == 0 && e.View == "" && e.Slot == "" {
 		return ""
 	}
-	m := make(map[string]interface{}, len(e.Config)+2)
+	m := make(map[string]interface{}, len(e.Config)+4)
 	for k, v := range e.Config {
 		m[k] = v
 	}
@@ -179,6 +183,12 @@ func entryConfigJSON(e ManifestEntry) string {
 	}
 	if len(e.FileFormats) > 0 {
 		m["file_formats"] = e.FileFormats
+	}
+	if e.View != "" {
+		m["view"] = e.View
+	}
+	if e.Slot != "" {
+		m["content_slot"] = e.Slot
 	}
 	b, _ := json.Marshal(m)
 	return string(b)

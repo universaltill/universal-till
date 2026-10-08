@@ -345,7 +345,26 @@ func FormatMoneyDisplay(minor int64, locale string) string {
 }
 
 func formatMoney(minor int64, locale string, digitShape bool) string {
-	c := ActiveCurrency()
+	return formatMoneyCurrency(minor, ActiveCurrency(), locale, digitShape)
+}
+
+// FormatMoneyIn is FormatMoney in a named currency rather than the active
+// one -- for an amount that carries its own ISO-4217 code (a plugin view's
+// money cell, ADR-0121 §7, ut-docs#3160). An unknown code renders as
+// "CODE 1.23" (CurrencyByCode's fallback).
+func FormatMoneyIn(minor int64, code, locale string) string {
+	return formatMoneyCurrency(minor, CurrencyByCode(code), locale, true)
+}
+
+// FormatDecimal renders a plain decimal string ("-1234.5", digits with one
+// optional leading '-' and one optional '.') with locale's grouping,
+// decimal separator and digit shape -- no float round-trip. A plugin view's
+// number cell (ut-docs#3160); the caller validates the grammar.
+func FormatDecimal(plain, locale string) string {
+	return LocalizeDigits(formatGrouped(plain, locale), locale)
+}
+
+func formatMoneyCurrency(minor int64, c CurrencyInfo, locale string, digitShape bool) string {
 	neg := minor < 0
 	if neg {
 		minor = -minor

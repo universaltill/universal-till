@@ -1,0 +1,49 @@
+{{/* ADR-0121 §7 (ut-docs#3160): actions and forms. Each posts _action to
+     .Route (the entry's own route) -- hx-post swaps the answer into
+     #plugin-view; without JS the plain form post renders the whole page.
+     Typed fields carry a _kind.<name> hidden input so core can read the
+     post without the original document (pluginview.DecodeForm). */}}
+{{ define "pluginview_action" }}
+<form class="plugin-view-action" method="post" action="{{ .Route }}" hx-post="{{ .Route }}" hx-target="#plugin-view" hx-swap="innerHTML">
+  <input type="hidden" name="_action" value="{{ .Action }}">
+  <button type="submit" class="btn btn-touch {{ .Style }}">{{ .Label }}</button>
+</form>
+{{ end }}
+
+{{ define "pluginview_form" }}
+{{- $c := .C }}
+<form class="card plugin-view-form" method="post" action="{{ .Route }}" hx-post="{{ .Route }}" hx-target="#plugin-view" hx-swap="innerHTML">
+  <input type="hidden" name="_action" value="{{ $c.Action }}">
+  {{- range $c.Fields }}
+  {{- if eq .Kind "toggle" }}
+  <input type="hidden" name="_kind.{{ .Name }}" value="toggle">
+  <label class="field-checks"><input type="checkbox" name="{{ .Name }}" value="true"{{ if .Checked }} checked{{ end }}> {{ .Label }}</label>
+  {{- else if eq .Kind "select" }}
+  <label>{{ .Label }}
+    <select name="{{ .Name }}"{{ if .Required }} required{{ end }}>
+      {{- range .Options }}<option value="{{ .Value }}"{{ if .Selected }} selected{{ end }}>{{ .Label }}</option>{{ end }}
+    </select>
+  </label>
+  {{- else if eq .Kind "money" }}
+  <input type="hidden" name="_kind.{{ .Name }}" value="money">
+  <label>{{ .Label }}
+    <input type="text" name="{{ .Name }}" value="{{ .Value }}" inputmode="decimal" autocomplete="off" {{ moneypatternlocal currency.Decimals false }} {{ moneyplaceholderlocal currency.Decimals 0 }}{{ if .Required }} required{{ end }}>
+  </label>
+  {{- else if eq .Kind "number" }}
+  <input type="hidden" name="_kind.{{ .Name }}" value="number">
+  <label>{{ .Label }}
+    <input type="text" name="{{ .Name }}" value="{{ .Value }}" inputmode="decimal" autocomplete="off" pattern="-?[0-9]+([.,][0-9]+)?"{{ if .Required }} required{{ end }}>
+  </label>
+  {{- else if eq .Kind "secret" }}
+  <label>{{ .Label }}
+    <input type="password" name="{{ .Name }}" value="" autocomplete="off"{{ if .Required }} required{{ end }}>
+  </label>
+  {{- else }}
+  <label>{{ .Label }}
+    <input type="text" name="{{ .Name }}" value="{{ .Value }}" autocomplete="off"{{ if .Required }} required{{ end }}>
+  </label>
+  {{- end }}
+  {{- end }}
+  <button type="submit" class="btn btn-touch primary">{{ $c.Submit }}</button>
+</form>
+{{ end }}

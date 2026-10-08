@@ -498,6 +498,23 @@ func (p *MyPlugin) LoadToken() (string, error) {
 }
 ```
 
+### Plugin view pages (ADR-0121 §7)
+
+A plugin page should not ship HTML. Give the `page` entry a `view`, hold
+`ui:page` and `events:receive`, and hook `ui.view.ask` and
+`ui.action.ask`. Answer each with a JSON **view document** built from the
+till's fixed components (`heading`, `text`, `notice`, `stat_tiles`,
+`table`, `list`, `empty_state`, `button`, `form`). The till draws it with
+its own templates in the operator's language and layout (RTL included).
+Money is sent as integer minor units plus currency. Text is a key from
+your own `locales/*.json`, or a literal the till escapes. Buttons and
+forms post an action name back to your entry's route. You never supply a
+URL, script or style. A slow, broken or invalid answer shows an
+"unavailable" notice and blocks nothing else.
+
+The format, limits and payloads are in
+[`ut-docs/reference/plugin-views.md`](https://github.com/universaltill/ut-docs/blob/main/reference/plugin-views.md).
+
 ---
 
 ## Testing

@@ -1,0 +1,31 @@
+{{/* ADR-0121 §7 (ut-docs#3160; format: ut-docs reference/plugin-views.md):
+     the v1 plugin view vocabulary. Every value here is a plain string from
+     pluginview.View -- html/template escapes it; nothing is marked safe.
+     Every form/hx-* target is .Route, the entry's own route, set by core;
+     a plugin never supplies a URL. pluginview_body is also the fragment an
+     htmx action swaps into #plugin-view. */}}
+{{ define "pluginview_body" }}
+{{- if .Unavailable }}
+<div class="plugin-view-notice warn" role="status">{{ T "plugin.view.unavailable" }}</div>
+{{- else }}
+{{- if .View.Title }}<h2 class="plugin-view-title">{{ .View.Title }}</h2>{{ end }}
+{{- $route := .Route }}
+{{- range .View.Components }}
+{{- if eq .Type "heading" }}<h2 class="plugin-view-heading">{{ .Text }}</h2>
+{{- else if eq .Type "text" }}<p class="plugin-view-text">{{ .Text }}</p>
+{{- else if eq .Type "notice" }}<div class="plugin-view-notice {{ .Level }}" role="{{ if eq .Level "error" }}alert{{ else }}status{{ end }}">{{ .Text }}</div>
+{{- else if eq .Type "stat_tiles" }}{{ template "pluginview_stat_tiles" . }}
+{{- else if eq .Type "table" }}{{ template "pluginview_table" . }}
+{{- else if eq .Type "list" }}<ul class="card plugin-view-list">{{ range .Items }}<li>{{ . }}</li>{{ end }}</ul>
+{{- else if eq .Type "empty_state" }}
+<div class="card plugin-view-empty">
+  <h2>{{ .Title }}</h2>
+  {{- if .Text }}<p class="muted">{{ .Text }}</p>{{ end }}
+  {{- if .Action }}{{ template "pluginview_action" (dict "Route" $route "Action" .Action "Label" .Label "Style" "primary") }}{{ end }}
+</div>
+{{- else if eq .Type "button" }}{{ template "pluginview_action" (dict "Route" $route "Action" .Action "Label" .Label "Style" .Style) }}
+{{- else if eq .Type "form" }}{{ template "pluginview_form" (dict "Route" $route "C" .) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{ end }}
