@@ -4,16 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
@@ -172,3 +175,132 @@ type emptyKV struct{}
 func (emptyKV) Get(context.Context, string) (string, bool, error)            { return "", false, nil }
 func (emptyKV) Set(context.Context, string, string) error                    { return nil }
 func (emptyKV) GetOrCreate(_ context.Context, _, def string) (string, error) { return def, nil }
+
+// ut-docs#3651: an unpaid till still on the legacy shared token gets its
+// ADR-0116 D4 credential inside the sync's 402 plan_required too —
+// otherwise the legacy token's retirement strands it on 401 token_retired.
+// pushSync keeps it (same rules as on a 200) and still fails the tick with
+// the 402 exactly as before; the token never reaches the error text or the
+// log.
+
+// planRequiredSyncCloud answers every /v1/stores/sync with a 402
+// plan_required carrying the entitlement block and, when set, the rotation
+// fields beside it.
+func planRequiredSyncCloud(t *testing.T, deviceID, deviceToken string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		d := map[string]any{"entitlement": json.RawMessage(planRequiredBlock)}
+		if deviceID != "" || deviceToken != "" {
+			d["device_id"], d["device_token"] = deviceID, deviceToken
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "3600")
+		w.WriteHeader(http.StatusPaymentRequired)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data":  d,
+			"error": map[string]string{"code": "plan_required", "message": "cloud sync needs an active plan"},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// assertSync402 checks pushSync failed exactly as a 402 always has: a
+// plan_required statusError with its Retry-After, the entitlement block
+// cached, and the unchanged error text.
+func assertSync402(t *testing.T, settings *data.SettingsRepo, err error) {
+	t.Helper()
+	se, ok := planRequired(err)
+	if !ok {
+		t.Fatalf("pushSync err = %v, want the 402 plan_required", err)
+	}
+	if se.RetryAfter != time.Hour {
+		t.Fatalf("RetryAfter = %v, want 1h", se.RetryAfter)
+	}
+	if want := "cloudsync: /v1/stores/sync returned 402"; err.Error() != want {
+		t.Fatalf("Error() = %q, want the unchanged %q", err.Error(), want)
+	}
+	if v, ok, _ := settings.Get(context.Background(), entitlement.KeyPlan); !ok || v != "local" {
+		t.Fatalf("%s = %q (set=%v), want the 402's block cached", entitlement.KeyPlan, v, ok)
+	}
+}
+
+func TestPushSync402_RotatedCredentialIsKept(t *testing.T) {
+	var logs bytes.Buffer
+	var logMu sync.Mutex
+	restore := logging.CaptureForTest(writerFunc(func(p []byte) (int, error) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		return logs.Write(p)
+	}))
+	defer restore()
+
+	srv := planRequiredSyncCloud(t, rotOwnDeviceID, rotDeviceToken)
+	cfg, d := bootEnrolledTill(t, srv.URL)
+	settings := data.NewSettingsRepo(d.DB)
+	ctx := context.Background()
+
+	_, err := pushSync(ctx, cfg, settings, buildSyncRequest(ctx, cfg, settings, Hooks{}))
+	assertSync402(t, settings, err)
+	if v, _, _ := settings.Get(ctx, "marketplace.token"); v != rotDeviceToken {
+		t.Fatalf("marketplace.token = %q, want the 402's rotated credential persisted", v)
+	}
+	if got := enroll.Effective(cfg).Marketplace.MerchantToken; got != rotDeviceToken {
+		t.Fatalf("effective token = %q, want the rotated credential for the next request", got)
+	}
+	if strings.Contains(err.Error(), rotDeviceToken) || strings.Contains(fmt.Sprintf("%v %+v %#v", err, err, err), rotDeviceToken) {
+		t.Fatal("the rotated credential is in the 402 error")
+	}
+	logMu.Lock()
+	defer logMu.Unlock()
+	if strings.Contains(logs.String(), rotDeviceToken) {
+		t.Fatalf("the rotated credential reached the log:\n%s", logs.String())
+	}
+}
+
+func TestPushSync402_CredentialForAnotherDeviceIsIgnored(t *testing.T) {
+	srv := planRequiredSyncCloud(t, "till-someone-else", rotDeviceToken)
+	cfg, d := bootEnrolledTill(t, srv.URL)
+	settings := data.NewSettingsRepo(d.DB)
+	ctx := context.Background()
+
+	_, err := pushSync(ctx, cfg, settings, buildSyncRequest(ctx, cfg, settings, Hooks{}))
+	assertSync402(t, settings, err)
+	if v, _, _ := settings.Get(ctx, "marketplace.token"); v != rotLegacyToken {
+		t.Fatalf("marketplace.token = %q, want the legacy token untouched", v)
+	}
+}
+
+func TestPushSync402_WithoutRotationFieldsIsUnchanged(t *testing.T) {
+	srv := planRequiredSyncCloud(t, "", "")
+	cfg, d := bootEnrolledTill(t, srv.URL)
+	settings := data.NewSettingsRepo(d.DB)
+	ctx := context.Background()
+
+	_, err := pushSync(ctx, cfg, settings, buildSyncRequest(ctx, cfg, settings, Hooks{}))
+	assertSync402(t, settings, err)
+	if v, _, _ := settings.Get(ctx, "marketplace.token"); v != rotLegacyToken {
+		t.Fatalf("marketplace.token = %q, want the legacy token untouched", v)
+	}
+}
+
+// Only the sync applies it: post (every other endpoint's path) hands back
+// no body on a 402, so a credential in another endpoint's refusal can never
+// be kept, and the error carries none of it.
+func TestPost402_OtherEndpointNeverAppliesCredential(t *testing.T) {
+	srv := planRequiredSyncCloud(t, rotOwnDeviceID, rotDeviceToken)
+	cfg, d := bootEnrolledTill(t, srv.URL)
+	settings := data.NewSettingsRepo(d.DB)
+	ctx := context.Background()
+
+	body, err := post(ctx, cfg, salesAggregatePath, []byte("{}"))
+	if _, ok := planRequired(err); !ok || body != nil {
+		t.Fatalf("post = (%q, %v), want (nil, a 402)", body, err)
+	}
+	if strings.Contains(fmt.Sprintf("%v %+v %#v", err, err, err), rotDeviceToken) {
+		t.Fatal("the rotated credential is in another endpoint's 402 error")
+	}
+	if v, _, _ := settings.Get(ctx, "marketplace.token"); v != rotLegacyToken {
+		t.Fatalf("marketplace.token = %q, want the legacy token untouched", v)
+	}
+}

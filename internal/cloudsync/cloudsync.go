@@ -1264,8 +1264,16 @@ func pushSync(ctx context.Context, cfg *config.Config, settings *data.SettingsRe
 		"store_id": req.storeID,
 		"devices":  req.devices,
 	})
-	body, err := post(ctx, cfg, "/v1/stores/sync", payload)
+	body, err := postBody(ctx, cfg, "/v1/stores/sync", payload)
 	if err != nil {
+		if _, ok := planRequired(err); ok {
+			// ut-docs#3651: an unpaid till still on the legacy shared token
+			// gets its ADR-0116 D4 credential inside the 402 too, so the
+			// legacy token's retirement can't strand it on 401
+			// token_retired. Same rules as a 200's; the tick still fails
+			// with the 402 below.
+			applyPlanRequiredCredential(ctx, settings, body)
+		}
 		cachePlanRequired(ctx, settings, err)
 		return nil, err
 	}
@@ -1347,6 +1355,35 @@ func planRequiredEntitlement(body []byte) json.RawMessage {
 		return nil
 	}
 	return env.Data.Entitlement
+}
+
+// applyPlanRequiredCredential keeps ADR-0116 D4's one-time rotated
+// credential (data.device_id + data.device_token) from the sync's 402
+// plan_required body (ut-docs#3651) through enroll.ApplyRotatedCredential,
+// with pushSync's 200 rules: only for this till's own device id, never over
+// an env-pinned token, never failing the tick. Bounded like
+// planRequiredEntitlement. A body without the fields (an older cloud's 402,
+// a proxy's page) touches nothing — not even ApplyRotatedCredential's
+// retry of an unsaved credential, which planUnpaidCheckin already runs
+// before every unpaid POST. The token lives only in this function's
+// locals: never logged, never on statusError.
+func applyPlanRequiredCredential(ctx context.Context, settings *data.SettingsRepo, body []byte) {
+	if settings == nil {
+		return
+	}
+	if len(body) > cloudErrorMaxBytes {
+		body = body[:cloudErrorMaxBytes]
+	}
+	var env struct {
+		Data struct {
+			DeviceID    string `json:"device_id"`
+			DeviceToken string `json:"device_token"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &env) != nil || (env.Data.DeviceID == "" && env.Data.DeviceToken == "") {
+		return
+	}
+	enroll.ApplyRotatedCredential(ctx, settings, env.Data.DeviceID, env.Data.DeviceToken)
 }
 
 // planRequired reports whether err is the cloud's 402 refusal of the
@@ -1657,6 +1694,21 @@ func postResult(ctx context.Context, cfg *config.Config, directiveID, status, ms
 }
 
 func post(ctx context.Context, cfg *config.Config, path string, payload []byte) ([]byte, error) {
+	body, err := postBody(ctx, cfg, path, payload)
+	if err != nil {
+		// A non-200's body stays here: only pushSync reads a 402's
+		// (ut-docs#3651's rotated credential), so no other endpoint can
+		// ever apply one.
+		return nil, err
+	}
+	return body, nil
+}
+
+// postBody is post that also hands back a non-200's body beside its
+// *statusError — for pushSync alone, which reads the rotated credential a
+// sync 402 plan_required may carry (ut-docs#3651). The body can hold a
+// secret: it is never put on the error. Every other caller uses post.
+func postBody(ctx context.Context, cfg *config.Config, path string, payload []byte) ([]byte, error) {
 	eff := enroll.Effective(cfg)
 	m := eff.Marketplace
 	url := strings.TrimRight(m.EndpointURL, "/") + path
@@ -1685,7 +1737,7 @@ func post(ctx context.Context, cfg *config.Config, path string, payload []byte) 
 		case http.StatusPaymentRequired:
 			se.Entitlement = planRequiredEntitlement(buf.Bytes())
 		}
-		return nil, se
+		return buf.Bytes(), se
 	}
 	return buf.Bytes(), nil
 }
