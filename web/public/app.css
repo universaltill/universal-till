@@ -6430,6 +6430,8 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
    line below its checkbox; the text wraps inside its own flex item instead. */
 .plugin-view-form label.field-checks { flex-wrap: nowrap; min-block-size: 46px; margin: 0; cursor: pointer; }
 .plugin-view-form label.field-checks > input[type="checkbox"] { flex: none; inline-size: 1.25rem; block-size: 1.25rem; margin: 0; }
+/* A file field (ut-docs#3793): the picker button at the 46px touch floor. */
+.plugin-view-form input[type="file"] { min-block-size: 46px; max-inline-size: 100%; }
 .plugin-view-action { margin: 0; }
 /* A running job's poll (ADR-0121 §8, ut-docs#3908): message, bar, and a
    plain refresh link at the 46px touch floor (the no-JS fallback). */

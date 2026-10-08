@@ -1068,6 +1068,12 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 		return err
 	}
 
+	// 0i. A page entry's config.upload_max_mb (ut-docs#3793) is an integer
+	// 1..MaxUploadMaxMB.
+	if err := validatePageEntryUploads(m.Entries); err != nil {
+		return err
+	}
+
 	// 0d. fiscal.sign.ask is an `exclusive` extension point (ADR-0041
 	// Decision B): a manifest declaring it while a DIFFERENT active plugin
 	// already holds the point must be rejected here, loudly, on BOTH

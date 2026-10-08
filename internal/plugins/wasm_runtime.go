@@ -298,6 +298,8 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			// ... nor a staged import file — CloseAll here also removes
 			// the temp file from disk (ut-docs#599).
 			importFiles.CloseAll(id)
+			// ... nor a plugin view upload (ut-docs#3793).
+			uploads.CloseAll(id)
 		}
 	}
 	for id := range active {
@@ -644,6 +646,9 @@ func (w *WasmRuntime) load(pluginID, version, path string) error {
 		// meaningless to it regardless — close them here, at the one place
 		// that actually knows a reload (not just a drop) just happened.
 		tcpConns.CloseAll(pluginID)
+		// Staged plugin view uploads belong to the old module's asks and
+		// jobs too (ut-docs#3793).
+		uploads.CloseAll(pluginID)
 	}
 	w.modules[pluginID] = compiled
 	w.versions[pluginID] = version

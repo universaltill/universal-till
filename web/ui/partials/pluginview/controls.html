@@ -2,7 +2,8 @@
      .Route (the entry's own route) -- hx-post swaps the answer into
      #plugin-view; without JS the plain form post renders the whole page.
      Typed fields carry a _kind.<name> hidden input so core can read the
-     post without the original document (pluginview.DecodeForm). */}}
+     post without the original document (pluginview.DecodeForm). A form
+     with a file field posts multipart (ut-docs#3793). */}}
 {{ define "pluginview_action" }}
 <form class="plugin-view-action" method="post" action="{{ .Route }}" hx-post="{{ .Route }}" hx-target="#plugin-view" hx-swap="innerHTML">
   <input type="hidden" name="_action" value="{{ .Action }}">
@@ -12,7 +13,7 @@
 
 {{ define "pluginview_form" }}
 {{- $c := .C }}
-<form class="card plugin-view-form" method="post" action="{{ .Route }}" hx-post="{{ .Route }}" hx-target="#plugin-view" hx-swap="innerHTML">
+<form class="card plugin-view-form" method="post" action="{{ .Route }}" hx-post="{{ .Route }}" hx-target="#plugin-view" hx-swap="innerHTML"{{ if $c.Multipart }} enctype="multipart/form-data" hx-encoding="multipart/form-data"{{ end }}>
   <input type="hidden" name="_action" value="{{ $c.Action }}">
   {{- range $c.Fields }}
   {{- if eq .Kind "toggle" }}
@@ -33,6 +34,10 @@
   <input type="hidden" name="_kind.{{ .Name }}" value="number">
   <label>{{ .Label }}
     <input type="text" name="{{ .Name }}" value="{{ .Value }}" inputmode="decimal" autocomplete="off" pattern="-?[0-9]+([.,][0-9]+)?"{{ if .Required }} required{{ end }}>
+  </label>
+  {{- else if eq .Kind "file" }}
+  <label>{{ .Label }}
+    <input type="file" name="{{ .Name }}"{{ if .Required }} required{{ end }}>
   </label>
   {{- else if eq .Kind "secret" }}
   <label>{{ .Label }}

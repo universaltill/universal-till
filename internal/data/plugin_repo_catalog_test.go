@@ -313,3 +313,39 @@ func TestPluginRepo_ListPageEntries(t *testing.T) {
 		t.Fatalf("expected no page entries once plugin inactive, got %+v err=%v", rows, err)
 	}
 }
+
+// TestPluginRepo_ListPageEntriesUploadMaxMB_3793: a page entry's
+// config.upload_max_mb is read back as UploadMaxMB; absent, malformed or
+// out of range (a hand-edited row) reads as 0 — no uploads.
+func TestPluginRepo_ListPageEntriesUploadMaxMB_3793(t *testing.T) {
+	ctx := context.Background()
+	d := openMigratedDB(t, "till.db")
+	repo := NewPluginRepo(d.DB)
+	seedCatalogAndPlugin(t, ctx, repo, "com.t.up", "1.0.0")
+	if err := repo.ReplacePluginEntries(ctx, nil, "com.t.up", []PluginEntryRow{
+		{Type: "page", Key: "a", Label: "A", Route: "/plugin/up/a", ConfigJSON: `{"view":"up.a","upload_max_mb":8}`, SortOrder: 1},
+		{Type: "page", Key: "b", Label: "B", Route: "/plugin/up/b", ConfigJSON: `{"view":"up.b"}`, SortOrder: 2},
+		{Type: "page", Key: "c", Label: "C", Route: "/plugin/up/c", ConfigJSON: `{"view":"up.c","upload_max_mb":500}`, SortOrder: 3},
+		{Type: "page", Key: "d", Label: "D", Route: "/plugin/up/d", ConfigJSON: `{"view":"up.d","upload_max_mb":"8"}`, SortOrder: 4},
+		{Type: "page", Key: "e", Label: "E", Route: "/plugin/up/e", ConfigJSON: `{"view":"up.e","upload_max_mb":4.0}`, SortOrder: 5},
+		{Type: "page", Key: "f", Label: "F", Route: "/plugin/up/f", ConfigJSON: `{"view":"up.f","upload_max_mb":2.5}`, SortOrder: 6},
+	}); err != nil {
+		t.Fatalf("seed entries: %v", err)
+	}
+	rows, err := repo.ListPageEntries(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int{}
+	for _, r := range rows {
+		got[r.EntryKey] = r.UploadMaxMB
+	}
+	if got["a"] != 8 || got["b"] != 0 || got["c"] != 0 || got["d"] != 0 || got["e"] != 4 || got["f"] != 0 {
+		t.Fatalf("UploadMaxMB = %v, want a=8, e=4 (4.0 is an integer, as install accepts) and the rest 0", got)
+	}
+	for _, r := range rows {
+		if r.EntryKey == "d" && r.View != "up.d" {
+			t.Fatalf("a malformed upload_max_mb must not cost the entry its view (got View=%q)", r.View)
+		}
+	}
+}

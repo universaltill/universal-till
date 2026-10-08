@@ -140,20 +140,31 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 		}
 	case r.Method == http.MethodPost:
 		var sub pluginview.Submission
-		sub, err = readPluginViewForm(w, r)
+		var ups []pluginUpload
+		sub, ups, err = readPluginViewForm(w, r, entry)
 		if err != nil {
-			failStatus = http.StatusBadRequest
+			failStatus = pluginViewFormFailStatus(err)
 			break
 		}
+		// Staged uploads (ut-docs#3793) never outlive this ask — unless
+		// the answer is a job, which then owns them until it ends.
+		tokens := uploadTokens(ups)
+		jobOwnsUploads := false
+		defer func() {
+			if !jobOwnsUploads {
+				plugins.ReleaseUploads(entry.PluginID, tokens)
+			}
+		}()
 		var ans pluginview.ActionAnswer
 		var vctx pluginview.Context
 		var payload map[string]any
-		ans, vctx, payload, err = askPluginAction(r.Context(), d, entry, locale, sub)
+		ans, vctx, payload, err = askPluginAction(r.Context(), d, entry, locale, sub, ups)
 		switch {
 		case err != nil:
 		case ans.Job != "":
 			var id string
-			id, err = startPluginJob(r.Context(), d, entry, ans.Job, payload, vctx)
+			id, err = startPluginJob(r.Context(), d, entry, ans.Job, payload, vctx, tokens)
+			jobOwnsUploads = err == nil
 			switch {
 			case errors.Is(err, errPluginJobBusy):
 				err = nil
@@ -258,13 +269,20 @@ func pluginViewParams(r *http.Request) map[string]string {
 	return out
 }
 
-func readPluginViewForm(w http.ResponseWriter, r *http.Request) (pluginview.Submission, error) {
+// readPluginViewForm reads an action post: url-encoded, or multipart when
+// the form has a file field (readPluginViewMultipart, ut-docs#3793). The
+// uploads are never nil on success ([] without files).
+func readPluginViewForm(w http.ResponseWriter, r *http.Request, entry data.PageEntryRow) (pluginview.Submission, []pluginUpload, error) {
+	if isMultipartForm(r) {
+		return readPluginViewMultipart(w, r, entry)
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, pluginview.MaxFormBytes)
 	if err := r.ParseForm(); err != nil {
-		return pluginview.Submission{}, fmt.Errorf("read form: %w", err)
+		return pluginview.Submission{}, nil, fmt.Errorf("read form: %w", err)
 	}
 	c := httpx.ActiveCurrency()
-	return pluginview.DecodeForm(r.PostForm, c.Decimals, c.Code)
+	sub, err := pluginview.DecodeForm(r.PostForm, c.Decimals, c.Code)
+	return sub, []pluginUpload{}, err
 }
 
 // pluginViewContext is what the plugin's answer is validated against: its
@@ -301,17 +319,20 @@ func askPluginView(ctx context.Context, d *common.Deps, entry data.PageEntryRow,
 
 // askPluginAction asks ui.action.ask; it also returns the validation
 // context and the payload, which a job answer reuses (startPluginJob).
-func askPluginAction(ctx context.Context, d *common.Deps, entry data.PageEntryRow, locale string, sub pluginview.Submission) (pluginview.ActionAnswer, pluginview.Context, map[string]any, error) {
+func askPluginAction(ctx context.Context, d *common.Deps, entry data.PageEntryRow, locale string, sub pluginview.Submission, ups []pluginUpload) (pluginview.ActionAnswer, pluginview.Context, map[string]any, error) {
 	invalid := sub.Invalid
 	if invalid == nil {
 		invalid = []string{}
+	}
+	if ups == nil {
+		ups = []pluginUpload{}
 	}
 	payload := map[string]any{
 		"view":           entry.View,
 		"action":         sub.Action,
 		"form":           sub.Values,
 		"invalid":        invalid,
-		"upload_handles": []string{},
+		"upload_handles": ups,
 		"locale":         locale,
 	}
 	raw, vctx, err := askPluginUI(ctx, d, entry, pluginActionAskEvent, payload)
@@ -332,6 +353,8 @@ func askPluginUI(ctx context.Context, d *common.Deps, entry data.PageEntryRow, e
 	if err != nil {
 		return nil, vctx, err
 	}
+	// A file field is only valid on an entry that declared its size cap.
+	vctx.Uploads = entry.UploadMaxMB > 0
 	actx, cancel := context.WithTimeout(ctx, pluginViewTimeout)
 	defer cancel()
 	type result struct {

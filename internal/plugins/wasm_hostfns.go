@@ -154,6 +154,9 @@ func instantiateHostModule(ctx context.Context, rt wazero.Runtime) error {
 		NewFunctionBuilder().WithFunc(hostImportFileSize).Export("import_file_size").
 		NewFunctionBuilder().WithFunc(hostImportFileRead).Export("import_file_read").
 		NewFunctionBuilder().WithFunc(hostImportFileClose).Export("import_file_close").
+		NewFunctionBuilder().WithFunc(hostUploadOpen).Export("upload_open").
+		NewFunctionBuilder().WithFunc(hostUploadRead).Export("upload_read").
+		NewFunctionBuilder().WithFunc(hostUploadClose).Export("upload_close").
 		NewFunctionBuilder().WithFunc(hostHTTPOpen).Export("http_open").
 		NewFunctionBuilder().WithFunc(hostHTTPWrite).Export("http_write").
 		NewFunctionBuilder().WithFunc(hostHTTPStatus).Export("http_status").

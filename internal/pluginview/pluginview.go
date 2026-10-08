@@ -49,12 +49,19 @@ var (
 
 // Context is what the validator checks a document against: the answering
 // plugin's id (a job event must be in its namespace), its own locale keys
-// and its own page-entry routes.
+// and its own page-entry routes, and whether the entry accepts uploads.
 type Context struct {
 	PluginID  string
 	OwnKeys   map[string]bool
 	OwnRoutes []string
+	// Uploads: the entry declared config.upload_max_mb (ut-docs#3793), so
+	// its forms may have file fields.
+	Uploads bool
 }
+
+// ValidFieldName reports whether s is a valid form field name (a file
+// part's name must be one).
+func ValidFieldName(s string) bool { return nameRe.MatchString(s) }
 
 // MaxJobEventBytes caps a job answer's event name (the same bound
 // event_publish puts on a published type).
@@ -611,6 +618,15 @@ func (v *validator) form(where string, f *Form) {
 			if hasValue {
 				v.fail("%s is a secret field: its value is never sent to the page", w)
 			}
+		case "file":
+			// ut-docs#3793: the operator's file reaches the plugin as an
+			// upload handle; only an entry with a declared size cap may ask.
+			if !v.c.Uploads {
+				v.fail("%s is a file field, but this page entry declares no config.upload_max_mb", w)
+			}
+			if hasValue {
+				v.fail("%s is a file field: it takes no value", w)
+			}
 		case "select":
 			if len(fl.Options) == 0 || len(fl.Options) > MaxSelectOptions {
 				v.fail("%s select needs 1..%d options", w, MaxSelectOptions)
@@ -631,7 +647,7 @@ func (v *validator) form(where string, f *Form) {
 				v.fail("%s value %q is not one of its options", w, val)
 			}
 		default:
-			v.fail("%s kind %q must be text, number, money, select, toggle or secret", w, fl.Kind)
+			v.fail("%s kind %q must be text, number, money, select, toggle, secret or file", w, fl.Kind)
 		}
 	}
 }
