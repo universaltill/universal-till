@@ -79,3 +79,24 @@
 ## Verdict
 
 Safe to merge.
+
+## Rebase onto main (PR sweep, lane:cloud-54)
+
+`main` gained operator file uploads (ut-docs#3793) while this PR waited,
+touching the same lines. Resolved as a union of both, no behaviour
+dropped:
+- `PageEntryRow` carries both `UploadMaxMB` and `Slot`; `ListPageEntries`
+  unpacks `view`, `upload_max_mb` and `content_slot` from one config blob.
+- `askPluginUIAs` sets `vctx.Uploads` from the entry and uses the
+  per-call `timeout` parameter, so slot asks keep their own bound.
+- `pluginview_form` posts to `#{{ .Target }}` and keeps the multipart
+  attributes, so a file field works inside a slot panel too.
+- Help step 13 keeps the upload sentence; step 14 (panels) follows it.
+- `manifest.json`: surface hash via `update-docs-shots-surface-hash.sh`,
+  `plugins` topic hashes recomputed from the merged markdown
+  (`guard-docs-shots.sh` passes).
+Verified: `go build ./...`, `go test ./internal/pages ./internal/data
+./internal/plugins` (TCP fixture tests skipped locally: the container's
+sandbox hangs them; CI runs them), every `ci.yml` build-job guard except
+three that need tool versions this container lacks (deadcode, shellcheck
+version pin).
