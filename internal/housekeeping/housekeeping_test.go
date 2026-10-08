@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -191,10 +192,110 @@ func TestRetentionTableCoversEverySweep(t *testing.T) {
 	}
 }
 
-// AC 2's table side: until a reviewed table allow-list exists (the
-// sync-history follow-up), housekeeping deletes files only — it may not
-// reach the database at all, so sales, receipts, fiscal data, the audit log
-// and Z reports can't be touched from here.
+// syncHistoryTables are the till's sync-history tables that don't carry
+// the sync_ prefix (ut-docs#3123's inventory); every sync_* table counts
+// too, found from the migrations so a new one can't slip past.
+var syncHistoryTables = []string{"held_sales_tombstones", "sales_aggregate_uploads"}
+
+// legalRecords returns the tables that hold records a shop must keep by
+// law (ADR-0040): sales and payments, invoices, shifts (Z reports are built
+// from them), fiscal/TSE data, the audit log, Z reports — every table with an
+// *_archive copy, every archive itself, and the named ones below.
+func legalRecords(t *testing.T) func(string) bool {
+	t.Helper()
+	archived := map[string]bool{}
+	for name := range createdTables(t) {
+		if base, ok := strings.CutSuffix(name, "_archive"); ok && base != "held_sales" {
+			archived[base] = true
+		}
+	}
+	for _, name := range []string{"sales", "shifts", "payments", "invoices", "audit_log", "report_archive", "reset_batches", "voucher_transactions", "price_history"} {
+		archived[name] = true
+	}
+	return func(name string) bool {
+		return archived[name] || strings.HasPrefix(name, "sale_") || strings.HasPrefix(name, "fiscal_") || strings.HasSuffix(name, "_archive")
+	}
+}
+
+// createdTables is every table a shipped migration creates.
+func createdTables(t *testing.T) map[string]bool {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join("..", "db", "migrations", "*.sql"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no migrations found (%v)", err)
+	}
+	create := regexp.MustCompile("(?i)CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?[\"`\\[]?([a-z0-9_]+)")
+	out := map[string]bool{}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range create.FindAllStringSubmatch(string(b), -1) {
+			out[strings.ToLower(m[1])] = true
+		}
+	}
+	if !out["sync_journal_quarantine"] || !out["sales_archive"] {
+		t.Fatalf("migration scan found %d tables — the CREATE TABLE pattern no longer matches", len(out))
+	}
+	return out
+}
+
+const dbWhere = "database: "
+
+// ut-docs#3123: every sync-history table has a row in the retention table
+// saying how it stays bounded (or why it is kept), so one that grows without
+// limit is a reviewed decision, not an accident. A new sync_* migration
+// fails here until its row is written.
+func TestRetentionTableCoversEverySyncHistoryTable(t *testing.T) {
+	want := map[string]bool{}
+	for name := range createdTables(t) {
+		if strings.HasPrefix(name, "sync_") {
+			want[name] = true
+		}
+	}
+	for _, name := range syncHistoryTables {
+		want[name] = true
+	}
+	have := map[string]bool{}
+	for _, r := range Retention() {
+		if name, ok := strings.CutPrefix(r.Where, dbWhere); ok {
+			have[name] = true
+		}
+	}
+	for name := range want {
+		if !have[name] {
+			t.Errorf("sync-history table %s has no retention-table row (Where %q)", name, dbWhere+name)
+		}
+	}
+}
+
+// The database rows in the retention table are a reviewed allow-list:
+// none of them may name a table that holds records a shop must keep by law.
+func TestRetentionTableNeverListsLegalRecords(t *testing.T) {
+	legal := legalRecords(t)
+	for _, r := range Retention() {
+		if name, ok := strings.CutPrefix(r.Where, dbWhere); ok && legal(name) {
+			t.Errorf("retention row %q names %s, which ADR-0040 keeps", r.Kind, name)
+		}
+	}
+	for _, name := range []string{"sales", "sale_lines", "shifts", "no_sale_events", "stock_movements", "payments_archive", "fiscal_tse_signatures", "audit_log", "report_archive"} {
+		if !legal(name) {
+			t.Errorf("legal-record check misses %q", name)
+		}
+	}
+	for _, name := range []string{"sync_asset_ledger", "held_sales_tombstones", "sales_aggregate_uploads", "held_sales"} {
+		if legal(name) {
+			t.Errorf("legal-record check wrongly includes %q", name)
+		}
+	}
+}
+
+// The table side of ut-docs#3092 AC 2: housekeeping deletes files only — it
+// may not reach the database at all, so sales, receipts, fiscal data, the
+// audit log and Z reports can't be touched from here. The sync-history
+// tables are bounded by the code that owns them (ut-docs#3123), listed in
+// the retention table above.
 func TestPackageNeverTouchesTheDatabase(t *testing.T) {
 	const module = "github.com/universaltill/universal-till/"
 	forbidden := []string{"database/sql", module + "internal/data", "modernc.org/sqlite", "github.com/mattn/go-sqlite3"}

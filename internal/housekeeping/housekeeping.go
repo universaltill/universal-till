@@ -4,7 +4,9 @@
 // down in Retention() and in the manual (web/help/*/backups.md).
 //
 // It deletes files only, each kind through the package that owns that file
-// namespace (db, issuereport, selfupdate). It never opens the database —
+// namespace (db, issuereport, selfupdate). The sync-history tables are
+// bounded by the code that owns them and only listed here (ut-docs#3123).
+// It never opens the database —
 // sales, receipts, fiscal/TSE data, the audit log and Z reports follow
 // ADR-0040's retention, not this job (TestPackageNeverTouchesTheDatabase).
 // The one file kind that holds that data, the pre-restore copies (each a
@@ -48,6 +50,16 @@ const (
 	KindUpdateDownloads = "update_downloads"
 	KindLogs            = "logs"
 	KindDiagnostics     = "diagnostics_spool"
+
+	// Sync-history tables (ut-docs#3123). Housekeeping never opens the
+	// database; each of these is bounded, or kept on purpose, by the code
+	// that owns it. They are listed so the retention table is complete — a
+	// row documents the bound, it never permits housekeeping to delete.
+	KindSyncAggregateLedger = "sync_aggregate_upload_ledger"
+	KindSyncHeldTombstones  = "sync_held_order_tombstones"
+	KindSyncAssetLedger     = "sync_asset_ledger"
+	KindSyncAdminVersion    = "sync_admin_version"
+	KindSyncQuarantine      = "sync_quarantined_sales"
 )
 
 // Rule is one row of the retention table.
@@ -59,8 +71,12 @@ type Rule struct {
 }
 
 // Retention is the written retention table: every kind of file the till
-// accumulates, its limit, and the code that enforces it. Rows enforced
-// elsewhere are listed so the table is complete.
+// accumulates, and every sync-history table in its database ("database:
+// <table>"), with its limit and the code that enforces it. Rows enforced
+// elsewhere are listed so the table is complete. A "database:" row only
+// documents how its owner bounds the table; housekeeping itself never
+// deletes rows (TestPackageNeverTouchesTheDatabase). A new sync_* table fails
+// TestRetentionTableCoversEverySyncHistoryTable until it has a row.
 func Retention() []Rule {
 	return []Rule{
 		{KindBackups, "backups/unitill-pos-*.db",
@@ -75,6 +91,20 @@ func Retention() []Rule {
 			fmt.Sprintf("%d files × %d MB, oldest dropped", logging.DefaultMaxFiles, logging.DefaultMaxFileBytes>>20), "logging.RotatingWriter"},
 		{KindDiagnostics, "diagnostics/pending/",
 			"200 batches, oldest dropped; deleted once uploaded", "diagnostics queue"},
+		{KindSyncAggregateLedger, "database: sales_aggregate_uploads",
+			"rows for business days before the upload look-back window are deleted on every upload round",
+			"cloudsync (salesAggregateLookbackDays, POSRepo.PruneSalesAggregateUploads)"},
+		{KindSyncHeldTombstones, "database: held_sales_tombstones",
+			"deleted once older than the tombstone lifetime, on every held-order delete or claim",
+			"data (heldSaleTombstoneTTL, held_sales_repo.go)"},
+		{KindSyncAssetLedger, "database: sync_asset_ledger",
+			"one row per photo or file this till downloaded from the main till; the row goes when the file is pruned",
+			"LAN asset sync (SyncAssetLedgerRepo.Apply)"},
+		{KindSyncAdminVersion, "database: sync_admin_version",
+			"a single counter row; never grows", "migration 023 (CHECK id = 1)"},
+		{KindSyncQuarantine, "database: sync_journal_quarantine",
+			"kept, never deleted automatically; one row per sale (UNIQUE sale_id), so retries add nothing: each row is a sale this till could not apply from another till, and may be its only copy of that sale (ADR-0040, ADR-0065)",
+			"nothing deletes it; shown on /sync-quarantine"},
 	}
 }
 
