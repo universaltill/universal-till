@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -43,6 +44,11 @@ type EventBus struct {
 	// touch from inside that critical section without a reentrant lock.
 	dropWarnMu   sync.Mutex
 	dropWarnedAt map[string]time.Time
+
+	// lastSaleCompleted is the UnixNano of the latest PublishSaleCompleted
+	// (0 = none): the wasm schedule ticker's sale-burst pause reads it
+	// (ADR-0121 §8, ut-docs#3161).
+	lastSaleCompleted atomic.Int64
 }
 
 // channelFullWarnInterval bounds how often publish() performs the "channel
@@ -117,6 +123,12 @@ type Event struct {
 	// raised, the handled event's hop + 1 for one a plugin raised through
 	// event_publish. A publish while handling a hop-3 event is dropped.
 	Hop int `json:"hop,omitempty"`
+	// Scheduled marks a `schedules[]` tick the host raised for one plugin
+	// (ADR-0121 §8, ut-docs#3161). A tick is ordinary work whatever its name
+	// — a plugin may name one `<id>.foo.ask` — so it never takes a reserved
+	// sale-path slot or an event-class deadline floor (isSalePathCall,
+	// timeoutForEvent). Host-side only: never serialised.
+	Scheduled bool `json:"-"`
 }
 
 // SaleCompletedEvent is the payload published on "sale.completed". It is the
@@ -806,7 +818,26 @@ func (eb *EventBus) auditDispatchWithDB(ctx context.Context, db *sql.DB, eventID
 
 // PublishSaleCompleted is a helper to publish sale.completed events
 func (eb *EventBus) PublishSaleCompleted(ctx context.Context, saleEvent SaleCompletedEvent) (string, error) {
+	// A sale just committed: the wasm schedule ticker holds due ticks while
+	// sales keep landing (ADR-0121 §8 "pauses all ticks during a sale commit
+	// burst", ut-docs#3161).
+	eb.markSaleCompleted(time.Now())
 	return eb.Publish(ctx, "sale.completed", saleEvent)
+}
+
+// markSaleCompleted records t as the latest sale commit.
+func (eb *EventBus) markSaleCompleted(t time.Time) {
+	eb.lastSaleCompleted.Store(t.UnixNano())
+}
+
+// lastSaleCompletedAt is when PublishSaleCompleted last ran on this bus;
+// zero if never.
+func (eb *EventBus) lastSaleCompletedAt() time.Time {
+	ns := eb.lastSaleCompleted.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
 }
 
 // redactCardPresentFields returns a copy of ev with every payment's

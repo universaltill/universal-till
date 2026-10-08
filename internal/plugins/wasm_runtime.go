@@ -12,6 +12,7 @@ import (
 	goruntime "runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -80,8 +81,21 @@ type WasmRuntime struct {
 	drainCtx  context.Context
 	drainStop context.CancelFunc
 	// wg tracks the per-plugin event-channel drainer goroutines Sync starts,
-	// so Close can wait for them to exit at shutdown (ut-docs#380).
+	// so Close can wait for them to exit at shutdown (ut-docs#380). The
+	// schedule tickers and their in-flight ticks are tracked here too.
 	wg sync.WaitGroup
+	// sched is the schedule ticker's clock, jitter, permission and fire
+	// seams (ADR-0121 §8, ut-docs#3161); zero fields mean the real ones.
+	sched scheduleDeps
+	// schedStop cancels the current Sync generation's schedule tickers.
+	schedStop context.CancelFunc
+	// schedActive counts running schedule tickers, schedRunsInFlight the
+	// ticks they have handed to the plugin and that are still running.
+	schedActive       atomic.Int64
+	schedRunsInFlight atomic.Int64
+	// schedBusy holds plugin id + "\x00" + event while that schedule's tick
+	// runs, across Sync generations (skip-while-running, ADR-0121 §8).
+	schedBusy sync.Map
 }
 
 // onHostState, when set (tests only), sees each event's hostState so a test
@@ -190,10 +204,10 @@ func (w *WasmRuntime) baseTimeout(pluginID string) (time.Duration, bool) {
 }
 
 // timeoutForEvent is timeoutFor for one event: a plugin-published event
-// (hop > 0, ADR-0121 §3) is ordinary work and gets no event-class floor
-// (payment gate, export, import), whatever its name.
+// (hop > 0, ADR-0121 §3) or a schedule tick (§8) is ordinary work and gets
+// no event-class floor (payment gate, export, import), whatever its name.
 func (w *WasmRuntime) timeoutForEvent(pluginID string, ev Event) time.Duration {
-	if ev.Hop > 0 {
+	if ev.Hop > 0 || ev.Scheduled {
 		timeout, _ := w.baseTimeout(pluginID)
 		return timeout
 	}
@@ -251,6 +265,13 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 	w.unsubGen++
 	gen := w.unsubGen
 	drainCtx := w.drainCtx
+	// The previous generation's schedule tickers stop here; the ones this
+	// Sync allows are started at the end, after the modules have loaded.
+	if w.schedStop != nil {
+		w.schedStop()
+	}
+	schedCtx, schedStop := context.WithCancel(drainCtx)
+	w.schedStop = schedStop
 	w.db = db // host functions resolve storage/permissions through this
 	// Drop compiled modules for plugins that are gone/disabled.
 	active := map[string]bool{}
@@ -439,6 +460,10 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 		w.mu.Unlock()
 	}
 
+	// Schedule tickers (ADR-0121 §8, ut-docs#3161): only for plugins whose
+	// module loaded and subscribed above.
+	w.startSchedules(ctx, schedCtx, gen, db, loaded)
+
 	if stateChanged {
 		// Install-state flips change what cached ".ask" answers (and the
 		// tax fail-closed broken check, tax_hook.go) may assume — bump AFTER
@@ -562,6 +587,12 @@ func (w *WasmRuntime) Close(ctx context.Context) {
 		w.drainStop()
 	}
 	w.drainCtx, w.drainStop = context.WithCancel(context.Background())
+	// Schedule tickers are children of the old drainCtx, so they stop
+	// already; cancel explicitly so the intent survives a refactor.
+	if w.schedStop != nil {
+		w.schedStop()
+		w.schedStop = nil
+	}
 	w.mu.Unlock()
 	if db != nil {
 		SharedBus(db).ResetSubscribers() // closes every open channel — drainers exit

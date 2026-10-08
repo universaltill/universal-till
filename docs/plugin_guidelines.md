@@ -533,6 +533,43 @@ reserved for the till's poll: it is never passed to your view as a
 The format, limits and payloads are in
 [`ut-docs/reference/plugin-views.md`](https://github.com/universaltill/ut-docs/blob/main/reference/plugin-views.md).
 
+### Scheduled work (ADR-0121 §8)
+
+A wasm plugin has no background threads. For periodic work (a retry
+queue, a poll), declare `schedules` in the manifest and hold the
+`schedule` permission:
+
+```json
+"permissions": ["schedule"],
+"schedules": [ { "event": "com.example.sync.retry.tick", "every_s": 300, "jitter_s": 60 } ]
+```
+
+The event must start with your plugin `id` plus a dot. `every_s` is at
+least 30, and `jitter_s` is from 0 to `every_s`. The till saves the
+schedules at install and replaces them on every update or rollback.
+While the plugin is active, its module is loaded and `schedule` is
+granted, the till sends each event to your plugin alone, as an ordinary
+event. The wait between ticks is `every_s` plus a random 0–`jitter_s`
+seconds. The payload is `{"scheduled_at": "<RFC 3339 time the tick fell
+due>"}`. You need no `hooks` entry for your own schedule event, and no
+other plugin receives it.
+
+- A tick is skipped while the previous run of the same schedule is
+  still going.
+- A tick that falls due within 3 s of a completed sale waits until 3 s
+  pass with no new sale, then fires. It is delayed, never dropped.
+- A tick is ordinary work, even if its name ends in `.ask`. It waits for
+  an ordinary call slot and never takes the slot reserved for sales.
+- Ticks stop when the plugin is disabled or uninstalled, or the till
+  shuts down. A revoked `schedule` permission stops them at the next tick.
+- The interval restarts whenever plugins are reloaded on the till
+  (any install, update, enable, disable or uninstall) and at start-up, so
+  the first tick comes `every_s` plus jitter after that. Don't rely on a
+  long interval firing at a fixed wall-clock time.
+- If the till can't read the saved schedules at a reload, it logs it and
+  nothing ticks until the next reload. A plugin installed before this till
+  version has no saved schedules: reinstall or update it to start ticks.
+
 ---
 
 ## Testing

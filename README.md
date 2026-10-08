@@ -464,6 +464,11 @@ ut-docs#3158).
 `blob_get_open`/`blob_read`, `blob_delete`, `blob_list`): flat names only,
 atomic commits, and a quota of the manifest's `limits.storage_mb`
 (ADR-0121 §6, ut-docs#3870).
+A plugin has no background threads: with `schedule` granted, the till sends
+each of its manifest `schedules` events to it every `every_s` (at least 30 s)
+plus a random 0–`jitter_s` s. A tick is skipped while the previous one still
+runs, waits out a burst of completed sales, and never takes the slot reserved
+for sales (ADR-0121 §8, ut-docs#3161).
 
 **See [PLUGIN_GUIDELINES.md](docs/plugin_guidelines.md) for complete documentation.**
 
