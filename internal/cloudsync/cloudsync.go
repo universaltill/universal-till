@@ -1434,6 +1434,11 @@ type snapshotItemRow struct {
 	// edit it. Omitted when the item has none, or when the stored pair is
 	// not a catalogtypes.ValidNetQuantity one — never half a pair.
 	NetQuantity *snapshotNetQuantity `json:"net_quantity,omitempty"`
+	// SellScreen (ut-docs#3015) is "hidden" or "removed" (from the quick
+	// buttons; removed wins when both flags are set) so my. can show it.
+	// Omitted when the item is on the sell screen — the same as an older
+	// till that never sends it, which the cloud reads as visible.
+	SellScreen string `json:"sell_screen,omitempty"`
 }
 
 // snapshotNetQuantity is an item's net quantity on the wire (ut-docs#3504):
@@ -1508,6 +1513,7 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 			Variants:    make([]snapshotVariantRow, 0, len(it.Variants)),
 			ImageSHA256: ServedImageSHA256(thumbs[it.ID]),
 			Icon:        iconid.EffectiveIcon(thumbs[it.ID], it.Icon),
+			SellScreen:  it.SellScreen,
 		}
 		if len(it.Barcodes) > 0 {
 			row.Barcode = it.Barcodes[0]
