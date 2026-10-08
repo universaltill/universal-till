@@ -81,6 +81,14 @@ type hostState struct {
 	viewsOnce sync.Once
 	viewsUsed []string
 	viewsOK   bool
+
+	// blobs are this event's blob:own handles (wasm_blob.go) — per event;
+	// handleEvent closes them all, discarding uncommitted puts.
+	blobs blobHandles
+	// blobQuotaBytes is limits.storage_mb in bytes, resolved once per event
+	// (blobQuota).
+	blobQuotaOnce  sync.Once
+	blobQuotaBytes int64
 }
 
 type hostStateKey struct{}
@@ -140,6 +148,13 @@ func instantiateHostModule(ctx context.Context, rt wazero.Runtime) error {
 		NewFunctionBuilder().WithFunc(hostHTTPClose).Export("http_close").
 		NewFunctionBuilder().WithFunc(hostViewQuery).Export("view_query").
 		NewFunctionBuilder().WithFunc(hostSecretSet).Export("secret_set").
+		NewFunctionBuilder().WithFunc(hostBlobPutOpen).Export("blob_put_open").
+		NewFunctionBuilder().WithFunc(hostBlobWrite).Export("blob_write").
+		NewFunctionBuilder().WithFunc(hostBlobCommit).Export("blob_commit").
+		NewFunctionBuilder().WithFunc(hostBlobGetOpen).Export("blob_get_open").
+		NewFunctionBuilder().WithFunc(hostBlobRead).Export("blob_read").
+		NewFunctionBuilder().WithFunc(hostBlobDelete).Export("blob_delete").
+		NewFunctionBuilder().WithFunc(hostBlobList).Export("blob_list").
 		Instantiate(ctx)
 	return err
 }

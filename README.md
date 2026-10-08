@@ -459,6 +459,11 @@ read view (`sales.by_day.v1`, `items.top.v1`, `payments.breakdown.v1`,
 `stock.levels.v1`, `audit.summary.v1`). It must list the view in its
 manifest's `views_used` and hold the view's `view:<class>` grant (ADR-0121 §5,
 ut-docs#3158).
+`blob:own` gives a plugin its own file store under
+`data/plugin-data/<id>/blobs` (`blob_put_open`/`blob_write`/`blob_commit`,
+`blob_get_open`/`blob_read`, `blob_delete`, `blob_list`): flat names only,
+atomic commits, and a quota of the manifest's `limits.storage_mb`
+(ADR-0121 §6, ut-docs#3870).
 
 **See [PLUGIN_GUIDELINES.md](docs/plugin_guidelines.md) for complete documentation.**
 
