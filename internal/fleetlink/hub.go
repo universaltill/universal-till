@@ -263,6 +263,29 @@ func (h *Hub) RelayCloudCheckin(scopes []string, linkVersion int64) {
 	}
 }
 
+// RequestUpdate asks tillID to update to target now (ADR-0114 §5,
+// ut-docs#2945: the Tills page's "Update now"). Non-blocking: the request
+// is a pending flag on that till's link — repeated presses coalesce, the
+// latest target wins — flushed as one fleet frame. ErrNotLinked when the
+// till has no live link whose hello has arrived. Whether the replica acts
+// on it (and when) is its own decision.
+func (h *Hub) RequestUpdate(tillID, target string) error {
+	p := h.Peer(tillID)
+	if p == nil {
+		return ErrNotLinked
+	}
+	if _, ok := p.Hello(); !ok {
+		return ErrNotLinked
+	}
+	// Silent past the heartbeat timeout: the reaper is about to drop this
+	// link, and a frame left pending on it would be lost after a 200.
+	if p.sinceFrame(time.Now()) > p.cfg.PeerTimeout {
+		return ErrNotLinked
+	}
+	p.markFleet(FleetPayload{Target: target, Now: true})
+	return nil
+}
+
 // Disconnect closes tillID's link and forgets its report — called when the
 // till is revoked (§1).
 func (h *Hub) Disconnect(tillID string) {

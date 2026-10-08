@@ -18,13 +18,12 @@ import (
 // with an "unsupported_version" error, never guessed at.
 const Version = 1
 
-// Message types (ADR-0114 §2's table). Only the ones this card uses are
-// handled; fleet/pairing/sat.* are reserved for their own cards and are
-// named here so the vocabulary lives in one place.
+// Message types (ADR-0114 §2's table). pairing/sat.* are reserved for
+// their own cards and are named here so the vocabulary lives in one place.
 const (
 	TypeHello   = "hello"
 	TypeSync    = "sync"
-	TypeFleet   = "fleet"   // ADR-0114 §5, #2726 — not sent yet
+	TypeFleet   = "fleet"   // ADR-0114 §5: main → replica "update to this version" (ut-docs#2945)
 	TypePairing = "pairing" // ADR-0114 §2 pairing push — not sent yet
 	TypeReport  = "report"
 	// TypeCloudCheckin (main → replica, one-way, ut-docs#2893): check in
@@ -88,6 +87,9 @@ var (
 	// ErrTooLarge is returned for a frame the peer's read limit would
 	// refuse — sending it would only get the whole link closed.
 	ErrTooLarge = errors.New("fleetlink: message too large")
+	// ErrNotLinked is returned by Hub.RequestUpdate when the till has no
+	// live link whose hello has arrived: nothing can be asked of it now.
+	ErrNotLinked = errors.New("fleetlink: till not linked")
 )
 
 // errVersion and errMalformed are Decode's two failure classes; the reader

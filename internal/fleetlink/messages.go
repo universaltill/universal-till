@@ -147,6 +147,17 @@ func (c *CloudCheckinPayload) merge(scopes []string, linkVersion int64) {
 	c.LinkVersion = max(c.LinkVersion, linkVersion)
 }
 
+// FleetPayload is a fleet frame (main → replica, ADR-0114 §5,
+// ut-docs#2945): "update to this release". It names a version only — the
+// replica installs it through its own checksum-verified update path, so
+// the frame can do little (§7). Now is the operator's "Update now": try at
+// the next safe moment even if automatic updates are off. The fleet update
+// policy arrives with #2739.
+type FleetPayload struct {
+	Target string `json:"target"`
+	Now    bool   `json:"now"`
+}
+
 // ByePayload says why a side is closing (ADR-0114 §2).
 type ByePayload struct {
 	Reason string `json:"reason"` // shutdown | updating | restarting

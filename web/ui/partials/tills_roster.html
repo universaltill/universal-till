@@ -55,6 +55,7 @@
     </tr>
     {{ end }}
     {{ range .Tills }}
+    {{ $row := . }}
     <tr data-till-id="{{ .ID }}"{{ with .Link }} data-link="{{ if .Linked }}up{{ else }}down{{ end }}"{{ end }}>
       <td>{{ .Name }}{{ if eq .ID $.ThisTillID }} <span class="muted">({{ T "tills.this_till" }})</span>{{ end }}</td>
       {{/* ut-docs#2781: the till's role as the main till's roster holds it
@@ -88,7 +89,22 @@
         {{ else if eq .VersionCmp "same" }}<br><small class="muted">{{ T "tills.version.same" }}</small>{{ end }}
         {{ if eq .UpdateState "waiting-safe-moment" }}<br><small class="muted">{{ T "tills.update.waiting_safe_moment" }}</small>
         {{ else if eq .UpdateState "downloading" }}<br><small class="muted">{{ T "tills.update.downloading" }}</small>
+        {{ else if eq .UpdateState "manual" }}<br><small class="muted">{{ T "tills.update.manual" }}</small>
         {{ else if eq .UpdateState "failed" }}<br><span class="tag warn">{{ printf (T "tills.update.failed") .UpdateCode }}</span>{{ end }}
+        {{/* ut-docs#2945: Update now asks this till, over the link, to
+             install this till's version at its next safe moment (no open
+             sale), even with automatic updates off. Main till only, like
+             Change role. A refusal (not linked, a dev build here) shows
+             its reason right under the button: the form is the save-error
+             anchor, inside #tills-roster, so the next press (save-error:
+             carriers clear their old line) or the 10 s refresh removes it. */}}
+        {{ if and (not $.SyncPrimary) .CanUpdateNow }}
+        <form hx-post="/api/tills/{{ $row.ID }}/update-now" hx-swap="none"
+              hx-confirm="{{ printf (T "tills.update_now.confirm") $row.Name $.MainVersion }}"
+              data-after-request="ok refresh-region:tills-roster; fail save-error:tills-update-now-error">
+          <button type="submit" class="btn secondary">{{ T "tills.update_now.btn" }}</button>
+        </form>
+        {{ end }}
       </td>
       {{ end }}
       <td>{{ datetime .EnrolledAt }}</td>

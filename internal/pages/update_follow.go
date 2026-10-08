@@ -65,6 +65,39 @@ func (a *followAttempt) set(v string) {
 	a.target = v
 }
 
+// followForced is the target an operator's "Update now" asked for on the
+// main till's Tills page (ut-docs#2945): a fleet frame naming the version
+// the main till's own hello names. In memory on purpose — one attempt per
+// press: followTick clears it when the attempt starts, and a restart
+// forgets an unspent press.
+var followForced followAttempt
+
+// followKick asks the auto-update scheduler to run a tick now instead of at
+// its next 30 s tick (capacity 1: presses coalesce). The scheduler is the
+// only goroutine that ever applies an update, so a press can never start a
+// second, concurrent install.
+var followKick = make(chan struct{}, 1)
+
+// onFleetUpdate takes a fleet frame from the main till (ADR-0114 §5). It is
+// accepted only as "update now" to exactly the version the main till's
+// hello names (mainVersion) — the frame cannot point this till at any
+// other release (§7: frames can do little). Everything else the follow
+// rule still decides: replica, newer release, UT_UPDATE_CHECK, an install
+// that can replace itself, no open sale. Never blocks the link loop.
+func onFleetUpdate(f fleetlink.FleetPayload, mainVersion string) {
+	target := normVersion(f.Target)
+	if !f.Now || !releaseVersion(target) || target != normVersion(mainVersion) {
+		logging.L().Infof("auto-update: ignored an update request for %q (main till runs %q)", f.Target, mainVersion)
+		return
+	}
+	followForced.set(target)
+	logging.L().Infof("auto-update: the main till asked this till to update to v%s now", target)
+	select {
+	case followKick <- struct{}{}:
+	default: // a kick is already pending
+	}
+}
+
 // followInputs is everything the follow rule reads, gathered by
 // followInputsOf so the rule itself stays pure and table-tested.
 type followInputs struct {
@@ -77,6 +110,7 @@ type followInputs struct {
 	AttemptedThisRun string // followRun
 	LastAttempted    string // keyFollowAttempted
 	LastError        string // keyFollowError
+	Forced           bool   // an "Update now" press names Target (followForced)
 }
 
 // normVersion drops the optional leading v (updates.Newer compares bare
@@ -99,6 +133,12 @@ func followSettled(in followInputs) (failed, noEffect bool) {
 // hasn't switched updates off, this install can replace itself, no sale is
 // open, and this target hasn't already been tried — once per run, and not
 // again after an attempt that took effect without moving the version.
+//
+// An operator's "Update now" (Forced, ut-docs#2945) overrides only the
+// shop's automatic-updates switch and the once-per-run / no-effect guards —
+// a press is one more deliberate attempt. It never overrides a dev build,
+// a downgrade, UT_UPDATE_CHECK, an install that can't replace itself, or
+// an open sale.
 func followDecision(in followInputs) (act bool, why string) {
 	switch {
 	case !in.Replica:
@@ -107,20 +147,65 @@ func followDecision(in followInputs) (act bool, why string) {
 		return false, "not_release" // a dev build never self-updates; an unknown target is no target
 	case !updates.Newer(normVersion(in.Target), normVersion(in.This)):
 		return false, "not_newer"
-	case in.AutoEnabled == "false" || !in.ChecksOn:
+	case !in.ChecksOn, in.AutoEnabled == "false" && !in.Forced:
 		return false, "off"
 	case !in.Supported:
 		return false, "unsupported"
-	case normVersion(in.AttemptedThisRun) == normVersion(in.Target):
+	case !in.Forced && normVersion(in.AttemptedThisRun) == normVersion(in.Target):
 		return false, "attempted"
 	}
-	if _, noEffect := followSettled(in); noEffect {
+	if _, noEffect := followSettled(in); noEffect && !in.Forced {
 		return false, "no_effect"
 	}
 	if in.Busy {
 		return false, "busy"
 	}
+	if in.Forced {
+		return true, "update_now"
+	}
 	return true, "follow"
+}
+
+// followBehind reports whether this till is a replica running an older
+// release than its main till.
+func followBehind(in followInputs) bool {
+	return in.Replica && releaseVersion(in.This) && releaseVersion(in.Target) &&
+		updates.Newer(normVersion(in.Target), normVersion(in.This))
+}
+
+// followReportState is the update_state this till reports to its main
+// till (ADR-0114 §2's states only; the Tills page roster, ut-docs#2945):
+// "downloading" while this run's attempt at the target is in progress,
+// "waiting-safe-moment" while that attempt (or one that would start now)
+// waits for an open sale to end, "failed:<code>" when the last attempt at
+// it failed, and "failed:unsupported" when it is behind and can't replace
+// itself (portable Windows zip, Android, unwritable install) — the roster
+// reads that one as "needs the installer".
+func followReportState(in followInputs) string {
+	if !followBehind(in) {
+		return "idle"
+	}
+	target := normVersion(in.Target)
+	if normVersion(in.LastAttempted) == target {
+		switch {
+		case in.LastError == followApplying && normVersion(in.AttemptedThisRun) == target:
+			// ApplyVersionWhenIdle downloads, then holds the restart until
+			// no sale is open: with one open, say it is waiting.
+			if in.Busy {
+				return "waiting-safe-moment"
+			}
+			return "downloading"
+		case strings.HasPrefix(in.LastError, "failed:"):
+			return in.LastError
+		}
+	}
+	if !in.Supported {
+		return "failed:unsupported"
+	}
+	if _, why := followDecision(in); why == "busy" {
+		return "waiting-safe-moment"
+	}
+	return "idle"
 }
 
 // followCanInstall is what the chip says about a newer target: true when
@@ -191,11 +276,19 @@ func followInputsOf(ctx context.Context, d *common.Deps) followInputs {
 		LastAttempted:    get(keyFollowAttempted),
 		LastError:        get(keyFollowError),
 	}
+	if forced := followForced.get(); forced != "" {
+		if forced == normVersion(in.Target) {
+			in.Forced = true
+		} else {
+			// The main till has moved on since the press: that target is
+			// gone, so the press is spent rather than kept forever.
+			followForced.set("")
+		}
+	}
 	// Supported() probes the disk (a temp file in the exe dir and the cwd)
 	// and the chip polls every 5 s on every till: only ask when a replica is
 	// actually behind its main till (ut-docs#2738 review).
-	if in.Replica && releaseVersion(in.This) && releaseVersion(in.Target) &&
-		updates.Newer(normVersion(in.Target), normVersion(in.This)) {
+	if followBehind(in) {
 		in.Supported = autoUpdateSupported()
 	}
 	return in
@@ -211,6 +304,9 @@ func followTick(ctx context.Context, d *common.Deps) {
 		return
 	}
 	target := normVersion(in.Target)
+	if in.Forced {
+		followForced.set("") // one attempt per press
+	}
 	followRun.set(target)
 	_ = d.Settings.Set(ctx, keyFollowAttempted, target)
 	_ = d.Settings.Set(ctx, keyFollowError, followApplying)

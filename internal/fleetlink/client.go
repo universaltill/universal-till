@@ -62,9 +62,14 @@ type ClientOptions struct {
 	// (ut-docs#2893). Single-flight: frames arriving while it runs make
 	// exactly one more call.
 	OnCloudCheckin func(ctx context.Context)
-	OnLost         func(ctx context.Context, cause string) // an established link died without a bye
-	OnRevoked      func(ctx context.Context)               // the main till revoked this till; dialling stops
-	WhileLinked    func(ctx context.Context)               // every RecheckEvery while linked
+	// OnFleet: the main till asked this till to update (ADR-0114 §5,
+	// ut-docs#2945). Coalesced: frames arriving while it runs make one
+	// more call with the latest payload. The receiver decides whether to
+	// act — the frame only names a version.
+	OnFleet     func(ctx context.Context, f FleetPayload)
+	OnLost      func(ctx context.Context, cause string) // an established link died without a bye
+	OnRevoked   func(ctx context.Context)               // the main till revoked this till; dialling stops
+	WhileLinked func(ctx context.Context)               // every RecheckEvery while linked
 }
 
 // DefaultClientOptions returns ADR-0114's client timings.
@@ -102,6 +107,8 @@ type Client struct {
 	syncIn      chan struct{} // cap 1: syncMask has bits
 	syncMask    atomic.Uint32
 	checkinIn   chan struct{} // cap 1: a cloud_checkin arrived
+	fleetIn     chan struct{} // cap 1: fleetLatest holds a fleet frame
+	fleetLatest atomic.Pointer[FleetPayload]
 
 	mu         sync.Mutex
 	revokedFor *Target // dialling stopped for this pairing
@@ -267,6 +274,7 @@ func NewClient(opts ClientOptions) *Client {
 		helloIn:     make(chan struct{}, 1),
 		syncIn:      make(chan struct{}, 1),
 		checkinIn:   make(chan struct{}, 1),
+		fleetIn:     make(chan struct{}, 1),
 	}
 }
 
@@ -485,13 +493,14 @@ const (
 // difference between an outage that just ended and one that continues.
 func (c *Client) runLink(ctx context.Context, t Target, conn Conn) (end linkEnd, established bool) {
 	// Signals from a previous link must not leak into this one.
-	for _, ch := range []chan struct{}{c.helloIn, c.syncIn, c.checkinIn} {
+	for _, ch := range []chan struct{}{c.helloIn, c.syncIn, c.checkinIn, c.fleetIn} {
 		select {
 		case <-ch:
 		default:
 		}
 	}
 	c.syncMask.Store(0)
+	c.fleetLatest.Store(nil)
 
 	p := newPeer(c, c.cfg, "r", "main", conn)
 	c.cur.Store(p)
@@ -573,6 +582,10 @@ func (c *Client) runLink(ctx context.Context, t Target, conn Conn) (end linkEnd,
 			if c.opts.OnCloudCheckin != nil {
 				c.opts.OnCloudCheckin(ctx)
 			}
+		case <-c.fleetIn:
+			if f := c.fleetLatest.Swap(nil); f != nil && c.opts.OnFleet != nil {
+				c.opts.OnFleet(ctx, *f)
+			}
 		case <-report.C:
 			sendReport(true)
 		case <-recheck.C:
@@ -648,8 +661,18 @@ func (c *Client) gotMessage(_ *Peer, env Envelope) {
 		poke(c.checkinIn)
 		return
 	}
+	if env.Type == TypeFleet {
+		var f FleetPayload
+		if json.Unmarshal(env.Payload, &f) != nil {
+			return
+		}
+		f.Target = clip(f.Target, maxReportField)
+		c.fleetLatest.Store(&f)
+		poke(c.fleetIn)
+		return
+	}
 	if env.Type != TypeSync {
-		return // fleet/pairing: their own cards (#2726, pairing push); report is → main only
+		return // pairing: its own card (pairing push); report is → main only
 	}
 	var sp SyncPayload
 	if json.Unmarshal(env.Payload, &sp) != nil {
