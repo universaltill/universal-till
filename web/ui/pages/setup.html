@@ -231,10 +231,11 @@
           <!-- ut-docs#3244: the operator already consented and the spec is on
                the background retry list, but the reachable catalog has no
                listing to match, so there is no tile and nothing to install
-               now — keep saying it is queued rather than going silent. -->
+               now — keep saying it is queued rather than going silent.
+               ut-docs#3243: and say why — it isn't published yet. -->
           <div class="setup-tax-plugin-prompt">
             <h2>{{ T "setup.tax_plugin.title" }}</h2>
-            <p class="muted" data-tax-plugin-pending>{{ T "setup.tax_plugin.install_pending" }}</p>
+            <p class="muted" data-tax-plugin-pending>{{ T "setup.tax_plugin.not_published" }}</p>
           </div>
           {{ end }}
           <label>{{ T "setup.tse.legal_name" }}

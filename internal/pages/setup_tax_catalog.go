@@ -358,6 +358,8 @@ func setupTaxPluginInstallHandler(d *common.Deps, svc *auth.Service) http.Handle
 			}
 		}
 		if !already {
+			// ut-docs#3243: newly queued — no reason recorded yet.
+			setBasePluginNotPublished(r.Context(), d, spec, false)
 			if saveErr := savePendingBasePlugins(r.Context(), d, append(pending, spec)); saveErr != nil {
 				logging.L().Errorf("setup wizard: persist pending tax plugin install: %v", saveErr)
 			}

@@ -148,6 +148,14 @@ const (
 	// also drop an entry from Settings without installing it — this is a
 	// helpful default, not a lock-in.
 	KeyPendingBasePlugins = "setup.pending_base_plugins"
+	// KeyBasePluginsNotPublished holds the JSON list of pending specs whose
+	// last install attempt reached the catalog and found no listing
+	// (ut-docs#3243), so the Settings chip can say "not in the catalog yet"
+	// instead of "installing… if you're offline". Absent from the list = the
+	// last attempt failed for any other reason (catalog unreachable, install
+	// error) or has not run yet. Per-till like the queue it annotates: the
+	// key sits under data's "setup.pending_base_plugins" per-till prefix.
+	KeyBasePluginsNotPublished = "setup.pending_base_plugins_not_published"
 	// KeyAutoRegisterOptIn records the shop's explicit answer to the setup
 	// wizard's eager store-registration question (ADR-0071, ut-docs#879):
 	// "true" means the operator opted in on the wizard's last screen (or

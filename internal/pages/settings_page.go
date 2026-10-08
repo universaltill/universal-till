@@ -740,7 +740,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// ut-docs#3135: the Report-an-issue card links to /report-issue, so
 		// it follows that page's own action, not "settings".
 		canReportIssue := canPerform(d, r, issueReportingAction)
-		pendingBasePluginRows := pendingBasePluginViews(pendingBasePlugins)
+		var notPublished map[basePluginSpec]bool
+		if len(pendingBasePlugins) > 0 {
+			notPublished = loadBasePluginsNotPublished(r.Context(), d)
+		}
+		pendingBasePluginRows := pendingBasePluginViews(pendingBasePlugins, notPublished)
 		// ut-docs#1913: the same four conditions that gate whether
 		// settings-issuereport/settings-menulayout/settings-payments/
 		// settings-data/settings-all actually RENDER their `.card` this
