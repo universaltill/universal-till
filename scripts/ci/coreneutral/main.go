@@ -1,5 +1,5 @@
 // Command coreneutral is the Go half of guard-core-neutral.sh
-// (ut-docs#2888; owner rule 2026-09-25, #2848; mechanism ADR-0119):
+// (ut-docs#2888; owner rule 2026-09-25, #2848; mechanism ADR-0121 §11):
 // core Go under internal/, cmd/ and mobile/ must not select behaviour by a specific
 // country, vendor or first-party plugin. It parses every non-test file with
 // go/parser, so comments and string literals are the parser's problem, not

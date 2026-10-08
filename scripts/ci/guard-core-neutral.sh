@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Guard (ut-docs#2888; owner rule 2026-09-25, #2848; ADR-0119): core Go
+# Guard (ut-docs#2888; owner rule 2026-09-25, #2848; ADR-0121 §11): core Go
 # under internal/, cmd/ and mobile/ never tests or selects by a specific country
 # code, vendor name or first-party plugin ID. The detector is
 # scripts/ci/coreneutral (go/parser, so comments and string literals are
