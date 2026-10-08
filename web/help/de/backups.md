@@ -9,7 +9,7 @@ keywords: [sicherung, backup, wiederherstellen, herunterladen, kopie, deinstalli
 
 # Datensicherungen
 
-Momentaufnahmen aller Ihrer Geschäftsdaten (Katalog, Verkäufe, Einstellungen), die Sie herunterladen und sicher aufbewahren können.
+Momentaufnahmen aller Ihrer Geschäftsdaten (Katalog, Verkäufe, Einstellungen), die Sie herunterladen und sicher aufbewahren können. Jede Sicherung enthält auch die Fotos, die Sie für Artikel und Kategorien hochgeladen haben, und Ihr Belegslogo — die eine heruntergeladene Datei stellt also auch diese wieder her.
 
 ## Verwendung
 

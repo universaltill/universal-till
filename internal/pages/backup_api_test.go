@@ -17,6 +17,7 @@ import (
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
 )
 
 // newBackupTestDeps opens a REAL on-disk (not in-memory) sqlite DB via the
@@ -711,5 +712,41 @@ func TestRestoreBackup_SuccessShowsCloseAndReopenWhenUnsupported(t *testing.T) {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("unsupported platform must not render %q: %s", forbidden, body)
 		}
+	}
+}
+
+// ut-docs#2724: "Back up now" puts the shop's uploaded photos inside the
+// snapshot, and restoring that one file onto a fresh device brings them back.
+func TestBackupNow_SnapshotCarriesUploadedPhotos(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	orig := paths.DataDir()
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init(orig) })
+	photo := paths.Data("public", "assets", "categories", "cat-1", "thumb.png")
+	if err := os.MkdirAll(filepath.Dir(photo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(photo, []byte("category-photo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mux, _, dbPath := newBackupTestDeps(t)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/backup/now", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	list, err := db.ListBackups(dbPath)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("list backups: %v %d", err, len(list))
+	}
+	dir, _ := db.BackupDir(dbPath)
+	freshAssets := filepath.Join(t.TempDir(), "assets")
+	if n, err := db.RestoreBackupAssets(filepath.Join(dir, list[0].Name), freshAssets); err != nil || n != 1 {
+		t.Fatalf("restore photos from the snapshot: %d %v", n, err)
+	}
+	got, err := os.ReadFile(filepath.Join(freshAssets, "categories", "cat-1", "thumb.png"))
+	if err != nil || string(got) != "category-photo" {
+		t.Fatalf("restored photo = %q %v", got, err)
 	}
 }

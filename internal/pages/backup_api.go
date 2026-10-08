@@ -14,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/procrestart"
 )
 
@@ -133,10 +134,11 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 			_ = posRepo.InsertAudit(r.Context(), nil, actorID, "backup", "-", action, payload, now, "")
 		}
 
-		path, err := db.Snapshot(d.Db, dbPath)
+		// Uploaded photos ride inside the snapshot (ut-docs#2724).
+		path, err := db.SnapshotWithAssets(d.Db, dbPath, paths.Data("public", "assets"))
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err != nil {
+		if err != nil && path == "" {
 			// Raw err.Error() here is intentional, not a leak (ut-docs#947
 			// Problem 1): the audit log is a manager/admin diagnostic
 			// surface, not the operator-facing screen LogAndLocalizedError
@@ -148,7 +150,13 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		_ = db.PruneBackups(dbPath, db.DefaultBackupKeep)
-		auditNow("backup_created", map[string]any{"file": filepath.Base(path)})
+		created := map[string]any{"file": filepath.Base(path)}
+		if err != nil {
+			// The DB snapshot is written and kept; only its photos are
+			// missing, which the audit row records for the admin.
+			created["photos_error"] = err.Error()
+		}
+		auditNow("backup_created", created)
 		// The Backup card refreshes itself so the list shows the new
 		// snapshot (ut-docs#2904): settings.html's button keys
 		// "ut-ok refresh-region" on this header, and the elevation dialog's

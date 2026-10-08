@@ -9,7 +9,7 @@ keywords: [backup, restore, download, copy, uninstall, remove]
 
 # Backups
 
-Snapshots of all your shop data (catalog, sales, settings) that you can download and keep somewhere safe.
+Snapshots of all your shop data (catalog, sales, settings) that you can download and keep somewhere safe. Each backup also holds the photos you uploaded for items and categories, and your receipt logo, so the one file you download brings them back too.
 
 ## How to use it
 

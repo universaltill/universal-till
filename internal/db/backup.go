@@ -7,6 +7,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -181,12 +182,28 @@ func StageRestore(dbPath, backupName string) error {
 	if _, err := os.Stat(src); err != nil {
 		return fmt.Errorf("backup not found: %w", err)
 	}
-	raw, err := os.ReadFile(src)
+	// Streamed, not read into memory: a snapshot now carries the shop's
+	// photos too (ut-docs#2724) and can be hundreds of MB on a small till.
+	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
+	defer in.Close()
 	pending := filepath.Join(filepath.Dir(dbPath), restorePendingName)
-	return os.WriteFile(pending, raw, 0o644)
+	out, err := os.OpenFile(pending, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		_ = os.Remove(pending)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		_ = os.Remove(pending)
+		return err
+	}
+	return nil
 }
 
 // PendingRestore reports whether a staged restore is waiting for a restart.
