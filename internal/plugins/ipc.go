@@ -113,6 +113,10 @@ type Event struct {
 	Type      string    `json:"event_type"`
 	Timestamp time.Time `json:"timestamp"`
 	Payload   []byte    `json:"payload"`
+	// Hop is the publish chain depth (ADR-0121 §3): 0 for an event core
+	// raised, the handled event's hop + 1 for one a plugin raised through
+	// event_publish. A publish while handling a hop-3 event is dropped.
+	Hop int `json:"hop,omitempty"`
 }
 
 // SaleCompletedEvent is the payload published on "sale.completed". It is the
@@ -603,24 +607,8 @@ func (eb *EventBus) publishWithID(ctx context.Context, id, eventType string, pay
 			eb.auditDispatchWithDB(ctx, db, event.ID, eventType, sub.PluginID, "success", "")
 			dispatched++
 		default:
-			select {
-			case sub.Channel <- subEvent:
-				eb.auditDispatchWithDB(ctx, db, event.ID, eventType, sub.PluginID, "enqueued", "")
+			if eb.enqueueWithDB(ctx, db, sub, subEvent) {
 				dispatched++
-			default:
-				if eb.shouldWarnChannelFull(sub.PluginID) {
-					// This audit row / log line stands for a BURST of
-					// drops, not a single one: every further drop for
-					// this plugin within channelFullWarnInterval is
-					// coalesced into it. Say so in the record itself —
-					// otherwise a reader of audit_log would reasonably
-					// (and wrongly) infer that an event with no "dropped"
-					// row was delivered, which after throttling is no
-					// longer a safe inference.
-					reason := fmt.Sprintf("channel full (further drops within %s coalesced into this entry)", channelFullWarnInterval)
-					eb.auditDispatchWithDB(ctx, db, event.ID, eventType, sub.PluginID, "dropped", reason)
-					logging.L().Warnf("event channel full for plugin %s (further drops within %s suppressed)", sub.PluginID, channelFullWarnInterval)
-				}
 			}
 		}
 	}
@@ -630,6 +618,58 @@ func (eb *EventBus) publishWithID(ctx context.Context, id, eventType string, pay
 	}
 
 	return event.ID, resp, nil
+}
+
+// EnqueuePublished delivers a plugin-published event (event_publish,
+// ADR-0121 §3) the non-blocking way only: enqueued onto each subscriber's
+// channel, with the same events:receive check, audit rows and channel-full
+// handling as Publish's non-blocking branch. It never calls a Blocking
+// handler, whatever mode the event type has — a published event is never
+// delivered inside anyone's call, and its drainer runs it as ordinary work.
+func (eb *EventBus) EnqueuePublished(ctx context.Context, ev Event) {
+	// RLock across the sends: ResetSubscribers can't close a channel
+	// mid-dispatch (ut-docs#504). Nothing below re-takes eb.mu.
+	eb.mu.RLock()
+	defer eb.mu.RUnlock()
+	db := eb.db
+	dispatched := 0
+	for _, sub := range eb.subscribers[ev.Type] {
+		if err := CheckPermission(ctx, db, sub.PluginID, "events:receive"); err != nil {
+			eb.auditDispatchWithDB(ctx, db, ev.ID, ev.Type, sub.PluginID, "denied", err.Error())
+			continue
+		}
+		if eb.enqueueWithDB(ctx, db, sub, ev) {
+			dispatched++
+		}
+	}
+	if err := eb.auditEventWithDB(ctx, db, ev.ID, ev.Type, dispatched); err != nil {
+		logging.L().Warnf("failed to audit event: %v", err)
+	}
+}
+
+// enqueueWithDB is the non-blocking send shared by publish and
+// EnqueuePublished: a full channel drops the event with a throttled audit
+// row and warning. Caller holds eb.mu (RLock). Reports whether it was sent.
+func (eb *EventBus) enqueueWithDB(ctx context.Context, db *sql.DB, sub EventSubscriber, ev Event) bool {
+	select {
+	case sub.Channel <- ev:
+		eb.auditDispatchWithDB(ctx, db, ev.ID, ev.Type, sub.PluginID, "enqueued", "")
+		return true
+	default:
+		if eb.shouldWarnChannelFull(sub.PluginID) {
+			// This audit row / log line stands for a BURST of drops, not a
+			// single one: every further drop for this plugin within
+			// channelFullWarnInterval is coalesced into it. Say so in the
+			// record itself — otherwise a reader of audit_log would
+			// reasonably (and wrongly) infer that an event with no
+			// "dropped" row was delivered, which after throttling is no
+			// longer a safe inference.
+			reason := fmt.Sprintf("channel full (further drops within %s coalesced into this entry)", channelFullWarnInterval)
+			eb.auditDispatchWithDB(ctx, db, ev.ID, ev.Type, sub.PluginID, "dropped", reason)
+			logging.L().Warnf("event channel full for plugin %s (further drops within %s suppressed)", sub.PluginID, channelFullWarnInterval)
+		}
+		return false
+	}
 }
 
 // Ask sends a blocking event to subscribed plugins and returns the first

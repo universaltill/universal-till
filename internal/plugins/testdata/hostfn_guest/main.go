@@ -32,6 +32,9 @@ func settingsGet(kPtr, kLen, dstPtr, dstCap uint32) int32
 //go:wasmimport ut secret_set
 func secretSet(kPtr, kLen, vPtr, vLen uint32) int32
 
+//go:wasmimport ut event_publish
+func eventPublish(tPtr, tLen, pPtr, pLen uint32) int32
+
 func ptrOf(b []byte) (uint32, uint32) {
 	if len(b) == 0 {
 		return 0, 0
@@ -75,6 +78,9 @@ func main() {
 			Value   string   `json:"value"`        // secret_set mode
 			Size    int      `json:"size"`         // secret_set mode: value of this many bytes instead
 			BadUTF8 bool     `json:"invalid_utf8"` // secret_set mode: send a non-UTF-8 value
+			// publish / publish_fail modes (ut-docs#3871).
+			PublishType    string          `json:"publish_type"`
+			PublishPayload json.RawMessage `json:"publish_payload"`
 		} `json:"payload"`
 	}
 	_ = json.Unmarshal(raw, &event)
@@ -83,6 +89,19 @@ func main() {
 	}
 	logf("guest running, url=%s mode=%s", event.Payload.URL, event.Payload.Mode)
 
+	if event.Payload.Mode == "publish" || event.Payload.Mode == "publish_fail" {
+		// event_publish (ADR-0121 §3): print the host's return code; in
+		// publish_fail mode exit non-zero afterwards — the host must still
+		// deliver what it accepted.
+		tp, tl := ptrOf([]byte(event.Payload.PublishType))
+		pp, pl := ptrOf(event.Payload.PublishPayload)
+		code := eventPublish(tp, tl, pp, pl)
+		fmt.Printf("{\"publish_code\":%d}\n", code)
+		if event.Payload.Mode == "publish_fail" {
+			os.Exit(1)
+		}
+		return
+	}
 	if event.Payload.Mode == "http_retry" {
 		runHTTPRetry(event.Payload.URL)
 		return
