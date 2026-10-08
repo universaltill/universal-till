@@ -21,6 +21,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/paths"
 )
 
 const (
@@ -60,15 +61,18 @@ type app struct {
 
 // openAndSnapshot reuses the product's own backup mechanism unmodified:
 // internal/db.Open (same-release binary, so its migration pass is a no-op
-// against an up-to-date DB) + internal/db.Snapshot (VACUUM INTO — a safe,
-// checkpointed online copy once the service writer is stopped).
+// against an up-to-date DB) + internal/db.SnapshotWithAssets (VACUUM INTO — a
+// safe, checkpointed online copy once the service writer is stopped — with
+// the uploaded photos inside it, ut-docs#2724). A photo failure is returned
+// as an error, so the uninstall stops rather than go on with a backup that
+// lacks the shop's photos.
 func openAndSnapshot(dbPath string) (string, error) {
 	database, err := db.Open(dbPath)
 	if err != nil {
 		return "", err
 	}
 	defer database.Close()
-	return db.Snapshot(database.DB, dbPath)
+	return db.SnapshotWithAssets(database.DB, dbPath, paths.Data("public", "assets"))
 }
 
 func (a *app) run() error {

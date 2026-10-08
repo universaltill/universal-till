@@ -150,6 +150,14 @@ func Run(ctx context.Context) error {
 			if applied {
 				log.Infof("staged backup restore applied to %s", cfg.DBPath)
 			}
+			// Put back the photos a restored backup carries (ut-docs#2724).
+			// Every boot, so an interrupted restore finishes; best-effort,
+			// never fatal — the till sells without photos.
+			if n, assetErr := db.RestoreBackupAssets(cfg.DBPath, paths.Data("public", "assets")); assetErr != nil {
+				log.Warnf("restore backup photos: %v", assetErr)
+			} else if n > 0 {
+				log.Infof("restored %d photo file(s) from the backup", n)
+			}
 			// Best-effort housekeeping, never fatal: a sweep failure must
 			// not block boot (offline-first — startup can't depend on this
 			// succeeding).

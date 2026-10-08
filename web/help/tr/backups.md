@@ -8,7 +8,7 @@ summary: Tüm dükkân verinizin (katalog, satışlar, ayarlar) anlık kopyalar�
 
 # Yedekler
 
-Tüm dükkân verinizin (katalog, satışlar, ayarlar) anlık kopyaları; indirip güvenli bir yerde saklayabilirsiniz.
+Tüm dükkân verinizin (katalog, satışlar, ayarlar) anlık kopyaları; indirip güvenli bir yerde saklayabilirsiniz. Her yedek, ürünler ve kategoriler için yüklediğiniz fotoğrafları ve fiş logonuzu da içerir; indirdiğiniz tek dosya bunları da geri getirir.
 
 ## Nasıl kullanılır
 

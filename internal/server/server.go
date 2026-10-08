@@ -21,6 +21,7 @@ import (
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/housekeeping"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
@@ -294,10 +295,15 @@ func runDailyBackup(db *sql.DB, dbPath string) {
 	if err == nil && len(list) > 0 && time.Since(list[0].ModTime) < 24*time.Hour {
 		return
 	}
-	path, err := dbpkg.Snapshot(db, dbPath)
-	if err != nil {
+	// Uploaded photos ride inside the snapshot (ut-docs#2724). A photo
+	// failure still leaves a usable DB backup, so it is logged, not fatal.
+	path, err := dbpkg.SnapshotWithAssets(db, dbPath, paths.Data("public", "assets"))
+	if err != nil && path == "" {
 		log.Printf("[Backup] snapshot failed: %v", err)
 		return
+	}
+	if err != nil {
+		log.Printf("[Backup] daily snapshot %s has no photos: %v", path, err)
 	}
 	log.Printf("[Backup] daily snapshot: %s", path)
 	_ = dbpkg.PruneBackups(dbPath, dbpkg.DefaultBackupKeep)
