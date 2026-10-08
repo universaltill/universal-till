@@ -818,6 +818,26 @@ func TestInitOrderTypePromptModeValidatesInput(t *testing.T) {
 	}
 }
 
+// ut-docs#3632: "off" is a fourth real mode (a shop with no eat-in), not
+// an unknown value -- it must survive InitOrderTypePromptMode rather than
+// being clamped back to "top", and OrderTypeOff reports it.
+func TestInitOrderTypePromptModeAcceptsOff(t *testing.T) {
+	defer InitOrderTypePromptMode("top")
+	InitOrderTypePromptMode("off")
+	if got := orderTypePromptModeVal(); got != "off" {
+		t.Fatalf("orderTypePromptModeVal = %q; want off", got)
+	}
+	if !OrderTypeOff() {
+		t.Fatal("OrderTypeOff() = false with mode off")
+	}
+	for _, m := range []string{"top", "before_item", "at_pay", "", "bogus"} {
+		InitOrderTypePromptMode(m)
+		if OrderTypeOff() {
+			t.Fatalf("OrderTypeOff() = true with mode %q", m)
+		}
+	}
+}
+
 func TestOrderTypePromptModeExposedToTemplates(t *testing.T) {
 	defer InitOrderTypePromptMode("top")
 	InitOrderTypePromptMode("at_pay")

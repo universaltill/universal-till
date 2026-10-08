@@ -261,7 +261,7 @@ export async function gotoSettled(page: Page, url: string, attempts = 3): Promis
   }
 }
 
-export async function setOrderTypePromptMode(page: Page, mode: 'top' | 'before_item' | 'at_pay') {
+export async function setOrderTypePromptMode(page: Page, mode: 'top' | 'before_item' | 'at_pay' | 'off') {
   await gotoSettled(page, '/settings#settings-order-type-prompt');
   const select = page.locator('form[hx-post="/api/settings/order-type-prompt"] select');
   await select.selectOption(mode);

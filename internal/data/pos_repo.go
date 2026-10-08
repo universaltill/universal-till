@@ -5009,7 +5009,7 @@ const (
 )
 
 // OrderTypePromptModeKey (ut-docs#2282) selects WHEN/WHERE the sale screen
-// asks the cashier for dine-in/takeaway -- see the three
+// asks the cashier for dine-in/takeaway -- see the four
 // OrderTypePromptMode* constants below. Unset (new install, or a
 // pre-ut-docs#2282 database) reads as "" from the settings table, which
 // every reader treats the same as OrderTypePromptModeTop (the documented
@@ -5029,6 +5029,14 @@ const (
 	// Pay: an intercept modal asks before the payment action (opening the
 	// tender overlay, or a direct one-tap charge) proceeds.
 	OrderTypePromptModeAtPay = "at_pay"
+	// OrderTypePromptModeOff (ut-docs#3632) is for a shop that doesn't sell
+	// food or drink to eat in at all (off-licence, barber, retail): the
+	// sale screen never shows the dine-in/takeaway toggle or the intercept
+	// modal, POST /api/pos/order-type refuses "takeaway" (409), every line
+	// stays at "" and the tax.rate.ask payload carries order_type "none"
+	// instead of "" (pages.taxAskOrderTypeNone). The setup wizard picks it
+	// for shop_type retail/service when the key is still unset.
+	OrderTypePromptModeOff = "off"
 )
 
 // NextDisplayNo allocates the next short, customer-facing order number for

@@ -775,6 +775,7 @@
         <option value="top" {{ if or (eq $orderTypePromptMode "") (eq $orderTypePromptMode "top") }}selected{{ end }}>{{ T "settings.order_type_prompt.mode_top" }}</option>
         <option value="before_item" {{ if eq $orderTypePromptMode "before_item" }}selected{{ end }}>{{ T "settings.order_type_prompt.mode_before_item" }}</option>
         <option value="at_pay" {{ if eq $orderTypePromptMode "at_pay" }}selected{{ end }}>{{ T "settings.order_type_prompt.mode_at_pay" }}</option>
+        <option value="off" {{ if eq $orderTypePromptMode "off" }}selected{{ end }}>{{ T "settings.order_type_prompt.mode_off" }}</option>
       </select>
       <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
       <span id="order-type-prompt-msg" aria-live="polite"></span>
