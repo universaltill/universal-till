@@ -44,10 +44,6 @@ const (
 // (reference/plugin-views.md): price is minor units, the rest strings.
 var itemFormFields = []string{"name", "sku", "barcode", "category", "price"}
 
-// ItemFormFields returns the item-form v1 apply_fields allow-list, as a
-// fresh slice.
-func ItemFormFields() []string { return append([]string(nil), itemFormFields...) }
-
 // itemFormMoneyFields are the allow-list's minor-unit fields.
 var itemFormMoneyFields = map[string]bool{"price": true}
 

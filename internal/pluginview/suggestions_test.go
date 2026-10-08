@@ -169,15 +169,3 @@ func TestSuggestions_SeamAnswerShapes_3873(t *testing.T) {
 		t.Fatalf("page redirect = %q %v", to, err)
 	}
 }
-
-func TestItemFormFields_3873(t *testing.T) {
-	got := ItemFormFields()
-	want := []string{"name", "sku", "barcode", "category", "price"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("ItemFormFields() = %v, want %v", got, want)
-	}
-	got[0] = "cost" // a fresh copy: callers cannot widen the allow-list
-	if ItemFormFields()[0] != "name" {
-		t.Fatal("ItemFormFields returned the shared slice")
-	}
-}

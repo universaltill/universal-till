@@ -69,7 +69,7 @@ The poll never extends the session (`auth.pluginJobPoll`). Demo mode denies both
 | 4 | nit | The filename was always `capture.jpg`, even for a PNG or WebP. | Fixed: the filename follows the sniffed type. |
 | 5 | nit | The 204 branch checks `HX-Request` but not `IsFragmentSwap`. | Accepted. The identify answers are always fragments, never a full page. |
 | 6 | nit | The overlay painted any non-OK body. | Fixed: only the seam's own statuses (200/400/404/413/429/502/503) are painted; anything else shows the error status. |
-| 7 | nit | `ItemFormFields()` has no production caller. | Accepted by design; #3956 uses it. |
+| 7 | nit | `ItemFormFields()` has no production caller. | First accepted (for #3956), then CI's `guard-deadcode-baseline` refused it: removed. The allow-list stays private (`itemFormFields`); #3956 exports what it needs when it has a caller. |
 | 8 | observation | `/api/pos/*` POSTs have no Origin or CSRF check. | Not introduced here; the new POST matches `/api/pos/identify` and `/api/pos/scan`. Cookie is SameSite=Lax. |
 
 ## TDD re-verification
