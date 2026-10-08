@@ -181,6 +181,13 @@ func contentSlotPanels(ctx context.Context, d *common.Deps, slot, locale string,
 // slots and setup.wizard.steps are 404; a viewer without the host page's
 // permission gets 403 and no content.
 func registerPluginSlots(mux *http.ServeMux, d *common.Deps) {
+	// A slot a manifest may declare but no screen draws would silently
+	// never render; say so at startup (a new slot needs a host).
+	for _, s := range plugins.ContentSlots() {
+		if _, ok := pluginSlotGates[s]; !ok && s != setupWizardSlot {
+			logging.L().Errorf("plugin content slot %q has no host screen", s)
+		}
+	}
 	mux.HandleFunc("GET /ui/slot/{slot}", func(w http.ResponseWriter, r *http.Request) {
 		slot := r.PathValue("slot")
 		gate, ok := pluginSlotGates[slot]

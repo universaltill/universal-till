@@ -68,6 +68,14 @@
   baseline could not run locally (binaries built with an older Go) — CI
   covers them.
 
+## CI round 1
+
+- `desktop-shell` failed `guard-deadcode-baseline.sh`: the exported
+  `plugins.ContentSlots()` was called only from tests. Now used at
+  startup by `registerPluginSlots` to log any manifest-declarable slot
+  that has no host screen. (The guard can't run locally: older Go
+  toolchain in the container.)
+
 ## Verdict
 
 Safe to merge.
