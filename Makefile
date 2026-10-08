@@ -36,8 +36,9 @@ test:
 # the plain `go test` 600s per-package default (ut-docs#648) — this package
 # is DB-heavy and -race instrumentation multiplies that cost, unlike the
 # package's plain (non-race) runtime, which `make test` above already
-# covers comfortably. -race isn't run in CI (ci.yml deliberately never
-# uses it, see its own comment on the internal/plugins step) — this target
+# covers comfortably. CI runs -race only for the small boot-path packages
+# (ci.yml's -race step, ut-docs#3014); internal/pages, internal/plugins and
+# internal/data stay out of it — this target
 # is the safe way to run it by hand (e.g. during Reviewer/Tester gate
 # verification) without an unqualified `go test ./internal/pages/... -race`
 # risking the bare default timeout. Same shape as the internal/plugins fix

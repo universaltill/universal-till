@@ -368,10 +368,21 @@ jobs:
         # plain, so don't run either a second time here. Also excludes
         # internal/pages itself (own step below, ut-docs#1992) for the same
         # margin reason as internal/plugins — see that step's comment — and
-        # internal/enroll, internal/logging and internal/netreach (own -race
-        # step below, ut-docs#3021, ut-docs#3410).
-        run: go test $(go list ./... | grep -vE '/internal/plugins$|/internal/plugins/(oauth|marketplace)$|/internal/pages$|/internal/(enroll|logging|netreach)$')
-      - name: Test internal/enroll, internal/logging, internal/netreach under -race (ut-docs#3021, ut-docs#3410)
+        # internal/enroll, internal/logging, internal/netreach, internal/app
+        # and internal/server (own -race step below, ut-docs#3021,
+        # ut-docs#3410, ut-docs#3014).
+        run: go test $(go list ./... | grep -vE '/internal/plugins$|/internal/plugins/(oauth|marketplace)$|/internal/pages$|/internal/(enroll|logging|netreach|app|server)$')
+      - name: Test internal/enroll, internal/logging, internal/netreach, internal/app, internal/server under -race (ut-docs#3021, ut-docs#3410, ut-docs#3014)
+        # internal/app and internal/server join this step (ut-docs#3014): the
+        # boot path starts background goroutines (the cloud link copies *cfg
+        # via enroll.Effective) before server.Start binds, so a write to any
+        # *cfg field in Start is a data race on every boot that plain
+        # `go test` never sees — it sat unseen until a chance local -race run
+        # (ut-docs#2990, TestStart_DoesNotWriteSharedConfigWhileOthersReadIt).
+        # Measured locally under -race: internal/app ~150s, internal/server
+        # ~45s, both under the default 600s per-package timeout; with the
+        # cold race-instrumented compile of internal/app's dependency tree
+        # expect the step to take ~3-6 min (the plain Test step sheds ~150s).
         # internal/logging and internal/netreach join this step (ut-docs#3410):
         # the recover path reaches the global logger from every background
         # goroutine, and an unsynchronised L() init race only shows under -race.
@@ -381,12 +392,13 @@ jobs:
         # exactly the shape that hid a real data race (Init writing a global
         # without mu while a loop a previous test left running read it under
         # mu.RLock) from the plain `go test` step above. Scoped to this one
-        # package rather than adding -race to the whole suite (that's the
-        # broader boot-path coverage tracked separately, ut-docs#3014).
+        # package rather than adding -race to the whole suite: internal/pages,
+        # internal/plugins and internal/data stay out because their -race
+        # runtimes don't fit (ut-docs#1034, ut-docs#2156, ut-docs#1366).
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
-        run: go test -race -count=1 ./internal/enroll/ ./internal/logging/ ./internal/netreach/
+        run: go test -race -count=1 ./internal/enroll/ ./internal/logging/ ./internal/netreach/ ./internal/app/ ./internal/server/
       - name: Test (internal/plugins/oauth and /marketplace — ut-docs#1630)
         # Same gap #1626 fixed for internal/plugins itself: the main Test
         # step above runs plain (no -v), so a t.Skip in these subpackages
@@ -403,7 +415,7 @@ jobs:
           GOCACHE: ${{ runner.temp }}/gobuildcache
         run: go test -v ./internal/plugins/oauth ./internal/plugins/marketplace
       - name: Test (internal/plugins — wider timeout, ut-docs#643/#753/#776)
-        # internal/plugins hit the plain (this workflow uses -race only for internal/enroll)
+        # internal/plugins hit the plain (this workflow uses -race only for the boot-path packages above)
         # default 600s per-package `go test` timeout for real in CI (PR
         # #316, "FAIL ... internal/plugins 600.015s") — not a deadlock: this
         # session measured the package's own plain runtime at 83-93s and
