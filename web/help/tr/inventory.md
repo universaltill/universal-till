@@ -13,8 +13,8 @@ routes: [/inventory, /locations, /ui/inventory/stock-table]
 
 ## Nasıl kullanılır
 
-1. Güncel stok seviyeleri için Envanter'i açın.
-2. O ürünle önceden doldurulmuş mal kabul/düzeltme penceresini açmak için bir stok satırına — veya arama kutusunun yanındaki **+** düğmesine — dokunun. Teslimatı mal kabul ile girin; fire, kırılma veya sayım farkı için düzeltme kullanın — stoktan düşmek için sayıyı negatif girin (dokunmatik kasada önce ekran klavyesinin "-" tuşuna dokunun).
+1. Güncel stok seviyeleri için Envanter'i açın. Stok takibi yapılan her etkin ürün listelenir, hiç stok almadığınız bir ürün bile: siz stok kaydedene kadar **Main** konumunuzda 0 olarak görünür.
+2. O ürünle önceden doldurulmuş mal kabul/düzeltme penceresini açmak için bir stok satırına dokunun — ayrı bir ekleme düğmesi yoktur; ürünü arama kutusu veya kategori filtresiyle bulup satırına dokunun. Teslimatı mal kabul ile girin; fire, kırılma veya sayım farkı için düzeltme kullanın — stoktan düşmek için sayıyı negatif girin (dokunmatik kasada önce ekran klavyesinin "-" tuşuna dokunun).
 3. Envanter sayfası stokun kaç gün yeteceğini tahmin eder ve ne kadar sipariş verileceğini önerir; raporlar sayfasında da düşük stok uyarısı görünür.
 4. Stok konumları (Konumlar, yalnızca yönetici) mağaza geneli kalemlerdir ve her zaman **ana kasadan** yönetilir: katılmış bir kasada bir konum oluşturmak, yeniden adlandırmak veya devre dışı bırakmak, sizi ana kasaya yönlendiren bir mesaj gösterir.
 5. Tap the filter icon beside the search box to open the category list, then tap a category to narrow the list to items in that category — tapping a category that has sub-categories includes their items too. It combines with the search box; tap **All categories** to clear it.

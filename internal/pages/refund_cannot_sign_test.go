@@ -12,8 +12,8 @@ import (
 )
 
 // --- ut-docs#3408 / ADR-0146: a fiscal.sign.ask "cannot-sign" answer on a
-// refund or return is refused wherever no money has moved electronically
-// yet (an inventory-page return, a cash/hookless refund). A refund whose
+// refund is refused wherever no money has moved electronically yet (a
+// cash/hookless refund). A refund whose
 // payment.<key>.refund hook already sent the money back keeps
 // proceed-and-declare (ADR-0146 Decision 3, ut-docs#3556) — pinned by
 // TestFiscalSignAsk_CannotSignOnProviderRefundStillDeclaresWithDifferentWording
@@ -99,32 +99,5 @@ func TestRefund_UnreachableCashRefundStillCompletesAndDeclares(t *testing.T) {
 	}
 	if n := countAuditRows(t, dp, fiscalSignGapActionSigning); n != 1 {
 		t.Fatalf("want 1 %s marker for the outage, got %d", fiscalSignGapActionSigning, n)
-	}
-}
-
-func TestCreateReturn_CannotSignIsRefused(t *testing.T) {
-	mux, dp := newInventoryAPITestDeps(t)
-	t.Cleanup(func() { plugins.SharedBus(dp.Db).ResetSubscribers() })
-	subscribeCannotSignSigner(t, dp)
-	saleID, _, lineID := seedCompletedSaleForReturn(t, dp)
-	stockBefore := countRows(t, dp, "SELECT COUNT(*) FROM stock_movements")
-
-	rec := postInvJSON(t, mux, "/api/inventory/return",
-		`{"original_sale_id":"`+saleID+`","reason":"faulty","lines":[{"line_id":"`+lineID+`","quantity":1}]}`)
-
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("a return the signer can't sign must be refused with 409, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), refundCannotSignCopy) {
-		t.Fatalf("want the refund.error.fiscal_cannot_sign copy, got: %s", rec.Body.String())
-	}
-	if n := countRows(t, dp, "SELECT COUNT(*) FROM sales WHERE sale_type = 'return'"); n != 0 {
-		t.Fatalf("a refused return must record no return sale, got %d", n)
-	}
-	if n := countAuditRows(t, dp, fiscalSignGapActionCannotSign); n != 0 {
-		t.Fatalf("a refused return has nothing to journal: want 0 %s rows, got %d", fiscalSignGapActionCannotSign, n)
-	}
-	if got := countRows(t, dp, "SELECT COUNT(*) FROM stock_movements"); got != stockBefore {
-		t.Fatalf("a refused return must not restock: stock_movements %d -> %d", stockBefore, got)
 	}
 }

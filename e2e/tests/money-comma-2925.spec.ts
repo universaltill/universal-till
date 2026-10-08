@@ -63,7 +63,8 @@ test.describe('Money inputs: decimal comma on the remaining fields (ut-docs#2925
 
   test('the stock cost accepts "3,50" and a malformed cost stays blank', async ({ page }) => {
     await page.goto('/inventory?lang=de');
-    await page.locator('#stock-dialog-open').click();
+    // ut-docs#3631: the dialog opens by tapping an item-level stock row.
+    await page.locator('#stock-table .stock-row[data-variant=""]').first().locator('td').first().click();
     await expect(page.locator('#stock-form')).toBeVisible();
     const submit = () => page.locator('#stock-form').evaluate((form: HTMLFormElement) =>
       form.dispatchEvent(new Event('submit', { cancelable: true })));

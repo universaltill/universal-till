@@ -129,8 +129,7 @@ func fiscalChipHandler(dp *common.Deps) http.HandlerFunc {
 	}
 }
 
-// createSigningOverride handles POST /api/fiscal/signing-override — modeled on
-// CreateNegativeInventoryOverride (inventory_api.go), adapted to owner
+// createSigningOverride handles POST /api/fiscal/signing-override — owner
 // (admin/super_admin) only.
 func createSigningOverride(dp *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -308,7 +307,7 @@ func createSigningOverride(dp *common.Deps) http.HandlerFunc {
 
 // respondFiscalError writes the { "data": null, "error": … } envelope for
 // JSON callers, an HTML fragment otherwise (same convention as
-// respondOverrideError in inventory_api.go).
+// respondError in inventory_api.go).
 func respondFiscalError(w http.ResponseWriter, r *http.Request, status int, message string) {
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, status, map[string]any{"data": nil, "error": message})

@@ -74,9 +74,10 @@ test.describe('admin-screen decimal fields survive typing via the on-screen keyb
       name: 'inventory.html quantity',
       goto: '/inventory',
       // ut-docs#2011: #stock-form now lives inside the full-screen
-      // receive/adjust dialog, closed by default.
+      // receive/adjust dialog, closed by default — opened by tapping a
+      // stock row (ut-docs#3631).
       before: async (page) => {
-        await page.locator('#stock-dialog-open').click();
+        await page.locator('#stock-table .stock-row[data-variant=""]').first().locator('td').first().click();
       },
       selector: '#stock-form input[name="quantity"]',
       text: '2.50',
@@ -85,7 +86,7 @@ test.describe('admin-screen decimal fields survive typing via the on-screen keyb
       name: 'inventory.html #stock-cost',
       goto: '/inventory',
       before: async (page) => {
-        await page.locator('#stock-dialog-open').click();
+        await page.locator('#stock-table .stock-row[data-variant=""]').first().locator('td').first().click();
       },
       selector: '#stock-cost',
       text: '4.20',
@@ -151,9 +152,9 @@ test.describe('admin-screen decimal fields survive typing via the on-screen keyb
   test('inventory.html #stock-cost: a correctly-typed amount syncs to #stock-cost-minor on submit', async ({ page }) => {
     await setOskMode(page, 'on');
     await page.goto('/inventory');
-    // ut-docs#2011: open the receive/adjust dialog first -- #stock-cost now
-    // lives inside it, closed by default.
-    await page.locator('#stock-dialog-open').click();
+    // ut-docs#2011: open the receive/adjust dialog first (by tapping a stock
+    // row, ut-docs#3631) -- #stock-cost now lives inside it, closed by default.
+    await page.locator('#stock-table .stock-row[data-variant=""]').first().locator('td').first().click();
     const cost = page.locator('#stock-cost');
     await cost.click();
     await expect(page.locator('#osk.osk-open')).toBeVisible();
@@ -188,8 +189,8 @@ test.describe('admin-screen decimal fields survive typing via the on-screen keyb
     await setOskMode(page, 'on');
     await page.goto('/inventory');
     // ut-docs#2011: #stock-form now lives inside the receive/adjust dialog,
-    // closed by default.
-    await page.locator('#stock-dialog-open').click();
+    // closed by default — opened by tapping a stock row (ut-docs#3631).
+    await page.locator('#stock-table .stock-row[data-variant=""]').first().locator('td').first().click();
     const qty = page.locator('#stock-form input[name="quantity"]');
     await qty.click();
     await expect(page.locator('#osk.osk-open')).toBeVisible();

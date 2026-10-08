@@ -18,10 +18,10 @@ import { test, expect } from './fixtures';
 test.describe('inventory: stock-cost currency-decimals conversion', () => {
   test('the cost conversion is delegated to window.utCurrency.toMinor(), not a hardcoded *100', async ({ page }) => {
     await page.goto('/inventory');
-    // ut-docs#2011: #stock-form now lives inside the full-screen
-    // receive/adjust dialog, opened blank via the header's "Add stock"
-    // button rather than sitting visible on the page.
-    await page.locator('#stock-dialog-open').click();
+    // ut-docs#2011: #stock-form lives inside the full-screen receive/adjust
+    // dialog; ut-docs#3631: opened by tapping an item-level stock row (the
+    // page-head "+" button is gone).
+    await page.locator('#stock-table .stock-row[data-variant=""]').first().locator('td').first().click();
     await expect(page.locator('#stock-form')).toBeVisible();
 
     // A marker return value no arithmetic on "12.34" could ever produce by
@@ -39,10 +39,10 @@ test.describe('inventory: stock-cost currency-decimals conversion', () => {
 
   test('a blank cost stays blank (never "0") even though toMinor("") is numerically 0 -- cost_price is optional server-side', async ({ page }) => {
     await page.goto('/inventory');
-    // ut-docs#2011: #stock-form now lives inside the full-screen
-    // receive/adjust dialog, opened blank via the header's "Add stock"
-    // button rather than sitting visible on the page.
-    await page.locator('#stock-dialog-open').click();
+    // ut-docs#2011: #stock-form lives inside the full-screen receive/adjust
+    // dialog; ut-docs#3631: opened by tapping an item-level stock row (the
+    // page-head "+" button is gone).
+    await page.locator('#stock-table .stock-row[data-variant=""]').first().locator('td').first().click();
     await expect(page.locator('#stock-form')).toBeVisible();
 
     // Real window.utCurrency.toMinor('') returns 0 (Number('') is 0, not

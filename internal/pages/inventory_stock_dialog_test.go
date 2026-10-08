@@ -56,9 +56,6 @@ func TestInventoryPage_StockRowsCarryDialogAttributes(t *testing.T) {
 	if !strings.Contains(body, `id="stock-dialog-context"`) {
 		t.Fatalf("expected a #stock-dialog-context confirmation line (which item/location is about to change), got: %s", body)
 	}
-	if !strings.Contains(body, `id="stock-dialog-open"`) {
-		t.Fatalf("expected a header \"Add stock\" button (id=stock-dialog-open) for the no-row-tapped path, got: %s", body)
-	}
 
 	// The existing Receive/Adjust form must now live INSIDE the dialog body,
 	// not sit as a separately-scrolled-to card -- otherwise the popup is
@@ -68,15 +65,6 @@ func TestInventoryPage_StockRowsCarryDialogAttributes(t *testing.T) {
 	dialogEnd := strings.Index(body[dialogStart:], "</dialog>")
 	if dialogStart < 0 || formIdx < 0 || dialogEnd < 0 || formIdx < dialogStart || formIdx > dialogStart+dialogEnd {
 		t.Fatalf("expected #stock-form to be nested inside #stock-dialog, got: %s", body)
-	}
-
-	// Override/Return stay untouched, outside the dialog (not moved).
-	if !strings.Contains(body, `id="override-form"`) || !strings.Contains(body, `id="return-form"`) {
-		t.Fatalf("expected override-form/return-form to remain present unchanged, got: %s", body)
-	}
-	overrideIdx := strings.Index(body, `id="override-form"`)
-	if overrideIdx >= dialogStart && overrideIdx <= dialogStart+dialogEnd {
-		t.Fatalf("override-form must NOT be moved inside the new stock dialog, got: %s", body)
 	}
 }
 

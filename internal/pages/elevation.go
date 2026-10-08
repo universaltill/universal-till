@@ -70,10 +70,10 @@ type elevationCheck struct {
 // that, same content-type branching every existing handler already does;
 // checkOrElevate itself never touches the request body).
 //
-// Modeled directly on fiscal_api.go's createSigningOverride and
-// inventory_api.go's CreateNegativeInventoryOverride (their bespoke,
-// pre-#557 manager-PIN-elevation precedents — both explicitly out of scope
-// to modify, ADR-0052), generalized to any canPerform() action rather than
+// Modeled directly on fiscal_api.go's createSigningOverride (a bespoke,
+// pre-#557 manager-PIN-elevation precedent — explicitly out of scope to
+// modify, ADR-0052; the inventory negative-stock override that was its
+// sibling was removed in ut-docs#3631), generalized to any canPerform() action rather than
 // each handler re-implementing its own PIN-lookup-then-role-recheck:
 //
 //   - canPerform(action) true: no elevation needed at all (allowed).
