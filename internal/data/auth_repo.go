@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +14,11 @@ import (
 // and the sessions table (docs: architecture/pos-auth.md).
 type AuthRepo struct {
 	db *sql.DB
+
+	// permMu guards perm, the in-memory role_permissions bitmask
+	// HasPermission answers from (ADR-0128 §6, ut-docs#3166).
+	permMu sync.Mutex
+	perm   *permBitmask
 }
 
 func NewAuthRepo(db *sql.DB) *AuthRepo {
@@ -526,7 +532,47 @@ func (r *AuthRepo) RevokeUserSessions(ctx context.Context, userID string) error 
 // action. No row (unknown role, unknown action, or an ungranted pairing
 // that was never seeded) means denied — this is a closed, not an open,
 // permission model.
+//
+// ut-docs#3166 (ADR-0128 §6): the answer comes from an in-memory bitmask
+// of the granted rows, rebuilt whenever sync_admin_version.generation
+// moves — migration 023's triggers bump it on every roles,
+// permission_actions and role_permissions write, so local edits, directive
+// apply and bundle apply all take effect on the next check. Plugins write
+// none of those tables, so a plugin install/remove changes no grant (ADR-0128
+// §6's "rebuilt on plugin install/remove" is covered by the generation
+// key). With no counter to key on, it falls back to the row lookup.
 func (r *AuthRepo) HasPermission(ctx context.Context, role, action string) (bool, error) {
+	var gen int64
+	if err := r.db.QueryRowContext(ctx, `SELECT generation FROM sync_admin_version WHERE id = 1`).Scan(&gen); err != nil {
+		// No counter to key on (missing row or table — a hand-edited DB
+		// or a test fixture): never trust the cache, same rule as
+		// SyncAdminRepo.adminGeneration. The row lookup still fails
+		// closed on a real DB error.
+		r.permMu.Lock()
+		r.perm = nil
+		r.permMu.Unlock()
+		return r.hasPermissionRow(ctx, role, action)
+	}
+
+	r.permMu.Lock()
+	defer r.permMu.Unlock()
+	if r.perm == nil || r.perm.gen != gen {
+		// gen was read BEFORE this scan (same ordering as
+		// SyncAdminRepo.ensureCached): a write committing mid-scan leaves
+		// the cache keyed on the older generation, so the next check
+		// rebuilds instead of serving stale grants under the newer one.
+		m, err := r.loadPermBitmask(ctx, gen)
+		if err != nil {
+			return false, err
+		}
+		r.perm = m
+	}
+	return r.perm.has(role, action), nil
+}
+
+// hasPermissionRow is the plain row lookup, used when there is no
+// generation counter to key the bitmask on.
+func (r *AuthRepo) hasPermissionRow(ctx context.Context, role, action string) (bool, error) {
 	var granted int
 	err := r.db.QueryRowContext(ctx,
 		`SELECT granted FROM role_permissions WHERE role = ? AND action = ?`, role, action).Scan(&granted)
@@ -537,6 +583,77 @@ func (r *AuthRepo) HasPermission(ctx context.Context, role, action string) (bool
 		return false, fmt.Errorf("has permission: %w", err)
 	}
 	return granted != 0, nil
+}
+
+// permBitmask is one generation's grants: each known action has a bit
+// position, each role a bitset of its granted actions.
+type permBitmask struct {
+	gen   int64
+	bit   map[string]int
+	masks map[string][]uint64
+}
+
+// has is the check itself. An action with no bit or a role with no mask
+// is denied.
+func (m *permBitmask) has(role, action string) bool {
+	b, ok := m.bit[action]
+	if !ok {
+		return false
+	}
+	mask := m.masks[role]
+	w := b / 64
+	return w < len(mask) && mask[w]&(1<<(uint(b)%64)) != 0
+}
+
+// loadPermBitmask reads the action catalog and every granted row into a
+// fresh bitmask for generation gen.
+func (r *AuthRepo) loadPermBitmask(ctx context.Context, gen int64) (*permBitmask, error) {
+	m := &permBitmask{gen: gen, bit: map[string]int{}, masks: map[string][]uint64{}}
+	rows, err := r.db.QueryContext(ctx, `SELECT action FROM permission_actions ORDER BY action`)
+	if err != nil {
+		return nil, fmt.Errorf("permission bitmask: %w", err)
+	}
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("permission bitmask: %w", err)
+		}
+		m.bit[a] = len(m.bit)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("permission bitmask: %w", err)
+	}
+
+	words := (len(m.bit) + 63) / 64
+	rows, err = r.db.QueryContext(ctx, `SELECT role, action FROM role_permissions WHERE granted != 0`)
+	if err != nil {
+		return nil, fmt.Errorf("permission bitmask: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var role, a string
+		if err := rows.Scan(&role, &a); err != nil {
+			return nil, fmt.Errorf("permission bitmask: %w", err)
+		}
+		b, ok := m.bit[a]
+		if !ok {
+			// The FK makes this unreachable; an action outside the
+			// catalog stays denied rather than getting a bit.
+			continue
+		}
+		mask := m.masks[role]
+		if mask == nil {
+			mask = make([]uint64, words)
+			m.masks[role] = mask
+		}
+		mask[b/64] |= 1 << (uint(b) % 64)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("permission bitmask: %w", err)
+	}
+	return m, nil
 }
 
 // RoleExists reports whether role is a recognized row in roles — the

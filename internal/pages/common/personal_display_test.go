@@ -252,6 +252,12 @@ func TestResolved_DbErrorFallsThrough(t *testing.T) {
 	if _, err := f.sql.Exec(`ALTER TABLE role_permissions RENAME TO role_permissions_gone`); err != nil {
 		t.Fatal(err)
 	}
+	// A rename fires no trigger, so bump the generation by hand: Can answers
+	// from a bitmask keyed on it (ut-docs#3166) and only re-reads the rows
+	// when it moves — that re-read is the failure under test.
+	if _, err := f.sql.Exec(`UPDATE sync_admin_version SET generation = generation + 1 WHERE id = 1`); err != nil {
+		t.Fatal(err)
+	}
 	f.assertTill(t, "u-mgr", "manager")
 }
 
