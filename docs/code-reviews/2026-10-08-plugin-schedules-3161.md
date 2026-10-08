@@ -54,6 +54,10 @@ The reviewer also asked for a Sync-level test that a plugin whose module fails t
 
 `gofmt`, `go build`, `go vet`, `golangci-lint` (v2.14 built with go1.27), every guard in `ci.yml`, the schedule tests under `-race`, and the full `go test ./...` — results recorded in the PR.
 
+## Rebase onto a moved main (2026-10-08, lane:cloud-41 sweep)
+
+`main` gained the jobs change (ut-docs#3908, #1756) and the persistent compile cache (ut-docs#3912, #1760) while this PR waited. The first rebase was clean. The second one conflicted in `WasmRuntime.Sync`, where both changes add a block after the module-load loop. The fix keeps both: the compile-cache prune runs first, then `startSchedules`. They are independent, since the prune only drops cache entries for uninstalled plugins, and both take `w.mu` only briefly. Re-verified on the rebased head: `go build`, `go vet`, the full `internal/plugins` package with CI's 20 m timeout, the schedule tests under `-race`, plus `internal/data` and `internal/db`.
+
 ## Verdict
 
 Safe to merge. Deferred: jobs, `poll` and `job_progress` (ut-docs#3908).
