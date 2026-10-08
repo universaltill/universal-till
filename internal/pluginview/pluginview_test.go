@@ -89,7 +89,7 @@ func TestDecodeViewAnswer_Refusals(t *testing.T) {
 		{"button url", doc(`{"type":"button","action":"go","label":{"literal":"x"},"href":"https://evil"}`), "unknown field"},
 		{"bad field name", doc(`{"type":"form","action":"save","submit":{"literal":"s"},"fields":[{"name":"_action","label":{"literal":"x"},"kind":"text"}]}`), "name"},
 		{"duplicate field name", doc(`{"type":"form","action":"save","submit":{"literal":"s"},"fields":[{"name":"a","label":{"literal":"x"},"kind":"text"},{"name":"a","label":{"literal":"x"},"kind":"text"}]}`), "twice"},
-		{"bad field kind", doc(`{"type":"form","action":"save","submit":{"literal":"s"},"fields":[{"name":"a","label":{"literal":"x"},"kind":"file"}]}`), "kind"},
+		{"bad field kind", doc(`{"type":"form","action":"save","submit":{"literal":"s"},"fields":[{"name":"a","label":{"literal":"x"},"kind":"image"}]}`), "kind"},
 		{"secret value echoed", doc(`{"type":"form","action":"save","submit":{"literal":"s"},"fields":[{"name":"a","label":{"literal":"x"},"kind":"secret","value":"hunter2"}]}`), "secret"},
 		{"select without options", doc(`{"type":"form","action":"save","submit":{"literal":"s"},"fields":[{"name":"a","label":{"literal":"x"},"kind":"select"}]}`), "options"},
 		{"select value not an option", doc(`{"type":"form","action":"save","submit":{"literal":"s"},"fields":[{"name":"a","label":{"literal":"x"},"kind":"select","options":[{"value":"a","label":{"literal":"A"}}],"value":"z"}]}`), "option"},
@@ -264,5 +264,62 @@ func TestPrepare_ResolvesAndFormats(t *testing.T) {
 	}
 	if fa := d.Prepare("fa"); fa.Components[0].Rows[0][1].Value != "۱٬۲۳۴٫۵" {
 		t.Errorf("fa number cell = %q", fa.Components[0].Rows[0][1].Value)
+	}
+}
+
+// File fields (ADR-0121 §7, ut-docs#3793): only on an entry that declared
+// config.upload_max_mb (Context.Uploads), never pre-filled; a form with one
+// renders as multipart.
+func TestFileField_3793(t *testing.T) {
+	fileForm := doc(`{"type":"form","action":"identify","submit":{"literal":"Go"},"fields":[
+		{"name":"photo","label":{"literal":"Photo"},"kind":"file","required":true},
+		{"name":"note","label":{"literal":"Note"},"kind":"text"}]}`)
+	if _, err := DecodeViewAnswer([]byte(fileForm), testCtx); err == nil || !strings.Contains(err.Error(), "upload_max_mb") {
+		t.Fatalf("file field without a declared upload max: err = %v, want a refusal naming upload_max_mb", err)
+	}
+	up := testCtx
+	up.Uploads = true
+	d, err := DecodeViewAnswer([]byte(fileForm), up)
+	if err != nil {
+		t.Fatalf("file field refused on an upload entry: %v", err)
+	}
+	withValue := doc(`{"type":"form","action":"identify","submit":{"literal":"Go"},"fields":[
+		{"name":"photo","label":{"literal":"Photo"},"kind":"file","value":"x"}]}`)
+	if _, err := DecodeViewAnswer([]byte(withValue), up); err == nil {
+		t.Fatal("a file field with a value was accepted")
+	}
+	withOptions := doc(`{"type":"form","action":"identify","submit":{"literal":"Go"},"fields":[
+		{"name":"photo","label":{"literal":"Photo"},"kind":"file","options":[{"value":"a","label":{"literal":"A"}}]}]}`)
+	if _, err := DecodeViewAnswer([]byte(withOptions), up); err == nil {
+		t.Fatal("a file field with options was accepted")
+	}
+
+	v := d.Prepare("en")
+	f := v.Components[0]
+	if !f.Multipart {
+		t.Fatal("a form with a file field must render as multipart")
+	}
+	if f.Fields[0].Kind != "file" || !f.Fields[0].Required {
+		t.Fatalf("file field = %+v", f.Fields[0])
+	}
+	plain, err := DecodeViewAnswer([]byte(doc(`{"type":"form","action":"s","submit":{"literal":"Go"},"fields":[{"name":"n","label":{"literal":"N"},"kind":"text"}]}`)), up)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Prepare("en").Components[0].Multipart {
+		t.Fatal("a form without a file field must not be multipart")
+	}
+}
+
+func TestValidFieldName_3793(t *testing.T) {
+	for _, ok := range []string{"photo", "a", "x_1"} {
+		if !ValidFieldName(ok) {
+			t.Errorf("%q refused", ok)
+		}
+	}
+	for _, bad := range []string{"", "_action", "Photo", "a-b", strings.Repeat("a", 65)} {
+		if ValidFieldName(bad) {
+			t.Errorf("%q accepted", bad)
+		}
 	}
 }

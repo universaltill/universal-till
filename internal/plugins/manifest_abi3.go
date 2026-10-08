@@ -1,8 +1,10 @@
 package plugins
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"path"
 	"regexp"
 	"strings"
@@ -208,7 +210,57 @@ func validateABI3Fields(m *Manifest) error {
 			return fmt.Errorf("manifest entry %q slot %q is not a content slot (allowed: %s)", e.Key, e.Slot, strings.Join(contentSlots, "|"))
 		}
 	}
+	return validatePageEntryUploads(m.Entries)
+}
+
+// MaxUploadMaxMB bounds a page entry's config.upload_max_mb (ut-docs#3793).
+const MaxUploadMaxMB = 32
+
+// validatePageEntryUploads: a page entry's config.upload_max_mb — the
+// largest file, in MiB, its plugin view's file fields accept (ADR-0121 §7,
+// ut-docs#3793) — is an integer 1..MaxUploadMaxMB when present. Static, so
+// ParseManifest, the verifier, PersistManifest and Rollback all run it.
+// Config is part of the signed manifest, so no signing change follows.
+func validatePageEntryUploads(entries []ManifestEntry) error {
+	for _, e := range entries {
+		if e.Type != "page" {
+			continue
+		}
+		raw, ok := e.Config["upload_max_mb"]
+		if !ok {
+			continue
+		}
+		if _, ok := UploadMaxMBValue(raw); !ok {
+			return fmt.Errorf("manifest entry %q config.upload_max_mb must be an integer 1..%d (got %v)", e.Key, MaxUploadMaxMB, raw)
+		}
+	}
 	return nil
+}
+
+// UploadMaxMBValue reads a config.upload_max_mb value as decoded from JSON:
+// an integer 1..MaxUploadMaxMB, or false.
+func UploadMaxMBValue(raw any) (int, bool) {
+	var f float64
+	switch v := raw.(type) {
+	case float64:
+		f = v
+	case int:
+		f = float64(v)
+	case int64:
+		f = float64(v)
+	case json.Number:
+		n, err := v.Float64()
+		if err != nil {
+			return 0, false
+		}
+		f = n
+	default:
+		return 0, false
+	}
+	if f != math.Trunc(f) || f < 1 || f > MaxUploadMaxMB {
+		return 0, false
+	}
+	return int(f), true
 }
 
 // validateMigrationsDir requires a relative, forward-slash path that stays

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -2331,7 +2332,15 @@ type PageEntryRow struct {
 	// ut-docs#3160), unpacked from config_json's "view" key; "" for a
 	// static/content page.
 	View string
+	// UploadMaxMB is the largest file, in MiB, the entry's plugin view's
+	// file fields accept (ut-docs#3793), unpacked from config_json's
+	// "upload_max_mb"; 0 = the view accepts no uploads.
+	UploadMaxMB int
 }
+
+// pageEntryUploadMaxMB is plugins.MaxUploadMaxMB (validated at install);
+// a row outside 1..it reads as 0 — no uploads.
+const pageEntryUploadMaxMB = 32
 
 // ListPageEntries returns active page entries from active plugins.
 func (r *PluginRepo) ListPageEntries(ctx context.Context) ([]PageEntryRow, error) {
@@ -2362,10 +2371,15 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 		if row.ConfigJSON != "" {
 			// A malformed blob just means "no view" (a static page).
 			var cfg struct {
-				View string `json:"view"`
+				View        string          `json:"view"`
+				UploadMaxMB json.RawMessage `json:"upload_max_mb"`
 			}
 			if json.Unmarshal([]byte(row.ConfigJSON), &cfg) == nil {
 				row.View = cfg.View
+				var mb float64
+				if len(cfg.UploadMaxMB) > 0 && json.Unmarshal(cfg.UploadMaxMB, &mb) == nil && mb == math.Trunc(mb) && mb >= 1 && mb <= pageEntryUploadMaxMB {
+					row.UploadMaxMB = int(mb)
+				}
 			}
 		}
 		res = append(res, row)

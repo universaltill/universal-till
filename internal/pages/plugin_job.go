@@ -287,9 +287,11 @@ func (r *pluginJobRegistry) poll(id, pluginID, route string, consume bool) (plug
 
 // startPluginJob runs event for entry's plugin as a job: payload is the
 // action's payload, sent with the job's id as job_id; vctx is what the
-// result is validated against (and job_progress keys too). It returns the
-// job id at once, or errPluginJobBusy.
-func startPluginJob(ctx context.Context, d *common.Deps, entry data.PageEntryRow, event string, payload map[string]any, vctx pluginview.Context) (string, error) {
+// result is validated against (and job_progress keys too); uploadTokens
+// are the action's staged uploads (ut-docs#3793), which the job owns from
+// a nil error on and releases when it ends, whichever way. It returns the
+// job id at once, or errPluginJobBusy (the caller still owns the uploads).
+func startPluginJob(ctx context.Context, d *common.Deps, entry data.PageEntryRow, event string, payload map[string]any, vctx pluginview.Context, uploadTokens []string) (string, error) {
 	reg := pluginJobs
 	watchEvery := pluginJobWatchEvery
 	deadline := pluginJobDeadline(ctx, d, entry.PluginID)
@@ -321,6 +323,9 @@ func startPluginJob(ctx context.Context, d *common.Deps, entry data.PageEntryRow
 	go func() {
 		defer logging.RecoverAndLog("pages.pluginJob")
 		defer cancel()
+		// Finished, failed, timed out, abandoned or panicked: the job's
+		// uploads go with it.
+		defer plugins.ReleaseUploads(entry.PluginID, uploadTokens)
 		type result struct {
 			raw []byte
 			ok  bool

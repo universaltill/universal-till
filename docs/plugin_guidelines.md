@@ -530,6 +530,20 @@ per plugin (a fifth drops the oldest). The query parameter `_job` is
 reserved for the till's poll: it is never passed to your view as a
 `params` entry, so don't use it in your own links.
 
+A form may ask the operator for a file with a field of kind `file`
+(no `value`). Your page entry must declare the largest file it accepts
+as `config.upload_max_mb` (an integer 1–32; anything else refuses the
+install), or a document with a file field is refused. The till streams
+each chosen file to a temporary file (at most four per post); a file
+over the limit is left out and its field named in `invalid`. Your
+`ui.action.ask` payload's `upload_handles` lists each file as
+`{"field", "handle", "filename", "size", "content_type"}`. Pass the
+`handle` to `upload_open` (ABI 3) and stream the file with `upload_read`
+(same plain-read rules as `import_file_read`, at most 256 KiB per call),
+then `upload_close`, which also deletes it. A handle works only for the
+plugin it was sent to. The file is deleted when the ask ends, or, if you
+answer with a job, when the job ends, even if you never close it.
+
 The format, limits and payloads are in
 [`ut-docs/reference/plugin-views.md`](https://github.com/universaltill/ut-docs/blob/main/reference/plugin-views.md).
 

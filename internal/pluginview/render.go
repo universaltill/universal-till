@@ -36,6 +36,9 @@ type ViewComponent struct {
 	Style  string
 	Submit string
 	Fields []ViewField
+	// Multipart: the form has a file field, so it posts
+	// multipart/form-data (ut-docs#3793).
+	Multipart bool
 }
 
 type ViewTile struct{ Label, Value string }
@@ -125,6 +128,9 @@ func (d *Document) Prepare(locale string) View {
 			vc.Action, vc.Submit = c.Form.Action, t(c.Form.Submit)
 			for _, f := range c.Form.Fields {
 				vc.Fields = append(vc.Fields, prepareField(f, t))
+				if f.Kind == "file" {
+					vc.Multipart = true
+				}
 			}
 		}
 		v.Components = append(v.Components, vc)
@@ -152,7 +158,7 @@ func prepareField(f Field, t func(Text) string) ViewField {
 		if hasValue {
 			_ = json.Unmarshal(f.Value, &vf.Checked)
 		}
-	case "secret":
+	case "secret", "file":
 		// Never pre-filled (the validator refuses a value anyway).
 	}
 	for _, o := range f.Options {
