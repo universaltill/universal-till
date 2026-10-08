@@ -87,6 +87,12 @@ var contentSlots = []string{
 	"admin.pages",
 }
 
+// ContentSlots returns a copy of the core content slots, in ADR order --
+// what core draws (internal/pages plugin_slot.go, ut-docs#3872).
+func ContentSlots() []string {
+	return append([]string(nil), contentSlots...)
+}
+
 func isContentSlot(s string) bool {
 	for _, c := range contentSlots {
 		if s == c {

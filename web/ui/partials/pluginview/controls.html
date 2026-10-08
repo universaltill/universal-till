@@ -1,10 +1,11 @@
 {{/* ADR-0121 §7 (ut-docs#3160): actions and forms. Each posts _action to
      .Route (the entry's own route) -- hx-post swaps the answer into
-     #plugin-view; without JS the plain form post renders the whole page.
+     #.Target (#plugin-view on a page, the panel's container in a content
+     slot, ut-docs#3872); without JS the plain form post renders the whole page.
      Typed fields carry a _kind.<name> hidden input so core can read the
      post without the original document (pluginview.DecodeForm). */}}
 {{ define "pluginview_action" }}
-<form class="plugin-view-action" method="post" action="{{ .Route }}" hx-post="{{ .Route }}" hx-target="#plugin-view" hx-swap="innerHTML">
+<form class="plugin-view-action" method="post" action="{{ .Route }}" hx-post="{{ .Route }}" hx-target="#{{ .Target }}" hx-swap="innerHTML">
   <input type="hidden" name="_action" value="{{ .Action }}">
   <button type="submit" class="btn btn-touch {{ .Style }}">{{ .Label }}</button>
 </form>
@@ -12,7 +13,7 @@
 
 {{ define "pluginview_form" }}
 {{- $c := .C }}
-<form class="card plugin-view-form" method="post" action="{{ .Route }}" hx-post="{{ .Route }}" hx-target="#plugin-view" hx-swap="innerHTML">
+<form class="card plugin-view-form" method="post" action="{{ .Route }}" hx-post="{{ .Route }}" hx-target="#{{ .Target }}" hx-swap="innerHTML">
   <input type="hidden" name="_action" value="{{ $c.Action }}">
   {{- range $c.Fields }}
   {{- if eq .Kind "toggle" }}

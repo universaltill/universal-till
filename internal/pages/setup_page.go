@@ -394,6 +394,9 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			}
 			data["tillName"] = strings.TrimSpace(r.PostFormValue("till_name"))
 		}
+		// ut-docs#3872: plugin panels for setup.wizard.steps, asked in
+		// parallel within the 2 s slot budget; "" when none answers.
+		data["pluginSlot"] = renderSetupSlot(r, d, httpx.RequestLocale(r))
 		httpx.RenderPartial("ui/pages/setup.html", data)(w, r)
 	}
 

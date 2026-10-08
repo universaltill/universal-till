@@ -6438,3 +6438,8 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .plugin-view-poll-bar { inline-size: 100%; block-size: 1rem; accent-color: var(--accent); }
 .plugin-view-poll-refresh { align-self: flex-start; display: inline-flex; align-items: center;
   min-block-size: 46px; padding-inline: .25rem; }
+/* Content slots (ADR-0121 §7, ut-docs#3872): one card per plugin panel
+   (web/ui/partials/pluginview/slot.html), stacked in the host region. */
+.plugin-slot { display: flex; flex-direction: column; gap: 1rem; margin-block: 1rem; }
+.plugin-slot-panel { min-inline-size: 0; }
+.plugin-slot-panel .plugin-view-title { font-size: 1.1rem; }

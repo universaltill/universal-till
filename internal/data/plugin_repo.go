@@ -2331,6 +2331,10 @@ type PageEntryRow struct {
 	// ut-docs#3160), unpacked from config_json's "view" key; "" for a
 	// static/content page.
 	View string
+	// Slot is the core content slot this entry's view also fills (ADR-0121
+	// §7, ut-docs#3872), unpacked from config_json's "content_slot" key;
+	// "" when the entry is a page only.
+	Slot string
 }
 
 // ListPageEntries returns active page entries from active plugins.
@@ -2360,12 +2364,15 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 			return nil, pluginObs.wrap("list_page_entries", err)
 		}
 		if row.ConfigJSON != "" {
-			// A malformed blob just means "no view" (a static page).
+			// A malformed blob just means "no view" (a static page) and
+			// no slot.
 			var cfg struct {
 				View string `json:"view"`
+				Slot string `json:"content_slot"`
 			}
 			if json.Unmarshal([]byte(row.ConfigJSON), &cfg) == nil {
 				row.View = cfg.View
+				row.Slot = cfg.Slot
 			}
 		}
 		res = append(res, row)

@@ -177,6 +177,10 @@
     <button class="btn secondary" id="eod-range-run-btn">{{ T "reports.eod.range_run" }}</button>
     <span id="eod-range-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></span>
   </div>
+  {{/* ADR-0121 §7 (ut-docs#3872): plugin panels (eod.footer), fetched
+       after the tab renders; only for an eod_report holder, the route's
+       own gate. */}}
+  {{ if .CanRunEOD }}<div class="plugin-slot-placeholder" hx-get="/ui/slot/eod.footer" hx-trigger="load" hx-swap="outerHTML"></div>{{ end }}
 </div>
 <script>
 (function () {
