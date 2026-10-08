@@ -23,8 +23,15 @@ window.utCurrency = (function(){
     var major = Math.floor(units / factor);
     var num = major.toString().replace(/\B(?=(\d{3})+(?!\d))/g, thousandsSep);
     if (decimals > 0) num += decimalSep + String(units % factor).padStart(decimals, '0');
-    if (neg) num = '-' + num;
-    return suffix ? num + ' ' + display : display + num;
+    var out = suffix ? num + ' ' + display : display + num;
+    if (!neg) return out;
+    // ut-docs#3880, the twin of Go's formatMoney/FormatMoneyDisplay: the
+    // sign leads the whole amount ("-£42.50", never "£-42.50"), and on an
+    // RTL page a prefix-symbol negative is one left-to-right isolate so
+    // the sign stays left of the symbol.
+    out = '-' + out;
+    var rtl = document.documentElement && document.documentElement.dir === 'rtl';
+    return rtl && !suffix ? '\u2066' + out + '\u2069' : out;
   }
   // ut-docs#2819: strict grammar, the client twin of Go's
   // httpx.ParseMoneyMajor (plus an optional leading minus for the payout/

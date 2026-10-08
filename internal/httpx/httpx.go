@@ -1087,7 +1087,7 @@ func FuncsFor(locale string) template.FuncMap {
 		if !ok {
 			return ""
 		}
-		return FormatMoney(cents, locale)
+		return FormatMoneyDisplay(cents, locale)
 	}
 	// {{ qty .Qty }}: locale digit-shape/grouping for an on-screen sale-line
 	// quantity, the quantity-side twin of money above (ut-docs#2221) — an

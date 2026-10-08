@@ -710,11 +710,11 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 		}
 		if len(lines) == 0 {
 			// Deliberately nothing selected (yet) -- a genuine, correct zero.
-			_, _ = w.Write([]byte(httpx.FormatMoney(0, locale)))
+			_, _ = w.Write([]byte(httpx.FormatMoneyDisplay(0, locale)))
 			return
 		}
 		total := computeRefundTotal(lines, money.FromMinor(saleDiscount), charges, inclusive)
-		_, _ = w.Write([]byte(httpx.FormatMoney(total.Minor(), locale)))
+		_, _ = w.Write([]byte(httpx.FormatMoneyDisplay(total.Minor(), locale)))
 	})
 
 	mux.HandleFunc("POST /api/refund", func(w http.ResponseWriter, r *http.Request) {
