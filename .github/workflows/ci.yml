@@ -81,6 +81,10 @@ jobs:
         run: bash scripts/ci/release-macos-nonblocking_test.sh
       - name: iOS TestFlight workflow never reaches its signing key from a PR — wiring test (ut-docs#3069)
         run: bash scripts/ci/ios-testflight-workflow_test.sh
+      - name: App stores stay private until launch — no public release path (ut-docs#3052)
+        run: bash scripts/ci/guard-store-private.sh
+      - name: Store-private guard regression test (ut-docs#3052)
+        run: bash scripts/ci/guard-store-private_test.sh
       - name: iOS app shell locks page zoom — wiring test (ut-docs#3350)
         run: bash scripts/ci/ios-webview-zoom_test.sh
       - name: iOS bug-report screenshot bridge — wiring test (ut-docs#3355)
