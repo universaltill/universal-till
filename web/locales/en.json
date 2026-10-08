@@ -1419,6 +1419,7 @@
   "plugin.content.fallback_notice": "This content isn't available in your language yet — showing what's there so far.",
   "plugin.content.meta": "Content v%s · updated %s",
   "plugin.content.search_placeholder": "Search…",
+  "plugin.view.unavailable": "This plugin page can't be shown right now. Try again in a moment — the rest of the till keeps working.",
   "plugins.buttons.title": "Plugin actions",
   "plugins.current_version": "Current version:",
   "plugins.error.grant_failed": "Could not grant the permission.",

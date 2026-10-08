@@ -1434,6 +1434,7 @@
   "plugin.content.fallback_notice": "این محتوا هنوز به زبان شما ترجمه نشده — محتوای موجود نمایش داده می‌شود.",
   "plugin.content.meta": "نسخهٔ محتوا %s · به‌روزرسانی %s",
   "plugin.content.search_placeholder": "جستجو…",
+  "plugin.view.unavailable": "این صفحهٔ افزونه اکنون قابل نمایش نیست. کمی بعد دوباره تلاش کنید — بقیهٔ صندوق مثل همیشه کار می‌کند.",
   "plugins.buttons.title": "عملیات افزونه‌ها",
   "plugins.current_version": "نسخه فعلی:",
   "plugins.error.grant_failed": "اعطای دسترسی ممکن نشد.",

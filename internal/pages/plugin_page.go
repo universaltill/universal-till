@@ -58,10 +58,7 @@ func registerPluginPages(mux *http.ServeMux, d *common.Deps) {
 			http.NotFound(w, r)
 			return
 		}
-		if !pluginPageMethodAllowed(w, r) {
-			return
-		}
-		renderPluginPage(w, r, d, entry)
+		servePluginEntry(w, r, d, entry)
 	})
 
 	mux.HandleFunc("GET /ui/plugin-buttons", func(w http.ResponseWriter, r *http.Request) {
@@ -113,8 +110,33 @@ func registerPluginPages(mux *http.ServeMux, d *common.Deps) {
 	})
 }
 
-// pluginPageMethodAllowed gates a matched plugin page route: pages are
-// read-only (sandboxed, no forms), so only GET and HEAD render (ut-docs#3789).
+// servePluginEntry answers a matched plugin page entry, from the /plugin/
+// catch-all or the index catch-all (a legacy root route such as /faq).
+// Every response, 405s included, carries the plugin page policy
+// (ut-docs#2892, ADR-0121 §7).
+func servePluginEntry(w http.ResponseWriter, r *http.Request, d *common.Deps, entry data.PageEntryRow) {
+	w.Header().Set("Content-Security-Policy", pluginPageCSP)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// ADR-0121 §7 (ut-docs#3160): a view entry is drawn by core from the
+	// plugin's view document, and POST runs its actions. Only under
+	// /plugin/ -- §7 lets core-generated hx-* target only /plugin/...; a
+	// view on any other route is ignored and the entry renders as before.
+	if entry.View != "" && strings.HasPrefix(entry.Route, "/plugin/") {
+		if !pluginViewMethodAllowed(w, r) {
+			return
+		}
+		servePluginView(w, r, d, entry)
+		return
+	}
+	if !pluginPageMethodAllowed(w, r) {
+		return
+	}
+	renderPluginPage(w, r, d, entry)
+}
+
+// pluginPageMethodAllowed gates a matched plugin page route: a static or
+// content page is read-only (sandboxed, no forms), so only GET and HEAD
+// render (ut-docs#3789). A view entry is gated by pluginViewMethodAllowed.
 // Otherwise it writes 405 with Allow and returns false.
 func pluginPageMethodAllowed(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {

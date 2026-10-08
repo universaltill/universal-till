@@ -1434,6 +1434,7 @@
   "plugin.content.fallback_notice": "Bu içerik henüz dilinize çevrilmedi — mevcut içerik gösteriliyor.",
   "plugin.content.meta": "İçerik sürüm %s · güncellenme %s",
   "plugin.content.search_placeholder": "Ara…",
+  "plugin.view.unavailable": "Bu eklenti sayfası şu anda gösterilemiyor. Birazdan tekrar deneyin — kasanın geri kalanı çalışmaya devam ediyor.",
   "plugins.buttons.title": "Eklenti işlemleri",
   "plugins.current_version": "Mevcut sürüm:",
   "plugins.error.grant_failed": "İzin verilemedi.",

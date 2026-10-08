@@ -707,11 +707,12 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 	}
 	cctx = withHostState(cctx, hs)
 
-	var stdout, stderr bytes.Buffer
+	var stderr bytes.Buffer
+	stdout := &cappedBuffer{max: answerCapFor(ev.Type)}
 	cfg := wazero.NewModuleConfig().
 		WithName(""). // anonymous: parallel instantiations must not collide
 		WithStdin(bytes.NewReader(in)).
-		WithStdout(&stdout).
+		WithStdout(stdout).
 		WithStderr(&stderr).
 		WithArgs("plugin.wasm", ev.Type).
 		// Real wall and monotonic clocks for WASI clock_time_get (ADR-0121
@@ -735,14 +736,51 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 			runErr = nil
 		}
 	}
+	if stdout.over {
+		// Checked before runErr: a refused write usually also makes the
+		// guest exit non-zero, and the cap is the real reason.
+		return nil, fmt.Errorf("wasm handler: %s answer to %s exceeds %d bytes", pluginID, ev.Type, stdout.max)
+	}
 	if runErr != nil {
 		return nil, fmt.Errorf("wasm handler: %w", runErr)
 	}
-	out := strings.TrimSpace(stdout.String())
+	out := strings.TrimSpace(stdout.buf.String())
 	if out != "" {
 		logging.L().Infof("%s", wasmResultLogLine(pluginID, ev.Type, out))
 	}
 	return json.RawMessage(out), nil
+}
+
+// maxUIAnswerBytes caps a ui.* answer (ui.view.ask / ui.action.ask, a view
+// document, ADR-0121 §7, ut-docs#3160). The renderer refuses a document
+// over 256 KiB anyway; this bound stops a plugin growing the host's memory
+// before that check runs.
+const maxUIAnswerBytes = 1 << 20
+
+// answerCapFor returns the stdout cap for eventType; 0 = unbounded. Only
+// ui.* asks are capped today: an export answer (content_b64) can carry a
+// whole dataset, so a global cap needs its own card.
+func answerCapFor(eventType string) int {
+	if strings.HasPrefix(eventType, "ui.") {
+		return maxUIAnswerBytes
+	}
+	return 0
+}
+
+// cappedBuffer is a guest stdout that refuses writes past max (0 =
+// unbounded) and remembers that it did.
+type cappedBuffer struct {
+	buf  bytes.Buffer
+	max  int
+	over bool
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if c.max > 0 && (c.over || c.buf.Len()+len(p) > c.max) {
+		c.over = true
+		return 0, fmt.Errorf("stdout exceeds %d bytes", c.max)
+	}
+	return c.buf.Write(p)
 }
 
 // wasmResultLogLine builds the exact line logged for a handler's stdout

@@ -34,7 +34,7 @@ func TestIsSalePathEvent(t *testing.T) {
 			t.Errorf("isSalePathEvent(%q) = false, want true", ev)
 		}
 	}
-	for _, ev := range []string{"sale.completed", "export.requested.ask", "import.requested.ask", "plugin.button.pressed", "ui.view.render"} {
+	for _, ev := range []string{"sale.completed", "export.requested.ask", "import.requested.ask", "plugin.button.pressed", "ui.view.render", "ui.view.ask", "ui.action.ask"} {
 		if isSalePathEvent(ev) {
 			t.Errorf("isSalePathEvent(%q) = true, want false", ev)
 		}

@@ -6397,3 +6397,37 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .ut-tour-actions .btn { min-block-size: 44px; min-inline-size: 44px; padding-block: .5rem; padding-inline: .9rem; font-size: .95rem; }
 .ut-tour-actions .btn[hidden] { display: none; }
 .manual-tour { margin-block-end: 1rem; }
+
+/* ---------- Plugin views (ADR-0121 §7, ut-docs#3160) ----------
+   Core's own rendering of a plugin's view document
+   (web/ui/partials/pluginview/). Logical properties only (RTL); actions
+   keep the till's 46px touch floor (.btn-touch). Notices are inline and
+   persist -- not .pos-notice, whose info level auto-expires. */
+.plugin-view { display: flex; flex-direction: column; gap: 1rem; }
+.plugin-view-title, .plugin-view-heading { margin: 0; }
+.plugin-view-text { margin: 0; overflow-wrap: anywhere; }
+.plugin-view-notice { padding: .55rem .8rem; border-radius: var(--radius);
+  border: 1px solid transparent; font-weight: 600; overflow-wrap: anywhere; }
+.plugin-view-notice.info { background: rgba(37, 99, 235, .1); color: var(--text);
+  border-color: rgba(37, 99, 235, .3); }
+.plugin-view-notice.warn { background: var(--warning-tint); color: var(--text);
+  border-color: var(--warning-tint-border); }
+.plugin-view-notice.error { background: var(--danger-tint); color: var(--danger);
+  border-color: var(--danger-tint-border); }
+.plugin-view-table-wrap { overflow-x: auto; }
+.plugin-view-table th { text-align: start; }
+.plugin-view-table .num { text-align: end; font-variant-numeric: tabular-nums; }
+/* nowrap only as a real table: in phone card mode (table-cards.js) it would
+   inherit into the ::before data-label and push a long German label
+   ("GESAMTBETRAG") over its value. */
+.plugin-view-table:not(.t-cards) .num { white-space: nowrap; }
+.plugin-view-list { margin: 0; padding-block: .75rem; padding-inline: 2rem 1rem; }
+.plugin-view-empty { text-align: center; }
+.plugin-view-form { display: flex; flex-direction: column; gap: .6rem; max-inline-size: 36rem; }
+.plugin-view-form > .btn, .plugin-view-action .btn { align-self: flex-start; }
+/* A toggle is a whole-row target at the 46px floor (.btn-touch). nowrap:
+   .field-checks' own flex-wrap would drop a long label (German) onto the
+   line below its checkbox; the text wraps inside its own flex item instead. */
+.plugin-view-form label.field-checks { flex-wrap: nowrap; min-block-size: 46px; margin: 0; cursor: pointer; }
+.plugin-view-form label.field-checks > input[type="checkbox"] { flex: none; inline-size: 1.25rem; block-size: 1.25rem; margin: 0; }
+.plugin-view-action { margin: 0; }

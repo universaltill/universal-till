@@ -1,0 +1,10 @@
+{{ define "content" }}
+{{/* ADR-0121 §7 / ut-docs#3160: a plugin page drawn from the plugin's view
+     document by core's own partials (web/ui/partials/pluginview/). */}}
+<h1 id="plugin-view-title">{{ .title }}</h1>
+<div id="plugin-view" class="plugin-view">
+{{ template "pluginview_body" .pv }}
+</div>
+{{ end }}
+
+{{ define "pluginview_title_oob" }}<h1 id="plugin-view-title" hx-swap-oob="true">{{ . }}</h1>{{ end }}

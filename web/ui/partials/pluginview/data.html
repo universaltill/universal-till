@@ -1,0 +1,23 @@
+{{/* ADR-0121 §7 (ut-docs#3160): read-only data components. Values are
+     already formatted (money from minor units + currency, numbers with
+     the locale's digits) by pluginview.Prepare. */}}
+{{ define "pluginview_stat_tiles" }}
+<div class="report-cards plugin-view-tiles">
+  {{- range .Tiles }}
+  <div class="card kpi"><div class="kpi-label">{{ .Label }}</div><div class="kpi-value">{{ .Value }}</div></div>
+  {{- end }}
+</div>
+{{ end }}
+
+{{ define "pluginview_table" }}
+<div class="card plugin-view-table-wrap">
+<table class="table plugin-view-table">
+  <thead><tr>{{ range .Columns }}<th{{ if ne .Kind "text" }} class="num"{{ end }}>{{ .Label }}</th>{{ end }}</tr></thead>
+  <tbody>
+    {{- range .Rows }}
+    <tr>{{ range . }}<td{{ if ne .Kind "text" }} class="num"{{ end }}>{{ .Value }}</td>{{ end }}</tr>
+    {{- end }}
+  </tbody>
+</table>
+</div>
+{{ end }}

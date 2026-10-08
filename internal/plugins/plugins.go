@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
@@ -34,6 +35,23 @@ type Manager struct {
 	db               *sql.DB
 	Wasm             *WasmRuntime // in-process runtime for runtime:"wasm" plugins
 	localizer        Localizer    // receives language-pack translations
+
+	// ownKeys: plugin id -> the locale keys that plugin's OWN
+	// locales/*.json declare (any locale), rebuilt by syncLocales. A plugin
+	// view's text key must be one of them (ADR-0121 §7, ut-docs#3160).
+	ownKeysMu sync.RWMutex
+	ownKeys   map[string]map[string]bool
+}
+
+// OwnLocaleKeys returns the set of locale keys plugin id's own locale
+// files declare, as of the last sync. The map is shared: read it only.
+func (m *Manager) OwnLocaleKeys(id string) map[string]bool {
+	if m == nil {
+		return nil
+	}
+	m.ownKeysMu.RLock()
+	defer m.ownKeysMu.RUnlock()
+	return m.ownKeys[id]
 }
 
 // Localizer is where plugin-shipped locale files land (the config.I18n).
@@ -63,11 +81,9 @@ func (m *Manager) SetLocalizer(l Localizer) {
 // (same class of shadowed-key logging as loadMenuEntries' page-key collision,
 // ut-docs#472).
 func (m *Manager) syncLocales() {
-	if m.localizer == nil {
-		return
-	}
 	overlays := map[string]map[string]string{}
 	source := map[string]map[string]string{} // locale -> key -> plugin id that supplied the current value
+	own := map[string]map[string]bool{}
 	for _, id := range m.InstalledIDs() {
 		p := m.Installed[id]
 		dir := filepath.Join(paths.Plugins(), id, p.Version, "locales")
@@ -93,7 +109,11 @@ func (m *Manager) syncLocales() {
 				overlays[locale] = map[string]string{}
 				source[locale] = map[string]string{}
 			}
+			if own[id] == nil {
+				own[id] = map[string]bool{}
+			}
 			for k, v := range msgs {
+				own[id][k] = true
 				if prevID, ok := source[locale][k]; ok && prevID != id {
 					log.Printf("plugin %s's locale key %q for %q is shadowed by plugin %s's overlay of the same key — only %s's translation is used; pick a non-colliding key name (see ut-docs/architecture/plugin-architecture.md's Plugin i18n section)", prevID, k, locale, id, id)
 				}
@@ -102,7 +122,12 @@ func (m *Manager) syncLocales() {
 			}
 		}
 	}
-	m.localizer.SetOverlays(overlays)
+	m.ownKeysMu.Lock()
+	m.ownKeys = own
+	m.ownKeysMu.Unlock()
+	if m.localizer != nil {
+		m.localizer.SetOverlays(overlays)
+	}
 }
 
 type Plugin struct {
