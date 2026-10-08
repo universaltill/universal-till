@@ -6,7 +6,9 @@
 # job in the `release-signing` environment — ut-infra
 # unitill-infra/release-signing/).
 #
-# Installs osslsigncode, fetches jsign and the Microsoft root (both pinned by
+# Expects osslsigncode from install-osslsigncode.sh, run in an earlier step
+# before `azure/login` (Ubuntu's 2.8 rejects valid timestamps,
+# ut-docs#3867). Fetches jsign and the Microsoft root (both pinned by
 # SHA-256), fetches a short-lived (~1h) signing token into a 0600 file, and
 # exports the paths + signing coordinates through $GITHUB_ENV. The token itself
 # is masked and never written to $GITHUB_ENV.
@@ -25,8 +27,10 @@ dir="$RUNNER_TEMP/win-signing"
 mkdir -p "$dir"
 chmod 700 "$dir"
 
-sudo apt-get update
-sudo apt-get install -y osslsigncode
+if ! command -v osslsigncode >/dev/null; then
+  echo "::error::osslsigncode missing — run packaging/windows/install-osslsigncode.sh in a step before azure/login" >&2
+  exit 1
+fi
 
 curl -fsSL -o "$dir/jsign.jar" "https://github.com/ebourg/jsign/releases/download/${JSIGN_VERSION}/jsign-${JSIGN_VERSION}.jar"
 echo "${JSIGN_SHA256}  $dir/jsign.jar" | sha256sum -c -

@@ -46,6 +46,16 @@ need() {
 }
 need SIGN_PUBLISHER SIGN_CA_BUNDLE
 
+# osslsigncode before 2.9 can't read a timestamp token without a signingTime
+# attribute, which Microsoft's service sometimes sends, and fails a valid
+# file. Install it with install-osslsigncode.sh, not apt (ut-docs#3867).
+ver="$(osslsigncode --version 2>/dev/null | sed -n '1s/^osslsigncode \([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p')" || true
+read -r ver_major ver_minor <<<"${ver:-0 0}"
+if [ "$ver_major" -lt 2 ] || { [ "$ver_major" -eq 2 ] && [ "$ver_minor" -lt 9 ]; }; then
+  echo "::error::sign-exe.sh needs osslsigncode 2.9 or newer (found: $(osslsigncode --version 2>&1 | head -1)) — run packaging/windows/install-osslsigncode.sh" >&2
+  exit 1
+fi
+
 if [ "$mode" = sign ]; then
   need JSIGN_JAR SIGN_ENDPOINT SIGN_ALIAS SIGN_TOKEN_FILE
   if [ ! -s "$SIGN_TOKEN_FILE" ]; then
