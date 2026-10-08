@@ -34,6 +34,7 @@ Bir güncellemeden sonra kasa neyin değiştiğini size anlatır — sade bir di
 2. Bir güncellemeden sonra kasayı ilk kez bir yönetici veya admin açtığında, durum çubuğunda küçük bir "… sürümüne güncellendi — yenilikleri görün" notu çıkar. Notları okumak için ona dokunun ya da gizlemek için × simgesine dokunun. Satışa asla engel olmaz ve yalnızca bir kez görünür.
 3. Kasiyerler bu notu hiç görmez, self-servis kioskundaki müşteriler de görmez. Yeni kurulmuş bir kasa da bu notu göstermez.
 4. Notlar kasanın içinde yerleşiktir, bu yüzden internet bağlantısı olmadan da çalışır. Bir not henüz dilinize çevrilmediyse İngilizce gösterilir.
+5. Bir güncellemeyi kurmadan önce Ayarlar → Yazılım güncellemesi, yönetici veya admin'e yeni sürümün neler getirdiğini gösterir: güncellemenin içerdiği her sürümün notları, en yenisi önce; çevrildiyse kasanın dilinde, değilse İngilizce. Bu notlar yalnızca o sayfayı açtığınızda indirilir. Yüklenemezlerse kasa "Sürüm notları kullanılamıyor" der — Windows ve Mac'te sürüm sayfasına bir bağlantıyla birlikte — ve güncellemeyi yine her zamanki gibi kurabilirsiniz.
 
 ## Android kasalarda
 

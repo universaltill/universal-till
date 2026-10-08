@@ -271,6 +271,11 @@ nfpms:
 
 checksum:
   name_template: checksums.txt
+  # ut-docs#3940: release.extra_files are not checksummed on their own, and
+  # release.yml's checksums job requires an entry for every published asset
+  # (scripts/ci/check-release-checksums.sh).
+  extra_files:
+    - glob: ./build/release-notes.json
 
 # ut-docs#3091: the owner-facing "What's new" leads the Release body
 # (release.yml passes --release-header from web/release-notes/en/<tag>.md);
@@ -296,6 +301,11 @@ release:
   # it "Latest") only after every platform job succeeds — see that job's
   # own comment before changing this back to `false`.
   draft: true
+  # ut-docs#3940: the till reads this asset (internal/updates.NotesAssetName)
+  # to show an incoming version's release notes before installing it.
+  # Written by release.yml's "Release-notes bundle asset" step.
+  extra_files:
+    - glob: ./build/release-notes.json
   footer: |
     **Raspberry Pi / Debian:** `sudo apt install ./unitill-pos_*_arm64.deb`
     then open http://localhost:8080 — the first-boot wizard does the rest.

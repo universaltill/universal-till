@@ -250,6 +250,13 @@ jobs:
         run: |
           sudo apt-get update
           bash packaging/windows/install-osslsigncode.sh
+      # ut-docs#3940: release-notes.json — every web/release-notes note, so a
+      # till can show this version's notes BEFORE installing it. Attached by
+      # .goreleaser.yaml's release.extra_files (build/ is gitignored, so it
+      # does not dirty the tree, and `--clean` only empties dist/). Built
+      # before the signing identity logs in, same rule as osslsigncode above.
+      - name: Release-notes bundle asset
+        run: go run ./scripts/release-notes-bundle -o build/release-notes.json
       - name: Azure login (OIDC, signing identity)
         uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
         with:

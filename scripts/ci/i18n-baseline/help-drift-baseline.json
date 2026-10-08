@@ -518,19 +518,19 @@
       "topic": "updates",
       "signature": {
         "headings": 5,
-        "numbered_steps": 12,
+        "numbered_steps": 13,
         "sub_bullets": 0,
         "top_bullets": 0,
         "bold_leadins": 0
       },
       "english": {
         "headings": 5,
-        "numbered_steps": 17,
+        "numbered_steps": 18,
         "sub_bullets": 0,
         "top_bullets": 0,
         "bold_leadins": 0
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2726: a new \"Automatic updates\" section (one heading, five numbered steps) added to English and this locale in lockstep (headings 3->4 / 3->4, numbered_steps 8->13 / 3->8); the pre-existing gap is unchanged, just re-recorded at its new absolute values. Updated ut-docs#3091: a new \"What's new in each version\" section (one heading, four numbered steps) added to English and this locale in lockstep (headings 4->5 / 4->5, numbered_steps 13->17 / 8->12); the pre-existing gap is unchanged."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2726: a new \"Automatic updates\" section (one heading, five numbered steps) added to English and this locale in lockstep (headings 3->4 / 3->4, numbered_steps 8->13 / 3->8); the pre-existing gap is unchanged, just re-recorded at its new absolute values. Updated ut-docs#3091: a new \"What's new in each version\" section (one heading, four numbered steps) added to English and this locale in lockstep (headings 4->5 / 4->5, numbered_steps 13->17 / 8->12); the pre-existing gap is unchanged. Updated ut-docs#3940: one numbered step (the incoming version's notes before installing) added to English and this locale in lockstep (numbered_steps 17->18 / 12->13); the pre-existing gap is unchanged."
     },
     {
       "locale": "fa",

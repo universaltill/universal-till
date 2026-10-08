@@ -35,6 +35,7 @@ Nach einem Update zeigt Ihnen die Kasse, was sich geändert hat – in einfachen
 2. Wenn ein Manager oder Admin die Kasse nach einem Update zum ersten Mal öffnet, erscheint in der Statusleiste ein kleiner Hinweis „Aktualisiert auf … – sehen Sie, was neu ist“. Tippen Sie darauf, um die Hinweise zu lesen, oder tippen Sie auf ×, um ihn auszublenden. Er stört nie beim Verkaufen und erscheint nur einmal.
 3. Kassierer sehen diesen Hinweis nie, Kunden an einem Selbstbedienungs-Kiosk ebenfalls nicht. Auch eine neu installierte Kasse zeigt ihn nicht.
 4. Die Hinweise sind in die Kasse eingebaut und funktionieren daher ohne Internetverbindung. Ist ein Hinweis noch nicht in Ihre Sprache übersetzt, wird er auf Englisch angezeigt.
+5. Bevor Sie ein Update installieren, zeigt Einstellungen → Software-Update einem Manager oder Admin, was die neue Version bringt: die Hinweise zu jeder Version, die das Update enthält, die neueste zuerst – in der Sprache der Kasse, sofern übersetzt, sonst auf Englisch. Diese Hinweise werden erst heruntergeladen, wenn Sie diese Seite öffnen. Können sie nicht geladen werden, zeigt die Kasse „Versionshinweise nicht verfügbar“ – unter Windows und auf dem Mac mit einem Link zur Release-Seite – und Sie können das Update trotzdem wie gewohnt installieren.
 
 ## Auf einer Android-Kasse
 

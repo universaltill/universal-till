@@ -327,7 +327,9 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/settings/display-mode":          true,
 	"POST /api/settings/kiosk-idle-reset":      true,
 	"POST /api/settings/kiosk-payment-mode":    true,
-	// Updates: check, apply, Android install, schedule, restart status.
+	// Updates: check, apply, Android install, schedule, restart status, and
+	// the incoming version's release notes (a download, ut-docs#3940).
+	"GET /api/update/notes":              true,
 	"GET /api/update/status":             true,
 	"POST /api/settings/update-schedule": true,
 	"POST /api/update/android-install":   true,

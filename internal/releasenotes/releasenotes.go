@@ -16,6 +16,7 @@ import (
 	"html/template"
 	"io/fs"
 	"path"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -128,17 +129,34 @@ func semverLess(a, b string) bool {
 // fails on a malformed note rather than skipping it: a release whose notes
 // silently vanish is worse than a build that refuses to start the tests.
 func Load(fsys fs.FS, root string) (*Library, error) {
-	lib := &Library{byLocale: map[string]map[string]*Note{}}
+	files, err := readSources(fsys, root)
+	if err != nil {
+		return nil, err
+	}
+	return build(files)
+}
+
+// sourceFile is one note file before parsing: <locale>/<name>.
+type sourceFile struct {
+	locale, name string
+	raw          []byte
+}
+
+func (f sourceFile) path() string { return f.locale + "/" + f.name }
+
+// readSources collects every <root>/<locale>/*.md file (other files and
+// nested directories are ignored, as they always were).
+func readSources(fsys fs.FS, root string) ([]sourceFile, error) {
 	locales, err := fs.ReadDir(fsys, root)
 	if err != nil {
 		return nil, fmt.Errorf("releasenotes: reading %s: %w", root, err)
 	}
+	var out []sourceFile
 	for _, ld := range locales {
 		if !ld.IsDir() {
 			continue
 		}
-		locale := ld.Name()
-		dir := path.Join(root, locale)
+		dir := path.Join(root, ld.Name())
 		entries, err := fs.ReadDir(fsys, dir)
 		if err != nil {
 			return nil, fmt.Errorf("releasenotes: reading %s: %w", dir, err)
@@ -147,28 +165,42 @@ func Load(fsys fs.FS, root string) (*Library, error) {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 				continue
 			}
-			name := path.Join(dir, e.Name())
-			stem := strings.TrimSuffix(e.Name(), ".md")
-			if !strings.HasPrefix(stem, "v") || Tag(stem) != stem {
-				return nil, fmt.Errorf("releasenotes: %s: filename must be v<MAJOR>.<MINOR>.<PATCH>.md", name)
-			}
-			raw, err := fs.ReadFile(fsys, name)
+			raw, err := fs.ReadFile(fsys, path.Join(dir, e.Name()))
 			if err != nil {
-				return nil, fmt.Errorf("releasenotes: reading %s: %w", name, err)
+				return nil, fmt.Errorf("releasenotes: reading %s: %w", path.Join(dir, e.Name()), err)
 			}
-			n, err := parseNote(raw)
-			if err != nil {
-				return nil, fmt.Errorf("releasenotes: %s: %w", name, err)
-			}
-			if n.Version != stem {
-				return nil, fmt.Errorf("releasenotes: %s: version %q does not match the filename", name, n.Version)
-			}
-			n.Locale, n.Translated = locale, true
-			if lib.byLocale[locale] == nil {
-				lib.byLocale[locale] = map[string]*Note{}
-			}
-			lib.byLocale[locale][n.Version] = n
+			out = append(out, sourceFile{locale: ld.Name(), name: e.Name(), raw: raw})
 		}
+	}
+	return out, nil
+}
+
+// build is the one strict parser behind Load (embedded notes) and
+// LoadBundle (a release's downloaded notes, ut-docs#3940): every rule a
+// release note must meet is checked here, whichever way it arrived.
+func build(files []sourceFile) (*Library, error) {
+	lib := &Library{byLocale: map[string]map[string]*Note{}}
+	for _, f := range files {
+		name := f.path()
+		if !localeRe.MatchString(f.locale) {
+			return nil, fmt.Errorf("releasenotes: %s: locale %q is not a language tag", name, f.locale)
+		}
+		stem, ok := strings.CutSuffix(f.name, ".md")
+		if !ok || !strings.HasPrefix(stem, "v") || Tag(stem) != stem {
+			return nil, fmt.Errorf("releasenotes: %s: filename must be v<MAJOR>.<MINOR>.<PATCH>.md", name)
+		}
+		n, err := parseNote(f.raw)
+		if err != nil {
+			return nil, fmt.Errorf("releasenotes: %s: %w", name, err)
+		}
+		if n.Version != stem {
+			return nil, fmt.Errorf("releasenotes: %s: version %q does not match the filename", name, n.Version)
+		}
+		n.Locale, n.Translated = f.locale, true
+		if lib.byLocale[f.locale] == nil {
+			lib.byLocale[f.locale] = map[string]*Note{}
+		}
+		lib.byLocale[f.locale][n.Version] = n
 	}
 	for locale, notes := range lib.byLocale {
 		if locale == FallbackLocale {
@@ -189,6 +221,11 @@ func Load(fsys fs.FS, root string) (*Library, error) {
 	})
 	return lib, nil
 }
+
+// localeRe is a plain language tag directory name ("en", "de", "pt-BR",
+// "zh_Hant"): no dots or slashes, so a bundle key can never climb out of
+// its locale.
+var localeRe = regexp.MustCompile(`^[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,8})?$`)
 
 func parseNote(raw []byte) (*Note, error) {
 	s := strings.ReplaceAll(string(raw), "\r\n", "\n")
