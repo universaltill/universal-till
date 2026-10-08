@@ -314,6 +314,38 @@ func TestPluginRepo_ListPageEntries(t *testing.T) {
 	}
 }
 
+// ut-docs#3872: a page entry's content slot (ADR-0121 §7), folded into
+// config_json under "content_slot" at install, comes back on
+// PageEntryRow.Slot next to View; a malformed blob means no slot.
+func TestPluginRepo_ListPageEntries_ContentSlot_3872(t *testing.T) {
+	ctx := context.Background()
+	d := openMigratedDB(t, "till.db")
+	repo := NewPluginRepo(d.DB)
+	seedCatalogAndPlugin(t, ctx, repo, "com.t.slot", "1.0.0")
+
+	if err := repo.ReplacePluginEntries(ctx, nil, "com.t.slot", []PluginEntryRow{
+		{Type: "page", Key: "panel", Label: "Panel", Route: "/plugin/slot", ConfigJSON: `{"view":"slot.panel","content_slot":"reports.panels","slot":"layout-key"}`},
+		{Type: "page", Key: "page", Label: "Page", Route: "/plugin/slot/page", ConfigJSON: `{"view":"slot.page"}`},
+		{Type: "page", Key: "bad", Label: "Bad", Route: "/plugin/slot/bad", ConfigJSON: `{"content_slot":`},
+	}); err != nil {
+		t.Fatalf("seed entries: %v", err)
+	}
+	rows, err := repo.ListPageEntries(ctx)
+	if err != nil {
+		t.Fatalf("ListPageEntries: %v", err)
+	}
+	got := map[string]PageEntryRow{}
+	for _, r := range rows {
+		got[r.EntryKey] = r
+	}
+	if got["panel"].Slot != "reports.panels" || got["panel"].View != "slot.panel" {
+		t.Fatalf("panel = %+v, want slot reports.panels, view slot.panel", got["panel"])
+	}
+	if got["page"].Slot != "" || got["bad"].Slot != "" || got["bad"].View != "" {
+		t.Fatalf("page/bad must have no slot: %+v / %+v", got["page"], got["bad"])
+	}
+}
+
 // TestPluginRepo_ListPageEntriesUploadMaxMB_3793: a page entry's
 // config.upload_max_mb is read back as UploadMaxMB; absent, malformed or
 // out of range (a hand-edited row) reads as 0 — no uploads.

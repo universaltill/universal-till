@@ -1,0 +1,17 @@
+{{/* ADR-0121 §7 (ut-docs#3872; format: ut-docs reference/plugin-views.md):
+     a core content slot's plugin panels, one <section> per plugin entry
+     that answered, in (plugin id, entry key) order. Each panel's container
+     id (.ID, set by core) is what the panel's actions and job poll target,
+     so an action answer replaces only that panel. The heading is the
+     view's title (or the entry's label), drawn by pluginview_body. */}}
+{{ define "pluginview_slot" }}
+<div class="plugin-slot" data-slot="{{ .Slot }}">
+{{- range .Panels }}
+  <section class="card plugin-slot-panel">
+    <div id="{{ .ID }}" class="plugin-view">
+{{ template "pluginview_body" .Body }}
+    </div>
+  </section>
+{{- end }}
+</div>
+{{ end }}

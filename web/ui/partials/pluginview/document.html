@@ -3,8 +3,11 @@
      pluginview.View -- html/template escapes it; nothing is marked safe.
      Every form/hx-* target is .Route, the entry's own route, set by core;
      a plugin never supplies a URL. pluginview_body is also the fragment an
-     htmx action swaps into #plugin-view. */}}
+     htmx action swaps into #plugin-view, or into a content slot panel's own
+     container (.TargetID, ut-docs#3872). .ReadOnly (setup.wizard.steps)
+     draws no actions or forms. */}}
 {{ define "pluginview_body" }}
+{{- if .View.Title }}<h2 class="plugin-view-title">{{ .View.Title }}</h2>{{ end }}
 {{- if .Unavailable }}
 <div class="plugin-view-notice warn" role="status">{{ T "plugin.view.unavailable" }}</div>
 {{- else if .JobBusy }}
@@ -13,8 +16,9 @@
 <div class="plugin-view-notice warn" role="status">{{ T "plugin.job.gone" }}</div>
 {{- else if .Job }}{{ template "pluginview_poll" . }}
 {{- else }}
-{{- if .View.Title }}<h2 class="plugin-view-title">{{ .View.Title }}</h2>{{ end }}
 {{- $route := .Route }}
+{{- $target := .TargetID }}
+{{- $ro := .ReadOnly }}
 {{- range .View.Components }}
 {{- if eq .Type "heading" }}<h2 class="plugin-view-heading">{{ .Text }}</h2>
 {{- else if eq .Type "text" }}<p class="plugin-view-text">{{ .Text }}</p>
@@ -26,10 +30,10 @@
 <div class="card plugin-view-empty">
   <h2>{{ .Title }}</h2>
   {{- if .Text }}<p class="muted">{{ .Text }}</p>{{ end }}
-  {{- if .Action }}{{ template "pluginview_action" (dict "Route" $route "Action" .Action "Label" .Label "Style" "primary") }}{{ end }}
+  {{- if and .Action (not $ro) }}{{ template "pluginview_action" (dict "Route" $route "Target" $target "Action" .Action "Label" .Label "Style" "primary") }}{{ end }}
 </div>
-{{- else if eq .Type "button" }}{{ template "pluginview_action" (dict "Route" $route "Action" .Action "Label" .Label "Style" .Style) }}
-{{- else if eq .Type "form" }}{{ template "pluginview_form" (dict "Route" $route "C" .) }}
+{{- else if and (eq .Type "button") (not $ro) }}{{ template "pluginview_action" (dict "Route" $route "Target" $target "Action" .Action "Label" .Label "Style" .Style) }}
+{{- else if and (eq .Type "form") (not $ro) }}{{ template "pluginview_form" (dict "Route" $route "Target" $target "C" .) }}
 {{- end }}
 {{- end }}
 {{- end }}

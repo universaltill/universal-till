@@ -547,6 +547,24 @@ answer with a job, when the job ends, even if you never close it.
 The format, limits and payloads are in
 [`ut-docs/reference/plugin-views.md`](https://github.com/universaltill/ut-docs/blob/main/reference/plugin-views.md).
 
+### Content slots (ADR-0121 §7, ut-docs#3872)
+
+A view entry can also fill one core content slot — `item.edit.actions`,
+`reports.panels`, `eod.footer`, `settings.sections`, `admin.pages` or
+`setup.wizard.steps` — by naming it in the entry's `slot` and holding
+`ui:slot:<slot>` (`ui:page` alone is not enough). The till asks every
+plugin filling the slot with `ui.view.ask` in parallel; `params` carry the
+host request's query plus `"slot"`. Each answer gets **2 s**: a slow,
+broken or invalid answer is skipped (logged, nothing shown) and never
+holds up the screen. Panels are drawn in (plugin id, entry key) order, at
+most 8 per slot. The five signed-in slots load lazily from
+`GET /ui/slot/{slot}`, gated by the host screen's permission (`admin.pages`
+also needs `reports`, ADR-0149 §6). A panel's actions post to the entry's
+own route, as on its page, and answer into that panel only. The setup
+wizard draws `setup.wizard.steps` inline and read-only (no buttons or
+forms: the wizard runs before anyone signs in). Details:
+[`plugin-views.md` → Content slots](https://github.com/universaltill/ut-docs/blob/main/reference/plugin-views.md#content-slots).
+
 ### Scheduled work (ADR-0121 §8)
 
 A wasm plugin has no background threads. For periodic work (a retry

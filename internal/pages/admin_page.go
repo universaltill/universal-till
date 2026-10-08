@@ -292,6 +292,9 @@ func registerAdmin(mux *http.ServeMux, d *common.Deps) {
 			"menuItems":   d.MenuSnapshot(),
 			"Groups":      groups,
 			"CurrentHref": current,
+			// ut-docs#3872: the admin.pages slot placeholder, drawn only
+			// for a viewer its route lets through (core reports too).
+			"PluginSlot": canPerform(d, r, "reports"),
 		}
 		if current != "" {
 			data["PanelHTML"] = embedAdminSection(mux, r, current)

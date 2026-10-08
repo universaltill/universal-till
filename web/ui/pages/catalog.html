@@ -390,6 +390,12 @@
             <label><input type="checkbox" name="isActive" id="item-active" value="1" checked> {{ T "catalog.active" }}</label>
           </div>
         </form>
+        {{/* ADR-0121 §7 (ut-docs#3872): plugin actions for the open item
+             (item.edit.actions). A sibling of #item-form, never inside it
+             (plugin panels carry their own forms). Filled by
+             openCatalogRow with ?item_id=, emptied by clearForm; hidden
+             for a not-yet-saved item like every item-bound panel. */}}
+        <div class="item-form-needs-item" id="item-plugin-slot"></div>
       </div>
 
       <!-- ut-docs#1956: the variants/barcodes/cost panel
@@ -997,6 +1003,9 @@
     // any in-flight guard so the next item's load isn't skipped.
     var modifiersHost = document.getElementById('item-modifiers-host');
     if (modifiersHost) modifiersHost.innerHTML = '';
+    // ut-docs#3872: drop A's plugin panels too.
+    var pluginSlot = document.getElementById('item-plugin-slot');
+    if (pluginSlot) pluginSlot.innerHTML = '';
     modifiersLoading = '';
     document.querySelectorAll('.pick-item').forEach(function (el) { el.value = ''; });
     ['image-item-id', 'labels-item-id', 'keypad-item-id'].forEach(function (id) {
@@ -1205,6 +1214,15 @@
     var modHost = document.getElementById('item-modifiers-host');
     if (modHost) modHost.innerHTML = '<div id="item-modifiers-list"></div>';
     loadItemModifiers();
+    // ut-docs#3872: the item's plugin panels (item.edit.actions) — emptied
+    // first so item A's panels never show under item B; a slow plugin is
+    // skipped server-side, so this never holds the dialog up.
+    var pluginSlotHost = document.getElementById('item-plugin-slot');
+    if (pluginSlotHost) {
+      pluginSlotHost.innerHTML = '';
+      htmx.ajax('GET', '/ui/slot/item.edit.actions?item_id=' + encodeURIComponent(row.dataset.id),
+        { target: '#item-plugin-slot', swap: 'innerHTML' });
+    }
     var imgLabel = document.getElementById('image-item-label');
     if (imgLabel) { imgLabel.value = row.dataset.name; document.getElementById('image-item-id').value = row.dataset.id; clearPendingImage(); }
     refreshBuiltinIconState(row.dataset.id);

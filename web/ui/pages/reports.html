@@ -117,4 +117,9 @@
   {{ end }}
 </div>
 <div id="report-tab-panel" role="tabpanel" style="margin-top:1rem"></div>
+{{/* ADR-0121 §7 (ut-docs#3872): plugin panels (reports.panels), fetched
+     after the page renders so it never waits on a plugin; they get the
+     report window as params. Replaced by nothing when no plugin answers. Below the tab panel so
+     late-arriving panels never push the tab strip down (UX review). */}}
+<div class="plugin-slot-placeholder" hx-get="/ui/slot/reports.panels?{{ $qs }}" hx-trigger="load" hx-swap="outerHTML"></div>
 {{ end }}

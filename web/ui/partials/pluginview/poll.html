@@ -1,18 +1,19 @@
 {{/* ADR-0121 §8 (ut-docs#3908; format: ut-docs reference/plugin-views.md):
      core's poll component for a running plugin job. It sits inside the
-     page body (#plugin-view), never a modal, so nav, status and lock stay
+     page body (#plugin-view, or a content slot panel's container --
+     .TargetID, ut-docs#3872), never a modal, so nav, status and lock stay
      reachable. htmx re-asks the entry's own route about every second and
      swaps the answer in: this poll again, or the job's result. The refresh
      link is the no-JS fallback. .Route and .Job.ID are set by core (the id
      is 32 hex characters); html/template escapes both. */}}
 {{ define "pluginview_poll" }}
 <div class="plugin-view-poll" role="status" aria-live="polite"
-     hx-get="{{ .Route }}?_job={{ .Job.ID }}" hx-trigger="every 1s" hx-target="#plugin-view" hx-swap="innerHTML">
-  <span id="plugin-view-poll-msg" class="plugin-view-poll-msg">{{ if .Job.Message }}{{ .Job.Message }}{{ else }}{{ T "plugin.job.running" }}{{ end }}</span>
+     hx-get="{{ .Route }}?_job={{ .Job.ID }}" hx-trigger="every 1s" hx-target="#{{ .TargetID }}" hx-swap="innerHTML">
+  <span id="{{ .TargetID }}-poll-msg" class="plugin-view-poll-msg">{{ if .Job.Message }}{{ .Job.Message }}{{ else }}{{ T "plugin.job.running" }}{{ end }}</span>
   {{- if .Job.HasPct }}
-  <progress class="plugin-view-poll-bar" max="100" value="{{ .Job.Pct }}" aria-labelledby="plugin-view-poll-msg">{{ .Job.Pct }}%</progress>
+  <progress class="plugin-view-poll-bar" max="100" value="{{ .Job.Pct }}" aria-labelledby="{{ .TargetID }}-poll-msg">{{ .Job.Pct }}%</progress>
   {{- else }}
-  <progress class="plugin-view-poll-bar" max="100" aria-labelledby="plugin-view-poll-msg"></progress>
+  <progress class="plugin-view-poll-bar" max="100" aria-labelledby="{{ .TargetID }}-poll-msg"></progress>
   {{- end }}
   <a class="plugin-view-poll-refresh" href="{{ .Route }}?_job={{ .Job.ID }}">{{ T "plugin.job.refresh" }}</a>
 </div>
