@@ -143,6 +143,19 @@ jobs:
         run: bash scripts/ci/guard-plugin-settings-bump.sh
       - name: Plugin-settings BumpGeneration guard regression test
         run: bash scripts/ci/guard-plugin-settings-bump_test.sh
+      # ADR-0121 F4 (ut-docs#3951): every "ut" host function has a guest SDK
+      # binding and vice versa. The reference-doc half runs in the
+      # adr-taxonomy-guard job, which has the ut-docs checkout.
+      - name: Guest SDK host-function guard
+        run: bash scripts/ci/guard-sdk-hostfns.sh
+      - name: Guest SDK host-function guard regression test
+        run: bash scripts/ci/guard-sdk-hostfns_test.sh
+      # sdk/plugin is a nested module: the root `go test ./...` never reaches it.
+      - name: Guest SDK tests (native fake host) and wasip1 vet
+        working-directory: sdk/plugin
+        run: |
+          go test -count=1 ./...
+          GOOS=wasip1 GOARCH=wasm go vet ./...
       - name: i18n coverage guard
         run: bash scripts/ci/guard-i18n.sh
       - name: i18n coverage guard regression test
@@ -829,6 +842,12 @@ jobs:
         env:
           DOCS_DIR: ut-docs
         run: bash scripts/ci/guard-adr-taxonomy-drift.sh
+      # ut-docs#3951: every host function has a reference entry in ut-docs.
+      - name: Guest SDK host-function reference guard
+        if: env.DOCS_READ_TOKEN != ''
+        env:
+          DOCS_DIR: ut-docs
+        run: bash scripts/ci/guard-sdk-hostfns.sh
       - name: Warn that the taxonomy guards will skip
         if: env.DOCS_READ_TOKEN == ''
-        run: echo "::warning::DOCS_READ_TOKEN secret not set — ut-docs is private, the ADR-0002 and cross-ADR taxonomy guards will be skipped"
+        run: echo "::warning::DOCS_READ_TOKEN secret not set — ut-docs is private, the ADR-0002, cross-ADR taxonomy and SDK reference guards will be skipped"

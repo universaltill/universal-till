@@ -7,8 +7,12 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	"github.com/universaltill/universal-till/sdk/plugin"
 )
 
 func main() {
-	fmt.Printf(`{"document":{"version":1,"components":[{"type":"text","text":{"literal":"%s"}}]}}`+"\n", strings.Repeat("A", 2<<20))
+	plugin.Run(plugin.Handlers{"*": func(plugin.Event) (any, error) {
+		return []byte(fmt.Sprintf(`{"document":{"version":1,"components":[{"type":"text","text":{"literal":"%s"}}]}}`+"\n", strings.Repeat("A", 2<<20))), nil
+	}})
 }

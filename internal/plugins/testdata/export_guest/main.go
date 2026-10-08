@@ -10,10 +10,9 @@ package main
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"io"
-	"os"
+
+	"github.com/universaltill/universal-till/sdk/plugin"
 )
 
 // exportSaleRow mirrors data.ExportSaleRow's wire shape (internal/data/
@@ -42,24 +41,21 @@ type exportRequestPayload struct {
 	Sales    []exportSaleRow `json:"sales"`
 }
 
-type incomingEvent struct {
-	Payload exportRequestPayload `json:"payload"`
-}
-
 func main() {
-	raw, _ := io.ReadAll(os.Stdin)
-	var ev incomingEvent
-	// A malformed/missing payload just yields an empty Sales slice —
-	// count/sum report 0/0 rather than the guest crashing, since this
-	// fixture's job is proving real data arrives, not validating it.
-	_ = json.Unmarshal(raw, &ev)
+	plugin.Run(plugin.Handlers{"*": func(ev plugin.Event) (any, error) {
+		var p exportRequestPayload
+		// A malformed/missing payload just yields an empty Sales slice —
+		// count/sum report 0/0 rather than the guest crashing, since this
+		// fixture's job is proving real data arrives, not validating it.
+		_ = ev.Decode(&p)
 
-	var sum int64
-	for _, s := range ev.Payload.Sales {
-		sum += s.Total
-	}
+		var sum int64
+		for _, s := range p.Sales {
+			sum += s.Total
+		}
 
-	content := []byte("id,total\n1,9.99\n")
-	fmt.Printf(`{"ok":true,"filename":"export.csv","content_b64":"%s","message":"count=%d sum=%d"}`+"\n",
-		base64.StdEncoding.EncodeToString(content), len(ev.Payload.Sales), sum)
+		content := []byte("id,total\n1,9.99\n")
+		return []byte(fmt.Sprintf(`{"ok":true,"filename":"export.csv","content_b64":"%s","message":"count=%d sum=%d"}`+"\n",
+			base64.StdEncoding.EncodeToString(content), len(p.Sales), sum)), nil
+	}})
 }

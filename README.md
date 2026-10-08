@@ -431,7 +431,9 @@ Access `/settings` in the web interface to configure:
 Want to extend Universal Till? Plugins run **in-process as WASM modules**
 (via [wazero](https://wazero.io), no cgo) — write the logic in Go
 (`GOOS=wasip1 GOARCH=wasm`), Rust, TinyGo, or anything else that compiles to
-WASM. One architecture-independent `.wasm` artifact per plugin, Ed25519-signed
+WASM. Go plugins build on the guest SDK in [`sdk/plugin`](sdk/plugin/README.md)
+(event loop, a typed wrapper for every host function, a fake host for native
+`go test`). One architecture-independent `.wasm` artifact per plugin, Ed25519-signed
 and capability-gated (a module gets nothing until the manifest grants it).
 Asset-only plugins (themes, language packs, layouts) use `runtime: "none"` instead —
 no code, just files. Hardware/device plugins needing raw OS access (USB,

@@ -25,7 +25,7 @@ bash "$bench/build.sh" >/dev/null
 # build must not be benched under this run's name.
 rm -rf "$out/modules"
 mkdir -p "$out/modules"
-for g in go-command go-reactor tinygo-command tinygo-reactor; do
+for g in go-command go-sdk-command go-reactor tinygo-command tinygo-reactor; do
 	if [[ -f $out/$g.wasm && ( $g == go-* || -n $(command -v tinygo) ) ]]; then
 		cp "$out/$g.wasm" "$out/modules/"
 	fi

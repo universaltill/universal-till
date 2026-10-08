@@ -8,42 +8,32 @@
 // started_tx_id back as tx_id (what a real signer does after retrieving THAT
 // transaction) alongside canned §6 KassenSichV evidence. This is NOT a real
 // signer (no fiskaly, no network): it exists purely to exercise core's
-// reconcile plumbing. Any other event, or a request without started_tx_id,
-// gets "not-found" — the honest answer for a transaction it never started.
+// reconcile plumbing. Any other event writes nothing; a request without
+// started_tx_id gets "not-found" — the honest answer for a transaction it
+// never started. Built on the Go guest SDK (ADR-0121 F4, ut-docs#3951).
 package main
 
-import (
-	"encoding/json"
-	"fmt"
-	"io"
-	"os"
-)
+import "github.com/universaltill/universal-till/sdk/plugin"
 
-func main() {
-	raw, _ := io.ReadAll(os.Stdin)
-	var ev struct {
-		Type    string          `json:"type"`
-		Payload json.RawMessage `json:"payload"`
-	}
-	_ = json.Unmarshal(raw, &ev)
-	if ev.Type != "fiscal.sign.reconcile.ask" {
-		os.Exit(0)
-	}
+func reconcile(ev plugin.Event) (any, error) {
 	var ask struct {
 		SaleID      string `json:"sale_id"`
 		StartedTxID string `json:"started_tx_id"`
 	}
-	_ = json.Unmarshal(ev.Payload, &ask)
+	_ = ev.Decode(&ask)
 	if ask.StartedTxID == "" {
-		fmt.Print(`{"status":"not-found"}`)
-		os.Exit(0)
+		return []byte(`{"status":"not-found"}`), nil
 	}
-	fmt.Print(`{"status":"confirmed","tx_id":"` + ask.StartedTxID + `","tx_revision":2,"tse":{` +
+	return []byte(`{"status":"confirmed","tx_id":"` + ask.StartedTxID + `","tx_revision":2,"tse":{` +
 		`"transaction_number":4712,` +
 		`"signature_counter":12346,` +
 		`"serial_number":"TSE-TEST-SERIAL-1",` +
 		`"start_time":"2026-08-15T10:31:00Z",` +
 		`"log_time":"2026-08-15T10:31:02Z",` +
 		`"signature":"RECONCILEDSIGBASE64==",` +
-		`"signature_algorithm":"ecdsa-plain-SHA256"}}`)
+		`"signature_algorithm":"ecdsa-plain-SHA256"}}`), nil
+}
+
+func main() {
+	plugin.Run(plugin.Handlers{"fiscal.sign.reconcile.ask": reconcile})
 }

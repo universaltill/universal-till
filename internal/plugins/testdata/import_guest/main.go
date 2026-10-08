@@ -13,28 +13,19 @@ package main
 
 import (
 	"crypto/sha256"
-	"encoding/json"
+	"errors"
 	"fmt"
+	"hash"
 	"io"
-	"os"
-	"unsafe"
+
+	"github.com/universaltill/universal-till/sdk/plugin"
 )
 
-//go:wasmimport ut import_file_size
-func importFileSize(handle int32) int64
-
+// raw on purpose: the SDK always passes a real Go buffer, so it cannot make
+// the out-of-bounds-dstPtr call runInvalidPtrRead needs (ut-docs#614).
+//
 //go:wasmimport ut import_file_read
-func importFileRead(handle int32, dstPtr, dstCap uint32) int32
-
-//go:wasmimport ut import_file_close
-func importFileClose(handle int32) int32
-
-func ptrOf(b []byte) (uint32, uint32) {
-	if len(b) == 0 {
-		return 0, 0
-	}
-	return uint32(uintptr(unsafe.Pointer(&b[0]))), uint32(len(b))
-}
+func rawImportFileRead(handle int32, dstPtr, dstCap uint32) int32
 
 // readBufSize is deliberately much smaller than the dispatch test's staged
 // file so a correct total byte count is only reachable by looping.
@@ -47,55 +38,76 @@ const readBufSize = 64 << 10
 // regardless of what the guest claims it can hold (ut-docs#615).
 const oversizedReadBufSize = 2 << 20 // 2MB
 
+type importPayload struct {
+	EntryKey   string   `json:"entry_key"`
+	Entities   []string `json:"entities"`
+	FileHandle int32    `json:"file_handle"`
+	FileName   string   `json:"file_name"`
+	FileSize   int64    `json:"file_size"`
+	Mode       string   `json:"mode"`
+}
+
+// code maps an SDK result back to the host's numeric return: 0 for
+// success, the negative host code for a *plugin.Error.
+func code(err error) int32 {
+	var e *plugin.Error
+	if errors.As(err, &e) {
+		return e.Code
+	}
+	if err != nil {
+		return -3
+	}
+	return 0
+}
+
 func main() {
-	raw, _ := io.ReadAll(os.Stdin)
-	var ev struct {
-		Payload struct {
-			EntryKey   string   `json:"entry_key"`
-			Entities   []string `json:"entities"`
-			FileHandle int32    `json:"file_handle"`
-			FileName   string   `json:"file_name"`
-			FileSize   int64    `json:"file_size"`
-			Mode       string   `json:"mode"`
-		} `json:"payload"`
-	}
-	_ = json.Unmarshal(raw, &ev)
-	h := ev.Payload.FileHandle
+	plugin.Run(plugin.Handlers{"*": handle})
+}
 
-	if ev.Payload.Mode == "oversized_read" {
-		runOversizedRead(h)
-		return
-	}
-	if ev.Payload.Mode == "invalid_ptr_read" {
-		runInvalidPtrRead(h)
-		return
+func handle(ev plugin.Event) (any, error) {
+	var p importPayload
+	_ = ev.Decode(&p)
+	f := plugin.ImportFileHandle(p.FileHandle)
+
+	switch p.Mode {
+	case "oversized_read":
+		return runOversizedRead(f), nil
+	case "invalid_ptr_read":
+		return runInvalidPtrRead(f, p.FileHandle), nil
 	}
 
-	size := importFileSize(h)
+	size, err := f.Size()
+	if err != nil {
+		size = int64(code(err))
+	}
 
 	hasher := sha256.New()
+	total, reads, rerr := drain(f, hasher)
+	if rerr != nil {
+		return []byte(fmt.Sprintf(`{"ok":false,"error":"import_file_read failed: %d"}`+"\n", code(rerr))), nil
+	}
+	cc := code(f.Close())
+	cc2 := code(f.Close()) // close is idempotent: second close also returns 0
+
+	return []byte(fmt.Sprintf(`{"ok":true,"message":"sha256=%x size=%d bytes=%d reads=%d close=%d close_again=%d","counts":{"items":%d}}`+"\n",
+		hasher.Sum(nil), size, total, reads, cc, cc2, reads)), nil
+}
+
+// drain reads f to EOF through a readBufSize buffer, hashing as it goes.
+func drain(f *plugin.ImportFile, h hash.Hash) (total int64, reads int, err error) {
 	buf := make([]byte, readBufSize)
-	bp, bc := ptrOf(buf)
-	var total int64
-	reads := 0
 	for {
-		n := importFileRead(h, bp, bc)
-		if n < 0 {
-			fmt.Printf(`{"ok":false,"error":"import_file_read failed: %d"}`+"\n", n)
-			return
+		n, err := f.Read(buf)
+		if errors.Is(err, io.EOF) {
+			return total, reads, nil
 		}
-		if n == 0 {
-			break // EOF
+		if err != nil {
+			return total, reads, err
 		}
-		hasher.Write(buf[:n])
+		h.Write(buf[:n])
 		total += int64(n)
 		reads++
 	}
-	cc := importFileClose(h)
-	cc2 := importFileClose(h) // close is idempotent: second close also returns 0
-
-	fmt.Printf(`{"ok":true,"message":"sha256=%x size=%d bytes=%d reads=%d close=%d close_again=%d","counts":{"items":%d}}`+"\n",
-		hasher.Sum(nil), size, total, reads, cc, cc2, reads)
 }
 
 // runOversizedRead issues exactly one import_file_read call against a 2MB
@@ -104,16 +116,14 @@ func main() {
 // ut-docs#615 host-side dstCap-clamp proof. Deliberately does not loop to
 // EOF or hash the content: the whole point is what happens in that ONE
 // oversized call, not whether the file can eventually be drained.
-func runOversizedRead(h int32) {
+func runOversizedRead(f *plugin.ImportFile) []byte {
 	buf := make([]byte, oversizedReadBufSize)
-	bp, bc := ptrOf(buf)
-	n := importFileRead(h, bp, bc)
-	cc := importFileClose(h)
-	if n < 0 {
-		fmt.Printf(`{"ok":false,"error":"import_file_read failed: %d"}`+"\n", n)
-		return
+	n, err := f.Read(buf)
+	cc := code(f.Close())
+	if err != nil && !errors.Is(err, io.EOF) {
+		return []byte(fmt.Sprintf(`{"ok":false,"error":"import_file_read failed: %d"}`+"\n", code(err)))
 	}
-	fmt.Printf(`{"ok":true,"message":"first_read_bytes=%d close=%d","counts":{"first_read_bytes":%d}}`+"\n", n, cc, int(n))
+	return []byte(fmt.Sprintf(`{"ok":true,"message":"first_read_bytes=%d close=%d","counts":{"first_read_bytes":%d}}`+"\n", n, cc, n))
 }
 
 // invalidGuestPtr is a destination address no wasip1 test module here ever
@@ -126,31 +136,20 @@ const invalidGuestPtr = 0xFFFFFF00
 // import_file_read call with a deliberately out-of-bounds dstPtr (expects
 // a hostErrInvalid response and, critically, that call must not consume
 // any bytes from the staged file), then reads the WHOLE file normally
-// through a valid buffer and hashes it. If the host had already consumed
-// bytes from the file cursor before discovering the bad pointer (the
-// pre-fix behavior), the hash below would not match the full, untouched
-// file content.
-func runInvalidPtrRead(h int32) {
+// through the SDK and hashes it. If the host had already consumed bytes
+// from the file cursor before discovering the bad pointer (the pre-fix
+// behavior), the hash below would not match the full, untouched file
+// content.
+func runInvalidPtrRead(f *plugin.ImportFile, h int32) []byte {
 	const probeCap = 64 // realistic dstCap; the pointer, not the size, is what's invalid
-	invalidCode := importFileRead(h, invalidGuestPtr, probeCap)
+	invalidCode := rawImportFileRead(h, invalidGuestPtr, probeCap)
 
 	hasher := sha256.New()
-	buf := make([]byte, readBufSize)
-	bp, bc := ptrOf(buf)
-	var total int64
-	for {
-		n := importFileRead(h, bp, bc)
-		if n < 0 {
-			fmt.Printf(`{"ok":false,"error":"import_file_read failed after invalid-ptr probe: %d"}`+"\n", n)
-			return
-		}
-		if n == 0 {
-			break
-		}
-		hasher.Write(buf[:n])
-		total += int64(n)
+	total, _, err := drain(f, hasher)
+	if err != nil {
+		return []byte(fmt.Sprintf(`{"ok":false,"error":"import_file_read failed after invalid-ptr probe: %d"}`+"\n", code(err)))
 	}
-	cc := importFileClose(h)
-	fmt.Printf(`{"ok":true,"message":"invalid_code=%d sha256=%x bytes=%d close=%d","counts":{"invalid_code":%d,"bytes":%d}}`+"\n",
-		invalidCode, hasher.Sum(nil), total, cc, int(invalidCode), int(total))
+	cc := code(f.Close())
+	return []byte(fmt.Sprintf(`{"ok":true,"message":"invalid_code=%d sha256=%x bytes=%d close=%d","counts":{"invalid_code":%d,"bytes":%d}}`+"\n",
+		invalidCode, hasher.Sum(nil), total, cc, int(invalidCode), int(total)))
 }

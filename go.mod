@@ -30,6 +30,11 @@ require (
 	github.com/pact-foundation/pact-go/v2 v2.4.2
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/tetratelabs/wazero v1.12.0
+	// The Go guest SDK (ADR-0121 F4, ut-docs#3951): host tests build their
+	// guests against this tree (replace below), never a published tag.
+	// replace is not transitive: a module importing this one's packages
+	// needs the same replace (or a real sdk/plugin/vX.Y.Z here).
+	github.com/universaltill/universal-till/sdk/plugin v0.0.0
 	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6
 	github.com/xuri/excelize/v2 v2.11.0
 	github.com/yuin/goldmark v1.8.5
@@ -97,3 +102,5 @@ tool (
 // abandoned webkit2gtk-4.0, which Debian 13 trixie / current Raspberry Pi OS
 // dropped entirely).
 replace github.com/webview/webview_go => ./internal/thirdparty/webview_go
+
+replace github.com/universaltill/universal-till/sdk/plugin => ./sdk/plugin

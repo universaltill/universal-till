@@ -12,9 +12,13 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	"github.com/universaltill/universal-till/sdk/plugin"
 )
 
 func main() {
-	token := strings.Repeat("T", 5000)
-	fmt.Printf(`{"approved":true,"auth_token":"%s"}`+"\n", token)
+	plugin.Run(plugin.Handlers{"*": func(plugin.Event) (any, error) {
+		token := strings.Repeat("T", 5000)
+		return []byte(fmt.Sprintf(`{"approved":true,"auth_token":"%s"}`+"\n", token)), nil
+	}})
 }

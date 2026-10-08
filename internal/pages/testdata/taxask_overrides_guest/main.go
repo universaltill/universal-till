@@ -10,115 +10,54 @@
 // PluginRepo.GetPluginSetting → the JSON-string unwrap → the guest's own
 // parse — the chain a mocked pos.TaxRateAsker (fakeTaxAsker) bypasses
 // entirely. Logic mirrors ut-plugin-tax-de/src/main.go handleTaxRateAsk +
-// src/taxrate.Resolve/ParseOverrides.
+// src/taxrate.Resolve/ParseOverrides. Built on the Go guest SDK (ADR-0121
+// F4, ut-docs#3951): plugin.SettingsGet does the buffer-ABI grow-and-retry.
 package main
 
 import (
 	"encoding/json"
-	"fmt"
-	"io"
-	"os"
 	"strings"
-	"unsafe"
+
+	"github.com/universaltill/universal-till/sdk/plugin"
 )
 
-//go:wasmimport ut settings_get
-func settingsGet(kPtr, kLen, dstPtr, dstCap uint32) int32
-
-//go:wasmimport ut log_write
-func logWrite(ptr, n uint32)
-
-func ptrOf(b []byte) (uint32, uint32) {
-	if len(b) == 0 {
-		return 0, 0
-	}
-	return uint32(uintptr(unsafe.Pointer(&b[0]))), uint32(len(b))
-}
-
-func logf(format string, args ...any) {
-	msg := []byte(fmt.Sprintf(format, args...))
-	p, n := ptrOf(msg)
-	logWrite(p, n)
-}
-
-// callBuf runs a data-returning host call honoring the buffer ABI (grow +
-// retry once if the first buffer was too small) — same pattern as the real
-// sibling plugins.
-func callBuf(fn func(dstPtr, dstCap uint32) int32) ([]byte, int32) {
-	buf := make([]byte, 8192)
-	p, c := ptrOf(buf)
-	n := fn(p, c)
-	if n < 0 {
-		return nil, n
-	}
-	if int(n) > len(buf) {
-		buf = make([]byte, n)
-		p, c = ptrOf(buf)
-		n = fn(p, c)
-		if n < 0 {
-			return nil, n
-		}
-		if int(n) > len(buf) {
-			n = int32(len(buf))
-		}
-	}
-	return buf[:n], n
-}
-
+// setting returns the plain setting value, or "" when the host reports any
+// error (unset, denied, …).
 func setting(key string) string {
-	kb := []byte(key)
-	out, code := callBuf(func(dp, dc uint32) int32 {
-		kp, kl := ptrOf(kb)
-		return settingsGet(kp, kl, dp, dc)
-	})
-	if code < 0 {
+	v, err := plugin.SettingsGet(key)
+	if err != nil {
 		return ""
 	}
-	return string(out)
+	return v
 }
 
-func main() {
-	raw, _ := io.ReadAll(os.Stdin)
-	var ev struct {
-		Type string `json:"type"`
-	}
-	_ = json.Unmarshal(raw, &ev)
-	if ev.Type != "tax.rate.ask" {
-		os.Exit(0)
-	}
-
-	var wrapper struct {
-		Payload json.RawMessage `json:"payload"`
-	}
-	_ = json.Unmarshal(raw, &wrapper)
+func taxRateAsk(ev plugin.Event) (any, error) {
 	var ask struct {
 		TaxCodeID string `json:"tax_code_id"`
 		OrderType string `json:"order_type"`
 	}
-	_ = json.Unmarshal(wrapper.Payload, &ask)
+	_ = ev.Decode(&ask)
 
 	// Mirrors taxrate.Resolve: dine-in never consults the setting; takeaway
 	// looks up the tax code's configured override.
 	if ask.OrderType != "takeaway" {
-		os.Exit(0)
+		return nil, nil
 	}
 	ovRaw := strings.TrimSpace(setting("takeaway_rate_overrides"))
 	overrides := map[string]int{}
 	if ovRaw != "" {
 		if err := json.Unmarshal([]byte(ovRaw), &overrides); err != nil {
-			logf("taxask_overrides_guest: takeaway_rate_overrides is not valid JSON: %v", err)
-			os.Exit(0)
+			plugin.Logf("taxask_overrides_guest: takeaway_rate_overrides is not valid JSON: %v", err)
+			return nil, nil
 		}
 	}
 	bp, ok := overrides[ask.TaxCodeID]
 	if !ok || bp <= 0 {
-		os.Exit(0) // no opinion — the line stays on its own rate
+		return nil, nil // no opinion — the line stays on its own rate
 	}
-	fmt.Print(string(mustJSON(map[string]int{"rate_bp": bp})))
-	os.Exit(0)
+	return map[string]int{"rate_bp": bp}, nil
 }
 
-func mustJSON(v any) []byte {
-	b, _ := json.Marshal(v)
-	return b
+func main() {
+	plugin.Run(plugin.Handlers{"tax.rate.ask": taxRateAsk})
 }

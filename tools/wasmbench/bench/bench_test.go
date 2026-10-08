@@ -60,6 +60,21 @@ func TestCommandModuleAnswersEveryEvent(t *testing.T) {
 	}
 }
 
+// The SDK guest (ut-docs#3951) does the same work through plugin.Run: same
+// answer, so its timings compare directly with go-command's.
+func TestSDKCommandModuleAnswersEveryEvent(t *testing.T) {
+	raw := buildGuest(t, "sdkcommand")
+	for _, engine := range []string{"interpreter", "compiler"} {
+		r, err := benchCommand(context.Background(), engine, "go-sdk-command", raw, 3)
+		if err != nil {
+			t.Fatalf("%s: %v", engine, err)
+		}
+		if string(r.Answer) != want(t) {
+			t.Fatalf("%s: timed a wrong answer %q", engine, r.Answer)
+		}
+	}
+}
+
 func TestReactorModuleAnswersEveryCall(t *testing.T) {
 	raw := buildGuest(t, "reactor", "-buildmode=c-shared")
 	for _, engine := range []string{"interpreter", "compiler"} {

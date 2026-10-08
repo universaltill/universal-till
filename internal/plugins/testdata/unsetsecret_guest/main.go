@@ -13,36 +13,26 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
-	"unsafe"
+
+	"github.com/universaltill/universal-till/sdk/plugin"
 )
 
-//go:wasmimport ut settings_get
-func settingsGet(kPtr, kLen, dstPtr, dstCap uint32) int32
-
-func ptrOf(b []byte) (uint32, uint32) {
-	if len(b) == 0 {
-		return 0, 0
-	}
-	return uint32(uintptr(unsafe.Pointer(&b[0]))), uint32(len(b))
-}
-
 func main() {
-	key := []byte("secret_key")
-	kp, kl := ptrOf(key)
-	buf := make([]byte, 4096)
-	bp, bc := ptrOf(buf)
-	code := settingsGet(kp, kl, bp, bc)
-	if code <= 0 {
-		// Not found (negative) or empty (0): unconfigured -> decline.
-		fmt.Fprintf(os.Stderr, "unsetsecret_guest: secret_key not configured (settings_get=%d)\n", code)
-		fmt.Println(`{"approved":false,"error":"secret_key not configured"}`)
-		os.Exit(2)
-	}
-	if int(code) > len(buf) {
-		fmt.Fprintf(os.Stderr, "unsetsecret_guest: secret_key too large (%d)\n", code)
-		os.Exit(2)
-	}
-	fmt.Println(`{"approved":true}`)
+	plugin.Run(plugin.Handlers{"*": func(plugin.Event) (any, error) {
+		v, err := plugin.SettingsGet("secret_key")
+		if err != nil || v == "" {
+			// Not found (negative host code) or empty: unconfigured -> decline.
+			var e *plugin.Error
+			code := int32(0)
+			if errors.As(err, &e) {
+				code = e.Code
+			}
+			fmt.Fprintf(os.Stderr, "unsetsecret_guest: secret_key not configured (settings_get=%d)\n", code)
+			return []byte(`{"approved":false,"error":"secret_key not configured"}` + "\n"), plugin.ExitCode(2)
+		}
+		return []byte(`{"approved":true}` + "\n"), nil
+	}})
 }

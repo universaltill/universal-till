@@ -10,95 +10,92 @@ package main
 
 import (
 	"crypto/sha256"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"os"
-	"unsafe"
+
+	"github.com/universaltill/universal-till/sdk/plugin"
 )
-
-//go:wasmimport ut upload_open
-func uploadOpen(tokPtr, tokLen uint32) int32
-
-//go:wasmimport ut upload_read
-func uploadRead(handle int32, dstPtr, dstCap uint32) int32
-
-//go:wasmimport ut upload_close
-func uploadClose(handle int32) int32
-
-func ptrOf(b []byte) (uint32, uint32) {
-	if len(b) == 0 {
-		return 0, 0
-	}
-	return uint32(uintptr(unsafe.Pointer(&b[0]))), uint32(len(b))
-}
 
 const readBufSize = 16 << 10
 
-func open(token string) int32 {
-	b := []byte(token)
-	p, n := ptrOf(b)
-	return uploadOpen(p, n)
+// code maps an SDK result back to the host's numeric return: 0 for
+// success, the negative host code for a *plugin.Error.
+func code(err error) int32 {
+	var e *plugin.Error
+	if errors.As(err, &e) {
+		return e.Code
+	}
+	if err != nil {
+		return -3
+	}
+	return 0
+}
+
+type uploadPayload struct {
+	Mode    string `json:"mode"`
+	Uploads []struct {
+		Field  string `json:"field"`
+		Handle string `json:"handle"`
+	} `json:"upload_handles"`
 }
 
 func main() {
-	raw, _ := io.ReadAll(os.Stdin)
-	var ev struct {
-		Payload struct {
-			Mode    string `json:"mode"`
-			Uploads []struct {
-				Field  string `json:"field"`
-				Handle string `json:"handle"`
-			} `json:"upload_handles"`
-		} `json:"payload"`
-	}
-	_ = json.Unmarshal(raw, &ev)
-	if len(ev.Payload.Uploads) == 0 {
-		fmt.Println(`{"error":"no upload"}`)
-		return
-	}
-	tok := ev.Payload.Uploads[0].Handle
+	plugin.Run(plugin.Handlers{"*": handle})
+}
 
-	switch ev.Payload.Mode {
+func handle(ev plugin.Event) (any, error) {
+	var p uploadPayload
+	_ = ev.Decode(&p)
+	if len(p.Uploads) == 0 {
+		return []byte(`{"error":"no upload"}` + "\n"), nil
+	}
+	tok := p.Uploads[0].Handle
+
+	switch p.Mode {
 	case "probe":
 		// Only report what upload_open answers (a foreign or malformed
-		// token), never read or close.
-		fmt.Printf(`{"open":%d}`+"\n", open(tok))
-		return
+		// token), never read or close. Success reports 0: the SDK keeps
+		// the handle number private.
+		_, err := plugin.UploadOpen(tok)
+		return []byte(fmt.Sprintf(`{"open":%d}`+"\n", code(err))), nil
 	case "leave_open":
-		h := open(tok)
-		buf := make([]byte, 4)
-		bp, bc := ptrOf(buf)
-		n := uploadRead(h, bp, bc)
-		fmt.Printf(`{"open_ok":%t,"read":%d}`+"\n", h >= 0, n)
-		return
+		u, err := plugin.UploadOpen(tok)
+		n := 0
+		if err == nil {
+			var rerr error
+			n, rerr = u.Read(make([]byte, 4))
+			if rerr != nil && !errors.Is(rerr, io.EOF) {
+				n = int(code(rerr))
+			}
+		} else {
+			n = int(code(err))
+		}
+		return []byte(fmt.Sprintf(`{"open_ok":%t,"read":%d}`+"\n", err == nil, n)), nil
 	}
 
-	h := open(tok)
-	if h < 0 {
-		fmt.Printf(`{"error":"upload_open %d"}`+"\n", h)
-		return
+	u, err := plugin.UploadOpen(tok)
+	if err != nil {
+		return []byte(fmt.Sprintf(`{"error":"upload_open %d"}`+"\n", code(err))), nil
 	}
 	hasher := sha256.New()
 	buf := make([]byte, readBufSize)
-	bp, bc := ptrOf(buf)
 	total, reads := 0, 0
 	for {
-		n := uploadRead(h, bp, bc)
-		if n < 0 {
-			fmt.Printf(`{"error":"upload_read %d"}`+"\n", n)
-			return
-		}
-		if n == 0 {
+		n, err := u.Read(buf)
+		if errors.Is(err, io.EOF) {
 			break
 		}
+		if err != nil {
+			return []byte(fmt.Sprintf(`{"error":"upload_read %d"}`+"\n", code(err))), nil
+		}
 		hasher.Write(buf[:n])
-		total += int(n)
+		total += n
 		reads++
 	}
-	cc := uploadClose(h)
-	cc2 := uploadClose(h)
-	reopen := open(tok) // the token is consumed by close
-	fmt.Printf(`{"sha256":"%x","bytes":%d,"reads":%d,"close":%d,"close_again":%d,"reopen":%d}`+"\n",
-		hasher.Sum(nil), total, reads, cc, cc2, reopen)
+	cc := code(u.Close())
+	cc2 := code(u.Close())
+	_, reopenErr := plugin.UploadOpen(tok) // the token is consumed by close
+	return []byte(fmt.Sprintf(`{"sha256":"%x","bytes":%d,"reads":%d,"close":%d,"close_again":%d,"reopen":%d}`+"\n",
+		hasher.Sum(nil), total, reads, cc, cc2, code(reopenErr))), nil
 }

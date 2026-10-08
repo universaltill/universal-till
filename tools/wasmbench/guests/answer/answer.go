@@ -25,9 +25,12 @@ func Answer(raw []byte) ([]byte, bool) {
 	if err := json.Unmarshal(raw, &ev); err != nil || ev.Type != "charge.policy.ask" {
 		return nil, false
 	}
-	out, err := json.Marshal(policy{Country: "GB", ServiceCharge: true, TipsVATExempt: true, MaxSuggestedBps: 1250, Note: "discretionary"})
-	if err != nil {
-		return nil, false
-	}
-	return out, true
+	out, err := Policy()
+	return out, err == nil
+}
+
+// Policy is the encoded answer alone, for a guest whose event loop (the SDK's
+// plugin.Run) already decoded and dispatched the event.
+func Policy() ([]byte, error) {
+	return json.Marshal(policy{Country: "GB", ServiceCharge: true, TipsVATExempt: true, MaxSuggestedBps: 1250, Note: "discretionary"})
 }
