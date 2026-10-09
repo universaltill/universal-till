@@ -598,7 +598,11 @@ normal scan path. Anything else — another component, an `apply_fields`
 effect, a redirect or a job — is refused and the overlay says identify
 failed. `suggestions` is refused on your own plugin pages and slots: it
 only renders in a core seam. The cashier can close the overlay at any
-time; the job is then dropped. Format and limits:
+time; the job is then dropped. When the cashier taps a suggestion, the
+till tries to store the photo as the item's newest `ai_ref` and then sends
+`catalog.identify.confirmed` `{job_id, item_id, sku, stored}` to your
+plugin alone (hook it too, and hold `view:inventory`); the answer is
+ignored. Format and limits:
 [`ut-docs/reference/plugin-views.md`](https://github.com/universaltill/ut-docs/blob/main/reference/plugin-views.md).
 
 ### Scheduled work (ADR-0121 §8)
