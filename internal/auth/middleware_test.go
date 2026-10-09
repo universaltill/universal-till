@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -429,5 +430,52 @@ func TestNoSaleRouteIsNotExempt(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/pos/no-sale", strings.NewReader(`{}`)))
 	if reached || rec.Code != http.StatusUnauthorized {
 		t.Fatalf("no-session POST /api/pos/no-sale: reached=%v status=%d, want 401 and not reached", reached, rec.Code)
+	}
+}
+
+// ut-docs#3935: the ctx Middleware hands to next for a resolved session
+// carries a permission snapshot — a second Can inside the request is
+// answered from the first check's bitmask, so a revoke is not seen until the next request.
+func TestMiddleware_ResolvedSessionCarriesPermissionSnapshot(t *testing.T) {
+	db := openAuthTestDB(t)
+	db.SetMaxOpenConns(1)
+	for _, s := range []string{
+		`CREATE TABLE permission_actions (action TEXT PRIMARY KEY)`,
+		`CREATE TABLE sync_admin_version (id INTEGER PRIMARY KEY, generation INTEGER NOT NULL)`,
+		`INSERT INTO sync_admin_version (id, generation) VALUES (1, 1)`,
+		`INSERT INTO permission_actions (action) VALUES ('refund')`,
+		`INSERT INTO role_permissions (role, action, granted) VALUES ('cashier', 'refund', 1)`,
+	} {
+		if _, err := db.Exec(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seedOperator(t, db, "alice", "cashier", "1122")
+	svc := NewService(db)
+	_, token, err := svc.Login(context.Background(), "1122")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var first, second bool
+	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, _ := FromContext(r.Context())
+		first, _ = svc.Can(r.Context(), u, "refund")
+		// A revoke that bumps the generation (as the real triggers do):
+		// without a snapshot the second Can would see it; only a snapshot
+		// still answers true.
+		if _, err := db.Exec(`UPDATE role_permissions SET granted = 0`); err != nil {
+			t.Error(err)
+		}
+		if _, err := db.Exec(`UPDATE sync_admin_version SET generation = generation + 1`); err != nil {
+			t.Error(err)
+		}
+		second, _ = svc.Can(r.Context(), u, "refund")
+	}), svc)
+	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
+	req.AddCookie(&http.Cookie{Name: CookieName, Value: token})
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if !first || !second {
+		t.Fatalf("snapshot missing from request ctx: first=%v second=%v", first, second)
 	}
 }

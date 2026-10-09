@@ -104,6 +104,23 @@ instead of recompiling (dev Mac, test guest: 14 s compile → 0.4 s hit).
 - **Off on Android/iOS**: they run wazero's interpreter, which has no
   compiled code to cache.
 
+## Permission checks: one generation read per request (ut-docs#3935)
+`AuthRepo.HasPermission` answers from an in-memory bitmask keyed on
+`sync_admin_version.generation` (ut-docs#3166, ADR-0128 §6). The auth
+middleware gives every signed-in request an empty permission snapshot
+(`data.WithPermissionSnapshot`). The request's first check reads the
+generation and keeps the bitmask. Every later check in that request — a
+menu render makes about ten — answers with no query.
+
+- **No time-based reuse.** The snapshot ends with the request, so a revoke
+  applies on the next request.
+- A grant or role write through `AuthRepo` empties the snapshot, so a check
+  later in the same request reads again.
+- With no generation row, every check falls back to the row lookup and
+  nothing is kept.
+- Test: `internal/data/auth_permission_snapshot_3935_test.go` counts the
+  generation reads.
+
 ## Offline smoke (sale flow)
 ```bash
 go run ./scripts/smoke-offline-sale/main.go               # uses ./data/smoke-offline-sale.db

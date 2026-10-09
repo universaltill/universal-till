@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
@@ -536,7 +537,11 @@ func Middleware(next http.Handler, svc *Service) http.Handler {
 			p := r.URL.Path
 			touch := !backgroundPoll(p) && !pluginJobPoll(r) && !displayBoardPoll(p) && p != "/api/orders/stream"
 			if u, ok := svc.ResolveFor(r.Context(), c.Value, touch, displayBoardRequest(r)); ok {
-				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u)))
+				// ut-docs#3935: a request-scoped permission snapshot, so
+				// the ~10 Can checks a page render makes read the
+				// sync_admin_version generation once, not ten times.
+				ctx := data.WithPermissionSnapshot(context.WithValue(r.Context(), ctxKey{}, u))
+				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 		}
