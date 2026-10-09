@@ -22,12 +22,16 @@
 <div class="plugin-view-notice {{ .Level }}" role="status">{{ T .Key }}</div>
 {{ end }}
 
-{{/* One button per add_to_basket candidate, posting exactly like the
-     "customers also buy" chip (web/ui/partials/suggestions.html). app.js
-     closes the overlay once the scan request completes. The image is the
-     plugin's own thumbnail blob (a core-signed URL, ut-docs#3957) when it
-     named one that checks out, else the catalog item's photo. */}}
+{{/* One button per add_to_basket candidate. It posts the job id with the
+     SKU to core's pick route, which adds the line through the /api/pos/scan
+     handler (same basket swap as the "customers also buy" chip,
+     web/ui/partials/suggestions.html) and then keeps the photo as the
+     item's reference photo (ADR-0121 R2a, ut-docs#4006). app.js closes the
+     overlay once the request completes. The image is the plugin's own
+     thumbnail blob (a core-signed URL, ut-docs#3957) when it named one that
+     checks out, else the catalog item's photo. */}}
 {{ define "identify_result" }}
+{{- $job := .Job }}
 <div class="plugin-identify-result">
   {{- range .Texts }}
   {{- if eq .Type "notice" }}<div class="plugin-view-notice {{ .Level }}" role="{{ if eq .Level "error" }}alert{{ else }}status{{ end }}">{{ .Text }}</div>
@@ -37,7 +41,7 @@
   <div class="ai-identify-results">
     {{- range .Matches }}
     <button type="button" class="btn ai-match" data-identify-pick title="{{ T "suggest.add" }}"
-            hx-post="/api/pos/scan" hx-vals='{{ jsonVals "code" .SKU "qty" .Qty }}'
+            hx-post="/api/pos/identify/plugin/pick" hx-vals='{{ jsonVals "_job" $job "sku" .SKU "qty" .Qty }}'
             hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
       {{- if .ThumbURL }}<img src="{{ .ThumbURL }}" alt="" loading="lazy" />
       {{- else if .ImageURL }}<img src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}

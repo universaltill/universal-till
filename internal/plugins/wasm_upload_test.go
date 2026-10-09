@@ -280,5 +280,86 @@ func TestUploadWasm_ReloadRemovesStaged_3793(t *testing.T) {
 func (r *uploadRegistry) count(pluginID string) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return len(r.staged[pluginID])
+	return len(r.staged[pluginID]) + len(r.parked[pluginID])
+}
+
+// A kept upload (ut-docs#4006, ADR-0121 R2a): the sell screen's identify
+// photo must survive the plugin's own upload_close so core can keep it for
+// a pick. upload_close still consumes the token for the guest (no reopen),
+// but parks the file; TakeUpload hands it to core once; ReleaseUploads and
+// CloseAll still delete it, parked or not.
+func TestKeptUpload_CloseParksTakeHandsOver_4006(t *testing.T) {
+	const p = "com.test.upload.kept"
+	t.Cleanup(func() { uploads.CloseAll(p) })
+
+	path := stageTempFile(t, []byte("photo"))
+	tok, err := StageUploadKept(p, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := uploads.open(p, tok)
+	if h < 0 {
+		t.Fatalf("open = %d", h)
+	}
+	uploads.closeHandle(p, h)
+	assertPresent(t, path) // parked, not deleted
+	if got := uploads.open(p, tok); got != hostErrNotFound {
+		t.Fatalf("reopen after upload_close = %d, want not found", got)
+	}
+	if n := uploads.count(p); n != 1 {
+		t.Fatalf("a parked upload still counts toward the cap: count = %d", n)
+	}
+	got, ok := TakeUpload(p, tok)
+	if !ok || got != path {
+		t.Fatalf("TakeUpload = %q, %v; want %q", got, ok, path)
+	}
+	if _, ok := TakeUpload(p, tok); ok {
+		t.Fatal("TakeUpload handed the same upload out twice")
+	}
+	ReleaseUploads(p, []string{tok}) // the job's release after the take: a no-op
+	assertPresent(t, path)           // core owns it now
+	if n := uploads.count(p); n != 0 {
+		t.Fatalf("count after take = %d", n)
+	}
+	_ = os.Remove(path)
+
+	// Taken while still open: the handle is closed, the file handed over.
+	path2 := stageTempFile(t, []byte("photo2"))
+	tok2, _ := StageUploadKept(p, path2)
+	h2 := uploads.open(p, tok2)
+	if got, ok := TakeUpload(p, tok2); !ok || got != path2 {
+		t.Fatalf("TakeUpload(open) = %q, %v", got, ok)
+	}
+	if _, ok := uploads.get(p, h2); ok {
+		t.Fatal("TakeUpload left the guest's handle open")
+	}
+	_ = os.Remove(path2)
+
+	// Released (the job failed): parked or staged, the file is deleted.
+	path3 := stageTempFile(t, []byte("photo3"))
+	tok3, _ := StageUploadKept(p, path3)
+	uploads.closeHandle(p, uploads.open(p, tok3))
+	ReleaseUploads(p, []string{tok3})
+	assertGone(t, path3)
+	if _, ok := TakeUpload(p, tok3); ok {
+		t.Fatal("a released upload was handed out")
+	}
+
+	// Unload: parked files go too.
+	path4 := stageTempFile(t, []byte("photo4"))
+	tok4, _ := StageUploadKept(p, path4)
+	uploads.closeHandle(p, uploads.open(p, tok4))
+	uploads.CloseAll(p)
+	assertGone(t, path4)
+
+	// A plain (not kept) upload is still deleted by upload_close, and
+	// TakeUpload of an unknown or foreign token is refused.
+	tok5, path5 := stageUploadFile(t, p, []byte("plain"))
+	uploads.closeHandle(p, uploads.open(p, tok5))
+	assertGone(t, path5)
+	tok6, path6 := stageUploadFile(t, p, []byte("mine"))
+	if _, ok := TakeUpload("com.test.other", tok6); ok {
+		t.Fatal("another plugin took the upload")
+	}
+	assertPresent(t, path6)
 }

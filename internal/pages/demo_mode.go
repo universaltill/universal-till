@@ -227,6 +227,8 @@ var demoDeniedRoutes = map[string]bool{
 	// and a plugin job; its poll has no job to find in a demo.
 	"GET /api/pos/identify/plugin":  true,
 	"POST /api/pos/identify/plugin": true,
+	// Its pick (ut-docs#4006): stores a photo; no job to pick from in a demo.
+	"POST /api/pos/identify/plugin/pick": true,
 	// Its suggestion thumbnails (ut-docs#3957): a plugin's blob store.
 	"GET /api/pos/identify/plugin/thumb": true,
 	"POST /api/reports/ask":              true,

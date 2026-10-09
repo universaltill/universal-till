@@ -1788,8 +1788,9 @@ utSellCamera(function(){
 // Rendered instead of the AI button above when an installed plugin answers
 // catalog.identify. The photo is posted once; the till answers at once with
 // a poll (htmx re-asks every second) while the plugin works as a job, then
-// with the plugin's suggestions — buttons that post the SKU to
-// /api/pos/scan exactly like a scan. The overlay is a plain fixed div, never
+// with the plugin's suggestions — buttons that post the SKU (and the job
+// id) to core's pick route, which adds it exactly like a scan and keeps the
+// photo as the item's reference photo (ut-docs#4006). The overlay is a plain fixed div, never
 // a modal: the cashier can close it any time and keep selling. Closing (or
 // retaking) clears the results, which removes the poll, so the job is
 // abandoned and a late result dropped. Strings ride on data-* attributes.

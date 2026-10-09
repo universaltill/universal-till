@@ -12,12 +12,15 @@ package itemimages
 import (
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -173,6 +176,47 @@ func LatestAIRef(dir string) (path, mediaType string, ok bool) {
 		media = "image/png"
 	}
 	return filepath.Join(dir, newest), media, true
+}
+
+// StoreAIRef writes img as itemID's newest confirmed reference photo — a
+// fresh PNG under AIRefDir (created first), never the uploaded bytes
+// (ut-docs#1417) — prunes the folder to MaxAIRefsPerItem and returns the
+// file's path. The built-in confirm and the plugin seam's pick (ADR-0121
+// R2a, ut-docs#4006) both store through it. A failed write leaves nothing
+// behind: a partial file with the newest name would shadow every older
+// photo (LatestAIRef picks only the newest).
+func StoreAIRef(itemID string, img image.Image) (string, error) {
+	if !ValidID(itemID) {
+		return "", ErrInvalid
+	}
+	dir := AIRefDir(itemID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	// Names are nanosecond timestamps (lexical = chronological); O_EXCL
+	// with a bump keeps two stores on a coarse clock (Windows) apart.
+	n := time.Now().UnixNano()
+	var out *os.File
+	var outPath string
+	for i := 0; ; i++ {
+		outPath = filepath.Join(dir, fmt.Sprintf("%d.png", n+int64(i)))
+		f, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err == nil {
+			out = f
+			break
+		}
+		if !errors.Is(err, fs.ErrExist) || i >= 16 {
+			return "", err
+		}
+	}
+	encErr := png.Encode(out, img)
+	closeErr := out.Close()
+	if encErr != nil || closeErr != nil {
+		_ = os.Remove(outPath)
+		return "", errors.Join(encErr, closeErr)
+	}
+	PruneAIRefs(dir)
+	return outPath, nil
 }
 
 // PruneAIRefs keeps only the newest MaxAIRefsPerItem reference photos so the

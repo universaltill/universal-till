@@ -222,3 +222,39 @@ func TestRef_RefusesOversizedFileWithoutReadingIt(t *testing.T) {
 		t.Fatalf("oversized file: err = %v, want ErrNotFound", err)
 	}
 }
+
+// StoreAIRef is the one store step both confirm paths use — the built-in
+// /api/pos/identify/confirm and the plugin seam's pick (ADR-0121 R2a,
+// ut-docs#4006): a fresh PNG as the item's newest ai_ref, its directory
+// created first, pruned to MaxAIRefsPerItem.
+func TestStoreAIRef_4006(t *testing.T) {
+	useDataDir(t)
+	const id = "itm-store"
+	img := image.NewRGBA(image.Rect(0, 0, 4, 3))
+	var last string
+	for i := 0; i < MaxAIRefsPerItem+2; i++ {
+		p, err := StoreAIRef(id, img)
+		if err != nil {
+			t.Fatalf("StoreAIRef #%d: %v", i, err)
+		}
+		if filepath.Dir(p) != AIRefDir(id) || filepath.Ext(p) != ".png" {
+			t.Fatalf("stored at %q, want a .png under %q", p, AIRefDir(id))
+		}
+		last = p
+	}
+	got, media, ok := LatestAIRef(AIRefDir(id))
+	if !ok || got != last || media != "image/png" {
+		t.Fatalf("LatestAIRef = %q %q %v, want the last stored %q", got, media, ok, last)
+	}
+	entries, _ := os.ReadDir(AIRefDir(id))
+	if len(entries) != MaxAIRefsPerItem {
+		t.Fatalf("%d ai_ref files, want %d (pruned)", len(entries), MaxAIRefsPerItem)
+	}
+	raw, _ := os.ReadFile(last)
+	if dec, err := png.Decode(bytes.NewReader(raw)); err != nil || dec.Bounds().Dx() != 4 {
+		t.Fatalf("stored file is not the PNG: %v", err)
+	}
+	if _, err := StoreAIRef("../x", img); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("StoreAIRef(bad id) = %v, want ErrInvalid", err)
+	}
+}

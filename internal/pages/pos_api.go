@@ -910,7 +910,7 @@ func resolveReceiptScanDestination(ctx context.Context, d *common.Deps, repo *da
 
 func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewPOSRepo(d.Db)
-	mux.HandleFunc("/api/pos/scan", func(w http.ResponseWriter, r *http.Request) {
+	scan := func(w http.ResponseWriter, r *http.Request) {
 		in := struct {
 			Code       string  `json:"code"`
 			Qty        float64 `json:"qty"`
@@ -1202,6 +1202,12 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		b.ToastMessage = httpx.T(locale, "pos.toast.item_not_found")
 		b.ToastLevel = "error"
 		render(&b)
+	}
+	mux.HandleFunc("/api/pos/scan", scan)
+	// The camera-identify seam's pick adds the line through this very
+	// handler (ADR-0121 R2a, ut-docs#4006).
+	mux.HandleFunc("POST /api/pos/identify/plugin/pick", func(w http.ResponseWriter, r *http.Request) {
+		servePluginIdentifyPick(w, r, d, scan)
 	})
 
 	// Remove a line. Prefers the line-specific key (ADR-0020 — safe once an
