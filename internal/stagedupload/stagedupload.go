@@ -1,10 +1,11 @@
 // Package stagedupload owns the temp files the till stages operator uploads
-// in (ut-docs#3955): plugin view uploads (#3793) and data-import uploads
-// (#599, #601). Each request handler creates its file with one of the
-// patterns below and removes it when it is done. A crash or power cut
-// mid-request — or, on Windows, a remove that races a reader still in
-// flight — leaves the file behind, and nothing else ever cleans the system
-// temp directory, so housekeeping calls PruneOlderThan.
+// in (ut-docs#3955): plugin view uploads (#3793), data-import uploads
+// (#599, #601) and the copies a .bkp backup import unpacks (#3985). Each
+// owner creates its file with one of the patterns below and removes it when
+// it is done. A crash or power cut mid-request — or, on Windows, a remove
+// that races a reader still in flight — leaves the file behind, and nothing
+// else ever cleans the system temp directory, so housekeeping calls
+// PruneOlderThan.
 //
 // The sweep removes only regular files whose names match these patterns;
 // every other file in the temp directory belongs to someone else.
@@ -24,22 +25,24 @@ const (
 	ViewUploadPattern  = "ut-view-upload-*.upload"  // plugin view uploads (#3793)
 	ImportPattern      = "ut-import-*.upload"       // POST /api/data/import (#599)
 	ImportStagePattern = "ut-import-stage-*.upload" // import preview staging (#601)
+	BkpDBPattern       = "ut-bkp-*.db"              // .bkp import's backup.db (#3985)
+	BkpDocsPattern     = "ut-bkp-docs-*.zip"        // .bkp import's documents.zip (#3985)
 )
 
 // MaxAge is how old a staged upload must be before the sweep removes it.
 // A plugin view upload lives at most its job's 300 s ceiling, and an import
-// upload only as long as its request. An import preview's staged copy
-// expires an hour after it was last (re)staged, but the mtime is not that
-// clock: restageCatalogUpload restarts the hour without touching the file,
-// and the registry prune is lazy, so an expired copy stays takeable until
-// the next preview. A day is far past every live use; the only owner that
+// upload and a .bkp import's unpacked copies only as long as the parse that
+// made them. An import preview's staged copy expires an hour after it was
+// last (re)staged, but the mtime is not that clock: restageCatalogUpload
+// restarts the hour without touching the file, and the registry prune is
+// lazy, so an expired copy stays takeable until the next preview. A day is far past every live use; the only owner that
 // can outlive it is a preview already past its TTL, whose commit then fails
 // cleanly with import.error.stage_expired and the operator re-uploads.
 const MaxAge = 24 * time.Hour
 
 // Patterns lists every pattern the sweep owns.
 func Patterns() []string {
-	return []string{ViewUploadPattern, ImportPattern, ImportStagePattern}
+	return []string{ViewUploadPattern, ImportPattern, ImportStagePattern, BkpDBPattern, BkpDocsPattern}
 }
 
 // Dir is the directory the handlers stage into: os.CreateTemp("") uses
