@@ -85,6 +85,16 @@ The reviewer confirmed:
   was looked at in a browser. CI's UI E2E (`layout-plugin-menu-1904.spec.ts`
   drives the real salon plugin) covers the layout at runtime.
 
+## CI follow-ups
+
+- `guard-docs-shots_test.sh`: the comment-only edits under `internal/pages`
+  moved the surface hash. It was refreshed with
+  `update-docs-shots-surface-hash.sh` (`Docs-Shots-Unchanged: true`).
+- `guard-deadcode-baseline.sh` flagged `PluginIDForShopType` as reachable
+  only from tests. `Sync` now uses it to choose the wanted builtin, so tests
+  and production share one lookup. The guard no longer flags it locally
+  (Go 1.27.1).
+
 ## Verdict
 
 Safe to merge once CI is green. Deferred: none. The fiscal and AI sites are

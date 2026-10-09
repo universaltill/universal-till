@@ -130,13 +130,17 @@ func Sync(ctx context.Context, db *sql.DB, shopType string) (changed bool, err e
 	syncMu.Lock()
 	defer syncMu.Unlock()
 	repo := data.NewPluginRepo(db)
+	wantID, err := PluginIDForShopType(shopType)
+	if err != nil {
+		return false, err
+	}
 
 	for _, b := range builtins {
 		m, err := b.parse()
 		if err != nil {
 			return false, err
 		}
-		c, err := syncOne(ctx, db, repo, b, m, provides(m, shopType))
+		c, err := syncOne(ctx, db, repo, b, m, wantID != "" && m.ID == wantID)
 		if err != nil {
 			return false, err
 		}
