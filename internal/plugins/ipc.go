@@ -45,6 +45,16 @@ type EventBus struct {
 	dropWarnMu   sync.Mutex
 	dropWarnedAt map[string]time.Time
 
+	// pubAuditMu guards the plugin-published-event audit throttles (see
+	// publishedAuditInterval, ut-docs#3887). Own mutex, never eb.mu:
+	// EnqueuePublished holds eb.mu.RLock across its loop.
+	pubAuditMu     sync.Mutex
+	pubPublishedAt map[string]time.Time // publisher plugin ID -> last event_published row
+	pubCoalesced   map[string]int       // publisher plugin ID -> publishes without a row since then
+	pubDeniedAt    map[string]time.Time // subscriber ID + "\x00" + event type -> last denied row
+	pubDeniedN     map[string]int       // same key -> denials without a row since then
+	now            func() time.Time     // test clock for the throttles; nil = time.Now
+
 	// lastSaleCompleted is the UnixNano of the latest PublishSaleCompleted
 	// (0 = none): the wasm schedule ticker's sale-burst pause reads it
 	// (ADR-0121 §8, ut-docs#3161).
@@ -89,6 +99,72 @@ func (eb *EventBus) shouldWarnChannelFull(pluginID string) bool {
 	}
 	eb.dropWarnedAt[pluginID] = now
 	return true
+}
+
+// publishedAuditInterval bounds the audit_log rows a plugin-published event
+// stream (event_publish, ADR-0121 §3) can write. A plugin may publish 20
+// events/s; before ut-docs#3887 each one wrote an event_published row plus an
+// event_dispatch row per subscriber into the same audit_log that holds GoBD
+// journal entries — ~1.7-3.5M rows/day from a single plugin. Now: no
+// per-subscriber "enqueued" row, at most one event_published row per
+// publishing plugin per interval (<= 1440/day) carrying a coalesced=N count of
+// that plugin's earlier publishes (any type) that got no row, and at most one
+// "denied" row per subscriber + event type per interval, likewise counted.
+// A count is carried into the NEXT row for its key, so a trailing burst with
+// no later publish (plugin quiet, disabled, till restarted) is not counted —
+// an accepted gap: the first row of the burst is always written, so the
+// stream stays visible. Core (hop-0) events are unaffected.
+const publishedAuditInterval = time.Minute
+
+func (eb *EventBus) clock() time.Time {
+	if eb.now != nil {
+		return eb.now()
+	}
+	return time.Now()
+}
+
+// shouldAuditPublished reports whether this publish by publisherID gets its
+// own event_published row, and the number of this plugin's publishes (any
+// type) since its previous row that did not — carried into this row; a
+// trailing burst is never counted (see publishedAuditInterval).
+func (eb *EventBus) shouldAuditPublished(publisherID string) (bool, int) {
+	eb.pubAuditMu.Lock()
+	defer eb.pubAuditMu.Unlock()
+	if eb.pubPublishedAt == nil {
+		eb.pubPublishedAt = make(map[string]time.Time)
+		eb.pubCoalesced = make(map[string]int)
+	}
+	now := eb.clock()
+	if last, ok := eb.pubPublishedAt[publisherID]; ok && now.Sub(last) < publishedAuditInterval {
+		eb.pubCoalesced[publisherID]++
+		return false, 0
+	}
+	eb.pubPublishedAt[publisherID] = now
+	n := eb.pubCoalesced[publisherID]
+	eb.pubCoalesced[publisherID] = 0
+	return true, n
+}
+
+// shouldAuditPublishedDenied is the per (subscriber, event type) throttle for
+// the "denied" row of a published event; the int is the denials since the
+// previous row that got none, as shouldAuditPublished.
+func (eb *EventBus) shouldAuditPublishedDenied(pluginID, eventType string) (bool, int) {
+	eb.pubAuditMu.Lock()
+	defer eb.pubAuditMu.Unlock()
+	if eb.pubDeniedAt == nil {
+		eb.pubDeniedAt = make(map[string]time.Time)
+		eb.pubDeniedN = make(map[string]int)
+	}
+	key := pluginID + "\x00" + eventType
+	now := eb.clock()
+	if last, ok := eb.pubDeniedAt[key]; ok && now.Sub(last) < publishedAuditInterval {
+		eb.pubDeniedN[key]++
+		return false, 0
+	}
+	eb.pubDeniedAt[key] = now
+	n := eb.pubDeniedN[key]
+	eb.pubDeniedN[key] = 0
+	return true, n
 }
 
 // SetDB rebinds the bus to a live database handle (see SharedBus).
@@ -619,7 +695,7 @@ func (eb *EventBus) publishWithID(ctx context.Context, id, eventType string, pay
 			eb.auditDispatchWithDB(ctx, db, event.ID, eventType, sub.PluginID, "success", "")
 			dispatched++
 		default:
-			if eb.enqueueWithDB(ctx, db, sub, subEvent) {
+			if eb.enqueueWithDB(ctx, db, sub, subEvent, true) {
 				dispatched++
 			}
 		}
@@ -634,11 +710,16 @@ func (eb *EventBus) publishWithID(ctx context.Context, id, eventType string, pay
 
 // EnqueuePublished delivers a plugin-published event (event_publish,
 // ADR-0121 §3) the non-blocking way only: enqueued onto each subscriber's
-// channel, with the same events:receive check, audit rows and channel-full
-// handling as Publish's non-blocking branch. It never calls a Blocking
-// handler, whatever mode the event type has — a published event is never
-// delivered inside anyone's call, and its drainer runs it as ordinary work.
-func (eb *EventBus) EnqueuePublished(ctx context.Context, ev Event) {
+// channel, with the same events:receive check and channel-full handling as
+// Publish's non-blocking branch. It never calls a Blocking handler, whatever
+// mode the event type has — a published event is never delivered inside
+// anyone's call, and its drainer runs it as ordinary work.
+//
+// Audit is coalesced (ut-docs#3887, see publishedAuditInterval): no
+// per-subscriber "enqueued" row, one event_published row per publisherID per
+// interval, one "denied" row per subscriber + type per interval; "dropped"
+// is unchanged.
+func (eb *EventBus) EnqueuePublished(ctx context.Context, publisherID string, ev Event) {
 	// RLock across the sends: ResetSubscribers can't close a channel
 	// mid-dispatch (ut-docs#504). Nothing below re-takes eb.mu.
 	eb.mu.RLock()
@@ -647,25 +728,34 @@ func (eb *EventBus) EnqueuePublished(ctx context.Context, ev Event) {
 	dispatched := 0
 	for _, sub := range eb.subscribers[ev.Type] {
 		if err := CheckPermission(ctx, db, sub.PluginID, "events:receive"); err != nil {
-			eb.auditDispatchWithDB(ctx, db, ev.ID, ev.Type, sub.PluginID, "denied", err.Error())
+			if ok, n := eb.shouldAuditPublishedDenied(sub.PluginID, ev.Type); ok {
+				reason := fmt.Sprintf("%s (coalesced=%d earlier denials; further denials within %s are coalesced into the next entry)", err.Error(), n, publishedAuditInterval)
+				eb.auditDispatchWithDB(ctx, db, ev.ID, ev.Type, sub.PluginID, "denied", reason)
+			}
 			continue
 		}
-		if eb.enqueueWithDB(ctx, db, sub, ev) {
+		if eb.enqueueWithDB(ctx, db, sub, ev, false) {
 			dispatched++
 		}
 	}
-	if err := eb.auditEventWithDB(ctx, db, ev.ID, ev.Type, dispatched); err != nil {
-		logging.L().Warnf("failed to audit event: %v", err)
+	if ok, coalesced := eb.shouldAuditPublished(publisherID); ok {
+		if err := eb.auditPublishedWithDB(ctx, db, publisherID, ev.ID, ev.Type, dispatched, coalesced); err != nil {
+			logging.L().Warnf("failed to audit event: %v", err)
+		}
 	}
 }
 
 // enqueueWithDB is the non-blocking send shared by publish and
 // EnqueuePublished: a full channel drops the event with a throttled audit
-// row and warning. Caller holds eb.mu (RLock). Reports whether it was sent.
-func (eb *EventBus) enqueueWithDB(ctx context.Context, db *sql.DB, sub EventSubscriber, ev Event) bool {
+// row and warning. auditEnqueued=false skips the per-subscriber "enqueued"
+// row (the published path, ut-docs#3887). Caller holds eb.mu (RLock).
+// Reports whether it was sent.
+func (eb *EventBus) enqueueWithDB(ctx context.Context, db *sql.DB, sub EventSubscriber, ev Event, auditEnqueued bool) bool {
 	select {
 	case sub.Channel <- ev:
-		eb.auditDispatchWithDB(ctx, db, ev.ID, ev.Type, sub.PluginID, "enqueued", "")
+		if auditEnqueued {
+			eb.auditDispatchWithDB(ctx, db, ev.ID, ev.Type, sub.PluginID, "enqueued", "")
+		}
 		return true
 	default:
 		if eb.shouldWarnChannelFull(sub.PluginID) {
@@ -795,6 +885,16 @@ func (eb *EventBus) AskPlugin(ctx context.Context, pluginID, eventType string, p
 func (eb *EventBus) auditEventWithDB(ctx context.Context, db *sql.DB, eventID, eventType string, subscriberCount int) error {
 	details := fmt.Sprintf("event_type=%s, subscribers=%d", eventType, subscriberCount)
 	return data.NewPluginRepo(db).InsertAuditRaw(ctx, nil, "event_published", "event", eventID, details, time.Now())
+}
+
+// auditPublishedWithDB is the coalesced event_published row for a
+// plugin-published event (ut-docs#3887): coalesced=N is the number of this
+// publisher's publishes, of any event type, that got no row since its
+// previous one.
+func (eb *EventBus) auditPublishedWithDB(ctx context.Context, db *sql.DB, publisherID, eventID, eventType string, subscriberCount, coalesced int) error {
+	details := fmt.Sprintf("event_type=%s, subscribers=%d, plugin_id=%s, coalesced=%d (publishes of any type by this plugin since its previous entry; further publishes within %s are coalesced into the next entry)",
+		eventType, subscriberCount, publisherID, coalesced, publishedAuditInterval)
+	return data.NewPluginRepo(db).InsertAuditRaw(ctx, nil, "event_published", "event", eventID, details, eb.clock())
 }
 
 // auditDispatch logs per-plugin dispatch results. Errors are swallowed to avoid blocking core flows.

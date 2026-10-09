@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -332,7 +333,7 @@ func TestEnqueuePublishedNeverRunsBlockingHandler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bus.EnqueuePublished(context.Background(), Event{ID: "e1", Type: typ, Payload: []byte("null"), Hop: 1})
+	bus.EnqueuePublished(context.Background(), publishTestPlugin, Event{ID: "e1", Type: typ, Payload: []byte("null"), Hop: 1})
 	if called {
 		t.Fatal("EnqueuePublished ran a Blocking handler inline")
 	}
@@ -354,7 +355,7 @@ func TestEnqueuePublishedChecksEventsReceive(t *testing.T) {
 	if err := RevokePermission(context.Background(), d, publishTestSub, "events:receive"); err != nil {
 		t.Fatal(err)
 	}
-	bus.EnqueuePublished(context.Background(), Event{ID: "e1", Type: "com.test.pub.tick", Payload: []byte("null"), Hop: 1})
+	bus.EnqueuePublished(context.Background(), publishTestPlugin, Event{ID: "e1", Type: "com.test.pub.tick", Payload: []byte("null"), Hop: 1})
 	select {
 	case ev := <-ch:
 		t.Fatalf("denied subscriber got %+v", ev)
@@ -564,5 +565,154 @@ func TestEventPublishDropAuditCoalesced(t *testing.T) {
 	}
 	if n := count(); n != 2 {
 		t.Fatalf("audit rows after the window = %d, want 2", n)
+	}
+}
+
+// auditCount counts audit_log rows by action whose details contain every
+// substring in like.
+func auditCount(t *testing.T, d *sql.DB, action string, like ...string) int {
+	t.Helper()
+	q := `SELECT COUNT(*) FROM audit_log WHERE action = ?`
+	args := []any{action}
+	for _, l := range like {
+		q += ` AND data_json LIKE ?`
+		args = append(args, "%"+l+"%")
+	}
+	var n int
+	if err := d.QueryRow(q, args...).Scan(&n); err != nil {
+		t.Fatalf("read audit: %v", err)
+	}
+	return n
+}
+
+func auditDetails(t *testing.T, d *sql.DB, action string) []string {
+	t.Helper()
+	rows, err := d.Query(`SELECT data_json FROM audit_log WHERE action = ? ORDER BY rowid`, action)
+	if err != nil {
+		t.Fatalf("read audit: %v", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func publishN(bus *EventBus, typ string, n int) {
+	for i := 0; i < n; i++ {
+		bus.EnqueuePublished(context.Background(), publishTestPlugin, Event{ID: "ev-" + strconv.Itoa(i), Type: typ, Payload: []byte("null"), Hop: 1})
+	}
+}
+
+// ut-docs#3887: 100 published events (20/s for 5s) write ONE event_published
+// row and no per-subscriber enqueued rows; every event is still delivered.
+func TestEnqueuePublishedCoalescesPublishAudit(t *testing.T) {
+	d := hostfnTestDB(t)
+	bus := NewEventBus(d)
+	clock := &fakeClock{now: time.Unix(1_700_000_000, 0)}
+	bus.now = clock.Now
+	const typ = "com.test.pub.tick"
+	ch := subscribeTestPlugin(t, d, bus, publishTestSub, typ)
+
+	publishN(bus, typ, 100)
+	if got := len(ch); got != 100 {
+		t.Fatalf("delivered %d events, want 100", got)
+	}
+	if n := auditCount(t, d, "event_published"); n != 1 {
+		t.Fatalf("event_published rows = %d, want 1", n)
+	}
+	if n := auditCount(t, d, "event_dispatch", "status=enqueued"); n != 0 {
+		t.Fatalf("enqueued rows = %d, want 0", n)
+	}
+	first := auditDetails(t, d, "event_published")[0]
+	for _, want := range []string{"event_type=" + typ, "subscribers=1", "plugin_id=" + publishTestPlugin, "coalesced=0", "coalesced"} {
+		if !strings.Contains(first, want) {
+			t.Errorf("first row %q lacks %q", first, want)
+		}
+	}
+
+	// After the interval, the next publish writes a second row carrying the
+	// 99 publishes that had no row of their own.
+	clock.Advance(publishedAuditInterval)
+	publishN(bus, typ, 1)
+	rows := auditDetails(t, d, "event_published")
+	if len(rows) != 2 {
+		t.Fatalf("event_published rows after the interval = %d, want 2", len(rows))
+	}
+	if !strings.Contains(rows[1], "coalesced=99") {
+		t.Errorf("second row %q lacks coalesced=99", rows[1])
+	}
+
+	// A different publisher has its own throttle.
+	bus.EnqueuePublished(context.Background(), "com.test.other", Event{ID: "o1", Type: typ, Payload: []byte("null"), Hop: 1})
+	if n := auditCount(t, d, "event_published"); n != 3 {
+		t.Fatalf("event_published rows with a second publisher = %d, want 3", n)
+	}
+}
+
+// ut-docs#3887: a denied subscriber gets one coalesced denied row per
+// (subscriber, type) per interval.
+func TestEnqueuePublishedCoalescesDeniedAudit(t *testing.T) {
+	d := hostfnTestDB(t)
+	bus := NewEventBus(d)
+	clock := &fakeClock{now: time.Unix(1_700_000_000, 0)}
+	bus.now = clock.Now
+	const typ = "com.test.pub.tick"
+	_ = subscribeTestPlugin(t, d, bus, publishTestSub, typ)
+	if err := RevokePermission(context.Background(), d, publishTestSub, "events:receive"); err != nil {
+		t.Fatal(err)
+	}
+	publishN(bus, typ, 50)
+	if n := auditCount(t, d, "event_dispatch", "status=denied"); n != 1 {
+		t.Fatalf("denied rows = %d, want 1", n)
+	}
+	if n := auditCount(t, d, "event_dispatch", "status=denied", "coalesced"); n != 1 {
+		t.Fatalf("denied row does not mention coalescing")
+	}
+	clock.Advance(publishedAuditInterval)
+	publishN(bus, typ, 1)
+	if n := auditCount(t, d, "event_dispatch", "status=denied"); n != 2 {
+		t.Fatalf("denied rows after the interval = %d, want 2", n)
+	}
+	// The second row carries the 49 denials the first one stood for.
+	if n := auditCount(t, d, "event_dispatch", "status=denied", "coalesced=49 "); n != 1 {
+		t.Fatalf("no denied row carries coalesced=49")
+	}
+}
+
+// ut-docs#3887: a full channel still leaves a (throttled) dropped row.
+func TestEnqueuePublishedFullChannelStillAuditsDropped(t *testing.T) {
+	d := hostfnTestDB(t)
+	bus := NewEventBus(d)
+	const typ = "com.test.pub.tick"
+	_ = subscribeTestPlugin(t, d, bus, publishTestSub, typ)
+	publishN(bus, typ, 105) // channel holds 100
+	if n := auditCount(t, d, "event_dispatch", "status=dropped"); n != 1 {
+		t.Fatalf("dropped rows = %d, want 1", n)
+	}
+}
+
+// ut-docs#3887 regression guard: core (hop-0) Publish keeps one
+// event_published row per event and one enqueued row per subscriber.
+func TestCorePublishKeepsPerEventAudit(t *testing.T) {
+	d := hostfnTestDB(t)
+	bus := NewEventBus(d)
+	const typ = "com.test.core.tick"
+	_ = subscribeTestPlugin(t, d, bus, publishTestSub, typ)
+	for i := 0; i < 3; i++ {
+		if _, err := bus.Publish(context.Background(), typ, map[string]int{"n": i}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := auditCount(t, d, "event_published"); n != 3 {
+		t.Fatalf("event_published rows = %d, want 3", n)
+	}
+	if n := auditCount(t, d, "event_dispatch", "status=enqueued"); n != 3 {
+		t.Fatalf("enqueued rows = %d, want 3", n)
 	}
 }

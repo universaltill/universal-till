@@ -259,7 +259,7 @@ func (w *WasmRuntime) flushPublished(ctx context.Context, db *sql.DB, hs *hostSt
 	bus := w.eventBus(db)
 	ctx = context.WithoutCancel(ctx) // the run deadline may be spent; the audit rows still land
 	for _, ev := range hs.published {
-		bus.EnqueuePublished(ctx, ev)
+		bus.EnqueuePublished(ctx, hs.pluginID, ev)
 	}
 	hs.published = nil
 }
