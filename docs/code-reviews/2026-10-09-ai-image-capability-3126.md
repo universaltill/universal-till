@@ -103,3 +103,53 @@ Safe to merge.
 - `min_pos_version` stays at 1.0.0. Tills older than v0.30.16 can't parse
   `type: "endpoint"`; this is the same exposure every endpoint-typed plugin
   already has.
+
+## Addendum, 2026-10-09 (late): the cutout endpoint folded in
+
+**Why.** CI's `desktop-shell` job went red on the whole-program dead-code
+guard: `CanCutout`, `RemoveBackground`, `rembgCutter.removeBackground`,
+`rembgForm` and `hasTransparency` had no caller outside tests, because the
+design put that caller in card C (#3127). A baseline entry was refused as a
+CI bypass, so the capability now ships with its real caller and the design's
+card split (`architecture/ai-product-photo.md` §9) was updated to match. C
+keeps the picker UI.
+
+**What shipped.** `POST /api/catalog/image/cutout`
+(`internal/pages/ai_cutout.go`, registered from `registerAIAPI`):
+- gate `catalog_management` first (cashier → 403, the service is never
+  called), then `404` when `!CanCutout()`;
+- body capped by `http.MaxBytesReader` at 10 MB → `413`; the multipart
+  memory limit is the same size, so nothing is spilled to a temp file;
+- `photo` header-checked (`image.DecodeConfig`: PNG/JPEG, ≤ `MaxPixels`) —
+  no full decode of the upload;
+- `background` = `tile` (default) | `white` | `transparent`, `tile_color` a
+  `catalogtypes.ItemColors()` hex (exact match; empty = white; else 400);
+- `imaging.SquareTile` at `TileSize`, answered `image/png`,
+  `Cache-Control: no-store`; nothing written to disk;
+- soft errors in the API envelope: `502` service failure, `422` no subject.
+  The adapter's error text (which contains the endpoint URL) is logged,
+  never sent to the browser.
+- Demo mode denies the route (outbound call at request time).
+
+**Review.** Fable, independent, on the snapshot. No blockers. Should-fixes,
+all fixed in this branch:
+1. The upload was fully decoded only to be thrown away (~24 MB per call on
+   top of the raw copies) → header-only check with `image.DecodeConfig`.
+2. `hexColor` mapped an unknown digit to 0 silently → `hex.DecodeString`
+   with an error; the test now walks every palette colour and malformed
+   values.
+3. Design §6 said `tile` + hex in one field → doc updated to the
+   `background` + `tile_color` contract (ut-docs PR for #3126).
+Nit fixed: the cashier test clears `UT_AUTH` for hermeticity.
+
+**Verified.** Mutation checks (each reverted afterwards): dropping the
+permission gate fails `TestCutoutAPI_CashierIsRefused`; dropping
+`MaxBytesReader` fails `TestCutoutAPI_OversizeBodyIs413`; ignoring the
+background choice fails `TestCutoutAPI_ReturnsSquareTileOnTheChosenBackground`.
+`guard-deadcode-baseline.sh` (run with `GOTOOLCHAIN=go1.27.1`; the pinned
+binary otherwise builds with go1.26 here) lists the five `internal/ai`
+functions without this change and none with it. Every `build`-job guard
+passes locally except `guard-shellcheck-version.sh` (no shellcheck in the
+sandbox; no shell script changed).
+
+**Verdict:** safe to merge.
