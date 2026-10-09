@@ -353,6 +353,8 @@ erDiagram
         string loyalty_no
         string created_at
         boolean is_sample_data
+        string phone_e164
+        string notes
     }
 
     users {
@@ -648,6 +650,13 @@ erDiagram
 - Seeds (001_init.sql): PROMO50 (50p), PROMO500 (£5), DISC10 (10% off) — respecting `type`. **Opt-in as of migration 038 (ut-docs#567)**, same as the demo catalogue (migration 036): not present on a fresh install unless the setup wizard's sample-data checkbox is ticked, flagged `is_sample_data = 1` when seeded, removable from Settings → Data alongside the demo customers and catalogue. `customers` gets the same `is_sample_data` column and the same opt-in/removal treatment for its 3 seeded demo rows (Alice Carter/Ben Singh/Chloe Martin).
 - Usage: POS scan/discount endpoint checks active promotions (optionally matching customer) before applying barcode prefixes; basket carries `customer_id` for targeted promos.
 - Constraints: no negative amounts; inactive/expired codes ignored; percent promos should cap discounts to avoid negative totals.
+
+## Customers — phone_e164 and notes (ut-docs#3200, ADR-0131)
+
+- Columns (migration 069): `phone_e164 TEXT` (indexed) and `notes TEXT`. Both are personal data: they travel to LAN replicas with the rest of the row (admin sync), are blanked on a replica's erased-customer shell (`scrubOnRetire`), and never go to the cloud.
+- `phone_e164` is `internal/phonenumber.Normalise(phone, store.country)`: `'+<digits>'` (E.164); the bare digits when the phone can't be normalised; `''` when there is no phone; `NULL` = not computed yet. A trigger resets it to `NULL` when `phone` changes on its own.
+- `POSRepo.BackfillCustomerPhoneE164` fills `NULL` rows in chunks, in the background after start-up on every till (main and replica); when `store.country` differs from the per-till marker `customers.phone_e164_region` it recomputes every row first. Idempotent.
+- `POSRepo.LookupCustomersByPhone` (caller ID): every non-erased customer whose `phone_e164` equals the caller's normalised number, else matches on the trailing 9 digits; at most 10, by name, each with its last 5 completed sales (date, total, line count). Rows still `NULL` are normalised in Go, so the lookup is right before the back-fill finishes. Migration 069 also adds `idx_sales_customer_id` for the last-5-sales query.
 
 ---
 
