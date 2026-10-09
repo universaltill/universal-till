@@ -30,11 +30,13 @@ instead.
 
 Once a day the till removes files it no longer needs, so its disk doesn't fill up:
 
-- Backups: the newest 14 are kept.
+- Backups: the newest 14 are kept. Together they never take more than a quarter of the free disk space: the oldest go first, but the newest 3 are always kept.
 - The copy of your data set aside when you restore a backup: kept for as long as the law requires you to keep sales records; after that, only the newest 3 are kept, and none older than 30 days.
 - Issue reports that couldn't be sent: removed after 7 days.
 - Downloaded updates: removed after 7 days.
 - Uploaded files left behind when the till stopped in the middle of an upload or import: removed after 24 hours.
+
+If the disk gets almost full — less than 500 MB free, or less than a tenth of the disk, whichever is larger — the till cleans up at once instead of waiting for the next day, and keeps only the minimum: the newest 3 backups, the newest copy set aside by a restore, and issue reports and downloaded updates from the last day. Managers then see **Storage almost full** in the status bar until there is room again. Selling carries on; to free more space, remove files you don't need from the device, or ask whoever set it up.
 
 The clean-up never removes sales, receipts, the audit log, Z reports or any other record you must keep by law. Each till cleans only its own disk.
 

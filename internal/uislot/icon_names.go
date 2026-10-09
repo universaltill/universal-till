@@ -43,6 +43,7 @@ var knownIconNames = map[string]bool{
 	"folder-input": true, // ut-docs#2465: the Move to category badge
 	"store":        true, // ut-docs#3090: Settings "My shop" tile
 	"credit-card":  true, // ut-docs#3090: Settings "Payments" tile
+	"hard-drive":   true, // ut-docs#3121: the low-disk status chip
 }
 
 // IsKnownIconName reports whether name is in the closed icon-name set.

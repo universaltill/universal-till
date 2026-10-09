@@ -29,11 +29,13 @@ yerine pencereyi kapatıp Universal Till'i yeniden açın.
 
 Kasa, diski dolmasın diye günde bir kez artık gerekmeyen dosyaları siler:
 
-- Yedekler: en yeni 14 yedek tutulur.
+- Yedekler: en yeni 14 yedek tutulur. Hepsi birlikte boş disk alanının dörtte birinden fazlasını asla kaplamaz: önce en eskiler silinir, ancak en yeni 3 yedek her zaman tutulur.
 - Bir yedeği geri yüklerken kenara ayrılan veri kopyası: satış kayıtlarını yasal olarak saklamanız gereken süre boyunca tutulur; bu süre dolduktan sonra yalnızca en yeni 3 kopya tutulur, hiçbiri 30 günden eski olmaz.
 - Gönderilemeyen sorun bildirimleri: 7 gün sonra silinir.
 - İndirilen güncellemeler: 7 gün sonra silinir.
 - Kasa bir yükleme veya içe aktarma sırasında kapandığı için geride kalan yüklenmiş dosyalar: 24 saat sonra silinir.
+
+Disk neredeyse dolarsa — 500 MB'tan az veya diskin onda birinden az boş alan kalırsa, hangisi büyükse — kasa ertesi günü beklemeden hemen temizlik yapar ve yalnızca en gerekli olanları tutar: en yeni 3 yedek, geri yükleme sırasında kenara ayrılan en yeni kopya ve son bir günün sorun bildirimleri ile indirilen güncellemeleri. Yöneticiler, yeniden yer açılana kadar durum çubuğunda **Depolama neredeyse dolu** görür. Satış devam eder; daha fazla yer açmak için cihazdan gerekmeyen dosyaları silin veya cihazı kuran kişiye sorun.
 
 Bu temizlik satışları, fişleri, denetim kaydını, Z raporlarını veya yasal olarak saklamanız gereken başka hiçbir kaydı asla silmez. Her kasa yalnızca kendi diskini temizler.
 

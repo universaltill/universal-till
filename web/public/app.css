@@ -5079,6 +5079,18 @@ body.login-screen {
 }
 .statusbar a.sb-report-archive[href]:hover { filter: brightness(0.92); }
 #sb-report-archive-mount:empty { display: none; }
+/* ut-docs#3121: the till's disk is below the low-disk floor
+   (disk_space_chip.html). Same amber pill as sb-report-archive: selling
+   carries on; a person needs to free space on the device. Wraps for the
+   same reason (long in some locales). */
+.statusbar .sb-disk-low {
+  color: #451a03; background: var(--warning, #d97706);
+  text-decoration: none; white-space: normal;
+  padding: .05rem .5rem; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem;
+}
+.statusbar a.sb-disk-low:hover { filter: brightness(0.92); }
+#sb-disk-space-mount:empty { display: none; }
 /* ut-docs#2742: the replica's one main-till light (main_till_status.html).
    Words carry the state; the dot only repeats it — filled green while
    linked, a hollow ring while polling (sync works, just not instantly).
@@ -6123,7 +6135,8 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
      moves to the foot of the ☰ drawer (the approved mock-up's layout). A
      problem still shows on the sale screen itself (offline-first: offline
      state is never hidden): no internet, main till not reachable, a
-     refused cloud credential (ADR-0116 D6) or an underpowered supply bring the row back just above the pay bar (or, in
+     refused cloud credential (ADR-0116 D6), a disk below the low-disk floor
+     (ut-docs#3121) or an underpowered supply bring the row back just above the pay bar (or, in
      the open sheet, at the very bottom, with Pay pinned above it). So does
      an open dialog: the scrim covers ☰, and status must stay reachable
      (html.ut-scrim-on lifts the row above it, below). app.js re-measures
@@ -6133,7 +6146,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
     padding-block: .2rem; font-size: .8rem;
   }
   body.sale-screen.pos-sheet-open .statusbar { bottom: 0; }
-  html:not(.ut-scrim-on) body.sale-screen:not(.nav-drawer-open) .statusbar:not(:has(.sb-conn.is-offline, .sb-main-till, .sb-cloud-auth, .sb-report-archive, .sb-power, .sb-update.is-stuck)) { display: none; }
+  html:not(.ut-scrim-on) body.sale-screen:not(.nav-drawer-open) .statusbar:not(:has(.sb-conn.is-offline, .sb-main-till, .sb-cloud-auth, .sb-report-archive, .sb-disk-low, .sb-power, .sb-update.is-stuck)) { display: none; }
   /* In the open drawer: its foot, one item per line, above the backdrop
      (the nav's stacking context is z-index 60). The drawer pads its end by
      the row's height so the last link scrolls clear of it. */
