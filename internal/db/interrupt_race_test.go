@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -42,12 +43,34 @@ import (
 // one victim goroutine whose context is NEVER cancelled. The victim must
 // never see an interrupt.
 func TestCancelledQueryNeverInterruptsAnotherGoroutine(t *testing.T) {
-	dbFile := filepath.Join(t.TempDir(), "interrupt.db")
-	d, err := Open(dbFile)
+	// Not t.TempDir (ut-docs#4000): its cleanup is a single RemoveAll, and
+	// DB.Close does not wait for database/sql's background opener. Every
+	// interrupted connection is discarded as driver.ErrBadConn (modernc's
+	// usable() checks sqlite3_is_interrupted) and finalClose queues a
+	// background re-open for the waiting cancellers, so a connection can
+	// still be opening (creating -wal/-shm) or closing after Close returns —
+	// tests that cancel queries on a pooled file DB need the same helper.
+	// That lost race failed this test on main with "directory not empty"
+	// while every assertion below held.
+	dir, err := os.MkdirTemp("", "interrupt-race-")
+	if err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := removeAllEventually(dir, 10*time.Second); err != nil {
+			t.Errorf("remove test dir: %v", err)
+		}
+	})
+	d, err := Open(filepath.Join(dir, "interrupt.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer d.Close()
+	// Close before the cleanup above runs (defers run first).
+	defer func() {
+		if err := d.Close(); err != nil {
+			t.Errorf("close: %v", err)
+		}
+	}()
 
 	// Force real contention over a small, shared set of connections: the bug
 	// is cross-CONNECTION-REUSE contamination, so a pool big enough to give
@@ -133,5 +156,22 @@ func TestCancelledQueryNeverInterruptsAnotherGoroutine(t *testing.T) {
 	// an interrupt proves nothing about the race.
 	if n := victimNs.Load(); n < 100 {
 		t.Fatalf("victim goroutine only completed %d queries — too few to have exercised the race", n)
+	}
+}
+
+// removeAllEventually removes dir, retrying until it sticks or timeout
+// passes (ut-docs#4000). A plain RemoveAll fails with "directory not empty"
+// when something creates a file between its listing and its final rmdir —
+// here, a late SQLite connection still opening after DB.Close returned.
+// That writer is a bounded burst (bounded by MaxOpenConns), so a
+// retry converges; a directory that never empties still fails, loudly.
+func removeAllEventually(dir string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		err := os.RemoveAll(dir)
+		if err == nil || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
