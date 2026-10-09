@@ -1056,6 +1056,24 @@
         // A swap that throws never reaches afterSwap: drop its sync so no
         // later, unrelated transition can flush a stale shell (review M2).
         document.addEventListener('htmx:swapError', function () { pendingSync = null; pendingXhr = null; });
+        // ut-docs#2869: back-to-back shell navigations. Under a View
+        // Transition, htmx swaps in the transition's update callback, a frame
+        // or more after htmx:beforeSwap -- and it resolved HX-Retarget
+        // (#ut-page) when the response arrived. If B's response arrives
+        // before A's update callback has run, A swaps first and replaces
+        // #ut-page, so B's swap hits a detached target and throws: the screen
+        // is left on A's content under B's URL and shell state, with A's
+        // listeners live. The later tap wins instead: a shell swap whose
+        // update callback has not run yet is marked superseded by the next
+        // swapping shell navigation, and its update callback skips htmx's
+        // swap, so the DOM goes straight from the old page to B.
+        var liveSwaps = [], armedSwap = null;
+        function skipSuperseded(s) {
+          if (!s) return false;
+          var i = liveSwaps.indexOf(s);
+          if (i >= 0) liveSwaps.splice(i, 1);
+          return s.superseded;
+        }
         // Belt and braces from ADR-0097, kept for the same-document case: a
         // skipped/aborted transition rejects its promises (a console error per
         // skip otherwise), and nothing may ever hold the screen -- the shared
@@ -1065,17 +1083,21 @@
           var orig = document.startViewTransition;
           document.startViewTransition = function (arg) {
             var args = Array.prototype.slice.call(arguments);
+            // The shell swap this transition carries, armed by
+            // htmx:beforeTransition just before htmx calls this (null for any
+            // other transition).
+            var swap = armedSwap; armedSwap = null;
             // The update callback (plain function, or the newer { update }
             // options form) starts with the deferred shell sync. A skipped
             // transition still runs its update callback, so the sync is never
             // lost; flushShellSync is a no-op for a transition that is not a
             // boosted shell swap (nothing pending).
             if (typeof arg === 'function') {
-              args[0] = function () { flushShellSync(); return arg.apply(this, arguments); };
+              args[0] = function () { if (skipSuperseded(swap)) return Promise.resolve(); flushShellSync(); return arg.apply(this, arguments); };
             } else if (arg && typeof arg.update === 'function') {
               var upd = arg.update, opts = {};
               for (var k in arg) opts[k] = arg[k];
-              opts.update = function () { flushShellSync(); return upd.apply(this, arguments); };
+              opts.update = function () { if (skipSuperseded(swap)) return Promise.resolve(); flushShellSync(); return upd.apply(this, arguments); };
               args[0] = opts;
             }
             var vt = orig.apply(document, args);
@@ -1191,7 +1213,6 @@
           // requestConfig.elt is the anchor that issued the request; detail.elt
           // here is the pre-retarget swap target (body), not the issuer.
           if (!rc.boosted || !shellNav(rc.elt)) return;
-          pendingSync = null; pendingXhr = null;
           var xhr = d.xhr;
           var url = finalURL(d);
           var ct = (xhr && xhr.getResponseHeader && xhr.getResponseHeader('Content-Type')) || '';
@@ -1220,6 +1241,13 @@
             return;
           }
           d.shouldSwap = true;
+          // ut-docs#2869: this swap replaces any earlier one still waiting
+          // for its transition's update callback. Reset only here, past the
+          // fallback above: a download fallback leaves the page in place, so
+          // an earlier swap still in flight keeps its own sync.
+          liveSwaps.forEach(function (s) { s.superseded = true; });
+          armedSwap = null;
+          pendingSync = null; pendingXhr = null;
           purgeHistoryCache();
           // Direction is informational as well as motion (the CSS fallback
           // selectors and the e2e suite read it), so it is set on every
@@ -1273,6 +1301,11 @@
           // (ADR-0119) -- cancelled here, so no View Transition and no
           // whole-page snapshot is ever created for that till.
           if (UT.motionOff() || !document.startViewTransition) { e.preventDefault(); return; }
+          if (e.defaultPrevented) return;
+          // htmx calls startViewTransition next, synchronously; the wrapper
+          // binds this to that transition's update callback (ut-docs#2869).
+          armedSwap = { superseded: false };
+          liveSwaps.push(armedSwap);
           // ADR-0122 §3: the zoom origin, set now -- after beforeSwap
           // decided the direction, before htmx starts the transition (and so
           // before the old snapshot). Three custom properties on <html>, no

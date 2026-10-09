@@ -289,9 +289,9 @@ func TestPersistentShell_BeforeSwapDefersTheShellSync(t *testing.T) {
 			t.Errorf("syncShell must carry the <html>/<body> sync (%q)", want)
 		}
 	}
-	if !strings.Contains(src, "args[0] = function () { flushShellSync(); return arg.apply(this, arguments); };") ||
-		!strings.Contains(src, "opts.update = function () { flushShellSync(); return upd.apply(this, arguments); };") {
-		t.Errorf("the startViewTransition wrapper must flush the pending shell sync at the start of the update callback (both call forms)")
+	if !strings.Contains(src, "args[0] = function () { if (skipSuperseded(swap)) return Promise.resolve(); flushShellSync(); return arg.apply(this, arguments); };") ||
+		!strings.Contains(src, "opts.update = function () { if (skipSuperseded(swap)) return Promise.resolve(); flushShellSync(); return upd.apply(this, arguments); };") {
+		t.Errorf("the startViewTransition wrapper must skip a superseded shell swap, else flush the pending shell sync, at the start of the update callback (both call forms)")
 	}
 	if !strings.Contains(src, "if (pendingSync && (e.detail || {}).xhr === pendingXhr) flushShellSync();") {
 		t.Errorf("htmx:afterSwap must flush the pending shell sync for the no-transition path (reduced motion / no View Transitions)")
@@ -304,5 +304,27 @@ func TestPersistentShell_BeforeSwapDefersTheShellSync(t *testing.T) {
 	// Review M1: the mouse hand-over must focus the control under the pointer.
 	if !strings.Contains(src, "if (f && f.focus) { try { f.focus(); } catch (err) { /* not focusable */ } }") {
 		t.Errorf("the mid-transition click hand-over must focus the field under the pointer (ut-docs#2496 review M1)")
+	}
+}
+
+// ut-docs#2869: back-to-back shell navigations under View Transitions. htmx
+// resolves HX-Retarget (#ut-page) when a response arrives but swaps in the
+// transition's update callback, so a second response handled before the
+// first transition's update callback ran swapped into a detached #ut-page and
+// threw, leaving the first page on screen under the second URL. The later
+// navigation must supersede the earlier queued swap. The browser half is
+// e2e/tests/shell-listener-race-2869.spec.ts.
+func TestPersistentShell_LaterNavigationSupersedesQueuedSwap(t *testing.T) {
+	src := readBaseHTML(t)
+	swap := extractBlock(t, src, "document.addEventListener('htmx:beforeSwap', function (e) {")
+	if !strings.Contains(swap, "liveSwaps.forEach(function (s) { s.superseded = true; });") {
+		t.Errorf("a swapping shell navigation must mark every queued shell swap superseded in htmx:beforeSwap")
+	}
+	trans := extractBlock(t, src, "document.addEventListener('htmx:beforeTransition', function (e) {")
+	if !strings.Contains(trans, "armedSwap = { superseded: false };") || !strings.Contains(trans, "liveSwaps.push(armedSwap);") {
+		t.Errorf("htmx:beforeTransition must arm the shell swap the next startViewTransition carries")
+	}
+	if !strings.Contains(src, "var swap = armedSwap; armedSwap = null;") {
+		t.Errorf("the startViewTransition wrapper must bind the armed shell swap to its own update callback")
 	}
 }
