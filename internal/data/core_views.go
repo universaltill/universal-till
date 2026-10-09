@@ -178,6 +178,15 @@ var (
 	argCatalogLimit = CoreViewArg{Name: "limit", Min: 1, Max: 500, Default: 500}
 )
 
+// sales.receipts.v1 reads one business date — today or up to a month back
+// — a page at a time: a receipt with its lines and payments is ~1–3 KiB, so
+// 100 stay under CoreViewMaxResult unless a receipt has many long lines;
+// then the plugin pages smaller.
+var (
+	argDaysAgo      = CoreViewArg{Name: "days_ago", Min: 0, Max: 31, Default: 0}
+	argReceiptLimit = CoreViewArg{Name: "limit", Min: 1, Max: 100, Default: 50}
+)
+
 // auditSummaryRows is the Ask tool's fixed row cap for audit.summary.v1.
 const auditSummaryRows = 100
 
@@ -229,6 +238,29 @@ var coreViews = map[string]CoreView{
 		Name: "catalog.items.v1", Permission: "view:inventory", Args: []CoreViewArg{argOffset, argCatalogLimit},
 		Run: func(ctx context.Context, db *sql.DB, args map[string]int) (any, error) {
 			return NewCatalogRepo(db).ListCatalogViewItems(ctx, args["offset"], args["limit"])
+		},
+	},
+	// ADR-0149 §6 (ut-docs#3976): the staff list — id, display name,
+	// active; never a username, PIN or role.
+	"users.list.v1": {
+		Name: "users.list.v1", Permission: "view:users",
+		Run: func(ctx context.Context, db *sql.DB, _ map[string]int) (any, error) {
+			return NewAuthRepo(db).ListUserViewRows(ctx)
+		},
+	},
+	// ADR-0149 §6 (ut-docs#3976): one business date's completed receipts,
+	// with lines, applied payments, tip and currency. The business date
+	// honours reports.business_day_start like sales.by_day.v1.
+	"sales.receipts.v1": {
+		Name: "sales.receipts.v1", Permission: "view:sales", Args: []CoreViewArg{argDaysAgo, argOffset, argReceiptLimit},
+		Run: func(ctx context.Context, db *sql.DB, args map[string]int) (any, error) {
+			v, _, err := NewSettingsRepo(db).Get(ctx, "reports.business_day_start")
+			if err != nil {
+				return nil, err
+			}
+			hh, mm := ParseBusinessDayStart(v)
+			date, from, to := receiptsBusinessDay(coreViewNow().In(time.Local), hh, mm, args["days_ago"])
+			return NewPOSRepo(db).ListReceiptViewRows(ctx, date, from, to, args["offset"], args["limit"])
 		},
 	},
 }

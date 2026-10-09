@@ -1540,6 +1540,7 @@
   "plugins.permissions.desc.ui_page": "Add its own page or screen to the till.",
   "plugins.permissions.desc.ui_slot": "Add content to a specific place in the till's screens.",
   "plugins.permissions.desc.view": "Read specific till reports you've approved (e.g. sales by day).",
+  "plugins.permissions.desc.view_users": "Read your staff list — names and whether each person is active. Never PINs, usernames or roles.",
   "plugins.permissions.setting_bound": "Connects only to the address saved in:",
   "plugins.permissions.setting_bound_hint": "Reaches only the address currently saved in these settings, including one on the shop network. Change the setting and the permission follows it.",
   "plugins.permissions.setting_bound_not_set": "not set — the permission reaches nothing",

@@ -1555,6 +1555,7 @@
   "plugins.permissions.desc.ui_page": "Kasaya kendi sayfasını veya ekranını ekler.",
   "plugins.permissions.desc.ui_slot": "Kasa ekranlarındaki belirli bir yere içerik ekler.",
   "plugins.permissions.desc.view": "Onayladığınız belirli kasa raporlarını okur (ör. günlük satışlar).",
+  "plugins.permissions.desc.view_users": "Personel listenizi okur — adlar ve her kişinin etkin olup olmadığı. PIN'leri, kullanıcı adlarını veya rolleri asla okumaz.",
   "plugins.permissions.setting_bound": "Yalnızca şu ayarlarda kayıtlı adrese bağlanır:",
   "plugins.permissions.setting_bound_hint": "Yalnızca bu ayarlarda şu an kayıtlı adrese erişir; bu, mağaza ağındaki bir adres de olabilir. Ayarı değiştirirseniz izin de yeni adrese geçer.",
   "plugins.permissions.setting_bound_not_set": "ayarlanmadı — izin hiçbir adrese erişmez",

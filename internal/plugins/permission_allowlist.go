@@ -64,8 +64,8 @@ var (
 	// fixture; new plugins use storage / db:own / blob:own instead.
 	legacyStorageQuotaRe = regexp.MustCompile(`^storage\.local\.\d+[KMG]B$`)
 	// view:<class> (ADR-0121 §5): the permission names a class of core read
-	// views — view:sales, view:inventory, view:audit — not one view
-	// (sales.by_day.v1 goes in views_used).
+	// views — view:sales, view:inventory, view:audit, view:users (ADR-0149
+	// §6) — not one view (sales.by_day.v1 goes in views_used).
 	viewPermissionRe = regexp.MustCompile(`^view:[a-z][a-z0-9_]*$`)
 	// grantHostnameRe: a DNS name after normGrantHost (IDNA-mapped,
 	// lower-cased) — LDH labels, '_' tolerated for LAN hosts, no wildcard,

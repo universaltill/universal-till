@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 )
@@ -267,6 +268,80 @@ func TestViewQueryCatalogItems(t *testing.T) {
 	res = runGuestPayload(t, w, d, pluginID, map[string]any{"view": "catalog.items.v1"})
 	if code := viewCode(t, res); code != hostErrDenied {
 		t.Fatalf("without view:inventory = %d, want %d", code, hostErrDenied)
+	}
+	if countDenials(t, d, pluginID) <= before {
+		t.Fatal("the denial was not audited")
+	}
+}
+
+// users.list.v1 (ADR-0149 §6, ut-docs#3976) is the new view:users class:
+// it runs only with that grant, and never carries a PIN, username or role.
+func TestViewQueryUsersList(t *testing.T) {
+	guest := buildViewGuest(t)
+	const pluginID = "com.test.views.users"
+	withInstalledManifest(t, pluginID, viewsManifest(pluginID, "users.list.v1"))
+	w := newViewRuntime(t, guest, pluginID)
+
+	d := viewDB(t, pluginID, "view:users")
+	if _, err := d.Exec(`DELETE FROM users WHERE id = 'kiosk'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`INSERT INTO users(id, username, display_name, role, pin_hash, is_active)
+		VALUES('uv-1', 'sam-login', 'Sam', 'manager', 'pin-hash-secret', 0)`); err != nil {
+		t.Fatal(err)
+	}
+	res := runGuestPayload(t, w, d, pluginID, map[string]any{"view": "users.list.v1"})
+	want := `[{"id":"uv-1","display_name":"Sam","active":false}]`
+	if code := viewCode(t, res); code != len(want) || res["result"] != want {
+		t.Fatalf("view_query = %d %v, want %s", code, res["result"], want)
+	}
+
+	d = viewDB(t, pluginID, "view:sales")
+	before := countDenials(t, d, pluginID)
+	res = runGuestPayload(t, w, d, pluginID, map[string]any{"view": "users.list.v1"})
+	if code := viewCode(t, res); code != hostErrDenied {
+		t.Fatalf("without view:users = %d, want %d", code, hostErrDenied)
+	}
+	if countDenials(t, d, pluginID) <= before {
+		t.Fatal("the denial was not audited")
+	}
+}
+
+// sales.receipts.v1 (ADR-0149 §6, ut-docs#3976) runs through the same gate:
+// view:sales and views_used, or a denial the audit log records.
+func TestViewQuerySalesReceipts(t *testing.T) {
+	guest := buildViewGuest(t)
+	const pluginID = "com.test.views.receipts"
+	withInstalledManifest(t, pluginID, viewsManifest(pluginID, "sales.receipts.v1"))
+	w := newViewRuntime(t, guest, pluginID)
+
+	d := viewDB(t, pluginID, "view:sales")
+	// Created now: today's business date at the default midnight start
+	// (stored whole seconds never round across midnight).
+	now := time.Now()
+	created := now.UTC().Format("2006-01-02 15:04:05")
+	if _, err := d.Exec(`INSERT INTO sales(id, receipt_no, sale_type, till_id, currency, subtotal, total, created_at)
+		VALUES('rv-1', 'R-1', 'sale', 't1', 'EUR', 500, 500, ?)`, created); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`INSERT INTO payments(id, sale_id, method_id, amount, tip_amount, masked_pan)
+		VALUES('rp-1', 'rv-1', 'card', 500, 40, '************4242')`); err != nil {
+		t.Fatal(err)
+	}
+	res := runGuestPayload(t, w, d, pluginID, map[string]any{"view": "sales.receipts.v1", "args": `{"limit":10}`})
+	want := `[{"id":"rv-1","receipt_no":"R-1","sale_type":"sale","business_date":"` + now.Format("2006-01-02") +
+		`","created_at":"` + created + `","till_id":"t1","cashier_id":"","currency":"EUR","subtotal_minor":500,` +
+		`"discount_minor":0,"tax_minor":0,"total_minor":500,"tip_minor":40,"fiscal_signed":false,"lines":[],` +
+		`"payments":[{"method_id":"card","amount_minor":500,"tip_minor":40}]}]`
+	if code := viewCode(t, res); code != len(want) || res["result"] != want {
+		t.Fatalf("view_query = %d %v, want %s", code, res["result"], want)
+	}
+
+	d = viewDB(t, pluginID, "view:users")
+	before := countDenials(t, d, pluginID)
+	res = runGuestPayload(t, w, d, pluginID, map[string]any{"view": "sales.receipts.v1"})
+	if code := viewCode(t, res); code != hostErrDenied {
+		t.Fatalf("without view:sales = %d, want %d", code, hostErrDenied)
 	}
 	if countDenials(t, d, pluginID) <= before {
 		t.Fatal("the denial was not audited")
