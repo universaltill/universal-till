@@ -190,6 +190,15 @@ jobs:
           bash scripts/ci/guard-core-neutral.sh
       - name: Core-neutral guard regression test
         run: bash scripts/ci/guard-core-neutral_test.sh
+      - name: Deadcode-baseline growth guard (ut-docs#3406)
+        # A PR may not add its own dead code to deadcode-baseline.txt; new
+        # entries land in a baseline-only PR. Fetches origin/main itself
+        # (idempotent) so a reordered step above can't turn it into a skip.
+        run: |
+          git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+          bash scripts/ci/guard-deadcode-baseline-growth.sh
+      - name: Deadcode-baseline growth guard regression test
+        run: bash scripts/ci/guard-deadcode-baseline-growth_test.sh
       - name: Manual screenshot freshness guard
         run: bash scripts/ci/run-docs-shots-guard.sh
       - name: Manual screenshot freshness guard wrapper regression test
