@@ -88,8 +88,8 @@ func TestAdminApply_ErasedCustomerPinnedBySatelliteSaleBecomesAnonymousShell(t *
 	primary := openMigratedDB(t, "primary.db")
 	replica := openMigratedDB(t, "replica.db")
 
-	mustExec(t, primary, `INSERT INTO customers (id, name, phone, email, address, loyalty_no)
-		VALUES ('c1', ?, '555-0100', 'erased@example.com', '1 Test Street', 'L-77')`, erasedName)
+	mustExec(t, primary, `INSERT INTO customers (id, name, phone, email, address, loyalty_no, notes, phone_e164)
+		VALUES ('c1', ?, '555-0100', 'erased@example.com', '1 Test Street', 'L-77', 'likes extra cheese', '5550100')`, erasedName)
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
 	if err != nil {
 		t.Fatalf("dump: %v", err)
@@ -126,14 +126,14 @@ func TestAdminApply_ErasedCustomerPinnedBySatelliteSaleBecomesAnonymousShell(t *
 	}
 
 	var name string
-	var phone, email, address, loyalty *string
-	if err := replica.DB.QueryRow(`SELECT name, phone, email, address, loyalty_no FROM customers WHERE id='c1'`).
-		Scan(&name, &phone, &email, &address, &loyalty); err != nil {
+	var phone, email, address, loyalty, notes, phoneE164 *string
+	if err := replica.DB.QueryRow(`SELECT name, phone, email, address, loyalty_no, notes, phone_e164 FROM customers WHERE id='c1'`).
+		Scan(&name, &phone, &email, &address, &loyalty, &notes, &phoneE164); err != nil {
 		t.Fatalf("the shell row must stay for the replica's own sale's FK: %v", err)
 	}
-	if name != "" || phone != nil || email != nil || address != nil || loyalty != nil {
-		t.Errorf("replica kept personal data after the primary's erasure: name=%q phone=%v email=%v address=%v loyalty_no=%v",
-			name, phone, email, address, loyalty)
+	if name != "" || phone != nil || email != nil || address != nil || loyalty != nil || notes != nil || phoneE164 != nil {
+		t.Errorf("replica kept personal data after the primary's erasure: name=%q phone=%v email=%v address=%v loyalty_no=%v notes=%v phone_e164=%v",
+			name, phone, email, address, loyalty, notes, phoneE164)
 	}
 	var label, payload string
 	if err := replica.DB.QueryRow(`SELECT label, payload FROM held_sales WHERE id='h1'`).Scan(&label, &payload); err != nil {

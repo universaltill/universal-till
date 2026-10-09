@@ -137,9 +137,11 @@ var adminTables = []adminTable{
 	// ut-docs#3253: a customer the primary erased but this replica's own
 	// sales still reference retires as an anonymous shell (name '' — the
 	// readers in pos_repo.go skip it — and no contact data), and their name
-	// leaves this till's parked baskets too.
+	// leaves this till's parked baskets too. notes and phone_e164
+	// (ut-docs#3200) are personal data like the rest.
 	{name: "customers", pk: []string{"id"}, unique: []string{"loyalty_no"},
-		scrubOnRetire: []scrubCol{{"name", "''"}, {"phone", "NULL"}, {"email", "NULL"}, {"address", "NULL"}, {"loyalty_no", "NULL"}},
+		scrubOnRetire: []scrubCol{{"name", "''"}, {"phone", "NULL"}, {"email", "NULL"}, {"address", "NULL"}, {"loyalty_no", "NULL"},
+			{"notes", "NULL"}, {"phone_e164", "NULL"}},
 		onPrune: func(ctx context.Context, tx *sql.Tx, id any) error {
 			return stripCustomerFromHeldSales(ctx, tx, fmt.Sprint(id), false)
 		}},
@@ -756,6 +758,11 @@ var PerTillSettingPrefixes = []string{
 	// Also covers DeviceInfoIDSettingsKey (ADR-0140, ut-docs#3862), this
 	// till's device_id_get identity.
 	"till_identity.",
+	// ut-docs#3200: the shop country THIS till's customers.phone_e164 was
+	// computed with (CustomerPhoneE164RegionSettingsKey). Each till runs its
+	// own back-fill; synced, the main till's marker would tell a replica its
+	// rows were already computed for a new country when they were not.
+	CustomerPhoneE164RegionSettingsKey,
 }
 
 func perTillSetting(key string) bool {

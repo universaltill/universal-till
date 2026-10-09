@@ -375,6 +375,9 @@ func Run(ctx context.Context) error {
 
 	netaccess.StartService("self-update check", func() { updates.Start(bgCtx, &wg) })
 	pihealth.Start(bgCtx, &wg) // local power-supply check only, no network
+	// ut-docs#3200 (ADR-0131 §3): customers.phone_e164 for caller ID, on
+	// every till, in the background; never fatal.
+	startCustomerPhoneE164Backfill(bgCtx, &wg, database.DB, log)
 	netaccess.StartService("alerts", func() { alerts.Start(bgCtx, cfg, database.DB, &wg) })
 
 	// LAN till discovery (ADR-0033 part 1, ut-docs#264): advertise this

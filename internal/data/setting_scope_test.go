@@ -398,6 +398,9 @@ func TestSettingScope_Classification(t *testing.T) {
 		{AppVersionSettingsKey, SettingPerTill},
 		{AppVersionFirstRunAtSettingsKey, SettingPerTill},
 		{ReleaseNotesSeenVersionSettingsKey, SettingPerTill},
+		// ut-docs#3200: the region THIS till's customers.phone_e164 was
+		// computed with — each till back-fills its own table.
+		{CustomerPhoneE164RegionSettingsKey, SettingPerTill},
 		// ut-docs#2950: reviewed and kept shop-wide (reasons at
 		// ShopWideSettingPrefixes).
 		{"setup.completed", SettingShopWide},
