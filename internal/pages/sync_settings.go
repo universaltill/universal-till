@@ -292,6 +292,7 @@ func registerSyncSettings(mux *http.ServeMux, d *common.Deps, refresh func(conte
 			// ut-docs#1068: the new country's base plugins, as the local
 			// handlers queue them.
 			queueBasePluginsForCountryChange(ctx, d, country)
+			startCustomerPhoneE164BackfillForCountryChange(d) // ut-docs#3992
 		}
 		d.NudgeLink(fleetlink.ScopeAdmin)
 		keys := make([]string, 0, len(in.Settings))

@@ -3123,6 +3123,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if countryChanged && !follows {
 			// ut-docs#1068: the new country's base plugins, as the wizard queues them.
 			queueBasePluginsForCountryChange(r.Context(), d, st.Country)
+			startCustomerPhoneE164BackfillForCountryChange(d) // ut-docs#3992
 		}
 		httpx.InitCurrency(st.Currency)
 		// Live-apply, no restart (ut-docs#861) — st.Locale is always the
@@ -3546,6 +3547,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			if countryChanged && !tillFollowsMain(r.Context(), d) {
 				// ut-docs#1068: the new country's base plugins, as the wizard queues them.
 				queueBasePluginsForCountryChange(r.Context(), d, value)
+				startCustomerPhoneE164BackfillForCountryChange(d) // ut-docs#3992
 			}
 			applyEngineConfig(r.Context(), d)
 		case "display.mode":

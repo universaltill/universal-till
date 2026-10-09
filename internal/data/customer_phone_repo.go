@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -21,6 +22,12 @@ const CustomerPhoneE164RegionSettingsKey = "customers.phone_e164_region"
 // DefaultPhoneE164BackfillBatch is the back-fill's chunk size: one short
 // write transaction per chunk, so a sale never waits long on the lock.
 const DefaultPhoneE164BackfillBatch = 200
+
+// ErrPhoneE164RegionChanged is returned by BackfillCustomerPhoneE164 when
+// another run recorded a different region while this one was computing
+// (ut-docs#3992): this run's values would be stale, so it stops and leaves
+// the rest to the newer run. A quiet stop, not a failure.
+var ErrPhoneE164RegionChanged = errors.New("phone_e164 back-fill: shop country changed during the run")
 
 // callerLookupLimit caps how many customers one number returns.
 const callerLookupLimit = 10
@@ -132,6 +139,11 @@ func (r *POSRepo) resetPhoneE164OnRegionChange(ctx context.Context, region strin
 		return fmt.Errorf("phone_e164 reset: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	// ut-docs#3992: a run that read an older country must not reset over a
+	// newer run's marker — re-check the country inside the transaction.
+	if err := phoneE164RegionCurrent(ctx, tx, region, false); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE customers SET phone_e164 = NULL WHERE phone_e164 IS NOT NULL`); err != nil {
 		return fmt.Errorf("phone_e164 reset: %w", err)
 	}
@@ -145,6 +157,32 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.upd
 		return fmt.Errorf("phone_e164 reset: %w", err)
 	}
 	invalidateCachedSetting(r.db, CustomerPhoneE164RegionSettingsKey)
+	return nil
+}
+
+// phoneE164RegionCurrent returns ErrPhoneE164RegionChanged unless, read
+// inside tx, store.country still is region and (when checkMarker) the
+// region marker still says region (ut-docs#3992). A run whose country is
+// out of date must neither reset nor write: the save that changed the
+// country started a newer run.
+func phoneE164RegionCurrent(ctx context.Context, tx *sql.Tx, region string, checkMarker bool) error {
+	keys := []string{StoreCountrySettingsKey}
+	if checkMarker {
+		keys = append(keys, CustomerPhoneE164RegionSettingsKey)
+	}
+	for _, k := range keys {
+		var v sql.NullString
+		if err := tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, k).Scan(&v); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("phone_e164 back-fill: %w", err)
+		}
+		got := v.String
+		if k == StoreCountrySettingsKey {
+			got = strings.ToUpper(strings.TrimSpace(got))
+		}
+		if got != region {
+			return ErrPhoneE164RegionChanged
+		}
+	}
 	return nil
 }
 
@@ -179,6 +217,12 @@ func (r *POSRepo) writePhoneE164Chunk(ctx context.Context, rows []phoneE164Row, 
 		return 0, fmt.Errorf("phone_e164 back-fill write: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	// ut-docs#3992: inside the write transaction (BEGIN IMMEDIATE), so a
+	// reset by a newer run either committed before this read (we stop) or
+	// waits for our commit and then NULLs what we wrote.
+	if err := phoneE164RegionCurrent(ctx, tx, region, true); err != nil {
+		return 0, err
+	}
 	stmt, err := tx.PrepareContext(ctx, `
 UPDATE customers SET phone_e164 = ?
 WHERE id = ? AND phone IS ? AND phone_e164 IS NULL`)

@@ -102,6 +102,8 @@ func TestBackfillCustomerPhoneE164_NeverOverwritesAConcurrentPhoneEdit(t *testin
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("read chunk: rows=%v err=%v", rows, err)
 	}
+	// The run's reset recorded the region before it read (ut-docs#3992).
+	mustExec(t, d, `INSERT INTO settings (key, value) VALUES (?, ?)`, CustomerPhoneE164RegionSettingsKey, "GB")
 	// A cashier edits the number between the back-fill's read and write.
 	mustExec(t, d, `UPDATE customers SET phone = '07700 900123' WHERE id = 'c1'`)
 
@@ -351,5 +353,60 @@ func TestLookupCustomersByPhone_RecentSales(t *testing.T) {
 		if r.SaleID != w.id || r.ReceiptNo != "R-"+w.id || r.Date != w.date || r.Total != w.total || r.ItemCount != w.items {
 			t.Errorf("RecentSales[%d] = %+v, want %+v", i, r, w)
 		}
+	}
+}
+
+// ut-docs#3992: a run that started with region A must stop writing once a
+// later run reset the column for region B, or its A-values would stay
+// forever (the later run's marker says B, so nothing recomputes them).
+func TestWritePhoneE164Chunk_StaleRegionWritesNothing(t *testing.T) {
+	d := phoneDB(t, "GB")
+	addCustomer(t, d, "c1", "Mobile", "07700 900123")
+	// Another run reset the column for GB and recorded it.
+	mustExec(t, d, `INSERT INTO settings (key, value) VALUES (?, ?)`, CustomerPhoneE164RegionSettingsKey, "GB")
+	rows := []phoneE164Row{{id: "c1", phone: sql.NullString{String: "07700 900123", Valid: true}}}
+	// A stale run still computing with DE.
+	n, err := NewPOSRepo(d.DB).writePhoneE164Chunk(context.Background(), rows, "DE")
+	if !errors.Is(err, ErrPhoneE164RegionChanged) {
+		t.Fatalf("err = %v, want ErrPhoneE164RegionChanged", err)
+	}
+	if n != 0 {
+		t.Errorf("wrote %d rows, want 0", n)
+	}
+	if got := phoneE164Of(t, d, "c1"); got.Valid {
+		t.Errorf("phone_e164 = %q, want it left NULL", got.String)
+	}
+	// The run whose region matches the marker still writes.
+	if n, err := NewPOSRepo(d.DB).writePhoneE164Chunk(context.Background(), rows, "GB"); err != nil || n != 1 {
+		t.Fatalf("matching region: n=%d err=%v", n, err)
+	}
+}
+
+// ut-docs#3992 review: a run that read an older country must neither reset
+// over a newer run's marker nor write values for that older country.
+func TestBackfillPhoneE164_OutdatedCountryNeitherResetsNorWrites(t *testing.T) {
+	d := phoneDB(t, "GB")
+	addCustomer(t, d, "c1", "Mobile", "07700 900123")
+	if _, err := NewPOSRepo(d.DB).BackfillCustomerPhoneE164(context.Background(), 10); err != nil {
+		t.Fatalf("back-fill: %v", err)
+	}
+	want := phoneE164Of(t, d, "c1")
+	// A run still holding the previous country, DE.
+	if err := NewPOSRepo(d.DB).resetPhoneE164OnRegionChange(context.Background(), "DE"); !errors.Is(err, ErrPhoneE164RegionChanged) {
+		t.Fatalf("reset err = %v, want ErrPhoneE164RegionChanged", err)
+	}
+	if got := phoneE164Of(t, d, "c1"); got != want {
+		t.Errorf("phone_e164 = %v after a stale reset, want %v kept", got, want)
+	}
+	var marker string
+	if err := d.DB.QueryRow(`SELECT value FROM settings WHERE key = ?`, CustomerPhoneE164RegionSettingsKey).Scan(&marker); err != nil || marker != "GB" {
+		t.Errorf("marker = %q (%v), want GB kept", marker, err)
+	}
+	// Marker says DE but the shop is GB: the DE run must not write.
+	mustExec(t, d, `UPDATE settings SET value = 'DE' WHERE key = ?`, CustomerPhoneE164RegionSettingsKey)
+	mustExec(t, d, `UPDATE customers SET phone_e164 = NULL`)
+	rows := []phoneE164Row{{id: "c1", phone: sql.NullString{String: "07700 900123", Valid: true}}}
+	if n, err := NewPOSRepo(d.DB).writePhoneE164Chunk(context.Background(), rows, "DE"); !errors.Is(err, ErrPhoneE164RegionChanged) || n != 0 {
+		t.Fatalf("write n=%d err=%v, want 0 and ErrPhoneE164RegionChanged", n, err)
 	}
 }
