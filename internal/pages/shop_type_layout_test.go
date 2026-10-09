@@ -13,12 +13,24 @@ import (
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
+// salonLayoutID resolves the embedded salon layout's id via the shop-type
+// lookup (ut-docs#3178) — core and its tests never hard-code the plugin id.
+func salonLayoutID(t testing.TB) string {
+	t.Helper()
+	id, err := builtinlayouts.PluginIDForShopType("service")
+	if err != nil || id == "" {
+		t.Fatalf("PluginIDForShopType(service) = %q, %v", id, err)
+	}
+	return id
+}
+
 // salonHidesTables reports whether the salon layout is live in the
 // replica's in-memory menu amendments (it hides /tables), i.e. whether the
 // plugin reload actually happened — not just the DB row.
-func salonHidesTables(d *common.Deps) bool {
+func salonHidesTables(t *testing.T, d *common.Deps) bool {
+	t.Helper()
 	for _, a := range d.MenuAmendmentsSnapshot() {
-		if a.PluginID == builtinlayouts.SalonPluginID && a.Key == "/tables" && a.Hide {
+		if a.PluginID == salonLayoutID(t) && a.Key == "/tables" && a.Hide {
 			return true
 		}
 	}
@@ -27,7 +39,7 @@ func salonHidesTables(d *common.Deps) bool {
 
 func salonInstalled(t *testing.T, d *common.Deps) bool {
 	t.Helper()
-	_, found, err := data.NewPluginRepo(d.Db).GetInstalledPluginVersion(t.Context(), builtinlayouts.SalonPluginID)
+	_, found, err := data.NewPluginRepo(d.Db).GetInstalledPluginVersion(t.Context(), salonLayoutID(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +76,7 @@ func TestShopTypeLayout_ReplicaFollowsPulledShopTypeWithoutRestart(t *testing.T)
 	if deferred := r.tick(ctx, replica); !deferred {
 		t.Fatal("reconcile must defer while the cashier basket has items")
 	}
-	if salonInstalled(t, replica) || salonHidesTables(replica) {
+	if salonInstalled(t, replica) || salonHidesTables(t, replica) {
 		t.Fatal("the layout must not change mid-sale")
 	}
 
@@ -83,7 +95,7 @@ func TestShopTypeLayout_ReplicaFollowsPulledShopTypeWithoutRestart(t *testing.T)
 	if !salonInstalled(t, replica) {
 		t.Fatal("salon layout must be installed after the pulled shop_type=service")
 	}
-	if !salonHidesTables(replica) {
+	if !salonHidesTables(t, replica) {
 		t.Fatal("salon layout must be live in the menu without a restart (plugins reloaded)")
 	}
 
@@ -93,7 +105,7 @@ func TestShopTypeLayout_ReplicaFollowsPulledShopTypeWithoutRestart(t *testing.T)
 	}
 	syncPullTick(ctx, replica, client, func(ctx2 context.Context) {})
 	r.tick(ctx, replica)
-	if salonInstalled(t, replica) || salonHidesTables(replica) {
+	if salonInstalled(t, replica) || salonHidesTables(t, replica) {
 		t.Fatal("salon layout must be removed after the pulled shop_type=retail")
 	}
 }

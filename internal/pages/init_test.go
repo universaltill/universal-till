@@ -17,7 +17,6 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
-	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
@@ -402,14 +401,14 @@ func TestInit_ReconcilesBuiltinLayoutForPreExistingShopType(t *testing.T) {
 	_, dp := Init(pctx, pctx, cfg, pm, d.DB, nil, &wg)  // first boot after the setting was already there
 	t.Cleanup(func() { httpx.InitRailVisibility(nil) }) // ut-docs#3079: Init wires a process-global checker bound to this test's DB
 
-	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(ctx, builtinlayouts.SalonPluginID); err != nil || !found {
+	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(ctx, salonLayoutID(t)); err != nil || !found {
 		t.Errorf("after boot, %s must be installed for a pre-existing shop_type=service, found=%v err=%v",
-			builtinlayouts.SalonPluginID, found, err)
+			salonLayoutID(t), found, err)
 	}
 
 	var hidesTables bool
 	for _, a := range pm.LayoutAmendments {
-		if a.PluginID == builtinlayouts.SalonPluginID && a.Key == "/tables" {
+		if a.PluginID == salonLayoutID(t) && a.Key == "/tables" {
 			hidesTables = a.Hide
 		}
 	}
@@ -428,7 +427,7 @@ func TestInit_ReconcilesBuiltinLayoutForPreExistingShopType(t *testing.T) {
 	// specifically, at boot, with no reload in between.
 	var settingsReordersTheme bool
 	for _, a := range dp.SettingsAmendmentsSnapshot() {
-		if a.PluginID == builtinlayouts.SalonPluginID && a.Key == "settings-theme" && a.Order != nil {
+		if a.PluginID == salonLayoutID(t) && a.Key == "settings-theme" && a.Order != nil {
 			settingsReordersTheme = true
 		}
 	}
@@ -485,8 +484,8 @@ func TestInit_SteadyStateRebootPopulatesSettingsAmendmentsWithoutReload(t *testi
 		t.Cleanup(func() { httpx.InitRailVisibility(nil) }) // ut-docs#3079: Init wires a process-global checker bound to this test's DB
 	}()
 
-	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(ctx, builtinlayouts.SalonPluginID); err != nil || !found {
-		t.Fatalf("first boot must have installed %s, found=%v err=%v", builtinlayouts.SalonPluginID, found, err)
+	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(ctx, salonLayoutID(t)); err != nil || !found {
+		t.Fatalf("first boot must have installed %s, found=%v err=%v", salonLayoutID(t), found, err)
 	}
 
 	// Second boot: a fresh process (fresh plugins.Manager, fresh Deps) against
@@ -506,7 +505,7 @@ func TestInit_SteadyStateRebootPopulatesSettingsAmendmentsWithoutReload(t *testi
 
 	var settingsReordersTheme bool
 	for _, a := range dp2.SettingsAmendmentsSnapshot() {
-		if a.PluginID == builtinlayouts.SalonPluginID && a.Key == "settings-theme" && a.Order != nil {
+		if a.PluginID == salonLayoutID(t) && a.Key == "settings-theme" && a.Order != nil {
 			settingsReordersTheme = true
 		}
 	}
@@ -518,7 +517,7 @@ func TestInit_SteadyStateRebootPopulatesSettingsAmendmentsWithoutReload(t *testi
 	// the bug would be in Sync/plugins.Init, not the Deps literal.
 	var railReordersOrders bool
 	for _, a := range dp2.RailAmendmentsSnapshot() {
-		if a.PluginID == builtinlayouts.SalonPluginID && a.Key == "/orders" && a.Order != nil {
+		if a.PluginID == salonLayoutID(t) && a.Key == "/orders" && a.Order != nil {
 			railReordersOrders = true
 		}
 	}
@@ -548,8 +547,8 @@ func TestInit_LeavesNonServiceShopTypeAlone(t *testing.T) {
 	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg)           // no shop_type ever set
 	t.Cleanup(func() { httpx.InitRailVisibility(nil) }) // ut-docs#3079: Init wires a process-global checker bound to this test's DB
 
-	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(context.Background(), builtinlayouts.SalonPluginID); err != nil || found {
+	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(context.Background(), salonLayoutID(t)); err != nil || found {
 		t.Errorf("after boot with no shop_type set, %s must NOT be installed, found=%v err=%v",
-			builtinlayouts.SalonPluginID, found, err)
+			salonLayoutID(t), found, err)
 	}
 }

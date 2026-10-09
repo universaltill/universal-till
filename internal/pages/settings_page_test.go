@@ -3330,7 +3330,7 @@ func TestShopTypeEndpoint_ServiceActivatesSalonLayout_SwitchAwayRemovesIt(t *tes
 
 	hasSalonAmendment := func() bool {
 		for _, a := range d.Pm.LayoutAmendments {
-			if a.PluginID == "com.universaltill.layout-salon" && a.Key == "/tables" && a.Hide {
+			if a.PluginID == salonLayoutID(t) && a.Key == "/tables" && a.Hide {
 				return true
 			}
 		}
@@ -3363,7 +3363,7 @@ func TestShopTypeEndpoint_ServiceActivatesSalonLayout_SwitchAwayRemovesIt(t *tes
 }
 
 // ut-docs#2006 gap 2, at the real handler level: a version-bump reinstall
-// whose installSalon half fails must still trigger ReloadPlugins — proven
+// whose installBuiltin half fails must still trigger ReloadPlugins — proven
 // here by d.Pm actually reflecting the post-removal DB state (no orphaned
 // amendment) even though builtinlayouts.Sync returned an error. Before this
 // card's fix, the handler's `if err := Sync(...); err != nil { warn } else
@@ -3386,7 +3386,7 @@ func TestShopTypeEndpoint_FailedReinstall_StillReloadsPlugins(t *testing.T) {
 
 	hasSalonAmendment := func() bool {
 		for _, a := range d.Pm.LayoutAmendments {
-			if a.PluginID == "com.universaltill.layout-salon" && a.Key == "/tables" && a.Hide {
+			if a.PluginID == salonLayoutID(t) && a.Key == "/tables" && a.Hide {
 				return true
 			}
 		}
@@ -3413,18 +3413,18 @@ func TestShopTypeEndpoint_FailedReinstall_StillReloadsPlugins(t *testing.T) {
 		t.Fatal("the stale-but-installed salon layout must already be active before the reinstall attempt")
 	}
 
-	// Block installSalon's os.MkdirAll deterministically, same
+	// Block installBuiltin's os.MkdirAll deterministically, same
 	// failure-injection as builtinlayouts_test.go's
 	// TestSync_ReinstallFailure_StillReturnsError: a regular file where a
 	// directory needs to be created, placed at the plugins ROOT (not under
-	// the plugin's own id directory) so removeSalon's os.RemoveAll doesn't
-	// wipe it before installSalon ever runs.
+	// the plugin's own id directory) so removeBuiltin's os.RemoveAll doesn't
+	// wipe it before installBuiltin ever runs.
 	if err := os.WriteFile(paths.Plugins(), []byte("blocking file"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	// Re-saving shop_type=service now hits the version-mismatch reinstall
-	// path: removeSalon succeeds (DB says uninstalled), installSalon fails
+	// path: removeBuiltin succeeds (DB says uninstalled), installBuiltin fails
 	// (blocked MkdirAll). The handler must treat this as "reload anyway."
 	rec := postForm(mux, "/api/settings/shop-type", url.Values{"shop_type": {"service"}}, &mgrUser)
 	if rec.Code != http.StatusNoContent {

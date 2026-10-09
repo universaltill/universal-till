@@ -672,7 +672,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			// menu until a later Settings save retries it.
 			// ut-docs#2006: reload unless it's a genuine no-op (no error,
 			// nothing changed) — an error still reloads, since a failed
-			// reinstall can leave the DB changed (removeSalon succeeded)
+			// reinstall can leave the DB changed (removeBuiltin succeeded)
 			// even though Sync itself returned an error.
 			changed, err := builtinlayouts.Sync(r.Context(), d.Db, v)
 			if err != nil {

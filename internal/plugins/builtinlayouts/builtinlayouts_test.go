@@ -23,7 +23,7 @@ import (
 // paths.Init (matching internal/secrets/keystore_test.go's own
 // withTestDataDir precedent) — NOT t.Setenv("UT_DATA_DIR", ...), which is
 // inert here: paths.DataDir() reads an atomic.Value paths.Init sets, never
-// the environment directly. Without this, a test exercising installSalon's
+// the environment directly. Without this, a test exercising installBuiltin's
 // disk writes silently falls back to a CWD-relative "./data" and writes real
 // files into this package's own source directory instead of a throwaway dir.
 func openTestDB(t *testing.T) *db.DB {
@@ -39,6 +39,26 @@ func openTestDB(t *testing.T) *db.DB {
 	return d
 }
 
+// salonID resolves the embedded salon layout's id through the shop-type
+// lookup, as core does (ut-docs#3178) — never a hard-coded plugin id.
+func salonID(t *testing.T) string {
+	t.Helper()
+	id, err := PluginIDForShopType("service")
+	if err != nil || id == "" {
+		t.Fatalf("PluginIDForShopType(service) = %q, %v", id, err)
+	}
+	return id
+}
+
+func embeddedSalon(t *testing.T) *plugins.Manifest {
+	t.Helper()
+	m, err := plugins.ParseManifest(bytes.NewReader(layoutsalon.ManifestJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
 func TestSync_ServiceShopType_InstallsAndActivatesSalonLayout(t *testing.T) {
 	d := openTestDB(t)
 	ctx := context.Background()
@@ -51,13 +71,13 @@ func TestSync_ServiceShopType_InstallsAndActivatesSalonLayout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := pm.Installed[SalonPluginID]; !ok {
-		t.Fatalf("want %s installed after Sync(\"service\"), got %+v", SalonPluginID, pm.Installed)
+	if _, ok := pm.Installed[salonID(t)]; !ok {
+		t.Fatalf("want %s installed after Sync(\"service\"), got %+v", salonID(t), pm.Installed)
 	}
 
 	var hidesTables, hidesKitchen bool
 	for _, a := range pm.LayoutAmendments {
-		if a.PluginID != SalonPluginID {
+		if a.PluginID != salonID(t) {
 			continue
 		}
 		switch a.Key {
@@ -75,7 +95,7 @@ func TestSync_ServiceShopType_InstallsAndActivatesSalonLayout(t *testing.T) {
 	// from the manifest bytes — Sync must have written them there, or the
 	// plugin's relabelled /items tile silently falls back to the core
 	// label with no error anywhere (ADR-0088 Decision G).
-	localeDir := paths.Plugins(SalonPluginID, "0.4.0", "locales")
+	localeDir := paths.Plugins(salonID(t), embeddedSalon(t).Version, "locales")
 	entries, err := os.ReadDir(localeDir)
 	if err != nil || len(entries) == 0 {
 		t.Fatalf("Sync must write plugins/layout-salon's locale files to %s: %v", localeDir, err)
@@ -90,7 +110,7 @@ func TestSync_NonServiceShopTypes_NeverInstallSalonLayout(t *testing.T) {
 			if _, err := Sync(ctx, d.DB, st); err != nil {
 				t.Fatalf("Sync(%q): %v", st, err)
 			}
-			active, err := data.NewPluginRepo(d.DB).PluginActive(ctx, SalonPluginID)
+			active, err := data.NewPluginRepo(d.DB).PluginActive(ctx, salonID(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -116,15 +136,15 @@ func TestSync_SwitchingAwayFromService_RemovesSalonLayoutCleanly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := pm.Installed[SalonPluginID]; ok {
+	if _, ok := pm.Installed[salonID(t)]; ok {
 		t.Fatalf("switching to shop_type=cafe must remove the salon layout, still installed: %+v", pm.Installed)
 	}
 	for _, a := range pm.LayoutAmendments {
-		if a.PluginID == SalonPluginID {
+		if a.PluginID == salonID(t) {
 			t.Fatalf("no orphaned amendment may survive removal, got %+v", a)
 		}
 	}
-	if _, err := os.Stat(paths.Plugins(SalonPluginID)); !os.IsNotExist(err) {
+	if _, err := os.Stat(paths.Plugins(salonID(t))); !os.IsNotExist(err) {
 		t.Fatalf("switching away must remove the plugin's on-disk files, stat err = %v", err)
 	}
 }
@@ -146,7 +166,7 @@ func TestSync_IsIdempotent(t *testing.T) {
 	}
 	n := 0
 	for _, a := range pm.LayoutAmendments {
-		if a.PluginID == SalonPluginID && a.Key == "/tables" {
+		if a.PluginID == salonID(t) && a.Key == "/tables" {
 			n++
 		}
 	}
@@ -176,7 +196,7 @@ func TestSync_DisabledSalonLayout_StillRemovedOnSwitchAway(t *testing.T) {
 	if _, err := Sync(ctx, d.DB, "service"); err != nil {
 		t.Fatalf("Sync(service): %v", err)
 	}
-	if err := data.NewPluginRepo(d.DB).SetPluginActive(ctx, nil, SalonPluginID, false); err != nil {
+	if err := data.NewPluginRepo(d.DB).SetPluginActive(ctx, nil, salonID(t), false); err != nil {
 		t.Fatalf("simulate manual disable: %v", err)
 	}
 
@@ -184,12 +204,12 @@ func TestSync_DisabledSalonLayout_StillRemovedOnSwitchAway(t *testing.T) {
 		t.Fatalf("Sync(cafe) with salon layout disabled-but-installed: %v", err)
 	}
 
-	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(ctx, SalonPluginID); err != nil {
+	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(ctx, salonID(t)); err != nil {
 		t.Fatal(err)
 	} else if found {
 		t.Fatal("switching away must remove a DISABLED-but-installed salon layout too, not just an active one")
 	}
-	if _, err := os.Stat(paths.Plugins(SalonPluginID)); !os.IsNotExist(err) {
+	if _, err := os.Stat(paths.Plugins(salonID(t))); !os.IsNotExist(err) {
 		t.Fatalf("switching away must also remove the disabled plugin's on-disk files, stat err = %v", err)
 	}
 }
@@ -223,7 +243,7 @@ func TestSync_StaleInstalledVersion_ReplacedWithCurrentOnResync(t *testing.T) {
 		t.Fatalf("Sync(service) over a stale version: %v", err)
 	}
 
-	version, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(ctx, SalonPluginID)
+	version, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(ctx, salonID(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,12 +260,45 @@ func TestSync_StaleInstalledVersion_ReplacedWithCurrentOnResync(t *testing.T) {
 	}
 	n := 0
 	for _, a := range pm.LayoutAmendments {
-		if a.PluginID == SalonPluginID && a.Key == "/tables" {
+		if a.PluginID == salonID(t) && a.Key == "/tables" {
 			n++
 		}
 	}
 	if n != 1 {
 		t.Fatalf("reinstalling over a stale version must not leave duplicate amendments, got %d", n)
+	}
+}
+
+// ut-docs#3178 review: a version bump reinstalls the builtin fresh, and an
+// operator who disabled it in Settings → Plugins must not find it switched
+// back on after the till self-updates.
+func TestSync_StaleVersionReinstall_KeepsOperatorDisable(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	repo := data.NewPluginRepo(d.DB)
+
+	stale := embeddedSalon(t)
+	stale.Version = "0.0.1-stale"
+	if err := plugins.PersistManifest(ctx, d.DB, stale, plugins.InstallOptions{TrustLevel: "system"}); err != nil {
+		t.Fatalf("install stale version: %v", err)
+	}
+	if err := repo.SetPluginActive(ctx, nil, salonID(t), false); err != nil {
+		t.Fatalf("simulate manual disable: %v", err)
+	}
+
+	if _, err := Sync(ctx, d.DB, "service"); err != nil {
+		t.Fatalf("Sync(service) over a disabled stale version: %v", err)
+	}
+	version, found, err := repo.GetInstalledPluginVersion(ctx, salonID(t))
+	if err != nil || !found || version != embeddedSalon(t).Version {
+		t.Fatalf("stale copy must be replaced with the embedded version, got %q found=%v err=%v", version, found, err)
+	}
+	active, err := repo.PluginActive(ctx, salonID(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active {
+		t.Fatal("a reinstall over an operator-disabled builtin must keep it disabled")
 	}
 }
 
@@ -315,7 +368,7 @@ func TestSync_ChangedIsTrueOnRealChanges(t *testing.T) {
 	}
 }
 
-// ut-docs#2006 gap 2: a failed reinstall (removeSalon succeeds, installSalon
+// ut-docs#2006 gap 2: a failed reinstall (removeBuiltin succeeds, installBuiltin
 // then fails) must still return an error — changed's value on an error path
 // is never load-bearing for the caller (the caller reloads unconditionally
 // on any error, per the call-site contract), but Sync itself must not lose
@@ -333,9 +386,9 @@ func TestSync_ReinstallFailure_StillReturnsError(t *testing.T) {
 		t.Fatalf("install fabricated stale version: %v", err)
 	}
 
-	// Block installSalon's os.MkdirAll(destDir, ...) deterministically: put a
+	// Block installBuiltin's os.MkdirAll(destDir, ...) deterministically: put a
 	// regular file at the plugins ROOT itself (not under paths.Plugins(id) —
-	// removeSalon's own os.RemoveAll(paths.Plugins(id)) runs first on this
+	// removeBuiltin's own os.RemoveAll(paths.Plugins(id)) runs first on this
 	// path and would silently delete a blocking file placed any deeper,
 	// since PersistManifest above never wrote any real directory for the
 	// stale version). This is a portable failure-injection (unlike
@@ -351,20 +404,20 @@ func TestSync_ReinstallFailure_StillReturnsError(t *testing.T) {
 
 	_, err = Sync(ctx, d.DB, "service")
 	if err == nil {
-		t.Fatal("Sync must return an error when installSalon's MkdirAll is blocked, got nil")
+		t.Fatal("Sync must return an error when installBuiltin's MkdirAll is blocked, got nil")
 	}
 
 	// The remove half of the reinstall must still have gone through — this
 	// is the exact residual-state gap ut-docs#2006 describes: the DB says
 	// uninstalled even though Sync errored.
-	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(ctx, SalonPluginID); err != nil {
+	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(ctx, salonID(t)); err != nil {
 		t.Fatal(err)
 	} else if found {
-		t.Fatal("removeSalon's half of the reinstall must have succeeded despite installSalon failing")
+		t.Fatal("removeBuiltin's half of the reinstall must have succeeded despite installBuiltin failing")
 	}
 }
 
-// TestSync_SalonInstall_WaitsForPluginTreeLock pins ut-docs#3278: installSalon
+// TestSync_SalonInstall_WaitsForPluginTreeLock pins ut-docs#3278: installBuiltin
 // must hold the per-plugin tree lock across the live locale-dir write and
 // PersistManifest, like every other install path (ut-docs#3273). Otherwise a
 // Rollback of layout-salon racing a shop-type reconcile (Sync) can commit over
@@ -379,9 +432,9 @@ func TestSync_SalonInstall_WaitsForPluginTreeLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	localesDir := paths.Plugins(SalonPluginID, m.Version, "locales")
+	localesDir := paths.Plugins(salonID(t), m.Version, "locales")
 
-	unlock := plugins.LockPluginTree(paths.Plugins(), SalonPluginID)
+	unlock := plugins.LockPluginTree(paths.Plugins(), salonID(t))
 	var once sync.Once
 	release := func() { once.Do(unlock) }
 	t.Cleanup(release)
@@ -401,7 +454,7 @@ func TestSync_SalonInstall_WaitsForPluginTreeLock(t *testing.T) {
 		t.Errorf("locale dir %s written while the plugin tree lock was held", localesDir)
 	}
 	repo := data.NewPluginRepo(d.DB)
-	if _, ok, err := repo.GetInstalledPluginVersion(ctx, SalonPluginID); err != nil {
+	if _, ok, err := repo.GetInstalledPluginVersion(ctx, salonID(t)); err != nil {
 		t.Fatal(err)
 	} else if ok {
 		t.Error("salon installed while the plugin tree lock was held")
@@ -416,7 +469,88 @@ func TestSync_SalonInstall_WaitsForPluginTreeLock(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Sync did not finish after the plugin tree lock was released")
 	}
-	if v, ok, err := repo.GetInstalledPluginVersion(ctx, SalonPluginID); err != nil || !ok || v != m.Version {
+	if v, ok, err := repo.GetInstalledPluginVersion(ctx, salonID(t)); err != nil || !ok || v != m.Version {
 		t.Fatalf("want salon %s installed, got %q ok=%v err=%v", m.Version, v, ok, err)
+	}
+}
+
+// ut-docs#3178 / ADR-0129 §2: core finds the builtin layout for a shop type
+// through the embedded manifest's `provides`, never by naming a plugin id.
+func TestPluginIDForShopType_ResolvesEmbeddedSalonForService(t *testing.T) {
+	m, err := plugins.ParseManifest(bytes.NewReader(layoutsalon.ManifestJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, st := range plugins.ShopTypes() {
+		got, err := PluginIDForShopType(st)
+		if err != nil {
+			t.Fatalf("PluginIDForShopType(%q): %v", st, err)
+		}
+		want := ""
+		if st == "service" {
+			want = m.ID
+		}
+		if got != want {
+			t.Errorf("PluginIDForShopType(%q) = %q, want %q", st, got, want)
+		}
+	}
+}
+
+func TestEmbeddedSalonManifest_ProvidesServiceShopType(t *testing.T) {
+	m, err := plugins.ParseManifest(bytes.NewReader(layoutsalon.ManifestJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := plugins.CapabilityLayoutShopTypePrefix + "service"
+	for _, p := range m.Provides {
+		if p == want {
+			return
+		}
+	}
+	t.Fatalf("embedded salon manifest must provide %q, got %v", want, m.Provides)
+}
+
+// ADR-0129 §2: `layout.shop_type:*` is embedded-builtin only. A non-embedded
+// (marketplace) plugin declaring it is never selected nor removed by Sync.
+func TestSync_LeavesNonEmbeddedShopTypeProviderAlone(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+	repo := data.NewPluginRepo(d.DB)
+
+	const otherID = "com.example.layout-service-lookalike"
+	other, err := plugins.ParseManifest(bytes.NewReader(layoutsalon.ManifestJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other.ID = otherID
+	// Amend a destination the salon doesn't touch, so both can coexist.
+	other.Entries = other.Entries[:1]
+	other.Entries[0].Config = map[string]interface{}{
+		"slot":       "menu",
+		"amendments": []interface{}{map[string]interface{}{"key": "/reports", "order": 900}},
+	}
+	other.Provides = []string{plugins.CapabilityLayoutShopTypePrefix + "service"}
+	if err := plugins.PersistManifest(ctx, d.DB, other, plugins.InstallOptions{TrustLevel: "verified"}); err != nil {
+		t.Fatalf("install non-embedded provider: %v", err)
+	}
+	salonID, err := PluginIDForShopType("service")
+	if err != nil || salonID == "" {
+		t.Fatalf("PluginIDForShopType(service) = %q, %v", salonID, err)
+	}
+
+	for _, st := range []string{"service", "cafe", "service"} {
+		if _, err := Sync(ctx, d.DB, st); err != nil {
+			t.Fatalf("Sync(%q): %v", st, err)
+		}
+		if _, found, err := repo.GetInstalledPluginVersion(ctx, otherID); err != nil || !found {
+			t.Fatalf("after Sync(%q) the non-embedded provider must stay installed, found=%v err=%v", st, found, err)
+		}
+		_, salonFound, err := repo.GetInstalledPluginVersion(ctx, salonID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if salonFound != (st == "service") {
+			t.Fatalf("after Sync(%q) embedded salon installed = %v, want %v", st, salonFound, st == "service")
+		}
 	}
 }
