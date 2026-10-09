@@ -1589,6 +1589,15 @@
            uploader retries every ~10 min); empty body otherwise. Same
            hx-preserve + default innerHTML swap as #sb-cloud-auth-mount. -->
       <span id="sb-report-archive-mount" hx-preserve hx-get="/ui/report-archive-chip" hx-trigger="load, every 60s"></span>
+      <!-- ut-docs#3121: free space on this till's disk is below the
+           low-disk floor (500 MB or 10% of the disk) — "Storage almost full"
+           (web/ui/partials/disk_space_chip.html), for a viewer who may open
+           Settings only. A status chip, never a modal: selling carries on,
+           and housekeeping has already pruned to its minimums. Filled by
+           GET /ui/disk-space-chip on load and every 60 s (the hourly
+           clean-up changes it); empty body otherwise. Same hx-preserve +
+           default innerHTML swap as #sb-report-archive-mount. -->
+      <span id="sb-disk-space-mount" hx-preserve hx-get="/ui/disk-space-chip" hx-trigger="load, every 60s"></span>
       <!-- The network light: navigator.onLine, plus the till's own probe
            of its cloud host (ut-docs#3095). navigator.onLine only means a
            network interface is up, so on Wi-Fi whose router has no

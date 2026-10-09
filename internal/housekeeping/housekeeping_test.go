@@ -141,7 +141,7 @@ func TestRun_RemovesOnlyWhatTheRetentionTableAllows(t *testing.T) {
 		}
 	}
 
-	results := Run(dbPath, testNow, 0)
+	results := RunWith(dbPath, testNow, 0, Normal)
 	for _, r := range results {
 		if r.Err != nil {
 			t.Errorf("%s: %v", r.Kind, r.Err)
@@ -183,8 +183,8 @@ func TestRun_RemovesOnlyWhatTheRetentionTableAllows(t *testing.T) {
 func TestRun_Idempotent(t *testing.T) {
 	root, dbPath := layout(t)
 	put(t, root, "backups/pre-restore-20200101-000000.db", testNow.Add(-60*24*time.Hour))
-	Run(dbPath, testNow, 0)
-	for _, r := range Run(dbPath, testNow, 0) {
+	RunWith(dbPath, testNow, 0, Normal)
+	for _, r := range RunWith(dbPath, testNow, 0, Normal) {
 		if r.Removed != 0 || r.Err != nil {
 			t.Errorf("second run: %s removed %d, err %v", r.Kind, r.Removed, r.Err)
 		}
@@ -202,7 +202,7 @@ func TestRetentionTableCoversEverySweep(t *testing.T) {
 		}
 		rows[r.Kind] = r
 	}
-	for _, res := range Run(dbPath, testNow, 0) {
+	for _, res := range RunWith(dbPath, testNow, 0, Normal) {
 		if _, ok := rows[res.Kind]; !ok {
 			t.Errorf("sweep %q has no retention-table row", res.Kind)
 		}
@@ -318,7 +318,7 @@ func TestPackageNeverTouchesTheDatabase(t *testing.T) {
 	forbidden := []string{"database/sql", module + "internal/data", "modernc.org/sqlite", "github.com/mattn/go-sqlite3"}
 	// internal/db also opens the database; only its backup-file functions
 	// are allowed here, whatever name it is imported under.
-	allowedDB := map[string]bool{"DefaultBackupKeep": true, "ListBackups": true, "PruneBackups": true, "PrunePreRestore": true}
+	allowedDB := map[string]bool{"BackupInfo": true, "DefaultBackupKeep": true, "ListBackups": true, "PruneBackups": true, "PrunePreRestore": true}
 	matches, _ := filepath.Glob("*.go")
 	fset := token.NewFileSet()
 	for _, f := range matches {

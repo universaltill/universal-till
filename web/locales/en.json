@@ -2618,6 +2618,8 @@
   "status.psu_underpowered": "Power supply too weak",
   "status.psu_underpowered_hint": "This device's power supply can't deliver enough current — USB peripherals like the touchscreen may misbehave. Replace it with the official supply for this board.",
   "status.register_till": "Marketplace: not connected",
+  "status.disk_low.hint": "This till's disk is almost full. Old backups and leftover files were already removed. Free some space on the device, or ask whoever set it up. Selling carries on.",
+  "status.disk_low.label": "Storage almost full",
   "status.report_archive.hint": "The cloud refused the report upload because the subscription is not active. Reports stay on this till and upload once it is active again.",
   "status.report_archive.refused": "Report upload refused",
   "status.update_auto_blocked": "can't install it by itself — tap for help",

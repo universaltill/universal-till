@@ -24,11 +24,13 @@ Beim Wiederherstellen werden alle aktuellen Daten durch die gewählte Sicherung 
 
 Einmal am Tag löscht die Kasse Dateien, die sie nicht mehr braucht, damit der Speicher nicht vollläuft:
 
-- Datensicherungen: die neuesten 14 bleiben erhalten.
+- Datensicherungen: die neuesten 14 bleiben erhalten. Zusammen belegen sie nie mehr als ein Viertel des freien Speichers: Die ältesten werden zuerst gelöscht, die neuesten 3 bleiben aber immer erhalten.
 - Die Kopie Ihrer Daten, die beim Wiederherstellen einer Sicherung beiseitegelegt wird: wird so lange aufbewahrt, wie Sie Verkaufsdaten gesetzlich aufbewahren müssen; danach bleiben nur noch die neuesten 3 erhalten, keine älter als 30 Tage.
 - Problemberichte, die nicht gesendet werden konnten: nach 7 Tagen gelöscht.
 - Heruntergeladene Updates: nach 7 Tagen gelöscht.
 - Hochgeladene Dateien, die liegen geblieben sind, weil die Kasse mitten in einem Upload oder Import ausgeschaltet wurde oder abgestürzt ist: nach 24 Stunden gelöscht.
+
+Wird der Speicher fast voll — weniger als 500 MB frei oder weniger als ein Zehntel des Speichers, je nachdem, was größer ist —, räumt die Kasse sofort auf, statt bis zum nächsten Tag zu warten, und behält nur das Nötigste: die neuesten 3 Datensicherungen, die neueste beim Wiederherstellen beiseitegelegte Kopie sowie Problemberichte und heruntergeladene Updates vom letzten Tag. Führungskräfte sehen dann in der Statusleiste **Speicher fast voll**, bis wieder Platz ist. Der Verkauf läuft weiter; um mehr Platz zu schaffen, löschen Sie nicht benötigte Dateien vom Gerät oder fragen Sie die Person, die es eingerichtet hat.
 
 Verkäufe, Belege, das Prüfprotokoll, Z-Berichte und alle anderen Aufzeichnungen, die Sie gesetzlich aufbewahren müssen, werden dabei nie gelöscht. Jede Kasse räumt nur ihren eigenen Speicher auf.
 

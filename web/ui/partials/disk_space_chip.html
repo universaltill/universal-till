@@ -1,0 +1,13 @@
+{{/* ut-docs#3121: free space on this till's disk is below the low-disk
+     floor (500 MB or 10% of the disk, whichever is larger). Rendered by
+     GET /ui/disk-space-chip (disk_space_chip.go) into the status bar's
+     #sb-disk-space-mount on every page, only for a viewer who may open
+     Settings (admin/manager). A status chip, never a modal: selling
+     carries on, and housekeeping has already pruned backups and leftover
+     files to their minimum. Words first, never colour alone; the
+     explanation is in the title. */}}
+<a href="/settings#settings-backup" class="sb-item sb-disk-low" data-testid="sb-disk-low"
+   title="{{ T "status.disk_low.hint" }}">
+  <span class="btn-ico" aria-hidden="true">{{ icon "hard-drive" }}</span>
+  <span class="sb-disk-low-text">{{ T "status.disk_low.label" }}</span>
+</a>

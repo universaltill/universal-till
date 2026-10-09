@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -19,6 +20,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	dbpkg "github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/diskspace"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/housekeeping"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -333,12 +335,84 @@ func runDailyBackup(db *sql.DB, dbPath string) {
 // overflowed (ut-docs#3365 review finding).
 const maxArchiveRetainDays = math.MaxInt64 / int64(24*time.Hour)
 
-// runHousekeeping runs the daily device clean-up when due and logs what it
-// removed. Failures are logged and skipped; nothing here blocks selling.
+// ProblemKeyDiskLow tags the Problems entry (back-office Problems panel +
+// cloud heartbeat, ADR-0018) for "free space on this till's disk is below
+// the low-disk floor" (ut-docs#3121). It stays open until a later check
+// finds the disk back above the floor.
+const ProblemKeyDiskLow = "disk.low"
+
+// diskFree probes the disk holding the data directory; a var so tests can
+// inject a full or an empty disk.
+var diskFree = diskspace.Probe
+
+// diskLowOpen reports whether a disk.low Problem is still open in the
+// Problems ring. It reads the ring rather than remembering its own flag, so
+// an entry evicted by 50 later warnings (a full disk produces many) is
+// raised again on the next check instead of going quiet (review of
+// ut-docs#3121).
+func diskLowOpen(now time.Time) bool {
+	for _, p := range logging.OpenProblems(now, 0) {
+		if p.Key == ProblemKeyDiskLow {
+			return true
+		}
+	}
+	return false
+}
+
+// runHousekeeping runs the daily device clean-up when due — or at once,
+// with each kind pruned to its minimum, when free space is below the
+// low-disk floor (ut-docs#3121) — then caps the backups' share of the free
+// space and reports a disk still below the floor. Called hourly by the
+// background loop. Failures are logged and skipped; nothing here blocks
+// selling.
 func runHousekeeping(s *housekeeping.Schedule, db *sql.DB, dbPath string, now time.Time) {
-	if !s.Due(now) {
+	dataDir := filepath.Dir(dbPath)
+	usage, probeErr := diskFree(dataDir)
+	if probeErr != nil && !errors.Is(probeErr, diskspace.ErrUnsupported) {
+		log.Printf("[Housekeeping] free-space probe: %v", probeErr)
+	}
+	low := probeErr == nil && diskspace.Low(usage)
+	if s.Due(now) || low {
+		sweepHousekeeping(s, db, dbPath, now, low, usage)
+	}
+	if probeErr != nil {
+		// Unknown free space: never cap or warn on a guess, and don't
+		// keep claiming a low disk nobody can measure any more.
+		logging.ResolveProblems(ProblemKeyDiskLow)
 		return
 	}
+	after, err := diskFree(dataDir)
+	if err != nil {
+		return
+	}
+	if r := housekeeping.CapBackups(dbPath, after.Free); r.Err != nil {
+		log.Printf("[Housekeeping] backup cap: %v", r.Err)
+	} else if r.Removed > 0 {
+		log.Printf("[Housekeeping] backups over %d%% of free space: removed %d, freed %d bytes", housekeeping.BackupSharePercent, r.Removed, r.Freed)
+		if u, err := diskFree(dataDir); err == nil {
+			after = u
+		}
+	}
+	reportDiskLow(after, now)
+}
+
+// reportDiskLow raises the disk.low Problem when the disk is below the
+// floor after the clean-up and none is open yet (one entry per episode),
+// and resolves it once the disk is back above.
+func reportDiskLow(u diskspace.Usage, now time.Time) {
+	if !diskspace.Low(u) {
+		logging.ResolveProblems(ProblemKeyDiskLow)
+		return
+	}
+	if diskLowOpen(now) {
+		return
+	}
+	logging.L().WarnProblemf(ProblemKeyDiskLow, "[Housekeeping] disk almost full after clean-up: %d MB free of %d MB (floor %d MB)", u.Free>>20, u.Total>>20, diskspace.Floor(u.Total)>>20)
+}
+
+// sweepHousekeeping is one housekeeping run: the Normal limits, or LowDisk
+// ones when low.
+func sweepHousekeeping(s *housekeeping.Schedule, db *sql.DB, dbPath string, now time.Time, low bool, usage diskspace.Usage) {
 	s.Ran(now)
 	// Pre-restore copies are full databases (sales, payments, Z reports,
 	// audit log), so they are kept for the shop's statutory archive floor
@@ -365,7 +439,14 @@ func runHousekeeping(s *housekeeping.Schedule, db *sql.DB, dbPath string, now ti
 	for _, rule := range housekeeping.Retention() {
 		policy[rule.Kind] = rule.Policy
 	}
-	for _, r := range housekeeping.Run(dbPath, now, minRetain) {
+	limits := housekeeping.Normal
+	if low {
+		limits = housekeeping.LowDisk
+	}
+	if low && !diskLowOpen(now) {
+		log.Printf("[Housekeeping] low disk: %d MB free of %d MB (floor %d MB) — pruning each kind to its minimum", usage.Free>>20, usage.Total>>20, diskspace.Floor(usage.Total)>>20)
+	}
+	for _, r := range housekeeping.RunWith(dbPath, now, minRetain, limits) {
 		if r.Err != nil {
 			log.Printf("[Housekeeping] %s: %v", r.Kind, r.Err)
 			continue

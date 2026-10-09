@@ -21,6 +21,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	appdb "github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/diskspace"
 	"github.com/universaltill/universal-till/internal/housekeeping"
 	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -724,6 +725,7 @@ func isolateStagedUploads(t *testing.T, root string) {
 }
 
 func TestRunHousekeeping_OncePerInterval(t *testing.T) {
+	fakeDisk(t, 1<<40, 1<<40)
 	root := t.TempDir()
 	origData, origPending := paths.DataDir(), issuereport.PendingDir
 	paths.Init(root)
@@ -769,6 +771,7 @@ func TestRunHousekeeping_OncePerInterval(t *testing.T) {
 // the shop country's archive_min_days floor, resolved from the live DB, even
 // past housekeeping.PreRestoreMaxAge; a copy past the floor still goes.
 func TestRunHousekeeping_KeepsPreRestoreCopiesInsideStatutoryFloor(t *testing.T) {
+	fakeDisk(t, 1<<40, 1<<40)
 	root := t.TempDir()
 	origData, origPending := paths.DataDir(), issuereport.PendingDir
 	paths.Init(root)
@@ -823,6 +826,7 @@ func TestRunHousekeeping_KeepsPreRestoreCopiesInsideStatutoryFloor(t *testing.T)
 // and delete a copy it was meant to protect, exactly backwards from
 // "fail safe toward retaining, never toward deleting".
 func TestRunHousekeeping_ClampsAbsurdArchiveRetentionInsteadOfOverflowing(t *testing.T) {
+	fakeDisk(t, 1<<40, 1<<40)
 	root := t.TempDir()
 	origData, origPending := paths.DataDir(), issuereport.PendingDir
 	paths.Init(root)
@@ -887,5 +891,172 @@ func ageNewestDailyBackup(t *testing.T, dbPath string, age time.Duration) {
 	}
 	if err := os.Chtimes(filepath.Join(backupDir, name), when, when); err != nil {
 		t.Fatalf("backdate backup: %v", err)
+	}
+}
+
+// fakeDisk pins runHousekeeping's free-space probe to free of total bytes
+// (ut-docs#3121), and clears the disk.low Problem state around the test.
+func fakeDisk(t *testing.T, free, total uint64) *diskspace.Usage {
+	t.Helper()
+	u := &diskspace.Usage{Free: free, Total: total}
+	orig := diskFree
+	diskFree = func(string) (diskspace.Usage, error) { return *u, nil }
+	logging.ResolveProblems(ProblemKeyDiskLow)
+	t.Cleanup(func() {
+		diskFree = orig
+		logging.ResolveProblems(ProblemKeyDiskLow)
+	})
+	return u
+}
+
+// housekeepingLayout points the data dir, issue reports and staged uploads
+// at a fresh temp dir and writes n daily snapshots of size bytes, newest
+// first; it returns the DB path and the snapshot paths.
+func housekeepingLayout(t *testing.T, now time.Time, n, size int) (string, []string) {
+	t.Helper()
+	root := t.TempDir()
+	origData, origPending := paths.DataDir(), issuereport.PendingDir
+	paths.Init(root)
+	issuereport.PendingDir = filepath.Join(root, "issue-reports", "pending")
+	t.Cleanup(func() { paths.Init(origData); issuereport.PendingDir = origPending })
+	isolateStagedUploads(t, root)
+	dbPath := filepath.Join(root, "unitill-pos.db")
+	dir, err := appdb.BackupDir(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snaps []string
+	for i := 0; i < n; i++ {
+		at := now.Add(-time.Duration(i) * 24 * time.Hour)
+		p := filepath.Join(dir, "unitill-pos-"+at.Format("20060102-150405")+".db")
+		// Sparse: the snapshots' size is what counts, not their bytes.
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Truncate(p, int64(size)); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, at, at); err != nil {
+			t.Fatal(err)
+		}
+		snaps = append(snaps, p)
+	}
+	return dbPath, snaps
+}
+
+func countExisting(paths []string) int {
+	n := 0
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			n++
+		}
+	}
+	return n
+}
+
+// openDiskLowProblems returns the still-open disk.low Problems.
+func openDiskLowProblems() []logging.Problem {
+	var out []logging.Problem
+	for _, p := range logging.OpenProblems(time.Now(), time.Hour) {
+		if p.Key == ProblemKeyDiskLow {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// ut-docs#3121 AC 2: below the floor, housekeeping runs at the next hourly
+// check even inside its daily interval, and prunes to the minimums (newest
+// 3 backups); above the floor, inside the interval, nothing is removed.
+func TestRunHousekeeping_LowDiskRunsAtOnceWithTheMinimums(t *testing.T) {
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	disk := fakeDisk(t, 1<<40, 1<<40)
+	dbPath, snaps := housekeepingLayout(t, now, 10, 10)
+	var s housekeeping.Schedule
+	runHousekeeping(&s, nil, dbPath, now)
+	if got := countExisting(snaps); got != 10 {
+		t.Fatalf("roomy disk: %d snapshots left, want all 10", got)
+	}
+	runHousekeeping(&s, nil, dbPath, now.Add(time.Hour))
+	if got := countExisting(snaps); got != 10 {
+		t.Fatalf("roomy disk inside the interval: %d snapshots left, want 10", got)
+	}
+	disk.Free = 100 << 20 // 100 MB free of 1 TB: far below the floor
+	runHousekeeping(&s, nil, dbPath, now.Add(2*time.Hour))
+	if got := countExisting(snaps); got != housekeeping.MinBackupKeep {
+		t.Fatalf("low disk: %d snapshots left, want %d", got, housekeeping.MinBackupKeep)
+	}
+	for i := 0; i < housekeeping.MinBackupKeep; i++ {
+		if _, err := os.Stat(snaps[i]); err != nil {
+			t.Errorf("low disk removed snapshot %d, one of the newest", i)
+		}
+	}
+}
+
+// ut-docs#3121 AC 4: every hourly check caps the snapshots at
+// BackupSharePercent of the free space they could release, even when the
+// daily sweep isn't due.
+func TestRunHousekeeping_CapsBackupsEveryHour(t *testing.T) {
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	fakeDisk(t, 1<<40, 1<<40)
+	dbPath, snaps := housekeepingLayout(t, now, 10, 100<<20) // 10 × 100 MB
+	var s housekeeping.Schedule
+	s.Ran(now) // the daily sweep is not due
+	// 1000 MB of snapshots, 1024 MB free (above the 500 MB floor): the
+	// budget is 25% of 2024 MB = 506 MB, so the newest 5 stay.
+	fakeDisk(t, 1<<30, 1<<30)
+	runHousekeeping(&s, nil, dbPath, now.Add(time.Hour))
+	if got := countExisting(snaps); got != 5 {
+		t.Fatalf("%d snapshots left, want 5", got)
+	}
+}
+
+// ut-docs#3121: a disk still below the floor after the clean-up raises one
+// disk.low Problem (not one per hour), resolved once space is back.
+func TestRunHousekeeping_DiskLowProblemRaisedOnceThenResolved(t *testing.T) {
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	disk := fakeDisk(t, 100<<20, 1<<40)
+	dbPath, _ := housekeepingLayout(t, now, 0, 0)
+	var s housekeeping.Schedule
+	runHousekeeping(&s, nil, dbPath, now)
+	runHousekeeping(&s, nil, dbPath, now.Add(time.Hour))
+	if got := openDiskLowProblems(); len(got) != 1 {
+		t.Fatalf("want 1 open %q problem while the disk stays low, got %v", ProblemKeyDiskLow, got)
+	}
+	// A full disk produces many other warnings; once they push the entry
+	// out of the Problems ring, the next check raises it again (review).
+	for i := 0; i < 60; i++ {
+		logging.L().WarnProblemf("test.disk_low_filler", "filler %d", i)
+	}
+	logging.ResolveProblems("test.disk_low_filler")
+	if got := openDiskLowProblems(); len(got) != 0 {
+		t.Fatalf("filler should have evicted the entry, still open: %v", got)
+	}
+	runHousekeeping(&s, nil, dbPath, now.Add(90*time.Minute))
+	if got := openDiskLowProblems(); len(got) != 1 {
+		t.Fatalf("after eviction: want the %q problem raised again, got %v", ProblemKeyDiskLow, got)
+	}
+	disk.Free = 1 << 40
+	runHousekeeping(&s, nil, dbPath, now.Add(2*time.Hour))
+	if got := openDiskLowProblems(); len(got) != 0 {
+		t.Fatalf("disk back above the floor: want no open %q problem, got %v", ProblemKeyDiskLow, got)
+	}
+}
+
+// A platform with no free-space probe never prunes to the minimums or caps
+// on a guess.
+func TestRunHousekeeping_UnknownFreeSpaceChangesNothing(t *testing.T) {
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	fakeDisk(t, 0, 0)
+	diskFree = func(string) (diskspace.Usage, error) { return diskspace.Usage{}, diskspace.ErrUnsupported }
+	dbPath, snaps := housekeepingLayout(t, now, 10, 10)
+	var s housekeeping.Schedule
+	s.Ran(now)
+	runHousekeeping(&s, nil, dbPath, now.Add(time.Hour))
+	if got := countExisting(snaps); got != 10 {
+		t.Fatalf("unknown free space: %d snapshots left, want 10", got)
+	}
+	if got := openDiskLowProblems(); len(got) != 0 {
+		t.Fatalf("unknown free space raised %v", got)
 	}
 }

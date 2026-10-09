@@ -362,6 +362,7 @@ var backgroundPollPaths = map[string]bool{
 	"/ui/theme-sync":          true,
 	"/ui/cloud-auth-chip":     true, // refused cloud credential (ADR-0116 D6, ut-docs#3524)
 	"/ui/report-archive-chip": true, // refused report upload (ADR-0147, ut-docs#574)
+	"/ui/disk-space-chip":     true, // low-disk chip, every 60 s (ut-docs#3121)
 	// Sale screen watchers (#2765, #2858).
 	"/ui/buttons/version":         true,
 	"/ui/open-orders-badge/watch": true,
@@ -466,6 +467,7 @@ var shellGetPaths = map[string]bool{
 	"/ui/bugreport-chip":      true,
 	"/ui/cloud-auth-chip":     true,
 	"/ui/report-archive-chip": true,
+	"/ui/disk-space-chip":     true,
 }
 
 var shellPostPaths = map[string]bool{

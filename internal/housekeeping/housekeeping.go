@@ -11,7 +11,7 @@
 // ADR-0040's retention, not this job (TestPackageNeverTouchesTheDatabase).
 // The one file kind that holds that data, the pre-restore copies (each a
 // full former database), is pruned only outside ADR-0040's statutory floor:
-// Run is told that floor (minRetain) by its caller, which resolves it from
+// RunWith is told that floor (minRetain) by its caller, which resolves it from
 // the shop's country, and db.PrunePreRestore keeps every copy inside it
 // (ut-docs#3365).
 // Each till cleans its own disk; nothing here is triggered by another till.
@@ -42,7 +42,50 @@ const (
 	// off overnight would never run it, and deleting a few files costs a
 	// running sale nothing.
 	Interval = 24 * time.Hour
+
+	// MinBackupKeep is the fewest snapshots any prune leaves: the low-disk
+	// sweep and the backup-size cap stop here (ut-docs#3121).
+	MinBackupKeep = 3
+	// BackupSharePercent caps the snapshots together at this share of the
+	// free space they could release (free + their own size), so on a
+	// filling disk the oldest go before the till runs out of room
+	// (ut-docs#3121 AC 4). A quarter leaves the floor plenty of headroom on
+	// a 16 GB tablet while a few-hundred-MB database still keeps all 14.
+	BackupSharePercent = 25
+	// LowDiskMaxAge is the age past which the low-disk sweep removes unsent
+	// bug reports and update downloads.
+	LowDiskMaxAge = 24 * time.Hour
 )
+
+// Limits are the per-kind limits one sweep applies.
+type Limits struct {
+	BackupKeep           int
+	PreRestoreKeep       int
+	PreRestoreMaxAge     time.Duration
+	IssueReportMaxAge    time.Duration
+	UpdateDownloadMaxAge time.Duration
+}
+
+// Normal is the daily sweep's limits — the retention table below.
+var Normal = Limits{
+	BackupKeep:           db.DefaultBackupKeep,
+	PreRestoreKeep:       PreRestoreKeep,
+	PreRestoreMaxAge:     PreRestoreMaxAge,
+	IssueReportMaxAge:    IssueReportMaxAge,
+	UpdateDownloadMaxAge: UpdateDownloadMaxAge,
+}
+
+// LowDisk is each kind's minimum, applied as soon as free space drops below
+// the diskspace floor (ut-docs#3121 AC 2). The statutory floor on restore
+// copies still binds (RunWith's minRetain); staged uploads keep their crash
+// age, because a younger file may belong to an upload still running.
+var LowDisk = Limits{
+	BackupKeep:           MinBackupKeep,
+	PreRestoreKeep:       1,
+	PreRestoreMaxAge:     LowDiskMaxAge,
+	IssueReportMaxAge:    LowDiskMaxAge,
+	UpdateDownloadMaxAge: LowDiskMaxAge,
+}
 
 // Kinds of stored file, as used in Retention() and Result.
 const (
@@ -83,13 +126,13 @@ type Rule struct {
 func Retention() []Rule {
 	return []Rule{
 		{KindBackups, "backups/unitill-pos-*.db",
-			fmt.Sprintf("newest %d snapshots", db.DefaultBackupKeep), "housekeeping + db.PruneBackups"},
+			fmt.Sprintf("newest %d snapshots, together at most %d%% of the free space they could release; newest %d below the low-disk floor (never fewer than %d)", db.DefaultBackupKeep, BackupSharePercent, MinBackupKeep, MinBackupKeep), "housekeeping + db.PruneBackups (CapBackups)"},
 		{KindPreRestore, "backups/pre-restore-*.db",
-			fmt.Sprintf("newest %d, none older than %d days, never inside the shop's statutory retention floor (ADR-0040)", PreRestoreKeep, days(PreRestoreMaxAge)), "housekeeping (db.PrunePreRestore)"},
+			fmt.Sprintf("newest %d, none older than %d days (newest 1, none older than %d day below the low-disk floor), never inside the shop's statutory retention floor (ADR-0040)", PreRestoreKeep, days(PreRestoreMaxAge), days(LowDiskMaxAge)), "housekeeping (db.PrunePreRestore)"},
 		{KindIssueReports, "issue-reports/pending/<id>/",
-			fmt.Sprintf("deleted once uploaded, or after %d days unsent", days(IssueReportMaxAge)), "cloudsync upload + housekeeping (issuereport.PruneOlderThan)"},
+			fmt.Sprintf("deleted once uploaded, or after %d days unsent (%d day below the low-disk floor)", days(IssueReportMaxAge), days(LowDiskMaxAge)), "cloudsync upload + housekeeping (issuereport.PruneOlderThan)"},
 		{KindUpdateDownloads, "updates/attempt-*/",
-			fmt.Sprintf("cleared when the next update starts, or after %d days", days(UpdateDownloadMaxAge)), "selfupdate + housekeeping (selfupdate.PruneStaleAttempts)"},
+			fmt.Sprintf("cleared when the next update starts, or after %d days (%d day below the low-disk floor)", days(UpdateDownloadMaxAge), days(LowDiskMaxAge)), "selfupdate + housekeeping (selfupdate.PruneStaleAttempts)"},
 		{KindLogs, "logs/till.log*",
 			fmt.Sprintf("%d files × %d MB, oldest dropped", logging.DefaultMaxFiles, logging.DefaultMaxFileBytes>>20), "logging.RotatingWriter"},
 		{KindDiagnostics, "diagnostics/pending/",
@@ -126,17 +169,52 @@ type Result struct {
 	Err     error
 }
 
-// Run applies every sweep once, at now, for the database at dbPath.
+// RunWith applies every sweep once, at now, for the database at dbPath,
+// with limits l (Normal daily, LowDisk below the free-space floor).
 // minRetain is the statutory archive floor; no pre-restore copy younger
-// than it is removed.
-func Run(dbPath string, now time.Time, minRetain time.Duration) []Result {
+// than it is removed, whatever l says.
+func RunWith(dbPath string, now time.Time, minRetain time.Duration, l Limits) []Result {
 	return []Result{
-		sweepBackups(dbPath),
-		result(KindPreRestore)(db.PrunePreRestore(dbPath, PreRestoreKeep, PreRestoreMaxAge, now, minRetain)),
-		result(KindIssueReports)(issuereport.PruneOlderThan(now.Add(-IssueReportMaxAge))),
-		result(KindUpdateDownloads)(selfupdate.PruneStaleAttempts(now.Add(-UpdateDownloadMaxAge))),
+		sweepBackups(dbPath, l.BackupKeep),
+		result(KindPreRestore)(db.PrunePreRestore(dbPath, l.PreRestoreKeep, l.PreRestoreMaxAge, now, minRetain)),
+		result(KindIssueReports)(issuereport.PruneOlderThan(now.Add(-l.IssueReportMaxAge))),
+		result(KindUpdateDownloads)(selfupdate.PruneStaleAttempts(now.Add(-l.UpdateDownloadMaxAge))),
 		result(KindStagedUploads)(stagedupload.PruneOlderThan(now.Add(-stagedupload.MaxAge))),
 	}
+}
+
+// CapBackups removes the oldest snapshots until the rest together use at
+// most BackupSharePercent of the space they could release (free bytes on
+// the disk plus their own size), never leaving fewer than MinBackupKeep
+// (ut-docs#3121 AC 4). It touches only unitill-pos-* snapshots.
+func CapBackups(dbPath string, free uint64) Result {
+	res := Result{Kind: KindBackups}
+	list, err := db.ListBackups(dbPath)
+	if err != nil {
+		res.Err = err
+		return res
+	}
+	var total uint64
+	for _, b := range list {
+		total += uint64(max(b.Size, 0))
+	}
+	budget := (free + total) / 100 * BackupSharePercent
+	keep, used := 0, uint64(0)
+	for _, b := range list {
+		used += uint64(max(b.Size, 0))
+		if keep >= MinBackupKeep && used > budget {
+			break
+		}
+		keep++
+	}
+	if keep == len(list) {
+		return res
+	}
+	if err := db.PruneBackups(dbPath, keep); err != nil {
+		res.Err = err
+		return res
+	}
+	return diffBackups(dbPath, list, res)
 }
 
 func result(kind string) func(int, int64, error) Result {
@@ -145,19 +223,24 @@ func result(kind string) func(int, int64, error) Result {
 	}
 }
 
-// sweepBackups re-applies the snapshot cap (normally already enforced after
-// each backup) and reports what it removed.
-func sweepBackups(dbPath string) Result {
+// sweepBackups re-applies the snapshot count (normally already enforced
+// after each backup) and reports what it removed.
+func sweepBackups(dbPath string, keep int) Result {
 	res := Result{Kind: KindBackups}
 	list, err := db.ListBackups(dbPath)
 	if err != nil {
 		res.Err = err
 		return res
 	}
-	if err := db.PruneBackups(dbPath, db.DefaultBackupKeep); err != nil {
+	if err := db.PruneBackups(dbPath, keep); err != nil {
 		res.Err = err
 		return res
 	}
+	return diffBackups(dbPath, list, res)
+}
+
+// diffBackups fills res with the snapshots in before that are gone now.
+func diffBackups(dbPath string, before []db.BackupInfo, res Result) Result {
 	after, err := db.ListBackups(dbPath)
 	if err != nil {
 		res.Err = err
@@ -167,7 +250,7 @@ func sweepBackups(dbPath string) Result {
 	for _, b := range after {
 		kept[b.Name] = true
 	}
-	for _, b := range list {
+	for _, b := range before {
 		if !kept[b.Name] {
 			res.Removed++
 			res.Freed += b.Size

@@ -2633,6 +2633,8 @@
   "status.psu_underpowered": "Güç kaynağı yetersiz",
   "status.psu_underpowered_hint": "Bu cihazın güç kaynağı yeterli akım sağlayamıyor — dokunmatik ekran gibi USB çevre birimleri düzgün çalışmayabilir. Bu kart için resmi güç kaynağıyla değiştirin.",
   "status.register_till": "Pazar yeri: bağlı değil",
+  "status.disk_low.hint": "Bu kasanın diski neredeyse dolu. Eski yedekler ve artık dosyalar zaten silindi. Cihazda biraz yer açın veya cihazı kuran kişiye sorun. Satış devam eder.",
+  "status.disk_low.label": "Depolama neredeyse dolu",
   "status.report_archive.hint": "Abonelik etkin olmadığı için bulut rapor yüklemesini reddetti. Raporlar bu kasada kalır ve abonelik yeniden etkin olduğunda yüklenir.",
   "status.report_archive.refused": "Rapor yüklemesi reddedildi",
   "status.update_auto_blocked": "kendisi kuramıyor — yardım için dokunun",

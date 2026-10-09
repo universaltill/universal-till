@@ -275,6 +275,9 @@ var railIcons = map[string]string{
 	// mode Move to category badge (buttons.html's tile-badges). Lucide
 	// folder-input -- an arrow going into a folder.
 	"folder-input": `<path d="M2 9V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-1"/><path d="M2 13h10"/><path d="m9 16 3-3-3-3"/>`,
+	// Low-disk status chip (ut-docs#3121, disk_space_chip.html). Lucide
+	// hard-drive.
+	"hard-drive": `<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/>`,
 }
 
 // iconSVGOpen is the one shared wrapper every rail icon renders inside.
