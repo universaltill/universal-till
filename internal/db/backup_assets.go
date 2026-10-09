@@ -76,6 +76,35 @@ func embedBackupAssets(snapshot, assetsRoot string) error {
 	)`); err != nil {
 		return err
 	}
+	err = walkBackupAssetFiles(assetsRoot, func(scope, root, path string, info fs.FileInfo) error {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.Join(scope, rel)
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(`INSERT OR REPLACE INTO `+backupAssetsTable+` (path, mod, data) VALUES (?, ?, ?)`,
+			filepath.ToSlash(rel), info.ModTime().Unix(), body)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// errStopWalk ends walkBackupAssetFiles early without reporting an error.
+var errStopWalk = errors.New("stop walk")
+
+// walkBackupAssetFiles calls visit for every file a backup embeds: regular
+// files in the backupAssetScopes trees, minus in-flight tmp files and files
+// over backupAssetMaxBytes. A missing scope dir is nothing; visit returning
+// errStopWalk stops the walk cleanly. One place for the walk rules, shared by
+// embedBackupAssets and BackupLacksPhotos (ut-docs#3993).
+func walkBackupAssetFiles(assetsRoot string, visit func(scope, root, path string, info fs.FileInfo) error) error {
 	for _, scope := range backupAssetScopes {
 		root := filepath.Join(assetsRoot, scope)
 		// WalkDir doesn't follow a symlinked root (a shop that keeps its
@@ -100,24 +129,53 @@ func embedBackupAssets(snapshot, assetsRoot string) error {
 			if info.Size() > backupAssetMaxBytes {
 				return nil
 			}
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
-			rel = filepath.Join(scope, rel)
-			body, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			_, err = tx.Exec(`INSERT OR REPLACE INTO `+backupAssetsTable+` (path, mod, data) VALUES (?, ?, ?)`,
-				filepath.ToSlash(rel), info.ModTime().Unix(), body)
-			return err
+			return visit(scope, root, path, info)
 		})
+		if errors.Is(err, errStopWalk) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
+}
+
+// BackupLacksPhotos reports whether a snapshot is missing photos the shop
+// has: it carries no photo table AND assetsRoot holds at least one file
+// embedBackupAssets would have embedded (ut-docs#3993). The snapshot is
+// opened read-only and never modified. It lets the daily-backup Problem
+// (ut-docs#3991) be re-derived from the newest backup after a restart.
+// true with a non-nil error means the photo tree could not be read; false
+// with an error means the snapshot itself could not be checked.
+func BackupLacksPhotos(snapshot, assetsRoot string) (bool, error) {
+	if _, err := os.Stat(snapshot); err != nil {
+		return false, err
+	}
+	sd, err := sql.Open("sqlite", fmt.Sprintf("file:%s?mode=ro&_pragma=busy_timeout(5000)", escapeSQLiteURIPath(snapshot)))
+	if err != nil {
+		return false, err
+	}
+	defer sd.Close()
+	var n int
+	if err := sd.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, backupAssetsTable).Scan(&n); err != nil {
+		return false, err
+	}
+	if n > 0 {
+		return false, nil
+	}
+	found := false
+	err = walkBackupAssetFiles(assetsRoot, func(_, _, _ string, _ fs.FileInfo) error {
+		found = true
+		return errStopWalk
+	})
+	if err != nil {
+		// The table is absent and the photo tree can't be read: the same
+		// unreadable tree is the likeliest reason the backup has no photos,
+		// so report it as lacking them, with the cause.
+		return true, err
+	}
+	return found, nil
 }
 
 // RestoreBackupAssets writes the photos a restored backup carries back under

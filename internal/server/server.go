@@ -163,7 +163,7 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 			defer wg.Done()
 			var hk housekeeping.Schedule
 			run := func() {
-				runDailyBackup(db, cfg.DBPath)
+				runDailyBackup(db, cfg.DBPath, paths.Data("public", "assets"))
 				runHousekeeping(&hk, db, cfg.DBPath, time.Now())
 			}
 			ticker := time.NewTicker(time.Hour)
@@ -297,25 +297,34 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 // until a later daily backup completes with photos and resolves it.
 const ProblemKeyDailyBackupNoPhotos = "backup.daily_no_photos"
 
+// ProblemKeyDailyBackupFailed tags the Problems entry for "the daily
+// auto-backup could not write any snapshot at all" (ut-docs#3993). It stays
+// open until a later daily snapshot is written or a fresh backup exists.
+const ProblemKeyDailyBackupFailed = "backup.daily_failed"
+
 // snapshotWithAssets is a seam so tests can simulate a photo failure.
 var snapshotWithAssets = dbpkg.SnapshotWithAssets
 
 // runDailyBackup snapshots the local DB unless a backup newer than 24h
 // already exists, then prunes old snapshots to the newest DefaultBackupKeep.
-func runDailyBackup(db *sql.DB, dbPath string) {
+func runDailyBackup(db *sql.DB, dbPath, assetsRoot string) {
 	list, err := dbpkg.ListBackups(dbPath)
 	if err == nil && len(list) > 0 && time.Since(list[0].ModTime) < 24*time.Hour {
+		checkFreshBackup(dbPath, assetsRoot, list[0].Name)
 		return
 	}
 	// Uploaded photos ride inside the snapshot (ut-docs#2724). A photo
 	// failure still leaves a usable DB backup, so it is not fatal — but it
 	// is raised as a keyed Problem (ut-docs#3991) so the shop is told the
 	// backup lacks its photos, and resolved by the next complete backup.
-	path, err := snapshotWithAssets(db, dbPath, paths.Data("public", "assets"))
+	path, err := snapshotWithAssets(db, dbPath, assetsRoot)
 	if err != nil && path == "" {
 		log.Printf("[Backup] snapshot failed: %v", err)
+		raiseOnce(ProblemKeyDailyBackupFailed, "[Backup] daily backup failed: %v", err)
 		return
 	}
+	// A snapshot was written, so the "no snapshot at all" condition is over.
+	logging.ResolveProblems(ProblemKeyDailyBackupFailed)
 	if err != nil {
 		// One open entry per condition, not one per failing day: the
 		// back-office panel shows only a few problems. Cause first, file
@@ -328,6 +337,52 @@ func runDailyBackup(db *sql.DB, dbPath string) {
 	log.Printf("[Backup] daily snapshot: %s", path)
 	_ = dbpkg.PruneBackups(dbPath, dbpkg.DefaultBackupKeep)
 }
+
+// raiseOnce logs a keyed Problem unless one with that key is already open, so
+// the hourly loop never stacks entries (ut-docs#3993).
+func raiseOnce(key, format string, args ...any) {
+	for _, p := range logging.OpenProblems(time.Now(), 0) {
+		if p.Key == key {
+			return
+		}
+	}
+	logging.L().WarnProblemf(key, format, args...)
+}
+
+// checkFreshBackup runs when the newest backup is under 24h old. The
+// Problems ring is in-memory, so after a restart a "no photos" Problem
+// (ut-docs#3991) would vanish while the photo-less backup is still the
+// newest: re-derive it from the backup itself (ut-docs#3993). A fresh backup
+// also means the "no snapshot at all" failure is over.
+func checkFreshBackup(dbPath, assetsRoot, name string) {
+	logging.ResolveProblems(ProblemKeyDailyBackupFailed)
+	dir, err := dbpkg.BackupDir(dbPath)
+	lacks := false
+	if err == nil {
+		lacks, err = dbpkg.BackupLacksPhotos(filepath.Join(dir, name), assetsRoot)
+	}
+	switch {
+	case lacks && err != nil:
+		raiseOnce(ProblemKeyDailyBackupNoPhotos, "[Backup] daily backup has no photos (%v): %s", err, name)
+	case lacks:
+		raiseOnce(ProblemKeyDailyBackupNoPhotos, "[Backup] daily backup has no photos: %s", name)
+	case err != nil:
+		// Can't tell (e.g. a hot journal left by a power cut mid-backup):
+		// change nothing, and log a repeated cause only once, not hourly.
+		if msg := err.Error(); msg != lastFreshCheckErr {
+			lastFreshCheckErr = msg
+			log.Printf("[Backup] check newest backup for photos: %v", err)
+		}
+		return
+	default:
+		logging.ResolveProblems(ProblemKeyDailyBackupNoPhotos)
+	}
+	lastFreshCheckErr = ""
+}
+
+// lastFreshCheckErr is the last cause checkFreshBackup logged; only the
+// housekeeping goroutine touches it.
+var lastFreshCheckErr string
 
 // maxArchiveRetainDays is the largest archive_min_days that still converts
 // to a positive time.Duration (int64 nanoseconds): math.MaxInt64 / one day,

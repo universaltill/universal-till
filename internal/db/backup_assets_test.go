@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // writeAsset writes rel (forward slashes) under root with body.
@@ -367,5 +368,107 @@ func TestSnapshotWithAssets_RebuildsTableOnReuse(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "assets")
 	if n, err := RestoreBackupAssets(snap, out); err != nil || n != 0 {
 		t.Fatalf("restored %d %v, want the deleted photo gone", n, err)
+	}
+}
+
+// BackupLacksPhotos (ut-docs#3993): a snapshot with the photo table never
+// lacks photos; one without it lacks them only if the shop has uploads.
+func TestBackupLacksPhotos(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "till.db")
+	d, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+	assets := filepath.Join(t.TempDir(), "assets")
+	writeAsset(t, assets, "items/x.jpg", []byte("jpg"))
+
+	withTable, err := SnapshotWithAssets(d.DB, dbPath, assets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := BackupLacksPhotos(withTable, assets)
+	if err != nil || got {
+		t.Fatalf("snapshot with table: lacks=%v err=%v, want false", got, err)
+	}
+
+	// A plain snapshot (no table), e.g. made before photos were embedded.
+	time.Sleep(1100 * time.Millisecond) // Snapshot names are per-second
+	plain, err := Snapshot(d.DB, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(plain)
+	stBefore, _ := os.Stat(plain)
+	got, err = BackupLacksPhotos(plain, assets)
+	if err != nil || !got {
+		t.Fatalf("no table + photos: lacks=%v err=%v, want true", got, err)
+	}
+	after, _ := os.ReadFile(plain)
+	stAfter, _ := os.Stat(plain)
+	if !bytes.Equal(before, after) || !stBefore.ModTime().Equal(stAfter.ModTime()) {
+		t.Fatal("BackupLacksPhotos modified the snapshot file")
+	}
+
+	// Nothing embeddable: missing scope, tmp files, oversize.
+	empty := filepath.Join(t.TempDir(), "assets")
+	if got, err = BackupLacksPhotos(plain, empty); err != nil || got {
+		t.Fatalf("no photos dir: lacks=%v err=%v, want false", got, err)
+	}
+	writeAsset(t, empty, "items/a.jpg.sync-tmp", []byte("x"))
+	writeAsset(t, empty, "logo/b.png.restore-tmp", []byte("x"))
+	writeAsset(t, empty, "categories/big.jpg", make([]byte, backupAssetMaxBytes+1))
+	writeAsset(t, empty, "other/c.jpg", []byte("x")) // not an uploaded scope
+	if got, err = BackupLacksPhotos(plain, empty); err != nil || got {
+		t.Fatalf("only tmp/oversize/other: lacks=%v err=%v, want false", got, err)
+	}
+
+	// Symlinked scope root is resolved like embedBackupAssets does.
+	link := filepath.Join(t.TempDir(), "assets")
+	real := t.TempDir()
+	writeAsset(t, real, "p.jpg", []byte("x"))
+	if err := os.MkdirAll(link, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(link, "items")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = BackupLacksPhotos(plain, link); err != nil || !got {
+		t.Fatalf("symlinked scope: lacks=%v err=%v, want true", got, err)
+	}
+
+	if _, err := BackupLacksPhotos(filepath.Join(t.TempDir(), "missing.db"), assets); err == nil {
+		t.Fatal("missing snapshot must return an error")
+	}
+}
+
+// An unreadable photo tree is the likeliest reason a backup has no photos,
+// so with the table absent it must still report "lacks", with the cause
+// (ut-docs#3993 review finding 1).
+func TestBackupLacksPhotos_UnreadableTreeCountsAsLacking(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a 0000 directory; CI runs as a normal user")
+	}
+	dbPath := filepath.Join(t.TempDir(), "till.db")
+	d, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+	plain, err := Snapshot(d.DB, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assets := filepath.Join(t.TempDir(), "assets")
+	writeAsset(t, assets, "items/sub/x.jpg", []byte("jpg"))
+	locked := filepath.Join(assets, "items", "sub")
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	got, err := BackupLacksPhotos(plain, assets)
+	if !got || err == nil {
+		t.Fatalf("unreadable photo tree: lacks=%v err=%v, want true with an error", got, err)
 	}
 }
