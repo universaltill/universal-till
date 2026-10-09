@@ -3,6 +3,8 @@ package enroll
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1198,5 +1200,93 @@ func TestEnsureSigningKeyBoundedByLazyTimeout(t *testing.T) {
 	}
 	if eff.Marketplace.PublicKey != "" {
 		t.Fatalf("key after a timed-out fetch: %q", eff.Marketplace.PublicKey)
+	}
+}
+
+// ut-docs#3861: a refused registration is a typed error, so the Settings
+// card can show a translated message instead of the cloud's raw JSON.
+func refusingMarketplace(t *testing.T, status int, body string) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/stores/register", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestRegisterNowRefusalIsTypedAndKeepsLogText(t *testing.T) {
+	resetState()
+	body := `{"data":null,"error":{"code":"service_unavailable","message":"not here"}}`
+	srv := refusingMarketplace(t, http.StatusForbidden, body)
+	_, err := RegisterNow(context.Background(), freshConfig(srv.URL), newFakeKV())
+	var he *RegisterHTTPError
+	if !errors.As(err, &he) {
+		t.Fatalf("err = %v, want *RegisterHTTPError", err)
+	}
+	if he.Status != 403 || he.Code != "service_unavailable" {
+		t.Fatalf("got status=%d code=%q", he.Status, he.Code)
+	}
+	if want := "register returned 403: " + body; err.Error() != want {
+		t.Fatalf("Error() = %q, want %q", err.Error(), want)
+	}
+	if !IsServiceRefused(err) {
+		t.Fatal("IsServiceRefused = false for a 403 service_unavailable")
+	}
+}
+
+func TestIsServiceRefused(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"403 service_unavailable", &RegisterHTTPError{Status: 403, Code: "service_unavailable"}, true},
+		{"wrapped", fmt.Errorf("outer: %w", &RegisterHTTPError{Status: 403, Code: "service_unavailable"}), true},
+		{"403 other code", &RegisterHTTPError{Status: 403, Code: "forbidden"}, false},
+		{"500 service_unavailable", &RegisterHTTPError{Status: 500, Code: "service_unavailable"}, false},
+		{"403 no code", &RegisterHTTPError{Status: 403}, false},
+		{"plain error", errors.New("register returned 403: service_unavailable"), false},
+	}
+	for _, c := range cases {
+		if got := IsServiceRefused(c.err); got != c.want {
+			t.Errorf("%s: IsServiceRefused = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestRegisterRefusalCodeParsing(t *testing.T) {
+	cases := []struct {
+		name, body, wantCode string
+		status               int
+		refused              bool
+	}{
+		{"envelope", `{"data":null,"error":{"code":"service_unavailable","message":"x"}}`, "service_unavailable", 403, true},
+		{"other code", `{"error":{"code":"forbidden"}}`, "forbidden", 403, false},
+		{"500 json", `{"error":{"code":"internal"}}`, "internal", 500, false},
+		{"not json", `service_unavailable`, "", 403, false},
+		{"truncated json", `{"error":{"code":"service_unav`, "", 403, false},
+		{"empty", ``, "", 403, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			resetState()
+			srv := refusingMarketplace(t, c.status, c.body)
+			m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
+			err := register(context.Background(), m, "Shop", newFakeKV())
+			var he *RegisterHTTPError
+			if !errors.As(err, &he) {
+				t.Fatalf("err = %v, want *RegisterHTTPError", err)
+			}
+			if he.Code != c.wantCode || he.Status != c.status {
+				t.Fatalf("status=%d code=%q, want %d %q", he.Status, he.Code, c.status, c.wantCode)
+			}
+			if IsServiceRefused(err) != c.refused {
+				t.Fatalf("IsServiceRefused = %v, want %v", !c.refused, c.refused)
+			}
+		})
 	}
 }

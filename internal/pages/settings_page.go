@@ -1142,15 +1142,32 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		status, err := enroll.RegisterNow(r.Context(), d.Cfg, d.Settings)
 		if err != nil || !(status.Registered || status.ViaMainTill) {
-			// Show the concrete reason (and the endpoint we tried) so the
-			// operator can see e.g. an unreachable/misconfigured marketplace.
-			reason := httpx.T(locale, "settings.enrol.not_registered")
+			// The raw reason (e.g. the cloud's JSON body, English-only) is
+			// logged, never rendered: it is not translated, not escaped
+			// HTML, and can name why the shop was refused (ut-docs#3861).
+			// The operator sees a translated message instead; only the
+			// endpoint we tried is shown on a generic failure, so an
+			// unreachable/misconfigured marketplace is still visible.
 			if err != nil {
-				reason = err.Error()
+				logging.L().Warnf("enrol now failed: %v", err)
 			}
-			endpoint := enroll.Effective(d.Cfg).Marketplace.EndpointURL
-			fmt.Fprintf(w, `<span class="error">❌ %s: %s (%s)</span>`,
-				httpx.T(locale, "settings.enrol.failed"), reason, endpoint)
+			if enroll.IsServiceRefused(err) {
+				fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
+					html.EscapeString(httpx.T(locale, "settings.enrol.service_unavailable")))
+				return
+			}
+			endpoint := html.EscapeString(enroll.Effective(d.Cfg).Marketplace.EndpointURL)
+			if err == nil {
+				fmt.Fprintf(w, `<span class="error">❌ %s %s (%s)</span>`,
+					httpx.T(locale, "settings.enrol.failed"),
+					httpx.T(locale, "settings.enrol.not_registered"), endpoint)
+				return
+			}
+			if endpoint == "" {
+				fmt.Fprintf(w, `<span class="error">❌ %s</span>`, httpx.T(locale, "settings.enrol.failed"))
+				return
+			}
+			fmt.Fprintf(w, `<span class="error">❌ %s (%s)</span>`, httpx.T(locale, "settings.enrol.failed"), endpoint)
 			return
 		}
 		settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "enrol_now_registered", map[string]any{"store_id": status.StoreID})

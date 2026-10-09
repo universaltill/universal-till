@@ -205,3 +205,62 @@ func TestEnrolPair_PromptFormDropsDuplicateSubmits(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#3861: a refused "Register now" must not print the cloud's raw
+// JSON (or the endpoint) into the card.
+func refusingRegisterCloud(t *testing.T, status int, body string) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/stores/register", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestEnrolNow_ServiceRefusedShowsTranslatedMessageOnly(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	srv := refusingRegisterCloud(t, http.StatusForbidden,
+		`{"data":null,"error":{"code":"service_unavailable","message":"Shops in XX are not served"}}`)
+	enroll.Init(t.Context(), &config.Config{}, d.Settings, &sync.WaitGroup{})
+	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
+	d.Cfg.Marketplace.EndpointURL = srv.URL + "/api"
+
+	rec := postForm(mux, "/api/enrol/now", url.Values{}, &mgrUser)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, `class="error"`) {
+		t.Fatalf("refused register = %d %s, want 200 with the failure span", rec.Code, body)
+	}
+	if !strings.Contains(body, "The Universal Till cloud is not available for this shop. The till keeps working offline.") {
+		t.Fatalf("missing the service-unavailable message: %s", body)
+	}
+	for _, bad := range []string{"register returned", "{", "service_unavailable", "not served", srv.URL, "Registration failed"} {
+		if strings.Contains(body, bad) {
+			t.Fatalf("body leaks %q: %s", bad, body)
+		}
+	}
+}
+
+func TestEnrolNow_OtherFailureShowsGenericMessageNotRawBody(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	srv := refusingRegisterCloud(t, http.StatusInternalServerError, `{"error":{"code":"internal","message":"db exploded <b>"}}`)
+	enroll.Init(t.Context(), &config.Config{}, d.Settings, &sync.WaitGroup{})
+	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
+	d.Cfg.Marketplace.EndpointURL = srv.URL + "/api"
+
+	rec := postForm(mux, "/api/enrol/now", url.Values{}, &mgrUser)
+	body := rec.Body.String()
+	if !strings.Contains(body, "Registration failed") {
+		t.Fatalf("missing the generic failure text: %s", body)
+	}
+	for _, bad := range []string{"register returned", "{", "db exploded", "<b>", "not available for this shop"} {
+		if strings.Contains(body, bad) {
+			t.Fatalf("body leaks %q: %s", bad, body)
+		}
+	}
+	if !strings.Contains(body, "(") || !strings.Contains(body, "127.0.0.1") {
+		t.Fatalf("generic failure should still name the endpoint tried: %s", body)
+	}
+}
