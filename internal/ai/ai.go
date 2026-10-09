@@ -28,6 +28,10 @@ type Config struct {
 	Model    string
 	AskModel string // tool-capable model for "Ask your till" (ollama, openai)
 	APIKey   string // claude/openai provider only
+
+	// Image is background removal (ut-docs#3126), configured independently
+	// of the text/vision provider above — see image.go.
+	Image ImageConfig
 }
 
 // DefaultClaudeModel is the model the claude provider runs when none is
@@ -49,6 +53,11 @@ const DefaultOpenAIModel = "gpt-4o-mini"
 // FromEnv reads UT_AI_PROVIDER / UT_AI_ENDPOINT / UT_AI_MODEL / UT_AI_API_KEY.
 // Provider is inferred when unset: an endpoint means ollama, a key means
 // claude, neither means disabled.
+//
+// Background removal reads UT_AI_IMAGE_PROVIDER / UT_AI_IMAGE_ENDPOINT /
+// UT_AI_IMAGE_MODEL independently: an image endpoint with no provider means
+// self_hosted (rembg), an empty model means DefaultImageModel, no endpoint
+// means off.
 func FromEnv() Config {
 	cfg := Config{
 		Provider: strings.ToLower(strings.TrimSpace(os.Getenv("UT_AI_PROVIDER"))),
@@ -84,6 +93,21 @@ func FromEnv() Config {
 			cfg.AskModel = "llama3.2"
 		case "openai":
 			cfg.AskModel = DefaultOpenAIModel
+		}
+	}
+	cfg.Image = ImageConfig{
+		Provider: strings.ToLower(strings.TrimSpace(os.Getenv("UT_AI_IMAGE_PROVIDER"))),
+		Endpoint: strings.TrimSpace(os.Getenv("UT_AI_IMAGE_ENDPOINT")),
+		Model:    strings.TrimSpace(os.Getenv("UT_AI_IMAGE_MODEL")),
+	}
+	if cfg.Image.Endpoint == "" {
+		cfg.Image = ImageConfig{}
+	} else {
+		if cfg.Image.Provider == "" && cfg.Image.Endpoint != "" {
+			cfg.Image.Provider = ImageProviderSelfHosted
+		}
+		if cfg.Image.Model == "" {
+			cfg.Image.Model = DefaultImageModel
 		}
 	}
 	return cfg
@@ -127,13 +151,23 @@ type provider interface {
 }
 
 // Service is the till-side AI facade. A nil or disabled Service is safe to
-// call Enabled() on, so pages can decide whether to render AI affordances.
+// call Enabled() and CanCutout() on, so pages can decide whether to render
+// AI affordances.
 type Service struct {
 	p       provider
 	enabled bool
+	cut     cutter // background removal; nil = off, independent of enabled
 }
 
+// New builds the text/vision backend and, independently, the image
+// (background-removal) capability: either may be on without the other.
 func New(cfg Config) *Service {
+	s := newTextService(cfg)
+	s.cut = newCutter(cfg.Image)
+	return s
+}
+
+func newTextService(cfg Config) *Service {
 	switch cfg.Provider {
 	case "ollama":
 		if cfg.Endpoint == "" {

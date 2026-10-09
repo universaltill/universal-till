@@ -1547,6 +1547,7 @@
   "plugins.permissions.setting_bound_now": "Currently:",
   "plugins.retry": "Retry install",
   "plugins.settings.ai.hosted_provider_notice": "Choosing a hosted provider (provider = claude or openai) sends what the AI features work on out of your premises to that provider's servers (Anthropic or OpenAI, both United States): for Identify by camera, the product photo plus your catalog's item names, SKUs and reference photos, with either provider. For Ask your till: with claude, nothing is sent — there is no hosted implementation yet, so it hides itself instead; with openai, your questions are sent together with the sales and stock figures used to answer them. Self-hosted (Ollama, the default) keeps all of it on your own hardware. The key you enter is your own account with that provider — you pay them directly, and Universal Till holds no account there.",
+  "plugins.settings.ai.image_model_unsupported": "This model isn't supported for background removal, so background removal stays off. Use birefnet-general-lite or u2netp.",
   "plugins.settings.invalid_endpoint": "%s must be a web address starting with http:// or https:// (for example https://192.168.1.20:8080/api).",
   "plugins.settings.none": "This plugin has no settings.",
   "plugins.settings.per_till": "this till only",

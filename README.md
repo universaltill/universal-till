@@ -361,8 +361,14 @@ UT_AI_MODEL=llama3.2-vision            # Open vision model (camera identify)
 UT_AI_ASK_MODEL=llama3.2               # Tool-capable text model (Ask your till)
 UT_AI_PROVIDER=                        # Optional: "claude" or "openai" for a hosted paid API
 UT_AI_API_KEY=                         # Only for the claude/openai providers (claude has no ask loop yet; openai has both)
+# Background removal for item/category photos — independent of the above
+# (works with text AI off). Point at the shop's own rembg server (`rembg s`).
+UT_AI_IMAGE_ENDPOINT=                  # rembg base URL, e.g. http://192.168.1.20:7000; empty = off
+UT_AI_IMAGE_MODEL=birefnet-general-lite # Only birefnet-general-lite (MIT) or u2netp (Apache-2.0); anything else = off
+UT_AI_IMAGE_PROVIDER=                  # Defaults to self_hosted when an endpoint is set; any other value = off
 # Shops don't use these env vars: the AI Assistant plugin's settings page
-# (provider / endpoint / vision_model / ask_model / api_key) is the
+# (provider / endpoint / vision_model / ask_model / api_key, and
+# image_provider / image_endpoint / image_model) is the
 # shop-facing configuration and takes priority; a hosted provider is that
 # shop's own key and cost, opt-in only (ADR-0085). Env = developer override.
 ```

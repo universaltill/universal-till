@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/ai"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -84,14 +85,26 @@ func isTaxRateOverridesKey(key string) bool {
 // ut-docs#1708): an operator must read what a hosted vendor receives before
 // they can type a key, so the notice is scoped to that plugin's that key —
 // not to every plugin's every secret field (same per-plugin-key
-// special-case family as isTaxRateOverridesKey). The template only renders
-// this inside the `.Secret` branch (review finding, ut-docs#1708) — every
-// key this returns non-"" for today also matches the secret heuristic, so
-// that's never been observed, but a future adopter on a plain-text setting
-// would get a silently-dropped notice; wire a non-secret render path first.
-func settingNoticeKey(pluginID, key string) string {
-	if pluginID == AIPluginID && key == "api_key" {
+// special-case family as isTaxRateOverridesKey). The template renders it
+// above the input in both the `.Secret` branch and the plain-text branch.
+//
+// Second adopter (ut-docs#3126): the AI plugin's plain-text image_model,
+// when its stored value is set but off the licence-checked allow-list
+// (ai.ImageModelAllowed — rembg's bria-rmbg default among them). Resolution
+// turns background removal off for such a value; the generic editor has no
+// per-plugin save-time validation, so this hint says why (never a modal).
+// value is the stored plain value; the resolver trims it the same way.
+func settingNoticeKey(pluginID, key, value string) string {
+	if pluginID != AIPluginID {
+		return ""
+	}
+	switch key {
+	case "api_key":
 		return "plugins.settings.ai.hosted_provider_notice"
+	case "image_model":
+		if v := strings.TrimSpace(value); v != "" && !ai.ImageModelAllowed(v) {
+			return "plugins.settings.ai.image_model_unsupported"
+		}
 	}
 	return ""
 }
@@ -330,7 +343,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 		var views []settingView
 		for _, row := range rows {
 			v := unwrapSettingValue(row.ValueJSON)
-			sv := settingView{Key: row.Key, Value: v, Secret: isSecret(row.Key), PerTill: row.Scope == "register", Notice: settingNoticeKey(pluginID, row.Key)}
+			sv := settingView{Key: row.Key, Value: v, Secret: isSecret(row.Key), PerTill: row.Scope == "register", Notice: settingNoticeKey(pluginID, row.Key, v)}
 			if sv.Secret {
 				sv.IsSet = v != ""
 				sv.Value = "" // never render a secret's value into the page

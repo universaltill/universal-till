@@ -1086,6 +1086,74 @@ func TestPluginSettingsPage_GET_AIPluginAPIKeyShowsHostedProviderNotice(t *testi
 	}
 }
 
+// ut-docs#3126: an image_model off the licence-checked allow-list turns
+// background removal off at resolve time; the generic settings editor has no
+// per-plugin save-time validation, so the AI plugin's image_model field shows
+// a plain hint above its input (never a modal). Allowed or empty: no hint.
+func TestPluginSettingsPage_GET_AIImageModelUnsupportedHint(t *testing.T) {
+	hint := httpx.T("en", "plugins.settings.ai.image_model_unsupported")
+	if hint == "" || hint == "plugins.settings.ai.image_model_unsupported" {
+		t.Fatalf("hint key must resolve to real copy in en.json, got %q", hint)
+	}
+	hint = html.EscapeString(hint)
+
+	for _, tc := range []struct {
+		model string
+		want  bool
+	}{
+		{"bria-rmbg", true},
+		{"isnet-general-use", true},
+		{"birefnet-general-lite", false},
+		{"u2netp", false},
+		{"", false},
+	} {
+		t.Run("model="+tc.model, func(t *testing.T) {
+			t.Setenv("UT_AUTH", "off")
+			mux, dp := newPluginSettingsTestDeps(t)
+			seedAIPluginRows(t, dp.Db, true)
+			seedPluginSetting(t, dp, AIPluginID, "image_endpoint", "http://rembg.local:7000", "global")
+			seedPluginSetting(t, dp, AIPluginID, "image_model", tc.model, "global")
+			// Another plugin's same-named key never gets the hint.
+			seedPluginSetting(t, dp, "p1", "image_model", "bria-rmbg", "global")
+
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/plugins/"+AIPluginID+"/settings", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET: code %d body %s", rec.Code, rec.Body.String())
+			}
+			body := rec.Body.String()
+			n := strings.Count(body, hint)
+			if !tc.want {
+				if n != 0 {
+					t.Fatalf("model %q: hint must not render, got:\n%s", tc.model, body)
+				}
+				return
+			}
+			if n != 1 {
+				t.Fatalf("model %q: want the hint exactly once, got %d in:\n%s", tc.model, n, body)
+			}
+			hintAt := strings.Index(body, hint)
+			inputAt := strings.Index(body, `name="setting_image_model"`)
+			if inputAt < 0 || hintAt > inputAt {
+				t.Fatalf("hint must render ABOVE the image_model input (hint %d, input %d)", hintAt, inputAt)
+			}
+			if !strings.Contains(body, `<p class="muted">`+hint+`</p>`) {
+				t.Fatalf("hint must be a plain muted paragraph, got:\n%s", body)
+			}
+			// The text input still shows the stored value so the shop can fix it.
+			if !strings.Contains(body, `name="setting_image_model" value="`+tc.model+`"`) {
+				t.Fatalf("image_model input must keep its value, got:\n%s", body)
+			}
+
+			rec = httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil))
+			if strings.Contains(rec.Body.String(), hint) {
+				t.Fatal("the hint is for the AI plugin's image_model only")
+			}
+		})
+	}
+}
+
 // seedPluginPermissions installs a plugin manifest declaring the given
 // permissions (all starting ungranted), mirroring how a real install
 // populates plugin_permissions — ListPluginPermissions reads that table,
