@@ -317,9 +317,15 @@ func (r *pluginJobRegistry) poll(id, pluginID, route string, consume bool) (plug
 // action's payload, sent with the job's id as job_id; vctx is what the
 // result is validated against (and job_progress keys too); uploadTokens
 // are the action's staged uploads (ut-docs#3793), which the job owns from
-// a nil error on and releases when it ends, whichever way. It returns the
-// job id at once, or errPluginJobBusy (the caller still owns the uploads).
-func startPluginJob(ctx context.Context, d *common.Deps, entry data.PageEntryRow, event string, payload map[string]any, vctx pluginview.Context, uploadTokens []string) (string, error) {
+// a nil error on and releases when it ends, whichever way. onDone, if not
+// nil, sees the plugin's answer — the decoded result, or the error that
+// failed it — before the job is marked finished and its uploads released
+// (the identify seam keeps its photo for a pick, ut-docs#4006); it is not
+// called for a job that timed out or was abandoned, but may be for one
+// cancelRunning already dropped whose answer was in flight — check
+// pluginJobs.owner when that matters. It returns the job id
+// at once, or errPluginJobBusy (the caller still owns the uploads).
+func startPluginJob(ctx context.Context, d *common.Deps, entry data.PageEntryRow, event string, payload map[string]any, vctx pluginview.Context, uploadTokens []string, onDone func(id string, doc *pluginview.Document, redirect string, err error)) (string, error) {
 	reg := pluginJobs
 	watchEvery := pluginJobWatchEvery
 	deadline := pluginJobDeadline(ctx, d, entry.PluginID)
@@ -386,6 +392,9 @@ func startPluginJob(ctx context.Context, d *common.Deps, entry data.PageEntryRow
 				}
 				if err != nil {
 					logging.L().Warnf("plugin job %s %s (%s): %v", entry.PluginID, event, entry.Route, err)
+				}
+				if onDone != nil {
+					onDone(id, doc, redirect, err)
 				}
 				reg.finish(id, doc, redirect, err)
 				return

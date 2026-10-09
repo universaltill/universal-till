@@ -67,7 +67,7 @@ Sepet toplamlarının altında bir öneri çipleri satırı görünebilir, zaten
 
 Şerit hiçbir öneri olmadığında hiçbir şey göstermez — boş bir kutu bile değil — boş bir sepet, birlikte güçlü satış kalıbı olmayan bir sepet ürünleri, veya herhangi bir nedenle arama kendisi başarısız olursa. Asla bir satışı engellemez veya kesmez — bir işaret olarak ele alın, tepki vermeniz gereken bir adım değil.
 
-Bir eklenti, tarama satırına "Kamerayla tanı" seçeneğini de ekleyebilir (kamera simgesi). Simgeye dokunun, kamerayı ürüne doğrultun ve Çek'e dokunun: eklenti ürünün ne olduğunu belirlerken kasa bir ilerleme çubuğu gösterir, ardından eşleşmeleri listeler. Bir eşleşmeye dokunarak onu, tam olarak taramışsınız gibi sepete ekleyin. Pencereyi istediğiniz zaman kapatıp satışa devam edebilirsiniz — eklentinin yanıtı o zaman yok sayılır. Barkod tarama ve arama her zaman bunun yanında kullanılabilir kalır.
+Bir eklenti, tarama satırına "Kamerayla tanı" seçeneğini de ekleyebilir (kamera simgesi). Simgeye dokunun, kamerayı ürüne doğrultun ve Çek'e dokunun: eklenti ürünün ne olduğunu belirlerken kasa bir ilerleme çubuğu gösterir, ardından eşleşmeleri listeler. Bir eşleşmeye dokunarak onu, tam olarak taramışsınız gibi sepete ekleyin. Kasa ardından fotoğrafınızı o ürünün referans fotoğraflarından biri olarak saklar (ürün başına en yeni beş fotoğraf, bağlı kasalarınızda da), böylece eklentinin eşleşmeleri kullandıkça iyileşebilir. Pencereyi istediğiniz zaman kapatıp satışa devam edebilirsiniz — eklentinin yanıtı o zaman yok sayılır. Barkod tarama ve arama her zaman bunun yanında kullanılabilir kalır.
 
 ## Yan menüdeki durum çipleri
 

@@ -8,16 +8,23 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/imaging"
+	"github.com/universaltill/universal-till/internal/itemimages"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -34,9 +41,13 @@ import (
 // startPluginJob) — never on the sale path, never blocking it. The overlay
 // polls GET ?_job=<id>; the plugin's answer is a document validated for the
 // SeamSellIdentify seam (text, notice, suggestions with add_to_basket
-// only), and each suggestion renders as a button posting its SKU through
-// the normal /api/pos/scan path. Closing the overlay stops the poll, so the
-// job is abandoned (pluginJobUnpolledTTL) and a late result dropped.
+// only), and each suggestion renders as a button posting {_job, sku, qty}
+// to the pick route, which adds the line through the normal /api/pos/scan
+// handler and then — off the request — stores the photo as the item's
+// newest ai_ref (ADR-0121 amendment 2026-10-09 R2a, ut-docs#4006; the photo
+// waits in identify_slot.go's pending-confirm slot). Closing the overlay
+// stops the poll, so the job is abandoned (pluginJobUnpolledTTL) and a late
+// result dropped.
 //
 // A suggestion may name a thumbnail: a blob in the answering plugin's own
 // store (blob:own, ut-docs#3957). Core shows it only if the blob is a real
@@ -50,6 +61,10 @@ import (
 const (
 	identifyEvent = "catalog.identify"
 	identifyRoute = "/api/pos/identify/plugin"
+	// identifyPickRoute adds a picked suggestion and learns from the photo.
+	identifyPickRoute = "/api/pos/identify/plugin/pick"
+	// identifyPickMaxBytes bounds the pick's form body (three short values).
+	identifyPickMaxBytes = 4 << 10
 	// identifyThumbRoute serves a suggestion's plugin-blob thumbnail.
 	identifyThumbRoute = "/api/pos/identify/plugin/thumb"
 	// identifyThumbMaxBytes caps a thumbnail blob: a list icon, not a photo.
@@ -100,6 +115,7 @@ type identifyNotice struct{ Key, Level string }
 
 // identifyResult is what identify_result renders.
 type identifyResult struct {
+	Job     string                     // the job id each pick carries back
 	Texts   []pluginview.ViewComponent // text and notice components, in order
 	Matches []identifyMatch
 }
@@ -222,6 +238,8 @@ func servePluginIdentifyStart(w http.ResponseWriter, r *http.Request, d *common.
 		renderIdentify(w, r, http.StatusNotFound, "identify_notice", identifyNotice{"plugin.view.unavailable", "warn"})
 		return
 	}
+	// A new capture replaces the photo an earlier result kept for a pick.
+	identifySlots.clear(pluginID)
 	up, err := readIdentifyPhoto(w, r, pluginID)
 	if err != nil {
 		logging.L().Infof("plugin identify %s: %v", pluginID, err)
@@ -242,7 +260,22 @@ func servePluginIdentifyStart(w http.ResponseWriter, r *http.Request, d *common.
 	vctx := pluginview.Context{PluginID: pluginID, OwnKeys: pluginOwnLocaleKeys(d, pluginID), Seam: pluginview.SeamSellIdentify}
 	payload := map[string]any{"upload_handles": []pluginUpload{up}, "locale": locale}
 	tokens := []string{up.Handle}
-	id, err := startPluginJob(r.Context(), d, identifyEntry(pluginID), identifyEvent, payload, vctx, tokens)
+	// A valid result keeps the photo for a pick (R2a): taken back before
+	// the job releases its uploads. A failed job keeps nothing.
+	keep := func(id string, doc *pluginview.Document, redirect string, err error) {
+		if err != nil || doc == nil || redirect != "" {
+			return
+		}
+		// A job a newer capture cancelled may still deliver its answer:
+		// it must not replace the newer job's slot.
+		if _, live := pluginJobs.owner(id, identifyRoute); !live {
+			return
+		}
+		if path, ok := plugins.TakeUpload(pluginID, up.Handle); ok {
+			identifySlots.put(pluginID, id, path, up.ContentType, pluginJobUnpolledTTL+identifySlotTTL)
+		}
+	}
+	id, err := startPluginJob(r.Context(), d, identifyEntry(pluginID), identifyEvent, payload, vctx, tokens, keep)
 	if errors.Is(err, errPluginJobBusy) && pluginJobs.cancelRunning(pluginID, identifyRoute) > 0 {
 		// A new capture supersedes this seam's earlier job: the overlay
 		// shows one result at a time and stopped polling the old one
@@ -250,7 +283,7 @@ func servePluginIdentifyStart(w http.ResponseWriter, r *http.Request, d *common.
 		// this a tablet (one job per plugin) refused the next Capture until
 		// the old job's unpolled TTL ran out. A job the plugin runs on its
 		// own page is never cancelled here: that stays busy.
-		id, err = startPluginJob(r.Context(), d, identifyEntry(pluginID), identifyEvent, payload, vctx, tokens)
+		id, err = startPluginJob(r.Context(), d, identifyEntry(pluginID), identifyEvent, payload, vctx, tokens, keep)
 	}
 	if err != nil {
 		// Only a nil error hands the photo to the job.
@@ -366,7 +399,9 @@ func stageIdentifyPhoto(part io.Reader, pluginID string) (pluginUpload, error) {
 	if size > identifyMaxPhotoBytes {
 		return pluginUpload{}, errIdentifyTooLarge
 	}
-	tok, err := plugins.StageUpload(pluginID, path)
+	// Kept: the plugin's upload_close must not delete the photo a pick
+	// may still store (ut-docs#4006).
+	tok, err := plugins.StageUploadKept(pluginID, path)
 	if err != nil {
 		return pluginUpload{}, errPluginUploadsBusy
 	}
@@ -409,7 +444,10 @@ func servePluginIdentifyPoll(w http.ResponseWriter, r *http.Request, d *common.D
 		// job; the reason is in the log.
 		renderIdentify(w, r, http.StatusOK, "identify_notice", identifyNotice{"ai.identify.error", "warn"})
 	default:
-		renderIdentify(w, r, http.StatusOK, "identify_result", identifyResultFor(r.Context(), d, pluginID, snap.doc.Prepare(locale)))
+		identifySlots.handedOut(pluginID, jobID)
+		res := identifyResultFor(r.Context(), d, pluginID, snap.doc.Prepare(locale))
+		res.Job = jobID
+		renderIdentify(w, r, http.StatusOK, "identify_result", res)
 	}
 }
 
@@ -447,4 +485,110 @@ func identifyResultFor(ctx context.Context, d *common.Deps, pluginID string, v p
 		}
 	}
 	return res
+}
+
+// identifyStoreRef stores img as itemID's newest ai_ref. A var so tests
+// can make the store slow or fail.
+var identifyStoreRef = func(_ context.Context, itemID string, img image.Image) error {
+	_, err := itemimages.StoreAIRef(itemID, img)
+	return err
+}
+
+// servePluginIdentifyPick adds a picked suggestion through scan — the
+// /api/pos/scan handler itself, so the line, the basket swap and every
+// scan rule are exactly a scan's — and only after the response is written
+// learns from the pick on its own goroutine: the sale is never delayed or
+// failed by it (ADR-0121 R2a). A cashier's sale action (#3079), session-
+// gated under /api/pos/* like the built-in confirm.
+func servePluginIdentifyPick(w http.ResponseWriter, r *http.Request, d *common.Deps, scan http.HandlerFunc) {
+	// A form body only: scan's JSON branch reads its own "code", which
+	// would add one item while the photo is stored on sku's.
+	if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, identifyPickMaxBytes)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+	jobID := r.Form.Get(pluginJobParam)
+	sku := strings.TrimSpace(r.Form.Get("sku"))
+	// The scan reads only its own fields; the pick's _job never reaches it.
+	r.Form.Set("code", sku)
+	r.Form.Del(pluginJobParam)
+	scan(w, r)
+	if sku == "" || !identifyJobIDRe.MatchString(jobID) {
+		return // nothing to learn: an unknown _job only adds the line
+	}
+	userID := getSessionUserID(r)
+	ctx := context.WithoutCancel(r.Context())
+	go func() {
+		defer logging.RecoverAndLog("pages.identifyPick")
+		learnIdentifyPick(ctx, d, jobID, sku, userID)
+	}()
+}
+
+// identifyJobIDRe: a job id is 32 hex characters (pluginJobRegistry).
+var identifyJobIDRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+// learnIdentifyPick stores the slot's photo for jobID — taken at most
+// once; none (expired, replaced, never existed) stores nothing — as the
+// newest ai_ref of the item sku resolves to (resolved by core, the way the
+// scan does, never named by the client), then nudges linked tills and
+// audits it, exactly like the built-in confirm. The slot's file is
+// deleted whatever happens.
+func learnIdentifyPick(ctx context.Context, d *common.Deps, jobID, sku, userID string) {
+	path, ctype, ok := identifySlots.take(jobID)
+	if !ok {
+		return
+	}
+	defer func() { _ = os.Remove(path) }()
+	if ctype != "image/jpeg" && ctype != "image/png" {
+		return // WebP: the bounded decode takes PNG/JPEG only
+	}
+	base, ok := d.Engine.ResolveBase(sku)
+	if !ok || !itemimages.ValidID(base.ItemID) {
+		logging.L().Infof("plugin identify pick: %q resolves to no item; photo not stored", sku)
+		return
+	}
+	raw, err := readCapped(path, identifyMaxPhotoBytes)
+	if err != nil {
+		logging.L().Infof("plugin identify pick: read photo: %v", err)
+		return
+	}
+	img, err := imaging.Decode(raw)
+	if err != nil {
+		logging.L().Infof("plugin identify pick: photo not stored: %v", err)
+		return
+	}
+	if err := identifyStoreRef(ctx, base.ItemID, img); err != nil {
+		logging.L().Warnf("plugin identify pick: store reference photo for %s: %v", base.ItemID, err)
+		return
+	}
+	// Reference photos live under the items asset tree, which linked
+	// tills pull: nudge them (ADR-0114 §2), as the built-in confirm does.
+	d.NudgeLink(fleetlink.ScopeAdmin)
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := data.NewPOSRepo(d.Db).InsertAudit(ctx, nil, userID, "ai", base.ItemID, "ai_identify_confirmed",
+		map[string]any{"item_id": base.ItemID}, now, ""); err != nil {
+		logging.L().Warnf("plugin identify pick: audit: %v", err)
+	}
+}
+
+// readCapped reads the file at path, refusing one over max bytes.
+func readCapped(path string, max int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > max {
+		return nil, errIdentifyTooLarge
+	}
+	return raw, nil
 }

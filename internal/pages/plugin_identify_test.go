@@ -186,9 +186,9 @@ func TestPluginIdentify_PollThenSuggestions_3873(t *testing.T) {
 		t.Fatalf("done poll = %d:\n%s", rec.Code, body)
 	}
 	for _, want := range []string{
-		`hx-post="/api/pos/scan"`,
-		`hx-vals='{&#34;code&#34;:&#34;TEA-1&#34;,&#34;qty&#34;:2}'`,
-		`hx-vals='{&#34;code&#34;:&#34;NOPE&#34;,&#34;qty&#34;:1}'`,
+		`hx-post="/api/pos/identify/plugin/pick"`,
+		`hx-vals='{&#34;_job&#34;:&#34;` + id + `&#34;,&#34;qty&#34;:2,&#34;sku&#34;:&#34;TEA-1&#34;}'`,
+		`hx-vals='{&#34;_job&#34;:&#34;` + id + `&#34;,&#34;qty&#34;:1,&#34;sku&#34;:&#34;NOPE&#34;}'`,
 		`hx-target="#basket"`,
 		`hx-swap="outerHTML"`,
 		`hx-sync="#basket:replace"`,
@@ -207,6 +207,11 @@ func TestPluginIdentify_PollThenSuggestions_3873(t *testing.T) {
 	if strings.Count(body, "<img") != 1 {
 		t.Errorf("only the catalog item with a photo shows one:\n%s", body)
 	}
+	// The job is over; its photo now waits for a pick (ut-docs#4006).
+	if n := len(stagedUploads(t)); n != 1 {
+		t.Fatalf("pending-confirm photo files = %d, want 1", n)
+	}
+	identifySlots.clear(viewPluginID)
 	assertNoStaged(t)
 	// The result is handed out once.
 	assertNotice(t, h.do(http.MethodGet, identifyRoute+"?_job="+id, nil, true), "plugin.job.gone")

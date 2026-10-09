@@ -4,12 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
-	"image/png"
 	"io"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -204,33 +201,10 @@ func registerAIAPI(mux *http.ServeMux, d *common.Deps) {
 		// uploaded, `.jpg` or `.png` alike (itemimages matches both
 		// extensions). imaging.RefJPEG's own bounded decode is what
 		// protects those pre-existing files on every future identify call.
-		dir := itemimages.AIRefDir(itemID)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if _, err := itemimages.StoreAIRef(itemID, photo.Img); err != nil {
 			writeJSON(w, http.StatusInternalServerError, nil, "cannot store reference image")
 			return
 		}
-		name := fmt.Sprintf("%d.png", time.Now().UnixNano())
-		outPath := filepath.Join(dir, name)
-		out, err := os.Create(outPath)
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, nil, "cannot store reference image")
-			return
-		}
-		encErr := png.Encode(out, photo.Img)
-		closeErr := out.Close()
-		if encErr != nil || closeErr != nil {
-			// Don't leave a partial/corrupt file behind (ut-docs#1417
-			// review): unlike the catalog handlers' fixed thumb.png name
-			// (which self-heals on the next upload), this filename is a
-			// unique nanosecond timestamp — left in place, it would
-			// shadow every older confirmed photo for this item
-			// (itemimages picks only the newest name; the `ref` choice then
-			// falls back to thumb.png when that decode fails).
-			_ = os.Remove(outPath)
-			writeJSON(w, http.StatusInternalServerError, nil, "cannot store reference image")
-			return
-		}
-		itemimages.PruneAIRefs(dir)
 		// Reference images live under the items asset tree, so linked
 		// tills sync them on their pull: nudge (ADR-0114 §2), as for a
 		// photo — a file moves no admin-table trigger.

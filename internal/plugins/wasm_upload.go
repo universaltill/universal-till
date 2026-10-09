@@ -33,6 +33,12 @@ import (
 // the end of the ui.action.ask that received it (or of the job it started)
 // via ReleaseUploads, or the plugin's unload/reload (WasmRuntime.Sync →
 // uploads.CloseAll).
+//
+// A kept upload (StageUploadKept, ut-docs#4006) differs in one way: its
+// upload_close consumes the token for the guest but parks the file instead
+// of deleting it, so core can still take it (TakeUpload) when the job ends —
+// the sell screen keeps the identify photo for a pick (ADR-0121 R2a).
+// ReleaseUploads and CloseAll delete a parked file like a staged one.
 
 const (
 	// maxStagedUploadsPerPlugin caps staged (not yet released) uploads per
@@ -64,6 +70,10 @@ type uploadRegistry struct {
 	staged  map[string]map[string]string // plugin → token → temp path
 	handles map[string]map[int32]uploadHandle
 	next    map[string]int32
+	// kept marks kept tokens (staged or parked); parked holds a kept
+	// token's file after its upload_close: plugin → token → temp path.
+	kept   map[string]map[string]bool
+	parked map[string]map[string]string
 }
 
 func newUploadRegistry() *uploadRegistry {
@@ -71,6 +81,8 @@ func newUploadRegistry() *uploadRegistry {
 		staged:  map[string]map[string]string{},
 		handles: map[string]map[int32]uploadHandle{},
 		next:    map[string]int32{},
+		kept:    map[string]map[string]bool{},
+		parked:  map[string]map[string]string{},
 	}
 }
 
@@ -81,8 +93,9 @@ var uploads = newUploadRegistry()
 
 var errUploadsFull = errors.New("plugin already holds the maximum number of staged uploads")
 
-// stage registers path for pluginID under a new random token.
-func (r *uploadRegistry) stage(pluginID, path string) (string, error) {
+// stage registers path for pluginID under a new random token; a kept one
+// survives upload_close (parked) until taken or released.
+func (r *uploadRegistry) stage(pluginID, path string, keep bool) (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
@@ -90,13 +103,19 @@ func (r *uploadRegistry) stage(pluginID, path string) (string, error) {
 	tok := hex.EncodeToString(b)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(r.staged[pluginID]) >= maxStagedUploadsPerPlugin {
+	if len(r.staged[pluginID])+len(r.parked[pluginID]) >= maxStagedUploadsPerPlugin {
 		return "", errUploadsFull
 	}
 	if r.staged[pluginID] == nil {
 		r.staged[pluginID] = map[string]string{}
 	}
 	r.staged[pluginID][tok] = path
+	if keep {
+		if r.kept[pluginID] == nil {
+			r.kept[pluginID] = map[string]bool{}
+		}
+		r.kept[pluginID][tok] = true
+	}
 	return tok, nil
 }
 
@@ -163,7 +182,8 @@ func closeAndRemove(path string, files []*os.File) {
 }
 
 // closeHandle closes the handle and consumes its token (the staged file is
-// removed, other handles on it closed). Unknown handles are a no-op.
+// removed — parked instead, for a kept token — and other handles on it
+// closed). Unknown handles are a no-op.
 func (r *uploadRegistry) closeHandle(pluginID string, handle int32) {
 	r.mu.Lock()
 	uh, ok := r.handles[pluginID][handle]
@@ -172,6 +192,13 @@ func (r *uploadRegistry) closeHandle(pluginID string, handle int32) {
 	if ok {
 		delete(r.handles[pluginID], handle)
 		path, files = r.releaseLocked(pluginID, uh.token)
+		if path != "" && r.kept[pluginID][uh.token] {
+			if r.parked[pluginID] == nil {
+				r.parked[pluginID] = map[string]string{}
+			}
+			r.parked[pluginID][uh.token] = path
+			path = ""
+		}
 	}
 	r.mu.Unlock()
 	if ok {
@@ -179,15 +206,35 @@ func (r *uploadRegistry) closeHandle(pluginID string, handle int32) {
 	}
 }
 
-// release consumes tokens staged for pluginID; unknown tokens (already
-// closed, or another plugin's) are a no-op.
+// release consumes tokens staged (or parked) for pluginID; unknown tokens
+// (already closed or taken, or another plugin's) are a no-op.
 func (r *uploadRegistry) release(pluginID string, tokens []string) {
 	for _, tok := range tokens {
 		r.mu.Lock()
 		path, files := r.releaseLocked(pluginID, tok)
+		if p, ok := r.parked[pluginID][tok]; ok {
+			path = p
+			delete(r.parked[pluginID], tok)
+		}
+		delete(r.kept[pluginID], tok)
 		r.mu.Unlock()
 		closeAndRemove(path, files)
 	}
+}
+
+// take hands a staged or parked token's file to the caller (closing any
+// handle on it) without deleting it: "", false when unknown.
+func (r *uploadRegistry) take(pluginID, token string) (string, bool) {
+	r.mu.Lock()
+	path, files := r.releaseLocked(pluginID, token)
+	if p, ok := r.parked[pluginID][token]; ok {
+		path = p
+		delete(r.parked[pluginID], token)
+	}
+	delete(r.kept[pluginID], token)
+	r.mu.Unlock()
+	closeAndRemove("", files)
+	return path, path != ""
 }
 
 // CloseAll releases every upload staged for pluginID (WasmRuntime.Sync,
@@ -195,14 +242,20 @@ func (r *uploadRegistry) release(pluginID string, tokens []string) {
 func (r *uploadRegistry) CloseAll(pluginID string) {
 	r.mu.Lock()
 	staged := r.staged[pluginID]
+	parked := r.parked[pluginID]
 	handles := r.handles[pluginID]
 	delete(r.staged, pluginID)
+	delete(r.parked, pluginID)
+	delete(r.kept, pluginID)
 	delete(r.handles, pluginID)
 	r.mu.Unlock()
 	for _, uh := range handles {
 		_ = uh.f.Close()
 	}
 	for _, path := range staged {
+		_ = os.Remove(path)
+	}
+	for _, path := range parked {
 		_ = os.Remove(path)
 	}
 }
@@ -213,11 +266,31 @@ func (r *uploadRegistry) CloseAll(pluginID string) {
 // (ReleaseUploads, upload_close or the plugin's unload remove it); on an
 // error the caller still owns — and must remove — it.
 func StageUpload(pluginID, path string) (string, error) {
-	tok, err := uploads.stage(pluginID, path)
+	return stageUpload(pluginID, path, false)
+}
+
+// StageUploadKept is StageUpload for a file core may still want when the
+// job ends (ut-docs#4006): the guest's upload_close parks it rather than
+// deleting it, and TakeUpload hands it back. ReleaseUploads and unload
+// delete it as usual.
+func StageUploadKept(pluginID, path string) (string, error) {
+	return stageUpload(pluginID, path, true)
+}
+
+func stageUpload(pluginID, path string, keep bool) (string, error) {
+	tok, err := uploads.stage(pluginID, path, keep)
 	if err != nil {
 		logging.L().Infof("[wasm:%s] upload staging refused: %v", pluginID, err)
 	}
 	return tok, err
+}
+
+// TakeUpload hands pluginID's staged or parked upload named by token to the
+// caller, which owns — and must remove — the file from then on; any guest
+// handle on it is closed. False when the token is unknown, released, taken
+// already, or another plugin's.
+func TakeUpload(pluginID, token string) (string, bool) {
+	return uploads.take(pluginID, token)
 }
 
 // ReleaseUploads removes pluginID's staged uploads named by tokens (and

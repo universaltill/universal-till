@@ -219,7 +219,7 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 		case err != nil:
 		case ans.Job != "":
 			var id string
-			id, err = startPluginJob(r.Context(), d, entry, ans.Job, payload, vctx, tokens)
+			id, err = startPluginJob(r.Context(), d, entry, ans.Job, payload, vctx, tokens, nil)
 			jobOwnsUploads = err == nil
 			switch {
 			case errors.Is(err, errPluginJobBusy):
