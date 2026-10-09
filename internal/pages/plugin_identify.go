@@ -61,8 +61,6 @@ import (
 const (
 	identifyEvent = "catalog.identify"
 	identifyRoute = "/api/pos/identify/plugin"
-	// identifyPickRoute adds a picked suggestion and learns from the photo.
-	identifyPickRoute = "/api/pos/identify/plugin/pick"
 	// identifyPickMaxBytes bounds the pick's form body (three short values).
 	identifyPickMaxBytes = 4 << 10
 	// identifyThumbRoute serves a suggestion's plugin-blob thumbnail.
