@@ -46,7 +46,7 @@
      a first-time prompt; an i18n key once a PIN was actually tried and
      failed — elevationErrorKey in elevation.go). */}}
 <span class="elevation-hint muted">{{ T "elevation.hint" }}</span>
-<dialog id="elevation-modal" class="modifier-modal elevation-dialog" hx-swap-oob="true">
+<dialog id="elevation-modal" class="modifier-modal elevation-dialog" hx-swap-oob="true" data-ut-focus-trap>
   {{/* ut-docs#795 review S7: this form had NO after-request handler of its
        own before — a successful retry swapped its confirmation into
        HxTarget but left the dialog sitting open over what, on users.html's

@@ -25,7 +25,7 @@
      already; anything else is terminal — close the dialog so the answer
      swapped into HxTarget is visible. */}}
 <span class="elevation-hint muted">{{ .Title }}</span>
-<dialog id="confirm-modal" class="modifier-modal confirm-dialog" hx-swap-oob="true">
+<dialog id="confirm-modal" class="modifier-modal confirm-dialog" hx-swap-oob="true" data-ut-focus-trap>
   <form hx-post="{{ .Action }}" hx-target="{{ .HxTarget }}" hx-swap="innerHTML"
         hx-sync="this:drop" hx-disabled-elt="find button[type=submit]"
         data-after-request="elevation-done">

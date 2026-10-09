@@ -325,3 +325,139 @@ test.describe('ut-docs#2097 till dialogs never block the status bar or Lock', ()
     }
   });
 });
+
+// ut-docs#3212: the older non-modal till dialogs (opened with .show() since
+// long before #2097) never had the keyboard half of showModal()'s inertness
+// either: with one open, Tab walked out to a product tile or Pay behind the
+// scrim and Enter acted on it. They opt into base.html's trap with
+// data-ut-focus-trap -- the trap without Escape-to-close (data-ut-escape-
+// close still implies both). Same Tab / Shift+Tab walk as (e) above, plus
+// focus forced onto the page behind is pulled back into the dialog; the
+// on-screen keyboard, status bar and Lock stay focusable.
+async function assertFocusTrapped(page: Page, sel: string) {
+  const dlg = page.locator(sel);
+  await expect(dlg).toBeVisible();
+  await page.evaluate((s) => {
+    const d = document.querySelector(s) as HTMLElement;
+    const f = d.querySelector('a[href], button, input, select, textarea, [tabindex]') as HTMLElement | null;
+    (f || d).focus();
+  }, sel);
+  for (const key of ['Tab', 'Tab', 'Tab', 'Tab', 'Tab', 'Tab', 'Tab', 'Tab', 'Shift+Tab', 'Shift+Tab', 'Shift+Tab', 'Shift+Tab', 'Shift+Tab', 'Shift+Tab']) {
+    await page.keyboard.press(key);
+    const inside = await page.evaluate((s) => !!document.querySelector(s)?.contains(document.activeElement), sel);
+    expect(inside, `${key} keeps focus inside ${sel}`).toBe(true);
+  }
+  // Focus that lands on the page behind (a script, a stray click target)
+  // is pulled back into the dialog.
+  const pulledBack = await page.evaluate((s) => {
+    const d = document.querySelector(s)!;
+    const behind = Array.from(document.querySelectorAll('main button, main a[href], main input, .nav a[href]'))
+      .find((el) => !d.contains(el) && !(el as Element).closest('dialog, .statusbar, .session-lock, #osk') && (el as HTMLElement).getClientRects().length > 0) as HTMLElement | undefined;
+    if (!behind) return 'no focusable element behind the dialog';
+    behind.focus();
+    return d.contains(document.activeElement) ? 'ok' : `focus stayed on ${behind.outerHTML.slice(0, 80)}`;
+  }, sel);
+  expect(pulledBack, `focus behind ${sel} is pulled back`).toBe('ok');
+  // The status bar stays focusable (CLAUDE.md "Offline-first").
+  const sbFocus = await page.evaluate(() => {
+    const el = document.querySelector('.statusbar a[href], .statusbar button, .statusbar [tabindex]') as HTMLElement | null;
+    if (!el) return 'none';
+    el.focus();
+    return document.activeElement === el ? 'ok' : 'stolen';
+  });
+  expect(sbFocus, 'the status bar keeps focus while a trapped dialog is open').not.toBe('stolen');
+}
+
+test.describe('ut-docs#3212 older non-modal till dialogs trap Tab like the #2097 ones', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 600 });
+    await page.request.post('/api/pos/reset');
+  });
+  test.afterEach(async ({ page }) => {
+    await page.request.post('/api/pos/reset').catch(() => {});
+  });
+
+  async function scanCoke(page: Page) {
+    await page.locator('.scan-row input[name="code"]').fill('5000000000012');
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
+      page.locator('.scan-row button[type=submit]').click(),
+    ]);
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
+  }
+
+  test('#hold-modal and #parked-orders-modal (sale screen)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.goto('/');
+    await page.waitForSelector('.pos-container');
+    await scanCoke(page);
+    await page.getByTestId('tender-footer-hold').click();
+    await assertFocusTrapped(page, '#hold-modal');
+    // Still a working dialog: holding lands the sale in Open orders.
+    await page.locator('#hold-label-input').fill(`F3212 ${RUN}`);
+    await page.locator('#hold-modal button[type=submit]').click();
+    await expect(page.locator('#hold-modal')).toBeHidden();
+
+    await page.getByTestId('parked-orders-open').click();
+    await expect(page.locator('#parked-orders-body')).toContainText(`F3212 ${RUN}`);
+    await assertFocusTrapped(page, '#parked-orders-modal');
+    await page.locator('#parked-orders-modal button', { hasText: 'Close' }).last().click();
+    await expect(page.locator('#parked-orders-modal')).toBeHidden();
+    assertClean();
+  });
+
+  test('#category-items-modal (sale screen), and a dialog opened over it keeps its own focus', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForSelector('.pos-container');
+    await page.evaluate(() => (document.getElementById('category-items-modal') as HTMLDialogElement).show());
+    await assertFocusTrapped(page, '#category-items-modal');
+    // Review S1: native show() focuses the new dialog BEFORE it becomes the
+    // topmost scrim popup; the trap must not pull that focus back into the
+    // trapped popup underneath (category popup -> modifier / order-type).
+    const focusIn = await page.evaluate(() => {
+      const d = document.getElementById('order-type-prompt-modal') as HTMLDialogElement;
+      d.show();
+      return d.contains(document.activeElement);
+    });
+    expect(focusIn, 'a dialog shown over a trapped one holds its own focus').toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#order-type-prompt-modal')).toBeHidden();
+  });
+
+  test('#parked-orders-modal: Tab from the Move-table toggle enters its options (review S2)', async ({ page }) => {
+    const label = `M3212 ${RUN}`;
+    await deactivateAllTables(page);
+    await createTable(page, label);
+    try {
+      await page.goto('/');
+      await page.waitForSelector('.pos-container');
+      await scanCoke(page);
+      await page.getByTestId('tender-footer-hold').click();
+      await page.locator('#hold-modal button[type=submit]').click();
+      await expect(page.locator('#hold-modal')).toBeHidden();
+      await page.getByTestId('parked-orders-open').click();
+      const toggle = page.locator('#parked-orders-modal .parked-move-toggle').first();
+      await expect(toggle).toBeVisible();
+      await toggle.focus();
+      await page.keyboard.press('Enter');
+      await expect(page.locator('#parked-orders-modal .parked-move-option').first()).toBeVisible();
+      await page.keyboard.press('Tab');
+      expect(await page.evaluate(() => !!document.activeElement?.classList.contains('parked-move-option')),
+        'Tab from the open toggle lands on its first table option').toBe(true);
+      await page.keyboard.press('Shift+Tab');
+      expect(await page.evaluate(() => !!document.activeElement?.classList.contains('parked-move-toggle')),
+        'Shift+Tab returns to the toggle').toBe(true);
+    } finally {
+      await deactivateAllTables(page);
+    }
+  });
+
+  test('#pfand-modal (menu)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.goto('/menu');
+    await page.waitForSelector('.menu-grid');
+    await page.locator('[data-testid="menu-pfand-open"]').click();
+    await assertFocusTrapped(page, '#pfand-modal');
+    assertClean();
+  });
+});
