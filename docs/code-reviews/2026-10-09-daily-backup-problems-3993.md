@@ -63,3 +63,14 @@ changes.
 ## Verdict
 
 Safe to merge.
+
+## CI follow-up (first push)
+
+`build` failed: `TestRunDailyBackup_FreshNoPhotosReRaisedAfterRestart`. The
+Problem message read `unitill-pos-[REDACTED].db`. The logger redacts
+every message, and about 10% of `unitill-pos-YYYYMMDD-HHMMSS.db` names
+look like a card number to it. Brute-forcing three days of per-second
+names gave 25,920 hits. So the "names the file" assertion depended on the
+clock. #3991's `TestRunDailyBackup_NoPhotosRaisesThenResolvesProblem`
+had the same latent flake. Both now compare against
+`logging.Redact(name)`. The product-side over-match is filed as its own card.

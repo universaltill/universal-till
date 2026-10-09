@@ -509,7 +509,7 @@ func TestRunDailyBackup_NoPhotosRaisesThenResolvesProblem(t *testing.T) {
 	}
 
 	msg := openDailyNoPhotosProblems()[0].Msg
-	if !strings.Contains(msg, "boom") || !strings.Contains(msg, list[0].Name) || strings.Contains(msg, filepath.Dir(dbPath)) {
+	if !strings.Contains(msg, "boom") || !strings.Contains(msg, logging.Redact(list[0].Name)) || strings.Contains(msg, filepath.Dir(dbPath)) {
 		t.Fatalf("problem must carry the cause and the snapshot's file name, not its directory: %q", msg)
 	}
 
@@ -619,7 +619,9 @@ func TestRunDailyBackup_FreshNoPhotosReRaisedAfterRestart(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("restart with a fresh photo-less backup must re-raise exactly 1 problem, got %v", got)
 	}
-	if list, _ := appdb.ListBackups(dbPath); len(list) != 1 || !strings.Contains(got[0].Msg, list[0].Name) || strings.Contains(got[0].Msg, filepath.Dir(dbPath)) {
+	// The logger redacts the message, and some timestamped names look like a
+	// card number to the redactor, so compare with the redacted name.
+	if list, _ := appdb.ListBackups(dbPath); len(list) != 1 || !strings.Contains(got[0].Msg, logging.Redact(list[0].Name)) || strings.Contains(got[0].Msg, filepath.Dir(dbPath)) {
 		t.Fatalf("re-raised problem must name the backup file only: %q", got[0].Msg)
 	}
 
