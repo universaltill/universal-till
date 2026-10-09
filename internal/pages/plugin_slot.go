@@ -191,6 +191,19 @@ func contentSlotPanels(ctx context.Context, d *common.Deps, slot, locale string,
 	return out
 }
 
+// pluginEntrySlotAllowed reports whether r may open a page entry that
+// declares slot: an entry with no slot is allowed; otherwise the slot's
+// host-page gate decides, failing closed for setup.wizard.steps and unknown
+// slots (ut-docs#3973). The Plugins page's Docs button uses it too, so the
+// button never disagrees with the route (ut-docs#3994).
+func pluginEntrySlotAllowed(d *common.Deps, r *http.Request, slot string) bool {
+	if slot == "" {
+		return true
+	}
+	gate, ok := pluginSlotGates[slot]
+	return ok && gate(d, r)
+}
+
 // registerPluginSlots serves GET /ui/slot/{slot}: the panels of one lazily
 // drawn slot as an HTML fragment (empty when no plugin answers). Unknown
 // slots and setup.wizard.steps are 404; a viewer without the host page's

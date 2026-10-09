@@ -126,11 +126,9 @@ func servePluginEntry(w http.ResponseWriter, r *http.Request, d *common.Deps, en
 	// setup.wizard.steps has no gate (drawn inline, read-only by the
 	// wizard), so its route is 403 for everyone. The 403 is requirePage's
 	// error page, rail intact.
-	if entry.Slot != "" {
-		if gate, ok := pluginSlotGates[entry.Slot]; !ok || !gate(d, r) {
-			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
-			return
-		}
+	if !pluginEntrySlotAllowed(d, r, entry.Slot) {
+		httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
+		return
 	}
 	// ADR-0121 §7 (ut-docs#3160): a view entry is drawn by core from the
 	// plugin's view document, and POST runs its actions. Only under

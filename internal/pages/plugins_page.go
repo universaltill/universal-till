@@ -45,6 +45,11 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 				if _, reserved := plugins.ReservedPageRoutePrefix(e.Route); reserved {
 					continue
 				}
+				// ut-docs#3994: the button follows the same slot gate as the
+				// route (servePluginEntry), so it is never shown then refused.
+				if e.EntryKey == plugins.DocsEntryKey && !pluginEntrySlotAllowed(d, r, e.Slot) {
+					continue
+				}
 				if e.EntryKey == plugins.DocsEntryKey && e.Route != "" {
 					if _, seen := docsRouteByPlugin[e.PluginID]; !seen {
 						docsRouteByPlugin[e.PluginID] = e.Route
