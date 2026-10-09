@@ -33,6 +33,7 @@ Kasa, diski dolmasın diye günde bir kez artık gerekmeyen dosyaları siler:
 - Bir yedeği geri yüklerken kenara ayrılan veri kopyası: satış kayıtlarını yasal olarak saklamanız gereken süre boyunca tutulur; bu süre dolduktan sonra yalnızca en yeni 3 kopya tutulur, hiçbiri 30 günden eski olmaz.
 - Gönderilemeyen sorun bildirimleri: 7 gün sonra silinir.
 - İndirilen güncellemeler: 7 gün sonra silinir.
+- Kasa bir yükleme veya içe aktarma sırasında kapandığı için geride kalan yüklenmiş dosyalar: 24 saat sonra silinir.
 
 Bu temizlik satışları, fişleri, denetim kaydını, Z raporlarını veya yasal olarak saklamanız gereken başka hiçbir kaydı asla silmez. Her kasa yalnızca kendi diskini temizler.
 

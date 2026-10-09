@@ -23,6 +23,7 @@ import (
 	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/stagedupload"
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
@@ -634,12 +635,23 @@ func TestOpenSetupPage_WaitsForListener(t *testing.T) {
 // first call; one added later survives until the next interval. With no
 // database the statutory floor falls back to GlobalArchiveMinDays (10
 // years, ut-docs#3365), so the fixtures are named (and aged) from 2010.
+// isolateStagedUploads points the staged-upload sweep at root/tmp, so a
+// housekeeping run never deletes from the real system temp dir
+// (ut-docs#3955 review).
+func isolateStagedUploads(t *testing.T, root string) {
+	t.Helper()
+	orig := stagedupload.Dir
+	stagedupload.Dir = func() string { return filepath.Join(root, "tmp") }
+	t.Cleanup(func() { stagedupload.Dir = orig })
+}
+
 func TestRunHousekeeping_OncePerInterval(t *testing.T) {
 	root := t.TempDir()
 	origData, origPending := paths.DataDir(), issuereport.PendingDir
 	paths.Init(root)
 	issuereport.PendingDir = filepath.Join(root, "issue-reports", "pending")
 	t.Cleanup(func() { paths.Init(origData); issuereport.PendingDir = origPending })
+	isolateStagedUploads(t, root)
 	dbPath := filepath.Join(root, "unitill-pos.db")
 	dir, err := appdb.BackupDir(dbPath)
 	if err != nil {
@@ -684,6 +696,7 @@ func TestRunHousekeeping_KeepsPreRestoreCopiesInsideStatutoryFloor(t *testing.T)
 	paths.Init(root)
 	issuereport.PendingDir = filepath.Join(root, "issue-reports", "pending")
 	t.Cleanup(func() { paths.Init(origData); issuereport.PendingDir = origPending })
+	isolateStagedUploads(t, root)
 	dbPath := filepath.Join(root, "unitill-pos.db")
 	d, err := appdb.Open(testsupport.MigratedDBFile(t, "hk_floor.db"))
 	if err != nil {
@@ -737,6 +750,7 @@ func TestRunHousekeeping_ClampsAbsurdArchiveRetentionInsteadOfOverflowing(t *tes
 	paths.Init(root)
 	issuereport.PendingDir = filepath.Join(root, "issue-reports", "pending")
 	t.Cleanup(func() { paths.Init(origData); issuereport.PendingDir = origPending })
+	isolateStagedUploads(t, root)
 	dbPath := filepath.Join(root, "unitill-pos.db")
 	d, err := appdb.Open(testsupport.MigratedDBFile(t, "hk_floor_overflow.db"))
 	if err != nil {

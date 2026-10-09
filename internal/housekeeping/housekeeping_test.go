@@ -17,22 +17,27 @@ import (
 
 	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/paths"
+	"github.com/universaltill/universal-till/internal/stagedupload"
 )
 
 var testNow = time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 
-// layout points paths and issuereport at a fresh data dir and returns it
-// plus the DB path inside it.
+// layout points paths and issuereport at a fresh data dir, and the
+// staged-upload sweep at its tmp/ subdirectory (never the real temp dir),
+// and returns it plus the DB path inside it.
 func layout(t *testing.T) (string, string) {
 	t.Helper()
 	root := t.TempDir()
 	origData := paths.DataDir()
 	origPending := issuereport.PendingDir
+	origStaged := stagedupload.Dir
 	paths.Init(root)
 	issuereport.PendingDir = filepath.Join(root, "issue-reports", "pending")
+	stagedupload.Dir = func() string { return filepath.Join(root, "tmp") }
 	t.Cleanup(func() {
 		paths.Init(origData)
 		issuereport.PendingDir = origPending
+		stagedupload.Dir = origStaged
 	})
 	return root, filepath.Join(root, "unitill-pos.db")
 }
@@ -92,6 +97,9 @@ func TestRun_RemovesOnlyWhatTheRetentionTableAllows(t *testing.T) {
 		"public/assets/items/a.png",
 		"plugins/x/plugin.wasm",
 		"issue-reports/pending/loose-file.txt",
+		// The system temp dir (tmp/ here) holds other programs' files.
+		"tmp/someone-else.upload",
+		"tmp/ut-bkp-1.db",
 	}
 	var mustGo []string
 	// 16 snapshots: the newest DefaultBackupKeep stay, two go.
@@ -117,9 +125,14 @@ func TestRun_RemovesOnlyWhatTheRetentionTableAllows(t *testing.T) {
 	put(t, root, "updates/attempt-1/unitill-pos-setup-1.0.0.exe", ancient)
 	age(t, root, "updates/attempt-1", ancient)
 	mustGo = append(mustGo, "updates/attempt-1/unitill-pos-setup-1.0.0.exe")
+	put(t, root, "tmp/ut-import-stage-1.upload", ancient)
+	mustGo = append(mustGo, "tmp/ut-import-stage-1.upload")
+	// A staged upload younger than its limit may still be in use.
+	put(t, root, "tmp/ut-view-upload-2.upload", testNow.Add(-time.Hour))
+	mustKeep = append(mustKeep, "tmp/ut-view-upload-2.upload")
 
 	for _, rel := range mustKeep {
-		if !strings.HasPrefix(rel, "backups/unitill-pos-") {
+		if !strings.HasPrefix(rel, "backups/unitill-pos-") && !strings.HasPrefix(rel, "tmp/ut-view-upload-") {
 			put(t, root, rel, ancient)
 		}
 	}
@@ -154,7 +167,7 @@ func TestRun_RemovesOnlyWhatTheRetentionTableAllows(t *testing.T) {
 	for _, r := range results {
 		removed[r.Kind] = r.Removed
 	}
-	want := map[string]int{KindBackups: 2, KindPreRestore: 5, KindIssueReports: 1, KindUpdateDownloads: 1}
+	want := map[string]int{KindBackups: 2, KindPreRestore: 5, KindIssueReports: 1, KindUpdateDownloads: 1, KindStagedUploads: 1}
 	for k, n := range want {
 		if removed[k] != n {
 			t.Errorf("%s removed %d, want %d", k, removed[k], n)

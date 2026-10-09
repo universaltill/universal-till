@@ -4,7 +4,7 @@
 // down in Retention() and in the manual (web/help/*/backups.md).
 //
 // It deletes files only, each kind through the package that owns that file
-// namespace (db, issuereport, selfupdate). The sync-history tables are
+// namespace (db, issuereport, selfupdate, stagedupload). The sync-history tables are
 // bounded by the code that owns them and only listed here (ut-docs#3123).
 // It never opens the database —
 // sales, receipts, fiscal/TSE data, the audit log and Z reports follow
@@ -21,12 +21,14 @@ package housekeeping
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/selfupdate"
+	"github.com/universaltill/universal-till/internal/stagedupload"
 )
 
 // Retention limits. Whichever limit is hit first removes the file.
@@ -50,6 +52,7 @@ const (
 	KindUpdateDownloads = "update_downloads"
 	KindLogs            = "logs"
 	KindDiagnostics     = "diagnostics_spool"
+	KindStagedUploads   = "staged_uploads"
 
 	// Sync-history tables (ut-docs#3123). Housekeeping never opens the
 	// database; each of these is bounded, or kept on purpose, by the code
@@ -91,6 +94,11 @@ func Retention() []Rule {
 			fmt.Sprintf("%d files × %d MB, oldest dropped", logging.DefaultMaxFiles, logging.DefaultMaxFileBytes>>20), "logging.RotatingWriter"},
 		{KindDiagnostics, "diagnostics/pending/",
 			"200 batches, oldest dropped; deleted once uploaded", "diagnostics queue"},
+		// The one row outside the data directory: os.CreateTemp("") stages
+		// into the system temp dir (ut-docs#3955).
+		{KindStagedUploads, "<system temp dir>/" + strings.Join(stagedupload.Patterns(), ", "),
+			fmt.Sprintf("deleted when the upload or import preview that made them ends; leftovers after a crash removed after %d hours", int(stagedupload.MaxAge/time.Hour)),
+			"the request handlers + housekeeping (stagedupload.PruneOlderThan)"},
 		{KindSyncAggregateLedger, "database: sales_aggregate_uploads",
 			"rows for business days before the upload look-back window are deleted on every upload round",
 			"cloudsync (salesAggregateLookbackDays, POSRepo.PruneSalesAggregateUploads)"},
@@ -127,6 +135,7 @@ func Run(dbPath string, now time.Time, minRetain time.Duration) []Result {
 		result(KindPreRestore)(db.PrunePreRestore(dbPath, PreRestoreKeep, PreRestoreMaxAge, now, minRetain)),
 		result(KindIssueReports)(issuereport.PruneOlderThan(now.Add(-IssueReportMaxAge))),
 		result(KindUpdateDownloads)(selfupdate.PruneStaleAttempts(now.Add(-UpdateDownloadMaxAge))),
+		result(KindStagedUploads)(stagedupload.PruneOlderThan(now.Add(-stagedupload.MaxAge))),
 	}
 }
 

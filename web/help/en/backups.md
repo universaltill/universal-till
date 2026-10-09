@@ -34,6 +34,7 @@ Once a day the till removes files it no longer needs, so its disk doesn't fill u
 - The copy of your data set aside when you restore a backup: kept for as long as the law requires you to keep sales records; after that, only the newest 3 are kept, and none older than 30 days.
 - Issue reports that couldn't be sent: removed after 7 days.
 - Downloaded updates: removed after 7 days.
+- Uploaded files left behind when the till stopped in the middle of an upload or import: removed after 24 hours.
 
 The clean-up never removes sales, receipts, the audit log, Z reports or any other record you must keep by law. Each till cleans only its own disk.
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/catimport"
+	"github.com/universaltill/universal-till/internal/stagedupload"
 )
 
 // Preview-time staging for POST /api/import (ut-docs#601): a preview
@@ -51,7 +52,7 @@ func stageCatalogUpload(file io.ReadSeeker) (string, error) {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return "", fmt.Errorf("seek upload for staging: %w", err)
 	}
-	tmp, err := os.CreateTemp("", "ut-import-stage-*.upload")
+	tmp, err := os.CreateTemp("", stagedupload.ImportStagePattern)
 	if err != nil {
 		return "", fmt.Errorf("create staging file: %w", err)
 	}
