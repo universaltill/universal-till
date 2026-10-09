@@ -418,13 +418,14 @@ func TestStart_WithDBRunsRelatedItemsRebuild(t *testing.T) {
 // is newer than 24h — and never duplicates.
 func TestRunDailyBackup_SnapshotsOnceThenSkipsFresh(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "till.db")
+	assetsRoot := filepath.Join(t.TempDir(), "assets")
 	d, err := appdb.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
 	t.Cleanup(func() { d.Close() })
 
-	runDailyBackup(d.DB, dbPath)
+	runDailyBackup(d.DB, dbPath, assetsRoot)
 	list, err := appdb.ListBackups(dbPath)
 	if err != nil {
 		t.Fatalf("list backups: %v", err)
@@ -447,7 +448,7 @@ func TestRunDailyBackup_SnapshotsOnceThenSkipsFresh(t *testing.T) {
 		t.Fatalf("backdate backup: %v", err)
 	}
 
-	runDailyBackup(d.DB, dbPath) // 2h-old backup exists → must skip
+	runDailyBackup(d.DB, dbPath, assetsRoot) // 2h-old backup exists → must skip
 	list, err = appdb.ListBackups(dbPath)
 	if err != nil {
 		t.Fatalf("list backups: %v", err)
@@ -483,6 +484,7 @@ func TestRunDailyBackup_NoPhotosRaisesThenResolvesProblem(t *testing.T) {
 	t.Cleanup(func() { snapshotWithAssets = oldSeam })
 
 	dbPath := filepath.Join(t.TempDir(), "till.db")
+	assetsRoot := filepath.Join(t.TempDir(), "assets")
 	d, err := appdb.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -496,7 +498,7 @@ func TestRunDailyBackup_NoPhotosRaisesThenResolvesProblem(t *testing.T) {
 		}
 		return path, errors.New("add photos to backup: boom")
 	}
-	runDailyBackup(d.DB, dbPath)
+	runDailyBackup(d.DB, dbPath, assetsRoot)
 
 	list, err := appdb.ListBackups(dbPath)
 	if err != nil || len(list) != 1 {
@@ -507,14 +509,14 @@ func TestRunDailyBackup_NoPhotosRaisesThenResolvesProblem(t *testing.T) {
 	}
 
 	msg := openDailyNoPhotosProblems()[0].Msg
-	if !strings.Contains(msg, "boom") || !strings.Contains(msg, list[0].Name) || strings.Contains(msg, filepath.Dir(dbPath)) {
+	if !strings.Contains(msg, "boom") || !strings.Contains(msg, logging.Redact(list[0].Name)) || strings.Contains(msg, filepath.Dir(dbPath)) {
 		t.Fatalf("problem must carry the cause and the snapshot's file name, not its directory: %q", msg)
 	}
 
 	// A second photo-less day must not stack a second open entry: the
 	// back-office panel shows only a handful of problems (review finding).
 	ageNewestDailyBackup(t, dbPath, 72*time.Hour)
-	runDailyBackup(d.DB, dbPath)
+	runDailyBackup(d.DB, dbPath, assetsRoot)
 	if list, err = appdb.ListBackups(dbPath); err != nil || len(list) != 2 {
 		t.Fatalf("second photo-less run must add a snapshot: len=%d err=%v", len(list), err)
 	}
@@ -524,7 +526,7 @@ func TestRunDailyBackup_NoPhotosRaisesThenResolvesProblem(t *testing.T) {
 
 	ageNewestDailyBackup(t, dbPath, 48*time.Hour)
 	snapshotWithAssets = oldSeam // real seam: photos included, no error
-	runDailyBackup(d.DB, dbPath)
+	runDailyBackup(d.DB, dbPath, assetsRoot)
 
 	list, err = appdb.ListBackups(dbPath)
 	if err != nil || len(list) != 3 {
@@ -535,23 +537,189 @@ func TestRunDailyBackup_NoPhotosRaisesThenResolvesProblem(t *testing.T) {
 	}
 }
 
-// A failing snapshot is logged, not fatal.
+// openDailyProblems returns the still-open Problems with the given key.
+func openDailyProblems(key string) []logging.Problem {
+	var out []logging.Problem
+	for _, p := range logging.OpenProblems(time.Now(), time.Hour) {
+		if p.Key == key {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// A failing snapshot is logged and raised as a keyed Problem, not fatal
+// (ut-docs#3993).
 func TestRunDailyBackup_SnapshotFailureLogged(t *testing.T) {
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
 	logBuf := &syncBuffer{}
 	oldOut := log.Writer()
 	log.SetOutput(logBuf)
 	t.Cleanup(func() { log.SetOutput(oldOut) })
 
 	dbPath := filepath.Join(t.TempDir(), "till.db")
+	assetsRoot := filepath.Join(t.TempDir(), "assets")
 	d, err := appdb.Open(dbPath)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
 	d.Close() // snapshot over a closed DB must fail
 
-	runDailyBackup(d.DB, dbPath)
+	runDailyBackup(d.DB, dbPath, assetsRoot)
 	if !strings.Contains(logBuf.String(), "[Backup] snapshot failed") {
 		t.Fatalf("snapshot failure not logged; log:\n%s", logBuf.String())
+	}
+	got := openDailyProblems(ProblemKeyDailyBackupFailed)
+	if len(got) != 1 || !strings.HasPrefix(got[0].Msg, "[Backup] daily backup failed") {
+		t.Fatalf("want 1 open %q problem, got %v", ProblemKeyDailyBackupFailed, got)
+	}
+}
+
+// After a restart the Problems ring is empty; the still-fresh newest backup
+// without photos re-raises the no-photos Problem once, never hourly
+// (ut-docs#3993), and a backup that has the photos (or a shop with none)
+// resolves it.
+func TestRunDailyBackup_FreshNoPhotosReRaisedAfterRestart(t *testing.T) {
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+	oldSeam := snapshotWithAssets
+	t.Cleanup(func() { snapshotWithAssets = oldSeam })
+
+	dbPath := filepath.Join(t.TempDir(), "till.db")
+	assetsRoot := filepath.Join(t.TempDir(), "assets")
+	if err := os.MkdirAll(filepath.Join(assetsRoot, "items"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	photo := filepath.Join(assetsRoot, "items", "x.jpg")
+	if err := os.WriteFile(photo, []byte("jpg"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, err := appdb.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+
+	snapshotWithAssets = func(conn *sql.DB, p, _ string) (string, error) {
+		path, serr := appdb.Snapshot(conn, p)
+		if serr != nil {
+			return "", serr
+		}
+		return path, errors.New("add photos to backup: boom")
+	}
+	runDailyBackup(d.DB, dbPath, assetsRoot)
+	if got := openDailyNoPhotosProblems(); len(got) != 1 {
+		t.Fatalf("want 1 open problem after photo-less backup, got %v", got)
+	}
+
+	logging.ResetRecent() // restart: the in-memory ring is gone
+	runDailyBackup(d.DB, dbPath, assetsRoot)
+	got := openDailyNoPhotosProblems()
+	if len(got) != 1 {
+		t.Fatalf("restart with a fresh photo-less backup must re-raise exactly 1 problem, got %v", got)
+	}
+	// The logger redacts the message, and some timestamped names look like a
+	// card number to the redactor, so compare with the redacted name.
+	if list, _ := appdb.ListBackups(dbPath); len(list) != 1 || !strings.Contains(got[0].Msg, logging.Redact(list[0].Name)) || strings.Contains(got[0].Msg, filepath.Dir(dbPath)) {
+		t.Fatalf("re-raised problem must name the backup file only: %q", got[0].Msg)
+	}
+
+	runDailyBackup(d.DB, dbPath, assetsRoot) // the hourly loop must not stack
+	if got := openDailyNoPhotosProblems(); len(got) != 1 {
+		t.Fatalf("hourly re-check must not stack problems, got %v", got)
+	}
+	if n := len(logging.Recent()); n != 1 {
+		t.Fatalf("hourly re-check must not re-log, ring has %d entries", n)
+	}
+
+	// The shop deletes its photos: nothing is lacking any more.
+	if err := os.Remove(photo); err != nil {
+		t.Fatal(err)
+	}
+	runDailyBackup(d.DB, dbPath, assetsRoot)
+	if got := openDailyNoPhotosProblems(); len(got) != 0 {
+		t.Fatalf("no photos left to lack: problem must resolve, got %v", got)
+	}
+
+	// Photo back, then a complete (real seam) backup resolves it on re-check.
+	if err := os.WriteFile(photo, []byte("jpg"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runDailyBackup(d.DB, dbPath, assetsRoot)
+	if got := openDailyNoPhotosProblems(); len(got) != 1 {
+		t.Fatalf("want re-raise, got %v", got)
+	}
+	ageNewestDailyBackup(t, dbPath, 48*time.Hour)
+	snapshotWithAssets = oldSeam
+	runDailyBackup(d.DB, dbPath, assetsRoot)
+	logging.ResetRecent()
+	runDailyBackup(d.DB, dbPath, assetsRoot) // fresh, has the table
+	if got := openDailyNoPhotosProblems(); len(got) != 0 {
+		t.Fatalf("fresh backup with photos must not raise, got %v", got)
+	}
+}
+
+// A fresh photo-less backup of a shop with no photos is not a problem.
+func TestRunDailyBackup_FreshNoPhotosShopWithoutPhotos(t *testing.T) {
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+	dbPath := filepath.Join(t.TempDir(), "till.db")
+	assetsRoot := filepath.Join(t.TempDir(), "assets")
+	d, err := appdb.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+	if _, err := appdb.Snapshot(d.DB, dbPath); err != nil { // plain, no table
+		t.Fatal(err)
+	}
+	runDailyBackup(d.DB, dbPath, assetsRoot)
+	if got := openDailyNoPhotosProblems(); len(got) != 0 {
+		t.Fatalf("shop without photos must not raise, got %v", got)
+	}
+}
+
+// A snapshot that fails entirely raises one keyed Problem (never stacking),
+// and a written snapshot or a fresh backup resolves it (ut-docs#3993).
+func TestRunDailyBackup_TotalFailureRaisesThenResolves(t *testing.T) {
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+	oldSeam := snapshotWithAssets
+	t.Cleanup(func() { snapshotWithAssets = oldSeam })
+
+	dbPath := filepath.Join(t.TempDir(), "till.db")
+	assetsRoot := filepath.Join(t.TempDir(), "assets")
+	d, err := appdb.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+
+	snapshotWithAssets = func(*sql.DB, string, string) (string, error) {
+		return "", errors.New("disk full")
+	}
+	runDailyBackup(d.DB, dbPath, assetsRoot)
+	got := openDailyProblems(ProblemKeyDailyBackupFailed)
+	if len(got) != 1 || !strings.Contains(got[0].Msg, "disk full") {
+		t.Fatalf("want 1 open failed problem with cause, got %v", got)
+	}
+	runDailyBackup(d.DB, dbPath, assetsRoot)
+	if got := openDailyProblems(ProblemKeyDailyBackupFailed); len(got) != 1 {
+		t.Fatalf("two failing runs must leave 1 open problem, got %v", got)
+	}
+
+	snapshotWithAssets = oldSeam
+	runDailyBackup(d.DB, dbPath, assetsRoot)
+	if got := openDailyProblems(ProblemKeyDailyBackupFailed); len(got) != 0 {
+		t.Fatalf("a written snapshot must resolve the failure, got %v", got)
+	}
+
+	// Fresh backup present (e.g. manual "Back up now") resolves a failure.
+	logging.L().WarnProblemf(ProblemKeyDailyBackupFailed, "[Backup] daily backup failed: x")
+	runDailyBackup(d.DB, dbPath, assetsRoot)
+	if got := openDailyProblems(ProblemKeyDailyBackupFailed); len(got) != 0 {
+		t.Fatalf("fresh-skip must resolve the failure, got %v", got)
 	}
 }
 
