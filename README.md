@@ -467,9 +467,9 @@ settings — only on a LAN address; `http:stream` adds the handle-based
 bodies up to the manifest's `limits.http_body_mb` (ADR-0121, ut-docs#3156).
 A plugin reads core data only through `view_query` on a named, versioned core
 read view (`sales.by_day.v1`, `items.top.v1`, `payments.breakdown.v1`,
-`stock.levels.v1`, `audit.summary.v1`). It must list the view in its
-manifest's `views_used` and hold the view's `view:<class>` grant (ADR-0121 §5,
-ut-docs#3158).
+`stock.levels.v1`, `audit.summary.v1`, `catalog.items.v1`). It must list the
+view in its manifest's `views_used` and hold the view's `view:<class>` grant
+(ADR-0121 §5, ut-docs#3158; `catalog.items.v1`: ADR-0149 §6, ut-docs#3698).
 `blob:own` gives a plugin its own file store under
 `data/plugin-data/<id>/blobs` (`blob_put_open`/`blob_write`/`blob_commit`,
 `blob_get_open`/`blob_read`, `blob_delete`, `blob_list`): flat names only,

@@ -170,11 +170,20 @@ var (
 	argLimit = CoreViewArg{Name: "limit", Min: 1, Max: 50, Default: 10}
 )
 
+// catalog.items.v1 pages through the catalog so a large one stays under
+// CoreViewMaxResult: 500 rows fit in 256 KiB unless names average over
+// ~300 bytes (item names have no length cap); then the plugin pages smaller.
+var (
+	argOffset       = CoreViewArg{Name: "offset", Min: 0, Max: 1_000_000, Default: 0}
+	argCatalogLimit = CoreViewArg{Name: "limit", Min: 1, Max: 500, Default: 500}
+)
+
 // auditSummaryRows is the Ask tool's fixed row cap for audit.summary.v1.
 const auditSummaryRows = 100
 
 // coreViews is the first set (ADR-0121 §5) — today's Ask tools
-// (internal/pages/ask_api.go), same arguments, bounds and caps.
+// (internal/pages/ask_api.go), same arguments, bounds and caps — plus the
+// views ADR-0149 §6 adds.
 var coreViews = map[string]CoreView{
 	"sales.by_day.v1": {
 		Name: "sales.by_day.v1", Permission: "view:sales", Args: []CoreViewArg{argDays},
@@ -212,6 +221,14 @@ var coreViews = map[string]CoreView{
 		Name: "audit.summary.v1", Permission: "view:audit", Args: []CoreViewArg{argDays},
 		Run: func(ctx context.Context, db *sql.DB, args map[string]int) (any, error) {
 			return NewPOSRepo(db).AuditActionSummary(ctx, args["days"], auditSummaryRows)
+		},
+	},
+	// ADR-0149 §6 (ut-docs#3698), with sku added for camera identify's
+	// add_to_basket (ut-docs#2851).
+	"catalog.items.v1": {
+		Name: "catalog.items.v1", Permission: "view:inventory", Args: []CoreViewArg{argOffset, argCatalogLimit},
+		Run: func(ctx context.Context, db *sql.DB, args map[string]int) (any, error) {
+			return NewCatalogRepo(db).ListCatalogViewItems(ctx, args["offset"], args["limit"])
 		},
 	},
 }
