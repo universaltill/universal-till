@@ -1115,6 +1115,17 @@ if (document.readyState === 'loading') document.addEventListener('DOMContentLoad
 else scheduleToastDismiss();
 document.addEventListener('htmx:afterSwap', scheduleToastDismiss);
 
+// ut-docs#3879: a failed plugin view action leaves the form in place
+// (HX-Reswap: none) and fills #plugin-view-alert out of band. That slot sits
+// above the view, so on a long page the operator who tapped a submit button
+// at the bottom would never see it — bring it into view. 'nearest' does not
+// move a page whose alert is already visible.
+document.addEventListener('htmx:oobAfterSwap', function (evt) {
+  var t = evt.detail && evt.detail.target;
+  if (!t || !t.classList || !t.classList.contains('plugin-view-alert') || !t.firstElementChild || !t.scrollIntoView) return;
+  t.scrollIntoView({ block: 'nearest' });
+});
+
 // ut-docs#2162: web/ui/layouts/base.html's own <title> only ever renders
 // on a full-page response — an in-panel swap (/items, /admin,
 // /help/{topic}) never touches document.title at all, so the browser tab

@@ -170,3 +170,57 @@ func prepareField(f Field, t func(Text) string) ViewField {
 	}
 	return vf
 }
+
+// Refill writes an operator's posted values back into the form whose
+// Action is action, so a failed action re-shows what they typed (no-JS
+// path, ut-docs#3879). posted is the raw form post (name -> values), read
+// as typed — money and number too, even if invalid. A field the post does
+// not name keeps the plugin's value, except a toggle: an unchecked box is
+// never posted, so absent means off. A select only takes a value one of
+// its options has. Secret and file fields are never refilled.
+func (v *View) Refill(action string, posted map[string][]string) {
+	if posted == nil {
+		return
+	}
+	for ci := range v.Components {
+		c := &v.Components[ci]
+		if c.Type != "form" || c.Action != action {
+			continue
+		}
+		for fi := range c.Fields {
+			refillField(&c.Fields[fi], posted)
+		}
+	}
+}
+
+func refillField(f *ViewField, posted map[string][]string) {
+	vals, ok := posted[f.Name]
+	val := ""
+	if ok && len(vals) > 0 {
+		val = vals[0]
+	}
+	switch f.Kind {
+	case "toggle":
+		f.Checked = val == "true"
+	case "text", "number", "money":
+		if ok {
+			f.Value = val
+		}
+	case "select":
+		if !ok {
+			return
+		}
+		known := false
+		for _, o := range f.Options {
+			known = known || o.Value == val
+		}
+		if !known {
+			return
+		}
+		f.Value = val
+		for i := range f.Options {
+			f.Options[i].Selected = f.Options[i].Value == val
+		}
+	}
+	// secret, file: never written back into the page.
+}

@@ -1,7 +1,10 @@
 {{ define "content" }}
 {{/* ADR-0121 §7 / ut-docs#3160: a plugin page drawn from the plugin's view
-     document by core's own partials (web/ui/partials/pluginview/). */}}
+     document by core's own partials (web/ui/partials/pluginview/).
+     #plugin-view-alert (ut-docs#3879) holds an action's failure notice
+     above the view, so the view (and the operator's filled-in form) stays. */}}
 <h1 id="plugin-view-title">{{ .title }}</h1>
+{{ template "pluginview_alert" .alert }}
 <div id="plugin-view" class="plugin-view">
 {{ template "pluginview_body" .pv }}
 </div>

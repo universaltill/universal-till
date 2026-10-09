@@ -22,6 +22,14 @@ import (
 // plugin's answer to ui.view.ask (GET) / ui.action.ask (POST) by core's own
 // partials. A slow, broken or invalid answer renders the page chrome with
 // an "unavailable" notice — it never blocks anything else.
+//
+// A failed action (unreadable post, failed/slow/invalid ui.action.ask
+// answer, or a job refused as busy) never costs the operator their input
+// (ut-docs#3879): an htmx action answers HX-Reswap: none plus the notice
+// out of band into #plugin-view-alert, so the form (file and password
+// inputs included) stays as typed; the no-JS post re-asks ui.view.ask and
+// renders that view with the posted values refilled
+// (pluginview.View.Refill) under the notice.
 
 // pluginViewTimeout bounds one view/action ask, on top of the WASM
 // runtime's own per-event deadline (whichever is shorter wins). A var so
@@ -36,7 +44,9 @@ const (
 )
 
 // The failure notice is the locale key plugin.view.unavailable, rendered
-// by web/ui/partials/pluginview/document.html.
+// by web/ui/partials/pluginview/document.html; a failed action shows
+// plugin.view.action_failed (or plugin.job.busy) in pluginview_alert
+// (web/ui/pages/plugin_view.html) instead.
 const (
 	pluginViewAskEvent   = "ui.view.ask"
 	pluginActionAskEvent = "ui.action.ask"
@@ -105,6 +115,17 @@ func (b pluginViewBody) TargetID() string {
 	return b.Target
 }
 
+// pluginViewAlert is what pluginview_alert renders into an action's
+// failure slot: its notice, or nothing. OOB marks the htmx out-of-band
+// copy. ID is the slot's id: "" for the page's #plugin-view-alert, or a
+// content slot panel's "<panel id>-alert" (slot.html).
+type pluginViewAlert struct {
+	ID     string
+	OOB    bool
+	Failed bool // plugin.view.action_failed
+	Busy   bool // plugin.job.busy
+}
+
 // pluginJobPoll is what pluginview_poll renders.
 type pluginJobPoll struct {
 	ID      string
@@ -152,6 +173,9 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 	var doc *pluginview.Document
 	var redirect string
 	var err error
+	// The action post, kept for a no-JS refill; formRead: it parsed.
+	var sub pluginview.Submission
+	formRead := false
 	switch {
 	case isPoll:
 		// A job's poll (ADR-0121 §8): never asks the plugin.
@@ -178,13 +202,13 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 			doc, redirect = snap.doc, snap.redirect
 		}
 	case r.Method == http.MethodPost:
-		var sub pluginview.Submission
 		var ups []pluginUpload
 		sub, ups, err = readPluginViewForm(w, r, entry)
 		if err != nil {
 			failStatus = pluginViewFormFailStatus(err)
 			break
 		}
+		formRead = true
 		// Staged uploads (ut-docs#3793) never outlive this ask — unless
 		// the answer is a job, which then owns them until it ends.
 		tokens := uploadTokens(ups)
@@ -241,6 +265,31 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 		// A poll answer always replaces the poll, whatever happened.
 		failed = false
 	}
+	// A failed action (ut-docs#3879): the notice goes to #plugin-view-alert
+	// and the view stays — untouched (htmx) or re-asked and refilled (no JS).
+	actionFailed := failed && r.Method == http.MethodPost
+	alertID := ""
+	if inSlot {
+		alertID = body.Target + "-alert"
+	}
+	alert := pluginViewAlert{ID: alertID}
+	if actionFailed {
+		alert = pluginViewAlert{ID: alertID, Busy: body.JobBusy, Failed: !body.JobBusy}
+	}
+	if actionFailed && !htmx {
+		var posted map[string][]string
+		action := ""
+		if formRead {
+			// An unread post may be half decoded: refill nothing from it.
+			action, posted = sub.Action, sub.Posted
+		}
+		if v, ok := pluginViewRefilled(r.Context(), d, entry, locale, action, posted); ok {
+			body = pluginViewBody{Route: entry.Route, View: v}
+		} else {
+			// No view to show: the body's own notice, as before.
+			alert = pluginViewAlert{}
+		}
+	}
 
 	title := httpx.T(locale, entry.Label)
 	docTitle := body.View.Title != ""
@@ -263,15 +312,28 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 	}
 
 	if htmx && (r.Method == http.MethodPost || (isPoll && fragment)) {
-		if failed {
+		render := httpx.RenderWith(pluginViewFiles, funcs)
+		if actionFailed {
+			// Swap nothing (the form keeps the operator's input, file and
+			// password fields included; submitting again is the retry) —
+			// only the alert, out of band. htmx 1.9 still runs OOB swaps
+			// under swap style none, and app.js's htmx:beforeSwap
+			// force-swaps this non-2xx text/html answer (shouldSwap), so
+			// they are processed (ut-docs#3879).
+			alert.OOB = true
+			w.Header().Set("HX-Reswap", "none")
 			w.WriteHeader(failStatus)
+			render("pluginview_alert", alert)(w, r)
+			return
 		}
-		httpx.RenderWith(pluginViewFiles, funcs)("pluginview_body", body)(w, r)
+		render("pluginview_body", body)(w, r)
 		if docTitle {
 			// Only the body is swapped; a new document title reaches the
 			// page heading out of band.
-			httpx.RenderWith(pluginViewFiles, funcs)("pluginview_title_oob", title)(w, r)
+			render("pluginview_title_oob", title)(w, r)
 		}
+		// Any other answer clears a stale failure notice.
+		render("pluginview_alert", pluginViewAlert{ID: alertID, OOB: true})(w, r)
 		return
 	}
 	page := map[string]any{
@@ -279,6 +341,7 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 		"theme":     d.CurrentState().Theme,
 		"menuItems": d.MenuSnapshot(),
 		"pv":        body,
+		"alert":     alert,
 	}
 	if fragment {
 		if failed {
@@ -288,6 +351,22 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 		return
 	}
 	httpx.RenderWith(pluginViewFiles, funcs)("base", page)(w, r)
+}
+
+// pluginViewRefilled re-asks the entry's view (no params) after a no-JS
+// action failed and refills the form of action with posted (nil: refill
+// nothing). ok is false when the view cannot be shown either.
+func pluginViewRefilled(ctx context.Context, d *common.Deps, entry data.PageEntryRow, locale, action string, posted map[string][]string) (pluginview.View, bool) {
+	doc, err := askPluginView(ctx, d, entry, locale, map[string]string{})
+	if err != nil {
+		logging.L().Warnf("plugin view %s %q (re-ask after a failed action, %s): %v", entry.PluginID, entry.View, entry.Route, err)
+		return pluginview.View{}, false
+	}
+	v := doc.Prepare(locale)
+	if posted != nil {
+		v.Refill(action, posted)
+	}
+	return v, true
 }
 
 // pluginViewParams forwards the query string, bounded: the first value of

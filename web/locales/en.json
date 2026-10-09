@@ -1423,6 +1423,7 @@
   "plugin.job.gone": "This task is no longer available — it may have finished while you were away. Start it again if you still need it.",
   "plugin.job.refresh": "Check progress",
   "plugin.job.running": "Working on it…",
+  "plugin.view.action_failed": "That didn't go through. Your entries are still here — try again in a moment.",
   "plugin.view.unavailable": "This plugin page can't be shown right now. Try again in a moment — the rest of the till keeps working.",
   "plugins.buttons.title": "Plugin actions",
   "plugins.current_version": "Current version:",

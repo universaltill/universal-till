@@ -129,9 +129,15 @@ func TestPluginSlot_RendersPanelsInStableOrder_3872(t *testing.T) {
 	}
 	// Each panel's actions post to its own entry route and target its own
 	// container; nothing targets a core URL.
-	ids := regexp.MustCompile(`<div id="(plugin-slot-[a-z0-9-]+)"`).FindAllStringSubmatch(body, -1)
+	ids := regexp.MustCompile(`<div id="(plugin-slot-[a-z0-9-]+)" class="plugin-view"`).FindAllStringSubmatch(body, -1)
 	if len(ids) != 2 || ids[0][1] == ids[1][1] {
 		t.Fatalf("panel containers = %v, want two distinct ids", ids)
+	}
+	// Each panel has its own empty action-failure slot (ut-docs#3879).
+	for _, id := range ids {
+		if !strings.Contains(body, `<div id="`+id[1]+`-alert" class="plugin-view-alert" aria-live="polite"></div>`) {
+			t.Errorf("panel %s has no alert slot:\n%s", id[1], body)
+		}
 	}
 	for _, m := range regexp.MustCompile(`(?:hx-post|hx-get| action)="([^"]*)"`).FindAllStringSubmatch(body, -1) {
 		if m[1] != "/plugin/other/panel" && m[1] != "/plugin/views/panel" {
@@ -299,8 +305,12 @@ func TestPluginSlot_ActionAnswersIntoPanel_3872(t *testing.T) {
 	if !strings.Contains(body, `hx-target="#plugin-slot-reports-panels-1"`) || strings.Contains(body, `#plugin-view"`) {
 		t.Fatalf("slot action must keep targeting its panel:\n%s", body)
 	}
-	if !strings.Contains(body, `<h2 class="plugin-view-title">SAVED title</h2>`) || strings.Contains(body, "hx-swap-oob") {
+	if !strings.Contains(body, `<h2 class="plugin-view-title">SAVED title</h2>`) || strings.Contains(body, `id="plugin-view-title"`) {
 		t.Fatalf("slot action keeps its title in the panel, no OOB heading:\n%s", body)
+	}
+	// It clears its own panel's failure slot, never the page's (ut-docs#3879).
+	if !strings.Contains(body, `<div id="plugin-slot-reports-panels-1-alert" class="plugin-view-alert" aria-live="polite" hx-swap-oob="innerHTML"></div>`) || strings.Contains(body, `id="plugin-view-alert"`) {
+		t.Fatalf("slot action must clear its panel's alert slot:\n%s", body)
 	}
 	// A forged target is ignored: the page's own container.
 	for _, forged := range []string{"", "pos-alert", `plugin-slot-x" onclick="y`, "plugin-view"} {
@@ -482,13 +492,20 @@ func TestPluginSlot_FailedActionKeepsPanelHeading_3872(t *testing.T) {
 		h.mux.ServeHTTP(rec, req)
 		return rec
 	}
+	// Since ut-docs#3879 a failed action swaps nothing (HX-Reswap: none), so
+	// the panel keeps its heading and the operator's input; the notice goes
+	// out of band into that panel's own alert slot.
 	rec := post("plugin-slot-reports-panels-1")
 	body := rec.Body.String()
-	if rec.Code != http.StatusBadGateway || !strings.Contains(body, `<h2 class="plugin-view-title">Views panel</h2>`) || !strings.Contains(body, "plugin-view-notice") {
-		t.Fatalf("failed slot action = %d, want 502 with the panel heading and the notice:\n%s", rec.Code, body)
+	if rec.Code != http.StatusBadGateway || rec.Header().Get("HX-Reswap") != "none" {
+		t.Fatalf("failed slot action = %d (HX-Reswap %q), want 502 and none:\n%s", rec.Code, rec.Header().Get("HX-Reswap"), body)
 	}
-	if body = post("").Body.String(); strings.Contains(body, "plugin-view-title") {
-		t.Fatalf("failed page action must not grow a heading inside #plugin-view:\n%s", body)
+	if !strings.Contains(body, `<div id="plugin-slot-reports-panels-1-alert" class="plugin-view-alert" aria-live="polite" hx-swap-oob="innerHTML">`) || !strings.Contains(body, "plugin-view-notice") ||
+		strings.Contains(body, `id="plugin-view-alert"`) || strings.Contains(body, "plugin-view-title") {
+		t.Fatalf("failed slot action must fill only its panel's alert slot:\n%s", body)
+	}
+	if body = post("").Body.String(); strings.Contains(body, "plugin-view-title") || !strings.Contains(body, `id="plugin-view-alert"`) {
+		t.Fatalf("failed page action must fill the page's alert slot, no heading:\n%s", body)
 	}
 }
 
@@ -504,6 +521,20 @@ func (h *slotHarness) postSlotAction(target string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	h.mux.ServeHTTP(rec, req)
 	return rec
+}
+
+// assertSlotActionFailed: a refused panel action swaps nothing and fills
+// only that panel's own alert slot (ut-docs#3879, #3872).
+func assertSlotActionFailed(t *testing.T, rec *httptest.ResponseRecorder, panel string) {
+	t.Helper()
+	if rec.Code != http.StatusBadGateway || rec.Header().Get("HX-Reswap") != "none" {
+		t.Fatalf("refused slot action = %d (HX-Reswap %q), want 502 and none:\n%s", rec.Code, rec.Header().Get("HX-Reswap"), rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `<div id="`+panel+`-alert" class="plugin-view-alert" aria-live="polite" hx-swap-oob="innerHTML">`) || strings.Contains(body, `id="plugin-view-alert"`) {
+		t.Fatalf("refused slot action must fill only its panel's alert slot:\n%s", body)
+	}
+	assertNotice(t, rec, "plugin.view.action_failed")
 }
 
 func (h *slotHarness) revokePerm(perm string) {
@@ -530,10 +561,12 @@ func TestPluginSlot_SlotOnlyPluginActionRuns_3963(t *testing.T) {
 	}
 
 	// The same post without a slot target is a page action: ui:page is
-	// missing, so it is refused and the plugin is not asked.
+	// missing, so it is refused and the plugin is not asked. Since
+	// ut-docs#3879 a refused action keeps the view and fills the page's
+	// alert slot.
 	h.lastEv = plugins.Event{}
 	for _, target := range []string{"", "plugin-view", "pos-alert"} {
-		assertUnavailable(t, h.postSlotAction(target), http.StatusBadGateway)
+		assertActionFailed(t, h.postSlotAction(target), http.StatusBadGateway, "plugin.view.action_failed")
 	}
 	if h.lastEv.Type != "" {
 		t.Fatal("a page action without ui:page was asked")
@@ -550,7 +583,7 @@ func TestPluginSlot_ActionNeedsOwnSlotPermission_3963(t *testing.T) {
 	if _, err := h.d.Db.Exec(`INSERT INTO plugin_permissions(id,plugin_id,permission,granted) VALUES('y',?,'ui:slot:eod.footer',1)`, viewPluginID); err != nil {
 		t.Fatal(err)
 	}
-	assertUnavailable(t, h.postSlotAction("plugin-slot-reports-panels-0"), http.StatusBadGateway)
+	assertSlotActionFailed(t, h.postSlotAction("plugin-slot-reports-panels-0"), "plugin-slot-reports-panels-0")
 	if h.lastEv.Type != "" {
 		t.Fatal("ui:slot:eod.footer let a reports.panels action through")
 	}
@@ -560,7 +593,7 @@ func TestPluginSlot_ActionNeedsOwnSlotPermission_3963(t *testing.T) {
 	if _, err := h.d.Db.Exec(`UPDATE plugin_permissions SET granted = 1 WHERE plugin_id = ? AND permission = 'ui:page'`, viewPluginID); err != nil {
 		t.Fatal(err)
 	}
-	assertUnavailable(t, h.postSlotAction("plugin-slot-reports-panels-0"), http.StatusBadGateway)
+	assertSlotActionFailed(t, h.postSlotAction("plugin-slot-reports-panels-0"), "plugin-slot-reports-panels-0")
 	if h.lastEv.Type != "" {
 		t.Fatal("ui:page alone ran a slot panel action")
 	}

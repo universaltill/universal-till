@@ -177,7 +177,7 @@ func TestPluginViewUpload_PayloadAndCleanupAfterAsk_3793(t *testing.T) {
 	// An answer core cannot use still releases the upload.
 	h.answerWith(`{"document":`)
 	body, ct = multipartPost(t, map[string]string{"_action": "identify"}, []uploadPart{{"photo", "a.png", content}})
-	assertUnavailable(t, h.doMultipart(uploadRoute, body, ct), http.StatusBadGateway)
+	assertActionFailed(t, h.doMultipart(uploadRoute, body, ct), http.StatusBadGateway, "plugin.view.action_failed")
 	assertNoStaged(t)
 }
 
@@ -226,7 +226,7 @@ func TestPluginViewUpload_Refusals_3793(t *testing.T) {
 			files = append(files, uploadPart{fmt.Sprintf("f%d", i), "x.png", small})
 		}
 		body, ct := multipartPost(t, map[string]string{"_action": "identify"}, files)
-		assertUnavailable(t, h.doMultipart(uploadRoute, body, ct), http.StatusBadRequest)
+		assertActionFailed(t, h.doMultipart(uploadRoute, body, ct), http.StatusBadRequest, "plugin.view.action_failed")
 		if h.lastEv.Type != "" {
 			t.Fatal("the plugin was asked")
 		}
@@ -235,7 +235,7 @@ func TestPluginViewUpload_Refusals_3793(t *testing.T) {
 	t.Run("entry without upload_max_mb", func(t *testing.T) {
 		h.lastEv = plugins.Event{}
 		body, ct := multipartPost(t, map[string]string{"_action": "save"}, []uploadPart{{"photo", "x.png", small}})
-		assertUnavailable(t, h.doMultipart("/plugin/views", body, ct), http.StatusBadRequest)
+		assertActionFailed(t, h.doMultipart("/plugin/views", body, ct), http.StatusBadRequest, "plugin.view.action_failed")
 		if h.lastEv.Type != "" {
 			t.Fatal("the plugin was asked")
 		}
@@ -248,7 +248,7 @@ func TestPluginViewUpload_Refusals_3793(t *testing.T) {
 	})
 	t.Run("bad file field name", func(t *testing.T) {
 		body, ct := multipartPost(t, map[string]string{"_action": "identify"}, []uploadPart{{"../x", "x.png", small}})
-		assertUnavailable(t, h.doMultipart(uploadRoute, body, ct), http.StatusBadRequest)
+		assertActionFailed(t, h.doMultipart(uploadRoute, body, ct), http.StatusBadRequest, "plugin.view.action_failed")
 		assertNoStaged(t)
 	})
 	t.Run("body past the whole-post bound", func(t *testing.T) {
@@ -256,7 +256,7 @@ func TestPluginViewUpload_Refusals_3793(t *testing.T) {
 		// http.MaxBytesReader trips while the oversize file is drained.
 		h.lastEv = plugins.Event{}
 		body, ct := multipartPost(t, map[string]string{"_action": "identify"}, []uploadPart{{"photo", "x.png", pngBytes(5 << 20)}})
-		assertUnavailable(t, h.doMultipart(uploadRoute, body, ct), http.StatusBadRequest)
+		assertActionFailed(t, h.doMultipart(uploadRoute, body, ct), http.StatusBadRequest, "plugin.view.action_failed")
 		if h.lastEv.Type != "" {
 			t.Fatal("the plugin was asked")
 		}
@@ -264,7 +264,7 @@ func TestPluginViewUpload_Refusals_3793(t *testing.T) {
 	})
 	t.Run("text parts over the form cap", func(t *testing.T) {
 		body, ct := multipartPost(t, map[string]string{"_action": "identify", "note": strings.Repeat("a", 70<<10)}, []uploadPart{{"photo", "x.png", small}})
-		assertUnavailable(t, h.doMultipart(uploadRoute, body, ct), http.StatusBadRequest)
+		assertActionFailed(t, h.doMultipart(uploadRoute, body, ct), http.StatusBadRequest, "plugin.view.action_failed")
 		assertNoStaged(t)
 	})
 }

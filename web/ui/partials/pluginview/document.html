@@ -5,7 +5,10 @@
      a plugin never supplies a URL. pluginview_body is also the fragment an
      htmx action swaps into #plugin-view, or into a content slot panel's own
      container (.TargetID, ut-docs#3872). .ReadOnly (setup.wizard.steps)
-     draws no actions or forms. */}}
+     draws no actions or forms. Its notices are for a view that could not
+     be drawn; a failed action instead keeps the view and shows its notice
+     in #plugin-view-alert (pluginview_alert in pages/plugin_view.html,
+     ut-docs#3879). */}}
 {{ define "pluginview_body" }}
 {{- if .View.Title }}<h2 class="plugin-view-title">{{ .View.Title }}</h2>{{ end }}
 {{- if .Unavailable }}
@@ -38,3 +41,19 @@
 {{- end }}
 {{- end }}
 {{ end }}
+
+{{/* ut-docs#3879: the action-failure slot, a polite live region that is
+     never replaced, only refilled. An htmx action that fails answers this
+     out of band (hx-swap-oob="innerHTML", so the live region itself stays
+     and its new notice is announced) with HX-Reswap: none, leaving the
+     view and the operator's input as they are; every other htmx answer
+     sends it empty, clearing a stale notice. The no-JS page renders it
+     with the notice above the re-asked, refilled view. .ID is the slot's
+     id: "" for the page's own #plugin-view-alert, or a content slot
+     panel's "<panel id>-alert" (slot.html). The wrapper is the live
+     region, so the notice inside carries no role="status" of its own (a
+     live region nested in another is announced twice). */}}
+{{ define "pluginview_alert" }}<div id="{{ if .ID }}{{ .ID }}{{ else }}plugin-view-alert{{ end }}" class="plugin-view-alert" aria-live="polite"{{ if .OOB }} hx-swap-oob="innerHTML"{{ end }}>
+{{- if .Busy }}<div class="plugin-view-notice warn">{{ T "plugin.job.busy" }}</div>
+{{- else if .Failed }}<div class="plugin-view-notice warn">{{ T "plugin.view.action_failed" }}</div>
+{{- end }}</div>{{ end }}
