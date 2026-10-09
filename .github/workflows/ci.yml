@@ -553,6 +553,43 @@ jobs:
         # internal/pages step above.
         run: go test -timeout 20m ./internal/pages/...
 
+  pages-shuffle:
+    # ut-docs#3865 (follow-up to ut-docs#3822 / PR #1742): internal/pages
+    # passes in any test order today, but nothing kept it that way — the
+    # next pages-level `var` seam a test stubs and forgets to restore would
+    # bring order dependence back unnoticed. (A leaked httpx global is
+    # mostly undone by chdirRoot's resetProcessGlobals before the next test,
+    # so it only shows here when a helper-less test reads it after the
+    # leaker under one of these seeds.) This job runs the package under
+    # a fixed list of -shuffle seeds, never -shuffle=on: a random seed would
+    # turn main red at random, and a pinned one fails the same way on every
+    # rerun and reproduces locally with the same flag.
+    #
+    # Its own job, not more steps in `build`: build already runs this
+    # package three times (~3-5 min each, see its ut-docs#1992 comment), and
+    # running it alongside other test binaries is what pushed it past the
+    # timeout before. No `needs:` either, so the matrix legs run beside
+    # build instead of adding to its wall clock.
+    #
+    # Reproduce a failure: go test -count=1 -shuffle=<seed> ./internal/pages
+    runs-on: ubuntu-latest
+    # Bounds a wedged checkout/setup/download; the test binary has its own
+    # -timeout 20m below.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: [ '1791386291628608919', '22' ]
+    name: pages-shuffle (seed ${{ matrix.seed }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.27' }
+      - name: Test internal/pages (-shuffle=${{ matrix.seed }})
+        # -count=1: a cached pass would skip the run. -timeout 20m: same
+        # margin as build's own internal/pages step (ut-docs#1992).
+        run: go test -timeout 20m -count=1 -shuffle=${{ matrix.seed }} ./internal/pages
+
   desktop-shell:
     # ut-docs#1071: cmd/unitill-desktop's `desktop && linux` build tag (cgo +
     # GTK/WebKit) was previously compiled nowhere except release.yml, at tag

@@ -36,6 +36,8 @@ var pagesGlobalsBaseline func()
 // whatever a helper-less test before them left behind — and clean up after
 // themselves; openPagesTestDB adds the exit reset alone. Set a global for
 // your test AFTER chdirRoot (or a helper that calls it), or it is reset.
+// CI's pages-shuffle job runs this package under pinned -shuffle seeds so
+// a new leak fails there (ut-docs#3865).
 func resetProcessGlobals(t *testing.T) {
 	t.Helper()
 	pagesGlobalsBaseline()
