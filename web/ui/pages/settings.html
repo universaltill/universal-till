@@ -391,6 +391,11 @@
             hx-indicator="#update-check-msg">{{ T "settings.update.check_btn" }}</button>
     <span id="update-check-msg" aria-live="polite"></span>
   </div>
+  {{/* ut-docs#2949: an additional till follows its main till's version, so it
+       says so instead of the schedule box (whose value is the main till's). */}}
+  {{ if .autoUpdateFollowsMain }}
+  <p class="muted" data-testid="update-follows-main">{{ if .autoUpdateMainVersion }}{{ printf (T "settings.update.follows_main") .autoUpdateMainVersion }}{{ else }}{{ T "settings.update.follows_main_unknown" }}{{ end }}</p>
+  {{ else }}
   <fieldset class="set-lock" data-lock-region="settings-update-schedule"{{ if index $.lockedRegions "settings-update-schedule" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-update-schedule" }}{{ template "set-lock-note" }}{{ end }}
   <form hx-post="/api/settings/update-schedule" hx-swap="none" class="set-gap">
@@ -401,6 +406,7 @@
     <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
   </form>
   </fieldset>
+  {{ end }}
   {{ end }}
 </div>
 <!-- ut-docs#3091: Settings → About — the running version, when this till

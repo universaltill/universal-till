@@ -97,8 +97,8 @@ var autoUpdateJitter = defaultAutoUpdateJitter
 // unset: a replica that updates to latest while its main till cannot (a
 // portable Windows main till, an unwritable .deb) would run ahead of it indefinitely.
 // Since ut-docs#2738 a replica never runs the nightly path at all — it
-// follows its main till's exact version (followTick) — so this only
-// decides what the Settings page shows there.
+// follows its main till's exact version (followTick), and since
+// ut-docs#2949 its Settings page says so instead of showing this value.
 func autoUpdateSchedule(get func(string) string) (enabled bool, hhmm string) {
 	hhmm = strings.TrimSpace(get(keyAutoUpdateTime))
 	if hhmm == "" {

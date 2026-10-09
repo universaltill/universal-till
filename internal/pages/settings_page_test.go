@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1065,6 +1067,53 @@ func TestSettingsPage_AutoUpdateShowsEffectiveDefault(t *testing.T) {
 	}
 	if checked.MatchString(get()) {
 		t.Fatal("shop switched auto-update off: the switch must render Off")
+	}
+}
+
+// ut-docs#2949: an additional till follows its main till's version
+// (ut-docs#2738), so it shows that instead of an "Update automatically" box
+// that read Off there and whose value is the main till's anyway.
+func TestSettingsPage_AdditionalTillShowsFollowsMainInsteadOfAutoUpdateBox(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	setReplicaSettings(t, d.Settings, "http://127.0.0.1:1", syncSettingsBearer)
+	followsLine := `data-testid="update-follows-main"`
+
+	body := getSettingsAsManager(t, mux)
+	if !strings.Contains(body, followsLine) {
+		t.Fatal("additional till: no 'follows the main till' line")
+	}
+	if strings.Contains(body, `hx-post="/api/settings/update-schedule"`) || strings.Contains(body, `<input type="time" name="time"`) {
+		t.Fatal("additional till: the auto-update box and time must not render")
+	}
+	if !strings.Contains(body, html.EscapeString(httpx.T("en", "settings.update.follows_main_unknown"))) {
+		t.Fatal("additional till, main version unknown: expected the version-less line")
+	}
+
+	if err := d.Settings.Set(t.Context(), keyMainVersion, "1.4.2"); err != nil {
+		t.Fatal(err)
+	}
+	body = getSettingsAsManager(t, mux)
+	want := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main"), "v1.4.2"))
+	if !strings.Contains(body, want) {
+		t.Fatalf("additional till: expected %q in the follows line", want)
+	}
+
+	// A version string from the main till is device input: anything that is
+	// not a release version is not printed.
+	if err := d.Settings.Set(t.Context(), keyMainVersion, "dev"); err != nil {
+		t.Fatal(err)
+	}
+	if body := getSettingsAsManager(t, mux); !strings.Contains(body, html.EscapeString(httpx.T("en", "settings.update.follows_main_unknown"))) {
+		t.Fatal("additional till, non-release main version: expected the version-less line")
+	}
+
+	// A main/standalone till keeps the box.
+	if err := d.Settings.Set(t.Context(), "sync.primary_url", ""); err != nil {
+		t.Fatal(err)
+	}
+	body = getSettingsAsManager(t, mux)
+	if strings.Contains(body, followsLine) || !strings.Contains(body, `hx-post="/api/settings/update-schedule"`) {
+		t.Fatal("main till: the auto-update box must render and the follows line must not")
 	}
 }
 
