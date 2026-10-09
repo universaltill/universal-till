@@ -2,12 +2,16 @@ package pages
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -32,8 +36,12 @@ import (
 // permission-less plugin is never asked, and its denial is audited and
 // warned once per process, not on every load (ut-docs#3945).
 //
-// Five regions load lazily from GET /ui/slot/{slot} (an htmx placeholder in
-// the host page), gated by the host page's own permission. The setup
+// Three regions load lazily from GET /ui/slot/{slot} (an htmx placeholder in
+// the host page), gated by the host page's own permission. Settings and
+// /admin give each entry its own place in their switcher instead
+// (ut-docs#3946): a Settings section that loads only its own entry from
+// GET /ui/slot/{slot}/{plugin}/{entry}, and an /admin tree row linking the
+// entry's own /plugin/ page (pluginSlotSections). The setup
 // wizard (auth-exempt, pre-operator) draws setup.wizard.steps inline and
 // read-only instead; that slot has no route.
 
@@ -95,11 +103,11 @@ func pluginSlotPanelID(slot string, i int) string {
 	return fmt.Sprintf("plugin-slot-%s-%d", strings.ReplaceAll(slot, ".", "-"), i)
 }
 
-// contentSlotPanels asks the plugins filling slot and returns their
-// prepared views in a stable (plugin id, entry key) order, failures
-// dropped. Every ask runs in parallel with its own pluginSlotTimeout, so
-// this returns within about one timeout whatever the plugins do.
-func contentSlotPanels(ctx context.Context, d *common.Deps, slot, locale string, params map[string]string) []pluginSlotPanel {
+// contentSlotEntries returns the entries filling slot for this render, in
+// a stable (plugin id, entry key) order, capped at pluginSlotMaxEntries:
+// an entry with a view, under /plugin/ and outside every reserved prefix,
+// whose plugin holds ui:slot:<slot>. Nothing is asked.
+func contentSlotEntries(ctx context.Context, d *common.Deps, slot string) []data.PageEntryRow {
 	entries, err := data.NewPluginRepo(d.Db).ListPageEntries(ctx)
 	if err != nil {
 		logging.L().Warnf("plugin slot %s: list entries: %v", slot, err)
@@ -144,7 +152,15 @@ func contentSlotPanels(ctx context.Context, d *common.Deps, slot, locale string,
 		logging.L().Warnf("plugin slot %s: %d entries, drawing the first %d", slot, len(fill), pluginSlotMaxEntries)
 		fill = fill[:pluginSlotMaxEntries]
 	}
+	return fill
+}
 
+// askSlotEntries asks every entry in fill for its view, in parallel, each
+// with its own pluginSlotTimeout, so this returns within about one timeout
+// whatever the plugins do. views[i] is fill[i]'s prepared view, or nil when
+// that plugin was slow, broken, invalid or silent (logged at warn).
+func askSlotEntries(ctx context.Context, d *common.Deps, slot, locale string, params map[string]string, fill []data.PageEntryRow) []*pluginview.View {
+	perm := "ui:slot:" + slot
 	p := make(map[string]string, len(params)+1)
 	for k, v := range params {
 		p[k] = v
@@ -156,7 +172,7 @@ func contentSlotPanels(ctx context.Context, d *common.Deps, slot, locale string,
 	for i, e := range fill {
 		wg.Add(1)
 		go func() {
-			defer logging.RecoverAndLog("pages.contentSlotPanels")
+			defer logging.RecoverAndLog("pages.askSlotEntries")
 			defer wg.Done()
 			raw, vctx, err := askPluginUIAs(ctx, d, e, perm, pluginSlotTimeout, pluginViewAskEvent, map[string]any{
 				"view":   e.View,
@@ -179,14 +195,72 @@ func contentSlotPanels(ctx context.Context, d *common.Deps, slot, locale string,
 		}()
 	}
 	wg.Wait()
+	return views
+}
 
+// contentSlotPanels asks the plugins filling slot and returns their
+// prepared views in a stable (plugin id, entry key) order, failures
+// dropped.
+func contentSlotPanels(ctx context.Context, d *common.Deps, slot, locale string, params map[string]string) []pluginSlotPanel {
+	fill := contentSlotEntries(ctx, d, slot)
 	var out []pluginSlotPanel
-	for i, v := range views {
+	for i, v := range askSlotEntries(ctx, d, slot, locale, params, fill) {
 		if v == nil {
 			continue
 		}
 		id := pluginSlotPanelID(slot, len(out))
 		out = append(out, pluginSlotPanel{ID: id, Body: pluginViewBody{Route: fill[i].Route, View: *v, Target: id}})
+	}
+	return out
+}
+
+// pluginSlotEntryID is a stable, id-safe token for one entry: the same
+// for an entry however other entries are installed, removed or reordered,
+// so a section's card id, deep link and panel container never move to
+// another plugin's entry (review of ut-docs#3946).
+func pluginSlotEntryID(e data.PageEntryRow) string {
+	h := sha256.Sum256([]byte(e.PluginID + "\x00" + e.EntryKey))
+	return hex.EncodeToString(h[:8])
+}
+
+// pluginSlotEntryPanelID is the container id of one entry's panel when a
+// host screen draws it on its own (it matches pluginSlotPanelIDRe).
+func pluginSlotEntryPanelID(slot string, e data.PageEntryRow) string {
+	return "plugin-slot-" + strings.ReplaceAll(slot, ".", "-") + "-" + pluginSlotEntryID(e)
+}
+
+// pluginSlotSection is one entry of a slot its host screen lists as its
+// own place in its switcher (ut-docs#3946): settings.sections as a
+// Settings section, admin.pages as an /admin tree row.
+type pluginSlotSection struct {
+	// Key is the section's element id on its host page (keyPrefix +
+	// pluginSlotEntryID), stable whatever else is installed.
+	Key      string
+	LabelKey string // the entry's label as declared (a locale key or text)
+	Label    string // LabelKey, translated
+	Route    string // the entry's own /plugin/ page
+	// URL loads just this entry's panel (GET /ui/slot/{slot}/{plugin}/{entry}).
+	URL string
+}
+
+// pluginSlotSections lists the entries of slot r's viewer would see, one
+// section each, without asking any plugin. Empty when the slot's host
+// gate refuses r.
+func pluginSlotSections(d *common.Deps, r *http.Request, slot, keyPrefix string) []pluginSlotSection {
+	if !pluginEntrySlotAllowed(d, r, slot) {
+		return nil
+	}
+	locale := httpx.RequestLocale(r)
+	fill := contentSlotEntries(r.Context(), d, slot)
+	out := make([]pluginSlotSection, len(fill))
+	for i, e := range fill {
+		out[i] = pluginSlotSection{
+			Key:      keyPrefix + pluginSlotEntryID(e),
+			LabelKey: e.Label,
+			Label:    httpx.T(locale, e.Label),
+			Route:    e.Route,
+			URL:      "/ui/slot/" + slot + "/" + url.PathEscape(e.PluginID) + "/" + url.PathEscape(e.EntryKey),
+		}
 	}
 	return out
 }
@@ -237,6 +311,45 @@ func registerPluginSlots(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		httpx.RenderWith(pluginSlotFiles, httpx.FuncsFor(locale))("pluginview_slot", pluginSlotView{Slot: slot, Panels: panels})(w, r)
+	})
+	// One entry's panel, for a host screen that gives each entry its own
+	// section (ut-docs#3946). Same gate as the whole slot; an entry not
+	// filling the slot for this render is 404. A plugin that fails keeps
+	// its heading and shows plugin.view.unavailable, never an empty
+	// section.
+	mux.HandleFunc("GET /ui/slot/{slot}/{plugin}/{entry}", func(w http.ResponseWriter, r *http.Request) {
+		slot := r.PathValue("slot")
+		gate, ok := pluginSlotGates[slot]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if !gate(d, r) {
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+		fill := contentSlotEntries(r.Context(), d, slot)
+		i := slices.IndexFunc(fill, func(e data.PageEntryRow) bool {
+			return e.PluginID == r.PathValue("plugin") && e.EntryKey == r.PathValue("entry")
+		})
+		if i < 0 {
+			http.NotFound(w, r)
+			return
+		}
+		e := fill[i]
+		locale := httpx.ResolveLocale(w, r)
+		id := pluginSlotEntryPanelID(slot, e)
+		body := pluginViewBody{Route: e.Route, Target: id}
+		if v := askSlotEntries(r.Context(), d, slot, locale, pluginViewParams(r), fill[i:i+1])[0]; v != nil {
+			body.View = *v
+		} else {
+			body.View.Title = httpx.T(locale, e.Label)
+			body.Unavailable = true
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		httpx.RenderWith(pluginSlotFiles, httpx.FuncsFor(locale))("pluginview_slot_entry", pluginSlotPanel{ID: id, Body: body})(w, r)
 	})
 }
 

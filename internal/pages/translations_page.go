@@ -253,7 +253,7 @@ func registerTranslations(mux *http.ServeMux, d *common.Deps, i18n *config.I18n)
 		// before this card.
 		if httpx.IsFragmentSwap(w, r) {
 			httpx.RenderContentFragment("ui/pages/translations.html", translationsData)(w, r)
-			writeAdminTreeOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/translations", adminGroupsFor(visibleAdminEntries(d, r)))
+			writeAdminTreeOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/translations", adminTreeGroups(d, r))
 			return
 		}
 		httpx.Render("ui/pages/translations.html", translationsData)(w, r)

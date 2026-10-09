@@ -122,7 +122,7 @@ func registerLocations(mux *http.ServeMux, d *common.Deps) {
 		// the exact same full standalone page as before this card.
 		if httpx.IsFragmentSwap(w, r) {
 			httpx.RenderContentFragment("ui/pages/locations.html", locationsData)(w, r)
-			writeAdminTreeOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/locations", adminGroupsFor(visibleAdminEntries(d, r)))
+			writeAdminTreeOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/locations", adminTreeGroups(d, r))
 			return
 		}
 		httpx.Render("ui/pages/locations.html", locationsData)(w, r)

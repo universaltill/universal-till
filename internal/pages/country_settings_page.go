@@ -221,7 +221,7 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 			// chips below carry that header on their own hx-headers), so
 			// this call site no longer needs its own guard the way the old
 			// isAdminPanelSwap check required.
-			writeAdminTreeOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/country-settings", adminGroupsFor(visibleAdminEntries(d, r)))
+			writeAdminTreeOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/country-settings", adminTreeGroups(d, r))
 			return
 		}
 		httpx.Render("ui/pages/country_settings.html", countrySettingsData)(w, r)

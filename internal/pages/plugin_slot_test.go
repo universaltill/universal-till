@@ -444,17 +444,18 @@ func TestPluginSlot_EntryCap_3872(t *testing.T) {
 }
 
 // Each lazily drawn slot has its placeholder (or loader) in its host
-// template, and the wizard draws setup.wizard.steps.
+// template, and the wizard draws setup.wizard.steps. Settings and /admin
+// list each entry in their switcher instead (ut-docs#3946,
+// plugin_slot_sections_test.go).
 func TestPluginSlot_HostTemplatesLoadTheirSlot_3872(t *testing.T) {
 	chdirRoot(t)
 	hosts := map[string]string{
 		"item.edit.actions": "web/ui/pages/catalog.html",
 		"reports.panels":    "web/ui/pages/reports.html",
 		"eod.footer":        "web/ui/partials/reports_tab_eod.html",
-		"settings.sections": "web/ui/pages/settings.html",
-		"admin.pages":       "web/ui/pages/admin.html",
 	}
-	if len(hosts) != len(pluginSlotGates) {
+	perEntry := []string{"settings.sections", "admin.pages"}
+	if len(hosts)+len(perEntry) != len(pluginSlotGates) {
 		t.Fatalf("hosts %v do not cover every gated slot", hosts)
 	}
 	for slot, file := range hosts {
