@@ -81,6 +81,15 @@ var secretSamples = []struct{ line, secret string }{
 	{"amount 1 378282246310005", "378282246310005"},
 	{"ref 12 34 4111 1111 1111 1111 ok", "4111 1111 1111 1111"},
 	{"ids 1234-5678 4111 1111 1111 1111", "4111 1111 1111 1111"},
+
+	// Only a real YYYYMMDD-HHMMSS date-time stamp is exempt (ut-docs#3999):
+	// Luhn-valid 8-6 runs that are not a calendar date / clock time, the
+	// same digits without the dash, and a card next to a stamp still go.
+	{"ref 20261309-000002 stored", "20261309-000002"},
+	{"ref 20261009-246004 stored", "20261009-246004"},
+	{"ref 20261009002845 stored", "20261009002845"},
+	{"ref 36011231-235008 stored", "36011231-235008"}, // a valid date-time, but not a 20xx year
+	{"unitill-pos-20261009-002845.db card 4111111111111111", "4111111111111111"},
 }
 
 func TestRedactRemovesSecrets(t *testing.T) {
@@ -137,6 +146,12 @@ func TestRedactKeepsDiagnosticDetail(t *testing.T) {
 		// A card-valid prefix inside a longer contiguous digit run is not
 		// cut out — spans only start/end on group boundaries.
 		"ref 41111111111111110000 stored",
+		// The daily backup's snapshot name carries a YYYYMMDD-HHMMSS stamp;
+		// ~1 in 10 is Luhn-valid with a 2-series IIN, so it was redacted
+		// at random and the owner couldn't tell which snapshot lost its
+		// photos (ut-docs#3999). No card scheme groups digits 8-6.
+		"daily backup without photos: unitill-pos-20261009-002845.db",
+		"daily backup without photos: unitill-pos-20261009-013545.db",
 	}
 	for _, line := range keep {
 		if got := Redact(line); got != line {
