@@ -2497,7 +2497,7 @@
   "setup.auto_register.label": "Bu kasayı Universal Till bulutuna şimdi kaydet",
   "setup.back": "Geri",
   "setup.base_plugins.dismiss_btn": "Kaldır",
-  "setup.base_plugins.pending": "Ücretsiz %s dil paketiniz arka planda yükleniyor — çevrimdışıysanız bu birkaç dakika sürebilir.",
+  "setup.base_plugins.pending": "Ücretsiz bir %s dil paketi aranıyor — eklenti kataloğunda bulunursa kasa onu arka planda kuruyor.",
   "setup.base_plugins.pending_tax": "%s vergi eklentiniz arka planda yükleniyor — çevrimdışıysanız bu birkaç dakika sürebilir.",
   "setup.base_plugins.not_published_tax": "%s vergi eklentiniz henüz eklenti kataloğunda yok — kasa kontrol etmeye devam ediyor ve yayımlanır yayımlanmaz kuruyor.",
   "setup.base_plugins.title": "Ülkeniz için ücretsiz eklentiler",

@@ -2482,7 +2482,7 @@
   "setup.auto_register.label": "Register this till with the Universal Till cloud now",
   "setup.back": "Back",
   "setup.base_plugins.dismiss_btn": "Remove",
-  "setup.base_plugins.pending": "Installing your free %s language pack in the background — this can take a few minutes if you're offline.",
+  "setup.base_plugins.pending": "Looking for a free %s language pack — if the plugin catalog has one, the till installs it in the background.",
   "setup.base_plugins.pending_tax": "Installing your %s tax plugin in the background — this can take a few minutes if you're offline.",
   "setup.base_plugins.not_published_tax": "Your %s tax plugin isn't in the plugin catalog yet — the till keeps checking and installs it as soon as it's published.",
   "setup.base_plugins.title": "Free plugins for your country",

@@ -1366,3 +1366,50 @@ func TestHandleInstallFromMarketplace_LocaleCatchUpFindsListingBeyondFirstCatalo
 		t.Fatalf("store.locale = %q after installing a language pack that sits on catalog page 2 (page size 1), want %q — an unpaginated catalog fetch would silently miss this listing", got, "ur-PK")
 	}
 }
+
+// ut-docs#3194: an offline till queues a language spec for its country's
+// locale whether or not any pack is published for it (FR/IT/NL/PK have
+// none). The Settings chip must not promise "Installing your free FR
+// language pack" while the till can't know that; once the reachable catalog
+// answers with no listing, the spec is dropped and the chip goes away.
+func TestSettingsPendingLanguageChipDoesNotPromiseUnpublishedPack(t *testing.T) {
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	langSpec := basePluginSpec{CanonicalType: "language", Locale: "fr"}
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{langSpec}); err != nil {
+		t.Fatal(err)
+	}
+	getSettings := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+		req = auth.WithUser(req, mgrUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /settings = %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	// Offline: the spec stays pending and the chip says the till is looking.
+	deadMarketplace(t, dp)
+	basePluginRetryTick(t.Context(), dp)
+	body := getSettings()
+	if !strings.Contains(body, `data-testid="pending-base-plugin"`) {
+		t.Fatal("offline: the pending language spec must still show its chip")
+	}
+	if strings.Contains(body, "Installing your free FR language pack") {
+		t.Error("offline: chip must not promise a pack the catalog may not have")
+	}
+	if !strings.Contains(body, "Looking for a free FR language pack") {
+		t.Error("offline: chip must say the till is looking for the pack")
+	}
+
+	// Online, no FR listing: the spec is dropped and the chip goes away.
+	mkt := newFakeMarketplace(t, map[string]string{})
+	mkt.setCatalog()
+	dp.Cfg.Marketplace = mkt.config()
+	basePluginRetryTick(t.Context(), dp)
+	if body := getSettings(); strings.Contains(body, `data-testid="pending-base-plugin"`) {
+		t.Error("reachable catalog with no FR pack: the pending chip must go away")
+	}
+}

@@ -2497,7 +2497,7 @@
   "setup.auto_register.label": "سجّل هذا الصندوق في سحابة Universal Till الآن",
   "setup.back": "رجوع",
   "setup.base_plugins.dismiss_btn": "إزالة",
-  "setup.base_plugins.pending": "يجري تثبيت حزمة اللغة %s المجانية في الخلفية — قد يستغرق ذلك بضع دقائق إذا كنت غير متصل بالإنترنت.",
+  "setup.base_plugins.pending": "جارٍ البحث عن حزمة لغة %s مجانية — إن توفرت في كتالوج الإضافات، يثبّتها الجهاز في الخلفية.",
   "setup.base_plugins.pending_tax": "يجري تثبيت إضافة الضرائب %s في الخلفية — قد يستغرق ذلك بضع دقائق إذا كنت غير متصل بالإنترنت.",
   "setup.base_plugins.not_published_tax": "إضافة الضرائب %s غير متوفرة في كتالوج الإضافات بعد — يواصل الجهاز التحقق ويثبّتها فور نشرها.",
   "setup.base_plugins.title": "إضافات مجانية لبلدك",
