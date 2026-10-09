@@ -647,3 +647,30 @@ func TestPluginSlot_ActionWithoutGateRefused_3963(t *testing.T) {
 		t.Fatal("a slot action with no host gate asked the plugin")
 	}
 }
+
+// A revoked ui:slot grant is audited once, not on every load of the host
+// page, and the plugin is never asked (ut-docs#3945).
+func TestPluginSlot_RevokedGrantAuditedOnce_3945(t *testing.T) {
+	h := newSlotHarness(t)
+	h.answerWith(slotDoc("VIEWS"))
+	h.otherWith(slotDoc("OTHER"), 0)
+	h.revokePerm("ui:slot:reports.panels")
+
+	for i := 0; i < 5; i++ {
+		rec := h.do(http.MethodGet, "/ui/slot/reports.panels", nil, true)
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK || !strings.Contains(body, "OTHER") || strings.Contains(body, "VIEWS") {
+			t.Fatalf("load %d: want only the permitted plugin's panel, got %d:\n%s", i, rec.Code, body)
+		}
+	}
+	if h.lastEv.Type != "" {
+		t.Fatal("a plugin without ui:slot:reports.panels was asked")
+	}
+	var n int
+	if err := h.d.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'permission_denied' AND entity_id = ?`, viewPluginID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("permission_denied audit rows after 5 loads = %d, want 1", n)
+	}
+}
