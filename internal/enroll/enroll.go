@@ -43,6 +43,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -280,6 +281,38 @@ func ForgetReplicaVouch() {
 	mu.Lock()
 	vouchedDevice = ""
 	mu.Unlock()
+}
+
+// RegisterHTTPError is a non-2xx answer from POST /v1/stores/register
+// (ut-docs#3861). Error() keeps the text the log always had; callers that
+// show something to an operator branch on Status/Code (see IsServiceRefused)
+// instead of printing the raw body.
+type RegisterHTTPError struct {
+	Status int
+	Code   string // the envelope's error.code; empty when the body is not that JSON
+	Body   string // already length-limited and trimmed
+}
+
+func (e *RegisterHTTPError) Error() string {
+	return fmt.Sprintf("register returned %d: %s", e.Status, e.Body)
+}
+
+func newRegisterHTTPError(status int, body string) *RegisterHTTPError {
+	var env struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	// Best-effort: a non-JSON or truncated body just leaves Code empty.
+	_ = json.Unmarshal([]byte(body), &env)
+	return &RegisterHTTPError{Status: status, Code: env.Error.Code, Body: body}
+}
+
+// IsServiceRefused reports whether the cloud refused to serve this shop
+// (HTTP 403 with error code "service_unavailable").
+func IsServiceRefused(err error) bool {
+	var he *RegisterHTTPError
+	return errors.As(err, &he) && he.Status == http.StatusForbidden && he.Code == "service_unavailable"
 }
 
 // RegisterNow performs one immediate, synchronous registration (and signing
@@ -681,7 +714,7 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("register returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return newRegisterHTTPError(resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var envelope struct {
 		Data struct {

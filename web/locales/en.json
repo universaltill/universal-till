@@ -2279,6 +2279,7 @@
   "settings.enrol.registered": "This till is registered with the Universal Till marketplace.",
   "settings.enrol.registered_via_main": "This till is registered through the main till.",
   "settings.enrol.retry": "Register now",
+  "settings.enrol.service_unavailable": "The Universal Till cloud is not available for this shop. The till keeps working offline.",
   "settings.enrol.store": "Store ID",
   "settings.enrol.title": "Till registration",
   "settings.error.change_on_main_till": "Change this setting on the main till.",

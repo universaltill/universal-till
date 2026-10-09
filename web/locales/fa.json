@@ -2294,6 +2294,7 @@
   "settings.enrol.registered": "این صندوق در بازار یونیورسال تیل ثبت شده است.",
   "settings.enrol.registered_via_main": "این صندوق از طریق صندوق اصلی ثبت شده است.",
   "settings.enrol.retry": "همین حالا ثبت کنید",
+  "settings.enrol.service_unavailable": "ابر یونیورسال تیل برای این فروشگاه در دسترس نیست. صندوق همچنان آفلاین کار می‌کند.",
   "settings.enrol.store": "شناسه فروشگاه",
   "settings.enrol.title": "ثبت صندوق",
   "settings.error.change_on_main_till": "این تنظیم را روی صندوق اصلی تغییر دهید.",

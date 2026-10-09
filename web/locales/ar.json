@@ -2294,6 +2294,7 @@
   "settings.enrol.registered": "هذا الصندوق مسجّل في متجر Universal Till.",
   "settings.enrol.registered_via_main": "هذا الصندوق مسجّل عبر الصندوق الأساسي.",
   "settings.enrol.retry": "سجّل الآن",
+  "settings.enrol.service_unavailable": "سحابة Universal Till غير متاحة لهذا المتجر. يواصل الصندوق العمل دون اتصال.",
   "settings.enrol.store": "معرّف المتجر",
   "settings.enrol.title": "تسجيل الصندوق",
   "settings.error.change_on_main_till": "غيّر هذا الإعداد من الصندوق الأساسي.",

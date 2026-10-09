@@ -2294,6 +2294,7 @@
   "settings.enrol.registered": "Bu kasa Universal Till mağazasına kayıtlı.",
   "settings.enrol.registered_via_main": "Bu kasa ana kasa üzerinden kayıtlı.",
   "settings.enrol.retry": "Şimdi kaydol",
+  "settings.enrol.service_unavailable": "Universal Till bulutu bu mağaza için kullanılamıyor. Kasa çevrimdışı çalışmaya devam eder.",
   "settings.enrol.store": "Mağaza kimliği",
   "settings.enrol.title": "Kasa kaydı",
   "settings.error.change_on_main_till": "Bu ayarı ana kasada değiştirin.",
