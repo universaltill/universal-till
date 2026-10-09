@@ -652,7 +652,7 @@ func BuildMenu(base []MenuItem, pm *plugins.Manager) []MenuItem {
 		if _, reserved := plugins.ReservedPageRoutePrefix(p.Route); reserved {
 			continue
 		}
-		items = append(items, MenuItem{Href: p.Route, Label: p.Label, Icon: p.Icon})
+		items = append(items, MenuItem{Href: p.Route, Label: p.Label, Icon: p.Icon, Slot: p.Slot})
 	}
 	return items
 }

@@ -465,6 +465,10 @@ type MenuItem struct {
 	// name (ut-docs#1734), "" for a core item (core tiles carry their icon
 	// on uislot.CoreMenu instead) or a plugin entry with no declared icon.
 	Icon string
+	// Slot is the content slot a plugin page entry declares, "" otherwise
+	// (ut-docs#3982). /menu gates such a tile by the slot's host-screen
+	// gate, so it is never shown and then refused (403).
+	Slot string
 }
 
 // SyncPrimaryURL returns the primary's URL when this till is a replica

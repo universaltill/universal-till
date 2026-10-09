@@ -1367,6 +1367,10 @@ type MenuEntryRow struct {
 	// key into httpx's bounded icon map (menu_page.go's menuIcon), where an
 	// unknown value renders the generic fallback.
 	IconName string
+	// Slot is the content slot the entry declares (config_json
+	// "content_slot", ut-docs#3982), "" for none or malformed JSON -- the
+	// same parse as ListPageEntries.
+	Slot string
 }
 
 // ReceiptTemplateRow represents receipt template metadata stored in plugin entries.
@@ -1604,13 +1608,14 @@ SELECT
     pe.label,
     pe.menu_group,
     COALESCE(pe.icon_path, ''),
+    COALESCE(pe.config_json, ''),
     GROUP_CONCAT(pp.permission) as required_permissions,
     GROUP_CONCAT(pp.granted) as granted_flags
 FROM plugin_entries pe
 JOIN plugins p ON p.id = pe.plugin_id
 LEFT JOIN plugin_permissions pp ON pp.plugin_id = pe.plugin_id
 WHERE pe.type = 'page' AND pe.is_active = 1 AND p.is_active = 1
-GROUP BY pe.plugin_id, pe.key, pe.route, pe.label, pe.menu_group, pe.icon_path
+GROUP BY pe.plugin_id, pe.key, pe.route, pe.label, pe.menu_group, pe.icon_path, pe.config_json
 ORDER BY pe.sort_order, pe.label
 `)
 	if err != nil {
@@ -1620,8 +1625,18 @@ ORDER BY pe.sort_order, pe.label
 	var res []MenuEntryRow
 	for rows.Next() {
 		var row MenuEntryRow
-		if err := rows.Scan(&row.PluginID, &row.Key, &row.Route, &row.Label, &row.MenuGroup, &row.IconName, &row.RequiredPermissions, &row.GrantedFlags); err != nil {
+		var configJSON string
+		if err := rows.Scan(&row.PluginID, &row.Key, &row.Route, &row.Label, &row.MenuGroup, &row.IconName, &configJSON, &row.RequiredPermissions, &row.GrantedFlags); err != nil {
 			return nil, pluginObs.wrap("list_menu_entries", err)
+		}
+		if configJSON != "" {
+			// ut-docs#3982: malformed JSON just means no slot.
+			var cfg struct {
+				Slot string `json:"content_slot"`
+			}
+			if json.Unmarshal([]byte(configJSON), &cfg) == nil {
+				row.Slot = cfg.Slot
+			}
 		}
 		res = append(res, row)
 	}

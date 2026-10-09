@@ -105,6 +105,32 @@ func TestManagerInitAndReload(t *testing.T) {
 	}
 }
 
+// ut-docs#3982: a page entry's content slot (config_json "content_slot")
+// reaches its MenuPlugin, so /menu can gate the tile by the slot's host
+// screen; a plain page entry carries none.
+func TestLoadMenuEntriesCarriesSlot(t *testing.T) {
+	db := managerTestDB(t)
+	ctx := context.Background()
+
+	seedInstalledPlugin(t, db, "com.test.slot", "Slot Plugin", "1.0.0", "none", true)
+	seedMenuEntry(t, db, "com.test.slot", "panel", "Panel")
+	seedMenuEntry(t, db, "com.test.slot", "plain", "Plain")
+	if _, err := db.Exec(`UPDATE plugin_entries SET config_json = '{"view":"v","content_slot":"reports.panels"}' WHERE key = 'panel'`); err != nil {
+		t.Fatalf("set slot: %v", err)
+	}
+
+	m, err := Init(ctx, &config.Config{Env: "test"}, db)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if got := m.MenuPlugins["panel"].Slot; got != "reports.panels" {
+		t.Fatalf("panel Slot = %q, want reports.panels", got)
+	}
+	if got := m.MenuPlugins["plain"].Slot; got != "" {
+		t.Fatalf("plain Slot = %q, want empty", got)
+	}
+}
+
 // A "docs" page entry (ADR-0037) is a Docs-button target, not a navigation
 // destination — it must not surface as a /menu tile, unlike any other
 // page-entry key.
