@@ -5,7 +5,7 @@
 // state — never on network reachability (offline-first, ADR-0003; "TSE
 // failing" is a narrower condition than "TSE unreachable", see ADR-0048
 // Decision 1). Today's gated markets are Germany (ADR-0048) and Turkey
-// (ut-docs#1208); RequiresHardGate is the one-line extension point for
+// (ut-docs#1208); markets.go is the one-line extension point for
 // adding the next one from ADR-0047's list. The settings keys, API route
 // and on-disk path use market-neutral "signing device" vocabulary
 // (ADR-0081, ut-docs#1587) — the Germany-specific "TSE" names ADR-0048
@@ -172,45 +172,18 @@ type Gate struct {
 	OverrideActor  string
 }
 
-// RequiresHardGate reports whether country is a market whose sales are
-// hard-gated on fiscal readiness: Germany (ADR-0048) and Turkey (Law No.
-// 3100's YN ÖKC mandate, ut-docs#1208, reference/turkey-compliance.md §1).
-// Turkey's signer is the ÖKC device itself, driven by the ut-plugin-tax-tr
-// payment plugin (plugins/tax-tr, device.go in this package); the gate
-// belongs here rather than in that plugin — per ADR-0050 Decision 2, the
-// enforcement point that notices a plugin's absence must be core's, not
-// the absent plugin's, the same reasoning that already gates DE while
-// ut-plugin-tax-de is itself an incomplete skeleton. A TR shop that
-// declares fiscal.system_of_record with no
-// fiscal.signing_device_configured.tr (for TR: no device has yet proven it
-// prints, fiscal_device_hook.go) hits BlockedNeverConfigured instead of
-// silently completing an unsigned sale. The next fiscalised market
-// (ADR-0047's list) is a further one-line addition here — the per-country
-// key functions take any country string, so it needs no key of its own.
+// RequiresHardGate reports whether country's sales are hard-gated on fiscal
+// readiness (ADR-0048). Case-sensitive. The market table and its legal
+// reasoning live in markets.go.
 func RequiresHardGate(country string) bool {
-	switch country {
-	case "DE", "TR":
-		return true
-	default:
-		return false
-	}
+	return marketObligations[country].HardGate
 }
 
-// RequiresPerSaleDeviceReceipt reports whether country's hard-gated market
-// requires evidence THIS SALE was issued through its signing device, not
-// merely that the device has proven itself at some point in the past
-// (ut-docs#1768). Turkey's YN ÖKC is the device itself printing the mali
-// fiş at the point of sale — a shop whose device is confirmed and healthy
-// must still route every sale through it (Law No. 3100,
-// reference/turkey-compliance.md §1), so RequiresHardGate("TR")==true is
-// not sufficient on its own to prove a given sale is compliant. Germany's
-// TSE instead signs (or honestly declares unsigned) after the fact via
-// fiscal.sign.ask/declareUnsignedFiscalSale (ADR-0044) — already per-sale
-// by construction — so DE is deliberately excluded here even though
-// RequiresHardGate("DE") is also true. The one-line extension point for
-// the next per-sale-receipt market from ADR-0047's list.
+// RequiresPerSaleDeviceReceipt reports whether country requires evidence
+// that THIS sale was issued through its signing device, not merely that the
+// device proved itself once (ut-docs#1768). Case-sensitive; see markets.go.
 func RequiresPerSaleDeviceReceipt(country string) bool {
-	return country == "TR"
+	return marketObligations[country].PerSaleDeviceReceipt
 }
 
 // AllowedTaxRateSetBP returns the basis-point VAT rates country's fiscal
@@ -230,7 +203,7 @@ func RequiresPerSaleDeviceReceipt(country string) bool {
 // fixed signing-rate set.
 func AllowedTaxRateSetBP(country string) (rates map[int]bool, restricted bool) {
 	switch country {
-	case "DE": // core-neutral:allow ADR-0136/ut-docs#3309 fiskaly SIGN DE signing-rate market list, same shape as RequiresHardGate's #2879 entries
+	case "DE": // core-neutral:allow ADR-0136/ut-docs#3309 fiskaly SIGN DE signing-rate market list, same shape as markets.go's table
 		return map[int]bool{1900: true, 700: true, 1070: true, 550: true, 0: true}, true
 	default:
 		return nil, false

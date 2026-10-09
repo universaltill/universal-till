@@ -2,21 +2,11 @@ package pages
 
 import (
 	"context"
-	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
-
-// taxRateSwitchMandatedCountries is the country → "a tax.rate.ask plugin
-// is expected to answer for this country" table (ADR-0068). Small,
-// explicit and reviewable by design — same convention as
-// ADR-0067's mandated-tax-plugin list — not
-// inferred from any marketplace/country metadata, so adding a country
-// here is a deliberate, reviewed line.
-var taxRateSwitchMandatedCountries = map[string]bool{
-	"DE": true,
-}
 
 // missingTaxRateSwitcher reports whether this shop's country expects a
 // tax.rate.ask answerer (ADR-0068) and none is currently active and
@@ -31,7 +21,7 @@ var taxRateSwitchMandatedCountries = map[string]bool{
 // behaviour, setupCountries, or the ut-docs#368 fail-closed gate that
 // blocks checkout on a broken registered plugin. See ADR-0068.
 func missingTaxRateSwitcher(ctx context.Context, d *common.Deps, country string) (bool, error) {
-	if !taxRateSwitchMandatedCountries[strings.ToUpper(country)] {
+	if !fiscal.RequiresTaxRateSwitch(country) {
 		return false, nil
 	}
 	repo := data.NewPluginRepo(d.Db)
