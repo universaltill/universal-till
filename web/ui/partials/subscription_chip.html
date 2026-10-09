@@ -6,8 +6,8 @@
      never carried by colour alone; the reason lives in title="" and on the
      Settings card it links to (a tooltip has no hover on a touchscreen).
      No role="alert": the 60 s poll must not be re-announced. The text
-     ellipsizes on a narrow bar (app.css .sb-subscription) and never wraps
-     it to a second line. */}}
+     ellipsizes on a narrow bar (app.css .sb-subscription) and is never
+     wrapped itself; the bar may still wrap when it is crowded (#3050). */}}
 <a class="sb-item sb-subscription is-{{ .state }}" href="/settings#subscription" data-testid="sb-subscription" data-sub-state="{{ .state }}"
    title="{{ if eq .state "lapsed" }}{{ T "subscription.chip.lapsed_title" }}{{ else }}{{ T "subscription.chip.stale_title" }}{{ end }}">
   <span class="sb-subscription-ico" aria-hidden="true">⚠</span>
