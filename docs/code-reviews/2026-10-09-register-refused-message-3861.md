@@ -30,3 +30,9 @@
 - Translations: the reviewer checked ar/fa/tr for meaning, neutrality and neighbouring terminology.
 - Visual: not looked at in a browser. The change only alters the text inside the existing `<span class="error">` fragment, and the handler tests assert that text.
 - Help: no topic describes the failure text, so `web/help` is unchanged.
+
+## CI follow-up: seed-22 shuffle failure
+- `pages-shuffle (seed 22)` failed on the rebased head: `TestEnrolCheckPlan_UnregisteredOrViaMainSaysNotRegistered` saw "registered through the main till".
+- Root cause: `TestSettingsAndStatusBar_ReplicaRegisteredViaMainTill`'s cleanup re-ran `enroll.Init` with its own replica settings, which leaves the package-level enroll state "via main till" for every later test. The two new tests changed seed 22's order, so the leaker started running before the victim. `main` passes only because of its order.
+- Proof: with the old cleanup, the pair (`-run` both, `-shuffle=1` and `2`) fails deterministically. With the fix, it passes under seeds 1–4.
+- Fix: the cleanup now resets to `emptyKV{}`, as the sibling tests do. The full `internal/pages` package passes with seed 22, with seed 1791386291628608919, and unshuffled.
