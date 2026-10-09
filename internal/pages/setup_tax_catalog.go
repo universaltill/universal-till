@@ -71,6 +71,14 @@ const (
 	setupTaxCatalogFetchTimeout  = 3 * time.Second
 	setupTaxCatalogRetryInterval = 30 * time.Second
 	setupTaxCatalogMaxPages      = 25
+
+	// setupTaxCatalogStaleMax caps how old the cached catalog may be when a
+	// refresh fails and the cache is served instead: past it the result reads
+	// as unreachable (ok=false) so the wizard shows the Offline tile rather
+	// than a cached miss's "not in the catalog yet" note while the till is
+	// actually offline (ut-docs#3974). Deliberately NOT shared with the
+	// language catalog, which keeps serving its cache indefinitely.
+	setupTaxCatalogStaleMax = 15 * time.Minute
 )
 
 // setupTaxCatalogCache is the package-level, mutex-guarded TTL cache behind
@@ -99,10 +107,16 @@ func resetSetupTaxCatalog() {
 
 // setupTaxCatalogEntries returns the cached tax-capability catalog, fetching
 // (bounded) when the cache is cold or expired. ok=false means the catalog is
-// unreachable AND nothing was ever cached. Mirrors setupLanguageCatalogEntries
-// field-for-field (same TTL/stale-cache/pagination/offline-first posture) —
-// see that function's own doc comment for the full reasoning, not repeated
-// here.
+// unreachable AND nothing usable was cached: nothing ever cached, or a cache
+// whose last success is setupTaxCatalogStaleMax old or older. Mirrors
+// setupLanguageCatalogEntries (same TTL/pagination/offline-first posture; see
+// that function's doc comment for the reasoning) with ONE deliberate
+// divergence, the stale cap: the language catalog serves its last success
+// forever, but here an hours-old "no DE tax listing" miss served while offline
+// made the wizard say "the tax plugin isn't in the plugin catalog yet" on an
+// offline till. Past the cap a failed refresh reads as unreachable instead, so
+// the wizard shows the Offline tile (ut-docs#3974). The cache is not cleared;
+// a later successful fetch replaces it.
 func setupTaxCatalogEntries(ctx context.Context, d *common.Deps) (entries []marketplace.PluginSummary, ok bool) {
 	c := &setupTaxCatalogCache
 	c.mu.Lock()
@@ -112,13 +126,21 @@ func setupTaxCatalogEntries(ctx context.Context, d *common.Deps) (entries []mark
 	if c.fetched && now.Sub(c.lastSuccess) < setupTaxCatalogTTL {
 		return c.entries, true
 	}
+	// serveCached is the one place the stale cap lives: every path that serves
+	// the cache without a fresh success goes through it.
+	serveCached := func() ([]marketplace.PluginSummary, bool) {
+		if !c.fetched || now.Sub(c.lastSuccess) >= setupTaxCatalogStaleMax {
+			return nil, false
+		}
+		return c.entries, true
+	}
 	if now.Sub(c.lastAttempt) < setupTaxCatalogRetryInterval {
-		return c.entries, c.fetched
+		return serveCached()
 	}
 	c.lastAttempt = now
 
 	if d.Cfg == nil || strings.TrimSpace(d.Cfg.Marketplace.EndpointURL) == "" {
-		return c.entries, c.fetched
+		return serveCached()
 	}
 
 	fctx, cancel := context.WithTimeout(ctx, setupTaxCatalogFetchTimeout)
@@ -133,9 +155,16 @@ func setupTaxCatalogEntries(ctx context.Context, d *common.Deps) (entries []mark
 	for page := 0; page < setupTaxCatalogMaxPages; page++ {
 		resp, err := client.ListPlugins(fctx, &marketplace.ListPluginsRequest{Capability: []string{"tax"}, PageToken: pageToken})
 		if err != nil {
-			logging.L().Warnf("setup wizard: tax catalog fetch failed (serving %s): %v",
-				map[bool]string{true: "stale cache", false: "nothing"}[c.fetched], err)
-			return c.entries, c.fetched
+			entries, ok := serveCached()
+			served := "nothing"
+			switch {
+			case ok:
+				served = "stale cache"
+			case c.fetched:
+				served = "nothing: cache past the stale cap"
+			}
+			logging.L().Warnf("setup wizard: tax catalog fetch failed (serving %s): %v", served, err)
+			return entries, ok
 		}
 		all = append(all, resp.Plugins...)
 		if resp.NextPageToken == "" {
@@ -157,7 +186,8 @@ type installableTaxPlugin struct {
 	Country   string
 	ListingID string
 	// Offline (ut-docs#1512): the catalog could not be reached and nothing
-	// is cached, so there is no listing to name yet. The tile still shows —
+	// is cached, or the cache is older than setupTaxCatalogStaleMax
+	// (ut-docs#3974), so there is no listing to name yet. The tile still shows —
 	// owner decision 2026-09-28, "always show the prompt" — with a "couldn't
 	// check yet, we'll install it when you're online" note, and its button
 	// queues the install for the #591 background retry with the operator's
@@ -173,7 +203,8 @@ type installableTaxPlugin struct {
 // prompt:
 //   - no locale mapped for this country: nil, false — nothing to prompt,
 //     not "catalog unavailable" (no note should show either).
-//   - the catalog is unreachable with nothing cached: an Offline tile, true
+//   - the catalog is unreachable with nothing cached, or a cache older than
+//     setupTaxCatalogStaleMax: an Offline tile, true
 //     (ut-docs#1512 — the operator is still prompted; the install is queued
 //     for when the till is online).
 //   - an active local plugin with a tax entry is meant for this country

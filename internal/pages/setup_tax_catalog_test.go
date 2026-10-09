@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
@@ -1475,5 +1476,94 @@ func TestNotPublishedReasonNotOrphanedByDismissRaceOrInheritedOnRequeue(t *testi
 	recordBasePluginAttempt(t.Context(), dp, taxSpec, fmt.Errorf("%w: %w", errBasePluginCatalogUnreachable, errors.New("dial tcp: connection refused")))
 	if got := loadBasePluginsNotPublished(t.Context(), dp); got[taxSpec] {
 		t.Fatalf("an unreachable catalog must clear the reason, got %+v", got)
+	}
+}
+
+// --- ut-docs#3974: a cached "no DE tax listing" miss must not outlive the cap ---
+
+// seedTaxCatalogCache plants a successful fetch (entries) from lastSuccessAgo
+// ago, with the last attempt lastAttemptAgo ago.
+func seedTaxCatalogCache(t *testing.T, entries []marketplace.PluginSummary, lastSuccessAgo, lastAttemptAgo time.Duration) {
+	t.Helper()
+	c := &setupTaxCatalogCache
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	c.fetched = true
+	c.entries = entries
+	c.lastSuccess = now.Add(-lastSuccessAgo)
+	c.lastAttempt = now.Add(-lastAttemptAgo)
+}
+
+func TestSetupInstallableTaxPlugin_StaleCachedMissReadsAsOffline_3974(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		attemptAgo  time.Duration
+		wantOffline bool
+	}{
+		{"fetch retried and fails", time.Hour, true},
+		{"inside the retry window", time.Second, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetTaxCatalogForTest(t)
+			dp := newBasePluginTestDeps(t)
+			deadMarketplace(t, dp)
+			seedTaxCatalogCache(t, nil, setupTaxCatalogStaleMax+time.Minute, tc.attemptAgo)
+
+			plugin, unavailable := setupInstallableTaxPlugin(t.Context(), dp, "DE")
+			if !unavailable || plugin == nil || !plugin.Offline {
+				t.Fatalf("plugin=%+v unavailable=%v, want an Offline tile past the stale cap", plugin, unavailable)
+			}
+		})
+	}
+}
+
+func TestSetupInstallableTaxPlugin_RecentCachedMissStillServed_3974(t *testing.T) {
+	for _, attemptAgo := range []time.Duration{time.Hour, time.Second} {
+		resetTaxCatalogForTest(t)
+		dp := newBasePluginTestDeps(t)
+		deadMarketplace(t, dp)
+		seedTaxCatalogCache(t, nil, setupTaxCatalogStaleMax-time.Minute, attemptAgo)
+
+		plugin, unavailable := setupInstallableTaxPlugin(t.Context(), dp, "DE")
+		if plugin != nil || unavailable {
+			t.Fatalf("attemptAgo=%v: plugin=%+v unavailable=%v, want nil,false (cache younger than the cap is served)", attemptAgo, plugin, unavailable)
+		}
+	}
+}
+
+// A cached HIT past the cap reads as offline too: the tile is Offline, so
+// its button queues the install instead of a doomed foreground attempt.
+func TestSetupInstallableTaxPlugin_StaleCachedHitReadsAsOffline_3974(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	dp := newBasePluginTestDeps(t)
+	deadMarketplace(t, dp)
+	seedTaxCatalogCache(t, []marketplace.PluginSummary{deTaxCatalogEntry("tax-de", "ut-plugin-tax-de", "1.0.0")}, setupTaxCatalogStaleMax+time.Minute, time.Hour)
+
+	plugin, unavailable := setupInstallableTaxPlugin(t.Context(), dp, "DE")
+	if plugin == nil || !plugin.Offline || !unavailable {
+		t.Fatalf("plugin=%+v unavailable=%v, want an Offline tile for a cached hit past the stale cap", plugin, unavailable)
+	}
+}
+
+func TestSetupGETStaleCachedMissOfflineShowsQueuedOfflineNote_3974(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	resetSetupLanguageCatalog()
+	t.Cleanup(resetSetupLanguageCatalog)
+	withOSLocale(t, "", "") // see TestSetupGETResumesStep3ForTaxCountry's comment
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	deadMarketplace(t, dp)
+	seedTaxCatalogCache(t, nil, 3*time.Hour, 3*time.Hour)
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{{CanonicalType: "tax", Locale: "de"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := getSetup(mux, "", "").Body.String()
+	if !strings.Contains(body, "data-tax-plugin-queued") {
+		t.Errorf("offline with a stale cached miss must show the queued-offline note, got:\n%s", body)
+	}
+	if strings.Contains(body, "isn&#39;t in the plugin catalog yet") {
+		t.Error("an offline till must not claim the plugin isn't in the catalog yet")
 	}
 }
