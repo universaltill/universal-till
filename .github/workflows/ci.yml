@@ -556,9 +556,11 @@ jobs:
   pages-shuffle:
     # ut-docs#3865 (follow-up to ut-docs#3822 / PR #1742): internal/pages
     # passes in any test order today, but nothing kept it that way — the
-    # next leaked process global (an httpx.Init* that SnapshotStateForTests
-    # misses, or a pages-level `var` seam a test forgets to restore) would
-    # bring order dependence back unnoticed. This job runs the package under
+    # next pages-level `var` seam a test stubs and forgets to restore would
+    # bring order dependence back unnoticed. (A leaked httpx global is
+    # mostly undone by chdirRoot's resetProcessGlobals before the next test,
+    # so it only shows here when a helper-less test reads it after the
+    # leaker under one of these seeds.) This job runs the package under
     # a fixed list of -shuffle seeds, never -shuffle=on: a random seed would
     # turn main red at random, and a pinned one fails the same way on every
     # rerun and reproduces locally with the same flag.
@@ -571,6 +573,9 @@ jobs:
     #
     # Reproduce a failure: go test -count=1 -shuffle=<seed> ./internal/pages
     runs-on: ubuntu-latest
+    # Bounds a wedged checkout/setup/download; the test binary has its own
+    # -timeout 20m below.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
