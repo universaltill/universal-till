@@ -359,6 +359,38 @@ func TestRunSnapshotFailureAborts(t *testing.T) {
 	}
 }
 
+// SnapshotWithAssets returns a non-empty path AND an error when the DB was
+// snapshotted but the photos could not be added (ut-docs#3991). The uninstall
+// must treat that as a hard failure: the snapshot is photo-less, so it must
+// neither be copied to the destination nor let anything be removed.
+func TestRunPhotoLessSnapshotAborts(t *testing.T) {
+	env := newTestEnv(t, []string{"--yes"}, "")
+	photoLess := filepath.Join(t.TempDir(), "unitill-pos-20260101-000000.db")
+	if err := os.WriteFile(photoLess, []byte("not-a-real-db"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env.app.snapshot = func(string) (string, error) {
+		return photoLess, errors.New("add photos to backup: permission denied")
+	}
+	err := env.app.run()
+	if err == nil {
+		t.Fatal("a photo-less snapshot (path + error) must be a hard error")
+	}
+	if !strings.Contains(err.Error(), "photos") {
+		t.Errorf("error should name the photo failure, got: %v", err)
+	}
+	if env.runner.called(removeCmd) || env.runner.called(purgeCmd) {
+		t.Errorf("nothing may be removed after a photo-less snapshot: %v", env.runner.calls)
+	}
+	if !env.runner.called(startCmd) {
+		t.Errorf("abort must try to restart the till, calls: %v", env.runner.calls)
+	}
+	copied, _ := filepath.Glob(filepath.Join(env.home, "*"))
+	if len(copied) != 0 {
+		t.Errorf("photo-less snapshot must not be copied to the destination, found %v", copied)
+	}
+}
+
 // A failed `systemctl stop` also aborts — a still-running writer makes the
 // copy unsafe.
 func TestRunStopFailureAborts(t *testing.T) {
