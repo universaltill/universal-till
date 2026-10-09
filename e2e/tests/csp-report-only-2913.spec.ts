@@ -6,6 +6,15 @@ import { test, expect } from './fixtures';
 // /csp-report, whose GET inventory is what the later enforcement slices are
 // planned from — so this spec attaches it.
 //
+// ut-docs#3505: it also asserts the inventory holds no `script-src-attr`
+// violation. Chromium reports one only when an inline on*= handler actually
+// runs, so this catches handlers that fire while SURFACES load (onerror=,
+// onload=, ...). A click-only onclick= that the spec never triggers is not
+// reported, and an hx-on handler is compiled by htmx with new Function, so it
+// shows up (if it ever fires) as script-src/eval, not script-src-attr. Both
+// are covered statically by scripts/ci/guard-no-inline-handlers.sh
+// (ut-docs#3325 slice 2).
+//
 // Deliberately NO watchConsole here: a report-only violation is logged as a
 // console error by design, and collecting them is the point.
 
@@ -41,6 +50,8 @@ type Violation = {
 };
 
 test('every surface carries the report-only CSP and violations are collected', async ({ page, request }, testInfo) => {
+  // Two 15s report polls on top of 13 navigations can pass the 45s default.
+  test.setTimeout(60_000);
   for (const path of SURFACES) {
     const resp = await page.goto(path);
     expect(resp, `no response for ${path}`).not.toBeNull();
@@ -70,6 +81,26 @@ test('every surface carries the report-only CSP and violations are collected', a
     )
     .toBeGreaterThan(0);
 
+  // Settle: reports land asynchronously, so the first poll can return before
+  // late ones do. Wait until two consecutive reads ~1s apart agree, then keep
+  // that final inventory.
+  let lastLength = -1;
+  await expect
+    .poll(
+      async () => {
+        const r = await request.get('/csp-report');
+        expect(r.status()).toBe(200);
+        const body = await r.json();
+        expect(body.error).toBeNull();
+        inventory = body.data as Violation[];
+        const settled = inventory.length === lastLength;
+        lastLength = inventory.length;
+        return settled;
+      },
+      { message: 'csp-report inventory never settled (unique count kept changing)', timeout: 15_000, intervals: [1_000] },
+    )
+    .toBe(true);
+
   for (const v of inventory) {
     expect(v.effective_directive, JSON.stringify(v)).not.toBe('');
     expect(v.document_path, JSON.stringify(v)).toMatch(/^\//);
@@ -86,4 +117,13 @@ test('every surface carries the report-only CSP and violations are collected', a
     body: JSON.stringify({ summary, data: inventory }, null, 2),
     contentType: 'application/json',
   });
+
+  // ut-docs#3325 slice 2 moved the inline hx-on/onclick handlers into
+  // web/public/inline-actions.js; ut-docs#3505 keeps them out. Asserted after
+  // the attach so the inventory is still attached on failure.
+  const scriptSrcAttr = inventory.filter((v) => v.effective_directive === 'script-src-attr');
+  expect(
+    scriptSrcAttr,
+    `inline event-handler attributes violate script-src-attr: ${JSON.stringify(scriptSrcAttr, null, 2)}`,
+  ).toEqual([]);
 });
