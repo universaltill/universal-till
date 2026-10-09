@@ -25,7 +25,7 @@ func newMenuLayoutSettingsDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	return mux, dp
 }
 
-func installSalonLayout(t *testing.T, dp *common.Deps) {
+func installBuiltinLayout(t *testing.T, dp *common.Deps) {
 	t.Helper()
 	m := &plugins.Manifest{
 		ID: "com.example.salon", Name: "Salon layout", Version: "1.0.0", Runtime: "none", CanonicalType: "layout",
@@ -47,7 +47,7 @@ func installSalonLayout(t *testing.T, dp *common.Deps) {
 // installRestructureLayout installs a `layout` plugin whose Menu-slot
 // amendments never hide anything — only relabel/reicon/reorder/regroup — so
 // tests can drive the amendedMenuRows path (ut-docs#1921) independently of
-// installSalonLayout's hide-only amendments above.
+// installBuiltinLayout's hide-only amendments above.
 func installRestructureLayout(t *testing.T, dp *common.Deps, pluginID, name string, amendments []any) {
 	t.Helper()
 	m := &plugins.Manifest{
@@ -83,7 +83,7 @@ func postMenuLayoutForm(t *testing.T, mux *http.ServeMux, path string, form url.
 func TestMenuLayoutSettings_ListsHiddenDestinationsNamingThePlugin(t *testing.T) {
 	mux, dp := newMenuLayoutSettingsDeps(t)
 	t.Setenv("UT_AUTH", "off")
-	installSalonLayout(t, dp)
+	installBuiltinLayout(t, dp)
 
 	rec := getPage(t, mux, "/settings/menu")
 	if rec.Code != http.StatusOK {
@@ -118,7 +118,7 @@ func TestMenuLayoutSettings_EmptyStateWhenNothingIsHidden(t *testing.T) {
 func TestMenuLayoutSettings_RestoreBringsTheTileBackAndSurvivesReload(t *testing.T) {
 	mux, dp := newMenuLayoutSettingsDeps(t)
 	t.Setenv("UT_AUTH", "off")
-	installSalonLayout(t, dp)
+	installBuiltinLayout(t, dp)
 	if body := getMenu(t, mux); strings.Contains(body, `href="/tables"`) {
 		t.Fatalf("precondition: /tables hidden, got: %s", body)
 	}
@@ -161,7 +161,7 @@ func TestMenuLayoutSettings_RestoreBringsTheTileBackAndSurvivesReload(t *testing
 func TestMenuLayoutSettings_RestoreRejectsAKeyNothingHides(t *testing.T) {
 	mux, dp := newMenuLayoutSettingsDeps(t)
 	t.Setenv("UT_AUTH", "off")
-	installSalonLayout(t, dp)
+	installBuiltinLayout(t, dp)
 	for _, key := range []string{"/nope", "/items", ""} {
 		rec := postMenuLayoutForm(t, mux, "/api/settings/menu/restore", url.Values{"key": {key}})
 		if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "err=menulayout.error.unknown_key") {
@@ -178,7 +178,7 @@ func TestMenuLayoutSettings_RestoreRejectsAKeyNothingHides(t *testing.T) {
 // Same gate as every other settings surface: canPerform(d, r, "settings").
 func TestMenuLayoutSettings_RequiresManager(t *testing.T) {
 	mux, dp := newMenuLayoutSettingsDeps(t)
-	installSalonLayout(t, dp)
+	installBuiltinLayout(t, dp)
 	// UT_AUTH unset, no session user on the request.
 	if rec := getPage(t, mux, "/settings/menu"); rec.Code != http.StatusForbidden {
 		t.Fatalf("GET /settings/menu without a manager = %d, want 403", rec.Code)

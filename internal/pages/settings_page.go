@@ -2294,7 +2294,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// never block a shop-type save over a cosmetic menu personalization.
 		// ut-docs#2006: reload unless it's a genuine no-op (no error,
 		// nothing changed) — an error still reloads, since a failed
-		// reinstall can leave the DB changed (removeSalon succeeded) even
+		// reinstall can leave the DB changed (removeBuiltin succeeded) even
 		// though Sync itself returned an error.
 		changed, syncErr := builtinlayouts.Sync(r.Context(), d.Db, v)
 		if syncErr != nil {

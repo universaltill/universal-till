@@ -10,7 +10,6 @@
 # --- #2879: hard-coded country/plugin-ID tables -> manifest declarations ---
 internal/fiscal/device.go|<file>|"com.universaltill.tax-tr" # #2879 fiscal.PluginIDTaxTR const
 internal/data/fiscal_repo.go|<file>|"com.universaltill.tax-de" # #2879 data.FiscalRegisterDEPluginID const
-internal/plugins/builtinlayouts/builtinlayouts.go|<file>|"com.universaltill.layout-salon" # #2879 SalonPluginID const
 internal/pages/setup_tax_catalog.go|<file>|"DE" # #2879 countryTaxLocale
 internal/pages/menu_page.go|init|"DE" # #2879 menu DE tile
 internal/pages/menu_page.go|init|"TR" # #2879 menu TR tile

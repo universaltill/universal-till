@@ -1,7 +1,8 @@
 {
   "id": "com.universaltill.layout-salon",
   "name": "Salon layout",
-  "version": "0.4.0",
+  "version": "0.4.1",
+  "provides": ["layout.shop_type:service"],
   "description": "A hair salon / barber shop Menu: no Tables, no Kitchen stations, Items shown as Services and listed first — the Items screen's own Library row reads Services and moves first too, the nav rail lists Orders ahead of Inventory, and the Settings sidebar puts Theme first and groups Printer with Tills under Hardware. Changes only navigation and labels — the catalog, options and stock underneath are untouched.",
   "author": "Universal Till Contributors",
   "website": "https://universaltill.com",

@@ -24,7 +24,7 @@ func newMenuLayoutReplica(t *testing.T, mainURL string) (*http.ServeMux, *common
 	// till decides on.
 	t.Setenv("UT_AUTH", "off")
 	setReplicaSettings(t, dp.Settings, mainURL, syncSettingsBearer)
-	installSalonLayout(t, dp)
+	installBuiltinLayout(t, dp)
 	return mux, dp
 }
 
@@ -88,7 +88,7 @@ func TestRederiveSettings_RebuildsMenuAmendmentsFromRestoredKeys(t *testing.T) {
 	mux, dp := newMenuLayoutSettingsDeps(t)
 	t.Setenv("UT_AUTH", "off")
 	dp.AuthSvc = auth.NewService(dp.Db)
-	installSalonLayout(t, dp)
+	installBuiltinLayout(t, dp)
 	if body := getMenu(t, mux); strings.Contains(body, `href="/tables"`) {
 		t.Fatalf("precondition: /tables hidden, got: %s", body)
 	}

@@ -391,7 +391,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// menu personalization.
 	// ut-docs#2006: reload unless it's a genuine no-op (no error, nothing
 	// changed) — an error still reloads, since a failed reinstall can leave
-	// the DB changed (removeSalon succeeded) even though Sync itself
+	// the DB changed (removeBuiltin succeeded) even though Sync itself
 	// returned an error.
 	if shopType, _, err := setStore.Get(ctx, common.KeyShopType); err != nil {
 		log.Warnf("boot: could not read shop_type for builtin layout reconciliation: %v", err)

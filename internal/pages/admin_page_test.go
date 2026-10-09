@@ -29,7 +29,7 @@ import (
 // given Menu-slot amendments and reloads dp's plugin manager so
 // d.MenuAmendmentsSnapshot() (and so uislot.Resolve, and so
 // visibleAdminEntries/registerMenu) actually picks them up — same
-// mechanism as menu_layout_settings_test.go's installSalonLayout, just
+// mechanism as menu_layout_settings_test.go's installBuiltinLayout, just
 // generic over the amendments rather than one hardcoded pair.
 func installLayoutAmendments(t *testing.T, dp *common.Deps, amendments ...map[string]any) {
 	t.Helper()

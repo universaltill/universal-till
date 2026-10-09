@@ -323,13 +323,13 @@ func TestItemsSection_RealHTMXSwapStillGetsOOBRail(t *testing.T) {
 // (the same one builtinlayouts.Sync installs for shop_type=service) into
 // dp's till and reloads plugin state — shared by every test that proves an
 // ADR-0088 slot end to end against that plugin rather than a fixture
-// (menu_layout_settings_test.go's installSalonLayout is the FIXTURE twin:
+// (menu_layout_settings_test.go's installBuiltinLayout is the FIXTURE twin:
 // a hand-built hide-only manifest for the restore-surface tests).
 //
 // syncLocales (internal/plugins.Manager) reads a plugin's locale files back
 // from paths.Plugins() on disk, never from the manifest bytes (Decision G)
 // — so a real overlay needs them written there first, the same step
-// internal/plugins/builtinlayouts.installSalon takes for a real till.
+// internal/plugins/builtinlayouts.installBuiltin takes for a real till.
 // Isolated to a temp dir so this test can't touch (or race) another test's
 // plugin files. Call BEFORE newMenuPageTestDeps (which, via its own
 // pm.SetLocalizer call, does a paths.Plugins() read) so that read already
