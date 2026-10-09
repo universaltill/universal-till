@@ -29,6 +29,7 @@ func UninstallPlugin(ctx context.Context, db *sql.DB, pluginID string) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit transaction: %w", err)
 	}
+	forgetDenials(db, pluginID) // its permissions are gone (ut-docs#3945)
 
 	// plugin_storage is namespaced KV without an FK — clear it explicitly.
 	// EXCEPT the fiscal-register prefix (ADR-0072/ut-docs#1106 review finding

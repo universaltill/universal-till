@@ -28,7 +28,9 @@ import (
 // ui.view.ask, in parallel, each bounded by pluginSlotTimeout. The answers
 // are validated and drawn by core's own plugin view partials. A slow,
 // broken, invalid, permission-less or silent plugin is skipped -- logged
-// at warn, never shown, never blocking the region or its page.
+// at warn, never shown, never blocking the region or its page. A
+// permission-less plugin is never asked, and its denial is audited and
+// warned once per process, not on every load (ut-docs#3945).
 //
 // Five regions load lazily from GET /ui/slot/{slot} (an htmx placeholder in
 // the host page), gated by the host page's own permission. The setup
@@ -103,6 +105,7 @@ func contentSlotPanels(ctx context.Context, d *common.Deps, slot, locale string,
 		logging.L().Warnf("plugin slot %s: list entries: %v", slot, err)
 		return nil
 	}
+	perm := "ui:slot:" + slot
 	var fill []data.PageEntryRow
 	for _, e := range entries {
 		if e.Slot != slot || e.View == "" {
@@ -114,6 +117,19 @@ func contentSlotPanels(ctx context.Context, d *common.Deps, slot, locale string,
 			continue
 		}
 		if _, reserved := plugins.ReservedPageRoutePrefix(e.Route); reserved {
+			continue
+		}
+		// Checked here, not at ask time, so a revoked entry never takes one
+		// of the pluginSlotMaxEntries places.
+		granted, first, err := plugins.CheckPermissionAuditOnce(ctx, d.Db, e.PluginID, perm)
+		if err != nil {
+			logging.L().Warnf("plugin slot %s: %s %q skipped: %v", slot, e.PluginID, e.View, err)
+			continue
+		}
+		if !granted {
+			if first {
+				logging.L().Warnf("plugin slot %s: %s %q skipped: %s not granted", slot, e.PluginID, e.View, perm)
+			}
 			continue
 		}
 		fill = append(fill, e)
@@ -134,7 +150,6 @@ func contentSlotPanels(ctx context.Context, d *common.Deps, slot, locale string,
 		p[k] = v
 	}
 	p["slot"] = slot
-	perm := "ui:slot:" + slot
 
 	views := make([]*pluginview.View, len(fill))
 	var wg sync.WaitGroup

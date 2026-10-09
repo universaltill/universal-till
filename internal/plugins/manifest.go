@@ -1291,6 +1291,8 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 	if err := data.NewSettingsRepo(db).Set(ctx, "sync.pull_version", ""); err != nil {
 		logging.L().Warnf("plugin install: could not reset sync pull cursor: %v", err)
 	}
+	// Its permissions were written afresh (ut-docs#3945).
+	forgetDenials(db, m.ID)
 
 	return nil
 }

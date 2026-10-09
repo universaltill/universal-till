@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -62,12 +63,66 @@ func CheckPermissionGranted(ctx context.Context, db *sql.DB, pluginID, permissio
 	return true, nil
 }
 
+// denialKey identifies one remembered denial. The db pointer keeps separate
+// databases (tests) independent.
+type denialKey struct {
+	db                   *sql.DB
+	pluginID, permission string
+}
+
+// auditedDenials holds the denials CheckPermissionAuditOnce already audited
+// in this process.
+var auditedDenials sync.Map
+
+// forgetDenials drops pluginID's remembered denials on db, so the next
+// denied check audits again. Called whenever its permissions are written.
+func forgetDenials(db *sql.DB, pluginID string) {
+	auditedDenials.Range(func(k, _ any) bool {
+		if dk := k.(denialKey); dk.db == db && dk.pluginID == pluginID {
+			auditedDenials.Delete(k)
+		}
+		return true
+	})
+}
+
+// CheckPermissionAuditOnce is CheckPermissionGranted for repeated,
+// non-deliberate checks, such as a host page polling a content slot on every
+// load (ut-docs#3945): a denial is audited only the first time in this
+// process (firstDenial), so a revoked or undeclared grant does not add an
+// audit row per page load. Any later grant, revoke, install or uninstall of
+// the plugin forgets the denial, so a re-revocation audits again. Deliberate
+// actions keep CheckPermission, which audits every denial. err is a DB
+// failure; callers fail closed.
+func CheckPermissionAuditOnce(ctx context.Context, db *sql.DB, pluginID, permission string) (granted, firstDenial bool, err error) {
+	granted, exists, err := data.NewPluginRepo(db).CheckPermission(ctx, pluginID, permission)
+	if err != nil {
+		return false, false, err
+	}
+	key := denialKey{db: db, pluginID: pluginID, permission: permission}
+	if exists && granted {
+		auditedDenials.Delete(key)
+		return true, false, nil
+	}
+	if _, seen := auditedDenials.LoadOrStore(key, struct{}{}); seen {
+		return false, false, nil
+	}
+	reason := "permission not granted"
+	if !exists {
+		reason = "permission not declared"
+	}
+	if err := auditPermissionDenial(ctx, db, pluginID, permission, reason); err != nil {
+		logging.L().Warnf("failed to audit permission denial: %v", err)
+	}
+	return false, true, nil
+}
+
 // GrantPermission grants a permission to a plugin
 func GrantPermission(ctx context.Context, db *sql.DB, pluginID, permission string) error {
 	repo := data.NewPluginRepo(db)
 	if err := repo.SetPermission(ctx, pluginID, permission, true); err != nil {
 		return err
 	}
+	forgetDenials(db, pluginID)
 
 	// Audit the grant
 	if err := auditPermissionGrant(ctx, db, pluginID, permission); err != nil {
@@ -83,6 +138,7 @@ func RevokePermission(ctx context.Context, db *sql.DB, pluginID, permission stri
 	if err := repo.SetPermission(ctx, pluginID, permission, false); err != nil {
 		return err
 	}
+	forgetDenials(db, pluginID)
 
 	// Audit the revocation
 	if err := auditPermissionRevoke(ctx, db, pluginID, permission); err != nil {
