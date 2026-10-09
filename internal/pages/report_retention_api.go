@@ -49,11 +49,11 @@ func registerReportRetentionModeAPI(mux *http.ServeMux, d *common.Deps, repo *da
 			// submits that mode, so the gate applies only to a change.
 			current, _, _ := d.Settings.Get(r.Context(), common.KeyReportRetentionMode)
 			if strings.TrimSpace(current) != mode && !reportRetentionCloudAllowed(r.Context(), d, time.Now()) {
-				common.LocalizedError(w, r, http.StatusConflict, "settings.retention.err_needs_subscription")
+				httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), "settings.retention.err_needs_subscription"), http.StatusConflict)
 				return
 			}
 		default:
-			common.LocalizedError(w, r, http.StatusBadRequest, "settings.retention.err_invalid_mode")
+			httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), "settings.retention.err_invalid_mode"), http.StatusBadRequest)
 			return
 		}
 		// Mutating + audit-writing (ut-docs#794): validated above, gated

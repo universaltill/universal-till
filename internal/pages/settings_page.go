@@ -2071,7 +2071,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		mode := strings.TrimSpace(r.Form.Get("mode"))
 		if mode != "register" && mode != "backoffice" && mode != "self_order" {
-			http.Error(w, "mode must be register, backoffice, or self_order", http.StatusBadRequest)
+			httpx.RefuseText(w, httpx.T(locale, "settings.display.err_invalid_mode"), http.StatusBadRequest)
 			return
 		}
 		rawMode := mode

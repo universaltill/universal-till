@@ -2226,6 +2226,7 @@
   "settings.display.large": "large displays",
   "settings.display.launch_on_startup_label": "Launch on startup",
   "settings.display.launch_on_startup_pending_note": "Takes effect once this platform's autostart support ships.",
+  "settings.display.err_invalid_mode": "Choose a device profile: Register, Back office or Self-order kiosk.",
   "settings.display.mode": "Device profile",
   "settings.display.mode_backoffice": "Back office (manager station)",
   "settings.display.mode_register": "Register (sell screen)",

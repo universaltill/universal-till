@@ -240,13 +240,20 @@
     'clear-text': function (ctx, id) { var el = byId(id); if (el) el.textContent = ''; },
     'clear-value': function (ctx, id) { var el = byId(id); if (el) el.value = ''; },
     'set-value': function (ctx, arg, args) { var el = byId(args[0]); if (el) el.value = args.length > 1 ? args[1] : ''; },
-    // A failed request's body as the message (store name, staff languages).
-    // ut-docs#3247: a non-empty reason supersedes the generic "server error"
-    // alert app.js raised for the same non-2xx; an empty body leaves it up
-    // (the operator has nothing else to read).
+    // A failed request's body as the message (store name, staff languages,
+    // device profile, report retention). ut-docs#3247: a non-empty reason
+    // supersedes the generic "server error" alert app.js raised for the same
+    // non-2xx; an empty body leaves it up (the operator has nothing else to
+    // read). ut-docs#3978: only a body the server marked X-UT-Response:
+    // refused (httpx.RefuseText: already translated, for the operator) and
+    // sent as text/plain counts, exactly as `save-error` requires; an
+    // unmarked body is an untranslated developer string or HTML, so it is
+    // never shown (the span is cleared so an older message cannot linger)
+    // and the generic alert stays.
     'text-response': function (ctx, id) {
       var el = byId(id), x = xhrOf(ctx);
-      var text = (x && x.responseText) || '';
+      var text = (x && header(ctx, 'X-UT-Response') === 'refused' &&
+        header(ctx, 'Content-Type').indexOf('text/plain') === 0 && x.responseText) || '';
       if (el) el.textContent = text;
       if (el && text.trim()) hideGenericServerAlert();
     },
