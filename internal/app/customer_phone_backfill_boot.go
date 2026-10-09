@@ -13,8 +13,11 @@ import (
 // startCustomerPhoneE164Backfill computes customers.phone_e164 for every
 // customer still without one (ut-docs#3200, ADR-0131 §3), in a background
 // goroutine registered on wg so shutdown waits for it. It runs on EVERY
-// till, main and replica alike: the column is derived from the till's own
-// rows and the shop country, and the caller-ID lookup reads it locally.
+// till, main and replica alike: the column is derived from the till's
+// rows and the shop country, and the caller-ID lookup reads it locally. A
+// replica also receives the main's values through the admin pull, and its
+// country changes arrive that way too — so a replica re-runs at its next
+// boot, while a main re-runs on every country save (ut-docs#3992).
 // Never on a request path; chunked (data.DefaultPhoneE164BackfillBatch
 // rows per short write transaction) so a sale never waits long on the
 // lock; stops between chunks when ctx ends. A failure is logged and never
@@ -26,8 +29,9 @@ func startCustomerPhoneE164Backfill(ctx context.Context, wg *sync.WaitGroup, sql
 		defer wg.Done()
 		n, err := data.NewPOSRepo(sqlDB).BackfillCustomerPhoneE164(ctx, data.DefaultPhoneE164BackfillBatch)
 		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return // shutting down; the next boot carries on
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+				errors.Is(err, data.ErrPhoneE164RegionChanged) {
+				return // shutting down, or a newer run owns the new country; the next boot carries on
 			}
 			log.Errorf("back-fill customers phone_e164: %v", err)
 			return

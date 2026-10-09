@@ -1185,6 +1185,7 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 			if countryChanged {
 				// ut-docs#1068: the new country's base plugins, as the wizard queues them.
 				queueBasePluginsForCountryChange(ctx, d, value)
+				startCustomerPhoneE164BackfillForCountryChange(d) // ut-docs#3992
 			}
 			if rederive != nil {
 				rederive(ctx)

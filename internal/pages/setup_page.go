@@ -728,6 +728,10 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// blocks or fails the wizard's own response. A no-op for a country with nothing mapped.
 		installBasePluginsForSetup(r.Context(), d, st.Country)
 
+		// ut-docs#3992: the boot back-fill ran before the wizard saved the
+		// country; re-normalise customers.phone_e164 for it, in the background.
+		startCustomerPhoneE164BackfillForCountryChange(d)
+
 		// Eager store registration on explicit opt-in (ADR-0071, ut-docs#879):
 		// same best-effort posture as the base-plugin install above — the
 		// choice is persisted BEFORE the one time-boxed network attempt, the
