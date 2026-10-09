@@ -3,6 +3,7 @@ package logging
 import (
 	"regexp"
 	"strings"
+	"time"
 )
 
 // redactedMark replaces every secret Redact removes.
@@ -163,9 +164,12 @@ func panSpans(line string, rs, re int) [][2]int {
 
 // looksLikePAN validates one group-aligned digit span from panSpans: a single consistent
 // separator (space, dash, or none) throughout, a real card IIN (first
-// digit 2-6 — a Unix-ms timestamp leads with 1), and a valid Luhn
-// checksum.
+// digit 2-6 — a Unix-ms timestamp leads with 1), a valid Luhn
+// checksum, and not a YYYYMMDD-HHMMSS date-time stamp.
 func looksLikePAN(candidate string) bool {
+	if isDateTimeStamp(candidate) {
+		return false
+	}
 	var sep byte
 	haveSep := false
 	digits := make([]byte, 0, len(candidate))
@@ -188,6 +192,25 @@ func looksLikePAN(candidate string) bool {
 		return false
 	}
 	return luhnValid(digits)
+}
+
+// isDateTimeStamp reports whether candidate is exactly a real
+// "YYYYMMDD-HHMMSS" calendar date and clock time (ut-docs#3999). The daily
+// backup names its snapshots unitill-pos-20261009-075545.db; about one
+// stamp in ten passes Luhn with a 2-series IIN, so the snapshot name in a
+// problem message was redacted at random. No card scheme groups its
+// digits 8-6, so exempting this exact dash-joined shape costs no card
+// coverage; the same digits without the dash are still checked as a PAN.
+// The year is pinned to 20xx (all the backup emits), which also keeps
+// time.Parse — and its allocating error path — off every other 15-char
+// span. layout mirrors the POS's internal/db backupTimeLayout.
+func isDateTimeStamp(candidate string) bool {
+	const layout = "20060102-150405"
+	if len(candidate) != len(layout) || candidate[0] != '2' || candidate[1] != '0' {
+		return false
+	}
+	_, err := time.Parse(layout, candidate)
+	return err == nil
 }
 
 // luhnValid implements the standard Luhn checksum (mod 10, doubling every
