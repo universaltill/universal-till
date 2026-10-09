@@ -1206,7 +1206,9 @@
          your free DE language pack", which is both wrong and the operator's
          only way to recognise (and dismiss) this exact pending item.
          ut-docs#3243: a tax spec the reachable catalog has no listing for
-         says so, rather than "installing… if you're offline". -->
+         says so, rather than "installing… if you're offline".
+         ut-docs#3194: a language spec with no listing is dropped silently, so
+         its chip says "looking for", never "installing". -->
     <span class="chip chip-note">{{ if and (eq .CanonicalType "tax") .NotPublished }}{{ printf (T "setup.base_plugins.not_published_tax") .LocaleUpper }}{{ else if eq .CanonicalType "tax" }}{{ printf (T "setup.base_plugins.pending_tax") .LocaleUpper }}{{ else }}{{ printf (T "setup.base_plugins.pending") .LocaleUpper }}{{ end }}</span>
     <button class="btn secondary" data-testid="pending-base-plugin-dismiss"
             hx-post="/api/settings/dismiss-pending-base-plugin"
