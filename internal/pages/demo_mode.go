@@ -457,21 +457,22 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /open-orders/counter/open":    true,
 	// Status chips every page loads (local reads only; denying them would
 	// stamp the demo message into the nav).
-	"GET /ui/bugreport-chip":      true,
-	"GET /ui/cloud-auth-chip":     true,
-	"GET /ui/disk-space-chip":     true, // ut-docs#3121; local statfs only
-	"GET /ui/diagnostics-chip":    true,
-	"GET /ui/fiscal-chip":         true,
-	"GET /ui/main-till-status":    true,
-	"GET /ui/net-status":          true,
-	"GET /ui/join-notice":         true, // ut-docs#2721; always empty in the demo (no LAN browse)
-	"GET /ui/pairing-notice":      true,
-	"GET /ui/shop-name-notice":    true, // ut-docs#3114
-	"GET /ui/plugin-buttons":      true,
-	"GET /ui/slot/{slot}":         true, // ut-docs#3872: core pages' content-slot placeholders; a demo installs no plugins, so it answers empty (panel actions post to /plugin/..., denied above)
-	"GET /ui/report-archive-chip": true,
-	"GET /ui/subscription-chip":   true, // ut-docs#2569, beside GET /api/entitlement
-	"GET /ui/sync-chip":           true,
+	"GET /ui/bugreport-chip":               true,
+	"GET /ui/cloud-auth-chip":              true,
+	"GET /ui/disk-space-chip":              true, // ut-docs#3121; local statfs only
+	"GET /ui/diagnostics-chip":             true,
+	"GET /ui/fiscal-chip":                  true,
+	"GET /ui/main-till-status":             true,
+	"GET /ui/net-status":                   true,
+	"GET /ui/join-notice":                  true, // ut-docs#2721; always empty in the demo (no LAN browse)
+	"GET /ui/pairing-notice":               true,
+	"GET /ui/shop-name-notice":             true, // ut-docs#3114
+	"GET /ui/plugin-buttons":               true,
+	"GET /ui/slot/{slot}":                  true, // ut-docs#3872: core pages' content-slot placeholders; a demo installs no plugins, so it answers empty (panel actions post to /plugin/..., denied above)
+	"GET /ui/slot/{slot}/{plugin}/{entry}": true, // ut-docs#3946: one entry's panel in its own Settings section; a demo installs no plugins, so it is 404
+	"GET /ui/report-archive-chip":          true,
+	"GET /ui/subscription-chip":            true, // ut-docs#2569, beside GET /api/entitlement
+	"GET /ui/sync-chip":                    true,
 	// Catalogue browse and edit, Designer, buttons, categories, modifiers,
 	// option sets, inventory, tax codes (form edits; uploads are blocked by
 	// the multipart file filter).

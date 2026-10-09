@@ -165,7 +165,7 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 		// the exact same full standalone page as before this card.
 		if httpx.IsFragmentSwap(w, r) {
 			httpx.RenderContentFragment("ui/pages/registers.html", registersData)(w, r)
-			writeAdminTreeOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/registers", adminGroupsFor(visibleAdminEntries(d, r)))
+			writeAdminTreeOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/registers", adminTreeGroups(d, r, visibleAdminEntries(d, r)))
 			return
 		}
 		httpx.Render("ui/pages/registers.html", registersData)(w, r)

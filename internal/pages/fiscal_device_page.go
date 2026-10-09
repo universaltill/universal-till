@@ -160,7 +160,7 @@ func registerFiscalDeviceTR(mux *http.ServeMux, d *common.Deps) {
 		// the exact same full standalone page as before this card.
 		if httpx.IsFragmentSwap(w, r) {
 			httpx.RenderContentFragment("ui/pages/fiscal_device.html", fiscalDeviceData)(w, r)
-			writeAdminTreeOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/fiscal-device", adminGroupsFor(visibleAdminEntries(d, r)))
+			writeAdminTreeOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/fiscal-device", adminTreeGroups(d, r, visibleAdminEntries(d, r)))
 			return
 		}
 		httpx.Render("ui/pages/fiscal_device.html", fiscalDeviceData)(w, r)

@@ -2356,12 +2356,17 @@
   </script>
 </div>
 {{ end }}
+{{/* ADR-0121 §7 (ut-docs#3872, #3946): each settings.sections plugin
+     entry is a section of its own -- a card the switcher below lists under
+     Plugins (its row is in #settings-nav-index) -- never a panel under every
+     core section. The card's heading is replaced by the plugin's panel,
+     fetched after the page renders, which draws the same heading. */}}
+{{ range .pluginSections }}
+<div class="card plugin-settings-section" id="{{ .ID }}">
+  <div class="plugin-slot-placeholder" hx-get="{{ .URL }}" hx-trigger="load" hx-swap="outerHTML"><h2>{{ .Label }}</h2></div>
+</div>
+{{ end }}
 </div><!-- /.settings-grid -->
-    {{/* ADR-0121 §7 (ut-docs#3872): plugin sections (settings.sections),
-         fetched after the page renders. Outside #settings-grid on purpose:
-         the section switcher below only shows/hides that grid's own cards,
-         so plugin sections stay in view under whichever card is open. */}}
-    <div class="plugin-slot-placeholder" hx-get="/ui/slot/settings.sections" hx-trigger="load" hx-swap="outerHTML"></div>
   </div><!-- /.settings-panel -->
 </div><!-- /.settings-shell -->
 <script>

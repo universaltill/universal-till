@@ -127,6 +127,32 @@ func adminGroupsFor(visible []uislot.Entry) []adminGroup {
 	return groups
 }
 
+// adminTreeGroups is the /admin tree for r: adminGroupsFor(visible), then
+// a Plugins group holding each admin.pages plugin entry r's slot gate lets
+// through (ut-docs#3946). A plugin row is a plain link to the entry's own
+// /plugin/ page, which is gated by the same slot gate (ut-docs#3973) and
+// draws the panel once, there -- never under every core destination. Like
+// adminGroupsFor's "Other" rows it is not fragment-capable: its route
+// answers with a whole page.
+func adminTreeGroups(d *common.Deps, r *http.Request, visible []uislot.Entry) []adminGroup {
+	groups := adminGroupsFor(visible)
+	if len(visible) == 0 {
+		return groups
+	}
+	gate := pluginSlotGates[adminPagesSlot]
+	if !gate(d, r) {
+		return groups
+	}
+	var entries []adminTreeEntry
+	for _, e := range contentSlotEntries(r.Context(), d, adminPagesSlot) {
+		entries = append(entries, adminTreeEntry{Entry: uislot.Entry{Key: e.Route, Href: e.Route, LabelKey: e.Label}})
+	}
+	if len(entries) == 0 {
+		return groups
+	}
+	return append(groups, adminGroup{HeadingKey: "nav.plugins", Entries: entries})
+}
+
 // adminEmbedHeader marks a sub-request whose fragment body is about to be
 // INLINED into /admin's own default panel load (embedAdminSection below) —
 // mirrors itemsnav.EmbedHeader/IsEmbed exactly, and for the identical
@@ -284,7 +310,7 @@ func registerAdmin(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
 			return
 		}
-		groups := adminGroupsFor(visible)
+		groups := adminTreeGroups(d, r, visible)
 		current := firstFragmentCapableHref(groups)
 		data := map[string]any{
 			"title":       httpx.T(httpx.RequestLocale(r), "page.title.admin"),
@@ -292,9 +318,6 @@ func registerAdmin(mux *http.ServeMux, d *common.Deps) {
 			"menuItems":   d.MenuSnapshot(),
 			"Groups":      groups,
 			"CurrentHref": current,
-			// ut-docs#3872: the admin.pages slot placeholder, drawn only
-			// for a viewer its route lets through (core reports too).
-			"PluginSlot": canPerform(d, r, "reports"),
 		}
 		if current != "" {
 			data["PanelHTML"] = embedAdminSection(mux, r, current)

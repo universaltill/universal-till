@@ -447,23 +447,26 @@ func TestPluginSlot_EntryCap_3872(t *testing.T) {
 // template, and the wizard draws setup.wizard.steps.
 func TestPluginSlot_HostTemplatesLoadTheirSlot_3872(t *testing.T) {
 	chdirRoot(t)
-	hosts := map[string]string{
-		"item.edit.actions": "web/ui/pages/catalog.html",
-		"reports.panels":    "web/ui/pages/reports.html",
-		"eod.footer":        "web/ui/partials/reports_tab_eod.html",
-		"settings.sections": "web/ui/pages/settings.html",
-		"admin.pages":       "web/ui/pages/admin.html",
+	// The two switcher-hosted slots (ut-docs#3946) are drawn one entry
+	// per section: Settings ranges its plugin sections, the /admin tree
+	// lists the admin.pages entries.
+	hosts := map[string][2]string{
+		"item.edit.actions": {"web/ui/pages/catalog.html", "/ui/slot/item.edit.actions"},
+		"reports.panels":    {"web/ui/pages/reports.html", "/ui/slot/reports.panels"},
+		"eod.footer":        {"web/ui/partials/reports_tab_eod.html", "/ui/slot/eod.footer"},
+		"settings.sections": {"web/ui/pages/settings.html", "{{ range .pluginSections }}"},
+		"admin.pages":       {"internal/pages/admin_page.go", "contentSlotEntries(r.Context(), d, adminPagesSlot)"},
 	}
 	if len(hosts) != len(pluginSlotGates) {
 		t.Fatalf("hosts %v do not cover every gated slot", hosts)
 	}
-	for slot, file := range hosts {
-		raw, err := os.ReadFile(file)
+	for slot, host := range hosts {
+		raw, err := os.ReadFile(host[0])
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(raw), "/ui/slot/"+slot) {
-			t.Errorf("%s does not load /ui/slot/%s", file, slot)
+		if !strings.Contains(string(raw), host[1]) {
+			t.Errorf("%s does not draw %s (%q)", host[0], slot, host[1])
 		}
 	}
 	raw, err := os.ReadFile("web/ui/pages/setup.html")

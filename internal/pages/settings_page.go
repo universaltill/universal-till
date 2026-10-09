@@ -760,6 +760,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			settingsnav.Resolve(locale, d.SettingsAmendmentsSnapshot()),
 			isManager, canReportIssue, len(payMethods) > 0, showDataCard,
 		)
+		// ut-docs#3946: each settings.sections plugin entry is a section of
+		// its own (a card in #settings-grid and a sidebar row under
+		// Plugins), never a panel under every core section.
+		pluginSections := pluginSlotSections(r, d, settingsSectionsSlot, locale)
+		settingsNav = append(settingsNav, pluginSectionNavRows(locale, pluginSections)...)
 		data := map[string]any{
 			"title":       httpx.T(httpx.RequestLocale(r), "page.title.settings"),
 			"theme":       st.Theme,
@@ -877,7 +882,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// — see settingsnav's own doc comment for why this resolves the
 			// sidebar and its categories only, not the on-page card
 			// content/order.
-			"settingsNav": settingsNav,
+			"settingsNav":    settingsNav,
+			"pluginSections": pluginSections,
 			// ut-docs#3090: the landing grid's category tiles, built from
 			// the SAME filtered rows so a category whose every section is
 			// gated out for this session gets no tile.

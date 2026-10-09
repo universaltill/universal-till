@@ -52,6 +52,8 @@ type contentBundle struct {
 //   - GET /ui/plugin-buttons       -> partial listing installed 'button' entries
 //   - POST /api/plugins/entries/{plugin}/{key}/action -> publish the button's event
 //   - GET /ui/slot/{slot}          -> a content slot's plugin panels (plugin_slot.go)
+//   - GET /ui/slot/{slot}/{plugin}/{entry} -> one entry's panel, for its own
+//     Settings section (plugin_slot.go, ut-docs#3946)
 func registerPluginPages(mux *http.ServeMux, d *common.Deps) {
 	registerPluginSlots(mux, d)
 	mux.HandleFunc("/plugin/", func(w http.ResponseWriter, r *http.Request) {

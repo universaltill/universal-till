@@ -3,11 +3,13 @@
      that answered, in (plugin id, entry key) order. Each panel's container
      id (.ID, set by core) is what the panel's actions and job poll target,
      so an action answer replaces only that panel. The heading is the
-     view's title (or the entry's label), drawn by pluginview_body. */}}
+     view's title (or the entry's label), drawn by pluginview_body. With
+     .Section the panel is drawn inside its own switcher section, which is
+     already the card (ut-docs#3946). */}}
 {{ define "pluginview_slot" }}
 <div class="plugin-slot" data-slot="{{ .Slot }}">
 {{- range .Panels }}
-  <section class="card plugin-slot-panel">
+  <section class="{{ if not $.Section }}card {{ end }}plugin-slot-panel">
     {{ template "pluginview_alert" (dict "ID" (printf "%s-alert" .ID)) }}
     <div id="{{ .ID }}" class="plugin-view">
 {{ template "pluginview_body" .Body }}

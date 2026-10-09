@@ -1851,6 +1851,11 @@ func TestSettingsPage_CoreSettingsAndFilterMatchTheRealTemplate(t *testing.T) {
 		if m == nil {
 			continue
 		}
+		if strings.HasPrefix(m[1], "{{") {
+			// A plugin section (ut-docs#3946): one card per settings.sections
+			// entry, listed by pluginSectionNavRows, not uislot.CoreSettings.
+			continue
+		}
 		gated := false
 		// Look back over blank/comment lines to the nearest real
 		// preceding line — every one of today's 5 gated cards has its

@@ -41,10 +41,6 @@
     {{ if .PanelHTML }}{{ .PanelHTML }}{{ end }}
   </div>
 </div>
-{{/* ADR-0121 §7 (ut-docs#3872): plugin admin pages (admin.pages), fetched
-     after the page renders; only for a viewer holding core reports too
-     (ADR-0149 §6), the route's own gate. */}}
-{{ if .PluginSlot }}<div class="plugin-slot-placeholder" hx-get="/ui/slot/admin.pages" hx-trigger="load" hx-swap="outerHTML"></div>{{ end }}
 
 <script>
 (function () {
