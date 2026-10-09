@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -541,7 +542,28 @@ func (r *AuthRepo) RevokeUserSessions(ctx context.Context, userID string) error 
 // none of those tables, so a plugin install/remove changes no grant (ADR-0128
 // §6's "rebuilt on plugin install/remove" is covered by the generation
 // key). With no counter to key on, it falls back to the row lookup.
+//
+// ut-docs#3935: a page makes ~10 checks per render, so a ctx carrying a
+// slot from WithPermissionSnapshot (the auth middleware attaches one per
+// request) remembers the bitmask the first check obtained and answers the
+// rest with no query at all. The snapshot lives only as long as the
+// request ctx — there is no time-based reuse, so a revoke applies on the
+// very next request. A write through this repo drops the slot
+// (forgetPermissionSnapshot), so a check later in the same request
+// re-reads. Those writers drop the slot before their transaction
+// commits, so a caller must not check a permission between the write and
+// its Commit — the check would re-fill the slot from the pre-commit
+// grants. The slot is keyed per ctx, not per AuthRepo: every AuthRepo
+// reads the same till database, so any of them may answer from it. The
+// no-counter fallback never populates the slot.
 func (r *AuthRepo) HasPermission(ctx context.Context, role, action string) (bool, error) {
+	slot, _ := ctx.Value(permSnapshotKey{}).(*permSnapshot)
+	if slot != nil {
+		if m := slot.p.Load(); m != nil {
+			return m.has(role, action), nil
+		}
+	}
+
 	var gen int64
 	if err := r.db.QueryRowContext(ctx, `SELECT generation FROM sync_admin_version WHERE id = 1`).Scan(&gen); err != nil {
 		// No counter to key on (missing row or table — a hand-edited DB
@@ -554,6 +576,19 @@ func (r *AuthRepo) HasPermission(ctx context.Context, role, action string) (bool
 		return r.hasPermissionRow(ctx, role, action)
 	}
 
+	m, err := r.currentPermBitmask(ctx, gen)
+	if err != nil {
+		return false, err
+	}
+	if slot != nil {
+		slot.p.Store(m)
+	}
+	return m.has(role, action), nil
+}
+
+// currentPermBitmask returns the bitmask for generation gen, rebuilding
+// the cached one when it is missing or keyed on another generation.
+func (r *AuthRepo) currentPermBitmask(ctx context.Context, gen int64) (*permBitmask, error) {
 	r.permMu.Lock()
 	defer r.permMu.Unlock()
 	if r.perm == nil || r.perm.gen != gen {
@@ -563,11 +598,38 @@ func (r *AuthRepo) HasPermission(ctx context.Context, role, action string) (bool
 		// rebuilds instead of serving stale grants under the newer one.
 		m, err := r.loadPermBitmask(ctx, gen)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 		r.perm = m
 	}
-	return r.perm.has(role, action), nil
+	return r.perm, nil
+}
+
+// permSnapshotKey is the ctx key of a request's permSnapshot.
+type permSnapshotKey struct{}
+
+// permSnapshot is one request's remembered bitmask (ut-docs#3935). A
+// permBitmask is immutable once built — a rebuild creates a new value and
+// never edits a published one — so sharing the pointer without a lock is
+// safe.
+type permSnapshot struct{ p atomic.Pointer[permBitmask] }
+
+// WithPermissionSnapshot returns ctx carrying an empty per-request
+// permission snapshot (see HasPermission). A ctx that already has one is
+// returned unchanged.
+func WithPermissionSnapshot(ctx context.Context) context.Context {
+	if _, ok := ctx.Value(permSnapshotKey{}).(*permSnapshot); ok {
+		return ctx
+	}
+	return context.WithValue(ctx, permSnapshotKey{}, &permSnapshot{})
+}
+
+// forgetPermissionSnapshot empties ctx's snapshot, if any, so the next
+// check in this request re-reads the generation after a grant/role write.
+func forgetPermissionSnapshot(ctx context.Context) {
+	if slot, ok := ctx.Value(permSnapshotKey{}).(*permSnapshot); ok {
+		slot.p.Store(nil)
+	}
 }
 
 // hasPermissionRow is the plain row lookup, used when there is no
@@ -739,6 +801,7 @@ func (r *AuthRepo) ListRolePermissionMatrix(ctx context.Context) ([]PermissionGr
 // treats "no row" as denied, so the first grant here has to be an insert,
 // not an update.
 func (r *AuthRepo) SetRolePermission(ctx context.Context, tx *sql.Tx, role, action string, granted bool) error {
+	forgetPermissionSnapshot(ctx)
 	g := 0
 	if granted {
 		g = 1
@@ -901,6 +964,7 @@ func queryStringsTx(ctx context.Context, tx *sql.Tx, q string, args ...any) ([]s
 // existing origin='builtin' key fails. An unchanged label is not rewritten
 // (an UPDATE that writes the same value still bumps sync_admin_version).
 func (r *AuthRepo) UpsertCloudRoleTx(ctx context.Context, tx *sql.Tx, role, label string) error {
+	forgetPermissionSnapshot(ctx)
 	cur, found, err := r.GetRoleTx(ctx, tx, role)
 	if err != nil {
 		return err
@@ -926,6 +990,7 @@ func (r *AuthRepo) UpsertCloudRoleTx(ctx context.Context, tx *sql.Tx, role, labe
 // permission_actions (the caller validates; an unknown one fails on the
 // FK). A row already holding the wanted value is not rewritten.
 func (r *AuthRepo) ReplaceRoleGrantsTx(ctx context.Context, tx *sql.Tx, role string, grants []string) error {
+	forgetPermissionSnapshot(ctx)
 	want := make(map[string]bool, len(grants))
 	for _, g := range grants {
 		want[g] = true
@@ -978,6 +1043,7 @@ func (r *AuthRepo) CountUsersWithRoleTx(ctx context.Context, tx *sql.Tx, role st
 // rows first (they reference roles(role)), then the roles row. A built-in
 // or missing role is left alone (no error).
 func (r *AuthRepo) DeleteCloudRoleTx(ctx context.Context, tx *sql.Tx, role string) error {
+	forgetPermissionSnapshot(ctx)
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM role_permissions WHERE role = ? AND role IN (SELECT role FROM roles WHERE origin = 'cloud')`, role); err != nil {
 		return fmt.Errorf("delete cloud role grants %s: %w", role, err)
