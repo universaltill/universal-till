@@ -100,6 +100,12 @@ func utBlobDelete(nPtr, nLen uint32) int32
 //go:wasmimport ut blob_list
 func utBlobList(dstPtr, dstCap uint32) int32
 
+//go:wasmimport ut item_image_open
+func utItemImageOpen(idPtr, idLen, rolePtr, roleLen uint32) int32
+
+//go:wasmimport ut item_image_read
+func utItemImageRead(h int32, dstPtr, dstCap uint32) int32
+
 //go:wasmimport ut event_publish
 func utEventPublish(tPtr, tLen, pPtr, pLen uint32) int32
 
@@ -306,6 +312,22 @@ func rawBlobDelete(name []byte) int32 {
 func rawBlobList(dst []byte) int32 {
 	dp, dc := ptr(dst)
 	r := utBlobList(dp, dc)
+	runtime.KeepAlive(dst)
+	return r
+}
+
+func rawItemImageOpen(id, role []byte) int32 {
+	ip, il := ptr(id)
+	rp, rl := ptr(role)
+	r := utItemImageOpen(ip, il, rp, rl)
+	runtime.KeepAlive(id)
+	runtime.KeepAlive(role)
+	return r
+}
+
+func rawItemImageRead(h int32, dst []byte) int32 {
+	dp, dc := ptr(dst)
+	r := utItemImageRead(h, dp, dc)
 	runtime.KeepAlive(dst)
 	return r
 }

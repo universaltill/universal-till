@@ -391,3 +391,86 @@ func TestViewQueryLargestResultIsOneCall(t *testing.T) {
 		t.Fatalf("view_query calls = %d, want 1", n)
 	}
 }
+
+func TestItemImages(t *testing.T) {
+	h := NewFakeHost()
+	h.ItemImages["itm1"] = ItemImageFiles{Thumb: []byte("thumb-jpeg")}
+	h.ItemImages["itm2"] = ItemImageFiles{AIRef: []byte("airef-jpeg"), Thumb: []byte("t2")}
+	UseFakeHost(t, h)
+
+	read := func(id, role string) ([]byte, error) {
+		r, err := ItemImageOpen(id, role)
+		if err != nil {
+			return nil, err
+		}
+		return io.ReadAll(r)
+	}
+	for _, c := range []struct{ id, role, want string }{
+		{"itm1", ItemImageThumb, "thumb-jpeg"},
+		{"itm1", ItemImageRef, "thumb-jpeg"},
+		{"itm2", ItemImageRef, "airef-jpeg"},
+		{"itm2", ItemImageAIRef, "airef-jpeg"},
+	} {
+		got, err := read(c.id, c.role)
+		if err != nil || string(got) != c.want {
+			t.Fatalf("%s/%s: got=%q err=%v", c.id, c.role, got, err)
+		}
+	}
+	if _, err := ItemImageOpen("itm1", ItemImageAIRef); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing ai_ref: err=%v, want ErrNotFound", err)
+	}
+	for _, c := range []struct{ id, role string }{{"a.b", "ref"}, {"a/b", "ref"}, {`a\b`, "ref"}, {"", "ref"}, {"itm1", "full"}} {
+		if _, err := ItemImageOpen(c.id, c.role); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("%q/%q: err=%v, want ErrInvalid", c.id, c.role, err)
+		}
+	}
+}
+
+func TestItemImageLimits(t *testing.T) {
+	h := NewFakeHost()
+	h.ItemImages["itm1"] = ItemImageFiles{Thumb: []byte("x")}
+	UseFakeHost(t, h)
+	var open []*ItemImage
+	for i := 0; i < 4; i++ {
+		r, err := ItemImageOpen("itm1", ItemImageThumb)
+		if err != nil {
+			t.Fatal(err)
+		}
+		open = append(open, r)
+	}
+	if _, err := ItemImageOpen("itm1", ItemImageThumb); !errors.Is(err, ErrBusy) {
+		t.Fatalf("fifth handle: err=%v, want ErrBusy", err)
+	}
+	// Reading to the end releases the handle.
+	if _, err := io.ReadAll(open[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := open[0].Read(make([]byte, 8)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("read after end: err=%v, want ErrNotFound", err)
+	}
+	r, err := ItemImageOpen("itm1", ItemImageThumb)
+	if err != nil {
+		t.Fatalf("open after a release: %v", err)
+	}
+	for _, o := range append(open[1:], r) {
+		if _, err := io.ReadAll(o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 64 opens per event, failed ones included: 6 so far.
+	for i := 6; i < 64; i++ {
+		if _, err := ItemImageOpen("nope", ItemImageThumb); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("open %d: err=%v", i+1, err)
+		}
+	}
+	if _, err := ItemImageOpen("itm1", ItemImageThumb); !errors.Is(err, ErrQuota) {
+		t.Fatalf("65th open: err=%v, want ErrQuota", err)
+	}
+	d := NewFakeHost()
+	d.ItemImages["itm1"] = ItemImageFiles{Thumb: []byte("x")}
+	d.Deny["item_image_open"] = true
+	UseFakeHost(t, d)
+	if _, err := ItemImageOpen("itm1", ItemImageThumb); !errors.Is(err, ErrDenied) {
+		t.Fatalf("denied: err=%v, want ErrDenied", err)
+	}
+}

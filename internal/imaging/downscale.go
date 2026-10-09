@@ -23,7 +23,7 @@ const MaxThumbEdge = 1600
 // within maxEdge, otherwise a new image scaled down (aspect ratio
 // preserved) so its longer edge equals maxEdge. Shared by every call site
 // that writes a decoded image back out for display or re-transmission —
-// internal/pages/ai_api.go's loadRefJPEG used to inline this same
+// the camera-identify reference photo (RefJPEG) used to inline this same
 // draw.ApproxBiLinear.Scale math for its own (much smaller, 160px)
 // reference-image case; this extracts it once rather than a third copy
 // appearing at the catalog thumbnail call sites (ut-docs#1416).

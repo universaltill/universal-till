@@ -24,7 +24,8 @@ import (
 // is an *Error returns its code, any other error ErrInternal. Hooks run
 // without the host lock, so a hook may call the SDK itself. The host's size
 // caps apply (storage 128 B keys / 64 KiB values, 256 KiB per stream read,
-// 64 view_query calls per FakeHost — one FakeHost stands for one event).
+// 64 view_query and 64 item_image_open calls, 4 open item images per
+// FakeHost — one FakeHost stands for one event).
 // One FakeHost is installed process-wide: tests that use it must not run in
 // parallel.
 type FakeHost struct {
@@ -39,6 +40,10 @@ type FakeHost struct {
 	Uploads map[string][]byte
 	// ImportFiles maps an import file_handle to the staged file.
 	ImportFiles map[int32][]byte
+	// ItemImages maps an item id to its photos, as item_image_open returns
+	// them (the till re-encodes; the fake hands back these bytes as is).
+	// Granted unless Deny["item_image_open"].
+	ItemImages map[string]ItemImageFiles
 
 	HTTP  func(HTTPRequest) (HTTPResponse, error)
 	TCP   func(host string, port int) (io.ReadWriteCloser, error)
@@ -76,6 +81,7 @@ type FakeHost struct {
 	importPos map[int32]int
 	puts      map[int32]*fakePut
 	gets      map[int32]*bytes.Reader
+	images    map[int32]*bytes.Reader
 }
 
 // PublishedEvent is one recorded event_publish.
@@ -88,6 +94,12 @@ type PublishedEvent struct {
 type JobReport struct {
 	Pct int
 	Key string
+}
+
+// ItemImageFiles is one FakeHost item's photos; nil = none of that role.
+// The "ref" role is AIRef when set, else Thumb, as on the till.
+type ItemImageFiles struct {
+	AIRef, Thumb []byte
 }
 
 type fakeStream struct {
@@ -113,6 +125,7 @@ func NewFakeHost() *FakeHost {
 		Storage: map[string][]byte{}, Settings: map[string]string{}, Secrets: map[string]string{},
 		PluginID: "com.example.plugin",
 		Blobs:    map[string][]byte{}, Uploads: map[string][]byte{}, ImportFiles: map[int32][]byte{},
+		ItemImages: map[string]ItemImageFiles{}, images: map[int32]*bytes.Reader{},
 		SecretSettings: map[string]bool{}, Deny: map[string]bool{}, Calls: map[string]int{},
 		streams: map[int32]*fakeStream{}, tcp: map[int32]io.ReadWriteCloser{},
 		uploads: map[int32]*fakeUpload{}, importPos: map[int32]int{},
@@ -129,6 +142,9 @@ const (
 	viewArgsMax     = 4 << 10
 	viewCallsMax    = 64
 	secretKeyMax    = 128
+	itemIDMax       = 128
+	itemOpensMax    = 64
+	itemHandlesMax  = 4
 )
 
 var (
@@ -712,6 +728,63 @@ func rawBlobList(dst []byte) int32 {
 	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
 	out, _ := json.Marshal(list)
 	return fill(dst, out)
+}
+
+func rawItemImageOpen(id, role []byte) int32 {
+	h, denied := enter("item_image_open")
+	defer h.mu.Unlock()
+	switch {
+	case h.Calls["item_image_open"] > itemOpensMax:
+		return ErrQuota.Code
+	case denied:
+		return ErrDenied.Code
+	case len(id) == 0 || len(id) > itemIDMax || bytes.ContainsAny(id, `/\.`):
+		return ErrInvalid.Code
+	}
+	f := h.ItemImages[string(id)]
+	var img []byte
+	switch string(role) {
+	case "ai_ref":
+		img = f.AIRef
+	case "thumb":
+		img = f.Thumb
+	case "ref":
+		img = f.AIRef
+		if img == nil {
+			img = f.Thumb
+		}
+	default:
+		return ErrInvalid.Code
+	}
+	switch {
+	case len(h.images) >= itemHandlesMax:
+		return ErrBusy.Code
+	case img == nil:
+		return ErrNotFound.Code
+	}
+	n := h.handle()
+	h.images[n] = bytes.NewReader(bytes.Clone(img))
+	return n
+}
+
+// rawItemImageRead releases the handle at the end, as the host does.
+func rawItemImageRead(id int32, dst []byte) int32 {
+	// The host checks view:inventory on open only, never on a read, so
+	// Deny["item_image_read"] has no effect here either (#4005 review).
+	h, _ := enter("item_image_read")
+	defer h.mu.Unlock()
+	r, ok := h.images[id]
+	switch {
+	case !ok:
+		return ErrNotFound.Code
+	case len(dst) == 0:
+		return ErrInvalid.Code
+	}
+	n, _ := r.Read(capRead(dst))
+	if n == 0 {
+		delete(h.images, id)
+	}
+	return int32(n)
 }
 
 func rawEventPublish(typ, payload []byte) int32 {

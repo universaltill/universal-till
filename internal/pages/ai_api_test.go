@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"image"
-	"image/jpeg"
 	"image/png"
 	"mime/multipart"
 	"net/http"
@@ -47,7 +46,7 @@ func writeTestPNG(t *testing.T, path string) {
 // sync_assets.go (batch 11, "LAN replica image sync silently dead since
 // the upload-path fix"): item images are uploaded to paths.Data("public",
 // "assets", "items", ...) (internal/pages/catalog/handlers.go), but
-// ai_api.go's itemAssetDir constant pointed at the OLD cwd-relative
+// ai_api.go's itemAssetDir (now itemimages.AssetDir) pointed at the OLD cwd-relative
 // "web/public/assets/items" path. Once the app runs from its installed
 // data directory (not the repo checkout), the camera-identify feature
 // silently found ZERO reference images for every item, degrading
@@ -79,49 +78,39 @@ func TestLoadReferenceImages_MissingImagesAreSkippedNotErrored(t *testing.T) {
 	}
 }
 
-func TestLoadRefJPEGDownscales(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "thumb.png")
-	src := image.NewRGBA(image.Rect(0, 0, 512, 384))
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, src); err != nil {
+// TestLoadReferenceImages_FallsBackToThumbWhenAIRefUndecodable: the newest
+// ai_ref no longer poisons an item — when it does not decode, the item's
+// thumb.png is sent instead, the same choice item_image_open's `ref` role
+// makes (ADR-0121 R1, ut-docs#4005).
+func TestLoadReferenceImages_FallsBackToThumbWhenAIRefUndecodable(t *testing.T) {
+	orig := paths.DataDir()
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init(orig) })
+
+	thumb := paths.Data("public", "assets", "items", "itm1", "thumb.png")
+	writeTestPNG(t, thumb)
+	bad := paths.Data("public", "assets", "items", "itm1", "ai_ref", "999.png")
+	if err := os.MkdirAll(filepath.Dir(bad), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(bad, []byte("corrupt"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	data, ok := loadRefJPEG(path)
-	if !ok {
-		t.Fatal("expected re-encode to succeed")
+	refs := loadReferenceImages([]ai.CatalogItem{{ID: "itm1"}})
+	if len(refs) != 1 {
+		t.Fatalf("expected the thumbnail as the fallback reference, got %d refs", len(refs))
 	}
-	img, err := jpeg.Decode(bytes.NewReader(data))
+	raw, err := os.ReadFile(thumb)
 	if err != nil {
-		t.Fatalf("output is not JPEG: %v", err)
+		t.Fatal(err)
 	}
-	if w := img.Bounds().Dx(); w != 160 {
-		t.Fatalf("long edge = %d, want 160", w)
+	want, err := imaging.RefJPEG(raw)
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestPruneAIRefsKeepsNewest(t *testing.T) {
-	dir := t.TempDir()
-	names := []string{"100.jpg", "200.jpg", "300.jpg", "400.jpg", "500.jpg", "600.jpg", "700.jpg"}
-	for _, n := range names {
-		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	pruneAIRefs(dir)
-	entries, _ := os.ReadDir(dir)
-	if len(entries) != maxAIRefsPerItem {
-		t.Fatalf("kept %d refs, want %d", len(entries), maxAIRefsPerItem)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "700.jpg")); err != nil {
-		t.Fatal("newest ref must survive pruning")
-	}
-	if _, err := os.Stat(filepath.Join(dir, "100.jpg")); !os.IsNotExist(err) {
-		t.Fatal("oldest ref must be pruned")
+	if !bytes.Equal(refs[0].Data, want) {
+		t.Fatal("fallback reference is not the thumbnail's RefJPEG bytes")
 	}
 }
 
@@ -509,7 +498,7 @@ func TestConfirmAPI_RejectsPixelBombPhotoAndWritesNoFile(t *testing.T) {
 // ut-docs#1417: a valid, in-bound confirm upload must be persisted as a
 // freshly re-encoded PNG, not the raw multipart upload written verbatim —
 // this is what protects any file already on disk once identify's own
-// bounded re-decode (loadRefJPEG) runs against it later. Trailing junk
+// bounded re-decode (imaging.RefJPEG) runs against it later. Trailing junk
 // appended after the real PNG data proves this more robustly than a plain
 // byte-equality check would: Go's PNG encoder is deterministic, so a
 // trivial fixture image can legitimately re-encode to the exact same
@@ -553,19 +542,24 @@ func TestConfirmAPI_SavesReEncodedFileNotRawUpload(t *testing.T) {
 	}
 }
 
-// TestLoadRefJPEG_RejectsPreExistingPixelBombFile is the defense-in-depth
-// half of ut-docs#1417: a hostile file already on disk (written before
-// this fix shipped, or by any means other than the confirm handler) must
-// still be rejected on every subsequent identify call, not just at
-// upload time.
-func TestLoadRefJPEG_RejectsPreExistingPixelBombFile(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "thumb.png")
+// TestLoadReferenceImages_RejectsPreExistingPixelBombFile is the
+// defense-in-depth half of ut-docs#1417: a hostile file already on disk
+// (written before this fix shipped, or by any means other than the confirm
+// handler) must still be rejected on every subsequent identify call, not
+// just at upload time.
+func TestLoadReferenceImages_RejectsPreExistingPixelBombFile(t *testing.T) {
+	orig := paths.DataDir()
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init(orig) })
+	path := paths.Data("public", "assets", "items", "itm1", "thumb.png")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, oversizedPNGBytes(t), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, ok := loadRefJPEG(path); ok {
+	if refs := loadReferenceImages([]ai.CatalogItem{{ID: "itm1"}}); len(refs) != 0 {
 		t.Fatal("expected a pre-existing pixel-bomb file to be rejected, not decoded")
 	}
 }

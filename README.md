@@ -475,6 +475,10 @@ view in its manifest's `views_used` and hold the view's `view:<class>` grant
 `blob_get_open`/`blob_read`, `blob_delete`, `blob_list`): flat names only,
 atomic commits, and a quota of the manifest's `limits.storage_mb`
 (ADR-0121 §6, ut-docs#3870).
+With `view:inventory`, `item_image_open`/`item_image_read` read an item's
+camera-identify reference photo (`ai_ref`, `thumb` or `ref`) as the same
+≤ 160 px JPEG the built-in identify sends — never a path or the original
+file (ADR-0121 R1, ut-docs#4005).
 A plugin has no background threads: with `schedule` granted, the till sends
 each of its manifest `schedules` events to it every `every_s` (at least 30 s)
 plus a random 0–`jitter_s` s. A tick is skipped while the previous one still
