@@ -64,23 +64,24 @@ func (r *identifySlotRegistry) handedOut(pluginID, jobID string) {
 	}
 }
 
-// take removes and returns the slot whose job is jobID, at most once; the
-// caller owns — and must delete — its file. A slot is found by job id
-// alone: ids are core's 128-bit random values, unique across plugins.
-func (r *identifySlotRegistry) take(jobID string) (path, ctype string, ok bool) {
+// take removes and returns the slot whose job is jobID, with the plugin
+// that owned it, at most once; the caller owns — and must delete — its
+// file. A slot is found by job id alone: ids are core's 128-bit random
+// values, unique across plugins.
+func (r *identifySlotRegistry) take(jobID string) (pluginID, path, ctype string, ok bool) {
 	if jobID == "" {
-		return "", "", false
+		return "", "", "", false
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for pluginID, s := range r.slots {
+	for id, s := range r.slots {
 		if s.jobID == jobID {
 			s.timer.Stop()
-			delete(r.slots, pluginID)
-			return s.path, s.ctype, true
+			delete(r.slots, id)
+			return id, s.path, s.ctype, true
 		}
 	}
-	return "", "", false
+	return "", "", "", false
 }
 
 // clear drops pluginID's slot and deletes its file (a new capture).

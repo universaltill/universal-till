@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -60,7 +61,10 @@ import (
 
 const (
 	identifyEvent = "catalog.identify"
-	identifyRoute = "/api/pos/identify/plugin"
+	// identifyConfirmedEvent tells the slot's plugin a pick was learned
+	// (ADR-0121 amendment 2026-10-09 R2b).
+	identifyConfirmedEvent = "catalog.identify.confirmed"
+	identifyRoute          = "/api/pos/identify/plugin"
 	// identifyPickMaxBytes bounds the pick's form body (three short values).
 	identifyPickMaxBytes = 4 << 10
 	// identifyThumbRoute serves a suggestion's plugin-blob thumbnail.
@@ -538,43 +542,95 @@ var identifyJobIDRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
 // once; none (expired, replaced, never existed) stores nothing — as the
 // newest ai_ref of the item sku resolves to (resolved by core, the way the
 // scan does, never named by the client), then nudges linked tills and
-// audits it, exactly like the built-in confirm. The slot's file is
-// deleted whatever happens.
+// audits it, exactly like the built-in confirm. Whenever sku resolves to
+// an item, the slot's plugin — and only it — then gets
+// catalog.identify.confirmed (R2b). The slot's file is deleted whatever
+// happens.
 func learnIdentifyPick(ctx context.Context, d *common.Deps, jobID, sku, userID string) {
-	path, ctype, ok := identifySlots.take(jobID)
+	pluginID, path, ctype, ok := identifySlots.take(jobID)
 	if !ok {
 		return
 	}
-	defer func() { _ = os.Remove(path) }()
-	if ctype != "image/jpeg" && ctype != "image/png" {
-		return // WebP: the bounded decode takes PNG/JPEG only
-	}
 	base, ok := d.Engine.ResolveBase(sku)
 	if !ok || !itemimages.ValidID(base.ItemID) {
+		_ = os.Remove(path)
 		logging.L().Infof("plugin identify pick: %q resolves to no item; photo not stored", sku)
 		return
+	}
+	stored := storeIdentifyPick(ctx, d, path, ctype, base.ItemID, userID)
+	_ = os.Remove(path) // stored or not, before the plugin is told
+	dispatchIdentifyConfirmed(ctx, d, pluginID, jobID, base.ItemID, stored)
+}
+
+// storeIdentifyPick stores the photo at path as itemID's newest ai_ref,
+// nudges linked tills and audits it; true only when the ai_ref was written.
+func storeIdentifyPick(ctx context.Context, d *common.Deps, path, ctype, itemID, userID string) bool {
+	if ctype != "image/jpeg" && ctype != "image/png" {
+		return false // WebP: the bounded decode takes PNG/JPEG only
 	}
 	raw, err := readCapped(path, identifyMaxPhotoBytes)
 	if err != nil {
 		logging.L().Infof("plugin identify pick: read photo: %v", err)
-		return
+		return false
 	}
 	img, err := imaging.Decode(raw)
 	if err != nil {
 		logging.L().Infof("plugin identify pick: photo not stored: %v", err)
-		return
+		return false
 	}
-	if err := identifyStoreRef(ctx, base.ItemID, img); err != nil {
-		logging.L().Warnf("plugin identify pick: store reference photo for %s: %v", base.ItemID, err)
-		return
+	if err := identifyStoreRef(ctx, itemID, img); err != nil {
+		logging.L().Warnf("plugin identify pick: store reference photo for %s: %v", itemID, err)
+		return false
 	}
 	// Reference photos live under the items asset tree, which linked
 	// tills pull: nudge them (ADR-0114 §2), as the built-in confirm does.
 	d.NudgeLink(fleetlink.ScopeAdmin)
 	now := time.Now().UTC().Format(time.RFC3339)
-	if err := data.NewPOSRepo(d.Db).InsertAudit(ctx, nil, userID, "ai", base.ItemID, "ai_identify_confirmed",
-		map[string]any{"item_id": base.ItemID}, now, ""); err != nil {
+	if err := data.NewPOSRepo(d.Db).InsertAudit(ctx, nil, userID, "ai", itemID, "ai_identify_confirmed",
+		map[string]any{"item_id": itemID}, now, ""); err != nil {
 		logging.L().Warnf("plugin identify pick: audit: %v", err)
+	}
+	return true
+}
+
+// identifyConfirmed is catalog.identify.confirmed's payload. Stored: the
+// photo is now itemID's newest ai_ref (item_image_open(item_id, "ai_ref")).
+// No upload handle: the stored ai_ref is the same photo, read through R1.
+type identifyConfirmed struct {
+	JobID  string `json:"job_id"`
+	ItemID string `json:"item_id"`
+	SKU    string `json:"sku"`
+	Stored bool   `json:"stored"`
+}
+
+// dispatchIdentifyConfirmed tells pluginID alone — never a bus broadcast
+// — about the pick of jobID, when it hooks the event and holds
+// events:receive (AskPlugin checks both) and view:inventory (catalog
+// data). A plugin that never hooked the event is skipped silently; one
+// that hooks it without view:inventory is skipped with its first denial
+// audited. sku is the item's own SKU, read by item_id: the resolved line
+// carries the picked code (a barcode, say), not the SKU. The answer is
+// discarded. It runs on the learning goroutine: the event's name takes an
+// ordinary call slot and deadline, never the reserved sale-path one, so a
+// slow or broken plugin delays nothing.
+func dispatchIdentifyConfirmed(ctx context.Context, d *common.Deps, pluginID, jobID, itemID string, stored bool) {
+	bus := plugins.SharedBus(d.Db)
+	if !slices.Contains(bus.SubscriberIDs(identifyConfirmedEvent), pluginID) {
+		return
+	}
+	granted, _, err := plugins.CheckPermissionAuditOnce(ctx, d.Db, pluginID, "view:inventory")
+	if err != nil || !granted {
+		logging.L().Infof("plugin identify pick: %s not told %s (view:inventory granted=%v, err=%v)", pluginID, identifyConfirmedEvent, granted, err)
+		return
+	}
+	item, ok, err := data.NewCatalogRepo(d.Db).GetItem(ctx, itemID)
+	if err != nil || !ok {
+		logging.L().Infof("plugin identify pick: %s: item %s not found (err=%v)", identifyConfirmedEvent, itemID, err)
+		return
+	}
+	ev := identifyConfirmed{JobID: jobID, ItemID: itemID, SKU: item.SKU, Stored: stored}
+	if _, _, err := bus.AskPlugin(ctx, pluginID, identifyConfirmedEvent, ev); err != nil {
+		logging.L().Infof("plugin identify pick: %s %s: %v", pluginID, identifyConfirmedEvent, err)
 	}
 }
 
