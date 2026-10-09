@@ -33,6 +33,17 @@ Independent Opus review of the Sonnet-built diff.
 - **Nit, done:** language-pack follow-ups for the new key (de/es/pt PRs,
   separately reviewed).
 
+## CI follow-up: pages-shuffle (seed 22)
+Adding this PR's test file reshuffled the seed-22 order and exposed an
+existing leak: `TestSettingsAndStatusBar_ReplicaRegisteredViaMainTill`'s
+cleanup re-ran `enroll.Init` from `d.Settings`, which still held the vouched
+device, so `enroll.CurrentStatus().ViaMainTill` stayed true for later tests
+(`TestEnrolCheckPlan_UnregisteredOrViaMainSaysNotRegistered`,
+`TestSettingsPage_ElevationWiredFormsVisibleToCashier` failed). Proven
+pre-existing: `main` plus two empty tests under this file's name fails the
+same way. Fixed: the cleanup resets from an empty store like its siblings.
+Seeds 22 and 1791386291628608919 pass locally.
+
 ## Verified
 - TDD re-verified by the reviewer: with the production changes reverted, both
   new Go tests fail (`en translation missing`, `X-UT-Response = "", want
