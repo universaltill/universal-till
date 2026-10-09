@@ -4,12 +4,13 @@ Date: 2026-10-09. Written by Opus 5.5 (lane:cloud-54) and reviewed by Sonnet aga
 
 ## What shipped
 
-Owner-facing notes in `web/release-notes/{en,de,ar,fa,tr}/v0.31.4.md`. The release was due after five feat/fix merges since v0.31.3:
+Owner-facing notes in `web/release-notes/{en,de,ar,fa,tr}/v0.31.4.md`. The release was due after six feat/fix merges since v0.31.3:
 - low-disk floor and manager chip;
 - daily-backup Problems after a restart and on total failure;
 - backup names kept out of card-number masking;
 - slot-gated plugin menu tiles;
-- slot-gated plugin Docs buttons.
+- slot-gated plugin Docs buttons;
+- translated Settings refusal messages (display mode, report retention), added after rebasing onto #1793.
 
 ## Findings
 
