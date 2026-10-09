@@ -870,3 +870,15 @@ func TestThemeSettingsKeyMatchesCommon(t *testing.T) {
 		t.Fatalf("data.ThemeSettingsKey = %q, want it to match common.KeyTheme = %q", data.ThemeSettingsKey, KeyTheme)
 	}
 }
+
+// TestBuildMenu_CopiesSlot pins ut-docs#3982: a content-slot page entry's
+// slot rides onto its MenuItem so /menu can gate the tile by the slot.
+func TestBuildMenu_CopiesSlot(t *testing.T) {
+	pm := &plugins.Manager{MenuPlugins: map[string]plugins.MenuPlugin{
+		"a": {Route: "/plugin-a", Label: "Plugin A", Slot: "reports.panels"},
+	}}
+	got := BuildMenu(nil, pm)
+	if len(got) != 1 || got[0].Slot != "reports.panels" {
+		t.Fatalf("BuildMenu = %+v, want one item with Slot reports.panels", got)
+	}
+}

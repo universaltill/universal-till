@@ -563,3 +563,44 @@ func TestReconcilePluginSettingsUpgrade(t *testing.T) {
 		t.Fatalf("GetPluginSetting = %q found=%v err=%v, want the register-scoped value", got, found, err)
 	}
 }
+
+// TestPluginRepo_ListMenuEntries_ReturnsSlot pins ut-docs#3982: a page
+// entry's content_slot (config_json) comes back on the menu row so /menu can
+// gate the tile by the slot's host screen; none/malformed JSON means no slot.
+func TestPluginRepo_ListMenuEntries_ReturnsSlot(t *testing.T) {
+	ctx := context.Background()
+	db := newPluginRepoTestDB(t)
+	repo := NewPluginRepo(db)
+
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('p1','Plugin One','1.0',1)`); err != nil {
+		t.Fatalf("seed plugin: %v", err)
+	}
+	seed := []struct{ id, key, cfg string }{
+		{"pe1", "slotted", `{"content_slot":"reports.panels"}`},
+		{"pe2", "plain", `{"view":"x"}`},
+		{"pe3", "broken", `{not json`},
+	}
+	for i, s := range seed {
+		if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label,menu_group,config_json,sort_order,is_active) VALUES(?,'p1','page',?,?,?,'main',?,?,1)`,
+			s.id, s.key, "/"+s.key, s.key, s.cfg, i); err != nil {
+			t.Fatalf("seed %s: %v", s.key, err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label,menu_group,sort_order,is_active) VALUES('pe4','p1','page','nocfg','/nocfg','nocfg','main',9,1)`); err != nil {
+		t.Fatalf("seed nocfg: %v", err)
+	}
+
+	rows, err := repo.ListMenuEntries(ctx)
+	if err != nil {
+		t.Fatalf("ListMenuEntries: %v", err)
+	}
+	want := map[string]string{"slotted": "reports.panels", "plain": "", "broken": "", "nocfg": ""}
+	if len(rows) != len(want) {
+		t.Fatalf("expected %d rows, got %d", len(want), len(rows))
+	}
+	for _, row := range rows {
+		if row.Slot != want[row.Key] {
+			t.Errorf("slot for %q = %q, want %q", row.Key, row.Slot, want[row.Key])
+		}
+	}
+}

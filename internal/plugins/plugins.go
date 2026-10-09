@@ -148,6 +148,10 @@ type MenuPlugin struct {
 	// uislot.IsKnownIconName's closed set, validated at install time
 	// (validatePageEntryIcon) — never a file path.
 	Icon string `json:"icon,omitempty"`
+	// Slot is the content slot the entry declares (config_json
+	// "content_slot"), "" for a plain page. /menu shows a slot entry's tile
+	// only to a viewer passing that slot's host-screen gate (ut-docs#3982).
+	Slot string `json:"slot,omitempty"`
 }
 
 // DocsEntryKey is the reserved page-entry key (ADR-0037) a plugin uses to
@@ -337,6 +341,7 @@ func (m *Manager) loadMenuEntries(ctx context.Context, repo *data.PluginRepo) er
 			Label:    row.Label,
 			Menu:     row.MenuGroup,
 			Icon:     row.IconName,
+			Slot:     row.Slot,
 		}
 		permsStr := row.RequiredPermissions
 		grantedStr := row.GrantedFlags

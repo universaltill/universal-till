@@ -569,7 +569,10 @@ page, a poll, any action -- also needs the host screen's permission, or
 the till answers 403 without asking the plugin (ut-docs#3963,
 ut-docs#3973). The setup wizard draws `setup.wizard.steps` inline and
 read-only (no buttons or forms: the wizard runs before anyone signs in),
-so that entry's route is 403 for everyone. Details:
+so that entry's route is 403 for everyone. A slot entry's `/menu` tile
+follows the same gate: it shows only to staff who pass the host screen's
+permission, and a `setup.wizard.steps` entry gets no tile (ut-docs#3982).
+Details:
 [`plugin-views.md` → Content slots](https://github.com/universaltill/ut-docs/blob/main/reference/plugin-views.md#content-slots).
 
 A `docs` page entry (the Plugins page's Docs button, ADR-0037) that

@@ -8,6 +8,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
 // Positive counterpart to TestImport_ManagerGate and
@@ -253,5 +254,48 @@ func TestMenuPage_LocationsRegistersTileIndependentOfSettings(t *testing.T) {
 	}
 	if strings.Contains(adminBody, `href="/translations"`) || strings.Contains(adminBody, `href="/country-settings"`) {
 		t.Fatalf("cashier still lacks settings, must not see the Localization cluster on /admin, got: %s", adminBody)
+	}
+}
+
+// ut-docs#3982: a content-slot page entry's /menu tile follows the slot's
+// host-screen gate (pluginSlotGates) -- never shown-then-403. A slot with
+// no gate (setup.wizard.steps) gets no tile for anyone; slot-less entries
+// are unchanged.
+func TestMenuPage_PluginSlotTileGatedBySlot(t *testing.T) {
+	mux, dp := newMenuPageTestDeps(t, []common.MenuItem{
+		{Href: "/p/rep", Label: "Rep Panel", Slot: "reports.panels"},
+		{Href: "/p/wiz", Label: "Wiz Step", Slot: "setup.wizard.steps"},
+		{Href: "/p/unk", Label: "Unknown Slot", Slot: "no.such.slot"},
+		{Href: "/p/plain", Label: "Plain Page"},
+	})
+	dp.AuthSvc = auth.NewService(dp.Db)
+
+	get := func(u auth.User) string {
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/menu", nil), u)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec.Body.String()
+	}
+
+	cashier := get(auth.User{ID: "c1", Role: "cashier"})
+	if strings.Contains(cashier, `href="/p/rep"`) {
+		t.Fatalf("cashier must not see a reports.panels slot tile: %s", cashier)
+	}
+	if !strings.Contains(cashier, `href="/p/plain"`) {
+		t.Fatalf("slot-less entry must be unchanged for cashier: %s", cashier)
+	}
+	for _, role := range []string{"manager", "admin"} {
+		body := get(auth.User{ID: "u-" + role, Role: role})
+		if !strings.Contains(body, `href="/p/rep"`) {
+			t.Fatalf("%s should see the reports.panels slot tile: %s", role, body)
+		}
+		if !strings.Contains(body, `href="/p/plain"`) {
+			t.Fatalf("%s should see the slot-less tile: %s", role, body)
+		}
+		for _, h := range []string{"/p/wiz", "/p/unk"} {
+			if strings.Contains(body, `href="`+h+`"`) {
+				t.Fatalf("%s must not see ungated-slot tile %s: %s", role, h, body)
+			}
+		}
 	}
 }

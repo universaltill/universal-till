@@ -88,6 +88,24 @@ var iconSVGFor = map[string]string{
 // this one, because httpx.Icon is a bounded lookup.
 const genericFallbackIcon = "puzzle"
 
+// pluginSlotPredicatePrefix marks a VisibleIf name core builds for a plugin
+// page entry that declares a content slot (ut-docs#3982): "plugin_slot:<slot>"
+// resolves through pluginSlotGates, so the tile shows only to a viewer who
+// passes the same gate servePluginEntry applies to the route.
+const pluginSlotPredicatePrefix = "plugin_slot:"
+
+// pluginSlotGate looks a slot up in pluginSlotGates. Set in init: a direct
+// reference would be an initialization cycle (the admin.pages gate calls
+// visibleAdminEntries, which reaches menuVisibility.visible).
+var pluginSlotGate func(slot string) (func(d *common.Deps, r *http.Request) bool, bool)
+
+func init() {
+	pluginSlotGate = func(slot string) (func(d *common.Deps, r *http.Request) bool, bool) {
+		g, ok := pluginSlotGates[slot]
+		return g, ok
+	}
+}
+
 // menuVisibility evaluates a core entry's VisibleIf predicate, memoized per
 // request: canPerform can hit role_permissions, and nine tiles share the
 // "settings" gate, so it is answered once, not nine times — the same single
@@ -109,11 +127,22 @@ func (v *menuVisibility) visible(name string) bool {
 	if got, ok := v.memo[name]; ok {
 		return got
 	}
-	pred, ok := menuPredicates[name]
-	if !ok {
-		return false
+	var got bool
+	if slot, isSlot := strings.CutPrefix(name, pluginSlotPredicatePrefix); isSlot {
+		// A slot with no gate (setup.wizard.steps, unknown) fails closed:
+		// servePluginEntry 403s its route for everyone.
+		gate, ok := pluginSlotGate(slot)
+		if !ok {
+			return false
+		}
+		got = gate(v.d, v.r)
+	} else {
+		pred, ok := menuPredicates[name]
+		if !ok {
+			return false
+		}
+		got = pred(v)
 	}
-	got := pred(v)
 	if v.memo == nil {
 		v.memo = make(map[string]bool, len(menuPredicates))
 	}
@@ -337,13 +366,19 @@ func menuSlotEntries(snapshot []common.MenuItem) []uislot.Entry {
 		if icon == "" {
 			icon = m.Icon
 		}
-		entries = append(entries, uislot.Entry{
+		e := uislot.Entry{
 			Key:      m.Href,
 			Href:     m.Href,
 			LabelKey: m.Label,
 			Icon:     icon,
 			Order:    uislot.PluginPagesOrder + pages,
-		})
+		}
+		// ut-docs#3982: core derives VisibleIf from the entry's slot; a
+		// plugin cannot author one (amendments have no such field).
+		if m.Slot != "" {
+			e.VisibleIf = pluginSlotPredicatePrefix + m.Slot
+		}
+		entries = append(entries, e)
 		pages++
 	}
 	for _, e := range uislot.CoreMenu {
