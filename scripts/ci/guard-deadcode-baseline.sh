@@ -38,7 +38,9 @@
 # burned it down) does not -- that's a strict improvement and this guard
 # doesn't force a baseline update to notice it. Update the baseline
 # manually (regenerate with this script's own DEADCODE_PKG below, normalize,
-# `sort`) when you deliberately add or remove a baseline entry.
+# `sort`) when you deliberately add or remove a baseline entry. A new entry
+# goes in its own baseline-only PR, never in the PR that made the function
+# dead (guard-deadcode-baseline-growth.sh, ut-docs#3406).
 #
 # Known false-positive shape worth knowing before deleting anything this
 # flags as new: `deadcode` runs with `-test=false`, so a call site that
@@ -116,6 +118,8 @@ if [[ -n "${new_entries}" ]]; then
   echo "(e.g. called only from a differently-tagged file this pass doesn't" >&2
   echo "compile), investigate before adding it to the baseline -- the" >&2
   echo "baseline is meant to shrink over time (ut-docs#1566), not grow." >&2
+  echo "A new entry goes in a separate PR that changes only ${BASELINE_FILE}" >&2
+  echo "(ut-docs#3406, guard-deadcode-baseline-growth.sh)." >&2
   exit 1
 fi
 
