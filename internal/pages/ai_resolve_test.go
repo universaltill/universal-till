@@ -23,7 +23,8 @@ import (
 
 func clearAIEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"UT_AI_PROVIDER", "UT_AI_ENDPOINT", "UT_AI_MODEL", "UT_AI_ASK_MODEL", "UT_AI_API_KEY"} {
+	for _, k := range []string{"UT_AI_PROVIDER", "UT_AI_ENDPOINT", "UT_AI_MODEL", "UT_AI_ASK_MODEL", "UT_AI_API_KEY",
+		"UT_AI_IMAGE_PROVIDER", "UT_AI_IMAGE_ENDPOINT", "UT_AI_IMAGE_MODEL"} {
 		t.Setenv(k, "")
 	}
 }
@@ -315,5 +316,146 @@ func TestAIResolve_InjectedServiceWins(t *testing.T) {
 	dp.AI = injected
 	if got := aiService(t.Context(), dp); got != injected {
 		t.Fatal("Deps.AI must be returned as-is ahead of plugin settings")
+	}
+}
+
+// ---- Background removal (ut-docs#3126, ai-product-photo.md §4) ----
+//
+// The image capability resolves independently of the text provider:
+// plugin image settings (when the plugin is active and image_endpoint is
+// set) > UT_AI_IMAGE_* env > off. Text resolution is untouched.
+
+func TestAIResolve_ImageFromPluginWithTextOff(t *testing.T) {
+	dp := newAIResolveDeps(t, true)
+	// Text is NOT configured (self-hosted, no endpoint) — image must still resolve.
+	setAISetting(t, dp, "image_provider", "self_hosted", false)
+	setAISetting(t, dp, "image_endpoint", "http://rembg.local:7000", false)
+	setAISetting(t, dp, "image_model", "u2netp", false)
+
+	cfg := resolveAIConfig(t.Context(), dp)
+	want := ai.Config{Image: ai.ImageConfig{Provider: "self_hosted", Endpoint: "http://rembg.local:7000", Model: "u2netp"}}
+	if cfg != want {
+		t.Fatalf("got %+v, want %+v", cfg, want)
+	}
+	svc := aiService(t.Context(), dp)
+	if svc.Enabled() {
+		t.Fatal("text AI is not configured: Enabled must be false")
+	}
+	if !svc.CanCutout() {
+		t.Fatal("image configured with text AI off: CanCutout must be true")
+	}
+}
+
+func TestAIResolve_ImageAlongsideTextKeepsTextUnchanged(t *testing.T) {
+	dp := newAIResolveDeps(t, true)
+	setAISetting(t, dp, "endpoint", "http://ollama.local:11434", false)
+	setAISetting(t, dp, "image_endpoint", "http://rembg.local:7000", false)
+	// No image_provider row (predates reconcile) and no image_model: the
+	// manifest defaults apply.
+	cfg := resolveAIConfig(t.Context(), dp)
+	want := ai.Config{Provider: "ollama", Endpoint: "http://ollama.local:11434", Model: "llama3.2-vision", AskModel: "llama3.2",
+		Image: ai.ImageConfig{Provider: "self_hosted", Endpoint: "http://rembg.local:7000", Model: ai.DefaultImageModel}}
+	if cfg != want {
+		t.Fatalf("got %+v, want %+v", cfg, want)
+	}
+	svc := aiService(t.Context(), dp)
+	if !svc.Enabled() || !svc.CanAsk() || !svc.CanCutout() {
+		t.Fatalf("enabled=%v canAsk=%v canCutout=%v, want all true", svc.Enabled(), svc.CanAsk(), svc.CanCutout())
+	}
+}
+
+// Resolution order: plugin image settings > UT_AI_IMAGE_* env > off.
+func TestAIResolve_ImageResolutionOrder(t *testing.T) {
+	// Off: nothing anywhere.
+	dp := newAIResolveDeps(t, true)
+	if cfg := resolveAIConfig(t.Context(), dp); cfg.Image != (ai.ImageConfig{}) {
+		t.Fatalf("no plugin image, no env: got %+v, want off", cfg.Image)
+	}
+	if aiService(t.Context(), dp).CanCutout() {
+		t.Fatal("no image config anywhere: CanCutout must be false")
+	}
+
+	// Env only (plugin image_endpoint empty — the manifest default).
+	setAISetting(t, dp, "image_provider", "self_hosted", false)
+	setAISetting(t, dp, "image_endpoint", "", false)
+	setAISetting(t, dp, "image_model", ai.DefaultImageModel, false)
+	t.Setenv("UT_AI_IMAGE_ENDPOINT", "http://env-rembg.local:7000")
+	envWant := ai.ImageConfig{Provider: "self_hosted", Endpoint: "http://env-rembg.local:7000", Model: ai.DefaultImageModel}
+	if cfg := resolveAIConfig(t.Context(), dp); cfg.Image != envWant {
+		t.Fatalf("empty plugin image_endpoint: got %+v, want env %+v", cfg.Image, envWant)
+	}
+
+	// Plugin wins over env.
+	setAISetting(t, dp, "image_endpoint", "http://plugin-rembg.local:7000", false)
+	if cfg := resolveAIConfig(t.Context(), dp); cfg.Image.Endpoint != "http://plugin-rembg.local:7000" {
+		t.Fatalf("plugin image_endpoint must win over env, got %+v", cfg.Image)
+	}
+
+	// Inactive plugin contributes nothing: env again.
+	if _, err := dp.Db.Exec(`UPDATE plugins SET is_active=0 WHERE id=?`, AIPluginID); err != nil {
+		t.Fatal(err)
+	}
+	if cfg := resolveAIConfig(t.Context(), dp); cfg.Image != envWant {
+		t.Fatalf("inactive plugin: got %+v, want env %+v", cfg.Image, envWant)
+	}
+}
+
+// Fail-safe (ADR-0126 §7): an image_provider this build has no adapter for
+// is OFF — never a hosted call, and not a silent fall-through to the env
+// image config either (the shop chose something; running a different
+// service than it chose would be wrong in either direction).
+func TestAIResolve_ImageUnknownProviderIsOff(t *testing.T) {
+	for _, p := range []string{"remove.bg", "photoroom", "claude", "openai", "Self_Hosted", "self-hosted"} {
+		t.Run(p, func(t *testing.T) {
+			dp := newAIResolveDeps(t, true)
+			t.Setenv("UT_AI_IMAGE_ENDPOINT", "http://env-rembg.local:7000")
+			setAISetting(t, dp, "image_provider", p, false)
+			setAISetting(t, dp, "image_endpoint", "http://rembg.local:7000", false)
+			cfg := resolveAIConfig(t.Context(), dp)
+			if cfg.Image.Endpoint == "http://env-rembg.local:7000" {
+				t.Fatalf("unknown provider fell through to env: %+v", cfg.Image)
+			}
+			if aiService(t.Context(), dp).CanCutout() {
+				t.Fatalf("image_provider=%q must resolve to off", p)
+			}
+			// Even with an empty plugin endpoint, an explicit unknown
+			// provider stays off rather than picking up the env service.
+			setAISetting(t, dp, "image_endpoint", "", false)
+			if aiService(t.Context(), dp).CanCutout() {
+				t.Fatalf("image_provider=%q with empty endpoint must stay off, not use env", p)
+			}
+		})
+	}
+}
+
+// A model off the licence-checked allow-list (rembg's own bria-rmbg default
+// among them) turns the capability off — not the env service instead.
+func TestAIResolve_ImageModelOffAllowListIsOff(t *testing.T) {
+	for _, m := range []string{"bria-rmbg", "bria-rmbg-2.0", "isnet-general-use"} {
+		t.Run(m, func(t *testing.T) {
+			dp := newAIResolveDeps(t, true)
+			t.Setenv("UT_AI_IMAGE_ENDPOINT", "http://env-rembg.local:7000")
+			setAISetting(t, dp, "image_provider", "self_hosted", false)
+			setAISetting(t, dp, "image_endpoint", "http://rembg.local:7000", false)
+			setAISetting(t, dp, "image_model", m, false)
+			if aiService(t.Context(), dp).CanCutout() {
+				t.Fatalf("image_model=%q must resolve to off", m)
+			}
+		})
+	}
+}
+
+// The text resolution is unchanged by image settings: a configured image
+// capability never makes an unconfigured text provider fall elsewhere.
+func TestAIResolve_ImageSettingsDoNotChangeTextFallThrough(t *testing.T) {
+	dp := newAIResolveDeps(t, true)
+	setAISetting(t, dp, "image_endpoint", "http://rembg.local:7000", false)
+	t.Setenv("UT_AI_ENDPOINT", "http://env.local:11434")
+	cfg := resolveAIConfig(t.Context(), dp)
+	if cfg.Provider != "ollama" || cfg.Endpoint != "http://env.local:11434" {
+		t.Fatalf("unconfigured plugin text must still fall through to env text, got %+v", cfg)
+	}
+	if cfg.Image.Endpoint != "http://rembg.local:7000" {
+		t.Fatalf("plugin image must still apply, got %+v", cfg.Image)
 	}
 }

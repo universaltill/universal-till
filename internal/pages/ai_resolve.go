@@ -34,21 +34,38 @@ func aiService(ctx context.Context, d *common.Deps) *ai.Service {
 // combination resolves to (ai.Service deliberately keeps its provider
 // private). An installed-but-unconfigured plugin falls through to the env
 // override, the same shape the endpoint-empty branch has always had.
+//
+// The image (background-removal) capability resolves independently, in the
+// same order (ut-docs#3126): the plugin's image settings when the plugin is
+// active and sets them, else UT_AI_IMAGE_* env, else off. Text resolution
+// is exactly as before; neither side's outcome changes the other's.
 func resolveAIConfig(ctx context.Context, d *common.Deps) ai.Config {
 	repo := data.NewPluginRepo(d.Db)
+	env := ai.FromEnv()
+	cfg := env
 	if active, err := repo.PluginActive(ctx, AIPluginID); err == nil && active {
-		if cfg, ok := aiPluginConfig(ctx, repo); ok {
+		pluginCfg, textOK, imageOK := aiPluginConfig(ctx, repo)
+		if textOK {
+			cfg = pluginCfg
+		}
+		if imageOK {
+			cfg.Image = pluginCfg.Image
 			return cfg
 		}
 	}
-	return ai.FromEnv()
+	cfg.Image = env.Image
+	return cfg
 }
 
 // aiPluginConfig builds the backend config from the AI plugin's settings
-// rows (ADR-0085). ok=false means "installed but not usably configured" —
-// self-hosted with no endpoint, or the hosted provider with no key.
-func aiPluginConfig(ctx context.Context, repo *data.PluginRepo) (ai.Config, bool) {
+// rows (ADR-0085). textOK=false means the text provider is "installed but
+// not usably configured" — self-hosted with no endpoint, or the hosted
+// provider with no key. imageOK reports whether the plugin's image settings
+// decide background removal (then cfg.Image holds them), independently of
+// textOK — see aiPluginImageConfig.
+func aiPluginConfig(ctx context.Context, repo *data.PluginRepo) (cfg ai.Config, textOK, imageOK bool) {
 	var provider, endpoint, visionModel, askModel, apiKey string
+	var imageProvider, imageEndpoint, imageModel string
 	if rows, err := repo.ListPluginSettings(ctx, AIPluginID); err == nil {
 		for _, row := range rows {
 			var v string
@@ -69,9 +86,55 @@ func aiPluginConfig(ctx context.Context, repo *data.PluginRepo) (ai.Config, bool
 				// Arrives already opened from its sealed row (ADR-0082
 				// ListPluginSettings); an unopenable row lists as "".
 				apiKey = v
+			case "image_provider":
+				imageProvider = v
+			case "image_endpoint":
+				imageEndpoint = v
+			case "image_model":
+				imageModel = v
 			}
 		}
 	}
+	cfg, textOK = aiPluginTextConfig(provider, endpoint, visionModel, askModel, apiKey)
+	cfg.Image, imageOK = aiPluginImageConfig(imageProvider, imageEndpoint, imageModel)
+	return cfg, textOK, imageOK
+}
+
+// aiPluginImageConfig decides the background-removal config from the
+// plugin's image_* settings (ut-docs#3126, ai-product-photo.md §4).
+//
+//   - image_endpoint set: the plugin decides. An empty image_provider row
+//     means the manifest default "self_hosted"; an empty image_model means
+//     ai.DefaultImageModel. The values are passed through as entered, so
+//     ai.New applies the fail-safes: any provider other than the exact
+//     "self_hosted" is off, and a model off the licence-checked allow-list
+//     (bria-rmbg among them) is off.
+//   - image_provider explicitly set to anything other than "self_hosted":
+//     the plugin decides OFF even with no endpoint. Fail-safe choice: the
+//     shop picked a provider this build can't run, so neither that nor a
+//     different service from the UT_AI_IMAGE_* env runs in its place.
+//   - otherwise (no endpoint, self_hosted or unset): ok=false — the plugin
+//     doesn't configure the capability and the env override applies,
+//     mirroring the text side's empty-endpoint fall-through.
+func aiPluginImageConfig(provider, endpoint, model string) (ai.ImageConfig, bool) {
+	if provider == "" {
+		provider = ai.ImageProviderSelfHosted
+	}
+	if provider != ai.ImageProviderSelfHosted {
+		return ai.ImageConfig{Provider: provider, Endpoint: endpoint, Model: model}, true
+	}
+	if endpoint == "" {
+		return ai.ImageConfig{}, false
+	}
+	if model == "" {
+		model = ai.DefaultImageModel
+	}
+	return ai.ImageConfig{Provider: provider, Endpoint: endpoint, Model: model}, true
+}
+
+// aiPluginTextConfig is the text/vision provider half of aiPluginConfig,
+// unchanged from before the image capability (ADR-0085, ut-docs#1791).
+func aiPluginTextConfig(provider, endpoint, visionModel, askModel, apiKey string) (ai.Config, bool) {
 	// ADR-0085 Decision 2, fail-safe direction (extended by ut-docs#1791):
 	// ONLY the exact values "claude" or "openai" select a hosted vendor.
 	// Unset, "self_hosted", a typo, a different case, or any other value

@@ -1562,6 +1562,7 @@
   "plugins.permissions.setting_bound_now": "Şu an:",
   "plugins.retry": "Kurulumu yeniden dene",
   "plugins.settings.ai.hosted_provider_notice": "Barındırılan bir sağlayıcı seçmek (provider = claude veya openai), yapay zekâ özelliklerinin üzerinde çalıştığı verileri dükkânınızın dışına, o sağlayıcının sunucularına (Anthropic veya OpenAI, ikisi de ABD'de) gönderir: \"Kamerayla tanı\" için, her iki sağlayıcıda da ürün fotoğrafı ile kataloğunuzdaki ürün adları, SKU kodları ve referans fotoğrafları gönderilir. \"Kasanıza sorun\" için: claude ile hiçbir şey gönderilmez — bunun için henüz barındırılan bir uygulama yoktur, bu yüzden özellik bunun yerine kendini gizler; openai ile ise sorularınız, yanıt için kullanılan satış ve stok rakamlarıyla birlikte gönderilir. Kendi sunucunuzda (Ollama, varsayılan) seçeneği bunların tümünü kendi donanımınızda tutar. Girdiğiniz anahtar o sağlayıcıdaki kendi hesabınızdır — ödemeyi doğrudan ona yaparsınız ve Universal Till'in orada hiçbir hesabı yoktur.",
+  "plugins.settings.ai.image_model_unsupported": "Bu model arka plan kaldırma için desteklenmiyor, bu nedenle arka plan kaldırma kapalı kalır. birefnet-general-lite veya u2netp kullanın.",
   "plugins.settings.invalid_endpoint": "%s, http:// veya https:// ile başlayan bir web adresi olmalıdır (ör. https://192.168.1.20:8080/api).",
   "plugins.settings.none": "Bu eklentinin ayarı yok.",
   "plugins.settings.per_till": "yalnızca bu kasa",

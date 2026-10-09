@@ -39,6 +39,7 @@
       </div>
     </fieldset>
     {{ else }}
+    {{ if .Notice }}<p class="muted">{{ T .Notice }}</p>{{ end }}
     <label>{{ .Key }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }} <input type="text" name="setting_{{ .Key }}" value="{{ .Value }}"></label>
     {{ end }}
     {{ end }}

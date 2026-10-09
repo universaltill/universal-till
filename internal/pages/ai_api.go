@@ -31,6 +31,7 @@ const (
 func registerAIAPI(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 	catRepo := data.NewCatalogRepo(d.Db)
+	registerAICutout(mux, d)
 
 	writeJSON := func(w http.ResponseWriter, status int, data any, errMsg string) {
 		w.Header().Set("Content-Type", "application/json")
