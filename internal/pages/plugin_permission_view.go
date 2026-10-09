@@ -28,7 +28,9 @@ type permissionBadge struct {
 	DescKey string
 }
 
-// permissionDescKeys maps the ADR-0121 §2 exact names to their description.
+// permissionDescKeys maps the ADR-0121 §2 exact names — and view:users
+// (ADR-0149 §6), whose consent line names what it never reads — to their
+// description.
 var permissionDescKeys = map[string]string{
 	"http:lan":        "plugins.permissions.desc.http_lan",
 	"http:stream":     "plugins.permissions.desc.http_stream",
@@ -39,6 +41,8 @@ var permissionDescKeys = map[string]string{
 	"cloud:directive": "plugins.permissions.desc.cloud_directive",
 	"secret:write":    "plugins.permissions.desc.secret_write",
 	"device-info":     "plugins.permissions.desc.device_info", // ADR-0140
+	// ADR-0149 §6 (ut-docs#3976): the staff list says what it never reads.
+	"view:users": "plugins.permissions.desc.view_users",
 }
 
 // permissionDescKey is the DescKey for name: an exact ADR-0121 §2 name, or

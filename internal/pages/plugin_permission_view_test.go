@@ -26,6 +26,11 @@ func TestDescribePermission_ADR0121DescKeys(t *testing.T) {
 		"secret:write":           "plugins.permissions.desc.secret_write",
 		// ADR-0140 (ut-docs#3862).
 		"device-info": "plugins.permissions.desc.device_info",
+		// ADR-0149 §6 (ut-docs#3976): the staff list gets its own consent
+		// line (exact names win over the generic view: fallback); every
+		// other view class keeps the generic one.
+		"view:users":     "plugins.permissions.desc.view_users",
+		"view:inventory": "plugins.permissions.desc.view",
 	}
 	for perm, key := range want {
 		b := describePermission(perm)

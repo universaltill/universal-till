@@ -36,7 +36,7 @@ func TestIsKnownPermission(t *testing.T) {
 		// ADR-0121 §2
 		"http:lan", "http:stream", "db:own", "blob:own", "schedule",
 		"cloud:directive", "secret:write", "ui:page",
-		"view:sales_by_day", "view:sales", "view:audit", "ui:slot:reports.panels", "ui:slot:admin.pages",
+		"view:sales_by_day", "view:sales", "view:audit", "view:users", "ui:slot:reports.panels", "ui:slot:admin.pages",
 		// net:/tcp: hosts in every form normGrantHost canonicalises
 		"net:API.Stripe.com", "net:erp.lan.", "net:münchen.example", "net:erp_lan", "net:10.0.0.5", "net:[fe80::1]",
 		// net:validation:<host> (ut-docs#3226, ADR-0121 amendment 2026-10-02):
