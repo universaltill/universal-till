@@ -572,6 +572,11 @@ read-only (no buttons or forms: the wizard runs before anyone signs in),
 so that entry's route is 403 for everyone. Details:
 [`plugin-views.md` → Content slots](https://github.com/universaltill/ut-docs/blob/main/reference/plugin-views.md#content-slots).
 
+A `docs` page entry (the Plugins page's Docs button, ADR-0037) that
+names a slot gets its button only for staff who pass that slot's gate, and
+never for a `setup.wizard.steps` or unknown slot, so the button is never
+shown and then refused (ut-docs#3994).
+
 ### Camera identify: `catalog.identify` (ADR-0121 §7)
 
 A plugin that recognises products from a photo subscribes to

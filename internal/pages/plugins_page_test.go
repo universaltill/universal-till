@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
@@ -30,7 +31,16 @@ func pluginsManagerTestDeps(t *testing.T) *common.Deps {
 // data the per-plugin action buttons, including Docs, are driven by.
 func pluginsManagerJSON(t *testing.T, mux *http.ServeMux) map[string]pluginsManagerItem {
 	t.Helper()
+	return pluginsManagerJSONAs(t, mux, nil)
+}
+
+// pluginsManagerJSONAs is pluginsManagerJSON for a signed-in user (UT_AUTH=on).
+func pluginsManagerJSONAs(t *testing.T, mux *http.ServeMux, u *auth.User) map[string]pluginsManagerItem {
+	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/plugins", nil)
+	if u != nil {
+		req = auth.WithUser(req, *u)
+	}
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	body := rec.Body.String()
@@ -369,5 +379,76 @@ func TestPluginsPage_ReadsTillCatalogKeyNotUILocale(t *testing.T) {
 	}
 	if snap, _, err := repo.Get("fa", ""); err == nil {
 		t.Errorf("/plugins cached a UI-locale catalog: %+v", snap)
+	}
+}
+
+// seedDocsEntryWithSlot registers a docs page entry whose content_slot is slot.
+func seedDocsEntryWithSlot(t *testing.T, d *common.Deps, pluginID, slot string) {
+	t.Helper()
+	seedTestPlugin(t, d.Db, pluginID, "Slot Docs", "1.0.0")
+	cfg := `{"content_slot":"` + slot + `"}`
+	if _, err := d.Db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label,config_json) VALUES('e1',?,'page','docs','/plugin/slotdocs/docs','How this works',?)`, pluginID, cfg); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A docs entry in setup.wizard.steps (no gate: its route is 403 for everyone)
+// or in an unknown slot gets no Docs button: the button follows the route's
+// gate so it is never shown then refused (ut-docs#3994).
+func TestPluginsPage_UngatedSlotDocsEntryHidesDocsRoute_3994(t *testing.T) {
+	for _, slot := range []string{"setup.wizard.steps", "nope.slot"} {
+		t.Run(slot, func(t *testing.T) {
+			d := pluginsManagerTestDeps(t)
+			seedDocsEntryWithSlot(t, d, "com.x.slotdocs", slot)
+			mux := http.NewServeMux()
+			registerPluginsPage(mux, d)
+			got, ok := pluginsManagerJSON(t, mux)["com.x.slotdocs"]
+			if !ok {
+				t.Fatal("plugin com.x.slotdocs missing from manager payload")
+			}
+			if got.DocsRoute != "" {
+				t.Errorf("docsRoute = %q, want empty for a docs entry in slot %q", got.DocsRoute, slot)
+			}
+		})
+	}
+}
+
+// A docs entry in a gated slot shows its button only to a viewer the slot's
+// host-page gate lets through (ut-docs#3994).
+func TestPluginsPage_GatedSlotDocsEntryFollowsRoleGate_3994(t *testing.T) {
+	d := pluginsManagerTestDeps(t)
+	t.Setenv("UT_AUTH", "on")
+	d.AuthSvc = auth.NewService(d.Db)
+	seedDocsEntryWithSlot(t, d, "com.x.slotdocs", "reports.panels")
+	const mgmtOnly, both = "c_01j9z3k4m5n6p7q8r9s0t1v2w6", "c_01j9z3k4m5n6p7q8r9s0t1v2w7"
+	for role, actions := range map[string][]string{mgmtOnly: {"plugin_management"}, both: {"plugin_management", "reports"}} {
+		if _, err := d.Db.Exec(`INSERT INTO roles (role, label, origin) VALUES (?, ?, 'cloud')`, role, role); err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range actions {
+			if _, err := d.Db.Exec(`INSERT INTO role_permissions (role, action, granted) VALUES (?, ?, 1)`, role, a); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	mux := http.NewServeMux()
+	registerPluginsPage(mux, d)
+	for _, tc := range []struct {
+		name string
+		u    auth.User
+		want string
+	}{
+		{"plugin_management without reports", auth.User{ID: "u1", Role: mgmtOnly}, ""},
+		{"plugin_management and reports", auth.User{ID: "u2", Role: both}, "/plugin/slotdocs/docs"},
+		{"admin", auth.User{ID: "a1", Role: "admin"}, "/plugin/slotdocs/docs"},
+	} {
+		u := tc.u
+		got, ok := pluginsManagerJSONAs(t, mux, &u)["com.x.slotdocs"]
+		if !ok {
+			t.Fatalf("%s: plugin missing from manager payload", tc.name)
+		}
+		if got.DocsRoute != tc.want {
+			t.Errorf("%s: docsRoute = %q, want %q", tc.name, got.DocsRoute, tc.want)
+		}
 	}
 }
