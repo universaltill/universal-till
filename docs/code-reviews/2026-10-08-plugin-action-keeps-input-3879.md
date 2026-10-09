@@ -77,3 +77,16 @@ work.
 ## Verdict
 Safe to merge. Merge core first, then the three language-pack PRs in the
 same cycle: `lang-pack-drift` stays red on main until they land.
+
+## Rebase onto main 5a86482, then 9522b01 (2026-10-09, lane:cloud-41 PR sweep)
+- `web/help/img/manifest.json` conflicted: took main's, re-applied only
+  this branch's four `plugins` topic hashes (checked against
+  `sha256sum web/help/*/plugins.md`), then
+  `update-docs-shots-surface-hash.sh`; docs-shots guard green.
+- Semantic conflict with #3963 (merged meanwhile): its two new slot tests
+  expected the old "unavailable" body for a refused action. A permission
+  refusal is a failed action, so under this change it answers 502 +
+  `HX-Reswap: none` and fills the page's or the panel's own alert slot.
+  The tests now assert that (new `assertSlotActionFailed` for panel
+  targets); the "plugin not asked" assertions are unchanged. No production
+  code changed in the rebase.

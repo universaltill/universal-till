@@ -523,6 +523,20 @@ func (h *slotHarness) postSlotAction(target string) *httptest.ResponseRecorder {
 	return rec
 }
 
+// assertSlotActionFailed: a refused panel action swaps nothing and fills
+// only that panel's own alert slot (ut-docs#3879, #3872).
+func assertSlotActionFailed(t *testing.T, rec *httptest.ResponseRecorder, panel string) {
+	t.Helper()
+	if rec.Code != http.StatusBadGateway || rec.Header().Get("HX-Reswap") != "none" {
+		t.Fatalf("refused slot action = %d (HX-Reswap %q), want 502 and none:\n%s", rec.Code, rec.Header().Get("HX-Reswap"), rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `<div id="`+panel+`-alert" class="plugin-view-alert" aria-live="polite" hx-swap-oob="innerHTML">`) || strings.Contains(body, `id="plugin-view-alert"`) {
+		t.Fatalf("refused slot action must fill only its panel's alert slot:\n%s", body)
+	}
+	assertNotice(t, rec, "plugin.view.action_failed")
+}
+
 func (h *slotHarness) revokePerm(perm string) {
 	h.t.Helper()
 	if _, err := h.d.Db.Exec(`UPDATE plugin_permissions SET granted = 0 WHERE plugin_id = ? AND permission = ?`, viewPluginID, perm); err != nil {
@@ -547,10 +561,12 @@ func TestPluginSlot_SlotOnlyPluginActionRuns_3963(t *testing.T) {
 	}
 
 	// The same post without a slot target is a page action: ui:page is
-	// missing, so it is refused and the plugin is not asked.
+	// missing, so it is refused and the plugin is not asked. Since
+	// ut-docs#3879 a refused action keeps the view and fills the page's
+	// alert slot.
 	h.lastEv = plugins.Event{}
 	for _, target := range []string{"", "plugin-view", "pos-alert"} {
-		assertUnavailable(t, h.postSlotAction(target), http.StatusBadGateway)
+		assertActionFailed(t, h.postSlotAction(target), http.StatusBadGateway, "plugin.view.action_failed")
 	}
 	if h.lastEv.Type != "" {
 		t.Fatal("a page action without ui:page was asked")
@@ -567,7 +583,7 @@ func TestPluginSlot_ActionNeedsOwnSlotPermission_3963(t *testing.T) {
 	if _, err := h.d.Db.Exec(`INSERT INTO plugin_permissions(id,plugin_id,permission,granted) VALUES('y',?,'ui:slot:eod.footer',1)`, viewPluginID); err != nil {
 		t.Fatal(err)
 	}
-	assertUnavailable(t, h.postSlotAction("plugin-slot-reports-panels-0"), http.StatusBadGateway)
+	assertSlotActionFailed(t, h.postSlotAction("plugin-slot-reports-panels-0"), "plugin-slot-reports-panels-0")
 	if h.lastEv.Type != "" {
 		t.Fatal("ui:slot:eod.footer let a reports.panels action through")
 	}
@@ -577,7 +593,7 @@ func TestPluginSlot_ActionNeedsOwnSlotPermission_3963(t *testing.T) {
 	if _, err := h.d.Db.Exec(`UPDATE plugin_permissions SET granted = 1 WHERE plugin_id = ? AND permission = 'ui:page'`, viewPluginID); err != nil {
 		t.Fatal(err)
 	}
-	assertUnavailable(t, h.postSlotAction("plugin-slot-reports-panels-0"), http.StatusBadGateway)
+	assertSlotActionFailed(t, h.postSlotAction("plugin-slot-reports-panels-0"), "plugin-slot-reports-panels-0")
 	if h.lastEv.Type != "" {
 		t.Fatal("ui:page alone ran a slot panel action")
 	}
