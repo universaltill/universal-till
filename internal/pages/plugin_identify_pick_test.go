@@ -47,6 +47,9 @@ func newPickHarness(t *testing.T) *identifyHarness {
 		"TEA-1": {SKU: "TEA-1", Name: "Tea", Qty: 1, PriceCents: 250, ItemID: "itm-tea", TaxRateBP: 2000},
 	})
 	registerPOSAPI(h.mux, h.d)
+	// Registered last, so it runs first: a learning step still in flight
+	// finishes before paths and the slots are restored.
+	t.Cleanup(h.d.WaitForAsyncWork)
 	h.answer(`{"document":{"version":1,"components":[{"type":"suggestions","items":[
 		{"label":{"literal":"Tea"},"effect":{"add_to_basket":{"sku":"TEA-1","qty":2}}}]}]}}`)
 	return h
@@ -281,6 +284,16 @@ func TestPluginIdentify_SlowStoreNeverDelaysTheSale_4006(t *testing.T) {
 	case <-called:
 	case <-time.After(2 * time.Second):
 		t.Fatal("the store step never ran")
+	}
+	// The learning step is tracked async work: shutdown (and a test's
+	// cleanup) waits for it rather than leaving it to write after paths
+	// changed under it.
+	drained := make(chan struct{})
+	go func() { h.d.WaitForAsyncWork(); close(drained) }()
+	select {
+	case <-drained:
+		t.Fatal("the learning step is not tracked on Deps.AsyncWork")
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 

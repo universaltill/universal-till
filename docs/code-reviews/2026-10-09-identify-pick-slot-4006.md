@@ -24,6 +24,8 @@
 | 5 | nit | An unfetched result's photo lingers 135 s rather than 30 s. | Accepted: bounded (one ≤ 8 MiB file per plugin). |
 | 6 | observation | `TestSetupWizard*` TempDir cleanup flakes, pre-existing. | Filed **ut-docs#4015** (Triage). |
 
+Found after review, at close-out: a learning goroutine outlived a failing test (the pre-fix JSON-smuggle run). Its cleanup had already put `paths` back to the cwd-relative default, so the goroutine wrote a PNG into the repo's untracked `data/`. Production is unaffected, but the goroutine was untracked: shutdown could cut a photo write short, and tests could leak. **Fixed:** the learning step is tracked on `Deps.AsyncWork` (production shutdown drains it, bounded), and the pick harness joins it in cleanup before `paths` are restored. `SlowStoreNeverDelaysTheSale` now also asserts the tracking (failed before the fix). The stray file was removed.
+
 Also caught by the full suite before review: the `go learnIdentifyPick(...)` statement tripped `TestNoUnrecoveredGoroutines`. Fixed by putting `RecoverAndLog` in the `go func` literal.
 
 Reviewer verified OK: no slot-file leak on any path (take, expire, replace, failed job, unload; crash → 24 h `ut-view-upload-*` housekeeping); scan behaviour unchanged; `code` can't be smuggled past `sku`; Windows-safe removal order; `StoreAIRef` MkdirAll + `paths`; route session-gated and demo-denied; the four translations match the English.

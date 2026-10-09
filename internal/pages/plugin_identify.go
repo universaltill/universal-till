@@ -523,8 +523,12 @@ func servePluginIdentifyPick(w http.ResponseWriter, r *http.Request, d *common.D
 	}
 	userID := getSessionUserID(r)
 	ctx := context.WithoutCancel(r.Context())
+	// Tracked async work: shutdown drains it (bounded) instead of cutting
+	// a photo write short.
+	d.AsyncWork.Add(1)
 	go func() {
 		defer logging.RecoverAndLog("pages.identifyPick")
+		defer d.AsyncWork.Done()
 		learnIdentifyPick(ctx, d, jobID, sku, userID)
 	}()
 }
