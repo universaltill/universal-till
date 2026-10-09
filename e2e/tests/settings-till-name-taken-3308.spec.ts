@@ -11,7 +11,9 @@ test('settings: a till name already in use is refused inline', async ({ page }) 
   const assertClean = watchConsole(page, /Failed to load resource:.*422|Response Status Error Code 422 from \/api\/settings\/till-name/);
   const reason = "That till name is already in use on this shop's network.";
   await page.route('**/api/settings/till-name', (r) => r.fulfill({
-    status: 422, contentType: 'text/plain; charset=utf-8', body: reason + '\n',
+    // ut-docs#3978: text-response trusts only a body marked refused, as
+    // the handler's httpx.RefuseText marks it.
+    status: 422, contentType: 'text/plain; charset=utf-8', headers: { 'X-UT-Response': 'refused' }, body: reason + '\n',
   }));
   const alertHiddenAfter = await recordAlertAfterRequest(page, '/api/settings/till-name');
   await page.goto('/settings?lang=en#settings-tills');

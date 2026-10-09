@@ -2241,6 +2241,7 @@
   "settings.display.large": "büyük ekranlar",
   "settings.display.launch_on_startup_label": "Açılışta başlat",
   "settings.display.launch_on_startup_pending_note": "Bu platform için otomatik başlatma desteği çıkınca etkinleşir.",
+  "settings.display.err_invalid_mode": "Bir cihaz profili seçin: Kasa, Arka ofis veya Self-servis kiosk.",
   "settings.display.mode": "Cihaz profili",
   "settings.display.mode_backoffice": "Arka ofis (yönetici istasyonu)",
   "settings.display.mode_register": "Kasa (satış ekranı)",

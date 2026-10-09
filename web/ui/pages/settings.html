@@ -514,7 +514,8 @@
        unconditional navigate-away that used to sit here, which would
        destroy the just-opened dialog before an operator could even see it. -->
   <!-- ut-docs#2781: a satellite till refuses Register/Back office with a
-       specific 400 — shown in #display-mode-msg (text-response), not the
+       specific 400 — shown in #display-mode-msg (text-response; the server marks it
+       X-UT-Response: refused, ut-docs#3978), not the
        generic save-failed bubble, which stays for every other failure. An
        additional till choosing Self-order gets the make-a-satellite confirm
        dialog first (text/html, so not-html keeps the page here). -->
@@ -1637,7 +1638,8 @@
   <!-- ut-docs#574 (ADR-0147 §1): cloud/both are selectable only while this
        till's cached entitlement includes cloud_backup; otherwise they stay
        visible but disabled, with the reason in words. The server enforces
-       the same gate (409 + translated reason, shown in #retention-msg). -->
+       the same gate (409 + translated reason, marked X-UT-Response: refused and
+       shown in #retention-msg by text-response, ut-docs#3978). -->
   <form hx-post="/api/settings/report-retention" hx-swap="none" data-after-request="ok not-html refresh-region; status:409 text-response:retention-msg; fail not-status:409 save-error:settings-save-error">
     {{ $mode := .reportRetentionMode }}
     {{ $cloudOK := .reportArchiveCloud.CloudAllowed }}

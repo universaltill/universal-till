@@ -18,7 +18,10 @@ import (
 func TestSettingsAndStatusBar_ReplicaRegisteredViaMainTill(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	ctx := t.Context()
-	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, d.Settings, &sync.WaitGroup{}) })
+	// Reset from an empty store, not d.Settings: d.Settings still holds the
+	// vouched device below, so re-initialising from it left ViaMainTill set
+	// for every later test (order-dependent; ut-docs#3978, pages-shuffle).
+	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
 
 	get := func() string {
 		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/settings", nil), mgrUser)

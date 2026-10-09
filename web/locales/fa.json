@@ -2241,6 +2241,7 @@
   "settings.display.large": "نمایشگرهای بزرگ",
   "settings.display.launch_on_startup_label": "اجرا هنگام روشن شدن",
   "settings.display.launch_on_startup_pending_note": "پس از عرضه پشتیبانی اجرای خودکار برای این پلتفرم فعال می‌شود.",
+  "settings.display.err_invalid_mode": "یک پروفایل دستگاه انتخاب کنید: صندوق، دفتر پشتیبان یا کیوسک سفارش خود.",
   "settings.display.mode": "پروفایل دستگاه",
   "settings.display.mode_backoffice": "دفتر پشتیبان (ایستگاه مدیر)",
   "settings.display.mode_register": "صندوق (صفحه فروش)",

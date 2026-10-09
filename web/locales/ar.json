@@ -2241,6 +2241,7 @@
   "settings.display.large": "الشاشات الكبيرة",
   "settings.display.launch_on_startup_label": "التشغيل عند بدء التشغيل",
   "settings.display.launch_on_startup_pending_note": "يصبح فعّالاً بمجرد صدور دعم التشغيل التلقائي لهذه المنصة.",
+  "settings.display.err_invalid_mode": "اختر ملف الجهاز: كاشير أو المكتب الخلفي أو كشك الطلب الذاتي.",
   "settings.display.mode": "ملف الجهاز",
   "settings.display.mode_backoffice": "المكتب الخلفي (محطة المدير)",
   "settings.display.mode_register": "كاشير (شاشة البيع)",
