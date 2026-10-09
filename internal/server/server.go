@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"sync"
@@ -288,6 +289,15 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	return nil
 }
 
+// ProblemKeyDailyBackupNoPhotos tags the Problems entry (back-office Problems
+// panel + cloud heartbeat, ADR-0018) for "the daily auto-backup was written
+// but could not include the uploaded photos" (ut-docs#3991). It stays open
+// until a later daily backup completes with photos and resolves it.
+const ProblemKeyDailyBackupNoPhotos = "backup.daily_no_photos"
+
+// snapshotWithAssets is a seam so tests can simulate a photo failure.
+var snapshotWithAssets = dbpkg.SnapshotWithAssets
+
 // runDailyBackup snapshots the local DB unless a backup newer than 24h
 // already exists, then prunes old snapshots to the newest DefaultBackupKeep.
 func runDailyBackup(db *sql.DB, dbPath string) {
@@ -296,14 +306,22 @@ func runDailyBackup(db *sql.DB, dbPath string) {
 		return
 	}
 	// Uploaded photos ride inside the snapshot (ut-docs#2724). A photo
-	// failure still leaves a usable DB backup, so it is logged, not fatal.
-	path, err := dbpkg.SnapshotWithAssets(db, dbPath, paths.Data("public", "assets"))
+	// failure still leaves a usable DB backup, so it is not fatal — but it
+	// is raised as a keyed Problem (ut-docs#3991) so the shop is told the
+	// backup lacks its photos, and resolved by the next complete backup.
+	path, err := snapshotWithAssets(db, dbPath, paths.Data("public", "assets"))
 	if err != nil && path == "" {
 		log.Printf("[Backup] snapshot failed: %v", err)
 		return
 	}
 	if err != nil {
-		log.Printf("[Backup] daily snapshot %s has no photos: %v", path, err)
+		// One open entry per condition, not one per failing day: the
+		// back-office panel shows only a few problems. Cause first, file
+		// name only — the heartbeat cuts a problem at 200 characters.
+		logging.ResolveProblems(ProblemKeyDailyBackupNoPhotos)
+		logging.L().WarnProblemf(ProblemKeyDailyBackupNoPhotos, "[Backup] daily backup has no photos (%v): %s", err, filepath.Base(path))
+	} else {
+		logging.ResolveProblems(ProblemKeyDailyBackupNoPhotos)
 	}
 	log.Printf("[Backup] daily snapshot: %s", path)
 	_ = dbpkg.PruneBackups(dbPath, dbpkg.DefaultBackupKeep)
