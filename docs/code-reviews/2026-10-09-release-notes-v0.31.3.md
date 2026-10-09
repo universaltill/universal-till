@@ -7,7 +7,7 @@ Date: 2026-10-09 · Written by Opus 5.5 (lane:cloud-54), reviewed by Sonnet agai
 Owner-facing notes `web/release-notes/{en,de,ar,fa,tr}/v0.31.3.md` for the
 release due after six feat/fix merges since v0.31.2: crash leftovers swept,
 coalesced plugin activity log, backup photos warning, plugin panel gate,
-quick-tap navigation fix.
+quick-tap navigation fix; updated before merge for the later daily-backup photos problem (#3991 lane).
 
 ## Findings
 
