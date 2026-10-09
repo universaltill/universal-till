@@ -2060,6 +2060,7 @@
   "settings.backup.col_file": "الملف",
   "settings.backup.col_size": "الحجم",
   "settings.backup.done": "أُنشئت النسخة الاحتياطية",
+  "settings.backup.done_no_photos": "أُنشئت النسخة الاحتياطية، لكن تعذّرت إضافة الصور — حاول مرة أخرى",
   "settings.backup.download": "حفظ إلى التنزيلات",
   "settings.backup.download_failed": "تعذّر تنزيل النسخة الاحتياطية.",
   "settings.backup.failed": "فشل النسخ الاحتياطي",

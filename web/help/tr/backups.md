@@ -12,7 +12,7 @@ Tüm dükkân verinizin (katalog, satışlar, ayarlar) anlık kopyaları; indiri
 
 ## Nasıl kullanılır
 
-1. Ayarlar → Yedekler: istediğiniz an yedek oluşturun.
+1. Ayarlar → Yedekler: istediğiniz an yedek oluşturun. Fotoğrafların eklenemediğini söylüyorsa, yedek verilerinizi içerir ama fotoğraflarınızı içermez — kasayı silmeden veya değiştirmeden önce tekrar deneyin.
 2. İndir, kopyayı İndirilenler klasörünüze kaydeder — bir kopyayı kasa dışında saklayın.
 
 ## Bir yedeği geri yükleme

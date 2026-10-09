@@ -3,6 +3,7 @@ package pages
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -748,5 +749,52 @@ func TestBackupNow_SnapshotCarriesUploadedPhotos(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(freshAssets, "categories", "cat-1", "thumb.png"))
 	if err != nil || string(got) != "category-photo" {
 		t.Fatalf("restored photo = %q %v", got, err)
+	}
+}
+
+// ut-docs#3948: when the DB snapshot is written but its photos fail, the
+// operator must see a warning (not the plain success line) before wiping a
+// device; the snapshot is still listed and the audit row records the cause.
+func TestBackupNow_PhotosFailureShowsWarningNotSuccess(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, dbPath := newBackupTestDeps(t)
+	orig := snapshotWithAssets
+	t.Cleanup(func() { snapshotWithAssets = orig })
+	snapshotWithAssets = func(conn *sql.DB, p, _ string) (string, error) {
+		path, err := db.Snapshot(conn, p)
+		if err != nil {
+			t.Fatalf("real snapshot: %v", err)
+		}
+		return path, errors.New("add photos to backup: boom")
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/backup/now", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("X-UT-Response"); got != "ok" {
+		t.Fatalf("X-UT-Response = %q, want ok so the list refreshes", got)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, httpx.T("en", "settings.backup.done_no_photos")) {
+		t.Fatalf("expected the no-photos warning text, got: %s", body)
+	}
+	if !strings.Contains(body, "row-warn-icon") {
+		t.Fatalf("expected the warning icon, got: %s", body)
+	}
+	if strings.Contains(body, "✓") {
+		t.Fatalf("must not show the success tick when photos failed: %s", body)
+	}
+	list, err := db.ListBackups(dbPath)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("expected one snapshot kept: %v %d", err, len(list))
+	}
+	var data string
+	if err := dp.Db.QueryRow(`SELECT data_json FROM audit_log WHERE action='backup_created'`).Scan(&data); err != nil {
+		t.Fatalf("expected a backup_created audit row: %v", err)
+	}
+	if !strings.Contains(data, "photos_error") || !strings.Contains(data, "boom") {
+		t.Fatalf("audit row must carry photos_error, got %s", data)
 	}
 }

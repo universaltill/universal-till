@@ -13,7 +13,7 @@ Momentaufnahmen aller Ihrer Geschäftsdaten (Katalog, Verkäufe, Einstellungen),
 
 ## Verwendung
 
-1. Einstellungen → Datensicherungen: Erstellen Sie jederzeit eine Sicherung.
+1. Einstellungen → Datensicherungen: Erstellen Sie jederzeit eine Sicherung. Wenn dort steht, dass die Fotos nicht hinzugefügt werden konnten, enthält die Sicherung Ihre Daten, aber nicht Ihre Fotos — versuchen Sie es erneut, bevor Sie die Kasse löschen oder ersetzen.
 2. „Herunterladen“ speichert eine Kopie in Ihrem Downloads-Ordner — bewahren Sie eine Kopie getrennt von der Kasse auf.
 
 ## Eine Sicherung wiederherstellen

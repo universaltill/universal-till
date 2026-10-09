@@ -2045,6 +2045,7 @@
   "settings.backup.col_file": "File",
   "settings.backup.col_size": "Size",
   "settings.backup.done": "Backup created",
+  "settings.backup.done_no_photos": "Backup created, but the photos could not be added — try again",
   "settings.backup.download": "Save to Downloads",
   "settings.backup.download_failed": "Could not download the backup.",
   "settings.backup.failed": "Backup failed",

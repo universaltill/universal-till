@@ -3,6 +3,7 @@ package pages
 import (
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"io"
 	"net/http"
 	"os"
@@ -91,6 +92,9 @@ func copyBackupTo(dstDir, src, name string) (string, error) {
 	return dst, nil
 }
 
+// snapshotWithAssets is a package var so tests can inject a photos failure.
+var snapshotWithAssets = db.SnapshotWithAssets
+
 // registerBackupAPI mounts local backup & restore (docs:
 // architecture/local-backup.md). Manager/admin only throughout.
 func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
@@ -135,7 +139,7 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		// Uploaded photos ride inside the snapshot (ut-docs#2724).
-		path, err := db.SnapshotWithAssets(d.Db, dbPath, paths.Data("public", "assets"))
+		path, err := snapshotWithAssets(d.Db, dbPath, paths.Data("public", "assets"))
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil && path == "" {
@@ -146,7 +150,7 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 			// the real error, not a translated summary.
 			auditNow("backup_failed", map[string]any{"error": err.Error()})
 			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.backup.failed"))
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, template.HTMLEscapeString(httpx.T(locale, "settings.backup.failed")))
 			return
 		}
 		_ = db.PruneBackups(dbPath, db.DefaultBackupKeep)
@@ -162,7 +166,15 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 		// "ut-ok refresh-region" on this header, and the elevation dialog's
 		// elevation-done step does the same on the approved retry.
 		w.Header().Set("X-UT-Response", "ok")
-		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "settings.backup.done"))
+		if err != nil {
+			// Snapshot kept, photos missing: warn instead of the tick so an
+			// operator about to wipe the device is not told all is well
+			// (ut-docs#3948).
+			fmt.Fprintf(w, `<span><span class="row-warn-icon" aria-hidden="true">⚠</span>%s</span>`,
+				template.HTMLEscapeString(httpx.T(locale, "settings.backup.done_no_photos")))
+			return
+		}
+		fmt.Fprintf(w, `<span>✓ %s</span>`, template.HTMLEscapeString(httpx.T(locale, "settings.backup.done")))
 	})
 
 	mux.HandleFunc("GET /api/backup/download/{name}", func(w http.ResponseWriter, r *http.Request) {

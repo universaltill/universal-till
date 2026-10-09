@@ -2060,6 +2060,7 @@
   "settings.backup.col_file": "پرونده",
   "settings.backup.col_size": "حجم",
   "settings.backup.done": "پشتیبان ساخته شد",
+  "settings.backup.done_no_photos": "پشتیبان ساخته شد، اما افزودن عکس‌ها ممکن نشد — دوباره تلاش کنید",
   "settings.backup.download": "ذخیره در Downloads",
   "settings.backup.download_failed": "دانلود نسخهٔ پشتیبان ممکن نشد.",
   "settings.backup.failed": "پشتیبان‌گیری ناموفق بود",
