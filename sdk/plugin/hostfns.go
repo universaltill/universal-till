@@ -397,6 +397,43 @@ func BlobList() ([]BlobInfo, error) {
 	return list, nil
 }
 
+// Item image roles for ItemImageOpen (ADR-0121 R1).
+const (
+	// ItemImageRef is the photo the built-in camera identify sends for the
+	// item: its newest confirmed photo if that decodes, else its thumbnail.
+	ItemImageRef = "ref"
+	// ItemImageAIRef is the item's newest cashier-confirmed photo.
+	ItemImageAIRef = "ai_ref"
+	// ItemImageThumb is the item's catalog thumbnail.
+	ItemImageThumb = "thumb"
+)
+
+// ItemImage reads one catalog item's reference photo (permission
+// "view:inventory"): a JPEG of at most 160 px on the long edge, re-encoded
+// by the till. Handles last only for the current event.
+type ItemImage struct{ h int32 }
+
+// ItemImageOpen opens itemID's photo of the given role. ErrNotFound: no
+// such item or image, or not a decodable PNG/JPEG; ErrInvalid: a bad id or
+// role; ErrQuota: a 65th open in this event (failed opens count); ErrBusy: a
+// fifth open handle.
+func ItemImageOpen(itemID, role string) (*ItemImage, error) {
+	h := rawItemImageOpen([]byte(itemID), []byte(role))
+	if h < 0 {
+		return nil, codeErr("item_image_open", h)
+	}
+	return &ItemImage{h: h}, nil
+}
+
+// Read reads the next chunk; io.EOF at the end, which also releases the
+// handle on the host. Never retried.
+func (r *ItemImage) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	return readResult("item_image_read", p, rawItemImageRead(r.h, p))
+}
+
 // Handle is the host handle, for logging or a host-level test.
 func (s *HTTPStream) Handle() int32 { return s.h }
 
@@ -411,6 +448,9 @@ func (w *BlobWriter) Handle() int32 { return w.h }
 
 // Handle is the host handle, for logging.
 func (r *BlobReader) Handle() int32 { return r.h }
+
+// Handle is the host handle, for logging.
+func (r *ItemImage) Handle() int32 { return r.h }
 
 // DeviceID is this till's stable device UUID (permission "device-info",
 // ADR-0140). Every successful call is audited on the till.

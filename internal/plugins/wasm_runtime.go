@@ -760,6 +760,8 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 	defer hs.streams.closeAll()
 	// So do blob handles; an uncommitted put leaves nothing behind.
 	defer hs.blobs.closeAll()
+	// And item image handles (ADR-0121 R1).
+	defer hs.itemImages.closeAll()
 	// event_publish delivery is asynchronous (ADR-0121 §3): what the guest
 	// published is enqueued only now that the instance has exited, however
 	// it ended — the host already answered 0 for each event. The call slot

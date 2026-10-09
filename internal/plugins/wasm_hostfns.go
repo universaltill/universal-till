@@ -91,6 +91,9 @@ type hostState struct {
 	// (blobQuota).
 	blobQuotaOnce  sync.Once
 	blobQuotaBytes int64
+	// itemImages are this event's item_image_open handles and open count
+	// (wasm_itemimage.go) — per event; handleEvent releases them all.
+	itemImages itemImageHandles
 	// hop is the handled event's hop count (0 = raised by core); an
 	// event_publish from this instance is hop+1 (wasm_event_publish.go).
 	hop int
@@ -171,6 +174,8 @@ func instantiateHostModule(ctx context.Context, rt wazero.Runtime) error {
 		NewFunctionBuilder().WithFunc(hostBlobRead).Export("blob_read").
 		NewFunctionBuilder().WithFunc(hostBlobDelete).Export("blob_delete").
 		NewFunctionBuilder().WithFunc(hostBlobList).Export("blob_list").
+		NewFunctionBuilder().WithFunc(hostItemImageOpen).Export("item_image_open").
+		NewFunctionBuilder().WithFunc(hostItemImageRead).Export("item_image_read").
 		NewFunctionBuilder().WithFunc(hostEventPublish).Export("event_publish").
 		NewFunctionBuilder().WithFunc(hostJobProgress).Export("job_progress").
 		NewFunctionBuilder().WithFunc(hostDeviceIDGet).Export("device_id_get").

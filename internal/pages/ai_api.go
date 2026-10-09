@@ -1,18 +1,15 @@
 package pages
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"image"
-	"image/jpeg"
 	"image/png"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -21,24 +18,14 @@ import (
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/imaging"
+	"github.com/universaltill/universal-till/internal/itemimages"
 	"github.com/universaltill/universal-till/internal/pages/common"
-	"github.com/universaltill/universal-till/internal/paths"
 )
 
 const (
 	maxIdentifyPhotoBytes = 4 << 20
 	maxReferenceImages    = 60
-	maxAIRefsPerItem      = 5
 )
-
-// itemAssetDir is the stable per-user data dir item-image tree (uploads
-// land here via internal/pages/catalog/handlers.go's paths.Data(...)
-// calls) -- NOT a cwd-relative path. A plain "web/public/assets/items"
-// constant here would only resolve when the process's cwd happens to be
-// the repo checkout, silently finding zero images once installed
-// (docs/code-reviews/2026-07-29-coverage-batch-11-sync-assets-regression.md
-// fixed the identical bug class in sync_assets.go).
-func itemAssetDir() string { return paths.Data("public", "assets", "items") }
 
 // registerAIAPI wires the camera-identify endpoints (docs repo:
 // architecture/ai-integration.md §g). Strictly assistive: the endpoints 404
@@ -214,10 +201,10 @@ func registerAIAPI(mux *http.ServeMux, d *common.Deps) {
 		// (e.g. trailing bytes past the real image data). It does NOT
 		// retroactively touch any file already on disk from before this
 		// fix shipped — those still exist as whatever the old client
-		// uploaded, `.jpg` or `.png` alike (refImageNames matches both
-		// extensions). loadRefJPEG's own bounded decode is what protects
-		// those pre-existing files on every future identify call.
-		dir := filepath.Join(itemAssetDir(), itemID, "ai_ref")
+		// uploaded, `.jpg` or `.png` alike (itemimages matches both
+		// extensions). imaging.RefJPEG's own bounded decode is what
+		// protects those pre-existing files on every future identify call.
+		dir := itemimages.AIRefDir(itemID)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			writeJSON(w, http.StatusInternalServerError, nil, "cannot store reference image")
 			return
@@ -236,14 +223,14 @@ func registerAIAPI(mux *http.ServeMux, d *common.Deps) {
 			// review): unlike the catalog handlers' fixed thumb.png name
 			// (which self-heals on the next upload), this filename is a
 			// unique nanosecond timestamp — left in place, it would
-			// silently poison every future identify call for this item
-			// (latestAIRef picks the newest name, and loadReferenceImages
-			// has no fallback to thumb.png when that decode then fails).
+			// shadow every older confirmed photo for this item
+			// (itemimages picks only the newest name; the `ref` choice then
+			// falls back to thumb.png when that decode fails).
 			_ = os.Remove(outPath)
 			writeJSON(w, http.StatusInternalServerError, nil, "cannot store reference image")
 			return
 		}
-		pruneAIRefs(dir)
+		itemimages.PruneAIRefs(dir)
 		// Reference images live under the items asset tree, so linked
 		// tills sync them on their pull: nudge (ADR-0114 §2), as for a
 		// photo — a file moves no admin-table trigger.
@@ -257,97 +244,19 @@ func registerAIAPI(mux *http.ServeMux, d *common.Deps) {
 }
 
 // loadReferenceImages picks one reference photo per item — the latest
-// cashier-confirmed ai_ref when present, else the catalog thumbnail — capped
-// and downscaled so the request stays small, cheap and cacheable.
+// cashier-confirmed ai_ref when it decodes, else the catalog thumbnail
+// (itemimages.Ref's "ref" role, the same choice and bytes the
+// item_image_open host function gives a plugin — ADR-0121 R1) — capped and
+// downscaled so the request stays small, cheap and cacheable.
 func loadReferenceImages(items []ai.CatalogItem) []ai.RefImage {
 	refs := make([]ai.RefImage, 0, maxReferenceImages)
 	for _, it := range items {
 		if len(refs) >= maxReferenceImages {
 			break
 		}
-		path := filepath.Join(itemAssetDir(), it.ID, "thumb.png")
-		if p, _, ok := latestAIRef(filepath.Join(itemAssetDir(), it.ID, "ai_ref")); ok {
-			path = p
-		}
-		if data, ok := loadRefJPEG(path); ok {
+		if data, err := itemimages.Ref(it.ID, itemimages.RoleRef); err == nil {
 			refs = append(refs, ai.RefImage{ItemID: it.ID, MediaType: "image/jpeg", Data: data})
 		}
 	}
 	return refs
-}
-
-// loadRefJPEG reads an image and re-encodes it as a small JPEG (max 160px
-// long edge). Full-size thumbs would put megabytes of base64 on every
-// identify request for no recognition benefit.
-//
-// Decoded via the bounded internal/imaging helper (ut-docs#1417), not raw
-// image.Decode: this file re-runs on EVERY identify call, for up to
-// maxReferenceImages items, so an unbounded decode here turns one hostile
-// file already on disk (from before this fix shipped, or from any other
-// path that once wrote to this tree) into a repeatable OOM rather than a
-// one-time risk — the confirm handler re-encoding at write time only
-// protects files written after this fix ships, not ones already present.
-func loadRefJPEG(path string) ([]byte, bool) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, false
-	}
-	src, err := imaging.Decode(raw)
-	if err != nil {
-		return nil, false
-	}
-	const maxEdge = 160
-	src = imaging.DownscaleMaxEdge(src, maxEdge)
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, src, &jpeg.Options{Quality: 70}); err != nil {
-		return nil, false
-	}
-	return buf.Bytes(), true
-}
-
-func latestAIRef(dir string) (path, mediaType string, ok bool) {
-	entries, err := os.ReadDir(dir)
-	if err != nil || len(entries) == 0 {
-		return "", "", false
-	}
-	names := refImageNames(entries)
-	if len(names) == 0 {
-		return "", "", false
-	}
-	newest := names[len(names)-1]
-	media := "image/jpeg"
-	if strings.HasSuffix(newest, ".png") {
-		media = "image/png"
-	}
-	return filepath.Join(dir, newest), media, true
-}
-
-// pruneAIRefs keeps only the newest reference photos so the folder (and the
-// identify-request payload) can't grow without bound.
-func pruneAIRefs(dir string) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	names := refImageNames(entries)
-	for len(names) > maxAIRefsPerItem {
-		_ = os.Remove(filepath.Join(dir, names[0]))
-		names = names[1:]
-	}
-}
-
-// refImageNames returns image filenames sorted oldest-first (names are
-// nanosecond timestamps, so lexical order is chronological).
-func refImageNames(entries []os.DirEntry) []string {
-	var names []string
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		if strings.HasSuffix(e.Name(), ".jpg") || strings.HasSuffix(e.Name(), ".png") {
-			names = append(names, e.Name())
-		}
-	}
-	sort.Strings(names)
-	return names
 }
