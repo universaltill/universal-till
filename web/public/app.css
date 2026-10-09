@@ -5044,12 +5044,25 @@ body.login-screen {
    properties only. */
 #sb-subscription-mount:empty { display: none; }
 #sb-subscription-mount { min-inline-size: 0; display: inline-flex; }
+/* ut-docs#3459: the cap is 14rem (was 16rem; border-box, so it is the chip's
+   whole width) so a long translation takes less of the row and ellipsizes
+   instead of pushing the version label onto a second line at 1024x600. The
+   bar keeps wrapping when it is genuinely crowded (ut-docs#3050: a nowrap
+   bar overflowed sideways with update + register + marketplace chips
+   showing). The 2.25rem touch target is a ::before hit area centred on the
+   chip, not min-block-size: a 2.25rem chip made the whole bar ~15px taller
+   the moment it appeared. Trade-off: where the bar wraps (tablet, phone) the
+   hit area reaches a few px into the neighbouring row's gap. */
 .statusbar .sb-subscription {
+  position: relative;
   color: #451a03; background: var(--warning, #d97706);
   text-decoration: none; white-space: nowrap; min-inline-size: 0;
-  max-inline-size: 16rem;
-  padding: .05rem .5rem; min-block-size: 2.25rem; align-items: center; border-radius: 999px; font-weight: 700;
+  max-inline-size: 14rem;
+  padding: .05rem .5rem; align-items: center; border-radius: 999px; font-weight: 700;
   margin-inline-start: .5rem;
+}
+.statusbar .sb-subscription::before {
+  content: ""; position: absolute; inset-inline: 0; inset-block: calc(50% - 1.125rem);
 }
 .statusbar .sb-subscription-text { overflow: hidden; text-overflow: ellipsis; min-inline-size: 0; }
 .statusbar a.sb-subscription:hover { filter: brightness(0.92); }
