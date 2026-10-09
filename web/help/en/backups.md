@@ -13,7 +13,7 @@ Snapshots of all your shop data (catalog, sales, settings) that you can download
 
 ## How to use it
 
-1. Settings → Backups: create a backup any time.
+1. Settings → Backups: create a backup any time. If it says the photos could not be added, the backup holds your data but not your photos — try again before you wipe or replace the till.
 2. Download saves a copy to your Downloads folder — keep one off the till.
 
 ## Restoring a backup

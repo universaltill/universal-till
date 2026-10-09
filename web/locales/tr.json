@@ -2060,6 +2060,7 @@
   "settings.backup.col_file": "Dosya",
   "settings.backup.col_size": "Boyut",
   "settings.backup.done": "Yedek oluşturuldu",
+  "settings.backup.done_no_photos": "Yedek oluşturuldu ama fotoğraflar eklenemedi — tekrar deneyin",
   "settings.backup.download": "İndirilenler’e kaydet",
   "settings.backup.download_failed": "Yedek indirilemedi.",
   "settings.backup.failed": "Yedekleme başarısız",
