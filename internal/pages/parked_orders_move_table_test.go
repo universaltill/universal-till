@@ -181,3 +181,27 @@ func TestHeldTableMove_FromPopupOccupiedShowsToast(t *testing.T) {
 		t.Fatalf("popup list should still render under the toast: %s", body)
 	}
 }
+
+// ut-docs#3630: a movable row carries the invisible placeholder immediately
+// before its <details>, so column 2 keeps the toggle's width when the open
+// panel spans the row; a row without moves still gets one (column alignment).
+func TestParkedOrders_MovableRowRendersPlaceholderBeforeDetails(t *testing.T) {
+	mux, _, _ := seedMoveTableFixture(t)
+	body := html.UnescapeString(parkedOrdersFragment(t, mux))
+
+	const ph = `class="btn secondary parked-move-placeholder" aria-hidden="true"`
+	h1 := rowHTML(t, body, "h1")
+	if n := strings.Count(h1, "parked-move-placeholder"); n != 1 {
+		t.Fatalf("movable row h1 should carry exactly one placeholder, got %d: %s", n, h1)
+	}
+	pi, di := strings.Index(h1, ph), strings.Index(h1, `<details class="parked-move"`)
+	if pi < 0 || di < 0 || pi > di {
+		t.Fatalf("placeholder must precede the <details> (ph=%d details=%d): %s", pi, di, h1)
+	}
+	if between := h1[pi:di]; strings.Count(between, "<") != 1 { // only the placeholder's own </span>
+		t.Fatalf("placeholder must sit immediately before <details>: %q", between)
+	}
+	if h2 := rowHTML(t, body, "h2"); !strings.Contains(h2, ph) || strings.Contains(h2, "<details") {
+		t.Fatalf("row without moves keeps a lone placeholder: %s", h2)
+	}
+}

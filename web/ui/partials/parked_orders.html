@@ -82,7 +82,11 @@
 {{ else }}
 {{/* ut-docs#3582: rows are a fixed three-column grid (app.css). When any
      row can move tables, every row without Move table gets an invisible
-     placeholder of the same size, so the columns line up row to row. */}}
+     placeholder of the same size, so the columns line up row to row.
+     ut-docs#3630: a row WITH Move table carries the same placeholder right
+     before its <details>: the open panel spans the row (app.css) and leaves
+     column 2, and the placeholder keeps that column the toggle's width so
+     the summary, laid over it, stays where it was and a second tap closes. */}}
 {{ $anyMove := false }}{{ range .orders }}{{ if .MoveTargets }}{{ $anyMove = true }}{{ end }}{{ end }}
 <ul class="parked-orders-list">
   {{ range .orders }}
@@ -110,6 +114,7 @@
     {{ end }}
     {{ if .MoveTargets }}
     {{ $id := .ID }}
+    <span class="btn secondary parked-move-placeholder" aria-hidden="true">{{ T "basket.table.move" }}</span>
     <details class="parked-move" data-testid="parked-move">
       <summary class="btn secondary parked-move-toggle" id="parked-move-{{ $id }}">{{ T "basket.table.move" }}<span class="visually-hidden"> · {{ .Label }}</span></summary>
       <div class="parked-move-options">

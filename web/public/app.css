@@ -3723,7 +3723,7 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    row in the list has one, parked_orders.html). Before this the row was a
    wrapping flexbox and Move table / the trash button landed wherever the
    leftover width let them. */
-.parked-orders-list > li { display: grid; grid-template-columns: minmax(0, 1fr) auto 46px; gap: .5rem; align-items: stretch; }
+.parked-orders-list > li { --parked-cancel-col: 46px; --parked-row-gap: .5rem; display: grid; grid-template-columns: minmax(0, 1fr) auto var(--parked-cancel-col); gap: var(--parked-row-gap); align-items: stretch; }
 .parked-orders-list > li > .parked-order,
 .parked-orders-list > li > .parked-order-form { grid-column: 1; grid-row: 1; min-inline-size: 0; }
 .parked-orders-list > li > .parked-move,
@@ -3734,23 +3734,26 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    it is a compact button beside the row; open, it takes a row of its own so
    the free-table options wrap under the order they move. Every target keeps
    the 46px floor (.btn-touch); logical properties only (RTL). */
-/* Open, the free-table options need the full width: the whole <details>
-   takes a second row of ITS OWN <li> (so it can only read as this order's),
-   and Cancel keeps its column on row 1. */
-.parked-orders-list > li > .parked-move[open] { grid-column: 1 / -1; grid-row: 2; }
-/* ut-docs#3622: with .parked-move[open] vacating column 2's row-1 track,
-   that track's auto width (per-<li> grid, not shared across rows) can
-   collapse toward 0, and the order button's own minmax(0, 1fr) column
-   grows to absorb the freed space -- widening right up to where the
-   toggle sat closed. A second tap meant to close the panel then lands on
-   the order button instead and resumes it. Rather than chase exact track
-   sizing, make the order's own resume target inert while ITS row's panel
-   is open: a tap anywhere it may have shifted to does nothing, never
-   resumes. (An engine without :has() just keeps the pre-#3622 behaviour.) */
+/* Open, the free-table options need the full width: the <details> spans its
+   <li> from row 1 (so it can only read as this order's), and its summary is
+   pinned to the inline end, exactly over column 2 -- the toggle does not
+   move, so a second tap at the same spot closes the panel (ut-docs#3630).
+   The inline-end margin is column 3 + the li's gap (the custom properties
+   on the li rule above). The options flow under the
+   summary; Cancel is later in the DOM, so it paints and hit-tests on top of
+   the details' row-1 area and stays tappable. */
+.parked-orders-list > li > .parked-move[open] { grid-column: 1 / -1; grid-row: 1 / span 2; }
+.parked-move[open] > summary { display: flex; inline-size: fit-content; margin-inline-start: auto; margin-inline-end: calc(var(--parked-cancel-col) + var(--parked-row-gap)); }
+/* ut-docs#3622 (kept as belt and braces after ut-docs#3630): should the
+   order button ever end up under where the toggle was, make its resume
+   target inert while ITS row's panel is open, so a tap there never resumes.
+   (An engine without :has() just skips this.) */
 .parked-orders-list > li:has(> .parked-move[open]) > .parked-order,
 .parked-orders-list > li:has(> .parked-move[open]) > .parked-order-form { pointer-events: none; }
-.parked-move-placeholder { visibility: hidden; min-height: 46px; display: inline-flex; align-items: center; }
-.parked-move > summary { list-style: none; min-height: 46px; display: inline-flex; align-items: center; cursor: pointer; }
+.parked-move-placeholder { visibility: hidden; min-height: 46px; display: inline-flex; align-items: center; white-space: nowrap; }
+/* nowrap on both: the closed placeholder and the open (fit-content) summary
+   must keep the same box, or a long label wobbles the toggle (ut-docs#3630). */
+.parked-move > summary { list-style: none; min-height: 46px; display: inline-flex; align-items: center; cursor: pointer; white-space: nowrap; }
 .parked-move > summary::-webkit-details-marker { display: none; }
 .parked-move-options { display: flex; flex-wrap: wrap; gap: .5rem; margin-block-start: .5rem; }
 .parked-move-option { min-height: 46px; min-width: 46px; }
@@ -3780,7 +3783,7 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
   .parked-orders-list > li > .parked-move-placeholder,
   .parked-orders-list > li > .parked-order-cancel,
   .parked-orders-list > li > .parked-order-cancel-spacer { grid-row: 2; }
-  .parked-orders-list > li > .parked-move[open] { grid-row: 3; }
+  .parked-orders-list > li > .parked-move[open] { grid-row: 2 / span 2; }
 }
 .parked-order-meta { margin-inline-start: auto; opacity: .8; white-space: nowrap; }
 /* .held-chip-table has never had a rule of its own (it rendered as bare text
