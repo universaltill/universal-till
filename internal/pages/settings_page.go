@@ -455,6 +455,26 @@ func filterSettingsNavForRender(rows []settingsnav.Row, isManager, canReportIssu
 	return out
 }
 
+// pluginSettingsCategory is the landing-grid category plugin sections
+// share (ut-docs#3946); a core key never takes it, and a `layout` group's
+// id always starts "g-" (settingsnav.catOf).
+const pluginSettingsCategory = "plugins"
+
+// pluginSettingsNavRows is the sidebar row of each plugin section, in the
+// Plugins group, appended after every core and `layout` row so the
+// category tile lands just before Advanced.
+func pluginSettingsNavRows(locale string, secs []pluginSlotSection) []settingsnav.Row {
+	if len(secs) == 0 {
+		return nil
+	}
+	group := httpx.T(locale, "nav.plugins")
+	out := make([]settingsnav.Row, len(secs))
+	for i, s := range secs {
+		out[i] = settingsnav.Row{Key: s.Key, Label: s.Label, Group: group, Cat: pluginSettingsCategory}
+	}
+	return out
+}
+
 // settingsCategoryTile is one /settings landing-grid tile as the template
 // renders it (ut-docs#3090): the resolved category plus its icon's SVG.
 type settingsCategoryTile struct {
@@ -760,6 +780,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			settingsnav.Resolve(locale, d.SettingsAmendmentsSnapshot()),
 			isManager, canReportIssue, len(payMethods) > 0, showDataCard,
 		)
+		// ut-docs#3946: each settings.sections plugin entry is a section of
+		// its own, under a Plugins group, instead of a panel drawn under
+		// whichever core section is open.
+		pluginSections := pluginSlotSections(d, r, "settings.sections", "settings-plugin-")
+		settingsNav = append(settingsNav, pluginSettingsNavRows(locale, pluginSections)...)
 		data := map[string]any{
 			"title":       httpx.T(httpx.RequestLocale(r), "page.title.settings"),
 			"theme":       st.Theme,
@@ -877,7 +902,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// — see settingsnav's own doc comment for why this resolves the
 			// sidebar and its categories only, not the on-page card
 			// content/order.
-			"settingsNav": settingsNav,
+			"settingsNav":    settingsNav,
+			"pluginSections": pluginSections,
 			// ut-docs#3090: the landing grid's category tiles, built from
 			// the SAME filtered rows so a category whose every section is
 			// gated out for this session gets no tile.

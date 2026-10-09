@@ -1848,7 +1848,9 @@ func TestSettingsPage_CoreSettingsAndFilterMatchTheRealTemplate(t *testing.T) {
 	var cards []found
 	for i, line := range lines {
 		m := cardRE.FindStringSubmatch(line)
-		if m == nil {
+		// A plugin section's card (ut-docs#3946) has a per-render id and
+		// is listed by pluginSettingsNavRows, not CoreSettings.
+		if m == nil || strings.HasPrefix(m[1], "{{") {
 			continue
 		}
 		gated := false

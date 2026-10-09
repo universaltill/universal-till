@@ -16,3 +16,13 @@
 {{- end }}
 </div>
 {{ end }}
+
+{{/* One entry's panel (ut-docs#3946): the body of a Settings section the
+     page gives that entry, loaded from GET /ui/slot/{slot}/{plugin}/{entry}.
+     The section's card is the page's own, so no <section> here. */}}
+{{ define "pluginview_slot_entry" }}
+{{ template "pluginview_alert" (dict "ID" (printf "%s-alert" .ID)) }}
+<div id="{{ .ID }}" class="plugin-view">
+{{ template "pluginview_body" .Body }}
+</div>
+{{ end }}

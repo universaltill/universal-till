@@ -127,6 +127,31 @@ func adminGroupsFor(visible []uislot.Entry) []adminGroup {
 	return groups
 }
 
+// adminTreeGroups is the tree r's viewer sees: adminGroupsFor over
+// visibleAdminEntries, plus the plugin admin pages (withPluginAdminGroup).
+// Every destination's OOB tree refresh uses it, so the Plugins group never
+// drops out of the tree after a row click.
+func adminTreeGroups(d *common.Deps, r *http.Request) []adminGroup {
+	return withPluginAdminGroup(d, r, adminGroupsFor(visibleAdminEntries(d, r)))
+}
+
+// withPluginAdminGroup appends a Plugins group with one row per admin.pages
+// entry r's viewer may open (ADR-0121 §7, ut-docs#3946): a plain link to the
+// entry's own /plugin/ page, which is slot-gated (ut-docs#3973) and has no
+// fragment handler -- the same row shape as a `layout`-regrouped entry.
+// Nothing is drawn under the core destinations any more.
+func withPluginAdminGroup(d *common.Deps, r *http.Request, groups []adminGroup) []adminGroup {
+	secs := pluginSlotSections(d, r, "admin.pages", "admin-plugin-")
+	if len(secs) == 0 {
+		return groups
+	}
+	entries := make([]adminTreeEntry, len(secs))
+	for i, s := range secs {
+		entries[i] = adminTreeEntry{Entry: uislot.Entry{Key: s.Route, Href: s.Route, LabelKey: s.LabelKey}}
+	}
+	return append(groups, adminGroup{HeadingKey: "nav.plugins", Entries: entries})
+}
+
 // adminEmbedHeader marks a sub-request whose fragment body is about to be
 // INLINED into /admin's own default panel load (embedAdminSection below) —
 // mirrors itemsnav.EmbedHeader/IsEmbed exactly, and for the identical
@@ -284,7 +309,7 @@ func registerAdmin(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
 			return
 		}
-		groups := adminGroupsFor(visible)
+		groups := withPluginAdminGroup(d, r, adminGroupsFor(visible))
 		current := firstFragmentCapableHref(groups)
 		data := map[string]any{
 			"title":       httpx.T(httpx.RequestLocale(r), "page.title.admin"),
@@ -292,9 +317,6 @@ func registerAdmin(mux *http.ServeMux, d *common.Deps) {
 			"menuItems":   d.MenuSnapshot(),
 			"Groups":      groups,
 			"CurrentHref": current,
-			// ut-docs#3872: the admin.pages slot placeholder, drawn only
-			// for a viewer its route lets through (core reports too).
-			"PluginSlot": canPerform(d, r, "reports"),
 		}
 		if current != "" {
 			data["PanelHTML"] = embedAdminSection(mux, r, current)
