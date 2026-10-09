@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pluginview"
+	"github.com/universaltill/universal-till/internal/stagedupload"
 )
 
 // Plugin view uploads (ADR-0121 §7, ut-docs#3793; format: ut-docs
@@ -218,7 +219,7 @@ func stagePluginUploadPart(part io.Reader, entry data.PageEntryRow, name, fileNa
 	if *files > pluginViewMaxUploads {
 		return up, false, false, fmt.Errorf("more than %d files in one post", pluginViewMaxUploads)
 	}
-	tmp, err := os.CreateTemp("", "ut-view-upload-*.upload")
+	tmp, err := os.CreateTemp("", stagedupload.ViewUploadPattern)
 	if err != nil {
 		logging.L().Errorf("plugin view upload %s: create temp file: %v", entry.PluginID, err)
 		return up, false, false, errPluginUploadStage

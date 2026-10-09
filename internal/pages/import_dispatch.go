@@ -14,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/stagedupload"
 )
 
 // importFormOverhead is the slack allowed on top of maxImportFileSize for
@@ -120,7 +121,7 @@ func registerImportDispatch(mux *http.ServeMux, d *common.Deps) {
 				// authoritative check (MultipartReader gives no reliable
 				// declared per-part size to fast-reject on first, unlike
 				// FormFile's header.Size).
-				tmp, cerr := os.CreateTemp("", "ut-import-*.upload")
+				tmp, cerr := os.CreateTemp("", stagedupload.ImportPattern)
 				if cerr != nil {
 					_ = part.Close()
 					dataAPIRespond(w, http.StatusInternalServerError, false, "could not stage the uploaded file")

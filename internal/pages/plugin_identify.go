@@ -22,6 +22,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pluginview"
+	"github.com/universaltill/universal-till/internal/stagedupload"
 )
 
 // The sell screen's camera-identify seam (ADR-0121 §7 "Core-owned
@@ -335,7 +336,7 @@ func stageIdentifyPhoto(part io.Reader, pluginID string) (pluginUpload, error) {
 	if !identifyPhotoTypes[ctype] {
 		return pluginUpload{}, fmt.Errorf("%w (sniffed %s)", errIdentifyNotImage, ctype)
 	}
-	tmp, err := os.CreateTemp("", "ut-view-upload-*.upload")
+	tmp, err := os.CreateTemp("", stagedupload.ViewUploadPattern)
 	if err != nil {
 		logging.L().Errorf("plugin identify %s: create temp file: %v", pluginID, err)
 		return pluginUpload{}, errPluginUploadStage

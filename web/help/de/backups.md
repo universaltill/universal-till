@@ -28,6 +28,7 @@ Einmal am Tag löscht die Kasse Dateien, die sie nicht mehr braucht, damit der S
 - Die Kopie Ihrer Daten, die beim Wiederherstellen einer Sicherung beiseitegelegt wird: wird so lange aufbewahrt, wie Sie Verkaufsdaten gesetzlich aufbewahren müssen; danach bleiben nur noch die neuesten 3 erhalten, keine älter als 30 Tage.
 - Problemberichte, die nicht gesendet werden konnten: nach 7 Tagen gelöscht.
 - Heruntergeladene Updates: nach 7 Tagen gelöscht.
+- Hochgeladene Dateien, die liegen geblieben sind, weil die Kasse mitten in einem Upload oder Import ausgeschaltet wurde oder abgestürzt ist: nach 24 Stunden gelöscht.
 
 Verkäufe, Belege, das Prüfprotokoll, Z-Berichte und alle anderen Aufzeichnungen, die Sie gesetzlich aufbewahren müssen, werden dabei nie gelöscht. Jede Kasse räumt nur ihren eigenen Speicher auf.
 
