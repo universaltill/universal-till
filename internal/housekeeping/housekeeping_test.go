@@ -99,7 +99,7 @@ func TestRun_RemovesOnlyWhatTheRetentionTableAllows(t *testing.T) {
 		"issue-reports/pending/loose-file.txt",
 		// The system temp dir (tmp/ here) holds other programs' files.
 		"tmp/someone-else.upload",
-		"tmp/ut-bkp-1.db",
+		"tmp/ut-bkp-1.db-journal",
 	}
 	var mustGo []string
 	// 16 snapshots: the newest DefaultBackupKeep stay, two go.
@@ -127,6 +127,10 @@ func TestRun_RemovesOnlyWhatTheRetentionTableAllows(t *testing.T) {
 	mustGo = append(mustGo, "updates/attempt-1/unitill-pos-setup-1.0.0.exe")
 	put(t, root, "tmp/ut-import-stage-1.upload", ancient)
 	mustGo = append(mustGo, "tmp/ut-import-stage-1.upload")
+	// A .bkp import a crash interrupted (ut-docs#3985).
+	put(t, root, "tmp/ut-bkp-1.db", ancient)
+	put(t, root, "tmp/ut-bkp-docs-1.zip", ancient)
+	mustGo = append(mustGo, "tmp/ut-bkp-1.db", "tmp/ut-bkp-docs-1.zip")
 	// A staged upload younger than its limit may still be in use.
 	put(t, root, "tmp/ut-view-upload-2.upload", testNow.Add(-time.Hour))
 	mustKeep = append(mustKeep, "tmp/ut-view-upload-2.upload")
@@ -167,7 +171,7 @@ func TestRun_RemovesOnlyWhatTheRetentionTableAllows(t *testing.T) {
 	for _, r := range results {
 		removed[r.Kind] = r.Removed
 	}
-	want := map[string]int{KindBackups: 2, KindPreRestore: 5, KindIssueReports: 1, KindUpdateDownloads: 1, KindStagedUploads: 1}
+	want := map[string]int{KindBackups: 2, KindPreRestore: 5, KindIssueReports: 1, KindUpdateDownloads: 1, KindStagedUploads: 3}
 	for k, n := range want {
 		if removed[k] != n {
 			t.Errorf("%s removed %d, want %d", k, removed[k], n)

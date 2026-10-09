@@ -97,7 +97,7 @@ func Retention() []Rule {
 		// The one row outside the data directory: os.CreateTemp("") stages
 		// into the system temp dir (ut-docs#3955).
 		{KindStagedUploads, "<system temp dir>/" + strings.Join(stagedupload.Patterns(), ", "),
-			fmt.Sprintf("deleted when the upload or import preview that made them ends; leftovers after a crash removed after %d hours", int(stagedupload.MaxAge/time.Hour)),
+			fmt.Sprintf("deleted when the upload, import or import preview that made them ends; leftovers after a crash removed after %d hours", int(stagedupload.MaxAge/time.Hour)),
 			"the request handlers + housekeeping (stagedupload.PruneOlderThan)"},
 		{KindSyncAggregateLedger, "database: sales_aggregate_uploads",
 			"rows for business days before the upload look-back window are deleted on every upload round",

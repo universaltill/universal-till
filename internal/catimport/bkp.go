@@ -19,6 +19,7 @@ import (
 	_ "modernc.org/sqlite" // pure-Go driver: read the extracted backup.db
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/stagedupload"
 )
 
 // speedy kasse / pepperm cashbox source-schema constants (ut-docs#511,
@@ -173,7 +174,7 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 		return Result{}, fmt.Errorf("read meta.inf: %w", err)
 	}
 
-	tmp, err := os.CreateTemp("", "ut-bkp-*.db")
+	tmp, err := os.CreateTemp("", stagedupload.BkpDBPattern)
 	if err != nil {
 		return Result{}, fmt.Errorf("create temp file for backup.db: %w", err)
 	}
@@ -558,7 +559,7 @@ func openBkpDocsIndex(docsZipFile *zip.File) (*bkpDocsIndex, error) {
 	if docsZipFile.UncompressedSize64 > uint64(bkpMaxDocsZipSize) {
 		return nil, ErrBkpTooLarge
 	}
-	tmp, err := os.CreateTemp("", "ut-bkp-docs-*.zip")
+	tmp, err := os.CreateTemp("", stagedupload.BkpDocsPattern)
 	if err != nil {
 		return nil, fmt.Errorf("create temp file for documents.zip: %w", err)
 	}

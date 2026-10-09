@@ -45,11 +45,16 @@ func TestPruneOlderThan(t *testing.T) {
 	put(t, dir, "ut-view-upload-111.upload", old)
 	put(t, dir, "ut-import-222.upload", old)
 	put(t, dir, "ut-import-stage-333.upload", old)
+	put(t, dir, "ut-bkp-1234.db", old)       // .bkp import's backup.db (ut-docs#3985)
+	put(t, dir, "ut-bkp-docs-5678.zip", old) // .bkp import's documents.zip (ut-docs#3985)
 	put(t, dir, "ut-view-upload-444.upload", fresh)
 	put(t, dir, "ut-import-stage-555.upload", fresh)
+	put(t, dir, "ut-bkp-4321.db", fresh)
+	put(t, dir, "ut-bkp-docs-8765.zip", fresh)
 	// Not ours, however old: another program's temp files, our own other
-	// temp kinds, a near-miss suffix.
-	put(t, dir, "ut-bkp-666.db", old)
+	// temp kinds, near-miss suffixes.
+	put(t, dir, "ut-bkp-666.db-journal", old)
+	put(t, dir, "ut-bkp-docs-667.zip.part", old)
 	put(t, dir, "ut-import-777.upload.keep", old)
 	put(t, dir, "ut-import-888.csv", old)
 	put(t, dir, "someone-else.upload", old)
@@ -69,12 +74,15 @@ func TestPruneOlderThan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 3 || freed != 12 {
-		t.Errorf("removed %d files, %d bytes; want 3, 12", n, freed)
+	if n != 5 || freed != 20 {
+		t.Errorf("removed %d files, %d bytes; want 5, 20", n, freed)
 	}
 	want := []string{
 		"someone-else.upload",
-		"ut-bkp-666.db",
+		"ut-bkp-4321.db",
+		"ut-bkp-666.db-journal",
+		"ut-bkp-docs-667.zip.part",
+		"ut-bkp-docs-8765.zip",
 		"ut-import-777.upload.keep",
 		"ut-import-888.csv",
 		"ut-import-999.upload",
