@@ -258,7 +258,7 @@ jobs:
       - name: Release-notes bundle asset
         run: go run ./scripts/release-notes-bundle -o build/release-notes.json
       - name: Azure login (OIDC, signing identity)
-        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_SIGNER_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -273,7 +273,7 @@ jobs:
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: bash scripts/ci/guard-release-notes.sh "$TAG" --header "$RUNNER_TEMP/release-header.md"
-      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           # Exact version, not "~> v2": this job can mint the signing token,
           # so no unreviewed tool release runs in it (ut-docs#2610). Bump
@@ -372,7 +372,7 @@ jobs:
           sudo apt-get update
           bash packaging/windows/install-osslsigncode.sh
       - name: Azure login (OIDC, signing identity)
-        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ vars.AZURE_SIGNER_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -596,15 +596,16 @@ jobs:
           distribution: temurin
           java-version: "17"
       # Installs cmdline-tools and sets ANDROID_HOME/ANDROID_SDK_ROOT.
-      # `packages` must be overridden: the action's own default is
-      # "tools platform-tools", and Google has removed the legacy `tools`
-      # package from the SDK repository, so the action's built-in
-      # `sdkmanager tools platform-tools` call now fails outright before
-      # any step of ours runs (ut-docs#2257). We only ever needed
-      # platform-tools here anyway — the NDK/platform/build-tools versions
-      # this app actually depends on are installed explicitly by the next
-      # step. https://github.com/android-actions/setup-android/blob/v3/action.yml
-      - uses: android-actions/setup-android@v3
+      # `packages` stays explicit: v3's default was "tools platform-tools",
+      # and Google has removed the legacy `tools` package from the SDK
+      # repository, so that default failed outright before any step of
+      # ours ran (ut-docs#2257). v4's default is "platform-tools", but an
+      # explicit value keeps a future default change out of this job. We
+      # only ever needed platform-tools here anyway — the
+      # NDK/platform/build-tools versions this app actually depends on are
+      # installed explicitly by the next step.
+      # https://github.com/android-actions/setup-android/blob/v4/action.yml
+      - uses: android-actions/setup-android@v4
         with:
           packages: "platform-tools"
       - name: Install NDK + platform + build-tools
