@@ -288,8 +288,8 @@ func TestItemImage_SixtyFiveOpensPerEvent(t *testing.T) {
 	}
 }
 
-// The built-in identify's reference set — 60 items, one `ref` each — fits
-// one event (ADR-0121 R1).
+// A camera-identify reference set the size the removed built-in identify
+// sent — 60 items, one `ref` each — fits one event (ADR-0121 R1).
 func TestItemImage_SixtyRefsInOneEvent(t *testing.T) {
 	f := newItemImageFixture(t)
 	const id = "com.test.itemimage.sixty"

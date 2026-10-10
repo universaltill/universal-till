@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/universaltill/universal-till/internal/ai"
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/bgremove"
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
@@ -306,13 +306,13 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		return ""
 	})
 
-	// Assistive AI (camera identify). No UT_AI_API_KEY → disabled and
-	// invisible; never on the checkout path (ADR-0003).
-	// AI resolves PER REQUEST via aiService (docs: ai-plugin.md): the
-	// marketplace AI plugin's settings first, env as the dev override,
-	// otherwise invisible. Deps.AI stays nil here — it is a test seam.
-	if ai.New(ai.FromEnv()).Enabled() {
-		log.Infof("AI env override present (UT_AI_*) — plugin settings take precedence when the AI plugin is active")
+	// Background removal (ut-docs#3126) resolves PER REQUEST via
+	// cutoutService: the AI plugin's image settings first, UT_AI_IMAGE_*
+	// env as the dev override, otherwise off. Never on the checkout path
+	// (ADR-0003). Deps.AI stays nil here — it is a test seam. Camera
+	// identify and "Ask your till" run in the AI plugin (ut-docs#2851).
+	if bgremove.New(bgremove.FromEnv()).CanCutout() {
+		log.Infof("background-removal env override present (UT_AI_IMAGE_*) — the AI plugin's image settings take precedence when it is active and sets them")
 	}
 
 	// Shell channel + WindowCtl (ut-docs#608/#611/#882/#883, reshaped by
@@ -499,9 +499,8 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerVoucherAPI(mux, dp)      // voucher liability balance query (ut-docs#1008)
 	registerFiscalAPI(mux, dp)       // German TSE hard-gate owner override (ADR-0048)
 	registerPOSModifiersAPI(mux, dp) // item customization step, ADR-0020
-	registerAIAPI(mux, dp)
-	registerPluginIdentify(mux, dp) // catalog.identify camera seam (ADR-0121 §7, ut-docs#3873)
-	registerAskAPI(mux, dp)
+	registerAICutout(mux, dp)        // background removal for tile photos (ut-docs#3126)
+	registerPluginIdentify(mux, dp)  // catalog.identify camera seam (ADR-0121 §7, ut-docs#3873)
 	registerPrintAPI(mux, dp)
 	registerKitchenPrintAPI(mux, dp)
 	registerBackupAPI(mux, dp)

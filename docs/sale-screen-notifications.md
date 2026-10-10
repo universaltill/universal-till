@@ -105,7 +105,7 @@ migrate one without taking that card:
   left behind with the rest (its strings are hardcoded under the
   ut-docs#205 inline-JS i18n follow-up).
 - Two sale-screen widgets keep their own scoped inline status lines
-  (`#split-tender-status`, `#ai-identify-status`).
+  (`#split-tender-status`, `#plugin-identify-status`).
 
 Known, filed separately, NOT fixed by the catalog migration:
 

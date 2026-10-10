@@ -5,8 +5,8 @@ package pos
 // pricing.go — a PricingRepo interface plus ResolveCurrentPrice /
 // AppendPriceHistory* delegating wrappers and a test-only testPricingRepo
 // that itself just called data.NewPOSRepo — none of which had a production
-// caller (the live reader is POSRepo.ResolveCurrentPrice, called directly
-// from internal/pages/ai_api.go and from POSRepo itself; the live writers
+// caller (the live reader was POSRepo.ResolveCurrentPrice, called directly
+// from the built-in identify, removed in ut-docs#2851, and from POSRepo itself; the live writers
 // are the ut-docs#2314 execer twins in internal/data/catalog_repo.go). The
 // whole layer was removed by the ut-docs#1566 dead-code burn-down; the
 // tests were kept and pointed at the repo they were always exercising.

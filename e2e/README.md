@@ -16,7 +16,7 @@ specs across projects, each against its own server(s):
   install with no operator PINs set yet, so `login.spec.ts` and its 4
   sibling specs (nav-rail lock/icons, session-expiry x2) can drive the
   real first-boot wizard and PIN login/lockout instead of bypassing auth.
-- **ai-identify** (8093), **layout** (8094), **diagnostics** (8095) — one
+- **layout** (8094), **diagnostics** (8095) — one
   static server each, 1 spec file each; see `playwright.config.ts`.
 
 `run-till.sh` (port 8091) is what the docs-shots harness

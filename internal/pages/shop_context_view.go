@@ -13,7 +13,7 @@ import (
 )
 
 // shop.context.v1 and .v2 (ut-docs#4034, #4045) read the same facts the built-in Ask
-// prompt does (ask_api.go): the live currency from httpx's registry, so its
+// prompt did (removed in ut-docs#2851): the live currency from httpx's registry, so its
 // decimals are the ones the till formats money with, the default locale and
 // the shop name — plus this till's own name as it reports it to the cloud.
 // data cannot import httpx or enroll, so the view's source lives here.

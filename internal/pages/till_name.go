@@ -93,3 +93,26 @@ func tillNameTaken(ctx context.Context, d *common.Deps, name string) (bool, erro
 	}
 	return data.NewTillsRepo(d.Db).NameTakenExcept(ctx, name, exceptID)
 }
+
+// storeNameOrDefault reads the shop name saved by the first-boot wizard.
+func storeNameOrDefault(ctx context.Context, d *common.Deps) string {
+	if v, ok, _ := d.Settings.Get(ctx, "store.name"); ok && strings.TrimSpace(v) != "" {
+		return v
+	}
+	return "this shop"
+}
+
+// tillNameOrDefault reads this (primary) till's own name, defaulting when
+// unset — distinct from a replica's own sync.till_name (ut-docs#396).
+// Unlike storeNameOrDefault's bare-string default (which only ever reaches
+// non-template contexts — receipts, mDNS), every caller of this
+// helper renders into a template that already shows the wizard's translated
+// "setup.till_name.default" — so the fallback here goes through T too,
+// otherwise an upgraded install with no till.name set would show the English
+// "Till 1" on a Farsi/Arabic/Turkish till (review finding, ut-docs#396).
+func tillNameOrDefault(ctx context.Context, d *common.Deps, locale string) string {
+	if v, ok, _ := d.Settings.Get(ctx, "till.name"); ok && strings.TrimSpace(v) != "" {
+		return strings.TrimSpace(v)
+	}
+	return httpx.T(locale, "setup.till_name.default")
+}

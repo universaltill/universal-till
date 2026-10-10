@@ -223,9 +223,9 @@ func TestRef_RefusesOversizedFileWithoutReadingIt(t *testing.T) {
 	}
 }
 
-// StoreAIRef is the one store step both confirm paths use — the built-in
-// /api/pos/identify/confirm and the plugin seam's pick (ADR-0121 R2a,
-// ut-docs#4006): a fresh PNG as the item's newest ai_ref, its directory
+// StoreAIRef is the store step of the plugin seam's pick (ADR-0121 R2a,
+// ut-docs#4006; the built-in confirm route went in ut-docs#2851):
+// a fresh PNG as the item's newest ai_ref, its directory
 // created first, pruned to MaxAIRefsPerItem.
 func TestStoreAIRef_4006(t *testing.T) {
 	useDataDir(t)

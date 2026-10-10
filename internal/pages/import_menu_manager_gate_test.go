@@ -116,32 +116,6 @@ func TestImportExportEndpoints_RealSessionGatesByRole(t *testing.T) {
 	})
 }
 
-// Positive counterpart to TestAskAPI_RequiresManagerWhenConfigured — a real
-// cashier session is denied by canPerform(d, r, "reports"), a real manager
-// session gets past the gate (ut-docs#713).
-func TestAskAPI_RealSessionGatesByRole(t *testing.T) {
-	mux, dp, _ := newAskAPITestDeps(t)
-	dp.AuthSvc = auth.NewService(dp.Db)
-	dp.AI = fakeAskServer(t, "irrelevant", http.StatusOK)
-
-	ask := func(u auth.User) *httptest.ResponseRecorder {
-		req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/reports/ask", strings.NewReader("question=how did we do today?")), u)
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
-		return rec
-	}
-
-	if rec := ask(auth.User{ID: "c1", Role: "cashier"}); rec.Code != http.StatusForbidden {
-		t.Fatalf("cashier = %d, want 403: %s", rec.Code, rec.Body.String())
-	}
-	for _, role := range []string{"manager", "admin", "super_admin"} {
-		if rec := ask(auth.User{ID: "u-" + role, Role: role}); rec.Code == http.StatusForbidden {
-			t.Fatalf("%s = 403, want past the auth gate: %s", role, rec.Body.String())
-		}
-	}
-}
-
 // Positive counterpart to TestMenuPage_ManagerOnlyTilesGatedByRole, which
 // only exercises the no-session/UT_AUTH=off pair — a real cashier session
 // must not see the manager-only tiles either, and manager/admin/super_admin

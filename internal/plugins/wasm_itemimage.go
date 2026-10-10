@@ -7,10 +7,9 @@ package plugins
 //	item_image_read(h, dstPtr, dstCap) -> n (0 = end, releases h) | err
 //
 // role is "ai_ref" (the item's newest cashier-confirmed photo), "thumb" (its
-// catalog thumbnail) or "ref" (ai_ref if it decodes, else thumb — the
-// built-in identify's choice). The bytes are internal/itemimages.Ref's:
-// the bounded internal/imaging decode re-encoded as a JPEG ≤ 160 px, q70,
-// identical to what the built-in identify sends. The host builds the path
+// catalog thumbnail) or "ref" (ai_ref if it decodes, else thumb). The
+// bytes are internal/itemimages.Ref's: the bounded internal/imaging decode
+// re-encoded as a JPEG ≤ 160 px, q70. The host builds the path
 // from the validated id under the items asset dir; it never follows an
 // item_images row and never hands the guest a path or the original file.
 //

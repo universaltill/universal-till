@@ -10,7 +10,7 @@ import { test, expect } from './fixtures';
 //
 // Runs on the `default` project only (it is not in any other project's
 // testMatch) — the other four projects keep their static per-project
-// `baseURL` (8092-8095) untouched, and their own existing specs are the
+// `baseURL` (8092/8094/8095) untouched, and their own existing specs are the
 // evidence that pass-through still works there.
 test('each default-project worker drives its own till on 9091 + parallelIndex', async ({ baseURL, request }) => {
   const expected = `http://127.0.0.1:${9091 + test.info().parallelIndex}`;

@@ -10,22 +10,15 @@ import { existsSync } from 'fs';
 const PREINSTALLED_CHROMIUM = '/opt/pw-browsers/chromium';
 const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREINSTALLED_CHROMIUM } : {};
 
-// Three tills under test:
+// Tills under test:
 //  - the DEFAULT project: auth off, demo catalog seeded by run-till.sh
 //    (go run ./e2e/seed_demo — the migrations stopped seeding it, #539)
-//    — every spec except AUTH_ONLY_SPECS/AI_IDENTIFY_ONLY_SPECS drives this
+//    — every spec except the *_ONLY_SPECS sets below drives this
 //    one directly.
 //  - the AUTH project: auth ON, a genuinely fresh install — only
 //    AUTH_ONLY_SPECS drives this one, since it needs the real first-boot
 //    wizard / PIN login flow the default project deliberately bypasses.
-//  - the AI-IDENTIFY project: `UT_AI_ENDPOINT` set so `.aiIdentify`
-//    resolves true server-side — only AI_IDENTIFY_ONLY_SPECS drives this
-//    one. Unlike barcode-scan, the ai.identify button/overlay markup
-//    doesn't exist in the DOM at all when the feature is off
-//    (`{{ if .aiIdentify }}` in web/ui/pages/index.html), so it can't join
-//    the shared default-project till the way barcode-scan's tests do
-//    (ut-docs#1559).
-// All three boot a REAL server; Chromium drives the layer our Go tests
+// Each boots a REAL server; Chromium drives the layer our Go tests
 // can't see (htmx swaps, Alpine, the OSK, JS errors).
 
 // Specs that need a real manager session the default (auth-off) till can
@@ -64,12 +57,6 @@ const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREI
 // auto-starts it. It must sort after login.spec.ts (first-boot wizard).
 const AUTH_ONLY_SPECS =
   /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|sell-tile-jiggle-mode-locked-cashier-2312|session-idle-lock-loop-3005|sale-only-cashier-3079|sell-all-grid-jiggle-locked-cashier-2534|phone-drawer-admin-3297|phone-drawer-admin-links-3358|session-display-board-idle-2935|session-kiosk-pin-mode-3136|sale-screen-guided-tour-3710)\.spec\.ts$/;
-
-// ut-docs#1559: the ai.identify overlay's own err.name branching coverage
-// needs the dedicated ai-identify project/server below — see the comment
-// on the webServer/projects entries for why it can't share the default
-// project's till.
-const AI_IDENTIFY_ONLY_SPECS = /camera-error-branching-ai-identify-1559\.spec\.ts$/;
 
 // ut-docs#1904 / ADR-0088: the layout-plugin spec drives a till with the
 // real plugins/layout-salon installed, which HIDES /tables and
@@ -179,12 +166,6 @@ export default defineConfig<{}, WorkerOptions>({
       reuseExistingServer: !process.env.CI,
     },
     {
-      command: 'bash ./run-till-ai.sh',
-      url: 'http://127.0.0.1:8093/healthz',
-      timeout: 120_000,
-      reuseExistingServer: !process.env.CI,
-    },
-    {
       command: 'bash ./run-till-layout.sh',
       url: 'http://127.0.0.1:8094/healthz',
       timeout: 120_000,
@@ -218,7 +199,7 @@ export default defineConfig<{}, WorkerOptions>({
   projects: [
     {
       name: 'default',
-      testIgnore: [AUTH_ONLY_SPECS, AI_IDENTIFY_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS, RELEASE_NOTES_ONLY_SPECS, INCOMING_NOTES_ONLY_SPECS, CSP_ONLY_SPECS],
+      testIgnore: [AUTH_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS, RELEASE_NOTES_ONLY_SPECS, INCOMING_NOTES_ONLY_SPECS, CSP_ONLY_SPECS],
       use: {
         // No static baseURL: the `workerServerURL` fixture supplies this
         // worker's own server (9091 + parallelIndex) — see the note above
@@ -235,17 +216,6 @@ export default defineConfig<{}, WorkerOptions>({
       workers: STATIC_SERVER_WORKERS,
       use: {
         baseURL: 'http://127.0.0.1:8092',
-        trace: 'retain-on-failure',
-        screenshot: 'only-on-failure',
-        launchOptions,
-      },
-    },
-    {
-      name: 'ai-identify',
-      testMatch: AI_IDENTIFY_ONLY_SPECS,
-      workers: STATIC_SERVER_WORKERS,
-      use: {
-        baseURL: 'http://127.0.0.1:8093',
         trace: 'retain-on-failure',
         screenshot: 'only-on-failure',
         launchOptions,

@@ -224,8 +224,9 @@ func SetCoreViewShopContext(f ShopContextFunc) (prev ShopContextFunc) {
 	return prev
 }
 
-// coreViews is the first set (ADR-0121 §5) — today's Ask tools
-// (internal/pages/ask_api.go), same arguments, bounds and caps — plus the
+// coreViews is the first set (ADR-0121 §5) — the read surface the AI
+// Assistant plugin's "Ask your till" uses, with the arguments, bounds and
+// caps of the built-in Ask tools it replaced (ut-docs#2851) — plus the
 // views ADR-0149 §6 adds.
 var coreViews = map[string]CoreView{
 	"sales.by_day.v1": {

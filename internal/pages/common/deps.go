@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/universaltill/universal-till/internal/ai"
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/bgremove"
 	"github.com/universaltill/universal-till/internal/cloudlink"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/discovery"
@@ -116,7 +116,10 @@ type Deps struct {
 	BtnStore          *ui.ButtonStore
 	CatalogRepo       *marketplace.CatalogRepository
 	AuthSvc           *auth.Service
-	AI                *ai.Service
+	// AI is the background-removal test seam (ut-docs#3126): nil in
+	// production, where the cutout route resolves it per request from the
+	// AI plugin's image settings or UT_AI_IMAGE_* env.
+	AI *bgremove.Service
 	// WindowCtl is the host-OS hook for the till's own window/process
 	// (ut-docs#608 scaffold) — exiting kiosk/fullscreen to the OS desktop,
 	// and applying a window-mode change. pages.Init wires the real

@@ -36,8 +36,8 @@ func TestDownscaleMaxEdge_ScalesDownPreservingAspectRatio(t *testing.T) {
 	}
 }
 
-// TestDownscaleMaxEdge_TallImageCapsOnHeight covers the orientation ai_api.go's
-// original inline version also had to handle: max(w,h) picks whichever edge
+// TestDownscaleMaxEdge_TallImageCapsOnHeight covers the orientation the
+// original inline version (in the since-removed built-in identify) also had to handle: max(w,h) picks whichever edge
 // is actually longer, not always width.
 func TestDownscaleMaxEdge_TallImageCapsOnHeight(t *testing.T) {
 	src := image.NewRGBA(image.Rect(0, 0, 900, 1800))

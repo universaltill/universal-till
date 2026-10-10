@@ -7,7 +7,7 @@ package pos
 // differ in how live they are, and the distinction matters for anyone
 // tempted to delete these tests next: SearchActiveItems has real production
 // callers that already go straight to the repo
-// (internal/pages/kitchen_stations_page.go, ai_api.go), whereas
+// (internal/pages/kitchen_stations_page.go), whereas
 // POSRepo.LookupActiveVariant has no production caller at all today — a
 // pre-existing state this repo already recorded in
 // docs/code-reviews/2026-08-28-no-sku-uuid-leak.md, not something this

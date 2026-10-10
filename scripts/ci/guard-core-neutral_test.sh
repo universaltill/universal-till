@@ -52,6 +52,25 @@ g commit -qam grow
 g tag -f base >/dev/null
 expect 0 "entry present on the base branch passes" base
 
+# ut-docs#2851: the AI text engine lives in ut-plugin-integration-ai; core's
+# internal/ai package may not come back, nor may anything import it.
+mkdir -p "${REPO}/internal/ai"
+printf 'package ai\n' >"${REPO}/internal/ai/ai.go"
+expect 1 "internal/ai directory coming back fails" base
+if ! grep -q 'internal/ai' "${WORK}/out"; then
+  echo "❌ FAIL: the internal/ai failure does not name internal/ai" >&2
+  FAILS=$((FAILS + 1))
+fi
+rm "${REPO}/internal/ai/ai.go"
+rmdir "${REPO}/internal/ai"
+mkdir -p "${REPO}/internal/y"
+printf 'package y\n\nimport _ "github.com/universaltill/universal-till/internal/ai"\n' >"${REPO}/internal/y/y.go"
+expect 1 "a Go file importing internal/ai fails" base
+printf 'package y\n\nimport _ "github.com/universaltill/universal-till/internal/aiconf"\n' >"${REPO}/internal/y/y.go"
+expect 0 "an import path merely starting with internal/ai passes" base
+rm "${REPO}/internal/y/y.go"
+rmdir "${REPO}/internal/y"
+
 printf 'package x\nfunc h(cc string) bool { return cc != "" }\n' >"${REPO}/internal/x/x.go"
 expect 1 "stale entry fails" base
 
