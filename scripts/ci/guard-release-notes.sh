@@ -42,14 +42,15 @@ fi
 # blanks on the front-matter values are tolerated, not refused.
 CONTENT="$(tr -d '\r' < "$FILE")"
 # Front-matter: first line '---', then version/date, then '---'.
-if [ "$(printf '%s\n' "$CONTENT" | head -n 1)" != "---" ]; then
+if [ "$(sed -n 1p <<<"$CONTENT")" != "---" ]; then
     echo "::error::${FILE}: must start with a '---' front-matter block (version, date)"
     exit 1
 fi
-FRONT="$(printf '%s\n' "$CONTENT" | awk 'NR==1{next} /^---$/{exit} {print}')"
+# No early `exit` in awk: under pipefail that can SIGPIPE printf (ut-docs#2983).
+FRONT="$(printf '%s\n' "$CONTENT" | awk 'NR==1{next} d{next} /^---$/{d=1; next} {print}')"
 BODY="$(printf '%s\n' "$CONTENT" | awk 'NR==1{next} f{print} /^---$/ && !f{f=1}')"
-VERSION="$(printf '%s\n' "$FRONT" | sed -n 's/^version:[[:space:]]*//p' | head -n 1 | sed 's/[[:space:]]*$//')"
-DATE="$(printf '%s\n' "$FRONT" | sed -n 's/^date:[[:space:]]*//p' | head -n 1 | sed 's/[[:space:]]*$//')"
+VERSION="$(printf '%s\n' "$FRONT" | sed -n 's/^version:[[:space:]]*//p' | sed -n 1p | sed 's/[[:space:]]*$//')"
+DATE="$(printf '%s\n' "$FRONT" | sed -n 's/^date:[[:space:]]*//p' | sed -n 1p | sed 's/[[:space:]]*$//')"
 
 if [ "$VERSION" != "$TAG" ]; then
     echo "::error::${FILE}: front-matter version '${VERSION}' does not match the tag ${TAG}"

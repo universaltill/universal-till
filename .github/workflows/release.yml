@@ -501,7 +501,10 @@ jobs:
           # Fail here, not at codesign, if the identity doesn't chain/validate.
           # Must run after list-keychains: trust evaluation only finds the
           # G2 intermediate in a keychain on the search list.
-          security find-identity -v -p codesigning "$KEYCHAIN" | grep -q "Developer ID Application" \
+          # Captured, not piped into grep -q: under shell: bash's pipefail an
+          # early grep exit can SIGPIPE the writer (ut-docs#2983).
+          identities="$(security find-identity -v -p codesigning "$KEYCHAIN")" || identities=""
+          grep -q "Developer ID Application" <<<"$identities" \
             || { echo "::error::no valid Developer ID Application identity after import"; exit 1; }
       - name: Build .app and .dmg
         env:

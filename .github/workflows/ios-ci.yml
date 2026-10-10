@@ -45,7 +45,7 @@ jobs:
             changed="ios/unknown-cannot-diff"
           fi
           echo "$changed"
-          if printf '%s\n' "$changed" | grep -qE '^(ios|mobile)/|^\.github/workflows/ios-(ci|testflight)\.yml$|^scripts/ci/ios-|^web/public/assets/logo/unitill-logo\.svg$'; then
+          if grep -qE '^(ios|mobile)/|^\.github/workflows/ios-(ci|testflight)\.yml$|^scripts/ci/ios-|^web/public/assets/logo/unitill-logo\.svg$' <<<"$changed"; then
             echo "match=true" >> "$GITHUB_OUTPUT"
           else
             echo "match=false" >> "$GITHUB_OUTPUT"

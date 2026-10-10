@@ -97,7 +97,7 @@ jobs:
           version="${version#v}"
           # CFBundleShortVersionString: one to three dot-separated integers.
           # A pre-release tag (v1.2.0-rc1) is refused rather than guessed at.
-          if ! printf '%s' "$version" | grep -qE '^[0-9]+(\.[0-9]+){0,2}$'; then
+          if ! grep -qE '^[0-9]+(\.[0-9]+){0,2}$' <<<"$version"; then
             echo "::error::'$version' is not a valid iOS marketing version (N, N.N or N.N.N)"
             exit 1
           fi

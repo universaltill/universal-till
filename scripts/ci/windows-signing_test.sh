@@ -84,8 +84,8 @@ fi
 wi_job="$(awk '/^  windows-installer:$/{on=1; print; next} on && /^  [a-z][a-z0-9-]*:$/{exit} on{print}' .github/workflows/release.yml)"
 for job in goreleaser windows-installer; do
   if [ "$job" = goreleaser ]; then body="$gr_job"; else body="$wi_job"; fi
-  build_at="$(grep -nF 'packaging/windows/install-osslsigncode.sh' <<<"$body" | head -1 | cut -d: -f1 || true)"
-  login_at="$(grep -nF 'azure/login@' <<<"$body" | head -1 | cut -d: -f1 || true)"
+  build_at="$(grep -nF 'packaging/windows/install-osslsigncode.sh' <<<"$body" | sed -n 1p | cut -d: -f1 || true)"
+  login_at="$(grep -nF 'azure/login@' <<<"$body" | sed -n 1p | cut -d: -f1 || true)"
   if [ -n "$build_at" ] && [ -n "$login_at" ] && [ "$build_at" -lt "$login_at" ]; then
     pass "${job} job builds osslsigncode before azure/login"
   else

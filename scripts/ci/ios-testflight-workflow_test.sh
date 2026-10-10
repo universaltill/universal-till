@@ -82,7 +82,7 @@ check_wf() {
   sdkstep="$(awk '/^      - name: /{p = ($0 ~ /^      - name: Refuse an iOS SDK/)} p' "$wf")"
   if [ -z "$sdkstep" ] || ! grep -qF 'xcrun --sdk iphoneos --show-sdk-version' <<<"$sdkstep" \
     || ! grep -qE -- '-lt 26 \]' <<<"$sdkstep" || ! grep -qF 'exit 1' <<<"$sdkstep" \
-    || [ "$(awk '/^      - name: Refuse an iOS SDK/{print NR; exit}' "$wf")" -gt "$(awk '/^      - name: Archive/{print NR; exit} END{print 999999}' "$wf" | head -1)" ]; then
+    || [ "$(awk '/^      - name: Refuse an iOS SDK/{print NR; exit}' "$wf")" -gt "$(awk '/^      - name: Archive/{print NR; exit} END{print 999999}' "$wf" | sed -n 1p)" ]; then
     echo "FAIL:no iOS SDK version check (refusing < 26) before the archive"
   fi
   if grep -qiE 'runs-on:.*(self-hosted|homelab)' "$wf"; then echo "FAIL:self-hosted runner in a public repo"; fi
