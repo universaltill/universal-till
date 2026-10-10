@@ -7,7 +7,7 @@ import { watchConsole } from './helpers';
 // page-load render goes through the locale-aware `money` template func
 // (correct), but every #basket htmx swap afterward (e.g. adding an item)
 // re-labelled the button from window.utCurrency.format(total)
-// (web/public/app.js), which has no digit-shape substitution — so in
+// (web/public/app.js), which then had no digit shaping (#2679 added it) — so in
 // practice the button showed Latin digits almost as soon as a real sale
 // started. The fix (web/ui/partials/basket.html, web/ui/pages/index.html)
 // threads the server-formatted amount through via a new `data-label`

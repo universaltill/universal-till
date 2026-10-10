@@ -20,8 +20,8 @@ import (
 // own digit shapes. Root cause: index.html's page-load render goes through
 // the locale-aware {{ money }} template func (httpx.FormatMoney), but every
 // #basket htmx swap afterward re-labelled the button from
-// window.utCurrency.format(total) (web/public/app.js), which has no digit
-// shaping. The fix threads the server-formatted amount through basket.html's
+// window.utCurrency.format(total) (web/public/app.js), which then had no
+// digit shaping (it has since ut-docs#2679). The fix threads the server-formatted amount through basket.html's
 // existing data-attribute-bridge pattern (.total already carries
 // data-minor) as a new data-label attribute, so the button's refresh script
 // can reuse the exact server-rendered string instead of reformatting it in

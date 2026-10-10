@@ -6,9 +6,14 @@
 // client-rendered money agreeing with server-rendered money on the same
 // screen (e.g. the payment overlay's pills next to the server-rendered
 // basket total) — a de-DE till shows "1.234,56" everywhere, not "1.234,56"
-// server-side and "1,234.56" here. Digit SHAPE (fa/ar numerals) is a
-// separate, still-unaddressed gap — out of scope here, same as it already
-// was before this file's separators became locale-aware.
+// server-side and "1,234.56" here. Digit SHAPE (fa/ar numerals) follows
+// data-number-digits (the locale's ten glyphs from the server's `digitset`
+// func, "" for Latin locales; ut-docs#2679): format() applies the same
+// substitution as Go's httpx.LocalizeDigits to the NUMBER part only
+// (digits, ',' -> U+066C, '.' -> U+066B), never to the currency symbol, so
+// a fee hint or voucher button matches the server-rendered basket. The
+// parse/prefill helpers (parseMinor/toMinor/toMajor) stay ASCII: they feed
+// editable inputs.
 window.utCurrency = (function(){
   var d = document.body ? document.body.dataset : {};
   var decimals = parseInt(d.currencyDecimals || '2', 10);
@@ -18,11 +23,23 @@ window.utCurrency = (function(){
   var suffix = d.currencySuffix === '1';
   var thousandsSep = d.numberThousands || ',';
   var decimalSep = d.numberDecimal || '.';
+  // ut-docs#2679: exactly 10 code points or no shaping at all.
+  var digitGlyphs = Array.from(d.numberDigits || '');
+  if (digitGlyphs.length !== 10) digitGlyphs = null;
+  function shapeDigits(num){
+    if (!digitGlyphs) return num;
+    return num.replace(/[0-9,.]/g, function(c){
+      if (c === ',') return '\u066C';
+      if (c === '.') return '\u066B';
+      return digitGlyphs[c.charCodeAt(0) - 48];
+    });
+  }
   function formatMinor(units){
     var neg = units < 0; if (neg) units = -units;
     var major = Math.floor(units / factor);
     var num = major.toString().replace(/\B(?=(\d{3})+(?!\d))/g, thousandsSep);
     if (decimals > 0) num += decimalSep + String(units % factor).padStart(decimals, '0');
+    num = shapeDigits(num);
     var out = suffix ? num + ' ' + display : display + num;
     if (!neg) return out;
     // ut-docs#3880, the twin of Go's formatMoney/FormatMoneyDisplay: the

@@ -109,8 +109,11 @@ test.describe('split-tender panel status copy localizes (ut-docs#925)', () => {
     await expect(status).toContainText(FA.addedSuffix);
     await expect(list).toContainText(FA.changeNote);
     // Both %s substitutions really happened -- a dropped placeholder would
-    // leave the amount off this confirmation entirely.
-    await expect(status).toContainText('1.20');
+    // leave the amount off this confirmation entirely. Since ut-docs#2679
+    // the client formatter digit-shapes under fa, so the amount reads
+    // exactly as the server renders it ("£۱٫۲۰"), never Latin "1.20".
+    await expect(status).toContainText('۱٫۲۰');
+    await expect(status).not.toContainText('1.20');
 
     // 4. Drive it all the way through a SUCCESSFUL sale. The net payment
     //    (1.40 - 0.20 change = 1.20) covers the 1.20 total, so this reaches

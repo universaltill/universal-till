@@ -1208,6 +1208,17 @@ func FuncsFor(locale string) template.FuncMap {
 		_, d := numberSeparators(locale)
 		return string(d)
 	}
+	// {{ digitset }}: the locale's ten numerals ("۰۱۲۳۴۵۶۷۸۹" fa/ur/ps,
+	// "٠١٢٣٤٥٦٧٨٩" ar) or "" for Latin locales -- the same set LocalizeDigits
+	// applies server-side, so window.utCurrency (web/public/app.js) shapes
+	// client-rendered money identically (ut-docs#2679).
+	funcs["digitset"] = func() string {
+		set := localeDigits(locale)
+		if set == nil {
+			return ""
+		}
+		return string(set[:])
+	}
 	funcs["currency"] = ActiveCurrency // {{ currency.Code }} etc.
 	funcs["currencies"] = Currencies   // the Settings picker options
 	// {{ moneypattern currency.Decimals false }} / {{ moneyplaceholder currency.Decimals 50 }}

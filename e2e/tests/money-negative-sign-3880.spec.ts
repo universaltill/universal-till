@@ -35,7 +35,7 @@ test.describe('Negative money sign (ut-docs#3880)', () => {
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
     // The e2e till runs GBP (a prefix symbol), the case the isolate is for.
     const formatted = await page.evaluate(() => (window as any).utCurrency.format(-4250));
-    expect(formatted).toBe('⁦-£42.50⁩');
+    expect(formatted).toBe('⁦-£۴۲٫۵۰⁩');
     // Go's FormatMoneyDisplay output for the same amount under fa (Persian
     // digits), plus the unwrapped string to prove the isolate is what fixes
     // the order.
