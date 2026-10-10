@@ -61,7 +61,7 @@ func Pair(ctx context.Context, cfg *config.Config, kv Settings, code string) (St
 	}
 	m := Effective(cfg).Marketplace
 	if strings.TrimSpace(m.EndpointURL) == "" {
-		return CurrentStatus(), fmt.Errorf("marketplace endpoint is not configured")
+		return CurrentStatus(), ErrNotConfigured
 	}
 	replica := isReplica(ctx, kv)
 	mu.RLock()
@@ -82,7 +82,8 @@ func Pair(ctx context.Context, cfg *config.Config, kv Settings, code string) (St
 	// Serialized with registration (RegisterNow and the background loop),
 	// so nothing registers the old device id mid-pair.
 	if !acquireAttempt(ctx) {
-		return CurrentStatus(), fmt.Errorf("pairing did not start before the caller's deadline (slot held by another attempt): %w", ctx.Err())
+		// acquireAttempt only fails via ctx.Done, so ctx.Err() is non-nil.
+		return CurrentStatus(), fmt.Errorf("%w: %w", ErrAttemptBusy, ctx.Err())
 	}
 	defer releaseAttempt()
 
@@ -207,11 +208,16 @@ func postPair(ctx context.Context, endpoint, code, deviceID, deviceName, version
 			} `json:"error"`
 		}
 		_ = json.Unmarshal(raw, &fail)
+		// Typed like Register now / claim (ut-docs#4058) so the Settings
+		// handler can branch on Status/Code. Only the sanitised code is
+		// kept: the raw body (which could echo the pairing code or a
+		// token) never enters the error.
 		errCode := fail.Error.Code
+		body := errCode
 		if !redeemErrCodeRe.MatchString(errCode) {
-			errCode = "(no error code)"
+			errCode, body = "", "(no error code)"
 		}
-		return "", "", "", &redeemError{status: resp.StatusCode, code: errCode}
+		return "", "", "", &RegisterHTTPError{Op: "pair", Status: resp.StatusCode, Code: errCode, Body: body}
 	}
 	var ok struct {
 		Data struct {

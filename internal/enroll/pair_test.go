@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 )
@@ -263,11 +264,11 @@ func TestPostPairNon200WithErrorCode(t *testing.T) {
 	cloud := newFakePairCloud(t)
 	cloud.set(func(c *fakePairCloud) { c.status, c.errOut = http.StatusForbidden, "code_invalid" })
 	_, _, _, err := postPair(context.Background(), cloud.srv.URL+"/api", pairCode, "till-new", "", "dev")
-	var re *redeemError
-	if !errors.As(err, &re) || re.status != http.StatusForbidden || re.code != "code_invalid" {
-		t.Fatalf("postPair err = %#v, want redeemError{403, code_invalid}", err)
+	var he *RegisterHTTPError
+	if !errors.As(err, &he) || he.Op != "pair" || he.Status != http.StatusForbidden || he.Code != "code_invalid" {
+		t.Fatalf("postPair err = %#v, want RegisterHTTPError{pair, 403, code_invalid}", err)
 	}
-	if strings.Contains(err.Error(), pairCode) {
+	if strings.Contains(err.Error(), pairCode) || strings.Contains(err.Error(), "nope") {
 		t.Fatalf("error carries the code: %v", err)
 	}
 }
@@ -282,11 +283,51 @@ func TestPostPairNon200WithGarbageBody(t *testing.T) {
 			cloud := newFakePairCloud(t)
 			cloud.set(func(c *fakePairCloud) { c.status, c.raw = http.StatusBadGateway, raw })
 			_, _, _, err := postPair(context.Background(), cloud.srv.URL+"/api", pairCode, "till-new", "", "dev")
-			var re *redeemError
-			if !errors.As(err, &re) || re.status != http.StatusBadGateway || re.code != "(no error code)" {
-				t.Fatalf("postPair err = %#v, want redeemError{502, (no error code)}", err)
+			var he *RegisterHTTPError
+			if !errors.As(err, &he) || he.Op != "pair" || he.Status != http.StatusBadGateway || he.Code != "" {
+				t.Fatalf("postPair err = %#v, want RegisterHTTPError{pair, 502, no code}", err)
+			}
+			if strings.Contains(err.Error(), "DROP TABLE") || strings.Contains(err.Error(), "bad gateway") {
+				t.Fatalf("error carries the raw body: %v", err)
 			}
 		})
+	}
+}
+
+// ut-docs#4058: a refusal with service_unavailable is recognisable to the
+// Settings handler, and the error never carries the cloud's message.
+func TestPostPairServiceUnavailableIsServiceRefused(t *testing.T) {
+	cloud := newFakePairCloud(t)
+	cloud.set(func(c *fakePairCloud) { c.status, c.errOut = http.StatusForbidden, ServiceRefusedCode })
+	_, _, _, err := postPair(context.Background(), cloud.srv.URL+"/api", pairCode, "till-new", "", "dev")
+	if !IsServiceRefused(err) {
+		t.Fatalf("postPair err = %v, want IsServiceRefused", err)
+	}
+}
+
+func TestPairNotConfiguredIsSentinel(t *testing.T) {
+	resetState()
+	_, err := Pair(context.Background(), &config.Config{}, newFakeKV(), pairCode)
+	if !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("err = %v, want ErrNotConfigured", err)
+	}
+}
+
+func TestPairBusySlotIsSentinel(t *testing.T) {
+	cloud := newFakePairCloud(t)
+	kv, cfg := bootForPair(t, cloud.srv.URL, false, pairOldStore)
+	if !acquireAttempt(context.Background()) {
+		t.Fatal("could not take the attempt slot")
+	}
+	defer releaseAttempt()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err := Pair(ctx, cfg, kv, pairCode)
+	if !errors.Is(err, ErrAttemptBusy) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want ErrAttemptBusy wrapping DeadlineExceeded", err)
+	}
+	if n := cloud.calls.Load(); n != 0 {
+		t.Fatalf("pair calls = %d, want 0", n)
 	}
 }
 
