@@ -28,6 +28,10 @@ this key up with the rest.
 - *nit, no change:* malformed `net:validation:` strings (empty, wildcard,
   port, scheme) get no description — covered by the test; no panic path.
 - *nit, no change:* translations faithful; Persian slightly stiff.
+- Second Sonnet pass on the de/es/pt pack strings: *should-fix, fixed* — de
+  said the plugin "muss" check signatures (a fact the host doesn't
+  enforce); now "vom Plugin wird erwartet", here in `web/help/de/plugins.md`
+  and in the de pack. es/pt faithful (pt keeps the pack's "encriptado").
 
 **Verified:**
 - TDD re-verified: with the fix reverted, `TestDescribePermission_ADR0121DescKeys`
