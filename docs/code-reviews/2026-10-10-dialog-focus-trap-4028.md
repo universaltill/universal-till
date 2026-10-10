@@ -90,4 +90,15 @@ keyboard-only, the same conclusion as the #3212 review.
   test opens the dialog with `.show()` rather than reaching More through
   real overflow at 1024×600.
 
+**CI round 1 (playwright):** `catalog-row-oob-1363` "a panel mutation on a
+filtered-out item keeps its refreshed row hidden" failed on all three tries.
+The test types into `#catalog-search` behind the open `#item-form-modal`,
+and the new trap now pulls that focus back into the dialog, which is the
+intended behaviour. The test now sets the box's value and fires its real
+`input` listener, without focusing it. Reproduced locally first (1 failed),
+then that spec plus the two specs CI marked flaky
+(`locations-record-dialog-2124`, `settings-two-pane-1960`, which this diff
+doesn't touch) passed 19/19 with `--retries=0`. No other spec in the CI
+run's 1151 failed.
+
 **Verdict:** safe to merge.
