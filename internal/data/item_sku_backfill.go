@@ -9,8 +9,8 @@ import (
 // ut-docs#3097: backfill for items created before ut-docs#3087 made every
 // insert fill a blank SKU. The product owner's rule is that no catalog item
 // may exist without a SKU, so every item — active or not — whose sku is
-// NULL or blank gets one from nextItemSKU, the same generator the insert
-// path uses. It runs once at boot on a primary/standalone till and from the
+// NULL or blank gets one by nextItemSKU's rules, the generator the insert
+// path uses (applied in bulk by skuPlanner, ut-docs#3280). It runs once at boot on a primary/standalone till and from the
 // Catalog page's "Generate missing SKUs" action.
 
 // AssignedItemSKU is one item the backfill gives (or would give) a SKU.
@@ -32,18 +32,56 @@ func (r *CatalogRepo) CountItemsMissingSKU(ctx context.Context) (int, error) {
 }
 
 // PlanMissingItemSKUs returns the SKUs BackfillMissingItemSKUs would assign
-// right now, without writing anything: it runs the very same routine in a
-// transaction and rolls it back, so on unchanged data the preview equals
+// right now, without writing anything. It runs the same planner inside a
+// read-only transaction (ut-docs#3280): a consistent snapshot that takes no
+// write lock, so a preview never blocks a sale. On unchanged data it equals
 // the commit exactly.
 func (r *CatalogRepo) PlanMissingItemSKUs(ctx context.Context) ([]AssignedItemSKU, error) {
-	return r.assignMissingItemSKUs(ctx, false)
+	// ReadOnly makes the driver issue a plain deferred BEGIN instead of
+	// the DSN's _txlock=immediate.
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("plan item skus: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	return planMissingItemSKUs(ctx, tx, nil)
 }
 
 // BackfillMissingItemSKUs gives every item with a NULL or blank SKU a
 // generated one, in one transaction, and returns what it assigned. A
 // second run assigns nothing.
 func (r *CatalogRepo) BackfillMissingItemSKUs(ctx context.Context) ([]AssignedItemSKU, error) {
-	return r.assignMissingItemSKUs(ctx, true)
+	// The DSN's _txlock=immediate (ut-docs#311) makes this take the write
+	// lock up front, so no concurrent insert can claim a SKU between the
+	// planner's reads and the UPDATEs.
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("backfill item skus: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	stmt, err := tx.PrepareContext(ctx, `UPDATE items SET sku = ?, updated_at = datetime('now') WHERE id = ? AND (sku IS NULL OR trim(sku) = '')`)
+	if err != nil {
+		return nil, fmt.Errorf("backfill item skus: prepare: %w", err)
+	}
+	defer stmt.Close()
+	out, err := planMissingItemSKUs(ctx, tx, func(id, sku string) (bool, error) {
+		res, err := stmt.ExecContext(ctx, sku, id)
+		if err != nil {
+			return false, fmt.Errorf("backfill item skus: update %s: %w", id, err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return false, fmt.Errorf("backfill item skus: update %s: %w", id, err)
+		}
+		return n != 0, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("backfill item skus: commit: %w", err)
+	}
+	return out, nil
 }
 
 type missingSKUItem struct {
@@ -51,48 +89,45 @@ type missingSKUItem struct {
 	categoryID sql.NullString
 }
 
-func (r *CatalogRepo) assignMissingItemSKUs(ctx context.Context, commit bool) ([]AssignedItemSKU, error) {
-	// The DSN's _txlock=immediate (ut-docs#311) makes this take the write
-	// lock up front, so no concurrent insert can claim a SKU between
-	// nextItemSKU's read and the UPDATE.
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("backfill item skus: begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
+// planMissingItemSKUs plans a SKU for every blank item in one pass over an
+// in-memory skuPlanner (ut-docs#3280). apply, when non-nil, stores each
+// SKU and reports whether the row still needed it; a SKU it did not store
+// is neither returned nor treated as taken.
+func planMissingItemSKUs(ctx context.Context, tx *sql.Tx, apply func(id, sku string) (bool, error)) ([]AssignedItemSKU, error) {
 	items, err := itemsMissingSKU(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]AssignedItemSKU, 0, len(items))
+	if len(items) == 0 {
+		return out, nil
+	}
+	planner, err := loadSKUPlanner(ctx, tx)
+	if err != nil {
+		return nil, fmt.Errorf("backfill item skus: %w", err)
+	}
 	for _, it := range items {
 		var cat *string
 		if it.categoryID.Valid {
 			cat = &it.categoryID.String
 		}
-		// Reading through tx means each item sees the SKUs assigned to the
-		// ones before it, so two blank items never get the same SKU.
-		sku, err := nextItemSKU(ctx, tx, cat, nil)
+		sku, err := planner.next(ctx, cat)
 		if err != nil {
 			return nil, fmt.Errorf("backfill item skus: generate for %s: %w", it.id, err)
 		}
-		res, err := tx.ExecContext(ctx, `UPDATE items SET sku = ?, updated_at = datetime('now') WHERE id = ? AND (sku IS NULL OR trim(sku) = '')`, sku, it.id)
-		if err != nil {
-			return nil, fmt.Errorf("backfill item skus: update %s: %w", it.id, err)
+		if apply != nil {
+			stored, err := apply(it.id, sku)
+			if err != nil {
+				return nil, err
+			}
+			if !stored {
+				continue
+			}
 		}
-		if n, err := res.RowsAffected(); err != nil {
-			return nil, fmt.Errorf("backfill item skus: update %s: %w", it.id, err)
-		} else if n == 0 {
-			continue
-		}
+		// Each item sees the SKUs planned before it, so two blank items
+		// never get the same SKU.
+		planner.take(cat, sku)
 		out = append(out, AssignedItemSKU{ItemID: it.id, Name: it.name, SKU: sku})
-	}
-	if !commit {
-		return out, nil // deferred Rollback discards the writes
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("backfill item skus: commit: %w", err)
 	}
 	return out, nil
 }
