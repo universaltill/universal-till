@@ -462,3 +462,27 @@ func TestFuncsForExposesNumberSeparators(t *testing.T) {
 		t.Errorf("en-GB decimalsep = %q, want \".\"", got)
 	}
 }
+
+// ut-docs#2679: digitset exposes the locale's numerals to window.utCurrency
+// (web/public/app.js) so client-rendered money is digit-shaped like the
+// server's LocalizeDigits. Latin locales yield "" (no shaping).
+func TestFuncsForDigitset(t *testing.T) {
+	InitI18n(realI18n(t), "en")
+	cases := []struct{ locale, want string }{
+		{"fa", "۰۱۲۳۴۵۶۷۸۹"},
+		{"fa-IR", "۰۱۲۳۴۵۶۷۸۹"},
+		{"ar", "٠١٢٣٤٥٦٧٨٩"},
+		{"ur-PK", "۰۱۲۳۴۵۶۷۸۹"},
+		{"en", ""},
+		{"de", ""},
+	}
+	for _, c := range cases {
+		fn, ok := FuncsFor(c.locale)["digitset"].(func() string)
+		if !ok {
+			t.Fatalf("%s: digitset func missing", c.locale)
+		}
+		if got := fn(); got != c.want {
+			t.Errorf("%s: digitset = %q, want %q", c.locale, got, c.want)
+		}
+	}
+}
