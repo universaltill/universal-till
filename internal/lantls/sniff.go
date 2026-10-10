@@ -8,6 +8,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // FirstByteTimeout is how long a new connection may stay silent before it
@@ -52,7 +54,10 @@ func newSniffListener(ln net.Listener, cfg *tls.Config, firstByte time.Duration)
 		errs:      make(chan error, 1),
 		done:      make(chan struct{}),
 	}
-	go s.acceptLoop()
+	go func() {
+		defer logging.RecoverAndLog("lantls.accept")
+		s.acceptLoop()
+	}()
 	return s
 }
 
@@ -73,7 +78,10 @@ func (s *sniffListener) acceptLoop() {
 			}
 			return
 		}
-		go s.sniff(c)
+		go func() {
+			defer logging.RecoverAndLog("lantls.sniff")
+			s.sniff(c)
+		}()
 	}
 }
 
@@ -82,6 +90,7 @@ func (s *sniffListener) sniff(c net.Conn) {
 	// doesn't leave sockets open for up to firstByte afterwards.
 	stop, stopped := make(chan struct{}), make(chan struct{})
 	go func() {
+		defer logging.RecoverAndLog("lantls.sniffStop")
 		defer close(stopped)
 		select {
 		case <-s.done:

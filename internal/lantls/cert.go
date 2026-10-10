@@ -35,8 +35,8 @@ import (
 )
 
 const (
-	keyFile  = "key.pem"
-	certFile = "cert.pem"
+	privateKeyFile = "key.pem"
+	certFile       = "cert.pem"
 
 	// Validity is a fresh certificate's lifetime (ADR-0114 §7: 5 years).
 	Validity = 5 * 365 * 24 * time.Hour
@@ -89,7 +89,7 @@ func loadOrCreate(dir string, now time.Time) (*Cert, error) {
 			log.Printf("[LAN TLS] could not restrict %s to 0700: %v", dir, err)
 		}
 	}
-	key, err := loadOrCreateKey(filepath.Join(dir, keyFile))
+	key, err := loadOrCreateKey(filepath.Join(dir, privateKeyFile))
 	if err != nil {
 		return nil, err
 	}

@@ -36,7 +36,7 @@ func TestLoadOrCreate_FreshDirCreatesP256KeyAndFiveYearCert(t *testing.T) {
 		if m := mode(t, dir); m != 0o700 {
 			t.Errorf("tls dir mode = %o, want 700", m)
 		}
-		if m := mode(t, filepath.Join(dir, keyFile)); m != 0o600 {
+		if m := mode(t, filepath.Join(dir, privateKeyFile)); m != 0o600 {
 			t.Errorf("key mode = %o, want 600", m)
 		}
 	}
@@ -149,7 +149,7 @@ func TestLoadOrCreate_MissingOrForeignCertReissuedOnSameKey(t *testing.T) {
 
 func TestLoadOrCreate_CorruptKeyIsAnErrorAndLeftUntouched(t *testing.T) {
 	dir := t.TempDir()
-	kp := filepath.Join(dir, keyFile)
+	kp := filepath.Join(dir, privateKeyFile)
 	junk := []byte("not a key")
 	if err := os.WriteFile(kp, junk, 0o600); err != nil {
 		t.Fatal(err)
@@ -194,7 +194,7 @@ func TestLoadOrCreate_WrongKeyTypeIsLeftUntouched(t *testing.T) {
 		t.Fatal(err)
 	}
 	der, _ := x509.MarshalPKCS8PrivateKey(k)
-	kp := filepath.Join(dir, keyFile)
+	kp := filepath.Join(dir, privateKeyFile)
 	want := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
 	if err := os.WriteFile(kp, want, 0o600); err != nil {
 		t.Fatal(err)
