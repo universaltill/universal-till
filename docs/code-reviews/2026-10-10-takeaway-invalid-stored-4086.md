@@ -52,7 +52,7 @@ After the production code was restored, all five new tests pass. The Dev phase a
 - Every guard in `ci.yml`'s build job. Exceptions:
   - `guard-deadcode-baseline.sh`: tool limit in this container (x/tools v0.48 can't load go1.27 packages). The change adds no functions.
   - `guard-shellcheck-version.sh`: no shellcheck binary here. No shell files changed.
-- CI runs both.
+- CI runs both. `guard-docs-shots.sh` was missed in the first local pass and CI caught it, because the help topic changed. `make docs-shots` re-ran all 120 shots: every PNG came back byte-identical, so only `manifest.json`'s hashes changed.
 
 ## Deferred
 
