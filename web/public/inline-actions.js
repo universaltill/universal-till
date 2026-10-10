@@ -201,7 +201,11 @@
       if (d && !d.open) d.showModal(); // showmodal:allow self-order kiosk #selforder-modal only (show-modal step, ut-docs#2097 exemption)
     },
     // Open without leaving focus inside the dialog (menu.html's deposit
-    // refund: show() would focus its first field and pop the OSK).
+    // refund: show() would focus its first field and pop the OSK). A
+    // dialog in base.html's focus trap (ut-docs#3212) would pull focus
+    // restored to the page behind straight back to that first field (the
+    // native keyboard on #1248's hardware), so there focus is left on the
+    // body: the next Tab enters the dialog.
     'show-keep-focus': function (ctx, id) {
       var d = byId(id);
       if (!d) return;
@@ -209,7 +213,8 @@
       showDialog(d);
       if (d.contains(document.activeElement)) {
         document.activeElement.blur();
-        if (prev && prev !== document.body && prev.focus) prev.focus();
+        var trapped = d.hasAttribute('data-ut-focus-trap') || d.hasAttribute('data-ut-escape-close');
+        if (!trapped && prev && prev !== document.body && prev.focus) prev.focus();
       }
     },
     'close': function (ctx, id) { closeDialog(byId(id)); },

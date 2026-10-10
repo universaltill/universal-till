@@ -49,7 +49,7 @@
      (#pfand-amount/#pfand-amount-minor/#pfand-result) and
      inputmode="decimal" are fixes for real cited bugs (ut-docs#1249,
      ut-docs#1248) and must not be altered by the move. -->
-<dialog id="pfand-modal" class="modifier-modal" aria-labelledby="pfand-modal-title">
+<dialog id="pfand-modal" class="modifier-modal" aria-labelledby="pfand-modal-title" data-ut-focus-trap>
   <form class="stacked-form" hx-post="/api/shifts/pfandrueckgabe" hx-target="#pfand-result" hx-swap="innerHTML"
         data-before-swap="swap-errors-into:pfand-result"
         data-after-request="ok-2xx close:pfand-modal reset-form">

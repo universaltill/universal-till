@@ -67,7 +67,7 @@
        label so multiple concurrent held sales read like "Tab 1" instead
        of only a CRM customer name or a bare timestamp. Static (no server
        round-trip to open) since it needs no per-open data. -->
-  <dialog id="hold-modal" class="modifier-modal" aria-labelledby="hold-modal-title">
+  <dialog id="hold-modal" class="modifier-modal" aria-labelledby="hold-modal-title" data-ut-focus-trap>
     <!-- ut-docs#1386: the actual basket-reset for Hold Sale happens here (on
          this form's submit), not on the button in .tender-default-footer
          that only opens this dialog — so the #payment-overlay-closing fix
@@ -165,7 +165,7 @@
        also cover the basket the cashier is resuming into. -->
   <dialog id="parked-orders-modal" class="modifier-modal parked-orders-modal"
           aria-labelledby="parked-orders-modal-title"
-          data-close="empty:parked-orders-body">
+          data-close="empty:parked-orders-body" data-ut-focus-trap>
     <h3 id="parked-orders-modal-title">{{ T "open_orders.title" }}</h3>
     {{/* #2702 review: the popup's notice has its OWN id (not #toast-message) and the
          body is emptied on close, so a stale refusal can never be found by the
@@ -198,7 +198,7 @@
        nav rail (app.css .category-items-modal), and it closes by itself
        once an item from it lands in the basket (app.js, catPopupArmed). -->
   <dialog id="category-items-modal" class="modifier-modal category-items-modal"
-          aria-labelledby="category-items-modal-title">
+          aria-labelledby="category-items-modal-title" data-ut-focus-trap>
     <h3 id="category-items-modal-title">
       <span class="visually-hidden">{{ T "products.categories_modal_title" }}: </span><span id="category-items-modal-name"></span>
     </h3>
@@ -432,7 +432,8 @@
          applied to #hold-modal/#pfand-modal/#elevation-modal/
          #table-add-modal for the identical reason (app.css's #hold-modal
          comment) — accepting the same lost focus-trap/Escape-to-close
-         those four already gave up. app.css gives it an explicit
+         those four already gave up (ut-docs#3212 has since given the first
+         three base.html's Tab trap back via data-ut-focus-trap). app.css gives it an explicit
          `position: fixed` + `z-index: 500` (matching those four) to replace
          the native top-layer stacking .show() no longer grants, kept below
          #osk's `z-index: 1000` so the keyboard still renders on top of the

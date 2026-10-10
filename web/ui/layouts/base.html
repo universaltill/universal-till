@@ -604,18 +604,24 @@
         // status bar, the rail's Lock and the on-screen keyboard stay
         // focusable (the rule this card enforces). The wedge scanner's
         // window keydown buffer never depended on focus.
+        // ut-docs#3212: a dialog that wants the trap but NOT Escape-to-close
+        // opts in with data-ut-focus-trap instead (data-ut-escape-close
+        // implies the trap).
         function escTop() {
           scrimSync();
           var top = scrimSet[scrimSet.length - 1];
-          return top && top.tagName === 'DIALOG' && top.hasAttribute('data-ut-escape-close') ? top : null;
+          return top && top.tagName === 'DIALOG' &&
+            (top.hasAttribute('data-ut-escape-close') || top.hasAttribute('data-ut-focus-trap')) ? top : null;
         }
         function escFocusables(d) {
           return Array.prototype.filter.call(
-            d.querySelectorAll('a[href], button, input, select, textarea, [tabindex]'),
+            d.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex]'),
             function (el) { return !el.disabled && el.tabIndex >= 0 && el.getClientRects().length > 0; });
         }
         function escAllowed(t) {
-          return !!(t && t.closest && t.closest('.statusbar, .session-lock, #osk'));
+          // #bugreport-panel (data-ut-no-scrim) stays usable while the
+          // operator reproduces the problem (ut-docs#3212 review).
+          return !!(t && t.closest && t.closest('.statusbar, .session-lock, #osk, #bugreport-panel'));
         }
         window.addEventListener('keydown', function (e) {
           if (e.key !== 'Tab' || e.defaultPrevented) return;
@@ -637,6 +643,7 @@
             var top = escTop();
             var t = e.target;
             if (!top || !t || top.contains(t) || escAllowed(t)) return;
+            if (UT.dialogOpening && UT.dialogOpening.contains(t)) return;
             var list = escFocusables(top);
             if (list.length) list[0].focus();
           } catch (err) { /* focus only */ }
@@ -691,7 +698,15 @@
           var wrapped = function () {
             var was = this.open;
             try { endClosing(this); UT.finishZooms(); } catch (e) { /* motion only */ }
-            var ret = native.apply(this, arguments);
+            // ut-docs#3212 (review): native show() focuses the new dialog
+            // BEFORE scrimTrack makes it topmost; the focus trap's focusin
+            // pull-back must not drag that focus back into the trapped
+            // dialog underneath.
+            var prevOpening = UT.dialogOpening;
+            UT.dialogOpening = this;
+            try {
+              var ret = native.apply(this, arguments);
+            } finally { UT.dialogOpening = prevOpening; }
             if (!was) { try { popupOpen(this); } catch (e) { /* motion only */ } }
             if (m === 'show') scrimTrack(this);
             return ret;
@@ -2070,11 +2085,11 @@
          checkOrElevate (backup_api.go, sync_api.go,
          permission_settings_page.go) and an extra closed, empty <dialog> on
          pages that never trigger it costs nothing. -->
-    <dialog id="elevation-modal" class="modifier-modal"></dialog>
+    <dialog id="elevation-modal" class="modifier-modal" data-ut-focus-trap></dialog>
     <!-- ut-docs#2781: the PIN-less confirm dialog (confirm_prompt.go's
          renderConfirmPrompt), OOB-swapped in here for the same no-nested-
          form reason as #elevation-modal above. -->
-    <dialog id="confirm-modal" class="modifier-modal"></dialog>
+    <dialog id="confirm-modal" class="modifier-modal" data-ut-focus-trap></dialog>
     <!-- ut-docs#2873: the ONE shared backdrop behind every non-modal popup
          (a .show() dialog, a UT.popupOpened() panel). Shown and hidden only
          by the popup hooks in the first inline script above; app.css
