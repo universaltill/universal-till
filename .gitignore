@@ -79,6 +79,8 @@ data/plugins/
 data/backups/
 # WASM compile cache (ut-docs#3912); any data/ dir a test run defaults to
 **/data/wasm-cache/
+# LAN TLS private key (ut-docs#2736) — never committed, wherever a run put it
+**/data/tls/
 unitill-pos-setup-*.exe
 /unitill-desktop
 /unitill-uninstall

@@ -23,6 +23,7 @@ import (
 	"github.com/universaltill/universal-till/internal/diskspace"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/housekeeping"
+	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -240,6 +241,8 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	// A fallback bind may have moved the port; plugin egress must refuse
 	// the one really serving (ut-docs#2891).
 	plugins.SetTillListenAddr(actualAddr)
+	// Same port, TLS as well as plain HTTP (ADR-0114 §7, ut-docs#2736).
+	ln = withLANTLS(ln, paths.Data("tls"), cfg.Demo)
 
 	// Graceful shutdown when context is cancelled. Registered with wg because
 	// net/http's Shutdown contract only guarantees Serve returns once
@@ -526,6 +529,26 @@ func bindListener(addr string, demo bool) (net.Listener, string, error) {
 		return nil, "", fmt.Errorf("demo mode binds exactly %s: %w", addr, err)
 	}
 	return ln, ln.Addr().String(), nil
+}
+
+// withLANTLS serves ln over TLS as well as plain HTTP, on the same port
+// (ADR-0114 §7, ut-docs#2736): a connection opening with a TLS handshake
+// gets the till's pinned self-signed certificate from dir, anything else
+// plain HTTP as before. TLS is never the cause of a failed request — if the
+// key can't be loaded or created, ln is served plain-only and the reason is
+// logged. A demo till (ADR-0113) sits behind the demo broker, which talks
+// plain HTTP to it, so it gets no LAN key.
+func withLANTLS(ln net.Listener, dir string, demo bool) net.Listener {
+	if demo {
+		return ln
+	}
+	c, err := lantls.LoadOrCreate(dir)
+	if err != nil {
+		log.Printf("[LAN TLS] serving plain HTTP only: %v", err)
+		return ln
+	}
+	log.Printf("[LAN TLS] serving TLS on the same port")
+	return lantls.Listen(ln, c.TLSConfig())
 }
 
 // boundAddrKey carries a WithBoundAddr reporter on Start's context.
