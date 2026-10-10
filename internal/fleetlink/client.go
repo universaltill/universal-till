@@ -20,7 +20,8 @@ const LinkPath = "/api/sync/link"
 
 // ErrUnauthorized is what a Probe returns when the main till refused this
 // till's bearer: the pairing is gone (revoked, or the main till was
-// re-installed). The client stops dialling until the pairing changes.
+// re-installed). The client stops dialling until the pairing changes, or
+// PairingAccepted says a pull with the same bearer succeeded.
 var ErrUnauthorized = errors.New("fleetlink: bearer refused by the main till")
 
 // Target is where an additional till's main till is and how to prove who
@@ -68,7 +69,7 @@ type ClientOptions struct {
 	// act — the frame only names a version.
 	OnFleet     func(ctx context.Context, f FleetPayload)
 	OnLost      func(ctx context.Context, cause string) // an established link died without a bye
-	OnRevoked   func(ctx context.Context)               // the main till revoked this till; dialling stops
+	OnRevoked   func(ctx context.Context)               // the main till revoked this till; dialling stops (once per refusal episode)
 	WhileLinked func(ctx context.Context)               // every RecheckEvery while linked
 }
 
@@ -112,6 +113,11 @@ type Client struct {
 
 	mu         sync.Mutex
 	revokedFor *Target // dialling stopped for this pairing
+	// warnedFor is the pairing OnRevoked last fired for. It outlives a
+	// PairingAccepted retry and is cleared only by an established link, so
+	// a main till that keeps answering pulls but refusing the link is
+	// reported once, not after every pull (ut-docs#4044).
+	warnedFor *Target
 
 	// Status (ADR-0114 §10, ut-docs#2742): what the connectivity chip
 	// reads. mode is a LinkMode; cur is the open link, if any; the rest
@@ -359,14 +365,39 @@ func (c *Client) isRevoked(t Target) bool {
 }
 
 func (c *Client) markRevoked(ctx context.Context, t Target) {
-	c.setMode(ModeRevoked)
+	// State before mode: a PairingAccepted that sees ModeRevoked must also
+	// see revokedFor, or its redial is lost (ut-docs#3590's order).
 	c.mu.Lock()
-	first := c.revokedFor == nil || *c.revokedFor != t
-	c.revokedFor = &t
+	first := c.warnedFor == nil || *c.warnedFor != t
+	c.revokedFor, c.warnedFor = &t, &t
 	c.mu.Unlock()
+	c.setMode(ModeRevoked)
 	if first && c.opts.OnRevoked != nil {
 		c.opts.OnRevoked(ctx)
 	}
+}
+
+// PairingAccepted tells the client the main till accepted this till's
+// current bearer elsewhere — an HTTP pull with it succeeded — so a refusal
+// that stopped the link was transient (the main till mid-restore, say):
+// forget it and redial now (ut-docs#4044). A no-op unless a refusal is
+// recorded. Non-blocking; safe for concurrent use.
+func (c *Client) PairingAccepted() {
+	c.mu.Lock()
+	was := c.revokedFor != nil
+	c.revokedFor = nil
+	c.mu.Unlock()
+	if was {
+		c.Redial()
+	}
+}
+
+// clearWarned ends a refusal episode: the link is up, so a later refusal
+// is news again.
+func (c *Client) clearWarned() {
+	c.mu.Lock()
+	c.warnedFor = nil
+	c.mu.Unlock()
 }
 
 // Run links to the main till and keeps the link up until ctx ends.
@@ -569,6 +600,7 @@ func (c *Client) runLink(ctx context.Context, t Target, conn Conn) (end linkEnd,
 			}
 			established = true
 			c.markLinkUp(h)
+			c.clearWarned()
 			c.setLinked(true)
 			if c.opts.OnHello != nil {
 				c.opts.OnHello(ctx, h)
