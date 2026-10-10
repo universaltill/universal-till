@@ -49,8 +49,8 @@ var permissionDescKeys = map[string]string{
 }
 
 // permissionDescKey is the DescKey for name: an exact ADR-0121 §2 name, or
-// the parameterised view:<name> / ui:slot:<slot> (the raw name, shown next
-// to the description, carries the parameter).
+// the parameterised view:<name> / ui:slot:<slot> / net:validation:<host>
+// (the raw name, shown next to the description, carries the parameter).
 func permissionDescKey(name string) string {
 	if k, ok := permissionDescKeys[name]; ok {
 		return k
@@ -60,6 +60,13 @@ func permissionDescKey(name string) string {
 		return "plugins.permissions.desc.view"
 	case strings.HasPrefix(name, "ui:slot:") && len(name) > len("ui:slot:"):
 		return "plugins.permissions.desc.ui_slot"
+	}
+	// net:validation:<host> (ut-docs#3226) allows plain, unencrypted HTTP to
+	// that host — a different risk from the https-only net:<host> it looks
+	// like, so it says so in words (ut-docs#3515). Only a well-formed grant:
+	// a malformed one is refused at install and never shown as granted.
+	if _, isValidation, err := plugins.ParseValidationPermission(name); isValidation && err == nil {
+		return "plugins.permissions.desc.net_validation"
 	}
 	return ""
 }

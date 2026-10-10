@@ -1535,6 +1535,7 @@
   "plugins.permissions.desc.device_info": "Read this till's device ID, local network addresses and time zone (e.g. for tax authority fraud-prevention headers).",
   "plugins.permissions.desc.http_lan": "Connect to devices on your shop's local network (e.g. a receipt printer or card reader).",
   "plugins.permissions.desc.http_stream": "Send and receive larger data over the internet in a continuous stream.",
+  "plugins.permissions.desc.net_validation": "Download data such as certificate revocation lists and timestamps from this one internet address over unencrypted HTTP. Anyone on the network path can read or change this connection; the plugin is expected to check the data's signatures itself.",
   "plugins.permissions.desc.schedule": "Run on a repeating schedule in the background.",
   "plugins.permissions.desc.secret_write": "Store a credential it already has (e.g. a device password) securely.",
   "plugins.permissions.desc.ui_page": "Add its own page or screen to the till.",

@@ -1550,6 +1550,7 @@
   "plugins.permissions.desc.device_info": "Bu kasanın cihaz kimliğini, yerel ağ adreslerini ve saat dilimini okur (ör. vergi idaresinin dolandırıcılık önleme başlıkları için).",
   "plugins.permissions.desc.http_lan": "Mağazanızın yerel ağındaki cihazlara bağlanır (ör. fiş yazıcısı veya kart okuyucu).",
   "plugins.permissions.desc.http_stream": "İnternet üzerinden daha büyük verileri sürekli bir akış halinde gönderir ve alır.",
+  "plugins.permissions.desc.net_validation": "Sertifika iptal listeleri ve zaman damgaları gibi verileri yalnızca bu internet adresinden şifrelenmemiş HTTP üzerinden indirir. Ağ yolundaki herkes bu bağlantıyı okuyabilir veya değiştirebilir; eklentinin verilerin imzalarını kendisinin denetlemesi beklenir.",
   "plugins.permissions.desc.schedule": "Arka planda yinelenen bir zamanlamayla çalışır.",
   "plugins.permissions.desc.secret_write": "Zaten sahip olduğu bir kimlik bilgisini (ör. bir cihaz parolası) güvenli şekilde saklar.",
   "plugins.permissions.desc.ui_page": "Kasaya kendi sayfasını veya ekranını ekler.",
