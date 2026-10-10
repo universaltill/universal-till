@@ -32,4 +32,6 @@ Nothing was dropped or added between locales, and there are no issue or ADR refs
 
 #1845 (ut-docs#4028: Tab trapped in the remaining non-modal dialogs) merged while the notes PR was in CI. A Fixed bullet for it was added in all five locales, so the release, which will include it, describes it.
 
+#1852 (ut-docs#2851) then merged as well: photo identify and Ask your till now come only from the AI Assistant plugin (2.0+). It got an Improved bullet in all five locales telling owners to install or update that plugin.
+
 **Verdict:** safe to merge.
