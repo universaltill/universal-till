@@ -41,7 +41,7 @@ func registerAICutout(mux *http.ServeMux, d *common.Deps) {
 			writeCutoutError(w, http.StatusForbidden, "catalog management permission required")
 			return
 		}
-		svc := aiService(r.Context(), d)
+		svc := cutoutService(r.Context(), d)
 		if !svc.CanCutout() {
 			writeCutoutError(w, http.StatusNotFound, "background removal is not configured")
 			return
@@ -99,7 +99,7 @@ func registerAICutout(mux *http.ServeMux, d *common.Deps) {
 // pixel bomb (ut-docs#1328/#1417) or a non-JPEG/PNG file is refused before
 // anything is sent to the service, without paying for a full decode the
 // handler would throw away — the till's own decode is of the service's
-// answer, bounded in internal/ai.
+// answer, bounded in internal/bgremove.
 func readCutoutPhoto(r *http.Request) ([]byte, string, error) {
 	file, _, err := r.FormFile("photo")
 	if err != nil {

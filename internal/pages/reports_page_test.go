@@ -2173,3 +2173,27 @@ func TestReportsPage_PresetChipRow(t *testing.T) {
 		t.Fatalf("inactive Custom chip must link to the rolling window, got: %s", body)
 	}
 }
+
+// ut-docs#2851: "Ask your till" comes only from the AI Assistant plugin's
+// reports.panels panel. The built-in Ask card is gone — even with the old
+// UT_AI_* text env set, Reports renders the plugin slot and no core
+// question form.
+func TestReportsPage_OnlyPluginAskPanel_2851(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	t.Setenv("UT_AI_ENDPOINT", "http://127.0.0.1:1")
+	t.Setenv("UT_AI_PROVIDER", "ollama")
+	mux, _ := newReportsPageTestDeps(t)
+	rec := getReportsPage(t, mux, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `/ui/slot/reports.panels`) {
+		t.Fatal("the reports.panels plugin slot must render")
+	}
+	for _, gone := range []string{`/api/reports/ask`, `name="question"`, `id="ask-answer"`} {
+		if strings.Contains(body, gone) {
+			t.Fatalf("built-in Ask card markup %q rendered (removed in ut-docs#2851)", gone)
+		}
+	}
+}

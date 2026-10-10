@@ -45,8 +45,8 @@ func newPOSTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	// seedForPages), so an HTTP scan of ABC alone correctly asks for a
 	// variant instead of adding directly. Seeded locally here (not in the
 	// shared seedForPages) so it only reaches newPOSTestDeps' own callers,
-	// not every other seedForPages consumer (ask_api_test.go's stock-level
-	// row count and buttons_api_test.go's own local "itm-plain" fixture
+	// not every other seedForPages consumer (core_views_parity_test.go's stock-level
+	// rows and buttons_api_test.go's own local "itm-plain" fixture
 	// both broke when this lived in seedForPages instead).
 	if _, err := db.Exec(`INSERT INTO items(id,sku,name,base_price,tax_code_id,is_active) VALUES('itm-plain2','PLAIN','Plain Item',200,'tax_std',1)`); err != nil {
 		t.Fatalf("seed plain item itm-plain2: %v", err)

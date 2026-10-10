@@ -218,11 +218,8 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/catalog/item/image":    true,
 	"POST /api/catalog/variant/image": true,
 	"POST /api/receipt-designer/logo": true,
-	// Outbound network at request time: online barcode lookup, AI camera
-	// identify and the report assistant.
-	"GET /api/catalog/lookup":        true,
-	"POST /api/pos/identify":         true,
-	"POST /api/pos/identify/confirm": true,
+	// Outbound network at request time: online barcode lookup.
+	"GET /api/catalog/lookup": true,
 	// Background removal (ut-docs#3126): a photo sent to the shop's own
 	// AI server.
 	"POST /api/catalog/image/cutout": true,
@@ -234,7 +231,6 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/pos/identify/plugin/pick": true,
 	// Its suggestion thumbnails (ut-docs#3957): a plugin's blob store.
 	"GET /api/pos/identify/plugin/thumb": true,
-	"POST /api/reports/ask":              true,
 	// Cloud enrolment, registration, telemetry and LAN
 	// sync/pairing/discovery/link (all /api/sync/*, /api/setup/*, the Tills
 	// pages).

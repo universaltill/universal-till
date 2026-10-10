@@ -1600,7 +1600,7 @@ function initOfflineOverride(updateFn){
   document.addEventListener('htmx:configRequest', updateOfflineFlag);
 })();
 
-// ut-docs#3807: the sell page's camera buttons (AI identify, barcode scan)
+// ut-docs#3807: the sell page's camera buttons (plugin identify, barcode scan)
 // render hidden; the bind functions below unhide and wire them. A menu link
 // swaps #ut-page instead of loading a new document (ADR-0098), so a binding
 // made once at load was lost on Sell -> Menu -> Sell, and never made when the
@@ -1623,186 +1623,8 @@ function utSellCamera(bind){
   window.addEventListener('offline', network);
 }
 
-// Camera identify (AI-assisted; strictly optional). The button only shows
-// when the server rendered it (UT_AI_API_KEY set) AND the till is online —
-// barcode scan stays the primary path and never waits on this.
-// ut-docs#3807: bound per sell page, not once per document — see
-// utSellCamera above.
-utSellCamera(function(){
-  var openBtn = document.getElementById('ai-identify-open');
-  var overlay = document.getElementById('ai-identify-overlay');
-  if (!openBtn || !overlay) return null;
-
-  var video = document.getElementById('ai-identify-video');
-  var results = document.getElementById('ai-identify-results');
-  var status = document.getElementById('ai-identify-status');
-  var captureBtn = document.getElementById('ai-identify-capture');
-  var retakeBtn = document.getElementById('ai-identify-retake');
-  var closeBtn = document.getElementById('ai-identify-close');
-  var msgs = overlay.dataset;
-  var stream = null;
-  var lastPhoto = null;
-
-  function updateVisibility(){
-    openBtn.hidden = !navigator.onLine;
-    if (!navigator.onLine && !overlay.hidden) close();
-  }
-  updateVisibility();
-
-  function setStatus(text){ status.textContent = text || ''; }
-
-  function open(){
-    overlay.hidden = false;
-    results.innerHTML = '';
-    setStatus('');
-    lastPhoto = null;
-    captureBtn.hidden = false;
-    retakeBtn.hidden = true;
-    // ut-docs#1251: on a non-secure-context origin (plain http:// to a LAN
-    // IP rather than localhost — reachable here since this button has no
-    // BarcodeDetector-style feature gate, only the server-side AI-key/online
-    // check above), `navigator.mediaDevices` is undefined entirely, and
-    // calling `.getUserMedia` on it throws a SYNCHRONOUS TypeError before
-    // the promise chain (and its .catch() below) even exists — the overlay
-    // opens but the camera never starts and no error is ever shown, not
-    // even "Camera unavailable". Guard it explicitly so that case reports
-    // the same honest, already-existing error as any other failure instead
-    // of hanging silently.
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setStatus(msgs.msgCameraError);
-      return;
-    }
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-      .then(function(s){
-        // Closed (or the page left, ut-docs#3807) while the camera was still
-        // starting: release it rather than keep it alive behind a hidden or
-        // detached overlay. Same guard as the barcode scan below.
-        if (overlay.hidden) { s.getTracks().forEach(function(t){ t.stop(); }); return; }
-        stream = s;
-        video.srcObject = s;
-      })
-      .catch(function(err){
-        if (err && err.name) {
-          switch (err.name) {
-            case 'NotFoundError':
-            case 'OverconstrainedError':
-              setStatus(msgs.msgCameraNotFound);
-              break;
-            case 'NotAllowedError':
-            case 'SecurityError':
-              setStatus(msgs.msgCameraPermissionDenied);
-              break;
-            case 'NotReadableError':
-              setStatus(msgs.msgCameraBusy);
-              break;
-            default:
-              setStatus(msgs.msgCameraError);
-          }
-        } else {
-          setStatus(msgs.msgCameraError);
-        }
-      });
-  }
-
-  function close(){
-    overlay.hidden = true;
-    if (stream) { stream.getTracks().forEach(function(t){ t.stop(); }); stream = null; }
-    video.srcObject = null;
-  }
-
-  // Bound the upload client-side: max 1024px long edge, JPEG.
-  function capture(cb){
-    var w = video.videoWidth, h = video.videoHeight;
-    if (!w || !h) { setStatus(msgs.msgCameraError); return; }
-    var scale = Math.min(1, 1024 / Math.max(w, h));
-    var canvas = document.createElement('canvas');
-    canvas.width = Math.round(w * scale);
-    canvas.height = Math.round(h * scale);
-    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-    canvas.toBlob(cb, 'image/jpeg', 0.85);
-  }
-
-  function renderMatches(data){
-    results.innerHTML = '';
-    var matches = (data && data.matches) || [];
-    if (!matches.length) {
-      var text = msgs.msgNoMatch;
-      if (data && data.suggested_name) text += ' — ' + msgs.msgSuggested + ' ' + data.suggested_name;
-      setStatus(text);
-      return;
-    }
-    setStatus('');
-    matches.forEach(function(m){
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'btn ai-match';
-      if (m.thumb_url) {
-        var img = document.createElement('img');
-        img.src = m.thumb_url;
-        img.alt = '';
-        btn.appendChild(img);
-      }
-      var label = document.createElement('span');
-      label.textContent = m.name + ' · ' + m.price_display;
-      btn.appendChild(label);
-      btn.addEventListener('click', function(){ pick(m); });
-      results.appendChild(btn);
-    });
-  }
-
-  function pick(m){
-    // Add the line through the normal scan path (SKU exact match).
-    if (window.htmx) {
-      window.htmx.ajax('POST', '/api/pos/scan', {
-        target: '#basket', swap: 'outerHTML', values: { code: m.sku, qty: 1 }
-      });
-    }
-    // Save the confirmed photo as an ai_ref reference image (fire-and-forget).
-    if (lastPhoto) {
-      var fd = new FormData();
-      fd.append('item_id', m.item_id);
-      fd.append('photo', lastPhoto, 'capture.jpg');
-      fetch('/api/pos/identify/confirm', { method: 'POST', body: fd });
-    }
-    close();
-  }
-
-  function identify(){
-    capture(function(blob){
-      if (!blob) { setStatus(msgs.msgError); return; }
-      lastPhoto = blob;
-      setStatus(msgs.msgSearching);
-      captureBtn.hidden = true;
-      retakeBtn.hidden = false;
-      var fd = new FormData();
-      fd.append('photo', blob, 'capture.jpg');
-      fetch('/api/pos/identify', { method: 'POST', body: fd })
-        .then(function(r){ return r.json(); })
-        .then(function(body){
-          if (!body || body.error) { setStatus(msgs.msgError); return; }
-          renderMatches(body.data);
-        })
-        .catch(function(){ setStatus(msgs.msgError); });
-    });
-  }
-
-  function retake(){
-    results.innerHTML = '';
-    setStatus('');
-    lastPhoto = null;
-    captureBtn.hidden = false;
-    retakeBtn.hidden = true;
-  }
-
-  openBtn.addEventListener('click', open);
-  captureBtn.addEventListener('click', identify);
-  retakeBtn.addEventListener('click', retake);
-  closeBtn.addEventListener('click', close);
-  return { btn: openBtn, close: close, onNetwork: updateVisibility };
-});
-
 // Plugin camera identify (ADR-0121 §7 catalog.identify seam, ut-docs#3873).
-// Rendered instead of the AI button above when an installed plugin answers
+// Rendered only when an installed plugin (the AI Assistant, ut-docs#2851) answers
 // catalog.identify. The photo is posted once; the till answers at once with
 // a poll (htmx re-asks every second) while the plugin works as a job, then
 // with the plugin's suggestions — buttons that post the SKU (and the job
@@ -1962,7 +1784,7 @@ utSellCamera(function(){
 // the wedge/HID scanner path above (never disables or steals focus from it —
 // this is purely an on-demand overlay, opened and closed by the cashier).
 // Decoding is 100% client-side — no frame or image is ever sent anywhere,
-// unlike the AI-identify feature above which uploads a still photo by
+// unlike the plugin identify feature above, which uploads a still photo by
 // design. The browser's native BarcodeDetector is used when it exists;
 // otherwise (WebKit, so every iPhone/iPad including the iOS app, and some
 // Android WebViews — ut-docs#696) a vendored zxing-wasm decoder
@@ -2085,7 +1907,7 @@ utSellCamera(function(){
       if (!overlay.hidden) return; // already open (button keeps focus; Space/Enter re-fires it)
       overlay.hidden = false;
       setStatus(msgs.msgScanning);
-      // ut-docs#1251: same guard as the AI-identify IIFE above — a
+      // ut-docs#1251: same guard as the plugin-identify binding above — a
       // non-secure-context origin leaves `navigator.mediaDevices` undefined,
       // and calling `.getUserMedia` on it throws synchronously, before the
       // .catch() below exists to report anything. Since ut-docs#696 the

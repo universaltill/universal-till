@@ -1,19 +1,24 @@
 package pages
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 )
 
-// ADR-0121 §5 / ut-docs#3158 AC: each core read view returns what today's
-// Ask tool returns on the same fixture DB, with the same arguments — the
-// AI plugin (#2851) swaps one for the other without the model noticing.
-// The only intended difference: an empty result is "[]" from a view where
-// the tool's nil slice marshals to "null".
-func TestCoreViewsMatchAskTools(t *testing.T) {
-	_, dp, db := newAskAPITestDeps(t)
+// ADR-0121 §5 / ut-docs#3158: each core read view the AI plugin's "Ask
+// your till" reads returns what the /reports repo method it wraps returns on
+// the same fixture DB, with the same arguments and the shop's business-day
+// start — so the plugin's answers agree with the Reports page. (The built-in
+// Ask tools this used to compare against were deleted in ut-docs#2851; the
+// repo calls below are exactly what they ran.) The only intended
+// difference: an empty result is "[]" from a view where a nil slice
+// marshals to "null".
+func TestCoreViewsMatchReportRepos(t *testing.T) {
+	dp, db := newSeededPagesDeps(t)
 	ctx := t.Context()
 	for _, q := range []string{
 		`INSERT INTO items(id,sku,name,base_price,tax_code_id,is_active) VALUES('itm2','PEAR','Pear',100,'tax_std',1)`,
@@ -38,14 +43,38 @@ func TestCoreViewsMatchAskTools(t *testing.T) {
 		}
 	}
 	// A non-midnight business day start: the view must read the same
-	// setting the Ask handler passes to askTools.
+	// setting /reports groups by.
 	if err := dp.Settings.Set(ctx, keyReportsBusinessDayStart, "04:30"); err != nil {
 		t.Fatal(err)
 	}
 
-	tools := map[string]func(map[string]any) (any, error){}
-	for _, tool := range askTools(data.NewPOSRepo(db), 4, 30) {
-		tools[tool.Name] = func(args map[string]any) (any, error) { return tool.Run(ctx, args) }
+	repo := data.NewPOSRepo(db)
+	// window is the rolling "last N days" the views use: [now-N days,
+	// now+1s) — the +1s pad because SQL window comparisons truncate to
+	// whole seconds (see reportNow in reports_page.go).
+	window := func(days int) (time.Time, time.Time) {
+		to := time.Now().Add(time.Second)
+		return to.Add(-time.Duration(days) * 24 * time.Hour), to
+	}
+	tools := map[string]func(ctx context.Context, args map[string]int) (any, error){
+		"sales_by_day": func(ctx context.Context, a map[string]int) (any, error) {
+			from, to := window(a["days"])
+			return repo.SalesByDay(ctx, from, to, 4, 30)
+		},
+		"top_items": func(ctx context.Context, a map[string]int) (any, error) {
+			from, to := window(a["days"])
+			return repo.TopItems(ctx, from, to, a["limit"])
+		},
+		"payment_breakdown": func(ctx context.Context, a map[string]int) (any, error) {
+			from, to := window(a["days"])
+			return repo.PaymentBreakdown(ctx, from, to)
+		},
+		"stock_levels": func(ctx context.Context, _ map[string]int) (any, error) {
+			return repo.ListStockLevels(ctx)
+		},
+		"till_activity_summary": func(ctx context.Context, a map[string]int) (any, error) {
+			return repo.AuditActionSummary(ctx, a["days"], 100)
+		},
 	}
 
 	cases := []struct {
@@ -69,8 +98,6 @@ func TestCoreViewsMatchAskTools(t *testing.T) {
 			if !ok {
 				t.Fatalf("view %s not registered", c.view)
 			}
-			// The view takes its raw JSON args through ParseArgs, the tool
-			// takes decoded JSON (numbers as float64).
 			raw, _ := json.Marshal(c.args)
 			parsed, err := v.ParseArgs(raw)
 			if err != nil {
@@ -80,18 +107,16 @@ func TestCoreViewsMatchAskTools(t *testing.T) {
 			if err != nil {
 				t.Fatalf("view %s: %v", c.view, err)
 			}
-			var toolArgs map[string]any
-			_ = json.Unmarshal(raw, &toolArgs)
-			res, err := tools[c.tool](toolArgs)
+			res, err := tools[c.tool](ctx, c.args)
 			if err != nil {
-				t.Fatalf("tool %s: %v", c.tool, err)
+				t.Fatalf("repo %s: %v", c.tool, err)
 			}
 			want, _ := json.Marshal(res)
 			if string(want) == "null" {
 				want = []byte("[]")
 			}
 			if string(got) != string(want) {
-				t.Fatalf("view %s%s\n got  %s\n want %s (tool %s)", c.view, raw, got, want, c.tool)
+				t.Fatalf("view %s%s\n got  %s\n want %s (repo %s)", c.view, raw, got, want, c.tool)
 			}
 			if string(got) == "[]" {
 				t.Fatalf("view %s%s returned nothing; the fixture should give it rows", c.view, raw)

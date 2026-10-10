@@ -6,25 +6,24 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/universaltill/universal-till/internal/ai"
+	"github.com/universaltill/universal-till/internal/bgremove"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
-// ADR-0085 (ut-docs#1708): aiService's resolution order — AI plugin
-// settings > UT_AI_* env > disabled — gains a `provider` setting that lets a
-// shop opt into the hosted Claude backend with its OWN key. These tests run
-// against a real migrated DB with real plugin/settings rows (the api_key is
-// written through the ADR-0082 seal/open path, exactly as the settings page
-// writes it), never a mocked repository.
+// Background removal (ut-docs#3126, ai-product-photo.md §4) resolves per
+// request: AI plugin image settings (when the plugin is active and
+// image_endpoint is set) > UT_AI_IMAGE_* env > off. The plugin's text
+// engine runs in its own WASM module (ut-docs#2851), so core resolves only
+// the image half. These tests run against a real migrated DB with real
+// plugin/settings rows, never a mocked repository.
 //
 // The env is cleared in every test so the FromEnv fallback is a known
 // quantity: whatever the plugin settings resolve to is what we assert on.
 
 func clearAIEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"UT_AI_PROVIDER", "UT_AI_ENDPOINT", "UT_AI_MODEL", "UT_AI_ASK_MODEL", "UT_AI_API_KEY",
-		"UT_AI_IMAGE_PROVIDER", "UT_AI_IMAGE_ENDPOINT", "UT_AI_IMAGE_MODEL"} {
+	for _, k := range []string{"UT_AI_IMAGE_PROVIDER", "UT_AI_IMAGE_ENDPOINT", "UT_AI_IMAGE_MODEL"} {
 		t.Setenv(k, "")
 	}
 }
@@ -48,7 +47,7 @@ func seedAIPluginRows(t *testing.T, db *sql.DB, active bool) {
 }
 
 // newAIResolveDeps opens a real migrated DB with the AI plugin installed in
-// the given active state and the UT_AI_* env cleared.
+// the given active state and the UT_AI_IMAGE_* env cleared.
 func newAIResolveDeps(t *testing.T, active bool) *common.Deps {
 	t.Helper()
 	clearAIEnv(t)
@@ -60,7 +59,7 @@ func newAIResolveDeps(t *testing.T, active bool) *common.Deps {
 
 // setAISetting writes one AI plugin setting the way the settings page does:
 // JSON-string encoded, global scope, sealed at rest when declaredSecret
-// (api_key is `type: "secret"` in the plugin manifest, ADR-0082).
+// (ADR-0082).
 func setAISetting(t *testing.T, dp *common.Deps, key, value string, declaredSecret bool) {
 	t.Helper()
 	raw, err := json.Marshal(value)
@@ -72,295 +71,45 @@ func setAISetting(t *testing.T, dp *common.Deps, key, value string, declaredSecr
 	}
 }
 
-// Pins the pre-ADR-0085 behavior so the provider branch can't regress it:
-// an installed-but-disabled plugin contributes nothing, and the UT_AI_* env
-// remains the developer override underneath.
-func TestAIResolve_PluginInactiveFallsBackToEnv(t *testing.T) {
-	dp := newAIResolveDeps(t, false)
-	setAISetting(t, dp, "endpoint", "http://ollama.local:11434", false)
-	setAISetting(t, dp, "provider", "claude", false)
-	setAISetting(t, dp, "api_key", "sk-ant-shop", true)
-
-	if cfg := resolveAIConfig(t.Context(), dp); cfg.Provider != "" {
-		t.Fatalf("inactive plugin + no env: provider %q, want disabled", cfg.Provider)
-	}
-	if aiService(t.Context(), dp).Enabled() {
-		t.Fatal("inactive plugin + no env must resolve to a disabled service")
-	}
-
-	t.Setenv("UT_AI_ENDPOINT", "http://env.local:11434")
-	cfg := resolveAIConfig(t.Context(), dp)
-	if cfg.Provider != "ollama" || cfg.Endpoint != "http://env.local:11434" {
-		t.Fatalf("inactive plugin + env endpoint: got %+v, want the env ollama config", cfg)
-	}
-	if !aiService(t.Context(), dp).Enabled() {
-		t.Fatal("env override must still enable the service when the plugin is inactive")
-	}
-}
-
-// Every installation that predates the provider setting (no `provider` row at
-// all) and every one that explicitly says self_hosted must resolve to the
-// exact Ollama config they got before — ADR-0085 Non-goals: byte-for-byte.
-func TestAIResolve_UnsetOrSelfHostedProviderKeepsOllama(t *testing.T) {
-	for name, provider := range map[string]string{"unset": "", "self_hosted": "self_hosted"} {
-		t.Run(name, func(t *testing.T) {
-			dp := newAIResolveDeps(t, true)
-			setAISetting(t, dp, "endpoint", "http://ollama.local:11434", false)
-			if provider != "" {
-				setAISetting(t, dp, "provider", provider, false)
-			}
-			// A stray key must not flip a self-hosted shop to a hosted vendor.
-			setAISetting(t, dp, "api_key", "sk-ant-left-over", true)
-
-			cfg := resolveAIConfig(t.Context(), dp)
-			want := ai.Config{Provider: "ollama", Endpoint: "http://ollama.local:11434", Model: "llama3.2-vision", AskModel: "llama3.2"}
-			if cfg != want {
-				t.Fatalf("got %+v, want %+v", cfg, want)
-			}
-			svc := aiService(t.Context(), dp)
-			if !svc.Enabled() || !svc.CanAsk() {
-				t.Fatalf("self-hosted with an endpoint must be enabled with ask: enabled=%v canAsk=%v", svc.Enabled(), svc.CanAsk())
-			}
-		})
-	}
-}
-
-// Same unchanged branch, the other way: self-hosted with no endpoint is
-// "not configured" and falls through to the env override (today's shape).
-func TestAIResolve_SelfHostedWithoutEndpointFallsThroughToEnv(t *testing.T) {
-	dp := newAIResolveDeps(t, true)
-	setAISetting(t, dp, "endpoint", "", false)
-	if aiService(t.Context(), dp).Enabled() {
-		t.Fatal("self-hosted with an empty endpoint and no env must be disabled")
-	}
-	t.Setenv("UT_AI_ENDPOINT", "http://env.local:11434")
-	if cfg := resolveAIConfig(t.Context(), dp); cfg.Provider != "ollama" || cfg.Endpoint != "http://env.local:11434" {
-		t.Fatalf("empty plugin endpoint must fall through to the env override, got %+v", cfg)
-	}
-}
-
-// ADR-0085 Decision 2: provider=claude with a key resolves to the existing
-// claudeProvider — the key arrives already opened from its sealed row, the
-// model defaults to the same value the UT_AI_* env path uses, and an
-// explicit vision_model overrides it. Claude wins over a sibling Ollama
-// endpoint the shop may still have configured from before the switch.
-func TestAIResolve_ClaudeWithKeySelectsClaude(t *testing.T) {
-	dp := newAIResolveDeps(t, true)
-	setAISetting(t, dp, "provider", "claude", false)
-	setAISetting(t, dp, "api_key", "sk-ant-shop-own-key", true)
-	setAISetting(t, dp, "endpoint", "http://ollama.local:11434", false)
-
-	cfg := resolveAIConfig(t.Context(), dp)
-	want := ai.Config{Provider: "claude", APIKey: "sk-ant-shop-own-key", Model: ai.DefaultClaudeModel}
-	if cfg != want {
-		t.Fatalf("got %+v, want %+v", cfg, want)
-	}
-	svc := aiService(t.Context(), dp)
-	if !svc.Enabled() {
-		t.Fatal("claude with a key must be enabled")
-	}
-	// The hosted backend has no ask loop today (internal/ai/ask_test.go pins
-	// CanAsk false for claude): Ask-your-till stays hidden rather than
-	// erroring — the existing degrade path, reached a new way.
-	if svc.CanAsk() {
-		t.Fatal("claude has no ask loop yet — CanAsk must be false so the UI hides Ask-your-till")
-	}
-
-	setAISetting(t, dp, "vision_model", "claude-sonnet-4-5", false)
-	if cfg := resolveAIConfig(t.Context(), dp); cfg.Model != "claude-sonnet-4-5" || cfg.Provider != "claude" {
-		t.Fatalf("vision_model must name the claude model, got %+v", cfg)
-	}
-}
-
-// Whitespace around an otherwise-exact "claude" is a stray space, not a
-// different provider — aiPluginConfig trims every setting value the same
-// way endpoint/vision_model/ask_model already were before this card, so
-// " claude " DOES select the hosted vendor (review finding, ut-docs#1708:
-// pin this deliberately rather than leaving it as an untested side effect
-// of the shared trim, since it's the one input that resolves forward to a
-// paid API without being byte-identical to the literal ADR-0085 wording).
-func TestAIResolve_WhitespacePaddedClaudeStillSelectsHosted(t *testing.T) {
-	dp := newAIResolveDeps(t, true)
-	setAISetting(t, dp, "provider", "  claude  ", false)
-	setAISetting(t, dp, "api_key", "sk-ant-shop-own-key", true)
-
-	cfg := resolveAIConfig(t.Context(), dp)
-	want := ai.Config{Provider: "claude", APIKey: "sk-ant-shop-own-key", Model: ai.DefaultClaudeModel}
-	if cfg != want {
-		t.Fatalf("got %+v, want %+v", cfg, want)
-	}
-}
-
-// provider=claude with no key is "not configured", not "use Ollama instead":
-// the shop chose a hosted vendor, so silently running its catalog against a
-// leftover Ollama endpoint would do something it didn't ask for. It falls
-// through to the env override exactly like the empty-endpoint branch, and
-// with no env that means disabled.
-func TestAIResolve_ClaudeWithoutKeyIsDisabledNotOllama(t *testing.T) {
-	for name, seedKey := range map[string]bool{"no_row": false, "empty_row": true} {
-		t.Run(name, func(t *testing.T) {
-			dp := newAIResolveDeps(t, true)
-			setAISetting(t, dp, "provider", "claude", false)
-			setAISetting(t, dp, "endpoint", "http://ollama.local:11434", false)
-			if seedKey {
-				setAISetting(t, dp, "api_key", "", true)
-			}
-			if cfg := resolveAIConfig(t.Context(), dp); cfg.Provider != "" {
-				t.Fatalf("claude without a key resolved to %+v, want disabled (never the sibling ollama endpoint)", cfg)
-			}
-			if aiService(t.Context(), dp).Enabled() {
-				t.Fatal("claude without a key must be a disabled service")
-			}
-		})
-	}
-}
-
-// The fail-safe ADR-0085 gap 3 requires, and the test that must fail against
-// a naive "anything that isn't self_hosted is hosted" implementation: only
-// the exact values "claude" or "openai" may select a paid vendor (ut-docs#1791
-// added the second). A typo, a different case, or any other string resolves
-// to the self-hosted path — Ollama when an endpoint exists, disabled when
-// not — even when a key is sitting right there in api_key.
-func TestAIResolve_UnrecognizedProviderNeverSelectsHosted(t *testing.T) {
-	for _, provider := range []string{"Claude", "CLAUDE", "claud", "anthropic", "hosted", "claude-haiku-4-5", "Openai", "OPENAI", "open_ai", "gpt"} {
-		t.Run(provider, func(t *testing.T) {
-			dp := newAIResolveDeps(t, true)
-			setAISetting(t, dp, "provider", provider, false)
-			setAISetting(t, dp, "api_key", "sk-ant-should-never-be-used", true)
-
-			// With an endpoint: the shop's own Ollama, never Claude.
-			setAISetting(t, dp, "endpoint", "http://ollama.local:11434", false)
-			cfg := resolveAIConfig(t.Context(), dp)
-			if cfg.Provider != "ollama" || cfg.APIKey != "" {
-				t.Fatalf("provider=%q resolved to %+v, want the self-hosted ollama config with no key", provider, cfg)
-			}
-
-			// Without one: disabled — not Claude just because a key exists.
-			setAISetting(t, dp, "endpoint", "", false)
-			cfg = resolveAIConfig(t.Context(), dp)
-			if cfg.Provider != "" || cfg.APIKey != "" {
-				t.Fatalf("provider=%q with no endpoint resolved to %+v, want disabled", provider, cfg)
-			}
-			if aiService(t.Context(), dp).Enabled() {
-				t.Fatalf("provider=%q with no endpoint must be a disabled service, never a hosted one", provider)
-			}
-		})
-	}
-}
-
-// ut-docs#1791: provider=openai with a key resolves to the new openai
-// backend — key already opened from its sealed row, vision_model AND
-// ask_model both default to ai.DefaultOpenAIModel (one model covers both
-// capabilities for OpenAI, unlike Ollama's split), and either default is
-// independently overridable. OpenAI wins over a sibling Ollama endpoint the
-// shop may still have configured from before the switch.
-func TestAIResolve_OpenAIWithKeySelectsOpenAI(t *testing.T) {
-	dp := newAIResolveDeps(t, true)
-	setAISetting(t, dp, "provider", "openai", false)
-	setAISetting(t, dp, "api_key", "sk-openai-shop-own-key", true)
-	setAISetting(t, dp, "endpoint", "http://ollama.local:11434", false)
-
-	cfg := resolveAIConfig(t.Context(), dp)
-	want := ai.Config{Provider: "openai", APIKey: "sk-openai-shop-own-key", Model: ai.DefaultOpenAIModel, AskModel: ai.DefaultOpenAIModel}
-	if cfg != want {
-		t.Fatalf("got %+v, want %+v", cfg, want)
-	}
-	svc := aiService(t.Context(), dp)
-	if !svc.Enabled() {
-		t.Fatal("openai with a key must be enabled")
-	}
-	// Unlike claude, openai's ask loop is real (ut-docs#1791) — Ask-your-till
-	// must NOT hide itself for this provider.
-	if !svc.CanAsk() {
-		t.Fatal("openai has a real ask loop — CanAsk must be true")
-	}
-
-	setAISetting(t, dp, "vision_model", "gpt-4o", false)
-	if cfg := resolveAIConfig(t.Context(), dp); cfg.Model != "gpt-4o" || cfg.AskModel != ai.DefaultOpenAIModel || cfg.Provider != "openai" {
-		t.Fatalf("vision_model must override independently of ask_model, got %+v", cfg)
-	}
-
-	setAISetting(t, dp, "ask_model", "gpt-4o-mini-2024-07-18", false)
-	if cfg := resolveAIConfig(t.Context(), dp); cfg.AskModel != "gpt-4o-mini-2024-07-18" || cfg.Model != "gpt-4o" {
-		t.Fatalf("ask_model must override independently of vision_model, got %+v", cfg)
-	}
-}
-
-// provider=openai with no key is "not configured", not "use Ollama instead" —
-// same fail-safe posture as the claude branch.
-func TestAIResolve_OpenAIWithoutKeyIsDisabledNotOllama(t *testing.T) {
-	for name, seedKey := range map[string]bool{"no_row": false, "empty_row": true} {
-		t.Run(name, func(t *testing.T) {
-			dp := newAIResolveDeps(t, true)
-			setAISetting(t, dp, "provider", "openai", false)
-			setAISetting(t, dp, "endpoint", "http://ollama.local:11434", false)
-			if seedKey {
-				setAISetting(t, dp, "api_key", "", true)
-			}
-			if cfg := resolveAIConfig(t.Context(), dp); cfg.Provider != "" {
-				t.Fatalf("openai without a key resolved to %+v, want disabled (never the sibling ollama endpoint)", cfg)
-			}
-			if aiService(t.Context(), dp).Enabled() {
-				t.Fatal("openai without a key must be a disabled service")
-			}
-		})
-	}
-}
-
-// Deps.AI (test/explicit injection) still short-circuits everything.
+// Deps.AI (test/explicit injection) short-circuits everything.
 func TestAIResolve_InjectedServiceWins(t *testing.T) {
 	dp := newAIResolveDeps(t, true)
-	setAISetting(t, dp, "provider", "claude", false)
-	setAISetting(t, dp, "api_key", "sk-ant-shop", true)
-	injected := &ai.Service{}
+	setAISetting(t, dp, "image_endpoint", "http://rembg.local:7000", false)
+	injected := &bgremove.Service{}
 	dp.AI = injected
-	if got := aiService(t.Context(), dp); got != injected {
+	if got := cutoutService(t.Context(), dp); got != injected {
 		t.Fatal("Deps.AI must be returned as-is ahead of plugin settings")
 	}
 }
 
-// ---- Background removal (ut-docs#3126, ai-product-photo.md §4) ----
-//
-// The image capability resolves independently of the text provider:
-// plugin image settings (when the plugin is active and image_endpoint is
-// set) > UT_AI_IMAGE_* env > off. Text resolution is untouched.
-
-func TestAIResolve_ImageFromPluginWithTextOff(t *testing.T) {
+func TestAIResolve_ImageFromPlugin(t *testing.T) {
 	dp := newAIResolveDeps(t, true)
-	// Text is NOT configured (self-hosted, no endpoint) — image must still resolve.
 	setAISetting(t, dp, "image_provider", "self_hosted", false)
 	setAISetting(t, dp, "image_endpoint", "http://rembg.local:7000", false)
 	setAISetting(t, dp, "image_model", "u2netp", false)
 
-	cfg := resolveAIConfig(t.Context(), dp)
-	want := ai.Config{Image: ai.ImageConfig{Provider: "self_hosted", Endpoint: "http://rembg.local:7000", Model: "u2netp"}}
+	cfg := resolveImageConfig(t.Context(), dp)
+	want := bgremove.ImageConfig{Provider: "self_hosted", Endpoint: "http://rembg.local:7000", Model: "u2netp"}
 	if cfg != want {
 		t.Fatalf("got %+v, want %+v", cfg, want)
 	}
-	svc := aiService(t.Context(), dp)
-	if svc.Enabled() {
-		t.Fatal("text AI is not configured: Enabled must be false")
-	}
-	if !svc.CanCutout() {
-		t.Fatal("image configured with text AI off: CanCutout must be true")
+	if !cutoutService(t.Context(), dp).CanCutout() {
+		t.Fatal("image configured: CanCutout must be true")
 	}
 }
 
-func TestAIResolve_ImageAlongsideTextKeepsTextUnchanged(t *testing.T) {
+// Rows written before the image settings were reconciled: no image_provider
+// row and no image_model — the manifest defaults apply. Text settings rows
+// (the plugin's own WASM engine reads them) are ignored by core.
+func TestAIResolve_ImageManifestDefaultsIgnoreTextSettings(t *testing.T) {
 	dp := newAIResolveDeps(t, true)
 	setAISetting(t, dp, "endpoint", "http://ollama.local:11434", false)
+	setAISetting(t, dp, "provider", "claude", false)
 	setAISetting(t, dp, "image_endpoint", "http://rembg.local:7000", false)
-	// No image_provider row (predates reconcile) and no image_model: the
-	// manifest defaults apply.
-	cfg := resolveAIConfig(t.Context(), dp)
-	want := ai.Config{Provider: "ollama", Endpoint: "http://ollama.local:11434", Model: "llama3.2-vision", AskModel: "llama3.2",
-		Image: ai.ImageConfig{Provider: "self_hosted", Endpoint: "http://rembg.local:7000", Model: ai.DefaultImageModel}}
+	cfg := resolveImageConfig(t.Context(), dp)
+	want := bgremove.ImageConfig{Provider: "self_hosted", Endpoint: "http://rembg.local:7000", Model: bgremove.DefaultImageModel}
 	if cfg != want {
 		t.Fatalf("got %+v, want %+v", cfg, want)
-	}
-	svc := aiService(t.Context(), dp)
-	if !svc.Enabled() || !svc.CanAsk() || !svc.CanCutout() {
-		t.Fatalf("enabled=%v canAsk=%v canCutout=%v, want all true", svc.Enabled(), svc.CanAsk(), svc.CanCutout())
 	}
 }
 
@@ -368,35 +117,35 @@ func TestAIResolve_ImageAlongsideTextKeepsTextUnchanged(t *testing.T) {
 func TestAIResolve_ImageResolutionOrder(t *testing.T) {
 	// Off: nothing anywhere.
 	dp := newAIResolveDeps(t, true)
-	if cfg := resolveAIConfig(t.Context(), dp); cfg.Image != (ai.ImageConfig{}) {
-		t.Fatalf("no plugin image, no env: got %+v, want off", cfg.Image)
+	if cfg := resolveImageConfig(t.Context(), dp); cfg != (bgremove.ImageConfig{}) {
+		t.Fatalf("no plugin image, no env: got %+v, want off", cfg)
 	}
-	if aiService(t.Context(), dp).CanCutout() {
+	if cutoutService(t.Context(), dp).CanCutout() {
 		t.Fatal("no image config anywhere: CanCutout must be false")
 	}
 
 	// Env only (plugin image_endpoint empty — the manifest default).
 	setAISetting(t, dp, "image_provider", "self_hosted", false)
 	setAISetting(t, dp, "image_endpoint", "", false)
-	setAISetting(t, dp, "image_model", ai.DefaultImageModel, false)
+	setAISetting(t, dp, "image_model", bgremove.DefaultImageModel, false)
 	t.Setenv("UT_AI_IMAGE_ENDPOINT", "http://env-rembg.local:7000")
-	envWant := ai.ImageConfig{Provider: "self_hosted", Endpoint: "http://env-rembg.local:7000", Model: ai.DefaultImageModel}
-	if cfg := resolveAIConfig(t.Context(), dp); cfg.Image != envWant {
-		t.Fatalf("empty plugin image_endpoint: got %+v, want env %+v", cfg.Image, envWant)
+	envWant := bgremove.ImageConfig{Provider: "self_hosted", Endpoint: "http://env-rembg.local:7000", Model: bgremove.DefaultImageModel}
+	if cfg := resolveImageConfig(t.Context(), dp); cfg != envWant {
+		t.Fatalf("empty plugin image_endpoint: got %+v, want env %+v", cfg, envWant)
 	}
 
 	// Plugin wins over env.
 	setAISetting(t, dp, "image_endpoint", "http://plugin-rembg.local:7000", false)
-	if cfg := resolveAIConfig(t.Context(), dp); cfg.Image.Endpoint != "http://plugin-rembg.local:7000" {
-		t.Fatalf("plugin image_endpoint must win over env, got %+v", cfg.Image)
+	if cfg := resolveImageConfig(t.Context(), dp); cfg.Endpoint != "http://plugin-rembg.local:7000" {
+		t.Fatalf("plugin image_endpoint must win over env, got %+v", cfg)
 	}
 
 	// Inactive plugin contributes nothing: env again.
 	if _, err := dp.Db.Exec(`UPDATE plugins SET is_active=0 WHERE id=?`, AIPluginID); err != nil {
 		t.Fatal(err)
 	}
-	if cfg := resolveAIConfig(t.Context(), dp); cfg.Image != envWant {
-		t.Fatalf("inactive plugin: got %+v, want env %+v", cfg.Image, envWant)
+	if cfg := resolveImageConfig(t.Context(), dp); cfg != envWant {
+		t.Fatalf("inactive plugin: got %+v, want env %+v", cfg, envWant)
 	}
 }
 
@@ -411,17 +160,17 @@ func TestAIResolve_ImageUnknownProviderIsOff(t *testing.T) {
 			t.Setenv("UT_AI_IMAGE_ENDPOINT", "http://env-rembg.local:7000")
 			setAISetting(t, dp, "image_provider", p, false)
 			setAISetting(t, dp, "image_endpoint", "http://rembg.local:7000", false)
-			cfg := resolveAIConfig(t.Context(), dp)
-			if cfg.Image.Endpoint == "http://env-rembg.local:7000" {
-				t.Fatalf("unknown provider fell through to env: %+v", cfg.Image)
+			cfg := resolveImageConfig(t.Context(), dp)
+			if cfg.Endpoint == "http://env-rembg.local:7000" {
+				t.Fatalf("unknown provider fell through to env: %+v", cfg)
 			}
-			if aiService(t.Context(), dp).CanCutout() {
+			if cutoutService(t.Context(), dp).CanCutout() {
 				t.Fatalf("image_provider=%q must resolve to off", p)
 			}
 			// Even with an empty plugin endpoint, an explicit unknown
 			// provider stays off rather than picking up the env service.
 			setAISetting(t, dp, "image_endpoint", "", false)
-			if aiService(t.Context(), dp).CanCutout() {
+			if cutoutService(t.Context(), dp).CanCutout() {
 				t.Fatalf("image_provider=%q with empty endpoint must stay off, not use env", p)
 			}
 		})
@@ -438,24 +187,9 @@ func TestAIResolve_ImageModelOffAllowListIsOff(t *testing.T) {
 			setAISetting(t, dp, "image_provider", "self_hosted", false)
 			setAISetting(t, dp, "image_endpoint", "http://rembg.local:7000", false)
 			setAISetting(t, dp, "image_model", m, false)
-			if aiService(t.Context(), dp).CanCutout() {
+			if cutoutService(t.Context(), dp).CanCutout() {
 				t.Fatalf("image_model=%q must resolve to off", m)
 			}
 		})
-	}
-}
-
-// The text resolution is unchanged by image settings: a configured image
-// capability never makes an unconfigured text provider fall elsewhere.
-func TestAIResolve_ImageSettingsDoNotChangeTextFallThrough(t *testing.T) {
-	dp := newAIResolveDeps(t, true)
-	setAISetting(t, dp, "image_endpoint", "http://rembg.local:7000", false)
-	t.Setenv("UT_AI_ENDPOINT", "http://env.local:11434")
-	cfg := resolveAIConfig(t.Context(), dp)
-	if cfg.Provider != "ollama" || cfg.Endpoint != "http://env.local:11434" {
-		t.Fatalf("unconfigured plugin text must still fall through to env text, got %+v", cfg)
-	}
-	if cfg.Image.Endpoint != "http://rembg.local:7000" {
-		t.Fatalf("plugin image must still apply, got %+v", cfg.Image)
 	}
 }

@@ -1,9 +1,9 @@
 // Package itemimages owns the catalog item image tree on disk — the
 // per-item thumb.png and the cashier-confirmed camera-identify reference
 // photos under ai_ref/ — and the one rule for picking an item's reference
-// photo. The built-in identify (internal/pages) and the item_image_open
-// plugin host function (internal/plugins, ADR-0121 R1, ut-docs#4005) both
-// resolve through Ref, so they always pick, and encode, the same photo.
+// photo. The item_image_open plugin host function (internal/plugins,
+// ADR-0121 R1, ut-docs#4005) resolves through Ref, so a plugin always gets
+// the same photo, encoded the same way, the removed built-in identify sent.
 //
 // Paths are built only from a validated item id under AssetDir; nothing
 // here reads the item_images table (its rows arrive by sync and import).
@@ -44,8 +44,8 @@ const (
 	RoleAIRef = "ai_ref"
 	// RoleThumb is the item's catalog thumbnail.
 	RoleThumb = "thumb"
-	// RoleRef is RoleAIRef when it decodes, else RoleThumb — the photo the
-	// built-in identify sends for the item.
+	// RoleRef is RoleAIRef when it decodes, else RoleThumb — the photo a
+	// camera-identify plugin gets for the item.
 	RoleRef = "ref"
 )
 

@@ -6,9 +6,8 @@ import (
 	"testing"
 )
 
-// RefJPEG is the camera-identify reference-photo encoding shared by the
-// built-in identify and the item_image_open host function (ADR-0121 R1,
-// ut-docs#4005): bounded decode, ≤ RefMaxEdge long edge, JPEG quality 70.
+// RefJPEG is the camera-identify reference-photo encoding the
+// item_image_open host function uses (ADR-0121 R1, ut-docs#4005): bounded decode, ≤ RefMaxEdge long edge, JPEG quality 70.
 func TestRefJPEG_DownscalesToJPEG(t *testing.T) {
 	for _, in := range [][]byte{encodePNG(t, 512, 384), encodeJPEG(t, 300, 600)} {
 		out, err := RefJPEG(in)

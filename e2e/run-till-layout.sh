@@ -3,7 +3,7 @@
 # installed (ADR-0088, ut-docs#1904), for layout-plugin-menu-1904.spec.ts.
 #
 # It needs its own server + Playwright project rather than joining the
-# shared default-project till for the same reason run-till-ai.sh does: the
+# shared default-project till because the plugin's menu
 # amendments change what the MENU renders for every other spec on that
 # server. Installing a plugin that hides /tables and /kitchen-stations and
 # re-labels /items into the till the whole default project drives would

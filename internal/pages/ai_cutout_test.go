@@ -2,9 +2,11 @@ package pages
 
 import (
 	"bytes"
+	"database/sql"
 	"image"
 	"image/color"
 	"image/png"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -12,11 +14,13 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/universaltill/universal-till/internal/ai"
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/bgremove"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/imaging"
+	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
 )
 
 // cutoutPNG is what a background-removal service answers: a 40×20 canvas,
@@ -46,8 +50,78 @@ func emptyCutoutPNG(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
+// newCutoutTestDeps mounts the cutout route on seeded Deps with a fresh
+// data dir.
+func newCutoutTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *sql.DB) {
+	t.Helper()
+	dp, db := newSeededPagesDeps(t)
+	origDataDir := paths.DataDir()
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init(origDataDir) })
+	mux := http.NewServeMux()
+	registerAICutout(mux, dp)
+	return mux, dp, db
+}
+
+// multipartPhotoRequest builds a real multipart/form-data POST with a photo
+// field (and any extra plain fields), matching what a browser upload sends.
+func multipartPhotoRequest(t *testing.T, path string, photo []byte, extra map[string]string) *http.Request {
+	t.Helper()
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	if photo != nil {
+		fw, err := w.CreateFormFile("photo", "photo.png")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fw.Write(photo); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for k, v := range extra {
+		if err := w.WriteField(k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, path, &buf)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	return req
+}
+
+func testPNGBytes(t *testing.T) []byte {
+	t.Helper()
+	src := image.NewRGBA(image.Rect(0, 0, 4, 4))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, src); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// oversizedPNGBytes is a real, fully valid, fully decodable PNG whose pixel
+// count sits just over imaging.MaxPixels — the actual pixel-bomb shape
+// (ut-docs#1328/#1417): a solid color compresses to a tiny file while
+// still being genuinely decodable, proving the guard rejects it via the
+// cheap dimension check rather than some unrelated "corrupt file" reason.
+func oversizedPNGBytes(t *testing.T) []byte {
+	t.Helper()
+	const w, h = 7000, 6000
+	if int64(w)*int64(h) <= imaging.MaxPixels {
+		t.Fatalf("test fixture %dx%d must exceed imaging.MaxPixels (%d)", w, h, imaging.MaxPixels)
+	}
+	src := image.NewGray(image.Rect(0, 0, w, h))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, src); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
 // fakeRembg stands in for the shop's rembg server and counts its calls.
-func fakeRembg(t *testing.T, status int, answer []byte) (*ai.Service, *atomic.Int64) {
+func fakeRembg(t *testing.T, status int, answer []byte) (*bgremove.Service, *atomic.Int64) {
 	t.Helper()
 	var calls atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +135,7 @@ func fakeRembg(t *testing.T, status int, answer []byte) (*ai.Service, *atomic.In
 		_, _ = w.Write(answer)
 	}))
 	t.Cleanup(srv.Close)
-	svc := ai.New(ai.Config{Image: ai.ImageConfig{Provider: ai.ImageProviderSelfHosted, Endpoint: srv.URL, Model: "u2netp"}})
+	svc := bgremove.New(bgremove.ImageConfig{Provider: bgremove.ImageProviderSelfHosted, Endpoint: srv.URL, Model: "u2netp"})
 	if !svc.CanCutout() {
 		t.Fatal("fixture: expected the image capability to be on")
 	}
@@ -84,7 +158,7 @@ func serveCutout(t *testing.T, mux http.Handler, req *http.Request) (*httptest.R
 
 func TestCutoutAPI_NotConfiguredReturns404(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	mux, _, _ := newAIAPITestDeps(t)
+	mux, _, _ := newCutoutTestDeps(t)
 	rec, _ := serveCutout(t, mux, multipartPhotoRequest(t, "/api/catalog/image/cutout", testPNGBytes(t), nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 with background removal off, got %d: %s", rec.Code, rec.Body.String())
@@ -93,7 +167,7 @@ func TestCutoutAPI_NotConfiguredReturns404(t *testing.T) {
 
 func TestCutoutAPI_ReturnsSquareTileOnTheChosenBackground(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	mux, dp, _ := newAIAPITestDeps(t)
+	mux, dp, _ := newCutoutTestDeps(t)
 	var calls *atomic.Int64
 	dp.AI, calls = fakeRembg(t, http.StatusOK, cutoutPNG(t))
 
@@ -138,7 +212,7 @@ func TestCutoutAPI_ReturnsSquareTileOnTheChosenBackground(t *testing.T) {
 
 func TestCutoutAPI_RefusesBadInputBeforeCallingTheService(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	mux, dp, _ := newAIAPITestDeps(t)
+	mux, dp, _ := newCutoutTestDeps(t)
 	var calls *atomic.Int64
 	dp.AI, calls = fakeRembg(t, http.StatusOK, cutoutPNG(t))
 
@@ -170,7 +244,7 @@ func TestCutoutAPI_RefusesBadInputBeforeCallingTheService(t *testing.T) {
 
 func TestCutoutAPI_OversizeBodyIs413(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	mux, dp, _ := newAIAPITestDeps(t)
+	mux, dp, _ := newCutoutTestDeps(t)
 	var calls *atomic.Int64
 	dp.AI, calls = fakeRembg(t, http.StatusOK, cutoutPNG(t))
 
@@ -198,7 +272,7 @@ func TestCutoutAPI_ServiceFailuresAreSoftErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			mux, dp, _ := newAIAPITestDeps(t)
+			mux, dp, _ := newCutoutTestDeps(t)
 			dp.AI, _ = fakeRembg(t, tc.status, tc.answer)
 			rec, _ := serveCutout(t, mux, multipartPhotoRequest(t, "/api/catalog/image/cutout", testPNGBytes(t), nil))
 			if rec.Code != tc.want {
@@ -215,7 +289,7 @@ func TestCutoutAPI_ServiceFailuresAreSoftErrors(t *testing.T) {
 // AI server is never called (design §6 "Gate").
 func TestCutoutAPI_CashierIsRefused(t *testing.T) {
 	t.Setenv("UT_AUTH", "")
-	mux, dp, _ := newAIAPITestDeps(t)
+	mux, dp, _ := newCutoutTestDeps(t)
 	dp.AuthSvc = auth.NewService(dp.Db)
 	var calls *atomic.Int64
 	dp.AI, calls = fakeRembg(t, http.StatusOK, cutoutPNG(t))

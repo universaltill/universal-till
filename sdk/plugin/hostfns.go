@@ -399,8 +399,8 @@ func BlobList() ([]BlobInfo, error) {
 
 // Item image roles for ItemImageOpen (ADR-0121 R1).
 const (
-	// ItemImageRef is the photo the built-in camera identify sends for the
-	// item: its newest confirmed photo if that decodes, else its thumbnail.
+	// ItemImageRef is the item's reference photo for camera identify: its
+	// newest confirmed photo if that decodes, else its thumbnail.
 	ItemImageRef = "ref"
 	// ItemImageAIRef is the item's newest cashier-confirmed photo.
 	ItemImageAIRef = "ai_ref"

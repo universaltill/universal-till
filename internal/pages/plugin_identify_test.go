@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/universaltill/universal-till/internal/ai"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -449,8 +448,9 @@ func TestIdentifyPluginID_3873(t *testing.T) {
 	}
 }
 
-// One camera-identify button: the plugin's when a plugin answers
-// catalog.identify, else the built-in AI one.
+// One camera-identify button: the plugin's, and only when a plugin answers
+// catalog.identify — the built-in AI identify is gone (ut-docs#2851), so no
+// plugin means no identify button at all.
 func TestIndex_PluginIdentifyButton_3873(t *testing.T) {
 	chdirRoot(t)
 	db := openPagesTestDB(t)
@@ -463,11 +463,7 @@ func TestIndex_PluginIdentifyButton_3873(t *testing.T) {
 	httpx.InitI18n(i18n, "en")
 	cfg := &config.Config{Theme: "default"}
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
-	dp := &common.Deps{Cfg: cfg, Db: db, State: state, Menu: []common.MenuItem{}, Settings: settings.NewStore(db),
-		AI: ai.New(ai.Config{Provider: "ollama", Endpoint: "http://127.0.0.1:1"})}
-	if !dp.AI.Enabled() {
-		t.Fatal("test AI service is not enabled")
-	}
+	dp := &common.Deps{Cfg: cfg, Db: db, State: state, Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
 	mux := http.NewServeMux()
 	registerIndex(mux, dp)
 	get := func() string {
@@ -483,8 +479,8 @@ func TestIndex_PluginIdentifyButton_3873(t *testing.T) {
 
 	identifyPluginID = func(context.Context, *common.Deps) string { return "" }
 	body := get()
-	if !strings.Contains(body, `id="ai-identify-open"`) || !strings.Contains(body, `id="ai-identify-overlay"`) {
-		t.Fatal("no plugin: the built-in AI identify must render")
+	if strings.Contains(body, `id="ai-identify-open"`) || strings.Contains(body, `id="ai-identify-overlay"`) {
+		t.Fatal("the built-in AI identify was removed (ut-docs#2851) but rendered")
 	}
 	if strings.Contains(body, `id="plugin-identify-open"`) || strings.Contains(body, `id="plugin-identify-overlay"`) {
 		t.Fatal("no plugin answers catalog.identify, but its button rendered")
@@ -496,7 +492,7 @@ func TestIndex_PluginIdentifyButton_3873(t *testing.T) {
 		t.Fatal("a plugin answers catalog.identify, but its button/overlay did not render")
 	}
 	if strings.Contains(body, `id="ai-identify-open"`) || strings.Contains(body, `id="ai-identify-overlay"`) {
-		t.Fatal("two camera-identify buttons: the built-in one must step aside for the plugin's")
+		t.Fatal("two camera-identify buttons: only the plugin's may render")
 	}
 }
 

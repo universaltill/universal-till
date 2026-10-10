@@ -36,7 +36,7 @@ func parseReportDays(r *http.Request) int {
 // reportNow is "now", padded by a second so a sale inserted in the same
 // instant as the request (racing the open end of a rolling/open-ended
 // window) isn't dropped by an exclusive upper bound. Mirrors the pattern
-// already used by alerts.go/backoffice_page.go/ask_api.go/inventory_page.go
+// already used by alerts.go/backoffice_page.go/inventory_page.go
 // for their own inline from/to windows.
 func reportNow() time.Time {
 	return time.Now().Add(time.Second)
@@ -290,7 +290,6 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			"title":     httpx.T(httpx.RequestLocale(r), "page.title.reports"),
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
-			"CanAsk":    aiService(r.Context(), d).CanAsk() && canPerform(d, r, "reports"),
 			"IsManager": canPerform(d, r, "reports"),
 			// ut-docs#1465: gates the "Shrinkage & Loss" tab button's own
 			// visibility on void_comp_waste specifically (not the generic

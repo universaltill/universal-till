@@ -2020,7 +2020,7 @@ label[hidden] { display: none; }
   user-select: none; touch-action: manipulation;
 }
 /* display:inline-flex above would defeat the hidden attribute's UA rule —
-   hidden buttons (osk-toggle, ai-identify-open) must actually disappear. */
+   hidden buttons (osk-toggle, plugin-identify-open) must actually disappear. */
 .btn[hidden] { display: none; }
 .btn:hover { background: #1d4ed8; }
 .btn:active { transform: translateY(1px); }
@@ -4574,7 +4574,7 @@ body.login-screen {
   gap: 0.75rem;
 }
 .ai-identify-panel h3 { margin: 0; }
-/* Shared by all three camera previews (AI identify + ut-docs#548 barcode
+/* Shared by all three camera previews (plugin identify + ut-docs#548 barcode
    scan + ut-docs#1472 catalog photo viewfinder) — a class, not an ID,
    since multiple distinct <video> elements use it. */
 .camera-overlay-video {
@@ -4587,7 +4587,7 @@ body.login-screen {
 /* ut-docs#3133: the catalog photo viewfinder sits in the full-width item
    dialog (#1956), where 100% at 4:3 was ~1230x920 on a 1280x800 tablet —
    taller than the screen, top under the tab bar. A compact preview; the
-   AI-identify and barcode panels keep the shared sizing above. */
+   plugin-identify and barcode panels keep the shared sizing above. */
 #image-viewfinder .camera-overlay-video {
   display: block;
   inline-size: min(100%, 20rem);

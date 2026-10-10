@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/universaltill/universal-till/internal/ai"
+	"github.com/universaltill/universal-till/internal/bgremove"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -88,7 +88,7 @@ func isTaxRateOverridesKey(key string) bool {
 //
 // Second adopter (ut-docs#3126): the AI plugin's plain-text image_model,
 // when its stored value is set but off the licence-checked allow-list
-// (ai.ImageModelAllowed — rembg's bria-rmbg default among them). Resolution
+// (bgremove.ImageModelAllowed — rembg's bria-rmbg default among them). Resolution
 // turns background removal off for such a value; the generic editor has no
 // per-plugin save-time validation, so this hint says why (never a modal).
 // value is the stored plain value; the resolver trims it the same way.
@@ -100,7 +100,7 @@ func settingNoticeKey(pluginID, key, value string) string {
 	case "api_key":
 		return "plugins.settings.ai.hosted_provider_notice"
 	case "image_model":
-		if v := strings.TrimSpace(value); v != "" && !ai.ImageModelAllowed(v) {
+		if v := strings.TrimSpace(value); v != "" && !bgremove.ImageModelAllowed(v) {
 			return "plugins.settings.ai.image_model_unsupported"
 		}
 	}

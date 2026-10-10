@@ -36,8 +36,8 @@ import (
 // The sell screen's camera-identify seam (ADR-0121 §7 "Core-owned
 // suggestion seam", ut-docs#3873; format: ut-docs reference/plugin-views.md).
 // When an active plugin answers catalog.identify, the sell screen shows
-// core's own identify button and overlay (instead of the built-in AI one,
-// which moves out in ut-docs#2851). The overlay posts one photo here; core
+// core's own identify button and overlay (the built-in AI one was removed
+// in ut-docs#2851; the AI Assistant plugin answers this seam). The overlay posts one photo here; core
 // stages it as an upload handle and runs catalog.identify as a job (§8,
 // startPluginJob) — never on the sale path, never blocking it. The overlay
 // polls GET ?_job=<id>; the plugin's answer is a document validated for the

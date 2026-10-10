@@ -349,28 +349,18 @@ UT_LOG_FILE=                          # Empty = on for Windows/macOS/Linux, off 
                                        # data dir, pos.env used, cloud host and
                                        # enrolment state.
 
-# Assistive AI (optional): camera item identification on the sale screen and
-# "Ask your till" — plain-language questions about sales/stock on /reports
-# (managers only, every question audited).
-# Self-hosted first — point at an Ollama server running open models
-# (a machine in the store, your homelab, or a VM you provide); photos, item
-# names and sales figures never leave your infrastructure. Nothing configured
-# = invisible, and checkout never depends on it.
-UT_AI_ENDPOINT=http://localhost:11434  # Ollama server URL (self-hosted)
-UT_AI_MODEL=llama3.2-vision            # Open vision model (camera identify)
-UT_AI_ASK_MODEL=llama3.2               # Tool-capable text model (Ask your till)
-UT_AI_PROVIDER=                        # Optional: "claude" or "openai" for a hosted paid API
-UT_AI_API_KEY=                         # Only for the claude/openai providers (claude has no ask loop yet; openai has both)
-# Background removal for item/category photos — independent of the above
-# (works with text AI off). Point at the shop's own rembg server (`rembg s`).
+# Camera item identification and "Ask your till" come from the AI Assistant
+# plugin (Marketplace, version 2.0 or later) — configured on its settings
+# page, run inside the plugin; there is no env override for them.
+# Background removal for item/category photos stays in the till: point it at
+# the shop's own rembg server (`rembg s`). Nothing configured = off, and
+# checkout never depends on it.
 UT_AI_IMAGE_ENDPOINT=                  # rembg base URL, e.g. http://192.168.1.20:7000; empty = off
 UT_AI_IMAGE_MODEL=birefnet-general-lite # Only birefnet-general-lite (MIT) or u2netp (Apache-2.0); anything else = off
 UT_AI_IMAGE_PROVIDER=                  # Defaults to self_hosted when an endpoint is set; any other value = off
-# Shops don't use these env vars: the AI Assistant plugin's settings page
-# (provider / endpoint / vision_model / ask_model / api_key, and
-# image_provider / image_endpoint / image_model) is the
-# shop-facing configuration and takes priority; a hosted provider is that
-# shop's own key and cost, opt-in only (ADR-0085). Env = developer override.
+# Shops don't use these env vars: the AI Assistant plugin's image_provider /
+# image_endpoint / image_model settings take priority when the plugin is
+# active and sets an endpoint. Env = developer override.
 ```
 
 ### Public demo mode (not for shops)
@@ -489,7 +479,7 @@ atomic commits, and a quota of the manifest's `limits.storage_mb`
 (ADR-0121 §6, ut-docs#3870).
 With `view:inventory`, `item_image_open`/`item_image_read` read an item's
 camera-identify reference photo (`ai_ref`, `thumb` or `ref`) as the same
-≤ 160 px JPEG the built-in identify sends — never a path or the original
+≤ 160 px JPEG reference image — never a path or the original
 file (ADR-0121 R1, ut-docs#4005).
 A plugin has no background threads: with `schedule` granted, the till sends
 each of its manifest `schedules` events to it every `every_s` (at least 30 s)
@@ -643,7 +633,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 - [x] Payment plugins: Stripe, QR Pay, demo card terminal, SumUp (reader-driven)
 - [x] Language plugins: German, Spanish (core ships en/ar/fa/tr)
 - [x] Theme plugins, FAQ / help plugin
-- [x] AI assistant plugin (camera item ID, "Ask your till") — self-hosted by default, hosted Claude or OpenAI as a shop's own-key opt-in (ADR-0085, ut-docs#1791)
+- [x] AI assistant plugin (camera item ID, "Ask your till") — runs inside the plugin (WASM, ut-docs#2851); self-hosted by default, hosted Claude or OpenAI as a shop's own-key opt-in (ADR-0085, ut-docs#1791)
 - [x] Webhook connector plugin (`ut-plugin-integration-webhook`) — reference/template for real ERP connectors, not itself a finished SAP/Dynamics integration (ADR-0014)
 - [x] Cloud sync service (optional, self-hostable)
 - [x] Multi-till LAN sync — one primary, replicas join by QR scan (ADR-0011); tills can also auto-discover primaries over mDNS and pair directly — no code to scan or type: select a discovered primary, the manager approves from a verification-code compare, done (ADR-0033). Available both on a configured till's Tills page and on a brand-new till's first-boot "Join an existing shop" screen (ut-docs#289). The same LAN auto-discovery finds network printers for kitchen station routing (ut-docs#140)

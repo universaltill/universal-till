@@ -214,10 +214,9 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			// pos_api.go/computeSaleTotals will demand.
 			"taxInclusive": d.CurrentState().TaxInclusive,
 			"payMethods":   gridMethods,
-			"aiIdentify":   aiService(r.Context(), d).Enabled(),
-			// ut-docs#3873: a plugin answers catalog.identify — the sell
-			// screen shows core's identify seam instead of the built-in AI
-			// button (one camera-identify button).
+			// ut-docs#3873: a plugin (the AI Assistant, ut-docs#2851)
+			// answers catalog.identify — the sell screen shows core's one
+			// camera-identify button.
 			"pluginIdentify":       identifyPluginID(r.Context(), d) != "",
 			"fiscalOverrideActive": fiscalOverrideActive,
 			"fiscalOverrideUntil":  fiscalOverrideUntil,

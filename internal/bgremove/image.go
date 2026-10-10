@@ -1,22 +1,27 @@
-package ai
+// Package bgremove is the till's host-side background removal for item and
+// category tile photos — the "image" capability (ut-docs#3126, docs repo
+// architecture/ai-product-photo.md §4). It stays in core because it
+// post-processes photos the host stores; the AI text engine (camera
+// identify, "Ask your till") lives in the AI Assistant plugin
+// (ut-plugin-integration-ai, ut-docs#2851).
+//
+// It has its own provider/endpoint/model: an image-segmentation server is a
+// different capability from a text/vision model. This is the first
+// per-capability slot of ADR-0126 §6, ahead of the generalisation in
+// ut-docs#3108 (same <capability>_provider|_endpoint|_model key shape).
+// Offline-first (ADR-0003): nothing here sits on the sale path; callers
+// treat every error as "feature unavailable" and keep the original photo.
+package bgremove
 
 import (
 	"context"
 	"errors"
 	"image"
+	"os"
+	"strings"
 
 	"github.com/universaltill/universal-till/internal/plugins"
 )
-
-// Background removal for item and category tile photos — the "image"
-// capability (ut-docs#3126, docs repo architecture/ai-product-photo.md §4).
-//
-// It is configured and resolved INDEPENDENTLY of the text/vision provider:
-// a shop's Ollama vision model can't segment an image, so the capability
-// has its own provider/endpoint/model, and "image on, text AI off" is a
-// valid shop. This is the first per-capability slot of ADR-0126 §6, ahead
-// of the generalisation in ut-docs#3108 (same
-// <capability>_provider|_endpoint|_model key shape).
 
 // ImageConfig configures background removal. An empty Endpoint means off.
 type ImageConfig struct {
@@ -91,8 +96,39 @@ func validImageEndpoint(endpoint string) bool {
 	return plugins.ValidEndpointURL(endpoint)
 }
 
-// CanCutout reports whether background removal is configured. Independent
-// of Enabled(): text AI may be off while this is on, and vice versa.
+// Service is the till-side background-removal facade. A nil Service is safe
+// to call CanCutout() on, so pages can decide whether to render the
+// affordance.
+type Service struct {
+	cut cutter // nil = off
+}
+
+// New builds the capability from its config; an unusable config yields a
+// Service whose CanCutout() is false.
+func New(ic ImageConfig) *Service { return &Service{cut: newCutter(ic)} }
+
+// FromEnv reads UT_AI_IMAGE_PROVIDER / UT_AI_IMAGE_ENDPOINT /
+// UT_AI_IMAGE_MODEL: an endpoint with no provider means self_hosted (rembg),
+// an empty model means DefaultImageModel, no endpoint means off.
+func FromEnv() ImageConfig {
+	ic := ImageConfig{
+		Provider: strings.ToLower(strings.TrimSpace(os.Getenv("UT_AI_IMAGE_PROVIDER"))),
+		Endpoint: strings.TrimSpace(os.Getenv("UT_AI_IMAGE_ENDPOINT")),
+		Model:    strings.TrimSpace(os.Getenv("UT_AI_IMAGE_MODEL")),
+	}
+	if ic.Endpoint == "" {
+		return ImageConfig{}
+	}
+	if ic.Provider == "" {
+		ic.Provider = ImageProviderSelfHosted
+	}
+	if ic.Model == "" {
+		ic.Model = DefaultImageModel
+	}
+	return ic
+}
+
+// CanCutout reports whether background removal is configured.
 func (s *Service) CanCutout() bool { return s != nil && s.cut != nil }
 
 // RemoveBackground returns the photo with its background made transparent.

@@ -20,42 +20,40 @@ Sales totals by day, department and payment type; best and slow sellers; dead st
 
 ## Ask your till
 
-When your shop's AI is turned on, a question box — **Ask your till** —
-appears on Reports, above the report tabs (below the top figures and the
-Audit trail button, for a manager). Type a plain question — "What sold
-best this week?", "How did we do today?" — and get an answer worked out
-from your own sales, stock and till-activity figures.
+The question panel comes from the **AI Assistant** plugin (Plugins → Store),
+version 2.0 or later. With it installed and turned on, its panel — **Ask
+your till** — appears on Reports below the report's own content, for a
+manager. Type a plain question — "What sold best this week?", "How did we do today?" — and
+get an answer worked out from your own sales, stock and till-activity
+figures.
 
-1. Type your question and press **Ask**.
-2. The answer appears below the box in a few seconds (a **Thinking…**
-   indicator shows while it works).
+1. Type your question into the AI Assistant panel and send it.
+2. The answer appears in the panel in a few seconds.
 3. Ask another question any time — each one is answered on its own, with
-   no memory of earlier questions in the conversation. The question text
-   itself is still recorded in the audit log (see The audit log, below),
-   the same as any other action.
+   no memory of earlier questions in the conversation.
 
-It only answers from a fixed set of figures — daily sales totals, best
-sellers, takings by payment method, stock levels, and till activity
-(logins, voids, overrides) by staff member — never raw customer data, and
-it can't do anything to the till, only answer questions about it.
+It only reads a fixed set of figures — daily sales totals, best sellers,
+takings by payment method, stock levels, and till activity (logins, voids,
+overrides) by staff member — never raw customer data, and it can't do
+anything to the till, only answer questions about it.
 
-**If the box doesn't appear**, one of three things is true:
+**If the panel doesn't appear**, one of three things is true:
 
-- Your shop's AI isn't turned on yet — an administrator can turn it on
-  under Plugins → AI Assistant → its settings page. By default it runs
-  entirely on your own hardware (self-hosted, via Ollama), so nothing
-  about your sales leaves the premises; choosing a hosted provider
-  instead sends the figures needed to answer each question to that
-  provider — the plugin's own settings page explains exactly what is
-  sent for each choice before you pick one.
-- The AI is turned on with the **Claude** provider — that one answers
-  "Identify by camera" questions but doesn't yet support Ask your till,
-  so the box stays hidden even though the rest of the AI features work.
+- The AI Assistant plugin isn't installed or turned on — an administrator
+  installs it from Plugins → Store and sets it up on
+  its settings page. By default it runs entirely on your own hardware
+  (self-hosted), so nothing about your sales leaves the premises; choosing
+  a hosted provider instead sends the figures needed to answer each
+  question to that provider — the plugin's own settings page explains
+  exactly what is sent for each choice before you pick one.
+- The till has an AI Assistant older than version 2.0 — update it on the
+  Plugins page. Older versions used a question box built into the till,
+  which has been removed.
 - You're signed in as a till operator rather than a manager — Ask your
   till is manager-only, same as the reports it draws on.
 
 If a question can't be answered (the AI server isn't reachable, or it
-genuinely doesn't know), the box says so rather than guessing — try again
+genuinely doesn't know), the panel says so rather than guessing — try again
 in a moment.
 
 ## Report periods
@@ -399,7 +397,7 @@ not something scoped to one till or one shift. Reach for it when a report
 number looks wrong and you need to see the actions behind it, or a
 manager needs to check who did something and when.
 
-1. Press **📜 Audit trail** — it's above the Ask your till box on Reports,
+1. Press **📜 Audit trail** — it's below the top figures on Reports,
    visible to a manager. The list shows every entry, newest first: when,
    who did it (or **System** for something the till did on its own, e.g.
    a scheduled automatic close), what it was done to, the action, and its

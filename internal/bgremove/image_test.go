@@ -1,4 +1,4 @@
-package ai
+package bgremove
 
 import (
 	"bytes"
@@ -22,8 +22,7 @@ import (
 
 func clearImageEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"UT_AI_PROVIDER", "UT_AI_ENDPOINT", "UT_AI_MODEL", "UT_AI_ASK_MODEL", "UT_AI_API_KEY",
-		"UT_AI_IMAGE_PROVIDER", "UT_AI_IMAGE_ENDPOINT", "UT_AI_IMAGE_MODEL"} {
+	for _, k := range []string{"UT_AI_IMAGE_PROVIDER", "UT_AI_IMAGE_ENDPOINT", "UT_AI_IMAGE_MODEL"} {
 		t.Setenv(k, "")
 	}
 }
@@ -70,24 +69,20 @@ func countingServer(t *testing.T) (*httptest.Server, *atomic.Int64) {
 
 func TestFromEnvImage(t *testing.T) {
 	clearImageEnv(t)
-	if cfg := FromEnv(); cfg.Image != (ImageConfig{}) {
-		t.Fatalf("no image env: got %+v, want zero", cfg.Image)
+	if cfg := FromEnv(); cfg != (ImageConfig{}) {
+		t.Fatalf("no image env: got %+v, want zero", cfg)
 	}
 	// An endpoint alone implies the self-hosted provider and the default model.
 	t.Setenv("UT_AI_IMAGE_ENDPOINT", "http://rembg.local:7000")
 	want := ImageConfig{Provider: "self_hosted", Endpoint: "http://rembg.local:7000", Model: DefaultImageModel}
-	if cfg := FromEnv(); cfg.Image != want {
-		t.Fatalf("endpoint only: got %+v, want %+v", cfg.Image, want)
+	if cfg := FromEnv(); cfg != want {
+		t.Fatalf("endpoint only: got %+v, want %+v", cfg, want)
 	}
 	t.Setenv("UT_AI_IMAGE_MODEL", "u2netp")
 	t.Setenv("UT_AI_IMAGE_PROVIDER", "Self_Hosted")
 	want = ImageConfig{Provider: "self_hosted", Endpoint: "http://rembg.local:7000", Model: "u2netp"}
-	if cfg := FromEnv(); cfg.Image != want {
-		t.Fatalf("explicit env: got %+v, want %+v", cfg.Image, want)
-	}
-	// The image env never switches text AI on, and vice versa.
-	if cfg := FromEnv(); cfg.Provider != "" {
-		t.Fatalf("image env must not enable text AI, got provider %q", cfg.Provider)
+	if cfg := FromEnv(); cfg != want {
+		t.Fatalf("explicit env: got %+v, want %+v", cfg, want)
 	}
 }
 
@@ -107,30 +102,23 @@ func TestImageModelAllowList(t *testing.T) {
 	}
 }
 
-func TestCanCutoutIndependentOfTextAI(t *testing.T) {
+func TestCanCutout(t *testing.T) {
 	srv, _ := countingServer(t)
 	var nilSvc *Service
 	if nilSvc.CanCutout() {
 		t.Fatal("nil service must not cut out")
 	}
-	if New(Config{}).CanCutout() {
+	if New(ImageConfig{}).CanCutout() {
 		t.Fatal("no image endpoint: CanCutout must be false")
 	}
-	if New(Config{Image: ImageConfig{Provider: "self_hosted"}}).CanCutout() {
+	if New(ImageConfig{Provider: "self_hosted"}).CanCutout() {
 		t.Fatal("self_hosted with no endpoint: CanCutout must be false")
 	}
-	svc := New(Config{Image: ImageConfig{Provider: "self_hosted", Endpoint: srv.URL}})
-	if svc.Enabled() {
-		t.Fatal("text AI is off: Enabled must be false")
+	if !New(ImageConfig{Provider: "self_hosted", Endpoint: srv.URL}).CanCutout() {
+		t.Fatal("self_hosted with an endpoint: CanCutout must be true")
 	}
-	if !svc.CanCutout() {
-		t.Fatal("image on with text AI off is a valid shop: CanCutout must be true")
-	}
-	// Both on at once.
-	both := New(Config{Provider: "ollama", Endpoint: "http://ollama.local:11434", Model: "m",
-		Image: ImageConfig{Provider: "self_hosted", Endpoint: srv.URL, Model: "u2netp"}})
-	if !both.Enabled() || !both.CanCutout() {
-		t.Fatalf("both configured: enabled=%v canCutout=%v", both.Enabled(), both.CanCutout())
+	if !New(ImageConfig{Provider: "self_hosted", Endpoint: srv.URL, Model: "u2netp"}).CanCutout() {
+		t.Fatal("self_hosted with an allowed model: CanCutout must be true")
 	}
 }
 
@@ -139,7 +127,7 @@ func TestCanCutoutIndependentOfTextAI(t *testing.T) {
 func TestCutoutUnknownProviderIsOffWithNoHTTPCall(t *testing.T) {
 	srv, hits := countingServer(t)
 	for _, p := range []string{"", "Self_Hosted", "self-hosted", "claude", "openai", "remove.bg", "hosted", "photoroom"} {
-		svc := New(Config{Image: ImageConfig{Provider: p, Endpoint: srv.URL, Model: DefaultImageModel}})
+		svc := New(ImageConfig{Provider: p, Endpoint: srv.URL, Model: DefaultImageModel})
 		if svc.CanCutout() {
 			t.Errorf("provider %q: CanCutout must be false", p)
 		}
@@ -155,7 +143,7 @@ func TestCutoutUnknownProviderIsOffWithNoHTTPCall(t *testing.T) {
 func TestCutoutModelOffAllowListIsOff(t *testing.T) {
 	srv, hits := countingServer(t)
 	for _, m := range []string{"bria-rmbg", "bria-rmbg-2.0", "isnet-general-use", "something-new"} {
-		svc := New(Config{Image: ImageConfig{Provider: "self_hosted", Endpoint: srv.URL, Model: m}})
+		svc := New(ImageConfig{Provider: "self_hosted", Endpoint: srv.URL, Model: m})
 		if svc.CanCutout() {
 			t.Errorf("model %q: CanCutout must be false", m)
 		}
@@ -165,19 +153,19 @@ func TestCutoutModelOffAllowListIsOff(t *testing.T) {
 		t.Fatalf("off-list models made %d HTTP calls, want 0", n)
 	}
 	// Empty model means the default, which is allowed.
-	if !New(Config{Image: ImageConfig{Provider: "self_hosted", Endpoint: srv.URL}}).CanCutout() {
+	if !New(ImageConfig{Provider: "self_hosted", Endpoint: srv.URL}).CanCutout() {
 		t.Fatal("empty model must default to an allowed model")
 	}
 }
 
 func TestCutoutEndpointMustBeHTTP(t *testing.T) {
 	for _, ep := range []string{"ftp://rembg.local", "file:///etc/passwd", "rembg.local:7000", "://bad", "http://", "javascript:alert(1)", "http://user:pw@rembg.local", "http://rembg.local/?x=1", " http://rembg.local"} {
-		if New(Config{Image: ImageConfig{Provider: "self_hosted", Endpoint: ep}}).CanCutout() {
+		if New(ImageConfig{Provider: "self_hosted", Endpoint: ep}).CanCutout() {
 			t.Errorf("endpoint %q: CanCutout must be false", ep)
 		}
 	}
 	for _, ep := range []string{"http://192.168.1.20:7000", "https://rembg.example/", "http://rembg.local:7000/base"} {
-		if !New(Config{Image: ImageConfig{Provider: "self_hosted", Endpoint: ep}}).CanCutout() {
+		if !New(ImageConfig{Provider: "self_hosted", Endpoint: ep}).CanCutout() {
 			t.Errorf("endpoint %q: CanCutout must be true", ep)
 		}
 	}
@@ -210,7 +198,7 @@ func TestRembgAdapterSendsFileAndModel(t *testing.T) {
 	defer srv.Close()
 
 	for _, model := range []string{"", "u2netp"} {
-		svc := New(Config{Image: ImageConfig{Provider: "self_hosted", Endpoint: srv.URL + "/", Model: model}})
+		svc := New(ImageConfig{Provider: "self_hosted", Endpoint: srv.URL + "/", Model: model})
 		img, err := svc.RemoveBackground(t.Context(), photo, "image/jpeg")
 		if err != nil {
 			t.Fatalf("model %q: %v", model, err)
@@ -327,7 +315,7 @@ func TestRembgAdapterDoesNotFollowRedirects(t *testing.T) {
 
 func TestRemoveBackgroundRequiresPhoto(t *testing.T) {
 	srv, hits := countingServer(t)
-	svc := New(Config{Image: ImageConfig{Provider: "self_hosted", Endpoint: srv.URL}})
+	svc := New(ImageConfig{Provider: "self_hosted", Endpoint: srv.URL})
 	if _, err := svc.RemoveBackground(t.Context(), nil, "image/png"); err == nil {
 		t.Fatal("empty photo must error")
 	}

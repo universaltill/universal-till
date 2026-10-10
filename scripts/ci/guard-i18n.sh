@@ -162,7 +162,7 @@ for path in sorted(glob.glob("web/locales/*.json")):
 #      registers_page.go, kitchen_stations_page.go, update_api.go,
 #      translations_page.go, tables_page.go, pos_modifiers_api.go,
 #      locations_page.go, plugin_page.go, order_tracking.go, help_page.go,
-#      ask_api.go, promotions_page.go, print_api.go, plugins_store_page.go,
+#      promotions_page.go, print_api.go, plugins_store_page.go,
 #      plugins_page.go, my_reports_page.go, discovery_api.go,
 #      country_settings_page.go).
 #    Narrowing this exemption today would fail CI on all of them at once,

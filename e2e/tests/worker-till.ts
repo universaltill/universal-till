@@ -29,9 +29,9 @@ export const REPO_ROOT = path.resolve(__dirname, '..', '..');
 // worker still boots if global setup was somehow skipped.
 export const PREBUILT_BIN = path.join(REPO_ROOT, 'e2e', '.bin', 'unitill-pos-e2e');
 
-// A fresh, previously-unused port band — deliberately NOT 8091+N: the four
-// single-server projects (auth/ai-identify/layout/diagnostics) keep their
-// static 8092-8095 (and the diagnostics spec's fake ut-cloud on 8096), and
+// A fresh, previously-unused port band — deliberately NOT 8091+N: the
+// single-server projects (auth/layout/diagnostics) keep their
+// static 8092/8094/8095 (and the diagnostics spec's fake ut-cloud on 8096), and
 // they run in other worker slots of the SAME overall run.
 // UT_E2E_WORKER_PORT_BASE (local only): several agent sessions/worktrees on
 // one machine each run this suite; with a fixed 9091 a second run would

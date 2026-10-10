@@ -586,9 +586,9 @@ shown and then refused (ut-docs#3994).
 
 A plugin that recognises products from a photo subscribes to
 `catalog.identify` (hook it, and hold `events:receive`). The sell screen
-then shows core's own "Identify by camera" button and overlay (in place
-of the built-in AI one; if several plugins answer, the lexically first
-plugin id wins). The overlay posts one photo (JPEG, PNG or WebP, at most
+then shows core's own "Identify by camera" button and overlay — the only
+camera-identify button the till has (if several plugins answer, the
+lexically first plugin id wins). The overlay posts one photo (JPEG, PNG or WebP, at most
 8 MiB) and the till runs `catalog.identify` as a **job** on your plugin:
 the payload is `{"upload_handles": [{"field": "photo", "handle", "filename",
 "size", "content_type"}], "locale", "job_id"}` — read the photo with
