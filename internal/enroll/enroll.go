@@ -283,21 +283,45 @@ func ForgetReplicaVouch() {
 	mu.Unlock()
 }
 
-// RegisterHTTPError is a non-2xx answer from POST /v1/stores/register
-// (ut-docs#3861). Error() keeps the text the log always had; callers that
-// show something to an operator branch on Status/Code (see IsServiceRefused)
-// instead of printing the raw body.
+// Failures the Settings card names on their own instead of "check the
+// internet connection" (ut-docs#3990).
+var (
+	// ErrNotConfigured: this till has no marketplace endpoint at all.
+	ErrNotConfigured = errors.New("marketplace endpoint is not configured")
+	// ErrAttemptBusy: another registration attempt held the slot until the
+	// caller's deadline; it wraps ctx.Err() too.
+	ErrAttemptBusy = errors.New("registration attempt did not start before the caller's deadline (slot held by another attempt)")
+	// ErrTillNotRegistered: this till has no store identity yet, so it has
+	// nothing to mint a claim code for.
+	ErrTillNotRegistered = errors.New("till is not registered with the marketplace yet")
+)
+
+// RegisterHTTPError is a non-2xx answer from one of the cloud's store
+// enrolment calls — POST /v1/stores/register (ut-docs#3861), claim-code and
+// devices/register (ut-docs#3990) — or a main till relaying the cloud's
+// refusal to a replica. Error() keeps the text the log always had; callers
+// that show something to an operator branch on Status/Code (see
+// IsServiceRefused) instead of printing the raw body.
 type RegisterHTTPError struct {
+	Op     string // the call, for the log text; empty means "register"
 	Status int
 	Code   string // the envelope's error.code; empty when the body is not that JSON
 	Body   string // already length-limited and trimmed
 }
 
 func (e *RegisterHTTPError) Error() string {
-	return fmt.Sprintf("register returned %d: %s", e.Status, e.Body)
+	op := e.Op
+	if op == "" {
+		op = "register"
+	}
+	return fmt.Sprintf("%s returned %d: %s", op, e.Status, e.Body)
 }
 
 func newRegisterHTTPError(status int, body string) *RegisterHTTPError {
+	return newCloudHTTPError("", status, body)
+}
+
+func newCloudHTTPError(op string, status int, body string) *RegisterHTTPError {
 	var env struct {
 		Error struct {
 			Code string `json:"code"`
@@ -305,14 +329,18 @@ func newRegisterHTTPError(status int, body string) *RegisterHTTPError {
 	}
 	// Best-effort: a non-JSON or truncated body just leaves Code empty.
 	_ = json.Unmarshal([]byte(body), &env)
-	return &RegisterHTTPError{Status: status, Code: env.Error.Code, Body: body}
+	return &RegisterHTTPError{Op: op, Status: status, Code: env.Error.Code, Body: body}
 }
+
+// ServiceRefusedCode is the cloud's error code for a shop it will not serve;
+// a main till relays it to its replicas under the same name (ut-docs#3990).
+const ServiceRefusedCode = "service_unavailable"
 
 // IsServiceRefused reports whether the cloud refused to serve this shop
 // (HTTP 403 with error code "service_unavailable").
 func IsServiceRefused(err error) bool {
 	var he *RegisterHTTPError
-	return errors.As(err, &he) && he.Status == http.StatusForbidden && he.Code == "service_unavailable"
+	return errors.As(err, &he) && he.Status == http.StatusForbidden && he.Code == ServiceRefusedCode
 }
 
 // RegisterNow performs one immediate, synchronous registration (and signing
@@ -325,7 +353,7 @@ func RegisterNow(ctx context.Context, cfg *config.Config, kv Settings) (Status, 
 	eff := Effective(cfg)
 	m := eff.Marketplace
 	if m.EndpointURL == "" {
-		return CurrentStatus(), fmt.Errorf("marketplace endpoint is not configured")
+		return CurrentStatus(), ErrNotConfigured
 	}
 	if !acquireAttempt(ctx) {
 		// acquireAttempt only returns false via ctx's own Done case, so
@@ -333,7 +361,7 @@ func RegisterNow(ctx context.Context, cfg *config.Config, kv Settings) (Status, 
 		// static string, so a caller can errors.Is(err,
 		// context.DeadlineExceeded) and so the message names the real
 		// cause (the attempt slot was held) instead of guessing.
-		return CurrentStatus(), fmt.Errorf("registration attempt did not start before the caller's deadline (slot held by another attempt): %w", ctx.Err())
+		return CurrentStatus(), fmt.Errorf("%w: %w", ErrAttemptBusy, ctx.Err())
 	}
 	defer releaseAttempt()
 	var firstErr error
@@ -790,7 +818,7 @@ func ClaimCode(ctx context.Context, cfg *config.Config) (ClaimInfo, error) {
 	m := eff.Marketplace
 	storeID, token := currentStoreAuth(m)
 	if m.EndpointURL == "" || storeID == "" || token == "" {
-		return ClaimInfo{}, fmt.Errorf("till is not registered with the marketplace yet")
+		return ClaimInfo{}, ErrTillNotRegistered
 	}
 	claimCodeCache.Lock()
 	if claimCodeCache.storeID == storeID && time.Now().Before(claimCodeCache.until) {
@@ -817,7 +845,7 @@ func ClaimCode(ctx context.Context, cfg *config.Config) (ClaimInfo, error) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return ClaimInfo{}, fmt.Errorf("claim-code returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return ClaimInfo{}, newCloudHTTPError("claim-code", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var envelope struct {
 		Data struct {
@@ -967,7 +995,7 @@ func registerDeviceID(ctx context.Context, m config.MarketplaceConfig, deviceID,
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return "", fmt.Errorf("device register returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return "", newCloudHTTPError("device register", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	logging.L().Infof("enrolment: till registered as device %s under store %s", deviceID, storeID)
 	var answer struct {

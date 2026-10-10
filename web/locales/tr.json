@@ -3192,5 +3192,8 @@
   "subscription.cap.browser_catalog": "Ürünleri tarayıcıdan yönetme",
   "subscription.cap.managed_tse": "Yönetilen TSE (kurulum ve yenileme)",
   "subscription.cap.central_catalog": "Tüm mağazalarınız için tek ürün kataloğu",
-  "subscription.cap.consolidated_reporting": "Mağazalarınızın birleşik raporları"
+  "subscription.cap.consolidated_reporting": "Mağazalarınızın birleşik raporları",
+  "settings.enrol.claim_failed": "Sahiplenme kodu alınamadı — internet bağlantısını kontrol edip yeniden deneyin.",
+  "settings.enrol.not_configured": "Bu kasada bulut adresi ayarlanmamış, bu yüzden kaydolamıyor. Kasa çevrimdışı çalışmaya devam eder; kurulumu yapan kişiden bir adres ayarlamasını isteyin.",
+  "settings.enrol.busy": "Başka bir kayıt denemesi hâlâ sürüyor — biraz bekleyip yeniden deneyin."
 }

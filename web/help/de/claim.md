@@ -14,7 +14,7 @@ Die Registrierung verbindet Ihre Kasse mit dem Universal-Till-Marktplatz; die Be
 ## Verwendung
 
 1. Einstellungen → Kassenregistrierung zeigt die Geschäftsidentität; „Jetzt registrieren“ verbindet sie bei Bedarf. Auf einer verbundenen Kasse registriert die Hauptkasse sie für Sie: Diese Karte meldet dann, dass sie über die Hauptkasse registriert ist, und das Beanspruchen erfolgt an der Hauptkasse.
-2. Klicken Sie auf „Dieses Geschäft beanspruchen“, um einen kurzen Code (15 Minuten gültig) und einen QR-Code zu erhalten — scannen Sie ihn mit Ihrem Telefon, um von dort aus zu beanspruchen.
+2. Klicken Sie auf „Dieses Geschäft übernehmen“, um einen kurzen Code (15 Minuten gültig) und einen QR-Code zu erhalten — scannen Sie ihn mit Ihrem Telefon, um von dort aus zu beanspruchen.
 3. Melden Sie sich mit Ihrer Universal-Till-ID im Marktplatz an, öffnen Sie die Beanspruchungsseite und geben Sie den Code ein.
 
 ## Automatische Registrierung — Ihre Wahl bei der Einrichtung
@@ -51,6 +51,15 @@ Lehnt die Cloud die Zugangsdaten dieser Kasse dreimal hintereinander ab, erschei
 - **Als neues Geschäft registrieren**: Das Geschäft hat kein Inhaberkonto, daher kann die Kasse nicht gekoppelt werden. Registrieren Sie sie neu als neues Geschäft; nur der alte Kassenverlauf geht verloren.
 
 Ein Manager öffnet mit einem Tipp auf den Hinweis Einstellungen → Kassenregistrierung. Der Hinweis verschwindet nach dem nächsten erfolgreichen Kontakt mit der Cloud.
+
+## Wenn „Jetzt registrieren“ oder „Dieses Geschäft übernehmen“ fehlschlägt
+
+Die Karte nennt die Ursache in einer Zeile; der Verkauf ist nie betroffen:
+
+- **Universal Till Cloud ist für dieses Geschäft nicht verfügbar**: Die Cloud bedient dieses Geschäft nicht. Auf einer verbundenen Kasse kommt diese Meldung von der Hauptkasse. Die Kasse arbeitet offline weiter.
+- **Auf dieser Kasse ist keine Cloud-Adresse eingerichtet**: Die Kasse wurde ohne Cloud-Adresse installiert und kann sich daher nicht registrieren. Bitten Sie die Person, die sie installiert hat, eine einzurichten.
+- **Ein anderer Registrierungsversuch läuft noch**: Die Kasse registriert sich bereits im Hintergrund. Warten Sie kurz und versuchen Sie es erneut.
+- **Registrierung fehlgeschlagen** oder **Der Übernahmecode konnte nicht abgerufen werden**: Die Kasse hat die Cloud nicht erreicht. Prüfen Sie die Internetverbindung und versuchen Sie es erneut.
 
 ## Mit einem Geschäft koppeln (und neu koppeln)
 

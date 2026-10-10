@@ -3192,5 +3192,8 @@
   "subscription.cap.browser_catalog": "Managing products from a browser",
   "subscription.cap.managed_tse": "Managed TSE (set-up and renewal)",
   "subscription.cap.central_catalog": "One product catalogue for all your shops",
-  "subscription.cap.consolidated_reporting": "Combined reports across your shops"
+  "subscription.cap.consolidated_reporting": "Combined reports across your shops",
+  "settings.enrol.claim_failed": "Could not get a claim code — check the internet connection and try again.",
+  "settings.enrol.not_configured": "No cloud address is set up on this till, so it can't register. The till keeps working offline; ask whoever installed it to set one up.",
+  "settings.enrol.busy": "Another registration attempt is still running — wait a moment and try again."
 }

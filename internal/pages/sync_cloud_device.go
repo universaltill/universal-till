@@ -93,6 +93,13 @@ func registerSyncCloudDevice(mux *http.ServeMux, d *common.Deps) {
 		case errors.Is(err, enroll.ErrNotRegistered):
 			fail(w, http.StatusConflict, "main_till_not_registered")
 			return
+		case enroll.IsServiceRefused(err):
+			// ut-docs#3990: the replica says why instead of "check the
+			// internet connection". Only the code crosses the LAN, never
+			// the cloud's message.
+			logging.L().Warnf("cloud device registration for replica till %s: %v", till.ID, err)
+			fail(w, http.StatusForbidden, enroll.ServiceRefusedCode)
+			return
 		default:
 			logging.L().Warnf("cloud device registration for replica till %s: %v", till.ID, err)
 			fail(w, http.StatusBadGateway, "cloud_unavailable")

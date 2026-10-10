@@ -52,6 +52,15 @@ If the cloud refuses this till's credential three times in a row, a chip appears
 
 A manager can tap the chip to open Settings → Till registration, straight to Pair with a shop below. The chip goes away after the next successful contact with the cloud.
 
+## When Register now or Claim this store fails
+
+The card says what went wrong in one line; selling is never affected:
+
+- **The Universal Till cloud is not available for this shop**: the cloud does not serve this shop. On a joined till this comes from the main till. The till keeps working offline.
+- **No cloud address is set up on this till**: the till was installed without a cloud address, so it can't register. Ask whoever installed it to set one up.
+- **Another registration attempt is still running**: the till is already registering in the background. Wait a moment and try again.
+- **Registration failed** or **Could not get a claim code**: the till could not reach the cloud. Check the internet connection and try again.
+
 ## Pair with a shop (and re-pairing)
 
 Use this when the shop already exists in the Universal Till cloud and this till should join it, or when a till was removed from the shop's cloud account or says it needs pairing again.

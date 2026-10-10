@@ -331,3 +331,35 @@ func TestSyncCloudDevice_RelaysRedeemCode(t *testing.T) {
 		t.Fatalf("vouch answer carries a token: %s", rec.Body.String())
 	}
 }
+
+// ut-docs#3990: when the cloud refuses the main till's shop, the main till
+// tells the replica so (403 service_unavailable) instead of a generic 502,
+// so the replica's Settings card can say why.
+func TestSyncCloudDevice_RelaysServiceRefusal(t *testing.T) {
+	dp := newMigratedSyncDeps(t, "primary.db")
+	if _, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Back office", hashBearer("token-abc")); err != nil {
+		t.Fatalf("enrol till: %v", err)
+	}
+	cloud := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"data":null,"error":{"code":"service_unavailable","message":"Shops in XX are not served"}}`))
+	}))
+	t.Cleanup(cloud.Close)
+	dp.Cfg = enrolMainTill(t, cloud.URL)
+	mux := http.NewServeMux()
+	registerSyncCloudDevice(mux, dp)
+
+	rec := postCloudDevice(t, mux, "token-abc", "till-replica")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.Error != "service_unavailable" {
+		t.Fatalf("answer = %s (err %v), want error service_unavailable", rec.Body.String(), err)
+	}
+	if strings.Contains(rec.Body.String(), "not served") {
+		t.Fatalf("answer relays the cloud's reason: %s", rec.Body.String())
+	}
+}
