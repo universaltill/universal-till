@@ -43,3 +43,18 @@ Terminology checked against `web/locales/*.json` and `web/help/*`: Open orders, 
 ## Verdict
 
 Safe to merge, then release v0.31.6.
+
+## Re-cut after the cancelled release (lane:cloud-54)
+
+Release run 38031306576's `windows-installer` hung in "Build osslsigncode" until GitHub's 6 h timeout. `cleanup-orphaned-tag` then removed the v0.31.6 tag and draft. The release-job timeouts are now bounded by #1837 (ut-docs#4059). The re-cut ships from current `main`, so the notes gained:
+- Improved: net:validation grants described as unencrypted on the store card (#1840, ut-docs#3515); price-only plugins can ask for the smaller `view:shop` permission (#1841, ut-docs#4045).
+- Fixed: Claim this store / Pair with a shop show translated messages (#1836 ut-docs#3990, #1839 ut-docs#4058); the additional-till update line also covers the main till's automatic updates being off (#1835, ut-docs#4031).
+
+| # | Severity | Finding (Fable review) | Outcome |
+|---|---|---|---|
+| 12 | Medium | Registration bullet put no-cloud-address / busy / replica-refusal messages on Claim this store; they are Register now and Pair with a shop (replica refusal: Register now only); "from the cloud" overstated for Pair | **Fixed** in all five |
+| 13 | Low/Medium | Price-only bullet read as if installed plugins stop asking today; v2 is opt-in for the plugin developer; omitted "this till's name" | **Fixed** in all five |
+| 14 | Low | de/ar/fa/tr hardened "is expected to check signatures" into "must" (#1840 changed de help for exactly this) | **Fixed** |
+| 15 | Info | The de pack lacks `plugins.permissions.desc.net_validation` / `.view_shop`, so German owners see those two store-card lines in English until the pack follow-up lands | Not a notes defect; noted for the #1840/#1841 follow-ups |
+
+`guard-release-notes.sh v0.31.6`, `go test ./internal/releasenotes`, compliance and competitor-naming guards pass.
