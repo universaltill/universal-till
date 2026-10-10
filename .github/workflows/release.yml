@@ -37,7 +37,7 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       tag: ${{ steps.v.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: v
@@ -147,10 +147,10 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Install GTK/WebKit dev headers
@@ -165,7 +165,7 @@ jobs:
             -ldflags "-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION}" \
             -o unitill-desktop ./cmd/unitill-desktop
           file unitill-desktop
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-shell-${{ matrix.arch }}
           path: unitill-desktop
@@ -185,11 +185,11 @@ jobs:
     # still bounding a genuine hang to a fraction of GitHub's 360m default.
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ needs.prepare.outputs.tag }}
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Run tests before releasing
@@ -216,19 +216,19 @@ jobs:
       id-token: write # OIDC for azure/login; job-scoped, so this job's actions are SHA-pinned
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ needs.prepare.outputs.tag }}
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       # The Linux archives/.deb carry the prebuilt desktop shells.
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: linux-shell-amd64
           path: dist-shells/linux-amd64
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: linux-shell-arm64
           path: dist-shells/linux-arm64
@@ -350,7 +350,7 @@ jobs:
     outputs:
       exe_sha256: ${{ steps.build.outputs.exe_sha256 }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.tag }}
       - name: Wait for the GitHub release to exist
@@ -444,11 +444,11 @@ jobs:
     outputs:
       dmg_sha256: ${{ steps.dmg.outputs.dmg_sha256 }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ needs.prepare.outputs.tag }}
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       # Gate before the (slow) build: the .dmg needs a release to attach to.
@@ -559,13 +559,13 @@ jobs:
           hdiutil detach -quiet -force "$mnt" || true
           [ "$fail" = 0 ]
           echo "dmg_sha256=$(shasum -a 256 "$dmg" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos-dmg
           path: dist/macos/unitill-pos-${{ needs.prepare.outputs.version }}-macOS-arm64.dmg
           if-no-files-found: error
           retention-days: 14
-          # A re-run of this job must be able to replace the artifact (v4
+          # A re-run of this job must be able to replace the artifact (v4+
           # answers 409 on a duplicate name otherwise) — ut-docs#2917 review.
           overwrite: true
 
@@ -585,13 +585,13 @@ jobs:
     outputs:
       apk_sha256: ${{ steps.attach.outputs.apk_sha256 }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
@@ -773,7 +773,7 @@ jobs:
       # full 30-attempt/10-minute timeout. Found by this job failing that
       # way on its first real run — see docs/code-reviews/2026-07-28-verify-
       # release-versions.md's follow-up note.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
       # Only needed for the Android check below (`go version -m` reads a Go
@@ -781,7 +781,7 @@ jobs:
       # GOOS/GOARCH from any host, no cross-compiler needed, just a `go`
       # binary on PATH). Every other check in this job is a prebuilt-artifact
       # inspection that doesn't touch Go tooling at all.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Wait for the GitHub release to exist
@@ -969,7 +969,7 @@ jobs:
     permissions:
       contents: write # needed to see the draft release by tag — see verify-versions' comment
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
       - name: Wait for the GitHub release to exist
@@ -1086,7 +1086,7 @@ jobs:
       # workflow_dispatch / repository_dispatch.
       actions: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Publish the release (undraft) now that every pre-publish platform succeeded
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1117,10 +1117,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.prepare.outputs.tag }}
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: macos-dmg
           path: dist/macos
@@ -1216,7 +1216,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Delete the orphaned tag and any draft release
         env:
           GH_TOKEN: ${{ github.token }}

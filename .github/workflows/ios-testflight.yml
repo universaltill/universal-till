@@ -61,7 +61,7 @@ jobs:
     # to process it (the tester check below, ut-docs#3217) + 20 slack.
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Tags, for `git describe` on a dispatch.
           fetch-depth: 0
@@ -105,7 +105,7 @@ jobs:
           echo "MARKETING_VERSION=$version" >> "$GITHUB_ENV"
           echo "BUILD_NUMBER=$build" >> "$GITHUB_ENV"
           echo "### TestFlight upload: Universal Till $version ($build)" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: Install gomobile/gobind and XcodeGen

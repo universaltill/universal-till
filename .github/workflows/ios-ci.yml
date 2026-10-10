@@ -22,7 +22,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fetch diff base
         # `|| true`: a new branch or a force-pushed `before` has nothing to
         # fetch — handled as "can't prove it's unrelated" below.
@@ -50,7 +50,7 @@ jobs:
           else
             echo "match=false" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         if: steps.filter.outputs.match == 'true'
         with:
           go-version-file: go.mod
@@ -91,7 +91,7 @@ jobs:
         run: bash scripts/ci/ios-sim-smoke.sh ios/build/dd/Build/Products/Debug-iphonesimulator/UniversalTill.app ios/build/shots
       - name: Upload simulator screenshots
         if: always() && steps.filter.outputs.match == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ios-simulator-screenshots
           path: ios/build/shots
