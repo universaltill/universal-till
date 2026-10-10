@@ -202,7 +202,7 @@
                         <span class="btn-ico" aria-hidden="true">{{ if eq $ac "accepted" }}{{ icon "check" }}{{ else }}{{ icon "user" }}{{ end }}</span>
                         <span>{{ $badge }}</span>
                       </button>
-                      <dialog class="modifier-modal age-check-sheet" aria-label="{{ T "age_check.prompt" }}"{{ if $open }} data-age-check-autoopen{{ end }}>
+                      <dialog class="modifier-modal age-check-sheet" aria-label="{{ T "age_check.prompt" }}" data-ut-focus-trap{{ if $open }} data-age-check-autoopen{{ end }}>
                         <p class="age-check-sheet-prompt">{{ T "age_check.prompt" }} {{ helpLink "age-restricted-sales" }}</p>
                         <p class="age-check-sheet-item">{{ .Name }}</p>
                         {{ if eq $ac "refused" }}<p class="age-check-refused-hint" role="alert">{{ T "age_check.refused_hint" }}</p>{{ end }}
@@ -356,7 +356,7 @@
                      zero-value button above. */}}
                 <div class="shrinkage-remove">
                   <button type="button" class="btn danger btn-x shrinkage-remove-toggle" title="{{ T "basket.remove" }}" aria-haspopup="dialog" aria-expanded="false">✕</button>
-                  <dialog class="modifier-modal shrinkage-sheet">
+                  <dialog class="modifier-modal shrinkage-sheet" data-ut-focus-trap>
                     <p class="shrinkage-sheet-prompt">{{ T "shrinkage.prompt" }}</p>
                     <div class="shrinkage-sheet-actions">
                       <button type="button" class="btn danger" hx-post="/api/pos/remove" hx-vals='{{ jsonVals "key" .LineKey "reason" "void" }}' hx-target="#shrinkage-hint" hx-swap="innerHTML" hx-sync="#basket:replace">{{ T "shrinkage.reason.void" }}</button>

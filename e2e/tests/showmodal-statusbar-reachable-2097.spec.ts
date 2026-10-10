@@ -461,3 +461,143 @@ test.describe('ut-docs#3212 older non-modal till dialogs trap Tab like the #2097
     assertClean();
   });
 });
+
+// ut-docs#4028: the remaining older .show() dialogs opt into the same trap
+// (data-ut-focus-trap only -- their Escape behaviour is unchanged). The
+// [data-record-dialog] dialogs are NOT here: record-dialog.js has its own
+// Tab trap + focusin backstop.
+test.describe('ut-docs#4028 remaining non-modal till dialogs trap Tab', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 600 });
+    await page.request.post('/api/pos/reset');
+  });
+  test.afterEach(async ({ page }) => {
+    await page.request.post('/api/pos/reset').catch(() => {});
+  });
+
+  test('#table-add-modal (tables)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await deactivateAllTables(page);
+    await createTable(page, `T4028 ${RUN}`);
+    try {
+      await page.goto('/tables');
+      // The floor plan's edit mode: tapping empty canvas opens the dialog
+      // (tables-tap-to-add-1025.spec.ts).
+      await page.locator('#tables-edit-toggle').click();
+      const bg = page.locator('.floorplan-bg');
+      const box = await bg.boundingBox();
+      await bg.click({ position: { x: box!.width * 0.15, y: box!.height * 0.2 } });
+      await assertFocusTrapped(page, '#table-add-modal');
+      assertClean();
+    } finally {
+      await deactivateAllTables(page);
+    }
+  });
+
+  test('#item-form-modal, #import-modal, #tax-codes-modal (catalog)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.goto('/items');
+    await page.locator('#item-form-add-btn').click();
+    await assertFocusTrapped(page, '#item-form-modal');
+    await page.locator('#item-form-close-btn').click();
+    await expect(page.locator('#item-form-modal')).toBeHidden();
+
+    await page.locator('#catalog-import-btn').click();
+    await assertFocusTrapped(page, '#import-modal');
+    await page.locator('#import-modal').locator('.page-head a', { hasText: '←' }).click();
+    await expect(page.locator('#import-modal')).toBeHidden();
+
+    await page.locator('#catalog-taxcodes-btn').click();
+    await assertFocusTrapped(page, '#tax-codes-modal');
+    assertClean();
+  });
+
+  test('#stock-dialog (inventory) still closes on Escape', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.goto('/inventory');
+    await page.locator('#stock-table .stock-row[data-variant=""]').first().locator('td').first().click();
+    await assertFocusTrapped(page, '#stock-dialog');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#stock-dialog')).toBeHidden();
+    assertClean();
+  });
+
+  test('.shrinkage-sheet (basket line remove)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.goto('/');
+    await page.waitForSelector('.pos-container');
+    await page.locator('.scan-row input[name="code"]').fill('5000000000012');
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
+      page.locator('.scan-row button[type=submit]').click(),
+    ]);
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
+    await page.locator('#basket-lines .shrinkage-remove-toggle').first().click();
+    await page.evaluate(() => document.querySelector('.shrinkage-sheet')!.id = 'shrinkage-4028');
+    await assertFocusTrapped(page, '#shrinkage-4028');
+    assertClean();
+  });
+
+  test('.age-check-sheet (age-restricted basket line)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    const name = `Age4028 ${RUN}`;
+    const barcode = '5009990040282';
+    await page.goto('/catalog');
+    await page.locator('#item-form-add-btn').click();
+    await page.locator('#item-barcode').fill(barcode);
+    await page.locator('#item-name').fill(name);
+    await page.locator('#item-price').fill('3.00');
+    await page.locator('#item-age-restricted').check();
+    await page.locator('#item-form-submit').click();
+    await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
+    try {
+      await page.goto('/');
+      await page.waitForSelector('.pos-container');
+      await page.locator('.scan-row input[name="code"]').fill(barcode);
+      await Promise.all([
+        page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
+        page.locator('.scan-row button[type=submit]').click(),
+      ]);
+      await expect(page.locator('#basket')).toContainText(name);
+      await page.locator('#basket-lines .age-check-toggle').first().click();
+      await page.evaluate(() => document.querySelector('.age-check-sheet[open]')!.id = 'age-check-4028');
+      await assertFocusTrapped(page, '#age-check-4028');
+      assertClean();
+    } finally {
+      await page.request.post('/api/pos/reset').catch(() => {});
+      await page.goto('/catalog');
+      const id = await page.locator('.catalog-row', { hasText: name }).first().getAttribute('data-id');
+      if (id) await page.request.post('/api/catalog/item/deactivate', { form: { id } });
+    }
+  });
+
+  test('#category-overflow-dialog (sale screen)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.goto('/');
+    await page.waitForSelector('.pos-container');
+    await page.evaluate(() => (document.getElementById('category-overflow-dialog') as HTMLDialogElement).show());
+    await assertFocusTrapped(page, '#category-overflow-dialog');
+    // Alpine's trapOverflowTab and base.html's trap both handle Tab here:
+    // from the last control it still wraps to the first. (Either handler
+    // alone lands on the same control, so this checks the wrap survives
+    // both, not which one ran -- the pull-back above is what fails
+    // without data-ut-focus-trap.)
+    const wrapped = await page.evaluate(async () => {
+      const d = document.getElementById('category-overflow-dialog')!;
+      const list = Array.from(d.querySelectorAll('button, [href], input, select, textarea, [tabindex]'))
+        .filter((el) => !(el as HTMLElement).hidden && (el as HTMLElement).getClientRects().length > 0) as HTMLElement[];
+      list[list.length - 1].focus();
+      return list.length;
+    });
+    expect(wrapped).toBeGreaterThan(1);
+    await page.keyboard.press('Tab');
+    const idx = await page.evaluate(() => {
+      const d = document.getElementById('category-overflow-dialog')!;
+      const list = Array.from(d.querySelectorAll('button, [href], input, select, textarea, [tabindex]'))
+        .filter((el) => !(el as HTMLElement).hidden && (el as HTMLElement).getClientRects().length > 0);
+      return list.indexOf(document.activeElement as Element);
+    });
+    expect(idx, 'Tab from the last control wraps to the first').toBe(0);
+    assertClean();
+  });
+});
