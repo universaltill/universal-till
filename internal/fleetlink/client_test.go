@@ -382,7 +382,7 @@ func TestClient_PairingAcceptedRefusedAgainWarnsOncePerEpisode(t *testing.T) {
 		c.PairingAccepted()
 		want := int32(i)
 		waitFor(t, "redialled after PairingAccepted", func() bool { return h.dials.Load() >= want })
-		waitFor(t, "revoked again", func() bool { return c.Status().Mode == ModeRevoked })
+		waitFor(t, "revoked again", func() bool { tgt, _ := tt.get(context.Background()); return c.isRevoked(tgt) })
 	}
 	if _, _, _, r := rec.get(); r != 1 {
 		t.Fatalf("OnRevoked fired %d times in one refusal episode, want 1", r)

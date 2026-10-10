@@ -365,11 +365,13 @@ func (c *Client) isRevoked(t Target) bool {
 }
 
 func (c *Client) markRevoked(ctx context.Context, t Target) {
-	c.setMode(ModeRevoked)
+	// State before mode: a PairingAccepted that sees ModeRevoked must also
+	// see revokedFor, or its redial is lost (ut-docs#3590's order).
 	c.mu.Lock()
 	first := c.warnedFor == nil || *c.warnedFor != t
 	c.revokedFor, c.warnedFor = &t, &t
 	c.mu.Unlock()
+	c.setMode(ModeRevoked)
 	if first && c.opts.OnRevoked != nil {
 		c.opts.OnRevoked(ctx)
 	}
@@ -378,8 +380,8 @@ func (c *Client) markRevoked(ctx context.Context, t Target) {
 // PairingAccepted tells the client the main till accepted this till's
 // current bearer elsewhere — an HTTP pull with it succeeded — so a refusal
 // that stopped the link was transient (the main till mid-restore, say):
-// forget it and redial now (ut-docs#4044). A no-op unless the link is
-// stopped as revoked. Non-blocking; safe for concurrent use.
+// forget it and redial now (ut-docs#4044). A no-op unless a refusal is
+// recorded. Non-blocking; safe for concurrent use.
 func (c *Client) PairingAccepted() {
 	c.mu.Lock()
 	was := c.revokedFor != nil
