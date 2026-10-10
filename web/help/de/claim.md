@@ -59,7 +59,7 @@ Die Karte nennt die Ursache in einer Zeile; der Verkauf ist nie betroffen:
 - **Universal Till Cloud ist für dieses Geschäft nicht verfügbar**: Die Cloud bedient dieses Geschäft nicht. Auf einer verbundenen Kasse kommt diese Meldung von der Hauptkasse. Die Kasse arbeitet offline weiter.
 - **Auf dieser Kasse ist keine Cloud-Adresse eingerichtet**: Die Kasse wurde ohne Cloud-Adresse installiert und kann sich daher nicht registrieren. Bitten Sie die Person, die sie installiert hat, eine einzurichten.
 - **Ein anderer Registrierungsversuch läuft noch**: Die Kasse registriert sich bereits im Hintergrund. Warten Sie kurz und versuchen Sie es erneut.
-- **Registrierung fehlgeschlagen** oder **Kein Übernahmecode erhalten**: Die Kasse hat die Cloud nicht erreicht. Prüfen Sie die Internetverbindung und versuchen Sie es erneut.
+- **Registrierung fehlgeschlagen** oder **Der Übernahmecode konnte nicht abgerufen werden**: Die Kasse hat die Cloud nicht erreicht. Prüfen Sie die Internetverbindung und versuchen Sie es erneut.
 
 ## Mit einem Geschäft koppeln (und neu koppeln)
 
