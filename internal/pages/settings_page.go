@@ -1135,7 +1135,18 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		info, err := enroll.ClaimCode(r.Context(), d.Cfg)
 		if err != nil {
-			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			// Same rule as "Register now" (ut-docs#3861, #3990): the raw
+			// reason — the cloud's English JSON, which can name why the shop
+			// is refused — is logged, never rendered.
+			logging.L().Warnf("claim code failed: %v", err)
+			key := "settings.enrol.claim_failed"
+			switch {
+			case enroll.IsServiceRefused(err):
+				key = "settings.enrol.service_unavailable"
+			case errors.Is(err, enroll.ErrTillNotRegistered):
+				key = "settings.enrol.not_registered"
+			}
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(httpx.T(locale, key)))
 			return
 		}
 		settingsAudit(r, posRepo, elev, "enrollment", "-", "claim_code_generated", nil)
@@ -1191,9 +1202,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			if err != nil {
 				logging.L().Warnf("enrol now failed: %v", err)
 			}
-			if enroll.IsServiceRefused(err) {
-				fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
-					html.EscapeString(httpx.T(locale, "settings.enrol.service_unavailable")))
+			if key := enrolFailureKey(err); key != "" {
+				fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, key)))
 				return
 			}
 			endpoint := html.EscapeString(enroll.Effective(d.Cfg).Marketplace.EndpointURL)
@@ -3697,4 +3707,20 @@ func resolveFiscalPostureKey(d *common.Deps, key string) (logical, storage strin
 		}
 	}
 	return key, key
+}
+
+// enrolFailureKey names the message for a "Register now" failure that is
+// not a network problem (ut-docs#3861, #3990), or "" for the generic
+// "check the internet connection" text. A replica's refusal arrives typed
+// from its main till, so IsServiceRefused covers both.
+func enrolFailureKey(err error) string {
+	switch {
+	case enroll.IsServiceRefused(err):
+		return "settings.enrol.service_unavailable"
+	case errors.Is(err, enroll.ErrNotConfigured):
+		return "settings.enrol.not_configured"
+	case errors.Is(err, enroll.ErrAttemptBusy):
+		return "settings.enrol.busy"
+	}
+	return ""
 }

@@ -64,6 +64,7 @@ type fakePrimary struct {
 	calls     atomic.Int32
 	fail      int32
 	failCode  int
+	failBody  string // written with failCode; empty = no body
 	leakToken bool
 	// entitlement, when set, rides in the answer as the main till's
 	// cached entitlement (ut-docs#2792).
@@ -87,6 +88,7 @@ func newFakePrimary(t *testing.T, fail int32, failCode int) *fakePrimary {
 		}
 		if n <= p.fail {
 			w.WriteHeader(p.failCode)
+			_, _ = w.Write([]byte(p.failBody))
 			return
 		}
 		var req map[string]string
@@ -523,5 +525,99 @@ func TestApplyRelayedEntitlementKeepsCache(t *testing.T) {
 	applyRelayedEntitlement(context.Background(), kv, valid)
 	if kv.get("entitlement.plan") != "pro" || kv.get("entitlement.last_confirmed_at") != "2026-09-20T10:00:00Z" {
 		t.Fatalf("a valid, newer relay was not applied: plan=%q confirmed=%q", kv.get("entitlement.plan"), kv.get("entitlement.last_confirmed_at"))
+	}
+}
+
+// ut-docs#3990: a main till whose own shop the cloud refuses answers the
+// replica 403 service_unavailable; the replica's RegisterNow error must say
+// so (IsServiceRefused), not look like a network failure.
+func TestRegisterNowOnReplicaCarriesMainTillsServiceRefusal(t *testing.T) {
+	resetState()
+	fastRetries(t)
+	srv, _ := testMarketplace(t, 0)
+	primary := newFakePrimary(t, 1, http.StatusForbidden)
+	primary.failBody = `{"data":null,"error":"service_unavailable"}`
+	kv := newFakeKV()
+	for k, v := range map[string]string{
+		"sync.primary_url": primary.srv.URL,
+		"sync.bearer":      "replica-bearer",
+		"sync.till_id":     "till-row-2",
+		keyPublicKey:       pinnedKey,
+	} {
+		_ = kv.Set(context.Background(), k, v)
+	}
+	cfg := freshConfig(srv.URL)
+	cfg.Marketplace.PublicKey = pinnedKey
+	initForTest(t, &config.Config{}, kv)
+
+	_, err := RegisterNow(context.Background(), cfg, kv)
+	if !IsServiceRefused(err) {
+		t.Fatalf("RegisterNow err = %v, want IsServiceRefused", err)
+	}
+}
+
+// Any other main-till failure (here an older main till's 502) stays a
+// generic error: only the explicit refusal code maps.
+func TestRegisterNowOnReplicaOtherMainTillFailureIsNotRefusal(t *testing.T) {
+	resetState()
+	fastRetries(t)
+	srv, _ := testMarketplace(t, 0)
+	primary := newFakePrimary(t, 1, http.StatusBadGateway)
+	primary.failBody = `{"data":null,"error":"cloud_unavailable"}`
+	kv := newFakeKV()
+	for k, v := range map[string]string{
+		"sync.primary_url": primary.srv.URL,
+		"sync.bearer":      "replica-bearer",
+		keyPublicKey:       pinnedKey,
+	} {
+		_ = kv.Set(context.Background(), k, v)
+	}
+	cfg := freshConfig(srv.URL)
+	cfg.Marketplace.PublicKey = pinnedKey
+	initForTest(t, &config.Config{}, kv)
+
+	_, err := RegisterNow(context.Background(), cfg, kv)
+	if err == nil || IsServiceRefused(err) {
+		t.Fatalf("RegisterNow err = %v, want a non-refusal error", err)
+	}
+}
+
+// The main till's side: the cloud refusing its devices/register call is a
+// typed refusal, so the LAN handler can relay it.
+func TestVouchForReplicaReportsServiceRefusal(t *testing.T) {
+	resetState()
+	cloud := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"data":null,"error":{"code":"service_unavailable","message":"not served"}}`))
+	}))
+	t.Cleanup(cloud.Close)
+	initForTest(t, mainTillCfg(cloud.URL), newFakeKV())
+	_, err := VouchForReplica(context.Background(), mainTillCfg(cloud.URL), ReplicaRequest{TillID: "till-row-2", DeviceID: "till-replica-1"})
+	if !IsServiceRefused(err) {
+		t.Fatalf("VouchForReplica err = %v, want IsServiceRefused", err)
+	}
+}
+
+// ut-docs#3990: RegisterNow's two non-network failures are sentinels the
+// Settings card can translate.
+func TestRegisterNowNotConfiguredIsSentinel(t *testing.T) {
+	resetState()
+	_, err := RegisterNow(context.Background(), &config.Config{}, newFakeKV())
+	if !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("err = %v, want ErrNotConfigured", err)
+	}
+}
+
+func TestRegisterNowBusySlotIsSentinel(t *testing.T) {
+	resetState()
+	if !acquireAttempt(context.Background()) {
+		t.Fatal("could not take the attempt slot")
+	}
+	defer releaseAttempt()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err := RegisterNow(ctx, freshConfig("http://127.0.0.1:1"), newFakeKV())
+	if !errors.Is(err, ErrAttemptBusy) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want ErrAttemptBusy wrapping DeadlineExceeded", err)
 	}
 }

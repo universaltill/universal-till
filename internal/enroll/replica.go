@@ -423,7 +423,18 @@ func (p primarySource) RequestVouch(ctx context.Context, deviceID, version strin
 		return Vouch{}, errPrimaryUnsupported
 	default:
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
-		return Vouch{}, fmt.Errorf("main till answered %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+		body := strings.TrimSpace(string(msg))
+		// The main till relays the cloud refusing its shop as 403
+		// {"error":"service_unavailable"} (ut-docs#3990); carry it typed so
+		// IsServiceRefused holds on this side too. Its envelope's error is a
+		// bare code string, unlike the cloud's {code,message} object.
+		var env struct {
+			Error string `json:"error"`
+		}
+		if resp.StatusCode == http.StatusForbidden && json.Unmarshal([]byte(body), &env) == nil && env.Error == ServiceRefusedCode {
+			return Vouch{}, &RegisterHTTPError{Op: "main till", Status: http.StatusForbidden, Code: ServiceRefusedCode, Body: body}
+		}
+		return Vouch{}, fmt.Errorf("main till answered %d: %s", resp.StatusCode, body)
 	}
 	var env struct {
 		Data Vouch `json:"data"`

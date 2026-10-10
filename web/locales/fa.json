@@ -3192,5 +3192,8 @@
   "subscription.cap.browser_catalog": "مدیریت کالاها از مرورگر",
   "subscription.cap.managed_tse": "TSE مدیریت‌شده (راه‌اندازی و تمدید)",
   "subscription.cap.central_catalog": "یک فهرست کالای مشترک برای همه فروشگاه‌ها",
-  "subscription.cap.consolidated_reporting": "گزارش‌های تجمیعی همه فروشگاه‌ها"
+  "subscription.cap.consolidated_reporting": "گزارش‌های تجمیعی همه فروشگاه‌ها",
+  "settings.enrol.claim_failed": "دریافت کد تصاحب ممکن نشد — اتصال اینترنت را بررسی کنید و دوباره تلاش کنید.",
+  "settings.enrol.not_configured": "هیچ نشانی ابری روی این صندوق تنظیم نشده است، بنابراین نمی‌تواند ثبت شود. صندوق همچنان آفلاین کار می‌کند؛ از کسی که آن را نصب کرده بخواهید نشانی را تنظیم کند.",
+  "settings.enrol.busy": "تلاش دیگری برای ثبت هنوز در جریان است — کمی صبر کنید و دوباره تلاش کنید."
 }

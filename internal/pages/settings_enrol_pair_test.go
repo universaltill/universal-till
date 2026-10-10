@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
@@ -262,5 +263,134 @@ func TestEnrolNow_OtherFailureShowsGenericMessageNotRawBody(t *testing.T) {
 	}
 	if !strings.Contains(body, "(") || !strings.Contains(body, "127.0.0.1") {
 		t.Fatalf("generic failure should still name the endpoint tried: %s", body)
+	}
+}
+
+// ut-docs#3990: "Show claim code" on a registered till whose shop the cloud
+// refuses (or any other cloud failure) prints a translated message, never
+// the cloud's body.
+func claimCodeDeps(t *testing.T, status int, body string) (*http.ServeMux, *common.Deps, string) {
+	t.Helper()
+	mux, _, d := newFullAuthDeps(t)
+	cloud := http.NewServeMux()
+	cloud.HandleFunc("POST /api/v1/stores/claim-code", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	})
+	srv := httptest.NewServer(cloud)
+	t.Cleanup(srv.Close)
+	cfg := &config.Config{Marketplace: config.MarketplaceConfig{
+		EndpointURL: srv.URL + "/api", StoreID: "store-claim-3990", MerchantToken: "claim-store-token",
+		DeviceID: "till-main", PublicKey: strings.Repeat("ab", 32),
+	}}
+	enroll.Init(t.Context(), cfg, newMemKV(), &sync.WaitGroup{})
+	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
+	d.Cfg.Marketplace = cfg.Marketplace
+	return mux, d, srv.URL
+}
+
+func TestClaimCode_ServiceRefusedShowsTranslatedMessageOnly(t *testing.T) {
+	mux, _, cloudURL := claimCodeDeps(t, http.StatusForbidden,
+		`{"data":null,"error":{"code":"service_unavailable","message":"Shops in XX are not served"}}`)
+	rec := postForm(mux, "/api/enrol/claim-code", url.Values{}, &mgrUser)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, `class="error"`) {
+		t.Fatalf("refused claim code = %d %s, want 200 with the failure span", rec.Code, body)
+	}
+	if !strings.Contains(body, "The Universal Till cloud is not available for this shop. The till keeps working offline.") {
+		t.Fatalf("missing the service-unavailable message: %s", body)
+	}
+	for _, bad := range []string{"claim-code returned", "{", "&#34;", "service_unavailable", "not served", cloudURL} {
+		if strings.Contains(body, bad) {
+			t.Fatalf("body leaks %q: %s", bad, body)
+		}
+	}
+}
+
+func TestClaimCode_OtherFailureShowsGenericMessageNotRawBody(t *testing.T) {
+	mux, _, _ := claimCodeDeps(t, http.StatusInternalServerError, `{"error":{"code":"internal","message":"db exploded <b>"}}`)
+	rec := postForm(mux, "/api/enrol/claim-code", url.Values{}, &mgrUser)
+	body := rec.Body.String()
+	if !strings.Contains(body, "Could not get a claim code") {
+		t.Fatalf("missing the generic claim failure text: %s", body)
+	}
+	for _, bad := range []string{"claim-code returned", "{", "&#34;", "db exploded", "&lt;b&gt;", "not available for this shop"} {
+		if strings.Contains(body, bad) {
+			t.Fatalf("body leaks %q: %s", bad, body)
+		}
+	}
+}
+
+func TestClaimCode_UnregisteredTillSaysNotRegistered(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	enroll.Init(t.Context(), &config.Config{}, newMemKV(), &sync.WaitGroup{})
+	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
+	d.Cfg.Marketplace = config.MarketplaceConfig{}
+	rec := postForm(mux, "/api/enrol/claim-code", url.Values{}, &mgrUser)
+	body := rec.Body.String()
+	if !strings.Contains(body, "This till is not registered yet.") || strings.Contains(body, "marketplace yet") {
+		t.Fatalf("unregistered claim = %s, want the translated not-registered text only", body)
+	}
+}
+
+// ut-docs#3990: "Register now" with no cloud address configured, or while
+// another attempt holds the slot, says what is actually wrong instead of
+// "check the internet connection".
+func TestEnrolNow_NotConfiguredHasOwnMessage(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	enroll.Init(t.Context(), &config.Config{}, d.Settings, &sync.WaitGroup{})
+	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
+	d.Cfg.Marketplace.EndpointURL = ""
+	rec := postForm(mux, "/api/enrol/now", url.Values{}, &mgrUser)
+	body := rec.Body.String()
+	if !strings.Contains(body, "No cloud address is set up on this till") {
+		t.Fatalf("missing the not-configured text: %s", body)
+	}
+	for _, bad := range []string{"check the internet connection", "not configured", "marketplace endpoint"} {
+		if strings.Contains(body, bad) {
+			t.Fatalf("body has %q: %s", bad, body)
+		}
+	}
+}
+
+func TestEnrolNow_BusySlotHasOwnMessage(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	cloud := http.NewServeMux()
+	cloud.HandleFunc("POST /api/v1/stores/register", func(w http.ResponseWriter, _ *http.Request) {
+		entered <- struct{}{}
+		<-release
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	srv := httptest.NewServer(cloud)
+	t.Cleanup(srv.Close)
+	enroll.Init(t.Context(), &config.Config{}, d.Settings, &sync.WaitGroup{})
+	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
+	d.Cfg.Marketplace.EndpointURL = srv.URL + "/api"
+
+	// A first attempt holds the slot inside the (blocked) cloud call.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = enroll.RegisterNow(context.Background(), d.Cfg, d.Settings)
+	}()
+	<-entered
+	t.Cleanup(func() { close(release); <-done })
+
+	form := url.Values{}
+	req := httptest.NewRequest(http.MethodPost, "/api/enrol/now", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, mgrUser)
+	ctx, cancel := context.WithTimeout(req.Context(), 50*time.Millisecond)
+	defer cancel()
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req.WithContext(ctx))
+	body := rec.Body.String()
+	if !strings.Contains(body, "Another registration attempt is still running") {
+		t.Fatalf("missing the busy text: %s", body)
+	}
+	if strings.Contains(body, "check the internet connection") || strings.Contains(body, "slot held") {
+		t.Fatalf("busy answer = %s, want only the busy text", body)
 	}
 }

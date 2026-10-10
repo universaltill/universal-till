@@ -52,6 +52,15 @@ Bulut bu kasanın kimlik bilgisini art arda üç kez reddederse durum çubuğund
 
 Bir yönetici uyarıya dokunarak Ayarlar → Kasa kaydı'nı açabilir. Uyarı, bulutla bir sonraki başarılı bağlantıdan sonra kaybolur.
 
+## Şimdi kaydol veya Bu mağazayı sahiplen başarısız olduğunda
+
+Kart sorunu tek satırda söyler; satış hiçbir zaman etkilenmez:
+
+- **Universal Till bulutu bu mağaza için kullanılamıyor**: bulut bu mağazaya hizmet vermiyor. Katılmış bir kasada bu mesaj ana kasadan gelir. Kasa çevrimdışı çalışmaya devam eder.
+- **Bu kasada bulut adresi ayarlanmamış**: kasa bulut adresi olmadan kuruldu, bu yüzden kaydolamıyor. Kurulumu yapan kişiden bir adres ayarlamasını isteyin.
+- **Başka bir kayıt denemesi hâlâ sürüyor**: kasa zaten arka planda kaydoluyor. Biraz bekleyip yeniden deneyin.
+- **Kayıt başarısız** veya **Sahiplenme kodu alınamadı**: kasa buluta ulaşamadı. İnternet bağlantısını kontrol edip yeniden deneyin.
+
 ## Bir mağazayla eşleştirme (ve yeniden eşleştirme)
 
 Mağaza Universal Till bulutunda zaten varsa ve bu kasanın ona katılması gerekiyorsa ya da bir kasa mağazanın bulut hesabından kaldırıldıysa veya yeniden eşleştirilmesi gerektiğini söylüyorsa bunu kullanın.

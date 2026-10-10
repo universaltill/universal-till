@@ -3192,5 +3192,8 @@
   "subscription.cap.browser_catalog": "إدارة المنتجات من المتصفح",
   "subscription.cap.managed_tse": "TSE مُدار (الإعداد والتجديد)",
   "subscription.cap.central_catalog": "كتالوج منتجات واحد لكل متاجرك",
-  "subscription.cap.consolidated_reporting": "تقارير مجمّعة لكل متاجرك"
+  "subscription.cap.consolidated_reporting": "تقارير مجمّعة لكل متاجرك",
+  "settings.enrol.claim_failed": "تعذّر الحصول على رمز الربط — تحقق من اتصال الإنترنت وحاول مجدداً.",
+  "settings.enrol.not_configured": "لم يُضبط عنوان سحابي على هذا الصندوق، لذا لا يمكنه التسجيل. يواصل الصندوق العمل دون اتصال؛ اطلب ممن ثبّته أن يضبط عنواناً.",
+  "settings.enrol.busy": "محاولة تسجيل أخرى ما زالت جارية — انتظر قليلاً وحاول مجدداً."
 }
