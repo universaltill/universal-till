@@ -263,6 +263,41 @@ func TestFollowCanInstall(t *testing.T) {
 	}
 }
 
+// ut-docs#4053: Settings says "follows" only in a state where this till
+// will install the main till's version by itself.
+func TestFollowLine(t *testing.T) {
+	base := followInputs{Replica: true, This: "1.3.0", Target: "1.4.0", Supported: true, ChecksOn: true}
+	with := func(f func(*followInputs)) followInputs { in := base; f(&in); return in }
+	for _, c := range []struct {
+		name string
+		in   followInputs
+		want string
+	}{
+		{"behind, can follow", base, "follows"},
+		{"busy still follows (it waits)", with(func(in *followInputs) { in.Busy = true }), "follows"},
+		{"applying now", with(func(in *followInputs) { in.LastAttempted, in.LastError = "1.4.0", followApplying }), "follows"},
+		{"level with the main till", with(func(in *followInputs) { in.Target = "1.3.0" }), "follows"},
+		{"main version unknown", with(func(in *followInputs) { in.Target = "" }), "follows"},
+		{"main till's updates off", with(func(in *followInputs) { in.AutoEnabled = "false" }), "main_off"},
+		{"main off wins over checks off", with(func(in *followInputs) { in.AutoEnabled, in.ChecksOn = "false", false }), "main_off"},
+		{"UT_UPDATE_CHECK off here, even when level", with(func(in *followInputs) { in.ChecksOn, in.Target = false, "1.3.0" }), "checks_off"},
+		{"checks off wins over unsupported", with(func(in *followInputs) { in.ChecksOn, in.Supported = false, false }), "checks_off"},
+		{"behind and can't replace itself", with(func(in *followInputs) { in.Supported = false }), "manual"},
+		{"unsupported wins over a failed attempt", with(func(in *followInputs) {
+			in.Supported, in.LastAttempted, in.LastError = false, "1.4.0", "failed:download"
+		}), "manual"},
+		{"level: Supported is never probed, so no manual line", with(func(in *followInputs) { in.Supported, in.Target = false, "1.3.0" }), "follows"},
+		{"this target failed", with(func(in *followInputs) { in.LastAttempted, in.LastError = "1.4.0", "failed:download" }), "failed"},
+		{"this target applied without effect", with(func(in *followInputs) { in.LastAttempted, in.LastError = "1.4.0", "" }), "failed"},
+		{"an older target failed: the new one follows", with(func(in *followInputs) { in.LastAttempted, in.LastError = "1.3.5", "failed:download" }), "follows"},
+		{"arrived on the attempted target", with(func(in *followInputs) { in.This, in.LastAttempted, in.LastError = "1.4.0", "1.4.0", "" }), "follows"},
+	} {
+		if got := followLine(c.in); got != c.want {
+			t.Errorf("%s: followLine = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 // GET /api/sync/ping carries the main till's version, so a replica without
 // the live link still has a target.
 func TestSyncPing_CarriesTheMainTillsVersion(t *testing.T) {

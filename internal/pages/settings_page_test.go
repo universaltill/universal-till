@@ -1162,6 +1162,70 @@ func TestSettingsPage_AdditionalTillSaysMainAutoUpdatesOff(t *testing.T) {
 	}
 }
 
+// ut-docs#4053: an additional till that won't follow its main till by
+// itself says why — UT_UPDATE_CHECK off here, an install that can't replace
+// itself, or a failed attempt at this target — instead of "follows".
+func TestSettingsPage_AdditionalTillSaysWhyItDoesNotFollow(t *testing.T) {
+	origVer, origSupported := autoUpdateBuildVersion, autoUpdateSupported
+	t.Cleanup(func() { autoUpdateBuildVersion, autoUpdateSupported = origVer, origSupported })
+	autoUpdateBuildVersion = func() string { return "1.4.0" }
+	supported := true
+	autoUpdateSupported = func() bool { return supported }
+
+	mux, _, d := newFullAuthDeps(t)
+	setReplicaSettings(t, d.Settings, "http://127.0.0.1:1", syncSettingsBearer)
+	set := func(k, v string) {
+		t.Helper()
+		if err := d.Settings.Set(t.Context(), k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	set(keyMainVersion, "1.4.2")
+
+	follows := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main"), "v1.4.2"))
+	checksOff := html.EscapeString(httpx.T("en", "settings.update.follows_main_checks_off"))
+	manual := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_manual"), "v1.4.2"))
+	failed := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main_failed"), "v1.4.2"))
+	lines := map[string]string{"follows": follows, "checks_off": checksOff, "manual": manual, "failed": failed}
+	expect := func(label, want string) {
+		t.Helper()
+		body := getSettingsAsManager(t, mux)
+		if !strings.Contains(body, `data-follow-line="`+want+`"`) {
+			t.Fatalf("%s: expected follow line state %q", label, want)
+		}
+		for state, text := range lines {
+			if has := strings.Contains(body, text); has != (state == want) {
+				t.Fatalf("%s: %q line present = %v, want %v", label, state, has, state == want)
+			}
+		}
+		if strings.Contains(body, `hx-post="/api/settings/update-schedule"`) {
+			t.Fatalf("%s: the auto-update box must not render", label)
+		}
+	}
+
+	expect("behind, can follow", "follows")
+
+	t.Setenv("UT_UPDATE_CHECK", "0")
+	expect("UT_UPDATE_CHECK off on this till", "checks_off")
+	t.Setenv("UT_UPDATE_CHECK", "")
+
+	supported = false
+	expect("install can't replace itself", "manual")
+	supported = true
+
+	set(keyFollowAttempted, "1.4.2")
+	set(keyFollowError, "failed:download")
+	expect("the attempt at this target failed", "failed")
+	set(keyFollowError, "")
+	expect("the attempt at this target didn't take", "failed")
+
+	// The main till moves on: a new target is followed again.
+	set(keyMainVersion, "1.4.3")
+	follows = html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main"), "v1.4.3"))
+	lines = map[string]string{"follows": follows}
+	expect("new target after a failed one", "follows")
+}
+
 // ut-docs#1133 (ADR-0065 follow-up, independent review 2026-08-26): the
 // Tills card's quarantine help text + "View quarantined entries" button
 // must not appear on a single-till shop that has never enrolled a

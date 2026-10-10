@@ -577,16 +577,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// when it is a release version.
 		autoUpdateFollowsMain := tillFollowsMain(r.Context(), d)
 		autoUpdateMainVersion := ""
-		// ut-docs#4031: with automatic updates off on the main till the
-		// replica does not follow (followCanInstall), so say that instead.
-		autoUpdateMainOff := false
+		// ut-docs#4031, #4053: in a state where the replica does not follow
+		// (main till's updates off, UT_UPDATE_CHECK off here, an install
+		// that can't replace itself, a failed attempt) the line says that
+		// instead of claiming it follows (followLine).
+		autoUpdateFollowLine := ""
 		if autoUpdateFollowsMain {
-			v, _, _ := d.Settings.Get(r.Context(), keyAutoUpdateEnabled)
-			autoUpdateMainOff = strings.TrimSpace(v) == "false"
-		}
-		if autoUpdateFollowsMain && !autoUpdateMainOff {
-			if v := followTarget(r.Context(), d); releaseVersion(v) {
-				autoUpdateMainVersion = "v" + strings.TrimPrefix(v, "v")
+			in := followInputsOf(r.Context(), d)
+			autoUpdateFollowLine = followLine(in)
+			if releaseVersion(in.Target) {
+				autoUpdateMainVersion = "v" + normVersion(in.Target)
 			}
 		}
 		// Sample-data note (ut-docs#539, extended to customers/promos by
@@ -871,7 +871,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"payFees":                feeRows,
 			"exportEntries":          exportEntries,
 			"autoUpdateFollowsMain":  autoUpdateFollowsMain,
-			"autoUpdateMainOff":      autoUpdateMainOff,
+			"autoUpdateFollowLine":   autoUpdateFollowLine,
 			"autoUpdateMainVersion":  autoUpdateMainVersion,
 			"autoUpdateEnabled":      autoUpdateEnabled,
 			"autoUpdateTime":         autoUpdateTime,
