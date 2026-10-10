@@ -9,7 +9,8 @@ Owner-facing notes in `web/release-notes/{en,de,ar,fa,tr}/v0.31.6.md`. The relea
 - identify-confirmed event to the identifying plugin (#1823);
 - open-orders Move table toggle stays put (#1821);
 - language-pack chip wording (#1813);
-- additional till's Software update section (#1825) and Tab trapped in older dialogs (#1824), which landed while this PR was open; added after a rebase.
+- additional till's Software update section (#1825) and Tab trapped in older dialogs (#1824), which landed while this PR was open; added after a rebase;
+- recovered sync problems clear from the cloud's "Attention needed" (#1830, ut-docs#2862), added by a later lane:cloud-54 sweep after a third rebase; #1826 and #1833 (test clock, CI guard) left out as developer-only.
 
 Left out as not owner-visible yet: #1817 (background-removal capability and endpoint; the picker UI is a later card) and #1832 (a plugin read view, developer-only).
 
@@ -23,6 +24,11 @@ Left out as not owner-visible yet: #1817 (background-removal capability and endp
 | 3 | Medium | ar: deposit called "التأمين", not the UI's "الوديعة" (#1824 bullet; second Sonnet pass) | **Fixed** |
 | 4 | Low | tr "Yazılım güncelleme" vs locale "Yazılım güncellemesi"; ar "تلقائياً" spelling; fa "اضافه" as in help | **Fixed** |
 | 5 | Low | ar till wording differs from help ("الجهاز") | Accepted: consistent with earlier release notes |
+| 6 | Low | #1830 bullet (Fable review): "as soon as it recovers" overstated — the cloud clears it at the next check-in | **Fixed** in all five ("at the till's next check-in") |
+| 7 | Low | #1830 bullet: only additional tills hit these warnings; pairing removed *on the main till* | **Fixed** in all five |
+| 8 | Low | fa "همگام کند"/"جفت‌شدن" vs the notes' "همگام‌سازی"/"جفت‌سازی"; de "bis zu einen Tag" | **Fixed** |
+
+The #1830 bullet was checked against `git show f0fb8a1`: keyed problems are exactly pairing-revoked and plugin-sync broken/install/uninstall; the refused-proof WARN still ages out after 24h and is not claimed. "Attention needed" terms match ut-cloud `manage_app.till.health_warning` in de/ar/fa/tr.
 
 Terminology checked against `web/locales/*.json` and `web/help/*`: Open orders, Move table, Settings → Data.
 
