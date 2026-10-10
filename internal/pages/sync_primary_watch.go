@@ -187,8 +187,12 @@ func primaryContactFailed(ctx context.Context, d *common.Deps, cause string) {
 // main till answered, so the outage problems it left in the Problems ring
 // are over: resolve them, so the next heartbeat stops reporting them and
 // my.'s "Attention needed" clears (ut-docs#2798). A pairing the main till
-// had refused is accepted again too (ut-docs#2862).
+// had refused is accepted again too (ut-docs#2862), so a link stopped by
+// that refusal redials (ut-docs#4044).
 func primaryContactOK(ctx context.Context, d *common.Deps) {
+	if d.LinkClient != nil {
+		d.LinkClient.PairingAccepted()
+	}
 	if d.PrimaryWatch != nil {
 		d.PrimaryWatch.ContactOK(ctx)
 	}

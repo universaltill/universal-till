@@ -306,6 +306,36 @@ func TestReplicaLink_RevokeStopsTheClient(t *testing.T) {
 	}
 }
 
+// ut-docs#4044: a link the main till refused once (403 while it restored,
+// say) comes back as soon as a pull with the same bearer succeeds — not
+// only after this till restarts.
+func TestReplicaLink_PullSuccessRedialsAfterATransientRefusal(t *testing.T) {
+	f := newSyncLinkFixture(t)
+	tillID := f.enrol(t, "Till 2", "token-abc")
+	var refuse atomic.Bool
+	refuse.Store(true)
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == fleetlink.LinkPath && refuse.Load() {
+			http.Error(w, "restoring", http.StatusForbidden)
+			return
+		}
+		f.mux.ServeHTTP(w, r)
+	}))
+	t.Cleanup(front.Close)
+	replica := linkReplica(t, front.URL, tillID, fastLinkClientOptions())
+	runReplica(t, replica, 50*time.Millisecond, time.Hour)
+	if !waitFor(t, 3*time.Second, func() bool {
+		return replica.LinkClient.Status().Mode == fleetlink.ModeRevoked
+	}) {
+		t.Fatal("the refusal never stopped the link")
+	}
+
+	refuse.Store(false) // the main till accepts this till again
+	if !waitFor(t, 3*time.Second, replica.LinkClient.Linked) {
+		t.Fatal("a pull with the same bearer succeeded, but the link stayed off")
+	}
+}
+
 // restartableMain serves the main till's sync API on a fixed address that
 // can be stopped and started again, like a main till restarting.
 type restartableMain struct {

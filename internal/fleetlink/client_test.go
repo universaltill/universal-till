@@ -320,6 +320,100 @@ func TestClient_UnauthorizedDialStops(t *testing.T) {
 	}
 }
 
+// ut-docs#4044: a refusal the main till takes back (it answered 403 while
+// restoring, say) must not switch the link off until a restart. A pull with
+// the same bearer succeeding is the proof: PairingAccepted redials.
+func TestClient_PairingAcceptedRedialsAfterATransientRefusal(t *testing.T) {
+	cfg := fastConfig()
+	h := newSwapHarness(t, cfg)
+	var refuse atomic.Bool
+	refuse.Store(true)
+	h.before = func(w http.ResponseWriter, r *http.Request) bool {
+		if refuse.Load() {
+			http.Error(w, "restoring", http.StatusForbidden)
+			return true
+		}
+		return false
+	}
+	tt := &testTarget{}
+	tt.set(Target{BaseURL: h.srv.URL, Bearer: "good-till-2"})
+	rec := &clientRec{}
+	c := NewClient(fastClientOptions(cfg, tt, rec, advertised()))
+	startClient(t, c)
+	waitFor(t, "revoked surfaced", func() bool { _, _, _, r := rec.get(); return r == 1 })
+
+	// The main till accepts the bearer again, but nothing redials on its own.
+	refuse.Store(false)
+	time.Sleep(150 * time.Millisecond)
+	if n := h.dials.Load(); n != 1 {
+		t.Fatalf("a revoked client redialled on its own: %d dials", n)
+	}
+
+	c.PairingAccepted() // a pull with the same bearer succeeded
+	waitFor(t, "linked after the refusal was taken back", c.Linked)
+	if got := c.Status().Mode; got != ModeLinked {
+		t.Fatalf("mode = %v, want linked", got)
+	}
+}
+
+// A main till that keeps answering pulls but refusing the link is reported
+// once per episode — not after every pull — and a refusal after the link
+// came back up is reported again.
+func TestClient_PairingAcceptedRefusedAgainWarnsOncePerEpisode(t *testing.T) {
+	cfg := fastConfig()
+	h := newSwapHarness(t, cfg)
+	var refuse atomic.Bool
+	refuse.Store(true)
+	h.before = func(w http.ResponseWriter, r *http.Request) bool {
+		if refuse.Load() {
+			http.Error(w, "no", http.StatusForbidden)
+			return true
+		}
+		return false
+	}
+	tt := &testTarget{}
+	tt.set(Target{BaseURL: h.srv.URL, Bearer: "good-till-2"})
+	rec := &clientRec{}
+	c := NewClient(fastClientOptions(cfg, tt, rec, advertised()))
+	startClient(t, c)
+	waitFor(t, "revoked surfaced", func() bool { _, _, _, r := rec.get(); return r == 1 })
+
+	for i := 2; i <= 4; i++ {
+		c.PairingAccepted()
+		want := int32(i)
+		waitFor(t, "redialled after PairingAccepted", func() bool { return h.dials.Load() >= want })
+		waitFor(t, "revoked again", func() bool { return c.Status().Mode == ModeRevoked })
+	}
+	if _, _, _, r := rec.get(); r != 1 {
+		t.Fatalf("OnRevoked fired %d times in one refusal episode, want 1", r)
+	}
+
+	// The link comes up: the episode is over.
+	refuse.Store(false)
+	c.PairingAccepted()
+	waitFor(t, "linked", c.Linked)
+	h.currentHub().Disconnect("till-2") // close code 4003: a new refusal
+	waitFor(t, "second episode surfaced", func() bool { _, _, _, r := rec.get(); return r == 2 })
+}
+
+// PairingAccepted on a link that isn't revoked changes nothing.
+func TestClient_PairingAcceptedIsANoOpWhenNotRevoked(t *testing.T) {
+	cfg := fastConfig()
+	h := newSwapHarness(t, cfg)
+	tt := &testTarget{}
+	tt.set(Target{BaseURL: h.srv.URL, Bearer: "good-till-2"})
+	rec := &clientRec{}
+	c := NewClient(fastClientOptions(cfg, tt, rec, advertised()))
+	startClient(t, c)
+	waitFor(t, "linked", c.Linked)
+	before := h.dials.Load()
+	c.PairingAccepted()
+	time.Sleep(100 * time.Millisecond)
+	if n := h.dials.Load(); n != before || !c.Linked() {
+		t.Fatalf("PairingAccepted disturbed a healthy link: dials %d→%d, linked %v", before, n, c.Linked())
+	}
+}
+
 func TestClient_HeartbeatLossCountsAFailedContact(t *testing.T) {
 	cfg := fastConfig()
 	cfg.PingInterval = 20 * time.Millisecond
