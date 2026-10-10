@@ -33,6 +33,7 @@ jobs:
   # (or uses the explicit input) and creates + pushes the tag.
   prepare:
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # ut-docs#4059: bound every job; GitHub defaults to 6 h
     outputs:
       version: ${{ steps.v.outputs.version }}
       tag: ${{ steps.v.outputs.tag }}
@@ -146,6 +147,7 @@ jobs:
           - runner: ubuntu-22.04-arm
             arch: arm64
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
@@ -247,8 +249,10 @@ jobs:
       # ut-docs#3867: build the signature verifier before the signing
       # identity logs in, so upstream's build code never runs next to it.
       - name: Build osslsigncode (pinned commit)
+        # ut-docs#4059: bounded — an apt/git hang here held a release for 30+ min.
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
+          bash scripts/ci/retry-with-backoff.sh 3 5 --clear-apt-lists -- sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
           bash packaging/windows/install-osslsigncode.sh
       # ut-docs#3940: release-notes.json — every web/release-notes note, so a
       # till can show this version's notes BEFORE installing it. Attached by
@@ -343,6 +347,7 @@ jobs:
     needs: [prepare, goreleaser]
     if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment: release-signing
     permissions:
       contents: write
@@ -368,8 +373,10 @@ jobs:
       # ut-docs#3867: build the signature verifier before the signing
       # identity logs in, so upstream's build code never runs next to it.
       - name: Build osslsigncode (pinned commit)
+        # ut-docs#4059: bounded — an apt/git hang here held a release for 30+ min.
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
+          bash scripts/ci/retry-with-backoff.sh 3 5 --clear-apt-lists -- sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
           bash packaging/windows/install-osslsigncode.sh
       - name: Azure login (OIDC, signing identity)
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
@@ -580,6 +587,7 @@ jobs:
     needs: [prepare, goreleaser]
     if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
     outputs:
@@ -748,6 +756,7 @@ jobs:
     needs: [prepare, goreleaser, android-app]
     if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     runs-on: macos-14 # tar/unzip/strings for every format (kept from when it also mounted the .dmg)
+    timeout-minutes: 20
     # contents: write, not the read-only this job actually needs (ut-docs#1376
     # follow-up): since .goreleaser.yaml's release.draft became true, this
     # job's own "wait for the release to exist" step (gh release view "$TAG")
@@ -967,6 +976,7 @@ jobs:
       ]
     if: ${{ !cancelled() && needs.goreleaser.result == 'success' && needs.windows-installer.result == 'success' && needs.android-app.result == 'success' && needs.verify-versions.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write # needed to see the draft release by tag — see verify-versions' comment
     steps:
@@ -1079,6 +1089,7 @@ jobs:
       ]
     if: ${{ !cancelled() && needs.goreleaser.result == 'success' && needs.windows-installer.result == 'success' && needs.android-app.result == 'success' && needs.verify-versions.result == 'success' && needs.checksums.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
       # ut-docs#3069: dispatch ios-testflight.yml below. A `release:
@@ -1214,6 +1225,7 @@ jobs:
     # exactly the two cases that orphan a tag.
     if: ${{ always() && github.event_name == 'workflow_dispatch' && needs.prepare.result == 'success' && needs.publish-release.result != 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:

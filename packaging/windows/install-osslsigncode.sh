@@ -26,10 +26,12 @@ rm -rf "$src"
 
 # No libcurl: with OpenSSL 3 upstream fetches CRLs and -ts URLs through
 # OpenSSL's own HTTP client (its CMakeLists only uses curl below 3.0).
-sudo apt-get install -y cmake libssl-dev zlib1g-dev
+# ut-docs#4059: retry and time-limit the network calls (a hang held a release).
+sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y cmake libssl-dev zlib1g-dev
 
-git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$OSSLSIGNCODE_VERSION" \
-  https://github.com/mtrojnar/osslsigncode.git "$src"
+timeout 300 git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$OSSLSIGNCODE_VERSION" \
+  https://github.com/mtrojnar/osslsigncode.git "$src" \
+  || { echo "::error::osslsigncode clone failed or timed out after 300 s (ut-docs#4059)" >&2; exit 1; }
 got="$(git -C "$src" rev-parse HEAD)"
 if [ "$got" != "$OSSLSIGNCODE_COMMIT" ]; then
   echo "::error::osslsigncode $OSSLSIGNCODE_VERSION is $got, expected $OSSLSIGNCODE_COMMIT — refusing to build it" >&2

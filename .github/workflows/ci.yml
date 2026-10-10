@@ -79,6 +79,8 @@ jobs:
         run: bash scripts/ci/check-release-checksums_test.sh
       - name: macOS notarization never holds a release — wiring test (ut-docs#2917)
         run: bash scripts/ci/release-macos-nonblocking_test.sh
+      - name: Every release job is time-bounded — wiring test (ut-docs#4059)
+        run: bash scripts/ci/release-job-timeouts_test.sh
       - name: iOS TestFlight workflow never reaches its signing key from a PR — wiring test (ut-docs#3069)
         run: bash scripts/ci/ios-testflight-workflow_test.sh
       - name: App stores stay private until launch — no public release path (ut-docs#3052)
