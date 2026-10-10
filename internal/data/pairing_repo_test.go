@@ -100,20 +100,27 @@ func TestPairingRepo_ApproveExtendsExpiry(t *testing.T) {
 	ctx := context.Background()
 	repo := newPairingTestRepo(t)
 
-	// Approve a request that still has a very short time left on its
-	// ORIGINAL ttl, then wait past what that original deadline would have
-	// been. If Approve didn't actually extend expires_at, the row would
-	// look expired now; it must not — approving must not hand the
-	// manager a success response for a pairing that's about to become
-	// unreachable to the replica.
-	id, err := repo.CreatePendingRequest(ctx, "Almost Expired Till", "commit789", 50*time.Millisecond)
+	// A fake clock, not wall time: expires_at is stored at RFC3339 second
+	// precision, so a real sub-second TTL fails whenever a second boundary
+	// or a busy CI runner falls between create and approve (ut-docs#4040).
+	clock := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	repo.now = func() time.Time { return clock }
+
+	// Approve a request with one second left on its ORIGINAL ttl, then
+	// move past what that original deadline would have been. If Approve
+	// didn't actually extend expires_at, the row would look expired now;
+	// it must not — approving must not hand the manager a success
+	// response for a pairing that's about to become unreachable to the
+	// replica.
+	id, err := repo.CreatePendingRequest(ctx, "Almost Expired Till", "commit789", 2*time.Second)
 	if err != nil {
 		t.Fatalf("CreatePendingRequest: %v", err)
 	}
+	clock = clock.Add(1 * time.Second)
 	if err := repo.Approve(ctx, id, "tok-fresh", 10*time.Minute); err != nil {
 		t.Fatalf("Approve on a near-expiry row: %v", err)
 	}
-	time.Sleep(100 * time.Millisecond) // past the ORIGINAL 50ms expiry
+	clock = clock.Add(5 * time.Second) // past the ORIGINAL 2s expiry
 
 	row, ok, err := repo.GetByID(ctx, id)
 	if err != nil || !ok {
@@ -121,6 +128,21 @@ func TestPairingRepo_ApproveExtendsExpiry(t *testing.T) {
 	}
 	if row.Token != "tok-fresh" {
 		t.Fatalf("expected the fresh token, got %+v", row)
+	}
+
+	// Control: the same timeline without the approve does expire, so the
+	// assertion above is proving the extension, not a clock that's ignored.
+	clock = time.Date(2026, 10, 9, 13, 0, 0, 0, time.UTC)
+	unapproved, err := repo.CreatePendingRequest(ctx, "Unapproved Till", "commitDEF", 2*time.Second)
+	if err != nil {
+		t.Fatalf("CreatePendingRequest (control): %v", err)
+	}
+	clock = clock.Add(6 * time.Second)
+	if _, ok, err := repo.GetByID(ctx, unapproved); err != nil || ok {
+		t.Fatalf("expected the unapproved row expired past its 2s ttl: ok=%v err=%v", ok, err)
+	}
+	if err := repo.Approve(ctx, unapproved, "tok-late", 10*time.Minute); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("Approve past the original expiry: got %v, want ErrNotPending", err)
 	}
 }
 

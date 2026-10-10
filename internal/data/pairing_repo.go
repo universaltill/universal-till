@@ -19,9 +19,12 @@ var ErrNotPending = errors.New("pending pairing not found or not pending")
 // part 2/3): a replica's pair request sits here until a manager approves
 // or denies it. Only the request's SHA-256 commitment is ever stored,
 // never the raw secret (mirrors tills.bearer_hash / TillByBearerHash).
-type PairingRepo struct{ db *sql.DB }
+type PairingRepo struct {
+	db  *sql.DB
+	now func() time.Time // injectable clock for expiry tests (ut-docs#4040)
+}
 
-func NewPairingRepo(db *sql.DB) *PairingRepo { return &PairingRepo{db: db} }
+func NewPairingRepo(db *sql.DB) *PairingRepo { return &PairingRepo{db: db, now: time.Now} }
 
 type PendingPairingRow struct {
 	ID          string
@@ -51,7 +54,7 @@ func (r *PairingRepo) CreatePendingRequestWithRole(ctx context.Context, deviceNa
 		return "", fmt.Errorf("create pending pairing: invalid role %q", role)
 	}
 	id := uuid.NewString()
-	now := time.Now().UTC()
+	now := r.now().UTC()
 	_, err := r.db.ExecContext(ctx, `
 INSERT INTO pending_pairings (id, device_name, commitment, requested_at, expires_at, status, requested_role)
 VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
@@ -66,7 +69,7 @@ VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
 // the manager's approve/deny queue. Expired rows are excluded here and
 // opportunistically deleted.
 func (r *PairingRepo) ListPending(ctx context.Context) ([]PendingPairingRow, error) {
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := r.now().UTC().Format(time.RFC3339)
 	if _, err := r.db.ExecContext(ctx,
 		`DELETE FROM pending_pairings WHERE expires_at < ?`, now); err != nil {
 		return nil, fmt.Errorf("expire pending pairings: %w", err)
@@ -105,7 +108,7 @@ FROM pending_pairings WHERE status = 'pending' ORDER BY requested_at ASC, id ASC
 // this list (the notice's dismiss-tracking) would see it change with
 // nothing having actually happened.
 func (r *PairingRepo) ListPendingReadOnly(ctx context.Context) ([]PendingPairingRow, error) {
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := r.now().UTC().Format(time.RFC3339)
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, device_name, commitment, token, requested_at, expires_at, status, requested_role
 FROM pending_pairings WHERE status = 'pending' AND expires_at >= ?
@@ -133,7 +136,7 @@ func (r *PairingRepo) GetByID(ctx context.Context, id string) (PendingPairingRow
 	err := r.db.QueryRowContext(ctx, `
 SELECT id, device_name, commitment, token, requested_at, expires_at, status, requested_role
 FROM pending_pairings WHERE id = ? AND expires_at >= ?`,
-		id, time.Now().UTC().Format(time.RFC3339)).
+		id, r.now().UTC().Format(time.RFC3339)).
 		Scan(&p.ID, &p.DeviceName, &p.Commitment, &p.Token, &p.RequestedAt, &p.ExpiresAt, &p.Status, &p.RequestedRole)
 	if err == sql.ErrNoRows {
 		return PendingPairingRow{}, false, nil
@@ -163,7 +166,7 @@ func (r *PairingRepo) ApproveWithRole(ctx context.Context, id, token, role strin
 	if role != "" && !ValidTillRole(role) {
 		return fmt.Errorf("approve pending pairing: invalid role %q", role)
 	}
-	now := time.Now().UTC()
+	now := r.now().UTC()
 	res, err := r.db.ExecContext(ctx, `
 UPDATE pending_pairings SET status = 'approved', token = ?, expires_at = ?,
 	requested_role = COALESCE(NULLIF(?, ''), requested_role)
@@ -193,7 +196,7 @@ func (r *PairingRepo) RoleForToken(ctx context.Context, token string) (role stri
 	err = r.db.QueryRowContext(ctx, `
 SELECT requested_role FROM pending_pairings
 WHERE token = ? AND status = 'approved' AND expires_at >= ?`,
-		token, time.Now().UTC().Format(time.RFC3339)).Scan(&role)
+		token, r.now().UTC().Format(time.RFC3339)).Scan(&role)
 	if err == sql.ErrNoRows {
 		return "", false, nil
 	}
