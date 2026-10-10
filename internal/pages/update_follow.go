@@ -220,6 +220,30 @@ func followCanInstall(in followInputs) bool {
 	return !failed && !noEffect
 }
 
+// followLine is what Settings → Software update says on an additional
+// till (ut-docs#2949, #4031, #4053): "follows" only when this till will
+// install the main till's version by itself. Otherwise the reason, in
+// followDecision's order: "main_off" (automatic updates off on the main
+// till), "checks_off" (UT_UPDATE_CHECK switched off on this till),
+// "manual" (behind, and this install can't replace itself) or "failed"
+// (behind, and the last attempt at this target failed or didn't take).
+func followLine(in followInputs) string {
+	switch {
+	case in.AutoEnabled == "false":
+		return "main_off"
+	case !in.ChecksOn:
+		return "checks_off"
+	case !followBehind(in):
+		return "follows"
+	case !in.Supported:
+		return "manual"
+	}
+	if failed, noEffect := followSettled(in); failed || noEffect {
+		return "failed"
+	}
+	return "follows"
+}
+
 // followTargetOf picks the target: the live link's hello version, else the
 // last pinged one.
 func followTargetOf(hasClient bool, st fleetlink.ClientStatus, stored string) string {

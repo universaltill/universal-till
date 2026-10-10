@@ -394,7 +394,8 @@
   {{/* ut-docs#2949: an additional till follows its main till's version, so it
        says so instead of the schedule box (whose value is the main till's). */}}
   {{ if .autoUpdateFollowsMain }}
-  <p class="muted" data-testid="update-follows-main">{{ if .autoUpdateMainOff }}{{ T "settings.update.follows_main_off" }}{{ else if .autoUpdateMainVersion }}{{ printf (T "settings.update.follows_main") .autoUpdateMainVersion }}{{ else }}{{ T "settings.update.follows_main_unknown" }}{{ end }}</p>
+  {{/* ut-docs#4031, #4053: followLine says why it doesn't follow, when it doesn't. */}}
+  <p class="muted" data-testid="update-follows-main" data-follow-line="{{ .autoUpdateFollowLine }}">{{ if eq .autoUpdateFollowLine "main_off" }}{{ T "settings.update.follows_main_off" }}{{ else if eq .autoUpdateFollowLine "checks_off" }}{{ T "settings.update.follows_main_checks_off" }}{{ else if eq .autoUpdateFollowLine "manual" }}{{ printf (T "settings.update.follows_main_manual") .autoUpdateMainVersion }}{{ else if eq .autoUpdateFollowLine "failed" }}{{ printf (T "settings.update.follows_main_failed") .autoUpdateMainVersion }}{{ else if .autoUpdateMainVersion }}{{ printf (T "settings.update.follows_main") .autoUpdateMainVersion }}{{ else }}{{ T "settings.update.follows_main_unknown" }}{{ end }}</p>
   {{ else }}
   <fieldset class="set-lock" data-lock-region="settings-update-schedule"{{ if index $.lockedRegions "settings-update-schedule" }} disabled{{ end }}>
   {{ if index $.lockedRegions "settings-update-schedule" }}{{ template "set-lock-note" }}{{ end }}
