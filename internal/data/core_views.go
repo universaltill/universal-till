@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -190,6 +191,39 @@ var (
 // auditSummaryRows is the Ask tool's fixed row cap for audit.summary.v1.
 const auditSummaryRows = 100
 
+// ShopContextRow is shop.context.v1's one row (ut-docs#4034): what a plugin
+// needs to read the sales views' minor units (amount / 10^currency_decimals)
+// and to name the shop. The names are "" when unset — the plugin picks its
+// own fallback; core never sends English placeholder text.
+type ShopContextRow struct {
+	StoreName        string `json:"store_name"`
+	TillName         string `json:"till_name"` // this till's own name, a joined till's included
+	CurrencyCode     string `json:"currency_code"`
+	CurrencyDecimals int    `json:"currency_decimals"`
+	Locale           string `json:"locale"` // the shop's default locale
+}
+
+// ShopContextFunc resolves shop.context.v1's row.
+type ShopContextFunc func(ctx context.Context, db *sql.DB) (ShopContextRow, error)
+
+// shopContextSource is installed by internal/pages, which owns the currency
+// registry (httpx) and this till's name (enroll.DeviceName) — both import
+// data, so data cannot resolve them itself.
+var shopContextSource atomic.Pointer[ShopContextFunc]
+
+// SetCoreViewShopContext installs (nil: removes) shop.context.v1's source
+// and returns the previous one, so a test stub can put it back.
+func SetCoreViewShopContext(f ShopContextFunc) (prev ShopContextFunc) {
+	var p *ShopContextFunc
+	if f != nil {
+		p = &f
+	}
+	if old := shopContextSource.Swap(p); old != nil {
+		prev = *old
+	}
+	return prev
+}
+
 // coreViews is the first set (ADR-0121 §5) — today's Ask tools
 // (internal/pages/ask_api.go), same arguments, bounds and caps — plus the
 // views ADR-0149 §6 adds.
@@ -261,6 +295,22 @@ var coreViews = map[string]CoreView{
 			hh, mm := ParseBusinessDayStart(v)
 			date, from, to := receiptsBusinessDay(coreViewNow().In(time.Local), hh, mm, args["days_ago"])
 			return NewPOSRepo(db).ListReceiptViewRows(ctx, date, from, to, args["offset"], args["limit"])
+		},
+	},
+	// ut-docs#4034: the shop facts that make the sales views' minor units
+	// readable (JPY has 0 decimals, not 2), so it shares their class.
+	"shop.context.v1": {
+		Name: "shop.context.v1", Permission: "view:sales",
+		Run: func(ctx context.Context, db *sql.DB, _ map[string]int) (any, error) {
+			src := shopContextSource.Load()
+			if src == nil {
+				return nil, errors.New("shop.context.v1: no shop context provider installed")
+			}
+			row, err := (*src)(ctx, db)
+			if err != nil {
+				return nil, err
+			}
+			return []ShopContextRow{row}, nil
 		},
 	},
 }

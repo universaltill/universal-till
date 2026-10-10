@@ -347,3 +347,34 @@ func TestViewQuerySalesReceipts(t *testing.T) {
 		t.Fatal("the denial was not audited")
 	}
 }
+
+// shop.context.v1 (ut-docs#4034) shares view:sales: it runs with that grant
+// and is denied, audited, without it. Its row comes from the source
+// internal/pages installs; this package stubs it.
+func TestViewQueryShopContext(t *testing.T) {
+	guest := buildViewGuest(t)
+	const pluginID = "com.test.views.shop"
+	withInstalledManifest(t, pluginID, viewsManifest(pluginID, "shop.context.v1"))
+	w := newViewRuntime(t, guest, pluginID)
+	prev := data.SetCoreViewShopContext(func(context.Context, *sql.DB) (data.ShopContextRow, error) {
+		return data.ShopContextRow{StoreName: "Kissa", TillName: "Bar", CurrencyCode: "JPY", Locale: "ja"}, nil
+	})
+	t.Cleanup(func() { data.SetCoreViewShopContext(prev) })
+
+	d := viewDB(t, pluginID, "view:sales")
+	res := runGuestPayload(t, w, d, pluginID, map[string]any{"view": "shop.context.v1"})
+	want := `[{"store_name":"Kissa","till_name":"Bar","currency_code":"JPY","currency_decimals":0,"locale":"ja"}]`
+	if code := viewCode(t, res); code != len(want) || res["result"] != want {
+		t.Fatalf("view_query = %d %v, want %s", code, res["result"], want)
+	}
+
+	d = viewDB(t, pluginID, "view:inventory")
+	before := countDenials(t, d, pluginID)
+	res = runGuestPayload(t, w, d, pluginID, map[string]any{"view": "shop.context.v1"})
+	if code := viewCode(t, res); code != hostErrDenied {
+		t.Fatalf("without view:sales = %d, want %d", code, hostErrDenied)
+	}
+	if countDenials(t, d, pluginID) <= before {
+		t.Fatal("the denial was not audited")
+	}
+}
