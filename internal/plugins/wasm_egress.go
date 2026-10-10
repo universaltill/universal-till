@@ -51,6 +51,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/netip"
@@ -494,14 +495,74 @@ func newPluginHTTPClient(d *egressDialer, tlsCfg *tls.Config) *http.Client {
 		TLSClientConfig:        tlsCfg,
 		ForceAttemptHTTP2:      true,
 		TLSHandshakeTimeout:    10 * time.Second,
-		ResponseHeaderTimeout:  30 * time.Second,
 		ExpectContinueTimeout:  1 * time.Second,
 		MaxResponseHeaderBytes: 64 << 10,
 		DisableKeepAlives:      true, // never share a connection across grants
 	}
-	c := netaccess.NewClientWithTransport(2*time.Minute, tr) // timeout is a backstop; the event deadline is usually tighter
+	// The header wait and an ordinary event's 2-minute backstop are per
+	// request (headerWaitTransport); the client timeout is the backstop at
+	// the job ceiling, and a job's own deadline always fires first.
+	c := netaccess.NewClientWithTransport(maxJobDeadline+10*time.Second, headerWaitTransport{base: tr})
 	c.CheckRedirect = checkPluginRedirect
 	return c
+}
+
+// pluginHeaderWait bounds the wait for a response's headers in an ordinary
+// event. A job (wasm_job.go) waits until its own deadline instead: a
+// self-hosted model answering a non-streamed request sends its headers
+// only when generation ends, which can take minutes on a store mini-PC or
+// a Pi (ut-docs#4035). A job never runs on the sale path. Tests shorten it
+// (the package has no parallel tests).
+var pluginHeaderWait = 30 * time.Second
+
+// pluginRequestBackstop bounds a whole request outside a job, body read
+// included, as the client timeout did before jobs (ut-docs#4035); the
+// event deadline is usually tighter.
+const pluginRequestBackstop = 2 * time.Minute
+
+// headerWaitTransport applies pluginHeaderWait to every hop of a request
+// made outside a job, plus pluginRequestBackstop; inside a job the request
+// context's deadline (the job's) is the only bound.
+type headerWaitTransport struct{ base http.RoundTripper }
+
+func (t headerWaitTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if _, isJob := JobFrom(req.Context()); isJob {
+		return t.base.RoundTrip(req)
+	}
+	errNoHeaders := fmt.Errorf("no response headers within %s", pluginHeaderWait)
+	bctx, bcancel := context.WithTimeout(req.Context(), pluginRequestBackstop)
+	ctx, cancel := context.WithCancelCause(bctx)
+	release := func() { cancel(nil); bcancel() }
+	timer := time.AfterFunc(pluginHeaderWait, func() { cancel(errNoHeaders) })
+	resp, err := t.base.RoundTrip(req.WithContext(ctx))
+	if !timer.Stop() {
+		// The wait ran out, even if headers raced in just after: fail the
+		// call rather than hand back a body that reads as cancelled.
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+		release()
+		return nil, errNoHeaders
+	}
+	if err != nil {
+		release()
+		return nil, err
+	}
+	// The body still reads under ctx: release it only when the body closes.
+	resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: release}
+	return resp, nil
+}
+
+// cancelOnClose releases the request context when the body is closed.
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel func()
+}
+
+func (b *cancelOnClose) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
 }
 
 // defaultPluginHTTPClient serves every plugin's http_request in production.

@@ -83,12 +83,19 @@ func runGuest(t *testing.T, w *WasmRuntime, d *sql.DB, pluginID, url string) map
 // the guest fixture dispatches on payload.mode (see testdata/hostfn_guest).
 func runGuestPayload(t *testing.T, w *WasmRuntime, d *sql.DB, pluginID string, payload any) map[string]any {
 	t.Helper()
+	return runGuestPayloadCtx(context.Background(), t, w, d, pluginID, payload)
+}
+
+// runGuestPayloadCtx is runGuestPayload with the event's call context — a
+// WithJob context runs the event as a job.
+func runGuestPayloadCtx(ctx context.Context, t *testing.T, w *WasmRuntime, d *sql.DB, pluginID string, payload any) map[string]any {
+	t.Helper()
 	body, _ := json.Marshal(payload)
 	ev := Event{ID: "ev1", Type: "test.event", Timestamp: time.Now(), Payload: body}
 	w.mu.Lock()
 	w.db = d
 	w.mu.Unlock()
-	if _, err := w.HandleEvent(context.Background(), pluginID, ev); err != nil {
+	if _, err := w.HandleEvent(ctx, pluginID, ev); err != nil {
 		t.Fatalf("HandleEvent: %v", err)
 	}
 	raw, err := data.NewPluginRepo(d).StorageGet(context.Background(), pluginID, "results")
