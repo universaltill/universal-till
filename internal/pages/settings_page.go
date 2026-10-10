@@ -1295,7 +1295,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		status, err := enroll.Pair(r.Context(), d.Cfg, d.Settings, code)
 		// The two refusals an operator can act on get their own translated
-		// message; everything else is the generic failure plus the reason.
+		// message; everything else is the generic failure (the raw reason is only logged).
 		switch {
 		case errors.Is(err, enroll.ErrPairStoreMismatch):
 			fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
@@ -1306,13 +1306,22 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				html.EscapeString(httpx.T(locale, "settings.enrol.pair_replica_no_store")))
 			return
 		}
-		if err != nil || !status.Registered {
-			reason := httpx.T(locale, "settings.enrol.not_registered")
-			if err != nil {
-				reason = err.Error()
+		if err != nil {
+			// The raw reason is logged, never rendered: it is English-only
+			// and can carry the cloud's body or the endpoint (ut-docs#4058;
+			// the error never contains the pairing code or token).
+			logging.L().Warnf("enrol pair failed: %v", err)
+			msg := httpx.T(locale, "settings.enrol.pair_failed")
+			if key := enrolFailureKey(err); key != "" {
+				msg = httpx.T(locale, key)
 			}
+			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(msg))
+			return
+		}
+		if !status.Registered {
 			fmt.Fprintf(w, `<span class="error">❌ %s: %s</span>`,
-				html.EscapeString(httpx.T(locale, "settings.enrol.pair_failed")), html.EscapeString(reason))
+				html.EscapeString(httpx.T(locale, "settings.enrol.pair_failed")),
+				html.EscapeString(httpx.T(locale, "settings.enrol.not_registered")))
 			return
 		}
 		settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "paired", map[string]any{"store_id": status.StoreID})
@@ -3717,9 +3726,9 @@ func resolveFiscalPostureKey(d *common.Deps, key string) (logical, storage strin
 	return key, key
 }
 
-// enrolFailureKey names the message for a "Register now" failure that is
-// not a network problem (ut-docs#3861, #3990), or "" for the generic
-// "check the internet connection" text. A replica's refusal arrives typed
+// enrolFailureKey names the message for a "Register now", "Claim this
+// store" or "Pair with a shop" failure that is not a network problem
+// (ut-docs#3861, #3990, #4058), or "" for the generic text. A replica's refusal arrives typed
 // from its main till, so IsServiceRefused covers both.
 func enrolFailureKey(err error) string {
 	switch {

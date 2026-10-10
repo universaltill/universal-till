@@ -3,6 +3,8 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -392,5 +394,104 @@ func TestEnrolNow_BusySlotHasOwnMessage(t *testing.T) {
 	}
 	if strings.Contains(body, "check the internet connection") || strings.Contains(body, "slot held") {
 		t.Fatalf("busy answer = %s, want only the busy text", body)
+	}
+}
+
+// ut-docs#4058: a failed "Pair with a shop" shows a translated message,
+// never err.Error() (cloud JSON, endpoint, dial errors).
+func pairFailureCloud(t *testing.T, d *common.Deps, status int, body string) {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/v1/stores/pair", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	enroll.Init(t.Context(), &config.Config{}, d.Settings, &sync.WaitGroup{})
+	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
+	d.Cfg.Marketplace.EndpointURL = srv.URL + "/api"
+}
+
+func assertNoLeak(t *testing.T, body string, bad ...string) {
+	t.Helper()
+	for _, b := range bad {
+		if strings.Contains(body, b) {
+			t.Fatalf("body leaks %q: %s", b, body)
+		}
+	}
+}
+
+func TestEnrolPair_ServiceRefusedShowsTranslatedMessageOnly(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	pairFailureCloud(t, d, http.StatusForbidden,
+		`{"data":null,"error":{"code":"service_unavailable","message":"Shop X refused because of region"}}`)
+	rec := postForm(mux, "/api/enrol/pair", url.Values{"code": {pairPageCode}}, &mgrUser)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, `class="error"`) ||
+		!strings.Contains(body, "The Universal Till cloud is not available for this shop. The till keeps working offline.") {
+		t.Fatalf("refused pair = %d %s, want the service-unavailable message", rec.Code, body)
+	}
+	assertNoLeak(t, body, "Pairing failed", "service_unavailable", "refused because", "403", pairPageCode)
+}
+
+func TestEnrolPair_OtherFailuresShowGenericMessageOnly(t *testing.T) {
+	for name, tc := range map[string]struct {
+		status int
+		body   string
+	}{
+		"403 code_invalid": {http.StatusForbidden, `{"data":null,"error":{"code":"code_invalid","message":"nope"}}`},
+		"502 non-JSON":     {http.StatusBadGateway, `<html>bad gateway</html>`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mux, _, d := newFullAuthDeps(t)
+			pairFailureCloud(t, d, tc.status, tc.body)
+			rec := postForm(mux, "/api/enrol/pair", url.Values{"code": {pairPageCode}}, &mgrUser)
+			body := rec.Body.String()
+			if !strings.Contains(body, `class="error"`) || !strings.Contains(body, "Pairing failed — check the code and the internet connection, then try again") {
+				t.Fatalf("pair = %s, want the generic pair_failed text", body)
+			}
+			assertNoLeak(t, body, "code_invalid", "cloud answered", "returned", "502", "403", "bad gateway", "not available for this shop", ": ")
+		})
+	}
+}
+
+func TestEnrolPair_NotConfiguredShowsTranslatedMessage(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	pairDeps(t, d)
+	d.Cfg.Marketplace.EndpointURL = ""
+	rec := postForm(mux, "/api/enrol/pair", url.Values{"code": {pairPageCode}}, &mgrUser)
+	body := rec.Body.String()
+	if !strings.Contains(body, "No cloud address is set up on this till") {
+		t.Fatalf("pair = %s, want the not-configured message", body)
+	}
+	assertNoLeak(t, body, "Pairing failed", "marketplace endpoint")
+}
+
+func TestEnrolPair_NetworkFailureShowsGenericMessageOnly(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	pairDeps(t, d)
+	d.Cfg.Marketplace.EndpointURL = "http://127.0.0.1:1/api"
+	rec := postForm(mux, "/api/enrol/pair", url.Values{"code": {pairPageCode}}, &mgrUser)
+	body := rec.Body.String()
+	if !strings.Contains(body, "Pairing failed — check the code and the internet connection, then try again") {
+		t.Fatalf("pair = %s, want the generic pair_failed text", body)
+	}
+	assertNoLeak(t, body, "dial", "127.0.0.1", "pair request", "refused", ": ")
+}
+
+// The handler-level busy path needs a held attempt slot, which only the
+// enroll package can take; enroll's TestPairBusySlotIsSentinel proves the
+// sentinel and this proves its message.
+func TestEnrolFailureKey_CoversPairErrors(t *testing.T) {
+	busy := fmt.Errorf("%w: %w", enroll.ErrAttemptBusy, context.DeadlineExceeded)
+	for err, want := range map[error]string{
+		busy:                     "settings.enrol.busy",
+		enroll.ErrNotConfigured:  "settings.enrol.not_configured",
+		errors.New("pair: boom"): "",
+	} {
+		if got := enrolFailureKey(err); got != want {
+			t.Fatalf("enrolFailureKey(%v) = %q, want %q", err, got, want)
+		}
 	}
 }
