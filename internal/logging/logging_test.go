@@ -190,3 +190,58 @@ func TestRecentHoldsRedactedMessage(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#2862: HasOpenProblem is the "already warned for this condition?"
+// check callers use to log a repeat at INFO instead of WARN.
+func TestHasOpenProblem(t *testing.T) {
+	ResetRecent()
+	t.Cleanup(ResetRecent)
+	l := L()
+	if HasOpenProblem("test.cond") || HasOpenProblem("") {
+		t.Fatal("empty ring reports an open problem")
+	}
+	l.Warnf("unkeyed")
+	if HasOpenProblem("") {
+		t.Fatal("empty key must never be open, even with unkeyed lines in the ring")
+	}
+	l.WarnProblemf("test.cond", "cond failed")
+	if !HasOpenProblem("test.cond") {
+		t.Fatal("unresolved keyed entry not reported open")
+	}
+	if HasOpenProblem("test.other") {
+		t.Fatal("a different key reported open")
+	}
+	ResolveProblems("test.cond")
+	if HasOpenProblem("test.cond") {
+		t.Fatal("a resolved entry still reported open")
+	}
+}
+
+// ut-docs#2862: ResolveProblemsWhere closes every open keyed entry whose key
+// matches, never an unkeyed one, and counts what it closed.
+func TestResolveProblemsWhere(t *testing.T) {
+	ResetRecent()
+	t.Cleanup(ResetRecent)
+	l := L()
+	l.WarnProblemf("grp:a", "a failed")
+	l.WarnProblemf("grp:b", "b failed")
+	l.WarnProblemf("other:c", "c failed")
+	l.Warnf("unkeyed")
+
+	if n := ResolveProblemsWhere(nil); n != 0 {
+		t.Fatalf("nil match resolved %d, want 0", n)
+	}
+	// A match-everything predicate must still skip the unkeyed line.
+	if n := ResolveProblemsWhere(func(k string) bool { return strings.HasPrefix(k, "grp:") || k == "" }); n != 2 {
+		t.Fatalf("resolved %d, want 2 (grp:a, grp:b; never the unkeyed line)", n)
+	}
+	if n := ResolveProblemsWhere(func(k string) bool { return strings.HasPrefix(k, "grp:") }); n != 0 {
+		t.Fatalf("second pass resolved %d, want 0 (already resolved)", n)
+	}
+	if !HasOpenProblem("other:c") {
+		t.Fatal("a non-matching key was resolved")
+	}
+	if len(Recent()) != 4 {
+		t.Fatalf("Recent() = %+v, want all four lines kept as history", Recent())
+	}
+}

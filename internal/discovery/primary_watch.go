@@ -57,10 +57,11 @@ import (
 // never overwrite it (data.PerTillSettingPrefixes).
 const PrimaryTillIDSettingKey = "sync.primary_till_id"
 
-// MainTillProblemKey tags the Problems entries (logging.WarnProblemf) of a
-// main-till outage — "main till unreachable" and a refused proof — so the
-// first successful contact afterwards resolves them and the cloud stops
-// showing "Attention needed" for an outage that is over (ut-docs#2798).
+// MainTillProblemKey tags the Problems entry (logging.WarnProblemf) of a
+// main-till outage — "main till unreachable" — so the first successful
+// contact afterwards resolves it and the cloud stops showing "Attention
+// needed" for an outage that is over (ut-docs#2798). A refused proof is
+// deliberately NOT under this key: see rediscover (ut-docs#2862).
 const MainTillProblemKey = "sync.main_till_contact"
 
 // UnreachableThreshold is how many consecutive failed contacts (30s pull
@@ -351,14 +352,24 @@ func (w *PrimaryWatch) rediscover(ctx context.Context) (oldURL, newURL string, e
 				// The cloud's answer did not prove itself: a stale record, a
 				// re-installed main till — or a wrong cloud answer. Never
 				// switch; say so where an operator can see it.
-				logging.L().WarnProblemf(MainTillProblemKey, "sync: the cloud reported this shop's main till at %s but it did not prove it holds this till's pairing (%v) — not switching", c.BaseURL, perr)
+				// Unkeyed on purpose (ut-docs#2862 m1): under MainTillProblemKey
+				// the next successful contact with the REAL main till would
+				// resolve this, silently clearing a warning about a stale or
+				// spoofing device that may still be on the LAN. Unkeyed it
+				// stays listed in the heartbeat for 24h after it was last
+				// seen (problemReportMaxAge) and repeats if it recurs. A
+				// per-address key is no fix: rediscover only runs during an
+				// outage, so "the address disappeared" can't be observed once
+				// the link is back, and the keyed problem would stay open forever.
+				logging.L().Warnf("sync: the cloud reported this shop's main till at %s but it did not prove it holds this till's pairing (%v) — not switching", c.BaseURL, perr)
 				continue
 			}
 			if c.TillID == expected {
 				// Claims to be our main till but can't prove it: a stale
 				// record, a re-installed main till (new pairing needed) — or
 				// a spoof. Never switch; say so where an operator can see it.
-				logging.L().WarnProblemf(MainTillProblemKey, "sync: %s advertises this shop's main till id but did not prove it holds this till's pairing (%v) — not switching", c.BaseURL, perr)
+				// Unkeyed on purpose, as above (ut-docs#2862 m1).
+				logging.L().Warnf("sync: %s advertises this shop's main till id but did not prove it holds this till's pairing (%v) — not switching", c.BaseURL, perr)
 			}
 			continue
 		}

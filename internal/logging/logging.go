@@ -202,6 +202,46 @@ func ResolveProblems(key string) int {
 	return n
 }
 
+// HasOpenProblem reports whether an unresolved Problem is logged under key.
+// A caller that warns once per condition uses it to log a repeat at INFO
+// instead of WARN, so a failure retried every tick does not flood the
+// 50-entry ring (ut-docs#2862). An empty key is never open.
+func HasOpenProblem(key string) bool {
+	if key == "" {
+		return false
+	}
+	recentMu.Lock()
+	defer recentMu.Unlock()
+	for _, p := range recentBuf {
+		if p.Key == key && !p.Resolved {
+			return true
+		}
+	}
+	return false
+}
+
+// ResolveProblemsWhere marks every open keyed Problem (Key != "") whose key
+// match accepts resolved and reports how many it closed; the caller logs the
+// recovery (at INFO) when that is non-zero. For a family of per-subject keys
+// whose subject can vanish without its own recovery branch running
+// (ut-docs#2862). A nil match resolves nothing; unkeyed lines never resolve.
+// match runs under the ring's lock: it must not log (that would deadlock).
+func ResolveProblemsWhere(match func(key string) bool) int {
+	if match == nil {
+		return 0
+	}
+	recentMu.Lock()
+	defer recentMu.Unlock()
+	n := 0
+	for i := range recentBuf {
+		if recentBuf[i].Key != "" && !recentBuf[i].Resolved && match(recentBuf[i].Key) {
+			recentBuf[i].Resolved = true
+			n++
+		}
+	}
+	return n
+}
+
 func remember(level Level, key, msg string) {
 	if level < Warn {
 		return

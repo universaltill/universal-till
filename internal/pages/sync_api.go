@@ -732,6 +732,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		}
 		// ut-docs#2753: no longer a replica, so no main till vouches for it.
 		enroll.ForgetReplicaVouch()
+		resolveReplicaSyncProblems()
 		now := time.Now().UTC().Format(time.RFC3339)
 		if elev.Outcome == elevated {
 			_ = posRepo.InsertAuditElevated(r.Context(), nil, actorID, elev.ActorID, "till", "-", "till_promoted", nil, now, "")

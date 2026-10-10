@@ -154,8 +154,8 @@ func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.
 	opts.OnLost = func(ctx context.Context, cause string) {
 		primaryContactFailed(ctx, d, cause)
 	}
-	opts.OnRevoked = func(context.Context) {
-		logging.L().Warnf("sync link: the main till no longer accepts this till's pairing — link stopped; this till keeps selling offline until it is paired again")
+	opts.OnRevoked = func(ctx context.Context) {
+		linkPairingRevoked(ctx, d)
 	}
 	opts.WhileLinked = func(ctx context.Context) {
 		refreshLinkContact(ctx, d)

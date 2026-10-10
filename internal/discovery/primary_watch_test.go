@@ -10,11 +10,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 const (
@@ -370,4 +372,48 @@ func TestPrimaryWatch_RelayedProofDoesNotSwitch(t *testing.T) {
 	if got := f.get(t, "sync.primary_url"); got != deadURL {
 		t.Fatalf("sync.primary_url = %q, want unchanged (%q)", got, deadURL)
 	}
+}
+
+// requireUnkeyedProofWarn asserts a refused proof logged a WARN that is NOT
+// under MainTillProblemKey: the next successful contact with the real main
+// till resolves that key, and must not silently clear a warning about a
+// stale or spoofing device that may still be on the LAN (ut-docs#2862 m1).
+func requireUnkeyedProofWarn(t *testing.T) {
+	t.Helper()
+	found := 0
+	for _, p := range logging.Recent() {
+		if !strings.Contains(p.Msg, "did not prove") {
+			continue
+		}
+		found++
+		if p.Key != "" {
+			t.Fatalf("a refused proof is keyed %q — an outage recovery would clear it: %+v", p.Key, p)
+		}
+	}
+	if found == 0 {
+		t.Fatalf("no refused-proof WARN logged: %+v", logging.Recent())
+	}
+	if n := logging.ResolveProblems(MainTillProblemKey); n != 0 {
+		t.Fatalf("resolving the outage key closed %d entries, want 0 (the refused-proof warning must survive recovery)", n)
+	}
+	open := 0
+	for _, p := range logging.OpenProblems(time.Now(), 24*time.Hour) {
+		if strings.Contains(p.Msg, "did not prove") {
+			open++
+		}
+	}
+	if open == 0 {
+		t.Fatal("the refused-proof warning is no longer open after the outage key resolved")
+	}
+}
+
+func TestPrimaryWatch_RefusedProofWarnsUnkeyed(t *testing.T) {
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+	spoof := newFakePrimary(t, testPrimaryID, "not-the-real-bearer-hash")
+	f := newWatchFixture(t, Candidate{Name: "Shop", TillID: testPrimaryID, BaseURL: spoof.srv.URL})
+	for i := 0; i < UnreachableThreshold; i++ {
+		f.w.ContactFailed(context.Background())
+	}
+	requireUnkeyedProofWarn(t)
 }
