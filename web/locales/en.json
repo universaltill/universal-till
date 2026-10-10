@@ -2471,6 +2471,8 @@
   "settings.update.apply_confirm": "Download and install the update now? The till restarts when done.",
   "settings.update.auto_blocked": "Automatic updates are on, but this till can't install them by itself: its install folder isn't writable by the till. If it was installed from the .deb package, reinstall the latest one — that fixes the folder; otherwise give the till's user write access to that folder. Then check again.",
   "settings.update.auto_enable": "Update automatically",
+  "settings.update.follows_main": "This till follows the main till's version (%s). Change automatic updates on the main till.",
+  "settings.update.follows_main_unknown": "This till follows the main till's version. Change automatic updates on the main till.",
   "settings.update.check_btn": "Check for updates",
   "settings.update.check_failed": "Could not reach the update server — try again later",
   "settings.update.download": "Download",

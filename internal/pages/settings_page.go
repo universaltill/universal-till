@@ -570,6 +570,18 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			v, _, _ := d.Settings.Get(r.Context(), k)
 			return v
 		})
+		// ut-docs#2949: an additional till follows its main till's version
+		// (ut-docs#2738) instead of running the nightly schedule, so the
+		// page says that rather than showing a box that reads Off there.
+		// The version is device input from the main till: print it only
+		// when it is a release version.
+		autoUpdateFollowsMain := tillFollowsMain(r.Context(), d)
+		autoUpdateMainVersion := ""
+		if autoUpdateFollowsMain {
+			if v := followTarget(r.Context(), d); releaseVersion(v) {
+				autoUpdateMainVersion = "v" + strings.TrimPrefix(v, "v")
+			}
+		}
 		// Sample-data note (ut-docs#539, extended to customers/promos by
 		// ut-docs#567): best-effort — a schema-less test DB or a query
 		// error just renders the page without the note, same posture as
@@ -851,6 +863,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"payDefault":             payDefault,
 			"payFees":                feeRows,
 			"exportEntries":          exportEntries,
+			"autoUpdateFollowsMain":  autoUpdateFollowsMain,
+			"autoUpdateMainVersion":  autoUpdateMainVersion,
 			"autoUpdateEnabled":      autoUpdateEnabled,
 			"autoUpdateTime":         autoUpdateTime,
 			"about":                  aboutView(r.Context(), d.Settings, locale), // ut-docs#3091
