@@ -6,10 +6,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with: { go-version: '1.27' }
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod }
+      - uses: actions/setup-node@v7
         # Needed only by the docs-shots cross-check below (ut-docs#370),
         # which shells out to the real e2e/tests-docs/lib.js rather than
         # duplicating its algorithm. Set up here, early, so that check runs
@@ -22,7 +22,7 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/gobuildcache"
           mkdir -p "${RUNNER_TEMP}/gomodcache"
       - name: Restore Go cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ${{ runner.temp }}/gobuildcache
@@ -591,9 +591,9 @@ jobs:
         seed: [ '1791386291628608919', '22' ]
     name: pages-shuffle (seed ${{ matrix.seed }})
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with: { go-version: '1.27' }
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod }
       - name: Test internal/pages (-shuffle=${{ matrix.seed }})
         # -count=1: a cached pass would skip the run. -timeout 20m: same
         # margin as build's own internal/pages step (ut-docs#1992).
@@ -620,9 +620,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with: { go-version: '1.27' }
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod }
       - name: Install GTK/WebKit dev headers
         # ut-docs#1933: apt-get update against this runner image's
         # pre-configured Google Chrome repo intermittently fails with a
@@ -699,9 +699,9 @@ jobs:
     needs: build
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with: { go-version: '1.27' }
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod }
       - name: Vet unitill-desktop (windows)
         run: go vet ./cmd/unitill-desktop/
       - name: Win32 window modes + startup shortcut
@@ -717,10 +717,10 @@ jobs:
       # specs skip (loudly), rather than failing the whole e2e job.
       DOCS_READ_TOKEN: ${{ secrets.DOCS_READ_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Checkout docs repo for docs-hub tests
         if: env.DOCS_READ_TOKEN != ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: universaltill/ut-docs
           # NOT ./docs — that is universal-till's OWN docs directory, which
@@ -731,9 +731,9 @@ jobs:
       - name: Warn that docs-hub specs will skip
         if: env.DOCS_READ_TOKEN == ''
         run: echo "::warning::DOCS_READ_TOKEN secret not set — ut-docs is private, docs-hub e2e specs will be skipped"
-      - uses: actions/setup-go@v5
-        with: { go-version: '1.27' }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod }
+      - uses: actions/setup-node@v7
         with:
           node-version: '26'
       - name: Seed E2E database
@@ -792,7 +792,7 @@ jobs:
         run: npm run test:e2e
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: tests/e2e/playwright-report/
@@ -804,9 +804,9 @@ jobs:
       PACT_BROKER_BASE_URL: ${{ secrets.PACT_BROKER_BASE_URL }}
       PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with: { go-version: '1.27' }
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod }
       - name: Download Pact FFI
         run: |
           curl -L -o /tmp/libpact_ffi.so.gz \
@@ -837,7 +837,7 @@ jobs:
             --branch "$PACT_CONSUMER_BRANCH"
       - name: Upload Pact artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pact-artifacts
           path: |
@@ -868,7 +868,7 @@ jobs:
       # failure class this guard exists to prevent).
       DOCS_READ_TOKEN: ${{ secrets.DOCS_READ_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Self-test runs first and unconditionally (no ut-docs checkout
       # needed), mirroring lang-pack-drift.yml's own "self-tests run first,
       # even if a later step would fail" convention and this file's other
@@ -889,7 +889,7 @@ jobs:
         run: bash scripts/ci/guard-adr-taxonomy-drift_test.sh
       - name: Checkout ut-docs for the taxonomy guards
         if: env.DOCS_READ_TOKEN != ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: universaltill/ut-docs
           path: ut-docs

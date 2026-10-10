@@ -34,7 +34,7 @@ jobs:
   authors:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Need the PR's commits and the base, not just a shallow tip.
           fetch-depth: 0

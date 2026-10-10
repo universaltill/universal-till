@@ -80,7 +80,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -95,7 +95,7 @@ jobs:
       # in-workspace-checkout + env-var convention ci.yml's taxonomy guards
       # already use for their own ut-docs checkout (DOCS_DIR).
       - name: Checkout ut-plugin-language-de
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: universaltill/ut-plugin-language-de
           ref: main
@@ -108,7 +108,7 @@ jobs:
       # new permission; works for fork PRs since it reads the base repo.
       - name: Checkout base branch en.json
         if: github.event_name == 'pull_request'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.base_ref }}
           path: .locale-audit-base
@@ -116,15 +116,15 @@ jobs:
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 26
       # Cache the Playwright browser download between runs, same pattern as
       # e2e.yml.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('e2e/package-lock.json') }}
@@ -162,7 +162,7 @@ jobs:
           UT_LOCALE_AUDIT_STRICT: "1"
         run: bash scripts/ci/audit-locale-render.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: locale-render-audit-playwright-report
