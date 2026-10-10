@@ -31,7 +31,7 @@
           <tr>
             <td>{{ if .Orphan }}{{ .Name }} <span class="muted">{{ T "plugins.settings.takeaway.deleted_code" }}</span>{{ else }}{{ .Name }}{{ end }}</td>
             <td>{{ if .Orphan }}—{{ else }}{{ .DineInPercent }}%{{ end }}</td>
-            <td><input type="number" step="0.01" min="0" max="100" name="takeaway_pct_{{ .TaxCodeID }}" value="{{ .OverridePercent }}" placeholder="{{ .PlaceholderPercent }}"></td>
+            <td><input type="text" inputmode="decimal" {{ percentpatternlocal }} name="takeaway_pct_{{ .TaxCodeID }}" value="{{ .OverridePercent }}" placeholder="{{ .PlaceholderPercent }}"></td>
           </tr>
           {{ end }}
         </tbody>

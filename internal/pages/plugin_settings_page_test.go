@@ -7,6 +7,7 @@ import (
 	"html"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -283,6 +284,13 @@ func TestPluginSettingsPage_GET_RendersTakeawayOverridesEditor(t *testing.T) {
 	if !strings.Contains(body, "takeaway_pct_tax_19") {
 		t.Fatalf("expected a takeaway_pct_tax_19 input, got %s", body)
 	}
+	// ut-docs#2974: a text input (not type=number, whose osk.js .value=""
+	// trap #1275/#2954 removed elsewhere) with the comma-tolerant pattern.
+	for _, want := range []string{`type="text"`, `inputmode="decimal"`, `data-money-local="percent"`} {
+		if !takeawayInputTag(t, body, "takeaway_pct_tax_19", want) {
+			t.Errorf("takeaway_pct_tax_19 input lacks %s: %s", want, body)
+		}
+	}
 	if !strings.Contains(body, "takeaway_pct_tax_reduced") {
 		t.Fatalf("expected a takeaway_pct_tax_reduced input, got %s", body)
 	}
@@ -549,8 +557,9 @@ func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_NonFiniteAndOverflowRejec
 	seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
 	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
 
-	for _, bad := range []string{"NaN", "nan", "Inf", "+Inf", "-Inf", "infinity", "1e300", "101", "-1", "0", "0.004"} {
-		form := "setting_takeaway_typed=1&takeaway_pct_tax_19=" + bad
+	for _, bad := range []string{"NaN", "nan", "Inf", "+Inf", "-Inf", "infinity", "1e300", "101", "-1", "0", "0.004",
+		"1e1", "1,555", "100,01", "5%"} { // ut-docs#2974: exponent/over-precision/suffix refused by the integer grammar
+		form := "setting_takeaway_typed=1&takeaway_pct_tax_19=" + url.QueryEscape(bad)
 		req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
@@ -1354,6 +1363,52 @@ func TestPluginSettingsAPI_POST_AuditRecordsChangedKeysNotValues(t *testing.T) {
 	for _, v := range []string{"new-host", "new-secret-value", "old.example", "original-secret"} {
 		if strings.Contains(raw, v) {
 			t.Fatalf("audit row must never carry setting values, found %q in %s", v, raw)
+		}
+	}
+}
+
+// takeawayInputTag reports whether the <input> carrying name="<name>" also
+// contains attr (ut-docs#2974).
+func takeawayInputTag(t *testing.T, body, name, attr string) bool {
+	t.Helper()
+	i := strings.Index(body, `name="`+name+`"`)
+	if i < 0 {
+		t.Fatalf("no input named %s", name)
+	}
+	start := strings.LastIndex(body[:i], "<input")
+	end := i + strings.Index(body[i:], ">")
+	return start >= 0 && strings.Contains(body[start:end], attr)
+}
+
+// ut-docs#2974: the takeaway override uses the shared comma-tolerant percent
+// grammar (httpx.ParsePercentBP): "1,5" and "7.25" are accepted.
+func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_AcceptsDecimalComma(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	for _, c := range []struct {
+		in   string
+		want int
+	}{{"1,5", 150}, {"7.25", 725}} {
+		mux, dp := newPluginSettingsTestDeps(t)
+		seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
+		seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
+		form := "setting_takeaway_typed=1&takeaway_pct_tax_19=" + url.QueryEscape(c.in)
+		req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%q: code %d body %s", c.in, rec.Code, rec.Body.String())
+		}
+		rows, err := data.NewPluginRepo(dp.Db).ListPluginSettings(context.Background(), "p1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range rows {
+			if row.Key == "takeaway_rate_overrides" {
+				if got := settingsGetRoundTrip(t, row.ValueJSON); got["tax_19"] != c.want || len(got) != 1 {
+					t.Fatalf("%q: stored %+v, want tax_19=%d", c.in, got, c.want)
+				}
+			}
 		}
 	}
 }

@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -209,13 +207,11 @@ func (e httpStatusError) Error() string { return e.msg }
 // sets it. Pure validation — no writes — so a caller can run it BEFORE any
 // setting is persisted.
 //
-// Rate validation happens on the float, before the int conversion: NaN, ±Inf
-// and out-of-range floats must be rejected here because int(math.Round(x))
-// is implementation-defined for non-finite/overflowing x — on amd64 it
-// yields math.MinInt64, which would be silently persisted into a live tax
-// setting (review finding on ut-docs#190). A non-blank value that rounds to
-// 0 bp is rejected too: the plugin ignores bp<=0, so "saving" it would
-// silently store nothing while reporting success.
+// The value is read by httpx.ParsePercentBP (ut-docs#2974): '.' or ',' as
+// the separator, at most 2 decimals, digits only, so exponents, NaN, Inf and
+// signs are refused by construction. A non-blank value of 0 bp is rejected
+// too: the plugin ignores bp<=0, so "saving" it would silently store nothing
+// while reporting success. Above 100% (10000 bp) is refused as well.
 func parseTaxOverrides(form map[string][]string, current map[string]int, taxCodes []data.TaxCodeView, locale string) (map[string]int, error) {
 	// Only tax_code_ids that are either an active tax code or an existing
 	// orphan entry are accepted — the form cannot invent entries.
@@ -239,15 +235,11 @@ func parseTaxOverrides(form map[string][]string, current map[string]int, taxCode
 			delete(overrides, id) // present but blank: explicit removal
 			continue
 		}
-		pct, err := strconv.ParseFloat(val, 64)
-		if err != nil || math.IsNaN(pct) || math.IsInf(pct, 0) || pct < 0 || pct > 100 {
+		bp, err := httpx.ParsePercentBP(val)
+		if err != nil || bp <= 0 || bp > 10000 {
 			return nil, invalid
 		}
-		bp := int(math.Round(pct * 100))
-		if bp <= 0 {
-			return nil, invalid
-		}
-		overrides[id] = bp
+		overrides[id] = int(bp)
 	}
 	return overrides, nil
 }

@@ -55,6 +55,37 @@ func TestPercentTemplates_NoDotOnlyPattern(t *testing.T) {
 	}
 }
 
+// ut-docs#2974: a percent input must be a text input with inputmode=decimal;
+// type="number" accepts "1e1" and hits the osk.js .value="" trap
+// (ut-docs#1275). Covers the takeaway_pct_<id> override field too.
+func TestPercentTemplates_NotTypeNumber(t *testing.T) {
+	chdirRoot(t)
+	percentField := regexp.MustCompile(`name="(value_percent|percent|tax_rate_pct|rate|takeawayRate|takeaway_pct_[^"]*)"`)
+	numberType := regexp.MustCompile(`type="number"`)
+	var hits []string
+	err := filepath.WalkDir(filepath.Join("web", "ui"), func(path string, e fs.DirEntry, err error) error {
+		if err != nil || e.IsDir() || !strings.HasSuffix(path, ".html") {
+			return err
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for i, line := range strings.Split(string(b), "\n") {
+			if percentField.MatchString(line) && numberType.MatchString(line) {
+				hits = append(hits, path+":"+strconv.Itoa(i+1))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) > 0 {
+		t.Fatalf("percent inputs still type=\"number\" (use type=\"text\" inputmode=\"decimal\" {{ percentpatternlocal }}; ut-docs#2974):\n%s", strings.Join(hits, "\n"))
+	}
+}
+
 func TestPromotionsCreate_ValuePercentAcceptsDecimalComma(t *testing.T) {
 	mux, d := newPromotionsTestMux(t)
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
