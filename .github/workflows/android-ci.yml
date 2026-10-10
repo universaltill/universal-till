@@ -82,7 +82,7 @@ jobs:
             changed="android/unknown-cannot-diff"
           fi
           echo "$changed"
-          if printf '%s\n' "$changed" | grep -qE '^(android|mobile)/'; then
+          if grep -qE '^(android|mobile)/' <<<"$changed"; then
             echo "match=true" >> "$GITHUB_OUTPUT"
           else
             echo "match=false" >> "$GITHUB_OUTPUT"

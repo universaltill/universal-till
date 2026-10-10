@@ -133,7 +133,7 @@ while IFS= read -r -d '' f; do
     case "${line}" in
       *'taxonomy-count:historical'*) continue ;;
     esac
-    n="$(printf '%s' "${line}" | grep -oE '[0-9]+-type( plugin)? taxonomy|\([0-9]+ canonical types\)|[0-9]+ types? \(ADR-0002|\([0-9]+ types[;,)]' | head -1 | grep -oE '[0-9]+' | head -1)"
+    n="$(printf '%s' "${line}" | grep -oE '[0-9]+-type( plugin)? taxonomy|\([0-9]+ canonical types\)|[0-9]+ types? \(ADR-0002|\([0-9]+ types[;,)]' | sed -n 1p | grep -oE '[0-9]+' | sed -n 1p)"
     if [ -n "${n}" ] && [ "${n}" -ne "${LIVE_COUNT}" ]; then
       echo "❌ adr-taxonomy-drift guard: ${f#"${ADR_DIR}"/}:${lineno} says ${n} but the live count is ${LIVE_COUNT} (${GO_FILE}'s CanonicalTypes):" >&2
       echo "    ${line}" >&2

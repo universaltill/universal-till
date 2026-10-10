@@ -145,7 +145,7 @@ TYPE_COUNT="$(printf '%s\n' "${GO_SORTED}" | grep -c '.')"
 # above would catch that drifting from the real count (independent review,
 # ut-docs#2134, finding N4: a 23rd type could be added to the pipe line
 # alone, passing the check above, while the title still said 22).
-TITLE_COUNT="$(grep -oE '\([0-9]+ canonical types\)' "${ADR_FILE}" | head -1 | grep -oE '[0-9]+' || true)"
+TITLE_COUNT="$(grep -oE '\([0-9]+ canonical types\)' "${ADR_FILE}" | sed -n 1p | grep -oE '[0-9]+' || true)"
 if [ -z "${TITLE_COUNT}" ]; then
   echo "❌ adr-plugin-taxonomy guard: could not find a \"(N canonical types)\" count in ${ADR_FILE}'s title — has it moved or been reworded?" >&2
   exit 1
