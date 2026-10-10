@@ -800,6 +800,44 @@ const (
 // swapping it.
 var pluginSyncInstall = cloudInstallPluginVersion
 
+// pluginSyncRemove is convergePluginSet's uninstall call — a seam so tests
+// can fail it without a half-installed plugin on disk (ut-docs#2862).
+var pluginSyncRemove = cloudRemovePlugin
+
+// Problem-key prefixes for convergePluginSet's WARNs (ut-docs#2862); the
+// suffix is the marketplace listing ID. A failure warns once while its key
+// is open (a failure repeating every 30s tick would flood the 50-entry
+// Problems ring) and is resolved when that listing converges, or when the
+// primary stops listing it (the listing's own branch can never run again).
+// The broken key is resolved by a successful re-fetch, so a plugin that
+// re-breaks on every reload warns again per attempt — bounded by
+// shouldRefetchBroken's backoff, which also ERRORs once the burst is spent.
+const (
+	pluginSyncBrokenKeyPrefix    = "plugin_sync.broken:"
+	pluginSyncInstallKeyPrefix   = "plugin_sync.install:"
+	pluginSyncUninstallKeyPrefix = "plugin_sync.uninstall:"
+)
+
+// warnPluginSyncOnce logs a plugin-sync failure as a keyed WARN the first
+// time, and at INFO while that key is still open.
+func warnPluginSyncOnce(key, format string, args ...any) {
+	if logging.HasOpenProblem(key) {
+		logging.L().Infof(format, args...)
+		return
+	}
+	logging.L().WarnProblemf(key, format, args...)
+}
+
+// resolvePluginSyncListing closes a listing's broken-re-fetch and install
+// problems: it is installed at the right version, or just was.
+func resolvePluginSyncListing(listingID string) {
+	n := logging.ResolveProblems(pluginSyncBrokenKeyPrefix + listingID)
+	n += logging.ResolveProblems(pluginSyncInstallKeyPrefix + listingID)
+	if n > 0 {
+		logging.L().Infof("plugin sync: %s follows the primary again — %d earlier problem(s) resolved", listingID, n)
+	}
+}
+
 // convergePluginSet makes this till's marketplace-installed plugin set match
 // the given primary registry rows — the shared diff loop of both the
 // changed-bundle and steady-state (cached rows) paths of syncPullPlugins.
@@ -837,6 +875,7 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 		}
 		if installed && version == row.Version && installState != data.PluginStateBroken {
 			clearBrokenRefetch(d, row.ListingID)
+			resolvePluginSyncListing(row.ListingID)
 			continue
 		}
 		if installed && installState == data.PluginStateBroken {
@@ -850,17 +889,18 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 				converged = false // still broken — just not retrying this tick
 				continue
 			}
-			logging.L().Warnf("plugin sync: %s (%s@%s) is broken locally (registered but not loadable) — re-fetching from the marketplace",
+			warnPluginSyncOnce(pluginSyncBrokenKeyPrefix+row.ListingID, "plugin sync: %s (%s@%s) is broken locally (registered but not loadable) — re-fetching from the marketplace",
 				row.PluginName, row.ListingID, row.Version)
 		}
 		if _, err := pluginSyncInstall(ctx, d, row.ListingID, row.Version); err != nil {
-			logging.L().Warnf("plugin sync: install %s (%s@%s) from the marketplace failed (will retry): %v",
+			warnPluginSyncOnce(pluginSyncInstallKeyPrefix+row.ListingID, "plugin sync: install %s (%s@%s) from the marketplace failed (will retry): %v",
 				row.PluginName, row.ListingID, row.Version, err)
 			converged = false
 			continue
 		}
 		logging.L().Infof("plugin sync: installed %s (%s@%s) to follow the primary",
 			row.PluginName, row.ListingID, row.Version)
+		resolvePluginSyncListing(row.ListingID)
 		changed = true
 	}
 
@@ -874,17 +914,20 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 	// loop skips the plugin forever and it can never be uninstalled from a
 	// replica (round-2 review BLOCKER; replicas reject manual uninstall).
 	records, err := statusStore.List(ctx)
+	recordsOK := err == nil
 	if err != nil {
 		logging.L().Errorf("plugin sync: list local install records: %v", err)
 		converged = false
 		records = nil
 	}
+	pendingUninstall := make(map[string]bool)
 	for listingID, rec := range records {
 		if inPrimary[listingID] || rec.State != plugins.InstallStateActive || rec.PluginID == "" {
 			continue
 		}
-		if _, err := cloudRemovePlugin(ctx, d, rec.PluginID); err != nil {
-			logging.L().Warnf("plugin sync: uninstall %s (removed on the primary) failed (will retry): %v",
+		pendingUninstall[listingID] = true
+		if _, err := pluginSyncRemove(ctx, d, rec.PluginID); err != nil {
+			warnPluginSyncOnce(pluginSyncUninstallKeyPrefix+listingID, "plugin sync: uninstall %s (removed on the primary) failed (will retry): %v",
 				rec.PluginID, err)
 			converged = false
 			continue
@@ -894,7 +937,31 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 		// healthy-reconvergence path is the only other place that clears it.
 		clearBrokenRefetch(d, listingID)
 		logging.L().Infof("plugin sync: uninstalled %s to follow the primary", rec.PluginID)
+		if logging.ResolveProblems(pluginSyncUninstallKeyPrefix+listingID) > 0 {
+			logging.L().Infof("plugin sync: uninstall of %s succeeded — earlier problem resolved", rec.PluginID)
+		}
 		changed = true
+	}
+	// A listing the primary dropped can never recover on its install/broken
+	// branch (it is no longer visited), and one that is no longer a pending
+	// uninstall — the primary re-added it, or its record went away or left
+	// Active by another path (a cloud directive, a failed install) — never
+	// reaches the uninstall branch again: close those keyed problems, or they
+	// would stay open for good (ut-docs#2862). An unreadable records list
+	// says nothing about pending uninstalls, so it closes none.
+	if n := logging.ResolveProblemsWhere(func(key string) bool {
+		if id, ok := strings.CutPrefix(key, pluginSyncBrokenKeyPrefix); ok {
+			return !inPrimary[id]
+		}
+		if id, ok := strings.CutPrefix(key, pluginSyncInstallKeyPrefix); ok {
+			return !inPrimary[id]
+		}
+		if id, ok := strings.CutPrefix(key, pluginSyncUninstallKeyPrefix); ok {
+			return inPrimary[id] || (recordsOK && !pendingUninstall[id])
+		}
+		return false
+	}); n > 0 {
+		logging.L().Infof("plugin sync: %d problem(s) for listings the primary dropped or re-added resolved", n)
 	}
 	if changed {
 		// The status-bar chip's pending count ("Updates are installed from

@@ -186,12 +186,47 @@ func primaryContactFailed(ctx context.Context, d *common.Deps, cause string) {
 // primaryContactOK is the pull loop's (and the link's) success path. The
 // main till answered, so the outage problems it left in the Problems ring
 // are over: resolve them, so the next heartbeat stops reporting them and
-// my.'s "Attention needed" clears (ut-docs#2798).
+// my.'s "Attention needed" clears (ut-docs#2798). A pairing the main till
+// had refused is accepted again too (ut-docs#2862).
 func primaryContactOK(ctx context.Context, d *common.Deps) {
 	if d.PrimaryWatch != nil {
 		d.PrimaryWatch.ContactOK(ctx)
 	}
 	if n := logging.ResolveProblems(discovery.MainTillProblemKey); n > 0 {
 		logging.L().Infof("sync: main till reachable again — %d earlier main-till problem(s) resolved", n)
+	}
+	if n := logging.ResolveProblems(LinkPairingRevokedProblemKey); n > 0 {
+		logging.L().Infof("sync: this till's pairing is accepted again — %d earlier pairing-revoked problem(s) resolved", n)
+	}
+}
+
+// LinkPairingRevokedProblemKey keys the "main till no longer accepts this
+// till's pairing" Problem (ut-docs#2862): logged once when the link is
+// refused, resolved by primaryContactOK when the main till accepts this till
+// again (re-paired, or the pairing record restored) — until then the cloud
+// heartbeat keeps listing it, however long ago it was logged.
+const LinkPairingRevokedProblemKey = "sync.link_pairing_revoked"
+
+// linkPairingRevoked is the link's OnRevoked handler: the main till refused
+// this till's pairing, so the link stopped.
+func linkPairingRevoked(_ context.Context, _ *common.Deps) {
+	logging.L().WarnProblemf(LinkPairingRevokedProblemKey, "sync link: the main till no longer accepts this till's pairing — link stopped; this till keeps selling offline until it is paired again")
+}
+
+// resolveReplicaSyncProblems closes every keyed problem only a replica's
+// sync loops resolve — the main-till outage, a revoked pairing and the
+// plugin-sync failures — once this till stops being a replica (promote): the
+// pull loop and the link stop for good, so nothing else ever would, and
+// keyed problems never age out (ut-docs#2862).
+func resolveReplicaSyncProblems() {
+	n := logging.ResolveProblems(discovery.MainTillProblemKey)
+	n += logging.ResolveProblems(LinkPairingRevokedProblemKey)
+	n += logging.ResolveProblemsWhere(func(key string) bool {
+		return strings.HasPrefix(key, pluginSyncBrokenKeyPrefix) ||
+			strings.HasPrefix(key, pluginSyncInstallKeyPrefix) ||
+			strings.HasPrefix(key, pluginSyncUninstallKeyPrefix)
+	})
+	if n > 0 {
+		logging.L().Infof("sync: this till is no longer a replica — %d earlier sync problem(s) resolved", n)
 	}
 }

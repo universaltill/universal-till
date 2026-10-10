@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // ut-docs#2774: when mDNS finds nothing usable, a stranded replica asks the
@@ -257,3 +259,15 @@ func TestPrimaryWatch_CloudLookupIsRateLimitedWithTheBrowse(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestPrimaryWatch_CloudRefusedProofWarnsUnkeyed(t *testing.T) {
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+	spoof := newFakePrimary(t, testPrimaryID, "not-the-real-bearer-hash")
+	f := newWatchFixture(t)
+	withCloud(f, hostOf(t, spoof.srv.URL), nil)
+	for i := 0; i < UnreachableThreshold; i++ {
+		f.w.ContactFailed(context.Background())
+	}
+	requireUnkeyedProofWarn(t)
+}
