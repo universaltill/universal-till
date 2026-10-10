@@ -49,15 +49,11 @@ const (
 type Cert struct {
 	tlsCert tls.Certificate
 	leaf    *x509.Certificate
-	pin     string
+	// pin is the hex SHA-256 of the certificate's SubjectPublicKeyInfo —
+	// what a peer pins. It depends only on the key, so renewal keeps it.
+	// Its accessor arrives with its first caller, pinning at pairing.
+	pin string
 }
-
-// Pin is the hex SHA-256 of the certificate's SubjectPublicKeyInfo — what a
-// peer pins. It depends only on the key, so renewal keeps it.
-func (c *Cert) Pin() string { return c.pin }
-
-// Leaf is the parsed certificate being served.
-func (c *Cert) Leaf() *x509.Certificate { return c.leaf }
 
 // TLSConfig serves this certificate: TLS 1.3 only (every peer is a till
 // running this code) and HTTP/1.1 only, since the main-till link is a

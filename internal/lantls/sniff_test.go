@@ -73,7 +73,7 @@ func TestSniff_PlainAndTLSOnOnePort(t *testing.T) {
 	if got := get(t, &http.Client{Timeout: 5 * time.Second}, "http://"+addr+"/healthz"); got != "tls=false" {
 		t.Errorf("plain HTTP: %q, want tls=false", got)
 	}
-	if got := get(t, pinnedClient(c.Pin()), "https://"+addr+"/healthz"); got != "tls=true" {
+	if got := get(t, pinnedClient(c.pin), "https://"+addr+"/healthz"); got != "tls=true" {
 		t.Errorf("TLS: %q, want tls=true (r.TLS set)", got)
 	}
 	// A client pinning some other key refuses the connection.

@@ -40,7 +40,7 @@ func TestLoadOrCreate_FreshDirCreatesP256KeyAndFiveYearCert(t *testing.T) {
 			t.Errorf("key mode = %o, want 600", m)
 		}
 	}
-	leaf := c.Leaf()
+	leaf := c.leaf
 	pub, ok := leaf.PublicKey.(*ecdsa.PublicKey)
 	if !ok || pub.Curve != elliptic.P256() {
 		t.Fatalf("cert key = %T, want ECDSA P-256", leaf.PublicKey)
@@ -58,8 +58,8 @@ func TestLoadOrCreate_FreshDirCreatesP256KeyAndFiveYearCert(t *testing.T) {
 		t.Error("cert is a CA: it must only be able to serve, not sign")
 	}
 	sum := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
-	if c.Pin() != hex.EncodeToString(sum[:]) {
-		t.Errorf("Pin() = %s, want SPKI SHA-256 %x", c.Pin(), sum)
+	if c.pin != hex.EncodeToString(sum[:]) {
+		t.Errorf("pin = %s, want SPKI SHA-256 %x", c.pin, sum)
 	}
 }
 
@@ -73,10 +73,10 @@ func TestLoadOrCreate_RestartKeepsPinAndCert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Pin() != b.Pin() {
-		t.Fatalf("pin changed across restart: %s → %s", a.Pin(), b.Pin())
+	if a.pin != b.pin {
+		t.Fatalf("pin changed across restart: %s → %s", a.pin, b.pin)
 	}
-	if a.Leaf().SerialNumber.Cmp(b.Leaf().SerialNumber) != 0 {
+	if a.leaf.SerialNumber.Cmp(b.leaf.SerialNumber) != 0 {
 		t.Errorf("cert re-issued on a plain restart")
 	}
 }
@@ -92,18 +92,18 @@ func TestLoadOrCreate_RenewsNearExpiryOnSameKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Pin() != b.Pin() {
-		t.Fatalf("renewal changed the pin: %s → %s", a.Pin(), b.Pin())
+	if a.pin != b.pin {
+		t.Fatalf("renewal changed the pin: %s → %s", a.pin, b.pin)
 	}
-	if !b.Leaf().NotAfter.Equal(later.Add(Validity)) {
-		t.Errorf("renewed NotAfter = %v, want %v", b.Leaf().NotAfter, later.Add(Validity))
+	if !b.leaf.NotAfter.Equal(later.Add(Validity)) {
+		t.Errorf("renewed NotAfter = %v, want %v", b.leaf.NotAfter, later.Add(Validity))
 	}
 	// …and the renewed cert is what the next boot loads.
 	c, err := loadOrCreate(dir, later.Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Leaf().SerialNumber.Cmp(b.Leaf().SerialNumber) != 0 {
+	if c.leaf.SerialNumber.Cmp(b.leaf.SerialNumber) != 0 {
 		t.Errorf("renewed cert was not persisted")
 	}
 }
@@ -121,7 +121,7 @@ func TestLoadOrCreate_MissingOrForeignCertReissuedOnSameKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("missing cert: %v", err)
 	}
-	if a.Pin() != b.Pin() {
+	if a.pin != b.pin {
 		t.Fatalf("missing cert changed the pin")
 	}
 
@@ -142,8 +142,8 @@ func TestLoadOrCreate_MissingOrForeignCertReissuedOnSameKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("foreign cert: %v", err)
 	}
-	if c.Pin() != a.Pin() {
-		t.Fatalf("foreign cert: pin %s, want our key's %s", c.Pin(), a.Pin())
+	if c.pin != a.pin {
+		t.Fatalf("foreign cert: pin %s, want our key's %s", c.pin, a.pin)
 	}
 }
 
@@ -182,7 +182,7 @@ func TestLoadOrCreate_TLSConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if leaf.SerialNumber.Cmp(c.Leaf().SerialNumber) != 0 {
+	if leaf.SerialNumber.Cmp(c.leaf.SerialNumber) != 0 {
 		t.Errorf("TLSConfig serves a different cert")
 	}
 }
