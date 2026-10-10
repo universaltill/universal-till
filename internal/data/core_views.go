@@ -191,7 +191,7 @@ var (
 // auditSummaryRows is the Ask tool's fixed row cap for audit.summary.v1.
 const auditSummaryRows = 100
 
-// ShopContextRow is shop.context.v1's one row (ut-docs#4034): what a plugin
+// ShopContextRow is the one row of shop.context.v1 and .v2 (ut-docs#4034, #4045): what a plugin
 // needs to read the sales views' minor units (amount / 10^currency_decimals)
 // and to name the shop. The names are "" when unset — the plugin picks its
 // own fallback; core never sends English placeholder text.
@@ -203,7 +203,7 @@ type ShopContextRow struct {
 	Locale           string `json:"locale"` // the shop's default locale
 }
 
-// ShopContextFunc resolves shop.context.v1's row.
+// ShopContextFunc resolves the shop.context.vN row.
 type ShopContextFunc func(ctx context.Context, db *sql.DB) (ShopContextRow, error)
 
 // shopContextSource is installed by internal/pages, which owns the currency
@@ -211,7 +211,7 @@ type ShopContextFunc func(ctx context.Context, db *sql.DB) (ShopContextRow, erro
 // data, so data cannot resolve them itself.
 var shopContextSource atomic.Pointer[ShopContextFunc]
 
-// SetCoreViewShopContext installs (nil: removes) shop.context.v1's source
+// SetCoreViewShopContext installs (nil: removes) the shop.context.vN source
 // and returns the previous one, so a test stub can put it back.
 func SetCoreViewShopContext(f ShopContextFunc) (prev ShopContextFunc) {
 	var p *ShopContextFunc
@@ -300,17 +300,29 @@ var coreViews = map[string]CoreView{
 	// ut-docs#4034: the shop facts that make the sales views' minor units
 	// readable (JPY has 0 decimals, not 2), so it shares their class.
 	"shop.context.v1": {
-		Name: "shop.context.v1", Permission: "view:sales",
-		Run: func(ctx context.Context, db *sql.DB, _ map[string]int) (any, error) {
-			src := shopContextSource.Load()
-			if src == nil {
-				return nil, errors.New("shop.context.v1: no shop context provider installed")
-			}
-			row, err := (*src)(ctx, db)
-			if err != nil {
-				return nil, err
-			}
-			return []ShopContextRow{row}, nil
-		},
+		Name: "shop.context.v1", Permission: "view:sales", Run: runShopContext("shop.context.v1"),
 	},
+	// ut-docs#4045 (ADR-0121 §5 amendment): the same row under view:shop, a
+	// non-★ class, so a plugin that only shows prices (catalog.items.v1's
+	// price_minor) learns the decimals without view:sales, which also opens
+	// every receipt. v1 keeps view:sales until no signed plugin lists it.
+	"shop.context.v2": {
+		Name: "shop.context.v2", Permission: "view:shop", Run: runShopContext("shop.context.v2"),
+	},
+}
+
+// runShopContext is shop.context.vN's Run: one row from the provider
+// internal/pages installs, or an error naming the view when none is.
+func runShopContext(name string) func(context.Context, *sql.DB, map[string]int) (any, error) {
+	return func(ctx context.Context, db *sql.DB, _ map[string]int) (any, error) {
+		src := shopContextSource.Load()
+		if src == nil {
+			return nil, errors.New(name + ": no shop context provider installed")
+		}
+		row, err := (*src)(ctx, db)
+		if err != nil {
+			return nil, err
+		}
+		return []ShopContextRow{row}, nil
+	}
 }

@@ -12,7 +12,7 @@ import (
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
-// shop.context.v1 (ut-docs#4034) reads the same facts the built-in Ask
+// shop.context.v1 and .v2 (ut-docs#4034, #4045) read the same facts the built-in Ask
 // prompt does (ask_api.go): the live currency from httpx's registry, so its
 // decimals are the ones the till formats money with, the default locale and
 // the shop name — plus this till's own name as it reports it to the cloud.
