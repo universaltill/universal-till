@@ -118,6 +118,11 @@ type taxOverrideRow struct {
 	OverridePercent    string // current value as a percent string, "" if unset
 	PlaceholderPercent string // suggested value (pinned takeaway rate), "" if none
 	Orphan             bool
+	// InvalidStoredPercent is the stored entry's percent text when it is out
+	// of the accepted range (bp <= 0 or > taxrate.MaxBP), "" otherwise. Such a
+	// row renders a blank input (a bad prefill would block the whole form) and
+	// a visible notice naming the stored value (ut-docs#4086).
+	InvalidStoredPercent string
 }
 
 // unwrapSettingValue unwraps a plugin_settings.value_json's JSON-string
@@ -137,7 +142,10 @@ func unwrapSettingValue(valueJSON string) string {
 // stored overrides map and the shop's active tax codes. Returns ok=false
 // when there's nothing to show typed (no active tax codes and no existing
 // overrides) — the caller falls back to the plain text input.
-func buildTaxOverrideRows(currentValue string, taxCodes []data.TaxCodeView) ([]taxOverrideRow, bool) {
+//
+// Every percent string is localized with httpx.LocalizeMajor so a comma-locale
+// till prefills "7,5" (ParsePercentBP accepts either separator on save).
+func buildTaxOverrideRows(currentValue string, taxCodes []data.TaxCodeView, locale string) ([]taxOverrideRow, bool) {
 	overrides := map[string]int{}
 	if trimmed := strings.TrimSpace(currentValue); trimmed != "" {
 		if err := json.Unmarshal([]byte(trimmed), &overrides); err != nil {
@@ -152,6 +160,8 @@ func buildTaxOverrideRows(currentValue string, taxCodes []data.TaxCodeView) ([]t
 	if len(taxCodes) == 0 && len(overrides) == 0 {
 		return nil, false
 	}
+	pct := func(bp int) string { return httpx.LocalizeMajor(taxrate.FormatPercent(bp), locale) }
+	valid := func(bp int) bool { return bp > 0 && bp <= taxrate.MaxBP }
 	var rows []taxOverrideRow
 	seen := map[string]bool{}
 	for _, tc := range taxCodes {
@@ -159,13 +169,17 @@ func buildTaxOverrideRows(currentValue string, taxCodes []data.TaxCodeView) ([]t
 		row := taxOverrideRow{
 			TaxCodeID:     tc.ID,
 			Name:          tc.Name,
-			DineInPercent: taxrate.FormatPercent(int(tc.RateBP)),
+			DineInPercent: pct(int(tc.RateBP)),
 		}
-		if bp, ok := overrides[tc.ID]; ok && bp > 0 {
-			row.OverridePercent = taxrate.FormatPercent(bp)
+		if bp, ok := overrides[tc.ID]; ok {
+			if valid(bp) {
+				row.OverridePercent = pct(bp)
+			} else {
+				row.InvalidStoredPercent = pct(bp)
+			}
 		}
 		if tc.TakeawayRateBP != nil {
-			row.PlaceholderPercent = taxrate.FormatPercent(int(*tc.TakeawayRateBP))
+			row.PlaceholderPercent = pct(int(*tc.TakeawayRateBP))
 		}
 		rows = append(rows, row)
 	}
@@ -177,12 +191,13 @@ func buildTaxOverrideRows(currentValue string, taxCodes []data.TaxCodeView) ([]t
 	}
 	sort.Strings(orphanIDs)
 	for _, id := range orphanIDs {
-		rows = append(rows, taxOverrideRow{
-			TaxCodeID:       id,
-			Name:            id,
-			OverridePercent: taxrate.FormatPercent(overrides[id]),
-			Orphan:          true,
-		})
+		row := taxOverrideRow{TaxCodeID: id, Name: id, Orphan: true}
+		if bp := overrides[id]; valid(bp) {
+			row.OverridePercent = pct(bp)
+		} else {
+			row.InvalidStoredPercent = pct(bp)
+		}
+		rows = append(rows, row)
 	}
 	return rows, true
 }
@@ -346,7 +361,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 					httpx.RenderError(w, r, http.StatusInternalServerError, "plugins.error.server", err)
 					return
 				}
-				if taxRows, ok := buildTaxOverrideRows(v, taxCodes); ok {
+				if taxRows, ok := buildTaxOverrideRows(v, taxCodes, httpx.RequestLocale(r)); ok {
 					sv.Typed = true
 					sv.TaxRows = taxRows
 				}

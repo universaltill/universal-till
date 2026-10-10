@@ -1412,3 +1412,124 @@ func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_AcceptsDecimalComma(t *te
 		}
 	}
 }
+
+// ut-docs#4086: out-of-range stored overrides must never prefill an input
+// (a bad value blocked the whole form), must never be silently blank, and
+// prefills use the locale's decimal separator.
+func TestBuildTaxOverrideRows_OutOfRangeStoredIsBlankWithNotice(t *testing.T) {
+	tcs := []data.TaxCodeView{{ID: "tax_a", Name: "A", RateBP: 1900}, {ID: "tax_b", Name: "B", RateBP: 700}}
+	cases := []struct {
+		stored string
+		id     string
+		orphan bool
+		want   string
+	}{
+		{`{"gone":-500}`, "gone", true, "-5"},
+		{`{"gone":15000}`, "gone", true, "150"},
+		{`{"gone":0}`, "gone", true, "0"},
+		{`{"tax_a":0}`, "tax_a", false, "0"},
+		{`{"tax_a":-100}`, "tax_a", false, "-1"},
+		{`{"tax_a":10001}`, "tax_a", false, "100.01"},
+	}
+	for _, c := range cases {
+		rows, ok := buildTaxOverrideRows(c.stored, tcs, "en")
+		if !ok {
+			t.Fatalf("%s: not ok", c.stored)
+		}
+		found := false
+		for _, r := range rows {
+			if r.TaxCodeID != c.id {
+				continue
+			}
+			found = true
+			if r.Orphan != c.orphan || r.OverridePercent != "" || r.InvalidStoredPercent != c.want {
+				t.Fatalf("%s: row %+v, want blank override + InvalidStoredPercent %q", c.stored, r, c.want)
+			}
+		}
+		if !found {
+			t.Fatalf("%s: row %s missing", c.stored, c.id)
+		}
+	}
+}
+
+func TestBuildTaxOverrideRows_ValidValuesAreLocalized(t *testing.T) {
+	tb := int64(1050)
+	tcs := []data.TaxCodeView{{ID: "tax_a", Name: "A", RateBP: 1925, TakeawayRateBP: &tb}}
+	for _, c := range []struct{ locale, over, dine, ph string }{
+		{"de", "7,5", "19,25", "10,5"},
+		{"en", "7.5", "19.25", "10.5"},
+	} {
+		rows, _ := buildTaxOverrideRows(`{"tax_a":750}`, tcs, c.locale)
+		r := rows[0]
+		if r.OverridePercent != c.over || r.DineInPercent != c.dine || r.PlaceholderPercent != c.ph || r.InvalidStoredPercent != "" {
+			t.Fatalf("%s: %+v", c.locale, r)
+		}
+	}
+}
+
+func TestBuildTaxOverrideRows_BoundariesAreValid(t *testing.T) {
+	tcs := []data.TaxCodeView{{ID: "tax_a", Name: "A", RateBP: 1900}}
+	rows, _ := buildTaxOverrideRows(`{"tax_a":10000,"gone":1}`, tcs, "en")
+	if rows[0].OverridePercent != "100" || rows[0].InvalidStoredPercent != "" || rows[1].OverridePercent != "0.01" || rows[1].InvalidStoredPercent != "" {
+		t.Fatalf("%+v", rows)
+	}
+}
+
+func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_LocalizedPrefillRoundTrips(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
+	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{"tax_19":750}`, "global")
+	rows, _ := buildTaxOverrideRows(`{"tax_19":750}`, []data.TaxCodeView{{ID: "tax_19", RateBP: 1900}}, "de")
+	if rows[0].OverridePercent != "7,5" {
+		t.Fatalf("prefill %q", rows[0].OverridePercent)
+	}
+	form := "setting_takeaway_typed=1&takeaway_pct_tax_19=" + url.QueryEscape(rows[0].OverridePercent)
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
+	}
+	stored, err := data.NewPluginRepo(dp.Db).ListPluginSettings(context.Background(), "p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range stored {
+		if row.Key == "takeaway_rate_overrides" {
+			if got := settingsGetRoundTrip(t, row.ValueJSON); got["tax_19"] != 750 || len(got) != 1 {
+				t.Fatalf("stored %+v, want tax_19=750", got)
+			}
+		}
+	}
+}
+
+func TestPluginSettingsPage_GET_InvalidStoredOverrideShowsNoticeAndNoBadValue(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
+	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{"tax_19":0,"tax_gone":-500,"tax_big":15000}`, "global")
+	req := httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET: code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, id := range []string{"tax_19", "tax_gone", "tax_big"} {
+		if !strings.Contains(body, `id="takeaway-invalid-`+id+`"`) || !strings.Contains(body, `aria-describedby="takeaway-invalid-`+id+`"`) {
+			t.Fatalf("missing invalid notice for %s: %s", id, body)
+		}
+	}
+	for _, want := range []string{"Invalid takeaway rate: -5%", "Invalid takeaway rate: 150%", "Invalid takeaway rate: 0%"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q in %s", want, body)
+		}
+	}
+	for _, bad := range []string{`value="-5"`, `value="150"`, `value="0"`} {
+		if strings.Contains(body, bad) {
+			t.Fatalf("input carries out-of-range %s", bad)
+		}
+	}
+}
