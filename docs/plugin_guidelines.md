@@ -520,7 +520,9 @@ The event must be in your own namespace and in your `hooks`. The till
 answers the operator at once with a progress poll, then sends you that
 event with the action's payload plus `job_id`. The deadline is your
 `limits.long_call_s` (at most 300 s), and a job never runs on the sale
-path. Report progress with the `job_progress(pct, msg_key)` host function
+path. Inside a job, `http_request` and `http_open` wait for a response's
+headers until that deadline (an ordinary event gives up after 30 s), so a
+non-streamed call to a slow self-hosted model can finish. Report progress with the `job_progress(pct, msg_key)` host function
 (ABI 3; `msg_key` from your own locale bundle; outside a job it returns
 `-1`, and a foreign key returns `-4`). Answer with a document or a
 redirect, as for an action. You can run at most two jobs at once (one on
