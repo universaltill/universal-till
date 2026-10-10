@@ -11,7 +11,7 @@ Owner-facing notes in `web/release-notes/{en,de,ar,fa,tr}/v0.31.6.md`. The relea
 - language-pack chip wording (#1813);
 - additional till's Software update section (#1825) and Tab trapped in older dialogs (#1824), which landed while this PR was open; added after a rebase.
 
-Left out as not owner-visible yet: #1817 (background-removal capability and endpoint; the picker UI is a later card).
+Left out as not owner-visible yet: #1817 (background-removal capability and endpoint; the picker UI is a later card) and #1832 (a plugin read view, developer-only).
 
 ## Findings
 
