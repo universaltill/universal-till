@@ -2473,6 +2473,7 @@
   "settings.update.auto_enable": "Update automatically",
   "settings.update.follows_main": "This till follows the main till's version (%s). Change automatic updates on the main till.",
   "settings.update.follows_main_unknown": "This till follows the main till's version. Change automatic updates on the main till.",
+  "settings.update.follows_main_off": "Automatic updates are off on the main till, so this till won't update by itself. Switch them on at the main till so this till follows it again.",
   "settings.update.check_btn": "Check for updates",
   "settings.update.check_failed": "Could not reach the update server — try again later",
   "settings.update.download": "Download",

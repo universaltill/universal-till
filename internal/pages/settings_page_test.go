@@ -1117,6 +1117,51 @@ func TestSettingsPage_AdditionalTillShowsFollowsMainInsteadOfAutoUpdateBox(t *te
 	}
 }
 
+// ut-docs#4031: when the main till has automatic updates off, the additional
+// till stops following (followCanInstall), so the line must not claim it
+// follows the main till's version.
+func TestSettingsPage_AdditionalTillSaysMainAutoUpdatesOff(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	setReplicaSettings(t, d.Settings, "http://127.0.0.1:1", syncSettingsBearer)
+	if err := d.Settings.Set(t.Context(), keyAutoUpdateEnabled, "false"); err != nil {
+		t.Fatal(err)
+	}
+	off := html.EscapeString(httpx.T("en", "settings.update.follows_main_off"))
+	unknown := html.EscapeString(httpx.T("en", "settings.update.follows_main_unknown"))
+	known := html.EscapeString(fmt.Sprintf(httpx.T("en", "settings.update.follows_main"), "v1.4.2"))
+
+	check := func(label string) {
+		t.Helper()
+		body := getSettingsAsManager(t, mux)
+		if !strings.Contains(body, `data-testid="update-follows-main"`) {
+			t.Fatalf("%s: no follows line", label)
+		}
+		if !strings.Contains(body, off) {
+			t.Fatalf("%s: expected the 'automatic updates are off on the main till' line", label)
+		}
+		if strings.Contains(body, unknown) || strings.Contains(body, known) {
+			t.Fatalf("%s: must not claim to follow the main till's version", label)
+		}
+		if strings.Contains(body, `hx-post="/api/settings/update-schedule"`) || strings.Contains(body, `<input type="time" name="time"`) {
+			t.Fatalf("%s: the auto-update box must not render", label)
+		}
+	}
+	check("main version unknown")
+	if err := d.Settings.Set(t.Context(), keyMainVersion, "1.4.2"); err != nil {
+		t.Fatal(err)
+	}
+	check("main version known")
+
+	// Back on: the follows line returns.
+	if err := d.Settings.Set(t.Context(), keyAutoUpdateEnabled, "true"); err != nil {
+		t.Fatal(err)
+	}
+	body := getSettingsAsManager(t, mux)
+	if strings.Contains(body, off) || !strings.Contains(body, known) {
+		t.Fatal("auto-updates on: expected the normal follows line")
+	}
+}
+
 // ut-docs#1133 (ADR-0065 follow-up, independent review 2026-08-26): the
 // Tills card's quarantine help text + "View quarantined entries" button
 // must not appear on a single-till shop that has never enrolled a

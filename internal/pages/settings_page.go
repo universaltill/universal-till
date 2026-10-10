@@ -577,7 +577,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// when it is a release version.
 		autoUpdateFollowsMain := tillFollowsMain(r.Context(), d)
 		autoUpdateMainVersion := ""
+		// ut-docs#4031: with automatic updates off on the main till the
+		// replica does not follow (followCanInstall), so say that instead.
+		autoUpdateMainOff := false
 		if autoUpdateFollowsMain {
+			v, _, _ := d.Settings.Get(r.Context(), keyAutoUpdateEnabled)
+			autoUpdateMainOff = strings.TrimSpace(v) == "false"
+		}
+		if autoUpdateFollowsMain && !autoUpdateMainOff {
 			if v := followTarget(r.Context(), d); releaseVersion(v) {
 				autoUpdateMainVersion = "v" + strings.TrimPrefix(v, "v")
 			}
@@ -864,6 +871,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"payFees":                feeRows,
 			"exportEntries":          exportEntries,
 			"autoUpdateFollowsMain":  autoUpdateFollowsMain,
+			"autoUpdateMainOff":      autoUpdateMainOff,
 			"autoUpdateMainVersion":  autoUpdateMainVersion,
 			"autoUpdateEnabled":      autoUpdateEnabled,
 			"autoUpdateTime":         autoUpdateTime,
