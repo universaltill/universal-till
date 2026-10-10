@@ -2532,8 +2532,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// ut-docs#3097: "Generate missing SKUs" — preview (GET, no writes) +
 	// commit (POST, primary only), the same two-state dialog as the
 	// barcode backfill above. The preview is CatalogRepo.
-	// PlanMissingItemSKUs (the commit's own routine, rolled back), so on
-	// unchanged data it shows exactly the SKUs the commit assigns; the
+	// PlanMissingItemSKUs (the commit's own planner in a read-only
+	// transaction, no write lock — ut-docs#3280), so on unchanged data it
+	// shows exactly the SKUs the commit assigns; the
 	// commit re-plans fresh inside its own transaction rather than
 	// trusting the preview.
 	mux.HandleFunc("GET /api/catalog/sku-backfill", func(w http.ResponseWriter, r *http.Request) {
