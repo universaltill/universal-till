@@ -717,9 +717,13 @@
              category tab; nothing typed, no money) -- a tap on the popup
              scrim closes it; @close keeps categoryOverflowOpen in step with
              that (and any other) native close and returns lost focus to
-             the More button, as closeCategoryOverflow() does. */}}
+             the More button, as closeCategoryOverflow() does.
+             data-ut-focus-trap (ut-docs#4028): base.html's keyboard trap
+             also pulls focus that lands behind it back in; Tab wrapping is
+             still trapOverflowTab's (it preventDefaults first, so
+             base.html's window handler bails). */}}
         <dialog id="category-overflow-dialog" x-ref="overflowDialog" class="modifier-modal category-overflow-dialog"
-                aria-labelledby="category-overflow-dialog-title" data-ut-scrim-dismiss
+                aria-labelledby="category-overflow-dialog-title" data-ut-scrim-dismiss data-ut-focus-trap
                 @close="categoryOverflowOpen = false; if (!document.activeElement || document.activeElement === document.body || $el.contains(document.activeElement)) { $refs.moreBtn && $refs.moreBtn.focus() }"
                 @keydown.escape.prevent="closeCategoryOverflow()" @keydown.tab="trapOverflowTab($event)">
           <div class="category-filter-dialog-head">

@@ -102,7 +102,7 @@
      add-table card below: /api/tables reads the hidden pos_x/pos_y (set by
      the click handler in this page's script) and falls back to canvas
      centre when they're absent, so the card's form is untouched. */}}
-<dialog id="table-add-modal" class="modifier-modal" aria-labelledby="table-add-title">
+<dialog id="table-add-modal" class="modifier-modal" aria-labelledby="table-add-title" data-ut-focus-trap>
   <form method="post" action="/api/tables" autocomplete="off">
     <h3 id="table-add-title">{{ T "tables.new.title" }}</h3>
     <input type="hidden" name="pos_x" id="table-add-x" />

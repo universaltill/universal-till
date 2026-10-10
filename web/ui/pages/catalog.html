@@ -137,8 +137,8 @@
      no-top-layer treatment as #item-form-modal itself, including its
      existing `body.osk-padded .item-form-modal` keyboard-clearance rule
      — reusing the class gets that for free, no new CSS needed. -->
-<dialog id="import-modal" class="item-form-modal" aria-labelledby="catalog-import-btn"></dialog>
-<dialog id="tax-codes-modal" class="item-form-modal" aria-labelledby="catalog-taxcodes-btn"></dialog>
+<dialog id="import-modal" class="item-form-modal" aria-labelledby="catalog-import-btn" data-ut-focus-trap></dialog>
+<dialog id="tax-codes-modal" class="item-form-modal" aria-labelledby="catalog-taxcodes-btn" data-ut-focus-trap></dialog>
 
 {{ if .SyncPrimary }}
 <div class="sync-banner" role="status">⚠ {{ if .SyncUnreachable }}{{ T "sync.banner_replica_main_till_unreachable" }}{{ else }}{{ T "sync.banner_replica_write_through" }}{{ end }}
@@ -196,7 +196,7 @@
      so every item-bound panel (variants, image, labels, keypad) shows its
      .item-form-needs-save hint and hides its .item-form-needs-item
      controls instead of offering forms that cannot work. -->
-<dialog id="item-form-modal" class="item-form-modal" aria-labelledby="item-form-title">
+<dialog id="item-form-modal" class="item-form-modal" aria-labelledby="item-form-title" data-ut-focus-trap>
   <div class="catalog-form is-create" id="item-form-root" x-data="{
     tab: 'details',
     init() {

@@ -235,11 +235,16 @@ test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
     await expect(page.locator('#vf-new')).toBeAttached();
     const row = page.locator(`.catalog-row[data-name="${name}"]`);
     // The search box sits on the page BEHIND the full-screen (non-modal,
-    // .show()) dialog. fill() only needs visible/enabled/editable — not a
-    // pointer hit-test — so it still drives the real input and its real
-    // 'input' listener without closing the dialog (which would leave no
+    // .show()) dialog. Since ut-docs#4028 the dialog traps focus, so the
+    // box can no longer take focus while it is open (fill() would type
+    // into the dialog instead). Set its value and fire its real 'input'
+    // listener directly, without closing the dialog (which would leave no
     // visible row to reopen once the filter hides it).
-    await page.locator('#catalog-search').fill('zzz-no-such-item');
+    const search = (q: string) => page.locator('#catalog-search').evaluate((el, v) => {
+      (el as HTMLInputElement).value = v;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }, q);
+    await search('zzz-no-such-item');
     await expect(row).toBeHidden();
 
     // Add a variant through the panel — the response carries the panel
@@ -253,7 +258,7 @@ test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
     // …and the refreshed element still respects the active filter.
     await expect(row).toBeHidden();
 
-    await page.locator('#catalog-search').fill('');
+    await search('');
     await expect(row).toBeVisible();
 
     assertClean();
