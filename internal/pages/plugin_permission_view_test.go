@@ -31,6 +31,8 @@ func TestDescribePermission_ADR0121DescKeys(t *testing.T) {
 		// other view class keeps the generic one.
 		"view:users":     "plugins.permissions.desc.view_users",
 		"view:inventory": "plugins.permissions.desc.view",
+		// ut-docs#4045: the non-★ shop facts class says what it never reads.
+		"view:shop": "plugins.permissions.desc.view_shop",
 	}
 	for perm, key := range want {
 		b := describePermission(perm)

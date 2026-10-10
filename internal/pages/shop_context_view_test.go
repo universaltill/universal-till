@@ -38,18 +38,22 @@ func TestShopContextView_RealProvider(t *testing.T) {
 			}
 		}
 	}
-	v, ok := data.LookupCoreView("shop.context.v1")
-	if !ok {
-		t.Fatal("shop.context.v1 not registered")
-	}
+	// shop.context.v2 (ut-docs#4045, under view:shop) reads the same row
+	// from the same provider.
 	run := func(want string) {
 		t.Helper()
-		out, err := data.RunCoreView(ctx, dbo.DB, v, map[string]int{}, data.CoreViewMaxResult)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(out) != want {
-			t.Fatalf("result:\n got  %s\n want %s", out, want)
+		for _, name := range []string{"shop.context.v1", "shop.context.v2"} {
+			v, ok := data.LookupCoreView(name)
+			if !ok {
+				t.Fatalf("%s not registered", name)
+			}
+			out, err := data.RunCoreView(ctx, dbo.DB, v, map[string]int{}, data.CoreViewMaxResult)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(out) != want {
+				t.Fatalf("%s result:\n got  %s\n want %s", name, out, want)
+			}
 		}
 	}
 

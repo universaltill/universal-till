@@ -23,9 +23,11 @@ func TestCoreViewRegistry_FirstSet(t *testing.T) {
 		"sales.receipts.v1": "view:sales",
 		// ut-docs#4034: the shop facts the sales views' minor units need.
 		"shop.context.v1": "view:sales",
+		// ut-docs#4045: the same row under the narrower, non-★ view:shop.
+		"shop.context.v2": "view:shop",
 	}
 	if len(coreViews) != len(want) {
-		t.Fatalf("%d views registered, want the %d of ADR-0121 §5 + ADR-0149 §6 + ut-docs#4034", len(coreViews), len(want))
+		t.Fatalf("%d views registered, want the %d of ADR-0121 §5 + ADR-0149 §6 + ut-docs#4034/#4045", len(coreViews), len(want))
 	}
 	for name, perm := range want {
 		v, ok := LookupCoreView(name)
@@ -185,6 +187,7 @@ func TestCoreViewRowShapesArePinned(t *testing.T) {
 		{"sales.receipts.v1 lines[]", ReceiptViewLine{}, "line_no item_id variant_id name sku quantity unit_price_minor discount_minor tax_minor total_minor"},
 		{"sales.receipts.v1 payments[]", ReceiptViewPayment{}, "method_id amount_minor tip_minor"},
 		{"shop.context.v1", ShopContextRow{}, "store_name till_name currency_code currency_decimals locale"},
+		{"shop.context.v2", ShopContextRow{}, "store_name till_name currency_code currency_decimals locale"},
 	}
 	for _, p := range pinned {
 		var keys []string

@@ -29,8 +29,8 @@ type permissionBadge struct {
 }
 
 // permissionDescKeys maps the ADR-0121 §2 exact names — and view:users
-// (ADR-0149 §6), whose consent line names what it never reads — to their
-// description.
+// (ADR-0149 §6) and view:shop (ut-docs#4045), whose consent lines name
+// what they never read — to their description.
 var permissionDescKeys = map[string]string{
 	"http:lan":        "plugins.permissions.desc.http_lan",
 	"http:stream":     "plugins.permissions.desc.http_stream",
@@ -43,6 +43,9 @@ var permissionDescKeys = map[string]string{
 	"device-info":     "plugins.permissions.desc.device_info", // ADR-0140
 	// ADR-0149 §6 (ut-docs#3976): the staff list says what it never reads.
 	"view:users": "plugins.permissions.desc.view_users",
+	// ut-docs#4045: the non-★ shop facts class (shop.context.v2) says it
+	// never reads sales, staff or customers.
+	"view:shop": "plugins.permissions.desc.view_shop",
 }
 
 // permissionDescKey is the DescKey for name: an exact ADR-0121 §2 name, or

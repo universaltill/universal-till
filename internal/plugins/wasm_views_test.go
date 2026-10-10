@@ -378,3 +378,41 @@ func TestViewQueryShopContext(t *testing.T) {
 		t.Fatal("the denial was not audited")
 	}
 }
+
+// shop.context.v2 (ut-docs#4045) is the same row under view:shop, a non-★
+// class: a price-only plugin (menu board, shelf label) reads the currency
+// decimals without view:sales, which also opens every receipt. Each version
+// is gated by its own class only — view:shop never opens v1, and view:sales
+// never opens v2.
+func TestViewQueryShopContextV2(t *testing.T) {
+	guest := buildViewGuest(t)
+	const pluginID = "com.test.views.shop2"
+	withInstalledManifest(t, pluginID, viewsManifest(pluginID, "shop.context.v1", "shop.context.v2", "sales.receipts.v1"))
+	w := newViewRuntime(t, guest, pluginID)
+	prev := data.SetCoreViewShopContext(func(context.Context, *sql.DB) (data.ShopContextRow, error) {
+		return data.ShopContextRow{StoreName: "Kissa", TillName: "Bar", CurrencyCode: "JPY", Locale: "ja"}, nil
+	})
+	t.Cleanup(func() { data.SetCoreViewShopContext(prev) })
+
+	d := viewDB(t, pluginID, "view:shop", "view:inventory")
+	res := runGuestPayload(t, w, d, pluginID, map[string]any{"view": "shop.context.v2"})
+	want := `[{"store_name":"Kissa","till_name":"Bar","currency_code":"JPY","currency_decimals":0,"locale":"ja"}]`
+	if code := viewCode(t, res); code != len(want) || res["result"] != want {
+		t.Fatalf("view_query = %d %v, want %s", code, res["result"], want)
+	}
+	for _, tc := range []struct{ view, grant string }{
+		{"shop.context.v1", "view:shop"},
+		{"sales.receipts.v1", "view:shop"},
+		{"shop.context.v2", "view:sales"},
+	} {
+		d = viewDB(t, pluginID, tc.grant)
+		before := countDenials(t, d, pluginID)
+		res = runGuestPayload(t, w, d, pluginID, map[string]any{"view": tc.view})
+		if code := viewCode(t, res); code != hostErrDenied {
+			t.Fatalf("%s with only %s = %d, want %d", tc.view, tc.grant, code, hostErrDenied)
+		}
+		if countDenials(t, d, pluginID) <= before {
+			t.Fatalf("%s with only %s: the denial was not audited", tc.view, tc.grant)
+		}
+	}
+}
