@@ -4433,6 +4433,21 @@ body.login-screen {
    characters); cap the role picker so a long one can't push the row's
    Change role button out of the card. */
 .users-inline select.users-role-pick { max-inline-size: 9rem; }
+/* ut-docs#3518: at till/tablet widths the /users row actions (PIN, active,
+   Promote, role + Change role) were clipped at the card's edge. Two parts,
+   /users only (the #users-list id is unique to users.html):
+   - the user cell breaks anywhere (with an 8rem floor so a word such as
+     "Administrator" stays whole), so a long
+     unbreakable name can't take the actions column's width (table auto
+     layout sizes columns from min-content); role/PIN/status keep normal
+     word breaks, which `anywhere` would split mid-word;
+   - below 1280px, where the 2fr track leaves the card ~730px or less, each
+     form wraps its button under its field instead of overrunning (tr
+     still clipped at 1101-~1140 with a 1100px cut-off). From 1280 the
+     forms stay nowrap, so ut-docs#898's desktop regression (role select
+     and Change role split onto two lines) can't come back. */
+#users-list td:first-child { overflow-wrap: anywhere; min-inline-size: 8rem; }
+@media (max-width: 1279px) { #users-list .users-inline { flex-wrap: wrap; row-gap: .35rem; } }
 /* Rename-field inputs (locations/registers "name" text input) hold longer,
    free-text names than the other .users-inline inputs (PIN, printer
    address, search, the country_settings checkbox) — a fixed 7.5rem clips
