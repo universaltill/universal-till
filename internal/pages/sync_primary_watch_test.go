@@ -74,7 +74,7 @@ func TestPrimaryProofAPI_AnswersForAnEnrolledTill(t *testing.T) {
 	}
 	// The replica verifies with discovery.HashBearer of its own bearer —
 	// it must be the very hash the primary stored at enrolment.
-	if want := discovery.PrimaryProof(discovery.HashBearer("token-abc"), primaryID, tillID, testNonce, proofLocalAddr); out.Data.Proof != want {
+	if want := discovery.PrimaryProof(discovery.HashBearer("token-abc"), primaryID, tillID, testNonce, proofLocalAddr, ""); out.Data.Proof != want {
 		t.Fatal("proof does not verify against the replica's own bearer")
 	}
 	if strings.Contains(rec.Body.String(), hashBearer("token-abc")) {

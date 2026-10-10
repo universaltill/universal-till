@@ -108,7 +108,7 @@ func TestPairingRepo_RoleFlowsFromRequestThroughApproval(t *testing.T) {
 	d := openMigratedDB(t, "pairing-role.db")
 	ctx := context.Background()
 	repo := NewPairingRepo(d.DB)
-	id, err := repo.CreatePendingRequestWithRole(ctx, "Kiosk", "c1", TillRoleSatellite, time.Minute)
+	id, err := repo.CreatePendingRequestWithRole(ctx, "Kiosk", "c1", TillRoleSatellite, "", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestPairingRepo_RoleFlowsFromRequestThroughApproval(t *testing.T) {
 	}
 
 	// A blank role at approval keeps the requested one.
-	id2, err := repo.CreatePendingRequestWithRole(ctx, "Order station", "c2", TillRoleSatellite, time.Minute)
+	id2, err := repo.CreatePendingRequestWithRole(ctx, "Order station", "c2", TillRoleSatellite, "", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestPairingRepo_RoleFlowsFromRequestThroughApproval(t *testing.T) {
 	if role, ok, _ := repo.RoleForToken(ctx, "tok-2"); !ok || role != TillRoleSatellite {
 		t.Fatalf("RoleForToken after plain Approve = %q ok=%v, want satellite", role, ok)
 	}
-	if _, err := repo.CreatePendingRequestWithRole(ctx, "X", "c3", "bogus", time.Minute); err == nil {
+	if _, err := repo.CreatePendingRequestWithRole(ctx, "X", "c3", "bogus", "", time.Minute); err == nil {
 		t.Fatal("a bogus requested role must be refused")
 	}
 }

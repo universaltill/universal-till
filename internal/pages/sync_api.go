@@ -904,7 +904,7 @@ func friendlyJoinError(locale string, err error) string {
 // typed alongside it.
 func joinPrimary(r *http.Request, d *common.Deps, code, address, name, role string) (string, error) {
 	if primaryURL, token, err := decodeEnrollCode(code); err == nil {
-		return completeJoin(r, d, primaryURL, token, name, role)
+		return completeJoin(r, d, primaryURL, token, name, role, "")
 	}
 	short, ok := normaliseShortCode(code)
 	if !ok {
@@ -917,7 +917,7 @@ func joinPrimary(r *http.Request, d *common.Deps, code, address, name, role stri
 	if !ok {
 		return "", &joinError{kind: joinErrBadAddress}
 	}
-	return completeJoin(r, d, primaryURL, short, name, role)
+	return completeJoin(r, d, primaryURL, short, name, role, "")
 }
 
 // primaryURLFromAddress turns the address a person typed next to a short
@@ -953,7 +953,7 @@ func primaryURLFromAddress(address string) (string, bool) {
 // (ut-docs#185) can drive it directly with a (primaryURL, token) pair it
 // already holds — that flow never has an encodeEnrollCode-packed code to
 // decode, just the two values decodeEnrollCode would have produced.
-func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role string) (string, error) {
+func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role, primaryCertPin string) (string, error) {
 	base := strings.TrimSuffix(primaryURL, "/")
 	client := netaccess.NewClient(60 * time.Second)
 
@@ -1034,6 +1034,8 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 		DeviceID:      "till-" + hex.EncodeToString(draw),
 		RegisterID:    out.Data.RegisterID,
 		TillRole:      out.Data.Role,
+		// ut-docs#4091: the pin pairing learned ("" for a code join).
+		PrimaryCertPin: primaryCertPin,
 	}); err != nil {
 		return "", &joinError{kind: joinErrStageIdentityFailed, detail: err.Error()}
 	}

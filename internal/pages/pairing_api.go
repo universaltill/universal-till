@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/discovery"
+	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -115,8 +116,15 @@ func sourceOf(r *http.Request) string {
 // primary's id off mDNS and this handler computing the code server-side
 // now agree on the identical value, so ADR-0033 §8's outbound
 // (impersonation) mitigation is actually in effect end-to-end.
-func derivedVerificationCode(commitment, primaryTillID string) string {
-	sum := sha256.Sum256([]byte(commitment + primaryTillID))
+//
+// pin is the main till's LAN TLS pin as seen on the pair request's
+// connection (ADR-0114 §7 amends ADR-0033 §4, ut-docs#4091): the main till
+// uses the pin it served, the joining till the pin it saw. A MITM's
+// certificate gives the two screens different codes, which the manager's
+// visual compare catches. "" (plain HTTP: a main till without TLS, or an
+// older joining till) is the original formula, byte for byte.
+func derivedVerificationCode(commitment, primaryTillID, pin string) string {
+	sum := sha256.Sum256([]byte(commitment + primaryTillID + pin))
 	code := binary.BigEndian.Uint32(sum[:4]) % 1000000
 	return fmt.Sprintf("%06d", code)
 }
@@ -158,7 +166,11 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
 			return
 		}
-		id, err := repo.CreatePendingRequestWithRole(r.Context(), in.DeviceName, in.Commitment, role, pairingRequestTTL)
+		// The pin this till served on THIS connection ("" over plain
+		// HTTP) — what the joining till saw, unless something in between
+		// presented its own certificate (ut-docs#4091).
+		id, err := repo.CreatePendingRequestWithRole(r.Context(), in.DeviceName, in.Commitment, role,
+			lantls.ServedPin(r.Context()), pairingRequestTTL)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "pairings.error.server", "pairing_api", err)
 			return
@@ -198,7 +210,7 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 				ID:               p.ID,
 				DeviceName:       p.DeviceName,
 				RequestedAt:      p.RequestedAt,
-				VerificationCode: derivedVerificationCode(p.Commitment, primaryTillID),
+				VerificationCode: derivedVerificationCode(p.Commitment, primaryTillID, p.ServedPin),
 				RequestedRole:    p.RequestedRole,
 			})
 		}

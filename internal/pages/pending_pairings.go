@@ -48,7 +48,7 @@ func registerPendingPairingsUI(mux *http.ServeMux, d *common.Deps) {
 			rows = append(rows, row{
 				ID:               p.ID,
 				DeviceName:       p.DeviceName,
-				VerificationCode: derivedVerificationCode(p.Commitment, primaryTillID),
+				VerificationCode: derivedVerificationCode(p.Commitment, primaryTillID, p.ServedPin),
 				RequestedRole:    p.RequestedRole,
 			})
 		}

@@ -481,3 +481,38 @@ WHERE (till_id IS NULL OR till_id = '') AND (created_at > ? OR (created_at = ? A
 		t.Fatalf("inherited opens past the join cursor = %d (err %v), want 0", n, err)
 	}
 }
+
+// ut-docs#4091: the main till's LAN TLS pin learned at pairing becomes the
+// per-till sync.primary_cert_pin; a join that learned none (plain HTTP, or a
+// paste-a-code join) clears whatever pin an earlier main till left behind.
+func TestApplyReplicaIdentityWritesPrimaryCertPin(t *testing.T) {
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init("") })
+
+	path := filepath.Join(t.TempDir(), "data", "unitill-pos.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+	get := func() string {
+		var v string
+		_ = d.QueryRow(`SELECT value FROM settings WHERE key = 'sync.primary_cert_pin'`).Scan(&v)
+		return v
+	}
+	for _, pin := range []string{"ab12cd", ""} {
+		if err := StageReplicaIdentity(path, ReplicaIdentity{
+			PrimaryURL: "http://primary.local", TillID: "till-2", Bearer: "b",
+			ReceiptPrefix: "T2-", TillName: "Back lane", DeviceID: "till-replica-xyz",
+			PrimaryCertPin: pin,
+		}); err != nil {
+			t.Fatalf("stage: %v", err)
+		}
+		if applied, err := ApplyReplicaIdentity(d.DB, path); err != nil || !applied {
+			t.Fatalf("apply: applied=%v err=%v", applied, err)
+		}
+		if got := get(); got != pin {
+			t.Fatalf("sync.primary_cert_pin = %q, want %q", got, pin)
+		}
+	}
+}
