@@ -12,6 +12,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/discovery"
+	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -72,7 +73,9 @@ func registerPrimaryProof(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": discovery.ProofResponse{
 			PrimaryTillID: primaryID,
-			Proof:         discovery.PrimaryProof(hash, primaryID, req.TillID, req.Nonce, r.Host),
+			// Over TLS the proof also covers the pin served on this
+			// connection (ut-docs#4091); over plain HTTP, none.
+			Proof: discovery.PrimaryProof(hash, primaryID, req.TillID, req.Nonce, r.Host, lantls.ServedPin(r.Context())),
 		}, "error": nil})
 	})
 }

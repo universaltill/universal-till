@@ -17,11 +17,9 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -50,8 +48,8 @@ type Cert struct {
 	tlsCert tls.Certificate
 	leaf    *x509.Certificate
 	// pin is the hex SHA-256 of the certificate's SubjectPublicKeyInfo —
-	// what a peer pins. It depends only on the key, so renewal keeps it.
-	// Its accessor arrives with its first caller, pinning at pairing.
+	// what a peer pins (PinOf). It depends only on the key, so renewal
+	// keeps it.
 	pin string
 }
 
@@ -102,11 +100,10 @@ func loadOrCreate(dir string, now time.Time) (*Cert, error) {
 			return nil, fmt.Errorf("lantls: parse issued cert: %w", err)
 		}
 	}
-	sum := sha256.Sum256(leaf.RawSubjectPublicKeyInfo)
 	return &Cert{
 		tlsCert: tls.Certificate{Certificate: [][]byte{leaf.Raw}, PrivateKey: key, Leaf: leaf},
 		leaf:    leaf,
-		pin:     hex.EncodeToString(sum[:]),
+		pin:     PinOf(leaf),
 	}, nil
 }
 

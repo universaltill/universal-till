@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/netaccess"
 )
@@ -56,6 +57,12 @@ import (
 // last proved it. The "sync." prefix keeps it per-till: admin-sync pulls
 // never overwrite it (data.PerTillSettingPrefixes).
 const PrimaryTillIDSettingKey = "sync.primary_till_id"
+
+// PrimaryCertPinSettingKey holds the main till's LAN TLS pin (ADR-0114 §7,
+// ut-docs#4091): the SPKI SHA-256 learned at pairing, or through a proof
+// over TLS. Per-till like PrimaryTillIDSettingKey ("sync." prefix): admin
+// sync never overwrites it.
+const PrimaryCertPinSettingKey = "sync.primary_cert_pin"
 
 // MainTillProblemKey tags the Problems entry (logging.WarnProblemf) of a
 // main-till outage — "main till unreachable" — so the first successful
@@ -124,9 +131,20 @@ type ProofResponse struct {
 // pull — at the relay. The main till only answers for a Host that is its
 // own address (pages.registerPrimaryProof), so a relayed proof is always
 // for the real till's address, never the relay's.
-func PrimaryProof(bearerHashHex, primaryTillID, replicaTillID, nonce, hostPort string) string {
+//
+// pin is the LAN TLS pin of the connection the challenge travelled over
+// (ADR-0114 §7, ut-docs#4091): the main till's served pin, and the pin the
+// replica saw. A device presenting another certificate can relay a genuine
+// proof, but it covers the real till's pin, not the one the replica saw,
+// so it fails. "" (plain HTTP, or an older main till) leaves the HMAC
+// byte-for-byte as before, so mixed versions still agree.
+func PrimaryProof(bearerHashHex, primaryTillID, replicaTillID, nonce, hostPort, pin string) string {
 	mac := hmac.New(sha256.New, []byte(bearerHashHex))
-	for _, part := range []string{proofLabel, primaryTillID, replicaTillID, nonce, hostPort} {
+	parts := []string{proofLabel, primaryTillID, replicaTillID, nonce, hostPort}
+	if pin != "" {
+		parts = append(parts, pin)
+	}
+	for _, part := range parts {
 		mac.Write([]byte(part))
 		mac.Write([]byte{'\n'})
 	}
@@ -173,6 +191,9 @@ type PrimaryWatch struct {
 	// cloudLookup is the cloud-assisted candidate source (ut-docs#2774);
 	// nil = mDNS only. Set once at wiring, before the pull loop starts.
 	cloudLookup CloudLookupFunc
+	// pinnedClient builds the TLS client a challenge tries first; it
+	// records the pin the candidate served (ut-docs#4091).
+	pinnedClient func() *lantls.PinnedClient
 
 	mu            sync.Mutex
 	failures      int
@@ -197,6 +218,9 @@ func NewPrimaryWatch(settings WatchSettings, browse BrowseFunc) *PrimaryWatch {
 		client:   client,
 		browse:   browse,
 		now:      time.Now,
+		pinnedClient: func() *lantls.PinnedClient {
+			return lantls.NewPinnedClient(client.Timeout, "")
+		},
 	}
 }
 
@@ -213,13 +237,15 @@ func (w *PrimaryWatch) get(ctx context.Context, key string) string {
 
 // ContactOK records a successful round trip to the main till. It re-arms
 // the one-time warning, and — once per process, for replicas paired before
-// ut-docs#2722 — learns the main till's id through the same proof, so a
-// later re-discovery has an identity to match on.
+// ut-docs#2722 or ut-docs#4091 — learns the main till's id and LAN TLS pin
+// through the same proof, so a later re-discovery has an identity to match
+// on and the replica a pin to trust.
 func (w *PrimaryWatch) ContactOK(ctx context.Context) {
 	w.mu.Lock()
 	w.failures = 0
 	w.warned = false
-	learn := !w.backfillTried && w.get(ctx, PrimaryTillIDSettingKey) == ""
+	learn := !w.backfillTried &&
+		(w.get(ctx, PrimaryTillIDSettingKey) == "" || w.get(ctx, PrimaryCertPinSettingKey) == "")
 	if learn {
 		w.backfillTried = true
 	}
@@ -228,12 +254,21 @@ func (w *PrimaryWatch) ContactOK(ctx context.Context) {
 		return
 	}
 	primaryURL := w.get(ctx, "sync.primary_url")
-	id, err := w.challenge(ctx, primaryURL, "")
+	id, pin, err := w.challenge(ctx, primaryURL, w.get(ctx, PrimaryTillIDSettingKey))
 	if err != nil {
-		logging.L().Infof("sync: could not learn the main till's id from %s (%v) — re-discovery will fall back to the synced discovery id", primaryURL, err)
+		logging.L().Infof("sync: could not learn the main till's id or pin from %s (%v) — re-discovery will fall back to the synced discovery id", primaryURL, err)
 		return
 	}
 	_ = w.settings.Set(ctx, PrimaryTillIDSettingKey, id)
+	w.storePin(ctx, pin)
+}
+
+// storePin keeps the pin a valid proof covered. A proof over plain HTTP
+// covers none and never clears one already held.
+func (w *PrimaryWatch) storePin(ctx context.Context, pin string) {
+	if pin != "" {
+		_ = w.settings.Set(ctx, PrimaryCertPinSettingKey, pin)
+	}
 }
 
 // ContactFailed records a failed contact (the main till did not answer).
@@ -346,7 +381,7 @@ func (w *PrimaryWatch) rediscover(ctx context.Context) (oldURL, newURL string, e
 		if i >= maxProofAttempts {
 			break
 		}
-		id, perr := w.challenge(ctx, c.BaseURL, c.TillID)
+		id, pin, perr := w.challenge(ctx, c.BaseURL, c.TillID)
 		if perr != nil {
 			if c.BaseURL == fromCloud {
 				// The cloud's answer did not prove itself: a stale record, a
@@ -377,6 +412,7 @@ func (w *PrimaryWatch) rediscover(ctx context.Context) (oldURL, newURL string, e
 			return oldURL, "", err
 		}
 		_ = w.settings.Set(ctx, PrimaryTillIDSettingKey, id)
+		w.storePin(ctx, pin)
 		logging.L().Infof("sync: main till found again at %s (was %s, main till id %s) — pairing kept, syncing resumes", c.BaseURL, oldURL, id)
 		return oldURL, c.BaseURL, nil
 	}
@@ -412,8 +448,40 @@ func (w *PrimaryWatch) cloudCandidate(ctx context.Context, oldURL string) string
 
 // challenge asks baseURL to prove it is this replica's main till. wantID,
 // when set, must equal the id the candidate answers with (the id it
-// advertised). Returns the proven main till id.
-func (w *PrimaryWatch) challenge(ctx context.Context, baseURL, wantID string) (string, error) {
+// advertised). Returns the proven main till id and the LAN TLS pin the
+// proof covered ("" over plain HTTP).
+//
+// It tries TLS on the same port first (ADR-0114 §7, ut-docs#4091), so the
+// proof binds the certificate the replica saw. Only a TLS attempt the
+// candidate couldn't take — a main till without TLS, or an older one
+// (lantls.PinnedClient.Exchange's plainOK) — falls back to plain HTTP; a
+// dead address doesn't pay a second timeout, and an answered proof that
+// fails over TLS (a certificate the main till doesn't hold) is final. Refusing plain HTTP once a pin is held
+// is ut-docs#2737's enforcement, not this.
+func (w *PrimaryWatch) challenge(ctx context.Context, baseURL, wantID string) (id, pin string, err error) {
+	if tlsBase, ok := lantls.HTTPSBase(baseURL); ok && w.pinnedClient != nil {
+		pc := w.pinnedClient()
+		var plainOK bool
+		do := func(req *http.Request) (*http.Response, error) {
+			resp, ok, err := pc.Exchange(req)
+			plainOK = ok
+			return resp, err
+		}
+		id, err := w.challengeVia(ctx, do, tlsBase, wantID, pc.Pin)
+		if err == nil {
+			return id, pc.Pin(), nil
+		}
+		if !plainOK {
+			return "", "", err
+		}
+	}
+	id, err = w.challengeVia(ctx, w.client.Do, baseURL, wantID, func() string { return "" })
+	return id, "", err
+}
+
+// challengeVia runs one challenge through do. pin reports the pin of the
+// connection it went over, read once the answer is in.
+func (w *PrimaryWatch) challengeVia(ctx context.Context, do func(*http.Request) (*http.Response, error), baseURL, wantID string, pin func() string) (string, error) {
 	bearer, tillID := w.get(ctx, "sync.bearer"), w.get(ctx, "sync.till_id")
 	if baseURL == "" || bearer == "" || tillID == "" {
 		return "", errors.New("no pairing to prove")
@@ -435,7 +503,7 @@ func (w *PrimaryWatch) challenge(ctx context.Context, baseURL, wantID string) (s
 		return "", errors.New("candidate URL has no host")
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := w.client.Do(req)
+	resp, err := do(req)
 	if err != nil {
 		return "", err
 	}
@@ -453,7 +521,7 @@ func (w *PrimaryWatch) challenge(ctx context.Context, baseURL, wantID string) (s
 	if id == "" || (wantID != "" && id != wantID) {
 		return "", errors.New("proof names a different till")
 	}
-	want := PrimaryProof(HashBearer(bearer), id, tillID, nonce, dialled)
+	want := PrimaryProof(HashBearer(bearer), id, tillID, nonce, dialled, pin())
 	got, err := hex.DecodeString(out.Data.Proof)
 	wantRaw, _ := hex.DecodeString(want)
 	if err != nil || !hmac.Equal(got, wantRaw) {

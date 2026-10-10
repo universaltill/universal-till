@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/procrestart"
@@ -70,8 +72,15 @@ const pairJoinHTTPTimeout = 10 * time.Second
 var pairingJoinNow = time.Now
 
 type pendingJoinState struct {
-	id            string
-	primaryURL    string
+	id         string
+	primaryURL string
+	// dialURL is where this attempt talks to the main till: primaryURL's
+	// same-port TLS URL when the pair request went over TLS, else
+	// primaryURL itself. pin is the certificate pin seen on that request
+	// ("" over plain HTTP); every later call of the attempt is pinned to
+	// it (ut-docs#4091).
+	dialURL       string
+	pin           string
 	primaryTillID string
 	deviceName    string
 	role          string // ut-docs#2781: the role this till asked to join as
@@ -81,6 +90,49 @@ type pendingJoinState struct {
 	status        string // "waiting" | "joined" | "expired" | "error"
 	shopName      string
 	errMsg        string
+}
+
+// code is the verification code this attempt shows: over the pin the
+// joining till saw, so a MITM's certificate makes it differ from the main
+// till's (ADR-0114 §7, ut-docs#4091).
+func (s *pendingJoinState) code() string {
+	return derivedVerificationCode(s.commitment, s.primaryTillID, s.pin)
+}
+
+// newPairPinnedClient builds the TLS client for one pairing call: learning
+// the pin (expectPin "") for the pair request, enforcing it for the polls.
+var newPairPinnedClient = func(expectPin string) *lantls.PinnedClient {
+	return lantls.NewPinnedClient(pairJoinHTTPTimeout, expectPin)
+}
+
+// sendPairRequest sends the pair request, over TLS on the main till's LAN
+// port first (ADR-0114 §7, ut-docs#4091) so the verification code can bind
+// the certificate pin this till saw. Only when the TLS attempt gets no
+// answer — a main till without TLS, or an older one, answering the
+// handshake as a bad HTTP request (lantls.PinnedClient.Exchange) — does it
+// fall back to plain HTTP, with no pin: both screens then show the original
+// code (ADR-0114 §11). An attacker who strips TLS on both legs gets today's
+// unpinned pairing; refusing that is ut-docs#2737's enforcement.
+func sendPairRequest(req *http.Request, plain *http.Client, baseURL string, body []byte) (dialURL, pin string, resp *http.Response, err error) {
+	if tlsBase, ok := lantls.HTTPSBase(baseURL); ok {
+		tlsReq, rerr := http.NewRequestWithContext(req.Context(), http.MethodPost,
+			tlsBase+"/api/sync/pair-request", bytes.NewReader(body))
+		if rerr == nil {
+			tlsReq.Header.Set("Content-Type", "application/json")
+			pc := newPairPinnedClient("")
+			resp, plainOK, err := pc.Exchange(tlsReq)
+			if err == nil {
+				return tlsBase, pc.Pin(), resp, nil
+			}
+			if !plainOK {
+				// No till there, or the request already reached it: a
+				// plain retry would only double the wait or the request.
+				return tlsBase, "", nil, err
+			}
+		}
+	}
+	resp, err = plain.Do(req)
+	return baseURL, "", resp, err
 }
 
 // replicaPairing holds the single active outbound pairing attempt, if any.
@@ -322,7 +374,7 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 
 		body, _ := json.Marshal(map[string]string{"device_name": name, "commitment": commitment, "role": role})
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
-			baseURL+"/api/sync/pair-request", strings.NewReader(string(body)))
+			baseURL+"/api/sync/pair-request", bytes.NewReader(body))
 		if err != nil {
 			// ut-docs#1611: same defect shape ut-docs#1544 fixed for this
 			// handler's other branches — a raw Go error string reaching the
@@ -338,7 +390,7 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 			return
 		}
 		req.Header.Set("Content-Type", "application/json")
-		resp, err := client.Do(req)
+		dialURL, pin, resp, err := sendPairRequest(req, client, baseURL, body)
 		if err != nil {
 			pairWaitView(w, r, statusURL, "error", "", "", fmt.Sprintf(httpx.T(locale, "tills.pairing.error.unreachable"), err.Error()))
 			return
@@ -358,9 +410,11 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 			return
 		}
 
-		rp.set(&pendingJoinState{
+		state := &pendingJoinState{
 			id:            out.Data.ID,
 			primaryURL:    baseURL,
+			dialURL:       dialURL,
+			pin:           pin,
 			primaryTillID: primaryTillID,
 			deviceName:    name,
 			role:          role,
@@ -368,8 +422,9 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 			commitment:    commitment,
 			requestedAt:   pairingJoinNow(),
 			status:        "waiting",
-		})
-		pairWaitView(w, r, statusURL, "waiting", derivedVerificationCode(commitment, primaryTillID), "", "")
+		}
+		rp.set(state)
+		pairWaitView(w, r, statusURL, "waiting", state.code(), "", "")
 	}
 }
 
@@ -411,16 +466,25 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 			return
 		}
 
-		url := state.primaryURL + "/api/sync/pair-requests/" + state.id + "?request_secret=" + state.requestSecret
+		// The request_secret travels in this URL, so a pinned attempt sends
+		// it only to the certificate it pinned: any other fails the
+		// handshake before a byte of the request is sent (ut-docs#4091).
+		url := state.dialURL + "/api/sync/pair-requests/" + state.id + "?request_secret=" + state.requestSecret
+		pollClient := client
+		if state.pin != "" {
+			pollClient = newPairPinnedClient(state.pin).Client
+		}
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, url, nil)
 		if err != nil {
-			pairWaitView(w, r, statusURL, "waiting", derivedVerificationCode(state.commitment, state.primaryTillID), "", "")
+			pairWaitView(w, r, statusURL, "waiting", state.code(), "", "")
 			return
 		}
-		resp, err := client.Do(req)
+		resp, err := pollClient.Do(req)
 		if err != nil {
 			// Transient network hiccup — stay waiting, the next tick retries.
-			pairWaitView(w, r, statusURL, "waiting", derivedVerificationCode(state.commitment, state.primaryTillID), "", "")
+			// So does a certificate that isn't the pinned one: no secret
+			// was sent, and the manager's codes never matched anyway.
+			pairWaitView(w, r, statusURL, "waiting", state.code(), "", "")
 			return
 		}
 		defer resp.Body.Close()
@@ -431,7 +495,7 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 		// the shared pair-request rate limiter (registerPairingAPI) — an
 		// expected steady-state outcome at this poll cadence, not fatal.
 		if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusTooManyRequests {
-			pairWaitView(w, r, statusURL, "waiting", derivedVerificationCode(state.commitment, state.primaryTillID), "", "")
+			pairWaitView(w, r, statusURL, "waiting", state.code(), "", "")
 			return
 		}
 		if resp.StatusCode != http.StatusOK {
@@ -454,7 +518,7 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 			return
 		}
 
-		shopName, err := completeJoin(r, d, state.primaryURL, out.Data.Token, state.deviceName, state.role)
+		shopName, err := completeJoin(r, d, state.primaryURL, out.Data.Token, state.deviceName, state.role, state.pin)
 		if err != nil {
 			next := *state
 			// friendlyJoinError, not err.Error(): completeJoin's failures are

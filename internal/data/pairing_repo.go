@@ -38,27 +38,33 @@ type PendingPairingRow struct {
 	// manager approved it, the role the manager settled on (ut-docs#2781,
 	// migration 067) — what /api/sync/enroll enrols the till as.
 	RequestedRole string
+	// ServedPin is the LAN TLS pin this till served on the connection that
+	// carried the request, "" over plain HTTP (ut-docs#4091, migration
+	// 070). The verification code binds it.
+	ServedPin string
 }
 
 // CreatePendingRequest records a new pair request for an additional till;
 // the caller has already hashed the replica's request_secret into
 // commitment.
 func (r *PairingRepo) CreatePendingRequest(ctx context.Context, deviceName, commitment string, ttl time.Duration) (string, error) {
-	return r.CreatePendingRequestWithRole(ctx, deviceName, commitment, TillRoleAdditional, ttl)
+	return r.CreatePendingRequestWithRole(ctx, deviceName, commitment, TillRoleAdditional, "", ttl)
 }
 
 // CreatePendingRequestWithRole is CreatePendingRequest with the role the
-// replica asked to join as (ut-docs#2781); the caller validates it.
-func (r *PairingRepo) CreatePendingRequestWithRole(ctx context.Context, deviceName, commitment, role string, ttl time.Duration) (string, error) {
+// replica asked to join as (ut-docs#2781; the caller validates it) and the
+// LAN TLS pin served on the request's connection ("" for plain HTTP,
+// ut-docs#4091).
+func (r *PairingRepo) CreatePendingRequestWithRole(ctx context.Context, deviceName, commitment, role, servedPin string, ttl time.Duration) (string, error) {
 	if !ValidTillRole(role) {
 		return "", fmt.Errorf("create pending pairing: invalid role %q", role)
 	}
 	id := uuid.NewString()
 	now := r.now().UTC()
 	_, err := r.db.ExecContext(ctx, `
-INSERT INTO pending_pairings (id, device_name, commitment, requested_at, expires_at, status, requested_role)
-VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
-		id, deviceName, commitment, now.Format(time.RFC3339), now.Add(ttl).Format(time.RFC3339), role)
+INSERT INTO pending_pairings (id, device_name, commitment, requested_at, expires_at, status, requested_role, served_pin)
+VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
+		id, deviceName, commitment, now.Format(time.RFC3339), now.Add(ttl).Format(time.RFC3339), role, servedPin)
 	if err != nil {
 		return "", fmt.Errorf("create pending pairing: %w", err)
 	}
@@ -75,7 +81,7 @@ func (r *PairingRepo) ListPending(ctx context.Context) ([]PendingPairingRow, err
 		return nil, fmt.Errorf("expire pending pairings: %w", err)
 	}
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, device_name, commitment, token, requested_at, expires_at, status, requested_role
+SELECT id, device_name, commitment, token, requested_at, expires_at, status, requested_role, served_pin
 FROM pending_pairings WHERE status = 'pending' ORDER BY requested_at ASC, id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list pending pairings: %w", err)
@@ -84,7 +90,7 @@ FROM pending_pairings WHERE status = 'pending' ORDER BY requested_at ASC, id ASC
 	var out []PendingPairingRow
 	for rows.Next() {
 		var p PendingPairingRow
-		if err := rows.Scan(&p.ID, &p.DeviceName, &p.Commitment, &p.Token, &p.RequestedAt, &p.ExpiresAt, &p.Status, &p.RequestedRole); err != nil {
+		if err := rows.Scan(&p.ID, &p.DeviceName, &p.Commitment, &p.Token, &p.RequestedAt, &p.ExpiresAt, &p.Status, &p.RequestedRole, &p.ServedPin); err != nil {
 			return nil, fmt.Errorf("scan pending pairing: %w", err)
 		}
 		out = append(out, p)
@@ -110,7 +116,7 @@ FROM pending_pairings WHERE status = 'pending' ORDER BY requested_at ASC, id ASC
 func (r *PairingRepo) ListPendingReadOnly(ctx context.Context) ([]PendingPairingRow, error) {
 	now := r.now().UTC().Format(time.RFC3339)
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, device_name, commitment, token, requested_at, expires_at, status, requested_role
+SELECT id, device_name, commitment, token, requested_at, expires_at, status, requested_role, served_pin
 FROM pending_pairings WHERE status = 'pending' AND expires_at >= ?
 ORDER BY requested_at ASC, id ASC`, now)
 	if err != nil {
@@ -120,7 +126,7 @@ ORDER BY requested_at ASC, id ASC`, now)
 	var out []PendingPairingRow
 	for rows.Next() {
 		var p PendingPairingRow
-		if err := rows.Scan(&p.ID, &p.DeviceName, &p.Commitment, &p.Token, &p.RequestedAt, &p.ExpiresAt, &p.Status, &p.RequestedRole); err != nil {
+		if err := rows.Scan(&p.ID, &p.DeviceName, &p.Commitment, &p.Token, &p.RequestedAt, &p.ExpiresAt, &p.Status, &p.RequestedRole, &p.ServedPin); err != nil {
 			return nil, fmt.Errorf("scan pending pairing: %w", err)
 		}
 		out = append(out, p)
@@ -134,10 +140,10 @@ ORDER BY requested_at ASC, id ASC`, now)
 func (r *PairingRepo) GetByID(ctx context.Context, id string) (PendingPairingRow, bool, error) {
 	var p PendingPairingRow
 	err := r.db.QueryRowContext(ctx, `
-SELECT id, device_name, commitment, token, requested_at, expires_at, status, requested_role
+SELECT id, device_name, commitment, token, requested_at, expires_at, status, requested_role, served_pin
 FROM pending_pairings WHERE id = ? AND expires_at >= ?`,
 		id, r.now().UTC().Format(time.RFC3339)).
-		Scan(&p.ID, &p.DeviceName, &p.Commitment, &p.Token, &p.RequestedAt, &p.ExpiresAt, &p.Status, &p.RequestedRole)
+		Scan(&p.ID, &p.DeviceName, &p.Commitment, &p.Token, &p.RequestedAt, &p.ExpiresAt, &p.Status, &p.RequestedRole, &p.ServedPin)
 	if err == sql.ErrNoRows {
 		return PendingPairingRow{}, false, nil
 	}

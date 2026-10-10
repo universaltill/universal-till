@@ -190,3 +190,38 @@ func TestPairingRepo_DenyRemovesRow(t *testing.T) {
 		t.Fatal("expected the row to be gone after Deny, not just marked denied")
 	}
 }
+
+// ut-docs#4091: the pin served on the request's connection is stored and
+// read back by every read path; a plain-HTTP request stores none.
+func TestPairingRepo_ServedPinRoundTrips(t *testing.T) {
+	ctx := context.Background()
+	repo := newPairingTestRepo(t)
+
+	pinned, err := repo.CreatePendingRequestWithRole(ctx, "TLS Till", "c-tls", TillRoleAdditional, "ab12", 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := repo.CreatePendingRequest(ctx, "Plain Till", "c-plain", 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{pinned: "ab12", plain: ""}
+
+	row, ok, err := repo.GetByID(ctx, pinned)
+	if err != nil || !ok || row.ServedPin != "ab12" {
+		t.Fatalf("GetByID: pin %q ok=%v err=%v, want ab12", row.ServedPin, ok, err)
+	}
+	for name, list := range map[string]func(context.Context) ([]PendingPairingRow, error){
+		"ListPending": repo.ListPending, "ListPendingReadOnly": repo.ListPendingReadOnly,
+	} {
+		rows, err := list(ctx)
+		if err != nil || len(rows) != 2 {
+			t.Fatalf("%s: %d rows, err %v", name, len(rows), err)
+		}
+		for _, r := range rows {
+			if r.ServedPin != want[r.ID] {
+				t.Errorf("%s: %s pin %q, want %q", name, r.DeviceName, r.ServedPin, want[r.ID])
+			}
+		}
+	}
+}

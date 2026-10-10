@@ -223,7 +223,7 @@ func TestListPairRequests_VerificationCodeUsesDiscoveryTillID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("discovery.TillID: %v", err)
 	}
-	wantCode := derivedVerificationCode(commitment, wantTillID)
+	wantCode := derivedVerificationCode(commitment, wantTillID, "")
 
 	if got := out.Data.Pending[0].VerificationCode; got != wantCode {
 		t.Fatalf("verification_code = %q, want %q (derived from discovery.TillID %q) — "+
@@ -236,7 +236,7 @@ func TestDerivedVerificationCode_IsAlwaysSixDecimalDigits(t *testing.T) {
 	// Run enough distinct inputs that a hex-leaking implementation
 	// (a-f characters) would almost certainly show up.
 	for i := 0; i < 200; i++ {
-		code := derivedVerificationCode(commitOf("commit-"+string(rune('a'+i%26))), "primary-"+string(rune('a'+i%26)))
+		code := derivedVerificationCode(commitOf("commit-"+string(rune('a'+i%26))), "primary-"+string(rune('a'+i%26)), "")
 		if len(code) != 6 {
 			t.Fatalf("expected 6 characters, got %q", code)
 		}

@@ -42,6 +42,12 @@ type ReplicaIdentity struct {
 	// (ut-docs#2781: additional | satellite), kept as sync.till_role. Empty
 	// when joining an older main till: the first admin pull fills it in.
 	TillRole string `json:"till_role,omitempty"`
+	// PrimaryCertPin is the main till's LAN TLS pin the joining till saw at
+	// pairing, kept as sync.primary_cert_pin (ADR-0114 §7, ut-docs#4091).
+	// Empty when the pairing ran over plain HTTP (a main till without TLS,
+	// or the paste-a-code join): the replica learns it later through the
+	// primary-proof handshake.
+	PrimaryCertPin string `json:"primary_cert_pin,omitempty"`
 }
 
 // ReplicaIdentityPath locates the identity file for a DB path.
@@ -102,6 +108,9 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 		"sync.bearer":         id.Bearer,
 		"sync.receipt_prefix": id.ReceiptPrefix,
 		"sync.till_name":      id.TillName,
+		// Always written, empty too: a till re-joining a main till must
+		// not keep trusting the previous main till's pin.
+		"sync.primary_cert_pin": id.PrimaryCertPin,
 	} {
 		if err := set(k, v); err != nil {
 			return false, fmt.Errorf("apply identity %s: %w", k, err)

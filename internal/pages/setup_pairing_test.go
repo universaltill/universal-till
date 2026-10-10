@@ -258,7 +258,7 @@ func TestSetupPairStartShowsCodeAndPollsSetupStatus(t *testing.T) {
 	if len(pending) != 1 {
 		t.Fatalf("expected exactly one pending request on the primary, got %+v", pending)
 	}
-	if want := derivedVerificationCode(pending[0].Commitment, primaryTillID); !strings.Contains(body, want) {
+	if want := derivedVerificationCode(pending[0].Commitment, primaryTillID, pending[0].ServedPin); !strings.Contains(body, want) {
 		t.Fatalf("expected the wizard's waiting screen to show verification code %q, got: %s", want, body)
 	}
 	if !strings.Contains(body, `hx-get="/api/setup/pair-status"`) {

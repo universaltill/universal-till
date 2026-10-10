@@ -62,7 +62,7 @@ func newFakePrimary(t *testing.T, primaryID, bearerHash string) *fakePrimary {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": ProofResponse{
 			PrimaryTillID: f.primaryID,
-			Proof:         PrimaryProof(f.bearerHash, f.primaryID, req.TillID, req.Nonce, r.Host),
+			Proof:         PrimaryProof(f.bearerHash, f.primaryID, req.TillID, req.Nonce, r.Host, ""),
 		}, "error": nil})
 	}))
 	t.Cleanup(f.srv.Close)
@@ -318,14 +318,14 @@ func TestPrimaryWatch_LegacyReplicaUsesDiscoveryIDHint(t *testing.T) {
 }
 
 func TestPrimaryProof_BindsEveryInput(t *testing.T) {
-	base := PrimaryProof("h", "p", "t", "n", "192.0.2.5:8080")
+	base := PrimaryProof("h", "p", "t", "n", "192.0.2.5:8080", "")
 	for _, other := range []string{
-		PrimaryProof("h2", "p", "t", "n", "192.0.2.5:8080"),
-		PrimaryProof("h", "p2", "t", "n", "192.0.2.5:8080"),
-		PrimaryProof("h", "p", "t2", "n", "192.0.2.5:8080"),
-		PrimaryProof("h", "p", "t", "n2", "192.0.2.5:8080"),
-		PrimaryProof("h", "p", "t", "n", "192.0.2.6:8080"),
-		PrimaryProof("h", "p", "t", "n", "192.0.2.5:8081"),
+		PrimaryProof("h2", "p", "t", "n", "192.0.2.5:8080", ""),
+		PrimaryProof("h", "p2", "t", "n", "192.0.2.5:8080", ""),
+		PrimaryProof("h", "p", "t2", "n", "192.0.2.5:8080", ""),
+		PrimaryProof("h", "p", "t", "n2", "192.0.2.5:8080", ""),
+		PrimaryProof("h", "p", "t", "n", "192.0.2.6:8080", ""),
+		PrimaryProof("h", "p", "t", "n", "192.0.2.5:8081", ""),
 	} {
 		if other == base {
 			t.Fatal("PrimaryProof ignores one of its inputs")

@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/tls"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,13 +15,18 @@ func TestWithLANTLS_ServesTLSAndCreatesKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(t.TempDir(), "tls")
-	ln := withLANTLS(inner, dir, false)
+	srv := &http.Server{}
+	ln := withLANTLS(srv, inner, dir, false)
 	defer ln.Close()
 	if ln == inner {
 		t.Fatal("listener not wrapped: TLS not served")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "key.pem")); err != nil {
 		t.Fatalf("key not created under the tls dir: %v", err)
+	}
+	// ut-docs#4091: handlers learn the pin served on their connection.
+	if srv.ConnContext == nil {
+		t.Fatal("ConnContext not set: handlers can't see the served pin")
 	}
 	go func() {
 		if c, err := ln.Accept(); err == nil {
@@ -47,8 +53,12 @@ func TestWithLANTLS_BadKeyFallsBackToPlain(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "key.pem"), []byte("junk"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if ln := withLANTLS(inner, dir, false); ln != inner {
+	srv := &http.Server{}
+	if ln := withLANTLS(srv, inner, dir, false); ln != inner {
 		t.Fatal("bad key: want the plain listener back unchanged")
+	}
+	if srv.ConnContext != nil {
+		t.Fatal("bad key: no TLS, so no served pin")
 	}
 }
 
@@ -59,7 +69,7 @@ func TestWithLANTLS_DemoStaysPlain(t *testing.T) {
 	}
 	defer inner.Close()
 	dir := filepath.Join(t.TempDir(), "tls")
-	if ln := withLANTLS(inner, dir, true); ln != inner {
+	if ln := withLANTLS(&http.Server{}, inner, dir, true); ln != inner {
 		t.Fatal("demo till: want plain listener")
 	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {

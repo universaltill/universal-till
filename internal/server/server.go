@@ -242,7 +242,7 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	// the one really serving (ut-docs#2891).
 	plugins.SetTillListenAddr(actualAddr)
 	// Same port, TLS as well as plain HTTP (ADR-0114 §7, ut-docs#2736).
-	ln = withLANTLS(ln, paths.Data("tls"), cfg.Demo)
+	ln = withLANTLS(srv, ln, paths.Data("tls"), cfg.Demo)
 
 	// Graceful shutdown when context is cancelled. Registered with wg because
 	// net/http's Shutdown contract only guarantees Serve returns once
@@ -538,7 +538,11 @@ func bindListener(addr string, demo bool) (net.Listener, string, error) {
 // key can't be loaded or created, ln is served plain-only and the reason is
 // logged. A demo till (ADR-0113) sits behind the demo broker, which talks
 // plain HTTP to it, so it gets no LAN key.
-func withLANTLS(ln net.Listener, dir string, demo bool) net.Listener {
+//
+// With TLS on, srv's ConnContext stamps the served pin onto each TLS
+// request (lantls.ServedPin), which pairing and the primary proof bind into
+// what the peer verifies (ut-docs#4091).
+func withLANTLS(srv *http.Server, ln net.Listener, dir string, demo bool) net.Listener {
 	if demo {
 		return ln
 	}
@@ -548,6 +552,7 @@ func withLANTLS(ln net.Listener, dir string, demo bool) net.Listener {
 		return ln
 	}
 	log.Printf("[LAN TLS] serving TLS on the same port")
+	srv.ConnContext = lantls.ConnContext(c)
 	return lantls.Listen(ln, c.TLSConfig())
 }
 

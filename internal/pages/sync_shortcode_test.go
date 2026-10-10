@@ -554,7 +554,7 @@ func TestCompleteJoin_Maps429ToTooManyAttempts(t *testing.T) {
 
 	replica, replicaPath := newSyncDepsWithPath(t, "replica.db")
 	r := httptest.NewRequest(http.MethodPost, "/api/sync/join", nil)
-	_, err := completeJoin(r, replica, srv.URL, "K7P4XQ", "Till 2", "additional")
+	_, err := completeJoin(r, replica, srv.URL, "K7P4XQ", "Till 2", "additional", "")
 	if k := joinKind(t, err); k != joinErrTooManyAttempts {
 		t.Fatalf("kind = %v, want joinErrTooManyAttempts", k)
 	}
