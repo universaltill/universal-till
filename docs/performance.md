@@ -88,7 +88,7 @@ wazero's compiled code in `<data dir>/wasm-cache`
 instead of recompiling (dev Mac, test guest: 14 s compile → 0.4 s hit).
 
 - **Log**: one line per load —
-  `wasm load <id>@<ver>: compiled|cache hit|compiled without cache in <dur>` —
+  `wasm load <id>@<ver>: compiled|cache hit|compiled in parallel|compiled without cache in <dur>` —
   plus `wasm compile cache: on at …` / `off (…)` once, at the first compile
   (a till with no WASM plugin never creates the dir).
 - **Bounded**: `index.json` maps each plugin to its entry; every plugin sync
@@ -103,6 +103,22 @@ instead of recompiling (dev Mac, test guest: 14 s compile → 0.4 s hit).
   that can't be created means no cache, logged once.
 - **Off on Android/iOS**: they run wazero's interpreter, which has no
   compiled code to cache.
+- **Parallel first compile** (ut-docs#3921,
+  `internal/plugins/wasm_compile_warm.go`): when two or more distinct
+  modules miss the cache (first start after installs, updates or a wazero
+  bump), they compile at once before the serial load — at most GOMAXPROCS
+  at a time, fewer if 32× each module's size would pass half of
+  `MemAvailable` (Linux). Each compile writes to its own staging cache dir
+  (`wasm-cache/staging`, cleared when the cache opens), and its one entry is
+  moved in and indexed under the runtime lock, so attribution and pruning
+  stay exact. Any failure there just leaves that plugin to the serial path.
+  Log: `wasm compile <id>@<ver>: compiled in <dur>`, one summary line, then
+  `wasm load …: compiled in parallel`. linux/amd64, 4 cores, tax-uk
+  (5.1 MiB): 3 modules 7.0 s → 2.75 s, 4 modules 10.0 s → 3.1 s; peak RSS
+  +~110 MB per extra concurrent compile. Re-measure:
+  `UT_WASM_COMPILE_MEASURE=<plugin.wasm> UT_WASM_COMPILE_N=3
+  UT_WASM_COMPILE_WORKERS=1|0 go test ./internal/plugins -run
+  TestWasmCompileWarm_Measure -v` (or `GOARCH=arm64 go test -c` for a Pi).
 
 ## Permission checks: one generation read per request (ut-docs#3935)
 `AuthRepo.HasPermission` answers from an in-memory bitmask keyed on
