@@ -275,6 +275,15 @@ var coreViews = map[string]CoreView{
 			return NewCatalogRepo(db).ListCatalogViewItems(ctx, args["offset"], args["limit"])
 		},
 	},
+	// ut-docs#4094: which active items have a reference photo, confirmed
+	// photos first, newest first — so a camera-identify plugin spends its
+	// 64 item_image_open calls on items that have one.
+	"catalog.photos.v1": {
+		Name: "catalog.photos.v1", Permission: "view:inventory", Args: []CoreViewArg{argOffset, argCatalogLimit},
+		Run: func(ctx context.Context, db *sql.DB, args map[string]int) (any, error) {
+			return NewCatalogRepo(db).ListCatalogPhotoViewRows(ctx, args["offset"], args["limit"])
+		},
+	},
 	// ADR-0149 §6 (ut-docs#3976): the staff list — id, display name,
 	// active; never a username, PIN or role.
 	"users.list.v1": {

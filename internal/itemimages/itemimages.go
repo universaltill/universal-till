@@ -248,3 +248,25 @@ func refImageNames(entries []os.DirEntry) []string {
 	sort.Strings(names)
 	return names
 }
+
+// PhotoStamp reports where an item's "ref" photo would come from — source
+// RoleAIRef (its newest confirmed photo) or RoleThumb (its thumbnail) — and
+// that file's modification time, from a stat only: nothing is read or
+// decoded, so a file that later fails to decode still reports ok. The
+// catalog.photos.v1 core view (ut-docs#4094) uses it to list photographed
+// items newest first, so a camera-identify plugin opens only items that
+// have a photo. ok is false for a bad id or an item with neither file.
+func PhotoStamp(itemID string) (source string, at time.Time, ok bool) {
+	if !ValidID(itemID) {
+		return "", time.Time{}, false
+	}
+	if p, _, found := LatestAIRef(AIRefDir(itemID)); found {
+		if st, err := os.Stat(p); err == nil && st.Mode().IsRegular() {
+			return RoleAIRef, st.ModTime(), true
+		}
+	}
+	if st, err := os.Stat(filepath.Join(AssetDir(), itemID, "thumb.png")); err == nil && st.Mode().IsRegular() {
+		return RoleThumb, st.ModTime(), true
+	}
+	return "", time.Time{}, false
+}
