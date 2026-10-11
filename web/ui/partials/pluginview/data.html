@@ -19,5 +19,40 @@
     {{- end }}
   </tbody>
 </table>
+{{- with .Paging }}
+{{/* ut-docs#3874: the plugin serves one page per view ask; the links are
+     the entry's own route with the table's page param (LinkPaging). A
+     content slot panel or the read-only wizard has no links: indicator only. */}}
+<nav class="plugin-view-paging" aria-label="{{ T "plugin.view.paging_label" }}">
+  {{- if .PrevURL }}<a class="btn btn-touch secondary" href="{{ .PrevURL }}" rel="prev">{{ T "plugin.view.page_prev" }}</a>{{ end }}
+  <span class="plugin-view-paging-pos">{{ .Text }}</span>
+  {{- if .NextURL }}<a class="btn btn-touch secondary" href="{{ .NextURL }}" rel="next">{{ T "plugin.view.page_next" }}</a>{{ end }}
+</nav>
+{{- end }}
+</div>
+{{ end }}
+
+{{/* ut-docs#3874: a QR code core encoded from the plugin's data (.QR is a
+     data:image/png URI built by pluginview.Prepare, never a plugin URL).
+     The alt says what it is; the plugin's label is the caption. */}}
+{{ define "pluginview_qr" }}
+<figure class="card plugin-view-qr">
+  <img src="{{ .QR }}" alt="{{ .Alt }}" width="{{ .QRSize }}" height="{{ .QRSize }}">
+  {{- if .Label }}<figcaption>{{ .Label }}</figcaption>{{ end }}
+</figure>
+{{ end }}
+
+{{/* ut-docs#3874: a multi-step flow's progress. "Step n of m" says the
+     position in words and the current step carries aria-current, so the
+     state never rests on colour; done steps get a check mark, and say
+     "done" to a screen reader. */}}
+{{ define "pluginview_wizard_step" }}
+<div class="card plugin-view-wizard">
+  <p class="plugin-view-wizard-pos">{{ .Text }}</p>
+  <ol class="plugin-view-wizard-steps" aria-label="{{ T "plugin.view.wizard_label" }}">
+    {{- range .Steps }}
+    <li class="{{ .State }}"{{ if eq .State "current" }} aria-current="step"{{ end }}>{{ if eq .State "done" }}<span aria-hidden="true">✓ </span>{{ end }}{{ .Label }}{{ if eq .State "done" }}<span class="visually-hidden"> {{ T "plugin.view.step_done" }}</span>{{ end }}</li>
+    {{- end }}
+  </ol>
 </div>
 {{ end }}

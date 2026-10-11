@@ -1,7 +1,14 @@
 package pluginview
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"html/template"
+	"net/url"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/money"
@@ -41,7 +48,35 @@ type ViewComponent struct {
 	Multipart bool
 	// suggestions (ut-docs#3873)
 	Suggestions []ViewSuggestion
+	// qr (ut-docs#3874): a PNG data URI core encoded from the plugin's
+	// data (never a plugin-supplied URL), its alt text, and the caption in
+	// Label.
+	QR     template.URL
+	QRSize int // the image's edge in pixels
+	Alt    string
+	// wizard_step (ut-docs#3874): Text is "Step n of m".
+	Steps []ViewStep
+	// table paging (ut-docs#3874)
+	Paging *ViewPaging
 }
+
+// ViewStep is one wizard step; State is done, current or upcoming.
+type ViewStep struct{ Label, State string }
+
+// ViewPaging is a paged table's indicator ("Page n of m") and, once
+// View.LinkPaging ran, its Previous/Next links ("" = none).
+type ViewPaging struct {
+	Param            string
+	Page, Pages      int64 // Pages 0: unknown total
+	HasNext          bool
+	Text             string
+	PrevURL, NextURL string
+}
+
+// qrModulePixels: a negative size makes go-qrcode draw each module this
+// many pixels wide, so even a 1024-byte code (109 modules) scans cleanly;
+// the image is drawn at its own size, shrunk only to fit a narrow screen.
+const qrModulePixels = -4
 
 type ViewTile struct{ Label, Value string }
 
@@ -136,6 +171,30 @@ func (d *Document) Prepare(locale string) View {
 			}
 		case "suggestions":
 			vc.Suggestions = prepareSuggestions(c.Suggestions, t)
+		case "qr":
+			// Encoded by the validator (never re-encoded per draw).
+			vc.QR = template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(c.QR.png))
+			vc.QRSize = pngWidth(c.QR.png)
+			vc.Alt = httpx.T(locale, "plugin.view.qr_alt")
+			if c.QR.Label != nil {
+				vc.Label = t(*c.QR.Label)
+			}
+		case "wizard_step":
+			w := c.WizardStep
+			for i, st := range w.Steps {
+				state := "upcoming"
+				switch {
+				case i+1 < w.Current:
+					state = "done"
+				case i+1 == w.Current:
+					state = "current"
+				}
+				vc.Steps = append(vc.Steps, ViewStep{Label: t(st), State: state})
+			}
+			vc.Text = fmt.Sprintf(httpx.T(locale, "plugin.view.wizard_step_of"), localNumber(int64(w.Current), locale), localNumber(int64(len(w.Steps)), locale))
+		}
+		if c.Type == "table" && c.Table.Paging != nil {
+			vc.Paging = preparePaging(c.Table.Paging, locale)
 		}
 		v.Components = append(v.Components, vc)
 	}
@@ -223,4 +282,76 @@ func refillField(f *ViewField, posted map[string][]string) {
 		}
 	}
 	// secret, file: never written back into the page.
+}
+
+// localNumber is n in the locale's digits and grouping.
+func localNumber(n int64, locale string) string {
+	return httpx.FormatDecimal(strconv.FormatInt(n, 10), locale)
+}
+
+func preparePaging(p *Paging, locale string) *ViewPaging {
+	vp := &ViewPaging{Param: p.ParamName(), Page: p.Page}
+	if p.Pages != nil {
+		vp.Pages = *p.Pages
+		vp.HasNext = p.Page < *p.Pages
+		vp.Text = fmt.Sprintf(httpx.T(locale, "plugin.view.page_n_of"), localNumber(p.Page, locale), localNumber(*p.Pages, locale))
+	} else {
+		vp.HasNext = *p.HasNext
+		vp.Text = fmt.Sprintf(httpx.T(locale, "plugin.view.page_n"), localNumber(p.Page, locale))
+	}
+	return vp
+}
+
+// LinkPaging gives every paged table its Previous/Next links: route (the
+// entry's own) with params (the query the view was asked with, already
+// bounded by the caller) and the table's own param set to the page
+// before/after. A view drawn where a link has nowhere to go (a content
+// slot panel, the read-only setup wizard) skips this and shows the
+// indicator alone.
+//
+// A link never carries a reserved "_" key (core's own, such as the job
+// poll's _job) and holds at most MaxParams keys: the table's param plus
+// the first MaxParams-1 others by sorted key, so the next ask still
+// forwards the page.
+func (v *View) LinkPaging(route string, params map[string]string) {
+	link := func(param string, page int64) string {
+		keys := make([]string, 0, len(params))
+		for k := range params {
+			if k != param && k != "" && !strings.HasPrefix(k, "_") {
+				keys = append(keys, k)
+			}
+		}
+		sort.Strings(keys)
+		if len(keys) > MaxParams-1 {
+			keys = keys[:MaxParams-1]
+		}
+		q := url.Values{}
+		for _, k := range keys {
+			q.Set(k, params[k])
+		}
+		q.Set(param, strconv.FormatInt(page, 10))
+		u := url.URL{Path: route, RawQuery: q.Encode()}
+		return u.String()
+	}
+	for i := range v.Components {
+		p := v.Components[i].Paging
+		if p == nil {
+			continue
+		}
+		p.PrevURL, p.NextURL = "", ""
+		if p.Page > 1 {
+			p.PrevURL = link(p.Param, p.Page-1)
+		}
+		if p.HasNext {
+			p.NextURL = link(p.Param, p.Page+1)
+		}
+	}
+}
+
+// pngWidth reads a PNG's width from its IHDR chunk (0 if b is not one).
+func pngWidth(b []byte) int {
+	if len(b) < 24 || string(b[1:4]) != "PNG" {
+		return 0
+	}
+	return int(b[16])<<24 | int(b[17])<<16 | int(b[18])<<8 | int(b[19])
 }
