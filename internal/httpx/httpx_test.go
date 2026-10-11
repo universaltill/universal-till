@@ -486,3 +486,29 @@ func TestFuncsForDigitset(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#4071: numbergrouping tells window.utCurrency (web/public/app.js)
+// to group Indian-style ("10,00,000") like the server's indianGrouping, so
+// client-rendered money agrees with the basket for en-IN / ur-PK. Every
+// other locale yields "" (uniform 3-digit grouping).
+func TestFuncsForNumberGrouping(t *testing.T) {
+	InitI18n(realI18n(t), "en")
+	cases := []struct{ locale, want string }{
+		{"en-IN", "indian"},
+		{"ur-PK", "indian"},
+		{"EN-in", "indian"},
+		{"en-GB", ""},
+		{"de-DE", ""},
+		{"fa", ""},
+		{"en", ""},
+	}
+	for _, c := range cases {
+		fn, ok := FuncsFor(c.locale)["numbergrouping"].(func() string)
+		if !ok {
+			t.Fatalf("%s: numbergrouping func missing", c.locale)
+		}
+		if got := fn(); got != c.want {
+			t.Errorf("%s: numbergrouping = %q, want %q", c.locale, got, c.want)
+		}
+	}
+}
