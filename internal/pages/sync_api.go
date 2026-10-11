@@ -24,6 +24,7 @@ import (
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/lanip"
+	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -956,6 +957,16 @@ func primaryURLFromAddress(address string) (string, bool) {
 func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role, primaryCertPin string) (string, error) {
 	base := strings.TrimSuffix(primaryURL, "/")
 	client := netaccess.NewClient(60 * time.Second)
+	if primaryCertPin != "" {
+		// Pairing learned the main till's pin (ut-docs#4091): the one-time
+		// token and the new bearer go over TLS verified by that pin, never
+		// plain HTTP (ADR-0114 §7, ut-docs#4092).
+		tlsBase, ok := lantls.HTTPSBase(base)
+		if !ok {
+			return "", &joinError{kind: joinErrRequestFailed, detail: "pinned main till has no LAN address: " + base}
+		}
+		base, client = tlsBase, lantls.NewPinnedClient(60*time.Second, primaryCertPin).Client
+	}
 
 	body, _ := json.Marshal(map[string]string{"token": token, "name": name, "role": role})
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,

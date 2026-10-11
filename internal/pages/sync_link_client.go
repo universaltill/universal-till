@@ -15,8 +15,8 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/fleetlink"
+	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
-	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -45,7 +45,7 @@ const linkProbeTimeout = 5 * time.Second
 // picked up on the next attempt.
 func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.Client {
 	posRepo := data.NewPOSRepo(d.Db)
-	probeClient := netaccess.NewClient(linkProbeTimeout)
+	probeClient := lantls.NewPeerClient(linkProbeTimeout)
 	// The bearer goes to the main till's address only.
 	probeClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	get := func(ctx context.Context, k string) string {
@@ -98,7 +98,9 @@ func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.
 			// (ut-docs#2945); a change is sent at the next on-change check.
 			UpdateState:    followReportState(followInputsOf(ctx, d)),
 			PushQueueDepth: depth,
-			TLSPinned:      false, // #2736
+			// The main till sees which tills speak pinned TLS (ADR-0114 §7;
+			// its per-till plain-HTTP refusal is ut-docs#2737).
+			TLSPinned: lantls.PeerPinned(ctx),
 			// This till's own name (sync.till_name), so the main till's
 			// Tills page follows a rename made here or from the cloud
 			// (ut-docs#3294). A change is sent at the next on-change check.

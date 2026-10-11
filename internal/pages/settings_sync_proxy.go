@@ -12,8 +12,8 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
-	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -52,7 +52,7 @@ import (
 
 // settingsSyncProxyClient is the additional-till -> main-till client; same
 // admin-screen budget as the users write-through.
-var settingsSyncProxyClient = netaccess.NewClient(userSyncTimeout)
+var settingsSyncProxyClient = lantls.NewPeerClient(userSyncTimeout)
 
 // errSettingsSync is a failed write-through. Code is the main till's
 // refusal code on a 4xx answer; "" means the main till could not be

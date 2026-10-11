@@ -29,6 +29,7 @@ import (
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages"
@@ -216,6 +217,20 @@ func Run(ctx context.Context) error {
 
 	settingsStore := settings.NewStore(database.DB)
 
+	// Pinned LAN TLS (ADR-0114 §7, ut-docs#4092): once this till holds its
+	// main till's pin, every replica → main till request goes over pinned
+	// TLS. Read at request time, so a re-pairing or re-discovery applies to
+	// the next request.
+	// Removed before the database closes.
+	defer lantls.SetPeerSource(func(ctx context.Context) (string, string, error) {
+		primary, _, err := settingsStore.Get(ctx, "sync.primary_url")
+		if err != nil {
+			return "", "", err
+		}
+		pin, _, err := settingsStore.Get(ctx, discovery.PrimaryCertPinSettingKey)
+		return primary, pin, err
+	})()
+
 	if err := bootstrapPluginDirectories(); err != nil {
 		return err
 	}
@@ -346,7 +361,7 @@ func Run(ctx context.Context) error {
 	// on) and declines on a primary/standalone till, which then self-
 	// generates; a replica fetches the primary's key once and persists it.
 	// paths.Data("secrets", ...) — never cwd-relative (ADR-0003).
-	secrets.SetDefault(secrets.NewKeyStore(pages.SecretsKeyFetcher(settingsStore, netaccess.NewClient(15*time.Second))))
+	secrets.SetDefault(secrets.NewKeyStore(pages.SecretsKeyFetcher(settingsStore, lantls.NewPeerClient(15*time.Second))))
 
 	pluginManager, err = plugins.Init(ctx, cfg, database.DB)
 	if err != nil {

@@ -13,9 +13,9 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fleetlink"
+	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
-	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -674,7 +674,7 @@ func registerSyncSales(mux *http.ServeMux, d *common.Deps) {
 // attempts serialized on the cursor, bounded by bgCtx, and joined by wg —
 // nothing can leak past the shutdown drain.
 func StartSyncPush(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) {
-	client := netaccess.NewClient(30 * time.Second)
+	client := lantls.NewPeerClient(30 * time.Second)
 	if d.SyncPushNow == nil {
 		d.SyncPushNow = make(chan struct{}, 1)
 	}

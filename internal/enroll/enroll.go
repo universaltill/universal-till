@@ -58,8 +58,8 @@ import (
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/discovery"
+	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
-	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
 // Settings is the key/value persistence enrolment needs; *settings.Store
@@ -167,7 +167,7 @@ var (
 	attemptSem = make(chan struct{}, 1)
 
 	// Overridable in tests.
-	httpClient = netaccess.NewClient(15 * time.Second)
+	httpClient = lantls.NewPeerClient(15 * time.Second)
 	// lazyKeyTimeout bounds EnsureSigningKey's wait (slot + fetch), the same
 	// 5 s RegisterNow's interactive callers use.
 	lazyKeyTimeout = 5 * time.Second

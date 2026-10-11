@@ -15,8 +15,8 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
-	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -39,7 +39,7 @@ const ClientTimeout = 5 * time.Second
 
 // Client is the additional-till -> main-till client. A variable so tests
 // can swap it.
-var Client = netaccess.NewClient(ClientTimeout)
+var Client = lantls.NewPeerClient(ClientTimeout)
 
 // maxForwardBody bounds the form an additional till reads before sending
 // it on. The category form allows a photo upload of up to 10 MiB; a form

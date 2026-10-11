@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
@@ -416,4 +418,85 @@ func TestPrimaryWatch_RefusedProofWarnsUnkeyed(t *testing.T) {
 		f.w.ContactFailed(context.Background())
 	}
 	requireUnkeyedProofWarn(t)
+}
+
+// tlsFakePrimary is fakePrimary on a same-port TLS + plain listener: its
+// proof covers the pin served on the connection, as the real handler's does.
+type tlsFakePrimary struct {
+	base       string
+	cert       *lantls.Cert
+	tls, plain atomic.Int32
+}
+
+func newTLSFakePrimary(t *testing.T, primaryID, bearerHash string) *tlsFakePrimary {
+	t.Helper()
+	cert, err := lantls.LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &tlsFakePrimary{base: "http://" + inner.Addr().String(), cert: cert}
+	srv := &http.Server{ConnContext: lantls.ConnContext(cert), Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS != nil {
+			f.tls.Add(1)
+		} else {
+			f.plain.Add(1)
+		}
+		var req ProofRequest
+		if r.URL.Path != ProofPath || json.NewDecoder(r.Body).Decode(&req) != nil || req.TillID != testTillID {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": ProofResponse{
+			PrimaryTillID: primaryID,
+			Proof:         PrimaryProof(bearerHash, primaryID, req.TillID, req.Nonce, r.Host, lantls.ServedPin(r.Context())),
+		}, "error": nil})
+	})}
+	go func() { _ = srv.Serve(lantls.Listen(inner, cert.TLSConfig())) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return f
+}
+
+// rediscoverWithPin runs one re-discovery on a replica that already holds pin.
+func rediscoverWithPin(t *testing.T, pin string, c Candidate) *watchFixture {
+	t.Helper()
+	f := newWatchFixture(t, c)
+	if err := f.settings.Set(context.Background(), PrimaryCertPinSettingKey, pin); err != nil {
+		t.Fatal(err)
+	}
+	for range UnreachableThreshold {
+		f.w.ContactFailed(context.Background())
+	}
+	return f
+}
+
+// ut-docs#4092: a replica holding the pin proves a moved main till over
+// pinned TLS only.
+func TestPrimaryWatch_PinnedReplicaProvesOverPinnedTLS(t *testing.T) {
+	p := newTLSFakePrimary(t, testPrimaryID, testBearerHash())
+	f := rediscoverWithPin(t, p.cert.Pin(), Candidate{TillID: testPrimaryID, BaseURL: p.base})
+
+	if got := f.get(t, "sync.primary_url"); got != p.base {
+		t.Fatalf("primary_url = %q, want the re-discovered %q", got, p.base)
+	}
+	if p.tls.Load() == 0 || p.plain.Load() != 0 {
+		t.Fatalf("proof went tls=%d plain=%d; want TLS only", p.tls.Load(), p.plain.Load())
+	}
+}
+
+// Another certificate at a candidate address is refused before a request
+// byte is sent, and never retried over plain HTTP (re-proof is ut-docs#2737).
+func TestPrimaryWatch_PinnedReplicaRefusesAnotherCertificate(t *testing.T) {
+	p := newTLSFakePrimary(t, testPrimaryID, testBearerHash())
+	f := rediscoverWithPin(t, strings.Repeat("0", 64), Candidate{TillID: testPrimaryID, BaseURL: p.base})
+
+	if got := f.get(t, "sync.primary_url"); got != deadURL {
+		t.Fatalf("switched to %q on a certificate that does not match the pin", got)
+	}
+	if n := p.tls.Load() + p.plain.Load(); n != 0 {
+		t.Fatalf("candidate served %d request(s) despite the pin mismatch", n)
+	}
 }

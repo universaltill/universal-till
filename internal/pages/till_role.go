@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
-	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -35,7 +35,7 @@ const tillRoleSettingsKey = "sync.till_role"
 // tillRoleSyncClient is the joined till's client for reporting its own new
 // role to the main till — a seam so tests can point it at an httptest
 // server (same shape as userSyncProxyClient).
-var tillRoleSyncClient = netaccess.NewClient(10 * time.Second)
+var tillRoleSyncClient = lantls.NewPeerClient(10 * time.Second)
 
 // tillRoleFromForm validates a submitted role. Blank means
 // TillRoleAdditional — every pre-#2781 sender (an older till joining, a

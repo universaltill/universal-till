@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -192,8 +193,9 @@ type PrimaryWatch struct {
 	// nil = mDNS only. Set once at wiring, before the pull loop starts.
 	cloudLookup CloudLookupFunc
 	// pinnedClient builds the TLS client a challenge tries first; it
-	// records the pin the candidate served (ut-docs#4091).
-	pinnedClient func() *lantls.PinnedClient
+	// records the pin the candidate served (ut-docs#4091) and, given the
+	// pin this till already holds, refuses any other (ut-docs#4092).
+	pinnedClient func(expectPin string) *lantls.PinnedClient
 
 	mu            sync.Mutex
 	failures      int
@@ -218,8 +220,8 @@ func NewPrimaryWatch(settings WatchSettings, browse BrowseFunc) *PrimaryWatch {
 		client:   client,
 		browse:   browse,
 		now:      time.Now,
-		pinnedClient: func() *lantls.PinnedClient {
-			return lantls.NewPinnedClient(client.Timeout, "")
+		pinnedClient: func(expectPin string) *lantls.PinnedClient {
+			return lantls.NewPinnedClient(client.Timeout, expectPin)
 		},
 	}
 }
@@ -456,11 +458,25 @@ func (w *PrimaryWatch) cloudCandidate(ctx context.Context, oldURL string) string
 // candidate couldn't take — a main till without TLS, or an older one
 // (lantls.PinnedClient.Exchange's plainOK) — falls back to plain HTTP; a
 // dead address doesn't pay a second timeout, and an answered proof that
-// fails over TLS (a certificate the main till doesn't hold) is final. Refusing plain HTTP once a pin is held
-// is ut-docs#2737's enforcement, not this.
+// fails over TLS (a certificate the main till doesn't hold) is final.
+//
+// A till that already holds a pin (ADR-0114 §7, ut-docs#4092) proves over
+// TLS with that pin only and never falls back to plain HTTP: another
+// certificate fails like an unreachable candidate. Adopting a new pin
+// through re-proof is ut-docs#2737.
 func (w *PrimaryWatch) challenge(ctx context.Context, baseURL, wantID string) (id, pin string, err error) {
-	if tlsBase, ok := lantls.HTTPSBase(baseURL); ok && w.pinnedClient != nil {
-		pc := w.pinnedClient()
+	held, _, err := w.settings.Get(ctx, PrimaryCertPinSettingKey)
+	if err != nil {
+		// An unreadable pin is never taken to mean "not pinned".
+		return "", "", fmt.Errorf("read the main till's TLS pin: %w", err)
+	}
+	held = strings.TrimSpace(held)
+	tlsBase, ok := lantls.HTTPSBase(baseURL)
+	if held != "" && (!ok || w.pinnedClient == nil) {
+		return "", "", errors.New("this till holds the main till's TLS pin, and " + baseURL + " is not a LAN till address it can verify")
+	}
+	if ok && w.pinnedClient != nil {
+		pc := w.pinnedClient(held)
 		var plainOK bool
 		do := func(req *http.Request) (*http.Response, error) {
 			resp, ok, err := pc.Exchange(req)
@@ -471,7 +487,7 @@ func (w *PrimaryWatch) challenge(ctx context.Context, baseURL, wantID string) (i
 		if err == nil {
 			return id, pc.Pin(), nil
 		}
-		if !plainOK {
+		if !plainOK || held != "" {
 			return "", "", err
 		}
 	}
