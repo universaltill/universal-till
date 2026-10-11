@@ -1,8 +1,8 @@
 // ut-docs#3127: "Remove background" in the item, category and variant photo
 // pickers (docs repo architecture/ai-product-photo.md §6). One module, three
 // thin adopters: each page renders web/ui/partials/photo_cutout.html (only
-// when the shop's background-removal service is configured and the viewer
-// holds catalog_management) bound to its own file input, and this script
+// when the viewer holds catalog_management; the engine is the shop's rembg
+// service or the built-in model, ut-docs#4137) bound to its own file input, and this script
 // drives it. Without that markup this file does nothing.
 //
 // Flow: a photo is picked (the input's own `change`, or `photo-cutout:pick`
@@ -16,6 +16,16 @@
 // into the SAME input, so the page's own save runs unchanged, and tells the
 // page with `photo-cutout:accept` ({file, cutout: true|false}).
 //
+// Engines (ut-docs#4137, ADR-0154): the panel's data-cutout-engine says
+// which. "service" posts the photo to the shop's rembg service through
+// /api/catalog/image/cutout (the flow above). "builtin" — the default when
+// no service is configured — cuts the photo out HERE: the 1024 px copy is
+// sampled to u2netp's 320×320 input, a Web Worker (photo-cutout-worker.js,
+// started per tap and terminated as soon as it answers) runs the vendored
+// model, the mask is scaled back as the photo's alpha, and the till only
+// squares that PNG (POST /api/catalog/image/tile). Nothing is loaded before
+// the tap; a background change re-tiles the same cut-out, no second run.
+//
 // Errors never block: any failure shows the panel's own translated message
 // (the server's text is never shown) and the original photo stays
 // selected. Inline panel, no dialog, no showModal (ADR-0003: nothing here
@@ -26,6 +36,14 @@
   if (window.utPhotoCutout) return;
 
   var ENDPOINT = '/api/catalog/image/cutout';
+  var TILE_ENDPOINT = '/api/catalog/image/tile';
+  var MODEL_EDGE = 320; // u2netp's input
+  // ImageNet normalisation, as rembg feeds u2netp.
+  var MEAN = [0.485, 0.456, 0.406];
+  var STD = [0.229, 0.224, 0.225];
+  // Built-in run: loading ~19 MB and inferring on a Pi can take a while;
+  // past this the worker is terminated and the panel says unavailable.
+  var BUILTIN_TIMEOUT_MS = 120000;
   var LONG_EDGE = 1024;
   // The server allows the service 90 s (bgremove.cutoutTimeout); give the
   // whole round trip a little more, then call it unavailable.
@@ -83,6 +101,7 @@
     if (st) {
       st.seq++;
       if (st.ctl) { st.ctl.abort(); st.ctl = null; }
+      stopWorker(st);
     }
     setBusy(panel, false);
     setStatus(panel, '', '');
@@ -122,6 +141,7 @@
     var prev = states.get(panel);
     revoke(prev);
     if (prev && prev.ctl) { prev.ctl.abort(); prev.ctl = null; }
+    if (prev) stopWorker(prev);
     // One panel serves every variant row: a pick left undecided on another
     // row would otherwise sit in that row's input and never upload — drop
     // it, so what the operator sees is what is pending.
@@ -170,7 +190,7 @@
   // Draw the photo at a 1024 px long edge. An <img> decode applies the EXIF
   // orientation, so the canvas copy is upright and the server needs no EXIF
   // code; a 12 MP phone photo (over imaging.MaxPixels) becomes ~0.8 MP.
-  function downscale(file) {
+  function drawScaled(file) {
     return new Promise(function (resolve, reject) {
       var url = URL.createObjectURL(file);
       var img = new Image();
@@ -183,16 +203,118 @@
         canvas.height = Math.max(1, Math.round(h * scale));
         canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
         URL.revokeObjectURL(url);
-        var png = file.type === 'image/png';
-        canvas.toBlob(function (blob) {
-          canvas.width = 0; canvas.height = 0;
-          if (!blob) { reject(new Error('encode failed')); return; }
-          resolve(blob);
-        }, png ? 'image/png' : 'image/jpeg', 0.9);
+        resolve(canvas);
       };
       img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('decode failed')); };
       img.src = url;
     });
+  }
+
+  function toBlob(canvas, type) {
+    return new Promise(function (resolve, reject) {
+      canvas.toBlob(function (blob) {
+        canvas.width = 0; canvas.height = 0;
+        if (!blob) { reject(new Error('encode failed')); return; }
+        resolve(blob);
+      }, type, 0.9);
+    });
+  }
+
+  function downscale(file) {
+    return drawScaled(file).then(function (canvas) {
+      return toBlob(canvas, file.type === 'image/png' ? 'image/png' : 'image/jpeg');
+    });
+  }
+
+  // Ends a built-in run: terminates its worker and rejects its pending
+  // inference at once (so nothing waits on the timeout holding the photo).
+  function stopWorker(st) {
+    if (!st) return;
+    if (st.worker) { st.worker.terminate(); st.worker = null; }
+    if (st.cancelInfer) { var c = st.cancelInfer; st.cancelInfer = null; c(); }
+  }
+
+  // u2netp's input: the photo stretched to 320×320, scaled by its brightest
+  // channel value, then ImageNet-normalised, planar RGB (rembg's recipe).
+  function modelInput(photo) {
+    var c = document.createElement('canvas');
+    c.width = MODEL_EDGE; c.height = MODEL_EDGE;
+    var ctx = c.getContext('2d');
+    ctx.drawImage(photo, 0, 0, MODEL_EDGE, MODEL_EDGE);
+    var px = ctx.getImageData(0, 0, MODEL_EDGE, MODEL_EDGE).data;
+    c.width = 0; c.height = 0;
+    var n = MODEL_EDGE * MODEL_EDGE, peak = 1, i;
+    for (i = 0; i < n * 4; i++) { if ((i & 3) !== 3 && px[i] > peak) peak = px[i]; }
+    var out = new Float32Array(3 * n);
+    for (i = 0; i < n; i++) {
+      for (var ch = 0; ch < 3; ch++) out[ch * n + i] = (px[i * 4 + ch] / peak - MEAN[ch]) / STD[ch];
+    }
+    return out;
+  }
+
+  // Run the model in a fresh worker; resolves with the 320×320 saliency map.
+  // seq: the run's st.seq; a run superseded (Use original photo, Retake, a
+  // new pick) before the worker starts never starts one.
+  function infer(panel, st, input, seq) {
+    return new Promise(function (resolve, reject) {
+      if (states.get(panel) !== st || st.seq !== seq) { reject(new Error('superseded')); return; }
+      if (typeof WebAssembly !== 'object' || typeof Worker !== 'function') { reject(new Error('no wasm')); return; }
+      var d = panel.dataset;
+      var worker;
+      // A plain script started as a module worker; where module workers are
+      // missing the option is ignored and it runs classic (same code).
+      try { worker = new Worker(d.cutoutWorker, { type: 'module' }); } catch (e) { reject(e); return; }
+      stopWorker(st); // at most one run per panel
+      st.worker = worker;
+      var timer = setTimeout(function () { stopWorker(st); }, BUILTIN_TIMEOUT_MS);
+      function done() {
+        clearTimeout(timer);
+        st.cancelInfer = null;
+        if (st.worker === worker) { worker.terminate(); st.worker = null; }
+      }
+      st.cancelInfer = function () { clearTimeout(timer); reject(new Error('stopped')); };
+      worker.onmessage = function (ev) {
+        done();
+        if (ev.data && ev.data.ok) resolve(ev.data.mask); else reject(new Error('inference failed'));
+      };
+      worker.onerror = function () { done(); reject(new Error('worker failed')); };
+      worker.postMessage({ runtime: d.cutoutRuntime, wasm: d.cutoutWasm, model: d.cutoutModel, input: input }, [input.buffer]);
+    });
+  }
+
+  // The built-in cut-out: the 1024 px photo with the model's mask, min-max
+  // normalised and scaled back up, as its alpha channel. PNG blob.
+  function builtinCutout(panel, st) {
+    if (st.cutout) return Promise.resolve(st.cutout);
+    var seq = st.seq;
+    return drawScaled(st.file).then(function (photo) {
+      return infer(panel, st, modelInput(photo), seq).then(function (mask) {
+        var n = MODEL_EDGE * MODEL_EDGE, lo = Infinity, hi = -Infinity, i;
+        for (i = 0; i < n; i++) { if (mask[i] < lo) lo = mask[i]; if (mask[i] > hi) hi = mask[i]; }
+        var range = hi - lo > 1e-6 ? hi - lo : 1;
+        var m = document.createElement('canvas');
+        m.width = MODEL_EDGE; m.height = MODEL_EDGE;
+        var mctx = m.getContext('2d');
+        var md = mctx.createImageData(MODEL_EDGE, MODEL_EDGE);
+        for (i = 0; i < n; i++) md.data[i * 4 + 3] = Math.round((mask[i] - lo) / range * 255);
+        mctx.putImageData(md, 0, 0);
+        // Scale the mask to the photo with the canvas's own smoothing.
+        var w = photo.width, h = photo.height;
+        var big = document.createElement('canvas');
+        big.width = w; big.height = h;
+        var bctx = big.getContext('2d');
+        bctx.imageSmoothingEnabled = true;
+        bctx.imageSmoothingQuality = 'high';
+        bctx.drawImage(m, 0, 0, w, h);
+        var alpha = bctx.getImageData(0, 0, w, h).data;
+        m.width = 0; m.height = 0; big.width = 0; big.height = 0;
+        var pctx = photo.getContext('2d');
+        var pd = pctx.getImageData(0, 0, w, h);
+        for (i = 3; i < pd.data.length; i += 4) pd.data[i] = alpha[i];
+        pctx.putImageData(pd, 0, 0);
+        return toBlob(photo, 'image/png');
+      }, function (e) { photo.width = 0; photo.height = 0; throw e; });
+    }).then(function (blob) { st.cutout = blob; return blob; });
   }
 
   function request(panel, st, choice) {
@@ -200,7 +322,10 @@
     var key = choice + '|' + color;
     var seq = st.seq;
     if (st.results[key]) return Promise.resolve(st.results[key]);
-    var p = st.photo ? Promise.resolve(st.photo) : downscale(st.file).then(function (b) { st.photo = b; return b; });
+    var builtin = panel.dataset.cutoutEngine === 'builtin';
+    var p;
+    if (builtin) p = builtinCutout(panel, st);
+    else p = st.photo ? Promise.resolve(st.photo) : downscale(st.file).then(function (b) { st.photo = b; return b; });
     return p.then(function (photo) {
       var fd = new FormData();
       fd.append('photo', photo, photo.type === 'image/png' ? 'photo.png' : 'photo.jpg');
@@ -209,7 +334,7 @@
       var ctl = window.AbortController ? new AbortController() : null;
       st.ctl = ctl;
       var timer = ctl ? setTimeout(function () { ctl.abort(); }, TIMEOUT_MS) : null;
-      return fetch(ENDPOINT, { method: 'POST', body: fd, credentials: 'same-origin', signal: ctl ? ctl.signal : undefined })
+      return fetch(builtin ? TILE_ENDPOINT : ENDPOINT, { method: 'POST', body: fd, credentials: 'same-origin', signal: ctl ? ctl.signal : undefined })
         .then(function (res) {
           if (timer) clearTimeout(timer);
           if (st.ctl === ctl) st.ctl = null;

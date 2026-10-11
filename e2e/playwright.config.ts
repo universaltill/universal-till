@@ -94,9 +94,9 @@ const CSP_ONLY_SPECS = /csp-report-only-2913\.spec\.ts$/;
 // ut-docs#3127: the "Remove background" spec drives a till with background
 // removal configured against a local fake rembg (run-till-cutout.sh,
 // fake-rembg-server.mjs on 8102). The shared default till must keep the
-// pickers exactly as a shop without AI sees them
-// (photo-cutout-off-3127.spec.ts runs there), so it gets its own server +
-// project.
+// pickers as a shop with no rembg service sees them — the built-in engine
+// (photo-cutout-builtin-4137.spec.ts runs there), so it gets its own
+// server + project.
 const CUTOUT_ONLY_SPECS = /photo-cutout-3127\.spec\.ts$/;
 
 // ut-docs#2345: the `default` project's till is NOT in the `webServer`

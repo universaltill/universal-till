@@ -74,34 +74,110 @@ func registerAICutout(mux *http.ServeMux, d *common.Deps) {
 			writeCutoutError(w, http.StatusBadGateway, "background removal unavailable")
 			return
 		}
-		tile, err := imaging.SquareTile(cut, bg, imaging.TileSize)
-		if errors.Is(err, imaging.ErrNoSubject) {
-			writeCutoutError(w, http.StatusUnprocessableEntity, "no product found in the photo")
-			return
-		}
-		if err != nil {
-			writeCutoutError(w, http.StatusInternalServerError, "cannot build tile")
-			return
-		}
-		var buf bytes.Buffer
-		if err := png.Encode(&buf, tile); err != nil {
-			writeCutoutError(w, http.StatusInternalServerError, "cannot build tile")
-			return
-		}
-		w.Header().Set("Content-Type", "image/png")
-		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write(buf.Bytes())
+		writeCutoutTile(w, cut, bg)
 	})
 }
 
+// registerCutoutTile wires POST /api/catalog/image/tile (ut-docs#4137,
+// ADR-0154 Decision 3): the built-in engine has already cut the photo out
+// in the browser, so the till only squares it onto the chosen background
+// with the one tile implementation, imaging.SquareTile. Same gate, body
+// cap, header check and envelope as /cutout; the photo must be a PNG that
+// carries transparency (anything else is no cut-out). Needs no service, so
+// it is always on; stateless, nothing written, never on the sale path.
+func registerCutoutTile(mux *http.ServeMux, d *common.Deps) {
+	mux.HandleFunc("POST /api/catalog/image/tile", func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "catalog_management") {
+			writeCutoutError(w, http.StatusForbidden, "catalog management permission required")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxCutoutUploadBytes)
+		if err := r.ParseMultipartForm(maxCutoutUploadBytes); err != nil {
+			var tooBig *http.MaxBytesError
+			if errors.As(err, &tooBig) {
+				writeCutoutError(w, http.StatusRequestEntityTooLarge, "photo larger than 10MB")
+				return
+			}
+			writeCutoutError(w, http.StatusBadRequest, "invalid upload")
+			return
+		}
+		bg, ok := cutoutBackground(r.FormValue("background"), r.FormValue("tile_color"))
+		if !ok {
+			writeCutoutError(w, http.StatusBadRequest, "invalid background")
+			return
+		}
+		raw, mediaType, err := readCutoutPhoto(r)
+		if err != nil {
+			writeCutoutError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if mediaType != "image/png" {
+			writeCutoutError(w, http.StatusBadRequest, "cut-out must be a PNG with transparency")
+			return
+		}
+		cut, _, err := imaging.DecodeBoundedFormats(raw, imaging.MaxPixels, map[string]bool{"png": true})
+		if err != nil {
+			writeCutoutError(w, http.StatusBadRequest, "cut-out must be a PNG with transparency")
+			return
+		}
+		if o, isOpaquer := cut.(interface{ Opaque() bool }); isOpaquer && o.Opaque() {
+			writeCutoutError(w, http.StatusBadRequest, "cut-out must be a PNG with transparency")
+			return
+		}
+		writeCutoutTile(w, cut, bg)
+	})
+}
+
+// writeCutoutTile squares a cut-out onto bg and answers it as a PNG — the
+// shared tail of /cutout and /tile.
+func writeCutoutTile(w http.ResponseWriter, cut image.Image, bg color.Color) {
+	tile, err := imaging.SquareTile(cut, bg, imaging.TileSize)
+	if errors.Is(err, imaging.ErrNoSubject) {
+		writeCutoutError(w, http.StatusUnprocessableEntity, "no product found in the photo")
+		return
+	}
+	if err != nil {
+		writeCutoutError(w, http.StatusInternalServerError, "cannot build tile")
+		return
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, tile); err != nil {
+		writeCutoutError(w, http.StatusInternalServerError, "cannot build tile")
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(buf.Bytes())
+}
+
+// The engine a photo picker's "Remove background" runs on (ut-docs#4137,
+// ADR-0154 Decision 2), rendered as the panel's data-cutout-engine.
+const (
+	// cutoutEngineService: the shop's own rembg service, through
+	// POST /api/catalog/image/cutout.
+	cutoutEngineService = "service"
+	// cutoutEngineBuiltin: the on-device model vendored under
+	// web/public/vendor/, run in the browser; the till only squares the
+	// result through POST /api/catalog/image/tile.
+	cutoutEngineBuiltin = "builtin"
+)
+
 // aiCutoutOffered is the one gate every photo picker asks before it renders
 // the "Remove background" offer (ut-docs#3127, design §6 "Gate"): the
-// service must be configured and the viewer must hold the permission the
-// page saves under — catalog_management for the item form, the category
-// form and the variants panel alike, the same check the cutout endpoint
-// makes. False renders the page exactly as before (no markup, no binding).
-func aiCutoutOffered(r *http.Request, d *common.Deps) bool {
-	return canPerform(d, r, "catalog_management") && cutoutService(r.Context(), d).CanCutout()
+// viewer must hold the permission the page saves under — catalog_management
+// for the item form, the category form and the variants panel alike, the
+// same check both routes make. It returns the engine to use: the shop's
+// rembg service when it is configured and valid, else the built-in
+// on-device model (ut-docs#4137), which needs no setup. "" (no permission)
+// renders the page exactly as before (no markup, no binding).
+func aiCutoutOffered(r *http.Request, d *common.Deps) string {
+	if !canPerform(d, r, "catalog_management") {
+		return ""
+	}
+	if cutoutService(r.Context(), d).CanCutout() {
+		return cutoutEngineService
+	}
+	return cutoutEngineBuiltin
 }
 
 // wireCutoutOffer hands aiCutoutOffered to the catalog subpackage, which
@@ -109,7 +185,7 @@ func aiCutoutOffered(r *http.Request, d *common.Deps) bool {
 // package (pages already imports catalog — a cycle). Called from Init
 // before catalog.Register.
 func wireCutoutOffer(d *common.Deps) {
-	d.AICutoutOffered = func(r *http.Request) bool { return aiCutoutOffered(r, d) }
+	d.AICutoutOffered = func(r *http.Request) string { return aiCutoutOffered(r, d) }
 }
 
 // readCutoutPhoto returns the uploaded photo's bytes and media type. Only

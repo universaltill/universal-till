@@ -524,7 +524,7 @@
     {{/* ut-docs#3127: "Remove background" for the photo just taken/chosen
          (web/ui/partials/photo_cutout.html); its PNG lands in
          #category-image-file and the one Save sends it as before. */}}
-    {{ if .root.AICutout }}{{ template "photo_cutout" (dict "ID" "category-image-cutout" "Input" "category-image-file" "Retake" "category-image-camera-btn" "Color" "category-color" "Preview" "1") }}{{ end }}
+    {{ if .root.AICutout }}{{ template "photo_cutout" (dict "Engine" .root.AICutout "ID" "category-image-cutout" "Input" "category-image-file" "Retake" "category-image-camera-btn" "Color" "category-color" "Preview" "1") }}{{ end }}
     {{/* ut-docs#2506: ~70 icons in sections — search box
          (web/public/icon-picker-filter.js), scroll box, "No image" first. */}}
     <input type="search" class="builtin-icon-search" data-icon-filter="category-icon-grid" placeholder="{{ T "catalog.builtin_icon.search" }}" aria-label="{{ T "catalog.builtin_icon.search" }}" autocomplete="off">

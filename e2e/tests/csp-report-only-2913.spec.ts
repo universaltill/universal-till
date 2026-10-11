@@ -127,3 +127,34 @@ test('every surface carries the report-only CSP and violations are collected', a
     `inline event-handler attributes violate script-src-attr: ${JSON.stringify(scriptSrcAttr, null, 2)}`,
   ).toEqual([]);
 });
+
+// ut-docs#4137 (ADR-0154): the built-in background removal starts a module
+// worker, dynamically imports the vendored onnxruntime bundle, fetches and
+// compiles its wasm and fetches the model — all same-origin. Under the
+// report-only policy none of that may raise a violation, so a later
+// enforcement slice (or a runtime upgrade that adds eval/blob: workers)
+// can't silently break the feature. The inventory is till-wide, so the
+// assertion is on what the tap ADDED (new entries or higher counts).
+test('built-in background removal raises no CSP violation', async ({ page, request }) => {
+  test.setTimeout(90_000);
+  const path = await import('path');
+  const key = (v: Violation) => `${v.effective_directive}|${v.blocked_uri}|${v.document_path}|${v.source_file}|${v.line}`;
+  const read = async () => new Map(((await (await request.get('/csp-report')).json()).data as Violation[]).map((v) => [key(v), v]));
+  await page.goto('/catalog');
+  await page.locator('.catalog-row').first().click();
+  await page.locator('#item-form-tab-image').click();
+  await expect(page.locator('#image-cutout')).toHaveAttribute('data-cutout-engine', 'builtin');
+  await page.locator('#image-file').setInputFiles(path.join(__dirname, '../fixtures/test-item-image.png'));
+  await page.waitForTimeout(2_000); // let the page's own load-time reports land first
+  const before = await read();
+  await page.locator('#image-cutout [data-cutout-action="remove"]').click();
+  await expect(page.locator('#image-cutout')).toHaveAttribute('aria-busy', 'false', { timeout: 60_000 });
+  await page.waitForTimeout(2_000); // reports are POSTed asynchronously
+  const after = await read();
+  // img-src blob: is excluded: the photo previews/downscale draw the picked
+  // file through a blob: <img> since ut-docs#3127 — a known, pre-existing
+  // report the enforcement slices own. This pins the new loading paths.
+  const added = [...after.values()].filter((v) => v.effective_directive !== 'img-src' &&
+    (!before.has(key(v)) || before.get(key(v))!.count < v.count));
+  expect(added, JSON.stringify(added, null, 2)).toEqual([]);
+});

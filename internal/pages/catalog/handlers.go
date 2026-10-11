@@ -196,11 +196,14 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	}
 
 	// aiCutoutOffered is pages.aiCutoutOffered, handed over through Deps
-	// (this package cannot import pages): whether the item form and the
-	// variants panel offer "Remove background" under their photo pickers
-	// (ut-docs#3127). nil (bare-Deps tests) → never.
-	aiCutoutOffered := func(r *http.Request) bool {
-		return d.AICutoutOffered != nil && d.AICutoutOffered(r)
+	// (this package cannot import pages): the engine the item form and the
+	// variants panel offer "Remove background" on under their photo pickers,
+	// "" for none (ut-docs#3127, #4137). nil (bare-Deps tests) → never.
+	aiCutoutOffered := func(r *http.Request) string {
+		if d.AICutoutOffered == nil {
+			return ""
+		}
+		return d.AICutoutOffered(r)
 	}
 
 	writeJSON := func(w http.ResponseWriter, status int, data any, errMsg string) {

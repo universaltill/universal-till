@@ -3,10 +3,14 @@
      "Remove background" offer under a photo picker — the item form, the
      category form and the variants panel all render this one panel, and
      web/public/photo-cutout.js (loaded by base.html) drives it. A page
-     includes it only when aiCutoutOffered said yes (service configured AND
-     catalog_management), so without AI none of this markup exists.
+     includes it only when aiCutoutOffered named an engine (the viewer holds
+     catalog_management), so a cashier never gets this markup.
 
      Data (built with `dict` at each call site):
+       .Engine  "service" (the shop's rembg, POST /api/catalog/image/cutout)
+                or "builtin" (the on-device model in
+                web/public/vendor/bg-removal/, run in the page, then
+                POST /api/catalog/image/tile) — ut-docs#4137, ADR-0154
        .ID      the panel's id
        .Input   id of the page's named file input the panel serves, or
        .Inputs  a selector for several (the variants panel, one per row)
@@ -23,7 +27,11 @@
      below, translated here (guard-i18n scans the scripts under web/public). No
      dialog, no showModal: the panel is inline and nothing in it blocks
      the page (ADR-0003 — nothing here is on the sale path). */}}
-<div class="photo-cutout" id="{{ .ID }}" hidden
+<div class="photo-cutout" id="{{ .ID }}" hidden data-cutout-engine="{{ .Engine }}"
+     {{ if eq .Engine "builtin" }}data-cutout-worker="/public/photo-cutout-worker.js?v={{ assetv "public/photo-cutout-worker.js" }}"
+     data-cutout-runtime="/public/vendor/bg-removal/ort.wasm.bundle.min.mjs?v={{ assetv "public/vendor/bg-removal/ort.wasm.bundle.min.mjs" }}"
+     data-cutout-wasm="/public/vendor/bg-removal/ort-wasm-simd-threaded.wasm?v={{ assetv "public/vendor/bg-removal/ort-wasm-simd-threaded.wasm" }}"
+     data-cutout-model="/public/vendor/bg-removal/u2netp.onnx?v={{ assetv "public/vendor/bg-removal/u2netp.onnx" }}"{{ end }}
      {{ if .Input }}data-cutout-input="{{ .Input }}"{{ end }}
      {{ if .Inputs }}data-cutout-inputs="{{ .Inputs }}"{{ end }}
      {{ if .Retake }}data-cutout-retake="{{ .Retake }}"{{ end }}

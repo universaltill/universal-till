@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { watchConsole } from './helpers';
 
@@ -87,6 +88,13 @@ async function openItemImagePanel(page: import('@playwright/test').Page) {
   await expect(page.locator('#item-form-panel-image')).toBeVisible();
 }
 
+// ut-docs#4137: background removal is built in, so a manager's Capture now
+// shows the Remove background offer first (the #3127 flow) and saves once
+// the operator chooses; these specs keep the photo as taken.
+async function useOriginalPhoto(page: Page) {
+  await page.locator('#image-cutout [data-cutout-action="original"]').click();
+}
+
 test.describe('catalog camera viewfinder (ut-docs#1472)', () => {
   test('opens a live preview and Capture uploads the frame via the existing image field', async ({ page }) => {
     const assertClean = watchConsole(page);
@@ -102,6 +110,7 @@ test.describe('catalog camera viewfinder (ut-docs#1472)', () => {
     await page.waitForFunction(() => (document.querySelector('#image-viewfinder-video') as HTMLVideoElement).videoWidth > 0);
 
     await page.locator('#image-viewfinder-capture-btn').click();
+    await useOriginalPhoto(page); // ut-docs#4137: the Remove background offer comes first
     await expect(page.locator('#image-viewfinder')).toBeHidden();
     // (ut-docs#3133: the "catalog-photo.jpg" name is shown only until the
     // automatic upload lands, then cleared with the file.)
@@ -156,6 +165,7 @@ test.describe('catalog camera viewfinder (ut-docs#1472)', () => {
     await page.locator('#image-camera-btn').click();
     await page.waitForFunction(() => (document.querySelector('#image-viewfinder-video') as HTMLVideoElement).videoWidth > 0);
     await page.locator('#image-viewfinder-capture-btn').click();
+    await useOriginalPhoto(page); // ut-docs#4137: the Remove background offer comes first
     // Upload for Butter (itm009) is in flight; move to Cheddar (itm010).
     await page.locator('#item-form-close-btn').click();
     await page.locator('.catalog-row', { hasText: 'Cheddar Cheese 400g' }).click();
@@ -190,6 +200,7 @@ test.describe('catalog camera viewfinder (ut-docs#1472)', () => {
     await page.locator('#image-camera-btn').click();
     await page.waitForFunction(() => (document.querySelector('#image-viewfinder-video') as HTMLVideoElement).videoWidth > 0);
     await page.locator('#image-viewfinder-capture-btn').click();
+    await useOriginalPhoto(page); // ut-docs#4137: the Remove background offer comes first
     await expect(page.locator('#image-msg')).toContainText('updated');
     expect(await page.locator('#image-file').evaluate((el: HTMLInputElement) => el.files ? el.files.length : 0)).toBe(0);
     await expect(page.locator('#image-file-name')).toHaveText('');
@@ -201,6 +212,7 @@ test.describe('catalog camera viewfinder (ut-docs#1472)', () => {
     await page.locator('#image-camera-btn').click();
     await page.waitForFunction(() => (document.querySelector('#image-viewfinder-video') as HTMLVideoElement).videoWidth > 0);
     await page.locator('#image-viewfinder-capture-btn').click();
+    await useOriginalPhoto(page); // ut-docs#4137: the Remove background offer comes first
     await expect(page.locator('#image-msg')).toContainText('updated');
     // Reopen from a fresh page load: the preview comes from the server.
     await openItemImagePanel(page);

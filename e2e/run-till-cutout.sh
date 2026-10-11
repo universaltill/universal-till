@@ -6,8 +6,8 @@
 # category and variant photo pickers offer "Remove background".
 #
 # Its own server + Playwright project: the shared default till must keep
-# rendering the pickers exactly as a shop without AI sees them
-# (photo-cutout-off-3127.spec.ts pins that).
+# rendering the pickers as a shop with no rembg service sees them — the
+# built-in engine (photo-cutout-builtin-4137.spec.ts pins that).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DATA_DIR="$(mktemp -d)"
