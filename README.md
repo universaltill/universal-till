@@ -352,9 +352,10 @@ UT_LOG_FILE=                          # Empty = on for Windows/macOS/Linux, off 
 # Camera item identification and "Ask your till" come from the AI Assistant
 # plugin (Marketplace, version 2.0 or later) — configured on its settings
 # page, run inside the plugin; there is no env override for them.
-# Background removal for item/category photos stays in the till: point it at
-# the shop's own rembg server (`rembg s`). Nothing configured = off, and
-# checkout never depends on it.
+# Background removal for item/category/variant photos stays in the till: point
+# it at the shop's own rembg server (`rembg s`). Configured, the photo pickers
+# offer "Remove background" to managers (ut-docs#3127). Nothing configured =
+# off, and checkout never depends on it.
 UT_AI_IMAGE_ENDPOINT=                  # rembg base URL, e.g. http://192.168.1.20:7000; empty = off
 UT_AI_IMAGE_MODEL=birefnet-general-lite # Only birefnet-general-lite (MIT) or u2netp (Apache-2.0); anything else = off
 UT_AI_IMAGE_PROVIDER=                  # Defaults to self_hosted when an endpoint is set; any other value = off

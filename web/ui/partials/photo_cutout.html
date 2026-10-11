@@ -1,0 +1,63 @@
+{{ define "photo_cutout" }}
+{{/* ut-docs#3127 (docs repo architecture/ai-product-photo.md §6): the
+     "Remove background" offer under a photo picker — the item form, the
+     category form and the variants panel all render this one panel, and
+     web/public/photo-cutout.js (loaded by base.html) drives it. A page
+     includes it only when aiCutoutOffered said yes (service configured AND
+     catalog_management), so without AI none of this markup exists.
+
+     Data (built with `dict` at each call site):
+       .ID      the panel's id
+       .Input   id of the page's named file input the panel serves, or
+       .Inputs  a selector for several (the variants panel, one per row)
+       .Retake  id of the page's own camera/choose button ("" → re-open the
+                input itself)
+       .Color   id of the form's colour field (its palette value is the
+                default tile background; anything else → white)
+       .Submit  "1" → submit the input's own form once the operator has
+                chosen (the variants panel, which used to upload on pick)
+       .Preview "1" → show the picked photo in the panel before removal
+                (pages with no preview of their own)
+
+     Every string the script shows comes from the data-msg-* attributes
+     below, translated here (guard-i18n scans the scripts under web/public). No
+     dialog, no showModal: the panel is inline and nothing in it blocks
+     the page (ADR-0003 — nothing here is on the sale path). */}}
+<div class="photo-cutout" id="{{ .ID }}" hidden
+     {{ if .Input }}data-cutout-input="{{ .Input }}"{{ end }}
+     {{ if .Inputs }}data-cutout-inputs="{{ .Inputs }}"{{ end }}
+     {{ if .Retake }}data-cutout-retake="{{ .Retake }}"{{ end }}
+     {{ if .Color }}data-cutout-color="{{ .Color }}"{{ end }}
+     {{ if .Submit }}data-cutout-submit="1"{{ end }}
+     {{ if .Preview }}data-cutout-preview="1"{{ end }}
+     data-msg-removing="{{ T "catalog.image.removing" }}"
+     data-msg-unavailable="{{ T "catalog.image.cutout_unavailable" }}"
+     data-msg-no-subject="{{ T "catalog.image.cutout_no_subject" }}">
+  <div class="photo-cutout-target" data-cutout-target hidden></div>
+  <div class="photo-cutout-compare" data-cutout-compare hidden>
+    <figure data-cutout-original-fig>
+      <img data-cutout-original alt="{{ T "catalog.image.original" }}">
+      <figcaption>{{ T "catalog.image.original" }}</figcaption>
+    </figure>
+    <figure data-cutout-result-fig hidden>
+      <img data-cutout-result alt="{{ T "catalog.image.without_background" }}">
+      <figcaption>{{ T "catalog.image.without_background" }}</figcaption>
+    </figure>
+  </div>
+  <div class="photo-cutout-bg" role="group" aria-label="{{ T "catalog.image.background" }}" data-cutout-bg hidden>
+    <span class="photo-cutout-label">{{ T "catalog.image.background" }}</span>
+    <div class="photo-cutout-bg-choices">
+      <button type="button" class="picker-tile photo-cutout-bg-tile" data-cutout-bg-choice="tile" aria-pressed="true"><span class="photo-cutout-swatch photo-cutout-swatch-tile" aria-hidden="true"></span>{{ T "catalog.image.bg_tile_colour" }}</button>
+      <button type="button" class="picker-tile photo-cutout-bg-tile" data-cutout-bg-choice="white" aria-pressed="false"><span class="photo-cutout-swatch photo-cutout-swatch-white" aria-hidden="true"></span>{{ T "catalog.image.bg_white" }}</button>
+      <button type="button" class="picker-tile photo-cutout-bg-tile" data-cutout-bg-choice="transparent" aria-pressed="false"><span class="photo-cutout-swatch photo-cutout-swatch-none" aria-hidden="true"></span>{{ T "catalog.image.bg_transparent" }}</button>
+    </div>
+  </div>
+  <div class="photo-cutout-status" role="status" aria-live="polite" data-cutout-status></div>
+  <div class="photo-cutout-actions">
+    <button type="button" class="btn" data-cutout-action="remove">{{ T "catalog.image.remove_background" }}</button>
+    <button type="button" class="btn" data-cutout-action="accept" hidden>{{ T "catalog.image.use_this" }}</button>
+    <button type="button" class="btn secondary" data-cutout-action="retake" hidden>{{ T "catalog.image.retake" }}</button>
+    <button type="button" class="btn secondary" data-cutout-action="original">{{ T "catalog.image.use_original" }}</button>
+  </div>
+</div>
+{{ end }}

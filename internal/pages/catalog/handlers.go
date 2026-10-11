@@ -195,6 +195,14 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		return false
 	}
 
+	// aiCutoutOffered is pages.aiCutoutOffered, handed over through Deps
+	// (this package cannot import pages): whether the item form and the
+	// variants panel offer "Remove background" under their photo pickers
+	// (ut-docs#3127). nil (bare-Deps tests) → never.
+	aiCutoutOffered := func(r *http.Request) bool {
+		return d.AICutoutOffered != nil && d.AICutoutOffered(r)
+	}
+
 	writeJSON := func(w http.ResponseWriter, status int, data any, errMsg string) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
@@ -330,6 +338,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 					"HasItemRoutes":        hasItemRoutes,
 					"OptionSets":           optionSets,
 					"AppliedSetIDs":        appliedIDs,
+					"AICutout":             aiCutoutOffered(r),
 				}
 				for k, v := range extra {
 					pdata[k] = v
@@ -338,6 +347,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_variants.html"),
+			filepath.Join("web", "ui", "partials", "photo_cutout.html"),
 		), funcs)("catalog_variants", pdata)(w, r)
 		if withTable {
 			writeRowOOB(w, r, itemID, false)
@@ -843,6 +853,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"BuiltinIconGroups":     catimport.BuiltinIconGroups(),
 			"ItemColors":            catalogtypes.ItemColors(),
 			"InItemsShell":          httpx.IsFragmentSwap(w, r),
+			"AICutout":              aiCutoutOffered(r),
 		}
 		catalogFiles := files(
 			filepath.Join("web", "ui", "layouts", "base.html"),
@@ -857,6 +868,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
 			filepath.Join("web", "ui", "partials", "catalog_row.html"),
 			filepath.Join("web", "ui", "partials", "catalog_variants.html"),
+			filepath.Join("web", "ui", "partials", "photo_cutout.html"),
 			filepath.Join("web", "ui", "partials", "category_filter.html"),
 			filepath.Join("web", "ui", "partials", "category_filter_popover.html"),
 		)

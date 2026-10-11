@@ -4605,6 +4605,53 @@ body.login-screen {
   background: var(--surface);
 }
 .item-image-current[hidden] { display: none; }
+/* ut-docs#3127: the "Remove background" offer under a photo picker
+   (web/ui/partials/photo_cutout.html, web/public/photo-cutout.js) — item
+   form, category form, variants panel. Inline, never a dialog. Logical
+   properties only (fa/ar render RTL); the buttons wrap rather than
+   overflow at 360 px and in the longest locale (de); every control keeps
+   the 44 px floor (.btn is 3rem, the choice tiles are set below). */
+.photo-cutout {
+  display: flex; flex-direction: column; gap: .5rem;
+  margin-block: .5rem; padding: .6rem;
+  border: 1px solid var(--border); border-radius: var(--radius, 8px);
+  background: var(--surface-2, var(--surface));
+  max-inline-size: 40rem;
+}
+.photo-cutout[hidden], .photo-cutout [hidden] { display: none !important; }
+.photo-cutout-target { font-weight: 600; overflow-wrap: anywhere; }
+.photo-cutout-compare { display: flex; flex-wrap: wrap; gap: .6rem; }
+.photo-cutout-compare figure { margin: 0; display: flex; flex-direction: column; gap: .25rem; align-items: center; }
+.photo-cutout-compare img {
+  display: block; inline-size: 8rem; block-size: 8rem; object-fit: contain;
+  border: 1px solid var(--border); border-radius: 8px;
+  /* A checkerboard behind the result, so "no background" reads as
+     transparent rather than as white — not colour alone: the caption and
+     the pressed choice say it too. */
+  background-color: #fff;
+  background-image: linear-gradient(45deg, #e5e7eb 25%, transparent 25%, transparent 75%, #e5e7eb 75%),
+                    linear-gradient(45deg, #e5e7eb 25%, transparent 25%, transparent 75%, #e5e7eb 75%);
+  background-size: 16px 16px; background-position: 0 0, 8px 8px;
+}
+.photo-cutout-compare figcaption { font-size: .85rem; color: var(--muted); text-align: center; }
+.photo-cutout-label { display: block; font-size: .85rem; font-weight: 600; color: var(--muted); margin-block-end: .25rem; }
+.photo-cutout-bg-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: .4rem; }
+.photo-cutout-bg-tile { min-block-size: 44px; gap: .4rem; font-size: .9rem; font-weight: 500; }
+.photo-cutout-swatch {
+  display: inline-block; flex: none; inline-size: 1.1rem; block-size: 1.1rem; border-radius: 4px;
+  border: 1px solid rgba(15, 23, 42, .25); background: var(--swatch, #fff);
+}
+.photo-cutout-swatch-white { background: #fff; }
+.photo-cutout-swatch-none {
+  background-color: #fff;
+  background-image: linear-gradient(45deg, #cbd5e1 25%, transparent 25%, transparent 75%, #cbd5e1 75%),
+                    linear-gradient(45deg, #cbd5e1 25%, transparent 25%, transparent 75%, #cbd5e1 75%);
+  background-size: 8px 8px; background-position: 0 0, 4px 4px;
+}
+.photo-cutout-status { font-size: .9rem; color: var(--muted); }
+.photo-cutout-status.photo-cutout-error { color: var(--danger); }
+.photo-cutout-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.photo-cutout-actions .btn { flex: 1 1 auto; min-inline-size: 0; white-space: normal; text-align: center; }
 .ai-identify-results { display: flex; flex-direction: column; gap: 0.5rem; }
 .ai-identify-results .ai-match {
   display: flex;

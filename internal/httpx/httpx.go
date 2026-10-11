@@ -1467,6 +1467,10 @@ var renderFiles = []string{
 	// ut-docs#3710: index.html's content block includes the guided tour's
 	// steps by its {{ define "tour" }} name.
 	"ui/partials/tour.html",
+	// ut-docs#3127: categories.html includes the "Remove background" offer
+	// panel by its "photo_cutout" define name (catalog.html and the
+	// variants panel list it in their own RenderWith file sets).
+	"ui/partials/photo_cutout.html",
 }
 
 // ut-docs#2020: web/ui/partials/record_dialog_msg.html is deliberately NOT

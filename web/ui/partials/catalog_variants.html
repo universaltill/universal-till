@@ -180,8 +180,12 @@
                   hx-target="#catalog-variants" hx-swap="outerHTML" class="vg-img-upload">
               <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
               <input type="hidden" name="variant_id" value="{{ .ID }}">
+              {{/* ut-docs#3127: with "Remove background" on, a pick waits for
+                   the offer below (photo-cutout.js submits this form on Use
+                   this / Use original photo) instead of uploading at once. */}}
               <label title="{{ T "catalog.variant_image" }}"><span class="btn-ico" aria-hidden="true">{{ icon "camera" }}</span><input type="file" name="image" accept="image/png,image/jpeg"
-                     data-change="request-submit"></label>
+                     aria-label="{{ T "catalog.variant_image" }} — {{ .Name }}"
+                     {{ if $.AICutout }}data-cutout-label="{{ .Name }}"{{ else }}data-change="request-submit"{{ end }}></label>
             </form>
           </div>
           <input form="vf-{{ .ID }}" type="text" name="name" value="{{ .Name }}" required>
@@ -244,6 +248,10 @@
           <button form="vf-new" class="btn" type="submit">{{ T "catalog.save_variant" }}</button>
         </div>
       </div>
+      {{/* ut-docs#3127: one "Remove background" panel for every row's photo
+           input (web/ui/partials/photo_cutout.html) — the grid's photo cell
+           is too small to hold it, so it opens here, naming the variant. */}}
+      {{ if .AICutout }}{{ template "photo_cutout" (dict "ID" "variant-image-cutout" "Inputs" ".vg-img-upload input[type=file]" "Color" "item-color" "Submit" "1" "Preview" "1") }}{{ end }}
     </div>
   </div>
 

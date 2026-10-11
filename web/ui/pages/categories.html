@@ -280,6 +280,8 @@
     if (imageCamera) imageCamera.value = '';
     if (imageName) imageName.value = '';
     if (imageFileName) imageFileName.textContent = '';
+    // ut-docs#3127: the "Remove background" offer goes with the pick.
+    if (window.utPhotoCutout) window.utPhotoCutout.reset('category-image-cutout');
   }
 
   function filePicked(file) {
@@ -332,8 +334,18 @@
         imageFile.files = dt.files;
       } catch (e) { return; }
       filePicked(f);
+      // ut-docs#3127: a DataTransfer copy fires no "change" — offer
+      // "Remove background" for it explicitly (web/public/photo-cutout.js;
+      // a no-op without the panel).
+      imageFile.dispatchEvent(new CustomEvent('photo-cutout:pick', { bubbles: true }));
     });
   }
+  // ut-docs#3127: the operator chose in the "Remove background" panel; the
+  // PNG (or the original) is already in #category-image-file — mirror its
+  // name (the discard guard's #category-image-name too). Save sends it.
+  if (imageFile) imageFile.addEventListener('photo-cutout:accept', function (ev) {
+    filePicked(ev.detail && ev.detail.file);
+  });
 
   // ut-docs#2699: Move up / Move down for the row this dialog was opened
   // on. The row itself is moved (list-reorder.js reorders the tbody,
@@ -509,6 +521,10 @@
     <input type="file" name="image" id="category-image-file" accept="image/png,image/jpeg" hidden>
     <input type="hidden" name="image_name" id="category-image-name">
     <div id="category-image-file-name" class="muted" aria-live="polite"></div>
+    {{/* ut-docs#3127: "Remove background" for the photo just taken/chosen
+         (web/ui/partials/photo_cutout.html); its PNG lands in
+         #category-image-file and the one Save sends it as before. */}}
+    {{ if .root.AICutout }}{{ template "photo_cutout" (dict "ID" "category-image-cutout" "Input" "category-image-file" "Retake" "category-image-camera-btn" "Color" "category-color" "Preview" "1") }}{{ end }}
     {{/* ut-docs#2506: ~70 icons in sections — search box
          (web/public/icon-picker-filter.js), scroll box, "No image" first. */}}
     <input type="search" class="builtin-icon-search" data-icon-filter="category-icon-grid" placeholder="{{ T "catalog.builtin_icon.search" }}" aria-label="{{ T "catalog.builtin_icon.search" }}" autocomplete="off">

@@ -1405,6 +1405,12 @@
          image, category editor) — attribute-driven off data-icon-filter, a
          no-op on any page without that markup, same pattern as above. -->
     <script defer src="/public/icon-picker-filter.js?v={{ assetv "public/icon-picker-filter.js" }}"></script>
+    <!-- ut-docs#3127: "Remove background" under the item / category /
+         variant photo pickers — attribute-driven off
+         web/ui/partials/photo_cutout.html (rendered only when the shop's
+         background-removal service is configured), a no-op on any page
+         without that markup, same pattern as above. -->
+    <script defer src="/public/photo-cutout.js?v={{ assetv "public/photo-cutout.js" }}"></script>
     <!-- ut-docs#2342: the bug-report panel's draft store (sessionStorage +
          IndexedDB) so an open report survives a full document load. Deferred
          like the rest; the panel reads it from UT.ready on. -->
