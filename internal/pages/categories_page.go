@@ -392,8 +392,10 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			// ut-docs#2500: the dialog's image picker offers the SAME
 			// built-in set as the item editor, grouped (ut-docs#2506).
 			"builtinIconGroups": catimport.BuiltinIconGroups(),
-			"errKey":            errKey,
-			"errCount":          errCount,
+			// ut-docs#3127: "Remove background" under the photo picker.
+			"AICutout": aiCutoutOffered(r, d),
+			"errKey":   errKey,
+			"errCount": errCount,
 		}
 		// ut-docs#1950: /categories is one of the /items rail's five section
 		// destinations — an htmx request from that panel (NOT a stale history

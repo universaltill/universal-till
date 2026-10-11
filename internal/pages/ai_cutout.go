@@ -94,6 +94,24 @@ func registerAICutout(mux *http.ServeMux, d *common.Deps) {
 	})
 }
 
+// aiCutoutOffered is the one gate every photo picker asks before it renders
+// the "Remove background" offer (ut-docs#3127, design §6 "Gate"): the
+// service must be configured and the viewer must hold the permission the
+// page saves under — catalog_management for the item form, the category
+// form and the variants panel alike, the same check the cutout endpoint
+// makes. False renders the page exactly as before (no markup, no binding).
+func aiCutoutOffered(r *http.Request, d *common.Deps) bool {
+	return canPerform(d, r, "catalog_management") && cutoutService(r.Context(), d).CanCutout()
+}
+
+// wireCutoutOffer hands aiCutoutOffered to the catalog subpackage, which
+// renders the item form and the variants panel but cannot import this
+// package (pages already imports catalog — a cycle). Called from Init
+// before catalog.Register.
+func wireCutoutOffer(d *common.Deps) {
+	d.AICutoutOffered = func(r *http.Request) bool { return aiCutoutOffered(r, d) }
+}
+
 // readCutoutPhoto returns the uploaded photo's bytes and media type. Only
 // the header is decoded (image.DecodeConfig allocates no pixel buffer): a
 // pixel bomb (ut-docs#1328/#1417) or a non-JPEG/PNG file is refused before

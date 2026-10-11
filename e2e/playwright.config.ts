@@ -91,6 +91,14 @@ const INCOMING_NOTES_ONLY_SPECS = /incoming-release-notes-3940\.spec\.ts$/;
 // and the shared default till never sets the flag.
 const CSP_ONLY_SPECS = /csp-report-only-2913\.spec\.ts$/;
 
+// ut-docs#3127: the "Remove background" spec drives a till with background
+// removal configured against a local fake rembg (run-till-cutout.sh,
+// fake-rembg-server.mjs on 8102). The shared default till must keep the
+// pickers exactly as a shop without AI sees them
+// (photo-cutout-off-3127.spec.ts runs there), so it gets its own server +
+// project.
+const CUTOUT_ONLY_SPECS = /photo-cutout-3127\.spec\.ts$/;
+
 // ut-docs#2345: the `default` project's till is NOT in the `webServer`
 // list below. Its ~134 spec files run in parallel, and `internal/pos.Engine`
 // is a server-side singleton, so one shared server would let workers race
@@ -195,11 +203,17 @@ export default defineConfig<{}, WorkerOptions>({
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
     },
+    {
+      command: 'bash ./run-till-cutout.sh',
+      url: 'http://127.0.0.1:8101/healthz',
+      timeout: 120_000,
+      reuseExistingServer: !process.env.CI,
+    },
   ],
   projects: [
     {
       name: 'default',
-      testIgnore: [AUTH_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS, RELEASE_NOTES_ONLY_SPECS, INCOMING_NOTES_ONLY_SPECS, CSP_ONLY_SPECS],
+      testIgnore: [AUTH_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS, RELEASE_NOTES_ONLY_SPECS, INCOMING_NOTES_ONLY_SPECS, CSP_ONLY_SPECS, CUTOUT_ONLY_SPECS],
       use: {
         // No static baseURL: the `workerServerURL` fixture supplies this
         // worker's own server (9091 + parallelIndex) — see the note above
@@ -271,6 +285,17 @@ export default defineConfig<{}, WorkerOptions>({
       workers: STATIC_SERVER_WORKERS,
       use: {
         baseURL: 'http://127.0.0.1:8098',
+        trace: 'retain-on-failure',
+        screenshot: 'only-on-failure',
+        launchOptions,
+      },
+    },
+    {
+      name: 'cutout',
+      testMatch: CUTOUT_ONLY_SPECS,
+      workers: STATIC_SERVER_WORKERS,
+      use: {
+        baseURL: 'http://127.0.0.1:8101',
         trace: 'retain-on-failure',
         screenshot: 'only-on-failure',
         launchOptions,

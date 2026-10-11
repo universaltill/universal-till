@@ -18,6 +18,9 @@ specs across projects, each against its own server(s):
   real first-boot wizard and PIN login/lockout instead of bypassing auth.
 - **layout** (8094), **diagnostics** (8095) — one
   static server each, 1 spec file each; see `playwright.config.ts`.
+- **cutout** (`run-till-cutout.sh`, port 8101) — a till whose background
+  removal points at `fake-rembg-server.mjs` (port 8102), a stand-in for the
+  shop's `rembg s`, for `photo-cutout-3127.spec.ts` (ut-docs#3127).
 
 `run-till.sh` (port 8091) is what the docs-shots harness
 (`playwright.docs.config.ts`) still boots; the per-worker till reproduces
@@ -38,7 +41,7 @@ genuinely fresh till shows `1.20`, not `1.44`. Fixed both the isolation
 bug and the now-exposed test.
 
     cd e2e && npm ci && npx playwright install chromium
-    npx playwright test                    # headless, all 5 projects
+    npx playwright test                    # headless, every project in playwright.config.ts
     npx playwright test --headed           # watch it
     npx playwright test --project=default  # skip the auth/setup specs
     npx playwright test --project=auth     # just login.spec.ts and its siblings
@@ -49,7 +52,7 @@ Rules learned the hard way:
   drives it, so two workers on one server race each other (which is why
   this suite ran at `workers: 1` until ut-docs#2345). `workers` is now
   `4` on CI / `2` locally, and it is safe only because each
-  `default`-project worker has its own server. The other four projects
+  `default`-project worker has its own server. The other projects
   still share ONE static server each — found live on the first 4-worker
   run: `auth` has 5 spec files, and without a cap Playwright spread them
   across several workers against the same shared till, so a nav-rail spec

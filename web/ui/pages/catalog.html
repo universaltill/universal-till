@@ -492,6 +492,10 @@
             <input type="file" id="image-file-camera" accept="image/*" capture="environment" hidden>
             <input type="file" name="image" id="image-file" accept="image/png,image/jpeg" hidden>
             <div id="image-file-name" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+            {{/* ut-docs#3127: "Remove background", offered under the photo
+                 just taken/chosen (web/ui/partials/photo_cutout.html). Only
+                 when the shop's background-removal service is configured. */}}
+            {{ if .AICutout }}{{ template "photo_cutout" (dict "ID" "image-cutout" "Input" "image-file" "Retake" "image-camera-btn" "Color" "item-color") }}{{ end }}
             <button class="btn" type="submit">{{ T "catalog.upload_image" }}</button>
             <div id="image-msg" class="muted" style="min-height:1.2rem"></div>
           </form>
@@ -1541,6 +1545,19 @@
     imageFileCamera.value = '';
     imageFileNameEl.textContent = '';
     if (pendingPreviewURL) showImagePreview('');
+    // ut-docs#3127: the "Remove background" offer goes with the pick.
+    if (window.utPhotoCutout) window.utPhotoCutout.reset('image-cutout');
+  }
+  // ut-docs#3127: with background removal configured, a photo assigned
+  // here (camera input, viewfinder capture — DataTransfer fires no
+  // "change") is offered "Remove background" first (web/public/
+  // photo-cutout.js). autoSave: the operator already chose to save this
+  // capture (#3133), so "Use original photo" saves it as before.
+  function cutoutOffered() {
+    return !!(window.utPhotoCutout && window.utPhotoCutout.available(imageFileInput));
+  }
+  function offerCutout(autoSave) {
+    imageFileInput.dispatchEvent(new CustomEvent('photo-cutout:pick', { bubbles: true, detail: { autoSave: autoSave } }));
   }
   function showPendingFile(file) {
     var url = URL.createObjectURL(file);
@@ -1642,6 +1659,7 @@
       // older WebViews; the submit listener below does the upload.
       showPendingFile(file);
       if (imageCurrent && imageCurrent.scrollIntoView) imageCurrent.scrollIntoView({ block: 'nearest' });
+      if (cutoutOffered()) { offerCutout(true); return; }
       imageForm.dispatchEvent(new Event('submit', { cancelable: true }));
     }, 'image/jpeg', 0.85);
   });
@@ -1653,7 +1671,17 @@
       imageFileInput.files = dt.files;
       imageFileNameEl.textContent = this.files[0].name;
       showPendingFile(this.files[0]);
+      if (cutoutOffered()) offerCutout(false);
     }
+  });
+  // ut-docs#3127: the operator chose in the "Remove background" panel. The
+  // PNG (or the untouched original) is already in #image-file; mirror it,
+  // and save a cutout straight away ("Use this" is the decision, like
+  // Capture) — the original only when it came from Capture.
+  imageFileInput.addEventListener('photo-cutout:accept', function (ev) {
+    var d = ev.detail || {};
+    if (d.file) { imageFileNameEl.textContent = d.file.name; showPendingFile(d.file); }
+    if (d.cutout || d.autoSave) imageForm.dispatchEvent(new Event('submit', { cancelable: true }));
   });
   imageFileInput.addEventListener('change', function () {
     if (this.files && this.files[0]) { imageFileNameEl.textContent = this.files[0].name; showPendingFile(this.files[0]); }
