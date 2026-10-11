@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/paths"
 )
 
 // ADR-0121 §5 (ut-docs#3158): view_query — a plugin reads a core read view
@@ -271,6 +272,43 @@ func TestViewQueryCatalogItems(t *testing.T) {
 	}
 	if countDenials(t, d, pluginID) <= before {
 		t.Fatal("the denial was not audited")
+	}
+}
+
+// catalog.photos.v1 (ut-docs#4094) runs through the same gate and lists
+// only the active items with a reference photo on disk.
+func TestViewQueryCatalogPhotos(t *testing.T) {
+	guest := buildViewGuest(t)
+	const pluginID = "com.test.views.photos"
+	withInstalledManifest(t, pluginID, viewsManifest(pluginID, "catalog.photos.v1")) // sets the data dir
+	w := newViewRuntime(t, guest, pluginID)
+
+	thumb := filepath.Join(paths.DataDir(), "public", "assets", "items", "cp-1", "thumb.png")
+	if err := os.MkdirAll(filepath.Dir(thumb), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(thumb, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Unix(1_790_000_000, 0)
+	if err := os.Chtimes(thumb, at, at); err != nil {
+		t.Fatal(err)
+	}
+
+	d := viewDB(t, pluginID, "view:inventory")
+	if _, err := d.Exec(`INSERT INTO items(id, sku, name, base_price) VALUES('cp-1', 'P-1', 'Photo', 100), ('cp-2', 'P-2', 'No photo', 100)`); err != nil {
+		t.Fatal(err)
+	}
+	res := runGuestPayload(t, w, d, pluginID, map[string]any{"view": "catalog.photos.v1", "args": `{"limit":10}`})
+	want := `[{"item_id":"cp-1","source":"thumb","photo_at":1790000000}]`
+	if code := viewCode(t, res); code != len(want) || res["result"] != want {
+		t.Fatalf("view_query = %d %v, want %s", code, res["result"], want)
+	}
+
+	d = viewDB(t, pluginID, "view:sales")
+	res = runGuestPayload(t, w, d, pluginID, map[string]any{"view": "catalog.photos.v1"})
+	if code := viewCode(t, res); code != hostErrDenied {
+		t.Fatalf("without view:inventory = %d, want %d", code, hostErrDenied)
 	}
 }
 

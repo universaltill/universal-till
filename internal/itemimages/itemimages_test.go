@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -256,5 +257,52 @@ func TestStoreAIRef_4006(t *testing.T) {
 	}
 	if _, err := StoreAIRef("../x", img); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("StoreAIRef(bad id) = %v, want ErrInvalid", err)
+	}
+}
+
+// PhotoStamp (ut-docs#4094) says which photo an item's "ref" open would
+// start from and how new it is, from a stat only, so catalog.photos.v1 can
+// list photographed items without decoding any.
+func TestPhotoStamp(t *testing.T) {
+	root := useDataDir(t)
+	items := filepath.Join(root, "public", "assets", "items")
+	old := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	newer := old.Add(time.Hour)
+
+	// No folder at all.
+	if _, _, ok := PhotoStamp("none"); ok {
+		t.Fatal("item without a folder has a photo")
+	}
+	// Thumbnail only: source thumb, its mtime.
+	write(t, filepath.Join(items, "t", "thumb.png"), pngOf(t, 2, 2, color.White))
+	mustChtimes(t, filepath.Join(items, "t", "thumb.png"), old)
+	if src, at, ok := PhotoStamp("t"); !ok || src != RoleThumb || !at.Equal(old) {
+		t.Fatalf("thumb only = %q %v %v, want thumb %v", src, at, ok, old)
+	}
+	// ai_ref wins over a thumb, at the newest ai_ref's mtime.
+	write(t, filepath.Join(items, "a", "thumb.png"), pngOf(t, 2, 2, color.White))
+	write(t, filepath.Join(items, "a", "ai_ref", "100.png"), pngOf(t, 2, 2, color.Black))
+	write(t, filepath.Join(items, "a", "ai_ref", "200.png"), pngOf(t, 2, 2, color.Black))
+	mustChtimes(t, filepath.Join(items, "a", "ai_ref", "100.png"), old)
+	mustChtimes(t, filepath.Join(items, "a", "ai_ref", "200.png"), newer)
+	if src, at, ok := PhotoStamp("a"); !ok || src != RoleAIRef || !at.Equal(newer) {
+		t.Fatalf("ai_ref = %q %v %v, want ai_ref %v", src, at, ok, newer)
+	}
+	// An empty ai_ref folder (or one with no images) falls back to the thumb.
+	write(t, filepath.Join(items, "e", "thumb.png"), pngOf(t, 2, 2, color.White))
+	write(t, filepath.Join(items, "e", "ai_ref", "notes.txt"), []byte("x"))
+	if src, _, ok := PhotoStamp("e"); !ok || src != RoleThumb {
+		t.Fatalf("empty ai_ref = %q %v, want thumb", src, ok)
+	}
+	// A bad id is never joined onto the asset dir.
+	if _, _, ok := PhotoStamp("../t"); ok {
+		t.Fatal("traversal id has a photo")
+	}
+}
+
+func mustChtimes(t *testing.T, p string, at time.Time) {
+	t.Helper()
+	if err := os.Chtimes(p, at, at); err != nil {
+		t.Fatal(err)
 	}
 }

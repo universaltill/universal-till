@@ -463,10 +463,11 @@ settings — only on a LAN address; `http:stream` adds the handle-based
 bodies up to the manifest's `limits.http_body_mb` (ADR-0121, ut-docs#3156).
 A plugin reads core data only through `view_query` on a named, versioned core
 read view (`sales.by_day.v1`, `items.top.v1`, `payments.breakdown.v1`,
-`stock.levels.v1`, `audit.summary.v1`, `catalog.items.v1`, `users.list.v1`,
+`stock.levels.v1`, `audit.summary.v1`, `catalog.items.v1`, `catalog.photos.v1`, `users.list.v1`,
 `sales.receipts.v1`, `shop.context.v1`, `shop.context.v2`). It must list the view in its manifest's `views_used` and
 hold the view's `view:<class>` grant (ADR-0121 §5, ut-docs#3158;
-`catalog.items.v1`: ADR-0149 §6, ut-docs#3698; `users.list.v1` under the
+`catalog.items.v1`: ADR-0149 §6, ut-docs#3698; `catalog.photos.v1`, the
+active items with a reference photo, newest first: ut-docs#4094; `users.list.v1` under the
 `view:users` class and `sales.receipts.v1`: ADR-0149 §6, ut-docs#3976;
 `shop.context.v1` — shop and till name, currency code and decimals, default
 locale — under `view:sales`: ut-docs#4034; the same row as `shop.context.v2`
