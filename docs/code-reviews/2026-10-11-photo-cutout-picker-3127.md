@@ -40,7 +40,7 @@
 | 1 | should-fix | Tile-colour swatch painted once at pick time; the colour sent is re-read per request (operator changes colour on Details after picking → swatch white, result red) | **Fixed**: `paintSwatch` on every request |
 | 2 | should-fix | Every panel button disabled while busy (100 s timeout) — no way out from a hung rembg | **Fixed**: Use original photo stays enabled and aborts the request; e2e `a request in flight…` (fails on the pre-fix module) |
 | 3 | should-fix | Variant: a pick on a second row orphaned the first row's undecided pick (never uploads) | **Fixed**: previous row's input cleared; e2e `…second row drops…` (fails on the pre-fix module) |
-| 4 | should-fix | Report-only CSP has no `img-src blob:`; the module decodes via `<img src=blob:>`, so an enforcing policy as-is would break Remove background | **Deferred** to a Backlog card (policy is report-only today; the item preview already relies on `blob:`; the CSP card ut-docs#2913 is closed) |
+| 4 | should-fix | Report-only CSP has no `img-src blob:`; the module decodes via `<img src=blob:>`, so an enforcing policy as-is would break Remove background | **Deferred** to ut-docs#3327 (CSP enforcement; finding added there). The policy is report-only today and the item preview already relies on `blob:` |
 | 5 | nit | Superseded answer created an object URL never revoked | **Fixed** |
 | 6 | nit | Per-render cost: `canPerform` + two plugin-settings reads on catalog/categories/variant renders | Accepted: three small SQLite reads on back-office renders, never the sale path |
 | 7 | nit | `e2e/README.md` didn't list the `cutout` project; project count stale | **Fixed** (generic wording) |
