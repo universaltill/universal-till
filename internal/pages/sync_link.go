@@ -21,8 +21,9 @@ import (
 // Additional tills (and later satellites) dial GET /api/sync/link; nothing
 // dials out from here. The link carries presence, hello state and coalesced
 // `sync` nudges; the data itself still moves over the existing /api/sync/*
-// pulls, which stay the source of truth. Plain HTTP for now — pinned TLS is
-// #2736; the replica client is #2735.
+// pulls, which stay the source of truth. A replica holding the main till's
+// pin dials it over pinned TLS (wss, ut-docs#4092); an unpinned one over
+// plain HTTP. The replica client is #2735.
 
 // linkAdminWatchInterval is how often the main till checks the admin
 // generation counter while at least one till is linked. One single-row

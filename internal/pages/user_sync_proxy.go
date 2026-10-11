@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
-	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -37,7 +37,7 @@ import (
 const userSyncTimeout = 5 * time.Second
 
 // userSyncProxyClient is the additional-till -> main-till client.
-var userSyncProxyClient = netaccess.NewClient(userSyncTimeout)
+var userSyncProxyClient = lantls.NewPeerClient(userSyncTimeout)
 
 // errUserSync is a failed write-through. Code is the main till's refusal
 // code on a 4xx answer; "" means the main till could not be reached or its

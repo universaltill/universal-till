@@ -60,8 +60,8 @@ type Cursors struct {
 }
 
 // Hello is the first frame each way (ADR-0114 §2). Update policy, fleet
-// target and TLS pin state are placeholders here: #2726 (§5) and #2736
-// (§7) fill them; null means "not offered by this build".
+// target and the TLS pin are placeholders here: #2726 (§5) and #2737
+// (§7 rotation) fill them; null means "not offered by this build".
 type Hello struct {
 	TillID       string  `json:"till_id"`
 	Role         string  `json:"role"` // "main" | "replica" | "satellite"; a joined till's stored role (additional|satellite, ut-docs#2781) comes from GET /api/sync/admin's role until #2741 wires it here

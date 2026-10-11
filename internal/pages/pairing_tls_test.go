@@ -40,8 +40,21 @@ func serveTLSTill(t *testing.T, h http.Handler) (string, *lantls.Cert) {
 	return "http://" + inner.Addr().String(), cert
 }
 
-// tlsPairingPrimary is a main till serving the pairing backend over TLS.
-func tlsPairingPrimary(t *testing.T) (pmux *http.ServeMux, base string, cert *lantls.Cert, primaryTillID string, primary *data.PairingRepo) {
+// countPlainSync wraps h, counting /api/sync/* requests that arrive over
+// plain HTTP — the requests a pinned till must never send (ut-docs#4092).
+func countPlainSync(h http.Handler) (http.Handler, *atomic.Int32) {
+	var n atomic.Int32
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS == nil && strings.HasPrefix(r.URL.Path, "/api/sync/") {
+			n.Add(1)
+		}
+		h.ServeHTTP(w, r)
+	}), &n
+}
+
+// tlsPairingPrimary is a main till serving the pairing backend over TLS;
+// plain counts the /api/sync/* requests it got over plain HTTP.
+func tlsPairingPrimary(t *testing.T) (pmux *http.ServeMux, base string, cert *lantls.Cert, primaryTillID string, primary *data.PairingRepo, plain *atomic.Int32) {
 	t.Helper()
 	d, _ := newSyncDepsWithPath(t, "primary.db")
 	if err := d.Settings.Set(t.Context(), "store.name", "Corner Shop"); err != nil {
@@ -50,12 +63,13 @@ func tlsPairingPrimary(t *testing.T) (pmux *http.ServeMux, base string, cert *la
 	pmux = http.NewServeMux()
 	ptokens := registerSyncAPI(pmux, d)
 	registerPairingAPI(pmux, d, auth.NewService(d.Db), ptokens)
-	base, cert = serveTLSTill(t, pmux)
+	h, plain := countPlainSync(pmux)
+	base, cert = serveTLSTill(t, h)
 	id, err := discovery.TillID(t.Context(), data.NewSettingsRepo(d.Db))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return pmux, base, cert, id, data.NewPairingRepo(d.Db)
+	return pmux, base, cert, id, data.NewPairingRepo(d.Db), plain
 }
 
 // managerCodes is what the main till's approval card shows.
@@ -82,7 +96,7 @@ func managerCodes(t *testing.T, pmux http.Handler) []struct{ ID, Code string } {
 
 func TestPairing_TLSMainTillBindsThePinAndStagesIt(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	pmux, base, cert, primaryTillID, pending := tlsPairingPrimary(t)
+	pmux, base, cert, primaryTillID, pending, plain := tlsPairingPrimary(t)
 
 	replica, replicaPath := newSyncDepsWithPath(t, "replica.db")
 	rsvc := auth.NewService(replica.Db)
@@ -134,9 +148,15 @@ func TestPairing_TLSMainTillBindsThePinAndStagesIt(t *testing.T) {
 	if id.PrimaryCertPin != cert.Pin() {
 		t.Fatalf("staged pin %q, want %q", id.PrimaryCertPin, cert.Pin())
 	}
-	// Sync keeps dialling the plain URL until slice 3/3 switches it.
+	// primary_url stays the plain LAN address; the peer transport upgrades
+	// it once the pin is held (ut-docs#4092).
 	if id.PrimaryURL != base {
 		t.Fatalf("staged primary_url %q, want %q", id.PrimaryURL, base)
+	}
+	// The one-time token (enroll) and the new bearer (snapshot) went over
+	// the pinned link too, never plain HTTP.
+	if n := plain.Load(); n != 0 {
+		t.Fatalf("main till got %d plain-HTTP /api/sync/* request(s) during a pinned join", n)
 	}
 }
 
@@ -146,7 +166,7 @@ func TestPairing_TLSMainTillBindsThePinAndStagesIt(t *testing.T) {
 // codes, which is what the manager's compare catches.
 func TestPairing_MITMCertificateChangesTheCode(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	pmux, base, cert, primaryTillID, pending := tlsPairingPrimary(t)
+	pmux, base, cert, primaryTillID, pending, _ := tlsPairingPrimary(t)
 
 	target, _ := lantls.HTTPSBase(base)
 	targetURL, err := url.Parse(target)

@@ -115,19 +115,26 @@ func TestPrimaryWatch_TLSProofWithWrongPinFails(t *testing.T) {
 	}
 }
 
-// A main till without TLS (older, or its key unusable): the proof runs over
-// plain HTTP as before, and never clears a pin the replica already holds.
-func TestPrimaryWatch_PlainProofKeepsAStoredPin(t *testing.T) {
+// A main till without TLS (older, or its key unusable) gets no plain-HTTP
+// proof from a replica that holds a pin (ut-docs#4092): nothing switches,
+// and the pin is kept.
+func TestPrimaryWatch_PinnedReplicaNeverProvesOverPlain(t *testing.T) {
 	primary := newFakePrimary(t, testPrimaryID, testBearerHash())
 	f := newWatchFixture(t, Candidate{Name: "Shop", TillID: testPrimaryID, BaseURL: primary.srv.URL})
 	if err := f.settings.Set(context.Background(), PrimaryCertPinSettingKey, "earlier-pin"); err != nil {
 		t.Fatal(err)
 	}
-	if out := relink(t, f); !out.Relinked {
-		t.Fatalf("plain main till not relinked: %+v", out)
+	if out := relink(t, f); out.Relinked {
+		t.Fatalf("pinned replica relinked over plain HTTP: %+v", out)
+	}
+	if got := f.get(t, "sync.primary_url"); got != deadURL {
+		t.Fatalf("primary_url moved to %q", got)
 	}
 	if got := f.get(t, PrimaryCertPinSettingKey); got != "earlier-pin" {
-		t.Fatalf("pin %q after a plain proof, want it kept", got)
+		t.Fatalf("pin %q, want it kept", got)
+	}
+	if primary.hits.Load() != 0 {
+		t.Fatalf("plain main till got %d request(s) from a pinned replica", primary.hits.Load())
 	}
 }
 

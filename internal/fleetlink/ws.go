@@ -11,8 +11,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-
-	"github.com/universaltill/universal-till/internal/netaccess"
+	"github.com/universaltill/universal-till/internal/lantls"
 )
 
 // wsConn adapts a coder/websocket connection to Conn — the one file that
@@ -74,7 +73,7 @@ func (e *DialError) Error() string {
 // Authorization header of the upgrade request, never in the URL. ctx
 // bounds the handshake only.
 func dial(ctx context.Context, url, bearer string, readLimit int64) (Conn, error) {
-	hc := netaccess.NewClient(0)
+	hc := lantls.NewPeerClient(0)
 	// The bearer must reach the main till only; a redirect is never
 	// followed (Go would drop the header across hosts, but a same-host
 	// redirect would not).
