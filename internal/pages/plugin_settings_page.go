@@ -67,6 +67,100 @@ func secretSettingCheck(ctx context.Context, d *common.Deps, pluginID string) (i
 	return isSecret, declaredSecret, declaredEndpoint, resolved
 }
 
+// choiceOptionView is one entry of a `type: "choice"` setting's dropdown.
+type choiceOptionView struct {
+	Value, Label string
+	Selected     bool
+	Unknown      bool // a stored value outside the options (show_when then hides nothing)
+}
+
+// settingsFormManifest returns the plugin's installed manifest for its
+// settings-form metadata (ut-docs#2832), or nil when it can't be read. Nil
+// is safe on both sides: the page degrades to plain text boxes in storage
+// order, and the POST handler has already refused to save when the manifest
+// is unresolvable (secretSettingCheck), so a nil here only means the plugin
+// declares nothing.
+func settingsFormManifest(ctx context.Context, d *common.Deps, pluginID string) *plugins.Manifest {
+	m, _, err := plugins.InstalledManifest(ctx, d.Db, pluginID)
+	if err != nil {
+		return nil
+	}
+	return m
+}
+
+// settingForm is one setting's settings-form metadata (ut-docs#2832).
+type settingForm struct {
+	Label   string             // translated label; the raw key when none is declared
+	Help    string             // translated help line; "" = none
+	Choice  bool               // `type: "choice"`: rendered as a dropdown of Options
+	Options []choiceOptionView // dropdown entries, Selected = the stored value
+	ShowKey string             // show_when.key; "" = always shown
+	ShowIn  string             // show_when.in, comma-joined (values carry no comma, validated)
+	Hidden  bool               // show_when not met by the stored values
+	order   int                // manifest declaration index; undeclared keys sort last
+}
+
+// undeclaredSettingOrder sorts settings the manifest doesn't declare after
+// every declared one (the stable sort keeps their storage order).
+const undeclaredSettingOrder = 1 << 30
+
+// buildSettingForm derives one setting's form metadata from its manifest
+// declaration: translated label/help, dropdown options for a choice (a
+// stored value that is not an option stays selectable as itself), the
+// show_when condition evaluated against the stored values, and the
+// declaration index the form is ordered by. A nil manifest or undeclared
+// key gives the plain text box, labelled with its key.
+func buildSettingForm(m *plugins.Manifest, key, value string, stored map[string]string, locale string) settingForm {
+	f := settingForm{Label: key, order: undeclaredSettingOrder}
+	decl := m.SettingDecl(key)
+	if decl == nil {
+		return f
+	}
+	for i := range m.Settings {
+		if m.Settings[i].Key == key {
+			f.order = i
+			break
+		}
+	}
+	if decl.Label != "" {
+		f.Label = httpx.T(locale, decl.Label)
+	}
+	if decl.Help != "" {
+		f.Help = httpx.T(locale, decl.Help)
+	}
+	if decl.Type == plugins.SettingTypeChoice {
+		f.Choice = true
+		switch {
+		case value == "":
+			// Unset: say so, rather than letting the browser preselect
+			// option 1 and a sibling's save silently write it.
+			f.Options = append(f.Options, choiceOptionView{Value: "", Label: httpx.T(locale, "plugins.settings.secret_empty"), Selected: true})
+		case !decl.ChoiceAllows(value):
+			// An older free-text value stays selectable as itself.
+			f.Options = append(f.Options, choiceOptionView{Value: value, Label: value, Selected: true, Unknown: true})
+		}
+		for _, o := range decl.Options {
+			f.Options = append(f.Options, choiceOptionView{Value: o.Value, Label: httpx.T(locale, o.Label), Selected: o.Value == value})
+		}
+	}
+	if w := decl.ShowWhen; w != nil {
+		f.ShowKey = w.Key
+		f.ShowIn = strings.Join(w.In, ",")
+		cur := stored[w.Key]
+		// A controlling choice holding a value outside its options (an
+		// older free-text entry) hides nothing: the plugin may still use
+		// the dependent fields, so the operator must see them.
+		ctl := m.SettingDecl(w.Key)
+		f.Hidden = !(ctl != nil && ctl.Type == plugins.SettingTypeChoice && cur != "" && !ctl.ChoiceAllows(cur))
+		for _, v := range w.In {
+			if cur == v {
+				f.Hidden = false
+			}
+		}
+	}
+	return f
+}
+
 // isTaxRateOverridesKey reports whether a plugin setting is a per-tax-code
 // takeaway rate override map (ut-docs#190) — a settings-surface convention
 // any tax plugin can adopt (same family as plugins.IsSecretSettingKey): the
@@ -314,13 +408,14 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 	catalogRepo := data.NewCatalogRepo(d.Db)
 
 	type settingView struct {
-		Key, Value string
-		Secret     bool // rendered masked; its value is never sent to the page
-		IsSet      bool // a value already exists (for the "leave blank to keep" hint)
-		PerTill    bool // register-scoped: this till's own value, never synced
-		Typed      bool // rendered as the typed takeaway-overrides editor instead
-		TaxRows    []taxOverrideRow
-		Notice     string // i18n key of a disclosure shown above the input (settingNoticeKey); "" = none
+		Key, Value  string
+		Secret      bool // rendered masked; its value is never sent to the page
+		IsSet       bool // a value already exists (for the "leave blank to keep" hint)
+		PerTill     bool // register-scoped: this till's own value, never synced
+		Typed       bool // rendered as the typed takeaway-overrides editor instead
+		TaxRows     []taxOverrideRow
+		Notice      string // i18n key of a disclosure shown above the input (settingNoticeKey); "" = none
+		settingForm        // settings-form metadata from the installed manifest (ut-docs#2832)
 	}
 
 	// permissionView is the read half of the permission-management surface
@@ -347,10 +442,21 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 		// Display only — safe to degrade to the heuristic if the manifest
 		// can't be resolved right now, per secretSettingCheck's doc comment.
 		isSecret, _, _, _ := secretSettingCheck(r.Context(), d, pluginID)
+		manifest := settingsFormManifest(r.Context(), d, pluginID)
+		locale := httpx.RequestLocale(r)
+		stored := make(map[string]string, len(rows))
+		for _, row := range rows {
+			// A key can have a global and a per-till row; show_when reads
+			// the shop-wide one when both exist.
+			if _, seen := stored[row.Key]; !seen || row.Scope == "global" {
+				stored[row.Key] = unwrapSettingValue(row.ValueJSON)
+			}
+		}
 		var views []settingView
 		for _, row := range rows {
 			v := unwrapSettingValue(row.ValueJSON)
 			sv := settingView{Key: row.Key, Value: v, Secret: isSecret(row.Key), PerTill: row.Scope == "register", Notice: settingNoticeKey(pluginID, row.Key, v)}
+			sv.settingForm = buildSettingForm(manifest, row.Key, v, stored, locale)
 			if sv.Secret {
 				sv.IsSet = v != ""
 				sv.Value = "" // never render a secret's value into the page
@@ -368,6 +474,9 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			}
 			views = append(views, sv)
 		}
+		// The manifest's declaration order is the form's order (a provider
+		// choice before the fields it controls); storage order is by key.
+		sort.SliceStable(views, func(i, j int) bool { return views[i].order < views[j].order })
 		// Display only, same standing as the settings list above — a manifest
 		// read failure here degrades to an empty permissions section rather
 		// than failing the whole page; the write side (plugin_api.go's
@@ -446,6 +555,25 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
+		// `type: "choice"` (ut-docs#2832): a submitted value must be one of
+		// the manifest's options, or the value already stored (an older
+		// install's free-text value is kept, never rewritten) — checked for
+		// every row before the first write, like the endpoint rule above.
+		manifest := settingsFormManifest(r.Context(), d, pluginID)
+		for _, row := range rows {
+			decl := manifest.SettingDecl(row.Key)
+			if decl == nil || decl.Type != plugins.SettingTypeChoice {
+				continue
+			}
+			form, ok := r.Form["setting_"+row.Key]
+			if !ok || len(form) == 0 {
+				continue
+			}
+			if val := strings.TrimSpace(form[0]); !decl.ChoiceAllows(val) && val != strings.TrimSpace(unwrapSettingValue(row.ValueJSON)) {
+				http.Error(w, fmt.Sprintf(httpx.T(locale, "plugins.settings.invalid_choice"), row.Key), http.StatusBadRequest)
+				return
+			}
+		}
 		typedOverrides := map[string]map[string]int{}
 		if r.Form.Get("setting_takeaway_typed") == "1" {
 			for _, row := range rows {
@@ -496,8 +624,10 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			}
 			val := strings.TrimSpace(form[0])
 			// Secret fields aren't pre-filled, so a blank submission means
-			// "keep the current value" rather than "clear it".
-			if val == "" && isSecret(row.Key) {
+			// "keep the current value" rather than "clear it" — unless the
+			// operator ticked "Remove saved key" (clear_setting_<key>,
+			// ut-docs#2832), which clears it.
+			if val == "" && isSecret(row.Key) && r.Form.Get("clear_setting_"+row.Key) != "1" {
 				continue
 			}
 			raw, err := json.Marshal(val)
