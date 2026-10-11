@@ -15,6 +15,10 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/skip2/go-qrcode"
 
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -35,6 +39,19 @@ const (
 	MaxListItems     = 200
 	MaxFormFields    = 50
 	MaxSelectOptions = 100
+	// ut-docs#3874: a qr's payload (fits a level-M code with room to
+	// spare), a wizard_step's steps, and the highest table page.
+	MaxQRDataBytes = 1024
+	// MaxQRCodes: each code is a PNG encode (~10 ms on a desktop, more on
+	// a Pi), done on every draw of the document (ut-docs#3874 review).
+	MaxQRCodes = 8
+	// MaxParams: the query keys a view ask forwards (pages'
+	// pluginViewParams); a paging link never carries more, so its own
+	// param is never the one dropped.
+	MaxParams      = 20
+	MinWizardSteps = 2
+	MaxWizardSteps = 12
+	MaxTablePage   = 1_000_000
 )
 
 var (
@@ -138,6 +155,8 @@ type Component struct {
 	Button      *Button
 	Form        *Form
 	Suggestions *Suggestions
+	QR          *QR
+	WizardStep  *WizardStep
 }
 
 type Heading struct {
@@ -175,6 +194,48 @@ type Table struct {
 	Type    string   `json:"type"`
 	Columns []Column `json:"columns"`
 	Rows    [][]Cell `json:"rows"`
+	Paging  *Paging  `json:"paging,omitempty"`
+}
+
+// Paging is a table's page position (ut-docs#3874). The plugin serves one
+// page per view ask; core draws Previous/Next links to the entry's own
+// route with Param (default "page") set, which reach the plugin as
+// params.<Param>. Exactly one of Pages (a known total) or HasNext is set.
+type Paging struct {
+	Page    int64   `json:"page"`
+	Pages   *int64  `json:"pages,omitempty"`
+	HasNext *bool   `json:"has_next,omitempty"`
+	Param   *string `json:"param,omitempty"`
+}
+
+// DefaultPagingParam is the query key a table pages with unless it names
+// its own.
+const DefaultPagingParam = "page"
+
+// ParamName is the query key this table pages with.
+func (p *Paging) ParamName() string {
+	if p.Param == nil {
+		return DefaultPagingParam
+	}
+	return *p.Param
+}
+
+// QR is a QR code core encodes from Data (ut-docs#3874): the plugin never
+// supplies an image or a URL. Label is the caption under it.
+type QR struct {
+	Type  string `json:"type"`
+	Data  string `json:"data"`
+	Label *Text  `json:"label,omitempty"`
+	// png: the code, encoded once by the validator and drawn by Prepare.
+	png []byte
+}
+
+// WizardStep is a multi-step flow's progress header (ut-docs#3874):
+// Current is 1-based. Moving between steps is ordinary buttons and forms.
+type WizardStep struct {
+	Type    string `json:"type"`
+	Steps   []Text `json:"steps"`
+	Current int    `json:"current"`
 }
 
 type List struct {
@@ -432,6 +493,12 @@ func decodeComponent(raw json.RawMessage) (Component, error) {
 	case "suggestions":
 		c.Suggestions = &Suggestions{}
 		target = c.Suggestions
+	case "qr":
+		c.QR = &QR{}
+		target = c.QR
+	case "wizard_step":
+		c.WizardStep = &WizardStep{}
+		target = c.WizardStep
 	default:
 		return Component{}, fmt.Errorf("unknown component type %q", head.Type)
 	}
@@ -445,6 +512,11 @@ func decodeComponent(raw json.RawMessage) (Component, error) {
 type validator struct {
 	c   Context
 	err error
+	// wizard: a wizard_step was seen (one per document); pagingParams: the
+	// query keys paged tables use (each table its own).
+	wizard       bool
+	pagingParams map[string]bool
+	qrs          int
 }
 
 func (v *validator) fail(format string, a ...any) {
@@ -546,6 +618,9 @@ func (v *validator) component(where string, c Component) {
 				v.cell(fmt.Sprintf("%s.rows[%d][%d]", where, i, j), cell, t.Columns[j].Kind)
 			}
 		}
+		if t.Paging != nil {
+			v.paging(where+".paging", t.Paging)
+		}
 	case "list":
 		if len(c.List.Items) > MaxListItems {
 			v.fail("%s has %d items (max %d)", where, len(c.List.Items), MaxListItems)
@@ -576,7 +651,63 @@ func (v *validator) component(where string, c Component) {
 		v.form(where, c.Form)
 	case "suggestions":
 		v.suggestions(where, c.Suggestions)
+	case "qr":
+		q := c.QR
+		switch {
+		case q.Data == "" || len(q.Data) > MaxQRDataBytes:
+			v.fail("%s data must be 1..%d bytes", where, MaxQRDataBytes)
+		case !utf8.ValidString(q.Data) || strings.ContainsRune(q.Data, 0):
+			v.fail("%s data must be UTF-8 text without NUL", where)
+		case v.qrs >= MaxQRCodes:
+			v.fail("%s: a document has at most %d qr components", where, MaxQRCodes)
+		case v.err == nil:
+			// Encoded once, here; a refused document is never encoded further.
+			png, err := qrcode.Encode(q.Data, qrcode.Medium, qrModulePixels)
+			if err != nil {
+				v.fail("%s data cannot be encoded as a QR code: %v", where, err)
+			}
+			q.png = png
+		}
+		v.qrs++
+		if q.Label != nil {
+			v.text(where+".label", *q.Label)
+		}
+	case "wizard_step":
+		w := c.WizardStep
+		if v.wizard {
+			v.fail("%s: a document has at most one wizard_step", where)
+		}
+		v.wizard = true
+		if len(w.Steps) < MinWizardSteps || len(w.Steps) > MaxWizardSteps {
+			v.fail("%s has %d steps (%d..%d)", where, len(w.Steps), MinWizardSteps, MaxWizardSteps)
+		}
+		if w.Current < 1 || w.Current > len(w.Steps) {
+			v.fail("%s current %d must be a step number, 1..%d", where, w.Current, len(w.Steps))
+		}
+		for i, st := range w.Steps {
+			v.text(fmt.Sprintf("%s.steps[%d]", where, i), st)
+		}
 	}
+}
+
+func (v *validator) paging(where string, p *Paging) {
+	if p.Page < 1 || p.Page > MaxTablePage {
+		v.fail("%s page %d must be 1..%d", where, p.Page, MaxTablePage)
+	}
+	if (p.Pages == nil) == (p.HasNext == nil) {
+		v.fail("%s must give exactly one of pages or has_next", where)
+	} else if p.Pages != nil && (*p.Pages < p.Page || *p.Pages > MaxTablePage) {
+		v.fail("%s pages %d must be at least page (%d) and at most %d", where, *p.Pages, p.Page, MaxTablePage)
+	}
+	param := p.ParamName()
+	v.name(where, "param", param)
+	if v.pagingParams == nil {
+		v.pagingParams = map[string]bool{}
+	}
+	if v.pagingParams[param] {
+		v.fail("%s param %q is used by two tables; give each its own", where, param)
+	}
+	v.pagingParams[param] = true
 }
 
 func (v *validator) form(where string, f *Form) {

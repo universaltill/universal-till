@@ -28,6 +28,8 @@
 {{- else if eq .Type "notice" }}<div class="plugin-view-notice {{ .Level }}" role="{{ if eq .Level "error" }}alert{{ else }}status{{ end }}">{{ .Text }}</div>
 {{- else if eq .Type "stat_tiles" }}{{ template "pluginview_stat_tiles" . }}
 {{- else if eq .Type "table" }}{{ template "pluginview_table" . }}
+{{- else if eq .Type "qr" }}{{ template "pluginview_qr" . }}
+{{- else if eq .Type "wizard_step" }}{{ template "pluginview_wizard_step" . }}
 {{- else if eq .Type "list" }}<ul class="card plugin-view-list">{{ range .Items }}<li>{{ . }}</li>{{ end }}</ul>
 {{- else if eq .Type "empty_state" }}
 <div class="card plugin-view-empty">

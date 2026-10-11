@@ -38,7 +38,7 @@ var pluginViewTimeout = 5 * time.Second
 
 // Bounds on what a GET forwards to the plugin as params.
 const (
-	pluginViewMaxParams        = 20
+	pluginViewMaxParams        = pluginview.MaxParams
 	pluginViewMaxParamKeyBytes = 64
 	pluginViewMaxParamBytes    = 256
 )
@@ -252,6 +252,12 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 		body.Unavailable = true
 	case doc != nil:
 		body.View = doc.Prepare(locale)
+		if !inSlot {
+			// A paged table's links (ut-docs#3874): this route with the
+			// query the view was asked with. A slot panel has no GET swap
+			// of its own, so it shows the page indicator alone.
+			body.View.LinkPaging(entry.Route, pluginViewParams(r))
+		}
 	}
 	failed := body.Unavailable || body.JobBusy
 	if isPoll {
@@ -356,6 +362,7 @@ func pluginViewRefilled(ctx context.Context, d *common.Deps, entry data.PageEntr
 		return pluginview.View{}, false
 	}
 	v := doc.Prepare(locale)
+	v.LinkPaging(entry.Route, nil)
 	if posted != nil {
 		v.Refill(action, posted)
 	}
