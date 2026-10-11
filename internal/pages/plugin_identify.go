@@ -120,6 +120,9 @@ type identifyResult struct {
 	Job     string                     // the job id each pick carries back
 	Texts   []pluginview.ViewComponent // text and notice components, in order
 	Matches []identifyMatch
+	// Failed: an error notice and no matches — the plugin said why it could
+	// not identify (ut-docs#4090), so "no match" would contradict it.
+	Failed bool
 }
 
 // identifyMatch is one suggestion button. ThumbURL (the plugin's blob)
@@ -483,6 +486,13 @@ func identifyResultFor(ctx context.Context, d *common.Deps, pluginID string, v p
 					m.ImageURL = line.ImageURL
 				}
 				res.Matches = append(res.Matches, m)
+			}
+		}
+	}
+	if len(res.Matches) == 0 {
+		for _, c := range res.Texts {
+			if c.Type == "notice" && c.Level == "error" {
+				res.Failed = true
 			}
 		}
 	}
