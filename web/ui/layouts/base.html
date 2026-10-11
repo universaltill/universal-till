@@ -2076,6 +2076,95 @@
          the current page renders. Closed by default; opened by the 🐞 nav
          chip, or pre-opened server-side by /report-issue. -->
     {{ template "bugreport_panel" . }}
+    <!-- Plugin view overlay (ADR-0149 §6, ut-docs#3699): non-modal, a
+         sibling of <main> like the bug-report panel, so it survives an htmx
+         navigation. Hidden until a sell-screen plugin button opens it. -->
+    {{/* Inline here, not a partial: every renderer that parses base.html
+         would otherwise need the new file in its list. Opened by a
+         [data-ut-plugin-overlay] button (partials/plugin_buttons.html),
+         which htmx-loads its view into #plugin-overlay-view; core answers
+         that as a body fragment (servePluginView, pluginOverlayTargetID).
+         Closes by hiding (✕ or Esc inside it), never removing, so a
+         running plugin job keeps polling and the view can be shown again.
+         data-ut-no-scrim: the sale underneath stays usable (ut-docs#2873). */}}
+    <section id="plugin-overlay" class="plugin-overlay" data-testid="plugin-overlay" data-ut-no-scrim
+             role="dialog" aria-modal="false" aria-labelledby="plugin-overlay-title" hidden>
+      <div class="plugin-overlay-head">
+        <h2 id="plugin-overlay-title"></h2>
+        <button type="button" class="plugin-overlay-close" id="plugin-overlay-close"
+                data-testid="plugin-overlay-close"
+                title="{{ T "common.close" }}" aria-label="{{ T "common.close" }}">
+          <span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span></button>
+      </div>
+      {{/* pluginview_alert's markup (partials/pluginview/document.html),
+           written out: base.html renderers don't parse that partial. */}}
+      <div id="plugin-overlay-view-alert" class="plugin-view-alert" aria-live="polite"></div>
+      <div id="plugin-overlay-view" class="plugin-view"></div>
+    </section>
+    <script>
+    (function () {
+      var ov = document.getElementById('plugin-overlay');
+      if (!ov) return;
+      var title = document.getElementById('plugin-overlay-title');
+      var view = document.getElementById('plugin-overlay-view');
+      var closeBtn = document.getElementById('plugin-overlay-close');
+      var alertBox = document.getElementById('plugin-overlay-view-alert');
+      var T = { unavailable: "{{ T "plugin.view.unavailable" }}" };
+      var opener = null;
+      var route = '';
+      function pathOf(u) {
+        try { return new URL(u, location.href).pathname; } catch (err) { return ''; }
+      }
+      function close() {
+        if (ov.hidden) return;
+        ov.hidden = true;
+        if (opener) {
+          opener.setAttribute('aria-expanded', 'false');
+          if (document.body.contains(opener)) opener.focus({ preventScroll: true });
+        }
+      }
+      // Capture: runs before htmx's own click handler sends the request,
+      // so the previous view is cleared before the new one arrives.
+      document.addEventListener('click', function (e) {
+        var b = e.target && e.target.closest ? e.target.closest('[data-ut-plugin-overlay]') : null;
+        if (!b) return;
+        if (opener && opener !== b) opener.setAttribute('aria-expanded', 'false');
+        opener = b;
+        b.setAttribute('aria-expanded', 'true');
+        route = b.getAttribute('hx-get') || '';
+        title.textContent = b.getAttribute('data-ut-overlay-title') || '';
+        view.innerHTML = '';
+        alertBox.innerHTML = '';
+        ov.hidden = false;
+        // The close button, never a field: opening must not pop a keyboard.
+        closeBtn.focus({ preventScroll: true });
+      }, true);
+      // A late answer for another view (a job poll or a slow GET of the
+      // view this overlay showed before) must not replace the view now
+      // open (ut-docs#3699 review): only the current route's answers swap
+      // in -- OOB parts included, since htmx skips the whole swap.
+      document.addEventListener('htmx:beforeSwap', function (e) {
+        if (e.detail.target !== view) return;
+        var p = e.detail.pathInfo && (e.detail.pathInfo.finalRequestPath || e.detail.pathInfo.requestPath);
+        if (!route || pathOf(p) !== route) e.detail.shouldSwap = false;
+      });
+      // A refused or failed open (plugin disabled since the button was
+      // drawn, network error): say so in the overlay, not an empty sheet.
+      function failed(e) {
+        if (e.detail.target !== view && !(e.detail.elt && e.detail.elt === opener)) return;
+        var n = document.createElement('div');
+        n.className = 'plugin-view-notice warn';
+        n.textContent = T.unavailable;
+        alertBox.replaceChildren(n);
+      }
+      document.addEventListener('htmx:responseError', failed);
+      document.addEventListener('htmx:sendError', failed);
+      closeBtn.addEventListener('click', close);
+      ov.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') { e.stopPropagation(); close(); }
+      });
+    })();
+    </script>
     <!-- Manager-override-elevation dialog (ut-docs#557). Empty/pre-built
          placeholder, OUTSIDE any <form> — same precedent as index.html's
          #modifier-modal/#hold-modal (and menu.html's #pfand-modal, moved

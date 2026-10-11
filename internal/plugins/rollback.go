@@ -292,6 +292,11 @@ func (rm *RollbackManager) rollback(ctx context.Context, pluginID, targetVersion
 		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
 	}
 
+	// Same for a button's opens_view (ut-docs#3699).
+	if err := validateButtonOpensView(manifest.Entries); err != nil {
+		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
+	}
+
 	// Same protection for a role:"preset" layout entry (ADR-0106 C) — the
 	// rollback target may have been a preset while the current version is
 	// not, and another plugin's preset may have become active since; a

@@ -154,6 +154,11 @@ type ManifestEntry struct {
 	// optional; ut-cloud's CanonicalEntry mirrors them.
 	View string `json:"view,omitempty"`
 	Slot string `json:"slot,omitempty"`
+	// OpensView is BUTTON-ONLY (ADR-0149 §6, ut-docs#3699): the view of
+	// one of the plugin's own page entries that pressing the button opens
+	// in the sell-screen overlay, instead of publishing an event
+	// (validateButtonOpensView). ut-cloud's CanonicalEntry mirrors it.
+	OpensView string `json:"opens_view,omitempty"`
 }
 
 // entryConfigJSON renders the config_json blob persisted for one manifest
@@ -171,12 +176,18 @@ type ManifestEntry struct {
 // data.PageEntryRow.View) and Slot under "content_slot" -- not "slot",
 // which is a layout entry's own config key (uislot.ParseAmendmentsJSON).
 func entryConfigJSON(e ManifestEntry) string {
-	if len(e.Config) == 0 && len(e.Entities) == 0 && len(e.FileFormats) == 0 && e.View == "" && e.Slot == "" {
+	if len(e.Config) == 0 && len(e.Entities) == 0 && len(e.FileFormats) == 0 && e.View == "" && e.Slot == "" && e.OpensView == "" {
 		return ""
 	}
-	m := make(map[string]interface{}, len(e.Config)+4)
+	m := make(map[string]interface{}, len(e.Config)+5)
 	for k, v := range e.Config {
 		m[k] = v
+	}
+	// ut-docs#3699: "opens_view" is only ever the typed, validated field;
+	// a config key of that name never reaches the button row.
+	delete(m, "opens_view")
+	if e.OpensView != "" {
+		m["opens_view"] = e.OpensView
 	}
 	if len(e.Entities) > 0 {
 		m["entities"] = e.Entities
@@ -1101,6 +1112,12 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 	// 0i. A page entry's config.upload_max_mb (ut-docs#3793) is an integer
 	// 1..MaxUploadMaxMB.
 	if err := validatePageEntryUploads(m.Entries); err != nil {
+		return err
+	}
+
+	// 0j. A button's opens_view names one of its own overlay-able page
+	// views (ADR-0149 §6, ut-docs#3699).
+	if err := validateButtonOpensView(m.Entries); err != nil {
 		return err
 	}
 

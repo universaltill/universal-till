@@ -4,12 +4,33 @@
   <div class="grid">
     {{ range .Buttons }}
     <div class="btn-tile">
+      {{/* ADR-0149 §6 (ut-docs#3699): an opens_view button opens its
+           plugin's view in core's overlay
+           instead of publishing an event (#plugin-overlay, inline in
+           layouts/base.html). data-ut-plugin-overlay shows the
+           overlay, titled with this button's label; htmx loads the view
+           into it (HX-Target plugin-overlay-view: servePluginView answers
+           the body fragment). */}}
+      {{ if .OverlayRoute }}
+      <button
+        type="button"
+        class="btn secondary"
+        hx-get="{{ .OverlayRoute }}"
+        hx-target="#plugin-overlay-view"
+        hx-swap="innerHTML"
+        data-ut-plugin-overlay
+        data-ut-overlay-title="{{ T .Label }}"
+        aria-controls="plugin-overlay"
+        aria-expanded="false"
+        title="{{ .PluginName }}">
+      {{ else }}
       <button
         class="btn secondary"
         hx-post="/api/plugins/entries/{{ .PluginID }}/{{ .EntryKey }}/action"
         hx-trigger="click"
         hx-swap="none"
         title="{{ .PluginName }}">
+      {{ end }}
         {{ if .IconPath }}<img src="/plugin-icons/{{ .PluginID }}/{{ .PluginVersion }}/{{ .IconPath }}" alt="" width="20" height="20" style="vertical-align:middle; margin-inline-end:.4rem" loading="lazy">{{ end }}
         {{/* ut-docs#2015: a button entry's label is a translator key, same
              as a page/export/report entry's — the owning plugin's own
