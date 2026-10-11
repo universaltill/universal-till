@@ -13,7 +13,10 @@
 // (digits, ',' -> U+066C, '.' -> U+066B), never to the currency symbol, so
 // a fee hint or voucher button matches the server-rendered basket. The
 // parse/prefill helpers (parseMinor/toMinor/toMajor) stay ASCII: they feed
-// editable inputs.
+// editable inputs. data-number-grouping="indian" (en-IN, ur-PK; the server's
+// `numbergrouping` func) groups the integer part like Go's groupIndianStyle
+// -- last 3 digits, then pairs ("10,00,000") -- instead of in threes
+// (ut-docs#4071).
 window.utCurrency = (function(){
   var d = document.body ? document.body.dataset : {};
   var decimals = parseInt(d.currencyDecimals || '2', 10);
@@ -26,6 +29,18 @@ window.utCurrency = (function(){
   // ut-docs#2679: exactly 10 code points or no shaping at all.
   var digitGlyphs = Array.from(d.numberDigits || '');
   if (digitGlyphs.length !== 10) digitGlyphs = null;
+  var indianGrouping = d.numberGrouping === 'indian';
+  // ut-docs#4071: twin of Go's groupIndianStyle.
+  function groupDigits(s){
+    if (!indianGrouping) return s.replace(/\B(?=(\d{3})+(?!\d))/g, thousandsSep);
+    if (s.length <= 3) return s;
+    var out = s.slice(-3), head = s.slice(0, -3);
+    while (head.length > 2) {
+      out = head.slice(-2) + thousandsSep + out;
+      head = head.slice(0, -2);
+    }
+    return head + thousandsSep + out;
+  }
   function shapeDigits(num){
     if (!digitGlyphs) return num;
     return num.replace(/[0-9,.]/g, function(c){
@@ -37,7 +52,7 @@ window.utCurrency = (function(){
   function formatMinor(units){
     var neg = units < 0; if (neg) units = -units;
     var major = Math.floor(units / factor);
-    var num = major.toString().replace(/\B(?=(\d{3})+(?!\d))/g, thousandsSep);
+    var num = groupDigits(major.toString());
     if (decimals > 0) num += decimalSep + String(units % factor).padStart(decimals, '0');
     num = shapeDigits(num);
     var out = suffix ? num + ' ' + display : display + num;

@@ -400,6 +400,31 @@ func TestFormatMoney_IndianGrouping(t *testing.T) {
 	InitCurrency("GBP")
 }
 
+// ut-docs#4071: the basket total's data-label is {{ money .Total }} ->
+// FormatMoneyDisplay. These literals are the contract the client-side
+// e2e (client-money-indian-grouping-4071.spec.ts) asserts
+// window.utCurrency.format(100000000) against.
+func TestFormatMoneyDisplay_IndianGrouping4071(t *testing.T) {
+	InitCurrency("GBP")
+	defer InitCurrency("GBP")
+	cases := []struct {
+		locale string
+		minor  int64
+		want   string
+	}{
+		{"en-IN", 100000000, "£10,00,000.00"},
+		{"ur-PK", 100000000, "£۱۰٬۰۰٬۰۰۰٫۰۰"},
+		{"en-IN", 12345678900, "£12,34,56,789.00"},
+		{"ur-PK", 12345678900, "£۱۲٬۳۴٬۵۶٬۷۸۹٫۰۰"},
+		{"en", 100000000, "£1,000,000.00"},
+	}
+	for _, c := range cases {
+		if got := FormatMoneyDisplay(c.minor, c.locale); got != c.want {
+			t.Errorf("FormatMoneyDisplay(%d, %s) = %q, want %q", c.minor, c.locale, got, c.want)
+		}
+	}
+}
+
 func TestFormatQty_IndianGrouping(t *testing.T) {
 	if got := FormatQty(1234567.5, "en-IN"); got != "12,34,567.5" {
 		t.Errorf("FormatQty en-IN = %q, want Indian grouping", got)

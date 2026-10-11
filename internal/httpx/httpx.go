@@ -1219,6 +1219,17 @@ func FuncsFor(locale string) template.FuncMap {
 		}
 		return string(set[:])
 	}
+	// {{ numbergrouping }}: "indian" for the locales whose server-side
+	// grouping is Indian-style (en-IN, ur-PK: "10,00,000"), else "" -- the
+	// same indianGrouping switch formatGrouped uses, exposed so
+	// window.utCurrency (web/public/app.js) groups client-rendered money
+	// like the basket instead of always in threes (ut-docs#4071).
+	funcs["numbergrouping"] = func() string {
+		if indianGrouping(locale) {
+			return "indian"
+		}
+		return ""
+	}
 	funcs["currency"] = ActiveCurrency // {{ currency.Code }} etc.
 	funcs["currencies"] = Currencies   // the Settings picker options
 	// {{ moneypattern currency.Decimals false }} / {{ moneyplaceholder currency.Decimals 50 }}
