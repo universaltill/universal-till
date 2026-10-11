@@ -46,11 +46,40 @@ type CoreViewArg struct {
 	Default  int
 }
 
+// AI data classes (ADR-0153 Decision 1, ut-docs#2837): a closed list, one
+// admin checkbox each. An ai.agent plugin's view_query needs the view's
+// view:<name> grant AND ai.send.<DataClass>. A view that returns data of
+// two classes takes the more sensitive one (customers > staff > sales >
+// stock, catalog > till_health).
+const (
+	DataClassSales      = "sales"       // receipts, payments, refunds, shifts, sales totals
+	DataClassCatalog    = "catalog"     // items, prices, categories, modifiers, item photos
+	DataClassStock      = "stock"       // stock levels, movements, suppliers
+	DataClassCustomers  = "customers"   // customer personal data
+	DataClassStaff      = "staff"       // staff names and roles
+	DataClassTillHealth = "till_health" // devices, sync, errors, activity
+
+	// DataClassShop is shop facts (name, currency, locale): not personal or
+	// commercial data, so it has no checkbox and needs no ai.send.* grant.
+	DataClassShop = "shop"
+)
+
+// AIDataClasses is the six grantable classes in display order. DataClassShop
+// is deliberately absent: it is always available.
+var AIDataClasses = []string{
+	DataClassSales, DataClassCatalog, DataClassStock,
+	DataClassCustomers, DataClassStaff, DataClassTillHealth,
+}
+
 // CoreView is one registered read view.
 type CoreView struct {
 	Name       string // versioned, e.g. sales.by_day.v1
 	Permission string // view:<class>
-	Args       []CoreViewArg
+	// DataClass is one of AIDataClasses or DataClassShop (ADR-0153
+	// Decision 1). Every registered view must set it: an ai.agent plugin is
+	// refused a view with none (fail closed).
+	DataClass string
+	Args      []CoreViewArg
 	// Run executes the view. args holds every declared argument, already
 	// bounds-checked by ParseArgs. The result marshals to a JSON array.
 	Run func(ctx context.Context, db *sql.DB, args map[string]int) (any, error)
@@ -230,7 +259,7 @@ func SetCoreViewShopContext(f ShopContextFunc) (prev ShopContextFunc) {
 // views ADR-0149 §6 adds.
 var coreViews = map[string]CoreView{
 	"sales.by_day.v1": {
-		Name: "sales.by_day.v1", Permission: "view:sales", Args: []CoreViewArg{argDays},
+		Name: "sales.by_day.v1", Permission: "view:sales", DataClass: DataClassSales, Args: []CoreViewArg{argDays},
 		Run: func(ctx context.Context, db *sql.DB, args map[string]int) (any, error) {
 			v, _, err := NewSettingsRepo(db).Get(ctx, "reports.business_day_start")
 			if err != nil {
@@ -242,27 +271,29 @@ var coreViews = map[string]CoreView{
 		},
 	},
 	"items.top.v1": {
-		Name: "items.top.v1", Permission: "view:sales", Args: []CoreViewArg{argDays, argLimit},
+		Name: "items.top.v1", Permission: "view:sales", DataClass: DataClassSales, Args: []CoreViewArg{argDays, argLimit},
 		Run: func(ctx context.Context, db *sql.DB, args map[string]int) (any, error) {
 			from, to := lastDays(args["days"])
 			return NewPOSRepo(db).TopItems(ctx, from, to, args["limit"])
 		},
 	},
 	"payments.breakdown.v1": {
-		Name: "payments.breakdown.v1", Permission: "view:sales", Args: []CoreViewArg{argDays},
+		Name: "payments.breakdown.v1", Permission: "view:sales", DataClass: DataClassSales, Args: []CoreViewArg{argDays},
 		Run: func(ctx context.Context, db *sql.DB, args map[string]int) (any, error) {
 			from, to := lastDays(args["days"])
 			return NewPOSRepo(db).PaymentBreakdown(ctx, from, to)
 		},
 	},
 	"stock.levels.v1": {
-		Name: "stock.levels.v1", Permission: "view:inventory",
+		Name: "stock.levels.v1", Permission: "view:inventory", DataClass: DataClassStock,
 		Run: func(ctx context.Context, db *sql.DB, _ map[string]int) (any, error) {
 			return NewPOSRepo(db).ListStockLevels(ctx)
 		},
 	},
+	// Class staff, not till_health (ADR-0153 Decision 1's "more sensitive
+	// class wins"): activity rows carry actor_id, which names staff.
 	"audit.summary.v1": {
-		Name: "audit.summary.v1", Permission: "view:audit", Args: []CoreViewArg{argDays},
+		Name: "audit.summary.v1", Permission: "view:audit", DataClass: DataClassStaff, Args: []CoreViewArg{argDays},
 		Run: func(ctx context.Context, db *sql.DB, args map[string]int) (any, error) {
 			return NewPOSRepo(db).AuditActionSummary(ctx, args["days"], auditSummaryRows)
 		},
@@ -270,7 +301,7 @@ var coreViews = map[string]CoreView{
 	// ADR-0149 §6 (ut-docs#3698), with sku added for camera identify's
 	// add_to_basket (ut-docs#2851).
 	"catalog.items.v1": {
-		Name: "catalog.items.v1", Permission: "view:inventory", Args: []CoreViewArg{argOffset, argCatalogLimit},
+		Name: "catalog.items.v1", Permission: "view:inventory", DataClass: DataClassCatalog, Args: []CoreViewArg{argOffset, argCatalogLimit},
 		Run: func(ctx context.Context, db *sql.DB, args map[string]int) (any, error) {
 			return NewCatalogRepo(db).ListCatalogViewItems(ctx, args["offset"], args["limit"])
 		},
@@ -279,7 +310,7 @@ var coreViews = map[string]CoreView{
 	// photos first, newest first — so a camera-identify plugin spends its
 	// 64 item_image_open calls on items that have one.
 	"catalog.photos.v1": {
-		Name: "catalog.photos.v1", Permission: "view:inventory", Args: []CoreViewArg{argOffset, argCatalogLimit},
+		Name: "catalog.photos.v1", Permission: "view:inventory", DataClass: DataClassCatalog, Args: []CoreViewArg{argOffset, argCatalogLimit},
 		Run: func(ctx context.Context, db *sql.DB, args map[string]int) (any, error) {
 			return NewCatalogRepo(db).ListCatalogPhotoViewRows(ctx, args["offset"], args["limit"])
 		},
@@ -287,7 +318,7 @@ var coreViews = map[string]CoreView{
 	// ADR-0149 §6 (ut-docs#3976): the staff list — id, display name,
 	// active; never a username, PIN or role.
 	"users.list.v1": {
-		Name: "users.list.v1", Permission: "view:users",
+		Name: "users.list.v1", Permission: "view:users", DataClass: DataClassStaff,
 		Run: func(ctx context.Context, db *sql.DB, _ map[string]int) (any, error) {
 			return NewAuthRepo(db).ListUserViewRows(ctx)
 		},
@@ -296,7 +327,7 @@ var coreViews = map[string]CoreView{
 	// with lines, applied payments, tip and currency. The business date
 	// honours reports.business_day_start like sales.by_day.v1.
 	"sales.receipts.v1": {
-		Name: "sales.receipts.v1", Permission: "view:sales", Args: []CoreViewArg{argDaysAgo, argOffset, argReceiptLimit},
+		Name: "sales.receipts.v1", Permission: "view:sales", DataClass: DataClassSales, Args: []CoreViewArg{argDaysAgo, argOffset, argReceiptLimit},
 		Run: func(ctx context.Context, db *sql.DB, args map[string]int) (any, error) {
 			v, _, err := NewSettingsRepo(db).Get(ctx, "reports.business_day_start")
 			if err != nil {
@@ -310,14 +341,14 @@ var coreViews = map[string]CoreView{
 	// ut-docs#4034: the shop facts that make the sales views' minor units
 	// readable (JPY has 0 decimals, not 2), so it shares their class.
 	"shop.context.v1": {
-		Name: "shop.context.v1", Permission: "view:sales", Run: runShopContext("shop.context.v1"),
+		Name: "shop.context.v1", Permission: "view:sales", DataClass: DataClassShop, Run: runShopContext("shop.context.v1"),
 	},
 	// ut-docs#4045 (ADR-0121 §5 amendment): the same row under view:shop, a
 	// non-★ class, so a plugin that only shows prices (catalog.items.v1's
 	// price_minor) learns the decimals without view:sales, which also opens
 	// every receipt. v1 keeps view:sales until no signed plugin lists it.
 	"shop.context.v2": {
-		Name: "shop.context.v2", Permission: "view:shop", Run: runShopContext("shop.context.v2"),
+		Name: "shop.context.v2", Permission: "view:shop", DataClass: DataClassShop, Run: runShopContext("shop.context.v2"),
 	},
 }
 

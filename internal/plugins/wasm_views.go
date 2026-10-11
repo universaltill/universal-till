@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"slices"
 
@@ -30,10 +31,15 @@ const (
 
 // hostViewQuery runs one core read view for the plugin and writes its JSON
 // result (an array) into dst per the buffer ABI. Checks, in order: more
-// than viewCallsPerEvent calls in this event → -5; unknown view → -1; view not in the plugin's manifest views_used, or its
-// view:<class> not granted → -2, audited; arguments not a JSON object of
-// in-bounds integers → -4; query error or deadline → -3; result over
-// viewResultCap → -5 (never truncated).
+// than viewCallsPerEvent calls in this event → -5; unknown view → -1; view
+// not in the plugin's manifest views_used, or its view:<class> not granted
+// → -2, audited; for a plugin whose installed manifest declares ai.agent
+// (ADR-0153 Decision 1), the view's data class not granted as
+// ai.send.<class>, or the view has no class → -2, audited (shop-class views
+// need no ai.send.* grant); arguments not a JSON object of in-bounds
+// integers → -4; query error or deadline → -3; result over viewResultCap →
+// -5 (never truncated). Every grant is checked on every call, so a revoke
+// is live.
 //
 // A guest that undersized dst and calls again re-runs the query: views are
 // read-only, so the retry has no side effect (unlike http_request's cache).
@@ -68,6 +74,9 @@ func hostViewQuery(ctx context.Context, m api.Module, namePtr, nameLen, argsPtr,
 	if err := CheckPermission(ctx, s.db, s.pluginID, view.Permission); err != nil {
 		return hostErrDenied
 	}
+	if !aiDataClassAllowed(ctx, s.db, s.pluginID, s.aiAgent, view) {
+		return hostErrDenied
+	}
 	args, err := view.ParseArgs(argsB)
 	if err != nil {
 		return hostErrInvalid
@@ -83,11 +92,41 @@ func hostViewQuery(ctx context.Context, m api.Module, namePtr, nameLen, argsPtr,
 	return writeGuest(m, dstPtr, dstCap, out)
 }
 
+// aiDataClassAllowed is ADR-0153 Decision 1's second gate. A plugin that
+// does not declare ai.agent is unaffected. For one that does, a view with
+// no data class is refused (fail closed, audited), a shop-class view is
+// allowed, and any other class needs ai.send.<class> — CheckPermission
+// audits a not-declared or not-granted denial.
+func aiDataClassAllowed(ctx context.Context, db *sql.DB, pluginID string, aiAgent bool, view data.CoreView) bool {
+	if !aiAgent {
+		return true
+	}
+	switch view.DataClass {
+	case "":
+		if err := auditPermissionDenial(ctx, db, pluginID, AIAgentPermission, "view "+view.Name+" has no AI data class"); err != nil {
+			logging.L().Warnf("failed to audit view denial: %v", err)
+		}
+		return false
+	case data.DataClassShop:
+		return true
+	}
+	return CheckPermission(ctx, db, pluginID, AISendPermissionPrefix+view.DataClass) == nil
+}
+
 // viewListed reports whether the plugin's installed manifest lists name in
-// views_used. The manifest is read once per event; no readable installed
-// manifest → not listed (fail closed). The view:<class> grant is still
-// checked on every call, so revocation stays live.
+// views_used. No readable installed manifest → not listed (fail closed).
+// The view:<class> and ai.send.<class> grants are still checked on every
+// call, so revocation stays live.
 func viewListed(ctx context.Context, s *hostState, name string) bool {
+	return loadManifestFacts(ctx, s) && slices.Contains(s.viewsUsed, name)
+}
+
+// loadManifestFacts reads the plugin's installed manifest once per event
+// and records its views_used and whether it declares ai.agent. It reports
+// false when no installed manifest is readable; callers fail closed. A
+// manifest swapped mid-event is seen from the next event on: events are
+// short and every grant is re-checked per call.
+func loadManifestFacts(ctx context.Context, s *hostState) bool {
 	s.viewsOnce.Do(func() {
 		m, ok, err := InstalledManifest(ctx, s.db, s.pluginID)
 		if err != nil {
@@ -96,7 +135,8 @@ func viewListed(ctx context.Context, s *hostState, name string) bool {
 		}
 		if ok && m != nil {
 			s.viewsUsed, s.viewsOK = m.ViewsUsed, true
+			s.aiAgent = slices.Contains(m.Permissions, AIAgentPermission)
 		}
 	})
-	return s.viewsOK && slices.Contains(s.viewsUsed, name)
+	return s.viewsOK
 }

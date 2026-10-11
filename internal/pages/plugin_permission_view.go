@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -46,10 +47,23 @@ var permissionDescKeys = map[string]string{
 	// ut-docs#4045: the non-★ shop facts class (shop.context.v2) says it
 	// never reads sales, staff or customers.
 	"view:shop": "plugins.permissions.desc.view_shop",
+	// ADR-0153 (ut-docs#2837): the AI agent permissions. Each ai.send.<class>
+	// says which data the AI model is given; the six classes are
+	// data.AIDataClasses (TestDescribePermission_AIAgentDescKeys pins them).
+	"ai.agent":              "plugins.permissions.desc.ai_agent",
+	"ai.send.sales":         "plugins.permissions.desc.ai_send_sales",
+	"ai.send.catalog":       "plugins.permissions.desc.ai_send_catalog",
+	"ai.send.stock":         "plugins.permissions.desc.ai_send_stock",
+	"ai.send.customers":     "plugins.permissions.desc.ai_send_customers",
+	"ai.send.staff":         "plugins.permissions.desc.ai_send_staff",
+	"ai.send.till_health":   "plugins.permissions.desc.ai_send_till_health",
+	"ai.tool.provide":       "plugins.permissions.desc.ai_tool_provide",
+	"ai.tool.provide.write": "plugins.permissions.desc.ai_tool_provide_write",
 }
 
-// permissionDescKey is the DescKey for name: an exact ADR-0121 §2 name, or
-// the parameterised view:<name> / ui:slot:<slot> / net:validation:<host>
+// permissionDescKey is the DescKey for name: an exact ADR-0121 §2 or
+// ADR-0153 name, or the parameterised view:<name> / ui:slot:<slot> /
+// ai.tools.write:<area> / net:validation:<host>
 // (the raw name, shown next to the description, carries the parameter).
 func permissionDescKey(name string) string {
 	if k, ok := permissionDescKeys[name]; ok {
@@ -60,6 +74,10 @@ func permissionDescKey(name string) string {
 		return "plugins.permissions.desc.view"
 	case strings.HasPrefix(name, "ui:slot:") && len(name) > len("ui:slot:"):
 		return "plugins.permissions.desc.ui_slot"
+	case strings.HasPrefix(name, plugins.AIToolsWritePermissionPrefix) &&
+		slices.Contains(plugins.AIToolsWriteAreas, strings.TrimPrefix(name, plugins.AIToolsWritePermissionPrefix)):
+		// ADR-0153 Decision 3: one line for every area; the raw name shows it.
+		return "plugins.permissions.desc.ai_tools_write"
 	}
 	// net:validation:<host> (ut-docs#3226) allows plain, unencrypted HTTP to
 	// that host — a different risk from the https-only net:<host> it looks
