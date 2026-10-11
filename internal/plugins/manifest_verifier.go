@@ -184,8 +184,12 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 	for _, s := range manifest.Settings {
 		if !isValidSettingType(s.Type) {
 			result.Errors = append(result.Errors, fmt.Sprintf("manifest setting %q has invalid type %q (allowed: %s)",
-				s.Key, s.Type, strings.Join([]string{SettingTypeSecret, SettingTypeEndpoint}, "|")))
+				s.Key, s.Type, allowedSettingTypes()))
 		}
+	}
+	// Settings-form metadata, same as ParseManifest (ut-docs#2832).
+	if err := validateSettingForm(&manifest); err != nil {
+		result.Errors = append(result.Errors, err.Error())
 	}
 	// Endpoint-typed setting defaults, same as ParseManifest (ut-docs#3552):
 	// this path persists DefaultValue via PersistManifest too, so it needs

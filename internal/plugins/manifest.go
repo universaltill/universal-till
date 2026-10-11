@@ -220,6 +220,31 @@ type ManifestSetting struct {
 	// when an operator saves it (ValidEndpointURL). Validated in
 	// ParseManifest; see secret_settings.go.
 	Type string `json:"type,omitempty"`
+	// Settings-form metadata (ut-docs#2832, choice_settings.go): Label and
+	// Help are i18n keys (the plugin's own locales or core's) the settings
+	// page shows instead of the raw key; Options are a `type: "choice"`
+	// setting's allowed values, rendered as a dropdown; ShowWhen shows the
+	// field only while another setting holds one of the listed values. All
+	// omitempty so manifests signed before these fields existed still
+	// verify; ut-cloud's CanonicalSetting mirrors them.
+	Label    string                    `json:"label,omitempty"`
+	Help     string                    `json:"help,omitempty"`
+	Options  []ManifestSettingOption   `json:"options,omitempty"`
+	ShowWhen *ManifestSettingCondition `json:"show_when,omitempty"`
+}
+
+// ManifestSettingOption is one allowed value of a `type: "choice"` setting:
+// Value is what gets stored, Label the i18n key shown for it.
+type ManifestSettingOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+// ManifestSettingCondition shows a setting only while the setting named Key
+// holds one of In.
+type ManifestSettingCondition struct {
+	Key string   `json:"key"`
+	In  []string `json:"in"`
 }
 
 // ManifestHook represents an event subscription
@@ -282,8 +307,13 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 	for _, s := range m.Settings {
 		if !isValidSettingType(s.Type) {
 			return nil, fmt.Errorf("manifest setting %q has invalid type %q (allowed: %s)",
-				s.Key, s.Type, strings.Join([]string{SettingTypeSecret, SettingTypeEndpoint}, "|"))
+				s.Key, s.Type, allowedSettingTypes())
 		}
+	}
+	// Settings-form metadata (ut-docs#2832): choice options, label/help
+	// keys, show_when.
+	if err := validateSettingForm(&m); err != nil {
+		return nil, err
 	}
 	// An "endpoint"-typed setting's default_value, if present and non-empty,
 	// must itself be a valid http(s) URL (ut-docs#3552) — PersistManifest

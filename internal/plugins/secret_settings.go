@@ -33,7 +33,12 @@ const SettingTypeEndpoint = "endpoint"
 
 // isValidSettingType is ParseManifest's enum check for ManifestSetting.Type.
 func isValidSettingType(t string) bool {
-	return t == "" || t == SettingTypeSecret || t == SettingTypeEndpoint
+	return t == "" || t == SettingTypeSecret || t == SettingTypeEndpoint || t == SettingTypeChoice
+}
+
+// allowedSettingTypes names the non-empty setting types for error messages.
+func allowedSettingTypes() string {
+	return strings.Join([]string{SettingTypeSecret, SettingTypeEndpoint, SettingTypeChoice}, "|")
 }
 
 // ValidEndpointURL reports whether v is http(s)://host[:port][/path]: an

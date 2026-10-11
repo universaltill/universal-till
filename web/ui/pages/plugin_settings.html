@@ -9,9 +9,16 @@
   {{ if .Settings }}
   <form hx-post="/api/plugins/{{ .PluginID }}/settings" hx-target="#ps-msg" hx-swap="innerHTML">
     {{ range .Settings }}
+    <div class="ps-field" style="margin-block-end:.75rem"{{ if .ShowKey }} data-show-when-key="{{ .ShowKey }}" data-show-when-in="{{ .ShowIn }}"{{ if .Hidden }} hidden{{ end }}{{ end }}>
     {{ if .Secret }}
     {{ if .Notice }}<p class="muted">{{ T .Notice }}</p>{{ end }}
-    <label>{{ .Key }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }} <input type="password" name="setting_{{ .Key }}" autocomplete="off" value="" placeholder="{{ if .IsSet }}{{ T "plugins.settings.secret_set" }}{{ else }}{{ T "plugins.settings.secret_empty" }}{{ end }}"></label>
+    <label title="{{ .Key }}">{{ .Label }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }}{{ if .IsSet }} <span class="tag" style="display:inline-block; width:max-content; background:rgba(22,163,74,.12); color:var(--success)">{{ T "plugins.settings.secret_saved" }}</span>{{ end }} <input type="password" name="setting_{{ .Key }}" autocomplete="off" value="" placeholder="{{ if .IsSet }}{{ T "plugins.settings.secret_set" }}{{ else }}{{ T "plugins.settings.secret_empty" }}{{ end }}"></label>
+    {{ if .IsSet }}<label style="display:flex; gap:.4rem; align-items:center"><input type="checkbox" name="clear_setting_{{ .Key }}" value="1"> {{ T "plugins.settings.secret_remove" }}</label>{{ end }}
+    {{ if .Help }}<p class="muted">{{ .Help }}</p>{{ end }}
+    {{ else if .Choice }}
+    {{ if .Notice }}<p class="muted">{{ T .Notice }}</p>{{ end }}
+    <label title="{{ .Key }}">{{ .Label }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }} <select name="setting_{{ .Key }}">{{ range .Options }}<option value="{{ .Value }}"{{ if .Selected }} selected{{ end }}{{ if .Unknown }} data-unknown{{ end }}>{{ .Label }}</option>{{ end }}</select></label>
+    {{ if .Help }}<p class="muted">{{ .Help }}</p>{{ end }}
     {{ else if .Typed }}
     <fieldset style="margin-block-end:.75rem">
       <legend>{{ T "plugins.settings.takeaway.title" }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }}</legend>
@@ -40,8 +47,10 @@
     </fieldset>
     {{ else }}
     {{ if .Notice }}<p class="muted">{{ T .Notice }}</p>{{ end }}
-    <label>{{ .Key }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }} <input type="text" name="setting_{{ .Key }}" value="{{ .Value }}"></label>
+    <label title="{{ .Key }}">{{ .Label }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }} <input type="text" name="setting_{{ .Key }}" value="{{ .Value }}"></label>
+    {{ if .Help }}<p class="muted">{{ .Help }}</p>{{ end }}
     {{ end }}
+    </div>
     {{ end }}
     <div style="display:flex; gap:.4rem; align-items:center; margin-top:.5rem">
       <button class="btn primary" type="submit">{{ T "plugins.settings.save" }}</button>
@@ -112,6 +121,31 @@
       }).catch(function (e) { permMsg.textContent = '✗ ' + e; });
     });
   });
+})();
+</script>
+
+<script>
+// ut-docs#2832: show_when — a field shows only while the setting it names
+// holds one of its listed values. The server renders the initial state;
+// this keeps it live as the operator changes a dropdown or types. A hidden
+// field keeps (and still submits) its value.
+(function () {
+  var fields = document.querySelectorAll('[data-show-when-key]');
+  if (!fields.length) return;
+  var form = fields[0].closest('form');
+  function apply() {
+    fields.forEach(function (f) {
+      var ctl = form.elements['setting_' + f.getAttribute('data-show-when-key')];
+      if (!ctl) return;
+      var want = f.getAttribute('data-show-when-in').split(',');
+      // An older free-text value outside the options hides nothing.
+      var opt = ctl.selectedOptions && ctl.selectedOptions[0];
+      if (opt && opt.hasAttribute('data-unknown')) { f.hidden = false; return; }
+      f.hidden = want.indexOf(ctl.value.trim()) < 0;
+    });
+  }
+  form.addEventListener('change', apply);
+  form.addEventListener('input', apply);
 })();
 </script>
 
