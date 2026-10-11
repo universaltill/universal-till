@@ -121,11 +121,12 @@ type Deps struct {
 	// production, where the cutout route resolves it per request from the
 	// AI plugin's image settings or UT_AI_IMAGE_* env.
 	AI *bgremove.Service
-	// AICutoutOffered reports whether this request's photo pickers offer
-	// "Remove background" (ut-docs#3127): pages.aiCutoutOffered, wired by
-	// pages.Init for the catalog subpackage (which cannot import pages).
-	// nil means "never offer" — bare-Deps tests stay valid.
-	AICutoutOffered func(r *http.Request) bool
+	// AICutoutOffered returns the engine this request's photo pickers offer
+	// "Remove background" on — "service" | "builtin", "" for none
+	// (ut-docs#3127, #4137): pages.aiCutoutOffered, wired by pages.Init for
+	// the catalog subpackage (which cannot import pages). nil means "never
+	// offer" — bare-Deps tests stay valid.
+	AICutoutOffered func(r *http.Request) string
 	// WindowCtl is the host-OS hook for the till's own window/process
 	// (ut-docs#608 scaffold) — exiting kiosk/fullscreen to the OS desktop,
 	// and applying a window-mode change. pages.Init wires the real

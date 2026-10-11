@@ -251,7 +251,7 @@
       {{/* ut-docs#3127: one "Remove background" panel for every row's photo
            input (web/ui/partials/photo_cutout.html) — the grid's photo cell
            is too small to hold it, so it opens here, naming the variant. */}}
-      {{ if .AICutout }}{{ template "photo_cutout" (dict "ID" "variant-image-cutout" "Inputs" ".vg-img-upload input[type=file]" "Color" "item-color" "Submit" "1" "Preview" "1") }}{{ end }}
+      {{ if .AICutout }}{{ template "photo_cutout" (dict "Engine" .AICutout "ID" "variant-image-cutout" "Inputs" ".vg-img-upload input[type=file]" "Color" "item-color" "Submit" "1" "Preview" "1") }}{{ end }}
     </div>
   </div>
 

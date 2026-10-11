@@ -3,9 +3,9 @@ package pages
 // ut-docs#3127: the "Remove background" offer in the item, category and
 // variant photo pickers. Each page renders the offer panel (the shared
 // web/ui/partials/photo_cutout.html, driven by web/public/photo-cutout.js)
-// only when background removal is configured AND the viewer may save on
-// that page (catalog_management) — otherwise the page renders exactly as
-// before (docs repo architecture/ai-product-photo.md §6 "Gate").
+// whenever the viewer may save on that page (catalog_management); the
+// engine is the shop's rembg service when configured, else the built-in
+// on-device model (ut-docs#4137, ADR-0154).
 
 import (
 	"net/http"
@@ -26,7 +26,6 @@ const (
 	itemCutoutMarker     = `data-cutout-input="image-file"`
 	categoryCutoutMarker = `data-cutout-input="category-image-file"`
 	variantCutoutMarker  = `data-cutout-inputs=".vg-img-upload input[type=file]"`
-	cutoutScriptMarker   = `class="photo-cutout"`
 )
 
 // newCutoutOfferMux mounts the three pages on seeded Deps, wired the way
@@ -88,42 +87,67 @@ func TestCutoutOffer_ShownWhenConfiguredAndAllowed(t *testing.T) {
 	}
 }
 
-// The variant photo input auto-submits on pick today. With the offer on,
-// the pick must NOT upload before the operator has chosen (the module
-// submits on Use this / Use original photo); with it off, unchanged.
-func TestCutoutOffer_VariantInputWaitsForTheOfferOnlyWhenOn(t *testing.T) {
+// The variant photo input never uploads on pick while the offer is shown:
+// the module submits on Use this / Use original photo. Since ut-docs#4137
+// the offer is there whenever the viewer may edit the catalogue.
+func TestCutoutOffer_VariantInputWaitsForTheOffer(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	mux, dp := newCutoutOfferMux(t)
-	const path = "/api/catalog/item-variants?item_id=cut-itm"
-
-	off := cutoutGetAs(t, mux, path, nil).Body.String()
-	if !strings.Contains(off, `data-change="request-submit"`) {
-		t.Fatalf("AI off: the variant photo input must still upload on pick, got:\n%s", off)
-	}
-
-	dp.AI, _ = fakeRembg(t, http.StatusOK, cutoutPNG(t))
-	on := cutoutGetAs(t, mux, path, nil).Body.String()
+	mux, _ := newCutoutOfferMux(t)
+	on := cutoutGetAs(t, mux, "/api/catalog/item-variants?item_id=cut-itm", nil).Body.String()
 	upload := on[strings.Index(on, `class="vg-img-upload"`):]
 	upload = upload[:strings.Index(upload, "</form>")]
 	if strings.Contains(upload, `data-change="request-submit"`) {
-		t.Fatalf("AI on: the variant photo input must wait for the offer, got:\n%s", upload)
+		t.Fatalf("the variant photo input must wait for the offer, got:\n%s", upload)
 	}
 }
 
-func TestCutoutOffer_AbsentWhenNotConfigured(t *testing.T) {
+// ut-docs#4137 (ADR-0154): with no rembg service configured, every picker
+// still offers Remove background, on the built-in on-device engine; with
+// the service configured, the panel names the service engine instead.
+func TestCutoutOffer_EngineFollowsTheServiceConfig(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	mux, _ := newCutoutOfferMux(t)
-	for _, p := range cutoutOfferPages {
-		t.Run(p.name, func(t *testing.T) {
-			rec := cutoutGetAs(t, mux, p.path, nil)
-			if rec.Code != http.StatusOK {
-				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-			}
-			body := rec.Body.String()
-			if strings.Contains(body, p.marker) || strings.Contains(body, cutoutScriptMarker) {
-				t.Fatalf("AI off: expected no offer panel, got:\n%s", body)
-			}
-		})
+	mux, dp := newCutoutOfferMux(t)
+	for _, tc := range []struct {
+		name, engine string
+		configure    func()
+	}{
+		{"not configured → built-in", `data-cutout-engine="builtin"`, func() {}},
+		{"rembg configured → service", `data-cutout-engine="service"`, func() { dp.AI, _ = fakeRembg(t, http.StatusOK, cutoutPNG(t)) }},
+	} {
+		tc.configure()
+		for _, p := range cutoutOfferPages {
+			t.Run(tc.name+"/"+p.name, func(t *testing.T) {
+				rec := cutoutGetAs(t, mux, p.path, nil)
+				if rec.Code != http.StatusOK {
+					t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+				}
+				body := rec.Body.String()
+				if !strings.Contains(body, p.marker) || !strings.Contains(body, tc.engine) {
+					t.Fatalf("expected the offer (%s) with %s, got:\n%s", p.marker, tc.engine, body)
+				}
+				// Only the built-in panel points at the vendored model, by a
+				// versioned same-origin URL (never a CDN, ADR-0003).
+				const model = `data-cutout-model="/public/vendor/bg-removal/u2netp.onnx?v=`
+				if builtin := strings.Contains(tc.engine, "builtin"); strings.Contains(body, model) != builtin {
+					t.Fatalf("built-in=%v but model URL present=%v", builtin, !builtin)
+				}
+			})
+		}
+	}
+}
+
+// A setting the till can't run (a model off the licence-checked allow-list)
+// turns the rembg path off; the built-in engine takes over and nothing is
+// sent anywhere (ADR-0154 Decision 2).
+func TestCutoutOffer_InvalidServiceSettingFallsBackToBuiltIn(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	t.Setenv("UT_AI_IMAGE_PROVIDER", "self_hosted")
+	t.Setenv("UT_AI_IMAGE_ENDPOINT", "http://127.0.0.1:1")
+	t.Setenv("UT_AI_IMAGE_MODEL", "bria-rmbg")
+	dp, _ := newSeededPagesDeps(t)
+	req := httptest.NewRequest(http.MethodGet, "/catalog", nil)
+	if got := aiCutoutOffered(req, dp); got != cutoutEngineBuiltin {
+		t.Fatalf("aiCutoutOffered = %q, want %q", got, cutoutEngineBuiltin)
 	}
 }
 
@@ -164,11 +188,11 @@ func TestCutoutOffer_CashierNeverSeesIt(t *testing.T) {
 	}
 
 	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/catalog", nil), cashier)
-	if aiCutoutOffered(req, dp) {
-		t.Fatal("aiCutoutOffered: true for a cashier")
+	if got := aiCutoutOffered(req, dp); got != "" {
+		t.Fatalf("aiCutoutOffered: %q for a cashier, want none", got)
 	}
 	req = auth.WithUser(httptest.NewRequest(http.MethodGet, "/catalog", nil), manager)
-	if !aiCutoutOffered(req, dp) {
-		t.Fatal("aiCutoutOffered: false for a manager with the service configured")
+	if got := aiCutoutOffered(req, dp); got != cutoutEngineService {
+		t.Fatalf("aiCutoutOffered: %q for a manager with the service configured, want %q", got, cutoutEngineService)
 	}
 }

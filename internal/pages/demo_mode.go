@@ -223,6 +223,10 @@ var demoDeniedRoutes = map[string]bool{
 	// Background removal (ut-docs#3126): a photo sent to the shop's own
 	// AI server.
 	"POST /api/catalog/image/cutout": true,
+	// Squaring a built-in (in-browser) cut-out (ut-docs#4137): a multipart
+	// photo upload like the ones above; denied with them, so a demo's
+	// Remove background shows the panel's own "isn't available" message.
+	"POST /api/catalog/image/tile": true,
 	// The plugin camera-identify seam (ut-docs#3873): a photo upload
 	// and a plugin job; its poll has no job to find in a demo.
 	"GET /api/pos/identify/plugin":  true,

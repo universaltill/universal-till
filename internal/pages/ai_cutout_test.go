@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 	"mime/multipart"
 	"net/http"
@@ -50,7 +51,7 @@ func emptyCutoutPNG(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-// newCutoutTestDeps mounts the cutout route on seeded Deps with a fresh
+// newCutoutTestDeps mounts the cutout and tile routes on seeded Deps with a fresh
 // data dir.
 func newCutoutTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *sql.DB) {
 	t.Helper()
@@ -60,6 +61,7 @@ func newCutoutTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *sql.DB) {
 	t.Cleanup(func() { paths.Init(origDataDir) })
 	mux := http.NewServeMux()
 	registerAICutout(mux, dp)
+	registerCutoutTile(mux, dp)
 	return mux, dp, db
 }
 
@@ -335,5 +337,113 @@ func TestHexColorMatchesThePalette(t *testing.T) {
 		if _, err := hexColor(bad); err == nil {
 			t.Fatalf("hexColor(%q) accepted a malformed value", bad)
 		}
+	}
+}
+
+// --- POST /api/catalog/image/tile (ut-docs#4137, ADR-0154) ---------------
+// The built-in engine cuts the photo out in the browser; the till only
+// squares it with imaging.SquareTile. No service is involved, so the route
+// works with nothing configured.
+
+func TestTileAPI_SquaresABrowserCutoutWithNoServiceConfigured(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	t.Setenv("UT_AI_IMAGE_ENDPOINT", "")
+	mux, _, _ := newCutoutTestDeps(t)
+	for _, tc := range []struct {
+		name   string
+		fields map[string]string
+		corner color.NRGBA
+	}{
+		{"default tile colour, white when none", nil, color.NRGBA{0xff, 0xff, 0xff, 0xff}},
+		{"palette tile colour", map[string]string{"background": "tile", "tile_color": "#0f766e"}, color.NRGBA{0x0f, 0x76, 0x6e, 0xff}},
+		{"transparent", map[string]string{"background": "transparent"}, color.NRGBA{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec, img := serveCutout(t, mux, multipartPhotoRequest(t, "/api/catalog/image/tile", cutoutPNG(t), tc.fields))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if ct, cc := rec.Header().Get("Content-Type"), rec.Header().Get("Cache-Control"); ct != "image/png" || cc != "no-store" {
+				t.Fatalf("headers: Content-Type=%q Cache-Control=%q", ct, cc)
+			}
+			if b := img.Bounds(); b.Dx() != imaging.TileSize || b.Dy() != imaging.TileSize {
+				t.Fatalf("tile is %dx%d, want %d square", b.Dx(), b.Dy(), imaging.TileSize)
+			}
+			if got := color.NRGBAModel.Convert(img.At(0, 0)).(color.NRGBA); got != tc.corner {
+				t.Fatalf("corner = %#v, want %#v", got, tc.corner)
+			}
+			mid := imaging.TileSize / 2
+			if got := color.NRGBAModel.Convert(img.At(mid, mid)).(color.NRGBA); got.R != 0xff || got.G != 0 || got.A != 0xff {
+				t.Fatalf("centre = %#v, want the red subject centred", got)
+			}
+		})
+	}
+}
+
+func TestTileAPI_RefusesWhatIsNotACutout(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _, _ := newCutoutTestDeps(t)
+	opaque := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	for i := range opaque.Pix {
+		opaque.Pix[i] = 0xff
+	}
+	var opaquePNG, jpg bytes.Buffer
+	if err := png.Encode(&opaquePNG, opaque); err != nil {
+		t.Fatal(err)
+	}
+	if err := jpeg.Encode(&jpg, opaque, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		photo  []byte
+		fields map[string]string
+		want   int
+	}{
+		{"no photo", nil, nil, http.StatusBadRequest},
+		{"not an image", []byte("nope"), nil, http.StatusBadRequest},
+		{"pixel bomb", oversizedPNGBytes(t), nil, http.StatusBadRequest},
+		{"JPEG has no alpha", jpg.Bytes(), nil, http.StatusBadRequest},
+		{"opaque PNG is no cutout", opaquePNG.Bytes(), nil, http.StatusBadRequest},
+		{"tile colour off the palette", cutoutPNG(t), map[string]string{"tile_color": "#ffffff"}, http.StatusBadRequest},
+		{"unknown background", cutoutPNG(t), map[string]string{"background": "scene"}, http.StatusBadRequest},
+		{"nothing kept", emptyCutoutPNG(t), nil, http.StatusUnprocessableEntity},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec, _ := serveCutout(t, mux, multipartPhotoRequest(t, "/api/catalog/image/tile", tc.photo, tc.fields))
+			if rec.Code != tc.want {
+				t.Fatalf("expected %d, got %d: %s", tc.want, rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), `"error"`) {
+				t.Fatalf("expected the API error envelope, got %s", rec.Body.String())
+			}
+		})
+	}
+	big := append(cutoutPNG(t), bytes.Repeat([]byte{0}, maxCutoutUploadBytes)...)
+	if rec, _ := serveCutout(t, mux, multipartPhotoRequest(t, "/api/catalog/image/tile", big, nil)); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversize body: expected 413, got %d", rec.Code)
+	}
+}
+
+func TestTileAPI_CashierIsRefused(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	mux, dp, _ := newCutoutTestDeps(t)
+	dp.AuthSvc = auth.NewService(dp.Db)
+	authRepo := data.NewAuthRepo(dp.Db)
+	cashierID, err := authRepo.CreateUser(t.Context(), "tile-cashier", "Cashier", "cashier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	managerID, err := authRepo.CreateUser(t.Context(), "tile-manager", "Manager", "manager")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := auth.WithUser(multipartPhotoRequest(t, "/api/catalog/image/tile", cutoutPNG(t), nil), auth.User{ID: cashierID, Role: "cashier"})
+	if rec, _ := serveCutout(t, mux, req); rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier: expected 403, got %d", rec.Code)
+	}
+	req = auth.WithUser(multipartPhotoRequest(t, "/api/catalog/image/tile", cutoutPNG(t), nil), auth.User{ID: managerID, Role: "manager"})
+	if rec, _ := serveCutout(t, mux, req); rec.Code != http.StatusOK {
+		t.Fatalf("manager: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

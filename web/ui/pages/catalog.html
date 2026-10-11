@@ -493,9 +493,10 @@
             <input type="file" name="image" id="image-file" accept="image/png,image/jpeg" hidden>
             <div id="image-file-name" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
             {{/* ut-docs#3127: "Remove background", offered under the photo
-                 just taken/chosen (web/ui/partials/photo_cutout.html). Only
-                 when the shop's background-removal service is configured. */}}
-            {{ if .AICutout }}{{ template "photo_cutout" (dict "ID" "image-cutout" "Input" "image-file" "Retake" "image-camera-btn" "Color" "item-color") }}{{ end }}
+                 just taken/chosen (web/ui/partials/photo_cutout.html). For
+                 every catalog_management holder: the shop's rembg service
+                 when configured, else the built-in model (ut-docs#4137). */}}
+            {{ if .AICutout }}{{ template "photo_cutout" (dict "Engine" .AICutout "ID" "image-cutout" "Input" "image-file" "Retake" "image-camera-btn" "Color" "item-color") }}{{ end }}
             <button class="btn" type="submit">{{ T "catalog.upload_image" }}</button>
             <div id="image-msg" class="muted" style="min-height:1.2rem"></div>
           </form>
