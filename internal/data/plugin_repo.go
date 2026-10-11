@@ -2431,6 +2431,10 @@ type ButtonEntryRow struct {
 	TriggerEvent  string
 	SortOrder     int
 	ConfigJSON    string
+	// OpensView (ADR-0149 §6, ut-docs#3699) is the plugin view the button
+	// opens in the sell-screen overlay, unpacked from config_json's
+	// "opens_view" key; "" for an event button.
+	OpensView string
 }
 
 // ListButtonEntries returns active button entries from active plugins.
@@ -2462,6 +2466,15 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 		var row ButtonEntryRow
 		if err := rows.Scan(&row.PluginID, &row.PluginVersion, &row.PluginName, &row.EntryKey, &row.Label, &row.IconPath, &row.ParentPageKey, &row.TargetAction, &row.TriggerEvent, &row.SortOrder, &row.ConfigJSON); err != nil {
 			return nil, pluginObs.wrap("list_button_entries", err)
+		}
+		if row.ConfigJSON != "" {
+			// A malformed blob just means an event button.
+			var cfg struct {
+				OpensView string `json:"opens_view"`
+			}
+			if json.Unmarshal([]byte(row.ConfigJSON), &cfg) == nil {
+				row.OpensView = cfg.OpensView
+			}
 		}
 		res = append(res, row)
 	}

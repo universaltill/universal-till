@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -64,9 +65,8 @@ func registerPluginPages(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("GET /ui/plugin-buttons", func(w http.ResponseWriter, r *http.Request) {
-		buttons, _ := data.NewPluginRepo(d.Db).ListButtonEntries(r.Context())
 		httpx.RenderPartial("ui/partials/plugin_buttons.html", map[string]any{
-			"Buttons": buttons,
+			"Buttons": salePluginButtons(r.Context(), d),
 		})(w, r)
 	})
 
@@ -78,7 +78,9 @@ func registerPluginPages(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		for _, b := range buttons {
-			if b.PluginID != pluginID || b.EntryKey != key {
+			// An overlay button (ut-docs#3699) opens a view; it has no
+			// event to publish.
+			if b.PluginID != pluginID || b.EntryKey != key || b.OpensView != "" {
 				continue
 			}
 			// The button's action is an event: hooks/processes subscribed to it
@@ -110,6 +112,72 @@ func registerPluginPages(mux *http.ServeMux, d *common.Deps) {
 		}
 		http.NotFound(w, r)
 	})
+}
+
+// salePluginButton is one sell-screen plugin button: an event button, or
+// (OverlayRoute set) one that opens its plugin's view in the overlay.
+type salePluginButton struct {
+	data.ButtonEntryRow
+	OverlayRoute string
+}
+
+// salePluginButtons lists the sell screen's plugin buttons. A button with
+// opens_view (ADR-0149 §6, ut-docs#3699) gets the route of its plugin's
+// page entry with that view, under /plugin/, outside every reserved
+// prefix and filling no slot (validateButtonOpensView's install rule,
+// re-checked here), whose plugin holds ui:page. Otherwise it is skipped
+// and logged -- never drawn as an event button instead.
+func salePluginButtons(ctx context.Context, d *common.Deps) []salePluginButton {
+	repo := data.NewPluginRepo(d.Db)
+	buttons, err := repo.ListButtonEntries(ctx)
+	if err != nil {
+		logging.L().Warnf("plugin buttons: %v", err)
+		return nil
+	}
+	var pages []data.PageEntryRow
+	pagesRead := false
+	out := make([]salePluginButton, 0, len(buttons))
+	for _, b := range buttons {
+		if b.OpensView == "" {
+			out = append(out, salePluginButton{ButtonEntryRow: b})
+			continue
+		}
+		if !pagesRead {
+			pagesRead = true
+			if pages, err = repo.ListPageEntries(ctx); err != nil {
+				logging.L().Warnf("plugin buttons: list pages: %v", err)
+			}
+		}
+		route := overlayButtonRoute(pages, b)
+		if route == "" {
+			logging.L().Warnf("plugin button %s/%s skipped: no overlay page serves view %q", b.PluginID, b.EntryKey, b.OpensView)
+			continue
+		}
+		granted, first, err := plugins.CheckPermissionAuditOnce(ctx, d.Db, b.PluginID, pluginViewPermission)
+		if err != nil || !granted {
+			if err != nil || first {
+				logging.L().Warnf("plugin button %s/%s skipped: %s not granted (%v)", b.PluginID, b.EntryKey, pluginViewPermission, err)
+			}
+			continue
+		}
+		out = append(out, salePluginButton{ButtonEntryRow: b, OverlayRoute: route})
+	}
+	return out
+}
+
+// overlayButtonRoute is the route of b's plugin's page entry the overlay
+// opens for b.OpensView, or "".
+func overlayButtonRoute(pages []data.PageEntryRow, b data.ButtonEntryRow) string {
+	for _, p := range pages {
+		if p.PluginID != b.PluginID || p.View != b.OpensView || p.Slot != "" || !strings.HasPrefix(p.Route, "/plugin/") {
+			continue
+		}
+		if _, reserved := plugins.ReservedPageRoutePrefix(p.Route); reserved {
+			continue
+		}
+		return p.Route
+	}
+	return ""
 }
 
 // servePluginEntry answers a matched plugin page entry, from the /plugin/

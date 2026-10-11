@@ -582,6 +582,18 @@ names a slot gets its button only for staff who pass that slot's gate, and
 never for a `setup.wizard.steps` or unknown slot, so the button is never
 shown and then refused (ut-docs#3994).
 
+### A sell-screen button that opens a view (ADR-0149 §6)
+
+A `button` entry with `"opens_view": "<view>"` opens that view, one of
+your own `page` entries with a `/plugin/` route and no `slot`, in the
+till's overlay over the sell screen. The overlay is not modal: the sale
+underneath stays usable. Its actions answer into the overlay. Install
+refuses an `opens_view` that names no such page (ut-docs#3699). Every
+`ui.view.ask` / `ui.action.ask` also carries the signed-in `operator`
+(`user_id`, `role`, sorted core `permissions`), so a view can draw less
+for a role. Details:
+[`plugin-views.md` → The sell-screen overlay](https://github.com/universaltill/ut-docs/blob/main/reference/plugin-views.md#the-sell-screen-overlay).
+
 ### Camera identify: `catalog.identify` (ADR-0121 §7)
 
 A plugin that recognises products from a photo subscribes to

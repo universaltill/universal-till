@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -52,6 +53,12 @@ const (
 	pluginActionAskEvent = "ui.action.ask"
 	pluginViewPermission = "ui:page"
 )
+
+// pluginOverlayTargetID is the container of core's sell-screen plugin
+// overlay (#plugin-overlay, inline in web/ui/layouts/base.html, ADR-0149 §6,
+// ut-docs#3699). A request for a view entry whose HX-Target names it is
+// answered as a fragment into the overlay, like a content slot panel.
+const pluginOverlayTargetID = "plugin-overlay-view"
 
 // pluginOwnLocaleKeys returns the keys of the plugin's own locale bundle.
 // Overridable in tests (which run without a plugins.Manager).
@@ -155,6 +162,18 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 		body.Target = t
 		inSlot = true
 	}
+	// The sell-screen overlay (ADR-0149 §6, ut-docs#3699) is drawn like a
+	// slot panel -- the body alone, its actions and poll targeting the
+	// overlay -- for its opening GET too. Its actions stay on ui:page: the
+	// overlay only ever opens an entry with no slot (overlayButtonRoute).
+	inOverlay := false
+	// The same URL answers differently per HX-Target (a slot panel, the
+	// overlay, the page): never one cache entry for all of them.
+	w.Header().Add("Vary", "HX-Target")
+	if htmx && fragment && entry.Slot == "" && r.Header.Get("HX-Target") == pluginOverlayTargetID {
+		body.Target = pluginOverlayTargetID
+		inOverlay = true
+	}
 	// A panel is drawn under ui:slot:<slot> (contentSlotPanels), so its
 	// actions run under that same grant, not ui:page (ut-docs#3963). No
 	// slot target, or an entry with no slot, stays on ui:page.
@@ -252,10 +271,11 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 		body.Unavailable = true
 	case doc != nil:
 		body.View = doc.Prepare(locale)
-		if !inSlot {
+		if !inSlot && !inOverlay {
 			// A paged table's links (ut-docs#3874): this route with the
-			// query the view was asked with. A slot panel has no GET swap
-			// of its own, so it shows the page indicator alone.
+			// query the view was asked with. A slot panel (or the overlay)
+			// has no GET swap of its own, so it shows the page indicator
+			// alone.
 			body.View.LinkPaging(entry.Route, pluginViewParams(r))
 		}
 	}
@@ -268,7 +288,7 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 	// and the view stays — untouched (htmx) or re-asked and refilled (no JS).
 	actionFailed := failed && r.Method == http.MethodPost
 	alertID := ""
-	if inSlot {
+	if inSlot || inOverlay {
 		alertID = body.Target + "-alert"
 	}
 	alert := pluginViewAlert{ID: alertID}
@@ -300,6 +320,10 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 			body.View.Title = title
 		}
 		docTitle = false
+	} else if inOverlay {
+		// The overlay's head shows the button's label; a document title
+		// is drawn inside the overlay by pluginview_body.
+		docTitle = false
 	} else if docTitle {
 		title = body.View.Title
 		body.View.Title = "" // shown once, as the page heading
@@ -310,7 +334,7 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 		w.Header().Set("Cache-Control", "no-store")
 	}
 
-	if htmx && (r.Method == http.MethodPost || (isPoll && fragment)) {
+	if htmx && (r.Method == http.MethodPost || (isPoll && fragment) || inOverlay) {
 		render := httpx.RenderWith(pluginViewFiles, funcs)
 		if actionFailed {
 			// Swap nothing (the form keeps the operator's input, file and
@@ -431,6 +455,29 @@ func pluginViewContext(ctx context.Context, d *common.Deps, pluginID string) (pl
 	return c, nil
 }
 
+// pluginOperator is a ui.* ask's "operator" (ADR-0149 §6,
+// ut-docs#3699): the signed-in operator's user id, role and the core
+// permission actions that role holds (sorted; [] when none, or when they
+// cannot be read -- fail closed). A plugin may draw less for a role; core
+// still gates its own surfaces (admin.pages, reports.panels) itself.
+// ok is false when nobody is signed in (sign-in off).
+func pluginOperator(ctx context.Context, d *common.Deps) (map[string]any, bool) {
+	u, ok := auth.FromContext(ctx)
+	if !ok || u.ID == "" {
+		return nil, false
+	}
+	perms := []string{}
+	if d.AuthSvc != nil {
+		got, err := d.AuthSvc.Repo().RoleGrants(ctx, u.Role)
+		if err != nil {
+			logging.L().Warnf("plugin ask: read %q grants: %v", u.Role, err)
+		} else {
+			perms = got
+		}
+	}
+	return map[string]any{"user_id": u.ID, "role": u.Role, "permissions": perms}, true
+}
+
 func askPluginView(ctx context.Context, d *common.Deps, entry data.PageEntryRow, locale string, params map[string]string) (*pluginview.Document, error) {
 	raw, vctx, err := askPluginUI(ctx, d, entry, pluginViewAskEvent, map[string]any{
 		"view":   entry.View,
@@ -490,6 +537,12 @@ func askPluginUIAs(ctx context.Context, d *common.Deps, entry data.PageEntryRow,
 	}
 	// A file field is only valid on an entry that declared its size cap.
 	vctx.Uploads = entry.UploadMaxMB > 0
+	// ADR-0149 §6 (ut-docs#3699): every ui.* ask says who is asking. Set
+	// on the caller's map, so a job started from an action answer
+	// (startPluginJob reuses the payload) carries it too.
+	if op, ok := pluginOperator(ctx, d); ok {
+		payload["operator"] = op
+	}
 	actx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	type result struct {

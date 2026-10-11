@@ -886,6 +886,28 @@ func (r *AuthRepo) RoleGrantsTx(ctx context.Context, tx *sql.Tx, role string) ([
 	return queryStringsTx(ctx, tx, `SELECT action FROM role_permissions WHERE role = ? AND granted = 1 ORDER BY action`, role)
 }
 
+// RoleGrants is the core permission actions role holds, sorted, never
+// nil -- the same rows HasPermission answers from (granted, and a known
+// action). The operator of a plugin ui.* ask (ADR-0149 §6, ut-docs#3699).
+func (r *AuthRepo) RoleGrants(ctx context.Context, role string) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT rp.action FROM role_permissions rp
+JOIN permission_actions pa ON pa.action = rp.action
+WHERE rp.role = ? AND rp.granted != 0 ORDER BY rp.action`, role)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // RoleReportRow is one roles row with the actions it is granted
 // (granted = 1), sorted, never nil — one entry of the main till's
 // check-in report (ADR-0128 §5, ut-docs#3323).

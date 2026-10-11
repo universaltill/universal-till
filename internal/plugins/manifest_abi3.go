@@ -216,7 +216,50 @@ func validateABI3Fields(m *Manifest) error {
 			return fmt.Errorf("manifest entry %q slot %q is not a content slot (allowed: %s)", e.Key, e.Slot, strings.Join(contentSlots, "|"))
 		}
 	}
-	return validatePageEntryUploads(m.Entries)
+	if err := validatePageEntryUploads(m.Entries); err != nil {
+		return err
+	}
+	return validateButtonOpensView(m.Entries)
+}
+
+// validateButtonOpensView (ADR-0149 §6, ut-docs#3699): opens_view is
+// button-only, and names the view of one of the same manifest's page
+// entries that the overlay can serve -- a route under /plugin/ outside
+// every reserved prefix (the overlay asks that route, ADR-0121 §7) and
+// no content slot (a slot entry's route is gated by its host screen,
+// ut-docs#3973, which the overlay is not). Static, so ParseManifest,
+// the verifier, PersistManifest and Rollback all run it.
+func validateButtonOpensView(entries []ManifestEntry) error {
+	for _, e := range entries {
+		if e.OpensView == "" {
+			continue
+		}
+		if e.Type != "button" {
+			return fmt.Errorf("manifest entry %q: opens_view is only allowed on a button entry (type %q)", e.Key, e.Type)
+		}
+		if !pluginViewNameRe.MatchString(e.OpensView) {
+			return fmt.Errorf("manifest entry %q opens_view %q must be lower-case letters, digits, '_', '.' or '-'", e.Key, e.OpensView)
+		}
+		if _, ok := overlayPageEntry(entries, e.OpensView); !ok {
+			return fmt.Errorf("manifest entry %q opens_view %q names no page entry of this plugin with that view, a /plugin/ route and no slot", e.Key, e.OpensView)
+		}
+	}
+	return nil
+}
+
+// overlayPageEntry returns the page entry among entries whose view is
+// view and which the overlay can serve (validateButtonOpensView's rule).
+func overlayPageEntry(entries []ManifestEntry, view string) (ManifestEntry, bool) {
+	for _, p := range entries {
+		if p.Type != "page" || p.View != view || p.Slot != "" || !strings.HasPrefix(p.Route, "/plugin/") {
+			continue
+		}
+		if _, reserved := ReservedPageRoutePrefix(p.Route); reserved {
+			continue
+		}
+		return p, true
+	}
+	return ManifestEntry{}, false
 }
 
 // MaxUploadMaxMB bounds a page entry's config.upload_max_mb (ut-docs#3793).

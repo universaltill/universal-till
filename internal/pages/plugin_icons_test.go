@@ -187,9 +187,10 @@ func TestPluginIcons_BlocksPathTraversal(t *testing.T) {
 func TestPluginButtonsTemplate_RendersIconOnlyWhenSet(t *testing.T) {
 	chdirRoot(t)
 
-	buttons := []data.ButtonEntryRow{
-		{PluginID: "com.x.stripe", PluginVersion: "1.0.0", PluginName: "Stripe", EntryKey: "tender", Label: "Card", IconPath: "icons/card.svg"},
-		{PluginID: "com.x.plain", PluginVersion: "2.0.0", PluginName: "Plain", EntryKey: "noop", Label: "No Icon"},
+	// The partial draws salePluginButtons' rows (ut-docs#3699).
+	buttons := []salePluginButton{
+		{ButtonEntryRow: data.ButtonEntryRow{PluginID: "com.x.stripe", PluginVersion: "1.0.0", PluginName: "Stripe", EntryKey: "tender", Label: "Card", IconPath: "icons/card.svg"}},
+		{ButtonEntryRow: data.ButtonEntryRow{PluginID: "com.x.plain", PluginVersion: "2.0.0", PluginName: "Plain", EntryKey: "noop", Label: "No Icon"}},
 	}
 
 	rec := httptest.NewRecorder()

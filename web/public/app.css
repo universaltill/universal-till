@@ -5667,6 +5667,60 @@ body.login-screen {
   .bugreport-panel a[href="/my-reports"] { display: inline-flex; align-items: center; min-block-size: 44px; }
 }
 
+/* ADR-0149 §6 (ut-docs#3699): the plugin view overlay (base.html
+   #plugin-overlay), opened by a sell-screen plugin button. Non-modal and
+   outside #ut-page like .bugreport-panel, and on the same footing: the
+   inline-end top corner, the same band reserved above the tender panel so
+   the pay buttons stay reachable on a 1024x600 / 1280x720 till, its own
+   scroll when the view is taller. Logical properties only (RTL mirrors).
+   No scrim (data-ut-no-scrim): the sale underneath keeps every tap. */
+.plugin-overlay {
+  position: fixed;
+  inset-block-start: 1rem;
+  inset-inline-end: 1rem;
+  inline-size: min(28rem, calc(100vw - 2rem));
+  max-block-size: max(14rem, min(70vh, calc(100vh - 33rem)));
+  display: flex; flex-direction: column;
+  z-index: 90;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: .6rem;
+  box-shadow: 0 8px 28px rgba(0,0,0,.28);
+  text-align: start;
+}
+.plugin-overlay[hidden] { display: none; }
+.plugin-overlay-head { display: flex; align-items: center; gap: .5rem;
+  padding-block: .4rem; padding-inline: .85rem .4rem;
+  border-block-end: 1px solid var(--border, #e2e8f0); }
+.plugin-overlay-head h2 { margin: 0; font-size: 1rem; flex: 1 1 auto; min-inline-size: 0; overflow-wrap: anywhere; }
+.plugin-overlay-close { flex: 0 0 auto; background: none; border: 0; cursor: pointer; font-size: 1.1rem;
+  color: var(--muted, #64748b); border-radius: .4rem;
+  min-block-size: 44px; min-inline-size: 44px;
+  display: inline-flex; align-items: center; justify-content: center; }
+.plugin-overlay-close:hover, .plugin-overlay-close:focus-visible { background: var(--surface-2, #f8fafc); color: inherit; }
+.plugin-overlay-close:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
+.plugin-overlay > .plugin-view-alert:empty { display: none; }
+.plugin-overlay > .plugin-view-alert { padding-inline: .85rem; padding-block-start: .5rem; }
+.plugin-overlay > .plugin-view { flex: 1 1 auto; min-block-size: 0; overflow-y: auto;
+  overscroll-behavior: contain; padding: .85rem; }
+.plugin-overlay .plugin-view .btn { min-block-size: 44px; }
+/* Phone: a bottom sheet over the lower part of the screen, clearing the
+   home indicator and the page's status row (--phone-sb-h, app.js). */
+@media (max-width: 480px) {
+  .plugin-overlay {
+    inset-block: auto 0 !important;
+    inset-inline: 0 !important;
+    inline-size: auto;
+    max-block-size: 75vh;
+    max-block-size: 75dvh;
+    z-index: 59;
+    border-inline: 0; border-block-end: 0;
+    border-radius: .9rem .9rem 0 0;
+    padding-block-end: calc(var(--phone-sb-h, 0px) + env(safe-area-inset-bottom));
+  }
+  .plugin-overlay-head h2 { font-size: 1.1rem; }
+}
+
 /* ADR-0088 / ut-docs#1904: the "Open" link on the Hidden menu tiles page.
    It sits on its own line under the destination name — inline, it read as
    part of the label ("Tables & floor plan Open"), the two-labels-in-one-row
