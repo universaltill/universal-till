@@ -26,3 +26,7 @@ claim left. No findings on this repo's diff.
 `go test ./internal/pages -run 'PluginSettings|Notice|Help'` (the notice renders above api_key); guard-i18n, guard-help-drift, guard-help-topics, guard-compliance-claims, guard-competitor-naming all ok. Visual: none (copy-only change to an existing notice block).
 
 **Verdict:** safe to merge.
+
+## Follow-up: docs-shots
+
+CI's docs-shots guard flagged the changed help topics (en/fa/ar/tr `plugins`). Ran `make docs-shots` on the branch (120 passed). The guard and its self-test are green locally. The run also re-took catalog/categories images that main's surface had moved; the regenerated manifest covers the whole tree.
