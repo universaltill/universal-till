@@ -229,6 +229,22 @@ func TestPluginIdentify_NoSuggestions_3873(t *testing.T) {
 	}
 }
 
+// A plugin that answers only an error notice (the AI plugin naming why its
+// provider failed, ut-docs#4090) is not "no match": the overlay shows the
+// reason alone, never also "No match found".
+func TestPluginIdentify_ErrorNoticeIsNotNoMatch_4090(t *testing.T) {
+	h := newIdentifyHarness(t)
+	h.answer(`{"document":{"version":1,"components":[{"type":"notice","level":"error","text":{"literal":"Your AI provider rejected the API key."}}]}}`)
+	rec := h.pollUntilDone(h.start())
+	body := rec.Body.String()
+	if !strings.Contains(body, "rejected the API key") || !strings.Contains(body, `role="alert"`) {
+		t.Errorf("the error notice is missing:\n%s", body)
+	}
+	if strings.Contains(body, template.HTMLEscapeString(httpx.T("en", "ai.identify.no_match"))) {
+		t.Errorf("an error notice also rendered \"no match\":\n%s", body)
+	}
+}
+
 // apply_fields is the item form's effect: refused at the sell seam, so
 // the job fails and the overlay says so.
 func TestPluginIdentify_RefusedAnswers_3873(t *testing.T) {

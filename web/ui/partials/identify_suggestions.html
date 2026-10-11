@@ -50,7 +50,7 @@
     </button>
     {{- end }}
   </div>
-  {{- else }}
+  {{- else if not .Failed }}
   <div class="plugin-view-notice info" role="status">{{ T "ai.identify.no_match" }}</div>
   {{- end }}
 </div>

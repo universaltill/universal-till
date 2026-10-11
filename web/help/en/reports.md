@@ -52,9 +52,15 @@ anything to the till, only answer questions about it.
 - You're signed in as a till operator rather than a manager — Ask your
   till is manager-only, same as the reports it draws on.
 
-If a question can't be answered (the AI server isn't reachable, or it
-genuinely doesn't know), the panel says so rather than guessing — try again
-in a moment.
+If a question can't be answered, the panel says so rather than guessing,
+and says why when it can tell: that the AI provider rejected your API key
+(check the key on the AI Assistant settings page), that your account with
+the provider has no credit left (add credit with the provider), or that it
+is busy or limiting requests (try again in a minute). With a hosted
+provider (Claude, OpenAI) it also tells you when the till can't reach the
+provider (check the internet connection); with your own AI server, it asks
+you to check that the server is running. **Identify by camera** names the
+same reasons when the provider refuses or can't be reached.
 
 ## Report periods
 
