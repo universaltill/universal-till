@@ -8,7 +8,9 @@ package plugins
 //
 //   - index.json maps plugin id → {version, entry, sha256}; an entry is
 //     attributed by diffing the version dir listing around the compile
-//     (compiles are serial under w.mu).
+//     (serial compiles hold w.mu across it). The parallel first compile
+//     (wasm_compile_warm.go, ut-docs#3921) attributes through per-compile
+//     staging dirs instead and moves entries in under w.mu.
 //   - The end of each Sync prunes entries no installed plugin references, temp
 //     leftovers, and version dirs of other wazero builds — bounded on disk.
 //   - A cache that makes wazero fail (corrupt entry, disk full, read-only)
@@ -120,6 +122,11 @@ func (w *WasmRuntime) ensureCompileCache() {
 func openWasmCompileCache(dir string) (*wasmCompileCache, wazero.CompilationCache, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, nil, err
+	}
+	// Staging dirs of parallel compiles a killed start left behind
+	// (ut-docs#3921); no compile runs before the cache is open.
+	if err := os.RemoveAll(filepath.Join(dir, compileStagingDir)); err != nil {
+		logging.L().Errorf("wasm compile cache: remove staging leftovers: %v", err)
 	}
 	before := wazeroVersionDirs(dir)
 	cc, err := wazero.NewCompilationCacheWithDir(dir)

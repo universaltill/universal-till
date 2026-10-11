@@ -61,15 +61,20 @@ type WasmRuntime struct {
 	cachedRT    wazero.Runtime
 	modRT       map[string]wazero.Runtime
 	lastLoad    map[string]wasmLoadOutcome // plugin id → how its module was last obtained
-	timeout     time.Duration
-	netTimeout  time.Duration   // wider deadline for plugins holding net:*
-	hasNet      map[string]bool // plugin id → granted net:* permission
-	hasTCP      map[string]bool // plugin id → granted tcp:* permission (raw device transport)
-	httpClient  *http.Client    // http_request egress client; nil → defaultPluginHTTPClient
-	db          *sql.DB         // for host functions; set by Sync
-	baseDir     string
-	unsubGen    int           // bumped per sync so stale handlers no-op
-	calls       *wasmCallGate // concurrent-call caps, sale-path slot reserved (ut-docs#3154)
+	// Parallel first compile (ut-docs#3921, wasm_compile_warm.go): warmed
+	// marks plugins whose entry the parallel pass just wrote, until their
+	// load; compileWorkers caps the compiles at once (0 = GOMAXPROCS).
+	warmed         map[string]bool
+	compileWorkers int
+	timeout        time.Duration
+	netTimeout     time.Duration   // wider deadline for plugins holding net:*
+	hasNet         map[string]bool // plugin id → granted net:* permission
+	hasTCP         map[string]bool // plugin id → granted tcp:* permission (raw device transport)
+	httpClient     *http.Client    // http_request egress client; nil → defaultPluginHTTPClient
+	db             *sql.DB         // for host functions; set by Sync
+	baseDir        string
+	unsubGen       int           // bumped per sync so stale handlers no-op
+	calls          *wasmCallGate // concurrent-call caps, sale-path slot reserved (ut-docs#3154)
 	// publishRate is event_publish's per-plugin token bucket (ut-docs#3871).
 	publishRate *publishRateLimiter
 	// bus, when set (tests), receives published events instead of SharedBus.
@@ -234,6 +239,7 @@ func NewWasmRuntime(baseDir string) *WasmRuntime {
 		versions:    map[string]string{},
 		modRT:       map[string]wazero.Runtime{},
 		lastLoad:    map[string]wasmLoadOutcome{},
+		warmed:      map[string]bool{},
 		timeout:     2 * time.Second,
 		netTimeout:  10 * time.Second,
 		hasNet:      map[string]bool{},
@@ -287,6 +293,7 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			delete(w.versions, id)
 			delete(w.modRT, id)
 			delete(w.lastLoad, id)
+			delete(w.warmed, id)
 			if w.cache != nil {
 				w.cache.forget(id)
 			}
@@ -307,6 +314,10 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 		w.hasTCP[id] = pluginHasTCPPermission(ctx, db, id)
 	}
 	w.mu.Unlock()
+
+	// Compile the cache misses concurrently first (ut-docs#3921); the loop
+	// below then reads them back from the cache.
+	w.warmCompileCache(rows)
 
 	bus := SharedBus(db)
 	bus.ResetSubscribers()
@@ -624,12 +635,18 @@ func (w *WasmRuntime) load(pluginID, version, path string) error {
 	if _, ok := w.modules[pluginID]; ok && w.versions[pluginID] == version {
 		return nil
 	}
+	// The parallel pass's mark applies to this load only, whatever happens.
+	warmed := w.warmed[pluginID]
+	delete(w.warmed, pluginID)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read module: %w", err)
 	}
 	start := time.Now()
 	compiled, rt, outcome, err := w.compile(pluginID, version, raw)
+	if outcome == wasmLoadCacheHit && warmed {
+		outcome = wasmLoadCompiledParallel
+	}
 	if err != nil {
 		return fmt.Errorf("compile module: %w", err)
 	}
