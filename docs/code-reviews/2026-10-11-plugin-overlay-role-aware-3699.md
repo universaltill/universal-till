@@ -82,6 +82,12 @@ fresh context, read-only on the working trees.
   readme-links, pipefail, demo-env), Playwright: sale-screen, faq,
   bug-report panel (desktop + phone sheet), popup-scrim, phone-popup-fit,
   sale-rail, nav-rail-lock — 73 passed.
+- Manual screenshots: CI's docs-shots freshness guard flagged the
+  `base.html`/`app.css` change. Nothing new renders without a plugin that
+  declares `opens_view` (the overlay starts `hidden`, confirmed in the
+  driven run; no docs-shots seed has such a plugin), so the surface hash
+  was refreshed (`update-docs-shots-surface-hash.sh`,
+  `Docs-Shots-Unchanged: true`) instead of regenerating the PNGs.
 - No new locale keys (`common.close`, `plugin.view.unavailable` reused).
   No file writes, no new paths. User manual: no shop-owner-visible change
   until a plugin ships an overlay button; nothing to document in
