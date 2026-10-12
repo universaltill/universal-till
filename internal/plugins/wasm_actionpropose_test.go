@@ -91,7 +91,10 @@ func TestActionPropose_Refusals_2838(t *testing.T) {
 			nil, "catalog.item.create.v1", createArgs, hostErrDenied},
 		{"area not granted", []string{"ai.agent", "ai.tools.write:catalog", "ai.tools.write:stock"}, []string{"ai.agent", "ai.tools.write:catalog"},
 			nil, "stock.adjust.v1", `{"changes":[{"item_id":"x","delta":1}]}`, hostErrDenied},
-		{"unknown action", []string{"ai.agent"}, []string{"ai.agent"}, nil, "settings.delete_everything.v1", `{}`, hostErrNotFound},
+		// An unknown name is refused like a missing grant, so a plugin
+		// can't enumerate action names (#4168).
+		{"unknown action", []string{"ai.agent"}, []string{"ai.agent"}, nil, "settings.delete_everything.v1", `{}`, hostErrDenied},
+		{"unknown action even with every grant", []string{"ai.agent", "ai.tools.write:catalog", "ai.tools.write:stock"}, []string{"ai.agent", "ai.tools.write:catalog", "ai.tools.write:stock"}, nil, "catalog.item.delete.v1", `{}`, hostErrDenied},
 		{"over 50", []string{"ai.agent", "ai.tools.write:catalog"}, []string{"ai.agent", "ai.tools.write:catalog"},
 			nil, "catalog.item.create.v1", manyItems(51), hostErrInvalid},
 		{"unknown field", []string{"ai.agent", "ai.tools.write:catalog"}, []string{"ai.agent", "ai.tools.write:catalog"},

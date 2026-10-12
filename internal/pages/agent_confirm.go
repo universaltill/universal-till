@@ -37,6 +37,9 @@ var agentResultTimeout = 5 * time.Second
 // withAgentOperator stamps the signed-in operator of a ui ask on ctx
 // (plugins.WithAskOperator); the WASM runtime hands it to action_propose
 // only for a hop-0 ui.view.ask / ui.action.ask. Never from the payload.
+// With UT_AUTH=off (dev/CI) there is no signed-in user or session, so no
+// operator is stamped and every action_propose returns -2: an e2e test of
+// agent writes must sign in for real (ut-docs#4168).
 func withAgentOperator(ctx context.Context) context.Context {
 	u, ok := auth.FromContext(ctx)
 	session := auth.SessionKey(ctx)
