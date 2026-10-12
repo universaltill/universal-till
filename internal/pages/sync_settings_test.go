@@ -37,6 +37,7 @@ func newSyncSettingsTestDeps(t *testing.T) *syncSettingsMain {
 	dbase := openPagesTestDB(t)
 	t.Cleanup(func() { dbase.Close() })
 	m := &syncSettingsMain{dp: &common.Deps{Db: dbase, Settings: settings.NewStore(dbase)}}
+	t.Cleanup(m.dp.WaitForAsyncWork) // ut-docs#4015: a country change's back-fill; drain before the close above (LIFO)
 	seedSyncOrdersTill(t, m.dp, "Till 2", syncSettingsBearer)
 	pin, err := auth.HashPIN("7391")
 	if err != nil {

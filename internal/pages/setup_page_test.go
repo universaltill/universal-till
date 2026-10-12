@@ -72,6 +72,10 @@ func newFullAuthDeps(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps)
 	// channel directly; tests for the Pi kiosk topology build their own
 	// unmarked channel.
 	d.Shell.MarkExitPath()
+	// ut-docs#4015: the wizard and a settings country change start the
+	// phone_e164 back-fill on AsyncWork; drain it before db.Close above
+	// (cleanups run LIFO) — see async_cleanup_ordering_test.go.
+	t.Cleanup(d.WaitForAsyncWork)
 	mux := http.NewServeMux()
 	registerAuth(mux, d, svc)
 	registerSetup(mux, d, svc)

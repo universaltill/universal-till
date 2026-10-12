@@ -154,6 +154,9 @@ func newRealDBDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		Cfg:      &config.Config{Theme: "default"},
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
 	}
+	// ut-docs#4015: drain the wizard's AsyncWork back-fill before the
+	// dbo.Close cleanup above (LIFO) — this DB keeps real WAL sidecars.
+	t.Cleanup(d.WaitForAsyncWork)
 	mux := http.NewServeMux()
 	registerAuth(mux, d, svc)
 	registerSetup(mux, d, svc)
