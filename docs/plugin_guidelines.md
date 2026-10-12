@@ -611,8 +611,9 @@ event `agent.action.result` (`{proposal, action, status}`, best-effort —
 hook it if you want it). Needs `ai.tools.write:<area>` granted by the
 admin, and the operator's role must hold the manual screen's permission
 (a cashier is refused with `-2`). Outside an operator's ui ask (schedule,
-published event, job) it is `-2`. Limits, codes and argument bounds:
-ut-docs `reference/plugin-host-functions.md`.
+published event, job) it is `-2`, and so is a catalogue action on a till
+that follows a main till (the catalogue is edited there). Limits, codes
+and argument bounds: ut-docs `reference/plugin-host-functions.md`.
 
 ### Camera identify: `catalog.identify` (ADR-0121 §7)
 

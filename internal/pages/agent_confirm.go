@@ -104,6 +104,14 @@ func registerAgentProposals(mux *http.ServeMux, d *common.Deps) {
 	agentaction.SetStockLocationResolver(func(ctx context.Context, db *sql.DB) (string, error) {
 		return posResolveTillStockLocation(ctx, d, db)
 	})
+	agentaction.SetProposeRefusal(func(ctx context.Context, a *agentaction.Action) string {
+		if a.Area == "catalog" && d.SyncPrimaryURL(ctx) != "" {
+			// A till that follows a main till forwards catalogue saves
+			// there; an agent change is never forwarded.
+			return "catalogue is edited on the main till"
+		}
+		return ""
+	})
 	mux.HandleFunc("POST /ui/agent/proposals/{id}/confirm", func(w http.ResponseWriter, r *http.Request) {
 		agentProposalDecide(w, r, d, true)
 	})
@@ -198,12 +206,8 @@ func agentConfirmRefusal(ctx context.Context, d *common.Deps, p *agentaction.Pro
 	if !agentRoleAllows(ctx, d, u, p.Action.RolePermission) {
 		return "role lacks " + p.Action.RolePermission
 	}
-	if p.Action.Area == "catalog" && d.SyncPrimaryURL(ctx) != "" {
-		// A till that follows a main till forwards catalogue saves there;
-		// an agent change is never forwarded.
-		return "catalogue is edited on the main till"
-	}
-	return ""
+	// Re-checked here too: a till may be linked after the proposal.
+	return agentaction.ProposeRefusal(ctx, p.Action)
 }
 
 // agentRoleAllows is the manual screen's role check for an action's role

@@ -204,3 +204,18 @@ func SetStockLocationResolver(fn func(ctx context.Context, db *sql.DB) (string, 
 		stockLocation = fn
 	}
 }
+
+// proposeRefusal is the propose-time gate beyond grants and roles: "" lets a
+// proposal be stored, else the reason it is refused. Core wires the till's
+// rules (e.g. a satellite till never takes catalogue proposals).
+var proposeRefusal = func(context.Context, *Action) string { return "" }
+
+// SetProposeRefusal replaces the propose-time gate.
+func SetProposeRefusal(fn func(ctx context.Context, a *Action) string) {
+	if fn != nil {
+		proposeRefusal = fn
+	}
+}
+
+// ProposeRefusal is "" when a may be proposed (and confirmed), else why not.
+func ProposeRefusal(ctx context.Context, a *Action) string { return proposeRefusal(ctx, a) }

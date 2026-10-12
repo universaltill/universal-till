@@ -189,3 +189,47 @@ func TestAskOperatorFor_OnlyHopZeroUIAsk_2838(t *testing.T) {
 		t.Error("an unstamped context got an operator")
 	}
 }
+
+// A till-level rule (a satellite till takes no catalogue proposals) refuses
+// at propose time: -2, audited with the reason, nothing stored (#4168).
+func TestActionPropose_ProposeRefusalDeniesAtProposeTime_4168(t *testing.T) {
+	const reason = "catalogue is edited on the main till"
+	agentaction.SetProposeRefusal(func(_ context.Context, a *agentaction.Action) string {
+		if a.Area == "catalog" {
+			return reason
+		}
+		return ""
+	})
+	t.Cleanup(func() { agentaction.SetProposeRefusal(func(context.Context, *agentaction.Action) string { return "" }) })
+	d, s := proposeFixture(t, []string{"ai.agent", "ai.tools.write:catalog", "ai.tools.write:stock"}, "ai.agent", "ai.tools.write:catalog", "ai.tools.write:stock")
+
+	before := countDenials(t, d, proposePlugin)
+	out, code := actionPropose(context.Background(), s, "catalog.item.create.v1", []byte(createArgs))
+	if code != hostErrDenied || out != nil {
+		t.Fatalf("code = %d (%s), want %d", code, out, hostErrDenied)
+	}
+	if countDenials(t, d, proposePlugin) != before+1 {
+		t.Error("the refusal left no permission_denied audit row")
+	}
+	var named int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'permission_denied' AND data_json LIKE ?`, "%"+reason+"%").Scan(&named); err != nil || named != 1 {
+		t.Fatalf("denial rows naming the reason = %d (%v), want 1", named, err)
+	}
+	if countAudit(t, d, "agent.action.proposed") != 0 {
+		t.Error("a refused proposal was audited as proposed")
+	}
+	// Nothing stored: the request ceiling would trip after 3 stored ones.
+	for i := range agentaction.MaxOpenPerRequest + 1 {
+		if _, code := actionPropose(context.Background(), s, "catalog.item.create.v1", []byte(createArgs)); code != hostErrDenied {
+			t.Fatalf("attempt %d = %d, want %d (a refusal must not consume quota)", i, code, hostErrDenied)
+		}
+	}
+
+	id, err := data.NewCatalogRepo(d).CreateItem(context.Background(), catalogtypes.ItemInput{Name: "Tea", BasePrice: 100, IsActive: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, code := actionPropose(context.Background(), s, "stock.adjust.v1", []byte(`{"changes":[{"item_id":"`+id+`","delta":5}]}`)); code != 0 {
+		t.Fatalf("stock.adjust.v1 = %d, want 0 (the rule is catalogue-only)", code)
+	}
+}

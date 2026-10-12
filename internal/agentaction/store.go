@@ -49,7 +49,11 @@ type Proposal struct {
 	Expires  time.Time
 	args     any
 	state    any
+	timer    stopper
 }
+
+// stopper is what Store needs of an expiry timer.
+type stopper interface{ Stop() bool }
 
 // Args and State are what Apply needs.
 func (p *Proposal) Args() any  { return p.args }
@@ -63,11 +67,14 @@ type Store struct {
 	open     map[string]*Proposal
 	sessions map[string][]time.Time
 	now      func() time.Time
+	// afterFunc arms an expiry timer (time.AfterFunc; a test fakes it).
+	afterFunc func(d time.Duration, f func()) stopper
 }
 
 // NewStore returns an empty store.
 func NewStore() *Store {
-	return &Store{open: map[string]*Proposal{}, sessions: map[string][]time.Time{}, now: time.Now}
+	return &Store{open: map[string]*Proposal{}, sessions: map[string][]time.Time{}, now: time.Now,
+		afterFunc: func(d time.Duration, f func()) stopper { return time.AfterFunc(d, f) }}
 }
 
 // Proposals is the till's one store.
@@ -89,6 +96,16 @@ func (s *Store) Put(ctx context.Context, db *sql.DB, p *Proposal) (string, error
 	now := s.now()
 	expired := s.sweepLocked(now)
 	id, err := s.putLocked(now, hex.EncodeToString(b[:]), p)
+	if err == nil {
+		// Audit the expiry on time even on an idle till; the sweep
+		// deletes before returning, so a later one can't audit it again.
+		p.timer = s.afterFunc(p.Expires.Sub(now), func() {
+			s.mu.Lock()
+			expired := s.sweepLocked(s.now())
+			s.mu.Unlock()
+			AuditExpired(context.Background(), db, expired)
+		})
+	}
 	s.mu.Unlock()
 	AuditExpired(ctx, db, expired)
 	return id, err
@@ -127,6 +144,9 @@ func (s *Store) sweepLocked(now time.Time) []*Proposal {
 	for id, p := range s.open {
 		if !now.Before(p.Expires) {
 			delete(s.open, id)
+			if p.timer != nil {
+				p.timer.Stop()
+			}
 			out = append(out, p)
 		}
 	}
@@ -165,6 +185,9 @@ func (s *Store) Take(ctx context.Context, db *sql.DB, id, userID, session string
 	p := s.open[id]
 	if p != nil && p.boundTo(userID, session) {
 		delete(s.open, id)
+		if p.timer != nil {
+			p.timer.Stop()
+		}
 	} else {
 		p = nil
 	}
