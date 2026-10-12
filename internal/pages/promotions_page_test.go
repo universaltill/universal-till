@@ -420,6 +420,60 @@ func TestPromotionsPageList_ValueAmountMajorIsCurrencyAware(t *testing.T) {
 	}
 }
 
+// ut-docs#4097 (#4086 precedent): a percent promotion's edit prefill and list
+// column used a bare %.2f, so a comma-decimal till showed "7.50". Both are now
+// localized; the save path already accepts either separator (#2954).
+func TestPromotionsPageList_ValuePercentIsLocaleAware(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	if _, err := d.Db.Exec(`INSERT INTO promotions(code, type, value, is_active) VALUES('PCTLOC', 'percent', 750, 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	get := func(path string) string {
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, path, nil), manager)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d: %s", path, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	de := get("/promotions?lang=de")
+	if !strings.Contains(de, `value="7,50"`) || !strings.Contains(de, "7,50%") {
+		t.Fatalf("lang=de: expected value=\"7,50\" and 7,50%%, got:\n%s", de)
+	}
+	if strings.Contains(de, `value="7.50"`) {
+		t.Fatalf("lang=de: unexpected dot-decimal prefill")
+	}
+	for _, path := range []string{"/promotions?lang=en", "/promotions"} {
+		en := get(path)
+		if !strings.Contains(en, `value="7.50"`) || !strings.Contains(en, "7.50%") {
+			t.Fatalf("%s: expected value=\"7.50\" and 7.50%%, got:\n%s", path, en)
+		}
+	}
+}
+
+// Round-trip: the comma prefill shown to a de user posts back to 750.
+func TestPromotionsPageEdit_PercentCommaPrefillRoundTrips(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	if _, err := d.Db.Exec(`INSERT INTO promotions(code, type, value, is_active) VALUES('PCTRT', 'percent', 750, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(mux, "/api/promotions/PCTRT/edit", url.Values{
+		"type": {"percent"}, "value_percent": {"7,50"}, "description": {"rt"},
+	}, &manager)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/promotions" {
+		t.Fatalf("edit: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var value int64
+	if err := d.Db.QueryRow(`SELECT value FROM promotions WHERE code = 'PCTRT'`).Scan(&value); err != nil || value != 750 {
+		t.Fatalf("stored value=%d err=%v, want 750", value, err)
+	}
+}
+
 func TestPromotionsPageDeactivateReactivate(t *testing.T) {
 	mux, d := newPromotionsTestMux(t)
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}

@@ -52,12 +52,13 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
+		locale := httpx.RequestLocale(r)
 		views := make([]promotionView, 0, len(list))
 		for _, p := range list {
-			views = append(views, newPromotionView(p))
+			views = append(views, newPromotionView(p, locale))
 		}
 		httpx.Render("ui/pages/promotions.html", map[string]any{
-			"title":      httpx.T(httpx.RequestLocale(r), "page.title.promotions"),
+			"title":      httpx.T(locale, "page.title.promotions"),
 			"theme":      d.CurrentState().Theme,
 			"menuItems":  d.MenuSnapshot(),
 			"promotions": views,
@@ -257,21 +258,24 @@ func promoDateOnly(stored string) string {
 // a raw int64, per the promotions table's own established convention).
 type promotionView struct {
 	data.PromotionAdmin
-	ValueDisplay     string // "£5.00" or "10.00%", for the read-only list column
+	ValueDisplay     string // "£5.00" or "10.00%" ("10,00%" on comma locales), for the read-only list column
 	ValueAmountMajor string // prefill for the amount-type edit input; "" if type is percent
 	ValuePercent     string // prefill for the percent-type edit input; "" if type is amount
 	StartsAtDate     string // calendar date only, for the <input type="date"> prefill
 	EndsAtDate       string // ditto; strips endsAtInclusive's end-of-day time
 }
 
-func newPromotionView(p data.PromotionAdmin) promotionView {
+// ut-docs#4097 (#4086 precedent, buildTaxOverrideRows): the percent strings are
+// localized so a comma-locale till shows/prefills "7,50"; the save path
+// already accepts either separator (#2954).
+func newPromotionView(p data.PromotionAdmin, locale string) promotionView {
 	v := promotionView{PromotionAdmin: p}
 	v.StartsAtDate = promoDateOnly(p.StartsAt)
 	v.EndsAtDate = promoDateOnly(p.EndsAt)
 	if p.Type == "percent" {
 		pct := float64(p.Value) / 100
-		v.ValueDisplay = fmt.Sprintf("%.2f%%", pct)
-		v.ValuePercent = fmt.Sprintf("%.2f", pct)
+		v.ValuePercent = httpx.LocalizeMajor(fmt.Sprintf("%.2f", pct), locale)
+		v.ValueDisplay = v.ValuePercent + "%"
 	} else {
 		v.ValueDisplay = money.FromMinor(p.Value).Format()
 		// ut-docs#1290: was hardcoded %.2f against /100, silently wrong on a
