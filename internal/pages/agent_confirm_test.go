@@ -99,9 +99,17 @@ func (h *agentHarness) propose(user, role, session, action, args string) string 
 }
 
 func (h *agentHarness) post(id, verb, user, role, session string) *httptest.ResponseRecorder {
+	return h.postSite(id, verb, user, role, session, "")
+}
+
+// postSite is post with a Sec-Fetch-Site header ("" sends none).
+func (h *agentHarness) postSite(id, verb, user, role, session, site string) *httptest.ResponseRecorder {
 	h.t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/ui/agent/proposals/"+id+"/"+verb, nil)
 	req.Header.Set("HX-Request", "true")
+	if site != "" {
+		req.Header.Set("Sec-Fetch-Site", site)
+	}
 	req = auth.WithUser(req, auth.User{ID: user, Role: role})
 	req = req.WithContext(auth.WithSessionKey(req.Context(), session))
 	rec := httptest.NewRecorder()
@@ -353,5 +361,68 @@ func TestAgentConfirm_UIAskStampsOperator_2838(t *testing.T) {
 	}
 	if got[0].Request == got[1].Request {
 		t.Error("two asks shared a request id")
+	}
+}
+
+// A cross-site post is refused before the proposal is touched, so a forged
+// request can neither apply a change nor burn the operator's proposal
+// (ut-docs#4168).
+func TestAgentConfirm_CrossSiteRefusedAndProposalKept_4168(t *testing.T) {
+	h := newAgentHarness(t)
+	id := h.propose("mgr-1", "manager", "sess", "catalog.item.create.v1", agentCreateArgs)
+	for _, verb := range []string{"confirm", "cancel"} {
+		if rec := h.postSite(id, verb, "mgr-1", "manager", "sess", "cross-site"); rec.Code != http.StatusForbidden {
+			t.Fatalf("cross-site %s = %d, want 403", verb, rec.Code)
+		}
+	}
+	if n := h.count(`SELECT COUNT(*) FROM items WHERE name IN ('Oat milk','Rye bread')`); n != 0 {
+		t.Fatalf("cross-site post created %d items", n)
+	}
+	if rec := h.postSite(id, "confirm", "mgr-1", "manager", "sess", "same-origin"); rec.Code != http.StatusOK {
+		t.Fatalf("same-origin confirm after the refused ones = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Many confirms of one proposal at once: exactly one applies it, the rest
+// get "no longer valid", and the items exist once (ut-docs#4168).
+func TestAgentConfirm_ConcurrentConfirmAppliesOnce_4168(t *testing.T) {
+	h := newAgentHarness(t)
+	id := h.propose("mgr-1", "manager", "sess", "catalog.item.create.v1", agentCreateArgs)
+	const n = 8
+	codes := make([]int, n)
+	bodies := make([]string, n)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			rec := h.post(id, "confirm", "mgr-1", "manager", "sess")
+			codes[i], bodies[i] = rec.Code, rec.Body.String()
+		}()
+	}
+	close(start)
+	wg.Wait()
+	// The losers must be refused by the single-use take ("no longer
+	// valid"), not later by the stale check: only one request may ever hold
+	// the proposal.
+	ok, conflict := 0, 0
+	for i, c := range codes {
+		switch {
+		case c == http.StatusOK:
+			ok++
+		case c == http.StatusConflict && strings.Contains(bodies[i], "no longer valid"):
+			conflict++
+		}
+	}
+	if ok != 1 || conflict != n-1 {
+		t.Fatalf("codes = %v: want one 200 and %d 409s", codes, n-1)
+	}
+	if got := h.count(`SELECT COUNT(*) FROM items WHERE name IN ('Oat milk','Rye bread')`); got != 2 {
+		t.Fatalf("items = %d, want 2 (applied once)", got)
+	}
+	if got := h.count(`SELECT COUNT(*) FROM audit_log WHERE action LIKE 'agent.action.%' AND action != 'agent.action.proposed'`); got != 1 {
+		t.Fatalf("decision audit rows = %d, want 1", got)
 	}
 }

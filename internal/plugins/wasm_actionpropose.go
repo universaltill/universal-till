@@ -87,7 +87,9 @@ func hostActionPropose(ctx context.Context, m api.Module, namePtr, nameLen, args
 
 // actionPropose is the host function's logic. Checks, in order: no ui-ask
 // operator → -2; installed manifest does not declare ai.agent → -2;
-// unknown action → -1; ai.tools.write:<area> not granted → -2; the
+// unknown action → -2, like a missing grant, so a plugin without the
+// grants can't enumerate action names (ut-docs#4168);
+// ai.tools.write:<area> not granted → -2; the
 // operator's role lacks the action's role permission → -2 (every -2 is
 // audited); bad or over-limit arguments → -4; a proposal ceiling → -5.
 func actionPropose(ctx context.Context, s *hostState, name string, args []byte) ([]byte, int32) {
@@ -105,7 +107,7 @@ func actionPropose(ctx context.Context, s *hostState, name string, args []byte) 
 	}
 	a, ok := agentaction.Lookup(name)
 	if !ok {
-		return nil, hostErrNotFound
+		return deny(AIAgentPermission, "action_propose: no such action")
 	}
 	if err := CheckPermission(ctx, s.db, s.pluginID, AIToolsWritePermissionPrefix+a.Area); err != nil {
 		return nil, hostErrDenied
