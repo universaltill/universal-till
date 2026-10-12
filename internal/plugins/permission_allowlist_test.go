@@ -192,3 +192,50 @@ func TestVerifyManifest_RefusesUnknownPermission(t *testing.T) {
 		t.Fatalf("known permissions refused: %v", err)
 	}
 }
+
+// ADR-0153 Decisions 1, 4 and 3 (ut-docs#2837): the AI agent permissions.
+// ai.send.<class> only for the six AI data classes (shop needs no grant);
+// ai.tools.write:<area> only for the closed set of write areas.
+func TestIsKnownPermission_AIAgent(t *testing.T) {
+	cases := []struct {
+		perm string
+		want bool
+	}{
+		{"ai.agent", true},
+		{"ai.tool.provide", true},
+		{"ai.tool.provide.write", true},
+		{"ai.send.sales", true},
+		{"ai.send.catalog", true},
+		{"ai.send.stock", true},
+		{"ai.send.customers", true},
+		{"ai.send.staff", true},
+		{"ai.send.till_health", true},
+		{"ai.tools.write:catalog", true},
+		{"ai.tools.write:stock", true},
+		{"ai.tools.write:settings", true},
+		{"ai.tools.write:plugins", true},
+
+		{"ai.send.shop", false},
+		{"ai.send.foo", false},
+		{"ai.send.", false},
+		{"ai.send", false},
+		{"ai.send.Sales", false},
+		{"ai.send.sales.x", false},
+		{"ai.send.*", false},
+		{"ai.tools.write:fiscal", false},
+		{"ai.tools.write:", false},
+		{"ai.tools.write", false},
+		{"ai.tools.write:*", false},
+		{"ai.tools.write:sales", false},
+		{"ai.agent:x", false},
+		{"ai.agents", false},
+		{"ai.tool.provide.read", false},
+		{"ai.tool", false},
+		{"AI.agent", false},
+	}
+	for _, c := range cases {
+		if got := isKnownPermission(c.perm); got != c.want {
+			t.Errorf("isKnownPermission(%q) = %v, want %v", c.perm, got, c.want)
+		}
+	}
+}

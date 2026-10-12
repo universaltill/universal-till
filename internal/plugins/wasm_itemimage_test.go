@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/paths"
 )
@@ -343,4 +344,29 @@ func TestItemImageHandles_CloseAllReleasesEveryHandle(t *testing.T) {
 	if r.full() {
 		t.Fatal("table still full after closeAll")
 	}
+}
+
+// ADR-0153 Decision 1 (ut-docs#2837): item photos are class catalog, so an
+// ai.agent plugin needs ai.send.catalog for item_image_open too — the same
+// data catalog.photos.v1 is gated on. Revoke is live and audited.
+func TestItemImage_AIAgentNeedsAISendCatalog(t *testing.T) {
+	f := newItemImageFixture(t)
+	const id = "com.test.itemimage.aiagent"
+	f.plugin(id, 0, permViewInventory, AIAgentPermission, "ai.send.catalog")
+	manifest := aiAgentManifest(id, []string{AIAgentPermission, permViewInventory, "ai.send.catalog"})
+	if err := os.WriteFile(filepath.Join(f.root, "plugins", id, "1.0.0", "manifest.json"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	itemFile(t, "itm1/thumb.png", testPNG(t, 8, 8, color.Black))
+
+	if res := runItemImage(f, id, openOp("itm1", "thumb")); res[0].Code < 0 {
+		t.Fatalf("open with ai.send.catalog granted = %d, want a handle", res[0].Code)
+	}
+	if err := data.NewPluginRepo(f.db).SetPermission(context.Background(), id, "ai.send.catalog", false); err != nil {
+		t.Fatal(err)
+	}
+	if res := runItemImage(f, id, openOp("itm1", "thumb")); res[0].Code != hostErrDenied {
+		t.Fatalf("open with ai.send.catalog revoked = %d, want -2", res[0].Code)
+	}
+	assertLastDenialPermission(t, f.db, id, "ai.send.catalog")
 }

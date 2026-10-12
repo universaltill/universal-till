@@ -27,6 +27,7 @@ import (
 
 	"github.com/tetratelabs/wazero/api"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/itemimages"
 	"github.com/universaltill/universal-till/internal/logging"
 )
@@ -121,6 +122,13 @@ func hostItemImageOpen(ctx context.Context, m api.Module, idPtr, idLen, rolePtr,
 		return hostErrQuota
 	}
 	if err := CheckPermission(ctx, s.db, s.pluginID, permViewInventory); err != nil {
+		return hostErrDenied
+	}
+	// ADR-0153 Decision 1 (ut-docs#2837): item photos are class catalog —
+	// an ai.agent plugin needs ai.send.catalog here exactly as for
+	// catalog.photos.v1. No readable manifest → refused (fail closed).
+	if !loadManifestFacts(ctx, s) || !aiDataClassAllowed(ctx, s.db, s.pluginID, s.aiAgent,
+		data.CoreView{Name: "item_image_open", DataClass: data.DataClassCatalog}) {
 		return hostErrDenied
 	}
 	if idLen == 0 || idLen > itemimages.MaxIDLen || roleLen > itemImageRoleMax {

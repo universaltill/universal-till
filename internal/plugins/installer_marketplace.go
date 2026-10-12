@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -328,6 +329,20 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 	// prior order left an orphan plugin_catalog row on a rejected install,
 	// since EnsureCatalogEntry's ON CONFLICT DO NOTHING is a no-op once
 	// upsertCatalogEntry had already written the row).
+	// The permission names declared before this install (an update), read
+	// before PersistManifest adds the new ones: installGrantsPermission
+	// grants an ai.send.* only on its first declaration (ADR-0153
+	// Decision 5). Unreadable → treat everything as already declared, so
+	// no ai.send.* is granted (fail closed).
+	previousPerms, prevErr := ListPluginPermissions(ctx, i.db, manifest.ID)
+	if prevErr != nil {
+		logging.L().Warnf("[MarketplaceInstaller] read existing permissions of %s: %v", manifest.ID, prevErr)
+	}
+	previouslyDeclared := make(map[string]bool, len(previousPerms))
+	for _, p := range previousPerms {
+		previouslyDeclared[p.Name] = true
+	}
+
 	if err := PersistManifest(ctx, i.db, manifest, InstallOptions{
 		InstalledFromURL: spec.SourceURL,
 		SHA256:           spec.Checksum,
@@ -347,8 +362,12 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 	// the permission set) passed marketplace review, so grant the declared
 	// permissions. Menu entries and capabilities gate on granted permissions;
 	// without this, installed pages never surface in the menu. Manual imports
-	// stay ungranted for the operator to approve.
+	// stay ungranted for the operator to approve. The AI permissions follow
+	// installGrantsPermission (ADR-0153 Decision 5).
 	for _, perm := range manifest.Permissions {
+		if !installGrantsPermission(manifest, perm, prevErr != nil || previouslyDeclared[perm]) {
+			continue
+		}
 		if err := GrantPermission(ctx, i.db, manifest.ID, perm); err != nil {
 			logging.L().Warnf("[MarketplaceInstaller] grant declared permission %s to %s: %v", perm, manifest.ID, err)
 		}
@@ -457,4 +476,27 @@ func minPOSVersion(manifest *Manifest) string {
 		return manifest.MinPOSVersion
 	}
 	return "2.5.0"
+}
+
+// installGrantsPermission is ADR-0153 Decision 5's install-grant rule
+// (amends ADR-0006) for a marketplace install or update. Never granted on
+// install: ai.tools.write:*, ai.tool.provide, ai.tool.provide.write, and
+// ai.send.* on a plugin that does not declare ai.agent (a tool plugin) —
+// the admin grants those on the plugin's settings page. ai.send.* on an
+// ai.agent plugin is granted only on its first declaration, so an admin's
+// unticked checkbox survives updates. "First declaration" is per
+// permission row: a version that drops an ai.send.* prunes its row, and a
+// later version that declares it again counts as a first declaration
+// (accepted: the re-declaring manifest passed marketplace review again).
+// Every other permission is granted as before (re-granted on every update:
+// ut-docs#4145).
+func installGrantsPermission(m *Manifest, perm string, previouslyDeclared bool) bool {
+	switch {
+	case perm == AIToolProvidePermission, perm == AIToolProvideWritePermission,
+		strings.HasPrefix(perm, AIToolsWritePermissionPrefix):
+		return false
+	case strings.HasPrefix(perm, AISendPermissionPrefix):
+		return slices.Contains(m.Permissions, AIAgentPermission) && !previouslyDeclared
+	}
+	return true
 }

@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"net/netip"
 	"regexp"
+	"slices"
 	"strings"
+
+	"github.com/universaltill/universal-till/internal/data"
 )
 
 // Manifest permission allow-list (ut-docs#3328, ADR-0121 §2). Until this,
@@ -38,6 +41,15 @@ var exactPermissions = map[string]bool{
 	// wasm_device_info.go device_id_get / device_local_ips_get /
 	// device_timezone_get. Bare: no wildcard or parameter form.
 	"device-info": true,
+
+	// ADR-0153 (ut-docs#2837): ★ ai.agent — the plugin sends till data to
+	// an AI model, so every view_query also needs ai.send.<data class>
+	// (wasm_views.go). ai.tool.provide / ai.tool.provide.write: the plugin
+	// offers the assistant read / write tools (Decision 4). All three are
+	// bare names.
+	"ai.agent":              true,
+	"ai.tool.provide":       true,
+	"ai.tool.provide.write": true,
 
 	// Grandfathered: dotted names published plugin repos declare
 	// (ut-plugin-language-* ui.locale, ut-plugin-theme*/themes ui.theme,
@@ -73,6 +85,25 @@ var (
 	// scheme, path or port. An IP literal is accepted by netip instead.
 	grantHostnameRe = regexp.MustCompile(`^[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?(\.[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?)*$`)
 )
+
+// AI agent permission shapes (ADR-0153, ut-docs#2837).
+const (
+	// AIAgentPermission marks a plugin that sends till data to an AI model.
+	AIAgentPermission = "ai.agent"
+	// AISendPermissionPrefix + a data.AIDataClasses entry: "may be given to
+	// the AI model". data.DataClassShop has no grant, so ai.send.shop is not
+	// a permission.
+	AISendPermissionPrefix = "ai.send."
+	// AIToolsWritePermissionPrefix + an AIToolsWriteAreas entry: the agent
+	// may propose changes in that area, each confirmed by the operator.
+	AIToolsWritePermissionPrefix = "ai.tools.write:"
+	AIToolProvidePermission      = "ai.tool.provide"
+	AIToolProvideWritePermission = "ai.tool.provide.write"
+)
+
+// AIToolsWriteAreas is the closed set of ai.tools.write:<area> areas
+// (ADR-0153 Decision 3). Fiscal records are never an AI write area.
+var AIToolsWriteAreas = []string{"catalog", "stock", "settings", "plugins"}
 
 // validGrantHost reports whether h can be the host of an exact net:/tcp:
 // grant: an IP literal (bracketed IPv6 included) or a DNS name. net:* and
@@ -118,6 +149,10 @@ func isKnownPermission(perm string) bool {
 		return ok && validGrantHost(host) && port > 0 && port <= 65535
 	case strings.HasPrefix(perm, "view:"):
 		return viewPermissionRe.MatchString(perm)
+	case strings.HasPrefix(perm, AISendPermissionPrefix):
+		return slices.Contains(data.AIDataClasses, strings.TrimPrefix(perm, AISendPermissionPrefix))
+	case strings.HasPrefix(perm, AIToolsWritePermissionPrefix):
+		return slices.Contains(AIToolsWriteAreas, strings.TrimPrefix(perm, AIToolsWritePermissionPrefix))
 	case strings.HasPrefix(perm, "ui:slot:"):
 		// ui:slot:<slot> (ADR-0121 §7): the slot is one of the core content
 		// slots, the same closed set an entry's `slot` field is checked

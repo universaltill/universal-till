@@ -63,6 +63,42 @@ func TestDescribePermission_ADR0121DescKeys(t *testing.T) {
 	}
 }
 
+// ADR-0153 (ut-docs#2837): the AI agent permissions carry consent lines —
+// one per ai.send.<class>, and one ai.tools.write line for every area (the
+// raw name next to it shows the area). A malformed AI name never earns one.
+func TestDescribePermission_AIAgentDescKeys(t *testing.T) {
+	want := map[string]string{
+		"ai.agent":                "plugins.permissions.desc.ai_agent",
+		"ai.send.sales":           "plugins.permissions.desc.ai_send_sales",
+		"ai.send.catalog":         "plugins.permissions.desc.ai_send_catalog",
+		"ai.send.stock":           "plugins.permissions.desc.ai_send_stock",
+		"ai.send.customers":       "plugins.permissions.desc.ai_send_customers",
+		"ai.send.staff":           "plugins.permissions.desc.ai_send_staff",
+		"ai.send.till_health":     "plugins.permissions.desc.ai_send_till_health",
+		"ai.tools.write:catalog":  "plugins.permissions.desc.ai_tools_write",
+		"ai.tools.write:stock":    "plugins.permissions.desc.ai_tools_write",
+		"ai.tools.write:settings": "plugins.permissions.desc.ai_tools_write",
+		"ai.tools.write:plugins":  "plugins.permissions.desc.ai_tools_write",
+		"ai.tool.provide":         "plugins.permissions.desc.ai_tool_provide",
+		"ai.tool.provide.write":   "plugins.permissions.desc.ai_tool_provide_write",
+	}
+	for perm, key := range want {
+		if b := describePermission(perm); b.DescKey != key {
+			t.Errorf("describePermission(%q).DescKey = %q, want %q", perm, b.DescKey, key)
+		}
+		for _, loc := range []string{"en", "ar", "fa", "tr"} {
+			if got := httpx.T(loc, key); got == key || strings.TrimSpace(got) == "" {
+				t.Errorf("%s: missing translation for %q", loc, key)
+			}
+		}
+	}
+	for _, perm := range []string{"ai.send.shop", "ai.send.foo", "ai.send.", "ai.tools.write:", "ai.tools.write:fiscal", "ai.configure", "ai.agent:x"} {
+		if b := describePermission(perm); b.DescKey != "" {
+			t.Errorf("describePermission(%q).DescKey = %q, want empty", perm, b.DescKey)
+		}
+	}
+}
+
 // The description is VISIBLE text, never only a title= tooltip (touchscreen
 // till: nothing depends on hover). Old permissions keep their badge+tooltip.
 func TestPluginStoreRendersADR0121PermissionDescriptionsAsVisibleText(t *testing.T) {

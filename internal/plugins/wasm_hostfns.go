@@ -83,6 +83,9 @@ type hostState struct {
 	viewsOnce sync.Once
 	viewsUsed []string
 	viewsOK   bool
+	// aiAgent: the installed manifest declares ai.agent (ADR-0153), so each
+	// view_query also needs ai.send.<data class>. Set with viewsUsed.
+	aiAgent bool
 
 	// blobs are this event's blob:own handles (wasm_blob.go) — per event;
 	// handleEvent closes them all, discarding uncommitted puts.
