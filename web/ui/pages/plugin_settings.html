@@ -20,7 +20,7 @@
     <label title="{{ .Key }}">{{ .Label }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }} <select name="setting_{{ .Key }}">{{ range .Options }}<option value="{{ .Value }}"{{ if .Selected }} selected{{ end }}{{ if .Unknown }} data-unknown{{ end }}>{{ .Label }}</option>{{ end }}</select></label>
     {{ if .Help }}<p class="muted">{{ .Help }}</p>{{ end }}
     {{ else if .Typed }}
-    <fieldset style="margin-block-end:.75rem">
+    <fieldset class="ps-takeaway-fieldset" style="margin-block-end:.75rem">
       <legend>{{ T "plugins.settings.takeaway.title" }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }}</legend>
       <p class="muted">{{ T "plugins.settings.takeaway.help" }}</p>
       <input type="hidden" name="setting_takeaway_typed" value="1">
