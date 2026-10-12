@@ -86,7 +86,7 @@ test.describe('Cashier is sale-only (ut-docs#3079)', () => {
     }
 
     // Direct URLs: 403, the localized refusal, the rail still there.
-    for (const path of ['/settings', '/reports', '/inventory', '/plugins', '/plugins/store', '/designer']) {
+    for (const path of ['/settings', '/reports', '/inventory', '/plugins', '/plugins/store', '/plugins/store/any-listing', '/designer']) {
       const resp = await page.goto(path);
       expect(resp?.status(), `cashier GET ${path}`).toBe(403);
       await expect(page.locator('body')).toContainText('Manager or admin required');

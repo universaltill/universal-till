@@ -1,0 +1,131 @@
+{{ define "content" }}
+{{ template "store_styles" }}
+<style>
+  .store-detail-head { display:flex; gap:1rem; align-items:flex-start; flex-wrap:wrap; }
+  .store-detail-title { flex:1 1 14rem; min-width:0; }
+  .store-detail-title h1 { margin:0 0 .25rem; overflow-wrap:anywhere; }
+  .store-detail-meta { display:flex; flex-wrap:wrap; gap:.3rem .5rem; align-items:center; margin:.35rem 0 0; }
+  .store-detail-desc { white-space:pre-line; overflow-wrap:anywhere; margin:0; }
+  .store-detail-actions { display:flex; gap:.5rem; flex-wrap:wrap; }
+  .store-detail-actions .btn { min-height:44px; }
+  .store-back-arrow { display:inline-block; }
+  html[dir="rtl"] .store-back-arrow { transform:scaleX(-1); }
+</style>
+
+<div class="page-head">
+  <a class="btn secondary" href="/plugins/store"><span class="store-back-arrow" aria-hidden="true">←</span> {{ T "plugins.store.title" }}</a>
+</div>
+
+{{ with .Item }}
+{{/* Catalog text (name, publisher, description) carries dir="auto": it may
+     be in another script than the UI (a Latin name on a Persian till), and
+     keeps its own word order and alignment, like any user-written text. */}}
+{{/* data-tier/data-vendor carry the unverified-publisher consent (ADR-0006
+     trust surface) to the action script below. */}}
+<div class="card store-detail" data-listing-id="{{ .ListingID }}" data-tier="{{ .Tier }}" data-vendor="{{ .Vendor }}">
+  <div class="store-detail-head">
+    {{ template "store_logo" (dict "Item" . "Large" true) }}
+    <div class="store-detail-title">
+      <h1 dir="auto">{{ .Name }}</h1>
+      {{ if .Vendor }}<div class="muted" dir="auto">{{ .Vendor }}</div>{{ end }}
+      <div class="store-detail-meta">
+        {{ template "store_badges" . }}
+        <span class="tag">v{{ .Version }}</span>
+        {{ if .Type }}<span class="tag">{{ T (printf "plugins.type.%s" .Type) }}</span>{{ end }}
+        {{ template "store_state" . }}
+      </div>
+    </div>
+  </div>
+
+  {{ if .Description }}<p class="store-detail-desc" dir="auto" style="margin-block-start:1rem">{{ .Description }}</p>{{ end }}
+
+  {{ if .Permissions }}
+  <div style="display:flex; gap:.3rem; flex-wrap:wrap; align-items:center; margin-block:1rem .4rem">
+    <span class="muted" style="font-size:.85rem">{{ T "plugins.store.permissions_label" }}</span>
+    {{ range .PermissionBadges }}
+    {{ if .SettingKeys }}
+    <span class="tag perm-badge" title="{{ T "plugins.permissions.setting_bound_hint" }} ({{ .Name }})">{{ T "plugins.permissions.setting_bound" }} {{ .SettingKeys }}</span>
+    {{ else if .DescKey }}
+    <span class="tag perm-badge">{{ .Name }}</span>
+    {{ else }}
+    <span class="tag perm-badge" title="{{ T "plugins.store.permission_hint" }}">{{ .Name }}</span>
+    {{ end }}
+    {{ end }}
+  </div>
+  {{ with .PermissionDescriptions }}
+  {{/* ADR-0121 §2 permissions: described in visible text, never a hover-only tooltip (touchscreen till). */}}
+  <ul class="muted perm-desc" style="margin-block:0 .6rem; padding-inline-start:1.1rem; font-size:.85rem; line-height:1.45">
+    {{ range . }}
+    <li class="perm-desc-item"><code dir="ltr">{{ .Name }}</code> — <span>{{ T .DescKey }}</span></li>
+    {{ end }}
+  </ul>
+  {{ end }}
+  {{ end }}
+
+  <div id="store-msg" class="muted" style="min-height:1.4rem; margin-block:1rem .5rem" aria-live="polite"></div>
+  <div class="store-detail-actions">
+    {{ if .Installed }}
+    <a class="btn secondary" href="/plugins">{{ T "plugins.store.manage_link" }}</a>
+    {{ else if .Downloaded }}
+    <button class="btn" data-store-action="install" data-listing-id="{{ .ListingID }}">{{ T "plugins.store.action.install" }}</button>
+    <button class="btn secondary" data-store-action="delete-download" data-listing-id="{{ .ListingID }}">{{ T "plugins.store.action.delete" }}</button>
+    {{ else }}
+    <button class="btn" data-store-action="download" data-listing-id="{{ .ListingID }}">{{ T "plugins.store.action.download" }}</button>
+    {{ end }}
+  </div>
+  {{ if not .Installed }}
+  <p class="muted" style="font-size:.85rem; margin:.6rem 0 0">🔒 {{ T "plugins.store.manager_approval_notice" }}</p>
+  {{ end }}
+</div>
+{{ end }}
+
+{{ template "store_logo_js" }}
+<script>
+window.utTrustPrompt = {{ T "plugins.trust.confirm" }};
+</script>
+<script>
+(function () {
+  var msg = document.getElementById('store-msg');
+  // API errors that arrive as i18n message KEYS map to localized text here —
+  // the template-populated-lookup pattern CLAUDE.md mandates for inline
+  // scripts. ut-docs#460: on a till that follows a primary, store
+  // download/install are rejected with this key.
+  var T = {
+    'plugins.install.error.replica_use_primary': '{{ T "plugins.install.error.replica_use_primary" }}',
+    'plugins.install.error.not_entitled': '{{ T "plugins.install.error.not_entitled" }}',
+    'plugins.install.error.not_found': '{{ T "plugins.install.error.not_found" }}',
+    'plugins.install.error.registered_required': '{{ T "plugins.install.error.registered_required" }}'
+  };
+  document.addEventListener('click', function (ev) {
+    var btn = ev.target.closest('[data-store-action]');
+    if (!btn) return;
+    var action = btn.getAttribute('data-store-action');
+    var listing = btn.getAttribute('data-listing-id');
+    var card = btn.closest('.store-detail');
+    // Unverified publisher: the operator must explicitly consent before the
+    // plugin lands on the till (trust chain surface, ADR-0006).
+    if ((action === 'download' || action === 'install') && card &&
+        card.getAttribute('data-tier') === 'unverified') {
+      var vendor = card.getAttribute('data-vendor') || '?';
+      var q = (window.utTrustPrompt || 'Do you trust this publisher: %s?').replace('%s', vendor);
+      if (!window.confirm(q)) return;
+    }
+    card.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+    msg.textContent = '⏳ ' + action + '…';
+
+    fetch('/api/plugins/store/' + action, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ listing_id: listing }).toString()
+    }).then(function (res) { return res.json().catch(function () { return {}; }).then(function (j) {
+      if (res.ok) { UT.reload('plugin-store:' + action); return; }
+      msg.textContent = '✗ ' + (T[j.error] || j.error || ('HTTP ' + res.status));
+      card.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
+    }); }).catch(function (e) {
+      msg.textContent = '✗ ' + e;
+      card.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
+    });
+  });
+})();
+</script>
+{{ end }}

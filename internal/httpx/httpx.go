@@ -1482,6 +1482,9 @@ var renderFiles = []string{
 	// panel by its "photo_cutout" define name (catalog.html and the
 	// variants panel list it in their own RenderWith file sets).
 	"ui/partials/photo_cutout.html",
+	// ut-docs#4180: the store grid and a listing's own page share the
+	// logo/lettermark, badges and state chip by their define names.
+	"ui/partials/plugin_store_bits.html",
 }
 
 // ut-docs#2020: web/ui/partials/record_dialog_msg.html is deliberately NOT

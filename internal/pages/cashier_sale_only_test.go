@@ -39,6 +39,8 @@ var saleOnlyRoutes = []saleOnlyRoute{
 	// No marketplace catalog is wired in this rig, so a manager gets the
 	// handler's own 503 — i.e. past the gate.
 	{http.MethodGet, "/plugins/store", "", []int{http.StatusOK, http.StatusServiceUnavailable}},
+	// ut-docs#4180: a listing's own page, same gate as the store.
+	{http.MethodGet, "/plugins/store/some-listing", "", []int{http.StatusOK, http.StatusServiceUnavailable, http.StatusNotFound}},
 	{http.MethodPost, "/api/inventory/receipt", "", []int{http.StatusBadRequest}},
 	// Review of this card: the same data/writes, left ungated.
 	{http.MethodGet, "/api/inventory/low-stock", "", []int{http.StatusOK}},

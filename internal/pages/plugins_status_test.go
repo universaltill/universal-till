@@ -92,21 +92,40 @@ func TestStorePageShowsLifecycleStatusAndInstalledSplit(t *testing.T) {
 	body := rec.Body.String()
 
 	for _, want := range []string{
-		// Installed listing: no store actions, points at the manager page.
 		"Active Plugin",
-		`data-testid="plugin-install-failed"`, // failure chip
-		// Failed listing stays actionable: Download retry affordance present.
-		`data-store-action="download" data-listing-id="listing-failed"`,
-		// Fresh listing is downloadable.
-		`data-store-action="download" data-listing-id="listing-fresh"`,
+		`data-testid="plugin-install-failed"`, // failure chip on the tile
+		`href="/plugins/store/listing-failed"`,
+		`href="/plugins/store/listing-fresh"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected store page to contain %q", want)
 		}
 	}
-	// The installed card must NOT offer download/install.
-	if strings.Contains(body, `data-store-action="download" data-listing-id="listing-active"`) ||
-		strings.Contains(body, `data-store-action="install" data-listing-id="listing-active"`) {
+	if !strings.Contains(body, httpx.T("en", "plugins.store.state.installed")) {
+		t.Fatal("installed tile must say so")
+	}
+
+	// ut-docs#4180: the actions live on each listing's own page.
+	detail := func(id string) string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/plugins/store/"+id, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /plugins/store/%s = %d", id, rec.Code)
+		}
+		return rec.Body.String()
+	}
+	// Failed listing stays actionable: Download retry affordance + the chip.
+	if b := detail("listing-failed"); !strings.Contains(b, `data-store-action="download" data-listing-id="listing-failed"`) ||
+		!strings.Contains(b, `data-testid="plugin-install-failed"`) {
+		t.Fatal("failed listing page must show the failure and offer Download again")
+	}
+	// Fresh listing is downloadable.
+	if b := detail("listing-fresh"); !strings.Contains(b, `data-store-action="download" data-listing-id="listing-fresh"`) {
+		t.Fatal("fresh listing page must offer Download")
+	}
+	// The installed listing must NOT offer download/install — only Manage.
+	if b := detail("listing-active"); strings.Contains(b, `data-store-action="`) || !strings.Contains(b, `href="/plugins"`) {
 		t.Fatal("installed listing must not offer store actions")
 	}
 }

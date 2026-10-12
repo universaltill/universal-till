@@ -180,6 +180,7 @@ var demoDeniedRoutes = map[string]bool{
 	"GET /api/plugins/{id}/export":                    true,
 	"GET /api/plugins/{id}/versions":                  true,
 	"GET /plugins/{id}/settings":                      true,
+	"GET /plugins/{section}/{listing_id}":             true, // the store's listing pages (ut-docs#4180)
 	"POST /api/plugins/entries/{plugin}/{key}/action": true,
 	"POST /api/plugins/import-from-file":              true,
 	"POST /api/plugins/install-from-marketplace":      true,

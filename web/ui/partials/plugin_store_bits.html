@@ -1,0 +1,72 @@
+{{/* ut-docs#4180: markup shared by the store grid (plugins_store.html) and a
+     listing's own page (plugins_store_detail.html) — the logo/lettermark,
+     the trust + paid badges and the lifecycle state chip — so a tile and
+     its page can't drift apart. Each define takes a storeItem. */}}
+
+{{ define "store_styles" }}
+<style>
+  .store-logo { position:relative; flex:none; display:inline-grid; place-items:center;
+    width:56px; height:56px; border-radius:14px; overflow:hidden; }
+  .store-logo.lg { width:72px; height:72px; border-radius:18px; }
+  .store-logo img { width:100%; height:100%; object-fit:contain; display:block; }
+  .store-logo img[hidden], .store-lettermark[hidden] { display:none; }
+  .store-lettermark { width:100%; height:100%; display:grid; place-items:center;
+    background:var(--surface-2); color:var(--accent); border:1px solid var(--border);
+    border-radius:inherit; font-weight:800; font-size:1.6rem; line-height:1; }
+  .store-logo.lg .store-lettermark { font-size:2rem; }
+  .store-badges { display:flex; flex-wrap:wrap; gap:.3rem; align-items:center; }
+  .store-state-downloaded { background:var(--surface-2); color:var(--accent); border-color:var(--accent); }
+  .store-state-failed { background:var(--danger-tint); color:var(--danger); border-color:var(--danger-tint-border); white-space:normal; }
+</style>
+{{ end }}
+
+{{/* Logo with its lettermark fallback. The lettermark is always rendered;
+     with an icon it starts hidden and the page script (store_logo_js) swaps
+     it in when the image fails — no inline onerror handler. */}}
+{{ define "store_logo" }}
+<span class="store-logo{{ if .Large }} lg{{ end }}">
+  {{ if .Item.Icon }}<img src="{{ .Item.Icon }}" alt="" width="{{ if .Large }}72{{ else }}56{{ end }}" height="{{ if .Large }}72{{ else }}56{{ end }}" loading="lazy" data-store-logo>{{ end }}
+  <span class="store-lettermark" aria-hidden="true"{{ if .Item.Icon }} hidden{{ end }}>{{ .Item.Initial }}</span>
+</span>
+{{ end }}
+
+{{ define "store_badges" }}
+{{ if eq .Tier "official" }}<span class="trust-badge trust-official" title="{{ T "plugins.trust.official_hint" }}">🏅 {{ T "plugins.trust.official" }}</span>
+{{ else if eq .Tier "verified" }}<span class="trust-badge trust-verified" title="{{ T "plugins.trust.verified_hint" }}">✔ {{ T "plugins.trust.verified" }}</span>
+{{ else }}<span class="trust-badge trust-unverified" title="{{ T "plugins.trust.unverified_hint" }}">⚠ {{ T "plugins.trust.unverified" }}</span>{{ end }}
+{{ if .Paid }}<span class="paid-badge" title="{{ T "plugins.store.paid_hint" }}">{{ T "plugins.store.paid_badge" }}</span>{{ end }}
+{{ end }}
+
+{{ define "store_state" }}
+{{ if .Installed }}<span class="tag ok">{{ T "plugins.store.state.installed" }}</span>
+{{ else if .Downloaded }}<span class="tag store-state-downloaded">{{ T "plugins.store.state.downloaded" }}</span>{{ end }}
+{{ if eq .StatusState "failed" }}
+<span class="tag store-state-failed" data-testid="plugin-install-failed">
+  {{ if .StatusMessageKey }}{{ T .StatusMessageKey }}{{ else }}{{ T "plugins.store.state.failed" }}{{ end }}
+  {{ if .Retryable }}· {{ T "plugins.store.state.retryable" }}{{ end }}
+</span>
+{{ else if .StatusState }}<span class="tag warn">⏳ {{ .StatusState }}</span>{{ end }}
+{{ end }}
+
+{{/* A logo that fails to load (offline till, marketplace icon gone) shows
+     its lettermark instead. "error" doesn't bubble, so listen in the capture
+     phase, and sweep images that already failed before this ran. */}}
+{{ define "store_logo_js" }}
+<script>
+(function () {
+  function fallback(img) {
+    var mark = img.parentNode && img.parentNode.querySelector('.store-lettermark');
+    if (!mark) return;
+    img.hidden = true;
+    mark.hidden = false;
+  }
+  document.addEventListener('error', function (ev) {
+    var t = ev.target;
+    if (t && t.tagName === 'IMG' && t.hasAttribute('data-store-logo')) fallback(t);
+  }, true);
+  document.querySelectorAll('img[data-store-logo]').forEach(function (img) {
+    if (img.complete && img.naturalWidth === 0 && img.getAttribute('src')) fallback(img);
+  });
+})();
+</script>
+{{ end }}

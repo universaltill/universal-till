@@ -1,4 +1,5 @@
 {{ define "content" }}
+{{ template "store_styles" }}
 <style>
   .store-cats { display:flex; flex-wrap:wrap; gap:.5rem; margin:0 0 1rem; }
   .cat-chip {
@@ -12,7 +13,20 @@
   .cat-chip.active { background:var(--brand, #4f46e5); border-color:var(--brand, #4f46e5); color:#fff; }
   .cat-chip .cat-n { font-size:.78rem; opacity:.7; font-weight:700; }
   .cat-chip.active .cat-n { opacity:.85; }
-  .store-card[hidden] { display:none; }
+  /* ut-docs#4180: small tiles, each one link to the listing's own page. */
+  .store-grid { display:grid; gap:.75rem; grid-template-columns:repeat(auto-fill, minmax(min(150px, 100%), 1fr)); }
+  .store-tile { display:flex; flex-direction:column; align-items:flex-start; gap:.35rem; min-width:0; min-height:44px;
+    padding:.75rem; border:1px solid var(--border); border-radius:var(--radius-lg, 14px);
+    background:var(--surface); color:var(--text); text-decoration:none; text-align:start; }
+  .store-tile:hover { border-color:var(--accent); }
+  .store-tile:focus-visible { outline:3px solid var(--focus-border, var(--accent)); outline-offset:2px; }
+  .store-tile[hidden] { display:none; }
+  /* dir="auto": a Latin name on an RTL till keeps its word order and its
+     clamp ellipsis at its own end. */
+  .store-tile-name { align-self:stretch; font-weight:700; line-height:1.25; overflow-wrap:anywhere;
+    display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-clamp:2; overflow:hidden; }
+  .store-tile-type { max-width:100%; font-size:.8rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .store-tile .trust-badge, .store-tile .paid-badge, .store-tile .tag { white-space:normal; overflow-wrap:anywhere; }
   .store-search { width:100%; max-width:360px; padding:.6rem .9rem; min-height:44px;
     font-size:.95rem; border:1px solid var(--border, #d1d5db); border-radius:999px;
     background:var(--surface, #fff); color:var(--text, #111827); margin:0 0 1rem; }
@@ -32,8 +46,6 @@
   <a class="btn secondary" href="/plugins">{{ T "plugins.store.manage_link" }}</a>
 </div>
 
-<div id="store-msg" class="muted" style="min-height:1.4rem; margin-bottom:.5rem" aria-live="polite"></div>
-
 {{ if .Items }}
 <input type="search" id="store-search" class="store-search" placeholder="{{ T "plugins.store.search_ph" }}" aria-label="{{ T "plugins.store.search_ph" }}" autocomplete="off">
 {{ if .Categories }}
@@ -44,73 +56,19 @@
   {{ end }}
 </div>
 {{ end }}
-<div id="store-grid" class="grid" style="grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:1rem">
-  {{ range .Items }}
-  <div class="card store-card" data-listing-id="{{ .ListingID }}" data-type="{{ .Type }}" data-name="{{ .Name }}" data-desc="{{ .Description }}" data-tier="{{ .Tier }}" data-vendor="{{ .Vendor }}">
-    <div style="display:flex; justify-content:space-between; align-items:baseline">
-      <div style="display:flex; align-items:center; gap:.5rem">
-        {{ if .Icon }}<img src="{{ .Icon }}" alt="" width="28" height="28" style="border-radius:7px" loading="lazy">{{ end }}
-        <h3 style="margin:.2rem 0">{{ .Name }}</h3>
-        {{ if eq .Tier "official" }}<span class="trust-badge trust-official" title="{{ T "plugins.trust.official_hint" }}">🏅 {{ T "plugins.trust.official" }}</span>
-        {{ else if eq .Tier "verified" }}<span class="trust-badge trust-verified" title="{{ T "plugins.trust.verified_hint" }}">✔ {{ T "plugins.trust.verified" }}</span>
-        {{ else }}<span class="trust-badge trust-unverified" title="{{ T "plugins.trust.unverified_hint" }}">⚠ {{ T "plugins.trust.unverified" }}</span>{{ end }}
-        {{ if .Paid }}<span class="paid-badge" title="{{ T "plugins.store.paid_hint" }}">{{ T "plugins.store.paid_badge" }}</span>{{ end }}
-      </div>
-      <span class="tag">v{{ .Version }}</span>
-    </div>
-    <p class="muted" style="min-height:2.4rem">{{ .Description }}</p>
-    {{ if .Permissions }}
-    <div style="display:flex; gap:.3rem; flex-wrap:wrap; align-items:center; margin-bottom:.4rem">
-      <span class="muted" style="font-size:.78rem">{{ T "plugins.store.permissions_label" }}</span>
-      {{ range .PermissionBadges }}
-      {{ if .SettingKeys }}
-      <span class="tag perm-badge" title="{{ T "plugins.permissions.setting_bound_hint" }} ({{ .Name }})">{{ T "plugins.permissions.setting_bound" }} {{ .SettingKeys }}</span>
-      {{ else if .DescKey }}
-      <span class="tag perm-badge">{{ .Name }}</span>
-      {{ else }}
-      <span class="tag perm-badge" title="{{ T "plugins.store.permission_hint" }}">{{ .Name }}</span>
-      {{ end }}
-      {{ end }}
-    </div>
-    {{ with .PermissionDescriptions }}
-    {{/* ADR-0121 §2 permissions: described in visible text, never a hover-only tooltip (touchscreen till). */}}
-    <ul class="muted perm-desc" style="margin-block:0 .6rem; padding-inline-start:1.1rem; font-size:.78rem; line-height:1.4">
-      {{ range . }}
-      <li class="perm-desc-item"><code dir="ltr">{{ .Name }}</code> — <span>{{ T .DescKey }}</span></li>
-      {{ end }}
-    </ul>
-    {{ end }}
-    {{ end }}
-    <div style="display:flex; gap:.4rem; align-items:center; margin-bottom:.6rem">
-      <span class="tag">{{ T (printf "plugins.type.%s" .Type) }}</span>
-      {{ if .Installed }}
-      <span class="tag" style="background:rgba(34,197,94,.2); color:#15803d">{{ T "plugins.store.state.installed" }}</span>
-      {{ else if .Downloaded }}
-      <span class="tag" style="background:rgba(59,130,246,.2); color:#1d4ed8">{{ T "plugins.store.state.downloaded" }}</span>
-      {{ end }}
-      {{ if eq .StatusState "failed" }}
-      <span class="tag" data-testid="plugin-install-failed" style="background:rgba(248,113,113,.25); color:#b91c1c">
-        {{ if .StatusMessageKey }}{{ T .StatusMessageKey }}{{ else }}{{ T "plugins.store.state.failed" }}{{ end }}
-        {{ if .Retryable }}· {{ T "plugins.store.state.retryable" }}{{ end }}
-      </span>
-      {{ else if .StatusState }}
-      <span class="tag" style="background:rgba(251,191,36,.25); color:#b45309">⏳ {{ .StatusState }}</span>
-      {{ end }}
-    </div>
-    <div style="display:flex; gap:.5rem; flex-wrap:wrap">
-      {{ if .Installed }}
-      <a class="btn secondary" href="/plugins">{{ T "plugins.store.manage_link" }}</a>
-      {{ else if .Downloaded }}
-      <button class="btn" data-store-action="install" data-listing-id="{{ .ListingID }}">{{ T "plugins.store.action.install" }}</button>
-      <button class="btn secondary" data-store-action="delete-download" data-listing-id="{{ .ListingID }}">{{ T "plugins.store.action.delete" }}</button>
-      {{ else }}
-      <button class="btn" data-store-action="download" data-listing-id="{{ .ListingID }}">{{ T "plugins.store.action.download" }}</button>
-      {{ end }}
-    </div>
-    {{ if not .Installed }}
-    <p class="muted" style="font-size:.78rem; margin:.5rem 0 0">🔒 {{ T "plugins.store.manager_approval_notice" }}</p>
-    {{ end }}
-  </div>
+<div id="store-grid" class="store-grid">
+  {{ range $i, $it := .Items }}
+  {{/* One link per listing; its accessible name is the plugin name, the
+       type/badges/state are its description. */}}
+  <a class="store-tile" href="{{ $it.DetailHref }}" aria-labelledby="store-tile-name-{{ $i }}" aria-describedby="store-tile-meta-{{ $i }}"
+     data-listing-id="{{ $it.ListingID }}" data-type="{{ $it.Type }}" data-name="{{ $it.Name }}" data-desc="{{ $it.Description }}">
+    {{ template "store_logo" (dict "Item" $it "Large" false) }}
+    <span class="store-tile-name" dir="auto" id="store-tile-name-{{ $i }}">{{ $it.Name }}</span>
+    <span id="store-tile-meta-{{ $i }}" style="display:contents">
+      {{ if $it.Type }}<span class="store-tile-type muted">{{ T (printf "plugins.type.%s" $it.Type) }}</span>{{ end }}
+      <span class="store-badges">{{ template "store_badges" $it }}{{ template "store_state" $it }}</span>
+    </span>
+  </a>
   {{ end }}
 </div>
 <p class="empty" id="store-no-matches" hidden>{{ T "plugins.store.no_matches" }}</p>
@@ -129,9 +87,7 @@
 </div>
 {{ end }}
 
-<script>
-window.utTrustPrompt = {{ printf "%q" (T "plugins.trust.confirm") }};
-</script>
+{{ template "store_logo_js" }}
 <script>
 (function () {
   // Category browsing + search: filter the grid client-side (instant, works
@@ -139,7 +95,7 @@ window.utTrustPrompt = {{ printf "%q" (T "plugins.trust.confirm") }};
   // combine (AND).
   var cats = document.querySelector('.store-cats');
   var search = document.getElementById('store-search');
-  var cards = Array.prototype.slice.call(document.querySelectorAll('#store-grid .store-card'));
+  var cards = Array.prototype.slice.call(document.querySelectorAll('#store-grid .store-tile'));
   var noMatch = document.getElementById('store-no-matches');
   var activeCat = '';
   function apply() {
@@ -167,48 +123,6 @@ window.utTrustPrompt = {{ printf "%q" (T "plugins.trust.confirm") }};
     });
   }
   if (search) { search.addEventListener('input', apply); }
-})();
-(function () {
-  var msg = document.getElementById('store-msg');
-  // API errors that arrive as i18n message KEYS map to localized text here —
-  // the template-populated-lookup pattern CLAUDE.md mandates for inline
-  // scripts. ut-docs#460: on a till that follows a primary, store
-  // download/install are rejected with this key.
-  var T = {
-    'plugins.install.error.replica_use_primary': '{{ T "plugins.install.error.replica_use_primary" }}',
-    'plugins.install.error.not_entitled': '{{ T "plugins.install.error.not_entitled" }}',
-    'plugins.install.error.not_found': '{{ T "plugins.install.error.not_found" }}'
-  };
-  document.addEventListener('click', function (ev) {
-    var btn = ev.target.closest('[data-store-action]');
-    if (!btn) return;
-    var action = btn.getAttribute('data-store-action');
-    var listing = btn.getAttribute('data-listing-id');
-    var card = btn.closest('.store-card');
-    // Unverified publisher: the operator must explicitly consent before the
-    // plugin lands on the till (trust chain surface, ADR-0006).
-    if ((action === 'download' || action === 'install') && card &&
-        card.getAttribute('data-tier') === 'unverified') {
-      var vendor = card.getAttribute('data-vendor') || '?';
-      var q = (window.utTrustPrompt || 'Do you trust this publisher: %s?').replace('%s', vendor);
-      if (!window.confirm(q)) return;
-    }
-    card.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
-    msg.textContent = '⏳ ' + action + '…';
-
-    fetch('/api/plugins/store/' + action, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ listing_id: listing }).toString()
-    }).then(function (res) { return res.json().catch(function () { return {}; }).then(function (j) {
-      if (res.ok) { UT.reload('plugin-store:' + action); return; }
-      msg.textContent = '✗ ' + (T[j.error] || j.error || ('HTTP ' + res.status));
-      card.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
-    }); }).catch(function (e) {
-      msg.textContent = '✗ ' + e;
-      card.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
-    });
-  });
 })();
 </script>
 {{ end }}

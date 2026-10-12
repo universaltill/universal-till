@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/enroll"
@@ -18,11 +21,15 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins/oauth"
 )
 
-// storeItem is one card on the plugin store page. Lifecycle:
-// available -> Download; downloaded -> Install / Delete download;
-// installed -> managed from /plugins (no store actions).
+// storeItem is one listing in the plugin store: a tile on /plugins/store and
+// the whole of its own page at /plugins/store/{listing_id} (ut-docs#4180).
+// Lifecycle (actions on the detail page): available -> Download;
+// downloaded -> Install / Delete download; installed -> managed from
+// /plugins (no store actions).
 type storeItem struct {
 	ListingID        string
+	DetailHref       string // /plugins/store/<path-escaped listing id>
+	Initial          string // lettermark shown when there is no icon or it fails to load
 	Name             string
 	Version          string
 	Description      string
@@ -70,84 +77,119 @@ func storeInstaller(d *common.Deps) (*plugins.MarketplaceInstaller, *config.Conf
 	return installer, &effCfg, err
 }
 
-// PluginStoreHandler renders the store: catalog listings the merchant is
-// approved for, each in its download/install lifecycle state.
+// storeDetailHref is the listing's own page; the id is one path segment.
+func storeDetailHref(listingID string) string {
+	return "/plugins/store/" + url.PathEscape(listingID)
+}
+
+// storeInitial is the tile's lettermark: the name's first letter (or digit),
+// uppercased — "?" for a name with none.
+func storeInitial(name string) string {
+	for _, r := range strings.TrimSpace(name) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return string(unicode.ToUpper(r))
+		}
+	}
+	if r, _ := utf8.DecodeRuneInString(strings.TrimSpace(name)); r != utf8.RuneError {
+		return string(r)
+	}
+	return "?"
+}
+
+// storeListings loads the catalog (the cached snapshot when offline —
+// GetOrFetch serves it) and maps every listing to its storeItem, in catalog
+// order. Shared by the store grid and each listing's page so the two can't
+// disagree about a listing's state. err is the catalog error, if any.
+func storeListings(r *http.Request, d *common.Deps) ([]storeItem, error) {
+	ctx := r.Context()
+	locale, deviceArch := marketplace.TillCatalogKey(d.Cfg.DefaultLocale)
+	// Marketplace web base for relative icon paths (endpoint minus /api).
+	webBase := strings.TrimSuffix(strings.TrimRight(enroll.Effective(d.Cfg).Marketplace.EndpointURL, "/"), "/api")
+	snapshot, _, err := d.CatalogRepo.GetOrFetch(ctx, locale, deviceArch)
+
+	var downloads map[string]plugins.StoreDownload
+	if installer, _, ierr := storeInstaller(d); ierr == nil {
+		downloads = installer.ListStoreDownloads()
+	}
+	statuses, _ := plugins.NewInstallStatusStore(d.Db).List(ctx)
+
+	items := []storeItem{}
+	if err == nil && snapshot != nil {
+		// Browse shows the whole public catalog — an anonymous till sees
+		// every plugin. Access is enforced at install/download time (free
+		// plugins self-serve; registered/paid need a claimed store), not by
+		// hiding listings here.
+		for _, p := range snapshot.Plugins {
+			items = append(items, storeItemFrom(d, p, webBase, downloads, statuses))
+		}
+	}
+	return items, err
+}
+
+// storeItemFrom maps one catalog listing plus the till's local download and
+// install-status records to its storeItem.
+func storeItemFrom(d *common.Deps, p marketplace.PluginSummary, webBase string,
+	downloads map[string]plugins.StoreDownload, statuses map[string]plugins.InstallStatusRecord) storeItem {
+	listingID := p.ListingID
+	if listingID == "" {
+		listingID = p.ID
+	}
+	item := storeItem{
+		ListingID:   listingID,
+		DetailHref:  storeDetailHref(listingID),
+		Initial:     storeInitial(p.Name),
+		Name:        p.Name,
+		Version:     p.Version,
+		Description: p.Description,
+		Vendor:      p.Vendor,
+		Tier:        trustTierOf(p.ID, p.TrustTier),
+		Type:        p.CanonicalType,
+		Permissions: p.Permissions,
+		Paid:        p.PaidListing,
+	}
+	if icon := p.IconURL; icon != "" {
+		if strings.HasPrefix(icon, "/") {
+			icon = webBase + icon
+		}
+		item.Icon = icon
+	}
+	if _, ok := downloads[listingID]; ok {
+		item.Downloaded = true
+	}
+	if st, ok := statuses[listingID]; ok {
+		switch st.State {
+		case plugins.InstallStateActive:
+			// Confirm against the actual installed set so a stale status
+			// (e.g. uninstalled plugin) doesn't freeze the store listing.
+			if _, installed := d.InstalledPlugin(st.PluginID); installed {
+				item.Installed = true
+			}
+		case plugins.InstallStateFailed:
+			// Operator-visible failure: keep the listing actionable (retry
+			// via Download/Install) and say what went wrong.
+			item.StatusState = string(st.State)
+			item.StatusMessageKey = st.MessageKey
+			item.Retryable = st.Retryable
+		case plugins.InstallStateRequested, plugins.InstallStateDownloading, plugins.InstallStateInstalling:
+			item.StatusState = string(st.State)
+		}
+	}
+	return item
+}
+
+// PluginStoreHandler renders the store: a grid of small tiles, one per
+// catalog listing, each a link to the listing's own page (ut-docs#4180).
 func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// ut-docs#3079: same gate as /plugins and the store's own POSTs.
 		if !requirePage(d, w, r, "plugin_management") {
 			return
 		}
-		ctx := r.Context()
 		if d.CatalogRepo == nil {
 			httpx.RenderError(w, r, http.StatusServiceUnavailable, "plugins.install.error.configuration", nil)
 			return
 		}
-
-		locale, deviceArch := marketplace.TillCatalogKey(d.Cfg.DefaultLocale)
-		// Marketplace web base for relative icon paths (endpoint minus /api).
-		webBase := strings.TrimSuffix(strings.TrimRight(enroll.Effective(d.Cfg).Marketplace.EndpointURL, "/"), "/api")
-		snapshot, _, err := d.CatalogRepo.GetOrFetch(ctx, locale, deviceArch)
-
-		var downloads map[string]plugins.StoreDownload
-		if installer, _, ierr := storeInstaller(d); ierr == nil {
-			downloads = installer.ListStoreDownloads()
-		}
-		statuses, _ := plugins.NewInstallStatusStore(d.Db).List(ctx)
-
-		items := []storeItem{}
-		if err == nil && snapshot != nil {
-			for _, p := range snapshot.Plugins {
-				listingID := p.ListingID
-				if listingID == "" {
-					listingID = p.ID
-				}
-				// Browse shows the whole public catalog — an anonymous till sees
-				// every plugin. Access is enforced at install/download time
-				// (free plugins self-serve; registered/paid need a claimed store),
-				// not by hiding listings here.
-				item := storeItem{
-					ListingID:   listingID,
-					Name:        p.Name,
-					Version:     p.Version,
-					Description: p.Description,
-					Vendor:      p.Vendor,
-					Tier:        trustTierOf(p.ID, p.TrustTier),
-					Type:        p.CanonicalType,
-					Permissions: p.Permissions,
-					Paid:        p.PaidListing,
-				}
-				if icon := p.IconURL; icon != "" {
-					if strings.HasPrefix(icon, "/") {
-						icon = webBase + icon
-					}
-					item.Icon = icon
-				}
-				if _, ok := downloads[listingID]; ok {
-					item.Downloaded = true
-				}
-				if st, ok := statuses[listingID]; ok {
-					switch st.State {
-					case plugins.InstallStateActive:
-						// Confirm against the actual installed set so a stale status
-						// (e.g. uninstalled plugin) doesn't freeze the store card.
-						if _, installed := d.InstalledPlugin(st.PluginID); installed {
-							item.Installed = true
-						}
-					case plugins.InstallStateFailed:
-						// Operator-visible failure: keep the card actionable (retry
-						// via Download/Install) and say what went wrong.
-						item.StatusState = string(st.State)
-						item.StatusMessageKey = st.MessageKey
-						item.Retryable = st.Retryable
-					case plugins.InstallStateRequested, plugins.InstallStateDownloading, plugins.InstallStateInstalling:
-						item.StatusState = string(st.State)
-					}
-				}
-				items = append(items, item)
-			}
-		}
-
+		items, err := storeListings(r, d)
 		httpx.Render("ui/pages/plugins_store.html", map[string]any{
 			"title":            httpx.T(httpx.RequestLocale(r), "page.title.plugin_store"),
 			"theme":            d.CurrentState().Theme,
@@ -157,6 +199,43 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 			"EntitledFiltered": false,
 			"CatalogError":     err != nil,
 		})(w, r)
+	}
+}
+
+// PluginStoreDetailHandler renders one listing's page: logo, publisher,
+// trust/paid badges, full description, what it may access (permission badges
+// + plain-language lines, ADR-0121 §2) and its Download / Install / Delete
+// download / Manage actions. Same gate and same offline catalog snapshot as
+// the store grid.
+func PluginStoreDetailHandler(d *common.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !requirePage(d, w, r, "plugin_management") {
+			return
+		}
+		if d.CatalogRepo == nil {
+			httpx.RenderError(w, r, http.StatusServiceUnavailable, "plugins.install.error.configuration", nil)
+			return
+		}
+		listingID := r.PathValue("listing_id")
+		items, err := storeListings(r, d)
+		for _, it := range items {
+			if it.ListingID == listingID {
+				httpx.Render("ui/pages/plugins_store_detail.html", map[string]any{
+					"title":     it.Name + " — " + httpx.T(httpx.RequestLocale(r), "page.title.plugin_store"),
+					"theme":     d.CurrentState().Theme,
+					"menuItems": d.MenuSnapshot(),
+					"Item":      it,
+				})(w, r)
+				return
+			}
+		}
+		if err != nil {
+			// No catalog at all (offline, never cached): the store page
+			// says so; this page can't know the listing.
+			httpx.RenderError(w, r, http.StatusServiceUnavailable, "plugins.store.offline", err)
+			return
+		}
+		httpx.RenderError(w, r, http.StatusNotFound, "plugins.install.error.not_found", nil)
 	}
 }
 
@@ -340,8 +419,38 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 }
 
-// registerPluginStore mounts the store page + its lifecycle API.
+// storeDetailPattern serves a listing's page at /plugins/store/{listing_id}
+// (ut-docs#4180). It can't be registered as "GET /plugins/store/{listing_id}":
+// that and plugin_settings_page.go's "GET /plugins/{id}/settings" both match
+// /plugins/store/settings with neither more specific, and ServeMux panics at
+// registration. This two-wildcard pattern is strictly LESS specific than
+// /plugins/{id}/settings (and than any future literal /plugins/x/y), so it
+// never conflicts; storeDetailDispatch serves only the "store" section and
+// 404s the rest exactly as the "/" catch-all did before. The one path it
+// can't have is a listing literally named "settings" — listing ids are UUIDs
+// (or com.* slugs), so /plugins/store/settings stays the settings page of a
+// plugin whose id is "store".
+const storeDetailPattern = "GET /plugins/{section}/{listing_id}"
+
+// registerPluginStore mounts the store page, each listing's page and the
+// store's lifecycle API.
 func registerPluginStore(mux *http.ServeMux, deps *common.Deps) {
 	mux.HandleFunc("/plugins/store", PluginStoreHandler(deps))
+	mux.HandleFunc("GET /plugins/{section}/{listing_id}", storeDetailDispatch(deps)) // = storeDetailPattern (a literal, so route scanners see it)
 	registerPluginStoreAPI(mux, deps)
+}
+
+// storeDetailDispatch routes /plugins/store/{listing_id} to the listing page;
+// any other /plugins/{x}/{y} is the plain 404 the "/" catch-all gave it
+// before this pattern existed (/plugins is core-reserved, so no plugin page
+// entry can live there — findPageEntry skips it).
+func storeDetailDispatch(d *common.Deps) http.HandlerFunc {
+	detail := PluginStoreDetailHandler(d)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("section") != "store" {
+			http.NotFound(w, r)
+			return
+		}
+		detail(w, r)
+	}
 }
