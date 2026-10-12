@@ -31,6 +31,7 @@ type SnapshotItem struct {
 	IsWeighed      bool
 	StockUntracked bool
 	AgeRestricted  bool
+	ItemType       string // items.item_type (ut-docs#4214)
 	// Icon is items.icon as stored (ut-docs#3584), "" for none; the push
 	// reports iconid.EffectiveIcon of it and the thumbnail path.
 	Icon string
@@ -68,7 +69,7 @@ type SnapshotItem struct {
 func (r *CatalogRepo) CatalogSnapshotItems(ctx context.Context) ([]SnapshotItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, name, COALESCE(sku, ''), base_price, COALESCE(category_id, ''), COALESCE(color, ''),
-       is_active, is_weighed, stock_untracked, age_restricted, COALESCE(icon, ''),
+       is_active, is_weighed, stock_untracked, age_restricted, item_type, COALESCE(icon, ''),
        net_quantity_value, net_quantity_unit, sell_screen_hidden, sell_screen_removed
 FROM items
 ORDER BY is_active DESC, name, id`)
@@ -81,7 +82,7 @@ ORDER BY is_active DESC, name, id`)
 		var nqValue sql.NullInt64
 		var nqUnit sql.NullString
 		var hidden, removed bool
-		if err := rows.Scan(&it.ID, &it.Name, &it.SKU, &it.PriceMinor, &it.CategoryID, &it.Color, &it.Active, &it.IsWeighed, &it.StockUntracked, &it.AgeRestricted, &it.Icon, &nqValue, &nqUnit, &hidden, &removed); err != nil {
+		if err := rows.Scan(&it.ID, &it.Name, &it.SKU, &it.PriceMinor, &it.CategoryID, &it.Color, &it.Active, &it.IsWeighed, &it.StockUntracked, &it.AgeRestricted, &it.ItemType, &it.Icon, &nqValue, &nqUnit, &hidden, &removed); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("catalog snapshot: items: %w", err)
 		}

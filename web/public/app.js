@@ -233,6 +233,14 @@ window.utCurrency = (function(){
     if (now - last > 100) { buf = ""; }
     last = now;
     if (e.key === 'Enter') {
+      // ut-docs#4214: a field that takes a scan itself (data-scan-own — the
+      // Gift voucher popup's card number) keeps it: its Enter submits that
+      // field's own form, never the sale screen's scan row.
+      var own = document.activeElement;
+      if (own && own.closest && own.closest('[data-scan-own]')) {
+        buf = "";
+        return;
+      }
       var codeInput = scanCodeInput();
       var code = buf;
       if (!code && codeInput && document.activeElement === codeInput) {
@@ -321,28 +329,18 @@ window.utCurrency = (function(){
     var paymentsList = card.querySelector('#split-tender-payments');
     var statusEl = card.querySelector('#split-tender-status');
     // ut-docs#1832: voucher redemption (a voucher_id on a "voucher"-method
-    // payment) and voucher issue ("Sell a voucher": issue_vouchers on the
-    // same tender POST). All optional — the panel keeps working without them.
+    // payment). Optional — the panel keeps working without it. Selling a
+    // voucher is a gift_voucher item's basket line since ut-docs#4214, so
+    // this panel has no voucher-issue form any more.
     var methodSelect = form ? form.querySelector('[name="method"]') : null;
     var voucherField = card.querySelector('#split-tender-voucher-field');
     var voucherCheckBtn = card.querySelector('#split-tender-voucher-check');
     var changeField = card.querySelector('#split-tender-change-field');
-    var issueDetails = card.querySelector('#split-tender-issue');
-    var issueForm = card.querySelector('#split-tender-issue-form');
-    var issueAddBtn = card.querySelector('#split-tender-issue-add');
-    var vouchersList = card.querySelector('#split-tender-vouchers');
-    // ut-docs#1037: single-purpose vouchers — the purpose radios + VAT-rate
-    // field on the issue form, and the Redeem row under the voucher-id
-    // field. All optional, same as the ut-docs#1832 hooks above.
-    var issueVatField = card.querySelector('#split-tender-issue-vat-field');
+    // ut-docs#1037: the Redeem row under the voucher-id field (a
+    // specific-item voucher is handed over, never taken as tender).
     var redeemRow = card.querySelector('#split-tender-voucher-redeem');
     var redeemInfo = card.querySelector('#split-tender-voucher-redeem-info');
     var redeemBtn = card.querySelector('#split-tender-voucher-redeem-btn');
-    // ut-docs#1037 (reviewer): the sale's pricing mode, for issueGross
-    // below. Absent (an older cached template) reads as inclusive — the
-    // pre-#1037 behaviour, and the mode in which face value already is the
-    // gross, so nothing changes for a multi-purpose issue either way.
-    var taxInclusive = card.getAttribute('data-tax-inclusive') !== '0';
 
     if (!form || !addBtn || !submitBtn || !clearBtn || !paymentsList) {
       return;
@@ -369,7 +367,6 @@ window.utCurrency = (function(){
     }
 
     var payments = [];
-    var pendingVoucherIssues = [];
     function formatMoney(units){
       return window.utCurrency.format(units);
     }
@@ -403,18 +400,6 @@ window.utCurrency = (function(){
       if (redeemRow) redeemRow.hidden = true;
       if (redeemInfo) redeemInfo.textContent = '';
       if (redeemRow) redeemRow.removeAttribute('data-voucher-id');
-    }
-
-    // ut-docs#1037: the purpose radios on the issue form. The VAT-rate field
-    // is hidden unless "specific item" is selected — same hidden-attribute
-    // toggle as syncVoucherField above.
-    function issuePurpose(){
-      if (!issueForm) return 'multi_purpose';
-      var checked = issueForm.querySelector('input[name="purpose"]:checked');
-      return checked && checked.value === 'single_purpose' ? 'single_purpose' : 'multi_purpose';
-    }
-    function syncIssuePurpose(){
-      if (issueVatField) issueVatField.hidden = issuePurpose() !== 'single_purpose';
     }
 
     function setStatus(message, level){
@@ -467,67 +452,17 @@ window.utCurrency = (function(){
       paymentsList.innerHTML = html;
     }
 
-    // Pending voucher issues render like the payment pills: code (or the
-    // "generated at checkout" stand-in for a blank one), face value, holder.
-    function renderVoucherIssues(){
-      if (!vouchersList) return;
-      if (!pendingVoucherIssues.length) {
-        vouchersList.classList.add('empty');
-        vouchersList.innerHTML = '<p>' + escapeHtml(msg.msgNoPendingVouchers) + '</p>';
-        return;
-      }
-      vouchersList.classList.remove('empty');
-      vouchersList.innerHTML = pendingVoucherIssues.map(function(issue, idx){
-        var code = issue.code ? '<span class="pill-code">' + escapeHtml(issue.code) + '</span>' : escapeHtml(msg.msgVoucherAutoCode);
-        var details = formatMoney(issue.amount);
-        if (issue.purpose === 'single_purpose') {
-          // ut-docs#1037: name the kind and the rate it will be taxed at,
-          // so a pending specific-item voucher is told apart from an
-          // any-use one before Complete Sale.
-          details += ' · ' + escapeHtml(msg.msgVoucherSinglePurpose) + ' ' + escapeHtml(formatVatRate(issue.vat_rate_bp)) + '%';
-        }
-        if (issue.holder_label) {
-          details += '<br><small>' + escapeHtml(issue.holder_label) + '</small>';
-        }
-        return '<div class="payment-pill"><div><strong>' + code + '</strong><div class="pill-meta">' + details + '</div></div><button type="button" class="pill-remove" data-remove-voucher="' + idx + '">&times;</button></div>';
-      }).join('');
-    }
-
     function netPayments(){
       return payments.reduce(function(sum, payment){
         return sum + (payment.amount - (payment.change || 0));
       }, 0);
     }
 
-    // ut-docs#1037 (reviewer): what a pending issue adds to what the
-    // customer owes. A multi-purpose voucher is a 0% liability — its face
-    // value, flat, as before. A SINGLE-purpose one is taxed at issue, so
-    // under EXCLUSIVE pricing its VAT rides on top of the face value (under
-    // inclusive the face value already contains it). Quoting the flat face
-    // value there left this panel short by exactly that VAT, and the server
-    // — which taxes the issue in pos.computeSaleTotals — then refused the
-    // cashier's own quoted amount with "does not cover the sale total".
-    // Mirrors pos.ComputeTaxBasisPoints's exclusive branch, half-up, so the
-    // two round identically.
-    function issueGross(issue){
-      if (issue.purpose !== 'single_purpose' || taxInclusive) return issue.amount;
-      var bp = Number(issue.vat_rate_bp || 0);
-      if (!Number.isFinite(bp) || bp <= 0) return issue.amount;
-      return issue.amount + Math.floor((issue.amount * bp + 5000) / 10000);
-    }
-
-    function voucherIssueTotal(){
-      return pendingVoucherIssues.reduce(function(sum, issue){
-        return sum + issueGross(issue);
-      }, 0);
-    }
-
     // What the customer owes right now: the server-rendered basket total
-    // plus every voucher pending issue — a voucher-only sale (no basket
-    // lines) is legitimately all voucher, and the server charges the same
-    // sum (pos_api.go adds voucherIssueTotal to the basket total).
+    // (a gift voucher being sold is a basket line, ut-docs#4214, so it is
+    // already in there).
     function amountDue(){
-      return basketTotal() + voucherIssueTotal();
+      return basketTotal();
     }
 
     function basketTotal(){
@@ -647,52 +582,6 @@ window.utCurrency = (function(){
       }
     }
 
-    // ut-docs#1037: the VAT rate is typed as a percentage ("19", "7",
-    // "5.5") and travels as basis points; formatVatRate is its inverse for
-    // the pending pill. A comma decimal separator is accepted (de/tr
-    // keyboards) — same tolerance window.utCurrency.toMinor has for amounts.
-    function parseVatRateBP(raw){
-      var text = String(raw || '').trim().replace(',', '.');
-      if (!text) return NaN;
-      var pct = Number(text);
-      if (!Number.isFinite(pct) || pct < 0 || pct > 100) return NaN;
-      return Math.round(pct * 100);
-    }
-    function formatVatRate(bp){
-      var pct = Number(bp || 0) / 100;
-      return Number.isInteger(pct) ? String(pct) : pct.toFixed(2).replace(/0+$/, '');
-    }
-
-    function addVoucherIssue(){
-      if (!issueForm) return false;
-      var data = new FormData(issueForm);
-      var amountMinor = toMinor(data.get('amount'));
-      if (amountMinor <= 0) {
-        setStatus(msg.msgAmountPositive, 'error');
-        return false;
-      }
-      var issue = { amount: amountMinor };
-      var code = String(data.get('voucher_code') || '').trim();
-      if (code) issue.code = code;
-      var holder = String(data.get('holder_label') || '').trim();
-      if (holder) issue.holder_label = holder;
-      if (issuePurpose() === 'single_purpose') {
-        var rateBP = parseVatRateBP(data.get('vat_rate'));
-        if (Number.isNaN(rateBP)) {
-          setStatus(msg.msgVoucherVatRateInvalid, 'error');
-          return false;
-        }
-        issue.purpose = 'single_purpose';
-        issue.vat_rate_bp = rateBP;
-      }
-      pendingVoucherIssues.push(issue);
-      renderVoucherIssues();
-      issueForm.reset();
-      syncIssuePurpose();
-      setStatus(fmt(msg.msgVoucherAdded, formatMoney(amountMinor)), 'success');
-      return true;
-    }
-
     // ut-docs#1037: the single-purpose hand-over. Irreversible on success
     // (the server drains the voucher in one step), so the button is
     // disabled while the request is in flight to swallow a double tap. A
@@ -786,7 +675,7 @@ window.utCurrency = (function(){
             'Content-Type': 'application/json',
             'Accept': 'text/html'
           },
-          body: JSON.stringify({ payments: payments, issue_vouchers: pendingVoucherIssues, offline: offlineOverrideEnabled() || !navigator.onLine })
+          body: JSON.stringify({ payments: payments, offline: offlineOverrideEnabled() || !navigator.onLine })
         });
         // ut-docs#2144: unlike hold/resume/scan (hx-post forms, fixed at the
         // auth-middleware level), this is a raw fetch() with no HX-Request
@@ -832,10 +721,6 @@ window.utCurrency = (function(){
         }
         payments = [];
         renderPayments();
-        pendingVoucherIssues = [];
-        renderVoucherIssues();
-        if (issueForm) issueForm.reset();
-        if (issueDetails) issueDetails.open = false;
         clearForm();
         setStatus(msg.msgSaleCompleted, 'success');
         // ut-docs#1252: the split-tender card now lives inside the
@@ -862,10 +747,6 @@ window.utCurrency = (function(){
     clearBtn.addEventListener('click', function(){
       payments = [];
       renderPayments();
-      pendingVoucherIssues = [];
-      renderVoucherIssues();
-      if (issueForm) issueForm.reset();
-      syncIssuePurpose();
       clearForm();
       setStatus(msg.msgCleared, 'info');
     });
@@ -882,25 +763,6 @@ window.utCurrency = (function(){
     if (redeemBtn) {
       redeemBtn.addEventListener('click', redeemSinglePurposeVoucher);
     }
-    if (issueForm) {
-      issueForm.addEventListener('change', function(e){
-        if (e.target && e.target.name === 'purpose') syncIssuePurpose();
-      });
-    }
-    if (issueAddBtn) {
-      issueAddBtn.addEventListener('click', addVoucherIssue);
-    }
-    if (vouchersList) {
-      vouchersList.addEventListener('click', function(e){
-        var target = e.target.closest('[data-remove-voucher]');
-        if (!target) return;
-        var idx = Number(target.getAttribute('data-remove-voucher'));
-        if (Number.isNaN(idx)) return;
-        pendingVoucherIssues.splice(idx, 1);
-        renderVoucherIssues();
-        setStatus(msg.msgVoucherRemoved, 'info');
-      });
-    }
     if (fillBtn) {
       fillBtn.addEventListener('click', fillRemaining);
     }
@@ -916,9 +778,7 @@ window.utCurrency = (function(){
     });
 
     renderPayments();
-    renderVoucherIssues();
     syncVoucherField();
-    syncIssuePurpose();
   }
 
   ready(initSplitTender);

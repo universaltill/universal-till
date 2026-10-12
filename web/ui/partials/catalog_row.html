@@ -37,6 +37,7 @@
     data-net-qty-unit="{{ with .Item.NetQuantityUnit }}{{ . }}{{ end }}"
     data-stock-untracked="{{ if .Item.StockUntracked }}1{{ else }}0{{ end }}"
     data-age-restricted="{{ if .Item.AgeRestricted }}1{{ else }}0{{ end }}"
+    data-item-type="{{ if .Item.ItemType }}{{ .Item.ItemType }}{{ else }}standard{{ end }}"
     data-category="{{ with .Item.CategoryID }}{{ . }}{{ end }}"
     data-brand="{{ with .Item.BrandID }}{{ . }}{{ end }}"
     data-price="{{ .Item.BasePrice }}"

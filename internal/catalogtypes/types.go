@@ -28,6 +28,13 @@ type ItemInput struct {
 	// value (false) means "unrestricted" — the same safe default the
 	// column's DEFAULT 0 gives every existing item on upgrade.
 	AgeRestricted bool
+	// ItemType is the item's type (ut-docs#4214, 071_items_item_type.sql):
+	// ItemTypeStandard (an ordinary product) or ItemTypeGiftVoucher (selling
+	// it issues a voucher — the till asks for its value and card number,
+	// and the sale books the voucher, never product revenue, stock or
+	// discounts). "" is read as standard on every write path
+	// (NormalizeItemType), so the Go zero value keeps today's behaviour.
+	ItemType string
 	// Color is this item's tile swatch (ut-docs#1901) — one of
 	// ItemColors()' fixed hex values, e.g. "#0f172a", or "" for none.
 	// Renders as the sale-screen tile's solid background for a photo-less
@@ -46,6 +53,25 @@ type ItemInput struct {
 	// per item) when the shop opts in.
 	NetQuantityValue *int64
 	NetQuantityUnit  *string
+}
+
+// Item types (items.item_type, migration 071's CHECK — ut-docs#4214).
+const (
+	ItemTypeStandard    = "standard"
+	ItemTypeGiftVoucher = "gift_voucher"
+)
+
+// NormalizeItemType maps "" to ItemTypeStandard and reports whether the
+// result is one of the known types. Every write path calls it, so an
+// unknown value is refused with a clear error before it reaches the CHECK.
+func NormalizeItemType(t string) (string, bool) {
+	switch t {
+	case "", ItemTypeStandard:
+		return ItemTypeStandard, true
+	case ItemTypeGiftVoucher:
+		return ItemTypeGiftVoucher, true
+	}
+	return t, false
 }
 
 // Net-quantity units (items.net_quantity_unit, migration 060's CHECK).

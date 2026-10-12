@@ -1459,8 +1459,12 @@ type snapshotItemRow struct {
 	// in a future change, set) the staff-ID-check flag — read-only on this
 	// side of the wire for now; the cloud's own ingest/display is separate
 	// follow-up work, not this field's concern.
-	AgeRestricted bool     `json:"age_restricted"`
-	Qty           *float64 `json:"qty,omitempty"`
+	AgeRestricted bool `json:"age_restricted"`
+	// ItemType (ut-docs#4214): "standard" or "gift_voucher" — my. shows it,
+	// and the cloud's customer-facing surfaces (online shop, digital menu)
+	// leave gift voucher items out; save_item's item_type sets it.
+	ItemType string   `json:"item_type"`
+	Qty      *float64 `json:"qty,omitempty"`
 	// Barcode is the legacy primary barcode, kept for a schema-1 reader.
 	Barcode                   string   `json:"barcode"`
 	Barcodes                  []string `json:"barcodes"`
@@ -1564,8 +1568,8 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 			ID: it.ID, Name: it.Name, SKU: it.SKU, PriceMinor: it.PriceMinor,
 			CategoryID: it.CategoryID, Color: it.Color, Active: it.Active,
 			IsWeighed: it.IsWeighed, StockUntracked: it.StockUntracked,
-			AgeRestricted: it.AgeRestricted,
-			Barcodes:      it.Barcodes, ModifierGroupIDs: it.ModifierGroupIDs,
+			AgeRestricted: it.AgeRestricted, ItemType: snapshotItemType(it.ItemType),
+			Barcodes: it.Barcodes, ModifierGroupIDs: it.ModifierGroupIDs,
 			ModifierOptOutIDs: it.ModifierOptOutIDs, EffectiveModifierGroupIDs: it.EffectiveModifierGroupIDs,
 			OptionSetIDs: it.OptionSetIDs,
 			Variants:     make([]snapshotVariantRow, 0, len(it.Variants)),
@@ -1939,4 +1943,13 @@ func Start(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks, wg 
 			}
 		}
 	}()
+}
+
+// snapshotItemType reports a row's item type, "standard" when the column is
+// empty (ut-docs#4214).
+func snapshotItemType(t string) string {
+	if t == "" {
+		return catalogtypes.ItemTypeStandard
+	}
+	return t
 }

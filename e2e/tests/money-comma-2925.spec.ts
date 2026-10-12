@@ -48,15 +48,17 @@ test.describe('Money inputs: decimal comma on the remaining fields (ut-docs#2925
       await expect(page.locator(c.minor), `${c.url} ${c.minor}`).toHaveValue(c.want);
     }
 
-    // The tender / voucher amounts are read by app.js via toMinor on
-    // submit; the pattern is what used to refuse the comma.
+    // The tender amounts are read by app.js via toMinor on submit; the
+    // pattern is what used to refuse the comma. (The Split tab's old "Sell
+    // a voucher" amount left with ut-docs#4214 — the Gift voucher popup's
+    // value field is checked by gift-voucher-item-4214.spec.ts.)
     await page.goto('/?lang=de');
     const tender = await page.evaluate(() =>
       Array.from(document.querySelectorAll<HTMLInputElement>(
-        '#split-tender-form input[name="amount"], #split-tender-form input[name="change"], #split-tender-issue-form input[name="amount"]',
+        '#split-tender-form input[name="amount"], #split-tender-form input[name="change"]',
       )).map((el) => { el.value = '3,50'; return el.checkValidity() && el.hasAttribute('data-money-local'); }),
     );
-    expect(tender.length).toBeGreaterThanOrEqual(3);
+    expect(tender.length).toBeGreaterThanOrEqual(2);
     expect(tender.every(Boolean)).toBe(true);
     assertClean();
   });

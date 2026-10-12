@@ -3,32 +3,36 @@ id: vouchers
 title: Gutscheine
 section: Täglicher Verkauf
 order: 25
-summary: Verkaufen Sie Mehrzweck-Gutscheine über den Reiter „Aufteilen“ des Zahlungsfeldes und nehmen Sie sie als Zahlung an — prüfen Sie das Guthaben vor dem Abschluss, und der Beleg druckt jeden ausgegebenen Code.
-keywords: [gutschein, geschenkgutschein, geschenkkarte, voucher, einlösen, guthaben, ausgeben, code]
+summary: Verkaufen Sie Gutscheine über einen Gutschein-Artikel — Karte scannen oder die Kasse eine Nummer erzeugen lassen — und nehmen Sie sie als Zahlung an, per Scan im Verkaufsbildschirm oder im Reiter „Aufteilen“ des Zahlungsfeldes.
+keywords: [gutschein, geschenkgutschein, geschenkkarte, voucher, einzweck, bestimmter artikel, einlösen, guthaben, ausgeben, code, kartennummer, artikeltyp]
 ---
 
 # Gutscheine
 
-Ein Gutschein ist Geld, das eine Kundin jetzt bezahlt, um es später auszugeben — für alles im Laden, an jeder Kasse. Die Kasse führt das Guthaben jedes Gutscheins unter seinem **Code**: dem Code, der auf einer physischen Karte aufgedruckt ist, die Sie aushändigen, oder einem, den die Kasse selbst erzeugt, wenn Sie das Codefeld leer lassen. Sowohl der Verkauf eines Gutscheins als auch die Annahme eines Gutscheins als Zahlung geschehen im Reiter **Aufteilen** des Zahlungsfeldes (zum Reiter selbst siehe [Zahlungen](/help/payments)).
+Ein Gutschein ist Geld, das eine Kundin jetzt bezahlt, um es später auszugeben — für alles im Laden, an jeder Kasse. Die Kasse führt das Guthaben jedes Gutscheins unter seiner **Kartennummer**: der Nummer, die auf einer physischen Karte aufgedruckt ist, die Sie aushändigen, oder einer 13-stelligen Nummer, die die Kasse erzeugt, wenn Sie die Nummer leer lassen. Einen Gutschein verkaufen Sie, indem Sie im Verkaufsbildschirm auf einen **Gutschein**-Artikel tippen; als Zahlung nehmen Sie ihn per Scan oder im Reiter **Aufteilen** des Zahlungsfeldes an (zum Reiter selbst siehe [Zahlungen](/help/payments)).
 
 ## Einen Gutschein verkaufen
 
-1. Tippen Sie auf **Zahlung**, wechseln Sie zum Reiter **Aufteilen** und öffnen Sie **Gutschein verkaufen** am unteren Rand des Feldes.
-2. Geben Sie den Wert des Gutscheins unter **Gutscheinwert** ein — ein normaler Währungsbetrag, z. B. `25,00`.
-3. **Code**: Tippen Sie den Code ein, der auf der Karte steht, die Sie aushändigen. Lassen Sie das Feld leer, erzeugt die Kasse den Code beim Abschluss selbst.
-4. **Für** ist optional — ein Name, um festzuhalten, für wen der Gutschein gekauft wurde.
-5. **Gutschein hinzufügen**. Er erscheint in einer Liste ausstehender Gutscheine mit seinem Code (oder *Code wird beim Abschluss erzeugt*), seinem Wert und dem Namen, jeweils mit einem ✕ zum Entfernen. Der Wert wird zu dem addiert, was die Kundin schuldet — **Rest auffüllen** rechnet ihn mit ein, die Rechnung geht also auf wie bei jedem anderen Verkauf.
-6. Nehmen Sie die Zahlung wie gewohnt entgegen (Bargeld, Karte, …) und **Verkauf abschließen**. Der Beleg listet jeden Gutschein unter **Ausgegebene Gutscheine** mit seinem endgültigen Code auf. Bei einem erzeugten Code ist dieser Beleg die einzige Stelle, an der der Code jemals angezeigt wird — händigen Sie ihn also aus oder schreiben Sie den Code auf die Karte.
+Zum Verkaufen brauchen Sie einen Artikel, dessen **Typ** im Katalog *Gutschein* ist (siehe [Katalog](/help/catalog)) — legen Sie ihn einmal an. Lassen Sie seinen Preis leer, wird jedes Mal nach dem Wert gefragt; geben Sie ihm einen Preis (z. B. *Gutschein 25 €*), startet das Fenster mit diesem Wert.
 
-Ein Gutschein kann allein verkauft werden, ohne irgendetwas anderes im Warenkorb, oder zusammen mit Waren in einem Verkauf. Der Verkauf eines Gutscheins ist kein Warenumsatz: Er wird als Geld erfasst, das demjenigen geschuldet wird, der ihn später ausgibt, und die Ware wird erst versteuert, wenn der Gutschein eingelöst wird — siehe die Hinweise zum Tagesabschluss unten.
+1. Tippen Sie im Verkaufsbildschirm auf den Gutschein-Artikel (oder scannen Sie seinen Barcode). Das Fenster **Gutschein** öffnet sich.
+2. **Kartennummer**: Scannen Sie die Karte, die Sie aushändigen — das Feld ist für Ihren Scanner bereit, sobald das Fenster offen ist — oder tippen Sie ihre Nummer ein. Lassen Sie es leer, erzeugt die Kasse eine Nummer, wenn Sie auf **Hinzufügen** tippen.
+3. **Wert**: der Wert des Gutscheins, ein normaler Währungsbetrag, z. B. `25,00`. Hat der Artikel einen Preis, steht dieser schon im Feld.
+4. **Für** ist optional — ein Name, um festzuhalten, für wen der Gutschein gekauft wurde.
+5. **Einlösbar für**: **Jeden Einkauf** ist der gewöhnliche Gutschein; **Bestimmter Artikel (jetzt versteuert)** ist unten beschrieben. Tippen Sie auf **Hinzufügen**.
+6. Der Gutschein kommt als eigene Position in den Warenkorb und zeigt seine Kartennummer. Nehmen Sie die Zahlung wie gewohnt entgegen (**Zahlung**, Bargeld, Karte, …). Der Beleg listet jeden Gutschein unter **Ausgegebene Gutscheine** mit seiner Nummer auf. Bei einer von der Kasse erzeugten Nummer findet die Kundin sie auf diesem Beleg — händigen Sie ihn also aus oder schreiben Sie die Nummer auf die Karte.
+
+Ein Gutschein kann allein verkauft werden, ohne irgendetwas anderes im Warenkorb, oder zusammen mit Waren in einem Verkauf. Seine Warenkorbposition ist immer genau ein Gutschein zu seinem Wert: ohne Mengentasten und ohne Positionsrabatt, und eine Aktion oder ein Warenkorbrabatt verringert ihn nie. Tippen Sie auf ✕ an der Position, um den Gutschein zu verwerfen — ohne Grundabfrage, denn nichts hat den Laden verlassen. Der Verkauf eines Gutscheins ist kein Warenumsatz und bewegt keinen Bestand: Er wird als Geld erfasst, das demjenigen geschuldet wird, der ihn später ausgibt, und die Ware wird erst versteuert, wenn der Gutschein eingelöst wird — siehe die Hinweise zum Tagesabschluss unten. Ein geparkter Verkauf behält seine Gutscheinpositionen, und der Gutschein wird ausgegeben, wenn der Verkauf bezahlt ist.
 
 Was schiefgehen kann:
 
-- Ein Wert von null wird abgelehnt, bevor er hinzugefügt wird.
-- Ein Code, der bereits vergeben ist, wird beim Drücken von **Verkauf abschließen** abgelehnt, mit einer entsprechenden Meldung — die Liste der ausstehenden Gutscheine bleibt erhalten, korrigieren Sie also den Code und versuchen Sie es erneut.
-- Ein Verkauf kann bis zu 50 Gutscheine ausgeben.
+- **Hinzufügen** bleibt ausgegraut, bis der Wert über null liegt.
+- Eine Kartennummer, die schon vergeben ist — früher verkauft oder bereits auf einer anderen Position dieses Verkaufs — wird im Fenster mit einer entsprechenden Meldung abgelehnt, bevor etwas hinzugefügt wird. Scannen Sie eine andere Karte oder lassen Sie die Nummer leer.
+- Ein Verkauf kann bis zu 50 Gutscheine verkaufen.
 
 ## Einen Gutschein als Zahlung annehmen
+
+Am schnellsten: Scannen Sie den Barcode des Gutscheins — die Karte oder die auf dem Beleg gedruckte Nummer — im Verkaufsbildschirm. Die Kasse schlägt ihn nach und bietet im Zahlungsfeld eine Schaltfläche **Gutschein** für sein Guthaben an, höchstens so viel, wie der Verkauf noch braucht. Um die Nummer stattdessen einzutippen oder die Zahlung aufzuteilen:
 
 1. Wählen Sie im Reiter **Aufteilen** die Methode **Gutschein**. Ein Feld **Gutscheincode** erscheint, und das Feld „Wechselgeld“ verschwindet — auf einen Gutschein wird nie Wechselgeld herausgegeben.
 2. Tippen Sie den Code von der Karte der Kundin ein.
@@ -51,9 +55,9 @@ Die meisten Gutscheine gelten für **jede Verwendung** — die Kundin entscheide
 
 Verkauf:
 
-1. Wählen Sie unter **Gutschein verkaufen** bei **Gutscheinart** die Option **Bestimmter Artikel (jetzt versteuert)** (die Vorgabe **Jede Verwendung** ist der oben beschriebene gewöhnliche Gutschein).
-2. Ein Feld **MwSt.-Satz** erscheint — geben Sie den Satz des Artikels in Prozent ein, z. B. `19` oder `7`.
-3. Füllen Sie Wert, Code und Namen wie gewohnt aus und **Gutschein hinzufügen**. Die Liste der ausstehenden Gutscheine kennzeichnet ihn als *Bestimmter Artikel* mit seinem Satz. Der Verkauf erfasst die Umsatzsteuer zu diesem Satz sofort, der Gutschein erscheint also wie eine normale Verkaufsposition in den Steuersätzen des Tages — nicht im Abschnitt **GUTSCHEINE** für Verbindlichkeiten.
+1. Wählen Sie im Fenster **Gutschein** unter **Einlösbar für** die Option **Bestimmter Artikel (jetzt versteuert)** (die Vorgabe **Jeden Einkauf** ist der oben beschriebene gewöhnliche Gutschein).
+2. Der Gutschein wird mit dem Steuercode des Gutschein-Artikels selbst versteuert — geben Sie diesem Artikel im Katalog den Satz des Artikels (z. B. einen Artikel *Kaffee-Gutschein* mit dem 7-%-Code).
+3. Füllen Sie Kartennummer, Wert und Namen wie gewohnt aus und tippen Sie auf **Hinzufügen**. Die Warenkorbposition zeigt *Bestimmter Artikel (jetzt versteuert)*. Der Verkauf erfasst die Umsatzsteuer zu diesem Satz sofort, der Gutschein erscheint also wie eine normale Verkaufsposition in den Steuersätzen des Tages — nicht im Abschnitt **GUTSCHEINE** für Verbindlichkeiten.
 
 Einlösen:
 
@@ -63,7 +67,7 @@ Einlösen:
 
 Was schiefgehen kann:
 
-- Ein leerer, negativer oder über 100 liegender MwSt.-Satz wird abgelehnt, bevor der Gutschein hinzugefügt wird.
+- Ein Gutschein-Artikel ohne Steuercode wird mit dem Standardsatz des Ladens versteuert — setzen Sie zuerst den richtigen Steuercode am Artikel.
 - Das Tippen auf **Einlösen** bei einem bereits eingelösten Gutschein, oder das Scannen eines Gutscheins für einen bestimmten Artikel im Verkaufsbildschirm, wird mit einer entsprechenden Meldung abgelehnt.
 - Ein an einer anderen Kasse verkaufter Gutschein für einen bestimmten Artikel lässt sich hier prüfen, aber noch nicht einlösen — lösen Sie ihn an der Hauptkasse oder an der Kasse ein, die ihn verkauft hat.
 

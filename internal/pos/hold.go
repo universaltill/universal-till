@@ -56,6 +56,12 @@ type SnapshotLine struct {
 	// basket asks again. Omitted (false) in a payload saved before this
 	// field existed; the tender gate's DB backstop still catches that line.
 	AgeRestricted bool `json:"age_restricted,omitempty"`
+	// GiftVoucher (ut-docs#4214) carries a voucher-sale line's number,
+	// holder and use through hold/resume, so a parked sale still issues the
+	// same voucher when it is paid.
+	GiftVoucher *GiftVoucherLine `json:"gift_voucher,omitempty"`
+	// ItemType (ut-docs#4214): the line's items.item_type at add time.
+	ItemType string `json:"item_type,omitempty"`
 }
 
 // KitchenPendingQty (ut-docs#2703) is how much of l still has to go to the
@@ -262,6 +268,8 @@ func (s *Service) Snapshot() BasketSnapshot {
 			OrderType:      l.OrderType,
 			KitchenSentQty: l.KitchenSentQty,
 			AgeRestricted:  l.AgeRestricted,
+			GiftVoucher:    cloneGiftVoucher(l.GiftVoucher),
+			ItemType:       l.ItemType,
 		})
 	}
 	return snap
@@ -320,6 +328,8 @@ func (s *Service) RestoreHeld(snap BasketSnapshot, origin HeldOrigin) {
 			OrderType:      lineMode,
 			KitchenSentQty: l.KitchenSentQty,
 			AgeRestricted:  l.AgeRestricted,
+			GiftVoucher:    cloneGiftVoucher(l.GiftVoucher),
+			ItemType:       l.ItemType,
 		})
 	}
 	s.discountType = snap.DiscountType
@@ -352,4 +362,14 @@ func (s *Service) RestoreHeld(snap BasketSnapshot, origin HeldOrigin) {
 	s.tableLabel = snap.TableLabel
 	s.applyTablePolicyLocked()
 	s.recomputeTotals()
+}
+
+// cloneGiftVoucher copies a voucher-sale line's details so a snapshot and
+// the live basket never share one *GiftVoucherLine.
+func cloneGiftVoucher(v *GiftVoucherLine) *GiftVoucherLine {
+	if v == nil {
+		return nil
+	}
+	c := *v
+	return &c
 }

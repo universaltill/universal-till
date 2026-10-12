@@ -2535,6 +2535,9 @@ func (a PriceResolverAdapter) resolve(ctx context.Context, code string) (pos.Bas
 		// ut-docs#3340: carried onto the live line so the basket can show
 		// the "needs ID check" badge from the moment the item is rung up.
 		AgeRestricted: row.AgeRestricted,
+		// ut-docs#4214: lets the scan handler send a gift voucher item to
+		// its popup, and the engine refuse it as goods.
+		ItemType: row.ItemType,
 	}
 	if row.ImageURL != "" {
 		line.ImageURL = row.ImageURL

@@ -51,11 +51,14 @@ type ItemPatch struct {
 	// Icon is the item's icon id (ut-docs#3584, items.icon): "" clears it.
 	// One picture per item (SetItemPicture): a non-empty icon replaces the
 	// item's thumbnail, the same rule as CategorySave.Icon.
-	Icon              *string
-	Barcodes          *[]string
-	Active            *bool
-	IsWeighed         *bool
-	StockUntracked    *bool
+	Icon           *string
+	Barcodes       *[]string
+	Active         *bool
+	IsWeighed      *bool
+	StockUntracked *bool
+	// ItemType sets items.item_type (ut-docs#4214): "standard" or
+	// "gift_voucher"; anything else is refused (ErrInvalidItemType).
+	ItemType          *string
 	ModifierGroupIDs  *[]string
 	ModifierOptOutIDs *[]string
 	// NetQuantityValue/NetQuantityUnit set a pre-packed item's net content
@@ -223,6 +226,9 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 			// placeholder row for an untracked item (ut-docs#1850).
 			in.StockUntracked = *p.StockUntracked
 		}
+		if p.ItemType != nil {
+			in.ItemType = *p.ItemType
+		}
 		if p.CategoryID != nil {
 			// Steers the generated SKU's shape (ut-docs#3087). Validated
 			// here, before the INSERT, so an unknown id gets the same
@@ -301,6 +307,10 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 	if p.StockUntracked != nil {
 		cur.StockUntracked = *p.StockUntracked
 		res.Changed = append(res.Changed, "stock_untracked")
+	}
+	if p.ItemType != nil {
+		cur.ItemType = *p.ItemType
+		res.Changed = append(res.Changed, "item_type")
 	}
 	if setNetQuantity {
 		// The pair travels together: a patch carrying it replaces both.

@@ -1,0 +1,88 @@
+{{/* gift_voucher_popup.html — the Gift voucher popup (ut-docs#4214). A
+     gift_voucher item never adds goods: /api/pos/scan (and GET
+     /ui/pos/modifiers, for a tile that would otherwise open the picker)
+     renders this into #modifier-modal — HX-Retarget + HX-Trigger-After-Swap
+     open-modifier-modal, the ut-docs#2227 variant picker's path — so a tile
+     tap, a typed code and a scanned item barcode all land here.
+
+     The form re-posts /api/pos/scan with the same code/src plus gv=1 and the
+     voucher fields. The server either adds the voucher line (a basket swap
+     carrying X-UT-Response: ok, so `ut-ok close:modifier-modal` closes this
+     dialog) or re-renders this popup with the error and the entered values
+     (no close: the cashier sees why).
+
+     * Card number (gv_code) is focused on open, so a hardware scanner's
+       keystrokes land in it; data-scan-own keeps app.js's wedge-scan
+       capture from stealing that scan for the sale screen. Empty = the till
+       creates a number when the line is added.
+     * Value is the till's usual money input (type="text" +
+       inputmode="decimal" + moneypatternlocal — never type="number",
+       ut-docs#1284/#2815); the script mirrors it into gv_value_minor and
+       keeps Add disabled until it is a valid amount. Prefilled from the
+       item's price when that is above zero.
+     * One OSK toggle (the elevation prompt's markup): osk.js opens a single
+       keyboard for whichever field is tapped, never two. */}}
+<div class="modifier-picker gift-voucher-popup">
+  <h3 id="gift-voucher-title">{{ T "pos.gift_voucher.title" }}</h3>
+  <p class="gift-voucher-item">{{ .ItemName }}</p>
+  <form hx-post="/api/pos/scan" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+        hx-disabled-elt="find button[type=submit]"
+        data-after-request="ut-ok close:modifier-modal" autocomplete="off" novalidate>
+    <input type="hidden" name="code" value="{{ .Code }}">
+    {{ if .Src }}<input type="hidden" name="src" value="{{ .Src }}">{{ end }}
+    <input type="hidden" name="gv" value="1">
+    <input type="hidden" name="gv_value_minor" value="{{ .PrefillMinor }}">
+    <div class="gift-voucher-row">
+      <label class="gift-voucher-field">{{ T "pos.gift_voucher.number" }}
+        <input type="text" name="gv_code" value="{{ .Number }}" maxlength="64" spellcheck="false"
+               autocapitalize="characters" data-scan-own aria-describedby="gift-voucher-number-hint gift-voucher-error"
+               autofocus>
+      </label>
+      <button class="btn secondary osk-toggle" type="button" data-osk-toggle hidden
+              title="{{ T "osk.toggle" }}" aria-label="{{ T "osk.toggle" }}">⌨️</button>
+    </div>
+    <p id="gift-voucher-number-hint" class="muted gift-voucher-hint">{{ T "pos.gift_voucher.number_hint" }}</p>
+    <div class="gift-voucher-pair">
+    <label class="gift-voucher-field">{{ T "pos.gift_voucher.value" }} ({{ currency.Display }})
+      <input type="text" inputmode="decimal" class="gift-voucher-value" data-gift-voucher-value
+             data-prefill-minor="{{ .PrefillMinor }}" data-max-minor="{{ .MaxMinor }}"
+             {{ moneypatternlocal currency.Decimals false }} {{ moneyplaceholderlocal currency.Decimals 0 }}>
+    </label>
+    <label class="gift-voucher-field">{{ T "pos.gift_voucher.holder" }}
+      <input type="text" name="gv_holder" value="{{ .Holder }}" maxlength="200">
+    </label>
+    </div>
+    <fieldset class="gift-voucher-use">
+      <legend>{{ T "pos.gift_voucher.use" }}</legend>
+      <label><input type="radio" name="gv_purpose" value="multi_purpose"{{ if ne .Purpose "single_purpose" }} checked{{ end }}> <span>{{ T "pos.gift_voucher.use_any" }}</span></label>
+      <label><input type="radio" name="gv_purpose" value="single_purpose"{{ if eq .Purpose "single_purpose" }} checked{{ end }}> <span>{{ T "pos.gift_voucher.use_specific" }}</span></label>
+    </fieldset>
+    <p id="gift-voucher-error" class="login-error" role="alert"{{ if not .ErrMsg }} hidden{{ end }}>{{ .ErrMsg }}</p>
+    <div class="modifier-actions">
+      <button type="button" class="btn secondary" data-action="close:modifier-modal">{{ T "common.cancel" }}</button>
+      <button type="submit" class="btn primary" disabled>{{ T "pos.gift_voucher.add" }}</button>
+    </div>
+  </form>
+  <script>
+    (function () {
+      var root = document.currentScript.parentElement;
+      var value = root.querySelector('[data-gift-voucher-value]');
+      var hidden = root.querySelector('input[name="gv_value_minor"]');
+      var add = root.querySelector('button[type="submit"]');
+      var number = root.querySelector('input[name="gv_code"]');
+      var max = parseInt(value.getAttribute('data-max-minor'), 10);
+      var prefill = parseInt(value.getAttribute('data-prefill-minor'), 10);
+      if (prefill > 0 && window.utCurrency) value.value = window.utCurrency.toMajor(prefill);
+      function sync() {
+        var raw = value.value.trim();
+        var minor = (raw !== '' && value.checkValidity() && window.utCurrency) ? window.utCurrency.toMinor(raw) : 0;
+        var ok = minor > 0 && minor <= max;
+        hidden.value = ok ? String(minor) : '';
+        add.disabled = !ok;
+      }
+      value.addEventListener('input', sync);
+      sync();
+      try { number.focus({ preventScroll: true }); } catch (e) { number.focus(); }
+    })();
+  </script>
+</div>

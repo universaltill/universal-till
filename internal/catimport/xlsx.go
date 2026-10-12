@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -436,6 +437,7 @@ func ParseXLSX(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbology
 			Description:   get(rec, "description"),
 			IsWeighed:     isTruthy(get(rec, "weighed")),
 			AgeRestricted: isTruthy(get(rec, "age_restricted")),
+			ItemType:      ParseItemType(get(rec, "item_type")),
 		}
 		if rawBarcode != "" && !barcodeMatched {
 			item.BarcodeIssue = BarcodeIssueNoSymbologyMatch
@@ -445,6 +447,10 @@ func ParseXLSX(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbology
 			item.Name = strings.TrimSpace(item.Name + " " + v)
 		}
 		price, perr := ParsePrice(getNum(rowNo, rec, "price"), currencyDecimals)
+		if item.ItemType == catalogtypes.ItemTypeGiftVoucher && strings.TrimSpace(getNum(rowNo, rec, "price")) == "" {
+			// ut-docs#4214: a gift voucher's value is asked at sale.
+			price, perr = 0, nil
+		}
 		item.PriceMinor = price
 		if raw := getNum(rowNo, rec, "stock"); raw != "" {
 			if qty, err := strconv.ParseFloat(strings.ReplaceAll(raw, ",", ""), 64); err == nil {

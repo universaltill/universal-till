@@ -159,7 +159,16 @@
                   {{ if .ImageURL }}<img class="line-thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ else }}<span class="line-thumb line-thumb-empty"></span>{{ end }}
                   <span class="line-text">
                     <span class="line-name">{{ .Name }}</span>
+                    {{/* ut-docs#4214: a gift voucher being sold shows its
+                         card number (and holder, and "specific item" when
+                         it is one) instead of the item's SKU. */}}
+                    {{ with .GiftVoucher }}
+                    <small class="muted line-gift-voucher" data-testid="gift-voucher-number">{{ .Code }}</small>
+                    {{ if .HolderLabel }}<small class="muted">{{ printf (T "basket.gift_voucher.for") .HolderLabel }}</small>{{ end }}
+                    {{ if .IsSinglePurpose }}<small class="muted">{{ T "pos.gift_voucher.use_specific" }}</small>{{ end }}
+                    {{ else }}
                     <small class="muted">{{ .SKU }}</small>
+                    {{ end }}
                     {{ if .Modifiers }}
                     <ul class="line-modifiers">
                       {{ range .Modifiers }}
@@ -224,6 +233,11 @@
                 </div>
               </td>
               <td>
+                {{ if .GiftVoucher }}
+                {{/* ut-docs#4214: a voucher line is always one voucher at its
+                     face value — no qty stepper, no line discount. */}}
+                <span class="line-qty-fixed">1</span>
+                {{ else }}
                 <div class="line-inputs">
                   <!-- ut-docs#1284: type="number" corrupts a decimal typed via
                        the kiosk OSK (see index.html's amount field for the
@@ -308,11 +322,15 @@
                          hx-swap="outerHTML"
                          hx-sync="#basket:replace" />
                 </div>
+                {{ end }}
               </td>
               <td>{{ money .PriceCents }}</td>
               <td>{{ money .LineTotal }}</td>
               <td>
-                {{ if .PriceCents.IsZero }}
+                {{ if or .PriceCents.IsZero .GiftVoucher }}
+                {{/* A zero-value line, or a gift voucher being sold
+                     (ut-docs#4214: dropping it just means the voucher is
+                     never issued — nothing to void or write off). */}}
                 <button class="btn danger btn-x" title="{{ T "basket.remove" }}" hx-post="/api/pos/remove" hx-vals='{{ jsonVals "key" .LineKey }}' hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">✕</button>
                 {{ else }}
                 {{/* ut-docs#1465 (G41): a non-zero extended-value line

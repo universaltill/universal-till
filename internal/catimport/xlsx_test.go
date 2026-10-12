@@ -901,3 +901,19 @@ func TestParseXLSX_ShopifyRejectedBeforeMergeCheck(t *testing.T) {
 		t.Errorf("err = %v, want ErrXLSXShopifyUnsupported (not ErrXLSXMergedCells)", err)
 	}
 }
+
+// ut-docs#4214: ParseXLSX's own row loop reads the Item type column too.
+func TestParseXLSX_ItemTypeColumn(t *testing.T) {
+	data := buildXLSX(t, [][]string{
+		{"Name", "Price", "Item type"},
+		{"Gutschein", "", "gift_voucher"},
+		{"Bread", "2.00", ""},
+	})
+	res, err := ParseXLSX(bytes.NewReader(data), int64(len(data)), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Items) != 2 || res.Items[0].ItemType != "gift_voucher" || res.Items[0].Issue != "" || res.Items[1].ItemType != "standard" {
+		t.Fatalf("items = %+v", res.Items)
+	}
+}

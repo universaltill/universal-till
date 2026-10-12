@@ -229,3 +229,24 @@ func TestMinorToDecimal(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#4214: the "Item type" column round-trips a gift voucher item
+// through export → import; a standard item comes back standard.
+func TestExportCSVRoundTripsItemType(t *testing.T) {
+	rows := []data.ExportRow{
+		{Name: "Gift voucher", SKU: "GV-1", PriceMinor: 0, ItemType: "gift_voucher"},
+		{Name: "Bread", SKU: "BR-1", PriceMinor: 200},
+	}
+	var b strings.Builder
+	writeCatalogCSV(&b, rows, 2)
+	if !strings.Contains(strings.SplitN(b.String(), "\n", 2)[0], "Item type") {
+		t.Fatalf("export header lacks Item type: %q", b.String())
+	}
+	res, err := catimport.Parse(strings.NewReader(b.String()), 2, data.DefaultEnabledBarcodeSymbologyIDs(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Items[0].ItemType != "gift_voucher" || res.Items[1].ItemType != "standard" || res.Items[0].Issue != "" {
+		t.Fatalf("item type did not round-trip: %+v / %+v", res.Items[0], res.Items[1])
+	}
+}

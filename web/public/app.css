@@ -1336,6 +1336,10 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
    isActive checkbox, meant to show only in edit mode) stays visibly
    flex-displayed on page load. Found live while testing ut-docs#259. */
 .field-checks[hidden] { display: none; }
+/* ut-docs#4214: the item editor hides the goods-only fields for a gift
+   voucher item — .field-checks label sets display:flex, so it needs the
+   same override. */
+.field-checks label[hidden] { display: none; }
 /* ut-docs#1901: the add/edit-item form is a <dialog> (#item-form-modal,
    opened via .show() from catalog.html) instead of a permanently-visible
    360px sticky side panel. Opened via .show(), NOT showModal() — same fix,
@@ -4060,37 +4064,43 @@ body.osk-padded .payment-overlay {
 .split-voucher-redeem[hidden] { display: none; }
 .split-voucher-redeem-info { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
 .split-voucher-redeem .btn { flex: 0 0 auto; }
-/* ut-docs#1037: voucher purpose radios. A fieldset of two <label>s rather
-   than a segmented toggle so a long option ("Bestimmter Artikel (jetzt
-   versteuert)") wraps instead of truncating; each label is a flex row so
-   the radio stays at the start of a wrapped line. */
-.split-issue-purpose { grid-column: 1 / -1; border: 1px solid var(--control-border); border-radius: 6px;
-                       padding: .35rem .5rem; margin: 0; display: flex; flex-wrap: wrap; gap: .3rem 1rem; }
-.split-issue-purpose legend { font-size: .8rem; color: var(--muted); padding-inline: .2rem; }
-.split-issue-purpose label { display: flex; align-items: flex-start; gap: .35rem; flex: 1 1 12rem; min-width: 0;
-                             margin: 0; font-size: .9rem; }
-.split-issue-purpose label span { overflow-wrap: anywhere; }
-.split-issue-purpose input[type="radio"] { flex: 0 0 auto; margin-block-start: .2rem; }
-.split-issue-vat-field { grid-column: 1 / -1; }
-.split-issue-vat-field[hidden] { display: none; }
-.split-issue-voucher { border-top: 1px dashed var(--border); padding-top: .4rem; }
-/* ux fix (ut-docs#1832 gate): a plain <summary> defaults to list-item
-   text with a tiny UA disclosure triangle — easy to miss on a touchscreen
-   next to this panel's 54px pill buttons. .split-issue-voucher-summary
-   layers on top of the existing .btn.secondary class (same control every
-   other secondary action here already uses) so it reads as tappable; the
-   list-item styling is suppressed and a chevron re-added via ::after
-   (rotated when [open]) so open/closed state is still visible without the
-   invisible-until-you-look-closely UA marker. */
-.split-issue-voucher-summary { width: 100%; justify-content: space-between; list-style: none; }
-.split-issue-voucher-summary::-webkit-details-marker { display: none; }
-.split-issue-voucher-summary::marker { content: ''; }
-.split-issue-voucher-summary::after {
-  content: '▾'; font-size: .8em; transition: transform .12s ease;
-}
-.split-issue-voucher[open] > .split-issue-voucher-summary::after { transform: rotate(180deg); }
-.split-issue-voucher-hint { font-size: .8rem; color: var(--muted); margin: .4rem 0 .4rem; }
-.split-issue-voucher .split-tender-form { margin-bottom: .4rem; }
+/* ut-docs#4214: the Gift voucher popup (gift_voucher_popup.html) in
+   #modifier-modal. Fields stack full width; the card number row keeps its
+   OSK toggle beside the field. The Use choice is a fieldset of two
+   <label>s (not a segmented toggle) so a long option ("Bestimmter Artikel
+   (jetzt versteuert)") wraps instead of truncating; each label is a flex
+   row so the radio stays at the start of a wrapped line. Logical
+   properties only (RTL). */
+#modifier-modal:has(.gift-voucher-popup) { max-width: 34rem; }
+.gift-voucher-popup h3 { margin-block: 0 .15rem; }
+.gift-voucher-popup .gift-voucher-item { margin: 0 0 .4rem; color: var(--muted); overflow-wrap: anywhere; }
+.gift-voucher-popup form { display: flex; flex-direction: column; gap: .4rem; }
+/* Value and For side by side on a till (the popup must fit a 1024x600
+   screen without scrolling to Add); stacked on a phone. */
+.gift-voucher-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .5rem; }
+@media (max-width: 480px) { .gift-voucher-pair { grid-template-columns: minmax(0, 1fr); } }
+/* Add/Cancel stay in view even when a long translation or a small screen
+   makes the dialog scroll (#modifier-modal is the scroll container). */
+.gift-voucher-popup .modifier-actions { position: sticky; inset-block-end: -1.25rem; margin-block-end: -1.25rem;
+                                         padding-block: .5rem 1.25rem; background: var(--surface, Canvas); }
+.gift-voucher-row { display: flex; align-items: flex-end; gap: .5rem; }
+.gift-voucher-field { display: flex; flex-direction: column; gap: .25rem; flex: 1 1 auto; min-inline-size: 0; }
+.gift-voucher-field input { min-block-size: 44px; inline-size: 100%; }
+.gift-voucher-field input[name="gv_code"] { font-family: monospace; font-size: 1.1rem; }
+.gift-voucher-value { font-size: 1.25rem; text-align: end; font-variant-numeric: tabular-nums; }
+.gift-voucher-hint { margin: -.2rem 0 0; font-size: .8rem; }
+.gift-voucher-use { border: 1px solid var(--control-border); border-radius: 6px;
+                    padding: .35rem .5rem; margin: 0; display: flex; flex-wrap: wrap; gap: .3rem 1rem; }
+.gift-voucher-use legend { font-size: .8rem; color: var(--muted); padding-inline: .2rem; }
+.gift-voucher-use label { display: flex; align-items: center; gap: .35rem; flex: 1 1 10rem; min-inline-size: 0;
+                          margin: 0; font-size: .9rem; min-block-size: 44px; }
+.gift-voucher-use label span { overflow-wrap: anywhere; }
+.gift-voucher-use input[type="radio"] { flex: 0 0 auto; }
+.gift-voucher-popup .login-error[hidden] { display: none; }
+/* The basket line of a voucher being sold: its number and holder under the
+   name, and a fixed "1" instead of the qty/discount controls. */
+.line-gift-voucher { font-family: monospace; overflow-wrap: anywhere; }
+.line-qty-fixed { display: inline-block; min-inline-size: 2rem; text-align: center; }
 .pill-code { font-family: monospace; overflow-wrap: anywhere; }
 .split-tender-payments { margin: .25rem 0; display: flex; flex-direction: column; gap: .4rem; }
 .split-tender-payments.empty { color: var(--muted); font-size: .9rem; }

@@ -3,32 +3,36 @@ id: vouchers
 title: Gift vouchers
 section: Everyday selling
 order: 25
-summary: Sell multi-purpose gift vouchers from the payment panel's Split tab and take them as payment — check the balance before you commit, and the receipt prints every code you issued.
-keywords: [voucher, gift voucher, gift card, gutschein, einzweck, single-purpose, specific item, redeem, balance, issue, code]
+summary: Sell gift vouchers by tapping a Gift voucher item — scan the card or let the till create a number — and take them as payment by scanning them at the sale screen or in the payment panel's Split tab.
+keywords: [voucher, gift voucher, gift card, gutschein, hediye çeki, einzweck, single-purpose, specific item, redeem, balance, issue, code, card number, item type]
 ---
 
 # Gift vouchers
 
-A gift voucher is money a customer pays now to spend later — on anything in the shop, at any till. The till keeps each voucher's balance under its **code**: the one printed on a physical card you hand over, or one the till makes up when you leave the code blank. Both selling a voucher and taking one as payment happen in the payment panel's **Split** tab (see [Payments](/help/payments) for the tab itself).
+A gift voucher is money a customer pays now to spend later — on anything in the shop, at any till. The till keeps each voucher's balance under its **card number**: the one printed on a physical card you hand over, or a 13-digit number the till creates when you leave the number empty. You sell a voucher by tapping a **Gift voucher** item on the sale screen, and take one as payment by scanning it or in the payment panel's **Split** tab (see [Payments](/help/payments) for the tab itself).
 
 ## Selling a voucher
 
-1. Tap **Payment**, switch to the **Split** tab, and open **Sell a voucher** at the bottom of the panel.
-2. Type the voucher's value in **Voucher amount** — a normal currency amount, e.g. `25.00`.
-3. **Code**: type the code printed on the card you're handing over. Leave it blank and the till generates a code at checkout instead.
-4. **For** is optional — a name to remember who the voucher was bought for.
-5. **Add Voucher**. It joins a pending list showing its code (or *Code generated at checkout*), value and holder, each with a ✕ to remove it. The value is added to what the customer owes — **Fill Remaining** counts it, so the arithmetic works the same as any other sale.
-6. Take the payment as usual (cash, card, …) and **Complete Sale**. The receipt lists every voucher under **Vouchers issued** with its final code. For a generated code this receipt is the only place the code is ever shown, so hand it to the customer or write the code on the card.
+Selling needs an item whose **Type** is *Gift voucher* in the catalogue (see [Catalog](/help/catalog)) — set one up once. Leave its price empty to be asked for the value every time, or give it a price (e.g. *Gift voucher €25*) to start the popup with that value.
 
-A voucher can be sold on its own, with nothing else in the basket, or together with goods in one sale. Selling a voucher is not product revenue: it's recorded as money owed to whoever later spends it, and the goods are taxed when the voucher is spent — see the day-end notes below.
+1. Tap the gift voucher item on the sale screen (or scan its barcode). The **Gift voucher** popup opens.
+2. **Card number**: scan the card you're handing over — the field is ready for your scanner as soon as the popup opens — or type its number. Leave it empty and the till creates a number when you tap **Add**.
+3. **Value**: the voucher's value, a normal currency amount, e.g. `25.00`. It starts with the item's price when the item has one.
+4. **For** is optional — a name to remember who the voucher was bought for.
+5. **Can be spent on**: **Any purchase** is the everyday voucher; **Specific item (taxed now)** is described below. Tap **Add**.
+6. The voucher joins the basket as its own line, showing its card number. Take the payment as usual (**Payment**, cash, card, …). The receipt lists every voucher under **Vouchers issued** with its number. For a number the till created, this receipt is where the customer finds it, so hand it over or write the number on the card.
+
+A voucher can be sold on its own, with nothing else in the basket, or together with goods in one sale. Its basket line is always one voucher at its value: it has no quantity buttons or line discount, and a promotion or basket discount never reduces it. Tap ✕ on the line to drop the voucher — no reason is asked, because nothing has left the shop. Selling a voucher is not product revenue and moves no stock: it's recorded as money owed to whoever later spends it, and the goods are taxed when the voucher is spent — see the day-end notes below. A held sale keeps its voucher lines, and the voucher is issued when the sale is paid.
 
 What can go wrong:
 
-- A value of zero is refused before it's added.
-- A code that's already in use is refused when you press **Complete Sale**, with a message saying so — the pending list stays, so correct the code and try again.
-- One sale can issue up to 50 vouchers.
+- **Add** stays greyed out until the value is above zero.
+- A card number that's already in use — sold before, or already on another line of this sale — is refused in the popup with a message saying so, before anything is added. Scan another card, or leave the number empty.
+- One sale can sell up to 50 vouchers.
 
 ## Taking a voucher as payment
+
+The quickest way: scan the voucher's barcode — the card, or the number printed on the receipt — on the sale screen. The till looks it up and offers a **Voucher** button in the payment panel for its balance, up to what the sale still needs. To type the number instead, or to split the payment:
 
 1. In the **Split** tab, choose **voucher** as the method. A **Voucher code** box appears, and the Change box disappears — a voucher never gives change.
 2. Type the code from the customer's card.
@@ -51,9 +55,9 @@ Most gift vouchers are for **any use** — the customer decides later what to sp
 
 Selling one:
 
-1. In **Sell a voucher**, choose **Specific item (taxed now)** under **Voucher type** (the default, **Any use**, is the everyday voucher described above).
-2. A **VAT rate** box appears — type the rate the item carries as a percentage, e.g. `19` or `7`.
-3. Fill in the amount, code and holder as usual and **Add Voucher**. The pending list marks it *Specific item* with its rate. The sale records the VAT at that rate straight away, so the voucher shows in the day's VAT bands like a normal sale line — not in the **GUTSCHEINE** liability section.
+1. In the **Gift voucher** popup, choose **Specific item (taxed now)** under **Can be spent on** (the default, **Any purchase**, is the everyday voucher described above).
+2. The voucher is taxed at the gift voucher item's own tax code — give that item the item's rate in the catalogue (e.g. a *Coffee voucher* item with the 7% code).
+3. Fill in the card number, value and holder as usual and **Add**. The basket line says *Specific item (taxed now)*. The sale records the VAT at that rate straight away, so the voucher shows in the day's VAT bands like a normal sale line — not in the **GUTSCHEINE** liability section.
 
 Redeeming one:
 
@@ -63,7 +67,7 @@ Redeeming one:
 
 What can go wrong:
 
-- A VAT rate that is empty, negative or above 100 is refused before the voucher is added.
+- A gift voucher item with no tax code is taxed at the shop's standard rate — set the right tax code on the item first.
 - Tapping **Redeem** on a voucher that has already been used, or scanning a specific-item voucher at the sale screen, is refused with a message saying so.
 - A specific-item voucher sold on another till can be checked from this one but not yet redeemed here — redeem it on the main till or on the till that sold it.
 

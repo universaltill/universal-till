@@ -1042,3 +1042,35 @@ func TestParseNoAgeRestrictedColumnLeavesItFalse(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#4214: this till's own "Item type" column. "gift_voucher" (or
+// "Gift voucher") marks a gift voucher item, which may leave its price
+// blank (imported as 0 — the till asks for the value at sale); anything
+// else, or no column, is a standard item.
+func TestParseItemTypeColumn(t *testing.T) {
+	csv := "Name,Price,Item type\n" +
+		"Gutschein,,gift_voucher\n" +
+		"Voucher 25,25.00,Gift voucher\n" +
+		"Bread,2.00,standard\n" +
+		"Milk,1.00,\n"
+	res, err := Parse(strings.NewReader(csv), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"gift_voucher", "gift_voucher", "standard", "standard"}
+	for i, it := range res.Items {
+		if it.ItemType != want[i] {
+			t.Errorf("row %d (%s): ItemType %q, want %q", i, it.Name, it.ItemType, want[i])
+		}
+	}
+	if it := res.Items[0]; it.Issue != "" || it.PriceMinor != 0 {
+		t.Errorf("a gift voucher row with a blank price imports at 0 without an issue, got %+v", it)
+	}
+	res, err = Parse(strings.NewReader("Name,Price,Item type\nBread,,standard\n"), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Items[0].Issue != IssueBadPrice {
+		t.Errorf("a standard row with a blank price is still a bad price, got %q", res.Items[0].Issue)
+	}
+}
