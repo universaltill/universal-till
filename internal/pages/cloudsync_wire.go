@@ -656,6 +656,29 @@ func remoteStoreNameReport(ctx context.Context, d *common.Deps) (string, bool) {
 	return name, true
 }
 
+// remoteCountryReport is the read side for DeviceExtra's `country`
+// (ut-docs#4020): the shop's store.country choice from setup, so the shop
+// profile in my. can show where the shop is registered. Any till reports it
+// (it is shop-wide, like currency). Only a stored two-letter A-Z code is
+// reported; an unset country (CurrentState defaults to "GB", which is not a
+// choice), a read error or anything else is left out, which the cloud reads
+// as "nothing to show". It never blocks a check-in.
+func remoteCountryReport(ctx context.Context, d *common.Deps) (string, bool) {
+	raw, found, err := d.Settings.Get(ctx, common.KeyCountry)
+	if err != nil {
+		logging.L().Warnf("cloudsync: country report failed: %v", err)
+		return "", false
+	}
+	if !found {
+		return "", false
+	}
+	c := strings.ToUpper(strings.TrimSpace(raw))
+	if len(c) != 2 || c[0] < 'A' || c[0] > 'Z' || c[1] < 'A' || c[1] > 'Z' {
+		return "", false
+	}
+	return c, true
+}
+
 // remoteQuickButtonsReport is the read side for DeviceExtra: the currently
 // applied quick-sale button layout (barcode + label, in the same sort order
 // LoadButtons itself orders by, plus the item each tile points at and that
@@ -1444,6 +1467,11 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 			// category/modifier editors to pre-fill from real state. Sent
 			// only when it changed (see configReportGate).
 			configGate.add(ctx, d, extra)
+			// ut-docs#4020: the shop's country, for the shop profile in my.
+			// See remoteCountryReport.
+			if c, ok := remoteCountryReport(ctx, d); ok {
+				extra["country"] = c
+			}
 			// The main till's directive key, on every check-in (contract
 			// §1): created here at the first one. A satellite never
 			// creates or reports one, so the cloud clears a key a
