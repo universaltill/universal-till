@@ -31,7 +31,12 @@ managers, and the GitHub Release body leads with it.
 
 1. List the cards closed since the previous tag (the pipeline board's **Done**
    column, or `git log --first-parent <previous-tag>..main`) and read each
-   card's close-out comment.
+   card's close-out comment. Credit a surface outside the till (my., the
+   website, a plugin) only when that surface's own change has shipped: a
+   till-side slice that merely lets my. send something is groundwork, not a
+   feature. Check the card's sibling slices and any open `blocked:dep` cards
+   naming it, and announce the feature in the release that ships its last
+   slice (ut-docs#4219).
 2. Write `web/release-notes/en/v<X.Y.Z>.md`:
    ```markdown
    ---
