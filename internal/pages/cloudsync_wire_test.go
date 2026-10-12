@@ -3358,3 +3358,33 @@ func TestRemoteStoreNameReport_ReadErrorOmits(t *testing.T) {
 		t.Fatalf("read error reported %q", name)
 	}
 }
+
+// ut-docs#4020: every check-in carries the shop's country (store.country),
+// so the shop profile in my. can show where the shop is registered. Only a
+// real two-letter choice is reported: an unset country (the in-memory
+// default "GB" is not a choice) and anything that is not two letters are
+// left out, which the cloud reads as "nothing to show".
+func TestBuildCloudHooks_ReportsShopCountryOnlyWhenChosen(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	hooks := buildCloudHooks(dp, nil)
+	if v, ok := hooks.DeviceExtra(ctx)["country"]; ok {
+		t.Fatalf("unset country reported as %#v", v)
+	}
+	for in, want := range map[string]string{"DE": "DE", "de": "DE", " pt ": "PT"} {
+		if err := dp.Settings.Set(ctx, common.KeyCountry, in); err != nil {
+			t.Fatalf("seed %q: %v", in, err)
+		}
+		if got := hooks.DeviceExtra(ctx)["country"]; got != want {
+			t.Fatalf("country %q reported as %#v, want %q", in, got, want)
+		}
+	}
+	for _, in := range []string{"", "  ", "Germany", "D3", "DEU"} {
+		if err := dp.Settings.Set(ctx, common.KeyCountry, in); err != nil {
+			t.Fatalf("seed %q: %v", in, err)
+		}
+		if v, ok := hooks.DeviceExtra(ctx)["country"]; ok {
+			t.Fatalf("country %q reported as %#v", in, v)
+		}
+	}
+}
