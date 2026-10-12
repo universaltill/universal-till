@@ -2,7 +2,6 @@ package pages
 
 import (
 	"html"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -104,17 +103,12 @@ func TestDescribePermission_AIAgentDescKeys(t *testing.T) {
 func TestPluginStoreRendersADR0121PermissionDescriptionsAsVisibleText(t *testing.T) {
 	chdirRoot(t)
 	initPagesI18n(t)
-	items := []storeItem{
-		{ListingID: "l1", Name: "Card reader", Version: "1.0", Type: "payment",
-			Permissions: []string{"http:lan", "view:sales_by_day", "storage", "net:validation:crl.example-ca.eu"}},
-	}
+	// ut-docs#4180: the permission list moved from the store card to the
+	// listing's own page, verbatim.
+	item := storeItem{ListingID: "l1", Name: "Card reader", Version: "1.0", Type: "payment",
+		Permissions: []string{"http:lan", "view:sales_by_day", "storage", "net:validation:crl.example-ca.eu"}}
 	for _, loc := range []string{"en", "ar", "fa", "tr"} {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("GET", "/plugins/store?lang="+loc, nil)
-		httpx.Render("ui/pages/plugins_store.html", map[string]any{
-			"title": "Plugin Store", "menuItems": nil, "Items": items, "Categories": storeCategories(items),
-		})(rec, req)
-		body := rec.Body.String()
+		body := renderStoreDetail(t, item, loc)
 		for _, key := range []string{"plugins.permissions.desc.http_lan", "plugins.permissions.desc.view", "plugins.permissions.desc.net_validation"} {
 			desc := html.EscapeString(httpx.T(loc, key))
 			if !strings.Contains(body, ">"+desc+"<") {

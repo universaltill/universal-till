@@ -82,9 +82,6 @@ func TestPluginStoreShowsCatalogForAnonymousTill(t *testing.T) {
 	if !strings.Contains(body, "trust-official") {
 		t.Error("first-party plugin missing the official badge")
 	}
-	if n := strings.Count(body, `data-tier="unverified"`); n != 1 {
-		t.Errorf("unverified card count = %d, want exactly 1 (only the third-party listing)", n)
-	}
 	// ut-docs#2647: browse shows the whole public catalog by design, so the
 	// "approval filter unavailable" note was wrong on every visit.
 	if strings.Contains(body, "approval filter unavailable") {
@@ -93,21 +90,33 @@ func TestPluginStoreShowsCatalogForAnonymousTill(t *testing.T) {
 	if !strings.Contains(body, "trust-unverified") {
 		t.Error("third-party plugin missing the unverified badge")
 	}
-	if !strings.Contains(body, `data-tier="unverified"`) || !strings.Contains(body, `data-vendor="Acme"`) {
-		t.Error("unverified card missing the consent data attributes")
-	}
-	if !strings.Contains(body, "utTrustPrompt") {
-		t.Error("localized trust prompt missing")
+	if n := strings.Count(body, "trust-unverified"); n != 1 {
+		t.Errorf("unverified tile count = %d, want exactly 1 (only the third-party listing)", n)
 	}
 	// ut-docs#673: only the paid listing (Buttons Left Theme) gets the paid
 	// badge — the free one (AI Assistant) must not.
-	if n := strings.Count(body, "paid-badge"); n != 1 {
+	if n := strings.Count(body, `class="paid-badge"`); n != 1 {
 		t.Errorf("paid-badge count = %d, want exactly 1 (only the paid listing)", n)
 	}
 	for _, name := range []string{"AI Assistant", "Buttons Left Theme"} {
 		if !strings.Contains(body, name) {
 			t.Fatalf("store page hid catalog plugin %q (empty-store regression); body:\n%s", name, body)
 		}
+	}
+
+	// ut-docs#4180: the unverified listing's own page carries the consent
+	// attributes and the localized prompt its Download/Install confirm uses.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/plugins/store/7c1e2a90-4d3b-4f8a-8b6e-2a5d9c0e1f02", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("listing page HTTP %d", rec.Code)
+	}
+	body = rec.Body.String()
+	if !strings.Contains(body, `data-tier="unverified"`) || !strings.Contains(body, `data-vendor="Acme"`) {
+		t.Error("unverified listing page missing the consent data attributes")
+	}
+	if !strings.Contains(body, "utTrustPrompt") {
+		t.Error("localized trust prompt missing")
 	}
 }
 
