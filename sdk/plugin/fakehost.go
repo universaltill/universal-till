@@ -48,6 +48,8 @@ type FakeHost struct {
 	HTTP  func(HTTPRequest) (HTTPResponse, error)
 	TCP   func(host string, port int) (io.ReadWriteCloser, error)
 	Views func(name string, args json.RawMessage) (json.RawMessage, error)
+	// Propose answers action_propose with a proposal id (nil: ErrDenied).
+	Propose func(name string, args json.RawMessage) (string, error)
 
 	// PluginID is the manifest id: event_publish accepts only
 	// "<PluginID>.<name>" types, as the till does (NewFakeHost sets
@@ -600,6 +602,26 @@ func rawViewQuery(name, args, dst []byte) int32 {
 	if out == nil {
 		out = json.RawMessage("[]")
 	}
+	return fill(dst, out)
+}
+
+func rawActionPropose(name, args, dst []byte) int32 {
+	h, denied := enter("action_propose")
+	defer h.mu.Unlock()
+	if denied || h.Propose == nil {
+		return ErrDenied.Code
+	}
+	if len(name) == 0 || len(name) > 128 || !json.Valid(args) {
+		return ErrInvalid.Code
+	}
+	var id string
+	var err error
+	propose, a := h.Propose, bytes.Clone(args)
+	h.unlocked(func() { id, err = propose(string(name), a) })
+	if err != nil {
+		return hookCode(err)
+	}
+	out, _ := json.Marshal(map[string]string{"proposal": id})
 	return fill(dst, out)
 }
 

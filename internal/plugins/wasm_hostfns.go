@@ -16,6 +16,7 @@ import (
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 
+	"github.com/universaltill/universal-till/internal/agentaction"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/netaccess"
@@ -105,6 +106,14 @@ type hostState struct {
 	// published buffers this instance's accepted event_publish calls;
 	// handleEvent flushes them to the bus only after the instance exits.
 	published []Event
+	// operator is the signed-in operator of a hop-0 ui ask (ADR-0153
+	// "Who is asking", askOperatorFor); nil in every other context, so
+	// action_propose is refused there.
+	operator *agentaction.Operator
+	// proposeKey/proposeOut: action_propose's buffer-ABI retry cache
+	// (one overflowed answer, like http_request's).
+	proposeKey []byte
+	proposeOut []byte
 	// jobProgress is the job_progress sink when this call is a job
 	// (WithJob, wasm_job.go); nil otherwise.
 	jobProgress func(pct int, key string) error
@@ -169,6 +178,7 @@ func instantiateHostModule(ctx context.Context, rt wazero.Runtime) error {
 		NewFunctionBuilder().WithFunc(hostHTTPRead).Export("http_read").
 		NewFunctionBuilder().WithFunc(hostHTTPClose).Export("http_close").
 		NewFunctionBuilder().WithFunc(hostViewQuery).Export("view_query").
+		NewFunctionBuilder().WithFunc(hostActionPropose).Export("action_propose").
 		NewFunctionBuilder().WithFunc(hostSecretSet).Export("secret_set").
 		NewFunctionBuilder().WithFunc(hostBlobPutOpen).Export("blob_put_open").
 		NewFunctionBuilder().WithFunc(hostBlobWrite).Export("blob_write").

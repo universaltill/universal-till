@@ -157,7 +157,24 @@ type Component struct {
 	Suggestions *Suggestions
 	QR          *QR
 	WizardStep  *WizardStep
+	Confirm     *Confirm
 }
+
+// Confirm is an AI-agent change awaiting the operator (ADR-0153 Decision
+// 3, ut-docs#2838): the plugin names only the proposal id core gave it.
+// Core draws every word of the card from its own proposal store
+// (View.ResolveConfirms) and its buttons post to core's own routes, never
+// to /plugin/... (ADR-0121 §7's one deliberate exception).
+type Confirm struct {
+	Type     string `json:"type"`
+	Proposal string `json:"proposal"`
+}
+
+// MaxConfirms bounds confirm components in one document (core's own
+// ceiling on open proposals per request is 3).
+const MaxConfirms = 3
+
+var proposalIDRe = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 type Heading struct {
 	Type string `json:"type"`
@@ -499,6 +516,9 @@ func decodeComponent(raw json.RawMessage) (Component, error) {
 	case "wizard_step":
 		c.WizardStep = &WizardStep{}
 		target = c.WizardStep
+	case "confirm":
+		c.Confirm = &Confirm{}
+		target = c.Confirm
 	default:
 		return Component{}, fmt.Errorf("unknown component type %q", head.Type)
 	}
@@ -517,6 +537,7 @@ type validator struct {
 	wizard       bool
 	pagingParams map[string]bool
 	qrs          int
+	confirms     int
 }
 
 func (v *validator) fail(format string, a ...any) {
@@ -671,6 +692,13 @@ func (v *validator) component(where string, c Component) {
 		v.qrs++
 		if q.Label != nil {
 			v.text(where+".label", *q.Label)
+		}
+	case "confirm":
+		if !proposalIDRe.MatchString(c.Confirm.Proposal) {
+			v.fail("%s proposal must be a proposal id", where)
+		}
+		if v.confirms++; v.confirms > MaxConfirms {
+			v.fail("%s: a document has at most %d confirm components", where, MaxConfirms)
 		}
 	case "wizard_step":
 		w := c.WizardStep

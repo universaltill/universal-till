@@ -117,6 +117,32 @@ func ViewQuery(name string, args any) (json.RawMessage, error) {
 	return json.RawMessage(out), err
 }
 
+// ActionPropose asks core to make a change (ADR-0153 Decision 3): name is
+// a core action (catalog.item.create.v1, stock.adjust.v1), args its
+// JSON-encoded arguments. It returns the proposal id to show with a
+// {"type":"confirm","proposal":id} view component; nothing changes until
+// the operator presses Confirm. Only an ai.agent plugin with the
+// ai.tools.write:<area> grant, inside an operator's ui.view.ask /
+// ui.action.ask, may propose (ErrDenied otherwise).
+func ActionPropose(name string, args any) (string, error) {
+	a, err := json.Marshal(args)
+	if err != nil {
+		return "", err
+	}
+	n := []byte(name)
+	out, err := bufCall("action_propose", 256, func(dst []byte) int32 { return rawActionPropose(n, a, dst) })
+	if err != nil {
+		return "", err
+	}
+	var r struct {
+		Proposal string `json:"proposal"`
+	}
+	if err := json.Unmarshal(out, &r); err != nil {
+		return "", fmt.Errorf("ut action_propose: decode: %w", err)
+	}
+	return r.Proposal, nil
+}
+
 // EventPublish raises an event in the plugin's own namespace, delivered
 // after this event returns (ADR-0121 §3). payload is JSON-encoded; nil
 // sends null, []byte and json.RawMessage go verbatim.

@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -12,6 +14,9 @@ import (
 )
 
 type ctxKey struct{}
+
+// sessionKeyCtx carries SessionKey's value (ut-docs#2838).
+type sessionKeyCtx struct{}
 
 // Disabled reports whether the middleware is off (UT_AUTH=off escape hatch
 // for CI/dev tooling); read once at startup by config.Init into
@@ -541,6 +546,7 @@ func Middleware(next http.Handler, svc *Service) http.Handler {
 				// the ~10 Can checks a page render makes read the
 				// sync_admin_version generation once, not ten times.
 				ctx := data.WithPermissionSnapshot(context.WithValue(r.Context(), ctxKey{}, u))
+				ctx = WithSessionKey(ctx, c.Value)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
@@ -596,6 +602,25 @@ func Middleware(next http.Handler, svc *Service) http.Handler {
 func FromContext(ctx context.Context) (User, bool) {
 	u, ok := ctx.Value(ctxKey{}).(User)
 	return u, ok
+}
+
+// SessionKey identifies the signed-in session without being its token: a
+// one-way hash of the session cookie (ut-docs#2838 binds an AI-agent
+// proposal to the session that asked for it). "" when there is none.
+func SessionKey(ctx context.Context) string {
+	k, _ := ctx.Value(sessionKeyCtx{}).(string)
+	return k
+}
+
+// WithSessionKey returns ctx carrying the session key of token: what the
+// middleware stamps, and the seam tests use, like WithUser.
+func WithSessionKey(ctx context.Context, token string) context.Context {
+	return context.WithValue(ctx, sessionKeyCtx{}, sessionKeyOf(token))
+}
+
+func sessionKeyOf(token string) string {
+	sum := sha256.Sum256([]byte("ut-session-key:" + token))
+	return hex.EncodeToString(sum[:16])
 }
 
 // UserID returns the session operator's id, or "system" when auth is

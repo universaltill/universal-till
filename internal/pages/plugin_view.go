@@ -271,6 +271,7 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 		body.Unavailable = true
 	case doc != nil:
 		body.View = doc.Prepare(locale)
+		resolveAgentConfirms(r.Context(), d, &body.View, entry.PluginID, locale)
 		if !inSlot && !inOverlay {
 			// A paged table's links (ut-docs#3874): this route with the
 			// query the view was asked with. A slot panel (or the overlay)
@@ -386,6 +387,7 @@ func pluginViewRefilled(ctx context.Context, d *common.Deps, entry data.PageEntr
 		return pluginview.View{}, false
 	}
 	v := doc.Prepare(locale)
+	resolveAgentConfirms(ctx, d, &v, entry.PluginID, locale)
 	v.LinkPaging(entry.Route, nil)
 	if posted != nil {
 		v.Refill(action, posted)
@@ -543,6 +545,9 @@ func askPluginUIAs(ctx context.Context, d *common.Deps, entry data.PageEntryRow,
 	if op, ok := pluginOperator(ctx, d); ok {
 		payload["operator"] = op
 	}
+	// ADR-0153 "Who is asking" (ut-docs#2838): the operator, from the
+	// session, for action_propose — never from the payload.
+	ctx = withAgentOperator(ctx)
 	actx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	type result struct {

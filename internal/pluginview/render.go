@@ -58,6 +58,34 @@ type ViewComponent struct {
 	Steps []ViewStep
 	// table paging (ut-docs#3874)
 	Paging *ViewPaging
+	// confirm (ut-docs#2838): the proposal id; Confirm is core's own card,
+	// filled by ResolveConfirms (nil: no longer valid).
+	Proposal string
+	Confirm  *ViewConfirm
+}
+
+// ViewConfirm is core's confirm card for one AI-agent proposal: every
+// string comes from core (the action's translated name, the formatted
+// before/after values), none from the plugin.
+type ViewConfirm struct {
+	ID           string
+	Title        string
+	Rows         []ViewConfirmRow
+	ConfirmLabel string
+}
+
+// ViewConfirmRow is one before/after row.
+type ViewConfirmRow struct{ Item, Field, Before, After string }
+
+// ResolveConfirms fills each confirm component's card through resolve
+// (core's proposal store, bound to the signed-in operator); resolve
+// returns nil for an unknown, expired or someone else's proposal.
+func (v *View) ResolveConfirms(resolve func(id string) *ViewConfirm) {
+	for i := range v.Components {
+		if c := &v.Components[i]; c.Type == "confirm" && resolve != nil {
+			c.Confirm = resolve(c.Proposal)
+		}
+	}
 }
 
 // ViewStep is one wizard step; State is done, current or upcoming.
@@ -179,6 +207,8 @@ func (d *Document) Prepare(locale string) View {
 			if c.QR.Label != nil {
 				vc.Label = t(*c.QR.Label)
 			}
+		case "confirm":
+			vc.Proposal = c.Confirm.Proposal
 		case "wizard_step":
 			w := c.WizardStep
 			for i, st := range w.Steps {

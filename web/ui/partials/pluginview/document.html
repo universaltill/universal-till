@@ -30,6 +30,7 @@
 {{- else if eq .Type "table" }}{{ template "pluginview_table" . }}
 {{- else if eq .Type "qr" }}{{ template "pluginview_qr" . }}
 {{- else if eq .Type "wizard_step" }}{{ template "pluginview_wizard_step" . }}
+{{- else if and (eq .Type "confirm") (not $ro) }}{{ template "pluginview_confirm" .Confirm }}
 {{- else if eq .Type "list" }}<ul class="card plugin-view-list">{{ range .Items }}<li>{{ . }}</li>{{ end }}</ul>
 {{- else if eq .Type "empty_state" }}
 <div class="card plugin-view-empty">
@@ -43,6 +44,42 @@
 {{- end }}
 {{- end }}
 {{ end }}
+
+{{/* ut-docs#2838 (ADR-0153 Decision 3): an AI-agent change awaiting the
+     operator. Every word is core's: the action's translated name, the
+     before/after rows core worked out, and the buttons, which post to
+     core's own /ui/agent/proposals/<id>/ routes (never to the plugin) and
+     swap the whole card for core's result notice. hx-disabled-elt stops a
+     double submit. A nil card (unknown, expired, someone else's) is the
+     "no longer valid" notice. */}}
+{{ define "pluginview_confirm" }}
+{{- if . }}
+<div class="card agent-confirm" id="agent-confirm-{{ .ID }}">
+  <h3 class="plugin-view-heading">{{ .Title }}</h3>
+  <p class="muted">{{ T "agent.confirm.intro" }}</p>
+  <div class="plugin-view-table-wrap">
+  <table class="table plugin-view-table">
+    <thead><tr><th scope="col">{{ T "agent.confirm.col_item" }}</th><th scope="col">{{ T "agent.confirm.col_field" }}</th><th scope="col">{{ T "agent.confirm.col_before" }}</th><th scope="col">{{ T "agent.confirm.col_after" }}</th></tr></thead>
+    <tbody>
+      {{- range .Rows }}
+      <tr><td>{{ .Item }}</td><td>{{ .Field }}</td><td>{{ .Before }}</td><td>{{ .After }}</td></tr>
+      {{- end }}
+    </tbody>
+  </table>
+  </div>
+  <div class="agent-confirm-actions">
+    <button type="button" class="btn btn-touch primary" hx-post="/ui/agent/proposals/{{ .ID }}/confirm" hx-target="#agent-confirm-{{ .ID }}" hx-swap="outerHTML" hx-disabled-elt="#agent-confirm-{{ .ID }} button">{{ .ConfirmLabel }}</button>
+    <button type="button" class="btn btn-touch secondary" hx-post="/ui/agent/proposals/{{ .ID }}/cancel" hx-target="#agent-confirm-{{ .ID }}" hx-swap="outerHTML" hx-disabled-elt="#agent-confirm-{{ .ID }} button">{{ T "agent.confirm.cancel" }}</button>
+  </div>
+</div>
+{{- else }}
+<div class="plugin-view-notice warn" role="status">{{ T "agent.notice.invalid" }}</div>
+{{- end }}
+{{ end }}
+
+{{/* ut-docs#2838: core's answer to a confirm/cancel post; it replaces the
+     confirm card (outerHTML). */}}
+{{ define "agent_notice" }}<div class="plugin-view-notice {{ .Level }}" role="status">{{ if .Count }}{{ printf (T .Key) .Count }}{{ else }}{{ T .Key }}{{ end }}</div>{{ end }}
 
 {{/* ut-docs#3879: the action-failure slot, a polite live region that is
      never replaced, only refilled. An htmx action that fails answers this

@@ -188,6 +188,7 @@ func askSlotEntries(ctx context.Context, d *common.Deps, slot, locale string, pa
 				return
 			}
 			v := doc.Prepare(locale)
+			resolveAgentConfirms(ctx, d, &v, e.PluginID, locale)
 			if v.Title == "" {
 				v.Title = httpx.T(locale, e.Label)
 			}

@@ -639,8 +639,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	catalog.Register(mux, dp)
 	registerBasket(mux, dp)
 	registerJournal(mux, dp)
-	registerOrderStatus(mux, dp)   // order lifecycle status one-tap surface (ut-docs#526)
-	registerOrderTracking(mux, dp) // anonymous customer tracking page /o/{token}, auth-exempt (ut-docs#527)
+	registerAgentProposals(mux, dp) // AI-agent confirm card routes (ADR-0153 Decision 3, ut-docs#2838)
+	registerOrderStatus(mux, dp)    // order lifecycle status one-tap surface (ut-docs#526)
+	registerOrderTracking(mux, dp)  // anonymous customer tracking page /o/{token}, auth-exempt (ut-docs#527)
 	registerHealth(mux)
 	registerWindowState(mux, dp) // desktop shell reads this pre-login at launch (ut-docs#611)
 	registerReloadReason(mux)    // ut-docs#2788: base.html reports why a whole page just reloaded
