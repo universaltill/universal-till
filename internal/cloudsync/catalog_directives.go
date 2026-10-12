@@ -58,6 +58,9 @@ var mainTillOnlyTypes = map[string]bool{
 	"create_stock_location":     true,
 	"rename_stock_location":     true,
 	"set_stock_location_active": true,
+	// Register stock location from my. (ut-docs#3642): registers are
+	// primary-wins synced too.
+	"set_register_location": true,
 }
 
 // catalogTypes are the directive types that change what the catalog
@@ -72,6 +75,8 @@ var catalogTypes = map[string]bool{
 	"upsert_category": true, "update_category": true, "upsert_modifier_group": true,
 	// The snapshot carries stock_locations too (ut-docs#3383).
 	"create_stock_location": true, "rename_stock_location": true, "set_stock_location_active": true,
+	// ...and registers (ut-docs#3642).
+	"set_register_location": true,
 }
 
 // payload is a presence-aware reader over a directive's payload: every

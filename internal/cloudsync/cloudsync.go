@@ -154,6 +154,16 @@ type Hooks struct {
 	CreateStockLocation    func(ctx context.Context, name string) (string, error)
 	RenameStockLocation    func(ctx context.Context, id, name string) (string, error)
 	SetStockLocationActive func(ctx context.Context, id string, active bool) (string, error)
+	// SetRegisterLocation handles "set_register_location" {register_id,
+	// location_id} (ut-docs#3642): which stock location a register takes
+	// stock from, from my.'s registers node. locationID "" unassigns. Main-till
+	// only (registers are primary-wins synced), through the same
+	// POSRepo.SetRegisterLocation the till's /registers page uses, audited
+	// (register / register_update) and idempotent — a register already at
+	// the asked-for location applies with no write. A non-empty location
+	// must exist and be active, unless it is the register's current one.
+	// See pages.cloudSetRegisterLocation.
+	SetRegisterLocation func(ctx context.Context, registerID, locationID string) (string, error)
 	// UpdateCategory handles the "update_category" directive (ut-docs#2354):
 	// a partial edit of an EXISTING category from the cloud's category
 	// editor, which picks from the categories/groups/stations the till last
@@ -831,6 +841,24 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing or invalid active"
 		}
 		msg, err = hooks.SetStockLocationActive(ctx, id, *active)
+	case "set_register_location":
+		if hooks.SetRegisterLocation == nil {
+			return "failed", "set_register_location is not supported on this till"
+		}
+		regID := str("register_id")
+		if regID == "" {
+			return "failed", "missing register_id"
+		}
+		// Required-present, never defaulted: "" unassigns, so an absent key
+		// must not read as "unassign".
+		loc, ok := payload(d.Payload).optStr("location_id")
+		if !ok {
+			return "failed", "invalid location_id"
+		}
+		if loc == nil {
+			return "failed", "missing location_id"
+		}
+		msg, err = hooks.SetRegisterLocation(ctx, regID, *loc)
 	case "update_category":
 		if hooks.UpdateCategory == nil {
 			return "failed", "update_category is not supported on this till"
@@ -1517,6 +1545,15 @@ type snapshotStockLocationRow struct {
 	IsActive bool   `json:"is_active"`
 }
 
+// snapshotRegisterRow is one register in the catalog snapshot's additive
+// registers field (ut-docs#3642); LocationID is "" when unassigned.
+type snapshotRegisterRow struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	IsActive   bool   `json:"is_active"`
+	LocationID string `json:"location_id"`
+}
+
 // pushSnapshotIfChanged uploads the catalog + on-hand stock when it differs
 // from what the cloud already has (tracked via a content hash in settings).
 // Schema 2 (contract §3.7): every item, inactive included, with its full
@@ -1612,6 +1649,22 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 			out = append(out, snapshotStockLocationRow{ID: l.ID, Name: l.Name, IsActive: l.IsActive})
 		}
 		body["stock_locations"] = out
+	}
+	// Registers (ut-docs#3642): every register, inactive included, with the
+	// stock location it takes stock from, for my.'s registers node. Same
+	// rules as stock_locations: hashed, and a read error omits the field.
+	if regs, err := data.NewPOSRepo(db).ListRegistersForAdmin(ctx); err != nil {
+		logging.L().Warnf("cloudsync: snapshot registers: %v", err)
+	} else {
+		out := make([]snapshotRegisterRow, 0, len(regs))
+		for _, r := range regs {
+			row := snapshotRegisterRow{ID: r.ID, Name: r.Name, IsActive: r.IsActive}
+			if r.LocationID != nil {
+				row.LocationID = *r.LocationID
+			}
+			out = append(out, row)
+		}
+		body["registers"] = out
 	}
 	payload, _ := json.Marshal(body)
 
