@@ -3432,7 +3432,9 @@ WHERE id = ?
 	return nil
 }
 
-func (r *CatalogRepo) AddBarcode(ctx context.Context, in catalogtypes.BarcodeInput) error {
+// normalizeBarcodeInput is AddBarcode's validation and symbology
+// inference, shared with NormalizeBarcode.
+func (r *CatalogRepo) normalizeBarcodeInput(ctx context.Context, in *catalogtypes.BarcodeInput) error {
 	if in.Barcode == "" {
 		return errors.New("barcode required")
 	}
@@ -3489,6 +3491,34 @@ func (r *CatalogRepo) AddBarcode(ctx context.Context, in catalogtypes.BarcodeInp
 		if !validEAN13(in.Barcode) {
 			return fmt.Errorf("%w %q: expected 13 digits with a valid check digit", ErrInvalidEAN13, in.Barcode)
 		}
+	}
+	return nil
+}
+
+// NormalizeBarcode is AddBarcode's validation and symbology inference on
+// its own (ut-docs#2838): it reads the shop's settings through the repo's
+// own connection, so a caller that will hold a write transaction runs it
+// first and then passes the result to AddNormalizedBarcodeTx.
+func (r *CatalogRepo) NormalizeBarcode(ctx context.Context, in catalogtypes.BarcodeInput) (catalogtypes.BarcodeInput, error) {
+	err := r.normalizeBarcodeInput(ctx, &in)
+	return in, err
+}
+
+// AddNormalizedBarcodeTx is AddBarcode's check-then-insert inside the
+// caller's transaction, for an input NormalizeBarcode returned (an
+// AI-agent item create attaches its barcode in the item's transaction, so
+// a refused barcode rolls the whole batch back — ut-docs#2838). It reads
+// only through tx.
+func (r *CatalogRepo) AddNormalizedBarcodeTx(ctx context.Context, tx *sql.Tx, in catalogtypes.BarcodeInput) error {
+	if in.Barcode == "" || in.BarcodeType == "" {
+		return errors.New("add barcode: input not normalized")
+	}
+	return addBarcodeInTx(ctx, tx, in)
+}
+
+func (r *CatalogRepo) AddBarcode(ctx context.Context, in catalogtypes.BarcodeInput) error {
+	if err := r.normalizeBarcodeInput(ctx, &in); err != nil {
+		return err
 	}
 	// The availability check and the insert must be atomic (ut-docs#304):
 	// without a transaction two concurrent callers can both pass the check,

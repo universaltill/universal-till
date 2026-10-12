@@ -34,8 +34,20 @@ figures.
 
 It only reads a fixed set of figures — daily sales totals, best sellers,
 takings by payment method, stock levels, and till activity (logins, voids,
-overrides) by staff member — never raw customer data, and it can't do
-anything to the till, only answer questions about it.
+overrides) by staff member — never raw customer data, and it can't change
+anything in the till on its own.
+
+If you ask the assistant to change something — add new items to the
+catalogue, or correct stock levels — the till first shows you a card with
+every change listed (item, what changes, before and after), in the till's
+own words. Nothing changes until you press **Confirm changes**; if you
+press **Cancel**, nothing is changed. Each change is confirmed every time,
+only by the person who asked, and only if your role may make that change
+on the catalogue or stock screen yourself (a cashier can't). A card is
+valid for five minutes; if the figures changed in the meantime, the till
+refuses it and asks you to ask again. An administrator turns this on per
+area (catalogue, stock) on the AI Assistant's **Permissions** section, and
+every proposal, confirmation and cancellation is kept in the audit trail.
 
 **If the panel doesn't appear**, one of three things is true:
 

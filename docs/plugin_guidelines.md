@@ -594,6 +594,26 @@ refuses an `opens_view` that names no such page (ut-docs#3699). Every
 for a role. Details:
 [`plugin-views.md` → The sell-screen overlay](https://github.com/universaltill/ut-docs/blob/main/reference/plugin-views.md#the-sell-screen-overlay).
 
+**AI-agent changes: `action_propose` + the `confirm` component**
+(ADR-0153 Decision 3, ut-docs#2838). An `ai.agent` plugin never writes
+till data itself. Inside a `ui.view.ask` / `ui.action.ask` it calls
+`action_propose(name, args)` (SDK `plugin.ActionPropose`) with a core
+action — `catalog.item.create.v1` or `stock.adjust.v1` — and gets back a
+proposal id; it then answers a view document containing
+`{"type": "confirm", "proposal": "<id>"}` (at most 3 per document; no
+other field is accepted). Core draws that card in its own words: the
+action's translated name, the before/after rows core worked out, and
+Confirm / Cancel buttons that post to core's
+`/ui/agent/proposals/{id}/confirm|cancel` — never to your route. Nothing
+changes until the operator confirms; core then re-checks everything and
+applies the batch in one transaction, and tells you the outcome with the
+event `agent.action.result` (`{proposal, action, status}`, best-effort —
+hook it if you want it). Needs `ai.tools.write:<area>` granted by the
+admin, and the operator's role must hold the manual screen's permission
+(a cashier is refused with `-2`). Outside an operator's ui ask (schedule,
+published event, job) it is `-2`. Limits, codes and argument bounds:
+ut-docs `reference/plugin-host-functions.md`.
+
 ### Camera identify: `catalog.identify` (ADR-0121 §7)
 
 A plugin that recognises products from a photo subscribes to
@@ -805,7 +825,7 @@ allow-list is `internal/plugins/permission_allowlist.go`):
 | `device-info` | ★ review-gated, read-only (ADR-0140, ut-docs#3862); bare — no wildcard or parameter form. `device_id_get`: this till's stable device id, a v4 UUID minted on first use, kept across a marketplace re-pair and unrelated to the marketplace device id. `device_local_ips_get`: a JSON array of the host's interface addresses (IPv4 and IPv6, loopback/unspecified excluded, zone stripped, deduplicated, sorted; none is `[]`). `device_timezone_get`: the local offset at call time as `UTC±hh:mm` (e.g. `UTC+01:00`, `UTC-05:30`). All three use the buffer ABI; without the grant they return `-2`. Every call is audited — a denial as `permission_denied`, a grant as `device_info_read` naming the function; if the grant's audit row can't be written the call returns `-3`. |
 | `db:own`, `schedule`, `cloud:directive`, `secret:write`, `ui:page`, `view:<class>`, `ui:slot:<slot>` | ADR-0121 §2 (ABI 3); the plugin store explains each to the operator in plain words. `view:<class>` names a class of core read views (`view:sales`, `view:inventory`, `view:audit`, `view:users`, `view:shop` — ADR-0121 §5; the view itself goes in `views_used`; `view:shop` is the non-sensitive class for `shop.context.v2`, the shop and till names, currency and locale, so a plugin that only shows prices needs no `view:sales` — ut-docs#4045), read through the `view_query` host function; the views, their arguments and result fields are in ut-docs `reference/contracts/plugin-views.md` (ut-docs#3158). `view:inventory` also gates `item_image_open` / `item_image_read` (ADR-0121 R1, ut-docs#4005): an item's reference photo by role (`ai_ref`, `thumb`, or `ref` = `ai_ref` if it decodes, else `thumb`), re-encoded by the till as a JPEG ≤ 160 px (never the file or a path); ≤ 64 opens (`-5`) and 4 open handles (`-6`) per event. `ui:slot:<slot>` names one of the §7 content slots (`item.edit.actions`, `reports.panels`, `setup.wizard.steps`, `eod.footer`, `settings.sections`, `admin.pages`), the same set an entry's `slot` is checked against. |
 | `ai.agent`, `ai.send.<class>` | ADR-0153 Decision 1 (ut-docs#2837). `ai.agent` (★, bare) marks a plugin that gives till data to an AI model. For such a plugin every `view_query` needs **both** the view's `view:<class>` grant **and** `ai.send.<data class>`, checked on every call (a revoke is live) and audited when refused (`-2`). The data classes are `sales`, `catalog`, `stock`, `customers`, `staff`, `till_health`; each core view has exactly one (`DataClass` in `internal/data/core_views.go`). `shop.context.*` is class `shop`, which needs no `ai.send.*` grant; `ai.send.shop` is not a permission. A view with no class is refused to every `ai.agent` plugin. A marketplace install grants `ai.send.*` to an `ai.agent` plugin only the first time the plugin declares it, so an admin's revoke survives updates (Decision 5). |
-| `ai.tools.write:<area>`, `ai.tool.provide`, `ai.tool.provide.write` | ADR-0153 Decisions 3–5. Areas: `catalog`, `stock`, `settings`, `plugins`. Recognised and explained on the consent screen; **never granted on install** — the admin grants them on the plugin's settings page. `ai.send.*` on a plugin without `ai.agent` (a tool plugin) also installs ungranted. |
+| `ai.tools.write:<area>`, `ai.tool.provide`, `ai.tool.provide.write` | ADR-0153 Decisions 3–5. Areas: `catalog`, `stock`, `settings`, `plugins`. Recognised and explained on the consent screen; **never granted on install** — the admin grants them on the plugin's settings page. `ai.tools.write:catalog` / `ai.tools.write:stock` gate `action_propose` (ut-docs#2838). `ai.send.*` on a plugin without `ai.agent` (a tool plugin) also installs ungranted. |
 
 `storage.local.<n>KB|MB|GB` and the dotted `ui.locale`, `ui.theme`, `ui.page`,
 `ai.configure`, `pos.tender` are accepted only so already-published plugins

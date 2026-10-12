@@ -6579,6 +6579,8 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .plugin-view-notice.error { background: var(--danger-tint); color: var(--danger);
   border-color: var(--danger-tint-border); }
 .plugin-view-table-wrap { overflow-x: auto; }
+/* ut-docs#2838: the AI-agent confirm card's buttons (core-rendered). */
+.agent-confirm-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-block-start: .75rem; }
 .plugin-view-table th { text-align: start; }
 .plugin-view-table .num { text-align: end; font-variant-numeric: tabular-nums; }
 /* nowrap only as a real table: in phone card mode (table-cards.js) it would

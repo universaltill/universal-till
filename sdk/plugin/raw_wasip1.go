@@ -76,6 +76,9 @@ func utHTTPClose(h int32) int32
 //go:wasmimport ut view_query
 func utViewQuery(nPtr, nLen, aPtr, aLen, dstPtr, dstCap uint32) int32
 
+//go:wasmimport ut action_propose
+func utActionPropose(nPtr, nLen, aPtr, aLen, dstPtr, dstCap uint32) int32
+
 //go:wasmimport ut secret_set
 func utSecretSet(kPtr, kLen, vPtr, vLen uint32) int32
 
@@ -257,6 +260,17 @@ func rawViewQuery(name, args, dst []byte) int32 {
 	ap, al := ptr(args)
 	dp, dc := ptr(dst)
 	r := utViewQuery(np, nl, ap, al, dp, dc)
+	runtime.KeepAlive(name)
+	runtime.KeepAlive(args)
+	runtime.KeepAlive(dst)
+	return r
+}
+
+func rawActionPropose(name, args, dst []byte) int32 {
+	np, nl := ptr(name)
+	ap, al := ptr(args)
+	dp, dc := ptr(dst)
+	r := utActionPropose(np, nl, ap, al, dp, dc)
 	runtime.KeepAlive(name)
 	runtime.KeepAlive(args)
 	runtime.KeepAlive(dst)

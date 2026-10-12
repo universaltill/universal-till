@@ -772,6 +772,7 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 	if isJob {
 		hs.jobProgress = job.Progress
 	}
+	hs.operator = askOperatorFor(ctx, ev, isJob)
 	// http:stream handles never outlive the event (ADR-0121 §3): closed
 	// however the guest ends — success, error, deadline or trap.
 	defer hs.streams.closeAll()

@@ -474,3 +474,22 @@ func TestItemImageLimits(t *testing.T) {
 		t.Fatalf("denied: err=%v, want ErrDenied", err)
 	}
 }
+
+// ut-docs#2838: ActionPropose returns the proposal id; no hook = denied.
+func TestActionPropose(t *testing.T) {
+	h := NewFakeHost()
+	UseFakeHost(t, h)
+	if _, err := ActionPropose("stock.adjust.v1", map[string]any{}); !errors.Is(err, ErrDenied) {
+		t.Fatalf("no Propose hook: err=%v, want ErrDenied", err)
+	}
+	h.Propose = func(name string, args json.RawMessage) (string, error) {
+		if name != "stock.adjust.v1" || string(args) != `{"changes":[]}` {
+			t.Errorf("propose %s %s", name, args)
+		}
+		return "0123456789abcdef0123456789abcdef", nil
+	}
+	id, err := ActionPropose("stock.adjust.v1", map[string]any{"changes": []any{}})
+	if err != nil || id != "0123456789abcdef0123456789abcdef" {
+		t.Fatalf("id=%q err=%v", id, err)
+	}
+}

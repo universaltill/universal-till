@@ -309,6 +309,8 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/sync/vouchers/{id}/redeem":       true,
 	"POST /api/sync/vouchers/{id}/release":      true,
 	"POST /ui/join-notice/dismiss":              true, // ut-docs#2721: writes sync.join_banner_dismissed
+	"POST /ui/agent/proposals/{id}/confirm":     true, // ut-docs#2838: applies an AI-agent change
+	"POST /ui/agent/proposals/{id}/cancel":      true, // ut-docs#2838: AI-agent proposals (no agent writes in the demo)
 	// First-run setup wizard and first-owner creation (the demo template is
 	// already set up).
 	"GET /setup":           true,
