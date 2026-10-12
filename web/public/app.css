@@ -6484,6 +6484,16 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   .pos-container .products .grid {
     grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem .75rem;
   }
+  /* ut-docs#3812: category tiles are text tiles, not app icons. At three
+     per row a tile's content box is ~70px, narrower than a one-word name
+     like "Household" (~75px) or "Haushaltswaren", so the name's
+     overflow-wrap had to break inside the word ("Househol" / "d"). Two
+     per row (~140px) fits them whole; the tiles stay compact
+     (ut-docs#2500), only their width grows. Also the "…" sheet and the
+     Move-to-category dialog, which share these tiles. */
+  .pos-container .products .grid:is(.category-tile-grid, .category-overflow-grid) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .pos-container .btn-tile,
   .pos-container .btn-tile.tile-colored {
     display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
