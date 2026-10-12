@@ -41,6 +41,10 @@ No blockers. The reviewer checked that every localized value matches `PercentPat
 - **Not checked:** the dark theme; real touch hardware.
 - **Pre-existing and not caused by this change:** at 1024×600 the promotions table scrolls inside its card, so the customer/edit columns are clipped until you scroll.
 
+## Docs-shots
+
+The change alters no screenshot pixel. The docs-shots till has no promotions, and the shot in every locale (en/fa/ar/tr) shows the empty list (looked at tr). So only `surface_sha256` was refreshed, with `update-docs-shots-surface-hash.sh` (`Docs-Shots-Unchanged: true`).
+
 ## Gate
 
 `gofmt -l .` is clean. `go build ./...`, `go vet ./internal/pages/`, `go test ./internal/pages/ ./internal/httpx/` and the full `go test ./...` all pass. `guard-data-access.sh` and `guard-i18n.sh` pass. The e2e specs `phone-promotions-3653`, `percent-comma-2954` and `osk-decimal-admin-fields-1275` (see the PR).
