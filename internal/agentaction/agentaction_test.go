@@ -2,6 +2,7 @@ package agentaction
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -151,5 +152,105 @@ func TestStore_ExpiryIsSweptAndAudited_2838(t *testing.T) {
 	var n int
 	if err := d.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'agent.action.expired' AND actor_id = 'u'`).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("expired audit rows = %d (%v), want 1", n, err)
+	}
+}
+
+// fakeTimer and fakeClock capture the store's expiry timers so a test fires them by hand.
+type fakeTimer struct {
+	d       time.Duration
+	f       func()
+	stopped bool
+}
+
+func (t *fakeTimer) Stop() bool { t.stopped = true; return true }
+
+type fakeClock struct {
+	now    time.Time
+	timers []*fakeTimer
+}
+
+func (c *fakeClock) afterFunc(d time.Duration, f func()) stopper {
+	t := &fakeTimer{d: d, f: f}
+	c.timers = append(c.timers, t)
+	return t
+}
+
+func expiryFixture(t *testing.T) (*Store, *fakeClock, *sql.DB) {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "agent-*.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	d, err := db.Open(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { d.Close() })
+	if _, err := d.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role) VALUES ('u','u','u','x','manager')`); err != nil {
+		t.Fatal(err)
+	}
+	c := &fakeClock{now: time.Now()}
+	s := NewStore()
+	s.now = func() time.Time { return c.now }
+	s.afterFunc = c.afterFunc
+	return s, c, d.DB
+}
+
+func expiredRows(t *testing.T, d *sql.DB) int {
+	t.Helper()
+	var n int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'agent.action.expired'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// An idle till still audits the expiry on time: the proposal's own timer
+// does it, with no later Put/Peek/Take (#4168).
+func TestStore_ExpiryTimerAuditsWithoutAnySweep_4168(t *testing.T) {
+	s, c, d := expiryFixture(t)
+	a, _ := Lookup("stock.adjust.v1")
+	id, err := s.Put(context.Background(), d, NewProposal("p", op("u", "s", "r"), a, nil, nil, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.timers) != 1 || c.timers[0].d != ProposalTTL {
+		t.Fatalf("timers = %+v, want one armed for %v", c.timers, ProposalTTL)
+	}
+	if expiredRows(t, d) != 0 {
+		t.Fatal("audited before expiry")
+	}
+	c.now = c.now.Add(ProposalTTL + time.Second)
+	c.timers[0].f()
+	if n := expiredRows(t, d); n != 1 {
+		t.Fatalf("expired rows after the timer = %d, want 1", n)
+	}
+	if s.Peek(context.Background(), d, id, "u", "s") != nil {
+		t.Fatal("expired proposal still shown")
+	}
+	if n := expiredRows(t, d); n != 1 {
+		t.Fatalf("expired rows after Peek = %d, want still 1", n)
+	}
+}
+
+// A taken proposal's timer is stopped, and a late fire audits nothing.
+func TestStore_TakeStopsExpiryTimer_4168(t *testing.T) {
+	s, c, d := expiryFixture(t)
+	a, _ := Lookup("stock.adjust.v1")
+	id, err := s.Put(context.Background(), d, NewProposal("p", op("u", "s", "r"), a, nil, nil, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Take(context.Background(), d, id, "u", "s") == nil {
+		t.Fatal("take failed")
+	}
+	if !c.timers[0].stopped {
+		t.Fatal("Take left the expiry timer running")
+	}
+	c.now = c.now.Add(ProposalTTL + time.Second)
+	c.timers[0].f()
+	if n := expiredRows(t, d); n != 0 {
+		t.Fatalf("expired rows for a taken proposal = %d, want 0", n)
 	}
 }

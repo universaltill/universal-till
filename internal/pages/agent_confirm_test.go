@@ -23,6 +23,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pluginview"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/settings"
 )
 
 // ADR-0153 Decision 3 (ut-docs#2838): the confirm/cancel routes. Only the
@@ -424,5 +425,48 @@ func TestAgentConfirm_ConcurrentConfirmAppliesOnce_4168(t *testing.T) {
 	}
 	if got := h.count(`SELECT COUNT(*) FROM audit_log WHERE action LIKE 'agent.action.%' AND action != 'agent.action.proposed'`); got != 1 {
 		t.Fatalf("decision audit rows = %d, want 1", got)
+	}
+}
+
+// A till linked to a main till after the proposal was stored still refuses
+// the catalogue change at confirm, through the shared propose-time rule
+// (#4168).
+func TestAgentConfirm_SatelliteRefusesCatalogueProposal_4168(t *testing.T) {
+	h := newAgentHarness(t)
+	t.Cleanup(func() { agentaction.SetProposeRefusal(func(context.Context, *agentaction.Action) string { return "" }) })
+	id := h.propose("mgr-1", "manager", "sess", "catalog.item.create.v1", agentCreateArgs)
+	h.d.Settings = settings.NewStore(h.d.Db)
+	if err := h.d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatal(err)
+	}
+	rec := h.post(id, "confirm", "mgr-1", "manager", "sess")
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "no longer allowed") {
+		t.Fatalf("satellite confirm = %d %s", rec.Code, rec.Body.String())
+	}
+	if n := h.count(`SELECT COUNT(*) FROM items WHERE name IN ('Oat milk','Rye bread')`); n != 0 {
+		t.Fatalf("satellite created %d items", n)
+	}
+	if h.count(`SELECT COUNT(*) FROM audit_log WHERE action = 'agent.action.refused' AND data_json LIKE '%main till%'`) != 1 {
+		t.Fatal("no refused audit row naming the main till")
+	}
+}
+
+// The satellite rule is the catalogue's only: a stock change on a till that
+// follows a main till still applies (#4168).
+func TestAgentConfirm_SatelliteStillAppliesStock_4168(t *testing.T) {
+	h := newAgentHarness(t)
+	t.Cleanup(func() { agentaction.SetProposeRefusal(func(context.Context, *agentaction.Action) string { return "" }) })
+	tea := h.item("Tea")
+	before := h.level(tea)
+	id := h.propose("mgr-1", "manager", "sess", "stock.adjust.v1", `{"changes":[{"item_id":"`+tea+`","delta":7}]}`)
+	h.d.Settings = settings.NewStore(h.d.Db)
+	if err := h.d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatal(err)
+	}
+	if rec := h.post(id, "confirm", "mgr-1", "manager", "sess"); rec.Code != http.StatusOK {
+		t.Fatalf("satellite stock confirm = %d %s", rec.Code, rec.Body.String())
+	}
+	if got := h.level(tea); got != before+7 {
+		t.Fatalf("level = %v, want %v", got, before+7)
 	}
 }

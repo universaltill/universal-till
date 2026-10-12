@@ -90,8 +90,10 @@ func hostActionPropose(ctx context.Context, m api.Module, namePtr, nameLen, args
 // unknown action → -2, like a missing grant, so a plugin without the
 // grants can't enumerate action names (ut-docs#4168);
 // ai.tools.write:<area> not granted → -2; the
-// operator's role lacks the action's role permission → -2 (every -2 is
-// audited); bad or over-limit arguments → -4; a proposal ceiling → -5.
+// operator's role lacks the action's role permission → -2; the till's
+// propose-time rule refuses the action (catalogue on a till that follows
+// a main till, ut-docs#4168) → -2 (every -2 is audited); bad or
+// over-limit arguments → -4; a proposal ceiling → -5.
 func actionPropose(ctx context.Context, s *hostState, name string, args []byte) ([]byte, int32) {
 	deny := func(perm, reason string) ([]byte, int32) {
 		if err := auditPermissionDenial(ctx, s.db, s.pluginID, perm, reason); err != nil {
@@ -120,6 +122,9 @@ func actionPropose(ctx context.Context, s *hostState, name string, args []byte) 
 	}
 	if !can {
 		return deny(a.RolePermission, "operator role "+op.Role+" lacks "+a.RolePermission)
+	}
+	if reason := agentaction.ProposeRefusal(ctx, a); reason != "" {
+		return deny(AIToolsWritePermissionPrefix+a.Area, "action_propose: "+reason)
 	}
 	env := agentaction.Env{DB: s.db}
 	parsed, rows, state, err := a.Prepare(ctx, env, args)
