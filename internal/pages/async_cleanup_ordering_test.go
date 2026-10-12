@@ -18,6 +18,9 @@ import (
 // handle — "sql: database is closed" log noise at best, and (with
 // t.TempDir()'s RemoveAll racing SQLite's sidecar files) the
 // "directory not empty" flake ut-docs#425 originally chased at worst.
+// Since ut-docs#3992 every store.country writer (the setup wizard,
+// settings, sync settings) also starts the phone_e164 back-fill on
+// AsyncWork — ut-docs#4015's SetupWizard flake.
 //
 // The fix is purely cleanup ORDERING: Go runs t.Cleanup functions LIFO,
 // so registering t.Cleanup(dp.WaitForAsyncWork) AFTER the helper's own
@@ -33,6 +36,12 @@ func TestTestDepsHelpers_DrainAsyncWorkBeforeClosingDB(t *testing.T) {
 		{"newInvoiceTestDeps", func(t *testing.T) *common.Deps { _, dp := newInvoiceTestDeps(t); return dp }},
 		{"newSyncSalesTestDeps", func(t *testing.T) *common.Deps { _, dp := newSyncSalesTestDeps(t); return dp }},
 		{"setupSelfOrderShopDeps", func(t *testing.T) *common.Deps { dp, _ := setupSelfOrderShopDeps(t); return dp }},
+		// ut-docs#4015: the setup wizard (and a settings country change)
+		// starts the ut-docs#3992 phone_e164 back-fill on AsyncWork.
+		{"newFullAuthDeps", func(t *testing.T) *common.Deps { _, _, dp := newFullAuthDeps(t); return dp }},
+		{"newRealDBDeps", func(t *testing.T) *common.Deps { _, dp := newRealDBDeps(t); return dp }},
+		{"newAuthTestMux", func(t *testing.T) *common.Deps { _, _, dp := newAuthTestMux(t); return dp }},
+		{"newSyncSettingsTestDeps", func(t *testing.T) *common.Deps { return newSyncSettingsTestDeps(t).dp }},
 	}
 
 	for _, h := range helpers {

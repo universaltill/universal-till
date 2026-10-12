@@ -35,6 +35,7 @@ func newAuthTestMux(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps) 
 	svc := auth.NewService(db)
 	store := settings.NewStore(db)
 	d := &common.Deps{Db: db, Settings: store, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: svc}
+	t.Cleanup(d.WaitForAsyncWork) // ut-docs#4015: drain before the db.Close cleanup above (LIFO)
 	mux := http.NewServeMux()
 	registerAuth(mux, d, svc)
 	registerUsers(mux, d, svc)
