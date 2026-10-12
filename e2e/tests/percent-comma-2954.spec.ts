@@ -27,10 +27,15 @@ test.describe('Percent inputs: decimal comma (ut-docs#2954)', () => {
       form.locator('button[type="submit"]').click(),
     ]);
     // The inline edit row prefills "%.2f" of the stored bp/100: "1.50"
-    // only if the server stored 150.
-    const html = await (await page.request.get('/promotions')).text();
-    const row = html.slice(html.indexOf(`action="/api/promotions/${code}/edit"`));
-    expect(row).toMatch(/name="value_percent"[^>]*value="1\.50"/);
+    // only if the server stored 150. The prefill follows the locale
+    // (ut-docs#4097) and ?lang=de left a de cookie, so read it back in en
+    // explicitly, then check de shows the comma form.
+    const rowOf = async (lang: string) => {
+      const html = await (await page.request.get(`/promotions?lang=${lang}`)).text();
+      return html.slice(html.indexOf(`action="/api/promotions/${code}/edit"`));
+    };
+    expect(await rowOf('en')).toMatch(/name="value_percent"[^>]*value="1\.50"/);
+    expect(await rowOf('de')).toMatch(/name="value_percent"[^>]*value="1,50"/);
     assertClean();
   });
 
