@@ -154,6 +154,10 @@ func newRealDBDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		Cfg:      &config.Config{Theme: "default"},
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
 	}
+	// Cleanups run last-in-first-out: this one runs before dbo.Close, so a
+	// country save's background phone_e164 back-fill (d.AsyncWork) finishes
+	// before the DB and its temp dir go away (ut-docs#4167).
+	t.Cleanup(d.WaitForAsyncWork)
 	mux := http.NewServeMux()
 	registerAuth(mux, d, svc)
 	registerSetup(mux, d, svc)

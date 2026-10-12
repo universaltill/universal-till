@@ -33,6 +33,10 @@ func TestTestDepsHelpers_DrainAsyncWorkBeforeClosingDB(t *testing.T) {
 		{"newInvoiceTestDeps", func(t *testing.T) *common.Deps { _, dp := newInvoiceTestDeps(t); return dp }},
 		{"newSyncSalesTestDeps", func(t *testing.T) *common.Deps { _, dp := newSyncSalesTestDeps(t); return dp }},
 		{"setupSelfOrderShopDeps", func(t *testing.T) *common.Deps { dp, _ := setupSelfOrderShopDeps(t); return dp }},
+		// ut-docs#4167: a country save's phone_e164 back-fill runs on AsyncWork.
+		{"newRealDBDeps", func(t *testing.T) *common.Deps { _, dp := newRealDBDeps(t); return dp }},
+		{"newFullAuthDeps", func(t *testing.T) *common.Deps { _, _, dp := newFullAuthDeps(t); return dp }},
+		{"newSyncSettingsTestDeps", func(t *testing.T) *common.Deps { return newSyncSettingsTestDeps(t).dp }},
 	}
 
 	for _, h := range helpers {

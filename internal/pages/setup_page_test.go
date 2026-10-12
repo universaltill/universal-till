@@ -76,7 +76,8 @@ func newFullAuthDeps(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps)
 	registerAuth(mux, d, svc)
 	registerSetup(mux, d, svc)
 	registerSettings(mux, d)
-	registerWindowState(mux, d) // ut-docs#611: desktop shell's pre-login window-mode read
+	registerWindowState(mux, d)   // ut-docs#611: desktop shell's pre-login window-mode read
+	t.Cleanup(d.WaitForAsyncWork) // LIFO: before db.Close (ut-docs#514, ut-docs#4167)
 	return mux, svc, d
 }
 
