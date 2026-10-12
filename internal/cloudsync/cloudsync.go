@@ -233,6 +233,14 @@ type Hooks struct {
 	// (CatalogRepo.SaveVariant), audited, idempotent. A variant is never
 	// deleted — active=false retires it.
 	SaveItemVariant func(ctx context.Context, p data.VariantSave) (string, error)
+	// ApplyItemOptionSets handles "apply_item_option_sets" (contract §3.13,
+	// ut-docs#4163): my. sets which option sets an item's range uses and,
+	// with generate, has the till generate the missing variants through
+	// the same OptionSetRepo generator its catalog panel uses — so the
+	// variants carry their option links and a later Generate on the till
+	// never duplicates them. Main-till only; every refusal is checked
+	// before anything is written; idempotent.
+	ApplyItemOptionSets func(ctx context.Context, p ItemOptionSetsApply) (string, error)
 	// SetCategoryOrder handles "set_category_order" (contract §3.8,
 	// ut-docs#3075): the owner's category order from my., as the full
 	// ordered id list. Main-till only like the five above. The hook
@@ -1085,6 +1093,15 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", bad
 		}
 		msg, err = hooks.SaveItemVariant(ctx, p)
+	case "apply_item_option_sets":
+		if hooks.ApplyItemOptionSets == nil {
+			return "failed", "apply_item_option_sets is not supported on this till"
+		}
+		p, bad := decodeApplyItemOptionSets(payload(d.Payload))
+		if bad != "" {
+			return "failed", bad
+		}
+		msg, err = hooks.ApplyItemOptionSets(ctx, p)
 	case "save_user", "set_user_pin", "deactivate_user":
 		hook := map[string]func(context.Context, UserDirective) (string, error){
 			"save_user": hooks.SaveUser, "set_user_pin": hooks.SetUserPIN, "deactivate_user": hooks.DeactivateUser,
@@ -1445,12 +1462,15 @@ type snapshotItemRow struct {
 	AgeRestricted bool     `json:"age_restricted"`
 	Qty           *float64 `json:"qty,omitempty"`
 	// Barcode is the legacy primary barcode, kept for a schema-1 reader.
-	Barcode                   string               `json:"barcode"`
-	Barcodes                  []string             `json:"barcodes"`
-	ModifierGroupIDs          []string             `json:"modifier_group_ids"`
-	ModifierOptOutIDs         []string             `json:"modifier_opt_out_ids"`
-	EffectiveModifierGroupIDs []string             `json:"effective_modifier_group_ids"`
-	Variants                  []snapshotVariantRow `json:"variants"`
+	Barcode                   string   `json:"barcode"`
+	Barcodes                  []string `json:"barcodes"`
+	ModifierGroupIDs          []string `json:"modifier_group_ids"`
+	ModifierOptOutIDs         []string `json:"modifier_opt_out_ids"`
+	EffectiveModifierGroupIDs []string `json:"effective_modifier_group_ids"`
+	// OptionSetIDs (ut-docs#4163, contract §3.7) are the option sets the
+	// item's range is generated from, axis order; [] for none.
+	OptionSetIDs []string             `json:"option_set_ids"`
+	Variants     []snapshotVariantRow `json:"variants"`
 	// ImageSHA256 is the hex SHA-256 of the photo the till serves for this
 	// item, "" for none or a built-in icon (contract §3.9 rule 5), so my.
 	// can tell an image it set from one taken on the till.
@@ -1547,10 +1567,11 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 			AgeRestricted: it.AgeRestricted,
 			Barcodes:      it.Barcodes, ModifierGroupIDs: it.ModifierGroupIDs,
 			ModifierOptOutIDs: it.ModifierOptOutIDs, EffectiveModifierGroupIDs: it.EffectiveModifierGroupIDs,
-			Variants:    make([]snapshotVariantRow, 0, len(it.Variants)),
-			ImageSHA256: ServedImageSHA256(thumbs[it.ID]),
-			Icon:        iconid.EffectiveIcon(thumbs[it.ID], it.Icon),
-			SellScreen:  it.SellScreen,
+			OptionSetIDs: it.OptionSetIDs,
+			Variants:     make([]snapshotVariantRow, 0, len(it.Variants)),
+			ImageSHA256:  ServedImageSHA256(thumbs[it.ID]),
+			Icon:         iconid.EffectiveIcon(thumbs[it.ID], it.Icon),
+			SellScreen:   it.SellScreen,
 		}
 		if len(it.Barcodes) > 0 {
 			row.Barcode = it.Barcodes[0]

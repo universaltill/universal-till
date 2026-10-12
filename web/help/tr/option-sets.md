@@ -35,3 +35,4 @@ Oluşturulan her varyant sıradan bir varyanttır: kendi SKU'su, fiyatı, stoku 
 - Burada eklediğiniz değerler paylaşılır: aynı *Boyut* seti tişörtleri, kapüşonluları ve kupaları yönetebilir. Bir ürünün hangi setleri kullandığını değiştirmek yalnızca **Varyantları oluştur**un bir sonraki sefer neyi oluşturacağını etkiler — daha önce oluşturulmuş varyantlar olduğu gibi kalır.
 - Tabloya elle yazdığınız bir varyanta, adı tesadüfen bir değerle eşleşse bile oluşturucu dokunmaz.
 - Seçenek setleri mağaza genelidir ve **ana kasadan** yönetilir: katılmış bir kasada set oluşturmak veya varyant oluşturmak sizi ana kasaya yönlendiren bir mesaj gösterir.
+- Bir ürünün en fazla 100 varyantı olabilir; mevcut olanlar da (elle eklenenler ve devre dışı bırakılanlar dahil) sayılır. Oluşturma bu sınırı aşacaksa **Varyantları oluştur** hiçbir şey oluşturmaz ve bir hata gösterir; bir değeri kaldırın ya da yalnızca tek bir set kullanın.

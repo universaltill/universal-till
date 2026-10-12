@@ -482,6 +482,7 @@
   "catalog.variants.generate": "Generate variants",
   "catalog.variants.generate_hint": "Creates one variant per combination at the item's price. Running it again never duplicates or removes existing variants — it only adds the missing ones.",
   "catalog.variants.generate_none_applied": "Apply at least one option set first, then generate.",
+  "catalog.variants.generate_too_many": "Generating would give this item %d variants — an item can have at most %d. Nothing was created; remove a value or use a single option set.",
   "catalog.variants.generated_count": "%d variant(s) created.",
   "catalog.variants.no_option_sets": "No option sets yet — create one first under",
   "catalog.variants.none": "No variants yet — add one below.",

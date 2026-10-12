@@ -3,6 +3,7 @@ package catalog
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -191,6 +192,45 @@ func TestCatalogVariantsPanel_GenerateWithoutAppliedSetsShowsHint(t *testing.T) 
 	rec = get(t, mux, "/api/catalog/item-variants?item_id=itm1")
 	if !strings.Contains(rec.Body.String(), `href="/catalog/option-sets"`) {
 		t.Fatalf("panel with no option sets in the shop must link to /catalog/option-sets, got: %s", rec.Body.String())
+	}
+}
+
+// ut-docs#4163: a matrix past data.MaxItemVariants is refused before
+// anything is created, and the panel says why with the counts — not a
+// generic "invalid request".
+func TestCatalogVariantsPanel_GenerateTooManyShowsTheCap(t *testing.T) {
+	mux, db := newCatalogMux(t)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "TEE", Name: "T-shirt", BasePrice: 1500, IsActive: true})
+	repo := data.NewOptionSetRepo(db)
+	var ids []string
+	for _, set := range []struct {
+		name string
+		n    int
+	}{{"Length", 11}, {"Width", 10}} {
+		id, err := repo.CreateOptionSet(t.Context(), set.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range set.n {
+			if _, err := repo.AddOptionSetValue(t.Context(), id, fmt.Sprintf("%s %d", set.name, i)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		ids = append(ids, id)
+	}
+	if err := repo.ApplyOptionSetsToItem(t.Context(), "itm1", ids); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(t, mux, "/api/catalog/item/generate-variants", "panelItem=itm1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 (panel re-render with the refusal), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Generating would give this item 110 variants") || !strings.Contains(rec.Body.String(), "at most 100") {
+		t.Fatalf("must name the count and the cap, got: %s", rec.Body.String())
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM item_variants WHERE item_id = 'itm1'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("a refused generate created %d variants (err %v)", n, err)
 	}
 }
 

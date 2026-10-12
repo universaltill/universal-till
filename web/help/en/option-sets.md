@@ -35,3 +35,4 @@ Every generated variant is an ordinary variant: it has its own SKU, price, stock
 - Values you add here are shared: the same *Size* set can drive T-shirts, hoodies and mugs. Changing which sets an item uses only affects what **Generate variants** creates next — variants already made stay as they are.
 - A variant you typed by hand in the grid is left alone by the generator, even if its name happens to match a value.
 - Option sets are shop-wide and managed from the **main till**: on a joined till, creating a set or generating variants shows a message pointing you back to the main till.
+- An item can have at most 100 variants, counting the ones it already has (hand-added and deactivated ones too). If generating would go past that, **Generate variants** creates nothing and shows an error; remove a value or use a single set instead.

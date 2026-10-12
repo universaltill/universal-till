@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/cloudsync"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -629,5 +630,58 @@ func TestCloudSaveItemVariant_RefusedOnReplica(t *testing.T) {
 	var n int
 	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM item_variants WHERE id = ?`, newVariantID).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("a replica wrote the variant (%d, %v)", n, err)
+	}
+}
+
+// apply_item_option_sets (ut-docs#4163): applies through
+// OptionSetRepo.ApplyOptionSetsAndGenerate, audits, says how many variants
+// it generated, converges on replay and is refused on a satellite till.
+func TestCloudApplyItemOptionSets_AppliesGeneratesAuditsAndReplays(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	hooks := buildCloudHooks(dp, nil)
+	if hooks.ApplyItemOptionSets == nil {
+		t.Fatal("ApplyItemOptionSets hook not wired")
+	}
+	vals := []data.OptionSetValueInput{{ID: "v-s", Value: "S"}, {ID: "v-m", Value: "M"}}
+	if _, err := hooks.SaveOptionSet(ctx, data.OptionSetSave{ID: "set-size", Create: true, Name: sp("Size"), Values: &vals}); err != nil {
+		t.Fatal(err)
+	}
+	countGenerated := func() int {
+		t.Helper()
+		var n int
+		if err := dp.Db.QueryRow(`SELECT COUNT(DISTINCT v.id) FROM item_variants v JOIN item_variant_options o ON o.variant_id = v.id WHERE v.item_id = 'itm1'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	p := cloudsync.ItemOptionSetsApply{ItemID: "itm1", OptionSetIDs: []string{"set-size"}, Generate: true}
+	msg, err := hooks.ApplyItemOptionSets(ctx, p)
+	if err != nil || msg != "applied option sets Size to Apple; generated 2 variants" {
+		t.Fatalf("apply: %q %v", msg, err)
+	}
+	if n := countGenerated(); n != 2 {
+		t.Fatalf("generated (linked) variants = %d, want 2", n)
+	}
+	if n := cloudAuditCount(t, dp, "cloud_item_option_sets_applied", "itm1"); n != 1 {
+		t.Fatalf("audit rows = %d, want 1", n)
+	}
+	if msg, err := hooks.ApplyItemOptionSets(ctx, p); err != nil || msg != "applied option sets Size to Apple; generated 0 variants" {
+		t.Fatalf("replay: %q %v", msg, err)
+	}
+	if n := countGenerated(); n != 2 {
+		t.Fatalf("replay changed the generated count to %d", n)
+	}
+	if _, err := hooks.ApplyItemOptionSets(ctx, cloudsync.ItemOptionSetsApply{ItemID: "itm1", OptionSetIDs: []string{"set-gone"}}); err == nil || err.Error() != "option set set-gone does not exist on this till" {
+		t.Fatalf("unknown set: %v", err)
+	}
+	if msg, err := hooks.ApplyItemOptionSets(ctx, cloudsync.ItemOptionSetsApply{ItemID: "itm1", OptionSetIDs: []string{}}); err != nil || msg != "cleared option sets on Apple" {
+		t.Fatalf("clear: %q %v", msg, err)
+	}
+
+	setReplica(t, dp)
+	if _, err := hooks.ApplyItemOptionSets(ctx, p); err == nil || !strings.HasPrefix(err.Error(), "this data is primary-wins synced") {
+		t.Fatalf("replica: %v", err)
 	}
 }

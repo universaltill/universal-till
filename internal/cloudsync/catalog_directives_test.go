@@ -18,7 +18,7 @@ import (
 // (keep), and a present field of the wrong shape FAILS the directive
 // instead of reading as absent.
 
-var newCatalogTypes = []string{"save_item", "save_category", "delete_category", "save_modifier_group", "delete_modifier_group", "delete_item", "save_option_set", "delete_option_set", "save_item_variant"}
+var newCatalogTypes = []string{"save_item", "save_category", "delete_category", "save_modifier_group", "delete_modifier_group", "delete_item", "save_option_set", "delete_option_set", "save_item_variant", "apply_item_option_sets"}
 
 func TestApplyNewCatalogTypes_NilHookUnsupported(t *testing.T) {
 	for _, typ := range newCatalogTypes {
@@ -393,6 +393,7 @@ func TestTickSatelliteSkipsMainTillOnlyTypes(t *testing.T) {
 		{"id": "d9", "type": "delete_option_set", "payload": map[string]any{"id": "s1"}},
 		{"id": "d10", "type": "save_item_variant", "payload": map[string]any{"item_id": "i1", "variant_id": "v1", "name": "L"}},
 		{"id": "d11", "type": "set_net_quantity", "payload": map[string]any{"id": "i1", "net_quantity_value": 500.0, "net_quantity_unit": "g"}},
+		{"id": "d12", "type": "apply_item_option_sets", "payload": map[string]any{"item_id": "i1", "option_set_ids": `["s1"]`, "generate": true}},
 	}}
 	srv := httptest.NewServer(cloud.handler())
 	defer srv.Close()
@@ -411,6 +412,7 @@ func TestTickSatelliteSkipsMainTillOnlyTypes(t *testing.T) {
 		SaveOptionSet:       func(context.Context, data.OptionSetSave) (string, error) { ran++; return "", nil },
 		DeleteOptionSet:     func(context.Context, string) (string, error) { ran++; return "", nil },
 		SaveItemVariant:     func(context.Context, data.VariantSave) (string, error) { ran++; return "", nil },
+		ApplyItemOptionSets: func(context.Context, ItemOptionSetsApply) (string, error) { ran++; return "", nil },
 		SetSetting:          func(context.Context, string, string) (string, error) { return "set", nil },
 	}
 	if err := Tick(context.Background(), testCfg(srv.URL), db, hooks); err != nil {
