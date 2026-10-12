@@ -48,7 +48,11 @@ type SnapshotItem struct {
 	ModifierGroupIDs          []string // directly attached, link order
 	ModifierOptOutIDs         []string
 	EffectiveModifierGroupIDs []string // ResolveGroupsForItem's result, sale-screen order
-	Variants                  []SnapshotVariant
+	// OptionSetIDs are the option sets applied to the item (item_option_sets,
+	// ut-docs#4163), axis order — inactive sets included, they are still
+	// applied.
+	OptionSetIDs []string
+	Variants     []SnapshotVariant
 }
 
 // CatalogSnapshotItems reads the whole catalog for the cloud snapshot
@@ -138,6 +142,10 @@ ORDER BY is_active DESC, name, id`)
 	if err != nil {
 		return nil, fmt.Errorf("catalog snapshot: opt-outs: %w", err)
 	}
+	optionSets, err := pairs(`SELECT item_id, option_set_id FROM item_option_sets ORDER BY item_id, axis_order, option_set_id`)
+	if err != nil {
+		return nil, fmt.Errorf("catalog snapshot: option sets: %w", err)
+	}
 	variantBarcodes, err := pairs(`SELECT variant_id, barcode FROM variant_barcodes ORDER BY variant_id, is_primary DESC, barcode`)
 	if err != nil {
 		return nil, fmt.Errorf("catalog snapshot: variant barcodes: %w", err)
@@ -152,6 +160,7 @@ ORDER BY is_active DESC, name, id`)
 		it.Barcodes = nonNil(barcodes[it.ID])
 		it.ModifierGroupIDs = nonNil(direct[it.ID])
 		it.ModifierOptOutIDs = nonNil(optOuts[it.ID])
+		it.OptionSetIDs = nonNil(optionSets[it.ID])
 		it.Variants = variants[it.ID]
 		if it.Variants == nil {
 			it.Variants = []SnapshotVariant{}

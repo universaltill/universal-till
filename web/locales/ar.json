@@ -482,6 +482,7 @@
   "catalog.variants.generate": "إنشاء المتغيّرات",
   "catalog.variants.generate_hint": "يُنشئ متغيّراً واحداً لكل تركيبة بسعر الصنف. إعادة التشغيل لا تكرّر المتغيّرات الموجودة ولا تحذفها — بل تضيف الناقص منها فقط.",
   "catalog.variants.generate_none_applied": "طبّق مجموعة خيارات واحدة على الأقل أولاً، ثم أنشئ المتغيّرات.",
+  "catalog.variants.generate_too_many": "سيؤدي الإنشاء إلى %d متغيّراً لهذا الصنف — والحد الأقصى للصنف %d. لم يُنشأ شيء؛ احذف قيمة أو استخدم مجموعة خيارات واحدة فقط.",
   "catalog.variants.generated_count": "تم إنشاء %d متغيّر(ات).",
   "catalog.variants.no_option_sets": "لا توجد مجموعات خيارات بعد — أنشئ واحدة أولاً في",
   "catalog.variants.none": "لا توجد متغيّرات بعد — أضف واحداً أدناه.",

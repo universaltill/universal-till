@@ -15,8 +15,9 @@ import (
 // set_category_order (§3.8, ut-docs#3075), set_catalog_image (§3.9,
 // ut-docs#3076; decode and fetch in catalog_image.go), save_option_set /
 // delete_option_set (ut-docs#3319), save_item_variant (§3.11,
-// ut-docs#3477) and set_net_quantity (§3.12, ut-docs#3402; applied
-// through the save_item hook).
+// ut-docs#3477), set_net_quantity (§3.12, ut-docs#3402; applied
+// through the save_item hook) and apply_item_option_sets (§3.13,
+// ut-docs#4163).
 
 // mainTillOnlyTypes are skipped entirely on a satellite till: no apply and
 // no result post, so the directive stays pending for the main till
@@ -24,18 +25,19 @@ import (
 // requirePrimaryDirective refusal; the cloud's delivery filter (§2.10)
 // covers them.
 var mainTillOnlyTypes = map[string]bool{
-	"save_item":             true,
-	"save_category":         true,
-	"delete_category":       true,
-	"delete_item":           true, // ut-docs#3317
-	"save_modifier_group":   true,
-	"delete_modifier_group": true,
-	"save_option_set":       true,
-	"delete_option_set":     true,
-	"save_item_variant":     true, // ut-docs#3477
-	"set_category_order":    true,
-	"set_catalog_image":     true,
-	"set_net_quantity":      true, // ut-docs#3402
+	"save_item":              true,
+	"save_category":          true,
+	"delete_category":        true,
+	"delete_item":            true, // ut-docs#3317
+	"save_modifier_group":    true,
+	"delete_modifier_group":  true,
+	"save_option_set":        true,
+	"delete_option_set":      true,
+	"save_item_variant":      true, // ut-docs#3477
+	"apply_item_option_sets": true, // ut-docs#4163
+	"set_category_order":     true,
+	"set_catalog_image":      true,
+	"set_net_quantity":       true, // ut-docs#3402
 	// Till user directives (reference/till-user-directives.md §4): only
 	// the main till applies them; the admin bundle carries the result to
 	// the other tills (ADR-0115 §1).
@@ -63,7 +65,7 @@ var mainTillOnlyTypes = map[string]bool{
 var catalogTypes = map[string]bool{
 	"save_item": true, "save_category": true, "delete_category": true, "delete_item": true,
 	"save_modifier_group": true, "delete_modifier_group": true, "set_category_order": true,
-	"save_option_set": true, "delete_option_set": true, "save_item_variant": true,
+	"save_option_set": true, "delete_option_set": true, "save_item_variant": true, "apply_item_option_sets": true,
 	"set_catalog_image": true, "set_net_quantity": true, "set_price": true, "rename_item": true, "deactivate_item": true, "create_item": true,
 	"add_barcode": true, "update_item_details": true, "adjust_stock": true,
 	"upsert_category": true, "update_category": true, "upsert_modifier_group": true,
@@ -383,6 +385,43 @@ func decodeSaveItemVariant(p payload) (data.VariantSave, string) {
 	if out.Barcodes, ok = p.optIDs("barcodes"); !ok {
 		return out, "bad barcodes"
 	}
+	return out, ""
+}
+
+// ItemOptionSetsApply is a decoded apply_item_option_sets payload
+// (ut-docs#4163): the item's full ordered option-set list (index = axis
+// order, empty clears) and whether to generate the missing variants.
+type ItemOptionSetsApply struct {
+	ItemID       string
+	OptionSetIDs []string
+	Generate     bool
+}
+
+// decodeApplyItemOptionSets reads an apply_item_option_sets payload
+// (§3.13): {item_id, option_set_ids, generate?}. option_set_ids, like
+// category_ids, is a JSON-encoded array string and is required — `[]`
+// clears the item's sets. Existence, activity, the two-axis limit,
+// duplicates and the variant cap are the repo's job
+// (OptionSetRepo.ApplyOptionSetsAndGenerate).
+func decodeApplyItemOptionSets(p payload) (ItemOptionSetsApply, string) {
+	var out ItemOptionSetsApply
+	out.ItemID, _ = p["item_id"].(string)
+	if out.ItemID = strings.TrimSpace(out.ItemID); out.ItemID == "" {
+		return out, "missing item_id"
+	}
+	if _, present := p["option_set_ids"]; !present {
+		return out, "missing option_set_ids"
+	}
+	ids, ok := p.optIDs("option_set_ids")
+	if !ok {
+		return out, "bad option_set_ids"
+	}
+	out.OptionSetIDs = *ids
+	gen, ok := p.optBool("generate")
+	if !ok {
+		return out, "bad generate"
+	}
+	out.Generate = gen != nil && *gen
 	return out, ""
 }
 

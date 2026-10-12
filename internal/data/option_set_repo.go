@@ -209,6 +209,28 @@ ORDER BY ios.axis_order, s.name`, itemID)
 	return sets, nil
 }
 
+// validateOptionSetIDs checks an item's option-set list — at most
+// maxOptionSetAxes, no blank id, no duplicate — and returns it trimmed.
+func validateOptionSetIDs(ids []string) ([]string, error) {
+	if len(ids) > maxOptionSetAxes {
+		return nil, fmt.Errorf("at most %d option sets can be applied to an item, got %d", maxOptionSetAxes, len(ids))
+	}
+	out := make([]string, 0, len(ids))
+	seen := map[string]bool{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return nil, errors.New("option_set_id required")
+		}
+		if seen[id] {
+			return nil, fmt.Errorf("option set %s listed twice", id)
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out, nil
+}
+
 // ApplyOptionSetsToItem replaces the item's applied option sets with the
 // given ids (slice index = axis_order). More than maxOptionSetAxes is
 // rejected outright; an empty slice clears the item's sets. Delete-then-
@@ -219,18 +241,9 @@ func (r *OptionSetRepo) ApplyOptionSetsToItem(ctx context.Context, itemID string
 	if itemID == "" {
 		return errors.New("item_id required")
 	}
-	if len(optionSetIDs) > maxOptionSetAxes {
-		return fmt.Errorf("at most %d option sets can be applied to an item, got %d", maxOptionSetAxes, len(optionSetIDs))
-	}
-	seen := map[string]bool{}
-	for _, id := range optionSetIDs {
-		if strings.TrimSpace(id) == "" {
-			return errors.New("option_set_id required")
-		}
-		if seen[id] {
-			return fmt.Errorf("option set %s listed twice", id)
-		}
-		seen[id] = true
+	optionSetIDs, err := validateOptionSetIDs(optionSetIDs)
+	if err != nil {
+		return err
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -261,13 +274,94 @@ func combinationKey(valueIDs []string) string {
 	return strings.Join(sorted, "|")
 }
 
+// ErrTooManyVariants reports that generating an item's variant matrix
+// would take it past MaxItemVariants (ut-docs#4163): the cloud keeps at
+// most that many per item and SaveVariant refuses the next one, so the
+// generator refuses up front, before writing anything.
+var ErrTooManyVariants = errors.New("too many variants")
+
+// TooManyVariantsError is the ErrTooManyVariants refusal with its counts,
+// so the till's panel can say how many variants generating would make.
+type TooManyVariantsError struct {
+	New   int // combinations that would be created
+	Total int // the item's variant count afterwards
+	Max   int
+}
+
+func (e *TooManyVariantsError) Error() string {
+	return fmt.Sprintf("%v: generating %d variants would give the item %d; an item can have at most %d", ErrTooManyVariants, e.New, e.Total, e.Max)
+}
+
+func (e *TooManyVariantsError) Is(target error) bool { return target == ErrTooManyVariants }
+
+// variantCombo is one combination of option values, one per applied set.
+type variantCombo struct {
+	valueIDs []string
+	names    []string
+}
+
+// missingCombinations returns the combinations of sets' values (in axis
+// order) that the item has no generated variant for yet. A set with no
+// values contributes no combinations at all — the product is empty, which
+// is correct (nothing to generate yet), not an error.
+func (r *OptionSetRepo) missingCombinations(ctx context.Context, itemID string, sets []OptionSetView) ([]variantCombo, error) {
+	for _, s := range sets {
+		if len(s.Values) == 0 {
+			return nil, nil
+		}
+	}
+	existing, err := r.existingCombinations(ctx, itemID)
+	if err != nil {
+		return nil, err
+	}
+	// Cartesian product across the (at most maxOptionSetAxes) applied sets.
+	combos := []variantCombo{{}}
+	for _, s := range sets {
+		var next []variantCombo
+		for _, c := range combos {
+			for _, v := range s.Values {
+				next = append(next, variantCombo{
+					valueIDs: append(append([]string(nil), c.valueIDs...), v.ID),
+					names:    append(append([]string(nil), c.names...), v.Value),
+				})
+			}
+		}
+		combos = next
+	}
+	missing := combos[:0]
+	for _, c := range combos {
+		if !existing[combinationKey(c.valueIDs)] {
+			missing = append(missing, c)
+		}
+	}
+	return missing, nil
+}
+
+// checkVariantCap refuses adding n variants when the item's existing ones
+// (active or not, hand-added included) plus n would exceed MaxItemVariants.
+func (r *OptionSetRepo) checkVariantCap(ctx context.Context, itemID string, n int) error {
+	if n == 0 {
+		return nil
+	}
+	var have int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_variants WHERE item_id = ?`, itemID).Scan(&have); err != nil {
+		return fmt.Errorf("count item variants: %w", err)
+	}
+	if have+n > MaxItemVariants {
+		return &TooManyVariantsError{New: n, Total: have + n, Max: MaxItemVariants}
+	}
+	return nil
+}
+
 // GenerateVariants creates the item_variants rows for every combination of
 // the item's applied option sets' values that doesn't exist yet, and
 // returns how many were created. Re-running after nothing changed creates
 // 0 and touches nothing; re-running after a value was added creates only
 // the new combinations (ut-docs#1839's re-import-duplication bug class,
 // deliberately not reintroduced here). Hand-added variants (no
-// item_variant_options rows) are neither counted nor touched.
+// item_variant_options rows) are neither counted nor touched. More than
+// MaxItemVariants in total is refused before anything is created
+// (ErrTooManyVariants, ut-docs#4163).
 //
 // Each new row goes through CatalogRepo.CreateVariant — the same insert the
 // manual add-variant row uses — so the inventory-row side effect, the
@@ -286,12 +380,9 @@ func (r *OptionSetRepo) GenerateVariants(ctx context.Context, itemID string) (in
 	if len(sets) == 0 {
 		return 0, ErrNoOptionSetsApplied
 	}
-	// A set with no values contributes no combinations at all — the product
-	// is empty, which is correct (nothing to generate yet), not an error.
-	for _, s := range sets {
-		if len(s.Values) == 0 {
-			return 0, nil
-		}
+	missing, err := r.missingCombinations(ctx, itemID, sets)
+	if err != nil || len(missing) == 0 {
+		return 0, err
 	}
 
 	var basePrice int64
@@ -301,37 +392,13 @@ func (r *OptionSetRepo) GenerateVariants(ctx context.Context, itemID string) (in
 		}
 		return 0, fmt.Errorf("read item base price: %w", err)
 	}
-
-	existing, err := r.existingCombinations(ctx, itemID)
-	if err != nil {
+	if err := r.checkVariantCap(ctx, itemID, len(missing)); err != nil {
 		return 0, err
-	}
-
-	// Cartesian product across the (at most maxOptionSetAxes) applied sets.
-	type combo struct {
-		valueIDs []string
-		names    []string
-	}
-	combos := []combo{{}}
-	for _, s := range sets {
-		var next []combo
-		for _, c := range combos {
-			for _, v := range s.Values {
-				next = append(next, combo{
-					valueIDs: append(append([]string(nil), c.valueIDs...), v.ID),
-					names:    append(append([]string(nil), c.names...), v.Value),
-				})
-			}
-		}
-		combos = next
 	}
 
 	catalog := NewCatalogRepo(r.db)
 	created := 0
-	for _, c := range combos {
-		if existing[combinationKey(c.valueIDs)] {
-			continue
-		}
+	for _, c := range missing {
 		variantID, err := catalog.CreateVariant(ctx, catalogtypes.VariantInput{
 			ItemID:   itemID,
 			Name:     strings.Join(c.names, " / "),
@@ -349,6 +416,86 @@ func (r *OptionSetRepo) GenerateVariants(ctx context.Context, itemID string) (in
 		created++
 	}
 	return created, nil
+}
+
+// ApplyOptionSetsResult reports what ApplyOptionSetsAndGenerate did.
+type ApplyOptionSetsResult struct {
+	ItemName string
+	SetNames []string // the applied sets, axis order
+	Created  int      // variants generated
+}
+
+// ApplyOptionSetsAndGenerate is the apply_item_option_sets directive's
+// write (ut-docs#4163): replace the item's applied option sets with
+// optionSetIDs (index = axis order, [] clears) and, when generate is set,
+// generate the missing variants exactly as the till's own Generate button
+// does. Every refusal — a missing item, an unknown set, a newly applied
+// inactive set, more
+// than maxOptionSetAxes, a duplicate, or a matrix past MaxItemVariants — is
+// checked before anything is written. Idempotent: a replay applies the same
+// sets and generates nothing new.
+func (r *OptionSetRepo) ApplyOptionSetsAndGenerate(ctx context.Context, itemID string, optionSetIDs []string, generate bool) (ApplyOptionSetsResult, error) {
+	var res ApplyOptionSetsResult
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return res, errors.New("item_id required")
+	}
+	err := r.db.QueryRowContext(ctx, `SELECT name FROM items WHERE id = ?`, itemID).Scan(&res.ItemName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return res, fmt.Errorf("item %s does not exist on this till", itemID)
+	}
+	if err != nil {
+		return res, fmt.Errorf("read item: %w", err)
+	}
+	optionSetIDs, err = validateOptionSetIDs(optionSetIDs)
+	if err != nil {
+		return res, err
+	}
+	// An inactive set may stay applied (the till keeps it, the snapshot
+	// reports it, Generate still uses it); only newly applying one is
+	// refused — so re-sending the item's current list always works.
+	current, err := r.ItemOptionSets(ctx, itemID)
+	if err != nil {
+		return res, err
+	}
+	applied := map[string]bool{}
+	for _, s := range current {
+		applied[s.ID] = true
+	}
+	sets := make([]OptionSetView, 0, len(optionSetIDs))
+	for _, id := range optionSetIDs {
+		s, err := r.GetOptionSet(ctx, id)
+		if errors.Is(err, ErrOptionSetNotFound) {
+			return res, fmt.Errorf("option set %s does not exist on this till", id)
+		}
+		if err != nil {
+			return res, err
+		}
+		if !s.IsActive && !applied[s.ID] {
+			return res, fmt.Errorf("option set %s is inactive", s.Name)
+		}
+		sets = append(sets, s)
+		res.SetNames = append(res.SetNames, s.Name)
+	}
+	if generate && len(sets) > 0 {
+		missing, err := r.missingCombinations(ctx, itemID, sets)
+		if err != nil {
+			return res, err
+		}
+		if err := r.checkVariantCap(ctx, itemID, len(missing)); err != nil {
+			return res, err
+		}
+	}
+	if err := r.ApplyOptionSetsToItem(ctx, itemID, optionSetIDs); err != nil {
+		return res, err
+	}
+	if generate && len(sets) > 0 {
+		res.Created, err = r.GenerateVariants(ctx, itemID)
+		if err != nil {
+			return res, err
+		}
+	}
+	return res, nil
 }
 
 // existingCombinations returns the combinationKey of every variant of the

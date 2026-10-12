@@ -306,6 +306,30 @@ func cloudSaveItemVariant(ctx context.Context, d *common.Deps, p data.VariantSav
 	return "updated variant " + label, nil
 }
 
+// cloudApplyItemOptionSets is the apply_item_option_sets hook (contract
+// §3.13, ut-docs#4163): one OptionSetRepo.ApplyOptionSetsAndGenerate call
+// — the same apply and the same generator the till's own variants panel
+// uses, so a variant generated from my. carries its option links and the
+// SKU the till mints. Every refusal is checked before anything is written.
+func cloudApplyItemOptionSets(ctx context.Context, d *common.Deps, p cloudsync.ItemOptionSetsApply) (string, error) {
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	res, err := data.NewOptionSetRepo(d.Db).ApplyOptionSetsAndGenerate(ctx, p.ItemID, p.OptionSetIDs, p.Generate)
+	if err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "item", p.ItemID, "cloud_item_option_sets_applied", map[string]any{"option_set_ids": p.OptionSetIDs, "generate": p.Generate, "created": res.Created})
+	if len(res.SetNames) == 0 {
+		return "cleared option sets on " + res.ItemName, nil
+	}
+	msg := "applied option sets " + strings.Join(res.SetNames, " × ") + " to " + res.ItemName
+	if p.Generate {
+		msg += fmt.Sprintf("; generated %d variants", res.Created)
+	}
+	return msg, nil
+}
+
 // optionSetInUseMaxNames caps how many item names the delete_option_set
 // refusal lists before "and N more": the result is one line the cloud shows
 // verbatim, and the full list already rides the option_sets report.

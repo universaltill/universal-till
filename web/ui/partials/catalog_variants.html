@@ -113,6 +113,7 @@
         </form>
         {{ end }}
         {{ if .GenerateNoSets }}<p class="option-set-pick-msg" role="status">{{ T "catalog.variants.generate_none_applied" }}</p>{{ end }}
+        {{ with .GenerateTooMany }}<p class="option-set-pick-msg" role="alert">{{ printf (T "catalog.variants.generate_too_many") .Total .Max }}</p>{{ end }}
         {{ if .Generated }}<p class="option-set-pick-msg" role="status">{{ printf (T "catalog.variants.generated_count") .GeneratedCount }}</p>{{ end }}
       </div>
 

@@ -1297,6 +1297,13 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			renderVariantsPanelWith(w, r, itemID, false, map[string]any{"GenerateNoSets": true})
 			return
 		}
+		// ut-docs#4163: past data.MaxItemVariants nothing was created; say
+		// why in the panel, with the counts, like the no-sets hint.
+		var tooMany *data.TooManyVariantsError
+		if errors.As(err, &tooMany) {
+			renderVariantsPanelWith(w, r, itemID, false, map[string]any{"GenerateTooMany": tooMany})
+			return
+		}
 		if err != nil {
 			skuAwareError(w, r, http.StatusBadRequest, err)
 			return

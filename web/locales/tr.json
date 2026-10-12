@@ -482,6 +482,7 @@
   "catalog.variants.generate": "Varyantları oluştur",
   "catalog.variants.generate_hint": "Her kombinasyon için ürünün fiyatıyla bir varyant oluşturur. Yeniden çalıştırmak mevcut varyantları asla çoğaltmaz veya silmez — yalnızca eksik olanları ekler.",
   "catalog.variants.generate_none_applied": "Önce en az bir seçenek seti uygulayın, sonra oluşturun.",
+  "catalog.variants.generate_too_many": "Oluşturma bu ürüne %d varyant verirdi — bir ürünün en fazla %d varyantı olabilir. Hiçbir şey oluşturulmadı; bir değeri kaldırın ya da yalnızca tek bir seçenek seti kullanın.",
   "catalog.variants.generated_count": "%d varyant oluşturuldu.",
   "catalog.variants.no_option_sets": "Henüz seçenek seti yok — önce şurada bir tane oluşturun:",
   "catalog.variants.none": "Henüz varyant yok — aşağıdan ekleyin.",
