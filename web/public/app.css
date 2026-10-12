@@ -1060,6 +1060,12 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
    text styling. */
 .modifier-attach-fieldset { border: 0; margin: 0; padding: 0; min-inline-size: 0; }
 .modifier-attach-fieldset legend { padding: 0; }
+/* ut-docs#4098: a <fieldset> defaults to min-inline-size: min-content, so
+   the plugin settings page's takeaway-overrides editor sized itself to its
+   widest stacked row and pushed the page ~27px sideways at 360px — the
+   overflow-x:auto wrapper inside it never got a narrower box to scroll in.
+   Let it shrink to its .card like any block. */
+.ps-takeaway-fieldset { min-inline-size: 0; }
 .modifier-attach-option { display: flex; flex-direction: row; align-items: center; gap: .5rem;
                            min-height: 44px; padding-inline: .25rem; }
 .modifier-attach-option input[type="checkbox"] { inline-size: 1.25rem; block-size: 1.25rem;

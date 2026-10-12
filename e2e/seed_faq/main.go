@@ -63,6 +63,19 @@ func main() {
 		VALUES (?,?,?,?,?,?,?)`,
 		"e2e-faq-page", pluginID, "page", "faq-page", "plugin.faq.menu", "/plugin/faq", "help_support")
 
+	// ut-docs#4098: one takeaway_rate_overrides row so the plugin settings
+	// page renders its typed overrides editor for
+	// plugin-settings-phone-overflow-4098.spec.ts — a valid override for the
+	// demo café tax code (seed_demo) plus an orphan (a deleted code's leftover)
+	// so both row shapes lay out. The FAQ plugin is the one installed
+	// plugin the e2e till has; the page only reads stored setting rows.
+	// Stored string-wrapped, the shape every real writer uses
+	// (data.EncodeMapSettingValue).
+	exec(`INSERT OR IGNORE INTO plugin_settings (id, plugin_id, key, value_json, scope)
+		VALUES (?,?,?,?,?)`,
+		"e2e-faq-takeaway-overrides", pluginID, "takeaway_rate_overrides",
+		`"{\"tax_demo_cafe\":700,\"tax-retired-reduced-rate\":550}"`, "global")
+
 	if err := tx.Commit(); err != nil {
 		fatalf("commit: %v", err)
 	}
