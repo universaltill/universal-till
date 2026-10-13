@@ -123,6 +123,26 @@ type fiscalSignAskPayload struct {
 	// round trip never completed — same honestly-degraded omitempty pattern
 	// as StartedTxID above; never a fabricated default.
 	OrderID string `json:"order_id,omitempty"`
+	// VoucherIssues (contract 1.14.0, ut-docs#4232) lists every voucher
+	// this sale issues, purpose normalised to data.VoucherPurposeMulti /
+	// data.VoucherPurposeSingle. A multi-purpose voucher (Mehrzweck-
+	// gutschein) is a 0% liability: in Total, never in VATBreakdown — a
+	// signer places it in its not-taxable bucket (DSFinV-K
+	// MehrzweckgutscheinKauf). A single-purpose one is a taxable supply at
+	// issue and is ALREADY folded into VATBreakdown at RateBP, so its entry
+	// here is informational only. Reconciles as
+	// max(Σgross(VATBreakdown) − SaleDiscount, 0) + Σamount(multi) = Total.
+	// Omitted when the sale issues none, so an existing signer sees no
+	// shape change.
+	VoucherIssues []fiscalSignAskVoucherIssue `json:"voucher_issues,omitempty"`
+}
+
+// fiscalSignAskVoucherIssue is one voucher sold in the signed sale
+// (contract 1.14.0). RateBP is 0 for a multi-purpose voucher.
+type fiscalSignAskVoucherIssue struct {
+	Purpose string `json:"purpose"`
+	Amount  int64  `json:"amount"`
+	RateBP  int    `json:"rate_bp"`
 }
 
 type fiscalSignAskPayment struct {
@@ -912,6 +932,35 @@ func buildFiscalSignPayload(in *pos.SaleInput, now time.Time) fiscalSignAskPaylo
 		agg.Net += lineNet.Minor()
 		agg.Tax += lineTax.Minor()
 	}
+	// ut-docs#4232: a single-purpose voucher is a taxable line of the sale
+	// (computeSaleTotals part 1) — same ComputeTaxBasisPoints call, same
+	// band, and part of the charge apportionment basis; a multi-purpose
+	// one is added to total after the clamp below, never to a band.
+	chargeLines := pos.ChargeTaxLinesFromSale(in.Lines)
+	var multiVoucherTotal money.Money
+	var voucherIssues []fiscalSignAskVoucherIssue
+	// Anything but single-purpose is read as multi-purpose, like "": an
+	// unknown purpose never reaches here — the tender handler rejects it
+	// and runs computeSaleTotals (CheckPaymentCoverage) before dispatch.
+	for _, v := range in.VoucherIssues {
+		if v.Purpose != data.VoucherPurposeSingle {
+			multiVoucherTotal = multiVoucherTotal.Add(v.Amount)
+			voucherIssues = append(voucherIssues, fiscalSignAskVoucherIssue{Purpose: data.VoucherPurposeMulti, Amount: v.Amount.Minor()})
+			continue
+		}
+		voucherTax, _ := pos.ComputeTaxBasisPoints(v.Amount, v.VATRateBasisPoints, in.TaxInclusive)
+		subtotal = subtotal.Add(v.Amount)
+		taxTotal = taxTotal.Add(voucherTax)
+		agg, ok := perRate[v.VATRateBasisPoints]
+		if !ok {
+			agg = &fiscalSignAskVATLine{RateBP: v.VATRateBasisPoints}
+			perRate[v.VATRateBasisPoints] = agg
+		}
+		agg.Net += v.Amount.Minor()
+		agg.Tax += voucherTax.Minor()
+		chargeLines = append(chargeLines, pos.ChargeTaxLine{RateBP: v.VATRateBasisPoints, Net: v.Amount})
+		voucherIssues = append(voucherIssues, fiscalSignAskVoucherIssue{Purpose: data.VoucherPurposeSingle, Amount: v.Amount.Minor(), RateBP: v.VATRateBasisPoints})
+	}
 	// ADR-0061 Decision 2 / ADR-0062 Decision 4 / contract 1.5.0: fold
 	// every charge's apportioned net/tax into the per-rate lines via the
 	// SAME shared function computeSaleTotals taxes them with — never a
@@ -919,7 +968,7 @@ func buildFiscalSignPayload(in *pos.SaleInput, now time.Time) fiscalSignAskPaylo
 	// cannot drift. The flat ServiceCharge field below (the charges' sum)
 	// stays display/reconciliation-only.
 	var chargeTax money.Money
-	for _, b := range pos.ApportionChargesTax(in.Charges, pos.ChargeTaxLinesFromSale(in.Lines), in.TaxInclusive) {
+	for _, b := range pos.ApportionChargesTax(in.Charges, chargeLines, in.TaxInclusive) {
 		agg, ok := perRate[b.RateBP]
 		if !ok {
 			agg = &fiscalSignAskVATLine{RateBP: b.RateBP}
@@ -939,6 +988,9 @@ func buildFiscalSignPayload(in *pos.SaleInput, now time.Time) fiscalSignAskPaylo
 	if total.IsNegative() {
 		total = money.Zero
 	}
+	// After the clamp, like computeSaleTotals part 2: a sale discount never
+	// eats a multi-purpose voucher's face value.
+	total = total.Add(multiVoucherTotal)
 	vat := make([]fiscalSignAskVATLine, 0, len(perRate))
 	for _, v := range perRate {
 		vat = append(vat, *v)
@@ -970,6 +1022,7 @@ func buildFiscalSignPayload(in *pos.SaleInput, now time.Time) fiscalSignAskPaylo
 		TaxInclusive:  in.TaxInclusive,
 		SaleDiscount:  in.SaleDiscount.Minor(),
 		ServiceCharge: in.ChargesTotal().Minor(),
+		VoucherIssues: voucherIssues,
 	}
 }
 
