@@ -76,9 +76,10 @@ func sampleReceiptDoc(storeName string, rd receiptDesign, locale string) print.D
 	if rd.ShowBarcode {
 		doc.Barcode = "000000123"
 	}
-	if rd.ShowTrackingQR {
+	if rd.ShowTrackingQR && orderTrackingLinksAvailable() {
 		// Shown whatever the plan: the box is the shop's choice; the plan
 		// gate (receiptTrackingQROffered) applies to real receipts only.
+		// No sample while no tracking link can exist (ut-docs#4260).
 		doc.TrackingCaption = httpx.T(locale, "receipt.tracking.caption")
 		doc.TrackingURL = sampleTrackingURL
 		if png, err := qrcode.Encode(sampleTrackingURL, qrcode.Medium, 240); err == nil {
@@ -127,7 +128,10 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 			"H1":        header[0], "H2": header[1], "H3": header[2],
 			"HasLogo": logoErr == nil,
 			"LogoV":   logoV,
-			"Preview": print.RenderText(sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd, httpx.RequestLocale(r))),
+			// ut-docs#4260: the tracking box is greyed out until the cloud
+			// tracking page exists (#4238).
+			"TrackingAvailable": orderTrackingLinksAvailable(),
+			"Preview":           print.RenderText(sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd, httpx.RequestLocale(r))),
 		})(w, r)
 	})
 
@@ -154,7 +158,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 		// session user travels as an allowed actor (what an allowed
 		// checkOrElevate would carry); the main till re-checks it.
 		elev := elevationCheck{Outcome: allowed, ActorID: getSessionUserID(r)}
-		if err := saveShopSettings(r.Context(), d, elev, map[string]string{
+		values := map[string]string{
 			keyReceiptHeader1:     strings.TrimSpace(r.Form.Get("header1")),
 			keyReceiptHeader2:     strings.TrimSpace(r.Form.Get("header2")),
 			keyReceiptHeader3:     strings.TrimSpace(r.Form.Get("header3")),
@@ -163,10 +167,16 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 			keyReceiptShowTax:     fmt.Sprintf("%t", r.Form.Get("show_tax") == "on"),
 			keyReceiptShowBarcode: fmt.Sprintf("%t", r.Form.Get("show_barcode") == "on"),
 			keyReceiptShowLogo:    fmt.Sprintf("%t", r.Form.Get("show_logo") == "on"),
-			// ut-docs#908: always saved explicitly, so the default
-			// (receiptTrackingQRDefault) only applies until the first save.
-			keyReceiptShowTrackingQR: fmt.Sprintf("%t", r.Form.Get("show_tracking_qr") == "on"),
-		}); err != nil {
+		}
+		// ut-docs#908: saved explicitly, so the default
+		// (receiptTrackingQRDefault) only applies until the first save —
+		// but only while the box is live: it is disabled (never posted)
+		// until the cloud tracking page exists, and saving then must keep
+		// the shop's stored choice for #4238 (ut-docs#4260).
+		if orderTrackingLinksAvailable() {
+			values[keyReceiptShowTrackingQR] = fmt.Sprintf("%t", r.Form.Get("show_tracking_qr") == "on")
+		}
+		if err := saveShopSettings(r.Context(), d, elev, values); err != nil {
 			if respondSettingsSyncFragment(w, r, err) {
 				return
 			}

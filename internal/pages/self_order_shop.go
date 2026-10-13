@@ -740,7 +740,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			receiptNo, displayNo = saleID, saleID
 		}
 		// Customer order tracking QR (ut-docs#527) — best-effort: the sale
-		// is committed, so a missing QR (no LAN-dialable address, encode
+		// is committed, so a missing QR (no cloud link yet, ut-docs#4260; encode
 		// error) renders a plain confirmation, never an error. Shop plan
 		// and up only (ut-docs#4206): on Local no token is minted at all.
 		var trackingQR template.URL
@@ -1050,7 +1050,7 @@ func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *com
 	var trackingQR template.URL
 	var trackingURL string
 	if snap.TrackingToken != "" {
-		trackingQR, trackingURL = orderTrackingQRForToken(r, snap.TrackingToken, httpx.ResolveLocale(w, r))
+		trackingQR, trackingURL = orderTrackingQRForToken(snap.TrackingToken, httpx.ResolveLocale(w, r))
 	}
 
 	httpx.RenderPartial("ui/partials/self_order_confirmation.html", map[string]any{

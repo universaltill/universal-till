@@ -660,6 +660,7 @@
   "designer.receipt.show_sku": "Show item codes (SKU)",
   "designer.receipt.show_tax": "Show subtotal and tax lines",
   "designer.receipt.show_tracking_qr": "Order tracking QR (paid plans)",
+  "designer.receipt.tracking_qr_needs_cloud": "Available once order tracking moves to our cloud.",
   "designer.receipt.title": "Receipt designer",
   "designer.reorder_hint": "Everything you change here shows on the sale screen straight away.",
   "designer.search_placeholder": "Search items (name, SKU, barcode)",

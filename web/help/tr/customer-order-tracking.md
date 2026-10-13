@@ -11,6 +11,8 @@ routes: [/o/{token}, /o/{token}/status]
 
 Müşteri bir QR kodu okutarak siparişinin durumunu kendi telefonundan izler: self servis kioskta sipariş verdikten sonra (ister orada ödemiş ister kasada ödeyecek olsun) ya da personelinizin kasada girdiği bir satışın fişinden. Self servis ekranının kendisi gibi, müşterinin gördüğü sayfa da müşteriye yöneliktir; bu yüzden bu kılavuza dönen bir "?" bağlantısı taşımaz — bu konuyu kılavuzun aramasından veya konu listesinden bulun.
 
+**Henüz kullanılamıyor:** Sipariş takibi bulutumuza taşınıyor. Taşınana kadar kasa hiçbir yerde takip QR kodu göstermez — ne kiosk onay ekranında ne fişlerde —, çünkü kasanın kendisine giden bir bağlantı yalnızca mağazanın Wi-Fi ağında çalışır ve her müşteriye kasanın adresini verir. Bu sayfanın geri kalanı, bulut sayfası yayına girdiğinde nasıl çalışacağını anlatır.
+
 ## Nasıl çalışır
 
 1. Müşteri siparişini self servis kioskta tamamladığında, onay ekranı sipariş numarasının yanında bir QR kodu gösterir (onay ekranı yaklaşık 20 saniye açık kalır; okutmak için yeterli).
@@ -28,7 +30,7 @@ Müşteri bir QR kodu okutarak siparişinin durumunu kendi telefonundan izler: s
 ## Notlar
 
 - Sipariş takibi ücretli planlara dahildir. Ücretsiz Yerel planda ya da ücretli özellikler duraklatılmışken (abonelik sona erdi veya kasa aboneliği 7 günden uzun süredir bulutla doğrulayamadı) onay ekranı ve fişler QR olmadan gösterilir; siparişin veya satışın kendisi bundan asla etkilenmez.
-- Müşterinin telefonu cihazla aynı ağda olmalıdır — mağazanın Wi-Fi ağı. Cihazın kendisinden başka bir ağ adresi yoksa onay ekranı veya fiş QR olmadan gösterilir; siparişin veya satışın kendisi bundan asla etkilenmez.
+- Takip sayfası bulutumuzda barındırılacak: müşterinin telefonu mağazanızın Wi-Fi ağına ihtiyaç duymaz ve kasanın kendi ağ adresi hiçbir QR kodunda ya da fişte görünmez.
 - Mağazanızda birden fazla kasa varsa ve sipariş kiosktan farklı bir kasada ödenirse, kioskun bağlantısı ödemeyi göremez: yaklaşık 2 saate kadar **Kasada ödeme bekleniyor** göstermeye devam eder, sonra yanıt vermez. Sipariş takibi bulutumuza taşınana kadar bunu önlemek için kiosk siparişlerinin ödemesini kioskun kendi kasasında alın.
 - [Fiş tasarımcısı](/help/designer) içindeki **Sipariş takip QR kodu (ücretli planlar)** kutusu, kasa fişlerindeki QR kodunu açar veya kapatır. Fiş tasarımcısını ilk kez kaydedene kadar açıktır; ancak mağazanız "Burada mı, paket mi" diye sormuyorsa (perakende ve hizmet mağazaları bu soru kapalı olarak başlar) kapalıdır. Tasarımcıyı kaydetmek kutuyu gösterildiği gibi bırakır. İadelerin ve iptal edilen satışların fişlerinde asla QR kodu bulunmaz; birden fazla kasası olan bir mağazada ek bir kasanın fişlerinde de bulunmaz: bu kasanın takip bağlantısını, sipariş takibi bulutumuza taşınana kadar ana kasanın **Siparişler** ekranı göremez.
 - Kimsenin **Siparişler** ekranında takip etmediği bir sipariş (kasadaki gündelik bir satış için olağan durum), satıştan 12 saat sonra yanıt vermez. Personeliniz durumunu belirlediği anda bunun yerine yukarıdaki kurallar geçerli olur.

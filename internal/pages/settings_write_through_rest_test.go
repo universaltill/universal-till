@@ -53,7 +53,8 @@ var receiptDesignWant = map[string]string{
 	keyReceiptHeader1: "Corner Shop", keyReceiptHeader2: "1 High St", keyReceiptHeader3: "VAT 123",
 	keyReceiptFooter: "Thanks!", keyReceiptShowSKU: "true", keyReceiptShowTax: "true",
 	keyReceiptShowBarcode: "false", keyReceiptShowLogo: "true",
-	keyReceiptShowTrackingQR: "false",
+	// receipt.show_tracking_qr is not saved while its box is disabled
+	// (no cloud tracking page yet, ut-docs#4260).
 }
 
 func TestSettingsWriteThrough_ReceiptDesignerOneBatchOnMain(t *testing.T) {
