@@ -1300,6 +1300,12 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		SetStockLocationActive: func(ctx context.Context, id string, active bool) (string, error) {
 			return cloudSetStockLocationActive(ctx, d, id, active)
 		},
+		// Register stock location from my. (ut-docs#3642): the same
+		// POSRepo.SetRegisterLocation registers_page.go's edit makes,
+		// main-till only, audited, idempotent. See cloudSetRegisterLocation.
+		SetRegisterLocation: func(ctx context.Context, registerID, locationID string) (string, error) {
+			return cloudSetRegisterLocation(ctx, d, registerID, locationID)
+		},
 		// update_category (ut-docs#2354): partial edit of an existing
 		// category + its modifier-group and kitchen-station links, picked
 		// from what the till last reported (#2472). See cloudUpdateCategory.
@@ -2236,6 +2242,80 @@ func cloudSetStockLocationActive(ctx context.Context, d *common.Deps, id string,
 	}
 	auditCloudDirective(ctx, d, "stock_location", id, "stock_location_deactivate", nil)
 	return "deactivated stock location " + loc.Name, nil
+}
+
+// cloudSetRegisterLocation is the set_register_location hook (ut-docs#3642):
+// my.'s registers node assigns the stock location a register takes stock
+// from, through the same POSRepo.SetRegisterLocation registers_page.go's
+// edit handler makes, audited the same way (entity "register", action
+// "register_update") under the "system" actor. locationID "" unassigns.
+//
+// The /registers picker offers every active location plus the register's
+// current one (ut-docs#895), so: a register already at the asked-for
+// location (unassigned counts as "") is a no-op success with no write or
+// audit row — checked first, so re-asking a since-retired current location
+// succeeds — and otherwise a non-empty location must exist and be active.
+// registers are primary-wins synced, so the write is gated by
+// requirePrimaryDirective; Tick also only applies this type on the main
+// till. Messages are English like every other directive result; no locale
+// keys.
+func cloudSetRegisterLocation(ctx context.Context, d *common.Deps, registerID, locationID string) (string, error) {
+	registerID, locationID = strings.TrimSpace(registerID), strings.TrimSpace(locationID)
+	repo := data.NewPOSRepo(d.Db)
+	regs, err := repo.ListRegistersForAdmin(ctx)
+	if err != nil {
+		return "", err
+	}
+	var reg *data.RegisterAdmin
+	for i := range regs {
+		if regs[i].ID == registerID {
+			reg = &regs[i]
+			break
+		}
+	}
+	if reg == nil {
+		return "", fmt.Errorf("register %s not found", registerID)
+	}
+	current := ""
+	if reg.LocationID != nil {
+		current = *reg.LocationID
+	}
+	locName := ""
+	if locationID != "" {
+		locs, err := repo.ListStockLocationsForAdmin(ctx)
+		if err != nil {
+			return "", err
+		}
+		loc, err := findStockLocation(locs, locationID)
+		if err != nil {
+			return "", err
+		}
+		locName = loc.Name
+		if current != locationID && !loc.IsActive {
+			return "", fmt.Errorf("stock location %s is inactive", loc.Name)
+		}
+	}
+	if current == locationID {
+		if locationID == "" {
+			return "register " + reg.Name + " already unassigned", nil
+		}
+		return "register " + reg.Name + " already takes stock from " + locName, nil
+	}
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	var ptr *string
+	if locationID != "" {
+		ptr = &locationID
+	}
+	if err := repo.SetRegisterLocation(ctx, registerID, ptr); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "register", registerID, "register_update", nil)
+	if locationID == "" {
+		return "register " + reg.Name + " unassigned", nil
+	}
+	return "register " + reg.Name + " now takes stock from " + locName, nil
 }
 
 // cloudUpdateCategory is the update_category hook (ut-docs#2354): a partial
