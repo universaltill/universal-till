@@ -23,6 +23,7 @@ import (
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/paths"
+	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
@@ -1508,6 +1509,35 @@ func TestOrderTrackingPushKeepsRecentTerminalOrders(t *testing.T) {
 	orders := cloud.tracking[0]["orders"].([]any)
 	if len(orders) != 1 || orders[0].(map[string]any)["token"] != tok {
 		t.Fatalf("orders = %+v, want the recent collected order", orders)
+	}
+}
+
+// ut-docs#908: counter receipts give nearly every sale a tracking token, and
+// almost none of them are ever tracked. An untracked ("") tokened sale rides
+// the push only for pos.OrderTrackingUntrackedExpiry after it was created —
+// otherwise the pushed set would grow with every sale the shop ever made.
+func TestOrderTrackingPushDropsOldUntrackedSales(t *testing.T) {
+	cloud := &fakeCloud{}
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	d := openMigratedDB(t, "cloudsync-tracking-untracked.db")
+
+	fresh := seedTrackedSale(t, d.DB, "sale-u1", "R-9101", "", "")
+	old := seedTrackedSale(t, d.DB, "sale-u2", "R-9102", "", "")
+	oldAt := time.Now().UTC().Add(-pos.OrderTrackingUntrackedExpiry - time.Hour).Format(time.RFC3339)
+	if _, err := d.DB.Exec(`UPDATE sales SET created_at = ? WHERE receipt_no = 'R-9102'`, oldAt); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Tick(context.Background(), testCfg(srv.URL), d.DB, Hooks{}); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(cloud.tracking) != 1 {
+		t.Fatalf("tracking pushes = %d, want 1", len(cloud.tracking))
+	}
+	orders := cloud.tracking[0]["orders"].([]any)
+	if len(orders) != 1 || orders[0].(map[string]any)["token"] != fresh {
+		t.Fatalf("orders = %+v, want only the fresh untracked sale (old token %s must age out)", orders, old)
 	}
 }
 

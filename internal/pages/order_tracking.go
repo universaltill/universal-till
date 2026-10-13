@@ -19,11 +19,13 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/print"
 )
 
 // Customer order tracking via QR (ut-docs#527), on #526's order-status
 // backbone. /o/{token} is the page a customer lands on after scanning the QR
-// on the self-order confirmation screen; /o/{token}/status is its 15s HTMX
+// on the self-order confirmation screen or, since ut-docs#908, on a counter
+// sale's receipt (printed or on screen); /o/{token}/status is its 15s HTMX
 // poll fragment. Both are auth-exempt (internal/auth/middleware.go — an
 // anonymous customer on a personal phone has no session and never will) and
 // gated only by the unguessable tracking token, so they expose the order's
@@ -39,12 +41,14 @@ import (
 
 // orderTrackingVisible reports whether a token should still resolve. The
 // rule itself (terminal statuses expire pos.OrderTrackingExpiry after their
-// last status write; unparseable terminal timestamps fail closed) moved to
+// last status write; an untracked "" sale expires
+// pos.OrderTrackingUntrackedExpiry after it was created, ut-docs#908;
+// unparseable timestamps fail closed) moved to
 // internal/pos with the cloud relay (ADR-0070, ut-docs#907) so the cloudsync
 // push applies the identical liveness the LAN page does — this wrapper just
 // adapts data.TrackedOrder to it.
 func orderTrackingVisible(o data.TrackedOrder, now time.Time) bool {
-	return pos.OrderTrackingVisible(o.Status, o.StatusUpdatedAt, now)
+	return pos.OrderTrackingVisible(o.Status, o.StatusUpdatedAt, o.CreatedAt, now)
 }
 
 // orderTrackingAwaitingPayment (ut-docs#4206) is the status /o/{token}
@@ -175,6 +179,94 @@ func orderTrackingQRForToken(r *http.Request, token, locale string) (qrDataURI t
 		return "", ""
 	}
 	return template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(png)), u
+}
+
+// receiptTrackingQROffered (ut-docs#908) is the one gate on a counter
+// sale's receipt carrying the customer order-tracking QR, printed or on
+// screen: a normal sale (never a return/refund — there is no order to
+// follow), the receipt setting on (rd.ShowTrackingQR), and the plan gate
+// (orderTrackingOffered — Shop and up). Display-only, like the plan gate it
+// wraps: it runs after the sale committed and only decides whether a QR is
+// shown, so it lives here, never in a sale-path file
+// (entitlement/salepath_imports_test.go).
+//
+// Two more exclusions (ut-docs#908 review): a sale that is not completed
+// (a reprinted voided sale is no order anyone will prepare), and any till
+// that follows a main till. On an additional till the Orders screen writes
+// the status on the main till, and the main till never holds this sale's
+// token — the LAN sale journal does not carry it (ADR-0070 amendment 1 §3,
+// #4238) — so the link would never leave "untracked". Until #4238 moves
+// tracking to the cloud, only the main till (or a single till) prints it.
+func receiptTrackingQROffered(ctx context.Context, d *common.Deps, saleType, saleStatus string, rd receiptDesign) bool {
+	if saleType != "sale" || saleStatus != "completed" || !rd.ShowTrackingQR {
+		return false
+	}
+	if d != nil && d.SyncPrimaryURL(ctx) != "" {
+		return false
+	}
+	return orderTrackingOffered(ctx, d)
+}
+
+// receiptTrackingPrint builds the printed receipt's tracking block for a
+// sale that passed receiptTrackingQROffered: the sale's (idempotently
+// minted) token, its /o/{token} link on this till's LAN address, that link
+// as a GS v 0 raster, and the caption in the shop locale (English when the
+// printer charset can't encode the translation — kitchenTicketText's
+// rule). A print has no request, so the host is mainTillLANAddress, not
+// advertisableHost. Best-effort by contract: any failure (no LAN address,
+// token error, encode error) logs a warning — never the token, it is the
+// customer's capability — and returns empty values, so the receipt prints
+// without the QR. The token is minted before the address check, so the
+// sale keeps one stable token for any later surface or reprint.
+func receiptTrackingPrint(ctx context.Context, d *common.Deps, receiptNo, locale, charset string) (qr []byte, caption, trackingURL string) {
+	token, err := data.NewPOSRepo(d.Db).EnsureOrderTrackingToken(ctx, receiptNo)
+	if err != nil || token == "" {
+		logging.L().Warnf("order tracking: no tracking QR on printed receipt %s: token: %v", receiptNo, err)
+		return nil, "", ""
+	}
+	host, ok := mainTillLANAddress(d)
+	if !ok {
+		logging.L().Warnf("order tracking: no tracking QR on printed receipt %s: this till has no LAN address", receiptNo)
+		return nil, "", ""
+	}
+	u := "http://" + host + "/o/" + token + "?lang=" + url.QueryEscape(locale)
+	png, err := qrcode.Encode(u, qrcode.Medium, 240)
+	if err != nil {
+		logging.L().Warnf("order tracking: no tracking QR on printed receipt %s: encode: %v", receiptNo, err)
+		return nil, "", ""
+	}
+	raster := print.RasterLogo(png)
+	if raster == nil {
+		logging.L().Warnf("order tracking: no tracking QR on printed receipt %s: raster encode failed", receiptNo)
+		return nil, "", ""
+	}
+	return raster, kitchenTicketText(locale, charset, "receipt.tracking.caption"), u
+}
+
+// receiptTrackingView is the on-screen receipt's tracking block
+// (receipt.html, data-testid="receipt-tracking-qr"); nil = no block.
+// QRDataURI is template.URL for the same reason as
+// receiptFiscalView.QRDataURI (ut-docs#906): html/template strips a data:
+// URI held in a plain string.
+type receiptTrackingView struct {
+	QRDataURI template.URL
+	URL       string
+}
+
+// receiptTrackingScreenView is the on-screen counterpart of
+// receiptTrackingPrint, for the cashier's post-tender receipt: gate, then
+// orderTrackingQRView (same idempotent token, host from the request like
+// the kiosk confirmation). nil when the gate fails or the QR could not be
+// built — the receipt renders without it.
+func receiptTrackingScreenView(r *http.Request, d *common.Deps, receiptNo, saleType, locale string, rd receiptDesign) *receiptTrackingView {
+	if !receiptTrackingQROffered(r.Context(), d, saleType, "completed", rd) {
+		return nil
+	}
+	qr, u := orderTrackingQRView(r, data.NewPOSRepo(d.Db), receiptNo, locale)
+	if qr == "" {
+		return nil
+	}
+	return &receiptTrackingView{QRDataURI: qr, URL: u}
 }
 
 func registerOrderTracking(mux *http.ServeMux, d *common.Deps) {

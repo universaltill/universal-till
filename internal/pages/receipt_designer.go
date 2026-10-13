@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	qrcode "github.com/skip2/go-qrcode"
+
 	"github.com/universaltill/universal-till/internal/clock"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -24,6 +26,9 @@ func designFromForm(r *http.Request) receiptDesign {
 		ShowTax:     r.Form.Get("show_tax") == "on",
 		ShowBarcode: r.Form.Get("show_barcode") == "on",
 		ShowLogo:    r.Form.Get("show_logo") == "on",
+		// ut-docs#908: explicit either way — the designer always shows the
+		// effective value (default included) and saves what is ticked.
+		ShowTrackingQR: r.Form.Get("show_tracking_qr") == "on",
 	}
 	for _, f := range []string{"header1", "header2", "header3"} {
 		if v := strings.TrimSpace(r.Form.Get(f)); v != "" {
@@ -33,8 +38,16 @@ func designFromForm(r *http.Request) receiptDesign {
 	return rd
 }
 
+// sampleTrackingURL is the designer's sample order-tracking link
+// (ut-docs#908): a fixed, never-resolving URL (RFC 2606 .invalid), so the
+// preview and `make docs-shots` stay byte-stable and no real token is ever
+// minted for a sample ticket.
+const sampleTrackingURL = "https://example.invalid/o/sample"
+
 // sampleReceiptDoc builds the designer's example ticket from a design.
-func sampleReceiptDoc(storeName string, rd receiptDesign) print.Doc {
+// locale only translates the tracking caption; the rest of the sample is
+// fixed English demo content.
+func sampleReceiptDoc(storeName string, rd receiptDesign, locale string) print.Doc {
 	line := func(name, sku, qty, amount string) print.Line {
 		if rd.ShowSKU && sku != "" {
 			name += " [" + sku + "]"
@@ -62,6 +75,15 @@ func sampleReceiptDoc(storeName string, rd receiptDesign) print.Doc {
 	doc.Totals = append(doc.Totals, print.KV{Label: "TOTAL", Amount: "£6.96", Strong: true})
 	if rd.ShowBarcode {
 		doc.Barcode = "000000123"
+	}
+	if rd.ShowTrackingQR {
+		// Shown whatever the plan: the box is the shop's choice; the plan
+		// gate (receiptTrackingQROffered) applies to real receipts only.
+		doc.TrackingCaption = httpx.T(locale, "receipt.tracking.caption")
+		doc.TrackingURL = sampleTrackingURL
+		if png, err := qrcode.Encode(sampleTrackingURL, qrcode.Medium, 240); err == nil {
+			doc.TrackingQR = print.RasterLogo(png)
+		}
 	}
 	if rd.Footer != "" {
 		doc.Footer = []string{rd.Footer}
@@ -105,7 +127,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 			"H1":        header[0], "H2": header[1], "H3": header[2],
 			"HasLogo": logoErr == nil,
 			"LogoV":   logoV,
-			"Preview": print.RenderText(sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd)),
+			"Preview": print.RenderText(sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd, httpx.RequestLocale(r))),
 		})(w, r)
 	})
 
@@ -117,7 +139,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		rd := designFromForm(r)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte(print.RenderText(sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd))))
+		_, _ = w.Write([]byte(print.RenderText(sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd, httpx.RequestLocale(r)))))
 	})
 
 	mux.HandleFunc("POST /api/receipt-designer/save", func(w http.ResponseWriter, r *http.Request) {
@@ -141,6 +163,9 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 			keyReceiptShowTax:     fmt.Sprintf("%t", r.Form.Get("show_tax") == "on"),
 			keyReceiptShowBarcode: fmt.Sprintf("%t", r.Form.Get("show_barcode") == "on"),
 			keyReceiptShowLogo:    fmt.Sprintf("%t", r.Form.Get("show_logo") == "on"),
+			// ut-docs#908: always saved explicitly, so the default
+			// (receiptTrackingQRDefault) only applies until the first save.
+			keyReceiptShowTrackingQR: fmt.Sprintf("%t", r.Form.Get("show_tracking_qr") == "on"),
 		}); err != nil {
 			if respondSettingsSyncFragment(w, r, err) {
 				return
@@ -226,8 +251,12 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.printer.test_failed"))
 			return
 		}
-		doc := sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd)
+		doc := sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd, locale)
 		doc.Charset = cfg.Charset
+		if doc.TrackingCaption != "" {
+			// Same charset fallback as a real receipt's caption.
+			doc.TrackingCaption = kitchenTicketText(locale, cfg.Charset, "receipt.tracking.caption")
+		}
 		doc.Logo = receiptLogoRaster(rd)
 		// PrintDoc picks ESC/POS (thermal) or plain text via lp (a regular
 		// printer like an HP) based on the configured printer type.
