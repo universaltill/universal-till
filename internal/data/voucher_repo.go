@@ -397,6 +397,35 @@ FROM vouchers WHERE id = ?`, id).
 	return v, nil
 }
 
+// VouchersIssuedInSale returns every voucher saleID issued, in the order
+// the sale wrote them (created_at, then insertion order — one sale's
+// vouchers share a timestamp), void ones included: the printed receipt
+// rebuilds its voucher block from this on every print and reprint
+// (ut-docs#4224) and marks a void one rather than dropping it.
+func (r *POSRepo) VouchersIssuedInSale(ctx context.Context, saleID string) ([]Voucher, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, holder_label, original_amount, balance, currency, status, created_at
+FROM vouchers WHERE issued_sale_id = ? ORDER BY created_at, rowid`, saleID)
+	if err != nil {
+		return nil, fmt.Errorf("vouchers issued in sale: %w", err)
+	}
+	defer rows.Close()
+	var out []Voucher
+	for rows.Next() {
+		v := Voucher{IssuedSaleID: saleID}
+		var holder sql.NullString
+		if err := rows.Scan(&v.ID, &holder, &v.OriginalAmountMinor, &v.BalanceMinor, &v.Currency, &v.Status, &v.CreatedAt); err != nil {
+			return nil, fmt.Errorf("vouchers issued in sale: scan: %w", err)
+		}
+		v.HolderLabel = holder.String
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("vouchers issued in sale: %w", err)
+	}
+	return out, nil
+}
+
 // nullableInt maps a *int to the NULL-or-value shape a nullable INTEGER
 // column wants (nil -> NULL), the *int counterpart of nullIfEmpty.
 func nullableInt(p *int) any {

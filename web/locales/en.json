@@ -1825,6 +1825,7 @@
   "receipt.title": "Receipt",
   "receipt.tracking.caption": "Scan to track your order",
   "receipt.vouchers.issued": "Vouchers issued",
+  "receipt.vouchers.void": "VOID - not valid",
   "recovery.db_open_failed": "The till couldn't open its database. Your data is safe — this needs a retry, or support.",
   "recovery.disk_full": "The till is out of storage space. Free up space on this device, then retry.",
   "recovery.migration_failed": "The till couldn't finish an update to its database. Your data is safe — this needs a retry, or support.",

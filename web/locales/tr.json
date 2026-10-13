@@ -1840,6 +1840,7 @@
   "receipt.title": "Fiş",
   "receipt.tracking.caption": "Siparişinizi takip etmek için kodu okutun",
   "receipt.vouchers.issued": "Düzenlenen hediye çekleri",
+  "receipt.vouchers.void": "İPTAL - geçersiz",
   "recovery.db_open_failed": "Kasa veritabanını açamadı. Verileriniz güvende — yeniden denemek ya da destek gerekiyor.",
   "recovery.disk_full": "Kasanın depolama alanı doldu. Bu cihazda yer açın, ardından yeniden deneyin.",
   "recovery.migration_failed": "Kasa, veritabanı güncellemesini tamamlayamadı. Verileriniz güvende — yeniden denemek ya da destek gerekiyor.",

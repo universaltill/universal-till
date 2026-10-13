@@ -64,6 +64,24 @@ type Doc struct {
 	// prints it as text under the caption, so a plain-text receipt still
 	// carries a link the customer can type.
 	TrackingURL string
+	// Vouchers are the gift vouchers this sale issued (ut-docs#4224),
+	// printed under VoucherHeading after the payments: value, holder, and
+	// the code as a CODE128 symbol (its HRI is the code text) so scanning
+	// the receipt redeems it. Empty = no block, byte-identical to before.
+	Vouchers       []VoucherBlock
+	VoucherHeading string
+}
+
+// VoucherBlock is one issued voucher, every field already formatted and
+// translated by the caller.
+type VoucherBlock struct {
+	Label  string // "Gift voucher"
+	Amount string // pre-formatted money
+	Holder string // "For: Anna"; empty = no row
+	Code   string
+	// Void, when set, is the notice printed for a voided voucher; its code
+	// then prints as text only, never as a scannable symbol.
+	Void string
 }
 
 // Line is one sale line.
@@ -104,15 +122,24 @@ var (
 	cmdBarcodeCode128 = []byte{0x1d, 0x6b, 0x49} // GS k 73 <len> <data>
 )
 
-// barcode emits a CODE128 symbol (code set B) for a printable-ASCII code.
-func barcode(b *bytes.Buffer, code string) {
+// barcodeEncodable reports whether code fits a CODE128 code set B symbol:
+// printable ASCII, at most 60 characters.
+func barcodeEncodable(code string) bool {
 	if code == "" || len(code) > 60 {
-		return
+		return false
 	}
 	for _, r := range code {
 		if r < 0x20 || r > 0x7e {
-			return // unencodable — skip rather than jam the printer
+			return false
 		}
+	}
+	return true
+}
+
+// barcode emits a CODE128 symbol (code set B) for a printable-ASCII code.
+func barcode(b *bytes.Buffer, code string) {
+	if !barcodeEncodable(code) {
+		return // unencodable — skip rather than jam the printer
 	}
 	data := append([]byte{'{', 'B'}, []byte(code)...)
 	b.Write(cmdBarcodeHeight)
@@ -182,6 +209,36 @@ func Render(d Doc) []byte {
 		for _, p := range d.Payments {
 			line(kvRow(p.Label, p.Amount))
 		}
+	}
+
+	if len(d.Vouchers) > 0 {
+		line("")
+		line(strings.Repeat("-", Width))
+		if d.VoucherHeading != "" {
+			b.Write(cmdBoldOn)
+			line(clip(d.VoucherHeading, Width))
+			b.Write(cmdBoldOff)
+		}
+		for _, v := range d.Vouchers {
+			line("")
+			line(kvRow(v.Label, v.Amount))
+			if v.Holder != "" {
+				line(clip(v.Holder, Width))
+			}
+			b.Write(cmdAlignMid)
+			if v.Void != "" {
+				line(clip(v.Void, Width))
+			}
+			if v.Void == "" && barcodeEncodable(v.Code) {
+				barcode(&b, v.Code) // HRI prints the code text under the bars
+			} else {
+				for _, row := range wrapRunes(v.Code, Width) {
+					line(row)
+				}
+			}
+			b.Write(cmdAlignLeft)
+		}
+		line(strings.Repeat("-", Width))
 	}
 
 	if d.Barcode != "" {
@@ -563,6 +620,27 @@ func RenderText(d Doc) string {
 		for _, p := range d.Payments {
 			b.WriteString(kvRow(p.Label, p.Amount) + "\n")
 		}
+	}
+	if len(d.Vouchers) > 0 {
+		b.WriteString("\n" + strings.Repeat("-", Width) + "\n")
+		if d.VoucherHeading != "" {
+			b.WriteString(clip(d.VoucherHeading, Width) + "\n")
+		}
+		for _, v := range d.Vouchers {
+			b.WriteString("\n" + kvRow(v.Label, v.Amount) + "\n")
+			if v.Holder != "" {
+				b.WriteString(clip(v.Holder, Width) + "\n")
+			}
+			if v.Void != "" {
+				center(v.Void)
+			}
+			// The code as text only: a plain-text printer can't draw the
+			// symbol, and placeholder bars would print on a real receipt.
+			for _, row := range wrapRunes(v.Code, Width) {
+				center(row)
+			}
+		}
+		b.WriteString(strings.Repeat("-", Width) + "\n")
 	}
 	if d.Barcode != "" {
 		b.WriteString("\n")

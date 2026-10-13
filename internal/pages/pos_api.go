@@ -2493,7 +2493,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// so by now it already holds the final codes.
 		var issuedVouchers []receiptVoucherIssue
 		for _, v := range voucherIssues {
-			issuedVouchers = append(issuedVouchers, receiptVoucherIssue{Code: v.VoucherID, Amount: v.Amount.Minor()})
+			issuedVouchers = append(issuedVouchers, receiptVoucherIssue{Code: v.VoucherID, Amount: v.Amount.Minor(), Holder: v.HolderLabel})
 		}
 		design := receiptDesignFromSettings(r.Context(), d)
 		// ut-docs#908: the customer order-tracking QR on the counter
@@ -2616,6 +2616,7 @@ type receiptPayment struct {
 type receiptVoucherIssue struct {
 	Code   string
 	Amount int64
+	Holder string // who it is for (ut-docs#4224); empty = no row
 }
 
 type receiptLegalBlock struct {
