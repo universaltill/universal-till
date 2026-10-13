@@ -36,10 +36,13 @@ type TrackedOrder struct {
 	CreatedAt       string
 }
 
-// newTrackingToken mints 16 bytes of crypto/rand as lowercase hex — the same
-// convention as the sync enrolment tokens (sync_api.go enrolTokens.issue):
-// never uuid (v4 leaks its version/variant bits), never math/rand.
-func newTrackingToken() (string, error) {
+// NewOrderTrackingToken mints 16 bytes of crypto/rand as lowercase hex — the
+// same convention as the sync enrolment tokens (sync_api.go
+// enrolTokens.issue): never uuid (v4 leaks its version/variant bits), never
+// math/rand. Exported for the kiosk pay-at-counter checkout (ut-docs#4206),
+// which mints the token before any sale exists and carries it in the held
+// order's payload until the sale adopts it (AdoptOrderTrackingToken).
+func NewOrderTrackingToken() (string, error) {
 	raw := make([]byte, 16)
 	if _, err := rand.Read(raw); err != nil {
 		return "", fmt.Errorf("tracking token: %w", err)
@@ -75,7 +78,7 @@ func (r *POSRepo) EnsureOrderTrackingToken(ctx context.Context, receiptNo string
 		return tok, err
 	}
 	for attempt := 0; ; attempt++ {
-		tok, err := newTrackingToken()
+		tok, err := NewOrderTrackingToken()
 		if err != nil {
 			return "", err
 		}
@@ -207,4 +210,72 @@ FROM sales WHERE tracking_token = ?
 		return TrackedOrder{}, false, fmt.Errorf("lookup order by tracking token: %w", err)
 	}
 	return o, true, nil
+}
+
+// AdoptOrderTrackingToken (ut-docs#4206) gives a just-tendered sale the
+// tracking token its held kiosk pay-at-counter order carried
+// (pos.BasketSnapshot.TrackingToken), so the QR the customer scanned at the
+// kiosk keeps resolving once the order is paid. Same guarded write as
+// EnsureOrderTrackingToken (`AND tracking_token IS NULL`): a sale that
+// already holds a token keeps it, and adopted reports whether this call
+// wrote one. An empty token or an unknown receipt is a no-op. A token
+// another sale already holds fails the UNIQUE index and comes back as an
+// error — the caller logs it; it is never regenerated here, because the
+// customer's QR names exactly this token.
+func (r *POSRepo) AdoptOrderTrackingToken(ctx context.Context, receiptNo, token string) (adopted bool, err error) {
+	if token == "" || receiptNo == "" {
+		return false, nil
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE sales SET tracking_token = ? WHERE receipt_no = ? AND tracking_token IS NULL`,
+		token, receiptNo)
+	if err != nil {
+		return false, fmt.Errorf("adopt order tracking token: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("adopt order tracking token: %w", err)
+	}
+	return n > 0, nil
+}
+
+// LookupHeldOrderByTrackingToken (ut-docs#4206) is /o/{token}'s fallback
+// for a kiosk pay-at-counter order that has not been paid yet: it is still
+// a held_sales row, and the token rides in its payload
+// (pos.BasketSnapshot's "tracking_token"). Only the customer-facing order
+// number ("display_no") is read back — DisplayNo, with ReceiptNo set to the
+// same value: the held row's own id is internal and never leaves this
+// method, same status-only exposure rule as LookupOrderByTrackingToken.
+// Status, timestamps and everything else stay empty; the caller decides
+// what an unpaid order shows. Unknown and empty tokens return found=false
+// with no error. json_valid guards inside a CASE (evaluated lazily, unlike
+// AND) so one malformed payload can never turn every lookup into an error.
+// held_sales holds only the shop's currently parked orders, so the scan is
+// small.
+//
+// notBefore bounds the answer (ut-docs#4206 review): a held row last
+// written before it is treated as not found. On a replica kiosk the local
+// row can be a mirror the primary already claimed and paid, which nothing
+// on a kiosk-mode till ever reconciles away, so without a bound the
+// customer's page would say "waiting for payment" forever.
+func (r *POSRepo) LookupHeldOrderByTrackingToken(ctx context.Context, token string, notBefore time.Time) (TrackedOrder, bool, error) {
+	if token == "" {
+		return TrackedOrder{}, false, nil
+	}
+	var displayNo string
+	err := r.db.QueryRowContext(ctx, `
+SELECT COALESCE(json_extract(payload, '$.display_no'), '')
+FROM held_sales
+WHERE CASE WHEN json_valid(payload) THEN json_extract(payload, '$.tracking_token') END = ?
+  AND julianday(COALESCE(NULLIF(updated_at, ''), created_at)) >= julianday(?)
+ORDER BY created_at ASC, id ASC
+LIMIT 1
+`, token, notBefore.UTC().Format(time.RFC3339)).Scan(&displayNo)
+	if errors.Is(err, sql.ErrNoRows) {
+		return TrackedOrder{}, false, nil
+	}
+	if err != nil {
+		return TrackedOrder{}, false, fmt.Errorf("lookup held order by tracking token: %w", err)
+	}
+	return TrackedOrder{ReceiptNo: displayNo, DisplayNo: displayNo}, true, nil
 }

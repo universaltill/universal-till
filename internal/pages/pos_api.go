@@ -224,6 +224,10 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	if saleInput.DisplayNo == "" {
 		saleInput.DisplayNo = engine.OrderDisplayNo()
 	}
+	// ut-docs#4206: the same resumed order may carry the customer's
+	// order-tracking token (placed on a Shop-plan till); read before
+	// engine.Reset() below, handed to the sale once it is committed.
+	trackingToken := engine.OrderTrackingToken()
 	// ADR-0138 D2 (ut-docs#3310): carry the held order this basket was
 	// resumed from — read off THIS engine (the kiosk's own engine on a kiosk
 	// checkout, never d.Engine), before engine.Reset() below clears it — so
@@ -714,6 +718,19 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	receiptNo, _, _, _, _ := repo.SaleTotals(ctx, saleID)
 	if receiptNo == "" {
 		receiptNo = saleID
+	}
+
+	// ut-docs#4206: a paid pay-at-counter order adopts the tracking token
+	// its held order carried, so the QR the customer scanned at the kiosk
+	// now shows this sale's status. Best-effort after the commit, exactly
+	// like the evidence writes above: a failure (e.g. the token is somehow
+	// already another sale's) only costs the customer's link and is
+	// logged — never unwinds or fails the tender. No token in the log: it
+	// is the customer's capability.
+	if trackingToken != "" {
+		if _, terr := repo.AdoptOrderTrackingToken(ctx, receiptNo, trackingToken); terr != nil {
+			logging.L().Warnf("order tracking: sale %s could not adopt its order's tracking token: %v", receiptNo, terr)
+		}
 	}
 
 	// Stock ownership is primary-only (ut-docs#404, ADR-0036): on the

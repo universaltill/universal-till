@@ -93,6 +93,9 @@ type Service struct {
 	// together with heldOrigin: it describes the order that basket came
 	// from, never the next sale.
 	orderDisplayNo string
+	// orderTrackingToken (ut-docs#4206) is the resumed order's
+	// BasketSnapshot.TrackingToken; cleared wherever orderDisplayNo is.
+	orderTrackingToken string
 	// taxAsker, when set, can override a line's tax rate per the current
 	// order type — see TaxRateAsker. nil (the default) means core just uses
 	// each line's own configured rate, unaffected by order type.
@@ -1235,6 +1238,7 @@ func (s *Service) Tender(amount money.Money, method string) (map[string]any, err
 	s.tableLabel = ""
 	s.heldOrigin = HeldOrigin{}
 	s.orderDisplayNo = ""
+	s.orderTrackingToken = ""
 	return map[string]any{"status": "ok", "method": method, "amount": amount}, nil
 }
 
@@ -1541,6 +1545,7 @@ func (s *Service) removeLocked(sku string) {
 		// silently replacing it on the Open orders page.
 		s.heldOrigin = HeldOrigin{}
 		s.orderDisplayNo = ""
+		s.orderTrackingToken = ""
 	}
 	s.recomputeTotals()
 }
@@ -1571,6 +1576,7 @@ func (s *Service) removeLineLocked(key string) {
 		// ut-docs#1918: same reasoning as removeLocked above.
 		s.heldOrigin = HeldOrigin{}
 		s.orderDisplayNo = ""
+		s.orderTrackingToken = ""
 	}
 	s.recomputeTotals()
 }
@@ -1635,6 +1641,7 @@ func (s *Service) resetLocked() {
 	s.tenderAttemptID = ""
 	s.heldOrigin = HeldOrigin{}
 	s.orderDisplayNo = ""
+	s.orderTrackingToken = ""
 	// ut-docs#3340: an ID check belongs to ONE sale's customer — never
 	// carried into the next basket. (s.basket = Basket{} above already
 	// clears the published AgeChecks copy.)

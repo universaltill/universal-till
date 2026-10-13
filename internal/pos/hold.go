@@ -105,6 +105,14 @@ type BasketSnapshot struct {
 	// the receipt, the kitchen ticket printed at payment and the order
 	// board all show the number the customer is holding.
 	DisplayNo string `json:"display_no,omitempty"`
+	// TrackingToken (ut-docs#4206) is the customer's order-tracking token
+	// a kiosk pay-at-counter order was placed with on a Shop-plan till ("",
+	// omitted, for every other basket). Carried exactly like DisplayNo:
+	// every resume and re-park keeps it, and the tender path hands it to
+	// the paid sale (sales.tracking_token), so the QR the customer scanned
+	// at the kiosk keeps working once the order is paid. Until then
+	// /o/{token} finds the order through this payload field.
+	TrackingToken string `json:"tracking_token,omitempty"`
 	// AddByHand (ut-docs#2703, reopened) lists the lines of a legacy
 	// pay-at-counter order that could not be matched to the catalog when it
 	// was converted into this held sale. Carried IN the payload so it
@@ -217,6 +225,16 @@ func (s *Service) OrderDisplayNo() string {
 	return s.orderDisplayNo
 }
 
+// OrderTrackingToken (ut-docs#4206) returns the order-tracking token this
+// basket was resumed with (a kiosk pay-at-counter order placed on a
+// Shop-plan till), or "" for any other basket. Same lifecycle as
+// OrderDisplayNo.
+func (s *Service) OrderTrackingToken() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.orderTrackingToken
+}
+
 // HasItems reports whether the current basket has any priced lines.
 func (s *Service) HasItems() bool {
 	s.mu.Lock()
@@ -253,6 +271,7 @@ func (s *Service) Snapshot() BasketSnapshot {
 		TableLabel:        s.tableLabel,
 		Total:             s.basket.Total,
 		DisplayNo:         s.orderDisplayNo,
+		TrackingToken:     s.orderTrackingToken,
 		AddByHand:         append([]ByHandLine(nil), s.basket.AddByHand...),
 	}
 	for _, l := range s.lines {
@@ -295,6 +314,7 @@ func (s *Service) RestoreHeld(snap BasketSnapshot, origin HeldOrigin) {
 	s.resetLocked()
 	s.heldOrigin = origin
 	s.orderDisplayNo = snap.DisplayNo
+	s.orderTrackingToken = snap.TrackingToken
 	s.basket.AddByHand = append([]ByHandLine(nil), snap.AddByHand...)
 	// ADR-0073 legacy rule: a pre-ADR-0073 payload has no per-line values
 	// and its header IS the mode of every line. A new payload always writes

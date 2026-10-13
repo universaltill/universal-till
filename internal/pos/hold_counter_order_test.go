@@ -2,6 +2,7 @@ package pos
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -159,5 +160,65 @@ func TestSnapshot_AddByHandTravelsWithTheOrder(t *testing.T) {
 	s.Reset()
 	if len(s.Basket().AddByHand) != 0 {
 		t.Fatal("Reset must clear the add-by-hand lines")
+	}
+}
+
+// ut-docs#4206: a pay-at-counter order placed on a Shop-plan till carries the
+// customer's order-tracking token in its held payload, so the sale the
+// cashier later tenders can adopt it. Same lifecycle as DisplayNo: it
+// survives the payload round trip and every re-park, and never leaks into
+// the next, unrelated sale (Reset, or voiding the last line).
+func TestSnapshot_TrackingTokenTravelsWithTheOrder(t *testing.T) {
+	s := newHoldService()
+	_, _ = s.Scan("A")
+	snap := s.Snapshot()
+	if snap.TrackingToken != "" {
+		t.Fatalf("a till-rung basket carries no tracking token: %+v", snap)
+	}
+	raw, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "tracking_token") {
+		t.Fatalf("an untracked payload must omit tracking_token: %s", raw)
+	}
+	snap.TrackingToken = "0123456789abcdef0123456789abcdef"
+	raw, err = json.Marshal(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"tracking_token":"0123456789abcdef0123456789abcdef"`) {
+		t.Fatalf("payload must carry tracking_token: %s", raw)
+	}
+	var back BasketSnapshot
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	s.Reset()
+	s.RestoreHeld(back, HeldOrigin{ID: "h1"})
+	if got := s.OrderTrackingToken(); got != back.TrackingToken {
+		t.Fatalf("restored basket lost the tracking token: %q", got)
+	}
+	if again := s.Snapshot(); again.TrackingToken != back.TrackingToken {
+		t.Fatalf("re-park snapshot dropped the tracking token: %+v", again)
+	}
+	s.Reset()
+	if s.OrderTrackingToken() != "" || s.Snapshot().TrackingToken != "" {
+		t.Fatal("Reset must clear the tracking token")
+	}
+
+	for _, void := range []func(s *Service){
+		func(s *Service) { s.Remove("A") },
+		func(s *Service) { s.RemoveLine(s.Basket().Lines[0].LineKey) },
+	} {
+		s := newHoldService()
+		_, _ = s.Scan("A")
+		snap := s.Snapshot()
+		snap.TrackingToken = "fedcba9876543210fedcba9876543210"
+		s.RestoreHeld(snap, HeldOrigin{ID: "h1"})
+		void(s)
+		if s.OrderTrackingToken() != "" {
+			t.Fatalf("voiding the last line must clear the tracking token: %q", s.OrderTrackingToken())
+		}
 	}
 }

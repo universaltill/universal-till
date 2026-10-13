@@ -8,7 +8,7 @@
      by design: never render who changed the status here. */}}
 {{ define "order_tracking_status" }}
 <div id="tracking-status"
-     {{ if .Poll }}hx-get="/o/{{ .Token }}/status" hx-trigger="every 15s" hx-target="this" hx-swap="outerHTML"{{ end }}>
+     {{ if .Poll }}hx-get="/o/{{ .Token }}/status{{ if .Wait }}?w={{ .Wait }}{{ end }}" hx-trigger="every 15s" hx-target="this" hx-swap="outerHTML"{{ end }}>
 {{ if .Expired }}
   <p class="muted">{{ T "tracking.not_found" }}</p>
 {{ else }}
