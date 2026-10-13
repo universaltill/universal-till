@@ -49,6 +49,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -725,6 +726,7 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 	if tid, err := discovery.ReportedTillID(ctx, kv); err == nil && strings.TrimSpace(tid) != "" {
 		fields["till_id"] = strings.TrimSpace(tid)
 	}
+	fields["platform"] = devicePlatform()
 	payload, err := json.Marshal(fields)
 	if err != nil {
 		return err
@@ -931,6 +933,12 @@ func currentStoreAuth(m config.MarketplaceConfig) (string, string) {
 	return storeID, liveToken(m.MerchantToken)
 }
 
+// devicePlatform is this till's platform as its cloud heartbeat reports it
+// (cloudsync), sent on both register calls so the cloud's re-pair retire
+// guard can tell two machines with one name apart at registration
+// (ut-docs#4027).
+func devicePlatform() string { return runtime.GOOS + "/" + runtime.GOARCH }
+
 // registerDevice adds this till as a device under its (already-registered)
 // store — the second, third, … till of a shop that shares one store identity
 // and its entitlements (marketplace: /v1/stores/devices/register). The shared
@@ -942,7 +950,7 @@ func registerDevice(ctx context.Context, m config.MarketplaceConfig, deviceName 
 	tillID, _ := discovery.ReportedTillID(ctx, kv) // best-effort: "" on error
 	// A till registering its own device never gets a redeem code (the cloud
 	// only mints one for another device with no credential yet).
-	if _, err := registerDeviceID(ctx, m, deviceID, deviceName, buildinfo.Version, tillID); err != nil {
+	if _, err := registerDeviceID(ctx, m, deviceID, deviceName, buildinfo.Version, tillID, devicePlatform()); err != nil {
 		return err
 	}
 	if err := kv.Set(ctx, keyDeviceRegistered, deviceID); err != nil {
@@ -958,12 +966,15 @@ func registerDevice(ctx context.Context, m config.MarketplaceConfig, deviceName 
 // device rows (ut-docs#2730, #2752): for this till's own device, the
 // discovery.ReportedTillID resolution (sync.till_id, else the kept cloud id,
 // else its LAN id — ut-docs#3307); for a vouched replica, its sync.till_id.
+// platform is the device's GOOS/GOARCH, sent when known (ut-docs#4027): this
+// till's own for its own device, "" for a replica (the main till doesn't
+// know it, and its own would be wrong for the replica's row).
 //
 // It returns the answer's optional data.redeem_code verbatim (ADR-0116 D3):
 // the one-time code the cloud mints when a device credential vouches for
 // another device that has no credential yet. An empty or undecodable body
 // means no code. The caller validates it; it is never logged here.
-func registerDeviceID(ctx context.Context, m config.MarketplaceConfig, deviceID, deviceName, version, tillID string) (string, error) {
+func registerDeviceID(ctx context.Context, m config.MarketplaceConfig, deviceID, deviceName, version, tillID, platform string) (string, error) {
 	storeID, token := m.StoreID, m.MerchantToken
 	if storeID == "" || token == "" {
 		return "", fmt.Errorf("no store identity yet")
@@ -976,6 +987,9 @@ func registerDeviceID(ctx context.Context, m config.MarketplaceConfig, deviceID,
 	}
 	if tillID = strings.TrimSpace(tillID); tillID != "" {
 		body["till_id"] = tillID
+	}
+	if platform != "" {
+		body["platform"] = platform
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
