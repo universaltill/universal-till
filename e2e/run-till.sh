@@ -10,6 +10,10 @@ export UT_DATA_DIR="$DATA_DIR" UT_AUTH=off UT_LISTEN_ADDR=127.0.0.1:8091
 # ut-docs#2704: never open the developer's browser on boot (the server's
 # default); Playwright drives its own headless one. Overridable.
 : "${UT_OPEN_BROWSER:=0}"; export UT_OPEN_BROWSER
+# ut-docs#3814: no LAN discovery (mDNS advertise/browse) from a throwaway till.
+# A real till on the developer's LAN otherwise showed up in the "Found a main
+# till on this network" banner of regenerated manual screenshots. Overridable.
+: "${UT_LAN_DISCOVERY:=0}"; export UT_LAN_DISCOVERY
 
 cd "$ROOT"
 # Installs the real FAQ plugin (page entry + content bundles) so faq.spec.ts

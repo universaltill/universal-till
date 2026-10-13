@@ -100,6 +100,10 @@ func Run(ctx context.Context) error {
 	// cleared on return so a later Run in the same process starts clean.
 	netaccess.SetDemo(cfg.Demo)
 	defer netaccess.SetDemo(false)
+	// ut-docs#3814: UT_LAN_DISCOVERY=0 (the e2e/docs-shots harness) silences
+	// mDNS advertising and browsing for this process; cleared on return.
+	discovery.SetLANDisabled(!cfg.LANDiscovery)
+	defer discovery.SetLANDisabled(false)
 
 	// Rotating, redacted log file under <data dir>/logs (ut-docs#2720): a
 	// Windows GUI launch discards stdout, so without this a field till

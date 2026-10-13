@@ -154,6 +154,12 @@ func scan[T any](ctx context.Context, timeout time.Duration, serviceName string,
 		return nil, err
 	}
 
+	// ut-docs#3814: LAN discovery off (UT_LAN_DISCOVERY=0) — no socket, no
+	// native bridge, nothing to find. Covers Browse and BrowsePrinters.
+	if LANDisabled() {
+		return nil, nil
+	}
+
 	// A platform shell's own discovery API replaces the raw sockets below
 	// entirely (iOS — see NativeBridge, ut-docs#3218).
 	if b := currentNativeBridge(); b != nil {

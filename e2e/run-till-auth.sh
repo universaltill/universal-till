@@ -13,6 +13,8 @@ export UT_DATA_DIR="$DATA_DIR" UT_LISTEN_ADDR=127.0.0.1:8092
 # ut-docs#2704: never open the developer's browser on boot (the server's
 # default); Playwright drives its own headless one. Overridable.
 : "${UT_OPEN_BROWSER:=0}"; export UT_OPEN_BROWSER
+# ut-docs#3814: no LAN discovery (mDNS) from a throwaway till. Overridable.
+: "${UT_LAN_DISCOVERY:=0}"; export UT_LAN_DISCOVERY
 
 # Build then run the BINARY from inside the fresh data dir, not the repo
 # root — see the matching comment in run-till.sh for why: `go run` ties

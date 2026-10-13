@@ -165,6 +165,7 @@ export async function startWorkerTill(parallelIndex: number, opts: { fresh?: boo
   const env = {
     ...process.env,
     UT_OPEN_BROWSER: process.env.UT_OPEN_BROWSER ?? '0',
+    UT_LAN_DISCOVERY: process.env.UT_LAN_DISCOVERY ?? '0', // ut-docs#3814
     UT_DATA_DIR: dataDir,
     UT_AUTH: 'off',
     UT_LISTEN_ADDR: `127.0.0.1:${port}`,

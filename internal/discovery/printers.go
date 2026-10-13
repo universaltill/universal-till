@@ -46,6 +46,11 @@ var errBrowsePanicked = errors.New("discovery: browse panicked")
 // still gets sweep results, and a machine that cannot enumerate its subnet
 // still gets mDNS results. Only both failing is an error.
 func DiscoverPrinters(ctx context.Context, timeout time.Duration) ([]PrinterCandidate, error) {
+	// ut-docs#3814: LAN discovery off (UT_LAN_DISCOVERY=0) covers the :9100
+	// sweep and its probes too, not just the mDNS browse.
+	if LANDisabled() {
+		return nil, nil
+	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 

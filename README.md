@@ -392,6 +392,15 @@ stops the till from starting.
   "Not available in the demo." with status 403. The till binds exactly
   `UT_LISTEN_ADDR` (no fallback port) and never opens a browser.
 
+### LAN discovery (developers and testing)
+
+`UT_LAN_DISCOVERY` (bool, default on; an unparseable value counts as on, so a
+typo never silences a production till) controls mDNS on the local network.
+Off, the till neither advertises itself nor browses for other tills or network
+printers. The e2e and docs-shots harness sets it to `0` so throwaway tills
+neither show up on a real till's LAN nor display one in manual screenshots
+(ut-docs#3814).
+
 ### Report-only Content-Security-Policy (developers and testing)
 
 `UT_CSP_REPORT_ONLY` (bool, default off; an unparseable value counts as off)
