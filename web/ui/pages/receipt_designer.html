@@ -19,6 +19,7 @@
         <label><input type="checkbox" name="show_tax" {{ if .D.ShowTax }}checked{{ end }}> {{ T "designer.receipt.show_tax" }}</label>
         <label><input type="checkbox" name="show_barcode" {{ if .D.ShowBarcode }}checked{{ end }}> {{ T "designer.receipt.show_barcode" }}</label>
         <label><input type="checkbox" name="show_logo" {{ if .D.ShowLogo }}checked{{ end }}> {{ T "designer.receipt.show_logo" }}</label>
+        <label><input type="checkbox" name="show_tracking_qr" {{ if .D.ShowTrackingQR }}checked{{ end }}> {{ T "designer.receipt.show_tracking_qr" }}</label>
       </div>
       <div style="display:flex; gap:.4rem; align-items:center; margin-top:.6rem">
         <button class="btn primary" type="button"

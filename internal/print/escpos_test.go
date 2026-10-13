@@ -3,6 +3,8 @@ package print
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
@@ -662,5 +664,108 @@ func TestRenderEmptySubIsByteIdentical(t *testing.T) {
 	}
 	if !strings.Contains(RenderText(d), "  Unit price (excl. VAT): £1.40") {
 		t.Fatal("expected the Sub row in the text rendering too")
+	}
+}
+
+// ut-docs#908: a counter receipt's customer order-tracking QR prints as a
+// centred caption line plus GS v 0 raster AFTER the TSE/fiscal QR and before
+// the footer, then returns to left alignment.
+func TestRenderIncludesTrackingQR(t *testing.T) {
+	tse := RasterLogo(pngBytes(t, 16, 8))
+	qr := RasterLogo(pngBytes(t, 24, 8))
+	if tse == nil || qr == nil {
+		t.Fatal("test raster failed to encode")
+	}
+	d := sampleDoc()
+	d.TSEQR = tse
+	d.TrackingQR = qr
+	d.TrackingCaption = "Scan to track your order"
+	out := Render(d)
+
+	qrIdx := bytes.Index(out, qr)
+	if qrIdx < 0 {
+		t.Fatal("rendered document does not contain the tracking QR raster")
+	}
+	capIdx := bytes.Index(out, []byte("Scan to track your order\n"))
+	if capIdx < 0 || capIdx > qrIdx {
+		t.Fatal("caption line must print right above the tracking QR raster")
+	}
+	// Centred: align-centre precedes the caption.
+	if capIdx < len(cmdAlignMid) || !bytes.Equal(out[capIdx-len(cmdAlignMid):capIdx], cmdAlignMid) {
+		t.Error("tracking caption is not preceded by align-centre")
+	}
+	// Raster, newline, back to left alignment.
+	after := out[qrIdx+len(qr):]
+	if !bytes.HasPrefix(after, append([]byte{'\n'}, cmdAlignLeft...)) {
+		t.Error("tracking QR raster must be followed by a newline and align-left")
+	}
+	if tseIdx := bytes.Index(out, tse); tseIdx < 0 || tseIdx > capIdx {
+		t.Error("tracking QR block must print after the TSE QR")
+	}
+	if ftIdx := bytes.Index(out, []byte("Thank you!")); ftIdx < qrIdx {
+		t.Error("tracking QR must print before the footer")
+	}
+}
+
+// A caption longer than the paper is clipped to Width runes, never wrapped
+// into the raster.
+func TestRenderTrackingCaptionClipped(t *testing.T) {
+	d := sampleDoc()
+	d.TrackingQR = RasterLogo(pngBytes(t, 16, 8))
+	d.TrackingCaption = strings.Repeat("x", Width+10)
+	out := Render(d)
+	if !bytes.Contains(out, append(append([]byte{}, cmdAlignMid...), []byte(strings.Repeat("x", Width)+"\n")...)) ||
+		bytes.Contains(out, []byte(strings.Repeat("x", Width+1))) {
+		t.Error("caption must be clipped to Width")
+	}
+}
+
+// Empty tracking fields leave both renderings byte-identical to the
+// pre-ut-docs#908 output (hashes pinned from the build before the fields
+// existed: sampleDoc + barcode + a 16x8 TSE raster).
+func TestRenderEmptyTrackingIsByteIdentical(t *testing.T) {
+	d := sampleDoc()
+	d.Barcode = "000000042"
+	d.TSEQR = RasterLogo(pngBytes(t, 16, 8))
+	if got := fmt.Sprintf("%x", sha256.Sum256(Render(d))); got != "98e7f69c7f5380109a3c3d04f8b3764e00fec7b0ac43c77fe77c15943ed95d40" {
+		t.Errorf("Render changed with no tracking QR: sha256 %s", got)
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(RenderText(d)))); got != "91d5d83e010994170afc2a88a44e82168558e04eb89820583110b12970e12bcf" {
+		t.Errorf("RenderText changed with no tracking QR: sha256 %s", got)
+	}
+	// A caption alone (no raster, no URL) prints nothing either.
+	d.TrackingCaption = "Scan to track your order"
+	if strings.Contains(string(Render(d)), "Scan to track") || strings.Contains(RenderText(d), "Scan to track") {
+		t.Error("a caption without a QR/URL must not print")
+	}
+}
+
+// RenderText (designer preview AND the plain-text system-printer path) cannot
+// show a raster, so it prints the caption plus the tracking URL itself,
+// centred and wrapped to Width — a customer with a plain-text receipt can
+// still type the link. Never a "[QR]" placeholder (ut-docs#1245 B2).
+func TestRenderTextTrackingShowsCaptionAndURL(t *testing.T) {
+	d := sampleDoc()
+	d.TrackingQR = RasterLogo(pngBytes(t, 16, 8))
+	d.TrackingCaption = "Scan to track your order"
+	d.TrackingURL = "http://192.168.1.20:8080/o/0123456789abcdef0123456789abcdef?lang=en"
+	out := RenderText(d)
+	if !strings.Contains(out, "Scan to track your order") {
+		t.Fatal("caption missing from the text rendering")
+	}
+	joined := strings.ReplaceAll(strings.ReplaceAll(out, "\n", ""), " ", "")
+	if !strings.Contains(joined, d.TrackingURL) {
+		t.Fatalf("tracking URL missing from the text rendering:\n%s", out)
+	}
+	for _, row := range strings.Split(out, "\n") {
+		if utf8.RuneCountInString(row) > Width {
+			t.Errorf("row wider than Width: %q", row)
+		}
+	}
+	if strings.Contains(out, "[QR]") {
+		t.Error("no placeholder for the raster")
+	}
+	if strings.Index(out, "Scan to track") > strings.Index(out, "Thank you!") {
+		t.Error("tracking block must precede the footer")
 	}
 }

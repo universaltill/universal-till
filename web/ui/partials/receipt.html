@@ -35,6 +35,9 @@
   .receipt-tse-signature {font-family: monospace; font-size: 0.75rem; overflow-wrap: anywhere;}
   .receipt-tse-qr {text-align: center; margin-block-start: 0.4rem;}
   .receipt-tse-qr img {max-width: 100%;}
+  .receipt-tracking-qr {border-top: 1px dashed #e5e7eb; margin-block-start: 0.75rem; padding-block-start: 0.75rem; text-align: center;}
+  .receipt-tracking-qr img {max-width: 160px; width: 100%; height: auto;}
+  .receipt-tracking-caption {display: block; margin-block-start: 0.25rem; color: #374151;}
   .receipt-printer-warning {display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; background: #fff7ed; border: 1px solid #fdba74; color: #9a3412; padding: 0.5rem; border-radius: 4px; margin: 0.75rem 0;}
   .receipt-printer-message {font-size: 0.9rem;}
   .receipt-ask {border-top: 1px dashed #e5e7eb; margin-top: 0.75rem; padding-top: 0.75rem;}
@@ -207,6 +210,16 @@
       {{ if .DeviceReceipt.Serial }}<div class="receipt-legal-line">{{ T "receipt.fiscal.device.serial" }}: {{ .DeviceReceipt.Serial }}</div>{{ end }}
       {{ if .DeviceReceipt.ZNo }}<div class="receipt-legal-line">{{ T "receipt.fiscal.device.z_no" }}: {{ .DeviceReceipt.ZNo }}</div>{{ end }}
       {{ if .DeviceReceipt.IssuedAt }}<div class="receipt-legal-line">{{ T "receipt.fiscal.device.issued_at" }}: {{ .DeviceReceipt.IssuedAt }}</div>{{ end }}
+    </div>
+    {{ end }}
+    {{ if .Tracking }}
+    <!-- ut-docs#908: the customer order-tracking QR (/o/{token}) on a
+         counter sale's receipt — only on a plan that offers order
+         tracking, with receipt.show_tracking_qr on. Deliberately NOT in
+         the @media print hide list: the browser-printed receipt keeps it. -->
+    <div class="receipt-tracking-qr" data-testid="receipt-tracking-qr">
+      <img src="{{ .Tracking.QRDataURI }}" alt="{{ T "receipt.tracking.caption" }}" width="160" height="160">
+      <small class="receipt-tracking-caption">{{ T "receipt.tracking.caption" }}</small>
     </div>
     {{ end }}
     {{ if .DesignFooter }}<div class="receipt-design-line" style="margin-top:.5rem"><small>{{ .DesignFooter }}</small></div>{{ end }}

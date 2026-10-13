@@ -20,7 +20,8 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
-// mainTillLANAddress is this till's LAN host:port, or false when it has no
+// mainTillLANAddress is this till's LAN host:port, whatever its role (the
+// printed order-tracking QR uses it too, ut-docs#908), or false when it has no
 // LAN address (never a loopback placeholder: lanip refuses those) or no
 // usable listen port. The port is the configured listen port — the one
 // the mDNS advertiser publishes too (app.listenPort): a fallback bind is

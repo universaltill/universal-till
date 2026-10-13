@@ -49,6 +49,21 @@ type Doc struct {
 	// never a payload core builds — printed centered after the barcode and
 	// before the footer when present. The name predates that generalisation.
 	TSEQR []byte
+	// TrackingQR is a pre-encoded GS v 0 raster block (RasterLogo) of the
+	// customer order-tracking link (ut-docs#908, /o/{token}), printed
+	// centred under TrackingCaption after the TSE QR and before the footer.
+	// Empty = no block, byte-identical to before the field existed.
+	TrackingQR []byte
+	// TrackingCaption is the one-line, already-translated text printed
+	// above TrackingQR (and, in RenderText, above TrackingURL); clipped to
+	// Width. Printed only together with TrackingQR (Render) or TrackingURL
+	// (RenderText), never on its own.
+	TrackingCaption string
+	// TrackingURL is the link TrackingQR encodes. Render never prints it
+	// (the raster carries it); RenderText — which cannot show a raster —
+	// prints it as text under the caption, so a plain-text receipt still
+	// carries a link the customer can type.
+	TrackingURL string
 }
 
 // Line is one sale line.
@@ -180,6 +195,17 @@ func Render(d Doc) []byte {
 		line("")
 		b.Write(cmdAlignMid)
 		b.Write(d.TSEQR) // pre-encoded GS v 0 raster (RasterLogo)
+		b.WriteByte('\n')
+		b.Write(cmdAlignLeft)
+	}
+
+	if len(d.TrackingQR) > 0 {
+		line("")
+		b.Write(cmdAlignMid)
+		if d.TrackingCaption != "" {
+			line(clip(d.TrackingCaption, Width))
+		}
+		b.Write(d.TrackingQR) // pre-encoded GS v 0 raster (RasterLogo)
 		b.WriteByte('\n')
 		b.Write(cmdAlignLeft)
 	}
@@ -559,6 +585,20 @@ func RenderText(d Doc) string {
 	// only. This project's own placeholder policy already forbids this
 	// (print_api.go: "fields the signer didn't return are skipped — never
 	// placeholders").
+	//
+	// The order-tracking QR (ut-docs#908) is different: what it encodes is a
+	// plain link, so this rendering prints the link itself under the caption
+	// — honest on a plain-text printer (the customer can type it) and in the
+	// designer preview alike. Keyed off TrackingURL, not the raster.
+	if d.TrackingURL != "" {
+		b.WriteString("\n")
+		if d.TrackingCaption != "" {
+			center(d.TrackingCaption)
+		}
+		for _, row := range wrapRunes(d.TrackingURL, Width) {
+			center(row)
+		}
+	}
 	if len(d.Footer) > 0 {
 		b.WriteString("\n")
 		for _, f := range d.Footer {

@@ -14,7 +14,7 @@ import (
 // Customer order tracking via QR (ut-docs#527), extending #526's order-status
 // backbone (order_status_repo.go). A sale's tracking_token is an unguessable
 // capability handed to the customer as a QR on the self-order confirmation
-// screen; anyone holding it may read the order's STATUS and nothing else —
+// screen or a counter sale's receipt (ut-docs#908); anyone holding it may read the order's STATUS and nothing else —
 // TrackedOrder deliberately carries no total, no basket lines, no payment
 // data, because /o/{token} is an anonymous, unauthenticated surface.
 
@@ -118,24 +118,28 @@ type LiveTrackedOrder struct {
 // ListLiveTrackedOrders returns every sale holding a tracking token whose
 // status view the visible callback still considers live. The liveness rule
 // (pos.OrderTrackingVisible — terminal statuses expire 2h after their last
-// write, but a NON-terminal one stays visible no matter how old, ut-docs#527)
-// reaches this method as a callback rather than a direct import, exactly
-// like ApplyOrderStatus's allowed callback and for the same reason:
-// internal/pos imports internal/data, so importing it back would be a cycle.
-// Ordering is deterministic (created_at, then receipt_no) so the caller's
-// content-hash push gate never sees phantom changes from row order.
+// write, an untracked "" sale 12h after it was created, but a TRACKED live
+// status stays visible no matter how old, ut-docs#527/#908) reaches this
+// method as a callback rather than a direct import, exactly like
+// ApplyOrderStatus's allowed callback and for the same reason: internal/pos
+// imports internal/data, so importing it back would be a cycle. Ordering is
+// deterministic (created_at, then receipt_no) so the caller's content-hash
+// push gate never sees phantom changes from row order.
 //
 // ut-docs#1321: without a bound this pulled every tokened sale a shop has
 // EVER issued on every cloud-sync tick, to filter almost all of them out in
 // Go. terminalStatuses + terminalCutoff let SQL prune the same rows the
 // visible callback would reject anyway — but ONLY rows whose order_status is
-// one of terminalStatuses; a non-terminal row is never bounded by
-// terminalCutoff, matching OrderTrackingVisible's "stays visible no matter
-// how old" rule exactly, so this can never disagree with the callback it
-// still runs. An empty terminalStatuses leaves the query unbounded (fails
-// open, not closed — a caller that can't yet name its terminal set gets the
-// pre-#1321 behavior, not a silently-empty result).
-func (r *POSRepo) ListLiveTrackedOrders(ctx context.Context, terminalStatuses []string, terminalCutoff time.Time, visible func(TrackedOrder) bool) ([]LiveTrackedOrder, error) {
+// one of terminalStatuses. ut-docs#908 added untrackedCutoff, the same prune
+// for untracked (empty order_status) rows on created_at (counter receipts mint a token
+// for nearly every sale, and almost none are ever tracked). A tracked live
+// row (new/preparing/ready) is never bounded by either cutoff, matching
+// OrderTrackingVisible's "stays visible no matter how old" rule for those
+// statuses exactly, so this can never disagree with the callback it still
+// runs. An empty terminalStatuses / zero untrackedCutoff leaves that part
+// of the query unbounded (fails open, not closed — a caller that can't yet
+// name its bound gets every row, not a silently-empty result).
+func (r *POSRepo) ListLiveTrackedOrders(ctx context.Context, terminalStatuses []string, terminalCutoff, untrackedCutoff time.Time, visible func(TrackedOrder) bool) ([]LiveTrackedOrder, error) {
 	query := `
 SELECT tracking_token, receipt_no, order_status, COALESCE(order_status_updated_at, ''), created_at
 FROM sales
@@ -161,11 +165,25 @@ WHERE tracking_token IS NOT NULL AND tracking_token != ''
 		// RFC3339Nano or a numeric offset would compare INCORRECTLY at the
 		// boundary (e.g. "...10:00:00.500Z" is lexicographically LESS than
 		// "...10:00:00Z", the opposite of chronological order) — if that ever
-		// changes, this needs a real time comparison, not a text one.
+		// changes, this needs a real time comparison, not a text one. (The
+		// untracked bound below already uses one.)
 		query += `  AND (order_status NOT IN (` + strings.Join(placeholders, ",") + `)
        OR COALESCE(NULLIF(order_status_updated_at, ''), created_at) >= ?)
 `
 		args = append(args, terminalCutoff.UTC().Format("2006-01-02T15:04:05Z07:00"))
+	}
+	if !untrackedCutoff.IsZero() {
+		// ut-docs#908: an untracked row survives only while created_at is
+		// within untrackedCutoff. julianday(), not a TEXT compare: created_at
+		// may also hold SQLite's own datetime('now') shape (the column
+		// default, "YYYY-MM-DD HH:MM:SS"), which does not sort against an
+		// RFC3339 string; julianday reads both — the same two shapes
+		// pos.OrderTrackingVisible parses — and returns NULL for anything
+		// else, so an unparseable created_at is pruned here exactly as the
+		// callback would fail it closed.
+		query += `  AND (order_status != '' OR julianday(created_at) >= julianday(?))
+`
+		args = append(args, untrackedCutoff.UTC().Format(time.RFC3339))
 	}
 	query += `ORDER BY created_at ASC, receipt_no ASC`
 	rows, err := r.db.QueryContext(ctx, query, args...)

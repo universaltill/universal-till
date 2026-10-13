@@ -120,7 +120,7 @@ func TestListLiveTrackedOrders(t *testing.T) {
 
 	// Callback sees exactly the tokened sales' status views.
 	var seen []TrackedOrder
-	all, err := repo.ListLiveTrackedOrders(ctx, nil, time.Time{}, func(o TrackedOrder) bool {
+	all, err := repo.ListLiveTrackedOrders(ctx, nil, time.Time{}, time.Time{}, func(o TrackedOrder) bool {
 		seen = append(seen, o)
 		return true
 	})
@@ -143,7 +143,7 @@ func TestListLiveTrackedOrders(t *testing.T) {
 
 	// The callback's verdict is honored: filtering out terminal statuses
 	// drops R-0002 from the result.
-	live, err := repo.ListLiveTrackedOrders(ctx, nil, time.Time{}, func(o TrackedOrder) bool {
+	live, err := repo.ListLiveTrackedOrders(ctx, nil, time.Time{}, time.Time{}, func(o TrackedOrder) bool {
 		return o.Status != "collected" && o.Status != "cancelled"
 	})
 	if err != nil {
@@ -154,7 +154,7 @@ func TestListLiveTrackedOrders(t *testing.T) {
 	}
 
 	// Nothing visible → empty, no error (the push's delete signal).
-	none, err := repo.ListLiveTrackedOrders(ctx, nil, time.Time{}, func(TrackedOrder) bool { return false })
+	none, err := repo.ListLiveTrackedOrders(ctx, nil, time.Time{}, time.Time{}, func(TrackedOrder) bool { return false })
 	if err != nil {
 		t.Fatalf("ListLiveTrackedOrders none: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestListLiveTrackedOrders_PrunesOldTerminalRowsInSQL(t *testing.T) {
 
 	var seenReceipts []string
 	cutoff := time.Now().UTC().Add(-2 * time.Hour) // mirrors pos.OrderTrackingExpiry
-	all, err := repo.ListLiveTrackedOrders(ctx, []string{"collected", "cancelled"}, cutoff,
+	all, err := repo.ListLiveTrackedOrders(ctx, []string{"collected", "cancelled"}, cutoff, time.Time{},
 		func(o TrackedOrder) bool {
 			seenReceipts = append(seenReceipts, o.ReceiptNo)
 			return true // callback would accept everything it's shown
@@ -236,12 +236,77 @@ func TestListLiveTrackedOrders_PrunesOldTerminalRowsInSQL(t *testing.T) {
 	// Empty terminalStatuses fails OPEN (pre-#1321 unbounded query, not a
 	// silently-empty result) — a caller with no terminal set yet still gets
 	// every tokened row, cutoff ignored.
-	unbounded, err := repo.ListLiveTrackedOrders(ctx, nil, cutoff, func(TrackedOrder) bool { return true })
+	unbounded, err := repo.ListLiveTrackedOrders(ctx, nil, cutoff, time.Time{}, func(TrackedOrder) bool { return true })
 	if err != nil {
 		t.Fatalf("ListLiveTrackedOrders unbounded: %v", err)
 	}
 	if len(unbounded) != 3 {
 		t.Fatalf("got %d rows with nil terminalStatuses, want all 3 (fails open): %+v", len(unbounded), unbounded)
+	}
+}
+
+// ut-docs#908: counter receipts mint a token for (almost) every sale, and
+// almost none of them are ever tracked on the Orders screen — so an
+// UNTRACKED ("") tokened sale must be bounded too, on created_at, matching
+// pos.OrderTrackingVisible's OrderTrackingUntrackedExpiry rule. An old
+// untracked sale is pruned in SQL; a fresh one and an old TRACKED live one
+// ("preparing") are kept. A zero untrackedCutoff leaves "" rows unbounded
+// (fails open, like an empty terminalStatuses).
+func TestListLiveTrackedOrders_PrunesOldUntrackedRowsInSQL(t *testing.T) {
+	d := openOrderStatusDB(t, "tracking_list_live_untracked.db")
+	now := time.Now().UTC()
+	seed := func(id, receipt, createdAt string) {
+		t.Helper()
+		if _, err := d.DB.Exec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES (?,?,'completed','sale','GBP',370,0,0,370,?)`, id, receipt, createdAt); err != nil {
+			t.Fatalf("seed %s: %v", receipt, err)
+		}
+	}
+	old := now.Add(-13 * time.Hour).Format(time.RFC3339)
+	seed("sale-1", "R-OLD-UNTRACKED", old)
+	seed("sale-2", "R-FRESH-UNTRACKED", now.Add(-time.Hour).Format(time.RFC3339))
+	seed("sale-3", "R-OLD-PREPARING", old)
+	// SQLite's own datetime() shape (the column default): still bounded.
+	seed("sale-4", "R-OLD-UNTRACKED-SQLITE", now.Add(-13*time.Hour).Format("2006-01-02 15:04:05"))
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+	for _, r := range []string{"R-OLD-UNTRACKED", "R-FRESH-UNTRACKED", "R-OLD-PREPARING", "R-OLD-UNTRACKED-SQLITE"} {
+		if _, err := repo.EnsureOrderTrackingToken(ctx, r); err != nil {
+			t.Fatalf("token %s: %v", r, err)
+		}
+	}
+	if applied, _, err := repo.ApplyOrderStatus(ctx, "R-OLD-PREPARING", "preparing", "u-alice",
+		old, func(string) bool { return true }); err != nil || !applied {
+		t.Fatalf("seed R-OLD-PREPARING: applied=%v err=%v", applied, err)
+	}
+
+	var seen []string
+	rows, err := repo.ListLiveTrackedOrders(ctx, []string{"collected", "cancelled"}, now.Add(-2*time.Hour),
+		now.Add(-12*time.Hour), func(o TrackedOrder) bool {
+			seen = append(seen, o.ReceiptNo)
+			return true
+		})
+	if err != nil {
+		t.Fatalf("ListLiveTrackedOrders: %v", err)
+	}
+	got := map[string]bool{}
+	for _, o := range rows {
+		got[o.ReceiptNo] = true
+	}
+	if len(rows) != 2 || !got["R-FRESH-UNTRACKED"] || !got["R-OLD-PREPARING"] {
+		t.Fatalf("rows = %+v, want exactly R-FRESH-UNTRACKED and R-OLD-PREPARING (old untracked SQL-pruned)", rows)
+	}
+	if len(seen) != 2 {
+		t.Fatalf("callback saw %v, want the pruned rows never to reach it", seen)
+	}
+
+	// Zero untrackedCutoff: "" rows unbounded (fails open).
+	all, err := repo.ListLiveTrackedOrders(ctx, []string{"collected", "cancelled"}, now.Add(-2*time.Hour),
+		time.Time{}, func(TrackedOrder) bool { return true })
+	if err != nil {
+		t.Fatalf("ListLiveTrackedOrders unbounded: %v", err)
+	}
+	if len(all) != 4 {
+		t.Fatalf("got %d rows with a zero untrackedCutoff, want all 4: %+v", len(all), all)
 	}
 }
 

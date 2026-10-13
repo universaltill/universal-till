@@ -182,6 +182,11 @@ type receiptDesign struct {
 	ShowTax     bool // subtotal+tax rows; off = TOTAL only
 	ShowBarcode bool
 	ShowLogo    bool // uploaded logo as a GS v 0 raster above the name
+	// ShowTrackingQR (ut-docs#908): a counter sale's receipt carries the
+	// customer order-tracking QR — still only on a plan that offers order
+	// tracking (receiptTrackingQROffered). Unset defaults to on, except for
+	// a shop with the dine-in/takeaway prompt switched off.
+	ShowTrackingQR bool
 }
 
 const (
@@ -193,7 +198,18 @@ const (
 	keyReceiptShowTax     = "receipt.show_tax"
 	keyReceiptShowBarcode = "receipt.show_barcode"
 	keyReceiptShowLogo    = "receipt.show_logo"
+	// keyReceiptShowTrackingQR: "true" | "false" (ut-docs#908); unset →
+	// receiptTrackingQRDefault.
+	keyReceiptShowTrackingQR = "receipt.show_tracking_qr"
 )
+
+// receiptTrackingQRDefault is receipt.show_tracking_qr's value while the
+// shop never chose one (ut-docs#908): on — a counter customer can follow the
+// order — except for a shop with the dine-in/takeaway prompt switched off
+// (httpx.OrderTypeOff: what the setup wizard gives retail and service shops,
+// ut-docs#3632), which hands goods over at the till and has nothing to
+// track.
+func receiptTrackingQRDefault() bool { return !httpx.OrderTypeOff() }
 
 // receiptLogoPath is where the designer stores the uploaded logo — the
 // stable per-user data directory, NOT the release tree: a self-update
@@ -240,6 +256,14 @@ func receiptDesignFromSettings(ctx context.Context, d *common.Deps) receiptDesig
 		ShowTax:     get(keyReceiptShowTax, "true") != "false",
 		ShowBarcode: get(keyReceiptShowBarcode, "true") != "false",
 		ShowLogo:    get(keyReceiptShowLogo, "false") == "true",
+	}
+	switch get(keyReceiptShowTrackingQR, "") {
+	case "true":
+		rd.ShowTrackingQR = true
+	case "false":
+		rd.ShowTrackingQR = false
+	default:
+		rd.ShowTrackingQR = receiptTrackingQRDefault()
 	}
 	for _, k := range []string{keyReceiptHeader1, keyReceiptHeader2, keyReceiptHeader3} {
 		if v := get(k, ""); v != "" {
@@ -486,6 +510,12 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 				doc.TSEQR = print.RasterLogo(png)
 			}
 		}
+	}
+	// ut-docs#908: the customer order-tracking QR on a counter sale's
+	// receipt — display-only and best-effort (receiptTrackingPrint never
+	// fails the receipt; a reprint reuses the sale's one token).
+	if receiptTrackingQROffered(ctx, d, detail.SaleType, detail.Status, rd) {
+		doc.TrackingQR, doc.TrackingCaption, doc.TrackingURL = receiptTrackingPrint(ctx, d, detail.ReceiptNo, printLocale, cfg.Charset)
 	}
 	if rd.Footer != "" {
 		doc.Footer = []string{rd.Footer}

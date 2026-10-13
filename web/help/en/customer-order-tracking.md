@@ -3,22 +3,23 @@ id: customer-order-tracking
 title: Customer order tracking (QR)
 section: Everyday selling
 order: 46
-summary: "After ordering at the self-order kiosk, customers scan a QR code to follow their order's status on their own phone. Part of the paid plans."
+summary: "Customers scan a QR code, on the self-order kiosk's confirmation or on the receipt of a sale rung up at the till, to follow their order's status on their own phone. Part of the paid plans."
 routes: [/o/{token}, /o/{token}/status]
-keywords: [tracking, QR, customer, order status, self order, phone]
+keywords: [tracking, QR, customer, order status, self order, phone, receipt, counter]
 ---
 
 # Customer order tracking (QR)
 
-After ordering at the self-order kiosk, whether they paid there or will pay at the counter, customers scan a QR code to follow their order's status on their own phone. Like the self-order screen itself, the page the customer sees is customer-facing, so it doesn't carry a "?" link back to this manual — find this topic from the manual's search or topic list.
+Customers scan a QR code to follow their order's status on their own phone: after ordering at the self-order kiosk (whether they paid there or will pay at the counter), or from the receipt of a sale your staff ring up at the till. Like the self-order screen itself, the page the customer sees is customer-facing, so it doesn't carry a "?" link back to this manual — find this topic from the manual's search or topic list.
 
 ## How it works
 
 1. When a customer completes an order at the self-order kiosk, the confirmation screen shows a QR code next to the order number (the confirmation stays up for about 20 seconds, long enough to scan).
-2. Scanning it opens a small page on the customer's phone showing the order number and its current status — the same statuses your staff set on the **Orders** screen: preparing, ready, collected.
-3. The page updates itself every few seconds, so the customer sees "Ready" the moment your staff tap it — no reloading, no asking at the counter.
-4. The link opens in the language the kiosk was being used in.
-5. If the customer chose to pay at the counter, the page shows **Waiting for payment at the counter** until your staff take payment for the order. From then on it shows the order's status like any other order. An order left unpaid for more than about 2 hours stops showing on the page until it is paid.
+2. When your staff ring up a sale at the till, the receipt carries a QR code with the line **Scan to track your order**: on the printed receipt and on the receipt shown on screen after payment. Reprinting the receipt prints the same QR. This depends on the receipt setting described in the notes below.
+3. Scanning it opens a small page on the customer's phone showing the order number and its current status — the same statuses your staff set on the **Orders** screen: preparing, ready, collected.
+4. The page updates itself every few seconds, so the customer sees "Ready" the moment your staff tap it — no reloading, no asking at the counter.
+5. The link opens in the language the kiosk was being used in. A printed receipt's link opens in the shop's language; the receipt shown on screen after payment uses the till screen's language.
+6. If the customer chose to pay at the counter, the page shows **Waiting for payment at the counter** until your staff take payment for the order. From then on it shows the order's status like any other order. An order left unpaid for more than about 2 hours stops showing on the page until it is paid.
 
 ## What the customer can and can't see
 
@@ -27,7 +28,8 @@ After ordering at the self-order kiosk, whether they paid there or will pay at t
 
 ## Notes
 
-- Order tracking is part of the paid plans. On the free Local plan, or while paid features are paused (the subscription ended, or the till couldn't confirm it with the cloud for more than 7 days), the confirmation shows without a QR; the order itself is never affected.
-- The customer's phone must be on the same network as the till — the shop's Wi-Fi. If the till has no network address other than itself, the confirmation simply shows without a QR; the order itself is never affected.
+- Order tracking is part of the paid plans. On the free Local plan, or while paid features are paused (the subscription ended, or the till couldn't confirm it with the cloud for more than 7 days), the confirmation and receipts show without a QR; the order or sale itself is never affected.
+- The customer's phone must be on the same network as the till — the shop's Wi-Fi. If the till has no network address other than itself, the confirmation or receipt simply shows without a QR; the order or sale itself is never affected.
 - If your shop has several tills and the order is paid on a different till from the kiosk, the kiosk's link can't see the payment: it keeps showing **Waiting for payment at the counter** for up to about 2 hours, then stops answering. Until order tracking moves to our cloud, take payment for kiosk orders on the kiosk's own till to avoid this.
-- The QR appears only for orders placed at the self-order kiosk. Sales your staff ring up at the till don't print a tracking QR yet.
+- The **Order tracking QR (paid plans)** box in the [Receipt designer](/help/designer) turns the QR on till receipts on or off. Until you first save the receipt designer, it is on, unless your shop doesn't ask "dine in or takeaway" (retail and service shops start with that question switched off), in which case it is off. Saving the designer keeps the box as it is shown. Receipts of refunds and voided sales never carry a QR, and neither do receipts from an additional till in a shop with several tills: the main till's **Orders** screen can't see that till's tracking link until order tracking moves to our cloud.
+- An order nobody tracks on the **Orders** screen (the usual case for an everyday sale at the till) stops answering 12 hours after the sale. Once your staff set its status, the rules above apply instead.

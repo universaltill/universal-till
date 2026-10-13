@@ -622,7 +622,7 @@ func TestRenderTextPreviewLayout(t *testing.T) {
 		ShowTax:     false,
 		ShowBarcode: true,
 	}
-	txt := print.RenderText(sampleReceiptDoc("My Shop", rd))
+	txt := print.RenderText(sampleReceiptDoc("My Shop", rd, "en"))
 	for _, want := range []string{"My Shop", "12 High Street", "VAT GB123", "[SKU-001]", "See you soon!", "000000123", "TOTAL"} {
 		if !strings.Contains(txt, want) {
 			t.Errorf("preview missing %q", want)
@@ -636,7 +636,7 @@ func TestRenderTextPreviewLayout(t *testing.T) {
 	}
 	rd.ShowBarcode = false
 	rd.ShowSKU = false
-	txt = print.RenderText(sampleReceiptDoc("My Shop", rd))
+	txt = print.RenderText(sampleReceiptDoc("My Shop", rd, "en"))
 	if strings.Contains(txt, "║█║") || strings.Contains(txt, "[SKU-001]") {
 		t.Error("disabled barcode/SKU still rendered")
 	}
