@@ -586,7 +586,7 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucher
 			// (tax on top) — no second inclusive/exclusive notion.
 			lineTax, lineGross := ComputeTaxBasisPoints(v.Amount, v.VATRateBasisPoints, in.TaxInclusive)
 			subtotal = subtotal.Add(v.Amount)
-			vatLines = append(vatLines, VATLine{RateBP: v.VATRateBasisPoints, LineTotal: lineGross.Minor(), TaxAmount: lineTax.Minor()})
+			vatLines = append(vatLines, VATLine{RateBP: v.VATRateBasisPoints, LineTotal: lineGross.Minor(), TaxAmount: lineTax.Minor(), SinglePurposeVoucher: true})
 			chargeLines = append(chargeLines, ChargeTaxLine{RateBP: v.VATRateBasisPoints, Net: v.Amount})
 		default:
 			return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: unknown purpose %q", i+1, v.Purpose)

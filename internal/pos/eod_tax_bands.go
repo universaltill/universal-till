@@ -74,5 +74,5 @@ func EODVATLinesForSale(s data.EODTaxBandSale, inclusive bool) []VATLine {
 // computeSaleTotals passed), so the returned gross+tax match the engine's.
 func SinglePurposeVoucherVATLine(rateBP int, amount int64, inclusive bool) VATLine {
 	tax, gross := ComputeTaxBasisPoints(money.FromMinor(amount), rateBP, inclusive)
-	return VATLine{RateBP: rateBP, LineTotal: gross.Minor(), TaxAmount: tax.Minor()}
+	return VATLine{RateBP: rateBP, LineTotal: gross.Minor(), TaxAmount: tax.Minor(), SinglePurposeVoucher: true}
 }
