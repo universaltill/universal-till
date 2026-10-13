@@ -992,7 +992,7 @@ func computeTotals(snap totalsSnapshot) computedTotals {
 			lineTax, lineTotal := ComputeTaxBasisPoints(face, rateBP, snap.cfg.TaxInclusive)
 			singlePurposeNet = singlePurposeNet.Add(face)
 			total = total.Add(lineTotal)
-			vatLines = append(vatLines, VATLine{RateBP: rateBP, LineTotal: lineTotal.Minor(), TaxAmount: lineTax.Minor()})
+			vatLines = append(vatLines, VATLine{RateBP: rateBP, LineTotal: lineTotal.Minor(), TaxAmount: lineTax.Minor(), SinglePurposeVoucher: true})
 			chargeTaxLines = append(chargeTaxLines, ChargeTaxLine{RateBP: rateBP, Net: face})
 			continue
 		}

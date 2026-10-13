@@ -25,10 +25,17 @@ import (
 //   - LineTotal: the line's total_after_tax (data.SaleDetailLine.LineTotal)
 //     — tax-inclusive under either pricing mode.
 //   - TaxAmount: the line's recorded tax (sale_lines.tax_amount).
+//   - SinglePurposeVoucher: the line is a single-purpose voucher this sale
+//     issues (ut-docs#1037, #4214), not goods. A basket discount applies to
+//     the goods only, so VATBandsForSale never prorates it into this line
+//     (ut-docs#4233). Set by SinglePurposeVoucherVATLine and by the two
+//     engine paths that band a voucher being sold (computeSaleTotals,
+//     computeTotals).
 type VATLine struct {
-	RateBP    int
-	LineTotal int64
-	TaxAmount int64
+	RateBP               int
+	LineTotal            int64
+	TaxAmount            int64
+	SinglePurposeVoucher bool
 }
 
 // VATBand is one per-rate row of a sale's VAT breakdown. Net+Tax == Gross
@@ -43,9 +50,11 @@ type VATBand struct {
 
 // VATBandsForSale aggregates a sale's lines by their RECORDED tax rate. A
 // whole-sale discount (sale_discounts — never folded into any line) is
-// prorated across the bands by gross share, largest-remainder so the pennies
-// land on the highest band and the bands still sum to what the customer
-// actually paid; and a service charge — which since ADR-0061 carries its own
+// prorated across the bands by the gross share of their GOODS,
+// largest-remainder so the pennies land on the highest band carrying goods
+// and the bands still sum to what the customer actually paid — a
+// single-purpose voucher's share of a band is never discounted and keeps
+// the tax it was issued with (ut-docs#4233); and a service charge — which since ADR-0061 carries its own
 // VAT — is apportioned into the bands through ApportionServiceChargeTax, the
 // SAME shared function the tender path and fiscal.sign.ask use.
 //
@@ -54,36 +63,75 @@ type VATBand struct {
 // band's rate (total = subtotal − d); exclusive discounts the NET base and
 // keeps line tax as computed (total = subtotal − d + tax).
 func VATBandsForSale(lines []VATLine, discountTotal int64, taxInclusive bool, serviceCharge int64, serviceChargeTaxBasisBP int) []VATBand {
-	byRate := map[int]*VATBand{}
-	var grossSum int64
+	// Each band remembers the single-purpose-voucher part of its figures
+	// so the discount below reaches only its goods part (ut-docs#4233).
+	type bandAcc struct {
+		VATBand
+		hasGoods                 bool
+		voucherGross, voucherTax int64
+	}
+	byRate := map[int]*bandAcc{}
+	var goodsGrossSum int64
 	for _, l := range lines {
 		b, ok := byRate[l.RateBP]
 		if !ok {
-			b = &VATBand{RateBP: l.RateBP}
+			b = &bandAcc{VATBand: VATBand{RateBP: l.RateBP}}
 			byRate[l.RateBP] = b
 		}
 		b.Gross += l.LineTotal
 		b.Tax += l.TaxAmount
 		b.Net += l.LineTotal - l.TaxAmount
-		grossSum += l.LineTotal
+		if l.SinglePurposeVoucher {
+			b.voucherGross += l.LineTotal
+			b.voucherTax += l.TaxAmount
+			continue
+		}
+		b.hasGoods = true
+		goodsGrossSum += l.LineTotal
 	}
-	out := make([]VATBand, 0, len(byRate))
+	acc := make([]*bandAcc, 0, len(byRate))
 	for _, b := range byRate {
-		out = append(out, *b)
+		acc = append(acc, b)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].RateBP < out[j].RateBP })
+	sort.Slice(acc, func(i, j int) bool { return acc[i].RateBP < acc[j].RateBP })
 
-	if d := discountTotal; d > 0 && grossSum > 0 {
+	if d := discountTotal; d > 0 {
+		if goodsGrossSum <= 0 {
+			// No goods to carry the discount (the basket caps a discount at
+			// the goods; a tender with an explicit discount, or another
+			// direct CompleteSale caller, can still get here):
+			// prorate it across every band as before ut-docs#4233, so the
+			// bands still sum to the sale's total.
+			for _, b := range acc {
+				b.hasGoods, b.voucherGross, b.voucherTax = true, 0, 0
+				goodsGrossSum += b.Gross
+			}
+		}
+		// The highest band carrying goods takes the pennies — but never a
+		// band whose goods are worth nothing next to a voucher (a fully
+		// line-discounted item): its remainder would come off the voucher.
+		// Without vouchers this is every band, as before ut-docs#4233.
+		last := -1
+		for i, b := range acc {
+			if b.hasGoods && (b.voucherGross == 0 || b.Gross-b.voucherGross > 0) {
+				last = i
+			}
+		}
 		remaining := d
-		for i := range out {
-			share := d * out[i].Gross / grossSum
-			if i == len(out)-1 {
+		for i, b := range acc {
+			if !b.hasGoods || goodsGrossSum <= 0 {
+				continue // a voucher-only band keeps its issue-time figures
+			}
+			goodsGross := b.Gross - b.voucherGross
+			share := d * goodsGross / goodsGrossSum
+			if i == last {
 				share = remaining // largest-remainder: the pennies land here
 			}
 			remaining -= share
 			if taxInclusive {
-				// Discount comes off the gross; re-derive net/tax at the
-				// band's rate (mirrors the engine: total = subtotal − d).
+				// Discount comes off the goods' gross; re-derive their
+				// net/tax at the band's rate (mirrors the engine: total =
+				// subtotal − d). The voucher part is added back unchanged.
 				// NOTE (ut-docs#1035): this re-derivation TRUNCATES, while
 				// ComputeTaxBasisPoints (the undiscounted per-line path both
 				// callers otherwise share) rounds half-up -- so a discounted
@@ -93,16 +141,22 @@ func VATBandsForSale(lines []VATLine, discountTotal int64, taxInclusive bool, se
 				// truncation is biased toward declaring slightly MORE tax,
 				// never less -- the safe direction -- so this is a known
 				// rounding-rule difference, not a defect.
-				out[i].Gross -= share
-				out[i].Net = out[i].Gross * 10000 / (10000 + int64(out[i].RateBP))
-				out[i].Tax = out[i].Gross - out[i].Net
+				goodsGross -= share
+				goodsNet := goodsGross * 10000 / (10000 + int64(b.RateBP))
+				b.Gross = goodsGross + b.voucherGross
+				b.Net = goodsNet + b.voucherGross - b.voucherTax
+				b.Tax = b.Gross - b.Net
 			} else {
 				// Exclusive engine discounts the NET base and keeps line
 				// tax as computed (total = subtotal − d + tax).
-				out[i].Net -= share
-				out[i].Gross = out[i].Net + out[i].Tax
+				b.Net -= share
+				b.Gross = b.Net + b.Tax
 			}
 		}
+	}
+	out := make([]VATBand, 0, len(acc))
+	for _, b := range acc {
+		out = append(out, b.VATBand)
 	}
 	// ADR-0061 Decision 2: the service charge carries VAT of its own,
 	// apportioned across the sale's own rate bands (or taxed at the flat
