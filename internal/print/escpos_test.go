@@ -769,3 +769,69 @@ func TestRenderTextTrackingShowsCaptionAndURL(t *testing.T) {
 		t.Error("tracking block must precede the footer")
 	}
 }
+
+// ut-docs#4224: every issued voucher prints its value, holder and code,
+// the code also as a CODE128 symbol so scanning the receipt redeems it.
+func TestRenderVoucherBlock(t *testing.T) {
+	d := sampleDoc()
+	d.VoucherHeading = "Vouchers issued"
+	d.Vouchers = []VoucherBlock{
+		{Label: "Gift voucher", Amount: "€25.00", Holder: "For: Anna", Code: "GV-12345"},
+		{Label: "Gift voucher", Amount: "€10.00", Code: "GV-VOID1", Void: "VOID - not valid"},
+	}
+	out := Render(d)
+	for _, want := range []string{"Vouchers issued", "For: Anna", "€25.00", "VOID - not valid", "GV-VOID1"} {
+		if !bytes.Contains(out, encodeText(want, d.Charset)) {
+			t.Errorf("printed receipt lacks %q", want)
+		}
+	}
+	sym := func(code string) []byte {
+		data := "{B" + code
+		return append([]byte{0x1d, 0x6b, 0x49, byte(len(data))}, data...)
+	}
+	if !bytes.Contains(out, sym("GV-12345")) {
+		t.Error("active voucher code not printed as CODE128")
+	}
+	if bytes.Contains(out, sym("GV-VOID1")) {
+		t.Error("void voucher must never print as a scannable barcode")
+	}
+	// The block sits after the payments and before the footer.
+	if i, j := bytes.Index(out, []byte("Change")), bytes.Index(out, []byte("Vouchers issued")); i < 0 || j < i {
+		t.Error("voucher block must follow the payments")
+	}
+	if i, j := bytes.Index(out, []byte("Vouchers issued")), bytes.Index(out, []byte("Thank you!")); j < i {
+		t.Error("voucher block must precede the footer")
+	}
+
+	// A code the symbol can't carry keeps its text, without the symbol.
+	d.Vouchers = []VoucherBlock{{Label: "Gift voucher", Amount: "€5.00", Code: "Gutschein-ü"}}
+	out = Render(d)
+	if bytes.Contains(out, cmdBarcodeCode128) {
+		t.Error("unencodable code printed a barcode")
+	}
+	if !bytes.Contains(out, encodeText("Gutschein-ü", d.Charset)) {
+		t.Error("unencodable code lost its text")
+	}
+
+	// No vouchers: byte-identical to a doc without the fields.
+	noVouchers := sampleDoc()
+	noVouchers.VoucherHeading = "Vouchers issued"
+	if !bytes.Equal(Render(sampleDoc()), Render(noVouchers)) {
+		t.Error("a heading with no vouchers changed the receipt")
+	}
+}
+
+func TestRenderTextVoucherBlock(t *testing.T) {
+	d := sampleDoc()
+	d.VoucherHeading = "Vouchers issued"
+	d.Vouchers = []VoucherBlock{{Label: "Gift voucher", Amount: "€25.00", Holder: "For: Anna", Code: "GV-12345"}}
+	out := RenderText(d)
+	for _, want := range []string{"Vouchers issued", "For: Anna", "€25.00", "GV-12345"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("plain-text receipt lacks %q", want)
+		}
+	}
+	if strings.Contains(out, "║█║") {
+		t.Error("plain-text voucher block must not print fake barcode glyphs")
+	}
+}

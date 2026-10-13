@@ -106,6 +106,22 @@ test.describe('gift voucher item: sell, then spend part of it (ut-docs#4214)', (
     await expect(receipt).toBeVisible();
     await expect(receipt).toContainText('Vouchers issued');
     await expect(receipt).toContainText(CODE);
+    // ut-docs#4224: the issued number is also a scannable barcode.
+    const bars = receipt.locator('.receipt-vouchers .barcode svg');
+    await expect(bars).toHaveCount(1);
+    // The barcode sits under the number, at the block's width — not squeezed beside it.
+    const codeBox = (await receipt.locator('.receipt-vouchers .receipt-voucher-code').boundingBox())!;
+    const barBox = (await bars.boundingBox())!;
+    const listBox = (await receipt.locator('.receipt-vouchers ul').boundingBox())!;
+    expect(barBox.y).toBeGreaterThanOrEqual(codeBox.y + codeBox.height - 1);
+    expect(barBox.width).toBeGreaterThan(listBox.width * 0.6);
+    if (process.env.GV_SHOTS_DIR) {
+      await page.screenshot({ path: `${process.env.GV_SHOTS_DIR}/gift-voucher-receipt-1280.png` });
+      await page.setViewportSize({ width: 360, height: 740 });
+      await receipt.locator('.receipt-vouchers').scrollIntoViewIfNeeded();
+      await page.screenshot({ path: `${process.env.GV_SHOTS_DIR}/gift-voucher-receipt-360.png` });
+      await page.setViewportSize({ width: 1280, height: 720 });
+    }
 
     let res = await page.request.get(`/api/vouchers/${CODE}`);
     expect(res.ok()).toBeTruthy();

@@ -511,6 +511,28 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 			}
 		}
 	}
+	// ut-docs#4224: every gift voucher this sale issued, rebuilt from the
+	// vouchers table so a reprint shows the same block — value, holder and
+	// the code as a CODE128 symbol, so scanning the receipt redeems it. A
+	// voided voucher prints marked, never as a scannable symbol. A read
+	// error degrades to no block: a receipt without it beats no receipt.
+	if vs, vErr := data.NewPOSRepo(d.Db).VouchersIssuedInSale(ctx, detail.ID); vErr == nil && len(vs) > 0 {
+		doc.VoucherHeading = httpx.T(printLocale, "receipt.vouchers.issued")
+		for _, v := range vs {
+			vb := print.VoucherBlock{
+				Label:  httpx.T(printLocale, "catalog.item_type.gift_voucher"),
+				Amount: money(v.OriginalAmountMinor),
+				Code:   v.ID,
+			}
+			if v.HolderLabel != "" {
+				vb.Holder = fmt.Sprintf(httpx.T(printLocale, "basket.gift_voucher.for"), v.HolderLabel)
+			}
+			if v.Status == "void" {
+				vb.Void = httpx.T(printLocale, "receipt.vouchers.void")
+			}
+			doc.Vouchers = append(doc.Vouchers, vb)
+		}
+	}
 	// ut-docs#908: the customer order-tracking QR on a counter sale's
 	// receipt — display-only and best-effort (receiptTrackingPrint never
 	// fails the receipt; a reprint reuses the sale's one token).

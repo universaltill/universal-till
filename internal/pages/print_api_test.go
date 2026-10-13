@@ -1630,3 +1630,51 @@ func TestBuildReceiptDoc_NoSellerVATNoUnchanged(t *testing.T) {
 		})
 	}
 }
+
+// ut-docs#4224: the printed receipt carries every voucher the sale issued —
+// value, holder, code (as a CODE128 symbol unless void) — read back from
+// the vouchers table, so a reprint prints the same block.
+func TestBuildReceiptDoc_IssuedVouchers(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	ctx := context.Background()
+	seedReceiptSale(t, dp, "sale1", "R001", "sale", "", 3500, 0, 0)
+	seedReceiptSale(t, dp, "sale2", "R002", "sale", "", 120, 0, 0)
+	repo := data.NewPOSRepo(dp.Db)
+	for _, v := range []data.Voucher{
+		{ID: "GV-100", HolderLabel: "Anna", OriginalAmountMinor: 2500, BalanceMinor: 2500, Currency: "GBP", IssuedSaleID: "sale1", CreatedAt: "2026-10-13T10:00:00Z"},
+		{ID: "GV-101", OriginalAmountMinor: 1000, BalanceMinor: 1000, Currency: "GBP", IssuedSaleID: "sale1", CreatedAt: "2026-10-13T10:00:00Z"},
+	} {
+		if err := repo.CreateVoucher(ctx, nil, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := dp.Db.ExecContext(ctx, `UPDATE vouchers SET status = 'void', balance = 0 WHERE id = 'GV-101'`); err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := buildReceiptDoc(ctx, dp, "R001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.VoucherHeading == "" || len(doc.Vouchers) != 2 {
+		t.Fatalf("voucher block = %q %+v, want a heading and 2 vouchers", doc.VoucherHeading, doc.Vouchers)
+	}
+	a, b := doc.Vouchers[0], doc.Vouchers[1]
+	if a.Code != "GV-100" || !strings.Contains(a.Holder, "Anna") || !strings.Contains(a.Amount, "25.00") || a.Void != "" || a.Label == "" {
+		t.Fatalf("first voucher = %+v", a)
+	}
+	if b.Code != "GV-101" || b.Holder != "" || b.Void == "" {
+		t.Fatalf("void voucher = %+v, want no holder and a void notice", b)
+	}
+	if out := print.Render(doc); !bytes.Contains(out, []byte("{BGV-100")) || bytes.Contains(out, []byte("{BGV-101")) {
+		t.Fatal("rendered receipt must carry GV-100 as a barcode and never the void GV-101")
+	}
+
+	other, err := buildReceiptDoc(ctx, dp, "R002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(other.Vouchers) != 0 || other.VoucherHeading != "" {
+		t.Fatalf("a sale that issued nothing printed a voucher block: %+v", other.Vouchers)
+	}
+}

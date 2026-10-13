@@ -509,7 +509,7 @@ func TestRenderReceipt_IssuedVouchersListed(t *testing.T) {
 	}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 2500}}
 	issued := []receiptVoucherIssue{
-		{Code: "GS-PRINTED-7", Amount: 1500},
+		{Code: "GS-PRINTED-7", Amount: 1500, Holder: "Anna"},
 		{Code: "8b1c2d3e-0000-4000-8000-000000000001", Amount: 1000},
 	}
 
@@ -522,12 +522,20 @@ func TestRenderReceipt_IssuedVouchersListed(t *testing.T) {
 			t.Fatalf("issued-voucher block missing %q in receipt: %s", want, html)
 		}
 	}
+	// ut-docs#4224: the holder line, and the code as a scannable barcode
+	// (Code39 on screen; a code it can't carry keeps just its text).
+	if !strings.Contains(html, "basket.gift_voucher.for") {
+		t.Fatalf("holder line missing: %s", html)
+	}
+	if n := strings.Count(html, `<div class="barcode"><svg`); n != 1 {
+		t.Fatalf("want exactly one voucher barcode (GS-PRINTED-7; the lowercase code is not Code39), got %d: %s", n, html)
+	}
 
 	plain, err := renderReceipt(funcs, "124", nil, payments, 0, 0, 2500, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil)
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
-	if strings.Contains(plain, "receipt-vouchers") || strings.Contains(plain, "receipt.vouchers.issued") {
+	if strings.Contains(plain, `class="receipt-payments receipt-vouchers"`) || strings.Contains(plain, "receipt.vouchers.issued") {
 		t.Fatalf("no voucher issued, yet the receipt rendered the issued-voucher block: %s", plain)
 	}
 }

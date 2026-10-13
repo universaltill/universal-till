@@ -472,3 +472,46 @@ func TestVoucherRepo_EnsureVoucherLocalRow_NeverClobbersExistingRow(t *testing.T
 		t.Fatalf("EnsureVoucherLocalRow must never clobber an existing local row, got %+v", v)
 	}
 }
+
+// ut-docs#4224: the printed receipt rebuilds its voucher block from the DB,
+// so a reprint shows every voucher the sale issued, in issue order, void
+// ones included (the printer marks them, it never drops them).
+func TestVoucherRepo_VouchersIssuedInSale(t *testing.T) {
+	d := b8OpenDB(t, "voucher-issued-in-sale.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	mk := func(id, sale, holder, at string, amount int64) {
+		t.Helper()
+		if err := repo.CreateVoucher(ctx, nil, Voucher{
+			ID: id, HolderLabel: holder, OriginalAmountMinor: amount, BalanceMinor: amount,
+			Currency: "EUR", IssuedSaleID: sale, CreatedAt: at,
+		}); err != nil {
+			t.Fatalf("CreateVoucher %s: %v", id, err)
+		}
+	}
+	mk("GS-2", "sale-1", "", "2026-10-13T10:00:00Z", 1000)
+	mk("GS-1", "sale-1", "Anna", "2026-10-13T10:00:00Z", 2500)
+	mk("GS-OTHER", "sale-2", "", "2026-10-13T09:00:00Z", 500)
+	if _, err := d.DB.ExecContext(ctx, `UPDATE vouchers SET status = 'void', balance = 0 WHERE id = 'GS-2'`); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.VouchersIssuedInSale(ctx, "sale-1")
+	if err != nil {
+		t.Fatalf("VouchersIssuedInSale: %v", err)
+	}
+	// Same timestamp: insertion (basket) order, not id order.
+	if len(got) != 2 || got[0].ID != "GS-2" || got[1].ID != "GS-1" {
+		t.Fatalf("got %+v, want GS-2 then GS-1", got)
+	}
+	if got[1].HolderLabel != "Anna" || got[1].OriginalAmountMinor != 2500 || got[1].Status != "active" {
+		t.Fatalf("GS-1 = %+v", got[1])
+	}
+	if got[0].Status != "void" || got[0].OriginalAmountMinor != 1000 {
+		t.Fatalf("GS-2 = %+v", got[0])
+	}
+	if none, err := repo.VouchersIssuedInSale(ctx, "sale-none"); err != nil || len(none) != 0 {
+		t.Fatalf("sale without vouchers: %v, %v", none, err)
+	}
+}
