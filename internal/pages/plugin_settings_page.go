@@ -434,6 +434,17 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		pluginID := r.PathValue("id")
+		// A plugin that isn't installed (a mistyped or shortened id) has no
+		// settings page — rendering one said "no settings, no permissions",
+		// which reads as a broken install (ut-docs#4135). A disabled plugin
+		// is still installed and keeps its page.
+		if _, installed, err := repo.GetInstalledPluginVersion(r.Context(), pluginID); err != nil {
+			httpx.RenderError(w, r, http.StatusInternalServerError, "plugins.error.server", err)
+			return
+		} else if !installed {
+			http.Redirect(w, r, "/plugins", http.StatusSeeOther)
+			return
+		}
 		rows, err := repo.ListPluginSettings(r.Context(), pluginID)
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "plugins.error.server", err)
@@ -511,6 +522,15 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		pluginID := r.PathValue("id")
+		// Same guard as the page (ut-docs#4135): no saving, and no
+		// plugin_settings_saved audit row, for a plugin that isn't installed.
+		if _, installed, err := repo.GetInstalledPluginVersion(r.Context(), pluginID); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
+			return
+		} else if !installed {
+			common.LocalizedError(w, r, http.StatusNotFound, "plugins.install.error.not_found")
+			return
+		}
 		_ = r.ParseForm()
 		rows, err := repo.ListPluginSettings(r.Context(), pluginID)
 		if err != nil {
