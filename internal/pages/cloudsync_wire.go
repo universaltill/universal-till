@@ -471,6 +471,9 @@ func cloudRenameTill(ctx context.Context, d *common.Deps, raw string) (string, e
 		}
 	}
 	auditCloudDirective(ctx, d, "settings", key, "till_name_changed", map[string]any{"name": name, "via": "cloud", "key": key})
+	if key == "till.name" {
+		renameOwnRegisterAfterTill(ctx, d, name) // ut-docs#4022
+	}
 	return "till renamed", nil
 }
 

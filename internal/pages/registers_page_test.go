@@ -600,3 +600,43 @@ func TestRegistersPage_ReplicaRefusalRendersInDialogMessageForHtmxRequest(t *tes
 		t.Errorf("htmx replica refusal must not redirect")
 	}
 }
+
+// ut-docs#4022: inactive registers are grouped under the active ones (with
+// a count), not mixed in by name.
+func TestRegistersPage_GroupsInactiveRegistersBelowActive(t *testing.T) {
+	mux, d := newRegistersTestMux(t)
+	ctx := t.Context()
+	if _, err := d.Db.ExecContext(ctx, `DELETE FROM registers`); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []struct {
+		id, name string
+		active   int
+	}{{"r-a", "Alpha old", 0}, {"r-b", "Bar", 1}, {"r-c", "Counter", 1}, {"r-d", "Door old", 0}} {
+		if _, err := d.Db.ExecContext(ctx, `INSERT INTO registers (id, name, is_active) VALUES (?, ?, ?)`, r.id, r.name, r.active); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, auth.WithUser(httptest.NewRequest(http.MethodGet, "/registers", nil), manager))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /registers = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	group := strings.Index(body, `class="registers-inactive"`)
+	if group < 0 || !strings.Contains(body[group:], "inactive (2)") {
+		t.Fatalf("no inactive group with its count in: %s", body)
+	}
+	pos := func(id string) int {
+		i := strings.Index(body, `data-id="`+id+`"`)
+		if i < 0 {
+			t.Fatalf("row %s missing", id)
+		}
+		return i
+	}
+	if !(pos("r-b") < pos("r-c") && pos("r-c") < group && group < pos("r-a") && pos("r-a") < pos("r-d")) {
+		t.Fatalf("want active rows (by name) then the inactive group (by name); got order b=%d c=%d group=%d a=%d d=%d",
+			pos("r-b"), pos("r-c"), group, pos("r-a"), pos("r-d"))
+	}
+}
