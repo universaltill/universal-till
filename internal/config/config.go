@@ -201,6 +201,12 @@ type Config struct {
 	// off; an unparseable value is off too, like UT_DEV_MODE — a typo never
 	// changes what a production till sends.
 	CSPReportOnly bool
+	// LANDiscovery is UT_LAN_DISCOVERY (ut-docs#3814): when off, the till
+	// neither advertises over mDNS nor browses it (join/primary watch, manual
+	// and printer search). Default on; an unparseable value is on too — a
+	// typo never turns discovery off on a production till. The e2e/docs-shots
+	// harness sets it to 0 so throwaway tills stay invisible to real ones.
+	LANDiscovery bool
 	// add more fields as needed (DB, SB, etc.)
 }
 
@@ -220,6 +226,10 @@ func Init() (*Config, error) {
 		return nil, fmt.Errorf("UT_DEMO=%q is not a boolean: %w", os.Getenv("UT_DEMO"), err)
 	}
 	cspReportOnly, _ := strconv.ParseBool(getenv("UT_CSP_REPORT_ONLY", "false"))
+	lanDiscovery, err := strconv.ParseBool(getenv("UT_LAN_DISCOVERY", "true"))
+	if err != nil {
+		lanDiscovery = true
+	}
 	healthCheckTimeout, _ := strconv.Atoi(getenv("UT_MARKETPLACE_HEALTH_CHECK_TIMEOUT_SEC", "5"))
 	fallbackTimeout, _ := strconv.Atoi(getenv("UT_MARKETPLACE_FALLBACK_TIMEOUT_SEC", "30"))
 
@@ -236,6 +246,7 @@ func Init() (*Config, error) {
 		DemoToken:     os.Getenv("UT_DEMO_TOKEN"),
 		AuthDisabled:  auth.Disabled(os.Getenv("UT_AUTH")),
 		CSPReportOnly: cspReportOnly,
+		LANDiscovery:  lanDiscovery,
 		Marketplace: MarketplaceConfig{
 			EndpointURL:           getenv("UT_MARKETPLACE_ENDPOINT_URL", "http://127.0.0.1:8081/api"),
 			StoreID:               getenv("UT_MARKETPLACE_STORE_ID", getenv("UT_STORE_NAME", DefaultStoreName)),

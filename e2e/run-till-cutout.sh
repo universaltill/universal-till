@@ -26,6 +26,8 @@ export UT_AI_IMAGE_ENDPOINT="http://127.0.0.1:${FAKE_PORT}" UT_AI_IMAGE_MODEL=u2
 # ut-docs#2704: never open the developer's browser on boot (the server's
 # default); Playwright drives its own headless one. Overridable.
 : "${UT_OPEN_BROWSER:=0}"; export UT_OPEN_BROWSER
+# ut-docs#3814: no LAN discovery (mDNS) from a throwaway till. Overridable.
+: "${UT_LAN_DISCOVERY:=0}"; export UT_LAN_DISCOVERY
 
 node "$ROOT/e2e/fake-rembg-server.mjs" "$FAKE_PORT" &
 FAKE_PID=$!

@@ -80,6 +80,12 @@ func NewAdvertiser(settings *data.SettingsRepo, isPrimary RoleCheck, port int) *
 // it too — same wg.Add(1)/go func/defer wg.Done() shape as
 // internal/alerts.Start and internal/updates.Start.
 func (a *Advertiser) Start(ctx context.Context, wg *sync.WaitGroup) {
+	// ut-docs#3814: a throwaway e2e/docs-shots till must not be visible to
+	// real tills on the LAN. Nothing to join to wg either.
+	if LANDisabled() {
+		logging.L().Infof("LAN discovery off (UT_LAN_DISCOVERY): not advertising over mDNS")
+		return
+	}
 	wg.Add(1)
 	go func() {
 		defer logging.RecoverAndLog("discovery.advertiser")

@@ -14,14 +14,15 @@ import { watchConsole } from './helpers';
 // end so a future regression here fails on behaviour, not just on "no JS
 // errors happened to fire".
 //
-// The scan itself is a real mDNS broadcast (discoverBrowseTimeout, 4s) —
-// this suite's own second (auth) project till shares the sandbox's network
-// namespace and, being a standalone/primary itself, is a legitimate
-// candidate the scan can find. So this asserts the chain reaches ONE of
-// its two real terminal states (a rendered result list, or the explicit
-// "none found" message) rather than assuming which — the old, broken
+// The request goes to the real handler, but harness tills run with
+// UT_LAN_DISCOVERY=0 (ut-docs#3814: no mDNS on the developer's LAN), so the
+// scan answers at once with no candidates. The test still accepts either
+// terminal state (a rendered result list, or the explicit "none found"
+// message) so it holds for a till run with discovery on. The old, broken
 // script reached neither: msg stayed stuck on "Searching…" forever because
 // the click handler that would have updated it was never even attached.
+// The request is held until "Searching…" has been seen; an instant answer
+// would otherwise replace it before the assertion could observe it.
 test('Find a primary on this network runs a real scan through to a result', async ({ page }) => {
   const assertClean = watchConsole(page);
   await page.goto('/tills');
@@ -30,9 +31,17 @@ test('Find a primary on this network runs a real scan through to a result', asyn
   const msg = page.locator('#discover-msg');
   const results = page.locator('#discover-results');
 
+  let releaseScan!: () => void;
+  const searchingSeen = new Promise<void>((resolve) => { releaseScan = resolve; });
+  await page.route('**/api/sync/discover-primaries', async (route) => {
+    await searchingSeen;
+    await route.continue();
+  });
+
   await expect(btn).toBeEnabled();
   await btn.click();
   await expect(msg).toHaveText('Searching…');
+  releaseScan();
 
   // Both .then() branches disable-then-re-enable the button before doing
   // anything else, so waiting on this alone proves the callback that used
