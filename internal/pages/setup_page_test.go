@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -108,6 +109,7 @@ func TestSetupWizardHappyPath(t *testing.T) {
 		"currency":     {"GBP"},
 		"tax_rate_pct": {"20"},
 		"store_name":   {"Corner Shop"},
+		"till_name":    {"Till 1"},
 	}, nil)
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/import?welcome=1" {
 		t.Fatalf("wizard setup: code=%d loc=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
@@ -153,7 +155,7 @@ func TestSetupWizardDrivesDisplayedSymbolFromCurrencyCodeAlone(t *testing.T) {
 	rec := postForm(mux, "/api/setup", url.Values{
 		"pin": {"2468"}, "pin_confirm": {"2468"},
 		"country": {"DE"}, "currency": {"EUR"}, "currency_touched": {"1"},
-		"tax_rate_pct": {"19"}, "store_name": {"Bäckerei Berlin"},
+		"tax_rate_pct": {"19"}, "store_name": {"Bäckerei Berlin"}, "till_name": {"Till 1"},
 	}, nil)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())
@@ -177,7 +179,7 @@ func TestSetupWizardCurrencyConfirmedOnlyWhenOperatorTouchedCountrySelect(t *tes
 	t.Run("no currency_touched field (operator never opened the country step)", func(t *testing.T) {
 		mux, _, d := newFullAuthDeps(t)
 		rec := postForm(mux, "/api/setup", url.Values{
-			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"},
+			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"}, "till_name": {"Till 1"},
 			"country": {"GB"}, "currency": {"GBP"}, "tax_rate_pct": {"20"},
 		}, nil)
 		if rec.Code != http.StatusSeeOther {
@@ -190,7 +192,7 @@ func TestSetupWizardCurrencyConfirmedOnlyWhenOperatorTouchedCountrySelect(t *tes
 	t.Run("currency_touched=1 (operator actually used the country select)", func(t *testing.T) {
 		mux, _, d := newFullAuthDeps(t)
 		rec := postForm(mux, "/api/setup", url.Values{
-			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"},
+			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"}, "till_name": {"Till 1"},
 			"country": {"GB"}, "currency": {"GBP"}, "tax_rate_pct": {"20"}, "currency_touched": {"1"},
 		}, nil)
 		if rec.Code != http.StatusSeeOther {
@@ -203,7 +205,7 @@ func TestSetupWizardCurrencyConfirmedOnlyWhenOperatorTouchedCountrySelect(t *tes
 	t.Run("currency_touched=1 but an unrecognised currency code is rejected, not confirmed", func(t *testing.T) {
 		mux, _, d := newFullAuthDeps(t)
 		rec := postForm(mux, "/api/setup", url.Values{
-			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"},
+			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"}, "till_name": {"Till 1"},
 			"country": {"GB"}, "currency": {"NOTREAL"}, "tax_rate_pct": {"20"}, "currency_touched": {"1"},
 		}, nil)
 		if rec.Code != http.StatusSeeOther {
@@ -226,7 +228,7 @@ func TestSetupWizardDerivesLocaleFromCountry(t *testing.T) {
 	t.Run("DE derives de-DE (non-RTL, safe even with no language pack installed)", func(t *testing.T) {
 		mux, _, d := newFullAuthDeps(t)
 		rec := postForm(mux, "/api/setup", url.Values{
-			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"},
+			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"}, "till_name": {"Till 1"},
 			"country": {"DE"}, "currency": {"EUR"}, "tax_rate_pct": {"19"},
 		}, nil)
 		if rec.Code != http.StatusSeeOther {
@@ -239,7 +241,7 @@ func TestSetupWizardDerivesLocaleFromCountry(t *testing.T) {
 	t.Run("GB derives en-GB", func(t *testing.T) {
 		mux, _, d := newFullAuthDeps(t)
 		rec := postForm(mux, "/api/setup", url.Values{
-			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"},
+			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"}, "till_name": {"Till 1"},
 			"country": {"GB"}, "currency": {"GBP"}, "tax_rate_pct": {"20"},
 		}, nil)
 		if rec.Code != http.StatusSeeOther {
@@ -252,7 +254,7 @@ func TestSetupWizardDerivesLocaleFromCountry(t *testing.T) {
 	t.Run("AE derives ar-AE (RTL, but ar ships bundled — safe)", func(t *testing.T) {
 		mux, _, d := newFullAuthDeps(t)
 		rec := postForm(mux, "/api/setup", url.Values{
-			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"},
+			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"}, "till_name": {"Till 1"},
 			"country": {"AE"}, "currency": {"AED"}, "tax_rate_pct": {"5"},
 		}, nil)
 		if rec.Code != http.StatusSeeOther {
@@ -265,7 +267,7 @@ func TestSetupWizardDerivesLocaleFromCountry(t *testing.T) {
 	t.Run("a posted locale field is ignored — server derives from country, not client text", func(t *testing.T) {
 		mux, _, d := newFullAuthDeps(t)
 		rec := postForm(mux, "/api/setup", url.Values{
-			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"},
+			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"}, "till_name": {"Till 1"},
 			"country": {"DE"}, "currency": {"EUR"}, "tax_rate_pct": {"19"}, "locale": {"xx-NOTREAL"},
 		}, nil)
 		if rec.Code != http.StatusSeeOther {
@@ -282,7 +284,7 @@ func TestSetupWizardDerivesLocaleFromCountry(t *testing.T) {
 		// makes this pass even with the guard deleted).
 		d.UpdateState(func(s *common.RuntimeState) { s.Locale = "tr" })
 		rec := postForm(mux, "/api/setup", url.Values{
-			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"},
+			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"}, "till_name": {"Till 1"},
 			"country": {"PK"}, "currency": {"PKR"}, "tax_rate_pct": {"18"},
 		}, nil)
 		if rec.Code != http.StatusSeeOther {
@@ -296,7 +298,7 @@ func TestSetupWizardDerivesLocaleFromCountry(t *testing.T) {
 		mux, _, d := newFullAuthDeps(t)
 		d.UpdateState(func(s *common.RuntimeState) { s.Locale = "tr" })
 		rec := postForm(mux, "/api/setup", url.Values{
-			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"},
+			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"}, "till_name": {"Till 1"},
 			"country": {"OTHER"}, "currency": {"USD"}, "tax_rate_pct": {"0"},
 		}, nil)
 		if rec.Code != http.StatusSeeOther {
@@ -326,6 +328,7 @@ func TestSetupWizardCreatesDefaultRegister(t *testing.T) {
 		"currency":     {"GBP"},
 		"tax_rate_pct": {"20"},
 		"store_name":   {"Corner Shop"},
+		"till_name":    {"Till 1"},
 	}, nil)
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/import?welcome=1" {
 		t.Fatalf("wizard setup: code=%d loc=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
@@ -342,8 +345,8 @@ func TestSetupWizardCreatesDefaultRegister(t *testing.T) {
 
 // The wizard's shop-name step also carries the primary till's own name
 // (ut-docs#396, distinct from a replica's sync.till_name) — submitting it
-// persists till.name, and omitting/blanking it leaves the name resolvable
-// via tillNameOrDefault's default, exactly like store_name's own handling.
+// persists till.name, trimmed. It is required (ut-docs#4146): see
+// TestSetupWizardRefusesBlankOrInvalidTillName.
 func TestSetupWizardTillName(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 
@@ -354,7 +357,7 @@ func TestSetupWizardTillName(t *testing.T) {
 		"currency":     {"GBP"},
 		"tax_rate_pct": {"20"},
 		"store_name":   {"Corner Shop"},
-		"till_name":    {"Front Register"},
+		"till_name":    {"  Front Register  "},
 	}, nil)
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/import?welcome=1" {
 		t.Fatalf("wizard setup with till_name: code=%d loc=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
@@ -364,28 +367,96 @@ func TestSetupWizardTillName(t *testing.T) {
 	}
 }
 
-// Omitting till_name (blank submit) must not error and must leave the name
-// resolvable via the default — same skip-on-blank behaviour as store_name.
-func TestSetupWizardBlankTillNameDoesNotErrorAndDefaultsOnRead(t *testing.T) {
-	mux, _, d := newFullAuthDeps(t)
+// ut-docs#4146: the till has no default name either — a blank,
+// whitespace-only, control-character or over-long till_name is refused
+// before anything is saved, and the wizard re-opens on the shop/till-name
+// step (4) with the error and the shop name the operator typed kept.
+func TestSetupWizardRefusesBlankOrInvalidTillName(t *testing.T) {
+	cases := map[string]url.Values{
+		"omitted":       {},
+		"blank":         {"till_name": {""}},
+		"whitespace":    {"till_name": {"  \t "}},
+		"control char":  {"till_name": {"Front\x01Till"}},
+		"over 60 runes": {"till_name": {strings.Repeat("é", 61)}},
+	}
+	for label, extra := range cases {
+		t.Run(label, func(t *testing.T) {
+			mux, svc, d := newFullAuthDeps(t)
+			form := url.Values{
+				"pin": {"2468"}, "pin_confirm": {"2468"},
+				"country": {"GB"}, "currency": {"GBP"}, "tax_rate_pct": {"20"},
+				"store_name": {"Corner Shop"},
+			}
+			for k, v := range extra {
+				form[k] = v
+			}
+			rec := postForm(mux, "/api/setup", form, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("code=%d loc=%q, want a 200 wizard re-render", rec.Code, rec.Header().Get("Location"))
+			}
+			body := rec.Body.String()
+			want := template.HTMLEscapeString(httpx.T("en", "tills.pairing.error.name_required_field"))
+			if !strings.Contains(body, `<p class="login-error">`+want+`</p>`) {
+				t.Errorf("re-render lacks the %q error: %s", want, body)
+			}
+			if !strings.Contains(body, "step: 4,") {
+				t.Error("re-render must open on the shop/till-name step (4)")
+			}
+			if !strings.Contains(body, `value="Corner Shop"`) {
+				t.Error("re-render must keep the shop name the operator typed")
+			}
+			// A refused till name is not echoed back (same rule as a refused
+			// shop name), so the field is empty and Next stays disabled
+			// rather than looking filled with an invisible bad character.
+			if !strings.Contains(body, `name="till_name" maxlength="60" value=""`) {
+				t.Error("re-render must not echo a refused till name back into the field")
+			}
+			if sessionCookie(rec) != "" {
+				t.Fatal("a refused wizard submit must not sign anyone in")
+			}
+			if fb, _ := svc.NeedsFirstBoot(t.Context()); !fb {
+				t.Fatal("a refused wizard submit must leave the till in first-boot state (no operator created)")
+			}
+			if sn, _, _ := d.Settings.Get(t.Context(), "store.name"); sn == "Corner Shop" {
+				t.Fatal("a refused wizard submit must not save the shop name")
+			}
+			if tn, ok, _ := d.Settings.Get(t.Context(), "till.name"); ok {
+				t.Fatalf("a refused wizard submit must not save a till name, got %q", tn)
+			}
+			if done, _, _ := d.Settings.Get(t.Context(), "setup.completed"); done == "true" {
+				t.Fatal("a refused wizard submit must not mark setup completed")
+			}
+		})
+	}
+}
 
+// Any other wizard error keeps the till name the operator typed, so a PIN
+// typo doesn't send them back to an empty till-name field (ut-docs#4146).
+func TestSetupWizardRerenderKeepsTillName(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
 	rec := postForm(mux, "/api/setup", url.Values{
-		"pin":          {"2468"},
-		"pin_confirm":  {"2468"},
-		"country":      {"GB"},
-		"currency":     {"GBP"},
-		"tax_rate_pct": {"20"},
-		"store_name":   {"Corner Shop"},
-		// till_name intentionally omitted.
+		"pin": {"2468"}, "pin_confirm": {"1357"},
+		"country": {"GB"}, "currency": {"GBP"}, "tax_rate_pct": {"20"},
+		"store_name": {"Corner Shop"}, "till_name": {"Front Register"},
 	}, nil)
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/import?welcome=1" {
-		t.Fatalf("wizard setup without till_name: code=%d loc=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PIN mismatch: code=%d, want a 200 wizard re-render", rec.Code)
 	}
-	if _, ok, _ := d.Settings.Get(t.Context(), "till.name"); ok {
-		t.Fatalf("till.name should be unset when the wizard field was blank")
+	if !strings.Contains(rec.Body.String(), `name="till_name" maxlength="60" value="Front Register"`) {
+		t.Error("a PIN-mismatch re-render must keep the till name the operator typed")
 	}
-	if got := tillNameOrDefault(t.Context(), d, "en"); got != "Till 1" {
-		t.Fatalf("tillNameOrDefault after blank submit = %q, want default %q", got, "Till 1")
+}
+
+// The step-4 till-name field never falls back to a default ("Till 1") on
+// first render, and is marked aria-required (ut-docs#4146).
+func TestSetupWizardTillNameFieldHasNoDefault(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+	body := getSetup(mux, "?lang=en", "").Body.String()
+	if !strings.Contains(body, `name="till_name" maxlength="60" value="" x-model="tillName" aria-required="true"`) {
+		t.Errorf("GET /setup: till_name field must be empty and aria-required, body: %s", body)
+	}
+	if strings.Contains(body, `value="Till 1"`) {
+		t.Error("GET /setup must not prefill a default till name")
 	}
 }
 
@@ -401,6 +472,7 @@ func TestSetupWizardIgnoresRetiredRestoreFields(t *testing.T) {
 				"pin":              {"2468"},
 				"pin_confirm":      {"2468"},
 				"store_name":       {"Test Shop"},
+				"till_name":        {"Till 1"},
 				"country":          {"GB"},
 				"currency":         {"GBP"},
 				"tax_rate_pct":     {"20"},
@@ -1065,6 +1137,7 @@ func TestSetupWizardFractionalTaxRate(t *testing.T) {
 		"pin": {"2468"}, "pin_confirm": {"2468"},
 		"country": {"GB"}, "currency": {"GBP"}, "tax_rate_pct": {"8.1"},
 		"store_name": {"Corner Shop"},
+		"till_name":  {"Till 1"},
 	}, nil)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())

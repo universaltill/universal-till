@@ -297,11 +297,14 @@
         <!-- Step 4 · shop name -->
         <!-- ut-docs#3096: the shop name is required — Next stays disabled
              while it is blank, and POST /api/setup refuses a blank or
-             placeholder name ("My Store") server-side. aria-required, not
+             placeholder name ("My Store") server-side. ut-docs#4146: the
+             same for the till name — no "Till 1" default, Next stays
+             disabled until it is typed, and the server refuses a blank or
+             invalid one (validateTillName). aria-required, not
              required: a native required on a field hidden by x-show would
              silently block the final submit on step 7. -->
-        <section x-show="step === 4" x-cloak data-step="4" x-data="{ storeName: '' }"
-                 x-init="storeName = $el.querySelector('input[name=store_name]').value">
+        <section x-show="step === 4" x-cloak data-step="4" x-data="{ storeName: '', tillName: '' }"
+                 x-init="storeName = $el.querySelector('input[name=store_name]').value; tillName = $el.querySelector('input[name=till_name]').value">
           <h1>{{ T "setup.store.title" }}</h1>
           <!-- ut-docs#1506: shown once, right after an explicit tax-plugin
                skip landed here (tax_plugin_skip_ack=1) — the operator
@@ -314,11 +317,11 @@
           <input type="text" name="store_name" maxlength="60" placeholder="{{ T "setup.store.placeholder" }}"
                  value="{{ .storeName }}" x-model="storeName" aria-required="true">
           <label>{{ T "setup.till_name.title" }}
-            <input type="text" name="till_name" maxlength="60" value="{{ if .tillName }}{{ .tillName }}{{ else }}{{ T "setup.till_name.default" }}{{ end }}">
+            <input type="text" name="till_name" maxlength="60" value="{{ .tillName }}" x-model="tillName" aria-required="true">
           </label>
           <div class="setup-nav">
             <button type="button" class="btn secondary" @click="step = country === 'DE' ? 3 : 2">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" :disabled="storeName.trim() === ''" @click="step = 5">{{ T "setup.next" }}</button>
+            <button type="button" class="btn primary" :disabled="storeName.trim() === '' || tillName.trim() === ''" @click="step = 5">{{ T "setup.next" }}</button>
           </div>
         </section>
 

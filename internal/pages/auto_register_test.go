@@ -35,6 +35,7 @@ func TestSetupWizardAutoRegisterOptInPersistsAndAttemptsRegistration(t *testing.
 		"country":       {"GB"}, // en ships bundled, so no base plugin: no base-plugin install can also hit register
 		"currency":      {"GBP"},
 		"store_name":    {"Corner Shop"},
+		"till_name":     {"Till 1"},
 		"auto_register": {"on"},
 	}, nil)
 	if rec.Code != http.StatusSeeOther {
@@ -69,6 +70,7 @@ func TestSetupWizardAutoRegisterSendsTheTypedShopName(t *testing.T) {
 		"country":       {"GB"},
 		"currency":      {"GBP"},
 		"store_name":    {"Corner Café"},
+		"till_name":     {"Till 1"},
 		"auto_register": {"on"},
 	}, nil)
 	if rec.Code != http.StatusSeeOther {
@@ -99,6 +101,7 @@ func TestSetupWizardAutoRegisterOptInOfflineStillCompletesSetup(t *testing.T) {
 		"country":       {"GB"},
 		"currency":      {"GBP"},
 		"store_name":    {"Corner Shop"},
+		"till_name":     {"Till 1"},
 		"auto_register": {"on"},
 	}, nil)
 	if rec.Code != http.StatusSeeOther {
@@ -134,6 +137,7 @@ func TestSetupWizardNoAutoRegisterByDefaultMakesNoAttempt(t *testing.T) {
 				"country":     {"GB"},
 				"currency":    {"GBP"},
 				"store_name":  {"Corner Shop"},
+				"till_name":   {"Till 1"},
 			}
 			for k, v := range tc.form {
 				form[k] = v

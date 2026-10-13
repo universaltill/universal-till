@@ -132,6 +132,7 @@ func deWizardForm() url.Values {
 		"currency":       {"EUR"},
 		"tax_rate_pct":   {"19"},
 		"store_name":     {"Ecke Laden"},
+		"till_name":      {"Till 1"},
 		"tse_legal_name": {"Ecke Laden GmbH"},
 		"tse_owner_name": {"Erika Musterfrau"},
 		"tse_tax_number": {"12/345/67890"},

@@ -1076,6 +1076,7 @@ func TestSetupWizardDE_HappyPathInstallsBasePluginSynchronously(t *testing.T) {
 		"country":     {"DE"},
 		"currency":    {"EUR"},
 		"store_name":  {"Ecke Laden"},
+		"till_name":   {"Till 1"},
 	}, nil)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())
@@ -1104,6 +1105,7 @@ func TestSetupWizardDE_OfflineCompletesAndLeavesPendingForRetry(t *testing.T) {
 		"country":     {"DE"},
 		"currency":    {"EUR"},
 		"store_name":  {"Ecke Laden"},
+		"till_name":   {"Till 1"},
 	}, nil)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("wizard setup must complete even offline: code=%d body=%s", rec.Code, rec.Body.String())

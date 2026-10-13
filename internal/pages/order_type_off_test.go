@@ -241,7 +241,7 @@ func TestSetupWizard_ShopTypePicksOrderTypeOff(t *testing.T) {
 		}
 		rec := postForm(mux, "/api/setup", url.Values{
 			"pin": {"2468"}, "pin_confirm": {"2468"}, "country": {"GB"}, "currency": {"GBP"},
-			"tax_rate_pct": {"20"}, "store_name": {"Corner Shop"}, "shop_type": {shopType},
+			"tax_rate_pct": {"20"}, "store_name": {"Corner Shop"}, "till_name": {"Till 1"}, "shop_type": {shopType},
 		}, nil)
 		if rec.Code != http.StatusSeeOther {
 			t.Fatalf("wizard shop_type=%s: code=%d body=%s", shopType, rec.Code, rec.Body.String())

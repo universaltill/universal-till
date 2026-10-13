@@ -75,6 +75,7 @@ var keyConstName = regexp.MustCompile(`^(Key|key)[A-Z]|Key$`)
 var notSettingsKeyConsts = map[string]string{
 	"httpx.genericErrKey":       "an i18n message key",
 	"pages.buttonsErrorKey":     "an i18n message key",
+	"pages.keyTillNameRequired": "an i18n message key (the wizard's till-name error, ut-docs#4146)",
 	"plugins.DocsEntryKey":      "a plugin manifest entry key",
 	"pages.reservedChargeKey":   "a charge-hook line key",
 	"ui.designerErrorServerKey": "an i18n message key",
