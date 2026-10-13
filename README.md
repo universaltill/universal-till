@@ -245,7 +245,9 @@ cp pos.env.example pos.env.dev
 docker compose -f docker-compose.edge.yml up --build
 ```
 
-Open http://localhost:8080
+Open http://localhost:8080. Your browser reaches the container through
+Docker's bridge, not loopback, so the compose file sets
+`UT_UI_ALLOW_CIDRS=172.16.0.0/12` (see "Who can open the till UI" below).
 
 ### Option 4: Development Mode (with the marketplace)
 
@@ -400,6 +402,36 @@ Off, the till neither advertises itself nor browses for other tills or network
 printers. The e2e and docs-shots harness sets it to `0` so throwaway tills
 neither show up on a real till's LAN nor display one in manual screenshots
 (ut-docs#3814).
+
+### Who can open the till UI (ADR-0157)
+
+The till listens on every interface (`UT_LISTEN_ADDR`, default `:8080`),
+because paired tills sync over the LAN. But only the till's own machine can
+open the UI: loopback, or one of its own interface addresses. A caller
+anywhere else on the network reaches only `/api/sync/*` (till-to-till, each
+route authenticated in its handler), `/healthz`, and, until they move to the
+cloud, the guest pages (`/self-order`, `/api/self-order/*`, `/o/*` and the
+static files they load). Everything else, the PIN screen included, answers
+`403 Forbidden` before auth runs (ut-docs#4261). Only the TCP peer address
+counts; forwarded-for headers are ignored.
+
+`UT_UI_ALLOW_CIDRS` (comma-separated CIDRs or IPs, default empty) adds
+networks whose browsers may open the UI too: the Docker host bridge (the
+compose files set `172.16.0.0/12`) or a dev laptop. An invalid entry, or one
+wider than `/8`, drops the whole list and logs an error: never wider, only
+stricter. The public demo (`UT_DEMO`) runs without the guard. To reach a
+headless till from your computer, tunnel over SSH
+(`ssh -L 8080:localhost:8080 <user>@<till>`) and open http://localhost:8080.
+
+- Docker falls back to `192.168.0.0/16` pools when its default ones run out,
+  and rootless Docker/Podman show the host as `10.0.2.x`: still getting 403?
+  Add your bridge gateway's network.
+- Never put a reverse proxy in front of the till on the same machine. Every
+  caller would then arrive from loopback and the guard would let all of them
+  through (forwarded headers are deliberately ignored).
+- The till's own interface addresses are re-read at most every 30 s, so
+  after a DHCP move a browser on the till that uses its LAN address can see
+  403 for up to 30 s. `localhost` is never affected.
 
 ### Report-only Content-Security-Policy (developers and testing)
 

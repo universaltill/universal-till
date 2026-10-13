@@ -21,6 +21,7 @@ import (
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/issuereport"
+	"github.com/universaltill/universal-till/internal/languard"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/netreach"
@@ -691,15 +692,28 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	if cfg.Demo {
 		demoWrap = func(h http.Handler) http.Handler { return newDemoMiddleware(h, mux, cfg.DemoToken) }
 	}
+	// LAN guard (ADR-0157, ut-docs#4261): outside demo and auth (only the CSP
+	// header wrap and panic recovery sit outside it), so a caller on the shop network reaches only the till-to-till sync
+	// surface and the guest pages — never the PIN screen. The public demo is
+	// public by design and runs without it.
+	lanWrap := func(h http.Handler) http.Handler { return h }
+	if !cfg.Demo {
+		allow, err := languard.ParseCIDRs(strings.Split(cfg.UIAllowCIDRs, ","))
+		if err != nil {
+			log.Errorf("%v — ignoring UT_UI_ALLOW_CIDRS; only this machine can open the till", err)
+			allow = nil
+		}
+		lanWrap = func(h http.Handler) http.Handler { return languard.New(h, allow) }
+	}
 	if authDisabled {
 		log.Warnf("UT_AUTH=off — operator login disabled")
-		return recoverMiddleware(cspWrap(demoWrap(boosted))), dp
+		return recoverMiddleware(cspWrap(lanWrap(demoWrap(boosted)))), dp
 	}
 	// recoverMiddleware wraps auth.Middleware itself (ut-docs#1271), not just
 	// mux, so a panic anywhere in the chain gets a clean response. The CSP
 	// header wrap sits just inside it so login/setup pages, auth redirects
 	// and recovered 500s all carry the header too.
-	return recoverMiddleware(cspWrap(demoWrap(auth.Middleware(boosted, authSvc)))), dp
+	return recoverMiddleware(cspWrap(lanWrap(demoWrap(auth.Middleware(boosted, authSvc))))), dp
 }
 
 // newRederiveSettings builds the shared settings re-derive: everything

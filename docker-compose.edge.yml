@@ -5,6 +5,10 @@ services:
     container_name: unitill-pos
     env_file: 
       - pos.env.dev
+    environment:
+      # The host browser arrives from Docker's bridge, not loopback; without
+      # this the till UI answers 403 (ADR-0157, ut-docs#4261).
+      UT_UI_ALLOW_CIDRS: "172.16.0.0/12"
     ports:
       - "8080:8080"
     volumes:

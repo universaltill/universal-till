@@ -3,6 +3,8 @@ services:
   pos:
     build: ../universal-till
     ports: ["8080:8080"]
+    # Host browser arrives via Docker's bridge (ADR-0157, ut-docs#4261).
+    environment: { UT_UI_ALLOW_CIDRS: "172.16.0.0/12" }
   payments_sdk_demo:
     build: ../addon-sdk-go
     ports: ["7001:7001"]

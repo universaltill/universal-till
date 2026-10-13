@@ -310,7 +310,7 @@ func TestInit_ReturnedDepsIsTheSameInstanceAsyncPrintGoroutinesTrack(t *testing.
 	// completed sale through the real mux, which is what fires
 	// printReceiptAsync/printKitchenAsync from inside pos_api.go's own dp,
 	// not one this test constructed.
-	scanReq := httptest.NewRequest(http.MethodPost, "/api/pos/scan", strings.NewReader("code=NOTAX&qty=1"))
+	scanReq := localRequest(http.MethodPost, "/api/pos/scan", strings.NewReader("code=NOTAX&qty=1"))
 	scanReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	scanRec := httptest.NewRecorder()
 	mux.ServeHTTP(scanRec, scanReq)
@@ -325,7 +325,7 @@ func TestInit_ReturnedDepsIsTheSameInstanceAsyncPrintGoroutinesTrack(t *testing.
 	if total <= 0 {
 		t.Fatalf("expected a positive basket total after scanning NOTAX, got %d", total)
 	}
-	tenderReq := httptest.NewRequest(http.MethodPost, "/api/pos/tender", strings.NewReader(
+	tenderReq := localRequest(http.MethodPost, "/api/pos/tender", strings.NewReader(
 		fmt.Sprintf(`{"payments":[{"method":"cash","amount":%d}]}`, total)))
 	tenderReq.Header.Set("Content-Type", "application/json")
 	tenderRec := httptest.NewRecorder()
