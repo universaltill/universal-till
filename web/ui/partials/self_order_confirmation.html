@@ -22,15 +22,15 @@
   {{ end }}
   {{ if .TrackingQR }}
   <!-- Order-tracking QR (ut-docs#527): scanning opens /o/{token} on the
-       customer's phone. Only rendered when the till has a LAN-dialable
-       address to bake into the URL; TrackingQR is a data:image/png URI
+       customer's phone. Only rendered when a cloud tracking link exists — never
+       the till's own LAN address (ut-docs#4260, #4238); TrackingQR is a data:image/png URI
        (template.URL — html/template filters data: from plain strings). The
        URL is repeated as text for phones that can't scan. -->
   <div class="order-confirmation-tracking">
     <img src="{{ .TrackingQR }}" alt="" width="200" height="200" />
     <p class="muted">{{ T "selforder.confirm.qr_caption" }}</p>
     <!-- Independent review, ut-docs#527: no CSS rule existed for this class
-         anywhere — a long LAN URL + 32-hex token has no guaranteed break
+         anywhere — a long tracking URL + 32-hex token has no guaranteed break
          opportunity otherwise. Scoped inline since this partial has no
          stylesheet of its own (matches receipt.html's own layout-only
          <style> convention, just smaller). -->

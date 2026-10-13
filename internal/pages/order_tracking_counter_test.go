@@ -37,7 +37,7 @@ func heldPayloadSnapshot(t *testing.T, h *counterHeldHarness) pos.BasketSnapshot
 	return snap
 }
 
-func TestCounterCheckout_ShopPlanShowsTrackingQRAndParksToken(t *testing.T) {
+func TestCounterCheckout_ShopPlanParksTokenWithoutLANQR(t *testing.T) {
 	h := newCounterHeldHarness(t)
 	seedTrackingPlan(t, h.dp, entitlement.PlanShop)
 
@@ -50,11 +50,10 @@ func TestCounterCheckout_ShopPlanShowsTrackingQRAndParksToken(t *testing.T) {
 	if !strings.Contains(h.onlyHeld().Payload, `"tracking_token":"`+snap.TrackingToken+`"`) {
 		t.Fatalf("payload JSON must carry tracking_token: %s", h.onlyHeld().Payload)
 	}
-	if !strings.Contains(body, "data:image/png;base64,") {
-		t.Fatalf("counter confirmation should embed the tracking QR: %s", body)
-	}
-	if !strings.Contains(body, "http://example.com/o/"+snap.TrackingToken+"?lang=en") {
-		t.Fatalf("counter confirmation should show the tracking URL for %s: %s", snap.TrackingToken, body)
+	// ut-docs#4260: no tracking QR until the cloud page exists (#4238),
+	// and never a link to the till itself.
+	if strings.Contains(body, "data:image/png;base64,") || strings.Contains(body, "/o/") {
+		t.Fatalf("counter confirmation must not show a tracking QR or link yet: %s", body)
 	}
 	// Still no sale: the token waits in the held order.
 	var n int

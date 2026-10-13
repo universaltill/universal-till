@@ -135,7 +135,7 @@ func orderTrackingOffered(ctx context.Context, d *common.Deps) bool {
 // orderTrackingOffered). Best-effort by contract: the sale is ALREADY
 // COMMITTED when this runs, so any failure here returns empty views and the
 // confirmation simply renders without a QR (see orderTrackingQRForToken).
-// The token is still minted before the host check, so the sale keeps one
+// The token is still minted before the link check, so the sale keeps one
 // stable token for any later surface.
 func orderTrackingQRView(r *http.Request, repo *data.POSRepo, receiptNo, locale string) (qrDataURI template.URL, trackingURL string) {
 	token, err := repo.EnsureOrderTrackingToken(r.Context(), receiptNo)
@@ -145,34 +145,47 @@ func orderTrackingQRView(r *http.Request, repo *data.POSRepo, receiptNo, locale 
 		logging.L().Warnf("order tracking: no tracking QR for sale %s: token: %v", receiptNo, err)
 		return "", ""
 	}
-	return orderTrackingQRForToken(r, token, locale)
+	return orderTrackingQRForToken(token, locale)
 }
 
-// orderTrackingQRForToken builds the /o/{token} link and its QR for an
+// orderTrackingCloudBase is the base URL of the customer tracking page a
+// tracking link opens. Order tracking is cloud-only (Shop and up): a link
+// must never point at the till itself — a customer's phone is not on the
+// shop network, and the link would hand every customer the till's own
+// address (ut-docs#4260). The cloud page does not exist yet (#4238), so
+// there is no base and no surface offers a tracking QR; #4238 returns the
+// cloud page's URL here.
+func orderTrackingCloudBase() string { return "" }
+
+// orderTrackingLinksAvailable reports whether a tracking link can be built
+// at all — the receipt designer greys its tracking box out while it can't.
+func orderTrackingLinksAvailable() bool { return orderTrackingCloudBase() != "" }
+
+// orderTrackingLink is the one place a customer tracking link is built:
+// the cloud page for token, with locale baked in (?lang=) so the phone
+// opens it in the language the order was placed in. ok is false while
+// there is no cloud page (orderTrackingCloudBase).
+func orderTrackingLink(token, locale string) (link string, ok bool) {
+	base := orderTrackingCloudBase()
+	if base == "" || token == "" {
+		return "", false
+	}
+	return strings.TrimSuffix(base, "/") + "/o/" + token + "?lang=" + url.QueryEscape(locale), true
+}
+
+// orderTrackingQRForToken builds the tracking link and its QR for an
 // already-minted token — shared by the pay-at-kiosk path (a sale's token)
 // and the pay-at-counter path (a held order's token, ut-docs#4206).
-// Best-effort: it must never fail or delay checkout (offline-first: a QR a
-// phone couldn't reach anyway is not worth an error screen). Any failure —
-// no advertisable host (kiosk browser dialling 127.0.0.1 on a box with no
-// LAN address, see advertisableHost's ut-docs#362 story) or a QR-encode
-// error — logs a warning (never the token) and returns empty views. The QR
-// still links to this till on the shop network. qrDataURI is a
+// Best-effort: it must never fail or delay checkout (offline-first). No
+// link (no cloud page yet, ut-docs#4260) or a QR-encode error returns empty
+// views and the screen renders without a QR. qrDataURI is a
 // data:image/png URI, typed template.URL because html/template's URL filter
 // rejects data: from a plain string.
-func orderTrackingQRForToken(r *http.Request, token, locale string) (qrDataURI template.URL, trackingURL string) {
-	host, err := advertisableHost(r.Host)
-	if err != nil {
-		logging.L().Warnf("order tracking: no tracking QR: no address another device can reach: %v", err)
+func orderTrackingQRForToken(token, locale string) (qrDataURI template.URL, trackingURL string) {
+	u, ok := orderTrackingLink(token, locale)
+	if !ok {
 		return "", ""
 	}
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	// ?lang= bakes the kiosk's locale into the link, so the phone opens the
-	// page in the language the customer just ordered in (ResolveLocale's
-	// query-param branch — zero extra code on the page side).
-	u := scheme + "://" + host + "/o/" + token + "?lang=" + url.QueryEscape(locale)
 	png, err := qrcode.Encode(u, qrcode.Medium, 200)
 	if err != nil {
 		logging.L().Warnf("order tracking: no tracking QR: encode: %v", err)
@@ -209,27 +222,25 @@ func receiptTrackingQROffered(ctx context.Context, d *common.Deps, saleType, sal
 
 // receiptTrackingPrint builds the printed receipt's tracking block for a
 // sale that passed receiptTrackingQROffered: the sale's (idempotently
-// minted) token, its /o/{token} link on this till's LAN address, that link
-// as a GS v 0 raster, and the caption in the shop locale (English when the
-// printer charset can't encode the translation — kitchenTicketText's
-// rule). A print has no request, so the host is mainTillLANAddress, not
-// advertisableHost. Best-effort by contract: any failure (no LAN address,
-// token error, encode error) logs a warning — never the token, it is the
-// customer's capability — and returns empty values, so the receipt prints
-// without the QR. The token is minted before the address check, so the
-// sale keeps one stable token for any later surface or reprint.
+// minted) token, its tracking link (orderTrackingLink — never this till's
+// own address, ut-docs#4260), that link as a GS v 0 raster, and the caption
+// in the shop locale (English when the printer charset can't encode the
+// translation — kitchenTicketText's rule). Best-effort by contract: any
+// failure (token error, no link yet, encode error) returns empty values, so
+// the receipt prints without the QR; it logs a warning but never the token,
+// which is the customer's capability. The token is minted before the link
+// check, so the sale keeps one stable token for any later surface or
+// reprint.
 func receiptTrackingPrint(ctx context.Context, d *common.Deps, receiptNo, locale, charset string) (qr []byte, caption, trackingURL string) {
 	token, err := data.NewPOSRepo(d.Db).EnsureOrderTrackingToken(ctx, receiptNo)
 	if err != nil || token == "" {
 		logging.L().Warnf("order tracking: no tracking QR on printed receipt %s: token: %v", receiptNo, err)
 		return nil, "", ""
 	}
-	host, ok := mainTillLANAddress(d)
+	u, ok := orderTrackingLink(token, locale)
 	if !ok {
-		logging.L().Warnf("order tracking: no tracking QR on printed receipt %s: this till has no LAN address", receiptNo)
 		return nil, "", ""
 	}
-	u := "http://" + host + "/o/" + token + "?lang=" + url.QueryEscape(locale)
 	png, err := qrcode.Encode(u, qrcode.Medium, 240)
 	if err != nil {
 		logging.L().Warnf("order tracking: no tracking QR on printed receipt %s: encode: %v", receiptNo, err)
@@ -255,8 +266,8 @@ type receiptTrackingView struct {
 
 // receiptTrackingScreenView is the on-screen counterpart of
 // receiptTrackingPrint, for the cashier's post-tender receipt: gate, then
-// orderTrackingQRView (same idempotent token, host from the request like
-// the kiosk confirmation). nil when the gate fails or the QR could not be
+// orderTrackingQRView (same idempotent token and link as the kiosk
+// confirmation). nil when the gate fails or the QR could not be
 // built — the receipt renders without it.
 func receiptTrackingScreenView(r *http.Request, d *common.Deps, receiptNo, saleType, locale string, rd receiptDesign) *receiptTrackingView {
 	if !receiptTrackingQROffered(r.Context(), d, saleType, "completed", rd) {

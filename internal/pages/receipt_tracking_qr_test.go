@@ -2,16 +2,10 @@ package pages
 
 import (
 	"context"
-	"encoding/base64"
-	"errors"
-	stdhtml "html"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
-
-	qrcode "github.com/skip2/go-qrcode"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/entitlement"
@@ -121,37 +115,25 @@ func newTrackingPrintDeps(t *testing.T) *common.Deps {
 	return dp
 }
 
-func TestBuildReceiptDoc_TrackingQROnCounterSale(t *testing.T) {
+// ut-docs#4260: order tracking is cloud-only. Until the cloud tracking page
+// exists (#4238) no receipt carries a tracking link — even on a Shop till
+// with a LAN address the old QR pointed at. The gate still passes, so the
+// sale keeps its (idempotent) token for #4238 to use.
+func TestBuildReceiptDoc_NoTrackingLinkUntilCloudPage(t *testing.T) {
 	dp := newTrackingPrintDeps(t)
 	seedReceiptSale(t, dp, "sale1", "R001", "sale", "", 120, 0, 0)
-	ctx := context.Background()
-
-	doc, err := buildReceiptDoc(ctx, dp, "R001")
+	doc, err := buildReceiptDoc(context.Background(), dp, "R001")
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok := saleTrackingToken(t, dp, "R001")
-	if len(tok) != 32 {
-		t.Fatalf("printing the receipt must mint the sale's tracking token, got %q", tok)
+	if len(doc.TrackingQR) != 0 || doc.TrackingURL != "" || doc.TrackingCaption != "" {
+		t.Fatalf("no receipt may carry a tracking link before the cloud page exists, got url=%q caption=%q qr=%d bytes", doc.TrackingURL, doc.TrackingCaption, len(doc.TrackingQR))
 	}
-	wantURL := "http://192.168.1.20:8080/o/" + tok + "?lang=" + url.QueryEscape(httpx.DefaultLocale())
-	if doc.TrackingURL != wantURL {
-		t.Fatalf("TrackingURL = %q, want %q", doc.TrackingURL, wantURL)
+	if strings.Contains(print.RenderText(doc), "192.168.1.20") {
+		t.Fatal("the printed receipt must never carry the till's LAN address")
 	}
-	if len(doc.TrackingQR) == 0 {
-		t.Fatal("expected a tracking QR raster on the printed receipt")
-	}
-	if doc.TrackingCaption != httpx.T(httpx.DefaultLocale(), "receipt.tracking.caption") || doc.TrackingCaption == "receipt.tracking.caption" {
-		t.Fatalf("TrackingCaption = %q, want the translated receipt.tracking.caption", doc.TrackingCaption)
-	}
-
-	// A reprint gets the SAME token — never a second link for one order.
-	again, err := buildReceiptDoc(ctx, dp, "R001")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if again.TrackingURL != wantURL || saleTrackingToken(t, dp, "R001") != tok {
-		t.Fatalf("reprint changed the tracking link: %q (token %q)", again.TrackingURL, saleTrackingToken(t, dp, "R001"))
+	if len(doc.Lines) != 1 {
+		t.Fatalf("receipt body missing: %+v", doc.Lines)
 	}
 }
 
@@ -192,23 +174,6 @@ func TestBuildReceiptDoc_NoTrackingQRWhenGateFails(t *testing.T) {
 	}
 }
 
-// No LAN address: the receipt still prints, just without the QR.
-func TestBuildReceiptDoc_NoLANAddressPrintsWithoutQR(t *testing.T) {
-	dp := newTrackingPrintDeps(t)
-	stubLANIP(t, "", errors.New("no lan"))
-	seedReceiptSale(t, dp, "sale1", "R001", "sale", "", 120, 0, 0)
-	doc, err := buildReceiptDoc(context.Background(), dp, "R001")
-	if err != nil {
-		t.Fatalf("a missing LAN address must never fail the receipt: %v", err)
-	}
-	if len(doc.TrackingQR) != 0 || doc.TrackingURL != "" {
-		t.Fatalf("expected no tracking block without a LAN address, got %q", doc.TrackingURL)
-	}
-	if len(doc.Lines) != 1 {
-		t.Fatalf("receipt body missing: %+v", doc.Lines)
-	}
-}
-
 // The caption falls back to English when the printer charset cannot encode
 // the shop locale's translation (kitchenTicketText's rule).
 func TestReceiptTrackingCaption_FallsBackToEnglishOnRestrictedCharset(t *testing.T) {
@@ -236,33 +201,30 @@ func TestDesignFromForm_ShowTrackingQR(t *testing.T) {
 	}
 }
 
-// The designer's sample ticket shows a fixed sample link (deterministic for
-// docs-shots) under the caption when the box is ticked, and nothing when not.
-func TestSampleReceiptDoc_TrackingQR(t *testing.T) {
+// ut-docs#4260: until the cloud tracking page exists (#4238) the designer
+// preview shows no tracking block, ticked or not, and saving the designer
+// leaves the stored choice alone (the box is disabled, so it never posts).
+func TestSampleReceiptDoc_NoTrackingQRUntilCloudPage(t *testing.T) {
 	doc := sampleReceiptDoc("My Shop", receiptDesign{ShowTrackingQR: true}, "en")
 	txt := print.RenderText(doc)
-	if !strings.Contains(txt, httpx.T("en", "receipt.tracking.caption")) || !strings.Contains(txt, sampleTrackingURL) {
-		t.Fatalf("designer preview must show the sample tracking block:\n%s", txt)
-	}
-	if len(doc.TrackingQR) == 0 {
-		t.Fatal("the designer's test print must carry a sample QR raster")
-	}
-	txt = print.RenderText(sampleReceiptDoc("My Shop", receiptDesign{}, "en"))
-	if strings.Contains(txt, sampleTrackingURL) {
-		t.Fatal("unticked: no tracking block in the preview")
+	if strings.Contains(txt, httpx.T("en", "receipt.tracking.caption")) || len(doc.TrackingQR) != 0 || doc.TrackingURL != "" {
+		t.Fatalf("designer preview must not show a tracking block yet:\n%s", txt)
 	}
 }
 
-func TestReceiptDesignerSave_WritesShowTrackingQR(t *testing.T) {
+func TestReceiptDesignerSave_KeepsShowTrackingQR(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newReceiptDesignerTestDeps(t)
 	for _, c := range []struct {
-		form string
-		want string
+		stored string
+		form   string
 	}{
-		{"show_tracking_qr=on", "true"},
-		{"footer=x", "false"},
+		{"true", "footer=x"},
+		{"false", "show_tracking_qr=on"},
 	} {
+		if err := dp.Settings.Set(context.Background(), keyReceiptShowTrackingQR, c.stored); err != nil {
+			t.Fatal(err)
+		}
 		req := httptest.NewRequest(http.MethodPost, "/api/receipt-designer/save", strings.NewReader(c.form))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
@@ -270,8 +232,8 @@ func TestReceiptDesignerSave_WritesShowTrackingQR(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("save = %d %q", rec.Code, rec.Body.String())
 		}
-		if got := mustSetting(t, dp, keyReceiptShowTrackingQR); got != c.want {
-			t.Fatalf("%s = %q, want %q", keyReceiptShowTrackingQR, got, c.want)
+		if got := mustSetting(t, dp, keyReceiptShowTrackingQR); got != c.stored {
+			t.Fatalf("%s = %q after saving %q, want it kept at %q", keyReceiptShowTrackingQR, got, c.form, c.stored)
 		}
 	}
 }
@@ -300,9 +262,10 @@ func TestRenderReceipt_TrackingQRBlock(t *testing.T) {
 	}
 }
 
-// End to end through the cashier tender: a Shop till's on-screen receipt
-// shows the QR for the sale's token; a Local till shows none and mints none.
-func TestTender_OnScreenReceiptTrackingQR(t *testing.T) {
+// End to end through the cashier tender: a Shop till mints the sale's token
+// but shows no QR until the cloud page exists (ut-docs#4260); a Local till
+// shows none and mints none.
+func TestTender_OnScreenReceiptHasNoLANTrackingQR(t *testing.T) {
 	for _, shop := range []bool{true, false} {
 		t.Run(map[bool]string{true: "shop", false: "local"}[shop], func(t *testing.T) {
 			chdirRoot(t)
@@ -347,16 +310,10 @@ func TestTender_OnScreenReceiptTrackingQR(t *testing.T) {
 			}
 			body := rec.Body.String()
 			if shop {
-				if tok == nil || !strings.Contains(body, `data-testid="receipt-tracking-qr"`) {
-					t.Fatalf("Shop till: expected a tracking QR block and a minted token (%v):\n%s", tok, body)
-				}
-				// The embedded QR encodes exactly this sale's link.
-				png, err := qrcode.Encode("http://192.168.1.20:8080/o/"+*tok+"?lang=en", qrcode.Medium, 200)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if !strings.Contains(stdhtml.UnescapeString(body), base64.StdEncoding.EncodeToString(png)) {
-					t.Fatalf("on-screen QR does not encode /o/%s:\n%s", *tok, body)
+				// ut-docs#4260: the gate passes (token minted) but there is
+				// no cloud page yet, so no QR and never the till's address.
+				if tok == nil || strings.Contains(body, `data-testid="receipt-tracking-qr"`) || strings.Contains(body, "192.168.1.20") {
+					t.Fatalf("Shop till: expected a minted token (%v) and no tracking QR:\n%s", tok, body)
 				}
 				return
 			}
@@ -364,5 +321,29 @@ func TestTender_OnScreenReceiptTrackingQR(t *testing.T) {
 				t.Fatalf("Local till must neither mint a token (%v) nor show a tracking QR:\n%s", tok, body)
 			}
 		})
+	}
+}
+
+// ut-docs#4260: the designer page greys the tracking box out (disabled, so
+// it never posts) and says why, until the cloud tracking page exists.
+func TestReceiptDesignerPage_TrackingBoxDisabledWithNote(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newReceiptDesignerTestDeps(t)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/receipt-designer", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /receipt-designer = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	i := strings.Index(body, `name="show_tracking_qr"`)
+	if i < 0 {
+		t.Fatal("designer must still show the tracking box")
+	}
+	tag := body[i : i+strings.Index(body[i:], ">")]
+	if !strings.Contains(tag, "disabled") || !strings.Contains(tag, `aria-describedby="rd-tracking-note"`) {
+		t.Fatalf("tracking box must be disabled and point at its note: %s", tag)
+	}
+	if !strings.Contains(body, `id="rd-tracking-note"`) || !strings.Contains(body, httpx.T("en", "designer.receipt.tracking_qr_needs_cloud")) {
+		t.Fatal("designer must explain why the tracking box is disabled")
 	}
 }

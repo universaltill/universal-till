@@ -215,3 +215,17 @@ func TestOrderTracking_ReachableWithoutSession(t *testing.T) {
 		t.Fatalf("control: /orders without a session should redirect to login, got %d", rec.Code)
 	}
 }
+
+// ut-docs#4260: a tracking link is never built on the till's own host — the
+// customer's phone is not on the shop network, and the link would hand every
+// customer the till's address. Until the cloud page exists (#4238) there is
+// no link at all, whatever host the kiosk browser used.
+func TestOrderTrackingQRForToken_NeverLinksToTheTill(t *testing.T) {
+	if orderTrackingLinksAvailable() {
+		t.Fatal("no tracking link may be offered before the cloud tracking page exists (#4238)")
+	}
+	qr, u := orderTrackingQRForToken("0123456789abcdef0123456789abcdef", "en")
+	if qr != "" || u != "" {
+		t.Fatalf("orderTrackingQRForToken = (%q, %q), want no QR and no link", qr, u)
+	}
+}
