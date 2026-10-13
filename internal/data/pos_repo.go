@@ -4461,6 +4461,48 @@ func (r *POSRepo) RenameRegister(ctx context.Context, id, newName string) error 
 	return nil
 }
 
+// RenameRegisterToFollowTill gives register id the name newName, so a
+// register keeps its till's name when the till is renamed (ut-docs#4022).
+// Best-effort by design: a name another register already holds is left
+// alone (renamed=false, no error) — the till rename itself must never fail
+// over its register — and so is an unknown id or an unchanged name.
+func (r *POSRepo) RenameRegisterToFollowTill(ctx context.Context, id, newName string) (bool, error) {
+	res, err := r.db.ExecContext(ctx, `
+UPDATE registers SET name = ?
+WHERE id = ? AND name IS NOT ?
+  AND NOT EXISTS (SELECT 1 FROM registers other WHERE other.name = ? AND other.id <> ?)`,
+		newName, id, newName, newName, id)
+	if err != nil {
+		return false, fmt.Errorf("rename register to follow till: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("rename register to follow till: %w", err)
+	}
+	return n > 0, nil
+}
+
+// EnrolledRegisterID returns the register enrolment created for a joined
+// till (ut-docs#894), as its till_enrolled audit row records it, or "" when
+// there is none (an enrolment from before #894, or a failed auto-provision).
+// The main till keeps no other till→register link; ut-docs#4022 uses this so
+// a joined till's rename renames exactly that register, never one that
+// merely shares the till's old name (enrolment may have suffixed it).
+func (r *POSRepo) EnrolledRegisterID(ctx context.Context, tillID string) (string, error) {
+	var id sql.NullString
+	err := r.db.QueryRowContext(ctx, `
+SELECT json_extract(data_json, '$.register_id') FROM audit_log
+WHERE entity_type = 'till' AND entity_id = ? AND action = 'till_enrolled'
+ORDER BY created_at DESC, rowid DESC LIMIT 1`, tillID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("enrolled register id: %w", err)
+	}
+	return id.String, nil
+}
+
 // SetRegisterLocation changes a register's assigned stock location (nil
 // clears it back to unassigned) -- ut-docs#895: a register's location was
 // previously fixed at creation time, so a mis-assignment had no fix short of
@@ -7287,7 +7329,15 @@ func (r *POSRepo) EnsurePaymentMethod(ctx context.Context, id string) error {
 	return err
 }
 
+// fallbackRegisterName names a seeded register only when neither the till
+// nor the shop has a name yet (ut-docs#4022).
+const fallbackRegisterName = "Default Register"
+
 // EnsureRegister returns an existing register or creates a default one.
+// The default is named after the till (till.name), else the shop
+// (store.name), so the Registers page shows a name the shop recognises
+// rather than a stock "Default Register" (ut-docs#4022); a name another
+// register (an inactive one) already holds gets a " (2)"… suffix.
 func (r *POSRepo) EnsureRegister(ctx context.Context) (string, error) {
 	var id string
 	err := r.db.QueryRowContext(ctx, `SELECT id FROM registers WHERE is_active = 1 ORDER BY id LIMIT 1`).Scan(&id)
@@ -7297,11 +7347,48 @@ func (r *POSRepo) EnsureRegister(ctx context.Context) (string, error) {
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}
-	id = "reg-default"
-	if _, err := r.db.ExecContext(ctx, `INSERT INTO registers (id, name, is_active) VALUES (?, ?, 1)`, id, "Default Register"); err != nil {
+	base, err := r.seedRegisterName(ctx)
+	if err != nil {
 		return "", err
 	}
-	return id, nil
+	id = "reg-default"
+	const maxAttempts = 50
+	for i := 1; i <= maxAttempts; i++ {
+		name := base
+		if i > 1 {
+			name = fmt.Sprintf("%s (%d)", base, i)
+		}
+		_, err = r.db.ExecContext(ctx, `INSERT INTO registers (id, name, is_active) VALUES (?, ?, 1)`, id, name)
+		if err == nil {
+			return id, nil
+		}
+		if !isUniqueViolation(err) || !strings.Contains(err.Error(), "registers.name") {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("ensure register: %d name candidates for %q all taken", maxAttempts, base)
+}
+
+// seededStoreName is the store.name 001_init.sql seeds before setup runs —
+// a placeholder, never a name to copy onto a register. (data cannot import
+// config.IsPlaceholderStoreName: config depends on data.)
+const seededStoreName = "My Store"
+
+// seedRegisterName is the name EnsureRegister gives a new default register:
+// the till's own name, else the shop's (unless still the seeded
+// placeholder), else fallbackRegisterName.
+func (r *POSRepo) seedRegisterName(ctx context.Context) (string, error) {
+	for _, key := range []string{"till.name", "store.name"} {
+		var v string
+		err := r.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&v)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("seed register name: %w", err)
+		}
+		if v = strings.TrimSpace(v); v != "" && !strings.EqualFold(v, seededStoreName) {
+			return v, nil
+		}
+	}
+	return fallbackRegisterName, nil
 }
 
 // EnsureUser returns a default cashier user if none exists.

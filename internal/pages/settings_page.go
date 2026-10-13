@@ -2951,6 +2951,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			}
 			settingsAudit(r, posRepo, elev, "settings", key, "till_name_changed",
 				map[string]any{"name": name, "key": key})
+			if key == "till.name" {
+				renameOwnRegisterAfterTill(r.Context(), d, name)
+			}
 		}
 		settingsRespondSaved(w, r, elev)
 	})

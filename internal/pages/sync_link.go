@@ -39,6 +39,7 @@ func newSyncLinkHub(d *common.Deps, cfg fleetlink.Config, adminRepo *data.SyncAd
 	pluginsRepo := data.NewSyncPluginsRepo(d.Db)
 	stockRepo := data.NewSyncStockRepo(data.NewPOSRepo(d.Db))
 	tills := data.NewTillsRepo(d.Db)
+	registers := data.NewPOSRepo(d.Db)
 	var unusableNames sync.Map // till id → the unusable name last warned about
 	return fleetlink.NewHub(fleetlink.HubOptions{
 		Config: cfg,
@@ -76,7 +77,7 @@ func newSyncLinkHub(d *common.Deps, cfg fleetlink.Config, adminRepo *data.SyncAd
 			}
 		},
 		OnReport: func(tillID string, r fleetlink.Report) {
-			applyReportedTillName(tills, &unusableNames, tillID, r.Name)
+			applyReportedTillName(tills, registers, &unusableNames, tillID, r.Name)
 		},
 	})
 }
@@ -90,7 +91,12 @@ func newSyncLinkHub(d *common.Deps, cfg fleetlink.Config, adminRepo *data.SyncAd
 // till is really called, as the cloud does.
 // An unusable name is warned about once per till and name, not on every
 // periodic report (unusableNames).
-func applyReportedTillName(tills *data.TillsRepo, unusableNames *sync.Map, tillID, reported string) {
+// The register enrolment created for the till (CreateRegisterForEnrolment,
+// recorded on its till_enrolled audit row) follows the rename
+// (ut-docs#4022), unless another register already has the name. It is found
+// by id, never by the till's old name: enrolment may have suffixed it
+// ("Bar (2)"), and a manager's own "Bar" must not be renamed instead.
+func applyReportedTillName(tills *data.TillsRepo, registers *data.POSRepo, unusableNames *sync.Map, tillID, reported string) {
 	if strings.TrimSpace(reported) == "" {
 		return
 	}
@@ -109,8 +115,17 @@ func applyReportedTillName(tills *data.TillsRepo, unusableNames *sync.Map, tillI
 		logging.L().Warnf("sync link: rename till %s: %v", tillID, err)
 		return
 	}
-	if changed {
-		logging.L().Infof("sync link: till %s now reports the name %q", tillID, name)
+	if !changed {
+		return
+	}
+	logging.L().Infof("sync link: till %s now reports the name %q", tillID, name)
+	regID, err := registers.EnrolledRegisterID(ctx, tillID)
+	if err != nil {
+		logging.L().Warnf("sync link: find register of till %s: %v", tillID, err)
+		return
+	}
+	if regID != "" {
+		renameRegisterAfterTill(ctx, registers, regID, name)
 	}
 }
 

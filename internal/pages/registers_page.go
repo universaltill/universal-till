@@ -128,7 +128,11 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 		for _, l := range locs {
 			activeLoc[l.ID] = true
 		}
+		// ut-docs#4022: active registers first, inactive ones grouped
+		// under them (leftovers from retired or unpaired tills), each group
+		// keeping ListRegistersForAdmin's name order.
 		views := make([]registerView, 0, len(regs))
+		inactiveViews := make([]registerView, 0)
 		for _, reg := range regs {
 			v := registerView{RegisterAdmin: reg, LocationOptions: locs}
 			if reg.LocationID != nil {
@@ -146,13 +150,18 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			v.InUse = inUse
-			views = append(views, v)
+			if reg.IsActive {
+				views = append(views, v)
+			} else {
+				inactiveViews = append(inactiveViews, v)
+			}
 		}
 		registersData := map[string]any{
 			"title":          httpx.T(httpx.RequestLocale(r), "page.title.registers"),
 			"theme":          d.CurrentState().Theme,
 			"menuItems":      d.MenuSnapshot(),
 			"registers":      views,
+			"inactive":       inactiveViews,
 			"stockLocations": locs,
 			"errKey":         errKey,
 		}

@@ -22,7 +22,7 @@
      "dialogID"       "register-dialog") }}
 
 <div class="card list-card">
-  {{ if not .registers }}
+  {{ if and (not .registers) (not .inactive) }}
   <p class="muted">{{ T "registers.empty" }}</p>
   {{ else }}
   <div class="list-scroll">
@@ -36,28 +36,21 @@
       </tr>
     </thead>
     <tbody>
-      {{ range .registers }}
-      <tr class="register-row" data-id="{{ .ID }}"
-          data-record-open="register-dialog"
-          data-record-action="/api/registers/{{ .ID }}"
-          data-record-destructive-action="/api/registers/{{ .ID }}/active"
-          data-field-name="{{ .Name }}"
-          data-field-location_id="{{ .LocationValue }}"
-          data-field-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
-        <td>{{ .Name }}</td>
-        <td>{{ if .LocationName }}{{ .LocationName }}{{ else }}<span class="muted">{{ T "registers.new.location_none" }}</span>{{ end }}</td>
-        <td>
-          {{ if .IsActive }}{{ T "registers.active" }}{{ else }}<span class="muted">{{ T "registers.inactive" }}</span>{{ end }}
-          {{ if .InUse }}<br /><span class="muted">{{ T "registers.in_use_hint" }}</span>{{ end }}
-        </td>
-        <td class="list-actions">
-          <button type="button" class="btn secondary btn-icon" data-record-edit
-                  aria-label="{{ T "common.edit" }}" title="{{ T "common.edit" }}">
-            <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
-          </button>
-        </td>
+      {{ range .registers }}{{ template "register_row" . }}{{ end }}
+    </tbody>
+    {{/* ut-docs#4022: inactive registers (retired or unpaired tills)
+         grouped under the active ones instead of mixed in by name. Still
+         rows of the same table, so search and reactivation work as
+         before. */}}
+    {{ if .inactive }}
+    <tbody class="registers-inactive">
+      <tr>
+        <td colspan="4" class="muted">{{ T "registers.inactive" }} ({{ len .inactive }})</td>
       </tr>
-      {{ end }}
+      {{ range .inactive }}{{ template "register_row" . }}{{ end }}
+    </tbody>
+    {{ end }}
+    <tbody>
       <tr id="registers-no-results" class="list-empty-row" hidden>
         <td colspan="4">{{ T "common.no_results" }}</td>
       </tr>
@@ -118,4 +111,28 @@
   <input type="hidden" name="active" value="1" />
   <button type="submit" class="btn secondary">{{ T "registers.activate" }}</button>
 </form>
+{{ end }}
+
+{{/* One register row; shared by the active and inactive groups. */}}
+{{ define "register_row" }}
+<tr class="register-row" data-id="{{ .ID }}"
+    data-record-open="register-dialog"
+    data-record-action="/api/registers/{{ .ID }}"
+    data-record-destructive-action="/api/registers/{{ .ID }}/active"
+    data-field-name="{{ .Name }}"
+    data-field-location_id="{{ .LocationValue }}"
+    data-field-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
+  <td>{{ if .IsActive }}{{ .Name }}{{ else }}<span class="muted">{{ .Name }}</span>{{ end }}</td>
+  <td>{{ if .LocationName }}{{ .LocationName }}{{ else }}<span class="muted">{{ T "registers.new.location_none" }}</span>{{ end }}</td>
+  <td>
+    {{ if .IsActive }}{{ T "registers.active" }}{{ else }}<span class="muted">{{ T "registers.inactive" }}</span>{{ end }}
+    {{ if .InUse }}<br /><span class="muted">{{ T "registers.in_use_hint" }}</span>{{ end }}
+  </td>
+  <td class="list-actions">
+    <button type="button" class="btn secondary btn-icon" data-record-edit
+            aria-label="{{ T "common.edit" }}" title="{{ T "common.edit" }}">
+      <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
+    </button>
+  </td>
+</tr>
 {{ end }}
