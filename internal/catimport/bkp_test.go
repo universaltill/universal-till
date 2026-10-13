@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	_ "modernc.org/sqlite"
 )
 
@@ -248,6 +249,40 @@ func TestParseBkp_OrderToggleExcluded(t *testing.T) {
 	}
 	if res.Items[0].Issue != IssueNotSellable {
 		t.Errorf("Issue = %q, want %q", res.Items[0].Issue, IssueNotSellable)
+	}
+}
+
+// TestParseBkp_VoucherProductBecomesGiftVoucherItem (ut-docs#4225): the old
+// till's ProductType=2 voucher product (pilot: SKU 30004 "Gutscheine", €0,
+// 0% VAT) imports as an item of type gift_voucher, not a €0 product; an
+// ordinary ProductType=1 row stays standard.
+func TestParseBkp_VoucherProductBecomesGiftVoucherItem(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "30004", ProductTextShort: "Gutscheine", SalesPrice: 0, ProductGroupText: "Gutscheine", Status: 1, ProductType: 2, TaxPercentage: 0.0},
+		{ProductNumber: "10234", ProductTextShort: "Espresso", SalesPrice: 2.90, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
+		// A NULL price on a voucher row is accepted as 0 (value asked at sale).
+		{ProductNumber: "30005", ProductTextShort: "Gutschein frei", SalesPrice: nil, ProductGroupText: "Gutscheine", Status: 1, ProductType: 2},
+	})
+	zipBytes := buildBkpZip(t, map[string][]byte{
+		"backup.db": dbBytes,
+		"meta.inf":  []byte(validMetaInfNoChecksums),
+	})
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	if len(res.Items) != 3 {
+		t.Fatalf("items = %d, want 3", len(res.Items))
+	}
+	if blank := res.Items[2]; blank.ItemType != catalogtypes.ItemTypeGiftVoucher || blank.Issue != "" || blank.PriceMinor != 0 {
+		t.Errorf("NULL-price voucher row = type %q issue %q price %d, want gift_voucher, no issue, 0", blank.ItemType, blank.Issue, blank.PriceMinor)
+	}
+	gv, std := res.Items[0], res.Items[1]
+	if gv.ItemType != catalogtypes.ItemTypeGiftVoucher || gv.Issue != "" || gv.PriceMinor != 0 || gv.SKU != "30004" {
+		t.Errorf("voucher row = type %q issue %q price %d sku %q, want gift_voucher, no issue, 0, 30004", gv.ItemType, gv.Issue, gv.PriceMinor, gv.SKU)
+	}
+	if std.ItemType != catalogtypes.ItemTypeStandard {
+		t.Errorf("ProductType=1 row type = %q, want standard", std.ItemType)
 	}
 }
 
