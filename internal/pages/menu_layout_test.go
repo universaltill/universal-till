@@ -53,7 +53,8 @@ var goldenManagerTiles = []string{
 	"/designer", "/shifts", "/journal", "/orders", "/reports", "/settings", "/plugins", "/items",
 	"/open-orders",
 	"/help",
-	"/users", "/kitchen-stations", "/bluetooth-devices", "/tables", "/report-issue", "/admin",
+	// ut-docs#4251: /vouchers (Order 2150, settings-gated) right after /users.
+	"/users", "/vouchers", "/kitchen-stations", "/bluetooth-devices", "/tables", "/report-issue", "/admin",
 }
 
 func TestMenuPage_GoldenZeroPluginTileOrder(t *testing.T) {

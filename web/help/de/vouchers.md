@@ -5,6 +5,7 @@ section: Täglicher Verkauf
 order: 25
 summary: Verkaufen Sie Gutscheine über einen Gutschein-Artikel — Karte scannen oder die Kasse eine Nummer erzeugen lassen — und nehmen Sie sie als Zahlung an, per Scan im Verkaufsbildschirm oder im Reiter „Aufteilen“ des Zahlungsfeldes.
 keywords: [gutschein, geschenkgutschein, geschenkkarte, voucher, einzweck, bestimmter artikel, einlösen, guthaben, ausgeben, code, kartennummer, artikeltyp]
+routes: [/vouchers, /vouchers/{id}]
 ---
 
 # Gutscheine
@@ -70,6 +71,20 @@ Was schiefgehen kann:
 - Ein Gutschein-Artikel ohne Steuercode wird mit dem Standardsatz des Ladens versteuert — setzen Sie zuerst den richtigen Steuercode am Artikel.
 - Das Tippen auf **Einlösen** bei einem bereits eingelösten Gutschein, oder das Scannen eines Gutscheins für einen bestimmten Artikel im Verkaufsbildschirm, wird mit einer entsprechenden Meldung abgelehnt.
 - Ein an einer anderen Kasse verkaufter Gutschein für einen bestimmten Artikel lässt sich hier prüfen, aber noch nicht einlösen — lösen Sie ihn an der Hauptkasse oder an der Kasse ein, die ihn verkauft hat.
+
+## Die Seite Geschenkgutscheine
+
+**Menü → Geschenkgutscheine** (nur Manager) listet jeden Gutschein, den diese Kasse kennt, den neuesten zuerst: Kartennummer, für wen er ist, ursprünglicher Wert, Restguthaben, Status — **Aktiv**, **Aufgebraucht** oder **Storniert** — und wofür er eingelöst werden kann (ein Gutschein für einen bestimmten Artikel ist markiert). **Verkauft in** verlinkt den Bon des Verkaufs, in dem er verkauft wurde; bei einem importierten Guthaben steht das stattdessen dort.
+
+1. Tippen Sie in das Feld **Suchen**, um einen Gutschein nach Kartennummer oder Inhaber zu finden — die Liste aktualisiert sich beim Tippen. Mit **Status** zeigen Sie nur aktive, aufgebrauchte oder stornierte Gutscheine.
+2. Tippen Sie auf eine Kartennummer, um den **Verlauf** des Gutscheins zu sehen: wann er ausgestellt und wann er jeweils eingelöst wurde, mit Betrag und einem Link zum Bon jedes Verkaufs.
+3. **CSV exportieren** lädt jeden Gutschein herunter, der zur aktuellen Suche und zum Status passt — alle, nicht nur die auf dem Bildschirm — mit den Spalten `code`, `balance`, `label`, `original_amount`, `status`, `purpose` und `created_at`. Die Datei lässt sich an einer anderen Kasse mit **Gutschein-Guthaben importieren** unten auf derselben Seite einlesen (siehe [Gutschein-Guthaben importieren](/help/voucher-import)).
+
+Gut zu wissen:
+
+- Die Seite zeigt die neuesten 200 Gutscheine. Gibt es mehr, steht das dort — suchen oder filtern Sie, um ältere zu finden.
+- Gibt es noch keine Gutscheine, sagt die Seite, wie Sie beginnen: einen mit einem Gutschein-Artikel verkaufen oder Guthaben aus Ihrem bisherigen System importieren.
+- An einer zusätzlichen Kasse zeigt die Liste nur die Gutscheine, die diese Kasse kennt — hier verkauft, importiert oder eingelöst. Die vollständige Liste ist an der Hauptkasse.
 
 ## Tagesabschluss und andere Kassen
 

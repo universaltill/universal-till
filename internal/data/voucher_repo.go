@@ -865,3 +865,135 @@ GROUP BY vt.type, (vt.sale_id IS NULL)`, args...)
 	}
 	return out, nil
 }
+
+// VoucherFilter narrows ListVouchers (the Gift vouchers page, ut-docs#4251).
+// Query is a case-insensitive substring of the voucher number or the
+// holder label (LIKE wildcards in it match themselves). Status is "" (all)
+// or one of active / redeemed / void — anything else is refused rather
+// than silently widened to "all". Limit <= 0 means unbounded (the CSV
+// export); the page passes a bound.
+type VoucherFilter struct {
+	Query  string
+	Status string
+	Limit  int
+}
+
+// VoucherListRow is one vouchers row plus the receipt number of the sale
+// that issued it — empty when there is no issuing sale (an imported
+// opening balance) or that sale is no longer in `sales` (archived by a
+// transaction-history reset; issued_sale_id is a soft reference, see this
+// file's header), so the page links /journal/{receipt} only when one exists.
+type VoucherListRow struct {
+	Voucher
+	IssuedReceiptNo string `json:"issued_receipt_no"`
+}
+
+// VoucherHistoryRow is one voucher_transactions row plus the receipt number
+// of its sale (empty for an imported opening balance or an archived sale).
+type VoucherHistoryRow struct {
+	VoucherTransaction
+	ReceiptNo string `json:"receipt_no"`
+}
+
+// likeContains escapes LIKE's own wildcards (and the escape character) so an
+// operator-typed term matches itself — same discipline as
+// SettingsRepo.GetByPrefix — and wraps it for a substring match.
+func likeContains(term string) string {
+	return "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(term) + "%"
+}
+
+// ListVouchers lists vouchers newest first (created_at, then insertion
+// order) for the Gift vouchers page and its CSV export (ut-docs#4251).
+// Read-only. SQLite's LIKE is case-insensitive for ASCII letters, which is
+// what the search box promises for voucher numbers.
+func (r *POSRepo) ListVouchers(ctx context.Context, f VoucherFilter) ([]VoucherListRow, error) {
+	where := []string{"1=1"}
+	var args []any
+	switch f.Status {
+	case "":
+	case "active", "redeemed", "void":
+		where = append(where, "v.status = ?")
+		args = append(args, f.Status)
+	default:
+		return nil, fmt.Errorf("list vouchers: unknown status %q", f.Status)
+	}
+	if q := strings.TrimSpace(f.Query); q != "" {
+		where = append(where, `(v.id LIKE ? ESCAPE '\' OR COALESCE(v.holder_label, '') LIKE ? ESCAPE '\')`)
+		pat := likeContains(q)
+		args = append(args, pat, pat)
+	}
+	query := `
+SELECT v.id, v.holder_label, v.original_amount, v.balance, v.currency, v.voucher_type, v.purpose,
+       v.issue_vat_rate_bp, v.status, v.issued_sale_id, v.created_at, COALESCE(s.receipt_no, '')
+FROM vouchers v
+LEFT JOIN sales s ON s.id = v.issued_sale_id
+WHERE ` + strings.Join(where, " AND ") + `
+ORDER BY v.created_at DESC, v.rowid DESC`
+	if f.Limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, f.Limit)
+	}
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list vouchers: %w", err)
+	}
+	defer rows.Close()
+	var out []VoucherListRow
+	for rows.Next() {
+		var row VoucherListRow
+		var holder, issuedSale sql.NullString
+		var rate sql.NullInt64
+		if err := rows.Scan(&row.ID, &holder, &row.OriginalAmountMinor, &row.BalanceMinor, &row.Currency, &row.VoucherType,
+			&row.Purpose, &rate, &row.Status, &issuedSale, &row.CreatedAt, &row.IssuedReceiptNo); err != nil {
+			return nil, fmt.Errorf("list vouchers: scan: %w", err)
+		}
+		row.HolderLabel = holder.String
+		row.IssuedSaleID = issuedSale.String
+		if rate.Valid {
+			bp := int(rate.Int64)
+			row.IssueVATRateBP = &bp
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list vouchers: %w", err)
+	}
+	return out, nil
+}
+
+// VoucherTransactions returns one voucher's issue/redemption history in time
+// order (created_at, then insertion order) for the voucher detail page
+// (ut-docs#4251). ErrVoucherNotFound when no such voucher exists, so the
+// page can tell "unknown number" from "no history yet".
+func (r *POSRepo) VoucherTransactions(ctx context.Context, voucherID string) ([]VoucherHistoryRow, error) {
+	var exists int
+	err := r.db.QueryRowContext(ctx, `SELECT 1 FROM vouchers WHERE id = ?`, voucherID).Scan(&exists)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("voucher %q: %w", voucherID, ErrVoucherNotFound)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("voucher transactions: %w", err)
+	}
+	rows, err := r.db.QueryContext(ctx, `
+SELECT vt.id, vt.voucher_id, COALESCE(vt.sale_id, ''), vt.type, vt.amount, vt.created_at, COALESCE(s.receipt_no, '')
+FROM voucher_transactions vt
+LEFT JOIN sales s ON s.id = vt.sale_id
+WHERE vt.voucher_id = ?
+ORDER BY vt.created_at, vt.rowid`, voucherID)
+	if err != nil {
+		return nil, fmt.Errorf("voucher transactions: %w", err)
+	}
+	defer rows.Close()
+	var out []VoucherHistoryRow
+	for rows.Next() {
+		var h VoucherHistoryRow
+		if err := rows.Scan(&h.ID, &h.VoucherID, &h.SaleID, &h.Type, &h.AmountMinor, &h.CreatedAt, &h.ReceiptNo); err != nil {
+			return nil, fmt.Errorf("voucher transactions: scan: %w", err)
+		}
+		out = append(out, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("voucher transactions: %w", err)
+	}
+	return out, nil
+}

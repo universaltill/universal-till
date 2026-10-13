@@ -76,25 +76,16 @@ const voucherImportIssueCodeExists = "code_exists"
 // when what actually happened is a read failure.
 const voucherImportIssueCheckFailed = "check_failed"
 
-// registerVoucherImport mounts GET /settings/vouchers/import (the page) and
-// POST /api/vouchers/import (preview + commit) — ut-docs#1834.
+// voucherImportedEvent is the htmx event a successful commit fires
+// (HX-Trigger); vouchers.html's list reloads on it (ut-docs#4251).
+const voucherImportedEvent = "vouchers-imported"
+
+// registerVoucherImport mounts POST /api/vouchers/import (preview + commit)
+// — ut-docs#1834. The upload form lives on the Gift vouchers page
+// (vouchers_page.go, GET /vouchers — ut-docs#4251 moved it there from its
+// old Settings sub-page).
 func registerVoucherImport(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
-
-	mux.HandleFunc("GET /settings/vouchers/import", func(w http.ResponseWriter, r *http.Request) {
-		// "settings" — same gate settings_page.go's own sub-pages use, NOT
-		// "import_export" (the catalog-import permission): this is a
-		// distinct capability from importing the product catalog.
-		if !canPerform(d, r, "settings") {
-			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
-			return
-		}
-		httpx.Render("ui/pages/voucher_import.html", map[string]any{
-			"title":     httpx.T(httpx.RequestLocale(r), "page.title.import_voucher_balances"),
-			"theme":     d.CurrentState().Theme,
-			"menuItems": d.MenuSnapshot(),
-		})(w, r)
-	})
 
 	mux.HandleFunc("POST /api/vouchers/import", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
@@ -345,6 +336,10 @@ func renderVoucherImportResult(w http.ResponseWriter, locale string, T func(stri
 	level, role := "success", "status"
 	if imported == 0 {
 		level, role = "error", "alert"
+	} else {
+		// ut-docs#4251: the Gift vouchers page's list listens for this
+		// event and reloads, so the new vouchers show without a refresh.
+		w.Header().Set("HX-Trigger", voucherImportedEvent)
 	}
 	summary := fmt.Sprintf(T("vouchers_import.result_summary"), imported, httpx.FormatMoney(importedTotalMinor, locale))
 	fmt.Fprintf(&b, `<div class="pos-notice %s" role="%s"><span class="notice-text">%s</span></div>`, level, role, htmlEscape(summary))
@@ -386,6 +381,10 @@ func translateVoucherBalanceIssue(T func(string) string, reason string) string {
 		return T("vouchers_import.status.non_positive_balance")
 	case catimport.VoucherBalanceIssueDuplicateCodeInFile:
 		return T("vouchers_import.status.duplicate_code_in_file")
+	case catimport.VoucherBalanceIssueSinglePurpose:
+		return T("vouchers_import.status.single_purpose")
+	case catimport.VoucherBalanceIssueNotActive:
+		return T("vouchers_import.status.not_active")
 	case voucherImportIssueCodeExists:
 		return T("vouchers_import.status.code_exists")
 	case voucherImportIssueCheckFailed:

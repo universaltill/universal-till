@@ -14,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/settings"
 )
 
 // Opening voucher-balance CSV import (ut-docs#1834). Test harness mirrors
@@ -32,9 +33,11 @@ func newVoucherImportTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, role) VALUES ('m1', 'm1', 'Manager', 'manager')`); err != nil {
 		t.Fatalf("seed test manager: %v", err)
 	}
-	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(db)}
+	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(db), Settings: settings.NewStore(db)}
 	mux := http.NewServeMux()
 	registerVoucherImport(mux, d)
+	// ut-docs#4251: the import form now lives on the Gift vouchers page.
+	registerVouchers(mux, d)
 	return mux, d
 }
 
@@ -88,7 +91,7 @@ func TestVoucherImportPage_Forbidden(t *testing.T) {
 	cashier := auth.User{ID: "c1", Role: "cashier", DisplayName: "Cash"}
 
 	// GET the page, unauthenticated.
-	req := httptest.NewRequest(http.MethodGet, "/settings/vouchers/import", nil)
+	req := httptest.NewRequest(http.MethodGet, "/vouchers", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
@@ -96,7 +99,7 @@ func TestVoucherImportPage_Forbidden(t *testing.T) {
 	}
 
 	// GET the page, cashier session.
-	req = auth.WithUser(httptest.NewRequest(http.MethodGet, "/settings/vouchers/import", nil), cashier)
+	req = auth.WithUser(httptest.NewRequest(http.MethodGet, "/vouchers", nil), cashier)
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
@@ -131,7 +134,7 @@ func TestVoucherImportPage_ManagerGetsPageOK(t *testing.T) {
 	mux, _ := newVoucherImportTestMux(t)
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
 
-	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/settings/vouchers/import", nil), manager)
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/vouchers", nil), manager)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -437,5 +440,23 @@ func TestVoucherImportPage_PreviewExcludesAlreadyExistingCodes(t *testing.T) {
 	}
 	if _, err := repo.GetVoucherBalance(t.Context(), nil, "GS-FRESH"); !errors.Is(err, data.ErrVoucherNotFound) {
 		t.Fatalf("preview must write nothing: GetVoucherBalance(GS-FRESH) err = %v, want ErrVoucherNotFound", err)
+	}
+}
+
+// ut-docs#4251 (tester finding 3): a commit that created vouchers fires the
+// event the Gift vouchers list reloads on; one that created none doesn't.
+func TestVoucherImportPage_CommitFiresListRefreshEvent(t *testing.T) {
+	mux, _ := newVoucherImportTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	body, ct := voucherImportMultipart(t, voucherImportCSV, map[string]string{"commit": "1"})
+	rec := postVoucherImport(mux, body, ct, &manager)
+	if got := rec.Header().Get("HX-Trigger"); got != "vouchers-imported" {
+		t.Fatalf("first commit HX-Trigger = %q, want vouchers-imported", got)
+	}
+	body2, ct2 := voucherImportMultipart(t, voucherImportCSV, map[string]string{"commit": "1"})
+	rec2 := postVoucherImport(mux, body2, ct2, &manager)
+	if got := rec2.Header().Get("HX-Trigger"); got != "" {
+		t.Fatalf("re-commit (nothing imported) HX-Trigger = %q, want none", got)
 	}
 }

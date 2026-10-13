@@ -156,3 +156,75 @@ func TestParseVoucherBalances_MissingHeader_ReturnsSentinelError(t *testing.T) {
 		t.Fatalf("expected ErrNoCodeColumn, got %v", err)
 	}
 }
+
+// ut-docs#4251: a single-purpose voucher's VAT was declared when it was
+// sold, so re-importing it (always as a multi-purpose opening balance)
+// would tax it a second time at redemption — the row is refused with its
+// own reason. Any other purpose value (or none) imports as before.
+func TestParseVoucherBalances_RefusesSinglePurposeRows(t *testing.T) {
+	in := "code,balance,label,original_amount,status,purpose,created_at\n" +
+		"GS-1,25.00,Alice,25.00,active,multi_purpose,2026-10-01T10:00:00Z\n" +
+		"GS-2,10.00,Bob,10.00,active,single_purpose,2026-10-02T10:00:00Z\n" +
+		"GS-3,5.00,,5.00,active,,2026-10-03T10:00:00Z\n" +
+		"GS-4,7.00,,7.00,active, Single-Purpose ,2026-10-03T10:00:00Z\n"
+	res, err := catimport.ParseVoucherBalances(strings.NewReader(in), 2)
+	if err != nil {
+		t.Fatalf("ParseVoucherBalances: %v", err)
+	}
+	if len(res.Items) != 2 || res.Items[0].Code != "GS-1" || res.Items[0].BalanceMinor != 2500 || res.Items[1].Code != "GS-3" {
+		t.Fatalf("items = %+v", res.Items)
+	}
+	if len(res.Issues) != 2 {
+		t.Fatalf("issues = %+v", res.Issues)
+	}
+	for i, code := range []string{"GS-2", "GS-4"} {
+		if res.Issues[i].Code != code || res.Issues[i].Reason != catimport.VoucherBalanceIssueSinglePurpose {
+			t.Fatalf("issue %d = %+v, want %s refused as %s", i, res.Issues[i], code, catimport.VoucherBalanceIssueSinglePurpose)
+		}
+	}
+}
+
+// The export's own header (balance before original_amount) must keep
+// "balance" bound to the current balance, never the original value.
+func TestParseVoucherBalances_ExportHeaderBindsBalanceNotOriginal(t *testing.T) {
+	in := "code,balance,label,original_amount,status,purpose,created_at\n" +
+		"GS-9,3.50,'=Eve,25.00,active,multi_purpose,2026-10-01T10:00:00Z\n"
+	res, err := catimport.ParseVoucherBalances(strings.NewReader(in), 2)
+	if err != nil {
+		t.Fatalf("ParseVoucherBalances: %v", err)
+	}
+	if len(res.Items) != 1 || res.Items[0].BalanceMinor != 350 || res.Items[0].HolderLabel != "=Eve" {
+		t.Fatalf("items = %+v issues = %+v", res.Items, res.Issues)
+	}
+}
+
+// A full export also carries used-up and void vouchers (balance 0.00). The
+// import reports them with their own reason, not as a bad balance
+// (ut-docs#4251 review finding 1).
+func TestParseVoucherBalances_RefusesNotActiveRowsWithOwnReason(t *testing.T) {
+	in := "code,balance,label,original_amount,status,purpose,created_at\n" +
+		"GS-1,25.00,Alice,25.00,active,multi_purpose,2026-10-01T10:00:00Z\n" +
+		"GS-2,0.00,Bob,10.00,redeemed,multi_purpose,2026-10-02T10:00:00Z\n" +
+		"GS-3,0.00,,5.00, Void ,multi_purpose,2026-10-03T10:00:00Z\n" +
+		"GS-4,0.00,,5.00,active,multi_purpose,2026-10-03T10:00:00Z\n"
+	res, err := catimport.ParseVoucherBalances(strings.NewReader(in), 2)
+	if err != nil {
+		t.Fatalf("ParseVoucherBalances: %v", err)
+	}
+	if len(res.Items) != 1 || res.Items[0].Code != "GS-1" {
+		t.Fatalf("items = %+v", res.Items)
+	}
+	want := []struct{ code, reason string }{
+		{"GS-2", catimport.VoucherBalanceIssueNotActive},
+		{"GS-3", catimport.VoucherBalanceIssueNotActive},
+		{"GS-4", catimport.VoucherBalanceIssueZeroOrNegBalance},
+	}
+	if len(res.Issues) != len(want) {
+		t.Fatalf("issues = %+v", res.Issues)
+	}
+	for i, w := range want {
+		if res.Issues[i].Code != w.code || res.Issues[i].Reason != w.reason {
+			t.Fatalf("issue %d = %+v, want %s as %s", i, res.Issues[i], w.code, w.reason)
+		}
+	}
+}

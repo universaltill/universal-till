@@ -268,6 +268,10 @@ var CoreMenu = []Entry{
 	{Key: "/open-orders", Href: "/open-orders", LabelKey: "open_orders.title", Icon: "monitor", Order: 1900},
 	{Key: "/help", Href: "/help", LabelKey: "nav.help", Icon: "help", Order: 2000},
 	{Key: "/users", Href: "/users", LabelKey: "users.title", Icon: "users", Order: 2100, VisibleIf: "settings"},
+	// ut-docs#4251: every gift voucher, its history, CSV export and the
+	// opening-balance import (moved here from Settings > Data management).
+	// Same "settings" gate as the page itself (vouchers_page.go).
+	{Key: "/vouchers", Href: "/vouchers", LabelKey: "vouchers.title", Icon: "gift", Order: 2150, VisibleIf: "settings"},
 	{Key: "/kitchen-stations", Href: "/kitchen-stations", LabelKey: "kitchenstations.title", Icon: "chef-hat", Order: 2200, VisibleIf: "settings"},
 	// bluetoothdevices.title, not a separate nav.bluetooth_devices key — it
 	// duplicated the exact same string across all locales with nothing to

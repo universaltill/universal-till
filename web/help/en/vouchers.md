@@ -4,7 +4,8 @@ title: Gift vouchers
 section: Everyday selling
 order: 25
 summary: Sell gift vouchers by tapping a Gift voucher item — scan the card or let the till create a number — and take them as payment by scanning them at the sale screen or in the payment panel's Split tab.
-keywords: [voucher, gift voucher, gift card, gutschein, hediye çeki, einzweck, single-purpose, specific item, redeem, balance, issue, code, card number, item type]
+keywords: [voucher, gift voucher, gift card, gutschein, hediye çeki, einzweck, single-purpose, specific item, redeem, balance, issue, code, card number, item type, list, history, export, csv]
+routes: [/vouchers, /vouchers/{id}]
 ---
 
 # Gift vouchers
@@ -70,6 +71,20 @@ What can go wrong:
 - A gift voucher item with no tax code is taxed at the shop's standard rate — set the right tax code on the item first.
 - Tapping **Redeem** on a voucher that has already been used, or scanning a specific-item voucher at the sale screen, is refused with a message saying so.
 - A specific-item voucher sold on another till can be checked from this one but not yet redeemed here — redeem it on the main till or on the till that sold it.
+
+## The Gift vouchers page
+
+**Menu → Gift vouchers** (manager only) lists every voucher this till knows about, newest first: its card number, who it is for, its original value, what is left on it, its status — **Active**, **Used up** or **Void** — and what it can be spent on (a specific-item voucher is marked). **Sold in** links to the receipt of the sale that sold it; an imported balance says so instead.
+
+1. Type in the **Search** box to find a voucher by card number or holder — the list updates as you type. Use **Status** to show only active, used-up or void vouchers.
+2. Tap a card number to see the voucher's **History**: when it was issued and every time it was redeemed, with the amount and a link to each sale's receipt.
+3. **Export CSV** downloads every voucher matching the current search and status — all of them, not just the ones on screen — with the columns `code`, `balance`, `label`, `original_amount`, `status`, `purpose` and `created_at`. The file can be imported on another till with **Import voucher balances** at the bottom of the same page (see [Import voucher balances](/help/voucher-import)).
+
+Good to know:
+
+- The page shows the newest 200 vouchers. When there are more it says so — search or filter to find older ones.
+- With no vouchers yet, the page tells you how to start: sell one with a Gift voucher item, or import balances from your previous system.
+- On an additional till, the list shows only the vouchers this till has seen — sold, imported or redeemed here. The full list is on the main till.
 
 ## Day-end reports and other tills
 

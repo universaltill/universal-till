@@ -512,6 +512,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerReportArchiveAPI(mux, dp) // ADR-0040 card 1: report retention mode + archive export
 	registerImport(mux, dp)
 	registerVoucherImport(mux, dp) // opening voucher-balance CSV import (ut-docs#1834)
+	registerVouchers(mux, dp)      // Gift vouchers page: list/history/export + the import form (ut-docs#4251)
 	registerReceiptDesigner(mux, dp)
 	registerPluginSettings(mux, dp)
 	registerTaxCodes(mux, dp) // ut-docs#259: tax-code management UI
