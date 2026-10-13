@@ -5,6 +5,7 @@ section: Günlük satış
 order: 25
 summary: Hediye çeklerini bir Hediye çeki ürününe dokunarak satın — kartı okutun ya da kasanın numara oluşturmasına izin verin — ve satış ekranında okutarak ya da ödeme panelinin Böl sekmesinde ödeme olarak alın.
 keywords: [hediye çeki, hediye kartı, gutschein, belirli ürün, kullanma, bakiye, düzenleme, kod, kart numarası, ürün türü]
+routes: [/vouchers, /vouchers/{id}]
 ---
 
 # Hediye çekleri
@@ -70,6 +71,20 @@ Neler ters gidebilir:
 - Vergi kodu olmayan bir hediye çeki ürünü, dükkânın standart oranıyla vergilendirilir — önce ürüne doğru vergi kodunu verin.
 - Zaten kullanılmış bir hediye çekinde **Kullan**'a dokunmak ya da satış ekranında belirli bir ürün için hediye çekini taratmak, bunu belirten bir mesajla reddedilir.
 - Başka bir kasada satılan belirli bir ürün için hediye çeki bu kasadan kontrol edilebilir ama henüz burada kullanılamaz — onu ana kasada ya da satan kasada kullanın.
+
+## Hediye çekleri sayfası
+
+**Menü → Hediye çekleri** (yalnızca yönetici), bu kasanın bildiği her hediye çekini en yenisi önce listeler: kart numarası, kimin için olduğu, ilk değeri, üzerinde kalan tutar, durumu — **Etkin**, **Tamamen kullanıldı** veya **İptal** — ve neye harcanabileceği (belirli bir ürün için olan çek işaretlenir). **Satıldığı fiş**, çeki satan satışın fişine bağlantı verir; içe aktarılan bir bakiyede bunun yerine bu yazar.
+
+1. Bir çeki kart numarasına veya sahibine göre bulmak için **Ara** kutusuna yazın — liste siz yazarken güncellenir. Yalnızca etkin, tamamen kullanılmış veya iptal edilmiş çekleri göstermek için **Durum**'u kullanın.
+2. Çekin **Geçmiş**ini görmek için bir kart numarasına dokunun: ne zaman düzenlendiği ve her kullanıldığı an, tutarı ve her satışın fişine bağlantısıyla.
+3. **CSV dışa aktar**, geçerli arama ve durumla eşleşen her çeki indirir — yalnızca ekrandakileri değil, hepsini — `code`, `balance`, `label`, `original_amount`, `status`, `purpose` ve `created_at` sütunlarıyla. Dosya başka bir kasada aynı sayfanın altındaki **Kupon bakiyelerini içe aktar** ile içe aktarılabilir (bkz. [Kupon bakiyelerini içe aktar](/help/voucher-import)).
+
+Bilmekte fayda var:
+
+- Sayfa en yeni 200 çeki gösterir. Daha fazlası varsa bunu belirtir — daha eskileri bulmak için arayın veya filtreleyin.
+- Henüz hiç çek yoksa sayfa nasıl başlayacağınızı söyler: bir Hediye çeki ürünüyle satın veya önceki sisteminizden bakiyeleri içe aktarın.
+- Ek bir kasada liste yalnızca bu kasanın gördüğü çekleri gösterir — burada satılan, içe aktarılan veya kullanılan. Tam liste ana kasadadır.
 
 ## Gün sonu raporları ve diğer kasalar
 

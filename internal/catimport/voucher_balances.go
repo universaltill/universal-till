@@ -7,8 +7,9 @@ package catimport
 // (ut-docs#1008) as an opening balance, not a sale. Same header-detected,
 // synonym-tolerant CSV convention as the rest of this package (see
 // catimport.go's package doc and headerIndex), deliberately much simpler:
-// two required columns (code, balance) plus one optional one (a holder
-// label), no format auto-detection, no barcode/stock/tax machinery at all.
+// two required columns (code, balance) plus two optional ones (a holder
+// label, and a purpose — ut-docs#4251 — used only to refuse single-purpose
+// rows), no format auto-detection, no barcode/stock/tax machinery at all.
 // Pure parsing, no DB — the pages layer (internal/pages/import_vouchers_page.go)
 // previews and commits, same split as catimport.go's own header comment
 // describes for the catalog importer.
@@ -57,7 +58,7 @@ type VoucherBalanceResult struct {
 
 // VoucherBalanceIssue* reason codes. A row failing multiple checks reports
 // the most specific single reason, in this fixed priority order
-// (missing_code, then bad_balance, then non_positive_balance, then — only
+// (missing_code, then single_purpose, then bad_balance, then non_positive_balance, then — only
 // for rows that otherwise parsed cleanly — duplicate_code_in_file): this is
 // a much simpler two-column format than the catalog importer, so
 // ut-docs#1713's combined-reason machinery (IssueMissingNameAndBadPrice)
@@ -87,12 +88,57 @@ const (
 	// occurrence imports: both are reported, and the operator fixes the
 	// source file and re-uploads, same as any other rejected row.
 	VoucherBalanceIssueDuplicateCodeInFile = "duplicate_code_in_file"
+	// VoucherBalanceIssueSinglePurpose (ut-docs#4251): the row's optional
+	// purpose column says single_purpose — a voucher sold for a specific
+	// item, whose VAT was already declared by the sale that issued it
+	// (ut-docs#1037). This import only ever creates multi-purpose opening
+	// balances, which are taxed again when spent, so importing such a row
+	// would tax the same money twice. Refused outright; the Gift vouchers
+	// page's own CSV export writes this column, so exporting from one till
+	// and importing on another can never silently convert one. Checked
+	// right after missing_code (the row is wrong in kind, whatever its
+	// balance says).
+	VoucherBalanceIssueSinglePurpose = "single_purpose"
+	// VoucherBalanceIssueNotActive (ut-docs#4251 review): the row's optional
+	// status column says the voucher is used up ("redeemed") or "void". A
+	// full export from the Gift vouchers page carries those with a 0.00
+	// balance; they are reported as having nothing left to import rather
+	// than as a bad balance. Checked right after single_purpose.
+	VoucherBalanceIssueNotActive = "not_active"
 )
+
+// voucherPurposeSingle is the exported purpose value this file refuses —
+// the same string as data.VoucherPurposeSingle (this package touches no DB
+// and does not import internal/data; see the package doc).
+const voucherPurposeSingle = "single_purpose"
+
+// isSinglePurposeValue normalises a purpose cell ("Single-Purpose",
+// " single purpose ") before comparing, so a hand-edited export is still
+// recognised.
+func isSinglePurposeValue(v string) bool {
+	v = strings.ToLower(strings.TrimSpace(v))
+	v = strings.NewReplacer("-", "_", " ", "_").Replace(v)
+	return v == voucherPurposeSingle
+}
+
+// isNotActiveStatusValue reports whether a status cell names a voucher with
+// nothing left to import: the exported "redeemed" (used up) or "void". An
+// empty or "active" cell, or a column that isn't there, is not refused.
+func isNotActiveStatusValue(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "redeemed", "void":
+		return true
+	}
+	return false
+}
 
 var voucherBalanceColumnSynonyms = map[string][]string{
 	"code":    {"code", "voucher code", "voucher id", "voucher_id", "id", "card code", "card number", "gutschein", "gutscheincode"},
 	"balance": {"balance", "amount", "remaining", "remaining balance", "value", "outstanding"},
 	"label":   {"label", "holder", "holder_label", "holder label", "customer", "name"},
+	// ut-docs#4251: optional; written by the Gift vouchers page's export.
+	"purpose": {"purpose", "voucher purpose", "voucher_purpose"},
+	"status":  {"status", "voucher status", "voucher_status"},
 }
 
 // voucherBalanceHeaderIndex is this file's own header-matching pass — a
@@ -171,6 +217,14 @@ func ParseVoucherBalances(r io.Reader, decimals int) (VoucherBalanceResult, erro
 		code := stripCSVDefuse(get(rec, "code"))
 		if code == "" {
 			res.Issues = append(res.Issues, VoucherBalanceRowIssue{RowNum: rowNum, Code: code, Reason: VoucherBalanceIssueMissingCode})
+			continue
+		}
+		if isSinglePurposeValue(get(rec, "purpose")) {
+			res.Issues = append(res.Issues, VoucherBalanceRowIssue{RowNum: rowNum, Code: code, Reason: VoucherBalanceIssueSinglePurpose})
+			continue
+		}
+		if isNotActiveStatusValue(get(rec, "status")) {
+			res.Issues = append(res.Issues, VoucherBalanceRowIssue{RowNum: rowNum, Code: code, Reason: VoucherBalanceIssueNotActive})
 			continue
 		}
 		balanceRaw := get(rec, "balance")

@@ -1,0 +1,48 @@
+{{ define "content" }}
+{{ $v := .voucher }}
+<div class="page-head">
+  <h1>{{ T "vouchers.detail.title" }} {{ $v.ID }} {{ helpLink "vouchers" }}</h1>
+  <a class="btn secondary" href="/vouchers">{{ T "vouchers.detail.back" }}</a>
+</div>
+
+<div class="card">
+  <dl class="voucher-facts" style="display:grid; grid-template-columns:auto 1fr; gap:.3rem 1rem; margin:0">
+    <dt class="muted">{{ T "vouchers.col.holder" }}</dt><dd style="margin:0">{{ if $v.HolderLabel }}{{ $v.HolderLabel }}{{ else }}—{{ end }}</dd>
+    <dt class="muted">{{ T "vouchers.col.original" }}</dt><dd style="margin:0">{{ money $v.OriginalAmountMinor }}</dd>
+    <dt class="muted">{{ T "vouchers.col.balance" }}</dt><dd style="margin:0">{{ money $v.BalanceMinor }}</dd>
+    <dt class="muted">{{ T "vouchers.col.status" }}</dt><dd style="margin:0">{{ if eq $v.Status "active" }}{{ T "vouchers.status.active" }}{{ else if eq $v.Status "redeemed" }}{{ T "vouchers.status.redeemed" }}{{ else }}{{ T "vouchers.status.void" }}{{ end }}</dd>
+    <dt class="muted">{{ T "pos.gift_voucher.use" }}</dt><dd style="margin:0">{{ if eq $v.Purpose "single_purpose" }}<span class="tag warn">{{ T "pos.gift_voucher.use_specific" }}</span>{{ else }}{{ T "pos.gift_voucher.use_any" }}{{ end }}</dd>
+    <dt class="muted">{{ T "vouchers.col.created" }}</dt><dd style="margin:0">{{ datetime $v.CreatedAt }}</dd>
+  </dl>
+</div>
+
+<div class="card" style="margin-block-start:1rem">
+  <h2>{{ T "vouchers.history.title" }}</h2>
+  {{ if .history }}
+  <div style="overflow-x:auto">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>{{ T "vouchers.history.col.date" }}</th>
+          <th>{{ T "vouchers.history.col.event" }}</th>
+          <th style="text-align:end">{{ T "vouchers.history.col.amount" }}</th>
+          <th>{{ T "vouchers.history.col.sale" }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .history }}
+        <tr>
+          <td>{{ datetime .CreatedAt }}</td>
+          <td>{{ if eq .Type "issue" }}{{ T "vouchers.history.type.issue" }}{{ else }}{{ T "vouchers.history.type.redemption" }}{{ end }}</td>
+          <td style="text-align:end">{{ money .AmountMinor }}</td>
+          <td>{{ if .SaleHref }}<a href="{{ .SaleHref }}">{{ .ReceiptNo }}</a>{{ else if and (eq .Type "issue") (not .SaleID) }}<span class="muted">{{ T "vouchers.imported" }}</span>{{ else if not .SaleID }}—{{ else }}<span class="muted">{{ T "vouchers.sale_not_on_till" }}</span>{{ end }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+  {{ else }}
+  <p class="muted">{{ T "vouchers.history.empty" }}</p>
+  {{ end }}
+</div>
+{{ end }}

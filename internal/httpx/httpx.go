@@ -1593,6 +1593,16 @@ func RenderPartial(tplPath string, data any) http.HandlerFunc {
 // given request gets (mirrors renderHelpPage's original, older version of
 // that same check for /help/{topic}).
 func RenderContentFragment(tplPath string, data any) http.HandlerFunc {
+	return RenderBlock(tplPath, "content", data)
+}
+
+// RenderBlock is RenderContentFragment for any named {{ define }} block of a
+// full page template, not just "content": a page that renders a block
+// inline on first load and re-renders ONLY that block for an htmx swap
+// (ut-docs#4251's Gift vouchers list, refreshed by its search box) keeps
+// one copy of the markup — same no-drift reasoning as RenderContentFragment
+// above, same file set and cache key as Render.
+func RenderBlock(tplPath, block string, data any) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		page := stripWebPrefix(tplPath)
 
@@ -1600,7 +1610,7 @@ func RenderContentFragment(tplPath string, data any) http.HandlerFunc {
 		locale := ResolveLocale(w, r)
 		files := append([]string{renderFiles[0], page}, renderFiles[1:]...)
 		t := template.Must(ClonedTemplate("httpx.Render:"+page, "base.html", withHelpHref(FuncsFor(locale), r), files...))
-		if err := t.ExecuteTemplate(w, "content", data); err != nil {
+		if err := t.ExecuteTemplate(w, block, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}

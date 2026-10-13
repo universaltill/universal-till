@@ -44,6 +44,7 @@ var knownIconNames = map[string]bool{
 	"store":        true, // ut-docs#3090: Settings "My shop" tile
 	"credit-card":  true, // ut-docs#3090: Settings "Payments" tile
 	"hard-drive":   true, // ut-docs#3121: the low-disk status chip
+	"gift":         true, // ut-docs#4251: the Gift vouchers menu tile
 }
 
 // IsKnownIconName reports whether name is in the closed icon-name set.

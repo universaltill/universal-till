@@ -1,0 +1,114 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "vouchers.title" }} {{ helpLink "vouchers" }}</h1>
+</div>
+
+{{ if .SyncPrimary }}
+{{/* ut-docs#4251: an additional till only knows the vouchers it issued,
+     imported or redeemed itself. A status banner, never a modal. */}}
+<div class="sync-banner" role="status">{{ T "vouchers.replica_note" }}
+  {{ if crossdevicelinkactionable }}
+  <a href="{{ .SyncPrimary }}/vouchers" target="_blank" rel="noopener" hx-boost="false">{{ T "sync.banner_open_primary" }}</a>
+  {{ else }}
+  <span>{{ T "sync.banner_open_primary_unavailable" }}</span>
+  {{ end }}
+</div>
+{{ end }}
+
+<div class="card">
+  <p class="muted">{{ T "vouchers.intro" }}</p>
+  {{/* The search box is type="search": osk.js gives it the on-screen
+       keyboard on a touch till like every other admin search field, and
+       Enter submits this form (the htmx request below). */}}
+  <form id="vouchers-filter" role="search" style="display:flex; flex-wrap:wrap; gap:.35rem .8rem; align-items:end"
+        hx-get="/ui/vouchers/list" hx-target="#vouchers-list" hx-swap="outerHTML"
+        hx-trigger="input delay:300ms, change, submit">
+    <label>{{ T "vouchers.search" }}
+      <input type="search" name="q" value="{{ .q }}" autocomplete="off" placeholder="{{ T "vouchers.search_ph" }}" style="inline-size:15rem; max-inline-size:100%">
+    </label>
+    <label>{{ T "vouchers.col.status" }}
+      <select name="status">
+        <option value="" {{ if eq .status "" }}selected{{ end }}>{{ T "vouchers.filter.all" }}</option>
+        <option value="active" {{ if eq .status "active" }}selected{{ end }}>{{ T "vouchers.status.active" }}</option>
+        <option value="redeemed" {{ if eq .status "redeemed" }}selected{{ end }}>{{ T "vouchers.status.redeemed" }}</option>
+        <option value="void" {{ if eq .status "void" }}selected{{ end }}>{{ T "vouchers.status.void" }}</option>
+      </select>
+    </label>
+  </form>
+
+  {{ template "vouchers_list" . }}
+</div>
+
+{{/* ut-docs#4251: the opening-balance import moved here from Settings >
+     Data management. The form is unchanged (POST /api/vouchers/import).
+     enctype="multipart/form-data" even on the confirm step (ut-docs#1834):
+     the handler's first step is r.ParseMultipartForm, which rejects a plain
+     urlencoded body outright. The preview fragment (swapped into
+     #vouchers-import-result) renders its OWN "Confirm import" form carrying
+     the exact uploaded bytes back as a hidden base64 field, so this outer
+     form only ever previews. */}}
+<div class="card" id="vouchers-import" style="margin-block-start:1rem">
+  <h2>{{ T "vouchers_import.title" }} {{ helpLink "voucher-import" }}</h2>
+  <p class="muted">{{ T "vouchers_import.help" }}</p>
+  <form id="vouchers-import-form" hx-post="/api/vouchers/import" hx-target="#vouchers-import-result" hx-swap="innerHTML"
+        enctype="multipart/form-data" hx-indicator="#vouchers-import-busy" hx-disabled-elt="find button[type=submit]">
+    <input type="hidden" name="commit" value="0">
+    <p>
+      <input type="file" name="file" accept=".csv,text/csv" required>
+    </p>
+    <button class="btn primary" type="submit">{{ T "vouchers_import.preview_btn" }}</button>
+  </form>
+  <div id="vouchers-import-busy" class="htmx-indicator" style="margin-block-start:.6rem; font-size:1.05rem; font-weight:600">
+    <span class="animate-spin" aria-hidden="true">⏳</span> {{ T "vouchers_import.busy" }}
+  </div>
+  <div id="vouchers-import-result" style="margin-block-start:.8rem; overflow-x:auto"></div>
+</div>
+{{ end }}
+
+{{ define "vouchers_list" }}
+{{ $l := .list }}
+<div id="vouchers-list" aria-live="polite"
+     hx-get="/ui/vouchers/list" hx-trigger="vouchers-imported from:body" hx-include="#vouchers-filter" hx-swap="outerHTML">
+  <div style="display:flex; flex-wrap:wrap; gap:.35rem .8rem; align-items:center; margin-block:.6rem">
+    <a class="btn secondary" href="{{ $l.exportHref }}" hx-boost="false" download>{{ T "vouchers.export_btn" }}</a>
+    <span class="muted">{{ T "vouchers.export_help" }}</span>
+  </div>
+  {{ if $l.vouchers }}
+  {{ if $l.truncated }}<p class="muted">{{ printf (T "vouchers.limit_note") $l.limit }}</p>{{ end }}
+  <div style="overflow-x:auto">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>{{ T "pos.gift_voucher.number" }}</th>
+          <th>{{ T "vouchers.col.holder" }}</th>
+          <th style="text-align:end">{{ T "vouchers.col.original" }}</th>
+          <th style="text-align:end">{{ T "vouchers.col.balance" }}</th>
+          <th>{{ T "vouchers.col.status" }}</th>
+          <th>{{ T "pos.gift_voucher.use" }}</th>
+          <th>{{ T "vouchers.col.created" }}</th>
+          <th>{{ T "vouchers.col.sale" }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range $l.vouchers }}
+        <tr>
+          <td><a href="{{ .DetailHref }}">{{ .ID }}</a></td>
+          <td>{{ .HolderLabel }}</td>
+          <td style="text-align:end">{{ money .OriginalAmountMinor }}</td>
+          <td style="text-align:end">{{ money .BalanceMinor }}</td>
+          <td>{{ if eq .Status "active" }}{{ T "vouchers.status.active" }}{{ else if eq .Status "redeemed" }}<span class="muted">{{ T "vouchers.status.redeemed" }}</span>{{ else }}<span class="muted">{{ T "vouchers.status.void" }}</span>{{ end }}</td>
+          <td>{{ if eq .Purpose "single_purpose" }}<span class="tag warn" style="white-space:nowrap">{{ T "pos.gift_voucher.use_specific" }}</span>{{ else }}{{ T "pos.gift_voucher.use_any" }}{{ end }}</td>
+          <td>{{ date .CreatedAt }}</td>
+          <td>{{ if .SaleHref }}<a href="{{ .SaleHref }}">{{ .IssuedReceiptNo }}</a>{{ else if .Imported }}<span class="muted">{{ T "vouchers.imported" }}</span>{{ else }}<span class="muted">{{ T "vouchers.sale_not_on_till" }}</span>{{ end }}</td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+  </div>
+  {{ else if $l.filtered }}
+  <p class="muted">{{ T "vouchers.empty_filtered" }}</p>
+  {{ else }}
+  <p class="muted">{{ T "vouchers.empty" }}</p>
+  {{ end }}
+</div>
+{{ end }}
