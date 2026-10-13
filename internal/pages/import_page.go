@@ -1432,6 +1432,10 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					// AC3 (ut-docs#3098): name the SKU the row actually got.
 					createdStatus = fmt.Sprintf(T("import.status.created_generated_sku"), it.SKU)
 				}
+				if it.ItemType == catalogtypes.ItemTypeGiftVoucher {
+					// ut-docs#4225: say the row became a gift voucher, not a €0 product.
+					createdStatus += " (" + T("catalog.item_type.gift_voucher") + ")"
+				}
 				if len(warnings) > 0 {
 					rows[i].Status = createdStatus + "; " + strings.Join(warnings, "; ")
 					rows[i].Warned = true

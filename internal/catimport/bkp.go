@@ -18,6 +18,7 @@ import (
 
 	_ "modernc.org/sqlite" // pure-Go driver: read the extracted backup.db
 
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/stagedupload"
 )
@@ -26,10 +27,13 @@ import (
 // com.pepperm.cashbox, app v4.4.08): Status=3 marks a row deleted in the
 // till's own Products table; ProductType=4 marks the "⚠️ToGo⚠️" order-type
 // toggle buttons, which flip the receipt's VAT mode and are never
-// themselves sellable items.
+// themselves sellable items. ProductType=2 is the till's voucher product
+// (pilot: "Gutscheine", €0, 0% VAT), imported as a gift_voucher item
+// (ut-docs#4225).
 const (
-	bkpStatusDeleted        = 3
-	bkpProductTypeOrderMode = 4
+	bkpStatusDeleted          = 3
+	bkpProductTypeGiftVoucher = 2
+	bkpProductTypeOrderMode   = 4
 )
 
 // ParseBkp/bkp.go's own reason codes (ut-docs#303/#511 pattern): stable,
@@ -322,6 +326,7 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 			SKU:      plu,
 			Name:     name,
 			Category: p.ProductGroupText,
+			ItemType: catalogtypes.ItemTypeStandard,
 			// Barcode is deliberately left empty: the source carries no
 			// barcodes at all, and ProductNumber is a 5-digit PLU, not a
 			// barcode — it must never be run through normalizeBarcode.
@@ -360,7 +365,14 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 		// field. It also means a row missing ONLY its name, with an
 		// otherwise-valid price, now keeps that price instead of discarding
 		// it — same latent bug, same fix.
+		if p.ProductType == bkpProductTypeGiftVoucher {
+			item.ItemType = catalogtypes.ItemTypeGiftVoucher
+		}
 		price, perr := parseBkpSalesPrice(p.SalesPriceRaw, currencyDecimals)
+		if item.ItemType == catalogtypes.ItemTypeGiftVoucher && strings.TrimSpace(p.SalesPriceRaw) == "" {
+			// Same as the CSV path: a gift voucher's value is asked at sale.
+			price, perr = 0, nil
+		}
 		item.PriceMinor = price // 0 on a parse failure; Issue below governs whether the row can commit at all
 		switch {
 		case p.Status == bkpStatusDeleted:
