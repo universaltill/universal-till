@@ -1729,8 +1729,17 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					`<label for="row-sku-%d" style="display:block;margin-block-start:.3rem">%s</label><input type="text" id="row-sku-%d" name="row_sku_%d" form="import-form" value="%s" aria-label="%s" autocomplete="off" spellcheck="false" style="display:block;max-width:12rem">`,
 					row.Idx, htmlEscape(label), row.Idx, row.Idx, htmlEscape(row.GeneratedSKU), htmlEscape(label))
 			}
+			// ut-docs#4262: a gift voucher row (€0.00, no barcode) looks like
+			// a plain free product in the Preview, so tag its type right
+			// after the name. Preview only — the commit result already
+			// appends " (Gift voucher)" to the status. A skipped voucher row
+			// keeps its chip on purpose: its type is still true.
+			nameHTML := htmlEscape(row.Name)
+			if !commit && row.ItemType == catalogtypes.ItemTypeGiftVoucher {
+				nameHTML += ` <span class="tag import-item-type">` + htmlEscape(T("catalog.item_type.gift_voucher")) + `</span>`
+			}
 			fmt.Fprintf(&b, `<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
-				cls, htmlEscape(row.Name), httpx.FormatMoney(row.PriceMinor, locale),
+				cls, nameHTML, httpx.FormatMoney(row.PriceMinor, locale),
 				htmlEscape(row.Barcode), htmlEscape(row.Category), statusHTML)
 		}
 		for _, row := range warnedRows {

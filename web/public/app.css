@@ -4190,6 +4190,8 @@ table.table tr:last-child td, .card table tr:last-child td { border-bottom: none
    left/right, for RTL. */
 tr.row-warn td { background: var(--warning-tint); }
 .row-warn-icon { color: var(--warning); margin-inline-end: .3em; }
+/* Gift-voucher type chip beside a Preview row name (ut-docs#4262). */
+.import-item-type { margin-inline-start: .35rem; white-space: nowrap; }
 /* Block-level warning notice (ut-docs#970 review, F6) — .row-warn above is
    scoped to `tr.row-warn td` only, so a non-table warning block (e.g. the
    catalogue-import currency-confirmation prompt) rendered with just
