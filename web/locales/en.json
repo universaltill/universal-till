@@ -3078,6 +3078,7 @@
   "tour.skip": "Skip tour",
   "tour.status.body": "Shows whether this till is online. Selling never stops when it is offline: sales sync once the connection is back.",
   "tour.status.title": "Connection",
+  "tracking.awaiting_payment": "Waiting for payment at the counter",
   "tracking.disclosure": "This page shows only your order's status — no names, items or payment details.",
   "tracking.not_found": "This tracking link isn't available — it may have expired after the order was completed.",
   "tracking.title": "Order tracking",

@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -1031,6 +1032,8 @@ func TestSelfOrderShop_CheckoutRejectsEmptyBasket(t *testing.T) {
 // loopback-degradation path.
 func TestSelfOrderShop_CheckoutConfirmationCarriesTrackingQR(t *testing.T) {
 	dp, d := setupSelfOrderShopDeps(t)
+	// Order tracking is Shop plan and up (ut-docs#4206).
+	seedTrackingPlan(t, dp, entitlement.PlanShop)
 	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
 	seedStock(t, d, "itm-coffee", 10)
 
@@ -1078,6 +1081,8 @@ func TestSelfOrderShop_CheckoutConfirmationCarriesTrackingQR(t *testing.T) {
 // degrade over a networking detail (offline-first).
 func TestSelfOrderShop_CheckoutSurvivesUnadvertisableHost(t *testing.T) {
 	dp, d := setupSelfOrderShopDeps(t)
+	// Order tracking is Shop plan and up (ut-docs#4206).
+	seedTrackingPlan(t, dp, entitlement.PlanShop)
 	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
 	seedStock(t, d, "itm-coffee", 10)
 

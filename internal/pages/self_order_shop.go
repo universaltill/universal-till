@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"html/template"
 	"math"
 	"net/http"
 	"net/url"
@@ -740,8 +741,13 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		}
 		// Customer order tracking QR (ut-docs#527) — best-effort: the sale
 		// is committed, so a missing QR (no LAN-dialable address, encode
-		// error) renders a plain confirmation, never an error.
-		trackingQR, trackingURL := orderTrackingQRView(r, repo, receiptNo, httpx.ResolveLocale(w, r))
+		// error) renders a plain confirmation, never an error. Shop plan
+		// and up only (ut-docs#4206): on Local no token is minted at all.
+		var trackingQR template.URL
+		var trackingURL string
+		if orderTrackingOffered(r.Context(), d) {
+			trackingQR, trackingURL = orderTrackingQRView(r, repo, receiptNo, httpx.ResolveLocale(w, r))
+		}
 		httpx.RenderPartial("ui/partials/self_order_confirmation.html", map[string]any{
 			"ReceiptNo":   receiptNo,
 			"DisplayNo":   displayNo,
@@ -949,6 +955,19 @@ func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *com
 	dispatchFiscalOrderStart(ctx, d, order.ID, fiscalOrderKindCounter, formFlagTruthy(r.Form.Get("offline")))
 
 	snap.DisplayNo = order.DisplayNo
+	// Customer order tracking (ut-docs#4206), Shop plan and up: the order
+	// is not a sale yet, so its token is minted now and carried IN the held
+	// payload (BasketSnapshot.TrackingToken) -- set before the payload is
+	// marshalled below. /o/{token} finds the parked order through it, and
+	// the tender hands it to the paid sale (completeTender). A token error
+	// only costs the QR, never the order.
+	if orderTrackingOffered(ctx, d) {
+		if tok, terr := data.NewOrderTrackingToken(); terr != nil {
+			logging.L().Warnf("self-order counter checkout: no tracking QR for order %s: token: %v", order.DisplayNo, terr)
+		} else {
+			snap.TrackingToken = tok
+		}
+	}
 	// Printed before parking so the held payload records the real outcome.
 	// Chosen over an async print + success callback: the callback would
 	// have to rewrite a held row that may already have been pushed to the
@@ -1025,11 +1044,20 @@ func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *com
 		eng.Reset()
 	}
 
+	// Built only once the order is parked: a QR for an order the till then
+	// failed to keep would point at nothing. Best-effort, like the
+	// pay-at-kiosk path: no QR, never an error.
+	var trackingQR template.URL
+	var trackingURL string
+	if snap.TrackingToken != "" {
+		trackingQR, trackingURL = orderTrackingQRForToken(r, snap.TrackingToken, httpx.ResolveLocale(w, r))
+	}
+
 	httpx.RenderPartial("ui/partials/self_order_confirmation.html", map[string]any{
 		"ReceiptNo":   order.ID,
 		"DisplayNo":   order.DisplayNo,
-		"TrackingQR":  "",
-		"TrackingURL": "",
+		"TrackingQR":  trackingQR,
+		"TrackingURL": trackingURL,
 		"CounterMode": true,
 		"PayFirst":    !sentToKitchen,
 	})(w, r)

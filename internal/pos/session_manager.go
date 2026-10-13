@@ -130,7 +130,7 @@ func NewSessionBasketManager(factory func() *Service) *SessionBasketManager {
 }
 
 // newSessionToken mints the opaque session id: 16 bytes of crypto/rand as
-// lowercase hex, the identical shape internal/data's newTrackingToken
+// lowercase hex, the identical shape internal/data's NewOrderTrackingToken
 // established for this codebase's other anonymous-customer-facing token
 // (the /o/{token} order-tracking link). Generated here directly rather than
 // reused from internal/data because these sessions never touch the DB.

@@ -35,7 +35,7 @@ func TestSessionBasketManager_CreateGetRemoveRoundTrip(t *testing.T) {
 	if svc == nil {
 		t.Fatal("Create returned a nil Service")
 	}
-	// Same shape as internal/data's newTrackingToken: 16 random bytes as
+	// Same shape as internal/data's NewOrderTrackingToken: 16 random bytes as
 	// lowercase hex — 32 chars, no other alphabet.
 	if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(token) {
 		t.Fatalf("token %q is not 32 lowercase hex chars", token)

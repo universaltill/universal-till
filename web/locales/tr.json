@@ -3093,6 +3093,7 @@
   "tour.skip": "Turu atla",
   "tour.status.body": "Bu kasanın çevrimiçi olup olmadığını gösterir. Çevrimdışıyken satış asla durmaz: bağlantı geri gelince satışlar eşitlenir.",
   "tour.status.title": "Bağlantı",
+  "tracking.awaiting_payment": "Kasada ödeme bekleniyor",
   "tracking.disclosure": "Bu sayfa yalnızca siparişinizin durumunu gösterir — isim, ürün veya ödeme bilgisi yoktur.",
   "tracking.not_found": "Bu takip bağlantısı kullanılamıyor — sipariş tamamlandıktan sonra süresi dolmuş olabilir.",
   "tracking.title": "Sipariş takibi",
