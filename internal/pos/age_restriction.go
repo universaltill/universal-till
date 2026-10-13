@@ -1,7 +1,5 @@
 package pos
 
-import "time"
-
 // Age-restricted sales (ut-docs#3340): due-diligence support for items the
 // merchant flags items.age_restricted (055_items_age_restricted.sql). Core
 // owns only the MECHANISM — the flag, the till's ID-check prompt, the
@@ -36,19 +34,6 @@ func ValidAgeVerificationOutcome(s string) bool {
 	default:
 		return false
 	}
-}
-
-// DOBBeforeCutoff reports whether a date of birth falls strictly before a
-// cutoff date — the "permanent birth-date cutoff" form of an age
-// restriction (a rule like "nobody born on or after <date> may ever buy
-// this"), as opposed to a rolling minimum age. Pure and generic: the
-// caller supplies the cutoff, so no jurisdiction's date is hardcoded in
-// core (ut-docs#3340 AC3, ADR-0050). Not wired into any UI in this slice
-// (DOB entry is an explicit non-goal) — it is the tested mechanism a later
-// DOB-entry feature or a country plugin's age.restriction.ask answer can
-// call. Born exactly ON the cutoff is NOT before it.
-func DOBBeforeCutoff(dob, cutoff time.Time) bool {
-	return dob.Before(cutoff)
 }
 
 // AgeCheck is one ID-check outcome the cashier recorded for an

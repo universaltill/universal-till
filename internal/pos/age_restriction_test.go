@@ -1,9 +1,6 @@
 package pos
 
-import (
-	"testing"
-	"time"
-)
+import "testing"
 
 func TestValidAgeVerificationOutcome(t *testing.T) {
 	for _, tc := range []struct {
@@ -20,34 +17,6 @@ func TestValidAgeVerificationOutcome(t *testing.T) {
 		if got := ValidAgeVerificationOutcome(tc.in); got != tc.want {
 			t.Errorf("ValidAgeVerificationOutcome(%q) = %v, want %v", tc.in, got, tc.want)
 		}
-	}
-}
-
-// TestDOBBeforeCutoff pins the permanent birth-date-cutoff mechanism
-// (ut-docs#3340 AC3): a restriction expressed as "born before <date>" rather
-// than a rolling age. The 2009-01-01 cutoff is a FIXTURE only — it lives in
-// this _test.go file and never in production code; core ships no
-// jurisdiction's date (ADR-0050).
-func TestDOBBeforeCutoff(t *testing.T) {
-	day := func(y int, m time.Month, d int) time.Time { return time.Date(y, m, d, 0, 0, 0, 0, time.UTC) }
-	cutoff := day(2009, time.January, 1)
-	for _, tc := range []struct {
-		name string
-		dob  time.Time
-		want bool
-	}{
-		{"day before cutoff is allowed", day(2008, time.December, 31), true},
-		{"long before cutoff is allowed", day(1970, time.June, 15), true},
-		{"born ON the cutoff is not allowed", day(2009, time.January, 1), false},
-		{"day after cutoff is not allowed", day(2009, time.January, 2), false},
-		{"well after cutoff is not allowed", day(2015, time.March, 3), false},
-		{"last instant before cutoff is allowed", cutoff.Add(-time.Nanosecond), true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := DOBBeforeCutoff(tc.dob, cutoff); got != tc.want {
-				t.Fatalf("DOBBeforeCutoff(%s, %s) = %v, want %v", tc.dob.Format(time.RFC3339Nano), cutoff.Format(time.DateOnly), got, tc.want)
-			}
-		})
 	}
 }
 
