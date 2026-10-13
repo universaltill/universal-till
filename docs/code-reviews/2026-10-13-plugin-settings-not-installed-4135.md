@@ -55,6 +55,12 @@
   - full `go test ./...` result is in the PR's CI.
   - `guard-deadcode-baseline.sh` could not run here: the container's `deadcode` binary is built with go1.26 against a go1.27 module. CI runs it with the right toolchain.
 
+## CI follow-up
+
+- The first CI run failed `guard-docs-shots`: the `plugins` topic's prose hashes (en, fa, ar, tr) were stale.
+- That topic's screenshot is the `/plugins` list, which this branch doesn't change. So I refreshed only the four topic hashes in `web/help/img/manifest.json`, with a `Docs-Shots-Unchanged: true` trailer. This follows the precedent of `54c07ce65`.
+- `guard-docs-shots.sh` and `guard-docs-shots_test.sh` pass.
+
 ## Verdict
 
 Safe to merge.
