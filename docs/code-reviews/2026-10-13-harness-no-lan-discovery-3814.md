@@ -57,3 +57,14 @@ subagent in a separate worktree.
 
 Safe to merge after F1/F2/F4/F5 fixes (done). No user-facing strings, SQL,
 file writes or paths touched.
+
+## Follow-up after CI (playwright)
+
+`tests/tills-lan-discovery.spec.ts` failed on the PR: with discovery off the
+scan answers instantly, so `#discover-msg` never showed the transient
+"Searching…" the spec asserted. The spec now holds
+`/api/sync/discover-primaries` with `page.route` until "Searching…" has been
+seen, then lets the real handler answer; its header comment no longer claims
+a real mDNS broadcast. Passed 3/3 locally (`--repeat-each=3`). The run's five
+"flaky" specs (settings two-pane, phone popups, money comma, locations
+dialog, backoffice scroll) passed on retry and touch nothing in this diff.
