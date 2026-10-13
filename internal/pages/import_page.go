@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
@@ -1162,7 +1163,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					// ut-docs#1850: the source's own "Track inventory? No"
 					// answer persists onto the created item, not just onto
 					// this row's one-time stock-recording decision below.
-					StockUntracked: it.HasTracksStock && !it.TracksStock,
+					StockUntracked: (it.HasTracksStock && !it.TracksStock) || it.ItemType == catalogtypes.ItemTypeGiftVoucher,
 
 					// ut-docs#3403: catimport only ever sets this pair after
 					// catalogtypes.ValidNetQuantity accepted it (an invalid
@@ -1171,6 +1172,8 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					NetQuantityValue: it.NetQuantityValue,
 					NetQuantityUnit:  it.NetQuantityUnit,
 					AgeRestricted:    it.AgeRestricted,
+					// ut-docs#4214: a gift voucher item is never stock-tracked.
+					ItemType: it.ItemType,
 				})
 				if err != nil {
 					_ = tx.Rollback()
@@ -1906,7 +1909,7 @@ func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 	// unit is CHECK-constrained by migration 060), so no csvSafe either.
 	_ = cw.Write([]string{"Name", "SKU", "Barcode", "Price", "Category",
 		"Description", "Sold by weight", "In stock", "Active", "Tax rate", "Takeaway tax",
-		"Net quantity", "Net quantity unit", "Age restricted"})
+		"Net quantity", "Net quantity unit", "Age restricted", "Item type"})
 	yn := func(b bool) string {
 		if b {
 			return "Y"
@@ -1929,10 +1932,20 @@ func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 			csvSafe(e.Name), csvSafe(e.SKU), csvSafe(e.Barcode), minorToDecimal(e.PriceMinor, decimals),
 			csvSafe(e.Category), csvSafe(e.Description), yn(e.IsWeighed),
 			strconv.FormatFloat(e.Stock, 'f', -1, 64), yn(e.IsActive),
-			tax, takeaway, nqValue, nqUnit, yn(e.AgeRestricted),
+			tax, takeaway, nqValue, nqUnit, yn(e.AgeRestricted), exportItemType(e.ItemType),
 		})
 	}
 	cw.Flush()
+}
+
+// exportItemType is the "Item type" cell (ut-docs#4214): the stored
+// type, "standard" for a row that predates the column — a fixed vocabulary,
+// so no csvSafe.
+func exportItemType(t string) string {
+	if t == "" {
+		return catalogtypes.ItemTypeStandard
+	}
+	return t
 }
 
 // taxDePluginID is the one plugin whose takeaway_rate_overrides setting the

@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/barcode"
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -53,6 +54,16 @@ func loadShopItems(ctx context.Context, d *common.Deps) ([]shopItem, error) {
 	if err != nil {
 		return nil, err
 	}
+	// ut-docs#4214: a gift voucher item needs staff to take its value and
+	// card number — a customer can't — so it is never offered here. The
+	// engine refuses it on a plain scan too (pos.Service.scanQty).
+	kept := items[:0]
+	for _, it := range items {
+		if it.ItemType != catalogtypes.ItemTypeGiftVoucher {
+			kept = append(kept, it)
+		}
+	}
+	items = kept
 	barcodes, err := repo.ItemBarcodes(ctx)
 	if err != nil {
 		return nil, err

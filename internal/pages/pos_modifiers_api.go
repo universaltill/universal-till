@@ -251,6 +251,13 @@ func registerPOSModifiersAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "item not found", http.StatusNotFound)
 			return
 		}
+		if base.IsGiftVoucherItem() {
+			// ut-docs#4214: a gift voucher item's tile (one that would open
+			// this picker because its category carries modifier groups)
+			// shows the Gift voucher popup instead — never goods.
+			renderGiftVoucherPopup(w, r, firstGiftVoucherPopup(code, r.URL.Query().Get("src"), base))
+			return
+		}
 		groups, err := data.NewModifierRepo(d.Db).ResolveGroupsForItem(r.Context(), itemID)
 		if err != nil {
 			http.Error(w, "failed to load customization options", http.StatusInternalServerError)

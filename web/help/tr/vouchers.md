@@ -3,32 +3,36 @@ id: vouchers
 title: Hediye çekleri
 section: Günlük satış
 order: 25
-summary: Ödeme panelinin Böl sekmesinden çok amaçlı hediye çekleri satın ve ödeme olarak kabul edin — tamamlamadan önce bakiyeyi kontrol edin; fiş, düzenlediğiniz her kodu yazdırır.
-keywords: [hediye çeki, hediye kartı, gutschein, kullanma, bakiye, düzenleme, kod]
+summary: Hediye çeklerini bir Hediye çeki ürününe dokunarak satın — kartı okutun ya da kasanın numara oluşturmasına izin verin — ve satış ekranında okutarak ya da ödeme panelinin Böl sekmesinde ödeme olarak alın.
+keywords: [hediye çeki, hediye kartı, gutschein, belirli ürün, kullanma, bakiye, düzenleme, kod, kart numarası, ürün türü]
 ---
 
 # Hediye çekleri
 
-Hediye çeki, müşterinin şimdi ödeyip daha sonra harcadığı paradır — dükkândaki her şey için, her kasada. Kasa her hediye çekinin bakiyesini **kodu** altında tutar: teslim ettiğiniz fiziksel kartın üzerinde basılı kod ya da kodu boş bıraktığınızda kasanın kendi ürettiği kod. Hem hediye çeki satmak hem de ödeme olarak almak, ödeme panelinin **Böl** sekmesinde yapılır (sekmenin kendisi için bkz. [Ödemeler](/help/payments)).
+Hediye çeki, müşterinin şimdi ödeyip daha sonra harcadığı paradır — dükkândaki her şey için, her kasada. Kasa her hediye çekinin bakiyesini **kart numarası** altında tutar: teslim ettiğiniz fiziksel kartın üzerinde basılı numara ya da numarayı boş bıraktığınızda kasanın oluşturduğu 13 haneli numara. Hediye çekini satış ekranında bir **Hediye çeki** ürününe dokunarak satarsınız; ödeme olarak ise okutarak ya da ödeme panelinin **Böl** sekmesinde alırsınız (sekmenin kendisi için bkz. [Ödemeler](/help/payments)).
 
 ## Hediye çeki satmak
 
-1. **Ödeme**'ye dokunun, **Böl** sekmesine geçin ve panelin altındaki **Hediye çeki sat** bölümünü açın.
-2. Hediye çekinin değerini **Hediye çeki tutarı** alanına yazın — normal bir para tutarı, örneğin `25,00`.
-3. **Kod**: teslim ettiğiniz kartın üzerinde basılı kodu yazın. Boş bırakırsanız kasa ödemede kendisi bir kod üretir.
-4. **Kimin için** isteğe bağlıdır — hediye çekinin kimin için alındığını hatırlamak için bir ad.
-5. **Hediye çeki ekle**. Kodu (ya da *Kod ödemede oluşturulur*), değeri ve sahibiyle birlikte bekleyen listeye eklenir; her birinin kaldırmak için bir ✕'i vardır. Değer, müşterinin ödeyeceği tutara eklenir — **Kalanı doldur** bunu hesaba katar, dolayısıyla hesap her satışta olduğu gibi işler.
-6. Ödemeyi her zamanki gibi alın (nakit, kart, …) ve **Satışı tamamla**'ya basın. Fiş, her hediye çekini nihai koduyla **Düzenlenen hediye çekleri** başlığı altında listeler. Üretilen bir kod için kodun gösterildiği tek yer bu fiştir; bu yüzden fişi müşteriye verin ya da kodu kartın üzerine yazın.
+Satış için katalogda **Türü** *Hediye çeki* olan bir ürün gerekir (bkz. [Katalog](/help/catalog)) — bir kez oluşturun. Fiyatını boş bırakırsanız tutar her seferinde sorulur; bir fiyat verirseniz (örneğin *Hediye çeki 25 ₺*) pencere o tutarla açılır.
 
-Bir hediye çeki sepette başka hiçbir şey olmadan tek başına ya da mallarla birlikte tek bir satışta satılabilir. Hediye çeki satışı ürün geliri değildir: daha sonra harcayacak kişiye borçlanılan para olarak kaydedilir ve mallar hediye çeki harcandığında vergilendirilir — aşağıdaki gün sonu notlarına bakın.
+1. Satış ekranında hediye çeki ürününe dokunun (ya da barkodunu okutun). **Hediye çeki** penceresi açılır.
+2. **Kart numarası**: teslim ettiğiniz kartı okutun — pencere açılır açılmaz alan okuyucunuza hazırdır — ya da numarasını yazın. Boş bırakırsanız **Ekle**'ye dokunduğunuzda kasa bir numara oluşturur.
+3. **Tutar**: hediye çekinin değeri, normal bir para tutarı, örneğin `25,00`. Ürünün bir fiyatı varsa alan o fiyatla başlar.
+4. **Kimin için** isteğe bağlıdır — hediye çekinin kimin için alındığını hatırlamak için bir ad.
+5. **Kullanılabileceği yer**: **Her alışveriş** olağan hediye çekidir; **Belirli bir ürün (vergi şimdi alınır)** aşağıda anlatılır. **Ekle**'ye dokunun.
+6. Hediye çeki, kart numarasını gösteren ayrı bir satır olarak sepete girer. Ödemeyi her zamanki gibi alın (**Ödeme**, nakit, kart, …). Fiş her hediye çekini **Düzenlenen hediye çekleri** altında numarasıyla listeler. Kasanın oluşturduğu bir numarayı müşteri bu fişte bulur; fişi verin ya da numarayı karta yazın.
+
+Bir hediye çeki tek başına, sepette başka hiçbir şey olmadan ya da ürünlerle birlikte tek bir satışta satılabilir. Sepet satırı her zaman değeriyle tek bir hediye çekidir: adet düğmesi ve satır indirimi yoktur, bir kampanya ya da sepet indirimi onu asla düşürmez. Hediye çekinden vazgeçmek için satırdaki ✕'e dokunun — neden sorulmaz, çünkü dükkândan hiçbir şey çıkmamıştır. Hediye çeki satmak ürün geliri değildir ve stok hareketi yaratmaz: daha sonra harcayacak kişiye borçlu olunan para olarak kaydedilir ve ürünler hediye çeki harcandığında vergilendirilir — aşağıdaki gün sonu notlarına bakın. Bekletilen bir satış hediye çeki satırlarını korur ve hediye çeki satış ödendiğinde düzenlenir.
 
 Neler ters gidebilir:
 
-- Sıfır değer, eklenmeden önce reddedilir.
-- Zaten kullanımda olan bir kod, **Satışı tamamla**'ya bastığınızda bunu belirten bir mesajla reddedilir — bekleyen liste kalır; kodu düzeltip yeniden deneyin.
-- Tek bir satışta en fazla 50 hediye çeki düzenlenebilir.
+- **Ekle**, tutar sıfırın üzerine çıkana kadar soluk kalır.
+- Zaten kullanımda olan bir kart numarası — daha önce satılmış ya da bu satışın başka bir satırında olan — hiçbir şey eklenmeden önce pencerede bunu belirten bir mesajla reddedilir. Başka bir kart okutun ya da numarayı boş bırakın.
+- Tek bir satışta en fazla 50 hediye çeki satılabilir.
 
 ## Hediye çekini ödeme olarak almak
+
+En hızlı yol: hediye çekinin barkodunu — kartı ya da fişte basılı numarayı — satış ekranında okutun. Kasa onu bulur ve ödeme panelinde, satışın hâlâ gerektirdiği tutarı aşmamak üzere bakiyesi için bir **Hediye çeki** düğmesi sunar. Numarayı yazmak ya da ödemeyi bölmek için:
 
 1. **Böl** sekmesinde yöntem olarak **voucher**'ı seçin. Bir **Hediye çeki kodu** kutusu belirir ve Para üstü kutusu kaybolur — hediye çeki asla para üstü vermez.
 2. Müşterinin kartındaki kodu yazın.
@@ -51,9 +55,9 @@ Hediye çeklerinin çoğu **her amaç için**dir — müşteri neye harcayacağ�
 
 Satmak:
 
-1. Panelin altındaki **Hediye çeki sat** bölümünde, **Hediye çeki türü** altından **Belirli bir ürün (vergi şimdi alınır)** seçeneğini seçin (varsayılan olan **Her amaç için**, yukarıda anlatılan olağan hediye çekidir).
-2. Bir **KDV oranı** kutusu belirir — ürünün oranını yüzde olarak yazın, örneğin `19` ya da `7`.
-3. Tutar, kod ve sahibi her zamanki gibi doldurun ve **Hediye çeki ekle**'ye basın. Bekleyen liste onu oranıyla birlikte *Belirli bir ürün* olarak işaretler. Satış KDV'yi o oranla hemen kaydeder; dolayısıyla hediye çeki, günün KDV dilimlerinde normal bir satış satırı gibi görünür — **GUTSCHEINE** borç bölümünde değil.
+1. **Hediye çeki** penceresinde, **Kullanılabileceği yer** altından **Belirli bir ürün (vergi şimdi alınır)** seçeneğini seçin (varsayılan olan **Her alışveriş**, yukarıda anlatılan olağan hediye çekidir).
+2. Hediye çeki, hediye çeki ürününün kendi vergi koduyla vergilendirilir — katalogda o ürüne ürünün oranını verin (örneğin %7 kodlu bir *Kahve hediye çeki* ürünü).
+3. Kart numarasını, tutarı ve sahibini her zamanki gibi doldurun ve **Ekle**'ye dokunun. Sepet satırında *Belirli bir ürün (vergi şimdi alınır)* yazar. Satış KDV'yi o oranla hemen kaydeder; dolayısıyla hediye çeki, günün KDV dilimlerinde normal bir satış satırı gibi görünür — **GUTSCHEINE** borç bölümünde değil.
 
 Kullanmak:
 
@@ -63,7 +67,7 @@ Kullanmak:
 
 Neler ters gidebilir:
 
-- Boş, negatif ya da 100'ün üzerindeki bir KDV oranı, hediye çeki eklenmeden önce reddedilir.
+- Vergi kodu olmayan bir hediye çeki ürünü, dükkânın standart oranıyla vergilendirilir — önce ürüne doğru vergi kodunu verin.
 - Zaten kullanılmış bir hediye çekinde **Kullan**'a dokunmak ya da satış ekranında belirli bir ürün için hediye çekini taratmak, bunu belirten bir mesajla reddedilir.
 - Başka bir kasada satılan belirli bir ürün için hediye çeki bu kasadan kontrol edilebilir ama henüz burada kullanılamaz — onu ana kasada ya da satan kasada kullanın.
 

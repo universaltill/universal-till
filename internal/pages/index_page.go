@@ -206,14 +206,7 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			"paymentMethods":       methods,
 			"paymentFeesJSON":      template.JS(feesJSON),
 			"paymentMethodDefault": defaultMethod,
-			// ut-docs#1037 (reviewer): the split-tender panel quotes what
-			// the customer owes for a PENDING single-purpose voucher issue,
-			// which is taxed at issue — under exclusive pricing its VAT
-			// rides on top of the face value, under inclusive it is already
-			// inside it. app.js needs the mode to quote the same figure
-			// pos_api.go/computeSaleTotals will demand.
-			"taxInclusive": d.CurrentState().TaxInclusive,
-			"payMethods":   gridMethods,
+			"payMethods":           gridMethods,
 			// ut-docs#3873: a plugin (the AI Assistant, ut-docs#2851)
 			// answers catalog.identify — the sell screen shows core's one
 			// camera-identify button.

@@ -1,0 +1,16 @@
+-- 071_items_item_type.sql — universaltill/ut-docs#4214 (gift voucher item
+-- type): every catalogue item has a TYPE. 'standard' is an ordinary product;
+-- 'gift_voucher' is an item whose sale ISSUES a voucher instead of selling
+-- goods — tapping it on the till asks for the voucher's value and card
+-- number, and the completed sale books a voucher (the 0% liability, or the
+-- #1037 single-purpose taxed issue), never product revenue, stock or
+-- discounts. More types may follow (deposit, service), hence a closed TEXT
+-- vocabulary rather than a 0/1 flag; the CHECK keeps it closed.
+--
+-- Additive and frozen once merged (ADR-0100). A column on items, same as
+-- age_restricted (055): it travels with the item through LAN sync, backup
+-- and restore with no extra plumbing. NOT NULL DEFAULT 'standard' keeps
+-- every existing item on an upgrading till selling exactly as before.
+-- Replay-safe: execMigrationStatements skips an ADD COLUMN whose column
+-- already exists (ut-docs#1412).
+ALTER TABLE items ADD COLUMN item_type TEXT NOT NULL DEFAULT 'standard' CHECK (item_type IN ('standard', 'gift_voucher'));

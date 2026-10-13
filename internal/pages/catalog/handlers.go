@@ -2903,6 +2903,18 @@ func plainBarcodeTypeFor(r *http.Request, code string) string {
 func parseItemInput(r *http.Request) (pos.ItemInput, error) {
 	name := strings.TrimSpace(r.Form.Get("name"))
 	priceStr := strings.TrimSpace(r.Form.Get("price"))
+	// ut-docs#4214: the Type select. A gift voucher asks for its value at
+	// sale, so its price may stay empty (stored as 0; a non-zero price
+	// pre-fills the popup). An unknown type is refused here, before the
+	// column's CHECK would.
+	itemType, ok := catalogtypes.NormalizeItemType(strings.TrimSpace(r.Form.Get("itemType")))
+	if !ok {
+		return pos.ItemInput{}, errors.New("invalid item type")
+	}
+	giftVoucher := itemType == catalogtypes.ItemTypeGiftVoucher
+	if giftVoucher && priceStr == "" {
+		priceStr = "0"
+	}
 	if name == "" || priceStr == "" {
 		return pos.ItemInput{}, errors.New("name and price required")
 	}
@@ -2917,7 +2929,7 @@ func parseItemInput(r *http.Request) (pos.ItemInput, error) {
 	if err != nil {
 		return pos.ItemInput{}, err
 	}
-	return pos.ItemInput{
+	in := pos.ItemInput{
 		Name:        name,
 		SKU:         strings.TrimSpace(r.Form.Get("sku")),
 		BasePrice:   price,
@@ -2947,7 +2959,18 @@ func parseItemInput(r *http.Request) (pos.ItemInput, error) {
 		IsActive:         formCheckboxActive(r),
 		NetQuantityValue: nqValue,
 		NetQuantityUnit:  nqUnit,
-	}, nil
+		ItemType:         itemType,
+	}
+	if giftVoucher {
+		// A gift voucher is never goods: no stock, no weight, no net
+		// quantity, no ID check — the editor hides those fields, and the
+		// server makes it so whatever the form sent.
+		in.StockUntracked = true
+		in.IsWeighed = false
+		in.AgeRestricted = false
+		in.NetQuantityValue, in.NetQuantityUnit = nil, nil
+	}
+	return in, nil
 }
 
 // parseNetQuantity reads the item form's pre-pack net quantity

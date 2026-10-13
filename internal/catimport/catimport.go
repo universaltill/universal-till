@@ -135,8 +135,12 @@ type ImportItem struct {
 	// IsWeighed, no other POS system's export has this concept, so it's
 	// only ever recognised when the column header is this till's own.
 	AgeRestricted bool
-	Stock         float64 // opening quantity from the source system
-	HasStock      bool    // the file carried a parseable stock value
+	// ItemType (ut-docs#4214) mirrors items.item_type: "gift_voucher" from
+	// this till's own "Item type" column (ParseItemType), else "standard".
+	// A gift voucher row may leave its price blank (imported as 0).
+	ItemType string
+	Stock    float64 // opening quantity from the source system
+	HasStock bool    // the file carried a parseable stock value
 	// TracksStock is the source system's own per-item answer to "should
 	// this item be stock-tracked?", and HasTracksStock says the file
 	// actually carried a parseable one (ut-docs#1843). The two are separate
@@ -259,7 +263,9 @@ var columnSynonyms = map[string][]string{
 	"description":    {"description", "details"},
 	"weighed":        {"sold by weight", "weighed", "sold by weight (y/n)", "weighed (y/n)"},
 	"age_restricted": {"age restricted", "age restricted (y/n)"},
-	"stock":          {"in stock", "stock", "quantity", "qty", "in_stock", "on_hand", "on hand", "current quantity", "stock quantity", "opening stock"},
+	// ut-docs#4214: this till's own export header.
+	"item_type": {"item type", "item_type"},
+	"stock":     {"in stock", "stock", "quantity", "qty", "in_stock", "on_hand", "on hand", "current quantity", "stock quantity", "opening stock"},
 	// The source system's per-item "is this item stock-tracked at all?"
 	// answer (ut-docs#1843). SumUp's header is "Track inventory? (Yes/No)";
 	// stripTrailingParen's second pass reduces that to "track inventory?",
@@ -601,6 +607,7 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 			Description:   stripCSVDefuse(get(rec, "description")),
 			IsWeighed:     isTruthy(get(rec, "weighed")),
 			AgeRestricted: isTruthy(get(rec, "age_restricted")),
+			ItemType:      ParseItemType(get(rec, "item_type")),
 		}
 		if rawBarcode != "" && !barcodeMatched {
 			item.BarcodeIssue = BarcodeIssueNoSymbologyMatch
@@ -624,6 +631,10 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 			}
 		}
 		price, perr := ParsePrice(rawPrice, currencyDecimals)
+		if item.ItemType == catalogtypes.ItemTypeGiftVoucher && strings.TrimSpace(rawPrice) == "" {
+			// ut-docs#4214: a gift voucher's value is asked at sale.
+			price, perr = 0, nil
+		}
 		item.PriceMinor = price
 		// Opening stock is optional and never blocks a row: a blank or
 		// unparseable value just means "no stock carried over".
@@ -972,4 +983,17 @@ func isTruthy(s string) bool {
 		return true
 	}
 	return false
+}
+
+// ParseItemType reads an "Item type" cell (ut-docs#4214): "gift_voucher" /
+// "gift voucher" (any case) is a gift voucher; anything else — blank,
+// "standard", an unknown word — is a standard item, so a stray value never
+// blocks a row.
+func ParseItemType(raw string) string {
+	v := strings.ToLower(strings.TrimSpace(raw))
+	v = strings.NewReplacer(" ", "_", "-", "_").Replace(v)
+	if v == catalogtypes.ItemTypeGiftVoucher {
+		return catalogtypes.ItemTypeGiftVoucher
+	}
+	return catalogtypes.ItemTypeStandard
 }

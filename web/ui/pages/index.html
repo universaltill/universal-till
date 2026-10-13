@@ -878,14 +878,8 @@
          data-msg-voucher-balance="{{ T "tender.status.voucher_balance" }}"
          data-msg-voucher-invalid="{{ T "pos.toast.voucher_invalid" }}"
          data-msg-voucher-check-unavailable="{{ T "tender.status.voucher_check_unavailable" }}"
-         data-msg-voucher-added="{{ T "tender.status.voucher_added" }}"
-         data-msg-voucher-removed="{{ T "tender.status.voucher_removed" }}"
-         data-msg-voucher-auto-code="{{ T "tender.issue_voucher.auto_code" }}"
-         data-msg-no-pending-vouchers="{{ T "tender.issue_voucher.no_pending" }}"
-         data-msg-voucher-single-purpose="{{ T "tender.issue_voucher.purpose_single" }}"
-         data-msg-voucher-vat-rate-invalid="{{ T "tender.status.voucher_vat_rate_invalid" }}"
-         data-msg-voucher-redeemed-single="{{ T "pos.toast.voucher_redeemed_single" }}"
-         data-tax-inclusive="{{ if .taxInclusive }}1{{ else }}0{{ end }}">
+         data-msg-voucher-single-purpose="{{ T "pos.gift_voucher.use_specific" }}"
+         data-msg-voucher-redeemed-single="{{ T "pos.toast.voucher_redeemed_single" }}">
       <form class="split-tender-form" id="split-tender-form" autocomplete="off">
         {{ $default := .paymentMethodDefault }}
         <div class="split-grid">
@@ -964,78 +958,6 @@
       <div id="split-tender-payments" class="split-tender-payments empty">
         <p>{{ T "tender.no_pending" }}</p>
       </div>
-      <!-- ut-docs#1832: voucher ISSUE ("Sell a voucher"). Collapsed by
-           default so the everyday split flow above keeps its height budget
-           on the till; opens into its own small form whose pending list
-           (#split-tender-vouchers) mirrors #split-tender-payments — app.js
-           folds every pending voucher's value into the amount still due and
-           sends the list as issue_vouchers on the same /api/pos/tender POST
-           (offline-safe, no new endpoint). A blank code means the till
-           generates one at checkout; the pilot merchant types the code
-           printed on a physical card instead. -->
-      <details class="split-issue-voucher" id="split-tender-issue">
-        <!-- ux: a bare <details>/<summary> reads as inert text next to this
-             panel's full-height pill buttons (Complete Sale/Clear/Fill
-             Remaining are all 54px .btn.secondary-class controls) — a
-             touchscreen cashier is unlikely to notice a 22px muted text
-             row as tappable. Reusing .btn.secondary here (the same class
-             every other secondary action in this panel already carries)
-             makes it read as an obviously-interactive control instead of
-             inventing a new affordance; the disclosure marker still shows
-             open/closed state (app.css adds the chevron). -->
-        <summary class="btn secondary split-issue-voucher-summary">{{ T "tender.issue_voucher.title" }}</summary>
-        <p class="split-issue-voucher-hint">{{ T "tender.issue_voucher.hint" }} {{ helpLink "vouchers" }}</p>
-        <form class="split-tender-form" id="split-tender-issue-form" autocomplete="off">
-          <div class="split-grid">
-            <label>{{ T "tender.issue_voucher.amount" }}
-              <input type="text" inputmode="decimal" name="amount" {{ moneypatternlocal currency.Decimals false }} {{ moneyplaceholderlocal currency.Decimals 0 }} required>
-            </label>
-            <!-- ut-docs#1832 review: name="voucher_code", NOT "code" -- the
-                 sale screen's barcode-scan input (line ~186) is already
-                 name="code" and several e2e specs (index-keyboard-1023,
-                 settings-osk, touch-select-pan-1021) select it page-wide via
-                 input[name=code], assuming it is the only one. A same-named
-                 field here broke that assumption (Playwright strict-mode
-                 violation, 8 tests red) even though app.js's own read is
-                 already scoped to #split-tender-issue-form and never
-                 collided functionally -- only the page-wide DOM shape did. -->
-            <label>{{ T "tender.issue_voucher.code" }}
-              <input type="text" name="voucher_code" placeholder="{{ T "tender.issue_voucher.code_placeholder" }}" maxlength="64" autocapitalize="characters" spellcheck="false">
-            </label>
-            <label>{{ T "tender.issue_voucher.holder_label" }}
-              <input type="text" name="holder_label" maxlength="200">
-            </label>
-            <!-- ut-docs#1037: voucher purpose. A radio pair, each inside
-                 its own <label> (ux-specified): the German wording for the
-                 single-purpose option ("Bestimmter Artikel (jetzt
-                 versteuert)") is long and must be allowed to wrap, which a
-                 fixed-width segmented button would truncate. "Any use" is
-                 checked by default — today's multi-purpose behaviour,
-                 unchanged. The VAT-rate field below starts hidden and
-                 app.js reveals it only for the single-purpose choice, the
-                 same hidden-attribute + JS-toggle mechanism
-                 #split-tender-voucher-field / #split-tender-change-field
-                 use above. The rate is typed as a percentage (19, 7) and
-                 sent as basis points on issue_vouchers[].vat_rate_bp. -->
-            <fieldset class="split-issue-purpose">
-              <legend>{{ T "tender.issue_voucher.purpose" }}</legend>
-              <label><input type="radio" name="purpose" value="multi_purpose" checked> <span>{{ T "tender.issue_voucher.purpose_multi" }}</span></label>
-              <label><input type="radio" name="purpose" value="single_purpose"> <span>{{ T "tender.issue_voucher.purpose_single" }}</span></label>
-            </fieldset>
-            <div id="split-tender-issue-vat-field" class="split-issue-vat-field" hidden>
-              <label>{{ T "tender.issue_voucher.vat_rate" }}
-                <input type="text" inputmode="decimal" name="vat_rate" placeholder="19" maxlength="6">
-              </label>
-            </div>
-          </div>
-          <div class="split-controls">
-            <button class="btn" type="button" id="split-tender-issue-add">{{ T "tender.issue_voucher.add" }}</button>
-          </div>
-        </form>
-        <div id="split-tender-vouchers" class="split-tender-payments empty">
-          <p>{{ T "tender.issue_voucher.no_pending" }}</p>
-        </div>
-      </details>
       <div id="split-tender-status" class="split-tender-status" aria-live="polite"></div>
       <div class="split-controls">
         <button class="btn primary" type="button" id="split-tender-submit">{{ T "tender.complete_sale" }}</button>

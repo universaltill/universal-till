@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 )
 
@@ -181,6 +182,15 @@ func decodeSaveItem(p payload) (data.ItemPatch, string) {
 	}
 	if out.PriceMinor, ok = p.optInt("price_minor"); !ok {
 		return out, "bad price_minor"
+	}
+	// ut-docs#4214: the item type, a closed vocabulary.
+	if out.ItemType, ok = p.optStr("item_type"); !ok {
+		return out, "bad item_type"
+	}
+	if out.ItemType != nil {
+		if _, known := catalogtypes.NormalizeItemType(*out.ItemType); !known {
+			return out, "bad item_type"
+		}
 	}
 	for _, f := range []struct {
 		k   string

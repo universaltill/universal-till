@@ -358,6 +358,17 @@ type BasketLine struct {
 	// from a snapshot that predates the flag cannot slip through. Not on
 	// the wire (json:"-"); SnapshotLine carries it through hold/resume.
 	AgeRestricted bool `json:"-"`
+	// ItemType (ut-docs#4214) is the item's items.item_type, set by the
+	// price resolver ("standard" or "gift_voucher"; a variant line carries
+	// its parent item's). A gift_voucher item is never added as goods —
+	// see IsGiftVoucherItem. Not on the wire.
+	ItemType string `json:"-"`
+	// GiftVoucher (ut-docs#4214) is set on a line that SELLS a gift voucher
+	// (AddGiftVoucherLine): PriceCents is the face value, and checkout turns
+	// the line into a voucher issue, never a sale line. Serialized so the
+	// basket partial can show the voucher number; SnapshotLine carries it
+	// through hold/resume.
+	GiftVoucher *GiftVoucherLine `json:"giftVoucher,omitempty"`
 	// modSig/modSigSet (ut-docs#1359) memoize ModifierSignature() so
 	// mergeResolved's per-add scan over every existing line reads a cached
 	// string instead of re-sorting and re-joining that line's Modifiers from
@@ -629,6 +640,13 @@ func (s *Service) scanQty(code string, qty float64) (*Basket, bool) {
 	if s.resolver != nil && code != "" {
 		resolved, ok = s.resolver.Resolve(code)
 	}
+	if ok && resolved.IsGiftVoucherItem() {
+		// ut-docs#4214: a gift voucher item is only ever added through its
+		// popup (AddGiftVoucherLine, via /api/pos/scan) — never as goods at
+		// its stored price, never cached.
+		s.recomputeTotals()
+		return &s.basket, false
+	}
 	if ok {
 		if !resolved.QtyFromCode {
 			resolved.Qty = qty
@@ -646,7 +664,7 @@ func (s *Service) scanQty(code string, qty float64) (*Basket, bool) {
 		// code already in the basket. Never bump a NoMerge (price-embedded)
 		// line this way: its Qty is fixed at 1 for one specific label, and
 		// qty+1 would double an absolute price (ADR-0059 §3).
-		if idx := s.findLineIndexForMode(code, s.orderType); idx >= 0 && !s.lines[idx].NoMerge {
+		if idx := s.findLineIndexForMode(code, s.orderType); idx >= 0 && !s.lines[idx].NoMerge && s.lines[idx].GiftVoucher == nil {
 			s.lines[idx].Qty += qty
 			s.recomputeTotals()
 			return &s.basket, true
@@ -666,6 +684,10 @@ func (s *Service) scanQty(code string, qty float64) (*Basket, bool) {
 func (s *Service) AddLineWithModifiers(base BasketLine, qty float64, mods []data.SelectedModifier) *Basket {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if base.IsGiftVoucherItem() {
+		// ut-docs#4214: never as goods — see scanQty.
+		return s.basketCopyLocked()
+	}
 	if qty <= 0 {
 		qty = 1
 	}
@@ -947,8 +969,33 @@ func computeTotals(snap totalsSnapshot) computedTotals {
 	vatLines := (*vatLinesPtr)[:0]
 	chargeTaxLines := (*chargeTaxLinesPtr)[:0]
 
+	// ut-docs#4214: gift voucher lines (GiftVoucher != nil) sit outside the
+	// goods: never in `sub` (so no basket discount and no service charge is
+	// computed on them). An any-purchase voucher is a 0% liability added to
+	// the total after the clamp; a specific-item one is taxed now at its
+	// item's rate, so it joins vatLines/chargeTaxLines like a line. Exactly
+	// the split the tender handler and pos.computeSaleTotals apply to the
+	// IssueVouchers these lines become at checkout.
+	var voucherLiability, singlePurposeNet money.Money
+	hasVoucherLines := false
 	for i := range snap.lines {
 		l := &snap.lines[i]
+		if l.GiftVoucher != nil {
+			hasVoucherLines = true
+			face := AmountForQuantity(l.PriceCents, l.Qty)
+			l.LineTotal = face
+			if !l.GiftVoucher.IsSinglePurpose() {
+				voucherLiability = voucherLiability.Add(face)
+				continue
+			}
+			rateBP, _ := effectiveTaxRateBPFor(*l, snap.taxAsker, l.OrderType, snap.cfg.TaxRateBasisPoints)
+			lineTax, lineTotal := ComputeTaxBasisPoints(face, rateBP, snap.cfg.TaxInclusive)
+			singlePurposeNet = singlePurposeNet.Add(face)
+			total = total.Add(lineTotal)
+			vatLines = append(vatLines, VATLine{RateBP: rateBP, LineTotal: lineTotal.Minor(), TaxAmount: lineTax.Minor()})
+			chargeTaxLines = append(chargeTaxLines, ChargeTaxLine{RateBP: rateBP, Net: face})
+			continue
+		}
 		lineBase := AmountForQuantity(l.PriceCents, l.Qty)
 		lineNet := lineBase.Sub(l.LineDiscount)
 		if lineNet.IsNegative() {
@@ -969,7 +1016,10 @@ func computeTotals(snap totalsSnapshot) computedTotals {
 	*vatLinesPtr = vatLines
 	*chargeTaxLinesPtr = chargeTaxLines
 
-	c.subtotal = sub
+	// The displayed subtotal includes the vouchers being sold, so the
+	// panel's Subtotal/Tax/Total add up; the discount and charge bases
+	// below stay goods-only (`sub`).
+	c.subtotal = sub.Add(singlePurposeNet).Add(voucherLiability)
 	var discount money.Money
 	switch snap.discountType {
 	case "percent":
@@ -982,6 +1032,11 @@ func computeTotals(snap totalsSnapshot) computedTotals {
 	}
 	if discount.IsNegative() {
 		discount = 0
+	}
+	if hasVoucherLines && discount > sub {
+		// ut-docs#4214: a basket discount never reaches a voucher being
+		// sold — capped at the goods it can apply to.
+		discount = sub
 	}
 	c.discount = discount
 	// Per-line, not a single subtotal-wide rate: lines can carry different
@@ -1034,7 +1089,9 @@ func computeTotals(snap totalsSnapshot) computedTotals {
 	if total.IsNegative() {
 		total = 0
 	}
-	c.total = total
+	// Any-purchase vouchers ride on top after the clamp, mirroring the
+	// tender handler's voucherIssueTotal fold (ut-docs#1008/#4214).
+	c.total = total.Add(voucherLiability)
 	return c
 }
 
@@ -1614,8 +1671,7 @@ func (s *Service) UpdateLine(code string, qty float64, discount money.Money) {
 	}
 	for i := range s.lines {
 		if s.lines[i].SKU == code || (s.lines[i].ItemID == code || s.lines[i].VariantID == code) {
-			s.lines[i].Qty = qty
-			s.lines[i].LineDiscount = discount
+			s.lines[i].Qty, s.lines[i].LineDiscount = lockedGiftVoucherQty(s.lines[i], qty, discount)
 			if s.lines[i].Qty == 0 {
 				s.removeLocked(s.lines[i].SKU)
 				return
@@ -1624,6 +1680,19 @@ func (s *Service) UpdateLine(code string, qty float64, discount money.Money) {
 			return
 		}
 	}
+}
+
+// lockedGiftVoucherQty (ut-docs#4214): a gift voucher line is always qty 1
+// with no line discount — only a zero qty (remove the line) gets through.
+// Any other line takes qty/discount as given.
+func lockedGiftVoucherQty(l BasketLine, qty float64, discount money.Money) (float64, money.Money) {
+	if l.GiftVoucher == nil {
+		return qty, discount
+	}
+	if qty == 0 {
+		return 0, 0
+	}
+	return 1, 0
 }
 
 // UpdateLineByKey sets qty/discount for the single line matching key
@@ -1636,8 +1705,7 @@ func (s *Service) UpdateLineByKey(key string, qty float64, discount money.Money)
 	}
 	for i := range s.lines {
 		if s.lines[i].LineKey == key {
-			s.lines[i].Qty = qty
-			s.lines[i].LineDiscount = discount
+			s.lines[i].Qty, s.lines[i].LineDiscount = lockedGiftVoucherQty(s.lines[i], qty, discount)
 			if s.lines[i].Qty == 0 {
 				s.removeLineLocked(key)
 				return
