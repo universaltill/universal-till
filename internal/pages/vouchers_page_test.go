@@ -97,7 +97,7 @@ func TestVouchersPage_ListsEveryVoucherWithDetails(t *testing.T) {
 		"GS-SOLD", "GS-IMPORTED", "GS-USED", "GS-SINGLE",
 		"Alice Example",
 		httpx.FormatMoneyDisplay(2500, "en"), httpx.FormatMoneyDisplay(1500, "en"),
-		httpx.T("en", "vouchers.status.active"),
+		httpx.T("en", "catalog.active"),
 		httpx.T("en", "vouchers.status.redeemed"),
 		httpx.T("en", "vouchers.status.void"),
 		httpx.T("en", "pos.gift_voucher.use_specific"),

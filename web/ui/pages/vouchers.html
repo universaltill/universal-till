@@ -23,13 +23,13 @@
   <form id="vouchers-filter" role="search" style="display:flex; flex-wrap:wrap; gap:.35rem .8rem; align-items:end"
         hx-get="/ui/vouchers/list" hx-target="#vouchers-list" hx-swap="outerHTML"
         hx-trigger="input delay:300ms, change, submit">
-    <label>{{ T "vouchers.search" }}
+    <label>{{ T "translations.search" }}
       <input type="search" name="q" value="{{ .q }}" autocomplete="off" placeholder="{{ T "vouchers.search_ph" }}" style="inline-size:15rem; max-inline-size:100%">
     </label>
     <label>{{ T "vouchers.col.status" }}
       <select name="status">
-        <option value="" {{ if eq .status "" }}selected{{ end }}>{{ T "vouchers.filter.all" }}</option>
-        <option value="active" {{ if eq .status "active" }}selected{{ end }}>{{ T "vouchers.status.active" }}</option>
+        <option value="" {{ if eq .status "" }}selected{{ end }}>{{ T "products.all" }}</option>
+        <option value="active" {{ if eq .status "active" }}selected{{ end }}>{{ T "catalog.active" }}</option>
         <option value="redeemed" {{ if eq .status "redeemed" }}selected{{ end }}>{{ T "vouchers.status.redeemed" }}</option>
         <option value="void" {{ if eq .status "void" }}selected{{ end }}>{{ T "vouchers.status.void" }}</option>
       </select>
@@ -70,7 +70,7 @@
 <div id="vouchers-list" aria-live="polite"
      hx-get="/ui/vouchers/list" hx-trigger="vouchers-imported from:body" hx-include="#vouchers-filter" hx-swap="outerHTML">
   <div style="display:flex; flex-wrap:wrap; gap:.35rem .8rem; align-items:center; margin-block:.6rem">
-    <a class="btn secondary" href="{{ $l.exportHref }}" hx-boost="false" download>{{ T "vouchers.export_btn" }}</a>
+    <a class="btn secondary" href="{{ $l.exportHref }}" hx-boost="false" download>{{ T "audit.export_btn" }}</a>
     <span class="muted">{{ T "vouchers.export_help" }}</span>
   </div>
   {{ if $l.vouchers }}
@@ -96,7 +96,7 @@
           <td>{{ .HolderLabel }}</td>
           <td style="text-align:end">{{ money .OriginalAmountMinor }}</td>
           <td style="text-align:end">{{ money .BalanceMinor }}</td>
-          <td>{{ if eq .Status "active" }}{{ T "vouchers.status.active" }}{{ else if eq .Status "redeemed" }}<span class="muted">{{ T "vouchers.status.redeemed" }}</span>{{ else }}<span class="muted">{{ T "vouchers.status.void" }}</span>{{ end }}</td>
+          <td>{{ if eq .Status "active" }}{{ T "catalog.active" }}{{ else if eq .Status "redeemed" }}<span class="muted">{{ T "vouchers.status.redeemed" }}</span>{{ else }}<span class="muted">{{ T "vouchers.status.void" }}</span>{{ end }}</td>
           <td>{{ if eq .Purpose "single_purpose" }}<span class="tag warn" style="white-space:nowrap">{{ T "pos.gift_voucher.use_specific" }}</span>{{ else }}{{ T "pos.gift_voucher.use_any" }}{{ end }}</td>
           <td>{{ date .CreatedAt }}</td>
           <td>{{ if .SaleHref }}<a href="{{ .SaleHref }}">{{ .IssuedReceiptNo }}</a>{{ else if .Imported }}<span class="muted">{{ T "vouchers.imported" }}</span>{{ else }}<span class="muted">{{ T "vouchers.sale_not_on_till" }}</span>{{ end }}</td>

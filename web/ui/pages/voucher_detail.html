@@ -10,7 +10,7 @@
     <dt class="muted">{{ T "vouchers.col.holder" }}</dt><dd style="margin:0">{{ if $v.HolderLabel }}{{ $v.HolderLabel }}{{ else }}—{{ end }}</dd>
     <dt class="muted">{{ T "vouchers.col.original" }}</dt><dd style="margin:0">{{ money $v.OriginalAmountMinor }}</dd>
     <dt class="muted">{{ T "vouchers.col.balance" }}</dt><dd style="margin:0">{{ money $v.BalanceMinor }}</dd>
-    <dt class="muted">{{ T "vouchers.col.status" }}</dt><dd style="margin:0">{{ if eq $v.Status "active" }}{{ T "vouchers.status.active" }}{{ else if eq $v.Status "redeemed" }}{{ T "vouchers.status.redeemed" }}{{ else }}{{ T "vouchers.status.void" }}{{ end }}</dd>
+    <dt class="muted">{{ T "vouchers.col.status" }}</dt><dd style="margin:0">{{ if eq $v.Status "active" }}{{ T "catalog.active" }}{{ else if eq $v.Status "redeemed" }}{{ T "vouchers.status.redeemed" }}{{ else }}{{ T "vouchers.status.void" }}{{ end }}</dd>
     <dt class="muted">{{ T "pos.gift_voucher.use" }}</dt><dd style="margin:0">{{ if eq $v.Purpose "single_purpose" }}<span class="tag warn">{{ T "pos.gift_voucher.use_specific" }}</span>{{ else }}{{ T "pos.gift_voucher.use_any" }}{{ end }}</dd>
     <dt class="muted">{{ T "vouchers.col.created" }}</dt><dd style="margin:0">{{ datetime $v.CreatedAt }}</dd>
   </dl>
