@@ -210,7 +210,7 @@ func postTillRole(t *testing.T, mux *http.ServeMux, id, role, userRole string) *
 
 func auditRows(t *testing.T, dp *common.Deps, action string) []string {
 	t.Helper()
-	rows, err := dp.Db.Query(`SELECT entity_type || '|' || entity_id || '|' || actor_id || '|' || data_json FROM audit_log WHERE action = ? ORDER BY created_at`, action)
+	rows, err := dp.Db.Query(`SELECT entity_type || '|' || entity_id || '|' || actor_id || '|' || data_json FROM audit_log WHERE action = ? ORDER BY created_at, rowid`, action)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -564,5 +564,71 @@ func TestDisplayMode_MainTillUnaffected(t *testing.T) {
 		if rec.Code != http.StatusNoContent {
 			t.Fatalf("%s on a main till: %d %s", mode, rec.Code, rec.Body)
 		}
+	}
+}
+
+// ut-docs#3813: a till that made ITSELF a satellite (Settings → Self-order
+// kiosk → confirm) must be revertible in one step from the main till's
+// Tills page. The self-confirm writes through to the main till's
+// authoritative tills.role, so the roster shows Satellite and choosing
+// Additional is a real change (audited, bundle moved) that the till's next
+// admin pull picks up — no "set Satellite first, then Additional" dance.
+func TestSelfMadeSatellite_RevertedFromMainTillInOneStep(t *testing.T) {
+	f := newTillRoleSettingsFixture(t, "additional")
+	if rec := f.setMode(t, url.Values{"mode": {"self_order"}, "confirm_satellite": {"1"}}); rec.Code != http.StatusNoContent {
+		t.Fatalf("self-confirm: %d %s", rec.Code, rec.Body)
+	}
+	tills := data.NewTillsRepo(f.main.Db)
+	if r, _, _ := tills.RoleByID(t.Context(), f.selfID); r != "satellite" {
+		t.Fatalf("main till's roster after the self-confirm = %q, want satellite (otherwise reverting is a no-op)", r)
+	}
+
+	// A bare mux with the fixture's UT_AUTH=off: this pins the revert, not
+	// the manager gate (TestTillRoleChange_ManagerOnlyAuditedAndShownOnRoster).
+	mainMux := http.NewServeMux()
+	registerTillRole(mainMux, f.main)
+	registerSyncAdmin(mainMux, f.main)
+	pull := func() adminBundleResponse {
+		req := httptest.NewRequest(http.MethodGet, "/api/sync/admin", nil)
+		req.Header.Set("Authorization", "Bearer token-self")
+		rec := httptest.NewRecorder()
+		mainMux.ServeHTTP(rec, req)
+		var out struct {
+			Data adminBundleResponse `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode %s: %v", rec.Body, err)
+		}
+		return out.Data
+	}
+	before := pull()
+	if before.Role != "satellite" {
+		t.Fatalf("pull before revert: Role = %q", before.Role)
+	}
+
+	if _, err := f.main.Db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role) VALUES ('u-manager','mgr','Manager','x','manager')`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postTillRole(t, mainMux, f.selfID, "additional", "manager"); rec.Code != http.StatusNoContent {
+		t.Fatalf("revert on the main till: %d %s", rec.Code, rec.Body)
+	}
+	if r, _, _ := tills.RoleByID(t.Context(), f.selfID); r != "additional" {
+		t.Fatalf("roster after one revert = %q, want additional", r)
+	}
+	got := auditRows(t, f.main, "role_changed")
+	if len(got) != 2 || got[1] != `till|`+f.selfID+`|u-manager|{"from":"satellite","to":"additional"}` {
+		t.Fatalf("main audit = %v, want the self-report then the manager's revert", got)
+	}
+
+	after := pull()
+	if after.Version == before.Version || after.Role != "additional" {
+		t.Fatalf("pull after revert: Version %q→%q Role=%q, want a moved bundle saying additional", before.Version, after.Version, after.Role)
+	}
+	rememberOwnTillRole(t.Context(), f.replica, after.Role)
+	if rec := f.setMode(t, url.Values{"mode": {"register"}}); rec.Code != http.StatusNoContent {
+		t.Fatalf("register on the reverted till: %d %s, want 204", rec.Code, rec.Body)
+	}
+	if m := f.mode(t); m != "" {
+		t.Fatalf("display.mode = %q, want register (stored as \"\")", m)
 	}
 }
