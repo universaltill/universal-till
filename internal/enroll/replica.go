@@ -466,7 +466,7 @@ func VouchForReplica(ctx context.Context, cfg *config.Config, req ReplicaRequest
 		req.Version = req.Version[:64]
 	}
 	m.StoreID, m.MerchantToken = storeID, token
-	code, err := registerDeviceID(ctx, m, req.DeviceID, req.DeviceName, req.Version, req.TillID)
+	code, err := registerDeviceID(ctx, m, req.DeviceID, req.DeviceName, req.Version, req.TillID, "")
 	if err != nil {
 		return Vouch{}, err
 	}

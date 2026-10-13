@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1129,6 +1130,11 @@ func TestRegisterSendsTillID(t *testing.T) {
 			if got := gotBody["till_id"]; got != want {
 				t.Fatalf("till_id = %v, want %q", got, want)
 			}
+			// ut-docs#4027: the platform the heartbeat reports, so the
+			// cloud's re-pair retire guard engages at registration.
+			if got := gotBody["platform"]; got != runtime.GOOS+"/"+runtime.GOARCH {
+				t.Fatalf("platform = %v, want %q", got, runtime.GOOS+"/"+runtime.GOARCH)
+			}
 		})
 	}
 }
@@ -1174,6 +1180,11 @@ func TestRegisterDeviceSendsReportedTillID(t *testing.T) {
 			}
 			if got := gotBody["till_id"]; got != want {
 				t.Fatalf("till_id = %v, want %q", got, want)
+			}
+			// ut-docs#4027: the platform the heartbeat reports, so the
+			// cloud's re-pair retire guard engages at registration.
+			if got := gotBody["platform"]; got != runtime.GOOS+"/"+runtime.GOARCH {
+				t.Fatalf("platform = %v, want %q", got, runtime.GOOS+"/"+runtime.GOARCH)
 			}
 		})
 	}

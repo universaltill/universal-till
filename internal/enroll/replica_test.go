@@ -430,6 +430,11 @@ func TestVouchForReplicaRegistersDeviceWithoutHandingOverToken(t *testing.T) {
 	if got["device_id"] != "till-replica" || got["device_name"] != "Back office" || got["version"] != "0.23.0" || got["till_id"] != "till-row-2" || got["store_id"] != "store-abc" {
 		t.Fatalf("cloud register request = %v", got)
 	}
+	// The main till doesn't know the replica's platform; its own would be
+	// wrong for the replica's row (ut-docs#4027).
+	if p, has := got["platform"]; has {
+		t.Fatalf("vouch sent platform %v for the replica", p)
+	}
 }
 
 func TestVouchForReplicaRefusals(t *testing.T) {
