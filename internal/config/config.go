@@ -207,6 +207,13 @@ type Config struct {
 	// typo never turns discovery off on a production till. The e2e/docs-shots
 	// harness sets it to 0 so throwaway tills stay invisible to real ones.
 	LANDiscovery bool
+	// UIAllowCIDRs is UT_UI_ALLOW_CIDRS (ADR-0157, ut-docs#4261): extra
+	// networks, comma-separated CIDRs or IPs, whose browsers may open the
+	// till UI. By default only the till's own machine can; the LAN reaches
+	// only the till-to-till sync surface. For a Docker host bridge or a dev
+	// laptop. Parsed by internal/languard in pages.Init; an invalid entry
+	// drops the whole list (stricter, never wider).
+	UIAllowCIDRs string
 	// add more fields as needed (DB, SB, etc.)
 }
 
@@ -247,6 +254,7 @@ func Init() (*Config, error) {
 		AuthDisabled:  auth.Disabled(os.Getenv("UT_AUTH")),
 		CSPReportOnly: cspReportOnly,
 		LANDiscovery:  lanDiscovery,
+		UIAllowCIDRs:  os.Getenv("UT_UI_ALLOW_CIDRS"),
 		Marketplace: MarketplaceConfig{
 			EndpointURL:           getenv("UT_MARKETPLACE_ENDPOINT_URL", "http://127.0.0.1:8081/api"),
 			StoreID:               getenv("UT_MARKETPLACE_STORE_ID", getenv("UT_STORE_NAME", DefaultStoreName)),

@@ -52,7 +52,7 @@ func cspTestMux(store *cspReportStore) *http.ServeMux {
 
 func postCSP(t *testing.T, h http.Handler, contentType, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/csp-report", strings.NewReader(body))
+	req := localRequest(http.MethodPost, "/csp-report", strings.NewReader(body))
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
@@ -79,7 +79,7 @@ type cspEntryJSON struct {
 func getInventory(t *testing.T, h http.Handler) cspInventory {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/csp-report", nil))
+	h.ServeHTTP(rec, localRequest(http.MethodGet, "/csp-report", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /csp-report status = %d, want 200; body %s", rec.Code, rec.Body)
 	}
@@ -147,7 +147,7 @@ func TestCSPReportOnlyMiddleware_SetsHeaderOnEveryResponseWithoutWrapping(t *tes
 				w.Header().Set("Content-Type", tc.ctype)
 				w.WriteHeader(tc.status)
 			}))
-			h.ServeHTTP(outer, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			h.ServeHTTP(outer, localRequest(http.MethodGet, tc.path, nil))
 			if v := outer.Header().Get("Content-Security-Policy-Report-Only"); v != wantCSPReportOnly {
 				t.Fatalf("Content-Security-Policy-Report-Only = %q, want %q", v, wantCSPReportOnly)
 			}
@@ -168,7 +168,7 @@ func TestCSPReportOnlyMiddleware_ThroughRecoverMiddleware(t *testing.T) {
 		panic("boom")
 	})))
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	h.ServeHTTP(rec, localRequest(http.MethodGet, "/", nil))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rec.Code)
 	}
@@ -336,7 +336,7 @@ func TestCSPReport_ErrorStatuses(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := newCSPReportStore(cspReportMaxEntries)
 			h := cspTestMux(store)
-			req := httptest.NewRequest(tc.method, "/csp-report", strings.NewReader(tc.body))
+			req := localRequest(tc.method, "/csp-report", strings.NewReader(tc.body))
 			if tc.ctype != "" {
 				req.Header.Set("Content-Type", tc.ctype)
 			}
@@ -452,10 +452,10 @@ func TestCSPReport_ConcurrentSafe(t *testing.T) {
 			defer wg.Done()
 			body := strings.Replace(legacyReport, `"line-number":42`, fmt.Sprintf(`"line-number":%d`, i%5), 1)
 			// No t.Fatalf off the test goroutine: hit the handlers directly.
-			req := httptest.NewRequest(http.MethodPost, "/csp-report", strings.NewReader(body))
+			req := localRequest(http.MethodPost, "/csp-report", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/csp-report")
 			h.ServeHTTP(httptest.NewRecorder(), req)
-			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/csp-report", nil))
+			h.ServeHTTP(httptest.NewRecorder(), localRequest(http.MethodGet, "/csp-report", nil))
 		}()
 	}
 	wg.Wait()
@@ -492,7 +492,7 @@ func TestInit_CSPReportOnlyFlag(t *testing.T) {
 
 			for _, path := range []string{"/healthz", "/login", "/", "/settings"} {
 				rec := httptest.NewRecorder()
-				h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+				h.ServeHTTP(rec, localRequest(http.MethodGet, path, nil))
 				got := rec.Header().Get("Content-Security-Policy-Report-Only")
 				if on && got != wantCSPReportOnly {
 					t.Errorf("flag on: GET %s (status %d) header = %q, want the report-only policy", path, rec.Code, got)
@@ -511,7 +511,7 @@ func TestInit_CSPReportOnlyFlag(t *testing.T) {
 			}
 
 			rec = httptest.NewRecorder()
-			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/csp-report", nil))
+			h.ServeHTTP(rec, localRequest(http.MethodGet, "/csp-report", nil))
 			if rec.Code == http.StatusOK {
 				t.Errorf("anonymous GET /csp-report = 200 — the inventory must stay behind auth")
 			}
@@ -543,13 +543,13 @@ func TestInit_CSPReportOnlyFlag_AuthDisabled(t *testing.T) {
 			t.Cleanup(func() { httpx.InitRailVisibility(nil) })
 
 			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+			h.ServeHTTP(rec, localRequest(http.MethodGet, "/healthz", nil))
 			if got := rec.Header().Get("Content-Security-Policy-Report-Only"); (got != "") != on {
 				t.Fatalf("csp=%v: /healthz header = %q", on, got)
 			}
 			postCSP(t, h, "application/csp-report", legacyReport)
 			rec = httptest.NewRecorder()
-			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/csp-report", nil))
+			h.ServeHTTP(rec, localRequest(http.MethodGet, "/csp-report", nil))
 			if !on {
 				if rec.Code == http.StatusOK && strings.Contains(rec.Body.String(), "effective_directive") {
 					t.Fatalf("flag off: GET /csp-report served the inventory")
@@ -574,7 +574,7 @@ func TestCSPReport_InventoryNeedsReadPermission(t *testing.T) {
 		t.Fatalf("POST status = %d, want 204", rec.Code)
 	}
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/csp-report", nil))
+	mux.ServeHTTP(rec, localRequest(http.MethodGet, "/csp-report", nil))
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("GET status = %d, want 403; body %s", rec.Code, rec.Body)
 	}
