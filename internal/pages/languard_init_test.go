@@ -63,7 +63,7 @@ func TestInit_LANCallerGetsOnlySyncSurface(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			h := initHandlerForGuard(t, &config.Config{AuthDisabled: authOff})
-			const lan = "192.168.1.50:50000"
+			const lan = "203.0.113.50:50000" // RFC 5737: never an own address
 			for _, c := range []struct{ method, path string }{
 				{http.MethodGet, "/login"}, {http.MethodGet, "/"}, {http.MethodPost, "/api/auth/login"},
 				{http.MethodPost, "/api/settings/exit-to-os"}, {http.MethodGet, "/setup"},
@@ -86,19 +86,21 @@ func TestInit_LANCallerGetsOnlySyncSurface(t *testing.T) {
 	}
 }
 
-// UT_UI_ALLOW_CIDRS opens the UI to a named network; an invalid list is
+// UT_UI_ALLOW_CIDRS opens the UI to a named network. Peers are RFC 5737
+// documentation addresses: real ones (172.17.0.1 is docker0 on CI runners)
+// can be this machine's own interface address and so count as local; an invalid list is
 // dropped whole, never widening the guard.
 func TestInit_UIAllowCIDRs(t *testing.T) {
-	h := initHandlerForGuard(t, &config.Config{UIAllowCIDRs: "172.17.0.0/16"})
-	if got := guardCode(h, "172.17.0.1:50000", http.MethodGet, "/login"); got == guardRefused {
+	h := initHandlerForGuard(t, &config.Config{UIAllowCIDRs: "198.51.100.0/24"})
+	if got := guardCode(h, "198.51.100.7:50000", http.MethodGet, "/login"); got == guardRefused {
 		t.Errorf("allowed bridge GET /login = 403")
 	}
-	if got := guardCode(h, "192.168.1.50:50000", http.MethodGet, "/login"); got != guardRefused {
+	if got := guardCode(h, "203.0.113.50:50000", http.MethodGet, "/login"); got != guardRefused {
 		t.Errorf("LAN GET /login = %d, want 403", got)
 	}
 
-	h = initHandlerForGuard(t, &config.Config{UIAllowCIDRs: "172.17.0.0/16,0.0.0.0/0"})
-	if got := guardCode(h, "172.17.0.1:50000", http.MethodGet, "/login"); got != guardRefused {
+	h = initHandlerForGuard(t, &config.Config{UIAllowCIDRs: "198.51.100.0/24,0.0.0.0/0"})
+	if got := guardCode(h, "198.51.100.7:50000", http.MethodGet, "/login"); got != guardRefused {
 		t.Errorf("invalid list: bridge GET /login = %d, want 403 (the whole list dropped)", got)
 	}
 }
