@@ -40,11 +40,12 @@ Bir güncellemeden sonra kasa neyin değiştiğini size anlatır — sade bir di
 
 Android uygulaması kendini masaüstü sürümleri gibi değiştiremez; bunun yerine yeni sürümü Android'in kendi yükleyicisine verir. Adımlar biraz farklıdır:
 
-1. Ekranın altındaki yeşil güncelleme rozetine dokunun, sonra onaylamak için tekrar dokunun. Hepsi bu — yönetici olarak oturum açtıysanız PIN sorulmaz, tıpkı Windows ve Mac'te olduğu gibi.
-2. Android yeni uygulamayı indirir (yaklaşık 140 MB, yavaş bağlantıda biraz zaman tanıyın; bu süre boyunca rozet "İndiriliyor" yazar) ve ardından kendi "Bu güncellemeyi yüklemek istiyor musunuz?" ekranını gösterir. Oradan onaylayın.
-3. Bunu ilk yapışınızda Android, Universal Till'in uygulama yüklemesine izin vermenizi isteyebilir. İzin verin, sonra rozete tekrar dokunun.
-4. Ayarlar → Yazılım güncelleme de aynı işi yapar; ayrıca hangi sürümde olduğunuzu ve hangi sürümün mevcut olduğunu gösterir.
-5. Yönetici PIN kutusu ve İndir düğmesi yalnızca gerçekten yeni bir sürüm varken görünür — güncel bir kasada dokunulacak bir şey yoktur. Kasa siz dokunurken yeniden denetleyip zaten en yeni sürümde olduğunuzu görürse, hiçbir şey indirmeden bunu söyler.
+1. Ekranın altındaki yeşil güncelleme rozetine dokunun. Rozet yeni sürüm numarasıyla birlikte "yüklemek için tekrar dokunun" yazar; onaylamak için birkaç saniye içinde tekrar dokunun. Hepsi bu — yönetici olarak oturum açtıysanız PIN sorulmaz, tıpkı Windows ve Mac'te olduğu gibi.
+2. Android yeni uygulamayı indirir (çoğu tablette yaklaşık 40 MB, çünkü her cihaz yalnızca kendisi için hazırlanmış paketi indirir) ve ardından kendi "Bu güncellemeyi yüklemek istiyor musunuz?" ekranını gösterir. Oradan onaylayın. İndirme sürerken rozet ne kadarının indiğini yüzde olarak gösterir. İndirme sırasında rozete tekrar dokunmak indirmeyi baştan başlatmaz.
+3. Bunu ilk yapışınızda Android, Universal Till'in uygulama yüklemesine izin vermenizi isteyebilir. İzin verin, sonra rozete tekrar dokunun. Zaten indirilmiş olan uygulama ikinci kez indirilmeden hemen yüklenir.
+4. İndirme başarısız olursa ya da üç dakika boyunca ilerlemezse rozet "Güncelleme başarısız — tekrar denemek için dokunun" yazar. Bağlantıyı denetleyin ve yeniden denemek için dokunun.
+5. Ayarlar → Yazılım güncelleme aynı işi tek dokunuşla yapar; ayrıca hangi sürümde olduğunuzu ve hangi sürümün mevcut olduğunu gösterir. Güncellemeleri denetle'den sonra oradaki İndir düğmesi aynı yüklemeyi başlatır.
+6. Yönetici PIN kutusu ve İndir düğmesi yalnızca gerçekten yeni bir sürüm varken görünür — güncel bir kasada dokunulacak bir şey yoktur. Kasa siz dokunurken yeniden denetleyip zaten en yeni sürümde olduğunuzu görürse, hiçbir şey indirmeden bunu söyler.
 
 İki durumda yönetici PIN'i istenir: kasiyer olarak oturum açtıysanız ya da kasa self-servis sipariş modundaysa. Self-servis modda kurulum aynı zamanda kiosk kilidini açacağı için, orada yönetici olsanız bile PIN gerekir.
 

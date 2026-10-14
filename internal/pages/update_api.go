@@ -340,23 +340,33 @@ func updateUnavailableHTML(locale, latest, goos string) string {
 	// native library inside the APK and only the package installer may
 	// replace an app's own code (an OS guarantee, not a gap here). But the
 	// native shell CAN drive that installer, so this is not the dead end the
-	// generic branch below describes: offer a button that calls the shell's
-	// own bridge. The bridge takes NO url — it resolves the release APK
-	// itself — so this markup cannot steer what gets installed (see
-	// MainActivity.KioskBridge.installUpdate). A plain <a href> would not
-	// work either way: shouldOverrideUrlLoading confines the WebView to the
-	// till's own loopback origin, so an off-origin download link is refused
-	// before it starts.
+	// generic branch below describes.
+	//
+	// ut-docs#4312: a BUTTON wired to the one shared install flow
+	// (web/public/android-update.js, [data-android-update-install]) — the same
+	// POST /api/update/android-install + bridge sequence as the status-bar
+	// chip and the Settings form. It was a link to /settings#android-update
+	// (ut-docs#1534), which is the page this answer renders on, so tapping
+	// "Download" started nothing. The markup itself never calls the bridge:
+	// the shared flow does, only after the server has authorised the caller,
+	// and the bridge takes NO url (MainActivity.KioskBridge.installUpdate), so
+	// nothing here can steer what gets installed.
 	if selfupdate.InstallBridgeAvailable(goos) {
-		// ut-docs#1534: an ABSOLUTE path, not a bare "#android-update"
-		// fragment. This same line renders into the status bar on every
-		// page, where a same-page fragment silently navigates nowhere — the
-		// operator taps "Download" and the till does nothing. Same-origin,
-		// so shouldOverrideUrlLoading still lets the WebView follow it.
-		return fmt.Sprintf(`<span>⬆ %s v%s — <a href="/settings#android-update" data-testid="android-update-install">%s</a></span>`,
-			html.EscapeString(httpx.T(locale, "status.update_available")),
+		at := func(key string) string { return html.EscapeString(httpx.T(locale, key)) }
+		return fmt.Sprintf(`<span>⬆ %s v%s — <button type="button" class="btn secondary" data-android-update-install data-testid="android-update-install"`+
+			` data-downloading="%s" data-progress="%s" data-installing="%s" data-retry="%s"`+
+			` data-failed="%s" data-locked="%s" data-uptodate="%s" data-nobridge="%s">%s</button></span>`,
+			at("status.update_available"),
 			html.EscapeString(latest),
-			html.EscapeString(httpx.T(locale, "settings.update.download")))
+			at("settings.update.android.downloading"),
+			at("settings.update.android.progress"),
+			at("settings.update.android.installing"),
+			at("settings.update.android.retry"),
+			at("settings.update.android.failed"),
+			at("auth.error.locked"),
+			at("settings.update.up_to_date"),
+			at("settings.update.android.no_bridge"),
+			at("settings.update.download"))
 	}
 	if selfupdate.DownloadLinkActionable(goos) {
 		// target="_blank": a plain same-window navigation is a dead end in

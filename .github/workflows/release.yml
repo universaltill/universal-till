@@ -616,6 +616,8 @@ jobs:
       contents: write
     outputs:
       apk_sha256: ${{ steps.attach.outputs.apk_sha256 }}
+      apk_arm64_sha256: ${{ steps.attach.outputs.apk_arm64_sha256 }}
+      apk_armv7_sha256: ${{ steps.attach.outputs.apk_armv7_sha256 }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -691,7 +693,13 @@ jobs:
           UT_MARKETPLACE_PUBLIC_KEY_PIN: ${{ vars.UT_MARKETPLACE_PUBLIC_KEY }}
           UT_MARKETPLACE_SIGNING_KEY_URL: ${{ vars.UT_MARKETPLACE_SIGNING_KEY_URL }}
         run: bash scripts/ci/resolve-marketplace-key.sh
-      - name: Build signed release APK
+      # ut-docs#1541: one APK per device ABI (android/app/build.gradle.kts
+      # product flavors) — every device downloads only its own ~40 MB package
+      # instead of the 150 MB universal one carrying both ABIs. The universal
+      # flavor is still built and published under the LEGACY names, because
+      # every till on v0.34.x or older has that stable URL baked in. Same
+      # signing config for all three (the release build type's).
+      - name: Build signed release APKs (arm64, armv7, universal)
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -710,22 +718,58 @@ jobs:
           # collided with the next minor bump the first time patch hit 100
           # (independent review caught this in the first draft: 0.2.100 and
           # 0.3.0 both hashed to the same code under MA*10000+MI*100+PA).
+          #
+          # ut-docs#1541: this is the BASE code; each flavor's real
+          # versionCode is base*10 + {universal 0, armv7 1, arm64 2}
+          # (android/app/build.gradle.kts), still above every earlier release.
           IFS=. read -r MA MI PA <<< "$VERSION"
           VERSION_CODE=$((MA * 1000000 + MI * 1000 + PA))
           cd android
-          ./gradlew assembleRelease -PversionName="$VERSION" -PversionCode="$VERSION_CODE"
-      - name: Verify the APK is actually signed with our key
+          ./gradlew assembleArm64Release assembleArmv7Release assembleUniversalRelease \
+            -PversionName="$VERSION" -PversionCode="$VERSION_CODE"
+      - name: Verify each APK is signed with our key and carries only its own ABI
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           BUILD_TOOLS="${ANDROID_HOME}/build-tools/36.1.0"
-          APK="android/app/build/outputs/apk/release/app-release.apk"
-          test -f "$APK"
-          "${BUILD_TOOLS}/apksigner" verify "$APK"
-          FINGERPRINT="$("${BUILD_TOOLS}/apksigner" verify --print-certs "$APK" | grep 'SHA-256 digest' | awk '{print $NF}')"
-          echo "signed with SHA-256: ${FINGERPRINT}"
-          mv "$APK" "unitill-pos_${VERSION}_android.apk"
+          IFS=. read -r MA MI PA <<< "$VERSION"
+          BASE_CODE=$((MA * 1000000 + MI * 1000 + PA))
+          # flavor : published name : ABI digit : expected lib/ dirs (sorted)
+          for spec in \
+            "arm64:unitill-pos_${VERSION}_android-arm64.apk:2:arm64-v8a" \
+            "armv7:unitill-pos_${VERSION}_android-armv7.apk:1:armeabi-v7a" \
+            "universal:unitill-pos_${VERSION}_android.apk:0:arm64-v8a armeabi-v7a"; do
+            IFS=: read -r flavor name digit want_abis <<< "$spec"
+            APK="android/app/build/outputs/apk/${flavor}/release/app-${flavor}-release.apk"
+            test -f "$APK"
+            "${BUILD_TOOLS}/apksigner" verify "$APK"
+            FINGERPRINT="$("${BUILD_TOOLS}/apksigner" verify --print-certs "$APK" | grep 'SHA-256 digest' | awk '{print $NF}')"
+            echo "${flavor}: signed with SHA-256: ${FINGERPRINT}"
+            # The ABI split is the whole point of #1541: fail rather than
+            # publish an "arm64" APK that still carries the 32-bit library.
+            got_abis="$(unzip -Z1 "$APK" | sed -n 's|^lib/\([^/]*\)/.*|\1|p' | sort -u | tr '\n' ' ' | sed 's/ $//')"
+            if [ "$got_abis" != "$want_abis" ]; then
+              echo "::error::${flavor} APK carries native libs for '${got_abis}', expected '${want_abis}'"
+              exit 1
+            fi
+            # useLegacyPackaging: the .so must be deflated, not stored
+            # (74.5 MB stored vs ~35 MB deflated per ABI).
+            # (awk reads to the end: no early-exiting reader under pipefail.)
+            if unzip -v "$APK" | awk '$NF ~ /^lib\/.*\.so$/ && $2 == "Stored" {bad=1} END {exit !bad}'; then
+              echo "::error::${flavor} APK stores its native libraries uncompressed (useLegacyPackaging lost?)"
+              exit 1
+            fi
+            want_code=$((BASE_CODE * 10 + digit))
+            badging="$("${BUILD_TOOLS}/aapt2" dump badging "$APK")"
+            got_code="$(sed -n "s/^package:.* versionCode='\([0-9]*\)'.*/\1/p" <<< "$badging")"
+            if [ "$got_code" != "$want_code" ]; then
+              echo "::error::${flavor} APK versionCode is '${got_code}', expected ${want_code}"
+              exit 1
+            fi
+            echo "${flavor}: ${got_abis}, versionCode ${got_code}, $(stat -c %s "$APK") bytes"
+            mv "$APK" "$name"
+          done
       - name: Attach the APK to the release
         id: attach
         env:
@@ -735,13 +779,19 @@ jobs:
         run: |
           set -euo pipefail
           APK="unitill-pos_${VERSION}_android.apk"
-          gh release upload "${TAG}" "$APK" --clobber
+          APK_ARM64="unitill-pos_${VERSION}_android-arm64.apk"
+          APK_ARMV7="unitill-pos_${VERSION}_android-armv7.apk"
+          gh release upload "${TAG}" "$APK" "$APK_ARM64" "$APK_ARMV7" --clobber
           # ut-docs#2863: the `checksums` job needs the exact bytes this job
           # signed and uploaded, to prove the published asset it later
-          # downloads is the same file (not a race with a re-upload). The
-          # fixed-name latest.apk copy is a byte copy of this same file, so
-          # one hash covers both.
-          echo "apk_sha256=$(sha256sum "$APK" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          # downloads is the same file (not a race with a re-upload). Each
+          # fixed-name *-latest.apk copy is a byte copy of its versioned file,
+          # so one hash per ABI covers both.
+          {
+            echo "apk_sha256=$(sha256sum "$APK" | awk '{print $1}')"
+            echo "apk_arm64_sha256=$(sha256sum "$APK_ARM64" | awk '{print $1}')"
+            echo "apk_armv7_sha256=$(sha256sum "$APK_ARMV7" | awk '{print $1}')"
+          } >> "$GITHUB_OUTPUT"
       - name: Also attach a fixed-name copy for the website's stable download link
         # ut-docs (download-page-apk-dead-end, 2026-08-30): the versioned
         # filename above means the website's Android button has no static
@@ -762,8 +812,14 @@ jobs:
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
+          # ut-docs#1541: the installed app's in-app updater downloads these
+          # stable names too (BuildConfig.UPDATE_APK_URL per flavor). The
+          # universal one keeps the legacy name every older till fetches.
           cp "unitill-pos_${VERSION}_android.apk" unitill-pos-android-latest.apk
-          gh release upload "${TAG}" unitill-pos-android-latest.apk --clobber
+          cp "unitill-pos_${VERSION}_android-arm64.apk" unitill-pos-android-arm64-latest.apk
+          cp "unitill-pos_${VERSION}_android-armv7.apk" unitill-pos-android-armv7-latest.apk
+          gh release upload "${TAG}" unitill-pos-android-latest.apk \
+            unitill-pos-android-arm64-latest.apk unitill-pos-android-armv7-latest.apk --clobber
 
   # Regression gate for a real bug found 2026-07-28: the Windows and Linux
   # desktop-shell (WebView) builds had no buildinfo.Version ldflag at all
@@ -849,6 +905,8 @@ jobs:
             --pattern "unitill-pos_*_windows_amd64.zip" \
             --pattern "unitill-pos_*_darwin_arm64.tar.gz" \
             --pattern "unitill-pos_*_android.apk" \
+            --pattern "unitill-pos_*_android-arm64.apk" \
+            --pattern "unitill-pos_*_android-armv7.apk" \
             --pattern "checksums.txt"
       # ADR-0158: every release binary carries the marketplace plugin-signing
       # key (pinned repository variable, cross-checked against the live key).
@@ -992,6 +1050,15 @@ jobs:
           }
 
           cd dist-check
+          # ut-docs#1541: the per-ABI APKs carry the same gomobile .so, so
+          # each one is checked too — a stale or unstamped split would ship
+          # to every device of that ABI.
+          for abi_apk in arm64:arm64-v8a armv7:armeabi-v7a; do
+            IFS=: read -r flavor abi <<< "$abi_apk"
+            rm -rf "extracted-${flavor}" && mkdir "extracted-${flavor}"
+            unzip -qo "unitill-pos_${VERSION}_android-${flavor}.apk" -d "extracted-${flavor}"
+            checkAndroidLib "extracted-${flavor}/lib/${abi}/libgojni.so" "android ${flavor} APK ${abi} libgojni.so"
+          done
           rm -rf extracted && mkdir extracted
           # ut-docs#1277: unzip prompts interactively (and fails non-zero
           # under set -euo pipefail, with no test ever running) when the APK
@@ -1007,13 +1074,14 @@ jobs:
 
           exit $fail
 
-  # Folds the Windows setup .exe and both Android .apk names into
+  # Folds the Windows setup .exe and all six Android .apk names (universal,
+  # arm64, armv7 — each versioned + its *-latest copy, ut-docs#1541) into
   # checksums.txt and verifies EVERY published asset against it (ut-docs#2863).
   # goreleaser's checksums.txt only ever covers goreleaser's own artifacts;
   # macos-dmg-attach folds the .dmg in after publishing
   # (packaging/macos/update-checksums.sh, ut-docs#2917) because internal/selfupdate's mac update path verifies it before
   # mounting, but before this job existed nothing did the same for the
-  # Windows installer or either Android .apk — a missing or wrong entry for
+  # Windows installer or any Android .apk — a missing or wrong entry for
   # any of them would only ever surface as a real device silently refusing a
   # real update (#160's planned Windows self-updater will verify a
   # downloaded setup .exe against this job's line the exact same way).
@@ -1062,6 +1130,8 @@ jobs:
           TAG: ${{ needs.prepare.outputs.tag }}
           EXE_SHA256: ${{ needs.windows-installer.outputs.exe_sha256 }}
           APK_SHA256: ${{ needs.android-app.outputs.apk_sha256 }}
+          APK_ARM64_SHA256: ${{ needs.android-app.outputs.apk_arm64_sha256 }}
+          APK_ARMV7_SHA256: ${{ needs.android-app.outputs.apk_armv7_sha256 }}
         run: |
           set -euo pipefail
           ASSETS="$RUNNER_TEMP/assets"
@@ -1071,9 +1141,11 @@ jobs:
           EXE="$ASSETS/unitill-pos-setup-${VERSION}.exe"
           APK="$ASSETS/unitill-pos_${VERSION}_android.apk"
           LATEST_APK="$ASSETS/unitill-pos-android-latest.apk"
+          APK_ARM64="$ASSETS/unitill-pos_${VERSION}_android-arm64.apk"
+          LATEST_APK_ARM64="$ASSETS/unitill-pos-android-arm64-latest.apk"
+          APK_ARMV7="$ASSETS/unitill-pos_${VERSION}_android-armv7.apk"
+          LATEST_APK_ARMV7="$ASSETS/unitill-pos-android-armv7-latest.apk"
           test -f "$EXE"
-          test -f "$APK"
-          test -f "$LATEST_APK"
 
           # Prove the published bytes are the ones the build jobs actually
           # signed — not something a later, unrelated re-upload replaced.
@@ -1086,24 +1158,36 @@ jobs:
             echo "::error::published $EXE sha256 (${got_exe}) does not match the one windows-installer signed (${EXE_SHA256})"
             exit 1
           fi
-          if [ -z "$APK_SHA256" ]; then
-            echo "::error::android-app job produced no apk_sha256 output"
-            exit 1
-          fi
-          got_apk="$(sha256sum "$APK" | awk '{print $1}')"
-          if [ "$got_apk" != "$APK_SHA256" ]; then
-            echo "::error::published $APK sha256 (${got_apk}) does not match the one android-app signed (${APK_SHA256})"
-            exit 1
-          fi
-          got_latest="$(sha256sum "$LATEST_APK" | awk '{print $1}')"
-          if [ "$got_latest" != "$APK_SHA256" ]; then
-            echo "::error::published $LATEST_APK sha256 (${got_latest}) is not a copy of the APK android-app signed (${APK_SHA256})"
-            exit 1
-          fi
+          # ut-docs#1541: three APKs (universal under the legacy names, plus
+          # arm64 and armv7), each published versioned + as a *-latest.apk
+          # byte copy. Every one must be the bytes android-app signed.
+          check_apk() { # check_apk <versioned> <latest> <signed sha256>
+            local apk="$1" latest="$2" want="$3" got
+            test -f "$apk"
+            test -f "$latest"
+            if [ -z "$want" ]; then
+              echo "::error::android-app job produced no sha256 output for $(basename "$apk")"
+              exit 1
+            fi
+            got="$(sha256sum "$apk" | awk '{print $1}')"
+            if [ "$got" != "$want" ]; then
+              echo "::error::published $apk sha256 (${got}) does not match the one android-app signed (${want})"
+              exit 1
+            fi
+            got="$(sha256sum "$latest" | awk '{print $1}')"
+            if [ "$got" != "$want" ]; then
+              echo "::error::published $latest sha256 (${got}) is not a copy of the APK android-app signed (${want})"
+              exit 1
+            fi
+          }
+          check_apk "$APK" "$LATEST_APK" "$APK_SHA256"
+          check_apk "$APK_ARM64" "$LATEST_APK_ARM64" "$APK_ARM64_SHA256"
+          check_apk "$APK_ARMV7" "$LATEST_APK_ARMV7" "$APK_ARMV7_SHA256"
 
           packaging/macos/update-checksums.sh "$ASSETS/checksums.txt" "$EXE"
-          packaging/macos/update-checksums.sh "$ASSETS/checksums.txt" "$APK"
-          packaging/macos/update-checksums.sh "$ASSETS/checksums.txt" "$LATEST_APK"
+          for f in "$APK" "$LATEST_APK" "$APK_ARM64" "$LATEST_APK_ARM64" "$APK_ARMV7" "$LATEST_APK_ARMV7"; do
+            packaging/macos/update-checksums.sh "$ASSETS/checksums.txt" "$f"
+          done
 
           bash scripts/ci/check-release-checksums.sh "$ASSETS/checksums.txt" "$ASSETS"
 

@@ -151,7 +151,10 @@ fi
 # The literal ${VERSION} is intentional: matching release.yml's own
 # unexpanded run: script text, not a shell expansion in this test.
 # shellcheck disable=SC2016
-for want in 'unitill-pos-setup-' 'unitill-pos_${VERSION}_android.apk' 'unitill-pos-android-latest.apk'; do
+# ut-docs#1541: plus the per-ABI APKs (versioned + stable *-latest names).
+for want in 'unitill-pos-setup-' 'unitill-pos_${VERSION}_android.apk' 'unitill-pos-android-latest.apk' \
+  'unitill-pos_${VERSION}_android-arm64.apk' 'unitill-pos-android-arm64-latest.apk' \
+  'unitill-pos_${VERSION}_android-armv7.apk' 'unitill-pos-android-armv7-latest.apk'; do
   if grep -qF -- "$want" <<<"$checksums_job"; then
     pass "checksums job folds in: ${want}"
   else

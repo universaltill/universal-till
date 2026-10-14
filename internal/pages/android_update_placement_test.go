@@ -25,23 +25,59 @@ import (
 // link must work from ANY page, and the install control must live under the
 // heading an operator looking for an update actually opens.
 
-// The Android status line is rendered into the status bar on every page (and
-// into the Settings check-for-updates slot). A bare "#android-update" href is
-// a same-page fragment: on /sale, /catalog or anywhere else it navigates
-// nowhere at all. It must be an absolute path to the settings anchor.
-func TestAndroidUpdateStatusLinkIsPageIndependent(t *testing.T) {
+// ut-docs#4312 (replacing ut-docs#1534's link): the check-for-updates answer
+// on Android is a BUTTON wired to the one shared install flow
+// (web/public/android-update.js, [data-android-update-install]). The #1534 link
+// to /settings#android-update pointed at the page the operator was already on,
+// so "Download" started nothing. The button carries every translated state the
+// shared flow can show on it.
+func TestAndroidUpdateCheckResultIsAnInstallButton(t *testing.T) {
 	got := updateUnavailableHTML("en", "0.2.51", "android")
 
-	if !strings.Contains(got, `href="/settings#android-update"`) {
-		t.Errorf("android status line must link to the settings anchor by absolute path, got %q", got)
+	if !strings.Contains(got, `<button type="button"`) || !strings.Contains(got, `data-android-update-install`) {
+		t.Errorf("android check result must be the shared install button, got %q", got)
 	}
-	if strings.Contains(got, `href="#android-update"`) {
-		t.Errorf("android status line still uses a bare same-page fragment (dead on every page but /settings), got %q", got)
+	if strings.Contains(got, "<a ") || strings.Contains(got, "href=") {
+		t.Errorf("android check result must not be a link (a same-page link starts nothing — ut-docs#4312), got %q", got)
 	}
-	// Unchanged from ut-docs#1246: this line renders where a cashier can see
-	// it, so it must never call the bridge itself — only the PIN-gated form may.
+	for _, attr := range []string{"data-downloading=", "data-progress=", "data-installing=", "data-retry=", "data-failed=", "data-locked=", "data-uptodate=", "data-nobridge="} {
+		if !strings.Contains(got, attr) {
+			t.Errorf("android install button lacks %s (the shared flow would show an empty label), got %q", attr, got)
+		}
+	}
+	// Unchanged from ut-docs#1246: the markup never calls the bridge itself —
+	// the shared flow does, only after the server authorised the caller.
 	if strings.Contains(got, "installUpdate") {
 		t.Errorf("android status line must not call the install bridge directly (ungated kiosk escape), got %q", got)
+	}
+}
+
+// ut-docs#4312: the three surfaces share ONE install flow. Each template must
+// call it rather than carry its own copy of the POST + bridge sequence (three
+// copies is how the chip and the form came to restart each other's download).
+func TestAndroidInstallSurfacesUseTheSharedFlow(t *testing.T) {
+	for _, f := range []string{"web/ui/pages/settings.html", "web/ui/layouts/base.html"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		src := string(b)
+		if !strings.Contains(src, "utAndroidUpdater.install(") {
+			t.Errorf("%s does not use the shared utAndroidUpdater.install flow (web/public/android-update.js)", f)
+		}
+		if strings.Contains(src, "AndroidKiosk.installUpdate") {
+			t.Errorf("%s calls the install bridge itself — only web/public/android-update.js may (ut-docs#4312)", f)
+		}
+		if !strings.Contains(src, "ut:android-update") {
+			t.Errorf("%s does not listen for the shell's progress (ut:android-update) — the operator sees no %% and no failure", f)
+		}
+	}
+	js, err := os.ReadFile("web/public/android-update.js")
+	if err != nil {
+		t.Fatalf("read shared flow: %v", err)
+	}
+	if !strings.Contains(string(js), "window.utAndroidUpdate = function") {
+		t.Error("android-update.js no longer defines window.utAndroidUpdate, the callback MainActivity.reportUpdate calls")
 	}
 }
 
@@ -276,14 +312,23 @@ func TestAndroidInstallRefusesWhenAlreadyCurrent(t *testing.T) {
 // say so with. web/ui/layouts/base.html's desktop chip has read this field
 // since 2026-07-28; these two are the ones that never did.
 func TestAndroidInstallSurfacesHonourAlreadyCurrent(t *testing.T) {
+	// ut-docs#4312: the POST + bridge sequence now lives once, in the shared
+	// flow; the two templates map its "uptodate" outcome to their own text.
+	shared, err := os.ReadFile("web/public/android-update.js")
+	if err != nil {
+		t.Fatalf("read web/public/android-update.js: %v", err)
+	}
+	if !strings.Contains(string(shared), "already_current") {
+		t.Error("web/public/android-update.js posts to /api/update/android-install but never reads data.already_current — a 200 that means 'you are up to date' is treated as authorisation and downloads the running build again (ut-docs#1545)")
+	}
 	for _, f := range []string{"web/ui/pages/settings.html", "web/ui/layouts/base.html"} {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatalf("read %s: %v", f, err)
 		}
 		src := string(b)
-		if !strings.Contains(src, "already_current") {
-			t.Errorf("%s posts to /api/update/android-install but never reads data.already_current — a 200 that means 'you are up to date' is treated as authorisation and downloads ~140MB to reinstall the running build (ut-docs#1545)", f)
+		if !strings.Contains(src, "'uptodate'") {
+			t.Errorf("%s never handles the shared flow's 'uptodate' outcome — the operator would get silence or a wrong message (ut-docs#1545)", f)
 		}
 		if !strings.Contains(src, `data-uptodate="{{ T "settings.update.up_to_date" }}"`) {
 			t.Errorf("%s has no translated 'already up to date' string to show for that answer — the operator would get silence or a wrong message (ut-docs#1545)", f)

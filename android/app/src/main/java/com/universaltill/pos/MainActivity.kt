@@ -52,6 +52,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.core.content.pm.PackageInfoCompat
 import androidx.core.os.LocaleListCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -99,6 +100,13 @@ class MainActivity : AppCompatActivity() {
     // online/offline light) in step with the device's network; see
     // [watchNetwork]. Null until registered, and again once unregistered.
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
+    // ut-docs#4312: the in-app update's state (see downloadAndInstallUpdate).
+    private val updateHandler = Handler(Looper.getMainLooper())
+    private var updatePollRunnable: Runnable? = null
+    private var updateCheckingReuse = false
+    private var updateLoggedPercent = -1
+    private var lastUpdateState: String? = null
 
     // ut-docs#1639 (independent review): whether this Activity is between
     // onResume and onPause. [schedulePinCheck] refuses to arm outside that
@@ -504,9 +512,15 @@ class MainActivity : AppCompatActivity() {
          * the operator to download and reinstall an APK by hand.
          *
          * **Takes no URL, deliberately.** The release APK is resolved from
-         * [UPDATE_APK_URL], a compile-time constant, so nothing the page
-         * renders can steer what gets installed — an argument would turn a
-         * JS-reachable bridge into "install arbitrary package".
+         * BuildConfig.UPDATE_APK_URL — per ABI flavor, plus a fixed per-ABI
+         * table the universal build picks from by the device's own ABI
+         * (ut-docs#1541, [UpdateLogic.updateApkUrl]) — all compile-time, so
+         * nothing the page renders can steer what gets installed — an
+         * argument would turn a JS-reachable bridge into "install arbitrary
+         * package".
+         *
+         * Idempotent (ut-docs#4312): a call while a download runs only
+         * re-reports its state through `window.utAndroidUpdate`.
          *
          * Reaching this is gated on a manager PIN by settings.html's
          * #android-update form (POST /api/update/android-install), because
@@ -754,21 +768,102 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Enqueues the release APK and hands the finished file to the system
-     * package installer. Downloads into the app's own external files dir: no
-     * storage permission needed, it is what [FileProvider] exposes (see
-     * res/xml/file_paths.xml), and a half-written APK never appears in the
-     * operator's Files app. Never crashes the till — a failure leaves the
-     * operator able to install by hand.
+     * The in-app update (ut-docs#1246, made reliable by ut-docs#4312).
+     *
+     * One download at a time, reported to the page as it goes:
+     * - a repeat [KioskBridge.installUpdate] while a download runs does
+     *   nothing but re-report its state (the chip and the Settings form used
+     *   to restart a 150 MB download on every tap);
+     * - the download id survives this Activity ([UPDATE_PREFS]), so a
+     *   recreated Activity, or a later tap, picks the same download up;
+     * - a complete APK already on disk is installed instead of downloaded
+     *   again, but only when it is provably the current release
+     *   ([UpdateLogic.canReuseDownloadedApk]: same length as the server's
+     *   Content-Length — or, when HEAD fails, as the finished saved
+     *   download's total ([UpdateLogic.expectedApkLength]) — parses, newer
+     *   than the running build);
+     * - it fails on a stall (no bytes for [UPDATE_STALL_MS]) or after
+     *   [UPDATE_HARD_CAP_MS], never on a fixed clock;
+     * - every transition is a `Log.i(TAG, "update: …")` line and a
+     *   `window.utAndroidUpdate({state, percent, error})` call
+     *   (web/public/android-update.js), so the chip shows a % and a failure.
+     *
+     * Downloads into the app's own external files dir: no storage permission,
+     * it is what [FileProvider] exposes (res/xml/file_paths.xml), and a
+     * half-written APK never appears in the operator's Files app. Never
+     * crashes the till — a failure leaves the operator able to retry.
      */
     private fun downloadAndInstallUpdate() {
+        if (updatePollRunnable != null || updateCheckingReuse) {
+            Log.i(TAG, "update: already in progress, re-reporting state")
+            lastUpdateState?.let { pushUpdateState(it) }
+            return
+        }
         try {
+            val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             val dest = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), UPDATE_APK_NAME)
-            if (dest.exists()) {
-                dest.delete() // a stale partial from an interrupted attempt must never be installed
+            val savedId = updatePrefs().getLong(UPDATE_PREF_ID, -1L)
+            if (savedId >= 0 && isDownloadInFlight(manager, savedId)) {
+                Log.i(TAG, "update: download $savedId is still running, watching it")
+                watchUpdateDownload(manager, savedId, dest)
+                return
             }
+            val url = updateApkUrl()
+            updateCheckingReuse = true
+            reportUpdate("downloading", null, null)
+            // The size check is a network call (HEAD), so off the UI thread.
+            Thread {
+                val (savedSuccessful, savedTotal) = savedDownloadOutcome(manager, savedId)
+                val expected = UpdateLogic.expectedApkLength(headContentLength(url), savedSuccessful, savedTotal)
+                val fileLength = if (dest.isFile) dest.length() else 0L
+                val archiveVersion = if (fileLength > 0) archiveVersionCode(dest) else null
+                runOnUiThread {
+                    updateCheckingReuse = false
+                    if (isDestroyed) return@runOnUiThread
+                    if (UpdateLogic.canReuseDownloadedApk(fileLength, expected, archiveVersion, installedVersionCode())) {
+                        Log.i(TAG, "update: reusing the complete APK already downloaded ($fileLength bytes, versionCode $archiveVersion)")
+                        launchPackageInstaller(dest)
+                    } else {
+                        enqueueUpdateDownload(manager, dest, url, savedId)
+                    }
+                }
+            }.apply {
+                name = "update-size-check"
+                isDaemon = true
+            }.start()
+        } catch (e: Exception) {
+            updateCheckingReuse = false
+            failUpdate(e.message ?: "update download failed")
+        }
+    }
+
+    /** ut-docs#1541: this build's own package, or — on the universal build — the device ABI's. */
+    private fun updateApkUrl(): String =
+        UpdateLogic.updateApkUrl(
+            BuildConfig.UPDATE_UNIVERSAL,
+            BuildConfig.UPDATE_APK_URL,
+            mapOf(
+                UpdateLogic.ABI_ARM64 to BuildConfig.UPDATE_APK_URL_ARM64,
+                UpdateLogic.ABI_ARMV7 to BuildConfig.UPDATE_APK_URL_ARMV7,
+            ),
+            Build.SUPPORTED_ABIS.toList(),
+        )
+
+    private fun enqueueUpdateDownload(
+        manager: DownloadManager,
+        dest: File,
+        url: String,
+        staleId: Long,
+    ) {
+        try {
+            // Only now is the old file worthless (partial, or an older
+            // release): remove the old record (DownloadManager deletes its
+            // file) and anything else left at the destination, so a
+            // half-written APK is never installed.
+            if (staleId >= 0) manager.remove(staleId)
+            if (dest.exists()) dest.delete()
             val request =
-                DownloadManager.Request(Uri.parse(UPDATE_APK_URL)).apply {
+                DownloadManager.Request(Uri.parse(url)).apply {
                     setMimeType(APK_MIME)
                     setTitle(getString(R.string.app_name))
                     setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
@@ -778,16 +873,51 @@ class MainActivity : AppCompatActivity() {
                         UPDATE_APK_NAME,
                     )
                 }
-            val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            pollDownload(manager, manager.enqueue(request), dest)
+            val id = manager.enqueue(request)
+            // The enqueue time (wall clock) goes with the id, so the hard cap
+            // counts from here in every later Activity (UpdateLogic.detectorStartMs).
+            updatePrefs()
+                .edit()
+                .putLong(UPDATE_PREF_ID, id)
+                .putLong(UPDATE_PREF_ENQUEUED_AT, System.currentTimeMillis())
+                .apply()
+            Log.i(TAG, "update: enqueued download $id from $url")
+            watchUpdateDownload(manager, id, dest)
         } catch (e: Exception) {
-            statusView.visibility = View.VISIBLE
-            statusView.text = getString(R.string.status_failed, e.message ?: "update download failed")
+            failUpdate(e.message ?: "update download failed")
         }
     }
 
     /**
-     * Watches [id] to a terminal state, then hands the file to the installer.
+     * Whether download [id] finished (STATUS_SUCCESSFUL) and its
+     * COLUMN_TOTAL_SIZE_BYTES — the reuse check's fallback when HEAD fails.
+     */
+    private fun savedDownloadOutcome(
+        manager: DownloadManager,
+        id: Long,
+    ): Pair<Boolean, Long?> {
+        if (id < 0) return false to null
+        return runCatching {
+            manager.query(DownloadManager.Query().setFilterById(id)).use { c ->
+                if (!c.moveToFirst()) return@use false to null
+                val status = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                val total = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+                (status == DownloadManager.STATUS_SUCCESSFUL) to total
+            }
+        }.getOrDefault(false to null)
+    }
+
+    private fun isDownloadInFlight(
+        manager: DownloadManager,
+        id: Long,
+    ): Boolean =
+        manager.query(DownloadManager.Query().setFilterById(id)).use { c ->
+            c.moveToFirst() &&
+                c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) in IN_FLIGHT_STATUSES
+        }
+
+    /**
+     * Polls [id] to a terminal state, then hands the file to the installer.
      *
      * POLLED, not a completion broadcast: DownloadManager's
      * ACTION_DOWNLOAD_COMPLETE comes from the system, so a receiver must be
@@ -796,37 +926,187 @@ class MainActivity : AppCompatActivity() {
      * never fired and the 142MB APK just sat on disk. Exporting it would let
      * any app on the device spoof "your download finished"; polling has no
      * receiver to leak and explicit terminal states. Bounded by
-     * [UPDATE_POLL_LIMIT] so a stalled download cannot poll for the life of
-     * the till.
+     * [UpdateLogic.StallDetector], not by a fixed number of polls.
      */
-    private fun pollDownload(
+    private fun watchUpdateDownload(
         manager: DownloadManager,
         id: Long,
         dest: File,
-        tick: Int = 0,
     ) {
-        if (tick > UPDATE_POLL_LIMIT) {
-            statusView.visibility = View.VISIBLE
-            statusView.text = getString(R.string.status_failed, "update download timed out")
-            return
-        }
-        val status =
-            manager.query(DownloadManager.Query().setFilterById(id)).use { c ->
-                if (!c.moveToFirst()) {
-                    DownloadManager.STATUS_FAILED
-                } else {
-                    c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+        stopUpdatePoll()
+        val enqueuedAt = updatePrefs().getLong(UPDATE_PREF_ENQUEUED_AT, -1L).takeIf { it > 0 }
+        val start = UpdateLogic.detectorStartMs(SystemClock.elapsedRealtime(), System.currentTimeMillis(), enqueuedAt)
+        val stall = UpdateLogic.StallDetector(UPDATE_STALL_MS, UPDATE_HARD_CAP_MS, start)
+        updateLoggedPercent = -1
+        val poll =
+            object : Runnable {
+                override fun run() {
+                    if (pollUpdateDownload(manager, id, dest, stall)) {
+                        updateHandler.postDelayed(this, UPDATE_POLL_MS)
+                    } else {
+                        updatePollRunnable = null
+                    }
                 }
             }
-        when (status) {
-            DownloadManager.STATUS_SUCCESSFUL -> launchPackageInstaller(dest)
-            DownloadManager.STATUS_FAILED -> {
-                statusView.visibility = View.VISIBLE
-                statusView.text = getString(R.string.status_failed, "update download failed")
+        updatePollRunnable = poll
+        poll.run()
+    }
+
+    /** One poll. Returns true to keep polling. */
+    private fun pollUpdateDownload(
+        manager: DownloadManager,
+        id: Long,
+        dest: File,
+        stall: UpdateLogic.StallDetector,
+    ): Boolean {
+        try {
+            manager.query(DownloadManager.Query().setFilterById(id)).use { c ->
+                if (!c.moveToFirst()) {
+                    // Cancelled from the notification, or cleared by the system.
+                    clearUpdateId()
+                    failUpdate("download cancelled")
+                    return false
+                }
+                val status = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                val done = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+                val total = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+                when (status) {
+                    DownloadManager.STATUS_SUCCESSFUL -> {
+                        val localUri = c.getString(c.getColumnIndexOrThrow(DownloadManager.COLUMN_LOCAL_URI))
+                        val file = localUri?.let { Uri.parse(it) }?.takeIf { it.scheme == "file" }?.path?.let { File(it) } ?: dest
+                        Log.i(TAG, "update: download $id complete ($done bytes)")
+                        // Finished: KEEP the id. A later tap reuses this file
+                        // only through the size + version check, never blindly;
+                        // when HEAD fails, this record's total is the size
+                        // (UpdateLogic.expectedApkLength). The next enqueue
+                        // removes it.
+                        reportUpdate("ready", 100, null)
+                        launchPackageInstaller(file)
+                        return false
+                    }
+                    DownloadManager.STATUS_FAILED -> {
+                        val reason = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
+                        manager.remove(id)
+                        clearUpdateId()
+                        failUpdate("download failed (reason $reason)")
+                        return false
+                    }
+                }
+                val pct = UpdateLogic.percent(done, total)
+                if (pct != null && UpdateLogic.crossedLogStep(updateLoggedPercent, pct)) {
+                    Log.i(TAG, "update: download $id at $pct% ($done/$total bytes)")
+                    updateLoggedPercent = pct
+                }
+                when (stall.observe(done, SystemClock.elapsedRealtime())) {
+                    UpdateLogic.Verdict.OK -> {
+                        reportUpdate("downloading", pct, null)
+                        return true
+                    }
+                    UpdateLogic.Verdict.STALLED -> {
+                        manager.remove(id)
+                        clearUpdateId()
+                        failUpdate("download stalled: no progress for ${UPDATE_STALL_MS / 60_000} minutes at $done bytes (status $status)")
+                        return false
+                    }
+                    UpdateLogic.Verdict.TIMED_OUT -> {
+                        manager.remove(id)
+                        clearUpdateId()
+                        failUpdate("download timed out after ${UPDATE_HARD_CAP_MS / 60_000} minutes at $done/$total bytes")
+                        return false
+                    }
+                }
             }
-            else -> webView.postDelayed({ pollDownload(manager, id, dest, tick + 1) }, UPDATE_POLL_MS)
+        } catch (e: Exception) {
+            failUpdate(e.message ?: "update download failed")
+            return false
         }
     }
+
+    /**
+     * ut-docs#4312: a download started before this Activity was (re)created
+     * keeps reporting to the page. Called from [onResume]; a finished one is
+     * left for the operator's next tap (the reuse check), never installed
+     * unasked.
+     */
+    private fun resumeUpdateWatch() {
+        if (updatePollRunnable != null || updateCheckingReuse) return
+        val id = updatePrefs().getLong(UPDATE_PREF_ID, -1L)
+        if (id < 0) return
+        runCatching {
+            val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            if (isDownloadInFlight(manager, id)) {
+                Log.i(TAG, "update: resuming the watch on download $id")
+                watchUpdateDownload(manager, id, File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), UPDATE_APK_NAME))
+            }
+        }.onFailure { Log.w(TAG, "update: could not resume the download watch", it) }
+    }
+
+    private fun stopUpdatePoll() {
+        updatePollRunnable?.let { updateHandler.removeCallbacks(it) }
+        updatePollRunnable = null
+    }
+
+    private fun updatePrefs() = getSharedPreferences(UPDATE_PREFS, Context.MODE_PRIVATE)
+
+    private fun clearUpdateId() =
+        updatePrefs()
+            .edit()
+            .remove(UPDATE_PREF_ID)
+            .remove(UPDATE_PREF_ENQUEUED_AT)
+            .apply()
+
+    private fun failUpdate(error: String) {
+        Log.w(TAG, "update: failed: $error")
+        reportUpdate("failed", null, error)
+    }
+
+    /** Tells the page (web/public/android-update.js) where the update is. */
+    private fun reportUpdate(
+        state: String,
+        percent: Int?,
+        error: String?,
+    ) {
+        val json = UpdateLogic.stateJson(state, percent, error)
+        lastUpdateState = json
+        pushUpdateState(json)
+    }
+
+    private fun pushUpdateState(json: String) {
+        if (!::webView.isInitialized) return
+        // json is UpdateLogic.stateJson output: a JSON object literal with
+        // every string escaped, so it is a valid JS expression as it stands.
+        webView.evaluateJavascript("window.utAndroidUpdate && window.utAndroidUpdate($json)", null)
+    }
+
+    /** The server's Content-Length for [url] (redirects followed), or null. */
+    private fun headContentLength(url: String): Long? =
+        runCatching {
+            val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+            try {
+                conn.requestMethod = "HEAD"
+                conn.instanceFollowRedirects = true
+                conn.connectTimeout = 15_000
+                conn.readTimeout = 15_000
+                if (conn.responseCode == java.net.HttpURLConnection.HTTP_OK) conn.contentLengthLong.takeIf { it > 0 } else null
+            } finally {
+                conn.disconnect()
+            }
+        }.onFailure { Log.w(TAG, "update: size check failed: ${it.message}") }.getOrNull()
+
+    /** The versionCode of the APK at [apk] if it parses as THIS app's package. */
+    private fun archiveVersionCode(apk: File): Long? =
+        runCatching {
+            @Suppress("DEPRECATION")
+            packageManager.getPackageArchiveInfo(apk.path, 0)
+                ?.takeIf { it.packageName == packageName }
+                ?.let { PackageInfoCompat.getLongVersionCode(it) }
+        }.getOrNull()
+
+    private fun installedVersionCode(): Long =
+        runCatching {
+            @Suppress("DEPRECATION")
+            PackageInfoCompat.getLongVersionCode(packageManager.getPackageInfo(packageName, 0))
+        }.getOrDefault(Long.MAX_VALUE) // unknown: never reuse a file blindly
 
     /**
      * Hands [apk] to the system installer via [FileProvider]. A `file://` URI
@@ -845,10 +1125,10 @@ class MainActivity : AppCompatActivity() {
             // r=...packageinstaller/...InstallStart" in logcat, no dialog,
             // no exception. That is exactly what "I pressed Update and
             // nothing happened" looked like on a real tablet. This is only
-            // reachable from settings.html's manager-PIN-gated
-            // #android-update form. Release defensively, the same way
-            // KioskBridge.exitLockdown does for exit-to-OS — a no-op if the
-            // pin was already off, which it is in the ordinary case.
+            // reachable after POST /api/update/android-install authorised the
+            // caller (manager session or PIN). Release defensively, the same
+            // way KioskBridge.exitLockdown does for exit-to-OS — a no-op if
+            // the pin was already off, which it is in the ordinary case.
             releaseKioskLock()
             clearImmersiveMode()
             val uri = FileProvider.getUriForFile(this, "$packageName.updates", apk)
@@ -859,12 +1139,14 @@ class MainActivity : AppCompatActivity() {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
             startActivity(intent)
+            Log.i(TAG, "update: package installer launched for ${apk.name} (${apk.length()} bytes)")
+            reportUpdate("installing", 100, null)
         } catch (e: Exception) {
             // Most likely ActivityNotFoundException, or "install unknown apps"
-            // not yet granted. Surface it — the fallback is a manual install,
-            // which the operator can only choose if they know this failed.
-            statusView.visibility = View.VISIBLE
-            statusView.text = getString(R.string.status_failed, e.message ?: "install failed")
+            // not yet granted. Surface it — the fallback is a retry or a
+            // manual install, which the operator can only choose if they know
+            // this failed.
+            failUpdate("installer: ${e.message ?: "install failed"}")
         }
     }
 
@@ -1899,6 +2181,9 @@ class MainActivity : AppCompatActivity() {
         } else {
             releaseKioskLock()
         }
+        // ut-docs#4312: a download that outlived the previous Activity keeps
+        // reporting its progress to the page.
+        resumeUpdateWatch()
     }
 
     /**
@@ -1987,6 +2272,9 @@ class MainActivity : AppCompatActivity() {
         // Handler otherwise holds this Activity indirectly via the Runnable
         // until the delay elapses.
         cancelPendingPinCheck()
+        // ut-docs#4312: stop polling (the download itself carries on in
+        // DownloadManager; onResume of the next Activity picks it up).
+        stopUpdatePoll()
         // Unbind (not stop) TillService — the till keeps running
         // regardless of whether this Activity exists (a real POS terminal
         // isn't "done" just because its screen isn't currently shown).
@@ -2027,20 +2315,30 @@ class MainActivity : AppCompatActivity() {
         // till believed them.
         private const val PIN_RECHECK_INTERVAL_MS = 3000L
 
-        // ut-docs#1246: the release APK's STABLE url — release.yml republishes
-        // this same filename on every release, so the shell never resolves a
-        // version or calls the GitHub API. Compile-time constant on purpose:
-        // installUpdate() takes no argument, so page content can never
-        // redirect an install.
-        private const val UPDATE_APK_URL =
-            "https://github.com/universaltill/universal-till/releases/latest/download/unitill-pos-android-latest.apk"
+        // ut-docs#1246/#1541: the release APK's STABLE url is
+        // BuildConfig.UPDATE_APK_URL, one per ABI flavor (app/build.gradle.kts)
+        // — release.yml republishes those filenames on every release, so the
+        // shell never resolves a version or calls the GitHub API. Compile-time
+        // on purpose: installUpdate() takes no argument, so page content can
+        // never redirect an install.
         private const val UPDATE_APK_NAME = "unitill-pos-update.apk"
         private const val APK_MIME = "application/vnd.android.package-archive"
 
-        // ~5 minutes at 750ms: enough for a ~140MB APK on shop WiFi, bounded
-        // so a stalled download cannot poll forever.
-        private const val UPDATE_POLL_MS = 750L
-        private const val UPDATE_POLL_LIMIT = 400
+        // ut-docs#4312: the old fixed limit (~5 minutes at 750ms) failed a
+        // 150 MB download on ordinary shop Wi-Fi. Now: poll once a second,
+        // fail only when no byte has arrived for 3 minutes, and give up after
+        // an hour whatever happens.
+        private const val UPDATE_POLL_MS = 1000L
+        private const val UPDATE_STALL_MS = 3L * 60L * 1000L
+        private const val UPDATE_HARD_CAP_MS = 60L * 60L * 1000L
+
+        // ut-docs#4312: where the in-flight DownloadManager id lives, so a
+        // recreated Activity or a later tap finds the same download.
+        private const val UPDATE_PREFS = "in_app_update"
+        private const val UPDATE_PREF_ID = "download_id"
+        private const val UPDATE_PREF_ENQUEUED_AT = "download_enqueued_at_wall_ms"
+        private val IN_FLIGHT_STATUSES =
+            setOf(DownloadManager.STATUS_PENDING, DownloadManager.STATUS_RUNNING, DownloadManager.STATUS_PAUSED)
 
         // ut-docs#414: the exact locale codes this app ships native string
         // resources for (values-fa/, values-tr/, values-ar/, plus the
