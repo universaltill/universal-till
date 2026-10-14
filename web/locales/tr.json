@@ -2279,6 +2279,7 @@
   "settings.diagnostics.stop_confirm_none": "Yükleme bekleyen bir şey yok. Tanılama modu kapatılsın mı?",
   "settings.diagnostics.stopped": "Tanılama modu kapalı. %d gönderilmemiş paket (%d olay) atıldı.",
   "settings.diagnostics.title": "Tanılama modu",
+  "settings.display.additional_kiosk_use_profile": "Bu kasa bir ek kasa. Bu kasayı self-servis kiosk yapmak için Ayarlar → Cihaz profili bölümünü kullanın — önce sorar ve ana kasaya bildirir.",
   "settings.display.apply": "Uygula",
   "settings.display.basket_panel_help": "Satış ekranında, sepet ile ürün düğmeleri arasındaki ayırıcıya dokunup basılı tutun (veya fareyle tıklayıp sürükleyin); her iki tarafı da büyütebilirsiniz. Sıfırla, varsayılan bölünmeyi geri getirir.",
   "settings.display.basket_panel_reset_btn": "Ayırıcıyı sıfırla",

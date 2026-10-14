@@ -3328,9 +3328,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		// ut-docs#2781: no side door around the dedicated display-mode
 		// handler's satellite gate.
-		if key == "display.mode" && value != "self_order" && ownTillRole(r.Context(), d) == data.TillRoleSatellite {
-			httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), "settings.display.satellite_mode_blocked"), http.StatusBadRequest)
-			return
+		// ut-docs#4263: nor around its additional-till confirm (an additional
+		// till becoming a kiosk must ask first and tell the main till).
+		if key == "display.mode" {
+			switch role := ownTillRole(r.Context(), d); {
+			case value != "self_order" && role == data.TillRoleSatellite:
+				httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), "settings.display.satellite_mode_blocked"), http.StatusBadRequest)
+				return
+			case value == "self_order" && role == data.TillRoleAdditional:
+				httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), "settings.display.additional_kiosk_use_profile"), http.StatusBadRequest)
+				return
+			}
 		}
 		// ADR-0083 (ut-docs#1767): the two signing-device posture keys are
 		// stored per country, but the form field / cloud directive still

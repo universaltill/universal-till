@@ -534,6 +534,50 @@ func TestDisplayMode_AdditionalToSelfOrderAsksFirstThenBecomesSatellite(t *testi
 	}
 }
 
+func (f *tillRoleSettingsFixture) upsertDisplayMode(t *testing.T, value string) *httptest.ResponseRecorder {
+	t.Helper()
+	form := url.Values{"key": {"display.mode"}, "value": {value}}
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/upsert", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	f.mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// ut-docs#4263: the generic upsert door must not let an additional till
+// become a kiosk without the confirm dialog and without telling the main
+// till (the inverse of the ut-docs#2781 satellite gate).
+func TestUpsertDisplayMode_AdditionalTillCannotSideStepToSelfOrder(t *testing.T) {
+	f := newTillRoleSettingsFixture(t, "additional")
+	rec := f.upsertDisplayMode(t, "self_order")
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "This till is an additional till") {
+		t.Fatalf("upsert self_order on an additional till: %d %s, want 400 with the specific message", rec.Code, rec.Body)
+	}
+	if m := f.mode(t); m != "" {
+		t.Fatalf("a refused upsert persisted display.mode=%q", m)
+	}
+	if got := ownTillRole(t.Context(), f.replica); got != "additional" {
+		t.Fatalf("own role = %q, want additional", got)
+	}
+	if r, _, _ := data.NewTillsRepo(f.main.Db).RoleByID(t.Context(), f.selfID); r != "additional" {
+		t.Fatalf("the main till's roster says %q, want additional", r)
+	}
+	for name, dp := range map[string]*common.Deps{"replica": f.replica, "main": f.main} {
+		if got := auditRows(t, dp, "role_changed"); len(got) != 0 {
+			t.Fatalf("%s role_changed audit = %v, want none", name, got)
+		}
+	}
+	// Not a blanket refusal: other profiles still go through on an additional
+	// till, and a satellite may still become a kiosk.
+	if rec := f.upsertDisplayMode(t, "register"); rec.Code != http.StatusOK && rec.Code != http.StatusNoContent {
+		t.Fatalf("upsert register on an additional till: %d %s", rec.Code, rec.Body)
+	}
+	sat := newTillRoleSettingsFixture(t, "satellite")
+	if rec := sat.upsertDisplayMode(t, "self_order"); rec.Code != http.StatusOK && rec.Code != http.StatusNoContent {
+		t.Fatalf("upsert self_order on a satellite: %d %s", rec.Code, rec.Body)
+	}
+}
+
 // The main till holds the role: if it can't be told, nothing changes here.
 func TestDisplayMode_MakeSatelliteRefusedWhileMainTillUnreachable(t *testing.T) {
 	f := newTillRoleSettingsFixture(t, "additional")

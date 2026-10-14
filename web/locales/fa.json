@@ -2279,6 +2279,7 @@
   "settings.diagnostics.stop_confirm_none": "چیزی در انتظار بارگذاری نیست. حالت عیب‌یابی خاموش شود؟",
   "settings.diagnostics.stopped": "حالت عیب‌یابی خاموش شد. %d دستهٔ ارسال‌نشده (%d رویداد) دور ریخته شد.",
   "settings.diagnostics.title": "حالت عیب‌یابی",
+  "settings.display.additional_kiosk_use_profile": "این صندوق یک صندوق اضافی است. برای تبدیل آن به کیوسک سفارش خود، از تنظیمات ← پروفایل دستگاه استفاده کنید — ابتدا می‌پرسد و صندوق اصلی را باخبر می‌کند.",
   "settings.display.apply": "اعمال",
   "settings.display.basket_panel_help": "در صفحهٔ فروش، خط جداکننده بین سبد خرید و دکمه‌های محصول را لمس‌کرده و نگه دارید (یا با ماوس کلیک کرده و بکشید) تا هر طرف را بزرگ‌تر کنید. بازنشانی، تقسیم پیش‌فرض را برمی‌گرداند.",
   "settings.display.basket_panel_reset_btn": "بازنشانی جداکننده",
