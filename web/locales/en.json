@@ -197,6 +197,8 @@
   "catalog.barcode.force_plain": "Plain code (ignore weight/price)",
   "catalog.barcode.force_plain_hint": "Treat this code as a plain product barcode, even if weight/price-embedded barcodes are enabled for this shop.",
   "catalog.barcode.remove_confirm": "Remove this barcode?",
+  "catalog.barcode.variant_inactive": "This variant is switched off. Tick Active for it and save, then add the barcode.",
+  "catalog.barcode.variant_inactive_hint": "Switched off: tick Active to add a barcode.",
   "catalog.barcode_backfill.btn": "Backfill barcodes from SKU",
   "catalog.barcode_backfill.confirm_btn": "Assign these barcodes",
   "catalog.barcode_backfill.eligible_count": "%d item(s) can get a barcode derived from their SKU.",

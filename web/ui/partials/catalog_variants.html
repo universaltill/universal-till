@@ -207,6 +207,13 @@
                       hx-target="#catalog-variants" hx-swap="outerHTML">✕</button>
             </span>
             {{ end }}
+            {{/* ut-docs#4343: the repo refuses a barcode on an inactive variant
+                 (and the scan path never resolves one), so the attach form
+                 is only offered for active rows; an inactive row says why —
+                 a short hint at the attach field's width (the sticky Save
+                 column, #1967, covers anything wider), the full sentence in
+                 its title. */}}
+            {{ if .IsActive }}
             <form class="chip-add" hx-post="/api/catalog/barcode" hx-target="#catalog-variants" hx-swap="outerHTML">
               <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
               <input type="hidden" name="variantId" value="{{ .ID }}">
@@ -214,6 +221,9 @@
               <label class="chip-add-primary" title="{{ T "catalog.barcode.force_plain_hint" }}"><input type="checkbox" name="forcePlainBarcode" value="1"> {{ T "catalog.barcode.force_plain" }}</label>
               <button class="btn secondary" type="submit" title="{{ T "catalog.attach_barcode" }}">＋</button>
             </form>
+            {{ else }}
+            <span class="vg-barcode-off" data-testid="variant-barcode-inactive" title="{{ T "catalog.barcode.variant_inactive" }}">{{ T "catalog.barcode.variant_inactive_hint" }}</span>
+            {{ end }}
             {{/* ut-docs#2230: an ACTIVE variant with neither a barcode (the
                  chips above) nor a SKU (the input in this row) is
                  "codeless" — nothing resolves it at sale time, so
