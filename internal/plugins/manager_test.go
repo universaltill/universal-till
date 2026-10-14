@@ -63,8 +63,10 @@ func TestManagerInitAndReload(t *testing.T) {
 	// Menu entry for a plugin with NO declared permissions → allowed.
 	seedMenuEntry(t, db, "com.test.a", "page-a", "Page A")
 
-	// A catalog-only plugin (not installed), with tags to parse.
-	seedCatalogRow(t, db, "com.test.c", "Plugin C", "1.0.0", `["pos","report"]`)
+	// A catalog-only plugin (not installed): plugin_catalog is only the
+	// FK parent of plugins(id,version), never a source of installed plugins
+	// (ut-docs#2238).
+	seedCatalogRow(t, db, "com.test.c", "Plugin C", "1.0.0", "")
 
 	m, err := Init(ctx, &config.Config{Env: "test"}, db)
 	if err != nil {
@@ -76,21 +78,6 @@ func TestManagerInitAndReload(t *testing.T) {
 	}
 	if _, ok := m.MenuPlugins["page-a"]; !ok {
 		t.Fatalf("menu entry for permissionless plugin missing: %+v", m.MenuPlugins)
-	}
-
-	views := m.CatalogList()
-	if len(views) != 3 {
-		t.Fatalf("CatalogList len = %d, want 3", len(views))
-	}
-	// Sorted by name; installed flag derived from Installed map.
-	if views[0].ID != "com.test.a" || !views[0].Installed {
-		t.Fatalf("catalog A view wrong: %+v", views[0])
-	}
-	if views[2].ID != "com.test.c" || views[2].Installed {
-		t.Fatalf("catalog C view wrong: %+v", views[2])
-	}
-	if len(views[2].Tags) != 2 || views[2].Tags[0] != "pos" {
-		t.Fatalf("tags not parsed: %+v", views[2].Tags)
 	}
 
 	// Uninstall B, Reload must drop it.
@@ -214,31 +201,6 @@ func TestLoadMenuEntriesPermissionGating(t *testing.T) {
 	}
 	if _, ok := m.MenuPlugins["page-denied"]; ok {
 		t.Fatalf("ungranted plugin's entry shown")
-	}
-}
-
-func TestParseTags(t *testing.T) {
-	cases := []struct {
-		in   string
-		want []string
-	}{
-		{`["a","b"]`, []string{"a", "b"}},
-		{`[]`, nil},
-		{``, nil},
-		{`[" a ", ""]`, []string{"a"}},
-		{`["one"]`, []string{"one"}},
-	}
-	for _, c := range cases {
-		got := parseTags(c.in)
-		if len(got) != len(c.want) {
-			t.Errorf("parseTags(%q) = %v, want %v", c.in, got, c.want)
-			continue
-		}
-		for i := range got {
-			if got[i] != c.want[i] {
-				t.Errorf("parseTags(%q)[%d] = %q, want %q", c.in, i, got[i], c.want[i])
-			}
-		}
 	}
 }
 
