@@ -414,6 +414,8 @@ cloud, the guest pages (`/self-order`, `/api/self-order/*`, `/o/*` and the
 static files they load). Everything else, the PIN screen included, answers
 `403 Forbidden` before auth runs (ut-docs#4261). Only the TCP peer address
 counts; forwarded-for headers are ignored.
+The boot-failure recovery screen and its retry button sit behind the same
+guard, also in demo mode (ut-docs#4268).
 
 `UT_UI_ALLOW_CIDRS` (comma-separated CIDRs or IPs, default empty) adds
 networks whose browsers may open the UI too: the Docker host bridge (the
