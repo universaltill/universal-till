@@ -180,6 +180,10 @@ jobs:
         run: bash scripts/ci/guard-i18n_dupkey_test.sh
       - name: i18n coverage guard page-title regression test
         run: bash scripts/ci/guard-i18n_title_test.sh
+      - name: i18n guard tests run in a sandbox (ut-docs#4258)
+        run: bash scripts/ci/guard-i18n-tests-sandboxed.sh
+      - name: i18n guard sandbox enforcement regression test
+        run: bash scripts/ci/guard-i18n-tests-sandboxed_test.sh
       - name: Compliance-claims wording guard
         run: bash scripts/ci/guard-compliance-claims.sh
       - name: Compliance-claims wording guard regression test
