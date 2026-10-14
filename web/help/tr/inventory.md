@@ -21,7 +21,7 @@ routes: [/inventory, /locations, /ui/inventory/stock-table]
 
 ## Hiç stok takibi yapmıyorsanız
 
-Bazı işletmeler stok saymaz — her ürünün her zaman satılabilmesini isterler. Bunun için **Ayarlar → Stok → „Ürünleri stok takibi yapmadan sat"** seçeneğini açın. Ürünler, kasada onlara ait bir stok kaydı olmasa bile satılır ve hiçbir satış stok yetersizliği nedeniyle reddedilmez.
+Bazı işletmeler stok saymaz — her ürünün her zaman satılabilmesini isterler. Bunun için **Ayarlar → Stok → „Ürünleri stok takibi yapmadan sat"** seçeneğini açın. Ürünler, kasada onlara ait bir stok kaydı olmasa bile satılır ve hiçbir satış stok yetersizliği nedeniyle reddedilmez. Kasa ayrıca hangi ürünlerin biteceğini de tahmin etmeyi bırakır: Envanter veya Raporlar sayfasında ⚠ bitmek üzere uyarısı, kalan gün ya da sipariş önerisi ve Mağazam gelen kutusunda ya da e-postayla düşük stok özeti olmaz — stok miktarlarınız görünür kalır.
 
 Kasanın, ürün bittiğinde satışı durdurmasını istiyorsanız kapalı bırakın. Varsayılan budur; stok takibi yapmayan bir sistemden aktarılan bir katalogun siz bu seçeneği açana kadar hiçbir şey satamamasının nedeni de budur.
 

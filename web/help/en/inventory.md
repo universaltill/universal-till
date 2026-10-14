@@ -52,7 +52,7 @@ There's no separate "transfer" button — move stock by recording two ordinary m
 
 ## If you do not track stock at all
 
-Some shops never count stock — they just want every item to sell, every time. Turn on **Settings → Stock → "Sell items without tracking stock"**. Items then sell even when the till has no stock record for them, and no sale is ever refused for being out of stock.
+Some shops never count stock — they just want every item to sell, every time. Turn on **Settings → Stock → "Sell items without tracking stock"**. Items then sell even when the till has no stock record for them, and no sale is ever refused for being out of stock. The till also stops predicting which items will run out: no ⚠ running-out chip on the Inventory or Reports page, no days-left or order suggestions, and no low-stock digest in your My shop inbox or by email — your stock quantities stay visible.
 
 Leave it off if you want the till to stop a sale when an item runs out. That is the default, and it is why a catalogue imported from a system that did not track stock cannot sell anything until you turn this on.
 

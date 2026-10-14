@@ -309,3 +309,69 @@ func TestInventoryLeadTimeAwareWarnAndReorder(t *testing.T) {
 		t.Fatalf("expected the reorder suggestion to target the item's own lead time + buffer, not the flat 14-day default; body: %s", body)
 	}
 }
+
+// ut-docs#4134: with the shop-wide "Sell items without tracking stock"
+// setting on, /inventory still lists stock quantities but makes no
+// prediction: no running-out chip, no days-left warning, no order hint.
+// With it off the same data warns (TestInventoryPredictsDaysLeft).
+func TestInventoryNoPredictionsWhenStockUntracked(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	chdirRoot(t)
+	d := openPagesTestDB(t)
+	defer d.Close()
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := d.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v (%s)", err, q)
+		}
+	}
+	mustExec(`INSERT INTO items (id, name, sku, base_price, is_active) VALUES ('it-cola','Fast Cola','COLA',100,1)`)
+	mustExec(`INSERT INTO stock_locations (id, name) VALUES ('loc-1','Shop floor')`)
+	mustExec(`INSERT INTO inventory (id, item_id, location_id, quantity) VALUES ('inv-1','it-cola','loc-1',6)`)
+	for i := 0; i < 14; i++ {
+		saleID := "s-" + string(rune('a'+i))
+		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
+		          VALUES (?, ?, 'completed', 'sale', 400, 0, 400, datetime('now', ?))`,
+			saleID, "R-"+saleID, "-"+string(rune('0'+i%9))+" days")
+		mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+		          VALUES (?, ?, 1, 'it-cola', 'Fast Cola', 4, 100, 0, 0, 0, 400, 400)`, "l-"+saleID, saleID)
+	}
+
+	state := common.LoadState(context.Background(), settings.NewStore(d), &config.Config{Theme: "default"})
+	state.AllowNegativeInventory = true
+	dp := &common.Deps{Cfg: &config.Config{Theme: "default"}, Db: d, State: state,
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(d)}
+
+	levels, runningOut := stockLevelsForDisplay(context.Background(), dp)
+	if runningOut != 0 {
+		t.Fatalf("runningOut = %d, want 0", runningOut)
+	}
+	if len(levels) != 1 {
+		t.Fatalf("levels = %d rows, want 1 (quantities stay listed)", len(levels))
+	}
+	if r := levels[0]; r.DaysLeft != -1 || r.RunsOut || r.OrderQty != 0 {
+		t.Fatalf("row = DaysLeft %d RunsOut %v OrderQty %d, want -1 false 0", r.DaysLeft, r.RunsOut, r.OrderQty)
+	}
+
+	mux := http.NewServeMux()
+	registerInventoryPage(mux, dp)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/inventory", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /inventory: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Fast Cola") {
+		t.Fatal("stock row must stay listed")
+	}
+	for _, bad := range []string{"predicted to run out", "days-warn", "order ~"} {
+		if strings.Contains(body, bad) {
+			t.Fatalf("untracked shop must not render %q", bad)
+		}
+	}
+}

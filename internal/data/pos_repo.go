@@ -249,6 +249,44 @@ func (l LowStockItem) IsRunningOut(rate float64) bool {
 	return l.DaysLeftAt(rate) <= l.EffectiveWarnDays()
 }
 
+// RunningOutCount counts the stock levels IsRunningOut flags at the rolling
+// 28-day sell rate ending at until — the one shared decision behind the
+// low-stock digest email and the /reports header chip (ut-docs#4134 moved it
+// here from internal/alerts). A shop that sells without tracking stock
+// (shopStockUntracked, from SettingsRepo.ShopStockUntracked) never predicts a
+// run-out, so it returns 0 without querying. Callers pass until with a +1s
+// pad: SQL window comparisons truncate to whole seconds, so an exact-now
+// exclusive upper bound can drop a sale committed in the same wall-clock
+// second (see reportNow in internal/pages/reports_page.go).
+func (r *POSRepo) RunningOutCount(ctx context.Context, until time.Time, shopStockUntracked bool) (int, error) {
+	if shopStockUntracked {
+		return 0, nil
+	}
+	from := until.Add(-28 * 24 * time.Hour)
+	rates, err := r.ItemDirectDailySellRates(ctx, from, until)
+	if err != nil {
+		return 0, err
+	}
+	variantRates, err := r.VariantDailySellRates(ctx, from, until)
+	if err != nil {
+		return 0, err
+	}
+	if len(rates) == 0 && len(variantRates) == 0 {
+		return 0, nil
+	}
+	levels, err := r.ListStockLevels(ctx)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, l := range levels {
+		if l.IsRunningOut(l.SellRate(rates, variantRates)) {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // SellRate picks the rate this row's own prediction (DaysLeftAt/
 // IsRunningOut/an order-quantity suggestion) must use: a variant-scoped row
 // (VariantID set, ut-docs#2082) uses its OWN rate from variantRates

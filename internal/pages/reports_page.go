@@ -254,19 +254,9 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		// without digging. This sell-rate window is a fixed rolling 28 days
 		// regardless of the selected report period/window — it feeds a
 		// stock-runout prediction, not the report figures above.
-		sellRateNow := reportNow()
-		runningOut := 0
-		rates, ratesErr := repo.ItemDirectDailySellRates(r.Context(), sellRateNow.Add(-28*24*time.Hour), sellRateNow)
-		variantRates, variantRatesErr := repo.VariantDailySellRates(r.Context(), sellRateNow.Add(-28*24*time.Hour), sellRateNow)
-		if ratesErr == nil && variantRatesErr == nil && (len(rates) > 0 || len(variantRates) > 0) {
-			if lvls, err := repo.ListStockLevels(r.Context()); err == nil {
-				for _, l := range lvls {
-					if l.IsRunningOut(l.SellRate(rates, variantRates)) {
-						runningOut++
-					}
-				}
-			}
-		}
+		// ut-docs#4134: a shop that sells without tracking stock gets no
+		// prediction (RunningOutCount returns 0), so no chip.
+		runningOut, _ := repo.RunningOutCount(r.Context(), reportNow(), d.CurrentState().AllowNegativeInventory)
 
 		var grandTotal, grandTax int64
 		var grandCount int

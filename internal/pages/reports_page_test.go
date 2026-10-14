@@ -2197,3 +2197,41 @@ func TestReportsPage_OnlyPluginAskPanel_2851(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#4134: the Reports header's running-out chip is suppressed when the
+// shop sells without tracking stock, and shown (same data) when it does not.
+func TestReportsPage_RunningOutChipHiddenWhenStockUntracked(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dp.Db.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("exec: %v (%s)", err, q)
+		}
+	}
+	mustExec(`INSERT INTO items (id, name, sku, base_price, is_active) VALUES ('it-cola','Fast Cola','COLA',100,1)`)
+	mustExec(`INSERT INTO inventory (id, item_id, location_id, quantity) VALUES ('inv-cola','it-cola','loc_main',6)`)
+	for i := 0; i < 14; i++ {
+		saleID := "s-unt-" + string(rune('a'+i))
+		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
+		          VALUES (?, ?, 'completed', 'sale', 400, 0, 400, datetime('now', ?))`,
+			saleID, "R-"+saleID, "-"+string(rune('0'+i%9))+" days")
+		mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+		          VALUES (?, ?, 1, 'it-cola', 'Fast Cola', 4, 100, 0, 0, 0, 400, 400)`, "l-"+saleID, saleID)
+	}
+
+	rec := getReportsPage(t, mux, "")
+	if !strings.Contains(rec.Body.String(), "predicted to run out") {
+		t.Fatal("control: with stock tracked the chip must show")
+	}
+
+	dp.UpdateState(func(s *common.RuntimeState) { s.AllowNegativeInventory = true })
+	rec = getReportsPage(t, mux, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "predicted to run out") {
+		t.Fatal("untracked shop must not show the running-out chip")
+	}
+}
