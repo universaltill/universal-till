@@ -292,8 +292,14 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	// render non-Latin numeral glyphs, RTL needs bitmap mode (spec) — so
 	// money/date below use the *Latin variants, not FormatMoney/FormatDate,
 	// even though those would also accept printLocale.
+	// ut-docs#4199: every label is printLocale's too (the printed invoice's
+	// convention). The receipt.paper.* keys are printf formats so a
+	// language can put the value first; their en values are the literals
+	// this function used to print, so an en receipt is unchanged.
 	printLocale := httpx.DefaultLocale()
 	money := func(minor int64) string { return httpx.FormatMoneyLatin(minor, printLocale) }
+	T := func(key string) string { return httpx.T(printLocale, key) }
+	Tf := func(key string, args ...any) string { return fmt.Sprintf(T(key), args...) }
 	// ut-docs#1632: FormatDateTimeLatin is FormatDateLatin plus the same
 	// "15:04" clock this used to hand-concatenate — same output, one call.
 	receiptDate := detail.CreatedAt
@@ -306,7 +312,7 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 		Logo:      receiptLogoRaster(rd),
 		Header:    rd.Header,
 		Meta: []string{
-			"Receipt " + detail.ReceiptNo,
+			Tf("receipt.paper.receipt_no", detail.ReceiptNo),
 			receiptDate,
 		},
 		Charset:   cfg.Charset,
@@ -318,21 +324,18 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	// (sibling card ut-docs#1818). Only printed when it actually differs
 	// from receipt_no (a configured scheme resolved to something shorter);
 	// a legacy sale with no display_no would otherwise print the same
-	// number twice. English literal, matching every other Meta line in
-	// this function — this receipt path is not yet migrated to T()/
-	// printLocale (see the money/date handling above), a pre-existing gap
-	// this card does not attempt to close.
+	// number twice.
 	if detail.DisplayNo != "" && detail.DisplayNo != detail.ReceiptNo {
-		doc.Meta = append([]string{"Order " + detail.DisplayNo}, doc.Meta...)
+		doc.Meta = append([]string{Tf("receipt.paper.order_no", detail.DisplayNo)}, doc.Meta...)
 	}
 	if rd.ShowBarcode {
 		// Scan-to-refund (G28): the receipt number as a barcode.
 		doc.Barcode = detail.ReceiptNo
 	}
 	if detail.SaleType == "return" {
-		meta := []string{"*** REFUND ***"}
+		meta := []string{T("receipt.paper.refund")}
 		if orig, ok, _ := data.NewPOSRepo(d.Db).OriginalReceiptFor(ctx, detail.ID); ok {
-			meta = append(meta, "For receipt "+orig)
+			meta = append(meta, Tf("receipt.paper.for_receipt", orig))
 		}
 		doc.Meta = append(meta, doc.Meta...)
 	}
@@ -340,7 +343,6 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	// prints its VAT number — and its address, unless the receipt header
 	// already carries it — so the till receipt holds the seller identity a
 	// VAT invoice needs. No VAT number configured = no change at all.
-	// English literals per this renderer's locale note above.
 	seller, _ := sellerConfig(ctx, d)
 	vatRegistered := seller.VATNo != ""
 	if vatRegistered {
@@ -354,16 +356,14 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 		// "VAT GB123456789", never byte-identical to this Meta line the way
 		// the address check above can be).
 		if !headerContains(rd.Header, seller.VATNo) {
-			doc.Meta = append(doc.Meta, "VAT No: "+seller.VATNo)
+			doc.Meta = append(doc.Meta, Tf("receipt.paper.vat_no", seller.VATNo))
 		}
 	}
 	// ADR-0073 Decision 7: a MIXED sale marks each line's mode; a uniform
-	// sale prints exactly as before. English literals match this renderer's
-	// existing convention (Latin digits forced regardless of printLocale
-	// — see above).
+	// sale prints exactly as before.
 	mixed := detail.OrderType == pos.OrderTypeMixed
 	if mixed {
-		doc.Meta = append(doc.Meta, "Mixed dine-in / takeaway")
+		doc.Meta = append(doc.Meta, T("receipt.paper.mixed"))
 	}
 	for _, l := range detail.Lines {
 		qty := httpx.FormatQtyLatin(l.Qty, printLocale)
@@ -373,26 +373,26 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 		}
 		if mixed {
 			if l.OrderType == pos.OrderTypeTakeaway {
-				name += " (takeaway)"
+				name += " " + T("receipt.paper.line_takeaway")
 			} else {
-				name += " (dine in)"
+				name += " " + T("receipt.paper.line_dine_in")
 			}
 		}
 		doc.Lines = append(doc.Lines, print.Line{Name: name, Qty: qty, Amount: money(l.LineTotal)})
 	}
 	if rd.ShowTax {
-		doc.Totals = []print.KV{{Label: "Subtotal", Amount: money(detail.Subtotal)}}
+		doc.Totals = []print.KV{{Label: T("basket.subtotal"), Amount: money(detail.Subtotal)}}
 	}
 	if detail.DiscountTotal != 0 {
-		doc.Totals = append(doc.Totals, print.KV{Label: "Discount", Amount: "-" + money(detail.DiscountTotal)})
+		doc.Totals = append(doc.Totals, print.KV{Label: T("basket.discount"), Amount: "-" + money(detail.DiscountTotal)})
 	}
 	if rd.ShowTax {
-		doc.Totals = append(doc.Totals, print.KV{Label: "Tax", Amount: money(detail.TaxTotal)})
+		doc.Totals = append(doc.Totals, print.KV{Label: T("basket.tax"), Amount: money(detail.TaxTotal)})
 	}
 	if detail.ServiceCharge != 0 {
-		doc.Totals = append(doc.Totals, print.KV{Label: "Service Charge", Amount: money(detail.ServiceCharge)})
+		doc.Totals = append(doc.Totals, print.KV{Label: T("journal.detail.service_charge"), Amount: money(detail.ServiceCharge)})
 	}
-	doc.Totals = append(doc.Totals, print.KV{Label: "TOTAL", Amount: money(detail.Total), Strong: true})
+	doc.Totals = append(doc.Totals, print.KV{Label: T("receipt.paper.total"), Amount: money(detail.Total), Strong: true})
 	// ut-docs#3337: the per-rate breakdown (gross charged at each VAT rate)
 	// a VAT-registered seller's receipt needs. Deliberately NOT gated by
 	// rd.ShowTax — that toggle keeps hiding only the lump Subtotal/Tax rows
@@ -400,18 +400,18 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	if vatRegistered {
 		for _, b := range vatBreakdown(detail) {
 			doc.Totals = append(doc.Totals, print.KV{
-				Label:  httpx.T(printLocale, "receipt.total_incl_vat") + " " + httpx.FormatPercentBP(int64(b.RateBP), printLocale),
+				Label:  T("receipt.total_incl_vat") + " " + httpx.FormatPercentBP(int64(b.RateBP), printLocale),
 				Amount: money(b.Gross),
 			})
 		}
 	}
 	for _, p := range detail.Payments {
-		doc.Payments = append(doc.Payments, print.KV{Label: strings.ToUpper(p.Method[:1]) + p.Method[1:], Amount: money(p.Amount)})
+		doc.Payments = append(doc.Payments, print.KV{Label: receiptMethodLabel(printLocale, p.Method), Amount: money(p.Amount)})
 		if p.ChangeGiven > 0 {
-			doc.Payments = append(doc.Payments, print.KV{Label: "Change", Amount: money(p.ChangeGiven)})
+			doc.Payments = append(doc.Payments, print.KV{Label: T("receipt.change"), Amount: money(p.ChangeGiven)})
 		}
 		if p.TipAmount > 0 {
-			doc.Payments = append(doc.Payments, print.KV{Label: "Tip", Amount: money(p.TipAmount)})
+			doc.Payments = append(doc.Payments, print.KV{Label: T("receipt.tip"), Amount: money(p.TipAmount)})
 		}
 		if p.Method == "cash" {
 			doc.KickDrawer = true
@@ -424,7 +424,7 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	// the override window that was active when the sale completed, so
 	// re-reading current settings here would give a stale or wrong answer.
 	if hasOverride, auditErr := data.NewPOSRepo(d.Db).HasAuditEntry(ctx, "sale", detail.ID, "unsigned_override"); auditErr == nil && hasOverride {
-		doc.Meta = append(doc.Meta, "Recorded during a documented TSE outage, under a time-limited owner override.")
+		doc.Meta = append(doc.Meta, T("receipt.fiscal.unsigned_override"))
 	}
 	// ADR-0044 proceed-and-declare (ut-docs#675): same audit-row derivation
 	// as the override line above — the sale's own unsigned_fiscal_signing /
@@ -439,9 +439,9 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	// sign this one" must never look like the same thing.
 	switch saleFiscalSigningGapKind(ctx, data.NewPOSRepo(d.Db), detail.ID) {
 	case fiscalSignGapActionSigning:
-		doc.Meta = append(doc.Meta, "TSE unreachable — this receipt was recorded without a TSE signature and will not be signed later.")
+		doc.Meta = append(doc.Meta, T("receipt.fiscal.unsigned_signing"))
 	case fiscalSignGapActionCannotSign:
-		doc.Meta = append(doc.Meta, "This sale could not be signed as presented — the receipt was recorded without a TSE signature and will not be signed later.")
+		doc.Meta = append(doc.Meta, T("receipt.fiscal.unsigned_cannot_sign"))
 	}
 	// ut-docs#585: the sale's recorded §6 KassenSichV TSE evidence, when any
 	// — same per-sale derivation as the two notices above (the sale's own
@@ -452,47 +452,44 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	// below. Fields the signer didn't return are skipped — never
 	// placeholders — and a read error degrades to no lines, same
 	// conservative policy as the audit-derived notices.
-	// English literals match this renderer's existing convention (Latin
-	// digits forced regardless of printLocale — see the note at the top
-	// of this function).
 	// Fiscal DEVICE receipt (Turkey's YN ÖKC, fiscal_device_hook.go): the
 	// device printed the legal receipt; this thermal copy carries its
 	// receipt number, serial and Z counter so the two can be matched. Same
 	// per-sale derivation and skip-what-is-absent policy as the TSE block
-	// below. English literals per this renderer's locale note.
+	// below.
 	if dev, ok, devErr := data.NewPOSRepo(d.Db).GetFiscalDeviceReceipt(ctx, detail.ID); devErr == nil && ok {
-		doc.Meta = append(doc.Meta, "Fiscal device receipt no.: "+dev.ReceiptNo)
+		doc.Meta = append(doc.Meta, Tf("receipt.paper.device.receipt_no", dev.ReceiptNo))
 		if dev.Serial != "" {
-			doc.Meta = append(doc.Meta, "Fiscal device serial: "+dev.Serial)
+			doc.Meta = append(doc.Meta, Tf("receipt.paper.device.serial", dev.Serial))
 		}
 		if dev.ZNo != 0 {
-			doc.Meta = append(doc.Meta, "Fiscal device Z no.: "+strconv.FormatInt(dev.ZNo, 10))
+			doc.Meta = append(doc.Meta, Tf("receipt.paper.device.z_no", strconv.FormatInt(dev.ZNo, 10)))
 		}
 		if dev.IssuedAt != "" {
-			doc.Meta = append(doc.Meta, "Fiscal device issued at: "+dev.IssuedAt)
+			doc.Meta = append(doc.Meta, Tf("receipt.paper.device.issued_at", dev.IssuedAt))
 		}
 	}
 	if sig, ok, sigErr := data.NewPOSRepo(d.Db).GetFiscalTSESignature(ctx, detail.ID); sigErr == nil && ok {
 		if sig.SerialNumber != "" {
-			doc.Meta = append(doc.Meta, "TSE serial: "+sig.SerialNumber)
+			doc.Meta = append(doc.Meta, Tf("receipt.paper.tse.serial", sig.SerialNumber))
 		}
 		if sig.TransactionNumber != 0 {
-			doc.Meta = append(doc.Meta, "TSE transaction no.: "+strconv.FormatInt(sig.TransactionNumber, 10))
+			doc.Meta = append(doc.Meta, Tf("receipt.paper.tse.transaction_no", strconv.FormatInt(sig.TransactionNumber, 10)))
 		}
 		if sig.SignatureCounter != 0 {
-			doc.Meta = append(doc.Meta, "TSE signature counter: "+strconv.FormatInt(sig.SignatureCounter, 10))
+			doc.Meta = append(doc.Meta, Tf("receipt.paper.tse.signature_counter", strconv.FormatInt(sig.SignatureCounter, 10)))
 		}
 		if sig.StartTime != "" {
-			doc.Meta = append(doc.Meta, "TSE transaction start: "+sig.StartTime)
+			doc.Meta = append(doc.Meta, Tf("receipt.paper.tse.start", sig.StartTime))
 		}
 		if sig.LogTime != "" {
-			doc.Meta = append(doc.Meta, "TSE transaction end: "+sig.LogTime)
+			doc.Meta = append(doc.Meta, Tf("receipt.paper.tse.end", sig.LogTime))
 		}
 		if sig.SignatureAlgorithm != "" {
-			doc.Meta = append(doc.Meta, "TSE signature algorithm: "+sig.SignatureAlgorithm)
+			doc.Meta = append(doc.Meta, Tf("receipt.paper.tse.algorithm", sig.SignatureAlgorithm))
 		}
 		if sig.Signature != "" {
-			doc.Meta = append(doc.Meta, "TSE signature: "+sig.Signature)
+			doc.Meta = append(doc.Meta, Tf("receipt.paper.tse.signature", sig.Signature))
 		}
 	}
 	// ut-docs#2880 (contract fiscal-sign-ask.md 1.10.0): the signer's own
@@ -517,18 +514,18 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	// voided voucher prints marked, never as a scannable symbol. A read
 	// error degrades to no block: a receipt without it beats no receipt.
 	if vs, vErr := data.NewPOSRepo(d.Db).VouchersIssuedInSale(ctx, detail.ID); vErr == nil && len(vs) > 0 {
-		doc.VoucherHeading = httpx.T(printLocale, "receipt.vouchers.issued")
+		doc.VoucherHeading = T("receipt.vouchers.issued")
 		for _, v := range vs {
 			vb := print.VoucherBlock{
-				Label:  httpx.T(printLocale, "catalog.item_type.gift_voucher"),
+				Label:  T("catalog.item_type.gift_voucher"),
 				Amount: money(v.OriginalAmountMinor),
 				Code:   v.ID,
 			}
 			if v.HolderLabel != "" {
-				vb.Holder = fmt.Sprintf(httpx.T(printLocale, "basket.gift_voucher.for"), v.HolderLabel)
+				vb.Holder = Tf("basket.gift_voucher.for", v.HolderLabel)
 			}
 			if v.Status == "void" {
-				vb.Void = httpx.T(printLocale, "receipt.vouchers.void")
+				vb.Void = T("receipt.vouchers.void")
 			}
 			doc.Vouchers = append(doc.Vouchers, vb)
 		}
@@ -543,6 +540,18 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 		doc.Footer = []string{rd.Footer}
 	}
 	return doc, nil
+}
+
+// receiptMethodLabel names a payment on the printed receipt (ut-docs#4199).
+// The built-in method ids carry their tender.* key (en "Cash"/"Card"/
+// "Voucher", what the title-cased id printed before); any other id — a
+// plugin tender, the legacy "gift" row — keeps its title-cased id.
+func receiptMethodLabel(locale, method string) string {
+	switch method {
+	case "cash", "card", "voucher":
+		return httpx.T(locale, "tender."+method)
+	}
+	return titleFirst(method)
 }
 
 // Test seams for the "printer hung until the deadline" regression
