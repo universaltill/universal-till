@@ -30,30 +30,51 @@ const minUptimeEnv = "UT_SHELL_MIN_UPTIME_SECONDS"
 // requirement while staying far below either failure threshold.
 const maxGateSeconds = 600
 
-// gateDuration resolves the hold from the environment, falling back to the
-// default. A malformed, negative, or too-large value falls back rather than
-// disabling the gate or overflowing: a typo must not silently reintroduce the
-// white screen. Only an explicit "0" disables it.
-func gateDuration() time.Duration {
-	raw, ok := os.LookupEnv(minUptimeEnv)
+// secondsFromEnv is the shared parse/clamp/fallback for the shell's
+// seconds-valued env knobs (UT_SHELL_MIN_UPTIME_SECONDS, ut-docs#1093;
+// UT_SHELL_ATTACH_RETRY_SECONDS, ut-docs#2248), factored out so the two can
+// never drift apart. Unset yields def. A malformed, negative, or too-large
+// (> maxGateSeconds) value falls back to def with one stderr line naming the
+// variable, rather than disabling the feature or overflowing: a typo must not
+// silently turn a safeguard off. Only an explicit "0" yields 0 (disabled).
+func secondsFromEnv(name string, def time.Duration) time.Duration {
+	raw, ok := os.LookupEnv(name)
 	if !ok {
-		return defaultMinUptime
+		return def
 	}
 	secs, err := strconv.Atoi(strings.TrimSpace(raw))
 	if err != nil || secs < 0 {
 		fmt.Fprintf(logging.Stderr(), "%s=%q is not a non-negative integer; using default %s\n",
-			minUptimeEnv, raw, defaultMinUptime)
-		return defaultMinUptime
+			name, raw, def)
+		return def
 	}
 	if secs == 0 {
 		return 0
 	}
 	if secs > maxGateSeconds {
 		fmt.Fprintf(logging.Stderr(), "%s=%d exceeds the %ds sanity cap; using default %s\n",
-			minUptimeEnv, secs, maxGateSeconds, defaultMinUptime)
-		return defaultMinUptime
+			name, secs, maxGateSeconds, def)
+		return def
 	}
 	return time.Duration(secs) * time.Second
+}
+
+// gateDuration resolves the hold from the environment, falling back to the
+// default. A malformed, negative, or too-large value falls back rather than
+// disabling the gate or overflowing: a typo must not silently reintroduce the
+// white screen. Only an explicit "0" disables it.
+func gateDuration() time.Duration {
+	return secondsFromEnv(minUptimeEnv, defaultMinUptime)
+}
+
+// attachRetryFloorDuration resolves the attach-probe retry floor
+// (ut-docs#1278) from UT_SHELL_ATTACH_RETRY_SECONDS (ut-docs#2248), with
+// exactly gateDuration's semantics: unset is defaultAttachRetryFloor, "0"
+// disables the floor (with the render gate also disabled that is the
+// pre-#1278 single immediate probe), and malformed/negative/over-cap values
+// fall back to the default with one stderr line.
+func attachRetryFloorDuration() time.Duration {
+	return secondsFromEnv(attachRetryEnv, defaultAttachRetryFloor)
 }
 
 // readUptimeFrom returns how long the machine has been up, from a /proc/uptime

@@ -13,7 +13,7 @@ import (
 // moment it binds :8080, without hot-looping the probe.
 const attachPollInterval = 500 * time.Millisecond
 
-// attachRetryFloor is the attach-probe retry's own minimum, held open
+// defaultAttachRetryFloor is the attach-probe retry's own minimum, held open
 // regardless of UT_SHELL_MIN_UPTIME_SECONDS (ut-docs#1278, review follow-up
 // to ut-docs#1199). Before this, attachDeadline() (attach_gate_linux.go)
 // derived the whole retry window from the render-defect startup gate's own
@@ -23,34 +23,49 @@ const attachPollInterval = 500 * time.Millisecond
 // the boot-race retry: that machine reverted to a single attach probe and
 // could still lose the race #1199 fixes. The render-defect gate and the
 // attach-race retry each need their own on/off switch. 15s is a recommended
-// default (per the review's suggestion) — tune to the measured systemd unit
-// start time if a deployment needs more headroom.
-const attachRetryFloor = 15 * time.Second
+// default (per the review's suggestion); ut-docs#2248 made it tunable via
+// attachRetryEnv for deployments whose systemd unit starts slower.
+const defaultAttachRetryFloor = 15 * time.Second
+
+// attachRetryEnv lets an operator tune or disable the attach-retry floor
+// (ut-docs#2248). "0" disables it; parsing, the 600s cap and the
+// fallback-with-stderr-line are shared with UT_SHELL_MIN_UPTIME_SECONDS via
+// secondsFromEnv (startup_gate.go).
+const attachRetryEnv = "UT_SHELL_ATTACH_RETRY_SECONDS"
 
 // attachRetryDuration is attachDeadline's pure decision (attach_gate_linux.go)
 // of how long from now to keep retrying the attach probe, given the render
-// gate's resolved minimum (min, from gateDuration()) and, when the gate is
-// active, how long the machine has been up (up). Split out as pure logic —
-// no clock, no file I/O — so the decision is directly testable here under
-// the plain (non-desktop-tagged) build, same "test the pure logic, leave
-// time.Now()/file I/O untested" split startup_gate.go's holdFor already uses
-// for waitForSafeStartup. It lives in this untagged file, not the
-// desktop&&linux-only attach_gate_linux.go, specifically so its test runs in
-// the CI job that actually executes `go test` on this package — the
-// desktop-shell job builds and vets attach_gate_linux.go but never tests it.
+// gate's resolved minimum (min, from gateDuration()), the retry floor (floor,
+// from attachRetryFloorDuration()) and, when readable, how long the machine
+// has been up (up; upKnown is false when /proc/uptime could not be read or
+// was not consulted). Split out as pure logic — no clock, no file I/O — so
+// the decision is directly testable here under the plain (non-desktop-tagged)
+// build, same "test the pure logic, leave time.Now()/file I/O untested" split
+// startup_gate.go's holdFor already uses for waitForSafeStartup. It lives in
+// this untagged file, not the desktop&&linux-only attach_gate_linux.go,
+// specifically so its test runs in the CI job that actually executes
+// `go test` on this package — the desktop-shell job builds and vets
+// attach_gate_linux.go but never tests it.
 //
 // min == 0 means the render-defect gate is explicitly disabled
-// (UT_SHELL_MIN_UPTIME_SECONDS=0) — but the attach-race retry is a separate
-// concern with its own switch, so it still gets attachRetryFloor rather than
-// collapsing to a single immediate probe (ut-docs#1278). Any other min keeps
-// the ut-docs#1199 behaviour unchanged: the two windows may still coincide,
-// deliberately — retrying the attach probe across the same span the render
-// gate is already holding open costs nothing extra.
-func attachRetryDuration(up, min time.Duration) time.Duration {
-	if min == 0 {
-		return attachRetryFloor
+// (UT_SHELL_MIN_UPTIME_SECONDS=0), and !upKnown means uptime is unreadable.
+// In both cases the attach-race retry is a separate concern that needs no
+// uptime knowledge, so it gets the absolute floor from now rather than
+// collapsing to a single immediate probe (ut-docs#1278; the unreadable case
+// ut-docs#2248). Otherwise the window is holdFor(up, max(min, floor)): the
+// floor is measured from boot exactly like the gate, so a small non-zero gate
+// (e.g. 1s, where holdFor(7s, 1s) would be 0) cannot reopen the ut-docs#1199
+// race, while a warm/manual launch already past both still costs exactly one
+// probe. With the default 60s gate max(60s, 15s) = 60s, so the two windows
+// still coincide, deliberately — retrying across the span the render gate is
+// already holding open costs nothing extra. A floor of 0 (operator-disabled)
+// leaves plain holdFor(up, min); with the gate also disabled that is the
+// pre-#1278 single immediate probe.
+func attachRetryDuration(up time.Duration, upKnown bool, min, floor time.Duration) time.Duration {
+	if min == 0 || !upKnown {
+		return floor
 	}
-	return holdFor(up, min)
+	return holdFor(up, max(min, floor))
 }
 
 // waitForAttach repeats probe (a health check against the would-be already-
@@ -76,12 +91,13 @@ func attachRetryDuration(up, min time.Duration) time.Duration {
 // replaces — so a warm or manual launch, or a platform with no startup gate
 // at all, cost exactly the one probe they always cost. Only a cold boot
 // still inside a retry window retries, and it never retries past that
-// window: on Linux with the render-defect gate active, that window is
-// attachDeadline's reuse of the same gate duration waitForSafeStartup is
-// already holding the window shut for (see below); with the gate disabled
-// (ut-docs#1278), it's attachRetryDuration's own independent
-// attachRetryFloor instead — disabling the gate no longer collapses this
-// to a single immediate probe the way it used to.
+// window: on Linux with the render-defect gate active, that window runs
+// until uptime reaches max(gate, floor) — with the default 60s gate, the
+// same span waitForSafeStartup is already holding the window shut for (see
+// below); with the gate disabled (ut-docs#1278) or /proc/uptime unreadable
+// (ut-docs#2248), it's attachRetryDuration's own floor from launch instead
+// (tunable via UT_SHELL_ATTACH_RETRY_SECONDS) — neither collapses this to a
+// single immediate probe the way it used to.
 //
 // On the attach path that costs nothing: waitForSafeStartup still opens the
 // window at the same instant it always did. One case does pay a little
@@ -90,7 +106,10 @@ func attachRetryDuration(up, min time.Duration) time.Duration {
 // then spawned AFTER that window rather than at the very first probe, so
 // its start-up and main()'s dial-wait loop no longer overlap the gate's
 // hold and the till appears a few seconds later than it used to (a tarball
-// install, or a .deb whose service is down). That is inherent rather than
+// install, or a .deb whose service is down). The same delay, up to the
+// floor and with no gate hold to overlap, applies with the gate disabled,
+// uptime unreadable, or a gate shorter than the floor (ut-docs#2248).
+// That is inherent rather than
 // an oversight: spawning speculatively in parallel with the retry is
 // precisely the second-server split-brain this exists to prevent.
 //
@@ -127,10 +146,12 @@ func waitForAttach(deadline time.Time, probe func() bool, sleep func(time.Durati
 // startup_gate.go already uses for waitForSafeStartup/holdFor.
 //
 // retryWindow reports whether the deadline gave the probe any chance to
-// retry at all: false covers a disabled/unreadable startup gate, a
-// platform with no gate (attach_gate_other.go), or a warm/manual launch
-// already past the gate window — all of which decide from a single probe
-// exactly as before ut-docs#1199. attempts is how many times probe() was
+// retry at all: false covers both switches at 0 (UT_SHELL_MIN_UPTIME_SECONDS
+// and UT_SHELL_ATTACH_RETRY_SECONDS), a platform with no gate
+// (attach_gate_other.go), or a launch already past max(gate, floor) — all of
+// which decide from a single probe exactly as before ut-docs#1199. A disabled
+// gate or unreadable uptime still opens a window (the floor; ut-docs#1278,
+// ut-docs#2248). attempts is how many times probe() was
 // called; elapsed is roughly how long the whole decision took (near-zero
 // for a single immediate probe); attached is the outcome.
 func attachDecisionLine(retryWindow bool, attempts int, elapsed time.Duration, attached bool) string {

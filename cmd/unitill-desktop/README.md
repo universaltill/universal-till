@@ -48,7 +48,7 @@ rather than being honoured, so a units-confusion typo can't hold the window
 for hours or silently disable the gate. Windows and macOS use their own
 platform web views and are unaffected — the gate is a no-op there. Disabling
 this gate does not also disable the attach-probe retry below — see
-ut-docs#1278 in the next section.
+ut-docs#1278 and ut-docs#2248 in the next section.
 
 ## Linux WebKit cookie persistence (ut-docs#1233)
 
@@ -108,21 +108,36 @@ case that does pay is a cold boot where the retry runs its whole window and
 still finds nothing — the `unitill-pos` child is then spawned *after* that
 window instead of at the first probe, so its start-up no longer overlaps
 the gate's hold and the till appears a few seconds later than it used to (a
-tarball install, or a `.deb` whose service is down). That is inherent, not
+tarball install, or a `.deb` whose service is down). The same delay, up to
+the floor below and with no gate hold to overlap, applies when the gate is
+disabled, uptime is unreadable, or the gate is shorter than the floor. That is inherent, not
 an oversight: spawning in parallel with the retry is exactly the two-server
 split this fixes.
 
-The retry only runs on Linux; other platforms/topologies (macOS, Windows, a
-warm/manual launch already past the gate) still decide from one probe, same
-as always. While the startup gate is active, the retry window is derived
-from its duration — the two windows coincide, which is what makes the
-retry free on the attach path above. **When the gate is disabled
-(`UT_SHELL_MIN_UPTIME_SECONDS=0`), the retry keeps its own independent 15s
-floor instead (ut-docs#1278)** — a machine that doesn't need the WebKitGTK
-render mitigation still gets a real chance to see the service come up,
-rather than reverting to a single probe and losing this race. See
-`attach_gate.go`'s doc comment for the exact retry-vs-give-up logic and its
-tests.
+The retry only runs on Linux; macOS, Windows, and a warm/manual launch
+already past both the gate and the floor (measured from boot) still decide
+from one probe, same as always. With the default 60s gate the retry window
+is the gate's own — the two windows coincide, which is what makes the retry
+free on the attach path above. **The retry also has its own floor
+(ut-docs#1278), default 15s, tunable with `UT_SHELL_ATTACH_RETRY_SECONDS`**
+(seconds; `0` disables the floor; values outside `0..600` fall back to the
+default with a stderr line, same rules as the gate's variable —
+ut-docs#2248). The floor applies in three cases:
+
+- **Gate disabled** (`UT_SHELL_MIN_UPTIME_SECONDS=0`): the retry runs for the
+  floor from launch — a machine that doesn't need the WebKitGTK render
+  mitigation still gets a real chance to see the service come up. With both
+  switches at `0` the shell is back to the pre-#1278 single immediate probe.
+- **Unreadable `/proc/uptime`**: the floor needs no uptime knowledge, so the
+  retry runs for the floor from launch instead of a single probe.
+- **Small non-zero gate** (e.g. `UT_SHELL_MIN_UPTIME_SECONDS=1`): the floor is
+  measured from boot like the gate, so the window is
+  `max(gate, floor) - uptime`; a cold boot at 7s uptime still retries for 8s,
+  while a warm/manual launch past both still costs one probe. The default 60s
+  gate is unchanged.
+
+See `attach_gate.go`'s doc comment for the exact retry-vs-give-up logic and
+its tests.
 
 **If an install was already bitten by the race before this fix** (two
 `unitill-pos` processes, one on `:8080` as the desktop user with its own
