@@ -869,7 +869,7 @@ func ClaimCode(ctx context.Context, cfg *config.Config) (ClaimInfo, error) {
 	if envelope.Data.Code == "" {
 		return ClaimInfo{}, fmt.Errorf("claim-code response missing code")
 	}
-	webBase := strings.TrimSuffix(strings.TrimRight(m.EndpointURL, "/"), "/api")
+	webBase := WebBase(m.EndpointURL)
 	info := ClaimInfo{
 		Code:      envelope.Data.Code,
 		ExpiresAt: envelope.Data.ExpiresAt,

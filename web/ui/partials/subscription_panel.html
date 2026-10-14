@@ -1,0 +1,98 @@
+{{/* ut-docs#4286: the Renew / Choose-a-plan panel's body, rendered into
+     base.html's #subscription-panel-body by subscription_panel.go. The
+     dialog itself (title, ✕, .show() — never showModal, so the status bar
+     stays reachable) lives in base.html. Steps (.step):
+       message  — not registered / registered via the main till (no QR).
+       active   — the refresh found a paid plan: "Paid until …", Change plan
+                  (an upgrade) and Close. No QR.
+       choices  — lapsed / no plan / offline: Renew current plan (only with
+                  a paid plan to renew) and Choose a plan.
+       handoff  — a QR of the cloud's /plans redirect, its URL as text, and
+                  the 20 s re-check (subscription_panel_poll).
+     Every button is btn-touch; logical CSS only (app.css
+     .subscription-panel*). */}}
+{{ $s := .step }}
+{{ if eq $s "message" }}
+<p class="error" role="status" data-testid="subscription-panel-message">{{ .message }}</p>
+<div class="subscription-panel-actions">{{ template "subscription_panel_close" }}</div>
+{{ else if eq $s "active" }}
+<div data-testid="subscription-panel-active" data-step="active">
+  <p class="subscription-panel-lead" role="status"><span aria-hidden="true">✅</span>
+    {{ if .sub.Renews }}{{ printf (T "subscription.check_result.renewed") .sub.Renews }}{{ else }}{{ T "subscription.check_result.renewed_no_date" }}{{ end }}</p>
+  <p>{{ T "subscription.plan_label" }} <strong>{{ T (printf "subscription.plan.%s" .sub.Plan) }}</strong></p>
+  <div class="subscription-panel-actions">
+    <button type="button" class="btn secondary btn-touch" data-testid="subscription-panel-change"
+            hx-post="/api/subscription/panel/handoff" hx-vals='{{ jsonVals "intent" "change" }}'
+            hx-target="#subscription-panel-body" hx-swap="innerHTML" hx-disabled-elt="this">{{ T "subscription.panel.change_plan" }}</button>
+    {{ template "subscription_panel_close" }}
+  </div>
+</div>
+{{ else if eq $s "choices" }}
+<div data-testid="subscription-panel-choices" data-step="choices">
+  {{ if .offline }}
+  <p class="notice-block-warn" role="status" data-testid="subscription-panel-offline">{{ T "subscription.panel.offline" }}</p>
+  {{ else }}
+  <p class="subscription-panel-lead" role="status">{{ T "subscription.panel.not_active" }}</p>
+  {{ end }}
+  <div class="subscription-panel-choices">
+    {{ if .canRenew }}
+    <button type="button" class="btn primary btn-touch subscription-panel-choice" data-testid="subscription-panel-renew"
+            hx-post="/api/subscription/panel/handoff" hx-vals='{{ jsonVals "intent" "renew" }}'
+            hx-target="#subscription-panel-body" hx-swap="innerHTML" hx-disabled-elt="this">
+      <strong>{{ T "subscription.panel.renew" }}</strong>
+      <span>{{ printf (T "subscription.panel.renew_hint") (T (printf "subscription.plan.%s" .sub.Plan)) }}</span>
+    </button>
+    {{ end }}
+    <button type="button" class="btn {{ if .canRenew }}secondary{{ else }}primary{{ end }} btn-touch subscription-panel-choice" data-testid="subscription-panel-choose"
+            hx-post="/api/subscription/panel/handoff" hx-vals='{{ jsonVals "intent" "change" }}'
+            hx-target="#subscription-panel-body" hx-swap="innerHTML" hx-disabled-elt="this">
+      <strong>{{ T "subscription.panel.choose" }}</strong>
+      <span>{{ T "subscription.panel.choose_hint" }}</span>
+    </button>
+  </div>
+  <div class="subscription-panel-actions">{{ template "subscription_panel_close" }}</div>
+</div>
+{{ else if eq $s "handoff" }}
+<div data-testid="subscription-panel-handoff" data-step="handoff" data-intent="{{ .intent }}">
+  <p class="subscription-panel-lead" role="status">{{ if eq .intent "renew" }}{{ T "subscription.panel.scan_renew" }}{{ else }}{{ T "subscription.panel.scan_change" }}{{ end }}</p>
+  {{ if .qr }}<img class="subscription-panel-qr" src="{{ .qr }}" alt="{{ T "subscription.panel.qr_alt" }}" width="220" height="220" data-testid="subscription-panel-qr">{{ end }}
+  <p class="muted subscription-panel-url" dir="ltr" data-testid="subscription-panel-url">{{ .url }}</p>
+  {{/* ut-docs#4298 seam: the in-app "Open here" web sheet (Android Custom
+       Tab, iOS SFSafariViewController, desktop child window) adds its
+       button here, opening .url in the shell's sheet. Not built yet. */}}
+  {{ template "subscription_panel_poll" .poll }}
+  <div class="subscription-panel-actions">
+    <button type="button" class="btn secondary btn-touch" data-testid="subscription-panel-back"
+            hx-post="/api/subscription/panel" hx-vals='{{ jsonVals "back" "1" }}'
+            hx-target="#subscription-panel-body" hx-swap="innerHTML">{{ T "common.back" }}</button>
+    {{ template "subscription_panel_close" }}
+  </div>
+</div>
+{{ end }}
+
+{{/* Close: back to exactly where the operator was (the dialog closes;
+     base.html returns focus to the button that opened it). */}}
+{{ define "subscription_panel_close" }}
+<button type="button" class="btn secondary btn-touch" data-testid="subscription-panel-done" data-action="close:subscription-panel">{{ T "common.close" }}</button>
+{{ end }}
+
+{{/* Step 3's re-check: every 20 s, at most subscriptionPanelPollMax times
+     (10 minutes). The server returns this element again with the next
+     count (outerHTML on itself), the stopped state, or — once the plan
+     changed — the active step, retargeted at #subscription-panel-body.
+     Closing the panel empties the body, which ends the polling. */}}
+{{ define "subscription_panel_poll" }}
+{{ if .pollStopped }}
+<div id="subscription-panel-poll" class="subscription-panel-poll" data-testid="subscription-panel-poll-stopped">
+  <p class="muted" role="status">{{ T "subscription.panel.poll_stopped" }}</p>
+  <p><button type="button" class="btn secondary btn-touch" hx-post="/api/subscription/panel"
+             hx-target="#subscription-panel-body" hx-swap="innerHTML" hx-disabled-elt="this">{{ T "subscription.check_now_btn" }}</button></p>
+</div>
+{{ else }}
+<div id="subscription-panel-poll" class="subscription-panel-poll" data-testid="subscription-panel-poll" data-poll-count="{{ .pollN }}"
+     hx-post="/api/subscription/panel/poll" hx-trigger="every {{ .pollEvery }}" hx-target="this" hx-swap="outerHTML"
+     hx-vals='{{ jsonVals "n" .pollN "was" .was }}'>
+  <p class="muted">{{ T "subscription.panel.waiting" }}</p>
+</div>
+{{ end }}
+{{ end }}

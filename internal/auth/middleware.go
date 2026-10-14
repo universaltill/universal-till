@@ -378,6 +378,9 @@ var backgroundPollPaths = map[string]bool{
 	"/ui/tills/pending-pairings":      true,
 	"/ui/settings/window-mode-status": true,
 	"/api/sync/pair-status":           true,
+	// Renew panel's QR re-check, every 20 s for ≤10 min (ut-docs#4286): an
+	// open QR must not keep an untouched till signed in.
+	"/api/subscription/panel/poll": true,
 }
 
 func backgroundPoll(path string) bool { return backgroundPollPaths[path] }
