@@ -7088,16 +7088,21 @@ LIMIT 1
 	return id, name, true
 }
 
+// activePromoWhere is the one definition of "promotion ?1 is usable now,
+// for customer ?2": shared by FindActivePromo and ScanCodeKinds so the
+// scan chooser can never offer a promo the apply path would refuse.
+const activePromoWhere = `code = ?1
+  AND is_active = 1
+  AND (customer_id IS NULL OR customer_id = ?2)
+  AND (starts_at IS NULL OR datetime(starts_at) <= CURRENT_TIMESTAMP)
+  AND (ends_at IS NULL OR datetime(ends_at) >= CURRENT_TIMESTAMP)`
+
 // FindActivePromo returns promo type/value if active and optionally targeted to the given customer.
 func (r *POSRepo) FindActivePromo(ctx context.Context, customerID string, code string) (string, int64, bool) {
 	row := r.db.QueryRowContext(ctx, `
 SELECT type, value
 FROM promotions
-WHERE code = ?
-  AND is_active = 1
-  AND (customer_id IS NULL OR customer_id = ?)
-  AND (starts_at IS NULL OR datetime(starts_at) <= CURRENT_TIMESTAMP)
-  AND (ends_at IS NULL OR datetime(ends_at) >= CURRENT_TIMESTAMP)
+WHERE `+activePromoWhere+`
 LIMIT 1
 `, strings.TrimSpace(code), nullIfEmpty(customerID))
 	var pType string
@@ -7112,6 +7117,25 @@ LIMIT 1
 		pType = "amount"
 	}
 	return pType, value, true
+}
+
+// ScanCodeKinds reports, in one round trip, whether a scanned code is a
+// voucher, a promotion usable now by customerID (the same rule as
+// FindActivePromo, including its value > 0 check) and a receipt number
+// (ut-docs#4344). The scan handler looks every code up as every kind; one
+// query instead of three keeps the commonest scan, an item, as fast as it
+// was (BenchmarkScanItemOnly in internal/pages).
+func (r *POSRepo) ScanCodeKinds(ctx context.Context, code, customerID string) (voucher, promo, receipt bool, err error) {
+	err = r.db.QueryRowContext(ctx, `
+SELECT
+  EXISTS(SELECT 1 FROM vouchers WHERE id = ?1),
+  EXISTS(SELECT 1 FROM promotions WHERE `+activePromoWhere+` AND value > 0),
+  EXISTS(SELECT 1 FROM sales WHERE receipt_no = ?1)
+`, strings.TrimSpace(code), nullIfEmpty(customerID)).Scan(&voucher, &promo, &receipt)
+	if err != nil {
+		return false, false, false, fmt.Errorf("scan code kinds: %w", err)
+	}
+	return voucher, promo, receipt, nil
 }
 
 // isUniqueViolation reports whether err is a SQLite UNIQUE constraint

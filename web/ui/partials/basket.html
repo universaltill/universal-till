@@ -31,6 +31,27 @@
     </div>
     {{ end }}
   {{ end }}
+  {{/* ut-docs#4344: the scanned code matched more than one kind (an item
+       AND a voucher, ...). Nothing was added; each row re-posts the scan
+       with its kind fixed. Not a .pos-notice: those fade out on their own
+       (app.js), and this must stay until the cashier picks, cancels or
+       scans again (the next basket render replaces it). Never takes focus,
+       so a scanner keeps typing into the scan field. */}}
+  {{ if .ScanChoices }}
+  <div class="scan-choices" role="group" aria-labelledby="scan-choices-title">
+    <p class="scan-choices-title" id="scan-choices-title">{{ T "pos.scan_choice.title" }}</p>
+    {{ range .ScanChoices }}
+    <button type="button" class="btn scan-choice" data-scan-kind="{{ .Kind }}"
+            hx-post="/api/pos/scan" hx-vals='{{ jsonVals "code" $.ScanChoiceCode "qty" $.ScanChoiceQty "kind" .Kind }}'
+            hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
+      <span class="scan-choice-kind">{{ .Label }}</span>
+      <span class="scan-choice-detail">{{ .Detail }}</span>
+    </button>
+    {{ end }}
+    <button type="button" class="btn secondary scan-choices-cancel"
+            hx-get="/ui/basket" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">{{ T "common.cancel" }}</button>
+  </div>
+  {{ end }}
   {{/* ut-docs#2703 (reopened): lines of a legacy pay-at-counter order that
        matched nothing in the catalog when it was opened. They ride in the
        held sale's payload (pos.BasketSnapshot.AddByHand), so this shows on

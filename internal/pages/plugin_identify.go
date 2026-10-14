@@ -528,6 +528,9 @@ func servePluginIdentifyPick(w http.ResponseWriter, r *http.Request, d *common.D
 	sku := strings.TrimSpace(r.Form.Get("sku"))
 	// The scan reads only its own fields; the pick's _job never reaches it.
 	r.Form.Set("code", sku)
+	// A pick is always the item, never a voucher/promo sharing its code
+	// (ut-docs#4344).
+	r.Form.Set("kind", scanKindItem)
 	r.Form.Del(pluginJobParam)
 	scan(w, r)
 	if sku == "" || !identifyJobIDRe.MatchString(jobID) {

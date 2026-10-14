@@ -952,6 +952,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			// (buttons.html's product-tile), see the item-not-found
 			// fall-through at the end of this handler (ut-docs#2525).
 			Src string `json:"src,omitempty"`
+			// Kind (ut-docs#4344) is the kind the cashier picked on the
+			// "this code is more than one thing" chooser: only that kind is
+			// acted on. Empty = look the code up as every kind.
+			Kind string `json:"kind,omitempty"`
 		}{Qty: 1}
 
 		if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
@@ -961,6 +965,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			in.Code = r.Form.Get("code")
 			in.CustomerID = r.Form.Get("customerId")
 			in.Src = r.Form.Get("src")
+			in.Kind = r.Form.Get("kind")
 			if q := r.Form.Get("qty"); q != "" {
 				if v, err := strconv.ParseFloat(q, 64); err == nil && v > 0 {
 					in.Qty = v
@@ -1034,19 +1039,68 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// that can never resurrect #2227 review finding F1 (it is only ever
 		// populated by this same guard running live, never by a restored
 		// snapshot, and is cleared with scanCache on every reset/restore).
-		base, baseOK := d.Engine.ResolveBase(code)
-		// ut-docs#4342: a scanner or camera read is a code, never a search
-		// term — it may only resolve to an item by exact code. A partial
-		// read ("9" from a Bluetooth scanner's dropped keystrokes) used to
-		// ring up whichever item's NAME contained it, and an item named
-		// after a voucher number shadowed the voucher. Typed entry (no src)
-		// keeps the name search. Re-resolved only on a hit, so a miss costs
-		// nothing extra.
-		deviceScan := isDeviceScanSource(in.Src)
-		if deviceScan && baseOK {
-			base, baseOK = d.Engine.ResolveExact(code)
+		// ut-docs#4344: look the code up as every kind at once. One answer
+		// acts exactly as before; two or more show the chooser in the basket
+		// and nothing is added, applied or offered until the cashier picks
+		// (the pick re-posts with kind=). A tile, a suggestion chip, the
+		// identify pick and the gift-voucher popup's own submit (gv=1)
+		// always mean the item. No answer at all falls through unchanged:
+		// typed entry may still find an item by name, everything else says
+		// not found. An ambiguous code asks every time, even when it is
+		// already in the basket -- a remembered pick would be invisible
+		// state, and a silent wrong pick is the bug this removes.
+		kind := in.Kind
+		if !isScanKind(kind) {
+			kind = ""
 		}
-		itemAllowed := !deviceScan || baseOK
+		if kind == "" && (in.Src == "tile" || r.Form.Get("gv") == "1") {
+			kind = scanKindItem
+		}
+		var resolvedVoucher *data.Voucher
+		var resolvedItem *pos.BasketLine
+		if kind == "" {
+			answers := resolveScanAnswers(r.Context(), d, repo, locale, code)
+			switch len(answers.choices) {
+			case 0:
+			case 1:
+				kind = answers.choices[0].Kind
+				resolvedVoucher = answers.voucher
+				resolvedItem = answers.item
+			default:
+				b := d.Engine.Basket()
+				b.ScanChoices = answers.choices
+				b.ScanChoiceCode = code
+				b.ScanChoiceQty = in.Qty
+				render(&b)
+				return
+			}
+		}
+		wants := func(k string) bool { return kind == "" || kind == k }
+
+		// The item is resolved once: by resolveScanAnswers when it ran (an
+		// exact match, so the device-scan rule below already holds), else
+		// here. Not at all when another kind was picked or answered.
+		var base pos.BasketLine
+		var baseOK bool
+		deviceScan := isDeviceScanSource(in.Src)
+		switch {
+		case !wants(scanKindItem):
+		case resolvedItem != nil:
+			base, baseOK = *resolvedItem, true
+		default:
+			base, baseOK = d.Engine.ResolveBase(code)
+			// ut-docs#4342: a scanner or camera read is a code, never a
+			// search term — it may only resolve to an item by exact code. A
+			// partial read ("9" from a Bluetooth scanner's dropped
+			// keystrokes) used to ring up whichever item's NAME contained
+			// it, and an item named after a voucher number shadowed the
+			// voucher. Typed entry (no src) keeps the name search.
+			// Re-resolved only on a hit, so a miss costs nothing extra.
+			if deviceScan && baseOK {
+				base, baseOK = d.Engine.ResolveExact(code)
+			}
+		}
+		itemAllowed := (!deviceScan || baseOK) && wants(scanKindItem)
 		// ut-docs#4214: a gift_voucher item never adds goods — whether it was
 		// tapped, typed or scanned, it opens the Gift voucher popup (and the
 		// popup's own submit lands here too, with gv=1). Checked before the
@@ -1109,7 +1163,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		// If the scan is a customer barcode, attach and return current basket.
-		if looksLikeCustomerCode(code) {
+		if kind == scanKindCustomer || (kind == "" && looksLikeCustomerCode(code)) {
 			if custID, custName, ok := repo.LookupCustomer(r.Context(), code); ok {
 				d.Engine.SetCustomer(custID, custName)
 				b := d.Engine.Basket()
@@ -1173,7 +1227,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				render(&b)
 			}
 		}
-		if looksLikeVoucherCode(code) {
+		if resolvedVoucher != nil {
+			offerVoucher(*resolvedVoucher, true)
+			return
+		}
+		if wants(scanKindVoucher) && looksLikeVoucherCode(code) {
 			// Same two-step resolution GET /api/vouchers/{id} uses
 			// (voucher_api.go): a local read first, then the cross-till
 			// primary fallback (voucher_sync_proxy.go, ut-docs#1668) on a
@@ -1204,14 +1262,16 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// item answers to the code. Local vouchers only: an item miss is
 		// the common case for an unknown code, so it must not wait on the
 		// main till (a GS- code still gets that fallback above).
-		if v, err := repo.GetVoucherBalance(r.Context(), nil, code); err == nil {
-			offerVoucher(v, true)
-			return
+		if wants(scanKindVoucher) {
+			if v, err := repo.GetVoucherBalance(r.Context(), nil, code); err == nil {
+				offerVoucher(v, true)
+				return
+			}
 		}
 
 		// Promo/discount codes checked only if item resolution fails.
 		customerID := d.Engine.CustomerID()
-		if promoType, value, ok := repo.FindActivePromo(r.Context(), customerID, code); ok {
+		if promoType, value, ok := repo.FindActivePromo(r.Context(), customerID, code); ok && wants(scanKindPromo) {
 			if promoType == "percent" {
 				d.Engine.SetDiscountPercent(value)
 			} else {
@@ -1235,7 +1295,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// /refund for one of those would. See latestOrderStatusForReceipt
 		// (order_status.go) for why this DOES need a primary-proxy call on
 		// a replica, unlike voucher lookup's own local-only read.
-		if exists, _ := repo.ReceiptExists(r.Context(), code); exists {
+		if exists, _ := repo.ReceiptExists(r.Context(), code); exists && wants(scanKindReceipt) {
 			if redirectPath, toastKey := resolveReceiptScanDestination(r.Context(), d, repo, code); redirectPath != "" {
 				w.Header().Set("HX-Redirect", redirectPath)
 				w.WriteHeader(http.StatusOK)
