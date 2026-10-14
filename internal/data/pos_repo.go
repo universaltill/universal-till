@@ -1851,6 +1851,10 @@ ORDER BY sl.sale_id, sl.line_no`, fromStr, toStr)
 		`datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) < datetime(?)`, fromStr, toStr); err != nil {
 		return nil, err
 	}
+	if err := r.attachSaleCharges(ctx, out, idx,
+		`datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) < datetime(?)`, fromStr, toStr); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -3258,7 +3262,8 @@ type EODTaxBandLine struct {
 // exactly the header fields the per-sale VAT banding needs: the pricing-
 // mode inference (pos.InferTaxInclusive) reads Subtotal/DiscountTotal/
 // TaxTotal/Total/ServiceCharge/VoucherIssueTotal, the banding itself prorates DiscountTotal
-// and apportions ServiceCharge at ServiceChargeTaxBasisBP, and SaleType
+// and apportions each of Charges at its own tax basis (ServiceCharge at
+// ServiceChargeTaxBasisBP for a sale with no rows), and SaleType
 // decides the sign ('return' subtracts).
 type EODTaxBandSale struct {
 	ID                      string
@@ -3285,6 +3290,12 @@ type EODTaxBandSale struct {
 	// which this package cannot import). Multi-purpose issues are NOT here
 	// — they stay in VoucherIssueTotal, in no band (a 0% liability).
 	SinglePurposeVoucherIssues []EODTaxBandVoucherIssue
+	// Charges (ADR-0062, ut-docs#4301): the sale's itemized sale_charges
+	// rows in seq order, so the banding apportions each charge at its own
+	// tax basis exactly as computeSaleTotals and fiscal.sign.ask did.
+	// Empty for a sale recorded before sale_charges was written; the
+	// banding then falls back to ServiceCharge/ServiceChargeTaxBasisBP.
+	Charges []SaleCharge
 	// Payments (ut-docs#1004): the sale's tendered revenue per method, for
 	// the method x VAT-rate cross-tab's apportionment. Ordered by method_id
 	// within the sale (the query's ORDER BY), which the apportionment
@@ -3351,6 +3362,36 @@ ORDER BY vt.sale_id, vt.rowid`, args...)
 	return rows.Err()
 }
 
+// attachSaleCharges is the fixed sale_charges query shared by
+// SalesForTaxBands / SalesForTaxBandsInstant / SalesForTaxWindow
+// (ut-docs#4301): every itemized charge of a sale matching salesWhere (the
+// caller's own completed-sale window predicate over alias `s`), grouped
+// onto its sale by the caller's idx in seq order. One query regardless of
+// sale count (no N+1).
+func (r *POSRepo) attachSaleCharges(ctx context.Context, out []EODTaxBandSale, idx map[string]int, salesWhere string, args ...any) error {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT c.sale_id, c.key, c.label, c.amount_minor, c.tax_basis_bp, c.base
+FROM sale_charges c
+JOIN sales s ON s.id = c.sale_id
+WHERE s.status = 'completed' AND `+salesWhere+`
+ORDER BY c.sale_id, c.seq`, args...)
+	if err != nil {
+		return fmt.Errorf("eod band sale charges: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var saleID string
+		var c SaleCharge
+		if err := rows.Scan(&saleID, &c.Key, &c.Label, &c.Amount, &c.TaxBasisBP, &c.Base); err != nil {
+			return fmt.Errorf("scan eod band sale charge: %w", err)
+		}
+		if i, ok := idx[saleID]; ok {
+			out[i].Charges = append(out[i].Charges, c)
+		}
+	}
+	return rows.Err()
+}
+
 // SalesForTaxBands loads every completed sale (and return) in the SAME
 // local-calendar-day window dateRangeSummary aggregates — local_date BETWEEN
 // date(from) AND date(to) (ut-docs#869, sargable per ut-docs#1664 — see
@@ -3372,7 +3413,7 @@ func (r *POSRepo) SalesForTaxBands(ctx context.Context, from, to string) ([]EODT
 
 // salesForTaxBandsWhere is SalesForTaxBands' body over an arbitrary
 // completed-sale window predicate on alias `s` (ut-docs#2535 split it out so
-// SalesForTaxBandsForTill scopes the SAME four reads to one till instead of
+// SalesForTaxBandsForTill scopes the SAME reads to one till instead of
 // copying them). Every query below ANDs `s.status = 'completed'` itself.
 func (r *POSRepo) salesForTaxBandsWhere(ctx context.Context, salesWhere string, args ...any) ([]EODTaxBandSale, error) {
 	saleRows, err := r.db.QueryContext(ctx, `
@@ -3427,6 +3468,9 @@ ORDER BY sl.sale_id, sl.line_no`, args...)
 	if err := r.attachSinglePurposeVoucherIssues(ctx, out, idx, salesWhere, args...); err != nil {
 		return nil, err
 	}
+	if err := r.attachSaleCharges(ctx, out, idx, salesWhere, args...); err != nil {
+		return nil, err
+	}
 
 	// Payments per sale (ut-docs#1004): tendered REVENUE only — change
 	// given comes back off, and tip_amount (which InsertPayment folds into
@@ -3458,8 +3502,9 @@ GROUP BY p.sale_id, p.method_id ORDER BY p.sale_id, p.method_id`, args...)
 }
 
 // SalesForTaxBandsInstant is SalesForTaxBands' close-to-close sibling
-// (ADR-0066 Decision 2, ut-docs#1140): the same three fixed queries (sales
-// header, non-zero lines, payments; no N+1, grouped per sale in Go) over a
+// (ADR-0066 Decision 2, ut-docs#1140): the same fixed queries (sales
+// header, non-zero lines, single-purpose voucher issues, charges, payments;
+// no N+1, grouped per sale in Go) over a
 // half-open [from, to) INSTANT window — see instantWindow's doc comment for
 // the comparison form and the zero-`from` unbounded case. The "eod" kind's
 // generation path must call this DIRECTLY with the time.Time window, never
@@ -3522,6 +3567,9 @@ ORDER BY sl.sale_id, sl.line_no`, sargs...)
 		return nil, err
 	}
 	if err := r.attachSinglePurposeVoucherIssues(ctx, out, idx, swin, sargs...); err != nil {
+		return nil, err
+	}
+	if err := r.attachSaleCharges(ctx, out, idx, swin, sargs...); err != nil {
 		return nil, err
 	}
 

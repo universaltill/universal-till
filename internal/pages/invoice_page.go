@@ -61,9 +61,9 @@ type vatBand struct {
 // the sale's own tax signature, never today's settings. A whole-sale
 // discount (sale_discounts, not folded into any line) is prorated across
 // the bands so the invoice total equals what the customer actually paid,
-// and a service charge — which since ADR-0061 carries its own VAT — is
-// apportioned into the bands through pos.ApportionServiceChargeTax, the
-// SAME shared function the tender path and fiscal.sign.ask use, so the
+// and every charge — which since ADR-0061 carries its own VAT — is
+// apportioned into the bands through pos.ApportionChargesTax (each at its
+// own basis, ut-docs#4301), the SAME shared function the tender path and fiscal.sign.ask use, so the
 // invoice can never declare a different VAT on the charge than the sale
 // actually collected. Every band's Net+Tax == Gross, and the bands' gross
 // sums to sale.Total, both before and after this ADR.
@@ -88,7 +88,7 @@ func vatBreakdown(sale data.SaleDetail) []vatBand {
 			lines = append(lines, singlePurposeVoucherVATLine(*vi.VATRateBP, vi.Amount, inclusive))
 		}
 	}
-	bands := pos.VATBandsForSale(lines, sale.DiscountTotal, inclusive, sale.ServiceCharge, sale.ServiceChargeTaxBasisBP)
+	bands := pos.VATBandsForSale(lines, sale.DiscountTotal, inclusive, pos.SaleChargesForBanding(sale.Charges, sale.ServiceCharge, sale.ServiceChargeTaxBasisBP))
 	out := make([]vatBand, 0, len(bands))
 	for _, b := range bands {
 		out = append(out, vatBand{RateBP: b.RateBP, Net: b.Net, Tax: b.Tax, Gross: b.Gross})

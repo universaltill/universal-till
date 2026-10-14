@@ -28,7 +28,7 @@ func EODTaxBandsFromSales(sales []data.EODTaxBandSale) []data.TaxBand {
 		if s.SaleType == "return" {
 			sign = -1
 		}
-		for _, b := range VATBandsForSale(lines, s.DiscountTotal, inclusive, s.ServiceCharge, s.ServiceChargeTaxBasisBP) {
+		for _, b := range VATBandsForSale(lines, s.DiscountTotal, inclusive, SaleChargesForBanding(s.Charges, s.ServiceCharge, s.ServiceChargeTaxBasisBP)) {
 			e, ok := agg[b.RateBP]
 			if !ok {
 				e = &data.TaxBand{RateBP: b.RateBP}

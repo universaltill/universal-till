@@ -44,7 +44,7 @@ func TestVATBandsForSale_DiscountSkipsSinglePurposeVoucher(t *testing.T) {
 				{RateBP: 1900, LineTotal: goodsGross.Minor(), TaxAmount: goodsTax.Minor()},
 				SinglePurposeVoucherVATLine(700, 5000, tc.inclusive),
 			}
-			bands := VATBandsForSale(lines, 1000, tc.inclusive, 0, 0)
+			bands := VATBandsForSale(lines, 1000, tc.inclusive, nil)
 			if got := bandByRate(t, bands, 1900); got != tc.want19 {
 				t.Errorf("19%% band = %+v, want %+v", got, tc.want19)
 			}
@@ -68,11 +68,11 @@ func TestVATBandsForSale_MixedBandDiscountsGoodsPartOnly(t *testing.T) {
 			{RateBP: 700, LineTotal: goods7Gross.Minor(), TaxAmount: goods7Tax.Minor()},
 			voucher,
 			{RateBP: 1900, LineTotal: goods19Gross.Minor(), TaxAmount: goods19Tax.Minor()},
-		}, 1000, inclusive, 0, 0)
+		}, 1000, inclusive, nil)
 		goodsOnly := VATBandsForSale([]VATLine{
 			{RateBP: 700, LineTotal: goods7Gross.Minor(), TaxAmount: goods7Tax.Minor()},
 			{RateBP: 1900, LineTotal: goods19Gross.Minor(), TaxAmount: goods19Tax.Minor()},
-		}, 1000, inclusive, 0, 0)
+		}, 1000, inclusive, nil)
 		// The voucher adds exactly its own issue-time figures to the 7%
 		// band; the goods' discounted figures are what a goods-only sale
 		// with the same discount declares.
@@ -176,7 +176,7 @@ func TestVATBandsForSale_RemainderNeverLandsOnVoucherOnlyGross(t *testing.T) {
 			{RateBP: 700, LineTotal: goodsGross.Minor(), TaxAmount: goodsTax.Minor()},
 			{RateBP: 1900, LineTotal: 0, TaxAmount: 0},
 			voucher,
-		}, 1, inclusive, 0, 0)
+		}, 1, inclusive, nil)
 		got := bandByRate(t, bands, 1900)
 		want := VATBand{RateBP: 1900, Gross: voucher.LineTotal, Tax: voucher.TaxAmount, Net: voucher.LineTotal - voucher.TaxAmount}
 		if got != want {

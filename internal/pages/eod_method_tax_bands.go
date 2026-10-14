@@ -142,7 +142,7 @@ func computeEODMethodTaxBandsFromSales(sales []data.EODTaxBandSale) []data.Metho
 		if s.SaleType == "return" {
 			sign = -1
 		}
-		for _, b := range pos.VATBandsForSale(lines, s.DiscountTotal, inclusive, s.ServiceCharge, s.ServiceChargeTaxBasisBP) {
+		for _, b := range pos.VATBandsForSale(lines, s.DiscountTotal, inclusive, pos.SaleChargesForBanding(s.Charges, s.ServiceCharge, s.ServiceChargeTaxBasisBP)) {
 			// Apportion the band's unsigned magnitudes; the sale's sign is
 			// applied only when adding into the aggregate (same convention
 			// computeEODTaxBands uses).

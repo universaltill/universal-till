@@ -170,7 +170,7 @@ func TestCompleteSale_SinglePurposeVoucherIssueGolden(t *testing.T) {
 		t.Fatalf("GetVoucherBalance: %v", err)
 	}
 	lineTax, lineGross := ComputeTaxBasisPoints(money.FromMinor(v.OriginalAmountMinor), *v.IssueVATRateBP, true)
-	bands := VATBandsForSale([]VATLine{{RateBP: *v.IssueVATRateBP, LineTotal: lineGross.Minor(), TaxAmount: lineTax.Minor()}}, 0, true, 0, 0)
+	bands := VATBandsForSale([]VATLine{{RateBP: *v.IssueVATRateBP, LineTotal: lineGross.Minor(), TaxAmount: lineTax.Minor()}}, 0, true, nil)
 	if len(bands) != 1 || bands[0].RateBP != 1900 || bands[0].Tax != taxTotal || bands[0].Gross != 2500 || bands[0].Net != 2101 {
 		t.Fatalf("bands = %+v, want one 19%% band net 2101 / tax %d / gross 2500", bands, taxTotal)
 	}

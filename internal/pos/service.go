@@ -1054,7 +1054,7 @@ func computeTotals(snap totalsSnapshot) computedTotals {
 	// serviceCharge=0: orthogonal to the chargeTax fold below, same
 	// reasoning as computeSaleTotals (internal/pos/sales.go).
 	var tax money.Money
-	for _, b := range VATBandsForSale(vatLines, discount.Minor(), snap.cfg.TaxInclusive, 0, 0) {
+	for _, b := range VATBandsForSale(vatLines, discount.Minor(), snap.cfg.TaxInclusive, nil) {
 		tax = tax.Add(money.FromMinor(b.Tax))
 	}
 	if tax.IsNegative() {

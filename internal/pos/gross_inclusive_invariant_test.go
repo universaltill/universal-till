@@ -218,7 +218,7 @@ func TestVATBandsForSale_InclusiveGrossSumMatchesSaleTotal(t *testing.T) {
 	bands := VATBandsForSale([]VATLine{
 		{RateBP: 1900, LineTotal: line1Gross.Minor(), TaxAmount: line1Tax.Minor()},
 		{RateBP: 700, LineTotal: line2Gross.Minor(), TaxAmount: line2Tax.Minor()},
-	}, discount, true, serviceCharge, serviceChargeTaxBasisBP)
+	}, discount, true, SaleChargesForBanding(nil, serviceCharge, serviceChargeTaxBasisBP))
 
 	if len(bands) == 0 {
 		t.Fatalf("no bands returned")

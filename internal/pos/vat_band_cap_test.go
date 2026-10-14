@@ -40,7 +40,7 @@ func TestVATBandsForSale_DiscountShareCappedAtBandGoods(t *testing.T) {
 			for _, l := range lines {
 				before += l.LineTotal
 			}
-			bands := VATBandsForSale(lines, 300, tc.inclusive, 0, 0)
+			bands := VATBandsForSale(lines, 300, tc.inclusive, nil)
 
 			pick := func(b VATBand) int64 {
 				if tc.inclusive {
@@ -89,7 +89,7 @@ func TestVATBandsForSale_CapNeverReachesVoucher(t *testing.T) {
 		{RateBP: 1900, LineTotal: 1, TaxAmount: 0},
 		{RateBP: 1900, LineTotal: 500, TaxAmount: 80, SinglePurposeVoucher: true},
 	}
-	bands := VATBandsForSale(lines, 200, true, 0, 0)
+	bands := VATBandsForSale(lines, 200, true, nil)
 	if b := bandByRate(t, bands, 700); b.Gross != 1 {
 		t.Errorf("7%% band = %+v, want gross 1", b)
 	}
@@ -112,7 +112,7 @@ func TestVATBandsForSale_OverDiscountStillSums(t *testing.T) {
 		{RateBP: 700, LineTotal: 100, TaxAmount: 7},
 		{RateBP: 1900, LineTotal: 50, TaxAmount: 8},
 	}
-	bands := VATBandsForSale(lines, 200, true, 0, 0)
+	bands := VATBandsForSale(lines, 200, true, nil)
 	var sum int64
 	for _, b := range bands {
 		sum += b.Gross

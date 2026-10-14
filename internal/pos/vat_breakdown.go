@@ -3,6 +3,7 @@ package pos
 import (
 	"sort"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/money"
 )
 
@@ -16,7 +17,10 @@ import (
 // math had to live here where both callers can reach it. Do not fork it
 // back into a caller: ADR-0061 requires every VAT-band computation to run
 // the service charge through the SAME ApportionServiceChargeTax call, so
-// nothing can declare different VAT on a charge than the sale collected.
+// nothing can declare different VAT on a charge than the sale collected
+// (ADR-0062 Decision 4: per charge, through ApportionChargesTax, so a
+// 2+-charge sale bands exactly as computeSaleTotals and fiscal.sign.ask
+// taxed it — ut-docs#4301).
 
 // VATLine is one persisted sale line's input to VATBandsForSale, in the
 // sale's own recorded figures (minor units):
@@ -56,15 +60,18 @@ type VATBand struct {
 // the next band (splitSaleDiscount, ut-docs#4277) — and the bands still
 // sum to what the customer actually paid — a
 // single-purpose voucher's share of a band is never discounted and keeps
-// the tax it was issued with (ut-docs#4233); and a service charge — which since ADR-0061 carries its own
-// VAT — is apportioned into the bands through ApportionServiceChargeTax, the
-// SAME shared function the tender path and fiscal.sign.ask use.
+// the tax it was issued with (ut-docs#4233); and every charge — which since ADR-0061 carries its own
+// VAT — is apportioned into the bands through ApportionChargesTax, each at
+// its own tax basis, the SAME shared function the tender path and
+// fiscal.sign.ask use (ut-docs#4301: never the charges' sum in one pass).
+// charges is the sale's itemized list (SaleChargesForBanding builds it
+// from persisted rows); nil for a sale without charges.
 //
 // Inclusive vs exclusive proration mirrors the engine (computeSaleTotals):
 // inclusive takes the discount off the gross and re-derives net/tax at the
 // band's rate (total = subtotal − d); exclusive discounts the NET base and
 // keeps line tax as computed (total = subtotal − d + tax).
-func VATBandsForSale(lines []VATLine, discountTotal int64, taxInclusive bool, serviceCharge int64, serviceChargeTaxBasisBP int) []VATBand {
+func VATBandsForSale(lines []VATLine, discountTotal int64, taxInclusive bool, charges []ChargeInput) []VATBand {
 	// Each band remembers the single-purpose-voucher part of its figures
 	// so the discount below reaches only its goods part (ut-docs#4233).
 	type bandAcc struct {
@@ -164,13 +171,14 @@ func VATBandsForSale(lines []VATLine, discountTotal int64, taxInclusive bool, se
 	for _, b := range acc {
 		out = append(out, b.VATBand)
 	}
-	// ADR-0061 Decision 2: the service charge carries VAT of its own,
-	// apportioned across the sale's own rate bands (or taxed at the flat
-	// basis the originating till's country plugin fixed, which rides the
-	// sale row so a re-issued invoice matches the original). Folded in
-	// here rather than left as an untaxed lump, so the VAT table declares
-	// the charge's tax and the bands still sum to what the customer paid.
-	if serviceCharge > 0 {
+	// ADR-0061 Decision 2: a charge carries VAT of its own, apportioned
+	// across the sale's own rate bands (or taxed at the flat basis the
+	// originating till's country plugin fixed, which rides sale_charges so
+	// a re-issued invoice matches the original). ADR-0062 Decision 4: each
+	// charge on its own, at its own basis (ut-docs#4301). Folded in here
+	// rather than left as an untaxed lump, so the VAT table declares the
+	// charges' tax and the bands still sum to what the customer paid.
+	if len(charges) > 0 {
 		chargeLines := make([]ChargeTaxLine, 0, len(lines))
 		for _, l := range lines {
 			// The band weights want each line's value in the sale's OWN
@@ -182,7 +190,7 @@ func VATBandsForSale(lines []VATLine, discountTotal int64, taxInclusive bool, se
 			}
 			chargeLines = append(chargeLines, ChargeTaxLine{RateBP: l.RateBP, Net: money.FromMinor(net)})
 		}
-		for _, b := range ApportionServiceChargeTax(money.FromMinor(serviceCharge), chargeLines, taxInclusive, serviceChargeTaxBasisBP) {
+		for _, b := range ApportionChargesTax(charges, chargeLines, taxInclusive) {
 			idx := -1
 			for i := range out {
 				if out[i].RateBP == b.RateBP {
@@ -207,6 +215,27 @@ func VATBandsForSale(lines []VATLine, discountTotal int64, taxInclusive bool, se
 			out[idx].Tax += b.Tax.Minor()
 		}
 		sort.Slice(out, func(i, j int) bool { return out[i].RateBP < out[j].RateBP })
+	}
+	return out
+}
+
+// SaleChargesForBanding is a persisted sale's charge list as
+// VATBandsForSale bands it: its itemized sale_charges rows (ADR-0062 —
+// every sale completed since ut-docs#985), each keeping its own tax
+// basis; or, for an older sale with no rows, one service charge rebuilt
+// from the scalar sales.service_charge_amount /
+// service_charge_tax_basis_bp — the same fallback refundCharges uses.
+// Nil when the sale carries no charge.
+func SaleChargesForBanding(rows []data.SaleCharge, serviceCharge int64, serviceChargeTaxBasisBP int) []ChargeInput {
+	if len(rows) == 0 {
+		if serviceCharge <= 0 {
+			return nil
+		}
+		return []ChargeInput{{Key: ServiceChargeKey, Amount: money.FromMinor(serviceCharge), TaxBasisBP: serviceChargeTaxBasisBP, Base: ChargeBaseNetLines}}
+	}
+	out := make([]ChargeInput, 0, len(rows))
+	for _, c := range rows {
+		out = append(out, ChargeInput{Key: c.Key, Label: c.Label, Amount: money.FromMinor(c.Amount), TaxBasisBP: c.TaxBasisBP, Base: c.Base})
 	}
 	return out
 }
