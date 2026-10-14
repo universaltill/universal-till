@@ -102,6 +102,19 @@ android {
 // version is not exactly the release version.
 val goVersionForLdflags = (project.findProperty("versionName") as String?) ?: "0.1.0-dev"
 
+// ADR-0158: release builds compile the marketplace plugin-signing key in.
+// CI exports UT_MARKETPLACE_KEY_HEX (scripts/ci/resolve-marketplace-key.sh);
+// the -X is appended only when it is set, so a local build stays a source
+// build (env/lazy-fetch key). verify-versions in release.yml fails a release
+// whose .so lacks it.
+val marketplaceKeyHex = System.getenv("UT_MARKETPLACE_KEY_HEX").orEmpty()
+val marketplaceKeyLdflag = if (marketplaceKeyHex.isEmpty()) "" else {
+    require(Regex("^[0-9a-f]{64}$").matches(marketplaceKeyHex)) {
+        "UT_MARKETPLACE_KEY_HEX must be 64 lowercase hex characters"
+    }
+    " -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=$marketplaceKeyHex"
+}
+
 // Regenerates libs/unitill-mobile.aar from the Go source (../mobile) on every
 // build, via `gomobile bind` — the .aar itself is NOT committed to git (it
 // was a ~90MB build artifact when this task built all 4 gomobile-default
@@ -195,7 +208,7 @@ val generateAar =
             // exact flags, both producing full function-name+file:line
             // stacks. The bug-report feature (which captures Go panics) is
             // unaffected.
-            "-ldflags", "-X github.com/universaltill/universal-till/internal/buildinfo.Version=$goVersionForLdflags -s -w",
+            "-ldflags", "-X github.com/universaltill/universal-till/internal/buildinfo.Version=$goVersionForLdflags$marketplaceKeyLdflag -s -w",
             "-o", "android/app/libs/unitill-mobile.aar",
             "./mobile",
         )

@@ -11,6 +11,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/buildinfo"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/taxrate"
 )
@@ -271,6 +273,15 @@ func Init() (*Config, error) {
 			FallbackTimeoutSec:    fallbackTimeout,
 			RequestTimeoutSec:     30,
 		},
+	}
+
+	// ADR-0158: a release binary carries the marketplace key; it is then
+	// the only key, and UT_MARKETPLACE_PUBLIC_KEY is ignored.
+	if compiled := buildinfo.MarketplacePublicKey; compiled != "" {
+		if env := cfg.Marketplace.PublicKey; env != "" && !strings.EqualFold(env, compiled) {
+			logging.L().Warnf("config: UT_MARKETPLACE_PUBLIC_KEY differs from the key compiled into this build; using the compiled key (ADR-0158)")
+		}
+		cfg.Marketplace.PublicKey = compiled
 	}
 
 	// UT_TAX_RATE is a percent string, fractional allowed ("8.1"); an

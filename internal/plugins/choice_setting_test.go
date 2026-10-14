@@ -78,10 +78,7 @@ func manyOptions(n int) string {
 
 // The marketplace path (VerifyManifest) must refuse the same shapes.
 func TestVerifyManifest_SettingForm(t *testing.T) {
-	mv, err := NewManifestVerifier("")
-	if err != nil {
-		t.Fatal(err)
-	}
+	mv := structuralOnlyVerifier()
 	p := filepath.Join(t.TempDir(), "manifest.json")
 	if err := os.WriteFile(p, []byte(choiceManifest(`{"key":"p","type":"choice"}`)), 0o600); err != nil {
 		t.Fatal(err)

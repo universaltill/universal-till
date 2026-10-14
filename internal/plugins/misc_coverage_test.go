@@ -20,7 +20,7 @@ func TestNewManifestVerifierValidation(t *testing.T) {
 	}
 	mv, err := NewManifestVerifier("")
 	if err != nil || mv.HasPublicKey() {
-		t.Fatalf("dev-mode verifier: %v, HasPublicKey=%v", err, mv.HasPublicKey())
+		t.Fatalf("keyless verifier: %v, HasPublicKey=%v", err, mv.HasPublicKey())
 	}
 	var nilMV *ManifestVerifier
 	if nilMV.HasPublicKey() {

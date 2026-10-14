@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -770,13 +771,18 @@ func TestHandleImportFromFile_AcceptsValidSignatureWhenPublicKeyConfigured(t *te
 	}
 }
 
-// With no marketplace public key configured (the dev / offline default), the
-// verifier has nothing to check against and an unsigned bundle imports — this
-// pins that fallback so the signature-enforcement change above doesn't silently
-// break offline provisioning on tills that never set a key.
-func TestHandleImportFromFile_NoPublicKeyImportsUnsignedBundle(t *testing.T) {
+// ADR-0158: with no marketplace key at all the till cannot verify anything,
+// so "Import from file" refuses — even with skip_signature=true — instead of
+// importing unsigned (the old offline/dev fallback). The operator gets the
+// translated no-key reason, not raw Go error text. Only a -tags devplugins
+// build keeps the old behaviour.
+func TestHandleImportFromFile_NoPublicKeyRefusesImport(t *testing.T) {
+	if plugins.UnsignedPluginsAllowed() {
+		t.Skip("a -tags devplugins build imports unsigned bundles with no key")
+	}
 	t.Setenv("UT_AUTH", "off")
 	isolatePluginsDir(t)
+	setCompiledMarketplaceKey(t, "")
 	db := openRealSchemaPagesDB(t)
 	deps := newPluginAPIDeps(t, db, nil) // cfg has empty Marketplace.PublicKey
 	mux := http.NewServeMux()
@@ -792,14 +798,108 @@ func TestHandleImportFromFile_NoPublicKeyImportsUnsignedBundle(t *testing.T) {
 		DeviceArch:    "any",
 	}
 	bundle := writePluginBundle(t, m)
+	for _, fields := range []map[string]string{nil, {"skip_signature": "true"}} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, importRequest(t, bundle, "unsigned.tar.gz", fields))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("fields %v: expected 400 with no key configured, got %d: %s", fields, rec.Code, rec.Body.String())
+		}
+		if want := httpx.T("en", "plugins.error.import_no_key") + "\n"; rec.Body.String() != want {
+			t.Fatalf("fields %v: expected the translated no-key message, got %q", fields, rec.Body.String())
+		}
+		if _, ok := deps.Pm.Installed["com.test.unsigned"]; ok {
+			t.Fatalf("fields %v: nothing may be installed when the till has no key", fields)
+		}
+	}
+}
+
+// A broken configured key used to fall back to a nil verifier, which
+// imported the bundle unverified. It must refuse instead (ADR-0158).
+func TestHandleImportFromFile_InvalidConfiguredKeyRefusesImport(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	isolatePluginsDir(t)
+	setCompiledMarketplaceKey(t, "")
+	cfg := basePluginCfg()
+	cfg.Marketplace.PublicKey = "not-a-hex-key"
+	db := openRealSchemaPagesDB(t)
+	deps := newPluginAPIDeps(t, db, cfg)
+	mux := http.NewServeMux()
+	registerPluginAPI(mux, deps)
+
+	m := plugins.Manifest{
+		ID:            "com.test.badkey",
+		Name:          "Bad Key",
+		Version:       "1.0.0",
+		Entrypoint:    "./plugin",
+		Runtime:       "go",
+		CanonicalType: "page",
+		DeviceArch:    "any",
+	}
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, importRequest(t, bundle, "unsigned.tar.gz", nil))
+	mux.ServeHTTP(rec, importRequest(t, writePluginBundle(t, m), "badkey.tar.gz", nil))
+	if rec.Code == http.StatusOK {
+		t.Fatalf("an invalid configured key must refuse the import, got 200: %s", rec.Body.String())
+	}
+	if _, ok := deps.Pm.Installed["com.test.badkey"]; ok {
+		t.Fatalf("nothing may be installed when the verifier cannot be built")
+	}
+}
+
+// The compiled-in key is the only key a release till trusts: a bundle signed
+// with it imports even when the config carries a different key, and a bundle
+// signed with the config's key is refused (ADR-0158).
+func TestHandleImportFromFile_CompiledKeyWinsOverConfiguredKey(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	isolatePluginsDir(t)
+	good, compiledHex := signedManifest(t, "com.test.compiledkey", "1.0.0")
+	other, otherHex := signedManifest(t, "com.test.configkey", "1.0.0")
+	setCompiledMarketplaceKey(t, compiledHex)
+	cfg := basePluginCfg()
+	cfg.Marketplace.PublicKey = otherHex
+
+	db := openRealSchemaPagesDB(t)
+	deps := newPluginAPIDeps(t, db, cfg)
+	mux := http.NewServeMux()
+	registerPluginAPI(mux, deps)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, importRequest(t, writePluginBundle(t, good), "good.tar.gz", nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 importing an unsigned bundle with no key configured, got %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("bundle signed with the compiled key: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if _, ok := deps.Pm.Installed["com.test.unsigned"]; !ok {
-		t.Fatalf("unsigned bundle should import when no key is configured")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, importRequest(t, writePluginBundle(t, other), "other.tar.gz", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bundle signed with the configured (non-compiled) key: expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
+	if _, ok := deps.Pm.Installed["com.test.configkey"]; ok {
+		t.Fatalf("a bundle signed with a key other than the compiled one must not be installed")
+	}
+}
+
+// signManifestWithTestKey signs m with a fresh Ed25519 key, the way the
+// marketplace does, and returns the signed manifest and the public key hex.
+func signManifestWithTestKey(t *testing.T, m plugins.Manifest) (plugins.Manifest, string) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	m.Signature = ""
+	canonical, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal canonical: %v", err)
+	}
+	m.Signature = hex.EncodeToString(ed25519.Sign(priv, canonical))
+	return m, hex.EncodeToString(pub)
+}
+
+// setCompiledMarketplaceKey overrides the -ldflags key for one test.
+func setCompiledMarketplaceKey(t *testing.T, hexKey string) {
+	t.Helper()
+	orig := buildinfo.MarketplacePublicKey
+	buildinfo.MarketplacePublicKey = hexKey
+	t.Cleanup(func() { buildinfo.MarketplacePublicKey = orig })
 }
 
 // TDD arc for ut-docs#2132: with a public key configured, importing a bundle

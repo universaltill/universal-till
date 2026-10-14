@@ -159,12 +159,19 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+      # ADR-0158: every release binary carries the marketplace plugin-signing
+      # key (pinned repository variable, cross-checked against the live key).
+      - name: Resolve marketplace signing key
+        env:
+          UT_MARKETPLACE_PUBLIC_KEY_PIN: ${{ vars.UT_MARKETPLACE_PUBLIC_KEY }}
+          UT_MARKETPLACE_SIGNING_KEY_URL: ${{ vars.UT_MARKETPLACE_SIGNING_KEY_URL }}
+        run: bash scripts/ci/resolve-marketplace-key.sh
       - name: Build unitill-desktop (${{ matrix.arch }})
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           CGO_ENABLED=1 go build -trimpath -tags desktop \
-            -ldflags "-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION}" \
+            -ldflags "-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX}" \
             -o unitill-desktop ./cmd/unitill-desktop
           file unitill-desktop
       - uses: actions/upload-artifact@v7
@@ -254,6 +261,13 @@ jobs:
         run: |
           bash scripts/ci/retry-with-backoff.sh 3 5 --clear-apt-lists -- sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
           bash packaging/windows/install-osslsigncode.sh
+      # ADR-0158: every release binary carries the marketplace plugin-signing
+      # key (pinned repository variable, cross-checked against the live key).
+      - name: Resolve marketplace signing key
+        env:
+          UT_MARKETPLACE_PUBLIC_KEY_PIN: ${{ vars.UT_MARKETPLACE_PUBLIC_KEY }}
+          UT_MARKETPLACE_SIGNING_KEY_URL: ${{ vars.UT_MARKETPLACE_SIGNING_KEY_URL }}
+        run: bash scripts/ci/resolve-marketplace-key.sh
       # ut-docs#3940: release-notes.json — every web/release-notes note, so a
       # till can show this version's notes BEFORE installing it. Attached by
       # .goreleaser.yaml's release.extra_files (build/ is gitignored, so it
@@ -513,6 +527,13 @@ jobs:
           identities="$(security find-identity -v -p codesigning "$KEYCHAIN")" || identities=""
           grep -q "Developer ID Application" <<<"$identities" \
             || { echo "::error::no valid Developer ID Application identity after import"; exit 1; }
+      # ADR-0158: every release binary carries the marketplace plugin-signing
+      # key (pinned repository variable, cross-checked against the live key).
+      - name: Resolve marketplace signing key
+        env:
+          UT_MARKETPLACE_PUBLIC_KEY_PIN: ${{ vars.UT_MARKETPLACE_PUBLIC_KEY }}
+          UT_MARKETPLACE_SIGNING_KEY_URL: ${{ vars.UT_MARKETPLACE_SIGNING_KEY_URL }}
+        run: bash scripts/ci/resolve-marketplace-key.sh
       - name: Build .app and .dmg
         env:
           # Empty when the secrets aren't set → build scripts ad-hoc sign / skip notarize.
@@ -557,6 +578,9 @@ jobs:
               echo "::error::missing macOS .app $bin"; fail=1
             elif grep -qx "dev" <<< "$out"; then
               echo "::error::macOS .app $bin embeds buildinfo.Version=dev"; fail=1
+            elif ! [[ "${UT_MARKETPLACE_KEY_HEX:-}" =~ ^[0-9a-f]{64}$ ]] || ! LC_ALL=C grep -aqF "$UT_MARKETPLACE_KEY_HEX" "$f"; then
+              # ADR-0158: the marketplace key must be compiled in.
+              echo "::error::macOS .app $bin lacks the compiled marketplace key (buildinfo.MarketplacePublicKey)"; fail=1
             elif grep -qxE "v?${VERSION//./\\.}" <<< "$out"; then
               echo "ok: macOS .app $bin carries version $VERSION"
             else
@@ -660,6 +684,13 @@ jobs:
           fi
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/unitill-release.keystore"
           echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/unitill-release.keystore" >> "$GITHUB_ENV"
+      # ADR-0158: every release binary carries the marketplace plugin-signing
+      # key (pinned repository variable, cross-checked against the live key).
+      - name: Resolve marketplace signing key
+        env:
+          UT_MARKETPLACE_PUBLIC_KEY_PIN: ${{ vars.UT_MARKETPLACE_PUBLIC_KEY }}
+          UT_MARKETPLACE_SIGNING_KEY_URL: ${{ vars.UT_MARKETPLACE_SIGNING_KEY_URL }}
+        run: bash scripts/ci/resolve-marketplace-key.sh
       - name: Build signed release APK
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -819,6 +850,13 @@ jobs:
             --pattern "unitill-pos_*_darwin_arm64.tar.gz" \
             --pattern "unitill-pos_*_android.apk" \
             --pattern "checksums.txt"
+      # ADR-0158: every release binary carries the marketplace plugin-signing
+      # key (pinned repository variable, cross-checked against the live key).
+      - name: Resolve marketplace signing key
+        env:
+          UT_MARKETPLACE_PUBLIC_KEY_PIN: ${{ vars.UT_MARKETPLACE_PUBLIC_KEY }}
+          UT_MARKETPLACE_SIGNING_KEY_URL: ${{ vars.UT_MARKETPLACE_SIGNING_KEY_URL }}
+        run: bash scripts/ci/resolve-marketplace-key.sh
       - name: Every binary must report the real version, never "dev"
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -842,6 +880,14 @@ jobs:
             out="$(strings -a "$file" 2>/dev/null || true)"
             if grep -qx "dev" <<< "$out"; then
               echo "::error::$label embeds buildinfo.Version=dev — the ldflags -X version injection is broken for this build"
+              fail=1
+              return
+            fi
+            # ADR-0158: the marketplace key must be compiled in. These builds
+            # use -trimpath, so `go version -m` records no -ldflags; look for
+            # the resolved key's bytes in the binary instead.
+            if ! [[ "${UT_MARKETPLACE_KEY_HEX:-}" =~ ^[0-9a-f]{64}$ ]] || ! LC_ALL=C grep -aqF "$UT_MARKETPLACE_KEY_HEX" "$file"; then
+              echo "::error::$label lacks the compiled marketplace key (buildinfo.MarketplacePublicKey)"
               fail=1
               return
             fi
@@ -928,7 +974,21 @@ jobs:
               fail=1
               return
             fi
-            echo "ok: $label carries version $VERSION"
+            # ADR-0158: the .so must carry the marketplace key, and it must be
+            # the key this release resolved.
+            local key
+            key="$(grep -oE 'buildinfo\.MarketplacePublicKey=[0-9a-f]{64}' <<< "$ldflags" | sed 's/.*=//' || true)"
+            if [ -z "$key" ]; then
+              echo "::error::$label lacks -X buildinfo.MarketplacePublicKey=<64 hex> (ADR-0158): $ldflags"
+              fail=1
+              return
+            fi
+            if [ "$key" != "${UT_MARKETPLACE_KEY_HEX:-}" ]; then
+              echo "::error::$label compiles marketplace key ${key:0:12}…, expected ${UT_MARKETPLACE_KEY_HEX:0:12}…"
+              fail=1
+              return
+            fi
+            echo "ok: $label carries version $VERSION and the marketplace key"
           }
 
           cd dist-check

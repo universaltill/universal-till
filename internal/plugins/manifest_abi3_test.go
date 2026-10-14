@@ -194,11 +194,8 @@ func TestVerifyManifest_RefusesUnsupportedABI(t *testing.T) {
 	if err := os.WriteFile(p, []byte(src), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	mv, err := NewManifestVerifier("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = mv.VerifyManifest(p)
+	mv := structuralOnlyVerifier()
+	_, err := mv.VerifyManifest(p)
 	if err == nil || !strings.Contains(err.Error(), "update the till") {
 		t.Fatalf("verifier accepted an ABI this till does not implement: %v", err)
 	}

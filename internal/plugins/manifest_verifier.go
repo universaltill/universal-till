@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
@@ -21,9 +23,18 @@ import (
 // (ut-docs#2132).
 var ErrManifestUnsigned = errors.New("plugin manifest is unsigned")
 
+// ErrNoMarketplaceKey is wrapped into the error when a plugin is refused
+// because the till has no marketplace signing key to verify it with
+// (ADR-0158): without a key no plugin runs, unless the binary was built with
+// `-tags devplugins`.
+var ErrNoMarketplaceKey = errors.New("no marketplace signing key configured")
+
 // ManifestVerifier validates plugin manifests and artifact signatures
 type ManifestVerifier struct {
 	publicKey ed25519.PublicKey
+	// allowUnsigned: with no key, check structure only. Set from
+	// allowUnsignedPlugins (true only in a -tags devplugins build, ADR-0158).
+	allowUnsigned bool
 }
 
 func (mv *ManifestVerifier) HasPublicKey() bool {
@@ -38,13 +49,39 @@ type VerificationResult struct {
 	Errors            []string
 }
 
-// NewManifestVerifier creates a new manifest verifier
-// publicKeyHex is the marketplace's Ed25519 public key in hex format
+// NewManifestVerifier creates a new manifest verifier.
+// publicKeyHex is the marketplace's Ed25519 public key in hex format, as the
+// caller's effective config holds it (env or persisted/fetched key).
+//
+// ADR-0158: when a key is compiled into the binary
+// (buildinfo.MarketplacePublicKey) it is used instead, whatever the caller
+// passed, and an invalid compiled key is an error. With no key at all the
+// verifier refuses every manifest (ErrNoMarketplaceKey), except in a
+// `-tags devplugins` build, where it checks structure only.
 func NewManifestVerifier(publicKeyHex string) (*ManifestVerifier, error) {
-	if publicKeyHex == "" {
-		return &ManifestVerifier{}, nil // Allow operation without signature verification for dev mode
+	if compiled := buildinfo.MarketplacePublicKey; compiled != "" {
+		if publicKeyHex != "" && !strings.EqualFold(publicKeyHex, compiled) {
+			warnIgnoredKeyOnce.Do(func() {
+				logging.L().Warnf("[Verifier] configured marketplace public key differs from the compiled-in key; using the compiled key (ADR-0158)")
+			})
+		}
+		mv, err := parseManifestVerifierKey(compiled)
+		if err != nil {
+			return nil, fmt.Errorf("compiled marketplace public key: %w", err)
+		}
+		return mv, nil
 	}
+	if publicKeyHex == "" {
+		return &ManifestVerifier{allowUnsigned: allowUnsignedPlugins}, nil
+	}
+	return parseManifestVerifierKey(publicKeyHex)
+}
 
+// warnIgnoredKeyOnce limits the "configured key ignored" warning to one log
+// line per process: NewManifestVerifier runs on every plugin action.
+var warnIgnoredKeyOnce sync.Once
+
+func parseManifestVerifierKey(publicKeyHex string) (*ManifestVerifier, error) {
 	pubKeyBytes, err := hex.DecodeString(publicKeyHex)
 	if err != nil {
 		return nil, fmt.Errorf("invalid public key hex: %w", err)
@@ -205,13 +242,19 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 	// Checksum verification (if provided in manifest)
 	result.ChecksumVerified = true // Default to true if no checksum in manifest
 
-	// Signature verification (if public key configured)
-	result.SignatureVerified = mv.publicKey == nil // true if no verification configured
+	// Signature verification. With no key, only a devplugins build
+	// (allowUnsigned) treats the manifest as verified; every other build
+	// refuses it outright (ADR-0158).
+	result.SignatureVerified = mv.publicKey == nil && mv.allowUnsigned
+	noKey := mv.publicKey == nil && !mv.allowUnsigned
+	if noKey {
+		result.Errors = append(result.Errors, "no marketplace signing key configured, so the plugin cannot be verified")
+	}
 
 	// Fail closed: with a public key configured, an unsigned manifest must be
 	// rejected, not silently skipped (every marketplace-published manifest is
 	// signed; a missing signature only ever means tampered/hand-built input).
-	// Dev mode — no key configured — is unaffected.
+	// No key at all is handled above (noKey).
 	unsigned := mv.publicKey != nil && manifest.Signature == ""
 	if unsigned {
 		result.Errors = append(result.Errors, "manifest missing required field: signature (public key is configured)")
@@ -248,6 +291,9 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 		err := fmt.Errorf("manifest validation failed (%d error(s)): %s", len(result.Errors), strings.Join(result.Errors, "; "))
 		if unsigned {
 			err = fmt.Errorf("%w: %w", ErrManifestUnsigned, err)
+		}
+		if noKey {
+			err = fmt.Errorf("%w: %w", ErrNoMarketplaceKey, err)
 		}
 		return result, err
 	}

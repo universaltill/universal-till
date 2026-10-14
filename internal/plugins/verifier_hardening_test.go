@@ -71,13 +71,12 @@ func TestVerifyManifestRejectsUnsignedWhenKeyConfigured(t *testing.T) {
 	}
 }
 
-func TestVerifyManifestStillAllowsUnsignedInDevMode(t *testing.T) {
-	// No public key configured (dev mode) — unsigned manifests must keep
-	// working; the fix must only bite when a key is present.
-	mv, err := NewManifestVerifier("")
-	if err != nil {
-		t.Fatalf("NewManifestVerifier: %v", err)
-	}
+func TestVerifyManifestStructuralOnlyVerifierAllowsUnsigned(t *testing.T) {
+	// A structural-only verifier (what a keyless verifier is in a
+	// -tags devplugins build, ADR-0158) accepts an unsigned manifest; the
+	// unsigned-refusal above must only bite when a key is present. A normal
+	// build's keyless verifier refuses instead (compiled_key_test.go).
+	mv := structuralOnlyVerifier()
 	manifest := map[string]any{
 		"id":             "com.test.dev",
 		"name":           "Dev",
@@ -92,7 +91,7 @@ func TestVerifyManifestStillAllowsUnsignedInDevMode(t *testing.T) {
 		t.Fatalf("write manifest: %v", err)
 	}
 	if _, err := mv.VerifyManifest(path); err != nil {
-		t.Fatalf("dev-mode unsigned manifest rejected: %v", err)
+		t.Fatalf("structural-only verifier rejected an unsigned manifest: %v", err)
 	}
 }
 
@@ -220,11 +219,8 @@ func TestVerifyManifestOtherFailureIsNotErrManifestUnsigned(t *testing.T) {
 		t.Fatalf("write manifest: %v", err)
 	}
 
-	mv, err := NewManifestVerifier("") // no key configured
-	if err != nil {
-		t.Fatalf("NewManifestVerifier: %v", err)
-	}
-	_, err = mv.VerifyManifest(path)
+	mv := structuralOnlyVerifier()
+	_, err := mv.VerifyManifest(path)
 	if err == nil {
 		t.Fatalf("manifest missing a required field passed verification")
 	}

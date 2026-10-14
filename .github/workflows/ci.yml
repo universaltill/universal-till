@@ -77,6 +77,8 @@ jobs:
         run: bash scripts/ci/guard-release-notes_test.sh
       - name: Release checksums completeness check regression test (ut-docs#2863)
         run: bash scripts/ci/check-release-checksums_test.sh
+      - name: Marketplace signing key resolution + release wiring self-test (ADR-0158, ut-docs#4292)
+        run: bash scripts/ci/resolve-marketplace-key_test.sh
       - name: macOS notarization never holds a release — wiring test (ut-docs#2917)
         run: bash scripts/ci/release-macos-nonblocking_test.sh
       - name: Every release job is time-bounded — wiring test (ut-docs#4059)
@@ -356,6 +358,15 @@ jobs:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
         run: go build ./...
+      - name: Build and test the devplugins variant (ADR-0158)
+        # Unsigned plugins run only in a `-tags devplugins` build; nothing
+        # else compiles devplugins_on.go or its tag-gated tests.
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+        run: |
+          go build -tags devplugins ./...
+          go test -tags devplugins ./internal/plugins/ -run 'Devplugins|SkipSignature|NilVerifier|NoKey|Compiled'
       - name: Vet Windows-only code (GOOS=windows, ut-docs#2760)
         # Nothing else on a PR compiles windows-tagged Go: the Windows shell
         # is a mingw cgo build that only release.yml runs. internal/procjob

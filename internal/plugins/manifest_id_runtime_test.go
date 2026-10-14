@@ -81,10 +81,7 @@ func writeVerifierManifest(t *testing.T, m map[string]any) string {
 // The marketplace installer reads manifests through VerifyManifest, not
 // ParseManifest, so the id check and the runtime default must hold there too.
 func TestVerifyManifest_RefusesTraversalID(t *testing.T) {
-	mv, err := NewManifestVerifier("")
-	if err != nil {
-		t.Fatal(err)
-	}
+	mv := structuralOnlyVerifier()
 	path := writeVerifierManifest(t, map[string]any{
 		"id": "../../pos", "name": "x", "version": "1.0.0",
 		"canonical_type": "page", "device_arch": "any", "runtime": "none",
@@ -95,10 +92,7 @@ func TestVerifyManifest_RefusesTraversalID(t *testing.T) {
 }
 
 func TestVerifyManifest_MissingRuntimeNeverProcess(t *testing.T) {
-	mv, err := NewManifestVerifier("")
-	if err != nil {
-		t.Fatal(err)
-	}
+	mv := structuralOnlyVerifier()
 	path := writeVerifierManifest(t, map[string]any{
 		"id": "com.test.noruntime", "name": "x", "version": "1.0.0",
 		"canonical_type": "page", "device_arch": "any", "entrypoint": "./plugin.wasm",
@@ -121,7 +115,7 @@ func TestImport_RefusesTraversalIDBeforePathJoin(t *testing.T) {
 	// inside this test's temp dir, never in the shared $TMPDIR.
 	root := t.TempDir()
 	base := filepath.Join(root, "a", "b")
-	imp := NewImporter(db, base, nil)
+	imp := NewImporter(db, base, structuralOnlyVerifier())
 	imp.manifestParser = func(io.Reader) (*Manifest, error) {
 		return &Manifest{ID: "../../pos", Name: "x", Version: "1.0.0", Runtime: "none"}, nil
 	}
