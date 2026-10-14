@@ -1,0 +1,14 @@
+-- 073_item_variants_retired_with_item.sql — universaltill/ut-docs#4348:
+-- switching an item off retires (is_active = 0) all its live variants, and
+-- switching it back on never revived them, so after an off/on cycle the
+-- item had no sellable variant. retired_with_item = 1 marks a variant that
+-- is off ONLY because its item was switched off; switching the item back
+-- on revives exactly those and clears the flag. A variant already off on
+-- its own keeps 0 and stays off. Any explicit per-variant on/off clears it.
+--
+-- No backfill: variants retired with their item before this column existed
+-- keep 0 and stay off (their cause is not recoverable); the operator
+-- reactivates those in the item editor as before. item_variants is
+-- primary-wins synced and copied column by column, so the flag travels to
+-- joined tills with the row. Frozen once merged (ADR-0100).
+ALTER TABLE item_variants ADD COLUMN retired_with_item INTEGER NOT NULL DEFAULT 0;
