@@ -52,7 +52,9 @@ type VATBand struct {
 // whole-sale discount (sale_discounts — never folded into any line) is
 // prorated across the bands by the gross share of their GOODS,
 // largest-remainder so the pennies land on the highest band carrying goods
-// and the bands still sum to what the customer actually paid — a
+// — no band's share ever exceeding its goods, the excess rolling down to
+// the next band (splitSaleDiscount, ut-docs#4277) — and the bands still
+// sum to what the customer actually paid — a
 // single-purpose voucher's share of a band is never discounted and keeps
 // the tax it was issued with (ut-docs#4233); and a service charge — which since ADR-0061 carries its own
 // VAT — is apportioned into the bands through ApportionServiceChargeTax, the
@@ -98,8 +100,9 @@ func VATBandsForSale(lines []VATLine, discountTotal int64, taxInclusive bool, se
 	if d := discountTotal; d > 0 {
 		if goodsGrossSum <= 0 {
 			// No goods to carry the discount (the basket caps a discount at
-			// the goods; a tender with an explicit discount, or another
-			// direct CompleteSale caller, can still get here):
+			// the goods only while a voucher is being sold, ut-docs#4214; a
+			// tender with an explicit discount, or another direct
+			// CompleteSale caller, can still get here):
 			// prorate it across every band as before ut-docs#4233, so the
 			// bands still sum to the sale's total.
 			for _, b := range acc {
@@ -107,28 +110,30 @@ func VATBandsForSale(lines []VATLine, discountTotal int64, taxInclusive bool, se
 				goodsGrossSum += b.Gross
 			}
 		}
-		// The highest band carrying goods takes the pennies — but never a
-		// band whose goods are worth nothing (a fully line-discounted
-		// item): its remainder would push the band negative, or come off a
-		// voucher sharing it (ut-docs#4275; fiscal-sign-ask.md
+		// Each band's share is capped at the goods it comes off and the
+		// excess rolls down (ut-docs#4275, #4277; fiscal-sign-ask.md
 		// § sale_discount step 3, as ut-plugin-tax-de signs it).
-		last := -1
+		weights := make([]int64, len(acc))
+		caps := make([]int64, len(acc))
 		for i, b := range acc {
-			if b.hasGoods && b.Gross-b.voucherGross > 0 {
-				last = i
-			}
-		}
-		remaining := d
-		for i, b := range acc {
-			if !b.hasGoods || goodsGrossSum <= 0 {
+			if !b.hasGoods {
 				continue // a voucher-only band keeps its issue-time figures
 			}
-			goodsGross := b.Gross - b.voucherGross
-			share := d * goodsGross / goodsGrossSum
-			if i == last {
-				share = remaining // largest-remainder: the pennies land here
+			weights[i] = b.Gross - b.voucherGross
+			caps[i] = weights[i]
+			if !taxInclusive {
+				// Exclusive discounts the NET base, so that is what a
+				// share must not exceed.
+				caps[i] = b.Net - (b.voucherGross - b.voucherTax)
 			}
-			remaining -= share
+		}
+		shares := splitSaleDiscount(d, weights, caps)
+		for i, b := range acc {
+			if !b.hasGoods || goodsGrossSum <= 0 {
+				continue
+			}
+			goodsGross := b.Gross - b.voucherGross
+			share := shares[i]
 			if taxInclusive {
 				// Discount comes off the goods' gross; re-derive their
 				// net/tax at the band's rate (mirrors the engine: total =
@@ -204,6 +209,64 @@ func VATBandsForSale(lines []VATLine, discountTotal int64, taxInclusive bool, se
 		sort.Slice(out, func(i, j int) bool { return out[i].RateBP < out[j].RateBP })
 	}
 	return out
+}
+
+// splitSaleDiscount splits a sale discount d over the bands (sorted by
+// ascending rate) in proportion to weights (each band's goods gross),
+// largest-remainder (ut-docs#4277; fiscal-sign-ask.md § sale_discount
+// steps 2–3):
+//  1. every band with weight > 0 gets floor(d × weight / Σweight), capped
+//     at its caps entry (the goods the discount comes off — gross
+//     inclusive, net exclusive);
+//  2. the minor units left over fill the bands from the highest rate down,
+//     each up to its cap, so the pennies land on the highest band that
+//     can still take them and none goes negative;
+//  3. anything still left (a discount larger than every band's goods —
+//     the basket caps a discount at the goods only while a voucher is
+//     being sold, ut-docs#4214, so a fixed-amount discount larger than
+//     the goods reaches here; tax and total are clamped to 0 afterwards)
+//     goes on the highest band with weight > 0, so the shares always sum
+//     to d.
+//
+// A band with weight ≤ 0 (no goods, or goods worth nothing) gets no share.
+func splitSaleDiscount(d int64, weights, caps []int64) []int64 {
+	shares := make([]int64, len(weights))
+	var sum int64
+	for _, w := range weights {
+		if w > 0 {
+			sum += w
+		}
+	}
+	if sum <= 0 {
+		return shares
+	}
+	remaining := d
+	for i, w := range weights {
+		if w <= 0 {
+			continue
+		}
+		shares[i] = min(d*w/sum, max(caps[i], 0))
+		remaining -= shares[i]
+	}
+	for i := len(shares) - 1; i >= 0 && remaining > 0; i-- {
+		if weights[i] <= 0 {
+			continue
+		}
+		if room := caps[i] - shares[i]; room > 0 {
+			take := min(room, remaining)
+			shares[i] += take
+			remaining -= take
+		}
+	}
+	if remaining != 0 {
+		for i := len(shares) - 1; i >= 0; i-- {
+			if weights[i] > 0 {
+				shares[i] += remaining
+				break
+			}
+		}
+	}
+	return shares
 }
 
 // InferTaxInclusive infers a persisted sale's pricing mode from its own
