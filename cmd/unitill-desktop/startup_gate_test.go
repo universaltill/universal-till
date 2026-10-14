@@ -91,6 +91,41 @@ func TestGateDurationHonoursEnv(t *testing.T) {
 	}
 }
 
+// TestAttachRetryFloorDurationHonoursEnv mirrors TestGateDurationHonoursEnv
+// for the attach-retry floor's own knob (ut-docs#2248): unset is the 15s
+// default, "0" disables the floor, and nonsense or oversized values fall back
+// to the default rather than disabling or overflowing.
+func TestAttachRetryFloorDurationHonoursEnv(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  bool
+		val  string
+		want time.Duration
+	}{
+		{"unset uses default", false, "", defaultAttachRetryFloor},
+		{"explicit seconds", true, "30", 30 * time.Second},
+		{"zero disables", true, "0", 0},
+		{"whitespace tolerated", true, "  20  ", 20 * time.Second},
+		{"negative falls back to default", true, "-5", defaultAttachRetryFloor},
+		{"garbage falls back to default", true, "soon", defaultAttachRetryFloor},
+		{"exactly at the cap is honoured", true, "600", 600 * time.Second},
+		{"one past the cap falls back to default", true, "601", defaultAttachRetryFloor},
+		{"units-confusion typo falls back to default", true, "60000", defaultAttachRetryFloor},
+		{"large enough to overflow Duration falls back to default", true, "9223372037", defaultAttachRetryFloor},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.set {
+				t.Setenv(attachRetryEnv, tc.val)
+			} else {
+				os.Unsetenv(attachRetryEnv)
+			}
+			if got := attachRetryFloorDuration(); got != tc.want {
+				t.Errorf("attachRetryFloorDuration() with %s=%q = %v, want %v", attachRetryEnv, tc.val, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestHoldFor covers waitForSafeStartup's compare-and-sleep decision in
 // isolation (independent review, ut-docs#1093): it was previously untested
 // because it was entangled with the real clock and /proc/uptime.

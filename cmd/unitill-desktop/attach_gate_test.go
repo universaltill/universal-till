@@ -135,43 +135,46 @@ func TestAttachDecisionLine(t *testing.T) {
 	}
 }
 
-// TestAttachRetryDurationFloorsWhenGateDisabled is ut-docs#1278's actual
-// fix: attachDeadline() (attach_gate_linux.go) used to collapse straight to
-// "now" (a single immediate probe, no retry) whenever the render-defect
-// gate was disabled (UT_SHELL_MIN_UPTIME_SECONDS=0), silently reopening the
-// ut-docs#1199 boot race on any machine disabling the gate for an unrelated
-// reason (X11, a non-Pi Linux desktop, no WebKitGTK 2.52.6 compositing
-// defect). The attach-race retry must still get its own floor in that case.
-func TestAttachRetryDurationFloorsWhenGateDisabled(t *testing.T) {
-	got := attachRetryDuration(0, 0)
-	if got != attachRetryFloor {
-		t.Fatalf("attachRetryDuration(0, 0) = %v, want attachRetryFloor (%v) — a disabled render gate must not collapse the attach-race retry to a single immediate probe",
-			got, attachRetryFloor)
-	}
-}
-
-// TestAttachRetryDurationUnchangedWhenGateActive covers acceptance criterion
-// 3 of ut-docs#1278: when the render gate is NOT disabled, attachRetryDuration
-// must still reduce to plain holdFor(up, min) — including the
-// near-end-of-window case where that is smaller than attachRetryFloor. The
-// two windows may legitimately coincide (ut-docs#1199's "free on the attach
-// path" reasoning), but this fix must not widen the active-gate window by
-// flooring it too — only the disabled-gate case (min == 0) gets the floor.
-func TestAttachRetryDurationUnchangedWhenGateActive(t *testing.T) {
+// TestAttachRetryDuration covers attachRetryDuration's whole decision table
+// (ut-docs#1278 floor, ut-docs#2248 gaps): the floor applies when the render
+// gate is disabled (min == 0) AND when uptime is unreadable (!upKnown — the
+// floor needs no uptime knowledge, so a failed /proc/uptime read must not
+// collapse to a single immediate probe); with the gate active and uptime
+// known the window is holdFor(up, max(min, floor)), i.e. the floor is
+// measured from boot like the gate, so a small non-zero
+// UT_SHELL_MIN_UPTIME_SECONDS (e.g. 1) cannot reopen the ut-docs#1199 race
+// (holdFor(7s, 1s) is 0) while a warm/manual launch past both still costs
+// exactly one probe. The default 60s gate is unchanged (max(60, 15) = 60).
+func TestAttachRetryDuration(t *testing.T) {
+	const floor = defaultAttachRetryFloor
+	s := time.Second
 	for _, tc := range []struct {
 		name    string
-		up, min time.Duration
+		up      time.Duration
+		upKnown bool
+		min     time.Duration
+		floor   time.Duration
 		want    time.Duration
 	}{
-		{"far from min, most of the window remains", 5 * time.Second, 60 * time.Second, 55 * time.Second},
-		{"near end of window, below the floor — must NOT be raised to the floor", 59 * time.Second, 60 * time.Second, 1 * time.Second},
-		{"exactly at min, no window left", 60 * time.Second, 60 * time.Second, 0},
-		{"already past min, no window left", 65 * time.Second, 60 * time.Second, 0},
+		{"gate disabled gets the floor", 0, true, 0, floor, floor},
+		{"gate disabled, uptime unread, still the floor", 0, false, 0, floor, floor},
+		{"unreadable uptime with active gate gets the floor", 0, false, 60 * s, floor, floor},
+		{"far from min, most of the window remains", 5 * s, true, 60 * s, floor, 55 * s},
+		{"near end of window, below the floor, must NOT be raised", 59 * s, true, 60 * s, floor, 1 * s},
+		{"exactly at min, no window left", 60 * s, true, 60 * s, floor, 0},
+		{"already past min, no window left", 65 * s, true, 60 * s, floor, 0},
+		{"small gate, boot-relative floor keeps the window open", 7 * s, true, 1 * s, floor, 8 * s},
+		{"small gate already past the floor, one probe", 20 * s, true, 1 * s, floor, 0},
+		{"floor 0 with gate disabled is the pre-1278 single probe", 0, true, 0, 0, 0},
+		{"floor 0 with gate active is plain holdFor", 5 * s, true, 60 * s, 0, 55 * s},
+		{"custom floor with gate disabled", 0, true, 0, 30 * s, 30 * s},
+		{"custom floor above the gate extends the window", 10 * s, true, 5 * s, 30 * s, 20 * s},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := attachRetryDuration(tc.up, tc.min)
+			got := attachRetryDuration(tc.up, tc.upKnown, tc.min, tc.floor)
 			if got != tc.want {
-				t.Errorf("attachRetryDuration(%v, %v) = %v, want %v", tc.up, tc.min, got, tc.want)
+				t.Errorf("attachRetryDuration(%v, %v, %v, %v) = %v, want %v",
+					tc.up, tc.upKnown, tc.min, tc.floor, got, tc.want)
 			}
 		})
 	}

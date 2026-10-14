@@ -93,10 +93,12 @@ func main() {
 	// second server (as the desktop user, trading against its own SQLite
 	// file) instead of attaching to the real one. waitForAttach retries
 	// across a window attachDeadline computes per-OS: on Linux, while
-	// ut-docs#1093's own startup gate is active, that's the same window it
-	// already holds the shell back for; if the gate is disabled,
-	// attachDeadline still gives the retry its own independent floor
-	// (ut-docs#1278) rather than collapsing to one probe. A warm launch or a
+	// ut-docs#1093's own startup gate is active, it runs until uptime
+	// reaches max(gate, floor) — by default the same window the gate
+	// already holds the shell back for; if the gate is disabled or uptime
+	// is unreadable, attachDeadline gives the retry its own floor from
+	// launch (ut-docs#1278, ut-docs#2248; tunable via
+	// UT_SHELL_ATTACH_RETRY_SECONDS) rather than collapsing to one probe. A warm launch or a
 	// platform with no gate at all still decides from one probe, and only a
 	// cold boot gets a real chance to see the service come up before giving
 	// up and spawning.
