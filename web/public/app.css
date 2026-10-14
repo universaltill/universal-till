@@ -2842,6 +2842,35 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    needs the identical fixed position + z-index, which .modifier-modal
    alone does not provide (ut-docs#2873's scrim sweep caught the gap). */
 #confirm-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
+/* ut-docs#4286: the Renew / Choose-a-plan panel (base.html). Non-modal
+   .show() over #ut-scrim like #table-qr-modal: fixed, centred, capped short
+   of the viewport so it never covers the status bar (z 460, reachable);
+   the head stays put and the body scrolls (1024x600 and a 360px phone).
+   Logical properties only (RTL). */
+#subscription-panel {
+  position: fixed; inset: 0; margin: auto; block-size: fit-content;
+  max-block-size: calc(100vh - 8rem); max-block-size: calc(100dvh - 8rem); z-index: 500;
+  max-inline-size: 30rem; inline-size: calc(100vw - 1.5rem); padding: 1rem;
+  background: var(--surface, #fff); color: var(--text, inherit);
+}
+#subscription-panel[open] { display: flex; flex-direction: column; overflow: hidden; }
+.subscription-panel-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; flex: none; }
+.subscription-panel-head h3 { margin: 0; }
+.subscription-panel-body { overflow-y: auto; min-block-size: 0; flex: 1 1 auto; overscroll-behavior: contain; padding-block-start: .5rem; }
+.subscription-panel-lead { font-weight: 600; }
+.subscription-panel-choices { display: flex; flex-direction: column; gap: .6rem; margin-block: .75rem; }
+.subscription-panel-choice { display: flex; flex-direction: column; align-items: flex-start; gap: .2rem; text-align: start; inline-size: 100%; padding: .8rem 1rem; }
+.subscription-panel-choice span { font-weight: 400; }
+/* The actions stay in view at the bottom of the scrolling body (a short
+   1024x600 screen would otherwise scroll Back/Close out of sight). */
+.subscription-panel-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5rem; margin-block-start: .75rem;
+  position: sticky; inset-block-end: 0; padding-block: .5rem 0; background: var(--surface, #fff); }
+.subscription-panel-qr { display: block; margin-inline: auto; inline-size: min(220px, 60vw, 26vh); inline-size: min(220px, 60vw, 26dvh); block-size: auto; image-rendering: pixelated; background: #fff; padding: .4rem; border-radius: var(--radius); }
+.subscription-panel-url { overflow-wrap: anywhere; text-align: center; font-size: .85rem; }
+.subscription-panel-poll p { text-align: center; }
+.statusbar button.sb-subscription { border: 0; font: inherit; font-weight: 700; cursor: pointer; }
+.statusbar button.sb-subscription:hover { filter: brightness(0.92); }
+
 /* Tap-to-add table dialog (ut-docs#1025): same non-modal treatment as
    #hold-modal/#pfand-modal/#elevation-modal above and for the identical
    reason — its label field is what a kiosk operator types the new table's

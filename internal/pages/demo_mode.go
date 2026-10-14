@@ -267,6 +267,9 @@ var demoDeniedRoutes = map[string]bool{
 	"GET /ui/tills/roster":                      true, // the denied /tills page's polled roster (ADR-0114 §10)
 	"POST /api/enrol/check-plan":                true, // ADR-0148: a demo till never contacts the cloud
 	"POST /api/subscription/check-now":          true, // ut-docs#4285: same — a demo till never contacts the cloud
+	"POST /api/subscription/panel":              true, // ut-docs#4286: refreshes from the cloud first
+	"POST /api/subscription/panel/handoff":      true, // ut-docs#4286: a QR to the real plans page
+	"POST /api/subscription/panel/poll":         true, // ut-docs#4286: an operator check-in
 	"POST /api/enrol/claim-code":                true,
 	"POST /api/enrol/now":                       true,
 	"POST /api/enrol/pair":                      true,

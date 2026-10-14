@@ -2172,6 +2172,60 @@
          checkOrElevate (backup_api.go, sync_api.go,
          permission_settings_page.go) and an extra closed, empty <dialog> on
          pages that never trigger it costs nothing. -->
+    {{/* ut-docs#4286: the Renew / Choose-a-plan panel. Non-modal: opened
+         with .show() in a fixed frame over #ut-scrim (app.css
+         #subscription-panel), never showModal(), so the status bar and Lock
+         stay reachable (guard-no-showmodal.sh). Its openers (the status-bar
+         chip, Settings → Subscription, the lapsed banner) carry
+         data-sub-panel-open plus their own hx-post into
+         #subscription-panel-body (subscription_panel.go); the script below
+         opens the dialog on that tap, shows "Loading…" until the first step
+         lands, and on close empties the body (which ends step 3's 20 s
+         re-check) and gives focus back to the opener — the till never
+         navigates. Declared before #elevation-modal so a PIN prompt raised
+         from it paints on top (same z-index, later in the DOM). Managers
+         only, like its openers (ut-docs#3079). */}}
+    {{ if allowed "settings" }}
+    <dialog id="subscription-panel" class="modifier-modal subscription-panel" aria-labelledby="subscription-panel-title"
+            data-ut-escape-close data-testid="subscription-panel">
+      <div class="subscription-panel-head">
+        <h3 id="subscription-panel-title">{{ T "subscription.panel.title" }} {{ helpLink "claim" }}</h3>
+        <button type="button" class="btn secondary btn-touch" aria-label="{{ T "common.close" }}"
+                data-action="close:subscription-panel" data-testid="subscription-panel-close"><span aria-hidden="true">✕</span></button>
+      </div>
+      <div id="subscription-panel-body" class="subscription-panel-body"></div>
+      <template id="subscription-panel-loading"><p class="muted" role="status">{{ T "common.loading" }}</p></template>
+    </dialog>
+    <script>
+      (function () {
+        var d = document.getElementById('subscription-panel');
+        if (!d) return;
+        var body = document.getElementById('subscription-panel-body');
+        var opener = null;
+        // Capture phase: runs before htmx sends the opener's own request,
+        // so "Loading…" never overwrites the answer.
+        document.addEventListener('click', function (e) {
+          var b = e.target && e.target.closest && e.target.closest('[data-sub-panel-open]');
+          if (!b || b.disabled) return;
+          try {
+            opener = b;
+            var tpl = document.getElementById('subscription-panel-loading');
+            body.replaceChildren(tpl ? tpl.content.cloneNode(true) : '');
+            if (!d.open) d.show();
+            var first = d.querySelector('[data-testid="subscription-panel-close"]');
+            if (first) first.focus({ preventScroll: true });
+          } catch (err) { /* panel only */ }
+        }, true);
+        d.addEventListener('close', function () {
+          try {
+            body.replaceChildren();
+            if (opener && opener.isConnected) opener.focus({ preventScroll: true });
+            opener = null;
+          } catch (err) { /* panel only */ }
+        });
+      })();
+    </script>
+    {{ end }}
     <dialog id="elevation-modal" class="modifier-modal" data-ut-focus-trap></dialog>
     <!-- ut-docs#2781: the PIN-less confirm dialog (confirm_prompt.go's
          renderConfirmPrompt), OOB-swapped in here for the same no-nested-

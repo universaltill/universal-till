@@ -31,6 +31,7 @@ func checkNowMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	prevWait, prevPoll := refreshEntitlementWait, refreshEntitlementPoll
 	refreshEntitlementWait, refreshEntitlementPoll = 600*time.Millisecond, 10*time.Millisecond
 	t.Cleanup(func() { refreshEntitlementWait, refreshEntitlementPoll = prevWait, prevPoll })
+	resetRefreshThrottle(t)
 	return mux, d
 }
 
@@ -223,4 +224,17 @@ func TestSubscriptionCheckNow_SameSecondCheckinStillCounts(t *testing.T) {
 	if body := rec.Body.String(); !strings.Contains(body, "Your plan is active. Paid until") {
 		t.Fatalf("a renewal landing in the same second as the last check-in = %s, want the renewed message", body)
 	}
+}
+
+// resetRefreshThrottle clears the package-level check-in floor for this
+// test and again after it, so one test's kick never throttles the next.
+func resetRefreshThrottle(t *testing.T) {
+	t.Helper()
+	clear := func() {
+		refreshKickMu.Lock()
+		refreshLastKick = time.Time{}
+		refreshKickMu.Unlock()
+	}
+	clear()
+	t.Cleanup(clear)
 }

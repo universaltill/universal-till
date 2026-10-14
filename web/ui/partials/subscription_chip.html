@@ -7,9 +7,23 @@
      Settings card it links to (a tooltip has no hover on a touchscreen).
      No role="alert": the 60 s poll must not be re-announced. The text
      ellipsizes on a narrow bar (app.css .sb-subscription) and is never
-     wrapped itself; the bar may still wrap when it is crowded (#3050). */}}
+     wrapped itself; the bar may still wrap when it is crowded (#3050).
+     ut-docs#4286: with .openPanel (a manager/admin who may check, on a till
+     that is not a replica registered via its main till) the chip is a
+     button that opens the Renew / Choose-a-plan panel (base.html's
+     #subscription-panel) right here — no navigation; otherwise it stays
+     the link to Settings. */}}
+{{ if .openPanel }}
+<button type="button" class="sb-item sb-subscription is-{{ .state }}" data-testid="sb-subscription" data-sub-state="{{ .state }}" data-sub-panel-open
+   hx-post="/api/subscription/panel" hx-target="#subscription-panel-body" hx-swap="innerHTML"
+   title="{{ if eq .state "lapsed" }}{{ T "subscription.chip.lapsed_title" }}{{ else }}{{ T "subscription.chip.stale_title" }}{{ end }}">
+  <span class="sb-subscription-ico" aria-hidden="true">⚠</span>
+  <span class="sb-subscription-text">{{ if eq .state "lapsed" }}{{ T "subscription.chip.lapsed" }}{{ else }}{{ T "subscription.chip.stale" }}{{ end }}</span>
+</button>
+{{ else }}
 <a class="sb-item sb-subscription is-{{ .state }}" href="/settings#subscription" data-testid="sb-subscription" data-sub-state="{{ .state }}"
    title="{{ if eq .state "lapsed" }}{{ T "subscription.chip.lapsed_title" }}{{ else }}{{ T "subscription.chip.stale_title" }}{{ end }}">
   <span class="sb-subscription-ico" aria-hidden="true">⚠</span>
   <span class="sb-subscription-text">{{ if eq .state "lapsed" }}{{ T "subscription.chip.lapsed" }}{{ else }}{{ T "subscription.chip.stale" }}{{ end }}</span>
 </a>
+{{ end }}

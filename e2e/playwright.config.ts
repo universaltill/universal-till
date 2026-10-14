@@ -73,7 +73,8 @@ const LAYOUT_ONLY_SPECS = /layout-plugin-menu-1904\.spec\.ts$/;
 // its own server + project, same reasoning as the layout project above.
 // ut-docs#4285: the paid-till registration-card spec registers against its
 // own fake cloud on the same port, so it shares this project and till.
-const DIAGNOSTICS_ONLY_SPECS = /(diagnostic-mode-indicator-2169|registration-card-paid-4285)\.spec\.ts$/;
+// ut-docs#4286: the Renew / Choose-a-plan panel spec too (a lapsed fake cloud).
+const DIAGNOSTICS_ONLY_SPECS = /(diagnostic-mode-indicator-2169|registration-card-paid-4285|subscription-panel-4286)\.spec\.ts$/;
 
 // ut-docs#3091: the release-notes spec needs a till stamped with a released
 // version and seeded as "just updated" (run-till-release-notes.sh), so the

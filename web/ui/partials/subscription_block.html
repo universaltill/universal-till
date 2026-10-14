@@ -20,6 +20,9 @@
   {{ if .LastConfirmed }}<p class="muted" data-testid="subscription-last-confirmed">{{ printf (T "subscription.last_confirmed") .LastConfirmed }}</p>{{ end }}
   {{ if eq .State "free" }}<p class="muted" data-testid="subscription-free-note">{{ T "subscription.free_note" }}</p>{{ end }}
   {{ template "subscription_check_now" . }}
+  {{/* ut-docs#4286: any plan — renew a lapsed one, or change (upgrade) an
+       active one. */}}
+  {{ template "subscription_renew_open" . }}
 </div>
 {{ template "subscription_paused_banner.html" (dict "sub" . "only" "" "tse" false "check" false) }}
 {{ end }}
@@ -34,5 +37,18 @@
 <p><button type="button" class="btn btn-touch" data-testid="subscription-check-now"
    hx-post="/api/subscription/check-now" hx-target="#subscription-check" hx-swap="innerHTML"
    hx-vals='{{ jsonVals "scope" "card" }}' hx-disabled-elt="this">{{ T "subscription.check_now_btn" }}</button></p>
+{{ end }}
+{{ end }}
+{{/* ut-docs#4286: "Renew or change plan" — opens base.html's
+     #subscription-panel (.show(), never showModal) and loads its first
+     step there; the till never navigates away. Input: subscriptionView;
+     only for CanRenew (manager/admin on a registered till that is not a
+     replica registered via its main till). The endpoints refuse on their
+     own. */}}
+{{ define "subscription_renew_open" }}
+{{ if .CanRenew }}
+<p><button type="button" class="btn primary btn-touch" data-testid="subscription-renew-open" data-sub-panel-open
+   hx-post="/api/subscription/panel" hx-target="#subscription-panel-body" hx-swap="innerHTML"
+   aria-haspopup="dialog" aria-controls="subscription-panel">{{ T "subscription.renew_open_btn" }}</button></p>
 {{ end }}
 {{ end }}

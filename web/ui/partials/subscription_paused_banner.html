@@ -30,6 +30,8 @@
      hx-post="/api/subscription/check-now" hx-target="#subscription-check-banner" hx-swap="innerHTML"
      hx-vals='{{ jsonVals "scope" "banner" "only" .only }}' hx-disabled-elt="this">{{ T "subscription.check_now_btn" }}</button></p>
   {{ end }}
+  {{/* ut-docs#4286: and the Renew / Choose-a-plan panel. */}}
+  {{ if .check }}{{ template "subscription_renew_open" .sub }}{{ end }}
   {{ else }}
   <p>{{ T "subscription.banner.stale.why" }}</p>
   <p>{{ T "subscription.banner.stale.fix" }}</p>

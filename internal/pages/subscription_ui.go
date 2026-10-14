@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -46,6 +47,10 @@ type subscriptionView struct {
 	// the renewal from the main till). Hides the button; the endpoint
 	// refuses on its own (ut-docs#4285).
 	CanCheck bool
+	// CanRenew: CanCheck on a registered till — it gets the "Renew or
+	// change plan" panel opener (ut-docs#4286). Hides the button; the
+	// panel's endpoints refuse on their own.
+	CanRenew bool
 	// CheckResult is "Check now"'s one-line result, translated; empty on a
 	// plain render.
 	CheckResult string
@@ -97,6 +102,7 @@ func subscriptionViewFor(ctx context.Context, r entitlement.Reader, now time.Tim
 func subscriptionViewWithCheck(r *http.Request, d *common.Deps, locale string) subscriptionView {
 	v := subscriptionViewFor(r.Context(), d.Settings, time.Now(), locale)
 	v.CanCheck = canCheckSubscription(d, r)
+	v.CanRenew = v.CanCheck && enroll.HasCredentials(d.Cfg)
 	return v
 }
 
@@ -125,17 +131,37 @@ var (
 	refreshEntitlementPoll = 250 * time.Millisecond
 )
 
+// The server-side floor on operator check-ins (review of ut-docs#4286):
+// every panel open, panel poll and Check now refreshes, so several tabs, a
+// double click or a forged poll loop could otherwise kick the cloud as
+// fast as requests arrive. A refresh within refreshKickFloor of the last
+// one that kicked reads the cache instead. refreshClock is the test seam.
+var (
+	refreshKickFloor = 5 * time.Second
+	refreshClock     = time.Now
+	refreshKickMu    sync.Mutex
+	refreshLastKick  time.Time
+)
+
 // refreshEntitlementNow asks the cloudsync loop for an operator check-in
 // now (ADR-0148 §2) and waits up to refreshEntitlementWait for it to land,
 // read as a change of entitlement.last_confirmed_at (every answered
 // check-in, 200 or 402, rewrites it). Shared by "Check now" and the
 // Renew / Choose-a-plan panel (ut-docs#4286), which refreshes before it
 // offers a checkout. Never a sale gate: it reads settings only. Returns
-// ctx's error if the request goes away first.
+// ctx's error if the request goes away first. Within refreshKickFloor of
+// the last kick it does not kick again and answers from the cache.
 func refreshEntitlementNow(ctx context.Context, d *common.Deps) (refreshOutcome, error) {
 	before, _, err := d.Settings.Get(ctx, entitlement.KeyLastConfirmedAt)
 	if err != nil {
 		return refreshTimedOut, err
+	}
+	if !claimRefreshKick() {
+		// Under the floor: answer from the cache the last kick refreshed.
+		if entitlement.SyncAllowed(ctx, d.Settings) {
+			return refreshActive, nil
+		}
+		return refreshNotActive, nil
 	}
 	// last_confirmed_at has one-second resolution: a check-in our kick
 	// starts in the same wall second as before would write the same string
@@ -172,6 +198,19 @@ func refreshEntitlementNow(ctx context.Context, d *common.Deps) (refreshOutcome,
 			return refreshNotActive, nil
 		}
 	}
+}
+
+// claimRefreshKick reports whether this refresh may kick a check-in (none
+// kicked within refreshKickFloor) and, if so, records it as the last kick.
+func claimRefreshKick() bool {
+	refreshKickMu.Lock()
+	defer refreshKickMu.Unlock()
+	now := refreshClock()
+	if !refreshLastKick.IsZero() && now.Sub(refreshLastKick) < refreshKickFloor {
+		return false
+	}
+	refreshLastKick = now
+	return true
 }
 
 // checkNowScopes maps "Check now"'s scope to the element its result
@@ -214,8 +253,13 @@ func registerSubscriptionUI(mux *http.ServeMux, d *common.Deps) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+		// ut-docs#4286: a viewer who may check, on a registered till, opens
+		// the Renew / Choose-a-plan panel from the chip; otherwise (a
+		// replica registered via its main till, an unregistered till) it
+		// keeps the link to Settings.
 		httpx.RenderPartial("ui/partials/subscription_chip.html", map[string]any{
-			"state": string(ev.State),
+			"state":     string(ev.State),
+			"openPanel": canCheckSubscription(d, r) && enroll.HasCredentials(d.Cfg),
 		})(w, r)
 	})
 
@@ -224,6 +268,7 @@ func registerSubscriptionUI(mux *http.ServeMux, d *common.Deps) {
 	// elevation gate and not-registered messages as POST
 	// /api/enrol/check-plan; always 200 (HTMX swaps the body).
 	posRepo := data.NewPOSRepo(d.Db)
+	registerSubscriptionPanel(mux, d, posRepo)
 	mux.HandleFunc("POST /api/subscription/check-now", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -255,6 +300,7 @@ func registerSubscriptionUI(mux *http.ServeMux, d *common.Deps) {
 		}
 		view := subscriptionViewFor(r.Context(), d.Settings, time.Now(), locale)
 		view.CanCheck = canCheckSubscription(d, r)
+		view.CanRenew = view.CanCheck
 		result := "timed_out"
 		switch outcome {
 		case refreshActive:
@@ -278,6 +324,8 @@ func registerSubscriptionUI(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderWith([]string{
 				filepath.Join("web", "ui", "partials", "subscription_check_banner.html"),
 				filepath.Join("web", "ui", "partials", "subscription_paused_banner.html"),
+				// subscription_renew_open (ut-docs#4286) lives in the block.
+				filepath.Join("web", "ui", "partials", "subscription_block.html"),
 			}, funcs)("subscription_check_banner.html", map[string]any{"sub": view, "only": only})(w, r)
 			return
 		}
