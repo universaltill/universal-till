@@ -402,3 +402,12 @@ da gösterir. Bu alanlar yalnızca bir ödeme yöntemi bunları gerçekten
 kaydettiğinde görünür — bugünkü yerleşik ödeme yöntemleri (nakit, Stripe,
 SumUp, QR ödeme) kaydetmiyor, bu yüzden mevcut fişler bundan etkilenmez.
 
+Hediye çeki satılan bir satış, her çeki ayrı bir satır olarak listeler:
+numarası, kimin için olduğu ve her alışverişte mi yoksa belirli bir üründe
+mi kullanılabileceği. Her alışverişte geçerli bir çek ara toplama dahil
+değildir (gelir değil, borçtur); bu yüzden toplamlar onu kendi **Düzenlenen
+hediye çekleri** satırında gösterir ve toplam,
+müşterinin ödediği tutarla örtüşür. Çekle
+yapılan bir ödeme, ödemenin altında çek numarasını gösterir. Yöneticiler
+numaraya dokunarak çekin kendi sayfasını açabilir (bkz.
+[Hediye çekleri](/help/vouchers)).

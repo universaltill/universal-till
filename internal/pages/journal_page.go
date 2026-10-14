@@ -3,6 +3,7 @@ package pages
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -48,6 +49,27 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 			invKind = "credit_note"
 		}
 		inv, hasInvoice, _ := data.NewInvoiceRepo(d.Db).BySale(r.Context(), sale.ID, invKind)
+		// ut-docs#4256: per issued voucher, its page link (path-escaped —
+		// a code may hold any printable character, "/" included) and
+		// whether it was voided, as the printed receipt marks it (#4224).
+		// A read error only loses the void marks, never the page.
+		voucherHrefs := make(map[string]string, len(sale.VoucherIssues))
+		for _, vi := range sale.VoucherIssues {
+			voucherHrefs[vi.VoucherID] = "/vouchers/" + url.PathEscape(vi.VoucherID)
+		}
+		for _, p := range sale.Payments {
+			if p.VoucherID != "" {
+				voucherHrefs[p.VoucherID] = "/vouchers/" + url.PathEscape(p.VoucherID)
+			}
+		}
+		voidVouchers := map[string]bool{}
+		if len(sale.VoucherIssues) > 0 {
+			if vs, vErr := repo.VouchersIssuedInSale(r.Context(), sale.ID); vErr == nil {
+				for _, v := range vs {
+					voidVouchers[v.ID] = v.Status == "void"
+				}
+			}
+		}
 		httpx.Render("ui/pages/journal_detail.html", map[string]any{
 			"title":       fmt.Sprintf(httpx.T(httpx.RequestLocale(r), "page.title.receipt_detail"), sale.ReceiptNo),
 			"theme":       d.CurrentState().Theme,
@@ -58,6 +80,11 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 			"InvoicingOn": invoicingOn,
 			"HasInvoice":  hasInvoice,
 			"Invoice":     inv,
+			// ut-docs#4256: a voucher number links to its page only for
+			// someone that page (settings-gated) will actually open for.
+			"CanViewVouchers": canPerform(d, r, "settings"),
+			"VoucherHrefs":    voucherHrefs,
+			"VoidVouchers":    voidVouchers,
 		})(w, r)
 	})
 

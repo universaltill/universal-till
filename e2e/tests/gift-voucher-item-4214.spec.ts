@@ -159,6 +159,36 @@ test.describe('gift voucher item: sell, then spend part of it (ut-docs#4214)', (
     expect(body.data.balance, 'remaining balance = value - spent').toBe(2500 - 120);
     expect(body.data.status).toBe('active');
 
+    // ut-docs#4256: the voucher page's sale links open journal receipts that
+    // name the voucher — the issuing sale as a line whose totals add up,
+    // the redeeming sale on its payment row.
+    await page.goto(`/vouchers/${CODE}`);
+    const saleLinks = page.locator('a[href^="/journal/"]');
+    await expect(saleLinks).toHaveCount(2);
+    const hrefs = await saleLinks.evaluateAll((as) => as.map((a) => a.getAttribute('href')!));
+    for (const href of hrefs) {
+      await page.goto(href);
+      await expect(page.locator('h1')).toBeVisible();
+      const issue = page.getByTestId('journal-voucher-issue');
+      if (await issue.count()) {
+        await expect(issue).toContainText(CODE);
+        await expect(issue).toContainText('Any purchase');
+        await expect(page.getByTestId('journal-voucher-total')).toContainText('25.00');
+        for (const vp of [{ width: 1024, height: 600 }, { width: 360, height: 740 }]) {
+          await page.setViewportSize(vp);
+          const row = (await issue.boundingBox())!;
+          expect(row.x + row.width, `voucher line fits at ${vp.width}`).toBeLessThanOrEqual(vp.width + 1);
+          if (process.env.GV_SHOTS_DIR) {
+            await page.screenshot({ path: `${process.env.GV_SHOTS_DIR}/journal-voucher-issue-${vp.width}.png`, fullPage: true });
+          }
+        }
+        await page.setViewportSize({ width: 1280, height: 720 });
+      } else {
+        await expect(page.getByTestId('journal-payment-voucher')).toContainText(CODE);
+      }
+    }
+    expect(new Set(hrefs).size, 'issuing and redeeming sales are two receipts').toBe(2);
+
     assertClean();
   });
 

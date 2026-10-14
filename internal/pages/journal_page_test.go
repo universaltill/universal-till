@@ -10,6 +10,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
 )
@@ -739,5 +740,107 @@ func TestJournalDBErrorsSurfaceAs500(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/journal", nil))
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("fragment with broken db = %d, want 500", rec.Code)
+	}
+}
+
+// TestJournalDetailShowsGiftVouchers (ut-docs#4256): a sale that issued a
+// gift voucher lists it as a line with its number, purpose and holder, the
+// multi-purpose face value appears in the totals so they add up, and a
+// voucher payment names the voucher it redeemed.
+func TestJournalDetailShowsGiftVouchers(t *testing.T) {
+	mux, d := newJournalMux(t)
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := d.Db.Exec(q, args...); err != nil {
+			t.Fatalf("seed: %v\n%s", err, q)
+		}
+	}
+	get := func(path string, user auth.User) string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, auth.WithUser(httptest.NewRequest(http.MethodGet, path, nil), user))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d (%s)", path, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+	manager := auth.User{ID: "m1", Role: "manager"}
+
+	// Voucher-only sale: a £25 any-purchase voucher, no goods.
+	exec(`INSERT INTO sales(id, receipt_no, status, sale_type, tender_type, offline, sync_status, currency, subtotal, discount_total, tax_total, total, voucher_issue_total, created_at)
+		VALUES ('gv-sale', 'R-GV-1', 'completed', 'sale', 'cash', 1, 'queued', 'GBP', 0, 0, 0, 2500, 2500, datetime('now'))`)
+	exec(`INSERT INTO vouchers(id, holder_label, original_amount, balance, currency, issued_sale_id) VALUES ('GV-4256-ANY', 'Sam', 2500, 2500, 'GBP', 'gv-sale')`)
+	exec(`INSERT INTO voucher_transactions(id, voucher_id, sale_id, type, amount) VALUES ('vt1', 'GV-4256-ANY', 'gv-sale', 'issue', 2500)`)
+	exec(`INSERT INTO payments(id, sale_id, method_id, amount, currency, paid_at) VALUES ('gv-p1', 'gv-sale', 'cash', 2500, 'GBP', datetime('now'))`)
+
+	body := get("/journal/R-GV-1", manager)
+	for _, want := range []string{
+		`data-testid="journal-voucher-issue"`,
+		"GV-4256-ANY",
+		"For Sam",
+		"Any purchase",
+		`data-testid="journal-voucher-total"`,
+		"Vouchers issued",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("voucher-only sale: missing %q", want)
+		}
+	}
+	if !strings.Contains(body, `href="/vouchers/GV-4256-ANY"`) {
+		t.Errorf("manager should get a link to the voucher's page")
+	}
+	if !strings.Contains(body, httpx.FormatMoneyDisplay(2500, "en")) {
+		t.Errorf("voucher-only sale: the voucher total row should carry the face value")
+	}
+
+	// A code with URL-reserved characters links to its own page, escaped,
+	// and a voided voucher is marked like on the printed receipt.
+	exec(`INSERT INTO sales(id, receipt_no, status, sale_type, tender_type, offline, sync_status, currency, subtotal, discount_total, tax_total, total, voucher_issue_total, created_at)
+		VALUES ('gv-sale-2', 'R-GV-4', 'completed', 'sale', 'cash', 1, 'queued', 'GBP', 0, 0, 0, 500, 500, datetime('now'))`)
+	exec(`INSERT INTO vouchers(id, original_amount, balance, currency, issued_sale_id, status) VALUES ('GS/7?x#y', 500, 500, 'GBP', 'gv-sale-2', 'void')`)
+	exec(`INSERT INTO voucher_transactions(id, voucher_id, sale_id, type, amount) VALUES ('vt3', 'GS/7?x#y', 'gv-sale-2', 'issue', 500)`)
+	body = get("/journal/R-GV-4", manager)
+	if !strings.Contains(body, `href="/vouchers/GS%2F7%3Fx%23y"`) {
+		t.Errorf("voucher link must path-escape the code")
+	}
+	if !strings.Contains(body, `data-testid="journal-voucher-void"`) {
+		t.Errorf("a voided voucher should be marked void")
+	}
+	if strings.Contains(get("/journal/R-GV-1", manager), `data-testid="journal-voucher-void"`) {
+		t.Errorf("an active voucher must not be marked void")
+	}
+
+	// Mixed sale: goods plus a single-purpose voucher (taxed now, so it is in
+	// the subtotal and adds no voucher-total row).
+	seedJournalPageSale(t, d, "mix-sale", "R-GV-2", "sale")
+	exec(`UPDATE sales SET subtotal = subtotal + 1000, tax_total = tax_total + 167, total = total + 1000 WHERE id = 'mix-sale'`)
+	exec(`INSERT INTO vouchers(id, original_amount, balance, currency, issued_sale_id, purpose, issue_vat_rate_bp) VALUES ('GV-4256-ONE', 1000, 1000, 'GBP', 'mix-sale', 'single_purpose', 2000)`)
+	exec(`INSERT INTO voucher_transactions(id, voucher_id, sale_id, type, amount) VALUES ('vt2', 'GV-4256-ONE', 'mix-sale', 'issue', 1000)`)
+	body = get("/journal/R-GV-2", manager)
+	for _, want := range []string{"Journal Apple", "GV-4256-ONE", "Specific item (taxed now)"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("mixed sale: missing %q", want)
+		}
+	}
+	if strings.Contains(body, `data-testid="journal-voucher-total"`) {
+		t.Errorf("single-purpose voucher is in the subtotal; no voucher-total row expected")
+	}
+
+	// Sale paid with a voucher: the payment row names the voucher.
+	seedJournalPageSale(t, d, "pay-sale", "R-GV-3", "sale")
+	exec(`UPDATE payments SET method_id = 'voucher', voucher_id = 'GV-4256-ANY' WHERE sale_id = 'pay-sale'`)
+	body = get("/journal/R-GV-3", manager)
+	if !strings.Contains(body, `data-testid="journal-payment-voucher"`) || !strings.Contains(body, "GV-4256-ANY") {
+		t.Errorf("voucher payment should name the voucher it redeemed")
+	}
+	if strings.Contains(body, `data-testid="journal-voucher-issue"`) {
+		t.Errorf("a sale that only redeemed a voucher issued none")
+	}
+
+	// A cashier sees the voucher number but no link to the settings-gated
+	// voucher page.
+	body = get("/journal/R-GV-1", auth.User{ID: "c1", Role: "cashier"})
+	if !strings.Contains(body, "GV-4256-ANY") || strings.Contains(body, `href="/vouchers/`) {
+		t.Errorf("cashier: want the number without a /vouchers link")
 	}
 }
