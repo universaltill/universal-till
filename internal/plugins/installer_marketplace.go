@@ -331,9 +331,10 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 	// upsertCatalogEntry had already written the row).
 	// The permission names declared before this install (an update), read
 	// before PersistManifest adds the new ones: installGrantsPermission
-	// grants an ai.send.* only on its first declaration (ADR-0153
-	// Decision 5). Unreadable → treat everything as already declared, so
-	// no ai.send.* is granted (fail closed).
+	// grants a permission only on its first declaration, so an update keeps
+	// the operator's grant/revoke state (ut-docs#4145, ADR-0153 Decision 5).
+	// Unreadable → treat everything as already declared, so nothing is
+	// granted (fail closed; the operator grants on the settings page).
 	previousPerms, prevErr := ListPluginPermissions(ctx, i.db, manifest.ID)
 	if prevErr != nil {
 		logging.L().Warnf("[MarketplaceInstaller] read existing permissions of %s: %v", manifest.ID, prevErr)
@@ -341,6 +342,22 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 	previouslyDeclared := make(map[string]bool, len(previousPerms))
 	for _, p := range previousPerms {
 		previouslyDeclared[p.Name] = true
+	}
+	// A fresh install that fails after PersistManifest is undone, or its
+	// ungranted rows would make the retry treat every permission as already
+	// declared and grant nothing (ut-docs#4145 review M1). Unreadable →
+	// assume installed, so a failure never deletes an existing plugin.
+	_, installedBefore, err := data.NewPluginRepo(i.db).GetInstalledPluginVersion(ctx, manifest.ID)
+	if err != nil {
+		installedBefore = true
+	}
+	undoFreshInstall := func() {
+		if installedBefore {
+			return
+		}
+		if err := UninstallPlugin(context.WithoutCancel(ctx), i.db, manifest.ID); err != nil {
+			logging.L().Warnf("[MarketplaceInstaller] undo failed install of %s: %v", manifest.ID, err)
+		}
 	}
 
 	if err := PersistManifest(ctx, i.db, manifest, InstallOptions{
@@ -355,6 +372,7 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 
 	if err := i.upsertCatalogEntry(ctx, manifest, spec.SourceURL, spec.Checksum, spec.Signature); err != nil {
 		_ = os.RemoveAll(finalDir)
+		undoFreshInstall()
 		return nil, fmt.Errorf("persist plugin catalog entry: %w", err)
 	}
 
@@ -362,8 +380,8 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 	// the permission set) passed marketplace review, so grant the declared
 	// permissions. Menu entries and capabilities gate on granted permissions;
 	// without this, installed pages never surface in the menu. Manual imports
-	// stay ungranted for the operator to approve. The AI permissions follow
-	// installGrantsPermission (ADR-0153 Decision 5).
+	// stay ungranted for the operator to approve. What an update grants
+	// follows installGrantsPermission (ut-docs#4145, ADR-0153 Decision 5).
 	for _, perm := range manifest.Permissions {
 		if !installGrantsPermission(manifest, perm, prevErr != nil || previouslyDeclared[perm]) {
 			continue
@@ -478,25 +496,30 @@ func minPOSVersion(manifest *Manifest) string {
 	return "2.5.0"
 }
 
-// installGrantsPermission is ADR-0153 Decision 5's install-grant rule
-// (amends ADR-0006) for a marketplace install or update. Never granted on
-// install: ai.tools.write:*, ai.tool.provide, ai.tool.provide.write, and
-// ai.send.* on a plugin that does not declare ai.agent (a tool plugin) —
-// the admin grants those on the plugin's settings page. ai.send.* on an
-// ai.agent plugin is granted only on its first declaration, so an admin's
-// unticked checkbox survives updates. "First declaration" is per
-// permission row: a version that drops an ai.send.* prunes its row, and a
-// later version that declares it again counts as a first declaration
-// (accepted: the re-declaring manifest passed marketplace review again).
-// Every other permission is granted as before (re-granted on every update:
-// ut-docs#4145).
+// installGrantsPermission is the marketplace install-grant rule for an
+// install or update. A permission the plugin already declared keeps its
+// stored state, so an operator's revoke (or a grant they made by hand)
+// survives every update and same-version reinstall (ut-docs#4145). Only a
+// first declaration is granted, except ADR-0153 Decision 5's ungranted set
+// (amends ADR-0006): ai.tools.write:*, ai.tool.provide,
+// ai.tool.provide.write, and ai.send.* on a plugin that does not declare
+// ai.agent (a tool plugin) — the admin grants those on the plugin's
+// settings page. "First declaration" is per permission row: a version that
+// drops a permission prunes its row, and a later version that declares it
+// again counts as a first declaration (accepted: the re-declaring manifest
+// passed marketplace review again). An uninstall drops the rows, so a
+// fresh install grants again. A plugin first imported manually (rows
+// stored ungranted) and later installed from the marketplace keeps those
+// rows ungranted too: the operator grants them on the settings page.
 func installGrantsPermission(m *Manifest, perm string, previouslyDeclared bool) bool {
 	switch {
+	case previouslyDeclared:
+		return false
 	case perm == AIToolProvidePermission, perm == AIToolProvideWritePermission,
 		strings.HasPrefix(perm, AIToolsWritePermissionPrefix):
 		return false
 	case strings.HasPrefix(perm, AISendPermissionPrefix):
-		return slices.Contains(m.Permissions, AIAgentPermission) && !previouslyDeclared
+		return slices.Contains(m.Permissions, AIAgentPermission)
 	}
 	return true
 }
