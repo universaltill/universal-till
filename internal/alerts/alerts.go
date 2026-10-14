@@ -70,38 +70,19 @@ func now() time.Time {
 // warn window (their own lead time, once set — otherwise the flat 7-day
 // default) at the 28-day selling rate.
 func runningOutCount(ctx context.Context, db *sql.DB) (int, error) {
-	repo := data.NewPOSRepo(db)
+	// ut-docs#4134: a shop that sells without tracking stock has no
+	// meaningful run-out prediction, so it never gets the digest.
+	untracked, err := data.NewSettingsRepo(db).ShopStockUntracked(ctx)
+	if err != nil {
+		return 0, err
+	}
 	// +1s pad: SQL window comparisons truncate to whole seconds, so an
 	// exact-now exclusive upper bound can drop a sale committed in this
 	// same wall-clock second (see reportNow's doc comment in
 	// internal/pages/reports_page.go). Deliberately the real wall clock,
 	// not now() above — this is a rolling 28-day window, not a
 	// calendar-day bucket, so it was never the flaky half of ut-docs#1769.
-	// Named nowPad rather than now to avoid shadowing the package-level
-	// now() helper.
-	nowPad := time.Now().Add(time.Second)
-	rates, err := repo.ItemDirectDailySellRates(ctx, nowPad.Add(-28*24*time.Hour), nowPad)
-	if err != nil {
-		return 0, err
-	}
-	variantRates, err := repo.VariantDailySellRates(ctx, nowPad.Add(-28*24*time.Hour), nowPad)
-	if err != nil {
-		return 0, err
-	}
-	if len(rates) == 0 && len(variantRates) == 0 {
-		return 0, nil
-	}
-	levels, err := repo.ListStockLevels(ctx)
-	if err != nil {
-		return 0, err
-	}
-	n := 0
-	for _, l := range levels {
-		if l.IsRunningOut(l.SellRate(rates, variantRates)) {
-			n++
-		}
-	}
-	return n, nil
+	return data.NewPOSRepo(db).RunningOutCount(ctx, time.Now().Add(time.Second), untracked)
 }
 
 // pushDigest sends today's low-stock digest to the marketplace when the till

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -47,6 +48,29 @@ SELECT value FROM settings WHERE key = ?
 		return "", false, settingsObs.wrapf("get", "get setting %s", err, key)
 	}
 	return val, true, nil
+}
+
+// KeyAllowNegativeInventory is the shop-wide "sell items without tracking
+// stock" settings key. Declared here so internal/data (which decides whether
+// stock predictions apply) and internal/pages/common share one spelling.
+const KeyAllowNegativeInventory = "pos.allow_negative_inventory"
+
+// ShopStockUntracked reports whether the shop sells without tracking stock
+// (ut-docs#4134). A missing or unparseable value is the default, false (stock
+// guard on), matching common.LoadState; only a real DB error is returned.
+func (r *SettingsRepo) ShopStockUntracked(ctx context.Context) (bool, error) {
+	v, ok, err := r.Get(ctx, KeyAllowNegativeInventory)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, nil
+	}
+	b, perr := strconv.ParseBool(v)
+	if perr != nil {
+		return false, nil
+	}
+	return b, nil
 }
 
 func (r *SettingsRepo) Set(ctx context.Context, key, value string) error {

@@ -24,7 +24,7 @@ Verfolgt die vorrätigen Mengen je Artikel und Variante. Verkäufe verringern de
 
 ## Wenn Sie gar keinen Bestand führen
 
-Manche Geschäfte zählen nie Bestand — sie möchten einfach, dass sich jeder Artikel jederzeit verkaufen lässt. Aktivieren Sie dazu **Einstellungen → Bestand → „Artikel ohne Bestandsführung verkaufen“**. Artikel werden dann auch verkauft, wenn die Kasse keinen Bestandssatz für sie hat, und kein Verkauf wird jemals wegen fehlendem Bestand abgelehnt.
+Manche Geschäfte zählen nie Bestand — sie möchten einfach, dass sich jeder Artikel jederzeit verkaufen lässt. Aktivieren Sie dazu **Einstellungen → Bestand → „Artikel ohne Bestandsführung verkaufen“**. Artikel werden dann auch verkauft, wenn die Kasse keinen Bestandssatz für sie hat, und kein Verkauf wird jemals wegen fehlendem Bestand abgelehnt. Die Kasse sagt dann auch nicht mehr voraus, welche Artikel zur Neige gehen: kein ⚠ Hinweis „geht zur Neige“ auf der Bestands- oder Berichtsseite, keine Angaben zu verbleibenden Tagen, keine Bestellvorschläge und keine Zusammenfassung zu niedrigem Bestand im Posteingang „Mein Shop“ oder per E-Mail — Ihre Bestandsmengen bleiben sichtbar.
 
 Lassen Sie die Option aus, wenn die Kasse den Verkauf stoppen soll, sobald ein Artikel aufgebraucht ist. Das ist die Voreinstellung — und der Grund, warum ein aus einem System ohne Bestandsführung importierter Katalog zunächst gar nichts verkaufen kann, bis Sie diese Option einschalten.
 

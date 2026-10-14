@@ -65,10 +65,16 @@ func stockLevelsForDisplay(ctx context.Context, d *common.Deps) ([]stockRow, int
 	// +1s pad keeps a sale committed in this SAME wall-clock second inside
 	// the window: SQL comparisons truncate to whole seconds, so an
 	// exact-now exclusive upper bound can otherwise drop it (see
-	// reportNow's doc comment in reports_page.go).
-	sellRateNow := time.Now().Add(time.Second)
-	rates, _ := posRepo.ItemDirectDailySellRates(ctx, sellRateNow.Add(-28*24*time.Hour), sellRateNow)
-	variantRates, _ := posRepo.VariantDailySellRates(ctx, sellRateNow.Add(-28*24*time.Hour), sellRateNow)
+	// reportNow's doc comment in reports_page.go). ut-docs#4134: a shop
+	// that sells without tracking stock gets no prediction at all — with
+	// no rates every row keeps DaysLeft -1, RunsOut false and OrderQty 0,
+	// while its quantity and reorder-level Low flag stay listed.
+	var rates, variantRates map[string]float64
+	if !d.CurrentState().AllowNegativeInventory {
+		sellRateNow := time.Now().Add(time.Second)
+		rates, _ = posRepo.ItemDirectDailySellRates(ctx, sellRateNow.Add(-28*24*time.Hour), sellRateNow)
+		variantRates, _ = posRepo.VariantDailySellRates(ctx, sellRateNow.Add(-28*24*time.Hour), sellRateNow)
+	}
 
 	// coverBufferDays is the safety-stock buffer added on top of the
 	// effective warn window (LowStockItem.EffectiveWarnDays — the item's

@@ -63,7 +63,7 @@ const (
 	// the stock guard is ON — a shop that never records stock cannot sell
 	// anything at all until this is turned on, because an item with no
 	// inventory row reads as quantity 0.
-	KeyAllowNegativeInventory = "pos.allow_negative_inventory"
+	KeyAllowNegativeInventory = data.KeyAllowNegativeInventory
 	// KeyBrowsingMode is the sell screen's browsing layout (ut-docs#2499,
 	// settings.sell_screen.browsing_mode): one of BrowsingModeCategoryTabs
 	// (a grid of category tiles, each opening a popup of that category's

@@ -625,3 +625,53 @@ func testStartRunsDigestLoopBody(t *testing.T, anchorHour int) {
 		t.Fatal("Start's loop goroutine did not join wg within 2s of ctx cancel")
 	}
 }
+
+// ut-docs#4134: with "Sell items without tracking stock" on, an item whose
+// recorded stock is low is not "running out" — the till must not push the
+// low-stock digest; with it off the same data still pushes.
+func TestPushDigest_UntrackedStockNeverPushes(t *testing.T) {
+	for _, tc := range []struct {
+		setting  string
+		wantPush bool
+	}{{"true", false}, {"false", true}} {
+		t.Run("allow_negative_inventory="+tc.setting, func(t *testing.T) {
+			f := filepath.Join(t.TempDir(), "untracked.db")
+			database, err := db.Open(f)
+			if err != nil {
+				t.Fatalf("open db: %v", err)
+			}
+			defer database.Close()
+			d := database.DB
+			mustExec := func(q string, args ...any) {
+				t.Helper()
+				if _, err := d.Exec(q, args...); err != nil {
+					t.Fatalf("exec: %v", err)
+				}
+			}
+			mustExec(`INSERT INTO items (id, name, sku, base_price, is_active) VALUES ('it-x','Cola','X',100,1)`)
+			mustExec(`INSERT INTO stock_locations (id, name) VALUES ('loc-x','Floor')`)
+			mustExec(`INSERT INTO inventory (id, item_id, location_id, quantity) VALUES ('inv-x','it-x','loc-x',6)`)
+			mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
+			          VALUES ('sx','RX','completed','sale',5600,0,5600, datetime('now','-1 days'))`)
+			mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+			          VALUES ('lx','sx',1,'it-x','Cola',56,100,0,0,0,5600,5600)`)
+			mustExec(`INSERT INTO settings (key, value, updated_at) VALUES ('pos.allow_negative_inventory', ?, datetime('now'))`, tc.setting)
+
+			var hit bool
+			mp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hit = true
+				_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"ok": true}})
+			}))
+			defer mp.Close()
+			cfg := &config.Config{Marketplace: config.MarketplaceConfig{
+				EndpointURL: mp.URL + "/api", StoreID: "store-abc", MerchantToken: "tok-1",
+			}}
+			if err := pushDigest(context.Background(), cfg, d); err != nil {
+				t.Fatalf("pushDigest: %v", err)
+			}
+			if hit != tc.wantPush {
+				t.Fatalf("pushed = %v, want %v", hit, tc.wantPush)
+			}
+		})
+	}
+}
