@@ -30,7 +30,9 @@ below); it never writes anything.
   **safe mode** section appears with a link to see (and export) **today's
   sales**, read-only, while the underlying problem is being fixed — so you
   can still tell a customer their total or print today's figures even
-  while the till itself won't fully start.
+  while the till itself won't fully start. The safe-mode link only appears on
+  the till itself; if you open this screen from another computer, it says so
+  instead.
 
 ## If Retry doesn't work
 

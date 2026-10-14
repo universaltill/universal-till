@@ -140,7 +140,8 @@ func Serve(ctx context.Context, cfg *config.Config, failure Failure) (Result, er
 // (unlike the main server, where the public demo is public by design): the
 // screen shows failure detail and a retry button, never something to expose.
 // A LAN peer still reaches /healthz; the safe-mode routes keep their own,
-// stricter requireLoopback.
+// stricter requireLoopback, and the page only links to them for a loopback
+// peer (pageHandler, #4290).
 func newHandler(cfg *config.Config, failure Failure, safeModeUsable bool, safeModeDB *sql.DB, retry chan struct{}) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthHandler())

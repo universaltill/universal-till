@@ -1854,6 +1854,7 @@
   "recovery.safe_mode_col_total": "جمع کل",
   "recovery.safe_mode_export": "خروجی CSV",
   "recovery.safe_mode_sales_today": "فروش امروز",
+  "recovery.safe_mode_this_device_only": "حالت ایمن (نمای فقط خواندنی فروش امروز) را فقط می‌توان روی خود صندوق باز کرد.",
   "recovery.taking_longer": "هنوز در حال کار است — پس از به‌روزرسانی پایگاه داده ممکن است چند دقیقه طول بکشد.",
   "recovery.title": "حالت بازیابی",
   "recovery.unknown_error": "صندوق راه‌اندازی نشد. اطلاعات شما ایمن است — نیاز به تلاش دوباره یا پشتیبانی دارد.",

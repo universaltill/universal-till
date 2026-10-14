@@ -28,6 +28,10 @@
     <p>{{ T "recovery.safe_mode_banner" }}</p>
     <p><a href="/recovery/safe-mode">{{ T "recovery.safe_mode_sales_today" }}</a></p>
   </div>
+  {{ else if .SafeModeElsewhere }}
+  <div class="safe-mode">
+    <p>{{ T "recovery.safe_mode_this_device_only" }}</p>
+  </div>
   {{ end }}
 </div>
 <script>
