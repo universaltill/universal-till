@@ -54,7 +54,7 @@
     "display": {
       "en": "01fa3c6fd781c7097bcadf437db6ab33b02fcf85b24df8f2a8c1981a0373dc3f",
       "fa": "92df37790108b0a4f36f7b618cda7301236dab09309817a90e249bcba5e1eac1",
-      "ar": "942f53e5a78308a1d3ff49c60db9f1108ff557de86ad73c4bef622a047507800",
+      "ar": "016a29a3e0dbd6d7d402e1337006baad95d6f9a6c3b17401c9eef6d11aab56bb",
       "tr": "6d4aed3d70da8a216dea1644cbfba09f56b9616234418ac87a19d588f0571358"
     },
     "fiscal-device": {
@@ -96,7 +96,7 @@
     "multitill": {
       "en": "d42c338e3a558431b463dd992edf40cc33d9e030442387dfd271cb6bbe2d56d3",
       "fa": "6a69cfea0c31302634488972294e720f102dfb246abb6f88af0a69254f961183",
-      "ar": "74a9c952957d6cccec13c9ec5e0e2ed6dfe259df2857ccfdbe02d6a4bdf7a6a9",
+      "ar": "f57b55604198400152865c3020fae721d5f1cf3d4df52a07144495ccf208de59",
       "tr": "95e0159715e2a077e5260969a1d6a1fe9675c96f16f5c1c0f241506808bd0826"
     },
     "my-reports": {
@@ -144,7 +144,7 @@
     "sell": {
       "en": "c3ab3b778f326f641842e69b32087d8417e411c1167690c3d35da640e9992164",
       "fa": "6574f8412e3495c0fc2e899866b69696c87aa598c2155ed7b53bae5a70d4836f",
-      "ar": "9c24bc4c0d4a836356e4c20c5ac1e6b08eedf55e871039ade9d7d32957edd368",
+      "ar": "dc458a8162db16c77cfd777705b7e4d0de0a5c62086182019f7e71ae38eccbf7",
       "tr": "e9c8a3242ffc47f2a1d83873ab99cfb707749bfa8997aa021ffdebc5e13076ed"
     },
     "tables": {
