@@ -1,0 +1,7 @@
+{{/* ut-docs#4285: "Check now"'s answer from the registration card's
+     paused banner — rendered into #subscription-check-banner (settings.html)
+     by POST /api/subscription/check-now with scope=banner. The result line,
+     then the banner again if anything is still paused (it carries the
+     button for another try). Input: sub (subscriptionView), only. */}}
+{{ if .sub.CheckResult }}<p class="subscription-check-result" role="status" data-testid="subscription-check-result">{{ .sub.CheckResult }}</p>{{ end }}
+{{ template "subscription_paused_banner.html" (dict "sub" .sub "only" .only "tse" false "check" true) }}

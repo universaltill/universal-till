@@ -1649,7 +1649,7 @@
            stale or lapsed. Managers only — a cashier can't act on it
            (ut-docs#3079). Same hx-preserve + innerHTML pattern as
            #sb-main-till-mount. Never a modal, never a sale gate. */}}
-      {{ if allowed "settings" }}<span id="sb-subscription-mount" hx-preserve hx-get="/ui/subscription-chip" hx-trigger="load, every 60s"></span>{{ end }}
+      {{ if allowed "settings" }}<span id="sb-subscription-mount" hx-preserve hx-get="/ui/subscription-chip" hx-trigger="load, every 60s, ut-subscription-changed from:body"></span>{{ end }}
       {{/* ut-docs#3079: the three admin links below (/settings#registration,
            /plugins) render only for a viewer who can open their target —
            `allowed` is bound per request (httpx.withHelpHref) to the same

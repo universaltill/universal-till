@@ -834,7 +834,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// ut-docs#2569 (ADR-0060 §6): the Subscription card and the
 			// paused banners on #registration and the TSE block. Settings
 			// KV reads only — no network, and never a gate.
-			"subscription": subscriptionViewFor(r.Context(), d.Settings, time.Now(), locale),
+			"subscription": subscriptionViewWithCheck(r, d, locale),
 			// ut-docs#1537: will the Android install endpoint accept this
 			// caller's session on its own, or is it going to demand a PIN?
 			// Rendered up front so a cashier (or anyone on a self-order kiosk)

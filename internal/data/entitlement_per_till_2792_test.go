@@ -20,6 +20,9 @@ func TestEntitlementSettingsArePerTill(t *testing.T) {
 		entitlement.KeySubscriptionStatus,
 		entitlement.KeyExpiresAt,
 		entitlement.KeyLastConfirmedAt,
+		// ut-docs#4285: the renewal watch's markers are this till's own.
+		entitlement.KeyLastPaidAt,
+		entitlement.KeyLapsedSeenAt,
 	} {
 		if !perTillSetting(k) {
 			t.Errorf("%s is admin-synced: every entitlement refresh on the main till would move the admin cursor", k)

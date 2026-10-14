@@ -4,7 +4,10 @@
      status, "Renews" (active plans only, display only — ADR-0060 §5), last
      confirmation, and the unfiltered paused banner when stale or lapsed.
      A free shop gets one plain line: core selling is free on every plan.
-     No renew link yet — the billing portal is ut-docs#678. */}}
+     No renew link yet — the billing portal is ut-docs#678.
+     ut-docs#4285: "Check now" (lapsed/stale, CanCheck only) re-renders this
+     body into settings.html's #subscription-check with its one-line
+     result; the banner below leaves its own button out. */}}
 {{ with .subscription }}
 <div class="subscription-block" data-testid="subscription-block" data-sub-state="{{ .State }}">
   <p class="subscription-plan">
@@ -16,6 +19,20 @@
   {{ if .Renews }}<p data-testid="subscription-renews">{{ printf (T "subscription.renews") .Renews }}</p>{{ end }}
   {{ if .LastConfirmed }}<p class="muted" data-testid="subscription-last-confirmed">{{ printf (T "subscription.last_confirmed") .LastConfirmed }}</p>{{ end }}
   {{ if eq .State "free" }}<p class="muted" data-testid="subscription-free-note">{{ T "subscription.free_note" }}</p>{{ end }}
+  {{ template "subscription_check_now" . }}
 </div>
-{{ template "subscription_paused_banner.html" (dict "sub" . "only" "" "tse" false) }}
+{{ template "subscription_paused_banner.html" (dict "sub" . "only" "" "tse" false "check" false) }}
+{{ end }}
+{{/* ut-docs#4285: "Check now"'s result line and button, shared by the
+     Subscription card and the paused banner. Input: subscriptionView.
+     scope says which element the answer replaces (checkNowScopes); only is
+     the banner's capability filter, echoed back. A role that may not run it
+     (CanCheck false) gets neither; the endpoint refuses on its own. */}}
+{{ define "subscription_check_now" }}
+{{ if .CheckResult }}<p class="subscription-check-result" role="status" data-testid="subscription-check-result">{{ .CheckResult }}</p>{{ end }}
+{{ if and .CanCheck (or (eq .State "lapsed") (eq .State "stale")) }}
+<p><button type="button" class="btn btn-touch" data-testid="subscription-check-now"
+   hx-post="/api/subscription/check-now" hx-target="#subscription-check" hx-swap="innerHTML"
+   hx-vals='{{ jsonVals "scope" "card" }}' hx-disabled-elt="this">{{ T "subscription.check_now_btn" }}</button></p>
+{{ end }}
 {{ end }}

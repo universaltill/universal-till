@@ -418,7 +418,10 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	now := operatorNow()
 	windowSeen := operatorDeadlineNS.Load()
 	unpaid := !syncAllowedFn(ctx, settings)
-	if unpaid && !takeStartupCheckin(ctx, settings, now) && !operatorWindowOpen(now) {
+	// Amendment 2026-10-14 (ut-docs#4285): a lapsed or recently paid till
+	// also checks in once an hour (renewalWatchDue), so a renewal done in
+	// the cloud admin reaches it by itself.
+	if unpaid && !takeStartupCheckin(ctx, settings, now) && !operatorWindowOpen(now) && !renewalWatchDue(ctx, settings, now) {
 		return false, nil
 	}
 
@@ -1379,6 +1382,7 @@ func cacheEntitlement(ctx context.Context, settings *data.SettingsRepo, raw json
 		logging.L().Warnf("cloudsync: ignoring invalid entitlement block (cache kept): %v", err)
 		return
 	}
+	renewalWatchMarkers(ctx, settings, kv, now)
 	if err := settings.SetMany(ctx, kv); err != nil {
 		logging.L().Warnf("cloudsync: entitlement cache not updated (will retry next tick): %v", err)
 	}
@@ -1921,13 +1925,14 @@ func parseRetryAfter(h string, now time.Time) time.Duration {
 // problem but a plan the shop is on (ADR-0148 §5: no warning, no
 // sync-error chip), so it is logged at INFO instead. After a 402 an
 // unpaid till asks again only at its next trigger (amendment §4,
-// ut-docs#3673), never on a timer.
+// ut-docs#3673); a lapsed or recently paid one also on the hourly renewal
+// watch (amendment 2026-10-14, ut-docs#4285).
 func logTickError(err error) {
 	if err == nil {
 		return
 	}
 	if se, ok := planRequired(err); ok {
-		next := "at the next start-up or operator action"
+		next := "at the next start-up or operator action, or within the hour if it lapsed in the last 90 days (renewal watch)"
 		if se.Entitlement == nil && !gatedByRefusal(err) {
 			// No block to cache: the till still believes it is paid and
 			// keeps honouring Retry-After (ADR-0148 amendment §4).
@@ -1952,6 +1957,9 @@ func Start(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks, wg 
 	// An unpaid till's start-up check-in (ADR-0148 amendment, ut-docs#3673)
 	// is armed here, before the goroutine, for the first hour of this run.
 	armStartupCheckin()
+	// The renewal watch's first check-in is due an hour after Start: the
+	// start-up check-in covers the boot (amendment 2026-10-14, ut-docs#4285).
+	armRenewalWatch()
 	wg.Add(1)
 	go func() {
 		defer logging.RecoverAndLog("cloudsync.loop")

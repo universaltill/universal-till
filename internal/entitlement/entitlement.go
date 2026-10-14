@@ -44,6 +44,14 @@ const (
 	// KeyLastConfirmedAt: UTC RFC3339 of the till's own clock at the last
 	// successful read of a valid entitlement block.
 	KeyLastConfirmedAt = "entitlement.last_confirmed_at"
+	// KeyLastPaidAt: UTC RFC3339 of the last time a cached block said
+	// active on a plan that allows cloud_sync. Anchors the renewal watch's
+	// 90 days (ADR-0148 amendment 2026-10-14, ut-docs#4285).
+	KeyLastPaidAt = "entitlement.last_paid_at"
+	// KeyLapsedSeenAt: UTC RFC3339 of the first time this till saw a
+	// lapsed block (written once, cleared by an active block). The watch's
+	// anchor for a till with no KeyLastPaidAt (ut-docs#4285).
+	KeyLapsedSeenAt = "entitlement.lapsed_seen_at"
 	// KeyCloudLinkTier: realtime | periodic (ADR-0117 §2). Deliberately not
 	// under the "entitlement." prefix (a different setting family), but
 	// rewritten on the same cadence as the block above — PerTillSettingPrefixes

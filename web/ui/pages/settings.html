@@ -62,17 +62,26 @@
   <div class="settings-panel" id="settings-panel">
     <button type="button" class="btn secondary settings-back" id="settings-back">← {{ T "settings.nav.back" }}</button>
 <div class="settings-grid" id="settings-grid">
+{{/* ut-docs#4285: a renewal confirmed by Check now re-renders the
+     registration card (cloud sync is back on), after a pause so the result
+     line is read. A hidden sibling, never attributes on the card itself:
+     htmx inherits hx-select/hx-target, which would filter every request
+     inside the card down to nothing (index.html documents the same trap). */}}
+<span hidden data-testid="registration-refresh" hx-get="/settings" hx-select="#registration" hx-target="#registration" hx-swap="outerHTML" hx-trigger="ut-subscription-changed from:body delay:4s"></span>
 <div class="card" id="registration">
   <h2>{{ T "settings.enrol.title" }} {{ helpLink "claim" }}</h2>
   {{/* ut-docs#2569: cloud sync and browser management pause here when the
        subscription is stale or lapsed — explained in place, nothing hidden.
        A registered till with cloud sync off (ADR-0148) already says so below
        with Check for a paid plan, so the banner leaves cloud sync out. */}}
+  {{/* ut-docs#4285: the banner's Check now re-renders this wrapper. */}}
+  <div id="subscription-check-banner" aria-live="polite">
   {{ if and enrolled .cloudSyncOff }}
-  {{ template "subscription_paused_banner.html" (dict "sub" .subscription "only" "browser_catalog" "tse" false) }}
+  {{ template "subscription_paused_banner.html" (dict "sub" .subscription "only" "browser_catalog" "tse" false "check" true) }}
   {{ else }}
-  {{ template "subscription_paused_banner.html" (dict "sub" .subscription "only" "cloud_sync browser_catalog" "tse" false) }}
+  {{ template "subscription_paused_banner.html" (dict "sub" .subscription "only" "cloud_sync browser_catalog" "tse" false "check" true) }}
   {{ end }}
+  </div>
   {{ if enrolled }}
     <p>✅ {{ T "settings.enrol.registered" }}</p>
     {{ if enrolstore }}<p class="muted">{{ T "settings.enrol.store" }}: <code>{{ enrolstore }}</code></p>{{ end }}
@@ -90,8 +99,12 @@
     <div class="set-divider">
       <p class="muted">{{ T "settings.enrol.cloud_sync_off" }}</p>
       <div class="set-row">
+        {{/* ut-docs#4285: a lapsed store gets the banner's Check now above;
+             one action, not two near-identical buttons. */}}
+        {{ if ne .subscription.State "lapsed" }}
         <button class="btn btn-touch" hx-post="/api/enrol/check-plan" hx-target="#check-plan-msg" hx-swap="innerHTML">{{ T "settings.enrol.check_plan_btn" }}</button>
         <span id="check-plan-msg" aria-live="polite"></span>
+        {{ end }}
       </div>
     </div>
     {{ end }}
@@ -175,7 +188,8 @@
 {{ if .isManager }}
 <div class="card" id="subscription">
   <h2>{{ T "subscription.title" }} {{ helpLink "claim" }}</h2>
-  {{ template "subscription_block.html" . }}
+  {{/* ut-docs#4285: Check now re-renders this body in place. */}}
+  <div id="subscription-check" aria-live="polite">{{ template "subscription_block.html" . }}</div>
 </div>
 {{ end }}
 {{ if .canReportIssue }}
