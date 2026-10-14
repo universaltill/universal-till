@@ -34,7 +34,7 @@ func TestVATBandsForSale_RemainderSkipsZeroGoodsBand(t *testing.T) {
 			for _, l := range lines {
 				before += l.LineTotal
 			}
-			bands := VATBandsForSale(lines, 100, tc.inclusive, 0, 0)
+			bands := VATBandsForSale(lines, 100, tc.inclusive, nil)
 
 			pick := func(b VATBand) int64 {
 				if tc.inclusive {

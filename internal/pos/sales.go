@@ -597,7 +597,7 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucher
 	// in a separate step, after this one, in VATBandsForSale itself), so
 	// leaving it out keeps this call scoped to exactly the line+discount
 	// figure and orthogonal to the chargeTax fold below -- no double count.
-	for _, b := range VATBandsForSale(vatLines, in.SaleDiscount.Minor(), in.TaxInclusive, 0, 0) {
+	for _, b := range VATBandsForSale(vatLines, in.SaleDiscount.Minor(), in.TaxInclusive, nil) {
 		taxTotal = taxTotal.Add(money.FromMinor(b.Tax))
 	}
 	if taxTotal.IsNegative() {

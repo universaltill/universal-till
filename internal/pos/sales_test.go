@@ -789,7 +789,7 @@ func TestComputeSaleTotals_InclusiveMultiRateDiscountMatchesVATBands(t *testing.
 		vatLines = append(vatLines, VATLine{RateBP: l.TaxRateBasisPoints, LineTotal: gross.Minor(), TaxAmount: tax.Minor()})
 	}
 	var wantTax money.Money
-	for _, b := range VATBandsForSale(vatLines, in.SaleDiscount.Minor(), true, 0, 0) {
+	for _, b := range VATBandsForSale(vatLines, in.SaleDiscount.Minor(), true, nil) {
 		wantTax = wantTax.Add(money.FromMinor(b.Tax))
 	}
 	if taxTotal != wantTax {
