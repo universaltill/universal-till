@@ -21,6 +21,8 @@ package cloudsync
 
 import (
 	"context"
+	"math/rand/v2"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -147,5 +149,102 @@ func recordUnpaidCheckin(ctx context.Context, settings *data.SettingsRepo, now t
 		keyUnpaidCheckinDate:    unpaidCheckinDay(now),
 	}); err != nil {
 		logging.L().Warnf("cloudsync: unpaid check-in not recorded (the next start checks in again): %v", err)
+	}
+}
+
+// Amendment 2026-10-14 (ut-docs#4285): the renewal watch. A till whose
+// cached block says lapsed, or that recorded a paid confirmation
+// (entitlement.last_paid_at), checks in once an hour (± 10 %) for 90 days
+// from that confirmation, or from the first lapse it saw
+// (entitlement.lapsed_seen_at) when it has none. A 402 does not end it;
+// a never-paid store (none, no block) is never watched.
+const (
+	renewalWatchInterval = time.Hour
+	renewalWatchWindow   = 90 * 24 * time.Hour
+)
+
+// renewalWatchJitter draws the interval's factor in [0.9, 1.1); tests pin it.
+var renewalWatchJitter = func() float64 { return 0.9 + 0.2*rand.Float64() }
+
+// renewalWatchNextAt is when the next watch check-in is due, on
+// startupClock (monotonic, like the start-up hour); nil = not armed (no
+// Start in this process). In memory only: a restart re-arms it an hour
+// out, and the start-up check-in covers the boot.
+var renewalWatchNextAt atomic.Pointer[time.Time]
+
+// nextRenewalWatch is from plus one jittered interval.
+func nextRenewalWatch(from time.Time) *time.Time {
+	at := from.Add(time.Duration(float64(renewalWatchInterval) * renewalWatchJitter()))
+	return &at
+}
+
+// armRenewalWatch arms the watch an interval from now (Start).
+func armRenewalWatch() { renewalWatchNextAt.Store(nextRenewalWatch(startupClock())) }
+
+// renewalWatchDue is a gated tick's renewal-watch test: true at most once
+// per jittered interval, and only while the till is lapsed or recently
+// paid and inside the 90 days. The interval is spent on the attempt,
+// whatever its outcome (a 402 or no answer waits for the next hour). A
+// settings read error says no: quiet, no call.
+func renewalWatchDue(ctx context.Context, settings *data.SettingsRepo, now time.Time) bool {
+	next := renewalWatchNextAt.Load()
+	if next == nil {
+		return false
+	}
+	status, _, err := settings.Get(ctx, entitlement.KeySubscriptionStatus)
+	if err != nil {
+		return false
+	}
+	paidRaw, _, err := settings.Get(ctx, entitlement.KeyLastPaidAt)
+	if err != nil {
+		return false
+	}
+	lapsed := strings.TrimSpace(status) == entitlement.StatusLapsed
+	paidAt, perr := time.Parse(time.RFC3339, strings.TrimSpace(paidRaw))
+	paid := perr == nil
+	if !lapsed && !paid {
+		return false
+	}
+	anchor := paidAt
+	if !paid {
+		seenRaw, _, err := settings.Get(ctx, entitlement.KeyLapsedSeenAt)
+		if err != nil {
+			return false
+		}
+		if anchor, err = time.Parse(time.RFC3339, strings.TrimSpace(seenRaw)); err != nil {
+			// A till that lapsed before this amendment: the watch starts now.
+			anchor = now
+			if err := settings.Set(ctx, entitlement.KeyLapsedSeenAt, now.UTC().Format(time.RFC3339)); err != nil {
+				logging.L().Warnf("cloudsync: lapse not recorded (the next tick tries again): %v", err)
+				return false
+			}
+		}
+	}
+	if now.Sub(anchor) > renewalWatchWindow {
+		return false
+	}
+	mono := startupClock()
+	if mono.Before(*next) {
+		return false
+	}
+	return renewalWatchNextAt.CompareAndSwap(next, nextRenewalWatch(mono))
+}
+
+// renewalWatchMarkers adds the watch's markers to kv, the validated block
+// cacheEntitlement is about to write in one SetMany: last_paid_at for an
+// active block on a plan that allows cloud_sync; lapsed_seen_at once for a
+// lapsed block (kept if already set); cleared by any active block.
+func renewalWatchMarkers(ctx context.Context, settings *data.SettingsRepo, kv map[string]string, now time.Time) {
+	stamp := now.UTC().Format(time.RFC3339)
+	switch kv[entitlement.KeySubscriptionStatus] {
+	case entitlement.StatusActive:
+		kv[entitlement.KeyLapsedSeenAt] = ""
+		if entitlement.Allows(entitlement.Plan(kv[entitlement.KeyPlan]), entitlement.CapCloudSync) {
+			kv[entitlement.KeyLastPaidAt] = stamp
+		}
+	case entitlement.StatusLapsed:
+		if seen, _, err := settings.Get(ctx, entitlement.KeyLapsedSeenAt); err == nil && strings.TrimSpace(seen) == "" {
+			kv[entitlement.KeyLapsedSeenAt] = stamp
+		}
 	}
 }

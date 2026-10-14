@@ -71,7 +71,9 @@ const LAYOUT_ONLY_SPECS = /layout-plugin-menu-1904\.spec\.ts$/;
 // to the shared default till would flip its Registration card — and what
 // every cloudsync tick does — for every later spec in the run, so it gets
 // its own server + project, same reasoning as the layout project above.
-const DIAGNOSTICS_ONLY_SPECS = /diagnostic-mode-indicator-2169\.spec\.ts$/;
+// ut-docs#4285: the paid-till registration-card spec registers against its
+// own fake cloud on the same port, so it shares this project and till.
+const DIAGNOSTICS_ONLY_SPECS = /(diagnostic-mode-indicator-2169|registration-card-paid-4285)\.spec\.ts$/;
 
 // ut-docs#3091: the release-notes spec needs a till stamped with a released
 // version and seeded as "just updated" (run-till-release-notes.sh), so the

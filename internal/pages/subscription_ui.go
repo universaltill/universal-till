@@ -2,12 +2,18 @@ package pages
 
 import (
 	"context"
+	"fmt"
+	"html"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -35,6 +41,14 @@ type subscriptionView struct {
 	// Paused lists the capabilities the cached plan includes but the
 	// effective plan does not (sorted).
 	Paused []string
+	// CanCheck: this viewer may run "Check now" (the settings permission,
+	// and not a replica registered through its main till — that one gets
+	// the renewal from the main till). Hides the button; the endpoint
+	// refuses on its own (ut-docs#4285).
+	CanCheck bool
+	// CheckResult is "Check now"'s one-line result, translated; empty on a
+	// plain render.
+	CheckResult string
 }
 
 // PausedOnly is Paused filtered to the space-separated capability names in
@@ -78,6 +92,112 @@ func subscriptionViewFor(ctx context.Context, r entitlement.Reader, now time.Tim
 	return v
 }
 
+// subscriptionViewWithCheck is the Settings page's view: the cached
+// entitlement plus whether this viewer gets "Check now".
+func subscriptionViewWithCheck(r *http.Request, d *common.Deps, locale string) subscriptionView {
+	v := subscriptionViewFor(r.Context(), d.Settings, time.Now(), locale)
+	v.CanCheck = canCheckSubscription(d, r)
+	return v
+}
+
+// canCheckSubscription is subscriptionView.CanCheck for this request.
+func canCheckSubscription(d *common.Deps, r *http.Request) bool {
+	return canPerform(d, r, "settings") && !enroll.CurrentStatus().ViaMainTill
+}
+
+// refreshOutcome is what a forced entitlement refresh learned.
+type refreshOutcome int
+
+const (
+	// refreshTimedOut: no check-in answered within the wait (offline, or
+	// the cloud is slow). Nothing changed.
+	refreshTimedOut refreshOutcome = iota
+	// refreshActive: the cloud confirmed a plan that allows cloud sync.
+	refreshActive
+	// refreshNotActive: the cloud answered; still lapsed / no paid plan.
+	refreshNotActive
+)
+
+// The refresh's wait for the check-in to land, and its poll step; vars so
+// tests run in milliseconds.
+var (
+	refreshEntitlementWait = 8 * time.Second
+	refreshEntitlementPoll = 250 * time.Millisecond
+)
+
+// refreshEntitlementNow asks the cloudsync loop for an operator check-in
+// now (ADR-0148 §2) and waits up to refreshEntitlementWait for it to land,
+// read as a change of entitlement.last_confirmed_at (every answered
+// check-in, 200 or 402, rewrites it). Shared by "Check now" and the
+// Renew / Choose-a-plan panel (ut-docs#4286), which refreshes before it
+// offers a checkout. Never a sale gate: it reads settings only. Returns
+// ctx's error if the request goes away first.
+func refreshEntitlementNow(ctx context.Context, d *common.Deps) (refreshOutcome, error) {
+	before, _, err := d.Settings.Get(ctx, entitlement.KeyLastConfirmedAt)
+	if err != nil {
+		return refreshTimedOut, err
+	}
+	// last_confirmed_at has one-second resolution: a check-in our kick
+	// starts in the same wall second as before would write the same string
+	// and read as no answer. Kick from the next second instead (at most a
+	// second's wait; tester-found, ut-docs#4285).
+	if prev, perr := time.Parse(time.RFC3339, strings.TrimSpace(before)); perr == nil {
+		if wait := time.Until(prev.Truncate(time.Second).Add(time.Second)); wait > 0 && wait <= time.Second {
+			select {
+			case <-ctx.Done():
+				return refreshTimedOut, ctx.Err()
+			case <-time.After(wait):
+			}
+		}
+	}
+	requestOperatorCheckin(d, operatorCheckinWindow)
+	deadline := time.NewTimer(refreshEntitlementWait)
+	defer deadline.Stop()
+	poll := time.NewTicker(refreshEntitlementPoll)
+	defer poll.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return refreshTimedOut, ctx.Err()
+		case <-deadline.C:
+			return refreshTimedOut, nil
+		case <-poll.C:
+			now, _, err := d.Settings.Get(ctx, entitlement.KeyLastConfirmedAt)
+			if err != nil || now == before {
+				continue
+			}
+			if entitlement.SyncAllowed(ctx, d.Settings) {
+				return refreshActive, nil
+			}
+			return refreshNotActive, nil
+		}
+	}
+}
+
+// checkNowScopes maps "Check now"'s scope to the element its result
+// replaces (innerHTML): the Settings → Subscription card's body, or the
+// paused banner on the registration card.
+var checkNowScopes = map[string]string{
+	"card":   "#subscription-check",
+	"banner": "#subscription-check-banner",
+}
+
+// checkNowOnly keeps the known capability names in raw (the banner's
+// "only" filter, echoed back from the page), dropping anything else.
+func checkNowOnly(raw string) string {
+	known := map[string]bool{}
+	for _, c := range entitlement.Capabilities() {
+		known[string(c)] = true
+	}
+	var out []string
+	for _, f := range strings.Fields(raw) {
+		if known[f] {
+			out = append(out, f)
+		}
+	}
+	return strings.Join(out, " ")
+}
+
 // registerSubscriptionUI: GET /ui/subscription-chip, polled from the status
 // bar (base.html's #sb-subscription-mount, every 60 s — the cache only
 // changes on a sync tick). An empty 200 unless the viewer can open Settings
@@ -97,5 +217,73 @@ func registerSubscriptionUI(mux *http.ServeMux, d *common.Deps) {
 		httpx.RenderPartial("ui/partials/subscription_chip.html", map[string]any{
 			"state": string(ev.State),
 		})(w, r)
+	})
+
+	// "Check now" (ADR-0148 amendment 2026-10-14, ut-docs#4285): a lapsed
+	// till checks with the cloud now and shows the answer in place. Same
+	// elevation gate and not-registered messages as POST
+	// /api/enrol/check-plan; always 200 (HTMX swaps the body).
+	posRepo := data.NewPOSRepo(d.Db)
+	mux.HandleFunc("POST /api/subscription/check-now", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = r.ParseForm()
+		scope := r.Form.Get("scope")
+		target, ok := checkNowScopes[scope]
+		if !ok {
+			scope, target = "card", checkNowScopes["card"]
+		}
+		only := checkNowOnly(r.Form.Get("only"))
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/subscription/check-now", target,
+				httpx.T(locale, "elevation.summary.subscription_check_now"),
+				[]elevationHiddenField{{Name: "scope", Value: scope}, {Name: "only", Value: only}}, elev)
+			return
+		}
+		if !enroll.HasCredentials(d.Cfg) {
+			key := "settings.enrol.not_registered"
+			if enroll.CurrentStatus().ViaMainTill {
+				key = "settings.enrol.registered_via_main"
+			}
+			fmt.Fprintf(w, `<p class="error" role="status">❌ %s</p>`, html.EscapeString(httpx.T(locale, key)))
+			return
+		}
+		outcome, err := refreshEntitlementNow(r.Context(), d)
+		if err != nil {
+			logging.L().Warnf("subscription check-now: %v", err)
+		}
+		view := subscriptionViewFor(r.Context(), d.Settings, time.Now(), locale)
+		view.CanCheck = canCheckSubscription(d, r)
+		result := "timed_out"
+		switch outcome {
+		case refreshActive:
+			result = "active"
+			// The status-bar chip and the registration card listen for this
+			// and re-read the fresh cache (ut-docs#4285).
+			w.Header().Set("HX-Trigger", "ut-subscription-changed")
+			view.CheckResult = httpx.T(locale, "subscription.check_result.renewed_no_date")
+			if view.Renews != "" {
+				view.CheckResult = fmt.Sprintf(httpx.T(locale, "subscription.check_result.renewed"), view.Renews)
+			}
+		case refreshNotActive:
+			result = "not_active"
+			view.CheckResult = httpx.T(locale, "subscription.check_result.still_lapsed")
+		default:
+			view.CheckResult = httpx.T(locale, "subscription.check_result.offline")
+		}
+		settingsAudit(r, posRepo, elev, "enrollment", "-", "subscription_check_now", map[string]any{"result": result})
+		funcs := httpx.FuncsFor(locale)
+		if scope == "banner" {
+			httpx.RenderWith([]string{
+				filepath.Join("web", "ui", "partials", "subscription_check_banner.html"),
+				filepath.Join("web", "ui", "partials", "subscription_paused_banner.html"),
+			}, funcs)("subscription_check_banner.html", map[string]any{"sub": view, "only": only})(w, r)
+			return
+		}
+		httpx.RenderWith([]string{
+			filepath.Join("web", "ui", "partials", "subscription_block.html"),
+			filepath.Join("web", "ui", "partials", "subscription_paused_banner.html"),
+		}, funcs)("subscription_block.html", map[string]any{"subscription": view})(w, r)
 	})
 }

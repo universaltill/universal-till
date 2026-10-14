@@ -30,10 +30,12 @@ func useRealSyncGate(t *testing.T) {
 	syncAllowedFn = entitlement.SyncAllowed
 	resetOperatorWindow()
 	disarmStartupCheckin()
+	disarmRenewalWatch()
 	t.Cleanup(func() {
 		syncAllowedFn = prev
 		resetOperatorWindow()
 		disarmStartupCheckin()
+		disarmRenewalWatch()
 	})
 }
 

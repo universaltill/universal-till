@@ -276,9 +276,12 @@ func TestSettingsSubscriptionBanner_RegisteredLapsedNoDuplicateCloudSync(t *test
 		wantCloudSync bool
 		wantFix       string
 	}{
-		{"lapsed", "lapsed", false, true, false, "Check for a paid plan in Settings → Till registration. Selling"},
+		// ut-docs#4285: the fix line no longer sends the owner to Settings →
+		// Till registration; Check now sits on the banner itself (a replica
+		// gets no button: the main till's Check now is the one that works).
+		{"lapsed", "lapsed", false, true, false, "notices the renewal by itself within an hour; to see it now, press Check now. Selling"},
 		{"stale", "stale", false, false, true, ""},
-		{"lapsed via main till", "lapsed", true, false, true, "Check for a paid plan in Settings → Till registration on the main till"},
+		{"lapsed via main till", "lapsed", true, false, true, "press Check now on the main till"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mux, _, d := newFullAuthDeps(t)
@@ -316,6 +319,13 @@ func TestSettingsSubscriptionBanner_RegisteredLapsedNoDuplicateCloudSync(t *test
 				card := cardSection(t, body, "subscription")
 				if !strings.Contains(card, tc.wantFix) {
 					t.Errorf("lapsed fix line must say %q:\n%s", tc.wantFix, card)
+				}
+				if strings.Contains(card, "Settings → Till registration") {
+					t.Errorf("lapsed fix line still points at Settings → Till registration:\n%s", card)
+				}
+				wantBtn := !tc.viaMain
+				if got := strings.Contains(reg, `data-testid="subscription-check-now-banner"`); got != wantBtn {
+					t.Errorf("registration banner Check now = %v, want %v:\n%s", got, wantBtn, reg)
 				}
 			}
 		})

@@ -6,7 +6,10 @@
      stale or lapsed). "tse" adds the ADR-0060 §7 line: a TSE already set up
      keeps signing. Degrades in place: it explains, it never hides or
      disables the surface it sits on. The paused features are a list, not a
-     joined string — joining words is locale grammar. */}}
+     joined string — joining words is locale grammar. "check" (optional,
+     ut-docs#4285) adds the lapsed banner's Check now button for a viewer
+     with .sub.CanCheck; only where the banner sits inside
+     #subscription-check-banner. */}}
 {{ $paused := .sub.PausedOnly .only }}
 {{ if $paused }}
 <div class="notice-block-warn subscription-banner" role="status" data-testid="subscription-paused" data-sub-state="{{ .sub.State }}">
@@ -17,8 +20,16 @@
   {{ if eq .sub.State "lapsed" }}
   <p>{{ T "subscription.banner.lapsed.why" }}</p>
   {{/* ADR-0148 §3: a replica registered through its main till learns the
-       renewal from the main till, which is where the button is. */}}
+       renewal from the main till, which is where the button is.
+       ut-docs#4285: with "check" (the registration card's banner) a
+       manager gets Check now right here; it re-renders the banner's
+       wrapper, #subscription-check-banner. */}}
   <p>{{ if enrolledviamain }}{{ T "subscription.banner.lapsed.fix_via_main" }}{{ else }}{{ T "subscription.banner.lapsed.fix" }}{{ end }}</p>
+  {{ if and .check .sub.CanCheck }}
+  <p><button type="button" class="btn btn-touch" data-testid="subscription-check-now-banner"
+     hx-post="/api/subscription/check-now" hx-target="#subscription-check-banner" hx-swap="innerHTML"
+     hx-vals='{{ jsonVals "scope" "banner" "only" .only }}' hx-disabled-elt="this">{{ T "subscription.check_now_btn" }}</button></p>
+  {{ end }}
   {{ else }}
   <p>{{ T "subscription.banner.stale.why" }}</p>
   <p>{{ T "subscription.banner.stale.fix" }}</p>
