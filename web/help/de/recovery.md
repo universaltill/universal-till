@@ -31,7 +31,9 @@ schreibgeschützte Sicherer-Modus-Ansicht unten); er schreibt nie etwas.
   der **heutigen Verkäufe**, schreibgeschützt, während das zugrunde liegende
   Problem behoben wird — sodass Sie einem Kunden weiterhin seine Summe nennen
   oder die heutigen Zahlen ausdrucken können, auch wenn die Kasse selbst nicht
-  vollständig startet.
+  vollständig startet. Der Link zum Sicheren Modus erscheint nur auf der Kasse
+  selbst; öffnen Sie diesen Bildschirm von einem anderen Computer aus, weist er
+  stattdessen darauf hin.
 
 ## Wenn „Erneut versuchen“ nicht funktioniert
 

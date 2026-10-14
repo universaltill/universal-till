@@ -1854,6 +1854,7 @@
   "recovery.safe_mode_col_total": "Toplam",
   "recovery.safe_mode_export": "CSV olarak dışa aktar",
   "recovery.safe_mode_sales_today": "Bugünün satışları",
+  "recovery.safe_mode_this_device_only": "Güvenli mod (bugünün satışlarının salt okunur görünümü) yalnızca kasanın kendisinde açılabilir.",
   "recovery.taking_longer": "Hâlâ çalışıyor — bir veritabanı güncellemesinden sonra bu birkaç dakika sürebilir.",
   "recovery.title": "Kurtarma modu",
   "recovery.unknown_error": "Kasa başlatılamadı. Verileriniz güvende — yeniden denemek ya da destek gerekiyor.",

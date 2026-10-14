@@ -29,7 +29,8 @@ güvenli mod görünümü); hiçbir şey yazmaz.
   çözülürken **bugünün satışlarını** salt okunur görmenizi (ve dışa
   aktarmanızı) sağlayan bir **güvenli mod** bölümü görünür — böylece kasa
   tam başlamasa bile müşteriye tutarı söyleyebilir veya bugünün rakamlarını
-  yazdırabilirsiniz.
+  yazdırabilirsiniz. Güvenli mod bağlantısı yalnızca kasanın kendisinde görünür;
+  bu ekranı başka bir bilgisayardan açarsanız, onun yerine bunu belirtir.
 
 ## Yeniden dene işe yaramazsa
 

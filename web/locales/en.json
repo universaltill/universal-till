@@ -1839,6 +1839,7 @@
   "recovery.safe_mode_col_total": "Total",
   "recovery.safe_mode_export": "Export as CSV",
   "recovery.safe_mode_sales_today": "Today's sales",
+  "recovery.safe_mode_this_device_only": "Safe mode (a read-only view of today's sales) can only be opened on the till itself.",
   "recovery.taking_longer": "Still working — this can take a few minutes after a database update.",
   "recovery.title": "Recovery mode",
   "recovery.unknown_error": "The till couldn't start. Your data is safe — this needs a retry, or support.",

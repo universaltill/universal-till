@@ -1854,6 +1854,7 @@
   "recovery.safe_mode_col_total": "الإجمالي",
   "recovery.safe_mode_export": "تصدير كملف CSV",
   "recovery.safe_mode_sales_today": "مبيعات اليوم",
+  "recovery.safe_mode_this_device_only": "الوضع الآمن (عرض للقراءة فقط لمبيعات اليوم) لا يمكن فتحه إلا على الكاشير نفسه.",
   "recovery.taking_longer": "لا يزال قيد العمل — قد يستغرق هذا بضع دقائق بعد تحديث قاعدة البيانات.",
   "recovery.title": "وضع الاسترداد",
   "recovery.unknown_error": "تعذّر تشغيل الكاشير. بياناتك آمنة — يلزم إعادة المحاولة أو التواصل مع الدعم.",

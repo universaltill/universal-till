@@ -55,6 +55,20 @@ func csvSafe(field string) string {
 	}
 }
 
+// isLoopbackPeer reports whether the request's TCP peer is this machine. It
+// reads r.RemoteAddr only — never X-Forwarded-For or any other client-set
+// header — so it cannot be spoofed by a LAN peer. requireLoopback enforces
+// it on the safe-mode routes; pageHandler uses it so the recovery page only
+// offers the safe-mode link to a peer that would not get a 403 (#4290).
+func isLoopbackPeer(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // requireLoopback refuses a request whose remote address isn't the local
 // machine (ut-docs#1436 independent review): cfg.ListenAddr defaults to
 // ":8080" — every interface, the whole shop LAN — and unlike normal
@@ -68,12 +82,7 @@ func csvSafe(field string) string {
 // way to build against a possibly-broken database.
 func requireLoopback(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			host = r.RemoteAddr
-		}
-		ip := net.ParseIP(host)
-		if ip == nil || !ip.IsLoopback() {
+		if !isLoopbackPeer(r) {
 			http.Error(w, "safe mode is only reachable from this device", http.StatusForbidden)
 			return
 		}

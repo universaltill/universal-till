@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/httpx"
+	locales "github.com/universaltill/universal-till/web/locales"
 )
 
 // The recovery server binds the same all-interfaces address as the main
@@ -125,5 +127,97 @@ func TestNewHandler_DemoModeStaysGuarded(t *testing.T) {
 	}
 	if retryFired(retry) {
 		t.Fatal("demo-mode LAN retry was triggered")
+	}
+}
+
+// safeModeHandler builds the handler with safe mode advertised as usable.
+// A nil *sql.DB is fine: route registration only wraps it in a repo, and
+// these tests never request the safe-mode routes themselves.
+func safeModeHandler(cfg *config.Config) http.Handler {
+	failure := Failure{Kind: KindMigration, Detail: "exec migration 42: syntax error", RefCode: "AAAA-BBBB"}
+	return newHandler(cfg, failure, true, nil, make(chan struct{}, 1))
+}
+
+// withRealLocales wires the embedded locale files so the page renders
+// English text rather than raw keys, and restores the key fallback after.
+func withRealLocales(t *testing.T) {
+	t.Helper()
+	i18n, err := config.NewI18nFS(locales.FS, "en")
+	if err != nil {
+		t.Fatalf("load i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+	t.Cleanup(func() { httpx.InitI18n(nil, "en") })
+}
+
+const safeModeThisDeviceOnly = "can only be opened on the till itself"
+
+// #4290: the safe-mode routes are loopback-only, so a LAN peer the guard
+// admits must not be offered a link that would 403.
+func TestPage_AllowedLANPeerGetsNoteNotSafeModeLink(t *testing.T) {
+	withRealLocales(t)
+	h := safeModeHandler(&config.Config{UIAllowCIDRs: "192.0.2.0/24"})
+	rec := serveFrom(h, lanPeer, http.MethodGet, "/")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("allowed LAN peer GET / = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "/recovery/safe-mode") {
+		t.Fatalf("LAN peer is offered the loopback-only safe-mode link:\n%s", body)
+	}
+	if !strings.Contains(body, safeModeThisDeviceOnly) {
+		t.Fatalf("LAN peer page missing the this-device-only note:\n%s", body)
+	}
+}
+
+func TestPage_LoopbackPeerGetsSafeModeLinkNotNote(t *testing.T) {
+	withRealLocales(t)
+	h := safeModeHandler(&config.Config{UIAllowCIDRs: "192.0.2.0/24"})
+	rec := serveFrom(h, loopbackPeer, http.MethodGet, "/")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("loopback GET / = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "/recovery/safe-mode") {
+		t.Fatalf("loopback page missing the safe-mode link:\n%s", body)
+	}
+	if strings.Contains(body, safeModeThisDeviceOnly) {
+		t.Fatalf("loopback page shows the this-device-only note:\n%s", body)
+	}
+}
+
+func TestPage_SafeModeUnusableShowsNeitherLinkNorNote(t *testing.T) {
+	withRealLocales(t)
+	h, _ := guardedHandler(&config.Config{UIAllowCIDRs: "192.0.2.0/24"})
+	for _, peer := range []string{lanPeer, loopbackPeer} {
+		rec := serveFrom(h, peer, http.MethodGet, "/")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s GET / = %d, want 200", peer, rec.Code)
+		}
+		body := rec.Body.String()
+		if strings.Contains(body, "/recovery/safe-mode") || strings.Contains(body, safeModeThisDeviceOnly) {
+			t.Fatalf("%s: safe mode unusable but page mentions it:\n%s", peer, body)
+		}
+	}
+}
+
+func TestIsLoopbackPeer(t *testing.T) {
+	for _, tc := range []struct {
+		remote string
+		want   bool
+	}{
+		{"127.0.0.1:5555", true},
+		{"[::1]:5555", true},
+		{"::1", true},
+		{"192.0.2.10:5555", false},
+		{"not-an-address", false},
+		{"", false},
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.RemoteAddr = tc.remote
+		r.Header.Set("X-Forwarded-For", "127.0.0.1")
+		if got := isLoopbackPeer(r); got != tc.want {
+			t.Errorf("isLoopbackPeer(%q) = %v, want %v", tc.remote, got, tc.want)
+		}
 	}
 }

@@ -32,11 +32,16 @@ func messageKey(k Kind) string {
 
 // pageHandler renders the top-level recovery page. safeModeAvailable is
 // decided once per Serve call (whether a read-only DB handle could be
-// opened), not per-request — recovery mode's DB state doesn't change
-// between requests within one Serve lifetime.
+// opened) — recovery mode's DB state doesn't change between requests within
+// one Serve lifetime. Whether the safe-mode link is shown is decided per
+// request: the safe-mode routes are loopback-only (requireLoopback) while the
+// LAN guard also admits own-interface and UT_UI_ALLOW_CIDRS peers, so a
+// non-loopback peer gets a "this device only" note instead of a link that
+// would 403 (#4290).
 func pageHandler(failure Failure, safeModeAvailable bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
+		loopback := isLoopbackPeer(r)
 		tpl, err := template.New("recovery.html").Funcs(httpx.FuncsFor(locale)).ParseFS(templatesFS, "templates/recovery.html")
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -46,7 +51,8 @@ func pageHandler(failure Failure, safeModeAvailable bool) http.HandlerFunc {
 			"Message":           httpx.T(locale, messageKey(failure.Kind)),
 			"Detail":            failure.Detail,
 			"RefCode":           failure.RefCode,
-			"SafeModeAvailable": safeModeAvailable,
+			"SafeModeAvailable": safeModeAvailable && loopback,
+			"SafeModeElsewhere": safeModeAvailable && !loopback,
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := tpl.ExecuteTemplate(w, "recovery.html", data); err != nil {
