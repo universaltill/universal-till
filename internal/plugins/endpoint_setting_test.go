@@ -98,10 +98,7 @@ func TestParseManifest_EndpointDefaultValue(t *testing.T) {
 // permission allow-list) — it must refuse the same invalid endpoint
 // defaults (ut-docs#3552).
 func TestVerifyManifest_RefusesInvalidEndpointDefault(t *testing.T) {
-	mv, err := NewManifestVerifier("")
-	if err != nil {
-		t.Fatal(err)
-	}
+	mv := structuralOnlyVerifier()
 	base := `{"id":"t.p","name":"T","version":"1.0.0","runtime":"none","canonical_type":"tax","device_arch":"any","settings":[`
 	p := filepath.Join(t.TempDir(), "manifest.json")
 

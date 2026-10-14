@@ -76,7 +76,7 @@ func newTestImporter(t *testing.T) (*Importer, string) {
 	db := openMarketplaceInstallerDB(t)
 	t.Cleanup(func() { db.Close() })
 	base := t.TempDir()
-	return NewImporter(db, base, nil), base
+	return NewImporter(db, base, structuralOnlyVerifier()), base
 }
 
 // --- Import behavior --------------------------------------------------------
@@ -101,8 +101,11 @@ func TestImportZipHappyPath(t *testing.T) {
 	if res.PluginID != "com.test.importzip" || res.Version != "1.0.0" {
 		t.Fatalf("unexpected result: %+v", res)
 	}
-	if len(res.Warnings) == 0 || !strings.Contains(res.Warnings[0], "skipped") {
-		t.Fatalf("expected dev-mode warning, got %v", res.Warnings)
+	// SkipSignature is honoured (and warned about) only in a -tags
+	// devplugins build; elsewhere the structural verifier runs (ADR-0158).
+	skipped := len(res.Warnings) > 0 && strings.Contains(res.Warnings[0], "skipped")
+	if skipped != UnsignedPluginsAllowed() {
+		t.Fatalf("skip warning = %v, want %v (warnings %v)", skipped, UnsignedPluginsAllowed(), res.Warnings)
 	}
 	// Extracted into the permanent per-version dir.
 	if _, err := os.Stat(filepath.Join(base, "com.test.importzip", "1.0.0", "assets", "a.txt")); err != nil {

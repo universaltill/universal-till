@@ -140,10 +140,7 @@ func mustJSON(t *testing.T, s string) string {
 // ParseManifest, so the closed set must hold there too (review of
 // ut-docs#3176): #3281 persists provides from that path.
 func TestVerifyManifest_RefusesUnknownProvidesAndBadMarkets(t *testing.T) {
-	mv, err := NewManifestVerifier("")
-	if err != nil {
-		t.Fatal(err)
-	}
+	mv := structuralOnlyVerifier()
 	base := `{"id":"t.p","name":"T","version":"1.0.0","runtime":"none","canonical_type":"tax","device_arch":"any"`
 	for name, extra := range map[string]string{
 		"provides": `,"provides":["fiscal.signer"]`,

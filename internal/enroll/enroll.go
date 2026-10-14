@@ -472,7 +472,9 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	if id.StoreID != "" && !storeIDExplicitLocal {
 		m.StoreID = id.StoreID
 	}
-	if m.PublicKey == "" {
+	if compiled := buildinfo.MarketplacePublicKey; compiled != "" {
+		m.PublicKey = compiled // ADR-0158: the persisted key never replaces it
+	} else if m.PublicKey == "" {
 		m.PublicKey = id.PublicKey
 	}
 	if m.MerchantToken == "" {
@@ -587,6 +589,11 @@ func Effective(cfg *config.Config) config.Config {
 	}
 	if m.PublicKey == "" {
 		m.PublicKey = cur.PublicKey
+	}
+	// ADR-0158: a compiled-in key is the only key; neither the persisted /
+	// fetched key nor a caller's copy replaces it.
+	if compiled := buildinfo.MarketplacePublicKey; compiled != "" {
+		m.PublicKey = compiled
 	}
 	m.MerchantToken = liveToken(m.MerchantToken)
 	return out

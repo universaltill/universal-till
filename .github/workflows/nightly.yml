@@ -160,6 +160,13 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      # ADR-0158: every release-ish build carries the marketplace
+      # plugin-signing key (pinned repository variable, cross-checked live).
+      - name: Resolve marketplace signing key
+        env:
+          UT_MARKETPLACE_PUBLIC_KEY_PIN: ${{ vars.UT_MARKETPLACE_PUBLIC_KEY }}
+          UT_MARKETPLACE_SIGNING_KEY_URL: ${{ vars.UT_MARKETPLACE_SIGNING_KEY_URL }}
+        run: bash scripts/ci/resolve-marketplace-key.sh
       - name: Build binary
         env:
           VERSION: ${{ needs.check.outputs.version }}
@@ -171,7 +178,7 @@ jobs:
           BIN="stage/unitill-pos"
           [ "$GOOS" = "windows" ] && BIN="stage/unitill-pos.exe"
           CGO_ENABLED=0 go build -trimpath \
-            -ldflags "-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION}" \
+            -ldflags "-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX}" \
             -o "$BIN" .
       - name: Stage archive contents
         # Same file set as .goreleaser.yaml's linux/windows/macos archives,

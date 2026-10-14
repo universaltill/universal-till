@@ -1005,11 +1005,9 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 			uploader = "manual-import"
 		}
 
-		// Check if signature verification should be skipped (dev-mode only)
-		skipSignature := false
-		if d.Cfg.Env == "dev" && r.FormValue("skip_signature") == "true" {
-			skipSignature = true
-		}
+		// skip_signature is honoured only by a -tags devplugins build
+		// (ADR-0158); no setting or env var turns it on in a release.
+		skipSignature := plugins.UnsignedPluginsAllowed() && r.FormValue("skip_signature") == "true"
 
 		// Save uploaded file to temporary location
 		tmpDir := filepath.Join(paths.Plugins("tmp"))
@@ -1039,17 +1037,16 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 			format = plugins.ImportFormatZip
 		}
 
-		// Create importer. Use the configured marketplace Ed25519 public key so a
-		// bundle carrying a signature is actually verified against it — CLAUDE.md:
-		// "Never run an unverified plugin." When no key is configured (dev/offline
-		// default) the verifier has nothing to check and unsigned bundles import,
-		// preserving offline provisioning. The key is fetched lazily here
-		// (ADR-0148 audit item 3): an import is a plugin interaction, and the
-		// effective config also carries a key fetched after boot.
+		// Create importer. The verifier uses the key compiled into a release
+		// binary, else the configured/lazily fetched key (ADR-0148 audit item
+		// 3: an import is a plugin interaction) — CLAUDE.md: "Never run an
+		// unverified plugin." With no key at all the verifier refuses every
+		// bundle (ADR-0158); a verifier that cannot be built refuses too,
+		// never falls back to importing unverified.
 		verifier, err := plugins.NewManifestVerifier(enroll.EnsureSigningKey(ctx, d.Cfg, d.Settings).Marketplace.PublicKey)
 		if err != nil {
-			log.Printf("Warning: failed to create verifier: %v", err)
-			verifier = nil // Allow import without verification in dev-mode
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.import_failed", "plugin_import_verifier", err)
+			return
 		}
 		importer := plugins.NewImporter(d.Db, paths.Plugins(), verifier)
 
@@ -1071,7 +1068,11 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 			// %v this used to show) told the operator nothing they could
 			// act on (ut-docs#2132). Every other import failure still
 			// gets a translated message, just without that specific detail.
-			if errors.Is(err, plugins.ErrManifestUnsigned) {
+			// ADR-0158: a till with no marketplace key refuses every
+			// bundle; say so rather than blaming the file.
+			if errors.Is(err, plugins.ErrNoMarketplaceKey) {
+				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "plugins.error.import_no_key", "plugin_import_no_key", err)
+			} else if errors.Is(err, plugins.ErrManifestUnsigned) {
 				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "plugins.error.import_unsigned", "plugin_import_unsigned", err)
 			} else {
 				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "plugins.error.import_failed", "plugin_import_failed", err)

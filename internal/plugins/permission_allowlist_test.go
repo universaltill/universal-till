@@ -173,10 +173,7 @@ func TestEveryShippedManifestStillParses(t *testing.T) {
 // goes through ParseManifest (same split as provides/markets and ABI-3) —
 // it must refuse the same permissions.
 func TestVerifyManifest_RefusesUnknownPermission(t *testing.T) {
-	mv, err := NewManifestVerifier("")
-	if err != nil {
-		t.Fatal(err)
-	}
+	mv := structuralOnlyVerifier()
 	base := `{"id":"t.p","name":"T","version":"1.0.0","runtime":"none","canonical_type":"tax","device_arch":"any","permissions":`
 	p := filepath.Join(t.TempDir(), "manifest.json")
 	if err := os.WriteFile(p, []byte(base+`["storage","exec:*"]}`), 0o600); err != nil {

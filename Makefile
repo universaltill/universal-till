@@ -20,6 +20,11 @@ VERSION?=0.1.0-dev
 #    listing needing a newer till from a dev build (ut-docs#2700).
 # internal/plugins/marketplace/dev_build_version_test.go pins all of this.
 LDFLAGS=-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=$(VERSION)
+# ADR-0158: `UT_MARKETPLACE_KEY_HEX=<hex> make build` compiles the marketplace
+# plugin-signing key in, as release builds do; unset = a source build.
+ifneq ($(UT_MARKETPLACE_KEY_HEX),)
+LDFLAGS += -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=$(UT_MARKETPLACE_KEY_HEX)
+endif
 
 .PHONY: build run test test-race-plugins test-race-pages test-race-data e2e e2e-seed docs-shots docs-shots-determinism prune-worktrees
 

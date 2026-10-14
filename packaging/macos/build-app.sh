@@ -20,6 +20,12 @@ cd "$REPO_ROOT"
 
 APP="$OUTDIR/Universal Till.app"
 LDFLAGS="-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION}"
+# ADR-0158: release builds compile the marketplace plugin-signing key in
+# (UT_MARKETPLACE_KEY_HEX, from scripts/ci/resolve-marketplace-key.sh). Unset
+# locally = a source build that uses the env/lazy-fetch key.
+if [ -n "${UT_MARKETPLACE_KEY_HEX:-}" ]; then
+  LDFLAGS="$LDFLAGS -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX}"
+fi
 
 echo "==> building binaries (arm64)"
 rm -rf "$APP"

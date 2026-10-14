@@ -115,13 +115,20 @@ jobs:
           go install golang.org/x/mobile/cmd/gobind@latest
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           brew install xcodegen
+      # ADR-0158: every release-ish build carries the marketplace
+      # plugin-signing key (pinned repository variable, cross-checked live).
+      - name: Resolve marketplace signing key
+        env:
+          UT_MARKETPLACE_PUBLIC_KEY_PIN: ${{ vars.UT_MARKETPLACE_PUBLIC_KEY }}
+          UT_MARKETPLACE_SIGNING_KEY_URL: ${{ vars.UT_MARKETPLACE_SIGNING_KEY_URL }}
+        run: bash scripts/ci/resolve-marketplace-key.sh
       - name: Bind the Go till server (gomobile bind -target=ios)
         run: |
           set -euo pipefail
           # Stamp the version the footer, the update check and support read; without
           # it buildinfo.Version stays "dev" (ut-docs#3221).
           gomobile bind -target=ios \
-            -ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Version=${MARKETING_VERSION}" \
+            -ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Version=${MARKETING_VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX}" \
             -o ios/build/Mobile.xcframework ./mobile
       - name: Generate the app icon asset catalog
         run: bash ios/scripts/make-app-icon.sh

@@ -414,10 +414,7 @@ func TestHTTPSettingBoundGrant(t *testing.T) {
 // ut-docs#3514: marketplace install and import verify through VerifyManifest,
 // not ParseManifest — the setting-bound grant check must run there too.
 func TestVerifyManifest_RefusesMalformedSettingBoundGrant(t *testing.T) {
-	mv, err := NewManifestVerifier("")
-	if err != nil {
-		t.Fatal(err)
-	}
+	mv := structuralOnlyVerifier()
 	base := `{"id":"t.p","name":"T","version":"1.0.0","runtime":"wasm","entrypoint":"./plugin.wasm","canonical_type":"integration","device_arch":"any","settings":[{"key":"url"},{"key":"host"},{"key":"port"}],"permissions":`
 	write := func(perms string) string {
 		p := filepath.Join(t.TempDir(), "manifest.json")
@@ -449,10 +446,7 @@ func TestVerifyManifest_RefusesMalformedSettingBoundGrant(t *testing.T) {
 
 // ut-docs#3514: same setting-type enum as ParseManifest (ADR-0082).
 func TestVerifyManifest_RefusesUnknownSettingType(t *testing.T) {
-	mv, err := NewManifestVerifier("")
-	if err != nil {
-		t.Fatal(err)
-	}
+	mv := structuralOnlyVerifier()
 	write := func(typ string) string {
 		p := filepath.Join(t.TempDir(), "manifest.json")
 		m := `{"id":"t.p","name":"T","version":"1.0.0","runtime":"wasm","entrypoint":"./plugin.wasm","canonical_type":"integration","device_arch":"any","settings":[{"key":"k","type":"` + typ + `"}]}`

@@ -30,7 +30,7 @@ type ImportRequest struct {
 	MaxSizeBytes  int64        // Maximum allowed archive size
 	TrustLevel    string       // Trust level to assign (untrusted, trusted, verified)
 	Uploader      string       // User/actor performing the import
-	SkipSignature bool         // Skip signature verification (dev-mode only)
+	SkipSignature bool         // Skip signature verification; honoured only in a -tags devplugins build (ADR-0158)
 }
 
 // ImportResult contains the outcome of an import operation
@@ -80,6 +80,13 @@ func (imp *Importer) Import(ctx context.Context, req *ImportRequest) (*ImportRes
 	// Validate request
 	if req.FilePath == "" {
 		return nil, fmt.Errorf("file path is required")
+	}
+	// ADR-0158: without a verifier nothing can be checked, so nothing is
+	// imported — and SkipSignature means nothing — unless this is a
+	// -tags devplugins build.
+	skipSignature := req.SkipSignature && allowUnsignedPlugins
+	if imp.verifier == nil && !allowUnsignedPlugins {
+		return nil, fmt.Errorf("plugin import refused: %w", ErrNoMarketplaceKey)
 	}
 
 	if req.MaxSizeBytes <= 0 {
@@ -132,11 +139,11 @@ func (imp *Importer) Import(ctx context.Context, req *ImportRequest) (*ImportRes
 		return nil, fmt.Errorf("invalid manifest: %w", err)
 	}
 
-	// Verify manifest (signature check can be skipped in dev-mode). The
+	// Verify manifest (signature check skippable only in a devplugins build). The
 	// manifest was already parsed above; VerifyManifest re-reads the file
 	// itself, so there is nothing to reopen (the old reopen leaked the new
 	// handle — the deferred Close was bound to the original one).
-	if !req.SkipSignature && imp.verifier != nil {
+	if !skipSignature && imp.verifier != nil {
 		if _, err := imp.verifier.VerifyManifest(manifestPath); err != nil {
 			return nil, fmt.Errorf("manifest verification failed: %w", err)
 		}
@@ -150,8 +157,8 @@ func (imp *Importer) Import(ctx context.Context, req *ImportRequest) (*ImportRes
 		Warnings: []string{},
 	}
 
-	if req.SkipSignature {
-		result.Warnings = append(result.Warnings, "Signature verification skipped (dev-mode)")
+	if skipSignature {
+		result.Warnings = append(result.Warnings, "Signature verification skipped (devplugins build)")
 	}
 
 	// id and version become directory names below; refuse anything that is

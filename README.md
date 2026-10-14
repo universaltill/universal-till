@@ -272,6 +272,16 @@ plugin signatures before installing.
 To point at a different marketplace, change `UT_MARKETPLACE_ENDPOINT_URL` (the URL
 must include `/api`) and `UT_MARKETPLACE_PUBLIC_KEY` in `pos.env.dev`.
 
+**Release builds compile the marketplace signing key in** (ADR-0158):
+`-ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=<hex>"`,
+resolved in CI by `scripts/ci/resolve-marketplace-key.sh` from the
+`UT_MARKETPLACE_PUBLIC_KEY` repository variable (cross-checked against the live
+key). A compiled key is the only key the till trusts — `UT_MARKETPLACE_PUBLIC_KEY`
+and a fetched key are ignored. A source build has no compiled key and uses the
+env var or the lazily fetched key; with no key at all it refuses every plugin.
+Unsigned plugins (sideloading your own builds) need a `go build -tags devplugins`
+till; no setting turns that on in a normal build.
+
 ---
 
 ## ⚙️ Configuration
@@ -317,7 +327,7 @@ UT_TAX_RATE=20                         # Default tax rate percentage (fractional
 
 # Marketplace integration (cloud plugin store). The endpoint must include /api.
 UT_MARKETPLACE_ENDPOINT_URL=https://cloud.home.taskrunnertech.co.uk/api  # Dev marketplace
-UT_MARKETPLACE_PUBLIC_KEY=             # Ed25519 signing key (hex) used to verify plugin signatures
+UT_MARKETPLACE_PUBLIC_KEY=             # Ed25519 signing key (hex); source builds only — ignored when the key is compiled in (ADR-0158)
 UT_MARKETPLACE_CLIENT_ID=              # Doubles as merchant_id on the install path
 UT_MARKETPLACE_STORE_ID=               # Store identifier for entitlement/install
 UT_MARKETPLACE_DEVICE_ID=              # Device identifier (defaults to hostname)

@@ -37,7 +37,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 	srcBase := t.TempDir()
 	id, version := "com.test.export", "2.1.0"
 	pluginDir := filepath.Join(srcBase, id, version)
-	manifest := `{"id":"com.test.export","name":"Export Test","version":"2.1.0","entrypoint":"./bin/app","runtime":"go"}`
+	manifest := `{"id":"com.test.export","name":"Export Test","version":"2.1.0","entrypoint":"./bin/app","runtime":"go","canonical_type":"page","device_arch":"any"}`
 	writeTestFile(t, filepath.Join(pluginDir, "manifest.json"), manifest)
 	writeTestFile(t, filepath.Join(pluginDir, "bin", "app"), "binary-bytes")
 	writeTestFile(t, filepath.Join(pluginDir, "content", "en.json"), `{"hello":"world"}`)
@@ -66,7 +66,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 	}
 
 	destBase := t.TempDir()
-	imp := NewImporter(db, destBase, nil) // nil verifier + SkipSignature (offline dev)
+	imp := NewImporter(db, destBase, structuralOnlyVerifier()) // structural checks only (unsigned test bundle)
 	ir, err := imp.Import(ctx, &ImportRequest{
 		FilePath:      bundlePath,
 		Format:        ImportFormatTarGz,

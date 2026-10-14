@@ -417,10 +417,7 @@ func TestHTTPValidationResponseCap(t *testing.T) {
 // through VerifyManifest, not ParseManifest — the validation-grant check must
 // run there too.
 func TestVerifyManifest_RefusesMalformedValidationGrant(t *testing.T) {
-	mv, err := NewManifestVerifier("")
-	if err != nil {
-		t.Fatal(err)
-	}
+	mv := structuralOnlyVerifier()
 	base := `{"id":"t.p","name":"T","version":"1.0.0","runtime":"wasm","entrypoint":"./plugin.wasm","canonical_type":"integration","device_arch":"any","permissions":`
 	write := func(perms string) string {
 		p := filepath.Join(t.TempDir(), "manifest.json")

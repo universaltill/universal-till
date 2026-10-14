@@ -212,14 +212,22 @@ func TestTakeawayOverride_RealChain_CloudInstallReconciles(t *testing.T) {
 // path (POST /api/plugins/import-from-file, handleImportFromFile): a
 // sideloaded bundle of the German tax plugin is activated unconditionally by
 // PersistManifest, so it must reconcile like every other activation. Round 2
-// of ut-docs#1370's review found this operator-facing path unwired. No
-// marketplace key is configured (the dev/offline default), so the unsigned
-// asset-only bundle imports the way a real offline provisioning does.
+// of ut-docs#1370's review found this operator-facing path unwired. The
+// bundle is signed with a test marketplace key the till is configured with,
+// the way a real offline provisioning bundle is (ADR-0158: a keyless till
+// imports nothing).
 func TestTakeawayOverride_ImportFromFileReconciles(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	isolatePluginsDir(t)
+	setCompiledMarketplaceKey(t, "")
+	manifest, pubHex := signManifestWithTestKey(t, plugins.Manifest{
+		ID: taxDePluginID, Name: "Tax DE (sideloaded)", Version: "1.0.0",
+		Runtime: "none", CanonicalType: "theme", DeviceArch: "any",
+	})
+	cfg := basePluginCfg()
+	cfg.Marketplace.PublicKey = pubHex
 	db := openRealSchemaPagesDB(t)
-	deps := newPluginAPIDeps(t, db, nil)
+	deps := newPluginAPIDeps(t, db, cfg)
 	mux := http.NewServeMux()
 	registerPluginAPI(mux, deps)
 
@@ -229,10 +237,7 @@ func TestTakeawayOverride_ImportFromFileReconciles(t *testing.T) {
 		t.Fatalf("create tax code: %v", err)
 	}
 
-	bundle := writePluginBundle(t, plugins.Manifest{
-		ID: taxDePluginID, Name: "Tax DE (sideloaded)", Version: "1.0.0",
-		Runtime: "none", CanonicalType: "theme", DeviceArch: "any",
-	})
+	bundle := writePluginBundle(t, manifest)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, importRequest(t, bundle, "tax-de.tar.gz", nil))
 	if rec.Code != http.StatusOK {
