@@ -108,12 +108,13 @@ func VATBandsForSale(lines []VATLine, discountTotal int64, taxInclusive bool, se
 			}
 		}
 		// The highest band carrying goods takes the pennies — but never a
-		// band whose goods are worth nothing next to a voucher (a fully
-		// line-discounted item): its remainder would come off the voucher.
-		// Without vouchers this is every band, as before ut-docs#4233.
+		// band whose goods are worth nothing (a fully line-discounted
+		// item): its remainder would push the band negative, or come off a
+		// voucher sharing it (ut-docs#4275; fiscal-sign-ask.md
+		// § sale_discount step 3, as ut-plugin-tax-de signs it).
 		last := -1
 		for i, b := range acc {
-			if b.hasGoods && (b.voucherGross == 0 || b.Gross-b.voucherGross > 0) {
+			if b.hasGoods && b.Gross-b.voucherGross > 0 {
 				last = i
 			}
 		}
