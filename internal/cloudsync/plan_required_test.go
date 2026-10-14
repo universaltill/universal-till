@@ -12,6 +12,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/entitlement"
+	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
@@ -229,5 +230,136 @@ func TestTickOn402CachesBlockBacksOffHourlyThenStaysQuiet(t *testing.T) {
 				t.Fatalf("tick after caching = (%v, %v), %d new calls; want a quiet gated tick", contacted, err, calls.Load()-before)
 			}
 		})
+	}
+}
+
+// --- ut-docs#4304: a 402 that closes the gate keeps the normal cadence ---
+
+// The scheduler: a refusal tick marked gatedRefusal waits one normal
+// jittered tick and resets the failure streak; the bare 402 (no gate
+// closed: an older cloud, a proxy) keeps its hour (test above).
+func TestSchedulerKeepsNormalCadenceAfterAGated402(t *testing.T) {
+	s := testScheduler(t)
+	s.next(err503()) // a failure streak the gated 402 must reset
+	if d := s.next(&gatedRefusal{err: err402()}); d > jitteredWait(2*time.Minute, 1) || d < jitteredWait(2*time.Minute, 0) {
+		t.Fatalf("after a gated 402: wait %v, want one normal tick (≤ %v)", d, jitteredWait(2*time.Minute, 1))
+	}
+	if s.fails != 0 {
+		t.Fatalf("fails = %d after a gated 402, want 0", s.fails)
+	}
+	if s.auth.status().Show {
+		t.Fatal("a gated 402 raised the credential chip")
+	}
+	var se *statusError
+	if err := error(&gatedRefusal{err: err402()}); !errors.As(err, &se) || se.StatusCode != http.StatusPaymentRequired {
+		t.Fatalf("errors.As through gatedRefusal = %v, want the 402 statusError", err)
+	}
+}
+
+// Driven, with the real ADR-0148 gate: a till whose cache says paid meets a
+// cloud that says 402 with a not-paid block. The tick marks the refusal
+// gated, the scheduler waits one normal tick (not the 402's hour), and the
+// next tick uploads a newly sent issue report with no sync call.
+func TestTickGated402UploadsAnIssueReportWithinOneNormalTick(t *testing.T) {
+	fakeClock(t)
+	resetTillAuth(t)
+	withTempPendingDir(t)
+	useRealSyncGate(t)
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+
+	var syncCalls, reports atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/stores/issue-reports":
+			if r.Method == http.MethodPost {
+				reports.Add(1)
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			syncCalls.Add(1)
+			writePlanRequired(w)
+		}
+	}))
+	defer srv.Close()
+
+	origTick := tickIntervalNS.Load()
+	t.Cleanup(func() { tickIntervalNS.Store(origTick) })
+	tickIntervalNS.Store(int64(2 * time.Minute))
+	sched := newScheduler()
+	sched.rng = func() float64 { return 0.5 }
+
+	cfg, d := testCfg(srv.URL), openMigratedDB(t, "gated_402_4304.db")
+	seedEntitlement(t, d.DB, "shop", "active", time.Now())
+
+	_, err := tick(context.Background(), cfg, d.DB, Hooks{})
+	if _, ok := planRequired(err); !ok || !gatedByRefusal(err) {
+		t.Fatalf("tick err = %v, want a 402 marked gatedRefusal", err)
+	}
+	logTickError(err)
+	if got := logging.Recent(); len(got) != 0 {
+		t.Fatalf("a gated 402 logged problems: %+v", got)
+	}
+	if w := sched.next(err); w != 2*time.Minute {
+		t.Fatalf("wait after the gated 402 = %v, want the normal 2m tick (rng 0.5)", w)
+	}
+
+	if _, err := issuereport.Save("sent after the 402", "", []byte("audio"), nil, nil); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	before := syncCalls.Load()
+	contacted, err := tick(context.Background(), cfg, d.DB, Hooks{})
+	if contacted || err != nil || syncCalls.Load() != before {
+		t.Fatalf("next tick = (%v, %v), %d sync calls; want a quiet gated tick", contacted, err, syncCalls.Load()-before)
+	}
+	if reports.Load() != 1 {
+		t.Fatalf("issue-report uploads on the next tick = %d, want 1", reports.Load())
+	}
+}
+
+// The other way round: when the gate stays open after the 402 (its block
+// still says paid — the cloud and cache disagree), the refusal is not
+// marked, so the scheduler keeps the hour instead of retrying every tick.
+func TestMarkGatedRefusalOnlyWhenTheGateIsClosed(t *testing.T) {
+	useRealSyncGate(t)
+	d := openMigratedDB(t, "gated_402_open_4304.db")
+	settings := data.NewSettingsRepo(d.DB)
+	seedEntitlement(t, d.DB, "shop", "active", time.Now())
+	if err := markGatedRefusal(context.Background(), settings, err402()); gatedByRefusal(err) {
+		t.Fatal("402 marked gated while the cache still says paid")
+	}
+	if err := markGatedRefusal(context.Background(), settings, err503()); gatedByRefusal(err) {
+		t.Fatal("a 503 was marked gated")
+	}
+	seedEntitlement(t, d.DB, "shop", "lapsed", time.Now())
+	if err := markGatedRefusal(context.Background(), settings, err402()); !gatedByRefusal(err) {
+		t.Fatal("402 not marked gated although the cache says lapsed")
+	}
+}
+
+// The unpaid check-in's own 402 (an operator window on a lapsed till: the
+// POST path, planUnpaidCheckin) is marked gated too, and the tick after it
+// makes no call.
+func TestTickUnpaidCheckin402IsMarkedGated(t *testing.T) {
+	fakeClock(t)
+	resetTillAuth(t)
+	useRealSyncGate(t)
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		writePlanRequired(w)
+	}))
+	defer srv.Close()
+	cfg, d := testCfg(srv.URL), openMigratedDB(t, "unpaid_402_4304.db")
+	seedEntitlement(t, d.DB, "shop", "lapsed", time.Now())
+	OpenOperatorWindow(time.Minute)
+
+	_, err := tick(context.Background(), cfg, d.DB, Hooks{})
+	if _, ok := planRequired(err); !ok || !gatedByRefusal(err) || calls.Load() == 0 {
+		t.Fatalf("tick err = %v after %d calls, want a 402 marked gatedRefusal", err, calls.Load())
+	}
+	before := calls.Load()
+	if contacted, err := tick(context.Background(), cfg, d.DB, Hooks{}); contacted || err != nil || calls.Load() != before {
+		t.Fatalf("next tick = (%v, %v), %d calls; want a quiet gated tick", contacted, err, calls.Load()-before)
 	}
 }

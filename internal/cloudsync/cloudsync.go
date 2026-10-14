@@ -437,6 +437,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 			// start-up check-in follows it (amendment §4).
 			closeOperatorWindow(windowSeen)
 			disarmStartupCheckin()
+			err = markGatedRefusal(ctx, settings, err)
 		}
 		return false, err
 	}
@@ -455,6 +456,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 				// No retry until the next trigger (§4).
 				closeOperatorWindow(windowSeen)
 				disarmStartupCheckin()
+				err = markGatedRefusal(ctx, settings, err)
 			}
 			return false, err
 		}
@@ -1446,13 +1448,26 @@ func planRequired(err error) (*statusError, bool) {
 // as a 200's would be (cacheEntitlement: validated, best-effort), so the
 // refusal itself tells this till it is not on a paid plan and ADR-0148's
 // gate stops the periodic check-in from the next tick. The tick still
-// fails with the 402 — that is what lets the scheduler honour its
-// Retry-After (retryAfterHint) — but quietly: logTickError does not report
-// it as a problem and authTracker ignores it. Any other error: no-op.
+// fails with the 402 (marked gatedRefusal once the gate is closed, so the
+// scheduler keeps its normal cadence — ut-docs#4304), but quietly:
+// logTickError does not report it as a problem and authTracker ignores it.
+// Any other error: no-op.
 func cachePlanRequired(ctx context.Context, settings *data.SettingsRepo, err error) {
 	if se, ok := planRequired(err); ok && settings != nil {
 		cacheEntitlement(ctx, settings, se.Entitlement, time.Now())
 	}
+}
+
+// markGatedRefusal wraps a 402 plan_required in gatedRefusal when, with its
+// block already cached (cachePlanRequired), this till's ADR-0148 gate is
+// now closed: the next ticks are quiet, so the scheduler keeps the normal
+// cadence for the local work that rides them (ut-docs#4304). Otherwise err
+// is returned as is.
+func markGatedRefusal(ctx context.Context, settings *data.SettingsRepo, err error) error {
+	if _, ok := planRequired(err); ok && !syncAllowedFn(ctx, settings) {
+		return &gatedRefusal{err: err}
+	}
+	return err
 }
 
 // snapshotSchema is the catalog snapshot's wire version (contract §3.7).
@@ -1913,7 +1928,7 @@ func logTickError(err error) {
 	}
 	if se, ok := planRequired(err); ok {
 		next := "at the next start-up or operator action"
-		if se.Entitlement == nil {
+		if se.Entitlement == nil && !gatedByRefusal(err) {
 			// No block to cache: the till still believes it is paid and
 			// keeps honouring Retry-After (ADR-0148 amendment §4).
 			next = "in " + retryAfterHint(err).String()
