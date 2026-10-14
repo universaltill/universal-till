@@ -1838,6 +1838,7 @@
   "receipt.return_for": "İade nedeni",
   "receipt.tip": "Bahşiş",
   "receipt.title": "Fiş",
+  "receipt.total_incl_vat": "KDV dahil toplam",
   "receipt.tracking.caption": "Siparişinizi takip etmek için kodu okutun",
   "receipt.vouchers.issued": "Düzenlenen hediye çekleri",
   "receipt.vouchers.void": "İPTAL - geçersiz",

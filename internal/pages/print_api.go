@@ -400,7 +400,7 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	if vatRegistered {
 		for _, b := range vatBreakdown(detail) {
 			doc.Totals = append(doc.Totals, print.KV{
-				Label:  fmt.Sprintf("Total incl. VAT %.2f%%", float64(b.RateBP)/100),
+				Label:  httpx.T(printLocale, "receipt.total_incl_vat") + " " + httpx.FormatPercentBP(int64(b.RateBP), printLocale),
 				Amount: money(b.Gross),
 			})
 		}
