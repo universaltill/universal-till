@@ -124,12 +124,17 @@ func (f *fakeCloud) queueRefusal(r refusal) {
 	f.mu.Unlock()
 }
 
+// waitLimit is the ceiling for waits on something that SHOULD happen. They
+// return as soon as the condition holds, so a passing run is no slower; 3 s
+// was below what a loaded, race-instrumented runner can take (ut-docs#4124).
+const waitLimit = 15 * time.Second
+
 func (f *fakeCloud) nextConn(t *testing.T) *cloudConn {
 	t.Helper()
 	select {
 	case c := <-f.conns:
 		return c
-	case <-time.After(3 * time.Second):
+	case <-time.After(waitLimit):
 		t.Fatal("the till never opened the cloud link")
 		return nil
 	}
@@ -167,7 +172,7 @@ func (c *cloudConn) closeWith(code int, reason string) {
 // frame waits for the next frame of type typ from the till.
 func (c *cloudConn) frame(t *testing.T, typ string) fleetlink.Envelope {
 	t.Helper()
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(waitLimit)
 	for {
 		select {
 		case env := <-c.frames:
@@ -227,14 +232,31 @@ func fastOptions() Options {
 
 func newHarness(t *testing.T, mod func(*Options)) *harness {
 	t.Helper()
-	return newHarnessClient(t, mod, nil)
+	return newHarnessAll(t, nil, mod, nil)
 }
 
 // newHarnessClient is newHarness with a hook on the Client before Run
 // starts (e.g. to stub rng), so the stub is set without racing Run.
 func newHarnessClient(t *testing.T, mod func(*Options), cmod func(*Client)) *harness {
 	t.Helper()
+	return newHarnessAll(t, nil, mod, cmod)
+}
+
+// newHarnessCloud is newHarness with a hook on the fakeCloud before Run
+// starts. ut-docs#4124: the cloud hello reads linkVersion/liveView when it
+// accepts the socket and Run dials straight away, so state set after the
+// constructor returns races the hello (a 0 link_version never kicks).
+func newHarnessCloud(t *testing.T, cloudMod func(*fakeCloud), mod func(*Options)) *harness {
+	t.Helper()
+	return newHarnessAll(t, cloudMod, mod, nil)
+}
+
+func newHarnessAll(t *testing.T, cloudMod func(*fakeCloud), mod func(*Options), cmod func(*Client)) *harness {
+	t.Helper()
 	h := &harness{cloud: newFakeCloud(t), done: make(chan struct{})}
+	if cloudMod != nil {
+		cloudMod(h.cloud)
+	}
 	h.gateOK.Store(true)
 	h.bearer.Store("cred-1")
 	h.status.Store(Status{Version: "v1.2.3", UpdateState: "idle"})
@@ -263,14 +285,14 @@ func (h *harness) stop() {
 	h.cancel()
 	select {
 	case <-h.done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(waitLimit):
 		panic("cloudlink Client.Run did not return after cancel")
 	}
 }
 
 func eventually(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(waitLimit)
 	for !cond() {
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for: %s", what)

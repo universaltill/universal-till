@@ -70,8 +70,7 @@ func TestNoDialWhileGateClosed(t *testing.T) {
 // AC4: a differing link_version in the cloud hello kicks the check-in; the
 // same one on a reconnect does not; every nudge kicks.
 func TestHelloVersionAndNudgeKickTheCheckIn(t *testing.T) {
-	h := newHarness(t, nil)
-	h.cloud.linkVersion.Store(5)
+	h := newHarnessCloud(t, func(fc *fakeCloud) { fc.linkVersion.Store(5) }, nil)
 	h.cloud.nextConn(t) // first connect: 5 != 0 → one kick
 	eventually(t, "kick on a differing link_version", func() bool { return h.kicks.Load() == 1 })
 
@@ -350,8 +349,7 @@ func TestSaleFramesFollowLiveView(t *testing.T) {
 }
 
 func TestSaleRateStaysInsideTheCloudBucket(t *testing.T) {
-	h := newHarness(t, nil)
-	h.cloud.liveView.Store(true)
+	h := newHarnessCloud(t, func(fc *fakeCloud) { fc.liveView.Store(true) }, nil)
 	c := h.cloud.nextConn(t)
 	c.frame(t, "hello")
 	eventually(t, "live view on", func() bool { return h.c.liveView.Load() && h.c.State() == StateLinked })
@@ -510,23 +508,28 @@ func TestReplacedLoopKeepsTheAttemptCount(t *testing.T) {
 func TestLinkVersionIsRecordedBeforeTheKick(t *testing.T) {
 	var atKick []int64
 	var mu sync.Mutex
-	var h *harness
-	h = newHarness(t, func(o *Options) {
+	// Kick fires from Run, possibly before newHarnessAll returns, so it must
+	// not read h: capture the Client (set before Run) and count locally.
+	var cl *Client
+	var kicks atomic.Int32
+	h := newHarnessAll(t, func(fc *fakeCloud) { fc.linkVersion.Store(5) }, func(o *Options) {
 		o.Kick = func() {
 			mu.Lock()
-			atKick = append(atKick, h.c.LinkVersion())
+			atKick = append(atKick, cl.LinkVersion())
 			mu.Unlock()
-			h.kicks.Add(1)
+			kicks.Add(1)
+		}
+	}, func(c *Client) {
+		cl = c
+		// Checked before Run starts: after that, the hello races this read.
+		if v := c.LinkVersion(); v != 0 {
+			t.Errorf("LinkVersion before any hello = %d, want 0", v)
 		}
 	})
-	if v := h.c.LinkVersion(); v != 0 {
-		t.Fatalf("LinkVersion before any hello = %d, want 0", v)
-	}
-	h.cloud.linkVersion.Store(5)
 	c := h.cloud.nextConn(t)
-	eventually(t, "kick on hello", func() bool { return h.kicks.Load() == 1 })
+	eventually(t, "kick on hello", func() bool { return kicks.Load() == 1 })
 	c.send("nudge", map[string]any{"link_version": 9, "scopes": []string{"directives"}})
-	eventually(t, "kick on nudge", func() bool { return h.kicks.Load() == 2 })
+	eventually(t, "kick on nudge", func() bool { return kicks.Load() == 2 })
 	mu.Lock()
 	defer mu.Unlock()
 	if len(atKick) != 2 || atKick[0] != 5 || atKick[1] != 9 {

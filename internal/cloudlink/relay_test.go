@@ -116,8 +116,7 @@ func TestCheckInWithoutANudgeNeverRelays(t *testing.T) {
 // link was down: relayed like a nudge (no scopes).
 func TestHelloVersionChangeIsRelayed(t *testing.T) {
 	rec := &relayRec{}
-	h := newHarness(t, func(o *Options) { o.Relay = rec.relay })
-	h.cloud.linkVersion.Store(5)
+	h := newHarnessCloud(t, func(fc *fakeCloud) { fc.linkVersion.Store(5) }, func(o *Options) { o.Relay = rec.relay })
 	h.cloud.nextConn(t)
 	eventually(t, "kick", func() bool { return h.kicks.Load() == 1 })
 	h.c.TickStarting()
