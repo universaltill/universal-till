@@ -560,3 +560,44 @@ func TestMoneyTemplateFuncUsesDisplayVariant(t *testing.T) {
 		t.Errorf("money(-300) under en = %q, want %q", got, want)
 	}
 }
+
+// ut-docs#4176: a basis-point rate rendered as a percent follows the
+// locale's decimal separator (separator only, Latin digits, like
+// LocalizeMajor) -- a de till shows 7,50%, an en till 7.50%.
+func TestFormatPercentBP(t *testing.T) {
+	cases := []struct {
+		bp     int64
+		locale string
+		want   string
+	}{
+		{750, "en", "7.50%"},
+		{750, "de", "7,50%"},
+		{750, "de-DE", "7,50%"},
+		{2000, "fr", "20,00%"},
+		{0, "tr", "0,00%"},
+		{1950, "pt", "19,50%"},
+		// fa/ar: no digit shaping here (Latin digits, '.' separator), as
+		// LocalizeMajor -- asserted so the behaviour is explicit.
+		{750, "fa", "7.50%"},
+		{750, "ar", "7.50%"},
+	}
+	for _, c := range cases {
+		if got := FormatPercentBP(c.bp, c.locale); got != c.want {
+			t.Errorf("FormatPercentBP(%d, %q) = %q, want %q", c.bp, c.locale, got, c.want)
+		}
+	}
+}
+
+// ut-docs#4176: {{ bpPercent }} in a request-scoped template (sale-screen
+// discount label, receipt) is bound to the request locale.
+func TestFuncsForBPPercentIsLocaleBound(t *testing.T) {
+	for locale, want := range map[string]string{"en": "7.50%", "de": "7,50%"} {
+		fn, ok := FuncsFor(locale)["bpPercent"].(func(int64) string)
+		if !ok {
+			t.Fatalf("FuncsFor(%q)[bpPercent] has the wrong type", locale)
+		}
+		if got := fn(750); got != want {
+			t.Errorf("FuncsFor(%q) bpPercent(750) = %q, want %q", locale, got, want)
+		}
+	}
+}

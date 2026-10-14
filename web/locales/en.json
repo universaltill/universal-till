@@ -1823,6 +1823,7 @@
   "receipt.return_for": "Return for",
   "receipt.tip": "Tip",
   "receipt.title": "Receipt",
+  "receipt.total_incl_vat": "Total incl. VAT",
   "receipt.tracking.caption": "Scan to track your order",
   "receipt.vouchers.issued": "Vouchers issued",
   "receipt.vouchers.void": "VOID - not valid",

@@ -1838,6 +1838,7 @@
   "receipt.return_for": "إرجاع لأجل",
   "receipt.tip": "الإكرامية",
   "receipt.title": "الإيصال",
+  "receipt.total_incl_vat": "الإجمالي شامل الضريبة",
   "receipt.tracking.caption": "امسح الرمز لتتبّع طلبك",
   "receipt.vouchers.issued": "القسائم الصادرة",
   "receipt.vouchers.void": "ملغاة - غير صالحة",

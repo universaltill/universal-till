@@ -634,6 +634,16 @@ func LocalizeMajor(plain, locale string) string {
 	return plain
 }
 
+// FormatPercentBP renders a basis-point rate as a two-decimal percent in
+// the locale's decimal separator (ut-docs#4176): 750 is "7,50%" on a de
+// till, "7.50%" on an en one. Separator only, Latin digits -- the same
+// scope as LocalizeMajor, so it is safe on a print path too. The sign stays
+// a suffix for every locale; per-locale placement (fr "7,50 %", tr "%7,50")
+// is a separate item.
+func FormatPercentBP(bp int64, locale string) string {
+	return LocalizeMajor(fmt.Sprintf("%.2f", float64(bp)/100), locale) + "%"
+}
+
 // MoneyPlaceholderLocalAttr is MoneyPlaceholderAttr for a MoneyPatternLocal
 // field: the example amount in the locale's decimal separator
 // (ut-docs#2818). Template callers use {{ moneyplaceholderlocal … }}, which

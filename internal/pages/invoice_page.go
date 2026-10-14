@@ -237,7 +237,7 @@ func buildInvoiceDoc(ctx context.Context, d *common.Deps, inv data.InvoiceRow, s
 	}
 	for _, b := range bands {
 		doc.Totals = append(doc.Totals, print.KV{
-			Label:  fmt.Sprintf("%s %.2f%%: %s + %s", T("invoice.vat"), float64(b.RateBP)/100, httpx.FormatMoney(b.Net, locale), httpx.FormatMoney(b.Tax, locale)),
+			Label:  fmt.Sprintf("%s %s: %s + %s", T("invoice.vat"), httpx.FormatPercentBP(int64(b.RateBP), locale), httpx.FormatMoney(b.Net, locale), httpx.FormatMoney(b.Tax, locale)),
 			Amount: httpx.FormatMoney(b.Gross, locale),
 		})
 	}
@@ -472,16 +472,17 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 			Rate            string
 			Net, Tax, Gross int64
 		}
+		// ut-docs#3337: the band rates and the per-line unit-price/rate
+		// detail row are formatted Go-side in the request's locale
+		// (ut-docs#4176: the percent too, not just the money).
+		locale := httpx.RequestLocale(r)
 		bands := make([]bandView, 0, len(raw))
 		for _, b := range raw {
 			bands = append(bands, bandView{
-				Rate: fmt.Sprintf("%.2f%%", float64(b.RateBP)/100),
+				Rate: httpx.FormatPercentBP(int64(b.RateBP), locale),
 				Net:  b.Net, Tax: b.Tax, Gross: b.Gross,
 			})
 		}
-		// ut-docs#3337: per-line view carrying the unit-price/rate detail
-		// row, formatted Go-side in the request's locale.
-		locale := httpx.RequestLocale(r)
 		type lineView struct {
 			Name      string
 			Qty       float64
@@ -545,7 +546,7 @@ func invoiceLineSub(l data.SaleDetailLine, locale, sep string) string {
 	if l.LineDiscount != 0 {
 		s += " (" + httpx.T(locale, "invoice.after_discount") + ")"
 	}
-	return s + sep + httpx.T(locale, "invoice.vat") + " " + fmt.Sprintf("%.2f%%", float64(l.TaxRateBP)/100)
+	return s + sep + httpx.T(locale, "invoice.vat") + " " + httpx.FormatPercentBP(int64(l.TaxRateBP), locale)
 }
 
 // timeOfSupply returns the sale's own date (the time of supply), formatted

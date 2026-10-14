@@ -1838,6 +1838,7 @@
   "receipt.return_for": "مرجوعی برای",
   "receipt.tip": "انعام",
   "receipt.title": "رسید",
+  "receipt.total_incl_vat": "جمع با احتساب مالیات",
   "receipt.tracking.caption": "برای پیگیری سفارش خود این کد را اسکن کنید",
   "receipt.vouchers.issued": "کارت‌های هدیهٔ صادرشده",
   "receipt.vouchers.void": "باطل - نامعتبر",
