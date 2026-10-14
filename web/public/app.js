@@ -179,18 +179,47 @@ window.utCurrency = (function(){
 
 (function(){
   var buf = "";
+  var gaps = [];
   var last = 0;
   var timeout = null;
+  // ut-docs#4342: a Bluetooth HID scanner sends one key per report slot
+  // (62.5 ms on the Netum L8BL Pro, measured with getevent) and now and then
+  // skips one (a single ~124 ms gap). Resetting on any gap over 100 ms
+  // submitted only the digits after the hiccup ("9" for voucher
+  // 5000000000029). A burst now survives gaps up to BURST_RESET_MS, and is
+  // a scanner read when its median gap is under SCAN_GAP_MS with at most
+  // one slower gap — a person typing (~150-250 ms per key) is not. 120, not
+  // 100: a scanner on its slow Bluetooth transmit setting sends ~100 ms per
+  // character and is still a scanner (review finding).
+  var SCAN_GAP_MS = 120;
+  var BURST_RESET_MS = 300;
+  function resetBurst(){ buf = ""; gaps = []; }
+  function isScannerBurst(){
+    if (!buf || !gaps.length) return false;
+    var sorted = gaps.slice().sort(function(a, b){ return a - b; });
+    var median = sorted[Math.floor(sorted.length / 2)];
+    var slow = 0;
+    for (var i = 0; i < gaps.length; i++) { if (gaps[i] > SCAN_GAP_MS) slow++; }
+    return median < SCAN_GAP_MS && slow <= 1;
+  }
   function scanCodeInput(){
     var form = document.querySelector('form[action="/api/pos/scan"], form[hx-post="/api/pos/scan"]');
     return form ? form.querySelector('input[name="code"]') : null;
   }
-  function submit(code, codeInput){
+  // src tells /api/pos/scan where the code came from (ut-docs#4342):
+  // "scanner" or "camera" reads resolve items by exact code only; typed
+  // entry ("") may still search by name.
+  function submit(code, codeInput, src){
     var form = codeInput && codeInput.form;
     if(!form || !codeInput) return;
+    var srcInput = form.querySelector('input[name="src"]');
     codeInput.value = code;
+    if (srcInput) srcInput.value = src || "";
     if (window.htmx) { window.htmx.trigger(form, 'submit'); } else { form.submit(); }
-    setTimeout(function(){ codeInput.value = ""; }, 0);
+    setTimeout(function(){
+      codeInput.value = "";
+      if (srcInput) srcInput.value = "";
+    }, 0);
   }
   // A wedge scanner "types" its scan as fast keystrokes into whatever has
   // focus (ut-docs#423) — e.g. the sale screen's products-search box, which
@@ -230,7 +259,8 @@ window.utCurrency = (function(){
   window.addEventListener('keydown', function(e){
     if (e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
     var now = Date.now();
-    if (now - last > 100) { buf = ""; }
+    var gap = now - last;
+    if (gap > BURST_RESET_MS) { resetBurst(); }
     last = now;
     if (e.key === 'Enter') {
       // ut-docs#4214: a field that takes a scan itself (data-scan-own — the
@@ -238,25 +268,30 @@ window.utCurrency = (function(){
       // field's own form, never the sale screen's scan row.
       var own = document.activeElement;
       if (own && own.closest && own.closest('[data-scan-own]')) {
-        buf = "";
+        resetBurst();
         return;
       }
+      if (buf) gaps.push(gap);
+      var scanned = isScannerBurst();
       var codeInput = scanCodeInput();
-      var code = buf;
+      var code = scanned ? buf : "";
       if (!code && codeInput && document.activeElement === codeInput) {
         code = (codeInput.value || '').trim();
       }
       if (code && codeInput) {
         e.preventDefault();
         clearStrayScanTarget(document.activeElement, code, codeInput);
-        submit(code, codeInput);
+        submit(code, codeInput, scanned ? 'scanner' : '');
       }
-      buf = "";
+      resetBurst();
       return;
     }
-    if (e.key.length === 1) buf += e.key;
+    if (e.key.length === 1) {
+      if (buf) gaps.push(gap);
+      buf += e.key;
+    }
     clearTimeout(timeout);
-    timeout = setTimeout(function(){ buf = ""; }, 300);
+    timeout = setTimeout(resetBurst, BURST_RESET_MS);
   });
 
   // Clear the scan code field after ANY submission of the scan form, not
@@ -1772,6 +1807,7 @@ utSellCamera(function(){
     var msgs = overlay.dataset;
     var stream = null;
     var rafID = null;
+    var candidate = null; // last decoded value, awaiting a matching read
     if (msgs.decoderV) DECODER_QS = '?v=' + encodeURIComponent(msgs.decoderV);
 
     openBtn.hidden = false;
@@ -1781,6 +1817,7 @@ utSellCamera(function(){
     function open(){
       if (!overlay.hidden) return; // already open (button keeps focus; Space/Enter re-fires it)
       overlay.hidden = false;
+      candidate = null;
       setStatus(msgs.msgScanning);
       // ut-docs#1251: same guard as the plugin-identify binding above — a
       // non-secure-context origin leaves `navigator.mediaDevices` undefined,
@@ -1856,10 +1893,18 @@ utSellCamera(function(){
           // close() nulls `stream`; a detect() already in flight when the
           // cashier closed must not ring up a line after the overlay is gone.
           if (!stream) return;
-          if (codes && codes.length) {
+          if (codes && codes.length && codes[0].rawValue) {
+            // ut-docs#4342: one frame can decode a partial pass over the
+            // bars as a short, wrong value; only a code read the same on two
+            // reads in a row is submitted.
             var code = codes[0].rawValue;
+            if (code !== candidate) {
+              candidate = code;
+              rafID = requestAnimationFrame(scanFrame);
+              return;
+            }
             close();
-            if (code) window.utScan.submit(code, window.utScan.input());
+            window.utScan.submit(code, window.utScan.input(), 'camera');
             return;
           }
           rafID = requestAnimationFrame(scanFrame);

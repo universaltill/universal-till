@@ -8226,6 +8226,18 @@ func (r *POSRepo) ResolveScanLine(ctx context.Context, code string, enabledIDs [
 // a barcode symbology). dec is only meaningful when the match came from the
 // barcode tiers — it is zero-valued for shortcut/SKU/name matches.
 func (r *POSRepo) ResolveShortcutLineDecoded(ctx context.Context, code string) (ShortcutLine, barcode.Decoded, bool) {
+	return r.resolveShortcutLineDecoded(ctx, code, true)
+}
+
+// ResolveShortcutLineDecodedExact is ResolveShortcutLineDecoded without the
+// name-LIKE tier (ut-docs#4342): a hardware scanner or camera read is a
+// code, never a search term, so a garbled or partial read ("9") must miss
+// rather than ring up whichever item's name happens to contain it.
+func (r *POSRepo) ResolveShortcutLineDecodedExact(ctx context.Context, code string) (ShortcutLine, barcode.Decoded, bool) {
+	return r.resolveShortcutLineDecoded(ctx, code, false)
+}
+
+func (r *POSRepo) resolveShortcutLineDecoded(ctx context.Context, code string, byName bool) (ShortcutLine, barcode.Decoded, bool) {
 	// variant barcode -> item barcode, via the symbology registry
 	if line, dec, ok := r.ResolveScanLine(ctx, code, r.enabledBarcodeSymbologies(ctx)); ok {
 		return line, dec, true
@@ -8270,6 +8282,9 @@ func (r *POSRepo) ResolveShortcutLineDecoded(ctx context.Context, code string) (
 			row.ItemName = row.ItemName + " - " + row.Variant
 		}
 		return r.toShortcutLine(row.SKU, price, row), barcode.Decoded{}, true
+	}
+	if !byName {
+		return ShortcutLine{}, barcode.Decoded{}, false
 	}
 	// Name like
 	if row, ok := r.resolveNameLike(ctx, "%"+q+"%"); ok {

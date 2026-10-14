@@ -1035,6 +1035,18 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// populated by this same guard running live, never by a restored
 		// snapshot, and is cleared with scanCache on every reset/restore).
 		base, baseOK := d.Engine.ResolveBase(code)
+		// ut-docs#4342: a scanner or camera read is a code, never a search
+		// term — it may only resolve to an item by exact code. A partial
+		// read ("9" from a Bluetooth scanner's dropped keystrokes) used to
+		// ring up whichever item's NAME contained it, and an item named
+		// after a voucher number shadowed the voucher. Typed entry (no src)
+		// keeps the name search. Re-resolved only on a hit, so a miss costs
+		// nothing extra.
+		deviceScan := isDeviceScanSource(in.Src)
+		if deviceScan && baseOK {
+			base, baseOK = d.Engine.ResolveExact(code)
+		}
+		itemAllowed := !deviceScan || baseOK
 		// ut-docs#4214: a gift_voucher item never adds goods — whether it was
 		// tapped, typed or scanned, it opens the Gift voucher popup (and the
 		// popup's own submit lands here too, with gv=1). Checked before the
@@ -1090,7 +1102,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			d.Engine.MarkNoSellableVariants(base.ItemID)
 		}
 
-		if d.Engine.HasScanCache(code) || d.Engine.HasLine(code) {
+		if itemAllowed && (d.Engine.HasScanCache(code) || d.Engine.HasLine(code)) {
 			b, _, _ := d.Engine.ScanQtyWithResult(code, in.Qty)
 			render(b)
 			return
@@ -1179,9 +1191,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		// Fast path: resolve item before any DB lookups to keep scan latency low.
-		if b, found, _ := d.Engine.ScanQtyWithResult(code, in.Qty); found {
-			render(b)
-			return
+		if itemAllowed {
+			if b, found, _ := d.Engine.ScanQtyWithResult(code, in.Qty); found {
+				render(b)
+				return
+			}
 		}
 
 		// ut-docs#4214: a voucher number without the "GS-" prefix — a
@@ -2951,6 +2965,13 @@ func looksLikeCustomerCode(code string) bool {
 // receipt-printer resolution (CODE39, the other alphanumeric option in the
 // registry, needs roughly twice the width per character for the same data
 // -- a poor fit for a small voucher/gift-card slip).
+// isDeviceScanSource reports whether a /api/pos/scan post came from a
+// hardware (wedge) scanner or the camera — app.js's utScan.submit sets
+// src=scanner|camera on the scan form (ut-docs#4342).
+func isDeviceScanSource(src string) bool {
+	return src == "scanner" || src == "camera"
+}
+
 func looksLikeVoucherCode(code string) bool {
 	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(code)), "GS-")
 }

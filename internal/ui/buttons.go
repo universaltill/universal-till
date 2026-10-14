@@ -2493,20 +2493,34 @@ type PriceResolverAdapter struct{ Store *ButtonStore }
 // missed AND trimming would actually change the query), not a fixed extra
 // call on every miss.
 func (a PriceResolverAdapter) Resolve(code string) (pos.BasketLine, bool) {
+	return a.resolveTrimmed(code, true)
+}
+
+// ResolveExact is Resolve without the name-substring tier (pos.ExactResolver,
+// ut-docs#4342): what a hardware scanner or the camera reads.
+func (a PriceResolverAdapter) ResolveExact(code string) (pos.BasketLine, bool) {
+	return a.resolveTrimmed(code, false)
+}
+
+func (a PriceResolverAdapter) resolveTrimmed(code string, byName bool) (pos.BasketLine, bool) {
 	ctx := context.Background()
 
-	if line, ok := a.resolve(ctx, code); ok {
+	if line, ok := a.resolve(ctx, code, byName); ok {
 		return line, true
 	}
 	trimmed := strings.TrimSpace(code)
 	if trimmed == "" || trimmed == code {
 		return pos.BasketLine{}, false
 	}
-	return a.resolve(ctx, trimmed)
+	return a.resolve(ctx, trimmed, byName)
 }
 
-func (a PriceResolverAdapter) resolve(ctx context.Context, code string) (pos.BasketLine, bool) {
-	row, dec, ok := a.Store.posRepo.ResolveShortcutLineDecoded(ctx, code)
+func (a PriceResolverAdapter) resolve(ctx context.Context, code string, byName bool) (pos.BasketLine, bool) {
+	resolveLine := a.Store.posRepo.ResolveShortcutLineDecoded
+	if !byName {
+		resolveLine = a.Store.posRepo.ResolveShortcutLineDecodedExact
+	}
+	row, dec, ok := resolveLine(ctx, code)
 	if !ok {
 		return pos.BasketLine{}, false
 	}
