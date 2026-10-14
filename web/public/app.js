@@ -1908,11 +1908,17 @@ utSellCamera(function(){
     // server's own idle clock trails ours after a page load (the load's
     // requests touch the session), so a bare jump to /login found the
     // session still fresh, bounced to "/" and reloaded every 10 minutes
-    // without ever locking. Whatever the POST answers, go to the keypad.
-    var go = function () { window.location.replace('/login'); };
+    // without ever locking. Whatever the POST answers, go to the keypad --
+    // except on a satellite kiosk in maintenance, where the server says "/"
+    // so the screen goes back to the kiosk (ut-docs#4307). Only that exact
+    // value is followed.
+    var go = function (res) {
+      var to = res && res.headers ? res.headers.get('X-UT-Lock-To') : null;
+      window.location.replace(to === '/' ? '/' : '/login');
+    };
     try {
       fetch('/api/auth/idle-lock', { method: 'POST', credentials: 'same-origin', keepalive: true })
-        .then(go, go);
+        .then(go, function () { go(null); });
     } catch (e) { go(); }
   }, 5000);
 })();

@@ -59,6 +59,26 @@ func inSelfOrderMode(ctx context.Context, d *common.Deps) bool {
 	return err == nil && mode == "self_order"
 }
 
+// kioskMaintenanceTill reports whether this till is a satellite running as
+// its self-order kiosk (ut-docs#4307). A satellite can only ever be a kiosk,
+// so a staff session here is a maintenance visit: signing in keeps the
+// kiosk, and locking (the Lock button or the idle auto-lock) hands the
+// screen back to customers via "/" — the anonymous-root seam sends it on to
+// /self-order, where the Android app pins again — instead of stranding it
+// on the staff keypad.
+func kioskMaintenanceTill(ctx context.Context, d *common.Deps) bool {
+	return inSelfOrderMode(ctx, d) && displayModeRoleRefusal(ownTillRole(ctx, d), "register") != ""
+}
+
+// lockDestination is where a locked session's screen goes: the keypad, or
+// the kiosk on a satellite in maintenance (kioskMaintenanceTill).
+func lockDestination(ctx context.Context, d *common.Deps) string {
+	if kioskMaintenanceTill(ctx, d) {
+		return "/"
+	}
+	return "/login"
+}
+
 // loginDestination maps a sanitized "next" to the actual redirect target.
 func loginDestination(next string) string {
 	if next == "kiosk" {
@@ -245,7 +265,38 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// screen. A plain /login from another browser on the LAN (a manager
 		// checking reports from a phone) leaves the kiosk alone; back-office
 		// and register tills keep their mode.
+		//
+		// ut-docs#4307: a satellite can only be a kiosk (till_role.go), so
+		// there the sign-in is a maintenance one instead — the till stays in
+		// self-order mode and the manager lands on Settings (dest is already
+		// /settings for next=kiosk), where Status and the lock are reachable
+		// like on every operator page. Refusing everyone would lock staff
+		// out of the satellite: "/" sends every session back to the kiosk.
+		// Someone who can't open Settings (a cashier, ut-docs#3079) has
+		// nothing to do on a satellite, so they get the satellite pointer
+		// and no session, like the refused kiosk sign-in above.
 		if next == "kiosk" && inSelfOrderMode(r.Context(), d) {
+			if kioskMaintenanceTill(r.Context(), d) {
+				role := ownTillRole(r.Context(), d)
+				ok, err := svc.Can(r.Context(), user, "settings")
+				if err != nil {
+					svc.Logout(r.Context(), token)
+					loginUnavailable(w, r, next, err)
+					return
+				}
+				if !ok {
+					svc.Logout(r.Context(), token)
+					_ = posRepo.InsertAudit(r.Context(), nil, user.ID, "settings", "display.mode", "kiosk_mode_refused",
+						map[string]any{"mode": "register", "till_role": role}, now, "")
+					renderLogin(w, r, displayModeRoleRefusal(role, "register"), next)
+					return
+				}
+				_ = posRepo.InsertAudit(r.Context(), nil, user.ID, "settings", "display.mode", "kiosk_maintenance_sign_in",
+					map[string]any{"mode": "self_order", "till_role": role}, now, "")
+				setSessionCookie(w, token, int(auth.SessionTTL.Seconds()))
+				http.Redirect(w, r, dest, http.StatusSeeOther)
+				return
+			}
 			if err := applyDisplayMode(r.Context(), d, "register"); err != nil {
 				svc.Logout(r.Context(), token)
 				loginUnavailable(w, r, next, err)
@@ -334,13 +385,15 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			svc.Logout(r.Context(), c.Value)
 		}
 		setSessionCookie(w, "", -1)
-		// HTMX lock button and plain forms both land on the keypad.
+		// HTMX lock button and plain forms both land on the keypad — or, on
+		// a satellite kiosk in maintenance, back on the kiosk (ut-docs#4307).
+		dest := lockDestination(r.Context(), d)
 		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("HX-Redirect", "/login")
+			w.Header().Set("HX-Redirect", dest)
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		http.Redirect(w, r, dest, http.StatusSeeOther)
 	})
 
 	// ut-docs#3005: the idle auto-lock's own timer (app.js) posts here before
@@ -356,6 +409,11 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			svc.IdleLock(r.Context(), c.Value)
 		}
 		setSessionCookie(w, "", -1)
+		// ut-docs#4307: tells app.js's timer where to go instead of /login
+		// (only ever "/"; the client ignores anything else).
+		if dest := lockDestination(r.Context(), d); dest != "/login" {
+			w.Header().Set("X-UT-Lock-To", dest)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 
