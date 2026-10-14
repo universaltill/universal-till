@@ -2,14 +2,17 @@ package recovery
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/languard"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/web/locales"
@@ -90,19 +93,16 @@ func Serve(ctx context.Context, cfg *config.Config, failure Failure) (Result, er
 	}
 
 	retry := make(chan struct{}, 1)
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", healthHandler())
-	mux.HandleFunc("GET /{$}", pageHandler(failure, safeModeUsable))
-	mux.HandleFunc("POST /api/recovery/retry", retryHandler(retry))
+	var safeModeSQL *sql.DB
 	if safeModeUsable {
-		registerSafeModeRoutes(mux, safeModeDB.DB)
+		safeModeSQL = safeModeDB.DB
 	}
 
 	ln, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
 		return Shutdown, fmt.Errorf("recovery mode: listen on %s: %w", cfg.ListenAddr, err)
 	}
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{Handler: newHandler(cfg, failure, safeModeUsable, safeModeSQL, retry)}
 
 	serveErr := make(chan error, 1)
 	go func() {
@@ -130,4 +130,29 @@ func Serve(ctx context.Context, cfg *config.Config, failure Failure) (Result, er
 		}
 		return Shutdown, nil
 	}
+}
+
+// newHandler builds the recovery mux behind the ADR-0157 LAN guard
+// (ut-docs#4268). Serve binds the same all-interfaces address as the normal
+// server but with its own mux, outside internal/pages' guard, so without
+// this any device on the shop network could read the failure detail and
+// ref code or POST a retry. The guard always applies, demo mode included
+// (unlike the main server, where the public demo is public by design): the
+// screen shows failure detail and a retry button, never something to expose.
+// A LAN peer still reaches /healthz; the safe-mode routes keep their own,
+// stricter requireLoopback.
+func newHandler(cfg *config.Config, failure Failure, safeModeUsable bool, safeModeDB *sql.DB, retry chan struct{}) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", healthHandler())
+	mux.HandleFunc("GET /{$}", pageHandler(failure, safeModeUsable))
+	mux.HandleFunc("POST /api/recovery/retry", retryHandler(retry))
+	if safeModeUsable {
+		registerSafeModeRoutes(mux, safeModeDB)
+	}
+	allow, err := languard.ParseCIDRs(strings.Split(cfg.UIAllowCIDRs, ","))
+	if err != nil {
+		logging.L().Errorf("%v — ignoring UT_UI_ALLOW_CIDRS; only this machine can open the till", err)
+		allow = nil
+	}
+	return languard.New(mux, allow)
 }
