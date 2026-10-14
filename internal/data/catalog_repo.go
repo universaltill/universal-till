@@ -2135,7 +2135,15 @@ func (r *CatalogRepo) DeactivateItem(ctx context.Context, itemID string) error {
 	// check -- an unknown id or one that's already inactive must refuse
 	// with ErrItemNotFound, not silently no-op (its own doc comment has the
 	// full rationale; this is the jiggle-mode trash badge's own repo call).
-	res, err := r.db.ExecContext(ctx, `UPDATE items SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND is_active = 1`, itemID)
+	// The item and its variants' cascade commit together (ut-docs#4348): a
+	// half-applied switch-off would leave variants live under a dead item,
+	// or retired without the flag that brings them back.
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("deactivate item: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx, `UPDATE items SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND is_active = 1`, itemID)
 	if err != nil {
 		return fmt.Errorf("deactivate item: %w", err)
 	}
@@ -2144,8 +2152,39 @@ func (r *CatalogRepo) DeactivateItem(ctx context.Context, itemID string) error {
 	} else if n == 0 {
 		return ErrItemNotFound
 	}
-	if _, err := r.db.ExecContext(ctx, `UPDATE item_variants SET is_active = 0, updated_at = datetime('now') WHERE item_id = ?`, itemID); err != nil {
-		return fmt.Errorf("deactivate item variants: %w", err)
+	if err := cascadeItemActiveToVariants(ctx, tx, itemID, true, false); err != nil {
+		return fmt.Errorf("deactivate item: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("deactivate item: commit: %w", err)
+	}
+	return nil
+}
+
+// cascadeItemActiveToVariants carries an item's on/off switch to its
+// variants (ut-docs#4348), inside the caller's transaction. Every item
+// writer that changes items.is_active calls it with the item's state
+// before and after the write; it does nothing unless the state changed.
+//
+//   - on -> off retires every live variant and marks it
+//     retired_with_item = 1. A variant already off keeps 0: that is how
+//     "switched off on its own" is remembered.
+//   - off -> on revives exactly the variants marked retired_with_item = 1
+//     and clears the flag; one switched off on its own stays off.
+//
+// Explicit per-variant on/off writes clear the flag (DeactivateVariant,
+// SaveVariant, UpdateVariant), so it only ever means "off because its
+// item was switched off".
+func cascadeItemActiveToVariants(ctx context.Context, ex execer, itemID string, wasActive, nowActive bool) error {
+	switch {
+	case wasActive && !nowActive:
+		if _, err := ex.ExecContext(ctx, `UPDATE item_variants SET is_active = 0, retired_with_item = 1, updated_at = datetime('now') WHERE item_id = ? AND is_active = 1`, itemID); err != nil {
+			return fmt.Errorf("retire variants with item: %w", err)
+		}
+	case !wasActive && nowActive:
+		if _, err := ex.ExecContext(ctx, `UPDATE item_variants SET is_active = 1, retired_with_item = 0, updated_at = datetime('now') WHERE item_id = ? AND is_active = 0 AND retired_with_item = 1`, itemID); err != nil {
+			return fmt.Errorf("revive variants with item: %w", err)
+		}
 	}
 	return nil
 }
@@ -2374,7 +2413,9 @@ func (r *CatalogRepo) DeactivateVariant(ctx context.Context, variantID string) e
 	if variantID == "" {
 		return errors.New("variantID required")
 	}
-	if _, err := r.db.ExecContext(ctx, `UPDATE item_variants SET is_active = 0, updated_at = datetime('now') WHERE id = ?`, variantID); err != nil {
+	// An explicit switch-off: the variant stays off when its item is next
+	// switched back on, so retired_with_item clears (ut-docs#4348).
+	if _, err := r.db.ExecContext(ctx, `UPDATE item_variants SET is_active = 0, retired_with_item = 0, updated_at = datetime('now') WHERE id = ?`, variantID); err != nil {
 		return fmt.Errorf("deactivate variant: %w", err)
 	}
 	return nil
@@ -3199,8 +3240,10 @@ func (r *CatalogRepo) UpdateItemReturningWasActive(ctx context.Context, in catal
 	// opposed to a clean "not found") is swallowed here, not propagated —
 	// only the write's own error is a reason to fail the request.
 	wasActive := true
+	prevKnown := false
 	if prev, ok, err := getItemExec(ctx, tx, in.ID); err == nil && ok {
 		wasActive = prev.IsActive
+		prevKnown = true
 	}
 	// ut-docs#2314: read the item's PRE-UPDATE resolved price (price_history-
 	// aware, same resolution ItemCurrentPrices/ResolveCurrentPrice use) inside
@@ -3214,6 +3257,15 @@ func (r *CatalogRepo) UpdateItemReturningWasActive(ctx context.Context, in catal
 	oldPrice, priceKnown, _ := resolveCurrentPriceExec(ctx, tx, in.ID, "")
 	if err := updateItemExec(ctx, tx, in); err != nil {
 		return true, err
+	}
+	// ut-docs#4348: the editor's Active switch carries to the variants, as
+	// DeactivateItem/SaveItem do. Only when the previous state was really
+	// read — the swallowed-read-error default above is a guess, not a fact
+	// to cascade on.
+	if prevKnown {
+		if err := cascadeItemActiveToVariants(ctx, tx, in.ID, wasActive, in.IsActive); err != nil {
+			return true, fmt.Errorf("update item: %w", err)
+		}
 	}
 	if priceKnown {
 		if err := recordPriceChangeExec(ctx, tx, in.ID, "", oldPrice, in.BasePrice, time.Now()); err != nil {
@@ -3422,16 +3474,23 @@ func (r *CatalogRepo) UpdateVariant(ctx context.Context, in catalogtypes.Variant
 	// Same conservative swallow-the-read-error default as
 	// UpdateItemReturningWasActive's own price probe.
 	oldPrice, priceKnown, _ := resolveCurrentPriceExec(ctx, tx, "", in.ID)
+	// ut-docs#4348: the editor's variant form always posts its Active box,
+	// so only a write that actually CHANGES is_active is an explicit
+	// per-variant switch and clears retired_with_item; a price edit on a
+	// variant retired with its item (box echoed unticked) keeps the flag,
+	// so the variant still comes back when the item is switched on.
+	// (SQLite evaluates the CASE against the pre-update is_active.)
 	_, err = tx.ExecContext(ctx, `
 UPDATE item_variants
 SET sku = COALESCE(NULLIF(?, ''), sku),
     name = ?,
     price = ?,
     cost_price = ?,
+    retired_with_item = CASE WHEN is_active = ? THEN retired_with_item ELSE 0 END,
     is_active = ?,
     updated_at = datetime('now')
 WHERE id = ?
-`, nullableString(in.SKU), in.Name, in.Price, nullableInt64(in.CostPrice), active, in.ID)
+`, nullableString(in.SKU), in.Name, in.Price, nullableInt64(in.CostPrice), active, active, in.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrSKUExists

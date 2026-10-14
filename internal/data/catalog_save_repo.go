@@ -322,9 +322,8 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 		cur.NetQuantityUnit = nil
 		res.Changed = append(res.Changed, "net_quantity")
 	}
-	deactivate := false
+	wasActive := cur.IsActive
 	if p.Active != nil {
-		deactivate = cur.IsActive && !*p.Active
 		cur.IsActive = *p.Active
 		res.Changed = append(res.Changed, "active")
 	}
@@ -339,13 +338,13 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 			return res, fmt.Errorf("save item: record price change: %w", err)
 		}
 	}
-	if deactivate {
-		// The same cascade DeactivateItem applies: an item's variants retire
-		// with it. Reactivating never revives variants (their own state is
-		// not recoverable from here); the operator reactivates those one by
-		// one in the item editor.
-		if _, err := tx.ExecContext(ctx, `UPDATE item_variants SET is_active = 0, updated_at = datetime('now') WHERE item_id = ?`, p.ID); err != nil {
-			return res, fmt.Errorf("save item: deactivate variants: %w", err)
+	// The same cascade DeactivateItem applies (ut-docs#4348): switching the
+	// item off retires its live variants, switching it back on revives
+	// exactly those. A just-created item has no variants, so this is a
+	// no-op there.
+	if !res.Created {
+		if err := cascadeItemActiveToVariants(ctx, tx, p.ID, wasActive, cur.IsActive); err != nil {
+			return res, fmt.Errorf("save item: %w", err)
 		}
 	}
 
