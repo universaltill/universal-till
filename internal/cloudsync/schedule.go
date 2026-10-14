@@ -114,10 +114,10 @@ const retryAfterClamp = time.Hour
 // contract — 429 Too Many Requests and 503 Service Unavailable (design
 // point 3), and 402 plan_required, the cloud's refusal of the check-in for
 // a store without an active paid plan (ADR-0148 follow-up, ut-docs#3624,
-// Retry-After 3600). For an unpaid till that wait only ends in a gated
-// tick, which makes no call: it asks again at its next start-up or
-// operator action, never on a timer (ADR-0148 amendment §4,
-// ut-docs#3673). The hint still matters for a till whose cache says paid
+// Retry-After 3600). A 402 after which the till's ADR-0148 gate is closed
+// never reaches this: tick marks it gatedRefusal and the scheduler keeps
+// the normal cadence, because the ticks that follow make no sync call
+// (ut-docs#4304). The hint still matters for a till whose cache says paid
 // and whose 402 carries no entitlement block (an older cloud, a proxy):
 // that is the paid path, and it keeps honouring Retry-After. Any other
 // status's RetryAfter is ignored even if it happens to be set. Returns 0 when there is nothing to honour. errors.As, so the
@@ -140,6 +140,23 @@ func retryAfterHint(err error) time.Duration {
 		ra = retryAfterClamp
 	}
 	return ra
+}
+
+// gatedRefusal marks a 402 plan_required after which this till's ADR-0148
+// gate is closed (the refusal's block was cached and says not paid, or the
+// till was already unpaid): tick wraps it so the scheduler keeps the normal
+// cadence instead of the 402's Retry-After (ut-docs#4304). A 402 the gate
+// does not close on (no block: an older cloud or a proxy, ADR-0148
+// amendment §4) stays bare and keeps honouring Retry-After. errors.As still
+// reaches the *statusError inside.
+type gatedRefusal struct{ err error }
+
+func (g *gatedRefusal) Error() string { return g.err.Error() }
+func (g *gatedRefusal) Unwrap() error { return g.err }
+
+func gatedByRefusal(err error) bool {
+	var g *gatedRefusal
+	return errors.As(err, &g)
 }
 
 // scheduler owns Start's loop-level delay state (ut-docs#2588): how many
@@ -189,8 +206,16 @@ func (s *scheduler) next(tickErr error) time.Duration {
 	if s.auth != nil {
 		s.auth.observe(tickErr)
 	}
-	if tickErr == nil {
+	if tickErr == nil || gatedByRefusal(tickErr) {
+		// A 402 that closed this till's ADR-0148 gate (gatedRefusal) is
+		// the steady state of an unpaid till, not a failure: the next
+		// ticks make no sync call, so honouring its Retry-After would only
+		// hold back the local work that rides the tick — a sent issue
+		// report waited up to an hour (ut-docs#4304).
 		s.fails = 0
+		if s.auth != nil && s.auth.lockedOut() {
+			return authRetryWait
+		}
 		return jitteredWait(tickInterval(), s.rng())
 	}
 	s.fails++
