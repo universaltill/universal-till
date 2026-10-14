@@ -14,6 +14,14 @@ type PriceResolver interface {
 	Resolve(code string) (BasketLine, bool)
 }
 
+// ExactResolver is an optional PriceResolver extension (ut-docs#4342):
+// ResolveExact resolves by code only (barcode, shortcut, SKU), never by a
+// fuzzy name match. A resolver without one has no fuzzy tier, so Resolve
+// already is exact.
+type ExactResolver interface {
+	ResolveExact(code string) (BasketLine, bool)
+}
+
 type Service struct {
 	// mu guards all mutable state below (ut-docs#449): a Service instance is
 	// shared by every request handler (one goroutine per request, net/http's
@@ -585,6 +593,20 @@ func (s *Service) ResolveBase(code string) (BasketLine, bool) {
 	code = strings.TrimSpace(code)
 	if s.resolver == nil || code == "" {
 		return BasketLine{}, false
+	}
+	return s.resolver.Resolve(code)
+}
+
+// ResolveExact is ResolveBase restricted to exact code matches (ExactResolver,
+// ut-docs#4342) — what a scanner or camera read may resolve to. Unlocked for
+// the same reason as ResolveBase.
+func (s *Service) ResolveExact(code string) (BasketLine, bool) {
+	code = strings.TrimSpace(code)
+	if s.resolver == nil || code == "" {
+		return BasketLine{}, false
+	}
+	if er, ok := s.resolver.(ExactResolver); ok {
+		return er.ResolveExact(code)
 	}
 	return s.resolver.Resolve(code)
 }

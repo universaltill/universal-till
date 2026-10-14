@@ -375,6 +375,9 @@
            sale screen to it (or didn't, depending on whether layout had
            settled), hiding the top of the screen on load. -->
       <script>(function (f) { if (f) f.focus({ preventScroll: true }); })(document.currentScript.parentNode.querySelector('input[name=code]'));</script>
+      <!-- ut-docs#4342: app.js sets "scanner"/"camera" for a device read,
+           which resolves items by exact code only; empty = typed entry. -->
+      <input type="hidden" name="src" value="">
       <input type="number" name="qty" value="1" min="1" step="1" required title="{{ T "tender.scan.qty" }}" aria-label="{{ T "tender.scan.qty" }}">
       <button class="btn tender-icon-btn" type="submit" title="{{ T "tender.scan.add" }}">
         <span class="btn-ico" aria-hidden="true">{{ icon "plus" }}</span><span class="visually-hidden">{{ T "tender.scan.add" }}</span></button>
