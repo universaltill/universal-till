@@ -41,11 +41,12 @@ Nach einem Update zeigt Ihnen die Kasse, was sich geändert hat – in einfachen
 
 Die Android-App kann sich nicht wie die Desktop-Versionen selbst ersetzen, sie übergibt die neue Version daher an Androids eigenen Installer. Die Schritte sind etwas anders:
 
-1. Tippen Sie unten auf dem Bildschirm auf den grünen Update-Chip, dann erneut zur Bestätigung. Das ist alles — als Manager angemeldet werden Sie nicht nach einer PIN gefragt, genau wie unter Windows und Mac.
-2. Android lädt die neue App herunter — etwa 140 MB, geben Sie ihr also bei einer langsamen Verbindung einen Moment; der Chip zeigt währenddessen „Wird heruntergeladen“ — und zeigt dann seinen eigenen Bildschirm „Möchten Sie dieses Update installieren?“ an. Bestätigen Sie dort.
-3. Beim ersten Mal fragt Android möglicherweise, ob Universal Till Apps installieren darf. Erlauben Sie es, und tippen Sie dann erneut auf den Chip.
-4. Einstellungen → Software-Update macht dasselbe und zeigt zusätzlich, welche Version Sie ausführen und welche verfügbar ist.
-5. Das PIN-Feld für Manager und die Download-Schaltfläche erscheinen nur, wenn tatsächlich eine neue Version verfügbar ist — an einer aktuellen Kasse gibt es dort nichts anzutippen. Prüft die Kasse erneut, während Sie tippen, und stellt fest, dass Sie bereits auf dem neuesten Stand sind, teilt sie dies mit, statt etwas herunterzuladen.
+1. Tippen Sie unten auf dem Bildschirm auf den grünen Update-Chip. Er zeigt dann „Zum Installieren erneut tippen“ mit der neuen Versionsnummer; tippen Sie innerhalb weniger Sekunden erneut, um zu bestätigen. Das ist alles — als Manager angemeldet werden Sie nicht nach einer PIN gefragt, genau wie unter Windows und Mac.
+2. Android lädt die neue App herunter — auf den meisten Tablets etwa 40 MB, weil jedes Gerät nur das für es gebaute Paket lädt — und zeigt dann seinen eigenen Bildschirm „Möchten Sie dieses Update installieren?“ an. Bestätigen Sie dort. Während des Downloads zeigt der Chip den Fortschritt in Prozent. Erneutes Tippen während des Downloads startet ihn nicht von vorn.
+3. Beim ersten Mal fragt Android möglicherweise, ob Universal Till Apps installieren darf. Erlauben Sie es, und tippen Sie dann erneut auf den Chip. Die bereits heruntergeladene App wird sofort installiert, nicht ein zweites Mal heruntergeladen.
+4. Schlägt der Download fehl oder kommt er drei Minuten lang nicht weiter, zeigt der Chip „Update fehlgeschlagen — zum Wiederholen tippen“. Prüfen Sie die Verbindung und tippen Sie, um es erneut zu versuchen.
+5. Einstellungen → Software-Update macht dasselbe mit einem einzigen Tippen und zeigt zusätzlich, welche Version Sie ausführen und welche verfügbar ist. Nach „Nach Updates suchen“ startet die dortige Download-Schaltfläche dieselbe Installation.
+6. Das PIN-Feld für Manager und die Download-Schaltfläche erscheinen nur, wenn tatsächlich eine neue Version verfügbar ist — an einer aktuellen Kasse gibt es dort nichts anzutippen. Prüft die Kasse erneut, während Sie tippen, und stellt fest, dass Sie bereits auf dem neuesten Stand sind, teilt sie dies mit, statt etwas herunterzuladen.
 
 Sie werden in zwei Fällen nach einer Manager-PIN gefragt: Sie sind als Kassierer angemeldet, oder die Kasse befindet sich im Selbstbedienungsmodus. Im Selbstbedienungsmodus würde die Installation auch den Kiosk entsperren, daher ist die PIN dort auch für einen Manager erforderlich.
 

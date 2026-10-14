@@ -75,14 +75,15 @@ func TestUpdateFallbackHTML(t *testing.T) {
 	if strings.Contains(android, "available for this install") {
 		t.Errorf("android must not fall into the kiosk dead-end branch, got %q", android)
 	}
-	// ut-docs#1534: absolute, not a bare fragment — this line also renders in
-	// the status bar on every other page, where "#android-update" goes nowhere.
-	if !strings.Contains(android, `href="/settings#android-update"`) {
-		t.Errorf("android fallback should point at the PIN-gated install form by absolute path, got %q", android)
+	// ut-docs#4312: an install ACTION, not a link — the link pointed at
+	// /settings#android-update, the page the operator was already on, so
+	// tapping it started nothing.
+	if !strings.Contains(android, `data-android-update-install`) || strings.Contains(android, "<a ") {
+		t.Errorf("android fallback should be the shared install button, not a link, got %q", android)
 	}
-	// Installing drops the kiosk pin, which is what exit-to-os guards. This
-	// status line renders on pages a cashier can reach, so it must NOT call
-	// the bridge itself — only settings.html's PIN-gated form may.
+	// Installing drops the kiosk pin, which is what exit-to-os guards. The
+	// markup must NOT call the bridge itself — web/public/android-update.js
+	// does, only after POST /api/update/android-install authorised the caller.
 	if strings.Contains(android, "installUpdate") {
 		t.Errorf("android status line must not call the install bridge directly (ungated kiosk escape), got %q", android)
 	}

@@ -31,7 +31,7 @@ import org.junit.runner.RunWith
  * raises a system confirmation dialog the test cannot answer. On a
  * Device-Owner-provisioned device the OS state follows the same intent.
  *
- * Run on a device or emulator: `./gradlew connectedDebugAndroidTest`.
+ * Run on a device or emulator: `./gradlew connectedArm64DebugAndroidTest`.
  * Precondition: the till on that device has finished setup (an un-set-up
  * till redirects every page to the setup wizard, so `/self-order` never
  * loads).

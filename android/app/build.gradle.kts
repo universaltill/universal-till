@@ -17,6 +17,28 @@ val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
 val releaseSigningConfigured =
     !releaseKeystorePath.isNullOrBlank() && !releaseKeystorePassword.isNullOrBlank() && !releaseKeyAlias.isNullOrBlank()
 
+// ut-docs#1541: one APK per device ABI. The universal APK (both ABIs) was
+// 150 MB because every device downloaded the other ABI's 73 MB libgojni.so
+// it can never load. Each flavor bakes its OWN update URL into BuildConfig
+// (installUpdate() still takes no argument, ADR via ut-docs#1246), and the
+// universal build also carries the fixed per-ABI table so a till on it moves
+// to its own ABI's package on the next update (UpdateLogic.updateApkUrl).
+//
+// release.yml publishes these stable names on every release; the universal
+// one keeps the legacy name every v0.34.x till already has baked in.
+val updateApkUrlBase = "https://github.com/universaltill/universal-till/releases/latest/download/"
+val updateApkUrlArm64 = updateApkUrlBase + "unitill-pos-android-arm64-latest.apk"
+val updateApkUrlArmv7 = updateApkUrlBase + "unitill-pos-android-armv7-latest.apk"
+val updateApkUrlUniversal = updateApkUrlBase + "unitill-pos-android-latest.apk"
+
+// CI passes -PversionCode=MAJOR*1000000+MINOR*1000+PATCH (release.yml). Each
+// flavor's real versionCode is base*10 + an ABI digit: universal 0, armv7 1,
+// arm64 2. Monotonic over every earlier release (v0.34.1 was 34001; the next
+// release's universal build is ≥ 340010), and arm64 ranks highest, so a
+// 64-bit device that moves off the universal build never "downgrades" onto a
+// 32-bit package of the same release.
+val baseVersionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
+
 android {
     namespace = "com.universaltill.pos"
     compileSdk = 36
@@ -32,12 +54,54 @@ android {
         // Android's own package manager to treat a new APK as an upgrade
         // (matters even for sideloading, not just Play) — release.yml
         // derives it deterministically from the semver tag.
-        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
+        // The per-ABI digit is added by each product flavor below (#1541).
+        versionCode = baseVersionCode * 10
         versionName = (project.findProperty("versionName") as String?) ?: "0.1.0-dev"
-        // ut-docs#3466: runs src/androidTest (connectedDebugAndroidTest, on a
-        // device or emulator — not part of android-ci.yml's compile-only
-        // assembleDebug gate).
+        // ut-docs#3466: runs src/androidTest (connectedArm64DebugAndroidTest,
+        // on a device or emulator — not part of android-ci.yml's compile-only
+        // assemble gate).
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // ut-docs#1541: the fixed ABI -> package table a universal build
+        // picks from by Build.SUPPORTED_ABIS[0]. Compile-time, never page input.
+        buildConfigField("String", "UPDATE_APK_URL_ARM64", "\"$updateApkUrlArm64\"")
+        buildConfigField("String", "UPDATE_APK_URL_ARMV7", "\"$updateApkUrlArmv7\"")
+    }
+
+    // ut-docs#1541: tasks are assemble{Arm64,Armv7,Universal}{Debug,Release}.
+    flavorDimensions += "abi"
+    productFlavors {
+        create("arm64") {
+            dimension = "abi"
+            ndk { abiFilters += "arm64-v8a" }
+            versionCode = baseVersionCode * 10 + 2
+            buildConfigField("String", "UPDATE_APK_URL", "\"$updateApkUrlArm64\"")
+            buildConfigField("boolean", "UPDATE_UNIVERSAL", "false")
+        }
+        create("armv7") {
+            dimension = "abi"
+            ndk { abiFilters += "armeabi-v7a" }
+            versionCode = baseVersionCode * 10 + 1
+            buildConfigField("String", "UPDATE_APK_URL", "\"$updateApkUrlArmv7\"")
+            buildConfigField("boolean", "UPDATE_UNIVERSAL", "false")
+        }
+        create("universal") {
+            dimension = "abi"
+            ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+            versionCode = baseVersionCode * 10
+            buildConfigField("String", "UPDATE_APK_URL", "\"$updateApkUrlUniversal\"")
+            buildConfigField("boolean", "UPDATE_UNIVERSAL", "true")
+        }
+    }
+
+    // ut-docs#1541: compress libgojni.so inside the APK (74.5 MB -> ~35 MB per
+    // ABI). The modern default stores it uncompressed so it can be mmapped
+    // straight from the APK; the cost of compressing is that Android extracts
+    // it at install (~75 MB on disk), which a till has room for — the download
+    // size is what every shop pays on every update.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 
     signingConfigs {
@@ -228,7 +292,11 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
 
     // ut-docs#3466 (ADR-0142, #1508 AC3): the instrumented remote-unlock
-    // regression test. Device/emulator only (connectedDebugAndroidTest).
+    // regression test. Device/emulator only (connectedArm64DebugAndroidTest).
+    // ut-docs#1541/#4312: JVM unit tests for the pure update decisions
+    // (UpdateLogic) — `./gradlew testArm64DebugUnitTest`, no device needed.
+    testImplementation("junit:junit:4.13.2")
+
     androidTestImplementation("androidx.test:core:1.6.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

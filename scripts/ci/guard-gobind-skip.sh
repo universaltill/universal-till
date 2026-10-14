@@ -8,7 +8,7 @@
 #   // skipped function SetBluetoothBridge with unsupported parameter or return types
 #
 # ...and still EXITS 0. android-ci.yml's `compile` job (`./gradlew
-# assembleDebug`) is a compile-only gate and cannot see this: the Kotlin
+# assembleArm64Debug`) is a compile-only gate and cannot see this: the Kotlin
 # side never references the dropped method, so nothing there fails either.
 # The original real occurrence was ut-docs#1721: mobile.SetBluetoothBridge
 # took a parameter type declared in internal/bluetooth (an unbound

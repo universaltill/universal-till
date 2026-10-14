@@ -50,8 +50,14 @@ no rewrite, no second plugin host.
 ## Build
 
 ```sh
-./gradlew assembleDebug
+./gradlew assembleArm64Debug          # most devices (64-bit ARM)
+./gradlew testArm64DebugUnitTest      # JVM unit tests (src/test), no device
 ```
+
+The app has one product flavor per device ABI (ut-docs#1541, dimension
+`abi`): `arm64`, `armv7` and `universal` (both). Every task name carries the
+flavor — `assemble{Arm64,Armv7,Universal}{Debug,Release}`, output under
+`app/build/outputs/apk/<flavor>/<buildType>/`.
 
 The `generateAar` Gradle task runs `gomobile bind` automatically as
 part of `preBuild` — `app/libs/unitill-mobile.aar` is a build artifact,
@@ -71,7 +77,7 @@ avdmanager create avd -n unitill-test -k "system-images;android-36;google_apis;a
 
 # Boot + install + launch
 emulator -avd unitill-test &
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/arm64/debug/app-arm64-debug.apk
 adb shell am start -n com.universaltill.pos/.MainActivity
 ```
 
@@ -123,8 +129,10 @@ independent review's 4 findings were fixed, not just before:
 Self-signed APK, direct sideload distribution — no Google Play involvement
 (Farshid's choice, matching this app's "no Google contact" posture
 everywhere else). `.github/workflows/release.yml`'s `android-app` job
-builds, signs, and attaches `unitill-pos_<version>_android.apk` to every
-GitHub release automatically, alongside the desktop builds; the site's
+builds, signs, and attaches `unitill-pos_<version>_android-arm64.apk`,
+`unitill-pos_<version>_android-armv7.apk` and the universal
+`unitill-pos_<version>_android.apk` (plus a `*-latest.apk` copy of each, see
+"Per-ABI packages" below) to every GitHub release automatically, alongside the desktop builds; the site's
 `/download` page picks it up with zero code changes needed (same live
 GitHub Releases API mechanism the other platforms already use).
 
@@ -154,6 +162,42 @@ GitHub Releases API mechanism the other platforms already use).
 - Live-verified: a real signed release APK installed and launched on the
   emulator, and upgrading an existing install with a newer signed build
   (same key) succeeded with no uninstall needed.
+
+## Per-ABI packages and the in-app update (ut-docs#1541, ut-docs#4312)
+
+- **One APK per ABI.** The universal APK was 150 MB: both ABIs' 73–75 MB
+  `libgojni.so`, stored uncompressed. Now each flavor carries only its own ABI
+  and `packaging.jniLibs.useLegacyPackaging = true` deflates the library
+  (Android extracts it at install, ~75 MB on disk). Measured 2026-10-14
+  (unsigned release): arm64 38.3 MB, armv7 38.4 MB, universal 73.9 MB.
+- **versionCode** = `base*10 + {universal 0, armv7 1, arm64 2}`, where CI's
+  base is `MAJOR*1000000 + MINOR*1000 + PATCH`. Above every earlier release
+  (v0.34.1 was 34001), and arm64 outranks the other two of the same release.
+- **Update URL per flavor** (`BuildConfig.UPDATE_APK_URL`):
+  `unitill-pos-android-arm64-latest.apk`, `…-armv7-latest.apk`, and the
+  legacy `unitill-pos-android-latest.apk` for universal — the name every
+  v0.34.x till has baked in, so it stays the universal build. A till on the
+  universal build moves to its own ABI's package, picked from the fixed
+  compile-time table by `Build.SUPPORTED_ABIS[0]` (`UpdateLogic.updateApkUrl`).
+  `installUpdate()` still takes no argument. `scripts/ci/guard-android-abi-packages.sh`
+  keeps the flavors, the compression and release.yml's published names in step.
+- **Reliable update flow.** One shared page flow (`web/public/android-update.js`)
+  for the status chip, the Settings form and the check-for-updates button. In
+  `MainActivity`: the DownloadManager id is kept (SharedPreferences
+  `in_app_update`), so a repeat tap only re-reports; a complete APK is
+  installed instead of downloaded again when its size matches the server's
+  Content-Length (HEAD), it parses and it is newer than the running build; a
+  download fails on a 3-minute stall or a 60-minute cap; state goes to the
+  page as `window.utAndroidUpdate({state, percent, error})` and to logcat as
+  `update: …` lines (`adb logcat -s MainActivity`).
+- **Verified on the API 36 emulator** (2026-10-14, a test build pointing at a
+  throttled local server, not the real tablet): progress 0→94 % reported to the
+  page, a repeat call mid-download logged "already in progress" and did not
+  restart, the installer's "Do you want to update this app?" opened, a second
+  call after completion reused the file (HEAD only, no GET), and a server that
+  stopped sending ended as `failed` on the page and in logcat. The 3-minute
+  stall path itself is covered by `UpdateLogicTest` (DownloadManager gave up
+  first on the emulator, reason 1008).
 
 ## Kiosk lock-down (ut-docs#1254, corrected by ut-docs#1508)
 
@@ -200,7 +244,7 @@ What's implemented now, all in `MainActivity`:
   `engageKioskLock`/`releaseKioskLock` push the intended pin state to Go
   (`Mobile.setKioskPinned`), reported on check-in as `kiosk_pinned`.
   Instrumented test: `app/src/androidTest/.../RemoteKioskUnlockTest.kt`
-  (`./gradlew connectedDebugAndroidTest`, needs a set-up till).
+  (`./gradlew connectedArm64DebugAndroidTest`, needs a set-up till).
 - **Immersive full-screen** (androidx `WindowInsetsControllerCompat`)
   hides the status and navigation bars as a cosmetic second layer,
   **in every mode, self-order or not** — a swipe reveals them

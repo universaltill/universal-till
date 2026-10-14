@@ -33,9 +33,10 @@ name: android-ci
 # time path evaluation.
 #
 # Deliberately compile-only: no instrumented tests, no signed/
-# distributable artifact — `assembleDebug` (unsigned, no keystore
+# distributable artifact — `assembleArm64Debug` (unsigned, no keystore
 # needed) is enough to prove the Kotlin actually compiles against the
-# generated Go .aar, which is the entire gap this closes.
+# generated Go .aar, which is the entire gap this closes. (Plus the JVM unit
+# tests in android/app/src/test, which need no device.)
 on:
   push:
     branches: [main]
@@ -151,13 +152,17 @@ jobs:
       - name: "Guard: gobind must not silently skip a binding"
         if: steps.filter.outputs.match == 'true'
         run: bash scripts/ci/guard-gobind-skip.sh
-      - name: Compile Android app (Gradle assembleDebug)
+      - name: Compile Android app + JVM unit tests (Gradle assembleArm64Debug)
         if: steps.filter.outputs.match == 'true'
-        # assembleDebug's preBuild dependency on generateAar means this
+        # The build's preBuild dependency on generateAar means this
         # single command exercises both halves of the app: the Go ->
         # .aar bind, and the Kotlin compile against it. Unsigned debug
         # build type — no keystore secrets needed for a compile check.
+        # ut-docs#1541: the app has per-ABI product flavors (arm64, armv7,
+        # universal) that share every source file, so one flavor proves the
+        # compile; assembleDebug would compile the same code three times.
+        # testArm64DebugUnitTest runs src/test (UpdateLogic, #4312) on the JVM.
         run: |
           set -euo pipefail
           cd android
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleArm64Debug testArm64DebugUnitTest --no-daemon
