@@ -209,6 +209,21 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// customers, so its new token and any staff session this browser
 		// still carried are revoked, as the Settings switch does (#1259).
 		if user.ID == kioskUserID {
+			// ut-docs#4295: on an additional joined till, becoming a kiosk
+			// means becoming a satellite, which only Settings → Device
+			// profile does (it asks first and tells the main till). Refuse
+			// with that pointer and change nothing — the kiosk user still
+			// never keeps its session, and the browser's staff session is
+			// left alone because the screen is not turning customer-facing.
+			if displayModeRoleRefusal(ownTillRole(r.Context(), d), "self_order") != "" {
+				svc.Logout(r.Context(), token)
+				role := ownTillRole(r.Context(), d)
+				logging.L().Infof("kiosk PIN sign-in refused on a %s till (use Settings → Device profile)", role)
+				_ = posRepo.InsertAudit(r.Context(), nil, user.ID, "settings", "display.mode", "kiosk_mode_refused",
+					map[string]any{"mode": "self_order", "till_role": role}, now, "")
+				renderLogin(w, r, "settings.display.additional_kiosk_use_profile", next)
+				return
+			}
 			svc.Logout(r.Context(), token)
 			if c, err := r.Cookie(auth.CookieName); err == nil {
 				svc.Logout(r.Context(), c.Value)

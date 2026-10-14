@@ -3330,13 +3330,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// handler's satellite gate.
 		// ut-docs#4263: nor around its additional-till confirm (an additional
 		// till becoming a kiosk must ask first and tell the main till).
+		// ut-docs#4295: and only a real device profile, as that handler's
+		// err_invalid_mode (an unknown value would leave the till in no mode).
 		if key == "display.mode" {
-			switch role := ownTillRole(r.Context(), d); {
-			case value != "self_order" && role == data.TillRoleSatellite:
-				httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), "settings.display.satellite_mode_blocked"), http.StatusBadRequest)
+			if !validDisplayMode(value) {
+				httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), "settings.display.err_invalid_mode"), http.StatusBadRequest)
 				return
-			case value == "self_order" && role == data.TillRoleAdditional:
-				httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), "settings.display.additional_kiosk_use_profile"), http.StatusBadRequest)
+			}
+			if refusal := displayModeRoleRefusal(ownTillRole(r.Context(), d), value); refusal != "" {
+				httpx.RefuseText(w, httpx.T(httpx.ResolveLocale(w, r), refusal), http.StatusBadRequest)
 				return
 			}
 		}
