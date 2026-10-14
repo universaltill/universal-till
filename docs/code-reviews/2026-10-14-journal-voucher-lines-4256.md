@@ -49,3 +49,14 @@ is in the page:
 ## Verdict
 
 Safe to merge.
+
+## CI follow-up
+
+The first push failed `guard-docs-shots`: the surface and the `reports` topic
+changed, so the screenshot manifest was stale. A first `make docs-shots` run
+rewrote 116 PNGs because the till's "Storage almost full" chip leaked into
+them: this container's volume had less than 10% free, below
+`diskspace.Floor`. That run was discarded. Re-run with `TMPDIR=/dev/shm` so
+the throwaway till's data dir sits on a roomy tmpfs, every PNG came out
+byte-identical and only `manifest.json` changed. The harness's dependence on
+host disk space is filed as its own card.
