@@ -2279,6 +2279,7 @@
   "settings.diagnostics.stop_confirm_none": "لا يوجد شيء بانتظار الرفع. هل تريد إيقاف وضع التشخيص؟",
   "settings.diagnostics.stopped": "وضع التشخيص متوقف. تم تجاهل %d دفعات غير مرسلة (%d أحداث).",
   "settings.diagnostics.title": "وضع التشخيص",
+  "settings.display.additional_kiosk_use_profile": "هذا الصندوق صندوق إضافي. لتحويله إلى كشك الطلب الذاتي، استخدم الإعدادات ← ملف الجهاز — فهو يسألك أولاً ويُبلغ الصندوق الأساسي.",
   "settings.display.apply": "تطبيق",
   "settings.display.basket_panel_help": "في شاشة البيع، اضغط مطوّلاً على الفاصل بين السلة وأزرار المنتجات (أو انقر واسحبه بالماوس) لتكبير أي جانب. تُعيد إعادة الضبط القسمة الافتراضية.",
   "settings.display.basket_panel_reset_btn": "إعادة ضبط الفاصل",

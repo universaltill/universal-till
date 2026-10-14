@@ -2264,6 +2264,7 @@
   "settings.diagnostics.stop_confirm_none": "Nothing is waiting to upload. Turn diagnostic mode off?",
   "settings.diagnostics.stopped": "Diagnostic mode is off. %d unsent batches (%d events) were discarded.",
   "settings.diagnostics.title": "Diagnostic mode",
+  "settings.display.additional_kiosk_use_profile": "This till is an additional till. To make it a self-order kiosk, use Settings → Device profile — it asks first and tells the main till.",
   "settings.display.apply": "Apply",
   "settings.display.basket_panel_help": "On the sell screen, press and hold the divider between the basket and the product buttons (or just click and drag it with a mouse) to make either side bigger. Reset puts it back to the default split.",
   "settings.display.basket_panel_reset_btn": "Reset divider",
