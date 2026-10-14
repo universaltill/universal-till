@@ -11,9 +11,10 @@ The first-parent merges since v0.34.2, read from each PR and its card's close-ou
 - New: a lapsed till checks in hourly, so a renewal arrives by itself, and managers get **Check now** (ut-docs#4285).
 - Improved: per-processor Android packages (38 MB instead of 150 MB) (ut-docs#1541), and the compiled-in marketplace signing key (ut-docs#4292).
 - Fixed: the Android in-app update flow (ut-docs#4312), and a self-order satellite now staying a kiosk on staff sign-in (ut-docs#4307).
+- Fixed (added after #1928 merged during CI): printed receipt labels now follow the shop's language (ut-docs#4199); the same five locales, wording checked against the PR and its manual change.
 - Left out on purpose:
   - ut-docs#4150 is the till side of my.'s sale detail. It is groundwork, and nothing reaches an owner until #4151/#4152 ship (RELEASING.md step 1, ut-docs#4219).
-  - ut-docs#2238 (dead-code removal) and ut-docs#4258 (CI test sandbox) are internal.
+  - ut-docs#2238 (dead-code removal) and ut-docs#4258 (CI test sandbox) are internal, and so is ut-docs#2248 (an operator-only desktop-shell timing override).
 
 ## Findings
 
