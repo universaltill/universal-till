@@ -68,3 +68,22 @@
 - ut-docs#4343: variant barcode attach fails silently on inactive variants.
 
 **Verdict:** safe to merge.
+
+## Follow-up: CI failure on the first push (2026-10-14, Fable review)
+
+**What failed:** "a scanner on a slow 100 ms transmit setting is still a scanner read" got `src=""` in CI only. `page.clock.install()` leaves the fake clock running in real time, so each `keyboard.press` round trip on the runner was added to every 100 ms gap and pushed the median past 120 ms.
+
+**Fix:** `openWithPausedClock` pauses the clock after load. Gaps now move only on `runFor`.
+
+**Verified:**
+- With 40 ms of real latency injected per key, the old spec fails with CI's exact error and the new one passes.
+- Mutations: `SCAN_GAP_MS` 100 fails the 100 ms case. `slow <= 2` and `SCAN_GAP_MS` 140 fail the two new negative cases.
+- The other CI failures on that run (locations dialog at the kiosk floor, phone /backoffice width, phone sell, popup fit) were all checked on the branch rebased onto main: 112 passed. They came from the stale base.
+- `web/help/img/manifest.json` regenerated (hashes only, no PNG changed). Guard fresh.
+
+**Fable findings:**
+- *Minor*, fixed: the rule's negatives weren't pinned. Added "two slow gaps → typed" and "steady 130 ms → typed".
+- *Nit*, fixed: commented the `+1000` in `pauseAt`.
+- No blockers.
+
+**Verdict:** safe to merge once CI is green on the rebased head.
