@@ -4,7 +4,7 @@
 
 ## What shipped
 
-Owner-facing notes `web/release-notes/{en,de,ar,fa,tr}/v0.34.2.md` for the merges since v0.34.1: revoked plugin permissions survive updates (#4145), a VAT rate's share of a sale discount is capped at its goods (#4277), the recovery screen sits behind the LAN guard (#4268), and its safe-mode link only shows where it works (#4290). Added after review, because #1910 merged meanwhile: no running-out predictions/digest when the shop sells without tracking stock (#4134) — wording taken from that PR's commit message and help diff, terms from `settings.stock_tracking.label` in each locale. #4263 (the settings-API refusal of self-order on an additional till) is left out: it changes no screen an owner uses.
+Owner-facing notes `web/release-notes/{en,de,ar,fa,tr}/v0.34.2.md` for the merges since v0.34.1: revoked plugin permissions survive updates (#4145), a VAT rate's share of a sale discount is capped at its goods (#4277), the recovery screen sits behind the LAN guard (#4268), and its safe-mode link only shows where it works (#4290). Added after review, because #1910 merged meanwhile: no running-out predictions/digest when the shop sells without tracking stock (#4134) — wording taken from that PR's commit message and help diff, terms from `settings.stock_tracking.label` in each locale. Likewise #1916 (#4301): each charge banded on its own so invoice/receipt VAT table/Z report match the signed receipt — from that PR's commit message. #4263 (the settings-API refusal of self-order on an additional till) is left out: it changes no screen an owner uses.
 
 ## Findings
 
