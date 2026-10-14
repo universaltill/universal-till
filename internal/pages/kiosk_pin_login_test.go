@@ -281,3 +281,158 @@ func TestKioskPINLogin_SatelliteStillEntersSelfOrder(t *testing.T) {
 		t.Fatalf("display.mode = %q, want self_order", got)
 	}
 }
+
+// ut-docs#4307: a satellite can only be a kiosk, so staff signing in through
+// the kiosk's own lock must not switch it to Register (its role would stay
+// satellite on both sides). A manager still gets in — a maintenance sign-in
+// that keeps the kiosk profile and lands on Settings, where Status and the
+// lock are reachable as on every operator page.
+func TestKioskPINLogin_SatelliteManagerSignInKeepsKioskAndReachesSettings(t *testing.T) {
+	dp, svc, h := kioskLoginHarness(t)
+	kioskJoinAs(t, dp, "satellite")
+	if rec := kioskPostLogin(h, "9090", "", nil); rec.Header().Get("Location") != "/self-order" {
+		t.Fatalf("setup: kiosk login → %q", rec.Header().Get("Location"))
+	}
+
+	rec := kioskPostLogin(h, "4321", "kiosk", nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings" {
+		t.Fatalf("manager PIN via the kiosk lock on a satellite = %d → %q, want 303 → /settings", rec.Code, rec.Header().Get("Location"))
+	}
+	if got := kioskDisplayMode(t, dp); got != "self_order" {
+		t.Fatalf("display.mode = %q after a manager sign-in on a satellite, want self_order (a satellite is only ever a kiosk)", got)
+	}
+	if got := ownTillRole(t.Context(), dp); got != "satellite" {
+		t.Fatalf("own role = %q, want satellite", got)
+	}
+	if refusal := displayModeRoleRefusal(ownTillRole(t.Context(), dp), kioskDisplayMode(t, dp)); refusal != "" {
+		t.Fatalf("role and mode disagree after the sign-in: %s", refusal)
+	}
+	cookie := kioskSessionCookie(rec)
+	if cookie == nil || cookie.Value == "" {
+		t.Fatal("a manager must still be signed in on a satellite")
+	}
+	if _, ok := svc.Resolve(t.Context(), cookie.Value); !ok {
+		t.Fatal("the manager's session is not live")
+	}
+	// Settings is reachable with that session (not bounced back to the
+	// kiosk the way "/" is while the till is in self-order mode).
+	settings := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req.AddCookie(cookie)
+	h.ServeHTTP(settings, req)
+	if settings.Code != http.StatusOK {
+		t.Fatalf("GET /settings after the maintenance sign-in = %d → %q, want 200", settings.Code, settings.Header().Get("Location"))
+	}
+	var exited, maint int
+	if err := dp.Db.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM audit_log WHERE action='kiosk_mode_exited'),
+		(SELECT COUNT(*) FROM audit_log WHERE action='kiosk_maintenance_sign_in')`).Scan(&exited, &maint); err != nil {
+		t.Fatal(err)
+	}
+	if exited != 0 || maint != 1 {
+		t.Fatalf("audit rows: kiosk_mode_exited=%d kiosk_maintenance_sign_in=%d, want 0 and 1", exited, maint)
+	}
+}
+
+// A cashier can't open Settings at all (ut-docs#3079) and can't take a
+// satellite out of kiosk mode, so their PIN through the kiosk lock is
+// refused with the satellite pointer: no session, mode and role unchanged,
+// and the kiosk's own back-out on the sign-in screen still leads back.
+func TestKioskPINLogin_SatelliteCashierRefusedWithSatellitePointer(t *testing.T) {
+	dp, _, h := kioskLoginHarness(t)
+	initTillRoleI18n(t)
+	kioskJoinAs(t, dp, "satellite")
+	if rec := kioskPostLogin(h, "9090", "", nil); rec.Header().Get("Location") != "/self-order" {
+		t.Fatalf("setup: kiosk login → %q", rec.Header().Get("Location"))
+	}
+
+	rec := kioskPostLogin(h, "1234", "kiosk", nil)
+	if rec.Code == http.StatusSeeOther {
+		t.Fatalf("cashier PIN via the kiosk lock on a satellite redirected to %q, want the sign-in page with the refusal", rec.Header().Get("Location"))
+	}
+	if !strings.Contains(rec.Body.String(), "This till is a satellite") {
+		t.Fatalf("cashier PIN on a satellite: %d, body lacks the satellite pointer:\n%s", rec.Code, rec.Body)
+	}
+	if c := kioskSessionCookie(rec); c != nil && c.Value != "" {
+		t.Fatal("a refused cashier sign-in set a session cookie")
+	}
+	var live int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE user_id IN (SELECT id FROM users WHERE username='cash') AND revoked_at IS NULL`).Scan(&live); err != nil || live != 0 {
+		t.Fatalf("cashier has %d live sessions (err %v) after a refused sign-in, want 0", live, err)
+	}
+	if got := kioskDisplayMode(t, dp); got != "self_order" {
+		t.Fatalf("display.mode = %q after a refused sign-in, want self_order", got)
+	}
+	var exited, refused int
+	if err := dp.Db.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM audit_log WHERE action='kiosk_mode_exited'),
+		(SELECT COUNT(*) FROM audit_log WHERE action='kiosk_mode_refused')`).Scan(&exited, &refused); err != nil {
+		t.Fatal(err)
+	}
+	if exited != 0 || refused != 1 {
+		t.Fatalf("audit rows: kiosk_mode_exited=%d kiosk_mode_refused=%d, want 0 and 1", exited, refused)
+	}
+}
+
+// ut-docs#4307 review finding: after a maintenance sign-in on a satellite,
+// locking must hand the screen back to the kiosk, not strand it on the staff
+// keypad — both the Lock button and the idle auto-lock (whose timer follows
+// the X-UT-Lock-To hint, app.js). Elsewhere locking still shows the keypad.
+func TestKioskPINLogin_SatelliteLockReturnsToKiosk(t *testing.T) {
+	signIn := func(t *testing.T, role string) (*common.Deps, http.Handler, *http.Cookie) {
+		t.Helper()
+		dp, _, h := kioskLoginHarness(t)
+		if role != "" {
+			kioskJoinAs(t, dp, role)
+		}
+		if role == "satellite" {
+			if rec := kioskPostLogin(h, "9090", "", nil); rec.Header().Get("Location") != "/self-order" {
+				t.Fatalf("setup: kiosk login → %q", rec.Header().Get("Location"))
+			}
+			return dp, h, kioskSessionCookie(kioskPostLogin(h, "4321", "kiosk", nil))
+		}
+		return dp, h, kioskSessionCookie(kioskPostLogin(h, "4321", "", nil))
+	}
+	post := func(h http.Handler, path string, cookie *http.Cookie, htmx bool) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.AddCookie(cookie)
+		if htmx {
+			req.Header.Set("HX-Request", "true")
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("satellite", func(t *testing.T) {
+		_, h, cookie := signIn(t, "satellite")
+		if rec := post(h, "/api/auth/logout", cookie, false); rec.Header().Get("Location") != "/" {
+			t.Fatalf("Lock on a satellite kiosk → %q, want / (back to the kiosk)", rec.Header().Get("Location"))
+		}
+		root := httptest.NewRecorder()
+		h.ServeHTTP(root, httptest.NewRequest(http.MethodGet, "/", nil))
+		if root.Header().Get("Location") != "/self-order" {
+			t.Fatalf("anonymous / after the lock → %q, want /self-order", root.Header().Get("Location"))
+		}
+		_, h, cookie = signIn(t, "satellite")
+		if rec := post(h, "/api/auth/logout", cookie, true); rec.Header().Get("HX-Redirect") != "/" {
+			t.Fatalf("htmx Lock on a satellite kiosk → HX-Redirect %q, want /", rec.Header().Get("HX-Redirect"))
+		}
+		_, h2, cookie2 := signIn(t, "satellite")
+		if rec := post(h2, "/api/auth/idle-lock", cookie2, false); rec.Code != http.StatusNoContent || rec.Header().Get("X-UT-Lock-To") != "/" {
+			t.Fatalf("idle-lock on a satellite kiosk = %d, X-UT-Lock-To %q, want 204 and /", rec.Code, rec.Header().Get("X-UT-Lock-To"))
+		}
+	})
+	for _, role := range []string{"", "additional"} {
+		t.Run("role="+role, func(t *testing.T) {
+			_, h, cookie := signIn(t, role)
+			if rec := post(h, "/api/auth/logout", cookie, false); rec.Header().Get("Location") != "/login" {
+				t.Fatalf("Lock → %q, want /login", rec.Header().Get("Location"))
+			}
+			_, h2, cookie2 := signIn(t, role)
+			if rec := post(h2, "/api/auth/idle-lock", cookie2, false); rec.Header().Get("X-UT-Lock-To") != "" {
+				t.Fatalf("idle-lock sent X-UT-Lock-To %q off a satellite kiosk, want none", rec.Header().Get("X-UT-Lock-To"))
+			}
+		})
+	}
+}
