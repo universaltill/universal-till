@@ -45,14 +45,14 @@ and item delete don't touch it). DeactivateItem's new tx has no caller holding a
   (throwaway test on modernc.org/sqlite, both SET orders).
 - TDD re-verified by the reviewer in its own worktree: with the off → on branch disabled all
   five `*_4348` tests fail on the "after switch-on" assertion; restored, all pass.
-- No UI change; no screenshots regenerated. No surface needed a visual check.
+- No UI change, so no surface needed a visual check. CI's guard-docs-shots flagged the edited catalog topic: `make docs-shots` regenerated the four catalog screenshots + manifest (only those committed; the guard is green on them).
 
 ## Gate
 
 gofmt clean · go build ./... · go vet · go test ./... (full) · golangci-lint 0 issues ·
 guards: data-access, i18n, help-topics, help-drift, card-data-schema,
 migration-version-collision, core-neutral, compliance-claims, competitor-naming,
-price-history-sync, kiosk-engine, no-showmodal.
+price-history-sync, kiosk-engine, no-showmodal, docs-shots (+ its self-test).
 
 ## Verdict
 
