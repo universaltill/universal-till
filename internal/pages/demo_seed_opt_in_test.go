@@ -178,6 +178,7 @@ func TestSetupWizardShopTypeSavedAndDemoDataFieldIgnored(t *testing.T) {
 		"currency":     {"GBP"},
 		"tax_rate_pct": {"20"},
 		"store_name":   {"Corner Shop"},
+		"till_name":    {"Till 1"},
 		"shop_type":    {"cafe"},
 		"demo_data":    {"on"},
 	}, nil)
@@ -215,6 +216,7 @@ func TestSetupWizardNoDemoByDefaultAndInvalidShopTypeIgnored(t *testing.T) {
 		"country":     {"GB"},
 		"currency":    {"GBP"},
 		"store_name":  {"Corner Shop"},
+		"till_name":   {"Till 1"},
 		"shop_type":   {"unicorn_farm"},
 	}, nil)
 	if rec.Code != http.StatusSeeOther {

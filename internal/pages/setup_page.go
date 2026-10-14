@@ -163,6 +163,11 @@ func wizardCountryCodes(countries []setupCountry) []string {
 // name; it re-opens the wizard on the shop-name step (ut-docs#3096).
 const keyStoreNameRequired = "setup.error.store_name_required"
 
+// keyTillNameRequired is the wizard error for a blank or invalid till name
+// (ut-docs#4146: no default till name — the operator names it on step 4).
+// An existing key, shared with the pairing dialog's action-neutral wording.
+const keyTillNameRequired = "tills.pairing.error.name_required_field"
+
 // maxStoreNameRunes matches the shop-name inputs' maxlength="60".
 const maxStoreNameRunes = 60
 
@@ -365,8 +370,8 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if strings.HasPrefix(errKey, "setup.error.tse_") {
 			errStep = 3
 		}
-		if errKey == keyStoreNameRequired {
-			errStep = 4 // the shop-name step (ut-docs#3096)
+		if errKey == keyStoreNameRequired || errKey == keyTillNameRequired {
+			errStep = 4 // the shop/till-name step (ut-docs#3096, ut-docs#4146)
 		}
 		data["errStep"] = errStep
 		// startStep is the step the wizard actually opens on: an error
@@ -397,7 +402,12 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			if errKey != keyStoreNameRequired {
 				data["storeName"] = strings.TrimSpace(r.PostFormValue("store_name"))
 			}
-			data["tillName"] = strings.TrimSpace(r.PostFormValue("till_name"))
+			// ut-docs#4146: likewise a refused till name (a control
+			// character, too long) is not echoed: the field would look
+			// filled while every resubmit fails with "required".
+			if errKey != keyTillNameRequired {
+				data["tillName"] = strings.TrimSpace(r.PostFormValue("till_name"))
+			}
 		}
 		// ut-docs#3872: plugin panels for setup.wizard.steps, asked in
 		// parallel within the 2 s slot budget; "" when none answers.
@@ -563,6 +573,14 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			renderWizard(w, r, keyStoreNameRequired, "")
 			return
 		}
+		// ut-docs#4146: the till is named too — no "Till 1" default. Same
+		// strict rule as the cloud's rename_till (validateTillName), and
+		// checked before anything is persisted.
+		tillName, tillNameErr := validateTillName(r.PostFormValue("till_name"))
+		if tillNameErr != nil {
+			renderWizard(w, r, keyTillNameRequired, "")
+			return
+		}
 
 		// Locale/currency/tax — same application path as /api/settings/save.
 		st := d.CurrentState()
@@ -650,11 +668,9 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			http.Error(w, "setup failed", http.StatusInternalServerError)
 			return
 		}
-		if name := strings.TrimSpace(r.Form.Get("till_name")); name != "" {
-			if err := d.Settings.Set(r.Context(), "till.name", name); err != nil {
-				http.Error(w, "setup failed", http.StatusInternalServerError)
-				return
-			}
+		if err := d.Settings.Set(r.Context(), "till.name", tillName); err != nil {
+			http.Error(w, "setup failed", http.StatusInternalServerError)
+			return
 		}
 		// Shop type (ut-docs#539, taxonomy per ADR-0026): optional, only a
 		// known value is persisted — a garbage/absent value just leaves the

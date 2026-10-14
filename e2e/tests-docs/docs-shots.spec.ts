@@ -259,6 +259,7 @@ async function ensureOperator(page: Page) {
     await step(2).locator('button.picker-tile[value="GB"]').click();
     await step(2).locator('.setup-nav button', { hasText: 'Next' }).click(); // country
     await page.locator('input[name=store_name]').fill('Demo Shop');
+    await page.locator('input[name=till_name]').fill('Till 1'); // required, no default (ut-docs#4146); the name the screenshots were taken with
     await step(4).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop name (step 3 is the DE-only business-identity step — GB skips it)
     await step(5).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop type (optional, ut-docs#539)
     await step(6).locator('input[name=pin]').fill(ADMIN_PIN);

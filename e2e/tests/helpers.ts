@@ -315,6 +315,7 @@ export async function ensureOperator(page: Page) {
     await step(2).locator('button.picker-tile[value="GB"]').click();
     await step(2).locator('.setup-nav button', { hasText: 'Next' }).click(); // country
     await page.locator('input[name=store_name]').fill('Demo Shop');
+    await page.locator('input[name=till_name]').fill('Front till'); // required, no default (ut-docs#4146)
     // Step numbers from here on: data-step="3" is the Germany-only business-
     // identity step (ADR-0053/ut-docs#802) — this flow picks GB, so the
     // wizard jumps 2 -> 4. Since ut-docs#3709 the wizard has seven steps:

@@ -221,6 +221,7 @@ test.describe.serial('first-boot setup and PIN login', () => {
 
       await countryStep.locator('.setup-nav button', { hasText: 'Next' }).click();
       await p.locator('input[name=store_name]').fill('Tile Picker Test Shop');
+      await p.locator('input[name=till_name]').fill('Front till'); // required, no default (ut-docs#4146)
       await p.locator('[data-step="4"] .setup-nav button', { hasText: 'Next' }).click();
 
       // Shop-type step: all six ADR-0026 tiles shown directly, no "show
@@ -265,6 +266,7 @@ test.describe.serial('first-boot setup and PIN login', () => {
       await step(2).locator('button.picker-tile[value="GB"]').tap();
       await step(2).locator('.setup-nav button', { hasText: 'Next' }).click();
       await p.locator('input[name=store_name]').fill('Rerender Test Shop');
+      await p.locator('input[name=till_name]').fill('Front till'); // required, no default (ut-docs#4146)
       await step(4).locator('.setup-nav button', { hasText: 'Next' }).click();
       await step(5).locator('.setup-nav button', { hasText: 'Next' }).click();
       // A deliberately mismatched PIN forces a server re-render with
@@ -427,6 +429,14 @@ test.describe.serial('first-boot setup and PIN login', () => {
     await storeName.fill('   ');
     await expect(storeNext).toBeDisabled();
     await storeName.fill('E2E Test Shop');
+    // ut-docs#4146: the till name is required too, with no "Till 1"
+    // prefill — Next stays disabled until this till is named as well.
+    const tillName = page.locator('input[name=till_name]');
+    await expect(tillName).toHaveValue('');
+    await expect(storeNext).toBeDisabled();
+    await tillName.fill('   ');
+    await expect(storeNext).toBeDisabled();
+    await tillName.fill('Front till');
     await expect(storeNext).toBeEnabled();
     await storeNext.click();
 
