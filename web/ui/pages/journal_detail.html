@@ -69,6 +69,23 @@
             <td>{{ money .LineTotal }}</td>
           </tr>
         {{ end }}
+        {{/* ut-docs#4256: gift vouchers this sale issued, like the printed
+             receipt's voucher block (#4224) — number, holder, purpose. */}}
+        {{ range .Sale.VoucherIssues }}
+          <tr data-testid="journal-voucher-issue">
+            <td class="catalog-name">{{ T "catalog.item_type.gift_voucher" }}
+              <br>{{ if $.CanViewVouchers }}<a href="{{ index $.VoucherHrefs .VoucherID }}"><code class="pill-code">{{ .VoucherID }}</code></a>{{ else }}<code class="pill-code">{{ .VoucherID }}</code>{{ end }}
+              {{ if index $.VoidVouchers .VoucherID }}<br><strong data-testid="journal-voucher-void">{{ T "receipt.vouchers.void" }}</strong>{{ end }}
+              {{ if .HolderLabel }}<br><small class="muted">{{ printf (T "basket.gift_voucher.for") .HolderLabel }}</small>{{ end }}
+              <br><small class="muted">{{ if eq .Purpose "single_purpose" }}{{ T "pos.gift_voucher.use_specific" }}{{ else }}{{ T "pos.gift_voucher.use_any" }}{{ end }}</small>
+            </td>
+            <td class="muted">—</td>
+            <td>{{ qty 1 }}</td>
+            <td>{{ money .Amount }}</td>
+            <td>—</td>
+            <td>{{ money .Amount }}</td>
+          </tr>
+        {{ end }}
       </tbody>
     </table>
   </div>
@@ -82,6 +99,9 @@
           {{ if .Sale.DiscountTotal }}<tr><td>{{ T "journal.detail.discount" }}</td><td style="text-align:end">-{{ money .Sale.DiscountTotal }}</td></tr>{{ end }}
           <tr><td>{{ T "journal.detail.tax" }}</td><td style="text-align:end">{{ money .Sale.TaxTotal }}</td></tr>
           {{ if .Sale.ServiceCharge }}<tr><td>{{ T "journal.detail.service_charge" }}</td><td style="text-align:end">{{ money .Sale.ServiceCharge }}</td></tr>{{ end }}
+          {{/* ut-docs#4256: any-purchase vouchers are in the total but not the
+               subtotal (a liability, not revenue) — show them so it adds up. */}}
+          {{ if .Sale.VoucherIssueTotal }}<tr data-testid="journal-voucher-total"><td>{{ T "receipt.vouchers.issued" }}</td><td style="text-align:end">{{ money .Sale.VoucherIssueTotal }}</td></tr>{{ end }}
           <tr><td><strong>{{ T "journal.detail.total" }}</strong></td><td style="text-align:end"><strong>{{ money .Sale.Total }}</strong></td></tr>
         </tbody>
       </table>
@@ -96,6 +116,7 @@
               <td><strong>{{ .Method }}</strong>
                 {{ if .MaskedPAN }}
                   <br><small class="muted">{{ .MaskedPAN }}{{ if .AuthCode }} &middot; {{ T "receipt.auth_code" }} {{ .AuthCode }}{{ end }}</small>
+                {{ else if .VoucherID }}<br><small class="muted" data-testid="journal-payment-voucher">{{ if $.CanViewVouchers }}<a href="{{ index $.VoucherHrefs .VoucherID }}"><code class="pill-code">{{ .VoucherID }}</code></a>{{ else }}<code class="pill-code">{{ .VoucherID }}</code>{{ end }}{{ if .Reference }} &middot; {{ .Reference }}{{ end }}</small>
                 {{ else if .Reference }}<br><small class="muted">{{ .Reference }}</small>{{ end }}
                 {{ if or .TerminalID .TraceID }}
                   <br><small class="muted">{{ if .TerminalID }}{{ T "journal.detail.terminal_id" }} {{ .TerminalID }}{{ end }}{{ if and .TerminalID .TraceID }} &middot; {{ end }}{{ if .TraceID }}{{ T "journal.detail.trace_id" }} {{ .TraceID }}{{ end }}</small>

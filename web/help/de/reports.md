@@ -443,3 +443,12 @@ eigenen Abrechnungsbericht des Terminals. Diese Felder erscheinen nur, sobald
 eine Zahlungsart sie tatsächlich erfasst — die heutigen eingebauten
 Zahlungsarten (Bargeld, Stripe, SumUp, QR-Zahlung) tun dies nicht, bestehende
 Belege sind davon also nicht betroffen.
+
+Ein Verkauf, in dem ein Gutschein verkauft wurde, führt jeden Gutschein als
+eigene Zeile: seine Nummer, für wen er ist und ob er für jeden Einkauf oder
+für einen bestimmten Artikel gilt. Ein Mehrzweck-Gutschein gehört nicht zur
+Zwischensumme (er ist eine Verbindlichkeit, kein Umsatz), daher zeigen die
+Summen ihn in einer eigenen Zeile **Ausgestellte Gutscheine**, und alles
+ergibt den bezahlten Betrag. Eine mit Gutschein bezahlte Zahlung zeigt die
+Gutscheinnummer unter der Zahlung. Manager können die Nummer antippen, um
+die Seite des Gutscheins zu öffnen (siehe [Gutscheine](/help/vouchers)).

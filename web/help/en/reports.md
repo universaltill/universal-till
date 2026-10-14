@@ -527,3 +527,11 @@ trace ID for matching it against the terminal's own settlement report.
 These fields only appear once a payment method actually records them —
 today's built-in payment methods (cash, Stripe, SumUp, QR pay) don't, so
 existing receipts are unaffected.
+
+A sale that sold a gift voucher lists each voucher as its own line: its
+number, who it is for, and whether it can be spent on any purchase or a
+specific item. An any-purchase voucher is not part of the subtotal (it is
+money owed, not revenue), so the totals show it on its own **Vouchers
+issued** row and add up to what the customer paid. A payment made with a
+voucher shows the voucher's number under the payment. Managers can tap the
+number to open the voucher's own page (see [Gift vouchers](/help/vouchers)).
