@@ -1,9 +1,12 @@
 // Package cloudlink is the till side of ADR-0117's cloud link: the one
 // outbound socket a store's main till holds to the cloud on the realtime
 // tier (ut-docs#2824). It carries nudges and small events, never directives
-// or data: a `nudge`, or a cloud hello whose link_version differs from the
-// last one seen, only kicks the existing cloudsync check-in (single-flight,
-// cloudsync.Hooks.Kick), which stays the source of truth.
+// or bulk data: a `nudge`, or a cloud hello whose link_version differs from
+// the last one seen, only kicks the existing cloudsync check-in (single-
+// flight, cloudsync.Hooks.Kick), which stays the source of truth. The one
+// cloud → till request is ADR-0155's bounded read: a `sale_detail_request`
+// for one sale of this store, answered from the till's own database with a
+// trimmed `sale_detail` (sale_detail.go) — never a write, print or directive.
 //
 // The transport, envelope, heartbeat and bounds are internal/fleetlink's
 // (fleetlink.Session); the wire contract is ut-cloud's internal/tilllink —
@@ -64,7 +67,8 @@ const (
 
 // DefaultConfig is ADR-0117 §7's per-connection bounds on fleetlink's
 // transport: ping every 30 s, gone after 75 s, 16 KiB messages, a 32
-// message / 256 KiB outbound queue, 10 s write timeout.
+// message / 256 KiB outbound queue, 10 s write timeout — and ADR-0155 §4's
+// 3 s inbound request deadline.
 func DefaultConfig() fleetlink.Config {
 	c := fleetlink.DefaultConfig()
 	c.PingInterval = 30 * time.Second
@@ -73,6 +77,8 @@ func DefaultConfig() fleetlink.Config {
 	c.ReadLimit = 16 << 10
 	c.QueueMessages = 32
 	c.QueueBytes = 256 << 10
+	// ADR-0155 §4: a sale_detail read answers inside the cloud's 5 s wait.
+	c.RequestTimeout = 3 * time.Second
 	return c
 }
 
@@ -136,6 +142,9 @@ type tillHello struct {
 	Platform    string `json:"platform"`
 	Envelope    int    `json:"envelope"`
 	LinkVersion int64  `json:"link_version"`
+	// Caps names the optional requests this till answers (ADR-0155 §2);
+	// the cloud asks only a till that advertised one.
+	Caps []string `json:"caps,omitempty"`
 }
 
 type cloudHello struct {
@@ -164,6 +173,11 @@ type Options struct {
 	Relay func(scopes []string, linkVersion int64)
 	// Status builds the current status frame (on connect, then on change).
 	Status func(ctx context.Context) Status
+	// SaleDetail reads one sale for the cloud's sale_detail_request
+	// (ADR-0155): found false for no such sale. Runs on fleetlink's handler
+	// goroutine under RequestTimeout; must honour ctx. Nil: the till
+	// neither advertises the cap nor answers the request.
+	SaleDetail func(ctx context.Context, saleID string) (SaleDetail, bool, error)
 
 	Version, Platform string // for the hello
 
@@ -212,6 +226,9 @@ func withConfigDefaults(c fleetlink.Config) fleetlink.Config {
 	}
 	if c.QueueBytes <= 0 {
 		c.QueueBytes = d.QueueBytes
+	}
+	if c.RequestTimeout <= 0 {
+		c.RequestTimeout = d.RequestTimeout
 	}
 	return c // the rest: fleetlink's own defaults
 }
@@ -318,6 +335,10 @@ type Client struct {
 	saleTokens float64
 	saleAt     time.Time
 
+	dmu          sync.Mutex // sale_detail request bucket (ADR-0155 §4)
+	detailTokens float64
+	detailAt     time.Time
+
 	rng func() float64 // U[0,1); a stub in tests
 }
 
@@ -325,13 +346,14 @@ type Client struct {
 func New(o Options) *Client {
 	o.defaults()
 	return &Client{
-		o:          o,
-		checkedIn:  make(chan struct{}, 1),
-		recheck:    make(chan struct{}, 1),
-		helloIn:    make(chan int64, 1),
-		nudgeIn:    make(chan int64, 1),
-		saleTokens: saleBurst,
-		rng:        rand.Float64,
+		o:            o,
+		checkedIn:    make(chan struct{}, 1),
+		recheck:      make(chan struct{}, 1),
+		helloIn:      make(chan int64, 1),
+		nudgeIn:      make(chan int64, 1),
+		saleTokens:   saleBurst,
+		detailTokens: detailBurst,
+		rng:          rand.Float64,
 	}
 }
 
@@ -648,15 +670,24 @@ func (c *Client) attempt(ctx context.Context, t Target, u string, attempt int) (
 	default:
 	}
 
+	var (
+		caps     []string
+		requests map[string]fleetlink.RequestHandler
+	)
+	if c.o.SaleDetail != nil {
+		caps = []string{capSaleDetail}
+		requests = map[string]fleetlink.RequestHandler{typeSaleDetailRequest: c.answerSaleDetail}
+	}
 	dctx, cancel := context.WithTimeout(ctx, c.o.DialTimeout)
 	sess, err := fleetlink.DialSession(dctx, u, t.Bearer, c.o.Config, fleetlink.SessionHandlers{
 		Hello: func(context.Context) any {
 			return tillHello{DeviceID: t.DeviceID, Version: c.o.Version, Platform: c.o.Platform,
-				Envelope: fleetlink.Version, LinkVersion: c.lastVersion.Load()}
+				Envelope: fleetlink.Version, LinkVersion: c.lastVersion.Load(), Caps: caps}
 		},
 		OneWay:    []string{typeNudge, typeLiveView},
 		OnHello:   c.gotHello,
 		OnMessage: c.gotMessage,
+		Requests:  requests,
 	})
 	cancel()
 	if err != nil {

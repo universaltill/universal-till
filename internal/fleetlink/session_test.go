@@ -193,3 +193,85 @@ func TestDialSessionRefusalIsDialError(t *testing.T) {
 		t.Fatalf("err = %#v, want *DialError 503 with RetryAfter 2m", err)
 	}
 }
+
+// A Session answers the request types its Requests map names (ADR-0155
+// §1): the handler runs off the reader goroutine, a Reply result names the
+// reply's own type (sale_detail for sale_detail_request) with reply_to the
+// request's id, a *RemoteError result is the error reply, and an
+// undeclared type stays unknown_type.
+func TestSessionAnswersDeclaredRequests(t *testing.T) {
+	replies := make(chan Envelope, 8)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		ctx := context.Background()
+		send := func(id, typ string, payload any) {
+			m, _ := newMessage(id, typ, "", payload)
+			b, _ := Encode(m)
+			_ = ws.Write(ctx, websocket.MessageText, b)
+		}
+		send("c-h", TypeHello, map[string]any{})
+		send("c-1", "thing_request", map[string]any{"id": "a"})
+		send("c-2", "thing_request", map[string]any{"id": "missing"})
+		send("c-3", "plain_request", nil)
+		send("c-4", "other_request", nil)
+		for {
+			_, b, err := ws.Read(ctx)
+			if err != nil {
+				return
+			}
+			if env, _ := Decode(b); env.ReplyTo != "" {
+				replies <- env
+			}
+		}
+	}))
+	defer srv.Close()
+
+	s, err := DialSession(context.Background(), "ws"+strings.TrimPrefix(srv.URL, "http"), "c", fastConfig(), SessionHandlers{
+		Hello: func(context.Context) any { return map[string]any{} },
+		Requests: map[string]RequestHandler{
+			"thing_request": func(_ context.Context, _ string, payload json.RawMessage) (any, error) {
+				var p struct{ ID string }
+				_ = json.Unmarshal(payload, &p)
+				if p.ID == "missing" {
+					return nil, &RemoteError{Code: "not_found"}
+				}
+				return Reply{Type: "thing", Payload: map[string]string{"id": p.ID}}, nil
+			},
+			"plain_request": func(context.Context, string, json.RawMessage) (any, error) {
+				return map[string]bool{"ok": true}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DialSession: %v", err)
+	}
+	done := make(chan struct{})
+	go func() { defer close(done); s.Run() }()
+	defer func() { s.Close(""); <-done }()
+
+	got := map[string]Envelope{}
+	for len(got) < 4 {
+		select {
+		case e := <-replies:
+			got[e.ReplyTo] = e
+		case <-time.After(3 * time.Second):
+			t.Fatalf("replies so far: %+v", got)
+		}
+	}
+	if e := got["c-1"]; e.Type != "thing" || string(e.Payload) != `{"id":"a"}` {
+		t.Fatalf("reply to c-1 = %s %s, want type thing with the handler's payload", e.Type, e.Payload)
+	}
+	if e := got["c-2"]; e.Type != TypeError || string(e.Payload) != `{"code":"not_found","retryable":false}` {
+		t.Fatalf("reply to c-2 = %s %s, want error not_found", e.Type, e.Payload)
+	}
+	// A plain result keeps ADR-0114's reply-of-the-request's-type rule.
+	if e := got["c-3"]; e.Type != "plain_request" || string(e.Payload) != `{"ok":true}` {
+		t.Fatalf("reply to c-3 = %s %s, want the request's own type", e.Type, e.Payload)
+	}
+	if e := got["c-4"]; e.Type != TypeError || !strings.Contains(string(e.Payload), CodeUnknownType) {
+		t.Fatalf("reply to c-4 = %s %s, want unknown_type", e.Type, e.Payload)
+	}
+}

@@ -32,7 +32,9 @@ import (
 // cloud_checkin frame so each replica checks in now too (ut-docs#2893).
 //
 // Offline-first: the socket has its own goroutine; the sale path only calls
-// the non-blocking, drop-when-down d.CloudLink.Sale.
+// the non-blocking, drop-when-down d.CloudLink.Sale. The cloud's one read
+// request — a live sale's detail (ADR-0155) — is answered on fleetlink's
+// handler goroutine from cloudLinkSaleDetailLookup; no sale waits on it.
 
 // updateStateIdle is the update state until the fleet-update states land
 // (#2726) — the same placeholder the LAN link's report carries.
@@ -59,8 +61,9 @@ func newCloudLinkClient(d *common.Deps) *cloudlink.Client {
 			}
 			return cloudLinkStatusOf(ctx, d, buildinfo.Version, peers)
 		},
-		Version:  buildinfo.Version,
-		Platform: runtime.GOOS + "/" + runtime.GOARCH,
+		SaleDetail: cloudLinkSaleDetailLookup(d),
+		Version:    buildinfo.Version,
+		Platform:   runtime.GOOS + "/" + runtime.GOARCH,
 	})
 }
 
@@ -232,6 +235,99 @@ func cloudLinkSaleOf(s data.SaleDetail, now time.Time) cloudlink.Sale {
 		ItemCount:  len(s.Lines),
 		Refund:     refund,
 	}
+}
+
+// cloudLinkSaleDetailLookup reads one sale for the cloud link's
+// sale_detail_request (ADR-0155 §1/§3): any sale on this till by id — the
+// main till holds every replica's sale under the same id the live summary
+// carried — mapped through cloudLinkSaleDetailOf. Read-only; cloudlink
+// trims and rate-limits it.
+func cloudLinkSaleDetailLookup(d *common.Deps) func(ctx context.Context, saleID string) (cloudlink.SaleDetail, bool, error) {
+	return func(ctx context.Context, saleID string) (cloudlink.SaleDetail, bool, error) {
+		if d.Db == nil {
+			return cloudlink.SaleDetail{}, false, nil
+		}
+		repo := data.NewPOSRepo(d.Db)
+		s, found, err := repo.GetSaleDetailByID(ctx, saleID)
+		if err != nil || !found {
+			return cloudlink.SaleDetail{}, false, err
+		}
+		prov, found, err := repo.SaleProvenance(ctx, saleID)
+		if err != nil || !found {
+			return cloudlink.SaleDetail{}, false, err
+		}
+		return cloudLinkSaleDetailOf(s, prov), true, nil
+	}
+}
+
+// cloudLinkSaleDetailOf maps a sale onto ADR-0155 §3's allow-list, field
+// by field — never by marshalling s: data.SaleDetail is the LAN journal
+// contract and carries what the cloud must never see (payment references,
+// card-present fields, voucher and user ids, charges; §3's never-list,
+// pinned by TestCloudLinkSaleDetailNeverList), and a field it gains later
+// stays off the wire until an ADR adds it here
+// (TestCloudLinkSaleDetailClassifiesEveryField). A return's header totals
+// are negative, as in cloudLinkSaleOf; created_at is RFC 3339 UTC, "" when
+// it doesn't parse.
+func cloudLinkSaleDetailOf(s data.SaleDetail, p data.SaleProvenance) cloudlink.SaleDetail {
+	refund := s.SaleType == "return"
+	signed := func(v int64) int64 {
+		if refund && v > 0 {
+			return -v
+		}
+		return v
+	}
+	created := ""
+	if t, err := time.Parse(time.RFC3339, strings.TrimSpace(s.CreatedAt)); err == nil {
+		created = t.UTC().Format(time.RFC3339)
+	}
+	out := cloudlink.SaleDetail{
+		ID:                 s.ID,
+		ReceiptNo:          s.ReceiptNo,
+		DisplayNo:          s.DisplayNo,
+		CreatedAt:          created,
+		Status:             s.Status,
+		SaleType:           s.SaleType,
+		OrderType:          s.OrderType,
+		TableLabel:         s.TableLabel,
+		Currency:           s.Currency,
+		SubtotalMinor:      signed(s.Subtotal),
+		DiscountTotalMinor: signed(s.DiscountTotal),
+		TaxTotalMinor:      signed(s.TaxTotal),
+		ServiceChargeMinor: signed(s.ServiceCharge),
+		TotalMinor:         signed(s.Total),
+		CashierName:        p.CashierName,
+		TillID:             p.TillID,
+		RegisterID:         s.RegisterID,
+		RegisterName:       p.RegisterName,
+		Lines:              make([]cloudlink.SaleDetailLine, 0, len(s.Lines)),
+		Payments:           make([]cloudlink.SaleDetailPayment, 0, len(s.Payments)),
+	}
+	for _, l := range s.Lines {
+		out.Lines = append(out.Lines, cloudlink.SaleDetailLine{
+			Name:              l.Name,
+			SKU:               l.SKU,
+			ItemID:            l.ItemID,
+			VariantID:         l.VariantID,
+			Qty:               l.Qty,
+			UnitPriceMinor:    l.UnitPrice,
+			LineDiscountMinor: l.LineDiscount,
+			TaxRateBP:         l.TaxRateBP,
+			TaxMinor:          l.TaxAmount,
+			LineTotalMinor:    l.LineTotal,
+			Modifiers:         append([]string{}, l.Modifiers...),
+			OrderType:         l.OrderType,
+		})
+	}
+	for _, pm := range s.Payments {
+		out.Payments = append(out.Payments, cloudlink.SaleDetailPayment{
+			Method:           pm.Method,
+			AmountMinor:      pm.Amount,
+			ChangeGivenMinor: pm.ChangeGiven,
+			TipMinor:         pm.TipAmount,
+		})
+	}
+	return out
 }
 
 // StartCloudLink runs d.CloudLink until ctx ends, joined by app.Run's

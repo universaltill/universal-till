@@ -14,8 +14,19 @@ import (
 
 // RequestHandler answers one inbound request from tillID. Return a
 // *RemoteError to choose the error code the peer sees; any other error is
-// "internal". It must honour ctx (RequestTimeout).
+// "internal". It must honour ctx (RequestTimeout). The result is the
+// payload of a reply of the request's own type (ADR-0114 §2), unless it is
+// a Reply.
 type RequestHandler func(ctx context.Context, tillID string, payload json.RawMessage) (any, error)
+
+// Reply is a RequestHandler result that names its reply's type, for a
+// protocol whose reply type differs from its request's (the cloud link's
+// sale_detail_request → sale_detail, ADR-0155 §1). An empty Type keeps the
+// request's own.
+type Reply struct {
+	Type    string
+	Payload any
+}
 
 // HubOptions configures a Hub.
 type HubOptions struct {

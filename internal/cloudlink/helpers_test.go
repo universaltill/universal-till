@@ -165,6 +165,31 @@ func (c *cloudConn) send(typ string, payload any) {
 	_ = c.ws.Write(context.Background(), websocket.MessageText, b)
 }
 
+// request sends a cloud → till request with a known envelope id, so the
+// test can match the till's reply_to (ADR-0155 §1).
+func (c *cloudConn) request(id, typ string, payload any) {
+	raw, _ := json.Marshal(payload)
+	b, _ := fleetlink.Encode(fleetlink.Envelope{ID: id, Type: typ, Payload: raw})
+	_ = c.ws.Write(context.Background(), websocket.MessageText, b)
+}
+
+// reply waits for the till's reply to the request with envelope id id.
+func (c *cloudConn) reply(t *testing.T, id string) fleetlink.Envelope {
+	t.Helper()
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case env := <-c.frames:
+			if env.ReplyTo == id {
+				return env
+			}
+		case <-deadline:
+			t.Fatalf("no reply to %q from the till", id)
+			return fleetlink.Envelope{}
+		}
+	}
+}
+
 func (c *cloudConn) closeWith(code int, reason string) {
 	_ = c.ws.Close(websocket.StatusCode(code), reason)
 }
