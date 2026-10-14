@@ -676,3 +676,71 @@ func TestSelfMadeSatellite_RevertedFromMainTillInOneStep(t *testing.T) {
 		t.Fatalf("display.mode = %q, want register (stored as \"\")", m)
 	}
 }
+
+// ut-docs#4295: the upsert also refuses a value that is no device profile
+// at all, as the dedicated handler's err_invalid_mode does.
+func TestUpsertDisplayMode_RefusesUnknownProfile(t *testing.T) {
+	f := newTillRoleSettingsFixture(t, "additional")
+	for _, v := range []string{"Self_Order", "kiosk"} {
+		rec := f.upsertDisplayMode(t, v)
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "Choose a device profile") {
+			t.Fatalf("upsert display.mode=%q: %d %s, want 400 err_invalid_mode", v, rec.Code, rec.Body)
+		}
+	}
+	if m := f.mode(t); m != "" {
+		t.Fatalf("a refused upsert persisted display.mode=%q", m)
+	}
+}
+
+// ut-docs#4295: the cloud set_setting directive is the other door around
+// the Device profile confirm — display.mode is per-till, so the shop-wide
+// check lets it through on a joined till. Refused (nothing written, the
+// role unchanged on both sides) whenever the mode breaks the till-role
+// rules; allowed otherwise.
+func TestCloudSetSettingDisplayMode_FollowsTillRole(t *testing.T) {
+	cases := []struct {
+		role, value string
+		refused     bool
+	}{
+		{"additional", "self_order", true},
+		{"additional", "backoffice", false},
+		{"additional", "register", false},
+		{"satellite", "register", true},
+		{"satellite", "", true},
+		{"satellite", "backoffice", true},
+		{"satellite", "self_order", false},
+		{"additional", "Self_Order", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.role+"/"+tc.value, func(t *testing.T) {
+			f := newTillRoleSettingsFixture(t, tc.role)
+			before := "sentinel"
+			if err := f.replica.Settings.Set(t.Context(), "display.mode", before); err != nil {
+				t.Fatal(err)
+			}
+			_, err := buildCloudHooks(f.replica, nil).SetSetting(t.Context(), "display.mode", tc.value)
+			got := f.mode(t)
+			if tc.refused {
+				if err == nil {
+					t.Fatalf("set_setting display.mode=%q on a %s till was applied", tc.value, tc.role)
+				}
+				if got != before {
+					t.Fatalf("a refused directive wrote display.mode=%q", got)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("set_setting display.mode=%q on a %s till: %v", tc.value, tc.role, err)
+				}
+				if got != tc.value {
+					t.Fatalf("display.mode = %q, want %q", got, tc.value)
+				}
+			}
+			if r := ownTillRole(t.Context(), f.replica); r != tc.role {
+				t.Fatalf("own role = %q, want %q", r, tc.role)
+			}
+			if r, _, _ := data.NewTillsRepo(f.main.Db).RoleByID(t.Context(), f.selfID); r != tc.role {
+				t.Fatalf("the main till's roster says %q, want %q", r, tc.role)
+			}
+		})
+	}
+}

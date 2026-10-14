@@ -210,3 +210,74 @@ func TestKioskPINLogin_OtherModesUntouchedByOrdinaryLogin(t *testing.T) {
 		})
 	}
 }
+
+// kioskJoinAs makes the harness's till a joined till with the given role,
+// as the main till last reported it (till_role.go's ownTillRole). The main
+// till's address is never dialled by the paths these tests drive.
+func kioskJoinAs(t *testing.T, dp *common.Deps, role string) {
+	t.Helper()
+	for k, v := range map[string]string{
+		"sync.primary_url": "https://192.0.2.1:8443",
+		"sync.till_role":   role,
+	} {
+		if err := dp.Settings.Set(t.Context(), k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// ut-docs#4295: on an additional joined till the kiosk user's PIN is not a
+// way around Settings → Device profile, which asks first and tells the main
+// till that this till becomes a satellite. Refused with that pointer:
+// nothing changes, the kiosk user still holds no session, and the browser's
+// staff session survives (the screen is not turning customer-facing).
+func TestKioskPINLogin_AdditionalTillRefusedWithDeviceProfilePointer(t *testing.T) {
+	dp, svc, h := kioskLoginHarness(t)
+	initTillRoleI18n(t)
+	kioskJoinAs(t, dp, "additional")
+	staff := kioskSessionCookie(kioskPostLogin(h, "4321", "", nil))
+	if staff == nil || staff.Value == "" {
+		t.Fatal("setup: manager login set no session cookie")
+	}
+
+	rec := kioskPostLogin(h, "9090", "", staff)
+	if rec.Code == http.StatusSeeOther {
+		t.Fatalf("kiosk PIN on an additional till redirected to %q, want the login page with the refusal", rec.Header().Get("Location"))
+	}
+	if !strings.Contains(rec.Body.String(), "This till is an additional till") {
+		t.Fatalf("kiosk PIN on an additional till: %d, body lacks the Device profile pointer:\n%s", rec.Code, rec.Body)
+	}
+	if got := kioskDisplayMode(t, dp); got != "" {
+		t.Fatalf("display.mode = %q after a refused kiosk sign-in, want unchanged", got)
+	}
+	if got := ownTillRole(t.Context(), dp); got != "additional" {
+		t.Fatalf("own role = %q, want additional", got)
+	}
+	if _, ok := svc.Resolve(t.Context(), staff.Value); !ok {
+		t.Fatal("a refused kiosk sign-in revoked the browser's staff session")
+	}
+	var live int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE user_id='kiosk' AND revoked_at IS NULL`).Scan(&live); err != nil || live != 0 {
+		t.Fatalf("kiosk user has %d live sessions (err %v), want 0", live, err)
+	}
+	if kioskAuditCount(t, dp, "kiosk_mode_entered", "kiosk") != 0 {
+		t.Fatal("a refused kiosk sign-in audited kiosk_mode_entered")
+	}
+	if kioskAuditCount(t, dp, "kiosk_mode_refused", "kiosk") != 1 {
+		t.Fatal("a refused kiosk sign-in left no kiosk_mode_refused audit row")
+	}
+}
+
+// A satellite is a kiosk by role: the kiosk user's PIN still turns it into
+// one (ut-docs#3136 unchanged there).
+func TestKioskPINLogin_SatelliteStillEntersSelfOrder(t *testing.T) {
+	dp, _, h := kioskLoginHarness(t)
+	kioskJoinAs(t, dp, "satellite")
+	rec := kioskPostLogin(h, "9090", "", nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/self-order" {
+		t.Fatalf("kiosk PIN on a satellite = %d → %q, want 303 → /self-order", rec.Code, rec.Header().Get("Location"))
+	}
+	if got := kioskDisplayMode(t, dp); got != "self_order" {
+		t.Fatalf("display.mode = %q, want self_order", got)
+	}
+}

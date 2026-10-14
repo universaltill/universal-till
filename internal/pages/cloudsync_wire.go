@@ -1192,6 +1192,19 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 			if err := rejectRemoteFiscalPostureWrite(d, key); err != nil {
 				return "", err
 			}
+			// ut-docs#4295: display.mode is per-till, so the check above
+			// lets it through on a joined till; the till-role rules still
+			// hold. A directive has no operator to confirm the
+			// additional → satellite change, so it is refused, not run.
+			if key == "display.mode" {
+				if !validDisplayMode(value) {
+					return "", fmt.Errorf("display.mode must be one of register, backoffice, self_order")
+				}
+				if role := ownTillRole(ctx, d); displayModeRoleRefusal(role, value) != "" {
+					logging.L().Infof("cloud set_setting display.mode=%q refused on a %s till", value, role)
+					return "", fmt.Errorf("display.mode %q is not allowed on a %s till (change the device profile at the till)", value, role)
+				}
+			}
 			// ut-docs#1750: the third writer of store.country, and the one
 			// with no HTTP caller to authorize — so it takes the
 			// fail-closed half of the invariant unconditionally: a shop

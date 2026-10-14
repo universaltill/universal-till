@@ -67,6 +67,35 @@ func ownTillRole(ctx context.Context, d *common.Deps) string {
 	return data.TillRoleAdditional
 }
 
+// validDisplayMode reports whether v is a device profile a generic setter
+// (POST /api/settings/upsert, the cloud set_setting directive) may store:
+// "" or "register" (the default register profile), "backoffice" or
+// "self_order" — the values the dedicated display-mode handler accepts.
+func validDisplayMode(v string) bool {
+	switch v {
+	case "", "register", "backoffice", "self_order":
+		return true
+	}
+	return false
+}
+
+// displayModeRoleRefusal is the device-profile half of the till-role rules
+// for every door that sets display.mode without the dedicated handler's
+// confirm (ut-docs#2781, #4263, #4295): a satellite can only be a kiosk, and
+// an additional till can't become one here — becoming a kiosk makes it a
+// satellite, which only Settings → Device profile does (it asks first and
+// tells the main till). It returns the locale key of the refusal, or "" when
+// mode is allowed for role (a main or standalone till has role "").
+func displayModeRoleRefusal(role, mode string) string {
+	switch {
+	case role == data.TillRoleSatellite && mode != "self_order":
+		return "settings.display.satellite_mode_blocked"
+	case role == data.TillRoleAdditional && mode == "self_order":
+		return "settings.display.additional_kiosk_use_profile"
+	}
+	return ""
+}
+
 // rememberOwnTillRole stores the role the main till reported for this till
 // (the admin pull), writing only on a change. An empty or unknown value —
 // an older main till, or garbage — leaves the stored role alone.
