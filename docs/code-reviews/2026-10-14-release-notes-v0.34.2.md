@@ -18,4 +18,8 @@ Owner-facing notes `web/release-notes/{en,de,ar,fa,tr}/v0.34.2.md` for the merge
 
 Terminology checked against the shipped strings (recovery.*, plugin permissions; German against the de pack). `guard-release-notes.sh v0.34.2` and `guard-compliance-claims.sh` pass.
 
+## Follow-up — #4295 (lane:cloud-54)
+
+#1918 (#4295) merged while this PR waited: on an additional joined till the kiosk-user PIN no longer makes it a kiosk, and a device-profile setting sent from the cloud can't make an additional till a kiosk or a satellite a Register/Back office. Bullet added in all five languages, terms taken from that commit's `multitill`/`self-order` help diff. Reviewed by Sonnet (fresh-context subagent): no major/minor findings; nits accepted — "a setting sent from the cloud" mirrors the help wording; "satellite" is defined on the Multiple tills help page; ar uses صندوق as the multitill help does. `guard-release-notes.sh v0.34.2`, `guard-compliance-claims.sh`, `guard-competitor-naming.sh` pass.
+
 **Verdict:** safe to merge, then dispatch `release.yml` with `bump=patch`.
