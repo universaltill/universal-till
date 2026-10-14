@@ -451,6 +451,15 @@ func (l *BasketLine) cachedModifierSignature() string {
 	return l.modSig
 }
 
+// ScanChoice is one row of the sale screen's "this code is more than one
+// thing" chooser (ut-docs#4344). Kind is what /api/pos/scan acts on when
+// the row is picked; Label and Detail are already translated/formatted.
+type ScanChoice struct {
+	Kind   string `json:"kind"`
+	Label  string `json:"label"`
+	Detail string `json:"detail,omitempty"`
+}
+
 type Basket struct {
 	Lines    []BasketLine `json:"lines"`
 	Subtotal money.Money  `json:"subtotal"`
@@ -471,6 +480,15 @@ type Basket struct {
 	// notification surface (ut-docs#213): "info" (default), "success" or
 	// "error". Errors persist until dismissed; info/success auto-expire.
 	ToastLevel string `json:"toastLevel,omitempty"`
+	// ScanChoices (ut-docs#4344) are the kinds a just-scanned code matched
+	// when it matched more than one (an item AND a voucher, ...): the sale
+	// screen asks which one, and nothing is added or applied until the
+	// cashier picks. ScanChoiceCode/ScanChoiceQty are the scan to re-post
+	// with the picked kind. Per-render only, like ToastMessage: set on the
+	// copy Basket() returns, never stored on the Service.
+	ScanChoices    []ScanChoice `json:"scanChoices,omitempty"`
+	ScanChoiceCode string       `json:"scanChoiceCode,omitempty"`
+	ScanChoiceQty  float64      `json:"scanChoiceQty,omitempty"`
 	// OrderType is the derived SUMMARY (ADR-0073, SummarizeOrderType): ""
 	// (every line dine-in), OrderTypeTakeaway (every line takeaway) or
 	// OrderTypeMixed. With no lines it is the default the next line
