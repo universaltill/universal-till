@@ -12,8 +12,9 @@ import (
 // envelope, hello, close codes and bounds language" as ADR-0114, reused,
 // not forked). The protocol's meaning lives with the caller: it builds its
 // own hello payload, reads the far side's hello raw, and names the one-way
-// types it wants delivered. ping/pong/bye/error are handled here, exactly
-// as on the LAN link; any other undeclared type is answered unknown_type.
+// types it wants delivered and the request types it answers. ping/pong/
+// bye/error are handled here, exactly as on the LAN link; any other
+// undeclared type is answered unknown_type.
 type Session struct {
 	p     *Peer
 	h     SessionHandlers
@@ -30,6 +31,11 @@ type SessionHandlers struct {
 	// OneWay lists the notification types delivered to OnMessage.
 	OneWay    []string
 	OnMessage func(env Envelope)
+	// Requests answers inbound requests by type (ADR-0155 §1). Each runs
+	// on its own goroutine under MaxInFlight and RequestTimeout, as on the
+	// LAN link; return a Reply to name a reply type other than the
+	// request's. Read-only after DialSession.
+	Requests map[string]RequestHandler
 }
 
 // SessionEnd says how a Session ended. Valid once Run has returned.
@@ -92,7 +98,7 @@ func (s *Session) helloFor(ctx context.Context, _ string) any {
 
 func (s *Session) onFrame() (func(string), time.Duration) { return nil, 0 }
 
-func (s *Session) handler(string) RequestHandler { return nil }
+func (s *Session) handler(typ string) RequestHandler { return s.h.Requests[typ] }
 
 func (s *Session) gotHello(_ *Peer, _ Hello, raw json.RawMessage) {
 	if s.h.OnHello != nil {

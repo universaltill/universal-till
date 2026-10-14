@@ -493,7 +493,14 @@ func (p *Peer) handleRequest(env Envelope) {
 			}
 			return
 		}
-		m, err := newMessage(p.nextID(), env.Type, env.ID, res)
+		typ := env.Type
+		if r, ok := res.(Reply); ok {
+			res = r.Payload
+			if r.Type != "" {
+				typ = r.Type
+			}
+		}
+		m, err := newMessage(p.nextID(), typ, env.ID, res)
 		if err != nil {
 			p.replyError(env.ID, CodeInternal, false)
 			return

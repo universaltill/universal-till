@@ -7705,6 +7705,38 @@ func (r *POSRepo) GetSaleDetailByID(ctx context.Context, saleID string) (SaleDet
 	return r.GetSaleDetail(ctx, receiptNo)
 }
 
+// SaleProvenance is what the cloud link's sale_detail names beside the
+// sale itself (ADR-0155 §3, ut-docs#4150), resolved on this till.
+type SaleProvenance struct {
+	// TillID is sales.till_id (SetSaleProvenance): the replica a
+	// journaled sale came from, "" for this till's own.
+	TillID string
+	// RegisterName is the sale's register's name, "" when it recorded
+	// none (a replica's sale keeps no register here — applyJournal).
+	RegisterName string
+	// CashierName is the cashier's display name, "" when none recorded.
+	CashierName string
+}
+
+// SaleProvenance reads a sale's SaleProvenance; ok is false (with a nil
+// error) for no such sale.
+func (r *POSRepo) SaleProvenance(ctx context.Context, saleID string) (SaleProvenance, bool, error) {
+	var p SaleProvenance
+	err := r.db.QueryRowContext(ctx, `
+SELECT COALESCE(s.till_id, ''), COALESCE(rg.name, ''), COALESCE(u.display_name, '')
+FROM sales s
+LEFT JOIN registers rg ON rg.id = s.register_id
+LEFT JOIN users u ON u.id = s.cashier_id
+WHERE s.id = ?`, saleID).Scan(&p.TillID, &p.RegisterName, &p.CashierName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SaleProvenance{}, false, nil
+	}
+	if err != nil {
+		return SaleProvenance{}, false, fmt.Errorf("sale provenance: %w", err)
+	}
+	return p, true, nil
+}
+
 // GetSaleDetail loads a sale with its lines and payments by receipt number.
 func (r *POSRepo) GetSaleDetail(ctx context.Context, receiptNo string) (SaleDetail, bool, error) {
 	var d SaleDetail
