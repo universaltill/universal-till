@@ -1469,21 +1469,6 @@ ON CONFLICT(id, version) DO UPDATE SET
 	return pluginObs.wrap("upsert_catalog_entry", err)
 }
 
-// CatalogRow represents a catalog entry row from plugin_catalog.
-type CatalogRow struct {
-	ID          string
-	Version     string
-	Name        string
-	Description string
-	Runtime     string
-	Entrypoint  string
-	PackageURL  string
-	SHA256      string
-	Author      string
-	Website     string
-	TagsJSON    string
-}
-
 // PluginSettingRow represents a plugin setting row.
 type PluginSettingRow struct {
 	ID        string
@@ -2828,83 +2813,6 @@ ORDER BY id, updated_at DESC
 		}
 	}
 	return out, rows.Err()
-}
-
-// ListCatalog returns non-deprecated catalog entries.
-func (r *PluginRepo) ListCatalog(ctx context.Context) ([]CatalogRow, error) {
-	rows, err := r.db.QueryContext(ctx, `
-SELECT id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, COALESCE(tags_json,'')
-FROM plugin_catalog
-WHERE is_deprecated = 0
-`)
-	if err != nil {
-		return nil, pluginObs.wrap("list_catalog", err)
-	}
-	defer rows.Close()
-	var res []CatalogRow
-	for rows.Next() {
-		var row CatalogRow
-		if err := rows.Scan(&row.ID, &row.Version, &row.Name, &row.Description, &row.Runtime, &row.Entrypoint, &row.PackageURL, &row.SHA256, &row.Author, &row.Website, &row.TagsJSON); err != nil {
-			return nil, pluginObs.wrap("list_catalog", err)
-		}
-		res = append(res, row)
-	}
-	return res, rows.Err()
-}
-
-// CatalogPage returns paginated catalog entries and total count filtered by
-// tag, from the local `plugin_catalog` table. No caller left outside its own
-// test (TestCatalogPage, plugin_repo_lifecycle_test.go): its last in-tree
-// caller, internal/plugins.Manager.CatalogPage — itself unreachable per the
-// deadcode-baseline guard's whole-program analysis — was deleted in
-// ut-docs#1566's `internal/plugins` slice. Production instead lists installed
-// plugins via PluginRepo.ListInstalledPlugins, and lists the *available*
-// marketplace catalog via the CatalogRepo snapshot + plugins.IndexCatalog
-// (internal/pages/plugin_api.go), an unrelated path. This method and
-// Manager.CatalogPage read as a matched, superseded pair from before that
-// split existed; with the domain half now gone, this one is a deletion
-// candidate (together with its test) for a future `internal/data` slice of
-// that same card.
-func (r *PluginRepo) CatalogPage(ctx context.Context, offset, limit int, tag string) ([]CatalogRow, int, error) {
-	where := "WHERE is_deprecated = 0"
-	args := []any{}
-	if strings.TrimSpace(tag) != "" {
-		where += " AND tags_json LIKE ?"
-		args = append(args, "%"+tag+"%")
-	}
-
-	var total int
-	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM plugin_catalog %s`, where)
-	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
-		return nil, 0, pluginObs.wrap("catalog_count", err)
-	}
-
-	args = append(args, limit, offset)
-	query := fmt.Sprintf(`
-SELECT id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, COALESCE(tags_json,'')
-FROM plugin_catalog
-%s
-ORDER BY name
-LIMIT ? OFFSET ?
-`, where)
-	rows, err := r.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, 0, pluginObs.wrap("catalog_page", err)
-	}
-	defer rows.Close()
-
-	var res []CatalogRow
-	for rows.Next() {
-		var row CatalogRow
-		if err := rows.Scan(&row.ID, &row.Version, &row.Name, &row.Description, &row.Runtime, &row.Entrypoint, &row.PackageURL, &row.SHA256, &row.Author, &row.Website, &row.TagsJSON); err != nil {
-			return nil, 0, pluginObs.wrap("catalog_page", err)
-		}
-		res = append(res, row)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, pluginObs.wrap("catalog_page", err)
-	}
-	return res, total, nil
 }
 
 type executor interface {

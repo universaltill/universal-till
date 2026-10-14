@@ -42,7 +42,7 @@ func seedExportPluginWithPermissions(t *testing.T, db *sql.DB, pluginID, key, la
 	// ut-docs#1677: plugins.entrypoint is NOT NULL and plugins has a
 	// composite FK to plugin_catalog(id,version) in the real migrated
 	// schema (ut-docs#1676) -- description/author/website/tags_json are
-	// nullable but PluginRepo.ListCatalog scans them non-Null.
+	// nullable; filled here to mirror a marketplace-written row.
 	mustExec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, min_pos_version, api_version, published_at) VALUES (?, '1.0.0', ?, 'desc', 'go', 'entry', 'url', 'sha', 'auth', 'site', '[]', '0.0.0', '1', datetime('now'))`, pluginID, pluginID)
 	mustExec(`INSERT INTO plugins (id, name, version, entrypoint, is_active) VALUES (?, ?, '1.0.0', 'entry', 1)`, pluginID, pluginID)
 	mustExec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, is_active, sort_order)
@@ -81,7 +81,7 @@ func seedExportPluginWithEntities(t *testing.T, db *sql.DB, pluginID, key, label
 	// ut-docs#1677: plugins.entrypoint is NOT NULL and plugins has a
 	// composite FK to plugin_catalog(id,version) in the real migrated
 	// schema (ut-docs#1676) -- description/author/website/tags_json are
-	// nullable but PluginRepo.ListCatalog scans them non-Null.
+	// nullable; filled here to mirror a marketplace-written row.
 	mustExec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, min_pos_version, api_version, published_at) VALUES (?, '1.0.0', ?, 'desc', 'go', 'entry', 'url', 'sha', 'auth', 'site', '[]', '0.0.0', '1', datetime('now'))`, pluginID, pluginID)
 	mustExec(`INSERT INTO plugins (id, name, version, entrypoint, is_active) VALUES (?, ?, '1.0.0', 'entry', 1)`, pluginID, pluginID)
 	mustExec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, is_active, sort_order, config_json)

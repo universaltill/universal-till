@@ -31,7 +31,6 @@ type Manager struct {
 	// (Deps.LayoutAmendmentsSnapshot), like MenuPlugins.
 	LayoutAmendments []uislot.Amendment
 	Installed        map[string]Plugin // key = plugin id
-	Catalog          map[string]CatalogEntry
 	db               *sql.DB
 	Wasm             *WasmRuntime // in-process runtime for runtime:"wasm" plugins
 	localizer        Localizer    // receives language-pack translations
@@ -161,25 +160,6 @@ type MenuPlugin struct {
 // and every type:"page" entry is otherwise also a menu candidate.
 const DocsEntryKey = "docs"
 
-type CatalogEntry struct {
-	ID          string   `json:"id"`
-	Version     string   `json:"version"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Runtime     string   `json:"runtime"`
-	Entrypoint  string   `json:"entrypoint"`
-	PackageURL  string   `json:"packageUrl"`
-	SHA256      string   `json:"sha256"`
-	Author      string   `json:"author"`
-	Website     string   `json:"website"`
-	Tags        []string `json:"tags,omitempty"`
-}
-
-type CatalogView struct {
-	CatalogEntry
-	Installed bool `json:"installed"`
-}
-
 // Init loads plugin metadata and menu entries from the database.
 func Init(ctx context.Context, cfg *config.Config, db *sql.DB) (*Manager, error) {
 	log.Printf("initialising plugins for env=%s", cfg.Env)
@@ -192,14 +172,10 @@ func Init(ctx context.Context, cfg *config.Config, db *sql.DB) (*Manager, error)
 	m := &Manager{
 		MenuPlugins: make(map[string]MenuPlugin),
 		Installed:   make(map[string]Plugin),
-		Catalog:     make(map[string]CatalogEntry),
 		db:          db,
 		Wasm:        NewWasmRuntimeWithCache(paths.Plugins(), paths.Data("wasm-cache")),
 	}
 
-	if err := m.loadCatalog(ctx, repo); err != nil {
-		return nil, err
-	}
 	if err := m.loadInstalled(ctx, repo); err != nil {
 		return nil, err
 	}
@@ -421,83 +397,5 @@ func (m *Manager) InstalledIDs() []string {
 		out = append(out, id)
 	}
 	sort.Strings(out)
-	return out
-}
-
-// CatalogList returns catalog entries with installed flag, from the local
-// plugin_catalog mirror Init/Reload load into m.Catalog.
-//
-// No production caller (ut-docs#1566): the plugins available to install are
-// listed straight from the marketplace CatalogRepository snapshot
-// (internal/pages/plugins_store_page.go ranges snapshot.Plugins; the
-// management page's "update available" badge resolves through
-// plugins.IndexCatalog over the same snapshot), and installed ones from
-// PluginRepo.ListInstalledPlugins. The local plugin_catalog table is
-// written on install (PersistManifest's EnsureCatalogEntry exists to
-// satisfy plugins(id,version)'s foreign key; MarketplaceInstaller's
-// UpsertCatalogEntry records the listing's metadata) but nothing reads
-// those rows back for display, so nothing reads this view.
-// The DB-paginated sibling, Manager.CatalogPage, was removed in that slice
-// (its data-layer half, PluginRepo.CatalogPage, is unchanged and still on
-// the deadcode baseline). This one is kept, as the only reader of the
-// otherwise write-only m.Catalog map: deleting it alone would leave
-// loadCatalog running an unread query on every Reload, and deleting the
-// whole chain (m.Catalog, loadCatalog, CatalogEntry/CatalogView,
-// PluginRepo.ListCatalog) crosses into internal/data — flagged as a
-// follow-up instead (ut-docs#2238). TestManagerInitAndReload also covers
-// loadCatalog's tag parsing and installed flag through it.
-func (m *Manager) CatalogList() []CatalogView {
-	out := make([]CatalogView, 0, len(m.Catalog))
-	for id, c := range m.Catalog {
-		_, ok := m.Installed[id]
-		out = append(out, CatalogView{CatalogEntry: c, Installed: ok})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].Name < out[j].Name
-	})
-	return out
-}
-
-func (m *Manager) loadCatalog(ctx context.Context, repo *data.PluginRepo) error {
-	rows, err := repo.ListCatalog(ctx)
-	if err != nil {
-		return fmt.Errorf("load plugin catalog: %w", err)
-	}
-	for _, row := range rows {
-		entry := CatalogEntry{
-			ID:          row.ID,
-			Version:     row.Version,
-			Name:        row.Name,
-			Description: row.Description,
-			Runtime:     row.Runtime,
-			Entrypoint:  row.Entrypoint,
-			PackageURL:  row.PackageURL,
-			SHA256:      row.SHA256,
-			Author:      row.Author,
-			Website:     row.Website,
-		}
-		if strings.TrimSpace(row.TagsJSON) != "" {
-			entry.Tags = parseTags(row.TagsJSON)
-		}
-		m.Catalog[entry.ID] = entry
-	}
-	return nil
-}
-
-func parseTags(s string) []string {
-	s = strings.TrimSpace(s)
-	s = strings.TrimPrefix(s, "[")
-	s = strings.TrimSuffix(s, "]")
-	if s == "" {
-		return nil
-	}
-	parts := strings.Split(s, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.Trim(p, ` "`)
-		if p != "" {
-			out = append(out, p)
-		}
-	}
 	return out
 }

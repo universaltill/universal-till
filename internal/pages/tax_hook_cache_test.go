@@ -27,9 +27,7 @@ func seedTaxPlugin(t *testing.T, db *sql.DB) {
 	t.Helper()
 	for _, q := range []string{
 		// description/author/website/tags_json are nullable in the real
-		// schema but PluginRepo.ListCatalog scans them into plain (non-Null)
-		// string fields -- NULL here fails any test path that lists the
-		// whole catalog, not just this plugin.
+		// schema; filled here to mirror a marketplace-written row.
 		`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, min_pos_version, api_version, published_at)
 		   VALUES ('com.universaltill.tax-uk', '1.0.0', 'UK VAT', 'desc', 'go', 'entry', 'url', 'sha', 'auth', 'site', '[]', '0.0.0', '1', datetime('now'))`,
 		`INSERT INTO plugins (id, name, version, entrypoint, is_active) VALUES ('com.universaltill.tax-uk', 'UK VAT', '1.0.0', 'entry', 1)`,

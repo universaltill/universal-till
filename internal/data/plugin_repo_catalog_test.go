@@ -72,36 +72,6 @@ func TestPluginRepo_UpsertCatalogEntry_InsertsAndUpdates(t *testing.T) {
 	}
 }
 
-func TestPluginRepo_ListCatalog_ExcludesDeprecated(t *testing.T) {
-	ctx := context.Background()
-	d := openMigratedDB(t, "till.db")
-	repo := NewPluginRepo(d.DB)
-
-	if err := repo.UpsertCatalogEntry(ctx, CatalogUpsertRow{
-		ID: "com.t.live", Version: "1.0.0", Name: "Live", Runtime: "wasm", Entrypoint: "p.wasm",
-		PackageURL: "u", SHA256: "s", MinPOSVersion: "0.1.0", PublishedAt: "2026-07-30",
-	}); err != nil {
-		t.Fatalf("seed live: %v", err)
-	}
-	if err := repo.UpsertCatalogEntry(ctx, CatalogUpsertRow{
-		ID: "com.t.dead", Version: "1.0.0", Name: "Dead", Runtime: "wasm", Entrypoint: "p.wasm",
-		PackageURL: "u", SHA256: "s", MinPOSVersion: "0.1.0", PublishedAt: "2026-07-30",
-	}); err != nil {
-		t.Fatalf("seed dead: %v", err)
-	}
-	if _, err := d.DB.ExecContext(ctx, `UPDATE plugin_catalog SET is_deprecated = 1 WHERE id='com.t.dead'`); err != nil {
-		t.Fatalf("deprecate: %v", err)
-	}
-
-	rows, err := repo.ListCatalog(ctx)
-	if err != nil {
-		t.Fatalf("ListCatalog: %v", err)
-	}
-	if len(rows) != 1 || rows[0].ID != "com.t.live" {
-		t.Fatalf("expected only the non-deprecated entry, got %+v", rows)
-	}
-}
-
 func TestPluginRepo_ListReceiptTemplates(t *testing.T) {
 	ctx := context.Background()
 	d := openMigratedDB(t, "till.db")
