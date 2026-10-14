@@ -6,19 +6,23 @@
 # plain-prose "%" (e.g. "10%-off") is never mistaken for a verb, proves
 # Go's explicit positional verbs (%[1]s) may legitimately reorder, proves
 # mixing positional and implicit verbs in one string is rejected rather
-# than guessed at, and proves the guard still passes on the real,
+# than guessed at, and proves the guard still passes on the pristine sandbox copy of the real,
 # unmodified locale files.
 #
 # Different mechanism from guard-i18n_test.sh/_toast_test.sh/_keycall_test.sh:
 # those plant disposable NEW fixture files. Check 8 operates on the
-# existing web/locales/*.json files themselves, so this test instead adds
-# one throwaway key to en.json and to one target locale, runs the guard,
-# then removes exactly that key again — restoring both files byte-for-byte
+# existing web/locales/*.json files themselves (in the sandbox copy, never
+# the real tree), so this test instead adds one throwaway key to en.json
+# and to one target locale, runs the guard, then removes exactly that key
+# again — restoring both files byte-for-byte
 # via the original content captured up front, never a partial JSON rewrite.
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "${ROOT_DIR}"
+# Run entirely in a throwaway copy of the tree so planted fixtures and rewritten
+# locale files never touch the real repo (ut-docs#4258).
+# shellcheck source=scripts/ci/i18n-guard-sandbox.sh
+source "$(dirname "${BASH_SOURCE[0]}")/i18n-guard-sandbox.sh"
+enter_i18n_guard_sandbox
 
 GUARD="scripts/ci/guard-i18n.sh"
 EN="web/locales/en.json"
@@ -47,6 +51,7 @@ cleanup() {
   local status=$?
   restore
   rm -rf "${BACKUP_DIR}"
+  remove_i18n_guard_sandbox
   exit "${status}"
 }
 trap cleanup EXIT
@@ -189,7 +194,7 @@ plant "zz.verb.percent-prose-no-hyphen" "including a 10%off code" "enthaelt eine
 expect_pass "percent sign directly followed by prose letters, not a verb"
 
 restore
-expect_pass "the real, unmodified repository tree"
+expect_pass "the pristine sandbox copy of the real tree"
 
 echo
 if [[ ${FAIL_COUNT} -gt 0 ]]; then

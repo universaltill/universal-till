@@ -18,8 +18,11 @@
 # this check's own fixture set/cleanup is unrelated to ToastMessage.
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "${ROOT_DIR}"
+# Run entirely in a throwaway copy of the tree so planted fixtures and rewritten
+# locale files never touch the real repo (ut-docs#4258).
+# shellcheck source=scripts/ci/i18n-guard-sandbox.sh
+source "$(dirname "${BASH_SOURCE[0]}")/i18n-guard-sandbox.sh"
+enter_i18n_guard_sandbox
 
 GUARD="scripts/ci/guard-i18n.sh"
 FIXTURE_DIR="internal/pages"
@@ -35,6 +38,7 @@ cleanup() {
     done
   fi
   [[ -d "${FIXTURE_SUBDIR}" ]] && rmdir "${FIXTURE_SUBDIR}" 2>/dev/null
+  remove_i18n_guard_sandbox
   exit "${status}"
 }
 trap cleanup EXIT
@@ -163,8 +167,8 @@ func zzGuardTestTitleLiteralNested() map[string]any {
 expect_fail "a hardcoded page <title> literal one directory below internal/pages"
 clear_fixture_nested "TitleLiteralNested"
 
-# Sanity: the guard must still pass clean on the real, unmodified tree.
-expect_pass "the real, unmodified repository tree"
+# Sanity: the guard must still pass clean on the pristine sandbox copy of the real tree.
+expect_pass "the pristine sandbox copy of the real tree"
 
 if [[ ${FAIL_COUNT} -gt 0 ]]; then
   echo "❌ ${FAIL_COUNT} guard-i18n_title_test.sh case(s) failed" >&2

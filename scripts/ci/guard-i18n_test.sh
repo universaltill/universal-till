@@ -6,11 +6,14 @@
 # works, proves a markup-only literal built up in JS (no real prose, just
 # tag/attribute skeleton) does NOT false-positive after tag-stripping, and
 # proves a real prose literal wrapped in a tag still correctly flags. Also
-# proves the guard still passes on the real, unmodified codebase.
+# proves the guard still passes on the pristine sandbox copy of the real codebase.
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "${ROOT_DIR}"
+# Run entirely in a throwaway copy of the tree so planted fixtures never touch
+# the real repo (ut-docs#4258).
+# shellcheck source=scripts/ci/i18n-guard-sandbox.sh
+source "$(dirname "${BASH_SOURCE[0]}")/i18n-guard-sandbox.sh"
+enter_i18n_guard_sandbox
 
 GUARD="scripts/ci/guard-i18n.sh"
 FIXTURE_DIR="web/ui/pages"
@@ -24,6 +27,7 @@ cleanup() {
       [[ -n "${f}" && -f "${f}" ]] && rm -f "${f}"
     done
   fi
+  remove_i18n_guard_sandbox
   exit "${status}"
 }
 trap cleanup EXIT

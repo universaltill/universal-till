@@ -118,10 +118,20 @@ func TestListenPort_ParsesConfiguredPort(t *testing.T) {
 // unbindable address — an early startup error, with the caller's ctx (never
 // cancelled here) still fully live. Before the fix, nothing told enroll's
 // loop to stop in this case, so Run's drain would always hit its full 10s
-// timeout waiting on a goroutine nothing had cancelled. Asserting Run returns
-// in well under that bound is what proves the internally-derived bgCtx (not
-// the caller's ctx) is what actually stops it.
+// timeout waiting on a goroutine nothing had cancelled. The drain-timeout
+// ERROR log (which a real regression always emits) is the primary proof that
+// the internally-derived bgCtx (not the caller's ctx) is what actually stops
+// it; the wall-clock bound below is only a backstop on top of that.
 func TestRun_JoinsBackgroundGoroutinesOnEarlyServerError(t *testing.T) {
+	// Healthy boot (migrations, plugin load, ...) was measured at 10.1-10.3s
+	// under -race with a concurrent `go test ./...` (ut-docs#4258), so a
+	// wall-clock bound at the bare drain timeout flaked. The drain-timeout
+	// ERROR log check below is what catches a bgCtx/join regression,
+	// whatever the boot time (a regression measured 19.9s — under this
+	// bound — and failed on the log). The wall-clock bound only catches a
+	// shutdown that hangs well past every drain.
+	const bootAllowance = 10 * time.Second
+
 	t.Setenv("UT_DATA_DIR", t.TempDir())
 	t.Setenv("UT_ENV_FILE", filepath.Join(t.TempDir(), "does-not-exist.env"))
 	t.Setenv("UT_AUTH", "off")
@@ -143,10 +153,10 @@ func TestRun_JoinsBackgroundGoroutinesOnEarlyServerError(t *testing.T) {
 		// this test exists for. A real bgCtx/join regression ALWAYS costs the
 		// full drain bound on top of boot time AND logs the drain-timeout
 		// error; a slow-but-healthy boot does neither.
-		if elapsed := time.Since(start); elapsed >= backgroundDrainTimeout {
-			t.Fatalf("Run took %s (>= the %s drain timeout) to return a startup error — "+
-				"background goroutines were only stopped by the drain giving up, not a real cancel",
-				elapsed, backgroundDrainTimeout)
+		if elapsed := time.Since(start); elapsed >= backgroundDrainTimeout+bootAllowance {
+			t.Fatalf("Run took %s (>= the %s drain timeout + %s boot allowance) to return a startup error — "+
+				"shutdown hung well past the drain bound",
+				elapsed, backgroundDrainTimeout, bootAllowance)
 		}
 		// "still running" (not the more specific "background services still
 		// running") deliberately catches a timeout on EITHER of Run's two
@@ -159,8 +169,8 @@ func TestRun_JoinsBackgroundGoroutinesOnEarlyServerError(t *testing.T) {
 				t.Fatalf("Run's drain hit its timeout on an early startup error: %s", p.Msg)
 			}
 		}
-	case <-time.After(30 * time.Second):
-		t.Fatal("Run did not return within 30s of an unbindable listen address")
+	case <-time.After(60 * time.Second):
+		t.Fatal("Run did not return within 60s of an unbindable listen address")
 	}
 }
 

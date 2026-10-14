@@ -20,8 +20,11 @@
 # fingers it either, since every value is copied verbatim from en.json.
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "${ROOT_DIR}"
+# Run entirely in a throwaway copy of the tree so planted fixtures and rewritten
+# locale files never touch the real repo (ut-docs#4258).
+# shellcheck source=scripts/ci/i18n-guard-sandbox.sh
+source "$(dirname "${BASH_SOURCE[0]}")/i18n-guard-sandbox.sh"
+enter_i18n_guard_sandbox
 
 GUARD="scripts/ci/guard-i18n.sh"
 FIXTURE="web/locales/zz_guard_test.json"
@@ -30,6 +33,7 @@ FAIL_COUNT=0
 cleanup() {
   local status=$?
   rm -f "${FIXTURE}"
+  remove_i18n_guard_sandbox
   exit "${status}"
 }
 trap cleanup EXIT
@@ -109,9 +113,9 @@ expect_fail_containing "a locale file with a duplicated top-level key" \
   "duplicate key" "${FIXTURE}" "${DUP_KEY}"
 rm -f "${FIXTURE}"
 
-# Sanity: the guard must still pass clean on the real, unmodified tree
+# Sanity: the guard must still pass clean on the pristine sandbox copy of the real tree
 # (proves this test's own fixture and cleanup leave no residue behind).
-expect_pass "the real, unmodified repository tree"
+expect_pass "the pristine sandbox copy of the real tree"
 
 if [[ ${FAIL_COUNT} -gt 0 ]]; then
   echo "❌ ${FAIL_COUNT} guard-i18n_dupkey_test.sh case(s) failed" >&2
