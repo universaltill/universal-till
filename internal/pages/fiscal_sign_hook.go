@@ -162,6 +162,15 @@ type fiscalSignAskVATLine struct {
 	RateBP int   `json:"rate_bp"`
 	Net    int64 `json:"net"`
 	Tax    int64 `json:"tax"`
+	// ServiceChargeNet / ServiceChargeTax (contract 1.16.0, ut-docs#4300)
+	// are the part of Net/Tax above that is the charges' apportioned share
+	// (pos.ApportionChargesTax), read in the same pricing mode as Net/Tax.
+	// pos.VATBandsForSale splits a sale discount over the goods and folds
+	// the charge in afterwards; a signer subtracts these first to split it
+	// the same way. Each is omitted when zero (a charged band's tax part
+	// can round to 0), so a signer reads an absent field as 0.
+	ServiceChargeNet int64 `json:"service_charge_net,omitempty"`
+	ServiceChargeTax int64 `json:"service_charge_tax,omitempty"`
 }
 
 // fiscalSignAskResponse is the JSON a plugin writes to stdout to answer.
@@ -976,6 +985,8 @@ func buildFiscalSignPayload(in *pos.SaleInput, now time.Time) fiscalSignAskPaylo
 		}
 		agg.Net += b.Amount.Minor()
 		agg.Tax += b.Tax.Minor()
+		agg.ServiceChargeNet += b.Amount.Minor()
+		agg.ServiceChargeTax += b.Tax.Minor()
 		chargeTax = chargeTax.Add(b.Tax)
 	}
 	total := subtotal.Sub(in.SaleDiscount).Add(in.ChargesTotal())

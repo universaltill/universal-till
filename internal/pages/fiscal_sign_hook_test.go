@@ -1099,6 +1099,8 @@ func TestFiscalSignPayload_ServiceChargeApportionedIntoVATBreakdown(t *testing.T
 				agg.RateBP = b.RateBP
 				agg.Net += b.Amount.Minor()
 				agg.Tax += b.Tax.Minor()
+				agg.ServiceChargeNet += b.Amount.Minor()
+				agg.ServiceChargeTax += b.Tax.Minor()
 				wantBands[b.RateBP] = agg
 				chargeTax = chargeTax.Add(b.Tax)
 			}
@@ -1586,8 +1588,49 @@ func TestFiscalSignPayload_MultiChargeFoldedPerCharge(t *testing.T) {
 	if p.ServiceCharge != 150 || p.Total != 1363 {
 		t.Fatalf("service_charge %d total %d, want 150/1363", p.ServiceCharge, p.Total)
 	}
-	want := []fiscalSignAskVATLine{{RateBP: 700, Net: 50, Tax: 4}, {RateBP: 1900, Net: 1100, Tax: 209}}
+	want := []fiscalSignAskVATLine{{RateBP: 700, Net: 50, Tax: 4, ServiceChargeNet: 50, ServiceChargeTax: 4}, {RateBP: 1900, Net: 1100, Tax: 209, ServiceChargeNet: 100, ServiceChargeTax: 19}}
 	if !reflect.DeepEqual(p.VATBreakdown, want) {
 		t.Fatalf("vat_breakdown = %+v, want %+v", p.VATBreakdown, want)
+	}
+}
+
+// ut-docs#4300 (contract 1.16.0): every vat_breakdown entry names the part
+// of its net/tax that is the charges' apportioned share, so a signer can
+// take it out before splitting the sale discount the way pos.VATBandsForSale
+// does (discount on the goods, charge folded in afterwards). The parts are
+// exactly what ApportionChargesTax folded in, and absent without a charge.
+func TestFiscalSignPayload_ChargePartPerRate(t *testing.T) {
+	lines := []pos.SaleLineInput{
+		{Name: "Food", Qty: 1, UnitPrice: money.FromMinor(1000), TaxRateBasisPoints: 1900},
+		{Name: "Paper", Qty: 1, UnitPrice: money.FromMinor(500), TaxRateBasisPoints: 700},
+	}
+	for _, inclusive := range []bool{false, true} {
+		charges := []pos.ChargeInput{
+			{Key: pos.ServiceChargeKey, Amount: money.FromMinor(301)},
+			{Key: "levy", Label: "Levy", Amount: money.FromMinor(50), TaxBasisBP: 700},
+		}
+		in := &pos.SaleInput{SaleID: "sale-charge-part", Currency: "EUR", TaxInclusive: inclusive, Charges: charges, Lines: lines}
+		p := buildFiscalSignPayload(in, time.Date(2026, 10, 14, 10, 0, 0, 0, time.UTC))
+		want := map[int][2]int64{}
+		for _, b := range pos.ApportionChargesTax(charges, pos.ChargeTaxLinesFromSale(lines), inclusive) {
+			want[b.RateBP] = [2]int64{b.Amount.Minor(), b.Tax.Minor()}
+		}
+		if len(p.VATBreakdown) != 2 {
+			t.Fatalf("inclusive=%v: vat_breakdown = %+v", inclusive, p.VATBreakdown)
+		}
+		for _, v := range p.VATBreakdown {
+			if got := [2]int64{v.ServiceChargeNet, v.ServiceChargeTax}; got != want[v.RateBP] || got[0] == 0 {
+				t.Fatalf("inclusive=%v rate %d: charge part %v, want %v", inclusive, v.RateBP, got, want[v.RateBP])
+			}
+		}
+	}
+
+	in := &pos.SaleInput{SaleID: "sale-no-charge", Currency: "EUR", Lines: lines}
+	raw, err := json.Marshal(buildFiscalSignPayload(in, time.Date(2026, 10, 14, 10, 0, 0, 0, time.UTC)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "service_charge_") {
+		t.Fatalf("a sale without a charge must not send the charge parts: %s", raw)
 	}
 }
