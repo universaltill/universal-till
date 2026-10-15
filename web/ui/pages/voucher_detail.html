@@ -16,6 +16,43 @@
   </dl>
 </div>
 
+{{ $a := .adjust }}
+{{ if $a.allowed }}
+{{/* ut-docs#4253: manager balance correction. Inline form, never a modal;
+     errors come back as a fragment swapped into #voucher-adjust-msg
+     (non-2xx text/html — app.js's beforeSwap), success redirects back here.
+     The new balance is a text field with inputmode="decimal" +
+     moneypatternlocal (comma or dot, the OSK's numeric pad), read with
+     httpx.ParseMoneyMajor. adjustment_id is minted per render, so a
+     double-submit of this form is applied once. */}}
+<div class="card" id="voucher-adjust" style="margin-block-start:1rem">
+  <h2>{{ T "vouchers.adjust.title" }}</h2>
+  {{ if $a.done }}<p class="tag ok" role="status">{{ T "vouchers.adjust.done" }}</p>{{ end }}
+  {{ if $a.possible }}
+  <p class="muted">{{ T "vouchers.adjust.intro" }}</p>
+  <form hx-post="{{ $a.href }}" hx-target="#voucher-adjust-msg" hx-swap="innerHTML" hx-disabled-elt="find button[type=submit]"
+        action="{{ $a.href }}" method="post" style="display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:end">
+    <input type="hidden" name="adjustment_id" value="{{ $a.id }}">
+    <input type="hidden" name="expected_balance" value="{{ $a.expected }}">
+    <p style="margin:0; flex-basis:100%">{{ T "vouchers.adjust.current" }}: <strong>{{ money $a.expected }}</strong></p>
+    <label>{{ T "vouchers.adjust.new_balance" }} ({{ currency.Display }})
+      <input type="text" name="new_balance" inputmode="decimal" autocomplete="off" required
+             {{ moneypatternlocal currency.Decimals false }} {{ moneyplaceholderlocal currency.Decimals 0 }} style="inline-size:9rem">
+    </label>
+    <label style="flex:1 1 16rem">{{ T "vouchers.adjust.reason" }}
+      <input type="text" name="reason" required maxlength="200" autocomplete="off" placeholder="{{ T "vouchers.adjust.reason_ph" }}" style="inline-size:100%">
+    </label>
+    <button class="btn primary" type="submit">{{ T "vouchers.adjust.save" }}</button>
+  </form>
+  <div id="voucher-adjust-msg" aria-live="polite" style="margin-block-start:.6rem"></div>
+  {{ else if $a.void }}
+  <p class="muted">{{ T "vouchers.adjust.not_void" }}</p>
+  {{ else }}
+  <p class="muted">{{ T "vouchers.adjust.not_single" }}</p>
+  {{ end }}
+</div>
+{{ end }}
+
 <div class="card" style="margin-block-start:1rem">
   <h2>{{ T "vouchers.history.title" }}</h2>
   {{ if .history }}
@@ -33,8 +70,11 @@
         {{ range .history }}
         <tr>
           <td>{{ datetime .CreatedAt }}</td>
-          <td>{{ if eq .Type "issue" }}{{ T "vouchers.history.type.issue" }}{{ else }}{{ T "vouchers.history.type.redemption" }}{{ end }}</td>
-          <td style="text-align:end">{{ money .AmountMinor }}</td>
+          <td>{{ if eq .Type "issue" }}{{ T "vouchers.history.type.issue" }}{{ else if eq .Type "adjustment" }}{{ T "vouchers.history.type.adjustment" }}
+            {{ if .Reason }}<br><span class="muted">{{ .Reason }}</span>{{ end }}
+            {{ if .ActorName }}<br><span class="muted">{{ printf (T "vouchers.history.by") .ActorName }}</span>{{ end }}
+            {{ else }}{{ T "vouchers.history.type.redemption" }}{{ end }}</td>
+          <td style="text-align:end">{{ if and (eq .Type "adjustment") (gt .AmountMinor 0) }}+{{ end }}{{ money .AmountMinor }}</td>
           <td>{{ if .SaleHref }}<a href="{{ .SaleHref }}">{{ .ReceiptNo }}</a>{{ else if and (eq .Type "issue") (not .SaleID) }}<span class="muted">{{ T "vouchers.imported" }}</span>{{ else if not .SaleID }}—{{ else }}<span class="muted">{{ T "vouchers.sale_not_on_till" }}</span>{{ end }}</td>
         </tr>
         {{ end }}

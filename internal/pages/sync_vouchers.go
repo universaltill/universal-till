@@ -31,6 +31,11 @@ import (
 //     commit one after the other and the second loses `balance >= ?`
 //     cleanly — that is the whole mechanism that closes the fully-
 //     simultaneous two-till double-redemption race #1668 left open.
+//   - POST /api/sync/vouchers/{id}/adjust (ut-docs#4253): a manager balance
+//     correction made on a replica, applied on THIS ledger (idempotent on
+//     the replica-minted adjustment id, lost-update guarded on the balance
+//     the manager saw). The replica refuses outright when it can't get an
+//     answer here — a correction is never applied locally only.
 //
 // This supersedes the round-2 review decision (2026-09-07) that kept this
 // surface deliberately read-only. That decision was right about what it
@@ -125,7 +130,26 @@ const (
 	// ut-docs#1037: the primary's double-tax guard refused a single-
 	// purpose voucher tendered as payment — definitive, like the others.
 	syncVoucherErrNotMultiPurpose = "voucher_not_multi_purpose"
+	// ut-docs#4253: /adjust's refusals. balance_changed and no_change are
+	// 409s (conflicts with live state); invalid/reason are 400s (the
+	// caller's input — the replica validates the same rules first, so
+	// reaching them means a skewed or buggy peer).
+	syncVoucherErrBalanceChanged     = "voucher_balance_changed"
+	syncVoucherErrAdjustmentNoChange = "voucher_adjustment_no_change"
+	syncVoucherErrAdjustmentInvalid  = "voucher_adjustment_invalid"
+	syncVoucherErrAdjustmentReason   = "voucher_adjustment_reason"
 )
+
+// voucherAdjustRequest is POST .../{id}/adjust's body (ut-docs#4253).
+// adjustment_id is the idempotency key the replica minted; actor is the
+// replica-side user id, recorded as-is (it may have no users row here).
+type voucherAdjustRequest struct {
+	AdjustmentID         string `json:"adjustment_id"`
+	ExpectedBalanceMinor int64  `json:"expected_balance_minor"`
+	NewBalanceMinor      int64  `json:"new_balance_minor"`
+	Reason               string `json:"reason"`
+	Actor                string `json:"actor"`
+}
 
 // registerSyncVouchers mounts the primary-side voucher endpoints on the
 // bearer-authed /api/sync/* surface.
@@ -223,6 +247,65 @@ func registerSyncVouchers(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		writeSyncOrdersJSON(w, http.StatusOK, voucherToSyncRow(v), nil)
+	})
+
+	// POST /api/sync/vouchers/{id}/adjust — a manager balance correction
+	// made on an additional till (ut-docs#4253). Corrections are made on
+	// THIS till's ledger, the shop's one serialization point for voucher
+	// balances, exactly like /redeem: AdjustVoucherBalance's lost-update
+	// guard (expected balance + guarded UPDATE) runs here, inside one
+	// BEGIN IMMEDIATE transaction. Idempotent on adjustment_id, so a retry
+	// after a lost response answers without applying twice — with the
+	// adjustment's OWN post-correction balance, not whatever the balance has
+	// moved to since; a replay of the id with a different correction is a
+	// 400 voucher_adjustment_invalid. Answers the POST-correction row: the
+	// replica sets its mirror to it (idempotent on the id there too).
+	mux.HandleFunc("POST /api/sync/vouchers/{id}/adjust", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := syncTill(r, tills); !ok {
+			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
+			return
+		}
+		id := strings.TrimSpace(r.PathValue("id"))
+		var in voucherAdjustRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&in); err != nil {
+			writeSyncOrdersJSON(w, http.StatusBadRequest, nil, "invalid body")
+			return
+		}
+		in.AdjustmentID = strings.TrimSpace(in.AdjustmentID)
+		if id == "" || in.AdjustmentID == "" {
+			writeSyncOrdersJSON(w, http.StatusBadRequest, nil, "id and adjustment_id required")
+			return
+		}
+		_, after, err := repo.AdjustVoucherBalance(r.Context(), nil, data.VoucherAdjustment{
+			ID:                   in.AdjustmentID,
+			VoucherID:            id,
+			ExpectedBalanceMinor: in.ExpectedBalanceMinor,
+			NewBalanceMinor:      in.NewBalanceMinor,
+			Reason:               in.Reason,
+			ActorUserID:          strings.TrimSpace(in.Actor),
+			Now:                  time.Now().UTC().Format(time.RFC3339),
+		})
+		switch {
+		case errors.Is(err, data.ErrVoucherNotFound):
+			writeSyncOrdersJSON(w, http.StatusNotFound, nil, "not found")
+		case errors.Is(err, data.ErrVoucherAdjustmentInvalid):
+			writeSyncOrdersJSON(w, http.StatusBadRequest, nil, syncVoucherErrAdjustmentInvalid)
+		case errors.Is(err, data.ErrVoucherAdjustmentReason):
+			writeSyncOrdersJSON(w, http.StatusBadRequest, nil, syncVoucherErrAdjustmentReason)
+		case errors.Is(err, data.ErrVoucherNotActive):
+			writeSyncOrdersJSON(w, http.StatusConflict, nil, syncVoucherErrNotActive)
+		case errors.Is(err, data.ErrVoucherNotMultiPurpose):
+			writeSyncOrdersJSON(w, http.StatusConflict, nil, syncVoucherErrNotMultiPurpose)
+		case errors.Is(err, data.ErrVoucherBalanceChanged):
+			writeSyncOrdersJSON(w, http.StatusConflict, nil, syncVoucherErrBalanceChanged)
+		case errors.Is(err, data.ErrVoucherAdjustmentNoChange):
+			writeSyncOrdersJSON(w, http.StatusConflict, nil, syncVoucherErrAdjustmentNoChange)
+		case err != nil:
+			logging.L().Errorf("sync voucher adjust %s (%s): %v", id, in.AdjustmentID, err)
+			writeSyncOrdersJSON(w, http.StatusInternalServerError, nil, "server error")
+		default:
+			writeSyncOrdersJSON(w, http.StatusOK, voucherToSyncRow(after), nil)
+		}
 	})
 
 	// POST /api/sync/vouchers/{id}/release — /redeem's inverse (ADR-0084

@@ -194,20 +194,20 @@
       "locale": "ar",
       "topic": "vouchers",
       "signature": {
-        "headings": 6,
-        "numbered_steps": 19,
+        "headings": 7,
+        "numbered_steps": 23,
         "sub_bullets": 0,
-        "top_bullets": 14,
+        "top_bullets": 19,
         "bold_leadins": 8
       },
       "english": {
-        "headings": 6,
-        "numbered_steps": 19,
+        "headings": 7,
+        "numbered_steps": 23,
         "sub_bullets": 0,
-        "top_bullets": 14,
+        "top_bullets": 19,
         "bold_leadins": 9
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#1037: English and every locale gained one section (heading +1, steps +6, top bullets +3, no bold lead-ins) for single-purpose vouchers — the pre-existing bold-lead-in gap this entry tracks is unchanged in size, just shifted. ut-docs#4214: the selling section was rewritten in English and this locale in lockstep (a gift voucher is now sold through a Gift voucher item's popup, not the Split tab), gaining two bold lead-ins on each side (English 5->7); the pre-existing gap is unchanged in size, just shifted. ut-docs#4251: a new \"Gift vouchers page\" section (one heading, three numbered steps, three top-level bullets, two bold lead-ins — the menu-path paragraph and the Export CSV step) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#1037: English and every locale gained one section (heading +1, steps +6, top bullets +3, no bold lead-ins) for single-purpose vouchers — the pre-existing bold-lead-in gap this entry tracks is unchanged in size, just shifted. ut-docs#4214: the selling section was rewritten in English and this locale in lockstep (a gift voucher is now sold through a Gift voucher item's popup, not the Split tab), gaining two bold lead-ins on each side (English 5->7); the pre-existing gap is unchanged in size, just shifted. ut-docs#4251: a new \"Gift vouchers page\" section (one heading, three numbered steps, three top-level bullets, two bold lead-ins — the menu-path paragraph and the Export CSV step) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4253: a new \"Correcting a balance\" section (one heading, four numbered steps, five top-level bullets, no bold lead-ins) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted."
     },
     {
       "locale": "de",
@@ -517,20 +517,20 @@
       "locale": "fa",
       "topic": "vouchers",
       "signature": {
-        "headings": 6,
-        "numbered_steps": 19,
+        "headings": 7,
+        "numbered_steps": 23,
         "sub_bullets": 0,
-        "top_bullets": 14,
+        "top_bullets": 19,
         "bold_leadins": 10
       },
       "english": {
-        "headings": 6,
-        "numbered_steps": 19,
+        "headings": 7,
+        "numbered_steps": 23,
         "sub_bullets": 0,
-        "top_bullets": 14,
+        "top_bullets": 19,
         "bold_leadins": 9
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#1037: English and every locale gained one section (heading +1, steps +6, top bullets +3, no bold lead-ins) for single-purpose vouchers — the pre-existing bold-lead-in gap this entry tracks is unchanged in size, just shifted. ut-docs#4214: the selling section was rewritten in English and this locale in lockstep (a gift voucher is now sold through a Gift voucher item's popup, not the Split tab), gaining two bold lead-ins on each side (English 5->7); the pre-existing gap is unchanged in size, just shifted. ut-docs#4251: a new \"Gift vouchers page\" section (one heading, three numbered steps, three top-level bullets, two bold lead-ins — the menu-path paragraph and the Export CSV step) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#1037: English and every locale gained one section (heading +1, steps +6, top bullets +3, no bold lead-ins) for single-purpose vouchers — the pre-existing bold-lead-in gap this entry tracks is unchanged in size, just shifted. ut-docs#4214: the selling section was rewritten in English and this locale in lockstep (a gift voucher is now sold through a Gift voucher item's popup, not the Split tab), gaining two bold lead-ins on each side (English 5->7); the pre-existing gap is unchanged in size, just shifted. ut-docs#4251: a new \"Gift vouchers page\" section (one heading, three numbered steps, three top-level bullets, two bold lead-ins — the menu-path paragraph and the Export CSV step) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4253: a new \"Correcting a balance\" section (one heading, four numbered steps, five top-level bullets, no bold lead-ins) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted."
     },
     {
       "locale": "tr",
@@ -859,20 +859,20 @@
       "locale": "tr",
       "topic": "vouchers",
       "signature": {
-        "headings": 6,
-        "numbered_steps": 19,
+        "headings": 7,
+        "numbered_steps": 23,
         "sub_bullets": 0,
-        "top_bullets": 14,
+        "top_bullets": 19,
         "bold_leadins": 10
       },
       "english": {
-        "headings": 6,
-        "numbered_steps": 19,
+        "headings": 7,
+        "numbered_steps": 23,
         "sub_bullets": 0,
-        "top_bullets": 14,
+        "top_bullets": 19,
         "bold_leadins": 9
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#1037: English and every locale gained one section (heading +1, steps +6, top bullets +3, no bold lead-ins) for single-purpose vouchers — the pre-existing bold-lead-in gap this entry tracks is unchanged in size, just shifted. ut-docs#4214: the selling section was rewritten in English and this locale in lockstep (a gift voucher is now sold through a Gift voucher item's popup, not the Split tab), gaining two bold lead-ins on each side (English 5->7); the pre-existing gap is unchanged in size, just shifted. ut-docs#4251: a new \"Gift vouchers page\" section (one heading, three numbered steps, three top-level bullets, two bold lead-ins — the menu-path paragraph and the Export CSV step) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#1037: English and every locale gained one section (heading +1, steps +6, top bullets +3, no bold lead-ins) for single-purpose vouchers — the pre-existing bold-lead-in gap this entry tracks is unchanged in size, just shifted. ut-docs#4214: the selling section was rewritten in English and this locale in lockstep (a gift voucher is now sold through a Gift voucher item's popup, not the Split tab), gaining two bold lead-ins on each side (English 5->7); the pre-existing gap is unchanged in size, just shifted. ut-docs#4251: a new \"Gift vouchers page\" section (one heading, three numbered steps, three top-level bullets, two bold lead-ins — the menu-path paragraph and the Export CSV step) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted. ut-docs#4253: a new \"Correcting a balance\" section (one heading, four numbered steps, five top-level bullets, no bold lead-ins) was added to English and this locale in lockstep; the pre-existing gap is unchanged in size, just shifted."
     },
     {
       "locale": "ar",

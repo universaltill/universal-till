@@ -466,7 +466,7 @@ var nonAdminTables = map[string]string{
 	"yuzde_usulu_pool_collections_archive": "archived yuzde_usulu_pool_collections — same reasoning",
 	"report_archive":                       "this till's own X/Z report archive — per-till operational history, same reasoning as sales_archive",
 	"sales_aggregate_uploads":              "which daily sales rollups THIS till has already delivered to the cloud (ut-docs#2535, content-hash ledger) — only the primary uploads, and syncing it would make a replica believe it had sent days it never did",
-	"voucher_transactions":                 "per-sale voucher issue/redemption ledger — same append-only reasoning as payments; stays per-till exactly like vouchers below (ut-docs#1668) — this till's own local ledger row, never dumped/applied. Its 'redemption' rows double as the cross-till idempotency key, (voucher_id, sale_id), ADR-0084 — see the vouchers entry below",
+	"voucher_transactions":                 "per-sale voucher issue/redemption ledger plus manager balance adjustments (ut-docs#4253) — same append-only reasoning as payments; stays per-till exactly like vouchers below (ut-docs#1668) — this till's own local ledger row, never dumped/applied. Its 'redemption' rows double as the cross-till idempotency key, (voucher_id, sale_id), ADR-0084 — see the vouchers entry below",
 
 	// Plugin install machinery — already named above. The installed SET
 	// travels as its own separately-fingerprinted bundle (SyncPluginsRepo,

@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
+	"syscall"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -137,11 +140,11 @@ func postVoucherActionOnPrimary(ctx context.Context, d *common.Deps, client *htt
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return nil, true, err
+		return nil, true, fmt.Errorf("%w: %v", errVoucherRequestNotSent, err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/sync/vouchers/"+url.PathEscape(voucherID)+"/"+action, bytes.NewReader(payload))
 	if err != nil {
-		return nil, true, err
+		return nil, true, fmt.Errorf("%w: %v", errVoucherRequestNotSent, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+bearer)
 	req.Header.Set("Content-Type", "application/json")
@@ -351,4 +354,148 @@ func voucherRedeemWriteThrough(ctx context.Context, d *common.Deps, repo *data.P
 		logging.L().Debugf("voucher proxy: local mirror of primary-reserved %s failed: %v", voucherID, mirrorErr)
 	}
 	return true, false, nil
+}
+
+// errVoucherPrimaryUnreachable is adjustVoucherOnPrimary's "definitely
+// not applied": the request never left this till (the connection was
+// refused, the main till's name didn't resolve, the dial failed or timed
+// out) or the main till answered with a clean refusal this version doesn't
+// know (a 4xx — every 4xx path on /adjust returns before its commit). A
+// manager correction on an additional till is then REFUSED, never applied
+// locally only (ut-docs#4253): a correction is a deliberate back-office
+// change to the shop-wide liability, not a sale, so offline-first does not
+// apply, and a local-only correction would silently diverge from the main
+// till's ledger with nothing to ever reconcile it.
+var errVoucherPrimaryUnreachable = errors.New("main till unreachable for voucher correction")
+
+// errVoucherPrimaryUnknown is adjustVoucherOnPrimary's "maybe applied"
+// (review MAJOR-2): the request was sent but no usable answer came back — a
+// timeout after sending, a lost or unreadable response, a 200 whose body
+// doesn't decode, or a 5xx. The main till may already have committed the
+// correction, so the manager is told to reload and check the history
+// rather than that nothing changed. Nothing is mirrored locally.
+var errVoucherPrimaryUnknown = errors.New("main till did not confirm the voucher correction")
+
+// errVoucherRequestNotSent marks a postVoucherActionOnPrimary failure that
+// happened before the request was built (so it can't have been sent).
+var errVoucherRequestNotSent = errors.New("voucher request not sent")
+
+// voucherRequestNeverSent reports whether a postVoucherActionOnPrimary
+// transport error proves the request never reached the main till: it
+// failed before sending, or while dialing (refused, DNS, dial timeout —
+// net/http wraps all of these in a *net.OpError with Op "dial"). Anything
+// else (a write/read error, a response-header timeout) is ambiguous.
+func voucherRequestNeverSent(err error) bool {
+	if errors.Is(err, errVoucherRequestNotSent) || errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "dial"
+}
+
+// adjustVoucherOnPrimary POSTs /api/sync/vouchers/{id}/adjust (ut-docs#4253)
+// and returns the main till's post-correction row. isReplica=false means
+// this till is not a replica (apply locally). A definitive refusal comes
+// back as its data sentinel; "the request never got there" as
+// errVoucherPrimaryUnreachable; "sent, but no usable answer" as
+// errVoucherPrimaryUnknown. The same adjustment id on a retry is
+// idempotent on the primary (and a replay must carry the same request), so
+// re-submitting the same form after an ambiguous failure never applies the
+// correction twice — but the manager is told to check first, because a
+// reloaded form mints a new id.
+func adjustVoucherOnPrimary(ctx context.Context, d *common.Deps, client *http.Client, in data.VoucherAdjustment) (after data.Voucher, isReplica bool, err error) {
+	resp, isReplica, err := postVoucherActionOnPrimary(ctx, d, client, in.VoucherID, "adjust", voucherAdjustRequest{
+		AdjustmentID:         in.ID,
+		ExpectedBalanceMinor: in.ExpectedBalanceMinor,
+		NewBalanceMinor:      in.NewBalanceMinor,
+		Reason:               in.Reason,
+		Actor:                in.ActorUserID,
+	})
+	if !isReplica {
+		return data.Voucher{}, false, nil
+	}
+	if err != nil {
+		if voucherRequestNeverSent(err) {
+			logging.L().Infof("voucher correction %s: main till unreachable: %v", in.VoucherID, err)
+			return data.Voucher{}, true, errVoucherPrimaryUnreachable
+		}
+		logging.L().Warnf("voucher correction %s (%s): sent to the main till but no answer (%v) — it may or may not have been applied there", in.VoucherID, in.ID, err)
+		return data.Voucher{}, true, errVoucherPrimaryUnknown
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Data  *syncVoucherRow `json:"data"`
+		Error any             `json:"error"`
+	}
+	decodeErr := json.NewDecoder(resp.Body).Decode(&out)
+	reason, _ := out.Error.(string)
+	switch {
+	case resp.StatusCode == http.StatusOK && decodeErr == nil && out.Data != nil:
+		return voucherFromSyncRow(*out.Data), true, nil
+	case resp.StatusCode == http.StatusNotFound:
+		return data.Voucher{}, true, fmt.Errorf("voucher %q on the main till: %w", in.VoucherID, data.ErrVoucherNotFound)
+	case reason == syncVoucherErrBalanceChanged:
+		return data.Voucher{}, true, fmt.Errorf("voucher %q on the main till: %w", in.VoucherID, data.ErrVoucherBalanceChanged)
+	case reason == syncVoucherErrAdjustmentNoChange:
+		return data.Voucher{}, true, fmt.Errorf("voucher %q on the main till: %w", in.VoucherID, data.ErrVoucherAdjustmentNoChange)
+	case reason == syncVoucherErrNotActive:
+		return data.Voucher{}, true, fmt.Errorf("voucher %q on the main till: %w", in.VoucherID, data.ErrVoucherNotActive)
+	case reason == syncVoucherErrNotMultiPurpose:
+		return data.Voucher{}, true, fmt.Errorf("voucher %q on the main till: %w", in.VoucherID, data.ErrVoucherNotMultiPurpose)
+	case reason == syncVoucherErrAdjustmentInvalid:
+		return data.Voucher{}, true, fmt.Errorf("voucher %q on the main till: %w", in.VoucherID, data.ErrVoucherAdjustmentInvalid)
+	case reason == syncVoucherErrAdjustmentReason:
+		return data.Voucher{}, true, fmt.Errorf("voucher %q on the main till: %w", in.VoucherID, data.ErrVoucherAdjustmentReason)
+	case resp.StatusCode >= 400 && resp.StatusCode < 500:
+		// Every 4xx path on /adjust (bad body, unauthorized, an unknown
+		// refusal from a newer main till) returns before its commit.
+		logging.L().Warnf("voucher correction %s: main till refused with %s (%v) — nothing applied", in.VoucherID, resp.Status, out.Error)
+		return data.Voucher{}, true, errVoucherPrimaryUnreachable
+	}
+	logging.L().Warnf("voucher correction %s (%s): main till answered %s (%v) — it may or may not have been applied there", in.VoucherID, in.ID, resp.Status, out.Error)
+	return data.Voucher{}, true, errVoucherPrimaryUnknown
+}
+
+// mirrorVoucherAdjustmentLocally brings this replica's local row to the
+// main till's post-correction balance after the main till accepted the
+// correction (ut-docs#4253), in one local transaction, under the SAME
+// adjustment id (so a re-submitted form is a no-op here too).
+//
+// The local ledger row records the delta against THIS till's own prior
+// balance (primary.Balance − local balance), not the main till's delta.
+// Why: every till's voucher_transactions must explain that till's own
+// balance column — the history page and this till's Z report read it — and
+// a local mirror can lag the main till (a redemption made elsewhere).
+// Recording the primary's delta would leave local history not adding up to
+// the local balance it now shows. A voucher this till has never seen is
+// first mirrored at its pre-correction state (balance = the expected
+// balance the main till just matched), so its local delta equals the main
+// till's. A local row already at the target balance needs no row at all.
+func mirrorVoucherAdjustmentLocally(ctx context.Context, d *common.Deps, repo *data.POSRepo, in data.VoucherAdjustment, primaryAfter data.Voucher) error {
+	tx, err := d.Db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	seed := primaryAfter
+	seed.BalanceMinor = in.ExpectedBalanceMinor
+	seed.Status = "active"
+	if seed.BalanceMinor == 0 {
+		seed.Status = "redeemed"
+	}
+	if err := repo.EnsureVoucherLocalRow(ctx, tx, seed); err != nil {
+		return err
+	}
+	// The main till already validated the correction: the mirror sets the
+	// local row to its result with no local range/purpose/status checks
+	// (review MINOR-1 — a stale local void or single-purpose row must not
+	// make the mirror fail).
+	if err := repo.MirrorVoucherAdjustment(ctx, tx, in.VoucherID, in.ID, primaryAfter.BalanceMinor, in.Reason, in.ActorUserID, in.Now); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

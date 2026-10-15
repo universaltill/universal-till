@@ -2544,8 +2544,12 @@ type EODReport struct {
 	// reported in a bucket of their own, distinct from VouchersIssued — see
 	// VoucherRangeSummary's doc comment (internal/data/voucher_repo.go) for
 	// why an import is never folded into Issued.
-	VouchersImportedCount int    `json:"vouchers_imported_count"`
-	VouchersImported      int64  `json:"vouchers_imported"`
+	VouchersImportedCount int   `json:"vouchers_imported_count"`
+	VouchersImported      int64 `json:"vouchers_imported"`
+	// VouchersAdjusted(Count) (ut-docs#4253): manager balance corrections,
+	// signed net — no money moved, never in Gross/Net or a VAT band.
+	VouchersAdjustedCount int    `json:"vouchers_adjusted_count"`
+	VouchersAdjusted      int64  `json:"vouchers_adjusted"`
 	FirstReceipt          string `json:"first_receipt"`
 	LastReceipt           string `json:"last_receipt"`
 	GeneratedAt           string `json:"generated_at"`
@@ -2868,6 +2872,8 @@ WHERE status = 'voided' AND (
 	rep.VouchersRedeemed = vouchers.RedeemedMinor
 	rep.VouchersImportedCount = vouchers.ImportedCount
 	rep.VouchersImported = vouchers.ImportedMinor
+	rep.VouchersAdjustedCount = vouchers.AdjustedCount
+	rep.VouchersAdjusted = vouchers.AdjustedMinor
 
 	rows, err := r.db.QueryContext(ctx, `
 SELECT p.method_id,
@@ -3123,6 +3129,8 @@ WHERE status = 'voided' AND `+vwin, vargs...).Scan(&rep.CancelCount, &rep.Cancel
 	rep.VouchersRedeemed = vouchers.RedeemedMinor
 	rep.VouchersImportedCount = vouchers.ImportedCount
 	rep.VouchersImported = vouchers.ImportedMinor
+	rep.VouchersAdjustedCount = vouchers.AdjustedCount
+	rep.VouchersAdjusted = vouchers.AdjustedMinor
 
 	mwin, margs := instantWindow("s.created_at", from, to)
 	rows, err := r.db.QueryContext(ctx, `

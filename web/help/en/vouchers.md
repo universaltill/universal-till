@@ -4,7 +4,7 @@ title: Gift vouchers
 section: Everyday selling
 order: 25
 summary: Sell gift vouchers by tapping a Gift voucher item — scan the card or let the till create a number — and take them as payment by scanning them at the sale screen or in the payment panel's Split tab.
-keywords: [voucher, gift voucher, gift card, gutschein, hediye çeki, einzweck, single-purpose, specific item, redeem, balance, issue, code, card number, item type, list, history, export, csv]
+keywords: [voucher, gift voucher, gift card, gutschein, hediye çeki, einzweck, single-purpose, specific item, redeem, balance, issue, code, card number, item type, list, history, export, csv, correct, correction, adjust, adjustment]
 routes: [/vouchers, /vouchers/{id}]
 ---
 
@@ -77,7 +77,7 @@ What can go wrong:
 **Menu → Gift vouchers** (manager only) lists every voucher this till knows about, newest first: its card number, who it is for, its original value, what is left on it, its status — **Active**, **Used up** or **Void** — and what it can be spent on (a specific-item voucher is marked). **Sold in** links to the receipt of the sale that sold it; an imported balance says so instead.
 
 1. Type in the **Search** box to find a voucher by card number or holder — the list updates as you type. Use **Status** to show only active, used-up or void vouchers.
-2. Tap a card number to see the voucher's **History**: when it was issued and every time it was redeemed, with the amount and a link to each sale's receipt.
+2. Tap a card number to see the voucher's **History**: when it was issued, every time it was redeemed and every correction, with the amount and a link to each sale's receipt.
 3. **Export CSV** downloads every voucher matching the current search and status — all of them, not just the ones on screen — with the columns `code`, `balance`, `label`, `original_amount`, `status`, `purpose` and `created_at`. The file can be imported on another till with **Import voucher balances** at the bottom of the same page (see [Import voucher balances](/help/voucher-import)).
 
 Good to know:
@@ -86,6 +86,25 @@ Good to know:
 - With no vouchers yet, the page tells you how to start: sell one with a Gift voucher item, or import balances from your previous system.
 - On an additional till, the list shows only the vouchers this till has seen — sold, imported or redeemed here. The full list is on the main till.
 
+## Correcting a balance
+
+When a voucher's balance is wrong — the value was keyed wrong when it was sold, or a damaged card is replaced — a manager can set the right balance from the voucher's own page. No money changes hands: the till records the correction, who made it and why.
+
+1. Open **Menu → Gift vouchers** and tap the voucher's card number.
+2. Under **Correct balance**, check the **Current balance**, then type the **New balance** — the full amount the voucher should have from now on, not the difference.
+3. Type a **Reason** (required, up to 200 characters), e.g. *amount keyed wrong when sold*.
+4. Tap **Save correction**. The page reloads with **Balance corrected.**, the new balance, and an **Adjustment** line in the **History** showing the difference (+ or −), the reason and who made it.
+
+A correction to 0 marks the voucher **Used up**; raising the balance of a used-up voucher makes it **Active** again. The voucher's original value never changes. The day-end (Z) report lists the day's corrections on their own **Adjusted** line in **GUTSCHEINE** — never as sales, payments or VAT.
+
+What can go wrong:
+
+- Only a manager or admin can correct a balance.
+- A voided voucher, or a voucher for a specific item, can't be corrected — the page says why instead of showing the form.
+- "The new balance is the same as the current balance" — there is nothing to correct.
+- "This voucher's balance changed while you were looking at it" — someone spent it, or corrected it, in the meantime. Reload the page, check the new balance, and correct again if it's still needed.
+- On an additional till, the correction is made on the main till. If the main till can't be reached, nothing is changed and the page says so — try again when it's back. If the page says the main till didn't confirm the correction, it may or may not have been saved: reload the page and check the voucher's history before you try again.
+
 ## Day-end reports and other tills
 
-The day-end (Z) report has its own **GUTSCHEINE** section for vouchers sold and spent that day, and voiding a sale that sold a voucher cancels the voucher with it (only while it's unused) — see [Reports & end of day](/help/reports). A voucher sold on one till can be spent on any other till in the shop; how that works while a till is offline is covered in [Multiple tills (one shop)](/help/multitill).
+The day-end (Z) report has its own **GUTSCHEINE** section for vouchers sold, spent and corrected that day, and voiding a sale that sold a voucher cancels the voucher with it (only while it's unused) — see [Reports & end of day](/help/reports). A voucher sold on one till can be spent on any other till in the shop; how that works while a till is offline is covered in [Multiple tills (one shop)](/help/multitill).

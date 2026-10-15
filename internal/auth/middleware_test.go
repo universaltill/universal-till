@@ -275,6 +275,11 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// ut-docs#1668 read-only decision; ADR-0084 supersedes that.)
 		"/api/sync/vouchers/GS-0001/redeem",
 		"/api/sync/vouchers/GS-0001/release",
+		// ut-docs#4253: the manager balance correction a replica forwards
+		// to the main till (voucher_sync_proxy.go adjustVoucherOnPrimary).
+		// Bearer-authed in the handler; without this entry every correction
+		// on an additional till is refused as "can't reach the main till".
+		"/api/sync/vouchers/GS-0001/adjust",
 		// ADR-0082 (ut-docs#1739): the one-shot plugin-settings encryption
 		// key fetch a replica's KeyStore makes against its primary on first
 		// use. Bearer-authed in the handler (syncTill), same as
@@ -352,6 +357,8 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		"/api/sync/vouchers/GS-0001/void",
 		"/api/sync/vouchers/GS-0001/redeem/extra",
 		"/api/sync/vouchers/GS-0001/release/extra",
+		"/api/sync/vouchers/GS-0001/adjust/extra",
+		"/api/sync/vouchers//adjust",
 		"/api/sync/vouchers//redeem",
 	} {
 		if exempt(p) {

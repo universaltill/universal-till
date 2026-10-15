@@ -206,6 +206,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/import":              true,
 	"POST /api/import/sample-data":  true,
 	"POST /api/vouchers/import":     true,
+	"POST /vouchers/{id}/adjust":    true, // ut-docs#4253: manager balance correction
 	// Backups: create, save-copy, download (a flagged demo database never
 	// leaves the demo), restore, and restart.
 	"GET /api/backup/download/{name}":   true,
@@ -312,6 +313,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/sync/users/apply":                true,
 	"POST /api/sync/vouchers/{id}/redeem":       true,
 	"POST /api/sync/vouchers/{id}/release":      true,
+	"POST /api/sync/vouchers/{id}/adjust":       true, // ut-docs#4253
 	"POST /ui/join-notice/dismiss":              true, // ut-docs#2721: writes sync.join_banner_dismissed
 	"POST /ui/agent/proposals/{id}/confirm":     true, // ut-docs#2838: applies an AI-agent change
 	"POST /ui/agent/proposals/{id}/cancel":      true, // ut-docs#2838: AI-agent proposals (no agent writes in the demo)

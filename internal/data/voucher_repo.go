@@ -140,9 +140,13 @@ type VoucherTransaction struct {
 	ID          string `json:"id"`
 	VoucherID   string `json:"voucher_id"`
 	SaleID      string `json:"sale_id"`
-	Type        string `json:"type"` // "issue" | "redemption"
-	AmountMinor int64  `json:"amount"`
+	Type        string `json:"type"`   // "issue" | "redemption" | "adjustment"
+	AmountMinor int64  `json:"amount"` // signed for an "adjustment" (new − old)
 	CreatedAt   string `json:"created_at"`
+	// ActorUserID / Reason (ut-docs#4253, migration 074) are set only on an
+	// "adjustment" — the manager who corrected the balance and why.
+	ActorUserID string `json:"actor_user_id,omitempty"`
+	Reason      string `json:"reason,omitempty"`
 }
 
 // CreateVoucher writes one vouchers row. tx may be nil (direct exec) or the
@@ -731,6 +735,13 @@ type VoucherRangeSummary struct {
 	RedeemedMinor int64 `json:"redeemed"`
 	ImportedCount int   `json:"imported_count"`
 	ImportedMinor int64 `json:"imported"`
+	// AdjustedCount/AdjustedMinor (ut-docs#4253): manager balance
+	// corrections — no money moved, so never Issued/Redeemed and never in a
+	// VAT band. AdjustedMinor is the SIGNED net of the window's corrections
+	// (each row's amount is new − old), so the bucket still ties the day's
+	// report out to the liability on the books.
+	AdjustedCount int   `json:"adjusted_count"`
+	AdjustedMinor int64 `json:"adjusted"`
 }
 
 // VouchersIssuedRedeemedForRange aggregates voucher_transactions over
@@ -794,6 +805,13 @@ GROUP BY vt.type, (vt.sale_id IS NULL)`, from, to)
 			return out, fmt.Errorf("vouchers issued/redeemed for range: scan: %w", err)
 		}
 		switch {
+		case txType == "adjustment":
+			// ut-docs#4253: an adjustment's sale_id is always NULL, so it
+			// is matched on type first — before the NULL-sale Imported
+			// case below could ever see it. Summed across both NULL/
+			// non-NULL groups in case a future writer sets a sale id.
+			out.AdjustedCount += count
+			out.AdjustedMinor += amount
 		case txType == "issue" && isImported:
 			out.ImportedCount, out.ImportedMinor = count, amount
 		case txType == "issue":
@@ -852,6 +870,10 @@ GROUP BY vt.type, (vt.sale_id IS NULL)`, args...)
 			return out, fmt.Errorf("vouchers issued/redeemed for instant window: scan: %w", err)
 		}
 		switch {
+		case txType == "adjustment":
+			// ut-docs#4253 — see VouchersIssuedRedeemedForRange.
+			out.AdjustedCount += count
+			out.AdjustedMinor += amount
 		case txType == "issue" && isImported:
 			out.ImportedCount, out.ImportedMinor = count, amount
 		case txType == "issue":
@@ -893,6 +915,9 @@ type VoucherListRow struct {
 type VoucherHistoryRow struct {
 	VoucherTransaction
 	ReceiptNo string `json:"receipt_no"`
+	// ActorName is the correcting manager's display name when this till
+	// knows the user (empty otherwise).
+	ActorName string `json:"actor_name"`
 }
 
 // likeContains escapes LIKE's own wildcards (and the escape character) so an
@@ -961,7 +986,7 @@ ORDER BY v.created_at DESC, v.rowid DESC`
 	return out, nil
 }
 
-// VoucherTransactions returns one voucher's issue/redemption history in time
+// VoucherTransactions returns one voucher's issue/redemption/adjustment history in time
 // order (created_at, then insertion order) for the voucher detail page
 // (ut-docs#4251). ErrVoucherNotFound when no such voucher exists, so the
 // page can tell "unknown number" from "no history yet".
@@ -975,9 +1000,11 @@ func (r *POSRepo) VoucherTransactions(ctx context.Context, voucherID string) ([]
 		return nil, fmt.Errorf("voucher transactions: %w", err)
 	}
 	rows, err := r.db.QueryContext(ctx, `
-SELECT vt.id, vt.voucher_id, COALESCE(vt.sale_id, ''), vt.type, vt.amount, vt.created_at, COALESCE(s.receipt_no, '')
+SELECT vt.id, vt.voucher_id, COALESCE(vt.sale_id, ''), vt.type, vt.amount, vt.created_at, COALESCE(s.receipt_no, ''),
+       COALESCE(vt.actor_user_id, ''), COALESCE(vt.reason, ''), COALESCE(u.display_name, '')
 FROM voucher_transactions vt
 LEFT JOIN sales s ON s.id = vt.sale_id
+LEFT JOIN users u ON u.id = vt.actor_user_id
 WHERE vt.voucher_id = ?
 ORDER BY vt.created_at, vt.rowid`, voucherID)
 	if err != nil {
@@ -987,7 +1014,8 @@ ORDER BY vt.created_at, vt.rowid`, voucherID)
 	var out []VoucherHistoryRow
 	for rows.Next() {
 		var h VoucherHistoryRow
-		if err := rows.Scan(&h.ID, &h.VoucherID, &h.SaleID, &h.Type, &h.AmountMinor, &h.CreatedAt, &h.ReceiptNo); err != nil {
+		if err := rows.Scan(&h.ID, &h.VoucherID, &h.SaleID, &h.Type, &h.AmountMinor, &h.CreatedAt, &h.ReceiptNo,
+			&h.ActorUserID, &h.Reason, &h.ActorName); err != nil {
 			return nil, fmt.Errorf("voucher transactions: scan: %w", err)
 		}
 		out = append(out, h)
@@ -996,4 +1024,291 @@ ORDER BY vt.created_at, vt.rowid`, voucherID)
 		return nil, fmt.Errorf("voucher transactions: %w", err)
 	}
 	return out, nil
+}
+
+// Manager balance correction (ut-docs#4253). A correction moves no money:
+// it records a signed 'adjustment' voucher_transactions row (migration 074)
+// with who made it and why, sets the voucher's balance, and writes an
+// audit_log row — all in one transaction.
+
+// maxVoucherAdjustmentReasonRunes bounds the operator-typed reason.
+const maxVoucherAdjustmentReasonRunes = 200
+
+// ErrVoucherAdjustmentInvalid is a correction the till refuses outright: a
+// new balance below zero or above the till's item price ceiling
+// (maxItemPriceMinor — the same bound a voucher's face value meets at
+// issue), a missing adjustment/voucher id, or an adjustment id already used
+// for something else (another voucher, another ledger type, or a different
+// correction of the same voucher).
+var ErrVoucherAdjustmentInvalid = errors.New("voucher adjustment is invalid")
+
+// ErrVoucherAdjustmentReason is a correction without a usable reason: empty
+// after trimming, or longer than 200 characters. Every correction is
+// audited, so the reason is mandatory.
+var ErrVoucherAdjustmentReason = errors.New("voucher adjustment needs a reason of 1 to 200 characters")
+
+// ErrVoucherAdjustmentNoChange is a "correction" to the balance the voucher
+// already has — nothing to record.
+var ErrVoucherAdjustmentNoChange = errors.New("voucher adjustment does not change the balance")
+
+// ErrVoucherBalanceChanged is the lost-update guard: the balance the
+// manager saw (ExpectedBalanceMinor) is no longer the voucher's balance — a
+// redemption or another correction landed in between — so the correction
+// is refused rather than silently applied on top of a number nobody saw.
+var ErrVoucherBalanceChanged = errors.New("voucher balance changed since it was read")
+
+// VoucherAdjustment is one manager balance correction.
+type VoucherAdjustment struct {
+	// ID is the adjustment's voucher_transactions id, minted by the caller
+	// (the page, or the replica that forwards it to the main till). It is
+	// the idempotency key: a second call with the same ID and the same
+	// request (delta new − expected, trimmed reason) applies nothing again
+	// and answers the adjustment's own before/after; the same ID with a
+	// different request → ErrVoucherAdjustmentInvalid.
+	ID        string
+	VoucherID string
+	// ExpectedBalanceMinor is the balance the manager was looking at.
+	ExpectedBalanceMinor int64
+	NewBalanceMinor      int64
+	Reason               string
+	ActorUserID          string
+	Now                  string
+}
+
+// AdjustVoucherBalance applies one manager correction (ut-docs#4253) and
+// returns the voucher before and after it. tx may be the caller's open
+// transaction; nil opens one here (BEGIN IMMEDIATE via the DSN) and commits.
+//
+// Fail-closed, in order: input checks (ids, 0 <= new balance <=
+// maxItemPriceMinor, reason 1..200 runes after trimming) →
+// ErrVoucherAdjustmentInvalid / ErrVoucherAdjustmentReason; an existing
+// 'adjustment' row with this ID for this voucher and the same request →
+// idempotent retry, nothing applied, answering that adjustment's own
+// before (expected) / after (new) balance even if the live balance has
+// moved since; the same ID with a different delta or reason →
+// ErrVoucherAdjustmentInvalid; unknown voucher → ErrVoucherNotFound; 'void' →
+// ErrVoucherNotActive; single-purpose → ErrVoucherNotMultiPurpose (its VAT
+// was declared at issue — a value change would need a tax event, which a
+// correction never is); balance != expected → ErrVoucherBalanceChanged;
+// new == current → ErrVoucherAdjustmentNoChange.
+//
+// The row's amount is signed (new − old). Status follows the balance: 0 →
+// 'redeemed' (Used up), > 0 → 'active' (re-opening a used-up voucher).
+// original_amount never moves — it is what was sold.
+func (r *POSRepo) AdjustVoucherBalance(ctx context.Context, tx *sql.Tx, in VoucherAdjustment) (before, after Voucher, err error) {
+	in.ID = strings.TrimSpace(in.ID)
+	in.VoucherID = strings.TrimSpace(in.VoucherID)
+	in.Reason = strings.TrimSpace(in.Reason)
+	if in.ID == "" || in.VoucherID == "" {
+		return Voucher{}, Voucher{}, fmt.Errorf("adjust voucher: adjustment id and voucher id are required: %w", ErrVoucherAdjustmentInvalid)
+	}
+	if in.NewBalanceMinor < 0 || in.NewBalanceMinor > maxItemPriceMinor {
+		return Voucher{}, Voucher{}, fmt.Errorf("adjust voucher %q: new balance %d out of range: %w", in.VoucherID, in.NewBalanceMinor, ErrVoucherAdjustmentInvalid)
+	}
+	if n := len([]rune(in.Reason)); n == 0 || n > maxVoucherAdjustmentReasonRunes {
+		return Voucher{}, Voucher{}, fmt.Errorf("adjust voucher %q: reason of %d characters: %w", in.VoucherID, n, ErrVoucherAdjustmentReason)
+	}
+	if in.Now == "" {
+		in.Now = time.Now().UTC().Format(time.RFC3339)
+	}
+
+	own := tx == nil
+	if own {
+		tx, err = r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return Voucher{}, Voucher{}, fmt.Errorf("adjust voucher: begin: %w", err)
+		}
+		defer func() {
+			if err != nil {
+				_ = tx.Rollback()
+			}
+		}()
+	}
+
+	before, after, err = r.adjustVoucherBalanceTx(ctx, tx, in)
+	if err != nil {
+		return Voucher{}, Voucher{}, err
+	}
+	if own {
+		if err = tx.Commit(); err != nil {
+			return Voucher{}, Voucher{}, fmt.Errorf("adjust voucher: commit: %w", err)
+		}
+	}
+	return before, after, nil
+}
+
+func (r *POSRepo) adjustVoucherBalanceTx(ctx context.Context, tx *sql.Tx, in VoucherAdjustment) (before, after Voucher, err error) {
+	// Idempotency: a row with this id already exists. A replay must be the
+	// SAME request — same voucher, same delta (new − expected), same
+	// trimmed reason — or it is refused: answering success for a different
+	// correction would tell the manager something was applied that never
+	// was (review MAJOR-1, ut-docs#4253).
+	var gotVoucher, gotType, gotReason string
+	var gotAmount int64
+	err = tx.QueryRowContext(ctx, `SELECT voucher_id, type, amount, COALESCE(reason, '') FROM voucher_transactions WHERE id = ?`, in.ID).Scan(&gotVoucher, &gotType, &gotAmount, &gotReason)
+	switch {
+	case err == nil:
+		if gotVoucher != in.VoucherID || gotType != "adjustment" {
+			return Voucher{}, Voucher{}, fmt.Errorf("adjust voucher %q: id %q already used: %w", in.VoucherID, in.ID, ErrVoucherAdjustmentInvalid)
+		}
+		if gotAmount != in.NewBalanceMinor-in.ExpectedBalanceMinor || gotReason != in.Reason {
+			return Voucher{}, Voucher{}, fmt.Errorf("adjust voucher %q: id %q already used for a different correction: %w", in.VoucherID, in.ID, ErrVoucherAdjustmentInvalid)
+		}
+		current, err := r.GetVoucherBalance(ctx, tx, in.VoucherID)
+		if err != nil {
+			return Voucher{}, Voucher{}, err
+		}
+		// Answer the adjustment's OWN result, not the live balance: a
+		// redemption since then must not make the retry look like a
+		// different correction (the replica mirrors this "after").
+		before, after = current, current
+		before.BalanceMinor = in.ExpectedBalanceMinor
+		after.BalanceMinor = in.NewBalanceMinor
+		before.Status, after.Status = voucherStatusForBalance(in.ExpectedBalanceMinor), voucherStatusForBalance(in.NewBalanceMinor)
+		return before, after, nil
+	case err != sql.ErrNoRows:
+		return Voucher{}, Voucher{}, fmt.Errorf("adjust voucher %q: idempotency check: %w", in.VoucherID, err)
+	}
+
+	before, err = r.GetVoucherBalance(ctx, tx, in.VoucherID)
+	if err != nil {
+		return Voucher{}, Voucher{}, err
+	}
+	if before.Status == "void" {
+		return Voucher{}, Voucher{}, fmt.Errorf("voucher %q (status void): %w", in.VoucherID, ErrVoucherNotActive)
+	}
+	if before.Purpose != VoucherPurposeMulti {
+		return Voucher{}, Voucher{}, fmt.Errorf("voucher %q (purpose %s): %w", in.VoucherID, before.Purpose, ErrVoucherNotMultiPurpose)
+	}
+	if before.BalanceMinor != in.ExpectedBalanceMinor {
+		return Voucher{}, Voucher{}, fmt.Errorf("voucher %q (balance %d, expected %d): %w", in.VoucherID, before.BalanceMinor, in.ExpectedBalanceMinor, ErrVoucherBalanceChanged)
+	}
+	delta := in.NewBalanceMinor - before.BalanceMinor
+	if delta == 0 {
+		return Voucher{}, Voucher{}, fmt.Errorf("voucher %q: %w", in.VoucherID, ErrVoucherAdjustmentNoChange)
+	}
+
+	// The guards are repeated in the UPDATE (the predicates-in-the-WHERE
+	// pattern DebitVoucherForRedemption uses): a write between the read
+	// above and this one loses cleanly instead of being overwritten.
+	res, err := tx.ExecContext(ctx, `
+UPDATE vouchers
+SET balance = ?,
+    status = CASE WHEN ? = 0 THEN 'redeemed' ELSE 'active' END
+WHERE id = ? AND balance = ? AND status IN ('active', 'redeemed') AND purpose = 'multi_purpose'`,
+		in.NewBalanceMinor, in.NewBalanceMinor, in.VoucherID, before.BalanceMinor)
+	if err != nil {
+		return Voucher{}, Voucher{}, fmt.Errorf("adjust voucher %q: %w", in.VoucherID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return Voucher{}, Voucher{}, fmt.Errorf("adjust voucher %q: rows affected: %w", in.VoucherID, err)
+	}
+	if n != 1 {
+		return Voucher{}, Voucher{}, fmt.Errorf("voucher %q: %w", in.VoucherID, ErrVoucherBalanceChanged)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO voucher_transactions (id, voucher_id, sale_id, type, amount, created_at, actor_user_id, reason)
+VALUES (?, ?, NULL, 'adjustment', ?, ?, ?, ?)`,
+		in.ID, in.VoucherID, delta, in.Now, nullIfEmpty(in.ActorUserID), in.Reason); err != nil {
+		return Voucher{}, Voucher{}, fmt.Errorf("adjust voucher %q: record: %w", in.VoucherID, err)
+	}
+
+	// audit_log.actor_id references users(id). On the main till a
+	// correction forwarded by an additional till can name a user this till
+	// has no row for; the id still lands in the payload, the column stays
+	// NULL rather than failing the FK and losing the correction.
+	auditActor := ""
+	if in.ActorUserID != "" {
+		var one int
+		err := tx.QueryRowContext(ctx, `SELECT 1 FROM users WHERE id = ?`, in.ActorUserID).Scan(&one)
+		switch {
+		case err == nil:
+			auditActor = in.ActorUserID
+		case err != sql.ErrNoRows:
+			return Voucher{}, Voucher{}, fmt.Errorf("adjust voucher %q: actor lookup: %w", in.VoucherID, err)
+		}
+	}
+	if err := r.InsertAudit(ctx, tx, auditActor, "voucher", in.VoucherID, "adjust", map[string]any{
+		"adjustment_id": in.ID,
+		"old":           before.BalanceMinor,
+		"new":           in.NewBalanceMinor,
+		"delta":         delta,
+		"reason":        in.Reason,
+		"actor":         in.ActorUserID,
+	}, in.Now, ""); err != nil {
+		return Voucher{}, Voucher{}, fmt.Errorf("adjust voucher %q: %w", in.VoucherID, err)
+	}
+
+	after, err = r.GetVoucherBalance(ctx, tx, in.VoucherID)
+	if err != nil {
+		return Voucher{}, Voucher{}, err
+	}
+	return before, after, nil
+}
+
+// voucherStatusForBalance is the status a correction leaves a voucher in:
+// 0 → 'redeemed' (Used up), anything else → 'active'.
+func voucherStatusForBalance(balance int64) string {
+	if balance == 0 {
+		return "redeemed"
+	}
+	return "active"
+}
+
+// MirrorVoucherAdjustment brings an additional till's local row to the
+// balance the MAIN till's correction produced (ut-docs#4253), inside the
+// caller's transaction. It is deliberately not AdjustVoucherBalance: the
+// main till already validated the correction on its ledger, so no range,
+// purpose, status or expected-balance check runs here — a stale local void
+// or single-purpose row, or a local lag, must not make the mirror fail
+// silently (review MINOR-1). It sets balance and status to the main till's
+// result and records an 'adjustment' row under the SAME id whose amount is
+// the delta against THIS till's prior local balance (so local history adds
+// up to the local balance); no row when nothing moves. Idempotent on the
+// id: an existing row with it means the mirror already ran → no-op.
+// ErrVoucherNotFound when the voucher has no local row (seed it first).
+func (r *POSRepo) MirrorVoucherAdjustment(ctx context.Context, tx *sql.Tx, voucherID, adjustmentID string, newBalanceMinor int64, reason, actorUserID, now string) error {
+	if tx == nil {
+		return fmt.Errorf("mirror voucher adjustment: a transaction is required")
+	}
+	voucherID = strings.TrimSpace(voucherID)
+	adjustmentID = strings.TrimSpace(adjustmentID)
+	if voucherID == "" || adjustmentID == "" {
+		return fmt.Errorf("mirror voucher adjustment: adjustment id and voucher id are required: %w", ErrVoucherAdjustmentInvalid)
+	}
+	if now == "" {
+		now = time.Now().UTC().Format(time.RFC3339)
+	}
+	var one int
+	err := tx.QueryRowContext(ctx, `SELECT 1 FROM voucher_transactions WHERE id = ?`, adjustmentID).Scan(&one)
+	switch {
+	case err == nil:
+		return nil
+	case err != sql.ErrNoRows:
+		return fmt.Errorf("mirror voucher adjustment %q: idempotency check: %w", voucherID, err)
+	}
+	var old int64
+	err = tx.QueryRowContext(ctx, `SELECT balance FROM vouchers WHERE id = ?`, voucherID).Scan(&old)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("voucher %q: %w", voucherID, ErrVoucherNotFound)
+	}
+	if err != nil {
+		return fmt.Errorf("mirror voucher adjustment %q: %w", voucherID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE vouchers SET balance = ?, status = ? WHERE id = ?`,
+		newBalanceMinor, voucherStatusForBalance(newBalanceMinor), voucherID); err != nil {
+		return fmt.Errorf("mirror voucher adjustment %q: %w", voucherID, err)
+	}
+	delta := newBalanceMinor - old
+	if delta == 0 {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO voucher_transactions (id, voucher_id, sale_id, type, amount, created_at, actor_user_id, reason)
+VALUES (?, ?, NULL, 'adjustment', ?, ?, ?, ?)`,
+		adjustmentID, voucherID, delta, now, nullIfEmpty(strings.TrimSpace(actorUserID)), strings.TrimSpace(reason)); err != nil {
+		return fmt.Errorf("mirror voucher adjustment %q: record: %w", voucherID, err)
+	}
+	return nil
 }

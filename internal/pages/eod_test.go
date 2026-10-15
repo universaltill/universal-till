@@ -641,3 +641,34 @@ func TestRenderTextPreviewLayout(t *testing.T) {
 		t.Error("disabled barcode/SKU still rendered")
 	}
 }
+
+// ut-docs#4253: manager balance corrections print as an "Adjusted (n)" line
+// in GUTSCHEINE — signed net, only when there was one — and open the
+// section on a day with no other voucher activity.
+func TestBuildEODDoc_VoucherAdjustedLine(t *testing.T) {
+	rep := data.EODReport{
+		Day: "2026-07-14", GeneratedAt: "2026-07-14T21:30:00Z",
+		VouchersAdjustedCount: 2, VouchersAdjusted: -400,
+	}
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
+	for _, want := range []string{"GUTSCHEINE", "Adjusted (2)", "-£4.00"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Z-report missing %q\n%s", want, out)
+		}
+	}
+	rep.VouchersAdjusted = 250
+	out = string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
+	if !strings.Contains(out, "+£2.50") {
+		t.Errorf("positive net adjustment should print sign-first (+£2.50)\n%s", out)
+	}
+
+	// No correction: no Adjusted line, even when the section prints.
+	rep = data.EODReport{
+		Day: "2026-07-14", GeneratedAt: "2026-07-14T21:30:00Z",
+		VouchersIssuedCount: 1, VouchersIssued: 1500,
+	}
+	out = string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
+	if strings.Contains(out, "Adjusted") {
+		t.Errorf("Adjusted line printed with no corrections\n%s", out)
+	}
+}
