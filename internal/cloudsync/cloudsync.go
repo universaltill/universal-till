@@ -471,8 +471,15 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// primary's snapshot is the shop's snapshot.
 	primaryURL, _, _ := settings.Get(ctx, "sync.primary_url")
 	isMainTill := strings.TrimSpace(primaryURL) == ""
+	// refusedMidTick is set once a push gets 402 plan_required: the store
+	// lapsed after this tick's 200 sync. pushRefused has cached its block
+	// when it carried one (closing the ADR-0148 gate); either way the rest
+	// of this tick's snapshot pushes would only be refused too
+	// (ut-docs#4385).
+	refusedMidTick := false
 	if isMainTill {
 		if err := pushSnapshotIfChanged(ctx, cfg, db); err != nil {
+			refusedMidTick = pushRefused(ctx, settings, err, windowSeen)
 			logPushError("snapshot push", err)
 		}
 		// Order-tracking rows ride the same primary-only gate (ADR-0070),
@@ -488,8 +495,11 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		// on the shop's LAN, it just gets no off-LAN fallback. Widening
 		// that needs a per-till key on the cloud row set — a follow-up
 		// card, not something this gate quietly covers.
-		if err := pushOrderTrackingIfChanged(ctx, cfg, db); err != nil {
-			logPushError("order tracking push", err)
+		if !refusedMidTick {
+			if err := pushOrderTrackingIfChanged(ctx, cfg, db); err != nil {
+				refusedMidTick = pushRefused(ctx, settings, err, windowSeen)
+				logPushError("order tracking push", err)
+			}
 		}
 		// Daily sales rollups (ADR-0111, ut-docs#2535) ride the same
 		// primary-only gate: the primary holds the shop's full sales journal
@@ -570,8 +580,9 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// Fresh data in the same tick (contract §3.6): a catalog change the
 	// cloud just made is reported back now, not a tick later. The hash gate
 	// makes this free when nothing actually changed.
-	if isMainTill && catalogApplied {
+	if isMainTill && catalogApplied && !refusedMidTick {
 		if err := pushSnapshotIfChanged(ctx, cfg, db); err != nil {
+			pushRefused(ctx, settings, err, windowSeen)
 			logPushError("snapshot push after directives", err)
 		}
 	}
@@ -1452,14 +1463,39 @@ func planRequired(err error) (*statusError, bool) {
 // as a 200's would be (cacheEntitlement: validated, best-effort), so the
 // refusal itself tells this till it is not on a paid plan and ADR-0148's
 // gate stops the periodic check-in from the next tick. The tick still
-// fails with the 402 (marked gatedRefusal once the gate is closed, so the
-// scheduler keeps its normal cadence — ut-docs#4304), but quietly:
-// logTickError does not report it as a problem and authTracker ignores it.
+// fails with the 402 when the refusal came from the sync itself (marked
+// gatedRefusal once the gate is closed, so the scheduler keeps its normal
+// cadence — ut-docs#4304; from a push, pushRefused, the tick succeeds),
+// but quietly: logTickError does not report it as a problem and
+// authTracker ignores it.
 // Any other error: no-op.
 func cachePlanRequired(ctx context.Context, settings *data.SettingsRepo, err error) {
 	if se, ok := planRequired(err); ok && settings != nil {
 		cacheEntitlement(ctx, settings, se.Entitlement, time.Now())
 	}
+}
+
+// pushRefused reports whether a snapshot / order-tracking push's err is a
+// 402 plan_required and, if so, caches its entitlement block
+// (cachePlanRequired) so this till's ADR-0148 gate closes now rather than
+// on the next tick's sync 402 (ut-docs#4385). A cached block is handled
+// like the sync path's refusal: the operator window closes and the
+// start-up check-in is disarmed (amendment §4), and the Info line
+// logTickError would have written explains why sync went quiet (Info
+// stays out of the problems ring). The tick itself still succeeds: the
+// 200 sync was this tick's contact.
+func pushRefused(ctx context.Context, settings *data.SettingsRepo, err error, windowSeen int64) bool {
+	se, ok := planRequired(err)
+	if !ok {
+		return false
+	}
+	cachePlanRequired(ctx, settings, err)
+	if len(se.Entitlement) > 0 {
+		closeOperatorWindow(windowSeen)
+		disarmStartupCheckin()
+		logging.L().Infof("cloudsync: cloud sync is part of the paid plans; this store is not on one (%s answered 402)", se.Path)
+	}
+	return true
 }
 
 // markGatedRefusal wraps a 402 plan_required in gatedRefusal when, with its
@@ -2037,9 +2073,10 @@ func snapshotItemType(t string) string {
 // logPushError logs a failed snapshot / order-tracking push. A cloud 402
 // plan_required (the store lapsed between this tick's 200 sync and the
 // push) is quiet — Debug, so nothing reaches the problems ring (ADR-0148
-// §5, ut-docs#4313); the next sync's 402 logs the Info line via
-// logTickError. Anything else warns as before. Neither push stores its
-// hash on error, so both retry once the store is paid.
+// §5, ut-docs#4313); tick has cached its block (pushRefused), so the
+// ADR-0148 gate keeps the next ticks quiet (ut-docs#4385). Anything else
+// warns as before. Neither push stores its hash on error, so both retry
+// once the store is paid.
 func logPushError(what string, err error) {
 	if _, ok := planRequired(err); ok {
 		logging.L().Debugf("cloudsync: %s refused: store has no paid plan (402)", what)
