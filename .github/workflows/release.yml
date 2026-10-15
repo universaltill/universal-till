@@ -578,8 +578,10 @@ jobs:
               echo "::error::missing macOS .app $bin"; fail=1
             elif grep -qx "dev" <<< "$out"; then
               echo "::error::macOS .app $bin embeds buildinfo.Version=dev"; fail=1
-            elif ! [[ "${UT_MARKETPLACE_KEY_HEX:-}" =~ ^[0-9a-f]{64}$ ]] || ! LC_ALL=C grep -aqF "$UT_MARKETPLACE_KEY_HEX" "$f"; then
-              # ADR-0158: the marketplace key must be compiled in.
+            elif [ "$bin" = unitill-pos ] && { ! [[ "${UT_MARKETPLACE_KEY_HEX:-}" =~ ^[0-9a-f]{64}$ ]] || ! LC_ALL=C grep -aqF "$UT_MARKETPLACE_KEY_HEX" "$f"; }; then
+              # ADR-0158: the marketplace key must be compiled into the server,
+              # the binary that verifies plugins. The shell never reads it
+              # (ut-docs#4356; see verify-versions).
               echo "::error::macOS .app $bin lacks the compiled marketplace key (buildinfo.MarketplacePublicKey)"; fail=1
             elif grep -qxE "v?${VERSION//./\\.}" <<< "$out"; then
               echo "ok: macOS .app $bin carries version $VERSION"
@@ -921,8 +923,13 @@ jobs:
         run: |
           set -euo pipefail
           fail=0
+          # check <file> <label> [key]: "key" also requires the compiled
+          # marketplace key. Only unitill-pos verifies plugins (ADR-0158); the
+          # desktop shells never read buildinfo.MarketplacePublicKey, so Go's
+          # linker drops the -X value from them (ut-docs#4356 — v0.34.3's
+          # release failed here). Pinned by release-marketplace-key_test.sh.
           check() {
-            local file="$1" label="$2"
+            local file="$1" label="$2" need_key="${3:-}"
             if [ ! -f "$file" ]; then
               echo "::error::missing $label ($file)"
               fail=1
@@ -944,7 +951,7 @@ jobs:
             # ADR-0158: the marketplace key must be compiled in. These builds
             # use -trimpath, so `go version -m` records no -ldflags; look for
             # the resolved key's bytes in the binary instead.
-            if ! [[ "${UT_MARKETPLACE_KEY_HEX:-}" =~ ^[0-9a-f]{64}$ ]] || ! LC_ALL=C grep -aqF "$UT_MARKETPLACE_KEY_HEX" "$file"; then
+            if [ "$need_key" = key ] && { ! [[ "${UT_MARKETPLACE_KEY_HEX:-}" =~ ^[0-9a-f]{64}$ ]] || ! LC_ALL=C grep -aqF "$UT_MARKETPLACE_KEY_HEX" "$file"; }; then
               echo "::error::$label lacks the compiled marketplace key (buildinfo.MarketplacePublicKey)"
               fail=1
               return
@@ -961,17 +968,17 @@ jobs:
           mkdir extracted
 
           tar xzf "unitill-pos_${VERSION}_linux_amd64.tar.gz" -C extracted
-          check extracted/unitill-pos "linux unitill-pos"
+          check extracted/unitill-pos "linux unitill-pos" key
           check extracted/unitill-desktop "linux unitill-desktop (the omission that caused the real bug)"
           rm -rf extracted && mkdir extracted
 
           unzip -qo "unitill-pos_${VERSION}_windows_amd64.zip" -d extracted
-          check extracted/unitill-pos.exe "windows unitill-pos.exe"
+          check extracted/unitill-pos.exe "windows unitill-pos.exe" key
           check extracted/unitill-desktop.exe "windows unitill-desktop.exe (the omission that caused the real bug)"
           rm -rf extracted && mkdir extracted
 
           tar xzf "unitill-pos_${VERSION}_darwin_arm64.tar.gz" -C extracted
-          check extracted/unitill-pos "macOS portable unitill-pos"
+          check extracted/unitill-pos "macOS portable unitill-pos" key
 
           exit $fail
       # ut-docs#1260: the Android APK never had a version check at all, so
