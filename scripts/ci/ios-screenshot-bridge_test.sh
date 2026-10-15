@@ -37,7 +37,7 @@ check() {
 
 web="$ROOT/ios/UniversalTill/TillWebView.swift"
 bridge="$ROOT/ios/UniversalTill/ScreenshotBridge.swift"
-panel="$ROOT/web/ui/partials/bugreport_panel.html"
+panel="$ROOT/web/ui/partials/bugreport_panel.html"  # guard-sandbox:allow read-only; mutations go to copies in $tmp
 if ! check "$web" "$bridge" "$panel"; then
   echo "FAIL: iOS screenshot bridge wiring"
   exit 1

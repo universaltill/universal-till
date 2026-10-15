@@ -8,8 +8,11 @@
 # guard still passes on the real, unmodified codebase.
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "${ROOT_DIR}"
+# Fixtures are planted in a throwaway copy of what the guard reads, never
+# the real tree (ut-docs#4311).
+# shellcheck source=scripts/ci/guard-test-sandbox.sh
+source "$(dirname "${BASH_SOURCE[0]}")/guard-test-sandbox.sh"
+enter_guard_test_sandbox internal/pages
 
 GUARD="scripts/ci/guard-page-http-error.sh"
 FIXTURE_DIR="internal/pages"
@@ -25,6 +28,7 @@ cleanup() {
       [[ -n "${f}" && -f "${f}" ]] && rm -f "${f}"
     done
   fi
+  remove_guard_test_sandbox
   exit "${status}"
 }
 trap cleanup EXIT

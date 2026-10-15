@@ -14,16 +14,18 @@
 # `must_not_contain` helper (which fails via an explicit `if ...; then
 # exit 1; fi`, not a negated command) actually catches the violation.
 #
-# Plants a fixture line in the real login.html (a valid HTML comment, so
-# the file stays syntactically well-formed throughout), same
-# backup/restore-from-file convention as guard-webkit-version_test.sh --
-# restore-from-backup rather than a pattern-delete, so a killed process at
-# worst leaves a *.orig backup file behind rather than corrupting the
-# committed template.
+# Plants a fixture line in login.html (a valid HTML comment, so the file
+# stays syntactically well-formed throughout) inside a sandbox copy of the
+# tree (ut-docs#4311), never the real template, and restores it from a
+# backup between cases.
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "${ROOT_DIR}"
+# Fixtures are planted in a throwaway copy of what the guard reads, never
+# the real tree (ut-docs#4311).
+# shellcheck source=scripts/ci/guard-test-sandbox.sh
+source "$(dirname "${BASH_SOURCE[0]}")/guard-test-sandbox.sh"
+enter_guard_test_sandbox web/ui web/public/app.css web/public/assets/logo \
+  tests/e2e/tests/pos_ui_mvp.spec.ts
 
 GUARD="scripts/ci/check-brand-assets.sh"
 LOGIN_HTML="web/ui/pages/login.html"
@@ -40,6 +42,7 @@ cleanup() {
   # script was killed mid-test and left login.html already mutated.
   cp "${BACKUP}" "${LOGIN_HTML}"
   rm -f "${BACKUP}"
+  remove_guard_test_sandbox
   exit "${status}"
 }
 trap cleanup EXIT

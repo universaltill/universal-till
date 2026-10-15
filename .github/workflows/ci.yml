@@ -188,6 +188,12 @@ jobs:
         run: bash scripts/ci/guard-i18n-tests-sandboxed.sh
       - name: i18n guard sandbox enforcement regression test
         run: bash scripts/ci/guard-i18n-tests-sandboxed_test.sh
+      - name: Guard regression tests run in a sandbox copy (ut-docs#4311)
+        run: bash scripts/ci/guard-ci-tests-sandboxed.sh
+      - name: Guard-test sandbox enforcement regression test
+        run: bash scripts/ci/guard-ci-tests-sandboxed_test.sh
+      - name: Guard-test sandbox helper regression test
+        run: bash scripts/ci/guard-test-sandbox_test.sh
       - name: Compliance-claims wording guard
         run: bash scripts/ci/guard-compliance-claims.sh
       - name: Compliance-claims wording guard regression test
