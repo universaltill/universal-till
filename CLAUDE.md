@@ -115,6 +115,9 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   blanket suppression), and **every guard in
   `.github/workflows/ci.yml`'s `build` job** (read the job for the current
   list).
+- A guard's `_test.sh` that plants or rewrites files runs in a throwaway copy
+  (`source scripts/ci/guard-test-sandbox.sh; enter_guard_test_sandbox
+  <paths>`), never the real tree — `guard-ci-tests-sandboxed.sh` (#4311).
 - `android-ci.yml` runs on every PR (no `paths:` filter — it was unreliable;
   it skips SDK/NDK setup internally via `git diff` unless `android/**` or
   `mobile/**` changed): Gradle build against the generated `.aar` plus

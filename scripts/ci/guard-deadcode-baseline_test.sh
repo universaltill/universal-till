@@ -6,16 +6,15 @@
 # Plants a disposable fixture file (a real .go file, so the fixture is
 # genuinely compiled and analyzed rather than merely textually present),
 # runs the real guard, asserts pass/fail, then removes the fixture and
-# re-verifies -- same restore-and-recheck shape as
-# guard-webkit-version_test.sh, so a killed process at worst leaves a
-# stray fixture file behind (harmless,
-# cmd/unitill-desktop/zzz_guard_test_fixture.go, never committed -- a
-# fresh git worktree/clone never has it) rather than corrupting real
-# source.
+# re-verifies -- all inside a sandbox copy of the tree (ut-docs#4311), so
+# even a killed run leaves nothing behind in the real tree.
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "${ROOT_DIR}"
+# Fixtures are planted in a throwaway copy of what the guard reads, never
+# the real tree (ut-docs#4311).
+# shellcheck source=scripts/ci/guard-test-sandbox.sh
+source "$(dirname "${BASH_SOURCE[0]}")/guard-test-sandbox.sh"
+enter_guard_test_sandbox .
 
 GUARD="scripts/ci/guard-deadcode-baseline.sh"
 # ut-docs#2425: the guard itself drops the ./cmd/unitill-desktop root when
@@ -41,6 +40,7 @@ FAIL_COUNT=0
 cleanup() {
   local status=$?
   rm -f "${FIXTURE}"
+  remove_guard_test_sandbox
   exit "${status}"
 }
 trap cleanup EXIT

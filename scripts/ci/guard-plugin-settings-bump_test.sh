@@ -25,8 +25,11 @@
 # mutation of real tracked source.
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "${ROOT_DIR}"
+# Fixtures are planted in a throwaway copy of what the guard reads, never
+# the real tree (ut-docs#4311).
+# shellcheck source=scripts/ci/guard-test-sandbox.sh
+source "$(dirname "${BASH_SOURCE[0]}")/guard-test-sandbox.sh"
+enter_guard_test_sandbox 'internal/*.go' 'cmd/*.go' 'scripts/*.go' 'e2e/*.go'
 
 GUARD="scripts/ci/guard-plugin-settings-bump.sh"
 FAIL_COUNT=0
@@ -41,6 +44,7 @@ cleanup() {
       [[ -n "${f}" && -f "${f}" ]] && rm -f "${f}"
     done
   fi
+  remove_guard_test_sandbox
   exit "${status}"
 }
 trap cleanup EXIT

@@ -13,8 +13,11 @@
 # earlier draft of this trap missing the topic-markdown restore.
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "${ROOT_DIR}"
+# Fixtures are planted in a throwaway copy of what the guard reads, never
+# the real tree (ut-docs#4311).
+# shellcheck source=scripts/ci/guard-test-sandbox.sh
+source "$(dirname "${BASH_SOURCE[0]}")/guard-test-sandbox.sh"
+enter_guard_test_sandbox web/ui web/public web/help internal/pages
 
 GUARD="scripts/ci/guard-docs-shots.sh"
 UPDATER="scripts/ci/update-docs-shots-surface-hash.sh"
@@ -65,6 +68,7 @@ cleanup() {
   cp "${MANIFEST_BACKUP}" "${MANIFEST}"
   cp "${TOPIC_MD_BACKUP}" "${FIRST_TOPIC_MD}"
   rm -f "${MANIFEST_BACKUP}" "${PRE_UPDATE_BACKUP}" "${TOPIC_MD_BACKUP}" "${OUT}" "${FIXTURE}"
+  remove_guard_test_sandbox
   exit "${status}"
 }
 trap cleanup EXIT

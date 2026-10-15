@@ -95,7 +95,7 @@ fi
 
 # --- wiring --------------------------------------------------------------
 
-LDX='internal/buildinfo.MarketplacePublicKey='
+LDX='internal/buildinfo.MarketplacePublicKey='  # guard-sandbox:allow a Go ldflags symbol, not a path
 
 # Every goreleaser build injects the key.
 builds="$(grep -c -- '- id: ' <(sed -n '/^builds:/,/^[a-z]/p' .goreleaser.yaml))"

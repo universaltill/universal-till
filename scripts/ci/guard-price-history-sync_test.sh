@@ -26,8 +26,12 @@
 # compiles them) and are removed by the EXIT trap.
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "${ROOT_DIR}"
+# Fixtures are planted in a throwaway copy of what the guard reads, never
+# the real tree (ut-docs#4311).
+# shellcheck source=scripts/ci/guard-test-sandbox.sh
+source "$(dirname "${BASH_SOURCE[0]}")/guard-test-sandbox.sh"
+enter_guard_test_sandbox '*.go'
+ROOT_DIR="$(pwd)"
 
 GUARD="scripts/ci/guard-price-history-sync.sh"
 FAIL_COUNT=0
@@ -61,6 +65,7 @@ cleanup() {
   if [[ -n "${mutated_real_file}" && -f "${mutated_real_file_backup}" ]]; then
     cp "${mutated_real_file_backup}" "${mutated_real_file}"
   fi
+  remove_guard_test_sandbox
   exit "${status}"
 }
 trap cleanup EXIT
@@ -300,7 +305,7 @@ rm -f /tmp/guard_price_history_test_out.$$
 #     alongside the real guard under scripts/ci/ -- it has to live there
 #     (not in ${scratch_dir}) because the guard computes ROOT_DIR relative
 #     to its own script path (dirname .../../..), which only resolves to
-#     the real repo root from inside scripts/ci/. Tracked via `fixtures`
+#     the (sandbox) repo root from inside scripts/ci/. Tracked via `fixtures`
 #     like every other planted file, so the EXIT trap removes it even on
 #     an interrupted run; never touches ALLOWED_WRITERS in the real,
 #     tracked guard.
