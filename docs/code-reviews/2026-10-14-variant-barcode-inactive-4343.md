@@ -49,6 +49,6 @@ column at 1024×600 (en and fa). Fixed by the short hint + width cap; the e2e no
   dark theme, physical touch hardware.
 
 ## Deferred
-- ut-docs#4348 — reactivating an item leaves its variants off (point 3 of the report; needs a design).
+- ut-docs#4348 — reactivating an item leaves its variants off (point 3 of the report). Filed this cycle; built and merged by another lane (#1935) while this PR waited on CI.
 
 **Verdict:** safe to merge.
