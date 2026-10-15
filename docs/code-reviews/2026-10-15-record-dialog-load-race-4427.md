@@ -29,12 +29,14 @@ Independent review: Opus, fresh context.
     `waitForLoadState('load')` lines are removed: they ran against the old,
     already-loaded document, so they guarded nothing.
   - `categories-editor-2284`: 1
-- Five local copies of the same pattern now import the helper:
+- Six local copies of the same pattern now import the helper:
   `categories-record-dialog-2010`, `category-list-drag-2699`,
-  `icon-library-2506`, `photo-cutout-3127` and `category-image-2500`.
-- `locations-record-dialog-2124.spec.ts` is untouched, because the open PR
-  universal-till#1974 (ut-docs#4421) fixes it with its own local copy.
-  Folding that copy into the helper is a one-line change once #1974 merges.
+  `icon-library-2506`, `photo-cutout-3127`, `category-image-2500` and
+  `locations-record-dialog-2124`.
+- `locations-record-dialog-2124.spec.ts` got its own local copy from
+  universal-till#1974 (ut-docs#4421), which merged while this PR was in CI.
+  After rebasing, that copy also imports the helper now. With
+  `--repeat-each=3`, 15 passed.
 
 ## Verification
 
