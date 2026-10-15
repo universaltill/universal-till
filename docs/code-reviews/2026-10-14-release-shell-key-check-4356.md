@@ -14,8 +14,10 @@
   pins the premise: on linux/windows/darwin, the shell links no
   `internal/app` or `internal/pages`, and `cmd/unitill-desktop` never names
   the key.
-- `web/release-notes/*/v0.34.3.md`: new entry for "Renew or change plan"
-  (#1926, merged after the notes), in all 5 locales.
+- `web/release-notes/*/v0.34.3.md`: new entries for "Renew or change plan"
+  (#1926) and the scan fix (#1932, ut-docs#4342), both merged after the notes,
+  in all 5 locales. The #1932 entry was added after a rebase; it is copy
+  only and mirrors that PR's help text.
 
 ## Root cause (verified)
 `cmd/unitill-desktop` starts the sibling `unitill-pos` and hosts the WebView.
