@@ -1,7 +1,11 @@
 {{ define "content" }}
-<div class="page-head">
+<!-- ut-docs#4279: page-head-wrap + a wrapping action row — at a 360px phone
+     the title and Refund / Print receipt / ← Journal sat on one never-wrapping
+     line (~518px wide), pushing the Journal button off-screen. Same page-scoped
+     fix as catalog.html (ut-docs#2092). -->
+<div class="page-head page-head-wrap">
   <h1>{{ T "journal.detail.title" }} #{{ .Sale.ReceiptNo }}</h1>
-  <div style="display:flex; gap:.4rem; align-items:center">
+  <div style="display:flex; flex-wrap:wrap; gap:.4rem; align-items:center">
     {{ if eq .Sale.SaleType "sale" }}
     <a class="btn" href="/refund/{{ .Sale.ReceiptNo }}">↩ {{ T "refund.title" }}</a>
     {{ end }}
