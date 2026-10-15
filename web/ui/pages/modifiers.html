@@ -17,7 +17,7 @@
        Modifiers button on /catalog, both now in-panel swaps), hx-get
        swaps #items-panel back to Catalog in place instead of a full
        reload, same as pressing the rail's own Catalog row. -->
-  <a class="btn secondary" href="/items"{{ if .InItemsShell }} hx-get="/catalog" hx-target="#items-panel" hx-push-url="true"{{ end }}>← {{ T "nav.catalog" }}</a>
+  <a class="btn secondary" href="/items"{{ if .InItemsShell }} hx-get="/catalog" hx-target="#items-panel" hx-push-url="true"{{ end }}><span class="back-arrow" aria-hidden="true">←</span> {{ T "nav.catalog" }}</a>
 </div>
 
 <p class="muted">{{ T "modifiers.subtitle" }}</p>

@@ -20,7 +20,7 @@
          - false (standalone page, e.g. a direct GET /import or another
            page's own back-link, ut-docs#2090's #1950/#1955 landings):
            unchanged plain link to /items. -->
-  <a class="btn secondary" href="/items"{{ if .InItemsShell }} data-action="close-closest"{{ end }}>← {{ T "nav.catalog" }}</a>
+  <a class="btn secondary" href="/items"{{ if .InItemsShell }} data-action="close-closest"{{ end }}><span class="back-arrow" aria-hidden="true">←</span> {{ T "nav.catalog" }}</a>
 </div>
 
 {{ if .welcome }}

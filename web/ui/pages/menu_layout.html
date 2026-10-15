@@ -1,7 +1,7 @@
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "menulayout.title" }} {{ helpLink "menu" }}</h1>
-  <a class="btn secondary" href="/settings">← {{ T "nav.settings" }}</a>
+  <a class="btn secondary" href="/settings"><span class="back-arrow" aria-hidden="true">←</span> {{ T "nav.settings" }}</a>
 </div>
 
 {{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}

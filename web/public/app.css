@@ -682,6 +682,11 @@ html.ut-scrim-on .nav .session-lock { position: relative; z-index: 1; pointer-ev
 /* ut-docs#3352 / ADR-0137: the shell Back (nav.html) points the way the
    page reads — its arrow mirrors in RTL, like .products-strip-back's. */
 html[dir="rtl"] .nav-back .nav-toggle-ico svg { transform: scaleX(-1); }
+/* ut-docs#4408: a page's text "← Back" link points the way the page reads.
+   The glyph is a bidi-neutral character, so it never mirrors on its own:
+   templates wrap it in .back-arrow (guarded by TestNoBareBackArrowGlyph). */
+.back-arrow { display: inline-block; }
+html[dir="rtl"] .back-arrow { transform: scaleX(-1); }
 /* An action, not a destination: no tile behind it, so it doesn't read as a
    fifth rail page (tap/hover feedback still tints it). */
 .nav-back { background: transparent; }
