@@ -61,7 +61,9 @@ func TestProbe_RealDirectory(t *testing.T) {
 }
 
 func TestProbe_MissingDirectoryIsAnError(t *testing.T) {
-	if _, err := Probe("/nonexistent/ut-docs-3121/really-not-here"); err == nil {
+	// The real probe, not Probe: UT_DOCS_SHOTS_DISK_ROOMY in the test
+	// process's env would pin Probe and skip the filesystem (ut-docs#4280).
+	if _, err := probeWith(false, "/nonexistent/ut-docs-3121/really-not-here"); err == nil {
 		t.Fatal("Probe of a missing path returned no error")
 	}
 }

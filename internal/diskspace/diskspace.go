@@ -56,8 +56,7 @@ var (
 
 // parseRoomy resolves the pin from a raw env value. Anything that is not a
 // true boolean (empty, a typo, "yes") is false, so a typo never hides a real
-// low disk. Pure and exported-to-package so it can be unit-tested without
-// racing the sync.Once cache in Probe.
+// low disk. Pure, so it can be unit-tested without racing the sync.Once cache in Probe.
 func parseRoomy(v string) bool {
 	b, err := strconv.ParseBool(strings.TrimSpace(v))
 	return err == nil && b
@@ -65,8 +64,9 @@ func parseRoomy(v string) bool {
 
 // Probe measures the disk that holds path (a directory that exists). Under
 // UT_DOCS_SHOTS_DISK_ROOMY (docs-shots harness only) it returns a pinned
-// roomy disk without touching the filesystem. The env is read once, on first
-// use.
+// roomy disk without touching the filesystem, so that till's housekeeping
+// also skips the low-disk prune and caps backups against the pinned free
+// space. The env is read once, on first use.
 func Probe(path string) (Usage, error) {
 	roomyOnce.Do(func() { roomyOn = parseRoomy(os.Getenv(DocsShotsRoomyEnv)) })
 	return probeWith(roomyOn, path)
