@@ -18,14 +18,23 @@ import { watchConsole } from './helpers';
 const DIALOG = '#location-dialog';
 const NAME = '#location-form input[name="name"]';
 
+// Every successful mutation here answers HX-Redirect (locations_page.go),
+// i.e. a REAL browser navigation back to /locations. The page is already
+// at /locations, so `page.waitForURL(/\/locations$/)` resolves at once
+// against the OLD document and guards nothing — the next row click can then
+// land in the NEW document before record-dialog.js has bound its document
+// click listener, and is silently dropped (ut-docs#4421, the same race as
+// categories-record-dialog-2010.spec.ts's ut-docs#2345). Await the new
+// document's `load` instead, registered BEFORE the click that triggers it.
+async function clickThenReload(page: Page, click: () => Promise<void>) {
+  await Promise.all([page.waitForEvent('load'), click()]);
+}
+
 async function createLocation(page: Page, name: string) {
   await page.locator('#locations-new').click();
   await expect(page.locator(DIALOG)).toBeVisible();
   await page.locator(NAME).fill(name);
-  await Promise.all([
-    page.waitForURL(/\/locations$/),
-    page.locator(`${DIALOG} .record-dialog-save`).click(),
-  ]);
+  await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
   await expect(page.locator('#locations-table .location-row', { hasText: name })).toHaveCount(1);
 }
 
@@ -69,10 +78,7 @@ test.describe('locations list + record dialog (ut-docs#2124)', () => {
 
     const renamed = name + ' Renamed';
     await page.locator(NAME).fill(renamed);
-    await Promise.all([
-      page.waitForURL(/\/locations$/),
-      page.locator(`${DIALOG} .record-dialog-save`).click(),
-    ]);
+    await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
     await expect(row(page, renamed)).toHaveCount(1);
     await expect(page.locator('#locations-table .location-row', { hasText: name + ' Renamed Renamed' })).toHaveCount(0);
 
@@ -87,20 +93,14 @@ test.describe('locations list + record dialog (ut-docs#2124)', () => {
     await row(page, renamed).click();
     await expect(dlg).toBeVisible();
     page.once('dialog', (d) => d.accept());
-    await Promise.all([
-      page.waitForURL(/\/locations$/),
-      page.locator(`${DIALOG} form[data-record-when="active=1"] button[type="submit"]`).click(),
-    ]);
+    await clickThenReload(page, () => page.locator(`${DIALOG} form[data-record-when="active=1"] button[type="submit"]`).click());
     await expect(row(page, renamed)).toContainText(/inactive/i);
 
     // Activate reverses it, from the same dialog — no confirm on this path.
     await row(page, renamed).click();
     await expect(dlg).toBeVisible();
     await expect(page.locator(`${DIALOG} form[data-record-when="active=0"] button[type="submit"]`)).toBeVisible();
-    await Promise.all([
-      page.waitForURL(/\/locations$/),
-      page.locator(`${DIALOG} form[data-record-when="active=0"] button[type="submit"]`).click(),
-    ]);
+    await clickThenReload(page, () => page.locator(`${DIALOG} form[data-record-when="active=0"] button[type="submit"]`).click());
     await expect(row(page, renamed)).toContainText(/\bactive\b/);
     await expect(row(page, renamed)).not.toContainText('inactive');
     assertClean();
