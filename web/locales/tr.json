@@ -569,6 +569,7 @@
   "common.loading": "Yükleniyor…",
   "common.money.invalid": "Tutarı rakamla girin; ondalık kısmından önce nokta veya virgül kullanın (örneğin 3.50 veya 3,50).",
   "common.money.invalid_whole": "Tutarı yalnızca rakamlarla, tam sayı olarak girin.",
+  "common.percent.invalid": "Yüzdeyi rakamla girin; en fazla iki ondalık basamaktan önce nokta veya virgül kullanın (örneğin 7.5 veya 7,25).",
   "common.no_results": "Eşleşme yok — farklı bir arama deneyin.",
   "common.save": "Kaydet",
   "common.show_less": "Daha az",
