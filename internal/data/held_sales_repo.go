@@ -292,6 +292,12 @@ func (r *HeldSalesRepo) ReconcileWithPrimary(ctx context.Context, presentIDs []s
 // offline-first guarantee). SQLite datetime() modifier text.
 const heldSaleTombstoneTTL = "-24 hours"
 
+// HeldSaleTombstoneWindow is heldSaleTombstoneTTL as a duration (pinned
+// equal by TestHeldSaleTombstoneWindowMatchesTTL): within it, a held sale
+// removed on this till's authority still has its tombstone, so its absence
+// proves the order was never resumed, cancelled or claimed (ut-docs#4392).
+const HeldSaleTombstoneWindow = 24 * time.Hour
+
 // tombstoneHeldSaleTx writes/refreshes id's tombstone -- stamped with the
 // till that resolved it (see ClaimAndTombstone) -- and prunes every
 // tombstone past heldSaleTombstoneTTL, inside the caller's transaction --
@@ -374,6 +380,23 @@ RETURNING id, label, total_minor, line_count, payload, COALESCE(table_id, ''), c
 		return HeldSale{}, false, false, heldSalesObs.wrapf("claim_and_tombstone", "commit", err)
 	}
 	return h, claimed, known, nil
+}
+
+// HasTombstone reports whether id has a tombstone younger than
+// heldSaleTombstoneTTL: the order was parked here and then resumed,
+// cancelled or claimed by a till (ut-docs#4392 — how a guest order's
+// re-delivery tells a cashier mid-resume from an orphan never parked).
+// Read-only; expired rows are ignored, not pruned.
+func (r *HeldSalesRepo) HasTombstone(ctx context.Context, id string) (has bool, err error) {
+	done := heldSalesObs.trace("has_tombstone")
+	defer func() { done(err) }()
+	var n int
+	if err = r.db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM held_sales_tombstones WHERE id = ? AND deleted_at >= datetime('now', ?)`,
+		id, heldSaleTombstoneTTL).Scan(&n); err != nil {
+		return false, heldSalesObs.wrapf("has_tombstone", "read tombstone %s", err, id)
+	}
+	return n > 0, nil
 }
 
 // DeleteAndTombstone (ADR-0093 Amendment B) is the plain primary-side

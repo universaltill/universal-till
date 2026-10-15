@@ -7,6 +7,7 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -15,6 +16,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/cloudsync"
@@ -459,5 +461,129 @@ func TestRemoteGuestTablesReport_CapsAt500(t *testing.T) {
 	rep, ok := remoteGuestTablesReport(context.Background(), h.dp)
 	if !ok || len(rep) != maxReportedGuestTables || maxReportedGuestTables != 500 {
 		t.Fatalf("report has %d entries, want 500", len(rep))
+	}
+}
+
+// ut-docs#4392 gap 1: an orphan — the "held" counter row was written but
+// the till died (or the park and its cleanup both failed) before the held
+// sale was parked. A re-delivered directive must place the order exactly
+// once, never answer "applied" for an order staff cannot see.
+func (h *guestHarness) orphan(guestOrderID string, age time.Duration) string {
+	h.t.Helper()
+	id := mustCounterID(h.t, h, guestOrderID)
+	if _, err := h.d.DB.Exec(`DELETE FROM held_sales WHERE id = ?`, id); err != nil {
+		h.t.Fatal(err)
+	}
+	created := time.Now().UTC().Add(-age).Format(time.RFC3339)
+	if _, err := h.d.DB.Exec(`UPDATE kiosk_counter_orders SET created_at = ? WHERE id = ?`, created, id); err != nil {
+		h.t.Fatal(err)
+	}
+	return id
+}
+
+func TestCloudGuestOrder_RedeliveryReplacesAnOrphanExactlyOnce(t *testing.T) {
+	h := newGuestHarness(t)
+	o := h.order("g1", cloudsync.GuestOrderLine{ItemID: "itm-cake", Qty: 2})
+	first := h.apply(o)
+	orphanID := h.orphan("g1", 5*time.Minute)
+
+	second := h.apply(o)
+	if second.Refusal != "" || second.TotalMinor != first.TotalMinor || second.DisplayNo == "" {
+		t.Fatalf("re-delivery over an orphan: %+v (first %+v)", second, first)
+	}
+	if n := h.count("kiosk_counter_orders"); n != 1 {
+		t.Fatalf("%d counter orders, want 1 (the orphan replaced, not added to)", n)
+	}
+	if n := h.count("held_sales"); n != 1 {
+		t.Fatalf("%d held sales, want the order parked exactly once", n)
+	}
+	newID := mustCounterID(t, h, "g1")
+	held, ok, err := data.NewHeldSalesRepo(h.d.DB).Get(context.Background(), newID)
+	if err != nil || !ok || held.TotalMinor != second.TotalMinor || !strings.HasPrefix(held.Label, second.DisplayNo) {
+		t.Fatalf("the re-placed order must be visible on Open orders: held=%+v ok=%v err=%v", held, ok, err)
+	}
+	if _, ok, _ := data.NewKioskCounterOrdersRepo(h.d.DB).Get(context.Background(), orphanID); ok && orphanID != newID {
+		t.Fatal("the orphan counter row is still there next to the new one")
+	}
+	if third := h.apply(o); third != second {
+		t.Fatalf("a further re-delivery must answer the re-placed order: %+v vs %+v", third, second)
+	}
+}
+
+// A cashier mid-resume also leaves a held counter row with no held sale —
+// but the resume's claim leaves a tombstone, so it is answered as placed
+// and never duplicated.
+func TestCloudGuestOrder_RedeliveryDuringAResumeIsNotDuplicated(t *testing.T) {
+	h := newGuestHarness(t)
+	o := h.order("g1", cloudsync.GuestOrderLine{ItemID: "itm-cake", Qty: 1})
+	first := h.apply(o)
+	id := mustCounterID(t, h, "g1")
+	if _, found, _ := heldSaleClaimForResume(context.Background(), h.dp, data.NewHeldSalesRepo(h.d.DB), id); !found {
+		t.Fatal("resume claim found nothing")
+	}
+	second := h.apply(o)
+	if second.Refusal != "" || second.DisplayNo != first.DisplayNo {
+		t.Fatalf("re-delivery during a resume: %+v (first %+v)", second, first)
+	}
+	if n := h.count("held_sales"); n != 0 {
+		t.Fatalf("%d held sales: the resumed order was parked again", n)
+	}
+	if n := h.count("kiosk_counter_orders"); n != 1 {
+		t.Fatalf("%d counter orders for one guest order", n)
+	}
+}
+
+// An orphan older than the tombstone window can no longer be told apart
+// from an order resumed (and voided) long ago: refuse, never re-place an
+// order that may have been dealt with, never claim it is parked.
+func TestCloudGuestOrder_RedeliveryOverAnOldOrphanIsRefused(t *testing.T) {
+	h := newGuestHarness(t)
+	o := h.order("g1", cloudsync.GuestOrderLine{ItemID: "itm-cake", Qty: 1})
+	h.apply(o)
+	h.orphan("g1", data.HeldSaleTombstoneWindow+time.Hour)
+	if out := h.apply(o); out.Refusal == "" {
+		t.Fatalf("an old orphan must be refused, got %+v", out)
+	}
+	if n := h.count("held_sales"); n != 0 {
+		t.Fatalf("%d held sales: an old orphan was re-placed", n)
+	}
+}
+
+// A counter row this young with no held sale may be another apply still
+// between Create and the park: leave the directive pending (internal
+// error), never delete a row someone else is about to park.
+func TestCloudGuestOrder_RedeliveryOverAnInFlightOrderIsDeferred(t *testing.T) {
+	h := newGuestHarness(t)
+	o := h.order("g1", cloudsync.GuestOrderLine{ItemID: "itm-cake", Qty: 1})
+	h.apply(o)
+	id := h.orphan("g1", 0)
+	// created_at has whole seconds: pin the process start well before it.
+	saved := guestOrderProcessStart
+	guestOrderProcessStart = time.Now().Add(-time.Hour)
+	t.Cleanup(func() { guestOrderProcessStart = saved })
+	if _, err := cloudGuestOrder(context.Background(), h.dp, o); !errors.Is(err, errGuestOrderInFlight) {
+		t.Fatalf("an in-flight order must defer the directive, got %v", err)
+	}
+	if _, ok, _ := data.NewKioskCounterOrdersRepo(h.d.DB).Get(context.Background(), id); !ok {
+		t.Fatal("the in-flight counter row was deleted")
+	}
+}
+
+// A young row left by a PREVIOUS run of the till (it crashed and restarted)
+// can have no apply in flight: it is re-placed at once, not deferred past
+// the cloud's 10-minute delivery window.
+func TestCloudGuestOrder_RedeliveryAfterARestartReplacesAYoungOrphan(t *testing.T) {
+	h := newGuestHarness(t)
+	o := h.order("g1", cloudsync.GuestOrderLine{ItemID: "itm-cake", Qty: 1})
+	h.apply(o)
+	h.orphan("g1", 0)
+	saved := guestOrderProcessStart
+	guestOrderProcessStart = time.Now().Add(time.Minute)
+	t.Cleanup(func() { guestOrderProcessStart = saved })
+	if out := h.apply(o); out.Refusal != "" || out.DisplayNo == "" {
+		t.Fatalf("a restarted till must re-place the orphan: %+v", out)
+	}
+	if n := h.count("held_sales"); n != 1 {
+		t.Fatalf("%d held sales, want the order parked exactly once", n)
 	}
 }

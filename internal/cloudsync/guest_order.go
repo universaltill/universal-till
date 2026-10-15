@@ -205,9 +205,9 @@ type guestOrderResult struct {
 	guestOrderID string
 }
 
-// applyGuestOrder decodes d and runs the hook. Shared by apply (its case
-// "guest_order") and tick's guest_order path, which also stores and
-// retries the result.
+// applyGuestOrder decodes d and runs the hook — only from handleGuestOrder,
+// Tick's guest_order path, which also stores and retries the result. apply
+// has no guest_order case (ut-docs#4392): it would skip that idempotency.
 func applyGuestOrder(ctx context.Context, d directive, hooks Hooks) guestOrderResult {
 	if hooks.GuestOrder == nil {
 		id, _ := d.Payload["guest_order_id"].(string)
