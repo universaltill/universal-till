@@ -15,9 +15,10 @@
   `internal/app` or `internal/pages`, and `cmd/unitill-desktop` never names
   the key.
 - `web/release-notes/*/v0.34.3.md`: new entries for "Renew or change plan"
-  (#1926) and the scan fix (#1932, ut-docs#4342), both merged after the notes,
-  in all 5 locales. The #1932 entry was added after a rebase; it is copy
-  only and mirrors that PR's help text.
+  (#1926), the scan fix (#1932, ut-docs#4342) and the variant revive fix
+  (#1935, ut-docs#4348), all merged after the notes,
+  in all 5 locales. The #1932/#1935 entries were added after rebases; they are copy
+  only and mirror those PRs' help text.
 
 ## Root cause (verified)
 `cmd/unitill-desktop` starts the sibling `unitill-pos` and hosts the WebView.
