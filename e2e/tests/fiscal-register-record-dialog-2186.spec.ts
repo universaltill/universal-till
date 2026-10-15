@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page, Locator } from '@playwright/test';
-import { watchConsole, gotoSettled } from './helpers';
+import { watchConsole, gotoSettled, clickThenReload } from './helpers';
 
 // ut-docs#2403: e2e coverage for /fiscal-register's record_dialog
 // VIEW-MODE behaviour shipped in ut-docs#2186, mirroring
@@ -50,13 +50,10 @@ async function createRegister(page: Page, name: string, locationLabel?: string):
   if (locationLabel) {
     await page.locator('#register-form select[name="location_id"]').selectOption({ label: locationLabel });
   }
-  await Promise.all([
-    page.waitForURL(/\/registers$/),
-    dlg.locator('.record-dialog-save').click(),
-  ]);
-  // The HX-Redirect's client-side navigation can still be settling
-  // (htmx:afterSwap's own re-binding, reapplyFilters, …) the instant the
-  // URL itself matches -- a navigation issued right after this resolves
+  await clickThenReload(page, () => dlg.locator('.record-dialog-save').click());
+  // The new document's post-load async work (deferred fetches,
+  // reapplyFilters, …) can still be settling the instant it fires
+  // `load` -- a navigation issued right after this resolves
   // can race that in-flight work and abort itself (net::ERR_ABORTED, or
   // "interrupted by another navigation to the same URL" when the next
   // navigation targets the page this one just landed on), confirmed by
@@ -79,10 +76,7 @@ async function createLocation(page: Page, name: string): Promise<void> {
   const dlg = page.locator('#location-dialog');
   await expect(dlg).toBeVisible();
   await page.locator('#location-form input[name="name"]').fill(name);
-  await Promise.all([
-    page.waitForURL(/\/locations$/),
-    dlg.locator('.record-dialog-save').click(),
-  ]);
+  await clickThenReload(page, () => dlg.locator('.record-dialog-save').click());
   await page.waitForLoadState('networkidle');
 }
 
@@ -92,10 +86,7 @@ async function deactivateRegister(page: Page, name: string): Promise<void> {
   const dlg = page.locator('#register-dialog');
   await expect(dlg).toBeVisible();
   page.once('dialog', (d) => d.accept());
-  await Promise.all([
-    page.waitForURL(/\/registers$/),
-    dlg.locator('form[data-record-when="active=1"] button[type="submit"]').click(),
-  ]);
+  await clickThenReload(page, () => dlg.locator('form[data-record-when="active=1"] button[type="submit"]').click());
   await page.waitForLoadState('networkidle');
 }
 
@@ -113,10 +104,7 @@ async function createFiscalEntry(page: Page, registerLabel: string, easSerial: s
   // Well in the past -- avoids the acquired-within-31-days "due soon"
   // banner, which is irrelevant noise for these tests.
   await page.locator(`${FORM} input[name="acquired_on"]`).fill('2020-01-01');
-  await Promise.all([
-    page.waitForURL(/\/fiscal-register$/),
-    page.locator(SAVE).click(),
-  ]);
+  await clickThenReload(page, () => page.locator(SAVE).click());
   await page.waitForLoadState('networkidle');
 }
 
@@ -284,10 +272,7 @@ test.describe('fiscal-register record dialog view-mode behaviour (ut-docs#2186 /
     const decommissionBtn = decommissionForm.locator('button[type="submit"]');
 
     page.once('dialog', (d) => d.accept());
-    await Promise.all([
-      page.waitForURL(/\/fiscal-register$/),
-      decommissionBtn.click(),
-    ]);
+    await clickThenReload(page, () => decommissionBtn.click());
     await expect(row).toContainText('Decommissioned');
 
     // Reopen: decommission is now absent -- one-directional, no way back

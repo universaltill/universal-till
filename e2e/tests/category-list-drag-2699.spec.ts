@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page, Locator, CDPSession } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, clickThenReload } from './helpers';
 
 // ut-docs#2699: both category lists — /categories and the Designer's
 // category-management section — lose the per-row pencil and up/down
@@ -23,10 +23,6 @@ import { watchConsole } from './helpers';
 
 const RUN = Date.now().toString(36).toUpperCase();
 const DIALOG = '#category-dialog';
-
-async function clickThenReload(page: Page, click: () => Promise<void>) {
-  await Promise.all([page.waitForEvent('load'), click()]);
-}
 
 async function createCategory(page: Page, name: string) {
   await page.locator('#categories-new').click();

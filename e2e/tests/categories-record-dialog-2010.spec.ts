@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, openNewItemForm, closeItemForm } from './helpers';
+import { watchConsole, openNewItemForm, closeItemForm, clickThenReload } from './helpers';
 
 // ut-docs#2010: /categories is the reference implementation of the app-wide
 // list/edit standard (ut-docs/reference/list-and-dialog-pattern.md):
@@ -28,18 +28,9 @@ import { watchConsole, openNewItemForm, closeItemForm } from './helpers';
 const DIALOG = '#category-dialog';
 const NAME = '#category-form input[name="name"]';
 
-// Every successful mutation here answers HX-Redirect (categories_page.go),
-// i.e. a REAL browser navigation back to /categories. The page is already
-// at /categories, so `page.waitForURL(/\/categories$/)` resolves at once
-// against the OLD document and guards nothing — the next row click can then
-// land in the NEW document before record-dialog.js has bound its document
-// click listener, and is silently dropped (seen live under 4 parallel
-// workers, ut-docs#2345: (b3) sat 30s on a Deactivate button inside a
-// dialog that never opened). Await the new document's `load` instead,
-// registered BEFORE the click that triggers it.
-async function clickThenReload(page: Page, click: () => Promise<void>) {
-  await Promise.all([page.waitForEvent('load'), click()]);
-}
+// Every successful mutation here answers HX-Redirect to the same URL (a real
+// navigation): await the new document's `load` via clickThenReload, not
+// waitForURL (ut-docs#2345, ut-docs#4427; see helpers.ts).
 
 async function createCategory(page: Page, name: string) {
   await page.locator('#categories-new').click();

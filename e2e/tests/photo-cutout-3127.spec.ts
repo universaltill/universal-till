@@ -3,7 +3,7 @@ import path from 'path';
 import zlib from 'zlib';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { watchConsole, openNewItemForm, closeItemForm } from './helpers';
+import { watchConsole, openNewItemForm, closeItemForm, clickThenReload } from './helpers';
 
 // ut-docs#3127: "Remove background" in the item, category and variant photo
 // pickers (docs repo architecture/ai-product-photo.md §6, §8 C). Runs on
@@ -302,7 +302,7 @@ test('category photo: Use this puts the tile in the form; the one Save stores it
   await expect(page.locator(P)).toBeHidden();
   await expect(page.locator('#category-image-file-name')).toHaveText('soup-cutout.png');
   await expect(page.locator('#category-image-name')).toHaveValue('soup-cutout.png');
-  await Promise.all([page.waitForEvent('load'), page.locator('#category-dialog .record-dialog-save').click()]);
+  await clickThenReload(page, () => page.locator('#category-dialog .record-dialog-save').click());
   const row = page.locator('#categories-table .category-row', { hasText: name }).first();
   const id = await row.getAttribute('data-id');
   await expect(row).toHaveAttribute('data-image', `/public/assets/categories/${id}/thumb.png`);
