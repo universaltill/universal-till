@@ -1149,3 +1149,56 @@ func TestSetupWizardFractionalTaxRate(t *testing.T) {
 		t.Fatalf("live TaxRateBP = %d, want 810", got)
 	}
 }
+
+// ut-docs#4259: finishing the wizard gives the new shop one gift voucher
+// item, named in the shop's language; a refused submission creates none.
+func TestSetupWizardSeedsGiftVoucherItemInShopLanguage(t *testing.T) {
+	voucherItems := func(t *testing.T, d *common.Deps) []string {
+		t.Helper()
+		rows, err := d.Db.Query(`SELECT name FROM items WHERE item_type = 'gift_voucher' AND is_active = 1 AND stock_untracked = 1`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var names []string
+		for rows.Next() {
+			var n string
+			if err := rows.Scan(&n); err != nil {
+				t.Fatal(err)
+			}
+			names = append(names, n)
+		}
+		return names
+	}
+	for _, c := range []struct{ country, currency, rate, want string }{
+		{"GB", "GBP", "20", "Gift voucher"},
+		{"AE", "AED", "5", "قسيمة هدية"},
+	} {
+		t.Run(c.country, func(t *testing.T) {
+			mux, _, d := newFullAuthDeps(t)
+			rec := postForm(mux, "/api/setup", url.Values{
+				"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"}, "till_name": {"Till 1"},
+				"country": {c.country}, "currency": {c.currency}, "tax_rate_pct": {c.rate},
+			}, nil)
+			if rec.Code != http.StatusSeeOther {
+				t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if got := voucherItems(t, d); len(got) != 1 || got[0] != c.want {
+				t.Fatalf("gift voucher items = %q, want [%q]", got, c.want)
+			}
+		})
+	}
+	t.Run("a refused submission seeds nothing", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		rec := postForm(mux, "/api/setup", url.Values{
+			"pin": {"2468"}, "pin_confirm": {"1357"}, "store_name": {"Test Shop"}, "till_name": {"Till 1"},
+			"country": {"GB"}, "currency": {"GBP"}, "tax_rate_pct": {"20"},
+		}, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("mismatched PIN: code=%d, want the wizard re-rendered", rec.Code)
+		}
+		if got := voucherItems(t, d); len(got) != 0 {
+			t.Fatalf("gift voucher items after a refused submission = %q", got)
+		}
+	})
+}

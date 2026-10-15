@@ -6641,6 +6641,13 @@ func (r *POSRepo) EraseCustomer(ctx context.Context, id, actorID, blockedActorID
 // cleanup. Since ut-docs#3452 reset-transactions archives shrinkage_events,
 // so the _archive clause follows the same reasoning as the other *_archive
 // clauses above.
+//
+// The gift voucher clause (ut-docs#4259) closes a fifth: a voucher sold
+// through a gift_voucher item is never a sale line (ut-docs#4214) and the
+// voucher row names no item, so the shop's voucher item looked "never
+// sold" however many vouchers it had sold. It is kept while the shop has
+// any active voucher (shop-wide, since vouchers carry no item id), the
+// same rule DeleteUnusedItem's itemOpenVouchersSQL applies.
 func obsoleteItemsPredicate(includeActive bool) string {
 	activeClause := "is_active = 0\nAND "
 	if includeActive {
@@ -6667,7 +6674,8 @@ AND NOT EXISTS (SELECT 1 FROM held_sales h JOIN item_variants v ON v.item_id = i
               WHERE h.payload LIKE '%"variant_id":"' || v.id || '"%')
 AND NOT EXISTS (SELECT 1 FROM held_sales_archive h WHERE h.payload LIKE '%"item_id":"' || items.id || '"%')
 AND NOT EXISTS (SELECT 1 FROM held_sales_archive h JOIN item_variants v ON v.item_id = items.id
-              WHERE h.payload LIKE '%"variant_id":"' || v.id || '"%')`
+              WHERE h.payload LIKE '%"variant_id":"' || v.id || '"%')
+AND NOT (items.item_type = 'gift_voucher' AND EXISTS (SELECT 1 FROM vouchers WHERE status = 'active'))`
 }
 
 // ObsoleteItem is a row in the catalog-cleanup preview.
