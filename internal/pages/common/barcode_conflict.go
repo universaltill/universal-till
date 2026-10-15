@@ -29,6 +29,11 @@ func FriendlyBarcodeConflict(ctx context.Context, repo *data.CatalogRepo, locale
 		log.Printf("[catalog] barcode attach failed: %v", err)
 		return httpx.T(locale, "catalog.error.barcode_no_symbology_match")
 	}
+	if errors.Is(err, data.ErrVariantInactive) {
+		// ut-docs#4343: the variant is switched off; say how to fix it.
+		log.Printf("[catalog] barcode attach failed: %v", err)
+		return httpx.T(locale, "catalog.barcode.variant_inactive")
+	}
 	var conflict *data.BarcodeConflictError
 	if !errors.As(err, &conflict) {
 		log.Printf("[catalog] barcode attach failed: %v", err)

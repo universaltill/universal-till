@@ -197,6 +197,8 @@
   "catalog.barcode.force_plain": "کد ساده (نادیده گرفتن وزن/قیمت)",
   "catalog.barcode.force_plain_hint": "این کد را به‌عنوان بارکد ساده محصول در نظر بگیر، حتی اگر بارکدهای دارای وزن/قیمت جاسازی‌شده برای این فروشگاه فعال باشند.",
   "catalog.barcode.remove_confirm": "این بارکد حذف شود؟",
+  "catalog.barcode.variant_inactive": "این گونه غیرفعال است. ابتدا «فعال» را برای آن علامت بزنید و ذخیره کنید، سپس بارکد را اضافه کنید.",
+  "catalog.barcode.variant_inactive_hint": "غیرفعال: برای افزودن بارکد، «فعال» را علامت بزنید.",
   "catalog.barcode_backfill.btn": "پر کردن بارکد از SKU",
   "catalog.barcode_backfill.confirm_btn": "این بارکدها را اختصاص بده",
   "catalog.barcode_backfill.eligible_count": "برای %d کالا می‌توان بارکدی برگرفته از SKU اختصاص داد.",

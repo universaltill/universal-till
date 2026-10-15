@@ -1233,6 +1233,9 @@ a.chip-warn { text-decoration: none; }
 .vg-row .chip-add { margin-block-start: 0; }
 .vg-row .chip-add input[type="text"] { inline-size: 7.5rem; }
 .vg-inactive > input, .vg-inactive > .chip-row { opacity: .55; }
+/* ut-docs#4343: an inactive variant's "switch it on first" hint, kept to the
+   attach field's width so the sticky Save column (#1967) never covers it. */
+.vg-row .vg-barcode-off { display: block; max-inline-size: 7.5rem; font-size: .8rem; line-height: 1.3; }
 .vg-new { background: var(--surface-2); border-radius: 8px; padding-inline: .5rem; }
 /* Raised to 1300px (was 900): the 17px base (#144) widens .vg-cols'
    fixed-rem sum past a 1280px 10-inch screen, so arm the scroll earlier. */

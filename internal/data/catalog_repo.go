@@ -34,6 +34,13 @@ var ErrInvalidEAN13 = errors.New("invalid EAN-13 barcode")
 // design (ADR-0059 Decision §2).
 var ErrBarcodeNoSymbologyMatch = errors.New("barcode matches no enabled symbology")
 
+// ErrVariantInactive reports that a barcode was refused because its target
+// variant is switched off (is_active = 0). The scan path never resolves an
+// inactive variant, so a barcode attached to one would be unreachable until
+// it is reactivated. Typed so the caller can tell the operator the real
+// reason instead of a generic failure (ut-docs#4343).
+var ErrVariantInactive = errors.New("variant inactive")
+
 // BarcodeConflictError reports that a barcode is already assigned to a
 // different item/variant. It carries the conflicting target as structured
 // data (not just prose) so a caller can resolve it to a name/SKU for the
@@ -3644,7 +3651,7 @@ func addBarcodeInTx(ctx context.Context, tx *sql.Tx, in catalogtypes.BarcodeInpu
 			return err
 		}
 		if active == 0 {
-			return fmt.Errorf("variant %s inactive", in.VariantID)
+			return fmt.Errorf("%w: %s", ErrVariantInactive, in.VariantID)
 		}
 		res, err := tx.ExecContext(ctx, `
 INSERT INTO variant_barcodes (barcode, variant_id, barcode_type, is_primary)

@@ -197,6 +197,8 @@
   "catalog.barcode.force_plain": "رمز عادي (تجاهل الوزن/السعر)",
   "catalog.barcode.force_plain_hint": "التعامل مع هذا الرمز كباركود منتج عادي، حتى لو كانت الباركودات المضمّنة بالوزن أو السعر مفعّلة لهذا المتجر.",
   "catalog.barcode.remove_confirm": "هل تريد إزالة هذا الرمز الشريطي؟",
+  "catalog.barcode.variant_inactive": "هذا المتغيّر غير نشط. فعّل خانة «نشط» له واحفظ، ثم أضف الباركود.",
+  "catalog.barcode.variant_inactive_hint": "غير نشط: فعّل «نشط» لإضافة باركود.",
   "catalog.barcode_backfill.btn": "تعبئة الباركود من SKU",
   "catalog.barcode_backfill.confirm_btn": "تعيين هذه الباركودات",
   "catalog.barcode_backfill.eligible_count": "يمكن اشتقاق باركود من SKU لعدد %d عنصر.",

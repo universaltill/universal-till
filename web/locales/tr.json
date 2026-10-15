@@ -197,6 +197,8 @@
   "catalog.barcode.force_plain": "Düz kod (ağırlık/fiyatı yok say)",
   "catalog.barcode.force_plain_hint": "Bu mağaza için ağırlık/fiyat gömülü barkodlar etkin olsa bile, bu kodu düz bir ürün barkodu olarak işle.",
   "catalog.barcode.remove_confirm": "Bu barkod kaldırılsın mı?",
+  "catalog.barcode.variant_inactive": "Bu varyant kapalı. Önce Etkin kutusunu işaretleyip kaydedin, sonra barkodu ekleyin.",
+  "catalog.barcode.variant_inactive_hint": "Kapalı: barkod eklemek için Etkin'i işaretleyin.",
   "catalog.barcode_backfill.btn": "SKU'dan barkod tamamla",
   "catalog.barcode_backfill.confirm_btn": "Bu barkodları ata",
   "catalog.barcode_backfill.eligible_count": "%d ürün için SKU'sundan barkod türetilebilir.",
