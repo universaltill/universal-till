@@ -1,12 +1,19 @@
 {{ define "receipt" }}
 <style>
   /* Layout-only styles; buttons/colors come from app.css so the receipt
-     matches the rest of the till and theme plugins. */
+     matches the rest of the till and theme plugins. ut-docs#4419: the card
+     and its text take the theme's tokens -- a fixed white card under
+     theme-coloured text left the dark theme's light text on white. The
+     barcodes paint their own white backing (httpx/barcode.go), so they stay
+     scannable on a dark card. Print pins paper colours (@media print). */
   .receipt-wrap {max-width: 420px; margin: 0 auto;}
-  .receipt-card {background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: .8rem .9rem;}
+  .receipt-card {background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: .8rem .9rem;}
+  /* app.css paints every h2 in --brand; a dark theme that doesn't re-point
+     h2 (built-in dark.css does) would put dark-on-dark headings here. */
+  .receipt-card h2 {color: inherit;}
   .barcode {text-align: center; margin: 0.4rem 0;}
   .barcode .receipt-barcode {max-width: 100%; height: 44px;}
-  .barcode small {display: block; letter-spacing: 3px; color: #374151;}
+  .barcode small {display: block; letter-spacing: 3px; color: var(--text);}
   .actions {display: flex; gap: 0.5rem; margin: .75rem 0 .25rem;}
   /* ut-docs#3361: at phone width (<=480px, the app's existing phone
      breakpoint) Print + New Customer + Refund's combined intrinsic widths
@@ -23,28 +30,28 @@
   }
   .receipt-lines {list-style: none; padding: 0; margin: 0.5rem 0;}
   .receipt-lines li {display: flex; justify-content: space-between; margin-bottom: 0.25rem;}
-  .receipt-payments {border-top: 1px dashed #e5e7eb; margin-top: 0.75rem; padding-top: 0.75rem;}
+  .receipt-payments {border-top: 1px dashed var(--border); margin-top: 0.75rem; padding-top: 0.75rem;}
   .receipt-payments h3 {margin: 0 0 0.35rem; font-size: 1rem;}
   .receipt-payments ul {list-style: none; padding: 0; margin: 0;}
   .receipt-payments li {display: flex; justify-content: space-between; margin-bottom: 0.35rem;}
-  .receipt-payments small {color: #6b7280; display: block; text-align: end;}
+  .receipt-payments small {color: var(--muted); display: block; text-align: end;}
   .receipt-voucher-code {font-family: monospace; overflow-wrap: anywhere;}
   /* ut-docs#4224: number + value on one row, holder and barcode full width under it */
   .receipt-vouchers li {flex-wrap: wrap; gap: 0 0.5rem;}
   .receipt-vouchers li > :first-child {flex: 1; min-width: 0;}
   .receipt-vouchers .receipt-voucher-holder, .receipt-vouchers .barcode {flex-basis: 100%;}
-  .receipt-legal {border-top: 1px dashed #e5e7eb; margin-top: 0.75rem; padding-top: 0.75rem; font-size: 0.85rem; color: #374151;}
+  .receipt-legal {border-top: 1px dashed var(--border); margin-top: 0.75rem; padding-top: 0.75rem; font-size: 0.85rem; color: var(--text);}
   .receipt-legal-label {font-weight: 600; margin-bottom: 0.25rem;}
   .receipt-legal-line {margin: 0.15rem 0;}
   .receipt-tse-signature {font-family: monospace; font-size: 0.75rem; overflow-wrap: anywhere;}
   .receipt-tse-qr {text-align: center; margin-block-start: 0.4rem;}
   .receipt-tse-qr img {max-width: 100%;}
-  .receipt-tracking-qr {border-top: 1px dashed #e5e7eb; margin-block-start: 0.75rem; padding-block-start: 0.75rem; text-align: center;}
+  .receipt-tracking-qr {border-top: 1px dashed var(--border); margin-block-start: 0.75rem; padding-block-start: 0.75rem; text-align: center;}
   .receipt-tracking-qr img {max-width: 160px; width: 100%; height: auto;}
-  .receipt-tracking-caption {display: block; margin-block-start: 0.25rem; color: #374151;}
+  .receipt-tracking-caption {display: block; margin-block-start: 0.25rem; color: var(--text);}
   .receipt-printer-warning {display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; background: #fff7ed; border: 1px solid #fdba74; color: #9a3412; padding: 0.5rem; border-radius: 4px; margin: 0.75rem 0;}
   .receipt-printer-message {font-size: 0.9rem;}
-  .receipt-ask {border-top: 1px dashed #e5e7eb; margin-top: 0.75rem; padding-top: 0.75rem;}
+  .receipt-ask {border-top: 1px dashed var(--border); margin-top: 0.75rem; padding-top: 0.75rem;}
   .receipt-ask-title {font-weight: 600; margin-bottom: 0.5rem;}
   .receipt-ask-actions {display: flex; gap: 0.5rem;}
   .receipt-ask-actions .btn {flex: 1; min-height: 3rem;}
@@ -54,6 +61,11 @@
        RTL) and overflow:hidden clips anything past one page. Block flow +
        visible overflow prints the same centered receipt in LTR and RTL. */
     body, body.kiosk.sale-screen {background: #fff; overflow: visible !important;}
+    /* ut-docs#4419: paper is white whatever the screen theme -- a dark
+       theme's light --text would print near-invisible. */
+    .receipt-card, .receipt-card * {color: #000 !important;}
+    .receipt-card {background: #fff; border-color: #e5e7eb;}
+    .receipt-card .totals {background: transparent; border-color: #e5e7eb;}
     .actions {display: none;}
     .nav {display: none !important;}
     .kiosk-header {display: none !important;}
