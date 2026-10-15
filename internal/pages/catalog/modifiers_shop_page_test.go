@@ -306,7 +306,7 @@ func TestModifiersPage_HasPersistentBackToCatalogLink(t *testing.T) {
 	if end := strings.Index(head, "</div>"); end != -1 {
 		head = head[:end]
 	}
-	backLink := `<a class="btn secondary" href="/items">← ` + httpx.T("en", "nav.catalog") + `</a>`
+	backLink := `<a class="btn secondary" href="/items"><span class="back-arrow" aria-hidden="true">←</span> ` + httpx.T("en", "nav.catalog") + `</a>`
 	if !strings.Contains(head, backLink) {
 		t.Errorf("expected page-head to contain a persistent back-to-catalog link %q, got head region: %s", backLink, head)
 	}

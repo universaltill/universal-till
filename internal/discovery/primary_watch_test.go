@@ -423,9 +423,12 @@ func TestPrimaryWatch_RefusedProofWarnsUnkeyed(t *testing.T) {
 // tlsFakePrimary is fakePrimary on a same-port TLS + plain listener: its
 // proof covers the pin served on the connection, as the real handler's does.
 type tlsFakePrimary struct {
-	base       string
-	cert       *lantls.Cert
-	tls, plain atomic.Int32
+	base        string
+	cert        *lantls.Cert
+	tls, plain  atomic.Int32
+	sawBearer   atomic.Bool  // a proof request carried an Authorization header
+	other       atomic.Int32 // non-proof requests, over verified TLS
+	otherBearer atomic.Bool
 }
 
 func newTLSFakePrimary(t *testing.T, primaryID, bearerHash string) *tlsFakePrimary {
@@ -444,6 +447,15 @@ func newTLSFakePrimary(t *testing.T, primaryID, bearerHash string) *tlsFakePrima
 			f.tls.Add(1)
 		} else {
 			f.plain.Add(1)
+		}
+		if r.URL.Path != ProofPath {
+			f.other.Add(1)
+			f.otherBearer.Store(r.Header.Get("Authorization") != "")
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": "ok", "error": nil})
+			return
+		}
+		if r.Header.Get("Authorization") != "" {
+			f.sawBearer.Store(true)
 		}
 		var req ProofRequest
 		if r.URL.Path != ProofPath || json.NewDecoder(r.Body).Decode(&req) != nil || req.TillID != testTillID {
@@ -487,16 +499,231 @@ func TestPrimaryWatch_PinnedReplicaProvesOverPinnedTLS(t *testing.T) {
 	}
 }
 
-// Another certificate at a candidate address is refused before a request
-// byte is sent, and never retried over plain HTTP (re-proof is ut-docs#2737).
-func TestPrimaryWatch_PinnedReplicaRefusesAnotherCertificate(t *testing.T) {
+// Another certificate at a candidate address is re-proven, never trusted
+// on sight (ADR-0114 §7, ut-docs#4410): the real main till restored onto new
+// hardware with a new key proves itself over that new certificate, and the
+// replica adopts both its address and its pin — over TLS only, with no
+// bearer sent.
+func TestPrimaryWatch_PinnedReplicaReprovesANewCertificate(t *testing.T) {
 	p := newTLSFakePrimary(t, testPrimaryID, testBearerHash())
 	f := rediscoverWithPin(t, strings.Repeat("0", 64), Candidate{TillID: testPrimaryID, BaseURL: p.base})
 
+	if got := f.get(t, "sync.primary_url"); got != p.base {
+		t.Fatalf("primary_url = %q; want the re-proven %q", got, p.base)
+	}
+	if got := f.get(t, PrimaryCertPinSettingKey); got != p.cert.Pin() {
+		t.Fatalf("pin = %q; want the new certificate's %q", got, p.cert.Pin())
+	}
+	if p.plain.Load() != 0 || p.sawBearer.Load() {
+		t.Fatalf("re-proof went plain=%d bearer=%v; want TLS only, no bearer", p.plain.Load(), p.sawBearer.Load())
+	}
+}
+
+// A device with another certificate that can't prove the pairing (it
+// doesn't hold this till's bearer hash) is never adopted: the address and
+// the old pin stay, and nothing goes over plain HTTP.
+func TestPrimaryWatch_PinnedReplicaRefusesAnUnprovenCertificate(t *testing.T) {
+	p := newTLSFakePrimary(t, testPrimaryID, "not-the-real-bearer-hash")
+	old := strings.Repeat("0", 64)
+	f := rediscoverWithPin(t, old, Candidate{TillID: testPrimaryID, BaseURL: p.base})
+
 	if got := f.get(t, "sync.primary_url"); got != deadURL {
-		t.Fatalf("switched to %q on a certificate that does not match the pin", got)
+		t.Fatalf("switched to %q on an unproven certificate", got)
+	}
+	if got := f.get(t, PrimaryCertPinSettingKey); got != old {
+		t.Fatalf("pin = %q; want the old one kept", got)
+	}
+	if p.plain.Load() != 0 || p.sawBearer.Load() {
+		t.Fatalf("candidate saw plain=%d bearer=%v", p.plain.Load(), p.sawBearer.Load())
+	}
+}
+
+// reproofFixture is a pinned replica whose main till is at base, holding
+// heldPin for it.
+func reproofFixture(t *testing.T, base, heldPin string) *watchFixture {
+	t.Helper()
+	f := newWatchFixture(t)
+	ctx := context.Background()
+	if err := f.settings.Set(ctx, "sync.primary_url", base); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.settings.Set(ctx, PrimaryCertPinSettingKey, heldPin); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+// The main till restored onto new hardware at the same address: the
+// transport's re-proof (ut-docs#4410) adopts its new pin with no re-pairing.
+func TestPrimaryWatch_ReproofAdoptsTheRestoredMainTill(t *testing.T) {
+	p := newTLSFakePrimary(t, testPrimaryID, testBearerHash())
+	old := strings.Repeat("0", 64)
+	f := reproofFixture(t, p.base, old)
+
+	if err := f.w.Reproof(context.Background(), p.base, old); err != nil {
+		t.Fatalf("Reproof: %v", err)
+	}
+	if got := f.get(t, PrimaryCertPinSettingKey); got != p.cert.Pin() {
+		t.Fatalf("pin = %q; want %q", got, p.cert.Pin())
+	}
+	if got := f.get(t, "sync.primary_url"); got != p.base {
+		t.Fatalf("primary_url changed to %q", got)
+	}
+	if p.plain.Load() != 0 || p.sawBearer.Load() {
+		t.Fatalf("re-proof went plain=%d bearer=%v; want TLS only, no bearer", p.plain.Load(), p.sawBearer.Load())
+	}
+}
+
+// A MITM with its own key relaying the real main till's proof: the proof
+// covers the real till's pin, not the one the replica saw, so the MITM's
+// certificate is never adopted. A failed re-proof warns (unkeyed, like any
+// refused proof) and cools down, so a hostile device can't make every
+// request run a proof.
+func TestPrimaryWatch_ReproofNeverAdoptsAMITMCertificate(t *testing.T) {
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+	realMain, err := lantls.LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hits atomic.Int32
+	base, _ := tlsPrimary(t, func(string) string { hits.Add(1); return realMain.Pin() })
+	f := reproofFixture(t, base, realMain.Pin())
+	ctx := context.Background()
+
+	if err := f.w.Reproof(ctx, base, realMain.Pin()); err == nil {
+		t.Fatal("Reproof accepted a proof over another certificate")
+	}
+	if got := f.get(t, PrimaryCertPinSettingKey); got != realMain.Pin() {
+		t.Fatalf("pin = %q; want the real main till's kept", got)
+	}
+	requireUnkeyedProofWarn(t)
+
+	f.now = f.now.Add(ReproofCooldown / 2)
+	if err := f.w.Reproof(ctx, base, realMain.Pin()); err == nil {
+		t.Fatal("Reproof succeeded inside the cooldown")
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("proof requests = %d; want 1 (the second call is inside the cooldown)", hits.Load())
+	}
+	f.now = f.now.Add(ReproofCooldown)
+	_ = f.w.Reproof(ctx, base, realMain.Pin())
+	if hits.Load() != 2 {
+		t.Fatalf("proof requests = %d after the cooldown; want 2", hits.Load())
+	}
+}
+
+// Requests that hit the mismatch together: the first re-proof adopts the
+// pin, and the rest find it already changed and go straight to their retry.
+func TestPrimaryWatch_ReproofSkipsWhenThePinAlreadyChanged(t *testing.T) {
+	p := newTLSFakePrimary(t, testPrimaryID, testBearerHash())
+	f := reproofFixture(t, p.base, p.cert.Pin())
+
+	if err := f.w.Reproof(context.Background(), p.base, strings.Repeat("0", 64)); err != nil {
+		t.Fatalf("Reproof: %v", err)
 	}
 	if n := p.tls.Load() + p.plain.Load(); n != 0 {
-		t.Fatalf("candidate served %d request(s) despite the pin mismatch", n)
+		t.Fatalf("main till got %d request(s); the pin had already moved on", n)
+	}
+}
+
+// The card's acceptance, end to end (ut-docs#4410): the main till restored
+// onto new hardware with a new key at the same address. The replica's next
+// bearer-carrying request hits the new certificate, the peer transport runs
+// the watch's re-proof, adopts the new pin and retries at once — no
+// re-pairing, and the bearer only ever travels over the verified retry.
+func TestPeerTransport_ReproofReadoptsARestoredMainTill(t *testing.T) {
+	p := newTLSFakePrimary(t, testPrimaryID, testBearerHash())
+	f := reproofFixture(t, p.base, strings.Repeat("0", 64))
+	t.Cleanup(lantls.SetPeerSource(func(ctx context.Context) (string, string, error) {
+		u, _, err := f.settings.Get(ctx, "sync.primary_url")
+		if err != nil {
+			return "", "", err
+		}
+		pin, _, err := f.settings.Get(ctx, PrimaryCertPinSettingKey)
+		return u, pin, err
+	}))
+	t.Cleanup(lantls.SetPeerReproof(f.w.Reproof))
+
+	req, err := http.NewRequest(http.MethodGet, p.base+"/api/sync/admin", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+testBearer)
+	resp, err := lantls.NewPeerClient(5 * time.Second).Do(req)
+	if err != nil {
+		t.Fatalf("request to the restored main till: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if got := f.get(t, PrimaryCertPinSettingKey); got != p.cert.Pin() {
+		t.Fatalf("pin = %q; want the restored main till's %q", got, p.cert.Pin())
+	}
+	if p.other.Load() != 1 || !p.otherBearer.Load() {
+		t.Fatalf("retried request reached the main till %d time(s), bearer=%v; want once, with its bearer", p.other.Load(), p.otherBearer.Load())
+	}
+	if p.sawBearer.Load() || p.plain.Load() != 0 {
+		t.Fatalf("proof carried a bearer=%v, plain requests=%d; want neither", p.sawBearer.Load(), p.plain.Load())
+	}
+}
+
+// A MITM relaying the challenge to the real main till over plain HTTP gets
+// a genuine proof with no pin in it. Re-proof binds the pin the replica saw,
+// so that proof fails and the MITM's certificate is never adopted.
+func TestPrimaryWatch_ReproofRefusesAnUnpinnedRelayedProof(t *testing.T) {
+	base, _ := tlsPrimary(t, func(string) string { return "" })
+	old := strings.Repeat("0", 64)
+	f := reproofFixture(t, base, old)
+
+	if err := f.w.Reproof(context.Background(), base, old); err == nil {
+		t.Fatal("Reproof adopted a certificate through a proof that covers no pin")
+	}
+	if got := f.get(t, PrimaryCertPinSettingKey); got != old {
+		t.Fatalf("pin = %q; want the old one kept", got)
+	}
+}
+
+// Review M1: a re-proof triggered by a short UI proxy call (800 ms) runs
+// under its own bound, so an expired caller deadline can't fail a genuine
+// main till's proof.
+func TestPrimaryWatch_ReproofOutlivesTheCallersDeadline(t *testing.T) {
+	p := newTLSFakePrimary(t, testPrimaryID, testBearerHash())
+	old := strings.Repeat("0", 64)
+	f := reproofFixture(t, p.base, old)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	<-ctx.Done()
+
+	if err := f.w.Reproof(ctx, p.base, old); err != nil {
+		t.Fatalf("Reproof under an expired caller deadline: %v", err)
+	}
+	if got := f.get(t, PrimaryCertPinSettingKey); got != p.cert.Pin() {
+		t.Fatalf("pin = %q; want %q", got, p.cert.Pin())
+	}
+}
+
+// Review m3: an address that proves itself with the pin already held is no
+// refusal — no cooldown starts, no warning is logged.
+func TestPrimaryWatch_ReproofWithTheHeldPinIsNoRefusal(t *testing.T) {
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+	p := newTLSFakePrimary(t, testPrimaryID, testBearerHash())
+	f := reproofFixture(t, p.base, p.cert.Pin())
+	ctx := context.Background()
+
+	for i := 0; i < 2; i++ {
+		if err := f.w.Reproof(ctx, p.base, p.cert.Pin()); err != nil {
+			t.Fatalf("Reproof #%d: %v", i+1, err)
+		}
+	}
+	if p.tls.Load() != 2 {
+		t.Fatalf("proofs = %d; want 2 (no cooldown after a success)", p.tls.Load())
+	}
+	for _, e := range logging.Recent() {
+		if strings.Contains(e.Msg, "did not prove") {
+			t.Fatalf("warned on a successful proof: %+v", e)
+		}
 	}
 }

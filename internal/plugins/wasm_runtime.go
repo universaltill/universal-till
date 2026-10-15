@@ -101,6 +101,12 @@ type WasmRuntime struct {
 	// schedBusy holds plugin id + "\x00" + event while that schedule's tick
 	// runs, across Sync generations (skip-while-running, ADR-0121 §8).
 	schedBusy sync.Map
+	// eventGates is each loaded plugin's event data-class gate, read from
+	// its installed manifest at load (ADR-0153 amendment, ut-docs#4147,
+	// event_dataclass.go); absent = eventGateNone. evDenials coalesces the
+	// audit rows of withheld events.
+	eventGates map[string]eventGate
+	evDenials  eventDenialThrottle
 }
 
 // onHostState, when set (tests only), sees each event's hostState so a test
@@ -244,6 +250,7 @@ func NewWasmRuntime(baseDir string) *WasmRuntime {
 		netTimeout:  10 * time.Second,
 		hasNet:      map[string]bool{},
 		hasTCP:      map[string]bool{},
+		eventGates:  map[string]eventGate{},
 		baseDir:     baseDir,
 		calls:       newWasmCallGate(wasmConcurrencyLimits(goruntime.GOOS)),
 		publishRate: newPublishRateLimiter(time.Now),
@@ -299,6 +306,7 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			}
 			delete(w.hasNet, id)
 			delete(w.hasTCP, id)
+			delete(w.eventGates, id)
 			w.publishRate.forget(id)
 			// A dropped plugin must never leak an open device socket.
 			tcpConns.CloseAll(id)
@@ -333,6 +341,29 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 
 	for _, row := range rows {
 		if row.Runtime != "wasm" || !row.IsActive {
+			continue
+		}
+		// ADR-0153 amendment (ut-docs#4147): whether the plugin declares
+		// ai.agent decides whether its events are checked against its
+		// ai.send.* grants. Read once here, before the module is (re)loaded,
+		// so no event reaches a new module ungated and the delivery path
+		// reads nothing for a plugin without ai.agent. A manifest that
+		// cannot be read leaves core unable to tell whether the plugin is an
+		// AI agent, and the view path already refuses it every view_query:
+		// treat it like a load failure (ut-docs#2280/#2304 precedent) —
+		// mark broken, log, don't count it loaded — and record the gate as
+		// unreadable so an already-compiled module from an earlier sync
+		// (UI asks and jobs reach it directly) is refused every event too.
+		gate, gateErr := installedEventGate(ctx, db, row.ID)
+		w.mu.Lock()
+		w.eventGates[row.ID] = gate
+		w.mu.Unlock()
+		if gateErr != nil {
+			logging.L().Errorf("wasm load %s: read installed manifest: %v", row.ID, gateErr)
+			failed = append(failed, row.ID)
+			if markBroken(ctx, repo, row) {
+				stateChanged = true
+			}
 			continue
 		}
 		modPath := filepath.Join(w.baseDir, row.ID, row.Version,
@@ -390,7 +421,7 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 				}
 				resp, err := w.HandleEvent(hctx, pluginID, ev)
 				if err != nil {
-					logging.L().Errorf("wasm %s handling %s: %v", pluginID, ev.Type, err)
+					logEventErr("wasm %s handling %s: %v", err, pluginID, ev.Type)
 					return nil, err
 				}
 				return resp, nil
@@ -434,7 +465,7 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 					return
 				}
 				if _, err := w.handleQueuedEvent(drainCtx, pluginID, ev); err != nil {
-					logging.L().Errorf("wasm %s handling %s: %v", pluginID, ev.Type, err)
+					logEventErr("wasm %s handling %s: %v", err, pluginID, ev.Type)
 				}
 			}
 			w.wg.Add(1)
@@ -701,6 +732,12 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 	w.mu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("module not loaded: %s", pluginID)
+	}
+	// ADR-0153 amendment (ut-docs#4147): an ai.agent plugin gets the event
+	// only with every data class it carries granted — before a call slot is
+	// taken or the guest instantiated. An error, never a nil answer.
+	if err := w.checkEventDataClasses(ctx, pluginID, ev); err != nil {
+		return nil, err
 	}
 	timeout := w.timeoutForEvent(pluginID, ev)
 	salePath := isSalePathCall(ev) // a published event (hop > 0) never is

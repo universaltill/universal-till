@@ -8,12 +8,10 @@
   .store-detail-desc { white-space:pre-line; overflow-wrap:anywhere; margin:0; }
   .store-detail-actions { display:flex; gap:.5rem; flex-wrap:wrap; }
   .store-detail-actions .btn { min-height:44px; }
-  .store-back-arrow { display:inline-block; }
-  html[dir="rtl"] .store-back-arrow { transform:scaleX(-1); }
 </style>
 
 <div class="page-head">
-  <a class="btn secondary" href="/plugins/store"><span class="store-back-arrow" aria-hidden="true">←</span> {{ T "plugins.store.title" }}</a>
+  <a class="btn secondary" href="/plugins/store"><span class="back-arrow" aria-hidden="true">←</span> {{ T "plugins.store.title" }}</a>
 </div>
 
 {{ with .Item }}

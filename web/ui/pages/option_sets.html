@@ -8,7 +8,7 @@
        already carries — this was the one reading as a forward link
        instead of a back affordance, pre-existing but on the exact line
        this diff already touches. -->
-  <a class="btn secondary" href="/items"{{ if .InItemsShell }} hx-get="/catalog" hx-target="#items-panel" hx-push-url="true"{{ end }}>← {{ T "nav.catalog" }}</a>
+  <a class="btn secondary" href="/items"{{ if .InItemsShell }} hx-get="/catalog" hx-target="#items-panel" hx-push-url="true"{{ end }}><span class="back-arrow" aria-hidden="true">←</span> {{ T "nav.catalog" }}</a>
 </div>
 
 <p class="muted">{{ T "catalog.option_sets.subtitle" }}</p>

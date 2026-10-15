@@ -61,7 +61,7 @@
         </div>
       </form>
       {{ if eq .next "kiosk" }}
-      <a class="btn secondary" href="/self-order">← {{ T "selforder.back" }}</a>
+      <a class="btn secondary" href="/self-order"><span class="back-arrow" aria-hidden="true">←</span> {{ T "selforder.back" }}</a>
       {{ end }}
 
       <!-- ut-docs#1099: the manager's escape hatch must be reachable FROM
