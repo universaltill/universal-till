@@ -26,6 +26,13 @@ go run ./e2e/seed_faq
 # this runs the same catalogue seed as the import page's "Load sample data").
 go run ./e2e/seed_demo
 
+# ut-docs#359: a few fixed-date sales + invoices so the manual's reports /
+# invoices screenshots aren't empty. Opt-in: only `make docs-shots` sets the
+# flag (playwright.docs.config.ts); the real e2e suite never sees these rows.
+if [ "${UT_DOCS_SHOTS_SEED_SALES:-}" = "1" ]; then
+  go run ./e2e/seed_docs_sales
+fi
+
 # Build once, then run the BINARY (not `go run`) from INSIDE the fresh data
 # dir, not the repo root. `go run` (even with `-C`) ties the process's
 # working directory to the module root — and the app's one-time legacy-data

@@ -41,6 +41,7 @@ on:
       - 'e2e/scripts/resolve-chromium.sh'
       - 'e2e/run-till.sh'
       - 'e2e/run-till-auth.sh'
+      - 'e2e/seed_docs_sales/**'
       - 'e2e/package.json'
       - 'e2e/package-lock.json'
       - 'Makefile'
