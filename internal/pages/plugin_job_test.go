@@ -93,7 +93,9 @@ func (h *jobHarness) poll(route, id string) *httptest.ResponseRecorder {
 // stillRunning: an htmx poll answer for a running job — the poll again,
 // or 204 when nothing changed since the last one.
 func stillRunning(rec *httptest.ResponseRecorder) bool {
-	return rec.Code == http.StatusNoContent || strings.Contains(rec.Body.String(), `class="plugin-view-poll"`)
+	// A chat's thinking bubble is its poll (ut-docs#4132).
+	return rec.Code == http.StatusNoContent || strings.Contains(rec.Body.String(), `class="plugin-view-poll"`) ||
+		strings.Contains(rec.Body.String(), "plugin-chat-thinking")
 }
 
 // pollUntil polls until the job is no longer running.

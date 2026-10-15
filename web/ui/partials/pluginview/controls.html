@@ -53,3 +53,59 @@
   <button type="submit" class="btn btn-touch primary">{{ $c.Submit }}</button>
 </form>
 {{ end }}
+
+{{/* ut-docs#4132 (ADR-0121 amendment 2026-10-11): the chat component.
+     .C is a pluginview.ViewChat. The transcript is a polite log; each
+     turn's text is escaped plain text, its line breaks kept by CSS
+     (white-space: pre-wrap), never markdown or HTML, in its own direction
+     (dir="auto": an English turn on an fa till keeps its punctuation at
+     its end; the question box does the same in CSS, unicode-bidi:
+     plaintext, which unlike dir="auto" keeps an empty box's placeholder
+     in the page's direction). User turns sit at
+     the end edge, assistant turns at the start edge (logical properties,
+     RTL-safe); a visually hidden "You:"/"Assistant:" says whose turn it
+     is. .Poll (a running job's pluginJobPoll) draws the thinking bubble,
+     which IS the job poll (same hx-get as pluginview_poll, refresh link as
+     the no-JS fallback) and no question box. Otherwise the box posts
+     question + _action, and core's own _turns: the history core drew,
+     already bounded (pluginview.EncodeHistory). .RO draws no box. */}}
+{{ define "pluginview_chat" }}
+{{- $c := .C }}
+<div class="card plugin-chat">
+  <div class="plugin-chat-scroll">
+    <div class="plugin-chat-log" role="log" aria-live="polite" aria-label="{{ T "plugin.chat.log_label" }}">
+      {{- range $c.Turns }}
+      <div class="plugin-chat-turn {{ if eq .Role "user" }}user{{ else }}assistant{{ end }}">
+        <span class="visually-hidden">{{ if eq .Role "user" }}{{ T "plugin.chat.you" }}{{ else }}{{ T "plugin.chat.assistant" }}{{ end }}</span>
+        <p class="plugin-chat-text" dir="auto">{{ .Text }}</p>
+        {{- if .Tools }}
+        <ul class="plugin-chat-tools">{{ range .Tools }}<li>{{ printf (T "plugin.chat.used_tool") . }}</li>{{ end }}</ul>
+        {{- end }}
+      </div>
+      {{- end }}
+      {{- if .Poll }}
+      <div class="plugin-chat-turn assistant plugin-chat-thinking" hx-get="{{ .Route }}?_job={{ .Poll.ID }}" hx-trigger="every 1s" hx-target="#{{ .Target }}" hx-swap="innerHTML">
+        <span class="visually-hidden">{{ T "plugin.chat.assistant" }}</span>
+        <p class="plugin-chat-text" id="{{ .Target }}-chat-thinking">{{ if .Poll.Message }}{{ .Poll.Message }}{{ else }}{{ T "plugin.chat.thinking" }}{{ end }}</p>
+        {{- if .Poll.HasPct }}
+        <progress class="plugin-view-poll-bar" max="100" value="{{ .Poll.Pct }}" aria-labelledby="{{ .Target }}-chat-thinking">{{ .Poll.Pct }}%</progress>
+        {{- end }}
+        <a class="plugin-view-poll-refresh" href="{{ .Route }}?_job={{ .Poll.ID }}">{{ T "plugin.job.refresh" }}</a>
+      </div>
+      {{- end }}
+    </div>
+  </div>
+  {{- if $c.Failed }}
+  <div class="plugin-view-notice warn" role="status">{{ T "plugin.view.action_failed" }}</div>
+  {{- end }}
+  {{- if and (not .Poll) (not .RO) }}
+  <form class="plugin-chat-ask" method="post" action="{{ .Route }}" hx-post="{{ .Route }}" hx-target="#{{ .Target }}" hx-swap="innerHTML" hx-disabled-elt="find button[type=submit]">
+    <input type="hidden" name="_action" value="{{ $c.Action }}">
+    <input type="hidden" name="_turns" value="{{ $c.History }}">
+    <label class="visually-hidden" for="{{ .Target }}-chat-q">{{ T "plugin.chat.question_label" }}</label>
+    <input type="text" id="{{ .Target }}-chat-q" name="question" value="{{ $c.Question }}" maxlength="1000" placeholder="{{ $c.Placeholder }}" autocomplete="off" required>
+    <button type="submit" class="btn btn-touch primary">{{ T "plugin.chat.send" }}</button>
+  </form>
+  {{- end }}
+</div>
+{{ end }}

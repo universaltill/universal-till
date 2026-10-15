@@ -112,6 +112,12 @@ type pluginViewBody struct {
 	// ReadOnly draws no actions or forms (setup.wizard.steps: the wizard
 	// is auth-exempt, /plugin/ routes are not -- ut-docs#3872).
 	ReadOnly bool
+	// Chat is core's own interim chat (ut-docs#4132) while a job answers
+	// a chat's question (with Job: the transcript, the question and a
+	// thinking bubble that is the poll) or after it failed (with
+	// Unavailable: the transcript, the failure notice and the question
+	// box again).
+	Chat *pluginview.ViewChat
 }
 
 // TargetID is the id actions, forms and the job poll target.
@@ -208,8 +214,10 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 			if snap.key != "" {
 				body.Job.Message = httpx.T(locale, snap.key)
 			}
+			body.Chat = snap.chat.view(locale, false)
 		case snap.state == pluginJobFailed:
 			err = errors.New("job failed (reason logged when it ended)")
+			body.Chat = snap.chat.view(locale, true)
 		default:
 			doc, redirect = snap.doc, snap.redirect
 		}
@@ -247,6 +255,7 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 				failStatus = http.StatusTooManyRequests
 			case err == nil:
 				body.Job = &pluginJobPoll{ID: id}
+				body.Chat = chatInterimFromPayload(payload).view(locale, false)
 			}
 		default:
 			doc, redirect = ans.Document, ans.Redirect
@@ -433,7 +442,7 @@ func readPluginViewForm(w http.ResponseWriter, r *http.Request, entry data.PageE
 		return pluginview.Submission{}, nil, fmt.Errorf("read form: %w", err)
 	}
 	c := httpx.ActiveCurrency()
-	sub, err := pluginview.DecodeForm(r.PostForm, c.Decimals, c.Code)
+	sub, err := pluginview.DecodePost(r.PostForm, c.Decimals, c.Code)
 	return sub, []pluginUpload{}, err
 }
 
@@ -510,6 +519,16 @@ func askPluginAction(ctx context.Context, d *common.Deps, entry data.PageEntryRo
 		"invalid":        invalid,
 		"upload_handles": ups,
 		"locale":         locale,
+	}
+	// ut-docs#4132: a chat's question box posts core's _turns; the plugin
+	// gets it validated and bounded as "turns" ([] when it was malformed).
+	// A post without _turns (not from a chat) carries no "turns" key.
+	if sub.TurnsPosted {
+		turns := sub.Turns
+		if turns == nil {
+			turns = []pluginview.HistoryTurn{}
+		}
+		payload["turns"] = turns
 	}
 	raw, vctx, err := askPluginUIAs(ctx, d, entry, perm, pluginViewTimeout, pluginActionAskEvent, payload)
 	if err != nil {

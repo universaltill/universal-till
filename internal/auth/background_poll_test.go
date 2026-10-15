@@ -160,6 +160,8 @@ var dynamicPollURLs = map[string][]string{
 var requestPollers = map[string]string{
 	// A running plugin job's poll (ADR-0121 §8, ut-docs#3908).
 	"web/ui/partials/pluginview/poll.html": "/plugin/demo?_job=0123456789abcdef0123456789abcdef",
+	// A chat's thinking bubble is that same job poll (ut-docs#4132).
+	"web/ui/partials/pluginview/controls.html": "/plugin/demo?_job=0123456789abcdef0123456789abcdef",
 	// The sell screen's catalog.identify job poll (ut-docs#3873).
 	"web/ui/partials/identify_suggestions.html": "/api/pos/identify/plugin?_job=0123456789abcdef0123456789abcdef",
 }

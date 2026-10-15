@@ -178,7 +178,7 @@ func readPluginViewMultipart(w http.ResponseWriter, r *http.Request, entry data.
 		}
 	}
 	c := httpx.ActiveCurrency()
-	sub, err := pluginview.DecodeForm(vals, c.Decimals, c.Code)
+	sub, err := pluginview.DecodePost(vals, c.Decimals, c.Code)
 	if err != nil {
 		return sub, nil, err
 	}
