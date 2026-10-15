@@ -17,8 +17,10 @@ import (
 // In-app release notes (ut-docs#3091): Settings → About shows the running
 // version, when this till first ran it, and the embedded "What's new"
 // (internal/releasenotes); after an update a status-bar chip announces the
-// new version once, to users who can open Settings, never on the self-order
-// kiosk (httpx's releasenoticeversion func).
+// new version once, to users who can open Settings, whatever the till's
+// display mode (ut-docs#4394): the customer-facing kiosk pages never include
+// base.html, so a customer never sees it; a manager on a self-order till
+// does (httpx's releasenoticeversion func).
 
 // aboutRecentNotes is how many releases the About card lists: the running
 // one plus the previous four.

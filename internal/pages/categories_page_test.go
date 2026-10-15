@@ -734,8 +734,8 @@ func TestCategoriesPage_RecordDialogStatusLockExitAffordance(t *testing.T) {
 	}
 
 	t.Run("not kiosk: affordance present", func(t *testing.T) {
-		httpx.InitSelfOrderMode(false)
-		t.Cleanup(func() { httpx.InitSelfOrderMode(false) })
+		httpx.InitDisplayMode("")
+		t.Cleanup(func() { httpx.InitDisplayMode("") })
 		dlg := dialogHTML(t)
 		for _, want := range affordances {
 			if !strings.Contains(dlg, want) {
@@ -754,8 +754,8 @@ func TestCategoriesPage_RecordDialogStatusLockExitAffordance(t *testing.T) {
 	})
 
 	t.Run("self_order till, staff session: affordance present", func(t *testing.T) {
-		httpx.InitSelfOrderMode(true)
-		t.Cleanup(func() { httpx.InitSelfOrderMode(false) })
+		httpx.InitDisplayMode("self_order")
+		t.Cleanup(func() { httpx.InitDisplayMode("") })
 		dlg := dialogHTML(t)
 		for _, want := range affordances {
 			if !strings.Contains(dlg, want) {

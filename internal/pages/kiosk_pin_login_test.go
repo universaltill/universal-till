@@ -52,8 +52,8 @@ func kioskLoginHarness(t *testing.T) (*common.Deps, *auth.Service, http.Handler)
 		}
 		return ""
 	})
-	// The live template flags are process-global; leave them as found.
-	t.Cleanup(func() { httpx.InitSelfOrderMode(false); httpx.InitDisplayMode("") })
+	// The live display mode is process-global; leave it as found.
+	t.Cleanup(func() { httpx.InitDisplayMode("") })
 
 	mux := http.NewServeMux()
 	registerIndex(mux, dp)

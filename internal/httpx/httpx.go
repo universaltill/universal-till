@@ -83,10 +83,11 @@ var baseFuncs = template.FuncMap{
 	// Published by internal/pages' auto-update scheduler every tick.
 	"autoupdatestuck": func() bool { return updates.AutoUpdateStuck() },
 	// releasenoticeversion: the version the after-update "what's new" chip
-	// announces ("v0.30.6"), or "" (ut-docs#3091). Always "" in self-order
-	// kiosk mode — a customer never sees it; base.html also gates it on
-	// `allowed "settings"` so a cashier never does either.
-	"releasenoticeversion": releaseNoticeVersion,
+	// announces ("v0.30.6"), or "" (ut-docs#3091). Not gated on self-order
+	// mode (ut-docs#4394): the customer-facing kiosk pages never include
+	// base.html, and base.html gates the chip on `allowed "settings"` so a
+	// cashier never sees it — a manager on a self-order till does.
+	"releasenoticeversion": releasenotes.NoticeVersion,
 	// updatedownloadlink: whether the status-bar chip's fallback (when
 	// canselfupdate is false) may show an actionable website link — false on
 	// a unix kiosk, where that link is a dead end (ut-docs#147/#159). Mirrors
@@ -895,41 +896,12 @@ var kioskMode atomic.Value // bool
 // targets, no text selection). Driven by UT_KIOSK=1.
 func InitKiosk(on bool) { kioskMode.Store(on) }
 
-// selfOrderMode is whether this till is in self-order kiosk mode — the
-// per-till display.mode setting (ADR-0020), not the UT_KIOSK window-chrome
-// flag kioskMode carries. Published at boot from the persisted display.mode
-// (pages.Init) and live-updated the moment it changes (settings_page.go's
-// display-mode handlers, newRederiveSettings). releaseNoticeVersion reads
-// it (ut-docs#3091). It is a till-wide flag, so it can't tell a customer at
-// the kiosk from a manager signed in on it or browsing from a phone:
-// operator surfaces such as record_dialog.html never gate on it
-// (ut-docs#4324).
-var selfOrderMode atomic.Value // bool
-
-// releaseNoticeVersion backs the "releasenoticeversion" template func.
-func releaseNoticeVersion() string {
-	if SelfOrderMode() {
-		return ""
-	}
-	return releasenotes.NoticeVersion()
-}
-
-// InitSelfOrderMode publishes whether this till is currently in self-order
-// kiosk mode (display.mode="self_order").
-func InitSelfOrderMode(on bool) { selfOrderMode.Store(on) }
-
-// SelfOrderMode reports the flag InitSelfOrderMode last published.
-func SelfOrderMode() bool {
-	on, _ := selfOrderMode.Load().(bool)
-	return on
-}
-
-// displayMode backs the "backtosaleurl" template func — same publish
-// pattern as selfOrderMode above (kept as a separate atomic rather than
-// derived from this one so neither call site's existing behavior changes),
-// but carrying the raw display.mode value ("", "backoffice", "self_order")
-// rather than a single bool, since RenderError (ut-docs#2154) needs to
-// choose between three destinations, not just detect self-order.
+// displayMode backs the "backtosaleurl" template func. It carries the raw
+// display.mode value ("", "backoffice", "self_order"), since RenderError
+// (ut-docs#2154) needs to choose between three destinations. It is a
+// till-wide value, so it can't tell a customer at the kiosk from a manager
+// signed in on it; operator surfaces (record_dialog.html, the release-notes
+// chip) never gate on it (ut-docs#4324, #4394).
 // RenderError has no *common.Deps in scope — it's called from ~80 sites
 // across many packages — so it can't read display.mode fresh per request
 // the way index_page.go/open_orders_page.go do; this cached value is how
@@ -941,7 +913,8 @@ var displayMode atomic.Value // string
 
 // InitDisplayMode publishes the current display.mode value for the
 // "backtosaleurl" template func below. Published at boot (pages.Init) and
-// live-updated at the same call sites InitSelfOrderMode already is.
+// live-updated when display.mode changes (the settings display-mode handlers
+// and newRederiveSettings).
 func InitDisplayMode(mode string) { displayMode.Store(mode) }
 
 // currentTheme backs RenderError's ".theme" template data (ut-docs#2362) —

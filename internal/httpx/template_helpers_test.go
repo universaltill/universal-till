@@ -872,20 +872,9 @@ func TestInitKioskExposedToTemplates(t *testing.T) {
 	}
 }
 
-// ut-docs#2099: SelfOrderMode reads back what InitSelfOrderMode published
-// (set at boot from the persisted display.mode, live-updated by the
-// settings handlers). ut-docs#4324: no template reads it — the record
-// dialog's status/lock/exit row is operator-only and never gated on it.
-func TestInitSelfOrderModeRoundTrips(t *testing.T) {
-	InitSelfOrderMode(true)
-	defer InitSelfOrderMode(false)
-	if !SelfOrderMode() {
-		t.Fatal("SelfOrderMode() = false after InitSelfOrderMode(true)")
-	}
-	InitSelfOrderMode(false)
-	if SelfOrderMode() {
-		t.Fatal("SelfOrderMode() = true after InitSelfOrderMode(false)")
-	}
+// ut-docs#4324, #4396: no "selforder" template func — a till-wide mode flag
+// can't tell a customer from a signed-in manager.
+func TestNoSelfOrderTemplateFunc(t *testing.T) {
 	if _, ok := FuncsFor("en")["selforder"]; ok {
 		t.Fatal(`"selforder" template func is back: a till-wide mode flag can't tell a customer from a signed-in manager (ut-docs#4324)`)
 	}
