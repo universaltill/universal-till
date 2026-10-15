@@ -1163,6 +1163,81 @@ func TestPluginSettingsPage_GET_AIImageModelUnsupportedHint(t *testing.T) {
 	}
 }
 
+// ut-docs#4095: image_endpoint is plain text on purpose (an `endpoint` type
+// would grant the plugin http:lan egress), so save never checks it. A set
+// value that is not a plain http(s) URL leaves the shop's own service unused
+// — bgremove refuses it at resolve time — and the field shows a plain hint
+// above its input. A valid URL (surrounding space trimmed, as the resolver
+// does) or an empty value: no hint.
+func TestPluginSettingsPage_GET_AIImageEndpointInvalidHint(t *testing.T) {
+	hint := httpx.T("en", "plugins.settings.ai.image_endpoint_invalid")
+	if hint == "" || hint == "plugins.settings.ai.image_endpoint_invalid" {
+		t.Fatalf("hint key must resolve to real copy in en.json, got %q", hint)
+	}
+	hint = html.EscapeString(hint)
+
+	for _, tc := range []struct {
+		name, endpoint string
+		want           bool
+	}{
+		{"no scheme", "192.168.1.20:7000", true},
+		{"bare host", "rembg.local", true},
+		{"ftp scheme", "ftp://rembg.local:7000", true},
+		{"query", "http://rembg.local:7000/?x=1", true},
+		{"valid", "http://rembg.local:7000", false},
+		{"valid https path", "https://rembg.local/api", false},
+		{"valid with spaces", "  http://192.168.1.20:7000  ", false},
+		{"empty", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("UT_AUTH", "off")
+			mux, dp := newPluginSettingsTestDeps(t)
+			seedAIPluginRows(t, dp.Db, true)
+			seedPluginSetting(t, dp, AIPluginID, "image_endpoint", tc.endpoint, "global")
+			// Another plugin's same-named key never gets the hint.
+			seedPluginSetting(t, dp, "p1", "image_endpoint", "rembg.local", "global")
+
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/plugins/"+AIPluginID+"/settings", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET: code %d body %s", rec.Code, rec.Body.String())
+			}
+			body := rec.Body.String()
+			n := strings.Count(body, hint)
+			if !tc.want {
+				if n != 0 {
+					t.Fatalf("endpoint %q: hint must not render, got:\n%s", tc.endpoint, body)
+				}
+				if !strings.Contains(body, `name="setting_image_endpoint"`) {
+					t.Fatalf("endpoint %q: the image_endpoint input must still render, got:\n%s", tc.endpoint, body)
+				}
+				return
+			}
+			if n != 1 {
+				t.Fatalf("endpoint %q: want the hint exactly once, got %d in:\n%s", tc.endpoint, n, body)
+			}
+			hintAt := strings.Index(body, hint)
+			inputAt := strings.Index(body, `name="setting_image_endpoint"`)
+			if inputAt < 0 || hintAt > inputAt {
+				t.Fatalf("hint must render ABOVE the image_endpoint input (hint %d, input %d)", hintAt, inputAt)
+			}
+			if !strings.Contains(body, `<p class="muted">`+hint+`</p>`) {
+				t.Fatalf("hint must be a plain muted paragraph, got:\n%s", body)
+			}
+			// The text input still shows the stored value so the shop can fix it.
+			if !strings.Contains(body, `name="setting_image_endpoint" value="`+tc.endpoint+`"`) {
+				t.Fatalf("image_endpoint input must keep its value, got:\n%s", body)
+			}
+
+			rec = httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil))
+			if strings.Contains(rec.Body.String(), hint) {
+				t.Fatal("the hint is for the AI plugin's image_endpoint only")
+			}
+		})
+	}
+}
+
 // seedPluginPermissions installs a plugin manifest declaring the given
 // permissions (all starting ungranted), mirroring how a real install
 // populates plugin_permissions — ListPluginPermissions reads that table,
