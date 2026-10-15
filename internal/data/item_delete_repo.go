@@ -115,6 +115,13 @@ SELECT EXISTS (SELECT 1 FROM held_sales WHERE payload LIKE '%"item_id":"' || ? |
 // cleanup's own rule, so the two delete paths can never disagree about
 // what is safe to remove.
 func (r *POSRepo) DeleteUnusedItem(ctx context.Context, itemID string) (ItemDeleteResult, error) {
+	return r.deleteUnusedItem(ctx, itemID, nil)
+}
+
+// deleteUnusedItem is DeleteUnusedItem with an optional precondition run
+// inside the same write transaction, after the item is loaded and before
+// any use check: a non-nil error from it aborts with nothing changed.
+func (r *POSRepo) deleteUnusedItem(ctx context.Context, itemID string, pre func(*sql.Tx) error) (ItemDeleteResult, error) {
 	var res ItemDeleteResult
 	itemID = strings.TrimSpace(itemID)
 	if itemID == "" {
@@ -132,6 +139,11 @@ func (r *POSRepo) DeleteUnusedItem(ctx context.Context, itemID string) (ItemDele
 			return res, nil
 		}
 		return res, fmt.Errorf("delete item: load: %w", err)
+	}
+	if pre != nil {
+		if err := pre(tx); err != nil {
+			return res, err
+		}
 	}
 	var sales int64
 	if err := tx.QueryRowContext(ctx, itemSalesCountSQL, itemID, itemID, itemID, itemID).Scan(&sales); err != nil {

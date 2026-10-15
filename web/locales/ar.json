@@ -945,6 +945,7 @@
   "import.status.name_already_in_catalog": "الاسم موجود بالفعل في الكتالوج",
   "import.status.not_sellable": "ليس صنفًا قابلًا للبيع (مفتاح نوع الطلب)",
   "import.status.ok": "موافق",
+  "import.status.seeded_gift_voucher_removed": "أُزيل صنف قسيمة الهدية «%s» الذي أُنشئ عند الإعداد، لأن هذا الاستيراد جلب صنفه الخاص.",
   "import.status.sku_already_in_catalog": "رمز SKU موجود بالفعل في الكتالوج",
   "import.status.sku_reused_in_file": "رقم الصنف \"%s\" مكرر داخل هذا الملف — تم الاستيراد برقم جديد",
   "import.status.source_deleted": "أُزيل من ملف المصدر",

@@ -945,6 +945,7 @@
   "import.status.name_already_in_catalog": "ad zaten katalogda mevcut",
   "import.status.not_sellable": "satılabilir bir ürün değil (sipariş türü anahtarı)",
   "import.status.ok": "tamam",
+  "import.status.seeded_gift_voucher_removed": "Kurulumda oluşturulan “%s” hediye çeki ürünü kaldırıldı, çünkü bu içe aktarma kendi ürününü getirdi.",
   "import.status.sku_already_in_catalog": "SKU zaten katalogda mevcut",
   "import.status.sku_reused_in_file": "\"%s\" ürün numarası bu dosyada tekrarlanmış — yeni bir numarayla içe aktarıldı",
   "import.status.source_deleted": "kaynak dosyada silinmiş",

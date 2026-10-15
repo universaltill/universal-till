@@ -2150,6 +2150,9 @@ var ShopWideSettingPrefixes = []string{
 	BarcodeEnabledSymbologiesKey, CatalogImportBarcodeFromSKUDefaultKey,
 	// Pre-pack unit price on shelf labels (data/catalog_settings.go).
 	CatalogPrePackUnitPriceEnabledKey,
+	// The setup-seeded gift voucher item, retired by the first import that
+	// brings its own (ut-docs#4399): catalogue state, like the item.
+	SeededGiftVoucherItemKey, seededGiftVoucherItemNameKey,
 	// The store-level marketplace keys (see PerTillSettingPrefixes' own
 	// comment). Listed key by key: a new marketplace.* key must be
 	// classified on purpose, since most of that family is per-till.
