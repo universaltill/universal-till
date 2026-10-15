@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test';
+import * as path from 'path';
 
 // A fixed instant (RFC3339, UTC) passed to both throwaway tills as
 // UT_DOCS_SHOTS_NOW so internal/clock.Now pins "now" for the run — the one
@@ -161,6 +162,11 @@ export default defineConfig({
             '--default-tile-width=1024',
             '--default-tile-height=1024',
           ],
+          // ut-docs#4407: the app ships no webfont, so pin which system font
+          // its stack resolves to — Inter, via this harness's own fontconfig
+          // (system config + Inter aliases), never the machine's /etc/fonts.
+          // tests-docs/lib.js's font check fails the run if it didn't take.
+          env: { ...process.env, FONTCONFIG_FILE: path.join(__dirname, 'fontconfig', 'fonts.conf') },
           // Set by scripts/docs-shots.sh only when resolve-chromium.sh found
           // a pre-installed browser worth reusing (ut-docs#622) — unset (and
           // so this key is omitted) on any machine that ran the normal

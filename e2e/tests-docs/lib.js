@@ -221,4 +221,92 @@ function buildManifest() {
   };
 }
 
-module.exports = { repoRoot, LOCALES, routedTopics, buildManifest };
+// FONT PIN (ut-docs#4407). The app ships no webfont: app.css's body stack is
+// -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+// Arial, sans-serif, so glyphs come from whatever system fonts the generating
+// machine has. Shots made on a laptop silently re-rendered reports/invoices
+// in a different face. playwright.docs.config.ts therefore runs Chromium
+// with e2e/fontconfig/fonts.conf (aliases the stack to Inter, on top of the
+// system config), and the harness refuses to run unless the platform really
+// resolves the body stack to these fonts (packages fonts-inter and
+// fonts-dejavu-core on Debian/Ubuntu).
+const PINNED_FONTS = { latin: 'Inter', arabic: 'DejaVu Sans' };
+
+// Platform font families Chromium really used for hidden probes that inherit
+// the page's body font (CSS.getPlatformFontsForNode, via CDP). Returns
+// { latin: string[], arabic: string[] | null } (arabic only when asked for).
+async function probePlatformFonts(page, { arabic }) {
+  const probes = [
+    { key: 'latin', text: 'Sales report 0123456789 \u20ac', dir: 'ltr' },
+  ];
+  if (arabic) {
+    probes.push({ key: 'arabic', text: '\u06af\u0632\u0627\u0631\u0634 \u0641\u0631\u0648\u0634 \u062a\u0642\u0631\u064a\u0631 \u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a', dir: 'rtl' });
+  }
+  await page.evaluate((ps) => {
+    for (const p of ps) {
+      const el = document.createElement('p');
+      el.id = `ut-font-probe-${p.key}`;
+      el.dir = p.dir;
+      el.textContent = p.text;
+      // No font-family: it must inherit the body stack, like real content.
+      el.style.cssText =
+        'position:absolute;visibility:hidden;inset-inline-start:0;top:0;margin:0;white-space:nowrap';
+      document.body.appendChild(el);
+    }
+  }, probes);
+  // Let a frame lay the probes out first: on a cold fontconfig cache the
+  // query can otherwise come back with no fonts at all.
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+  const cdp = await page.context().newCDPSession(page);
+  const out = { latin: [], arabic: arabic ? [] : null };
+  try {
+    await cdp.send('DOM.enable');
+    await cdp.send('CSS.enable');
+    const { root } = await cdp.send('DOM.getDocument', { depth: 0 });
+    for (const p of probes) {
+      const { nodeId } = await cdp.send('DOM.querySelector', {
+        nodeId: root.nodeId,
+        selector: `#ut-font-probe-${p.key}`,
+      });
+      const { fonts } = await cdp.send('CSS.getPlatformFontsForNode', { nodeId });
+      out[p.key] = [...new Set(fonts.map((f) => f.familyName))];
+    }
+  } finally {
+    await page
+      .evaluate((ps) => ps.forEach((p) => document.getElementById(`ut-font-probe-${p.key}`)?.remove()), probes)
+      .catch(() => {});
+    await cdp.detach().catch(() => {});
+  }
+  return out;
+}
+
+// Returns null when the resolved fonts match the pin, else a failure message.
+function fontPinProblem(resolved, pinned) {
+  const bad = [];
+  const l = resolved.latin;
+  if (l.length !== 1 || l[0] !== pinned.latin) {
+    bad.push(`Latin text resolved to [${l.join(', ') || 'none'}], expected exactly [${pinned.latin}]`);
+  }
+  if (resolved.arabic) {
+    const a = resolved.arabic;
+    const ok = a.includes(pinned.arabic) && a.every((f) => f === pinned.arabic || f === pinned.latin);
+    if (!ok) {
+      bad.push(
+        `Arabic-script text resolved to [${a.join(', ') || 'none'}], expected ${pinned.arabic} (spaces/punctuation may come from ${pinned.latin})`,
+      );
+    }
+  }
+  if (!bad.length) return null;
+  return (
+    `docs-shots font pin failed (ut-docs#4407): ${bad.join('; ')}.\n` +
+    'The app ships no webfont, so shots render in whatever system fonts the generating machine has; ' +
+    'committed shots are pinned to the reference environment.\n' +
+    'Fix: install fonts-inter and fonts-dejavu-core (Debian/Ubuntu: ' +
+    '`sudo apt-get install -y fonts-inter fonts-dejavu-core`); the harness applies e2e/fontconfig/fonts.conf ' +
+    'itself via FONTCONFIG_FILE. The reference environment is Linux; ' +
+    'macOS/Windows resolve the app\'s font stack to their own OS font first and cannot match - ' +
+    'run docs-shots in a Linux container or the cloud lane instead.'
+  );
+}
+
+module.exports = { repoRoot, LOCALES, routedTopics, buildManifest, PINNED_FONTS, probePlatformFonts, fontPinProblem };
