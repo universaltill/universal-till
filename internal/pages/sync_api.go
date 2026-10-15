@@ -320,6 +320,13 @@ func displayPrimaryAddress(primaryURL string) string {
 
 // syncTill authenticates a replica's sync call by its bearer (only the
 // SHA-256 is stored; the hash lookup makes timing attacks moot).
+//
+// It also enforces pinned LAN TLS per till (ADR-0114 §7, ut-docs#2737): the
+// first bearer request a till makes over TLS records it as pinned, and from
+// then on its bearer is refused on plain HTTP. A till sends TLS only once it
+// holds this main till's pin (lantls.NewPeerClient) and then never falls
+// back, so a plain request with a pinned till's bearer is a stolen bearer or
+// a downgrade. A till that has never used TLS keeps plain HTTP (§11).
 func syncTill(r *http.Request, repo *data.TillsRepo) (data.TillRow, bool) {
 	h := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if h == "" {
@@ -329,7 +336,39 @@ func syncTill(r *http.Request, repo *data.TillsRepo) (data.TillRow, bool) {
 	if err != nil || !ok {
 		return data.TillRow{}, false
 	}
+	switch {
+	case r.TLS == nil && t.TLSPinned:
+		warnPlainHTTPRefused(t.ID)
+		return data.TillRow{}, false
+	case r.TLS != nil && !t.TLSPinned:
+		// Best effort: a failed write only means the next TLS request
+		// records it; the request itself is authenticated either way.
+		if err := repo.MarkTLSPinned(r.Context(), t.ID); err != nil {
+			if _, seen := tlsPinRecordFailedWarned.LoadOrStore(t.ID, struct{}{}); !seen {
+				logging.L().Warnf("sync: record till %s as TLS-pinned: %v", t.ID, err)
+			}
+		} else {
+			tlsPinRecordFailedWarned.Delete(t.ID)
+			logging.L().Infof("sync: till %s now uses pinned TLS; plain-HTTP sync requests from it are refused", t.ID)
+		}
+		t.TLSPinned = true
+	}
 	return t, true
+}
+
+// plainHTTPRefusedWarned holds the till ids whose plain-HTTP refusal has
+// been logged, so a client retrying every few seconds logs once per till
+// per process, not once per request. Bounded by the enrolled tills.
+var plainHTTPRefusedWarned sync.Map
+
+// tlsPinRecordFailedWarned does the same for a failing MarkTLSPinned (a
+// read-only DB would otherwise warn on every TLS request).
+var tlsPinRecordFailedWarned sync.Map
+
+func warnPlainHTTPRefused(tillID string) {
+	if _, seen := plainHTTPRefusedWarned.LoadOrStore(tillID, struct{}{}); !seen {
+		logging.L().Warnf("sync: refused a plain-HTTP request carrying the bearer of till %s, which uses pinned TLS (ADR-0114 §7)", tillID)
+	}
 }
 
 // registerSyncAPI returns the enrolTokens store it wires up so callers

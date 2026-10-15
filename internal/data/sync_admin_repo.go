@@ -511,6 +511,7 @@ var nonAdminTables = map[string]string{
 	// ut-docs#4337: the main till's own record of the guest_order directive
 	// results it applied and still has to (or already did) report to the
 	// cloud — per-till delivery bookkeeping, like issue_reports_sent below.
+	"till_tls_pinned":     "main-till record of which enrolled tills have authenticated over pinned LAN TLS, so their bearer is refused on plain HTTP — main-till bookkeeping, never synced (ut-docs#2737)",
 	"guest_order_results": "guest_order directive results awaiting (or past) cloud delivery — per-till bookkeeping, never synced (ut-docs#4337)",
 
 	// Local bookkeeping with no shop-wide meaning.
