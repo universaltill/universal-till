@@ -29,8 +29,10 @@ import { WORKER_TILL_EFFECTS_LEVEL } from './worker-till';
 // answers with the 503 error page, so error pages are swept too. It runs
 // before /backoffice on purpose: its 503 logs a long unbreakable URL that
 // /backoffice's Problems card lists, which once pushed that page 120px past
-// a 440px phone (ut-docs#4226).
-const ROUTES = ['/', '/admin', '/audit', '/plugins/store/any-listing', '/backoffice', '/bluetooth-devices', '/catalog', '/catalog/option-sets',
+// a 440px phone (ut-docs#4226). The loop asserts the 503: if this till ever
+// gets a catalogue, pick another route that still renders the error page.
+const ERROR_ROUTE = '/plugins/store/any-listing';
+const ROUTES = ['/', '/admin', '/audit', ERROR_ROUTE, '/backoffice', '/bluetooth-devices', '/catalog', '/catalog/option-sets',
   '/catalog/tax-codes', '/categories', '/country-settings', '/designer', '/fiscal-device', '/fiscal-register',
   '/help', '/import', '/inventory', '/items', '/journal', '/kitchen-stations', '/locations', '/menu',
   '/modifiers', '/my-reports', '/open-orders', '/orders', '/plugins', '/plugins/store', '/promotions',
@@ -214,6 +216,7 @@ for (const [w, h] of [[390, 844], [440, 956]] as const) {
 
       for (const route of ROUTES) {
         await gotoRoute(page, route);
+        if (route === ERROR_ROUTE) expect((await page.request.get(route)).status(), `${route} must render the error page`).toBe(503);
         if (route === '/') {
           await page.locator('.pos-container .btn-tile[hx-post="/api/pos/scan"]').first().click();
           await page.waitForTimeout(300);
@@ -293,8 +296,8 @@ for (const [w, h] of [[390, 844], [440, 956]] as const) {
       const distinct = new Set(measured.map((m) => m.split(' ')[1]));
       console.log(`ut-docs#3351 @${w}px measured ${measured.length} popups (${distinct.size} distinct):\n  ${measured.join('\n  ')}`);
       // Not vacuous: a sweep that stops finding popups would pass for nothing.
-      // 29 distinct today; the floor lets at most one silently drop out.
-      expect(distinct.size, [...distinct].join(' ')).toBeGreaterThanOrEqual(28);
+      // 31 distinct today; the floor lets at most one silently drop out.
+      expect(distinct.size, [...distinct].join(' ')).toBeGreaterThanOrEqual(30);
       expect(failures, failures.join('\n')).toEqual([]);
     });
   });

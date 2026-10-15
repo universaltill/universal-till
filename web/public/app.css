@@ -840,7 +840,8 @@ body.sale-screen .session-admin-link { display: none; }
 .kpi-value { font-size: 1.6rem; font-weight: 700; color: var(--brand); margin-top: .15rem; }
 /* ut-docs#4226: a /backoffice Problems line is a raw log message — a failed
    fetch logs its whole URL, one unbreakable word that pushed the page
-   ~120px past a 440px phone. Break it anywhere; the time cell stays nowrap. */
+   past a phone's viewport (558px wide). Break it anywhere; the time cell
+   stays nowrap. */
 .backoffice-problem-msg { overflow-wrap: anywhere; }
 /* ut-docs#421: which report tab is open had no visual cue at all. Repeats
    the :hover pairing (not just .active alone) because .btn.secondary:hover
