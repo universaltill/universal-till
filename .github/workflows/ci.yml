@@ -79,6 +79,8 @@ jobs:
         run: bash scripts/ci/check-release-checksums_test.sh
       - name: Marketplace signing key resolution + release wiring self-test (ADR-0158, ut-docs#4292)
         run: bash scripts/ci/resolve-marketplace-key_test.sh
+      - name: Release key check applies to the server, not the desktop shells — wiring + behaviour test (ut-docs#4356)
+        run: bash scripts/ci/release-marketplace-key_test.sh
       - name: macOS notarization never holds a release — wiring test (ut-docs#2917)
         run: bash scripts/ci/release-macos-nonblocking_test.sh
       - name: Every release job is time-bounded — wiring test (ut-docs#4059)
