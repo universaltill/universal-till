@@ -341,7 +341,8 @@ func TestSetupTaxPluginInstallFailureJoinsPendingList(t *testing.T) {
 }
 
 // ut-docs#4272: at step 3 of a first boot the shop has no real name yet
-// (store.name is still migration 001's "My Store"; the wizard saves the
+// (store.name is blank — migration 001's "My Store" seed, cleared by 075
+// (ut-docs#4273); the wizard saves the
 // owner's name only with POST /api/setup), and an install would have to
 // register the shop with the cloud. Registration waits for a shop name, so
 // the tile's button queues the spec (the operator's consent) instead — the
@@ -354,8 +355,8 @@ func TestSetupTaxPluginInstallUnnamedShopQueuesInsteadOfInstalling(t *testing.T)
 	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
 	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
 	dp.Cfg.Marketplace = mkt.config()
-	if name, _, _ := dp.Settings.Get(t.Context(), common.KeyStoreName); name != "My Store" {
-		t.Fatalf("precondition: store.name = %q, want migration 001's \"My Store\"", name)
+	if name, _, _ := dp.Settings.Get(t.Context(), common.KeyStoreName); name != "" {
+		t.Fatalf("precondition: store.name = %q, want blank (migration 075 clears 001's seed)", name)
 	}
 
 	rec := postForm(mux, "/api/setup/tax-plugin", url.Values{"country": {"DE"}}, nil)

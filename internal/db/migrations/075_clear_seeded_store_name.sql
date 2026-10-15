@@ -1,0 +1,13 @@
+-- 075_clear_seeded_store_name.sql — universaltill/ut-docs#4273 (owner rule
+-- on #4146: no default shop name). 001_init.sql seeds store.name = 'My
+-- Store', a stock English name the shop never chose; this blanks that seed
+-- on every till, fresh or installed.
+--
+-- Data only, frozen once merged (ADR-0100). Matches the exact seed, so a
+-- name a person typed is never touched. The row is blanked, not deleted:
+-- shop_name_notice.go shows "Name your shop" only for a stored key, and
+-- every reader already treats a blank name as unnamed
+-- (config.IsPlaceholderStoreName). settings.SaveRuntimeConfig no longer
+-- writes the UT_STORE_NAME default back at boot, so the blank sticks.
+-- Re-running it is a no-op.
+UPDATE settings SET value = '' WHERE key = 'store.name' AND value = 'My Store';

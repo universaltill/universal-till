@@ -358,7 +358,7 @@ func setupTaxPluginInstallHandler(d *common.Deps, svc *auth.Service) http.Handle
 		//
 		// ut-docs#4272: the same queue-for-later when the install would have
 		// to register the shop with the cloud before it has a real name —
-		// on a first boot store.name is still migration 001's placeholder
+		// on a first boot store.name is still blank (075 clears 001's seed)
 		// until POST /api/setup saves the owner's name, and registration
 		// waits for that. installBasePluginsForSetup attempts every pending
 		// spec right after the name is saved, so the plugin still installs
