@@ -67,6 +67,9 @@ func TestPluginChat_RendersTranscriptAndBox_4132(t *testing.T) {
 			`name="_action" value="ask"`,
 			`name="_turns" value="[{&#34;role&#34;:&#34;user&#34;,&#34;text&#34;:&#34;How much \u003ctea\u003e?&#34;}`,
 			`name="question"`,
+			// ≤ 1000 characters is ≤ 4 KiB of UTF-8, so the plugin can
+			// always echo the question back as a turn (review, 2026-10-14).
+			`maxlength="1000"`,
 			`placeholder="Ask about sales"`,
 			template.HTMLEscapeString(httpx.T("en", "plugin.chat.send")),
 			`hx-post="/plugin/views"`,
@@ -318,5 +321,31 @@ func TestPluginChat_PlainJobUnchanged_4132(t *testing.T) {
 	_, rec := h.startJob(true)
 	if !strings.Contains(rec.Body.String(), `class="plugin-view-poll"`) || strings.Contains(rec.Body.String(), "plugin-chat") {
 		t.Fatalf("plain job:\n%s", rec.Body.String())
+	}
+}
+
+// A chat in the sell-screen overlay (ADR-0149 §6) posts its question and
+// draws its answer into the overlay, never the page container (review,
+// 2026-10-14).
+func TestPluginChat_InOverlay_4132(t *testing.T) {
+	h := newViewHarness(t)
+	h.answerWith(chatDocument)
+	overlay := map[string]string{"HX-Request": "true", "HX-Target": pluginOverlayTargetID}
+	for _, rec := range []*httptest.ResponseRecorder{
+		h.doAs(http.MethodGet, "/plugin/views", nil, nil, overlay),
+		h.doAs(http.MethodPost, "/plugin/views", url.Values{"_action": {"ask"}, "question": {"x"}, "_turns": {"[]"}}, nil, overlay),
+	} {
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK || strings.Contains(body, "<html") {
+			t.Fatalf("overlay chat = %d, want the body fragment:\n%s", rec.Code, body)
+		}
+		for _, want := range []string{`role="log"`, `hx-target="#plugin-overlay-view"`, `id="plugin-overlay-view-chat-q"`} {
+			if !strings.Contains(body, want) {
+				t.Errorf("overlay chat missing %q in:\n%s", want, body)
+			}
+		}
+		if strings.Contains(body, `hx-target="#plugin-view"`) {
+			t.Errorf("overlay chat targets the page container:\n%s", body)
+		}
 	}
 }

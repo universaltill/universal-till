@@ -103,7 +103,7 @@
     <input type="hidden" name="_action" value="{{ $c.Action }}">
     <input type="hidden" name="_turns" value="{{ $c.History }}">
     <label class="visually-hidden" for="{{ .Target }}-chat-q">{{ T "plugin.chat.question_label" }}</label>
-    <input type="text" id="{{ .Target }}-chat-q" name="question" value="{{ $c.Question }}" placeholder="{{ $c.Placeholder }}" autocomplete="off" required>
+    <input type="text" id="{{ .Target }}-chat-q" name="question" value="{{ $c.Question }}" maxlength="1000" placeholder="{{ $c.Placeholder }}" autocomplete="off" required>
     <button type="submit" class="btn btn-touch primary">{{ T "plugin.chat.send" }}</button>
   </form>
   {{- end }}
