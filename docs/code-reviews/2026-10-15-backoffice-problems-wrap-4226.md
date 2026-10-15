@@ -37,5 +37,12 @@ The reviewer checked that no other page renders the Problems ring. `logging.Open
 - **No strings changed.** `overflow-wrap` doesn't depend on text direction, so RTL is unaffected.
 - **Guards.** 45 of 46 build-job guards pass. `guard-shellcheck-version.sh` can't run in this container (no `shellcheck` binary), and no shell script changed.
 
+## CI follow-up
+- **First push:** the `build` job failed in `guard-docs-shots_test.sh`. The template and CSS edit moved the docs-shots surface hash.
+- **Remedy:** a full `make docs-shots` run, not the hash-only escape hatch, because `/backoffice` is screenshotted.
+  - It regenerated all 120 shots and changed no PNG; only `surface_sha256` moved.
+  - The commit carries `Docs-Shots-Unchanged: true`.
+- **Gap noted:** my local guard pass missed this guard, because the build job doesn't call it as a plain `guard-*.sh` line.
+
 ## Verdict
 Safe to merge.
