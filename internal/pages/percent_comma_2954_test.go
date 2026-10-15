@@ -230,11 +230,36 @@ func TestPercentInvalidMessage_IgnoresCurrencyDecimals(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	body := rec.Body.String()
-	want := `data-percent-invalid="` + template.HTMLEscapeString(httpx.T("en", "common.money.invalid")) + `"`
+	want := `data-percent-invalid="` + template.HTMLEscapeString(httpx.T("en", "common.percent.invalid")) + `"`
 	if !strings.Contains(body, want) {
 		t.Fatalf("IRT shop: body lacks %s", want)
 	}
 	if !strings.Contains(body, `name="value_percent"`) || !strings.Contains(body, `data-money-local="percent" name="value_percent"`) {
 		t.Fatalf("value_percent does not opt into the percent message")
+	}
+}
+
+// ut-docs#2973: a percent field must not show the money message ("for example
+// 3.50 or 3,50"). <body data-percent-invalid> carries its own
+// common.percent.invalid text, distinct from data-money-invalid.
+func TestPercentInvalidMessage_IsPercentSpecific(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newPromotionsTestMux(t)
+	req := httptest.NewRequest(http.MethodGet, "/promotions", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	const wantText = "Enter the percentage in digits, with a dot or a comma before up to two decimals (for example 7.5 or 7,25)."
+	if got := httpx.T("en", "common.percent.invalid"); got != wantText {
+		t.Fatalf("common.percent.invalid (en) = %q, want %q", got, wantText)
+	}
+	want := `data-percent-invalid="` + template.HTMLEscapeString(wantText) + `"`
+	if !strings.Contains(body, want) {
+		t.Fatalf("body lacks %s", want)
+	}
+	pct := regexp.MustCompile(`data-percent-invalid="([^"]*)"`).FindStringSubmatch(body)
+	mon := regexp.MustCompile(`data-money-invalid="([^"]*)"`).FindStringSubmatch(body)
+	if pct == nil || mon == nil || pct[1] == mon[1] {
+		t.Fatalf("data-percent-invalid must differ from data-money-invalid: pct=%v money=%v", pct, mon)
 	}
 }

@@ -51,6 +51,8 @@ test.describe('Percent inputs: decimal comma (ut-docs#2954)', () => {
       await page.goto(`${c.url}?lang=de`);
       const expected = await page.evaluate(() => document.body.dataset.percentInvalid || '');
       expect(expected, 'body carries the shop-language message').not.toBe('');
+      const moneyMsg = await page.evaluate(() => document.body.dataset.moneyInvalid || '');
+      expect(expected, `${c.url}: percent message must not be the money message (ut-docs#2973)`).not.toBe(moneyMsg);
       const got = await page.locator(c.sel).first().evaluate((el: HTMLInputElement) => {
         el.value = '1,5';
         el.dispatchEvent(new Event('input', { bubbles: true }));

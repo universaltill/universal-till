@@ -569,6 +569,7 @@
   "common.loading": "Loading…",
   "common.money.invalid": "Enter the amount in digits, with a dot or a comma before the decimals (for example 3.50 or 3,50).",
   "common.money.invalid_whole": "Enter the amount as a whole number, digits only.",
+  "common.percent.invalid": "Enter the percentage in digits, with a dot or a comma before up to two decimals (for example 7.5 or 7,25).",
   "common.no_results": "No matches — try a different search.",
   "common.save": "Save",
   "common.show_less": "Less",
