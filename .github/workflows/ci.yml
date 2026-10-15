@@ -55,6 +55,10 @@ jobs:
           version: v2.14.0
       - name: macOS minimum vs Go toolchain guard
         run: bash scripts/ci/guard-macos-min-version.sh && bash scripts/ci/guard-macos-min-version_test.sh
+      - name: Mail-address allow-list guard (ut-docs#4229)
+        run: bash scripts/ci/guard-mail-addresses.sh
+      - name: Mail-address allow-list guard regression test
+        run: bash scripts/ci/guard-mail-addresses_test.sh
       - name: Shellcheck version guard
         run: bash scripts/ci/guard-shellcheck-version.sh
       - name: Shellcheck version guard regression test
