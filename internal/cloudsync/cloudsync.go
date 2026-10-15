@@ -473,7 +473,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	isMainTill := strings.TrimSpace(primaryURL) == ""
 	if isMainTill {
 		if err := pushSnapshotIfChanged(ctx, cfg, db); err != nil {
-			logging.L().Warnf("cloudsync: snapshot push failed (will retry): %v", err)
+			logPushError("snapshot push", err)
 		}
 		// Order-tracking rows ride the same primary-only gate (ADR-0070),
 		// but for the CLOUD's storage model, not the shop's data model:
@@ -489,7 +489,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		// that needs a per-till key on the cloud row set — a follow-up
 		// card, not something this gate quietly covers.
 		if err := pushOrderTrackingIfChanged(ctx, cfg, db); err != nil {
-			logging.L().Warnf("cloudsync: order tracking push failed (will retry): %v", err)
+			logPushError("order tracking push", err)
 		}
 		// Daily sales rollups (ADR-0111, ut-docs#2535) ride the same
 		// primary-only gate: the primary holds the shop's full sales journal
@@ -572,7 +572,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// makes this free when nothing actually changed.
 	if isMainTill && catalogApplied {
 		if err := pushSnapshotIfChanged(ctx, cfg, db); err != nil {
-			logging.L().Warnf("cloudsync: snapshot push after directives failed (will retry): %v", err)
+			logPushError("snapshot push after directives", err)
 		}
 	}
 	// Issue-reporter status pull (ADR-0022, spec 012, ut-docs#348): the
@@ -2032,4 +2032,18 @@ func snapshotItemType(t string) string {
 		return catalogtypes.ItemTypeStandard
 	}
 	return t
+}
+
+// logPushError logs a failed snapshot / order-tracking push. A cloud 402
+// plan_required (the store lapsed between this tick's 200 sync and the
+// push) is quiet — Debug, so nothing reaches the problems ring (ADR-0148
+// §5, ut-docs#4313); the next sync's 402 logs the Info line via
+// logTickError. Anything else warns as before. Neither push stores its
+// hash on error, so both retry once the store is paid.
+func logPushError(what string, err error) {
+	if _, ok := planRequired(err); ok {
+		logging.L().Debugf("cloudsync: %s refused: store has no paid plan (402)", what)
+		return
+	}
+	logging.L().Warnf("cloudsync: %s failed (will retry): %v", what, err)
 }

@@ -363,3 +363,72 @@ func TestTickUnpaidCheckin402IsMarkedGated(t *testing.T) {
 		t.Fatalf("next tick = (%v, %v), %d calls; want a quiet gated tick", contacted, err, calls.Load()-before)
 	}
 }
+
+// --- ut-docs#4313: a 402 on the snapshot pushes is quiet too ---
+
+// The store lapses between the tick's 200 sync and the catalog / order
+// tracking pushes: those 402s must not reach the problems ring as warnings
+// (ADR-0148 §5), and no hash may be stored, so the pushes retry once the
+// store is paid.
+func TestTickPushes402AreQuietAndStoreNoHash(t *testing.T) {
+	fakeClock(t)
+	resetTillAuth(t)
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+
+	var snapPosts, trackPosts atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/stores/sync", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"directives": []any{}}})
+	})
+	// Answer the issue-report status pull so it doesn't warn about a 404.
+	mux.HandleFunc("/v1/stores/issue-reports", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"reports": []any{}, "total": 0}})
+	})
+	mux.HandleFunc("/v1/stores/catalog-snapshot", func(w http.ResponseWriter, r *http.Request) {
+		snapPosts.Add(1)
+		writePlanRequired(w)
+	})
+	mux.HandleFunc("/v1/stores/order-tracking-snapshot", func(w http.ResponseWriter, r *http.Request) {
+		trackPosts.Add(1)
+		writePlanRequired(w)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	// A real migrated schema, so the other tick steps don't warn on
+	// missing tables and the problems ring only sees what the pushes log.
+	db := openMigratedDB(t, "plan-required-push.db").DB
+	if _, err := db.Exec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('it-1','SKU1','Cola',100,1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := tick(context.Background(), testCfg(srv.URL), db, Hooks{}); err != nil {
+		t.Fatalf("tick: %v (a refused snapshot push must not fail the tick)", err)
+	}
+	if snapPosts.Load() == 0 || trackPosts.Load() == 0 {
+		t.Fatalf("pushes never attempted (snapshot %d, order-tracking %d): the test would pass vacuously", snapPosts.Load(), trackPosts.Load())
+	}
+	if got := logging.Recent(); len(got) != 0 {
+		t.Fatalf("a 402 on a snapshot push logged problems: %+v", got)
+	}
+	repo := data.NewSettingsRepo(db)
+	for _, k := range []string{"cloudsync.snapshot_hash", "cloudsync.order_tracking_hash"} {
+		if v, ok, _ := repo.Get(context.Background(), k); ok {
+			t.Fatalf("%s = %q stored after a refused push; it must retry once paid", k, v)
+		}
+	}
+}
+
+func TestLogPushError402IsNotAProblem(t *testing.T) {
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+	logPushError("snapshot push", err402())
+	if got := logging.Recent(); len(got) != 0 {
+		t.Fatalf("a 402 logged problems: %+v", got)
+	}
+	logPushError("snapshot push", err503())
+	if got := logging.Recent(); len(got) != 1 {
+		t.Fatalf("a 503 logged %d problems, want 1 (control)", len(got))
+	}
+}
