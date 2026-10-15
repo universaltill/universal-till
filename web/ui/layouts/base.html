@@ -623,6 +623,8 @@
           // operator reproduces the problem (ut-docs#3212 review).
           return !!(t && t.closest && t.closest('.statusbar, .session-lock, #osk, #bugreport-panel'));
         }
+        // record-dialog.js's focusin backstop uses the same allow-list (ut-docs#4078).
+        UT.focusTrapExempt = escAllowed;
         window.addEventListener('keydown', function (e) {
           if (e.key !== 'Tab' || e.defaultPrevented) return;
           try {
