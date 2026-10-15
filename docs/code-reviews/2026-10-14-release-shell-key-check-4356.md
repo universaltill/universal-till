@@ -16,8 +16,9 @@
   the key.
 - `web/release-notes/*/v0.34.3.md`: new entries for "Renew or change plan"
   (#1926), the scan fix (#1932, ut-docs#4342) and the variant revive fix
-  (#1935, ut-docs#4348), all merged after the notes,
-  in all 5 locales. The #1932/#1935 entries were added after rebases; they are copy
+  (#1935, ut-docs#4348) and the inactive-variant barcode message (#1933,
+  ut-docs#4343), all merged after the notes,
+  in all 5 locales. The #1932/#1935/#1933 entries were added after rebases; they are copy
   only and mirror those PRs' help text.
 
 ## Root cause (verified)
