@@ -23,6 +23,11 @@ type GiftVoucherLine struct {
 	Code        string `json:"code"`
 	HolderLabel string `json:"holder_label,omitempty"`
 	Purpose     string `json:"purpose,omitempty"`
+	// TopUp (ut-docs#4252) marks the line as adding value to the EXISTING
+	// voucher Code rather than selling a new one: checkout turns it into a
+	// VoucherIssueInput with TopUp, which credits that voucher. Always
+	// multi-purpose (a single-purpose voucher's VAT was fixed at issue).
+	TopUp bool `json:"top_up,omitempty"`
 }
 
 // IsSinglePurpose reports whether the voucher is a #1037 single-purpose
@@ -60,6 +65,9 @@ func (s *Service) AddGiftVoucherLine(base BasketLine, value money.Money, v GiftV
 	v.HolderLabel = strings.TrimSpace(v.HolderLabel)
 	if v.Purpose == "" {
 		v.Purpose = data.VoucherPurposeMulti
+	}
+	if v.TopUp && v.Purpose != data.VoucherPurposeMulti {
+		return nil, errors.New("a gift voucher top-up is always for any purchase")
 	}
 	if v.Code == "" || !value.IsPositive() {
 		return nil, errors.New("gift voucher needs a number and a value above zero")

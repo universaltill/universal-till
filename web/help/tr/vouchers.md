@@ -4,7 +4,7 @@ title: Hediye çekleri
 section: Günlük satış
 order: 25
 summary: Hediye çeklerini bir Hediye çeki ürününe dokunarak satın — kartı okutun ya da kasanın numara oluşturmasına izin verin — ve satış ekranında okutarak ya da ödeme panelinin Böl sekmesinde ödeme olarak alın.
-keywords: [hediye çeki, hediye kartı, gutschein, belirli ürün, kullanma, bakiye, düzenleme, kod, kart numarası, ürün türü, düzelt, düzeltme, bakiye düzeltme]
+keywords: [hediye çeki, hediye kartı, gutschein, belirli ürün, kullanma, bakiye, düzenleme, kod, kart numarası, ürün türü, düzelt, düzeltme, bakiye düzeltme, bakiye yükleme, yükle, değer ekle]
 routes: [/vouchers, /vouchers/{id}]
 ---
 
@@ -104,6 +104,27 @@ Neler ters gidebilir:
 - "Yeni bakiye mevcut bakiyeyle aynı" — düzeltilecek bir şey yok.
 - "Siz bakarken bu hediye çekinin bakiyesi değişti" — bu arada biri çeki harcadı ya da düzeltti. Sayfayı yenileyin, yeni bakiyeyi kontrol edin ve hâlâ gerekiyorsa yeniden düzeltin.
 - Ek bir kasada düzeltme ana kasada yapılır. Ana kasaya ulaşılamıyorsa hiçbir şey değişmez ve sayfa bunu söyler — ana kasa geri geldiğinde tekrar deneyin. Sayfa ana kasanın düzeltmeyi onaylamadığını söylüyorsa düzeltme kaydedilmiş de olabilir, kaydedilmemiş de: tekrar denemeden önce sayfayı yenileyin ve hediye çekinin geçmişini kontrol edin.
+
+## Hediye çekine bakiye yükleme
+
+Bir müşteri elindeki hediye çekine değer ekleyebilir — kart numarasını korur ve bakiyesi artar. Bakiye yükleme, yeni bir hediye çeki satmak gibi bir satıştır: müşteri bunu kasada öder ve hediye çeki harcanana kadar hiçbir şey vergilendirilmez.
+
+1. Önce **Menü → Hediye çekleri** sayfasını açın ve hediye çekinin kart numarasına dokunun.
+2. Açılan sayfada **Bakiye yükle** altında **Eklenecek tutar** alanına tutarı yazın, örn. `20.00`, ve **Satışa ekle**'ye dokunun.
+3. Satış ekranı, bu kart numarası için *Bakiye yükleme* olarak işaretlenmiş bir hediye çeki satırıyla açılır. Müşterinin aldığı diğer ürünleri ekleyin, sonra ödemeyi her zamanki gibi alın.
+4. Satış ödendiğinde hediye çekinin bakiyesi bu tutar kadar artar. Fiş bunu **Düzenlenen hediye çekleri** altında kart numarası, eklenen tutar ve yeni bakiyeyle *Hediye çeki bakiye yükleme* olarak listeler; hediye çekinin **Geçmiş** bölümünde fişe bağlantılı bir **Bakiye yüklendi** satırı görünür.
+
+Kullanılmış bir hediye çeki yeniden **Etkin** olur; ilk değeri hiç değişmez. Satış ödenene kadar hediye çekine hiçbir şey eklenmez — yüklemeyi kaldırmak için satırdaki ✕'e dokunun. Gün sonu (Z) raporu bakiye yüklemeyi **GUTSCHEINE** bölümünde satılan hediye çekleriyle birlikte sayar. Satışı iptal etmek tutarı hediye çekinden geri alır, ancak yalnızca müşteri onu harcamamışsa.
+
+Neler ters gidebilir:
+
+- Yalnızca bir yönetici veya admin hediye çekine bakiye yükleyebilir.
+- İptal edilmiş bir hediye çekine veya belirli bir ürün için verilen hediye çekine bakiye yüklenemez — sayfa formu göstermek yerine nedenini söyler.
+- Tutar sıfırdan büyük olmalıdır ve bir hediye çekinin bakiyesi kasanın tek hediye çeki sınırını aşamaz.
+- Bir hediye çekine satış başına bir kez bakiye yüklenebilir ve hediye çeki kendi yüklemesini ödeyemez.
+- Bakiye yükleme için katalogda etkin bir hediye çeki ürünü gerekir — yoksa sayfa bunu söyler.
+- Yüklenen tutarın bir kısmı harcandıktan sonra satışı iptal etmek reddedilir.
+- Ek bir kasada sayfa, bakiyeyi ana kasada yüklemenizi ister.
 
 ## Gün sonu raporları ve diğer kasalar
 

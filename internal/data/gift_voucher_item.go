@@ -172,3 +172,19 @@ func (r *POSRepo) ForgetSeededGiftVoucherItem(ctx context.Context) error {
 	}
 	return nil
 }
+
+// ActiveGiftVoucherItemID returns the id of the shop's first active gift
+// voucher item (oldest first) — the base of a top-up basket line added from
+// the voucher page (ut-docs#4252). ok=false with a nil error when the shop
+// has none.
+func (r *CatalogRepo) ActiveGiftVoucherItemID(ctx context.Context) (string, bool, error) {
+	var id string
+	err := r.db.QueryRowContext(ctx, `SELECT id FROM items WHERE item_type = ? AND is_active = 1 ORDER BY rowid LIMIT 1`, catalogtypes.ItemTypeGiftVoucher).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("active gift voucher item: %w", err)
+	}
+	return id, true, nil
+}

@@ -4,7 +4,7 @@ title: Gutscheine
 section: Täglicher Verkauf
 order: 25
 summary: Verkaufen Sie Gutscheine über einen Gutschein-Artikel — Karte scannen oder die Kasse eine Nummer erzeugen lassen — und nehmen Sie sie als Zahlung an, per Scan im Verkaufsbildschirm oder im Reiter „Aufteilen“ des Zahlungsfeldes.
-keywords: [gutschein, geschenkgutschein, geschenkkarte, voucher, einzweck, bestimmter artikel, einlösen, guthaben, ausgeben, code, kartennummer, artikeltyp, korrigieren, Korrektur, Guthaben korrigieren]
+keywords: [gutschein, geschenkgutschein, geschenkkarte, voucher, einzweck, bestimmter artikel, einlösen, guthaben, ausgeben, code, kartennummer, artikeltyp, korrigieren, Korrektur, Guthaben korrigieren, aufladen, Aufladung, Guthaben aufladen]
 routes: [/vouchers, /vouchers/{id}]
 ---
 
@@ -104,6 +104,27 @@ Was schiefgehen kann:
 - „Das neue Guthaben entspricht dem aktuellen Guthaben“ — es gibt nichts zu korrigieren.
 - „Das Guthaben dieses Gutscheins hat sich geändert, während Sie ihn angesehen haben“ — jemand hat ihn inzwischen eingelöst oder korrigiert. Laden Sie die Seite neu, prüfen Sie das neue Guthaben und korrigieren Sie erneut, falls nötig.
 - An einer zusätzlichen Kasse wird die Korrektur an der Hauptkasse vorgenommen. Ist die Hauptkasse nicht erreichbar, wird nichts geändert und die Seite sagt das — versuchen Sie es erneut, wenn sie wieder erreichbar ist. Meldet die Seite, dass die Hauptkasse die Korrektur nicht bestätigt hat, wurde sie vielleicht gespeichert, vielleicht auch nicht: Laden Sie die Seite neu und prüfen Sie den Verlauf des Gutscheins, bevor Sie es erneut versuchen.
+
+## Einen Gutschein aufladen
+
+Ein Kunde kann einen Gutschein, den er schon hat, aufladen — die Karte behält ihre Nummer und ihr Guthaben steigt. Eine Aufladung ist ein Verkauf, genau wie der Verkauf eines neuen Gutscheins: Der Kunde bezahlt sie an der Kasse, und versteuert wird erst, wenn der Gutschein eingelöst wird.
+
+1. Öffnen Sie **Menü → Geschenkgutscheine** und tippen Sie auf die Kartennummer des Gutscheins.
+2. Geben Sie unter **Aufladen** den **Aufzuladenden Betrag** ein, z. B. `20.00`, und tippen Sie auf **Zum Verkauf hinzufügen**.
+3. Der Verkaufsbildschirm öffnet sich mit einer Gutscheinzeile für diese Kartennummer, markiert als *Aufladung*. Fügen Sie alles hinzu, was der Kunde sonst noch kauft, und kassieren Sie wie gewohnt.
+4. Sobald der Verkauf bezahlt ist, steigt das Guthaben des Gutscheins um den Betrag. Der Beleg führt ihn unter **Ausgegebene Gutscheine** als *Geschenkgutschein-Aufladung* mit Kartennummer, aufgeladenem Betrag und neuem Guthaben, und der **Verlauf** des Gutscheins zeigt eine Zeile **Aufladung** mit Link zum Beleg.
+
+Ein aufgebrauchter Gutschein ist danach wieder **Aktiv**; sein ursprünglicher Wert ändert sich nie. Bis der Verkauf bezahlt ist, wird dem Gutschein nichts gutgeschrieben — tippen Sie auf ✕ an der Zeile, um die Aufladung zu entfernen. Der Tagesabschlussbericht (Z-Bericht) zählt eine Aufladung im Abschnitt **GUTSCHEINE** zu den verkauften Gutscheinen. Das Stornieren des Verkaufs bucht den Betrag wieder vom Gutschein ab, allerdings nur, solange der Kunde ihn nicht ausgegeben hat.
+
+Was schiefgehen kann:
+
+- Nur ein Manager oder Administrator kann einen Gutschein aufladen.
+- Ein stornierter Gutschein oder ein Gutschein für einen bestimmten Artikel lässt sich nicht aufladen — die Seite sagt stattdessen, warum.
+- Der Betrag muss über null liegen, und das Guthaben eines Gutscheins darf das Limit der Kasse für einen Gutschein nicht übersteigen.
+- Ein Gutschein kann pro Verkauf einmal aufgeladen werden und kann seine eigene Aufladung nicht bezahlen.
+- Eine Aufladung braucht einen aktiven Geschenkgutschein-Artikel im Katalog — gibt es keinen, sagt die Seite das.
+- Das Stornieren des Verkaufs wird abgelehnt, sobald ein Teil des aufgeladenen Betrags ausgegeben wurde.
+- An einer zusätzlichen Kasse bittet die Seite Sie, an der Hauptkasse aufzuladen.
 
 ## Tagesabschluss und andere Kassen
 

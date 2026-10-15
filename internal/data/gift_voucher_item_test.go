@@ -284,3 +284,24 @@ func TestRetireSeededGiftVoucherItem_NoMarkerOrGoneIsANoOp(t *testing.T) {
 		t.Fatal("marker to a missing item not cleared")
 	}
 }
+
+// ut-docs#4252: a top-up from the voucher page needs a gift voucher item as
+// its basket line's base — the first ACTIVE one; none (or only inactive
+// ones) is a clear "no item" answer, not an error.
+func TestActiveGiftVoucherItemID(t *testing.T) {
+	d, x, _ := resetTestDB(t, "active-gift-voucher-item.db")
+	repo := data.NewCatalogRepo(d.DB)
+	ctx := context.Background()
+	if id, ok, err := repo.ActiveGiftVoucherItemID(ctx); err != nil || ok || id != "" {
+		t.Fatalf("empty catalog: id=%q ok=%v err=%v, want none", id, ok, err)
+	}
+	seedGiftVoucherItem(x, "gv-off", 0)
+	x(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('plain', 'P1', 'Bread', 100, 1)`)
+	if _, ok, err := repo.ActiveGiftVoucherItemID(ctx); err != nil || ok {
+		t.Fatalf("only an inactive voucher item: ok=%v err=%v, want none", ok, err)
+	}
+	seedGiftVoucherItem(x, "gv-on", 1)
+	if id, ok, err := repo.ActiveGiftVoucherItemID(ctx); err != nil || !ok || id != "gv-on" {
+		t.Fatalf("id=%q ok=%v err=%v, want gv-on", id, ok, err)
+	}
+}

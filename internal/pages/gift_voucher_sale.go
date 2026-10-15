@@ -232,8 +232,12 @@ func giftVoucherIssuesFromLines(lines []pos.BasketLine, eng *pos.Service) (goods
 			Code:        l.GiftVoucher.Code,
 			HolderLabel: l.GiftVoucher.HolderLabel,
 			Purpose:     data.VoucherPurposeMulti,
+			// ut-docs#4252: a top-up line credits the existing voucher.
+			// Always multi-purpose (AddGiftVoucherLine refuses otherwise),
+			// so it never reaches the single-purpose branch below.
+			TopUp: l.GiftVoucher.TopUp,
 		}
-		if l.GiftVoucher.IsSinglePurpose() {
+		if l.GiftVoucher.IsSinglePurpose() && !l.GiftVoucher.TopUp {
 			rate, blocked := eng.EffectiveLineTaxRateBP(l)
 			if blocked {
 				taxBlocked = append(taxBlocked, l)

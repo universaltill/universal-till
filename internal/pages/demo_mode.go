@@ -634,10 +634,14 @@ var demoAllowedRoutes = map[string]bool{
 	// ut-docs#4251: the Gift vouchers page and its CSV export (a download
 	// of the visitor's own sample data, like the audit export); importing
 	// stays denied above (file ingest).
-	"GET /api/vouchers/export":                   true,
-	"GET /ui/vouchers/list":                      true,
-	"GET /vouchers":                              true,
-	"GET /vouchers/{id}":                         true,
+	"GET /api/vouchers/export": true,
+	"GET /ui/vouchers/list":    true,
+	"GET /vouchers":            true,
+	"GET /vouchers/{id}":       true,
+	// ut-docs#4252: a top-up only adds a line to the demo's own basket,
+	// like selling a voucher on the sale screen; the paying sale is the
+	// demo's own sample data.
+	"POST /vouchers/{id}/top-up":                 true,
 	"POST /api/country-settings":                 true,
 	"POST /api/country-settings/{code}/delete":   true,
 	"POST /api/data/cleanup-catalog":             true,

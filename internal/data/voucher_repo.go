@@ -134,13 +134,13 @@ type Voucher struct {
 	CreatedAt      string `json:"created_at"`
 }
 
-// VoucherTransaction is one voucher_transactions row — a single issue or
-// redemption event against a voucher's balance.
+// VoucherTransaction is one voucher_transactions row — a single issue,
+// redemption, manager adjustment or top-up event against a voucher's balance.
 type VoucherTransaction struct {
 	ID          string `json:"id"`
 	VoucherID   string `json:"voucher_id"`
 	SaleID      string `json:"sale_id"`
-	Type        string `json:"type"`   // "issue" | "redemption" | "adjustment"
+	Type        string `json:"type"`   // "issue" | "redemption" | "adjustment" | "top_up"
 	AmountMinor int64  `json:"amount"` // signed for an "adjustment" (new − old)
 	CreatedAt   string `json:"created_at"`
 	// ActorUserID / Reason (ut-docs#4253, migration 074) are set only on an
@@ -181,12 +181,14 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	return nil
 }
 
-// RecordVoucherTransaction writes one voucher_transactions row (an issue or a
-// redemption). It records the event only — debiting the balance is
-// DebitVoucherForRedemption's job, so the two must be called together (in the
-// same transaction) for a redemption.
+// RecordVoucherTransaction writes one voucher_transactions row (an issue, a
+// redemption or — ut-docs#4252, migration 080 — a top-up). It records the
+// event only — debiting the balance is DebitVoucherForRedemption's job and
+// crediting it TopUpVoucher's, so the two must be called together (in the
+// same transaction). An 'adjustment' is never written here: it carries an
+// actor and a reason (AdjustVoucherBalance).
 func (r *POSRepo) RecordVoucherTransaction(ctx context.Context, tx *sql.Tx, t VoucherTransaction) error {
-	if t.Type != "issue" && t.Type != "redemption" {
+	if t.Type != "issue" && t.Type != "redemption" && t.Type != "top_up" {
 		return fmt.Errorf("record voucher transaction: invalid type %q", t.Type)
 	}
 	if t.AmountMinor <= 0 {
@@ -654,7 +656,14 @@ WHERE id = ? AND status IN ('active', 'redeemed') AND purpose = 'multi_purpose'`
 // concurrent redemption touches mid-void — fails the whole call with
 // ErrVoucherRedeemedCannotVoid, rolling the sale void back. A voucher already
 // 'void' (the sale was voided before) is skipped: re-voiding is idempotent.
+//
+// A sale can also have TOPPED UP existing vouchers (ut-docs#4252, 'top_up'
+// rows): those vouchers are not voided — they existed before this sale —
+// but the credit the sale added is taken back (reverseTopUpsInSale below).
 func (r *POSRepo) VoidVouchersIssuedInSale(ctx context.Context, tx *sql.Tx, saleID string) error {
+	if err := r.reverseTopUpsInSale(ctx, tx, saleID); err != nil {
+		return err
+	}
 	rows, err := r.exec(tx).QueryContext(ctx, `
 SELECT DISTINCT voucher_id FROM voucher_transactions WHERE sale_id = ? AND type = 'issue'`, saleID)
 	if err != nil {
@@ -706,6 +715,110 @@ WHERE id = ? AND status = 'active' AND balance = original_amount`, id)
 			continue
 		}
 		return fmt.Errorf("voucher %q (status %s): %w", id, status, ErrVoucherRedeemedCannotVoid)
+	}
+	return nil
+}
+
+// topUpReversalIDPrefix + the top_up row's own id is the id of the
+// 'adjustment' row that takes that top-up back when its sale is voided.
+const topUpReversalIDPrefix = "topup-void:"
+
+// reverseTopUpsInSale takes back every top-up saleID made (ut-docs#4252),
+// inside the caller's transaction: for each 'top_up' row of the sale, a
+// guarded debit of its amount (the predicates-in-the-WHERE pattern
+// DebitVoucherForRedemption uses: active, multi-purpose, balance >= amount)
+// plus one 'adjustment' row of −amount carrying the voided sale's id, so the
+// voucher's history still adds up to its balance and shows where the money
+// went. A balance below the top-up — the customer has already spent some of
+// what was added — refuses the whole void with ErrVoucherRedeemedCannotVoid,
+// exactly like an issued voucher that has been spent; draining to 0 leaves
+// the voucher 'redeemed' (Used up).
+//
+// Idempotency (a repeat void must never debit twice): the reversal row's id
+// is DETERMINISTIC — topUpReversalIDPrefix + the top_up row's id — and is
+// checked before the debit, so a second call finds the marker and skips.
+// Why a ledger marker and not "only debit when the sale isn't already
+// voided": the only caller, pos.UpdateSaleStatus, flips sales.status to
+// 'voided' BEFORE calling this in the same transaction (and itself refuses
+// voided → voided), so the sale's status can't tell a first void from a
+// repeat one here; an issued voucher has its own 'void' status for that,
+// but a topped-up voucher stays alive. The marker row is also the audit
+// trail of the reversal, and it is an 'adjustment' (a signed balance
+// change) rather than a new ledger type so migration 080's CHECK stays the
+// four types the design names. The day-close never counts it: like the
+// top_up row itself it carries the voided sale's id, and both range
+// functions drop rows of a voided sale.
+func (r *POSRepo) reverseTopUpsInSale(ctx context.Context, tx *sql.Tx, saleID string) error {
+	if saleID == "" {
+		return nil
+	}
+	type topUpRow struct {
+		id, voucherID string
+		amount        int64
+		created       string
+	}
+	rows, err := r.exec(tx).QueryContext(ctx, `
+SELECT id, voucher_id, amount, created_at FROM voucher_transactions
+WHERE sale_id = ? AND type = 'top_up' ORDER BY rowid`, saleID)
+	if err != nil {
+		return fmt.Errorf("reverse top-ups for sale: %w", err)
+	}
+	var tops []topUpRow
+	for rows.Next() {
+		var t topUpRow
+		if err := rows.Scan(&t.id, &t.voucherID, &t.amount, &t.created); err != nil {
+			rows.Close()
+			return fmt.Errorf("reverse top-ups for sale: scan: %w", err)
+		}
+		tops = append(tops, t)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("reverse top-ups for sale: %w", err)
+	}
+	rows.Close()
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, t := range tops {
+		reversalID := topUpReversalIDPrefix + t.id
+		var one int
+		err := r.exec(tx).QueryRowContext(ctx, `SELECT 1 FROM voucher_transactions WHERE id = ?`, reversalID).Scan(&one)
+		if err == nil {
+			continue // already reversed by an earlier void
+		}
+		if err != sql.ErrNoRows {
+			return fmt.Errorf("reverse top-up %q: idempotency check: %w", t.id, err)
+		}
+		res, err := r.exec(tx).ExecContext(ctx, `
+UPDATE vouchers
+SET balance = balance - ?,
+    status = CASE WHEN balance - ? = 0 THEN 'redeemed' ELSE status END
+WHERE id = ? AND status = 'active' AND balance >= ? AND purpose = 'multi_purpose'`,
+			t.amount, t.amount, t.voucherID, t.amount)
+		if err != nil {
+			return fmt.Errorf("reverse top-up of voucher %q: %w", t.voucherID, err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("reverse top-up of voucher %q: rows affected: %w", t.voucherID, err)
+		}
+		if n != 1 {
+			var status string
+			var balance int64
+			err := r.exec(tx).QueryRowContext(ctx, `SELECT status, balance FROM vouchers WHERE id = ?`, t.voucherID).Scan(&status, &balance)
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("reverse top-up of voucher %q: %w", t.voucherID, ErrVoucherNotFound)
+			}
+			if err != nil {
+				return fmt.Errorf("reverse top-up of voucher %q: %w", t.voucherID, err)
+			}
+			return fmt.Errorf("voucher %q (status %s, balance %d, top-up %d): %w", t.voucherID, status, balance, t.amount, ErrVoucherRedeemedCannotVoid)
+		}
+		if _, err := r.exec(tx).ExecContext(ctx, `
+INSERT INTO voucher_transactions (id, voucher_id, sale_id, type, amount, created_at)
+VALUES (?, ?, ?, 'adjustment', ?, ?)`, reversalID, t.voucherID, saleID, -t.amount, now); err != nil {
+			return fmt.Errorf("reverse top-up of voucher %q: record: %w", t.voucherID, err)
+		}
 	}
 	return nil
 }
@@ -812,10 +925,20 @@ GROUP BY vt.type, (vt.sale_id IS NULL)`, from, to)
 			// non-NULL groups in case a future writer sets a sale id.
 			out.AdjustedCount += count
 			out.AdjustedMinor += amount
+		case txType == "top_up":
+			// ut-docs#4252: a top-up is a voucher SALE (the customer paid
+			// for added value — a new 0% liability), so it is Issued, and
+			// the eod_tax_bands identity (bands = Net − vouchers issued)
+			// needs it there. Matched before the NULL-sale Imported case;
+			// a top-up always carries its sale id. += because the issue
+			// case below folds into the same bucket.
+			out.IssuedCount += count
+			out.IssuedMinor += amount
 		case txType == "issue" && isImported:
 			out.ImportedCount, out.ImportedMinor = count, amount
 		case txType == "issue":
-			out.IssuedCount, out.IssuedMinor = count, amount
+			out.IssuedCount += count
+			out.IssuedMinor += amount
 		case txType == "redemption":
 			// A redemption always carries a real sale_id
 			// (ReserveVoucherRedemption/pos.CompleteSale both require one
@@ -874,10 +997,15 @@ GROUP BY vt.type, (vt.sale_id IS NULL)`, args...)
 			// ut-docs#4253 — see VouchersIssuedRedeemedForRange.
 			out.AdjustedCount += count
 			out.AdjustedMinor += amount
+		case txType == "top_up":
+			// ut-docs#4252 — see VouchersIssuedRedeemedForRange.
+			out.IssuedCount += count
+			out.IssuedMinor += amount
 		case txType == "issue" && isImported:
 			out.ImportedCount, out.ImportedMinor = count, amount
 		case txType == "issue":
-			out.IssuedCount, out.IssuedMinor = count, amount
+			out.IssuedCount += count
+			out.IssuedMinor += amount
 		case txType == "redemption":
 			out.RedeemedCount, out.RedeemedMinor = count, amount
 		}
@@ -986,7 +1114,7 @@ ORDER BY v.created_at DESC, v.rowid DESC`
 	return out, nil
 }
 
-// VoucherTransactions returns one voucher's issue/redemption/adjustment history in time
+// VoucherTransactions returns one voucher's issue/redemption/adjustment/top-up history in time
 // order (created_at, then insertion order) for the voucher detail page
 // (ut-docs#4251). ErrVoucherNotFound when no such voucher exists, so the
 // page can tell "unknown number" from "no history yet".
@@ -1311,4 +1439,154 @@ VALUES (?, ?, NULL, 'adjustment', ?, ?, ?, ?)`,
 		return fmt.Errorf("mirror voucher adjustment %q: record: %w", voucherID, err)
 	}
 	return nil
+}
+
+// Top-up as a sale (ut-docs#4252). A customer adds value to an existing
+// multi-purpose voucher by buying it at the till: the sale's own transaction
+// credits the voucher (TopUpVoucher, from pos.CompleteSale) and records one
+// 'top_up' ledger row (migration 080) with the sale id. Voiding the sale
+// takes the credit back (reverseTopUpsInSale). The day-close counts it as
+// Issued.
+
+// ErrVoucherTopUpInvalid is a top-up the till refuses outright: no voucher
+// or sale id, or an amount that is not above zero.
+var ErrVoucherTopUpInvalid = errors.New("voucher top-up is invalid")
+
+// ErrVoucherTopUpRefused wraps every refusal TopUpVoucher returns for a
+// voucher that can't take the top-up (unknown, void, single-purpose, over
+// the ceiling), alongside the specific sentinel, so the tender handler can
+// tell a failed top-up line from a failed voucher redemption (review m1).
+var ErrVoucherTopUpRefused = errors.New("voucher top-up refused")
+
+// ErrVoucherTopUpOverCeiling is a top-up that would take the voucher's
+// balance above the till's per-voucher ceiling (pos.MaxVoucherIssueAmount,
+// the same bound a voucher's face value meets at issue).
+var ErrVoucherTopUpOverCeiling = errors.New("voucher top-up would exceed the maximum voucher balance")
+
+// TopUpVoucher credits voucherID by amountMinor as part of sale saleID and
+// returns the voucher after the credit. tx is required: the credit must land
+// atomically with the sale that was paid for it.
+//
+// Fail-closed, in order: empty ids or amount <= 0 → ErrVoucherTopUpInvalid;
+// unknown voucher → ErrVoucherNotFound; 'void' → ErrVoucherNotActive;
+// single-purpose → ErrVoucherNotMultiPurpose (its VAT was fixed at issue —
+// added value would be a new taxable supply of a different kind); balance +
+// amount > maxBalanceMinor → ErrVoucherTopUpOverCeiling. The guards are
+// repeated in the UPDATE (the predicates-in-the-WHERE pattern
+// DebitVoucherForRedemption uses), so a void or a concurrent change between
+// the read and the write loses cleanly. A 'redeemed' (Used up) voucher
+// becomes 'active' again; original_amount never moves — it is what was
+// first sold.
+func (r *POSRepo) TopUpVoucher(ctx context.Context, tx *sql.Tx, voucherID, saleID string, amountMinor, maxBalanceMinor int64, now string) (Voucher, error) {
+	if tx == nil {
+		return Voucher{}, fmt.Errorf("top up voucher: a transaction is required")
+	}
+	voucherID = strings.TrimSpace(voucherID)
+	if voucherID == "" || strings.TrimSpace(saleID) == "" || amountMinor <= 0 {
+		return Voucher{}, fmt.Errorf("top up voucher %q: %w", voucherID, ErrVoucherTopUpInvalid)
+	}
+	if now == "" {
+		now = time.Now().UTC().Format(time.RFC3339)
+	}
+	before, err := r.GetVoucherBalance(ctx, tx, voucherID)
+	if errors.Is(err, ErrVoucherNotFound) {
+		return Voucher{}, fmt.Errorf("voucher %q: %w: %w", voucherID, ErrVoucherTopUpRefused, err)
+	}
+	if err != nil {
+		return Voucher{}, err
+	}
+	if before.Status == "void" {
+		return Voucher{}, fmt.Errorf("voucher %q (status void): %w: %w", voucherID, ErrVoucherTopUpRefused, ErrVoucherNotActive)
+	}
+	if before.Purpose != VoucherPurposeMulti {
+		return Voucher{}, fmt.Errorf("voucher %q (purpose %s): %w: %w", voucherID, before.Purpose, ErrVoucherTopUpRefused, ErrVoucherNotMultiPurpose)
+	}
+	// Written as a subtraction so a huge amount can't overflow the sum.
+	if before.BalanceMinor > maxBalanceMinor-amountMinor {
+		return Voucher{}, fmt.Errorf("voucher %q (balance %d + %d > %d): %w: %w", voucherID, before.BalanceMinor, amountMinor, maxBalanceMinor, ErrVoucherTopUpRefused, ErrVoucherTopUpOverCeiling)
+	}
+	res, err := tx.ExecContext(ctx, `
+UPDATE vouchers
+SET balance = balance + ?,
+    status = 'active'
+WHERE id = ? AND status IN ('active', 'redeemed') AND purpose = 'multi_purpose' AND balance <= ?`,
+		amountMinor, voucherID, maxBalanceMinor-amountMinor)
+	if err != nil {
+		return Voucher{}, fmt.Errorf("top up voucher %q: %w", voucherID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return Voucher{}, fmt.Errorf("top up voucher %q: rows affected: %w", voucherID, err)
+	}
+	if n != 1 {
+		return Voucher{}, fmt.Errorf("voucher %q: %w: %w", voucherID, ErrVoucherTopUpRefused, ErrVoucherNotActive)
+	}
+	if err := r.RecordVoucherTransaction(ctx, tx, VoucherTransaction{
+		ID:          uuid.NewString(),
+		VoucherID:   voucherID,
+		SaleID:      saleID,
+		Type:        "top_up",
+		AmountMinor: amountMinor,
+		CreatedAt:   now,
+	}); err != nil {
+		return Voucher{}, err
+	}
+	return r.GetVoucherBalance(ctx, tx, voucherID)
+}
+
+// VoucherTopUp is one top-up a sale made, as its receipt shows it.
+type VoucherTopUp struct {
+	VoucherID   string `json:"voucher_id"`
+	HolderLabel string `json:"holder_label"`
+	// AmountMinor is the value added.
+	AmountMinor int64 `json:"amount"`
+	// BalanceAfterMinor is the voucher's balance right after this top-up —
+	// the ledger summed up to and including the top_up row — so a reprint
+	// shows what the first print showed, whatever happened to the voucher
+	// since.
+	BalanceAfterMinor int64 `json:"balance_after"`
+	// Reversed: the sale was voided and the credit taken back.
+	Reversed bool `json:"reversed"`
+}
+
+// VoucherTopUpsInSale returns every top-up saleID made, in the order the
+// sale wrote them — the on-screen and printed receipt (first print and
+// reprint) and the journal read it.
+//
+// The balance after each top-up is the signed sum of the voucher's ledger up
+// to and including that row (issue/top_up add, redemption subtracts,
+// adjustment is already signed). Every writer of a vouchers balance writes
+// the matching ledger row in the same transaction (CreateVoucher+issue,
+// DebitVoucherForRedemption+redemption, AdjustVoucherBalance, TopUpVoucher,
+// ReleaseVoucherRedemption deleting the row it undoes), so on the till that
+// made the top-up — top-ups are main-till only in this card — the sum is
+// the balance. A void of the voucher itself sets balance 0 with no row, but
+// a void voucher can never be topped up.
+func (r *POSRepo) VoucherTopUpsInSale(ctx context.Context, saleID string) ([]VoucherTopUp, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT t.voucher_id, COALESCE(v.holder_label, ''), t.amount,
+       (SELECT COALESCE(SUM(CASE WHEN l.type = 'redemption' THEN -l.amount ELSE l.amount END), 0)
+          FROM voucher_transactions l
+         WHERE l.voucher_id = t.voucher_id AND l.rowid <= t.rowid),
+       EXISTS (SELECT 1 FROM voucher_transactions x WHERE x.id = ? || t.id)
+FROM voucher_transactions t
+JOIN vouchers v ON v.id = t.voucher_id
+WHERE t.sale_id = ? AND t.type = 'top_up'
+ORDER BY t.rowid`, topUpReversalIDPrefix, saleID)
+	if err != nil {
+		return nil, fmt.Errorf("voucher top-ups in sale: %w", err)
+	}
+	defer rows.Close()
+	var out []VoucherTopUp
+	for rows.Next() {
+		var t VoucherTopUp
+		if err := rows.Scan(&t.VoucherID, &t.HolderLabel, &t.AmountMinor, &t.BalanceAfterMinor, &t.Reversed); err != nil {
+			return nil, fmt.Errorf("voucher top-ups in sale: scan: %w", err)
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("voucher top-ups in sale: %w", err)
+	}
+	return out, nil
 }

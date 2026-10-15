@@ -78,7 +78,11 @@ type VoucherBlock struct {
 	Label  string // "Gift voucher"
 	Amount string // pre-formatted money
 	Holder string // "For: Anna"; empty = no row
-	Code   string
+	// Balance is the voucher's balance after a top-up (ut-docs#4252),
+	// pre-formatted with its label ("New balance £35.00"); empty = no row
+	// (every newly issued voucher — its balance is its value).
+	Balance string
+	Code    string
 	// Void, when set, is the notice printed for a voided voucher; its code
 	// then prints as text only, never as a scannable symbol.
 	Void string
@@ -326,6 +330,9 @@ func Render(d Doc) []byte {
 			line(kvRow(v.Label, v.Amount))
 			if v.Holder != "" {
 				line(clip(v.Holder, Width))
+			}
+			if v.Balance != "" {
+				line(clip(v.Balance, Width))
 			}
 			b.Write(cmdAlignMid)
 			if v.Void != "" {
@@ -732,6 +739,9 @@ func RenderText(d Doc) string {
 			b.WriteString("\n" + kvRow(v.Label, v.Amount) + "\n")
 			if v.Holder != "" {
 				b.WriteString(clip(v.Holder, Width) + "\n")
+			}
+			if v.Balance != "" {
+				b.WriteString(clip(v.Balance, Width) + "\n")
 			}
 			if v.Void != "" {
 				center(v.Void)

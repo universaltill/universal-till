@@ -352,6 +352,9 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 			HolderLabel: v.HolderLabel,
 			Amount:      money.FromMinor(v.Amount),
 			Purpose:     v.Purpose,
+			// ut-docs#4252: a top-up replays as a credit of the primary's
+			// existing voucher, never as a second issue of the number.
+			TopUp: v.TopUp,
 		}
 		if v.VATRateBP != nil {
 			vi.VATRateBasisPoints = *v.VATRateBP

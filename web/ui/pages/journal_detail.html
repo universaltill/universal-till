@@ -77,9 +77,11 @@
              receipt's voucher block (#4224) — number, holder, purpose. */}}
         {{ range .Sale.VoucherIssues }}
           <tr data-testid="journal-voucher-issue">
-            <td class="catalog-name">{{ T "catalog.item_type.gift_voucher" }}
+            <td class="catalog-name">{{ if .TopUp }}{{ T "receipt.vouchers.top_up" }}{{ else }}{{ T "catalog.item_type.gift_voucher" }}{{ end }}
               <br>{{ if $.CanViewVouchers }}<a href="{{ index $.VoucherHrefs .VoucherID }}"><code class="pill-code">{{ .VoucherID }}</code></a>{{ else }}<code class="pill-code">{{ .VoucherID }}</code>{{ end }}
-              {{ if index $.VoidVouchers .VoucherID }}<br><strong data-testid="journal-voucher-void">{{ T "receipt.vouchers.void" }}</strong>{{ end }}
+              {{/* ut-docs#4252: a top-up's void mark is its own (the voucher it
+                   credited stays alive when the top-up sale is voided). */}}
+              {{ if .TopUp }}{{ if index $.VoidTopUps .VoucherID }}<br><strong data-testid="journal-voucher-void">{{ T "receipt.vouchers.top_up_void" }}</strong>{{ end }}{{ else if index $.VoidVouchers .VoucherID }}<br><strong data-testid="journal-voucher-void">{{ T "receipt.vouchers.void" }}</strong>{{ end }}
               {{ if .HolderLabel }}<br><small class="muted">{{ printf (T "basket.gift_voucher.for") .HolderLabel }}</small>{{ end }}
               <br><small class="muted">{{ if eq .Purpose "single_purpose" }}{{ T "pos.gift_voucher.use_specific" }}{{ else }}{{ T "pos.gift_voucher.use_any" }}{{ end }}</small>
             </td>
