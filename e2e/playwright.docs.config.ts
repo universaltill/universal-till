@@ -13,7 +13,21 @@ const DOCS_SHOTS_NOW = '2026-01-02T15:04:05Z';
 // roomy disk, so the host's free space never reaches a screenshot as the
 // "Storage almost full" chip. Like UT_DOCS_SHOTS_NOW, set ONLY here, never
 // in run-till*.sh, so the real e2e suite keeps the live probe.
-const DOCS_SHOTS_ENV = { UT_DOCS_SHOTS_NOW: DOCS_SHOTS_NOW, UT_DOCS_SHOTS_DISK_ROOMY: '1' };
+//
+// UT_DOCS_SHOTS_SEED_SALES makes run-till.sh also run e2e/seed_docs_sales:
+// three completed sales + two invoices at FIXED December-2025 dates
+// (ut-docs#359), so the `reports` and `invoices` topics show real data. Like
+// the two above, set ONLY here: the e2e suite's tills stay sale-free. The
+// screenshots address that fixed window through pinnedQuery in
+// tests-docs/docs-shots.spec.ts.
+const DOCS_SHOTS_ENV = {
+  // The server renders dates in time.Local; pin it so a regenerating machine
+  // in any timezone (e.g. UTC+13) prints the same dates as CI (ut-docs#359).
+  TZ: 'UTC',
+  UT_DOCS_SHOTS_NOW: DOCS_SHOTS_NOW,
+  UT_DOCS_SHOTS_DISK_ROOMY: '1',
+  UT_DOCS_SHOTS_SEED_SALES: '1',
+};
 
 // The manual's screenshot harness (`make docs-shots`) — captures every routed
 // help topic at 1024×600 in every shipped locale into web/help/img/.

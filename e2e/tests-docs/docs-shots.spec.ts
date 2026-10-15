@@ -27,11 +27,15 @@ const AUTH_BASE = 'http://127.0.0.1:8092';
 const ADMIN_PIN = '482913'; // same PIN login.spec.ts sets, so a reused local auth server still logs in
 
 // Extra query params pinned per topic so no screenshot depends on when it was
-// taken. /reports' widgets look back N days from "now" — the till's DB is
-// fresh (no sales either way), but pin the lookback so the rendered filter
-// state can never drift with the calendar.
+// taken. The docs till carries three sales and two invoices at FIXED
+// December-2025 dates (ut-docs#359, e2e/seed_docs_sales), and both screens
+// default to a window anchored on the wall clock (/reports: the last 14 days;
+// /invoices: the current calendar month — neither reads internal/clock), so
+// each topic addresses the seeded month explicitly instead. Keep these in
+// step with the dates in seed_docs_sales/main.go.
 const pinnedQuery: Record<string, string> = {
-  reports: 'days=30',
+  reports: 'period=month&anchor=2025-12-15',
+  invoices: 'from=2025-12-01&to=2025-12-31',
 };
 
 // CLOCK-PINNED FOR DETERMINISM (ut-docs#930, was the accepted gap ut-docs#327
