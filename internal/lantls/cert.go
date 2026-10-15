@@ -83,10 +83,6 @@ func (c *Cert) TLSConfig() *tls.Config {
 // returns is the one served for the whole process lifetime.
 func LoadOrCreate(dir string) (*Cert, error) { return loadOrCreate(dir, time.Now()) }
 
-// LoadOrCreateAt is LoadOrCreate as of now: for tests in other packages
-// that need a key of a given age or a rotation in a given state.
-func LoadOrCreateAt(dir string, now time.Time) (*Cert, error) { return loadOrCreate(dir, now) }
-
 func loadOrCreate(dir string, now time.Time) (*Cert, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("lantls: create %s: %w", dir, err)

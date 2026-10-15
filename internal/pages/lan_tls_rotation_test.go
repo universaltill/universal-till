@@ -2,7 +2,10 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -19,14 +22,46 @@ import (
 // and confirms it in its report, and the main till switches at its next
 // start once every pinned till has confirmed.
 
+// ageRotationState moves a timestamp in the TLS dir's rotation.json back
+// by d, so the next LoadOrCreate sees a key (or a pending next key) that
+// old — the on-disk state is the only clock a load reads.
+func ageRotationState(t *testing.T, dir, field string, d time.Duration) {
+	t.Helper()
+	path := filepath.Join(dir, "rotation.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st map[string]any
+	if err := json.Unmarshal(b, &st); err != nil {
+		t.Fatal(err)
+	}
+	ts, ok := st[field].(string)
+	if !ok {
+		t.Fatalf("rotation.json has no %s: %s", field, b)
+	}
+	at, err := time.Parse(time.RFC3339Nano, ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st[field] = at.Add(-d).Format(time.RFC3339Nano)
+	if b, err = json.Marshal(st); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // pendingRotationCert is a main till's LAN key that is RotateEvery old, so
 // loading it now creates the next key: Pin is served, NextPin pending.
 func pendingRotationCert(t *testing.T) (dir string, c *lantls.Cert) {
 	t.Helper()
 	dir = t.TempDir()
-	if _, err := lantls.LoadOrCreateAt(dir, time.Now().Add(-lantls.RotateEvery)); err != nil {
+	if _, err := lantls.LoadOrCreate(dir); err != nil {
 		t.Fatal(err)
 	}
+	ageRotationState(t, dir, "key_created_at", lantls.RotateEvery)
 	c, err := lantls.LoadOrCreate(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -237,7 +272,8 @@ func TestRotation_PinnedReplicaLearnsAndConfirmsTheNextPin(t *testing.T) {
 func TestRotation_ReplicaPromotesTheNextPinAfterTheSwitch(t *testing.T) {
 	dir, pending := pendingRotationCert(t)
 	old, next := pending.Pin(), pending.NextPin()
-	switched, err := lantls.LoadOrCreateAt(dir, time.Now().Add(lantls.RotationWindow))
+	ageRotationState(t, dir, "next_created_at", lantls.RotationWindow)
+	switched, err := lantls.LoadOrCreate(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
