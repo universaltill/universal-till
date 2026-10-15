@@ -8,6 +8,13 @@ import { defineConfig } from '@playwright/test';
 // timezone.
 const DOCS_SHOTS_NOW = '2026-01-02T15:04:05Z';
 
+// The env both docs tills get on top of the inherited one. ut-docs#4280:
+// UT_DOCS_SHOTS_DISK_ROOMY makes internal/diskspace.Probe report a fixed
+// roomy disk, so the host's free space never reaches a screenshot as the
+// "Storage almost full" chip. Like UT_DOCS_SHOTS_NOW, set ONLY here, never
+// in run-till*.sh, so the real e2e suite keeps the live probe.
+const DOCS_SHOTS_ENV = { UT_DOCS_SHOTS_NOW: DOCS_SHOTS_NOW, UT_DOCS_SHOTS_DISK_ROOMY: '1' };
+
 // The manual's screenshot harness (`make docs-shots`) — captures every routed
 // help topic at 1024×600 in every shipped locale into web/help/img/.
 //
@@ -48,14 +55,14 @@ export default defineConfig({
       // panel's timestamps. Read by internal/clock.Now; set ONLY here (NOT in
       // the shared run-till.sh, which the real e2e suite also boots and which
       // must keep the live clock). Passed on top of the inherited env.
-      env: { UT_DOCS_SHOTS_NOW: DOCS_SHOTS_NOW },
+      env: DOCS_SHOTS_ENV,
     },
     {
       command: 'bash ./run-till-auth.sh',
       url: 'http://127.0.0.1:8092/healthz',
       timeout: 120_000,
       reuseExistingServer: false,
-      env: { UT_DOCS_SHOTS_NOW: DOCS_SHOTS_NOW },
+      env: DOCS_SHOTS_ENV,
     },
   ],
   projects: [

@@ -1,6 +1,7 @@
 package diskspace
 
 import (
+	"errors"
 	"testing"
 )
 
@@ -60,7 +61,62 @@ func TestProbe_RealDirectory(t *testing.T) {
 }
 
 func TestProbe_MissingDirectoryIsAnError(t *testing.T) {
-	if _, err := Probe("/nonexistent/ut-docs-3121/really-not-here"); err == nil {
+	// The real probe, not Probe: UT_DOCS_SHOTS_DISK_ROOMY in the test
+	// process's env would pin Probe and skip the filesystem (ut-docs#4280).
+	if _, err := probeWith(false, "/nonexistent/ut-docs-3121/really-not-here"); err == nil {
 		t.Fatal("Probe of a missing path returned no error")
 	}
+}
+
+// ut-docs#4280: only a true boolean turns the harness pin on; a typo must
+// never hide a real low disk.
+func TestParseRoomy(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want bool
+	}{
+		{"1", true},
+		{"true", true},
+		{" true ", true},
+		{"0", false},
+		{"false", false},
+		{"", false},
+		{"garbage", false},
+		{"yes", false},
+	} {
+		if got := parseRoomy(c.in); got != c.want {
+			t.Errorf("parseRoomy(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+// The pinned docs-shots disk must never trip the low-disk chip/problem.
+func TestDocsShotsRoomyIsNotLow(t *testing.T) {
+	if Low(docsShotsRoomy) {
+		t.Fatalf("docsShotsRoomy %+v is Low; the manual screenshots would show the chip", docsShotsRoomy)
+	}
+}
+
+func TestProbeWith(t *testing.T) {
+	t.Run("roomy returns the pin without touching the filesystem", func(t *testing.T) {
+		u, err := probeWith(true, "/definitely/not/a/dir")
+		if err != nil {
+			t.Fatalf("err = %v, want nil", err)
+		}
+		if u != docsShotsRoomy {
+			t.Errorf("usage = %+v, want %+v", u, docsShotsRoomy)
+		}
+	})
+	t.Run("not roomy uses the real probe", func(t *testing.T) {
+		u, err := probeWith(false, t.TempDir())
+		if errors.Is(err, ErrUnsupported) {
+			t.Skip("no probe on this platform")
+		}
+		if err != nil {
+			t.Fatalf("err = %v", err)
+		}
+		if u.Total == 0 {
+			t.Errorf("Total = 0, want a real disk size")
+		}
+	})
 }
