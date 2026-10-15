@@ -1,6 +1,7 @@
 #!/bin/sh
-# Universal Till .deb postinstall: system user, writable data dirs, item
-# images preserved across upgrades, service enabled.
+# Universal Till .deb postinstall: system user, writable data dirs, legacy
+# item photos kept safe until the data-dir migration has copied them (see
+# the ITEMS block), service enabled.
 set -e
 
 # System user for the service.
@@ -10,10 +11,21 @@ fi
 
 mkdir -p /opt/unitill/data /var/lib/unitill/items
 
-# web/ is package-owned and refreshed on every upgrade — but shops upload
-# item photos INTO web/public/assets/items. Keep those on /var/lib behind a
-# symlink so upgrades never delete them; seed the shipped demo thumbs only
-# into an empty store.
+# web/ is package-owned and refreshed on every upgrade. New item photo
+# uploads no longer land here — they go to the stable data dir
+# (paths.Data("public","assets","items",...), i.e. $UT_DATA_DIR/public/...)
+# — but this symlink is NOT vestigial yet (ut-docs#256): a box installed
+# before 2026-07-29 holds the shop's old uploaded photos in this tree.
+# paths.migrateLegacyUploadedAssets reads web/public/assets/items on every
+# start (copy-if-absent, no first-run marker) to copy them into the data
+# dir, and the /public/ handler still serves from this tree as its second
+# source when a copy failed. Keeping the tree on /var/lib behind a symlink
+# means a .deb upgrade can never delete those photos. (The in-app
+# self-update swaps in a real web/items dir without the symlink; the photos
+# stay safe in /var/lib/unitill/items until the next .deb postinstall puts
+# the link back.) The shipped demo thumbs are copied into /var/lib only
+# when it is empty. Retire this block together with the migration, not
+# before.
 ITEMS=/opt/unitill/web/public/assets/items
 if [ -d "$ITEMS" ] && [ ! -L "$ITEMS" ]; then
     if [ -z "$(ls -A /var/lib/unitill/items 2>/dev/null)" ]; then
