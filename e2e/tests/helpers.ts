@@ -285,6 +285,15 @@ export async function setBrowsingMode(page: Page, mode: BrowsingMode) {
   expect(resp.ok(), `set browsing mode=${mode} (status ${resp.status()})`).toBe(true);
 }
 
+// ut-docs#4272: a till registers with the cloud only once its shop has a real
+// name (a fresh till is still on migration 001's "My Store"), so a spec that
+// presses Register now names the shop first. Plain API call, same as
+// setBrowsingMode: UT_AUTH=off, so no elevation prompt.
+export async function nameShop(page: Page, name = 'E2E Test Shop') {
+  const resp = await page.request.post('/api/settings/store-name', { form: { store_name: name } });
+  expect(resp.ok(), `name the shop (status ${resp.status()})`).toBe(true);
+}
+
 // Same PIN tests-docs/docs-shots.spec.ts sets during its own first-boot
 // wizard completion, so a shared AUTH-project server (8092) already set up
 // by one spec file in this run still logs in for another.

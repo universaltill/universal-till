@@ -254,6 +254,7 @@ func TestSettingsAutoRegisterOnPersistsAndTriggersRegistration(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	mkt := newFakeMarketplace(t, nil)
 	d.Cfg.Marketplace = mkt.config()
+	nameShop(t, d) // an unnamed shop never registers (ut-docs#4272)
 
 	rec := postForm(mux, "/api/settings/auto-register", url.Values{"optIn": {"on"}}, &mgrUser)
 	if rec.Code != http.StatusNoContent {

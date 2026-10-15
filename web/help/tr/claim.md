@@ -61,6 +61,7 @@ Kart sorunu tek satırda söyler; satış hiçbir zaman etkilenmez:
 - **Universal Till bulutu bu mağaza için kullanılamıyor**: bulut bu mağazaya hizmet vermiyor. Katılmış bir kasada bu mesaj ana kasadan gelir. Kasa çevrimdışı çalışmaya devam eder.
 - **Bu kasada bulut adresi ayarlanmamış**: kasa bulut adresi olmadan kuruldu, bu yüzden kaydolamıyor. Kurulumu yapan kişiden bir adres ayarlamasını isteyin.
 - **Başka bir kayıt denemesi hâlâ sürüyor**: kasa zaten arka planda kaydoluyor. Biraz bekleyip yeniden deneyin.
+- **Önce mağazanıza bir ad verin**: mağazanın henüz gerçek bir adı yok (boş ya da "My Store" gibi varsayılan bir ad), bu yüzden kasa onu buluta kaydetmedi. Mesajdaki **Dükkân adı** bağlantısını izleyin, mağazanın adını kaydedin, ardından Şimdi kaydol düğmesine yeniden basın.
 - **Kayıt başarısız** veya **Sahiplenme kodu alınamadı**: kasa buluta ulaşamadı. İnternet bağlantısını kontrol edip yeniden deneyin.
 
 ## Bir mağazayla eşleştirme (ve yeniden eşleştirme)

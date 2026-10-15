@@ -7,8 +7,10 @@
 // (RegisterNow) — via POST /v1/stores/register, and the returned store/
 // merchant identity + device token persist in settings. Explicit
 // configuration (UT_MARKETPLACE_CLIENT_ID / _STORE_ID / _DEVICE_ID) always
-// wins; enrolment only fills the gaps. Nothing here ever blocks startup or
-// checkout (offline-first).
+// wins; enrolment only fills the gaps. A main/standalone till whose shop has
+// no real name yet never registers (ErrStoreUnnamed, ut-docs#4272): it waits
+// until the wizard or Settings names the shop. Nothing here ever blocks
+// startup or checkout (offline-first).
 //
 // The marketplace's Ed25519 signing key (needed to verify plugin bundles) is
 // fetched alongside enrolment, or lazily by EnsureSigningKey at the first
@@ -295,7 +297,22 @@ var (
 	// ErrTillNotRegistered: this till has no store identity yet, so it has
 	// nothing to mint a claim code for.
 	ErrTillNotRegistered = errors.New("till is not registered with the marketplace yet")
+	// ErrStoreUnnamed: the shop has no real name yet (blank or a
+	// placeholder, config.IsPlaceholderStoreName), so the till does not
+	// create an anonymous cloud store — the cloud would hold a shop nobody
+	// can recognise (ut-docs#4272). Registration waits for a shop name.
+	ErrStoreUnnamed = errors.New("shop is not named yet; registration waits for a shop name")
 )
+
+// AwaitingShopName reports whether registration is currently held back only
+// because the shop has no real name: the till is not registered, is not a
+// replica (a replica registers through its main till, never anonymously),
+// and shopName finds no usable name. Callers that would otherwise trigger
+// registration (the setup wizard's tax-plugin install) use it to queue
+// their work for after the shop is named instead of failing (ut-docs#4272).
+func AwaitingShopName(ctx context.Context, cfg *config.Config, kv Settings) bool {
+	return !CurrentStatus().Registered && !isReplica(ctx, kv) && shopName(ctx, cfg, kv) == ""
+}
 
 // RegisterHTTPError is a non-2xx answer from one of the cloud's store
 // enrolment calls — POST /v1/stores/register (ut-docs#3861), claim-code and
@@ -369,10 +386,16 @@ func RegisterNow(ctx context.Context, cfg *config.Config, kv Settings) (Status, 
 	if s := CurrentStatus(); !s.Registered {
 		// A replica never creates its own anonymous store — that would split
 		// the shop in the cloud; its credential comes from the main till
-		// (ut-docs#2730).
-		registerFn := func() error { return register(ctx, m, shopName(ctx, cfg, kv), kv) }
+		// (ut-docs#2730). A main/standalone till never creates an anonymous
+		// store for a shop with no real name (ut-docs#4272): it waits until
+		// the wizard or Settings names the shop.
+		var registerFn func() error
 		if isReplica(ctx, kv) {
 			registerFn = func() error { return registerOnReplica(ctx, m, kv) }
+		} else if name := shopName(ctx, cfg, kv); name != "" {
+			registerFn = func() error { return register(ctx, m, name, kv) }
+		} else {
+			registerFn = func() error { return ErrStoreUnnamed }
 		}
 		if err := registerFn(); err != nil {
 			firstErr = err
@@ -559,7 +582,11 @@ func EnsureSigningKey(ctx context.Context, cfg *config.Config, kv Settings) conf
 func EnsureRegistered(ctx context.Context, cfg *config.Config, kv Settings) config.Config {
 	if s := CurrentStatus(); !s.Registered {
 		if _, err := RegisterNow(ctx, cfg, kv); err != nil {
-			logging.L().Infof("enrolment: lazy registration failed (marketplace call will surface it): %v", err)
+			if errors.Is(err, ErrStoreUnnamed) {
+				logging.L().Infof("enrolment: registration waits until the shop is named (marketplace call will surface it)")
+			} else {
+				logging.L().Infof("enrolment: lazy registration failed (marketplace call will surface it): %v", err)
+			}
 		}
 	}
 	return Effective(cfg)
@@ -660,9 +687,10 @@ func regionForCountry(country string) string {
 // shopName is the name registration sends: the live store.name setting,
 // falling back to cfg.StoreName when it is unset, blank or unreadable
 // (ut-docs#2776). A failed read never fails registration. A placeholder
-// ("My Store", which migration 001 seeds) is never sent: with no real name
-// anywhere it returns "", and the cloud records the shop as unnamed rather
-// than creating another "My Store" (ut-docs#3096).
+// ("My Store", which migration 001 seeds) is never sent (ut-docs#3096):
+// with no real name anywhere it returns "", and RegisterNow then does not
+// register at all — it returns ErrStoreUnnamed and registration waits for a
+// shop name (ut-docs#4272).
 func shopName(ctx context.Context, cfg *config.Config, kv Settings) string {
 	if v, _, err := kv.Get(ctx, StoreNameSettingsKey); err == nil && !config.IsPlaceholderStoreName(v) {
 		return strings.TrimSpace(v)

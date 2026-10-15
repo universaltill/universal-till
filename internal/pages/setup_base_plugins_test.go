@@ -980,7 +980,15 @@ func TestInstallBasePluginsForSetup_OfflineThenBackgroundRetryInstalls(t *testin
 	dp.Cfg.Marketplace.StoreID = "store-1"
 	dead.Close()
 
+	drainBasePluginRetryNudge()
 	installBasePluginsForSetup(t.Context(), dp, "DE")
+	// ut-docs#4272 review: a spec left pending wakes the background retry
+	// at once instead of waiting for its next 5-minute tick.
+	select {
+	case <-basePluginRetryNudge:
+	default:
+		t.Fatal("a spec left pending must nudge the background retry")
+	}
 
 	pending, err := loadPendingBasePlugins(t.Context(), dp)
 	if err != nil {

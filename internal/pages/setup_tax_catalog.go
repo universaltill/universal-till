@@ -355,9 +355,17 @@ func setupTaxPluginInstallHandler(d *common.Deps, svc *auth.Service) http.Handle
 		// setupWizardTaxInstallTimeout on a foreground attempt that is
 		// unlikely to succeed. If the network came back in that window, the
 		// retry installs it within one tick.
-		if match.Offline {
+		//
+		// ut-docs#4272: the same queue-for-later when the install would have
+		// to register the shop with the cloud before it has a real name —
+		// on a first boot store.name is still migration 001's placeholder
+		// until POST /api/setup saves the owner's name, and registration
+		// waits for that. installBasePluginsForSetup attempts every pending
+		// spec right after the name is saved, so the plugin still installs
+		// at the end of the wizard when the till is online.
+		if match.Offline || enroll.AwaitingShopName(r.Context(), d.Cfg, d.Settings) {
 			if err := addPendingBasePlugins(r.Context(), d, []basePluginSpec{spec}); err != nil {
-				logging.L().Errorf("setup wizard: persist offline tax plugin install: %v", err)
+				logging.L().Errorf("setup wizard: persist queued tax plugin install: %v", err)
 			}
 			http.Redirect(w, r, resume+"&tax_plugin_pending=1", http.StatusSeeOther)
 			return

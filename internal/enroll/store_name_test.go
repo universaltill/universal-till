@@ -80,25 +80,47 @@ func TestRegisterNowFallsBackToConfigStoreName(t *testing.T) {
 	}
 }
 
-// ut-docs#3096: enrolment never sends a placeholder name. With store.name
-// still the migration-seeded "My Store" and no real name in the config
-// either, registration sends a blank name (the cloud then marks the shop as
-// unnamed) instead of creating yet another cloud shop called "My Store".
-// Registration itself still goes ahead — it must never block a plugin install.
+// ut-docs#3096: enrolment never sends a placeholder name. A real name in
+// the config still counts when store.name holds the migration-seeded
+// "My Store".
 func TestRegisterNowNeverSendsPlaceholderName(t *testing.T) {
+	resetState()
+	var gotBody map[string]any
+	srv := registerTestServer(t, &gotBody)
+	kv := newFakeKV()
+	_ = kv.Set(context.Background(), StoreNameSettingsKey, "My Store")
+	cfg := freshConfig(srv.URL)
+	cfg.StoreName = "Corner Shop"
+
+	if _, err := RegisterNow(context.Background(), cfg, kv); err != nil {
+		t.Fatalf("RegisterNow: %v", err)
+	}
+	if got := gotBody["store_name"]; got != "Corner Shop" {
+		t.Fatalf("store_name = %q, want %q", got, "Corner Shop")
+	}
+	if !CurrentStatus().Registered {
+		t.Fatal("registration did not complete")
+	}
+}
+
+// ut-docs#4272: a till whose shop has no real name (blank, the migration-
+// seeded "My Store", or the cloud's own placeholder) never calls the
+// anonymous /stores/register: the cloud would create an unnamed shop the
+// owner cannot recognise. RegisterNow says why (ErrStoreUnnamed) and the
+// till stays unregistered until the shop is named.
+func TestRegisterNowRefusesUnnamedShop(t *testing.T) {
 	cases := []struct {
-		name, setting, cfgName, want string
+		name, setting, cfgName string
 	}{
-		{"seeded default, default cfg", "My Store", "My Store", ""},
-		{"seeded default, real env name", "My Store", "Corner Shop", "Corner Shop"},
-		{"cloud default in setting", "Universal Till store", "My Store", ""},
-		{"unset, default cfg", "", "my store", ""},
+		{"seeded default, default cfg", "My Store", "My Store"},
+		{"blank setting, blank cfg", "   ", ""},
+		{"unset, default cfg", "", "my store"},
+		{"cloud default in setting", "Universal Till store", "My Store"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			resetState()
-			var gotBody map[string]any
-			srv := registerTestServer(t, &gotBody)
+			srv, registerCalls := testMarketplace(t, 0)
 			kv := newFakeKV()
 			if c.setting != "" {
 				_ = kv.Set(context.Background(), StoreNameSettingsKey, c.setting)
@@ -106,15 +128,57 @@ func TestRegisterNowNeverSendsPlaceholderName(t *testing.T) {
 			cfg := freshConfig(srv.URL)
 			cfg.StoreName = c.cfgName
 
-			if _, err := RegisterNow(context.Background(), cfg, kv); err != nil {
-				t.Fatalf("RegisterNow: %v", err)
+			if !AwaitingShopName(context.Background(), cfg, kv) {
+				t.Fatal("AwaitingShopName = false for an unnamed, unregistered till")
 			}
-			if got := gotBody["store_name"]; got != c.want {
-				t.Fatalf("store_name = %q, want %q", got, c.want)
+			_, err := RegisterNow(context.Background(), cfg, kv)
+			if !errors.Is(err, ErrStoreUnnamed) {
+				t.Fatalf("RegisterNow err = %v, want ErrStoreUnnamed", err)
 			}
-			if !CurrentStatus().Registered {
-				t.Fatal("registration did not complete")
+			if *registerCalls != 0 {
+				t.Fatalf("/stores/register called %d times for an unnamed shop", *registerCalls)
+			}
+			if CurrentStatus().Registered {
+				t.Fatal("unnamed till reads as registered")
+			}
+			// EnsureRegistered (the plugin-install path) swallows it the same way.
+			EnsureRegistered(context.Background(), cfg, kv)
+			if *registerCalls != 0 {
+				t.Fatalf("EnsureRegistered called /stores/register %d times for an unnamed shop", *registerCalls)
 			}
 		})
+	}
+}
+
+// Once the shop is named (the wizard or Settings writes store.name), the
+// very next attempt registers with that name.
+func TestRegisterNowRegistersOnceShopIsNamed(t *testing.T) {
+	resetState()
+	var gotBody map[string]any
+	srv := registerTestServer(t, &gotBody)
+	kv := newFakeKV()
+	_ = kv.Set(context.Background(), StoreNameSettingsKey, "My Store")
+	cfg := freshConfig(srv.URL)
+	cfg.StoreName = "My Store"
+
+	if _, err := RegisterNow(context.Background(), cfg, kv); !errors.Is(err, ErrStoreUnnamed) {
+		t.Fatalf("first RegisterNow err = %v, want ErrStoreUnnamed", err)
+	}
+	_ = kv.Set(context.Background(), StoreNameSettingsKey, "Corner Café")
+	if AwaitingShopName(context.Background(), cfg, kv) {
+		t.Fatal("AwaitingShopName = true after the shop was named")
+	}
+	if _, err := RegisterNow(context.Background(), cfg, kv); err != nil {
+		t.Fatalf("RegisterNow after naming: %v", err)
+	}
+	if got := gotBody["store_name"]; got != "Corner Café" {
+		t.Fatalf("store_name = %v, want %q", got, "Corner Café")
+	}
+	if !CurrentStatus().Registered {
+		t.Fatal("registration did not complete")
+	}
+	_ = kv.Set(context.Background(), StoreNameSettingsKey, "My Store")
+	if AwaitingShopName(context.Background(), cfg, kv) {
+		t.Fatal("AwaitingShopName = true for a registered till")
 	}
 }

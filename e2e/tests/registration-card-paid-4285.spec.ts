@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, nameShop } from './helpers';
 import * as http from 'http';
 import * as crypto from 'crypto';
 
@@ -87,6 +87,7 @@ test.describe.serial('registration card on a paid till (ut-docs#4285)', () => {
     // diagnostics spec ran first) asks via "Check for a paid plan".
     const registerBtn = card.locator('button[hx-post="/api/enrol/now"]');
     if (await registerBtn.count()) {
+      await nameShop(page); // ut-docs#4272: registration waits for a real shop name
       await registerBtn.click();
       await expect(page.locator('#enrol-msg')).toContainText('✅');
     } else {

@@ -394,6 +394,43 @@ func TestRegisterNowOnReplicaUsesMainTillNotAnonymousStore(t *testing.T) {
 	}
 }
 
+// ut-docs#4272: the shop-name gate is for the anonymous store only. A
+// replica with no shop name of its own (it joined a named main till) still
+// asks its main till to vouch, and is never "awaiting a shop name".
+func TestRegisterNowOnUnnamedReplicaStillAsksMainTill(t *testing.T) {
+	resetState()
+	fastRetries(t)
+	srv, registerCalls := testMarketplace(t, 0)
+	primary := newFakePrimary(t, 0, 0)
+	kv := newFakeKV()
+	for k, v := range map[string]string{
+		"sync.primary_url":   primary.srv.URL,
+		"sync.bearer":        "replica-bearer",
+		"sync.till_id":       "till-row-2",
+		keyPublicKey:         pinnedKey,
+		StoreNameSettingsKey: "My Store",
+	} {
+		_ = kv.Set(context.Background(), k, v)
+	}
+	cfg := freshConfig(srv.URL)
+	cfg.StoreName = "My Store"
+	cfg.Marketplace.PublicKey = pinnedKey
+	initForTest(t, &config.Config{}, kv) // identity only, no loop
+
+	if AwaitingShopName(context.Background(), cfg, kv) {
+		t.Fatal("AwaitingShopName = true on a replica")
+	}
+	if _, err := RegisterNow(context.Background(), cfg, kv); err != nil {
+		t.Fatalf("RegisterNow: %v", err)
+	}
+	if *registerCalls != 0 {
+		t.Fatalf("replica called /stores/register %d times", *registerCalls)
+	}
+	if primary.calls.Load() != 1 {
+		t.Fatalf("main till asked %d times, want 1", primary.calls.Load())
+	}
+}
+
 // --- main-till side: vouching for a replica ------------------------------
 
 func mainTillCfg(endpoint string) *config.Config {

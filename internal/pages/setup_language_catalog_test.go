@@ -550,10 +550,13 @@ func TestInstallBasePluginsForSetup_SuccessRemovesOnlyItsOwnSpecNotTheWholeList(
 	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
 	d.Cfg.Marketplace = mkt.config()
 
-	// An unrelated spec (from the wizard's language step) already queued —
-	// nothing here should ever install it or touch it.
-	esSpec := basePluginSpec{CanonicalType: "language", Locale: "es"}
-	if err := savePendingBasePlugins(t.Context(), d, []basePluginSpec{esSpec}); err != nil {
+	// An unrelated spec already queued that cannot install here: the setup
+	// hook attempts every pending spec (ut-docs#4272), and a tax spec with
+	// no published listing stays pending (ut-docs#3210) — so it must
+	// survive DE's own successful install. (A language spec with nothing
+	// published is a successful no-op and would rightly be dropped.)
+	otherSpec := basePluginSpec{CanonicalType: "tax", Locale: "es"}
+	if err := savePendingBasePlugins(t.Context(), d, []basePluginSpec{otherSpec}); err != nil {
 		t.Fatalf("seed pending es spec: %v", err)
 	}
 
@@ -566,7 +569,7 @@ func TestInstallBasePluginsForSetup_SuccessRemovesOnlyItsOwnSpecNotTheWholeList(
 	if err != nil {
 		t.Fatalf("loadPendingBasePlugins: %v", err)
 	}
-	if len(pending) != 1 || pending[0] != esSpec {
-		t.Fatalf("pending after a successful DE install = %+v, want exactly [es] — installing de must remove only de, never the whole list", pending)
+	if len(pending) != 1 || pending[0] != otherSpec {
+		t.Fatalf("pending after a successful DE install = %+v, want exactly [tax/es] — installing de must remove only de, never the whole list", pending)
 	}
 }

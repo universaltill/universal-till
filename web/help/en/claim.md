@@ -61,6 +61,7 @@ The card says what went wrong in one line; selling is never affected:
 - **The Universal Till cloud is not available for this shop**: the cloud does not serve this shop. On a joined till this comes from the main till. The till keeps working offline.
 - **No cloud address is set up on this till**: the till was installed without a cloud address, so it can't register. Ask whoever installed it to set one up.
 - **Another registration attempt is still running**: the till is already registering in the background. Wait a moment and try again.
+- **Name your shop first**: the shop has no real name yet (it is blank or a default such as "My Store"), so the till has not registered it with the cloud. Follow the **Shop name** link in the message, save the shop's name, then press Register now again.
 - **Registration failed** or **Could not get a claim code**: the till could not reach the cloud. Check the internet connection and try again.
 
 ## Pair with a shop (and re-pairing)
