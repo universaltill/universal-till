@@ -25,6 +25,9 @@
      request's own Hx-Target header right back to decide which fragment to
      re-render, so this partial and that dispatch can never drift apart. */}}
 {{ define "modifier_group_admin" }}
+{{/* ut-docs#3605: detach/attach travel to the main till on an additional
+     till (catalogsync.Routes) — disabled while it can't be reached. */}}
+<fieldset data-main-till-lock{{ if .SyncUnreachable }} disabled{{ end }}>
 <div class="catalog-detail-modifiers">
   <div class="muted catalog-detail-label">{{ T "catalog.modifiers.title" }}</div>
   {{/* ut-docs#2330, independent-review finding: catalog.modifiers.summary_none
@@ -91,6 +94,7 @@
   </form>
   {{ end }}
 </div>
+</fieldset>
 {{ end }}
 
 {{/* Wraps a single item's modifier_group_admin in the item editor

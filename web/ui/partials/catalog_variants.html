@@ -16,6 +16,13 @@
   {{ if not .ItemID }}
   <p class="muted" style="margin:0">{{ T "catalog.variants.pick_hint" }}</p>
   {{ else }}
+  {{/* ut-docs#3605: every form in this panel saves the item (most travel
+       to the main till, catalogsync.Routes), so the whole panel sits in
+       one fieldset[data-main-till-lock]: disabled while this additional
+       till can't reach its main till. .SyncUnreachable comes from the
+       panel's own handler; base.html's chip follower applies the live
+       state to a freshly swapped-in panel (htmx:load). */}}
+  <fieldset data-main-till-lock{{ if .SyncUnreachable }} disabled{{ end }}>
   <div class="catalog-detail-grid">
 
     <aside class="catalog-detail-info">
@@ -297,6 +304,7 @@
     <p class="muted catalog-routing-help">{{ T "catalog.routing.override_help" }}</p>
   </div>
   {{ end }}
+  </fieldset>
 
   <script>
     (function () {

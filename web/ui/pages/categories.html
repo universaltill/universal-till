@@ -138,6 +138,8 @@
      "createTitleKey" "categories.create"
      "editTitleKey"   "categories.edit"
      "createAction"   "/api/categories"
+     "mainTillLock"   true
+     "mainTillLocked" .SyncUnreachable
      "root"           .) }}
 
 <script>
@@ -425,6 +427,13 @@
      (HX-Redirect short-circuits to a real navigation, see
      record_dialog.html's own comment). */}}
 {{ define "record_dialog_fields" }}
+{{/* ut-docs#3605: on an additional till a category save travels to the
+     main till (catalogsync.Routes); while it can't be reached the form
+     (and Save / deactivate, record_dialog.html and the slot below) is
+     disabled, with the note saying why. Followed live by base.html's
+     chip handler. */}}
+{{ if .root.SyncPrimary }}<p class="set-lock-note" data-main-till-away role="status"{{ if not .root.SyncUnreachable }} hidden{{ end }}>{{ T "sync.banner_replica_main_till_unreachable" }}</p>{{ end }}
+<fieldset data-main-till-lock{{ if .root.SyncUnreachable }} disabled{{ end }}>
 <form id="category-form" method="post" action="/api/categories" autocomplete="off"
       enctype="multipart/form-data" hx-encoding="multipart/form-data"
       hx-boost="true" hx-target="#category-dialog-msg" hx-swap="innerHTML">
@@ -583,6 +592,7 @@
     {{ end }}
   </div>
 </form>
+</fieldset>
 {{ end }}
 
 {{/* Deactivate, never erase (#1956's settled semantics): the trash icon
@@ -604,6 +614,7 @@
      preventDefault()" guard, correct for the plain non-htmx form #2010
      shipped, could no longer stop it once these forms became boosted. */}}
 {{ define "record_dialog_destructive" }}
+<fieldset data-main-till-lock{{ if .root.SyncUnreachable }} disabled{{ end }}>
 <form method="post" data-record-destructive-form data-record-when="active=1"
       hx-confirm="{{ T "categories.deactivate_confirm" }}"
       hx-boost="true" hx-target="#category-dialog-msg" hx-swap="innerHTML">
@@ -618,4 +629,5 @@
   <input type="hidden" name="active" value="1" />
   <button type="submit" class="btn secondary">{{ T "categories.activate" }}</button>
 </form>
+</fieldset>
 {{ end }}

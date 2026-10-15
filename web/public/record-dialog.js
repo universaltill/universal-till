@@ -78,7 +78,21 @@
   var openers = typeof WeakMap === 'function' ? new WeakMap() : null;
   function serialize(form) {
     // What the server would receive, as one comparable string.
-    return new URLSearchParams(new FormData(form)).toString();
+    // ut-docs#3605: base.html's chip follower disables a catalogue form's
+    // fieldset[data-main-till-lock] live while the main till is away, and
+    // disabled controls drop out of FormData — so a lock flip between
+    // open and close read as an unsaved edit. Read the form as if those
+    // fieldsets were enabled (re-disabled synchronously, before any paint).
+    var locked = Array.prototype.filter.call(
+      document.querySelectorAll('fieldset[data-main-till-lock]'),
+      function (fs) { return fs.disabled && (fs.contains(form) || form.contains(fs)); }
+    );
+    locked.forEach(function (fs) { fs.disabled = false; });
+    try {
+      return new URLSearchParams(new FormData(form)).toString();
+    } finally {
+      locked.forEach(function (fs) { fs.disabled = true; });
+    }
   }
 
   function formOf(dialog) {

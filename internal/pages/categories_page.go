@@ -396,6 +396,11 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			"AICutout": aiCutoutOffered(r, d),
 			"errKey":   errKey,
 			"errCount": errCount,
+			// ut-docs#3605: an additional till renders the dialog's
+			// write-through controls disabled while its main till can't
+			// be reached (and the note saying why).
+			"SyncPrimary":     d.SyncPrimaryURL(ctx),
+			"SyncUnreachable": d.MainTillUnreachable != nil && d.MainTillUnreachable(ctx),
 		}
 		// ut-docs#1950: /categories is one of the /items rail's five section
 		// destinations — an htmx request from that panel (NOT a stale history

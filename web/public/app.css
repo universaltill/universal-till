@@ -5551,7 +5551,14 @@ body.login-screen {
 /* display: contents: a fieldset is its own block formatting context, so
    the margins around it stopped collapsing and some cards grew 6-11px on a
    main till (#2981 Tester); disabled still reaches its controls. */
-.set-lock { display: contents; border: 0; margin: 0; padding: 0; min-inline-size: 0; }
+/* ut-docs#3605: the catalogue's write-through controls sit in a
+   fieldset[data-main-till-lock] — same invisible frame, disabled (server
+   render + base.html's chip follower) while the main till is away. */
+.set-lock, fieldset[data-main-till-lock] { display: contents; border: 0; margin: 0; padding: 0; min-inline-size: 0; }
+/* A disabled text field looks like an enabled one in most themes (#3605
+   Tester): dim it like .btn:disabled so "can't type here" shows without
+   reading the note. */
+fieldset[data-main-till-lock]:disabled :is(input, textarea, select) { opacity: .55; cursor: not-allowed; }
 .set-lock-note { margin-block: .4rem; padding-block: .4rem; padding-inline: .6rem;
                  background: var(--warning-tint); color: var(--text);
                  border: 1px solid var(--warning-tint-border); border-radius: 6px; }
