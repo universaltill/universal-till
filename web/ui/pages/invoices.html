@@ -1,7 +1,10 @@
 {{ define "content" }}
-<div class="page-head">
+<!-- ut-docs#4402: page-head-wrap + a wrapping action row, as invoice.html
+     (ut-docs#4393) — at a 360px phone the title and Export CSV / ← Journal
+     were forced onto one line and the h1 was squeezed into a narrow column. -->
+<div class="page-head page-head-wrap">
   <h1>🧾 {{ T "invoice.list_title" }}</h1>
-  <div style="display:flex; gap:.4rem; align-items:center">
+  <div style="display:flex; flex-wrap:wrap; gap:.4rem; align-items:center">
     <a class="btn" hx-boost="false" href="/api/invoices/export?from={{ .From }}&to={{ .To }}" download>{{ T "invoice.export_btn" }}</a>
     <a class="btn secondary" href="/journal"><span class="back-arrow" aria-hidden="true">←</span> {{ T "journal.title" }}</a>
   </div>
