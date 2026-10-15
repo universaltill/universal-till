@@ -217,6 +217,21 @@ func (r *TillsRepo) MarkTLSPinned(ctx context.Context, id string) error {
 	return nil
 }
 
+// AllTillsTLSPinned reports whether this main till has at least one enrolled
+// till and every one of them has a till_tls_pinned row — the condition under
+// which plain-HTTP peer sync closes entirely (ADR-0114 §7, ut-docs#4411).
+// Zero tills is false: nothing yet shows the fleet speaks TLS.
+func (r *TillsRepo) AllTillsTLSPinned(ctx context.Context) (bool, error) {
+	var total, unpinned int
+	err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*), COALESCE(SUM(CASE WHEN p.till_id IS NULL THEN 1 ELSE 0 END), 0)
+FROM tills t LEFT JOIN till_tls_pinned p ON p.till_id = t.id`).Scan(&total, &unpinned)
+	if err != nil {
+		return false, fmt.Errorf("all tills tls pinned: %w", err)
+	}
+	return total > 0 && unpinned == 0, nil
+}
+
 // TouchLastSeen refreshes a till's last_seen_at without a bearer lookup —
 // the main-till link (ADR-0114) calls it for a linked till's frames, so
 // table-claim TTLs keep treating a linked till as alive. last_seen_at is a
