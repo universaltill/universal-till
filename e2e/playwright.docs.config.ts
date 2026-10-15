@@ -48,14 +48,22 @@ export default defineConfig({
       // panel's timestamps. Read by internal/clock.Now; set ONLY here (NOT in
       // the shared run-till.sh, which the real e2e suite also boots and which
       // must keep the live clock). Passed on top of the inherited env.
-      env: { UT_DOCS_SHOTS_NOW: DOCS_SHOTS_NOW },
+      // ut-docs#4280: the host's free space must never reach a screenshot
+      // (no "Storage almost full" chip). Read by internal/diskspace.Probe;
+      // set ONLY here, not in run-till*.sh, so the real e2e suite keeps the
+      // live probe.
+      env: { UT_DOCS_SHOTS_NOW: DOCS_SHOTS_NOW, UT_DOCS_SHOTS_DISK_ROOMY: '1' },
     },
     {
       command: 'bash ./run-till-auth.sh',
       url: 'http://127.0.0.1:8092/healthz',
       timeout: 120_000,
       reuseExistingServer: false,
-      env: { UT_DOCS_SHOTS_NOW: DOCS_SHOTS_NOW },
+      // ut-docs#4280: the host's free space must never reach a screenshot
+      // (no "Storage almost full" chip). Read by internal/diskspace.Probe;
+      // set ONLY here, not in run-till*.sh, so the real e2e suite keeps the
+      // live probe.
+      env: { UT_DOCS_SHOTS_NOW: DOCS_SHOTS_NOW, UT_DOCS_SHOTS_DISK_ROOMY: '1' },
     },
   ],
   projects: [
