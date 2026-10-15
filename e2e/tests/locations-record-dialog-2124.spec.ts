@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, clickThenReload } from './helpers';
 
 // ut-docs#2124: /locations adopts the ut-docs#2010 list/edit dialog
 // standard, mirroring categories-record-dialog-2010.spec.ts's proof for
@@ -18,17 +18,9 @@ import { watchConsole } from './helpers';
 const DIALOG = '#location-dialog';
 const NAME = '#location-form input[name="name"]';
 
-// Every successful mutation here answers HX-Redirect (locations_page.go),
-// i.e. a REAL browser navigation back to /locations. The page is already
-// at /locations, so `page.waitForURL(/\/locations$/)` resolves at once
-// against the OLD document and guards nothing — the next row click can then
-// land in the NEW document before record-dialog.js has bound its document
-// click listener, and is silently dropped (ut-docs#4421, the same race as
-// categories-record-dialog-2010.spec.ts's ut-docs#2345). Await the new
-// document's `load` instead, registered BEFORE the click that triggers it.
-async function clickThenReload(page: Page, click: () => Promise<void>) {
-  await Promise.all([page.waitForEvent('load'), click()]);
-}
+// Every successful mutation here answers HX-Redirect back to /locations (a
+// real navigation): await the new document's `load` via clickThenReload, not
+// waitForURL (ut-docs#4421, ut-docs#4427; see helpers.ts).
 
 async function createLocation(page: Page, name: string) {
   await page.locator('#locations-new').click();

@@ -679,3 +679,17 @@ export async function recordAlertAfterRequest(page: Page, pathFragment: string) 
     return page.evaluate(() => (window as any).__alertAfter.hidden);
   };
 }
+
+// Click something whose server reply is `HX-Redirect` back to the SAME URL the
+// page is already at (every SUCCESSFUL record-dialog mutation), and wait for
+// the fresh document. `page.waitForURL(<same url>)` resolves at once against
+// the OLD document, so the next click can land in the new document before the
+// deferred web/public/record-dialog.js has bound its click listener and is
+// silently dropped (ut-docs#2345, ut-docs#4427). The `load` listener is
+// registered BEFORE the click so the event cannot be missed. Only for clicks
+// that really navigate: a refused (4xx) mutation or a dismissed confirm never
+// fires `load`, so this would wait out the whole test timeout instead of
+// failing fast — assert those directly.
+export async function clickThenReload(page: Page, click: () => Promise<void>) {
+  await Promise.all([page.waitForEvent('load'), click()]);
+}

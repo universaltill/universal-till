@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, setOskMode } from './helpers';
+import { watchConsole, setOskMode, clickThenReload } from './helpers';
 
 // ut-docs#2187: /country-settings adopts the ut-docs#2010 list/edit dialog
 // standard, mirroring locations-record-dialog-2124.spec.ts's shape (the
@@ -68,10 +68,7 @@ test.describe('country settings list + record dialog (ut-docs#2187)', () => {
     const code = newCode();
     await page.locator(CODE).fill(code);
     await page.locator(CURRENCY).fill('GBP');
-    await Promise.all([
-      page.waitForURL(/\/country-settings\?all=1$/),
-      page.locator(`${DIALOG} .record-dialog-save`).click(),
-    ]);
+    await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
     await expect(row(page, code)).toHaveCount(1);
     await expect(row(page, code)).toContainText('GBP');
     // A freshly-created country is never builtin, so its badge shows.
@@ -92,10 +89,7 @@ test.describe('country settings list + record dialog (ut-docs#2187)', () => {
     const code = newCode();
     await page.locator(CODE).fill(code);
     await page.locator(CURRENCY).fill('EUR');
-    await Promise.all([
-      page.waitForURL(/\/country-settings\?all=1$/),
-      page.locator(`${DIALOG} .record-dialog-save`).click(),
-    ]);
+    await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
 
     // Tap the row (not just the pencil button) to open edit mode, prefilled
     // from the row's data-field-* attributes.
@@ -125,10 +119,7 @@ test.describe('country settings list + record dialog (ut-docs#2187)', () => {
 
     await page.locator(CURRENCY).fill('USD');
     await page.locator(TAX).fill('12.5');
-    await Promise.all([
-      page.waitForURL(/\/country-settings\?all=1$/),
-      page.locator(`${DIALOG} .record-dialog-save`).click(),
-    ]);
+    await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
     await expect(row(page, code)).toContainText('USD');
     // formatBPAsPercent only trims a trailing ".00" — a genuinely fractional
     // rate keeps both decimal places.
@@ -203,10 +194,7 @@ test.describe('country settings list + record dialog (ut-docs#2187)', () => {
 
     // Edit its tax rate first, so the restore is genuinely observable.
     await page.locator(TAX).fill('1');
-    await Promise.all([
-      page.waitForURL(/\/country-settings\?all=1$/),
-      page.locator(`${DIALOG} .record-dialog-save`).click(),
-    ]);
+    await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
     await expect(row(page, 'GB')).toContainText('1%');
 
     await row(page, 'GB').click();
@@ -214,10 +202,7 @@ test.describe('country settings list + record dialog (ut-docs#2187)', () => {
     // hx-confirm pops a real browser confirm() — accept it explicitly (same
     // pattern as locations-record-dialog-2124.spec.ts's own deactivate case).
     page.once('dialog', (d) => d.accept());
-    await Promise.all([
-      page.waitForURL(/\/country-settings\?all=1$/),
-      page.locator(`${DIALOG} form[data-record-when="is_builtin=1"] button[type="submit"]`).click(),
-    ]);
+    await clickThenReload(page, () => page.locator(`${DIALOG} form[data-record-when="is_builtin=1"] button[type="submit"]`).click());
     // Restored to its shipped default (20%), not removed — GB is still
     // listed, and still builtin.
     await expect(row(page, 'GB')).toHaveCount(1);

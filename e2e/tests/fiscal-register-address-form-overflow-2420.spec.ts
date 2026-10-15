@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, clickThenReload } from './helpers';
 
 // ut-docs#2420: found while writing e2e coverage for ut-docs#2186's
 // record_dialog work (ut-docs#2403) -- real, reproduced, unrelated to that
@@ -28,10 +28,7 @@ async function createRegister(page: Page, name: string, locationLabel?: string):
   if (locationLabel) {
     await page.locator('#register-form select[name="location_id"]').selectOption({ label: locationLabel });
   }
-  await Promise.all([
-    page.waitForURL(/\/registers$/),
-    dlg.locator('.record-dialog-save').click(),
-  ]);
+  await clickThenReload(page, () => dlg.locator('.record-dialog-save').click());
   await page.waitForLoadState('networkidle');
 }
 
@@ -41,10 +38,7 @@ async function createLocation(page: Page, name: string): Promise<void> {
   const dlg = page.locator('#location-dialog');
   await expect(dlg).toBeVisible();
   await page.locator('#location-form input[name="name"]').fill(name);
-  await Promise.all([
-    page.waitForURL(/\/locations$/),
-    dlg.locator('.record-dialog-save').click(),
-  ]);
+  await clickThenReload(page, () => dlg.locator('.record-dialog-save').click());
   await page.waitForLoadState('networkidle');
 }
 
@@ -60,10 +54,7 @@ async function createFiscalEntry(page: Page, registerLabel: string, easSerial: s
   await page.locator(`${FORM} input[name="tse_certification_id"]`).fill('CERT-' + easSerial);
   await page.locator(`${FORM} input[name="tse_type"]`).fill('Cloud-TSE');
   await page.locator(`${FORM} input[name="acquired_on"]`).fill('2020-01-01');
-  await Promise.all([
-    page.waitForURL(/\/fiscal-register$/),
-    page.locator(`${DIALOG} .record-dialog-save`).click(),
-  ]);
+  await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
   await page.waitForLoadState('networkidle');
 }
 

@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, clickThenReload } from './helpers';
 
 // ut-docs#2185: /registers adopts the ut-docs#2010 list/edit dialog
 // standard, mirroring locations-record-dialog-2124.spec.ts's proof for
@@ -18,10 +18,7 @@ async function createRegister(page: Page, name: string) {
   await page.locator('#registers-new').click();
   await expect(page.locator(DIALOG)).toBeVisible();
   await page.locator(NAME).fill(name);
-  await Promise.all([
-    page.waitForURL(/\/registers$/),
-    page.locator(`${DIALOG} .record-dialog-save`).click(),
-  ]);
+  await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
   await expect(page.locator('#registers-table .register-row', { hasText: name })).toHaveCount(1);
 }
 
@@ -54,10 +51,7 @@ test.describe('registers list + record dialog (ut-docs#2185)', () => {
       const val = await options[0].getAttribute('value');
       await page.locator(LOCATION).selectOption(val!);
     }
-    await Promise.all([
-      page.waitForURL(/\/registers$/),
-      page.locator(`${DIALOG} .record-dialog-save`).click(),
-    ]);
+    await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
     await expect(row(page, name)).toHaveCount(1);
     assertClean();
   });
@@ -87,10 +81,7 @@ test.describe('registers list + record dialog (ut-docs#2185)', () => {
     expect(options.length).toBeGreaterThan(0);
     const val = await options[0].getAttribute('value');
     await page.locator(LOCATION).selectOption(val!);
-    await Promise.all([
-      page.waitForURL(/\/registers$/),
-      page.locator(`${DIALOG} .record-dialog-save`).click(),
-    ]);
+    await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
     // Reopen: the location just picked is still selected — proves the
     // row's data-field-location_id prefill round-trips through a real
     // save, not just the name field.
@@ -102,20 +93,14 @@ test.describe('registers list + record dialog (ut-docs#2185)', () => {
     // auto-dismisses an unhandled one, which would silently no-op the
     // click, so accept it explicitly).
     page.once('dialog', (d) => d.accept());
-    await Promise.all([
-      page.waitForURL(/\/registers$/),
-      page.locator(`${DIALOG} form[data-record-when="active=1"] button[type="submit"]`).click(),
-    ]);
+    await clickThenReload(page, () => page.locator(`${DIALOG} form[data-record-when="active=1"] button[type="submit"]`).click());
     await expect(row(page, renamed)).toContainText(/inactive/i);
 
     // Activate reverses it, from the same dialog — no confirm on this path.
     await row(page, renamed).click();
     await expect(dlg).toBeVisible();
     await expect(page.locator(`${DIALOG} form[data-record-when="active=0"] button[type="submit"]`)).toBeVisible();
-    await Promise.all([
-      page.waitForURL(/\/registers$/),
-      page.locator(`${DIALOG} form[data-record-when="active=0"] button[type="submit"]`).click(),
-    ]);
+    await clickThenReload(page, () => page.locator(`${DIALOG} form[data-record-when="active=0"] button[type="submit"]`).click());
     await expect(row(page, renamed)).toContainText(/\bactive\b/);
     await expect(row(page, renamed)).not.toContainText('inactive');
     assertClean();

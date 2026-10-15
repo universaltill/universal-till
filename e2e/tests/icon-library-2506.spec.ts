@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, clickThenReload } from './helpers';
 
 // ut-docs#2506 (first cut): the built-in icon library grew from 5 tiles to
 // ~70 in sections, so both pickers gained a search box
@@ -101,7 +101,7 @@ test.describe('built-in icon library (ut-docs#2506)', () => {
     await page.locator(NAME).fill(name);
     await page.locator(SEARCH).fill('beer');
     await page.locator(`${ICONS} [data-icon="beer"]`).click();
-    await Promise.all([page.waitForEvent('load'), page.locator(`${DIALOG} .record-dialog-save`).click()]);
+    await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
     await page.locator('#categories-table .category-row', { hasText: name }).first().click();
     await expect(page.locator(DIALOG)).toBeVisible();
     await expect(page.locator(`${ICONS} [data-icon="beer"]`)).toHaveAttribute('aria-pressed', 'true');
