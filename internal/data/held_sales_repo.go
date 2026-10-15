@@ -448,6 +448,30 @@ ON CONFLICT(id) DO UPDATE SET
 	return nil
 }
 
+// SwapPayload replaces held sale id's payload with newPayload only if the
+// row still exists AND still carries exactly oldPayload — a
+// compare-and-swap in one statement (ut-docs#4337). The guest_order
+// directive path parks its order with lines unsent and prints the kitchen
+// ticket asynchronously; once the print is confirmed it marks the lines
+// sent through this, so a cashier who resumed (deleted) or re-parked
+// (changed) the order meanwhile is never overwritten. swapped=false with a
+// nil error means the row moved on; nothing was written. updated_at moves
+// on a swap, like every other local write of the row.
+func (r *HeldSalesRepo) SwapPayload(ctx context.Context, id, oldPayload, newPayload string) (swapped bool, err error) {
+	done := heldSalesObs.trace("swap_payload")
+	defer func() { done(err) }()
+	res, err := r.db.ExecContext(ctx, `
+UPDATE held_sales SET payload = ?, updated_at = datetime('now') WHERE id = ? AND payload = ?`, newPayload, id, oldPayload)
+	if err != nil {
+		return false, heldSalesObs.wrapf("swap_payload", "swap held sale %s payload", err, id)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, heldSalesObs.wrapf("swap_payload", "swap held sale %s payload: rows affected", err, id)
+	}
+	return n == 1, nil
+}
+
 func (r *HeldSalesRepo) Delete(ctx context.Context, id string) error {
 	var err error
 	done := heldSalesObs.trace("delete")

@@ -54,7 +54,7 @@ func newHoldTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	// ut-docs#820: POST /api/pos/held/table validates the target table is
 	// free via POSRepo.IsTableFree, which queries `tables` and `held_sales`
 	// directly -- needed even by tests that never assign a table.
-	if _, err := db.Exec(`CREATE TABLE tables (id TEXT PRIMARY KEY, label TEXT NOT NULL, area_zone TEXT NOT NULL DEFAULT '', seat_count INTEGER NOT NULL DEFAULT 0, shape TEXT NOT NULL DEFAULT 'rect', pos_x INTEGER NOT NULL DEFAULT 0, pos_y INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE tables (id TEXT PRIMARY KEY, label TEXT NOT NULL, area_zone TEXT NOT NULL DEFAULT '', seat_count INTEGER NOT NULL DEFAULT 0, shape TEXT NOT NULL DEFAULT 'rect', pos_x INTEGER NOT NULL DEFAULT 0, pos_y INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, guest_token TEXT);`); err != nil {
 		t.Fatalf("create tables: %v", err)
 	}
 	// ut-docs#1390: hold releases the live basket's table claim and resume
@@ -75,7 +75,7 @@ func newHoldTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	// ut-docs#2703 (reopened): Open orders' "Pay at the counter" tab also
 	// lists legacy open counter orders -- column-identical to migrations
 	// 026 + 029.
-	if _, err := db.Exec(`CREATE TABLE kiosk_counter_orders (id TEXT PRIMARY KEY, display_no TEXT NOT NULL, order_type TEXT NOT NULL DEFAULT '', lines_json TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, collected_at TEXT, table_id TEXT REFERENCES tables(id));`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE kiosk_counter_orders (id TEXT PRIMARY KEY, display_no TEXT NOT NULL, order_type TEXT NOT NULL DEFAULT '', lines_json TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, collected_at TEXT, table_id TEXT REFERENCES tables(id), guest_order_id TEXT);`); err != nil {
 		t.Fatalf("create kiosk_counter_orders: %v", err)
 	}
 

@@ -174,6 +174,11 @@ type KioskCounterOrder struct {
 	TableID    string
 	TableLabel string
 	Lines      []KioskCounterOrderLine
+	// GuestOrderID (ut-docs#4337, ADR-0159 §5, migration 077) is the cloud
+	// GuestOrder id of an order placed from the cloud guest page through a
+	// guest_order directive; "" for every LAN/kiosk order. Unique where
+	// set, so a re-delivered directive cannot create a second order.
+	GuestOrderID string
 }
 
 type KioskCounterOrdersRepo struct {
@@ -266,9 +271,9 @@ FROM kiosk_counter_orders WHERE display_no LIKE ? || '%'`,
 	displayNo := seqPrefix + strconv.FormatInt(next, 10)
 
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO kiosk_counter_orders (id, display_no, order_type, lines_json, status, created_at, table_id)
-VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, displayNo, order.OrderType, string(linesJSON), status, now, nullIfEmpty(order.TableID)); err != nil {
+INSERT INTO kiosk_counter_orders (id, display_no, order_type, lines_json, status, created_at, table_id, guest_order_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, displayNo, order.OrderType, string(linesJSON), status, now, nullIfEmpty(order.TableID), nullIfEmpty(strings.TrimSpace(order.GuestOrderID))); err != nil {
 		return KioskCounterOrder{}, fmt.Errorf("insert counter order: %w", err)
 	}
 	cutoff := nowT.Add(-counterOrderHeldRetention).Format(time.RFC3339)
@@ -384,6 +389,30 @@ WHERE k.id = ?`, id).Scan(&o.ID, &o.DisplayNo, &o.OrderType, &linesJSON, &o.Stat
 			return KioskCounterOrder{}, false, fmt.Errorf("unmarshal counter order lines: %w", err)
 		}
 	}
+	return o, true, nil
+}
+
+// FindByGuestOrderID returns the counter order a guest_order directive
+// created for guestOrderID (ut-docs#4337), any status. found=false for an
+// empty or unknown id — an empty id never matches a LAN order's NULL.
+func (r *KioskCounterOrdersRepo) FindByGuestOrderID(ctx context.Context, guestOrderID string) (KioskCounterOrder, bool, error) {
+	guestOrderID = strings.TrimSpace(guestOrderID)
+	if guestOrderID == "" {
+		return KioskCounterOrder{}, false, nil
+	}
+	var id string
+	err := r.db.QueryRowContext(ctx, `SELECT id FROM kiosk_counter_orders WHERE guest_order_id = ?`, guestOrderID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return KioskCounterOrder{}, false, nil
+	}
+	if err != nil {
+		return KioskCounterOrder{}, false, fmt.Errorf("find counter order by guest order id: %w", err)
+	}
+	o, ok, err := r.Get(ctx, id)
+	if err != nil || !ok {
+		return KioskCounterOrder{}, ok, err
+	}
+	o.GuestOrderID = guestOrderID
 	return o, true, nil
 }
 

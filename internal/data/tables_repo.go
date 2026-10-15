@@ -19,7 +19,9 @@ package data
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -128,10 +130,15 @@ func (r *POSRepo) CreateTable(ctx context.Context, label, areaZone string, seatC
 	}
 	id := uuid.NewString()
 	now := time.Now().UTC().Format(time.RFC3339)
+	// ADR-0159 §1 (ut-docs#4337): every new table gets its guest token now.
+	token, err := NewTableGuestToken()
+	if err != nil {
+		return "", fmt.Errorf("create table: %w", err)
+	}
 	if _, err := r.db.ExecContext(ctx, `
-INSERT INTO tables (id, label, area_zone, seat_count, shape, pos_x, pos_y, enabled, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-		id, label, areaZone, seatCount, shape, clampToCanvas(posX), clampToCanvas(posY), now, now); err != nil {
+INSERT INTO tables (id, label, area_zone, seat_count, shape, pos_x, pos_y, enabled, created_at, updated_at, guest_token)
+VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+		id, label, areaZone, seatCount, shape, clampToCanvas(posX), clampToCanvas(posY), now, now, token); err != nil {
 		return "", fmt.Errorf("create table: %w", err)
 	}
 	return id, nil
@@ -735,4 +742,103 @@ ORDER BY t.area_zone, t.label`)
 		return nil, fmt.Errorf("iterate table states: %w", err)
 	}
 	return out, nil
+}
+
+// NewTableGuestToken mints a table's guest token (ADR-0159 §1,
+// ut-docs#4337): 16 bytes of crypto/rand as lowercase hex, the same shape
+// as the order-tracking token. It is the only credential on the guest
+// side, so it must be unguessable; the table id never leaves the till.
+func NewTableGuestToken() (string, error) {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("table guest token: %w", err)
+	}
+	return hex.EncodeToString(raw), nil
+}
+
+// GuestTable is one entry of the device report's guest_tables
+// (ADR-0159 §1): an enabled table's guest token and label.
+type GuestTable struct {
+	Token string
+	Label string
+}
+
+// GuestTables returns up to limit ENABLED tables with their guest tokens,
+// ordered like ListTables (area, then label). An enabled table with no
+// token yet (one created before migration 076) is given one first, through
+// a guarded write (`AND guest_token IS NULL`) so a concurrent mint never
+// replaces a token already issued; the token is then read back.
+func (r *POSRepo) GuestTables(ctx context.Context, limit int) ([]GuestTable, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	missing, err := r.db.QueryContext(ctx, `SELECT id FROM tables WHERE enabled = 1 AND guest_token IS NULL`)
+	if err != nil {
+		return nil, fmt.Errorf("guest tables: list untokened: %w", err)
+	}
+	var ids []string
+	for missing.Next() {
+		var id string
+		if err := missing.Scan(&id); err != nil {
+			missing.Close()
+			return nil, fmt.Errorf("guest tables: scan untokened: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := missing.Err(); err != nil {
+		missing.Close()
+		return nil, fmt.Errorf("guest tables: iterate untokened: %w", err)
+	}
+	missing.Close()
+	for _, id := range ids {
+		token, err := NewTableGuestToken()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := r.db.ExecContext(ctx, `UPDATE tables SET guest_token = ? WHERE id = ? AND guest_token IS NULL`, token, id); err != nil {
+			return nil, fmt.Errorf("guest tables: mint token: %w", err)
+		}
+	}
+	rows, err := r.db.QueryContext(ctx, `
+SELECT guest_token, label FROM tables
+WHERE enabled = 1 AND guest_token IS NOT NULL
+ORDER BY area_zone, label, id LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("guest tables: %w", err)
+	}
+	defer rows.Close()
+	var out []GuestTable
+	for rows.Next() {
+		var g GuestTable
+		if err := rows.Scan(&g.Token, &g.Label); err != nil {
+			return nil, fmt.Errorf("guest tables: scan: %w", err)
+		}
+		out = append(out, g)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("guest tables: iterate: %w", err)
+	}
+	return out, nil
+}
+
+// TableByGuestToken looks a table up by its guest token, enabled or not
+// (Table.Enabled says which; a guest_order for a disabled table is
+// refused by the caller). found=false for an empty or unknown token.
+func (r *POSRepo) TableByGuestToken(ctx context.Context, token string) (Table, bool, error) {
+	if token == "" {
+		return Table{}, false, nil
+	}
+	var t Table
+	var enabled int
+	err := r.db.QueryRowContext(ctx, `
+SELECT id, label, area_zone, seat_count, shape, pos_x, pos_y, enabled, created_at, updated_at
+FROM tables WHERE guest_token = ?`, token).Scan(&t.ID, &t.Label, &t.AreaZone, &t.SeatCount, &t.Shape, &t.PosX, &t.PosY, &enabled, &t.CreatedAt, &t.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return Table{}, false, nil
+	}
+	if err != nil {
+		return Table{}, false, fmt.Errorf("table by guest token: %w", err)
+	}
+	t.Enabled = enabled == 1
+	return t, true, nil
 }

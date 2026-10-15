@@ -61,6 +61,10 @@ var mainTillOnlyTypes = map[string]bool{
 	// Register stock location from my. (ut-docs#3642): registers are
 	// primary-wins synced too.
 	"set_register_location": true,
+	// Guest orders from the cloud table page (ADR-0159 §5, ut-docs#4337):
+	// the order is parked on the main till, where the shop's tables and
+	// held orders live.
+	"guest_order": true,
 }
 
 // catalogTypes are the directive types that change what the catalog
