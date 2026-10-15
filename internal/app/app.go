@@ -442,6 +442,14 @@ func Run(ctx context.Context) error {
 
 	mux, deps := pagesInit(ctx, bgCtx, cfg, pluginManager, database.DB, catalogRepo, &wg)
 
+	// Re-proof on an unknown certificate (ADR-0114 §7, ut-docs#4410): a
+	// pinned request that meets another certificate at the main till's
+	// address asks the watch to prove it, with no bearer, before failing.
+	// Removed before the database closes, like the peer source above.
+	if deps != nil && deps.PrimaryWatch != nil {
+		defer lantls.SetPeerReproof(deps.PrimaryWatch.Reproof)()
+	}
+
 	if err := supervisor.AutoStartPlugins(ctx); err != nil {
 		log.Warnf("plugin auto-start failed: %v", err)
 	}
