@@ -1116,3 +1116,32 @@ func TestSessionBasketManager_BindTable_RefusalSaysWhy(t *testing.T) {
 		t.Fatalf("owner's own resume at the cap: refusal = %v, want BindOK", refusal)
 	}
 }
+
+// ut-docs#4337 (ADR-0159 §5): a guest_order directive builds its basket
+// from the session factory but never registers it as a live session — it
+// is not reachable by any cookie, never swept, never counted.
+func TestSessionBasketManager_NewDetachedUsesFactoryWithoutRegistering(t *testing.T) {
+	built := 0
+	m := NewSessionBasketManager(func() *Service {
+		built++
+		return NewServiceWithResolver(Config{TaxRateBasisPoints: 700}, nil)
+	})
+	svc, ok := m.NewDetached()
+	if !ok || svc == nil || built != 1 {
+		t.Fatalf("NewDetached = %v %v (factory calls %d)", svc, ok, built)
+	}
+	if svc.Config().TaxRateBasisPoints != 700 {
+		t.Fatalf("detached basket not built by the factory: %+v", svc.Config())
+	}
+	if m.Len() != 0 {
+		t.Fatalf("a detached basket was registered as a live session (Len %d)", m.Len())
+	}
+	other, _ := m.NewDetached()
+	if other == svc {
+		t.Fatal("NewDetached handed out the same Service twice")
+	}
+	var nilM *SessionBasketManager
+	if s, ok := nilM.NewDetached(); ok || s != nil {
+		t.Fatal("nil manager must report no basket")
+	}
+}

@@ -129,6 +129,20 @@ func NewSessionBasketManager(factory func() *Service) *SessionBasketManager {
 	}
 }
 
+// NewDetached builds one basket with the session factory WITHOUT
+// registering it (ut-docs#4337, ADR-0159 §5): the guest_order directive
+// prices a cloud guest order on a fresh *Service built exactly like a
+// table-QR session's — same resolver, askers and current kiosk Config —
+// that no cookie can reach and no sweep or cap counts. ok=false on a nil
+// manager (a bare-Deps test harness) or a nil factory.
+func (m *SessionBasketManager) NewDetached() (*Service, bool) {
+	if m == nil || m.factory == nil {
+		return nil, false
+	}
+	svc := m.factory()
+	return svc, svc != nil
+}
+
 // newSessionToken mints the opaque session id: 16 bytes of crypto/rand as
 // lowercase hex, the identical shape internal/data's NewOrderTrackingToken
 // established for this codebase's other anonymous-customer-facing token

@@ -315,6 +315,17 @@ type Hooks struct {
 	// returns the refusal reason (not_self_order, kiosk_appliance,
 	// not_supported, no_shell) as its error.
 	KioskUnlock func(ctx context.Context, directiveID, createdBy string) (string, error)
+	// GuestOrder handles "guest_order" (ut-docs#4337, ADR-0159 §5): an
+	// order a guest placed on the cloud table page. Main-till only; apply
+	// has decoded and bounded the payload (decodeGuestOrder), which is
+	// still untrusted — the hook (pages.cloudGuestOrder) re-resolves the
+	// table token, every item, variant and option against the till's own
+	// database, prices the order from the till's catalogue on a fresh
+	// basket engine (never the cashier's or the kiosk's) and parks it as a
+	// pay-at-counter held order. A refusal is returned as
+	// GuestOrderOutcome.Refusal (nothing written); a non-nil error is an
+	// internal failure and leaves the directive pending for the next tick.
+	GuestOrder func(ctx context.Context, o GuestOrder) (GuestOrderOutcome, error)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can
 	// render a real design picker instead of a raw key/value form). Keys must
@@ -533,6 +544,12 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		return b, err
 	}
 	catalogApplied := false
+	// guest_order (ADR-0159 §5): at most maxGuestOrdersPerTick per tick —
+	// each one may take a few DB writes and a fiscal start — and the ids
+	// this tick already answered, so the retry pass below doesn't post the
+	// same result twice in one tick.
+	guestOrders := 0
+	guestAnswered := map[string]bool{}
 	for _, d := range dirs {
 		if !isMainTill && mainTillOnlyTypes[d.Type] {
 			// Contract §3: a satellite till leaves these pending for the
@@ -560,6 +577,19 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 			}
 			continue
 		}
+		if d.Type == "guest_order" {
+			if guestOrders >= maxGuestOrdersPerTick {
+				// Left pending with no result post: the cloud delivers it
+				// again on the next check-in.
+				continue
+			}
+			guestOrders++
+			if id, _ := d.Payload["guest_order_id"].(string); id != "" {
+				guestAnswered[strings.TrimSpace(id)] = true
+			}
+			handleGuestOrder(ctx, cfg, db, d, hooks)
+			continue
+		}
 		fetchDeferred = false
 		status, msg := apply(ctx, d, hooks)
 		if fetchDeferred && status == "failed" {
@@ -569,13 +599,19 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		if status == "applied" && catalogTypes[d.Type] {
 			catalogApplied = true
 		}
-		if err := postResult(ctx, cfg, d.ID, status, msg); err != nil {
+		if err := postResult(ctx, cfg, d.ID, status, msg, nil); err != nil {
 			// Leave it pending on the cloud; the next tick re-applies (the
 			// hooks are idempotent for the supported types) and re-reports.
 			logging.L().Warnf("cloudsync: result for %s not delivered: %v", d.ID, err)
 		} else {
 			logging.L().Infof("cloudsync: directive %s (%s) %s: %s", d.ID, d.Type, status, msg)
 		}
+	}
+	// A guest_order result the cloud did not acknowledge on an earlier tick
+	// is re-posted until it answers 200 or 404 (ADR-0159 §4). Only the main
+	// till applies guest orders, so only it holds such results.
+	if isMainTill {
+		retryGuestOrderResults(ctx, cfg, db, guestAnswered)
 	}
 	// Fresh data in the same tick (contract §3.6): a catalog change the
 	// cloud just made is reported back now, not a tick later. The hash gate
@@ -811,6 +847,14 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 		// (deviceTargetSkipReason). The id and created_by the till audits
 		// come from the directive itself (ADR-0142 D3).
 		msg, err = hooks.KioskUnlock(ctx, d.ID, d.CreatedBy)
+	case "guest_order":
+		// Tick takes guest_order through handleGuestOrder (stored result,
+		// retry); this case serves apply's other callers the same outcome.
+		r := applyGuestOrder(ctx, d, hooks)
+		if r.deferred {
+			return "failed", "guest_order could not be applied now"
+		}
+		return r.status, r.msg
 	case "upsert_category":
 		if hooks.UpsertCategory == nil {
 			return "failed", "upsert_category is not supported on this till"
@@ -1295,6 +1339,9 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 	// source of truth, whatever it's labelled for the cloud UI).
 	if isReplica {
 		delete(device, LANAddressKey)
+		// ADR-0159 §1 (ut-docs#4337): same rule for the guest tables —
+		// absent on a replica's report, so the cloud keeps the main till's.
+		delete(device, GuestTablesKey)
 	}
 	// A LOCAL diagnostic-mode stop (ADR-0092 §1, ut-docs#2169) is reported
 	// best-effort here — on the device record of the very next heartbeat,
@@ -1817,15 +1864,22 @@ func pushOrderTrackingIfChanged(ctx context.Context, cfg *config.Config, db *sql
 	return settings.Set(ctx, "cloudsync.order_tracking_hash", hash)
 }
 
-// postResult reports one directive outcome.
-func postResult(ctx context.Context, cfg *config.Config, directiveID, status, msg string) error {
+// postResult reports one directive outcome. resultData is the result's
+// optional data object — only guest_order sends one (ADR-0159 §5:
+// {display_no, total_minor, currency}); nil leaves the field off the wire,
+// so every other type's result body is unchanged.
+func postResult(ctx context.Context, cfg *config.Config, directiveID, status, msg string, resultData map[string]any) error {
 	eff := enroll.Effective(cfg)
-	payload, _ := json.Marshal(map[string]string{
+	body := map[string]any{
 		"store_id":     eff.Marketplace.StoreID,
 		"directive_id": directiveID,
 		"status":       status,
 		"message":      msg,
-	})
+	}
+	if resultData != nil {
+		body["data"] = resultData
+	}
+	payload, _ := json.Marshal(body)
 	_, err := post(ctx, cfg, "/v1/stores/directives/result", payload)
 	return err
 }

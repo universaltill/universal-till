@@ -1255,6 +1255,12 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		KioskUnlock: func(ctx context.Context, directiveID, createdBy string) (string, error) {
 			return cloudKioskUnlock(ctx, d, directiveID, createdBy)
 		},
+		// guest_order (ut-docs#4337, ADR-0159 §5): park a cloud guest
+		// page's order as a pay-at-counter held order for its table, priced
+		// by this till. Main-till only. See cloudGuestOrder.
+		GuestOrder: func(ctx context.Context, o cloudsync.GuestOrder) (cloudsync.GuestOrderOutcome, error) {
+			return cloudGuestOrder(ctx, d, o)
+		},
 		InstallPlugin: func(ctx context.Context, listingID string) (string, error) {
 			return cloudInstallPlugin(ctx, d, listingID)
 		},
@@ -1512,6 +1518,12 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				// mainTillLANAddress.
 				if addr, ok := mainTillLANAddress(d); ok {
 					extra[cloudsync.LANAddressKey] = addr
+				}
+				// ADR-0159 §1 (ut-docs#4337): the enabled tables a guest can
+				// order from by phone, by guest token. See
+				// remoteGuestTablesReport.
+				if tables, ok := remoteGuestTablesReport(ctx, d); ok {
+					extra[cloudsync.GuestTablesKey] = tables
 				}
 				// ADR-0128 §5 (ut-docs#3323): roles and permission actions,
 				// for my.'s role editor — only when the admin generation

@@ -81,6 +81,7 @@ var notSettingsKeyConsts = map[string]string{
 	"ui.designerErrorServerKey": "an i18n message key",
 	"pos.ServiceChargeKey":      "a sale charge-line key",
 	"cloudsync.LANAddressKey":   "a cloud device-report field, not a setting (ut-docs#2774)",
+	"cloudsync.GuestTablesKey":  "a cloud device-report field, not a setting (ut-docs#4337)",
 }
 
 // settingsKeyShape is what a settings key (or a key-family prefix built by
