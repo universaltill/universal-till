@@ -154,3 +154,133 @@ func TestCleanupObsoleteItems_KeepsGiftVoucherItemWhileVouchersAreOpen(t *testin
 		}
 	}
 }
+
+// ut-docs#4399: an import that brings its own gift voucher item retires the
+// one setup seeded, but only while nothing has used it.
+
+func seedMarkedGiftVoucherItem(t *testing.T, repo *data.CatalogRepo) string {
+	t.Helper()
+	ctx := context.Background()
+	if created, err := repo.SeedDefaultGiftVoucherItem(ctx, "Gutschein"); err != nil || !created {
+		t.Fatalf("seed: created=%v err=%v", created, err)
+	}
+	id, ok, err := repo.SeededGiftVoucherItemID(ctx)
+	if err != nil || !ok || id == "" {
+		t.Fatalf("marker after seed: id=%q ok=%v err=%v", id, ok, err)
+	}
+	return id
+}
+
+func TestSeedDefaultGiftVoucherItem_RecordsTheSeededItem(t *testing.T) {
+	d, _, _ := resetTestDB(t, "seed-gift-voucher-marker.db")
+	repo := data.NewCatalogRepo(d.DB)
+	id := seedMarkedGiftVoucherItem(t, repo)
+	var itemType string
+	if err := d.DB.QueryRow(`SELECT item_type FROM items WHERE id = ?`, id).Scan(&itemType); err != nil || itemType != catalogtypes.ItemTypeGiftVoucher {
+		t.Fatalf("marker %q points at item_type=%q (%v)", id, itemType, err)
+	}
+}
+
+func TestRetireSeededGiftVoucherItem_RemovesAnUnusedSeededItem(t *testing.T) {
+	d, x, _ := resetTestDB(t, "retire-seeded-voucher.db")
+	ctx := context.Background()
+	id := seedMarkedGiftVoucherItem(t, data.NewCatalogRepo(d.DB))
+	seedGiftVoucherItem(x, "imported-gv", 1)
+
+	res, err := data.NewPOSRepo(d.DB).RetireSeededGiftVoucherItem(ctx)
+	if err != nil || !res.Removed || res.Name != "Gutschein" || res.ID != id {
+		t.Fatalf("retire = %+v, %v; want removed Gutschein", res, err)
+	}
+	if itemExists(t, d.DB, id) {
+		t.Fatal("seeded item still exists")
+	}
+	if !itemExists(t, d.DB, "imported-gv") {
+		t.Fatal("the imported voucher item was removed")
+	}
+	if _, ok, _ := data.NewCatalogRepo(d.DB).SeededGiftVoucherItemID(ctx); ok {
+		t.Fatal("marker not cleared after removal")
+	}
+}
+
+func TestRetireSeededGiftVoucherItem_KeepsItWithNoOtherVoucherItem(t *testing.T) {
+	d, x, _ := resetTestDB(t, "retire-seeded-voucher-alone.db")
+	ctx := context.Background()
+	id := seedMarkedGiftVoucherItem(t, data.NewCatalogRepo(d.DB))
+	// An inactive voucher item is no replacement the sale screen can use.
+	seedGiftVoucherItem(x, "inactive-gv", 0)
+
+	res, err := data.NewPOSRepo(d.DB).RetireSeededGiftVoucherItem(ctx)
+	if err != nil || res.Removed {
+		t.Fatalf("retire = %+v, %v; want nothing removed", res, err)
+	}
+	if !itemExists(t, d.DB, id) {
+		t.Fatal("the shop's only usable voucher item was removed")
+	}
+	if _, ok, _ := data.NewCatalogRepo(d.DB).SeededGiftVoucherItemID(ctx); !ok {
+		t.Fatal("marker cleared although nothing was decided")
+	}
+}
+
+func TestRetireSeededGiftVoucherItem_KeepsAUsedSeededItemAndForgetsIt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		use  func(x func(string, ...any), id string)
+	}{
+		{"open vouchers", func(x func(string, ...any), _ string) { seedVoucher(x, "1000000000017", "active", 2500) }},
+		// Edited by the shop (review finding, ut-docs#4399): its own now.
+		{"renamed", func(x func(string, ...any), id string) {
+			x(`UPDATE items SET name = 'Gift card 25' WHERE id = ?`, id)
+		}},
+		{"priced", func(x func(string, ...any), id string) {
+			x(`UPDATE items SET base_price = 2500 WHERE id = ?`, id)
+		}},
+		{"quick button", func(x func(string, ...any), id string) {
+			x(`INSERT INTO shortcut_buttons (barcode, label, item_id) VALUES ('sb-1', 'Gutschein', ?)`, id)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, x, _ := resetTestDB(t, "retire-seeded-voucher-used.db")
+			ctx := context.Background()
+			id := seedMarkedGiftVoucherItem(t, data.NewCatalogRepo(d.DB))
+			seedGiftVoucherItem(x, "imported-gv", 1)
+			tc.use(x, id)
+
+			res, err := data.NewPOSRepo(d.DB).RetireSeededGiftVoucherItem(ctx)
+			if err != nil || res.Removed {
+				t.Fatalf("retire = %+v, %v; want kept", res, err)
+			}
+			if !itemExists(t, d.DB, id) {
+				t.Fatal("a seeded item in use was removed")
+			}
+			// Decided: the shop uses it, so no later import may remove it.
+			if _, ok, _ := data.NewCatalogRepo(d.DB).SeededGiftVoucherItemID(ctx); ok {
+				t.Fatal("marker kept for an item the shop uses")
+			}
+		})
+	}
+}
+
+func TestRetireSeededGiftVoucherItem_NoMarkerOrGoneIsANoOp(t *testing.T) {
+	d, x, _ := resetTestDB(t, "retire-seeded-voucher-nomarker.db")
+	ctx := context.Background()
+	pos := data.NewPOSRepo(d.DB)
+	// A shop with no marker (set up before ut-docs#4399, or its voucher
+	// item came from an import) never loses a voucher item here.
+	seedGiftVoucherItem(x, "old-gv", 1)
+	seedGiftVoucherItem(x, "imported-gv", 1)
+	if res, err := pos.RetireSeededGiftVoucherItem(ctx); err != nil || res.Removed {
+		t.Fatalf("no marker: %+v, %v", res, err)
+	}
+	if !itemExists(t, d.DB, "old-gv") || !itemExists(t, d.DB, "imported-gv") {
+		t.Fatal("an unmarked voucher item was removed")
+	}
+
+	// The marked item was deleted by hand meanwhile: forget the marker.
+	x(`INSERT INTO settings (key, value) VALUES (?, 'gone-gv')`, data.SeededGiftVoucherItemKey)
+	if res, err := pos.RetireSeededGiftVoucherItem(ctx); err != nil || res.Removed {
+		t.Fatalf("marker to a missing item: %+v, %v", res, err)
+	}
+	if _, ok, _ := data.NewCatalogRepo(d.DB).SeededGiftVoucherItemID(ctx); ok {
+		t.Fatal("marker to a missing item not cleared")
+	}
+}

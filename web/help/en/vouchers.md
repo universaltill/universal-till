@@ -14,7 +14,7 @@ A gift voucher is money a customer pays now to spend later — on anything in th
 
 ## Selling a voucher
 
-Selling needs an item whose **Type** is *Gift voucher* in the catalogue (see [Catalog](/help/catalog)). A new shop already has one, ready to sell: it is named in the shop's language when that language is installed during setup, otherwise *Gift voucher* (rename it in the catalogue if you like). On a till that was set up before this, create one once. Leave its price empty to be asked for the value every time, or give it a price (e.g. *Gift voucher €25*) to start the popup with that value.
+Selling needs an item whose **Type** is *Gift voucher* in the catalogue (see [Catalog](/help/catalog)). A new shop already has one, ready to sell: it is named in the shop's language when that language is installed during setup, otherwise *Gift voucher* (rename it in the catalogue if you like). If a catalogue import then brings its own gift voucher item, the one created at setup is removed, as long as nothing has used it yet, and the import summary says so. On a till that was set up before this, create one once. Leave its price empty to be asked for the value every time, or give it a price (e.g. *Gift voucher €25*) to start the popup with that value.
 
 1. Tap the gift voucher item on the sale screen (or scan its barcode). The **Gift voucher** popup opens.
 2. **Card number**: scan the card you're handing over — the field is ready for your scanner as soon as the popup opens — or type its number. Leave it empty and the till creates a number when you tap **Add**.

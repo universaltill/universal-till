@@ -945,6 +945,7 @@
   "import.status.name_already_in_catalog": "name already in catalog",
   "import.status.not_sellable": "not a sellable item (order-type toggle)",
   "import.status.ok": "ok",
+  "import.status.seeded_gift_voucher_removed": "The gift voucher item “%s” created at setup was removed, because this import brought its own.",
   "import.status.sku_already_in_catalog": "SKU already in catalog",
   "import.status.sku_reused_in_file": "item number \"%s\" reused in this file — imported under a new number",
   "import.status.source_deleted": "removed in source file",

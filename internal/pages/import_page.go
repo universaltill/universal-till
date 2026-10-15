@@ -976,6 +976,10 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		overridesSet := 0
 		overridesFailed := false
 		overridesPluginDisabled := false
+		// ut-docs#4399: gift voucher rows this commit created, and the
+		// setup-seeded voucher item it retired because of them.
+		giftVouchersCreated := 0
+		seededVoucherRemoved, seededVoucherRemovedID := "", ""
 		if commit {
 			// Opening stock from the source file lands as a "receive"
 			// movement at the location THIS till's register is assigned
@@ -1444,6 +1448,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					rows[i].Status = createdStatus
 				}
 				created++
+				if it.ItemType == catalogtypes.ItemTypeGiftVoucher {
+					giftVouchersCreated++
+				}
 			}
 			// Populate ut-plugin-tax-de's takeaway_rate_overrides once, after
 			// the loop, so the merchant never hand-writes that JSON
@@ -1481,9 +1488,14 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				// #512's original design — a shop with no German tax plugin
 				// genuinely has nothing to configure.
 			}
+			if giftVouchersCreated > 0 {
+				seededVoucherRemovedID, seededVoucherRemoved = retireSeededGiftVoucherItem(r.Context(), d)
+			}
 			_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "catalog", "-", "import",
 				map[string]any{"format": res.Format, "created": created, "warned": warned, "failed": failed, "rows": len(rows),
 					"tax_codes_created": taxCodesCreated, "takeaway_overrides_set": overridesSet,
+					"seeded_gift_voucher_item_removed":   seededVoucherRemoved != "",
+					"seeded_gift_voucher_item_id":        seededVoucherRemovedID,
 					"takeaway_overrides_plugin_disabled": overridesPluginDisabled,
 					// ut-docs#970: record what currency these rows were
 					// actually priced under, alongside whether this request
@@ -1553,6 +1565,11 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					T("import.status.tax_overrides_plugin_disabled"))
 			}
 			b.WriteString(`</p>`)
+			if seededVoucherRemoved != "" {
+				// Both halves escaped; the key carries exactly one %s.
+				fmt.Fprintf(&b, `<p data-seeded-voucher-removed="1">%s</p>`,
+					fmt.Sprintf(htmlEscape(T("import.status.seeded_gift_voucher_removed")), htmlEscape(seededVoucherRemoved)))
+			}
 			// ut-docs#2112: from inside the /items shell's Import dialog, a
 			// plain navigation to bare /catalog is exactly the railless
 			// standalone destination #2090 moved every other in-shell exit
@@ -2354,4 +2371,38 @@ func respondImportCurrencySaveError(w http.ResponseWriter, r *http.Request, T fu
 	}
 	log.Printf("[import] save currency confirmation: %v", err)
 	http.Error(w, T("import.error.invalid_file"), http.StatusInternalServerError)
+}
+
+// retireSeededGiftVoucherItem (ut-docs#4399) removes the gift voucher item
+// setup seeded once an import has created the shop's own, and returns its
+// id and name, or "" when nothing was removed. The repository deletes it only if
+// nothing has used it; the live cashier and kiosk baskets are memory-only,
+// so they are checked here first, as for the delete_item directive. An
+// item in a live basket is kept for now and retried by the next import.
+// Best-effort: the imported rows are committed, so a failure is logged and
+// the shop keeps both items.
+func retireSeededGiftVoucherItem(ctx context.Context, d *common.Deps) (id, name string) {
+	seededID, ok, err := data.NewCatalogRepo(d.Db).SeededGiftVoucherItemID(ctx)
+	if err != nil {
+		log.Printf("[import] seeded gift voucher item: %v", err)
+		return "", ""
+	}
+	if !ok {
+		return "", ""
+	}
+	if inBasket, err := itemInLiveBasket(ctx, d, seededID); err != nil || inBasket {
+		if err != nil {
+			log.Printf("[import] seeded gift voucher item: basket check: %v", err)
+		}
+		return "", ""
+	}
+	res, err := data.NewPOSRepo(d.Db).RetireSeededGiftVoucherItem(ctx)
+	if err != nil {
+		log.Printf("[import] seeded gift voucher item: %v", err)
+		return "", ""
+	}
+	if !res.Removed {
+		return "", ""
+	}
+	return res.ID, res.Name
 }
