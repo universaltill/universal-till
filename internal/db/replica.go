@@ -111,6 +111,9 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 		// Always written, empty too: a till re-joining a main till must
 		// not keep trusting the previous main till's pin.
 		"sync.primary_cert_pin": id.PrimaryCertPin,
+		// A next pin (key rotation, ut-docs#4409) belongs to the pin it
+		// was announced under: never carried across a pairing.
+		"sync.primary_cert_next_pin": "",
 	} {
 		if err := set(k, v); err != nil {
 			return false, fmt.Errorf("apply identity %s: %w", k, err)

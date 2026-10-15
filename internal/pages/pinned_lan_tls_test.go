@@ -51,11 +51,7 @@ func pinnedReplica(t *testing.T, m *tlsSyncMain, pin string) (*common.Deps, stri
 	if err := r.Settings.Set(t.Context(), discovery.PrimaryCertPinSettingKey, pin); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(lantls.SetPeerSource(func(ctx context.Context) (string, string, error) {
-		primary, _, _ := r.Settings.Get(ctx, "sync.primary_url")
-		p, _, _ := r.Settings.Get(ctx, discovery.PrimaryCertPinSettingKey)
-		return primary, p, nil
-	}))
+	pinSource(t, r)
 	return r, tillID
 }
 

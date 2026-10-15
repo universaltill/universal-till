@@ -635,13 +635,13 @@ func TestPrimaryWatch_ReproofSkipsWhenThePinAlreadyChanged(t *testing.T) {
 func TestPeerTransport_ReproofReadoptsARestoredMainTill(t *testing.T) {
 	p := newTLSFakePrimary(t, testPrimaryID, testBearerHash())
 	f := reproofFixture(t, p.base, strings.Repeat("0", 64))
-	t.Cleanup(lantls.SetPeerSource(func(ctx context.Context) (string, string, error) {
+	t.Cleanup(lantls.SetPeerSource(func(ctx context.Context) (lantls.PeerTarget, error) {
 		u, _, err := f.settings.Get(ctx, "sync.primary_url")
 		if err != nil {
-			return "", "", err
+			return lantls.PeerTarget{}, err
 		}
 		pin, _, err := f.settings.Get(ctx, PrimaryCertPinSettingKey)
-		return u, pin, err
+		return lantls.PeerTarget{PrimaryURL: u, Pin: pin}, err
 	}))
 	t.Cleanup(lantls.SetPeerReproof(f.w.Reproof))
 
@@ -725,5 +725,64 @@ func TestPrimaryWatch_ReproofWithTheHeldPinIsNoRefusal(t *testing.T) {
 		if strings.Contains(e.Msg, "did not prove") {
 			t.Fatalf("warned on a successful proof: %+v", e)
 		}
+	}
+}
+
+// Key rotation (ut-docs#4409): a held next pin belongs to the pin it was
+// announced under. Whenever another path sets a different primary pin — a
+// re-proof, a re-discovery — the next pin is cleared with it.
+func TestPrimaryWatch_ReproofClearsTheNextPin(t *testing.T) {
+	p := newTLSFakePrimary(t, testPrimaryID, testBearerHash())
+	old := strings.Repeat("0", 64)
+	f := reproofFixture(t, p.base, old)
+	if err := f.settings.Set(context.Background(), PrimaryCertNextPinSettingKey, strings.Repeat("1", 64)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := f.w.Reproof(context.Background(), p.base, old); err != nil {
+		t.Fatalf("Reproof: %v", err)
+	}
+	if got := f.get(t, PrimaryCertPinSettingKey); got != p.cert.Pin() {
+		t.Fatalf("pin = %q; want %q", got, p.cert.Pin())
+	}
+	if got := f.get(t, PrimaryCertNextPinSettingKey); got != "" {
+		t.Fatalf("next pin = %q after a re-proof; want it cleared", got)
+	}
+}
+
+func TestPrimaryWatch_RediscoveredNewPinClearsTheNextPin(t *testing.T) {
+	p := newTLSFakePrimary(t, testPrimaryID, testBearerHash())
+	f := newWatchFixture(t, Candidate{TillID: testPrimaryID, BaseURL: p.base})
+	ctx := context.Background()
+	_ = f.settings.Set(ctx, PrimaryCertPinSettingKey, strings.Repeat("0", 64))
+	_ = f.settings.Set(ctx, PrimaryCertNextPinSettingKey, strings.Repeat("1", 64))
+	for range UnreachableThreshold {
+		f.w.ContactFailed(ctx)
+	}
+	if got := f.get(t, PrimaryCertPinSettingKey); got != p.cert.Pin() {
+		t.Fatalf("pin = %q; want %q", got, p.cert.Pin())
+	}
+	if got := f.get(t, PrimaryCertNextPinSettingKey); got != "" {
+		t.Fatalf("next pin = %q after re-discovery adopted a new pin; want it cleared", got)
+	}
+}
+
+// Re-finding the main till under the pin already held keeps a pending
+// rotation's next pin.
+func TestPrimaryWatch_RediscoveredSamePinKeepsTheNextPin(t *testing.T) {
+	p := newTLSFakePrimary(t, testPrimaryID, testBearerHash())
+	f := newWatchFixture(t, Candidate{TillID: testPrimaryID, BaseURL: p.base})
+	ctx := context.Background()
+	next := strings.Repeat("1", 64)
+	_ = f.settings.Set(ctx, PrimaryCertPinSettingKey, p.cert.Pin())
+	_ = f.settings.Set(ctx, PrimaryCertNextPinSettingKey, next)
+	for range UnreachableThreshold {
+		f.w.ContactFailed(ctx)
+	}
+	if got := f.get(t, "sync.primary_url"); got != p.base {
+		t.Fatalf("primary_url = %q; want %q", got, p.base)
+	}
+	if got := f.get(t, PrimaryCertNextPinSettingKey); got != next {
+		t.Fatalf("next pin = %q; want %q kept", got, next)
 	}
 }

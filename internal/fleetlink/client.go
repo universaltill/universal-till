@@ -57,7 +57,11 @@ type ClientOptions struct {
 	// Callbacks, all on the client's own goroutine (never the link's
 	// reader), so they may touch the database. They must not block for
 	// long: the link's housekeeping waits on them.
-	OnHello func(ctx context.Context, main Hello)     // the main till's hello: the link is up
+	// OnHello: the main till's hello, the link is up. verifiedPin is the
+	// pin of the certificate verified on this link's own connection ("" =
+	// plain HTTP): unlike main.TLSPin, which the main till reports about
+	// itself, it is what this till actually checked (ut-docs#4409).
+	OnHello func(ctx context.Context, main Hello, verifiedPin string)
 	OnSync  func(ctx context.Context, scopes []Scope) // a coalesced sync nudge
 	// OnCloudCheckin: the main till relayed "check in with the cloud now"
 	// (ut-docs#2893). Single-flight: frames arriving while it runs make
@@ -603,7 +607,7 @@ func (c *Client) runLink(ctx context.Context, t Target, conn Conn) (end linkEnd,
 			c.clearWarned()
 			c.setLinked(true)
 			if c.opts.OnHello != nil {
-				c.opts.OnHello(ctx, h)
+				c.opts.OnHello(ctx, h, connVerifiedPin(conn))
 			}
 			sendReport(true)
 		case <-c.syncIn:

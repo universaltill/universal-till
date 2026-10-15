@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/universaltill/universal-till/internal/lantls"
 )
 
 func TestWithLANTLS_ServesTLSAndCreatesKey(t *testing.T) {
@@ -16,10 +18,15 @@ func TestWithLANTLS_ServesTLSAndCreatesKey(t *testing.T) {
 	}
 	dir := filepath.Join(t.TempDir(), "tls")
 	srv := &http.Server{}
+	t.Cleanup(lantls.SetServing(nil))
 	ln := withLANTLS(srv, inner, dir, false)
 	defer ln.Close()
 	if ln == inner {
 		t.Fatal("listener not wrapped: TLS not served")
+	}
+	// ut-docs#4409: the link's hello announces the served (and next) pin.
+	if lantls.Serving() == nil {
+		t.Fatal("lantls.Serving() = nil with TLS on")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "key.pem")); err != nil {
 		t.Fatalf("key not created under the tls dir: %v", err)
@@ -54,8 +61,16 @@ func TestWithLANTLS_BadKeyFallsBackToPlain(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := &http.Server{}
+	stale, err := lantls.LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(lantls.SetServing(stale)) // an earlier in-process run's cert
 	if ln := withLANTLS(srv, inner, dir, false); ln != inner {
 		t.Fatal("bad key: want the plain listener back unchanged")
+	}
+	if lantls.Serving() != nil {
+		t.Fatal("bad key: lantls.Serving() still set with TLS off")
 	}
 	if srv.ConnContext != nil {
 		t.Fatal("bad key: no TLS, so no served pin")

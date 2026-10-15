@@ -20,6 +20,31 @@ import (
 type wsConn struct {
 	c       *websocket.Conn
 	dialled bool // this side dialled (an additional till)
+	// pin is the pin verified on this connection's TLS handshake when this
+	// side dialled it ("" = plain HTTP).
+	pin string
+}
+
+// VerifiedPin is the pin of the certificate this connection's dialler
+// verified ("" over plain HTTP).
+func (w wsConn) VerifiedPin() string { return w.pin }
+
+// connVerifiedPin is conn's verified pin, "" for a Conn without one.
+func connVerifiedPin(conn Conn) string {
+	if v, ok := conn.(interface{ VerifiedPin() string }); ok {
+		return v.VerifiedPin()
+	}
+	return ""
+}
+
+// verifiedPinOf is the pin of the certificate the upgrade's TLS handshake
+// presented — only ever accepted by the pinned peer transport when it
+// matched a held pin — or "" over plain HTTP.
+func verifiedPinOf(resp *http.Response) string {
+	if resp == nil || resp.TLS == nil || len(resp.TLS.PeerCertificates) == 0 {
+		return ""
+	}
+	return lantls.PinOf(resp.TLS.PeerCertificates[0])
 }
 
 var errNonText = errors.New("fleetlink: non-text frame")
@@ -95,7 +120,7 @@ func dial(ctx context.Context, url, bearer string, readLimit int64) (Conn, error
 		return nil, err
 	}
 	c.SetReadLimit(readLimit)
-	return wsConn{c: c, dialled: true}, nil
+	return wsConn{c: c, dialled: true, pin: verifiedPinOf(resp)}, nil
 }
 
 // maxRefusalCode bounds DialError.Code: a code is a short identifier.

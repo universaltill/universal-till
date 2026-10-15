@@ -224,15 +224,22 @@ func Run(ctx context.Context) error {
 	// Pinned LAN TLS (ADR-0114 §7, ut-docs#4092): once this till holds its
 	// main till's pin, every replica → main till request goes over pinned
 	// TLS. Read at request time, so a re-pairing or re-discovery applies to
-	// the next request.
+	// the next request. During a key rotation the main till's announced
+	// next pin is trusted too (ut-docs#4409).
 	// Removed before the database closes.
-	defer lantls.SetPeerSource(func(ctx context.Context) (string, string, error) {
-		primary, _, err := settingsStore.Get(ctx, "sync.primary_url")
-		if err != nil {
-			return "", "", err
+	defer lantls.SetPeerSource(func(ctx context.Context) (lantls.PeerTarget, error) {
+		var t lantls.PeerTarget
+		var err error
+		if t.PrimaryURL, _, err = settingsStore.Get(ctx, "sync.primary_url"); err != nil {
+			return lantls.PeerTarget{}, err
 		}
-		pin, _, err := settingsStore.Get(ctx, discovery.PrimaryCertPinSettingKey)
-		return primary, pin, err
+		if t.Pin, _, err = settingsStore.Get(ctx, discovery.PrimaryCertPinSettingKey); err != nil {
+			return lantls.PeerTarget{}, err
+		}
+		if t.NextPin, _, err = settingsStore.Get(ctx, discovery.PrimaryCertNextPinSettingKey); err != nil {
+			return lantls.PeerTarget{}, err
+		}
+		return t, nil
 	})()
 
 	if err := bootstrapPluginDirectories(); err != nil {

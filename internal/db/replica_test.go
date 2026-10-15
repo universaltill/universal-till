@@ -516,3 +516,35 @@ func TestApplyReplicaIdentityWritesPrimaryCertPin(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#4409: a next pin announced by an earlier main till (a key
+// rotation in progress) must not survive a (re-)pairing: it is cleared
+// with every join, whatever pin the join learned.
+func TestApplyReplicaIdentityClearsPrimaryCertNextPin(t *testing.T) {
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init("") })
+
+	path := filepath.Join(t.TempDir(), "data", "unitill-pos.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+	if _, err := d.Exec(`INSERT INTO settings (key, value) VALUES ('sync.primary_cert_next_pin', 'ffff')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := StageReplicaIdentity(path, ReplicaIdentity{
+		PrimaryURL: "http://primary.local", TillID: "till-2", Bearer: "b",
+		ReceiptPrefix: "T2-", TillName: "Back lane", PrimaryCertPin: "ab12cd",
+	}); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if applied, err := ApplyReplicaIdentity(d.DB, path); err != nil || !applied {
+		t.Fatalf("apply: applied=%v err=%v", applied, err)
+	}
+	var v string
+	_ = d.QueryRow(`SELECT value FROM settings WHERE key = 'sync.primary_cert_next_pin'`).Scan(&v)
+	if v != "" {
+		t.Fatalf("sync.primary_cert_next_pin = %q after pairing, want it cleared", v)
+	}
+}

@@ -65,6 +65,15 @@ const PrimaryTillIDSettingKey = "sync.primary_till_id"
 // sync never overwrites it.
 const PrimaryCertPinSettingKey = "sync.primary_cert_pin"
 
+// PrimaryCertNextPinSettingKey holds the main till's announced next LAN TLS
+// pin during a key rotation (ADR-0114 §7, ut-docs#4409): learned from the
+// main till's hello over a link pinned by PrimaryCertPinSettingKey, trusted
+// alongside it, and promoted to it once the main till serves it. Per-till
+// ("sync." prefix). Cleared whenever the primary pin is set another way
+// (pairing, re-proof, re-discovery): it belongs to the pin it was announced
+// under.
+const PrimaryCertNextPinSettingKey = "sync.primary_cert_next_pin"
+
 // MainTillProblemKey tags the Problems entry (logging.WarnProblemf) of a
 // main-till outage — "main till unreachable" — so the first successful
 // contact afterwards resolves it and the cloud stops showing "Attention
@@ -283,11 +292,25 @@ func (w *PrimaryWatch) ContactOK(ctx context.Context) {
 }
 
 // storePin keeps the pin a valid proof covered. A proof over plain HTTP
-// covers none and never clears one already held.
+// covers none and never clears one already held. A different pin drops a
+// held next pin (ut-docs#4409) first, so a power cut in between leaves only
+// the old pin, never a stale next pin beside the new one.
 func (w *PrimaryWatch) storePin(ctx context.Context, pin string) {
-	if pin != "" {
-		_ = w.settings.Set(ctx, PrimaryCertPinSettingKey, pin)
+	if pin == "" || pin == w.get(ctx, PrimaryCertPinSettingKey) {
+		return
 	}
+	if err := w.clearNextPin(ctx); err != nil {
+		return
+	}
+	_ = w.settings.Set(ctx, PrimaryCertPinSettingKey, pin)
+}
+
+// clearNextPin drops a held next pin (ut-docs#4409).
+func (w *PrimaryWatch) clearNextPin(ctx context.Context) error {
+	if w.get(ctx, PrimaryCertNextPinSettingKey) == "" {
+		return nil
+	}
+	return w.settings.Set(ctx, PrimaryCertNextPinSettingKey, "")
 }
 
 var errReproofCooldown = errors.New("re-proof refused a moment ago — not trying again yet")
@@ -341,6 +364,9 @@ func (w *PrimaryWatch) Reproof(ctx context.Context, primaryURL, heldPin string) 
 	// A re-pairing or re-discovery may have moved on while the proof ran.
 	if w.get(pctx, "sync.primary_url") != cur || w.get(pctx, PrimaryCertPinSettingKey) != curPin {
 		return nil
+	}
+	if err := w.clearNextPin(pctx); err != nil {
+		return err
 	}
 	if err := w.settings.Set(pctx, PrimaryCertPinSettingKey, pin); err != nil {
 		return err
