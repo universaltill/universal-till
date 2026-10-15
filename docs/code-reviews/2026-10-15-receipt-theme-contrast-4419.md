@@ -71,6 +71,15 @@ HTML/TS-only diff: `guard-deadcode-baseline.sh` (deadcode binary built with
 an older Go) and `guard-shellcheck-version.sh` (no shellcheck installed);
 CI runs both.
 
+First CI run went red on `guard-docs-shots_test.sh`: `receipt.html` is on
+the manual's screenshot surface. The post-tender receipt is rendered only
+by `pos_api.go` after a tender, and no `docs-shots.spec.ts` shot takes a
+tender (its only "receipt" is the designer's own preview), so no shot's
+pixels change: refreshed `surface_sha256` with
+`update-docs-shots-surface-hash.sh` (`Docs-Shots-Unchanged: true`). Every
+`ci.yml` guard self-test then passed locally except the deadcode one
+(container's Go, as above).
+
 ## Verdict
 
 Safe to merge. No deferred items beyond the accepted low/nit above.
