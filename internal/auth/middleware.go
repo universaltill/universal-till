@@ -338,6 +338,11 @@ func exempt(path string) bool {
 		if id, ok := strings.CutSuffix(rest, "/release"); ok && id != "" && !strings.Contains(id, "/") {
 			return true
 		}
+		// ut-docs#4253: the manager balance correction a replica forwards to
+		// the main till — same bounded shape, bearer-authed in the handler.
+		if id, ok := strings.CutSuffix(rest, "/adjust"); ok && id != "" && !strings.Contains(id, "/") {
+			return true
+		}
 	}
 	return false
 }

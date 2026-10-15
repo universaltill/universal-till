@@ -4,7 +4,7 @@ title: Gutscheine
 section: Täglicher Verkauf
 order: 25
 summary: Verkaufen Sie Gutscheine über einen Gutschein-Artikel — Karte scannen oder die Kasse eine Nummer erzeugen lassen — und nehmen Sie sie als Zahlung an, per Scan im Verkaufsbildschirm oder im Reiter „Aufteilen“ des Zahlungsfeldes.
-keywords: [gutschein, geschenkgutschein, geschenkkarte, voucher, einzweck, bestimmter artikel, einlösen, guthaben, ausgeben, code, kartennummer, artikeltyp]
+keywords: [gutschein, geschenkgutschein, geschenkkarte, voucher, einzweck, bestimmter artikel, einlösen, guthaben, ausgeben, code, kartennummer, artikeltyp, korrigieren, Korrektur, Guthaben korrigieren]
 routes: [/vouchers, /vouchers/{id}]
 ---
 
@@ -77,7 +77,7 @@ Was schiefgehen kann:
 **Menü → Geschenkgutscheine** (nur Manager) listet jeden Gutschein, den diese Kasse kennt, den neuesten zuerst: Kartennummer, für wen er ist, ursprünglicher Wert, Restguthaben, Status — **Aktiv**, **Aufgebraucht** oder **Storniert** — und wofür er eingelöst werden kann (ein Gutschein für einen bestimmten Artikel ist markiert). **Verkauft in** verlinkt den Bon des Verkaufs, in dem er verkauft wurde; bei einem importierten Guthaben steht das stattdessen dort.
 
 1. Tippen Sie in das Feld **Suchen**, um einen Gutschein nach Kartennummer oder Inhaber zu finden — die Liste aktualisiert sich beim Tippen. Mit **Status** zeigen Sie nur aktive, aufgebrauchte oder stornierte Gutscheine.
-2. Tippen Sie auf eine Kartennummer, um den **Verlauf** des Gutscheins zu sehen: wann er ausgestellt und wann er jeweils eingelöst wurde, mit Betrag und einem Link zum Bon jedes Verkaufs.
+2. Tippen Sie auf eine Kartennummer, um den **Verlauf** des Gutscheins zu sehen: wann er ausgestellt wurde, wann er jeweils eingelöst wurde und jede Korrektur, mit Betrag und einem Link zum Bon jedes Verkaufs.
 3. **CSV exportieren** lädt jeden Gutschein herunter, der zur aktuellen Suche und zum Status passt — alle, nicht nur die auf dem Bildschirm — mit den Spalten `code`, `balance`, `label`, `original_amount`, `status`, `purpose` und `created_at`. Die Datei lässt sich an einer anderen Kasse mit **Gutschein-Guthaben importieren** unten auf derselben Seite einlesen (siehe [Gutschein-Guthaben importieren](/help/voucher-import)).
 
 Gut zu wissen:
@@ -86,6 +86,25 @@ Gut zu wissen:
 - Gibt es noch keine Gutscheine, sagt die Seite, wie Sie beginnen: einen mit einem Gutschein-Artikel verkaufen oder Guthaben aus Ihrem bisherigen System importieren.
 - An einer zusätzlichen Kasse zeigt die Liste nur die Gutscheine, die diese Kasse kennt — hier verkauft, importiert oder eingelöst. Die vollständige Liste ist an der Hauptkasse.
 
+## Ein Guthaben korrigieren
+
+Stimmt das Guthaben eines Gutscheins nicht — der Wert wurde beim Verkauf falsch eingetippt, oder eine beschädigte Karte wird ersetzt —, kann ein Manager auf der Seite des Gutscheins das richtige Guthaben eintragen. Dabei fließt kein Geld: Die Kasse erfasst die Korrektur, wer sie vorgenommen hat und warum.
+
+1. Öffnen Sie **Menü → Geschenkgutscheine** und tippen Sie auf die Kartennummer des Gutscheins.
+2. Prüfen Sie unter **Guthaben korrigieren** das **Aktuelle Guthaben** und tippen Sie dann das **Neue Guthaben** ein — den vollen Betrag, den der Gutschein ab jetzt haben soll, nicht die Differenz.
+3. Geben Sie einen **Grund** ein (Pflicht, bis zu 200 Zeichen), z. B. *Betrag beim Verkauf falsch eingetippt*.
+4. Tippen Sie auf **Korrektur speichern**. Die Seite lädt neu mit **Guthaben korrigiert.**, dem neuen Guthaben und einer Zeile **Korrektur** im **Verlauf**, die die Differenz (+ oder −), den Grund und den Namen zeigt.
+
+Eine Korrektur auf 0 markiert den Gutschein als **Aufgebraucht**; wird das Guthaben eines aufgebrauchten Gutscheins erhöht, ist er wieder **Aktiv**. Der ursprüngliche Wert des Gutscheins ändert sich nie. Der Tagesabschlussbericht (Z-Bericht) führt die Korrekturen des Tages in einer eigenen Zeile **Adjusted** im Abschnitt **GUTSCHEINE** — nie als Verkauf, Zahlung oder Umsatzsteuer.
+
+Was schiefgehen kann:
+
+- Nur ein Manager oder Administrator kann ein Guthaben korrigieren.
+- Ein stornierter Gutschein oder ein Gutschein für einen bestimmten Artikel lässt sich nicht korrigieren — die Seite sagt stattdessen, warum.
+- „Das neue Guthaben entspricht dem aktuellen Guthaben“ — es gibt nichts zu korrigieren.
+- „Das Guthaben dieses Gutscheins hat sich geändert, während Sie ihn angesehen haben“ — jemand hat ihn inzwischen eingelöst oder korrigiert. Laden Sie die Seite neu, prüfen Sie das neue Guthaben und korrigieren Sie erneut, falls nötig.
+- An einer zusätzlichen Kasse wird die Korrektur an der Hauptkasse vorgenommen. Ist die Hauptkasse nicht erreichbar, wird nichts geändert und die Seite sagt das — versuchen Sie es erneut, wenn sie wieder erreichbar ist. Meldet die Seite, dass die Hauptkasse die Korrektur nicht bestätigt hat, wurde sie vielleicht gespeichert, vielleicht auch nicht: Laden Sie die Seite neu und prüfen Sie den Verlauf des Gutscheins, bevor Sie es erneut versuchen.
+
 ## Tagesabschluss und andere Kassen
 
-Der Tagesabschlussbericht (Z-Bericht) hat einen eigenen Abschnitt **GUTSCHEINE** für die an diesem Tag verkauften und eingelösten Gutscheine, und das Stornieren eines Verkaufs, mit dem ein Gutschein verkauft wurde, storniert den Gutschein mit — allerdings nur, solange er unbenutzt ist; siehe [Berichte & Tagesabschluss](/help/reports). Ein an einer Kasse verkaufter Gutschein kann an jeder anderen Kasse im Laden eingelöst werden; wie das funktioniert, während eine Kasse offline ist, steht unter [Mehrere Kassen (ein Laden)](/help/multitill).
+Der Tagesabschlussbericht (Z-Bericht) hat einen eigenen Abschnitt **GUTSCHEINE** für die an diesem Tag verkauften, eingelösten und korrigierten Gutscheine, und das Stornieren eines Verkaufs, mit dem ein Gutschein verkauft wurde, storniert den Gutschein mit — allerdings nur, solange er unbenutzt ist; siehe [Berichte & Tagesabschluss](/help/reports). Ein an einer Kasse verkaufter Gutschein kann an jeder anderen Kasse im Laden eingelöst werden; wie das funktioniert, während eine Kasse offline ist, steht unter [Mehrere Kassen (ein Laden)](/help/multitill).

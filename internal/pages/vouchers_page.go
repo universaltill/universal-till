@@ -3,11 +3,18 @@ package pages
 import (
 	"encoding/csv"
 	"errors"
+	"fmt"
+	"html"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -21,8 +28,12 @@ import (
 // unchanged in import_vouchers_page.go).
 //
 // Read-only over vouchers/voucher_transactions (internal/data
-// voucher_repo.go's ListVouchers/VoucherTransactions). Gated on "settings",
-// the same action the import always used, server-side on every route.
+// voucher_repo.go's ListVouchers/VoucherTransactions) except for one write:
+// the manager balance correction, POST /vouchers/{id}/adjust (ut-docs#4253,
+// AdjustVoucherBalance — on an additional till made on the main till's
+// ledger first, voucher_sync_proxy.go adjustVoucherOnPrimary). Gated on
+// "settings", the same action the import always used, server-side on every
+// route.
 //
 // Offline-first: everything reads the local database. On an additional
 // till that local view is only the vouchers this till has seen (issued
@@ -179,13 +190,117 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 		for _, h := range hist {
 			views = append(views, voucherHistoryView{VoucherHistoryRow: h, SaleHref: journalHref(h.ReceiptNo)})
 		}
+		// The correction form (ut-docs#4253). Its expected balance is the
+		// one the correction will be checked against: on an additional till
+		// that is the main till's live balance when it answers (the
+		// correction is made on its ledger, and a lagging local mirror
+		// would otherwise refuse every correction as "balance changed").
+		possible := v.Status != "void" && v.Purpose == data.VoucherPurposeMulti
+		allowed := canPerform(d, r, "settings")
+		expected := v.BalanceMinor
+		if possible && allowed {
+			if pv, ok := fetchVoucherFromPrimary(r.Context(), d, voucherProxyClient, id); ok {
+				expected = pv.BalanceMinor
+			}
+		}
 		httpx.Render("ui/pages/voucher_detail.html", map[string]any{
 			"title":     httpx.T(httpx.RequestLocale(r), "vouchers.title"),
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
 			"voucher":   v,
 			"history":   views,
+			"adjust": map[string]any{
+				"allowed":  allowed,
+				"possible": possible,
+				"void":     v.Status == "void",
+				"id":       uuid.NewString(),
+				"expected": expected,
+				"done":     r.URL.Query().Get("adjusted") == "1",
+				"href":     "/vouchers/" + url.PathEscape(id) + "/adjust",
+			},
 		})(w, r)
+	})
+
+	// POST /vouchers/{id}/adjust — a manager balance correction with a
+	// reason (ut-docs#4253). No money moves; the correction is a signed
+	// 'adjustment' ledger row plus an audit row (data.AdjustVoucherBalance).
+	// Errors come back as an inline HTML fragment (non-2xx, text/html —
+	// app.js swaps it into the form's message slot), success as
+	// HX-Redirect / 303 back to the detail page.
+	mux.HandleFunc("POST /vouchers/{id}/adjust", func(w http.ResponseWriter, r *http.Request) {
+		// With auth on, an audited correction needs a named actor: a
+		// session whose user id is empty is refused like a missing
+		// permission (review MINOR-5). UT_AUTH=off (canPerform's escape
+		// hatch) has no sessions, so it is exempt.
+		if !canPerform(d, r, "settings") || (!auth.Disabled(os.Getenv("UT_AUTH")) && strings.TrimSpace(getSessionUserID(r)) == "") {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return
+		}
+		id := r.PathValue("id")
+		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		if err := r.ParseForm(); err != nil {
+			voucherAdjustMessage(w, r, http.StatusBadRequest, "vouchers.adjust.error.reload")
+			return
+		}
+		adjID := strings.TrimSpace(r.PostFormValue("adjustment_id"))
+		if _, err := uuid.Parse(adjID); err != nil {
+			voucherAdjustMessage(w, r, http.StatusBadRequest, "vouchers.adjust.error.reload")
+			return
+		}
+		expected, err := strconv.ParseInt(strings.TrimSpace(r.PostFormValue("expected_balance")), 10, 64)
+		if err != nil {
+			// The hidden field is the page's, not the manager's: an
+			// unparseable one means a stale or tampered form (review NIT-3).
+			voucherAdjustMessage(w, r, http.StatusBadRequest, "vouchers.adjust.error.reload")
+			return
+		}
+		newBal, err := httpx.ParseMoneyMajor(r.PostFormValue("new_balance"), httpx.ActiveCurrency().Decimals)
+		if err != nil {
+			voucherAdjustMessage(w, r, http.StatusBadRequest, "vouchers.adjust.error.amount")
+			return
+		}
+		in := data.VoucherAdjustment{
+			ID:                   adjID,
+			VoucherID:            id,
+			ExpectedBalanceMinor: expected,
+			NewBalanceMinor:      newBal,
+			Reason:               r.PostFormValue("reason"),
+			ActorUserID:          getSessionUserID(r),
+			Now:                  time.Now().UTC().Format(time.RFC3339),
+		}
+
+		// An additional till corrects on the main till's ledger first and
+		// refuses outright when it can't (never a local-only correction).
+		primaryAfter, isReplica, err := adjustVoucherOnPrimary(r.Context(), d, voucherProxyClient, in)
+		if err == nil {
+			if isReplica {
+				if mErr := mirrorVoucherAdjustmentLocally(r.Context(), d, repo, in, primaryAfter); mErr != nil {
+					// The main till's ledger has the correction, which is
+					// what counts; a failed local mirror is a Problem to
+					// look at (Warn lands on the Problems panel, same
+					// plumbing as releaseVoucherOnPrimary), not a reason to
+					// tell the manager it failed.
+					logging.L().Warnf("voucher correction %s (%s): applied on the main till, local mirror failed — this till shows a stale balance until it is next corrected or synced: %v", id, in.ID, mErr)
+				}
+			} else {
+				_, _, err = repo.AdjustVoucherBalance(r.Context(), nil, in)
+			}
+		}
+		if err != nil {
+			status, key := voucherAdjustErrorKey(err)
+			if status == http.StatusInternalServerError {
+				logging.L().Errorf("voucher correction %s: %v", id, err)
+			}
+			voucherAdjustMessage(w, r, status, key)
+			return
+		}
+		target := "/vouchers/" + url.PathEscape(id) + "?adjusted=1"
+		if r.Header.Get("HX-Request") == "true" {
+			w.Header().Set("HX-Redirect", target)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Redirect(w, r, target, http.StatusSeeOther)
 	})
 
 	mux.HandleFunc("GET /api/vouchers/export", func(w http.ResponseWriter, r *http.Request) {
@@ -229,4 +344,38 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 		_ = repo.InsertAudit(r.Context(), nil, getSessionUserID(r), "voucher", "-", "export",
 			map[string]any{"rows": len(rows), "q": f.Query, "status": f.Status}, time.Now().UTC().Format(time.RFC3339), "")
 	})
+}
+
+// voucherAdjustErrorKey maps a correction failure to its status and the
+// localized message shown inline on the detail page (ut-docs#4253).
+func voucherAdjustErrorKey(err error) (int, string) {
+	switch {
+	case errors.Is(err, errVoucherPrimaryUnreachable):
+		return http.StatusServiceUnavailable, "vouchers.adjust.error.primary_unreachable"
+	case errors.Is(err, errVoucherPrimaryUnknown):
+		return http.StatusBadGateway, "vouchers.adjust.error.primary_unknown"
+	case errors.Is(err, data.ErrVoucherNotFound):
+		return http.StatusNotFound, "vouchers.error.not_found"
+	case errors.Is(err, data.ErrVoucherAdjustmentInvalid):
+		return http.StatusBadRequest, "vouchers.adjust.error.amount"
+	case errors.Is(err, data.ErrVoucherAdjustmentReason):
+		return http.StatusBadRequest, "vouchers.adjust.error.reason"
+	case errors.Is(err, data.ErrVoucherAdjustmentNoChange):
+		return http.StatusConflict, "vouchers.adjust.error.no_change"
+	case errors.Is(err, data.ErrVoucherBalanceChanged):
+		return http.StatusConflict, "vouchers.adjust.error.changed"
+	case errors.Is(err, data.ErrVoucherNotActive):
+		return http.StatusConflict, "vouchers.adjust.not_void"
+	case errors.Is(err, data.ErrVoucherNotMultiPurpose):
+		return http.StatusConflict, "vouchers.adjust.not_single"
+	}
+	return http.StatusInternalServerError, "common.error.server"
+}
+
+// voucherAdjustMessage writes the inline (non-modal) message fragment the
+// correction form swaps into its message slot.
+func voucherAdjustMessage(w http.ResponseWriter, r *http.Request, status int, key string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	fmt.Fprintf(w, `<div class="notice-block-warn" role="alert"><p>%s</p></div>`, html.EscapeString(httpx.T(httpx.RequestLocale(r), key)))
 }

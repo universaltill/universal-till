@@ -520,7 +520,7 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	// method. Same footer-line precedent as BY DEPARTMENT / BY TILL above;
 	// "GUTSCHEINE" matches the Germany-pilot Z-report vocabulary the card
 	// specifies. Omitted entirely on a day with no voucher activity.
-	if rep.VouchersIssuedCount > 0 || rep.VouchersRedeemedCount > 0 || rep.VouchersImportedCount > 0 {
+	if rep.VouchersIssuedCount > 0 || rep.VouchersRedeemedCount > 0 || rep.VouchersImportedCount > 0 || rep.VouchersAdjustedCount > 0 {
 		doc.Footer = append(doc.Footer, "", "GUTSCHEINE")
 		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Issued (%d)", rep.VouchersIssuedCount), money(rep.VouchersIssued)))
 		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Redeemed (%d)", rep.VouchersRedeemedCount), money(rep.VouchersRedeemed)))
@@ -530,6 +530,17 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 		// permanent "Imported (0)" line to every single day's report.
 		if rep.VouchersImportedCount > 0 {
 			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Imported (%d)", rep.VouchersImportedCount), money(rep.VouchersImported)))
+		}
+		// Adjusted (ut-docs#4253): manager balance corrections — no money
+		// moved, never in Gross/Net or a VAT band. Same own-condition rule
+		// as Imported; the amount is the SIGNED net, printed sign-first
+		// either way so a correction up can't be read as a sale.
+		if rep.VouchersAdjustedCount > 0 {
+			net := "+" + money(rep.VouchersAdjusted)
+			if rep.VouchersAdjusted < 0 {
+				net = "-" + money(-rep.VouchersAdjusted)
+			}
+			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Adjusted (%d)", rep.VouchersAdjustedCount), net))
 		}
 	}
 	// Cancellations (ut-docs#1012): a completed sale later VOIDED — e.g.

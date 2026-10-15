@@ -4,7 +4,7 @@ title: Hediye çekleri
 section: Günlük satış
 order: 25
 summary: Hediye çeklerini bir Hediye çeki ürününe dokunarak satın — kartı okutun ya da kasanın numara oluşturmasına izin verin — ve satış ekranında okutarak ya da ödeme panelinin Böl sekmesinde ödeme olarak alın.
-keywords: [hediye çeki, hediye kartı, gutschein, belirli ürün, kullanma, bakiye, düzenleme, kod, kart numarası, ürün türü]
+keywords: [hediye çeki, hediye kartı, gutschein, belirli ürün, kullanma, bakiye, düzenleme, kod, kart numarası, ürün türü, düzelt, düzeltme, bakiye düzeltme]
 routes: [/vouchers, /vouchers/{id}]
 ---
 
@@ -77,7 +77,7 @@ Neler ters gidebilir:
 **Menü → Hediye çekleri** (yalnızca yönetici), bu kasanın bildiği her hediye çekini en yenisi önce listeler: kart numarası, kimin için olduğu, ilk değeri, üzerinde kalan tutar, durumu — **Etkin**, **Tamamen kullanıldı** veya **İptal** — ve neye harcanabileceği (belirli bir ürün için olan çek işaretlenir). **Satıldığı fiş**, çeki satan satışın fişine bağlantı verir; içe aktarılan bir bakiyede bunun yerine bu yazar.
 
 1. Bir çeki kart numarasına veya sahibine göre bulmak için **Ara** kutusuna yazın — liste siz yazarken güncellenir. Yalnızca etkin, tamamen kullanılmış veya iptal edilmiş çekleri göstermek için **Durum**'u kullanın.
-2. Çekin **Geçmiş**ini görmek için bir kart numarasına dokunun: ne zaman düzenlendiği ve her kullanıldığı an, tutarı ve her satışın fişine bağlantısıyla.
+2. Çekin **Geçmiş**ini görmek için bir kart numarasına dokunun: ne zaman düzenlendiği, her kullanıldığı an ve her düzeltme, tutarı ve her satışın fişine bağlantısıyla.
 3. **CSV dışa aktar**, geçerli arama ve durumla eşleşen her çeki indirir — yalnızca ekrandakileri değil, hepsini — `code`, `balance`, `label`, `original_amount`, `status`, `purpose` ve `created_at` sütunlarıyla. Dosya başka bir kasada aynı sayfanın altındaki **Kupon bakiyelerini içe aktar** ile içe aktarılabilir (bkz. [Kupon bakiyelerini içe aktar](/help/voucher-import)).
 
 Bilmekte fayda var:
@@ -86,6 +86,25 @@ Bilmekte fayda var:
 - Henüz hiç çek yoksa sayfa nasıl başlayacağınızı söyler: bir Hediye çeki ürünüyle satın veya önceki sisteminizden bakiyeleri içe aktarın.
 - Ek bir kasada liste yalnızca bu kasanın gördüğü çekleri gösterir — burada satılan, içe aktarılan veya kullanılan. Tam liste ana kasadadır.
 
+## Bakiyeyi düzeltmek
+
+Bir hediye çekinin bakiyesi yanlışsa — değer satışta yanlış girildiyse ya da hasarlı bir kart değiştiriliyorsa — bir yönetici doğru bakiyeyi çekin kendi sayfasından girebilir. Para el değiştirmez: kasa düzeltmeyi, kimin yaptığını ve nedenini kaydeder.
+
+1. Önce **Menü → Hediye çekleri**'ni açın ve çekin kart numarasına dokunun.
+2. Burada **Bakiyeyi düzelt** altında **Mevcut bakiye**yi kontrol edin, ardından **Yeni bakiye**yi yazın — farkı değil, çekin bundan sonra sahip olması gereken tutarın tamamını.
+3. Bir **Neden** yazın (zorunlu, en fazla 200 karakter), örneğin *satışta tutar yanlış girildi*.
+4. Ardından **Düzeltmeyi kaydet**e dokunun. Sayfa **Bakiye düzeltildi.** mesajı, yeni bakiye ve **Geçmiş**te farkı (+ veya −), nedeni ve düzeltmeyi yapanı gösteren bir **Düzeltme** satırıyla yeniden yüklenir.
+
+0'a yapılan bir düzeltme çeki **Tamamen kullanıldı** olarak işaretler; tamamen kullanılmış bir çekin bakiyesini artırmak onu yeniden **Etkin** yapar. Çekin ilk değeri hiç değişmez. Gün sonu (Z) raporu günün düzeltmelerini **GUTSCHEINE** bölümünde kendi **Adjusted** satırında listeler — asla satış, ödeme ya da KDV olarak değil.
+
+Neler ters gidebilir:
+
+- Bakiyeyi yalnızca bir yönetici veya admin düzeltebilir.
+- İptal edilmiş bir çek ya da belirli bir ürün için verilen bir çek düzeltilemez — sayfa formu göstermek yerine nedenini söyler.
+- "Yeni bakiye mevcut bakiyeyle aynı" — düzeltilecek bir şey yok.
+- "Siz bakarken bu hediye çekinin bakiyesi değişti" — bu arada biri çeki harcadı ya da düzeltti. Sayfayı yenileyin, yeni bakiyeyi kontrol edin ve hâlâ gerekiyorsa yeniden düzeltin.
+- Ek bir kasada düzeltme ana kasada yapılır. Ana kasaya ulaşılamıyorsa hiçbir şey değişmez ve sayfa bunu söyler — ana kasa geri geldiğinde tekrar deneyin. Sayfa ana kasanın düzeltmeyi onaylamadığını söylüyorsa düzeltme kaydedilmiş de olabilir, kaydedilmemiş de: tekrar denemeden önce sayfayı yenileyin ve hediye çekinin geçmişini kontrol edin.
+
 ## Gün sonu raporları ve diğer kasalar
 
-Gün sonu (Z) raporunun, o gün satılan ve harcanan hediye çekleri için kendi **GUTSCHEINE** bölümü vardır; hediye çeki satan bir satışı iptal etmek hediye çekini de (yalnızca kullanılmamışken) iptal eder — bkz. [Raporlar ve gün sonu](/help/reports). Bir kasada satılan hediye çeki dükkândaki başka herhangi bir kasada harcanabilir; bir kasa çevrimdışıyken bunun nasıl işlediği [Birden çok kasa (tek dükkân)](/help/multitill) sayfasında anlatılır.
+Gün sonu (Z) raporunun, o gün satılan, harcanan ve düzeltilen hediye çekleri için kendi **GUTSCHEINE** bölümü vardır; hediye çeki satan bir satışı iptal etmek hediye çekini de (yalnızca kullanılmamışken) iptal eder — bkz. [Raporlar ve gün sonu](/help/reports). Bir kasada satılan hediye çeki dükkândaki başka herhangi bir kasada harcanabilir; bir kasa çevrimdışıyken bunun nasıl işlediği [Birden çok kasa (tek dükkân)](/help/multitill) sayfasında anlatılır.
