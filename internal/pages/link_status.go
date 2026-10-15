@@ -87,7 +87,11 @@ type linkView struct {
 //  4. an established link was lost and nothing has reached the main till
 //     since the loss was noticed (no pull, no new link) → unreachable at
 //     once, since the last frame — the chip turns within one 12 s presence
-//     window instead of after the pull loop's three failed ticks;
+//     window instead of after the pull loop's three failed ticks. A link
+//     that ended with the main till's bye counts too once one presence
+//     window has passed without the main till answering (the client
+//     reports LostAt = the bye then, ut-docs#4422): a clean shutdown read
+//     "polling" for PrimaryWatch's whole window;
 //  5. the main till gives no answer to the link's attempts and the last
 //     contact is older than PrimaryWatch's window (or there never was one)
 //     → unreachable since that contact: the watch's own "already gone at
