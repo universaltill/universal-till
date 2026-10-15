@@ -1278,7 +1278,10 @@ a.chip-warn { text-decoration: none; }
      selector outranks a bare `.btn`) and leaves white label text on a
      near-white button — which is how the add-variant row's "Save Variant"
      was rendered illegible before review. */
-  .vg-cols > :last-child { position: sticky; inset-inline-end: 0; z-index: 1; }
+  /* ut-docs#3605: a row's cells after the photo sit in a display:contents
+     fieldset[data-main-till-lock], so its Save is that fieldset's last child. */
+  .vg-cols > :last-child:not(fieldset),
+  .vg-cols > fieldset[data-main-till-lock]:last-child > :last-child { position: sticky; inset-inline-end: 0; z-index: 1; }
   .vg-head > :last-child { background: var(--surface); }
 }
 

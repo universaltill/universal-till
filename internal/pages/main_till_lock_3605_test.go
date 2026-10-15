@@ -369,6 +369,11 @@ var voidElement = map[string]bool{
 	"input": true, "link": true, "meta": true, "source": true, "track": true, "wbr": true,
 }
 
+// TestMainTillLock_EveryWriteThroughControlIsLockable sees only hx-post and
+// <form action>. A post made from JS (fetch / htmx.ajax) is covered only
+// when its inputs or trigger sit in a lock. The category lists'
+// data-reorder-url drag/Alt+Arrow reorder (list-reorder.js) is NOT locked
+// yet and is invisible here; it is tracked on ut-docs#4418.
 func TestMainTillLock_EveryWriteThroughControlIsLockable(t *testing.T) {
 	chdirRoot(t)
 	patterns := lockRoutePatterns()

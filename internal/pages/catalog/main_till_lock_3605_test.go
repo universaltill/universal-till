@@ -66,6 +66,9 @@ func newLockCatalogMux(t *testing.T, standalone bool, unreachable *bool) *http.S
 	if _, err := dbase.DB.Exec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm1','SKU1','Flat White',320,1)`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := dbase.DB.Exec(`INSERT INTO item_variants (id, item_id, sku, name, price, is_active) VALUES ('var1','itm1','SKU1-L','Large',380,1)`); err != nil {
+		t.Fatal(err)
+	}
 	modRepo := data.NewModifierRepo(dbase.DB)
 	for _, g := range []struct{ id, name string }{{"gOwn", "Extras"}, {"gOther", "Milk"}} {
 		if _, err := modRepo.CreateGroup(t.Context(), g.id, g.name, false, 0, 1, 0); err != nil {
@@ -133,10 +136,15 @@ func TestCatalogMainTillLock_LockedWhileMainTillUnreachable(t *testing.T) {
 		t.Errorf("/catalog: expected the 'can't reach the main till' text in both the banner and the item dialog")
 	}
 	variants := getOK(t, mux, "/api/catalog/item-variants?item_id=itm1")
-	for _, marker := range []string{`hx-post="/api/catalog/item-cost"`, `hx-post="/api/catalog/barcode"`, `id="vf-new"`, `form="vf-new" class="btn" type="submit"`} {
+	for _, marker := range []string{`hx-post="/api/catalog/item-cost"`, `hx-post="/api/catalog/barcode"`, `form="vf-new" type="text" name="name"`, `form="vf-new" class="btn" type="submit"`, `form="vf-var1" type="text" name="name"`, `form="vf-var1" class="btn primary" type="submit"`} {
 		if !lockedAround(t, variants, marker) {
 			t.Errorf("variants panel: %s is not inside a main-till lock", marker)
 		}
+	}
+	// A variant's photo writes only image files on this till (never
+	// requirePrimary, no write-through): it stays usable (#3605 review).
+	if lockedAround(t, variants, `hx-post="/api/catalog/variant/image"`) {
+		t.Errorf("variants panel: the variant photo upload must stay usable but sits inside a main-till lock")
 	}
 	mods := getOK(t, mux, "/api/catalog/modifier-groups-panel?item_id=itm1")
 	for _, marker := range []string{`hx-post="/api/catalog/modifier-group/detach"`, `hx-post="/api/catalog/modifier-group/attach"`} {
