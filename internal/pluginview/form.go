@@ -28,6 +28,11 @@ type Submission struct {
 	// Posted is the raw post as read, kept only to refill the form when
 	// the action fails (View.Refill, ut-docs#3879); never sent anywhere.
 	Posted map[string][]string
+	// Turns is a chat's history (ut-docs#4132), read by DecodePost from
+	// core's _turns field: validated and bounded, empty when malformed.
+	// TurnsPosted: the post carried _turns (it came from a chat).
+	Turns       []HistoryTurn
+	TurnsPosted bool
 }
 
 // DecodeForm reads a posted plugin view form. Core's own fields: _action

@@ -6693,6 +6693,42 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .plugin-view-paging { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem;
   padding-block: .6rem; padding-inline: .6rem; }
 .plugin-view-paging-pos { font-variant-numeric: tabular-nums; }
+/* The chat component (ut-docs#4132, ADR-0121 amendment 2026-10-11). The
+   transcript scrolls inside the card; column-reverse on the scroller keeps
+   it pinned to the newest turn without script while the inner log keeps
+   DOM (reading) order. User turns at the end edge, assistant turns at the
+   start edge -- logical properties only, so RTL mirrors them. Text is
+   pre-wrap: the plugin's line breaks are kept, nothing is parsed. The
+   question row wraps on a 360px phone, its input and Send at the 46px
+   touch floor (.btn-touch). The thinking bubble pulses unless the
+   operator asked for reduced motion. */
+.plugin-chat { display: flex; flex-direction: column; gap: .75rem; min-inline-size: 0; }
+.plugin-chat-scroll { display: flex; flex-direction: column-reverse; overflow-y: auto;
+  max-block-size: min(60vh, 32rem); overscroll-behavior: contain; }
+.plugin-chat-log { display: flex; flex-direction: column; gap: .6rem; padding-block: .25rem; }
+.plugin-chat-turn { max-inline-size: min(85%, 40rem); padding-block: .55rem; padding-inline: .8rem;
+  border-radius: var(--radius-lg); border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  align-self: flex-start; border-end-start-radius: .25rem; }
+.plugin-chat-turn.user { align-self: flex-end; background: var(--accent); color: var(--accent-contrast);
+  border-color: var(--accent); border-end-start-radius: var(--radius-lg); border-end-end-radius: .25rem; }
+.plugin-chat-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; text-align: start; }
+.plugin-chat-tools { margin: .4rem 0 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: .3rem; }
+.plugin-chat-tools li { padding-block: .1rem; padding-inline: .55rem; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--muted);
+  font-size: .85rem; overflow-wrap: anywhere; }
+.plugin-chat-thinking { display: flex; flex-direction: column; gap: .4rem; }
+.plugin-chat-thinking .plugin-chat-text { color: var(--muted); font-style: italic; }
+@media (prefers-reduced-motion: no-preference) {
+  .plugin-chat-thinking .plugin-chat-text { animation: plugin-chat-pulse 1.6s ease-in-out infinite; }
+}
+@keyframes plugin-chat-pulse { 50% { opacity: .45; } }
+.plugin-chat-ask { display: flex; flex-wrap: wrap; gap: .5rem; align-items: stretch; margin: 0; }
+/* plaintext: typed text takes its own direction (an English question on
+   an fa till), while an empty box's placeholder keeps the page's -- the
+   dir="auto" attribute would flip that placeholder to LTR. */
+.plugin-chat-ask input[name="question"] { flex: 1 1 12rem; min-inline-size: 0; min-block-size: 46px;
+  unicode-bidi: plaintext; }
+.plugin-chat-ask .btn { flex: 0 0 auto; }
 /* Content slots (ADR-0121 §7, ut-docs#3872): one card per plugin panel
    (web/ui/partials/pluginview/slot.html), stacked in the host region. */
 .plugin-slot { display: flex; flex-direction: column; gap: 1rem; margin-block: 1rem; }

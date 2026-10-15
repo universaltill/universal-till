@@ -8,10 +8,14 @@
      draws no actions or forms. Its notices are for a view that could not
      be drawn; a failed action instead keeps the view and shows its notice
      in #plugin-view-alert (pluginview_alert in pages/plugin_view.html,
-     ut-docs#3879). */}}
+     ut-docs#3879). .Chat (ut-docs#4132) is core's own interim chat: with
+     .Job the transcript and a thinking bubble that is the poll, with
+     .Unavailable (the job failed) the transcript, the notice and the
+     question box again. */}}
 {{ define "pluginview_body" }}
 {{- if .View.Title }}<h2 class="plugin-view-title">{{ .View.Title }}</h2>{{ end }}
-{{- if .Unavailable }}
+{{- if and .Chat (or .Job .Unavailable) }}{{ template "pluginview_chat" (dict "Route" .Route "Target" .TargetID "C" .Chat "Poll" .Job "RO" .ReadOnly) }}
+{{- else if .Unavailable }}
 <div class="plugin-view-notice warn" role="status">{{ T "plugin.view.unavailable" }}</div>
 {{- else if .JobBusy }}
 <div class="plugin-view-notice warn" role="status">{{ T "plugin.job.busy" }}</div>
@@ -30,6 +34,7 @@
 {{- else if eq .Type "table" }}{{ template "pluginview_table" . }}
 {{- else if eq .Type "qr" }}{{ template "pluginview_qr" . }}
 {{- else if eq .Type "wizard_step" }}{{ template "pluginview_wizard_step" . }}
+{{- else if eq .Type "chat" }}{{ template "pluginview_chat" (dict "Route" $route "Target" $target "C" .Chat "Poll" nil "RO" $ro) }}
 {{- else if and (eq .Type "confirm") (not $ro) }}{{ template "pluginview_confirm" .Confirm }}
 {{- else if eq .Type "list" }}<ul class="card plugin-view-list">{{ range .Items }}<li>{{ . }}</li>{{ end }}</ul>
 {{- else if eq .Type "empty_state" }}

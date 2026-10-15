@@ -62,6 +62,8 @@ type ViewComponent struct {
 	// filled by ResolveConfirms (nil: no longer valid).
 	Proposal string
 	Confirm  *ViewConfirm
+	// chat (ut-docs#4132)
+	Chat *ViewChat
 }
 
 // ViewConfirm is core's confirm card for one AI-agent proposal: every
@@ -209,6 +211,8 @@ func (d *Document) Prepare(locale string) View {
 			}
 		case "confirm":
 			vc.Proposal = c.Confirm.Proposal
+		case "chat":
+			vc.Chat = prepareChat(c.Chat, locale, t)
 		case "wizard_step":
 			w := c.WizardStep
 			for i, st := range w.Steps {
@@ -273,6 +277,13 @@ func (v *View) Refill(action string, posted map[string][]string) {
 	}
 	for ci := range v.Components {
 		c := &v.Components[ci]
+		if c.Type == "chat" && c.Chat != nil && c.Chat.Action == action {
+			// ut-docs#4132: the question the operator typed.
+			if q := posted["question"]; len(q) > 0 {
+				c.Chat.Question = q[0]
+			}
+			continue
+		}
 		if c.Type != "form" || c.Action != action {
 			continue
 		}

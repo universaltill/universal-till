@@ -158,6 +158,7 @@ type Component struct {
 	QR          *QR
 	WizardStep  *WizardStep
 	Confirm     *Confirm
+	Chat        *Chat
 }
 
 // Confirm is an AI-agent change awaiting the operator (ADR-0153 Decision
@@ -519,6 +520,9 @@ func decodeComponent(raw json.RawMessage) (Component, error) {
 	case "confirm":
 		c.Confirm = &Confirm{}
 		target = c.Confirm
+	case "chat":
+		c.Chat = &Chat{}
+		target = c.Chat
 	default:
 		return Component{}, fmt.Errorf("unknown component type %q", head.Type)
 	}
@@ -538,6 +542,7 @@ type validator struct {
 	pagingParams map[string]bool
 	qrs          int
 	confirms     int
+	chats        int
 }
 
 func (v *validator) fail(format string, a ...any) {
@@ -700,6 +705,8 @@ func (v *validator) component(where string, c Component) {
 		if v.confirms++; v.confirms > MaxConfirms {
 			v.fail("%s: a document has at most %d confirm components", where, MaxConfirms)
 		}
+	case "chat":
+		v.chat(where, c.Chat)
 	case "wizard_step":
 		w := c.WizardStep
 		if v.wizard {

@@ -100,6 +100,9 @@ type pluginJob struct {
 	unpolledTTL time.Duration
 	resultTTL   time.Duration
 	cancel      context.CancelFunc
+	// chat: the interim a job started from a chat's question draws
+	// (ut-docs#4132); nil otherwise. In memory only, it dies with the job.
+	chat *pluginChatInterim
 }
 
 // pluginJobSnapshot is what one poll sees. unchanged: the job is running
@@ -111,6 +114,7 @@ type pluginJobSnapshot struct {
 	doc       *pluginview.Document
 	redirect  string
 	unchanged bool
+	chat      *pluginChatInterim
 }
 
 // pluginJobRegistry holds the till's jobs, keyed by id.
@@ -175,6 +179,15 @@ func (r *pluginJobRegistry) reserve(pluginID, route string, cancel context.Cance
 		cancel:      cancel,
 	}
 	return id, nil
+}
+
+// attachChat keeps the chat interim (ut-docs#4132) on job id.
+func (r *pluginJobRegistry) attachChat(id string, chat *pluginChatInterim) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if j, ok := r.jobs[id]; ok {
+		j.chat = chat
+	}
 }
 
 // progress records a job_progress report for a running job.
@@ -301,7 +314,7 @@ func (r *pluginJobRegistry) poll(id, pluginID, route string, consume bool) (plug
 		return pluginJobSnapshot{}, false
 	}
 	j.lastPoll = time.Now()
-	snap := pluginJobSnapshot{state: j.state, pct: j.pct, key: j.key, doc: j.doc, redirect: j.redirect}
+	snap := pluginJobSnapshot{state: j.state, pct: j.pct, key: j.key, doc: j.doc, redirect: j.redirect, chat: j.chat}
 	switch {
 	case !consume:
 	case j.state != pluginJobRunning:
@@ -337,6 +350,9 @@ func startPluginJob(ctx context.Context, d *common.Deps, entry data.PageEntryRow
 		cancel()
 		return "", err
 	}
+	// Before the job runs, so every poll -- even of a job that fails at
+	// once -- sees it.
+	reg.attachChat(id, chatInterimFromPayload(payload))
 	job := make(map[string]any, len(payload)+1)
 	for k, v := range payload {
 		job[k] = v
@@ -413,4 +429,37 @@ func startPluginJob(ctx context.Context, d *common.Deps, entry data.PageEntryRow
 		}
 	}()
 	return id, nil
+}
+
+// pluginChatInterim is what a job started from a chat's question keeps to
+// draw core's interim chat on every poll (ut-docs#4132): the posted
+// history, the question and the action. It is the job payload's own
+// "turns", form "question" and "action", nothing more.
+type pluginChatInterim struct {
+	turns    []pluginview.HistoryTurn
+	question string
+	action   string
+}
+
+// chatInterimFromPayload is the chat interim of an action payload, or nil
+// when the post did not come from a chat (no "turns").
+func chatInterimFromPayload(payload map[string]any) *pluginChatInterim {
+	turns, ok := payload["turns"].([]pluginview.HistoryTurn)
+	if !ok {
+		return nil
+	}
+	c := &pluginChatInterim{turns: turns}
+	c.action, _ = payload["action"].(string)
+	if form, ok := payload["form"].(map[string]any); ok {
+		c.question, _ = form["question"].(string)
+	}
+	return c
+}
+
+// view draws c for locale (nil: no chat).
+func (c *pluginChatInterim) view(locale string, failed bool) *pluginview.ViewChat {
+	if c == nil {
+		return nil
+	}
+	return pluginview.InterimChat(locale, c.action, c.turns, c.question, failed)
 }
