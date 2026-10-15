@@ -88,6 +88,12 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   `plugins/**/plugin.json` (+ their `locales/`). Reviewed exception
   (help/UI only): same-line `naming-rule:allow`.
 
+## Mail addresses (ut-docs#4229, `scripts/ci/guard-mail-addresses.sh`)
+- Only allow-listed `@universaltill.com` addresses (real M365 aliases, send-only
+  senders, test data) in tracked files; the list is inline in the guard,
+  byte-identical in four repos — see ut-docs `reference/mail-addresses.md`.
+  Reviewed exception: same-line `mail-address:allow <reason>`.
+
 ## Core neutrality (#2848, ADR-0121 §11; `scripts/ci/guard-core-neutral.sh`)
 - Country, vendor, vertical and integration code ships in its ut-plugin-* repo; core Go never tests a curated list of country codes, vendor names or plugin IDs (#2888).
 - Shrink-only allow-list `scripts/ci/core-neutral-allowlist.txt` (each entry cites its move card); reviewed exception: same-line `// core-neutral:allow <reason>`.
