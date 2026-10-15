@@ -1,5 +1,5 @@
 import { test, expect, type Page } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, nameShop } from './helpers';
 import * as http from 'http';
 import * as crypto from 'crypto';
 
@@ -114,6 +114,7 @@ async function ensureRegistered(page: Page) {
   await page.goto('/settings#registration');
   const registerBtn = page.locator('#registration button[hx-post="/api/enrol/now"]');
   if (await registerBtn.count()) {
+    await nameShop(page); // ut-docs#4272: registration waits for a real shop name
     await registerBtn.click();
     await expect(page.locator('#enrol-msg')).toContainText('✅');
     await page.goto('/settings#registration');

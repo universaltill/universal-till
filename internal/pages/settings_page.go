@@ -1210,6 +1210,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			if err != nil {
 				logging.L().Warnf("enrol now failed: %v", err)
 			}
+			if errors.Is(err, enroll.ErrStoreUnnamed) {
+				// ut-docs#4272: nothing was sent; point the owner at the
+				// Shop name card (a /settings#<card-id> link the page's
+				// hash routing opens), so naming the shop is one tap away.
+				fmt.Fprintf(w, `<span class="error">❌ %s <a href="/settings#settings-store-name">%s</a></span>`,
+					html.EscapeString(httpx.T(locale, "settings.enrol.name_required")),
+					html.EscapeString(httpx.T(locale, "settings.store_name.title")))
+				return
+			}
 			if key := enrolFailureKey(err); key != "" {
 				fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, key)))
 				return
@@ -3751,6 +3760,8 @@ func enrolFailureKey(err error) string {
 		return "settings.enrol.not_configured"
 	case errors.Is(err, enroll.ErrAttemptBusy):
 		return "settings.enrol.busy"
+	case errors.Is(err, enroll.ErrStoreUnnamed):
+		return "settings.enrol.name_required"
 	}
 	return ""
 }

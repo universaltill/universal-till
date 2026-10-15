@@ -216,6 +216,9 @@ func TestSetupTaxPluginInstallHappyPath(t *testing.T) {
 	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
 	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
 	dp.Cfg.Marketplace = mkt.config()
+	// A shop that already has a real name (here the configured one) installs
+	// in the foreground; an unnamed one queues (ut-docs#4272, below).
+	dp.Cfg.StoreName = "Corner Shop"
 
 	// The redirect carries the country back so the wizard resumes on step 3
 	// (where the tile lives) instead of restarting at step 1.
@@ -334,6 +337,106 @@ func TestSetupTaxPluginInstallFailureJoinsPendingList(t *testing.T) {
 	}
 	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); !active {
 		t.Fatal("expected the tax plugin installed by the existing retry tick")
+	}
+}
+
+// ut-docs#4272: at step 3 of a first boot the shop has no real name yet
+// (store.name is still migration 001's "My Store"; the wizard saves the
+// owner's name only with POST /api/setup), and an install would have to
+// register the shop with the cloud. Registration waits for a shop name, so
+// the tile's button queues the spec (the operator's consent) instead — the
+// same pending list and redirect as the offline branch — with no cloud call
+// that would register or download.
+func TestSetupTaxPluginInstallUnnamedShopQueuesInsteadOfInstalling(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+	if name, _, _ := dp.Settings.Get(t.Context(), common.KeyStoreName); name != "My Store" {
+		t.Fatalf("precondition: store.name = %q, want migration 001's \"My Store\"", name)
+	}
+
+	rec := postForm(mux, "/api/setup/tax-plugin", url.Values{"country": {"DE"}}, nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /api/setup/tax-plugin: code=%d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/setup?tax_country=DE&tax_plugin_pending=1" {
+		t.Fatalf("redirect = %q, want /setup?tax_country=DE&tax_plugin_pending=1", loc)
+	}
+	pending, err := loadPendingBasePlugins(t.Context(), dp)
+	if err != nil {
+		t.Fatalf("loadPendingBasePlugins: %v", err)
+	}
+	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "tax", Locale: "de"}) {
+		t.Fatalf("pending = %+v, want the tax/de spec queued", pending)
+	}
+	if hits := mkt.storeRegisterHits(); hits != 0 {
+		t.Fatalf("an unnamed shop called /stores/register %d times", hits)
+	}
+	if hits := mkt.downloadTokenHits(); hits != 0 {
+		t.Fatalf("an unnamed shop started a download (%d download-token hits)", hits)
+	}
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); active {
+		t.Fatal("nothing should be installed before the shop is named")
+	}
+}
+
+// ut-docs#4272: the tax spec step 3 queued for an unnamed shop installs in
+// POST /api/setup itself, right after the wizard saves the owner's shop
+// name — registration then carries that name. Covers a country with its own
+// base spec (DE: the German language pack) and one with none (GB), where
+// installBasePluginsForSetup used to return before attempting anything.
+func TestSetupWizardInstallsQueuedTaxPluginOnceShopIsNamed(t *testing.T) {
+	for _, country := range []string{"DE", "GB"} {
+		t.Run(country, func(t *testing.T) {
+			resetTaxCatalogForTest(t)
+			mux, dp := newRealDBDeps(t)
+			initTestPaths(t)
+			mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+			mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+			dp.Cfg.Marketplace = mkt.config()
+
+			// Step 3: the shop is still unnamed, so the install is queued.
+			rec := postForm(mux, "/api/setup/tax-plugin", url.Values{"country": {"DE"}}, nil)
+			if loc := rec.Header().Get("Location"); loc != "/setup?tax_country=DE&tax_plugin_pending=1" {
+				t.Fatalf("step 3 redirect = %q, want the queued (pending) redirect", loc)
+			}
+
+			rec = postForm(mux, "/api/setup", url.Values{
+				"pin":         {"2468"},
+				"pin_confirm": {"2468"},
+				"country":     {country},
+				"currency":    {"EUR"},
+				"store_name":  {"Corner Café"},
+				"till_name":   {"Till 1"},
+			}, nil)
+			if rec.Code != http.StatusSeeOther {
+				t.Fatalf("POST /api/setup: code=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if active, err := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); err != nil || !active {
+				t.Fatalf("queued tax plugin not installed by POST /api/setup: active=%v err=%v", active, err)
+			}
+			pending, err := loadPendingBasePlugins(t.Context(), dp)
+			if err != nil {
+				t.Fatalf("loadPendingBasePlugins: %v", err)
+			}
+			for _, p := range pending {
+				if p.CanonicalType == "tax" {
+					t.Fatalf("installed tax spec still pending: %+v", pending)
+				}
+			}
+			names := mkt.storeRegisterNames()
+			if len(names) == 0 {
+				t.Fatal("the install never asked to register the shop")
+			}
+			for _, n := range names {
+				if n != "Corner Café" {
+					t.Fatalf("register store_name(s) = %q, want only the typed name", names)
+				}
+			}
+		})
 	}
 }
 
@@ -478,6 +581,7 @@ func TestSetupWizardTaxPluginTileGoneAfterInstall(t *testing.T) {
 	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
 	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
 	dp.Cfg.Marketplace = mkt.config()
+	dp.Cfg.StoreName = "Corner Shop" // a named shop installs at step 3 (ut-docs#4272)
 
 	rec := postForm(mux, "/api/setup/tax-plugin", url.Values{"country": {"DE"}}, nil)
 	if rec.Code != http.StatusSeeOther {
@@ -820,6 +924,7 @@ func TestSetupWizardNextButtonHasNoBackgroundQueueWhenTileAbsent(t *testing.T) {
 	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
 	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
 	dp.Cfg.Marketplace = mkt.config()
+	dp.Cfg.StoreName = "Corner Shop" // a named shop installs at step 3 (ut-docs#4272)
 
 	rec := postForm(mux, "/api/setup/tax-plugin", url.Values{"country": {"DE"}}, nil)
 	if rec.Code != http.StatusSeeOther {

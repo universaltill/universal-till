@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, nameShop } from './helpers';
 import * as http from 'http';
 import * as crypto from 'crypto';
 
@@ -84,6 +84,7 @@ test.describe.serial('Renew / Choose-a-plan panel (ut-docs#4286)', () => {
       await page.goto('/settings#registration');
       const registerBtn = page.locator('#registration button[hx-post="/api/enrol/now"]');
       if (await registerBtn.count()) {
+        await nameShop(page); // ut-docs#4272: registration waits for a real shop name
         await registerBtn.click();
         await expect(page.locator('#enrol-msg')).toContainText('✅');
       }

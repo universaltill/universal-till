@@ -3360,5 +3360,6 @@
   "subscription.cap.consolidated_reporting": "Mağazalarınızın birleşik raporları",
   "settings.enrol.claim_failed": "Sahiplenme kodu alınamadı — internet bağlantısını kontrol edip yeniden deneyin.",
   "settings.enrol.not_configured": "Bu kasada bulut adresi ayarlanmamış, bu yüzden kaydolamıyor. Kasa çevrimdışı çalışmaya devam eder; kurulumu yapan kişiden bir adres ayarlamasını isteyin.",
-  "settings.enrol.busy": "Başka bir kayıt denemesi hâlâ sürüyor — biraz bekleyip yeniden deneyin."
+  "settings.enrol.busy": "Başka bir kayıt denemesi hâlâ sürüyor — biraz bekleyip yeniden deneyin.",
+  "settings.enrol.name_required": "Önce mağazanıza bir ad verin: kasa, buluta ancak mağazanın gerçek bir adı olduğunda kaydolur."
 }

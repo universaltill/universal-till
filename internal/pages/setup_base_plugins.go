@@ -125,31 +125,51 @@ const (
 // up the confirmed country's free base plugins, persists them as pending
 // BEFORE any network attempt (so the list survives even if the process dies
 // mid-request), then makes one best-effort, time-boxed synchronous attempt
-// to resolve+install right here. Mirrors this same handler's other
-// best-effort steps (auto-register, TSE kickoff) — a failure here must
-// never delay or fail the wizard's own response, so every error is logged
-// and swallowed.
+// to resolve+install every pending spec right here — not only the country's
+// own: a fiscal plugin step 3 queued because the shop had no name yet
+// (ut-docs#4272) installs now, since POST /api/setup saves store.name
+// before calling this. Mirrors this same handler's other best-effort steps
+// (auto-register, TSE kickoff) — a failure here must never delay or fail
+// the wizard's own response, so every error is logged and swallowed; what
+// is left pending is the background retry's (StartBasePluginRetry).
 func installBasePluginsForSetup(ctx context.Context, d *common.Deps, country string) {
-	specs := basePluginsForCountry(ctx, d, country)
-	if len(specs) == 0 {
-		return
-	}
-	pending := append([]basePluginSpec(nil), specs...)
 	// Merge (append-if-absent), never wholesale-replace (ut-docs#1110): the
 	// wizard's language step (setup_language_catalog.go) can already have
 	// queued an unrelated spec — e.g. a catalog-only language picked at step
 	// 1, still offline — before this country step ever runs. A plain
 	// savePendingBasePlugins here silently dropped that spec.
-	if err := addPendingBasePlugins(ctx, d, pending); err != nil {
-		logging.L().Errorf("setup wizard: persist pending base plugins: %v", err)
+	if specs := basePluginsForCountry(ctx, d, country); len(specs) > 0 {
+		if err := addPendingBasePlugins(ctx, d, specs); err != nil {
+			logging.L().Errorf("setup wizard: persist pending base plugins: %v", err)
+		}
+	}
+	pending, err := loadPendingBasePlugins(ctx, d)
+	if err != nil {
+		logging.L().Errorf("setup wizard: load pending base plugins: %v", err)
+		return
+	}
+	if len(pending) == 0 {
+		return
 	}
 
 	attemptCtx, cancel := context.WithTimeout(ctx, setupBasePluginAttemptTimeout)
 	defer cancel()
+	leftPending := false
+	// ut-docs#4272 review: the shared budget above is short, and the retry
+	// loop's first tick usually fired mid-wizard (and failed: the shop had
+	// no name, so no credentials). Without a nudge, whatever is still
+	// pending here — a queued fiscal plugin included — would wait for the
+	// next 5-minute tick.
+	defer func() {
+		if leftPending {
+			nudgeBasePluginRetry()
+		}
+	}()
 	for _, spec := range pending {
 		if err := resolveAndInstallBasePlugin(attemptCtx, d, spec); err != nil {
 			logging.L().Warnf("setup wizard: base plugin %s/%s not installed yet, will retry in background: %v",
 				spec.CanonicalType, spec.Locale, err)
+			leftPending = true
 			continue
 		}
 		// Installed (or a no-op because an equivalent plugin was already
