@@ -855,7 +855,7 @@ body.sale-screen .session-admin-link { display: none; }
 .page-head { display: flex; align-items: center; justify-content: space-between;
              gap: 1rem; margin: .25rem 0 1rem; }
 /* ut-docs#2092: page-scoped override for .page-head usages whose action
-   row is more than a title + one small control (currently catalog.html and journal_detail.html)
+   row is more than a title + one small control (`grep -l page-head-wrap web/ui` lists them)
    — lets the row drop to its own line at narrow widths instead of both
    flex children being squeezed onto one, never-wrapping line. */
 .page-head-wrap { flex-wrap: wrap; }
