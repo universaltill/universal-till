@@ -139,10 +139,12 @@ func validateEODAnnotation(s string) error {
 // ~£1M extremes. Grouping by method and reusing THIS proven 4-column
 // layout under a method heading line sidesteps the problem instead of
 // inventing a new, less-tested one.
-func rateTableRows(rates []int, net, tax, gross []int64, money func(int64) string) []string {
+func rateTableRows(rates []int, net, tax, gross []int64, money func(int64) string, hdr rateTableHeader) []string {
 	n := len(rates)
 	rate, netS, taxS, grossS := make([]string, n), make([]string, n), make([]string, n), make([]string, n)
-	tw := [4]int{0, len("Net"), len("Tax"), len("Gross")} // tight: header floors
+	// tight: header floors, in runes like the cells below (a translated
+	// header, ut-docs#4330, can be longer than the en one and non-ASCII).
+	tw := [4]int{0, utf8.RuneCountInString(hdr.Net), utf8.RuneCountInString(hdr.Tax), utf8.RuneCountInString(hdr.Gross)}
 	for i := range rates {
 		rate[i], netS[i], taxS[i], grossS[i] = fmtRateBP(rates[i]), money(net[i]), money(tax[i]), money(gross[i])
 		for j, s := range []string{rate[i], netS[i], taxS[i], grossS[i]} {
@@ -167,12 +169,26 @@ func rateTableRows(rates []int, net, tax, gross []int64, money func(int64) strin
 		w = tw
 	}
 	lines := make([]string, 0, n+1)
-	lines = append(lines, fmt.Sprintf("%-*s %*s %*s %*s", w[0], "", w[1], "Net", w[2], "Tax", w[3], "Gross"))
+	lines = append(lines, fmt.Sprintf("%-*s %*s %*s %*s", w[0], "", w[1], hdr.Net, w[2], hdr.Tax, w[3], hdr.Gross))
 	for i := range rates {
 		lines = append(lines, fmt.Sprintf("%-*s %*s %*s %*s",
 			w[0], rate[i], w[1], netS[i], w[2], taxS[i], w[3], grossS[i]))
 	}
 	return lines
+}
+
+// rateTableHeader is the Net/Tax/Gross column header rateTableRows prints,
+// in the shop's locale (ut-docs#4330).
+type rateTableHeader struct{ Net, Tax, Gross string }
+
+// eodRateTableHeader reads the column header from the existing on-screen
+// keys, whose en values are the literals the printed table always used.
+func eodRateTableHeader(locale string) rateTableHeader {
+	return rateTableHeader{
+		Net:   httpx.T(locale, "reports.eod.net"),
+		Tax:   httpx.T(locale, "basket.tax"),
+		Gross: httpx.T(locale, "reports.eod.gross"),
+	}
 }
 
 // titleFirst upper-cases a label's first character for display (payment
@@ -267,12 +283,22 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	// sale receipt's own printLocale (print_api.go), and the same reason
 	// for the *Latin variants below — ESC/POS text mode can't render
 	// non-Latin numeral glyphs, RTL needs bitmap mode (ut-docs#1130).
+	//
+	// The header, totals, payment methods, tips and VAT tables follow the
+	// store locale too (ut-docs#4330, the sale receipt's ut-docs#4199
+	// convention); the en values are the literals they replaced, so an en
+	// Z-report is unchanged. The sections further down keep their fixed
+	// labels for now.
 	printLocale := httpx.DefaultLocale()
+	T := func(key string) string { return httpx.T(printLocale, key) }
 	money := func(minor int64) string { return httpx.FormatMoneyLatin(minor, printLocale) }
-	generated := "Generated " + rep.GeneratedAt
+	method := func(id string) string { return receiptMethodLabel(printLocale, id) }
+	hdr := eodRateTableHeader(printLocale)
+	generatedAt := rep.GeneratedAt
 	if t, err := time.Parse(time.RFC3339, rep.GeneratedAt); err == nil {
-		generated = "Generated " + httpx.FormatDateLatin(t.Local(), printLocale) + " " + t.Local().Format("15:04")
+		generatedAt = httpx.FormatDateLatin(t.Local(), printLocale) + " " + t.Local().Format("15:04")
 	}
+	generated := fmt.Sprintf(T("reports.zpaper.generated"), generatedAt)
 	doc := print.Doc{
 		StoreName: storeName,
 		Meta: []string{
@@ -282,13 +308,13 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 		Charset: charset,
 	}
 	doc.Totals = []print.KV{
-		{Label: fmt.Sprintf("Sales (%d)", rep.SalesCount), Amount: money(rep.Gross)},
-		{Label: fmt.Sprintf("Refunds (%d)", rep.RefundCount), Amount: "-" + money(rep.RefundTotal)},
-		{Label: "Tax (net)", Amount: money(rep.TaxNet)},
-		{Label: "NET", Amount: money(rep.Net), Strong: true},
+		{Label: fmt.Sprintf(T("reports.zpaper.sales"), rep.SalesCount), Amount: money(rep.Gross)},
+		{Label: fmt.Sprintf(T("reports.zpaper.refunds"), rep.RefundCount), Amount: "-" + money(rep.RefundTotal)},
+		{Label: T("reports.zpaper.tax_net"), Amount: money(rep.TaxNet)},
+		{Label: T("reports.zpaper.net"), Amount: money(rep.Net), Strong: true},
 	}
 	for _, m := range rep.Methods {
-		doc.Payments = append(doc.Payments, print.KV{Label: titleFirst(m.Method), Amount: money(m.In - m.Out)})
+		doc.Payments = append(doc.Payments, print.KV{Label: method(m.Method), Amount: money(m.In - m.Out)})
 	}
 	// Tips by payment method (ut-docs#1007), as footer lines rather than
 	// folded into doc.Payments above -- the reference day-close reports
@@ -299,20 +325,20 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	// cash tips -- prints nothing, same convention Departments/Tills
 	// below already follow).
 	if len(rep.Tips) > 0 {
-		doc.Footer = append(doc.Footer, "", "TIPS (held out of revenue)")
+		doc.Footer = append(doc.Footer, "", T("reports.zpaper.tips"))
 		var tipTotal int64
 		for _, tp := range rep.Tips {
-			label := titleFirst(tp.Method)
+			label := method(tp.Method)
 			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("%dx %s", tp.Count, label), money(tp.Amount)))
 			tipTotal += tp.Amount
 		}
-		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", "TOTAL", money(tipTotal)))
+		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", T("receipt.paper.total"), money(tipTotal)))
 	}
 	// Per-VAT-rate breakdown (ut-docs#1003) + department breakdown (E1b) +
 	// per-register breakdown, as footer lines so they print on the Z-report
 	// without depending on new Doc fields.
 	if len(rep.TaxBands) > 0 {
-		doc.Footer = append(doc.Footer, "", "BY VAT RATE")
+		doc.Footer = append(doc.Footer, "", T("reports.zpaper.by_vat_rate"))
 		rates := make([]int, len(rep.TaxBands))
 		net := make([]int64, len(rep.TaxBands))
 		tax := make([]int64, len(rep.TaxBands))
@@ -320,7 +346,7 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 		for i, b := range rep.TaxBands {
 			rates[i], net[i], tax[i], gross[i] = b.RateBP, b.Net, b.Tax, b.Gross
 		}
-		doc.Footer = append(doc.Footer, rateTableRows(rates, net, tax, gross, money)...)
+		doc.Footer = append(doc.Footer, rateTableRows(rates, net, tax, gross, money, hdr)...)
 	}
 	// Method x VAT-rate cross-tab (ut-docs#1004) — the grid the accounting
 	// export posts from: one "BY METHOD & VAT RATE" heading, then one
@@ -336,7 +362,7 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	// Method-then-RateBP (see eod_method_tax_bands.go), so a method's rows
 	// are always contiguous — no grouping/sorting needed here.
 	if len(rep.MethodTaxBands) > 0 {
-		doc.Footer = append(doc.Footer, "", "BY METHOD & VAT RATE")
+		doc.Footer = append(doc.Footer, "", T("reports.zpaper.by_method_vat_rate"))
 		i := 0
 		for i < len(rep.MethodTaxBands) {
 			j := i
@@ -351,8 +377,8 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 			for k, b := range group {
 				rates[k], net[k], tax[k], gross[k] = b.RateBP, b.Net, b.Tax, b.Gross
 			}
-			doc.Footer = append(doc.Footer, titleFirst(group[0].Method)+":")
-			doc.Footer = append(doc.Footer, rateTableRows(rates, net, tax, gross, money)...)
+			doc.Footer = append(doc.Footer, method(group[0].Method)+":")
+			doc.Footer = append(doc.Footer, rateTableRows(rates, net, tax, gross, money, hdr)...)
 			i = j
 		}
 	}
