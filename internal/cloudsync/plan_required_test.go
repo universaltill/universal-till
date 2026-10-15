@@ -406,8 +406,16 @@ func TestTickPushes402AreQuietAndStoreNoHash(t *testing.T) {
 	if _, err := tick(context.Background(), testCfg(srv.URL), db, Hooks{}); err != nil {
 		t.Fatalf("tick: %v (a refused snapshot push must not fail the tick)", err)
 	}
-	if snapPosts.Load() == 0 || trackPosts.Load() == 0 {
-		t.Fatalf("pushes never attempted (snapshot %d, order-tracking %d): the test would pass vacuously", snapPosts.Load(), trackPosts.Load())
+	if snapPosts.Load() == 0 {
+		t.Fatal("snapshot push never attempted: the test would pass vacuously")
+	}
+	// ut-docs#4385: the snapshot 402 cached the block, so the order
+	// tracking push is skipped for the rest of this tick.
+	if n := trackPosts.Load(); n != 0 {
+		t.Fatalf("%d order-tracking POSTs after the snapshot push's 402, want 0", n)
+	}
+	if plan, _, _ := data.NewSettingsRepo(db).Get(context.Background(), entitlement.KeyPlan); plan != "local" {
+		t.Fatalf("%s = %q after the snapshot push's 402, want the block's %q", entitlement.KeyPlan, plan, "local")
 	}
 	if got := logging.Recent(); len(got) != 0 {
 		t.Fatalf("a 402 on a snapshot push logged problems: %+v", got)
@@ -417,6 +425,72 @@ func TestTickPushes402AreQuietAndStoreNoHash(t *testing.T) {
 		if v, ok, _ := repo.Get(context.Background(), k); ok {
 			t.Fatalf("%s = %q stored after a refused push; it must retry once paid", k, v)
 		}
+	}
+}
+
+// ut-docs#4385: the catalog snapshot is accepted, then the order-tracking
+// push is refused with 402: its block is cached too (the ADR-0148 gate
+// closes in this tick, not the next), quietly, and no hash is stored.
+func TestTickOrderTrackingPush402CachesBlock(t *testing.T) {
+	fakeClock(t)
+	resetTillAuth(t)
+	useRealSyncGate(t)
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+
+	var trackPosts, requests atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/stores/sync", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"directives": []any{}}})
+	})
+	mux.HandleFunc("/v1/stores/issue-reports", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"reports": []any{}, "total": 0}})
+	})
+	mux.HandleFunc("/v1/stores/catalog-snapshot", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{}})
+	})
+	mux.HandleFunc("/v1/stores/order-tracking-snapshot", func(w http.ResponseWriter, r *http.Request) {
+		trackPosts.Add(1)
+		writePlanRequired(w)
+	})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		mux.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	db := openMigratedDB(t, "plan-required-tracking.db").DB
+	// A paid store, so the real ADR-0148 gate lets this tick sync.
+	if err := data.NewSettingsRepo(db).SetMany(context.Background(), map[string]string{
+		entitlement.KeyPlan:               "pro",
+		entitlement.KeySubscriptionStatus: entitlement.StatusActive,
+		entitlement.KeyLastConfirmedAt:    time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !syncAllowedFn(context.Background(), data.NewSettingsRepo(db)) {
+		t.Fatal("seeded paid entitlement does not open the gate: the test would pass vacuously")
+	}
+	if _, err := tick(context.Background(), testCfg(srv.URL), db, Hooks{}); err != nil {
+		t.Fatalf("tick: %v (a refused order-tracking push must not fail the tick)", err)
+	}
+	if trackPosts.Load() != 1 {
+		t.Fatalf("order-tracking POSTs = %d, want 1", trackPosts.Load())
+	}
+	if got := logging.Recent(); len(got) != 0 {
+		t.Fatalf("a 402 on the order-tracking push logged problems: %+v", got)
+	}
+	repo := data.NewSettingsRepo(db)
+	if plan, _, _ := repo.Get(context.Background(), entitlement.KeyPlan); plan != "local" {
+		t.Fatalf("%s = %q after the order-tracking push's 402, want the block's %q", entitlement.KeyPlan, plan, "local")
+	}
+	if v, ok, _ := repo.Get(context.Background(), "cloudsync.order_tracking_hash"); ok {
+		t.Fatalf("cloudsync.order_tracking_hash = %q stored after a refused push", v)
+	}
+	// The gate is really closed now: the next tick is quiet, no request.
+	before := requests.Load()
+	if contacted, err := tick(context.Background(), testCfg(srv.URL), db, Hooks{}); contacted || err != nil || requests.Load() != before {
+		t.Fatalf("next tick = (%v, %v), %d requests; want a quiet gated tick", contacted, err, requests.Load()-before)
 	}
 }
 

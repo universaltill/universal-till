@@ -508,6 +508,10 @@ var nonAdminTables = map[string]string{
 	// reasoning: a satellite's own in-flight counter order must not be
 	// pruned just because a periodic snapshot from elsewhere didn't carry it.
 	"kiosk_counter_orders": "self-order kiosk pay-at-counter orders — per-till operational state, never a sale, no cross-till sync (v1 non-goal)",
+	// ut-docs#4337: the main till's own record of the guest_order directive
+	// results it applied and still has to (or already did) report to the
+	// cloud — per-till delivery bookkeeping, like issue_reports_sent below.
+	"guest_order_results": "guest_order directive results awaiting (or past) cloud delivery — per-till bookkeeping, never synced (ut-docs#4337)",
 
 	// Local bookkeeping with no shop-wide meaning.
 	"issue_reports_sent": "dedup record of bug reports already sent FROM this till",

@@ -315,6 +315,17 @@ type Hooks struct {
 	// returns the refusal reason (not_self_order, kiosk_appliance,
 	// not_supported, no_shell) as its error.
 	KioskUnlock func(ctx context.Context, directiveID, createdBy string) (string, error)
+	// GuestOrder handles "guest_order" (ut-docs#4337, ADR-0159 §5): an
+	// order a guest placed on the cloud table page. Main-till only; apply
+	// has decoded and bounded the payload (decodeGuestOrder), which is
+	// still untrusted — the hook (pages.cloudGuestOrder) re-resolves the
+	// table token, every item, variant and option against the till's own
+	// database, prices the order from the till's catalogue on a fresh
+	// basket engine (never the cashier's or the kiosk's) and parks it as a
+	// pay-at-counter held order. A refusal is returned as
+	// GuestOrderOutcome.Refusal (nothing written); a non-nil error is an
+	// internal failure and leaves the directive pending for the next tick.
+	GuestOrder func(ctx context.Context, o GuestOrder) (GuestOrderOutcome, error)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can
 	// render a real design picker instead of a raw key/value form). Keys must
@@ -471,8 +482,15 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// primary's snapshot is the shop's snapshot.
 	primaryURL, _, _ := settings.Get(ctx, "sync.primary_url")
 	isMainTill := strings.TrimSpace(primaryURL) == ""
+	// refusedMidTick is set once a push gets 402 plan_required: the store
+	// lapsed after this tick's 200 sync. pushRefused has cached its block
+	// when it carried one (closing the ADR-0148 gate); either way the rest
+	// of this tick's snapshot pushes would only be refused too
+	// (ut-docs#4385).
+	refusedMidTick := false
 	if isMainTill {
 		if err := pushSnapshotIfChanged(ctx, cfg, db); err != nil {
+			refusedMidTick = pushRefused(ctx, settings, err, windowSeen)
 			logPushError("snapshot push", err)
 		}
 		// Order-tracking rows ride the same primary-only gate (ADR-0070),
@@ -488,8 +506,11 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		// on the shop's LAN, it just gets no off-LAN fallback. Widening
 		// that needs a per-till key on the cloud row set — a follow-up
 		// card, not something this gate quietly covers.
-		if err := pushOrderTrackingIfChanged(ctx, cfg, db); err != nil {
-			logPushError("order tracking push", err)
+		if !refusedMidTick {
+			if err := pushOrderTrackingIfChanged(ctx, cfg, db); err != nil {
+				refusedMidTick = pushRefused(ctx, settings, err, windowSeen)
+				logPushError("order tracking push", err)
+			}
 		}
 		// Daily sales rollups (ADR-0111, ut-docs#2535) ride the same
 		// primary-only gate: the primary holds the shop's full sales journal
@@ -523,6 +544,12 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		return b, err
 	}
 	catalogApplied := false
+	// guest_order (ADR-0159 §5): at most maxGuestOrdersPerTick per tick —
+	// each one may take a few DB writes and a fiscal start — and the ids
+	// this tick already answered, so the retry pass below doesn't post the
+	// same result twice in one tick.
+	guestOrders := 0
+	guestAnswered := map[string]bool{}
 	for _, d := range dirs {
 		if !isMainTill && mainTillOnlyTypes[d.Type] {
 			// Contract §3: a satellite till leaves these pending for the
@@ -550,6 +577,19 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 			}
 			continue
 		}
+		if d.Type == "guest_order" {
+			if guestOrders >= maxGuestOrdersPerTick {
+				// Left pending with no result post: the cloud delivers it
+				// again on the next check-in.
+				continue
+			}
+			guestOrders++
+			if id, _ := d.Payload["guest_order_id"].(string); id != "" {
+				guestAnswered[strings.TrimSpace(id)] = true
+			}
+			handleGuestOrder(ctx, cfg, db, d, hooks)
+			continue
+		}
 		fetchDeferred = false
 		status, msg := apply(ctx, d, hooks)
 		if fetchDeferred && status == "failed" {
@@ -559,7 +599,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		if status == "applied" && catalogTypes[d.Type] {
 			catalogApplied = true
 		}
-		if err := postResult(ctx, cfg, d.ID, status, msg); err != nil {
+		if err := postResult(ctx, cfg, d.ID, status, msg, nil); err != nil {
 			// Leave it pending on the cloud; the next tick re-applies (the
 			// hooks are idempotent for the supported types) and re-reports.
 			logging.L().Warnf("cloudsync: result for %s not delivered: %v", d.ID, err)
@@ -567,11 +607,18 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 			logging.L().Infof("cloudsync: directive %s (%s) %s: %s", d.ID, d.Type, status, msg)
 		}
 	}
+	// A guest_order result the cloud did not acknowledge on an earlier tick
+	// is re-posted until it answers 200 or 404 (ADR-0159 §4). Only the main
+	// till applies guest orders, so only it holds such results.
+	if isMainTill {
+		retryGuestOrderResults(ctx, cfg, db, guestAnswered)
+	}
 	// Fresh data in the same tick (contract §3.6): a catalog change the
 	// cloud just made is reported back now, not a tick later. The hash gate
 	// makes this free when nothing actually changed.
-	if isMainTill && catalogApplied {
+	if isMainTill && catalogApplied && !refusedMidTick {
 		if err := pushSnapshotIfChanged(ctx, cfg, db); err != nil {
+			pushRefused(ctx, settings, err, windowSeen)
 			logPushError("snapshot push after directives", err)
 		}
 	}
@@ -800,6 +847,14 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 		// (deviceTargetSkipReason). The id and created_by the till audits
 		// come from the directive itself (ADR-0142 D3).
 		msg, err = hooks.KioskUnlock(ctx, d.ID, d.CreatedBy)
+	case "guest_order":
+		// Tick takes guest_order through handleGuestOrder (stored result,
+		// retry); this case serves apply's other callers the same outcome.
+		r := applyGuestOrder(ctx, d, hooks)
+		if r.deferred {
+			return "failed", "guest_order could not be applied now"
+		}
+		return r.status, r.msg
 	case "upsert_category":
 		if hooks.UpsertCategory == nil {
 			return "failed", "upsert_category is not supported on this till"
@@ -1284,6 +1339,9 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 	// source of truth, whatever it's labelled for the cloud UI).
 	if isReplica {
 		delete(device, LANAddressKey)
+		// ADR-0159 §1 (ut-docs#4337): same rule for the guest tables —
+		// absent on a replica's report, so the cloud keeps the main till's.
+		delete(device, GuestTablesKey)
 	}
 	// A LOCAL diagnostic-mode stop (ADR-0092 §1, ut-docs#2169) is reported
 	// best-effort here — on the device record of the very next heartbeat,
@@ -1452,14 +1510,39 @@ func planRequired(err error) (*statusError, bool) {
 // as a 200's would be (cacheEntitlement: validated, best-effort), so the
 // refusal itself tells this till it is not on a paid plan and ADR-0148's
 // gate stops the periodic check-in from the next tick. The tick still
-// fails with the 402 (marked gatedRefusal once the gate is closed, so the
-// scheduler keeps its normal cadence — ut-docs#4304), but quietly:
-// logTickError does not report it as a problem and authTracker ignores it.
+// fails with the 402 when the refusal came from the sync itself (marked
+// gatedRefusal once the gate is closed, so the scheduler keeps its normal
+// cadence — ut-docs#4304; from a push, pushRefused, the tick succeeds),
+// but quietly: logTickError does not report it as a problem and
+// authTracker ignores it.
 // Any other error: no-op.
 func cachePlanRequired(ctx context.Context, settings *data.SettingsRepo, err error) {
 	if se, ok := planRequired(err); ok && settings != nil {
 		cacheEntitlement(ctx, settings, se.Entitlement, time.Now())
 	}
+}
+
+// pushRefused reports whether a snapshot / order-tracking push's err is a
+// 402 plan_required and, if so, caches its entitlement block
+// (cachePlanRequired) so this till's ADR-0148 gate closes now rather than
+// on the next tick's sync 402 (ut-docs#4385). A cached block is handled
+// like the sync path's refusal: the operator window closes and the
+// start-up check-in is disarmed (amendment §4), and the Info line
+// logTickError would have written explains why sync went quiet (Info
+// stays out of the problems ring). The tick itself still succeeds: the
+// 200 sync was this tick's contact.
+func pushRefused(ctx context.Context, settings *data.SettingsRepo, err error, windowSeen int64) bool {
+	se, ok := planRequired(err)
+	if !ok {
+		return false
+	}
+	cachePlanRequired(ctx, settings, err)
+	if len(se.Entitlement) > 0 {
+		closeOperatorWindow(windowSeen)
+		disarmStartupCheckin()
+		logging.L().Infof("cloudsync: cloud sync is part of the paid plans; this store is not on one (%s answered 402)", se.Path)
+	}
+	return true
 }
 
 // markGatedRefusal wraps a 402 plan_required in gatedRefusal when, with its
@@ -1781,15 +1864,22 @@ func pushOrderTrackingIfChanged(ctx context.Context, cfg *config.Config, db *sql
 	return settings.Set(ctx, "cloudsync.order_tracking_hash", hash)
 }
 
-// postResult reports one directive outcome.
-func postResult(ctx context.Context, cfg *config.Config, directiveID, status, msg string) error {
+// postResult reports one directive outcome. resultData is the result's
+// optional data object — only guest_order sends one (ADR-0159 §5:
+// {display_no, total_minor, currency}); nil leaves the field off the wire,
+// so every other type's result body is unchanged.
+func postResult(ctx context.Context, cfg *config.Config, directiveID, status, msg string, resultData map[string]any) error {
 	eff := enroll.Effective(cfg)
-	payload, _ := json.Marshal(map[string]string{
+	body := map[string]any{
 		"store_id":     eff.Marketplace.StoreID,
 		"directive_id": directiveID,
 		"status":       status,
 		"message":      msg,
-	})
+	}
+	if resultData != nil {
+		body["data"] = resultData
+	}
+	payload, _ := json.Marshal(body)
 	_, err := post(ctx, cfg, "/v1/stores/directives/result", payload)
 	return err
 }
@@ -2037,9 +2127,10 @@ func snapshotItemType(t string) string {
 // logPushError logs a failed snapshot / order-tracking push. A cloud 402
 // plan_required (the store lapsed between this tick's 200 sync and the
 // push) is quiet — Debug, so nothing reaches the problems ring (ADR-0148
-// §5, ut-docs#4313); the next sync's 402 logs the Info line via
-// logTickError. Anything else warns as before. Neither push stores its
-// hash on error, so both retry once the store is paid.
+// §5, ut-docs#4313); tick has cached its block (pushRefused), so the
+// ADR-0148 gate keeps the next ticks quiet (ut-docs#4385). Anything else
+// warns as before. Neither push stores its hash on error, so both retry
+// once the store is paid.
 func logPushError(what string, err error) {
 	if _, ok := planRequired(err); ok {
 		logging.L().Debugf("cloudsync: %s refused: store has no paid plan (402)", what)
