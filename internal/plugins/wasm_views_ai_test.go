@@ -30,8 +30,9 @@ func TestViewQuery_AIAgentNeedsAISendGrant(t *testing.T) {
 	d := viewDB(t, pluginID, "ai.agent", "view:sales", "ai.send.sales")
 	repo := data.NewPluginRepo(d)
 	ctx := context.Background()
+	// An ai.agent read runs only in an operator's ui ask (ut-docs#4143).
 	call := func() int {
-		return viewCode(t, runGuestPayload(t, w, d, pluginID, map[string]any{"view": "items.top.v1"}))
+		return viewCode(t, runGuestEventCtx(askAs("manager"), t, w, d, pluginID, "ui.view.ask", map[string]any{"view": "items.top.v1"}))
 	}
 
 	if c := call(); c != 2 {
@@ -69,7 +70,7 @@ func TestViewQuery_AIAgentShopClassNeedsNoAISend(t *testing.T) {
 		[]string{"ai.agent", "view:shop"}, "shop.context.v2"))
 	w := newViewRuntime(t, guest, pluginID)
 	d := viewDB(t, pluginID, "ai.agent", "view:shop")
-	if c := viewCode(t, runGuestPayload(t, w, d, pluginID, map[string]any{"view": "shop.context.v2"})); c <= 0 {
+	if c := viewCode(t, runGuestEventCtx(askAs("cashier"), t, w, d, pluginID, "ui.view.ask", map[string]any{"view": "shop.context.v2"})); c <= 0 {
 		t.Fatalf("ai.agent shop.context.v2 with no ai.send.* = %d, want the result length", c)
 	}
 }

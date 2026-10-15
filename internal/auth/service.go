@@ -281,7 +281,22 @@ func (s *Service) ResolveFor(ctx context.Context, token string, touch, board boo
 	if token == "" {
 		return User{}, false
 	}
+	return s.resolveHash(ctx, hashToken(token), touch, board)
+}
+
+// SessionCheck returns a check of token's session for work that outlives
+// the request (an AI-agent job, ut-docs#4143): it resolves like
+// ResolveNoTouch — so an idle session is revoked and idle-lock audited by
+// the check itself — but keeps only the token's hash, never the token.
+func (s *Service) SessionCheck(token string) func(ctx context.Context) (User, bool) {
+	if token == "" {
+		return func(context.Context) (User, bool) { return User{}, false }
+	}
 	hash := hashToken(token)
+	return func(ctx context.Context) (User, bool) { return s.resolveHash(ctx, hash, false, false) }
+}
+
+func (s *Service) resolveHash(ctx context.Context, hash string, touch, board bool) (User, bool) {
 	row, ok, err := s.repo.LookupSession(ctx, hash)
 	if err != nil || !ok {
 		if err == nil {

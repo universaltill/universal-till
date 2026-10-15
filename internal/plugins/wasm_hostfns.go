@@ -106,10 +106,13 @@ type hostState struct {
 	// published buffers this instance's accepted event_publish calls;
 	// handleEvent flushes them to the bus only after the instance exits.
 	published []Event
-	// operator is the signed-in operator of a hop-0 ui ask (ADR-0153
-	// "Who is asking", askOperatorFor); nil in every other context, so
-	// action_propose is refused there.
-	operator *agentaction.Operator
+	// operator is the signed-in operator of a hop-0 ui ask, or of a job
+	// started from one (ADR-0153 "Who is asking", askOperatorFor); nil in
+	// every other context, so action_propose and an ai.agent plugin's
+	// view_query are refused there. operatorLive is a job's session check
+	// (nil for the ask itself); askingOperator runs it on every use.
+	operator     *agentaction.Operator
+	operatorLive func(context.Context) bool
 	// proposeKey/proposeOut: action_propose's buffer-ABI retry cache
 	// (one overflowed answer, like http_request's).
 	proposeKey []byte
