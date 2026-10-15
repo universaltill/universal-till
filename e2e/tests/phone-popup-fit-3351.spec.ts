@@ -25,7 +25,12 @@ import { WORKER_TILL_EFFECTS_LEVEL } from './worker-till';
 // same call every till dialog's own code makes -- its frame must fit even
 // before the server fills it.
 
-const ROUTES = ['/', '/admin', '/audit', '/backoffice', '/bluetooth-devices', '/catalog', '/catalog/option-sets',
+// '/plugins/store/any-listing' is a detail route the e2e till (no catalogue)
+// answers with the 503 error page, so error pages are swept too. It runs
+// before /backoffice on purpose: its 503 logs a long unbreakable URL that
+// /backoffice's Problems card lists, which once pushed that page 120px past
+// a 440px phone (ut-docs#4226).
+const ROUTES = ['/', '/admin', '/audit', '/plugins/store/any-listing', '/backoffice', '/bluetooth-devices', '/catalog', '/catalog/option-sets',
   '/catalog/tax-codes', '/categories', '/country-settings', '/designer', '/fiscal-device', '/fiscal-register',
   '/help', '/import', '/inventory', '/items', '/journal', '/kitchen-stations', '/locations', '/menu',
   '/modifiers', '/my-reports', '/open-orders', '/orders', '/plugins', '/plugins/store', '/promotions',
