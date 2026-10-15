@@ -8,6 +8,7 @@ import (
 
 	"github.com/tetratelabs/wazero/api"
 
+	"github.com/universaltill/universal-till/internal/agentaction"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
 )
@@ -36,7 +37,10 @@ const (
 // → -2, audited; for a plugin whose installed manifest declares ai.agent
 // (ADR-0153 Decision 1), the view's data class not granted as
 // ai.send.<class>, or the view has no class → -2, audited (shop-class views
-// need no ai.send.* grant); arguments not a JSON object of in-bounds
+// need no ai.send.* grant); for such a plugin too (agentReadAllowed,
+// ut-docs#4143): no ui-ask operator, or a job whose session ended → -2;
+// past the request's tool-call ceiling → -5; the operator's role lacks the
+// view's data-class permission → -2 (each audited); arguments not a JSON object of in-bounds
 // integers → -4; query error or deadline → -3; result over viewResultCap →
 // -5 (never truncated). Every grant is checked on every call, so a revoke
 // is live.
@@ -77,6 +81,9 @@ func hostViewQuery(ctx context.Context, m api.Module, namePtr, nameLen, argsPtr,
 	if !aiDataClassAllowed(ctx, s.db, s.pluginID, s.aiAgent, view) {
 		return hostErrDenied
 	}
+	if code := agentReadAllowed(ctx, s, view); code != 0 {
+		return code
+	}
 	args, err := view.ParseArgs(argsB)
 	if err != nil {
 		return hostErrInvalid
@@ -111,6 +118,53 @@ func aiDataClassAllowed(ctx context.Context, db *sql.DB, pluginID string, aiAgen
 		return true
 	}
 	return CheckPermission(ctx, db, pluginID, AISendPermissionPrefix+view.DataClass) == nil
+}
+
+// agentReadAllowed is ADR-0153's operator rule for an ai.agent plugin's
+// view_query (ut-docs#4143); 0 = allowed, else the host code. A plugin
+// that does not declare ai.agent is unaffected. Otherwise the call needs
+// the operator of a ui ask (or of a live job started from one: "Who is
+// asking"), counts against that request's tool-call ceiling (Decision 6,
+// one chat turn across its events and jobs), and needs the role
+// permission of the view's data class (Decision 1, "The operator's role
+// still applies to reads"; a cashier gets no sales, staff or till-health
+// view). Every refusal is audited.
+func agentReadAllowed(ctx context.Context, s *hostState, view data.CoreView) int32 {
+	if !s.aiAgent {
+		return 0
+	}
+	deny := func(perm, reason string) {
+		if err := auditPermissionDenial(ctx, s.db, s.pluginID, perm, reason); err != nil {
+			logging.L().Warnf("failed to audit view denial: %v", err)
+		}
+	}
+	op, why := s.askingOperator(ctx)
+	if op == nil {
+		deny(AIAgentPermission, "view_query "+why)
+		return hostErrDenied
+	}
+	if !agentaction.ToolCalls.Take(*op) {
+		deny(AIAgentPermission, "view_query: tool-call ceiling of one request reached")
+		return hostErrQuota
+	}
+	perm, ok := data.AIReadRolePermission(view.DataClass)
+	if !ok {
+		deny(AIAgentPermission, "view "+view.Name+": no operator role rule for data class "+view.DataClass)
+		return hostErrDenied
+	}
+	if perm == "" {
+		return 0
+	}
+	can, err := data.NewAuthRepo(s.db).HasPermission(ctx, op.Role, perm)
+	if err != nil {
+		logging.L().Warnf("[wasm:%s] view_query role check: %v", s.pluginID, err)
+		return hostErrInternal
+	}
+	if !can {
+		deny(perm, "view "+view.Name+": operator role "+op.Role+" lacks "+perm)
+		return hostErrDenied
+	}
+	return 0
 }
 
 // viewListed reports whether the plugin's installed manifest lists name in

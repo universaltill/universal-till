@@ -38,16 +38,61 @@ func AskOperatorFrom(ctx context.Context) (agentaction.Operator, bool) {
 	return op, ok && op.UserID != "" && op.Session != ""
 }
 
-// askOperatorFor is the operator the host state gets for ev: only a
-// core-raised (hop 0) ui ask that is not a job has one.
-func askOperatorFor(ctx context.Context, ev Event, isJob bool) *agentaction.Operator {
-	if ev.Hop != 0 || isJob || (ev.Type != "ui.view.ask" && ev.Type != "ui.action.ask") {
-		return nil
+// askSessionLiveKey carries a job's session check (ADR-0153 "Who is
+// asking": a job whose session has ended is refused, ut-docs#4143).
+type askSessionLiveKey struct{}
+
+// WithAskSessionLive returns ctx carrying live, which reports whether the
+// session of the ask operator on ctx is still signed in. The page layer
+// stamps it, with the ask's operator, on a job it starts from a ui ask; a
+// job without it gets no operator.
+func WithAskSessionLive(ctx context.Context, live func(context.Context) bool) context.Context {
+	return context.WithValue(ctx, askSessionLiveKey{}, live)
+}
+
+// AskSessionLiveFrom returns the session check WithAskSessionLive stamped.
+func AskSessionLiveFrom(ctx context.Context) (func(context.Context) bool, bool) {
+	live, ok := ctx.Value(askSessionLiveKey{}).(func(context.Context) bool)
+	return live, ok && live != nil
+}
+
+// askOperatorFor is the operator the host state gets for ev, and the
+// session check to run before each use (nil: none needed). A core-raised
+// (hop 0) ui.view.ask / ui.action.ask has the operator the page layer
+// stamped; so does a hop-0 job started from one, which must also carry a
+// session check. Every other call has none.
+func askOperatorFor(ctx context.Context, ev Event, isJob bool) (*agentaction.Operator, func(context.Context) bool) {
+	if ev.Hop != 0 {
+		return nil, nil
 	}
-	if op, ok := AskOperatorFrom(ctx); ok {
-		return &op
+	op, ok := AskOperatorFrom(ctx)
+	if !ok {
+		return nil, nil
 	}
-	return nil
+	if isJob {
+		live, ok := AskSessionLiveFrom(ctx)
+		if !ok {
+			return nil, nil
+		}
+		return &op, live
+	}
+	if ev.Type != "ui.view.ask" && ev.Type != "ui.action.ask" {
+		return nil, nil
+	}
+	return &op, nil
+}
+
+// askingOperator is the operator an ai.agent host call acts for, or nil
+// with the reason it has none: outside an operator's ui ask, or in a job
+// whose session has ended.
+func (s *hostState) askingOperator(ctx context.Context) (*agentaction.Operator, string) {
+	if s.operator == nil {
+		return nil, "outside an operator's ui ask"
+	}
+	if s.operatorLive != nil && !s.operatorLive(ctx) {
+		return nil, "the operator's session has ended"
+	}
+	return s.operator, ""
 }
 
 // hostActionPropose: action_propose(name, args, dst) writes
@@ -86,7 +131,7 @@ func hostActionPropose(ctx context.Context, m api.Module, namePtr, nameLen, args
 }
 
 // actionPropose is the host function's logic. Checks, in order: no ui-ask
-// operator → -2; installed manifest does not declare ai.agent → -2;
+// operator (or a job whose session ended) → -2; installed manifest does not declare ai.agent → -2;
 // unknown action → -2, like a missing grant, so a plugin without the
 // grants can't enumerate action names (ut-docs#4168);
 // ai.tools.write:<area> not granted → -2; the
@@ -101,8 +146,9 @@ func actionPropose(ctx context.Context, s *hostState, name string, args []byte) 
 		}
 		return nil, hostErrDenied
 	}
-	if s.operator == nil {
-		return deny(AIAgentPermission, "action_propose outside an operator's ui ask")
+	opp, why := s.askingOperator(ctx)
+	if opp == nil {
+		return deny(AIAgentPermission, "action_propose "+why)
 	}
 	if !loadManifestFacts(ctx, s) || !s.aiAgent {
 		return deny(AIAgentPermission, "action_propose needs ai.agent declared")
@@ -114,7 +160,7 @@ func actionPropose(ctx context.Context, s *hostState, name string, args []byte) 
 	if err := CheckPermission(ctx, s.db, s.pluginID, AIToolsWritePermissionPrefix+a.Area); err != nil {
 		return nil, hostErrDenied
 	}
-	op := *s.operator
+	op := *opp
 	can, err := data.NewAuthRepo(s.db).HasPermission(ctx, op.Role, a.RolePermission)
 	if err != nil {
 		logging.L().Warnf("[wasm:%s] action_propose role check: %v", s.pluginID, err)

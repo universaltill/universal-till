@@ -241,12 +241,15 @@ func servePluginView(w http.ResponseWriter, r *http.Request, d *common.Deps, ent
 		var ans pluginview.ActionAnswer
 		var vctx pluginview.Context
 		var payload map[string]any
-		ans, vctx, payload, err = askPluginAction(r.Context(), d, entry, actionPerm, locale, sub, ups)
+		// The operator is stamped once, here, so a job started from the
+		// answer belongs to the same request (ut-docs#4143).
+		actx := withAgentOperator(r.Context())
+		ans, vctx, payload, err = askPluginAction(actx, d, entry, actionPerm, locale, sub, ups)
 		switch {
 		case err != nil:
 		case ans.Job != "":
 			var id string
-			id, err = startPluginJob(r.Context(), d, entry, ans.Job, payload, vctx, tokens, nil)
+			id, err = startPluginJob(withAgentJobSession(actx, d, r), d, entry, ans.Job, payload, vctx, tokens, nil)
 			jobOwnsUploads = err == nil
 			switch {
 			case errors.Is(err, errPluginJobBusy):
