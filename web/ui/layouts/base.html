@@ -1771,8 +1771,10 @@
       {{ end }}
       {{ with releasenoticeversion }}{{ if allowed "settings" }}
       <!-- ut-docs#3091: once after an update — a non-blocking notice, never a
-           modal. releasenoticeversion is "" on the self-order kiosk; `allowed
-           "settings"` keeps it from a cashier (#3079). The link opens
+           modal. The customer-facing self-order kiosk pages never include this
+           layout, so a customer never sees it; `allowed "settings"` keeps it
+           from a cashier (#3079) while a manager on a self-order till still
+           gets it (ut-docs#4394). The link opens
            Settings → About and counts as seen (POST ?open=1, then HX-Redirect); × dismisses. -->
       <span class="sb-item sb-release-notes" id="sb-release-notes" data-testid="sb-release-notes">
         <a href="/settings#settings-about" hx-post="/api/release-notes/seen?open=1" hx-swap="none" data-testid="sb-release-notes-link"><span class="btn-ico" aria-hidden="true">{{ icon "eye" }}</span> <span class="sb-release-notes-text">{{ printf (T "status.release_notes_updated") . }}</span></a>

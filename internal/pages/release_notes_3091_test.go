@@ -224,11 +224,11 @@ func TestSettingsAbout_WhatsNewLinkMarksSeen(t *testing.T) {
 	}
 }
 
-func TestReleaseNotesChip_ManagerOnlyAndNeverOnKiosk(t *testing.T) {
+func TestReleaseNotesChip_ManagerOnlyIncludingOnSelfOrderTill(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	t.Setenv("UT_AUTH", "on")
 	httpx.InitRailVisibility(menuPredicateChecker(d))
-	t.Cleanup(func() { httpx.InitRailVisibility(nil); httpx.InitSelfOrderMode(false) })
+	t.Cleanup(func() { httpx.InitRailVisibility(nil); httpx.InitDisplayMode("") })
 	v := newestNoteVersion(t)
 	withRunningVersion(t, v)
 	releasenotes.SetNoticeVersion("v" + v)
@@ -249,9 +249,15 @@ func TestReleaseNotesChip_ManagerOnlyAndNeverOnKiosk(t *testing.T) {
 	if strings.Contains(cash, `data-testid="sb-release-notes"`) {
 		t.Error("a cashier must never see the release-notes chip")
 	}
-	// Self-order kiosk: never, whoever is signed in.
-	httpx.InitSelfOrderMode(true)
-	if strings.Contains(getPathAs3091(t, mux, "/settings", mgrUser).Body.String(), `data-testid="sb-release-notes"`) {
-		t.Error("the chip must never show in self-order kiosk mode")
+	// Self-order till (ut-docs#4394): the till's display mode must not hide the
+	// chip from a manager signed in on it (maintenance sign-in, phone); the
+	// customer-facing kiosk pages never include base.html. A cashier still
+	// never sees it.
+	httpx.InitDisplayMode("self_order")
+	if !strings.Contains(getPathAs3091(t, mux, "/settings", mgrUser).Body.String(), `data-testid="sb-release-notes"`) {
+		t.Error("a manager on a self-order till must still see the chip")
+	}
+	if strings.Contains(getPathAs3091(t, mux, "/settings", cashUser).Body.String(), `data-testid="sb-release-notes"`) {
+		t.Error("a cashier must never see the chip, self-order till or not")
 	}
 }

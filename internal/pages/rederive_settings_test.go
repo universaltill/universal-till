@@ -56,14 +56,14 @@ func TestRederiveSettings_PushesWindowModeOntoShellChannel(t *testing.T) {
 	}
 }
 
-// TestRederiveSettings_PublishesSelfOrderMode (review of ut-docs#2099,
+// TestRederiveSettings_PublishesDisplayMode (review of ut-docs#2099,
 // finding B1): display.mode is deliberately NOT part of RuntimeState (see
-// pages.Init's own boot-time InitSelfOrderMode call), so it got no free
+// pages.Init's own boot-time InitDisplayMode call), so it got no free
 // ride from this function's `*s = st` and was left stale until the next
 // process restart after a cloud set_setting directive (ADR-0018) or replica
-// drift (it gates the post-update release notice, ut-docs#3091). Same shape
-// as the WindowMode test above.
-func TestRederiveSettings_PublishesSelfOrderMode(t *testing.T) {
+// drift (it backs the error page's "Back to sale" link, ut-docs#2154). Same
+// shape as the WindowMode test above.
+func TestRederiveSettings_PublishesDisplayMode(t *testing.T) {
 	_, _, d := newFullAuthDeps(t)
 	d.KioskEngine = pos.NewServiceWithResolver(pos.Config{}, stubResolver{})
 
@@ -73,26 +73,27 @@ func TestRederiveSettings_PublishesSelfOrderMode(t *testing.T) {
 	}
 	rederive := newRederiveSettings(d, true, i18n)
 
-	httpx.InitSelfOrderMode(false)
-	defer httpx.InitSelfOrderMode(false)
+	httpx.InitDisplayMode("")
+	defer httpx.InitDisplayMode("")
+	backToSale := httpx.FuncsFor("en")["backtosaleurl"].(func() string)
 
 	// A cloud directive / replica drift writes display.mode straight into
-	// the store — no settings handler, no InitSelfOrderMode call of its own.
+	// the store — no settings handler, no InitDisplayMode call of its own.
 	if err := d.Settings.Set(t.Context(), "display.mode", "self_order"); err != nil {
 		t.Fatal(err)
 	}
 	rederive(context.Background())
-	if !httpx.SelfOrderMode() {
-		t.Fatal("SelfOrderMode() = false after rederive with display.mode=self_order — the flag went stale")
+	if got := backToSale(); got != "/self-order" {
+		t.Fatalf("backtosaleurl = %q after rederive with display.mode=self_order, want /self-order — the display mode went stale", got)
 	}
 
 	// And back down again: taken out of kiosk mode, the till must regain
-	// the affordance without waiting for a restart.
+	// its normal destination without waiting for a restart.
 	if err := d.Settings.Set(t.Context(), "display.mode", "register"); err != nil {
 		t.Fatal(err)
 	}
 	rederive(context.Background())
-	if httpx.SelfOrderMode() {
-		t.Fatal("SelfOrderMode() = true after rederive with display.mode=register — the flag went stale")
+	if got := backToSale(); got != "/" {
+		t.Fatalf("backtosaleurl = %q after rederive with display.mode=register, want / — the display mode went stale", got)
 	}
 }
