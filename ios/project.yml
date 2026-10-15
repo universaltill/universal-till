@@ -83,7 +83,7 @@ targets:
           - _unitill-sync._tcp
           - _pdl-datastream._tcp
         # Barcode scanning with the camera from the web UI.
-        NSCameraUsageDescription: Universal Till uses the camera to scan barcodes.
+        NSCameraUsageDescription: Universal Till uses the camera to scan barcodes and take item photos.
         # The bug-report panel's voice note (getUserMedia audio). Without it
         # iOS terminates the app on the first Record tap (ut-docs#3354);
         # scripts/ci/guard-ios-usage-descriptions.sh ties web capture calls
