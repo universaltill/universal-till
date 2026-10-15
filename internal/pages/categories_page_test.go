@@ -697,13 +697,12 @@ func TestCategoriesPage_RendersRecordDialogWithFieldsSlot(t *testing.T) {
 
 // ut-docs#2099 (implementation half of ut-docs#1999, coding-standards.md
 // §10): the record dialog covers the nav rail, so it owes status/lock/
-// exit-to-OS a compact home of their own EXCEPT on a device in self-order
-// kiosk mode, where the universal rule inverts and all three must be
-// deliberately absent (customer containment). Lives once in
-// record_dialog.html (not per-page), so this test drives it purely through
-// httpx.InitSelfOrderMode — the same global toggle base.html's "kiosk" func
-// already uses for the unrelated window-chrome flag — never by threading a
-// per-page field through categories_page.go.
+// exit-to-OS a compact home of its own. ut-docs#4324: it renders only on
+// operator pages, which need a staff session, so the row is there whatever
+// the till's display.mode — a manager's maintenance sign-in on a satellite
+// kiosk (#4307) keeps display.mode=self_order and still needs Lock. The
+// customer-facing kiosk pages never include the dialog
+// (TestSelfOrderKioskTemplatesHaveNoRecordDialog).
 func TestCategoriesPage_RecordDialogStatusLockExitAffordance(t *testing.T) {
 	mux, _ := newCategoriesTestMux(t)
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
@@ -754,20 +753,17 @@ func TestCategoriesPage_RecordDialogStatusLockExitAffordance(t *testing.T) {
 		}
 	})
 
-	t.Run("self_order kiosk: affordance absent", func(t *testing.T) {
+	t.Run("self_order till, staff session: affordance present", func(t *testing.T) {
 		httpx.InitSelfOrderMode(true)
 		t.Cleanup(func() { httpx.InitSelfOrderMode(false) })
 		dlg := dialogHTML(t)
-		for _, unwanted := range affordances {
-			if strings.Contains(dlg, unwanted) {
-				t.Errorf("self_order-mode dialog must NOT render %s (customer containment):\n%s", unwanted, dlg)
+		for _, want := range affordances {
+			if !strings.Contains(dlg, want) {
+				t.Errorf("a manager's dialog on a self_order till is missing %s (ut-docs#4324):\n%s", want, dlg)
 			}
 		}
-		if strings.Contains(dlg, `action="/api/auth/logout"`) {
-			t.Errorf("self_order-mode dialog must not expose the lock form:\n%s", dlg)
-		}
-		if strings.Contains(dlg, `href="/settings#settings-display"`) {
-			t.Errorf("self_order-mode dialog must not expose the exit-to-OS link:\n%s", dlg)
+		if !strings.Contains(dlg, `action="/api/auth/logout"`) {
+			t.Errorf("a manager's dialog on a self_order till has no lock form:\n%s", dlg)
 		}
 	})
 }

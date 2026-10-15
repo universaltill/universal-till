@@ -811,7 +811,7 @@ func publishCachedSettings(ctx context.Context, store *settings.Store, st common
 	// the host detection, re-run here only when the hardware fingerprint
 	// changed — local file reads, never the network.
 	httpx.InitEffectsLevel(resolveEffectsLevel(ctx, store))
-	// ut-docs#2099/#2154: self-order kiosk containment flag + the full
+	// ut-docs#2099/#2154: the self-order mode flag + the full
 	// display mode error_page.html's "Back to sale" link needs.
 	if mode, _, err := store.Get(ctx, "display.mode"); err == nil {
 		httpx.InitSelfOrderMode(mode == "self_order")

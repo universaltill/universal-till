@@ -152,11 +152,11 @@ func applyDisplayMode(ctx context.Context, d *common.Deps, rawMode string) error
 	if err := d.Settings.Set(ctx, "display.mode", mode); err != nil {
 		return err
 	}
-	// ut-docs#2099: keep httpx's live "selforder" template flag
-	// (record_dialog.html's status/lock/exit-to-OS withholding, §10) in
-	// step with the mode that was JUST persisted — without this the flag
-	// would only ever reflect the value pages.Init read at boot, stale until
-	// the till restarts. Mirrors httpx.InitOSKMode(mode) in the OSK handler.
+	// ut-docs#2099: keep httpx's live self-order flag (the post-update
+	// release notice's withholding, ut-docs#3091) in step with the mode
+	// that was JUST persisted — without this the flag would only ever
+	// reflect the value pages.Init read at boot, stale until the till
+	// restarts. Mirrors httpx.InitOSKMode(mode) in the OSK handler.
 	httpx.InitSelfOrderMode(mode == "self_order")
 	httpx.InitDisplayMode(mode) // ut-docs#2154, same live-update
 	return nil
@@ -3660,9 +3660,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// ut-docs#2121: this generic key/value door didn't get the same
 			// side effects as the dedicated POST /api/settings/display-mode
 			// handler above — same class of bug ut-docs#2099's review found
-			// in newRederiveSettings. Keep httpx's live "selforder" template
-			// flag (record_dialog.html's status/lock/exit-to-OS withholding,
-			// coding-standards.md §10) in step with what was just persisted,
+			// in newRederiveSettings. Keep httpx's live self-order flag
+			// (httpx.SelfOrderMode) in step with what was just persisted,
 			// exactly as the dedicated handler does right after its own
 			// d.Settings.Set — without this it stays stale until restart.
 			httpx.InitSelfOrderMode(value == "self_order")

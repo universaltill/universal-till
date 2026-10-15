@@ -872,23 +872,22 @@ func TestInitKioskExposedToTemplates(t *testing.T) {
 	}
 }
 
-// ut-docs#2099 (the implementation half of ut-docs#1999,
-// coding-standards.md §10): "selforder" mirrors InitKiosk/"kiosk" exactly —
-// a package-level toggle published to templates, set at boot from the
-// persisted display.mode and live-updated by POST /api/settings/display-mode
-// — so record_dialog.html can withhold the status/lock/exit affordance for
-// customer containment without every page threading the flag through by
-// hand.
-func TestInitSelfOrderModeExposedToTemplates(t *testing.T) {
+// ut-docs#2099: SelfOrderMode reads back what InitSelfOrderMode published
+// (set at boot from the persisted display.mode, live-updated by the
+// settings handlers). ut-docs#4324: no template reads it — the record
+// dialog's status/lock/exit row is operator-only and never gated on it.
+func TestInitSelfOrderModeRoundTrips(t *testing.T) {
 	InitSelfOrderMode(true)
 	defer InitSelfOrderMode(false)
-	fn := FuncsFor("en")["selforder"].(func() bool)
-	if !fn() {
-		t.Fatal("selforder template func = false after InitSelfOrderMode(true)")
+	if !SelfOrderMode() {
+		t.Fatal("SelfOrderMode() = false after InitSelfOrderMode(true)")
 	}
 	InitSelfOrderMode(false)
-	if fn() {
-		t.Fatal("selforder template func = true after InitSelfOrderMode(false)")
+	if SelfOrderMode() {
+		t.Fatal("SelfOrderMode() = true after InitSelfOrderMode(false)")
+	}
+	if _, ok := FuncsFor("en")["selforder"]; ok {
+		t.Fatal(`"selforder" template func is back: a till-wide mode flag can't tell a customer from a signed-in manager (ut-docs#4324)`)
 	}
 }
 

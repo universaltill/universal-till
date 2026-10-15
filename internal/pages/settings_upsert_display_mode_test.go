@@ -19,11 +19,8 @@ import (
 // "display.mode" — same class of bug ut-docs#2099's review found and fixed
 // in newRederiveSettings (the cloud set_setting/replica-drift path), just
 // via a different generic-editor door. This drives the fix through the
-// generic upsert endpoint and asserts httpx's live "selforder" template
-// flag (record_dialog.html's status/lock/exit-to-OS withholding,
-// coding-standards.md §10) actually flips immediately, the same assertion
-// shape categories_page_test.go's TestCategoriesPage_RecordDialogStatusLockExitAffordance
-// uses for the dedicated handler's own equivalent effect.
+// generic upsert endpoint and asserts httpx's live self-order flag
+// (httpx.SelfOrderMode) actually flips immediately.
 func TestSettingsUpsertDisplayMode_UpdatesLiveKioskFlag(t *testing.T) {
 	dp, d := setupSelfOrderShopDeps(t)
 	dp.BtnStore = ui.NewButtonStore(d.DB)
@@ -31,41 +28,13 @@ func TestSettingsUpsertDisplayMode_UpdatesLiveKioskFlag(t *testing.T) {
 
 	mux := http.NewServeMux()
 	registerSettings(mux, dp)
-	registerCategories(mux, dp)
 
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
-	// httpx.selfOrderMode is process-global (mirrors categories_page_test.go's
-	// own TestCategoriesPage_RecordDialogStatusLockExitAffordance setup) — set
-	// the known baseline explicitly rather than relying on some other test in
-	// the package happening to have left it false, or a `-run` filter that
-	// skips whichever test would have reset it makes this one spuriously fail.
+	// httpx.selfOrderMode is process-global — set the known baseline
+	// explicitly rather than relying on some other test in the package
+	// happening to have left it false.
 	httpx.InitSelfOrderMode(false)
 	t.Cleanup(func() { httpx.InitSelfOrderMode(false) })
-
-	dialogHTML := func(t *testing.T) string {
-		t.Helper()
-		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/categories", nil), manager)
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("GET /categories: %d %s", rec.Code, rec.Body.String())
-		}
-		body := rec.Body.String()
-		start := strings.Index(body, `<dialog id="category-dialog"`)
-		if start < 0 {
-			t.Fatalf("page has no #category-dialog:\n%s", body)
-		}
-		end := strings.Index(body[start:], `</dialog>`)
-		if end < 0 {
-			t.Fatalf("dialog is not closed")
-		}
-		return body[start : start+end]
-	}
-
-	// Baseline: not in self-order mode, the affordance is present.
-	if dlg := dialogHTML(t); !strings.Contains(dlg, `data-record-dialog-lock`) {
-		t.Fatalf("register-mode dialog is missing the lock affordance before the upsert:\n%s", dlg)
-	}
 
 	upsert := func(t *testing.T, value string) {
 		t.Helper()
@@ -80,19 +49,18 @@ func TestSettingsUpsertDisplayMode_UpdatesLiveKioskFlag(t *testing.T) {
 	}
 
 	// The bug: without httpx.InitSelfOrderMode being called from this path,
-	// the dialog would still show the lock/exit affordance here, staying
-	// stale until the process restarted (exactly ut-docs#2099's B1 finding,
-	// just reached through the generic editor instead of the cloud path).
+	// the flag would stay stale until the process restarted (exactly
+	// ut-docs#2099's B1 finding, reached through the generic editor).
 	upsert(t, "self_order")
-	if dlg := dialogHTML(t); strings.Contains(dlg, `data-record-dialog-lock`) {
-		t.Fatalf("self_order-mode dialog must NOT render the lock affordance immediately after POST /api/settings/upsert (customer containment):\n%s", dlg)
+	if !httpx.SelfOrderMode() {
+		t.Fatal("SelfOrderMode() = false right after POST /api/settings/upsert display.mode=self_order")
 	}
 
 	// And it flips back live too, same unconditional shape as the dedicated
 	// handler's own InitSelfOrderMode(rawMode == "self_order") call.
 	upsert(t, "backoffice")
-	if dlg := dialogHTML(t); !strings.Contains(dlg, `data-record-dialog-lock`) {
-		t.Fatalf("leaving self_order via upsert must restore the lock affordance immediately:\n%s", dlg)
+	if httpx.SelfOrderMode() {
+		t.Fatal("SelfOrderMode() = true right after leaving self_order via upsert")
 	}
 }
 
