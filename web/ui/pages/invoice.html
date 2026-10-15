@@ -1,7 +1,11 @@
 {{ define "content" }}
-<div class="page-head">
+<!-- ut-docs#4393: page-head-wrap + a wrapping action row, as journal_detail.html
+     (ut-docs#4279) — at a 360px phone the title and Print / ← Receipt were
+     forced onto one line: no sideways scroll, but the h1 was squeezed to
+     ~120px and the invoice number broke mid-token. -->
+<div class="page-head page-head-wrap">
   <h1>{{ if .IsCreditNote }}{{ T "invoice.credit_note" }}{{ else if .Seller.VATNo }}{{ T "invoice.tax_title" }}{{ else }}{{ T "invoice.title" }}{{ end }} {{ .Inv.DisplayNo }}</h1>
-  <div style="display:flex; gap:.4rem; align-items:center">
+  <div style="display:flex; flex-wrap:wrap; gap:.4rem; align-items:center">
     <button class="btn" data-action="print">🖨 {{ T "invoice.print" }}</button>
     <a class="btn secondary" href="/journal/{{ .Sale.ReceiptNo }}"><span class="back-arrow" aria-hidden="true">←</span> {{ T "journal.detail.title" }}</a>
   </div>
