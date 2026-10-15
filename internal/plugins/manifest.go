@@ -148,6 +148,13 @@ type ManifestEntry struct {
 	// type simply omits them.
 	Entities    []string `json:"entities,omitempty"`
 	FileFormats []string `json:"file_formats,omitempty"`
+	// Source is IMPORT-ONLY (ADR-0161, ut-docs#4429): "api" marks an entry
+	// that pulls from another system over its API instead of reading an
+	// uploaded file — POST /api/data/import then takes no file, and the
+	// plugin hands rows back through import_rows_submit. "" = a file
+	// entry (validateImportEntrySource). ut-cloud's CanonicalEntry must
+	// mirror it (same position, same tag) or the marketplace signer strips it.
+	Source string `json:"source,omitempty"`
 
 	// View names the plugin view this entry renders and Slot the core
 	// content slot it fills (ADR-0121 §7; one of contentSlots). Both
@@ -176,7 +183,7 @@ type ManifestEntry struct {
 // data.PageEntryRow.View) and Slot under "content_slot" -- not "slot",
 // which is a layout entry's own config key (uislot.ParseAmendmentsJSON).
 func entryConfigJSON(e ManifestEntry) string {
-	if len(e.Config) == 0 && len(e.Entities) == 0 && len(e.FileFormats) == 0 && e.View == "" && e.Slot == "" && e.OpensView == "" {
+	if len(e.Config) == 0 && len(e.Entities) == 0 && len(e.FileFormats) == 0 && e.Source == "" && e.View == "" && e.Slot == "" && e.OpensView == "" {
 		return ""
 	}
 	m := make(map[string]interface{}, len(e.Config)+5)
@@ -194,6 +201,11 @@ func entryConfigJSON(e ManifestEntry) string {
 	}
 	if len(e.FileFormats) > 0 {
 		m["file_formats"] = e.FileFormats
+	}
+	// ADR-0161: "source" is only ever the typed, validated field.
+	delete(m, "source")
+	if e.Source != "" {
+		m["source"] = e.Source
 	}
 	if e.View != "" {
 		m["view"] = e.View
@@ -699,6 +711,30 @@ func ReservedPageRoutePrefix(route string) (string, bool) {
 	return "", false
 }
 
+// ImportSourceAPI is the one ManifestEntry.Source value (ADR-0161).
+const ImportSourceAPI = "api"
+
+// validateImportEntrySource (ADR-0161, ut-docs#4429): source is
+// import-only, "api" is its one value, and an api entry reads no file, so
+// it declares no file_formats.
+func validateImportEntrySource(entries []ManifestEntry) error {
+	for _, e := range entries {
+		if e.Source == "" {
+			continue
+		}
+		if e.Type != "import" {
+			return fmt.Errorf("entry %q: source is only valid on an import entry", e.Key)
+		}
+		if e.Source != ImportSourceAPI {
+			return fmt.Errorf("import entry %q: unknown source %q (the only value is %q)", e.Key, e.Source, ImportSourceAPI)
+		}
+		if len(e.FileFormats) > 0 {
+			return fmt.Errorf("import entry %q: an api source reads no file, so it declares no file_formats", e.Key)
+		}
+	}
+	return nil
+}
+
 // validatePageEntryIcon enforces the install-time half of ut-docs#1734
 // (follow-up from #1722): a type:"page" entry's IconName is the plugin's own
 // declared default menu-tile icon, and it must be one of
@@ -1118,6 +1154,11 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 	// 0j. A button's opens_view names one of its own overlay-able page
 	// views (ADR-0149 §6, ut-docs#3699).
 	if err := validateButtonOpensView(m.Entries); err != nil {
+		return err
+	}
+
+	// 0k. An import entry's source is "api" or absent (ADR-0161).
+	if err := validateImportEntrySource(m.Entries); err != nil {
 		return err
 	}
 

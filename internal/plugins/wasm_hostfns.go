@@ -117,6 +117,10 @@ type hostState struct {
 	// (one overflowed answer, like http_request's).
 	proposeKey []byte
 	proposeOut []byte
+	// importRows is the API-source import run's row buffer
+	// (wasm_import_rows.go); nil outside such an ask, so
+	// import_rows_submit is refused there.
+	importRows *ImportRowSink
 	// jobProgress is the job_progress sink when this call is a job
 	// (WithJob, wasm_job.go); nil otherwise.
 	jobProgress func(pct int, key string) error
@@ -172,6 +176,7 @@ func instantiateHostModule(ctx context.Context, rt wazero.Runtime) error {
 		NewFunctionBuilder().WithFunc(hostImportFileSize).Export("import_file_size").
 		NewFunctionBuilder().WithFunc(hostImportFileRead).Export("import_file_read").
 		NewFunctionBuilder().WithFunc(hostImportFileClose).Export("import_file_close").
+		NewFunctionBuilder().WithFunc(hostImportRowsSubmit).Export("import_rows_submit").
 		NewFunctionBuilder().WithFunc(hostUploadOpen).Export("upload_open").
 		NewFunctionBuilder().WithFunc(hostUploadRead).Export("upload_read").
 		NewFunctionBuilder().WithFunc(hostUploadClose).Export("upload_close").

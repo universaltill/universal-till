@@ -493,3 +493,26 @@ func TestActionPropose(t *testing.T) {
 		t.Fatalf("id=%q err=%v", id, err)
 	}
 }
+
+// ADR-0161 (ut-docs#4429): ImportRowsSubmit sends {"entity","rows"} and
+// returns how many rows the host took; the fake enforces the per-call cap
+// and the run's resolved entities, as the till does.
+func TestImportRowsSubmit(t *testing.T) {
+	h := NewFakeHost()
+	h.ImportEntities = map[string]bool{"items": true}
+	UseFakeHost(t, h)
+	n, err := ImportRowsSubmit("items", []map[string]any{{"external_id": "a", "name": "A", "price_minor": 1}})
+	if err != nil || n != 1 {
+		t.Fatalf("submit = %d, %v", n, err)
+	}
+	if got := len(h.ImportRows["items"]); got != 1 {
+		t.Fatalf("recorded %d rows", got)
+	}
+	if _, err := ImportRowsSubmit("customers", []any{}); !errors.Is(err, ErrDenied) {
+		t.Fatalf("unresolved entity: %v, want ErrDenied", err)
+	}
+	big := make([]map[string]any, ImportRowsMaxPerCall+1)
+	if _, err := ImportRowsSubmit("items", big); !errors.Is(err, ErrQuota) {
+		t.Fatalf("over the per-call cap: %v, want ErrQuota", err)
+	}
+}
