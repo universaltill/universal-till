@@ -225,12 +225,14 @@ func TestSetupWizardNoDemoByDefaultAndInvalidShopTypeIgnored(t *testing.T) {
 	if v, ok, _ := d.Settings.Get(t.Context(), common.KeyShopType); ok {
 		t.Fatalf("invalid shop.type %q was persisted", v)
 	}
+	// The shop's own gift voucher item (ut-docs#4259) is the one item a
+	// fresh wizard creates; it is not sample data.
 	var n int
-	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM items`).Scan(&n); err != nil {
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE item_type <> 'gift_voucher' OR is_sample_data = 1`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 0 {
-		t.Fatalf("items after setup = %d, want 0", n)
+		t.Fatalf("items after setup = %d, want 0 besides the gift voucher item", n)
 	}
 	for _, table := range []string{"customers", "promotions"} {
 		if err := d.Db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil {

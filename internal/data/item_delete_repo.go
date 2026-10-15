@@ -23,6 +23,7 @@ const (
 	ItemUseStockHistory = "stock_history"
 	ItemUseQuickButton  = "quick_button"
 	ItemUseOpenBasket   = "open_basket"
+	ItemUseOpenVouchers = "open_vouchers"
 )
 
 // ItemInUseError refuses a delete. Its text is the owner-readable line the
@@ -45,6 +46,8 @@ func (e *ItemInUseError) Error() string {
 		return "it has stock history — deactivate it instead"
 	case ItemUseQuickButton:
 		return "it is on a quick button — deactivate it instead"
+	case ItemUseOpenVouchers:
+		return "the shop has open gift vouchers — deactivate it instead"
 	default:
 		return "it is in an open basket — deactivate it instead"
 	}
@@ -79,6 +82,14 @@ SELECT EXISTS (SELECT 1 FROM stock_movements WHERE item_id = ?)
     OR EXISTS (SELECT 1 FROM stock_movements_archive WHERE variant_id IN (SELECT id FROM item_variants WHERE item_id = ?))
     OR EXISTS (SELECT 1 FROM shrinkage_events WHERE item_id = ?)
     OR EXISTS (SELECT 1 FROM shrinkage_events_archive WHERE item_id = ?)`
+
+// itemOpenVouchersSQL (ut-docs#4259): a gift voucher item while the shop
+// has any active voucher. A voucher sold through the item is never a sale
+// line (ut-docs#4214) and carries no item id, so the guard is shop-wide.
+// Takes the item id once. obsoleteItemsPredicate carries the same clause.
+const itemOpenVouchersSQL = `
+SELECT EXISTS (SELECT 1 FROM items WHERE id = ? AND item_type = 'gift_voucher')
+   AND EXISTS (SELECT 1 FROM vouchers WHERE status = 'active')`
 
 // itemParkedSQL: a held (parked) sale or open tab, live or archived, with a
 // line for the item or one of its variants — the same payload match
@@ -137,6 +148,7 @@ func (r *POSRepo) DeleteUnusedItem(ctx context.Context, itemID string) (ItemDele
 		{itemStockHistorySQL, 6, ItemUseStockHistory},
 		{`SELECT EXISTS (SELECT 1 FROM shortcut_buttons WHERE item_id = ?)`, 1, ItemUseQuickButton},
 		{itemParkedSQL, 4, ItemUseOpenBasket},
+		{itemOpenVouchersSQL, 1, ItemUseOpenVouchers},
 	} {
 		args := make([]any, c.n)
 		for i := range args {

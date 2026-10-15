@@ -14,7 +14,7 @@ Ein Gutschein ist Geld, das eine Kundin jetzt bezahlt, um es später auszugeben 
 
 ## Einen Gutschein verkaufen
 
-Zum Verkaufen brauchen Sie einen Artikel, dessen **Typ** im Katalog *Gutschein* ist (siehe [Katalog](/help/catalog)) — legen Sie ihn einmal an. Lassen Sie seinen Preis leer, wird jedes Mal nach dem Wert gefragt; geben Sie ihm einen Preis (z. B. *Gutschein 25 €*), startet das Fenster mit diesem Wert.
+Zum Verkaufen brauchen Sie einen Artikel, dessen **Typ** im Katalog *Gutschein* ist (siehe [Katalog](/help/catalog)). Ein neues Geschäft hat bereits einen, sofort verkaufsbereit: Er heißt *Gutschein*, wenn die deutsche Sprache bei der Einrichtung installiert wird, sonst *Gift voucher* (benennen Sie ihn im Katalog um, wenn Sie möchten). Auf einer Kasse, die schon vorher eingerichtet wurde, legen Sie ihn einmal an. Lassen Sie seinen Preis leer, wird jedes Mal nach dem Wert gefragt; geben Sie ihm einen Preis (z. B. *Gutschein 25 €*), startet das Fenster mit diesem Wert.
 
 1. Tippen Sie im Verkaufsbildschirm auf den Gutschein-Artikel (oder scannen Sie seinen Barcode). Das Fenster **Gutschein** öffnet sich.
 2. **Kartennummer**: Scannen Sie die Karte, die Sie aushändigen — das Feld ist für Ihren Scanner bereit, sobald das Fenster offen ist — oder tippen Sie ihre Nummer ein. Lassen Sie es leer, erzeugt die Kasse eine Nummer, wenn Sie auf **Hinzufügen** tippen.
