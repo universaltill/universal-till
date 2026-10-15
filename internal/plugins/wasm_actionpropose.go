@@ -56,6 +56,23 @@ func AskSessionLiveFrom(ctx context.Context) (func(context.Context) bool, bool) 
 	return live, ok && live != nil
 }
 
+// askReadOnlyKey marks a job's operator as read-only (ADR-0153 amendment
+// 2026-10-15, ut-docs#4444): the camera identify job acts for the cashier
+// who took the photo, so an ai.agent plugin may read for them, but
+// identify only suggests — it never proposes a change.
+type askReadOnlyKey struct{}
+
+// WithAskReadOnly returns ctx whose ask operator may read but not propose.
+func WithAskReadOnly(ctx context.Context) context.Context {
+	return context.WithValue(ctx, askReadOnlyKey{}, true)
+}
+
+// AskReadOnlyFrom reports whether WithAskReadOnly stamped ctx.
+func AskReadOnlyFrom(ctx context.Context) bool {
+	ro, _ := ctx.Value(askReadOnlyKey{}).(bool)
+	return ro
+}
+
 // askOperatorFor is the operator the host state gets for ev, and the
 // session check to run before each use (nil: none needed). A core-raised
 // (hop 0) ui.view.ask / ui.action.ask has the operator the page layer
@@ -131,7 +148,8 @@ func hostActionPropose(ctx context.Context, m api.Module, namePtr, nameLen, args
 }
 
 // actionPropose is the host function's logic. Checks, in order: no ui-ask
-// operator (or a job whose session ended) → -2; installed manifest does not declare ai.agent → -2;
+// operator (or a job whose session ended) → -2; a read-only operator
+// (camera identify, ut-docs#4444) → -2; installed manifest does not declare ai.agent → -2;
 // unknown action → -2, like a missing grant, so a plugin without the
 // grants can't enumerate action names (ut-docs#4168);
 // ai.tools.write:<area> not granted → -2; the
@@ -149,6 +167,9 @@ func actionPropose(ctx context.Context, s *hostState, name string, args []byte) 
 	opp, why := s.askingOperator(ctx)
 	if opp == nil {
 		return deny(AIAgentPermission, "action_propose "+why)
+	}
+	if s.operatorReadOnly {
+		return deny(AIAgentPermission, "action_propose from a read-only operator (camera identify job)")
 	}
 	if !loadManifestFacts(ctx, s) || !s.aiAgent {
 		return deny(AIAgentPermission, "action_propose needs ai.agent declared")

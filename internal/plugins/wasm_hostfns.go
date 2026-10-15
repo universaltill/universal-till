@@ -111,8 +111,11 @@ type hostState struct {
 	// every other context, so action_propose and an ai.agent plugin's
 	// view_query are refused there. operatorLive is a job's session check
 	// (nil for the ask itself); askingOperator runs it on every use.
-	operator     *agentaction.Operator
-	operatorLive func(context.Context) bool
+	// operatorReadOnly (WithAskReadOnly): the operator may be read for but
+	// not proposed for — the camera identify job (ut-docs#4444).
+	operator         *agentaction.Operator
+	operatorLive     func(context.Context) bool
+	operatorReadOnly bool
 	// proposeKey/proposeOut: action_propose's buffer-ABI retry cache
 	// (one overflowed answer, like http_request's).
 	proposeKey []byte

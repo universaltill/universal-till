@@ -811,6 +811,7 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 	}
 	hs.operator, hs.operatorLive = askOperatorFor(ctx, ev, isJob)
 	hs.importRows = importRowSinkFor(ctx, ev, isJob, pluginID)
+	hs.operatorReadOnly = hs.operator != nil && AskReadOnlyFrom(ctx)
 	// http:stream handles never outlive the event (ADR-0121 §3): closed
 	// however the guest ends — success, error, deadline or trap.
 	defer hs.streams.closeAll()

@@ -280,7 +280,12 @@ func servePluginIdentifyStart(w http.ResponseWriter, r *http.Request, d *common.
 			identifySlots.put(pluginID, id, path, up.ContentType, pluginJobUnpolledTTL+identifySlotTTL)
 		}
 	}
-	id, err := startPluginJob(r.Context(), d, identifyEntry(pluginID), identifyEvent, payload, vctx, tokens, keep)
+	// The job acts for the signed-in cashier who took the photo (ADR-0153
+	// "Who is asking", amendment 2026-10-15, ut-docs#4444): an ai.agent
+	// plugin may read catalog views for them while their session lives,
+	// role-checked per view, but may propose nothing — identify suggests.
+	jctx := withAgentJobSession(plugins.WithAskReadOnly(withAgentOperator(r.Context())), d, r)
+	id, err := startPluginJob(jctx, d, identifyEntry(pluginID), identifyEvent, payload, vctx, tokens, keep)
 	if errors.Is(err, errPluginJobBusy) && pluginJobs.cancelRunning(pluginID, identifyRoute) > 0 {
 		// A new capture supersedes this seam's earlier job: the overlay
 		// shows one result at a time and stopped polling the old one
@@ -288,7 +293,7 @@ func servePluginIdentifyStart(w http.ResponseWriter, r *http.Request, d *common.
 		// this a tablet (one job per plugin) refused the next Capture until
 		// the old job's unpolled TTL ran out. A job the plugin runs on its
 		// own page is never cancelled here: that stays busy.
-		id, err = startPluginJob(r.Context(), d, identifyEntry(pluginID), identifyEvent, payload, vctx, tokens, keep)
+		id, err = startPluginJob(jctx, d, identifyEntry(pluginID), identifyEvent, payload, vctx, tokens, keep)
 	}
 	if err != nil {
 		// Only a nil error hands the photo to the job.
