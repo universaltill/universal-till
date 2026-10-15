@@ -12,6 +12,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/fleetlink"
+	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -41,7 +42,14 @@ func newSyncLinkHub(d *common.Deps, cfg fleetlink.Config, adminRepo *data.SyncAd
 	tills := data.NewTillsRepo(d.Db)
 	registers := data.NewPOSRepo(d.Db)
 	var unusableNames sync.Map // till id → the unusable name last warned about
-	return fleetlink.NewHub(fleetlink.HubOptions{
+	var hub *fleetlink.Hub
+	reportOf := func(tillID string) (fleetlink.Report, bool) {
+		if hub == nil {
+			return fleetlink.Report{}, false
+		}
+		return hub.Report(tillID)
+	}
+	hub = fleetlink.NewHub(fleetlink.HubOptions{
 		Config: cfg,
 		Hello: func(ctx context.Context, _ string) fleetlink.Hello {
 			h := fleetlink.Hello{
@@ -64,6 +72,13 @@ func newSyncLinkHub(d *common.Deps, cfg fleetlink.Config, adminRepo *data.SyncAd
 			if b, err := stockRepo.DumpStock(ctx); err == nil {
 				h.Cursors.Stock = b.Fingerprint()
 			}
+			// The pin this till serves and, during a key rotation, the
+			// next one (ADR-0114 §7, ut-docs#4409). A replica takes the
+			// next pin only over a link already pinned to this one.
+			if c := lantls.Serving(); c != nil {
+				pin := c.Pin()
+				h.TLSPin, h.NextPin = &pin, c.NextPin()
+			}
 			return h
 		},
 		// A linked till may poll far less (#2735's 5-min floor), but
@@ -78,8 +93,46 @@ func newSyncLinkHub(d *common.Deps, cfg fleetlink.Config, adminRepo *data.SyncAd
 		},
 		OnReport: func(tillID string, r fleetlink.Report) {
 			applyReportedTillName(tills, registers, &unusableNames, tillID, r.Name)
+			confirmNextPin(lantls.Serving(), tills, reportOf, tillID, r)
 		},
 	})
+	return hub
+}
+
+// confirmNextPin records a till's report of the pending next pin (ADR-0114
+// §7, ut-docs#4409). The switch waits for every paired till except those
+// whose latest report says they don't pin — a switch can't cut those off;
+// a till that hasn't reported since this start counts as pinning. Cheap on
+// the hot path: the tills are read only for a new confirmation of the
+// pending pin. Failures are logged, never fail the link; the rotation then
+// falls back to its RotationWindow ceiling.
+func confirmNextPin(c *lantls.Cert, tills *data.TillsRepo, reportOf func(string) (fleetlink.Report, bool), tillID string, r fleetlink.Report) {
+	if c == nil || r.NextPin == "" || !c.NeedsConfirm(tillID, r.NextPin) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rows, err := tills.ListTills(ctx)
+	if err != nil {
+		logging.L().Warnf("sync link: key rotation: list tills: %v", err)
+		return
+	}
+	required := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.ID != tillID {
+			if rep, ok := reportOf(row.ID); ok && !rep.TLSPinned {
+				continue
+			}
+		}
+		required = append(required, row.ID)
+	}
+	if err := c.ConfirmNext(tillID, r.NextPin, required); err != nil {
+		logging.L().Warnf("sync link: key rotation: record till %s's confirmation: %v", tillID, err)
+		return
+	}
+	if !c.NeedsConfirm(tillID, r.NextPin) {
+		logging.L().Infof("sync link: till %s holds this till's next LAN TLS pin", tillID)
+	}
 }
 
 // applyReportedTillName keeps the main till's tills row in step with the

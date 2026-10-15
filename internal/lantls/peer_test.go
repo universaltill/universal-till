@@ -48,7 +48,7 @@ func newPeerTill(t *testing.T) *peerTill {
 // usePeer points the shared peer transport at primary/pin for one test.
 func usePeer(t *testing.T, primary, pin string) {
 	t.Helper()
-	t.Cleanup(SetPeerSource(func(context.Context) (string, string, error) { return primary, pin, nil }))
+	t.Cleanup(SetPeerSource(func(context.Context) (PeerTarget, error) { return PeerTarget{PrimaryURL: primary, Pin: pin}, nil }))
 }
 
 func peerGet(t *testing.T, url string) (string, error) {
@@ -147,7 +147,7 @@ func TestPeerClient_OtherHostsAreUntouched(t *testing.T) {
 func TestPeerClient_PinChangeDropsVerifiedConnections(t *testing.T) {
 	main := newPeerTill(t)
 	pin := main.cert.Pin()
-	t.Cleanup(SetPeerSource(func(context.Context) (string, string, error) { return main.base, pin, nil }))
+	t.Cleanup(SetPeerSource(func(context.Context) (PeerTarget, error) { return PeerTarget{PrimaryURL: main.base, Pin: pin}, nil }))
 
 	if got, err := peerGet(t, main.base+"/"); err != nil || got != "tls=true" {
 		t.Fatalf("first request: %q, %v", got, err)
@@ -213,8 +213,8 @@ func TestSamePeerHost(t *testing.T) {
 // nothing (least of all a bearer) goes out over plain HTTP.
 func TestPeerClient_UnreadablePinFailsClosed(t *testing.T) {
 	main := newPeerTill(t)
-	t.Cleanup(SetPeerSource(func(context.Context) (string, string, error) {
-		return "", "", errors.New("database is locked")
+	t.Cleanup(SetPeerSource(func(context.Context) (PeerTarget, error) {
+		return PeerTarget{}, errors.New("database is locked")
 	}))
 
 	if _, err := peerGet(t, main.base+"/api/sync/admin"); err == nil {
@@ -232,7 +232,9 @@ func TestPeerClient_UnreadablePinFailsClosed(t *testing.T) {
 // so a re-proof hook can change the held pin mid-test.
 func usePeerVar(t *testing.T, primary string, pin *atomic.Pointer[string]) {
 	t.Helper()
-	t.Cleanup(SetPeerSource(func(context.Context) (string, string, error) { return primary, *pin.Load(), nil }))
+	t.Cleanup(SetPeerSource(func(context.Context) (PeerTarget, error) {
+		return PeerTarget{PrimaryURL: primary, Pin: *pin.Load()}, nil
+	}))
 }
 
 // ADR-0114 §7 (ut-docs#4410): a certificate matching no held pin triggers a
@@ -375,5 +377,75 @@ func TestPeerClient_ReproofDoesNotReplayAnUnrewindableBody(t *testing.T) {
 	}
 	if got, err := peerGet(t, main.base+"/"); err != nil || got != "tls=true" {
 		t.Fatalf("next request: %q, %v; want TLS under the adopted pin", got, err)
+	}
+}
+
+// Key rotation, replica side (ADR-0114 §7, ut-docs#4409): a replica that
+// learned the main till's next pin trusts it alongside the held one, so
+// the main till's switch costs no re-proof.
+func TestPeerClient_HeldNextPinIsAcceptedWithoutReproof(t *testing.T) {
+	main := newPeerTill(t)
+	old := strings.Repeat("0", 64)
+	t.Cleanup(SetPeerSource(func(context.Context) (PeerTarget, error) {
+		return PeerTarget{PrimaryURL: main.base, Pin: old, NextPin: main.cert.Pin()}, nil
+	}))
+	var calls atomic.Int32
+	t.Cleanup(SetPeerReproof(func(context.Context, string, string) error { calls.Add(1); return nil }))
+
+	got, err := peerGet(t, main.base+"/api/sync/ping")
+	if err != nil {
+		t.Fatalf("main till serving the held next pin: %v", err)
+	}
+	if got != "tls=true" || calls.Load() != 0 {
+		t.Fatalf("got %q with %d re-proof(s); want TLS and none", got, calls.Load())
+	}
+}
+
+// A certificate matching neither the held pin nor the next one is still a
+// mismatch, re-proven with the held primary pin.
+func TestPeerClient_CertificateMatchingNeitherPinIsReproven(t *testing.T) {
+	main := newPeerTill(t)
+	held, next := strings.Repeat("0", 64), strings.Repeat("1", 64)
+	t.Cleanup(SetPeerSource(func(context.Context) (PeerTarget, error) {
+		return PeerTarget{PrimaryURL: main.base, Pin: held, NextPin: next}, nil
+	}))
+	var gotHeld string
+	t.Cleanup(SetPeerReproof(func(_ context.Context, _, heldPin string) error { gotHeld = heldPin; return nil }))
+
+	if _, err := peerGet(t, main.base+"/"); !errors.Is(err, ErrPinMismatch) {
+		t.Fatalf("err = %v; want ErrPinMismatch", err)
+	}
+	if gotHeld != held {
+		t.Fatalf("re-proof got held pin %q; want the primary pin %q", gotHeld, held)
+	}
+	if n := main.plain.Load() + main.tls.Load(); n != 0 {
+		t.Fatalf("main till served %d request(s)", n)
+	}
+}
+
+// Without the next pin, the switched main till is a mismatch.
+func TestPeerClient_OnlyTheOldPinMismatchesASwitchedMainTill(t *testing.T) {
+	main := newPeerTill(t)
+	usePeer(t, main.base, strings.Repeat("0", 64))
+	if _, err := peerGet(t, main.base+"/"); !errors.Is(err, ErrPinMismatch) {
+		t.Fatalf("err = %v; want ErrPinMismatch", err)
+	}
+}
+
+// The transport is bound to the (pin, next pin) pair: a connection
+// verified under a next pin is never reused once that next pin is dropped.
+func TestPeerClient_NextPinChangeDropsVerifiedConnections(t *testing.T) {
+	main := newPeerTill(t)
+	held := strings.Repeat("0", 64)
+	next := main.cert.Pin()
+	t.Cleanup(SetPeerSource(func(context.Context) (PeerTarget, error) {
+		return PeerTarget{PrimaryURL: main.base, Pin: held, NextPin: next}, nil
+	}))
+	if got, err := peerGet(t, main.base+"/"); err != nil || got != "tls=true" {
+		t.Fatalf("first request: %q, %v", got, err)
+	}
+	next = ""
+	if _, err := peerGet(t, main.base+"/"); !errors.Is(err, ErrPinMismatch) {
+		t.Fatalf("after the next pin was dropped: err = %v; want ErrPinMismatch", err)
 	}
 }

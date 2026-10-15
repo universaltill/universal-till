@@ -30,6 +30,12 @@ func serveTLSTill(t *testing.T, h http.Handler) (string, *lantls.Cert) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return serveTLSTillWithCert(t, h, cert), cert
+}
+
+// serveTLSTillWithCert is serveTLSTill with a given LAN key.
+func serveTLSTillWithCert(t *testing.T, h http.Handler, cert *lantls.Cert) string {
+	t.Helper()
 	inner, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +43,7 @@ func serveTLSTill(t *testing.T, h http.Handler) (string, *lantls.Cert) {
 	srv := &http.Server{Handler: h, ConnContext: lantls.ConnContext(cert)}
 	go func() { _ = srv.Serve(lantls.Listen(inner, cert.TLSConfig())) }()
 	t.Cleanup(func() { _ = srv.Close() })
-	return "http://" + inner.Addr().String(), cert
+	return "http://" + inner.Addr().String()
 }
 
 // countPlainSync wraps h, counting /api/sync/* requests that arrive over

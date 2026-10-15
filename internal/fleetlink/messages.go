@@ -59,9 +59,11 @@ type Cursors struct {
 	Stock   string `json:"stock_version"`
 }
 
-// Hello is the first frame each way (ADR-0114 §2). Update policy, fleet
-// target and the TLS pin are placeholders here: #2726 (§5) and #2737
-// (§7 rotation) fill them; null means "not offered by this build".
+// Hello is the first frame each way (ADR-0114 §2). Update policy and fleet
+// target are placeholders here (#2726, §5); null means "not offered by this
+// build". TLSPin is, on the main till's hello, the pin it serves (null with
+// TLS off, or from an older build); NextPin its pending next pin during a
+// key rotation (§7, ut-docs#4409).
 type Hello struct {
 	TillID       string  `json:"till_id"`
 	Role         string  `json:"role"` // "main" | "replica" | "satellite"; a joined till's stored role (additional|satellite, ut-docs#2781) comes from GET /api/sync/admin's role until #2741 wires it here
@@ -72,6 +74,10 @@ type Hello struct {
 	UpdatePolicy *string `json:"update_policy"`
 	FleetTarget  *string `json:"fleet_target"`
 	TLSPin       *string `json:"tls_pin"`
+	// NextPin is, on the main till's hello, the pin of the key it will
+	// switch to (ut-docs#4409); "" when no rotation is pending. A replica
+	// trusts it only from a link already pinned to TLSPin.
+	NextPin string `json:"next_pin,omitempty"`
 	// PeerTillID is, on the main till's hello, the id this link is
 	// authenticated as — lets the dialler confirm who the main till thinks
 	// it is.
@@ -99,7 +105,7 @@ var cloudDeviceIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]+$`)
 // kept for the link's lifetime.
 func (h *Hello) clipStrings() {
 	for _, s := range []*string{&h.TillID, &h.Role, &h.Version, &h.Platform, &h.PeerTillID,
-		&h.Cursors.Admin, &h.Cursors.Plugins, &h.Cursors.Stock} {
+		&h.Cursors.Admin, &h.Cursors.Plugins, &h.Cursors.Stock, &h.NextPin} {
 		*s = clip(*s, maxReportField)
 	}
 	for _, p := range []**string{&h.UpdatePolicy, &h.FleetTarget, &h.TLSPin} {
@@ -182,7 +188,10 @@ type Report struct {
 	// sync.till_name), so the main till's tills row follows a rename made
 	// on that till or from the cloud (ut-docs#3294). Omitempty: an older
 	// replica's report has none, and the main till then keeps its row.
-	Name       string    `json:"name,omitempty"`
+	Name string `json:"name,omitempty"`
+	// NextPin is the main till's next pin this peer holds (key rotation,
+	// ut-docs#4409): its confirmation that a switch won't cut it off.
+	NextPin    string    `json:"next_pin,omitempty"`
 	ReceivedAt time.Time `json:"-"`
 }
 
@@ -201,6 +210,7 @@ func decodeReport(raw json.RawMessage) (Report, bool) {
 	}
 	r.Version = clip(r.Version, maxReportField)
 	r.UpdateState = clip(r.UpdateState, maxReportField)
+	r.NextPin = clip(r.NextPin, maxReportField)
 	if len(r.Name) > maxReportNameBytes {
 		r.Name = ""
 	}
