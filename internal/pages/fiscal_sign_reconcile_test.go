@@ -563,11 +563,12 @@ func renderHTMLReceiptForSale(t *testing.T, dp *common.Deps, saleID string) stri
 	ctx := context.Background()
 	repo := data.NewPOSRepo(dp.Db)
 	funcs := map[string]any{
-		"money":      func(v int64) string { return fmt.Sprintf("€%.2f", float64(v)/100) },
-		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
-		"barcodesvg": httpx.BarcodeSVG,
-		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
-		"T":          func(key string) string { return key },
+		"money":         func(v int64) string { return fmt.Sprintf("€%.2f", float64(v)/100) },
+		"qty":           func(v any) string { return fmt.Sprintf("%v", v) },
+		"barcodesvg":    httpx.BarcodeSVG,
+		"barcode128svg": httpx.Code128SVG,
+		"bpPercent":     func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"T":             func(key string) string { return key },
 	}
 	gap := saleFiscalSigningGapKind(ctx, repo, saleID)
 	tse, _, _ := repo.GetFiscalTSESignature(ctx, saleID)

@@ -125,8 +125,10 @@
             <div><strong class="receipt-voucher-code">{{ .Code }}</strong></div>
             <div>{{ money .Amount }}</div>
             {{ if .Holder }}<div class="receipt-voucher-holder">{{ printf (T "basket.gift_voucher.for") .Holder }}</div>{{ end }}
-            <!-- ut-docs#4224: the code as a barcode, so scanning the receipt redeems it -->
-            {{ with barcodesvg .Code }}<div class="barcode">{{ . }}</div>{{ end }}
+            <!-- ut-docs#4224: the code as a barcode, so scanning the receipt redeems it.
+                 CODE128 like the printed receipt (ut-docs#4248): a card number can be
+                 lowercase or longer than CODE39's 32 characters. -->
+            {{ with barcode128svg .Code }}<div class="barcode">{{ . }}</div>{{ end }}
           </li>
         {{ end }}
       </ul>
