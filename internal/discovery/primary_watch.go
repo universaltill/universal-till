@@ -94,6 +94,17 @@ const MinBrowseInterval = 5 * time.Minute
 // browseTimeout bounds one browse, same order as the Tills page's scan.
 const browseTimeout = 3 * time.Second
 
+// ReproofCooldown is how long after a failed re-proof (ut-docs#4410) a
+// mismatched certificate just fails again without another proof: a
+// hostile device at the main till's address can't turn every request into
+// a challenge. A real main till that couldn't prove itself yet (still
+// restoring) is tried again after it.
+const ReproofCooldown = time.Minute
+
+// reproofTimeout bounds one re-proof: a mismatched handshake plus the
+// learn-mode challenge, each within the watch client's 5 s.
+const reproofTimeout = 15 * time.Second
+
 // maxProofAttempts bounds how many candidates one re-discovery challenges.
 const maxProofAttempts = 8
 
@@ -202,6 +213,12 @@ type PrimaryWatch struct {
 	warned        bool
 	lastBrowse    time.Time
 	backfillTried bool
+
+	// reproofMu serialises Reproof: requests that hit the same new
+	// certificate together run one proof, and the rest find the pin moved.
+	reproofMu       sync.Mutex
+	lastReproofFail time.Time
+	reproofWarned   bool
 }
 
 // BrowseFunc finds main tills on the LAN — Browse in production; a fake LAN
@@ -271,6 +288,69 @@ func (w *PrimaryWatch) storePin(ctx context.Context, pin string) {
 	if pin != "" {
 		_ = w.settings.Set(ctx, PrimaryCertPinSettingKey, pin)
 	}
+}
+
+var errReproofCooldown = errors.New("re-proof refused a moment ago — not trying again yet")
+
+// Reproof is the peer transport's re-proof (lantls.SetPeerReproof, ADR-0114
+// §7, ut-docs#4410): the main till at primaryURL served a certificate other
+// than heldPin. It challenges that address over TLS with no bearer; a valid
+// proof — keyed by this till's bearer hash, covering the pin of that very
+// connection — stores the new pin, so the caller's retry is verified by it.
+// A refused proof keeps the old pin (the request then fails like an
+// unreachable main till: banner, re-discovery, selling offline) and starts
+// ReproofCooldown. nil with the pin unchanged means another caller already
+// re-proved, or the till was re-paired, since the request was made.
+func (w *PrimaryWatch) Reproof(ctx context.Context, primaryURL, heldPin string) error {
+	w.reproofMu.Lock()
+	defer w.reproofMu.Unlock()
+	// The re-proof gets its own bound, not the triggering request's: a
+	// short UI proxy call (800 ms) must not fail a genuine main till's proof.
+	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), reproofTimeout)
+	defer cancel()
+	cur, curPin := w.get(pctx, "sync.primary_url"), w.get(pctx, PrimaryCertPinSettingKey)
+	if strings.TrimSuffix(cur, "/") != strings.TrimSuffix(strings.TrimSpace(primaryURL), "/") || curPin != strings.TrimSpace(heldPin) {
+		return nil
+	}
+	if !w.lastReproofFail.IsZero() && w.now().Sub(w.lastReproofFail) < ReproofCooldown {
+		return errReproofCooldown
+	}
+	id, pin, err := w.challenge(pctx, cur, w.get(pctx, PrimaryTillIDSettingKey))
+	if err == nil && pin == curPin {
+		// It proved itself with the pin already held (the other
+		// certificate is gone): nothing to adopt, nothing refused.
+		return nil
+	}
+	if err == nil && pin == "" {
+		err = errors.New("the proof did not cover a certificate")
+	}
+	if err != nil {
+		w.lastReproofFail = w.now()
+		var refused proofRefusedError
+		if errors.As(err, &refused) && !w.reproofWarned {
+			w.reproofWarned = true
+			// Unkeyed on purpose, as rediscover's refused proofs
+			// (ut-docs#2862 m1): a later good contact must not clear it.
+			logging.L().Warnf("sync: the main till's address %s presented a new certificate but did not prove it holds this till's pairing (%v) — keeping the old pin", cur, err)
+		} else {
+			// A transport failure (timeout, reset) is no refusal: info only.
+			logging.L().Infof("sync: could not re-prove the main till at %s over its new certificate (%v) — keeping the old pin", cur, err)
+		}
+		return err
+	}
+	// A re-pairing or re-discovery may have moved on while the proof ran.
+	if w.get(pctx, "sync.primary_url") != cur || w.get(pctx, PrimaryCertPinSettingKey) != curPin {
+		return nil
+	}
+	if err := w.settings.Set(pctx, PrimaryCertPinSettingKey, pin); err != nil {
+		return err
+	}
+	if w.get(pctx, PrimaryTillIDSettingKey) == "" {
+		_ = w.settings.Set(pctx, PrimaryTillIDSettingKey, id)
+	}
+	w.lastReproofFail, w.reproofWarned = time.Time{}, false
+	logging.L().Infof("sync: the main till at %s proved itself with a new certificate — new pin adopted, pairing kept", cur)
+	return nil
 }
 
 // ContactFailed records a failed contact (the main till did not answer).
@@ -461,9 +541,12 @@ func (w *PrimaryWatch) cloudCandidate(ctx context.Context, oldURL string) string
 // fails over TLS (a certificate the main till doesn't hold) is final.
 //
 // A till that already holds a pin (ADR-0114 §7, ut-docs#4092) proves over
-// TLS with that pin only and never falls back to plain HTTP: another
-// certificate fails like an unreachable candidate. Adopting a new pin
-// through re-proof is ut-docs#2737.
+// TLS only and never falls back to plain HTTP. A certificate matching no
+// held pin is re-proven, not trusted (ut-docs#4410): the challenge runs
+// again over a connection that accepts that certificate, so the proof —
+// which only the holder of this till's bearer hash can make — must cover
+// it. The returned pin is then the new one; the challenge carries no
+// bearer either way.
 func (w *PrimaryWatch) challenge(ctx context.Context, baseURL, wantID string) (id, pin string, err error) {
 	held, _, err := w.settings.Get(ctx, PrimaryCertPinSettingKey)
 	if err != nil {
@@ -487,6 +570,9 @@ func (w *PrimaryWatch) challenge(ctx context.Context, baseURL, wantID string) (i
 		if err == nil {
 			return id, pc.Pin(), nil
 		}
+		if held != "" && errors.Is(err, lantls.ErrPinMismatch) {
+			return w.reproveVia(ctx, tlsBase, wantID)
+		}
 		if !plainOK || held != "" {
 			return "", "", err
 		}
@@ -494,6 +580,31 @@ func (w *PrimaryWatch) challenge(ctx context.Context, baseURL, wantID string) (i
 	id, err = w.challengeVia(ctx, w.client.Do, baseURL, wantID, func() string { return "" })
 	return id, "", err
 }
+
+// reproveVia challenges tlsBase over TLS accepting whatever certificate it
+// serves, and returns that certificate's pin only if the proof covers it.
+// Never plain HTTP: this till holds a pin.
+func (w *PrimaryWatch) reproveVia(ctx context.Context, tlsBase, wantID string) (id, pin string, err error) {
+	pc := w.pinnedClient("")
+	do := func(req *http.Request) (*http.Response, error) {
+		resp, _, err := pc.Exchange(req)
+		return resp, err
+	}
+	id, err = w.challengeVia(ctx, do, tlsBase, wantID, pc.Pin)
+	if err != nil {
+		return "", "", err
+	}
+	if pin = pc.Pin(); pin == "" {
+		return "", "", errors.New("re-proof completed without a TLS certificate")
+	}
+	return id, pin, nil
+}
+
+// proofRefusedError is a candidate that answered but did not prove the
+// pairing — as opposed to one that could not be reached.
+type proofRefusedError struct{ msg string }
+
+func (e proofRefusedError) Error() string { return e.msg }
 
 // challengeVia runs one challenge through do. pin reports the pin of the
 // connection it went over, read once the answer is in.
@@ -525,7 +636,7 @@ func (w *PrimaryWatch) challengeVia(ctx context.Context, do func(*http.Request) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", errors.New("proof refused: " + resp.Status)
+		return "", proofRefusedError{"proof refused: " + resp.Status}
 	}
 	var out struct {
 		Data ProofResponse `json:"data"`
@@ -535,13 +646,13 @@ func (w *PrimaryWatch) challengeVia(ctx context.Context, do func(*http.Request) 
 	}
 	id := strings.TrimSpace(out.Data.PrimaryTillID)
 	if id == "" || (wantID != "" && id != wantID) {
-		return "", errors.New("proof names a different till")
+		return "", proofRefusedError{"proof names a different till"}
 	}
 	want := PrimaryProof(HashBearer(bearer), id, tillID, nonce, dialled, pin())
 	got, err := hex.DecodeString(out.Data.Proof)
 	wantRaw, _ := hex.DecodeString(want)
 	if err != nil || !hmac.Equal(got, wantRaw) {
-		return "", errors.New("proof does not match this till's pairing")
+		return "", proofRefusedError{"proof does not match this till's pairing"}
 	}
 	return id, nil
 }

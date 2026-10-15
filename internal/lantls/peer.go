@@ -21,8 +21,9 @@ import (
 // main till's pin (sync.primary_cert_pin), every request it sends to the
 // main till goes over TLS on the same LAN port, verified by that pin only,
 // and never falls back to plain HTTP. A till with no pin keeps plain HTTP
-// (ADR-0114 §11). A pin mismatch fails the request like an unreachable main
-// till; adopting a new pin (re-proof) is ut-docs#2737.
+// (ADR-0114 §11). A pin mismatch runs the re-proof hook (SetPeerReproof,
+// ut-docs#4410): a valid proof adopts the new pin and the request is retried
+// once; otherwise it fails like an unreachable main till.
 //
 // Every replica → main till client shares one transport, built by
 // NewPeerClient. Call sites keep building plain http:// URLs from
@@ -58,6 +59,26 @@ func peerTarget(ctx context.Context) (primaryURL, pin string, err error) {
 	return strings.TrimSpace(primaryURL), strings.TrimSpace(pin), err
 }
 
+// PeerReproof proves, with no bearer, that the till at primaryURL now
+// serving a certificate other than heldPin is still this till's main till
+// (ADR-0114 §7, ut-docs#4410), and on success stores the new pin where the
+// PeerSource reads it. nil error with the held pin unchanged means nothing
+// to retry.
+type PeerReproof func(ctx context.Context, primaryURL, heldPin string) error
+
+var peerReproof atomic.Pointer[PeerReproof]
+
+// SetPeerReproof installs the process-wide re-proof hook; nil means a pin
+// mismatch just fails. It returns a func that restores the previous hook.
+func SetPeerReproof(fn PeerReproof) (restore func()) {
+	var p *PeerReproof
+	if fn != nil {
+		p = &fn
+	}
+	prev := peerReproof.Swap(p)
+	return func() { peerReproof.Store(prev) }
+}
+
 // PeerPinned reports whether this till holds a pin for its main till, i.e.
 // whether its traffic to the main till is pinned TLS (fleetlink's report).
 func PeerPinned(ctx context.Context) bool {
@@ -89,7 +110,46 @@ func (p *peerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if pin == "" || !samePeerHost(r.URL, primaryURL) {
 		return http.DefaultTransport.RoundTrip(r)
 	}
-	return p.tls.roundTrip(upgradeToPeerTLS(r), pin)
+	resp, err := p.tls.roundTrip(upgradeToPeerTLS(r), pin)
+	if err == nil || !errors.Is(err, ErrPinMismatch) {
+		return resp, err
+	}
+	return p.reproveAndRetry(r, primaryURL, pin, err)
+}
+
+// reproveAndRetry handles a certificate that matches no held pin
+// (ADR-0114 §7, ut-docs#4410). The mismatch was caught in the handshake, so
+// no byte of r — its bearer included — reached that server. The hook
+// proves the main till over a separate bearer-less connection; only if it
+// leaves a different pin held is r sent again, once, verified by that pin.
+// Otherwise the original mismatch stands.
+func (p *peerTransport) reproveAndRetry(r *http.Request, primaryURL, heldPin string, mismatch error) (*http.Response, error) {
+	hook := peerReproof.Load()
+	if hook == nil {
+		return nil, mismatch
+	}
+	if err := (*hook)(r.Context(), primaryURL, heldPin); err != nil {
+		return nil, mismatch
+	}
+	nowURL, pin, err := peerTarget(r.Context())
+	if err != nil || pin == "" || pin == heldPin || !samePeerHost(r.URL, nowURL) {
+		// Not re-proven, or the main till moved meanwhile: the request
+		// would only mismatch again.
+		return nil, mismatch
+	}
+	retry := upgradeToPeerTLS(r)
+	if r.Body != nil && r.Body != http.NoBody {
+		if r.GetBody == nil {
+			// Can't be replayed; the next request uses the new pin.
+			return nil, mismatch
+		}
+		body, err := r.GetBody()
+		if err != nil {
+			return nil, mismatch
+		}
+		retry.Body = body
+	}
+	return p.tls.roundTrip(retry, pin)
 }
 
 // closeBody honours RoundTrip's contract to close the body even on error.
