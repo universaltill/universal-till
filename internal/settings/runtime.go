@@ -50,7 +50,7 @@ func (s *Store) storedTaxRate(ctx context.Context) (string, error) {
 	return strings.TrimSpace(v), err
 }
 
-// SaveRuntimeConfig updates DB from a RuntimeConfig. All six keys are
+// SaveRuntimeConfig updates DB from a RuntimeConfig. Its keys are
 // written in one transaction, so a mid-way failure never leaves a partial
 // mix of old and new values behind.
 //
@@ -68,6 +68,14 @@ func (s *Store) SaveRuntimeConfig(ctx context.Context, cfg *config.Config) error
 		"store.locale":        cfg.Locales.Locale,
 		"store.tax_inclusive": strconv.FormatBool(cfg.Locales.TaxInclusive),
 		"store.tax_rate":      taxrate.FormatPercent(cfg.Locales.TaxRateBP),
+	}
+	// ut-docs#4273: a placeholder (the UT_STORE_NAME default "My Store",
+	// blank, the cloud's default) is never written. LoadRuntimeConfig
+	// ignores a blank store.name, so without this every boot wrote the
+	// env default back over migration 075's blank. A real UT_STORE_NAME is
+	// still saved, as before.
+	if config.IsPlaceholderStoreName(cfg.StoreName) {
+		delete(kv, "store.name")
 	}
 	// A failed read is treated like an unparseable value: without knowing
 	// what is stored, writing the config default could clobber the shop's
