@@ -1162,6 +1162,12 @@
         </span>
       </button>
       <div class="list-actions designer-cat-actions">
+        {{/* ut-docs#3605: category writes travel to the main till on an
+             additional till (catalogsync.Routes) — the deactivate/activate
+             and edit forms sit in fieldset[data-main-till-lock], disabled
+             while it can't be reached (followed live by base.html's chip
+             handler). The quick-button editing above is NOT locked here. */}}
+        <fieldset data-main-till-lock{{ if $.SyncUnreachable }} disabled{{ end }}>
         {{ if $c.IsActive }}
         <form hx-post="/api/designer/categories/{{ $c.ID }}/active" hx-target="#designer-cat-msg-{{ $c.ID }}" hx-swap="innerHTML"
               {{ if eq $c.ItemCount 0 }}hx-confirm="{{ printf (T "designer.category.deactivate_confirm") $c.Name }}"{{ end }}>
@@ -1178,11 +1184,13 @@
           <button type="submit" class="btn secondary compact" id="designer-cat-active-{{ $c.ID }}">{{ T "categories.activate" }}</button>
         </form>
         {{ end }}
+        </fieldset>
       </div>
       {{ if and $c.IsActive (gt $c.ItemCount 0) }}
       <p class="muted designer-cat-blocked" id="designer-cat-blocked-{{ $c.ID }}" data-testid="designer-cat-blocked-{{ $c.ID }}">{{ printf (T "designer.category.deactivate_blocked_hint") $c.ItemCount }}</p>
       {{ end }}
       <p class="designer-cat-msg" id="designer-cat-msg-{{ $c.ID }}" role="status" aria-live="polite"></p>
+      <fieldset data-main-till-lock{{ if $.SyncUnreachable }} disabled{{ end }}>
       <form class="designer-cat-form" id="designer-cat-form-{{ $c.ID }}" x-show="editing" x-cloak
             hx-post="/api/designer/categories/{{ $c.ID }}" hx-target="#designer-cat-msg-{{ $c.ID }}" hx-swap="innerHTML" autocomplete="off">
         {{/* ut-docs#3606: the category's updated_at as rendered — on an
@@ -1212,6 +1220,7 @@
           <button type="button" class="btn secondary compact" @click="editing = false">{{ T "common.cancel" }}</button>
         </div>
       </form>
+      </fieldset>
     </li>
     {{ else }}
     <li class="muted designer-cat-none">{{ T "categories.empty" }}</li>
@@ -1219,6 +1228,7 @@
   </ol>
   <div class="designer-cat-new" x-data="{ creating: false }">
     <button type="button" class="btn primary compact" id="designer-cat-new" :aria-expanded="creating" aria-controls="designer-cat-form-new" @click="creating = !creating">+ {{ T "categories.new" }}</button>
+    <fieldset data-main-till-lock{{ if .SyncUnreachable }} disabled{{ end }}>
     <form class="designer-cat-form" id="designer-cat-form-new" x-show="creating" x-cloak
           hx-post="/api/designer/categories" hx-target="#designer-categories-msg" hx-swap="innerHTML" autocomplete="off">
       <label class="designer-cat-field">{{ T "categories.col.name" }}
@@ -1230,6 +1240,7 @@
         <button type="button" class="btn secondary compact" @click="creating = false">{{ T "common.cancel" }}</button>
       </div>
     </form>
+    </fieldset>
   </div>
 </section>
 {{ end }}

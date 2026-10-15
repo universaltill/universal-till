@@ -139,11 +139,12 @@ test.describe('variants grid Save/Save Variant stays reachable without horizonta
     const existingRow = page.locator('.vg-row:not(.vg-new)');
     await expect(existingRow).toBeVisible();
 
-    // Direct child, not just any `[type=submit]` under the row — the
-    // barcode chip-add form's "＋" button lives under this same row too
-    // (nested inside .chip-row), but isn't the commit action this card is
-    // about.
-    const result = await geometry(page, '.vg-row:not(.vg-new) > button[type=submit]');
+    // The row's own Save (form="vf-<id>"), not just any `[type=submit]`
+    // under the row: the barcode chip-add form's "＋" button lives under
+    // this same row too (nested inside .chip-row), but isn't the commit
+    // action this card is about. Not a direct-child selector: since
+    // ut-docs#3605 the row's cells sit in a display:contents lock fieldset.
+    const result = await geometry(page, '.vg-row:not(.vg-new) button[type=submit][form^="vf-"]');
     expect(result.withinViewport, "the existing row's Save button must be fully within the viewport").toBe(true);
     expect(result.hit, "the existing row's Save button must be a real hit-test target").toBe(true);
     expect(result.gridScrollLeft, 'reached without scrolling the grid sideways').toBe(0);

@@ -66,6 +66,12 @@
                         the button is NOT inside the form
        "createTitleKey" / "editTitleKey"   locale keys for the two titles
        "createAction"   the create endpoint the JS sets as form.action
+       "mainTillLock"   OPTIONAL (ut-docs#3605): true on a catalogue screen
+                        whose save travels to the main till — Save renders
+                        inside a fieldset[data-main-till-lock], disabled
+                        when "mainTillLocked" is true (and then followed
+                        live by base.html's chip handler). The page wraps
+                        its own fields/destructive slots the same way.
        "root"           OPTIONAL but pass it: the page's own data (`.` at the
                         call site). The slots below receive this dict, and
                         `$` inside a define binds to the same argument, so
@@ -162,7 +168,9 @@
                   aria-label="{{ T "common.close" }}" title="{{ T "common.close" }}">
             <span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span>
           </button>
+          {{ if .mainTillLock }}<fieldset data-main-till-lock{{ if .mainTillLocked }} disabled{{ end }}>{{ end }}
           <button type="submit" class="btn primary record-dialog-save" form="{{ .formID }}">{{ T "common.save" }}</button>
+          {{ if .mainTillLock }}</fieldset>{{ end }}
         </div>
       </div>
       {{/* ut-docs#2099, ut-docs#4324 — always rendered: this dialog is

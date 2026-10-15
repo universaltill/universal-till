@@ -141,7 +141,9 @@
 <dialog id="tax-codes-modal" class="item-form-modal" aria-labelledby="catalog-taxcodes-btn" data-ut-focus-trap></dialog>
 
 {{ if .SyncPrimary }}
-<div class="sync-banner" role="status">⚠ {{ if .SyncUnreachable }}{{ T "sync.banner_replica_main_till_unreachable" }}{{ else }}{{ T "sync.banner_replica_write_through" }}{{ end }}
+{{/* ut-docs#3605: both texts render, the inactive one hidden, so
+     base.html's chip follower can swap them while the page stays open. */}}
+<div class="sync-banner" role="status">⚠ <span data-main-till-away{{ if not .SyncUnreachable }} hidden{{ end }}>{{ T "sync.banner_replica_main_till_unreachable" }}</span><span data-main-till-here{{ if .SyncUnreachable }} hidden{{ end }}>{{ T "sync.banner_replica_write_through" }}</span>
   {{ if crossdevicelinkactionable }}
   <a href="{{ .SyncPrimary }}/catalog" target="_blank" rel="noopener" hx-boost="false">{{ T "sync.banner_open_primary" }}</a>
   {{ else }}
@@ -228,12 +230,19 @@
                preserved and can be reactivated. hx-include pulls the id
                from the form's own hidden #item-id; hx-confirm is rewritten
                by setMode with the item's name (catalog.delete_confirm_named). -->
+          {{/* ut-docs#3605: every control below that travels to the main
+               till (catalogsync.Routes) sits in a fieldset[data-main-till-lock]:
+               disabled while this additional till can't reach its main
+               till (rendered here, then followed live by base.html's chip
+               handler). Close, the tabs, labels and search stay usable. */}}
+          <fieldset data-main-till-lock{{ if .SyncUnreachable }} disabled{{ end }}>
           <button type="button" class="btn secondary catalog-form-delete" id="item-form-delete" hidden
                   aria-label="{{ T "catalog.delete" }}" title="{{ T "catalog.delete" }}"
                   hx-post="/api/catalog/item/deactivate" hx-include="#item-id"
                   hx-confirm="{{ T "catalog.delete" }}" hx-target="this" hx-swap="none">
             <span class="btn-ico" aria-hidden="true">{{ icon "trash-2" }}</span>
           </button>
+          </fieldset>
         </div>
         <div class="catalog-form-head-actions">
           <!-- ut-docs#2000: Close/Save (below) go icon+label, same shape as
@@ -256,16 +265,21 @@
             <span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span>
             <span class="btn-label">{{ T "common.close" }}</span>
           </button>
+          <fieldset data-main-till-lock{{ if .SyncUnreachable }} disabled{{ end }}>
           <button class="btn primary" type="submit" form="item-form" id="item-form-submit"
                   aria-label="{{ T "catalog.create_item" }}" title="{{ T "catalog.create_item" }}">
             <span class="btn-ico" aria-hidden="true">{{ icon "check" }}</span>
             <span class="btn-label">{{ T "catalog.create_item" }}</span>
           </button>
+          </fieldset>
         </div>
       </div>
       <!-- In the pinned head (not at the bottom of the form) so a save or
            error notice is visible at any scroll position. -->
       <div id="item-form-msg" class="muted" aria-live="polite"></div>
+      {{/* ut-docs#3605: the full-screen dialog covers the page banner, so
+           it says itself why its fields are greyed out. */}}
+      {{ if .SyncPrimary }}<p class="set-lock-note" data-main-till-away role="status"{{ if not .SyncUnreachable }} hidden{{ end }}>{{ T "sync.banner_replica_main_till_unreachable" }}</p>{{ end }}
       {{/* data-hscroll-ok (ut-docs#3359): below 700px this one-row tab strip
            swipes sideways by design (app.css .catalog-form-head .tab-bar,
            ut-docs#2000/#2024, with its own edge fade) — not a table. */}}
@@ -282,6 +296,7 @@
     <div class="catalog-form-body">
       <div class="tab-panel" id="item-form-panel-details" role="tabpanel" aria-labelledby="item-form-tab-details" x-show="tab === 'details'">
         <form id="item-form" autocomplete="off">
+          <fieldset data-main-till-lock{{ if .SyncUnreachable }} disabled{{ end }}>
           <input type="hidden" name="id" id="item-id">
           {{/* ut-docs#2817: the updated_at of the card this dialog loaded —
                on an additional till the save travels to the main till,
@@ -399,6 +414,7 @@
             <input type="hidden" name="isActive" value="0">
             <label><input type="checkbox" name="isActive" id="item-active" value="1" checked> {{ T "catalog.active" }}</label>
           </div>
+          </fieldset>
         </form>
         {{/* ADR-0121 §7 (ut-docs#3872): plugin actions for the open item
              (item.edit.actions). A sibling of #item-form, never inside it
@@ -573,10 +589,13 @@
           <p class="muted">{{ T "catalog.keypad.hint" }}</p>
           <label>{{ T "basket.col.item" }} <input type="text" class="pick-item" id="keypad-item-label" readonly placeholder="{{ T "catalog.pick_row" }}"></label>
           <input type="hidden" id="keypad-item-id">
+          {{/* ut-docs#3605: a mapped key posts /api/catalog/barcode (script below). */}}
+          <fieldset data-main-till-lock{{ if .SyncUnreachable }} disabled{{ end }}>
           <label>{{ T "catalog.keypad.capture_label" }}
             <input type="text" id="keypad-capture" autocomplete="off" placeholder="{{ T "catalog.keypad.capture_placeholder" }}">
           </label>
           <label class="field-checks"><input type="checkbox" id="keypad-primary"> {{ T "catalog.keypad.set_primary" }}</label>
+          </fieldset>
           <div id="keypad-log" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
         </div>
       </div>

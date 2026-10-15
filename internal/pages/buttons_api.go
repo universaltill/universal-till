@@ -74,8 +74,11 @@ func saleScreenButtons(d *common.Deps, w http.ResponseWriter, r *http.Request, e
 		BrowsingMode: common.ClampBrowsingMode(d.CurrentState().BrowsingMode),
 		Granted:      canPerform(d, r, "catalog_management"),
 		EditMode:     editMode,
-		Cache:        d.SellScreenCache(),
-		Locale:       locale,
+		// ut-docs#3605: the Designer's category controls render disabled
+		// while this additional till can't reach its main till.
+		SyncUnreachable: editMode && d.MainTillUnreachable != nil && d.MainTillUnreachable(r.Context()),
+		Cache:           d.SellScreenCache(),
+		Locale:          locale,
 	}, nil
 }
 

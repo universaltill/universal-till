@@ -16,9 +16,20 @@
   {{ if not .ItemID }}
   <p class="muted" style="margin:0">{{ T "catalog.variants.pick_hint" }}</p>
   {{ else }}
+  {{/* ut-docs#3605: each region of this panel that saves the item sits
+       in a fieldset[data-main-till-lock] — disabled while this additional
+       till can't reach its main till (most of these travel to it,
+       catalogsync.Routes). Per region, not panel-wide: a variant's photo
+       (.vg-img, /api/catalog/variant/image) writes only image files and
+       never needs the main till, so it stays usable. In a grid row the
+       fieldset is display:contents (app.css), so its cells keep their grid
+       columns. .SyncUnreachable comes from the panel's own handler;
+       base.html's chip follower applies the live state to a freshly
+       swapped-in panel (htmx:load). */}}
   <div class="catalog-detail-grid">
 
     <aside class="catalog-detail-info">
+      <fieldset data-main-till-lock{{ if $.SyncUnreachable }} disabled{{ end }}>
       <div class="catalog-detail-title">
         {{/* ut-docs#1324: resolved via item_images (ItemImageURL), same
              source of truth as every other ImageURL consumer in this app
@@ -83,6 +94,7 @@
                placeholder="0" title="{{ T "catalog.reorder_level_hint" }}">
         <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
       </form>
+      </fieldset>
     </aside>
 
     <div class="catalog-detail-variants">
@@ -94,6 +106,7 @@
            additive: the manual per-variant grid below is untouched, and
            re-generating only ever adds the combinations that don't exist
            yet (item_variant_options is the idempotency key). -->
+      <fieldset data-main-till-lock{{ if $.SyncUnreachable }} disabled{{ end }}>
       <div class="option-set-pick">
         {{ if not .OptionSets }}
         <p class="muted" style="margin:0">{{ T "catalog.variants.no_option_sets" }} <a href="/catalog/option-sets">{{ T "catalog.option_sets.title" }}</a></p>
@@ -116,6 +129,7 @@
         {{ with .GenerateTooMany }}<p class="option-set-pick-msg" role="alert">{{ printf (T "catalog.variants.generate_too_many") .Total .Max }}</p>{{ end }}
         {{ if .Generated }}<p class="option-set-pick-msg" role="status">{{ printf (T "catalog.variants.generated_count") .GeneratedCount }}</p>{{ end }}
       </div>
+      </fieldset>
 
       {{/* ut-docs#2815: a variant save re-renders this whole panel, which
            on its own reads as "nothing happened". Same one-shot role=status
@@ -123,6 +137,7 @@
       {{ if .VariantSaved }}<p class="option-set-pick-msg" role="status" data-testid="variant-saved">{{ T "catalog.item_form.saved" }}</p>{{ end }}
       {{ if not .Variants }}<p class="muted">{{ T "catalog.variants.none" }}</p>{{ end }}
 
+      <fieldset data-main-till-lock{{ if $.SyncUnreachable }} disabled{{ end }}>
       {{ range .Variants }}
       <form id="vf-{{ .ID }}" hidden hx-post="/api/catalog/variant" hx-target="#catalog-variants" hx-swap="outerHTML">
         <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
@@ -139,6 +154,7 @@
         <input type="hidden" name="isActive" value="1">
         <input type="hidden" name="price" value="">
       </form>
+      </fieldset>
 
       <div class="variant-grid" role="table">
         <div class="vg-cols vg-head" role="row">
@@ -189,6 +205,7 @@
                      {{ if $.AICutout }}data-cutout-label="{{ .Name }}"{{ else }}data-change="request-submit"{{ end }}></label>
             </form>
           </div>
+          <fieldset data-main-till-lock{{ if $.SyncUnreachable }} disabled{{ end }}>
           <input form="vf-{{ .ID }}" type="text" name="name" value="{{ .Name }}" required>
           <input form="vf-{{ .ID }}" type="text" name="sku" value="{{ .SKU }}">
           <!-- ut-docs#1284: type="number" corrupts a decimal typed via the
@@ -245,11 +262,13 @@
           </div>
           <input form="vf-{{ .ID }}" type="checkbox" name="isActive" value="1" {{ if .IsActive }}checked{{ end }}>
           <button form="vf-{{ .ID }}" class="btn primary" type="submit">{{ T "common.save" }}</button>
+          </fieldset>
         </div>
         {{ end }}
 
         <div class="vg-cols vg-row vg-new" role="row">
           <div></div>
+          <fieldset data-main-till-lock{{ if $.SyncUnreachable }} disabled{{ end }}>
           <input form="vf-new" type="text" name="name" required placeholder="{{ T "catalog.variants.add" }} — 330ml / XL">
           <input form="vf-new" type="text" name="sku" placeholder="{{ T "catalog.auto_if_blank" }}">
           <input form="vf-new" type="text" inputmode="decimal" class="variant-price-major" {{ moneypatternlocal currency.Decimals false }} required>
@@ -257,6 +276,7 @@
           <div class="muted"></div>
           <div></div>
           <button form="vf-new" class="btn" type="submit">{{ T "catalog.save_variant" }}</button>
+          </fieldset>
         </div>
       </div>
       {{/* ut-docs#3127: one "Remove background" panel for every row's photo
@@ -284,6 +304,7 @@
     <div class="muted catalog-detail-label">{{ T "catalog.routing.title" }}</div>
     <p class="muted catalog-routing-inherited">{{ if .CategoryStationNames }}{{ printf (T "catalog.routing.inherited") .CategoryStationNames }}{{ else }}{{ T "catalog.routing.inherited_default" }}{{ end }}</p>
     {{ if .HasItemRoutes }}<p class="catalog-routing-override">{{ T "catalog.routing.override_active" }}</p>{{ end }}
+    <fieldset data-main-till-lock{{ if $.SyncUnreachable }} disabled{{ end }}>
     <form id="item-routing-form" hx-post="/api/catalog/item-station-routes" hx-target="#catalog-variants" hx-swap="outerHTML" class="catalog-routing-form">
       <input type="hidden" name="panelItem" value="{{ .ItemID }}">
       <input type="hidden" name="itemId" value="{{ .ItemID }}">
@@ -294,6 +315,7 @@
       </div>
       <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
     </form>
+    </fieldset>
     <p class="muted catalog-routing-help">{{ T "catalog.routing.override_help" }}</p>
   </div>
   {{ end }}

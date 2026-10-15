@@ -62,6 +62,10 @@ type modifierAdminItem struct {
 	// list leaves it nil.
 	InheritedGroups []data.ModifierGroup
 	Target          string
+	// SyncUnreachable (ut-docs#3605): this additional till can't reach its
+	// main till, so the attach/detach controls (write-through routes)
+	// render disabled.
+	SyncUnreachable bool
 	// Notice is an already-translated, already-formatted message to show
 	// inline above this fragment (ut-docs#2046, independent-review finding)
 	// — e.g. the detach-guard's refusal. Plain http.Error/LocalizedError
@@ -342,6 +346,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 					"OptionSets":           optionSets,
 					"AppliedSetIDs":        appliedIDs,
 					"AICutout":             aiCutoutOffered(r),
+					// ut-docs#3605: the panel's forms render disabled
+					// while the main till can't be reached.
+					"SyncUnreachable": d.MainTillUnreachable != nil && d.MainTillUnreachable(r.Context()),
 				}
 				for k, v := range extra {
 					pdata[k] = v
@@ -528,6 +535,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			AttachableGroups: attachable,
 			InheritedGroups:  visibleInherited,
 			Target:           "item-modifiers-list",
+			SyncUnreachable:  d.MainTillUnreachable != nil && d.MainTillUnreachable(r.Context()),
 			Notice:           notice,
 		})(w, r)
 	}

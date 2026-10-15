@@ -1693,6 +1693,11 @@ type ButtonsHTTP struct {
 	// screen, so every existing ButtonsHTTP literal renders exactly as
 	// before.
 	EditMode bool
+	// SyncUnreachable (ut-docs#3605): EditMode only — this additional till
+	// can't reach its main till, so the Designer's category controls
+	// (write-through routes) render disabled. Never part of the sale
+	// screen's cached render (EditMode bypasses Cache).
+	SyncUnreachable bool
 	// Cache (ut-docs#2501) serves List (outside EditMode) and CategoryItems
 	// from rendered bytes while nothing they depend on has changed — see
 	// sellscreen_cache.go for the invalidation contract. nil = no caching:
@@ -2047,6 +2052,7 @@ func (h *ButtonsHTTP) renderList(w http.ResponseWriter, r *http.Request, chipPar
 		"Chip":            chip,
 		"ChipFiltered":    chipFiltered,
 		"EditMode":        h.EditMode,
+		"SyncUnreachable": h.EditMode && h.SyncUnreachable,
 		"AdminCategories": adminCats,
 		"ItemColors":      palette,
 		"HiddenItems":     hidden,

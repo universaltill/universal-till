@@ -1852,6 +1852,26 @@
         var mount = document.getElementById('sb-main-till-mount');
         var live = document.getElementById('sb-link-live');
         var lastState = null;
+        // ut-docs#3605: the catalogue's write-through controls sit in
+        // [data-main-till-lock] elements (a fieldset, server-rendered
+        // disabled while the main till is away) and the catalogue/inventory
+        // banner carries both texts ([data-main-till-away] /
+        // [data-main-till-here], the inactive one hidden). Keep them in
+        // step with the chip on an open page: on a change of its state —
+        // not every 5 s poll — and for content htmx swaps in later (the
+        // item dialog's variants/modifiers panels). Only a till that shows
+        // the chip (one that follows a main till) ever does this, and only
+        // elements carrying those attributes are touched.
+        var lockState = '';
+        function applyMainTillLock(root, away) {
+          function each(sel, fn) {
+            if (root.matches && root.matches(sel)) fn(root);
+            Array.prototype.forEach.call(root.querySelectorAll(sel), fn);
+          }
+          each('[data-main-till-lock]', function (el) { el.disabled = away; });
+          each('[data-main-till-away]', function (el) { el.hidden = !away; });
+          each('[data-main-till-here]', function (el) { el.hidden = away; });
+        }
         function followChip() {
           if (!mount || !bar) return;
           var chip = mount.querySelector('[data-link-state]');
@@ -1866,9 +1886,18 @@
             live.textContent = chip.textContent.replace(/\s+/g, ' ').trim();
           }
           lastState = state;
+          if (state && state !== lockState) {
+            lockState = state;
+            applyMainTillLock(document, state === 'unreachable');
+          }
         }
         document.body.addEventListener('htmx:afterSwap', function (e) {
           if (e.target === mount) followChip();
+        });
+        document.body.addEventListener('htmx:load', function (e) {
+          var el = e.detail && e.detail.elt;
+          if (!lockState || !el || !el.querySelectorAll || (mount && mount.contains(el))) return;
+          applyMainTillLock(el, lockState === 'unreachable');
         });
         followChip();
       })();
