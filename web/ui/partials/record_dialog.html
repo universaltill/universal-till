@@ -81,13 +81,17 @@
      today — Settings' exit-to-OS flow. §10 makes those three reachable on
      EVERY surface, admin ones included, with exactly one inversion: a
      device in self-order kiosk mode (display.mode="self_order") must
-     NEVER expose them — that's customer containment, not an oversight to
-     "fix" by rendering them anyway. `selforder` (httpx's template func,
-     backed by the same InitSelfOrderMode/live-update pair InitOSKMode
-     already uses for the OSK mode) is the axis: never admin-vs-sale, only
-     "is THIS device in kiosk mode right now". Built ONCE here so /categories
-     and every future ut-docs#2012 screen inherit it automatically — no
-     per-page wiring, no per-page opt-in.
+     NEVER expose them to the customer it faces. This dialog only renders on
+     operator pages, which need a staff session, so the row is ALWAYS
+     rendered here — never gated on display.mode (ut-docs#4324: a manager's
+     maintenance sign-in on a satellite kiosk, #4307, keeps
+     display.mode=self_order and still needs Lock, and the till-wide flag
+     would also strip it from a manager browsing that till from a phone).
+     Containment lives in the kiosk's own templates (self_order*.html),
+     which never include this dialog — pinned by
+     TestSelfOrderKioskTemplatesHaveNoRecordDialog. Built ONCE here so
+     /categories and every future ut-docs#2012 screen inherit it
+     automatically — no per-page wiring, no per-page opt-in.
 
      .record-dialog-status-row lives INSIDE .record-dialog-head (still
      `flex: none`, still pinned, still no second scroll container) as its
@@ -161,11 +165,10 @@
           <button type="submit" class="btn primary record-dialog-save" form="{{ .formID }}">{{ T "common.save" }}</button>
         </div>
       </div>
-      {{/* ut-docs#2099 — withheld outright in self-order kiosk mode
-           (customer containment, coding-standards.md §10); see the file
-           header comment above for the full rationale and why each control
-           reuses an existing mechanism instead of a new one. */}}
-      {{ if not selforder }}
+      {{/* ut-docs#2099, ut-docs#4324 — always rendered: this dialog is
+           operator-only (see the file header comment above for the full
+           rationale and why each control reuses an existing mechanism
+           instead of a new one). */}}
       <div class="record-dialog-status-row" data-record-dialog-status-row>
         <span class="record-dialog-conn sb-conn" id="{{ .id }}-conn" data-record-dialog-conn
               data-conn-online="{{ T "status.online" }}" data-conn-offline="{{ T "status.offline" }}">
@@ -184,7 +187,6 @@
           </button>
         </form>
       </div>
-      {{ end }}
     </div>
     <div class="record-dialog-body">
       <div id="{{ .id }}-msg" class="record-dialog-msg" data-record-dialog-msg aria-live="polite"></div>

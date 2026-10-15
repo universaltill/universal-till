@@ -61,10 +61,8 @@ func TestRederiveSettings_PushesWindowModeOntoShellChannel(t *testing.T) {
 // pages.Init's own boot-time InitSelfOrderMode call), so it got no free
 // ride from this function's `*s = st` and was left stale until the next
 // process restart after a cloud set_setting directive (ADR-0018) or replica
-// drift — exactly the kiosk-containment flag coding-standards.md §10
-// depends on to withhold lock/status/exit-to-OS from a device an admin just
-// declared customer-facing (or restore them on a device taken out of kiosk
-// mode). Same shape as the WindowMode test above.
+// drift (it gates the post-update release notice, ut-docs#3091). Same shape
+// as the WindowMode test above.
 func TestRederiveSettings_PublishesSelfOrderMode(t *testing.T) {
 	_, _, d := newFullAuthDeps(t)
 	d.KioskEngine = pos.NewServiceWithResolver(pos.Config{}, stubResolver{})
@@ -74,7 +72,6 @@ func TestRederiveSettings_PublishesSelfOrderMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	rederive := newRederiveSettings(d, true, i18n)
-	selforder := func() bool { return httpx.FuncsFor("en")["selforder"].(func() bool)() }
 
 	httpx.InitSelfOrderMode(false)
 	defer httpx.InitSelfOrderMode(false)
@@ -85,8 +82,8 @@ func TestRederiveSettings_PublishesSelfOrderMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	rederive(context.Background())
-	if !selforder() {
-		t.Fatal("selforder template func = false after rederive with display.mode=self_order — the flag went stale, leaving lock/status/exit-to-OS rendered to a device just declared customer-facing")
+	if !httpx.SelfOrderMode() {
+		t.Fatal("SelfOrderMode() = false after rederive with display.mode=self_order — the flag went stale")
 	}
 
 	// And back down again: taken out of kiosk mode, the till must regain
@@ -95,7 +92,7 @@ func TestRederiveSettings_PublishesSelfOrderMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	rederive(context.Background())
-	if selforder() {
-		t.Fatal("selforder template func = true after rederive with display.mode=register — an ordinary register is wrongly withholding lock/status/exit-to-OS")
+	if httpx.SelfOrderMode() {
+		t.Fatal("SelfOrderMode() = true after rederive with display.mode=register — the flag went stale")
 	}
 }
