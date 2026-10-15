@@ -847,14 +847,6 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 		// (deviceTargetSkipReason). The id and created_by the till audits
 		// come from the directive itself (ADR-0142 D3).
 		msg, err = hooks.KioskUnlock(ctx, d.ID, d.CreatedBy)
-	case "guest_order":
-		// Tick takes guest_order through handleGuestOrder (stored result,
-		// retry); this case serves apply's other callers the same outcome.
-		r := applyGuestOrder(ctx, d, hooks)
-		if r.deferred {
-			return "failed", "guest_order could not be applied now"
-		}
-		return r.status, r.msg
 	case "upsert_category":
 		if hooks.UpsertCategory == nil {
 			return "failed", "upsert_category is not supported on this till"

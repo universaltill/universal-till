@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
@@ -141,31 +142,86 @@ func refuseGuestOrder(code string) cloudsync.GuestOrderOutcome {
 	return cloudsync.GuestOrderOutcome{Refusal: code}
 }
 
+// guestOrderInFlightGrace: a "held" counter row created by THIS process
+// and younger than this, with no held sale, may be another apply still
+// between Create and the park (a local write on the main till, well under
+// a second), so it is not treated as an orphan yet (ut-docs#4392). A row
+// from before guestOrderProcessStart can have no apply in flight (the till
+// restarted), so it is never deferred: the cloud stops delivering a guest
+// order 10 minutes after it was placed (ut-cloud claims.GuestOrderExpiry),
+// and a restarted till must re-place it on its first check-in, not wait
+// out a grace and miss that window. Keep this well under that expiry.
+const guestOrderInFlightGrace = 30 * time.Second
+
+// guestOrderProcessStart: see guestOrderInFlightGrace.
+var guestOrderProcessStart = time.Now()
+
+// errGuestOrderInFlight leaves the directive pending: its counter row is
+// too young to call an orphan (guestOrderInFlightGrace).
+var errGuestOrderInFlight = errors.New("guest order: counter order not parked yet")
+
 // guestOrderAlreadyPlaced answers a guest order this till already parked:
 // its C-number and, while the held sale is still parked, its total (a
 // resumed or paid order's held row is gone; its total then reads 0 — the
-// cloud has normally stored the first result long before).
+// cloud has normally stored the first result long before). ok=false means
+// the order must be placed: it never was, or only an orphan was left.
+//
+// Orphans (ut-docs#4392): a "held" counter row with no held sale is either
+// a cashier mid-resume (or an order since paid or cancelled) or an orphan
+// left by a crash, or by a failed park whose cleanup failed too, between
+// Create and the park. Every removal of a held sale on this till — the
+// only authority a guest order is parked on, being main-till only — goes
+// through ClaimAndTombstone and leaves a tombstone for
+// data.HeldSaleTombstoneWindow; a resume happens after the row was
+// created, so for a row younger than the window, no tombstone proves the
+// order was never parked. That orphan is removed (DeleteHeld) and the
+// order placed again, exactly once (fiscal.order.start fires again for the
+// new order id, as on the failed-park retry). A row older than the window
+// can no longer be told apart from an order dealt with long ago: it is
+// refused, never re-placed and never reported as parked. A row younger
+// than guestOrderInFlightGrace, created by this process, defers the
+// directive instead.
 func guestOrderAlreadyPlaced(ctx context.Context, d *common.Deps, counterRepo *data.KioskCounterOrdersRepo, guestOrderID, currency string) (cloudsync.GuestOrderOutcome, bool, error) {
 	prior, ok, err := counterRepo.FindByGuestOrderID(ctx, guestOrderID)
 	if err != nil || !ok {
 		return cloudsync.GuestOrderOutcome{}, false, err
 	}
 	out := cloudsync.GuestOrderOutcome{DisplayNo: prior.DisplayNo, Currency: currency}
-	held, found, err := data.NewHeldSalesRepo(d.Db).Get(ctx, prior.ID)
+	heldRepo := data.NewHeldSalesRepo(d.Db)
+	held, found, err := heldRepo.Get(ctx, prior.ID)
 	if err != nil {
 		return cloudsync.GuestOrderOutcome{}, false, err
 	}
 	if found {
 		out.TotalMinor = held.TotalMinor
-	} else if prior.Status == data.KioskCounterOrderStatusHeld {
-		// A "held" counter row with no held sale is either a cashier
-		// mid-resume or an orphan left by a crash/failed cleanup between
-		// Create and the park. Re-placing could duplicate the first, so the
-		// order is answered as placed — but loudly, so staff can find it
-		// (review of ut-docs#4337; follow-up card tracks orphan recovery).
-		logging.L().Errorf("guest order %s: counter order %s (%s) has no parked held sale — check Open orders; if it is missing, take the order at the counter", guestOrderID, prior.ID, prior.DisplayNo)
+		return out, true, nil
 	}
-	return out, true, nil
+	if prior.Status != data.KioskCounterOrderStatusHeld {
+		return out, true, nil
+	}
+	resolved, err := heldRepo.HasTombstone(ctx, prior.ID)
+	if err != nil {
+		return cloudsync.GuestOrderOutcome{}, false, err
+	}
+	if resolved {
+		return out, true, nil
+	}
+	created, perr := time.Parse(time.RFC3339, prior.CreatedAt)
+	age := time.Since(created)
+	switch {
+	case perr == nil && created.After(guestOrderProcessStart) && age < guestOrderInFlightGrace:
+		return cloudsync.GuestOrderOutcome{}, false, fmt.Errorf("guest order %s (%s): %w", guestOrderID, prior.DisplayNo, errGuestOrderInFlight)
+	case perr != nil || age >= data.HeldSaleTombstoneWindow:
+		logging.L().Errorf("guest order %s: counter order %s (%s) was never parked or was dealt with too long ago to tell — refused; the guest is asked to order at the counter", guestOrderID, prior.ID, prior.DisplayNo)
+		// Any refusal code reads "please order at the counter" on the guest
+		// page; item_unavailable is the closest of the three ADR-0159 codes.
+		return refuseGuestOrder(cloudsync.GuestOrderItemUnavailable), true, nil
+	}
+	if err := counterRepo.DeleteHeld(ctx, prior.ID); err != nil {
+		return cloudsync.GuestOrderOutcome{}, false, err
+	}
+	logging.L().Warnf("guest order %s: counter order %s (%s) was never parked — removed, placing the order again", guestOrderID, prior.ID, prior.DisplayNo)
+	return cloudsync.GuestOrderOutcome{}, false, nil
 }
 
 // resolveGuestOrderLine re-validates one line against the till's own
