@@ -44,11 +44,12 @@ func TestRenderReceipt_WorksFromAnyWorkingDirectory(t *testing.T) {
 	})
 
 	funcs := map[string]any{
-		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
-		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
-		"barcodesvg": httpx.BarcodeSVG,
-		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
-		"T":          func(key string) string { return key },
+		"money":         func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":           func(v any) string { return fmt.Sprintf("%v", v) },
+		"barcodesvg":    httpx.BarcodeSVG,
+		"barcode128svg": httpx.Code128SVG,
+		"bpPercent":     func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"T":             func(key string) string { return key },
 	}
 	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0}}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100, Reference: "REF"}}
@@ -63,10 +64,11 @@ func TestRenderReceipt_WorksFromAnyWorkingDirectory(t *testing.T) {
 func TestRenderReceipt_TableLabelShownWhenAssigned(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
-		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
-		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
-		"barcodesvg": httpx.BarcodeSVG,
-		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"money":         func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":           func(v any) string { return fmt.Sprintf("%v", v) },
+		"barcodesvg":    httpx.BarcodeSVG,
+		"barcode128svg": httpx.Code128SVG,
+		"bpPercent":     func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T": func(key string) string {
 			if key == "basket.table.label" {
 				return "Table"
@@ -98,10 +100,11 @@ func TestRenderReceipt_TableLabelShownWhenAssigned(t *testing.T) {
 func TestRenderReceipt_DiscountShown(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
-		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
-		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
-		"barcodesvg": httpx.BarcodeSVG,
-		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"money":         func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":           func(v any) string { return fmt.Sprintf("%v", v) },
+		"barcodesvg":    httpx.BarcodeSVG,
+		"barcode128svg": httpx.Code128SVG,
+		"bpPercent":     func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T": func(key string) string {
 			switch key {
 			case "receipt.legal.plugin_label":
@@ -154,10 +157,11 @@ func TestRenderReceipt_DiscountShown(t *testing.T) {
 func TestRenderReceipt_ShowsMaskedPANAndAuthCode(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
-		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
-		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
-		"barcodesvg": httpx.BarcodeSVG,
-		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"money":         func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":           func(v any) string { return fmt.Sprintf("%v", v) },
+		"barcodesvg":    httpx.BarcodeSVG,
+		"barcode128svg": httpx.Code128SVG,
+		"bpPercent":     func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T": func(key string) string {
 			if key == "receipt.auth_code" {
 				return "Auth"
@@ -193,11 +197,12 @@ func TestRenderReceipt_ShowsMaskedPANAndAuthCode(t *testing.T) {
 func TestRenderReceipt_NoCardPresentFieldsFallsBackToReference(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
-		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
-		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
-		"barcodesvg": httpx.BarcodeSVG,
-		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
-		"T":          func(key string) string { return key },
+		"money":         func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":           func(v any) string { return fmt.Sprintf("%v", v) },
+		"barcodesvg":    httpx.BarcodeSVG,
+		"barcode128svg": httpx.Code128SVG,
+		"bpPercent":     func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"T":             func(key string) string { return key },
 	}
 	lines := []pos.SaleLineInput{{Name: "Tea", Qty: 1, UnitPrice: 250, TaxRateBasisPoints: 0}}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 250, Reference: "sumup-ref-1"}}
@@ -213,10 +218,11 @@ func TestRenderReceipt_NoCardPresentFieldsFallsBackToReference(t *testing.T) {
 func TestRenderReceipt_LegalText(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
-		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
-		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
-		"barcodesvg": httpx.BarcodeSVG,
-		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"money":         func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":           func(v any) string { return fmt.Sprintf("%v", v) },
+		"barcodesvg":    httpx.BarcodeSVG,
+		"barcode128svg": httpx.Code128SVG,
+		"bpPercent":     func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T": func(key string) string {
 			switch key {
 			case "receipt.legal.plugin_label":
@@ -265,10 +271,11 @@ func TestRenderReceipt_LegalText(t *testing.T) {
 func TestRenderReceipt_NoLegalText(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
-		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
-		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
-		"barcodesvg": httpx.BarcodeSVG,
-		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"money":         func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":           func(v any) string { return fmt.Sprintf("%v", v) },
+		"barcodesvg":    httpx.BarcodeSVG,
+		"barcode128svg": httpx.Code128SVG,
+		"bpPercent":     func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T": func(key string) string {
 			switch key {
 			case "receipt.legal.plugin_label":
@@ -309,11 +316,12 @@ func TestRenderReceipt_NoLegalText(t *testing.T) {
 func TestRenderReceiptHonorsDesign(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
-		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
-		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
-		"barcodesvg": httpx.BarcodeSVG,
-		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
-		"T":          func(key string) string { return key },
+		"money":         func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":           func(v any) string { return fmt.Sprintf("%v", v) },
+		"barcodesvg":    httpx.BarcodeSVG,
+		"barcode128svg": httpx.Code128SVG,
+		"bpPercent":     func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"T":             func(key string) string { return key },
 	}
 	lines := []pos.SaleLineInput{
 		{Name: "Apple", SKU: "SKU-9", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0},
@@ -343,11 +351,12 @@ func TestRenderReceiptHonorsDesign(t *testing.T) {
 func TestRenderReceipt_UnsignedOverrideLine(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
-		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
-		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
-		"barcodesvg": httpx.BarcodeSVG,
-		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
-		"T":          func(key string) string { return key },
+		"money":         func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":           func(v any) string { return fmt.Sprintf("%v", v) },
+		"barcodesvg":    httpx.BarcodeSVG,
+		"barcode128svg": httpx.Code128SVG,
+		"bpPercent":     func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"T":             func(key string) string { return key },
 	}
 	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0}}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100}}
@@ -375,11 +384,12 @@ func TestRenderReceipt_UnsignedOverrideLine(t *testing.T) {
 func TestRenderReceipt_UnsignedFiscalSigningLine(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
-		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
-		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
-		"barcodesvg": httpx.BarcodeSVG,
-		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
-		"T":          func(key string) string { return key },
+		"money":         func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":           func(v any) string { return fmt.Sprintf("%v", v) },
+		"barcodesvg":    httpx.BarcodeSVG,
+		"barcode128svg": httpx.Code128SVG,
+		"bpPercent":     func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"T":             func(key string) string { return key },
 	}
 	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0}}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100}}
@@ -409,11 +419,12 @@ func TestRenderReceipt_UnsignedFiscalSigningLine(t *testing.T) {
 func TestRenderReceipt_UnsignedCannotSignLine(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
-		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
-		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
-		"barcodesvg": httpx.BarcodeSVG,
-		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
-		"T":          func(key string) string { return key },
+		"money":         func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":           func(v any) string { return fmt.Sprintf("%v", v) },
+		"barcodesvg":    httpx.BarcodeSVG,
+		"barcode128svg": httpx.Code128SVG,
+		"bpPercent":     func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"T":             func(key string) string { return key },
 	}
 	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0}}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100}}
@@ -448,11 +459,12 @@ func TestRenderReceipt_UnsignedCannotSignLine(t *testing.T) {
 func TestRenderReceipt_TSEQRDataURIRendersNotZgotmplZ(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
-		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
-		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
-		"barcodesvg": httpx.BarcodeSVG,
-		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
-		"T":          func(key string) string { return key },
+		"money":         func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":           func(v any) string { return fmt.Sprintf("%v", v) },
+		"barcodesvg":    httpx.BarcodeSVG,
+		"barcode128svg": httpx.Code128SVG,
+		"bpPercent":     func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"T":             func(key string) string { return key },
 	}
 	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0}}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100}}
@@ -501,11 +513,12 @@ func TestRenderReceipt_TSEQRDataURIRendersNotZgotmplZ(t *testing.T) {
 func TestRenderReceipt_IssuedVouchersListed(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
-		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
-		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
-		"barcodesvg": httpx.BarcodeSVG,
-		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
-		"T":          func(key string) string { return key },
+		"money":         func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":           func(v any) string { return fmt.Sprintf("%v", v) },
+		"barcodesvg":    httpx.BarcodeSVG,
+		"barcode128svg": httpx.Code128SVG,
+		"bpPercent":     func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"T":             func(key string) string { return key },
 	}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 2500}}
 	issued := []receiptVoucherIssue{
@@ -522,13 +535,16 @@ func TestRenderReceipt_IssuedVouchersListed(t *testing.T) {
 			t.Fatalf("issued-voucher block missing %q in receipt: %s", want, html)
 		}
 	}
-	// ut-docs#4224: the holder line, and the code as a scannable barcode
-	// (Code39 on screen; a code it can't carry keeps just its text).
+	// ut-docs#4224: the holder line, and the code as a scannable barcode.
+	// ut-docs#4248: CODE128, so the lowercase uuid code gets one too.
 	if !strings.Contains(html, "basket.gift_voucher.for") {
 		t.Fatalf("holder line missing: %s", html)
 	}
-	if n := strings.Count(html, `<div class="barcode"><svg`); n != 1 {
-		t.Fatalf("want exactly one voucher barcode (GS-PRINTED-7; the lowercase code is not Code39), got %d: %s", n, html)
+	if n := strings.Count(html, `<div class="barcode"><svg`); n != 2 {
+		t.Fatalf("want a voucher barcode for both codes, got %d: %s", n, html)
+	}
+	if !strings.Contains(html, `aria-label="8b1c2d3e-0000-4000-8000-000000000001"`) {
+		t.Fatalf("uuid voucher code has no barcode: %s", html)
 	}
 
 	plain, err := renderReceipt(funcs, "124", nil, payments, 0, 0, 2500, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil)
@@ -546,11 +562,12 @@ func TestRenderReceipt_IssuedVouchersListed(t *testing.T) {
 func TestRenderReceipt_VoucherRedemptionShowsCode(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
-		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
-		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
-		"barcodesvg": httpx.BarcodeSVG,
-		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
-		"T":          func(key string) string { return key },
+		"money":         func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":           func(v any) string { return fmt.Sprintf("%v", v) },
+		"barcodesvg":    httpx.BarcodeSVG,
+		"barcode128svg": httpx.Code128SVG,
+		"bpPercent":     func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
+		"T":             func(key string) string { return key },
 	}
 	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 300, TaxRateBasisPoints: 0}}
 	payments := []pos.PaymentInput{{MethodID: "voucher", Amount: 300, VoucherID: "GS-REDEEM-9"}}

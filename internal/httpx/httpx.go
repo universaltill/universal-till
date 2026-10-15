@@ -1257,7 +1257,8 @@ func FuncsFor(locale string) template.FuncMap {
 	funcs["fxlevel"] = effectsLevelVal
 	funcs["idlelocksecs"] = func() int64 { return idleLockSecs.Load() }
 	funcs["ordertypepromptmode"] = orderTypePromptModeVal
-	funcs["barcodesvg"] = BarcodeSVG // scannable CODE39 for receipt numbers
+	funcs["barcodesvg"] = BarcodeSVG    // scannable CODE39 for receipt numbers
+	funcs["barcode128svg"] = Code128SVG // CODE128 (sets B/C) for voucher codes (ut-docs#4248)
 	funcs["locale"] = func() string { return locale }
 	// defaultlocale is the shop's configured DEFAULT locale (Settings'
 	// Language card, ut-docs#861) — distinct from "locale" above, which is
