@@ -127,8 +127,9 @@ func TestApprovePairRequest_PersistsFinalRoleOntoTill(t *testing.T) {
 		t.Fatalf("token retrieval: %s %v", rec.Body, err)
 	}
 	// The replica still says "additional" at enrol; the approval wins.
+	// Over TLS: a satellite enrols over pinned TLS only (ut-docs#4411).
 	body, _ := json.Marshal(map[string]string{"token": tok.Data.Token, "name": "Order station", "role": "additional"})
-	req := httptest.NewRequest(http.MethodPost, "/api/sync/enroll", strings.NewReader(string(body)))
+	req := overTLS(httptest.NewRequest(http.MethodPost, "/api/sync/enroll", strings.NewReader(string(body))))
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -155,7 +156,8 @@ func TestEnroll_RoleFromJoiningTill(t *testing.T) {
 	tok := tokens.issue()
 	enrol := func(role string) *httptest.ResponseRecorder {
 		body, _ := json.Marshal(map[string]string{"token": tok, "name": "Kiosk", "role": role})
-		req := httptest.NewRequest(http.MethodPost, "/api/sync/enroll", strings.NewReader(string(body)))
+		// Over TLS: a satellite enrols over pinned TLS only (ut-docs#4411).
+		req := overTLS(httptest.NewRequest(http.MethodPost, "/api/sync/enroll", strings.NewReader(string(body))))
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)

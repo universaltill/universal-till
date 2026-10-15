@@ -42,6 +42,11 @@ func registerPrimaryProof(mux *http.ServeMux, d *common.Deps) {
 	settingsRepo := data.NewSettingsRepo(d.Db)
 	limiter := newPairRateLimiter(time.Minute, 10)
 	mux.HandleFunc("POST "+discovery.ProofPath, func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#4411: plain HTTP closes once every till is pinned (every
+		// replica then re-proves over TLS with the pin it holds).
+		if refusePlainSyncWhenClosed(w, r, tills) {
+			return
+		}
 		if !limiter.allow(sourceOf(r)) {
 			writeProofError(w, http.StatusTooManyRequests, "too many proof requests")
 			return
