@@ -850,10 +850,17 @@ body.sale-screen .session-admin-link { display: none; }
 .page-head { display: flex; align-items: center; justify-content: space-between;
              gap: 1rem; margin: .25rem 0 1rem; }
 /* ut-docs#2092: page-scoped override for .page-head usages whose action
-   row is more than a title + one small control (currently just catalog.html)
+   row is more than a title + one small control (currently catalog.html and journal_detail.html)
    — lets the row drop to its own line at narrow widths instead of both
    flex children being squeezed onto one, never-wrapping line. */
 .page-head-wrap { flex-wrap: wrap; }
+/* ut-docs#4279: the journal-detail receipt barcode SVG carries a fixed pixel
+   width (~370px for a 9-digit receipt no.), wider than a 360px phone's content
+   box and the last thing keeping /journal/{receipt} scrolling sideways. Its
+   viewBox lets it scale down; the aspect ratio follows. Trade-off: at 360px
+   the narrow bar drops to ~1.7 CSS px (still >=3 device px at DPR 2+). The
+   post-sale receipt's own .barcode .receipt-barcode rule outranks this. */
+.receipt-barcode { max-inline-size: 100%; block-size: auto; }
 .page-head input[type="search"] { min-width: 260px; }
 /* ut-docs#2165: keeps a .page-head's search box and its category-filter
    trigger together as ONE space-between child. Without it .page-head's own
