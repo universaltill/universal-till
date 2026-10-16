@@ -40,7 +40,7 @@ func TestAndroidUpdateCheckResultIsAnInstallButton(t *testing.T) {
 	if strings.Contains(got, "<a ") || strings.Contains(got, "href=") {
 		t.Errorf("android check result must not be a link (a same-page link starts nothing — ut-docs#4312), got %q", got)
 	}
-	for _, attr := range []string{"data-downloading=", "data-progress=", "data-installing=", "data-retry=", "data-failed=", "data-locked=", "data-uptodate=", "data-nobridge="} {
+	for _, attr := range []string{"data-downloading=", "data-progress=", "data-installing=", "data-retry=", "data-again=", "data-failed=", "data-locked=", "data-uptodate=", "data-nobridge="} {
 		if !strings.Contains(got, attr) {
 			t.Errorf("android install button lacks %s (the shared flow would show an empty label), got %q", attr, got)
 		}

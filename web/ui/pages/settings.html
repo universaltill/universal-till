@@ -281,6 +281,7 @@
         data-progress="{{ T "settings.update.android.progress" }}"
         data-installing="{{ T "settings.update.android.installing" }}"
         data-retry="{{ T "settings.update.android.retry" }}"
+        data-again="{{ T "settings.update.android.install_again" }}"
         data-failed="{{ T "settings.update.android.failed" }}"
         data-locked="{{ T "auth.error.locked" }}"
         data-pinneeded="{{ T "settings.update.android.pin_needed" }}"
@@ -371,17 +372,13 @@
         msg.textContent = T({ locked: 'locked', uptodate: 'uptodate', nobridge: 'nobridge' }[outcome] || 'failed');
       });
     });
-    // The shell's own report: % while downloading, the installer opening, or
-    // a failure the operator can retry with the same button.
+    // The shell's own report: % while downloading, the installer opening, a
+    // failure the operator can retry with the same button, or (ut-docs#4495)
+    // 'closed' — the installer went away or never came up — which says so.
     document.addEventListener('ut:android-update', function (e) {
       var s = e.detail || {};
       msg.textContent = window.utAndroidUpdater.text(form, s);
       btn.disabled = s.state === 'downloading';
-    });
-    document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState !== 'visible' || !window.utAndroidUpdater) { return; }
-      var s = window.utAndroidUpdater.state();
-      if (s && (s.state === 'installing' || s.state === 'ready')) { btn.disabled = false; }
     });
   })();
   </script>

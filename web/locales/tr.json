@@ -2651,6 +2651,7 @@
   "settings.update.android.installing": "Android yükleyicisi açılıyor…",
   "settings.update.android.progress": "Güncelleme indiriliyor… %%%d",
   "settings.update.android.retry": "Güncelleme başarısız — tekrar denemek için dokunun",
+  "settings.update.android.install_again": "Android yükleyicisini görmediniz mi? Yeniden açmak için dokunun",
   "settings.update.android.downloading": "İndiriliyor — hazır olduğunda Android onay isteyecek",
   "settings.update.android.failed": "Güncelleme başlatılamadı — bağlantıyı denetleyip tekrar deneyin",
   "settings.update.android.no_bridge": "Bu güncelleme yalnızca kasa uygulamasının kendisinden yüklenebilir",

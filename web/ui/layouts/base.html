@@ -1698,6 +1698,7 @@
                 data-progress="{{ T "settings.update.android.progress" }}"
                 data-installing="{{ T "settings.update.android.installing" }}"
                 data-retry="{{ T "settings.update.android.retry" }}"
+                data-again="{{ T "settings.update.android.install_again" }}"
                 data-failed="{{ T "settings.update.android.failed" }}"
                 data-locked="{{ T "auth.error.locked" }}"
                 data-nobridge="{{ T "settings.update.android.no_bridge" }}"
@@ -1979,15 +1980,11 @@
             clearTimeout(aTimer); aArmed = false;
             abtn.textContent = window.utAndroidUpdater.text(abtn, s);
             abtn.disabled = s.state === 'downloading';
-            aRetry = s.state === 'failed';
-          });
-          // Back from Android's installer, or from its "allow this app to
-          // install apps" settings on the first install of a build (the manual
-          // says to tap the chip again afterwards): tappable again.
-          document.addEventListener('visibilitychange', function () {
-            if (document.visibilityState !== 'visible' || !window.utAndroidUpdater) { return; }
-            var s = window.utAndroidUpdater.state();
-            if (s && (s.state === 'installing' || s.state === 'ready')) { aReset(); }
+            // ut-docs#4495: 'closed' — Android's installer went away or never
+            // came up (android-update.js reports it, also on the way back from
+            // its "allow this app to install apps" settings): one tap opens it
+            // again, reusing the download.
+            aRetry = s.state === 'failed' || s.state === 'closed';
           });
         }
       })();

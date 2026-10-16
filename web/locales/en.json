@@ -2636,6 +2636,7 @@
   "settings.update.android.installing": "Opening Android’s installer…",
   "settings.update.android.progress": "Downloading update… %d%%",
   "settings.update.android.retry": "Update failed — tap to retry",
+  "settings.update.android.install_again": "Didn’t see Android’s installer? Tap to open it again",
   "settings.update.android.downloading": "Downloading — Android will ask you to confirm when it is ready",
   "settings.update.android.failed": "Could not start the update — check the connection and try again",
   "settings.update.android.no_bridge": "This update can only be installed from the till app itself",

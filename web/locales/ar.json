@@ -2651,6 +2651,7 @@
   "settings.update.android.installing": "جارٍ فتح مثبّت أندرويد…",
   "settings.update.android.progress": "جارٍ تنزيل التحديث… %d%%",
   "settings.update.android.retry": "فشل التحديث — اضغط لإعادة المحاولة",
+  "settings.update.android.install_again": "لم يظهر مثبّت أندرويد؟ اضغط لفتحه مرة أخرى",
   "settings.update.android.downloading": "جارٍ التنزيل — سيطلب أندرويد تأكيدك عند الانتهاء",
   "settings.update.android.failed": "تعذّر بدء التحديث — تحقّق من الاتصال وحاول مجددًا",
   "settings.update.android.no_bridge": "لا يمكن تثبيت هذا التحديث إلا من تطبيق الجهاز نفسه",

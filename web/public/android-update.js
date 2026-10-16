@@ -19,9 +19,18 @@
 // 2. window.utAndroidUpdate(state) — called BY the native shell
 //    (MainActivity.reportUpdate, evaluateJavascript) on every transition and
 //    once a second while downloading: {state: downloading|ready|installing|
-//    failed, percent, error}. Re-broadcast as a `ut:android-update` document
-//    event; utAndroidUpdater.text(el, state) turns it into the element's own
-//    data-progress / data-downloading / data-installing / data-retry text.
+//    failed|closed, percent, error}. Re-broadcast as a `ut:android-update`
+//    document event; utAndroidUpdater.text(el, state) turns it into the
+//    element's own data-progress / data-downloading / data-installing /
+//    data-retry / data-again text.
+//
+// ut-docs#4495: "closed" = Android's installer is no longer in front, or
+// never came up, so the operator may tap to open it again. The shell reports
+// it from MainActivity.onResume after it launched the installer; this file
+// also synthesises it when "installing" gets no answer within
+// INSTALLER_GRACE_MS, or when the page becomes visible again. The installer
+// is a see-through dialog activity, so the WebView behind it never goes
+// hidden and `visibilitychange` alone left the button disabled for ever.
 //
 // Deferred shell-head script (httpx.HeadAssets): loaded once per document,
 // survives boosted navigations; a no-op on any till without the bridge.
@@ -29,11 +38,25 @@
   'use strict';
   var last = null;
   var lastAt = 0;
+  var graceTimer = null;
+  // Android's installer is on screen within a second or two when it comes
+  // up at all. Past this, offer to open it again: if it IS up (its staging
+  // or Play Protect scan can take a while on a big APK), it covers the page,
+  // so a re-enabled button behind it is harmless.
+  var INSTALLER_GRACE_MS = 12000;
+
+  function closed() {
+    window.utAndroidUpdate({ state: 'closed', percent: null, error: null });
+  }
 
   window.utAndroidUpdate = function (state) {
     if (!state || typeof state !== 'object') return;
     last = state;
     lastAt = Date.now();
+    clearTimeout(graceTimer);
+    if (state.state === 'installing') {
+      graceTimer = setTimeout(function () { if (last === state) closed(); }, INSTALLER_GRACE_MS);
+    }
     try {
       document.dispatchEvent(new CustomEvent('ut:android-update', { detail: state }));
     } catch (e) { /* very old WebView: progress is cosmetic */ }
@@ -84,6 +107,7 @@
     if (!el || !s) return '';
     var attr = function (k) { return el.getAttribute('data-' + k) || ''; };
     if (s.state === 'failed') return attr('retry');
+    if (s.state === 'closed') return attr('again') || attr('retry');
     if (s.state === 'ready' || s.state === 'installing') return attr('installing');
     if (typeof s.percent === 'number' && attr('progress')) {
       return attr('progress').replace('%d', String(s.percent)).replace('%%', '%');
@@ -140,19 +164,17 @@
     var buttons = document.querySelectorAll('[data-android-update-install]');
     for (var i = 0; i < buttons.length; i++) {
       buttons[i].textContent = text(buttons[i], s);
-      // Failed: tap to retry. Otherwise it stays disabled until Android's
-      // installer takes over the screen.
-      buttons[i].disabled = s.state !== 'failed';
+      // Failed or closed: tap to try again. Otherwise it stays disabled
+      // while the download runs and the installer opens.
+      buttons[i].disabled = s.state !== 'failed' && s.state !== 'closed';
     }
   });
 
   // Back from Android's installer (or from its "allow this app to install
   // apps" settings, on the first install of a build): the operator may have
-  // cancelled, so the button must be tappable again.
+  // cancelled. One "closed" report re-enables every surface the same way.
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState !== 'visible' || !last) return;
-    if (last.state !== 'installing' && last.state !== 'ready') return;
-    var buttons = document.querySelectorAll('[data-android-update-install]');
-    for (var i = 0; i < buttons.length; i++) { buttons[i].disabled = false; }
+    if (last.state === 'installing' || last.state === 'ready') closed();
   });
 })();
