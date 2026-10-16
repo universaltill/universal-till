@@ -132,7 +132,30 @@ func (r *POSRepo) deleteUnusedItem(ctx context.Context, itemID string, pre func(
 		return res, fmt.Errorf("delete item: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if res, err = deleteUnusedItemTx(ctx, tx, itemID, pre); err != nil || res.AlreadyDeleted {
+		return res, err
+	}
+	if err := tx.Commit(); err != nil {
+		return res, fmt.Errorf("delete item: commit: %w", err)
+	}
+	return res, nil
+}
 
+// DeleteUnusedItemTx is DeleteUnusedItem inside the caller's transaction
+// (the cloud catalogue pull's tombstone rule, ADR-0162 §4, ut-docs#4463):
+// the same use checks, the same *ItemInUseError refusal with nothing
+// changed. The caller checks the in-memory baskets first, as
+// DeleteUnusedItem's do.
+func (r *POSRepo) DeleteUnusedItemTx(ctx context.Context, tx *sql.Tx, itemID string) (ItemDeleteResult, error) {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return ItemDeleteResult{}, errors.New("missing id")
+	}
+	return deleteUnusedItemTx(ctx, tx, itemID, nil)
+}
+
+func deleteUnusedItemTx(ctx context.Context, tx *sql.Tx, itemID string, pre func(*sql.Tx) error) (ItemDeleteResult, error) {
+	var res ItemDeleteResult
 	if err := tx.QueryRowContext(ctx, `SELECT name FROM items WHERE id = ?`, itemID).Scan(&res.Name); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			res.AlreadyDeleted = true
@@ -194,9 +217,6 @@ func (r *POSRepo) deleteUnusedItem(ctx context.Context, itemID string, pre func(
 		// The checks above passed, so the cleanup rule only disagrees if it
 		// grew a clause they lack: refuse rather than guess.
 		return res, &ItemInUseError{Reason: ItemUseStockHistory}
-	}
-	if err := tx.Commit(); err != nil {
-		return res, fmt.Errorf("delete item: commit: %w", err)
 	}
 	return res, nil
 }

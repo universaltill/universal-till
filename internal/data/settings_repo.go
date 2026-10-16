@@ -91,6 +91,23 @@ ON CONFLICT(key) DO UPDATE SET
 	return nil
 }
 
+// SetTx is Set inside the caller's transaction, so a value commits with
+// the writes it describes — the cloud catalogue pull's cursor commits with
+// its chunk (ADR-0162 §4, ut-docs#4463).
+func (r *SettingsRepo) SetTx(ctx context.Context, tx *sql.Tx, key, value string) error {
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO settings (key, value, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET
+	value = excluded.value,
+	updated_at = excluded.updated_at
+`, key, value, time.Now().UTC()); err != nil {
+		return settingsObs.wrapf("set_tx", "set setting %s", err, key)
+	}
+	invalidateCachedSetting(r.db, key)
+	return nil
+}
+
 // GetByPrefix returns every settings key/value pair whose key starts with
 // prefix, in one query — in place of one Get per key (ut-docs#1323: the
 // sale screen previously called Get once per active payment method just to

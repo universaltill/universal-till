@@ -43,17 +43,23 @@ func cloudSaveItem(ctx context.Context, d *common.Deps, p data.ItemPatch) (strin
 		}
 		return "", err
 	}
-	// ut-docs#3584: an icon from my. replaced the item's uploaded photo —
-	// remove the file, as the till's own icon picker does
-	// (removeUploadedThumbnail). A replaced library tile has no file.
-	if res.ClearedImagePath != "" && safeCategoryID(p.ID) && res.ClearedImagePath == catalog.ItemThumbURL(p.ID) {
-		catalog.RemoveItemUpload(p.ID)
-	}
+	removeReplacedItemUpload(p.ID, res.ClearedImagePath)
 	auditCloudDirective(ctx, d, "item", p.ID, "cloud_item_saved", map[string]any{"created": res.Created, "changed": res.Changed})
 	if res.Created {
 		return "created " + res.Name, nil
 	}
 	return "updated " + res.Name, nil
+}
+
+// removeReplacedItemUpload removes an item's uploaded photo file once an
+// icon from the cloud replaced it (ut-docs#3584), as the till's own icon
+// picker does (removeUploadedThumbnail) — for save_item and for the cloud
+// catalogue pull (ADR-0162 §4, ut-docs#4463). A replaced library tile has
+// no file; clearedPath "" is a no-op.
+func removeReplacedItemUpload(itemID, clearedPath string) {
+	if clearedPath != "" && safeCategoryID(itemID) && clearedPath == catalog.ItemThumbURL(itemID) {
+		catalog.RemoveItemUpload(itemID)
+	}
 }
 
 // barcodeTakenError turns a barcode conflict into "barcode X is already

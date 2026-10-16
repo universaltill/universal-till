@@ -71,6 +71,18 @@ type ItemPatch struct {
 	// its own flag because nil already means "keep"; combining it with
 	// either net-quantity field is refused.
 	ClearNetQuantity bool
+	// The fields below are set only by the cloud catalogue pull (ADR-0162
+	// §4, ut-docs#4463); no directive sends them. Description "" clears;
+	// Unit "" is stored as "each" (updateItemExec's rule); TaxCodeID ""
+	// clears the item's tax code, any other id must be an active tax code.
+	// SellScreenRemoved true takes the item off the quick buttons for good
+	// with RemoveFromSellScreen's statements (removed wins over hidden).
+	Description       *string
+	Unit              *string
+	TaxCodeID         *string
+	AgeRestricted     *bool
+	SellScreenHidden  *bool
+	SellScreenRemoved *bool
 }
 
 // ItemSaveResult reports what SaveItem did.
@@ -141,24 +153,63 @@ func (r *CatalogRepo) resolveBarcodeSet(ctx context.Context, codes []string, own
 // the other item.
 func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult, error) {
 	var res ItemSaveResult
+	p, barcodes, err := r.prepareItemPatch(ctx, p, true)
+	if err != nil {
+		return res, err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return res, fmt.Errorf("save item: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if res, err = r.saveItemTx(ctx, tx, p, barcodes); err != nil {
+		return res, err
+	}
+	if err := tx.Commit(); err != nil {
+		return res, fmt.Errorf("save item: commit: %w", err)
+	}
+	return res, nil
+}
+
+// SaveItemTx is SaveItem inside the caller's transaction — the cloud
+// catalogue pull applies up to 100 rows per transaction (ADR-0162 §4,
+// ut-docs#4463) through the same validation and write path. Barcodes are
+// refused here: resolving them reads the shop's symbology settings through
+// the pool, which must not run inside a held write transaction.
+func (r *CatalogRepo) SaveItemTx(ctx context.Context, tx *sql.Tx, p ItemPatch) (ItemSaveResult, error) {
+	if p.Barcodes != nil {
+		return ItemSaveResult{}, errors.New("save item: barcodes cannot be saved inside a caller's transaction")
+	}
+	p, _, err := r.prepareItemPatch(ctx, p, false)
+	if err != nil {
+		return ItemSaveResult{}, err
+	}
+	return r.saveItemTx(ctx, tx, p, nil)
+}
+
+// prepareItemPatch is SaveItem's validation that needs no write
+// transaction: it trims and checks every field, and (resolveBarcodes)
+// resolves the barcode set through the pool. A malformed patch never takes
+// the write lock.
+func (r *CatalogRepo) prepareItemPatch(ctx context.Context, p ItemPatch, resolveBarcodes bool) (ItemPatch, []resolvedBarcode, error) {
 	p.ID = strings.TrimSpace(p.ID)
 	if p.ID == "" {
-		return res, errors.New("missing id")
+		return p, nil, errors.New("missing id")
 	}
 	// Validate everything that needs no database first, so a malformed
 	// patch never takes the write lock.
 	if p.Name != nil {
 		n := strings.TrimSpace(*p.Name)
 		if n == "" {
-			return res, errors.New("the item name must not be blank")
+			return p, nil, errors.New("the item name must not be blank")
 		}
 		p.Name = &n
 	}
 	if p.PriceMinor != nil && *p.PriceMinor < 0 {
-		return res, errors.New("the price must not be negative")
+		return p, nil, errors.New("the price must not be negative")
 	}
 	if p.PriceMinor != nil && *p.PriceMinor > maxItemPriceMinor {
-		return res, fmt.Errorf("the price must be at most %d in minor units", maxItemPriceMinor)
+		return p, nil, fmt.Errorf("the price must be at most %d in minor units", maxItemPriceMinor)
 	}
 	if p.SKU != nil {
 		s := strings.TrimSpace(*p.SKU)
@@ -167,42 +218,57 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 	if p.Color != nil {
 		c := strings.TrimSpace(*p.Color)
 		if !catalogtypes.ValidItemColor(c) {
-			return res, fmt.Errorf("colour %q is not one of the palette colours", c)
+			return p, nil, fmt.Errorf("colour %q is not one of the palette colours", c)
 		}
 		p.Color = &c
 	}
 	if p.Icon != nil {
 		ic := strings.TrimSpace(*p.Icon)
 		if ic != "" && !iconid.ValidFormat(ic) {
-			return res, fmt.Errorf("icon %q is not a valid icon id", ic)
+			return p, nil, fmt.Errorf("icon %q is not a valid icon id", ic)
 		}
 		p.Icon = &ic
 	}
 	var barcodes []resolvedBarcode
 	if p.Barcodes != nil {
 		var err error
+		if !resolveBarcodes {
+			return p, nil, errors.New("save item: barcodes need resolving outside the transaction")
+		}
 		if barcodes, err = r.resolveBarcodeSet(ctx, *p.Barcodes, "an item"); err != nil {
-			return res, err
+			return p, nil, err
 		}
 	}
 	for _, list := range []*[]string{p.ModifierGroupIDs, p.ModifierOptOutIDs} {
 		if list != nil && len(*list) > maxItemModifierGroups {
-			return res, fmt.Errorf("an item can have at most %d modifier groups", maxItemModifierGroups)
+			return p, nil, fmt.Errorf("an item can have at most %d modifier groups", maxItemModifierGroups)
 		}
 	}
 	setNetQuantity := p.NetQuantityValue != nil || p.NetQuantityUnit != nil
 	if setNetQuantity && (p.ClearNetQuantity || !catalogtypes.ValidNetQuantity(p.NetQuantityValue, p.NetQuantityUnit)) {
 		// updateItemExec checks the pair again; this fails fast, before
 		// the write lock, like every other field here.
-		return res, ErrInvalidNetQuantity
+		return p, nil, ErrInvalidNetQuantity
 	}
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return res, fmt.Errorf("save item: begin: %w", err)
+	if p.Description != nil {
+		desc := strings.TrimSpace(*p.Description)
+		p.Description = &desc
 	}
-	defer func() { _ = tx.Rollback() }()
+	if p.Unit != nil {
+		u := strings.TrimSpace(*p.Unit)
+		p.Unit = &u
+	}
+	if p.TaxCodeID != nil {
+		tc := strings.TrimSpace(*p.TaxCodeID)
+		p.TaxCodeID = &tc
+	}
+	return p, barcodes, nil
+}
 
+// saveItemTx is SaveItem's write, in tx, of an already prepared patch.
+func (r *CatalogRepo) saveItemTx(ctx context.Context, tx *sql.Tx, p ItemPatch, barcodes []resolvedBarcode) (ItemSaveResult, error) {
+	var res ItemSaveResult
+	setNetQuantity := p.NetQuantityValue != nil || p.NetQuantityUnit != nil
 	cur, exists, err := getItemExec(ctx, tx, p.ID)
 	if err != nil {
 		return res, err
@@ -322,6 +388,31 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 		cur.NetQuantityUnit = nil
 		res.Changed = append(res.Changed, "net_quantity")
 	}
+	if p.Description != nil {
+		cur.Description = *p.Description
+		res.Changed = append(res.Changed, "description")
+	}
+	if p.Unit != nil {
+		cur.Unit = *p.Unit
+		res.Changed = append(res.Changed, "unit")
+	}
+	if p.TaxCodeID != nil {
+		if tc := *p.TaxCodeID; tc == "" {
+			cur.TaxCodeID = nil
+		} else {
+			if ok, err := rowExists(ctx, tx, `SELECT 1 FROM tax_codes WHERE id = ? AND is_active = 1`, tc); err != nil {
+				return res, fmt.Errorf("save item: check tax code: %w", err)
+			} else if !ok {
+				return res, fmt.Errorf("tax code %s does not exist on this till or is inactive", tc)
+			}
+			cur.TaxCodeID = &tc
+		}
+		res.Changed = append(res.Changed, "tax_code_id")
+	}
+	if p.AgeRestricted != nil {
+		cur.AgeRestricted = *p.AgeRestricted
+		res.Changed = append(res.Changed, "age_restricted")
+	}
 	wasActive := cur.IsActive
 	if p.Active != nil {
 		cur.IsActive = *p.Active
@@ -348,6 +439,9 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 		}
 	}
 
+	if err := saveItemSellScreenTx(ctx, tx, p, &res); err != nil {
+		return res, err
+	}
 	if p.Icon != nil {
 		if err := saveItemIconTx(ctx, tx, p.ID, *p.Icon, &res); err != nil {
 			return res, err
@@ -390,11 +484,38 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 		}
 		res.Changed = append(res.Changed, "modifier_opt_out_ids")
 	}
-	if err := tx.Commit(); err != nil {
-		return res, fmt.Errorf("save item: commit: %w", err)
-	}
 	res.Name = cur.Name
 	return res, nil
+}
+
+// saveItemSellScreenTx applies the patch's sell-screen flags. Removed
+// wins, exactly as RemoveFromSellScreen: removing clears hidden and deletes
+// the item's explicit quick-button row. Clearing removed only lifts the
+// flag (the item can be added back as a quick button); it never invents a
+// button.
+func saveItemSellScreenTx(ctx context.Context, tx *sql.Tx, p ItemPatch, res *ItemSaveResult) error {
+	removed := p.SellScreenRemoved != nil && *p.SellScreenRemoved
+	if p.SellScreenHidden != nil && !removed {
+		if _, err := tx.ExecContext(ctx, `UPDATE items SET sell_screen_hidden = ?, updated_at = datetime('now') WHERE id = ?`, boolToInt(*p.SellScreenHidden), p.ID); err != nil {
+			return fmt.Errorf("save item: sell screen hidden: %w", err)
+		}
+		res.Changed = append(res.Changed, "sell_screen_hidden")
+	}
+	if p.SellScreenRemoved == nil {
+		return nil
+	}
+	if removed {
+		if _, err := tx.ExecContext(ctx, `UPDATE items SET sell_screen_removed = 1, sell_screen_hidden = 0, updated_at = datetime('now') WHERE id = ?`, p.ID); err != nil {
+			return fmt.Errorf("save item: remove from sell screen: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM shortcut_buttons WHERE item_id = ?`, p.ID); err != nil {
+			return fmt.Errorf("save item: remove from sell screen: clear shortcut rows: %w", err)
+		}
+	} else if _, err := tx.ExecContext(ctx, `UPDATE items SET sell_screen_removed = 0, updated_at = datetime('now') WHERE id = ?`, p.ID); err != nil {
+		return fmt.Errorf("save item: sell screen removed: %w", err)
+	}
+	res.Changed = append(res.Changed, "sell_screen_removed")
+	return nil
 }
 
 // saveItemIconTx applies save_item's icon (ut-docs#3584) with the
@@ -515,6 +636,10 @@ type CategorySave struct {
 	ShowOnSaleScreen *bool
 	GroupIDs         *[]string
 	StationIDs       *[]string
+	// SortOrder sets categories.sort_order as given (the cloud catalogue
+	// pull, ADR-0162 §4, ut-docs#4463: the cloud masters the order). No
+	// directive sends it — set_category_order renumbers the whole list.
+	SortOrder *int
 }
 
 // CategorySaveResult reports what SaveCategory did.
@@ -598,6 +723,43 @@ func subtreeHeight(tree map[string]catNode, id string) int {
 	return walk(id, map[string]bool{id: true})
 }
 
+// prepareCategorySave trims and checks a category save before any write.
+func prepareCategorySave(p CategorySave) (CategorySave, error) {
+	p.ID = strings.TrimSpace(p.ID)
+	if p.ID == "" {
+		return p, errors.New("missing id")
+	}
+	if p.Name != nil {
+		n := strings.TrimSpace(*p.Name)
+		if n == "" {
+			return p, ErrCategoryNameRequired
+		}
+		p.Name = &n
+	}
+	if p.Color != nil {
+		c := strings.TrimSpace(*p.Color)
+		if !catalogtypes.ValidItemColor(c) {
+			return p, fmt.Errorf("colour %q is not one of the palette colours", c)
+		}
+		p.Color = &c
+	}
+	if p.Icon != nil {
+		ic := strings.TrimSpace(*p.Icon)
+		if ic != "" && !iconid.ValidFormat(ic) {
+			return p, fmt.Errorf("icon %q is not a valid icon id", ic)
+		}
+		p.Icon = &ic
+	}
+	if p.ParentID != nil {
+		pid := strings.TrimSpace(*p.ParentID)
+		p.ParentID = &pid
+	}
+	if p.SortOrder != nil && *p.SortOrder < 0 {
+		return p, errors.New("the sort order must not be negative")
+	}
+	return p, nil
+}
+
 // SaveCategory applies a save_category directive (contract §3.2) in one
 // transaction: create-with-id or update, a parent move (the new parent must
 // exist and be active, must not be the category itself or below it, and
@@ -607,34 +769,9 @@ func subtreeHeight(tree map[string]catNode, id string) int {
 // kitchen-station link sets.
 func (r *CatalogRepo) SaveCategory(ctx context.Context, p CategorySave) (CategorySaveResult, error) {
 	var res CategorySaveResult
-	p.ID = strings.TrimSpace(p.ID)
-	if p.ID == "" {
-		return res, errors.New("missing id")
-	}
-	if p.Name != nil {
-		n := strings.TrimSpace(*p.Name)
-		if n == "" {
-			return res, ErrCategoryNameRequired
-		}
-		p.Name = &n
-	}
-	if p.Color != nil {
-		c := strings.TrimSpace(*p.Color)
-		if !catalogtypes.ValidItemColor(c) {
-			return res, fmt.Errorf("colour %q is not one of the palette colours", c)
-		}
-		p.Color = &c
-	}
-	if p.Icon != nil {
-		ic := strings.TrimSpace(*p.Icon)
-		if ic != "" && !iconid.ValidFormat(ic) {
-			return res, fmt.Errorf("icon %q is not a valid icon id", ic)
-		}
-		p.Icon = &ic
-	}
-	if p.ParentID != nil {
-		pid := strings.TrimSpace(*p.ParentID)
-		p.ParentID = &pid
+	p, err := prepareCategorySave(p)
+	if err != nil {
+		return res, err
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -642,10 +779,32 @@ func (r *CatalogRepo) SaveCategory(ctx context.Context, p CategorySave) (Categor
 		return res, fmt.Errorf("save category: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if res, err = saveCategoryTx(ctx, tx, p); err != nil {
+		return res, err
+	}
+	if err := tx.Commit(); err != nil {
+		return res, fmt.Errorf("save category: commit: %w", err)
+	}
+	return res, nil
+}
 
+// SaveCategoryTx is SaveCategory inside the caller's transaction (the
+// cloud catalogue pull's ≤100-row chunks, ADR-0162 §4, ut-docs#4463):
+// the same validation and write.
+func (r *CatalogRepo) SaveCategoryTx(ctx context.Context, tx *sql.Tx, p CategorySave) (CategorySaveResult, error) {
+	p, err := prepareCategorySave(p)
+	if err != nil {
+		return CategorySaveResult{}, err
+	}
+	return saveCategoryTx(ctx, tx, p)
+}
+
+// saveCategoryTx is SaveCategory's write, in tx, of a prepared save.
+func saveCategoryTx(ctx context.Context, tx *sql.Tx, p CategorySave) (CategorySaveResult, error) {
+	var res CategorySaveResult
 	var name, parent, color, icon, imagePath string
 	var hidden, active bool
-	err = tx.QueryRowContext(ctx, `
+	err := tx.QueryRowContext(ctx, `
 SELECT name, COALESCE(parent_id, ''), COALESCE(color, ''), COALESCE(icon, ''), COALESCE(image_path, ''), sell_screen_hidden, is_active
 FROM categories WHERE id = ?`, p.ID).Scan(&name, &parent, &color, &icon, &imagePath, &hidden, &active)
 	switch {
@@ -745,8 +904,11 @@ UPDATE categories SET name = ?, parent_id = ?, color = ?, icon = ?, image_path =
 	if p.StationIDs != nil {
 		res.Changed = append(res.Changed, "station_ids")
 	}
-	if err := tx.Commit(); err != nil {
-		return res, fmt.Errorf("save category: commit: %w", err)
+	if p.SortOrder != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE categories SET sort_order = ?, updated_at = datetime('now') WHERE id = ?`, *p.SortOrder, p.ID); err != nil {
+			return res, fmt.Errorf("save category: sort order: %w", err)
+		}
+		res.Changed = append(res.Changed, "sort_order")
 	}
 	res.Name = name
 	return res, nil
@@ -779,7 +941,28 @@ func (r *CatalogRepo) DeleteCategoryMoving(ctx context.Context, id, moveItemsTo 
 		return res, fmt.Errorf("delete category: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if res, err = deleteCategoryMovingTx(ctx, tx, id, moveItemsTo); err != nil || res.AlreadyDeleted {
+		return res, err
+	}
+	if err := tx.Commit(); err != nil {
+		return res, fmt.Errorf("delete category: commit: %w", err)
+	}
+	return res, nil
+}
 
+// DeleteCategoryMovingTx is DeleteCategoryMoving inside the caller's
+// transaction (the cloud catalogue pull's tombstone rule, ADR-0162 §4,
+// ut-docs#4463).
+func (r *CatalogRepo) DeleteCategoryMovingTx(ctx context.Context, tx *sql.Tx, id, moveItemsTo string) (CategoryDeleteResult, error) {
+	id, moveItemsTo = strings.TrimSpace(id), strings.TrimSpace(moveItemsTo)
+	if id == "" {
+		return CategoryDeleteResult{}, errors.New("missing id")
+	}
+	return deleteCategoryMovingTx(ctx, tx, id, moveItemsTo)
+}
+
+func deleteCategoryMovingTx(ctx context.Context, tx *sql.Tx, id, moveItemsTo string) (CategoryDeleteResult, error) {
+	var res CategoryDeleteResult
 	var parent string
 	var active bool
 	if err := tx.QueryRowContext(ctx, `SELECT name, COALESCE(parent_id, ''), is_active FROM categories WHERE id = ?`, id).Scan(&res.Name, &parent, &active); err != nil {
@@ -825,9 +1008,6 @@ func (r *CatalogRepo) DeleteCategoryMoving(ctx context.Context, id, moveItemsTo 
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {
 			return res, fmt.Errorf("delete category: %w", err)
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return res, fmt.Errorf("delete category: commit: %w", err)
 	}
 	return res, nil
 }

@@ -24,6 +24,7 @@ package entitlement
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -63,7 +64,45 @@ const (
 	// KeyCloudLinkTier is "realtime" — empty otherwise (ADR-0117 §2;
 	// on_demand is a recorded option, not built).
 	KeyCloudLinkMode = "cloud.link_mode"
+	// KeyCatalogMaster: till | adopting | cloud — who masters the shop's
+	// catalogue (ADR-0162 §1, ut-docs#4463). Cached with the block like the
+	// rest (and per-till like them: "entitlement." in
+	// data.PerTillSettingPrefixes); read through CatalogMaster.
+	KeyCatalogMaster = "entitlement.catalog_master"
 )
+
+// Catalogue master modes (ADR-0162 §1). The cloud owns the mode; the till
+// only caches it.
+const (
+	CatalogMasterTill     = "till"
+	CatalogMasterAdopting = "adopting"
+	CatalogMasterCloud    = "cloud"
+)
+
+// CatalogMasterMode normalises a raw catalog_master wire or cached value,
+// fail safe: only the exact strings "cloud" and "adopting" keep their
+// meaning; anything else — missing, an older cloud's omission, a value
+// this build doesn't know — is "till", today's behaviour (ADR-0162 §1).
+func CatalogMasterMode(raw string) string {
+	switch raw {
+	case CatalogMasterCloud, CatalogMasterAdopting:
+		return raw
+	}
+	return CatalogMasterTill
+}
+
+// CatalogMaster is the cached catalogue master mode (ADR-0162 §1),
+// normalised by CatalogMasterMode. Deliberately no Grace check: the ADR
+// keeps a cached mode in force until the cloud says otherwise, never
+// decided from a clock. No cache or a read error is "till". NEVER a sale
+// gate (package doc): it only steers the cloud catalogue pull.
+func CatalogMaster(ctx context.Context, r Reader) string {
+	v, ok, err := r.Get(ctx, KeyCatalogMaster)
+	if err != nil || !ok {
+		return CatalogMasterTill
+	}
+	return CatalogMasterMode(v)
+}
 
 // Grace is how long a cached plan is honoured without a fresh confirmation
 // from the cloud before EffectivePlan degrades to Local (ADR-0060 §5: one
@@ -278,10 +317,27 @@ type Block struct {
 	// periodic, ADR-0117 §2).
 	CloudLink     string `json:"cloud_link"`
 	CloudLinkMode string `json:"cloud_link_mode"`
+	// CatalogMaster is ADR-0162 §1's catalogue mode (till | adopting |
+	// cloud). Raw: Values normalises it with CatalogMasterMode, so a
+	// missing or unknown value caches "till", never an error. A
+	// json.RawMessage so a wrong JSON type can never reject the whole
+	// block (it reads as till).
+	CatalogMaster json.RawMessage `json:"catalog_master"`
 }
 
-// Values validates b and returns the six settings rows to write (the four
-// ADR-0060 §4 rows plus ADR-0117 §2's cloud_link tier/mode), with
+// catalogMaster decodes the raw catalog_master field: a JSON string, else
+// "" (which normalises to till).
+func (b Block) catalogMaster() string {
+	var s string
+	if len(b.CatalogMaster) == 0 || json.Unmarshal(b.CatalogMaster, &s) != nil {
+		return ""
+	}
+	return s
+}
+
+// Values validates b and returns the seven settings rows to write (the four
+// ADR-0060 §4 rows, ADR-0117 §2's cloud_link tier/mode and ADR-0162 §1's
+// catalog_master), with
 // last_confirmed_at = now (UTC). An unknown plan or status is an error — the
 // caller keeps its cache. A non-RFC3339 expires_at is stored empty.
 func (b Block) Values(now time.Time) (map[string]string, error) {
@@ -313,6 +369,7 @@ func (b Block) Values(now time.Time) (map[string]string, error) {
 		KeyLastConfirmedAt:    now.UTC().Format(time.RFC3339),
 		KeyCloudLinkTier:      tier,
 		KeyCloudLinkMode:      LinkMode(tier, b.CloudLinkMode),
+		KeyCatalogMaster:      CatalogMasterMode(b.catalogMaster()),
 	}, nil
 }
 
