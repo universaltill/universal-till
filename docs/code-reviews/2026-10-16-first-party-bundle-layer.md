@@ -37,3 +37,8 @@ The reviewer checked these and found no problem:
 
 ## Verdict
 Safe to merge. Deferred: the UI half is ut-docs#4477.
+
+## Rebase note
+- While this PR was waiting, ut-docs#4373 (ICU plurals) merged a `resolveLocked` helper and `TM`, and ut-docs#4374 merged bundle fonts.
+- The `internal/config/i18n.go` conflict is resolved so that `resolveLocked`, and therefore both `T` and `TM`, walk each locale through `layerLookupLocked`. `TM` thus gets the same first-party/built-in/third-party order as `T`.
+- Re-ran on the rebased head: config, buildinfo, msgfmt, httpx, the pages package, the plugin locale/font tests, `guard-i18n.sh`, `guard-builddate-stamped.sh` and golangci-lint (0 issues). All pass.
