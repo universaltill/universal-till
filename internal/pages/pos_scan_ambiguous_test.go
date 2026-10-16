@@ -212,3 +212,48 @@ func TestScanAmbiguous_RepeatScanStillAsks(t *testing.T) {
 		t.Fatalf("the repeat scan must not add before the pick; lines=%+v", b.Lines)
 	}
 }
+
+// A GS- code that already answered locally (here: an item) must not wait on
+// the main till: the cross-till voucher proxy is only for a GS- code nothing
+// local answered (BA requirement 1 on ut-docs#4344, ADR-0003).
+func TestScanAmbiguous_LocalAnswerSkipsPrimaryVoucherProxy(t *testing.T) {
+	mux, dp, d := setupScanBarcodeDeps(t)
+	seedAmbiguousItem(t, d, "GS-ITEM-1")
+	var primaryHits int
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryHits++
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(primary.Close)
+	setReplicaSettings(t, dp.Settings, primary.URL, "b-replica")
+
+	postScanKind(t, mux, "GS-ITEM-1", "scanner", "")
+	if b := dp.Engine.Basket(); len(b.Lines) != 1 || b.Lines[0].ItemID != "itm-amb" {
+		t.Fatalf("a GS- code that is a local item adds the item; lines=%+v", b.Lines)
+	}
+	if primaryHits != 0 {
+		t.Fatalf("a locally answered GS- code must not ask the main till, got %d request(s)", primaryHits)
+	}
+}
+
+// A GS- code nothing answers asks the main till once, not once in the
+// resolve step and again in the voucher branch (each ask can cost the
+// proxy's 2 s budget when the main till is unreachable).
+func TestScanAmbiguous_UnknownGSCodeAsksPrimaryOnce(t *testing.T) {
+	mux, dp, _ := setupScanBarcodeDeps(t)
+	var primaryHits int
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		primaryHits++
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(primary.Close)
+	setReplicaSettings(t, dp.Settings, primary.URL, "b-replica")
+
+	postScanKind(t, mux, "GS-NOWHERE", "scanner", "")
+	if primaryHits != 1 {
+		t.Fatalf("an unknown GS- code must ask the main till exactly once, got %d", primaryHits)
+	}
+	if b := dp.Engine.Basket(); len(b.Lines) != 0 || b.VoucherID != "" {
+		t.Fatalf("an unknown code adds nothing; lines=%+v voucher=%q", b.Lines, b.VoucherID)
+	}
+}

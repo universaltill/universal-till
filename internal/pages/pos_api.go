@@ -1068,6 +1068,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		var resolvedVoucher *data.Voucher
 		var resolvedItem *pos.BasketLine
+		// askedPrimary: resolveScanAnswers already ran (and, for a GS- code
+		// nothing local answered, already asked the main till), so the
+		// voucher branch below must not ask a second time.
+		askedPrimary := kind == ""
 		if kind == "" {
 			answers := resolveScanAnswers(r.Context(), d, repo, locale, code)
 			switch len(answers.choices) {
@@ -1249,7 +1253,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			// for free, no new network path introduced here.
 			v, err := repo.GetVoucherBalance(r.Context(), nil, code)
 			found := err == nil
-			if !found && errors.Is(err, data.ErrVoucherNotFound) {
+			if !found && !askedPrimary && errors.Is(err, data.ErrVoucherNotFound) {
 				if primaryV, ok := fetchVoucherFromPrimary(r.Context(), d, voucherProxyClient, code); ok {
 					v, found = primaryV, true
 				}

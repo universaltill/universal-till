@@ -44,9 +44,9 @@ type scanAnswers struct {
 // that is legitimately two things became whichever came first, silently.
 // The reads are local, read-only indexed point lookups: the voucher, promo
 // and receipt checks share one query (POSRepo.ScanCodeKinds), so an
-// item-only scan pays one extra round trip (BenchmarkScanItemOnly). The only network call is the main-till voucher
-// fallback, and only for a GS- code with no local voucher -- the same place
-// the handler already made it (ADR-0003).
+// item-only scan pays one extra round trip (BenchmarkScanItemOnly). The only
+// network call is the main-till voucher fallback, and only for a GS- code
+// nothing local answered (ADR-0003).
 //
 // Customer lookups stay limited to looksLikeCustomerCode codes:
 // LookupCustomer also matches a phone number, which would turn ordinary
@@ -77,8 +77,11 @@ func resolveScanAnswers(ctx context.Context, d *common.Deps, repo *data.POSRepo,
 		_, custName, custOK = repo.LookupCustomer(ctx, code)
 	}
 
+	// The main till is asked only when nothing local answered: a scan never
+	// waits on the network once the till itself knows what the code is.
 	voucherOK := vErr == nil
-	if !voucherOK && looksLikeVoucherCode(code) && errors.Is(vErr, data.ErrVoucherNotFound) {
+	localAnswer := itemOK || custOK || promoOK || receipt
+	if !voucherOK && !localAnswer && looksLikeVoucherCode(code) && errors.Is(vErr, data.ErrVoucherNotFound) {
 		v, voucherOK = fetchVoucherFromPrimary(ctx, d, voucherProxyClient, code)
 	}
 
