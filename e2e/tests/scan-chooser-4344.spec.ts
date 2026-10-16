@@ -127,4 +127,35 @@ test.describe('a code that is two things asks which one (ut-docs#4344)', () => {
       await page.screenshot({ path: test.info().outputPath(`chooser-${vp.width}-${vp.lang}.png`) });
     });
   }
+
+  // The chooser's tint is translucent over --surface: it must stay readable
+  // on the dark theme too (UX note 6 on the card).
+  test('dark theme: the title and rows stay readable', async ({ page }) => {
+    const setTheme = (theme: string) =>
+      page.request.post('/api/settings/theme', { form: { theme } });
+    const before = await page.request.get('/');
+    const prev = /\/themes\/([a-z0-9-]+)\.css/.exec(await before.text())?.[1] ?? 'default';
+    expect((await setTheme('dark')).status()).toBe(204);
+    try {
+      await page.setViewportSize({ width: 1024, height: 600 });
+      await page.goto('/');
+      await expect(page.locator('#theme-css')).toHaveAttribute('href', /\/themes\/dark\.css/);
+      await scan(page);
+      const chooser = page.locator('#basket .scan-choices');
+      await expect(chooser).toBeVisible();
+      // Text colour must differ clearly from the page background behind the
+      // translucent tint (a light-theme-only colour would vanish here).
+      const [fg, bg] = await chooser.locator('.scan-choices-title').evaluate((el) => {
+        const lum = (c: string) => {
+          const [r, g, b] = (c.match(/\d+(\.\d+)?/g) || ['0', '0', '0']).slice(0, 3).map(Number);
+          return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        };
+        return [lum(getComputedStyle(el).color), lum(getComputedStyle(document.body).backgroundColor)];
+      });
+      expect(Math.abs(fg - bg), 'title contrast on dark').toBeGreaterThan(100);
+      await page.screenshot({ path: test.info().outputPath('chooser-1024-dark.png') });
+    } finally {
+      await setTheme(prev);
+    }
+  });
 });
