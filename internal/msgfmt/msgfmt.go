@@ -156,13 +156,8 @@ func (m *Message) collectPluralArgs(set map[string]struct{}) {
 		for _, e := range p.exact {
 			e.msg.collectPluralArgs(set)
 		}
-		keys := make([]string, 0, len(p.branches))
-		for k := range p.branches {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			p.branches[k].collectPluralArgs(set)
+		for _, b := range p.branches {
+			b.collectPluralArgs(set)
 		}
 	}
 }

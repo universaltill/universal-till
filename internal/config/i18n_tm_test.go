@@ -178,7 +178,7 @@ func pluralMetaProblems(en map[string]string, meta map[string]json.RawMessage) [
 		case len(args) == 0:
 		default:
 			if _, ok := meta[key]; !ok {
-				out = append(out, fmt.Sprintf("web/i18n-meta/en.meta.json %s: the en.json value has a plural argument (%s) but the key has no meta entry; add one with \"plural\": %q", key, args[0], args[0]))
+				out = append(out, fmt.Sprintf("web/i18n-meta/en.meta.json %s: the en.json value has a plural argument (%s) but the key has no meta entry; add one with \"plural\": %q (and a description and review; drop its key-meta-baseline.txt line)", key, args[0], args[0]))
 			} else {
 				out = append(out, fmt.Sprintf("web/i18n-meta/en.meta.json %s: the en.json value has a plural argument (%s) but the meta entry has no `plural`; add \"plural\": %q", key, args[0], args[0]))
 			}
@@ -212,12 +212,15 @@ func TestPluralMetaProblems(t *testing.T) {
 			[]string{`web/locales/en.json k: the value has a plural argument or a meta ` + "`plural`" + ` but does not parse as ICU (msgfmt: "n" has no other branch); fix the value`}},
 		{"plural nested in a select branch", map[string]string{"k": "{kind, select, a {" + pl + "} other {y}}"}, meta("n"), nil},
 		{"value has plural, no meta entry", map[string]string{"k": pl}, map[string]json.RawMessage{},
-			[]string{"web/i18n-meta/en.meta.json k: the en.json value has a plural argument (n) but the key has no meta entry; add one with \"plural\": \"n\""}},
+			[]string{"web/i18n-meta/en.meta.json k: the en.json value has a plural argument (n) but the key has no meta entry; add one with \"plural\": \"n\" (and a description and review; drop its key-meta-baseline.txt line)"}},
 		{"value has plural, meta without plural", map[string]string{"k": pl},
 			map[string]json.RawMessage{"k": json.RawMessage(`{"description":"d"}`)},
 			[]string{"web/i18n-meta/en.meta.json k: the en.json value has a plural argument (n) but the meta entry has no `plural`; add \"plural\": \"n\""}},
 		{"value has plural, meta names wrong arg", map[string]string{"k": pl}, meta("kind"),
 			[]string{`web/i18n-meta/en.meta.json k: plural "kind" is not a plural argument of the en.json value (plural args: [n]); set ` + "`plural`" + ` to a real {arg, plural, ...} argument or remove it`}},
+		{"value has broken plural, no meta entry", map[string]string{"k": "{n, plural, one {x}}"}, map[string]json.RawMessage{},
+			[]string{`web/locales/en.json k: the value has a plural argument or a meta ` + "`plural`" + ` but does not parse as ICU (msgfmt: "n" has no other branch); fix the value`}},
+		{"apostrophe-quoted plural is literal text", map[string]string{"k": "'{n, plural, one {x} other {y}}'"}, map[string]json.RawMessage{}, nil},
 		{"plain key", map[string]string{"k": "Hello {name}"}, map[string]json.RawMessage{}, nil},
 		{"meta plural on key absent from en", map[string]string{}, meta("n"), nil},
 	}
