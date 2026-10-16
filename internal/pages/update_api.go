@@ -354,7 +354,7 @@ func updateUnavailableHTML(locale, latest, goos string) string {
 	if selfupdate.InstallBridgeAvailable(goos) {
 		at := func(key string) string { return html.EscapeString(httpx.T(locale, key)) }
 		return fmt.Sprintf(`<span>⬆ %s v%s — <button type="button" class="btn secondary" data-android-update-install data-testid="android-update-install"`+
-			` data-downloading="%s" data-progress="%s" data-installing="%s" data-retry="%s"`+
+			` data-downloading="%s" data-progress="%s" data-installing="%s" data-retry="%s" data-again="%s"`+
 			` data-failed="%s" data-locked="%s" data-uptodate="%s" data-nobridge="%s">%s</button></span>`,
 			at("status.update_available"),
 			html.EscapeString(latest),
@@ -362,6 +362,7 @@ func updateUnavailableHTML(locale, latest, goos string) string {
 			at("settings.update.android.progress"),
 			at("settings.update.android.installing"),
 			at("settings.update.android.retry"),
+			at("settings.update.android.install_again"),
 			at("settings.update.android.failed"),
 			at("auth.error.locked"),
 			at("settings.update.up_to_date"),

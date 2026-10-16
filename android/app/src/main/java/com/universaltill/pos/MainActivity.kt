@@ -108,6 +108,13 @@ class MainActivity : AppCompatActivity() {
     private var updateLoggedPercent = -1
     private var lastUpdateState: String? = null
 
+    // ut-docs#4495: set when [launchPackageInstaller] hands the APK over.
+    // Android's installer is a see-through dialog activity, so the page
+    // behind it never goes hidden; the next [onResume] in this process means
+    // it went away without replacing the app (an install kills this process),
+    // and the page is told so it can offer to open it again.
+    private var updateInstallerLaunched = false
+
     // ut-docs#1639 (independent review): whether this Activity is between
     // onResume and onPause. [schedulePinCheck] refuses to arm outside that
     // window, and cancelling in [onPause] alone is NOT enough to get that
@@ -799,6 +806,10 @@ class MainActivity : AppCompatActivity() {
             lastUpdateState?.let { pushUpdateState(it) }
             return
         }
+        // ut-docs#4495: a new attempt. A launch Android refused silently
+        // never paused this Activity, so its flag must not survive into this
+        // attempt and report "closed" mid-download on the next resume.
+        updateInstallerLaunched = false
         try {
             val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             val dest = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), UPDATE_APK_NAME)
@@ -1139,6 +1150,7 @@ class MainActivity : AppCompatActivity() {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
             startActivity(intent)
+            updateInstallerLaunched = true
             Log.i(TAG, "update: package installer launched for ${apk.name} (${apk.length()} bytes)")
             reportUpdate("installing", 100, null)
         } catch (e: Exception) {
@@ -2184,6 +2196,12 @@ class MainActivity : AppCompatActivity() {
         // ut-docs#4312: a download that outlived the previous Activity keeps
         // reporting its progress to the page.
         resumeUpdateWatch()
+        // ut-docs#4495: back from Android's installer without an install.
+        if (updateInstallerLaunched) {
+            updateInstallerLaunched = false
+            Log.i(TAG, "update: back from the package installer without an install")
+            reportUpdate("closed", null, null)
+        }
     }
 
     /**
