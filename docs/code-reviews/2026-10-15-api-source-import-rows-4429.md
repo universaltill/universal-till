@@ -22,7 +22,7 @@
   - preview writes nothing;
   - each row has its own savepoint;
   - commits run in chunks of 100 processed rows.
-- Migration `080_import_source_links.sql`: checksum pinned, never LAN-synced (`nonAdminTables`).
+- Migration `081_import_source_links.sql` (renumbered from 080 on rebase: #4252 took 080): checksum pinned, never LAN-synced (`nonAdminTables`).
 - Repository additions: `catalog_sync_repo.go` and `import_source_links_repo.go`. Shared category and tax helpers, so both importers use one rule.
 - Audit: one `import_sync` entry per committed run, holding the plugin, source and counts. A run that stops part-way is audited with `partial: true`.
 - **ut-cloud** (`feat/4429-signer-import-source`): `CanonicalEntry.Source` mirrors the new field, so the marketplace signer keeps it.
