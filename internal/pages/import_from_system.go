@@ -214,7 +214,10 @@ func renderImportSystemResult(w http.ResponseWriter, r *http.Request, v importSy
 		samples = samples[:catsync.MaxSamples]
 	}
 	for _, s := range samples {
-		view := importSystemSample{Row: s.Row, Name: s.Name, ExternalID: s.ExternalID, Action: s.Action, Issue: s.Issue}
+		view := importSystemSample{Row: s.Row, Name: s.Name, ExternalID: s.ExternalID, Action: s.Action}
+		if s.Issue != "" || s.IssueCode != "" {
+			view.Issue = importSystemIssueText(T, s)
+		}
 		if k, ok := importSystemActionKeys[s.Action]; ok {
 			view.ActionLabel = T(k)
 		} else {
@@ -246,6 +249,25 @@ func renderImportSystemResult(w http.ResponseWriter, r *http.Request, v importSy
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	_, _ = w.Write(buf.Bytes())
+}
+
+// importSystemIssueText renders a sample's row issue in the till's language
+// from its code and args (ut-docs#4485), like translateImportIssue does for
+// the file import. A code with no key never puts catsync's machine text on
+// screen.
+func importSystemIssueText(T func(string) string, s catsync.Sample) string {
+	if s.IssueCode != "" {
+		key := "import.issue." + s.IssueCode
+		if text := T(key); text != key {
+			args := make([]any, len(s.IssueArgs))
+			for i, a := range s.IssueArgs {
+				args[i] = a
+			}
+			return fmt.Sprintf(text, args...)
+		}
+	}
+	logging.L().Warnf("[import-system] unrecognised row issue code %q", s.IssueCode)
+	return T("import.status.unknown_issue")
 }
 
 // shopWideSettingRows keeps one row per key in first-seen order, the

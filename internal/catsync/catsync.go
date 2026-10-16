@@ -94,7 +94,11 @@ type Sample struct {
 	Name       string   `json:"name,omitempty"`
 	Action     string   `json:"action"`
 	Changes    []string `json:"changes,omitempty"`
-	Issue      string   `json:"issue,omitempty"`
+	Issue      string   `json:"issue,omitempty"` // English text
+	// IssueCode is the stable code of the issue and IssueArgs the values its
+	// text names (ut-docs#4485): the till translates them, a client may too.
+	IssueCode string   `json:"issue_code,omitempty"`
+	IssueArgs []string `json:"issue_args,omitempty"`
 }
 
 // Result counts what a run did (or, for a preview, would do).
@@ -128,7 +132,7 @@ type plan struct {
 	target  string // existing item to update; "" for a new one
 	relink  bool   // the link must be written (new, matched, or re-pointed)
 	changes []string
-	issue   string
+	issue   rowIssue
 	state   data.SyncItemState
 	addBC   []catalogtypes.BarcodeInput
 	delta   float64 // stock movement quantity, when "stock" is a change
@@ -176,16 +180,16 @@ func Run(ctx context.Context, db *sql.DB, rows []json.RawMessage, opt Options) (
 	// Parse, validate and normalize first, through the pool: barcode
 	// normalization reads settings and must not run inside the tx.
 	parsed := make([]row, len(rows))
-	issues := make([]string, len(rows))
+	issues := make([]rowIssue, len(rows))
 	exts := make([]string, len(rows))
 	seenExt := map[string]bool{}
 	for i, raw := range rows {
 		r, ext, issue := parseRow(raw)
 		exts[i] = ext
-		if issue == "" && seenExt[ext] {
-			issue = "external_id appears on more than one row"
+		if issue.none() && seenExt[ext] {
+			issue = newIssue(IssueExternalIDDuplicate)
 		}
-		if issue == "" {
+		if issue.none() {
 			issue = normalizeBarcodes(ctx, rn.cat, &r)
 		}
 		if ext != "" {
@@ -239,8 +243,9 @@ func Run(ctx context.Context, db *sql.DB, rows []json.RawMessage, opt Options) (
 			}
 		}
 		s := Sample{Row: i + 1, ExternalID: exts[i]}
-		if issues[i] != "" {
-			s.Action, s.Issue = ActionIssue, issues[i]
+		if !issues[i].none() {
+			s.Action = ActionIssue
+			s.setIssue(issues[i])
 			res.add(s)
 			continue
 		}
@@ -274,10 +279,11 @@ func Run(ctx context.Context, db *sql.DB, rows []json.RawMessage, opt Options) (
 				// row created; cached ids may now point at nothing.
 				clear(rn.catCache)
 				clear(rn.taxCache)
-				p = plan{action: ActionIssue, issue: "could not apply this row"}
+				p = issue(IssueApplyFailed)
 			}
 		}
-		s.Action, s.Changes, s.Issue = p.action, p.changes, p.issue
+		s.Action, s.Changes = p.action, p.changes
+		s.setIssue(p.issue)
 		res.add(s)
 		if opt.Commit {
 			if processed++; processed >= commitChunk {
@@ -295,17 +301,26 @@ func Run(ctx context.Context, db *sql.DB, rows []json.RawMessage, opt Options) (
 	return res, nil
 }
 
-func issue(msg string) plan { return plan{action: ActionIssue, issue: msg} }
+func issue(code string, args ...string) plan {
+	return plan{action: ActionIssue, issue: newIssue(code, args...)}
+}
+
+func (s *Sample) setIssue(i rowIssue) {
+	if i.none() {
+		return
+	}
+	s.Issue, s.IssueCode, s.IssueArgs = i.Text(), i.Code, i.Args
+}
 
 // plan decides what one valid row does. Reads only (through rn.q).
 func (rn *runner) plan(ctx context.Context, r *row) (plan, error) {
 	for _, b := range r.barcodes {
 		if other, ok := rn.claimedBarcode[b.Barcode]; ok && other != r.ext {
-			return issue("barcode " + b.Barcode + " appears on more than one row"), nil
+			return issue(IssueBarcodeDuplicate, b.Barcode), nil
 		}
 	}
 	if other, ok := rn.claimedSKU[r.sku]; r.sku != "" && ok && other != r.ext {
-		return issue("sku appears on more than one row"), nil
+		return issue(IssueSKUDuplicate), nil
 	}
 
 	var p plan
@@ -332,7 +347,7 @@ func (rn *runner) plan(ctx context.Context, r *row) (plan, error) {
 			if ext, ok, err := rn.links.ExternalIDFor(ctx, rn.q, rn.opt.Source, EntityItems, cand); err != nil {
 				return plan{}, err
 			} else if ok && ext != r.ext {
-				return issue("the matching item is already linked to source record " + ext), nil
+				return issue(IssueItemLinkedElsewhere, ext), nil
 			}
 			st, ok, err := rn.cat.SyncItemState(ctx, rn.q, cand)
 			if err != nil {
@@ -347,7 +362,7 @@ func (rn *runner) plan(ctx context.Context, r *row) (plan, error) {
 	}
 	if p.target != "" {
 		if other, ok := rn.claimedItem[p.target]; ok && other != r.ext {
-			return issue("another row in this run already matched the same item"), nil
+			return issue(IssueItemAlreadyMatched), nil
 		}
 	}
 
@@ -412,14 +427,14 @@ func (rn *runner) planNew(ctx context.Context, r *row, p *plan) (plan, error) {
 		if _, ok, err := rn.cat.SyncBarcodeOwner(ctx, rn.q, b.Barcode); err != nil {
 			return plan{}, err
 		} else if ok {
-			return issue("barcode " + b.Barcode + " belongs to another item"), nil
+			return issue(IssueBarcodeTaken, b.Barcode), nil
 		}
 	}
 	if r.sku != "" {
 		if _, ok, err := rn.cat.SyncSKUOwner(ctx, rn.q, r.sku); err != nil {
 			return plan{}, err
 		} else if ok {
-			return issue("sku belongs to another item"), nil
+			return issue(IssueSKUTaken), nil
 		}
 	}
 	p.action = ActionNew
@@ -466,7 +481,7 @@ func (rn *runner) planUpdate(ctx context.Context, r *row, p *plan) (plan, error)
 			return plan{}, err
 		}
 		if ok && owner != p.target {
-			return issue("barcode " + b.Barcode + " belongs to another item"), nil
+			return issue(IssueBarcodeTaken, b.Barcode), nil
 		}
 		if !ok {
 			// The item keeps its own primary barcode; one only becomes

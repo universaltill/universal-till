@@ -375,3 +375,38 @@ func TestAPIImport_DeclineOrCapAppliesNothing(t *testing.T) {
 		t.Fatalf("items %d -> %d after a refused run", itemsBefore, n)
 	}
 }
+
+// ut-docs#4485: the JSON API keeps the English issue text and adds the
+// stable code (and args) so a client can translate it itself.
+func TestAPIImport_SamplesCarryIssueCodeAndEnglish(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedAPIImportPlugin(t, dp.Db, apiImportPluginID, []string{"items"}, []string{"items"})
+	installImportRowsGuest(t, dp)
+	setGuestSetting(t, dp, "rows", `[{"external_id":"bad","price_minor":1},`+
+		`{"external_id":"deep","name":"D","price_minor":1,"category_path":["a","b","c","d","e"]}]`)
+
+	rec := postAPIImport(t, mux, url.Values{"mode": {"preview"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data struct {
+			Samples []struct {
+				Issue     string   `json:"issue"`
+				IssueCode string   `json:"issue_code"`
+				IssueArgs []string `json:"issue_args"`
+			} `json:"samples"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil || len(env.Data.Samples) != 2 {
+		t.Fatalf("decode %s: %v", rec.Body.String(), err)
+	}
+	a, b := env.Data.Samples[0], env.Data.Samples[1]
+	if a.Issue != "name is missing or invalid" || a.IssueCode != "name_invalid" || len(a.IssueArgs) != 0 {
+		t.Errorf("sample 1: %+v", a)
+	}
+	if b.Issue != "category_path is deeper than 4 levels" || b.IssueCode != "category_too_deep" || len(b.IssueArgs) != 1 || b.IssueArgs[0] != "4" {
+		t.Errorf("sample 2: %+v", b)
+	}
+}

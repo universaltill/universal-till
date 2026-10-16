@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -86,40 +86,40 @@ func cleanText(s string, maxRunes int) (string, bool) {
 
 // parseRow decodes and validates one submitted row. ext is returned even
 // when the row is otherwise invalid, so the issue can name it.
-func parseRow(raw json.RawMessage) (row, string, string) {
+func parseRow(raw json.RawMessage) (row, string, rowIssue) {
 	var w wireRow
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	if err := dec.Decode(&w); err != nil {
-		return row{}, "", "row is not a valid item object"
+		return row{}, "", newIssue(IssueRowNotObject)
 	}
 	if dec.More() {
-		return row{}, "", "row is not a single JSON object"
+		return row{}, "", newIssue(IssueRowNotSingleObject)
 	}
 	ext, ok := cleanText(w.ExternalID, externalIDMax)
 	if !ok {
-		return row{}, "", "external_id is missing or invalid"
+		return row{}, "", newIssue(IssueExternalIDInvalid)
 	}
 	r := row{ext: ext, active: true, weighed: w.SoldByWeight}
 	if r.name, ok = cleanText(w.Name, nameMaxRunes); !ok {
-		return row{}, ext, "name is missing or invalid"
+		return row{}, ext, newIssue(IssueNameInvalid)
 	}
 	if w.PriceMinor == nil || *w.PriceMinor < 0 || *w.PriceMinor > priceMinorMax {
-		return row{}, ext, "price_minor is missing or out of range"
+		return row{}, ext, newIssue(IssuePriceInvalid)
 	}
 	r.price = money.FromMinor(*w.PriceMinor)
 	if strings.TrimSpace(w.SKU) != "" {
 		if r.sku, ok = cleanText(w.SKU, skuMax); !ok {
-			return row{}, ext, "sku is invalid"
+			return row{}, ext, newIssue(IssueSKUInvalid)
 		}
 	}
 	if w.CategoryPath != nil {
 		if len(w.CategoryPath) > categoryDepth {
-			return row{}, ext, fmt.Sprintf("category_path is deeper than %d levels", categoryDepth)
+			return row{}, ext, newIssue(IssueCategoryTooDeep, strconv.Itoa(categoryDepth))
 		}
 		for _, c := range w.CategoryPath {
 			name, ok := cleanText(c, categoryMaxRune)
 			if !ok {
-				return row{}, ext, "category_path has an empty or invalid level"
+				return row{}, ext, newIssue(IssueCategoryLevelInvalid)
 			}
 			r.catPath = append(r.catPath, name)
 		}
@@ -129,14 +129,14 @@ func parseRow(raw json.RawMessage) (row, string, string) {
 	}
 	if w.VATRateBP != nil {
 		if *w.VATRateBP < 0 || *w.VATRateBP > vatMaxBP {
-			return row{}, ext, "vat_rate_bp is out of range (0-10000)"
+			return row{}, ext, newIssue(IssueVATOutOfRange)
 		}
 		r.vat, r.hasVAT = int(*w.VATRateBP), true
 	}
 	if w.StockQty != nil {
 		q := *w.StockQty
 		if math.IsNaN(q) || math.IsInf(q, 0) || math.Abs(q) > stockMaxAbs {
-			return row{}, ext, "stock_qty is out of range"
+			return row{}, ext, newIssue(IssueStockOutOfRange)
 		}
 		r.stock, r.hasStock = q, true
 	}
@@ -148,13 +148,13 @@ func parseRow(raw json.RawMessage) (row, string, string) {
 		codes = append([]string{b}, codes...)
 	}
 	if len(codes) > barcodesMax {
-		return row{}, ext, fmt.Sprintf("more than %d barcodes", barcodesMax)
+		return row{}, ext, newIssue(IssueTooManyBarcodes, strconv.Itoa(barcodesMax))
 	}
 	seen := map[string]bool{}
 	for _, c := range codes {
 		c = strings.TrimSpace(c)
 		if !barcodeRe.MatchString(c) {
-			return row{}, ext, "a barcode is invalid"
+			return row{}, ext, newIssue(IssueBarcodeInvalid)
 		}
 		if seen[c] {
 			continue
@@ -162,19 +162,19 @@ func parseRow(raw json.RawMessage) (row, string, string) {
 		seen[c] = true
 		r.barcodes = append(r.barcodes, catalogtypes.BarcodeInput{Barcode: c})
 	}
-	return r, ext, ""
+	return r, ext, rowIssue{}
 }
 
 // normalizeBarcodes runs the shop's symbology rules over r's barcodes
 // (through the pool — it reads settings, so it runs before the commit's
 // transaction opens).
-func normalizeBarcodes(ctx context.Context, cat *data.CatalogRepo, r *row) string {
+func normalizeBarcodes(ctx context.Context, cat *data.CatalogRepo, r *row) rowIssue {
 	out := r.barcodes[:0]
 	seen := map[string]bool{}
 	for i, b := range r.barcodes {
 		in, err := cat.NormalizeBarcode(ctx, catalogtypes.BarcodeInput{Barcode: b.Barcode, ItemID: "pending", IsPrimary: i == 0})
 		if err != nil {
-			return "barcode " + b.Barcode + " is not accepted by this till's barcode settings"
+			return newIssue(IssueBarcodeNotAccepted, b.Barcode)
 		}
 		if seen[in.Barcode] {
 			continue
@@ -184,5 +184,5 @@ func normalizeBarcodes(ctx context.Context, cat *data.CatalogRepo, r *row) strin
 		out = append(out, in)
 	}
 	r.barcodes = out
-	return ""
+	return rowIssue{}
 }
