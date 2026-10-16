@@ -39,9 +39,9 @@ example really is accepted or refused by `PercentPatternLocal`.
 
 - The reviewer traced each field's server path: promotions → `promotions_page.go:95`, payment fee → `settings_page.go:1077`, takeaway editor → `plugin_settings_page.go:359`. All three go through `ParsePercentBP` (`ParseMoneyMajor(raw, 2)`), which refuses more than two fraction digits.
 - TDD: with the help edits stashed, the extended test fails (for example `web/help/tr/plugins.md: missing the two-decimal example 8.875`). Restored, it passes.
-- `go build ./...`, `go vet ./internal/httpx ./internal/pages`, `go test ./...`: every package passed except `internal/plugins`, which hit the 600 s test timeout under container load (see DOCS-SHOTS-AND-PLUGINS below).
+- `go build ./...`, `go vet ./internal/httpx ./internal/pages`, `go test ./...`: every package passed except `internal/plugins`, which hit the 600 s test timeout under container load. Re-run on its own with a longer timeout, it passed (`ok … 986.8s`). The diff touches nothing that package reads.
 - Guards: `guard-help-drift` (baseline untouched; every insert is inside a sentence, so no structural count changes), `guard-help-topics`, `guard-compliance-claims`, `guard-competitor-naming`, `guard-mail-addresses`, `guard-i18n`, `guard-rtl-logical-css`, `guard-core-neutral`, `guard-readme-local-links` all pass.
 - No UI surface and no locale key changed.
-DOCS-SHOTS-AND-PLUGINS
+- `guard-docs-shots` hashes topic markdown, so `make docs-shots` was re-run (120 shots passed). Every PNG came out byte-identical, and only the 8 topic hashes (plugins and promotions × en/fa/ar/tr) in `web/help/img/manifest.json` changed. payments.md has no screenshot route.
 
 **Verdict:** safe to merge.
