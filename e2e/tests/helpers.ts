@@ -381,14 +381,29 @@ export async function markTourDone(page: Page) {
 // whatever an earlier test left behind makes that true. Was duplicated
 // verbatim across four spec files before this extraction (ut-docs#1173
 // review finding); consolidated here rather than fixed a fifth time.
+// ut-docs#4458: every pass must deactivate one table. A refused Deactivate
+// redirects to `/tables?err=<key>` and leaves its button in place, so the
+// loop throws on the first pass that makes no progress (naming that key),
+// or that lands anywhere but /tables, instead of spinning until the test
+// timeout or returning with tables still active.
 export async function deactivateAllTables(page: Page) {
   await ensureOperator(page); // fresh Playwright context per test -> log in each time
   await page.goto('/tables');
-  for (;;) {
-    const btn = page.locator('form[action$="/active"] button', { hasText: 'Deactivate' }).first();
-    if ((await btn.count()) === 0) break;
+  const buttons = page.locator('form[action$="/active"] button', { hasText: 'Deactivate' });
+  let before = await buttons.count();
+  while (before > 0) {
     // Same-URL 303: wait for the new document, not the old one (ut-docs#4440).
-    await clickThenReload(page, () => btn.click());
+    await clickThenReload(page, () => buttons.first().click());
+    const url = new URL(page.url());
+    if (url.pathname !== '/tables') {
+      throw new Error(`deactivateAllTables: Deactivate landed on ${url.pathname}, not /tables`);
+    }
+    const after = await buttons.count();
+    if (after >= before) {
+      const err = url.searchParams.get('err') ?? '(no ?err= in the URL)';
+      throw new Error(`deactivateAllTables: Deactivate made no progress (${after} still active): ${err}`);
+    }
+    before = after;
   }
 }
 
