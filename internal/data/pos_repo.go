@@ -4063,6 +4063,21 @@ WHERE status = 'completed' AND till_id = '' AND created_at > ?`, cursor).Scan(&n
 	return n, nil
 }
 
+// HasCompletedSales reports whether this till holds any finished sale —
+// completed or later voided (a void is fiscal history too), rung up here or
+// journaled in from a replica. Open baskets don't count. The ambient join notice
+// (ut-docs#3796) uses it to warn that linking replaces that history with
+// the main till's copy.
+func (r *POSRepo) HasCompletedSales(ctx context.Context) (bool, error) {
+	var has bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM sales WHERE status IN ('completed', 'voided'))`).Scan(&has)
+	if err != nil {
+		return false, fmt.Errorf("has completed sales: %w", err)
+	}
+	return has, nil
+}
+
 // OriginalSaleIDFor returns the linked original sale id for a return.
 func (r *POSRepo) OriginalSaleIDFor(ctx context.Context, returnSaleID string) (string, error) {
 	var id string

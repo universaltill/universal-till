@@ -1038,3 +1038,41 @@ func TestAuditActionSummary(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#3796: the ambient join notice warns before linking a till that
+// already holds sales, because joining replaces its whole DB with the main
+// till's copy. Completed and voided sales count — an open basket is not history —
+// and a journaled-in sale (a non-empty till_id) counts too: it is replaced too.
+func TestHasCompletedSales(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	has, err := dbx.repo.HasCompletedSales(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if has {
+		t.Fatal("a till with no sales must report no sales history")
+	}
+
+	seedLifecycleSale(t, dbx, "open1", "R-OPEN", "sale", "open", "2026-01-01T10:00:00Z", 100, 20)
+	if has, err = dbx.repo.HasCompletedSales(ctx); err != nil || has {
+		t.Fatalf("an open sale is not sales history: has=%v err=%v", has, err)
+	}
+
+	seedLifecycleSale(t, dbx, "void1", "R-VOID", "sale", "voided", "2026-01-01T10:30:00Z", 100, 20)
+	if has, err = dbx.repo.HasCompletedSales(ctx); err != nil || !has {
+		t.Fatalf("a voided sale is fiscal history and must count: has=%v err=%v", has, err)
+	}
+	if _, err := dbx.d.DB.ExecContext(ctx, `DELETE FROM sales WHERE id = 'void1'`); err != nil {
+		t.Fatal(err)
+	}
+
+	seedLifecycleSale(t, dbx, "remote1", "R-REMOTE", "sale", "completed", "2026-01-01T11:00:00Z", 100, 20)
+	if _, err := dbx.d.DB.ExecContext(ctx, `UPDATE sales SET till_id = 'other-till' WHERE id = 'remote1'`); err != nil {
+		t.Fatal(err)
+	}
+	if has, err = dbx.repo.HasCompletedSales(ctx); err != nil || !has {
+		t.Fatalf("a completed sale must count as sales history: has=%v err=%v", has, err)
+	}
+}

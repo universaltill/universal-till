@@ -3081,6 +3081,8 @@
   "tills.network_key.no_tls": "This till's secure connection (TLS) is off, so there is no network key to change.",
   "tills.link_help": "Link, version and queue refresh by themselves every 10 seconds.",
   "tills.discovery.ambient.banner": "Found a main till on this network: %s. Link this till to it?",
+  "tills.discovery.ambient.has_sales_confirm": "Replace this till's sales and data",
+  "tills.discovery.ambient.has_sales_warning": "This till already has sales. Linking replaces everything on it — sales, products and settings — with the main till's copy. Its own sales are not sent to the main till; they stay only in a copy in this till's backups folder.",
   "tills.discovery.ambient.dismiss": "Don't ask again on this till",
   "tills.discovery.ambient.link": "Link this till",
   "tills.discovery.denied": "Universal Till can't use the local network on this device. If you were just asked, allow it and search again; otherwise turn on Local Network for Universal Till in the device's Settings, or enter a pairing code instead.",

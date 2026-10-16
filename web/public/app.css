@@ -4448,6 +4448,18 @@ body.login-screen {
    ("test-" / "2721-main"); it still breaks if it alone is wider than the
    line, so a long name can't overflow a 360px screen. */
 .join-notice-name { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
+/* ut-docs#3796: a till that already has sales is warned that linking
+   replaces them. The warning takes its own full-width row under the text;
+   it uses --text on the warning tint, not --warning (too low contrast on
+   its own tint, ut-docs#2680), with the warning colour as an edge. The
+   confirm's label is padded to a 44px row so the whole label is the
+   touch target, not just the box. */
+.join-notice-warning { flex-basis: 100%; margin: 0; padding: .45rem .7rem;
+  font-weight: 500; color: var(--text); background: var(--warning-tint);
+  border-inline-start: 3px solid var(--warning); border-radius: 4px; }
+.join-notice-confirm { display: inline-flex; align-items: center; gap: .35rem; }
+.join-notice-confirm input[type="checkbox"] { inline-size: 1.25rem; block-size: 1.25rem; margin: 0; }
+.join-notice-confirm .join-notice-label { display: inline-flex; align-items: center; min-block-size: 44px; }
 .join-notice-status:not(:empty) { padding: .55rem 1rem; border-block-end: 1px solid rgba(37, 99, 235, .3); }
 
 /* Operator chip + lock button in the nav: a column, in the rail and in
