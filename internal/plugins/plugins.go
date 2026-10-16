@@ -40,6 +40,11 @@ type Manager struct {
 	// view's text key must be one of them (ADR-0121 §7, ut-docs#3160).
 	ownKeysMu sync.RWMutex
 	ownKeys   map[string]map[string]bool
+
+	// fonts: every active language plugin's fonts/*.woff2, rebuilt by
+	// syncBundleFonts (ut-docs#4374). Read through BundleFonts.
+	fontsMu sync.RWMutex
+	fonts   []BundleFont
 }
 
 // OwnLocaleKeys returns the set of locale keys plugin id's own locale
@@ -190,6 +195,7 @@ func Init(ctx context.Context, cfg *config.Config, db *sql.DB) (*Manager, error)
 	}
 	warnPaymentMethodAnomalies(ctx, repo)
 	m.Wasm.Sync(ctx, db)
+	m.syncBundleFonts()
 	return m, nil
 }
 
@@ -278,6 +284,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 	warnPaymentMethodAnomalies(ctx, repo)
 	m.Wasm.Sync(ctx, m.db)
 	m.syncLocales()
+	m.syncBundleFonts()
 	return nil
 }
 

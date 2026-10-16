@@ -270,7 +270,7 @@ func exempt(path string) bool {
 	if strings.HasPrefix(path, "/o/") {
 		return true
 	}
-	for _, p := range []string{"/api/auth/", "/public/", "/themes/", "/plugin-icons/"} {
+	for _, p := range []string{"/api/auth/", "/public/", "/themes/", "/plugin-icons/", "/plugin-fonts/"} {
 		if strings.HasPrefix(path, p) {
 			return true
 		}

@@ -78,7 +78,7 @@ import (
 // skippedPrefixes mirrors routecoverage.go's non-page namespaces — see this
 // file's own doc comment above for why it's a copy, not a shared import.
 var skippedPrefixes = []string{
-	"/api/", "/ui/", "/ext/", "/v1/", "/plugin-icons/", "/themes/",
+	"/api/", "/ui/", "/ext/", "/v1/", "/plugin-icons/", "/plugin-fonts/", "/themes/",
 	"/help", "/public/", "/healthz", "/plugin/", "/self-order", "/csp-report",
 }
 

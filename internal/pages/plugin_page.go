@@ -309,7 +309,8 @@ func renderPluginPage(w http.ResponseWriter, r *http.Request, d *common.Deps, en
 const pluginPageCSP = "object-src 'none'; frame-src 'self' about:; frame-ancestors 'self'"
 
 // pluginFrameTmpl is the document a plugin's content/index.html is wrapped
-// in inside its sandboxed iframe: the till's stylesheet and theme so it
+// in inside its sandboxed iframe: the till's stylesheet, language-bundle
+// fonts (ut-docs#4374) and theme so it
 // looks native, the locale's lang/dir on <html>, dir="auto" on <body> (the
 // plugin's content language need not match the till locale -- an English
 // docs page in an fa till must not be mirrored), and a body reset that drops the
@@ -321,6 +322,7 @@ var pluginFrameTmpl = template.Must(template.New("plugin-frame").Parse(`<!DOCTYP
 <head>
 <meta charset="utf-8">
 <link rel="stylesheet" href="/public/app.css?v={{ .AppCSSVer }}">
+<link rel="stylesheet" href="/plugin-fonts/bundle-fonts.css">
 {{- if .ThemeCSS }}
 <link rel="stylesheet" href="{{ .ThemeCSS }}">
 {{- end }}

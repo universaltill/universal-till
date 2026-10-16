@@ -668,9 +668,9 @@ func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql
 }
 
 // reservedPageRoutePrefixes are the namespaces core owns (ut-docs#3786):
-// /api, /ui, /v1 carry core's handlers; /public, /ext, /plugin-icons are
-// core subtrees (defense-in-depth — the mux never lets their children reach
-// the catch-all); /self-order, /o, /themes are auth-exempt (auth.exempt), so
+// /api, /ui, /v1 carry core's handlers; /public, /ext, /plugin-icons,
+// /plugin-fonts are core subtrees (defense-in-depth — the mux never lets
+// their children reach the catch-all); /self-order, /o, /themes are auth-exempt (auth.exempt), so
 // a plugin page there would reach anonymous customers and the kiosk.
 // /help, /orders, /journal, /plugins, /refund, /invoice, /kitchen-display,
 // /vouchers (ut-docs#4251) have {wildcard} children (GET /help/{topic}), so a deeper path
@@ -689,7 +689,7 @@ func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql
 // TestReservedPageRoutesCoverLiteralChildNamespaces pin the wildcard and
 // literal-child halves against the real mux registrations.
 var reservedPageRoutePrefixes = []string{
-	"/api", "/ui", "/v1", "/public", "/ext", "/plugin-icons", "/self-order", "/o", "/themes",
+	"/api", "/ui", "/v1", "/public", "/ext", "/plugin-icons", "/plugin-fonts", "/self-order", "/o", "/themes",
 	"/help", "/orders", "/journal", "/plugins", "/refund", "/invoice", "/kitchen-display", "/vouchers",
 	"/settings", "/catalog", "/users", "/open-orders", "/recovery",
 }

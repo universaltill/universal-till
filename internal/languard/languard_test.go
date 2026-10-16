@@ -71,6 +71,7 @@ func TestLANCallerReachesSyncHealthAndGuestPages(t *testing.T) {
 		"/healthz",
 		"/self-order", "/self-order/cart", "/api/self-order/basket", "/o/abc123", "/o/abc123/status",
 		"/public/app.css", "/themes/monarch/theme.css", "/plugin-icons/x.png",
+		"/plugin-fonts/bundle-fonts.css", "/plugin-fonts/com.universaltill.language-th/2.0.0/NotoSansThai.woff2",
 	} {
 		if got := serve(t, g, lanPeer, p); got != http.StatusTeapot {
 			t.Errorf("LAN %s: got %d, want passed through", p, got)
