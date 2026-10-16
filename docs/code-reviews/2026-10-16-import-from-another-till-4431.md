@@ -68,3 +68,14 @@ Dev looked at the screenshots: kiosk before, preview and commit; phone; phone in
 ## Verdict
 
 Safe to merge.
+
+## Addendum: key metadata (ADR-0160, ut-docs#4362)
+
+- **Why:** while this PR was open, main gained `guard-i18n-meta.sh`, which requires an `en.meta.json` entry for every new key. CI failed on the 43 new keys.
+- **What changed:** each key now has a translator description and `review: standard` (no legal text). The four keys with printf verbs carry `placeholders`, and the three buttons plus the welcome action carry `max_length` 40.
+- **Review:** Sonnet 5.5 (independent) checked every description against `import.html`, `import_system_result.html` and `import_from_system.go`, plus the placeholder values. Verdict: safe to merge. It raised four wording points, all applied:
+  - `connection` is a screen-reader label, not a heading;
+  - `ask_manager` also shows in the empty state;
+  - `commit_done` also shows above the issues warning;
+  - `changes` should stay short and lower case.
+- **Gate:** `guard-i18n-meta.sh` and `guard-i18n-meta_test.sh` pass.
