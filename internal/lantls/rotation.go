@@ -26,6 +26,10 @@ import (
 // confirmed it (ConfirmNext) or RotationWindow has passed. The retired key
 // is kept on disk — never served — for KeepPrevious.
 //
+// A load that finds the data directory on different hardware than last
+// time starts the same rotation (hostid.go, ut-docs#4450), as does a
+// manager's RotateNow (ut-docs#4423).
+//
 // Every decision is taken at load (LoadOrCreate), so the served pin is
 // fixed for a process lifetime: ConnContext, ServedPin, pairing and the
 // primary proof never see it change under them. A confirmed rotation
@@ -76,6 +80,10 @@ type rotationState struct {
 	// Ready: every required peer confirmed; the next load switches.
 	Ready      bool      `json:"ready,omitempty"`
 	SwitchedAt time.Time `json:"switched_at,omitzero"`
+	// HostID is the machine this directory last loaded on, as a hostTag
+	// ("" = not known yet); a different one starts a rotation
+	// (ut-docs#4450).
+	HostID string `json:"host_id,omitempty"`
 }
 
 func (s *rotationState) clearNext() {
@@ -123,6 +131,8 @@ type rotation struct {
 	dir string
 	now time.Time
 	st  rotationState
+	// host is this machine's hostTag ("" = unknown).
+	host string
 }
 
 func (r *rotation) path(f string) string { return filepath.Join(r.dir, f) }
@@ -194,7 +204,40 @@ func (r *rotation) run(cur *ecdsa.PrivateKey, created bool, keyMtime time.Time) 
 		dirty = true
 	}
 
+	// Different hardware (ut-docs#4450): the key was copied here with the
+	// whole data directory, so start a rotation. A pending next key was
+	// copied with it and is replaced, never switched to. An id from
+	// another source counts too (a Pi's data folder copied to a PC): a
+	// machine doesn't change its source, and a needless rotation costs
+	// far less than two machines sharing a key.
+	moved := false
 	switch {
+	case r.host == "" || r.st.HostID == r.host:
+	case r.st.HostID == "":
+		// First record (a fresh key, or a till from before this build).
+		r.st.HostID = r.host
+		dirty = true
+	case broken:
+		// Never replaced; the id stays old so a later load retries.
+		log.Printf("[LAN TLS] this data directory now runs on different hardware, but the pending next key is unusable: not rotating")
+		moved = true
+	default:
+		moved = true
+		why := "this data directory now runs on different hardware"
+		if next != nil {
+			why += " (replacing the pending next key, copied with it)"
+		}
+		if k := r.createNext(why); k != nil {
+			next = k
+			r.st.HostID = r.host
+			dirty = true
+		}
+	}
+
+	switch {
+	case moved:
+		// No switch on this load: the next key is fresh, or the copied
+		// one could not be replaced.
 	case next != nil && (r.st.Ready || clockOK && !r.now.Before(r.st.NextCreatedAt.Add(RotationWindow))):
 		if r.switchTo() {
 			cur, next = next, nil
@@ -294,6 +337,9 @@ func (r *rotation) finishSwitch() {
 	r.st.clearNext()
 }
 
+// writeNextKey writes a new next key; a var so a test can fail it.
+var writeNextKey = writeKey
+
 // createNext creates the next key and its certificate; why is logged.
 func (r *rotation) createNext(why string) *ecdsa.PrivateKey {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -301,7 +347,7 @@ func (r *rotation) createNext(why string) *ecdsa.PrivateKey {
 		log.Printf("[LAN TLS] could not create the next key: %v", err)
 		return nil
 	}
-	if err := writeKey(r.path(nextKeyFile), key); err != nil {
+	if err := writeNextKey(r.path(nextKeyFile), key); err != nil {
 		log.Printf("[LAN TLS] could not create the next key: %v", err)
 		return nil
 	}
