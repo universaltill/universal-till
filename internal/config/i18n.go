@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/universaltill/universal-till/internal/msgfmt"
 )
 
 // baseLocale is T's guaranteed-complete terminal fallback (ut-docs#995) —
@@ -101,27 +103,56 @@ func NewI18nFS(fsys fs.FS, fallback string) (*I18n, error) {
 func (i *I18n) T(locale, key string) string {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
-	for _, loc := range []string{locale, baseLang(locale), i.fallback, baseLang(i.fallback), baseLocale} {
-		// Shop overrides (manager edits) win over everything; then base files,
-		// so a plugin cannot hijack core strings; overlays add new locales
-		// (language packs) and fill missing keys.
-		if m, ok := i.shop[loc]; ok {
-			if v, ok := m[key]; ok {
-				return v
-			}
-		}
-		if m, ok := i.messages[loc]; ok {
-			if v, ok := m[key]; ok {
-				return v
-			}
-		}
-		if m, ok := i.overlays[loc]; ok {
-			if v, ok := m[key]; ok {
-				return v
-			}
-		}
+	if v, _, ok := i.resolveLocked([]string{locale, baseLang(locale), i.fallback, baseLang(i.fallback), baseLocale}, key); ok {
+		return v
 	}
 	return key
+}
+
+// resolveLocked walks locales in order and returns the first value for key
+// and the locale it came from. Shop overrides (manager edits) win over
+// everything; then base files, so a plugin cannot hijack core strings;
+// overlays add new locales (language packs) and fill missing keys.
+func (i *I18n) resolveLocked(locales []string, key string) (string, string, bool) {
+	for _, loc := range locales {
+		if v, ok := i.shop[loc][key]; ok {
+			return v, loc, true
+		}
+		if v, ok := i.messages[loc][key]; ok {
+			return v, loc, true
+		}
+		if v, ok := i.overlays[loc][key]; ok {
+			return v, loc, true
+		}
+	}
+	return "", "", false
+}
+
+// TM translates a MessageFormat key (ADR-0160 §8, ut-docs#4373) — a value
+// such as "{count, plural, one {# item} other {# items}}" — and formats it
+// with args. Plural categories follow the language the value is written in
+// (a German till falling back to English text uses English categories).
+// A value that doesn't format (malformed ICU in a translation, a missing
+// argument) falls back to the English value; if English fails too, its
+// raw text renders. An unknown key renders as the key, like T.
+func (i *I18n) TM(locale, key string, args map[string]any, opts msgfmt.Options) string {
+	i.mu.RLock()
+	v, src, ok := i.resolveLocked([]string{locale, baseLang(locale), i.fallback, baseLang(i.fallback), baseLocale}, key)
+	en, _, enOK := i.resolveLocked([]string{baseLocale}, key)
+	i.mu.RUnlock()
+	if !ok {
+		return key
+	}
+	if out, err := msgfmt.Format(src, v, args, opts); err == nil {
+		return out
+	}
+	if !enOK {
+		return v
+	}
+	if out, err := msgfmt.Format(baseLocale, en, args, opts); err == nil {
+		return out
+	}
+	return en
 }
 
 // Has reports whether key is a real, known translation key — present in any
