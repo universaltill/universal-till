@@ -205,12 +205,14 @@ func TestLoadMenuEntriesPermissionGating(t *testing.T) {
 }
 
 type captureLocalizer struct {
-	overlays map[string]map[string]string
+	overlays map[string]map[string]string // the third-party layer
+	layers   config.PluginLocales
 	calls    int
 }
 
-func (c *captureLocalizer) SetOverlays(o map[string]map[string]string) {
-	c.overlays = o
+func (c *captureLocalizer) SetPluginLocales(pl config.PluginLocales) {
+	c.layers = pl
+	c.overlays = pl.ThirdParty
 	c.calls++
 }
 

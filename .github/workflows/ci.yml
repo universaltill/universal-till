@@ -95,6 +95,10 @@ jobs:
         run: bash scripts/ci/guard-store-private.sh
       - name: Store-private guard regression test (ut-docs#3052)
         run: bash scripts/ci/guard-store-private_test.sh
+      - name: Every Version stamp also stamps BuildDate (ADR-0160 §6, ut-docs#4369)
+        run: bash scripts/ci/guard-builddate-stamped.sh
+      - name: BuildDate stamp guard regression test (ut-docs#4369)
+        run: bash scripts/ci/guard-builddate-stamped_test.sh
       - name: iOS app shell locks page zoom — wiring test (ut-docs#3350)
         run: bash scripts/ci/ios-webview-zoom_test.sh
       - name: iOS bug-report screenshot bridge — wiring test (ut-docs#3355)

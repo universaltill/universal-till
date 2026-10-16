@@ -177,8 +177,9 @@ jobs:
           mkdir -p stage
           BIN="stage/unitill-pos"
           [ "$GOOS" = "windows" ] && BIN="stage/unitill-pos.exe"
+          BUILD_DATE="$(bash scripts/ci/build-date.sh)"
           CGO_ENABLED=0 go build -trimpath \
-            -ldflags "-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX}" \
+            -ldflags "-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX}" \
             -o "$BIN" .
       - name: Stage archive contents
         # Same file set as .goreleaser.yaml's linux/windows/macos archives,

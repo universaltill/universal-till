@@ -170,8 +170,10 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
+          set -euo pipefail
+          BUILD_DATE="$(bash scripts/ci/build-date.sh)"
           CGO_ENABLED=1 go build -trimpath -tags desktop \
-            -ldflags "-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX}" \
+            -ldflags "-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX}" \
             -o unitill-desktop ./cmd/unitill-desktop
           file unitill-desktop
       - uses: actions/upload-artifact@v7
@@ -552,6 +554,8 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
+          BUILD_DATE="$(bash scripts/ci/build-date.sh)"
+          export BUILD_DATE
           packaging/macos/build-app.sh "$VERSION" dist/macos
           packaging/macos/make-dmg.sh "$VERSION" dist/macos
       # Moved here from verify-versions (ut-docs#2917): that job no longer

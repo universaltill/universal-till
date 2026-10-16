@@ -126,9 +126,10 @@ jobs:
         run: |
           set -euo pipefail
           # Stamp the version the footer, the update check and support read; without
-          # it buildinfo.Version stays "dev" (ut-docs#3221).
+          # it buildinfo.Version stays "dev" (ut-docs#3221). BuildDate: ADR-0160 §6.
+          BUILD_DATE="$(bash scripts/ci/build-date.sh)"
           gomobile bind -target=ios \
-            -ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Version=${MARKETING_VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX}" \
+            -ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Version=${MARKETING_VERSION} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=${BUILD_DATE} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=${UT_MARKETPLACE_KEY_HEX}" \
             -o ios/build/Mobile.xcframework ./mobile
       - name: Generate the app icon asset catalog
         run: bash ios/scripts/make-app-icon.sh

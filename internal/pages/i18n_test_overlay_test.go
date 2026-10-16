@@ -30,7 +30,7 @@ func applyTestOverlays(t *testing.T, i18n *config.I18n, dir string) *testI18nOve
 	if err != nil {
 		t.Fatalf("newTestI18nOverlayLocalizer: %v", err)
 	}
-	l.SetOverlays(map[string]map[string]string{})
+	l.SetPluginLocales(config.PluginLocales{})
 	return l
 }
 
@@ -89,7 +89,7 @@ func TestTestI18nOverlays_CollectsAllFilesBeforeOneSetOverlaysCall(t *testing.T)
 // (reviewer, 2026-09-18): the plugin manager re-publishes its overlays from
 // scratch on every Manager.Reload -- Deps.ReloadPlugins, which a plain e2e
 // run really does hit (boot-time builtin-layout reconciliation, the setup
-// wizard's shop-type step, any plugin install/enable). SetOverlays REPLACES
+// wizard's shop-type step, any plugin install/enable). SetPluginLocales REPLACES
 // everything, so a one-shot load of the test overlays is wiped by the first
 // such reload and every page silently renders English again. Reproduced live
 // against a running till before the fix (POST /api/settings/shop-type
@@ -105,9 +105,9 @@ func TestTestI18nOverlays_SurvivesPluginManagerReload(t *testing.T) {
 
 	// A later reload: the manager republishes only the installed plugins'
 	// own overlays, with no knowledge of the test directory.
-	localizer.SetOverlays(map[string]map[string]string{
+	localizer.SetPluginLocales(config.PluginLocales{ThirdParty: map[string]map[string]string{
 		"de": {"plugin.own.key": "Von einem Plugin"},
-	})
+	}})
 
 	if got := i18n.T("de", "nav.sell"); got != "Verkaufen" {
 		t.Fatalf("T(de, nav.sell) = %q after a plugin reload, want Verkaufen", got)
@@ -119,7 +119,9 @@ func TestTestI18nOverlays_SurvivesPluginManagerReload(t *testing.T) {
 
 // TestTestI18nOverlays_TestOverlayWinsOverPluginOverlay: the run under way is
 // deliberately exercising the test directory's pack, so its value wins on a
-// locale+key collision with an installed plugin's own overlay.
+// locale+key collision with an installed plugin's own overlay — a third-party
+// plugin's and an installed first-party pack's (stale tier, ADR-0160 §6:
+// today's com.universaltill.language-de carries no bundle.json) alike.
 func TestTestI18nOverlays_TestOverlayWinsOverPluginOverlay(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "de.json"), []byte(`{"nav.sell":"Verkaufen"}`), 0o644); err != nil {
@@ -128,14 +130,17 @@ func TestTestI18nOverlays_TestOverlayWinsOverPluginOverlay(t *testing.T) {
 
 	i18n := newOverlayTestI18n(t)
 	localizer := applyTestOverlays(t, i18n, dir)
-	localizer.SetOverlays(map[string]map[string]string{"de": {"nav.sell": "Von einem Plugin"}})
+	localizer.SetPluginLocales(config.PluginLocales{
+		FirstPartyStale: map[string]map[string]string{"de": {"nav.sell": "Vom Sprachpaket"}},
+		ThirdParty:      map[string]map[string]string{"de": {"nav.sell": "Von einem Plugin"}},
+	})
 
 	if got := i18n.T("de", "nav.sell"); got != "Verkaufen" {
 		t.Fatalf("T(de, nav.sell) = %q, want the test overlay to win over a plugin's own value", got)
 	}
 }
 
-// TestTestI18nOverlays_DoesNotMutateCallersMap: SetOverlays' argument belongs
+// TestTestI18nOverlays_DoesNotMutateCallersMap: SetPluginLocales' argument belongs
 // to the plugin manager, which keeps building its own map -- merging must not
 // write the test overlay back into it.
 func TestTestI18nOverlays_DoesNotMutateCallersMap(t *testing.T) {
@@ -150,7 +155,7 @@ func TestTestI18nOverlays_DoesNotMutateCallersMap(t *testing.T) {
 		t.Fatalf("newTestI18nOverlayLocalizer: %v", err)
 	}
 	fromPlugins := map[string]map[string]string{"de": {"plugin.own.key": "Von einem Plugin"}}
-	localizer.SetOverlays(fromPlugins)
+	localizer.SetPluginLocales(config.PluginLocales{FirstPartyStale: fromPlugins})
 
 	if _, ok := fromPlugins["de"]["nav.sell"]; ok {
 		t.Fatal("the caller's own overlay map was mutated by the merge")

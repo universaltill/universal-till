@@ -158,7 +158,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// Ed25519 WASM plugin install. See scripts/ci/audit-locale-render.sh.
 	//
 	// Wired as a wrapper AROUND the translator the plugin manager publishes
-	// to, not as a one-shot SetOverlays call after SetLocalizer: the manager
+	// to, not as a one-shot SetPluginLocales call after SetLocalizer: the manager
 	// re-publishes its overlays from scratch on every Reload (ReloadPlugins),
 	// which atomically replaces them -- a one-shot call is silently dropped
 	// the first time anything reloads plugins, including the boot-time
