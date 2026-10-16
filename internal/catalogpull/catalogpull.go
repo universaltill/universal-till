@@ -51,6 +51,14 @@
 //   - ApplierVersion is stored beside the cursor: a till whose stored
 //     applier is older than the code's re-pulls everything from 0, so a
 //     release that applies more fields picks them up.
+//   - After a run the feed served, the caller reports the till's refusals
+//     (ReportFailures, ut-docs#4493): the whole current
+//     cloud_apply_failures set, newest first, at most MaxReportedFailures,
+//     POSTed to <endpoint>/v1/stores/catalog/apply-failures where it
+//     replaces what the cloud held for the store, so a cleared refusal
+//     disappears there too. Only a set whose fingerprint differs from the
+//     last one the cloud accepted (KeyFailuresReported) is sent; a failed
+//     post keeps the fingerprint and the next run retries.
 //
 // Nothing here runs on the sale path: internal/cloudsync calls Run from its
 // own goroutine after a successful check-in. An open basket keeps the

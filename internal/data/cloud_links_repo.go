@@ -133,3 +133,35 @@ func (*CloudLinkRepo) ClearFailure(ctx context.Context, q SyncQuerier, entity, c
 	}
 	return nil
 }
+
+// CloudApplyFailure is one cloud_apply_failures row: the latest refusal of
+// a pulled cloud row (Entity is the feed's kind; At is RFC 3339 UTC).
+type CloudApplyFailure struct {
+	Entity  string
+	CloudID string
+	Version int64
+	Reason  string
+	At      string
+}
+
+// ListFailures returns up to limit recorded refusals, newest At first
+// (ties by entity, cloud_id) — the set the till reports to the cloud
+// (ut-docs#4493).
+func (*CloudLinkRepo) ListFailures(ctx context.Context, q SyncQuerier, limit int) ([]CloudApplyFailure, error) {
+	rows, err := q.QueryContext(ctx, `
+SELECT entity, cloud_id, version, reason, at FROM cloud_apply_failures
+ORDER BY at DESC, entity, cloud_id LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("cloud apply failures: %w", err)
+	}
+	defer rows.Close()
+	var out []CloudApplyFailure
+	for rows.Next() {
+		var f CloudApplyFailure
+		if err := rows.Scan(&f.Entity, &f.CloudID, &f.Version, &f.Reason, &f.At); err != nil {
+			return nil, fmt.Errorf("cloud apply failures: %w", err)
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
