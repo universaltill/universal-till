@@ -36,7 +36,7 @@ Each new test was confirmed to fail against the pre-fix guard (6 failing cases) 
 - TDD: removing `"he"` from `IsRTL` makes `TestDirFuncRTLLocales` fail; restoring it makes it pass (author and reviewer each checked).
 - `shellcheck` 0 issues on both scripts, `guard-ci-tests-sandboxed.sh` green, `go vet`/`go test ./internal/httpx` ok, and `guard-i18n`, `no-showmodal`, `no-inline-handlers` and `help-topics` are green.
 
-No visual surface changed for an LTR shop, so there are no new docs-shots and no help topic changed (no shop-owner-visible behaviour).
+No visual surface changed for an LTR shop, so there are no new docs-shots and no help topic changed (no shop-owner-visible behaviour). The docs-shots surface hash was refreshed with `update-docs-shots-surface-hash.sh`. No screenshot spec drives either touched element: `#search-results` is `display:none` until a search runs, and `.permission-list` only appears in a plugin-upload preview. In LTR both rules are pixel-identical (Chromium check above).
 
 ## Verdict
 
