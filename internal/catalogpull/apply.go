@@ -164,6 +164,12 @@ func (r *runner) apply(ctx context.Context, tx *sql.Tx, row Row, gen int64) ([]r
 	if err != nil {
 		return nil, err
 	}
+	adopted := false
+	if row.Kind == kindTaxCode && !linked {
+		if local, adopted, err = r.adoptSeedTaxCode(ctx, tx, local, f); err != nil {
+			return nil, err
+		}
+	}
 	var created bool
 	var changed []string
 	var photos []replacedPhoto
@@ -221,12 +227,46 @@ func (r *runner) apply(ctx context.Context, tx *sql.Tx, row Row, gen int64) ([]r
 	if err := r.links.ClearFailure(ctx, tx, row.Kind, row.CloudID); err != nil {
 		return nil, err
 	}
-	if err := r.audit(ctx, tx, row.Kind, local, "saved", map[string]any{
+	payload := map[string]any{
 		"cloud_id": row.CloudID, "version": row.Version, "created": created, "changed": changed,
-	}); err != nil {
+	}
+	if adopted {
+		payload["adopted_seed"] = true
+	}
+	if err := r.audit(ctx, tx, row.Kind, local, "saved", payload); err != nil {
 		return nil, err
 	}
 	return photos, nil
+}
+
+// adoptSeedTaxCode (ADR-0162 §4, ut-docs#4494) returns the local id an
+// unlinked tax_code row is applied to: the migration-seeded tax code of
+// exactly its name (data.SeedTaxCodeIDs) when no other cloud row is linked
+// to it, else local unchanged. A fresh till runs the setup wizard before
+// it can be paired, so its seed tax codes are already there and
+// tax_codes.name is UNIQUE: without this, a cloud "Standard VAT" — and
+// every item naming it — would be refused. Only the seed ids are adopted;
+// a till-made row of the same name stays a refusal (ut-docs#4465).
+//
+// Safe across a resync: once adopted, the seed row is an ordinary linked
+// row — the link (not the name) finds it on every later row and on the
+// resync's full pull, which re-stamps the link's gen; the prune of a link
+// the cloud no longer returns, or a tombstone, goes through the tax-code
+// rule (deactivated, never deleted: items and history name it), and drops
+// the link, so a later cloud row of that name may adopt it again. A seed
+// row already linked is never re-pointed to a second cloud row: that one
+// stays refused on the name, as before.
+func (r *runner) adoptSeedTaxCode(ctx context.Context, tx *sql.Tx, local string, f fields) (string, bool, error) {
+	name, err := f.requiredStr("name")
+	if err != nil || name == nil {
+		return local, false, nil // applyTaxCode reports it
+	}
+	// SaveTaxCodeTx stores the trimmed name: that is what UNIQUE compares.
+	seed, ok, err := r.links.AdoptableSeedTaxCode(ctx, tx, kindTaxCode, strings.TrimSpace(*name))
+	if err != nil || !ok {
+		return local, false, err
+	}
+	return seed, true, nil
 }
 
 func (r *runner) audit(ctx context.Context, tx *sql.Tx, kind, localID, what string, payload map[string]any) error {
@@ -246,6 +286,7 @@ func (r *runner) audit(ctx context.Context, tx *sql.Tx, kind, localID, what stri
 // missing row) and links it. That is intentional — it is exactly the
 // crash case above, and a till-made row the cloud learned under the same
 // id is the same row — and observable: its audit row says created:false.
+//
 // linked reports whether the id came from a link.
 func (r *runner) localID(ctx context.Context, tx *sql.Tx, kind, cloudID string) (local string, linked bool, err error) {
 	local, ok, err := r.links.LocalID(ctx, tx, kind, cloudID)

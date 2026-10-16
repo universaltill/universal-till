@@ -48,6 +48,16 @@
 //     (KeyResyncGen), so a crash mid-resync still prunes once the resumed
 //     pull finishes. Any other failure keeps the cursor; the caller logs
 //     and retries on the next trigger.
+//   - The till's seed rows (ut-docs#4494): a fresh till runs the setup
+//     wizard before it can be paired, so it already holds migration 001's
+//     tax codes and the wizard's gift voucher item. An unlinked tax_code
+//     row named exactly like an unlinked seed tax code
+//     (data.SeedTaxCodeIDs) adopts it — applied onto it and linked, audit
+//     adopted_seed:true — instead of being refused on the UNIQUE name
+//     (any other same-named local row stays refused, ut-docs#4465). A run
+//     that applied a row then retires the seeded gift voucher item once
+//     the shop's own active one exists, unless it is in a live basket,
+//     used or edited (best-effort, after the last commit).
 //   - ApplierVersion is stored beside the cursor: a till whose stored
 //     applier is older than the code's re-pulls everything from 0, so a
 //     release that applies more fields picks them up.
@@ -178,8 +188,68 @@ type state struct {
 
 // Run pulls and applies the feed from the stored cursor. A non-nil error
 // means the run stopped early; everything committed before it stays, and
-// the next Run continues from the stored cursor.
+// the next Run continues from the stored cursor. A run that applied at
+// least one row then retires the wizard's seeded gift voucher item
+// (retireSeededGiftVoucherItem), outside every chunk transaction.
 func Run(ctx context.Context, db *sql.DB, fetch Fetcher, opt Options) (Result, error) {
+	res, err := run(ctx, db, fetch, opt)
+	// Applied > 0 already set Changed, so the sale screen refreshes
+	// whether or not the retire removes anything.
+	if res.Applied > 0 {
+		retireSeededGiftVoucherItem(ctx, db, opt)
+	}
+	return res, err
+}
+
+// retireSeededGiftVoucherItem removes the gift voucher item the setup
+// wizard seeded (ut-docs#4259) once another active gift voucher item
+// exists — normally the shop's own, brought by the pull (ADR-0162 §4,
+// ut-docs#4494) — import_page.go's
+// retireSeededGiftVoucherItem for a cloud-master store, which is fed by
+// the pull instead of an import. data.POSRepo.RetireSeededGiftVoucherItem
+// acts only while the wizard's marker is set, another active gift voucher
+// item exists and the seeded item is untouched and unused. The live
+// baskets are memory-only, so they are asked first; an item in one, or a
+// failing check, keeps it and the marker, and the next run that applies a
+// row retries. Best-effort: the applied rows are committed, so a failure
+// is logged and never fails the run. It reports whether the item was
+// removed. It runs after the last chunk
+// committed: its own write transaction must not nest in one (SQLite's
+// single writer).
+func retireSeededGiftVoucherItem(ctx context.Context, db *sql.DB, opt Options) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	id, ok, err := data.NewCatalogRepo(db).SeededGiftVoucherItemID(ctx)
+	if err != nil {
+		logging.L().Warnf("catalogpull: seeded gift voucher item: %v", err)
+		return false
+	}
+	if !ok {
+		return false
+	}
+	if opt.ItemInLiveBasket != nil {
+		in, err := opt.ItemInLiveBasket(ctx, id)
+		if err != nil {
+			logging.L().Warnf("catalogpull: seeded gift voucher item: basket check: %v", err)
+			return false
+		}
+		if in {
+			return false
+		}
+	}
+	res, err := data.NewPOSRepo(db).RetireSeededGiftVoucherItem(ctx)
+	if err != nil {
+		logging.L().Warnf("catalogpull: seeded gift voucher item: %v", err)
+		return false
+	}
+	if res.Removed {
+		logging.L().Infof("catalogpull: removed the seeded gift voucher item %q (%s): the cloud catalogue brought the shop's own", res.Name, res.ID)
+	}
+	return res.Removed
+}
+
+func run(ctx context.Context, db *sql.DB, fetch Fetcher, opt Options) (Result, error) {
 	var res Result
 	settings := data.NewSettingsRepo(db)
 	st, err := loadState(ctx, settings)

@@ -805,6 +805,10 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 // "Gift voucher" (renaming it when the pack arrives is ut-docs#4398's
 // follow-up). Only a key missing from every locale makes T hand back the
 // key itself; that creates nothing rather than an item named after it.
+// The wizard runs before a till can be paired, so a cloud-master store
+// gets it too: its catalogue pull retires it once the cloud brings the
+// shop's own (catalogpull.Run, ADR-0162 §4, ut-docs#4494), as an import
+// does (ut-docs#4399).
 func seedDefaultGiftVoucherItem(ctx context.Context, d *common.Deps, locale string) {
 	const key = "catalog.item_type.gift_voucher"
 	name := httpx.T(locale, key)
