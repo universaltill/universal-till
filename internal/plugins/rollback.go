@@ -287,6 +287,11 @@ func (rm *RollbackManager) rollback(ctx context.Context, pluginID, targetVersion
 		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
 	}
 
+	// Same for an import entry's source (ADR-0161).
+	if err := validateImportEntrySource(manifest.Entries); err != nil {
+		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
+	}
+
 	// Same for a page entry's config.upload_max_mb (ut-docs#3793).
 	if err := validatePageEntryUploads(manifest.Entries); err != nil {
 		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)

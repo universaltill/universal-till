@@ -2547,6 +2547,8 @@ type ImportEntryRow struct {
 	SortOrder   int
 	Entities    []string
 	FileFormats []string
+	// Source is "api" for an API-source entry (ADR-0161), "" for a file one.
+	Source string
 }
 
 // ListImportEntries returns active import entries from active plugins —
@@ -2583,10 +2585,12 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 			var cfg struct {
 				Entities    []string `json:"entities"`
 				FileFormats []string `json:"file_formats"`
+				Source      string   `json:"source"`
 			}
 			if err := json.Unmarshal([]byte(configJSON), &cfg); err == nil {
 				row.Entities = cfg.Entities
 				row.FileFormats = cfg.FileFormats
+				row.Source = cfg.Source
 			}
 		}
 		res = append(res, row)

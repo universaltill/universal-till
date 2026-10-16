@@ -810,6 +810,7 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 		hs.jobProgress = job.Progress
 	}
 	hs.operator, hs.operatorLive = askOperatorFor(ctx, ev, isJob)
+	hs.importRows = importRowSinkFor(ctx, ev, isJob, pluginID)
 	// http:stream handles never outlive the event (ADR-0121 §3): closed
 	// however the guest ends — success, error, deadline or trap.
 	defer hs.streams.closeAll()

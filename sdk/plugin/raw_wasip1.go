@@ -112,6 +112,9 @@ func utItemImageRead(h int32, dstPtr, dstCap uint32) int32
 //go:wasmimport ut event_publish
 func utEventPublish(tPtr, tLen, pPtr, pLen uint32) int32
 
+//go:wasmimport ut import_rows_submit
+func utImportRowsSubmit(bPtr, bLen uint32) int32
+
 //go:wasmimport ut job_progress
 func utJobProgress(pct, kPtr, kLen uint32) int32
 
@@ -352,6 +355,13 @@ func rawEventPublish(typ, payload []byte) int32 {
 	r := utEventPublish(tp, tl, pp, pl)
 	runtime.KeepAlive(typ)
 	runtime.KeepAlive(payload)
+	return r
+}
+
+func rawImportRowsSubmit(batch []byte) int32 {
+	bp, bl := ptr(batch)
+	r := utImportRowsSubmit(bp, bl)
+	runtime.KeepAlive(batch)
 	return r
 }
 

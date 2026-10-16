@@ -69,6 +69,12 @@ type FakeHost struct {
 	InJob bool
 	Deny  map[string]bool
 
+	// ImportRows records import_rows_submit batches by entity. Any entity
+	// is accepted unless ImportEntities is set, which then lists the ones
+	// the run resolved (others are ErrDenied, as on the till).
+	ImportRows     map[string][]json.RawMessage
+	ImportEntities map[string]bool
+
 	Logs      []string
 	Published []PublishedEvent
 	Progress  []JobReport
@@ -807,6 +813,30 @@ func rawItemImageRead(id int32, dst []byte) int32 {
 		delete(h.images, id)
 	}
 	return int32(n)
+}
+
+func rawImportRowsSubmit(batch []byte) int32 {
+	h, denied := enter("import_rows_submit")
+	defer h.mu.Unlock()
+	var b struct {
+		Entity string            `json:"entity"`
+		Rows   []json.RawMessage `json:"rows"`
+	}
+	switch {
+	case denied:
+		return ErrDenied.Code
+	case json.Unmarshal(batch, &b) != nil || b.Entity == "":
+		return ErrInvalid.Code
+	case h.ImportEntities != nil && !h.ImportEntities[b.Entity]:
+		return ErrDenied.Code
+	case len(b.Rows) > ImportRowsMaxPerCall:
+		return ErrQuota.Code
+	}
+	if h.ImportRows == nil {
+		h.ImportRows = map[string][]json.RawMessage{}
+	}
+	h.ImportRows[b.Entity] = append(h.ImportRows[b.Entity], b.Rows...)
+	return int32(len(b.Rows))
 }
 
 func rawEventPublish(typ, payload []byte) int32 {

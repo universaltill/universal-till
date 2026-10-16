@@ -16,6 +16,17 @@ import (
 // lookup is parent-scoped and case-insensitive so re-running an import is
 // idempotent: the same department + category resolve to the same rows.
 func (r *CatalogRepo) EnsureCategoryUnder(ctx context.Context, name, parentID string) (string, error) {
+	return ensureCategoryUnderExec(ctx, r.db, name, parentID)
+}
+
+// EnsureCategoryUnderTx is EnsureCategoryUnder inside the caller's
+// transaction (ADR-0161: an API-source import applies in one tx) — the same
+// rule, so the two import paths can never disagree on category identity.
+func (r *CatalogRepo) EnsureCategoryUnderTx(ctx context.Context, tx *sql.Tx, name, parentID string) (string, error) {
+	return ensureCategoryUnderExec(ctx, tx, name, parentID)
+}
+
+func ensureCategoryUnderExec(ctx context.Context, ex execer, name, parentID string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return "", nil
@@ -25,11 +36,11 @@ func (r *CatalogRepo) EnsureCategoryUnder(ctx context.Context, name, parentID st
 		err error
 	)
 	if parentID == "" {
-		err = r.db.QueryRowContext(ctx,
+		err = ex.QueryRowContext(ctx,
 			`SELECT id FROM categories WHERE name = ? COLLATE NOCASE AND parent_id IS NULL`,
 			name).Scan(&id)
 	} else {
-		err = r.db.QueryRowContext(ctx,
+		err = ex.QueryRowContext(ctx,
 			`SELECT id FROM categories WHERE name = ? COLLATE NOCASE AND parent_id = ?`,
 			name, parentID).Scan(&id)
 	}
@@ -40,7 +51,7 @@ func (r *CatalogRepo) EnsureCategoryUnder(ctx context.Context, name, parentID st
 		return "", fmt.Errorf("find category: %w", err)
 	}
 	id = uuid.NewString()
-	if _, err := r.db.ExecContext(ctx,
+	if _, err := ex.ExecContext(ctx,
 		`INSERT INTO categories (id, name, parent_id) VALUES (?, ?, ?)`,
 		id, name, nullableString(parentID)); err != nil {
 		return "", fmt.Errorf("create category: %w", err)
@@ -53,16 +64,26 @@ func (r *CatalogRepo) EnsureCategoryUnder(ctx context.Context, name, parentID st
 // Used by ItemExistsByNameAndCategory below, which must not have the side
 // effect of creating a category just to check whether an item exists in it.
 func (r *CatalogRepo) findCategoryIDUnder(ctx context.Context, name, parentID string) (id string, ok bool, err error) {
+	return findCategoryIDUnderExec(ctx, r.db, name, parentID)
+}
+
+// FindCategoryUnder is findCategoryIDUnder through q — the read-only half
+// an API-source import preview plans with (ADR-0161).
+func (r *CatalogRepo) FindCategoryUnder(ctx context.Context, q SyncQuerier, name, parentID string) (string, bool, error) {
+	return findCategoryIDUnderExec(ctx, q, name, parentID)
+}
+
+func findCategoryIDUnderExec(ctx context.Context, ex execer, name, parentID string) (id string, ok bool, err error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return "", false, nil
 	}
 	if parentID == "" {
-		err = r.db.QueryRowContext(ctx,
+		err = ex.QueryRowContext(ctx,
 			`SELECT id FROM categories WHERE name = ? COLLATE NOCASE AND parent_id IS NULL`,
 			name).Scan(&id)
 	} else {
-		err = r.db.QueryRowContext(ctx,
+		err = ex.QueryRowContext(ctx,
 			`SELECT id FROM categories WHERE name = ? COLLATE NOCASE AND parent_id = ?`,
 			name, parentID).Scan(&id)
 	}

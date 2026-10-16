@@ -1038,11 +1038,21 @@ func (r *CatalogRepo) deleteBarcodeExact(ctx context.Context, barcode string) (b
 // (rate, takeaway) pair: re-running an import must not create duplicate tax
 // codes, the same idempotency principle as the rest of catalog import.
 func (r *CatalogRepo) FindOrCreateTaxCode(ctx context.Context, rateBP int, takeawayBP *int) (string, bool, error) {
+	return findOrCreateTaxCodeExec(ctx, r.db, rateBP, takeawayBP)
+}
+
+// FindOrCreateTaxCodeTx is FindOrCreateTaxCode inside the caller's
+// transaction (ADR-0161) — one rule for both import paths.
+func (r *CatalogRepo) FindOrCreateTaxCodeTx(ctx context.Context, tx *sql.Tx, rateBP int, takeawayBP *int) (string, bool, error) {
+	return findOrCreateTaxCodeExec(ctx, tx, rateBP, takeawayBP)
+}
+
+func findOrCreateTaxCodeExec(ctx context.Context, ex execer, rateBP int, takeawayBP *int) (string, bool, error) {
 	// SQLite: `= NULL` never matches, `IS ?` with a nullable bound
 	// parameter compares NULL-safely, so one query covers both shapes.
 	find := func() (string, error) {
 		var id string
-		err := r.db.QueryRowContext(ctx, `
+		err := ex.QueryRowContext(ctx, `
 SELECT id FROM tax_codes
 WHERE rate_basis_points = ? AND takeaway_rate_basis_points IS ?
 ORDER BY id LIMIT 1`, rateBP, nullableIntPtr(takeawayBP)).Scan(&id)
@@ -1066,7 +1076,7 @@ ORDER BY id LIMIT 1`, rateBP, nullableIntPtr(takeawayBP)).Scan(&id)
 		name = fmt.Sprintf("Imported %s%% (takeaway %s%%)", taxrate.FormatPercent(rateBP), taxrate.FormatPercent(*takeawayBP))
 	}
 	id = uuid.NewString()
-	_, insErr := r.db.ExecContext(ctx, `
+	_, insErr := ex.ExecContext(ctx, `
 INSERT INTO tax_codes (id, name, rate_basis_points, takeaway_rate_basis_points, is_active)
 VALUES (?, ?, ?, ?, 1)`, id, name, rateBP, nullableIntPtr(takeawayBP))
 	if insErr == nil {

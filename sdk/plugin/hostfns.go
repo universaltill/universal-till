@@ -154,6 +154,32 @@ func EventPublish(eventType string, payload any) error {
 	return codeErr("event_publish", rawEventPublish([]byte(eventType), p))
 }
 
+// ImportRowsMaxPerCall is import_rows_submit's per-call row cap.
+const ImportRowsMaxPerCall = 500
+
+// ImportRowsSubmit hands one batch of ADR-0051 rows for entity (e.g.
+// "items") back to the till during an API-source import.requested.ask
+// (ADR-0161). rows is anything that marshals to a JSON array of row
+// objects, each with an "external_id"; at most ImportRowsMaxPerCall per
+// call. It returns how many rows the till accepted. ErrDenied outside an
+// API-source import ask or for an entity the run did not resolve;
+// ErrQuota over a cap (500 per call, 20,000 rows / 32 MiB per run) —
+// the till then refuses the whole run; ErrInvalid for a malformed batch.
+func ImportRowsSubmit(entity string, rows any) (int, error) {
+	b, err := json.Marshal(struct {
+		Entity string `json:"entity"`
+		Rows   any    `json:"rows"`
+	}{entity, rows})
+	if err != nil {
+		return 0, err
+	}
+	n := rawImportRowsSubmit(b)
+	if n < 0 {
+		return 0, codeErr("import_rows_submit", n)
+	}
+	return int(n), nil
+}
+
 // JobProgress reports progress from inside a job: pct is clamped to 0–100,
 // key is a key in the plugin's own locales ("" keeps the current message).
 // Outside a job it is ErrNotFound.
