@@ -495,6 +495,7 @@
   "age_check.kiosk_blocked": "Bu sipariş yaş sınırlı bir ürün içeriyor. Lütfen kasada ödeyin — personelin bu sipariş için kimlik kontrolü yapması gerekecek.",
   "catalog.tab.details": "Ayrıntılar",
   "catalog.take_photo": "Fotoğraf Çek",
+  "catalog.add_photo": "Fotoğraf ekle",
   "catalog.tax_code": "Vergi kodu",
   "catalog.tax_code.inactive": "pasif",
   "catalog.tax_code.none": "— yok —",

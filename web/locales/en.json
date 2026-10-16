@@ -495,6 +495,7 @@
   "age_check.kiosk_blocked": "This order includes an age-restricted item. Please pay at the counter — staff will need to check ID for this order.",
   "catalog.tab.details": "Details",
   "catalog.take_photo": "Take a Photo",
+  "catalog.add_photo": "Add photo",
   "catalog.tax_code": "Tax code",
   "catalog.tax_code.inactive": "inactive",
   "catalog.tax_code.none": "— none —",

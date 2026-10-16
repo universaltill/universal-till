@@ -495,6 +495,7 @@
   "age_check.kiosk_blocked": "این سفارش شامل کالایی با محدودیت سنی است. لطفاً در پیشخوان پرداخت کنید — کارکنان باید کارت شناسایی را برای این سفارش بررسی کنند.",
   "catalog.tab.details": "جزئیات",
   "catalog.take_photo": "گرفتن عکس",
+  "catalog.add_photo": "افزودن عکس",
   "catalog.tax_code": "کد مالیات",
   "catalog.tax_code.inactive": "غیرفعال",
   "catalog.tax_code.none": "— هیچ‌کدام —",
