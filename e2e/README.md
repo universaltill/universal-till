@@ -34,8 +34,9 @@ and status icons) to Noto Color Emoji (ut-docs#4425). Install `fonts-inter`,
 `fonts-dejavu-core` and `fonts-noto-color-emoji` (Debian/Ubuntu).
 macOS/Windows resolve the stack to their own OS font first and cannot match:
 run `make docs-shots` in a Linux container or the cloud lane. Still not
-checked: symbol glyphs the pinned fonts lack (✓ ⚠ ☰ come from DejaVu Sans
-via the system fallback).
+checked: symbol glyphs Inter lacks (e.g. ☰) come from the system's fallback —
+DejaVu Sans on the reference machine. To check the alias by hand, escape the
+hyphen: `fc-match 'ui\-monospace'` (unescaped, fontconfig reads it as a size).
 
 `run-till.sh` (port 8091) is what the docs-shots harness
 (`playwright.docs.config.ts`) still boots; the per-worker till reproduces
