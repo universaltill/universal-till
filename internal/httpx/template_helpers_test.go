@@ -923,6 +923,25 @@ func TestIsRTL(t *testing.T) {
 	}
 }
 
+// ut-docs#4375 (ADR-0160 §8): he and ur join ar/fa as right-to-left. IsRTL
+// alone is not the acceptance -- <html dir> comes from the template's `dir`
+// func, so pin that wiring for every RTL locale a bundle can bring.
+func TestDirFuncRTLLocales(t *testing.T) {
+	cases := map[string]string{
+		"ar": "rtl", "fa": "rtl", "he": "rtl", "he-IL": "rtl", "ur": "rtl", "ur_PK": "rtl",
+		"en": "ltr", "de": "ltr", "tr": "ltr",
+	}
+	for locale, want := range cases {
+		dir, ok := FuncsFor(locale)["dir"].(func() string)
+		if !ok {
+			t.Fatalf("FuncsFor(%q)[\"dir\"] is not a func() string", locale)
+		}
+		if got := dir(); got != want {
+			t.Errorf("dir() for %q = %q; want %q", locale, got, want)
+		}
+	}
+}
+
 // ut-docs#1537: on Android the chip must be an ACTIONABLE BUTTON that installs,
 // not a link that navigates to Settings. The owner's report was blunt — "it
 // should update the app even when I click on the bottom of the screen on the

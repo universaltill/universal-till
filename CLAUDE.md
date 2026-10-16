@@ -64,7 +64,9 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   `web/public/**/*.js` (not `vendor/`). Reviewed legacy exception:
   same-line `// i18n:ignore` (#205, #453).
 - RTL: `dir` comes from the locale (`httpx.IsRTL`); use logical CSS
-  properties (`margin-inline-start`, `text-align: start`), never left/right.
+  properties (`margin-inline-start`, `text-align: start`), never left/right
+  (`scripts/ci/guard-rtl-logical-css.sh`; shrink-only
+  `rtl-css-baseline.txt`; reviewed exception `rtl:allow <reason>`; #4375).
 - A new `en.json` key needs follow-up PRs in every `ut-plugin-language-*`
   pack `scripts/ci/check-lang-pack-drift.sh` checks — see that script's
   `PACKS` array for the current list; never hard-code pack names here.
