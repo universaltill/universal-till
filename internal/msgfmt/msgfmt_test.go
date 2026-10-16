@@ -183,3 +183,30 @@ func TestPlural_LargeAndFloat32(t *testing.T) {
 		}
 	}
 }
+
+// pluralArgs names every plural argument, at any nesting depth, sorted and
+// de-duplicated; select-only and plain messages have none (ut-docs#4479).
+func TestPluralArgs(t *testing.T) {
+	cases := []struct {
+		name, pattern string
+		want          []string
+	}{
+		{"simple", "{n, plural, one {# item} other {# items}}", []string{"n"}},
+		{"in select branch", "{kind, select, a {{n, plural, one {x} other {y}}} other {z}}", []string{"n"}},
+		{"in plural branch", "{a, plural, one {{b, plural, one {x} other {y}}} other {z}}", []string{"a", "b"}},
+		{"in exact branch", "{a, plural, =0 {{b, plural, other {x}}} other {z}}", []string{"a", "b"}},
+		{"duplicates removed", "{a, plural, one {{a, plural, other {x}}} other {{a, plural, other {y}}}}", []string{"a"}},
+		{"select only", "{g, select, m {he} other {they}}", nil},
+		{"plain text", "Hello {name}", nil},
+	}
+	for _, c := range cases {
+		m, err := Parse(c.pattern)
+		if err != nil {
+			t.Fatalf("%s: parse: %v", c.name, err)
+		}
+		got := pluralArgs(m)
+		if strings.Join(got, ",") != strings.Join(c.want, ",") {
+			t.Errorf("%s: pluralArgs = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
