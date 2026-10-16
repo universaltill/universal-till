@@ -1,0 +1,169 @@
+{
+  "default_area": "common",
+  "legal_namespaces": [
+    "fiscal",
+    "fiscaldevice",
+    "fiscalregister",
+    "invoice",
+    "legal",
+    "receipt",
+    "shadow_documents",
+    "tax",
+    "taxcodes"
+  ],
+  "areas": {
+    "sale": {
+      "description": "The sale screen: basket, scanning, payment, holds, refunds and the quick-button grid.",
+      "namespaces": [
+        "pos",
+        "basket",
+        "tender",
+        "hold",
+        "refund",
+        "scan",
+        "age_check",
+        "pfand",
+        "open_orders",
+        "tile_sheet",
+        "buttons",
+        "osk",
+        "suggest",
+        "filter",
+        "ai"
+      ]
+    },
+    "catalog": {
+      "description": "Items, categories, modifiers, stock, promotions, vouchers, imports and the menu designer.",
+      "namespaces": [
+        "catalog",
+        "categories",
+        "items",
+        "products",
+        "modifiers",
+        "inventory",
+        "shrinkage",
+        "import",
+        "vouchers",
+        "vouchers_import",
+        "promotions",
+        "designer",
+        "menulayout",
+        "list_reorder",
+        "backoffice",
+        "barcode"
+      ]
+    },
+    "orders": {
+      "description": "Orders, tables, kitchen stations and displays, and order tracking.",
+      "namespaces": [
+        "orders",
+        "tables",
+        "kitchenstations",
+        "kitchen",
+        "kitchendisplay",
+        "tracking"
+      ]
+    },
+    "reports": {
+      "description": "Reports, the journal, end of day and the audit trail.",
+      "namespaces": [
+        "reports",
+        "journal",
+        "eod",
+        "audit"
+      ]
+    },
+    "staff": {
+      "description": "Users, permissions, sign-in, PIN elevation and shifts.",
+      "namespaces": [
+        "users",
+        "permissions",
+        "auth",
+        "elevation",
+        "shifts"
+      ]
+    },
+    "settings": {
+      "description": "Settings, admin menus, locations, registers, country settings, translations and the subscription.",
+      "namespaces": [
+        "settings",
+        "admin",
+        "nav",
+        "menu",
+        "page",
+        "locations",
+        "registers",
+        "countrysettings",
+        "translations",
+        "subscription"
+      ]
+    },
+    "tills": {
+      "description": "Tills and devices: sync, pairing, Bluetooth devices, status chips, diagnostics, recovery and uninstall.",
+      "namespaces": [
+        "tills",
+        "sync",
+        "pairings",
+        "bluetoothdevices",
+        "status",
+        "diagnostics",
+        "recovery",
+        "uninstall"
+      ]
+    },
+    "setup": {
+      "description": "First-run setup, the guided tour, demo data and onboarding notices.",
+      "namespaces": [
+        "setup",
+        "tour",
+        "demo",
+        "shop_name_notice"
+      ]
+    },
+    "selforder": {
+      "description": "The self-order kiosk's customer pages.",
+      "namespaces": [
+        "selforder",
+        "kiosk"
+      ]
+    },
+    "receipts-and-legal": {
+      "description": "Receipts, invoices, fiscal devices and registers, tax codes and other legally relevant wording. Every key here needs a human approval (ADR-0160 §4).",
+      "namespaces": [
+        "receipt",
+        "invoice",
+        "fiscal",
+        "fiscalregister",
+        "fiscaldevice",
+        "taxcodes",
+        "shadow_documents"
+      ]
+    },
+    "plugins": {
+      "description": "The plugin marketplace, plugin pages and the assistant.",
+      "namespaces": [
+        "plugins",
+        "plugin",
+        "agent",
+        "ext"
+      ]
+    },
+    "support": {
+      "description": "Help, the user manual links and issue reports.",
+      "namespaces": [
+        "help",
+        "issuereport"
+      ]
+    },
+    "common": {
+      "description": "Shared words and messages used across many screens.",
+      "namespaces": [
+        "common",
+        "app",
+        "confirm",
+        "error",
+        "notice"
+      ]
+    }
+  }
+}
