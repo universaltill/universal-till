@@ -2,6 +2,7 @@ package pages
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/catsync"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -293,5 +295,94 @@ func TestShopWideSettingRows_GlobalBeatsAnEarlierPerTillRow(t *testing.T) {
 	}
 	if got[1].Key != "api_secret" || got[1].Scope != "register" {
 		t.Errorf("api_secret: a lone per-till row stays, got %+v", got[1])
+	}
+}
+
+// ut-docs#4485: a row's issue in the preview is shown in the till's
+// language (a code plus args from catsync, translated here), never as
+// catsync's English API text.
+func TestImportSystem_PreviewRowIssueIsTranslated(t *testing.T) {
+	mux, d := newImportSystemDeps(t)
+	seedSystemImporter(t, d, "k")
+	installImportRowsGuest(t, d)
+	setGuestSetting(t, d, "rows", `[{"external_id":"p-1","name":"Flat white","price_minor":320},`+
+		`{"external_id":"bad","price_minor":1},`+
+		`{"external_id":"p-3","name":"Deep","price_minor":1,"category_path":["a","b","c","d","e"]}]`)
+
+	post := func(lang string) string {
+		rec := postForm(mux, "/api/import/from-system?lang="+lang, url.Values{
+			"plugin_id": {apiImportPluginID}, "entry_key": {"api"}, "mode": {"preview"},
+		}, &mgrUser)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("preview (%s): %d %s", lang, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	fa := post("fa")
+	for _, want := range []string{
+		httpx.T("fa", "import.issue.name_invalid"),
+		fmt.Sprintf(httpx.T("fa", "import.issue.category_too_deep"), "4"),
+	} {
+		if want == "" || strings.HasPrefix(want, "import.issue.") || !strings.Contains(fa, want) {
+			t.Errorf("fa preview missing %q:\n%s", want, fa)
+		}
+	}
+	for _, english := range []string{"name is missing or invalid", "category_path is deeper"} {
+		if strings.Contains(fa, english) {
+			t.Errorf("fa preview shows the API English %q:\n%s", english, fa)
+		}
+	}
+
+	en := post("en")
+	if want := httpx.T("en", "import.issue.name_invalid"); !strings.Contains(en, want) {
+		t.Errorf("en preview missing %q:\n%s", want, en)
+	}
+}
+
+// An issue with a code the till has no text for never puts machine text on
+// screen.
+func TestImportSystemIssueText_UnknownCodeIsGeneric(t *testing.T) {
+	chdirRoot(t)
+	i18n, err := config.NewI18n("web/locales", "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpx.InitI18n(i18n, "en")
+	T := func(k string) string { return httpx.T("en", k) }
+	got := importSystemIssueText(T, catsync.Sample{Issue: "raw machine text", IssueCode: "no_such_code"})
+	if got != T("import.status.unknown_issue") {
+		t.Errorf("unknown code rendered %q", got)
+	}
+	if got := importSystemIssueText(T, catsync.Sample{Issue: "raw machine text"}); got != T("import.status.unknown_issue") {
+		t.Errorf("empty code rendered %q", got)
+	}
+}
+
+// Every catsync issue code has a translated text in every locale, with the
+// same placeholders as English.
+func TestCatsyncIssueCodes_HaveLocaleKeys(t *testing.T) {
+	chdirRoot(t)
+	i18n, err := config.NewI18n("web/locales", "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpx.InitI18n(i18n, "en")
+	verbs := func(s string) int { return strings.Count(s, "%s") }
+	for _, code := range catsync.IssueCodes {
+		key := "import.issue." + code
+		en := httpx.T("en", key)
+		if en == key {
+			t.Errorf("en.json has no %s", key)
+			continue
+		}
+		for _, loc := range []string{"ar", "fa", "tr"} {
+			got := httpx.T(loc, key)
+			if got == key || got == en {
+				t.Errorf("%s: %s missing or untranslated: %q", loc, key, got)
+			} else if verbs(got) != verbs(en) {
+				t.Errorf("%s: %s has %d %%s, English has %d", loc, key, verbs(got), verbs(en))
+			}
+		}
 	}
 }
