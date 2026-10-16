@@ -25,6 +25,7 @@ import (
 	"github.com/universaltill/universal-till/internal/fxlevel"
 	"github.com/universaltill/universal-till/internal/manual"
 	moneypkg "github.com/universaltill/universal-till/internal/money"
+	"github.com/universaltill/universal-till/internal/msgfmt"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/pihealth"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -694,6 +695,33 @@ func T(locale, key string) string {
 	return key
 }
 
+// TM translates and formats a MessageFormat key (ADR-0160 §8,
+// ut-docs#4373) outside templates. Numbers render with the locale's
+// grouping and digit shape, like {{ qty }}. A translation that doesn't
+// format falls back to English (config.I18n.TM).
+func TM(locale, key string, args map[string]any) string {
+	t := translator()
+	if t == nil {
+		return key
+	}
+	return t.TM(locale, key, args, msgfmt.Options{Number: func(plain string) string {
+		return LocalizeDigits(formatGrouped(plain, locale), locale)
+	}})
+}
+
+// argPairs turns a template's "name", value, "name", value… into an
+// argument map. A non-string name or a trailing name with no value is
+// skipped; the message then lacks that argument and TM falls back.
+func argPairs(pairs []any) map[string]any {
+	args := make(map[string]any, len(pairs)/2)
+	for i := 0; i+1 < len(pairs); i += 2 {
+		if name, ok := pairs[i].(string); ok {
+			args[name] = pairs[i+1]
+		}
+	}
+	return args
+}
+
 // genericErrKey is the fallback QueryErrKey renders in place of unrecognised
 // `?err=` text. Reuses the existing shared `common.error.server` key rather
 // than minting a new one — same reasoning as ut-docs#1663/#1620's own
@@ -1313,6 +1341,9 @@ func FuncsFor(locale string) template.FuncMap {
 		}
 		return key
 	}
+	// {{ TM "cart.items" "count" .N }}: a MessageFormat key (plural/select,
+	// ADR-0160 §8, ut-docs#4373) with name/value argument pairs.
+	funcs["TM"] = func(key string, pairs ...any) string { return TM(locale, key, argPairs(pairs)) }
 	// Locale-bound override of the baseFuncs fallback: the section "?" label
 	// translates with the page it sits on.
 	funcs["helpLink"] = func(id string) template.HTML { return helpLinkHTML(id, locale) }

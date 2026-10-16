@@ -284,6 +284,12 @@ function helper() {
 expect_pass "a .map() whose close style the bounded lookahead must not spill past"
 clear_fixture "MapCloseThisArg"
 
+# ut-docs#4373: a MessageFormat key used via {{ TM "key" … }} must exist
+# in en.json, exactly like {{ T "key" }}.
+plant "TMUnknownKey" '<p>{{ TM "zz.guard_test.no_such_key" "count" 1 }}</p>'
+expect_fail "a {{ TM }} key missing from en.json"
+clear_fixture "TMUnknownKey"
+
 # Sanity: the guard must still pass clean on the real, unmodified tree
 # (proves this test file itself, and the fixtures' cleanup, leave no
 # residue behind).
