@@ -559,6 +559,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerTillsRoster(mux, dp)        // Tills page roster, live link per till (ut-docs#2742)
 	registerTillRole(mux, dp)           // till role change, Tills page + joined till's own report (ut-docs#2781)
 	registerTillUpdateNow(mux, dp)      // Tills page "Update now" over the main-till link (ut-docs#2945)
+	registerTillRotateTLSKey(mux, dp)   // Tills page "Change network key" (ut-docs#4423)
 	// ut-docs#3095: the status-bar light's cloud reachability. Probes run
 	// lazily on /ui/net-status polls, each bounded by netreach's 5 s
 	// timeout and cancelled by bgCtx on shutdown.

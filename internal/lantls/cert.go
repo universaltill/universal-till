@@ -55,8 +55,8 @@ type Cert struct {
 	pin string
 
 	// Key rotation (rotation.go, ut-docs#4409): nextPin is the pending
-	// next key's pin, fixed at load like pin; st is rotation.json in dir,
-	// updated by ConfirmNext under mu.
+	// next key's pin, set at load or by RotateNow (ut-docs#4423); st is
+	// rotation.json in dir. Both are read and written under mu.
 	nextPin string
 	dir     string
 	mu      sync.Mutex
