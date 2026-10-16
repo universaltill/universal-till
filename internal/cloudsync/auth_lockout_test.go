@@ -380,3 +380,103 @@ func resetTillAuth(t *testing.T) {
 	tillAuth.observe(nil) // a success clears the streak
 	t.Cleanup(func() { tillAuth.observe(nil) })
 }
+
+// ut-docs#3533: a pairing during an ADR-0116 D6 lock-out ends the hourly
+// wait within seconds, through ADR-0148 §2's operator window (the "Pair
+// with a shop" handler opens it and kicks the loop): the check-in runs on
+// the new credential, and the chip clears without waiting out the hour. A
+// kick with no window open — a cloud nudge, a relayed check-in — leaves
+// the hourly wait alone.
+func TestPairingDuringLockOutEndsTheHourlyWaitAndClearsTheChip(t *testing.T) {
+	resetTillAuth(t)
+	resetOperatorWindow()
+	t.Cleanup(resetOperatorWindow)
+	origFirst, origTick := firstDelayNS.Load(), tickIntervalNS.Load()
+	origNew := newSchedulerFn
+	t.Cleanup(func() { firstDelayNS.Store(origFirst); tickIntervalNS.Store(origTick); newSchedulerFn = origNew })
+	firstDelayNS.Store(int64(time.Millisecond))
+	tickIntervalNS.Store(int64(5 * time.Millisecond)) // the first two 401s back off briefly
+	newSchedulerFn = func() *scheduler {
+		s := newScheduler() // the production tracker, the one the chip reads
+		s.rng = func() float64 { return 0.5 }
+		return s
+	}
+
+	// The cloud refuses the old credential until the till is paired.
+	var paired atomic.Bool
+	var requests atomic.Int32
+	cloud := &fakeCloud{}
+	ok := cloud.handler()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if !paired.Load() {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(unauthorizedBody("token_retired")))
+			return
+		}
+		ok.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	kick := make(chan struct{}, 1)
+	var ticks atomic.Int32
+	succeeded := make(chan struct{})
+	var okOnce sync.Once
+	hooks := Hooks{
+		Kick: kick,
+		AfterTick: func(_ context.Context, _ bool, err error) {
+			ticks.Add(1)
+			if err == nil {
+				okOnce.Do(func() { close(succeeded) })
+			}
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	wg := startJoined(t, ctx, cancel, testCfg(srv.URL), testDB(t), hooks)
+
+	// The streak is folded in after AfterTick (scheduler.next), so poll the
+	// chip rather than reading it from the hook.
+	deadline := time.Now().Add(3 * time.Second)
+	for !AuthChipStatus().Show && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if !AuthChipStatus().Show {
+		t.Fatal("the till never locked out after three 401s")
+	}
+	time.Sleep(20 * time.Millisecond) // a 4th tick here would mean no hourly wait
+	if n := ticks.Load(); n != 3 {
+		t.Fatalf("ticks at lock-out = %d, want 3", n)
+	}
+
+	// A kick outside any operator window: the hourly wait goes on.
+	before := requests.Load()
+	kick <- struct{}{}
+	time.Sleep(100 * time.Millisecond)
+	if n := requests.Load(); n != before {
+		t.Fatalf("a kick with no operator window ended the lock-out wait (%d new requests)", n-before)
+	}
+	if !AuthChipStatus().Show {
+		t.Fatal("the chip cleared without a successful check-in")
+	}
+
+	// The operator pairs: a working credential, then the handler's
+	// requestOperatorCheckin (window + kick).
+	paired.Store(true)
+	OpenOperatorWindow(2 * time.Minute)
+	kick <- struct{}{}
+	select {
+	case <-succeeded:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the pairing's kick did not end the hourly lock-out wait")
+	}
+	// As above, the success reaches the chip just after AfterTick.
+	deadline = time.Now().Add(3 * time.Second)
+	for AuthChipStatus().Show && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if st := AuthChipStatus(); st.Show {
+		t.Fatalf("AuthChipStatus = %+v after a successful check-in, want hidden", st)
+	}
+	cancel()
+	waitJoined(t, wg)
+}

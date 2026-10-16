@@ -2093,17 +2093,16 @@ func Start(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks, wg 
 				hooks.AfterTick(ctx, contacted, err)
 			}
 			// No kicks while backing off. That includes the flat hourly
-			// wait of an ADR-0116 D6 lock-out (schedule.go's authTracker): a
-			// credential written while the till waits — a pairing, a
-			// re-registration — is first tried on the next hourly tick, and
-			// the status chip stays until that tick succeeds. The "Pair with
-			// a shop" screen (ut-docs#3523) is where an earlier wake belongs;
-			// a cloud nudge can't be it, the link itself is refused on a 401.
-			// Exception (ADR-0148, ut-docs#3615): a kick that arrives while an
-			// operator check-in window is open is an operator action on this
-			// till, and it ends the backoff — otherwise an unpaid till whose
-			// window check-in failed once would wait out the backoff, long
-			// past its window. A kick outside a window is consumed and the
+			// wait of an ADR-0116 D6 lock-out (schedule.go's authTracker); a
+			// cloud nudge can't end it, the link itself is refused on a 401.
+			// Exception (ADR-0148 §2, ut-docs#3615): a kick that arrives while
+			// an operator check-in window is open is an operator action on
+			// this till, and it ends the backoff or the lock-out wait —
+			// otherwise an unpaid till whose window check-in failed once
+			// would wait out the backoff, long past its window. "Pair with a
+			// shop" (ut-docs#3523) opens one, so a new credential is tried
+			// within seconds and the chip clears on that check-in
+			// (ut-docs#3533). A kick outside a window is consumed and the
 			// wait goes on; the check-in the wait ends in satisfies it.
 			timer := time.NewTimer(sched.next(err))
 		wait:
