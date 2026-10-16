@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/universaltill/universal-till/internal/db"
 	"html"
 	"html/template"
 	"net/http"
@@ -16,10 +15,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/db"
+
 	qrcode "github.com/skip2/go-qrcode"
 
+	"github.com/universaltill/universal-till/catimport/barcode"
 	"github.com/universaltill/universal-till/internal/auth"
-	"github.com/universaltill/universal-till/internal/barcode"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/data/seeddata"
@@ -745,7 +746,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// fix above closes).
 		showQuarantineSection := hasEnrolledTills || quarantineCount > 0
 		// Barcode symbology checklist (ADR-0059 Decision §2, ut-docs#935):
-		// every internal/barcode registry entry, plus whether this shop
+		// every catimport/barcode registry entry, plus whether this shop
 		// currently has it enabled. Best-effort like the other reads on
 		// this page — EnabledBarcodeSymbologies already falls back to the
 		// compatibility-preserving default set on error, so the checklist
@@ -1841,7 +1842,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// Barcode symbology checklist (ADR-0059 Decision §2, ut-docs#935): one
-	// checkbox per internal/barcode registry entry, persisted immediately
+	// checkbox per catimport/barcode registry entry, persisted immediately
 	// via SettingsRepo.SetBarcodeSymbologyEnabled (through the main till on
 	// an additional till, ut-docs#2979) — same manager-gated,
 	// audit-writing, elevation-wired shape as launch-on-startup above.

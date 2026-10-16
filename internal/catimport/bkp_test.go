@@ -17,9 +17,17 @@ import (
 	"strings"
 	"testing"
 
+	shared "github.com/universaltill/universal-till/catimport"
+	"github.com/universaltill/universal-till/catimport/barcode"
+
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	_ "modernc.org/sqlite"
 )
+
+// testEnabledIDs is the full barcode default registry, every test's
+// enabledSymbologyIDs unless a test exercises a narrower set (ADR-0059
+// Decision §3) — the same value the shared module's own tests use.
+var testEnabledIDs = barcode.Default().IDs()
 
 // bkpProductRow mirrors the documented speedy kasse Products columns
 // (ut-docs#511) for building synthetic fixtures — never real customer data,
@@ -229,8 +237,8 @@ func TestParseBkp_StatusDeletedExcluded(t *testing.T) {
 	if len(res.Items) != 1 {
 		t.Fatalf("items = %d, want 1", len(res.Items))
 	}
-	if res.Items[0].Issue != IssueSourceDeleted {
-		t.Errorf("Issue = %q, want %q", res.Items[0].Issue, IssueSourceDeleted)
+	if res.Items[0].Issue != shared.IssueSourceDeleted {
+		t.Errorf("Issue = %q, want %q", res.Items[0].Issue, shared.IssueSourceDeleted)
 	}
 }
 
@@ -247,8 +255,8 @@ func TestParseBkp_OrderToggleExcluded(t *testing.T) {
 	if len(res.Items) != 1 {
 		t.Fatalf("items = %d, want 1", len(res.Items))
 	}
-	if res.Items[0].Issue != IssueNotSellable {
-		t.Errorf("Issue = %q, want %q", res.Items[0].Issue, IssueNotSellable)
+	if res.Items[0].Issue != shared.IssueNotSellable {
+		t.Errorf("Issue = %q, want %q", res.Items[0].Issue, shared.IssueNotSellable)
 	}
 }
 
@@ -299,8 +307,8 @@ func TestParseBkp_BlankNameExcluded(t *testing.T) {
 	if len(res.Items) != 1 {
 		t.Fatalf("items = %d, want 1", len(res.Items))
 	}
-	if res.Items[0].Issue != IssueMissingName {
-		t.Errorf("Issue = %q, want %q", res.Items[0].Issue, IssueMissingName)
+	if res.Items[0].Issue != shared.IssueMissingName {
+		t.Errorf("Issue = %q, want %q", res.Items[0].Issue, shared.IssueMissingName)
 	}
 }
 
@@ -354,8 +362,8 @@ func TestParseBkp_DuplicateProductNumber(t *testing.T) {
 	if res.Items[1].SKU != "555-2" {
 		t.Errorf("second occurrence SKU = %q, want a synthesized %q", res.Items[1].SKU, "555-2")
 	}
-	if res.Items[1].SKUIssue != SKUIssueDuplicateInFile {
-		t.Errorf("second occurrence SKUIssue = %q, want %q", res.Items[1].SKUIssue, SKUIssueDuplicateInFile)
+	if res.Items[1].SKUIssue != shared.SKUIssueDuplicateInFile {
+		t.Errorf("second occurrence SKUIssue = %q, want %q", res.Items[1].SKUIssue, shared.SKUIssueDuplicateInFile)
 	}
 	if res.Items[1].SKUIssueRaw != "555" {
 		t.Errorf("second occurrence SKUIssueRaw = %q, want the original PLU %q", res.Items[1].SKUIssueRaw, "555")
@@ -493,8 +501,8 @@ func TestParseBkp_BadPrice(t *testing.T) {
 		t.Fatalf("items = %d, want 1", len(res.Items))
 	}
 	it := res.Items[0]
-	if it.Issue != IssueBadPrice {
-		t.Errorf("Issue = %q, want %q", it.Issue, IssueBadPrice)
+	if it.Issue != shared.IssueBadPrice {
+		t.Errorf("Issue = %q, want %q", it.Issue, shared.IssueBadPrice)
 	}
 	if it.IssueDetail != "N/A" {
 		t.Errorf("IssueDetail = %q, want raw value %q", it.IssueDetail, "N/A")
@@ -521,8 +529,8 @@ func TestParseBkp_MissingNameAndBadPrice(t *testing.T) {
 		t.Fatalf("items = %d, want 1", len(res.Items))
 	}
 	it := res.Items[0]
-	if it.Issue != IssueMissingNameAndBadPrice {
-		t.Errorf("Issue = %q, want %q", it.Issue, IssueMissingNameAndBadPrice)
+	if it.Issue != shared.IssueMissingNameAndBadPrice {
+		t.Errorf("Issue = %q, want %q", it.Issue, shared.IssueMissingNameAndBadPrice)
 	}
 	if it.IssueDetail != "not-a-price" {
 		t.Errorf("IssueDetail = %q, want raw value %q", it.IssueDetail, "not-a-price")
@@ -552,8 +560,8 @@ func TestParseBkp_MissingNameOnlyStillCarriesValidPrice(t *testing.T) {
 		t.Fatalf("items = %d, want 1", len(res.Items))
 	}
 	it := res.Items[0]
-	if it.Issue != IssueMissingName {
-		t.Errorf("Issue = %q, want %q", it.Issue, IssueMissingName)
+	if it.Issue != shared.IssueMissingName {
+		t.Errorf("Issue = %q, want %q", it.Issue, shared.IssueMissingName)
 	}
 	if it.PriceMinor != 450 {
 		t.Errorf("PriceMinor = %d, want 450 (the source's real price, not discarded)", it.PriceMinor)
@@ -612,8 +620,8 @@ func TestParseBkp_BadPriceRowDoesNotBlockLaterGoodRowSamePLU(t *testing.T) {
 	if len(res.Items) != 2 {
 		t.Fatalf("items = %d, want 2", len(res.Items))
 	}
-	if res.Items[0].Issue != IssueBadPrice {
-		t.Errorf("first (bad price) Issue = %q, want %q", res.Items[0].Issue, IssueBadPrice)
+	if res.Items[0].Issue != shared.IssueBadPrice {
+		t.Errorf("first (bad price) Issue = %q, want %q", res.Items[0].Issue, shared.IssueBadPrice)
 	}
 	if res.Items[1].Issue != "" || res.Items[1].PriceMinor != 450 {
 		t.Errorf("second (good, same PLU) = %+v, want it to import cleanly at 450, not be flagged as a duplicate", res.Items[1])
@@ -993,8 +1001,8 @@ func TestParseBkp_UnparseableTaxWarnsButStillImports(t *testing.T) {
 	if it.HasTax {
 		t.Error("unparseable tax cell must leave HasTax false")
 	}
-	if it.TaxIssue != TaxIssueUnparseable || it.TaxIssueRaw != "n/a" {
-		t.Errorf("TaxIssue = (%q,%q), want (%q,%q)", it.TaxIssue, it.TaxIssueRaw, TaxIssueUnparseable, "n/a")
+	if it.TaxIssue != shared.TaxIssueUnparseable || it.TaxIssueRaw != "n/a" {
+		t.Errorf("TaxIssue = (%q,%q), want (%q,%q)", it.TaxIssue, it.TaxIssueRaw, shared.TaxIssueUnparseable, "n/a")
 	}
 	if !it.HasTakeaway || it.TakeawayRateBP != 700 {
 		t.Errorf("the OTHER column (takeaway) must still parse independently: %+v", it)
@@ -1143,8 +1151,8 @@ func TestParseBkp_DanglingImagePathWarnsButStillImports(t *testing.T) {
 	if len(it.ImageData) != 0 {
 		t.Errorf("ImageData = %q, want none for a dangling path", it.ImageData)
 	}
-	if it.ImageIssue != ImageIssueUnresolved || it.ImageIssueRaw != "images/does-not-exist.jpg" {
-		t.Errorf("ImageIssue/Raw = (%q,%q), want (%q,%q)", it.ImageIssue, it.ImageIssueRaw, ImageIssueUnresolved, "images/does-not-exist.jpg")
+	if it.ImageIssue != shared.ImageIssueUnresolved || it.ImageIssueRaw != "images/does-not-exist.jpg" {
+		t.Errorf("ImageIssue/Raw = (%q,%q), want (%q,%q)", it.ImageIssue, it.ImageIssueRaw, shared.ImageIssueUnresolved, "images/does-not-exist.jpg")
 	}
 }
 
@@ -1161,8 +1169,8 @@ func TestParseBkp_ImagePathWithNoDocumentsZipWarns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseBkp: %v", err)
 	}
-	if len(res.Items) != 1 || res.Items[0].ImageIssue != ImageIssueUnresolved {
-		t.Fatalf("got %+v, want one item with ImageIssue=%q", res.Items, ImageIssueUnresolved)
+	if len(res.Items) != 1 || res.Items[0].ImageIssue != shared.ImageIssueUnresolved {
+		t.Fatalf("got %+v, want one item with ImageIssue=%q", res.Items, shared.ImageIssueUnresolved)
 	}
 }
 
@@ -1211,8 +1219,8 @@ func TestParseBkp_OversizedImageEntryRejected(t *testing.T) {
 	if len(it.ImageData) != 0 {
 		t.Errorf("ImageData should be empty for an over-cap entry, got %d bytes", len(it.ImageData))
 	}
-	if it.ImageIssue != ImageIssueTooLarge {
-		t.Errorf("ImageIssue = %q, want %q", it.ImageIssue, ImageIssueTooLarge)
+	if it.ImageIssue != shared.ImageIssueTooLarge {
+		t.Errorf("ImageIssue = %q, want %q", it.ImageIssue, shared.ImageIssueTooLarge)
 	}
 }
 
@@ -1271,8 +1279,8 @@ func TestParseBkp_AggregateImageBudgetCapsLaterRows(t *testing.T) {
 	if !bytes.Equal(first.ImageData, img1) || first.ImageIssue != "" {
 		t.Errorf("first row = (data=%q issue=%q), want the resolved image with no issue", first.ImageData, first.ImageIssue)
 	}
-	if len(second.ImageData) != 0 || second.ImageIssue != ImageIssueTooLarge {
-		t.Errorf("second row = (data=%q issue=%q), want empty data and ImageIssue=%q once the aggregate budget is exhausted", second.ImageData, second.ImageIssue, ImageIssueTooLarge)
+	if len(second.ImageData) != 0 || second.ImageIssue != shared.ImageIssueTooLarge {
+		t.Errorf("second row = (data=%q issue=%q), want empty data and ImageIssue=%q once the aggregate budget is exhausted", second.ImageData, second.ImageIssue, shared.ImageIssueTooLarge)
 	}
 }
 
@@ -1292,8 +1300,8 @@ func TestParseBkp_BlockedRowNeverResolvesImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseBkp: %v", err)
 	}
-	if len(res.Items) != 1 || res.Items[0].Issue != IssueSourceDeleted {
-		t.Fatalf("got %+v, want one item with Issue=%q", res.Items, IssueSourceDeleted)
+	if len(res.Items) != 1 || res.Items[0].Issue != shared.IssueSourceDeleted {
+		t.Fatalf("got %+v, want one item with Issue=%q", res.Items, shared.IssueSourceDeleted)
 	}
 	it := res.Items[0]
 	if len(it.ImageData) != 0 || it.ImageIssue != "" {
@@ -1587,8 +1595,8 @@ func TestParseBkp_UseItemNumbersAsBarcodesSkipsInFileDuplicate(t *testing.T) {
 	if second.Barcode != "" {
 		t.Errorf("second (colliding) occurrence Barcode = %q, want empty", second.Barcode)
 	}
-	if second.BarcodeIssue != BarcodeIssueDuplicateItemNumber {
-		t.Errorf("second occurrence BarcodeIssue = %q, want %q", second.BarcodeIssue, BarcodeIssueDuplicateItemNumber)
+	if second.BarcodeIssue != shared.BarcodeIssueDuplicateItemNumber {
+		t.Errorf("second occurrence BarcodeIssue = %q, want %q", second.BarcodeIssue, shared.BarcodeIssueDuplicateItemNumber)
 	}
 	if second.BarcodeIssueRaw != "555" {
 		t.Errorf("second occurrence BarcodeIssueRaw = %q, want the raw PLU %q", second.BarcodeIssueRaw, "555")

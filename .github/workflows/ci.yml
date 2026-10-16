@@ -184,6 +184,23 @@ jobs:
         run: |
           go test -count=1 ./...
           GOOS=wasip1 GOARCH=wasm go vet ./...
+      # catimport is the shared catalogue parser, a nested module (ADR-0164
+      # §1, ut-docs#4525): the root `go build/test ./...` never reaches it.
+      - name: Shared catimport module build, vet and tests
+        working-directory: catimport
+        run: |
+          go build ./...
+          go vet ./...
+          go test -count=1 ./...
+      - name: Shared catimport module lint (golangci-lint, unused)
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14.0
+          working-directory: catimport
+      - name: catimport module guard (self-contained, used in-tree)
+        run: bash scripts/ci/guard-catimport-module.sh
+      - name: catimport module guard regression test
+        run: bash scripts/ci/guard-catimport-module_test.sh
       - name: i18n coverage guard
         run: bash scripts/ci/guard-i18n.sh
       - name: i18n coverage guard regression test

@@ -13,7 +13,7 @@ import (
 )
 
 // FormatPercent renders basis points as a plain percent string ("19",
-// "19.5") — the exact shape ParseTaxRateBP (internal/catimport) reads back.
+// "19.5") — the exact shape ParseTaxRateBP (the shared catimport module) reads back.
 // Deliberately NOT money.Money/minorToDecimal: basis points are hundredths
 // of a percent, a fixed scale of their own, not money decimals.
 func FormatPercent(bp int) string {

@@ -1,5 +1,7 @@
 package catalogtypes
 
+import "github.com/universaltill/universal-till/catimport/catalogrules"
+
 type ItemInput struct {
 	ID          string
 	SKU         string
@@ -56,9 +58,11 @@ type ItemInput struct {
 }
 
 // Item types (items.item_type, migration 071's CHECK — ut-docs#4214).
+// Defined once in the shared catimport module's catalogrules (ADR-0164 §1,
+// ut-docs#4525), which the parser checks against too.
 const (
-	ItemTypeStandard    = "standard"
-	ItemTypeGiftVoucher = "gift_voucher"
+	ItemTypeStandard    = catalogrules.ItemTypeStandard
+	ItemTypeGiftVoucher = catalogrules.ItemTypeGiftVoucher
 )
 
 // NormalizeItemType maps "" to ItemTypeStandard and reports whether the
@@ -74,27 +78,20 @@ func NormalizeItemType(t string) (string, bool) {
 	return t, false
 }
 
-// Net-quantity units (items.net_quantity_unit, migration 060's CHECK).
+// Net-quantity units (items.net_quantity_unit, migration 060's CHECK),
+// defined once in catalogrules (ADR-0164 §1, ut-docs#4525).
 const (
-	NetQuantityGrams       = "g"
-	NetQuantityMillilitres = "ml"
-	NetQuantityEach        = "ea"
+	NetQuantityGrams       = catalogrules.NetQuantityGrams
+	NetQuantityMillilitres = catalogrules.NetQuantityMillilitres
+	NetQuantityEach        = catalogrules.NetQuantityEach
 )
 
 // ValidNetQuantity reports whether a value/unit pair may be stored: both
-// nil (none), or a positive value with one of the three units.
+// nil (none), or a positive value with one of the three units. It is the
+// shared module's rule, so an imported pair and a saved pair can never be
+// judged differently.
 func ValidNetQuantity(value *int64, unit *string) bool {
-	if value == nil && unit == nil {
-		return true
-	}
-	if value == nil || unit == nil || *value <= 0 {
-		return false
-	}
-	switch *unit {
-	case NetQuantityGrams, NetQuantityMillilitres, NetQuantityEach:
-		return true
-	}
-	return false
+	return catalogrules.ValidNetQuantity(value, unit)
 }
 
 // ItemColor is one swatch in the fixed item-color palette (ut-docs#1901).

@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	barcodepkg "github.com/universaltill/universal-till/internal/barcode"
+	barcodepkg "github.com/universaltill/universal-till/catimport/barcode"
 	"github.com/universaltill/universal-till/internal/data/seeddata"
 )
 
@@ -151,7 +151,7 @@ func TestSeedShortcutButtonsValidEAN13(t *testing.T) {
 }
 
 // isValidEAN13 reports whether barcode is 13 digits with a valid check
-// digit. Delegates to the shared internal/barcode checksum (ADR-0059
+// digit. Delegates to the shared catimport/barcode checksum (ADR-0059
 // Decision §1 — "reuse/extract ... rather than duplicating it") instead of
 // keeping its own third copy of the algorithm (ut-docs#933 review finding
 // F5 — this file and internal/data/catalog_repo.go had each grown one).

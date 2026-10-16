@@ -2,8 +2,6 @@ package barcode
 
 import (
 	"testing"
-
-	"github.com/universaltill/universal-till/internal/money"
 )
 
 // ValidEAN13Checksum is exercised elsewhere in this file only indirectly
@@ -176,8 +174,8 @@ func TestEAN13PricePrefix02(t *testing.T) {
 	if !d.HasEmbeddedPrice {
 		t.Fatal("HasEmbeddedPrice = false, want true")
 	}
-	if d.EmbeddedPrice != money.FromMinor(350) {
-		t.Errorf("EmbeddedPrice = %v, want 350 minor units", d.EmbeddedPrice)
+	if d.EmbeddedPriceMinor != 350 {
+		t.Errorf("EmbeddedPriceMinor = %d, want 350", d.EmbeddedPriceMinor)
 	}
 	if d.HasEmbeddedWeight {
 		t.Error("HasEmbeddedWeight = true, want false")
@@ -337,5 +335,32 @@ func TestMatchNoEnabledSymbologyMatches(t *testing.T) {
 	reg := Default()
 	if _, ok := reg.Match([]string{"EAN13"}, "not-a-valid-ean13"); ok {
 		t.Error("Match(unmatchable code) = true, want false")
+	}
+}
+
+// IsLookupKey says whether key is what id's decode stores, so a consumer can
+// accept an already-decoded, typed barcode without re-matching it (a
+// re-match of an embedded-data key lands on a different symbology).
+func TestIsLookupKey(t *testing.T) {
+	reg := Default()
+	cases := []struct {
+		id, key string
+		want    bool
+	}{
+		{"EAN13", "5449000000996", true},
+		{"EAN13", "5449000000997", false},                // bad check digit
+		{"EAN13_PRICE_PREFIX02", "0212345000000", true},  // zeroed template
+		{"EAN13_PRICE_PREFIX02", "0212345002506", false}, // a raw label, not its key
+		{"EAN13_PRICE_PREFIX02", "2212345000000", false}, // wrong prefix
+		{"EAN13_WEIGHT_PREFIX2X", "2112345000000", true},
+		{"EAN13_WEIGHT_PREFIX2X", "211234500000", false}, // 12 digits
+		{"CODE128", "ABC-123", true},
+		{"NOPE", "123", false},
+		{"EAN13", "", false},
+	}
+	for _, c := range cases {
+		if got := reg.IsLookupKey(c.id, c.key); got != c.want {
+			t.Errorf("IsLookupKey(%q, %q) = %v, want %v", c.id, c.key, got, c.want)
+		}
 	}
 }

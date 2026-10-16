@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/universaltill/universal-till/internal/catimport"
+	"github.com/universaltill/universal-till/catimport"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -1877,7 +1877,7 @@ BEGIN SELECT RAISE(ABORT, 'simulated stock movement failure'); END;`); err != ni
 // criteria run through the full HTTP import path: under the shop's DEFAULT
 // enabled symbologies (every permissive catch-all on, ADR-0059 §2), a
 // legitimate 4-digit produce PLU now matches CODE128's structural catch-all
-// via the shared internal/barcode registry and imports WITH its barcode
+// via the shared catimport/barcode registry and imports WITH its barcode
 // attached — superseding this test's own pre-#936 shape (formerly
 // TestImport_UnsupportedBarcodeShapeWarnsButStillImports), which asserted
 // the OLD ad hoc 6-14-digit rule's rejection of this exact code. See

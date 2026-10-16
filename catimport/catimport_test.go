@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/universaltill/universal-till/internal/barcode"
+	"github.com/universaltill/universal-till/catimport/barcode"
 )
 
-// testEnabledIDs is the full internal/barcode default registry, used as
+// testEnabledIDs is the full catimport/barcode default registry, used as
 // every test's enabledSymbologyIDs unless a test specifically exercises a
 // narrower shop-enabled set (ADR-0059 Decision §3, ut-docs#936) — none of
 // this file's fixture barcodes fall in the two embedded-data prefixes
@@ -832,7 +832,7 @@ Latte,555,2.80
 	}
 }
 
-// stripCSVDefuse is the reverse of pages.csvSafe (ut-docs#321): it only
+// StripCSVDefuse is the reverse of pages.csvSafe (ut-docs#321): it only
 // strips a leading "'" when the byte right after it is itself one of
 // csvSafe's own trigger chars — the exact two-byte pattern csvSafe emits,
 // and one a genuine hand-typed value beginning with an apostrophe would
@@ -847,7 +847,7 @@ func TestStripCSVDefuse(t *testing.T) {
 		{"empty", "", ""},
 		{"plain text", "Sparkling Water 500ml", "Sparkling Water 500ml"},
 		// These also cover the accepted lossy collision (2026-08-06 review,
-		// see stripCSVDefuse's doc comment): csvSafe("'=X") == csvSafe("=X")
+		// see StripCSVDefuse's doc comment): csvSafe("'=X") == csvSafe("=X")
 		// == "'=X", so a pre-existing "'=X"-shaped value is indistinguishable
 		// from our own defuse marker and strips the same way. Pinned here
 		// deliberately, not just incidentally exercised.
@@ -863,8 +863,8 @@ func TestStripCSVDefuse(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := stripCSVDefuse(c.in); got != c.want {
-				t.Errorf("stripCSVDefuse(%q) = %q, want %q", c.in, got, c.want)
+			if got := StripCSVDefuse(c.in); got != c.want {
+				t.Errorf("StripCSVDefuse(%q) = %q, want %q", c.in, got, c.want)
 			}
 		})
 	}

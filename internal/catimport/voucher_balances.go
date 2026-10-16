@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	shared "github.com/universaltill/universal-till/catimport"
 )
 
 // ErrNoCodeColumn is ParseVoucherBalances' own reason code (mirrors
@@ -214,7 +216,7 @@ func ParseVoucherBalances(r io.Reader, decimals int) (VoucherBalanceResult, erro
 		if rerr != nil {
 			return res, fmt.Errorf("row %d: %w", rowNum, rerr)
 		}
-		code := stripCSVDefuse(get(rec, "code"))
+		code := shared.StripCSVDefuse(get(rec, "code"))
 		if code == "" {
 			res.Issues = append(res.Issues, VoucherBalanceRowIssue{RowNum: rowNum, Code: code, Reason: VoucherBalanceIssueMissingCode})
 			continue
@@ -228,7 +230,7 @@ func ParseVoucherBalances(r io.Reader, decimals int) (VoucherBalanceResult, erro
 			continue
 		}
 		balanceRaw := get(rec, "balance")
-		balanceMinor, perr := ParsePrice(balanceRaw, decimals)
+		balanceMinor, perr := shared.ParsePrice(balanceRaw, decimals)
 		if perr != nil {
 			res.Issues = append(res.Issues, VoucherBalanceRowIssue{RowNum: rowNum, Code: code, Reason: VoucherBalanceIssueBadBalance})
 			continue
@@ -241,7 +243,7 @@ func ParseVoucherBalances(r io.Reader, decimals int) (VoucherBalanceResult, erro
 			RowNum:       rowNum,
 			Code:         code,
 			BalanceMinor: balanceMinor,
-			HolderLabel:  stripCSVDefuse(get(rec, "label")),
+			HolderLabel:  shared.StripCSVDefuse(get(rec, "label")),
 		}
 		if _, taken := firstRowByCode[code]; !taken {
 			firstRowByCode[code] = item

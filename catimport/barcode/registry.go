@@ -3,8 +3,6 @@ package barcode
 import (
 	"fmt"
 	"strings"
-
-	"github.com/universaltill/universal-till/internal/money"
 )
 
 // Default returns the ADR-0059 §1 default registry — the ten symbologies
@@ -252,8 +250,8 @@ func parseEAN13PricePrefix02(code string) (Decoded, bool) {
 		SymbologyID: "EAN13_PRICE_PREFIX02",
 		// digits 1-7 (prefix+item code) kept; the price (8-12) and check
 		// digit (13) — both label-specific — are zeroed to a stable key.
-		LookupKey:        code[0:7] + "000000",
-		HasEmbeddedPrice: true,
-		EmbeddedPrice:    money.FromMinor(int64(minorUnits)),
+		LookupKey:          code[0:7] + "000000",
+		HasEmbeddedPrice:   true,
+		EmbeddedPriceMinor: int64(minorUnits),
 	}, true
 }

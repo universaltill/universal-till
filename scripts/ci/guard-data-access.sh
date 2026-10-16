@@ -2,7 +2,9 @@
 #
 # Enforces the repository pattern (docs reference/coding-standards.md §1):
 # raw SQL must live in the data layer (internal/data) or migrations (internal/db).
-# Fails if a SQL statement appears in a Go source file anywhere else.
+# Fails if a SQL statement appears in a Go source file anywhere else under
+# internal/ or in the shared catimport/ module (ADR-0164 §1: a pure parser,
+# never a database client).
 #
 # database/sql *types* (*sql.Tx, sql.ErrNoRows, ...) are fine outside the data
 # layer — transaction handles are threaded through the domain layer. This guard
@@ -31,7 +33,7 @@ cd "${ROOT_DIR}"
 same_line='("|`)[[:space:]]*(SELECT|INSERT[[:space:]]+INTO|UPDATE[[:space:]]|DELETE[[:space:]]+FROM|CREATE[[:space:]]+TABLE|SAVEPOINT([^A-Za-z0-9_]|$)|ROLLBACK[[:space:]]+TO([^A-Za-z0-9_]|$)|RELEASE([^A-Za-z0-9_]|$)|BEGIN([^A-Za-z0-9_]|$)|COMMIT([^A-Za-z0-9_]|$))'
 line_start='^[[:space:]]*(SELECT[[:space:]]|INSERT[[:space:]]+INTO[[:space:]]|UPDATE[[:space:]]+[A-Za-z_]+[[:space:]]+SET|DELETE[[:space:]]+FROM[[:space:]]|CREATE[[:space:]]+TABLE[[:space:]]|SAVEPOINT([[:space:];]|$)|ROLLBACK[[:space:]]+TO([[:space:];]|$)|RELEASE([[:space:];]|$)|BEGIN([[:space:];]|$)|COMMIT([[:space:];]|$))'
 
-matches="$(grep -rnE "${same_line}|${line_start}" --include='*.go' internal 2>/dev/null \
+matches="$(grep -rnE "${same_line}|${line_start}" --include='*.go' internal catimport 2>/dev/null \
   | grep -vE '/(data|db|testsupport)/' \
   | grep -v '_test.go' || true)"
 

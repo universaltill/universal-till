@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	shared "github.com/universaltill/universal-till/catimport"
+
 	_ "modernc.org/sqlite" // pure-Go driver: read the extracted backup.db
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
@@ -124,10 +126,10 @@ var bkpMaxTotalImageSize int64 = 200 << 20 // 200MB
 // own params of the same name, meaningful only when useItemNumbersAsBarcodes
 // is true — this format never carries barcodes of its own (see the PLU
 // comment below), so enabledSymbologyIDs is otherwise unused.
-func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyIDs []string, useItemNumbersAsBarcodes bool) (Result, error) {
+func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyIDs []string, useItemNumbersAsBarcodes bool) (shared.Result, error) {
 	zr, err := zip.NewReader(r, size)
 	if err != nil {
-		return Result{}, fmt.Errorf("open zip: %w", err)
+		return shared.Result{}, fmt.Errorf("open zip: %w", err)
 	}
 
 	var dbFile, metaFile, docsZipFile *zip.File
@@ -146,7 +148,7 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 		}
 	}
 	if dbFile == nil || metaFile == nil {
-		return Result{}, ErrBkpMissingFiles
+		return shared.Result{}, ErrBkpMissingFiles
 	}
 	// Zip-bomb guard for meta.inf (review finding, ut-docs#511, 2026-08-09):
 	// it's always fully buffered below, so checking its declared size first
@@ -154,7 +156,7 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 	// own guard is separate, further down — enforced on bytes actually
 	// streamed, not this declared-size check (ut-docs#594).
 	if metaFile.UncompressedSize64 > bkpMaxMetaSize {
-		return Result{}, ErrBkpTooLarge
+		return shared.Result{}, ErrBkpTooLarge
 	}
 	// backup.db's declared size is a sound FAST REJECT (review finding,
 	// ut-docs#594): archive/zip refuses to read an entry whose declared
@@ -170,17 +172,17 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 	// streamed byte count below stays the authoritative check; this is the
 	// cheap gate in front of it.
 	if dbFile.UncompressedSize64 > uint64(bkpMaxDBSize) {
-		return Result{}, ErrBkpTooLarge
+		return shared.Result{}, ErrBkpTooLarge
 	}
 
 	metaBytes, err := readZipEntry(metaFile)
 	if err != nil {
-		return Result{}, fmt.Errorf("read meta.inf: %w", err)
+		return shared.Result{}, fmt.Errorf("read meta.inf: %w", err)
 	}
 
 	tmp, err := os.CreateTemp("", stagedupload.BkpDBPattern)
 	if err != nil {
-		return Result{}, fmt.Errorf("create temp file for backup.db: %w", err)
+		return shared.Result{}, fmt.Errorf("create temp file for backup.db: %w", err)
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
@@ -215,7 +217,7 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 	rc, err := dbFile.Open()
 	if err != nil {
 		tmp.Close()
-		return Result{}, fmt.Errorf("open backup.db entry: %w", err)
+		return shared.Result{}, fmt.Errorf("open backup.db entry: %w", err)
 	}
 	hasher := sha256.New()
 	crcHasher := crc32.NewIEEE()
@@ -223,13 +225,13 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 	rcCloseErr := rc.Close()
 	closeErr := tmp.Close()
 	if copyErr != nil {
-		return Result{}, fmt.Errorf("write temp backup.db: %w", copyErr)
+		return shared.Result{}, fmt.Errorf("write temp backup.db: %w", copyErr)
 	}
 	if rcCloseErr != nil {
-		return Result{}, fmt.Errorf("close backup.db entry: %w", rcCloseErr)
+		return shared.Result{}, fmt.Errorf("close backup.db entry: %w", rcCloseErr)
 	}
 	if closeErr != nil {
-		return Result{}, fmt.Errorf("close temp backup.db: %w", closeErr)
+		return shared.Result{}, fmt.Errorf("close temp backup.db: %w", closeErr)
 	}
 	// Backstop, deliberately kept even though the declared-size gate above
 	// pre-empts it for every archive archive/zip will actually read (a
@@ -238,14 +240,14 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 	// the bound hold on the bytes themselves rather than on a header field,
 	// so the guarantee survives anything the fast reject can't see.
 	if written > bkpMaxDBSize {
-		return Result{}, ErrBkpTooLarge
+		return shared.Result{}, ErrBkpTooLarge
 	}
 
 	if err := validateBkpMeta(metaBytes, bkpDigests{
 		sha256Hex: hex.EncodeToString(hasher.Sum(nil)),
 		crc32Hex:  fmt.Sprintf("%08x", crcHasher.Sum32()),
 	}); err != nil {
-		return Result{}, err
+		return shared.Result{}, err
 	}
 
 	// temp_store(2): read-only queries over a caller-supplied backup need
@@ -259,13 +261,13 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 	// truncates the path there and drops the _pragma query string with it.
 	sqlDB, err := sql.Open("sqlite", fmt.Sprintf("file:%s?_pragma=temp_store(2)", escapeSQLiteURIPath(tmpPath)))
 	if err != nil {
-		return Result{}, fmt.Errorf("open backup.db: %w", err)
+		return shared.Result{}, fmt.Errorf("open backup.db: %w", err)
 	}
 	defer sqlDB.Close()
 
 	products, err := data.ReadBkpProducts(context.Background(), sqlDB)
 	if err != nil {
-		return Result{}, fmt.Errorf("read Products table: %w", err)
+		return shared.Result{}, fmt.Errorf("read Products table: %w", err)
 	}
 
 	// ut-docs#1223: only bother extracting documents.zip when at least one
@@ -293,7 +295,7 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 		}
 	}
 
-	res := Result{Format: "speedy-kasse"}
+	res := shared.Result{Format: "speedy-kasse"}
 	seen := map[string]bool{}
 	dupSuffix := map[string]int{}
 	// Aggregate image-bytes budget (independent review, ut-docs#1223) —
@@ -322,7 +324,7 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 		// NULL, not the empty string (ut-docs#1176) — nothing further
 		// needed here for the empty case.
 		plu := strings.TrimSpace(p.ProductNumber)
-		item := ImportItem{
+		item := shared.ImportItem{
 			SKU:      plu,
 			Name:     name,
 			Category: p.ProductGroupText,
@@ -341,17 +343,17 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 		// not silently dropped. The two columns are independent: one being
 		// unparseable never stops the other from parsing.
 		if raw := p.TaxPercentageRaw; raw != "" {
-			if bp, terr := ParseTaxRateBP(raw); terr == nil {
+			if bp, terr := shared.ParseTaxRateBP(raw); terr == nil {
 				item.TaxRateBP, item.HasTax = bp, true
 			} else {
-				item.TaxIssue, item.TaxIssueRaw = TaxIssueUnparseable, raw
+				item.TaxIssue, item.TaxIssueRaw = shared.TaxIssueUnparseable, raw
 			}
 		}
 		if raw := p.TaxPercentage2Raw; raw != "" {
-			if bp, terr := ParseTaxRateBP(raw); terr == nil {
+			if bp, terr := shared.ParseTaxRateBP(raw); terr == nil {
 				item.TakeawayRateBP, item.HasTakeaway = bp, true
 			} else {
-				item.TakeawayTaxIssue, item.TakeawayTaxIssueRaw = TaxIssueUnparseable, raw
+				item.TakeawayTaxIssue, item.TakeawayTaxIssueRaw = shared.TaxIssueUnparseable, raw
 			}
 		}
 		// Price is parsed unconditionally, up front — mirroring catimport.go's
@@ -376,17 +378,17 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 		item.PriceMinor = price // 0 on a parse failure; Issue below governs whether the row can commit at all
 		switch {
 		case p.Status == bkpStatusDeleted:
-			item.Issue = IssueSourceDeleted
+			item.Issue = shared.IssueSourceDeleted
 		case p.ProductType == bkpProductTypeOrderMode:
-			item.Issue = IssueNotSellable
+			item.Issue = shared.IssueNotSellable
 		case name == "" && perr != nil:
 			// See IssueMissingNameAndBadPrice's doc comment (catimport.go).
-			item.Issue = IssueMissingNameAndBadPrice
+			item.Issue = shared.IssueMissingNameAndBadPrice
 			item.IssueDetail = p.SalesPriceRaw
 		case name == "":
-			item.Issue = IssueMissingName
+			item.Issue = shared.IssueMissingName
 		case perr != nil:
-			item.Issue = IssueBadPrice
+			item.Issue = shared.IssueBadPrice
 			item.IssueDetail = p.SalesPriceRaw
 		}
 		// Product photo (ut-docs#1223): only worth resolving for a row
@@ -405,7 +407,7 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 				if n := int64(len(item.ImageData)); n > 0 {
 					if totalImageBytes+n > bkpMaxTotalImageSize {
 						item.ImageData = nil
-						item.ImageIssue, item.ImageIssueRaw = ImageIssueTooLarge, raw
+						item.ImageIssue, item.ImageIssueRaw = shared.ImageIssueTooLarge, raw
 					} else {
 						totalImageBytes += n
 					}
@@ -463,7 +465,7 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 					}
 				}
 				item.SKU = candidate
-				item.SKUIssue = SKUIssueDuplicateInFile
+				item.SKUIssue = shared.SKUIssueDuplicateInFile
 				item.SKUIssueRaw = plu
 			}
 			// Register whichever SKU this row actually ends up claiming —
@@ -483,10 +485,10 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 		// suffix by this point.
 		if useItemNumbersAsBarcodes && item.Issue == "" && plu != "" {
 			if item.SKUIssue != "" {
-				item.BarcodeIssue = BarcodeIssueDuplicateItemNumber
+				item.BarcodeIssue = shared.BarcodeIssueDuplicateItemNumber
 				item.BarcodeIssueRaw = plu
 			} else {
-				item.Barcode, item.BarcodeType, item.BarcodeIssue, item.BarcodeIssueRaw = DeriveNumberBarcode(plu, enabledSymbologyIDs)
+				item.Barcode, item.BarcodeType, item.BarcodeIssue, item.BarcodeIssueRaw = shared.DeriveNumberBarcode(plu, enabledSymbologyIDs)
 			}
 		}
 		res.Items = append(res.Items, item)
@@ -515,7 +517,7 @@ func collapseWhitespace(s string) string {
 // this is just a TrimSpace wrapper. See normalizeDecimalComma's doc comment
 // for the heuristic and its one accepted "2,900" ambiguity.
 func parseBkpSalesPrice(raw string, currencyDecimals int) (int64, error) {
-	return ParsePrice(strings.TrimSpace(raw), currencyDecimals)
+	return shared.ParsePrice(strings.TrimSpace(raw), currencyDecimals)
 }
 
 // readZipEntry reads one zip.File fully into memory — used for meta.inf,
@@ -662,7 +664,7 @@ func normalizeBkpArchivePath(p string) string {
 // way every reference is unresolved.
 func resolveBkpImage(idx *bkpDocsIndex, raw string) (data []byte, issue, issueRaw string) {
 	if idx == nil {
-		return nil, ImageIssueUnresolved, raw
+		return nil, shared.ImageIssueUnresolved, raw
 	}
 	norm := normalizeBkpArchivePath(raw)
 	entry, ok := idx.byNorm[norm]
@@ -673,15 +675,15 @@ func resolveBkpImage(idx *bkpDocsIndex, raw string) (data []byte, issue, issueRa
 		entry, ok = idx.byBase[filepath.Base(norm)]
 	}
 	if !ok {
-		return nil, ImageIssueUnresolved, raw
+		return nil, shared.ImageIssueUnresolved, raw
 	}
 	if entry.UncompressedSize64 > uint64(bkpMaxImageSize) {
-		return nil, ImageIssueTooLarge, raw
+		return nil, shared.ImageIssueTooLarge, raw
 	}
 	b, err := readZipEntry(entry)
 	if err != nil {
 		log.Printf("[catimport] read image %q from documents.zip: %v", entry.Name, err)
-		return nil, ImageIssueUnresolved, raw
+		return nil, shared.ImageIssueUnresolved, raw
 	}
 	return b, "", ""
 }

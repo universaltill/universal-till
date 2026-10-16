@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/universaltill/universal-till/internal/catalogtypes"
+	"github.com/universaltill/universal-till/catimport/catalogrules"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -325,7 +325,7 @@ func LooksLikeXLSXZip(r io.ReaderAt, size int64) bool {
 // drawn (ut-docs#1853 narrowed this from an original whole-sheet check)
 // and why guessing isn't attempted there.
 //
-// Deliberately does NOT run cell values through stripCSVDefuse: that
+// Deliberately does NOT run cell values through StripCSVDefuse: that
 // function reverses THIS app's own CSV-export formula-defusing (a leading
 // "'" this app itself added, see csvSafe) so re-importing your own
 // export doesn't show a literal "'=FOO" — a CSV-round-trip concern that
@@ -361,7 +361,7 @@ func ParseXLSX(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbology
 		headers[0] = strings.TrimPrefix(headers[0], "\uFEFF") // parity with Parse's BOM strip
 	}
 	res := Result{Format: DetectFormat(headers), SheetName: sheetName}
-	if res.Format == "shopify" {
+	if res.Format == FormatShopify {
 		return Result{}, ErrXLSXShopifyUnsupported
 	}
 	idx := headerIndex(headers)
@@ -439,15 +439,16 @@ func ParseXLSX(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbology
 			AgeRestricted: isTruthy(get(rec, "age_restricted")),
 			ItemType:      ParseItemType(get(rec, "item_type")),
 		}
+		item.ExternalID = sourceExternalID(res.Format, func(field string) string { return get(rec, field) })
 		if rawBarcode != "" && !barcodeMatched {
 			item.BarcodeIssue = BarcodeIssueNoSymbologyMatch
 			item.BarcodeIssueRaw = rawBarcode
 		}
-		if v := get(rec, "variation"); v != "" && !strings.EqualFold(v, "regular") && res.Format == "square" {
+		if v := get(rec, "variation"); v != "" && !strings.EqualFold(v, "regular") && res.Format == FormatSquare {
 			item.Name = strings.TrimSpace(item.Name + " " + v)
 		}
 		price, perr := ParsePrice(getNum(rowNo, rec, "price"), currencyDecimals)
-		if item.ItemType == catalogtypes.ItemTypeGiftVoucher && strings.TrimSpace(getNum(rowNo, rec, "price")) == "" {
+		if item.ItemType == catalogrules.ItemTypeGiftVoucher && strings.TrimSpace(getNum(rowNo, rec, "price")) == "" {
 			// ut-docs#4214: a gift voucher's value is asked at sale.
 			price, perr = 0, nil
 		}

@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/universaltill/universal-till/internal/barcode"
+	"github.com/universaltill/universal-till/catimport/barcode"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -2575,7 +2575,7 @@ func (a PriceResolverAdapter) resolve(ctx context.Context, code string, byName b
 			line.Qty = w
 			line.QtyFromCode = true
 		} else {
-			// internal/barcode always formats EmbeddedWeight as "%d.%03d"
+			// catimport/barcode always formats EmbeddedWeight as "%d.%03d"
 			// (registry.go), so this should be unreachable — but if it ever
 			// isn't, fail safe: keep the caller-supplied qty (QtyFromCode
 			// stays false) rather than silently losing the decoded weight
@@ -2589,7 +2589,7 @@ func (a PriceResolverAdapter) resolve(ctx context.Context, code string, byName b
 	// PriceCents, which would silently drop one label's price. A zero
 	// decoded price likewise stays a visible zero-priced line.
 	if dec.HasEmbeddedPrice {
-		line.PriceCents = dec.EmbeddedPrice
+		line.PriceCents = money.FromMinor(dec.EmbeddedPriceMinor)
 		line.Qty = 1
 		line.QtyFromCode = true
 		line.NoMerge = true
