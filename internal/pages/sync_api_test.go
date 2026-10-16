@@ -1083,8 +1083,8 @@ func TestTillsPage_ShowsPrimaryRowTaggedAsPrimaryWhenViewingFromAReplica(t *test
 	if !strings.Contains(body, "Front Counter") {
 		t.Fatalf("expected a replica to show the synced primary name, got body without it: %s", body)
 	}
-	if !strings.Contains(body, "the primary") {
-		t.Fatalf("expected the primary row tagged as \"the primary\" (not \"this till\") on a replica, got: %s", body)
+	if !strings.Contains(body, "("+httpx.T("en", "tills.the_primary")+")") {
+		t.Fatalf("expected the primary row tagged as \"the main till\" (not \"this till\") on a replica, got: %s", body)
 	}
 }
 

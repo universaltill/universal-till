@@ -715,6 +715,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// like the other reads on this page, a count error just hides the
 		// card's warning line instead of failing the page.
 		isPrimaryTill := d.SyncPrimaryURL(r.Context()) == ""
+		// The Tills card's role line (ut-docs#2782): "Main till" on a main
+		// or standalone till, the joined role plus the main till's address
+		// on a joined one.
+		tillRoleKey, mainTillAddr := "settings.tills.role_main", ""
+		if role := ownTillRole(r.Context(), d); role != "" {
+			tillRoleKey = "tills.role.replica"
+			if role == data.TillRoleSatellite {
+				tillRoleKey = "tills.role.satellite"
+			}
+			mainTillAddr = mainTillHostPort(d.SyncPrimaryURL(r.Context()))
+		}
 		var quarantineCount int
 		var hasEnrolledTills bool
 		if isPrimaryTill {
@@ -863,20 +874,25 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// still silently staged on disk (db.PendingRestore is a
 			// persistent, on-disk fact; nothing else re-checks it once the
 			// original POST response is gone).
-			"restorePending":         backupRestorePending(d.Cfg.DBPath),
-			"restartSupported":       backupRestartSupported(),
-			"payMethods":             payMethods,
-			"payDefault":             payDefault,
-			"payFees":                feeRows,
-			"exportEntries":          exportEntries,
-			"autoUpdateFollowsMain":  autoUpdateFollowsMain,
-			"autoUpdateFollowLine":   autoUpdateFollowLine,
-			"autoUpdateMainVersion":  autoUpdateMainVersion,
-			"autoUpdateEnabled":      autoUpdateEnabled,
-			"autoUpdateTime":         autoUpdateTime,
-			"about":                  aboutView(r.Context(), d.Settings, locale), // ut-docs#3091
-			"TillName":               deviceNameOrDefault(r.Context(), d, locale),
-			"TillRegisterID":         tillRegisterID,
+			"restorePending":        backupRestorePending(d.Cfg.DBPath),
+			"restartSupported":      backupRestartSupported(),
+			"payMethods":            payMethods,
+			"payDefault":            payDefault,
+			"payFees":               feeRows,
+			"exportEntries":         exportEntries,
+			"autoUpdateFollowsMain": autoUpdateFollowsMain,
+			"autoUpdateFollowLine":  autoUpdateFollowLine,
+			"autoUpdateMainVersion": autoUpdateMainVersion,
+			"autoUpdateEnabled":     autoUpdateEnabled,
+			"autoUpdateTime":        autoUpdateTime,
+			"about":                 aboutView(r.Context(), d.Settings, locale), // ut-docs#3091
+			"TillName":              deviceNameOrDefault(r.Context(), d, locale),
+			"TillRegisterID":        tillRegisterID,
+			"TillRoleKey":           tillRoleKey,
+			"MainTillAddr":          mainTillAddr,
+			// The Registers link is only offered to whoever /registers admits
+			// (ut-docs#2782 review) — same action as its nav slot.
+			"CanManageRegisters":     canPerform(d, r, "stock_location_management"),
 			"registers":              registers,
 			"QuarantineCount":        quarantineCount,
 			"ShowQuarantineSection":  showQuarantineSection,

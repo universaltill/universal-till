@@ -118,7 +118,7 @@ func TestSKUBackfillCommit_RefusedOnReplica(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("replica commit = %d, want 409: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "manage the catalog on the primary till") {
+	if !strings.Contains(rec.Body.String(), "manage the catalog on the main till") {
 		t.Fatalf("replica refusal must carry item_replica_use_primary's message: %s", rec.Body.String())
 	}
 	if n := missingSKUCount(t, db); n != 2 {

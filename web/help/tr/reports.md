@@ -218,7 +218,7 @@ Depozito iadesi (Pfandrückgabe) çıkışı **bu cihazın kendi kasasının** a
 vardiyasına kaydedilir — aynı anda başka bir kasanın vardiyası açık olsa
 bile asla diğer çekmeceye düşmez. Birden fazla kasası olan bir mağazada
 cihazın önce hangi kasa olduğunu bilmesi gerekir: Ayarlar → Kasalar'da
-"Bu cihazın kasası"nı ayarlayın; yoksa çıkış, sizi oraya yönlendiren bir
+"Ödemeler için nakit kasası"nı ayarlayın; yoksa çıkış, sizi oraya yönlendiren bir
 mesajla reddedilir.
 
 Raporlar'daki Ödemeler ve kanallar sekmesi, seçili dönem için bir "Nedene

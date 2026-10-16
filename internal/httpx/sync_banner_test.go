@@ -84,7 +84,7 @@ func TestInventoryBannerHasNoLinkWhenNotActionable(t *testing.T) {
 	if strings.Contains(body, `href="http://primary.till.local:8080/inventory"`) {
 		t.Fatalf("ut-docs#390: expected NO link to the primary till when crossdevicelinkactionable is false — this strands the kiosk operator, got %.800s", body)
 	}
-	if !strings.Contains(body, "Edit this on the primary till") {
+	if !strings.Contains(body, "Edit this on the main till") {
 		t.Fatalf("expected the inert fallback text, got %.800s", body)
 	}
 }
@@ -158,7 +158,7 @@ func TestCatalogBannerHasNoLinkWhenNotActionable(t *testing.T) {
 	if strings.Contains(body, `href="http://primary.till.local:8080/catalog"`) {
 		t.Fatalf("ut-docs#390: expected NO link to the primary till when crossdevicelinkactionable is false — this strands the kiosk operator, got %.800s", body)
 	}
-	if !strings.Contains(body, "Edit this on the primary till") {
+	if !strings.Contains(body, "Edit this on the main till") {
 		t.Fatalf("expected the inert fallback text, got %.800s", body)
 	}
 }

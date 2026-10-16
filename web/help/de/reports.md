@@ -236,7 +236,7 @@ Eine Pfandrückgabe-Auszahlung wird gegen die offene Schicht des **eigenen
 Registers dieser Kasse** gebucht — auch wenn gleichzeitig die Schicht eines
 anderen Registers offen ist, landet sie nie auf der anderen Schublade. In
 einem Geschäft mit mehr als einem Register muss die Kasse zunächst wissen,
-welches Register sie ist: Legen Sie „Register dieser Kasse“ unter Einstellungen
+welches Register sie ist: Legen Sie „Kassenplatz für Auszahlungen“ unter Einstellungen
 → Kassen fest, sonst wird die Auszahlung mit einer entsprechenden Meldung
 abgelehnt.
 
@@ -333,15 +333,15 @@ Verkaufssynchronisierung haben, dies ist also ein Netzwerkkontakt-Signal, kein
 Beweis dafür, dass ihre Verkäufe tatsächlich angekommen sind; nützlich, um eine
 zurückgefallene Kasse zu erkennen, kein Ersatz für den Abgleich der Summen.
 Eine Kasse zeigt hier „—“, wenn sie nie in Kontakt stand, oder (bei einer
-Replika) weil ihre Kontaktzeit nicht von der Primärkasse heruntergegeben wird.
+Replika) weil ihre Kontaktzeit nicht von der Hauptkasse heruntergegeben wird.
 
-Nur die Primärkasse eines Geschäfts sammelt die Verkäufe anderer Kassen — eine
+Nur die Hauptkasse eines Geschäfts sammelt die Verkäufe anderer Kassen — eine
 Replika-Kasse hat für das Kassenjournal immer nur ihre eigenen lokalen Verkäufe,
 unabhängig vom gewählten Kassenfilter, da eine Replika ihre eigenen Verkäufe
-immer nur einseitig nach oben zur Primärkasse überträgt und niemals die
+immer nur einseitig nach oben zur Hauptkasse überträgt und niemals die
 Verkäufe der Geschwister zurückerhält. Die Wahl von „Alle Kassen“ oder einer
 bestimmten anderen Kasse auf einer Replika zeigt eine erklärende Meldung, dass
-kassenübergreifende Verkäufe nur auf der Primärkasse des Geschäfts verfügbar
+kassenübergreifende Verkäufe nur auf der Hauptkasse des Geschäfts verfügbar
 sind, statt einer Tabelle, die still leer ist, ohne zu erklären, warum.
 
 ## Trinkgeld- und Servicegebühr-Auszahlungen an Mitarbeiter (Reiter Trinkgeld)

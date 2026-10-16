@@ -343,7 +343,7 @@ func TestCatalogItemMutations_ConflictShowsReloadMessage(t *testing.T) {
 func TestCatalogOutOfScopeMutations_StillRefusedOnReplica(t *testing.T) {
 	main := newStubMain(t)
 	rc := newReplicaCatalog(t, main.srv.URL)
-	const wantMsg = "manage the catalog on the primary till"
+	const wantMsg = "manage the catalog on the main till"
 	for _, c := range []struct {
 		label, path string
 		form        url.Values

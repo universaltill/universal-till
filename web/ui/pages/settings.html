@@ -1979,6 +1979,10 @@
      renders for every session. -->
 <div class="card" id="settings-tills">
   <h2>🔗 {{ T "tills.title" }}</h2>
+  <!-- ut-docs#2782: which kind of till this is, and (on a joined till) the
+       main till it follows. -->
+  <p id="settings-till-role"><strong>{{ T "settings.tills.role_label" }}: {{ T .TillRoleKey }}</strong>
+    {{ if .MainTillAddr }}<br><span class="muted">{{ printf (T "settings.tills.main_till_addr") .MainTillAddr }}</span>{{ end }}</p>
   <!-- This till's own name, on every till (ut-docs#3292): the main till
        saves till.name; a joined till saves its own per-till sync.till_name,
        never till.name (which there holds the main till's name). -->
@@ -2015,7 +2019,8 @@
     </label>
     <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
     <span id="till-register-msg" aria-live="polite"></span>
-    <p class="muted">{{ T "settings.tills.register_help" }}</p>
+    <p class="muted">{{ T "settings.tills.register_help" }}
+      {{ if .CanManageRegisters }}<a href="/registers">{{ T "registers.title" }}</a>{{ end }}</p>
   </form>
   </div>
   <p class="muted">{{ T "settings.tills.help" }}</p>

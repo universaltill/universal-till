@@ -3610,3 +3610,102 @@ func settingsRefusedForCashier(t *testing.T, mux *http.ServeMux) string {
 	}
 	return body
 }
+
+// ut-docs#2782: the Tills card opens with this till's role ("Main till" on a
+// main/standalone till; the joined role plus the main till's address on a
+// joined one), and the register picker is labelled for what it does.
+func TestSettingsPage_TillsCardShowsRoleAndMainTillAddress(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	get := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+		req = auth.WithUser(req, mgrUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /settings = %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+	roleLine := func(role string) string {
+		return httpx.T("en", "settings.tills.role_label") + ": " + role
+	}
+	mainTill := httpx.T("en", "settings.tills.role_main")
+
+	body := get()
+	if !strings.Contains(body, roleLine(mainTill)) {
+		t.Fatalf("main till: want role line %q, got:\n%s", roleLine(mainTill), body)
+	}
+	if strings.Contains(body, "Main till: ") && strings.Contains(body, "192.168.1.10") {
+		t.Fatalf("main till must not show a main-till address")
+	}
+	if !strings.Contains(body, "Cash register for payouts") {
+		t.Fatalf("want the register label %q, got:\n%s", "Cash register for payouts", body)
+	}
+	if !strings.Contains(body, `href="/registers"`) {
+		t.Fatalf("want a link to the Registers page")
+	}
+
+	if err := d.Settings.Set(t.Context(), "sync.primary_url", "https://192.168.1.10:8080"); err != nil {
+		t.Fatal(err)
+	}
+	body = get()
+	if !strings.Contains(body, roleLine(httpx.T("en", "tills.role.replica"))) {
+		t.Fatalf("joined till: want role line %q, got:\n%s", roleLine("Additional till"), body)
+	}
+	if strings.Contains(body, roleLine(mainTill)) {
+		t.Fatalf("joined till must not claim to be the main till")
+	}
+	if !strings.Contains(body, "Main till: 192.168.1.10:8080") {
+		t.Fatalf("joined till: want the main till's address, got:\n%s", body)
+	}
+
+	// A satellite names its own role, not "Additional till".
+	if err := d.Settings.Set(t.Context(), tillRoleSettingsKey, data.TillRoleSatellite); err != nil {
+		t.Fatal(err)
+	}
+	body = get()
+	if !strings.Contains(body, roleLine(httpx.T("en", "tills.role.satellite"))) {
+		t.Fatalf("satellite: want role line %q, got:\n%s", roleLine(httpx.T("en", "tills.role.satellite")), body)
+	}
+}
+
+// The Registers link is offered only to a session /registers admits
+// (stock_location_management), not to everyone who can open Settings.
+func TestSettingsPage_TillsCardRegistersLinkFollowsRegistersPermission(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	shown := func() bool {
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/settings", nil), mgrUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /settings = %d", rec.Code)
+		}
+		return strings.Contains(rec.Body.String(), `href="/registers"`)
+	}
+	if !shown() {
+		t.Fatalf("manager with stock_location_management: want the Registers link")
+	}
+	if err := data.NewAuthRepo(d.Db).SetRolePermission(t.Context(), nil, "manager", "stock_location_management", false); err != nil {
+		t.Fatal(err)
+	}
+	if shown() {
+		t.Fatalf("manager without stock_location_management must not get a link /registers would refuse")
+	}
+}
+
+func TestMainTillHostPort(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"", ""},
+		{"https://192.168.1.10:8080", "192.168.1.10:8080"},
+		{"http://till.local:8080/", "till.local:8080"},
+		{"https://user:pw@192.168.1.10:8080/x", "192.168.1.10:8080"},
+		{"192.168.1.10:8080", "192.168.1.10:8080"},
+		{"192.168.1.10:8080/x?y=1", "192.168.1.10:8080"},
+		{"user:pw@192.168.1.10:8080", "192.168.1.10:8080"},
+		{"  https://10.0.0.2  ", "10.0.0.2"},
+	} {
+		if got := mainTillHostPort(tc.in); got != tc.want {
+			t.Errorf("mainTillHostPort(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
