@@ -81,14 +81,46 @@ type OptionSetAdmin struct {
 // leaves the same state.
 func (r *OptionSetRepo) SaveOptionSet(ctx context.Context, p OptionSetSave) (OptionSetSaveResult, error) {
 	var res OptionSetSaveResult
+	p, values, err := prepareOptionSetSave(p)
+	if err != nil {
+		return res, err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return res, fmt.Errorf("save option set: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if res, err = saveOptionSetTx(ctx, tx, p, values); err != nil {
+		return res, err
+	}
+	if err := tx.Commit(); err != nil {
+		return res, fmt.Errorf("save option set: commit: %w", err)
+	}
+	return res, nil
+}
+
+// SaveOptionSetTx is SaveOptionSet inside the caller's transaction — the
+// cloud catalogue pull's ≤100-row chunks (ADR-0162 §4, ut-docs#4491): the
+// same validation and write.
+func (r *OptionSetRepo) SaveOptionSetTx(ctx context.Context, tx *sql.Tx, p OptionSetSave) (OptionSetSaveResult, error) {
+	p, values, err := prepareOptionSetSave(p)
+	if err != nil {
+		return OptionSetSaveResult{}, err
+	}
+	return saveOptionSetTx(ctx, tx, p, values)
+}
+
+// prepareOptionSetSave is SaveOptionSet's validation that needs no
+// database; it returns the normalized values when the patch carries them.
+func prepareOptionSetSave(p OptionSetSave) (OptionSetSave, []OptionSetValueInput, error) {
 	p.ID = strings.TrimSpace(p.ID)
 	if p.ID == "" {
-		return res, errors.New("missing id")
+		return p, nil, errors.New("missing id")
 	}
 	if p.Name != nil {
 		n := strings.TrimSpace(*p.Name)
 		if n == "" {
-			return res, errors.New("the option set name must not be blank")
+			return p, nil, errors.New("the option set name must not be blank")
 		}
 		p.Name = &n
 	}
@@ -96,20 +128,19 @@ func (r *OptionSetRepo) SaveOptionSet(ctx context.Context, p OptionSetSave) (Opt
 	if p.Values != nil {
 		var err error
 		if values, err = normalizeOptionSetValues(*p.Values); err != nil {
-			return res, err
+			return p, nil, err
 		}
 	}
+	return p, values, nil
+}
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return res, fmt.Errorf("save option set: begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
+// saveOptionSetTx is SaveOptionSet's write, in tx, of a prepared patch.
+func saveOptionSetTx(ctx context.Context, tx *sql.Tx, p OptionSetSave, values []OptionSetValueInput) (OptionSetSaveResult, error) {
+	var res OptionSetSaveResult
 	var name string
 	var active int
 	exists := true
-	err = tx.QueryRowContext(ctx, `SELECT name, is_active FROM option_sets WHERE id = ?`, p.ID).Scan(&name, &active)
+	err := tx.QueryRowContext(ctx, `SELECT name, is_active FROM option_sets WHERE id = ?`, p.ID).Scan(&name, &active)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		if !p.Create {
@@ -152,9 +183,6 @@ func (r *OptionSetRepo) SaveOptionSet(ctx context.Context, p OptionSetSave) (Opt
 			return res, err
 		}
 		res.Changed = append(res.Changed, "values")
-	}
-	if err := tx.Commit(); err != nil {
-		return res, fmt.Errorf("save option set: commit: %w", err)
 	}
 	res.Name = name
 	return res, nil
@@ -432,6 +460,28 @@ func (r *OptionSetRepo) DeleteOptionSetIfUnused(ctx context.Context, id string) 
 		return false, fmt.Errorf("delete option set: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	deleted, err := deleteOptionSetIfUnusedTx(ctx, tx, id)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("delete option set: commit: %w", err)
+	}
+	return deleted, nil
+}
+
+// DeleteOptionSetIfUnusedTx is DeleteOptionSetIfUnused inside the caller's
+// transaction (the cloud catalogue pull's tombstone, ut-docs#4491): the
+// same rule, ErrOptionSetInUse while an active item has the set applied.
+func (r *OptionSetRepo) DeleteOptionSetIfUnusedTx(ctx context.Context, tx *sql.Tx, id string) (bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false, errors.New("id required")
+	}
+	return deleteOptionSetIfUnusedTx(ctx, tx, id)
+}
+
+func deleteOptionSetIfUnusedTx(ctx context.Context, tx *sql.Tx, id string) (bool, error) {
 	inUse, err := rowExists(ctx, tx, `SELECT 1 FROM item_option_sets ios JOIN items i ON i.id = ios.item_id WHERE ios.option_set_id = ? AND i.is_active = 1 LIMIT 1`, id)
 	if err != nil {
 		return false, fmt.Errorf("delete option set: usage check: %w", err)
@@ -446,9 +496,6 @@ func (r *OptionSetRepo) DeleteOptionSetIfUnused(ctx context.Context, id string) 
 	n, err := res.RowsAffected()
 	if err != nil {
 		return false, fmt.Errorf("delete option set: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("delete option set: commit: %w", err)
 	}
 	return n > 0, nil
 }

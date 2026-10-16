@@ -794,26 +794,52 @@ func (r *ModifierRepo) SetCategoryModifierGroups(ctx context.Context, categoryID
 		return fmt.Errorf("set category modifier groups: begin: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op after Commit
-	if _, err := tx.ExecContext(ctx, `DELETE FROM category_modifier_group_links WHERE category_id = ?`, categoryID); err != nil {
-		return fmt.Errorf("set category modifier groups: delete: %w", err)
-	}
-	seen := map[string]bool{}
-	sortOrder := 0
-	for _, gid := range groupIDs {
-		gid = strings.TrimSpace(gid)
-		if gid == "" || seen[gid] {
-			continue
-		}
-		seen[gid] = true
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO category_modifier_group_links (category_id, group_id, sort_order) VALUES (?, ?, ?)`,
-			categoryID, gid, sortOrder); err != nil {
-			return fmt.Errorf("set category modifier groups: insert: %w", err)
-		}
-		sortOrder++
+	if err := setCategoryModifierGroupsTx(ctx, tx, categoryID, dedupeIDs(groupIDs)); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("set category modifier groups: commit: %w", err)
+	}
+	return nil
+}
+
+// SetCategoryModifierGroupsTx is SetCategoryModifierGroups inside the
+// caller's transaction — the cloud catalogue pull's category
+// modifier_group_cloud_ids (ADR-0162 §4, ut-docs#4491), whose list is the
+// category's whole set. Because a pulled row the till did not author must
+// be refused, never half-applied, it also checks what the screen's form
+// cannot submit wrongly: the category must exist, and every group must
+// exist (active or not — the cloud may keep a deactivated group on a
+// category, and the sale-time resolver skips inactive groups anyway).
+func (r *ModifierRepo) SetCategoryModifierGroupsTx(ctx context.Context, tx *sql.Tx, categoryID string, groupIDs []string) error {
+	categoryID = strings.TrimSpace(categoryID)
+	if categoryID == "" {
+		return errors.New("category_id required")
+	}
+	if ok, err := rowExists(ctx, tx, `SELECT 1 FROM categories WHERE id = ?`, categoryID); err != nil {
+		return fmt.Errorf("set category modifier groups: check category: %w", err)
+	} else if !ok {
+		return fmt.Errorf("%w: %s", ErrCategoryNotFound, categoryID)
+	}
+	ids := dedupeIDs(groupIDs)
+	if err := requireGroupsTx(ctx, tx, ids); err != nil {
+		return err
+	}
+	return setCategoryModifierGroupsTx(ctx, tx, categoryID, ids)
+}
+
+// setCategoryModifierGroupsTx replaces the category's links with ids
+// (already trimmed and de-duplicated), index = sort_order.
+func setCategoryModifierGroupsTx(ctx context.Context, tx *sql.Tx, categoryID string, ids []string) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM category_modifier_group_links WHERE category_id = ?`, categoryID); err != nil {
+		return fmt.Errorf("set category modifier groups: delete: %w", err)
+	}
+	for i, gid := range ids {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO category_modifier_group_links (category_id, group_id, sort_order) VALUES (?, ?, ?)`,
+			categoryID, gid, i); err != nil {
+			return fmt.Errorf("set category modifier groups: insert: %w", err)
+		}
 	}
 	return nil
 }

@@ -19,16 +19,19 @@
 //     its cloud_links row share a savepoint.
 //   - Within one version group (one cloud transaction, which always
 //     arrives whole) rows are applied in dependency order — tax codes,
-//     categories parents-first, items, then the rest — not the feed's
-//     kind/cloud_id order, so references inside the group resolve.
+//     modifier groups, option sets, categories parents-first, items, then
+//     the rest — not the feed's kind/cloud_id order, so references inside
+//     the group resolve.
 //   - Every row gets its own savepoint: a row the till refuses (price
 //     ceiling, palette, unknown parent, …) rolls back alone, keeps the
 //     till's previous state, is upserted into cloud_apply_failures and
 //     logged, and the cursor still moves past it, so one bad row cannot
-//     wedge the feed. Kinds this slice does not apply (variants, barcodes,
-//     modifier groups, option sets, layouts, staff, settings — follow-ups
-//     ut-docs#4491/#4492 — and any unknown kind) are skipped, cursor
-//     advancing.
+//     wedge the feed. Applied kinds: tax_code, category, item,
+//     modifier_group, option_set (ut-docs#4491), with the category/item
+//     modifier-group, opt-out and option-set link lists. Kinds this
+//     applier does not apply (item_variant, item_barcode — ut-docs#4521;
+//     layout, staff, setting — ut-docs#4492; any unknown kind) are
+//     skipped, cursor advancing.
 //   - An error that is not the till refusing a row (context ended,
 //     database failure, a hook failing) aborts the chunk with the cursor
 //     unchanged; it is never recorded as a refusal.
@@ -68,7 +71,9 @@ import (
 // ApplierVersion is the version of this package's row applier. Bump it
 // when a release applies a field or kind it skipped before: every till
 // re-pulls from 0 once (cursor reset) and so picks up what it ignored.
-const ApplierVersion = 1
+// 1: tax codes, categories, items (ut-docs#4463). 2: modifier groups,
+// option sets and the link lists naming them (ut-docs#4491).
+const ApplierVersion = 2
 
 // Settings keys of the pull state. "cloudsync." is a per-till settings
 // family (data.PerTillSettingPrefixes): never LAN-synced, so the main
@@ -174,6 +179,7 @@ func Run(ctx context.Context, db *sql.DB, fetch Fetcher, opt Options) (Result, e
 	r := &runner{
 		db: db, settings: settings, opt: opt,
 		cat: data.NewCatalogRepo(db), pos: data.NewPOSRepo(db), links: data.NewCloudLinkRepo(),
+		mods: data.NewModifierRepo(db), sets: data.NewOptionSetRepo(db),
 	}
 	resynced := false
 	for pages := 0; pages < maxPagesPerRun; pages++ {
@@ -343,6 +349,8 @@ type runner struct {
 	settings *data.SettingsRepo
 	cat      *data.CatalogRepo
 	pos      *data.POSRepo
+	mods     *data.ModifierRepo
+	sets     *data.OptionSetRepo
 	links    *data.CloudLinkRepo
 	opt      Options
 	// photos are thumbnails the open chunk's icons replaced, reported to
@@ -430,11 +438,12 @@ func (r *runner) applyPage(ctx context.Context, p Page, st *state, res *Result) 
 // dependencyOrder returns rows with each version group (the rows of one
 // cloud transaction, which arrive whole and contiguous) reordered so a
 // row's references within the group are applied before it: tax codes,
-// then categories parents-first, then items, then every other kind. The
-// server orders a group by kind then cloud_id (ut-cloud
-// internal/catalogfeed/kinds.go), so an item written with its tax code,
-// or a child category whose cloud_id sorts before its new parent's, would
-// otherwise be refused as "has not reached this till". The order is
+// then modifier groups, then option sets, then categories parents-first,
+// then items, then every other kind. The server orders a group by kind
+// then cloud_id (ut-cloud internal/catalogfeed/kinds.go), so an item
+// written with its tax code, or with a modifier group or option set it
+// names, or a child category whose cloud_id sorts before its new
+// parent's, would otherwise be refused as "has not reached this till". The order is
 // settled over the whole group before chunking, so when an oversized
 // group spans transactions a parent still lands in an earlier-or-same
 // chunk. Versions stay contiguous, so the cursor rule is unchanged.
@@ -455,11 +464,15 @@ func orderGroup(group []Row) []Row {
 	if len(group) < 2 {
 		return group
 	}
-	var tax, cats, items, other []Row
+	var tax, groups, sets, cats, items, other []Row
 	for _, r := range group {
 		switch r.Kind {
 		case kindTaxCode:
 			tax = append(tax, r)
+		case kindModifierGroup:
+			groups = append(groups, r)
+		case kindOptionSet:
+			sets = append(sets, r)
 		case kindCategory:
 			cats = append(cats, r)
 		case kindItem:
@@ -470,6 +483,8 @@ func orderGroup(group []Row) []Row {
 	}
 	out := make([]Row, 0, len(group))
 	out = append(out, tax...)
+	out = append(out, groups...)
+	out = append(out, sets...)
 	out = append(out, parentsFirst(cats)...)
 	out = append(out, items...)
 	return append(out, other...)
