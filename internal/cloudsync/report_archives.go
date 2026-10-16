@@ -18,9 +18,11 @@ import (
 )
 
 // Till-side uploader for the cloud report archive (ut-docs#574, ADR-0040
-// card 4, ADR-0147 §2/§3): the main till POSTs each report_archive row the
-// cloud has not acknowledged yet to {EndpointURL}/v1/stores/report-archives
-// and sets cloud_acked_at on a 2xx. Only in retention mode cloud or both;
+// card 4, ADR-0147 §2/§3): a till POSTs each report_archive row the cloud
+// has not acknowledged yet to {EndpointURL}/v1/stores/report-archives and
+// sets cloud_acked_at on a 2xx. Every till uploads its own Z chain
+// (ut-docs#4438, ADR-0147 amendment 2): the main till without a till_id,
+// an additional till under its sync.till_id. Only in retention mode cloud or both;
 // the un-acked rows are the queue, so a failed round simply leaves them for
 // a later one. Best-effort and off the sale path like the rest of this
 // package (ADR-0003). Same shape as pushSalesAggregates.
@@ -67,17 +69,20 @@ func reportArchiveWirePeriod(period string) (string, bool) {
 
 // reportArchiveUpload is the wire body; field names mirror ut-cloud's
 // report-archive upload handler. Content is the archived report itself
-// (content_json), sent as JSON, not as a string.
+// (content_json), sent as JSON, not as a string. TillID is omitted on the
+// main till (the cloud's empty till_id, ut-docs#3565) and set on an
+// additional till.
 type reportArchiveUpload struct {
 	StoreID string          `json:"store_id"`
+	TillID  string          `json:"till_id,omitempty"`
 	Kind    string          `json:"kind"`
 	Period  string          `json:"period"`
 	Content json.RawMessage `json:"content"`
 }
 
-// pushReportArchives runs one upload round. Called from Tick's main-till-
-// only block; never returns an error — every failure is logged and a later
-// round retries.
+// pushReportArchives runs one upload round. Called from every Tick, on the
+// main till and on an additional till alike; never returns an error — every
+// failure is logged and a later round retries.
 //
 // Outcomes per row (ADR-0147 §2):
 //   - 2xx: mark acked, clear the refusal state;
@@ -108,6 +113,11 @@ func pushReportArchives(ctx context.Context, cfg *config.Config, db *sql.DB) {
 		return
 	}
 
+	tillID, ok := reportArchiveTillID(ctx, settings)
+	if !ok {
+		return
+	}
+
 	repo := data.NewPOSRepo(db)
 	rows, err := repo.ListUnackedReportArchives(ctx, reportArchiveBatch)
 	if err != nil {
@@ -123,7 +133,7 @@ func pushReportArchives(ctx context.Context, cfg *config.Config, db *sql.DB) {
 			continue
 		}
 		payload, err := json.Marshal(reportArchiveUpload{
-			StoreID: storeID, Kind: row.Kind, Period: period, Content: json.RawMessage(row.Content),
+			StoreID: storeID, TillID: tillID, Kind: row.Kind, Period: period, Content: json.RawMessage(row.Content),
 		})
 		if err != nil {
 			// content_json that is not valid JSON: the cloud could never
@@ -154,6 +164,40 @@ func pushReportArchives(ctx context.Context, cfg *config.Config, db *sql.DB) {
 	if sent > 0 {
 		logging.L().Infof("cloudsync: report archives uploaded (%d)", sent)
 	}
+}
+
+// reportArchiveTillID is the till_id this till's rows go up under: "" on
+// the main till (no sync.primary_url — the same test Tick uses), else the
+// additional till's sync.till_id, the roster id its heartbeat reports
+// (discovery.ReportedTillID's first tier). ok=false when an additional till
+// has no usable id: it must never upload without one, or its Z chain would
+// be filed as the main till's, and it waits for the roster id rather than
+// falling back to its LAN id, which would split its chain across two cloud
+// till_ids (review finding 2). Its rows then stay local and un-acked, so
+// nothing becomes prune-eligible on the ack.
+func reportArchiveTillID(ctx context.Context, settings *data.SettingsRepo) (string, bool) {
+	primaryURL, _, err := settings.Get(ctx, "sync.primary_url")
+	if err != nil {
+		logging.L().Warnf("cloudsync: report archives: read role: %v", err)
+		return "", false
+	}
+	if strings.TrimSpace(primaryURL) == "" {
+		return "", true
+	}
+	tillID, _, err := settings.Get(ctx, "sync.till_id")
+	if err != nil {
+		logging.L().Warnf("cloudsync: report archives: read till id: %v", err)
+		return "", false
+	}
+	if tillID = strings.TrimSpace(tillID); tillID == "" {
+		logging.L().Infof("cloudsync: report archives: joined till has no roster id yet, kept local")
+		return "", false
+	}
+	if !reportArchiveIdentifier.MatchString(tillID) {
+		logging.L().Warnf("cloudsync: report archives: till id %q is not a valid cloud key, kept local", tillID)
+		return "", false
+	}
+	return tillID, true
 }
 
 // recordReportArchiveRefusal stores the 402 time for the chip, logging only

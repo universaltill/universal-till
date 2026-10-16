@@ -181,17 +181,19 @@ aufbewahrt werden:
   10 Jahre davon die Festplatte einer modernen Kasse nicht füllen.
 - **Nur Cloud** / **Kasse + Cloud** — benötigen ein aktives Abonnement mit
   Cloud-Backup; ohne ein solches werden sie angezeigt, aber mit „benötigt ein
-  aktives Abonnement“ markiert. Die Hauptkasse lädt jeden archivierten
-  Bericht im Hintergrund etwa alle 10 Minuten, den ältesten zuerst, in das
+  aktives Abonnement“ markiert. Jede Kasse lädt ihre eigenen archivierten
+  Berichte im Hintergrund etwa alle 10 Minuten, den ältesten zuerst, in das
   Cloud-Konto Ihres Geschäfts hoch. Bei **Nur Cloud** wird ein Bericht von
   der Kasse entfernt, sobald die Cloud ihn bestätigt hat; bei **Kasse +
   Cloud** behält die Kasse ihn zusätzlich die vollen 10 Jahre.
 
 Die Kasse behält immer ihren neuesten Tagesabschlussbericht, auch wenn die
 Cloud ihn bereits hat, damit der nächste Tagesabschluss die Z-Nummernfolge
-fortsetzt und dort beginnt, wo der letzte endete. Zusätzliche Kassen
-behalten ihre eigenen Berichte unabhängig von der Einstellung 10 Jahre lang;
-nur die Hauptkasse lädt hoch.
+fortsetzt und dort beginnt, wo der letzte endete. Jede Kasse behält
+und lädt ihre eigenen Berichte hoch: Die Berichte einer zusätzlichen Kasse
+werden in der Cloud unter dieser Kasse gespeichert, getrennt von denen der
+Hauptkasse, und die Kasse, die sie erstellt hat, entfernt sie nach derselben
+Einstellung.
 
 Solange der Cloud-Speicher aktiv ist, zeigt dieselbe Karte, wie viele
 Berichte noch auf das Hochladen warten. Lehnt die Cloud das Hochladen ab,

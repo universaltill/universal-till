@@ -834,16 +834,16 @@ func reportRetentionCutoff(now time.Time) string {
 
 // pruneReportArchive runs the report_archive prune once per calendar day
 // (ADR-0040 §2 as amended by ADR-0147 §4). The predicate depends on the
-// till and the retention mode:
+// retention mode, the same on every till:
 //
-//	main till, till  → rows older than 10 years
-//	main till, cloud → rows the cloud has acked (any age)
-//	main till, both  → rows acked AND older than 10 years
-//	replica, any     → rows older than 10 years
+//	till  → rows older than 10 years
+//	cloud → rows the cloud has acked (any age)
+//	both  → rows acked AND older than 10 years
 //
-// Only the main till uploads (cloudsync.pushReportArchives), so only it
-// ever sets cloud_acked_at; a replica's own Z archive is pruned by age in
-// every mode. Every predicate keeps each kind's newest and highest-Z row
+// Every till uploads its own Z chain (cloudsync.pushReportArchives, an
+// additional till under its own till_id — ut-docs#4438, ADR-0147
+// amendment 2), so on every till cloud_acked_at means the cloud holds that
+// till's row. Every predicate keeps each kind's newest and highest-Z row
 // (data.reportArchiveKeepClause), so the Z chain survives. An unknown mode
 // value prunes like till — never more than the 10-year floor allows.
 // lastPruneDay is only advanced past a successful run — a transient DB
@@ -864,10 +864,10 @@ func pruneReportArchive(ctx context.Context, d *common.Deps, repo *data.POSRepo,
 	var err error
 	predicate := "age"
 	switch {
-	case mainTill && mode == common.ReportRetentionModeCloud:
+	case mode == common.ReportRetentionModeCloud:
 		predicate = "acked"
 		n, err = repo.PruneReportArchiveAcked(ctx)
-	case mainTill && mode == common.ReportRetentionModeBoth:
+	case mode == common.ReportRetentionModeBoth:
 		predicate = "acked_and_age"
 		n, err = repo.PruneReportArchiveAckedOlderThan(ctx, cutoff)
 	default:
@@ -895,9 +895,8 @@ func pruneReportArchive(ctx context.Context, d *common.Deps, repo *data.POSRepo,
 }
 
 // reportArchiveOnMainTill reports whether this till is the shop's main (or
-// only) till: no sync.primary_url — the same test cloudsync's Tick uses for
-// its main-till-only uploads, so the till that uploads and the till that
-// prunes on the ack are always the same one.
+// only) till: no sync.primary_url — the same test cloudsync uses to decide
+// whether its uploads carry a till_id. Recorded on the prune audit row.
 func reportArchiveOnMainTill(ctx context.Context, d *common.Deps) bool {
 	v, _, _ := d.Settings.Get(ctx, "sync.primary_url")
 	return strings.TrimSpace(v) == ""
