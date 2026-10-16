@@ -183,7 +183,8 @@ func isTaxRateOverridesKey(key string) bool {
 // Second adopter (ut-docs#3126): the AI plugin's plain-text image_model,
 // when its stored value is set but off the licence-checked allow-list
 // (bgremove.ImageModelAllowed — rembg's bria-rmbg default among them). Resolution
-// turns background removal off for such a value; the generic editor has no
+// leaves the shop's own service unused for such a value and the till on its
+// built-in background removal (ut-docs#4137, #4448); the generic editor has no
 // per-plugin save-time validation, so this hint says why (never a modal).
 // value is the stored plain value; the resolver trims it the same way.
 //
