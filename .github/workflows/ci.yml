@@ -198,6 +198,15 @@ jobs:
         run: bash scripts/ci/guard-i18n_dupkey_test.sh
       - name: i18n coverage guard page-title regression test
         run: bash scripts/ci/guard-i18n_title_test.sh
+      - name: i18n key-metadata guard (ADR-0160, ut-docs#4362)
+        # checkout is depth 1 with no other refs: fetch main so the guard can
+        # refuse a placeholder change on an existing key and a growing
+        # baseline against origin/main.
+        run: |
+          git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+          bash scripts/ci/guard-i18n-meta.sh
+      - name: i18n key-metadata guard regression test
+        run: bash scripts/ci/guard-i18n-meta_test.sh
       - name: i18n guard tests run in a sandbox (ut-docs#4258)
         run: bash scripts/ci/guard-i18n-tests-sandboxed.sh
       - name: i18n guard sandbox enforcement regression test

@@ -58,6 +58,14 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
 - No hardcoded user-facing strings: templates use `{{ T "key" }}`, and every
   key exists in every `web/locales/*.json` (en.json is the base) —
   `scripts/ci/guard-i18n.sh`. Go-side menu labels are `nav.*` keys.
+- Every `en.json` key has metadata in `web/i18n-meta/en.meta.json`:
+  `description` and `review` (`legal`|`standard`) required, `placeholders`
+  (one meaning per verb), optional `max_length`/`plural`/`area`; namespaces
+  map to areas in `areas.json`. A placeholder change on an existing key
+  needs a new key; legal namespaces need `review: legal` or a reviewed
+  `"review_exception"`. Pre-existing keys sit in the shrink-only
+  `i18n-baseline/key-meta-baseline.txt` — describe one, delete its line
+  (`scripts/ci/guard-i18n-meta.sh`, ADR-0160, #4362).
 - Inline `<script>` text is user-facing too: use a page-local
   `var T = { key: "{{ T "some.key" }}" }` (see
   `web/ui/partials/bugreport_panel.html`). The guard also scans
