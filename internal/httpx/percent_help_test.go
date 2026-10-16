@@ -9,14 +9,19 @@ import (
 )
 
 // TestPercentHelpTopicsStateTwoDecimalLimit keeps the manual honest about
-// PercentPatternLocal (ut-docs#4446): every translation of the two topics
-// that describe entering a tax rate gives the refused 3-decimal example, and
-// the examples it gives really are accepted/refused by the field's pattern.
+// PercentPatternLocal (ut-docs#4446): every translation of each topic that
+// describes a percent field (tax rate, promotion percent-off, payment-fee
+// percent, plugin takeaway rate — ut-docs#4498) gives the accepted and the
+// refused 3-decimal example, and those examples really are accepted/refused
+// by the field's pattern.
 func TestPercentHelpTopicsStateTwoDecimalLimit(t *testing.T) {
 	re := regexp.MustCompile(`^(?:` + PercentPatternLocal + `)$`)
 	topics := map[string]struct{ ok, refused string }{
 		"tax-codes.md":        {"7.25", "8.875"},
 		"country-settings.md": {"8.25", "8.875"},
+		"promotions.md":       {"12.25", "12.125"},
+		"payments.md":         {"2.75", "2.875"},
+		"plugins.md":          {"7.25", "8.875"},
 	}
 	for file, ex := range topics {
 		if !re.MatchString(ex.ok) {
