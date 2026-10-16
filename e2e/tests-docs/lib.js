@@ -228,19 +228,32 @@ function buildManifest() {
 // in a different face. playwright.docs.config.ts therefore runs Chromium
 // with e2e/fontconfig/fonts.conf (aliases the stack to Inter, on top of the
 // system config), and the harness refuses to run unless the platform really
-// resolves the body stack to these fonts (packages fonts-inter and
-// fonts-dejavu-core on Debian/Ubuntu).
-const PINNED_FONTS = { latin: 'Inter', arabic: 'DejaVu Sans' };
+// resolves the body stack to these fonts (packages fonts-inter,
+// fonts-dejavu-core and fonts-noto-color-emoji on Debian/Ubuntu).
+//
+// ut-docs#4425 extends the pin past body text: monospace (codes, chips,
+// plugin ids — app.css's `ui-monospace, monospace` and inline
+// `font-family:monospace`) is aliased to DejaVu Sans Mono by fonts.conf, and
+// emoji (menu/status icons) must come from Noto Color Emoji, which app.css's
+// body stack names itself.
+const PINNED_FONTS = { latin: 'Inter', arabic: 'DejaVu Sans', mono: 'DejaVu Sans Mono', emoji: 'Noto Color Emoji' };
 
-// Platform font families Chromium really used for hidden probes that inherit
-// the page's body font (CSS.getPlatformFontsForNode, via CDP). Returns
-// { latin: string[], arabic: string[] | null } (arabic only when asked for).
+// Platform font families Chromium really used for hidden probes
+// (CSS.getPlatformFontsForNode, via CDP). Returns
+// { latin, mono, emoji: string[], arabic: string[] | null } (arabic only
+// when asked for).
 async function probePlatformFonts(page, { arabic }) {
+  // `family` null = inherit the body stack, like real content.
   const probes = [
-    { key: 'latin', text: 'Sales report 0123456789 \u20ac', dir: 'ltr' },
+    { key: 'latin', text: 'Sales report 0123456789 \u20ac', dir: 'ltr', family: null },
+    // Both monospace stacks the app uses: the chips' and plain inline/<code>.
+    { key: 'mono', text: 'GV-7Q2K-91XZ 0123456789', dir: 'ltr', family: 'ui-monospace, monospace' },
+    { key: 'mono2', text: 'ut-plugin-tax-de 0123456789', dir: 'ltr', family: 'monospace' },
+    // Emoji the nav and menu really show (bug report, receipts, lock).
+    { key: 'emoji', text: '\u{1F41E}\u{1F9FE}\u{1F512}', dir: 'ltr', family: null },
   ];
   if (arabic) {
-    probes.push({ key: 'arabic', text: '\u06af\u0632\u0627\u0631\u0634 \u0641\u0631\u0648\u0634 \u062a\u0642\u0631\u064a\u0631 \u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a', dir: 'rtl' });
+    probes.push({ key: 'arabic', text: '\u06af\u0632\u0627\u0631\u0634 \u0641\u0631\u0648\u0634 \u062a\u0642\u0631\u064a\u0631 \u0627\u0644\u0645\u0628\u064a\u0639\u0627\u062a', dir: 'rtl', family: null });
   }
   await page.evaluate((ps) => {
     for (const p of ps) {
@@ -248,9 +261,9 @@ async function probePlatformFonts(page, { arabic }) {
       el.id = `ut-font-probe-${p.key}`;
       el.dir = p.dir;
       el.textContent = p.text;
-      // No font-family: it must inherit the body stack, like real content.
       el.style.cssText =
         'position:absolute;visibility:hidden;inset-inline-start:0;top:0;margin:0;white-space:nowrap';
+      if (p.family) el.style.fontFamily = p.family;
       document.body.appendChild(el);
     }
   }, probes);
@@ -258,7 +271,7 @@ async function probePlatformFonts(page, { arabic }) {
   // query can otherwise come back with no fonts at all.
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
   const cdp = await page.context().newCDPSession(page);
-  const out = { latin: [], arabic: arabic ? [] : null };
+  const out = { latin: [], mono: [], mono2: [], emoji: [], arabic: arabic ? [] : null };
   try {
     await cdp.send('DOM.enable');
     await cdp.send('CSS.enable');
@@ -277,7 +290,8 @@ async function probePlatformFonts(page, { arabic }) {
       .catch(() => {});
     await cdp.detach().catch(() => {});
   }
-  return out;
+  const mono = [...new Set([...out.mono, ...out.mono2])];
+  return { latin: out.latin, mono, emoji: out.emoji, arabic: out.arabic };
 }
 
 // Returns null when the resolved fonts match the pin, else a failure message.
@@ -286,6 +300,14 @@ function fontPinProblem(resolved, pinned) {
   const l = resolved.latin;
   if (l.length !== 1 || l[0] !== pinned.latin) {
     bad.push(`Latin text resolved to [${l.join(', ') || 'none'}], expected exactly [${pinned.latin}]`);
+  }
+  const m = resolved.mono;
+  if (m.length !== 1 || m[0] !== pinned.mono) {
+    bad.push(`monospace text resolved to [${m.join(', ') || 'none'}], expected exactly [${pinned.mono}]`);
+  }
+  const e = resolved.emoji;
+  if (e.length !== 1 || e[0] !== pinned.emoji) {
+    bad.push(`emoji resolved to [${e.join(', ') || 'none'}], expected exactly [${pinned.emoji}]`);
   }
   if (resolved.arabic) {
     const a = resolved.arabic;
@@ -298,11 +320,11 @@ function fontPinProblem(resolved, pinned) {
   }
   if (!bad.length) return null;
   return (
-    `docs-shots font pin failed (ut-docs#4407): ${bad.join('; ')}.\n` +
+    `docs-shots font pin failed (ut-docs#4407, ut-docs#4425): ${bad.join('; ')}.\n` +
     'The app ships no webfont, so shots render in whatever system fonts the generating machine has; ' +
     'committed shots are pinned to the reference environment.\n' +
-    'Fix: install fonts-inter and fonts-dejavu-core (Debian/Ubuntu: ' +
-    '`sudo apt-get install -y fonts-inter fonts-dejavu-core`); the harness applies e2e/fontconfig/fonts.conf ' +
+    'Fix: install fonts-inter, fonts-dejavu-core and fonts-noto-color-emoji (Debian/Ubuntu: ' +
+    '`sudo apt-get install -y fonts-inter fonts-dejavu-core fonts-noto-color-emoji`); the harness applies e2e/fontconfig/fonts.conf ' +
     'itself via FONTCONFIG_FILE. The reference environment is Linux; ' +
     'macOS/Windows resolve the app\'s font stack to their own OS font first and cannot match - ' +
     'run docs-shots in a Linux container or the cloud lane instead.'
