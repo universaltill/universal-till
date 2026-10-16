@@ -1364,6 +1364,17 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		DeleteItem: func(ctx context.Context, id string) (string, error) {
 			return cloudDeleteItem(ctx, d, id)
 		},
+		// The cloud catalogue pull's till-side rules (ADR-0162 §4,
+		// ut-docs#4463): the same live-basket check delete_item makes, the
+		// tax-code screen's country rate rule, and the upload clean-up
+		// cloudSaveItem does when an icon replaced a photo.
+		CatalogItemInLiveBasket: func(ctx context.Context, id string) (bool, error) {
+			return itemInLiveBasket(ctx, d, id)
+		},
+		CatalogTaxRateRefused: func(rateBP int, takeawayBP *int) bool {
+			return taxCodeRatesRefusedForCountry(d.CurrentState().Country, rateBP, takeawayBP)
+		},
+		CatalogItemPhotoReplaced: removeReplacedItemUpload,
 		SaveModifierGroup: func(ctx context.Context, p data.ModifierGroupSave) (string, error) {
 			return cloudSaveModifierGroup(ctx, d, p)
 		},

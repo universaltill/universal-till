@@ -326,6 +326,16 @@ type Hooks struct {
 	// GuestOrderOutcome.Refusal (nothing written); a non-nil error is an
 	// internal failure and leaves the directive pending for the next tick.
 	GuestOrder func(ctx context.Context, o GuestOrder) (GuestOrderOutcome, error)
+	// CatalogItemInLiveBasket, CatalogTaxRateRefused and
+	// CatalogItemPhotoReplaced are the till-side rules the cloud catalogue
+	// pull (ADR-0162 §4, ut-docs#4463; catalog_pull.go) needs from the
+	// pages layer: whether the cashier or kiosk basket holds an item (a
+	// tombstoned one is then deactivated, never deleted), the shop
+	// country's tax-rate rule, and removing an upload a pulled icon
+	// replaced. Nil = none / no restriction / keep the file.
+	CatalogItemInLiveBasket  func(ctx context.Context, itemID string) (bool, error)
+	CatalogTaxRateRefused    func(rateBP int, takeawayBP *int) bool
+	CatalogItemPhotoReplaced func(itemID, clearedPath string)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can
 	// render a real design picker instead of a raw key/value form). Keys must
@@ -612,6 +622,15 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// till applies guest orders, so only it holds such results.
 	if isMainTill {
 		retryGuestOrderResults(ctx, cfg, db, guestAnswered)
+	}
+	// ADR-0162 §4 (ut-docs#4463): on a cloud-master store the main till
+	// pulls the cloud's catalogue after a check-in POST that reached the
+	// cloud (plan.post: a 304 means nothing changed — every catalogue write
+	// bumps link_version). Never a replica (it gets the rows over LAN
+	// sync), never after a mid-tick 402. A pull failure is logged and
+	// retried on the next trigger; it never fails the check-in.
+	if isMainTill && plan.post && !refusedMidTick && pullCloudCatalog(ctx, cfg, db, hooks) {
+		catalogApplied = true
 	}
 	// Fresh data in the same tick (contract §3.6): a catalog change the
 	// cloud just made is reported back now, not a tick later. The hash gate

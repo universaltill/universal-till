@@ -517,6 +517,11 @@ var nonAdminTables = map[string]string{
 	// till; additional tills get the resulting catalogue rows, never the
 	// foreign-id bookkeeping behind them.
 	"import_source_links": "which local record an API-source import's (source, entity, external_id) became — main-till import bookkeeping, never synced (ut-docs#4429)",
+	// ADR-0162 §4 (ut-docs#4463): only the main till pulls the cloud
+	// catalogue; additional tills get the resulting catalogue rows, never
+	// the cloud-id bookkeeping or its refusal log.
+	"cloud_links":          "which local record a cloud catalogue row (entity, cloud_id) became — main-till pull bookkeeping, never synced (ut-docs#4463)",
+	"cloud_apply_failures": "the latest refusal per pulled cloud catalogue row — main-till pull bookkeeping, never synced (ut-docs#4463)",
 
 	// Local bookkeeping with no shop-wide meaning.
 	"issue_reports_sent": "dedup record of bug reports already sent FROM this till",

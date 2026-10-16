@@ -1924,9 +1924,9 @@ func rowExists(ctx context.Context, tx *sql.Tx, query, arg string) (bool, error)
 
 // activeItemCountForCategory counts currently-active items pointing at
 // categoryID — shared by SetCategoryActive's deactivate guard.
-func (r *CatalogRepo) activeItemCountForCategory(ctx context.Context, categoryID string) (int, error) {
+func activeItemCountForCategory(ctx context.Context, ex execer, categoryID string) (int, error) {
 	var n int
-	if err := r.db.QueryRowContext(ctx,
+	if err := ex.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM items WHERE category_id = ? AND is_active = 1`, categoryID).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count active items for category: %w", err)
 	}
@@ -1940,8 +1940,19 @@ func (r *CatalogRepo) activeItemCountForCategory(ctx context.Context, categoryID
 // silently reassigning those items to "uncategorised" or cascading the
 // deactivation onto them. Reactivating never needs this guard.
 func (r *CatalogRepo) SetCategoryActive(ctx context.Context, id string, active bool) error {
+	return setCategoryActiveExec(ctx, r.db, id, active)
+}
+
+// SetCategoryActiveTx is SetCategoryActive inside the caller's transaction
+// (the cloud catalogue pull, ADR-0162 §4, ut-docs#4463) — the same
+// has-active-items refusal.
+func (r *CatalogRepo) SetCategoryActiveTx(ctx context.Context, tx *sql.Tx, id string, active bool) error {
+	return setCategoryActiveExec(ctx, tx, id, active)
+}
+
+func setCategoryActiveExec(ctx context.Context, ex execer, id string, active bool) error {
 	if !active {
-		n, err := r.activeItemCountForCategory(ctx, id)
+		n, err := activeItemCountForCategory(ctx, ex, id)
 		if err != nil {
 			return err
 		}
@@ -1953,7 +1964,7 @@ func (r *CatalogRepo) SetCategoryActive(ctx context.Context, id string, active b
 	if active {
 		v = 1
 	}
-	res, err := r.db.ExecContext(ctx, `UPDATE categories SET is_active = ?, updated_at = datetime('now') WHERE id = ?`, v, id)
+	res, err := ex.ExecContext(ctx, `UPDATE categories SET is_active = ?, updated_at = datetime('now') WHERE id = ?`, v, id)
 	if err != nil {
 		return fmt.Errorf("set category active: %w", err)
 	}
@@ -2148,6 +2159,32 @@ func (r *CatalogRepo) DeactivateItem(ctx context.Context, itemID string) error {
 	if itemID == "" {
 		return errors.New("itemID required")
 	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("deactivate item: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := deactivateItemTx(ctx, tx, itemID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("deactivate item: commit: %w", err)
+	}
+	return nil
+}
+
+// DeactivateItemTx is DeactivateItem inside the caller's transaction (the
+// cloud catalogue pull's tombstone rule for an item that cannot be deleted,
+// ADR-0162 §4, ut-docs#4463). An unknown or already inactive item is
+// ErrItemNotFound, as DeactivateItem.
+func (r *CatalogRepo) DeactivateItemTx(ctx context.Context, tx *sql.Tx, itemID string) error {
+	if itemID == "" {
+		return errors.New("itemID required")
+	}
+	return deactivateItemTx(ctx, tx, itemID)
+}
+
+func deactivateItemTx(ctx context.Context, tx *sql.Tx, itemID string) error {
 	// ut-docs#2541 review finding 4: AND is_active = 1 plus a RowsAffected
 	// check -- an unknown id or one that's already inactive must refuse
 	// with ErrItemNotFound, not silently no-op (its own doc comment has the
@@ -2155,11 +2192,6 @@ func (r *CatalogRepo) DeactivateItem(ctx context.Context, itemID string) error {
 	// The item and its variants' cascade commit together (ut-docs#4348): a
 	// half-applied switch-off would leave variants live under a dead item,
 	// or retired without the flag that brings them back.
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("deactivate item: begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
 	res, err := tx.ExecContext(ctx, `UPDATE items SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND is_active = 1`, itemID)
 	if err != nil {
 		return fmt.Errorf("deactivate item: %w", err)
@@ -2171,9 +2203,6 @@ func (r *CatalogRepo) DeactivateItem(ctx context.Context, itemID string) error {
 	}
 	if err := cascadeItemActiveToVariants(ctx, tx, itemID, true, false); err != nil {
 		return fmt.Errorf("deactivate item: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("deactivate item: commit: %w", err)
 	}
 	return nil
 }

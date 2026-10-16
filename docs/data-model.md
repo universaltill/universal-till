@@ -658,6 +658,88 @@ erDiagram
 - `POSRepo.BackfillCustomerPhoneE164` fills `NULL` rows in chunks, in the background after start-up on every till (main and replica); when `store.country` differs from the per-till marker `customers.phone_e164_region` it recomputes every row first. Idempotent.
 - `POSRepo.LookupCustomersByPhone` (caller ID): every non-erased customer whose `phone_e164` equals the caller's normalised number, else matches on the trailing 9 digits; at most 10, by name, each with its last 5 completed sales (date, total, line count). Rows still `NULL` are normalised in Go, so the lookup is right before the back-fill finishes. Migration 069 also adds `idx_sales_customer_id` for the last-5-sales query.
 
+## Cloud catalogue pull — cloud_links (ut-docs#4463, ADR-0162 §4)
+
+On a paid store whose catalogue the cloud masters, the **main till** pulls the
+cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
+`GET /v1/stores/catalog`) and applies it through its own repositories
+(`internal/catalogpull`, called from `internal/cloudsync`'s tick).
+
+- **When.** Only when all hold: this till is the main till (no
+  `sync.primary_url`), the cached `entitlement.catalog_master` is exactly
+  `cloud` (the sync response's entitlement block; anything else reads as
+  `till`), and this tick's check-in POST reached the cloud (a 304 check-in
+  means nothing changed). A pull failure is logged and retried on the next
+  trigger; it never fails the check-in and never touches the sale path.
+  Replicas get the result over LAN admin sync like any other catalogue edit.
+- **Tables (migration 082, main-till only, never LAN-synced).**
+  `cloud_links(entity, cloud_id, local_id, version, gen, updated_at, PK(entity, cloud_id))`
+  maps a cloud row to its local record (index on `(entity, local_id)`); a
+  cloud-created row's local id is its `cloud_id`. `gen` is the resync
+  generation that last saw the row. `cloud_apply_failures(entity, cloud_id,
+  version, reason, at)` keeps the latest refusal per cloud row until a later
+  version of it applies.
+- **State (settings, per-till `cloudsync.` family).**
+  `cloudsync.catalog.cursor` (highest version fully applied),
+  `cloudsync.catalog.applier_version` (a stored value below the code's
+  `catalogpull.ApplierVersion` resets the cursor to 0 — a full re-pull),
+  `cloudsync.catalog.gen` and `cloudsync.catalog.resync_gen` (a resync in
+  progress).
+- **Apply.** Pages are applied in transactions of at most 100 rows, one
+  savepoint per row. The cursor is written in the chunk's transaction and only
+  at a version boundary, so a crash re-applies at most one version, which is
+  idempotent. A row the till's validation refuses keeps the till's previous
+  version, is recorded in `cloud_apply_failures` (and logged), and the cursor
+  still moves past it. An error that is not a refusal — the context ending,
+  a SQLite failure other than a constraint (`data.IsStorageError`), a failed
+  savepoint, a hook such as the live-basket check failing — aborts the chunk
+  with the cursor unchanged and records nothing. A page with more rows than
+  the requested limit is refused unless all its rows share one version (the
+  contract's one oversized case).
+  **Order within a version.** A version group (one cloud transaction, always
+  whole) is applied in dependency order, not the feed's kind/`cloud_id`
+  order: tax codes, then categories with a parent named in the group before
+  its children, then items, then every other kind. The order is settled over
+  the whole group before it is cut into chunks. A parent cycle falls back to
+  feed order and is refused by the normal validation. A reference
+  (`parent_cloud_id`, `category_cloud_id`, `tax_code_cloud_id`) to a row that
+  has no link yet — in an earlier version or earlier in its group — refuses
+  the row. An unlinked local row whose id equals the `cloud_id` is adopted
+  (updated and linked; its audit row says `created: false`).
+  Applied kinds: `tax_code`, `category`, `item`. Every other kind (variants,
+  barcodes, modifier groups, option sets, layouts, staff, settings, unknown)
+  is skipped, cursor advancing (follow-ups ut-docs#4491/#4492). Each applied
+  row writes an `audit_log` row (`actor system`, action
+  `cloud_catalog_<kind>_saved|deleted|deactivated`).
+- **Fields.** `tax_code`: name, rate_basis_points, takeaway_rate_basis_points
+  (null = no override), active. `category`: name, parent_cloud_id (null = top
+  level), sort_order, color, icon (null = clear), sell_screen_hidden, active
+  (deactivating refuses while active items are in it). `item`: name, sku and
+  unit (blank = keep), description (null = clear), price_minor,
+  category_cloud_id / tax_code_cloud_id (null = clear), active, is_weighed,
+  stock_untracked, age_restricted, color, icon, item_type, sell_screen_hidden,
+  sell_screen_removed, net_quantity_value/unit (both null = clear). Not
+  applied: `modifier_group_cloud_ids`, `modifier_opt_out_cloud_ids`,
+  `option_set_cloud_ids`.
+- **Tombstones** use the delete rules: an item that was ever sold, has stock
+  history, is on a quick button, in a parked or live basket, is deactivated;
+  otherwise deleted (`delete_item`'s rule). A category is soft-deleted
+  (`DeleteCategoryMoving`); a tax code is deactivated. The link is removed.
+- **409** `catalog_master_till` / `catalog_adopting` and **401/403** (e.g.
+  `device_credential_required`) stop the pull with the cursor unchanged and
+  no error; a 401/403 is logged at Warn once, then at Info until the feed
+  accepts the credential again.
+  **410 resync** starts a new generation from cursor 0. When the full pull
+  reaches `high_water`, the till fetches once more at `since=high_water`:
+  only an empty page with the same `high_water` confirms it, and then every
+  link with an older generation goes through the tombstone rules. Any other
+  answer is applied as a normal page and the prune waits for a later run
+  (`resync_gen` stays set), so on a feed written without pause the prune
+  waits for a quiet run; stale links only linger meanwhile. A crash
+  mid-resync still prunes at the end. Not yet built: the outbox exemption
+  (ut-docs#4464) and reporting refusals back to the cloud as `apply_failed`
+  (ut-docs#4493).
+
 ---
 
 ## Cloud Marketplace Integration (Feature 009)
