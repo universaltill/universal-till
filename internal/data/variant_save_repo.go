@@ -40,6 +40,16 @@ type VariantSave struct {
 	PriceMinor *int64
 	Active     *bool
 	Barcodes   *[]string
+	// RetiredWithItem, when set, is written as given — the cloud
+	// catalogue pull mirrors the cloud's flag (ut-docs#4521). It only
+	// holds on an inactive variant: an active one always stores false.
+	// nil = the directive rule: a write that changes is_active clears it.
+	RetiredWithItem *bool
+	// OptionValueIDs, when set, is the variant's FULL set of option values
+	// (item_variant_options, the generator's provenance; [] clears it):
+	// at most maxOptionSetAxes values, each an option value on this till,
+	// at most one per option set. nil = keep.
+	OptionValueIDs *[]string
 }
 
 // VariantSaveResult reports what SaveVariant did. Name is the variant's
@@ -66,50 +76,111 @@ type variantRow struct {
 // *BarcodeConflictError carrying the barcode; a SKU used by an item or
 // another variant fails with ErrSKUExists naming the owner.
 func (r *CatalogRepo) SaveVariant(ctx context.Context, p VariantSave) (VariantSaveResult, error) {
-	var res VariantSaveResult
+	p, barcodes, err := r.prepareVariantSave(ctx, p, true)
+	if err != nil {
+		return VariantSaveResult{}, err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return VariantSaveResult{}, fmt.Errorf("save variant: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := r.saveVariantTx(ctx, tx, p, barcodes)
+	if err != nil {
+		return res, err
+	}
+	if err := tx.Commit(); err != nil {
+		return res, fmt.Errorf("save variant: commit: %w", err)
+	}
+	return res, nil
+}
+
+// SaveVariantTx is SaveVariant inside the caller's transaction — the
+// cloud catalogue pull applies up to 100 rows per transaction (ADR-0162
+// §4, ut-docs#4521) through the same validation and write path, as
+// SaveItemTx does. Barcodes are refused here for SaveItemTx's reason:
+// resolving them reads the shop's symbology settings through the pool,
+// which must not run inside a held write transaction (the pull writes
+// barcodes one row at a time through PutBarcodeTx instead).
+func (r *CatalogRepo) SaveVariantTx(ctx context.Context, tx *sql.Tx, p VariantSave) (VariantSaveResult, error) {
+	if p.Barcodes != nil {
+		return VariantSaveResult{}, errors.New("save variant: barcodes cannot be saved inside a caller's transaction")
+	}
+	p, _, err := r.prepareVariantSave(ctx, p, false)
+	if err != nil {
+		return VariantSaveResult{}, err
+	}
+	return r.saveVariantTx(ctx, tx, p, nil)
+}
+
+// prepareVariantSave is SaveVariant's validation that needs no write
+// transaction: it trims and checks every field, and (resolveBarcodes)
+// resolves the barcode set through the pool. A malformed patch never takes
+// the write lock.
+func (r *CatalogRepo) prepareVariantSave(ctx context.Context, p VariantSave, resolveBarcodes bool) (VariantSave, []resolvedBarcode, error) {
+	res := p
 	p.ID, p.ItemID = strings.TrimSpace(p.ID), strings.TrimSpace(p.ItemID)
 	if p.ID == "" {
-		return res, errors.New("missing variant_id")
+		return res, nil, errors.New("missing variant_id")
 	}
 	if p.ItemID == "" {
-		return res, errors.New("missing item_id")
+		return res, nil, errors.New("missing item_id")
 	}
 	// Everything that needs no database first, so a malformed patch never
 	// takes the write lock.
 	if p.Name != nil {
 		n := strings.TrimSpace(*p.Name)
 		if n == "" {
-			return res, errors.New("the variant name must not be blank")
+			return res, nil, errors.New("the variant name must not be blank")
 		}
 		p.Name = &n
 	}
 	if p.PriceMinor != nil && *p.PriceMinor < 0 {
-		return res, errors.New("the price must not be negative")
+		return res, nil, errors.New("the price must not be negative")
 	}
 	if p.PriceMinor != nil && *p.PriceMinor > maxItemPriceMinor {
-		return res, fmt.Errorf("the price must be at most %d in minor units", maxItemPriceMinor)
+		return res, nil, fmt.Errorf("the price must be at most %d in minor units", maxItemPriceMinor)
 	}
 	if p.SKU != nil {
 		s := strings.TrimSpace(*p.SKU)
 		p.SKU = &s
 	}
+	if p.OptionValueIDs != nil {
+		if len(*p.OptionValueIDs) > maxOptionSetAxes {
+			return res, nil, fmt.Errorf("a variant combines at most %d option values", maxOptionSetAxes)
+		}
+		ids := make([]string, 0, len(*p.OptionValueIDs))
+		seen := make(map[string]bool, len(*p.OptionValueIDs))
+		for _, id := range *p.OptionValueIDs {
+			id = strings.TrimSpace(id)
+			if id == "" {
+				return res, nil, errors.New("an option value id must not be blank")
+			}
+			if seen[id] {
+				return res, nil, fmt.Errorf("option value %s is listed twice", id)
+			}
+			seen[id] = true
+			ids = append(ids, id)
+		}
+		p.OptionValueIDs = &ids
+	}
 	var barcodes []resolvedBarcode
-	if p.Barcodes != nil {
+	if p.Barcodes != nil && resolveBarcodes {
 		var err error
 		if barcodes, err = r.resolveBarcodeSet(ctx, *p.Barcodes, "a variant"); err != nil {
-			return res, err
+			return res, nil, err
 		}
 	}
+	return p, barcodes, nil
+}
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return res, fmt.Errorf("save variant: begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
+// saveVariantTx is SaveVariant's write inside tx, for a patch
+// prepareVariantSave returned.
+func (r *CatalogRepo) saveVariantTx(ctx context.Context, tx *sql.Tx, p VariantSave, barcodes []resolvedBarcode) (VariantSaveResult, error) {
+	var res VariantSaveResult
 	var itemName string
 	var itemUntracked bool
-	err = tx.QueryRowContext(ctx, `SELECT name, stock_untracked FROM items WHERE id = ?`, p.ItemID).Scan(&itemName, &itemUntracked)
+	err := tx.QueryRowContext(ctx, `SELECT name, stock_untracked FROM items WHERE id = ?`, p.ItemID).Scan(&itemName, &itemUntracked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return res, fmt.Errorf("item %s does not exist on this till", p.ItemID)
 	}
@@ -217,17 +288,77 @@ func (r *CatalogRepo) SaveVariant(ctx context.Context, p VariantSave) (VariantSa
 		}
 	}
 
+	if p.RetiredWithItem != nil {
+		retired := *p.RetiredWithItem && !cur.active
+		if _, err := tx.ExecContext(ctx, `UPDATE item_variants SET retired_with_item = ? WHERE id = ?`, boolToInt(retired), p.ID); err != nil {
+			return res, fmt.Errorf("save variant: retired_with_item: %w", err)
+		}
+		res.Changed = append(res.Changed, "retired_with_item")
+	}
+	if p.OptionValueIDs != nil {
+		if err := replaceVariantOptionValuesTx(ctx, tx, p.ID, *p.OptionValueIDs); err != nil {
+			return res, err
+		}
+		res.Changed = append(res.Changed, "option_value_ids")
+	}
 	if p.Barcodes != nil {
 		if err := replaceVariantBarcodesTx(ctx, tx, p.ID, barcodes); err != nil {
 			return res, err
 		}
 		res.Changed = append(res.Changed, "barcodes")
 	}
-	if err := tx.Commit(); err != nil {
-		return res, fmt.Errorf("save variant: commit: %w", err)
-	}
 	res.Name = cur.name
 	return res, nil
+}
+
+// replaceVariantOptionValuesTx makes ids the variant's full
+// item_variant_options set. Every id must be an option value on this till,
+// at most one per option set (a combination); anything else refuses the
+// whole save. A value of a set the item no longer uses is kept: it is
+// provenance only, and the cloud may keep it after detaching the set, so
+// refusing it would refuse every later edit of the variant.
+func replaceVariantOptionValuesTx(ctx context.Context, tx *sql.Tx, variantID string, ids []string) error {
+	sets := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		var set string
+		err := tx.QueryRowContext(ctx, `SELECT option_set_id FROM option_set_values WHERE id = ?`, id).Scan(&set)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("option value %s does not exist on this till", id)
+		}
+		if err != nil {
+			return fmt.Errorf("save variant: check option value: %w", err)
+		}
+		if sets[set] {
+			return fmt.Errorf("option value %s repeats an option set the variant already has a value of", id)
+		}
+		sets[set] = true
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM item_variant_options WHERE variant_id = ?`, variantID); err != nil {
+		return fmt.Errorf("save variant: clear option values: %w", err)
+	}
+	for _, id := range ids {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO item_variant_options (variant_id, option_set_value_id) VALUES (?, ?)`, variantID, id); err != nil {
+			return fmt.Errorf("save variant: write option value: %w", err)
+		}
+	}
+	return nil
+}
+
+// DeactivateVariantTx retires a variant inside the caller's transaction
+// — the cloud pull's tombstone (a variant is never deleted, SaveVariant's
+// rule). Like DeactivateVariant it is an explicit switch-off, so
+// retired_with_item clears. It reports whether an active variant was
+// switched off; a missing or already inactive one is a no-op.
+func (r *CatalogRepo) DeactivateVariantTx(ctx context.Context, tx *sql.Tx, variantID string) (bool, error) {
+	res, err := tx.ExecContext(ctx, `UPDATE item_variants SET is_active = 0, retired_with_item = 0, updated_at = datetime('now') WHERE id = ? AND is_active = 1`, variantID)
+	if err != nil {
+		return false, fmt.Errorf("deactivate variant: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("deactivate variant: %w", err)
+	}
+	return n > 0, nil
 }
 
 func getVariantTx(ctx context.Context, tx *sql.Tx, id string) (variantRow, bool, error) {

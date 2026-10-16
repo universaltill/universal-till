@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -25,10 +26,13 @@ const (
 	kindItem          = "item"
 	kindModifierGroup = "modifier_group"
 	kindOptionSet     = "option_set"
+	kindItemVariant   = "item_variant"
+	kindItemBarcode   = "item_barcode"
 )
 
 var appliedKinds = map[string]bool{
 	kindTaxCode: true, kindCategory: true, kindItem: true, kindModifierGroup: true, kindOptionSet: true,
+	kindItemVariant: true, kindItemBarcode: true,
 }
 
 // auditActor is the audit_log actor of a pulled row: the seeded 'system'
@@ -140,9 +144,15 @@ func canonicalID(id string) (string, error) {
 
 // apply writes one row (in the caller's savepoint) and its link.
 func (r *runner) apply(ctx context.Context, tx *sql.Tx, row Row, gen int64) ([]replacedPhoto, error) {
-	local, err := r.localID(ctx, tx, row.Kind, row.CloudID)
+	local, linked, err := r.localID(ctx, tx, row.Kind, row.CloudID)
 	if err != nil {
 		return nil, err
+	}
+	if row.Kind == kindItemBarcode && !linked {
+		// A barcode's local record is its owner and stored key
+		// (barcodeLocalID), never its cloud_id: an unlinked barcode row has
+		// none yet.
+		local = ""
 	}
 	if row.Deleted {
 		return nil, r.tombstone(ctx, tx, row.Kind, row.CloudID, local, row.Version)
@@ -188,6 +198,19 @@ func (r *runner) apply(ctx context.Context, tx *sql.Tx, row Row, gen int64) ([]r
 			return nil, err
 		}
 		created, changed = res.Created, res.Changed
+	case kindItemVariant:
+		res, err := r.applyVariant(ctx, tx, local, f)
+		if err != nil {
+			return nil, err
+		}
+		created, changed = res.Created, res.Changed
+	case kindItemBarcode:
+		newLocal, made, err := r.applyBarcode(ctx, tx, row.CloudID, local, f)
+		if err != nil {
+			return nil, err
+		}
+		created, changed = made, []string{"barcode", "item_cloud_id", "variant_cloud_id", "is_primary"}
+		local = newLocal
 	}
 	if err := r.links.Upsert(ctx, tx, data.CloudLink{Entity: row.Kind, CloudID: row.CloudID, LocalID: local, Version: row.Version, Gen: gen}); err != nil {
 		return nil, err
@@ -220,15 +243,16 @@ func (r *runner) audit(ctx context.Context, tx *sql.Tx, kind, localID, what stri
 // missing row) and links it. That is intentional — it is exactly the
 // crash case above, and a till-made row the cloud learned under the same
 // id is the same row — and observable: its audit row says created:false.
-func (r *runner) localID(ctx context.Context, tx *sql.Tx, kind, cloudID string) (string, error) {
+// linked reports whether the id came from a link.
+func (r *runner) localID(ctx context.Context, tx *sql.Tx, kind, cloudID string) (local string, linked bool, err error) {
 	local, ok, err := r.links.LocalID(ctx, tx, kind, cloudID)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if ok {
-		return local, nil
+		return local, true, nil
 	}
-	return cloudID, nil
+	return cloudID, false, nil
 }
 
 // resolve maps a cross-row reference to the local id of an already pulled
@@ -257,6 +281,8 @@ func kindLabel(kind string) string {
 		return "modifier group"
 	case kindOptionSet:
 		return "option set"
+	case kindItemVariant:
+		return "variant"
 	default:
 		return kind
 	}
@@ -278,7 +304,12 @@ func kindLabel(kind string) string {
 //     past sales keep their sale_line_modifiers snapshots);
 //   - option set: deleted when no active item has it applied
 //     (DeleteOptionSetIfUnusedTx, delete_option_set's rule), else
-//     deactivated.
+//     deactivated;
+//   - item variant: deactivated (DeactivateVariantTx) — a variant is never
+//     deleted (save_item_variant's rule; sales and stock reference it);
+//   - item barcode: removed from the owner its link stored
+//     (DeleteOwnedBarcodeTx); one never pulled, or whose key another
+//     barcode row's link also names, is left alone.
 func (r *runner) tombstone(ctx context.Context, tx *sql.Tx, kind, cloudID, local string, version int64) error {
 	what := ""
 	switch kind {
@@ -354,6 +385,22 @@ func (r *runner) tombstone(ctx context.Context, tx *sql.Tx, kind, cloudID, local
 		case err != nil:
 			return err
 		case deleted:
+			what = "deleted"
+		}
+	case kindItemVariant:
+		off, err := r.cat.DeactivateVariantTx(ctx, tx, local)
+		if err != nil {
+			return err
+		}
+		if off {
+			what = "deactivated"
+		}
+	case kindItemBarcode:
+		deleted, err := r.removeBarcode(ctx, tx, cloudID, local)
+		if err != nil {
+			return err
+		}
+		if deleted {
 			what = "deleted"
 		}
 	}
@@ -807,4 +854,226 @@ func (r *runner) applyOptionSet(ctx context.Context, tx *sql.Tx, local string, f
 		p.Values = &vals
 	}
 	return r.sets.SaveOptionSetTx(ctx, tx, p)
+}
+
+// applyVariant maps an item_variant row onto data.VariantSave:
+// item_cloud_id (required — a variant names its item on every row), name,
+// sku (blank = keep; a blank on create generates a VAR- code), price_minor
+// (not null), active, retired_with_item (only holds on an inactive
+// variant), and option_value_cloud_ids — the variant's FULL set of option
+// values (item_variant_options; absent keeps, [] clears, null refuses).
+// An option value's id is its cloud id (applyOptionSet), so it must be a
+// value already on this till. SaveVariant's rules apply: a variant never
+// moves to another item, at most 100 per item, one SKU namespace with
+// items.
+func (r *runner) applyVariant(ctx context.Context, tx *sql.Tx, local string, f fields) (data.VariantSaveResult, error) {
+	p := data.VariantSave{ID: local, Create: true}
+	var err error
+	fail := func(e error) (data.VariantSaveResult, error) { return data.VariantSaveResult{}, e }
+	item, present, null, err := f.str("item_cloud_id")
+	switch {
+	case err != nil:
+		return fail(err)
+	case !present || null:
+		return fail(errors.New("item_cloud_id is required"))
+	}
+	if p.ItemID, err = r.resolve(ctx, tx, kindItem, item); err != nil {
+		return fail(err)
+	}
+	if p.Name, err = f.requiredStr("name"); err != nil {
+		return fail(err)
+	}
+	if p.SKU, err = f.keepIfBlankStr("sku"); err != nil {
+		return fail(err)
+	}
+	price, present, null, err := f.int64("price_minor")
+	switch {
+	case err != nil:
+		return fail(err)
+	case present && null:
+		return fail(errors.New("price_minor must not be null"))
+	case present:
+		p.PriceMinor = &price
+	}
+	if p.Active, err = f.boolPtr("active"); err != nil {
+		return fail(err)
+	}
+	if p.RetiredWithItem, err = f.boolPtr("retired_with_item"); err != nil {
+		return fail(err)
+	}
+	raw, present, null := f.get("option_value_cloud_ids")
+	switch {
+	case present && null:
+		return fail(errors.New("option_value_cloud_ids must be a list, not null"))
+	case present:
+		var ids []string
+		if err := json.Unmarshal(raw, &ids); err != nil {
+			return fail(errors.New("option_value_cloud_ids must be a list of ids"))
+		}
+		vals := make([]string, 0, len(ids))
+		for _, id := range ids {
+			v, err := canonicalID(id)
+			if err != nil {
+				return fail(fmt.Errorf("option value %w", err))
+			}
+			vals = append(vals, v)
+		}
+		p.OptionValueIDs = &vals
+	}
+	return r.cat.SaveVariantTx(ctx, tx, p)
+}
+
+// barcodeResolution is one feed barcode resolved before the chunk's
+// transaction (resolveBarcodes).
+type barcodeResolution struct {
+	res data.ResolvedBarcode
+	err error
+}
+
+// resolveBarcodes resolves every item_barcode code on a page before any
+// of its chunks begins: resolving reads the shop's enabled symbologies
+// through the pool, which must not run inside the held write transaction
+// (resolveBarcodeSet's rule). The pull itself never changes those
+// settings (the setting kind is not applied, ut-docs#4492), so a page's
+// resolutions hold for all its chunks. The code is read exactly as
+// applyBarcode reads it (decodeFields, "barcode"), so the two agree.
+func (r *runner) resolveBarcodes(ctx context.Context, rows []Row) map[string]barcodeResolution {
+	out := map[string]barcodeResolution{}
+	for _, row := range rows {
+		if row.Kind != kindItemBarcode || row.Deleted {
+			continue
+		}
+		f, err := decodeFields(row.Data)
+		if err != nil {
+			continue // applyBarcode refuses it
+		}
+		code, err := f.requiredStr("barcode")
+		if err != nil || code == nil {
+			continue
+		}
+		if _, ok := out[*code]; ok {
+			continue
+		}
+		res, err := r.cat.ResolveBarcode(ctx, *code)
+		out[*code] = barcodeResolution{res: res, err: err}
+	}
+	return out
+}
+
+// barcodeLocalID is a barcode link's local id: its owner and stored key,
+// "item:<item id>:<key>" or "variant:<variant id>:<key>". Item and variant
+// ids never contain ':' (UUIDs); the key may, and parseBarcodeLocalID
+// splits at the first two only. Keeping the
+// owner means a changed, moved or tombstoned row removes the barcode only
+// from the owner it put it on — never one another item or variant holds
+// now.
+func barcodeLocalID(itemID, variantID, key string) string {
+	if variantID != "" {
+		return "variant:" + variantID + ":" + key
+	}
+	return "item:" + itemID + ":" + key
+}
+
+// parseBarcodeLocalID splits a barcodeLocalID; ok is false for anything
+// else.
+func parseBarcodeLocalID(local string) (itemID, variantID, key string, ok bool) {
+	parts := strings.SplitN(local, ":", 3)
+	if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
+		return "", "", "", false
+	}
+	switch parts[0] {
+	case "item":
+		return parts[1], "", parts[2], true
+	case "variant":
+		return "", parts[1], parts[2], true
+	}
+	return "", "", "", false
+}
+
+// removeBarcode deletes the barcode a link's local id names from its own
+// owner, unless another barcode row's link names the same record. ""
+// (never pulled) or an unreadable id is a no-op.
+func (r *runner) removeBarcode(ctx context.Context, tx *sql.Tx, cloudID, local string) (bool, error) {
+	itemID, variantID, key, ok := parseBarcodeLocalID(local)
+	if !ok {
+		return false, nil
+	}
+	held, err := r.links.HeldByOther(ctx, tx, kindItemBarcode, local, cloudID)
+	if err != nil || held {
+		return false, err
+	}
+	return r.cat.DeleteOwnedBarcodeTx(ctx, tx, key, itemID, variantID)
+}
+
+// applyBarcode maps an item_barcode row onto data.BarcodePut and returns
+// its new local id (barcodeLocalID) and whether the barcode row was
+// created. A barcode row is written whole: barcode and item_cloud_id are
+// required, variant_cloud_id absent or null is an item barcode,
+// is_primary absent is false (true demotes the owner's other primary).
+// barcode_type is not read: the till resolves the code against the shop's
+// enabled symbologies exactly as save_item does (ADR-0059 §3 — the stored
+// type is the till's own, never trusted from the sender). prev is the
+// local id the row had before ("" = none): a changed code or a move
+// removes the old barcode from its old owner. A key another barcode row's
+// link already names refuses the row (its tombstone would delete a code
+// the other row still has).
+func (r *runner) applyBarcode(ctx context.Context, tx *sql.Tx, cloudID, prev string, f fields) (string, bool, error) {
+	code, err := f.requiredStr("barcode")
+	switch {
+	case err != nil:
+		return "", false, err
+	case code == nil:
+		return "", false, errors.New("barcode is required")
+	}
+	item, present, null, err := f.str("item_cloud_id")
+	switch {
+	case err != nil:
+		return "", false, err
+	case !present || null:
+		return "", false, errors.New("item_cloud_id is required")
+	}
+	var p data.BarcodePut
+	if p.ItemID, err = r.resolve(ctx, tx, kindItem, item); err != nil {
+		return "", false, err
+	}
+	if variant, present, null, err := f.str("variant_cloud_id"); err != nil {
+		return "", false, err
+	} else if present && !null {
+		if p.VariantID, err = r.resolve(ctx, tx, kindItemVariant, variant); err != nil {
+			return "", false, err
+		}
+	}
+	if primary, err := f.boolPtr("is_primary"); err != nil {
+		return "", false, err
+	} else if primary != nil {
+		p.IsPrimary = *primary
+	}
+	resolved, ok := r.barcodes[*code]
+	switch {
+	case !ok:
+		// Cannot happen (resolveBarcodes reads every row the same way);
+		// refused, never an infra error, so it cannot wedge the feed.
+		return "", false, errors.New("the barcode was not resolved before the chunk began")
+	case resolved.err != nil:
+		return "", false, resolved.err
+	}
+	p.Barcode = resolved.res
+	local := barcodeLocalID(p.ItemID, p.VariantID, p.Barcode.Key)
+	held, err := r.links.HeldByOther(ctx, tx, kindItemBarcode, local, cloudID)
+	if err != nil {
+		return "", false, err
+	}
+	if held {
+		return "", false, fmt.Errorf("barcode %s is already another cloud barcode row's", p.Barcode.Raw)
+	}
+	if prev != "" && prev != local {
+		if _, err := r.removeBarcode(ctx, tx, cloudID, prev); err != nil {
+			return "", false, err
+		}
+	}
+	created, err := r.cat.PutBarcodeTx(ctx, tx, p)
+	if err != nil {
+		return "", false, err
+	}
+	return local, created, nil
 }

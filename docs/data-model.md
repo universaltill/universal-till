@@ -658,7 +658,7 @@ erDiagram
 - `POSRepo.BackfillCustomerPhoneE164` fills `NULL` rows in chunks, in the background after start-up on every till (main and replica); when `store.country` differs from the per-till marker `customers.phone_e164_region` it recomputes every row first. Idempotent.
 - `POSRepo.LookupCustomersByPhone` (caller ID): every non-erased customer whose `phone_e164` equals the caller's normalised number, else matches on the trailing 9 digits; at most 10, by name, each with its last 5 completed sales (date, total, line count). Rows still `NULL` are normalised in Go, so the lookup is right before the back-fill finishes. Migration 069 also adds `idx_sales_customer_id` for the last-5-sales query.
 
-## Cloud catalogue pull — cloud_links (ut-docs#4463, ut-docs#4491, ADR-0162 §4)
+## Cloud catalogue pull — cloud_links (ut-docs#4463, ut-docs#4491, ut-docs#4521, ADR-0162 §4)
 
 On a paid store whose catalogue the cloud masters, the **main till** pulls the
 cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
@@ -700,18 +700,20 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   whole) is applied in dependency order, not the feed's kind/`cloud_id`
   order: tax codes, then modifier groups, then option sets, then categories
   with a parent named in the group before its children, then items, then
-  every other kind. The order is settled over
+  item variants, then item barcodes, then every other kind. The order is settled over
   the whole group before it is cut into chunks. A parent cycle falls back to
   feed order and is refused by the normal validation. A reference
-  (`parent_cloud_id`, `category_cloud_id`, `tax_code_cloud_id`, and every id
+  (`parent_cloud_id`, `category_cloud_id`, `tax_code_cloud_id`, a variant's or
+  barcode's `item_cloud_id`, a barcode's `variant_cloud_id`, and every id
   in `modifier_group_cloud_ids`, `modifier_opt_out_cloud_ids`,
   `option_set_cloud_ids`) to a row of that kind that has no link yet — in an
   earlier version or earlier in its group — refuses the row. An unlinked local row whose id equals the `cloud_id` is adopted
   (updated and linked; its audit row says `created: false`).
   Applied kinds: `tax_code`, `category`, `item`, `modifier_group`,
-  `option_set` (applier version 2, ut-docs#4491). Every other kind is
-  skipped, cursor advancing: `item_variant`, `item_barcode` (ut-docs#4521),
-  `layout`, `staff`, `setting` (ut-docs#4492), and any unknown kind. Each applied
+  `option_set` (applier version 2, ut-docs#4491), `item_variant`,
+  `item_barcode` (applier version 3, ut-docs#4521). Every other kind is
+  skipped, cursor advancing: `layout`, `staff`, `setting` (ut-docs#4492),
+  and any unknown kind. Each applied
   row writes an `audit_log` row (`actor system`, action
   `cloud_catalog_<kind>_saved|deleted|deactivated`).
 - **Fields.** `tax_code`: name, rate_basis_points, takeaway_rate_basis_points
@@ -740,6 +742,27 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   an item's option sets never generates variants (they arrive as their own
   rows, ut-docs#4521). The same holds for `options` and `values`: absent
   keeps, `null` refuses.
+  `item_variant` (`SaveVariantTx`, `save_item_variant`'s rules): item_cloud_id
+  (required on every row; a variant never moves to another item), name, sku
+  (blank = keep; blank on create generates a `VAR-` code), price_minor (not
+  null), active, retired_with_item (stored only on an inactive variant), and
+  option_value_cloud_ids — the variant's whole `item_variant_options` set
+  (absent keeps, `[]` clears, `null` refuses; at most two ids, each an
+  option value already on this till — its local id is its cloud id — and at
+  most one per option set; a value of a set the item no longer uses is kept
+  as provenance).
+  `item_barcode` (`PutBarcodeTx`, one row per barcode, written whole):
+  barcode and item_cloud_id required, variant_cloud_id null = an item
+  barcode (else a variant of that item), is_primary (true demotes the
+  owner's other primary). `barcode_type` is not read: the till resolves the
+  code against the shop's enabled symbologies as `save_item` does (ADR-0059
+  §3). The link's local id is the owner and stored key
+  (`item:<id>:<key>` / `variant:<id>:<key>`), so a changed code, a move or a
+  tombstone removes the barcode only from the owner the row put it on. A code
+  another item or variant holds, a code another barcode row's link already
+  names, or a 21st barcode on one owner refuses the row. A page's codes are
+  resolved before its first transaction (resolving reads settings through
+  the pool; a settings read failure aborts the chunk rather than refusing).
 - **Tombstones** use the delete rules: an item that was ever sold, has stock
   history, is on a quick button, in a parked or live basket, is deactivated;
   otherwise deleted (`delete_item`'s rule). A category is soft-deleted
@@ -747,7 +770,8 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   deleted with `delete_modifier_group`'s cascade (options, item and category
   links, opt-outs; past sales keep their snapshots). An option set is deleted
   when no active item has it applied, else deactivated
-  (`delete_option_set`'s rule). The link is removed. A resync's prune uses the
+  (`delete_option_set`'s rule). A variant is deactivated, never deleted; a
+  barcode is removed (one never pulled is a no-op). The link is removed. A resync's prune uses the
   same rules for every kind.
 - **409** `catalog_master_till` / `catalog_adopting` and **401/403** (e.g.
   `device_credential_required`) stop the pull with the cursor unchanged and
