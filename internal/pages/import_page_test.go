@@ -354,7 +354,7 @@ func TestImport_CommitRefusedOnReplica(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `class="pos-notice error"`) {
 		t.Fatalf("commit on replica body = %q, want a rendered .pos-notice error fragment", rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "primary") {
+	if !strings.Contains(rec.Body.String(), "main till") {
 		t.Fatalf("commit on replica body = %q, want the replica_use_primary message", rec.Body.String())
 	}
 	var n int
@@ -401,7 +401,7 @@ func TestImportSampleData_RefusedOnReplica(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 		t.Fatalf("sample data on replica Content-Type = %q, want text/html", ct)
 	}
-	if !strings.Contains(rec.Body.String(), `class="pos-notice error"`) || !strings.Contains(rec.Body.String(), "primary") {
+	if !strings.Contains(rec.Body.String(), `class="pos-notice error"`) || !strings.Contains(rec.Body.String(), "main till") {
 		t.Fatalf("sample data on replica body = %q, want the rendered replica_use_primary notice", rec.Body.String())
 	}
 	seedRepo := data.NewDemoSeedRepo(dp.Db)

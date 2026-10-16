@@ -124,5 +124,8 @@
   "translations.mode.empty": {"description": "Error when Save is pressed with an empty override field.", "review": "standard"},
   "translations.mode.reload": {"description": "Button that reloads the page so a saved override shows.", "review": "standard", "max_length": 24},
   "translations.mode.page_areas": {"description": "Heading of the list of areas (groups in the translation service) that the texts on the current page belong to.", "review": "standard", "max_length": 32},
-  "translations.mode.page_areas_help": {"description": "Explanation under 'Areas on this page': these are the translation-service groups to invite a translator to.", "review": "standard"}
+  "translations.mode.page_areas_help": {"description": "Explanation under 'Areas on this page': these are the translation-service groups to invite a translator to.", "review": "standard"},
+  "settings.tills.main_till_addr": {"description": "Line on a joined till's Settings Tills card giving the network address of the main till it follows.", "review": "standard", "placeholders": ["network address of the main till, e.g. 192.168.1.10:8080"]},
+  "settings.tills.role_label": {"description": "Label in front of this till's role on the Settings Tills card (This till: Main till).", "review": "standard", "max_length": 24},
+  "settings.tills.role_main": {"description": "This till's role when it is the shop's main till (the one other tills join), shown after the 'This till' label.", "review": "standard", "max_length": 24}
 }
