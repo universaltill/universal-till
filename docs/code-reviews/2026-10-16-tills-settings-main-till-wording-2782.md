@@ -32,6 +32,7 @@ Author: Sonnet (Dev subagent, `complexity:easy`) · Reviewer: Opus 5.5, fresh co
 - **Placeholders:** every changed value in en/tr/ar/fa was diffed against origin/main. No placeholder was added, dropped or reordered, and there are no duplicate or removed keys.
 - **Driven run** (Playwright, real till): the Settings → Tills card at 1024×600 in en and fa (RTL), and at 360px in en. I read the screenshots: the role line is on top, the relabelled picker is below it, nothing is clipped, and RTL mirrors correctly. `settings-till-name-taken-3308` and `tills-lan-discovery` pass.
 - **Not looked at:** a joined-till render in the browser (the e2e till is always a main till; the Go handler test covers it), dark theme, a physical device.
+- **Docs-shots:** CI's first run flagged stale manual screenshots; `make docs-shots` regenerated en/tr multitill (looked at — shows "main till"), guard + its self-test green.
 - **Gate:** gofmt, build, vet, `go test ./...`, golangci-lint (0 issues), and the guards: i18n, i18n-meta, help-drift, help-topics, rtl, compliance-claims, competitor-naming, data-access, no-showmodal, no-inline-handlers, mail-addresses, core-neutral, kiosk-engine, page-http-error, readme-local-links.
 
 ## Verdict
