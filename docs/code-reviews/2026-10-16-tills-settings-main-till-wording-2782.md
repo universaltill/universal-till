@@ -35,5 +35,11 @@ Author: Sonnet (Dev subagent, `complexity:easy`) · Reviewer: Opus 5.5, fresh co
 - **Docs-shots:** CI's first run flagged stale manual screenshots; `make docs-shots` regenerated en/tr multitill (looked at — shows "main till"), guard + its self-test green.
 - **Gate:** gofmt, build, vet, `go test ./...`, golangci-lint (0 issues), and the guards: i18n, i18n-meta, help-drift, help-topics, rtl, compliance-claims, competitor-naming, data-access, no-showmodal, no-inline-handlers, mail-addresses, core-neutral, kiosk-engine, page-http-error, readme-local-links.
 
+## Rebase onto main (sweep, 2026-10-16)
+- Conflicts in en/de/tr `multitill.md` step 3 and `en.meta.json`. Main had added the "this till already has sales" warning to step 3 and two `tills.discovery.ambient.*` meta keys.
+- Resolution: kept main's new text and re-applied this branch's button-label change on top ("Find a main till on this network", de "Hauptkasse in diesem Netzwerk finden", tr "Bu ağda bir ana kasa bul"). Kept both sets of meta keys.
+- Main added no new "primary (till)" `en.json` value since the branch point.
+- Re-ran `make docs-shots`: only `manifest.json` changed. Gate re-run on the rebased head: build, `go test ./...`, golangci-lint (0 issues), every `build`-job guard bar shellcheck (no shell files touched; not installed here).
+
 ## Verdict
 Safe to merge. The de/es pack PRs follow the core merge, per the new-key rule (#1576).
