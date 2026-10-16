@@ -16,7 +16,7 @@ builds:
     main: .
     env: [CGO_ENABLED=0]
     flags: [-trimpath]
-    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }}"]
+    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate={{ .CommitDate }} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }}"]
     goos: [linux]
     goarch: [amd64, arm64]
   - id: windows
@@ -24,7 +24,7 @@ builds:
     main: .
     env: [CGO_ENABLED=0]
     flags: [-trimpath]
-    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }}"]
+    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate={{ .CommitDate }} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }}"]
     goos: [windows]
     goarch: [amd64]
     hooks:
@@ -48,7 +48,7 @@ builds:
       - CC=x86_64-w64-mingw32-gcc
       - CXX=x86_64-w64-mingw32-g++
     flags: [-trimpath, -tags=desktop]
-    ldflags: ["-s -w -H windowsgui -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }}"]
+    ldflags: ["-s -w -H windowsgui -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate={{ .CommitDate }} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }}"]
     goos: [windows]
     goarch: [amd64]
     hooks:
@@ -67,7 +67,7 @@ builds:
     main: .
     env: [CGO_ENABLED=0]
     flags: [-trimpath]
-    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }}"]
+    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate={{ .CommitDate }} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }}"]
     goos: [darwin]
     goarch: [arm64]
   # Friendly .deb uninstaller (ut-docs#1083): backs the shop's database up
@@ -97,7 +97,7 @@ builds:
     main: ./cmd/unitill-uninstall
     env: [CGO_ENABLED=0]
     flags: [-trimpath]
-    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }}"]
+    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}} -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate={{ .CommitDate }} -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey={{ .Env.UT_MARKETPLACE_KEY_HEX }}"]
     goos: [linux]
     goarch: [amd64, arm64]
     hooks:
