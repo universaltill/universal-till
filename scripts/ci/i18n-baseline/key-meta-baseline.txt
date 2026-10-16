@@ -936,7 +936,6 @@ import.status.not_sellable
 import.status.ok
 import.status.seeded_gift_voucher_removed
 import.status.sku_already_in_catalog
-import.status.sku_reused_in_file
 import.status.source_deleted
 import.status.stock_location_failed
 import.status.stock_movement_failed

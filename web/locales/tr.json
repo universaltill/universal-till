@@ -971,7 +971,7 @@
   "import.status.ok": "tamam",
   "import.status.seeded_gift_voucher_removed": "Kurulumda oluşturulan “%s” hediye çeki ürünü kaldırıldı, çünkü bu içe aktarma kendi ürününü getirdi.",
   "import.status.sku_already_in_catalog": "SKU zaten katalogda mevcut",
-  "import.status.sku_reused_in_file": "\"%s\" ürün numarası bu dosyada tekrarlanmış — yeni bir numarayla içe aktarıldı",
+  "import.status.sku_reused_renumbered": "\"%s\" ürün numarası bu dosyada tekrarlanmış — yeni numara \"%s\"",
   "import.status.source_deleted": "kaynak dosyada silinmiş",
   "import.status.stock_location_failed": "stok aktarılmadı: varsayılan konum kullanılamıyor",
   "import.status.stock_movement_failed": "stok aktarılmadı: stok hareketi kaydedilemedi",

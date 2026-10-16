@@ -872,7 +872,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			catimport.ImportItem
 			Status    string   // translated display text
 			Skipped   bool     // preview-time issue/duplicate — never entered the commit loop as importable
-			Warned    bool     // created, but with a warning
+			Warned    bool     // created (commit) or importable (preview), but with a warning
 			Failed    bool     // commit-time failure (category/department/item creation)
 			Idx       int      // stable 0-based row index for this parse (ut-docs#601) — field names row_include_<Idx> etc.
 			FixFields []string // "name"/"price", in order, when the row's issue is forceable with inline correction field(s), else nil — ut-docs#1713: a row can need both at once
@@ -941,6 +941,13 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			if !skipped {
 				importable++
 			}
+			// ut-docs#1235: a reused PLU renumbered at parse time is shown
+			// on the Preview too, as a warned row naming the new number —
+			// not a plain "ok" the operator only learns about after commit.
+			warnedPreview := false
+			if !commit && !skipped && it.SKUIssue != "" {
+				status, warnedPreview = translateSKUIssue(T, it.SKUIssue, it.SKUIssueRaw, it.SKU), true
+			}
 			generatedSKU := ""
 			if predictSKUs && !skipped && it.SKU == "" {
 				// Same department/category nesting the commit loop
@@ -953,7 +960,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					skuReserved[sku] = true
 				}
 			}
-			rows = append(rows, rowView{ImportItem: it, Status: status, Skipped: skipped, Idx: i, FixFields: fixFields, GeneratedSKU: generatedSKU})
+			rows = append(rows, rowView{ImportItem: it, Status: status, Skipped: skipped, Warned: warnedPreview, Idx: i, FixFields: fixFields, GeneratedSKU: generatedSKU})
 		}
 
 		// ut-docs#601: a preview stages the upload so the follow-up commit
@@ -1416,7 +1423,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				// the operator sees the number was reused rather than
 				// silently getting a "-2" SKU with no explanation.
 				if it.SKUIssue != "" {
-					warnings = append(warnings, translateSKUIssue(T, it.SKUIssue, it.SKUIssueRaw))
+					warnings = append(warnings, translateSKUIssue(T, it.SKUIssue, it.SKUIssueRaw, it.SKU))
 				}
 				// A present-but-invalid net quantity imported the item with
 				// none (ut-docs#3403) — warned, never silent, since it also
@@ -2302,10 +2309,12 @@ func translateTaxIssue(T func(string) string, code, raw string) string {
 
 // translateSKUIssue is translateBarcodeIssue's counterpart for the
 // (non-blocking) SKUIssue reason code (ut-docs#1222).
-func translateSKUIssue(T func(string) string, code, raw string) string {
+// sku is the number the row was renumbered to, named in the message so the
+// operator can find the item later (ut-docs#1235).
+func translateSKUIssue(T func(string) string, code, raw, sku string) string {
 	switch code {
 	case catimport.SKUIssueDuplicateInFile:
-		return fmt.Sprintf(T("import.status.sku_reused_in_file"), raw)
+		return fmt.Sprintf(T("import.status.sku_reused_renumbered"), raw, sku)
 	default:
 		log.Printf("[import] unrecognised SKU issue reason code %q", code)
 		return T("import.status.unknown_issue")

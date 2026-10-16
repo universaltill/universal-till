@@ -971,7 +971,7 @@
   "import.status.ok": "بدون مشکل",
   "import.status.seeded_gift_voucher_removed": "کالای کارت هدیهٔ «%s» که هنگام راه‌اندازی ساخته شده بود حذف شد، چون این درون‌ریزی کالای خودش را آورد.",
   "import.status.sku_already_in_catalog": "کد کالا (SKU) قبلاً در کاتالوگ موجود است",
-  "import.status.sku_reused_in_file": "شمارهٔ کالای «%s» در این فایل تکراری است — با شمارهٔ جدیدی وارد شد",
+  "import.status.sku_reused_renumbered": "شمارهٔ کالای «⁦%s⁩» در این فایل تکراری است — شمارهٔ جدید «⁦%s⁩»",
   "import.status.source_deleted": "در فایل مبدأ حذف شده",
   "import.status.stock_location_failed": "موجودی منتقل نشد: مکان پیش‌فرض در دسترس نیست",
   "import.status.stock_movement_failed": "موجودی منتقل نشد: ثبت تراکنش موجودی ممکن نشد",
