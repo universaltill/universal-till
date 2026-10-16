@@ -20,12 +20,16 @@ import (
 // The kinds this applier writes, by feed kind. Each is also the cloud_links
 // entity and the audit entity type. Every other kind is skipped.
 const (
-	kindTaxCode  = "tax_code"
-	kindCategory = "category"
-	kindItem     = "item"
+	kindTaxCode       = "tax_code"
+	kindCategory      = "category"
+	kindItem          = "item"
+	kindModifierGroup = "modifier_group"
+	kindOptionSet     = "option_set"
 )
 
-var appliedKinds = map[string]bool{kindTaxCode: true, kindCategory: true, kindItem: true}
+var appliedKinds = map[string]bool{
+	kindTaxCode: true, kindCategory: true, kindItem: true, kindModifierGroup: true, kindOptionSet: true,
+}
 
 // auditActor is the audit_log actor of a pulled row: the seeded 'system'
 // user, as every cloud directive's audit row (auditCloudDirective).
@@ -172,6 +176,18 @@ func (r *runner) apply(ctx context.Context, tx *sql.Tx, row Row, gen int64) ([]r
 		if res.ClearedImagePath != "" {
 			photos = append(photos, replacedPhoto{itemID: local, path: res.ClearedImagePath})
 		}
+	case kindModifierGroup:
+		res, err := r.applyModifierGroup(ctx, tx, local, f)
+		if err != nil {
+			return nil, err
+		}
+		created, changed = res.Created, res.Changed
+	case kindOptionSet:
+		res, err := r.applyOptionSet(ctx, tx, local, f)
+		if err != nil {
+			return nil, err
+		}
+		created, changed = res.Created, res.Changed
 	}
 	if err := r.links.Upsert(ctx, tx, data.CloudLink{Entity: row.Kind, CloudID: row.CloudID, LocalID: local, Version: row.Version, Gen: gen}); err != nil {
 		return nil, err
@@ -237,6 +253,10 @@ func kindLabel(kind string) string {
 	switch kind {
 	case kindTaxCode:
 		return "tax code"
+	case kindModifierGroup:
+		return "modifier group"
+	case kindOptionSet:
+		return "option set"
 	default:
 		return kind
 	}
@@ -252,7 +272,13 @@ func kindLabel(kind string) string {
 //   - category: DeleteCategoryMovingTx (subcategories move up, items become
 //     uncategorised, soft-deleted so past sales keep its name);
 //   - tax code: deactivated — the till has no tax-code delete (items and
-//     history reference it).
+//     history reference it);
+//   - modifier group: deleted (DeleteGroupIfExistsTx — delete_modifier_
+//     group's cascade to its options, item/category links and opt-outs;
+//     past sales keep their sale_line_modifiers snapshots);
+//   - option set: deleted when no active item has it applied
+//     (DeleteOptionSetIfUnusedTx, delete_option_set's rule), else
+//     deactivated.
 func (r *runner) tombstone(ctx context.Context, tx *sql.Tx, kind, cloudID, local string, version int64) error {
 	what := ""
 	switch kind {
@@ -306,6 +332,29 @@ func (r *runner) tombstone(ctx context.Context, tx *sql.Tx, kind, cloudID, local
 			return err
 		default:
 			what = "deactivated"
+		}
+	case kindModifierGroup:
+		deleted, err := r.mods.DeleteGroupIfExistsTx(ctx, tx, local)
+		if err != nil {
+			return err
+		}
+		if deleted {
+			what = "deleted"
+		}
+	case kindOptionSet:
+		deleted, err := r.sets.DeleteOptionSetIfUnusedTx(ctx, tx, local)
+		switch {
+		case errors.Is(err, data.ErrOptionSetInUse):
+			off := false
+			_, err := r.sets.SaveOptionSetTx(ctx, tx, data.OptionSetSave{ID: local, Active: &off})
+			if err != nil {
+				return err
+			}
+			what = "deactivated"
+		case err != nil:
+			return err
+		case deleted:
+			what = "deleted"
 		}
 	}
 	if err := r.links.Delete(ctx, tx, kind, cloudID); err != nil {
@@ -449,6 +498,32 @@ func (r *runner) ref(ctx context.Context, tx *sql.Tx, f fields, key, kind string
 	return &local, nil
 }
 
+// refList maps a *_cloud_ids list: absent → nil (keep); [] → an empty
+// list (clear); null → refused (the contract's lists are never null);
+// every id must be linked to an already pulled row of kind.
+func (r *runner) refList(ctx context.Context, tx *sql.Tx, f fields, key, kind string) (*[]string, error) {
+	raw, present, null := f.get(key)
+	switch {
+	case !present:
+		return nil, nil
+	case null:
+		return nil, fmt.Errorf("%s must be a list, not null", key)
+	}
+	var ids []string
+	if err := json.Unmarshal(raw, &ids); err != nil {
+		return nil, fmt.Errorf("%s must be a list of ids", key)
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		local, err := r.resolve(ctx, tx, kind, id)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", key, err)
+		}
+		out = append(out, local)
+	}
+	return &out, nil
+}
+
 // applyTaxCode maps a tax_code row: name, rate_basis_points,
 // takeaway_rate_basis_points (null = no takeaway override), active.
 func (r *runner) applyTaxCode(ctx context.Context, tx *sql.Tx, local string, f fields) (data.TaxCodeSaveResult, error) {
@@ -474,7 +549,8 @@ func (r *runner) applyTaxCode(ctx context.Context, tx *sql.Tx, local string, f f
 // applyCategory maps a category row: name, parent_cloud_id (null = top
 // level), sort_order, color, icon (null = clear), sell_screen_hidden,
 // active (SetCategoryActive's rules: deactivating refuses while active
-// items are in it). modifier_group_cloud_ids is not applied (follow-up).
+// items are in it), modifier_group_cloud_ids (the category's whole ordered
+// group set, SetCategoryModifierGroupsTx).
 func (r *runner) applyCategory(ctx context.Context, tx *sql.Tx, local string, f fields) (data.CategorySaveResult, error) {
 	p := data.CategorySave{ID: local, Create: true}
 	var err error
@@ -505,6 +581,10 @@ func (r *runner) applyCategory(ctx context.Context, tx *sql.Tx, local string, f 
 	if err != nil {
 		return data.CategorySaveResult{}, err
 	}
+	groups, err := r.refList(ctx, tx, f, "modifier_group_cloud_ids", kindModifierGroup)
+	if err != nil {
+		return data.CategorySaveResult{}, err
+	}
 	res, err := r.cat.SaveCategoryTx(ctx, tx, p)
 	if err != nil {
 		return res, err
@@ -515,14 +595,22 @@ func (r *runner) applyCategory(ctx context.Context, tx *sql.Tx, local string, f 
 		}
 		res.Changed = append(res.Changed, "active")
 	}
+	if groups != nil {
+		if err := r.mods.SetCategoryModifierGroupsTx(ctx, tx, local, *groups); err != nil {
+			return res, err
+		}
+		res.Changed = append(res.Changed, "modifier_group_ids")
+	}
 	return res, nil
 }
 
 // applyItem maps an item row onto data.ItemPatch, field by field (the
 // field table is in docs/data-model.md, "Cloud catalogue pull"). A blank
 // sku or unit keeps the till's (a blank SKU is generated on create). The
-// modifier-group, opt-out and option-set id lists are not applied
-// (follow-ups ut-docs#4491/#4492).
+// modifier-group and opt-out lists are the item's whole sets
+// (ItemPatch.ModifierGroupIDs / ModifierOptOutIDs); option_set_cloud_ids
+// is its whole ordered set of option sets (ApplyOptionSetsToItemTx — no
+// variants are generated: they arrive as their own rows, ut-docs#4521).
 func (r *runner) applyItem(ctx context.Context, tx *sql.Tx, local string, f fields) (data.ItemSaveResult, error) {
 	p := data.ItemPatch{ID: local, Create: true}
 	var err error
@@ -603,5 +691,120 @@ func (r *runner) applyItem(ctx context.Context, tx *sql.Tx, local string, f fiel
 			}
 		}
 	}
-	return r.cat.SaveItemTx(ctx, tx, p)
+	if p.ModifierGroupIDs, err = r.refList(ctx, tx, f, "modifier_group_cloud_ids", kindModifierGroup); err != nil {
+		return fail(err)
+	}
+	if p.ModifierOptOutIDs, err = r.refList(ctx, tx, f, "modifier_opt_out_cloud_ids", kindModifierGroup); err != nil {
+		return fail(err)
+	}
+	sets, err := r.refList(ctx, tx, f, "option_set_cloud_ids", kindOptionSet)
+	if err != nil {
+		return fail(err)
+	}
+	res, err := r.cat.SaveItemTx(ctx, tx, p)
+	if err != nil {
+		return res, err
+	}
+	if sets != nil {
+		if err := r.sets.ApplyOptionSetsToItemTx(ctx, tx, local, *sets); err != nil {
+			return res, err
+		}
+		res.Changed = append(res.Changed, "option_set_ids")
+	}
+	return res, nil
+}
+
+// applyModifierGroup maps a modifier_group row onto data.ModifierGroupSave:
+// name, required, min_select, max_select, sort_order, active, and options
+// — the group's FULL ordered option set (an option left out is deleted),
+// each {id, name, price_delta_minor, active}; an option id must be a UUID
+// (it becomes the local option's primary key) and an absent option active
+// means active. The selection rules, bounds and option rules are
+// SaveGroup's.
+func (r *runner) applyModifierGroup(ctx context.Context, tx *sql.Tx, local string, f fields) (data.ModifierGroupSaveResult, error) {
+	p := data.ModifierGroupSave{ID: local, Create: true}
+	var err error
+	fail := func(e error) (data.ModifierGroupSaveResult, error) { return data.ModifierGroupSaveResult{}, e }
+	if p.Name, err = f.requiredStr("name"); err != nil {
+		return fail(err)
+	}
+	if p.Required, err = f.boolPtr("required"); err != nil {
+		return fail(err)
+	}
+	if p.MinSelect, err = f.intField("min_select"); err != nil {
+		return fail(err)
+	}
+	if p.MaxSelect, err = f.intField("max_select"); err != nil {
+		return fail(err)
+	}
+	if p.SortOrder, err = f.intField("sort_order"); err != nil {
+		return fail(err)
+	}
+	if p.Active, err = f.boolPtr("active"); err != nil {
+		return fail(err)
+	}
+	raw, present, null := f.get("options")
+	switch {
+	case present && null:
+		return fail(errors.New("options must be a list, not null"))
+	case present:
+		var in []struct {
+			ID              string `json:"id"`
+			Name            string `json:"name"`
+			PriceDeltaMinor int64  `json:"price_delta_minor"`
+			Active          *bool  `json:"active"`
+		}
+		if err := json.Unmarshal(raw, &in); err != nil {
+			return fail(errors.New("options must be a list of {id, name, price_delta_minor, active}"))
+		}
+		opts := make([]data.ModifierOption, 0, len(in))
+		for _, o := range in {
+			id, err := canonicalID(o.ID)
+			if err != nil {
+				return fail(fmt.Errorf("option %w", err))
+			}
+			opts = append(opts, data.ModifierOption{ID: id, Name: o.Name, PriceDeltaMinor: o.PriceDeltaMinor, IsActive: o.Active == nil || *o.Active})
+		}
+		p.Options = &opts
+	}
+	return r.mods.SaveGroupTx(ctx, tx, p)
+}
+
+// applyOptionSet maps an option_set row onto data.OptionSetSave: name,
+// active, and values — the set's FULL ordered value list ({id, value}; an
+// id must be a UUID, a value left out is deleted). SaveOptionSet's rules
+// apply (unique name, 1–128 characters per value, no value twice).
+func (r *runner) applyOptionSet(ctx context.Context, tx *sql.Tx, local string, f fields) (data.OptionSetSaveResult, error) {
+	p := data.OptionSetSave{ID: local, Create: true}
+	var err error
+	fail := func(e error) (data.OptionSetSaveResult, error) { return data.OptionSetSaveResult{}, e }
+	if p.Name, err = f.requiredStr("name"); err != nil {
+		return fail(err)
+	}
+	if p.Active, err = f.boolPtr("active"); err != nil {
+		return fail(err)
+	}
+	raw, present, null := f.get("values")
+	switch {
+	case present && null:
+		return fail(errors.New("values must be a list, not null"))
+	case present:
+		var in []struct {
+			ID    string `json:"id"`
+			Value string `json:"value"`
+		}
+		if err := json.Unmarshal(raw, &in); err != nil {
+			return fail(errors.New("values must be a list of {id, value}"))
+		}
+		vals := make([]data.OptionSetValueInput, 0, len(in))
+		for _, v := range in {
+			id, err := canonicalID(v.ID)
+			if err != nil {
+				return fail(fmt.Errorf("option set value %w", err))
+			}
+			vals = append(vals, data.OptionSetValueInput{ID: id, Value: v.Value})
+		}
+		p.Values = &vals
+	}
+	return r.sets.SaveOptionSetTx(ctx, tx, p)
 }

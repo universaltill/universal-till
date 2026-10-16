@@ -658,7 +658,7 @@ erDiagram
 - `POSRepo.BackfillCustomerPhoneE164` fills `NULL` rows in chunks, in the background after start-up on every till (main and replica); when `store.country` differs from the per-till marker `customers.phone_e164_region` it recomputes every row first. Idempotent.
 - `POSRepo.LookupCustomersByPhone` (caller ID): every non-erased customer whose `phone_e164` equals the caller's normalised number, else matches on the trailing 9 digits; at most 10, by name, each with its last 5 completed sales (date, total, line count). Rows still `NULL` are normalised in Go, so the lookup is right before the back-fill finishes. Migration 069 also adds `idx_sales_customer_id` for the last-5-sales query.
 
-## Cloud catalogue pull — cloud_links (ut-docs#4463, ADR-0162 §4)
+## Cloud catalogue pull — cloud_links (ut-docs#4463, ut-docs#4491, ADR-0162 §4)
 
 On a paid store whose catalogue the cloud masters, the **main till** pulls the
 cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
@@ -698,17 +698,20 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   contract's one oversized case).
   **Order within a version.** A version group (one cloud transaction, always
   whole) is applied in dependency order, not the feed's kind/`cloud_id`
-  order: tax codes, then categories with a parent named in the group before
-  its children, then items, then every other kind. The order is settled over
+  order: tax codes, then modifier groups, then option sets, then categories
+  with a parent named in the group before its children, then items, then
+  every other kind. The order is settled over
   the whole group before it is cut into chunks. A parent cycle falls back to
   feed order and is refused by the normal validation. A reference
-  (`parent_cloud_id`, `category_cloud_id`, `tax_code_cloud_id`) to a row that
-  has no link yet — in an earlier version or earlier in its group — refuses
-  the row. An unlinked local row whose id equals the `cloud_id` is adopted
+  (`parent_cloud_id`, `category_cloud_id`, `tax_code_cloud_id`, and every id
+  in `modifier_group_cloud_ids`, `modifier_opt_out_cloud_ids`,
+  `option_set_cloud_ids`) to a row of that kind that has no link yet — in an
+  earlier version or earlier in its group — refuses the row. An unlinked local row whose id equals the `cloud_id` is adopted
   (updated and linked; its audit row says `created: false`).
-  Applied kinds: `tax_code`, `category`, `item`. Every other kind (variants,
-  barcodes, modifier groups, option sets, layouts, staff, settings, unknown)
-  is skipped, cursor advancing (follow-ups ut-docs#4491/#4492). Each applied
+  Applied kinds: `tax_code`, `category`, `item`, `modifier_group`,
+  `option_set` (applier version 2, ut-docs#4491). Every other kind is
+  skipped, cursor advancing: `item_variant`, `item_barcode` (ut-docs#4521),
+  `layout`, `staff`, `setting` (ut-docs#4492), and any unknown kind. Each applied
   row writes an `audit_log` row (`actor system`, action
   `cloud_catalog_<kind>_saved|deleted|deactivated`).
 - **Fields.** `tax_code`: name, rate_basis_points, takeaway_rate_basis_points
@@ -718,13 +721,34 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   unit (blank = keep), description (null = clear), price_minor,
   category_cloud_id / tax_code_cloud_id (null = clear), active, is_weighed,
   stock_untracked, age_restricted, color, icon, item_type, sell_screen_hidden,
-  sell_screen_removed, net_quantity_value/unit (both null = clear). Not
-  applied: `modifier_group_cloud_ids`, `modifier_opt_out_cloud_ids`,
-  `option_set_cloud_ids`.
+  sell_screen_removed, net_quantity_value/unit (both null = clear).
+  `modifier_group`: name, required, min_select, max_select, sort_order (the
+  group row's own legacy column; not negative), active, options — the full
+  ordered option set `[{id, name, price_delta_minor, active}]` (an option left
+  out is deleted; an absent option `active` means active; each `id` must be a
+  UUID and becomes the option's local id) — with `save_modifier_group`'s rules
+  (0 ≤ min ≤ max ≤ 50, required needs min ≥ 1, unique name among active
+  groups, 1–128-character option names, price change 0–999 999 999).
+  `option_set`: name (unique), active, values — the full ordered value list
+  `[{id, value}]` (UUID ids; a value left out is deleted, its generated
+  variants stay) with `save_option_set`'s rules.
+  **Link lists** — category `modifier_group_cloud_ids`; item
+  `modifier_group_cloud_ids`, `modifier_opt_out_cloud_ids`,
+  `option_set_cloud_ids` — are each the whole ordered set: absent keeps the
+  till's links, `[]` clears them, `null` refuses the row (the contract's lists
+  are never null), and every id must resolve through `cloud_links`. Applying
+  an item's option sets never generates variants (they arrive as their own
+  rows, ut-docs#4521). The same holds for `options` and `values`: absent
+  keeps, `null` refuses.
 - **Tombstones** use the delete rules: an item that was ever sold, has stock
   history, is on a quick button, in a parked or live basket, is deactivated;
   otherwise deleted (`delete_item`'s rule). A category is soft-deleted
-  (`DeleteCategoryMoving`); a tax code is deactivated. The link is removed.
+  (`DeleteCategoryMoving`); a tax code is deactivated. A modifier group is
+  deleted with `delete_modifier_group`'s cascade (options, item and category
+  links, opt-outs; past sales keep their snapshots). An option set is deleted
+  when no active item has it applied, else deactivated
+  (`delete_option_set`'s rule). The link is removed. A resync's prune uses the
+  same rules for every kind.
 - **409** `catalog_master_till` / `catalog_adopting` and **401/403** (e.g.
   `device_credential_required`) stop the pull with the cursor unchanged and
   no error; a 401/403 is logged at Warn once, then at Info until the feed
