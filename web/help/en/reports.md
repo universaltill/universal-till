@@ -236,7 +236,7 @@ In Settings → Report Retention, choose where reports are kept:
   disk.
 - **Cloud only** / **Till + cloud** — need an active subscription that
   includes cloud backup; without one they are shown but marked "needs an
-  active subscription". The main till uploads each archived report to your
+  active subscription". Each till uploads its own archived reports to your
   shop's cloud account in the background, about every 10 minutes, oldest
   first. With **Cloud only**, a report is removed from the till once the
   cloud has confirmed it; with **Till + cloud**, the till also keeps it for
@@ -244,8 +244,10 @@ In Settings → Report Retention, choose where reports are kept:
 
 The till always keeps its most recent end-of-day report, even after the
 cloud has it, so the next day-end report continues the Z-number sequence
-and starts where the last one ended. Additional tills keep their own
-reports for 10 years whatever the setting; only the main till uploads.
+and starts where the last one ended. Each till keeps and uploads its own
+reports: an additional till's reports are stored in the cloud under that
+till, separately from the main till's, and the till that made them
+removes them by the same setting.
 
 While cloud storage is on, the same card shows how many reports are still
 waiting to upload. If the cloud refuses the upload because the

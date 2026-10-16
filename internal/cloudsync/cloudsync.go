@@ -519,13 +519,13 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		// would double-report its own sales. Throttled and self-logging;
 		// never fails the tick.
 		pushSalesAggregates(ctx, cfg, db)
-		// Archived reports (ADR-0147 §2, ut-docs#574): only in retention
-		// mode cloud/both, and only from the main till — report_archive is
-		// per-till and not synced, so a replica uploading too would need a
-		// till key on the cloud row (a follow-up). Throttled and
-		// self-logging; never fails the tick.
-		pushReportArchives(ctx, cfg, db)
 	}
+	// Archived reports (ADR-0147 §2, ut-docs#574): only in retention mode
+	// cloud/both, from EVERY till — report_archive is per-till and not
+	// synced, so each till uploads its own Z chain, an additional till under
+	// its own till_id (ut-docs#4438, ADR-0147 amendment 2). Throttled and
+	// self-logging; never fails the tick.
+	pushReportArchives(ctx, cfg, db)
 	// Image fetches share one budget per tick: after the first
 	// transport-level failure (errImageFetchUnreachable) no further fetch is
 	// tried this tick, and each affected directive stays pending (no result

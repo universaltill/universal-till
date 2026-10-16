@@ -16,8 +16,9 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 )
 
-// ut-docs#574 (ADR-0040 card 4, ADR-0147 §2/§3): the main till uploads its
-// un-acked report_archive rows to POST /v1/stores/report-archives.
+// ut-docs#574 (ADR-0040 card 4, ADR-0147 §2/§3): a till uploads its
+// un-acked report_archive rows to POST /v1/stores/report-archives —
+// since ut-docs#4438 every till, an additional till under its own till_id.
 
 // archiveCloud answers each POST with the next status from statuses (the
 // last one repeats; empty = 200) and records the decoded body.
@@ -341,9 +342,13 @@ func TestPushReportArchives_Throttled(t *testing.T) {
 	}
 }
 
-// Tick gate: only a registered main till uploads (ADR-0147 §2).
-func TestTickReportArchives_MainTillOnly(t *testing.T) {
-	t.Run("main till uploads", func(t *testing.T) {
+// ut-docs#4438 (ADR-0147 amendment 2): every till uploads its own Z chain.
+// The main till sends no till_id (its cloud rows, blob keys and wire
+// contract are unchanged); an additional till sends its own
+// discovery.ReportedTillID, so two tills closing in the same second land on
+// distinct cloud rows.
+func TestTickReportArchives_EveryTillUploadsItsOwnChain(t *testing.T) {
+	t.Run("main till uploads without till_id", func(t *testing.T) {
 		noArchiveThrottle(t)
 		noAggThrottle(t)
 		cloud := &fakeCloud{}
@@ -356,27 +361,128 @@ func TestTickReportArchives_MainTillOnly(t *testing.T) {
 		if len(cloud.reportArchives) != 2 {
 			t.Fatalf("report archives = %d, want 2", len(cloud.reportArchives))
 		}
+		for _, body := range cloud.reportArchives {
+			if v, has := body["till_id"]; has {
+				t.Fatalf("main till sent till_id %v; its wire contract must stay unchanged", v)
+			}
+		}
 	})
-	t.Run("replica never uploads", func(t *testing.T) {
+	t.Run("replica uploads with its own till_id and is acked", func(t *testing.T) {
 		noArchiveThrottle(t)
 		noAggThrottle(t)
 		cloud := &fakeCloud{}
 		srv := httptest.NewServer(cloud.handler())
 		defer srv.Close()
 		f := seedArchiveFixture(t, "ra-tick-replica.db", "cloud", 2)
-		if err := data.NewSettingsRepo(f.db).Set(context.Background(), "sync.primary_url", "http://10.0.0.2:8080"); err != nil {
-			t.Fatal(err)
+		setReplica(t, f.db, "till-r1")
+		if err := Tick(context.Background(), testCfg(srv.URL), f.db, Hooks{}); err != nil {
+			t.Fatalf("tick: %v", err)
 		}
+		if len(cloud.reportArchives) != 2 {
+			t.Fatalf("replica uploaded %d report archives, want 2", len(cloud.reportArchives))
+		}
+		for _, body := range cloud.reportArchives {
+			if body["till_id"] != "till-r1" || body["store_id"] != "store-1" {
+				t.Fatalf("replica body = %v, want till_id=till-r1 store_id=store-1", body)
+			}
+		}
+		if unacked(t, f) != 0 {
+			t.Fatalf("replica rows not acked: %d un-acked", unacked(t, f))
+		}
+	})
+	t.Run("replica in till mode never uploads", func(t *testing.T) {
+		noArchiveThrottle(t)
+		noAggThrottle(t)
+		cloud := &fakeCloud{}
+		srv := httptest.NewServer(cloud.handler())
+		defer srv.Close()
+		f := seedArchiveFixture(t, "ra-tick-replica-till.db", "till", 2)
+		setReplica(t, f.db, "till-r1")
 		if err := Tick(context.Background(), testCfg(srv.URL), f.db, Hooks{}); err != nil {
 			t.Fatalf("tick: %v", err)
 		}
 		if len(cloud.reportArchives) != 0 {
-			t.Fatalf("replica uploaded %d report archives", len(cloud.reportArchives))
-		}
-		if unacked(t, f) != 2 {
-			t.Fatalf("replica acked rows: %d un-acked", unacked(t, f))
+			t.Fatalf("replica in till mode uploaded %d report archives", len(cloud.reportArchives))
 		}
 	})
+}
+
+// setReplica makes db an additional till joined to a main till, known to it
+// as tillID (sync.till_id, what discovery.ReportedTillID reports).
+func setReplica(t *testing.T, db *sql.DB, tillID string) {
+	t.Helper()
+	s := data.NewSettingsRepo(db)
+	if err := s.Set(context.Background(), "sync.primary_url", "http://10.0.0.2:8080"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Set(context.Background(), "sync.till_id", tillID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A replica whose till id can't be a cloud key never uploads without one:
+// an empty till_id would file its Z chain as the main till's. Its rows stay
+// local and un-acked (so they are never prune-eligible on the ack).
+func TestPushReportArchives_ReplicaWithInvalidTillIDSendsNothing(t *testing.T) {
+	noArchiveThrottle(t)
+	cloud := &archiveCloud{}
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	f := seedArchiveFixture(t, "ra-replica-badid.db", "cloud", 2)
+	setReplica(t, f.db, "till:r1/../x")
+	pushReportArchives(context.Background(), testCfg(srv.URL), f.db)
+	if cloud.count() != 0 {
+		t.Fatalf("posts = %d, want 0 for an invalid till id", cloud.count())
+	}
+	if unacked(t, f) != 2 {
+		t.Fatalf("un-acked = %d, want 2", unacked(t, f))
+	}
+}
+
+// Review finding 2: a replica whose roster id has not arrived yet (join in
+// progress) waits for it instead of falling back to its LAN id — that would
+// split its Z chain across two cloud till_ids.
+func TestPushReportArchives_ReplicaWithoutRosterIDWaits(t *testing.T) {
+	noArchiveThrottle(t)
+	cloud := &archiveCloud{}
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	f := seedArchiveFixture(t, "ra-replica-noid.db", "cloud", 2)
+	if err := data.NewSettingsRepo(f.db).Set(context.Background(), "sync.primary_url", "http://10.0.0.2:8080"); err != nil {
+		t.Fatal(err)
+	}
+	pushReportArchives(context.Background(), testCfg(srv.URL), f.db)
+	if cloud.count() != 0 || unacked(t, f) != 2 {
+		t.Fatalf("posts = %d, un-acked = %d; want 0 and 2 until sync.till_id is set", cloud.count(), unacked(t, f))
+	}
+}
+
+// A replica's 402 is its own refusal state (the per-till key), cleared by
+// its own next accepted upload — the same outcomes as the main till.
+func TestPushReportArchives_ReplicaRecordsItsOwnRefusal(t *testing.T) {
+	noArchiveThrottle(t)
+	cloud := &archiveCloud{}
+	cloud.setStatuses(http.StatusPaymentRequired)
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	f := seedArchiveFixture(t, "ra-replica-402.db", "cloud", 2)
+	setReplica(t, f.db, "till-r1")
+	pushReportArchives(context.Background(), testCfg(srv.URL), f.db)
+	if refusedAt(t, f.db) == "" {
+		t.Fatal("replica 402 not recorded")
+	}
+	if cloud.count() != 1 || cloud.post(0)["till_id"] != "till-r1" {
+		t.Fatalf("posts = %d, want 1 carrying till_id", cloud.count())
+	}
+	cloud.setStatuses(http.StatusOK)
+	reportArchiveLastNS.Store(0)
+	pushReportArchives(context.Background(), testCfg(srv.URL), f.db)
+	if refusedAt(t, f.db) != "" {
+		t.Fatal("replica refusal not cleared by its next 200")
+	}
+	if unacked(t, f) != 0 {
+		t.Fatalf("un-acked = %d, want 0", unacked(t, f))
+	}
 }
 
 // Review finding 2: a row whose content_json is not valid JSON (or empty)

@@ -25,8 +25,9 @@ const (
 	// refused a report upload with 402 subscription_inactive, and cleared by
 	// the next accepted upload or when the mode goes back to till. It drives
 	// the settings warning and the status-bar chip. The "cloudsync." prefix
-	// makes it per-till (PerTillSettingPrefixes): only the main till
-	// uploads, and a replica must never inherit the main till's refusal.
+	// makes it per-till (PerTillSettingPrefixes): each till uploads its
+	// own Z chain and records its own refusal (ut-docs#4438), and a replica
+	// must never inherit the main till's.
 	ReportArchiveCloudRefusedAtKey = "cloudsync.report_archive_refused_at"
 )
 
@@ -125,8 +126,8 @@ const reportArchiveKeepClause = `
                  WHERE k.kind = report_archive.kind AND k.z_number IS NOT NULL
                  ORDER BY k.z_number DESC LIMIT 1)`
 
-// PruneReportArchiveAcked deletes every acked row (mode cloud on the main
-// till, ADR-0147 §4) except each kind's newest and highest-Z row.
+// PruneReportArchiveAcked deletes every acked row (mode cloud, ADR-0147 §4
+// as amended for every till by ut-docs#4438) except each kind's newest and highest-Z row.
 func (r *POSRepo) PruneReportArchiveAcked(ctx context.Context) (int64, error) {
 	res, err := r.db.ExecContext(ctx,
 		`DELETE FROM report_archive WHERE cloud_acked_at IS NOT NULL`+reportArchiveKeepClause)
@@ -138,7 +139,7 @@ func (r *POSRepo) PruneReportArchiveAcked(ctx context.Context) (int64, error) {
 }
 
 // PruneReportArchiveAckedOlderThan deletes rows that are acked AND whose
-// period is before cutoff (mode both on the main till, ADR-0147 §4), with
+// period is before cutoff (mode both, ADR-0147 §4), with
 // the same keep rule. cutoff compares as text exactly like
 // PruneReportArchiveOlderThan.
 func (r *POSRepo) PruneReportArchiveAckedOlderThan(ctx context.Context, cutoff string) (int64, error) {

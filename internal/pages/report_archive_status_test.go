@@ -14,9 +14,10 @@ import (
 )
 
 // ut-docs#574 (ADR-0147): the Report retention card enables cloud/both only
-// with a cloud_backup entitlement, and on the main till shows the pending
+// with a cloud_backup entitlement, and on every till shows the pending
 // upload count and a refused-upload warning; the status bar carries a chip
-// for the refusal.
+// for the refusal. Since ut-docs#4438 every till uploads, so an additional
+// till shows its own state too.
 
 func getSettingsBody(t *testing.T, mux *http.ServeMux) string {
 	t.Helper()
@@ -97,37 +98,40 @@ func TestSettingsRetention_CloudOptionsEnabledWithCloudBackup(t *testing.T) {
 	}
 }
 
-func TestSettingsRetention_MainTillShowsPendingAndRefusal(t *testing.T) {
-	mux, _, d := newFullAuthDeps(t)
-	seedTwoArchives(t, d)
-	setKV(t, d, map[string]string{
-		common.KeyReportRetentionMode:       "cloud",
-		data.ReportArchiveCloudRefusedAtKey: "2026-10-01T00:00:00Z",
-	})
-	body := getSettingsBody(t, mux)
-	if !strings.Contains(body, "Reports waiting to upload to the cloud: 2") {
-		t.Errorf("pending upload count missing")
-	}
-	if !strings.Contains(body, "Cloud upload refused") {
-		t.Errorf("refusal warning missing")
-	}
-}
-
-func TestSettingsRetention_TillModeOrReplicaShowsNoCloudStatus(t *testing.T) {
+// Every till uploads its own Z chain (ut-docs#4438), so the main till and
+// an additional till both show their own pending count and refusal.
+func TestSettingsRetention_EveryTillShowsPendingAndRefusal(t *testing.T) {
 	cases := map[string]map[string]string{
-		"till mode": {common.KeyReportRetentionMode: "till", data.ReportArchiveCloudRefusedAtKey: "2026-10-01T00:00:00Z"},
-		"replica":   {common.KeyReportRetentionMode: "cloud", data.ReportArchiveCloudRefusedAtKey: "2026-10-01T00:00:00Z", "sync.primary_url": "http://10.0.0.2:8080"},
+		"main till": {},
+		"replica":   {"sync.primary_url": "http://10.0.0.2:8080", "sync.till_id": "till-r1"},
 	}
 	for name, kv := range cases {
 		t.Run(name, func(t *testing.T) {
 			mux, _, d := newFullAuthDeps(t)
 			seedTwoArchives(t, d)
+			setKV(t, d, map[string]string{
+				common.KeyReportRetentionMode:       "cloud",
+				data.ReportArchiveCloudRefusedAtKey: "2026-10-01T00:00:00Z",
+			})
 			setKV(t, d, kv)
 			body := getSettingsBody(t, mux)
-			if strings.Contains(body, "Reports waiting to upload") || strings.Contains(body, "Cloud upload refused") {
-				t.Fatalf("%s must not show the cloud upload status", name)
+			if !strings.Contains(body, "Reports waiting to upload to the cloud: 2") {
+				t.Errorf("pending upload count missing")
+			}
+			if !strings.Contains(body, "Cloud upload refused") {
+				t.Errorf("refusal warning missing")
 			}
 		})
+	}
+}
+
+func TestSettingsRetention_TillModeShowsNoCloudStatus(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	seedTwoArchives(t, d)
+	setKV(t, d, map[string]string{common.KeyReportRetentionMode: "till", data.ReportArchiveCloudRefusedAtKey: "2026-10-01T00:00:00Z"})
+	body := getSettingsBody(t, mux)
+	if strings.Contains(body, "Reports waiting to upload") || strings.Contains(body, "Cloud upload refused") {
+		t.Fatal("till mode must not show the cloud upload status")
 	}
 }
 
@@ -181,12 +185,12 @@ func TestReportArchiveChip(t *testing.T) {
 			t.Fatalf("chip = %q, want empty in till mode", got)
 		}
 	})
-	t.Run("replica: empty", func(t *testing.T) {
+	t.Run("replica: its own refusal shows its chip", func(t *testing.T) {
 		_, _, d := newFullAuthDeps(t)
 		setKV(t, d, refused)
 		setKV(t, d, map[string]string{"sync.primary_url": "http://10.0.0.2:8080"})
-		if got := getReportArchiveChip(t, d, mgrUser); got != "" {
-			t.Fatalf("chip = %q, want empty on a replica", got)
+		if got := getReportArchiveChip(t, d, mgrUser); !strings.Contains(got, `data-testid="sb-report-archive"`) {
+			t.Fatalf("chip = %q, want the chip on a replica that uploads (ut-docs#4438)", got)
 		}
 	})
 }
