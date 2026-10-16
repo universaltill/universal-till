@@ -108,9 +108,16 @@
    below is inert for them, not load-bearing. */
 :root { --fluid-fs: clamp(17px, min(13.57px + 0.335vw, 13.25px + 0.625vh), 20px); }
 html { font-size: calc(var(--ui-scale, 1) * var(--fluid-fs)); }
+/* --ut-bundle-fonts: the font subsets installed language bundles ship
+   (ADR-0160 §8, ut-docs#4374), declared by /plugin-fonts/bundle-fonts.css.
+   They sit AFTER the generic sans-serif on purpose: a bundle font only
+   draws glyphs the system fonts lack (a Thai or CJK script), never Latin
+   text or digits. Undefined (no bundle ships a font) → the fallback just
+   repeats sans-serif. */
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif,
+    var(--ut-bundle-fonts, sans-serif),
     "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Segoe UI Symbol";
   background: var(--bg);
   color: var(--text);

@@ -415,6 +415,8 @@ var demoAllowedRoutes = map[string]bool{
 	"/healthz": true,
 	"/public/": true,
 	"GET /plugin-icons/{plugin}/{version}/{file...}": true,
+	"GET /plugin-fonts/bundle-fonts.css":             true,
+	"GET /plugin-fonts/{plugin}/{version}/{file}":    true,
 	"GET /themes/{file}":                             true,
 	"GET /ui/theme-sync":                             true,
 	// Sign-in, lock and session.

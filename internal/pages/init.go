@@ -102,6 +102,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	pluginPagesDir = paths.Plugins()
 	pluginThemesDir = paths.Plugins()
 	pluginIconsDir = paths.Plugins()
+	pluginFontsDir = paths.Plugins()
 	issuereport.PendingDir = paths.Data("issue-reports", "pending")
 	// Diagnostic-mode pending batches (ADR-0092 §3, ut-docs#2169) — same
 	// stable-data-dir convention; diagnostics.Flush MkdirAlls it before the
@@ -490,6 +491,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerThemes(mux, dp)
 	registerThemeSync(mux, dp) // ut-docs#2343: base.html's every-30s theme-sync poll
 	registerPluginIcons(mux)
+	registerPluginFonts(mux, dp) // language-bundle fonts (ADR-0160 §8, ut-docs#4374)
 	registerPluginsPage(mux, dp)
 	registerPluginAPI(mux, dp)
 	registerPluginPages(mux, dp)
