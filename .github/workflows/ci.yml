@@ -145,6 +145,12 @@ jobs:
         run: bash scripts/ci/guard-no-showmodal.sh
       - name: No-showModal guard regression test
         run: bash scripts/ci/guard-no-showmodal_test.sh
+      # ut-docs#4375 (ADR-0160 §8): no physical left/right CSS -- the till lays
+      # out right-to-left for ar/fa/he/ur; shrink-only baseline for old lines.
+      - name: RTL logical-CSS guard
+        run: bash scripts/ci/guard-rtl-logical-css.sh
+      - name: RTL logical-CSS guard regression test
+        run: bash scripts/ci/guard-rtl-logical-css_test.sh
       - name: Demo-mode env read guard (ADR-0113)
         run: bash scripts/ci/guard-demo-env.sh
       - name: Demo-mode env read guard regression test
