@@ -19,8 +19,8 @@
 //     its cloud_links row share a savepoint.
 //   - Within one version group (one cloud transaction, which always
 //     arrives whole) rows are applied in dependency order — tax codes,
-//     modifier groups, option sets, categories parents-first, items, then
-//     the rest — not the feed's kind/cloud_id order, so references inside
+//     modifier groups, option sets, categories parents-first, items,
+//     variants, barcodes, then the rest — not the feed's kind/cloud_id order, so references inside
 //     the group resolve.
 //   - Every row gets its own savepoint: a row the till refuses (price
 //     ceiling, palette, unknown parent, …) rolls back alone, keeps the
@@ -28,10 +28,11 @@
 //     logged, and the cursor still moves past it, so one bad row cannot
 //     wedge the feed. Applied kinds: tax_code, category, item,
 //     modifier_group, option_set (ut-docs#4491), with the category/item
-//     modifier-group, opt-out and option-set link lists. Kinds this
-//     applier does not apply (item_variant, item_barcode — ut-docs#4521;
-//     layout, staff, setting — ut-docs#4492; any unknown kind) are
-//     skipped, cursor advancing.
+//     modifier-group, opt-out and option-set link lists, item_variant and
+//     item_barcode (ut-docs#4521; a page's barcodes are resolved before
+//     its first transaction, since that reads settings through the pool).
+//     Kinds this applier does not apply (layout, staff, setting —
+//     ut-docs#4492; any unknown kind) are skipped, cursor advancing.
 //   - An error that is not the till refusing a row (context ended,
 //     database failure, a hook failing) aborts the chunk with the cursor
 //     unchanged; it is never recorded as a refusal.
@@ -72,8 +73,9 @@ import (
 // when a release applies a field or kind it skipped before: every till
 // re-pulls from 0 once (cursor reset) and so picks up what it ignored.
 // 1: tax codes, categories, items (ut-docs#4463). 2: modifier groups,
-// option sets and the link lists naming them (ut-docs#4491).
-const ApplierVersion = 2
+// option sets and the link lists naming them (ut-docs#4491). 3: item
+// variants (with their option values) and item barcodes (ut-docs#4521).
+const ApplierVersion = 3
 
 // Settings keys of the pull state. "cloudsync." is a per-till settings
 // family (data.PerTillSettingPrefixes): never LAN-synced, so the main
@@ -356,6 +358,9 @@ type runner struct {
 	// photos are thumbnails the open chunk's icons replaced, reported to
 	// opt.ItemPhotoReplaced once the chunk commits.
 	photos []replacedPhoto
+	// barcodes are the open page's item_barcode codes, resolved before its
+	// first chunk began (resolveBarcodes).
+	barcodes map[string]barcodeResolution
 }
 
 type replacedPhoto struct{ itemID, path string }
@@ -371,7 +376,9 @@ func (r *runner) applyPage(ctx context.Context, p Page, st *state, res *Result) 
 			_ = tx.Rollback()
 		}
 		r.photos = nil
+		r.barcodes = nil
 	}()
+	r.barcodes = r.resolveBarcodes(ctx, p.Rows)
 	begin := func() error {
 		var err error
 		if tx, err = r.db.BeginTx(ctx, nil); err != nil {
@@ -439,7 +446,8 @@ func (r *runner) applyPage(ctx context.Context, p Page, st *state, res *Result) 
 // cloud transaction, which arrive whole and contiguous) reordered so a
 // row's references within the group are applied before it: tax codes,
 // then modifier groups, then option sets, then categories parents-first,
-// then items, then every other kind. The server orders a group by kind
+// then items, then item variants, then item barcodes, then every other
+// kind. The server orders a group by kind
 // then cloud_id (ut-cloud internal/catalogfeed/kinds.go), so an item
 // written with its tax code, or with a modifier group or option set it
 // names, or a child category whose cloud_id sorts before its new
@@ -464,7 +472,7 @@ func orderGroup(group []Row) []Row {
 	if len(group) < 2 {
 		return group
 	}
-	var tax, groups, sets, cats, items, other []Row
+	var tax, groups, sets, cats, items, variants, barcodes, other []Row
 	for _, r := range group {
 		switch r.Kind {
 		case kindTaxCode:
@@ -477,6 +485,10 @@ func orderGroup(group []Row) []Row {
 			cats = append(cats, r)
 		case kindItem:
 			items = append(items, r)
+		case kindItemVariant:
+			variants = append(variants, r)
+		case kindItemBarcode:
+			barcodes = append(barcodes, r)
 		default:
 			other = append(other, r)
 		}
@@ -487,6 +499,8 @@ func orderGroup(group []Row) []Row {
 	out = append(out, sets...)
 	out = append(out, parentsFirst(cats)...)
 	out = append(out, items...)
+	out = append(out, variants...)
+	out = append(out, barcodes...)
 	return append(out, other...)
 }
 

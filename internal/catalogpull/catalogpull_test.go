@@ -424,17 +424,16 @@ func TestPullItemInLiveBasketIsDeactivatedNotDeleted(t *testing.T) {
 
 func TestPullSkipsOtherKindsAndStillAdvances(t *testing.T) {
 	h := newHarness(t)
-	// item_variant/item_barcode: ut-docs#4521; layout/staff/setting:
-	// ut-docs#4492.
-	for i, kind := range []string{"item_variant", "item_barcode", "layout", "staff", "setting", "something_new"} {
+	// layout/staff/setting: ut-docs#4492.
+	for i, kind := range []string{"layout", "staff", "setting", "something_new"} {
 		h.feed.add(feedRow{Kind: kind, CloudID: itemID(50 + i), Version: int64(i + 1), Data: map[string]any{"name": "x"}})
 	}
 	res := h.mustRun()
-	if res.Skipped != 6 || res.Changed || res.Refused != 0 {
-		t.Fatalf("result = %+v, want 6 skipped", res)
+	if res.Skipped != 4 || res.Changed || res.Refused != 0 {
+		t.Fatalf("result = %+v, want 4 skipped", res)
 	}
-	if h.cursor() != 6 {
-		t.Fatalf("cursor = %d, want 6", h.cursor())
+	if h.cursor() != 4 {
+		t.Fatalf("cursor = %d, want 4", h.cursor())
 	}
 	if n := h.count(`SELECT COUNT(*) FROM cloud_links`) + h.count(`SELECT COUNT(*) FROM cloud_apply_failures`); n != 0 {
 		t.Fatalf("skipped kinds left %d bookkeeping rows", n)
@@ -442,10 +441,10 @@ func TestPullSkipsOtherKindsAndStillAdvances(t *testing.T) {
 }
 
 func TestPullApplierVersionBumpRepullsFromZero(t *testing.T) {
-	// Version 2 (ut-docs#4491) applies modifier groups, option sets and
-	// the link lists: a till that ran version 1 (ut-docs#4463) re-pulls.
-	if ApplierVersion != 2 {
-		t.Fatalf("ApplierVersion = %d, want 2", ApplierVersion)
+	// Version 3 (ut-docs#4521) applies item variants and barcodes: a till
+	// that ran version 2 (ut-docs#4491) re-pulls.
+	if ApplierVersion != 3 {
+		t.Fatalf("ApplierVersion = %d, want 3", ApplierVersion)
 	}
 	h := newHarness(t)
 	h.feed.add(itemFeedRow(1, 1, "A", 100))
@@ -454,7 +453,7 @@ func TestPullApplierVersionBumpRepullsFromZero(t *testing.T) {
 		t.Fatalf("applier version = %q, want %d", h.setting(KeyApplierVersion), ApplierVersion)
 	}
 	// A till whose stored applier is older than the code's.
-	if err := data.NewSettingsRepo(h.db).Set(context.Background(), KeyApplierVersion, "1"); err != nil {
+	if err := data.NewSettingsRepo(h.db).Set(context.Background(), KeyApplierVersion, "2"); err != nil {
 		t.Fatal(err)
 	}
 	h.mustRun()

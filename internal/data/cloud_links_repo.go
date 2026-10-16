@@ -59,6 +59,21 @@ ON CONFLICT(entity, cloud_id) DO UPDATE SET
 	return nil
 }
 
+// HeldByOther reports whether a link of entity other than cloudID points
+// at localID (idx_cloud_links_local) — two cloud rows claiming one local
+// record, which the cloud pull refuses for a barcode (ut-docs#4521).
+func (*CloudLinkRepo) HeldByOther(ctx context.Context, q SyncQuerier, entity, localID, cloudID string) (bool, error) {
+	var one int
+	err := q.QueryRowContext(ctx, `SELECT 1 FROM cloud_links WHERE entity = ? AND local_id = ? AND cloud_id <> ? LIMIT 1`, entity, localID, cloudID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("cloud link: %w", err)
+	}
+	return true, nil
+}
+
 // Touch stamps an existing link with gen (a row the pull saw but did not
 // apply, e.g. a refused one, still exists in the cloud). No link: no-op.
 func (*CloudLinkRepo) Touch(ctx context.Context, q SyncQuerier, entity, cloudID string, gen int64) error {
