@@ -1,0 +1,68 @@
+{{/* ut-docs#4431: POST /api/import/from-system's fragment, swapped into an
+     importer's .import-system-result (aria-live) on the import page.
+     A preview ends with the Import button; a failed or part-way commit
+     offers Run again (safe: rows are linked, ADR-0161 §3). The plugin's own
+     message is shown as its own words. data-* markers are what tests key on
+     instead of translated text. */}}
+{{ if .Err }}
+<div class="notice-block-warn" role="alert" data-import-system-error="1"{{ if .Partial }} data-import-system-partial="1"{{ end }}>
+  <p>{{ .ErrText }}</p>
+  {{ if .Retry }}
+  <div class="import-system-actions">
+    <button type="button" class="btn primary" data-import-system-retry="1"
+            hx-post="/api/import/from-system" hx-vals='{{ jsonVals "plugin_id" .PluginID "entry_key" .EntryKey "mode" "commit" }}'
+            hx-target="closest .import-system-result" hx-swap="innerHTML"
+            hx-indicator="closest .import-system-entry" hx-disabled-elt="closest fieldset">{{ T "import.system.run_again" }}</button>
+  </div>
+  {{ end }}
+</div>
+{{ else }}
+<div class="{{ if eq .Mode "commit" }}{{ if .Counts.Issues }}notice-block-warn{{ else }}notice-block-success{{ end }}{{ else }}notice-block-warn{{ end }}" role="status" data-import-system-result="{{ .Mode }}">
+  <p>{{ if eq .Mode "commit" }}{{ T "import.system.commit_done" }}{{ else }}{{ T "import.system.preview_done" }}{{ end }}</p>
+  {{ if .Message }}<p class="muted">{{ printf (T "import.system.plugin_message") .Message }}</p>{{ end }}
+  <dl class="import-system-counts">
+    <div><dt>{{ T "import.system.count.new" }}</dt><dd data-count="new">{{ .Counts.New }}</dd></div>
+    <div><dt>{{ T "import.system.count.updated" }}</dt><dd data-count="updated">{{ .Counts.Updated }}</dd></div>
+    <div><dt>{{ T "import.system.count.unchanged" }}</dt><dd data-count="unchanged">{{ .Counts.Unchanged }}</dd></div>
+    <div><dt>{{ T "import.system.count.issues" }}</dt><dd data-count="issues">{{ .Counts.Issues }}</dd></div>
+  </dl>
+  {{ if eq .Mode "commit" }}
+  <div class="import-system-actions">
+    <a class="btn secondary" href="/items">{{ T "import.view_catalog" }}</a>
+  </div>
+  {{ end }}
+</div>
+{{ if .Samples }}
+<div class="import-system-samples">
+  {{/* A heading, not a <caption>: the phone table-to-cards layout squeezes
+       a caption into one narrow column. */}}
+  <p class="import-system-samples-title" id="import-system-samples-{{ .PluginID }}">{{ T "import.system.samples" }}</p>
+  <table aria-labelledby="import-system-samples-{{ .PluginID }}">
+    <thead><tr>
+      <th scope="col">{{ T "import.system.col.row" }}</th>
+      <th scope="col">{{ T "import.system.col.name" }}</th>
+      <th scope="col">{{ T "import.system.col.result" }}</th>
+      <th scope="col">{{ T "import.system.col.detail" }}</th>
+    </tr></thead>
+    <tbody>
+    {{ range .Samples }}
+    <tr data-sample-action="{{ .Action }}">
+      <td>{{ .Row }}</td>
+      <td>{{ if .Name }}{{ .Name }}{{ else }}<span class="muted">{{ .ExternalID }}</span>{{ end }}</td>
+      <td>{{ .ActionLabel }}</td>
+      <td>{{ if .Issue }}{{ .Issue }}{{ else if .Changes }}{{ printf (T "import.system.changes") .Changes }}{{ end }}</td>
+    </tr>
+    {{ end }}
+    </tbody>
+  </table>
+</div>
+{{ end }}
+{{ if ne .Mode "commit" }}
+<div class="import-system-actions">
+  <button type="button" class="btn primary" data-import-system-commit="1"
+          hx-post="/api/import/from-system" hx-vals='{{ jsonVals "plugin_id" .PluginID "entry_key" .EntryKey "mode" "commit" }}'
+          hx-target="closest .import-system-result" hx-swap="innerHTML"
+          hx-indicator="closest .import-system-entry" hx-disabled-elt="closest fieldset">{{ T "import.import" }}</button>
+</div>
+{{ end }}
+{{ end }}

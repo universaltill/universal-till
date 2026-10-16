@@ -362,6 +362,10 @@ func TestPluginRepo_ListImportEntries(t *testing.T) {
 	if !ok || bkp.PluginID != "i1" || bkp.Label != "Speedy .bkp Import" || bkp.SortOrder != 1 {
 		t.Fatalf("unexpected bkp_import row: %+v (present=%v)", bkp, ok)
 	}
+	// ut-docs#4431: the import page lists API importers by plugin name.
+	if bare := byKey["bare_import"]; bare.PluginName != "Bare Importer" {
+		t.Fatalf("PluginName = %q, want the plugin's own name", bare.PluginName)
+	}
 	if len(bkp.Entities) != 2 || bkp.Entities[0] != "items" || bkp.Entities[1] != "categories" {
 		t.Fatalf("unexpected entities: %+v", bkp.Entities)
 	}

@@ -56,6 +56,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewCatalogRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
 	settingsRepo := data.NewSettingsRepo(d.Db)
+	registerImportFromSystem(mux, d)
 
 	mux.HandleFunc("GET /import", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "import_export") {
@@ -106,14 +107,24 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		if sampleErr != nil {
 			logging.L().Errorf("import page: count sample data: %v", sampleErr)
 		}
+		// ut-docs#4431: the installed API importers ("From another till
+		// system"). A read failure hides the section (logged); the file
+		// import never depends on it.
+		systemImporters, systemErr := importSystemEntries(r.Context(), d, httpx.RequestLocale(r))
+		if systemErr != nil {
+			logging.L().Errorf("import page: list API importers: %v", systemErr)
+		}
 		importData := map[string]any{
-			"title":           httpx.T(httpx.RequestLocale(r), "page.title.import"),
-			"theme":           d.CurrentState().Theme,
-			"menuItems":       d.MenuSnapshot(),
-			"welcome":         welcome,
-			"showSampleCard":  sampleErr == nil,
-			"sampleItemCount": sampleCount,
-			"sampleLoaded":    sampleLoaded,
+			"showSystemCard":   systemErr == nil,
+			"systemImporters":  systemImporters,
+			"canManagePlugins": canPerform(d, r, "plugin_management"),
+			"title":            httpx.T(httpx.RequestLocale(r), "page.title.import"),
+			"theme":            d.CurrentState().Theme,
+			"menuItems":        d.MenuSnapshot(),
+			"welcome":          welcome,
+			"showSampleCard":   sampleErr == nil,
+			"sampleItemCount":  sampleCount,
+			"sampleLoaded":     sampleLoaded,
 			// ut-docs#3709 review S2: a satellite till cannot load sample
 			// data (POST /api/import/sample-data refuses it) — the card
 			// says to use the main till instead of offering the button.

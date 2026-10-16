@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -139,49 +140,12 @@ func registerImportDispatch(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
-		// Resolve which entities this run covers: the caller's requested
-		// list (comma-separated), defaulting to everything the entry
-		// declares. Each candidate must be BOTH declared in the entry's
-		// manifest AND granted "<entity>:write" (the same per-ledger shape
-		// export uses for sales:read/inventory:read, ut-docs#228): an
-		// undeclared or ungranted entity is silently omitted rather than
-		// failing the whole request — unless nothing at all survives, which
-		// IS an invalid request. CheckPermissionGranted (not
-		// CheckPermission) so a genuine infrastructure failure still 500s
-		// instead of masquerading as a denial.
-		declared := map[string]bool{}
-		for _, e := range entry.Entities {
-			declared[e] = true
-		}
-		requested := entry.Entities
-		if raw := strings.TrimSpace(entitiesRaw); raw != "" {
-			// Dedupe as parsed (review finding F4, ut-docs#599): an
-			// unbounded, unduplicated "entities" value would otherwise cost
-			// one CheckPermissionGranted DB round-trip AND one duplicate
-			// entry in the dispatched payload per repeat -- manager-gated,
-			// so low severity, but free to close.
-			seen := map[string]bool{}
-			requested = nil
-			for _, e := range strings.Split(raw, ",") {
-				if e = strings.TrimSpace(e); e != "" && !seen[e] {
-					seen[e] = true
-					requested = append(requested, e)
-				}
-			}
-		}
-		var granted []string
-		for _, e := range requested {
-			if !declared[e] {
-				continue
-			}
-			ok, perr := plugins.CheckPermissionGranted(r.Context(), d.Db, entry.PluginID, e+":write")
-			if perr != nil {
-				dataAPIRespond(w, http.StatusInternalServerError, false, perr.Error())
-				return
-			}
-			if ok {
-				granted = append(granted, e)
-			}
+		// Declared ∩ granted ∩ requested; nothing surviving is an invalid
+		// request (grantedImportEntities).
+		granted, err := grantedImportEntities(r.Context(), d, entry, entitiesRaw)
+		if err != nil {
+			dataAPIRespond(w, http.StatusInternalServerError, false, err.Error())
+			return
 		}
 		if len(granted) == 0 {
 			dataAPIRespond(w, http.StatusBadRequest, false, "no importable entities — none of the requested entities are both declared by the import entry and granted the matching :write permission")
@@ -341,4 +305,50 @@ func readImportMultipart(w http.ResponseWriter, r *http.Request, tmpPath, fileNa
 			_ = part.Close()
 		}
 	}
+}
+
+// grantedImportEntities resolves which entities a run covers: the caller's
+// requested list (comma-separated entitiesRaw), defaulting to everything the
+// entry declares. Each candidate must be BOTH declared in the entry's
+// manifest AND granted "<entity>:write" (the same per-ledger shape export
+// uses for sales:read/inventory:read, ut-docs#228): an undeclared or
+// ungranted entity is silently omitted rather than failing the whole
+// request — the caller refuses a run where nothing survives.
+// CheckPermissionGranted (not CheckPermission) so a genuine infrastructure
+// failure is an error instead of masquerading as a denial.
+func grantedImportEntities(ctx context.Context, d *common.Deps, entry data.ImportEntryRow, entitiesRaw string) ([]string, error) {
+	declared := map[string]bool{}
+	for _, e := range entry.Entities {
+		declared[e] = true
+	}
+	requested := entry.Entities
+	if raw := strings.TrimSpace(entitiesRaw); raw != "" {
+		// Dedupe as parsed (review finding F4, ut-docs#599): an
+		// unbounded, unduplicated "entities" value would otherwise cost
+		// one CheckPermissionGranted DB round-trip AND one duplicate
+		// entry in the dispatched payload per repeat -- manager-gated,
+		// so low severity, but free to close.
+		seen := map[string]bool{}
+		requested = nil
+		for _, e := range strings.Split(raw, ",") {
+			if e = strings.TrimSpace(e); e != "" && !seen[e] {
+				seen[e] = true
+				requested = append(requested, e)
+			}
+		}
+	}
+	var granted []string
+	for _, e := range requested {
+		if !declared[e] {
+			continue
+		}
+		ok, err := plugins.CheckPermissionGranted(ctx, d.Db, entry.PluginID, e+":write")
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			granted = append(granted, e)
+		}
+	}
+	return granted, nil
 }

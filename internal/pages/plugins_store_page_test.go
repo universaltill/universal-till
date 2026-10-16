@@ -167,3 +167,33 @@ func TestPluginStoreRendersSettingBoundPermissionInWords(t *testing.T) {
 		t.Errorf("want 2 permission badges, got %d", strings.Count(body, "perm-badge"))
 	}
 }
+
+// ut-docs#4431: the import page links "Get the importer for your system" to
+// /plugins/store?type=import — the store opens on that category when the
+// catalog has it, and on All otherwise (never on an empty grid).
+func TestStoreActiveCategoryPreselectsKnownTypeOnly(t *testing.T) {
+	cats := []storeCategory{{Type: "import", Count: 2}, {Type: "payment", Count: 1}}
+	if got := storeActiveCategory("import", cats); got != "import" {
+		t.Fatalf("storeActiveCategory(import) = %q", got)
+	}
+	if got := storeActiveCategory("theme", cats); got != "" {
+		t.Fatalf("a type with no listings preselected %q, want All", got)
+	}
+	chdirRoot(t)
+	initPagesI18n(t)
+	items := []storeItem{{ListingID: "l1", Name: "Importer", Version: "1.0", Type: "import"}, {ListingID: "l2", Name: "Card reader", Version: "1.0", Type: "payment"}}
+	rec := httptest.NewRecorder()
+	httpx.Render("ui/pages/plugins_store.html", map[string]any{
+		"title": "Plugin Store", "Items": items, "Categories": storeCategories(items), "ActiveCat": "import",
+	})(rec, httptest.NewRequest("GET", "/plugins/store?type=import", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, `class="cat-chip active" data-cat="import"`) {
+		t.Errorf("import chip not preselected")
+	}
+	if strings.Contains(body, `class="cat-chip active" data-cat=""`) {
+		t.Errorf("All chip still active alongside the preselected category")
+	}
+	if !strings.Contains(body, `data-active-cat="import"`) {
+		t.Errorf("chip row does not carry the preselected category for the filter script")
+	}
+}
