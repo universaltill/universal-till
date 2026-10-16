@@ -1,0 +1,14 @@
+{{/* ut-docs#4539 (ADR-0163 amendment 2026-10-16): the shop's currency on
+     my. differs from the one this till sells in, and the till did not
+     adopt it by itself — it already has sales (changing the currency would
+     relabel every recorded amount) or doesn't know the code. Rendered by
+     GET /ui/shop-currency-chip (shop_currency.go) into the status bar's
+     #sb-shop-currency-mount on every page, only for a viewer who may open
+     Settings (admin/manager). A status chip, never a modal: selling
+     carries on. Words first, never colour alone; the explanation, naming
+     both currencies, is in the title. */}}
+<a href="/settings#settings-currency" class="sb-item sb-shop-currency" data-testid="sb-shop-currency"
+   title="{{ printf (T "status.shop_currency_mismatch.hint") .Till .Shop }}">
+  <span class="btn-ico" aria-hidden="true">{{ icon "store" }}</span>
+  <span class="sb-shop-currency-text">{{ T "status.shop_currency_mismatch.label" }}</span>
+</a>

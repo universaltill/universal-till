@@ -72,3 +72,9 @@ Mağaza Universal Till bulutunda zaten varsa ve bu kasanın ona katılması gere
 2. Bu kasada Ayarlar → Kasa kaydı → Bir mağazayla eşleştir'i açın, kodu girin ve Eşleştir'e basın. Bir yönetici veya admin onaylar.
 3. Kasa yalnızca kendi bulut bağlantısını değiştirir: yeni bir cihaz kimliği ve kendine ait bir kimlik bilgisi alır. Satışlar, ürünler ve ayarlar kasada kalır; satış bu süre boyunca çevrimdışı çalışmaya devam eder.
 4. Katılmış bir kasada kod, ana kasasıyla aynı mağazadan gelmelidir; başka bir mağazanın kodu reddedilir ve hiçbir şey değişmez. Reddedilen veya süresi dolmuş bir koddan sonra kasa, yeni bir kodla eşleştirene kadar kayıtsız kalır.
+
+## Mağazanın para birimi
+
+Bulut hesabında (my.) oluşturulan bir mağaza para birimini ülkesinden alır. Böyle bir mağazanın ana kasası henüz hiçbir satışı tamamlamamış veya iptal etmemişse, bir sonraki bulut eşitlemesinde kendiliğinden mağazanın para birimine geçer (devam eden veya park edilmiş bir satış varken bekler) ve bu geçiş denetim kaydına yazılır. Katılmış kasalar ana kasayı izler.
+
+Bir kasada satış olduktan sonra para birimini asla kendiliğinden değiştirmez: bu, kaydedilmiş her tutarı yeniden etiketlerdi. Kendi para birimiyle satmaya devam eder, bir yönetici durum çubuğunda **Para birimi mağazadan farklı** çipini görür (iki para birimini görmek için üzerine gelin) ve bulut hesabı bu kasa için aynı sorunu listeler. Ayarlar → Para birimi'ni açmak için çipe dokunun ve kayıtlarınız için güvenli olduğunda orada değiştirin. İkisi eşleştiği anda çip kaybolur. Bu kasa sürümünün tanımadığı bir para birimine asla geçilmez; kasa güncellenene kadar aynı şekilde gösterilir.

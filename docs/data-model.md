@@ -658,6 +658,36 @@ erDiagram
 - `POSRepo.BackfillCustomerPhoneE164` fills `NULL` rows in chunks, in the background after start-up on every till (main and replica); when `store.country` differs from the per-till marker `customers.phone_e164_region` it recomputes every row first. Idempotent.
 - `POSRepo.LookupCustomersByPhone` (caller ID): every non-erased customer whose `phone_e164` equals the caller's normalised number, else matches on the trailing 9 digits; at most 10, by name, each with its last 5 completed sales (date, total, line count). Rows still `NULL` are normalised in Go, so the lookup is right before the back-fill finishes. Migration 069 also adds `idx_sales_customer_id` for the last-5-sales query.
 
+## Shop currency from the cloud (ut-docs#4539, ADR-0163 amendment 2026-10-16)
+
+A store born on my. has a currency the cloud set. The `POST /v1/stores/sync`
+response's entitlement block (ADR-0060 §3; a 402 `plan_required` body's block
+too) then carries `currency` (ISO 4217) and `currency_decimals`; a
+till-born store's block omits both.
+
+- **Cache (settings, per-till `entitlement.` family, written with the rest of
+  the block by `entitlement.Block.Values`).** `entitlement.shop_currency`:
+  three upper-case ASCII letters, or `''` when the block has none or a
+  malformed one (never an error). `entitlement.shop_currency_decimals`:
+  `0`..`4` as a string, or `''`; informational only, the till's own currency
+  table decides.
+- **Adopted marker.** `entitlement.shop_currency_adopted` (per-till): the
+  shop value this till last adopted by itself. Written by the till, never by
+  the block, so each shop value is adopted at most once and a manager's later
+  choice is never overridden.
+- **Reconcile** (`pages.reconcileShopCurrency`, the `cloudsync.Hooks.ShopCurrency`
+  hook, after every tick that reached the cloud). Main till only. With no
+  completed or voided sale, no sale in progress (cashier/kiosk/self-order
+  basket lines, parked sales), a code this build knows and a shop value not
+  adopted before, it writes `store.currency`, `store.currency_confirmed =
+  true` and the marker in one `SetMany`, and audits `settings` /
+  `store.currency` / `currency_adopted_from_cloud` with `{from, to}` as actor
+  `system`. Otherwise a mismatch stays: an open problem keyed
+  `cloud.shop_currency_mismatch` (reported to my.) and, for managers, the
+  status chip `GET /ui/shop-currency-chip`. Both clear once the two match.
+  Replicas follow the main till's `store.currency` through the primary-wins
+  settings pull (ADR-0011 §5).
+
 ## Cloud catalogue pull — cloud_links (ut-docs#4463, ut-docs#4491, ut-docs#4521, ADR-0162 §4)
 
 On a paid store whose catalogue the cloud masters, the **main till** pulls the

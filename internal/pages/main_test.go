@@ -41,7 +41,9 @@ var pagesGlobalsBaseline func()
 func resetProcessGlobals(t *testing.T) {
 	t.Helper()
 	pagesGlobalsBaseline()
+	resetShopCurrencyMemo()
 	t.Cleanup(pagesGlobalsBaseline)
+	t.Cleanup(resetShopCurrencyMemo)
 }
 
 // TestMain wires real i18n once for this package's whole test binary, and

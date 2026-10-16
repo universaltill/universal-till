@@ -72,3 +72,9 @@ Use this when the shop already exists in the Universal Till cloud and this till 
 2. On this till, open Settings → Till registration → Pair with a shop, enter the code and press Pair. A manager or admin approves it.
 3. The till replaces only its own cloud connection: it takes a new device ID and a credential of its own. Sales, products and settings stay on the till, and selling keeps working offline the whole time.
 4. On a joined till, the code must come from the same shop as its main till; a code for another shop is refused and nothing changes. A refused or expired code leaves the till unregistered until you pair it with a fresh code.
+
+## The shop's currency
+
+A shop created in the cloud account (my.) takes its currency from its country. When the main till of such a shop has not completed or voided a sale yet, it switches to the shop's currency by itself at its next cloud sync (waiting while a sale is in progress or parked), and the switch is recorded in the audit log. Joined tills follow the main till.
+
+Once a till has a sale, it never changes its currency by itself: that would relabel every amount already recorded. It keeps selling in its own currency, a manager sees a **Currency differs from shop** chip in the status bar (hold the pointer on it to see both currencies), and the cloud account lists the same problem for this till. Tap the chip to open Settings → Currency and change it there once that is safe for your records. The chip goes away as soon as the two match. A currency this till version doesn't know is never switched to; it is shown the same way until the till is updated.

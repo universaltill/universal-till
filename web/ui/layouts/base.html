@@ -1632,6 +1632,16 @@
            clean-up changes it); empty body otherwise. Same hx-preserve +
            default innerHTML swap as #sb-report-archive-mount. -->
       <span id="sb-disk-space-mount" hx-preserve hx-get="/ui/disk-space-chip" hx-trigger="load, every 60s"></span>
+      <!-- ut-docs#4539 (ADR-0163 amendment 2026-10-16): the shop's currency
+           on my. differs from this till's and the till did not adopt it
+           (it already has sales, or doesn't know the code) — "Currency
+           differs from shop" (web/ui/partials/shop_currency_chip.html), for
+           a viewer who may open Settings only. A status chip, never a
+           modal: selling carries on. Filled by GET /ui/shop-currency-chip
+           on load and every 60 s (the cloud check-in changes it); empty
+           body otherwise. Same hx-preserve + default innerHTML swap as
+           #sb-disk-space-mount. -->
+      <span id="sb-shop-currency-mount" hx-preserve hx-get="/ui/shop-currency-chip" hx-trigger="load, every 60s"></span>
       <!-- The network light: navigator.onLine, plus the till's own probe
            of its cloud host (ut-docs#3095). navigator.onLine only means a
            network interface is up, so on Wi-Fi whose router has no

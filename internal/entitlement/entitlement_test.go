@@ -148,8 +148,8 @@ func TestBlockValues(t *testing.T) {
 			t.Errorf("%s = %q, want %q", k, got[k], v)
 		}
 	}
-	if len(got) != 7 {
-		t.Errorf("Values returned %d keys, want exactly 7: %v", len(got), got)
+	if len(got) != 9 {
+		t.Errorf("Values returned %d keys, want exactly 9: %v", len(got), got)
 	}
 
 	// null expiry → empty string.
