@@ -4295,6 +4295,32 @@ tr.row-warn td { background: var(--warning-tint); }
 .import-welcome-actions, .import-sample-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
 .import-welcome-actions .btn, .import-sample-actions .btn { flex: 1 1 auto; }
 
+/* ut-docs#4431: "From another till system" — one block per installed API
+   importer: its name, its keys' set / not-set state, a link to its plugin
+   settings, Check & preview / Import, and an aria-live result area. The
+   fieldset is only the busy-disable scope (hx-disabled-elt), not a visual
+   group. Logical properties only (RTL). */
+.import-system-entry { border-block-start: 1px solid var(--border); padding-block: .8rem 0; margin-block-start: .6rem; }
+.import-system-entry h4 { margin-block: 0 .4rem; }
+.import-system-secrets { display: flex; flex-wrap: wrap; gap: .3rem 1.2rem; margin-block: 0 .6rem; }
+.import-system-secrets div { display: flex; gap: .4rem; align-items: baseline; }
+.import-system-secrets dt { font-weight: 600; }
+.import-system-secrets dd { margin: 0; }
+.import-system-secrets dd[data-secret-state="not-set"] { color: var(--warning); font-weight: 600; }
+.import-system-run { border: 0; padding: 0; margin: 0; min-inline-size: 0; }
+.import-system-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-block: .5rem; }
+.import-system-actions .btn { flex: 1 1 auto; min-height: 44px; }
+.import-system-busy { margin-block-start: .5rem; font-size: 1.05rem; font-weight: 600; }
+.import-system-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr)); gap: .4rem; margin-block: .5rem 0; }
+.import-system-counts div { border: 1px solid var(--border); border-radius: var(--radius); padding: .4rem .6rem; background: var(--surface); }
+.import-system-counts dt { font-size: .85rem; color: var(--muted); }
+.import-system-counts dd { margin: 0; font-size: 1.3rem; font-weight: 700; }
+.import-system-samples { overflow-x: auto; margin-block-start: .4rem; }
+.import-system-samples table { width: 100%; border-collapse: collapse; }
+.import-system-samples-title { font-weight: 600; margin-block: .3rem; }
+.import-system-samples th, .import-system-samples td { text-align: start; padding: .3rem .5rem; border-block-end: 1px solid var(--border); vertical-align: top; }
+.import-system-samples tr[data-sample-action="issue"] td { background: var(--warning-tint); }
+
 /* ---------- Kiosk mode (dedicated till: UT_KIOSK=1) ----------
    Touch-first: bigger targets, no text selection or tap highlights, no
    accidental pinch zoom. Pair with a fullscreen browser (chromium --kiosk);

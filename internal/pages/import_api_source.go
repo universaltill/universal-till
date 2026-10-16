@@ -38,12 +38,76 @@ func apiImportCommitKey(pluginID, entryKey string) string {
 	return "api-import\x00" + pluginID + "\x00" + entryKey
 }
 
-// runAPISourceImport serves an api-source entry. granted is the run's
-// requested ∩ declared ∩ granted "<entity>:write" set.
+// apiImportError is a failed API-source run: the HTTP status and English
+// message the JSON API answers with, the locale key the import page shows
+// (ut-docs#4431), the plugin's own words where it declined (detail), and
+// for a commit that stopped part-way the rows it applied.
+type apiImportError struct {
+	status  int
+	msg     string
+	key     string
+	detail  string
+	applied int
+}
+
+// Locale keys of apiImportError.key.
+const (
+	apiImportErrNoEntities   = "import.system.error.no_entities"
+	apiImportErrReplica      = "import.error.replica_use_primary"
+	apiImportErrRunning      = "import.error.already_in_progress"
+	apiImportErrNoResponse   = "import.system.error.no_response"
+	apiImportErrRefused      = "import.system.error.refused"
+	apiImportErrBadAnswer    = "import.system.error.bad_answer"
+	apiImportErrDeclined     = "import.system.error.declined"
+	apiImportErrFailed       = "import.system.error.failed"
+	apiImportErrPreview      = "import.system.error.preview_failed"
+	apiImportErrPartial      = "import.system.error.partial"
+	apiImportErrBadMode      = "import.system.error.failed"
+	apiImportErrNotInstalled = "import.system.error.not_found"
+)
+
+// apiImportOutcome is a successful run.
+type apiImportOutcome struct {
+	message      string // the plugin's own message; "" when it gave none
+	res          catsync.Result
+	pluginCounts map[string]int
+}
+
+// runAPISourceImport serves an api-source entry on the JSON API. granted is
+// the run's requested ∩ declared ∩ granted "<entity>:write" set.
 func runAPISourceImport(w http.ResponseWriter, r *http.Request, d *common.Deps, entry data.ImportEntryRow, granted []string, mode string) {
-	if mode != "preview" && mode != "commit" {
-		dataAPIRespond(w, http.StatusBadRequest, false, "mode must be preview or commit")
+	out, aerr := executeAPISourceImport(r, d, entry, granted, mode)
+	if aerr != nil {
+		dataAPIRespond(w, aerr.status, false, aerr.msg)
 		return
+	}
+	counts := map[string]int{"new": out.res.New, "updated": out.res.Updated, "unchanged": out.res.Unchanged, "issues": out.res.Issues}
+	samples := out.res.Samples
+	if samples == nil {
+		samples = []catsync.Sample{}
+	}
+	msg := out.message
+	if msg == "" {
+		msg = "import plugin accepted the request"
+	}
+	payload := map[string]any{"message": msg, "mode": mode, "counts": counts, "samples": samples}
+	if len(out.pluginCounts) > 0 {
+		payload["plugin_counts"] = out.pluginCounts
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{"data": payload, "error": nil})
+}
+
+// executeAPISourceImport runs one preview or commit of an api-source entry:
+// asks the plugin, collects its rows and applies them with catsync. Shared
+// by the JSON API and the import page (ut-docs#4431).
+func executeAPISourceImport(r *http.Request, d *common.Deps, entry data.ImportEntryRow, granted []string, mode string) (apiImportOutcome, *apiImportError) {
+	fail := func(status int, key, msg string) (apiImportOutcome, *apiImportError) {
+		return apiImportOutcome{}, &apiImportError{status: status, key: key, msg: msg}
+	}
+	if mode != "preview" && mode != "commit" {
+		return fail(http.StatusBadRequest, apiImportErrBadMode, "mode must be preview or commit")
 	}
 	// Core applies items today; stock rides on item rows (ADR-0161).
 	var entities []string
@@ -57,8 +121,7 @@ func runAPISourceImport(w http.ResponseWriter, r *http.Request, d *common.Deps, 
 		}
 	}
 	if len(entities) == 0 {
-		dataAPIRespond(w, http.StatusBadRequest, false, "no importable entities — an API-source import applies items, and the entry must declare items and hold items:write")
-		return
+		return fail(http.StatusBadRequest, apiImportErrNoEntities, "no importable entities — an API-source import applies items, and the entry must declare items and hold items:write")
 	}
 	if stock {
 		entities = append(entities, "stock")
@@ -67,14 +130,12 @@ func runAPISourceImport(w http.ResponseWriter, r *http.Request, d *common.Deps, 
 	// Imports are applied on the main till only: an additional till's
 	// catalogue comes from the main till's sync and would be reverted.
 	if commit && d.SyncPrimaryURL(r.Context()) != "" {
-		dataAPIRespond(w, http.StatusConflict, false, "imports are applied on the main till only")
-		return
+		return fail(http.StatusConflict, apiImportErrReplica, "imports are applied on the main till only")
 	}
 	if commit {
 		key := apiImportCommitKey(entry.PluginID, entry.Key)
 		if !reserveImportCommit(key) {
-			dataAPIRespond(w, http.StatusConflict, false, "an import from this source is already running")
-			return
+			return fail(http.StatusConflict, apiImportErrRunning, "an import from this source is already running")
 		}
 		defer releaseImportCommit(key)
 	}
@@ -83,30 +144,25 @@ func runAPISourceImport(w http.ResponseWriter, r *http.Request, d *common.Deps, 
 	resp, ok, err := plugins.SharedBus(d.Db).AskPlugin(plugins.WithImportRowSink(r.Context(), sink), entry.PluginID, "import.requested.ask",
 		apiImportRequestPayload{EntryKey: entry.Key, Entities: entities, Mode: mode, Source: plugins.ImportSourceAPI})
 	if err != nil {
-		dataAPIRespond(w, http.StatusInternalServerError, false, err.Error())
-		return
+		return fail(http.StatusInternalServerError, apiImportErrNoResponse, err.Error())
 	}
 	if !ok {
-		dataAPIRespond(w, http.StatusBadRequest, false, "import plugin did not respond")
-		return
+		return fail(http.StatusBadRequest, apiImportErrNoResponse, "import plugin did not respond")
 	}
 	// Over a cap the whole run is refused, whatever the plugin answered.
 	if refused := sink.Refused(); refused != nil {
-		dataAPIRespond(w, http.StatusBadRequest, false, refused.Error())
-		return
+		return fail(http.StatusBadRequest, apiImportErrRefused, refused.Error())
 	}
 	var parsed importResponse
 	if jerr := json.Unmarshal(resp, &parsed); jerr != nil {
-		dataAPIRespond(w, http.StatusInternalServerError, false, "import plugin returned an invalid response")
-		return
+		return fail(http.StatusInternalServerError, apiImportErrBadAnswer, "import plugin returned an invalid response")
 	}
 	if !parsed.OK {
 		msg := parsed.Error
 		if msg == "" {
 			msg = "import plugin declined without a reason"
 		}
-		dataAPIRespond(w, http.StatusBadRequest, false, msg)
-		return
+		return apiImportOutcome{}, &apiImportError{status: http.StatusBadRequest, key: apiImportErrDeclined, msg: msg, detail: parsed.Error}
 	}
 
 	opt := catsync.Options{Source: entry.PluginID, Commit: commit, ActorID: getSessionUserID(r), Stock: stock}
@@ -114,8 +170,7 @@ func runAPISourceImport(w http.ResponseWriter, r *http.Request, d *common.Deps, 
 		loc, lerr := pos.ResolveStockLocationID(r.Context(), d.Db, tillRegisterIDBestEffort(r.Context(), d))
 		if lerr != nil {
 			logging.L().Errorf("[import-api] %s: resolve stock location: %v", entry.PluginID, lerr)
-			dataAPIRespond(w, http.StatusInternalServerError, false, "could not resolve the stock location")
-			return
+			return fail(http.StatusInternalServerError, apiImportErrFailed, "could not resolve the stock location")
 		}
 		opt.LocationID = loc
 	}
@@ -135,30 +190,15 @@ func runAPISourceImport(w http.ResponseWriter, r *http.Request, d *common.Deps, 
 	}
 	if err != nil {
 		logging.L().Errorf("[import-api] %s %s: %v", entry.PluginID, mode, err)
-		msg := "the import could not be applied"
-		if !commit {
-			msg = "the import preview could not be built"
-		}
 		if partial {
-			msg = fmt.Sprintf("the import stopped part-way after applying %d rows; run it again to finish", res.New+res.Updated)
+			applied := res.New + res.Updated
+			return apiImportOutcome{}, &apiImportError{status: http.StatusInternalServerError, key: apiImportErrPartial, applied: applied,
+				msg: fmt.Sprintf("the import stopped part-way after applying %d rows; run it again to finish", applied)}
 		}
-		dataAPIRespond(w, http.StatusInternalServerError, false, msg)
-		return
+		if !commit {
+			return fail(http.StatusInternalServerError, apiImportErrPreview, "the import preview could not be built")
+		}
+		return fail(http.StatusInternalServerError, apiImportErrFailed, "the import could not be applied")
 	}
-	counts := map[string]int{"new": res.New, "updated": res.Updated, "unchanged": res.Unchanged, "issues": res.Issues}
-	msg := parsed.Message
-	if msg == "" {
-		msg = "import plugin accepted the request"
-	}
-	samples := res.Samples
-	if samples == nil {
-		samples = []catsync.Sample{}
-	}
-	payload := map[string]any{"message": msg, "mode": mode, "counts": counts, "samples": samples}
-	if len(parsed.Counts) > 0 {
-		payload["plugin_counts"] = parsed.Counts
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{"data": payload, "error": nil})
+	return apiImportOutcome{message: parsed.Message, res: res, pluginCounts: parsed.Counts}, nil
 }

@@ -2549,6 +2549,9 @@ type ImportEntryRow struct {
 	FileFormats []string
 	// Source is "api" for an API-source entry (ADR-0161), "" for a file one.
 	Source string
+	// PluginName is the owning plugin's name — the import page lists API
+	// importers by it (ut-docs#4431).
+	PluginName string
 }
 
 // ListImportEntries returns active import entries from active plugins —
@@ -2557,6 +2560,7 @@ func (r *PluginRepo) ListImportEntries(ctx context.Context) ([]ImportEntryRow, e
 	rows, err := r.db.QueryContext(ctx, `
 SELECT
     p.id,
+    COALESCE(p.name, ''),
     pe.key,
     pe.label,
     pe.sort_order,
@@ -2574,7 +2578,7 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 	for rows.Next() {
 		var row ImportEntryRow
 		var configJSON string
-		if err := rows.Scan(&row.PluginID, &row.Key, &row.Label, &row.SortOrder, &configJSON); err != nil {
+		if err := rows.Scan(&row.PluginID, &row.PluginName, &row.Key, &row.Label, &row.SortOrder, &configJSON); err != nil {
 			return nil, pluginObs.wrap("list_import_entries", err)
 		}
 		if configJSON != "" {

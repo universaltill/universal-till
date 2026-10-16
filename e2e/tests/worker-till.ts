@@ -136,16 +136,25 @@ function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
 // reuse another's unseeded fresh till.
 export const FRESH_PORT_OFFSET = 50;
 
-export async function startWorkerTill(parallelIndex: number, opts: { fresh?: boolean } = {}): Promise<WorkerTill> {
+// ut-docs#4431: `extraSeeds` boots a till with the usual two seeds PLUS the
+// given `go run` seed packages (e.g. './e2e/seed_api_importer', a test
+// plugin the shared worker till must not carry), on its own port band
+// (worker port + EXTRA_SEEDS_PORT_OFFSET). Like `fresh`, it never reuses a
+// till already listening there.
+export const EXTRA_SEEDS_PORT_OFFSET = 100;
+
+export async function startWorkerTill(parallelIndex: number, opts: { fresh?: boolean; extraSeeds?: string[] } = {}): Promise<WorkerTill> {
   const fresh = opts.fresh === true;
-  const port = workerPort(parallelIndex) + (fresh ? FRESH_PORT_OFFSET : 0);
+  const extraSeeds = opts.extraSeeds ?? [];
+  const ownTill = fresh || extraSeeds.length > 0;
+  const port = workerPort(parallelIndex) + (fresh ? FRESH_PORT_OFFSET : extraSeeds.length > 0 ? EXTRA_SEEDS_PORT_OFFSET : 0);
   const url = `http://127.0.0.1:${port}`;
   const tag = `[till:${port}]`;
 
-  if (fresh && (await isHealthy(url))) {
-    throw new Error(`${tag} something is already listening on ${url}; a fresh till never reuses one`);
+  if (ownTill && (await isHealthy(url))) {
+    throw new Error(`${tag} something is already listening on ${url}; a fresh or extra-seeded till never reuses one`);
   }
-  if (!fresh && (await isHealthy(url))) {
+  if (!ownTill && (await isHealthy(url))) {
     // Same semantics as the `webServer` entries' `reuseExistingServer:
     // !process.env.CI`: locally, a till a developer left running on this
     // worker's port is reused as-is (fast edit/test loop, single-spec
@@ -185,6 +194,9 @@ export async function startWorkerTill(parallelIndex: number, opts: { fresh?: boo
     if (!fresh) {
       execFileSync('go', ['run', './e2e/seed_faq'], goOpts);
       execFileSync('go', ['run', './e2e/seed_demo'], goOpts);
+    }
+    for (const seed of extraSeeds) {
+      execFileSync('go', ['run', seed], goOpts);
     }
 
     let bin = PREBUILT_BIN;
