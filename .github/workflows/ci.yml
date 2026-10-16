@@ -396,14 +396,19 @@ jobs:
       - name: Vet Windows-only code (GOOS=windows, ut-docs#2760)
         # Nothing else on a PR compiles windows-tagged Go: the Windows shell
         # is a mingw cgo build that only release.yml runs. internal/procjob
-        # (the kill-on-close job that stops unitill-pos when the shell dies)
-        # and the data-dir lock are pure Go, so cross-vet them — tests
-        # included — to catch a wrong x/sys signature before a release.
+        # (the kill-on-close job that stops unitill-pos when the shell dies),
+        # the data-dir lock and internal/lantls's MachineGuid read
+        # (ut-docs#4450) are pure Go, so cross-vet them — tests included —
+        # to catch a wrong x/sys signature before a release.
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
           GOOS: windows
-        run: go vet ./internal/procjob/ ./internal/db/ ./cmd/unitill-desktop/
+        run: |
+          go vet ./internal/procjob/ ./internal/db/ ./internal/lantls/ ./cmd/unitill-desktop/
+          # The macOS hardware-UUID read (ut-docs#4450) is pure Go too;
+          # nothing else compiles darwin-tagged code before a release.
+          GOOS=darwin go vet ./internal/lantls/
       - name: Windows exe carries the app icon + VERSIONINFO (ut-docs#2786)
         # The release's goreleaser pre-build hook, end to end: winres.sh
         # writes the .syso, a cross-compiled unitill-pos.exe links it, and

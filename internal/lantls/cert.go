@@ -108,7 +108,7 @@ func loadOrCreate(dir string, now time.Time) (*Cert, error) {
 	}
 	// Key rotation before renewal, so the certificate renewed below is the
 	// one on the key actually served (ut-docs#4409).
-	rot := &rotation{dir: dir, now: now, st: loadState(dir)}
+	rot := &rotation{dir: dir, now: now, st: loadState(dir), host: hostTag(hostIdentity())}
 	key, next := rot.run(key, errors.Is(statErr, fs.ErrNotExist), keyMtime)
 	leaf, err := ensureLeaf(filepath.Join(dir, certFile), key, now)
 	if err != nil {
