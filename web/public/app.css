@@ -4534,7 +4534,11 @@ body.login-screen {
     font-size: .75rem; line-height: 1.6; font-weight: 600; text-transform: uppercase;
     letter-spacing: .04em; color: var(--muted);
   }
-  table.t-cards tr > .t-cards-actions:empty { display: none; }
+  /* ut-docs#3441: `:empty` alone misses a cell whose template left only
+     whitespace text nodes (e.g. /orders' print-warning cell when nothing
+     failed), leaving a blank flex strip on every card. table-cards.js adds
+     .t-cards-blank for exactly that case. */
+  table.t-cards tr > .t-cards-actions:is(:empty, .t-cards-blank) { display: none; }
   table.t-cards tr > .t-cards-actions { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; }
   /* ut-docs#3357: a labelled actions CELL (a real column header, e.g.
      /orders' "Update") renders its buttons through the page's own
