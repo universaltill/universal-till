@@ -376,6 +376,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// `allowed` status-bar links are evaluated per request against the same
 	// menuPredicates the /menu grid uses — so a cashier sees neither.
 	httpx.InitRailVisibility(menuPredicateChecker(dp))
+	// ut-docs#4370: translate mode (ADR-0160 §7) — the T helper tags
+	// strings with their keys only for a request translateModeActive allows.
+	httpx.InitTranslateMode(func(r *http.Request) bool { return translateModeActive(dp, r) })
 	// ut-docs#3091: record this till's running version (and when it first
 	// ran it) and publish whether the after-update "what's new" chip shows.
 	recordRunningVersion(ctx, dp.Settings, releasenotes.Builtin(), buildinfo.Version, time.Now())

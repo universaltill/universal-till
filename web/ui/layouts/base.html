@@ -1367,6 +1367,11 @@
          can't be swapped directly). -->
     <link id="theme-css" rel="stylesheet" data-theme="{{ .theme }}" {{ if and .theme (ne .theme "default") }}href="/themes/{{ .theme }}.css?v={{ assetv (printf "public/themes/%s.css" .theme) }}"{{ end }} />
     <!-- Vendored locally: the till must work fully offline. -->
+    {{/* ut-docs#4370 (ADR-0160 §7): translate mode only. FIRST of the
+         deferred scripts, so its capture-phase Alt+click / long-press
+         listeners run before any page or shell handler can act on that
+         click, and its marker sweep runs before other scripts read text. */}}
+    {{ if translatemode }}<script defer src="/public/translate-mode.js?v={{ assetv "public/translate-mode.js" }}"></script>{{ end }}
     <script defer src="/public/vendor/htmx.min.js?v={{ assetv "public/vendor/htmx.min.js" }}"></script>
     <script defer src="/public/vendor/alpine.min.js?v={{ assetv "public/vendor/alpine.min.js" }}"></script>
     <script defer src="/public/app.js?v={{ assetv "public/app.js" }}"></script>
@@ -1787,6 +1792,16 @@
                 title="{{ T "status.release_notes_dismiss" }}" aria-label="{{ T "status.release_notes_dismiss" }}"><span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span></button>
       </span>
       {{ end }}{{ end }}
+      {{ if translatemode }}
+      {{/* ut-docs#4370: translate mode is on — its state, how to use it and
+           the way out, always in view while it lasts. */}}
+      <span class="sb-item sb-translate" data-testid="sb-translate-mode">
+        <strong>{{ T "translations.mode.title" }}</strong>
+        <span class="sb-translate-hint">{{ T "translations.mode.hint" }}</span>
+        <button type="button" class="sb-translate-off" data-testid="sb-translate-off"
+                hx-post="/api/translate-mode" hx-vals='{"on":"0"}' hx-swap="none">{{ T "translations.mode.turn_off" }}</button>
+      </span>
+      {{ end }}
       <span class="sb-item sb-ver" title="Universal Till">Universal&nbsp;Till&nbsp;v{{ appversion }}</span>
     </footer>
     <script>
@@ -2266,6 +2281,23 @@
          (a .show() dialog, a UT.popupOpened() panel). Shown and hidden only
          by the popup hooks in the first inline script above; app.css
          #ut-scrim. A tap on it reaches nothing behind. -->
+    {{ if translatemode }}
+    {{/* ut-docs#4370 (ADR-0160 §7): translate mode's key panel. A side
+         panel opened with .show() — never showModal — and data-ut-no-scrim:
+         the page beside it stays usable, so the next string can be
+         Alt+clicked or long-pressed while the panel is open. Filled by
+         web/public/translate-mode.js from /ui/translate-mode/panel. */}}
+    <dialog id="translate-panel" class="translate-panel" data-ut-no-scrim data-ut-escape-close
+            aria-labelledby="translate-panel-title" data-testid="translate-panel">
+      <div class="translate-panel-head">
+        <h3 id="translate-panel-title">{{ T "translations.mode.panel_title" }} {{ helpLink "translate-mode" }}</h3>
+        <button type="button" class="btn secondary btn-touch" aria-label="{{ T "common.close" }}"
+                data-action="close:translate-panel" data-testid="translate-panel-close"><span aria-hidden="true">✕</span></button>
+      </div>
+      <div id="translate-panel-body" class="translate-panel-body"></div>
+      <template id="translate-panel-loading"><p class="muted" role="status">{{ T "common.loading" }}</p></template>
+    </dialog>
+    {{ end }}
     <div id="ut-scrim" hidden aria-hidden="true"></div>
   </body>
 </html>

@@ -33,6 +33,7 @@ var HeadAssets = []string{
 	"public/tour.js",               // ut-docs#3710: sale-screen guided tour
 	"public/android-update.js",     // ut-docs#4312: the shared Android in-app update flow
 	"public/inline-actions.js",     // ut-docs#3325: delegated data-action/data-* hooks (no inline handlers, CSP)
+	"public/translate-mode.js",     // ut-docs#4370: translate mode only (the shell signature also marks the mode)
 }
 
 // headAssetVersion is assetVersion, indirected so a test can prove the
