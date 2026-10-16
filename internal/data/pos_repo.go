@@ -7649,6 +7649,13 @@ type SaleDetailVoucherIssue struct {
 	// land a different tax_total/total than the replica journaled.
 	Purpose   string `json:"purpose,omitempty"`
 	VATRateBP *int   `json:"vat_rate_bp,omitempty"`
+	// TopUp (ut-docs#4252): this entry ADDED Amount to the existing voucher
+	// VoucherID (a 'top_up' ledger row) rather than issuing it. omitempty
+	// keeps every issue byte-identical on the wire. Replicas can't make
+	// top-ups yet (main till only), so no journal carries one today;
+	// applyJournal maps it through so a future replica top-up replays as a
+	// credit, never as a second issue of the same number.
+	TopUp bool `json:"top_up,omitempty"`
 }
 
 type SaleDetailLine struct {
@@ -7855,12 +7862,15 @@ FROM payments WHERE sale_id = ? ORDER BY paid_at`, d.ID)
 	// sale_id is a deliberately FK-less soft reference (migration 068's
 	// header), so this is a plain WHERE sale_id = ? join, not an FK
 	// traversal. The issue transaction's amount IS the face value; the
-	// holder label lives on the vouchers row.
+	// holder label lives on the vouchers row. A top-up (ut-docs#4252) rides
+	// the same list, flagged: its row's amount is what the sale ADDED to an
+	// existing voucher, and it is always multi-purpose (no purpose/rate on
+	// the wire, like any multi-purpose issue).
 	viRows, err := r.db.QueryContext(ctx, `
-SELECT vt.voucher_id, COALESCE(v.holder_label, ''), vt.amount, v.purpose, v.issue_vat_rate_bp
+SELECT vt.voucher_id, COALESCE(v.holder_label, ''), vt.amount, v.purpose, v.issue_vat_rate_bp, vt.type = 'top_up'
 FROM voucher_transactions vt
 JOIN vouchers v ON v.id = vt.voucher_id
-WHERE vt.sale_id = ? AND vt.type = 'issue'
+WHERE vt.sale_id = ? AND vt.type IN ('issue', 'top_up')
 ORDER BY vt.rowid`, d.ID)
 	if err != nil {
 		return SaleDetail{}, false, fmt.Errorf("get sale voucher issues: %w", err)
@@ -7870,13 +7880,13 @@ ORDER BY vt.rowid`, d.ID)
 		var vi SaleDetailVoucherIssue
 		var purpose string
 		var rate sql.NullInt64
-		if err := viRows.Scan(&vi.VoucherID, &vi.HolderLabel, &vi.Amount, &purpose, &rate); err != nil {
+		if err := viRows.Scan(&vi.VoucherID, &vi.HolderLabel, &vi.Amount, &purpose, &rate, &vi.TopUp); err != nil {
 			return SaleDetail{}, false, fmt.Errorf("scan sale voucher issue: %w", err)
 		}
 		// Only a single-purpose issue carries the two new fields on the
 		// wire (see SaleDetailVoucherIssue) — multi-purpose stays the
 		// pre-#1037 shape.
-		if purpose == VoucherPurposeSingle {
+		if purpose == VoucherPurposeSingle && !vi.TopUp {
 			vi.Purpose = purpose
 			if rate.Valid {
 				bp := int(rate.Int64)

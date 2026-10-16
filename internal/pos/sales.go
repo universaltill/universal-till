@@ -228,7 +228,9 @@ type SaleInput struct {
 	// transaction as the sale, same precedent as sale_charges (ADR-0062).
 	// The LAN-sync journal carries these since contract 1.3.0
 	// (ut-docs#1053): data.SaleDetail.VoucherIssues rides the wire and
-	// applyJournal reconstructs this field on replay.
+	// applyJournal reconstructs this field on replay. An entry with TopUp
+	// (ut-docs#4252) credits an existing voucher instead of issuing one —
+	// same 0% liability, a 'top_up' ledger row, no vouchers row.
 	VoucherIssues []VoucherIssueInput
 	// AgeVerifications (ut-docs#3340) are the ID-check outcomes the cashier
 	// recorded during this sale (Service.AgeChecks) — one
@@ -269,6 +271,14 @@ type VoucherIssueInput struct {
 	// Must be 0 for a multi-purpose voucher — a rate there is a caller bug
 	// and is rejected rather than silently dropped.
 	VATRateBasisPoints int
+	// TopUp (ut-docs#4252): Amount is ADDED to the existing voucher
+	// VoucherID (which must exist, be multi-purpose and not void) instead
+	// of issuing a new one — data.TopUpVoucher in the sale's transaction,
+	// one 'top_up' ledger row, never CreateVoucher. Priced exactly like a
+	// multi-purpose issue: a 0% liability in voucher_issue_total, never in
+	// a VAT band. VoucherID may not be empty, Purpose must be multi ("" or
+	// data.VoucherPurposeMulti) and VATRateBasisPoints 0.
+	TopUp bool
 }
 
 type SaleLineInput struct {
@@ -572,6 +582,11 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucher
 		if v.Amount > MaxVoucherIssueAmount {
 			return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: amount %d exceeds the maximum of %d minor units", i+1, v.Amount.Minor(), MaxVoucherIssueAmount.Minor())
 		}
+		// ut-docs#4252: a top-up adds to a multi-purpose voucher's
+		// liability — never a taxable supply at issue.
+		if v.TopUp && v.Purpose != "" && v.Purpose != data.VoucherPurposeMulti {
+			return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: a top-up is always multi-purpose", i+1)
+		}
 		switch v.Purpose {
 		case "", data.VoucherPurposeMulti:
 			if v.VATRateBasisPoints != 0 {
@@ -874,8 +889,24 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 	// loop below — a retried transaction must issue the SAME voucher codes
 	// it would have on the first attempt.
 	issuedIDs := make(map[string]bool, len(in.VoucherIssues))
+	topUpIDs := make(map[string]bool)
 	for i := range in.VoucherIssues {
 		id := strings.TrimSpace(in.VoucherIssues[i].VoucherID)
+		// ut-docs#4252: a top-up names the voucher it credits — never a
+		// generated number — and one voucher is issued OR topped up at
+		// most once per sale (a second line for it would be a basket
+		// bug; the basket itself refuses a number already on a line).
+		if in.VoucherIssues[i].TopUp {
+			if id == "" {
+				return "", fmt.Errorf("voucher issue %d: a top-up needs the voucher number", i+1)
+			}
+			if issuedIDs[id] {
+				return "", fmt.Errorf("voucher issue %d: voucher %q is already in this sale", i+1, id)
+			}
+			topUpIDs[id] = true
+		} else if topUpIDs[id] {
+			return "", fmt.Errorf("voucher issue %d: voucher %q is already in this sale", i+1, id)
+		}
 		if id == "" {
 			id = uuid.NewString()
 		}
@@ -1288,6 +1319,16 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 			// as the sale — the sale_charges precedent (ADR-0062) for a
 			// sale-level financial event that is not an article line.
 			for _, v := range in.VoucherIssues {
+				// ut-docs#4252: a top-up credits the EXISTING voucher
+				// (fail-closed: unknown, void, single-purpose or over the
+				// per-voucher ceiling refuses the whole sale) and writes
+				// its own 'top_up' row — no vouchers row is created.
+				if v.TopUp {
+					if _, err := repo.TopUpVoucher(ctx, tx, v.VoucherID, saleID, v.Amount.Minor(), MaxVoucherIssueAmount.Minor(), now); err != nil {
+						return err
+					}
+					continue
+				}
 				// A single-purpose voucher (ut-docs#1037) records the rate
 				// it was taxed at (computeSaleTotals validated it) so the
 				// day-close can band the issue at the sale's own rate; a

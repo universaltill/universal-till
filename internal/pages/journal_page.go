@@ -63,10 +63,18 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 		voidVouchers := map[string]bool{}
+		// ut-docs#4252: a top-up this sale made, taken back by voiding the
+		// sale, is marked like a void voucher (the voucher itself lives on).
+		voidTopUps := map[string]bool{}
 		if len(sale.VoucherIssues) > 0 {
 			if vs, vErr := repo.VouchersIssuedInSale(r.Context(), sale.ID); vErr == nil {
 				for _, v := range vs {
 					voidVouchers[v.ID] = v.Status == "void"
+				}
+			}
+			if tops, tErr := repo.VoucherTopUpsInSale(r.Context(), sale.ID); tErr == nil {
+				for _, t := range tops {
+					voidTopUps[t.VoucherID] = t.Reversed
 				}
 			}
 		}
@@ -85,6 +93,7 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 			"CanViewVouchers": canPerform(d, r, "settings"),
 			"VoucherHrefs":    voucherHrefs,
 			"VoidVouchers":    voidVouchers,
+			"VoidTopUps":      voidTopUps,
 		})(w, r)
 	})
 

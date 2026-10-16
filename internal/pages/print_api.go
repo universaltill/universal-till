@@ -530,6 +530,29 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 			doc.Vouchers = append(doc.Vouchers, vb)
 		}
 	}
+	// ut-docs#4252: every voucher this sale TOPPED UP, labelled as a top-up
+	// with the value added and the balance right after (summed from the
+	// ledger, so a reprint prints what the first print did). A top-up whose
+	// sale was voided prints marked, never as a scannable symbol. Same
+	// degrade-to-no-block rule on a read error.
+	if tops, tErr := data.NewPOSRepo(d.Db).VoucherTopUpsInSale(ctx, detail.ID); tErr == nil && len(tops) > 0 {
+		doc.VoucherHeading = T("receipt.vouchers.issued")
+		for _, t := range tops {
+			vb := print.VoucherBlock{
+				Label:   T("receipt.vouchers.top_up"),
+				Amount:  "+" + money(t.AmountMinor),
+				Balance: Tf("receipt.vouchers.new_balance", money(t.BalanceAfterMinor)),
+				Code:    t.VoucherID,
+			}
+			if t.HolderLabel != "" {
+				vb.Holder = Tf("basket.gift_voucher.for", t.HolderLabel)
+			}
+			if t.Reversed {
+				vb.Void = T("receipt.vouchers.top_up_void")
+			}
+			doc.Vouchers = append(doc.Vouchers, vb)
+		}
+	}
 	// ut-docs#908: the customer order-tracking QR on a counter sale's
 	// receipt — display-only and best-effort (receiptTrackingPrint never
 	// fails the receipt; a reprint reuses the sale's one token).

@@ -36,10 +36,14 @@
   .receipt-payments li {display: flex; justify-content: space-between; margin-bottom: 0.35rem;}
   .receipt-payments small {color: var(--muted); display: block; text-align: end;}
   .receipt-voucher-code {font-family: monospace; overflow-wrap: anywhere;}
-  /* ut-docs#4224: number + value on one row, holder and barcode full width under it */
+  /* ut-docs#4224: number + value on one row, holder and barcode full width under it.
+     ut-docs#4252: a top-up's label sits full width above that row and its new
+     balance full width under it (the number is no longer the first child). */
   .receipt-vouchers li {flex-wrap: wrap; gap: 0 0.5rem;}
-  .receipt-vouchers li > :first-child {flex: 1; min-width: 0;}
-  .receipt-vouchers .receipt-voucher-holder, .receipt-vouchers .barcode {flex-basis: 100%;}
+  .receipt-vouchers li > .receipt-voucher-num {flex: 1; min-width: 0;}
+  .receipt-vouchers .receipt-voucher-holder, .receipt-vouchers .barcode,
+  .receipt-vouchers .receipt-voucher-top-up, .receipt-vouchers .receipt-voucher-balance {flex-basis: 100%;}
+  .receipt-vouchers .receipt-voucher-balance {text-align: end;}
   .receipt-legal {border-top: 1px dashed var(--border); margin-top: 0.75rem; padding-top: 0.75rem; font-size: 0.85rem; color: var(--text);}
   .receipt-legal-label {font-weight: 600; margin-bottom: 0.25rem;}
   .receipt-legal-line {margin: 0.15rem 0;}
@@ -134,8 +138,12 @@
       <ul>
         {{ range .IssuedVouchers }}
           <li>
-            <div><strong class="receipt-voucher-code">{{ .Code }}</strong></div>
-            <div>{{ money .Amount }}</div>
+            {{/* ut-docs#4252: a top-up of an existing voucher is labelled as
+                 one: the value added, then the voucher's new balance. */}}
+            {{ if .TopUp }}<div class="receipt-voucher-top-up">{{ T "receipt.vouchers.top_up" }}</div>{{ end }}
+            <div class="receipt-voucher-num"><strong class="receipt-voucher-code">{{ .Code }}</strong></div>
+            <div>{{ if .TopUp }}+{{ end }}{{ money .Amount }}</div>
+            {{ if .HasBalance }}<div class="receipt-voucher-balance">{{ printf (T "receipt.vouchers.new_balance") (money .Balance) }}</div>{{ end }}
             {{ if .Holder }}<div class="receipt-voucher-holder">{{ printf (T "basket.gift_voucher.for") .Holder }}</div>{{ end }}
             <!-- ut-docs#4224: the code as a barcode, so scanning the receipt redeems it.
                  CODE128 like the printed receipt (ut-docs#4248): a card number can be

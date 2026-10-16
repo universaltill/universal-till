@@ -166,6 +166,8 @@
                     <small class="muted line-gift-voucher" data-testid="gift-voucher-number">{{ .Code }}</small>
                     {{ if .HolderLabel }}<small class="muted">{{ printf (T "basket.gift_voucher.for") .HolderLabel }}</small>{{ end }}
                     {{ if .IsSinglePurpose }}<small class="muted">{{ T "pos.gift_voucher.use_specific" }}</small>{{ end }}
+                    {{/* ut-docs#4252: adding value to an existing voucher. */}}
+                    {{ if .TopUp }}<small class="muted" data-testid="gift-voucher-top-up">{{ T "basket.gift_voucher.top_up" }}</small>{{ end }}
                     {{ else }}
                     <small class="muted">{{ .SKU }}</small>
                     {{ end }}

@@ -4,7 +4,7 @@ title: Gift vouchers
 section: Everyday selling
 order: 25
 summary: Sell gift vouchers by tapping a Gift voucher item — scan the card or let the till create a number — and take them as payment by scanning them at the sale screen or in the payment panel's Split tab.
-keywords: [voucher, gift voucher, gift card, gutschein, hediye çeki, einzweck, single-purpose, specific item, redeem, balance, issue, code, card number, item type, list, history, export, csv, correct, correction, adjust, adjustment]
+keywords: [voucher, gift voucher, gift card, gutschein, hediye çeki, einzweck, single-purpose, specific item, redeem, balance, issue, code, card number, item type, list, history, export, csv, correct, correction, adjust, adjustment, top up, top-up, reload, add value]
 routes: [/vouchers, /vouchers/{id}]
 ---
 
@@ -104,6 +104,27 @@ What can go wrong:
 - "The new balance is the same as the current balance" — there is nothing to correct.
 - "This voucher's balance changed while you were looking at it" — someone spent it, or corrected it, in the meantime. Reload the page, check the new balance, and correct again if it's still needed.
 - On an additional till, the correction is made on the main till. If the main till can't be reached, nothing is changed and the page says so — try again when it's back. If the page says the main till didn't confirm the correction, it may or may not have been saved: reload the page and check the voucher's history before you try again.
+
+## Topping up a voucher
+
+A customer can add value to a voucher they already have — the card keeps its number and its balance goes up. A top-up is a sale, just like selling a new voucher: the customer pays for it at the till, and nothing is taxed until the voucher is spent.
+
+1. Open **Menu → Gift vouchers** and tap the voucher's card number.
+2. Under **Top up**, type the **Amount to add**, e.g. `20.00`, and tap **Add to sale**.
+3. The sale screen opens with a gift voucher line for this card number, marked *Top-up*. Add anything else the customer is buying, then take the payment as usual.
+4. When the sale is paid, the voucher's balance goes up by the amount. The receipt lists it under **Vouchers issued** as a *Gift voucher top-up*, with the card number, the amount added and the new balance, and the voucher's **History** shows a **Top-up** line linked to the receipt.
+
+A used-up voucher becomes **Active** again; its original value never changes. Nothing is added to the voucher until the sale is paid — tap ✕ on the line to drop the top-up. The day-end (Z) report counts a top-up with the vouchers sold in **GUTSCHEINE**. Voiding the sale takes the amount back off the voucher, but only while the customer hasn't spent it.
+
+What can go wrong:
+
+- Only a manager or admin can top up a voucher.
+- A voided voucher, or a voucher for a specific item, can't be topped up — the page says why instead of showing the form.
+- The amount must be above zero, and a voucher's balance can't go above the till's limit for one voucher.
+- A voucher can be topped up once per sale, and it can't pay for its own top-up.
+- A top-up needs an active gift voucher item in the catalogue — if there is none, the page says so.
+- Voiding the sale is refused once part of the topped-up amount has been spent.
+- On an additional till, the page asks you to top up on the main till instead.
 
 ## Day-end reports and other tills
 
