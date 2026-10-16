@@ -30,6 +30,6 @@ the browser pattern is bypassed.
 ## Verified
 - TDD: with the help edits stashed the test fails (`web/help/tr/country-settings.md: missing … 8.875`); restored, it passes.
 - `go vet ./internal/httpx`, `go test ./internal/httpx`, `guard-help-drift`, `guard-help-topics`, `guard-compliance-claims`, `guard-competitor-naming` pass; the other `ci.yml` build guards pass locally except `guard-deadcode-baseline` (local deadcode binary built with an older Go) and `guard-shellcheck-version` (no shellcheck in the container) — toolchain only, CI runs both.
-- No UI surface, no locale key, no screenshot change.
+- No UI surface and no locale key. `guard-docs-shots` keys on topic markdown, so `make docs-shots` was re-run (120 shots passed). Every PNG came out byte-identical and only the 8 topic hashes in `web/help/img/manifest.json` changed.
 
 **Verdict:** safe to merge.
