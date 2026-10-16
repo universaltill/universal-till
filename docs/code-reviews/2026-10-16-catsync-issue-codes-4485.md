@@ -56,6 +56,7 @@
 | 1 | Low | The tr `too_many_barcodes` text glued a suffix to the number (`%s'den`). The real value, 10, needs `10'dan`. | Fixed: `Bir üründe en fazla %s barkod olabilir.` (no suffix on the number). |
 | 2 | Low | The ar `category_too_deep` and `too_many_barcodes` texts used a noun form after `%s` that only fits 3–10. | Fixed: reworded so the number stands alone after "الحد الأقصى…:". |
 | 3 | Nit | The fa text shows Western digits from the `%s` args. | Accepted: every `%d`/`%s` count in the till is formatted the same way. |
+| 5 | CI | `guard-deadcode-baseline.sh` flagged `IssueCodes()` as unreachable, because only tests called it. This container's deadcode was built with go1.26 and could not run the guard. | Fixed: `IssueCodes` is now a package variable (`slices.Sorted(maps.Keys(issueText))`). Re-checked locally with a go1.27 deadcode: no catsync entry. |
 | 4 | Nit | The fallback log says `unrecognised row issue code ""` when a sample has text but no code. The current engine never produces such a sample. | Accepted. |
 
 The reviewer checked and cleared these points:

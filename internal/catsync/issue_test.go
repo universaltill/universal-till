@@ -96,7 +96,7 @@ func TestRun_AlreadyLinkedAndApplyFailedCodes(t *testing.T) {
 }
 
 func TestIssueCodes_AllHaveEnglishFormat(t *testing.T) {
-	codes := IssueCodes()
+	codes := IssueCodes
 	if len(codes) < 21 {
 		t.Fatalf("only %d codes", len(codes))
 	}

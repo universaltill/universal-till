@@ -369,7 +369,7 @@ func TestCatsyncIssueCodes_HaveLocaleKeys(t *testing.T) {
 	}
 	httpx.InitI18n(i18n, "en")
 	verbs := func(s string) int { return strings.Count(s, "%s") }
-	for _, code := range catsync.IssueCodes() {
+	for _, code := range catsync.IssueCodes {
 		key := "import.issue." + code
 		en := httpx.T("en", key)
 		if en == key {

@@ -2,7 +2,8 @@ package catsync
 
 import (
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 )
 
 // Per-row issue codes (ut-docs#4485). A code is stable API: the till
@@ -59,15 +60,9 @@ var issueText = map[string]string{
 	IssueApplyFailed:          "could not apply this row",
 }
 
-// IssueCodes lists every issue code, sorted.
-func IssueCodes() []string {
-	out := make([]string, 0, len(issueText))
-	for c := range issueText {
-		out = append(out, c)
-	}
-	sort.Strings(out)
-	return out
-}
+// IssueCodes lists every issue code, sorted. A variable, not a func: only
+// tests read it, and the deadcode guard flags a test-only func.
+var IssueCodes = slices.Sorted(maps.Keys(issueText))
 
 // rowIssue is one row's problem: a code plus the values its text names.
 // The zero value means no issue.
