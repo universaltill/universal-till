@@ -257,3 +257,29 @@ func TestScanAmbiguous_UnknownGSCodeAsksPrimaryOnce(t *testing.T) {
 		t.Fatalf("an unknown code adds nothing; lines=%+v voucher=%q", b.Lines, b.VoucherID)
 	}
 }
+
+// The chooser's re-post keeps the scan's src: a device read stays a device
+// read after the pick, so the item side never reaches the name search (#4342).
+func TestScanAmbiguous_ChooserKeepsDeviceSource(t *testing.T) {
+	mux, _, d := setupScanBarcodeDeps(t)
+	seedAmbiguousItem(t, d, ambiguousCode)
+	seedAmbiguousVoucher(t, d, ambiguousCode)
+	body := postScanKind(t, mux, ambiguousCode, "camera", "").Body.String()
+	if !strings.Contains(body, `&#34;src&#34;:&#34;camera&#34;`) && !strings.Contains(body, `"src":"camera"`) {
+		t.Fatalf("the chooser rows must re-post src=camera\n%s", body)
+	}
+}
+
+// kind=customer acts only on a customer code: a phone-shaped number posted
+// with kind=customer must not attach a customer by phone, which a plain scan
+// of that number never did.
+func TestScanAmbiguous_KindCustomerKeepsCustomerCodeGate(t *testing.T) {
+	mux, dp, d := setupScanBarcodeDeps(t)
+	if _, err := d.Exec(`INSERT INTO customers (id, name, phone) VALUES ('c-phone', 'Phone Person', '07700900123')`); err != nil {
+		t.Fatal(err)
+	}
+	postScanKind(t, mux, "07700900123", "", "customer")
+	if b := dp.Engine.Basket(); b.CustomerID != "" {
+		t.Fatalf("kind=customer on a non-customer code must not attach a customer, got %q", b.CustomerID)
+	}
+}

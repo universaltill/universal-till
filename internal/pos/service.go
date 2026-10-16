@@ -483,12 +483,15 @@ type Basket struct {
 	// ScanChoices (ut-docs#4344) are the kinds a just-scanned code matched
 	// when it matched more than one (an item AND a voucher, ...): the sale
 	// screen asks which one, and nothing is added or applied until the
-	// cashier picks. ScanChoiceCode/ScanChoiceQty are the scan to re-post
+	// cashier picks. ScanChoiceCode/ScanChoiceQty/ScanChoiceSrc are the scan to re-post
 	// with the picked kind. Per-render only, like ToastMessage: set on the
 	// copy Basket() returns, never stored on the Service.
 	ScanChoices    []ScanChoice `json:"scanChoices,omitempty"`
 	ScanChoiceCode string       `json:"scanChoiceCode,omitempty"`
 	ScanChoiceQty  float64      `json:"scanChoiceQty,omitempty"`
+	// ScanChoiceSrc is the scan's src, re-posted with the pick so a device
+	// read stays exact-only after the cashier chooses (ut-docs#4342).
+	ScanChoiceSrc string `json:"scanChoiceSrc,omitempty"`
 	// OrderType is the derived SUMMARY (ADR-0073, SummarizeOrderType): ""
 	// (every line dine-in), OrderTypeTakeaway (every line takeaway) or
 	// OrderTypeMixed. With no lines it is the default the next line

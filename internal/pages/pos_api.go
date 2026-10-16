@@ -1085,6 +1085,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				b.ScanChoices = answers.choices
 				b.ScanChoiceCode = code
 				b.ScanChoiceQty = in.Qty
+				b.ScanChoiceSrc = in.Src
 				render(&b)
 				return
 			}
@@ -1177,7 +1178,9 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		// If the scan is a customer barcode, attach and return current basket.
-		if kind == scanKindCustomer || (kind == "" && looksLikeCustomerCode(code)) {
+		// kind=customer still needs a customer code: LookupCustomer also
+		// matches a phone number, which a scan never attached (ut-docs#4344).
+		if (kind == scanKindCustomer || kind == "") && looksLikeCustomerCode(code) {
 			if custID, custName, ok := repo.LookupCustomer(r.Context(), code); ok {
 				d.Engine.SetCustomer(custID, custName)
 				b := d.Engine.Basket()

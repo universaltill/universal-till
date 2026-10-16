@@ -42,7 +42,7 @@
     <p class="scan-choices-title" id="scan-choices-title">{{ T "pos.scan_choice.title" }}</p>
     {{ range .ScanChoices }}
     <button type="button" class="btn scan-choice" data-scan-kind="{{ .Kind }}"
-            hx-post="/api/pos/scan" hx-vals='{{ jsonVals "code" $.ScanChoiceCode "qty" $.ScanChoiceQty "kind" .Kind }}'
+            hx-post="/api/pos/scan" hx-vals='{{ jsonVals "code" $.ScanChoiceCode "qty" $.ScanChoiceQty "src" $.ScanChoiceSrc "kind" .Kind }}'
             hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
       <span class="scan-choice-kind">{{ .Label }}</span>
       <span class="scan-choice-detail">{{ .Detail }}</span>
