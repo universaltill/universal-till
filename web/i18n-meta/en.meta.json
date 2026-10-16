@@ -20,5 +20,11 @@
   "common.show_less": {"description": "Toggle that collapses an expanded list or text.", "review": "standard", "max_length": 24},
   "common.show_more": {"description": "Toggle that expands a shortened list or text.", "review": "standard", "max_length": 24},
   "common.submit": {"description": "Button that sends a form.", "review": "standard", "max_length": 24},
-  "common.view": {"description": "Button or link that opens a record read-only.", "review": "standard", "max_length": 24}
+  "common.view": {"description": "Button or link that opens a record read-only.", "review": "standard", "max_length": 24},
+  "pos.scan_choice.customer": {"description": "Row label in the scan chooser: the code is a customer or loyalty card. The customer's name is shown under it.", "review": "standard", "max_length": 24},
+  "pos.scan_choice.item": {"description": "Row label in the scan chooser: the code is a catalog item (product). The item's name and price are shown under it.", "review": "standard", "max_length": 24},
+  "pos.scan_choice.promo": {"description": "Row label in the scan chooser: the code is a promotion or discount code. The code is shown under it.", "review": "standard", "max_length": 24},
+  "pos.scan_choice.receipt": {"description": "Row label in the scan chooser: the code is the number of an earlier receipt (sale), which opens its refund. The receipt number is shown under it.", "review": "standard", "max_length": 24},
+  "pos.scan_choice.title": {"description": "Heading of the sale-screen chooser shown when one scanned or typed code matches more than one thing (e.g. an item and a gift voucher). It asks the cashier which one they meant.", "review": "standard"},
+  "pos.scan_choice.voucher": {"description": "Row label in the scan chooser: the code is a gift voucher number. The voucher number and remaining balance are shown under it.", "review": "standard", "max_length": 24}
 }

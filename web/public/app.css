@@ -3547,6 +3547,21 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
   .basket th:nth-child(4), .basket td:nth-child(4) { grid-area: total; }
   .basket th:nth-child(5), .basket td:nth-child(5) { grid-area: remove; }
 }
+/* ---------- Scan chooser (ut-docs#4344) ----------
+   A scanned code matched more than one kind (item, voucher, ...): one row
+   per answer at the top of #basket. In-flow like .pos-notice so it never
+   covers Pay, but it is not one: it never fades and stays until the
+   cashier picks, cancels or scans again. Shown on a phone's collapsed
+   basket too (the phone :not() list below). */
+.scan-choices { display: flex; flex-direction: column; gap: .4rem; flex-shrink: 0;
+  padding: .6rem; margin-block-end: .5rem; border-radius: var(--radius);
+  background: rgba(37, 99, 235, .1); border: 1px solid rgba(37, 99, 235, .3); }
+.scan-choices-title { margin: 0; font-weight: 600; font-size: .92rem; color: var(--text); overflow-wrap: anywhere; }
+.scan-choices .scan-choice { display: flex; flex-direction: column; align-items: flex-start;
+  inline-size: 100%; min-block-size: 48px; text-align: start; gap: .1rem; white-space: normal; }
+.scan-choice-kind { font-weight: 700; }
+.scan-choice-detail { font-weight: 400; overflow-wrap: anywhere; }
+.scan-choices .scan-choices-cancel { min-block-size: 48px; align-self: flex-end; }
 /* ---------- Sale-screen notices (ut-docs#213) ----------
    THE notification surface for the sale screen — one component, two slots:
    server-rendered inside #basket (partials/basket.html) and the client-side
@@ -6405,7 +6420,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
     background: var(--surface); box-shadow: 0 -4px 16px rgba(15, 23, 42, .14);
     max-height: none; min-height: 0; overflow: visible;
   }
-  body:not(.pos-sheet-open) .pos-container > .basket:not(.receipt-view) > :not(.order-type-row):not(.basket-phonebar):not(.pos-notice) { display: none; }
+  body:not(.pos-sheet-open) .pos-container > .basket:not(.receipt-view) > :not(.order-type-row):not(.basket-phonebar):not(.pos-notice):not(.scan-choices) { display: none; }
   /* Product owner, 2026-09-29: Dine in | Takeaway sits NEXT TO the pay
      bar, one row (the approved mock-up), not on a row of its own above
      it. The order-type row becomes a contents box so its toggle is the
