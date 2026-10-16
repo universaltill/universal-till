@@ -27,7 +27,7 @@
 #      (whether `plural` names a real ICU plural argument of the English
 #      value, and that every English plural carries `plural`, is checked by
 #      the Go test TestRealLocaleBundle_PluralMetadataMatchesEnglish in
-#      internal/config/i18n_tm_test.go, which `go test ./...` runs in CI —
+#      internal/msgfmt/plural_meta_test.go, which `go test ./...` runs in CI —
 #      ut-docs#4479);
 #   7. areas.json doesn't map an en.json namespace to exactly one area;
 #   8. a baseline entry is stale (key gone, or now described) or new

@@ -184,7 +184,7 @@ func TestPlural_LargeAndFloat32(t *testing.T) {
 	}
 }
 
-// PluralArgs names every plural argument, at any nesting depth, sorted and
+// pluralArgs names every plural argument, at any nesting depth, sorted and
 // de-duplicated; select-only and plain messages have none (ut-docs#4479).
 func TestPluralArgs(t *testing.T) {
 	cases := []struct {
@@ -204,9 +204,9 @@ func TestPluralArgs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: parse: %v", c.name, err)
 		}
-		got := m.PluralArgs()
+		got := pluralArgs(m)
 		if strings.Join(got, ",") != strings.Join(c.want, ",") {
-			t.Errorf("%s: PluralArgs = %v, want %v", c.name, got, c.want)
+			t.Errorf("%s: pluralArgs = %v, want %v", c.name, got, c.want)
 		}
 	}
 }

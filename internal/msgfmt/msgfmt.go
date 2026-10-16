@@ -26,7 +26,6 @@ package msgfmt
 import (
 	"fmt"
 	"math"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -128,38 +127,6 @@ func (m *Message) Format(locale string, args map[string]any, opts Options) (stri
 		return "", err
 	}
 	return b.String(), nil
-}
-
-// PluralArgs returns the name of every plural argument in m, at any nesting
-// depth (inside select/plural branches and exact =N branches too), sorted and
-// without duplicates. A select-only or plain message has none (ut-docs#4479).
-func (m *Message) PluralArgs() []string {
-	set := map[string]struct{}{}
-	m.collectPluralArgs(set)
-	out := make([]string, 0, len(set))
-	for a := range set {
-		out = append(out, a)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func (m *Message) collectPluralArgs(set map[string]struct{}) {
-	for i := range m.parts {
-		p := &m.parts[i]
-		if p.kind != partPlural && p.kind != partSelect {
-			continue
-		}
-		if p.kind == partPlural {
-			set[p.arg] = struct{}{}
-		}
-		for _, e := range p.exact {
-			e.msg.collectPluralArgs(set)
-		}
-		for _, b := range p.branches {
-			b.collectPluralArgs(set)
-		}
-	}
 }
 
 // hashValue is the number `#` renders inside the innermost plural branch.
