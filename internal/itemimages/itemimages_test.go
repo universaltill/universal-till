@@ -260,6 +260,90 @@ func TestStoreAIRef_4006(t *testing.T) {
 	}
 }
 
+// slowImage encodes slowly, so a test can look at the ai_ref folder while
+// StoreAIRef is still writing.
+type slowImage struct{ image.Image }
+
+func (s slowImage) At(x, y int) color.Color {
+	time.Sleep(2 * time.Millisecond)
+	return s.Image.At(x, y)
+}
+
+// A reader never sees a half-written ai_ref (ut-docs#4441): the photo is
+// encoded under a temp name and appears under its final *.png name only once
+// complete, and no temp file is left behind. The slow encode (~130 ms) keeps
+// the old in-place write visible long enough for the poller to catch it.
+func TestStoreAIRef_NoPartialFileVisible_4441(t *testing.T) {
+	useDataDir(t)
+	const id = "itm-atomic"
+	if err := os.MkdirAll(AIRefDir(id), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	img := slowImage{image.NewRGBA(image.Rect(0, 0, 8, 8))}
+	type res struct {
+		p   string
+		err error
+	}
+	done := make(chan res, 1)
+	go func() {
+		p, err := StoreAIRef(id, img)
+		done <- res{p, err}
+	}()
+	// Any *.png a reader can see — even in the moment between publish and
+	// return — must already be the whole photo; under the old in-place write
+	// the poller caught it mid-encode and the decode failed.
+	complete := func(p string) {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return // pruned between listing and reading
+		}
+		if dec, err := png.Decode(bytes.NewReader(raw)); err != nil || dec.Bounds().Dx() != 8 {
+			<-done
+			t.Fatalf("reader saw %s half-written (%d bytes): %v", filepath.Base(p), len(raw), err)
+		}
+	}
+	var r res
+	for waiting := true; waiting; {
+		select {
+		case r = <-done:
+			waiting = false
+		default:
+			m, _ := filepath.Glob(filepath.Join(AIRefDir(id), "*.png"))
+			for _, p := range m {
+				complete(p)
+			}
+			if p, _, ok := LatestAIRef(AIRefDir(id)); ok {
+				complete(p)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	if r.err != nil {
+		t.Fatalf("StoreAIRef: %v", r.err)
+	}
+	entries, _ := os.ReadDir(AIRefDir(id))
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(r.p) {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("ai_ref folder = %v, want only %s (no temp file left)", names, filepath.Base(r.p))
+	}
+	raw, _ := os.ReadFile(r.p)
+	if dec, err := png.Decode(bytes.NewReader(raw)); err != nil || dec.Bounds().Dx() != 8 {
+		t.Fatalf("stored file is not the full PNG: %v", err)
+	}
+}
+
+// A temp file left by a crash mid-store is never taken for a photo.
+func TestLatestAIRef_IgnoresTempFiles_4441(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, ".9999999999999999999.png.tmp"), []byte("\x89PNG half"))
+	if p, _, ok := LatestAIRef(dir); ok {
+		t.Fatalf("LatestAIRef = %q, want none (only a temp file)", p)
+	}
+}
+
 // PhotoStamp (ut-docs#4094) says which photo an item's "ref" open would
 // start from and how new it is, from a stat only, so catalog.photos.v1 can
 // list photographed items without decoding any.
