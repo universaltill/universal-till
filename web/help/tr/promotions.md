@@ -14,7 +14,7 @@ Kasiyerlerin ödeme sırasında okuttuğu veya yazdığı, indirim uygulayan pro
 ## Nasıl kullanılır
 
 1. Aktif ve pasif tüm kodları görmek için Promosyonlar'ı açın.
-2. Sabit tutar veya yüzde indirimi, isteğe bağlı bir açıklama, isteğe bağlı bir başlangıç/bitiş tarihi aralığı ve hedeflemek için isteğe bağlı bir müşteri ile bir kod oluşturun — herkesin kullanabilmesi için müşteri alanını boş bırakın. Yüzde değeri 0 ile 100 arasındadır ve bitiş tarihi o günün tamamını kapsar. Sabit tutar veya yüzde indirimi, ondalık kısmından önce nokta veya virgülle yazılabilir (3.50 veya 3,50; 7.5 veya 7,5).
+2. Sabit tutar veya yüzde indirimi, isteğe bağlı bir açıklama, isteğe bağlı bir başlangıç/bitiş tarihi aralığı ve hedeflemek için isteğe bağlı bir müşteri ile bir kod oluşturun — herkesin kullanabilmesi için müşteri alanını boş bırakın. Yüzde değeri 0 ile 100 arasındadır ve bitiş tarihi o günün tamamını kapsar. Sabit tutar veya yüzde indirimi, ondalık kısmından önce nokta veya virgülle yazılabilir (3.50 veya 3,50; 7.5 veya 7,5). Yüzde indirimi en fazla iki ondalık basamak alır (`12.25` kabul edilir, `12.125` reddedilir).
 3. Mevcut bir kodun türünü, değerini, açıklamasını veya tarihlerini istediğiniz zaman düzenleyin; kodun kendisi ve hedeflediği müşteri oluşturulduktan sonra değiştirilemez.
 4. Bir kodu, geçmişini kaybetmeden ödemede çalışmaz hale getirmek için devre dışı bırakın; aynı şekilde yeniden etkinleştirin.
 5. Bir kod asla tamamen silinmez, bu yüzden onu kullanan geçmiş satışlar bozulmadan kalır.
