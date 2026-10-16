@@ -36,6 +36,7 @@ func SnapshotStateForTests() (restore func()) {
 	theme := currentTheme.Load()
 	amendments := railAmendmentsSource.Load()
 	visibility := railVisibilitySource.Load()
+	translateMode := translateModeSource.Load()
 	cross, bridge, avail := CrossDeviceLinkActionable, UpdateInstallBridge, UpdateAvailable
 
 	// An atomic.Value can't go back to "never stored", so a value unset at
@@ -62,6 +63,7 @@ func SnapshotStateForTests() (restore func()) {
 		currentTheme.Store(restoreValue(theme, ""))
 		railAmendmentsSource.Store(restoreValue(amendments, (func() []uislot.Amendment)(nil)))
 		railVisibilitySource.Store(restoreValue(visibility, (func(*http.Request, string) bool)(nil)))
+		translateModeSource.Store(restoreValue(translateMode, (func(*http.Request) bool)(nil)))
 		CrossDeviceLinkActionable, UpdateInstallBridge, UpdateAvailable = cross, bridge, avail
 	}
 }

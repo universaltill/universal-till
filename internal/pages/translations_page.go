@@ -243,6 +243,10 @@ func registerTranslations(mux *http.ServeMux, d *common.Deps, i18n *config.I18n)
 			"menuItems":  d.MenuSnapshot(),
 			"editLocale": editLocale,
 			"locales":    i18n.Available(),
+			// ut-docs#4370: the translate-mode card. Never offered on a
+			// self-order kiosk or the public demo (the toggle refuses there too).
+			"translateModeAvailable": translateModeOffered(d, r),
+			"translateModeOn":        translateModeActive(d, r),
 		}
 		// ut-docs#2116: /translations is one of the /admin tree's six
 		// destinations -- an htmx request from that panel (NOT a stale
@@ -312,4 +316,6 @@ func registerTranslations(mux *http.ServeMux, d *common.Deps, i18n *config.I18n)
 			"translation_override_cleared", map[string]string{"locale": editLocale, "key": key}, now, "")
 		renderRow(w, r, editLocale, r.Form.Get("q"), key)
 	})
+
+	registerTranslateMode(mux, d, i18n, repo, posRepo, reload)
 }

@@ -156,6 +156,13 @@ func writeDemoRefusal(w http.ResponseWriter, r *http.Request, status int) {
 // demoDeniedRoutes are refused in the demo whatever the allow-list says
 // (ADR-0113 §1.5). Exact mux patterns, grouped by why.
 var demoDeniedRoutes = map[string]bool{
+	// Translate mode (ut-docs#4370, ADR-0160 §7): a manager tool that links
+	// every string into Weblate and writes shop overrides. A public demo
+	// visitor gets neither the mode nor its panel (translateModeAllowed
+	// also refuses on a demo till, so a hand-set cookie does nothing).
+	"POST /api/translate-mode":          true,
+	"GET /ui/translate-mode/panel":      true,
+	"POST /api/translate-mode/override": true,
 	// Report-only CSP sink and inventory (ut-docs#2913): a dev/test
 	// inventory aid, only registered with UT_CSP_REPORT_ONLY on — nothing a
 	// demo visitor needs.

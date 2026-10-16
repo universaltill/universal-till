@@ -66,6 +66,8 @@ var UpdateInstallBridge = selfupdate.InstallBridgeAvailableNow
 var UpdateAvailable = func() bool { return updates.Current().Available }
 
 var baseFuncs = template.FuncMap{
+	// ut-docs#4370: request-bound by withTranslateMode; false everywhere else.
+	"translatemode": func() bool { return false },
 	// runelen: a field's `size` attribute must track how many CHARACTERS
 	// will actually show, not how many bytes the string takes (ut-docs#3319
 	// review finding) — Go's builtin `len` on a string is byte length, which
@@ -336,7 +338,7 @@ func withHelpHref(funcs template.FuncMap, r *http.Request) template.FuncMap {
 	visible := requestVisibility(r)
 	out["railEntries"] = func() []RailEntry { return railEntriesFor(locale, visible) }
 	out["allowed"] = allowedFunc(visible)
-	return out
+	return withTranslateMode(out, r)
 }
 
 // RenderWith builds a one-off renderer from explicit files and funcs.
@@ -1566,7 +1568,7 @@ func RenderPartial(tplPath string, data any) http.HandlerFunc {
 
 		writePageTitleHeader(w, data)
 		locale := ResolveLocale(w, r)
-		t := template.Must(ClonedTemplate("httpx.RenderPartial:"+page, filepath.Base(page), FuncsFor(locale), page))
+		t := template.Must(ClonedTemplate("httpx.RenderPartial:"+page, filepath.Base(page), withTranslateMode(FuncsFor(locale), r), page))
 		if err := t.Execute(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
