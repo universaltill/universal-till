@@ -263,3 +263,51 @@ func TestJoinNoticeUI_BdiNameAndVisibleLabel(t *testing.T) {
 		t.Errorf("the name field's only label must not be a placeholder: %s", body)
 	}
 }
+
+// ut-docs#3796: linking replaces this till's whole DB with the main till's
+// copy (completeJoin stages the snapshot as a restore). A till that already
+// holds sales says so in the notice and asks for an explicit confirm before
+// "Link this till" submits.
+func TestJoinNoticeUI_WarnsAndRequiresConfirmWhenTillHasSales(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+	registerJoinNoticeUI(mux, dp)
+	seedCompletedSaleForStatus(t, dp.Db, "sale-3796")
+	withJoinCandidate(t, dp, joinNoticeMain)
+
+	body := getJoinNotice(t, mux).Body.String()
+	for _, want := range []string{
+		`<p class="join-notice-warning" id="join-notice-warning">`,
+		"This till already has sales.",
+		`<input type="checkbox" id="join-notice-replace" name="replace_local_data" value="1" required hx-preserve aria-describedby="join-notice-warning">`,
+		`<label class="join-notice-label" for="join-notice-replace">`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected %q in the notice of a till with sales, got: %s", want, body)
+		}
+	}
+	// The confirm sits INSIDE the pair-start form, so the browser's own
+	// required-field check holds the submit back.
+	form := body[strings.Index(body, `<form class="join-notice-form"`):]
+	form = form[:strings.Index(form, "</form>")]
+	if !strings.Contains(form, `id="join-notice-replace"`) {
+		t.Errorf("the replace-data confirm must be inside the pair-start form: %s", form)
+	}
+}
+
+// Inverse: a till with no sales yet (the common fresh-install case) gets the
+// plain notice — no warning, no extra tick box.
+func TestJoinNoticeUI_NoWarningWithoutSales(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+	registerJoinNoticeUI(mux, dp)
+	withJoinCandidate(t, dp, joinNoticeMain)
+
+	body := getJoinNotice(t, mux).Body.String()
+	if !strings.Contains(body, `id="join-notice"`) {
+		t.Fatalf("expected the notice, got: %s", body)
+	}
+	if strings.Contains(body, "join-notice-warning") || strings.Contains(body, "join-notice-replace") {
+		t.Errorf("a till with no sales must not get the replace-data warning: %s", body)
+	}
+}

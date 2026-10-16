@@ -25,15 +25,26 @@
      (pair-start's waiting fragment, which polls pair-status itself and is
      what actually completes the join) goes to #join-notice-status, which
      base.html hosts OUTSIDE the mount so an empty re-poll (candidate gone,
-     session lapsed) can never delete it mid-approval. */}}
+     session lapsed) can never delete it mid-approval.
+
+     ut-docs#3796: linking replaces this till's whole DB with the main
+     till's copy. When this till already holds sales (.HasSales,
+     join_notice.go) the notice says so, and a required tick box inside the
+     form holds "Link this till" back until a manager confirms; hx-preserve
+     keeps the tick across the 30s re-polls, like the name. */}}
 <div id="join-notice" class="pairing-notice join-notice" role="status">
   <span class="pairing-notice-text">⇄ {{ .Banner }}</span>
+  {{ if .HasSales }}<p class="join-notice-warning" id="join-notice-warning">{{ T "tills.discovery.ambient.has_sales_warning" }}</p>{{ end }}
   <form class="join-notice-form" hx-post="/api/sync/pair-start" hx-target="#join-notice-status" hx-swap="innerHTML"
         data-before-request="trim-validate:join-notice-name">
     <input type="hidden" name="base_url" value="{{ .BaseURL }}">
     <input type="hidden" name="till_id" value="{{ .TillID }}">
     <label class="join-notice-label" for="join-notice-name">{{ T "tills.pairing.your_till_name" }}</label>
     <input type="text" id="join-notice-name" name="name" required hx-preserve>
+    {{ if .HasSales }}<span class="join-notice-confirm">
+      <input type="checkbox" id="join-notice-replace" name="replace_local_data" value="1" required hx-preserve aria-describedby="join-notice-warning">
+      <label class="join-notice-label" for="join-notice-replace">{{ T "tills.discovery.ambient.has_sales_confirm" }}</label>
+    </span>{{ end }}
     <button type="submit" class="btn secondary">{{ T "tills.discovery.ambient.link" }}</button>
   </form>
   <button type="button" class="notice-dismiss" aria-label="{{ T "tills.discovery.ambient.dismiss" }}" title="{{ T "tills.discovery.ambient.dismiss" }}"
