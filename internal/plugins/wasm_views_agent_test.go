@@ -165,3 +165,29 @@ func TestViewQuery_AIAgentJobFromAskNeedsLiveSession_4143(t *testing.T) {
 		t.Fatalf("job without a session check = %d, want %d", c, hostErrDenied)
 	}
 }
+
+// The camera identify job (ut-docs#4444): core stamps the cashier as a
+// read-only operator with a live session check. Its catalog read works,
+// a sales view is still role-checked, and a signed-out session ends it.
+func TestViewQuery_AIAgentIdentifyJobReadsForCashier_4444(t *testing.T) {
+	w, d := agentSalesFixture(t, agentSalesPlugin)
+	live := true
+	jobCtx := func() context.Context {
+		ctx := WithAskReadOnly(WithAskSessionLive(askAs("cashier"), func(context.Context) bool { return live }))
+		return WithJob(ctx, JobCall{Deadline: 10 * time.Second})
+	}
+	identify := func(view string) int {
+		return viewCode(t, runGuestEventCtx(jobCtx(), t, w, d, agentSalesPlugin, "catalog.identify", map[string]any{"view": view}))
+	}
+	if c := identify("catalog.items.v1"); c < 2 {
+		t.Fatalf("identify job catalog.items.v1 = %d, want a result", c)
+	}
+	if c := identify("items.top.v1"); c != hostErrDenied {
+		t.Fatalf("identify job (cashier) items.top.v1 = %d, want %d", c, hostErrDenied)
+	}
+	assertLastDenialPermission(t, d, agentSalesPlugin, "reports")
+	live = false
+	if c := identify("catalog.items.v1"); c != hostErrDenied {
+		t.Fatalf("identify job after sign-out = %d, want %d", c, hostErrDenied)
+	}
+}

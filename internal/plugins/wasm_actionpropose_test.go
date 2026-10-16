@@ -266,3 +266,31 @@ func TestActionPropose_ProposeRefusalDeniesAtProposeTime_4168(t *testing.T) {
 		t.Fatalf("stock.adjust.v1 = %d, want 0 (the rule is catalogue-only)", code)
 	}
 }
+
+// ADR-0153 amendment 2026-10-15 (ut-docs#4444): the camera identify job's
+// operator is read-only — its view_query works, but action_propose is
+// refused and audited (identify suggests; it never proposes a change).
+func TestActionPropose_ReadOnlyOperatorRefused_4444(t *testing.T) {
+	d, s := proposeFixture(t, []string{"ai.agent", "ai.tools.write:catalog"}, "ai.agent", "ai.tools.write:catalog")
+	s.operatorReadOnly = true
+	before := countDenials(t, d, proposePlugin)
+	if out, code := actionPropose(context.Background(), s, "catalog.item.create.v1", []byte(createArgs)); code != hostErrDenied || out != nil {
+		t.Fatalf("read-only operator: code = %d (%s), want %d", code, out, hostErrDenied)
+	}
+	if countDenials(t, d, proposePlugin) != before+1 {
+		t.Error("the read-only refusal left no permission_denied audit row")
+	}
+}
+
+// askOperatorFor reports a job's read-only stamp; a ui ask is never
+// read-only (the stamp is only for jobs core starts itself).
+func TestAskOperatorFor_ReadOnlyJob_4444(t *testing.T) {
+	op := agentaction.Operator{UserID: "u", Role: "cashier", Session: "s", Request: "r"}
+	ctx := WithAskSessionLive(WithAskOperator(context.Background(), op), func(context.Context) bool { return true })
+	if AskReadOnlyFrom(ctx) {
+		t.Fatal("an unstamped context reads as read-only")
+	}
+	if !AskReadOnlyFrom(WithAskReadOnly(ctx)) {
+		t.Fatal("WithAskReadOnly not reported")
+	}
+}
