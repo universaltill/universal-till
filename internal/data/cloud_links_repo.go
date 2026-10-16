@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -164,4 +165,39 @@ ORDER BY at DESC, entity, cloud_id LIMIT ?`, limit)
 		out = append(out, f)
 	}
 	return out, rows.Err()
+}
+
+// SeedTaxCodeIDs are the tax codes migration 001 seeds into every new till
+// (Standard VAT, Reduced VAT, Zero-rated). A cloud-master store's pull
+// adopts one of them when the cloud sends a tax code of the same name
+// (ADR-0162 §4, ut-docs#4494): the setup wizard runs before the till can
+// be paired, so the seed rows are already there, and tax_codes.name is
+// UNIQUE. Only these ids are ever adopted by name — any other local row of
+// the same name stays a refusal (general adoption is ut-docs#4465).
+var SeedTaxCodeIDs = []string{"tax_std", "tax_red", "tax_zero"}
+
+// AdoptableSeedTaxCode returns the seed tax code (SeedTaxCodeIDs) named
+// exactly name that no cloud_links row of entity points at, so a cloud row
+// of that name can take it over instead of being refused on the UNIQUE
+// name. The comparison is the column's own (BINARY collation): exactly the
+// names the UNIQUE constraint would call equal. ok=false: none.
+func (*CloudLinkRepo) AdoptableSeedTaxCode(ctx context.Context, q SyncQuerier, entity, name string) (string, bool, error) {
+	args := []any{name}
+	for _, id := range SeedTaxCodeIDs {
+		args = append(args, id)
+	}
+	args = append(args, entity)
+	var id string
+	err := q.QueryRowContext(ctx, `
+SELECT t.id FROM tax_codes t
+WHERE t.name = ? AND t.id IN (?`+strings.Repeat(", ?", len(SeedTaxCodeIDs)-1)+`)
+  AND NOT EXISTS (SELECT 1 FROM cloud_links l WHERE l.entity = ? AND l.local_id = t.id)`,
+		args...).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("adoptable seed tax code: %w", err)
+	}
+	return id, true, nil
 }

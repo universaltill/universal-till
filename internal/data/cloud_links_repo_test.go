@@ -156,3 +156,49 @@ func TestCloudApplyFailures_ListNewestFirst(t *testing.T) {
 		t.Fatalf("limit 2 = %+v, want the two newest", got)
 	}
 }
+
+// ut-docs#4494: the seed ids are migration 001's tax codes, and only an
+// unlinked one of exactly the given name is adoptable.
+func TestAdoptableSeedTaxCode(t *testing.T) {
+	d := openMigratedDB(t, "cloud-links-seed-tax.db")
+	ctx := context.Background()
+	links := NewCloudLinkRepo()
+	for _, id := range SeedTaxCodeIDs {
+		var n int
+		if err := d.DB.QueryRow(`SELECT COUNT(*) FROM tax_codes WHERE id = ?`, id).Scan(&n); err != nil || n != 1 {
+			t.Fatalf("seed tax code %s missing from a migrated till (n=%d err=%v)", id, n, err)
+		}
+	}
+	mustExec(t, d, `INSERT INTO tax_codes (id, name, rate_basis_points, is_active) VALUES ('tax_local', 'Takeaway VAT', 700, 1)`)
+	for _, c := range []struct {
+		name, want string
+		ok         bool
+	}{
+		{"Standard VAT", "tax_std", true},
+		{"Zero-rated", "tax_zero", true},
+		{"standard vat", "", false}, // BINARY: a different name to UNIQUE too
+		{"Takeaway VAT", "", false}, // not a seed row
+		{"Nothing", "", false},
+	} {
+		got, ok, err := links.AdoptableSeedTaxCode(ctx, d.DB, "tax_code", c.name)
+		if err != nil || ok != c.ok || got != c.want {
+			t.Fatalf("%q: got %q %v %v, want %q %v", c.name, got, ok, err, c.want, c.ok)
+		}
+	}
+	if err := links.Upsert(ctx, d.DB, CloudLink{Entity: "tax_code", CloudID: "c1", LocalID: "tax_std", Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := links.AdoptableSeedTaxCode(ctx, d.DB, "tax_code", "Standard VAT"); err != nil || ok {
+		t.Fatalf("a linked seed row is adoptable: ok=%v err=%v", ok, err)
+	}
+	// A link of another entity to the same local id does not count.
+	if _, ok, _ := links.AdoptableSeedTaxCode(ctx, d.DB, "tax_code", "Reduced VAT"); !ok {
+		t.Fatal("Reduced VAT not adoptable")
+	}
+	if err := links.Upsert(ctx, d.DB, CloudLink{Entity: "item", CloudID: "c2", LocalID: "tax_red", Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := links.AdoptableSeedTaxCode(ctx, d.DB, "tax_code", "Reduced VAT"); !ok {
+		t.Fatal("an item link with the same local id blocked the tax code's adoption")
+	}
+}

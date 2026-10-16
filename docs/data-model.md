@@ -709,6 +709,21 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   `option_set_cloud_ids`) to a row of that kind that has no link yet — in an
   earlier version or earlier in its group — refuses the row. An unlinked local row whose id equals the `cloud_id` is adopted
   (updated and linked; its audit row says `created: false`).
+  **Seed rows (ut-docs#4494).** A fresh till runs the setup wizard before it
+  can be paired, so it already holds migration 001's tax codes and the
+  wizard's gift voucher item. An unlinked `tax_code` row whose (trimmed) name
+  equals exactly — BINARY, as the UNIQUE constraint compares — the name of a
+  seed tax code (`data.SeedTaxCodeIDs`: `tax_std`, `tax_red`, `tax_zero`) that
+  no `tax_code` link points at is applied onto that seed row and linked
+  (audit `adopted_seed: true`, `created: false`); from then on it is an
+  ordinary linked row (a tombstone or prune deactivates it). Any other local
+  row of the same name, or a seed row already linked, still refuses the row
+  (general adoption is ut-docs#4465). After a run that applied at least one
+  row, the seeded gift voucher item is retired
+  (`POSRepo.RetireSeededGiftVoucherItem`, ut-docs#4399's rules: another active
+  gift voucher item exists, the seeded one is untouched and unused) unless the
+  live baskets hold it or their check fails — then the next applying run
+  retries. Best-effort, after the last commit; a removal counts as a change.
   Applied kinds: `tax_code`, `category`, `item`, `modifier_group`,
   `option_set` (applier version 2, ut-docs#4491), `item_variant`,
   `item_barcode` (applier version 3, ut-docs#4521). Every other kind is
