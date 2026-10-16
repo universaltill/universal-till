@@ -10,12 +10,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/universaltill/universal-till/internal/barcode"
+	"github.com/universaltill/universal-till/catimport/barcode"
 )
 
 // BarcodeEnabledSymbologiesKey is the settings-table key holding the shop's
 // enabled barcode symbology ids (ADR-0059 Decision §2) as a JSON array of
-// internal/barcode registry ids, e.g. ["EAN13","CODE128"]. Stored in the
+// catimport/barcode registry ids, e.g. ["EAN13","CODE128"]. Stored in the
 // existing generic settings table rather than a dedicated table — the ADR
 // explicitly leaves the storage shape open ("a JSON column on the existing
 // shop-settings row — Dev's call"), and a key/value row needs no migration,

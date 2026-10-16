@@ -34,8 +34,5 @@ internal/pages/import_page.go|registerImport|"speedy-kasse" # #2885 .bkp importe
 internal/pages/ai_resolve.go|<file>|"com.universaltill.integration-ai" # #2851 AIPluginID const
 
 # --- #2850: generic CSV import-dialect detection, class a, kept by audit ---
-internal/catimport/catimport.go|DetectFormat|"loyverse" # #2850 class a, kept by audit (CSV dialect detection)
-internal/catimport/catimport.go|DetectFormat|"square" # #2850 class a, kept by audit (CSV dialect detection)
-internal/catimport/catimport.go|DetectFormat|"sumup" # #2850 class a, kept by audit (CSV dialect detection)
-internal/catimport/catimport.go|Parse|"square" # #2850 class a, kept by audit (CSV dialect detection)
-internal/catimport/xlsx.go|ParseXLSX|"square" # #2850 class a, kept by audit (CSV dialect detection)
+# Moved to the shared catimport module (ADR-0164 §1, ut-docs#4525): now one
+# same-line core-neutral:allow marker on each Format* const there.

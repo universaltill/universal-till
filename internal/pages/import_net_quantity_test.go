@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/catimport"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
-	"github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
 )
 

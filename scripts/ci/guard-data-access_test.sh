@@ -17,7 +17,7 @@ set -euo pipefail
 # the real tree (ut-docs#4311).
 # shellcheck source=scripts/ci/guard-test-sandbox.sh
 source "$(dirname "${BASH_SOURCE[0]}")/guard-test-sandbox.sh"
-enter_guard_test_sandbox 'internal/*.go'
+enter_guard_test_sandbox 'internal/*.go' 'catimport/*.go'
 
 GUARD="scripts/ci/guard-data-access.sh"
 FIXTURE_DIR="internal/pages"
@@ -132,6 +132,15 @@ func zzGuardTestNonSqlIdentifiers() string {
 }'
 expect_pass "non-SQL identifiers starting with RELEASE/COMMIT/BEGIN"
 rm -f "${FIXTURE_DIR}/zz_guard_test_NonSqlIdentifiers.go"
+fixtures=()
+
+# The shared catimport module (ADR-0164 §1, ut-docs#4525) is a pure parser:
+# no SQL of its own, so it is scanned like internal/.
+mod_fixture="catimport/zz_guard_test_ModuleSQL.go"
+fixtures+=("${mod_fixture}")
+printf 'package catimport\n\nvar zzGuardTestQ = "SELECT id FROM items"\n' >"${mod_fixture}"
+expect_fail "SQL in the catimport module"
+rm -f "${mod_fixture}"
 fixtures=()
 
 # Baseline: the guard must still pass on the real, unmodified codebase.

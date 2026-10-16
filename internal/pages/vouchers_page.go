@@ -443,8 +443,8 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 		for _, v := range rows {
 			// code and label are operator-typed: csvSafe defuses a leading
 			// formula trigger, and the importer strips that same "'" back
-			// off (catimport.stripCSVDefuse). One lossy edge: a stored value
-			// already shaped "'=X" comes back as "=X" (stripCSVDefuse doc,
+			// off (catimport.StripCSVDefuse). One lossy edge: a stored value
+			// already shaped "'=X" comes back as "=X" (StripCSVDefuse doc,
 			// ut-docs#321).
 			_ = cw.Write([]string{
 				csvSafe(v.ID),

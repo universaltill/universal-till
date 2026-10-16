@@ -9,7 +9,7 @@ import (
 // headers this till's own catalog export writes) carry a pre-packed item's
 // net content. A valid pair comes through as the pointer pair
 // catalogtypes.ItemInput stores; blank cells mean none; anything that fails
-// catalogtypes.ValidNetQuantity is reported via NetQuantityIssue and never
+// catalogrules.ValidNetQuantity is reported via NetQuantityIssue and never
 // kept half-set — and never blocks the row, same as a bad tax cell.
 const netQuantityCSV = `Name,Price,Net quantity,Net quantity unit
 Coffee Beans,6.50,250,g

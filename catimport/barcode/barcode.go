@@ -1,16 +1,18 @@
 // Package barcode provides a shop-configurable barcode symbology parser and
 // registry (ADR-0059). It is a leaf package: it depends on nothing beyond
-// the standard library and internal/money (for the price-embedded decode),
-// and never imports internal/data or internal/pages — the data layer and
-// the scan path both import this package, not the other way round.
+// the standard library — the data layer, the scan path and the catimport
+// parser all import this package, not the other way round. It lives in the
+// shared catimport module (ADR-0164 §1, ut-docs#4525) so the till and
+// ut-cloud judge a barcode with the one registry; a module never imports
+// the till's internal packages, so an embedded price is integer minor units
+// (EmbeddedPriceMinor), converted to money.Money by the till at its own
+// boundary.
 //
 // Adding a symbology means adding a new Registry entry in registry.go, not
 // a new branch in a caller (ADR-0059 Decision §1's "data, not a new if"
 // requirement). This card (ut-docs#933) ships the parser/registry only —
 // wiring it into AddBarcode and the scan path is ut-docs#934.
 package barcode
-
-import "github.com/universaltill/universal-till/internal/money"
 
 // Decoded is the result of a Symbology successfully parsing a scanned code.
 type Decoded struct {
@@ -39,21 +41,22 @@ type Decoded struct {
 	// ut-docs#934/#935 build against.
 	LookupKey string
 
-	// HasEmbeddedPrice and EmbeddedPrice are set only when SymbologyID is
+	// HasEmbeddedPrice and EmbeddedPriceMinor are set only when SymbologyID is
 	// EAN13_PRICE_PREFIX02 — the barcode encodes an absolute price for that
 	// one specific unit, not a per-unit rate (ADR-0059 Decision §3).
-	// EmbeddedPrice can legitimately be zero (a label printed with a zero
-	// price) — callers must not treat HasEmbeddedPrice==true, Price==0 as
-	// a parse failure, and #934 must decide deliberately whether a
-	// zero-price scan is allowed to create a basket line at all.
-	HasEmbeddedPrice bool
-	EmbeddedPrice    money.Money
+	// EmbeddedPriceMinor is in the shop currency's minor units and can
+	// legitimately be zero (a label printed with a zero price) — callers
+	// must not treat HasEmbeddedPrice==true, Price==0 as a parse failure,
+	// and #934 must decide deliberately whether a zero-price scan is
+	// allowed to create a basket line at all.
+	HasEmbeddedPrice   bool
+	EmbeddedPriceMinor int64
 
 	// HasEmbeddedWeight and EmbeddedWeight are set only when SymbologyID is
 	// EAN13_WEIGHT_PREFIX2X. EmbeddedWeight is a decimal string in
-	// kilograms (e.g. "1.234") — a quantity, not money, so it deliberately
-	// does not use internal/money (it ultimately feeds BasketLine.Qty, a
-	// float64). Like EmbeddedPrice, it can legitimately be "0.000".
+	// kilograms (e.g. "1.234") — a quantity, not money, so it is
+	// deliberately not a minor-unit amount (it ultimately feeds
+	// BasketLine.Qty, a float64). Like EmbeddedPriceMinor, it can legitimately be "0.000".
 	HasEmbeddedWeight bool
 	EmbeddedWeight    string
 }
@@ -153,4 +156,28 @@ func (r *Registry) matchTier(enabled map[string]bool, code string, embedded bool
 		}
 	}
 	return Decoded{}, false
+}
+
+// IsLookupKey reports whether key is exactly what a decode by symbology id
+// stores as its LookupKey: the code itself for a plain symbology, the
+// zeroed prefix+item template for an embedded-data one. A consumer handed
+// an already-decoded, typed barcode checks it with this instead of
+// re-matching the key — a re-match decodes twice, and an embedded-data
+// key (its check digit zeroed) lands on a different symbology or none.
+func (r *Registry) IsLookupKey(id, key string) bool {
+	s, ok := r.Lookup(id)
+	if !ok || key == "" {
+		return false
+	}
+	label := key
+	if s.embedsData {
+		// The key's embedded digits are already zero; give it a valid
+		// check digit so it parses as a label, then compare the template.
+		if len(key) != 13 || !isAllDigits(key) {
+			return false
+		}
+		label = key[:12] + string(gs1CheckDigit(key[:12]))
+	}
+	d, ok := s.Parse(label)
+	return ok && d.SymbologyID == id && d.LookupKey == key
 }

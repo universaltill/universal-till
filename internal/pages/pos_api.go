@@ -3071,7 +3071,7 @@ func looksLikeCustomerCode(code string) bool {
 // product/customer scan: looksLikeCustomerCode's own prefixes are
 // CUST*/LOY-/LOY<digit>, none of which start "GS-", so the two can never
 // both match the same code; and every catalog barcode symbology this till
-// accepts (internal/barcode/registry.go -- EAN13/EAN8/UPCA/UPCE/GTIN14 and
+// accepts (catimport/barcode/registry.go -- EAN13/EAN8/UPCA/UPCE/GTIN14 and
 // the two weight-embedded GS1 variants) is PURELY NUMERIC, so none of them
 // can ever start with the letters "GS-" either. Only CODE128/CODE39/
 // INTERNAL_PLU admit free text at all, and a shop configuring one of those

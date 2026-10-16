@@ -1,14 +1,21 @@
 // Package catimport parses catalog exports from other POS systems
 // (docs: architecture/catalog-import.md, G22a). Formats are detected from
-// the CSV header row; per-format synonym tables map columns onto one
-// neutral ImportItem. Parsing never touches THIS application's own catalog
-// database — the pages layer previews, dedupes and commits. (ParseBkp,
-// ut-docs#511, is a partial exception in letter only: it opens a SQLite
-// connection, but only against a temp file extracted from the operator's
-// own uploaded .bkp backup — a foreign, read-only file, never the live
-// catalog DB. Its actual SQL query text lives in internal/data, not here,
-// so this package still carries no literal SQL of its own — see bkp.go and
-// internal/data/bkp_products_repo.go's doc comments for why.)
+// the CSV/XLSX header row; per-format synonym tables map columns onto one
+// neutral ImportItem, and ToRows turns a Result into ADR-0051 interchange
+// rows. Parsing never touches a catalog database — the caller previews,
+// dedupes and commits.
+//
+// This is the shared module github.com/universaltill/universal-till/catimport
+// (ADR-0164 §1, ut-docs#4525): the till imports it through an in-repo
+// replace, ut-cloud through a published catimport/vX.Y.Z tag, so both parse
+// a file with the one copy of this code. It must never import a package of
+// the till (internal/...) — Go's internal rule would allow it, since the
+// module path sits under the till's, but the cloud could then not build it
+// (scripts/ci/guard-catimport-module.sh). Money is integer minor units.
+// The till-only importers (.bkp, gift-voucher balances) stay in
+// universal-till/internal/catimport and build on this package. No new
+// vendor format is added here: vendor formats are import plugins
+// (ADR-0164 §2); the ones below are grandfathered.
 package catimport
 
 import (
@@ -20,8 +27,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/universaltill/universal-till/internal/barcode"
-	"github.com/universaltill/universal-till/internal/catalogtypes"
+	"github.com/universaltill/universal-till/catimport/barcode"
+	"github.com/universaltill/universal-till/catimport/catalogrules"
 )
 
 // ErrNoNameColumn is Parse's own reason code (ut-docs#303) for the single
@@ -32,6 +39,18 @@ import (
 // treatment yet; the caller still must not put THEIR raw text on screen
 // either, see import_page.go's generic fallback + log.
 var ErrNoNameColumn = errors.New("no name column recognised — is this a catalog export?")
+
+// Format names Result.Format carries (and DetectFormat returns). The vendor
+// formats are grandfathered by ADR-0164 §1: no new vendor format is added to
+// this module — a new one is an import plugin (ADR-0164 §2).
+const (
+	FormatLoyverse   = "loyverse" // core-neutral:allow ADR-0164 §1 grandfathered CSV dialect (#2850 class a)
+	FormatSquare     = "square"   // core-neutral:allow ADR-0164 §1 grandfathered CSV dialect (#2850 class a)
+	FormatSumUp      = "sumup"    // core-neutral:allow ADR-0164 §1 grandfathered CSV dialect (#2850 class a)
+	FormatShopify    = "shopify"
+	FormatGenericERP = "generic-erp"
+	FormatGeneric    = "generic"
+)
 
 // Issue/BarcodeIssue reason codes (ut-docs#303). catimport has no locale to
 // translate into — it's a pure parser (package doc above) — so it reports a
@@ -62,7 +81,7 @@ const (
 	IssueDuplicateSKUInFile = "duplicate_sku_in_file" // ProductNumber repeats within THIS file — distinct from import.status.sku_already_in_catalog, which is a DB-level check
 
 	// BarcodeIssueNoSymbologyMatch: the CSV carried a non-empty barcode
-	// value that matched none of the shop's enabled internal/barcode
+	// value that matched none of the shop's enabled catimport/barcode
 	// registry entries (ADR-0059 Decision §3) — the same named-rejection
 	// shape as CatalogRepo.AddBarcode's ErrBarcodeNoSymbologyMatch, just a
 	// reason code here instead of an error (catimport has no locale, see
@@ -111,7 +130,7 @@ const (
 
 	// NetQuantityIssueInvalid (ut-docs#3403): the row carried a net-quantity
 	// value and/or unit, but the pair did not pass
-	// catalogtypes.ValidNetQuantity — a value that isn't a positive whole
+	// catalogrules.ValidNetQuantity — a value that isn't a positive whole
 	// number, a unit other than g/ml/ea, or one of the two given without
 	// the other. Non-blocking, same pattern as TaxIssue: the row still
 	// imports, just with no net quantity, and the pages layer warns so the
@@ -122,6 +141,14 @@ const (
 
 // ImportItem is one parsed catalog row, prices in minor units.
 type ImportItem struct {
+	// ExternalID is the source system's own stable id for this row, where
+	// its format has one (ADR-0164 §1): Loyverse "Handle/SKU", Square
+	// Token, SumUp "Item id/Variant id", Shopify "Handle/Variant SKU"; a
+	// row with no SKU keeps the bare Handle. It depends on the row alone,
+	// never on the rest of the file (joinExternalID). Empty for a generic
+	// or ERP file. The till's
+	// own importer ignores it; ToRows carries it as ADR-0051 external_id.
+	ExternalID  string
 	Name        string
 	SKU         string
 	Barcode     string
@@ -156,7 +183,7 @@ type ImportItem struct {
 	HasTracksStock bool
 	Issue          string // one of the Issue* consts, non-empty = row cannot be imported
 	IssueDetail    string // the row's dynamic value for reason codes that need one (e.g. the raw price string for IssueBadPrice)
-	// BarcodeType is the internal/barcode registry id that Barcode matched
+	// BarcodeType is the catimport/barcode registry id that Barcode matched
 	// (ADR-0059, ut-docs#936), e.g. "EAN13" / "CODE128" / "INTERNAL_PLU".
 	// Empty when Barcode is empty. The pages layer passes this to
 	// CatalogRepo.AddBarcode as an explicit BarcodeType so AddBarcode's
@@ -224,10 +251,10 @@ type ImportItem struct {
 	ImageIssueRaw string
 	// NetQuantityValue/NetQuantityUnit are a pre-packed item's net content
 	// (ut-docs#3403, round-tripping ut-docs#3391's items.net_quantity_*),
-	// in the same shape catalogtypes.ItemInput carries them: both nil when
-	// the file has no net quantity for this row (no column, or both cells
-	// blank), otherwise a pair that already passed
-	// catalogtypes.ValidNetQuantity.
+	// in the same shape the till's catalogtypes.ItemInput carries them:
+	// both nil when the file has no net quantity for this row (no column,
+	// or both cells blank), otherwise a pair that already passed
+	// catalogrules.ValidNetQuantity.
 	NetQuantityValue *int64
 	NetQuantityUnit  *string
 	// NetQuantityIssue/NetQuantityIssueRaw mirror TaxIssue/TaxIssueRaw: set
@@ -292,7 +319,7 @@ var columnSynonyms = map[string][]string{
 	"variation": {"variation name"},
 	"token":     {"token", "handle"},
 	// Shopify products-CSV columns (ut-docs#3284). Consulted ONLY when
-	// res.Format == "shopify" — see shopifyFallback in Parse — so none of
+	// res.Format == FormatShopify — see shopifyFallback in Parse — so none of
 	// these can change how another format's file reads. "handle" is its own
 	// field rather than a reuse of "token" above: token is Square's
 	// detection signature and must keep meaning exactly that. Shopify's
@@ -308,6 +335,10 @@ var columnSynonyms = map[string][]string{
 	"variant_barcode": {"variant barcode"},
 	"variant_stock":   {"variant inventory qty"},
 	"shopify_type":    {"type"},
+	// SumUp's per-row ids, read only for ExternalID (ADR-0164 §1) — the
+	// exact headers its sumup fallback detection already keys on.
+	"item_id":    {"item id"},
+	"variant_id": {"variant id"},
 }
 
 // stripTrailingParen removes one trailing parenthesised suffix (and the
@@ -386,20 +417,20 @@ func DetectFormat(headers []string) string {
 	joined := strings.ToLower(strings.Join(headers, "|"))
 	switch {
 	case strings.Contains(joined, "handle") && strings.Contains(joined, "sold by weight"):
-		return "loyverse"
+		return FormatLoyverse
 	case strings.Contains(joined, "token") && strings.Contains(joined, "variation name"):
-		return "square"
+		return FormatSquare
 	case strings.Contains(joined, "set up different prices and vat for takeaway"):
 		// SumUp's items-export (ut-docs#581): this takeaway-VAT-toggle column
 		// name is effectively unique to SumUp.
-		return "sumup"
+		return FormatSumUp
 	case hasColumn(headers, "handle") && hasExactHeader(headers, "variant sku"):
 		// Shopify's products export (ut-docs#3284). Loyverse also carries a
 		// Handle column, but never "Variant SKU" (and Loyverse's own case
 		// above already won on "sold by weight"). Shopify's header set never
 		// carries a department column, so ordering against the generic-erp
 		// case below is safe either way.
-		return "shopify"
+		return FormatShopify
 	case hasColumn(headers, "department"):
 		// A department axis marks an enterprise/ERP master export (Ansar &c.)
 		// rather than a plain corner-shop catalog. Broad synonym coverage
@@ -416,16 +447,16 @@ func DetectFormat(headers []string) string {
 		// paren suffix — the same "department wins" rule as M1, extended to the
 		// paren-lenient match. Pinned by
 		// TestDetectFormatParenSuffixDepartmentWinsOverSumUpFallback.
-		return "generic-erp"
+		return FormatGenericERP
 	case hasExactHeader(headers, "item id") && hasExactHeader(headers, "variant id"):
 		// Fallback SumUp signature for an export missing the takeaway-toggle
 		// column above (that column is itself optional in a merchant's SumUp
 		// account settings). Exact per-header match, not a substring Contains
 		// on the joined string — "Item Identifier"/"Parent Item Id" must not
 		// collide with this (ut-docs#581 review finding M1).
-		return "sumup"
+		return FormatSumUp
 	default:
-		return "generic"
+		return FormatGeneric
 	}
 }
 
@@ -458,12 +489,12 @@ func hasColumn(headers []string, field string) bool {
 
 // csvFormulaTriggers mirrors internal/pages/csv_export.go's csvSafe —
 // duplicated here (not imported: pages already imports catimport, so the
-// reverse would cycle) because stripCSVDefuse needs the exact same set to
+// reverse would cycle) because StripCSVDefuse needs the exact same set to
 // safely reverse it. If csvSafe's trigger set ever changes, this one must
 // change with it.
 const csvFormulaTriggers = "=+-@\t\r"
 
-// stripCSVDefuse reverses pages.csvSafe's leading-apostrophe formula
+// StripCSVDefuse reverses pages.csvSafe's leading-apostrophe formula
 // defusing (ut-docs#321) so catalog export → import round-trips losslessly
 // through our own importer, a documented migration path (G22b) — unlike
 // the invoice/audit exports csvSafe was first written for, which are never
@@ -489,7 +520,7 @@ const csvFormulaTriggers = "=+-@\t\r"
 // for the full analysis; a fully lossless fix would need csvSafe itself
 // (shared with invoice/audit) to double a pre-existing leading "'" before a
 // trigger char, tracked as its own follow-up card rather than done here.
-func stripCSVDefuse(field string) string {
+func StripCSVDefuse(field string) string {
 	if len(field) < 2 || field[0] != '\'' {
 		return field
 	}
@@ -501,7 +532,7 @@ func stripCSVDefuse(field string) string {
 
 // Parse reads a CSV export into neutral items. currencyDecimals drives
 // price parsing (e.g. 2 for GBP: "1.40" → 140; 0 for IRT: "12000" → 12000).
-// enabledSymbologyIDs is the shop's enabled internal/barcode registry ids
+// enabledSymbologyIDs is the shop's enabled catimport/barcode registry ids
 // (data.SettingsRepo.EnabledBarcodeSymbologies) — the caller reads this
 // from the data layer (this package touches no DB, see the package doc)
 // and passes it through so a CSV barcode is judged by the same shared
@@ -544,7 +575,7 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 	// parsing below (ParsePrice, normalizeBarcode, the optional-stock
 	// block) runs unchanged for all formats instead of being forked.
 	shopifyFallback := func(rec []string, field, shopifyField string) string {
-		if _, ok := idx[field]; !ok && res.Format == "shopify" {
+		if _, ok := idx[field]; !ok && res.Format == FormatShopify {
 			return get(rec, shopifyField)
 		}
 		return get(rec, field)
@@ -573,10 +604,10 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 		if err != nil {
 			return res, fmt.Errorf("row %d: %w", len(res.Items)+2, err)
 		}
-		name := stripCSVDefuse(get(rec, "name"))
-		category := stripCSVDefuse(shopifyFallback(rec, "category", "shopify_type"))
+		name := StripCSVDefuse(get(rec, "name"))
+		category := StripCSVDefuse(shopifyFallback(rec, "category", "shopify_type"))
 		rawPrice := shopifyFallback(rec, "price", "variant_price")
-		if res.Format == "shopify" {
+		if res.Format == FormatShopify {
 			handle := get(rec, "handle")
 			if handle != "" && handle == prevHandle && name == "" {
 				name = prevName
@@ -595,26 +626,27 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 				prevHandle, prevName, prevCategory = handle, name, category
 			}
 		}
-		rawBarcode := stripCSVDefuse(shopifyFallback(rec, "barcode", "variant_barcode"))
+		rawBarcode := StripCSVDefuse(shopifyFallback(rec, "barcode", "variant_barcode"))
 		dec, barcodeMatched := normalizeBarcode(rawBarcode, enabledSymbologyIDs)
 		item := ImportItem{
 			Name:          name,
-			SKU:           stripCSVDefuse(shopifyFallback(rec, "sku", "variant_sku")),
+			SKU:           StripCSVDefuse(shopifyFallback(rec, "sku", "variant_sku")),
 			Barcode:       dec.LookupKey,
 			BarcodeType:   dec.SymbologyID,
 			Category:      category,
 			Department:    get(rec, "department"),
-			Description:   stripCSVDefuse(get(rec, "description")),
+			Description:   StripCSVDefuse(get(rec, "description")),
 			IsWeighed:     isTruthy(get(rec, "weighed")),
 			AgeRestricted: isTruthy(get(rec, "age_restricted")),
 			ItemType:      ParseItemType(get(rec, "item_type")),
 		}
+		item.ExternalID = sourceExternalID(res.Format, func(field string) string { return get(rec, field) })
 		if rawBarcode != "" && !barcodeMatched {
 			item.BarcodeIssue = BarcodeIssueNoSymbologyMatch
 			item.BarcodeIssueRaw = rawBarcode
 		}
 		// Square: variation name qualifies the item name ("Coffee — Large").
-		if v := get(rec, "variation"); v != "" && !strings.EqualFold(v, "regular") && res.Format == "square" {
+		if v := get(rec, "variation"); v != "" && !strings.EqualFold(v, "regular") && res.Format == FormatSquare {
 			item.Name = strings.TrimSpace(item.Name + " " + v)
 		}
 		// Shopify: option values qualify the product title ("Logo Tee S
@@ -623,15 +655,15 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 		// product (its counterpart to Square's "Regular" above) and is
 		// never appended. Only once there's a base name to qualify — a
 		// genuinely nameless row must stay nameless for IssueMissingName.
-		if res.Format == "shopify" && item.Name != "" {
+		if res.Format == FormatShopify && item.Name != "" {
 			for _, f := range []string{"option1_value", "option2_value", "option3_value"} {
-				if v := stripCSVDefuse(get(rec, f)); v != "" && !strings.EqualFold(v, "default title") {
+				if v := StripCSVDefuse(get(rec, f)); v != "" && !strings.EqualFold(v, "default title") {
 					item.Name += " " + v
 				}
 			}
 		}
 		price, perr := ParsePrice(rawPrice, currencyDecimals)
-		if item.ItemType == catalogtypes.ItemTypeGiftVoucher && strings.TrimSpace(rawPrice) == "" {
+		if item.ItemType == catalogrules.ItemTypeGiftVoucher && strings.TrimSpace(rawPrice) == "" {
 			// ut-docs#4214: a gift voucher's value is asked at sale.
 			price, perr = 0, nil
 		}
@@ -904,10 +936,10 @@ func ParseTaxRateBP(s string) (int, error) {
 }
 
 // parseNetQuantity reads a net-quantity value cell and unit cell
-// (ut-docs#3403) into the pointer pair catalogtypes.ItemInput stores. The
-// value must be a plain whole number; the unit is matched
+// (ut-docs#3403) into the pointer pair the till's catalogtypes.ItemInput
+// stores. The value must be a plain whole number; the unit is matched
 // case-insensitively ("ML" reads as "ml"). ok is false unless the pair
-// passes catalogtypes.ValidNetQuantity — the one rule every net-quantity
+// passes catalogrules.ValidNetQuantity — the one rule every net-quantity
 // write path checks — so a pair this returns can never be refused later
 // by the catalog repository's own check.
 func parseNetQuantity(rawValue, rawUnit string) (value *int64, unit *string, ok bool) {
@@ -916,14 +948,14 @@ func parseNetQuantity(rawValue, rawUnit string) (value *int64, unit *string, ok 
 		return nil, nil, false
 	}
 	u := strings.ToLower(strings.TrimSpace(rawUnit))
-	if !catalogtypes.ValidNetQuantity(&n, &u) {
+	if !catalogrules.ValidNetQuantity(&n, &u) {
 		return nil, nil, false
 	}
 	return &n, &u, true
 }
 
 // normalizeBarcode matches a raw CSV barcode cell against enabledIDs via
-// the shared internal/barcode registry (ADR-0059 Decision §3) — the same
+// the shared catimport/barcode registry (ADR-0059 Decision §3) — the same
 // Match function AddBarcode and the scan-path lookup call, so import and
 // scan can never disagree about what a code means (ut-docs#936). Returns
 // the barcode.Decoded (SymbologyID + LookupKey, plus any embedded data)
@@ -992,8 +1024,8 @@ func isTruthy(s string) bool {
 func ParseItemType(raw string) string {
 	v := strings.ToLower(strings.TrimSpace(raw))
 	v = strings.NewReplacer(" ", "_", "-", "_").Replace(v)
-	if v == catalogtypes.ItemTypeGiftVoucher {
-		return catalogtypes.ItemTypeGiftVoucher
+	if v == catalogrules.ItemTypeGiftVoucher {
+		return catalogrules.ItemTypeGiftVoucher
 	}
-	return catalogtypes.ItemTypeStandard
+	return catalogrules.ItemTypeStandard
 }

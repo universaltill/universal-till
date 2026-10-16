@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/universaltill/universal-till/internal/catimport"
+	"github.com/universaltill/universal-till/catimport"
 	"github.com/universaltill/universal-till/internal/stagedupload"
 )
 

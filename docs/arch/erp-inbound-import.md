@@ -20,7 +20,9 @@ ERP — pulled on a schedule or pushed by them.
 
 ## What we already have
 
-`internal/catimport` parses CSV from **Loyverse / Square / generic** headers
+The shared `catimport` module (`universal-till/catimport`, ADR-0164 §1 —
+the till and ut-cloud import the same code) parses CSV/XLSX from
+**Loyverse / Square / SumUp / Shopify / generic** headers
 (case-insensitive column synonyms, barcode normalisation incl. Sheets `.0`,
 currency-decimal price parsing), and the `/import` page runs preview → import,
 **idempotent** (existing barcode/SKU skipped), auto-creating categories and

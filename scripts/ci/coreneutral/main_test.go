@@ -326,14 +326,17 @@ func TestScanTreeExclusions(t *testing.T) {
 	write("cmd/app/main.go", "package main\nfunc main() {}\n")
 	write("internal/y/y.go", bad)
 	write("mobile/m.go", bad)
+	// The shared catimport module is core too (ADR-0164 §1, ut-docs#4525).
+	write("catimport/c.go", bad)
+	write("catimport/c_test.go", bad)
 	fs, _, n, err := scanTree(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 3 {
-		t.Fatalf("files scanned = %d, want 3", n)
+	if n != 4 {
+		t.Fatalf("files scanned = %d, want 4", n)
 	}
-	if len(fs) != 2 || fs[0].Path != "internal/y/y.go" || fs[1].Path != "mobile/m.go" {
+	if len(fs) != 3 || fs[0].Path != "catimport/c.go" || fs[1].Path != "internal/y/y.go" || fs[2].Path != "mobile/m.go" {
 		t.Fatalf("findings = %+v", fs)
 	}
 }

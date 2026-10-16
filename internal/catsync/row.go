@@ -11,6 +11,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/universaltill/universal-till/catimport"
+	"github.com/universaltill/universal-till/catimport/barcode"
+
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/money"
@@ -33,28 +36,18 @@ const (
 var barcodeRe = regexp.MustCompile(`^[0-9A-Za-z\-]{1,64}$`)
 
 // wireRow is one ADR-0051 interchange item row as an import plugin submits
-// it. Unknown fields are ignored (a later minor version may add some).
-// There is deliberately no "source" field: core stamps the source.
-type wireRow struct {
-	ExternalID   string   `json:"external_id"`
-	Name         string   `json:"name"`
-	SKU          string   `json:"sku"`
-	Barcode      string   `json:"barcode"`
-	Barcodes     []string `json:"barcodes"`
-	PriceMinor   *int64   `json:"price_minor"`
-	CategoryPath []string `json:"category_path"`
-	VATRateBP    *int64   `json:"vat_rate_bp"`
-	StockQty     *float64 `json:"stock_qty"`
-	Active       *bool    `json:"active"`
-	SoldByWeight bool     `json:"sold_by_weight"`
-}
+// it. The type is the shared catimport module's Row (ADR-0164 §1), so the
+// module's ToRows and a plugin's rows share one vocabulary. Unknown fields
+// are ignored (a later minor version may add some). There is deliberately
+// no "source" field: core stamps the source.
+type wireRow = catimport.Row
 
 // row is a validated wireRow.
 type row struct {
 	ext      string
 	name     string
 	sku      string
-	barcodes []catalogtypes.BarcodeInput // normalized; ItemID unset
+	barcodes []catalogtypes.BarcodeInput // normalized; ItemID unset; BarcodeType set only when the row typed it
 	price    money.Money
 	catPath  []string // nil = leave the category as it is
 	vat      int
@@ -144,8 +137,16 @@ func parseRow(raw json.RawMessage) (row, string, rowIssue) {
 		r.active = *w.Active
 	}
 	codes := w.Barcodes
-	if b := strings.TrimSpace(w.Barcode); b != "" {
+	b := strings.TrimSpace(w.Barcode)
+	if b != "" {
 		codes = append([]string{b}, codes...)
+	}
+	// A typed barcode (barcode_type) is its producer's decode: barcode is
+	// that type's lookup key, stored as typed, never re-matched (#936). It
+	// types barcode only, and must be exactly that type's key.
+	typ := strings.ToUpper(strings.TrimSpace(w.BarcodeType))
+	if typ != "" && (b == "" || !barcode.Default().IsLookupKey(typ, b)) {
+		return row{}, ext, newIssue(IssueBarcodeInvalid)
 	}
 	if len(codes) > barcodesMax {
 		return row{}, ext, newIssue(IssueTooManyBarcodes, strconv.Itoa(barcodesMax))
@@ -160,19 +161,28 @@ func parseRow(raw json.RawMessage) (row, string, rowIssue) {
 			continue
 		}
 		seen[c] = true
-		r.barcodes = append(r.barcodes, catalogtypes.BarcodeInput{Barcode: c})
+		in := catalogtypes.BarcodeInput{Barcode: c}
+		if c == b {
+			in.BarcodeType = typ
+		}
+		r.barcodes = append(r.barcodes, in)
 	}
 	return r, ext, rowIssue{}
 }
 
 // normalizeBarcodes runs the shop's symbology rules over r's barcodes
 // (through the pool — it reads settings, so it runs before the commit's
-// transaction opens).
+// transaction opens). A typed barcode is checked against its type and
+// stored as is; an untyped one is matched against the enabled symbologies.
 func normalizeBarcodes(ctx context.Context, cat *data.CatalogRepo, r *row) rowIssue {
 	out := r.barcodes[:0]
 	seen := map[string]bool{}
 	for i, b := range r.barcodes {
-		in, err := cat.NormalizeBarcode(ctx, catalogtypes.BarcodeInput{Barcode: b.Barcode, ItemID: "pending", IsPrimary: i == 0})
+		normalize := cat.NormalizeBarcode
+		if b.BarcodeType != "" {
+			normalize = cat.NormalizeTypedBarcode
+		}
+		in, err := normalize(ctx, catalogtypes.BarcodeInput{Barcode: b.Barcode, BarcodeType: b.BarcodeType, ItemID: "pending", IsPrimary: i == 0})
 		if err != nil {
 			return newIssue(IssueBarcodeNotAccepted, b.Barcode)
 		}

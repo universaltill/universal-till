@@ -23,7 +23,7 @@ func seedSettingsTable(t *testing.T, db *sql.DB) {
 }
 
 // ean13c appends the GS1 mod-10 check digit to a 12-digit body (same
-// algorithm as internal/barcode's own gs1CheckDigit, reimplemented locally
+// algorithm as catimport/barcode's own gs1CheckDigit, reimplemented locally
 // since it's unexported).
 func ean13c(t *testing.T, body string) string {
 	t.Helper()

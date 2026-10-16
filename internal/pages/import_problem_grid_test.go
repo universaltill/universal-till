@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/universaltill/universal-till/internal/catimport"
+	"github.com/universaltill/universal-till/catimport"
 )
 
 // ut-docs#601: the import preview's problem rows become interactive — the

@@ -20,8 +20,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/universaltill/universal-till/catimport"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
-	"github.com/universaltill/universal-till/internal/catimport"
+	tillimport "github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/fleetlink"
@@ -509,7 +510,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		var res catimport.Result
 		switch {
 		case isBkp:
-			res, err = catimport.ParseBkp(file, fileSize, httpx.ActiveCurrency().Decimals, enabledIDs, useItemNumbersAsBarcodes)
+			res, err = tillimport.ParseBkp(file, fileSize, httpx.ActiveCurrency().Decimals, enabledIDs, useItemNumbersAsBarcodes)
 		case isXLSX:
 			res, err = catimport.ParseXLSX(file, fileSize, httpx.ActiveCurrency().Decimals, enabledIDs, useItemNumbersAsBarcodes)
 		default:
@@ -526,14 +527,14 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			case errors.Is(err, catimport.ErrXLSXShopifyUnsupported):
 				http.Error(w, T("import.error.xlsx_shopify_unsupported"), http.StatusBadRequest)
 				return
-			case errors.Is(err, catimport.ErrBkpMissingFiles), errors.Is(err, catimport.ErrBkpInvalidMeta), errors.Is(err, catimport.ErrBkpTooLarge):
+			case errors.Is(err, tillimport.ErrBkpMissingFiles), errors.Is(err, tillimport.ErrBkpInvalidMeta), errors.Is(err, tillimport.ErrBkpTooLarge):
 				// The upload looked like a ZIP but isn't a recognisable
 				// .bkp backup — log the real detail, never raw text on the
 				// operator's screen (ut-docs#303's rule, same as below).
 				log.Printf("[import] bkp parse: %v", err)
 				http.Error(w, T("import.error.bkp_unrecognised"), http.StatusBadRequest)
 				return
-			case errors.Is(err, catimport.ErrBkpChecksumMismatch):
+			case errors.Is(err, tillimport.ErrBkpChecksumMismatch):
 				log.Printf("[import] bkp parse: %v", err)
 				http.Error(w, T("import.error.bkp_checksum_failed"), http.StatusBadRequest)
 				return
@@ -621,7 +622,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				}
 				switch {
 				case isBkp:
-					res, err = catimport.ParseBkp(file, fileSize, chosen.Decimals, enabledIDs, useItemNumbersAsBarcodes)
+					res, err = tillimport.ParseBkp(file, fileSize, chosen.Decimals, enabledIDs, useItemNumbersAsBarcodes)
 				case isXLSX:
 					res, err = catimport.ParseXLSX(file, fileSize, chosen.Decimals, enabledIDs, useItemNumbersAsBarcodes)
 				default:
@@ -1369,7 +1370,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					}
 				}
 				if !imageSet {
-					if err := repo.EnsureDefaultThumbnail(r.Context(), itemID, catimport.PlaceholderIconPath(it.Name, it.Category)); err != nil {
+					if err := repo.EnsureDefaultThumbnail(r.Context(), itemID, tillimport.PlaceholderIconPath(it.Name, it.Category)); err != nil {
 						log.Printf("[import] set placeholder thumbnail for item %q: %v", it.Name, err)
 					}
 				}
@@ -1943,7 +1944,7 @@ var confirmCarriedOverrideField = regexp.MustCompile(`^(row_(include|name|price|
 // active are system-formatted, not free text, so they're left untouched —
 // blanket-sanitizing every column corrupted a legitimate negative amount
 // last time this was tried (see #195's review). csvSafe's defusing "'" is
-// stripped back off by catimport's stripCSVDefuse on re-import, so the
+// stripped back off by catimport's StripCSVDefuse on re-import, so the
 // round trip stays lossless — see that function's doc comment.
 func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 	cw := csv.NewWriter(out)

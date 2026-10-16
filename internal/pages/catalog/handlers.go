@@ -20,10 +20,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/universaltill/universal-till/catimport"
+	"github.com/universaltill/universal-till/catimport/barcode"
 	"github.com/universaltill/universal-till/internal/auth"
-	"github.com/universaltill/universal-till/internal/barcode"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
-	"github.com/universaltill/universal-till/internal/catimport"
+	tillimport "github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -861,7 +862,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"SyncPrimary":           d.SyncPrimaryURL(r.Context()),
 			"SyncUnreachable":       d.MainTillUnreachable != nil && d.MainTillUnreachable(r.Context()),
 			"MissingSKUCount":       missingSKUCount,
-			"BuiltinIconGroups":     catimport.BuiltinIconGroups(),
+			"BuiltinIconGroups":     tillimport.BuiltinIconGroups(),
 			"ItemColors":            catalogtypes.ItemColors(),
 			"InItemsShell":          httpx.IsFragmentSwap(w, r),
 			"AICutout":              aiCutoutOffered(r),
@@ -2212,7 +2213,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				categoryName = cat.Name
 			}
 		}
-		suggestedKey := catimport.PlaceholderIcon(itm.Name, categoryName)
+		suggestedKey := tillimport.PlaceholderIcon(itm.Name, categoryName)
 		selectedKey := ""
 		isCustom := false
 		// ut-docs#3133: the Item image tab previews the current picture from
@@ -2239,7 +2240,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if hasPath {
 			thumbnailURL = httpx.ImgVersion(path)
 			isCustom = true
-			for _, ic := range catimport.BuiltinIcons() {
+			for _, ic := range tillimport.BuiltinIcons() {
 				if ic.Path == path {
 					selectedKey = ic.Key
 					isCustom = false
@@ -2289,7 +2290,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			writeRowOOB(w, r, itemID, false)
 			return
 		}
-		path, ok := catimport.IconPath(icon)
+		path, ok := tillimport.IconPath(icon)
 		if !ok {
 			http.Error(w, "unknown icon", http.StatusBadRequest)
 			return

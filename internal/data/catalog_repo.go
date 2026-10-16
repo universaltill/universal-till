@@ -5,11 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/universaltill/universal-till/internal/barcode"
+	"github.com/universaltill/universal-till/catimport/barcode"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -3626,6 +3627,26 @@ func (r *CatalogRepo) NormalizeBarcode(ctx context.Context, in catalogtypes.Barc
 	return in, err
 }
 
+// NormalizeTypedBarcode is NormalizeBarcode for a barcode its producer
+// already decoded (an ADR-0051 row's barcode_type, ut-docs#4525): in.Barcode
+// is that decode's lookup key, so it is stored as typed, never re-matched —
+// re-matching an embedded-data key (its check digit zeroed) decodes it a
+// second time onto a different symbology, or none (ut-docs#936). The type
+// must be one the shop has enabled, and in.Barcode exactly that type's
+// lookup key; otherwise it is refused with ErrBarcodeNoSymbologyMatch.
+func (r *CatalogRepo) NormalizeTypedBarcode(ctx context.Context, in catalogtypes.BarcodeInput) (catalogtypes.BarcodeInput, error) {
+	in.BarcodeType = strings.ToUpper(strings.TrimSpace(in.BarcodeType))
+	enabledIDs, err := r.settings.EnabledBarcodeSymbologies(ctx)
+	if err != nil {
+		logging.L().Warnf("catalog: typed barcode: enabled symbologies unavailable, using defaults: %v", err)
+	}
+	if !slices.Contains(enabledIDs, in.BarcodeType) || !barcode.Default().IsLookupKey(in.BarcodeType, in.Barcode) {
+		return in, fmt.Errorf("%w: %q as %s (enabled: %s)",
+			ErrBarcodeNoSymbologyMatch, in.Barcode, in.BarcodeType, strings.Join(enabledIDs, ", "))
+	}
+	return r.NormalizeBarcode(ctx, in)
+}
+
 // AddNormalizedBarcodeTx is AddBarcode's check-then-insert inside the
 // caller's transaction, for an input NormalizeBarcode returned (an
 // AI-agent item create attaches its barcode in the item's transaction, so
@@ -3739,7 +3760,7 @@ WHERE item_barcodes.item_id = excluded.item_id
 	return nil
 }
 
-// validEAN13 delegates to the shared internal/barcode checksum (ADR-0059
+// validEAN13 delegates to the shared catimport/barcode checksum (ADR-0059
 // Decision §1 — "reuse/extract ... rather than duplicating it") instead of
 // keeping its own copy of the GS1 check-digit algorithm.
 func validEAN13(code string) bool {
