@@ -19,16 +19,6 @@ type CloudLink struct {
 	Gen     int64
 }
 
-// CloudApplyFailure is one cloud_apply_failures row: the latest refusal of
-// a pulled cloud row.
-type CloudApplyFailure struct {
-	Entity  string
-	CloudID string
-	Version int64
-	Reason  string
-	At      string
-}
-
 // CloudLinkRepo reads and writes cloud_links and cloud_apply_failures
 // (migration 082). Stateless like ImportSourceLinkRepo — every call names
 // its executor, so the pull's chunk transaction sees its own writes.
@@ -127,24 +117,4 @@ func (*CloudLinkRepo) ClearFailure(ctx context.Context, q SyncQuerier, entity, c
 		return fmt.Errorf("cloud apply failure clear: %w", err)
 	}
 	return nil
-}
-
-// Failures lists up to limit recorded refusals, newest first.
-func (*CloudLinkRepo) Failures(ctx context.Context, q SyncQuerier, limit int) ([]CloudApplyFailure, error) {
-	rows, err := q.QueryContext(ctx, `
-SELECT entity, cloud_id, version, reason, at FROM cloud_apply_failures
-ORDER BY at DESC, entity, cloud_id LIMIT ?`, limit)
-	if err != nil {
-		return nil, fmt.Errorf("cloud apply failures: %w", err)
-	}
-	defer rows.Close()
-	var out []CloudApplyFailure
-	for rows.Next() {
-		var f CloudApplyFailure
-		if err := rows.Scan(&f.Entity, &f.CloudID, &f.Version, &f.Reason, &f.At); err != nil {
-			return nil, fmt.Errorf("cloud apply failures: %w", err)
-		}
-		out = append(out, f)
-	}
-	return out, rows.Err()
 }

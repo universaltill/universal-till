@@ -2,6 +2,7 @@ package catalogpull
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strconv"
 	"testing"
@@ -310,14 +311,14 @@ func TestPullRefusedRowRecordedChunkMatesAppliedCursorAdvances(t *testing.T) {
 			t.Fatalf("chunk-mate %s rolled back with a refused row", id)
 		}
 	}
-	fails, err := data.NewCloudLinkRepo().Failures(context.Background(), h.db, 10)
+	fails, err := applyFailures(h.db)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(fails) != 3 {
 		t.Fatalf("failures = %+v, want 3", fails)
 	}
-	byID := map[string]data.CloudApplyFailure{}
+	byID := map[string]applyFailure{}
 	for _, f := range fails {
 		byID[f.CloudID] = f
 	}
@@ -331,7 +332,7 @@ func TestPullRefusedRowRecordedChunkMatesAppliedCursorAdvances(t *testing.T) {
 	if it, _ := h.item(itemID(1)); it.Price != 150 {
 		t.Fatalf("later version not applied: %+v", it)
 	}
-	fails, _ = data.NewCloudLinkRepo().Failures(context.Background(), h.db, 10)
+	fails, _ = applyFailures(h.db)
 	if len(fails) != 2 {
 		t.Fatalf("failure of item 1 not cleared by its later version: %+v", fails)
 	}
@@ -532,4 +533,29 @@ func TestPullLeavesAnOpenBasketLinePriceAlone(t *testing.T) {
 	if _, found, _ := fresh.ScanQtyWithResult("TEA-1", 1); !found || fresh.Lines()[0].PriceCents.Minor() != 300 {
 		t.Fatalf("next line rung up = %+v, want the new 300", fresh.Lines())
 	}
+}
+
+// applyFailure is one cloud_apply_failures row.
+type applyFailure struct {
+	Entity, CloudID, Reason string
+	Version                 int64
+}
+
+// applyFailures reads every recorded refusal (the repo has no reader until
+// ut-docs#4493 reports them to the cloud).
+func applyFailures(db *sql.DB) ([]applyFailure, error) {
+	rows, err := db.Query(`SELECT entity, cloud_id, version, reason FROM cloud_apply_failures ORDER BY entity, cloud_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []applyFailure
+	for rows.Next() {
+		var f applyFailure
+		if err := rows.Scan(&f.Entity, &f.CloudID, &f.Version, &f.Reason); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
 }

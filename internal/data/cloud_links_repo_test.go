@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"fmt"
 	"testing"
 )
 
@@ -83,7 +84,7 @@ func TestCloudApplyFailures_LatestPerRow(t *testing.T) {
 	if err := links.RecordFailure(ctx, d.DB, "category", "c1", 2, "x"); err != nil {
 		t.Fatal(err)
 	}
-	got, err := links.Failures(ctx, d.DB, 10)
+	got, err := cloudApplyFailures(ctx, d.DB, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +103,38 @@ func TestCloudApplyFailures_LatestPerRow(t *testing.T) {
 	if err := links.ClearFailure(ctx, d.DB, "item", "c1"); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := links.Failures(ctx, d.DB, 10); len(got) != 1 || got[0].Entity != "category" {
+	if got, _ := cloudApplyFailures(ctx, d.DB, 10); len(got) != 1 || got[0].Entity != "category" {
 		t.Fatalf("after clear: %+v", got)
 	}
+}
+
+// CloudApplyFailure is one cloud_apply_failures row: the latest refusal of
+// a pulled cloud row.
+type CloudApplyFailure struct {
+	Entity  string
+	CloudID string
+	Version int64
+	Reason  string
+	At      string
+}
+
+// cloudApplyFailures lists up to limit recorded refusals, newest first.
+// Test-only: reporting them to the cloud is ut-docs#4493.
+func cloudApplyFailures(ctx context.Context, q SyncQuerier, limit int) ([]CloudApplyFailure, error) {
+	rows, err := q.QueryContext(ctx, `
+SELECT entity, cloud_id, version, reason, at FROM cloud_apply_failures
+ORDER BY at DESC, entity, cloud_id LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("cloud apply failures: %w", err)
+	}
+	defer rows.Close()
+	var out []CloudApplyFailure
+	for rows.Next() {
+		var f CloudApplyFailure
+		if err := rows.Scan(&f.Entity, &f.CloudID, &f.Version, &f.Reason, &f.At); err != nil {
+			return nil, fmt.Errorf("cloud apply failures: %w", err)
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
 }
