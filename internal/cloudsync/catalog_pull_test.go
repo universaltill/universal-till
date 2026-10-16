@@ -2,7 +2,9 @@ package cloudsync
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -25,13 +27,47 @@ type catalogFeed struct {
 	mu     sync.Mutex
 	calls  int
 	status int
+	// price is the served item's price_minor (0 = 275); a negative one is
+	// refused by the till and so recorded as an apply failure.
+	price int64
+	// reports are the bodies POSTed to …/catalog/apply-failures.
+	reports [][]byte
+	// reportStatus, when set, is the apply-failures endpoint's answer.
+	reportStatus int
+}
+
+func (f *catalogFeed) report(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer tok-1" {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	b, _ := io.ReadAll(r.Body)
+	f.mu.Lock()
+	f.reports = append(f.reports, b)
+	status := f.reportStatus
+	f.mu.Unlock()
+	if status != 0 {
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": map[string]any{"code": "apply_failures_unavailable", "message": "x"}})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"stored": 1}, "error": nil})
+}
+
+func (f *catalogFeed) reportBodies() [][]byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([][]byte(nil), f.reports...)
 }
 
 func (f *catalogFeed) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.calls++
-	status := f.status
+	status, price := f.status, f.price
 	f.mu.Unlock()
+	if price == 0 {
+		price = 275
+	}
 	if r.Header.Get("Authorization") != "Bearer tok-1" || r.URL.Query().Get("store_id") != "store-1" {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
@@ -44,7 +80,7 @@ func (f *catalogFeed) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rows := []map[string]any{}
 	if r.URL.Query().Get("since") == "0" {
 		rows = append(rows, map[string]any{"kind": "item", "cloud_id": pullItemID, "version": 1, "deleted": false,
-			"data": map[string]any{"name": "Cloud tea", "price_minor": 275, "active": true}})
+			"data": map[string]any{"name": "Cloud tea", "price_minor": price, "active": true}})
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"rows": rows, "next": 1, "high_water": 1}, "error": nil})
 }
@@ -59,7 +95,22 @@ func (f *catalogFeed) count() int {
 // carries the given catalog_master, plus the catalogue feed.
 func tickWithFeed(t *testing.T, master string, primaryURL string, feedStatus int) (*catalogFeed, *fakeCloud, *data.SettingsRepo, func(string) bool, error) {
 	t.Helper()
+	return tickWithFeedOf(t, master, primaryURL, &catalogFeed{status: feedStatus})
+}
+
+func tickWithFeedOf(t *testing.T, master string, primaryURL string, feed *catalogFeed) (*catalogFeed, *fakeCloud, *data.SettingsRepo, func(string) bool, error) {
+	t.Helper()
+	return tickWithFeedSeeded(t, master, primaryURL, feed, nil)
+}
+
+// tickWithFeedSeeded is tickWithFeedOf with seed run on the migrated DB
+// before the tick.
+func tickWithFeedSeeded(t *testing.T, master string, primaryURL string, feed *catalogFeed, seed func(*sql.DB)) (*catalogFeed, *fakeCloud, *data.SettingsRepo, func(string) bool, error) {
+	t.Helper()
 	d := openMigratedDB(t, "pull.db")
+	if seed != nil {
+		seed(d.DB)
+	}
 	settings := data.NewSettingsRepo(d.DB)
 	if primaryURL != "" {
 		if err := settings.Set(context.Background(), "sync.primary_url", primaryURL); err != nil {
@@ -68,9 +119,9 @@ func tickWithFeed(t *testing.T, master string, primaryURL string, feedStatus int
 	}
 	block := `{"plan":"shop","subscription_status":"active","catalog_master":"` + master + `"}`
 	cloud := &fakeCloud{entitlement: json.RawMessage(block)}
-	feed := &catalogFeed{status: feedStatus}
 	mux := http.NewServeMux()
 	mux.Handle("/v1/stores/catalog", feed)
+	mux.HandleFunc("/v1/stores/catalog/apply-failures", feed.report)
 	mux.Handle("/", cloud.handler())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -193,5 +244,71 @@ func TestTickDoesNotPullAfterA304Checkin(t *testing.T) {
 	}
 	if feed.count() != first {
 		t.Fatalf("a 304 tick pulled (%d → %d calls)", first, feed.count())
+	}
+}
+
+// ut-docs#4493: after a served pull the main till reports the rows it
+// refused; a pull the feed did not serve reports nothing, and a report
+// failure never fails the check-in.
+func TestTickReportsApplyFailuresAfterAServedPull(t *testing.T) {
+	feed, _, settings, has, err := tickWithFeedOf(t, "cloud", "", &catalogFeed{price: -5})
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if has(pullItemID) {
+		t.Fatal("a negative price was applied")
+	}
+	bodies := feed.reportBodies()
+	if len(bodies) != 1 {
+		t.Fatalf("reports = %d, want 1", len(bodies))
+	}
+	var body struct {
+		StoreID  string                `json:"store_id"`
+		Failures []catalogpull.Failure `json:"failures"`
+	}
+	if err := json.Unmarshal(bodies[0], &body); err != nil {
+		t.Fatalf("report body %s: %v", bodies[0], err)
+	}
+	if body.StoreID != "store-1" || len(body.Failures) != 1 || body.Failures[0].Kind != "item" ||
+		body.Failures[0].CloudID != pullItemID || body.Failures[0].Version != 1 || body.Failures[0].Reason == "" {
+		t.Fatalf("report = %s", bodies[0])
+	}
+	if v, _, _ := settings.Get(context.Background(), catalogpull.KeyFailuresReported); v == "" {
+		t.Fatal("accepted report's fingerprint not stored")
+	}
+}
+
+// seedApplyFailure records a refused cloud row, so a report has
+// something to send.
+func seedApplyFailure(t *testing.T) func(*sql.DB) {
+	return func(db *sql.DB) {
+		if err := data.NewCloudLinkRepo().RecordFailure(context.Background(), db, "item", pullItemID, 3, "price above the ceiling"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestTickDoesNotReportWhenThePullWasNotServed(t *testing.T) {
+	feed, _, _, _, err := tickWithFeedSeeded(t, "cloud", "", &catalogFeed{status: http.StatusServiceUnavailable}, seedApplyFailure(t))
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if n := len(feed.reportBodies()); n != 0 {
+		t.Fatalf("reports = %d after an unserved pull with a recorded failure, want 0", n)
+	}
+}
+
+// A 5xx from the report never fails the check-in and leaves the
+// fingerprint unset, so the next served pull retries.
+func TestTickReportServerErrorKeepsFingerprint(t *testing.T) {
+	feed, _, settings, _, err := tickWithFeedSeeded(t, "cloud", "", &catalogFeed{price: -5, reportStatus: http.StatusServiceUnavailable}, nil)
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if n := len(feed.reportBodies()); n != 1 {
+		t.Fatalf("reports = %d, want 1 attempt", n)
+	}
+	if v, _, _ := settings.Get(context.Background(), catalogpull.KeyFailuresReported); v != "" {
+		t.Fatalf("fingerprint %q stored after a 503", v)
 	}
 }

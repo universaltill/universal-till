@@ -84,7 +84,7 @@ func TestCloudApplyFailures_LatestPerRow(t *testing.T) {
 	if err := links.RecordFailure(ctx, d.DB, "category", "c1", 2, "x"); err != nil {
 		t.Fatal(err)
 	}
-	got, err := cloudApplyFailures(ctx, d.DB, 10)
+	got, err := links.ListFailures(ctx, d.DB, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,38 +103,56 @@ func TestCloudApplyFailures_LatestPerRow(t *testing.T) {
 	if err := links.ClearFailure(ctx, d.DB, "item", "c1"); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := cloudApplyFailures(ctx, d.DB, 10); len(got) != 1 || got[0].Entity != "category" {
+	if got, _ := links.ListFailures(ctx, d.DB, 10); len(got) != 1 || got[0].Entity != "category" {
 		t.Fatalf("after clear: %+v", got)
 	}
 }
 
-// CloudApplyFailure is one cloud_apply_failures row: the latest refusal of
-// a pulled cloud row.
-type CloudApplyFailure struct {
-	Entity  string
-	CloudID string
-	Version int64
-	Reason  string
-	At      string
-}
+// ut-docs#4493: ListFailures feeds the till's apply-failures report —
+// newest `at` first, ties broken by (entity, cloud_id), at most limit rows.
+func TestCloudApplyFailures_ListNewestFirst(t *testing.T) {
+	d := openMigratedDB(t, "cloud-failures-list.db")
+	ctx := context.Background()
+	links := NewCloudLinkRepo()
 
-// cloudApplyFailures lists up to limit recorded refusals, newest first.
-// Test-only: reporting them to the cloud is ut-docs#4493.
-func cloudApplyFailures(ctx context.Context, q SyncQuerier, limit int) ([]CloudApplyFailure, error) {
-	rows, err := q.QueryContext(ctx, `
-SELECT entity, cloud_id, version, reason, at FROM cloud_apply_failures
-ORDER BY at DESC, entity, cloud_id LIMIT ?`, limit)
-	if err != nil {
-		return nil, fmt.Errorf("cloud apply failures: %w", err)
+	if got, err := links.ListFailures(ctx, d.DB, 10); err != nil || len(got) != 0 {
+		t.Fatalf("empty table: %+v %v", got, err)
 	}
-	defer rows.Close()
-	var out []CloudApplyFailure
-	for rows.Next() {
-		var f CloudApplyFailure
-		if err := rows.Scan(&f.Entity, &f.CloudID, &f.Version, &f.Reason, &f.At); err != nil {
-			return nil, fmt.Errorf("cloud apply failures: %w", err)
+	for _, r := range []struct {
+		entity, id, at string
+		version        int64
+	}{
+		{"item", "b", "2026-10-16T10:00:00Z", 4},
+		{"item", "a", "2026-10-16T10:00:00Z", 3},
+		{"category", "z", "2026-10-16T10:00:00Z", 2},
+		{"tax_code", "t", "2026-10-16T12:00:00Z", 9},
+		{"item", "old", "2026-10-15T09:00:00Z", 1},
+	} {
+		if _, err := d.DB.ExecContext(ctx, `INSERT INTO cloud_apply_failures (entity, cloud_id, version, reason, at) VALUES (?, ?, ?, ?, ?)`,
+			r.entity, r.id, r.version, "reason "+r.id, r.at); err != nil {
+			t.Fatal(err)
 		}
-		out = append(out, f)
 	}
-	return out, rows.Err()
+	got, err := links.ListFailures(ctx, d.DB, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	for _, f := range got {
+		order = append(order, f.Entity+"/"+f.CloudID)
+	}
+	want := []string{"tax_code/t", "category/z", "item/a", "item/b", "item/old"}
+	if fmt.Sprint(order) != fmt.Sprint(want) {
+		t.Fatalf("order = %v, want %v", order, want)
+	}
+	if got[0].Version != 9 || got[0].Reason != "reason t" || got[0].At != "2026-10-16T12:00:00Z" {
+		t.Fatalf("first = %+v", got[0])
+	}
+	got, err = links.ListFailures(ctx, d.DB, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[1].CloudID != "z" {
+		t.Fatalf("limit 2 = %+v, want the two newest", got)
+	}
 }

@@ -52,7 +52,10 @@ func (r *runner) applyRow(ctx context.Context, tx *sql.Tx, row Row, gen int64, r
 	}
 	cloudID, idErr := canonicalID(row.CloudID)
 	if idErr != nil {
-		// Recorded under the raw id (bounded): the cloud must hear of it.
+		// Recorded under the raw id (bounded) so the refusal is kept and
+		// logged locally; the apply-failures report drops non-UUID ids (the
+		// cloud would refuse the whole report), so the cloud does not hear
+		// of this one.
 		res.Refused++
 		return r.recordRefusal(ctx, tx, row.Kind, boundID(row.CloudID), row.Version, idErr)
 	}
