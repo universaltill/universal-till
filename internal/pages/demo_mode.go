@@ -308,6 +308,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/sync/till-role":                  true, // ut-docs#2781: a joined till's own role report
 	"POST /api/tills/{id}/role":                 true, // ut-docs#2781: Tills page Change role
 	"POST /api/tills/{id}/update-now":           true, // ut-docs#2945: Tills page Update now
+	"POST /api/tills/rotate-tls-key":            true, // ut-docs#4423: Tills page Change network key
 	"POST /api/sync/settings/apply":             true,
 	"POST /api/sync/catalog/apply":              true,
 	"POST /api/sync/users/apply":                true,

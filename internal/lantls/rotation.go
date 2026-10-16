@@ -201,7 +201,7 @@ func (r *rotation) run(cur *ecdsa.PrivateKey, created bool, keyMtime time.Time) 
 			dirty = true
 		}
 	case next == nil && !broken && clockOK && !r.now.Before(r.st.KeyCreatedAt.Add(RotateEvery)):
-		if k := r.createNext(); k != nil {
+		if k := r.createNext(fmt.Sprintf("key is %v old", RotateEvery)); k != nil {
 			next = k
 			dirty = true
 		}
@@ -245,6 +245,9 @@ func (r *rotation) loadNext(curPin string) (next *ecdsa.PrivateKey, broken bool)
 }
 
 // switchTo makes the next key current, keeping the current one as prev-*.
+// A switch within KeepPrevious of the last one (a rotate-now soon after,
+// ut-docs#4423) overwrites the older retired key early; it is never
+// served, only kept for diagnostics.
 // The order keeps a current key on disk through a power cut at any point:
 // copy current → prev, then rename next over current (atomic), then the
 // state; an interruption after the rename is finished by the next load
@@ -291,8 +294,8 @@ func (r *rotation) finishSwitch() {
 	r.st.clearNext()
 }
 
-// createNext creates the next key and its certificate.
-func (r *rotation) createNext() *ecdsa.PrivateKey {
+// createNext creates the next key and its certificate; why is logged.
+func (r *rotation) createNext(why string) *ecdsa.PrivateKey {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		log.Printf("[LAN TLS] could not create the next key: %v", err)
@@ -308,7 +311,7 @@ func (r *rotation) createNext() *ecdsa.PrivateKey {
 		return nil
 	}
 	r.st.NextPin, r.st.NextCreatedAt, r.st.Confirmed, r.st.Ready = pin, r.now, nil, false
-	log.Printf("[LAN TLS] key is %v old: created the next key; announcing it to linked tills", RotateEvery)
+	log.Printf("[LAN TLS] %s: created the next key; announcing it to linked tills", why)
 	return key
 }
 
@@ -337,18 +340,80 @@ func (r *rotation) prunePrev() (dirty bool) {
 }
 
 // NextPin is the pending next key's pin, announced in the link's hello
-// (fleetlink.Hello.NextPin); "" when no rotation is pending.
-func (c *Cert) NextPin() string { return c.nextPin }
+// (fleetlink.Hello.NextPin); "" when no rotation is pending. RotateNow can
+// set it while the till serves.
+func (c *Cert) NextPin() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.nextPin
+}
+
+// ErrNoTLS: this till's LAN port serves no TLS, so there is no key to
+// rotate.
+var ErrNoTLS = errors.New("lantls: this till serves no LAN TLS")
+
+// RotateNow starts a key rotation on demand (ADR-0114 §7, ut-docs#4423):
+// the next key is created now exactly as the 4-year step creates it, and
+// from here on the rotation is the same one — announced as next_pin,
+// switched at a load once every required till confirmed it or
+// RotationWindow passed. The served pin never changes in this process.
+//
+// A rotation already pending is kept, never replaced: peers may hold its
+// pin already. started reports whether this call created the next key;
+// pin is the pending next pin either way.
+func (c *Cert) RotateNow() (pin string, started bool, err error) {
+	return c.rotateNow(time.Now())
+}
+
+func (c *Cert) rotateNow(now time.Time) (string, bool, error) {
+	if c == nil || c.dir == "" {
+		return "", false, ErrNoTLS
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.nextPin != "" {
+		return c.nextPin, false, nil
+	}
+	r := &rotation{dir: c.dir, now: now, st: c.st}
+	if _, err := os.Stat(r.path(nextKeyFile)); err == nil {
+		// A next key the load found unusable is left as is (loadNext):
+		// never overwritten here either.
+		return "", false, errors.New("lantls: a pending next key is unusable; not replacing it")
+	}
+	key := r.createNext("a manager asked for a new key")
+	if key == nil {
+		return "", false, errors.New("lantls: could not create the next key")
+	}
+	if _, err := ensureLeaf(r.path(nextCertFile), key, now); err != nil {
+		// Re-issued at the switch, as at load.
+		log.Printf("[LAN TLS] could not issue the next certificate: %v", err)
+	}
+	if err := saveState(c.dir, r.st); err != nil {
+		// Nothing announced yet: take the key back so no half-started
+		// rotation is left behind (a leftover would be adopted at load).
+		for _, f := range []string{nextKeyFile, nextCertFile} {
+			if rmErr := os.Remove(r.path(f)); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+				log.Printf("[LAN TLS] could not remove %s: %v", f, rmErr)
+			}
+		}
+		return "", false, err
+	}
+	c.st, c.nextPin = r.st, r.st.NextPin
+	return c.nextPin, true, nil
+}
 
 // NeedsConfirm reports whether tillID reporting nextPin would be a new
 // confirmation of the pending rotation — the cheap check before the
 // caller reads which tills are required.
 func (c *Cert) NeedsConfirm(tillID, nextPin string) bool {
-	if c.nextPin == "" || nextPin != c.nextPin || tillID == "" {
+	if tillID == "" {
 		return false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.nextPin == "" || nextPin != c.nextPin {
+		return false
+	}
 	return !c.st.Ready && !slices.Contains(c.st.Confirmed, tillID)
 }
 
@@ -358,7 +423,7 @@ func (c *Cert) NeedsConfirm(tillID, nextPin string) bool {
 // wrong or empty pin, or a till outside required, changes nothing. The
 // state is persisted before returning.
 func (c *Cert) ConfirmNext(tillID, nextPin string, required []string) error {
-	if c.nextPin == "" || nextPin != c.nextPin || tillID == "" || c.dir == "" {
+	if tillID == "" || c.dir == "" {
 		return nil
 	}
 	if len(required) > maxConfirmed {
@@ -371,6 +436,9 @@ func (c *Cert) ConfirmNext(tillID, nextPin string, required []string) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.nextPin == "" || nextPin != c.nextPin {
+		return nil
+	}
 	if c.st.Ready && slices.Contains(c.st.Confirmed, tillID) {
 		return nil
 	}
