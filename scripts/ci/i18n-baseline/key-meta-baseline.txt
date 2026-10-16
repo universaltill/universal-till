@@ -201,6 +201,7 @@ buttons.edit_mode.title
 buttons.edit_mode.title_all_grid
 catalog.active
 catalog.add_item_btn
+catalog.add_photo
 catalog.age_restricted
 catalog.attach_barcode
 catalog.auto_if_blank
