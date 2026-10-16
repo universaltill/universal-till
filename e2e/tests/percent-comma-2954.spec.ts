@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, clickThenReload } from './helpers';
 
 // ut-docs#2954: #2925 made every money input comma-tolerant, but the
 // percent inputs (promotion percent, payment-fee percent, tax rates) kept a
@@ -22,10 +22,8 @@ test.describe('Percent inputs: decimal comma (ut-docs#2954)', () => {
     const value = form.locator('input[name="value_percent"]');
     await value.fill('1,5');
     expect(await value.evaluate((el: HTMLInputElement) => el.checkValidity())).toBe(true);
-    await Promise.all([
-      page.waitForURL(/\/promotions(\?lang=de)?$/),
-      form.locator('button[type="submit"]').click(),
-    ]);
+    // Same-URL 303: wait for the new document, not the old one (ut-docs#4440).
+    await clickThenReload(page, () => form.locator('button[type="submit"]').click());
     // The inline edit row prefills "%.2f" of the stored bp/100: "1.50"
     // only if the server stored 150. The prefill follows the locale
     // (ut-docs#4097) and ?lang=de left a de cookie, so read it back in en

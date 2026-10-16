@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, clickThenReload } from './helpers';
 
 // ut-docs#2925: the money fields #2819 didn't reach kept the dot-only
 // pattern, so a German/Turkish keyboard's "3,50" was blocked by native
@@ -18,10 +18,8 @@ test.describe('Money inputs: decimal comma on the remaining fields (ut-docs#2925
     const value = form.locator('input[name="value_amount"]');
     await value.fill('3,50');
     expect(await value.evaluate((el: HTMLInputElement) => el.checkValidity())).toBe(true);
-    await Promise.all([
-      page.waitForURL(/\/promotions(\?lang=de)?$|\/promotions$/),
-      form.locator('button[type="submit"]').click(),
-    ]);
+    // Same-URL 303: wait for the new document, not the old one (ut-docs#4440).
+    await clickThenReload(page, () => form.locator('button[type="submit"]').click());
     // The inline edit row prefills FormatMajorPlain(stored minor) in the
     // session's German decimal comma (ut-docs#2818): "3,50" only if the
     // server stored 350.

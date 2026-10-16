@@ -387,7 +387,8 @@ export async function deactivateAllTables(page: Page) {
   for (;;) {
     const btn = page.locator('form[action$="/active"] button', { hasText: 'Deactivate' }).first();
     if ((await btn.count()) === 0) break;
-    await Promise.all([page.waitForURL((u) => u.pathname === '/tables'), btn.click()]);
+    // Same-URL 303: wait for the new document, not the old one (ut-docs#4440).
+    await clickThenReload(page, () => btn.click());
   }
 }
 
@@ -420,10 +421,10 @@ export async function clearAllHeldSales(page: Page) {
 // violation.
 export async function createTable(page: Page, label: string) {
   await page.locator('.users-form form[action="/api/tables"] input[name="label"]').fill(label);
-  await Promise.all([
-    page.waitForURL((u) => u.pathname === '/tables'),
+  // Same-URL 303: wait for the new document, not the old one (ut-docs#4440).
+  await clickThenReload(page, () =>
     page.locator('.users-form form[action="/api/tables"] button[type=submit]').click(),
-  ]);
+  );
 }
 
 // ut-docs#1901: the catalog add/edit-item form moved from an always-visible
@@ -681,8 +682,9 @@ export async function recordAlertAfterRequest(page: Page, pathFragment: string) 
 }
 
 // Click something whose server reply is `HX-Redirect` back to the SAME URL the
-// page is already at (every SUCCESSFUL record-dialog mutation), and wait for
-// the fresh document. `page.waitForURL(<same url>)` resolves at once against
+// page is already at (every SUCCESSFUL record-dialog mutation), or a plain form
+// POST whose 303 lands on that same URL (/tables, /promotions — ut-docs#4440),
+// and wait for the fresh document. `page.waitForURL(<same url>)` resolves at once against
 // the OLD document, so the next click can land in the new document before the
 // deferred web/public/record-dialog.js has bound its click listener and is
 // silently dropped (ut-docs#2345, ut-docs#4427). The `load` listener is

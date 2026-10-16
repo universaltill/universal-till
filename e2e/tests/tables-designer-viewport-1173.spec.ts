@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, deactivateAllTables, createTable } from './helpers';
+import { watchConsole, deactivateAllTables, createTable, clickThenReload } from './helpers';
 
 // ut-docs#1173: reported against the real 10.1" till (1920x1200 @ 1.5 scale
 // — 1280x800 logical), landscape and short. The floor-plan SVG's viewBox is
@@ -63,7 +63,7 @@ test.describe('Table designer fits the till\'s real 1280x800 viewport (ut-docs#1
     await addSubmit.scrollIntoViewIfNeeded();
     await expect(addSubmit).toBeVisible();
     await page.locator('.users-form form[action="/api/tables"] input[name="label"]').fill('E2E Reachable Table 1173');
-    await Promise.all([page.waitForURL((u) => u.pathname === '/tables'), addSubmit.click()]);
+    await clickThenReload(page, () => addSubmit.click());
     await expect(page.locator('.table', { hasText: 'E2E Reachable Table 1173' })).toBeVisible();
 
     // The row list itself must not need horizontal scrolling to reach its
@@ -96,7 +96,7 @@ test.describe('Table designer fits the till\'s real 1280x800 viewport (ut-docs#1
       .first()
       .locator('form[action^="/api/tables/"]:not([action$="/active"]) button[type=submit]');
     await expect(rowSave).toBeVisible();
-    await Promise.all([page.waitForURL((u) => u.pathname === '/tables'), rowSave.click()]);
+    await clickThenReload(page, () => rowSave.click());
 
     assertClean();
   });
