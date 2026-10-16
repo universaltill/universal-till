@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/bgremove"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -1605,6 +1606,40 @@ func TestPluginSettingsPage_GET_InvalidStoredOverrideShowsNoticeAndNoBadValue(t 
 	for _, bad := range []string{`value="-5"`, `value="150"`, `value="0"`} {
 		if strings.Contains(body, bad) {
 			t.Fatalf("input carries out-of-range %s", bad)
+		}
+	}
+}
+
+// ut-docs#4448: an unsupported image_model only makes bgremove refuse the
+// shop's own rembg service; the photo picker then falls back to the built-in
+// on-device model (cutoutEngineBuiltin, ut-docs#4137). The hint must say so,
+// like its image_endpoint_invalid sibling and the plugins help page, not
+// claim background removal is off. Checked in every core locale.
+func TestAIImageModelUnsupportedHint_SaysBuiltinStaysOn(t *testing.T) {
+	if bgremove.New(bgremove.ImageConfig{Provider: bgremove.ImageProviderSelfHosted, Endpoint: "http://192.168.1.20:7000", Model: "bria-rmbg"}).CanCutout() {
+		t.Fatal("precondition: an unsupported model must leave the shop's service unused")
+	}
+	en := httpx.T("en", "plugins.settings.ai.image_model_unsupported")
+	if !strings.Contains(en, "built-in background removal") || strings.Contains(en, "stays off") {
+		t.Errorf("en hint must say the till keeps its built-in background removal, got %q", en)
+	}
+	sibling := map[string]string{}
+	for _, lang := range []string{"ar", "fa", "tr"} {
+		sibling[lang] = httpx.T(lang, "plugins.settings.ai.image_endpoint_invalid")
+	}
+	// Each translation reuses its sibling's "keeps using its built-in
+	// background removal" clause verbatim, so the two hints read alike.
+	clause := map[string]string{
+		"ar": "ويواصل استخدام إزالة الخلفية المدمجة",
+		"fa": "همچنان از حذف پس‌زمینهٔ داخلی استفاده می‌کند",
+		"tr": "yerleşik arka plan kaldırmayı kullanmaya devam eder",
+	}
+	for lang, c := range clause {
+		if !strings.Contains(sibling[lang], c) {
+			t.Fatalf("%s: sibling image_endpoint_invalid no longer carries %q; update this test", lang, c)
+		}
+		if got := httpx.T(lang, "plugins.settings.ai.image_model_unsupported"); !strings.Contains(got, c) {
+			t.Errorf("%s hint must say the till keeps its built-in background removal (%q), got %q", lang, c, got)
 		}
 	}
 }
