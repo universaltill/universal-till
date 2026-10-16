@@ -213,6 +213,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/import":              true,
 	"POST /api/import/sample-data":  true,
 	"POST /api/import/from-system":  true, // ut-docs#4431: pulls a catalogue from another system
+	"POST /api/import/from-file":    true, // ut-docs#4526: commits a file through an importer plugin
 	"POST /api/vouchers/import":     true,
 	"POST /vouchers/{id}/adjust":    true, // ut-docs#4253: manager balance correction
 	// Backups: create, save-copy, download (a flagged demo database never

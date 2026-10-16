@@ -172,7 +172,7 @@ func (s *hostState) streamLimit(ctx context.Context) int64 {
 func streamCall(ctx context.Context) (*hostState, int32) {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return nil, hostErrInternal
+		return nil, stateErr(ctx)
 	}
 	if err := CheckPermission(ctx, s.db, s.pluginID, permHTTPStream); err != nil {
 		return nil, hostErrDenied
@@ -389,7 +389,7 @@ func readSome(r io.Reader, buf []byte) (int, error) {
 func hostHTTPClose(ctx context.Context, h int32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	if _, ok := s.streams.get(h); !ok {
 		return hostErrNotFound

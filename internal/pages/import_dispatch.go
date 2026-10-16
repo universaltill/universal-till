@@ -156,6 +156,15 @@ func registerImportDispatch(mux *http.ServeMux, d *common.Deps) {
 			runAPISourceImport(w, r, d, entry, granted, strings.TrimSpace(modeRaw))
 			return
 		}
+		// ADR-0164 §2: a file-rows entry's rows are applied by core, like
+		// an api entry's (mode=preview|commit); the run owns the staged
+		// file from here.
+		if entry.Source == plugins.ImportSourceFile {
+			staged = true
+			runRowsImport(w, r, d, entry, granted, strings.TrimSpace(modeRaw),
+				&rowsImportFile{path: tmpPath, name: fileName, size: written})
+			return
+		}
 
 		// The file was already staged to tmpPath while reading the
 		// multipart parts above — a single copy, not a second one here.

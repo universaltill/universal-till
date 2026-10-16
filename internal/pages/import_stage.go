@@ -30,6 +30,10 @@ import (
 type stagedCatalogEntry struct {
 	path   string
 	staged time.Time
+	// owner is who may take the copy: "" for the standard importer, a
+	// file-rows entry's stagedOwner for a copy its preview staged
+	// (ADR-0164 §2) — so neither commits the other's copy.
+	owner string
 }
 
 var (
@@ -49,6 +53,12 @@ const stagedCatalogTTL = time.Hour
 // copy until takeStagedCatalogUpload/discardStagedCatalogUpload consumes it
 // or the TTL prune removes it.
 func stageCatalogUpload(file io.ReadSeeker) (string, error) {
+	return stageCatalogUploadFor(file, "")
+}
+
+// stageCatalogUploadFor is stageCatalogUpload for a given owner (see
+// stagedCatalogEntry.owner).
+func stageCatalogUploadFor(file io.ReadSeeker, owner string) (string, error) {
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return "", fmt.Errorf("seek upload for staging: %w", err)
 	}
@@ -82,7 +92,7 @@ func stageCatalogUpload(file io.ReadSeeker) (string, error) {
 			delete(stagedCatalogUploads, k)
 		}
 	}
-	stagedCatalogUploads[id] = stagedCatalogEntry{path: tmp.Name(), staged: time.Now()}
+	stagedCatalogUploads[id] = stagedCatalogEntry{path: tmp.Name(), staged: time.Now(), owner: owner}
 	stagedCatalogMu.Unlock()
 	return id, nil
 }
@@ -90,13 +100,20 @@ func stageCatalogUpload(file io.ReadSeeker) (string, error) {
 // takeStagedCatalogUpload removes id from the registry and hands the staged
 // file's path — and its ownership, including removal — to the caller.
 func takeStagedCatalogUpload(id string) (string, bool) {
+	return takeStagedCatalogUploadFor(id, "")
+}
+
+// takeStagedCatalogUploadFor is takeStagedCatalogUpload for owner: a copy
+// staged for anyone else is left in place and reported as absent.
+func takeStagedCatalogUploadFor(id, owner string) (string, bool) {
 	stagedCatalogMu.Lock()
 	defer stagedCatalogMu.Unlock()
 	e, ok := stagedCatalogUploads[id]
-	if ok {
-		delete(stagedCatalogUploads, id)
+	if !ok || e.owner != owner {
+		return "", false
 	}
-	return e.path, ok
+	delete(stagedCatalogUploads, id)
+	return e.path, true
 }
 
 // restageCatalogUpload hands a taken staged copy back to the registry under
@@ -112,15 +129,26 @@ func takeStagedCatalogUpload(id string) (string, bool) {
 // answer the confirm prompt, with the prune still the backstop if they
 // abandon it.
 func restageCatalogUpload(id, path string) {
+	restageCatalogUploadFor(id, path, "")
+}
+
+// restageCatalogUploadFor is restageCatalogUpload for owner (the copy goes
+// back under the owner it was taken for).
+func restageCatalogUploadFor(id, path, owner string) {
 	stagedCatalogMu.Lock()
 	defer stagedCatalogMu.Unlock()
-	stagedCatalogUploads[id] = stagedCatalogEntry{path: path, staged: time.Now()}
+	stagedCatalogUploads[id] = stagedCatalogEntry{path: path, staged: time.Now(), owner: owner}
 }
 
 // discardStagedCatalogUpload consumes and deletes a staged copy that will
 // never be committed (e.g. a re-preview superseding the previous one).
 func discardStagedCatalogUpload(id string) {
-	if path, ok := takeStagedCatalogUpload(id); ok {
+	discardStagedCatalogUploadFor(id, "")
+}
+
+// discardStagedCatalogUploadFor is discardStagedCatalogUpload for owner.
+func discardStagedCatalogUploadFor(id, owner string) {
+	if path, ok := takeStagedCatalogUploadFor(id, owner); ok {
 		_ = os.Remove(path)
 	}
 }

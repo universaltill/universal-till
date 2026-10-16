@@ -172,7 +172,10 @@ func (l *publishRateLimiter) forget(pluginID string) {
 // audits included (drop audits are further coalesced to 1/s).
 func hostEventPublish(ctx context.Context, m api.Module, typePtr, typeLen, payloadPtr, payloadLen uint32) int32 {
 	s, ok := stateFrom(ctx)
-	if !ok || s.publishRate == nil {
+	if !ok {
+		return stateErr(ctx)
+	}
+	if s.publishRate == nil {
 		return hostErrInternal
 	}
 	if typeLen > maxPublishTypeLen {

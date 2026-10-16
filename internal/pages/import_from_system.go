@@ -105,6 +105,12 @@ type importSystemView struct {
 	Counts                   catsync.Result
 	Samples                  []importSystemSample
 	Err                      *apiImportError
+	// A file-rows entry's run from the import page (ADR-0164 §2,
+	// import_file_rows.go): File marks it; a preview also carries the
+	// copy staged for its commit, the uploaded name and the plugin's name.
+	File                 bool
+	StagedID             string
+	FileName, PluginName string
 	// Filled by renderImportSystemResult.
 	ErrText string
 	Retry   bool
@@ -207,7 +213,9 @@ func renderImportSystemResult(w http.ResponseWriter, r *http.Request, v importSy
 		}
 		// A failed commit can safely run again (rows are linked) — except
 		// where running again cannot help.
-		v.Retry = v.Mode == "commit" && v.Err.key != apiImportErrReplica && v.Err.key != apiImportErrNoEntities && v.Err.key != apiImportErrNotInstalled
+		// A file run's staged copy is single-use: the operator uploads the
+		// file again instead (the fragment says so).
+		v.Retry = !v.File && v.Mode == "commit" && v.Err.key != apiImportErrReplica && v.Err.key != apiImportErrNoEntities && v.Err.key != apiImportErrNotInstalled
 	}
 	samples := v.Counts.Samples
 	if len(samples) > catsync.MaxSamples {

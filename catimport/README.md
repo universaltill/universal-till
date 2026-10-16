@@ -11,6 +11,13 @@ res, err := catimport.Parse(r, currencyDecimals, barcode.Default().IDs(), false)
 rows := catimport.ToRows(res) // []catimport.Row, money in minor units
 ```
 
+- **Header claims:** `HeaderRow` reads a CSV's or workbook's header row
+  (bounded; a ZIP is opened as a workbook only when the file is named
+  `.xlsx`/`.xlsm`) and `HeadersClaim` matches it against a file-rows import
+  plugin's declared `file_headers`, so the till and ut-cloud offer a file
+  to the same plugin (ADR-0164 §2). `NeutralHeader` names the columns the
+  standard importer reads in any file; a `file_headers` claim must include
+  one that is not neutral.
 - **Packages:** `catimport` (CSV/XLSX parsing, detection, `Row`/`ToRows`),
   `catimport/barcode` (the ADR-0059 symbology registry), and
   `catimport/catalogrules` (item types, the net-quantity rule).

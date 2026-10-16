@@ -158,11 +158,13 @@ func EventPublish(eventType string, payload any) error {
 const ImportRowsMaxPerCall = 500
 
 // ImportRowsSubmit hands one batch of ADR-0051 rows for entity (e.g.
-// "items") back to the till during an API-source import.requested.ask
-// (ADR-0161). rows is anything that marshals to a JSON array of row
-// objects, each with an "external_id"; at most ImportRowsMaxPerCall per
-// call. It returns how many rows the till accepted. ErrDenied outside an
-// API-source import ask or for an entity the run did not resolve;
+// "items") back to the host during the import.requested.ask of an
+// API-source entry (ADR-0161) or a file-rows entry ("source": "file",
+// ADR-0164 §2; see FileImportHostFunctions). rows is anything that
+// marshals to a JSON array of row objects (catimport.Row's vocabulary),
+// each with an "external_id"; at most ImportRowsMaxPerCall per call. It
+// returns how many rows the host accepted. ErrDenied outside such an ask
+// (a legacy file entry included) or for an entity the run did not resolve;
 // ErrQuota over a cap (500 per call, 20,000 rows / 32 MiB per run) —
 // the till then refuses the whole run; ErrInvalid for a malformed batch.
 func ImportRowsSubmit(entity string, rows any) (int, error) {

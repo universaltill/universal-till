@@ -2547,8 +2547,11 @@ type ImportEntryRow struct {
 	SortOrder   int
 	Entities    []string
 	FileFormats []string
-	// Source is "api" for an API-source entry (ADR-0161), "" for a file one.
+	// Source is "api" for an API-source entry (ADR-0161), "file" for a
+	// file-rows entry (ADR-0164 §2), "" for a legacy file one.
 	Source string
+	// FileHeaders are a file-rows entry's claim columns (ADR-0164 §2).
+	FileHeaders []string
 	// PluginName is the owning plugin's name — the import page lists API
 	// importers by it (ut-docs#4431).
 	PluginName string
@@ -2590,11 +2593,13 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 				Entities    []string `json:"entities"`
 				FileFormats []string `json:"file_formats"`
 				Source      string   `json:"source"`
+				FileHeaders []string `json:"file_headers"`
 			}
 			if err := json.Unmarshal([]byte(configJSON), &cfg); err == nil {
 				row.Entities = cfg.Entities
 				row.FileFormats = cfg.FileFormats
 				row.Source = cfg.Source
+				row.FileHeaders = cfg.FileHeaders
 			}
 		}
 		res = append(res, row)

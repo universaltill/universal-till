@@ -811,6 +811,9 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 	}
 	hs.operator, hs.operatorLive = askOperatorFor(ctx, ev, isJob)
 	hs.importRows = importRowSinkFor(ctx, ev, isJob, pluginID)
+	// A file-rows run is sandboxed (ADR-0164 §2): only the file, the rows
+	// and log act; stateFrom refuses the rest.
+	hs.fileImport = hs.importRows != nil && hs.importRows.file
 	hs.operatorReadOnly = hs.operator != nil && AskReadOnlyFrom(ctx)
 	// http:stream handles never outlive the event (ADR-0121 §3): closed
 	// however the guest ends — success, error, deadline or trap.

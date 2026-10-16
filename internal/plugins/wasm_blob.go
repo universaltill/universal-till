@@ -267,7 +267,7 @@ func scanBlobs(dir string) ([]blobEntry, error) {
 func blobCall(ctx context.Context) (*hostState, int32) {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return nil, hostErrInternal
+		return nil, stateErr(ctx)
 	}
 	if err := CheckPermission(ctx, s.db, s.pluginID, permBlobOwn); err != nil {
 		return nil, hostErrDenied

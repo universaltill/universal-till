@@ -189,7 +189,7 @@ func (r *tcpConnRegistry) CloseAll(pluginID string) {
 func hostTCPOpen(ctx context.Context, m api.Module, hostPtr, hostLen, port, timeoutMs uint32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	// The public demo till has no outbound network (ADR-0113 §1.6): every
 	// tcp egress is permission denied, whatever the plugin was granted.
@@ -310,7 +310,7 @@ func tcpHandleAuthorized(ctx context.Context, s *hostState, info tcpHandleInfo) 
 func hostTCPWrite(ctx context.Context, m api.Module, handle int32, ptr, length uint32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	info, ok := tcpConns.get(s.pluginID, handle)
 	if !ok {
@@ -342,7 +342,7 @@ func hostTCPWrite(ctx context.Context, m api.Module, handle int32, ptr, length u
 func hostTCPRead(ctx context.Context, m api.Module, handle int32, dstPtr, dstCap, timeoutMs uint32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	info, ok := tcpConns.get(s.pluginID, handle)
 	if !ok {
@@ -388,7 +388,7 @@ func hostTCPRead(ctx context.Context, m api.Module, handle int32, dstPtr, dstCap
 func hostTCPClose(ctx context.Context, handle int32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	tcpConns.Close(s.pluginID, handle)
 	return 0

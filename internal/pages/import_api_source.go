@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/catsync"
@@ -76,7 +78,13 @@ type apiImportOutcome struct {
 // runAPISourceImport serves an api-source entry on the JSON API. granted is
 // the run's requested ∩ declared ∩ granted "<entity>:write" set.
 func runAPISourceImport(w http.ResponseWriter, r *http.Request, d *common.Deps, entry data.ImportEntryRow, granted []string, mode string) {
-	out, aerr := executeAPISourceImport(r, d, entry, granted, mode)
+	runRowsImport(w, r, d, entry, granted, mode, nil)
+}
+
+// runRowsImport serves one rows run (an api-source entry, or a file-rows
+// entry with its staged file) on the JSON API.
+func runRowsImport(w http.ResponseWriter, r *http.Request, d *common.Deps, entry data.ImportEntryRow, granted []string, mode string, file *rowsImportFile) {
+	out, aerr := executeRowsImport(r, d, entry, granted, mode, file)
 	if aerr != nil {
 		dataAPIRespond(w, aerr.status, false, aerr.msg)
 		return
@@ -103,12 +111,34 @@ func runAPISourceImport(w http.ResponseWriter, r *http.Request, d *common.Deps, 
 // asks the plugin, collects its rows and applies them with catsync. Shared
 // by the JSON API and the import page (ut-docs#4431).
 func executeAPISourceImport(r *http.Request, d *common.Deps, entry data.ImportEntryRow, granted []string, mode string) (apiImportOutcome, *apiImportError) {
+	return executeRowsImport(r, d, entry, granted, mode, nil)
+}
+
+// executeRowsImport is one rows run: an api-source entry's (file nil) or a
+// file-rows entry's (ADR-0164 §2, ut-docs#4526; file is the staged upload,
+// whose path the plugin file registry owns from here on, run or not). A
+// file-rows ask carries a file sink, so the plugin runs in the import
+// sandbox (plugins.FileImportHostFunctions only). Everything after the ask
+// — caps, decline, catsync, audit — is the same for both.
+func executeRowsImport(r *http.Request, d *common.Deps, entry data.ImportEntryRow, granted []string, mode string, file *rowsImportFile) (apiImportOutcome, *apiImportError) {
+	if file != nil {
+		// However this run ends, the staged copy is removed: here until
+		// the plugin file registry takes it, by CloseImportFile after.
+		defer func() {
+			if !file.registered && !file.busy {
+				_ = os.Remove(file.path)
+			}
+		}()
+	}
 	fail := func(status int, key, msg string) (apiImportOutcome, *apiImportError) {
 		return apiImportOutcome{}, &apiImportError{status: status, key: key, msg: msg}
 	}
 	if mode != "preview" && mode != "commit" {
 		return fail(http.StatusBadRequest, apiImportErrBadMode, "mode must be preview or commit")
 	}
+	// The plugin's own source id stamps every link (ADR-0161 §2): an api
+	// and a file entry of one plugin share it, so a re-import through
+	// either updates the same items.
 	// Core applies items today; stock rides on item rows (ADR-0161).
 	var entities []string
 	stock := false
@@ -135,14 +165,49 @@ func executeAPISourceImport(r *http.Request, d *common.Deps, entry data.ImportEn
 	if commit {
 		key := apiImportCommitKey(entry.PluginID, entry.Key)
 		if !reserveImportCommit(key) {
+			if file != nil && file.keepIfBusy {
+				file.busy = true // the caller keeps path (rowsImportFile.keepIfBusy)
+			}
 			return fail(http.StatusConflict, apiImportErrRunning, "an import from this source is already running")
 		}
 		defer releaseImportCommit(key)
 	}
 
-	sink := plugins.NewImportRowSink(entry.PluginID, []string{catsync.EntityItems})
-	resp, ok, err := plugins.SharedBus(d.Db).AskPlugin(plugins.WithImportRowSink(r.Context(), sink), entry.PluginID, "import.requested.ask",
-		apiImportRequestPayload{EntryKey: entry.Key, Entities: entities, Mode: mode, Source: plugins.ImportSourceAPI})
+	var (
+		sink    *plugins.ImportRowSink
+		payload any
+	)
+	if file == nil {
+		sink = plugins.NewImportRowSink(entry.PluginID, []string{catsync.EntityItems})
+		payload = apiImportRequestPayload{EntryKey: entry.Key, Entities: entities, Mode: mode, Source: plugins.ImportSourceAPI}
+	} else {
+		if file.size > fileRowsMaxBytes {
+			return fail(http.StatusBadRequest, fileRowsErrTooLarge, fmt.Sprintf("the file is larger than the %d bytes an import plugin reads", fileRowsMaxBytes))
+		}
+		if commit {
+			sum, herr := fileSHA256(file.path)
+			if herr != nil {
+				logging.L().Errorf("[import-file] %s: hash staged file: %v", entry.PluginID, herr)
+				return fail(http.StatusInternalServerError, apiImportErrFailed, "could not read the uploaded file")
+			}
+			file.sha256 = sum
+		}
+		handle, herr := plugins.OpenImportFile(entry.PluginID, file.path)
+		if herr != nil {
+			logging.L().Errorf("[import-file] %s: register staged file: %v", entry.PluginID, herr)
+			return fail(http.StatusInternalServerError, apiImportErrFailed, "could not stage the uploaded file")
+		}
+		file.registered = true
+		defer plugins.CloseImportFile(entry.PluginID, handle)
+		sink = plugins.NewFileImportRowSink(entry.PluginID, []string{catsync.EntityItems})
+		name := ""
+		if file.name != "" {
+			name = filepath.Base(file.name)
+		}
+		payload = fileRowsRequestPayload{EntryKey: entry.Key, Entities: entities, FileHandle: handle,
+			FileName: name, FileSize: file.size, Mode: mode, Source: plugins.ImportSourceFile}
+	}
+	resp, ok, err := plugins.SharedBus(d.Db).AskPlugin(plugins.WithImportRowSink(r.Context(), sink), entry.PluginID, "import.requested.ask", payload)
 	if err != nil {
 		return fail(http.StatusInternalServerError, apiImportErrNoResponse, err.Error())
 	}
@@ -179,12 +244,17 @@ func executeAPISourceImport(r *http.Request, d *common.Deps, entry data.ImportEn
 	// still have applied rows: those are audited too, flagged partial.
 	partial := err != nil && commit && res.New+res.Updated > 0
 	if commit && (err == nil || partial) {
-		// Plugin, source and counts only — never row contents or credentials.
+		// Plugin, source and counts only — never row contents, the file's
+		// name or credentials. A file run names the file by its SHA-256.
+		auditData := map[string]any{"plugin": entry.PluginID, "entry_key": entry.Key, "source": entry.PluginID,
+			"entity": catsync.EntityItems, "rows": sink.Len(), "stock": stock, "partial": partial,
+			"new": res.New, "updated": res.Updated, "unchanged": res.Unchanged, "issues": res.Issues, "kind": plugins.ImportSourceAPI}
+		if file != nil {
+			auditData["kind"] = plugins.ImportSourceFile
+			auditData["file_sha256"] = file.sha256
+		}
 		if aerr := data.NewPOSRepo(d.Db).InsertAudit(context.WithoutCancel(r.Context()), nil, getSessionUserID(r), "catalog", "-", "import_sync",
-			map[string]any{"plugin": entry.PluginID, "entry_key": entry.Key, "source": entry.PluginID,
-				"entity": catsync.EntityItems, "rows": sink.Len(), "stock": stock, "partial": partial,
-				"new": res.New, "updated": res.Updated, "unchanged": res.Unchanged, "issues": res.Issues},
-			time.Now().UTC().Format(time.RFC3339), ""); aerr != nil {
+			auditData, time.Now().UTC().Format(time.RFC3339), ""); aerr != nil {
 			logging.L().Errorf("[import-api] %s: audit: %v", entry.PluginID, aerr)
 		}
 	}

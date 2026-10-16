@@ -4,9 +4,29 @@
      offers Run again (safe: rows are linked, ADR-0161 §3). The plugin's own
      message is shown as its own words. data-* markers are what tests key on
      instead of translated text. */}}
+{{/* ADR-0164 §2 (ut-docs#4526): the same fragment serves a file-rows
+     entry's run from the import page (.File): its preview lands in
+     #import-result, so it brings its own .import-system-result wrapper for
+     its buttons to target, and the commit's answer fills that wrapper. Import posts the copy staged at preview to
+     /api/import/from-file; "Use the standard importer" resubmits the form
+     with importer=core — offered on a failed preview too, so a file the
+     plugin cannot read can still be imported. A failed file commit has no Run again: the staged
+     copy is single-use, so the operator previews the file again. */}}
+{{ if and .File (ne .Mode "commit") }}<div class="import-system-result" aria-live="polite" data-import-file-plugin="{{ .PluginID }}">{{ end }}
+{{ if and .File (ne .Mode "commit") }}
+<div class="import-file-plugin-intro">
+  {{ if and .PluginName (not .Err) }}<p>{{ printf (T "import.file_plugin.detected") .PluginName }}</p>{{ end }}
+  <div class="import-system-actions">
+    <button type="button" class="btn secondary" data-import-use-standard="1"
+            hx-post="/api/import" hx-include="#import-form" hx-vals='{{ jsonVals "importer" "core" }}' hx-encoding="multipart/form-data"
+            hx-target="#import-result" hx-swap="innerHTML" hx-disabled-elt="this">{{ T "import.file_plugin.use_standard" }}</button>
+  </div>
+</div>
+{{ end }}
 {{ if .Err }}
 <div class="notice-block-warn" role="alert" data-import-system-error="1"{{ if .Partial }} data-import-system-partial="1"{{ end }}>
   <p>{{ .ErrText }}</p>
+  {{ if and .File (eq .Mode "commit") }}<p>{{ T "import.file_plugin.upload_again" }}</p>{{ end }}
   {{ if .Retry }}
   <div class="import-system-actions">
     <button type="button" class="btn primary" data-import-system-retry="1"
@@ -59,10 +79,17 @@
 {{ end }}
 {{ if ne .Mode "commit" }}
 <div class="import-system-actions">
+  {{ if .File }}
+  <button type="button" class="btn primary" data-import-system-commit="1"
+          hx-post="/api/import/from-file" hx-vals='{{ jsonVals "staged_id" .StagedID "plugin_id" .PluginID "entry_key" .EntryKey "file_name" .FileName }}'
+          hx-target="closest .import-system-result" hx-swap="innerHTML" hx-disabled-elt="this">{{ T "import.import" }}</button>
+  {{ else }}
   <button type="button" class="btn primary" data-import-system-commit="1"
           hx-post="/api/import/from-system" hx-vals='{{ jsonVals "plugin_id" .PluginID "entry_key" .EntryKey "mode" "commit" }}'
           hx-target="closest .import-system-result" hx-swap="innerHTML"
           hx-indicator="closest .import-system-entry" hx-disabled-elt="closest fieldset">{{ T "import.import" }}</button>
+  {{ end }}
 </div>
 {{ end }}
 {{ end }}
+{{ if and .File (ne .Mode "commit") }}</div>{{ end }}

@@ -30,7 +30,7 @@ const secretSetMaxValue = 64 << 10
 func hostSecretSet(ctx context.Context, m api.Module, keyPtr, keyLen, valPtr, valLen uint32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	// Both lengths are bounded before guest memory is read: the key is
 	// logged on refusal, so it must never be a multi-MiB guest buffer.
