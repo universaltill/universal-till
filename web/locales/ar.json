@@ -971,7 +971,7 @@
   "import.status.ok": "موافق",
   "import.status.seeded_gift_voucher_removed": "أُزيل صنف قسيمة الهدية «%s» الذي أُنشئ عند الإعداد، لأن هذا الاستيراد جلب صنفه الخاص.",
   "import.status.sku_already_in_catalog": "رمز SKU موجود بالفعل في الكتالوج",
-  "import.status.sku_reused_in_file": "رقم الصنف \"%s\" مكرر داخل هذا الملف — تم الاستيراد برقم جديد",
+  "import.status.sku_reused_renumbered": "رقم الصنف \"⁦%s⁩\" مكرر داخل هذا الملف — الرقم الجديد \"⁦%s⁩\"",
   "import.status.source_deleted": "أُزيل من ملف المصدر",
   "import.status.stock_location_failed": "لم يتم ترحيل المخزون: الموقع الافتراضي غير متاح",
   "import.status.stock_movement_failed": "لم يتم ترحيل المخزون: تعذر تسجيل حركة المخزون",

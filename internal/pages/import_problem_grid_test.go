@@ -826,7 +826,7 @@ func TestImport_BkpStagedCommitDedupesAnchoredForcedRowsVetoesUnanchoredOnes(t *
 	// reassigned (ut-docs#1234 review) — not a silent "OK" that hides the
 	// fact its PLU quietly changed.
 	if !strings.Contains(resp, "reused in this file") {
-		t.Fatalf("a deduped forced-correction row must show the sku_reused_in_file status: %s", resp)
+		t.Fatalf("a deduped forced-correction row must show the sku_reused_renumbered status: %s", resp)
 	}
 	if strings.Contains(resp, "item could not be created") {
 		t.Fatalf("an in-file duplicate leaked into the write loop and failed on the DB constraint instead of being refused up front: %s", resp)
