@@ -362,6 +362,14 @@
       n.value = n.value.trim();
       if (!n.reportValidity()) { preventDefault(ctx); return false; }
     },
+    // ut-docs#4507: the same check for a field that needs no trimming (the
+    // Tills page's replace-data tick box): `required` speaks, an invalid
+    // field cancels the htmx request. Chain it after trim-validate.
+    'validate': function (ctx, id) {
+      var n = byId(id);
+      if (!n) return;
+      if (!n.reportValidity()) { preventDefault(ctx); return false; }
+    },
 
     // ---- htmx ----
     // menu.html's deposit refund: its 4xx message is meant for #id, so let

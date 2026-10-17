@@ -450,6 +450,9 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		m["menuItems"] = d.MenuSnapshot()
 		m["MainUnreachable"] = lv.State == linkUnreachable
 		m["MainUnreachableSince"] = lv.Since
+		// ut-docs#4507: joining replaces this till's sales too — the join
+		// section warns and asks for a confirm (same as the join notice).
+		m["HasSales"] = hasSalesHistory(r.Context(), d)
 		httpx.Render("ui/pages/tills.html", m)(w, r)
 	})
 
@@ -875,6 +878,9 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
 			return
 		}
+		if refuseJoinWithoutReplaceConfirm(w, r, d) { // ut-docs#4507
+			return
+		}
 		shopName, err := joinPrimary(r, d,
 			strings.TrimSpace(r.Form.Get("code")), strings.TrimSpace(r.Form.Get("address")),
 			strings.TrimSpace(r.Form.Get("name")), role)
@@ -911,6 +917,9 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
 			return
 		}
+		if refuseJoinWithoutReplaceConfirm(w, r, d) { // ut-docs#4507
+			return
+		}
 		shopName, err := joinPrimary(r, d,
 			strings.TrimSpace(r.Form.Get("code")), strings.TrimSpace(r.Form.Get("address")),
 			strings.TrimSpace(r.Form.Get("name")), role)
@@ -932,6 +941,25 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	})
 
 	return tokens
+}
+
+// refuseJoinWithoutReplaceConfirm answers a code join (POST /api/sync/join,
+// POST /api/setup/join) with 409 before joinPrimary when this till already
+// holds sales and the form lacks replace_local_data=1 (ut-docs#4507): no
+// enrolment, no snapshot, no staged restore. Same escaped fragment as a
+// join error; app.js's htmx:beforeSwap swaps a text/html 4xx in. The
+// first-boot wizard has no tick box: a first-boot till normally has no
+// sales (no operator exists to ring one up), so there this is a fail-closed
+// backstop with no in-wizard way past it — join from the Tills page instead.
+func refuseJoinWithoutReplaceConfirm(w http.ResponseWriter, r *http.Request, d *common.Deps) bool {
+	if !joinNeedsReplaceConfirm(r, d) {
+		return false
+	}
+	locale := httpx.ResolveLocale(w, r)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusConflict)
+	fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, html.EscapeString(httpx.T(locale, "tills.discovery.ambient.has_sales_warning")))
+	return true
 }
 
 // joinErrKind classifies why joinPrimary/completeJoin failed, so the

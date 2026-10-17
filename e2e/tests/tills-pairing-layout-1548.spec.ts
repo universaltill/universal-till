@@ -140,6 +140,12 @@ test.describe('tills page pairing layout (ut-docs#1548)', () => {
     await expect(error).toBeHidden();
     await expect(nameInput).not.toHaveClass(/field-invalid/);
 
+    // ut-docs#4507: on a till that already has sales (other specs may have
+    // rung some up on this shared server), the join also needs the
+    // replace-data tick box — tick it so this spec stays about the name.
+    const replace = page.locator('#pairing-replace-local');
+    if (await replace.count()) await replace.check();
+
     // ...and the form still WORKS after having been blocked once. The guard
     // cancels htmx:beforeRequest; htmx 1.9.12 applies hx-disabled-elt and
     // the indicator only AFTER that event, so a cancel must not leave the

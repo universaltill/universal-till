@@ -4460,6 +4460,9 @@ body.login-screen {
 .join-notice-confirm { display: inline-flex; align-items: center; gap: .35rem; }
 .join-notice-confirm input[type="checkbox"] { inline-size: 1.25rem; block-size: 1.25rem; margin: 0; }
 .join-notice-confirm .join-notice-label { display: inline-flex; align-items: center; min-block-size: 44px; }
+/* ut-docs#4507: the same warning and confirm above the Tills page's join
+   tabs; there it is a block in the card, so it needs its own spacing. */
+.tills-join .join-replace-warning { margin-block: .6rem .2rem; }
 .join-notice-status:not(:empty) { padding: .55rem 1rem; border-block-end: 1px solid rgba(37, 99, 235, .3); }
 
 /* Operator chip + lock button in the nav: a column, in the rail and in

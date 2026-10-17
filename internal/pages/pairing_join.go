@@ -90,6 +90,11 @@ type pendingJoinState struct {
 	status        string // "waiting" | "joined" | "expired" | "error"
 	shopName      string
 	errMsg        string
+	// replaceLocalData: the manager confirmed at pair-start that joining
+	// replaces this till's sales (ut-docs#4507). Without it, pair-status
+	// re-checks for sales before completeJoin — the first sale can land
+	// while the main till's manager is still deciding.
+	replaceLocalData bool
 }
 
 // code is the verification code this attempt shows: over the pin the
@@ -365,6 +370,14 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
 			return
 		}
+		// ut-docs#4507: joining replaces this till's whole DB, sales
+		// included. A till that already holds sales sends nothing to the
+		// main till until the form carries the explicit confirm.
+		replaceConfirmed := r.Form.Get("replace_local_data") == "1"
+		if joinNeedsReplaceConfirm(r, d) {
+			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, "tills.discovery.ambient.has_sales_warning"))
+			return
+		}
 
 		raw := make([]byte, 32)
 		_, _ = rand.Read(raw)
@@ -411,17 +424,18 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 		}
 
 		state := &pendingJoinState{
-			id:            out.Data.ID,
-			primaryURL:    baseURL,
-			dialURL:       dialURL,
-			pin:           pin,
-			primaryTillID: primaryTillID,
-			deviceName:    name,
-			role:          role,
-			requestSecret: secret,
-			commitment:    commitment,
-			requestedAt:   pairingJoinNow(),
-			status:        "waiting",
+			id:               out.Data.ID,
+			primaryURL:       baseURL,
+			dialURL:          dialURL,
+			pin:              pin,
+			primaryTillID:    primaryTillID,
+			deviceName:       name,
+			role:             role,
+			requestSecret:    secret,
+			commitment:       commitment,
+			requestedAt:      pairingJoinNow(),
+			status:           "waiting",
+			replaceLocalData: replaceConfirmed,
 		}
 		rp.set(state)
 		pairWaitView(w, r, statusURL, "waiting", state.code(), "", "")
@@ -518,6 +532,19 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 			return
 		}
 
+		// ut-docs#4507: sent without the replace confirm because this till
+		// had no sales then; if one has landed since, don't stage a restore
+		// over it. The manager starts again and ticks the confirm. Accepted
+		// residual window: a sale rung up during completeJoin's own enrol +
+		// snapshot download (up to ~a minute) is not re-checked; it survives
+		// in backups/pre-restore-*.db (follow-up card filed from the review).
+		if !state.replaceLocalData && hasSalesHistory(r.Context(), d) {
+			next := *state
+			next.status, next.errMsg = "error", httpx.T(locale, "tills.discovery.ambient.has_sales_warning")
+			rp.active = &next
+			pairWaitViewPolling(w, r, statusURL, "error", "", "", next.errMsg, true)
+			return
+		}
 		shopName, err := completeJoin(r, d, state.primaryURL, out.Data.Token, state.deviceName, state.role, state.pin)
 		if err != nil {
 			next := *state

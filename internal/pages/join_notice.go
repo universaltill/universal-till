@@ -113,6 +113,16 @@ func hasSalesHistory(ctx context.Context, d *common.Deps) bool {
 	return has
 }
 
+// joinNeedsReplaceConfirm reports whether a join request must be refused
+// because this till already holds sales and the form lacks the explicit
+// replace_local_data=1 confirm (ut-docs#4507). Every path that ends in
+// completeJoin checks it server-side — pair-start, the code join and, for
+// a first sale that lands mid-approval, pair-status — not only the ambient
+// notice's tick box (ut-docs#3796). The form must already be parsed.
+func joinNeedsReplaceConfirm(r *http.Request, d *common.Deps) bool {
+	return r.Form.Get("replace_local_data") != "1" && hasSalesHistory(r.Context(), d)
+}
+
 // hasEnrolledTills reports whether this till has replicas enrolled — i.e.
 // it is already a main till. An error (or no DB) counts as "yes" so the
 // join notice fails closed rather than offering to demote a main till.
