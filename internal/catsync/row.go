@@ -13,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/catimport"
 	"github.com/universaltill/universal-till/catimport/barcode"
+	"github.com/universaltill/universal-till/catimport/catalogrules"
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
@@ -31,6 +32,10 @@ const (
 	priceMinorMax   = 1_000_000_000_00 // a sanity ceiling, not a business rule
 	vatMaxBP        = 10_000
 	stockMaxAbs     = 1_000_000_000
+	// descriptionMaxRunes is the description bound the cloud catalogue
+	// applies (ut-cloud catalogwrite/rules.MaxDescriptionRunes); the till's
+	// own editor and file import set none.
+	descriptionMaxRunes = 1000
 )
 
 var barcodeRe = regexp.MustCompile(`^[0-9A-Za-z\-]{1,64}$`)
@@ -56,6 +61,12 @@ type row struct {
 	hasStock bool
 	active   bool
 	weighed  bool
+	desc     string // "" = leave the item's description as it is
+	age      *bool  // nil = leave the item's age check as it is
+	// nqValue/nqUnit: a pair that passed catalogrules.ValidNetQuantity;
+	// both nil = leave the item's net quantity as it is.
+	nqValue *int64
+	nqUnit  *string
 }
 
 // cleanText trims s and refuses empty, over-long, invalid UTF-8, control
@@ -71,6 +82,30 @@ func cleanText(s string, maxRunes int) (string, bool) {
 		// a different name), except ZWNJ/ZWJ, which Persian/Urdu spelling
 		// and emoji sequences need.
 		if unicode.IsControl(r) || (unicode.Is(unicode.Cf, r) && r != '\u200c' && r != '\u200d') {
+			return "", false
+		}
+	}
+	return s, true
+}
+
+// cleanDescription is cleanText for a description: blank is fine (it means
+// "leave as is"), and line breaks and tabs are allowed, since a
+// description is multi-line text (the file import keeps them too). Every
+// other control or invisible format character is refused, as in names.
+func cleanDescription(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	if !utf8.ValidString(s) || utf8.RuneCountInString(s) > descriptionMaxRunes {
+		return "", false
+	}
+	for _, r := range s {
+		switch r {
+		// Line breaks and tabs; ZWNJ/ZWJ (Persian spelling, emoji); the
+		// soft hyphen (German supplier text); LRM/RLM (Arabic/Hebrew
+		// text). Bidi overrides and zero-width spaces stay refused.
+		case '\n', '\r', '\t', '\u200c', '\u200d', '\u00ad', '\u200e', '\u200f':
+			continue
+		}
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return "", false
 		}
 	}
@@ -135,6 +170,16 @@ func parseRow(raw json.RawMessage) (row, string, rowIssue) {
 	}
 	if w.Active != nil {
 		r.active = *w.Active
+	}
+	if r.desc, ok = cleanDescription(w.Description); !ok {
+		return row{}, ext, newIssue(IssueDescriptionInvalid)
+	}
+	r.age = w.AgeRestricted
+	if w.NetQuantityValue != nil || w.NetQuantityUnit != nil {
+		if !catalogrules.ValidNetQuantity(w.NetQuantityValue, w.NetQuantityUnit) {
+			return row{}, ext, newIssue(IssueNetQuantityInvalid)
+		}
+		r.nqValue, r.nqUnit = w.NetQuantityValue, w.NetQuantityUnit
 	}
 	codes := w.Barcodes
 	b := strings.TrimSpace(w.Barcode)

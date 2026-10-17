@@ -386,3 +386,31 @@ func TestCatsyncIssueCodes_HaveLocaleKeys(t *testing.T) {
 		}
 	}
 }
+
+// Every change name catsync reports has a translated label in every locale
+// (ut-docs#4542 added description, age_restricted and net_quantity).
+func TestImportSystemChangeKeys_CoverCatsyncChanges(t *testing.T) {
+	chdirRoot(t)
+	i18n, err := config.NewI18n("web/locales", "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpx.InitI18n(i18n, "en")
+	for _, c := range []string{"name", "price", "category", "vat", "active", "barcode", "stock", "description", "age_restricted", "net_quantity"} {
+		key, ok := importSystemChangeKeys[c]
+		if !ok {
+			t.Errorf("change %q has no label key", c)
+			continue
+		}
+		en := httpx.T("en", key)
+		if en == key {
+			t.Errorf("en.json has no %s", key)
+			continue
+		}
+		for _, loc := range []string{"ar", "fa", "tr"} {
+			if got := httpx.T(loc, key); got == key || got == en {
+				t.Errorf("%s: %s missing or untranslated: %q", loc, key, got)
+			}
+		}
+	}
+}

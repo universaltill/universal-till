@@ -112,6 +112,8 @@ func TestExternalID_XLSX(t *testing.T) {
 
 func i64(v int64) *int64     { return &v }
 func f64(v float64) *float64 { return &v }
+func str(v string) *string   { return &v }
+func boolp(v bool) *bool     { return &v }
 
 // ToRows emits ADR-0051 item rows (the vocabulary catsync decodes):
 // importable items only, money in minor units, optional fields only when
@@ -123,6 +125,8 @@ func TestToRows_Mapping(t *testing.T) {
 			ExternalID: "x1", Name: "Cola", SKU: "C-1", Barcode: "5449000000996", BarcodeType: "EAN13", PriceMinor: 140,
 			Department: "Drinks", Category: "Soft", TaxRateBP: 1900, HasTax: true,
 			Stock: 24, HasStock: true, IsWeighed: false,
+			Description: "  Classic cola\nchilled  ", AgeRestricted: true,
+			NetQuantityValue: i64(330), NetQuantityUnit: str("ml"),
 		},
 		{ // 1: minimal row, weighed
 			Name: "Bananas", PriceMinor: 89, IsWeighed: true,
@@ -143,7 +147,9 @@ func TestToRows_Mapping(t *testing.T) {
 	got := ToRows(res)
 	want := []Row{
 		{ExternalID: "x1", Name: "Cola", SKU: "C-1", Barcode: "5449000000996", BarcodeType: "EAN13", PriceMinor: i64(140),
-			CategoryPath: []string{"Drinks", "Soft"}, VATRateBP: i64(1900), StockQty: f64(24)},
+			CategoryPath: []string{"Drinks", "Soft"}, VATRateBP: i64(1900), StockQty: f64(24),
+			Description: "Classic cola\nchilled", AgeRestricted: boolp(true),
+			NetQuantityValue: i64(330), NetQuantityUnit: str("ml")},
 		{Name: "Bananas", PriceMinor: i64(89), SoldByWeight: true},
 		{Name: "Bag", PriceMinor: i64(10)},
 		{Name: "Tin", PriceMinor: i64(99), CategoryPath: []string{"Food"}, StockQty: f64(3)},
@@ -221,5 +227,59 @@ func TestToRows_PriceEmbeddedBarcodeKeepsType(t *testing.T) {
 	rows := ToRows(res)
 	if len(rows) != 1 || rows[0].Barcode != "0212345000000" || rows[0].BarcodeType != "EAN13_PRICE_PREFIX02" {
 		t.Fatalf("rows = %+v, want key 0212345000000 typed EAN13_PRICE_PREFIX02", rows)
+	}
+}
+
+// description, age_restricted and the net-quantity pair are additive
+// (ADR-0051 §3, ut-docs#4542): absent when unset (TestRow_JSONVocabulary
+// pins that), and named as below when set.
+func TestRow_JSONDescriptionAgeNetQuantity(t *testing.T) {
+	b, err := json.Marshal(Row{ExternalID: "e", Name: "n", PriceMinor: i64(1), Description: "d",
+		AgeRestricted: boolp(false), NetQuantityValue: i64(250), NetQuantityUnit: str("g")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"sold_by_weight":false,"description":"d","age_restricted":false,"net_quantity_value":250,"net_quantity_unit":"g"}`
+	if !strings.HasSuffix(string(b), want) {
+		t.Errorf("json = %s\nwant suffix %s", b, want)
+	}
+}
+
+// A file can say "age restricted" but never "not restricted": a file
+// without the column parses the same as one that says No. So RowFor emits
+// age_restricted only as true, and a row from an unrestricted item leaves
+// the consumer's flag as it is (ut-docs#4542).
+func TestRowFor_AgeRestrictedOnlyWhenTrue(t *testing.T) {
+	r, ok := RowFor(ImportItem{Name: "Tea", PriceMinor: 1})
+	if !ok || r.AgeRestricted != nil || r.Description != "" || r.NetQuantityValue != nil || r.NetQuantityUnit != nil {
+		t.Fatalf("plain item row = %+v, want no description/age/net quantity", r)
+	}
+	r, _ = RowFor(ImportItem{Name: "Wine", PriceMinor: 1, AgeRestricted: true})
+	if r.AgeRestricted == nil || !*r.AgeRestricted {
+		t.Fatalf("restricted item row age_restricted = %v, want true", r.AgeRestricted)
+	}
+}
+
+// The till's own export headers round-trip through rows: what the file
+// importer would store, a row carries.
+func TestToRows_TillExportColumns(t *testing.T) {
+	csv := "Name,Price,Description,Age restricted,Net quantity,Net quantity unit\n" +
+		"Red wine,9.99,Dry red,Y,750,ml\n" +
+		"Water,0.50,,N,,\n"
+	res, err := Parse(strings.NewReader(csv), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := ToRows(res)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	w := rows[0]
+	if w.Description != "Dry red" || w.AgeRestricted == nil || !*w.AgeRestricted ||
+		w.NetQuantityValue == nil || *w.NetQuantityValue != 750 || w.NetQuantityUnit == nil || *w.NetQuantityUnit != "ml" {
+		t.Errorf("wine row = %+v", w)
+	}
+	if v := rows[1]; v.Description != "" || v.AgeRestricted != nil || v.NetQuantityValue != nil || v.NetQuantityUnit != nil {
+		t.Errorf("water row = %+v, want no description/age/net quantity", v)
 	}
 }
