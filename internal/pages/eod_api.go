@@ -226,18 +226,20 @@ func fmtRateBP(bp int) string {
 }
 
 // eodPeriodMeta renders the report's period header line: "END OF DAY <day>"
-// for a legacy calendar-day report (rep.Day set), or a close-to-close
+// (in the shop's locale, ut-docs#4397) for a legacy calendar-day report
+// (rep.Day set), or a close-to-close
 // "Zeitraum" line matching the reference document's own worked example
 // (ADR-0066 Decision 6, ut-docs#1141) when rep.Day is empty (the "eod"
-// kind's new path). Fixed vocabulary, not routed through T() — same
+// kind's new path). The Zeitraum line is fixed vocabulary, not routed
+// through T() — same
 // convention as "Erstellt von"/"Anmerkung" below (a jurisdiction/
 // fiscal-format label an auditor reads regardless of the till's
 // operator-UI locale). rep.From is empty only on the till's first-ever
 // close (ADR-0066 Decision 3, unbounded lower bound) — "bis" (German
 // "until") rather than a bare leading " - " for that open-ended case.
-func eodPeriodMeta(rep data.EODReport) string {
+func eodPeriodMeta(rep data.EODReport, locale string) string {
 	if rep.Day != "" {
-		return "END OF DAY " + rep.Day
+		return fmt.Sprintf(httpx.T(locale, "reports.zpaper.end_of_day"), rep.Day)
 	}
 	if rep.From == "" {
 		return "Zeitraum bis " + rep.To
@@ -250,8 +252,7 @@ func eodPeriodMeta(rep data.EODReport) string {
 // algorithm internal/print's own (unexported) kvRow uses for sale lines,
 // reimplemented here because eod_api.go builds doc.Footer as plain strings
 // and has no access to that unexported helper. Unlike a fixed "%-N s %s"
-// format (what BY DEPARTMENT/BY TILL and friends still use, since their
-// labels are short/controlled), this guarantees the amount is never pushed
+// format, this guarantees the amount is never pushed
 // past the printer's own line-clip by an overlong label (ut-docs#1010
 // review finding 1 — sale_lines.name_snapshot is free-text and can easily
 // exceed a fixed pad width). Rune-based throughout, matching kvRow/clip's
@@ -272,6 +273,17 @@ func footerRow(label, amount string) string {
 	return label + strings.Repeat(" ", space) + amount
 }
 
+// eodRow prints a Z-report row the way "%-20s %s" always has, so an en
+// row stays byte-for-byte the same, but a translated label long enough to
+// push the amount past print.Width goes through footerRow instead, which
+// clips the label and keeps the amount (ut-docs#4397).
+func eodRow(label, amount string) string {
+	if utf8.RuneCountInString(fmt.Sprintf("%-20s", label))+1+utf8.RuneCountInString(amount) <= print.Width {
+		return fmt.Sprintf("%-20s %s", label, amount)
+	}
+	return footerRow(label, amount)
+}
+
 // buildEODDoc renders the Z-report for the receipt printer. articleMode/
 // articleCap (ut-docs#1650) control only the "BY ARTICLE" footer section
 // below — already-resolved values (resolveEODArticlePrintSettings), never
@@ -284,11 +296,11 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	// for the *Latin variants below — ESC/POS text mode can't render
 	// non-Latin numeral glyphs, RTL needs bitmap mode (ut-docs#1130).
 	//
-	// The header, totals, payment methods, tips and VAT tables follow the
-	// store locale too (ut-docs#4330, the sale receipt's ut-docs#4199
-	// convention); the en values are the literals they replaced, so an en
-	// Z-report is unchanged. The sections further down keep their fixed
-	// labels for now.
+	// Every label follows the store locale too (ut-docs#4330 and #4397, the
+	// sale receipt's ut-docs#4199 convention); the en values are the
+	// literals they replaced, so an en Z-report is unchanged. Only the
+	// fixed fiscal vocabulary stays as it is: Zeitraum, GUTSCHEINE,
+	// STORNOS, Erstellt von, Anmerkung and the ÖKC slip names.
 	printLocale := httpx.DefaultLocale()
 	T := func(key string) string { return httpx.T(printLocale, key) }
 	money := func(minor int64) string { return httpx.FormatMoneyLatin(minor, printLocale) }
@@ -302,7 +314,7 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	doc := print.Doc{
 		StoreName: storeName,
 		Meta: []string{
-			eodPeriodMeta(rep),
+			eodPeriodMeta(rep, printLocale),
 			generated,
 		},
 		Charset: charset,
@@ -383,23 +395,23 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 		}
 	}
 	if len(rep.Departments) > 0 {
-		doc.Footer = append(doc.Footer, "", "BY DEPARTMENT")
+		doc.Footer = append(doc.Footer, "", T("reports.zpaper.by_department"))
 		for _, d := range rep.Departments {
 			name := d.Department
 			if name == "" {
-				name = "Uncategorized"
+				name = T("reports.uncategorized")
 			}
-			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", name, money(d.Revenue)))
+			doc.Footer = append(doc.Footer, eodRow(name, money(d.Revenue)))
 		}
 	}
 	if len(rep.Tills) > 0 {
-		doc.Footer = append(doc.Footer, "", "BY TILL")
+		doc.Footer = append(doc.Footer, "", T("reports.zpaper.by_till"))
 		for _, t := range rep.Tills {
 			name := t.Name
 			if name == "" {
-				name = "This till"
+				name = T("reports.this_till")
 			}
-			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", name, money(t.Revenue)))
+			doc.Footer = append(doc.Footer, eodRow(name, money(t.Revenue)))
 		}
 	}
 	// Fiscal device (ÖKC) Z-status/reconciliation (ut-docs#2410) — TR shops
@@ -407,7 +419,7 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	// doc comment), so this section is entirely absent from every other
 	// till's printed Z-report, byte-for-byte, same as before this card.
 	if fd := rep.FiscalDevice; fd != nil {
-		doc.Footer = append(doc.Footer, "", "FISCAL DEVICE (OKC)")
+		doc.Footer = append(doc.Footer, "", T("reports.zpaper.fiscal_device.title"))
 		// Empty (ut-docs#2410 review finding): no device receipts AND no
 		// till tenders on the device in this window is not the same thing
 		// as "device and till agree" — Total==TillOKCTenders==0 would
@@ -416,7 +428,7 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 		// line instead of a table + verdict, and nothing else for the
 		// section.
 		if fd.Empty() {
-			doc.Footer = append(doc.Footer, "NO DEVICE ACTIVITY")
+			doc.Footer = append(doc.Footer, T("reports.zpaper.fiscal_device.no_activity"))
 		} else {
 			// footerRow, not "%-20s %s" (review precedent: BY ARTICLE
 			// GROUP/BY ARTICLE/BY OPERATOR above) — a device serial or the
@@ -424,9 +436,9 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 			// 20-char pad's remaining budget under print.Width=42;
 			// footerRow clips the LABEL instead, so the value (what
 			// matters to reconcile against) always survives.
-			doc.Footer = append(doc.Footer, footerRow("Serial", fd.Serial))
+			doc.Footer = append(doc.Footer, footerRow(T("reports.zpaper.fiscal_device.serial"), fd.Serial))
 			if fd.Maker != "" {
-				doc.Footer = append(doc.Footer, footerRow("Maker", fd.Maker))
+				doc.Footer = append(doc.Footer, footerRow(T("fiscaldevice.device.maker"), fd.Maker))
 			}
 			zNo := ""
 			for i, z := range fd.ZNos {
@@ -436,25 +448,27 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 				zNo += fmt.Sprintf("%d", z)
 			}
 			if len(fd.ZNos) > 1 {
-				zNo += " (closed mid-period)"
+				zNo = fmt.Sprintf(T("reports.zpaper.fiscal_device.z_closed_mid"), zNo)
 			}
-			doc.Footer = append(doc.Footer, footerRow("Z no.", zNo))
+			doc.Footer = append(doc.Footer, footerRow(T("reports.zpaper.fiscal_device.z_no"), zNo))
 			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %d", "Mali fis", fd.MaliFis))
 			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %d", "Iade fisi", fd.IadeFisi))
 			// Bilgi fisi / Other (ut-docs#2410): omitted entirely when
 			// zero, same "no line beats a permanent zero line" convention
-			// as GUTSCHEINE/STORNOS/TIPS above.
+			// as GUTSCHEINE/STORNOS/TIPS above. The three slip names are
+			// the device's own Turkish vocabulary, printed as they are in
+			// every locale.
 			if fd.BilgiFisi > 0 {
 				doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %d", "Bilgi fisi", fd.BilgiFisi))
 			}
 			if fd.Other > 0 {
-				doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %d", "Other", fd.Other))
+				doc.Footer = append(doc.Footer, eodRow(T("reports.zpaper.fiscal_device.other"), fmt.Sprintf("%d", fd.Other)))
 			}
-			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %d", "Till OKC tenders", fd.TillOKCTenders))
+			doc.Footer = append(doc.Footer, eodRow(T("reports.zpaper.fiscal_device.till_tenders"), fmt.Sprintf("%d", fd.TillOKCTenders)))
 			if fd.Total == fd.TillOKCTenders {
-				doc.Footer = append(doc.Footer, "MATCH")
+				doc.Footer = append(doc.Footer, T("reports.zpaper.fiscal_device.match"))
 			} else {
-				doc.Footer = append(doc.Footer, fmt.Sprintf("MISMATCH (device %d vs till %d)", fd.Total, fd.TillOKCTenders))
+				doc.Footer = append(doc.Footer, fmt.Sprintf(T("reports.zpaper.fiscal_device.mismatch"), fd.Total, fd.TillOKCTenders))
 			}
 		}
 	}
@@ -467,21 +481,19 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	// Single-day only — see EODReport.ArticleGroups/Articles/Operators' own
 	// doc comment; a range report simply has nothing here.
 	//
-	// Uses footerRow, NOT the "%-20s %s" sprintf every sibling section above
-	// uses (review finding 1): those names are short, controlled strings
-	// (a department/till name, "TOTAL", "Issued (n)"), so %-20s's fixed pad
-	// never overflows print.Width in practice. sale_lines.name_snapshot is
-	// free-text product name text where 34+ runes is completely ordinary —
-	// %-20s only pads, never truncates, so an overlong name silently pushes
-	// the amount past the printer's own line-clip with no error, deleting
-	// the actual revenue figure off a financial document. footerRow clips
-	// the label instead, guaranteeing the amount always survives.
+	// Uses footerRow, NOT the "%-20s %s" layout (eodRow) the sibling
+	// sections use (review finding 1): eodRow keeps a short label's 20-column
+	// pad, which suits a department/till name, "TOTAL" or "Issued (n)".
+	// sale_lines.name_snapshot is free-text product name text where 34+
+	// runes is completely ordinary, so these rows always right-align the
+	// amount and clip the label, guaranteeing the revenue figure survives
+	// on a financial document.
 	if len(rep.ArticleGroups) > 0 {
-		doc.Footer = append(doc.Footer, "", "BY ARTICLE GROUP")
+		doc.Footer = append(doc.Footer, "", T("reports.zpaper.by_article_group"))
 		for _, g := range rep.ArticleGroups {
 			name := g.Group
 			if name == "" {
-				name = "Uncategorized"
+				name = T("reports.uncategorized")
 			}
 			doc.Footer = append(doc.Footer, footerRow(name, money(g.Gross.Minor())))
 		}
@@ -489,14 +501,13 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	// Per-store print-mode setting (ut-docs#1650): "off" omits this section
 	// entirely (the on-screen report is unaffected regardless — see
 	// keyEODArticlePrintMode's doc comment); "capped" (default) prints only
-	// the top articleCap articles by revenue, followed by a fixed-vocabulary
-	// "+N more" line (same non-localized-printed-report convention as
-	// GUTSCHEINE/STORNOS below), since rep.Articles already arrives sorted
+	// the top articleCap articles by revenue, followed by a "+N more" line
+	// (in the shop's locale, ut-docs#4397), since rep.Articles already arrives sorted
 	// `ORDER BY gross DESC` (ArticleSalesForDay/ArticleSalesForInstantWindow)
 	// — taking the first articleCap IS the top-N by revenue, no extra sort
 	// needed. "all" reproduces the pre-#1650 unconditional behavior.
 	if len(rep.Articles) > 0 && articleMode != eodArticlePrintOff {
-		doc.Footer = append(doc.Footer, "", "BY ARTICLE")
+		doc.Footer = append(doc.Footer, "", T("reports.zpaper.by_article"))
 		articles := rep.Articles
 		omitted := 0
 		if articleMode == eodArticlePrintCapped && articleCap > 0 && len(articles) > articleCap {
@@ -507,15 +518,15 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 			doc.Footer = append(doc.Footer, footerRow(a.Name, money(a.Gross.Minor())))
 		}
 		if omitted > 0 {
-			doc.Footer = append(doc.Footer, fmt.Sprintf("+%d more (see on-screen report)", omitted))
+			doc.Footer = append(doc.Footer, fmt.Sprintf(T("reports.zpaper.articles_more"), omitted))
 		}
 	}
 	if len(rep.Operators) > 0 {
-		doc.Footer = append(doc.Footer, "", "BY OPERATOR")
+		doc.Footer = append(doc.Footer, "", T("reports.zpaper.by_operator"))
 		for _, o := range rep.Operators {
 			name := o.DisplayName
 			if name == "" {
-				name = "Unattributed"
+				name = T("reports.eod.unattributed")
 			}
 			doc.Footer = append(doc.Footer, footerRow(name, money(o.Gross.Minor())))
 		}
@@ -524,17 +535,16 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	// footer-section precedent as BY ARTICLE GROUP/BY ARTICLE/BY OPERATOR
 	// above, decomposed by sale_lines.order_type so a mixed sale's revenue
 	// splits across both buckets rather than needing a third "mixed" one.
-	// Fixed English labels, same as "Uncategorized"/"Unattributed" above —
-	// this printed report is not localized (see GUTSCHEINE/STORNOS's own
-	// fixed-vocabulary precedent below).
+	// Labels follow the shop's locale, the sale basket's own dine-in/
+	// takeaway keys (ut-docs#4397).
 	// ut-docs#3632: omitted for a shop with the order type switched off
 	// when every row is dine-in (eodOrderTypesForDisplay).
 	if orderTypes := eodOrderTypesForDisplay(rep.OrderTypes); len(orderTypes) > 0 {
-		doc.Footer = append(doc.Footer, "", "BY ORDER TYPE")
+		doc.Footer = append(doc.Footer, "", T("reports.zpaper.by_order_type"))
 		for _, o := range orderTypes {
-			name := "Dine in"
+			name := T("basket.order_type.dine_in")
 			if o.OrderType == pos.OrderTypeTakeaway {
-				name = "Takeaway"
+				name = T("basket.order_type.takeaway")
 			}
 			doc.Footer = append(doc.Footer, footerRow(name, money(o.Gross.Minor())))
 		}
@@ -545,17 +555,19 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	// Artikelumsatz and every per-rate VAT band), a redemption is a payment
 	// method. Same footer-line precedent as BY DEPARTMENT / BY TILL above;
 	// "GUTSCHEINE" matches the Germany-pilot Z-report vocabulary the card
-	// specifies. Omitted entirely on a day with no voucher activity.
+	// specifies, and stays German in every locale; its lines follow the
+	// shop's locale (ut-docs#4397). Omitted entirely on a day with no
+	// voucher activity.
 	if rep.VouchersIssuedCount > 0 || rep.VouchersRedeemedCount > 0 || rep.VouchersImportedCount > 0 || rep.VouchersAdjustedCount > 0 {
 		doc.Footer = append(doc.Footer, "", "GUTSCHEINE")
-		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Issued (%d)", rep.VouchersIssuedCount), money(rep.VouchersIssued)))
-		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Redeemed (%d)", rep.VouchersRedeemedCount), money(rep.VouchersRedeemed)))
+		doc.Footer = append(doc.Footer, eodRow(fmt.Sprintf(T("reports.zpaper.vouchers_issued"), rep.VouchersIssuedCount), money(rep.VouchersIssued)))
+		doc.Footer = append(doc.Footer, eodRow(fmt.Sprintf(T("reports.zpaper.vouchers_redeemed"), rep.VouchersRedeemedCount), money(rep.VouchersRedeemed)))
 		// Imported (ut-docs#1834): a separate line, own condition — most
 		// days have none, and unlike Issued/Redeemed (which always print as
 		// a pair once either is nonzero) this would otherwise add a
 		// permanent "Imported (0)" line to every single day's report.
 		if rep.VouchersImportedCount > 0 {
-			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Imported (%d)", rep.VouchersImportedCount), money(rep.VouchersImported)))
+			doc.Footer = append(doc.Footer, eodRow(fmt.Sprintf(T("reports.zpaper.vouchers_imported"), rep.VouchersImportedCount), money(rep.VouchersImported)))
 		}
 		// Adjusted (ut-docs#4253): manager balance corrections — no money
 		// moved, never in Gross/Net or a VAT band. Same own-condition rule
@@ -566,7 +578,7 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 			if rep.VouchersAdjusted < 0 {
 				net = "-" + money(-rep.VouchersAdjusted)
 			}
-			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Adjusted (%d)", rep.VouchersAdjustedCount), net))
+			doc.Footer = append(doc.Footer, eodRow(fmt.Sprintf(T("reports.zpaper.vouchers_adjusted"), rep.VouchersAdjustedCount), net))
 		}
 	}
 	// Cancellations (ut-docs#1012): a completed sale later VOIDED — e.g.
@@ -585,8 +597,8 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	// none, same convention as GUTSCHEINE/TIPS: a permanent "-£0.00"
 	// line on every report would be worse than no line at all.
 	if rep.CancelCount > 0 {
-		doc.Footer = append(doc.Footer, "", "STORNOS (voided receipts, not in revenue)")
-		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Voided (%d)", rep.CancelCount), money(rep.CancelTotal)))
+		doc.Footer = append(doc.Footer, "", "STORNOS ("+T("reports.zpaper.stornos_note")+")")
+		doc.Footer = append(doc.Footer, eodRow(fmt.Sprintf(T("reports.zpaper.voided"), rep.CancelCount), money(rep.CancelTotal)))
 	}
 	// Cash-drawer reconciliation (ut-docs#1006) — printed only when at
 	// least one shift was closed that day; a day-close without one still
@@ -599,17 +611,17 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 			}
 			return money(minor)
 		}
-		line := func(label string, amount string) string {
-			return fmt.Sprintf("%-20s %s", label, amount)
+		line := func(key string, amount string) string {
+			return eodRow(T(key), amount)
 		}
-		varianceLine := line("Variance", signed(rc.Variance))
+		varianceLine := line("shifts.variance", signed(rc.Variance))
 		if rc.Variance != 0 {
 			// Flag a count discrepancy so it can't be missed on paper.
 			varianceLine += " !!"
 		}
-		doc.Footer = append(doc.Footer, "", "CASH RECONCILIATION",
-			line("Opening float", signed(rc.OpeningFloat)),
-			line("Cash sales", signed(rc.CashSales)),
+		doc.Footer = append(doc.Footer, "", T("reports.zpaper.cash.title"),
+			line("reports.zpaper.cash.opening_float", signed(rc.OpeningFloat)),
+			line("reports.zpaper.cash.cash_sales", signed(rc.CashSales)),
 		)
 		// Tips held out (ut-docs#1046): only printed when non-zero, same "no
 		// line at all beats a permanent -£0.00 line" convention as
@@ -617,20 +629,20 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 		// appears on a real report yet, but the figure is correct the moment
 		// it is turned on.
 		if rc.TipsHeldOut != 0 {
-			doc.Footer = append(doc.Footer, line("Tips held out", signed(rc.TipsHeldOut)))
+			doc.Footer = append(doc.Footer, line("reports.zpaper.cash.tips_held_out", signed(rc.TipsHeldOut)))
 		}
 		doc.Footer = append(doc.Footer,
-			line("Pay-ins", signed(rc.PayIns)),
-			line("Pay-outs", signed(rc.PayOuts)),
-			line("Calculated", signed(rc.Calculated)),
-			line("Counted", signed(rc.Counted)),
+			line("reports.zpaper.cash.pay_ins", signed(rc.PayIns)),
+			line("reports.zpaper.cash.pay_outs", signed(rc.PayOuts)),
+			line("reports.zpaper.cash.calculated", signed(rc.Calculated)),
+			line("shifts.counted", signed(rc.Counted)),
 			varianceLine,
-			line("Skim to safe", signed(rc.Skim)),
-			line("New float", signed(rc.NewFloat)),
+			line("shifts.skim", signed(rc.Skim)),
+			line("reports.zpaper.cash.new_float", signed(rc.NewFloat)),
 		)
 	}
 	if rep.FirstReceipt != "" {
-		doc.Footer = append(doc.Footer, "", "Receipts "+rep.FirstReceipt+" - "+rep.LastReceipt)
+		doc.Footer = append(doc.Footer, "", fmt.Sprintf(T("reports.zpaper.receipts_range"), rep.FirstReceipt, rep.LastReceipt))
 	}
 	// Who generated the close, plus an optional annotation (ut-docs#1012),
 	// matching the reference Z-Bon's own "Anmerkung / Erstellt von" —

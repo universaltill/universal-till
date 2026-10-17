@@ -147,6 +147,7 @@ func TestBuildEODDoc_CloseToCloseMetaLine(t *testing.T) {
 // pins the exact three cases (legacy day, bounded range, unbounded first
 // close) as pure string values.
 func TestEodPeriodMeta(t *testing.T) {
+	newPrintAPITestDeps(t) // loads the translator: the legacy line is a key (ut-docs#4397)
 	cases := []struct {
 		name string
 		rep  data.EODReport
@@ -159,7 +160,7 @@ func TestEodPeriodMeta(t *testing.T) {
 			"Zeitraum bis 2026-08-24T19:19:00+02:00"},
 	}
 	for _, c := range cases {
-		if got := eodPeriodMeta(c.rep); got != c.want {
+		if got := eodPeriodMeta(c.rep, "en"); got != c.want {
 			t.Errorf("%s: eodPeriodMeta = %q, want %q", c.name, got, c.want)
 		}
 	}

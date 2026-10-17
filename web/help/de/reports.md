@@ -95,19 +95,19 @@ von“ gedruckt, wenn vorhanden.
 Das Ausführen von Tagesabschluss für einen einzelnen Tag (nicht einen
 Datumsbereich) fügt drei weitere Aufschlüsselungen hinzu, im gedruckten
 Bericht und auf dem Bildschirm in der Liste der archivierten Berichte:
-**BY ARTICLE GROUP** (Umsatz nach der eigenen Kategorie jedes Artikels — eine
+**NACH WARENGRUPPE** (Umsatz nach der eigenen Kategorie jedes Artikels — eine
 Unterkategorie wie „Handys“ erscheint hier in einer eigenen Zeile, statt wie
 bei der Abteilungsaufschlüsselung in ihre übergeordnete Abteilung
-zusammengefasst zu werden), **BY ARTICLE** (jeder an diesem Tag verkaufte
+zusammengefasst zu werden), **NACH ARTIKEL** (jeder an diesem Tag verkaufte
 Artikel, nicht nur die Best-/Schlechtverkäufer — auf dem Bildschirm eingeklappt
-angezeigt, da ein geschäftiger Tag Dutzende auflisten kann) und **BY OPERATOR**
+angezeigt, da ein geschäftiger Tag Dutzende auflisten kann) und **NACH KASSIERER**
 (Umsatz und Verkaufsanzahl je Kassierer). Der Umsatz bleibt immer dem
 Kassierer zugeordnet, der den Verkauf tatsächlich gebucht hat, auch wenn ein
 Manager eine Ausnahme dafür genehmigt hat, sodass die Bediener-Aufschlüsselung
 immer widerspiegelt, wer wirklich an der Kasse stand.
 
 Die Artikelliste auf dem Bildschirm zeigt immer jeden Artikel, egal wie viele
-es sind. Der **gedruckte** Abschnitt BY ARTICLE ist separat konfigurierbar (im
+es sind. Der **gedruckte** Abschnitt NACH ARTIKEL ist separat konfigurierbar (im
 Reiter Tagesabschluss, neben dem Zeitplan für den automatischen Abschluss), da
 ein Geschäft mit vielen Artikeln sonst bei jedem Abschluss Hunderte
 zusätzlicher Zeilen drucken könnte: **Top N nach Umsatz drucken** (Standard —
@@ -120,7 +120,7 @@ nur im gedruckten Bericht weg).
 ## Aufschlüsselung nach Vor-Ort/Außer-Haus
 
 Das Ausführen von Tagesabschluss für einen einzelnen Tag fügt außerdem eine
-Aufschlüsselung **BY ORDER TYPE** hinzu, im gedruckten Bericht und auf dem
+Aufschlüsselung **NACH BESTELLART** hinzu, im gedruckten Bericht und auf dem
 Bildschirm in der Liste der archivierten Berichte: Umsatz und Menge aufgeteilt
 zwischen **Vor Ort** und **Außer Haus**, passend zu den Beschriftungen des
 eigenen Vor-Ort-/Außer-Haus-Schalters auf dem Verkaufsbildschirm. Ein Verkauf,
@@ -133,8 +133,8 @@ verzehrt wurde, zeigt nur die Zeile „Vor Ort“, keine leere Zeile „Außer H
 
 ## Zahlungsart und Mehrwertsteuersatz zusammen im Tagesabschlussbericht (Z)
 
-Der gedruckte Tagesabschlussbericht enthält eine Tabelle **BY METHOD & VAT
-RATE**: die Tageseinnahmen aufgeschlüsselt nach Zahlungsart und Mehrwertsteuersatz
+Der gedruckte Tagesabschlussbericht enthält eine Tabelle **NACH ZAHLUNGSART &
+USt-SATZ**: die Tageseinnahmen aufgeschlüsselt nach Zahlungsart und Mehrwertsteuersatz
 gleichzeitig — eine Zeile pro Kombination (z. B. Bargeld bei 7 %, Karte bei
 19 %), jeweils mit Netto-, Steuer- und Bruttobetrag. Das ist die Tabelle, die
 ein Steuerberater in die Buchhaltungssoftware einträgt: über welche Zahlungsart
@@ -275,15 +275,15 @@ Bargeld wie bisher ein. Zwei optionale Zusätze kommen hinzu:
 
 ## Bargeldabgleich im Tagesabschlussbericht
 
-Der gedruckte Tagesabschlussbericht (Z) erhält einen Abschnitt **CASH
-RECONCILIATION** an jedem Tag, an dem mindestens eine Schicht geschlossen
+Der gedruckte Tagesabschlussbericht (Z) erhält einen Abschnitt **KASSENABGLEICH**
+an jedem Tag, an dem mindestens eine Schicht geschlossen
 wurde: Startgeld, Barverkäufe, einbehaltene Trinkgelder (nur an einem Tag mit
 tatsächlichem Bar-Trinkgeld gedruckt), Einzahlungen, Auszahlungen, Berechnet
 (was in den Schubladen sein sollte), Gezählt (was tatsächlich darin war),
 Abweichung, Abschöpfen in den Safe und die auf den nächsten Tag übertragene
 neue Wechselgeldkasse. Barverkäufe schließen jedes Bar-Trinkgeld aus, genauso
 wie Trinkgelder bereits an anderer Stelle des Berichts aus dem Umsatz
-herausgehalten werden — deshalb steht die Zeile „Einbehaltene Trinkgelder“
+herausgehalten werden — deshalb steht die Zeile „Einbeh. Trinkgelder“
 zwischen Barverkäufen und Einzahlungen: Startgeld + Barverkäufe +
 einbehaltene Trinkgelder + Einzahlungen + Auszahlungen ergeben zusammen
 Berechnet, sodass die eigenen Zahlen des Abschnitts auch bei genutztem

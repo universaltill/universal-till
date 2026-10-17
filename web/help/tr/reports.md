@@ -88,22 +88,22 @@ sayıları ne olursa olsun. Ancak **basılı** gün sonu (Z) raporunun
 kapanış zamanlamasının yanında) — çünkü çok sayıda üründen oluşan bir
 mağaza her kapanışta yüzlerce fazladan satır yazdırabilir: **Gelire göre
 ilk N'i yazdır** (varsayılan — ilk 30 ürünü, ya da belirlediğiniz
-sayıyı, daha fazlası varsa bir "+N more" satırıyla birlikte yazdırır),
+sayıyı, daha fazlası varsa bir "+N tane daha" satırıyla birlikte yazdırır),
 **Her ürünü yazdır** (önceki davranış, sınırsız) ya da **Yazdırma** (bu
 bölümü yalnızca basılı rapordan kaldırır, ekrandaki rapordan değil).
 
 ## Sipariş türüne göre döküm
 
 Tek bir gün için Gün sonu işlemini çalıştırmak, hem basılı raporda hem de
-arşivlenmiş rapor listesinde ekranda bir **BY ORDER TYPE** (sipariş
-türüne göre) dökümü de ekler: hasılat ve adet, satış ekranının kendi
-burada/paket anahtarındaki etiketlerle eşleşen **Dine in** (Burada) ve
-**Takeaway** (Paket) arasında bölünür. Her ikisini de içeren bir satış
+arşivlenmiş rapor listesinde ekranda bir **SİPARİŞ TÜRÜNE GÖRE**
+dökümü de ekler: hasılat ve adet, satış ekranının kendi
+burada/paket anahtarındaki etiketlerle eşleşen **Burada** ve
+**Paket** arasında bölünür. Her ikisini de içeren bir satış
 (bazı ürünler burada, bazıları paket) üçüncü bir "karma" satıra ihtiyaç
 duymadan kendi ürünlerine göre iki satıra doğru şekilde bölünür. Yukarıdaki
 ürün grubu/ürün/kasiyer dökümleri gibi, bir satır yalnızca o modda en az
-bir satış olduğunda görünür — tamamen burada geçen bir gün yalnızca Dine
-in satırını gösterir, boş bir Takeaway satırı göstermez.
+bir satış olduğunda görünür — tamamen burada geçen bir gün yalnızca Burada
+satırını gösterir, boş bir Paket satırı göstermez.
 
 ## Türkiye için mali cihaz (ÖKC) durumu
 
@@ -125,7 +125,7 @@ bu eklentisi açık olan bir Türkiye kasasında görünür.
 
 ## Gün sonu (Z) raporunda ödeme yöntemi ve KDV oranı bir arada
 
-Yazdırılan gün sonu raporunda **BY METHOD & VAT RATE** tablosu bulunur:
+Yazdırılan gün sonu raporunda **ÖDEME YÖNTEMİ VE KDV ORANINA GÖRE** tablosu bulunur:
 günün hasılatı aynı anda hem ödeme yöntemine hem KDV oranına göre ayrılır
 — her kombinasyon için bir satır (ör. %7'de nakit, %19'da kart) ve her
 satırda net, vergi ve brüt tutar. Bu, muhasebecinin muhasebe yazılımına
@@ -253,13 +253,13 @@ girin. Buna iki isteğe bağlı ek eklenir:
 ## Gün sonu (Z) raporunda nakit mutabakatı
 
 En az bir vardiyanın kapatıldığı her günde, basılı gün sonu (Z) raporuna
-bir **CASH RECONCILIATION** (nakit mutabakatı) bölümü eklenir: açılış bakiyesi, nakit satışlar,
+bir **KASA MUTABAKATI** bölümü eklenir: açılış bakiyesi, nakit satışlar,
 ayrılan bahşişler (yalnızca o gün gerçekten nakit bahşiş varsa basılır),
 nakit girişleri, nakit çıkışları, beklenen (çekmecelerde olması gereken),
 sayılan (çekmecelerde bulunan), fark, çelik kasaya çekim ve ertesi güne
 devreden yeni bakiye. Nakit satışlar, bahşişlerin raporun başka yerlerinde
 zaten hasılattan ayrı tutulmasıyla aynı şekilde, hiçbir nakit bahşişi
-içermez — "Tips held out" (ayrılan bahşişler) satırının nakit satışlar ile nakit girişleri
+içermez — "Ayrılan bahşişler" satırının nakit satışlar ile nakit girişleri
 arasında yer almasının nedeni de budur: açılış bakiyesi + nakit satışlar +
 ayrılan bahşişler + nakit girişleri + nakit çıkışları toplamı beklenen
 tutara eşittir, böylece nakit bahşiş kullanıldığında da, sıradan bahşişsiz
