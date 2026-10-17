@@ -55,6 +55,13 @@ Sonnet, per MODEL-ROUTING. Verdict: no blockers.
 | 5 | minor | e2e: a hash-only `goto` is a same-document navigation, so the chip check relied on poll timing. | **Fixed.** The spec reloads explicitly. The e2e run also found that the other `diagnostics` specs' fakes answer the catalog with an empty list, which the till caches for 5 min. The spec is named to sort first in that project, and the reason is documented in the spec and the config. |
 | 6 | nit | No test for the additional-till case or for the elevated re-post. No review record yet. | The reviewer read the code and confirmed the elevated re-post queues (the elevation prompt re-posts `locale`). The additional-till branch is one call to the existing `tillFollowsMain`, so it was not tested separately. This file is the review record. |
 
+Found by the gate after the review:
+
+| # | Severity | Finding | Outcome |
+|---|---|---|---|
+| 7 | blocker (CI) | `TestDemoRouteClassification` failed: the new GET route was on neither demo list. My first full-package run missed it because it had timed out. | **Fixed.** The route is allowed in demo mode: it reads local settings only, like `/ui/disk-space-chip`. |
+| 8 | blocker (CI) | `guard-docs-shots` failed because the topic and the app surface changed. | **Fixed.** I ran `make docs-shots` (120 shots). No screenshot changed, only `web/help/img/manifest.json`. |
+
 Checked by the reviewer with no finding: the ordering between the chip and the
 retry tick; elevation (the chip's `canPerform("settings")` matches the save's
 gate, and cashiers get nothing); injection (html/template, `isPlausibleLocale`,
@@ -85,8 +92,8 @@ settings-write guard; and translation placeholder parity.
   hardware, dark theme.
 - **Gate.**
   - `gofmt`, `go build`, `go vet`: clean. `golangci-lint`: 0 issues.
-  - `go test ./...`: green. `internal/plugins` needed `-timeout 30m` on this
-    container; it is untouched.
+  - `go test ./...`: green after finding 7. `internal/plugins` needed
+    `-timeout 30m` on this container; it is untouched.
   - Every guard in `ci.yml`'s build job passes, except two that fail the same
     way on `main` in this container: `guard-deadcode-baseline` (the desktop
     root is skipped without GTK headers) and `guard-shellcheck-version`
