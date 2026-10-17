@@ -378,6 +378,8 @@ var backgroundPollPaths = map[string]bool{
 	"/ui/report-archive-chip": true, // refused report upload (ADR-0147, ut-docs#574)
 	"/ui/disk-space-chip":     true, // low-disk chip, every 60 s (ut-docs#3121)
 	"/ui/shop-currency-chip":  true, // shop currency differs, every 60 s (ut-docs#4539)
+	// Settings → Language download chip, every 3 s (ut-docs#4477).
+	"/ui/settings/language-install": true,
 	// Sale screen watchers (#2765, #2858).
 	"/ui/buttons/version":         true,
 	"/ui/open-orders-badge/watch": true,

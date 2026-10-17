@@ -2233,6 +2233,16 @@
       {{ range locales }}
       <option value="{{ . }}" {{ if eq . $cur }}selected{{ end }}>{{ nativelocalename . }}</option>
       {{ end }}
+      {{ if .installableLangs }}
+      <!-- ut-docs#4477 (ADR-0160 §6): languages from the plugin catalog,
+           downloaded in the background when picked. Offline, or on an
+           additional till, this group is absent. -->
+      <optgroup label="{{ T "settings.language.download_group" }}" data-testid="settings-language-downloads">
+        {{ range .installableLangs }}
+        <option value="{{ .Locale }}" data-install-locale="{{ .Locale }}">{{ .NativeName }}</option>
+        {{ end }}
+      </optgroup>
+      {{ end }}
     </select>
     <button class="btn" type="submit">{{ T "settings.language.apply" }}</button>
     <!-- No id here (ut-docs#861 review F4): the shared handler's elevation
@@ -2244,7 +2254,14 @@
          bigger change than this card's scope. -->
     <span aria-live="polite"></span>
   </form>
+  {{ if .installableLangs }}<p class="muted">{{ T "settings.language.downloads_on_select" }}</p>{{ end }}
   </fieldset>
+  {{ if .languageSwitchPending }}
+  <!-- ut-docs#4477: the picked language's download chip
+       (partials/settings_language_install.html). Outside the lock
+       fieldset: a disabled fieldset would drop the chip's hidden locale. -->
+  <div hx-get="/ui/settings/language-install" hx-trigger="load" hx-swap="outerHTML"></div>
+  {{ end }}
 </div>
 <!-- ut-docs#3086: which languages the ☰ Menu offers staff. Every installed
      language is listed here so the admin can choose; the shop's default

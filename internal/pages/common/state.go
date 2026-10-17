@@ -156,6 +156,14 @@ const (
 	// error) or has not run yet. Per-till like the queue it annotates: the
 	// key sits under data's "setup.pending_base_plugins" per-till prefix.
 	KeyBasePluginsNotPublished = "setup.pending_base_plugins_not_published"
+	// KeyLocaleSwitchPending holds the locale a manager picked in Settings →
+	// Language before its language pack was installed (ut-docs#4477, ADR-0160
+	// §6), as "<locale>@<unix seconds of the pick>". The pack is queued on
+	// KeyPendingBasePlugins; the Language card's status chip applies this
+	// locale through the normal save once it is installed (within an hour of
+	// the pick), then clears it. Per-till like the queue: the key sits under
+	// data's "setup.pending_base_plugins" per-till prefix.
+	KeyLocaleSwitchPending = "setup.pending_base_plugins_locale_switch"
 	// KeyAutoRegisterOptIn records the shop's explicit answer to the setup
 	// wizard's eager store-registration question (ADR-0071, ut-docs#879):
 	// "true" means the operator opted in on the wizard's last screen (or

@@ -1,0 +1,30 @@
+{{/* ut-docs#4477 (ADR-0160 §6): the Language card's chip for a language
+     picked before its pack was installed. Rendered by
+     GET /ui/settings/language-install (settings_language_install.go).
+     A status chip, never a modal: the till stays usable while the pack
+     downloads in the background.
+     - installing: polls every 3s, replacing itself.
+     - ready: posts the Language card's own save once (hx-trigger load), so
+       the switch takes the normal path (audit, locale_confirmed, the
+       ut-docs#2135 cookie retirement), then reloads like the card does.
+     - unavailable: the pack left the queue without arriving; no polling. */}}
+{{ if eq .State "installing" }}
+<div class="chip-row" id="language-install-chip" data-testid="language-install-chip" data-state="installing"
+     role="status" aria-live="polite"
+     hx-get="/ui/settings/language-install" hx-trigger="every 3s" hx-swap="outerHTML">
+  <span class="chip chip-note">{{ printf (T "settings.language.installing") .NativeName }}</span>
+</div>
+{{ else if eq .State "ready" }}
+<form class="chip-row" id="language-install-chip" data-testid="language-install-chip" data-state="ready"
+      role="status" aria-live="polite"
+      hx-post="/api/settings/save" hx-trigger="load" hx-swap="none"
+      data-after-request="ok not-html reload:settings-save; fail save-error:settings-save-error">
+  <input type="hidden" name="locale" value="{{ .ApplyLocale }}">
+  <span class="chip chip-note">{{ printf (T "settings.language.switching") .NativeName }}</span>
+</form>
+{{ else }}
+<div class="chip-row" id="language-install-chip" data-testid="language-install-chip" data-state="unavailable"
+     role="status" aria-live="polite">
+  <span class="chip chip-note">{{ printf (T "settings.language.install_unavailable") .NativeName }}</span>
+</div>
+{{ end }}
