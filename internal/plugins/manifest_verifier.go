@@ -266,10 +266,9 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("invalid signature hex: %v", err))
 		} else {
-			// Create canonical representation for signing (exclude signature field)
-			manifestCopy := manifest
-			manifestCopy.Signature = ""
-			canonicalBytes, err := json.Marshal(manifestCopy)
+			// Canonical form: signature and both ADR-0165 content fields
+			// emptied — byte-identical to the form before them.
+			canonicalBytes, err := legacySignedBytes(manifest)
 			if err != nil {
 				result.Errors = append(result.Errors, fmt.Sprintf("failed to create canonical manifest: %v", err))
 			} else {
@@ -281,6 +280,23 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 					log.Warnf("[Verifier] Signature verification failed for plugin %s", manifest.ID)
 				}
 			}
+		}
+	}
+
+	// ADR-0165 (ut-docs#4546): with a key, the signature must cover every
+	// file in the package too, not only manifest.json. A missing digest is
+	// refused rather than treated as legacy — stripping both fields would
+	// otherwise turn any signed manifest back into one covering nothing.
+	if mv.publicKey != nil {
+		// A missing content field reads as unsigned to the operator: a
+		// pre-ADR-0165 bundle (an export of an older install) needs the
+		// "install it from the Plugin Store" message, not a generic failure.
+		if manifest.ContentDigest == "" || manifest.ContentSignature == "" {
+			unsigned = true
+		}
+		if errs := mv.verifyContent(&manifest, filepath.Dir(manifestPath)); len(errs) > 0 {
+			result.Errors = append(result.Errors, errs...)
+			result.SignatureVerified = false
 		}
 	}
 
@@ -309,6 +325,50 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 	}
 
 	return result, nil
+}
+
+// verifyContent checks the ADR-0165 content fields of m against the package
+// directory dir: both present, content_signature valid over the content
+// form, and dir's ComputeContentDigest equal to content_digest. Returns the
+// failures, if any.
+func (mv *ManifestVerifier) verifyContent(m *Manifest, dir string) []string {
+	if m.ContentDigest == "" || m.ContentSignature == "" {
+		return []string{"manifest missing required field: content_digest/content_signature (public key is configured; the release must be re-signed by the marketplace)"}
+	}
+	var errs []string
+	sigBytes, err := hex.DecodeString(m.ContentSignature)
+	if err != nil {
+		errs = append(errs, fmt.Sprintf("invalid content_signature hex: %v", err))
+	} else if contentBytes, err := contentSignedBytes(*m); err != nil {
+		errs = append(errs, fmt.Sprintf("failed to create canonical content manifest: %v", err))
+	} else if !ed25519.Verify(mv.publicKey, contentBytes, sigBytes) {
+		errs = append(errs, "manifest content signature verification failed")
+		logging.L().Warnf("[Verifier] Content signature verification failed for plugin %s", m.ID)
+	}
+	actual, err := ComputeContentDigest(dir)
+	switch {
+	case err != nil:
+		errs = append(errs, err.Error())
+	case actual != m.ContentDigest:
+		errs = append(errs, fmt.Sprintf("content digest mismatch: package files do not match the signed manifest (expected %s, got %s)", m.ContentDigest, actual))
+		logging.L().Warnf("[Verifier] Content digest mismatch for plugin %s: expected %s, got %s", m.ID, m.ContentDigest, actual)
+	}
+	return errs
+}
+
+// legacySignedBytes is what `signature` covers: the manifest with signature,
+// content_digest and content_signature emptied. The two content fields are
+// omitempty, so these are the bytes a till without ADR-0165 computes.
+func legacySignedBytes(m Manifest) ([]byte, error) {
+	m.Signature, m.ContentDigest, m.ContentSignature = "", "", ""
+	return json.Marshal(m)
+}
+
+// contentSignedBytes is what `content_signature` covers: the manifest with
+// signature and content_signature emptied, content_digest kept (ADR-0165 §3).
+func contentSignedBytes(m Manifest) ([]byte, error) {
+	m.Signature, m.ContentSignature = "", ""
+	return json.Marshal(m)
 }
 
 // VerifyExecutable checks that the executable file exists and is executable

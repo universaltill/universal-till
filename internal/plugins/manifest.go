@@ -37,6 +37,13 @@ type Manifest struct {
 	MinPOSVersion string `json:"min_pos_version"` // Minimum POS version required
 	Signature     string `json:"signature"`       // Ed25519 signature of manifest (hex)
 	ArtifactHash  string `json:"artifact_hash"`   // SHA256 of the plugin artifact
+	// Signed content digest (ADR-0165, ut-docs#4546): ContentDigest covers
+	// every file in the package but manifest.json (ComputeContentDigest);
+	// ContentSignature is the marketplace's signature over the manifest
+	// with the digest kept. Both omitempty, so Signature's canonical bytes
+	// are unchanged for tills without this change.
+	ContentDigest    string `json:"content_digest,omitempty"`
+	ContentSignature string `json:"content_signature,omitempty"`
 
 	// Entries: pages, buttons, popups, etc.
 	Entries []ManifestEntry `json:"entries,omitempty"`

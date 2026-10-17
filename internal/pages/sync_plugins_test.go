@@ -481,13 +481,7 @@ func signedFakeMktArtifact(t *testing.T, privateKey ed25519.PrivateKey, manifest
 // fixture (ut-docs#368) ships a real compiled module as plugin.wasm.
 func signedFakeMktArtifactWithBinary(t *testing.T, privateKey ed25519.PrivateKey, manifest *plugins.Manifest, binName string, binData []byte) []byte {
 	t.Helper()
-	canonical := *manifest
-	canonical.Signature = ""
-	canonicalBytes, err := json.Marshal(canonical)
-	if err != nil {
-		t.Fatalf("marshal canonical manifest: %v", err)
-	}
-	manifest.Signature = hex.EncodeToString(ed25519.Sign(privateKey, canonicalBytes))
+	signPluginManifest(t, manifest, privateKey, map[string][]byte{binName: binData})
 
 	manifestBytes, err := json.Marshal(manifest)
 	if err != nil {
@@ -534,13 +528,7 @@ func signedFakeMktArtifactWithBinary(t *testing.T, privateKey ed25519.PrivateKey
 // shape (a flat map[string]string).
 func signedFakeMktArtifactWithLocale(t *testing.T, privateKey ed25519.PrivateKey, manifest *plugins.Manifest, locale string, localeJSON []byte) []byte {
 	t.Helper()
-	canonical := *manifest
-	canonical.Signature = ""
-	canonicalBytes, err := json.Marshal(canonical)
-	if err != nil {
-		t.Fatalf("marshal canonical manifest: %v", err)
-	}
-	manifest.Signature = hex.EncodeToString(ed25519.Sign(privateKey, canonicalBytes))
+	signPluginManifest(t, manifest, privateKey, map[string][]byte{"locales/" + locale + ".json": localeJSON})
 
 	manifestBytes, err := json.Marshal(manifest)
 	if err != nil {

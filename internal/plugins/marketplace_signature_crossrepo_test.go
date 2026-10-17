@@ -1,6 +1,9 @@
 package plugins
 
 import (
+	"crypto/ed25519"
+	"encoding/hex"
+	"strings"
 	"testing"
 )
 
@@ -13,6 +16,12 @@ import (
 // If this breaks, the marketplace signing.CanonicalManifest struct and this
 // package's Manifest struct have drifted; regenerate the fixture from the
 // marketplace and reconcile the structs.
+//
+// The fixtures predate ADR-0165 (ut-docs#4546), so they carry no
+// content_digest: VerifyManifest now refuses them for exactly that reason
+// and no other, and their legacy `signature` still verifies — which is the
+// proof that adding the two omitempty content fields left the legacy
+// canonical bytes unchanged.
 const marketplaceTestPublicKeyHex = "79b5562e8fe654f94078b112e8a98ba7901f853ae695bed7e0e3910bad049664"
 
 func TestMarketplaceSignatureVerifies(t *testing.T) {
@@ -24,13 +33,31 @@ func TestMarketplaceSignatureVerifies(t *testing.T) {
 		t.Fatal("expected configured public key")
 	}
 
-	result, err := verifier.VerifyManifest("testdata/marketplace_signed_manifest.json")
+	verifyPreContentDigestFixture(t, verifier, marketplaceTestPublicKeyHex, "testdata/marketplace_signed_manifest.json")
+}
+
+// verifyPreContentDigestFixture checks a fixture signed before ADR-0165:
+// VerifyManifest's only complaint is the missing content fields, and its
+// legacy signature verifies over legacySignedBytes.
+func verifyPreContentDigestFixture(t *testing.T, verifier *ManifestVerifier, pubHex, path string) *Manifest {
+	t.Helper()
+	result, err := verifier.VerifyManifest(path)
+	if err == nil {
+		t.Fatal("a manifest without content_digest must be refused when a key is configured (ADR-0165)")
+	}
+	if len(result.Errors) != 1 || !strings.Contains(result.Errors[0], "content_digest/content_signature") {
+		t.Fatalf("want only the missing-content-fields error, got %v", result.Errors)
+	}
+	pub, _ := hex.DecodeString(pubHex)
+	sig, _ := hex.DecodeString(result.Manifest.Signature)
+	legacy, err := legacySignedBytes(*result.Manifest)
 	if err != nil {
-		t.Fatalf("VerifyManifest returned errors: %v (%v)", err, result.Errors)
+		t.Fatal(err)
 	}
-	if !result.SignatureVerified {
-		t.Fatal("marketplace signature did not verify with the real POS verifier")
+	if !ed25519.Verify(ed25519.PublicKey(pub), legacy, sig) {
+		t.Fatal("marketplace signature did not verify with the real POS verifier's legacy canonical form")
 	}
+	return result.Manifest
 }
 
 func TestMarketplaceSignatureRejectedByWrongKey(t *testing.T) {
@@ -60,14 +87,7 @@ func TestMarketplaceSignatureVerifiesABI3Fields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManifestVerifier: %v", err)
 	}
-	result, err := verifier.VerifyManifest("testdata/marketplace_signed_manifest_abi3.json")
-	if err != nil {
-		t.Fatalf("VerifyManifest returned errors: %v (%v)", err, result.Errors)
-	}
-	if !result.SignatureVerified {
-		t.Fatal("marketplace signature over the ABI-3 fields did not verify with the real POS verifier")
-	}
-	m := result.Manifest
+	m := verifyPreContentDigestFixture(t, verifier, abi3FixturePublicKeyHex, "testdata/marketplace_signed_manifest_abi3.json")
 	if m.Limits == nil || len(m.Schedules) != 2 || m.DB == nil || m.Retention == nil || len(m.ViewsUsed) != 2 || m.Entries[0].Slot != "reports.panels" {
 		t.Fatalf("fixture lost ABI-3 fields: %+v", m)
 	}

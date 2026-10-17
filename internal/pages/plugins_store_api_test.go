@@ -322,11 +322,7 @@ func signedAssetOnlyManifest(t *testing.T, id, name string) (plugins.Manifest, s
 		CanonicalType: "theme",
 		DeviceArch:    "any",
 	}
-	canonical, err := json.Marshal(m)
-	if err != nil {
-		t.Fatalf("marshal canonical: %v", err)
-	}
-	m.Signature = hex.EncodeToString(ed25519.Sign(priv, canonical))
+	signPluginManifest(t, &m, priv, nil) // writePluginBundle packs manifest.json only
 	return m, hex.EncodeToString(pub)
 }
 
