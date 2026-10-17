@@ -518,7 +518,8 @@ func visibleSettings(all map[string]string) map[string]string {
 
 func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
-	registerReleaseNotes(mux, d) // ut-docs#3091: the after-update chip's dismiss
+	registerReleaseNotes(mux, d)            // ut-docs#3091: the after-update chip's dismiss
+	registerSettingsLanguageInstall(mux, d) // ut-docs#4477: the Language card's install chip
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
 		// ut-docs#3079: a cashier is sale-only — the whole page is gated,
 		// not just its individual cards/actions.
@@ -905,6 +906,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"staffLocaleSet":         staffLocaleSet(all[common.KeyStaffLocales]), // ut-docs#3086
 			"defaultStaffLocale":     httpx.DefaultStaffLocale(),
 			"pendingBasePlugins":     pendingBasePluginRows,
+			"installableLangs":       settingsInstallableLanguagesCached(r.Context(), d),
+			"languageSwitchPending":  all[common.KeyLocaleSwitchPending] != "", // ut-docs#4477, with installableLangs
 			"tseProvisioning":        tseProvisioningViewFor(tseState),
 			"tseRetryable":           tseProvisioningRetryable(tseState),
 			"tseCanDismiss":          !tseProvisioningDismissBlocked(tseState),
@@ -3166,6 +3169,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// Language card's own field. Drives the ut-docs#2135 cookie clear
 		// below; a rejected value must not clear anything.
 		localeChosen := false
+		installLocale := ""
 		if v := strings.TrimSpace(r.Form.Get("locale")); v != "" {
 			// Reject silently rather than 400 (ut-docs#861) — matches this
 			// handler's existing lenient contract (see the comment at its
@@ -3187,6 +3191,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				// card's own base-plugin-install catch-up) ever
 				// silently overrides it.
 				extra[common.KeyLocaleConfirmed] = "true"
+			} else {
+				// ut-docs#4477: maybe a catalog language that isn't
+				// installed yet; queued below, once the save has succeeded.
+				installLocale = v
 			}
 		}
 		// ut-docs#2948: on an additional till the ut-docs#2135 generation
@@ -3269,6 +3277,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// Both engines: the kiosk's separate instance (ut-docs#449) must see
 		// the same tax config or it would silently charge stale rates.
 		applyEngineConfig(r.Context(), d)
+		if localeChosen {
+			// ut-docs#4477: an explicit language save, the chip's own apply
+			// included, settles any language still waiting on its pack.
+			clearLanguageSwitchPending(r.Context(), d)
+		} else if installLocale != "" && queueSettingsLanguageInstall(r.Context(), d, installLocale) {
+			// ut-docs#4477: queued for a background download; the Language
+			// card's chip applies it through this handler once it has
+			// arrived. st.Locale stays as it is until then.
+			auditPayload["locale_install"] = baseLang(installLocale)
+		}
 		settingsAudit(r, posRepo, elev, "settings", "-", "store_settings_saved", auditPayload)
 		settingsRespondSaved(w, r, elev)
 	})
