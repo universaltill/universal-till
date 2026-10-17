@@ -113,6 +113,51 @@ WHERE gen < ? ORDER BY entity, cloud_id LIMIT ?`, gen, limit)
 	return out, rows.Err()
 }
 
+// RecordRetired notes a local record the pull could only retire (an option
+// set a cloud tombstone found in use, ut-docs#4522): its delete is retried
+// on every chunk commit until the record is gone (migration 083).
+func (*CloudLinkRepo) RecordRetired(ctx context.Context, q SyncQuerier, entity, localID, cloudID string) error {
+	_, err := q.ExecContext(ctx, `
+INSERT INTO cloud_retired (entity, local_id, cloud_id, retired_at) VALUES (?, ?, ?, ?)
+ON CONFLICT(entity, local_id) DO UPDATE SET cloud_id = excluded.cloud_id, retired_at = excluded.retired_at`,
+		entity, localID, cloudID, time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("cloud retired record: %w", err)
+	}
+	return nil
+}
+
+// CloudRetired is one cloud_retired row.
+type CloudRetired struct {
+	LocalID, CloudID string
+}
+
+// Retired returns entity's retired records, oldest first.
+func (*CloudLinkRepo) Retired(ctx context.Context, q SyncQuerier, entity string) ([]CloudRetired, error) {
+	rows, err := q.QueryContext(ctx, `SELECT local_id, cloud_id FROM cloud_retired WHERE entity = ? ORDER BY retired_at, local_id`, entity)
+	if err != nil {
+		return nil, fmt.Errorf("cloud retired: %w", err)
+	}
+	defer rows.Close()
+	var out []CloudRetired
+	for rows.Next() {
+		var r CloudRetired
+		if err := rows.Scan(&r.LocalID, &r.CloudID); err != nil {
+			return nil, fmt.Errorf("cloud retired: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// DropRetired removes a retired record (no-op when absent).
+func (*CloudLinkRepo) DropRetired(ctx context.Context, q SyncQuerier, entity, localID string) error {
+	if _, err := q.ExecContext(ctx, `DELETE FROM cloud_retired WHERE entity = ? AND local_id = ?`, entity, localID); err != nil {
+		return fmt.Errorf("cloud retired drop: %w", err)
+	}
+	return nil
+}
+
 // RecordFailure upserts the latest refusal of (entity, cloudID).
 func (*CloudLinkRepo) RecordFailure(ctx context.Context, q SyncQuerier, entity, cloudID string, version int64, reason string) error {
 	_, err := q.ExecContext(ctx, `

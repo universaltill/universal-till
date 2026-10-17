@@ -522,6 +522,7 @@ var nonAdminTables = map[string]string{
 	// the cloud-id bookkeeping or its refusal log.
 	"cloud_links":          "which local record a cloud catalogue row (entity, cloud_id) became — main-till pull bookkeeping, never synced (ut-docs#4463)",
 	"cloud_apply_failures": "the latest refusal per pulled cloud catalogue row — main-till pull bookkeeping, never synced (ut-docs#4463)",
+	"cloud_retired":        "option sets the cloud pull could only retire, whose delete it retries — main-till pull bookkeeping, never synced (ut-docs#4522)",
 
 	// Local bookkeeping with no shop-wide meaning.
 	"issue_reports_sent": "dedup record of bug reports already sent FROM this till",
