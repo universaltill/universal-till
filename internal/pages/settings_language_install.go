@@ -73,9 +73,9 @@ func settingsInstallableLanguagesCached(ctx context.Context, d *common.Deps) []i
 	if !fresh && settingsLanguageRefreshing.CompareAndSwap(false, true) {
 		d.AsyncWork.Add(1)
 		go func() {
+			defer logging.RecoverAndLog("pages.settingsLanguageCatalog")
 			defer d.AsyncWork.Done()
 			defer settingsLanguageRefreshing.Store(false)
-			defer logging.RecoverAndLog("pages.settingsLanguageCatalog")
 			setupLanguageCatalogEntries(context.Background(), d)
 		}()
 	}
