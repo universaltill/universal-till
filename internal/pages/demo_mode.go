@@ -295,6 +295,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/setup/update-check":              true,
 	"POST /api/sync/cloud-device":               true,
 	"POST /api/sync/enroll":                     true,
+	"POST /api/sync/enroll/withdraw":            true,
 	"POST /api/sync/enroll-token":               true,
 	"POST /api/sync/held-sales/claim":           true,
 	"POST /api/sync/held-sales/delete":          true,

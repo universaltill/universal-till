@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -355,6 +356,24 @@ func syncTill(r *http.Request, repo *data.TillsRepo) (data.TillRow, bool) {
 		t.TLSPinned = true
 	}
 	return t, true
+}
+
+// joinWithdrawWindow bounds how long after enrolment a till may withdraw
+// its own enrolment (ut-docs#4566). A join enrols, then downloads the
+// snapshot within a minute or two; the window is generous for a slow LAN.
+const joinWithdrawWindow = 15 * time.Minute
+
+// withinJoinWithdrawWindow reports whether a till enrolled at enrolledAt
+// (tills.enrolled_at: SQLite datetime('now') in UTC, or RFC 3339) may still
+// withdraw at now. An unparseable value fails closed.
+func withinJoinWithdrawWindow(enrolledAt string, now time.Time) bool {
+	for _, layout := range []string{time.DateTime, time.RFC3339} {
+		if t, err := time.ParseInLocation(layout, enrolledAt, time.UTC); err == nil {
+			age := now.Sub(t)
+			return age >= -time.Minute && age <= joinWithdrawWindow
+		}
+	}
+	return false
 }
 
 // plainHTTPRefusedWarned holds the till ids whose plain-HTTP refusal has
@@ -725,6 +744,52 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			},
 			"error": nil,
 		})
+	})
+
+	// ut-docs#4566: a joining till whose join failed after it enrolled
+	// (snapshot download or staging failed, or a sale landed mid-join)
+	// withdraws the enrolment it just got, so the manager's retry with the
+	// same name is not refused as "name already in use". Bearer-gated: the
+	// till is the bearer's own, never one named in the request, so a bearer
+	// can withdraw no till but its own. Only within joinWithdrawWindow of
+	// enrolment — removing an established till stays the manager's revoke.
+	mux.HandleFunc("POST /api/sync/enroll/withdraw", func(w http.ResponseWriter, r *http.Request) {
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			http.Error(w, "withdraw must be done on the primary till", http.StatusConflict)
+			return
+		}
+		till, ok := syncTill(r, repo)
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if !withinJoinWithdrawWindow(till.EnrolledAt, time.Now()) {
+			http.Error(w, "enrolment is too old to withdraw; revoke it on the main till", http.StatusConflict)
+			return
+		}
+		// Read before the delete: the audit row outlives the till, but the
+		// register is looked up by the till's own enrolment.
+		registerID, regErr := posRepo.EnrolledRegisterID(r.Context(), till.ID)
+		if err := repo.DeleteTill(r.Context(), till.ID); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
+			return
+		}
+		if d.Link != nil {
+			d.Link.Disconnect(till.ID)
+		}
+		// The register enrolment provisioned for it goes too, unless anything
+		// already uses it. Best-effort: the till itself is withdrawn either way.
+		registerRemoved := false
+		if regErr != nil {
+			logging.L().Warnf("sync: withdraw till %s: find its enrolment register: %v", till.ID, regErr)
+		} else if registerRemoved, regErr = posRepo.DeleteUnusedEnrolmentRegister(r.Context(), registerID); regErr != nil {
+			logging.L().Warnf("sync: withdraw till %s: remove its enrolment register %s: %v", till.ID, registerID, regErr)
+		}
+		_ = posRepo.InsertAudit(r.Context(), nil, "system", "till", till.ID, "till_enrolment_withdrawn",
+			map[string]any{"name": till.Name, "register_id": registerID, "register_removed": registerRemoved},
+			time.Now().UTC().Format(time.RFC3339), "")
+		w.Header().Set("HX-Trigger", "tills-changed")
+		w.WriteHeader(http.StatusNoContent)
 	})
 
 	// D2: full-DB snapshot for a joining replica (bearer-gated). Uses the
@@ -1229,23 +1294,31 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&out) != nil || out.Data.Bearer == "" {
 		return "", &joinError{kind: joinErrRefused}
 	}
+	// ut-docs#4566: from here on the main till holds an enrolment for this
+	// till. Any failure below withdraws it (best-effort), so a retry with
+	// the same name is not refused as "name already in use"; the original
+	// error is what the manager sees either way.
+	fail := func(je *joinError) (string, error) {
+		withdrawEnrolment(r.Context(), client, base, out.Data.Bearer)
+		return "", je
+	}
 
 	// Download the shop snapshot with our new bearer and stage it.
 	sreq, err := http.NewRequestWithContext(r.Context(), http.MethodGet, base+"/api/sync/snapshot", nil)
 	if err != nil {
-		return "", &joinError{kind: joinErrRequestFailed, detail: err.Error()}
+		return fail(&joinError{kind: joinErrRequestFailed, detail: err.Error()})
 	}
 	sreq.Header.Set("Authorization", "Bearer "+out.Data.Bearer)
 	sresp, err := client.Do(sreq)
 	if err != nil {
-		return "", &joinError{kind: joinErrSnapshotFailed, detail: err.Error()}
+		return fail(&joinError{kind: joinErrSnapshotFailed, detail: err.Error()})
 	}
 	defer sresp.Body.Close()
 	if sresp.StatusCode != http.StatusOK {
-		return "", &joinError{kind: joinErrSnapshotFailed, detail: sresp.Status}
+		return fail(&joinError{kind: joinErrSnapshotFailed, detail: sresp.Status})
 	}
 	if err := db.StageRestoreFromReader(d.Cfg.DBPath, sresp.Body); err != nil {
-		return "", &joinError{kind: joinErrStageSnapshotFailed, detail: err.Error()}
+		return fail(&joinError{kind: joinErrStageSnapshotFailed, detail: err.Error()})
 	}
 	draw := make([]byte, 16)
 	_, _ = rand.Read(draw)
@@ -1262,23 +1335,57 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 		// one a code join learned over TLS; "" after a plain enrolment.
 		PrimaryCertPin: primaryCertPin,
 	}); err != nil {
-		return "", &joinError{kind: joinErrStageIdentityFailed, detail: err.Error()}
+		// The snapshot is already staged: withdraw it too, or the restart
+		// would restore the main till's copy with no replica identity.
+		// Still staged → keep the enrolment rather than strand the restore.
+		if uerr := db.UnstageJoin(d.Cfg.DBPath); uerr != nil {
+			logging.L().Errorf("join: withdraw the staged snapshot after the identity failed: %v", uerr)
+			return "", &joinError{kind: joinErrStageIdentityFailed, detail: err.Error()}
+		}
+		return fail(&joinError{kind: joinErrStageIdentityFailed, detail: err.Error()})
 	}
 	// ut-docs#4560: the caller checked for sales before enrolling, but the
 	// enrolment and snapshot download take up to about a minute, and the
 	// till keeps selling meanwhile. Unconfirmed and a sale has landed →
 	// withdraw what was just staged, so the restart keeps this till's own
-	// DB. The main till keeps an enrolment that never syncs; the manager
-	// revokes it there, as after any other failure past the enrol.
+	// DB, and the enrolment with it (ut-docs#4566). A staged join that
+	// could not be withdrawn still applies on restart, so its enrolment
+	// stays.
 	if !replaceConfirmed && hasSalesHistory(r.Context(), d) {
 		if err := db.UnstageJoin(d.Cfg.DBPath); err != nil {
 			logging.L().Errorf("join: withdraw the staged join after a sale landed: %v", err)
 			return "", &joinError{kind: joinErrStageSnapshotFailed, detail: err.Error()}
 		}
-		return "", &joinError{kind: joinErrHasSales}
+		return fail(&joinError{kind: joinErrHasSales})
 	}
 	posRepo := data.NewPOSRepo(d.Db)
 	_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", out.Data.TillID, "joined_primary",
 		map[string]any{"primary": primaryURL}, time.Now().UTC().Format(time.RFC3339), "")
 	return out.Data.ShopName, nil
+}
+
+// withdrawEnrolment asks the main till at base to drop the enrolment that
+// bearer was just issued for (POST /api/sync/enroll/withdraw, ut-docs#4566).
+// Best-effort: a failure is logged, never returned — the join's own error
+// is the one the manager sees, and a ghost entry can still be revoked on the
+// main till's Tills page. It outlives a cancelled request so a manager who
+// navigated away still gets the cleanup.
+func withdrawEnrolment(ctx context.Context, client *http.Client, base, bearer string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/sync/enroll/withdraw", nil)
+	if err != nil {
+		logging.L().Warnf("join: withdraw the enrolment on the main till: %v", err)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	resp, err := client.Do(req)
+	if err != nil {
+		logging.L().Warnf("join: withdraw the enrolment on the main till: %v", err)
+		return
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		logging.L().Warnf("join: withdraw the enrolment on the main till: %s", resp.Status)
+	}
 }
