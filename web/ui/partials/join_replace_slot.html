@@ -1,0 +1,14 @@
+{{/* ut-docs#4560: a join refused because this till holds sales brings the
+     tick box with it. The slot sits above the join tabs on the Tills page
+     and in the first-boot wizard; both tabs hx-include and validate
+     #pairing-replace-local, so ticking it and retrying sends the confirm.
+     Keep the slot's content identical to tills.html's own .HasSales render.
+     inline: also the refusal itself, for a code join's message area. */ -}}
+{{ if .inline }}<span class="muted">✗ {{ T "tills.discovery.ambient.has_sales_warning" }}</span>{{ end }}
+<div id="pairing-replace-slot" hx-swap-oob="true">
+  <p class="join-notice-warning join-replace-warning" id="pairing-replace-warning">{{ T "tills.discovery.ambient.has_sales_warning" }}</p>
+  <span class="join-notice-confirm">
+    <input type="checkbox" id="pairing-replace-local" name="replace_local_data" value="1" required hx-preserve aria-describedby="pairing-replace-warning">
+    <label class="join-notice-label" for="pairing-replace-local">{{ T "tills.discovery.ambient.has_sales_confirm" }}</label>
+  </span>
+</div>

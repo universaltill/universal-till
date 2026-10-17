@@ -8,6 +8,7 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -78,6 +79,26 @@ func StageRestoreFromReader(dbPath string, r io.Reader) error {
 		return err
 	}
 	return nil
+}
+
+// UnstageJoin withdraws a join staged by StageRestoreFromReader and
+// StageReplicaIdentity, so the next start keeps this till's own DB
+// (ut-docs#4560: a sale landed while the join was being staged). A file
+// that is already gone is not an error. Both removals are always tried;
+// the identity goes first, because an identity left without its restore
+// would point this till's own DB at the main till (half-joined), while a
+// restore left without its identity is no worse than before #4560.
+func UnstageJoin(dbPath string) error {
+	var errs []error
+	for _, p := range []string{
+		ReplicaIdentityPath(dbPath),
+		filepath.Join(filepath.Dir(dbPath), restorePendingName),
+	} {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // ApplyReplicaIdentity runs after Open when an identity file exists:

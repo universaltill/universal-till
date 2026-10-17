@@ -883,7 +883,11 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		}
 		shopName, err := joinPrimary(r, d,
 			strings.TrimSpace(r.Form.Get("code")), strings.TrimSpace(r.Form.Get("address")),
-			strings.TrimSpace(r.Form.Get("name")), role)
+			strings.TrimSpace(r.Form.Get("name")), role, r.Form.Get("replace_local_data") == "1")
+		if isJoinErrKind(err, joinErrHasSales) { // ut-docs#4560
+			writeReplaceRefusal(w, r)
+			return
+		}
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
@@ -922,7 +926,11 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		}
 		shopName, err := joinPrimary(r, d,
 			strings.TrimSpace(r.Form.Get("code")), strings.TrimSpace(r.Form.Get("address")),
-			strings.TrimSpace(r.Form.Get("name")), role)
+			strings.TrimSpace(r.Form.Get("name")), role, r.Form.Get("replace_local_data") == "1")
+		if isJoinErrKind(err, joinErrHasSales) { // ut-docs#4560
+			writeReplaceRefusal(w, r)
+			return
+		}
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
@@ -955,11 +963,32 @@ func refuseJoinWithoutReplaceConfirm(w http.ResponseWriter, r *http.Request, d *
 	if !joinNeedsReplaceConfirm(r, d) {
 		return false
 	}
-	locale := httpx.ResolveLocale(w, r)
+	writeReplaceRefusal(w, r)
+	return true
+}
+
+// writeReplaceRefusal answers a code join refused for this till's sales:
+// 409, the warning where the join's own message goes, and (ut-docs#4560)
+// the tick box itself, swapped out of band into #pairing-replace-slot above
+// the join tabs. Without it a till whose first sale landed after the page
+// rendered — or the first-boot wizard, which never renders one — had no
+// way to confirm short of guessing that a reload brings the box.
+func writeReplaceRefusal(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusConflict)
-	fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, html.EscapeString(httpx.T(locale, "tills.discovery.ambient.has_sales_warning")))
-	return true
+	renderReplaceSlot(w, r, true)
+}
+
+// renderReplaceSlot renders join_replace_slot.html: the out-of-band
+// #pairing-replace-slot fill, preceded by the inline refusal when inline.
+func renderReplaceSlot(w http.ResponseWriter, r *http.Request, inline bool) {
+	httpx.RenderPartial("ui/partials/join_replace_slot.html", map[string]any{"inline": inline})(w, r)
+}
+
+// isJoinErrKind reports whether err is a *joinError of kind k.
+func isJoinErrKind(err error, k joinErrKind) bool {
+	var je *joinError
+	return errors.As(err, &je) && je.kind == k
 }
 
 // joinErrKind classifies why joinPrimary/completeJoin failed, so the
@@ -985,6 +1014,9 @@ const (
 	joinErrNeedAddress
 	joinErrBadAddress
 	joinErrTooManyAttempts
+	// ut-docs#4560: a sale landed while the join was being staged, and the
+	// manager had not confirmed replacing this till's sales.
+	joinErrHasSales
 )
 
 // joinErrLocaleKey maps each kind to its web/locales/*.json key. Every key
@@ -1003,6 +1035,7 @@ var joinErrLocaleKey = map[joinErrKind]string{
 	joinErrNeedAddress:         "tills.join_error.need_address",
 	joinErrBadAddress:          "tills.join_error.bad_address",
 	joinErrTooManyAttempts:     "tills.join_error.too_many_attempts",
+	joinErrHasSales:            "tills.discovery.ambient.has_sales_warning",
 }
 
 // joinError is what every joinPrimary/completeJoin failure path returns.
@@ -1050,9 +1083,9 @@ func friendlyJoinError(locale string, err error) string {
 // carries the main till's URL, so address is ignored) or, since
 // ut-docs#3219, the short XXX-XXX code, which needs the main till's address
 // typed alongside it.
-func joinPrimary(r *http.Request, d *common.Deps, code, address, name, role string) (string, error) {
+func joinPrimary(r *http.Request, d *common.Deps, code, address, name, role string, replaceConfirmed bool) (string, error) {
 	if primaryURL, token, err := decodeEnrollCode(code); err == nil {
-		return completeJoin(r, d, primaryURL, token, name, role, "")
+		return completeJoin(r, d, primaryURL, token, name, role, "", replaceConfirmed)
 	}
 	short, ok := normaliseShortCode(code)
 	if !ok {
@@ -1065,7 +1098,7 @@ func joinPrimary(r *http.Request, d *common.Deps, code, address, name, role stri
 	if !ok {
 		return "", &joinError{kind: joinErrBadAddress}
 	}
-	return completeJoin(r, d, primaryURL, short, name, role, "")
+	return completeJoin(r, d, primaryURL, short, name, role, "", replaceConfirmed)
 }
 
 // primaryURLFromAddress turns the address a person typed next to a short
@@ -1101,7 +1134,7 @@ func primaryURLFromAddress(address string) (string, bool) {
 // (ut-docs#185) can drive it directly with a (primaryURL, token) pair it
 // already holds — that flow never has an encodeEnrollCode-packed code to
 // decode, just the two values decodeEnrollCode would have produced.
-func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role, primaryCertPin string) (string, error) {
+func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role, primaryCertPin string, replaceConfirmed bool) (string, error) {
 	base := strings.TrimSuffix(primaryURL, "/")
 	client := netaccess.NewClient(60 * time.Second)
 	if primaryCertPin != "" {
@@ -1230,6 +1263,19 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 		PrimaryCertPin: primaryCertPin,
 	}); err != nil {
 		return "", &joinError{kind: joinErrStageIdentityFailed, detail: err.Error()}
+	}
+	// ut-docs#4560: the caller checked for sales before enrolling, but the
+	// enrolment and snapshot download take up to about a minute, and the
+	// till keeps selling meanwhile. Unconfirmed and a sale has landed →
+	// withdraw what was just staged, so the restart keeps this till's own
+	// DB. The main till keeps an enrolment that never syncs; the manager
+	// revokes it there, as after any other failure past the enrol.
+	if !replaceConfirmed && hasSalesHistory(r.Context(), d) {
+		if err := db.UnstageJoin(d.Cfg.DBPath); err != nil {
+			logging.L().Errorf("join: withdraw the staged join after a sale landed: %v", err)
+			return "", &joinError{kind: joinErrStageSnapshotFailed, detail: err.Error()}
+		}
+		return "", &joinError{kind: joinErrHasSales}
 	}
 	posRepo := data.NewPOSRepo(d.Db)
 	_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", out.Data.TillID, "joined_primary",
