@@ -121,6 +121,9 @@ type pluginJobSnapshot struct {
 type pluginJobRegistry struct {
 	mu   sync.Mutex
 	jobs map[string]*pluginJob
+	// wg counts startPluginJob's goroutines so tests can wait them out
+	// (ut-docs#4517).
+	wg sync.WaitGroup
 }
 
 func newPluginJobRegistry() *pluginJobRegistry {
@@ -370,7 +373,9 @@ func startPluginJob(ctx context.Context, d *common.Deps, entry data.PageEntryRow
 		},
 	})
 
+	reg.wg.Add(1)
 	go func() {
+		defer reg.wg.Done()
 		defer logging.RecoverAndLog("pages.pluginJob")
 		defer cancel()
 		// Finished, failed, timed out, abandoned or panicked: the job's
