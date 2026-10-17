@@ -59,3 +59,12 @@ global, which is a write racing that read.
 ## Verdict
 
 Safe to merge.
+
+## CI follow-up
+
+The first CI run failed `guard-docs-shots`, because a file under
+`internal/pages/**.go` changed. The change alters no rendered pixel: it
+adds a WaitGroup field and the calls that use it. So the surface hash was
+refreshed with `scripts/ci/update-docs-shots-surface-hash.sh` and committed
+with the `Docs-Shots-Unchanged: true` trailer, and no screenshots were
+regenerated.
