@@ -46,7 +46,10 @@ fi
 # --- collect: changed + new + deleted ---------------------------------------
 changed="$(git ls-files -- 'web/help/img/*/*.png' | sed -n 1p)"
 deleted="$(git ls-files -- 'web/help/img/*/*.png' | sed -n 2p)"
-[ -n "${changed}" ] && [ -n "${deleted}" ] || { echo "FAIL - sandbox has fewer than two committed screenshots" >&2; exit 1; }
+if [ -z "${changed}" ] || [ -z "${deleted}" ]; then
+  echo "FAIL - sandbox has fewer than two committed screenshots" >&2
+  exit 1
+fi
 printf 'changed bytes' >"${changed}"
 rm "${deleted}"
 mkdir -p web/help/img/xx
