@@ -646,6 +646,11 @@
             var t = e.target;
             if (!top || !t || top.contains(t) || escAllowed(t)) return;
             if (UT.dialogOpening && UT.dialogOpening.contains(t)) return;
+            // ut-docs#4077: a dialog may name a neutral home for stray
+            // focus (the age-check sheet's prompt line), so it never lands
+            // on a link or an action a stray Enter would trigger.
+            var home = top.querySelector('[data-ut-focus-home]');
+            if (home && home.getClientRects().length > 0) { home.focus(); return; }
             var list = escFocusables(top);
             if (list.length) list[0].focus();
           } catch (err) { /* focus only */ }

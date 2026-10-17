@@ -3138,6 +3138,9 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
 .age-check-toggle.is-refused { border-color: var(--danger); color: var(--danger); }
 .age-check-toggle .btn-ico svg { inline-size: 1rem; block-size: 1rem; }
 .age-check-sheet-prompt { margin: 0 0 .3rem; font-size: .95rem; font-weight: 600; }
+/* ut-docs#4077: the prompt is the sheet's neutral first focus (tabindex=-1,
+   never in the Tab cycle) -- text, not a control, so no ring around it. */
+.age-check-sheet-prompt:focus { outline: none; }
 .age-check-sheet-item { margin: 0 0 .5rem; }
 .age-check-refused-hint { margin: 0 0 .5rem; color: var(--danger); font-weight: 600; }
 .age-check-sheet-actions { display: flex; flex-direction: column; gap: .5rem; }

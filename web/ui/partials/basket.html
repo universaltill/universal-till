@@ -221,7 +221,12 @@
                          sighted users read. The helpLink beside the prompt
                          (ut-docs#3340 review) makes the age-restricted-sales
                          topic reachable from the feature itself, not only
-                         from the catalog checkbox. */}}
+                         from the catalog checkbox. ut-docs#4077: the
+                         prompt line is the sheet's first focus (autofocus +
+                         tabindex=-1, outside the Tab cycle) and the focus
+                         trap's pull-back target (data-ut-focus-home), so a
+                         stray keyboard Enter neither follows the help link
+                         out of the sale nor lands on Accept. */}}
                     {{ if .AgeRestricted }}
                     {{- $ac := index $.AgeChecks .ItemID -}}
                     {{- $open := and $.AgeCheckOpenKey (eq $.AgeCheckOpenKey .LineKey) -}}
@@ -235,7 +240,7 @@
                         <span>{{ $badge }}</span>
                       </button>
                       <dialog class="modifier-modal age-check-sheet" aria-label="{{ T "age_check.prompt" }}" data-ut-focus-trap{{ if $open }} data-age-check-autoopen{{ end }}>
-                        <p class="age-check-sheet-prompt">{{ T "age_check.prompt" }} {{ helpLink "age-restricted-sales" }}</p>
+                        <p class="age-check-sheet-prompt" tabindex="-1" autofocus data-ut-focus-home>{{ T "age_check.prompt" }} {{ helpLink "age-restricted-sales" }}</p>
                         <p class="age-check-sheet-item">{{ .Name }}</p>
                         {{ if eq $ac "refused" }}<p class="age-check-refused-hint" role="alert">{{ T "age_check.refused_hint" }}</p>{{ end }}
                         <div class="age-check-sheet-actions">
