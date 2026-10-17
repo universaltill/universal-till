@@ -4612,6 +4612,28 @@ ORDER BY created_at DESC, rowid DESC LIMIT 1`, tillID).Scan(&id)
 	return id.String, nil
 }
 
+// DeleteUnusedEnrolmentRegister removes the register enrolment
+// auto-provisioned for a till that withdrew its join (ut-docs#4566), so a
+// same-name retry gets "Till 2" again rather than "Till 2 (2)". It deletes
+// only a register nothing refers to — no sale, shift or no-sale event, and
+// no row a foreign key protects (that refusal comes back as an error) — and
+// reports whether it did. An empty id is a no-op.
+func (r *POSRepo) DeleteUnusedEnrolmentRegister(ctx context.Context, id string) (bool, error) {
+	if id == "" {
+		return false, nil
+	}
+	res, err := r.db.ExecContext(ctx, `
+DELETE FROM registers WHERE id = ?
+  AND NOT EXISTS (SELECT 1 FROM sales WHERE register_id = ?)
+  AND NOT EXISTS (SELECT 1 FROM shifts WHERE register_id = ?)
+  AND NOT EXISTS (SELECT 1 FROM no_sale_events WHERE register_id = ?)`, id, id, id, id)
+	if err != nil {
+		return false, fmt.Errorf("delete unused enrolment register: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
 // SetRegisterLocation changes a register's assigned stock location (nil
 // clears it back to unassigned) -- ut-docs#895: a register's location was
 // previously fixed at creation time, so a mis-assignment had no fix short of
