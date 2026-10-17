@@ -41,11 +41,13 @@ func newJobHarness(t *testing.T) *jobHarness {
 	t.Helper()
 	h := &jobHarness{viewHarness: newViewHarness(t)}
 	origReg, origUnpolled, origResult, origWatch, origDeadline, origCaps := pluginJobs, pluginJobUnpolledTTL, pluginJobResultTTL, pluginJobWatchEvery, pluginJobDeadline, pluginJobCaps
-	pluginJobs = newPluginJobRegistry()
+	reg := newPluginJobRegistry()
+	pluginJobs = reg
 	pluginJobWatchEvery = 10 * time.Millisecond
 	// Desktop caps whatever the test host is; tests that need others set them.
 	pluginJobCaps = func() (int, int) { return plugins.JobCaps("linux") }
 	t.Cleanup(func() {
+		drainPluginJobs(t, reg)
 		pluginJobs, pluginJobUnpolledTTL, pluginJobResultTTL, pluginJobWatchEvery, pluginJobDeadline, pluginJobCaps = origReg, origUnpolled, origResult, origWatch, origDeadline, origCaps
 	})
 	if _, err := h.d.Db.Exec(`INSERT INTO plugin_hooks(id,plugin_id,event,action,is_active) VALUES(?,?,?,'job',1)`, viewPluginID+"-hjob", viewPluginID, viewJobEvent); err != nil {
@@ -67,6 +69,32 @@ func newJobHarness(t *testing.T) *jobHarness {
 	}
 	h.answerWith(`{"job":{"event":"` + viewJobEvent + `"}}`)
 	return h
+}
+
+// drainPluginJobs cancels r's running jobs and waits for every job
+// goroutine to return, so none is still reading the package globals when a
+// harness cleanup restores them (ut-docs#4517). wg.Wait orders every read
+// a job goroutine makes before the restore, including those of jobs that
+// cancelRunning or abandon already removed from the map.
+func drainPluginJobs(t *testing.T, r *pluginJobRegistry) {
+	t.Helper()
+	r.mu.Lock()
+	for _, j := range r.jobs {
+		if j.state == pluginJobRunning {
+			j.cancel()
+		}
+	}
+	r.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		r.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Errorf("plugin job goroutines still running 5s after cancel")
+	}
 }
 
 func (h *jobHarness) onJob(f func(ctx context.Context, ev plugins.Event) (json.RawMessage, error)) {
