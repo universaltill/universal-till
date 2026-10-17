@@ -4463,6 +4463,11 @@ body.login-screen {
 /* ut-docs#4507: the same warning and confirm above the Tills page's join
    tabs; there it is a block in the card, so it needs its own spacing. */
 .tills-join .join-replace-warning { margin-block: .6rem .2rem; }
+/* ut-docs#4560: a join held back by the unticked confirm marks the warning
+   and the box (inline-actions.js markInvalid) — the native bubble alone
+   may never show on a WebKitGTK kiosk. */
+.join-replace-warning.field-invalid { border-inline-start-color: var(--danger); outline: 2px solid var(--danger); outline-offset: 1px; }
+.join-notice-confirm input[type="checkbox"].field-invalid { outline: 2px solid var(--danger); outline-offset: 2px; }
 .join-notice-status:not(:empty) { padding: .55rem 1rem; border-block-end: 1px solid rgba(37, 99, 235, .3); }
 
 /* Operator chip + lock button in the nav: a column, in the rail and in

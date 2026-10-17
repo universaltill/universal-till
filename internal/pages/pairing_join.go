@@ -376,6 +376,7 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 		replaceConfirmed := r.Form.Get("replace_local_data") == "1"
 		if joinNeedsReplaceConfirm(r, d) {
 			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, "tills.discovery.ambient.has_sales_warning"))
+			renderReplaceSlot(w, r, false) // ut-docs#4560: bring the tick box
 			return
 		}
 
@@ -534,18 +535,20 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 
 		// ut-docs#4507: sent without the replace confirm because this till
 		// had no sales then; if one has landed since, don't stage a restore
-		// over it. The manager starts again and ticks the confirm. Accepted
-		// residual window: a sale rung up during completeJoin's own enrol +
-		// snapshot download (up to ~a minute) is not re-checked; it survives
-		// in backups/pre-restore-*.db (follow-up card filed from the review).
+		// over it. The manager starts again and ticks the confirm, which
+		// this render brings (ut-docs#4560) — only this one: the stored
+		// error's re-polls must not re-swap a box being ticked. A sale rung
+		// up during completeJoin's own enrol + snapshot download is caught
+		// there and refused the same way (ut-docs#4560).
 		if !state.replaceLocalData && hasSalesHistory(r.Context(), d) {
 			next := *state
 			next.status, next.errMsg = "error", httpx.T(locale, "tills.discovery.ambient.has_sales_warning")
 			rp.active = &next
 			pairWaitViewPolling(w, r, statusURL, "error", "", "", next.errMsg, true)
+			renderReplaceSlot(w, r, false)
 			return
 		}
-		shopName, err := completeJoin(r, d, state.primaryURL, out.Data.Token, state.deviceName, state.role, state.pin)
+		shopName, err := completeJoin(r, d, state.primaryURL, out.Data.Token, state.deviceName, state.role, state.pin, state.replaceLocalData)
 		if err != nil {
 			next := *state
 			// friendlyJoinError, not err.Error(): completeJoin's failures are
@@ -554,6 +557,9 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 			next.status, next.errMsg = "error", friendlyJoinError(locale, err)
 			rp.active = &next
 			pairWaitViewPolling(w, r, statusURL, "error", "", "", next.errMsg, true)
+			if isJoinErrKind(err, joinErrHasSales) {
+				renderReplaceSlot(w, r, false)
+			}
 			return
 		}
 		next := *state
