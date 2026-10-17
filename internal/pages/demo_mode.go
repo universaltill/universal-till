@@ -485,6 +485,7 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /ui/bugreport-chip":               true,
 	"GET /ui/cloud-auth-chip":              true,
 	"GET /ui/disk-space-chip":              true, // ut-docs#3121; local statfs only
+	"GET /ui/shop-currency-chip":           true, // ut-docs#4539; local settings read only
 	"GET /ui/diagnostics-chip":             true,
 	"GET /ui/fiscal-chip":                  true,
 	"GET /ui/main-till-status":             true,

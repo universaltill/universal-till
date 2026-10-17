@@ -140,6 +140,12 @@ var allowedRemoteTillSettingKeys = map[string]bool{
 // currency changes the meaning of every price and report, and the shop type
 // drives tax/fiscal defaults. Never add one of these to
 // allowedRemoteTillSettingKeys without superseding that decision.
+//
+// The one gated cloud-driven currency write is not a directive: ADR-0163
+// amendment 2026-10-16 (ut-docs#4539) — the main till adopts the shop
+// currency from the cached entitlement block before its first sale, once
+// per shop value and never mid-sale (reconcileShopCurrency,
+// shop_currency.go).
 var reportedReadOnlyTillSettingKeys = []string{
 	common.KeyReportRetentionMode, // settings-retention
 	common.KeyCurrency,            // settings-currency
@@ -1549,6 +1555,9 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// Records whether the check-in carrying a roles report got through
 		// (rolesReportGate.commit). wireCloudLinkHooks chains onto it.
 		AfterTick: rolesGate.commit,
+		// ADR-0163 amendment 2026-10-16 (ut-docs#4539): adopt the shop's
+		// currency from my. before the first sale, else report it.
+		ShopCurrency: func(ctx context.Context) { reconcileShopCurrency(ctx, d) },
 	}
 }
 

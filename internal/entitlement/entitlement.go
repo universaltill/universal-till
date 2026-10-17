@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -69,7 +70,54 @@ const (
 	// rest (and per-till like them: "entitlement." in
 	// data.PerTillSettingPrefixes); read through CatalogMaster.
 	KeyCatalogMaster = "entitlement.catalog_master"
+	// KeyShopCurrency: the shop's ISO 4217 currency as the cloud set it for
+	// a store born on my. (ADR-0163 amendment 2026-10-16, ut-docs#4539),
+	// normalised to three upper-case ASCII letters; "" when the block
+	// carries none (a till-born store, an older cloud) or a malformed one.
+	// Per-till like the rest of the block; read through ShopCurrency.
+	KeyShopCurrency = "entitlement.shop_currency"
+	// KeyShopCurrencyDecimals: the cloud's minor-unit digits for
+	// KeyShopCurrency, "0".."4", or "". Informational: the till's own
+	// currency table decides the decimals it sells with.
+	KeyShopCurrencyDecimals = "entitlement.shop_currency_decimals"
+	// KeyShopCurrencyAdopted: the shop currency this till last adopted by
+	// itself (ADR-0163 amendment 2026-10-16), or unset. Written by the
+	// till, never by Block.Values: a till adopts each shop value once, so
+	// a manager who later chooses another currency is never overridden.
+	// Per-till like the rest of "entitlement.".
+	KeyShopCurrencyAdopted = "entitlement.shop_currency_adopted"
 )
+
+// ShopCurrencyCode normalises a raw shop-currency value: trimmed and
+// upper-cased, kept only when it is exactly three ASCII letters; anything
+// else is "" (no shop currency). Whether this build knows the code is the
+// caller's question, not this package's.
+func ShopCurrencyCode(raw string) string {
+	s := strings.ToUpper(strings.TrimSpace(raw))
+	if len(s) != 3 {
+		return ""
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < 'A' || s[i] > 'Z' {
+			return ""
+		}
+	}
+	return s
+}
+
+// ShopCurrency is the cached shop currency (ADR-0163 amendment
+// 2026-10-16). ok is false when there is none: no cache, an empty or
+// malformed value, or a read error. No Grace check — like CatalogMaster,
+// it stays what the cloud last said. NEVER a sale gate (package doc): only
+// the till's currency reconcile and its status chip read it.
+func ShopCurrency(ctx context.Context, r Reader) (code string, ok bool) {
+	v, found, err := r.Get(ctx, KeyShopCurrency)
+	if err != nil || !found {
+		return "", false
+	}
+	code = ShopCurrencyCode(v)
+	return code, code != ""
+}
 
 // Catalogue master modes (ADR-0162 §1). The cloud owns the mode; the till
 // only caches it.
@@ -323,6 +371,35 @@ type Block struct {
 	// json.RawMessage so a wrong JSON type can never reject the whole
 	// block (it reads as till).
 	CatalogMaster json.RawMessage `json:"catalog_master"`
+	// Currency and CurrencyDecimals are the shop's currency (ISO 4217) and
+	// its minor-unit digits, sent only for a store whose currency the
+	// cloud set (a my.-born store; ADR-0163 amendment 2026-10-16,
+	// ut-docs#4539). Raw like CatalogMaster: absent, null, a wrong JSON
+	// type or an out-of-range value caches "" and never rejects the block.
+	Currency         json.RawMessage `json:"currency"`
+	CurrencyDecimals json.RawMessage `json:"currency_decimals"`
+}
+
+// shopCurrency decodes the raw currency field: a JSON string normalised by
+// ShopCurrencyCode, else "".
+func (b Block) shopCurrency() string {
+	var s string
+	if len(b.Currency) == 0 || json.Unmarshal(b.Currency, &s) != nil {
+		return ""
+	}
+	return ShopCurrencyCode(s)
+}
+
+// shopCurrencyDecimals decodes the raw currency_decimals field: a JSON
+// integer 0..4 as a decimal string, else "".
+func (b Block) shopCurrencyDecimals() string {
+	// A pointer so JSON null (which leaves an int untouched) reads as
+	// absent, not as 0.
+	var n *int
+	if len(b.CurrencyDecimals) == 0 || json.Unmarshal(b.CurrencyDecimals, &n) != nil || n == nil || *n < 0 || *n > 4 {
+		return ""
+	}
+	return strconv.Itoa(*n)
 }
 
 // catalogMaster decodes the raw catalog_master field: a JSON string, else
@@ -335,9 +412,9 @@ func (b Block) catalogMaster() string {
 	return s
 }
 
-// Values validates b and returns the seven settings rows to write (the four
-// ADR-0060 §4 rows, ADR-0117 §2's cloud_link tier/mode and ADR-0162 §1's
-// catalog_master), with
+// Values validates b and returns the nine settings rows to write (the four
+// ADR-0060 §4 rows, ADR-0117 §2's cloud_link tier/mode, ADR-0162 §1's
+// catalog_master and ADR-0163's shop currency and decimals), with
 // last_confirmed_at = now (UTC). An unknown plan or status is an error — the
 // caller keeps its cache. A non-RFC3339 expires_at is stored empty.
 func (b Block) Values(now time.Time) (map[string]string, error) {
@@ -370,6 +447,10 @@ func (b Block) Values(now time.Time) (map[string]string, error) {
 		KeyCloudLinkTier:      tier,
 		KeyCloudLinkMode:      LinkMode(tier, b.CloudLinkMode),
 		KeyCatalogMaster:      CatalogMasterMode(b.catalogMaster()),
+		// Always written, "" included: a store whose cloud stops sending
+		// a currency must clear the cache, not keep a stale one.
+		KeyShopCurrency:         b.shopCurrency(),
+		KeyShopCurrencyDecimals: b.shopCurrencyDecimals(),
 	}, nil
 }
 

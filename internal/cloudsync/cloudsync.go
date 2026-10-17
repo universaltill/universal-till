@@ -371,6 +371,16 @@ type Hooks struct {
 	// processed makes the next check-in POST without asking (checkin.go);
 	// the link records it before it kicks. Must not block.
 	LinkVersion func() int64
+	// ShopCurrency, when non-nil, reconciles this till's currency with the
+	// shop currency the cloud set for a my.-born store (ADR-0163 amendment
+	// 2026-10-16, ut-docs#4539; pages.reconcileShopCurrency): adopt it
+	// before the first sale, otherwise report the mismatch. Called once per
+	// tick that reached the cloud, after the sync response's entitlement
+	// block was cached, so it reads the fresh cache — a 402
+	// plan_required's cached block included (shopCurrencyAfterRefusal).
+	// Never on a failed tick, a block-less 402 or a gated (skipped) tick.
+	// Best-effort: it logs, it never fails the tick. Nil = unsupported.
+	ShopCurrency func(ctx context.Context)
 
 	// fetchCatalogImage is set by tick (it needs the cloud endpoint and
 	// credential from cfg) and bound into each set_catalog_image's
@@ -461,6 +471,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 			// start-up check-in follows it (amendment §4).
 			closeOperatorWindow(windowSeen)
 			disarmStartupCheckin()
+			shopCurrencyAfterRefusal(ctx, hooks, err)
 			err = markGatedRefusal(ctx, settings, err)
 		}
 		return false, err
@@ -480,11 +491,19 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 				// No retry until the next trigger (§4).
 				closeOperatorWindow(windowSeen)
 				disarmStartupCheckin()
+				shopCurrencyAfterRefusal(ctx, hooks, err)
 				err = markGatedRefusal(ctx, settings, err)
 			}
 			return false, err
 		}
 		plan.done(cfg)
+	}
+	// The cloud answered (a POST whose block is now cached, or a
+	// conditional check-in that found nothing changed and leaves the cache
+	// as the last POST wrote it): reconcile the till's currency with the
+	// shop's (ADR-0163 amendment 2026-10-16, ut-docs#4539).
+	if hooks.ShopCurrency != nil {
+		hooks.ShopCurrency(ctx)
 	}
 	// Catalog/inventory up-sync rides the same tick, but only when the shop's
 	// data actually changed (hash gate) — most ticks send nothing. Replicas
@@ -1531,6 +1550,19 @@ func cachePlanRequired(ctx context.Context, settings *data.SettingsRepo, err err
 	if se, ok := planRequired(err); ok && settings != nil {
 		cacheEntitlement(ctx, settings, se.Entitlement, time.Now())
 	}
+}
+
+// shopCurrencyAfterRefusal runs Hooks.ShopCurrency after a check-in's 402
+// plan_required that carried an entitlement block: cachePlanRequired has
+// cached it (a lapsed store's block names its currency too), so the cloud
+// did answer and the till reconciles from that answer (ADR-0163 amendment
+// 2026-10-16, ut-docs#4539). A block-less 402 cached nothing: no call.
+func shopCurrencyAfterRefusal(ctx context.Context, hooks Hooks, err error) {
+	se, ok := planRequired(err)
+	if !ok || hooks.ShopCurrency == nil || len(se.Entitlement) == 0 || string(se.Entitlement) == "null" {
+		return
+	}
+	hooks.ShopCurrency(ctx)
 }
 
 // pushRefused reports whether a snapshot / order-tracking push's err is a

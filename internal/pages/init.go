@@ -560,6 +560,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerMainTillStatus(mux, dp)     // replica's main-till connectivity chip (ut-docs#2722, #2742)
 	registerCloudAuthChip(mux, dp)      // refused cloud credential chip (ADR-0116 D6, ut-docs#3524)
 	registerDiskSpaceChip(mux, dp)      // low-disk chip for managers (ut-docs#3121)
+	registerShopCurrencyChip(mux, dp)   // shop currency differs, for managers (ut-docs#4539)
 	registerReportArchiveChip(mux, dp)  // refused report upload chip (ADR-0147, ut-docs#574)
 	registerTillsRoster(mux, dp)        // Tills page roster, live link per till (ut-docs#2742)
 	registerTillRole(mux, dp)           // till role change, Tills page + joined till's own report (ut-docs#2781)

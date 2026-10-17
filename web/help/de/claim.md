@@ -72,3 +72,9 @@ Verwenden Sie dies, wenn das Geschäft bereits in der Universal-Till-Cloud exist
 2. Öffnen Sie an dieser Kasse Einstellungen → Kassenregistrierung → Mit einem Geschäft koppeln, geben Sie den Code ein und tippen Sie auf „Koppeln“. Ein Manager oder Administrator bestätigt den Vorgang.
 3. Die Kasse ersetzt nur ihre eigene Cloud-Verbindung: Sie erhält eine neue Geräte-ID und eigene Zugangsdaten. Verkäufe, Artikel und Einstellungen bleiben auf der Kasse, und der Verkauf funktioniert die ganze Zeit offline weiter.
 4. Auf einer verbundenen Kasse muss der Code vom selben Geschäft stammen wie ihre Hauptkasse; ein Code für ein anderes Geschäft wird abgelehnt und nichts ändert sich. Nach einem abgelehnten oder abgelaufenen Code bleibt die Kasse unregistriert, bis Sie sie mit einem neuen Code koppeln.
+
+## Die Währung des Geschäfts
+
+Ein im Cloud-Konto (my.) angelegtes Geschäft übernimmt die Währung seines Landes. Hat die Hauptkasse eines solchen Geschäfts noch keinen Verkauf abgeschlossen oder storniert, stellt sie sich bei der nächsten Cloud-Synchronisierung selbst auf die Währung des Geschäfts um (solange ein Verkauf läuft oder geparkt ist, wartet sie); die Umstellung wird im Prüfprotokoll festgehalten. Verbundene Kassen folgen der Hauptkasse.
+
+Sobald eine Kasse einen Verkauf hat, ändert sie ihre Währung nie von selbst: Das würde jeden bereits erfassten Betrag umbenennen. Sie verkauft weiter in ihrer eigenen Währung, ein Manager sieht in der Statusleiste den Hinweis **Währung weicht vom Geschäft ab** (zeigen Sie darauf, um beide Währungen zu sehen), und das Cloud-Konto führt dasselbe Problem für diese Kasse. Tippen Sie auf den Hinweis, um Einstellungen → Währung zu öffnen, und ändern Sie sie dort, sobald es für Ihre Aufzeichnungen unbedenklich ist. Der Hinweis verschwindet, sobald beide übereinstimmen. Auf eine Währung, die diese Kassenversion nicht kennt, wird nie umgestellt; sie wird genauso angezeigt, bis die Kasse aktualisiert ist.
