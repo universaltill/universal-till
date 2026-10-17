@@ -624,6 +624,26 @@ func verifySHA256(path, want string) error {
 // half-gigabyte fixtures.
 var extractLimit int64 = 512 << 20
 
+// archiveEntryTarget resolves an archive entry name to its path under dst,
+// refusing anything that escapes it. A directory entry naming the root itself
+// ("./", as `tar -C dir -czf x.tgz .` writes first) reports isRoot so the
+// caller skips it; any other entry naming the root is refused (ut-docs#4565,
+// mirrors internal/plugins' archiveEntryTarget from ut-docs#4563).
+func archiveEntryTarget(dst, name string, isDir bool) (target string, isRoot bool, err error) {
+	root := filepath.Clean(dst)
+	target = filepath.Join(root, name)
+	if target == root {
+		if isDir {
+			return "", true, nil
+		}
+		return "", false, fmt.Errorf("unsafe path in archive: %s", name)
+	}
+	if !strings.HasPrefix(target, root+string(os.PathSeparator)) {
+		return "", false, fmt.Errorf("unsafe path in archive: %s", name)
+	}
+	return target, false, nil
+}
+
 func extractTarGz(src, dst string) error {
 	f, err := os.Open(src)
 	if err != nil {
@@ -645,9 +665,12 @@ func extractTarGz(src, dst string) error {
 			return err
 		}
 		// Guard against path traversal.
-		target := filepath.Join(dst, hdr.Name)
-		if !strings.HasPrefix(target, filepath.Clean(dst)+string(os.PathSeparator)) {
-			return fmt.Errorf("unsafe path in archive: %s", hdr.Name)
+		target, isRoot, err := archiveEntryTarget(dst, hdr.Name, hdr.Typeflag == tar.TypeDir)
+		if err != nil {
+			return err
+		}
+		if isRoot {
+			continue
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
