@@ -520,9 +520,11 @@ var nonAdminTables = map[string]string{
 	// ADR-0162 §4 (ut-docs#4463): only the main till pulls the cloud
 	// catalogue; additional tills get the resulting catalogue rows, never
 	// the cloud-id bookkeeping or its refusal log.
-	"cloud_links":          "which local record a cloud catalogue row (entity, cloud_id) became — main-till pull bookkeeping, never synced (ut-docs#4463)",
-	"cloud_apply_failures": "the latest refusal per pulled cloud catalogue row — main-till pull bookkeeping, never synced (ut-docs#4463)",
-	"cloud_retired":        "option sets the cloud pull could only retire, whose delete it retries — main-till pull bookkeeping, never synced (ut-docs#4522)",
+	"cloud_links":           "which local record a cloud catalogue row (entity, cloud_id) became — main-till pull bookkeeping, never synced (ut-docs#4463)",
+	"cloud_apply_failures":  "the latest refusal per pulled cloud catalogue row — main-till pull bookkeeping, never synced (ut-docs#4463)",
+	"cloud_retired":         "option sets the cloud pull could only retire, whose delete it retries — main-till pull bookkeeping, never synced (ut-docs#4522)",
+	"cloud_outbox":          "the main till's catalogue edits not yet answered by the cloud — main-till upload bookkeeping, never synced (ut-docs#4464)",
+	"cloud_outbox_suppress": "a flag row that lives only inside the pull's own write transaction — never synced (ut-docs#4464)",
 
 	// Local bookkeeping with no shop-wide meaning.
 	"issue_reports_sent": "dedup record of bug reports already sent FROM this till",

@@ -62,6 +62,22 @@ func (r *runner) applyRow(ctx context.Context, tx *sql.Tx, row Row, gen int64, r
 		return false, r.recordRefusal(ctx, tx, row.Kind, boundID(row.CloudID), row.Version, idErr)
 	}
 	row.CloudID = cloudID
+	switch why, err := r.skip(ctx, tx, row); {
+	case err != nil:
+		return false, fmt.Errorf("catalogpull: %w", errors.Join(err, ctx.Err()))
+	case why != "":
+		// Not applied now, and not a refusal: the row still exists in the
+		// cloud, so a resync must not prune it.
+		if why == skipEcho {
+			res.Echoed++
+		} else {
+			res.Pending++
+		}
+		if terr := r.links.Touch(ctx, tx, row.Kind, row.CloudID, gen); terr != nil {
+			return false, fmt.Errorf("catalogpull: %w", terr)
+		}
+		return false, nil
+	}
 	var photos []replacedPhoto
 	err = data.WithSavepoint(ctx, tx, "cloud_pull_row", func() error {
 		var err error
@@ -174,6 +190,24 @@ func (r *runner) apply(ctx context.Context, tx *sql.Tx, row Row, gen int64) ([]r
 			return nil, err
 		}
 	}
+	// Field-wise apply (ADR-0162 §4): a field with an unanswered local
+	// edit waits for its upload's verdict; it keeps its base too.
+	var link data.CloudLinkState
+	if uploadable(row.Kind) && linked {
+		var ok bool
+		if link, ok, err = r.links.State(ctx, tx, row.Kind, row.CloudID); err != nil {
+			return nil, err
+		}
+		if ok && !r.forced {
+			pending, _, err := r.pendingFields(ctx, tx, row.Kind, local, link)
+			if err != nil {
+				return nil, err
+			}
+			for name := range pending {
+				delete(f, name)
+			}
+		}
+	}
 	var created bool
 	var changed []string
 	var photos []replacedPhoto
@@ -227,6 +261,16 @@ func (r *runner) apply(ctx context.Context, tx *sql.Tx, row Row, gen int64) ([]r
 	}
 	if err := r.links.Upsert(ctx, tx, data.CloudLink{Entity: row.Kind, CloudID: row.CloudID, LocalID: local, Version: row.Version, Gen: gen}); err != nil {
 		return nil, err
+	}
+	if uploadable(row.Kind) {
+		// The applied values are what the till now shares with the cloud.
+		base := baseFromRow(row.Kind, f, parseBase(link.Base))
+		if err := r.keptSKUBase(ctx, tx, row.Kind, local, f, base); err != nil {
+			return nil, err
+		}
+		if err := r.links.SetBase(ctx, tx, row.Kind, row.CloudID, base.encode()); err != nil {
+			return nil, err
+		}
 	}
 	if err := r.links.ClearFailure(ctx, tx, row.Kind, row.CloudID); err != nil {
 		return nil, err
@@ -1057,6 +1101,11 @@ func (r *runner) removeBarcode(ctx context.Context, tx *sql.Tx, cloudID, local s
 	if err != nil || held {
 		return false, err
 	}
+	if variantID == "" {
+		if err := r.dropBaseBarcode(ctx, tx, itemID, key); err != nil {
+			return false, err
+		}
+	}
 	return r.cat.DeleteOwnedBarcodeTx(ctx, tx, key, itemID, variantID)
 }
 
@@ -1130,6 +1179,11 @@ func (r *runner) applyBarcode(ctx context.Context, tx *sql.Tx, cloudID, prev str
 	if err != nil {
 		return "", false, err
 	}
+	if p.VariantID == "" {
+		if err := r.setBaseBarcode(ctx, tx, p.ItemID, *code, p.Barcode.Key, p.IsPrimary); err != nil {
+			return "", false, err
+		}
+	}
 	return local, created, nil
 }
 
@@ -1180,4 +1234,125 @@ func (r *runner) retryRetiredSet(ctx context.Context, tx *sql.Tx, rt data.CloudR
 		}
 	}
 	return r.links.DropRetired(ctx, tx, kindOptionSet, rt.LocalID)
+}
+
+// Why a row is not applied now (skip).
+const (
+	skipEcho    = "echo"
+	skipPending = "pending"
+)
+
+// skip reports why row is left for later, "" to apply it:
+//
+//   - echo: the row at the version of the till's own accepted upload
+//     (cloud_links.echo_version) — the till applied it with the answer;
+//   - pending: the till holds an unanswered edit of the row the pull must
+//     not overwrite (ADR-0162 §4) — a tombstone of a row with an outbox
+//     mark, a live row the till deleted (a pending delete), or an
+//     item-level barcode row of an item whose barcode set is a pending
+//     edit. The upload's answer settles it.
+//
+// An upload answer's own rows are never echoes, and a conflict answer's
+// (forced) never pending.
+func (r *runner) skip(ctx context.Context, tx *sql.Tx, row Row) (string, error) {
+	local, linked, err := r.localID(ctx, tx, row.Kind, row.CloudID)
+	if err != nil {
+		return "", err
+	}
+	if linked && !r.answering {
+		st, ok, err := r.links.State(ctx, tx, row.Kind, row.CloudID)
+		if err != nil {
+			return "", err
+		}
+		if ok && st.EchoVersion != 0 && row.Version == st.EchoVersion {
+			return skipEcho, nil
+		}
+		if ok && !r.resyncing && uploadable(row.Kind) && row.Version < st.Version {
+			// An upload answer already applied a newer version of the row
+			// (the feed lists a row once, at its latest version, so this is
+			// only a page read before that answer): never step back.
+			return skipEcho, nil
+		}
+	}
+	if r.forced {
+		return "", nil
+	}
+	switch row.Kind {
+	case kindItem, kindCategory, kindTaxCode:
+		if !linked {
+			return "", nil
+		}
+		marked, err := r.outbox.HasMark(ctx, tx, row.Kind, local)
+		if err != nil || !marked {
+			return "", err
+		}
+		if row.Deleted {
+			return skipPending, nil
+		}
+		l, err := r.readLocal(ctx, tx, row.Kind, local, nil)
+		if err != nil {
+			return "", err
+		}
+		if !l.exists {
+			return skipPending, nil
+		}
+	case kindItemBarcode:
+		itemID := ""
+		if linked {
+			itemID, _, _, _ = parseBarcodeLocalID(local)
+		} else if !row.Deleted {
+			if f, err := decodeFields(row.Data); err == nil {
+				variant, _, vNull, _ := f.str("variant_cloud_id")
+				item, _, _, _ := f.str("item_cloud_id")
+				if (variant == "" || vNull) && item != "" {
+					if id, err := canonicalID(item); err == nil {
+						if itemID, _, err = r.links.LocalID(ctx, tx, kindItem, id); err != nil {
+							return "", err
+						}
+					}
+				}
+			}
+		}
+		if itemID == "" {
+			return "", nil
+		}
+		marked, err := r.outbox.HasMark(ctx, tx, kindItem, itemID)
+		if err != nil || !marked {
+			return "", err
+		}
+		st, ok, err := r.links.StateByLocal(ctx, tx, kindItem, itemID)
+		if err != nil || !ok {
+			return "", err
+		}
+		base := parseBase(st.Base)
+		if base == nil {
+			return "", nil
+		}
+		l, err := r.readLocal(ctx, tx, kindItem, itemID, base)
+		if err != nil {
+			return "", err
+		}
+		if l.exists && keyList(l.keys) != baseKeys(base["barcodes"]) {
+			return skipPending, nil
+		}
+	}
+	return "", nil
+}
+
+// pruneExempt reports whether a stale link must survive a resync's prune
+// (ADR-0162 §4): a create not accepted by the cloud yet (version 0), or a
+// row with an unanswered local edit — both upload first.
+func (r *runner) pruneExempt(ctx context.Context, tx *sql.Tx, l data.CloudLink) (bool, error) {
+	if l.Version == 0 {
+		return true, nil
+	}
+	switch l.Entity {
+	case kindItem, kindCategory, kindTaxCode:
+		return r.outbox.HasMark(ctx, tx, l.Entity, l.LocalID)
+	case kindItemBarcode:
+		if itemID, _, _, ok := parseBarcodeLocalID(l.LocalID); ok && itemID != "" {
+			return r.outbox.HasMark(ctx, tx, kindItem, itemID)
+		}
+	}
+	return false, nil
 }

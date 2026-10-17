@@ -312,3 +312,78 @@ func TestTickReportServerErrorKeepsFingerprint(t *testing.T) {
 		t.Fatalf("fingerprint %q stored after a 503", v)
 	}
 }
+
+// ADR-0162 §5 (ut-docs#4464): a cloud-master main till uploads its own
+// edits in the same tick, BEFORE it pulls.
+func TestTickUploadsTheOutboxBeforeThePull(t *testing.T) {
+	d := openMigratedDB(t, "push.db")
+	settings := data.NewSettingsRepo(d.DB)
+	if err := settings.Set(context.Background(), "entitlement.catalog_master", "cloud"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO items (id, sku, name, base_price) VALUES ('local-1', 'L-1', 'Till scone', 300)`); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var order []string
+	var got []map[string]any
+	feed := &catalogFeed{}
+	cloud := &fakeCloud{entitlement: json.RawMessage(`{"plan":"shop","subscription_status":"active","catalog_master":"cloud"}`)}
+	mux := http.NewServeMux()
+	mux.Handle("/v1/stores/catalog", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		order = append(order, "pull")
+		mu.Unlock()
+		feed.ServeHTTP(w, r)
+	}))
+	mux.HandleFunc("/v1/stores/catalog/changes", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			StoreID string           `json:"store_id"`
+			Changes []map[string]any `json:"changes"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		mu.Lock()
+		order = append(order, "upload")
+		got = append(got, req.Changes...)
+		mu.Unlock()
+		results := []map[string]any{}
+		for _, c := range req.Changes {
+			results = append(results, map[string]any{"change_id": c["change_id"], "status": "accepted", "version": 1, "current": []any{}})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"results": results}, "error": nil})
+	})
+	mux.Handle("/", cloud.handler())
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	if err := Tick(context.Background(), testCfg(srv.URL), d.DB, Hooks{}); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(order) < 2 || order[0] != "upload" || order[1] != "pull" {
+		t.Fatalf("calls = %v, want the upload before the pull", order)
+	}
+	if len(got) != 1 || got[0]["op"] != "create" || got[0]["kind"] != "item" {
+		t.Fatalf("uploaded = %+v", got)
+	}
+}
+
+func TestTickNeverUploadsOnAReplica(t *testing.T) {
+	d := openMigratedDB(t, "push-replica.db")
+	settings := data.NewSettingsRepo(d.DB)
+	_ = settings.Set(context.Background(), "sync.primary_url", "https://main-till.local:8443")
+	calls := 0
+	cloud := &fakeCloud{entitlement: json.RawMessage(`{"plan":"shop","subscription_status":"active","catalog_master":"cloud"}`)}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/stores/catalog/changes", func(w http.ResponseWriter, r *http.Request) { calls++ })
+	mux.Handle("/v1/stores/catalog", &catalogFeed{})
+	mux.Handle("/", cloud.handler())
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	if err := Tick(context.Background(), testCfg(srv.URL), d.DB, Hooks{}); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("a replica uploaded (%d calls)", calls)
+	}
+}

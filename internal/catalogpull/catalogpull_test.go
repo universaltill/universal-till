@@ -441,10 +441,10 @@ func TestPullSkipsOtherKindsAndStillAdvances(t *testing.T) {
 }
 
 func TestPullApplierVersionBumpRepullsFromZero(t *testing.T) {
-	// Version 3 (ut-docs#4521) applies item variants and barcodes: a till
-	// that ran version 2 (ut-docs#4491) re-pulls.
-	if ApplierVersion != 3 {
-		t.Fatalf("ApplierVersion = %d, want 3", ApplierVersion)
+	// Version 4 (ut-docs#4464) keeps every uploadable row's base: a till
+	// that ran version 3 (ut-docs#4521) re-pulls, so its rows get one.
+	if ApplierVersion != 4 {
+		t.Fatalf("ApplierVersion = %d, want 4", ApplierVersion)
 	}
 	h := newHarness(t)
 	h.feed.add(itemFeedRow(1, 1, "A", 100))
@@ -453,7 +453,7 @@ func TestPullApplierVersionBumpRepullsFromZero(t *testing.T) {
 		t.Fatalf("applier version = %q, want %d", h.setting(KeyApplierVersion), ApplierVersion)
 	}
 	// A till whose stored applier is older than the code's.
-	if err := data.NewSettingsRepo(h.db).Set(context.Background(), KeyApplierVersion, "2"); err != nil {
+	if err := data.NewSettingsRepo(h.db).Set(context.Background(), KeyApplierVersion, "3"); err != nil {
 		t.Fatal(err)
 	}
 	h.mustRun()

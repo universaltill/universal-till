@@ -27,10 +27,11 @@ var catalogReportWarned atomic.Bool
 // report has been logged at Warn; reset once a report is accepted.
 var catalogReportRejectedWarned atomic.Bool
 
-// pullCloudCatalog runs the cloud catalogue pull (ADR-0162 §4,
-// ut-docs#4463; internal/catalogpull) when the cached entitlement block
-// says this store's catalogue is cloud-mastered, and reports whether the
-// catalogue changed. The caller has already checked this is the main till
+// pullCloudCatalog uploads the till's own catalogue edits (ADR-0162 §5,
+// ut-docs#4464) and then runs the cloud catalogue pull (§4, ut-docs#4463;
+// internal/catalogpull) when the cached entitlement block says this store's
+// catalogue is cloud-mastered, and reports whether the catalogue changed.
+// The caller has already checked this is the main till
 // and that this tick's check-in POST reached the cloud. Errors are logged,
 // never returned: the cursor stays and the next trigger retries, so a pull
 // failure can never turn a successful check-in into a failed one.
@@ -39,12 +40,18 @@ func pullCloudCatalog(ctx context.Context, cfg *config.Config, db *sql.DB, hooks
 		return false
 	}
 	m := enroll.Effective(cfg).Marketplace
-	fetch := catalogpull.NewHTTPFetcher(httpClient, m.EndpointURL, m.StoreID, m.MerchantToken)
-	res, err := catalogpull.Run(ctx, db, fetch, catalogpull.Options{
+	opt := catalogpull.Options{
 		ItemInLiveBasket:  hooks.CatalogItemInLiveBasket,
 		TaxRateRefused:    hooks.CatalogTaxRateRefused,
 		ItemPhotoReplaced: hooks.CatalogItemPhotoReplaced,
-	})
+	}
+	// Upload first, then pull (ADR-0162 §4/§5, ut-docs#4464): the till's
+	// own edits reach the cloud's conflict test before the feed could bring
+	// a newer cloud value over them (the pull also leaves a pending field
+	// alone when the upload could not run).
+	uploaded := pushCloudCatalog(ctx, db, catalogpull.NewHTTPPoster(httpClient, m.EndpointURL, m.StoreID, m.MerchantToken), opt)
+	fetch := catalogpull.NewHTTPFetcher(httpClient, m.EndpointURL, m.StoreID, m.MerchantToken)
+	res, err := catalogpull.Run(ctx, db, fetch, opt)
 	if err != nil {
 		logging.L().Warnf("cloudsync: catalogue pull stopped (kept what was applied; retried on the next check-in): %v", err)
 	}
@@ -71,6 +78,23 @@ func pullCloudCatalog(ctx context.Context, cfg *config.Config, db *sql.DB, hooks
 	}
 	if res.Applied > 0 || res.Refused > 0 || res.Pruned > 0 {
 		logging.L().Infof("cloudsync: catalogue pull: %d applied, %d refused, %d skipped, %d pruned", res.Applied, res.Refused, res.Skipped, res.Pruned)
+	}
+	return res.Changed || uploaded
+}
+
+// pushCloudCatalog uploads the outbox and reports whether an answer changed
+// the local catalogue. Errors are logged, never returned: the outbox stays
+// and the next trigger re-sends it.
+func pushCloudCatalog(ctx context.Context, db *sql.DB, post catalogpull.Poster, opt catalogpull.Options) bool {
+	res, err := catalogpull.Push(ctx, db, post, opt)
+	if err != nil {
+		logging.L().Warnf("cloudsync: catalogue upload stopped (kept the rest; re-sent on the next check-in): %v", err)
+	}
+	if res.Stopped != "" {
+		logging.L().Infof("cloudsync: catalogue upload not accepted now (%d %s); %d changes wait", res.StopStatus, res.Stopped, res.Pending)
+	}
+	if res.Sent > 0 {
+		logging.L().Infof("cloudsync: catalogue upload: %d sent, %d accepted, %d replaced by the cloud's row, %d re-minted, %d waiting", res.Sent, res.Accepted, res.Conflicts, res.Rejected, res.Pending)
 	}
 	return res.Changed
 }
