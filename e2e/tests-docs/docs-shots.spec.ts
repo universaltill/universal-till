@@ -14,7 +14,7 @@ import * as path from 'path';
 // e2e/run-till.sh (go run ./e2e/seed_demo) — the migrations stopped seeding
 // it in ut-docs#539. The AUTH till (8092) gets no sample data: the wizard
 // below never loads any (ut-docs#3709).
-const { repoRoot, LOCALES, routedTopics } = require('./lib');
+const { repoRoot, LOCALES, routedTopics, PINNED_FONTS, probePlatformFonts, fontPinProblem } = require('./lib');
 
 const imgRoot = path.join(repoRoot, 'web', 'help', 'img');
 
@@ -27,11 +27,15 @@ const AUTH_BASE = 'http://127.0.0.1:8092';
 const ADMIN_PIN = '482913'; // same PIN login.spec.ts sets, so a reused local auth server still logs in
 
 // Extra query params pinned per topic so no screenshot depends on when it was
-// taken. /reports' widgets look back N days from "now" — the till's DB is
-// fresh (no sales either way), but pin the lookback so the rendered filter
-// state can never drift with the calendar.
+// taken. The docs till carries three sales and two invoices at FIXED
+// December-2025 dates (ut-docs#359, e2e/seed_docs_sales), and both screens
+// default to a window anchored on the wall clock (/reports: the last 14 days;
+// /invoices: the current calendar month — neither reads internal/clock), so
+// each topic addresses the seeded month explicitly instead. Keep these in
+// step with the dates in seed_docs_sales/main.go.
 const pinnedQuery: Record<string, string> = {
-  reports: 'days=30',
+  reports: 'period=month&anchor=2025-12-15',
+  invoices: 'from=2025-12-01&to=2025-12-31',
 };
 
 // CLOCK-PINNED FOR DETERMINISM (ut-docs#930, was the accepted gap ut-docs#327
@@ -93,6 +97,18 @@ const pinnedQuery: Record<string, string> = {
 // rather than ship as "documentation".
 const MIN_BYTES = 4096;
 
+// Precondition (ut-docs#4407): the generating machine must resolve the app's
+// system-font stack to the pinned reference fonts (see PINNED_FONTS in
+// lib.js). Checked once per locale per worker; a failure fails the test.
+const fontsVerified = new Set<string>();
+async function assertPinnedFonts(page: Page, locale: string) {
+  if (fontsVerified.has(locale)) return;
+  const resolved = await probePlatformFonts(page, { arabic: ['fa', 'ar'].includes(locale) });
+  const problem = fontPinProblem(resolved, PINNED_FONTS);
+  if (problem) throw new Error(problem);
+  fontsVerified.add(locale);
+}
+
 async function capture(page: Page, id: string, locale: string, route: string) {
   const sep = route.includes('?') ? '&' : '?';
   let url = `${route}${sep}lang=${locale}`;
@@ -138,11 +154,15 @@ async function capture(page: Page, id: string, locale: string, route: string) {
     )
     .catch(() => {}); // no htmx on the page at all → nothing to wait for
 
-  // Let webfonts finish before capturing, or Arabic-script shots race the
-  // font swap.
+  // The app has no webfont, so glyphs come from system fonts: refuse to
+  // shoot on a machine that doesn't resolve the pinned ones (ut-docs#4407).
+  // Before the waits below so any reflow from the probe settles first.
+  await assertPinnedFonts(page, locale);
+
+  // Cheap no-op safety net (no webfonts today): let any font load finish.
   await page.evaluate(() => (document as any).fonts.ready);
 
-  // fonts.ready resolves when the font FILES have loaded, not when the
+  // fonts.ready resolves when any font FILES have loaded, not when the
   // browser has actually repainted the glyphs with them — a one-frame gap
   // that intermittently captured a page mid-swap (ut-docs#930: `invoices`
   // churning in a single locale on ~half of runs, with no source change).

@@ -37,6 +37,7 @@ var skippedPrefixes = []struct{ prefix, why string }{
 	{"/ext/", "external device surfaces (customer display, …), not operator pages"},
 	{"/v1/", "marketplace install protocol stubs, machine-to-machine"},
 	{"/plugin-icons/", "static icon assets"},
+	{"/plugin-fonts/", "static language-bundle font assets and their generated @font-face stylesheet (ut-docs#4374)"},
 	{"/themes/", "static theme assets"},
 	{"/help", "the manual's own self-referential routes"},
 	{"/public/", "static file server"},

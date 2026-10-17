@@ -102,6 +102,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	pluginPagesDir = paths.Plugins()
 	pluginThemesDir = paths.Plugins()
 	pluginIconsDir = paths.Plugins()
+	pluginFontsDir = paths.Plugins()
 	issuereport.PendingDir = paths.Data("issue-reports", "pending")
 	// Diagnostic-mode pending batches (ADR-0092 §3, ut-docs#2169) — same
 	// stable-data-dir convention; diagnostics.Flush MkdirAlls it before the
@@ -157,7 +158,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// Ed25519 WASM plugin install. See scripts/ci/audit-locale-render.sh.
 	//
 	// Wired as a wrapper AROUND the translator the plugin manager publishes
-	// to, not as a one-shot SetOverlays call after SetLocalizer: the manager
+	// to, not as a one-shot SetPluginLocales call after SetLocalizer: the manager
 	// re-publishes its overlays from scratch on every Reload (ReloadPlugins),
 	// which atomically replaces them -- a one-shot call is silently dropped
 	// the first time anything reloads plugins, including the boot-time
@@ -375,6 +376,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// `allowed` status-bar links are evaluated per request against the same
 	// menuPredicates the /menu grid uses — so a cashier sees neither.
 	httpx.InitRailVisibility(menuPredicateChecker(dp))
+	// ut-docs#4370: translate mode (ADR-0160 §7) — the T helper tags
+	// strings with their keys only for a request translateModeActive allows.
+	httpx.InitTranslateMode(func(r *http.Request) bool { return translateModeActive(dp, r) })
 	// ut-docs#3091: record this till's running version (and when it first
 	// ran it) and publish whether the after-update "what's new" chip shows.
 	recordRunningVersion(ctx, dp.Settings, releasenotes.Builtin(), buildinfo.Version, time.Now())
@@ -490,6 +494,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerThemes(mux, dp)
 	registerThemeSync(mux, dp) // ut-docs#2343: base.html's every-30s theme-sync poll
 	registerPluginIcons(mux)
+	registerPluginFonts(mux, dp) // language-bundle fonts (ADR-0160 §8, ut-docs#4374)
 	registerPluginsPage(mux, dp)
 	registerPluginAPI(mux, dp)
 	registerPluginPages(mux, dp)
@@ -555,10 +560,12 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerMainTillStatus(mux, dp)     // replica's main-till connectivity chip (ut-docs#2722, #2742)
 	registerCloudAuthChip(mux, dp)      // refused cloud credential chip (ADR-0116 D6, ut-docs#3524)
 	registerDiskSpaceChip(mux, dp)      // low-disk chip for managers (ut-docs#3121)
+	registerShopCurrencyChip(mux, dp)   // shop currency differs, for managers (ut-docs#4539)
 	registerReportArchiveChip(mux, dp)  // refused report upload chip (ADR-0147, ut-docs#574)
 	registerTillsRoster(mux, dp)        // Tills page roster, live link per till (ut-docs#2742)
 	registerTillRole(mux, dp)           // till role change, Tills page + joined till's own report (ut-docs#2781)
 	registerTillUpdateNow(mux, dp)      // Tills page "Update now" over the main-till link (ut-docs#2945)
+	registerTillRotateTLSKey(mux, dp)   // Tills page "Change network key" (ut-docs#4423)
 	// ut-docs#3095: the status-bar light's cloud reachability. Probes run
 	// lazily on /ui/net-status polls, each bounded by netreach's 5 s
 	// timeout and cancelled by bgCtx on shutdown.
@@ -811,10 +818,9 @@ func publishCachedSettings(ctx context.Context, store *settings.Store, st common
 	// the host detection, re-run here only when the hardware fingerprint
 	// changed — local file reads, never the network.
 	httpx.InitEffectsLevel(resolveEffectsLevel(ctx, store))
-	// ut-docs#2099/#2154: the self-order mode flag + the full
-	// display mode error_page.html's "Back to sale" link needs.
+	// ut-docs#2154: the display mode error_page.html's "Back to sale" link
+	// needs.
 	if mode, _, err := store.Get(ctx, "display.mode"); err == nil {
-		httpx.InitSelfOrderMode(mode == "self_order")
 		httpx.InitDisplayMode(mode)
 	} else {
 		logging.L().Warnf("settings: read display.mode: %v", err)

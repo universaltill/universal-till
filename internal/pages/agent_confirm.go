@@ -40,7 +40,14 @@ var agentResultTimeout = 5 * time.Second
 // With UT_AUTH=off (dev/CI) there is no signed-in user or session, so no
 // operator is stamped and every action_propose returns -2: an e2e test of
 // agent writes must sign in for real (ut-docs#4168).
+//
+// A ctx that already carries one keeps it: an action handler stamps the
+// operator before the ask, so a job started from its answer shares the
+// ask's request id (one chat turn, ut-docs#4143).
 func withAgentOperator(ctx context.Context) context.Context {
+	if _, ok := plugins.AskOperatorFrom(ctx); ok {
+		return ctx
+	}
 	u, ok := auth.FromContext(ctx)
 	session := auth.SessionKey(ctx)
 	if !ok || u.ID == "" || session == "" {
@@ -51,6 +58,32 @@ func withAgentOperator(ctx context.Context) context.Context {
 		return ctx
 	}
 	return plugins.WithAskOperator(ctx, agentaction.Operator{UserID: u.ID, Role: u.Role, Session: session, Request: hex.EncodeToString(b[:])})
+}
+
+// withAgentJobSession readies ctx (stamped by withAgentOperator) for a job
+// started from that ui ask (ADR-0153 "Who is asking", ut-docs#4143): the
+// job keeps the ask's operator, and core checks before each ai.agent host
+// call that the session that asked is still signed in, as the same user
+// with the same role — a job whose session has ended (logout, idle lock)
+// is refused. The check is auth.Service.SessionCheck: it holds only the
+// token's hash, never touches the session (a job never keeps it alive)
+// and, like a background poll, may itself be what idle-locks it. No
+// operator, no auth service or no session cookie: ctx unchanged, so the
+// job has no operator at all.
+func withAgentJobSession(ctx context.Context, d *common.Deps, r *http.Request) context.Context {
+	op, ok := plugins.AskOperatorFrom(ctx)
+	if !ok || d.AuthSvc == nil {
+		return ctx
+	}
+	c, err := r.Cookie(auth.CookieName)
+	if err != nil || c.Value == "" {
+		return ctx
+	}
+	check := d.AuthSvc.SessionCheck(c.Value)
+	return plugins.WithAskSessionLive(ctx, func(ctx context.Context) bool {
+		u, ok := check(ctx)
+		return ok && u.ID == op.UserID && u.Role == op.Role
+	})
 }
 
 // resolveAgentConfirms fills v's confirm cards for the signed-in operator;

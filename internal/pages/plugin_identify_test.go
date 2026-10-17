@@ -45,10 +45,14 @@ func newIdentifyHarness(t *testing.T) *identifyHarness {
 	h := &identifyHarness{viewHarness: newViewHarness(t)}
 	isolateTemp(t)
 	origReg, origWatch, origCaps := pluginJobs, pluginJobWatchEvery, pluginJobCaps
-	pluginJobs = newPluginJobRegistry()
+	reg := newPluginJobRegistry()
+	pluginJobs = reg
 	pluginJobWatchEvery = 10 * time.Millisecond
 	pluginJobCaps = func() (int, int) { return plugins.JobCaps("linux") }
-	t.Cleanup(func() { pluginJobs, pluginJobWatchEvery, pluginJobCaps = origReg, origWatch, origCaps })
+	t.Cleanup(func() {
+		drainPluginJobs(t, reg)
+		pluginJobs, pluginJobWatchEvery, pluginJobCaps = origReg, origWatch, origCaps
+	})
 	registerPluginIdentify(h.mux, h.d)
 	addIdentifyHook(t, h, viewPluginID)
 	if _, err := plugins.SharedBus(h.d.Db).SubscribeWithHandler(t.Context(), viewPluginID, []string{identifyEvent},

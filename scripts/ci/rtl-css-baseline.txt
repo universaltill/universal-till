@@ -1,0 +1,5 @@
+# Physical left/right CSS that predates guard-rtl-logical-css.sh (ut-docs#4375).
+# Shrink-only: <path relative to the repo root><TAB><the line, indentation trimmed>.
+# The guard fails on an entry that no longer matches, so a fixed line leaves this file.
+# New exceptions take a same-line `rtl:allow <reason>` marker instead.
+web/public/app.css	.toast { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);

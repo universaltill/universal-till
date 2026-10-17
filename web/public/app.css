@@ -108,9 +108,16 @@
    below is inert for them, not load-bearing. */
 :root { --fluid-fs: clamp(17px, min(13.57px + 0.335vw, 13.25px + 0.625vh), 20px); }
 html { font-size: calc(var(--ui-scale, 1) * var(--fluid-fs)); }
+/* --ut-bundle-fonts: the font subsets installed language bundles ship
+   (ADR-0160 §8, ut-docs#4374), declared by /plugin-fonts/bundle-fonts.css.
+   They sit AFTER the generic sans-serif on purpose: a bundle font only
+   draws glyphs the system fonts lack (a Thai or CJK script), never Latin
+   text or digits. Undefined (no bundle ships a font) → the fallback just
+   repeats sans-serif. */
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif,
+    var(--ut-bundle-fonts, sans-serif),
     "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Segoe UI Symbol";
   background: var(--bg);
   color: var(--text);
@@ -682,6 +689,11 @@ html.ut-scrim-on .nav .session-lock { position: relative; z-index: 1; pointer-ev
 /* ut-docs#3352 / ADR-0137: the shell Back (nav.html) points the way the
    page reads — its arrow mirrors in RTL, like .products-strip-back's. */
 html[dir="rtl"] .nav-back .nav-toggle-ico svg { transform: scaleX(-1); }
+/* ut-docs#4408: a page's text "← Back" link points the way the page reads.
+   The glyph is a bidi-neutral character, so it never mirrors on its own:
+   templates wrap it in .back-arrow (guarded by TestNoBareBackArrowGlyph). */
+.back-arrow { display: inline-block; }
+html[dir="rtl"] .back-arrow { transform: scaleX(-1); }
 /* An action, not a destination: no tile behind it, so it doesn't read as a
    fifth rail page (tap/hover feedback still tints it). */
 .nav-back { background: transparent; }
@@ -838,6 +850,11 @@ body.sale-screen .session-admin-link { display: none; }
 .kpi { text-align: center; padding: 1rem; }
 .kpi-label { font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
 .kpi-value { font-size: 1.6rem; font-weight: 700; color: var(--brand); margin-top: .15rem; }
+/* ut-docs#4226: a /backoffice Problems line is a raw log message — a failed
+   fetch logs its whole URL, one unbreakable word that pushed the page
+   past a phone's viewport (558px wide). Break it anywhere; the time cell
+   stays nowrap. */
+.backoffice-problem-msg { overflow-wrap: anywhere; }
 /* ut-docs#421: which report tab is open had no visual cue at all. Repeats
    the :hover pairing (not just .active alone) because .btn.secondary:hover
    below shares this rule's specificity and comes later in the cascade —
@@ -850,7 +867,7 @@ body.sale-screen .session-admin-link { display: none; }
 .page-head { display: flex; align-items: center; justify-content: space-between;
              gap: 1rem; margin: .25rem 0 1rem; }
 /* ut-docs#2092: page-scoped override for .page-head usages whose action
-   row is more than a title + one small control (currently catalog.html and journal_detail.html)
+   row is more than a title + one small control (`grep -l page-head-wrap web/ui` lists them)
    — lets the row drop to its own line at narrow widths instead of both
    flex children being squeezed onto one, never-wrapping line. */
 .page-head-wrap { flex-wrap: wrap; }
@@ -1268,7 +1285,10 @@ a.chip-warn { text-decoration: none; }
      selector outranks a bare `.btn`) and leaves white label text on a
      near-white button — which is how the add-variant row's "Save Variant"
      was rendered illegible before review. */
-  .vg-cols > :last-child { position: sticky; inset-inline-end: 0; z-index: 1; }
+  /* ut-docs#3605: a row's cells after the photo sit in a display:contents
+     fieldset[data-main-till-lock], so its Save is that fieldset's last child. */
+  .vg-cols > :last-child:not(fieldset),
+  .vg-cols > fieldset[data-main-till-lock]:last-child > :last-child { position: sticky; inset-inline-end: 0; z-index: 1; }
   .vg-head > :last-child { background: var(--surface); }
 }
 
@@ -3527,6 +3547,21 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
   .basket th:nth-child(4), .basket td:nth-child(4) { grid-area: total; }
   .basket th:nth-child(5), .basket td:nth-child(5) { grid-area: remove; }
 }
+/* ---------- Scan chooser (ut-docs#4344) ----------
+   A scanned code matched more than one kind (item, voucher, ...): one row
+   per answer at the top of #basket. In-flow like .pos-notice so it never
+   covers Pay, but it is not one: it never fades and stays until the
+   cashier picks, cancels or scans again. Shown on a phone's collapsed
+   basket too (the phone :not() list below). */
+.scan-choices { display: flex; flex-direction: column; gap: .4rem; flex-shrink: 0;
+  padding: .6rem; margin-block-end: .5rem; border-radius: var(--radius);
+  background: rgba(37, 99, 235, .1); border: 1px solid rgba(37, 99, 235, .3); }
+.scan-choices-title { margin: 0; font-weight: 600; font-size: .92rem; color: var(--text); overflow-wrap: anywhere; }
+.scan-choices .scan-choice { display: flex; flex-direction: column; align-items: flex-start;
+  inline-size: 100%; min-block-size: 48px; text-align: start; gap: .1rem; white-space: normal; }
+.scan-choice-kind { font-weight: 700; }
+.scan-choice-detail { font-weight: 400; overflow-wrap: anywhere; }
+.scan-choices .scan-choices-cancel { min-block-size: 48px; align-self: flex-end; }
 /* ---------- Sale-screen notices (ut-docs#213) ----------
    THE notification surface for the sale screen — one component, two slots:
    server-rendered inside #basket (partials/basket.html) and the client-side
@@ -4260,6 +4295,32 @@ tr.row-warn td { background: var(--warning-tint); }
 .import-welcome-actions, .import-sample-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
 .import-welcome-actions .btn, .import-sample-actions .btn { flex: 1 1 auto; }
 
+/* ut-docs#4431: "From another till system" — one block per installed API
+   importer: its name, its keys' set / not-set state, a link to its plugin
+   settings, Check & preview / Import, and an aria-live result area. The
+   fieldset is only the busy-disable scope (hx-disabled-elt), not a visual
+   group. Logical properties only (RTL). */
+.import-system-entry { border-block-start: 1px solid var(--border); padding-block: .8rem 0; margin-block-start: .6rem; }
+.import-system-entry h4 { margin-block: 0 .4rem; }
+.import-system-secrets { display: flex; flex-wrap: wrap; gap: .3rem 1.2rem; margin-block: 0 .6rem; }
+.import-system-secrets div { display: flex; gap: .4rem; align-items: baseline; }
+.import-system-secrets dt { font-weight: 600; }
+.import-system-secrets dd { margin: 0; }
+.import-system-secrets dd[data-secret-state="not-set"] { color: var(--warning); font-weight: 600; }
+.import-system-run { border: 0; padding: 0; margin: 0; min-inline-size: 0; }
+.import-system-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-block: .5rem; }
+.import-system-actions .btn { flex: 1 1 auto; min-height: 44px; }
+.import-system-busy { margin-block-start: .5rem; font-size: 1.05rem; font-weight: 600; }
+.import-system-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr)); gap: .4rem; margin-block: .5rem 0; }
+.import-system-counts div { border: 1px solid var(--border); border-radius: var(--radius); padding: .4rem .6rem; background: var(--surface); }
+.import-system-counts dt { font-size: .85rem; color: var(--muted); }
+.import-system-counts dd { margin: 0; font-size: 1.3rem; font-weight: 700; }
+.import-system-samples { overflow-x: auto; margin-block-start: .4rem; }
+.import-system-samples table { width: 100%; border-collapse: collapse; }
+.import-system-samples-title { font-weight: 600; margin-block: .3rem; }
+.import-system-samples th, .import-system-samples td { text-align: start; padding: .3rem .5rem; border-block-end: 1px solid var(--border); vertical-align: top; }
+.import-system-samples tr[data-sample-action="issue"] td { background: var(--warning-tint); }
+
 /* ---------- Kiosk mode (dedicated till: UT_KIOSK=1) ----------
    Touch-first: bigger targets, no text selection or tap highlights, no
    accidental pinch zoom. Pair with a fullscreen browser (chromium --kiosk);
@@ -4387,6 +4448,26 @@ body.login-screen {
    ("test-" / "2721-main"); it still breaks if it alone is wider than the
    line, so a long name can't overflow a 360px screen. */
 .join-notice-name { display: inline-block; max-width: 100%; overflow-wrap: anywhere; }
+/* ut-docs#3796: a till that already has sales is warned that linking
+   replaces them. The warning takes its own full-width row under the text;
+   it uses --text on the warning tint, not --warning (too low contrast on
+   its own tint, ut-docs#2680), with the warning colour as an edge. The
+   confirm's label is padded to a 44px row so the whole label is the
+   touch target, not just the box. */
+.join-notice-warning { flex-basis: 100%; margin: 0; padding: .45rem .7rem;
+  font-weight: 500; color: var(--text); background: var(--warning-tint);
+  border-inline-start: 3px solid var(--warning); border-radius: 4px; }
+.join-notice-confirm { display: inline-flex; align-items: center; gap: .35rem; }
+.join-notice-confirm input[type="checkbox"] { inline-size: 1.25rem; block-size: 1.25rem; margin: 0; }
+.join-notice-confirm .join-notice-label { display: inline-flex; align-items: center; min-block-size: 44px; }
+/* ut-docs#4507: the same warning and confirm above the Tills page's join
+   tabs; there it is a block in the card, so it needs its own spacing. */
+.tills-join .join-replace-warning { margin-block: .6rem .2rem; }
+/* ut-docs#4560: a join held back by the unticked confirm marks the warning
+   and the box (inline-actions.js markInvalid) — the native bubble alone
+   may never show on a WebKitGTK kiosk. */
+.join-replace-warning.field-invalid { border-inline-start-color: var(--danger); outline: 2px solid var(--danger); outline-offset: 1px; }
+.join-notice-confirm input[type="checkbox"].field-invalid { outline: 2px solid var(--danger); outline-offset: 2px; }
 .join-notice-status:not(:empty) { padding: .55rem 1rem; border-block-end: 1px solid rgba(37, 99, 235, .3); }
 
 /* Operator chip + lock button in the nav: a column, in the rail and in
@@ -4461,7 +4542,11 @@ body.login-screen {
     font-size: .75rem; line-height: 1.6; font-weight: 600; text-transform: uppercase;
     letter-spacing: .04em; color: var(--muted);
   }
-  table.t-cards tr > .t-cards-actions:empty { display: none; }
+  /* ut-docs#3441: `:empty` alone misses a cell whose template left only
+     whitespace text nodes (e.g. /orders' print-warning cell when nothing
+     failed), leaving a blank flex strip on every card. table-cards.js adds
+     .t-cards-blank for exactly that case. */
+  table.t-cards tr > .t-cards-actions:is(:empty, .t-cards-blank) { display: none; }
   table.t-cards tr > .t-cards-actions { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; }
   /* ut-docs#3357: a labelled actions CELL (a real column header, e.g.
      /orders' "Update") renders its buttons through the page's own
@@ -5226,6 +5311,18 @@ body.login-screen {
 }
 .statusbar a.sb-disk-low:hover { filter: brightness(0.92); }
 #sb-disk-space-mount:empty { display: none; }
+/* ut-docs#4539: the till's currency differs from the shop's on my.
+   (shop_currency_chip.html). Same amber pill as sb-disk-low: selling
+   carries on; a manager decides when to change the currency. Wraps for
+   the same reason (long in some locales). */
+.statusbar .sb-shop-currency {
+  color: #451a03; background: var(--warning, #d97706);
+  text-decoration: none; white-space: normal;
+  padding: .05rem .5rem; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem;
+}
+.statusbar a.sb-shop-currency:hover { filter: brightness(0.92); }
+#sb-shop-currency-mount:empty { display: none; }
 /* ut-docs#2742: the replica's one main-till light (main_till_status.html).
    Words carry the state; the dot only repeats it — filled green while
    linked, a hollow ring while polling (sync works, just not instantly).
@@ -5541,7 +5638,14 @@ body.login-screen {
 /* display: contents: a fieldset is its own block formatting context, so
    the margins around it stopped collapsing and some cards grew 6-11px on a
    main till (#2981 Tester); disabled still reaches its controls. */
-.set-lock { display: contents; border: 0; margin: 0; padding: 0; min-inline-size: 0; }
+/* ut-docs#3605: the catalogue's write-through controls sit in a
+   fieldset[data-main-till-lock] — same invisible frame, disabled (server
+   render + base.html's chip follower) while the main till is away. */
+.set-lock, fieldset[data-main-till-lock] { display: contents; border: 0; margin: 0; padding: 0; min-inline-size: 0; }
+/* A disabled text field looks like an enabled one in most themes (#3605
+   Tester): dim it like .btn:disabled so "can't type here" shows without
+   reading the note. */
+fieldset[data-main-till-lock]:disabled :is(input, textarea, select) { opacity: .55; cursor: not-allowed; }
 .set-lock-note { margin-block: .4rem; padding-block: .4rem; padding-inline: .6rem;
                  background: var(--warning-tint); color: var(--text);
                  border: 1px solid var(--warning-tint-border); border-radius: 6px; }
@@ -6335,7 +6439,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
     padding-block: .2rem; font-size: .8rem;
   }
   body.sale-screen.pos-sheet-open .statusbar { bottom: 0; }
-  html:not(.ut-scrim-on) body.sale-screen:not(.nav-drawer-open) .statusbar:not(:has(.sb-conn.is-offline, .sb-main-till, .sb-cloud-auth, .sb-report-archive, .sb-disk-low, .sb-power, .sb-update.is-stuck)) { display: none; }
+  html:not(.ut-scrim-on) body.sale-screen:not(.nav-drawer-open) .statusbar:not(:has(.sb-conn.is-offline, .sb-main-till, .sb-cloud-auth, .sb-report-archive, .sb-disk-low, .sb-shop-currency, .sb-power, .sb-update.is-stuck)) { display: none; }
   /* In the open drawer: its foot, one item per line, above the backdrop
      (the nav's stacking context is z-index 60). The drawer pads its end by
      the row's height so the last link scrolls clear of it. */
@@ -6378,7 +6482,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
     background: var(--surface); box-shadow: 0 -4px 16px rgba(15, 23, 42, .14);
     max-height: none; min-height: 0; overflow: visible;
   }
-  body:not(.pos-sheet-open) .pos-container > .basket:not(.receipt-view) > :not(.order-type-row):not(.basket-phonebar):not(.pos-notice) { display: none; }
+  body:not(.pos-sheet-open) .pos-container > .basket:not(.receipt-view) > :not(.order-type-row):not(.basket-phonebar):not(.pos-notice):not(.scan-choices) { display: none; }
   /* Product owner, 2026-09-29: Dine in | Takeaway sits NEXT TO the pay
      bar, one row (the approved mock-up), not on a row of its own above
      it. The order-type row becomes a contents box so its toggle is the
@@ -6741,3 +6845,54 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .plugin-slot { display: flex; flex-direction: column; gap: 1rem; margin-block: 1rem; }
 .plugin-slot-panel { min-inline-size: 0; }
 .plugin-slot-panel .plugin-view-title { font-size: 1.1rem; }
+
+/* ut-docs#4370 (ADR-0160 §7): translate mode. The key panel is a side
+   panel (.show(), data-ut-no-scrim) on the inline-end edge, above the page
+   and clear of the bottom status bar, so Lock and the Turn off control
+   stay reachable. Full width on a phone. */
+.translate-panel { position: fixed; inset-block: .5rem 2.6rem; inset-inline-start: auto; inset-inline-end: .5rem;
+  margin: 0; inline-size: min(24rem, calc(100vw - 1rem));
+  /* The UA gives <dialog> block-size: fit-content; both insets must win so
+     the body scrolls inside the screen instead of running off it. */
+  block-size: auto; max-block-size: none; z-index: 88;
+  display: none; flex-direction: column; padding: .75rem 1rem; border-radius: var(--radius);
+  background: var(--surface, #fff); color: inherit; border: 1px solid rgba(15,23,42,.15);
+  box-shadow: 0 10px 30px rgba(15,23,42,.25); }
+.translate-panel[open] { display: flex; }
+.translate-panel-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; flex: none; }
+.translate-panel-head h3 { margin: 0; font-size: 1.05rem; }
+.translate-panel-body { overflow-y: auto; min-block-size: 0; flex: 1 1 auto; overscroll-behavior: contain; padding-block-start: .5rem; }
+.translate-panel-facts { display: grid; grid-template-columns: minmax(0, 1fr); gap: .1rem; margin: 0 0 .75rem; }
+.translate-panel-facts dt { font-size: .8rem; font-weight: 600; opacity: .75; margin-block-start: .45rem; }
+.translate-panel-facts dd { margin: 0; overflow-wrap: anywhere; }
+.translate-panel-key { font-size: .95rem; user-select: all; }
+.translate-panel-placeholders { margin: 0; padding-inline-start: 1.2rem; }
+.translate-panel-section { border-block-start: 1px solid rgba(15,23,42,.12); padding-block: .6rem; }
+.translate-panel-section h4 { margin: 0 0 .4rem; font-size: .95rem; }
+.translate-panel-weblate { display: inline-flex; }
+.translate-panel-qr { display: block; margin: .6rem auto 0; inline-size: min(160px, 50vw, 25dvh); block-size: auto;
+  image-rendering: pixelated; background: #fff; padding: .3rem; border-radius: var(--radius); }
+.translate-panel-qr-hint { text-align: center; font-size: .85rem; }
+.translate-panel-override textarea { inline-size: 100%; box-sizing: border-box; font: inherit; }
+.translate-panel-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-block-start: .5rem; }
+.translate-panel-keys { display: flex; flex-wrap: wrap; gap: .4rem; margin-block-end: .5rem; }
+.translate-panel-keys .is-current { outline: 2px solid currentColor; }
+.translate-panel-areas { display: flex; flex-wrap: wrap; gap: .35rem; list-style: none; margin: 0; padding: 0; }
+.translate-panel-areas li { padding: .15rem .5rem; border-radius: 999px; background: rgba(15,23,42,.08); }
+.translate-panel-status { font-weight: 600; }
+/* Which texts carry a key: a dashed outline on hover (mouse), a solid one
+   on the text whose panel is open. Outline, not border: nothing moves. */
+html.ut-translate-mode [data-i18n-key]:hover { outline: 1px dashed #2563eb; outline-offset: 1px; }
+html.ut-translate-mode .ut-tm-selected { outline: 2px solid #2563eb; outline-offset: 1px; }
+/* Long-pressing a text must open the panel, not start a text selection
+   or the iOS callout. */
+html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.statusbar .sb-translate { gap: .5rem; color: #fde68a; }
+.statusbar .sb-translate-hint { white-space: normal; }
+.statusbar .sb-translate-off { border: 1px solid currentColor; background: transparent; color: inherit; font: inherit;
+  font-weight: 700; border-radius: 999px; padding: .1rem .7rem; min-block-size: 1.8rem; cursor: pointer; }
+.translate-mode-card h2 { display: flex; align-items: center; gap: .4rem; }
+@media (max-width: 480px) {
+  .translate-panel { inset-inline: 0; inset-block: 0 2.6rem; inline-size: 100vw; border-radius: 0; }
+  .statusbar .sb-translate-hint { display: none; }
+}

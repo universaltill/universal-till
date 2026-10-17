@@ -35,6 +35,15 @@ type ModifierGroupSave struct {
 	DetachCategoryIDs []string
 	AttachItemIDs     []string
 	DetachItemIDs     []string
+	// The fields below are set only by the cloud catalogue pull (ADR-0162
+	// §4, ut-docs#4491); no directive sends them. SortOrder sets the group
+	// row's own sort_order (a legacy column no read path orders by — the
+	// link rows carry each item's/category's order — kept so the cloud's
+	// value round-trips); it must not be negative, as a category's. Active
+	// sets is_active (UpdateGroup's flag); turning a group on checks its
+	// name against the other active groups, as a rename does.
+	SortOrder *int
+	Active    *bool
 }
 
 // ModifierGroupSaveResult reports what SaveGroup did.
@@ -52,25 +61,60 @@ type ModifierGroupSaveResult struct {
 // Idempotent: re-applying the same patch leaves the same state.
 func (r *ModifierRepo) SaveGroup(ctx context.Context, p ModifierGroupSave) (ModifierGroupSaveResult, error) {
 	var res ModifierGroupSaveResult
+	p, err := prepareGroupSave(p)
+	if err != nil {
+		return res, err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return res, fmt.Errorf("save modifier group: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if res, err = saveGroupTx(ctx, tx, p); err != nil {
+		return res, err
+	}
+	if err := tx.Commit(); err != nil {
+		return res, fmt.Errorf("save modifier group: commit: %w", err)
+	}
+	return res, nil
+}
+
+// SaveGroupTx is SaveGroup inside the caller's transaction — the cloud
+// catalogue pull's ≤100-row chunks (ADR-0162 §4, ut-docs#4491): the same
+// validation and write.
+func (r *ModifierRepo) SaveGroupTx(ctx context.Context, tx *sql.Tx, p ModifierGroupSave) (ModifierGroupSaveResult, error) {
+	p, err := prepareGroupSave(p)
+	if err != nil {
+		return ModifierGroupSaveResult{}, err
+	}
+	return saveGroupTx(ctx, tx, p)
+}
+
+// prepareGroupSave is SaveGroup's validation that needs no database: a
+// malformed patch never takes the write lock.
+func prepareGroupSave(p ModifierGroupSave) (ModifierGroupSave, error) {
 	p.ID = strings.TrimSpace(p.ID)
 	if p.ID == "" {
-		return res, errors.New("missing id")
+		return p, errors.New("missing id")
 	}
 	if p.Name != nil {
 		n := strings.TrimSpace(*p.Name)
 		if n == "" {
-			return res, errors.New("the modifier group name must not be blank")
+			return p, errors.New("the modifier group name must not be blank")
 		}
 		p.Name = &n
 	}
+	if p.SortOrder != nil && *p.SortOrder < 0 {
+		return p, errors.New("the sort order must not be negative")
+	}
 	if p.Options != nil {
 		if err := validateOptions(*p.Options); err != nil {
-			return res, err
+			return p, err
 		}
 	}
 	for _, pair := range [][2][]string{{p.AttachCategoryIDs, p.DetachCategoryIDs}, {p.AttachItemIDs, p.DetachItemIDs}} {
 		if len(pair[0]) > maxGroupAttachIDs || len(pair[1]) > maxGroupAttachIDs {
-			return res, fmt.Errorf("at most %d ids per attach or detach list", maxGroupAttachIDs)
+			return p, fmt.Errorf("at most %d ids per attach or detach list", maxGroupAttachIDs)
 		}
 		detach := map[string]bool{}
 		for _, id := range pair[1] {
@@ -78,21 +122,20 @@ func (r *ModifierRepo) SaveGroup(ctx context.Context, p ModifierGroupSave) (Modi
 		}
 		for _, id := range pair[0] {
 			if detach[strings.TrimSpace(id)] {
-				return res, fmt.Errorf("%s is both attached and detached", strings.TrimSpace(id))
+				return p, fmt.Errorf("%s is both attached and detached", strings.TrimSpace(id))
 			}
 		}
 	}
+	return p, nil
+}
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return res, fmt.Errorf("save modifier group: begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
+// saveGroupTx is SaveGroup's write, in tx, of a prepared patch.
+func saveGroupTx(ctx context.Context, tx *sql.Tx, p ModifierGroupSave) (ModifierGroupSaveResult, error) {
+	var res ModifierGroupSaveResult
 	var name string
 	var required, active bool
 	var minSel, maxSel int
-	err = tx.QueryRowContext(ctx, `SELECT name, required, min_select, max_select, is_active FROM item_modifier_groups WHERE id = ?`, p.ID).
+	err := tx.QueryRowContext(ctx, `SELECT name, required, min_select, max_select, is_active FROM item_modifier_groups WHERE id = ?`, p.ID).
 		Scan(&name, &required, &minSel, &maxSel, &active)
 	exists := true
 	switch {
@@ -107,18 +150,22 @@ func (r *ModifierRepo) SaveGroup(ctx context.Context, p ModifierGroupSave) (Modi
 	case err != nil:
 		return res, fmt.Errorf("save modifier group: load: %w", err)
 	}
+	if p.Active != nil {
+		active = *p.Active
+		res.Changed = append(res.Changed, "active")
+	}
 	if p.Name != nil {
-		if active {
-			var other string
-			err := tx.QueryRowContext(ctx, `SELECT name FROM item_modifier_groups WHERE is_active = 1 AND id <> ? AND lower(name) = lower(?) LIMIT 1`, p.ID, *p.Name).Scan(&other)
-			if err == nil {
-				return res, fmt.Errorf("a modifier group named %s already exists", *p.Name)
-			} else if !errors.Is(err, sql.ErrNoRows) {
-				return res, fmt.Errorf("save modifier group: name check: %w", err)
-			}
-		}
 		name = *p.Name
 		res.Changed = append(res.Changed, "name")
+	}
+	if (p.Name != nil || p.Active != nil) && active {
+		var other string
+		err := tx.QueryRowContext(ctx, `SELECT name FROM item_modifier_groups WHERE is_active = 1 AND id <> ? AND lower(name) = lower(?) LIMIT 1`, p.ID, name).Scan(&other)
+		if err == nil {
+			return res, fmt.Errorf("a modifier group named %s already exists", name)
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return res, fmt.Errorf("save modifier group: name check: %w", err)
+		}
 	}
 	if p.Required != nil {
 		required = *p.Required
@@ -139,16 +186,22 @@ func (r *ModifierRepo) SaveGroup(ctx context.Context, p ModifierGroupSave) (Modi
 		return res, errors.New("a required modifier group must ask for at least 1 choice")
 	}
 	if exists {
-		if _, err := tx.ExecContext(ctx, `UPDATE item_modifier_groups SET name = ?, required = ?, min_select = ?, max_select = ?, updated_at = datetime('now') WHERE id = ?`,
-			name, boolToInt(required), minSel, maxSel, p.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE item_modifier_groups SET name = ?, required = ?, min_select = ?, max_select = ?, is_active = ?, updated_at = datetime('now') WHERE id = ?`,
+			name, boolToInt(required), minSel, maxSel, boolToInt(active), p.ID); err != nil {
 			return res, fmt.Errorf("save modifier group: update: %w", err)
 		}
 	} else {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO item_modifier_groups (id, name, required, min_select, max_select, sort_order) VALUES (?, ?, ?, ?, ?, 0)`,
-			p.ID, name, boolToInt(required), minSel, maxSel); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO item_modifier_groups (id, name, required, min_select, max_select, sort_order, is_active) VALUES (?, ?, ?, ?, ?, 0, ?)`,
+			p.ID, name, boolToInt(required), minSel, maxSel, boolToInt(active)); err != nil {
 			return res, fmt.Errorf("save modifier group: insert: %w", err)
 		}
 		res.Created = true
+	}
+	if p.SortOrder != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE item_modifier_groups SET sort_order = ?, updated_at = datetime('now') WHERE id = ?`, *p.SortOrder, p.ID); err != nil {
+			return res, fmt.Errorf("save modifier group: sort order: %w", err)
+		}
+		res.Changed = append(res.Changed, "sort_order")
 	}
 
 	if p.Options != nil {
@@ -200,9 +253,6 @@ ON CONFLICT(item_id, group_id) DO NOTHING`, id, p.ID, id); err != nil {
 	}
 	if len(p.AttachItemIDs)+len(p.DetachItemIDs) > 0 {
 		res.Changed = append(res.Changed, "items")
-	}
-	if err := tx.Commit(); err != nil {
-		return res, fmt.Errorf("save modifier group: commit: %w", err)
 	}
 	res.Name = name
 	return res, nil
@@ -298,11 +348,21 @@ func requireRowTx(ctx context.Context, tx *sql.Tx, query, arg, msg string) error
 // and opt-outs; past sales unaffected) reporting whether a group was there
 // to delete — delete_modifier_group's "already deleted" replay answer.
 func (r *ModifierRepo) DeleteGroupIfExists(ctx context.Context, id string) (bool, error) {
+	return deleteGroupIfExists(ctx, r.db, id)
+}
+
+// DeleteGroupIfExistsTx is DeleteGroupIfExists inside the caller's
+// transaction (the cloud catalogue pull's tombstone, ut-docs#4491).
+func (r *ModifierRepo) DeleteGroupIfExistsTx(ctx context.Context, tx *sql.Tx, id string) (bool, error) {
+	return deleteGroupIfExists(ctx, tx, id)
+}
+
+func deleteGroupIfExists(ctx context.Context, ex execer, id string) (bool, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return false, errors.New("id required")
 	}
-	res, err := r.db.ExecContext(ctx, `DELETE FROM item_modifier_groups WHERE id = ?`, id)
+	res, err := ex.ExecContext(ctx, `DELETE FROM item_modifier_groups WHERE id = ?`, id)
 	if err != nil {
 		return false, fmt.Errorf("delete modifier group: %w", err)
 	}

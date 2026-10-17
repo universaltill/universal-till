@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -205,6 +206,11 @@ type Event struct {
 	// sale-path slot or an event-class deadline floor (isSalePathCall,
 	// timeoutForEvent). Host-side only: never serialised.
 	Scheduled bool `json:"-"`
+	// Publisher is the plugin that raised a hop > 0 event through
+	// event_publish (set by EnqueuePublished). Plugin ids can nest, so the
+	// event name alone does not say whose own event it is (ADR-0153
+	// amendment, ut-docs#4147). Host-side only: never serialised.
+	Publisher string `json:"-"`
 }
 
 // SaleCompletedEvent is the payload published on "sale.completed". It is the
@@ -688,7 +694,7 @@ func (eb *EventBus) publishWithID(ctx context.Context, id, eventType string, pay
 			handlerResp, err := sub.Handler(ctx, subEvent)
 			eb.mu.RLock()
 			if err != nil {
-				eb.auditDispatchWithDB(ctx, db, event.ID, eventType, sub.PluginID, "error", err.Error())
+				eb.auditDispatchWithDB(ctx, db, event.ID, eventType, sub.PluginID, handlerErrStatus(err), err.Error())
 				return "", nil, fmt.Errorf("blocking event %s failed for plugin %s: %w", eventType, sub.PluginID, err)
 			}
 			resp = handlerResp
@@ -726,6 +732,7 @@ func (eb *EventBus) EnqueuePublished(ctx context.Context, publisherID string, ev
 	defer eb.mu.RUnlock()
 	db := eb.db
 	dispatched := 0
+	ev.Publisher = publisherID
 	for _, sub := range eb.subscribers[ev.Type] {
 		if err := CheckPermission(ctx, db, sub.PluginID, "events:receive"); err != nil {
 			if ok, n := eb.shouldAuditPublishedDenied(sub.PluginID, ev.Type); ok {
@@ -819,6 +826,12 @@ func (eb *EventBus) AskFrom(ctx context.Context, eventType string, payload inter
 			continue
 		}
 		resp, err := sub.Handler(ctx, event)
+		if errors.Is(err, ErrEventDataClassDenied) {
+			// Withheld from an ai.agent plugin (ut-docs#4147): skipped like
+			// a refused events:receive, so another subscriber may answer.
+			eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "denied", err.Error())
+			continue
+		}
 		if err != nil {
 			eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "error", err.Error())
 			return nil, sub.PluginID, false, fmt.Errorf("ask %s failed for plugin %s: %w", eventType, sub.PluginID, err)
@@ -865,6 +878,12 @@ func (eb *EventBus) AskPlugin(ctx context.Context, pluginID, eventType string, p
 			continue
 		}
 		resp, err := sub.Handler(ctx, event)
+		if errors.Is(err, ErrEventDataClassDenied) {
+			// Withheld from an ai.agent plugin (ut-docs#4147): skipped like
+			// a refused events:receive, so the ask gets no answer.
+			eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "denied", err.Error())
+			continue
+		}
 		if err != nil {
 			eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "error", err.Error())
 			return nil, false, fmt.Errorf("ask %s failed for plugin %s: %w", eventType, sub.PluginID, err)

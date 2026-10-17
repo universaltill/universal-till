@@ -29,7 +29,9 @@
 </div>
 
 {{ if .SyncPrimary }}
-<div class="sync-banner" role="status">⚠ {{ if .SyncUnreachable }}{{ T "sync.banner_replica_main_till_unreachable" }}{{ else }}{{ T "sync.banner_replica_write_through" }}{{ end }}
+{{/* ut-docs#3605: both texts render, the inactive one hidden, so
+     base.html's chip follower can swap them while the page stays open. */}}
+<div class="sync-banner" role="status">⚠ <span data-main-till-away{{ if not .SyncUnreachable }} hidden{{ end }}>{{ T "sync.banner_replica_main_till_unreachable" }}</span><span data-main-till-here{{ if .SyncUnreachable }} hidden{{ end }}>{{ T "sync.banner_replica_write_through" }}</span>
   {{ if crossdevicelinkactionable }}
   <a href="{{ .SyncPrimary }}/inventory" target="_blank" rel="noopener" hx-boost="false">{{ T "sync.banner_open_primary" }}</a>
   {{ else }}

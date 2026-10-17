@@ -130,7 +130,7 @@ func fastClientOptions(cfg Config, tt *testTarget, rec *clientRec, level *atomic
 		Report: func(context.Context) Report {
 			return Report{Version: "v1.0.0", UpdateState: "idle", PushQueueDepth: 3}
 		},
-		OnHello: func(_ context.Context, h Hello) {
+		OnHello: func(_ context.Context, h Hello, _ string) {
 			rec.mu.Lock()
 			rec.hellos = append(rec.hellos, h)
 			rec.mu.Unlock()

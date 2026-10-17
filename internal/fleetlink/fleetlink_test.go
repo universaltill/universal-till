@@ -2,6 +2,8 @@ package fleetlink
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/universaltill/universal-till/internal/lantls"
 )
 
 // ---- envelope --------------------------------------------------------------
@@ -809,5 +812,78 @@ func TestLink_OnFrameTouchIsThrottled(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 	if n := touches.Load(); n != 1 {
 		t.Fatalf("touches = %d, want 1 (throttled)", n)
+	}
+}
+
+// Key rotation (ADR-0114 §7, ut-docs#4409): the main till's hello carries
+// its served pin and its pending next pin; a replica's report echoes the
+// next pin it holds. Both are untrusted LAN input, clipped like every
+// other field (a hex pin is exactly maxReportField bytes).
+func TestHello_NextPinRoundTripAndClip(t *testing.T) {
+	pin, next := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	b, err := json.Marshal(Hello{Role: "main", TLSPin: &pin, NextPin: next})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"next_pin":"`+next+`"`) {
+		t.Fatalf("hello %s lacks next_pin", b)
+	}
+	var h Hello
+	if err := json.Unmarshal(b, &h); err != nil {
+		t.Fatal(err)
+	}
+	if h.TLSPin == nil || *h.TLSPin != pin || h.NextPin != next {
+		t.Fatalf("hello round trip = %+v", h)
+	}
+	if b, _ := json.Marshal(Hello{Role: "main"}); strings.Contains(string(b), "next_pin") {
+		t.Fatalf("hello with no rotation pending sends next_pin: %s", b)
+	}
+	long := strings.Repeat("c", 500)
+	h = Hello{TLSPin: &long, NextPin: long}
+	h.clipStrings()
+	if len(*h.TLSPin) != maxReportField || len(h.NextPin) != maxReportField {
+		t.Fatalf("clipped tls_pin %d, next_pin %d bytes; want %d", len(*h.TLSPin), len(h.NextPin), maxReportField)
+	}
+}
+
+func TestReport_NextPinRoundTripAndClip(t *testing.T) {
+	next := strings.Repeat("b", 64)
+	b, err := json.Marshal(Report{Version: "v1", TLSPinned: true, NextPin: next})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, ok := decodeReport(b)
+	if !ok || r.NextPin != next {
+		t.Fatalf("report round trip = %+v ok=%v", r, ok)
+	}
+	if b, _ := json.Marshal(Report{Version: "v1"}); strings.Contains(string(b), "next_pin") {
+		t.Fatalf("report with no next pin sends next_pin: %s", b)
+	}
+	r, ok = decodeReport(json.RawMessage(`{"version":"v1","next_pin":"` + strings.Repeat("x", 500) + `"}`))
+	if !ok || len(r.NextPin) != maxReportField {
+		t.Fatalf("next_pin clipped to %d bytes; want %d", len(r.NextPin), maxReportField)
+	}
+}
+
+// The pin verified on the link's own connection (ut-docs#4409 review):
+// what a replica's rotation handling trusts, never the hello's
+// self-reported tls_pin. Plain HTTP verifies none.
+func TestVerifiedPinOf(t *testing.T) {
+	c, err := lantls.LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf := c.TLSConfig().Certificates[0].Leaf
+	if got := verifiedPinOf(&http.Response{TLS: &tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}}}); got != c.Pin() {
+		t.Fatalf("TLS response: pin %q; want %q", got, c.Pin())
+	}
+	for name, resp := range map[string]*http.Response{
+		"nil response":        nil,
+		"plain HTTP":          {},
+		"TLS, no certificate": {TLS: &tls.ConnectionState{}},
+	} {
+		if got := verifiedPinOf(resp); got != "" {
+			t.Errorf("%s: pin %q; want none", name, got)
+		}
 	}
 }

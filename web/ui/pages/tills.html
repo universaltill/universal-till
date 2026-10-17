@@ -1,7 +1,7 @@
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "tills.title" }}</h1>
-  <a class="btn secondary" href="/settings">← {{ T "settings.title" }}</a>
+  <a class="btn secondary" href="/settings"><span class="back-arrow" aria-hidden="true">←</span> {{ T "settings.title" }}</a>
 </div>
 
 {{/* ut-docs#2722: on a replica whose main till stopped answering — the
@@ -84,6 +84,25 @@
          "<field> is required" wording the rest of the app already uses
          (locations/registers/taxcodes .error.required). */}}
     <p id="pairing-till-name-error" class="field-error-msg" role="alert" hidden>{{ T "tills.pairing.error.name_required_field" }}</p>
+    {{/* ut-docs#4507: either tab's join replaces this till's whole DB with
+         the main till's copy, sales included. When this till already holds
+         sales (.HasSales, sync_api.go) it says so above both tabs, and a
+         required tick box — hx-include'd and validate:-guarded by both
+         tabs' requests, like the name — holds the request back until a
+         manager confirms. pair-start and /api/sync/join refuse without it
+         too. Same warning and label as the join notice (ut-docs#3796).
+         ut-docs#4560: the slot is always there, and both tabs always
+         include and validate the box (a missing one is skipped): a join
+         refused for sales fills it out of band (join_replace_slot.html,
+         keep the two identical) when the first sale landed after this
+         page rendered. */}}
+    <div id="pairing-replace-slot">{{ if .HasSales }}
+      <p class="join-notice-warning join-replace-warning" id="pairing-replace-warning">{{ T "tills.discovery.ambient.has_sales_warning" }}</p>
+      <span class="join-notice-confirm">
+        <input type="checkbox" id="pairing-replace-local" name="replace_local_data" value="1" required hx-preserve aria-describedby="pairing-replace-warning">
+        <label class="join-notice-label" for="pairing-replace-local">{{ T "tills.discovery.ambient.has_sales_confirm" }}</label>
+      </span>
+    {{ end }}</div>
     {{/* ut-docs#2781: "Join as" — the role this till asks to join as. Shared
          by both tabs like the name above (hx-include'd by id); the main till's
          manager can still change it on the approval card or later on Tills. */}}
@@ -107,8 +126,8 @@
            longer natively checked on submit — same explicit
            reportValidity() guard the discover button already needs for
            the same reason (ut-docs#1540). -->
-      <form hx-post="/api/sync/join" hx-include="#pairing-till-name, #pairing-join-role" hx-target="#join-msg" hx-swap="innerHTML"
-            data-before-request="trim-validate:pairing-till-name">
+      <form hx-post="/api/sync/join" hx-include="#pairing-till-name, #pairing-join-role, #pairing-replace-local" hx-target="#join-msg" hx-swap="innerHTML"
+            data-before-request="trim-validate:pairing-till-name validate:pairing-replace-local">
         {{/* ut-docs#3219: the main till shows a short XXX-XXX code plus its
              address; both are typed here. The address is ignored when the
              full (long) code is pasted instead, so it stays optional. */}}
@@ -229,14 +248,14 @@
           return '<li style="padding:.3rem 0">' + esc(p.name)
             + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + esc(p.till_id) + addrPart + '</span> '
             + '<button type="button" class="btn secondary" hx-post="/api/sync/pair-start" '
-            + 'hx-vals="' + escAttr(vals) + '" hx-include="#pairing-till-name, #pairing-join-role" '
+            + 'hx-vals="' + escAttr(vals) + '" hx-include="#pairing-till-name, #pairing-join-role, #pairing-replace-local" '
             // ut-docs#1540: same required-field guard as the setup wizard's
             // discovery button — this one lives outside a <form> too, so
             // the input's own `required` attribute needs an explicit
             // reportValidity() call to actually surface to the operator.
             // Trimming in place first is what makes a whitespace-only
             // entry fail `required` instead of cancelling silently.
-            + 'data-before-request="trim-validate:pairing-till-name" '
+            + 'data-before-request="trim-validate:pairing-till-name validate:pairing-replace-local" '
             + 'hx-target="#pairing-status-host" hx-swap="innerHTML">' + esc(i18n.requestBtn) + '</button></li>';
         }).join('') + '</ul>';
         htmx.process(out);

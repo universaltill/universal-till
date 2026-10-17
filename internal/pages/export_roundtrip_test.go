@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/universaltill/universal-till/internal/catimport"
+	"github.com/universaltill/universal-till/catimport"
 	"github.com/universaltill/universal-till/internal/data"
 )
 
@@ -128,7 +128,7 @@ func TestExportCatalogCSV_FormulaShapedValuesDefusedAndRoundTrip(t *testing.T) {
 // Rather than hardcoding a third copy of the trigger set (which could
 // itself silently drift from both), this sweeps candidate bytes as the
 // LEADING byte of two round-tripped values through the real
-// writeCatalogCSV (csvSafe) and catimport.Parse (stripCSVDefuse):
+// writeCatalogCSV (csvSafe) and catimport.Parse (StripCSVDefuse):
 //
 //   - plain(b): no leading apostrophe. If csvSafe defuses b but catimport's
 //     set doesn't recognize it to strip the apostrophe back off on import,
@@ -146,7 +146,7 @@ func TestExportCatalogCSV_FormulaShapedValuesDefusedAndRoundTrip(t *testing.T) {
 //     (Restricted to non-trigger b: for a byte csvSafe already treats as a
 //     trigger, "genuine apostrophe + trigger char" is indistinguishable
 //     from a defused value by design — the accepted, separately-documented
-//     non-injectivity trade-off on stripCSVDefuse, not drift. Whether b is
+//     non-injectivity trade-off on StripCSVDefuse, not drift. Whether b is
 //     "currently a trigger" is decided by calling the real csvSafe below,
 //     not a fourth hardcoded copy of the set — so a legitimate, synced
 //     addition of a new trigger char to both csvSafe and csvFormulaTriggers

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/universaltill/universal-till/catimport"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/uislot"
@@ -36,6 +37,13 @@ type Manifest struct {
 	MinPOSVersion string `json:"min_pos_version"` // Minimum POS version required
 	Signature     string `json:"signature"`       // Ed25519 signature of manifest (hex)
 	ArtifactHash  string `json:"artifact_hash"`   // SHA256 of the plugin artifact
+	// Signed content digest (ADR-0165, ut-docs#4546): ContentDigest covers
+	// every file in the package but manifest.json (ComputeContentDigest);
+	// ContentSignature is the marketplace's signature over the manifest
+	// with the digest kept. Both omitempty, so Signature's canonical bytes
+	// are unchanged for tills without this change.
+	ContentDigest    string `json:"content_digest,omitempty"`
+	ContentSignature string `json:"content_signature,omitempty"`
 
 	// Entries: pages, buttons, popups, etc.
 	Entries []ManifestEntry `json:"entries,omitempty"`
@@ -148,6 +156,26 @@ type ManifestEntry struct {
 	// type simply omits them.
 	Entities    []string `json:"entities,omitempty"`
 	FileFormats []string `json:"file_formats,omitempty"`
+	// Source is IMPORT-ONLY (ADR-0161, ut-docs#4429): "api" marks an entry
+	// that pulls from another system over its API instead of reading an
+	// uploaded file — POST /api/data/import then takes no file, and the
+	// plugin hands rows back through import_rows_submit. "file" (ADR-0164
+	// §2, ut-docs#4526) marks a file-rows entry: it parses the uploaded
+	// file in the import sandbox (file + rows + log only, no network, no
+	// settings or secrets) and hands rows back the same way, so the same
+	// .wasm also runs in ut-cloud's import host. "" = a legacy file entry
+	// (ut-docs#599: it answers counts, never rows). validateImportEntrySource.
+	// ut-cloud's CanonicalEntry must mirror it (same position, same tag) or
+	// the marketplace signer strips it.
+	Source string `json:"source,omitempty"`
+	// FileHeaders is FILE-ROWS-ONLY (ADR-0164 §2, ut-docs#4526): the
+	// column names that identify this system's export. A file is offered
+	// to the entry when its extension is one of FileFormats AND its header
+	// row holds every one of these (trimmed, case-insensitive) —
+	// FileClaims. Required when FileFormats names a generic spreadsheet
+	// extension (genericSheetFormats), so no plugin claims every .csv.
+	// ut-cloud's CanonicalEntry must mirror it.
+	FileHeaders []string `json:"file_headers,omitempty"`
 
 	// View names the plugin view this entry renders and Slot the core
 	// content slot it fills (ADR-0121 §7; one of contentSlots). Both
@@ -176,7 +204,7 @@ type ManifestEntry struct {
 // data.PageEntryRow.View) and Slot under "content_slot" -- not "slot",
 // which is a layout entry's own config key (uislot.ParseAmendmentsJSON).
 func entryConfigJSON(e ManifestEntry) string {
-	if len(e.Config) == 0 && len(e.Entities) == 0 && len(e.FileFormats) == 0 && e.View == "" && e.Slot == "" && e.OpensView == "" {
+	if len(e.Config) == 0 && len(e.Entities) == 0 && len(e.FileFormats) == 0 && e.Source == "" && len(e.FileHeaders) == 0 && e.View == "" && e.Slot == "" && e.OpensView == "" {
 		return ""
 	}
 	m := make(map[string]interface{}, len(e.Config)+5)
@@ -194,6 +222,16 @@ func entryConfigJSON(e ManifestEntry) string {
 	}
 	if len(e.FileFormats) > 0 {
 		m["file_formats"] = e.FileFormats
+	}
+	// ADR-0161: "source" is only ever the typed, validated field.
+	delete(m, "source")
+	if e.Source != "" {
+		m["source"] = e.Source
+	}
+	// ADR-0164 §2: likewise "file_headers" (trimmed, as validated).
+	delete(m, "file_headers")
+	if hs := trimmedFileHeaders(e.FileHeaders); len(hs) > 0 {
+		m["file_headers"] = hs
 	}
 	if e.View != "" {
 		m["view"] = e.View
@@ -656,9 +694,9 @@ func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql
 }
 
 // reservedPageRoutePrefixes are the namespaces core owns (ut-docs#3786):
-// /api, /ui, /v1 carry core's handlers; /public, /ext, /plugin-icons are
-// core subtrees (defense-in-depth — the mux never lets their children reach
-// the catch-all); /self-order, /o, /themes are auth-exempt (auth.exempt), so
+// /api, /ui, /v1 carry core's handlers; /public, /ext, /plugin-icons,
+// /plugin-fonts are core subtrees (defense-in-depth — the mux never lets
+// their children reach the catch-all); /self-order, /o, /themes are auth-exempt (auth.exempt), so
 // a plugin page there would reach anonymous customers and the kiosk.
 // /help, /orders, /journal, /plugins, /refund, /invoice, /kitchen-display,
 // /vouchers (ut-docs#4251) have {wildcard} children (GET /help/{topic}), so a deeper path
@@ -677,7 +715,7 @@ func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql
 // TestReservedPageRoutesCoverLiteralChildNamespaces pin the wildcard and
 // literal-child halves against the real mux registrations.
 var reservedPageRoutePrefixes = []string{
-	"/api", "/ui", "/v1", "/public", "/ext", "/plugin-icons", "/self-order", "/o", "/themes",
+	"/api", "/ui", "/v1", "/public", "/ext", "/plugin-icons", "/plugin-fonts", "/self-order", "/o", "/themes",
 	"/help", "/orders", "/journal", "/plugins", "/refund", "/invoice", "/kitchen-display", "/vouchers",
 	"/settings", "/catalog", "/users", "/open-orders", "/recovery",
 }
@@ -697,6 +735,123 @@ func ReservedPageRoutePrefix(route string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// ManifestEntry.Source values: ImportSourceAPI (ADR-0161) and
+// ImportSourceFile (ADR-0164 §2). "" is a legacy file entry.
+const (
+	ImportSourceAPI  = "api"
+	ImportSourceFile = "file"
+)
+
+// File-rows entry bounds (ADR-0164 §2): FileHeadersMin..FileHeadersMax
+// claim columns, each 1..FileHeaderMaxBytes bytes once trimmed. Two at
+// least, so one common column ("Name") never claims every file.
+const (
+	FileHeadersMin     = 2
+	FileHeadersMax     = 16
+	FileHeaderMaxBytes = 128
+)
+
+// genericSheetFormats are the extensions many systems' files share — any
+// spreadsheet or data export, and the formats the till's standard importer
+// reads itself (.bkp). A file-rows entry reading one must claim files by
+// header (file_headers), or it would take over every upload of that kind.
+var genericSheetFormats = map[string]bool{
+	"csv": true, "tsv": true, "txt": true, "xlsx": true, "xls": true, "xlsm": true, "ods": true,
+	"json": true, "xml": true, "zip": true, "bkp": true,
+}
+
+// NormalizeFileFormat lower-cases a declared or uploaded extension and
+// drops its leading dot (".CSV" → "csv").
+func NormalizeFileFormat(f string) string {
+	return strings.ToLower(strings.TrimPrefix(strings.TrimSpace(f), "."))
+}
+
+// trimmedFileHeaders is FileHeaders as stored: trimmed, blanks dropped.
+func trimmedFileHeaders(hs []string) []string {
+	var out []string
+	for _, h := range hs {
+		if h = strings.TrimSpace(h); h != "" {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// validateImportEntrySource (ADR-0161 ut-docs#4429, ADR-0164 §2
+// ut-docs#4526): source is import-only, with the values "api" and "file".
+// An api entry reads no file, so it declares no file_formats. A file-rows
+// entry reads the file formats it declares, submits items (so it declares
+// the items entity), and claims a generic spreadsheet only by its header
+// row. file_headers belongs to file-rows entries alone.
+func validateImportEntrySource(entries []ManifestEntry) error {
+	for _, e := range entries {
+		if e.Source == "" && len(e.FileHeaders) == 0 {
+			continue
+		}
+		if e.Type != "import" {
+			return fmt.Errorf("entry %q: source and file_headers are only valid on an import entry", e.Key)
+		}
+		switch e.Source {
+		case ImportSourceAPI:
+			if len(e.FileFormats) > 0 {
+				return fmt.Errorf("import entry %q: an api source reads no file, so it declares no file_formats", e.Key)
+			}
+			if len(e.FileHeaders) > 0 {
+				return fmt.Errorf("import entry %q: an api source reads no file, so it declares no file_headers", e.Key)
+			}
+		case ImportSourceFile:
+			if err := validateFileRowsEntry(e); err != nil {
+				return err
+			}
+		case "":
+			return fmt.Errorf("import entry %q: file_headers needs \"source\": %q (a file-rows entry)", e.Key, ImportSourceFile)
+		default:
+			return fmt.Errorf("import entry %q: unknown source %q (the values are %q and %q)", e.Key, e.Source, ImportSourceAPI, ImportSourceFile)
+		}
+	}
+	return nil
+}
+
+// validateFileRowsEntry checks one "source": "file" entry.
+func validateFileRowsEntry(e ManifestEntry) error {
+	if len(e.FileFormats) == 0 {
+		return fmt.Errorf("import entry %q: a file source declares the file_formats it reads", e.Key)
+	}
+	items := false
+	for _, ent := range e.Entities {
+		items = items || ent == "items"
+	}
+	if !items {
+		return fmt.Errorf("import entry %q: a file source submits item rows, so it declares the items entity", e.Key)
+	}
+	if len(e.FileHeaders) > FileHeadersMax || (len(e.FileHeaders) > 0 && len(e.FileHeaders) < FileHeadersMin) {
+		return fmt.Errorf("import entry %q: %d to %d file_headers", e.Key, FileHeadersMin, FileHeadersMax)
+	}
+	vendorColumn := false
+	for _, h := range e.FileHeaders {
+		h = strings.TrimSpace(h)
+		if h == "" || len(h) > FileHeaderMaxBytes {
+			return fmt.Errorf("import entry %q: each file_headers name is 1 to %d bytes", e.Key, FileHeaderMaxBytes)
+		}
+		vendorColumn = vendorColumn || !catimport.NeutralHeader(h)
+	}
+	// A claim of neutral catalogue columns only (name, price, sku, …, as
+	// the standard importer reads them — catimport.NeutralHeader) would
+	// take over ordinary catalogue files; the export's own column must
+	// identify it.
+	if len(e.FileHeaders) > 0 && !vendorColumn {
+		return fmt.Errorf("import entry %q: file_headers must name at least one column specific to the export, not only neutral catalogue columns (name, price, sku, barcode, category, …)", e.Key)
+	}
+	if len(e.FileHeaders) == 0 {
+		for _, f := range e.FileFormats {
+			if genericSheetFormats[NormalizeFileFormat(f)] {
+				return fmt.Errorf("import entry %q: a file source reading %q must declare file_headers, the header row that identifies its export", e.Key, f)
+			}
+		}
+	}
+	return nil
 }
 
 // validatePageEntryIcon enforces the install-time half of ut-docs#1734
@@ -1118,6 +1273,11 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 	// 0j. A button's opens_view names one of its own overlay-able page
 	// views (ADR-0149 §6, ut-docs#3699).
 	if err := validateButtonOpensView(m.Entries); err != nil {
+		return err
+	}
+
+	// 0k. An import entry's source is "api" or absent (ADR-0161).
+	if err := validateImportEntrySource(m.Entries); err != nil {
 		return err
 	}
 

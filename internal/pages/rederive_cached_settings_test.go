@@ -116,6 +116,7 @@ var notSettingsDerived = map[string]string{
 	"InitKiosk":          "UT_KIOSK env var, not a setting",
 	"InitRailAmendments": "wires a live accessor (reads Deps on every render), not a cached value",
 	"InitRailVisibility": "wires a live per-request permission checker (ut-docs#3079), not a cached value",
+	"InitTranslateMode":  "wires a live per-request translate-mode check (cookie + permission + kiosk mode, ut-docs#4370), not a cached value",
 }
 
 // TestCachedSettingsGlobals_AllPublishedByOneHelper (ut-docs#2790 guard):

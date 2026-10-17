@@ -5,11 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/universaltill/universal-till/internal/barcode"
+	"github.com/universaltill/universal-till/catimport/barcode"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -1038,11 +1039,21 @@ func (r *CatalogRepo) deleteBarcodeExact(ctx context.Context, barcode string) (b
 // (rate, takeaway) pair: re-running an import must not create duplicate tax
 // codes, the same idempotency principle as the rest of catalog import.
 func (r *CatalogRepo) FindOrCreateTaxCode(ctx context.Context, rateBP int, takeawayBP *int) (string, bool, error) {
+	return findOrCreateTaxCodeExec(ctx, r.db, rateBP, takeawayBP)
+}
+
+// FindOrCreateTaxCodeTx is FindOrCreateTaxCode inside the caller's
+// transaction (ADR-0161) — one rule for both import paths.
+func (r *CatalogRepo) FindOrCreateTaxCodeTx(ctx context.Context, tx *sql.Tx, rateBP int, takeawayBP *int) (string, bool, error) {
+	return findOrCreateTaxCodeExec(ctx, tx, rateBP, takeawayBP)
+}
+
+func findOrCreateTaxCodeExec(ctx context.Context, ex execer, rateBP int, takeawayBP *int) (string, bool, error) {
 	// SQLite: `= NULL` never matches, `IS ?` with a nullable bound
 	// parameter compares NULL-safely, so one query covers both shapes.
 	find := func() (string, error) {
 		var id string
-		err := r.db.QueryRowContext(ctx, `
+		err := ex.QueryRowContext(ctx, `
 SELECT id FROM tax_codes
 WHERE rate_basis_points = ? AND takeaway_rate_basis_points IS ?
 ORDER BY id LIMIT 1`, rateBP, nullableIntPtr(takeawayBP)).Scan(&id)
@@ -1066,7 +1077,7 @@ ORDER BY id LIMIT 1`, rateBP, nullableIntPtr(takeawayBP)).Scan(&id)
 		name = fmt.Sprintf("Imported %s%% (takeaway %s%%)", taxrate.FormatPercent(rateBP), taxrate.FormatPercent(*takeawayBP))
 	}
 	id = uuid.NewString()
-	_, insErr := r.db.ExecContext(ctx, `
+	_, insErr := ex.ExecContext(ctx, `
 INSERT INTO tax_codes (id, name, rate_basis_points, takeaway_rate_basis_points, is_active)
 VALUES (?, ?, ?, ?, 1)`, id, name, rateBP, nullableIntPtr(takeawayBP))
 	if insErr == nil {
@@ -1914,9 +1925,9 @@ func rowExists(ctx context.Context, tx *sql.Tx, query, arg string) (bool, error)
 
 // activeItemCountForCategory counts currently-active items pointing at
 // categoryID — shared by SetCategoryActive's deactivate guard.
-func (r *CatalogRepo) activeItemCountForCategory(ctx context.Context, categoryID string) (int, error) {
+func activeItemCountForCategory(ctx context.Context, ex execer, categoryID string) (int, error) {
 	var n int
-	if err := r.db.QueryRowContext(ctx,
+	if err := ex.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM items WHERE category_id = ? AND is_active = 1`, categoryID).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count active items for category: %w", err)
 	}
@@ -1930,8 +1941,19 @@ func (r *CatalogRepo) activeItemCountForCategory(ctx context.Context, categoryID
 // silently reassigning those items to "uncategorised" or cascading the
 // deactivation onto them. Reactivating never needs this guard.
 func (r *CatalogRepo) SetCategoryActive(ctx context.Context, id string, active bool) error {
+	return setCategoryActiveExec(ctx, r.db, id, active)
+}
+
+// SetCategoryActiveTx is SetCategoryActive inside the caller's transaction
+// (the cloud catalogue pull, ADR-0162 §4, ut-docs#4463) — the same
+// has-active-items refusal.
+func (r *CatalogRepo) SetCategoryActiveTx(ctx context.Context, tx *sql.Tx, id string, active bool) error {
+	return setCategoryActiveExec(ctx, tx, id, active)
+}
+
+func setCategoryActiveExec(ctx context.Context, ex execer, id string, active bool) error {
 	if !active {
-		n, err := r.activeItemCountForCategory(ctx, id)
+		n, err := activeItemCountForCategory(ctx, ex, id)
 		if err != nil {
 			return err
 		}
@@ -1943,7 +1965,7 @@ func (r *CatalogRepo) SetCategoryActive(ctx context.Context, id string, active b
 	if active {
 		v = 1
 	}
-	res, err := r.db.ExecContext(ctx, `UPDATE categories SET is_active = ?, updated_at = datetime('now') WHERE id = ?`, v, id)
+	res, err := ex.ExecContext(ctx, `UPDATE categories SET is_active = ?, updated_at = datetime('now') WHERE id = ?`, v, id)
 	if err != nil {
 		return fmt.Errorf("set category active: %w", err)
 	}
@@ -2138,6 +2160,32 @@ func (r *CatalogRepo) DeactivateItem(ctx context.Context, itemID string) error {
 	if itemID == "" {
 		return errors.New("itemID required")
 	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("deactivate item: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := deactivateItemTx(ctx, tx, itemID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("deactivate item: commit: %w", err)
+	}
+	return nil
+}
+
+// DeactivateItemTx is DeactivateItem inside the caller's transaction (the
+// cloud catalogue pull's tombstone rule for an item that cannot be deleted,
+// ADR-0162 §4, ut-docs#4463). An unknown or already inactive item is
+// ErrItemNotFound, as DeactivateItem.
+func (r *CatalogRepo) DeactivateItemTx(ctx context.Context, tx *sql.Tx, itemID string) error {
+	if itemID == "" {
+		return errors.New("itemID required")
+	}
+	return deactivateItemTx(ctx, tx, itemID)
+}
+
+func deactivateItemTx(ctx context.Context, tx *sql.Tx, itemID string) error {
 	// ut-docs#2541 review finding 4: AND is_active = 1 plus a RowsAffected
 	// check -- an unknown id or one that's already inactive must refuse
 	// with ErrItemNotFound, not silently no-op (its own doc comment has the
@@ -2145,11 +2193,6 @@ func (r *CatalogRepo) DeactivateItem(ctx context.Context, itemID string) error {
 	// The item and its variants' cascade commit together (ut-docs#4348): a
 	// half-applied switch-off would leave variants live under a dead item,
 	// or retired without the flag that brings them back.
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("deactivate item: begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
 	res, err := tx.ExecContext(ctx, `UPDATE items SET is_active = 0, updated_at = datetime('now') WHERE id = ? AND is_active = 1`, itemID)
 	if err != nil {
 		return fmt.Errorf("deactivate item: %w", err)
@@ -2161,9 +2204,6 @@ func (r *CatalogRepo) DeactivateItem(ctx context.Context, itemID string) error {
 	}
 	if err := cascadeItemActiveToVariants(ctx, tx, itemID, true, false); err != nil {
 		return fmt.Errorf("deactivate item: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("deactivate item: commit: %w", err)
 	}
 	return nil
 }
@@ -3587,6 +3627,26 @@ func (r *CatalogRepo) NormalizeBarcode(ctx context.Context, in catalogtypes.Barc
 	return in, err
 }
 
+// NormalizeTypedBarcode is NormalizeBarcode for a barcode its producer
+// already decoded (an ADR-0051 row's barcode_type, ut-docs#4525): in.Barcode
+// is that decode's lookup key, so it is stored as typed, never re-matched —
+// re-matching an embedded-data key (its check digit zeroed) decodes it a
+// second time onto a different symbology, or none (ut-docs#936). The type
+// must be one the shop has enabled, and in.Barcode exactly that type's
+// lookup key; otherwise it is refused with ErrBarcodeNoSymbologyMatch.
+func (r *CatalogRepo) NormalizeTypedBarcode(ctx context.Context, in catalogtypes.BarcodeInput) (catalogtypes.BarcodeInput, error) {
+	in.BarcodeType = strings.ToUpper(strings.TrimSpace(in.BarcodeType))
+	enabledIDs, err := r.settings.EnabledBarcodeSymbologies(ctx)
+	if err != nil {
+		logging.L().Warnf("catalog: typed barcode: enabled symbologies unavailable, using defaults: %v", err)
+	}
+	if !slices.Contains(enabledIDs, in.BarcodeType) || !barcode.Default().IsLookupKey(in.BarcodeType, in.Barcode) {
+		return in, fmt.Errorf("%w: %q as %s (enabled: %s)",
+			ErrBarcodeNoSymbologyMatch, in.Barcode, in.BarcodeType, strings.Join(enabledIDs, ", "))
+	}
+	return r.NormalizeBarcode(ctx, in)
+}
+
 // AddNormalizedBarcodeTx is AddBarcode's check-then-insert inside the
 // caller's transaction, for an input NormalizeBarcode returned (an
 // AI-agent item create attaches its barcode in the item's transaction, so
@@ -3700,7 +3760,7 @@ WHERE item_barcodes.item_id = excluded.item_id
 	return nil
 }
 
-// validEAN13 delegates to the shared internal/barcode checksum (ADR-0059
+// validEAN13 delegates to the shared catimport/barcode checksum (ADR-0059
 // Decision §1 — "reuse/extract ... rather than duplicating it") instead of
 // keeping its own copy of the GS1 check-digit algorithm.
 func validEAN13(code string) bool {

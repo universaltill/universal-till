@@ -2067,6 +2067,7 @@ utSellCamera(function(){
   var drag = null;      // { tile, cell, pointerId, offX, offY, moved, onLost }
 
   function grid() { return document.getElementById('buttons-grid'); }
+  function translateModeOn() { return document.documentElement.classList.contains('ut-translate-mode'); }
   function bar() { return document.querySelector('.products-finder .jiggle-bar'); }
   // ut-docs#2294 fallout: #buttons-grid-all (the All grid, every active
   // catalog item -- not just quick buttons) renders INSIDE #buttons-grid,
@@ -2497,6 +2498,9 @@ utSellCamera(function(){
     }
     if (active) { if (canMove(tile)) startDrag(e, tile); return; }
     clearHold();
+    // ut-docs#4370: in translate mode a long press opens the key panel
+    // (translate-mode.js); it must not also arm edit mode.
+    if (translateModeOn()) return;
     var h = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, tile: tile };
     h.timer = setTimeout(function () {
       hold = null;
@@ -2528,6 +2532,7 @@ utSellCamera(function(){
   document.addEventListener('contextmenu', function (e) {
     var tile = tileFor(e.target);
     if (!tile) return;
+    if (translateModeOn() && !active) return; // ut-docs#4370: see pointerdown
     e.preventDefault(); // desktop right-click, and Android's own long-press-to-contextmenu
     clearHold();
     if (!active) enter();

@@ -179,6 +179,18 @@ val marketplaceKeyLdflag = if (marketplaceKeyHex.isEmpty()) "" else {
     " -X github.com/universaltill/universal-till/internal/buildinfo.MarketplacePublicKey=$marketplaceKeyHex"
 }
 
+// ADR-0160 §6: internal/buildinfo.BuildDate is the source commit's time, so a
+// first-party language bundle generated after it beats the built-in strings.
+// Empty outside a git checkout or without git on PATH (a source build: every
+// dated bundle is newer) — isIgnoreExitValue covers the first, runCatching the
+// second (a missing executable throws instead of exiting non-zero).
+val buildDate = runCatching {
+    providers.exec {
+        commandLine("git", "show", "-s", "--format=%cI", "HEAD")
+        isIgnoreExitValue = true
+    }.standardOutput.asText.get().trim()
+}.getOrDefault("")
+
 // Regenerates libs/unitill-mobile.aar from the Go source (../mobile) on every
 // build, via `gomobile bind` — the .aar itself is NOT committed to git (it
 // was a ~90MB build artifact when this task built all 4 gomobile-default
@@ -272,7 +284,7 @@ val generateAar =
             // exact flags, both producing full function-name+file:line
             // stacks. The bug-report feature (which captures Go panics) is
             // unaffected.
-            "-ldflags", "-X github.com/universaltill/universal-till/internal/buildinfo.Version=$goVersionForLdflags$marketplaceKeyLdflag -s -w",
+            "-ldflags", "-X github.com/universaltill/universal-till/internal/buildinfo.Version=$goVersionForLdflags -X github.com/universaltill/universal-till/internal/buildinfo.BuildDate=$buildDate$marketplaceKeyLdflag -s -w",
             "-o", "android/app/libs/unitill-mobile.aar",
             "./mobile",
         )

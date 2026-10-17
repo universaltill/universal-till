@@ -78,7 +78,21 @@
   var openers = typeof WeakMap === 'function' ? new WeakMap() : null;
   function serialize(form) {
     // What the server would receive, as one comparable string.
-    return new URLSearchParams(new FormData(form)).toString();
+    // ut-docs#3605: base.html's chip follower disables a catalogue form's
+    // fieldset[data-main-till-lock] live while the main till is away, and
+    // disabled controls drop out of FormData — so a lock flip between
+    // open and close read as an unsaved edit. Read the form as if those
+    // fieldsets were enabled (re-disabled synchronously, before any paint).
+    var locked = Array.prototype.filter.call(
+      document.querySelectorAll('fieldset[data-main-till-lock]'),
+      function (fs) { return fs.disabled && (fs.contains(form) || form.contains(fs)); }
+    );
+    locked.forEach(function (fs) { fs.disabled = false; });
+    try {
+      return new URLSearchParams(new FormData(form)).toString();
+    } finally {
+      locked.forEach(function (fs) { fs.disabled = true; });
+    }
   }
 
   function formOf(dialog) {
@@ -315,7 +329,9 @@
   // record dialog is open, Tab/Shift+Tab cycle inside it and a focusin
   // backstop pulls back any focus that lands outside (a stray tap on the
   // strip the OSK-shortened dialog uncovers, a script focusing something).
-  // #osk is whitelisted: it is a <body> child and stays reachable by design.
+  // The status bar, Lock, the OSK and the bug-report panel stay reachable
+  // by design (CLAUDE.md "Offline-first"): the same allow-list as base.html's
+  // escAllowed, shared as UT.focusTrapExempt (ut-docs#4078).
 
   var FOCUSABLE = 'a[href], button:not([disabled]), input:not([type="hidden"]):not([disabled]), ' +
     'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -324,7 +340,11 @@
     return Array.prototype.filter.call(dialog.querySelectorAll(FOCUSABLE), function (el) {
       // Skips anything hidden — the destructive slot in create mode, the
       // data-record-when form that did not match — which has no box.
-      return el.getClientRects().length > 0;
+      // Skips roving-tabindex tiles (tabindex=-1 buttons) too: they match
+      // FOCUSABLE via `button` but Tab never lands on them, so as the "last"
+      // entry they stopped trapTab wrapping and Tab leaked to the status bar
+      // once the backstop began exempting it (ut-docs#4078).
+      return el.getClientRects().length > 0 && el.tabIndex >= 0;
     });
   }
 
@@ -349,8 +369,12 @@
     if (!dialog) return;                       // no dialog open: never interferes
     var t = ev.target;
     if (!t || dialog.contains(t)) return;
-    var osk = document.getElementById('osk');
-    if (osk && osk.contains(t)) return;
+    if (window.UT && typeof UT.focusTrapExempt === 'function') {
+      if (UT.focusTrapExempt(t)) return;
+    } else {
+      var osk = document.getElementById('osk');
+      if (osk && osk.contains(t)) return;
+    }
     // Another <dialog> opened ON TOP of this one owns the focus while it is
     // up — the trap must not fight it. /categories has none today, but the
     // ut-docs#2012 screens carry #plugin-install-modal, #hold-modal and

@@ -185,7 +185,7 @@ func TestModifierGroupDeleteUnassigned_RefusedOnReplica(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("delete-unassigned on replica: want 409, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "primary till") {
+	if !strings.Contains(rec.Body.String(), "main till") {
 		t.Fatalf("expected the replica-gate notice, not the stale-count notice, got:\n%s", rec.Body.String())
 	}
 	var n int

@@ -132,12 +132,17 @@ func derivedVerificationCode(commitment, primaryTillID, pin string) string {
 func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, tokens *enrolTokens) {
 	repo := data.NewPairingRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
+	tillsRepo := data.NewTillsRepo(d.Db)
 	limiter := newPairRateLimiter(time.Minute, 5)
 
 	// Replica-initiated, unauthenticated by design (ADR-0033 §8 — the
 	// manager approval step is the trust boundary for this direction);
 	// rate-limited per source so the queue can't be spammed unboundedly.
 	mux.HandleFunc("POST /api/sync/pair-request", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#4411: plain HTTP closes once every till is pinned.
+		if refusePlainSyncWhenClosed(w, r, tillsRepo) {
+			return
+		}
 		if !limiter.allow(sourceOf(r)) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -309,6 +314,10 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 	// would hit, and it also drives a DB read per call — rate-limit it
 	// the same as the request endpoint, defence in depth either way.
 	mux.HandleFunc("GET /api/sync/pair-requests/{id}", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#4411: the token never leaves over plain HTTP once closed.
+		if refusePlainSyncWhenClosed(w, r, tillsRepo) {
+			return
+		}
 		if !limiter.allow(sourceOf(r)) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)

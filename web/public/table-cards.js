@@ -17,6 +17,15 @@
 //   .t-cards-title                the first labelled cell: the card title
 //   .t-cards-actions              a cell under an empty header (row
 //                                 actions): no label, sits at the card end
+//   .t-cards-blank                a .t-cards-actions cell with no element
+//                                 children and only whitespace text (a
+//                                 template's `{{ if }}` that rendered
+//                                 nothing): CSS `:empty` misses the stray
+//                                 whitespace, so this hides it (ut-docs#3441).
+//                                 Decided at annotation time: code that later
+//                                 fills such a cell with text only (no new
+//                                 element, so no htmx:load) must call
+//                                 window.utTableCards(row) itself
 //   tr.t-cards-row                a real record row (rows whose cells all
 //                                 span several columns — empty-state and
 //                                 group-heading rows — stay a plain line)
@@ -118,10 +127,11 @@
       if (c.classList.contains('t-cards-more')) return;
       var label = cols[col] || '';
       col += c.colSpan || 1;
-      c.classList.remove('t-cards-title', 't-cards-extra', 't-cards-actions');
+      c.classList.remove('t-cards-title', 't-cards-extra', 't-cards-actions', 't-cards-blank');
       if (!label) {
         c.removeAttribute('data-label');
         c.classList.add('t-cards-actions');
+        if (!c.children.length && !(c.textContent || '').trim()) c.classList.add('t-cards-blank');
         return;
       }
       c.setAttribute('data-label', label);

@@ -541,17 +541,22 @@ func bindListener(addr string, demo bool) (net.Listener, string, error) {
 //
 // With TLS on, srv's ConnContext stamps the served pin onto each TLS
 // request (lantls.ServedPin), which pairing and the primary proof bind into
-// what the peer verifies (ut-docs#4091).
+// what the peer verifies (ut-docs#4091). It also becomes lantls.Serving(),
+// whose pin and pending next pin the main-till link announces (key
+// rotation, ut-docs#4409); nil with TLS off.
 func withLANTLS(srv *http.Server, ln net.Listener, dir string, demo bool) net.Listener {
 	if demo {
+		lantls.SetServing(nil)
 		return ln
 	}
 	c, err := lantls.LoadOrCreate(dir)
 	if err != nil {
+		lantls.SetServing(nil)
 		log.Printf("[LAN TLS] serving plain HTTP only: %v", err)
 		return ln
 	}
 	log.Printf("[LAN TLS] serving TLS on the same port")
+	lantls.SetServing(c)
 	srv.ConnContext = lantls.ConnContext(c)
 	return lantls.Listen(ln, c.TLSConfig())
 }

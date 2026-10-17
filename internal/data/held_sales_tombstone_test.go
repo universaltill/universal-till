@@ -205,3 +205,41 @@ func TestHeldSalesRepo_ClaimAndTombstone_ExactlyOneConcurrentWinner(t *testing.T
 		}
 	}
 }
+
+// ut-docs#4392: HasTombstone tells a guest order a cashier resumed (or
+// cancelled) on the main till apart from an orphan that was never parked.
+// Every primary-side removal leaves one; an expired one no longer counts.
+func TestHeldSalesRepo_HasTombstone(t *testing.T) {
+	repo, dbh := newHeldSalesTombstoneRepo(t)
+	ctx := context.Background()
+	if err := repo.Upsert(ctx, tombstoneTestHeldSale); err != nil {
+		t.Fatal(err)
+	}
+	if has, err := repo.HasTombstone(ctx, "h1"); err != nil || has {
+		t.Fatalf("a parked order has no tombstone, got %v err=%v", has, err)
+	}
+	if _, claimed, _, err := repo.ClaimAndTombstone(ctx, "h1", ""); err != nil || !claimed {
+		t.Fatalf("claim: claimed=%v err=%v", claimed, err)
+	}
+	if has, err := repo.HasTombstone(ctx, "h1"); err != nil || !has {
+		t.Fatalf("a resumed order must read tombstoned, got %v err=%v", has, err)
+	}
+	if has, err := repo.HasTombstone(ctx, "never-parked"); err != nil || has {
+		t.Fatalf("an id nothing removed has no tombstone, got %v err=%v", has, err)
+	}
+	if _, err := dbh.DB.Exec(`UPDATE held_sales_tombstones SET deleted_at = datetime('now', '-25 hours') WHERE id = 'h1'`); err != nil {
+		t.Fatal(err)
+	}
+	if has, err := repo.HasTombstone(ctx, "h1"); err != nil || has {
+		t.Fatalf("a tombstone past the TTL must not count, got %v err=%v", has, err)
+	}
+}
+
+// HeldSaleTombstoneWindow is the Go form of the SQLite TTL; they must agree,
+// or a caller trusting the window would read an expired tombstone's absence
+// as "never resumed".
+func TestHeldSaleTombstoneWindowMatchesTTL(t *testing.T) {
+	if got, want := data.HeldSaleTombstoneTTLForTest(), fmt.Sprintf("-%d hours", int(data.HeldSaleTombstoneWindow.Hours())); got != want {
+		t.Fatalf("tombstone TTL %q, window %q", got, want)
+	}
+}

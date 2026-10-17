@@ -8,8 +8,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/universaltill/universal-till/catimport/barcode"
 	"github.com/universaltill/universal-till/internal/auth"
-	"github.com/universaltill/universal-till/internal/barcode"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 )

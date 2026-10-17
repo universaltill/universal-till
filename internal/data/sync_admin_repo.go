@@ -466,7 +466,7 @@ var nonAdminTables = map[string]string{
 	"yuzde_usulu_pool_collections_archive": "archived yuzde_usulu_pool_collections — same reasoning",
 	"report_archive":                       "this till's own X/Z report archive — per-till operational history, same reasoning as sales_archive",
 	"sales_aggregate_uploads":              "which daily sales rollups THIS till has already delivered to the cloud (ut-docs#2535, content-hash ledger) — only the primary uploads, and syncing it would make a replica believe it had sent days it never did",
-	"voucher_transactions":                 "per-sale voucher issue/redemption ledger plus manager balance adjustments (ut-docs#4253) — same append-only reasoning as payments; stays per-till exactly like vouchers below (ut-docs#1668) — this till's own local ledger row, never dumped/applied. Its 'redemption' rows double as the cross-till idempotency key, (voucher_id, sale_id), ADR-0084 — see the vouchers entry below",
+	"voucher_transactions":                 "per-sale voucher issue/redemption/top-up ledger (top-ups: ut-docs#4252) plus manager balance adjustments (ut-docs#4253) — same append-only reasoning as payments; stays per-till exactly like vouchers below (ut-docs#1668) — this till's own local ledger row, never dumped/applied. Its 'redemption' rows double as the cross-till idempotency key, (voucher_id, sale_id), ADR-0084 — see the vouchers entry below",
 
 	// Plugin install machinery — already named above. The installed SET
 	// travels as its own separately-fingerprinted bundle (SyncPluginsRepo,
@@ -511,7 +511,18 @@ var nonAdminTables = map[string]string{
 	// ut-docs#4337: the main till's own record of the guest_order directive
 	// results it applied and still has to (or already did) report to the
 	// cloud — per-till delivery bookkeeping, like issue_reports_sent below.
+	"till_tls_pinned":     "main-till record of which enrolled tills have authenticated over pinned LAN TLS, so their bearer is refused on plain HTTP — main-till bookkeeping, never synced (ut-docs#2737)",
 	"guest_order_results": "guest_order directive results awaiting (or past) cloud delivery — per-till bookkeeping, never synced (ut-docs#4337)",
+	// ADR-0161 §5 (ut-docs#4429): imports are applied only on the main
+	// till; additional tills get the resulting catalogue rows, never the
+	// foreign-id bookkeeping behind them.
+	"import_source_links": "which local record an API-source import's (source, entity, external_id) became — main-till import bookkeeping, never synced (ut-docs#4429)",
+	// ADR-0162 §4 (ut-docs#4463): only the main till pulls the cloud
+	// catalogue; additional tills get the resulting catalogue rows, never
+	// the cloud-id bookkeeping or its refusal log.
+	"cloud_links":          "which local record a cloud catalogue row (entity, cloud_id) became — main-till pull bookkeeping, never synced (ut-docs#4463)",
+	"cloud_apply_failures": "the latest refusal per pulled cloud catalogue row — main-till pull bookkeeping, never synced (ut-docs#4463)",
+	"cloud_retired":        "option sets the cloud pull could only retire, whose delete it retries — main-till pull bookkeeping, never synced (ut-docs#4522)",
 
 	// Local bookkeeping with no shop-wide meaning.
 	"issue_reports_sent": "dedup record of bug reports already sent FROM this till",
@@ -2150,6 +2161,9 @@ var ShopWideSettingPrefixes = []string{
 	BarcodeEnabledSymbologiesKey, CatalogImportBarcodeFromSKUDefaultKey,
 	// Pre-pack unit price on shelf labels (data/catalog_settings.go).
 	CatalogPrePackUnitPriceEnabledKey,
+	// The setup-seeded gift voucher item, retired by the first import that
+	// brings its own (ut-docs#4399): catalogue state, like the item.
+	SeededGiftVoucherItemKey, seededGiftVoucherItemNameKey,
 	// The store-level marketplace keys (see PerTillSettingPrefixes' own
 	// comment). Listed key by key: a new marketplace.* key must be
 	// classified on purpose, since most of that family is per-till.

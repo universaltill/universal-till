@@ -1,4 +1,4 @@
 "CFBundleDisplayName" = "Universal Till";
 "NSLocalNetworkUsageDescription" = "يعثر Universal Till على صناديق متجرك الأخرى ويتزامن معها عبر الشبكة المحلية.";
-"NSCameraUsageDescription" = "يستخدم Universal Till الكاميرا لمسح الرموز الشريطية.";
+"NSCameraUsageDescription" = "يستخدم Universal Till الكاميرا لمسح الرموز الشريطية والتقاط صور الأصناف.";
 "NSMicrophoneUsageDescription" = "يستخدم Universal Till الميكروفون لتسجيل ملاحظة صوتية في الإبلاغ عن مشكلة.";

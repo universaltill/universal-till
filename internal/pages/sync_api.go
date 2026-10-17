@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
@@ -320,6 +321,13 @@ func displayPrimaryAddress(primaryURL string) string {
 
 // syncTill authenticates a replica's sync call by its bearer (only the
 // SHA-256 is stored; the hash lookup makes timing attacks moot).
+//
+// It also enforces pinned LAN TLS per till (ADR-0114 §7, ut-docs#2737): the
+// first bearer request a till makes over TLS records it as pinned, and from
+// then on its bearer is refused on plain HTTP. A till sends TLS only once it
+// holds this main till's pin (lantls.NewPeerClient) and then never falls
+// back, so a plain request with a pinned till's bearer is a stolen bearer or
+// a downgrade. A till that has never used TLS keeps plain HTTP (§11).
 func syncTill(r *http.Request, repo *data.TillsRepo) (data.TillRow, bool) {
 	h := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if h == "" {
@@ -329,8 +337,82 @@ func syncTill(r *http.Request, repo *data.TillsRepo) (data.TillRow, bool) {
 	if err != nil || !ok {
 		return data.TillRow{}, false
 	}
+	switch {
+	case r.TLS == nil && t.TLSPinned:
+		warnPlainHTTPRefused(t.ID)
+		return data.TillRow{}, false
+	case r.TLS != nil && !t.TLSPinned:
+		// Best effort: a failed write only means the next TLS request
+		// records it; the request itself is authenticated either way.
+		if err := repo.MarkTLSPinned(r.Context(), t.ID); err != nil {
+			if _, seen := tlsPinRecordFailedWarned.LoadOrStore(t.ID, struct{}{}); !seen {
+				logging.L().Warnf("sync: record till %s as TLS-pinned: %v", t.ID, err)
+			}
+		} else {
+			tlsPinRecordFailedWarned.Delete(t.ID)
+			logging.L().Infof("sync: till %s now uses pinned TLS; plain-HTTP sync requests from it are refused", t.ID)
+		}
+		t.TLSPinned = true
+	}
 	return t, true
 }
+
+// plainHTTPRefusedWarned holds the till ids whose plain-HTTP refusal has
+// been logged, so a client retrying every few seconds logs once per till
+// per process, not once per request. Bounded by the enrolled tills.
+var plainHTTPRefusedWarned sync.Map
+
+// tlsPinRecordFailedWarned does the same for a failing MarkTLSPinned (a
+// read-only DB would otherwise warn on every TLS request).
+var tlsPinRecordFailedWarned sync.Map
+
+func warnPlainHTTPRefused(tillID string) {
+	if _, seen := plainHTTPRefusedWarned.LoadOrStore(tillID, struct{}{}); !seen {
+		logging.L().Warnf("sync: refused a plain-HTTP request carrying the bearer of till %s, which uses pinned TLS (ADR-0114 §7)", tillID)
+	}
+}
+
+// refusePlainSyncWhenClosed closes plain-HTTP peer sync entirely once the
+// whole fleet has moved to pinned TLS (ADR-0114 §7, ut-docs#4411): this till
+// serves TLS, it has at least one enrolled till, and every enrolled till has
+// authenticated over TLS (TillsRepo.AllTillsTLSPinned). It is called at the
+// top of the unauthenticated peer handshake routes — enroll, pair-request,
+// the pair-request poll and primary-proof — before any rate limiter or
+// one-time token, so a refused plain request spends neither. Bearer routes
+// need no call: every till is pinned then, so syncTill already refuses its
+// bearer on plain HTTP. Ping and the local browser's session routes never
+// call it, so the till's own UI keeps working over plain HTTP.
+//
+// It writes the 403 and returns true when the request is refused. A DB error
+// leaves the route open (logged once per process) rather than failing it:
+// TLS must never be the cause of a failed request (ADR-0114 §7), and the
+// per-till check in syncTill still protects every pinned till's bearer.
+func refusePlainSyncWhenClosed(w http.ResponseWriter, r *http.Request, repo *data.TillsRepo) bool {
+	if r.TLS != nil || lantls.Serving() == nil {
+		return false
+	}
+	closed, err := repo.AllTillsTLSPinned(r.Context())
+	if err != nil {
+		if plainClosureCheckFailedWarned.CompareAndSwap(false, true) {
+			logging.L().Warnf("sync: plain-HTTP closure check failed, leaving plain HTTP open: %v", err)
+		}
+		return false
+	}
+	if !closed {
+		return false
+	}
+	if plainClosureRefusedWarned.CompareAndSwap(false, true) {
+		logging.L().Warnf("sync: refused a plain-HTTP %s %s: every paired till uses pinned TLS, so plain-HTTP peer sync is closed (ADR-0114 §7)", r.Method, r.URL.Path)
+	}
+	http.Error(w, "plain HTTP sync is closed on this till; use pinned TLS on the same port", http.StatusForbidden)
+	return true
+}
+
+// plainClosureRefusedWarned and plainClosureCheckFailedWarned make
+// refusePlainSyncWhenClosed log its first refusal, and a failing closure
+// check, once per process: a peer retrying every few seconds (or a broken
+// DB) would otherwise warn on every plain request.
+var plainClosureRefusedWarned, plainClosureCheckFailedWarned atomic.Bool
 
 // registerSyncAPI returns the enrolTokens store it wires up so callers
 // that issue their own tokens (e.g. registerPairingAPI's approve handler,
@@ -368,6 +450,9 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		m["menuItems"] = d.MenuSnapshot()
 		m["MainUnreachable"] = lv.State == linkUnreachable
 		m["MainUnreachableSince"] = lv.Since
+		// ut-docs#4507: joining replaces this till's sales too — the join
+		// section warns and asks for a confirm (same as the join notice).
+		m["HasSales"] = hasSalesHistory(r.Context(), d)
 		httpx.Render("ui/pages/tills.html", m)(w, r)
 	})
 
@@ -459,6 +544,10 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	// Replica enrolment — token IS the auth (one-time, 10-min), so this
 	// path is middleware-exempt like the login flow.
 	mux.HandleFunc("POST /api/sync/enroll", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#4411: before the limiter and the one-time token below.
+		if refusePlainSyncWhenClosed(w, r, repo) {
+			return
+		}
 		// ut-docs#405: defense in depth alongside the enroll-token guard
 		// above — a stale QR/code minted before this fix (or copy-pasted
 		// to the wrong device by hand) must still not be honoured by a
@@ -487,10 +576,33 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
 			return
 		}
+		presented := strings.TrimSpace(in.Token)
+		// Satellites are TLS-only from enrolment (ADR-0114 §7, ut-docs#4411),
+		// whether the satellite role is the till's own choice or the
+		// manager's on the approval card (RoleForToken, read here without
+		// spending the token). Refused before the token is consumed, so the
+		// till can retry the same token over TLS.
+		if r.TLS == nil {
+			if role == data.TillRoleSatellite {
+				http.Error(w, "a satellite enrols over pinned TLS only", http.StatusForbidden)
+				return
+			}
+			// A read error fails closed before the token is spent: answering
+			// on would let a manager-chosen satellite enrol over plain HTTP
+			// if the later read succeeds (review finding).
+			approved, ok, err := pairingRepo.RoleForToken(r.Context(), presented)
+			if err != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
+				return
+			}
+			if ok && approved == data.TillRoleSatellite {
+				http.Error(w, "a satellite enrols over pinned TLS only", http.StatusForbidden)
+				return
+			}
+		}
 		// ut-docs#3219: a short pairing code (typed by hand, 30 bits) is
 		// rate-limited per source and spends the shop-wide failure budget;
 		// a long token is neither, exactly as before.
-		presented := strings.TrimSpace(in.Token)
 		if short, isShort := normaliseShortCode(presented); isShort {
 			if !shortCodeLimiter.allow(sourceOf(r)) {
 				http.Error(w, "too many pairing attempts; wait a minute and try again", http.StatusTooManyRequests)
@@ -549,6 +661,16 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
+		}
+		// A satellite (only ever enrolled over TLS, above) is pinned from
+		// enrolment: its bearer is refused on plain HTTP at once, not from
+		// its first TLS bearer request (ut-docs#4411). A failed write is
+		// logged and the enrolment still succeeds — that first TLS bearer
+		// request records the pin anyway (syncTill).
+		if role == data.TillRoleSatellite {
+			if err := repo.MarkTLSPinned(r.Context(), tillID); err != nil {
+				logging.L().Warnf("sync: record satellite %s as TLS-pinned at enrolment: %v", tillID, err)
+			}
 		}
 		// ut-docs#894: pin THIS (primary) till's own register identity BEFORE
 		// adding a second register below. Independent review finding: a fresh
@@ -756,9 +878,16 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
 			return
 		}
+		if refuseJoinWithoutReplaceConfirm(w, r, d) { // ut-docs#4507
+			return
+		}
 		shopName, err := joinPrimary(r, d,
 			strings.TrimSpace(r.Form.Get("code")), strings.TrimSpace(r.Form.Get("address")),
-			strings.TrimSpace(r.Form.Get("name")), role)
+			strings.TrimSpace(r.Form.Get("name")), role, r.Form.Get("replace_local_data") == "1")
+		if isJoinErrKind(err, joinErrHasSales) { // ut-docs#4560
+			writeReplaceRefusal(w, r)
+			return
+		}
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
@@ -792,9 +921,16 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Error(w, "role must be additional or satellite", http.StatusBadRequest)
 			return
 		}
+		if refuseJoinWithoutReplaceConfirm(w, r, d) { // ut-docs#4507
+			return
+		}
 		shopName, err := joinPrimary(r, d,
 			strings.TrimSpace(r.Form.Get("code")), strings.TrimSpace(r.Form.Get("address")),
-			strings.TrimSpace(r.Form.Get("name")), role)
+			strings.TrimSpace(r.Form.Get("name")), role, r.Form.Get("replace_local_data") == "1")
+		if isJoinErrKind(err, joinErrHasSales) { // ut-docs#4560
+			writeReplaceRefusal(w, r)
+			return
+		}
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
@@ -813,6 +949,46 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	})
 
 	return tokens
+}
+
+// refuseJoinWithoutReplaceConfirm answers a code join (POST /api/sync/join,
+// POST /api/setup/join) with 409 before joinPrimary when this till already
+// holds sales and the form lacks replace_local_data=1 (ut-docs#4507): no
+// enrolment, no snapshot, no staged restore. Same escaped fragment as a
+// join error; app.js's htmx:beforeSwap swaps a text/html 4xx in. The
+// first-boot wizard has no tick box: a first-boot till normally has no
+// sales (no operator exists to ring one up), so there this is a fail-closed
+// backstop with no in-wizard way past it — join from the Tills page instead.
+func refuseJoinWithoutReplaceConfirm(w http.ResponseWriter, r *http.Request, d *common.Deps) bool {
+	if !joinNeedsReplaceConfirm(r, d) {
+		return false
+	}
+	writeReplaceRefusal(w, r)
+	return true
+}
+
+// writeReplaceRefusal answers a code join refused for this till's sales:
+// 409, the warning where the join's own message goes, and (ut-docs#4560)
+// the tick box itself, swapped out of band into #pairing-replace-slot above
+// the join tabs. Without it a till whose first sale landed after the page
+// rendered — or the first-boot wizard, which never renders one — had no
+// way to confirm short of guessing that a reload brings the box.
+func writeReplaceRefusal(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusConflict)
+	renderReplaceSlot(w, r, true)
+}
+
+// renderReplaceSlot renders join_replace_slot.html: the out-of-band
+// #pairing-replace-slot fill, preceded by the inline refusal when inline.
+func renderReplaceSlot(w http.ResponseWriter, r *http.Request, inline bool) {
+	httpx.RenderPartial("ui/partials/join_replace_slot.html", map[string]any{"inline": inline})(w, r)
+}
+
+// isJoinErrKind reports whether err is a *joinError of kind k.
+func isJoinErrKind(err error, k joinErrKind) bool {
+	var je *joinError
+	return errors.As(err, &je) && je.kind == k
 }
 
 // joinErrKind classifies why joinPrimary/completeJoin failed, so the
@@ -838,6 +1014,9 @@ const (
 	joinErrNeedAddress
 	joinErrBadAddress
 	joinErrTooManyAttempts
+	// ut-docs#4560: a sale landed while the join was being staged, and the
+	// manager had not confirmed replacing this till's sales.
+	joinErrHasSales
 )
 
 // joinErrLocaleKey maps each kind to its web/locales/*.json key. Every key
@@ -856,6 +1035,7 @@ var joinErrLocaleKey = map[joinErrKind]string{
 	joinErrNeedAddress:         "tills.join_error.need_address",
 	joinErrBadAddress:          "tills.join_error.bad_address",
 	joinErrTooManyAttempts:     "tills.join_error.too_many_attempts",
+	joinErrHasSales:            "tills.discovery.ambient.has_sales_warning",
 }
 
 // joinError is what every joinPrimary/completeJoin failure path returns.
@@ -903,9 +1083,9 @@ func friendlyJoinError(locale string, err error) string {
 // carries the main till's URL, so address is ignored) or, since
 // ut-docs#3219, the short XXX-XXX code, which needs the main till's address
 // typed alongside it.
-func joinPrimary(r *http.Request, d *common.Deps, code, address, name, role string) (string, error) {
+func joinPrimary(r *http.Request, d *common.Deps, code, address, name, role string, replaceConfirmed bool) (string, error) {
 	if primaryURL, token, err := decodeEnrollCode(code); err == nil {
-		return completeJoin(r, d, primaryURL, token, name, role, "")
+		return completeJoin(r, d, primaryURL, token, name, role, "", replaceConfirmed)
 	}
 	short, ok := normaliseShortCode(code)
 	if !ok {
@@ -918,7 +1098,7 @@ func joinPrimary(r *http.Request, d *common.Deps, code, address, name, role stri
 	if !ok {
 		return "", &joinError{kind: joinErrBadAddress}
 	}
-	return completeJoin(r, d, primaryURL, short, name, role, "")
+	return completeJoin(r, d, primaryURL, short, name, role, "", replaceConfirmed)
 }
 
 // primaryURLFromAddress turns the address a person typed next to a short
@@ -954,7 +1134,7 @@ func primaryURLFromAddress(address string) (string, bool) {
 // (ut-docs#185) can drive it directly with a (primaryURL, token) pair it
 // already holds — that flow never has an encodeEnrollCode-packed code to
 // decode, just the two values decodeEnrollCode would have produced.
-func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role, primaryCertPin string) (string, error) {
+func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role, primaryCertPin string, replaceConfirmed bool) (string, error) {
 	base := strings.TrimSuffix(primaryURL, "/")
 	client := netaccess.NewClient(60 * time.Second)
 	if primaryCertPin != "" {
@@ -969,15 +1149,48 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 	}
 
 	body, _ := json.Marshal(map[string]string{"token": token, "name": name, "role": role})
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
-		base+"/api/sync/enroll", strings.NewReader(string(body)))
-	if err != nil {
-		return "", &joinError{kind: joinErrRequestFailed, detail: err.Error()}
+	var resp *http.Response
+	if primaryCertPin == "" {
+		// A code join (QR, long or short code) tries TLS on the main till's
+		// same LAN port first, learning its pin, exactly as sendPairRequest
+		// does (ADR-0114 §7, ut-docs#4411): a main till that has closed
+		// plain HTTP still answers it, a satellite can only enrol this way,
+		// and the joined till dials pinned from the start. There is no
+		// visual compare on this path, so the pin is trust-on-first-use —
+		// no weaker than the plain enrolment plus primary-proof backfill it
+		// replaces. Plain HTTP only when the TLS attempt got no answer
+		// (a main till without TLS, or an older one — Exchange's plainOK).
+		if tlsBase, ok := lantls.HTTPSBase(base); ok {
+			tlsReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
+				tlsBase+"/api/sync/enroll", strings.NewReader(string(body)))
+			if err != nil {
+				return "", &joinError{kind: joinErrRequestFailed, detail: err.Error()}
+			}
+			tlsReq.Header.Set("Content-Type", "application/json")
+			pc := lantls.NewPinnedClient(60*time.Second, "")
+			tlsResp, plainOK, err := pc.Exchange(tlsReq)
+			switch {
+			case err == nil:
+				primaryCertPin = pc.Pin()
+				base, client, resp = tlsBase, lantls.NewPinnedClient(60*time.Second, primaryCertPin).Client, tlsResp
+			case !plainOK:
+				// No till there, or the request already reached it: a
+				// plain retry would only double the wait or the request.
+				return "", &joinError{kind: joinErrUnreachable, detail: err.Error()}
+			}
+		}
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", &joinError{kind: joinErrUnreachable, detail: err.Error()}
+	if resp == nil {
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
+			base+"/api/sync/enroll", strings.NewReader(string(body)))
+		if err != nil {
+			return "", &joinError{kind: joinErrRequestFailed, detail: err.Error()}
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err = client.Do(req)
+		if err != nil {
+			return "", &joinError{kind: joinErrUnreachable, detail: err.Error()}
+		}
 	}
 	defer resp.Body.Close()
 	var out struct {
@@ -1045,10 +1258,24 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 		DeviceID:      "till-" + hex.EncodeToString(draw),
 		RegisterID:    out.Data.RegisterID,
 		TillRole:      out.Data.Role,
-		// ut-docs#4091: the pin pairing learned ("" for a code join).
+		// ut-docs#4091: the pin pairing learned, or (ut-docs#4411) the
+		// one a code join learned over TLS; "" after a plain enrolment.
 		PrimaryCertPin: primaryCertPin,
 	}); err != nil {
 		return "", &joinError{kind: joinErrStageIdentityFailed, detail: err.Error()}
+	}
+	// ut-docs#4560: the caller checked for sales before enrolling, but the
+	// enrolment and snapshot download take up to about a minute, and the
+	// till keeps selling meanwhile. Unconfirmed and a sale has landed →
+	// withdraw what was just staged, so the restart keeps this till's own
+	// DB. The main till keeps an enrolment that never syncs; the manager
+	// revokes it there, as after any other failure past the enrol.
+	if !replaceConfirmed && hasSalesHistory(r.Context(), d) {
+		if err := db.UnstageJoin(d.Cfg.DBPath); err != nil {
+			logging.L().Errorf("join: withdraw the staged join after a sale landed: %v", err)
+			return "", &joinError{kind: joinErrStageSnapshotFailed, detail: err.Error()}
+		}
+		return "", &joinError{kind: joinErrHasSales}
 	}
 	posRepo := data.NewPOSRepo(d.Db)
 	_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", out.Data.TillID, "joined_primary",

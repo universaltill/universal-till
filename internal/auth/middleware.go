@@ -270,7 +270,7 @@ func exempt(path string) bool {
 	if strings.HasPrefix(path, "/o/") {
 		return true
 	}
-	for _, p := range []string{"/api/auth/", "/public/", "/themes/", "/plugin-icons/"} {
+	for _, p := range []string{"/api/auth/", "/public/", "/themes/", "/plugin-icons/", "/plugin-fonts/"} {
 		if strings.HasPrefix(path, p) {
 			return true
 		}
@@ -374,6 +374,7 @@ var backgroundPollPaths = map[string]bool{
 	"/ui/cloud-auth-chip":     true, // refused cloud credential (ADR-0116 D6, ut-docs#3524)
 	"/ui/report-archive-chip": true, // refused report upload (ADR-0147, ut-docs#574)
 	"/ui/disk-space-chip":     true, // low-disk chip, every 60 s (ut-docs#3121)
+	"/ui/shop-currency-chip":  true, // shop currency differs, every 60 s (ut-docs#4539)
 	// Sale screen watchers (#2765, #2858).
 	"/ui/buttons/version":         true,
 	"/ui/open-orders-badge/watch": true,
@@ -482,6 +483,7 @@ var shellGetPaths = map[string]bool{
 	"/ui/cloud-auth-chip":     true,
 	"/ui/report-archive-chip": true,
 	"/ui/disk-space-chip":     true,
+	"/ui/shop-currency-chip":  true, // ut-docs#4539
 }
 
 var shellPostPaths = map[string]bool{

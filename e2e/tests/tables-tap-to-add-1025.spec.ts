@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, deactivateAllTables, createTable } from './helpers';
+import { watchConsole, deactivateAllTables, createTable, clickThenReload } from './helpers';
 
 // ut-docs#1025: two bounded floor-plan editor fixes.
 //
@@ -95,10 +95,7 @@ test.describe('Tables floor plan: tap-to-add + touch-action scoping (ut-docs#102
     await expect(page.locator('#table-add-label')).toBeFocused();
 
     await page.locator('#table-add-label').fill('E2E Tapped 1025');
-    await Promise.all([
-      page.waitForURL((u) => u.pathname === '/tables'),
-      dialog.locator('button[type=submit]').click(),
-    ]);
+    await clickThenReload(page, () => dialog.locator('button[type=submit]').click());
 
     const created = page.locator(`.table-node:has-text("E2E Tapped 1025")`);
     await expect(created).toBeVisible();

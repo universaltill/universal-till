@@ -744,6 +744,13 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// blocks or fails the wizard's own response. A no-op for a country with nothing mapped.
 		installBasePluginsForSetup(r.Context(), d, st.Country)
 
+		// ut-docs#4259: the new shop starts with its gift voucher item,
+		// named in the shop's language. After the base-plugin install, so
+		// a language pack that just arrived names it. Best-effort, like
+		// the install: a failure never fails the wizard, and the owner
+		// can still add one in Catalog → Type.
+		seedDefaultGiftVoucherItem(r.Context(), d, st.Locale)
+
 		// ut-docs#3992: the boot back-fill ran before the wizard saved the
 		// country; re-normalise customers.phone_e164 for it, in the background.
 		startCustomerPhoneE164BackfillForCountryChange(d)
@@ -789,4 +796,27 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		http.Redirect(w, r, redirectTo, http.StatusSeeOther)
 	})
+}
+
+// seedDefaultGiftVoucherItem creates the new shop's gift voucher item
+// (ut-docs#4259), named with catalog.item_type.gift_voucher in locale.
+// Logged, never returned: first boot must not fail over it. T falls back
+// to English, so a shop whose language pack isn't installed yet gets
+// "Gift voucher" (renaming it when the pack arrives is ut-docs#4398's
+// follow-up). Only a key missing from every locale makes T hand back the
+// key itself; that creates nothing rather than an item named after it.
+// The wizard runs before a till can be paired, so a cloud-master store
+// gets it too: its catalogue pull retires it once the cloud brings the
+// shop's own (catalogpull.Run, ADR-0162 §4, ut-docs#4494), as an import
+// does (ut-docs#4399).
+func seedDefaultGiftVoucherItem(ctx context.Context, d *common.Deps, locale string) {
+	const key = "catalog.item_type.gift_voucher"
+	name := httpx.T(locale, key)
+	if name == key {
+		logging.L().Warnf("setup: gift voucher item not created: no text for %s in %q", key, locale)
+		return
+	}
+	if _, err := data.NewCatalogRepo(d.Db).SeedDefaultGiftVoucherItem(ctx, name); err != nil {
+		logging.L().Warnf("setup: gift voucher item not created: %v", err)
+	}
 }

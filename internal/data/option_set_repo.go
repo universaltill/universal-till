@@ -250,6 +250,48 @@ func (r *OptionSetRepo) ApplyOptionSetsToItem(ctx context.Context, itemID string
 		return fmt.Errorf("begin apply option sets: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := applyOptionSetsToItemTx(ctx, tx, itemID, optionSetIDs); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit apply option sets: %w", err)
+	}
+	return nil
+}
+
+// ApplyOptionSetsToItemTx is ApplyOptionSetsToItem inside the caller's
+// transaction — the cloud catalogue pull's item option_set_cloud_ids
+// (ADR-0162 §4, ut-docs#4491), the item's whole ordered set. Like the
+// non-Tx method it never generates variants (the cloud sends those as
+// their own rows, ut-docs#4521). It also refuses an item or a set this
+// till does not have by name, rather than as a bare FK failure.
+func (r *OptionSetRepo) ApplyOptionSetsToItemTx(ctx context.Context, tx *sql.Tx, itemID string, optionSetIDs []string) error {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return errors.New("item_id required")
+	}
+	optionSetIDs, err := validateOptionSetIDs(optionSetIDs)
+	if err != nil {
+		return err
+	}
+	if ok, err := rowExists(ctx, tx, `SELECT 1 FROM items WHERE id = ?`, itemID); err != nil {
+		return fmt.Errorf("apply option sets: check item: %w", err)
+	} else if !ok {
+		return fmt.Errorf("item %s does not exist on this till", itemID)
+	}
+	for _, id := range optionSetIDs {
+		if ok, err := rowExists(ctx, tx, `SELECT 1 FROM option_sets WHERE id = ?`, id); err != nil {
+			return fmt.Errorf("apply option sets: check option set: %w", err)
+		} else if !ok {
+			return fmt.Errorf("%w: %s", ErrOptionSetNotFound, id)
+		}
+	}
+	return applyOptionSetsToItemTx(ctx, tx, itemID, optionSetIDs)
+}
+
+// applyOptionSetsToItemTx replaces the item's sets with the validated ids
+// (index = axis_order).
+func applyOptionSetsToItemTx(ctx context.Context, tx *sql.Tx, itemID string, optionSetIDs []string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM item_option_sets WHERE item_id = ?`, itemID); err != nil {
 		return fmt.Errorf("clear item option sets: %w", err)
 	}
@@ -257,9 +299,6 @@ func (r *OptionSetRepo) ApplyOptionSetsToItem(ctx context.Context, itemID string
 		if _, err := tx.ExecContext(ctx, `INSERT INTO item_option_sets (item_id, option_set_id, axis_order) VALUES (?, ?, ?)`, itemID, id, i); err != nil {
 			return fmt.Errorf("insert item option set: %w", err)
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit apply option sets: %w", err)
 	}
 	return nil
 }

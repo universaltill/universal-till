@@ -25,7 +25,6 @@ func TestSnapshotState_RestoresEveryPublishedGlobal(t *testing.T) {
 	InitIdleLock(0)
 	SetLocaleGeneration(0)
 	InitKiosk(false)
-	InitSelfOrderMode(false)
 	InitDisplayMode("")
 	InitTheme("")
 	InitRailAmendments(nil)
@@ -46,7 +45,6 @@ func TestSnapshotState_RestoresEveryPublishedGlobal(t *testing.T) {
 		InitIdleLock(5)
 		SetLocaleGeneration(7)
 		InitKiosk(true)
-		InitSelfOrderMode(true)
 		InitDisplayMode("self_order")
 		InitTheme("dark")
 		InitRailAmendments(func() []uislot.Amendment { return nil })
@@ -87,9 +85,6 @@ func TestSnapshotState_RestoresEveryPublishedGlobal(t *testing.T) {
 		}
 		if on, _ := kioskMode.Load().(bool); on {
 			t.Errorf("round %d: kiosk still on", round)
-		}
-		if on, _ := selfOrderMode.Load().(bool); on {
-			t.Errorf("round %d: self-order still on", round)
 		}
 		if got, _ := displayMode.Load().(string); got != "" {
 			t.Errorf("round %d: display mode %q, want empty", round, got)

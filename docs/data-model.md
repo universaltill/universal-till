@@ -658,6 +658,194 @@ erDiagram
 - `POSRepo.BackfillCustomerPhoneE164` fills `NULL` rows in chunks, in the background after start-up on every till (main and replica); when `store.country` differs from the per-till marker `customers.phone_e164_region` it recomputes every row first. Idempotent.
 - `POSRepo.LookupCustomersByPhone` (caller ID): every non-erased customer whose `phone_e164` equals the caller's normalised number, else matches on the trailing 9 digits; at most 10, by name, each with its last 5 completed sales (date, total, line count). Rows still `NULL` are normalised in Go, so the lookup is right before the back-fill finishes. Migration 069 also adds `idx_sales_customer_id` for the last-5-sales query.
 
+## Shop currency from the cloud (ut-docs#4539, ADR-0163 amendment 2026-10-16)
+
+A store born on my. has a currency the cloud set. The `POST /v1/stores/sync`
+response's entitlement block (ADR-0060 §3; a 402 `plan_required` body's block
+too) then carries `currency` (ISO 4217) and `currency_decimals`; a
+till-born store's block omits both.
+
+- **Cache (settings, per-till `entitlement.` family, written with the rest of
+  the block by `entitlement.Block.Values`).** `entitlement.shop_currency`:
+  three upper-case ASCII letters, or `''` when the block has none or a
+  malformed one (never an error). `entitlement.shop_currency_decimals`:
+  `0`..`4` as a string, or `''`; informational only, the till's own currency
+  table decides.
+- **Adopted marker.** `entitlement.shop_currency_adopted` (per-till): the
+  shop value this till last adopted by itself. Written by the till, never by
+  the block, so each shop value is adopted at most once and a manager's later
+  choice is never overridden.
+- **Reconcile** (`pages.reconcileShopCurrency`, the `cloudsync.Hooks.ShopCurrency`
+  hook, after every tick that reached the cloud). Main till only. With no
+  completed or voided sale, no sale in progress (cashier/kiosk/self-order
+  basket lines, parked sales), a code this build knows and a shop value not
+  adopted before, it writes `store.currency`, `store.currency_confirmed =
+  true` and the marker in one `SetMany`, and audits `settings` /
+  `store.currency` / `currency_adopted_from_cloud` with `{from, to}` as actor
+  `system`. Otherwise a mismatch stays: an open problem keyed
+  `cloud.shop_currency_mismatch` (reported to my.) and, for managers, the
+  status chip `GET /ui/shop-currency-chip`. Both clear once the two match.
+  Replicas follow the main till's `store.currency` through the primary-wins
+  settings pull (ADR-0011 §5).
+
+## Cloud catalogue pull — cloud_links (ut-docs#4463, ut-docs#4491, ut-docs#4521, ut-docs#4522, ADR-0162 §4)
+
+On a paid store whose catalogue the cloud masters, the **main till** pulls the
+cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
+`GET /v1/stores/catalog`) and applies it through its own repositories
+(`internal/catalogpull`, called from `internal/cloudsync`'s tick).
+
+- **When.** Only when all hold: this till is the main till (no
+  `sync.primary_url`), the cached `entitlement.catalog_master` is exactly
+  `cloud` (the sync response's entitlement block; anything else reads as
+  `till`), and this tick's check-in POST reached the cloud (a 304 check-in
+  means nothing changed). A pull failure is logged and retried on the next
+  trigger; it never fails the check-in and never touches the sale path.
+  Replicas get the result over LAN admin sync like any other catalogue edit.
+- **Tables (migration 082, main-till only, never LAN-synced).**
+  `cloud_links(entity, cloud_id, local_id, version, gen, updated_at, PK(entity, cloud_id))`
+  maps a cloud row to its local record (index on `(entity, local_id)`); a
+  cloud-created row's local id is its `cloud_id`. `gen` is the resync
+  generation that last saw the row. `cloud_apply_failures(entity, cloud_id,
+  version, reason, at)` keeps the latest refusal per cloud row until a later
+  version of it applies. `cloud_retired(entity, local_id, cloud_id,
+  retired_at, PK(entity, local_id))` (migration 083, ut-docs#4522) lists
+  option sets a tombstone could only retire; see Tombstones.
+- **State (settings, per-till `cloudsync.` family).**
+  `cloudsync.catalog.cursor` (highest version fully applied),
+  `cloudsync.catalog.applier_version` (a stored value below the code's
+  `catalogpull.ApplierVersion` resets the cursor to 0 — a full re-pull),
+  `cloudsync.catalog.gen` and `cloudsync.catalog.resync_gen` (a resync in
+  progress).
+- **Apply.** Pages are applied in transactions of at most 100 rows, one
+  savepoint per row. The cursor is written in the chunk's transaction and only
+  at a version boundary, so a crash re-applies at most one version, which is
+  idempotent. A row the till's validation refuses keeps the till's previous
+  version, is recorded in `cloud_apply_failures` (and logged), and the cursor
+  still moves past it. An error that is not a refusal — the context ending,
+  a SQLite failure other than a constraint (`data.IsStorageError`), a failed
+  savepoint, a hook such as the live-basket check failing — aborts the chunk
+  with the cursor unchanged and records nothing. A page with more rows than
+  the requested limit is refused unless all its rows share one version (the
+  contract's one oversized case).
+  **Order within a version.** A version group (one cloud transaction, always
+  whole) is applied in dependency order, not the feed's kind/`cloud_id`
+  order: tax codes, then modifier groups, then option sets, then categories
+  with a parent named in the group before its children, then items, then
+  item variants, then option-set tombstones (so a set deleted with its
+  last use is unused by then, ut-docs#4522), then item barcodes, then every
+  other kind. A row refused on its first attempt is applied once more at the
+  end of its group and only then recorded: an option or value moved between
+  groups or sets in one cloud transaction is refused by whichever side
+  applies first (ut-docs#4522). The cursor moves to a version only once all
+  its rows, retries included, are applied. The order is settled over
+  the whole group before it is cut into chunks. A parent cycle falls back to
+  feed order and is refused by the normal validation. A reference
+  (`parent_cloud_id`, `category_cloud_id`, `tax_code_cloud_id`, a variant's or
+  barcode's `item_cloud_id`, a barcode's `variant_cloud_id`, and every id
+  in `modifier_group_cloud_ids`, `modifier_opt_out_cloud_ids`,
+  `option_set_cloud_ids`) to a row of that kind that has no link yet — in an
+  earlier version or earlier in its group — refuses the row. An unlinked local row whose id equals the `cloud_id` is adopted
+  (updated and linked; its audit row says `created: false`).
+  **Seed rows (ut-docs#4494).** A fresh till runs the setup wizard before it
+  can be paired, so it already holds migration 001's tax codes and the
+  wizard's gift voucher item. An unlinked `tax_code` row whose (trimmed) name
+  equals exactly — BINARY, as the UNIQUE constraint compares — the name of a
+  seed tax code (`data.SeedTaxCodeIDs`: `tax_std`, `tax_red`, `tax_zero`) that
+  no `tax_code` link points at is applied onto that seed row and linked
+  (audit `adopted_seed: true`, `created: false`); from then on it is an
+  ordinary linked row (a tombstone or prune deactivates it). Any other local
+  row of the same name, or a seed row already linked, still refuses the row
+  (general adoption is ut-docs#4465). After a run that applied at least one
+  row, the seeded gift voucher item is retired
+  (`POSRepo.RetireSeededGiftVoucherItem`, ut-docs#4399's rules: another active
+  gift voucher item exists, the seeded one is untouched and unused) unless the
+  live baskets hold it or their check fails — then the next applying run
+  retries. Best-effort, after the last commit; a removal counts as a change.
+  Applied kinds: `tax_code`, `category`, `item`, `modifier_group`,
+  `option_set` (applier version 2, ut-docs#4491), `item_variant`,
+  `item_barcode` (applier version 3, ut-docs#4521). Every other kind is
+  skipped, cursor advancing: `layout`, `staff`, `setting` (ut-docs#4492),
+  and any unknown kind. Each applied
+  row writes an `audit_log` row (`actor system`, action
+  `cloud_catalog_<kind>_saved|deleted|deactivated`).
+- **Fields.** `tax_code`: name, rate_basis_points, takeaway_rate_basis_points
+  (null = no override), active. `category`: name, parent_cloud_id (null = top
+  level), sort_order, color, icon (null = clear), sell_screen_hidden, active
+  (deactivating refuses while active items are in it). `item`: name, sku and
+  unit (blank = keep), description (null = clear), price_minor,
+  category_cloud_id / tax_code_cloud_id (null = clear), active, is_weighed,
+  stock_untracked, age_restricted, color, icon, item_type, sell_screen_hidden,
+  sell_screen_removed, net_quantity_value/unit (both null = clear).
+  `modifier_group`: name, required, min_select, max_select, sort_order (the
+  group row's own legacy column; not negative), active, options — the full
+  ordered option set `[{id, name, price_delta_minor, active}]` (an option left
+  out is deleted; an absent option `active` means active; each `id` must be a
+  UUID and becomes the option's local id) — with `save_modifier_group`'s rules
+  (0 ≤ min ≤ max ≤ 50, required needs min ≥ 1, unique name among active
+  groups, 1–128-character option names, price change 0–999 999 999).
+  `option_set`: name (unique), active, values — the full ordered value list
+  `[{id, value}]` (UUID ids; a value left out is deleted, its generated
+  variants stay) with `save_option_set`'s rules.
+  **Link lists** — category `modifier_group_cloud_ids`; item
+  `modifier_group_cloud_ids`, `modifier_opt_out_cloud_ids`,
+  `option_set_cloud_ids` — are each the whole ordered set: absent keeps the
+  till's links, `[]` clears them, `null` refuses the row (the contract's lists
+  are never null), and every id must resolve through `cloud_links`. Applying
+  an item's option sets never generates variants (they arrive as their own
+  rows, ut-docs#4521). The same holds for `options` and `values`: absent
+  keeps, `null` refuses.
+  `item_variant` (`SaveVariantTx`, `save_item_variant`'s rules): item_cloud_id
+  (required on every row; a variant never moves to another item), name, sku
+  (blank = keep; blank on create generates a `VAR-` code), price_minor (not
+  null), active, retired_with_item (stored only on an inactive variant), and
+  option_value_cloud_ids — the variant's whole `item_variant_options` set
+  (absent keeps, `[]` clears, `null` refuses; at most two ids, each an
+  option value already on this till — its local id is its cloud id — and at
+  most one per option set; a value of a set the item no longer uses is kept
+  as provenance).
+  `item_barcode` (`PutBarcodeTx`, one row per barcode, written whole):
+  barcode and item_cloud_id required, variant_cloud_id null = an item
+  barcode (else a variant of that item), is_primary (true demotes the
+  owner's other primary). `barcode_type` is not read: the till resolves the
+  code against the shop's enabled symbologies as `save_item` does (ADR-0059
+  §3). The link's local id is the owner and stored key
+  (`item:<id>:<key>` / `variant:<id>:<key>`), so a changed code, a move or a
+  tombstone removes the barcode only from the owner the row put it on. A code
+  another item or variant holds, a code another barcode row's link already
+  names, or a 21st barcode on one owner refuses the row. A page's codes are
+  resolved before its first transaction (resolving reads settings through
+  the pool; a settings read failure aborts the chunk rather than refusing).
+- **Tombstones** use the delete rules: an item that was ever sold, has stock
+  history, is on a quick button, in a parked or live basket, is deactivated;
+  otherwise deleted (`delete_item`'s rule). A category is soft-deleted
+  (`DeleteCategoryMoving`); a tax code is deactivated. A modifier group is
+  deleted with `delete_modifier_group`'s cascade (options, item and category
+  links, opt-outs; past sales keep their snapshots). An option set is deleted
+  when no active item has it applied (`delete_option_set`'s rule), else
+  retired (ut-docs#4522): deactivated and renamed to free its UNIQUE name
+  (`Size (1a2b3c4d)`; retiring again keeps the name), so a later cloud set of
+  that name applies, and recorded in `cloud_retired`. Every chunk commit
+  retries those deletes: a set no active item uses any more is deleted
+  (audit `retired: true`); one reactivated on the till, or already gone, only
+  loses its record. A variant is deactivated, never deleted; a
+  barcode is removed (one never pulled is a no-op). The link is removed. A resync's prune uses the
+  same rules for every kind.
+- **409** `catalog_master_till` / `catalog_adopting` and **401/403** (e.g.
+  `device_credential_required`) stop the pull with the cursor unchanged and
+  no error; a 401/403 is logged at Warn once, then at Info until the feed
+  accepts the credential again.
+  **410 resync** starts a new generation from cursor 0. When the full pull
+  reaches `high_water`, the till fetches once more at `since=high_water`:
+  only an empty page with the same `high_water` confirms it, and then every
+  link with an older generation goes through the tombstone rules. Any other
+  answer is applied as a normal page and the prune waits for a later run
+  (`resync_gen` stays set), so on a feed written without pause the prune
+  waits for a quiet run; stale links only linger meanwhile. A crash
+  mid-resync still prunes at the end. Not yet built: the outbox exemption
+  (ut-docs#4464) and reporting refusals back to the cloud as `apply_failed`
+  (ut-docs#4493).
+
 ---
 
 ## Cloud Marketplace Integration (Feature 009)
@@ -769,7 +957,10 @@ data/plugins/
 
 **Download Integrity**
 - SHA256 checksum validation during download
-- Ed25519 signature verification for marketplace artifacts
+- Ed25519 signature verification for marketplace artifacts: `signature` covers
+  `manifest.json`; `content_signature` binds `content_digest`, the SHA-256 of every
+  other file in the package, which the till recomputes from the extracted
+  directory (ADR-0165)
 - Resume support via HTTP Range requests
 - .part file promotion only after verification
 

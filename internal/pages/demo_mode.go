@@ -156,6 +156,13 @@ func writeDemoRefusal(w http.ResponseWriter, r *http.Request, status int) {
 // demoDeniedRoutes are refused in the demo whatever the allow-list says
 // (ADR-0113 §1.5). Exact mux patterns, grouped by why.
 var demoDeniedRoutes = map[string]bool{
+	// Translate mode (ut-docs#4370, ADR-0160 §7): a manager tool that links
+	// every string into Weblate and writes shop overrides. A public demo
+	// visitor gets neither the mode nor its panel (translateModeAllowed
+	// also refuses on a demo till, so a hand-set cookie does nothing).
+	"POST /api/translate-mode":          true,
+	"GET /ui/translate-mode/panel":      true,
+	"POST /api/translate-mode/override": true,
 	// Report-only CSP sink and inventory (ut-docs#2913): a dev/test
 	// inventory aid, only registered with UT_CSP_REPORT_ONLY on — nothing a
 	// demo visitor needs.
@@ -205,6 +212,8 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/data/import":         true,
 	"POST /api/import":              true,
 	"POST /api/import/sample-data":  true,
+	"POST /api/import/from-system":  true, // ut-docs#4431: pulls a catalogue from another system
+	"POST /api/import/from-file":    true, // ut-docs#4526: commits a file through an importer plugin
 	"POST /api/vouchers/import":     true,
 	"POST /vouchers/{id}/adjust":    true, // ut-docs#4253: manager balance correction
 	// Backups: create, save-copy, download (a flagged demo database never
@@ -308,6 +317,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/sync/till-role":                  true, // ut-docs#2781: a joined till's own role report
 	"POST /api/tills/{id}/role":                 true, // ut-docs#2781: Tills page Change role
 	"POST /api/tills/{id}/update-now":           true, // ut-docs#2945: Tills page Update now
+	"POST /api/tills/rotate-tls-key":            true, // ut-docs#4423: Tills page Change network key
 	"POST /api/sync/settings/apply":             true,
 	"POST /api/sync/catalog/apply":              true,
 	"POST /api/sync/users/apply":                true,
@@ -414,6 +424,8 @@ var demoAllowedRoutes = map[string]bool{
 	"/healthz": true,
 	"/public/": true,
 	"GET /plugin-icons/{plugin}/{version}/{file...}": true,
+	"GET /plugin-fonts/bundle-fonts.css":             true,
+	"GET /plugin-fonts/{plugin}/{version}/{file}":    true,
 	"GET /themes/{file}":                             true,
 	"GET /ui/theme-sync":                             true,
 	// Sign-in, lock and session.
@@ -473,6 +485,7 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /ui/bugreport-chip":               true,
 	"GET /ui/cloud-auth-chip":              true,
 	"GET /ui/disk-space-chip":              true, // ut-docs#3121; local statfs only
+	"GET /ui/shop-currency-chip":           true, // ut-docs#4539; local settings read only
 	"GET /ui/diagnostics-chip":             true,
 	"GET /ui/fiscal-chip":                  true,
 	"GET /ui/main-till-status":             true,
@@ -634,10 +647,14 @@ var demoAllowedRoutes = map[string]bool{
 	// ut-docs#4251: the Gift vouchers page and its CSV export (a download
 	// of the visitor's own sample data, like the audit export); importing
 	// stays denied above (file ingest).
-	"GET /api/vouchers/export":                   true,
-	"GET /ui/vouchers/list":                      true,
-	"GET /vouchers":                              true,
-	"GET /vouchers/{id}":                         true,
+	"GET /api/vouchers/export": true,
+	"GET /ui/vouchers/list":    true,
+	"GET /vouchers":            true,
+	"GET /vouchers/{id}":       true,
+	// ut-docs#4252: a top-up only adds a line to the demo's own basket,
+	// like selling a voucher on the sale screen; the paying sale is the
+	// demo's own sample data.
+	"POST /vouchers/{id}/top-up":                 true,
 	"POST /api/country-settings":                 true,
 	"POST /api/country-settings/{code}/delete":   true,
 	"POST /api/data/cleanup-catalog":             true,

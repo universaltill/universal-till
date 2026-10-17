@@ -6,7 +6,8 @@
 // pairing — never by names or dates — so the certificate carries no
 // hostnames, and an expired cert, a new IP or a Pi with no RTC can't fail a
 // request. Renewal re-issues the certificate on the same key, so the pin
-// never changes by itself; a pin change is a key rotation (ut-docs#2737).
+// never changes by itself; a pin change is a key rotation (rotation.go,
+// ut-docs#4409).
 //
 // TLS is never the cause of a failed request: if the key can't be loaded or
 // created, the caller serves plain HTTP only, exactly as before this
@@ -29,6 +30,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 )
 
@@ -51,6 +53,14 @@ type Cert struct {
 	// what a peer pins (PinOf). It depends only on the key, so renewal
 	// keeps it.
 	pin string
+
+	// Key rotation (rotation.go, ut-docs#4409): nextPin is the pending
+	// next key's pin, set at load or by RotateNow (ut-docs#4423); st is
+	// rotation.json in dir. Both are read and written under mu.
+	nextPin string
+	dir     string
+	mu      sync.Mutex
+	st      rotationState
 }
 
 // TLSConfig serves this certificate: TLS 1.3 only (every peer is a till
@@ -68,6 +78,9 @@ func (c *Cert) TLSConfig() *tls.Config {
 // paths.Data("tls")), creating the key on first use and re-issuing the
 // certificate on the same key when it is missing, doesn't match the key, or
 // is within RenewBefore of expiry.
+//
+// Key rotation (rotation.go, ut-docs#4409) runs here too, so the pin it
+// returns is the one served for the whole process lifetime.
 func LoadOrCreate(dir string) (*Cert, error) { return loadOrCreate(dir, time.Now()) }
 
 func loadOrCreate(dir string, now time.Time) (*Cert, error) {
@@ -83,65 +96,78 @@ func loadOrCreate(dir string, now time.Time) (*Cert, error) {
 			log.Printf("[LAN TLS] could not restrict %s to 0700: %v", dir, err)
 		}
 	}
-	key, err := loadOrCreateKey(filepath.Join(dir, privateKeyFile))
+	keyPath := filepath.Join(dir, privateKeyFile)
+	fi, statErr := os.Stat(keyPath)
+	key, err := loadOrCreateKey(keyPath)
 	if err != nil {
 		return nil, err
 	}
-	leaf := loadLeaf(filepath.Join(dir, certFile), &key.PublicKey)
-	if leaf == nil || now.Add(RenewBefore).After(leaf.NotAfter) {
-		der, err := issue(key, now)
-		if err != nil {
-			return nil, err
-		}
-		if err := writeAtomic(filepath.Join(dir, certFile), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
-			return nil, err
-		}
-		if leaf, err = x509.ParseCertificate(der); err != nil {
-			return nil, fmt.Errorf("lantls: parse issued cert: %w", err)
-		}
+	var keyMtime time.Time
+	if statErr == nil {
+		keyMtime = fi.ModTime()
 	}
-	return &Cert{
+	// Key rotation before renewal, so the certificate renewed below is the
+	// one on the key actually served (ut-docs#4409).
+	rot := &rotation{dir: dir, now: now, st: loadState(dir), host: hostTag(hostIdentity())}
+	key, next := rot.run(key, errors.Is(statErr, fs.ErrNotExist), keyMtime)
+	leaf, err := ensureLeaf(filepath.Join(dir, certFile), key, now)
+	if err != nil {
+		return nil, err
+	}
+	c := &Cert{
 		tlsCert: tls.Certificate{Certificate: [][]byte{leaf.Raw}, PrivateKey: key, Leaf: leaf},
 		leaf:    leaf,
 		pin:     PinOf(leaf),
-	}, nil
+		dir:     dir,
+		st:      rot.st,
+	}
+	if next != nil {
+		// The pending next certificate is renewed like the current one;
+		// a failure only means it is re-issued at the switch.
+		if _, err := ensureLeaf(filepath.Join(dir, nextCertFile), next, now); err != nil {
+			log.Printf("[LAN TLS] could not renew the next certificate: %v", err)
+		}
+		c.nextPin = rot.st.NextPin
+	}
+	return c, nil
+}
+
+// ensureLeaf loads the certificate at path, re-issuing it on key when it is
+// missing, doesn't match the key, or is within RenewBefore of expiry.
+func ensureLeaf(path string, key *ecdsa.PrivateKey, now time.Time) (*x509.Certificate, error) {
+	leaf := loadLeaf(path, &key.PublicKey)
+	if leaf != nil && !now.Add(RenewBefore).After(leaf.NotAfter) {
+		return leaf, nil
+	}
+	der, err := issue(key, now)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeAtomic(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+		return nil, err
+	}
+	if leaf, err = x509.ParseCertificate(der); err != nil {
+		return nil, fmt.Errorf("lantls: parse issued cert: %w", err)
+	}
+	return leaf, nil
 }
 
 // loadOrCreateKey reads the key, or creates one if the file doesn't exist.
 // An unreadable or unparsable key is an error and is never replaced: a new
 // key would silently change the pin every paired till trusts.
 func loadOrCreateKey(path string) (*ecdsa.PrivateKey, error) {
-	b, err := os.ReadFile(path)
+	key, err := readKey(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
 			return nil, fmt.Errorf("lantls: generate key: %w", err)
 		}
-		der, err := x509.MarshalPKCS8PrivateKey(key)
-		if err != nil {
-			return nil, fmt.Errorf("lantls: marshal key: %w", err)
-		}
-		if err := writeAtomic(path, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
+		if err := writeKey(path, key); err != nil {
 			return nil, err
 		}
 		return key, nil
 	}
-	if err != nil {
-		return nil, fmt.Errorf("lantls: read key: %w", err)
-	}
-	blk, _ := pem.Decode(b)
-	if blk == nil {
-		return nil, fmt.Errorf("lantls: %s is not PEM (left as is)", path)
-	}
-	k, err := x509.ParsePKCS8PrivateKey(blk.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("lantls: parse key %s (left as is): %w", path, err)
-	}
-	key, ok := k.(*ecdsa.PrivateKey)
-	if !ok || key.Curve != elliptic.P256() {
-		return nil, fmt.Errorf("lantls: %s is not an ECDSA P-256 key (left as is)", path)
-	}
-	return key, nil
+	return key, err
 }
 
 // loadLeaf returns the stored certificate, or nil when it is missing,
@@ -214,11 +240,16 @@ func writeAtomic(path string, data []byte, perm os.FileMode) error {
 	}
 	// Persist the rename too: losing a just-created key to a power cut
 	// would mean a new key — a new pin — on the next boot.
+	syncDir(filepath.Dir(path))
+	return nil
+}
+
+// syncDir persists renames in dir (best effort; not on Windows).
+func syncDir(dir string) {
 	if runtime.GOOS != "windows" {
-		if d, err := os.Open(filepath.Dir(path)); err == nil {
+		if d, err := os.Open(dir); err == nil {
 			_ = d.Sync()
 			d.Close()
 		}
 	}
-	return nil
 }

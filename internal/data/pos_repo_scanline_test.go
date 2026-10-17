@@ -102,8 +102,8 @@ func TestResolveScanLine_PriceEmbedded(t *testing.T) {
 	if dec.SymbologyID != "EAN13_PRICE_PREFIX02" || !dec.HasEmbeddedPrice {
 		t.Fatalf("matched %+v, want EAN13_PRICE_PREFIX02 with an embedded price", dec)
 	}
-	if dec.EmbeddedPrice.Minor() != 350 {
-		t.Fatalf("embedded price = %d, want 350", dec.EmbeddedPrice.Minor())
+	if dec.EmbeddedPriceMinor != 350 {
+		t.Fatalf("embedded price = %d, want 350", dec.EmbeddedPriceMinor)
 	}
 	if line.ItemID != "i-ham" {
 		t.Fatalf("resolved %+v, want item i-ham", line)

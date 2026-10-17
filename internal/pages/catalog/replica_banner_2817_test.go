@@ -5,6 +5,7 @@ import (
 	"html"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -36,13 +37,18 @@ func TestCatalogReplicaBanner_SaysChangesGoToTheMainTill(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	Register(mux, dp)
+	// ut-docs#3605: the banner carries both texts so it can follow the
+	// status chip on an open page; the inactive one renders hidden. What
+	// the operator sees is the page minus those hidden elements (the item
+	// dialog's own note included).
+	hiddenSpan := regexp.MustCompile(`<(span|p)\b[^>]*\bdata-main-till-(away|here)\b[^>]*\shidden>[^<]*</(span|p)>`)
 	render := func() string {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/catalog", nil))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("GET /catalog = %d", rec.Code)
 		}
-		return rec.Body.String()
+		return hiddenSpan.ReplaceAllString(rec.Body.String(), "")
 	}
 	// The page is HTML: the messages arrive escaped.
 	writeThrough := html.EscapeString(httpx.T("en", "sync.banner_replica_write_through"))

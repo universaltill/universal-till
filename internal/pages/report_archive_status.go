@@ -19,8 +19,8 @@ import (
 type reportArchiveCloudStatus struct {
 	// CloudAllowed: cloud/both may be chosen now (ADR-0147 §1 gate).
 	CloudAllowed bool
-	// Show: this is the main till and the mode uploads, so the upload
-	// state below means something. A replica never uploads (§2).
+	// Show: the mode uploads, so the upload state below means something.
+	// Every till uploads its own Z chain (ut-docs#4438).
 	Show bool
 	// Pending: rows not yet acknowledged by the cloud.
 	Pending int
@@ -33,7 +33,7 @@ type reportArchiveCloudStatus struct {
 // card's other reads.
 func loadReportArchiveCloudStatus(ctx context.Context, d *common.Deps, mode string, now time.Time) reportArchiveCloudStatus {
 	st := reportArchiveCloudStatus{CloudAllowed: reportRetentionCloudAllowed(ctx, d, now)}
-	if !data.UploadsReportArchives(strings.TrimSpace(mode)) || !reportArchiveOnMainTill(ctx, d) {
+	if !data.UploadsReportArchives(strings.TrimSpace(mode)) {
 		return st
 	}
 	st.Show = true
@@ -53,14 +53,15 @@ func reportArchiveUploadRefused(ctx context.Context, d *common.Deps) bool {
 	return strings.TrimSpace(v) != ""
 }
 
-// reportArchiveChipVisible: the chip shows only on the main till, in mode
-// cloud or both, while a refusal stands (ADR-0147 §1/§2).
+// reportArchiveChipVisible: the chip shows in mode cloud or both while this
+// till's own refusal stands (ADR-0147 §1/§2) — on any till, since every
+// till uploads its own Z chain (ut-docs#4438).
 func reportArchiveChipVisible(ctx context.Context, d *common.Deps) bool {
 	mode, _, _ := d.Settings.Get(ctx, common.KeyReportRetentionMode)
 	if !data.UploadsReportArchives(strings.TrimSpace(mode)) {
 		return false
 	}
-	return reportArchiveOnMainTill(ctx, d) && reportArchiveUploadRefused(ctx, d)
+	return reportArchiveUploadRefused(ctx, d)
 }
 
 // registerReportArchiveChip: GET /ui/report-archive-chip, polled from the

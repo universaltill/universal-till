@@ -164,7 +164,7 @@ func CloseImportFile(pluginID string, handle int32) {
 // hostImportFileSize returns the staged file's total size in bytes, or a
 // negative hostErr* code when the handle is unknown to this plugin.
 func hostImportFileSize(ctx context.Context, handle int32) int64 {
-	s, ok := stateFrom(ctx)
+	s, ok := stateFromAny(ctx)
 	if !ok {
 		return int64(hostErrInternal)
 	}
@@ -194,7 +194,7 @@ func hostImportFileSize(ctx context.Context, handle int32) int64 {
 // semantics instead: at most dstCap bytes are written and the return
 // value is exactly how many landed in the guest buffer.
 func hostImportFileRead(ctx context.Context, m api.Module, handle int32, dstPtr, dstCap uint32) int32 {
-	s, ok := stateFrom(ctx)
+	s, ok := stateFromAny(ctx)
 	if !ok {
 		return hostErrInternal
 	}
@@ -238,7 +238,7 @@ func hostImportFileRead(ctx context.Context, m api.Module, handle int32, dstPtr,
 // handle also returns 0 (mirrors tcp_close — the host-side dispatcher
 // cleanup and the guest's own close may both run).
 func hostImportFileClose(ctx context.Context, handle int32) int32 {
-	s, ok := stateFrom(ctx)
+	s, ok := stateFromAny(ctx)
 	if !ok {
 		return hostErrInternal
 	}

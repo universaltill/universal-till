@@ -37,10 +37,12 @@ on:
     paths:
       - 'e2e/playwright.docs.config.ts'
       - 'e2e/tests-docs/**'
+      - 'e2e/fontconfig/**'
       - 'e2e/scripts/docs-shots.sh'
       - 'e2e/scripts/resolve-chromium.sh'
       - 'e2e/run-till.sh'
       - 'e2e/run-till-auth.sh'
+      - 'e2e/seed_docs_sales/**'
       - 'e2e/package.json'
       - 'e2e/package-lock.json'
       - 'Makefile'
@@ -67,6 +69,12 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 26
+      # ut-docs#4407: the app has no webfont, so the harness refuses to run
+      # without the reference fonts (Inter for Latin, DejaVu Sans for Arabic,
+      # DejaVu Sans Mono for monospace, Noto Color Emoji for emoji —
+      # ut-docs#4425).
+      - name: Install reference fonts
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-inter fonts-dejavu-core fonts-noto-color-emoji
       # Prints exactly which file(s) differed on failure, with each PNG's
       # differing-pixel count and bounding box (scripts/ci/pngdiff,
       # ut-docs#2929). The script restores web/help/img/ to its pre-run state

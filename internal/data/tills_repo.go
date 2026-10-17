@@ -24,6 +24,10 @@ type TillRow struct {
 	// ut-docs#2781). Until #1154 a satellite has no runtime behaviour of its
 	// own: the role labels the till and gates its device profile.
 	Role string
+	// TLSPinned is set once the till has authenticated a sync request over
+	// pinned LAN TLS (till_tls_pinned, ut-docs#2737). Filled by
+	// TillByBearerHash only.
+	TLSPinned bool
 }
 
 // Till roles (ut-docs#2781): the values tills.role and
@@ -185,9 +189,10 @@ func (r *TillsRepo) NameTakenExcept(ctx context.Context, name, exceptID string) 
 func (r *TillsRepo) TillByBearerHash(ctx context.Context, bearerHash string) (TillRow, bool, error) {
 	var t TillRow
 	err := r.db.QueryRowContext(ctx, `
-SELECT id, name, enrolled_at, COALESCE(last_seen_at, ''), role
-FROM tills WHERE bearer_hash = ?`, bearerHash).
-		Scan(&t.ID, &t.Name, &t.EnrolledAt, &t.LastSeenAt, &t.Role)
+SELECT t.id, t.name, t.enrolled_at, COALESCE(t.last_seen_at, ''), t.role, p.till_id IS NOT NULL
+FROM tills t LEFT JOIN till_tls_pinned p ON p.till_id = t.id
+WHERE t.bearer_hash = ?`, bearerHash).
+		Scan(&t.ID, &t.Name, &t.EnrolledAt, &t.LastSeenAt, &t.Role, &t.TLSPinned)
 	if err == sql.ErrNoRows {
 		return TillRow{}, false, nil
 	}
@@ -197,6 +202,34 @@ FROM tills WHERE bearer_hash = ?`, bearerHash).
 	_, _ = r.db.ExecContext(ctx, `UPDATE tills SET last_seen_at = ? WHERE id = ?`,
 		time.Now().UTC().Format(time.RFC3339), t.ID)
 	return t, true, nil
+}
+
+// MarkTLSPinned records that the till authenticated a sync request over
+// pinned LAN TLS (ADR-0114 §7, ut-docs#2737); idempotent. An unknown till id
+// fails on the foreign key rather than leaving an orphan row.
+func (r *TillsRepo) MarkTLSPinned(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO till_tls_pinned (till_id, pinned_at) VALUES (?, ?) ON CONFLICT(till_id) DO NOTHING`,
+		id, time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("mark till tls pinned: %w", err)
+	}
+	return nil
+}
+
+// AllTillsTLSPinned reports whether this main till has at least one enrolled
+// till and every one of them has a till_tls_pinned row — the condition under
+// which plain-HTTP peer sync closes entirely (ADR-0114 §7, ut-docs#4411).
+// Zero tills is false: nothing yet shows the fleet speaks TLS.
+func (r *TillsRepo) AllTillsTLSPinned(ctx context.Context) (bool, error) {
+	var total, unpinned int
+	err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*), COALESCE(SUM(CASE WHEN p.till_id IS NULL THEN 1 ELSE 0 END), 0)
+FROM tills t LEFT JOIN till_tls_pinned p ON p.till_id = t.id`).Scan(&total, &unpinned)
+	if err != nil {
+		return false, fmt.Errorf("all tills tls pinned: %w", err)
+	}
+	return total > 0 && unpinned == 0, nil
 }
 
 // TouchLastSeen refreshes a till's last_seen_at without a bearer lookup —

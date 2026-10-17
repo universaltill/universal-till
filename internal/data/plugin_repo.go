@@ -2547,6 +2547,14 @@ type ImportEntryRow struct {
 	SortOrder   int
 	Entities    []string
 	FileFormats []string
+	// Source is "api" for an API-source entry (ADR-0161), "file" for a
+	// file-rows entry (ADR-0164 §2), "" for a legacy file one.
+	Source string
+	// FileHeaders are a file-rows entry's claim columns (ADR-0164 §2).
+	FileHeaders []string
+	// PluginName is the owning plugin's name — the import page lists API
+	// importers by it (ut-docs#4431).
+	PluginName string
 }
 
 // ListImportEntries returns active import entries from active plugins —
@@ -2555,6 +2563,7 @@ func (r *PluginRepo) ListImportEntries(ctx context.Context) ([]ImportEntryRow, e
 	rows, err := r.db.QueryContext(ctx, `
 SELECT
     p.id,
+    COALESCE(p.name, ''),
     pe.key,
     pe.label,
     pe.sort_order,
@@ -2572,7 +2581,7 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 	for rows.Next() {
 		var row ImportEntryRow
 		var configJSON string
-		if err := rows.Scan(&row.PluginID, &row.Key, &row.Label, &row.SortOrder, &configJSON); err != nil {
+		if err := rows.Scan(&row.PluginID, &row.PluginName, &row.Key, &row.Label, &row.SortOrder, &configJSON); err != nil {
 			return nil, pluginObs.wrap("list_import_entries", err)
 		}
 		if configJSON != "" {
@@ -2583,10 +2592,14 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 			var cfg struct {
 				Entities    []string `json:"entities"`
 				FileFormats []string `json:"file_formats"`
+				Source      string   `json:"source"`
+				FileHeaders []string `json:"file_headers"`
 			}
 			if err := json.Unmarshal([]byte(configJSON), &cfg); err == nil {
 				row.Entities = cfg.Entities
 				row.FileFormats = cfg.FileFormats
+				row.Source = cfg.Source
+				row.FileHeaders = cfg.FileHeaders
 			}
 		}
 		res = append(res, row)

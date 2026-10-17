@@ -10,6 +10,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -158,6 +159,10 @@ func tillsRosterData(ctx context.Context, d *common.Deps, w http.ResponseWriter,
 		// whether or not this till is the main till (Show is false only
 		// when the shop has no cloud enrolment at all).
 		"CloudLink": cloudLinkRowFor(ctx, d, locale),
+		// ut-docs#4423: the main till's LAN TLS key and its "Change
+		// network key" action, only where the link roster is (main till)
+		// and the LAN port serves TLS.
+		"NetworkKey": networkKeyView(linkInfo),
 	}, nil
 }
 
@@ -176,4 +181,18 @@ func registerTillsRoster(mux *http.ServeMux, d *common.Deps) {
 		}
 		httpx.RenderPartial("ui/partials/tills_roster.html", m)(w, r)
 	})
+}
+
+// networkKeyRow is the Tills page's network key line (ut-docs#4423).
+type networkKeyRow struct {
+	Show    bool
+	Pending bool // a rotation is under way: linked tills are switching over
+}
+
+func networkKeyView(linkInfo bool) networkKeyRow {
+	c := lantls.Serving()
+	if !linkInfo || c == nil {
+		return networkKeyRow{}
+	}
+	return networkKeyRow{Show: true, Pending: c.NextPin() != ""}
 }

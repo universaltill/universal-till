@@ -205,7 +205,7 @@ VALUES ('com.rb.route', '1.0.0', 'RB Route', 'wasm', './main.wasm', 'https://exa
 func TestPersistManifest_RejectsReservedPageRoutes(t *testing.T) {
 	for _, route := range []string{
 		"/api/x", "/api/plugins/marketplace", "/ui/foo", "/v1/bar",
-		"/public/x.js", "/ext/y", "/plugin-icons/a/b/c", "/api",
+		"/public/x.js", "/ext/y", "/plugin-icons/a/b/c", "/plugin-fonts/a/b/c", "/api",
 		"/self-order/promo", "/themes/a/b", "/o/x/y",
 		// ut-docs#3791: core namespaces with {wildcard} children.
 		"/help/a/b", "/orders/a/b", "/journal/a/b", "/plugins/a/b",
@@ -296,7 +296,7 @@ func TestReservedPageRoutesCoverAuthExemptNamespaces(t *testing.T) {
 	mw := auth.Middleware(next, nil)
 	for _, ns := range []string{
 		"/api", "/api/auth", "/api/self-order", "/api/sync", "/ui", "/v1", "/public", "/ext",
-		"/plugin-icons", "/self-order", "/o", "/themes", "/plugin", "/help", "/orders",
+		"/plugin-icons", "/plugin-fonts", "/self-order", "/o", "/themes", "/plugin", "/help", "/orders",
 		"/settings", "/setup", "/login", "/healthz", "/kitchen-display", "/journal", "/recovery",
 	} {
 		probe := ns + "/zz-plugin-probe/x"

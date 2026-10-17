@@ -516,3 +516,81 @@ func TestApplyReplicaIdentityWritesPrimaryCertPin(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#4409: a next pin announced by an earlier main till (a key
+// rotation in progress) must not survive a (re-)pairing: it is cleared
+// with every join, whatever pin the join learned.
+func TestApplyReplicaIdentityClearsPrimaryCertNextPin(t *testing.T) {
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init("") })
+
+	path := filepath.Join(t.TempDir(), "data", "unitill-pos.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+	if _, err := d.Exec(`INSERT INTO settings (key, value) VALUES ('sync.primary_cert_next_pin', 'ffff')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := StageReplicaIdentity(path, ReplicaIdentity{
+		PrimaryURL: "http://primary.local", TillID: "till-2", Bearer: "b",
+		ReceiptPrefix: "T2-", TillName: "Back lane", PrimaryCertPin: "ab12cd",
+	}); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if applied, err := ApplyReplicaIdentity(d.DB, path); err != nil || !applied {
+		t.Fatalf("apply: applied=%v err=%v", applied, err)
+	}
+	var v string
+	_ = d.QueryRow(`SELECT value FROM settings WHERE key = 'sync.primary_cert_next_pin'`).Scan(&v)
+	if v != "" {
+		t.Fatalf("sync.primary_cert_next_pin = %q after pairing, want it cleared", v)
+	}
+}
+
+// ut-docs#4560: withdrawing a staged join removes both the restore and the
+// identity, and is a no-op when nothing (or only one of them) is staged.
+func TestUnstageJoinRemovesRestoreAndIdentity(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "till.db")
+	if err := StageRestoreFromReader(dbPath, strings.NewReader("snapshot")); err != nil {
+		t.Fatal(err)
+	}
+	if err := StageReplicaIdentity(dbPath, ReplicaIdentity{PrimaryURL: "http://main:8080", TillID: "t2"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := UnstageJoin(dbPath); err != nil {
+		t.Fatalf("unstage: %v", err)
+	}
+	if PendingRestore(dbPath) {
+		t.Error("the staged restore must be gone")
+	}
+	if _, err := os.Stat(ReplicaIdentityPath(dbPath)); !os.IsNotExist(err) {
+		t.Errorf("the staged identity must be gone (stat err %v)", err)
+	}
+	if err := UnstageJoin(dbPath); err != nil {
+		t.Errorf("nothing staged must not be an error: %v", err)
+	}
+}
+
+// A removal that fails is reported, and does not stop the other removal:
+// the identity goes even when the restore can't (a half-joined till —
+// identity without restore — is the worse state).
+func TestUnstageJoinTriesBothAndReportsFailure(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "till.db")
+	if err := StageReplicaIdentity(dbPath, ReplicaIdentity{TillID: "t2"}); err != nil {
+		t.Fatal(err)
+	}
+	// A non-empty directory where the restore file goes: os.Remove fails.
+	blocker := filepath.Join(dir, restorePendingName)
+	if err := os.MkdirAll(filepath.Join(blocker, "x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := UnstageJoin(dbPath); err == nil {
+		t.Fatal("expected the failed restore removal to be reported")
+	}
+	if _, err := os.Stat(ReplicaIdentityPath(dbPath)); !os.IsNotExist(err) {
+		t.Errorf("the identity must still be removed (stat err %v)", err)
+	}
+}

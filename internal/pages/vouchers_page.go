@@ -18,7 +18,9 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pos"
 )
 
 // Gift vouchers page (ut-docs#4251): one manager page that lists every
@@ -33,7 +35,9 @@ import (
 // AdjustVoucherBalance — on an additional till made on the main till's
 // ledger first, voucher_sync_proxy.go adjustVoucherOnPrimary). Gated on
 // "settings", the same action the import always used, server-side on every
-// route.
+// route. POST /vouchers/{id}/top-up (ut-docs#4252) writes nothing: it adds a
+// top-up line to the cashier's basket, and the sale that pays for it credits
+// the voucher (pos.CompleteSale → data.TopUpVoucher).
 //
 // Offline-first: everything reads the local database. On an additional
 // till that local view is only the vouchers this till has seen (issued
@@ -209,6 +213,16 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 			"menuItems": d.MenuSnapshot(),
 			"voucher":   v,
 			"history":   views,
+			// ut-docs#4252: the Top up section. Same gate and the same
+			// "possible" rule as the correction; an additional till gets a
+			// note instead of the form (top-ups are main-till only).
+			"topUp": map[string]any{
+				"allowed":  allowed,
+				"possible": possible,
+				"void":     v.Status == "void",
+				"replica":  d.SyncPrimaryURL(r.Context()) != "",
+				"href":     "/vouchers/" + url.PathEscape(id) + "/top-up",
+			},
 			"adjust": map[string]any{
 				"allowed":  allowed,
 				"possible": possible,
@@ -303,6 +317,111 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 		http.Redirect(w, r, target, http.StatusSeeOther)
 	})
 
+	// POST /vouchers/{id}/top-up — add value to an existing voucher as a
+	// sale (ut-docs#4252). It checks the voucher BEFORE touching the basket,
+	// then adds a top-up gift-voucher line (Code = this voucher, Price = the
+	// amount) to the CASHIER's basket, d.Engine — never the self-order
+	// kiosk's — and sends the manager to the sale screen to take payment.
+	// Nothing is credited here: the paying sale does that in its own
+	// transaction (pos.CompleteSale → data.TopUpVoucher, which re-checks
+	// every rule). Errors are an inline fragment, like /adjust.
+	mux.HandleFunc("POST /vouchers/{id}/top-up", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.RequestLocale(r)
+		fail := func(status int, msg string) { voucherInlineMessage(w, status, msg) }
+		if !canPerform(d, r, "settings") {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return
+		}
+		// An additional till can't top up yet: its sale would have to
+		// credit the main till's ledger (follow-up card). Checkout itself is
+		// untouched — this only refuses adding the line.
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			fail(http.StatusConflict, httpx.T(locale, "vouchers.top_up.replica_note"))
+			return
+		}
+		if d.Engine == nil {
+			fail(http.StatusInternalServerError, httpx.T(locale, "common.error.server"))
+			return
+		}
+		id := r.PathValue("id")
+		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		amountMsg := fmt.Sprintf(httpx.T(locale, "vouchers.top_up.error.amount"), httpx.FormatMoneyDisplay(pos.MaxVoucherIssueAmount.Minor(), locale))
+		if err := r.ParseForm(); err != nil {
+			fail(http.StatusBadRequest, amountMsg)
+			return
+		}
+		amount, err := httpx.ParseMoneyMajor(r.PostFormValue("amount"), httpx.ActiveCurrency().Decimals)
+		if err != nil || amount <= 0 || money.FromMinor(amount) > pos.MaxVoucherIssueAmount {
+			fail(http.StatusBadRequest, amountMsg)
+			return
+		}
+		v, err := repo.GetVoucherBalance(r.Context(), nil, id)
+		switch {
+		case errors.Is(err, data.ErrVoucherNotFound):
+			fail(http.StatusNotFound, httpx.T(locale, "vouchers.error.not_found"))
+			return
+		case err != nil:
+			logging.L().Errorf("voucher top-up %s: %v", id, err)
+			fail(http.StatusInternalServerError, httpx.T(locale, "common.error.server"))
+			return
+		case v.Status == "void":
+			fail(http.StatusConflict, httpx.T(locale, "vouchers.top_up.not_void"))
+			return
+		case v.Purpose != data.VoucherPurposeMulti:
+			fail(http.StatusConflict, httpx.T(locale, "vouchers.top_up.not_single"))
+			return
+		case v.BalanceMinor > pos.MaxVoucherIssueAmount.Minor()-amount:
+			fail(http.StatusBadRequest, amountMsg)
+			return
+		}
+		if d.Engine.HasGiftVoucherCode(v.ID) {
+			fail(http.StatusConflict, httpx.T(locale, "vouchers.top_up.error.in_sale"))
+			return
+		}
+		if countGiftVoucherLines(d.Engine.Lines()) >= pos.MaxVoucherIssuesPerSale {
+			fail(http.StatusConflict, fmt.Sprintf(httpx.T(locale, "pos.gift_voucher.error.too_many"), pos.MaxVoucherIssuesPerSale))
+			return
+		}
+		// The line's base is the shop's gift voucher item, resolved the way
+		// the sale screen resolves a tile (its item-id code), so the line
+		// is exactly what selling a voucher puts in the basket.
+		itemID, ok, err := data.NewCatalogRepo(d.Db).ActiveGiftVoucherItemID(r.Context())
+		if err != nil {
+			logging.L().Errorf("voucher top-up %s: gift voucher item: %v", id, err)
+			fail(http.StatusInternalServerError, httpx.T(locale, "common.error.server"))
+			return
+		}
+		var base pos.BasketLine
+		if ok {
+			base, ok = d.Engine.ResolveExact(data.ItemIDCode(itemID))
+		}
+		if !ok || !base.IsGiftVoucherItem() {
+			fail(http.StatusConflict, httpx.T(locale, "vouchers.top_up.error.no_item"))
+			return
+		}
+		_, err = d.Engine.AddGiftVoucherLine(base, money.FromMinor(amount), pos.GiftVoucherLine{
+			Code:        v.ID,
+			HolderLabel: boundGiftVoucherHolder(v.HolderLabel),
+			Purpose:     data.VoucherPurposeMulti,
+			TopUp:       true,
+		})
+		if errors.Is(err, pos.ErrGiftVoucherCodeInBasket) {
+			fail(http.StatusConflict, httpx.T(locale, "vouchers.top_up.error.in_sale"))
+			return
+		}
+		if err != nil {
+			logging.L().Errorf("voucher top-up %s: add line: %v", id, err)
+			fail(http.StatusInternalServerError, httpx.T(locale, "common.error.server"))
+			return
+		}
+		if r.Header.Get("HX-Request") == "true" {
+			w.Header().Set("HX-Redirect", "/")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	})
+
 	mux.HandleFunc("GET /api/vouchers/export", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "settings") {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
@@ -324,8 +443,8 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 		for _, v := range rows {
 			// code and label are operator-typed: csvSafe defuses a leading
 			// formula trigger, and the importer strips that same "'" back
-			// off (catimport.stripCSVDefuse). One lossy edge: a stored value
-			// already shaped "'=X" comes back as "=X" (stripCSVDefuse doc,
+			// off (catimport.StripCSVDefuse). One lossy edge: a stored value
+			// already shaped "'=X" comes back as "=X" (StripCSVDefuse doc,
 			// ut-docs#321).
 			_ = cw.Write([]string{
 				csvSafe(v.ID),
@@ -375,7 +494,13 @@ func voucherAdjustErrorKey(err error) (int, string) {
 // voucherAdjustMessage writes the inline (non-modal) message fragment the
 // correction form swaps into its message slot.
 func voucherAdjustMessage(w http.ResponseWriter, r *http.Request, status int, key string) {
+	voucherInlineMessage(w, status, httpx.T(httpx.RequestLocale(r), key))
+}
+
+// voucherInlineMessage writes an already-localized message as the inline
+// fragment the detail page's forms swap into their message slot.
+func voucherInlineMessage(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	fmt.Fprintf(w, `<div class="notice-block-warn" role="alert"><p>%s</p></div>`, html.EscapeString(httpx.T(httpx.RequestLocale(r), key)))
+	fmt.Fprintf(w, `<div class="notice-block-warn" role="alert"><p>%s</p></div>`, html.EscapeString(msg))
 }

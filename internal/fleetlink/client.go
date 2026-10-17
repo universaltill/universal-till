@@ -57,7 +57,11 @@ type ClientOptions struct {
 	// Callbacks, all on the client's own goroutine (never the link's
 	// reader), so they may touch the database. They must not block for
 	// long: the link's housekeeping waits on them.
-	OnHello func(ctx context.Context, main Hello)     // the main till's hello: the link is up
+	// OnHello: the main till's hello, the link is up. verifiedPin is the
+	// pin of the certificate verified on this link's own connection ("" =
+	// plain HTTP): unlike main.TLSPin, which the main till reports about
+	// itself, it is what this till actually checked (ut-docs#4409).
+	OnHello func(ctx context.Context, main Hello, verifiedPin string)
 	OnSync  func(ctx context.Context, scopes []Scope) // a coalesced sync nudge
 	// OnCloudCheckin: the main till relayed "check in with the cloud now"
 	// (ut-docs#2893). Single-flight: frames arriving while it runs make
@@ -130,6 +134,7 @@ type Client struct {
 	lostAt      time.Time
 	lostSeen    time.Time
 	failedAt    time.Time
+	byeAt       time.Time // the last link ended with the main till's bye (ut-docs#4422)
 }
 
 // LinkMode is what the client is doing about its main till.
@@ -162,8 +167,11 @@ type ClientStatus struct {
 	// LinkedSince is when the current link came up (zero when not linked).
 	LinkedSince time.Time
 	// LostAt is when the main till was last heard before an established
-	// link was lost without a bye; zero while linked, or when the last
-	// link ended with a bye (a restart or an update is not an outage).
+	// link was lost; zero while linked. A link that ended with a bye (a
+	// restart or an update) is no outage while the main till may still be
+	// coming back: LostAt stays zero for one presence window (PeerTimeout)
+	// after the bye, then reads the bye's time if nothing has answered
+	// since (ut-docs#4422) — a main till shut down cleanly is gone.
 	LostAt time.Time
 	// LostSeen is when this till noticed the loss (the heartbeat check or
 	// the socket closing, up to PeerTimeout after LostAt). A contact with
@@ -190,6 +198,7 @@ func (c *Client) statusAt(now time.Time) ClientStatus {
 		LostSeen:    c.lostSeen,
 		FailedAt:    c.failedAt,
 	}
+	byeAt := c.byeAt
 	c.smu.Unlock()
 	s.Linked = c.linked.Load()
 	if s.Linked {
@@ -203,6 +212,11 @@ func (c *Client) statusAt(now time.Time) ClientStatus {
 	if !s.Linked {
 		s.LinkedSince = time.Time{}
 	}
+	if !s.Linked && s.LostAt.IsZero() && !byeAt.IsZero() {
+		if seen := byeAt.Add(c.cfg.PeerTimeout); !now.Before(seen) {
+			s.LostAt, s.LostSeen = byeAt, seen
+		}
+	}
 	return s
 }
 
@@ -214,7 +228,7 @@ func (c *Client) markLinkUp(h Hello) {
 	c.mainVersion = h.Version
 	c.linkedSince = time.Now()
 	c.lostAt, c.lostSeen = time.Time{}, time.Time{}
-	c.failedAt = time.Time{}
+	c.failedAt, c.byeAt = time.Time{}, time.Time{}
 	c.smu.Unlock()
 	c.setMode(ModeLinked)
 }
@@ -233,7 +247,7 @@ func (c *Client) markAttemptFailed() {
 // (any HTTP status), so it is reachable even if no link came of it.
 func (c *Client) markAnswered() {
 	c.smu.Lock()
-	c.failedAt = time.Time{}
+	c.failedAt, c.byeAt = time.Time{}, time.Time{}
 	c.smu.Unlock()
 }
 
@@ -249,13 +263,23 @@ func (c *Client) markLinkLost(last time.Time) {
 	c.smu.Unlock()
 }
 
-// clearOutage forgets a running outage: the link ended with a bye (the
-// main till restarting or updating), or this till has no main till.
+// clearOutage forgets a running outage: the main till answered, or this
+// till has no main till.
 func (c *Client) clearOutage() {
 	c.smu.Lock()
 	c.lostAt, c.lostSeen = time.Time{}, time.Time{}
 	c.linkedSince = time.Time{}
-	c.failedAt = time.Time{}
+	c.failedAt, c.byeAt = time.Time{}, time.Time{}
+	c.smu.Unlock()
+}
+
+// markBye records that the link ended with the main till's bye (restarting,
+// updating or shutting down): no outage yet, but one since the bye if the
+// main till hasn't answered within a presence window (statusAt).
+func (c *Client) markBye() {
+	c.clearOutage()
+	c.smu.Lock()
+	c.byeAt = time.Now()
 	c.smu.Unlock()
 }
 
@@ -440,6 +464,7 @@ func (c *Client) attempt(ctx context.Context, t Target, attempt int) (time.Durat
 	level, err := c.opts.Probe(ctx, t)
 	switch {
 	case errors.Is(err, ErrUnauthorized):
+		c.markAnswered() // it answered: a refusal, not an outage
 		c.markRevoked(ctx, t)
 		return c.opts.RecheckEvery, 0
 	case err != nil:
@@ -548,7 +573,7 @@ func (c *Client) runLink(ctx context.Context, t Target, conn Conn) (end linkEnd,
 		case end == endLost && established:
 			c.markLinkLost(p.lastFrameAt(time.Now()))
 		case end == endBye:
-			c.clearOutage()
+			c.markBye()
 		}
 		if LinkMode(c.mode.Load()) == ModeLinked {
 			c.setMode(ModeConnecting)
@@ -603,7 +628,7 @@ func (c *Client) runLink(ctx context.Context, t Target, conn Conn) (end linkEnd,
 			c.clearWarned()
 			c.setLinked(true)
 			if c.opts.OnHello != nil {
-				c.opts.OnHello(ctx, h)
+				c.opts.OnHello(ctx, h, connVerifiedPin(conn))
 			}
 			sendReport(true)
 		case <-c.syncIn:

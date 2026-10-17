@@ -53,6 +53,37 @@
 </div>
 {{ end }}
 
+{{ $t := .topUp }}
+{{ if $t.allowed }}
+{{/* ut-docs#4252: top up as a sale. Same pattern as Correct balance above:
+     inline form, never a modal; refusals come back as a fragment swapped
+     into #voucher-top-up-msg, success sends the manager to the sale screen
+     with the top-up line in the basket (nothing is credited until the sale
+     is paid). An additional till shows a note instead — top-ups are made
+     on the main till. */}}
+<div class="card" id="voucher-top-up" style="margin-block-start:1rem">
+  <h2>{{ T "vouchers.top_up.title" }}</h2>
+  {{ if $t.replica }}
+  <p class="muted" role="status">{{ T "vouchers.top_up.replica_note" }}</p>
+  {{ else if $t.possible }}
+  <p class="muted">{{ T "vouchers.top_up.intro" }}</p>
+  <form hx-post="{{ $t.href }}" hx-target="#voucher-top-up-msg" hx-swap="innerHTML" hx-disabled-elt="find button[type=submit]"
+        action="{{ $t.href }}" method="post" style="display:flex; flex-wrap:wrap; gap:.5rem 1rem; align-items:end">
+    <label>{{ T "vouchers.top_up.amount" }} ({{ currency.Display }})
+      <input type="text" name="amount" inputmode="decimal" autocomplete="off" required
+             {{ moneypatternlocal currency.Decimals false }} {{ moneyplaceholderlocal currency.Decimals 0 }} style="inline-size:9rem">
+    </label>
+    <button class="btn primary" type="submit">{{ T "vouchers.top_up.add" }}</button>
+  </form>
+  <div id="voucher-top-up-msg" aria-live="polite" style="margin-block-start:.6rem"></div>
+  {{ else if $t.void }}
+  <p class="muted">{{ T "vouchers.top_up.not_void" }}</p>
+  {{ else }}
+  <p class="muted">{{ T "vouchers.top_up.not_single" }}</p>
+  {{ end }}
+</div>
+{{ end }}
+
 <div class="card" style="margin-block-start:1rem">
   <h2>{{ T "vouchers.history.title" }}</h2>
   {{ if .history }}
@@ -70,11 +101,14 @@
         {{ range .history }}
         <tr>
           <td>{{ datetime .CreatedAt }}</td>
-          <td>{{ if eq .Type "issue" }}{{ T "vouchers.history.type.issue" }}{{ else if eq .Type "adjustment" }}{{ T "vouchers.history.type.adjustment" }}
+          {{/* ut-docs#4252: a top-up adds value in a sale; voiding that sale
+               writes an adjustment carrying the sale's id, shown as the
+               top-up being taken back (a manager correction has no sale). */}}
+          <td>{{ if eq .Type "issue" }}{{ T "vouchers.history.type.issue" }}{{ else if eq .Type "top_up" }}{{ T "vouchers.history.type.top_up" }}{{ else if and (eq .Type "adjustment") .SaleID }}{{ T "vouchers.history.type.top_up_void" }}{{ else if eq .Type "adjustment" }}{{ T "vouchers.history.type.adjustment" }}
             {{ if .Reason }}<br><span class="muted">{{ .Reason }}</span>{{ end }}
             {{ if .ActorName }}<br><span class="muted">{{ printf (T "vouchers.history.by") .ActorName }}</span>{{ end }}
             {{ else }}{{ T "vouchers.history.type.redemption" }}{{ end }}</td>
-          <td style="text-align:end">{{ if and (eq .Type "adjustment") (gt .AmountMinor 0) }}+{{ end }}{{ money .AmountMinor }}</td>
+          <td style="text-align:end">{{ if or (eq .Type "top_up") (and (eq .Type "adjustment") (gt .AmountMinor 0)) }}+{{ end }}{{ money .AmountMinor }}</td>
           <td>{{ if .SaleHref }}<a href="{{ .SaleHref }}">{{ .ReceiptNo }}</a>{{ else if and (eq .Type "issue") (not .SaleID) }}<span class="muted">{{ T "vouchers.imported" }}</span>{{ else if not .SaleID }}—{{ else }}<span class="muted">{{ T "vouchers.sale_not_on_till" }}</span>{{ end }}</td>
         </tr>
         {{ end }}

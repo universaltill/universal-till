@@ -49,10 +49,10 @@
 {{ if .Items }}
 <input type="search" id="store-search" class="store-search" placeholder="{{ T "plugins.store.search_ph" }}" aria-label="{{ T "plugins.store.search_ph" }}" autocomplete="off">
 {{ if .Categories }}
-<div class="store-cats" role="group" aria-label="{{ T "plugins.store.browse" }}">
-  <button type="button" class="cat-chip active" data-cat="">{{ T "plugins.store.all" }} <span class="cat-n">{{ len .Items }}</span></button>
+<div class="store-cats" role="group" aria-label="{{ T "plugins.store.browse" }}" data-active-cat="{{ .ActiveCat }}">
+  <button type="button" class="cat-chip{{ if not .ActiveCat }} active{{ end }}" data-cat="">{{ T "plugins.store.all" }} <span class="cat-n">{{ len .Items }}</span></button>
   {{ range .Categories }}
-  <button type="button" class="cat-chip" data-cat="{{ .Type }}">{{ T (printf "plugins.type.%s" .Type) }} <span class="cat-n">{{ .Count }}</span></button>
+  <button type="button" class="cat-chip{{ if eq .Type $.ActiveCat }} active{{ end }}" data-cat="{{ .Type }}">{{ T (printf "plugins.type.%s" .Type) }} <span class="cat-n">{{ .Count }}</span></button>
   {{ end }}
 </div>
 {{ end }}
@@ -97,7 +97,9 @@
   var search = document.getElementById('store-search');
   var cards = Array.prototype.slice.call(document.querySelectorAll('#store-grid .store-tile'));
   var noMatch = document.getElementById('store-no-matches');
-  var activeCat = '';
+  // ?type=<t> (ut-docs#4431) opens on that category: the server marks the
+  // chip and names it here.
+  var activeCat = (cats && cats.getAttribute('data-active-cat')) || '';
   function apply() {
     var q = (search && search.value || '').trim().toLowerCase();
     var shown = 0;
@@ -123,6 +125,7 @@
     });
   }
   if (search) { search.addEventListener('input', apply); }
+  if (activeCat) { apply(); }
 })();
 </script>
 {{ end }}

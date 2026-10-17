@@ -273,7 +273,7 @@ func TestOptionSets_MutationsRefusedOnReplica(t *testing.T) {
 		if rec.Code != http.StatusConflict {
 			t.Fatalf("%s on replica: want 409, got %d: %s", tc.path, rec.Code, rec.Body.String())
 		}
-		if !strings.Contains(rec.Body.String(), "primary till") {
+		if !strings.Contains(rec.Body.String(), "main till") {
 			t.Fatalf("%s on replica: body missing the localized replica message, got %q", tc.path, rec.Body.String())
 		}
 	}

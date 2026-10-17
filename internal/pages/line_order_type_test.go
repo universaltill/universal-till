@@ -250,11 +250,12 @@ func TestHeldTable_MixedHeldSaleMayMoveTable(t *testing.T) {
 func TestRenderReceipt_MixedSaleMarksLines_UniformUnchanged(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
-		"money":      func(v int64) string { return "x" },
-		"qty":        func(v any) string { return "x" },
-		"barcodesvg": func(s string) template.HTML { return "" },
-		"bpPercent":  func(bp int64) string { return "" },
-		"T":          func(key string) string { return key },
+		"money":         func(v int64) string { return "x" },
+		"qty":           func(v any) string { return "x" },
+		"barcodesvg":    func(s string) template.HTML { return "" },
+		"barcode128svg": func(s string) template.HTML { return "" },
+		"bpPercent":     func(bp int64) string { return "" },
+		"T":             func(key string) string { return key },
 	}
 	mixed := []pos.SaleLineInput{
 		{Name: "Coffee", Qty: 1, UnitPrice: 100, OrderType: ""},

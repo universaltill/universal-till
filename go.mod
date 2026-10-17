@@ -11,6 +11,10 @@ require (
 	github.com/pact-foundation/pact-go/v2 v2.4.2
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/tetratelabs/wazero v1.12.0
+	// The shared catalogue parser (ADR-0164 §1, ut-docs#4525): this tree's
+	// copy via the replace below, so the till and the module can't drift.
+	// ut-cloud will require a published catimport/vX.Y.Z tag instead (#4528).
+	github.com/universaltill/universal-till/catimport v0.0.0
 	// The Go guest SDK (ADR-0121 F4, ut-docs#3951): host tests build their
 	// guests against this tree (replace below), never a published tag.
 	// replace is not transitive: a module importing this one's packages
@@ -90,3 +94,7 @@ tool (
 replace github.com/webview/webview_go => ./internal/thirdparty/webview_go
 
 replace github.com/universaltill/universal-till/sdk/plugin => ./sdk/plugin
+
+// replace is not transitive: a module importing this one's packages needs
+// the same replace (or a real catimport/vX.Y.Z here).
+replace github.com/universaltill/universal-till/catimport => ./catimport

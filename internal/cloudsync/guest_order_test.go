@@ -128,8 +128,8 @@ func TestApplyGuestOrder_HookContract(t *testing.T) {
 	ctx := context.Background()
 	d := toDirective(t, guestDirective("d1", "g1", guestLine("itm-1", 2)))
 
-	if status, msg := apply(ctx, d, Hooks{}); status != "failed" || msg != "guest_order is not supported on this till" {
-		t.Fatalf("nil hook: %s %q", status, msg)
+	if r := applyGuestOrder(ctx, d, Hooks{}); r.status != "failed" || r.msg != "guest_order is not supported on this till" || r.guestOrderID != "g1" {
+		t.Fatalf("nil hook: %+v", r)
 	}
 	var got GuestOrder
 	ok := Hooks{GuestOrder: func(_ context.Context, o GuestOrder) (GuestOrderOutcome, error) {
@@ -471,5 +471,21 @@ func TestTick_GuestOrderResultPermanent4xxDoesNotStarveLaterResults(t *testing.T
 	}
 	if attempts["d2"] != 2 || attempts["d3"] != 2 {
 		t.Fatalf("429/5xx results must be retried once each until 200: d2=%d d3=%d", attempts["d2"], attempts["d3"])
+	}
+}
+
+// ut-docs#4392 gap 2: guest_order goes only through Tick's handleGuestOrder
+// (stored result, retry). apply has no guest_order case, so a caller that
+// ever routed one there could never place an order past the stored-result
+// idempotency: the hook is not run.
+func TestApply_NeverRunsTheGuestOrderHook(t *testing.T) {
+	d := toDirective(t, guestDirective("d1", "g1", guestLine("itm-1", 1)))
+	called := false
+	hooks := Hooks{GuestOrder: func(context.Context, GuestOrder) (GuestOrderOutcome, error) {
+		called = true
+		return GuestOrderOutcome{DisplayNo: "C-1"}, nil
+	}}
+	if status, _ := apply(context.Background(), d, hooks); status != "failed" || called {
+		t.Fatalf("apply(guest_order) = %s, hook called %v", status, called)
 	}
 }

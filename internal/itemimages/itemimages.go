@@ -182,9 +182,12 @@ func LatestAIRef(dir string) (path, mediaType string, ok bool) {
 // fresh PNG under AIRefDir (created first), never the uploaded bytes
 // (ut-docs#1417) — prunes the folder to MaxAIRefsPerItem and returns the
 // file's path. The built-in confirm and the plugin seam's pick (ADR-0121
-// R2a, ut-docs#4006) both store through it. A failed write leaves nothing
-// behind: a partial file with the newest name would shadow every older
-// photo (LatestAIRef picks only the newest).
+// R2a, ut-docs#4006) both store through it. The PNG is encoded under a
+// hidden temp name that refImageNames ignores and appears under its final
+// name only once complete (ut-docs#4441): a reader — LatestAIRef, the
+// identify request, PruneAIRefs — never sees a half-written photo. A failed
+// write leaves nothing behind: a partial file with the newest name would
+// shadow every older photo (LatestAIRef picks only the newest).
 func StoreAIRef(itemID string, img image.Image) (string, error) {
 	if !ValidID(itemID) {
 		return "", ErrInvalid
@@ -193,30 +196,53 @@ func StoreAIRef(itemID string, img image.Image) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	// Names are nanosecond timestamps (lexical = chronological); O_EXCL
-	// with a bump keeps two stores on a coarse clock (Windows) apart.
 	n := time.Now().UnixNano()
-	var out *os.File
-	var outPath string
-	for i := 0; ; i++ {
-		outPath = filepath.Join(dir, fmt.Sprintf("%d.png", n+int64(i)))
-		f, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-		if err == nil {
-			out = f
-			break
-		}
-		if !errors.Is(err, fs.ErrExist) || i >= 16 {
-			return "", err
-		}
+	tmp, err := os.CreateTemp(dir, fmt.Sprintf(".%d-*.png.tmp", n))
+	if err != nil {
+		return "", err
 	}
-	encErr := png.Encode(out, img)
-	closeErr := out.Close()
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	// CreateTemp makes 0600; keep the 0644 the photos always had.
+	_ = tmp.Chmod(0o644)
+	encErr := png.Encode(tmp, img)
+	closeErr := tmp.Close()
 	if encErr != nil || closeErr != nil {
-		_ = os.Remove(outPath)
 		return "", errors.Join(encErr, closeErr)
+	}
+	outPath, err := publishAIRef(dir, tmpPath, n)
+	if err != nil {
+		return "", err
 	}
 	PruneAIRefs(dir)
 	return outPath, nil
+}
+
+// publishAIRef moves the complete temp file to the first free
+// "<n+i>.png". Names are nanosecond timestamps (lexical = chronological);
+// the bump keeps two stores on a coarse clock (Windows) apart. A hard link
+// fails rather than replace an existing name; where the filesystem has no
+// hard links, a stat-then-rename does the same short of a same-nanosecond
+// race.
+func publishAIRef(dir, tmpPath string, n int64) (string, error) {
+	for i := 0; ; i++ {
+		outPath := filepath.Join(dir, fmt.Sprintf("%d.png", n+int64(i)))
+		err := os.Link(tmpPath, outPath)
+		if err == nil {
+			return outPath, nil
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			if _, statErr := os.Lstat(outPath); errors.Is(statErr, fs.ErrNotExist) {
+				if renameErr := os.Rename(tmpPath, outPath); renameErr != nil {
+					return "", errors.Join(err, renameErr)
+				}
+				return outPath, nil
+			}
+		}
+		if i >= 16 {
+			return "", err
+		}
+	}
 }
 
 // PruneAIRefs keeps only the newest MaxAIRefsPerItem reference photos so the

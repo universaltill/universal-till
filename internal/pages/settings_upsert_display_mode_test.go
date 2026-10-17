@@ -19,9 +19,9 @@ import (
 // "display.mode" — same class of bug ut-docs#2099's review found and fixed
 // in newRederiveSettings (the cloud set_setting/replica-drift path), just
 // via a different generic-editor door. This drives the fix through the
-// generic upsert endpoint and asserts httpx's live self-order flag
-// (httpx.SelfOrderMode) actually flips immediately.
-func TestSettingsUpsertDisplayMode_UpdatesLiveKioskFlag(t *testing.T) {
+// generic upsert endpoint and asserts httpx's live display mode (read via
+// the "backtosaleurl" template func) actually flips immediately.
+func TestSettingsUpsertDisplayMode_UpdatesLiveDisplayMode(t *testing.T) {
 	dp, d := setupSelfOrderShopDeps(t)
 	dp.BtnStore = ui.NewButtonStore(d.DB)
 	dp.Menu = []common.MenuItem{{Href: "/", Label: "Home"}}
@@ -30,11 +30,12 @@ func TestSettingsUpsertDisplayMode_UpdatesLiveKioskFlag(t *testing.T) {
 	registerSettings(mux, dp)
 
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
-	// httpx.selfOrderMode is process-global — set the known baseline
+	// httpx's display mode is process-global — set the known baseline
 	// explicitly rather than relying on some other test in the package
-	// happening to have left it false.
-	httpx.InitSelfOrderMode(false)
-	t.Cleanup(func() { httpx.InitSelfOrderMode(false) })
+	// happening to have left it unset.
+	httpx.InitDisplayMode("")
+	t.Cleanup(func() { httpx.InitDisplayMode("") })
+	backToSale := httpx.FuncsFor("en")["backtosaleurl"].(func() string)
 
 	upsert := func(t *testing.T, value string) {
 		t.Helper()
@@ -48,19 +49,19 @@ func TestSettingsUpsertDisplayMode_UpdatesLiveKioskFlag(t *testing.T) {
 		}
 	}
 
-	// The bug: without httpx.InitSelfOrderMode being called from this path,
-	// the flag would stay stale until the process restarted (exactly
+	// The bug: without httpx.InitDisplayMode being called from this path,
+	// the value would stay stale until the process restarted (exactly
 	// ut-docs#2099's B1 finding, reached through the generic editor).
 	upsert(t, "self_order")
-	if !httpx.SelfOrderMode() {
-		t.Fatal("SelfOrderMode() = false right after POST /api/settings/upsert display.mode=self_order")
+	if got := backToSale(); got != "/self-order" {
+		t.Fatalf("backtosaleurl = %q right after POST /api/settings/upsert display.mode=self_order, want /self-order", got)
 	}
 
 	// And it flips back live too, same unconditional shape as the dedicated
-	// handler's own InitSelfOrderMode(rawMode == "self_order") call.
+	// handler's own InitDisplayMode call.
 	upsert(t, "backoffice")
-	if httpx.SelfOrderMode() {
-		t.Fatal("SelfOrderMode() = true right after leaving self_order via upsert")
+	if got := backToSale(); got != "/?stay=1" {
+		t.Fatalf("backtosaleurl = %q right after leaving self_order via upsert, want /?stay=1", got)
 	}
 }
 
@@ -74,9 +75,9 @@ func TestSettingsUpsertDisplayMode_UpdatesLiveKioskFlag(t *testing.T) {
 func TestSettingsUpsertDisplayMode_RevokesActingSessionOnSelfOrderEntry(t *testing.T) {
 	dp, d := setupSelfOrderShopDeps(t)
 	// This test drives the till into self_order mode, which flips
-	// httpx's process-global flag (see the sibling test's own comment) —
-	// reset it so a later test in the package doesn't inherit self_order=true.
-	t.Cleanup(func() { httpx.InitSelfOrderMode(false) })
+	// httpx's process-global display mode (see the sibling test's own
+	// comment) — reset it so a later test in the package doesn't inherit it.
+	t.Cleanup(func() { httpx.InitDisplayMode("") })
 	svc := auth.NewService(d.DB)
 	mgrID, err := svc.Repo().CreateUser(t.Context(), "mgr-upsert", "Manager Upsert", "manager")
 	if err != nil {

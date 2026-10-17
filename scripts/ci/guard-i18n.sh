@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Enforces multilingual UI (docs reference/coding-standards.md):
-#   1. Every {{ T "key" }} used in a template must exist in web/locales/en.json.
+#   1. Every {{ T "key" }} (or {{ TM "key" … }}) used in a template must
+#      exist in web/locales/en.json.
 #   2. Every locale file must define exactly the same key set as en.json
 #      (the base locale) — no missing translations, no orphan keys.
 #   3. No Go-side literal replaces a template's own job: a raw English string
@@ -83,10 +84,11 @@ def keys(path):
 
 base = keys("web/locales/en.json")
 
-# 1. template T "key" usage must resolve in the base locale.
+# 1. template T "key" usage must resolve in the base locale. TM (a
+#    MessageFormat key, ut-docs#4373) is checked the same way.
 used = set()
 for f in glob.glob("web/ui/**/*.html", recursive=True):
-    used |= set(re.findall(r'\{\{-?\s*T\s+"([^"]+)"', open(f).read()))
+    used |= set(re.findall(r'\{\{-?\s*TM?\s+"([^"]+)"', open(f).read()))
 # Go-side menu labels (nav.*) live in the base menu; assume any nav.* is used.
 missing = sorted(k for k in used if k not in base)
 if missing:

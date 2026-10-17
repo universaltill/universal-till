@@ -4,7 +4,7 @@ title: Hediye çekleri
 section: Günlük satış
 order: 25
 summary: Hediye çeklerini bir Hediye çeki ürününe dokunarak satın — kartı okutun ya da kasanın numara oluşturmasına izin verin — ve satış ekranında okutarak ya da ödeme panelinin Böl sekmesinde ödeme olarak alın.
-keywords: [hediye çeki, hediye kartı, gutschein, belirli ürün, kullanma, bakiye, düzenleme, kod, kart numarası, ürün türü, düzelt, düzeltme, bakiye düzeltme]
+keywords: [hediye çeki, hediye kartı, gutschein, belirli ürün, kullanma, bakiye, düzenleme, kod, kart numarası, ürün türü, düzelt, düzeltme, bakiye düzeltme, bakiye yükleme, yükle, değer ekle]
 routes: [/vouchers, /vouchers/{id}]
 ---
 
@@ -14,14 +14,14 @@ Hediye çeki, müşterinin şimdi ödeyip daha sonra harcadığı paradır — d
 
 ## Hediye çeki satmak
 
-Satış için katalogda **Türü** *Hediye çeki* olan bir ürün gerekir (bkz. [Katalog](/help/catalog)) — bir kez oluşturun. Fiyatını boş bırakırsanız tutar her seferinde sorulur; bir fiyat verirseniz (örneğin *Hediye çeki 25 ₺*) pencere o tutarla açılır.
+Satış için katalogda **Türü** *Hediye çeki* olan bir ürün gerekir (bkz. [Katalog](/help/catalog)). Yeni bir işletmede satışa hazır bir tane zaten vardır: kurulum sırasında işletmenin dili yüklüyse *Hediye çeki*, değilse *Gift voucher* adını taşır (isterseniz katalogda yeniden adlandırın). Ardından bir katalog içe aktarması kendi hediye çeki ürününü getirirse, kurulumda oluşturulan ürün henüz hiç kullanılmadıysa kaldırılır ve içe aktarma özeti bunu belirtir. Bundan önce kurulmuş bir kasada bir kez oluşturun. Fiyatını boş bırakırsanız tutar her seferinde sorulur; bir fiyat verirseniz (örneğin *Hediye çeki 25 ₺*) pencere o tutarla açılır.
 
 1. Satış ekranında hediye çeki ürününe dokunun (ya da barkodunu okutun). **Hediye çeki** penceresi açılır.
 2. **Kart numarası**: teslim ettiğiniz kartı okutun — pencere açılır açılmaz alan okuyucunuza hazırdır — ya da numarasını yazın. Boş bırakırsanız **Ekle**'ye dokunduğunuzda kasa bir numara oluşturur.
 3. **Tutar**: hediye çekinin değeri, normal bir para tutarı, örneğin `25,00`. Ürünün bir fiyatı varsa alan o fiyatla başlar.
 4. **Kimin için** isteğe bağlıdır — hediye çekinin kimin için alındığını hatırlamak için bir ad.
 5. **Kullanılabileceği yer**: **Her alışveriş** olağan hediye çekidir; **Belirli bir ürün (vergi şimdi alınır)** aşağıda anlatılır. **Ekle**'ye dokunun.
-6. Hediye çeki, kart numarasını gösteren ayrı bir satır olarak sepete girer. Ödemeyi her zamanki gibi alın (**Ödeme**, nakit, kart, …). Fiş her hediye çekini **Düzenlenen hediye çekleri** altında numarası, kimin için olduğu ve basılı fişte barkod olarak numarasıyla listeler (kasanın oluşturduğu numaralarda ekranda da); böylece fiş sonradan okutulunca kart gibi kullanılır. Kasanın oluşturduğu bir numarayı müşteri bu fişte bulur; fişi verin ya da numarayı karta yazın.
+6. Hediye çeki, kart numarasını gösteren ayrı bir satır olarak sepete girer. Ödemeyi her zamanki gibi alın (**Ödeme**, nakit, kart, …). Fiş her hediye çekini **Düzenlenen hediye çekleri** altında numarası, kimin için olduğu ve basılı fişte ve ekranda barkod olarak numarasıyla listeler; böylece fiş sonradan okutulunca kart gibi kullanılır. Kasanın oluşturduğu bir numarayı müşteri bu fişte bulur; fişi verin ya da numarayı karta yazın.
 
 Bir hediye çeki tek başına, sepette başka hiçbir şey olmadan ya da ürünlerle birlikte tek bir satışta satılabilir. Sepet satırı her zaman değeriyle tek bir hediye çekidir: adet düğmesi ve satır indirimi yoktur, bir kampanya ya da sepet indirimi onu asla düşürmez. Hediye çekinden vazgeçmek için satırdaki ✕'e dokunun — neden sorulmaz, çünkü dükkândan hiçbir şey çıkmamıştır. Hediye çeki satmak ürün geliri değildir ve stok hareketi yaratmaz: daha sonra harcayacak kişiye borçlu olunan para olarak kaydedilir ve ürünler hediye çeki harcandığında vergilendirilir — aşağıdaki gün sonu notlarına bakın. Bekletilen bir satış hediye çeki satırlarını korur ve hediye çeki satış ödendiğinde düzenlenir.
 
@@ -104,6 +104,27 @@ Neler ters gidebilir:
 - "Yeni bakiye mevcut bakiyeyle aynı" — düzeltilecek bir şey yok.
 - "Siz bakarken bu hediye çekinin bakiyesi değişti" — bu arada biri çeki harcadı ya da düzeltti. Sayfayı yenileyin, yeni bakiyeyi kontrol edin ve hâlâ gerekiyorsa yeniden düzeltin.
 - Ek bir kasada düzeltme ana kasada yapılır. Ana kasaya ulaşılamıyorsa hiçbir şey değişmez ve sayfa bunu söyler — ana kasa geri geldiğinde tekrar deneyin. Sayfa ana kasanın düzeltmeyi onaylamadığını söylüyorsa düzeltme kaydedilmiş de olabilir, kaydedilmemiş de: tekrar denemeden önce sayfayı yenileyin ve hediye çekinin geçmişini kontrol edin.
+
+## Hediye çekine bakiye yükleme
+
+Bir müşteri elindeki hediye çekine değer ekleyebilir — kart numarasını korur ve bakiyesi artar. Bakiye yükleme, yeni bir hediye çeki satmak gibi bir satıştır: müşteri bunu kasada öder ve hediye çeki harcanana kadar hiçbir şey vergilendirilmez.
+
+1. Önce **Menü → Hediye çekleri** sayfasını açın ve hediye çekinin kart numarasına dokunun.
+2. Açılan sayfada **Bakiye yükle** altında **Eklenecek tutar** alanına tutarı yazın, örn. `20.00`, ve **Satışa ekle**'ye dokunun.
+3. Satış ekranı, bu kart numarası için *Bakiye yükleme* olarak işaretlenmiş bir hediye çeki satırıyla açılır. Müşterinin aldığı diğer ürünleri ekleyin, sonra ödemeyi her zamanki gibi alın.
+4. Satış ödendiğinde hediye çekinin bakiyesi bu tutar kadar artar. Fiş bunu **Düzenlenen hediye çekleri** altında kart numarası, eklenen tutar ve yeni bakiyeyle *Hediye çeki bakiye yükleme* olarak listeler; hediye çekinin **Geçmiş** bölümünde fişe bağlantılı bir **Bakiye yüklendi** satırı görünür.
+
+Kullanılmış bir hediye çeki yeniden **Etkin** olur; ilk değeri hiç değişmez. Satış ödenene kadar hediye çekine hiçbir şey eklenmez — yüklemeyi kaldırmak için satırdaki ✕'e dokunun. Gün sonu (Z) raporu bakiye yüklemeyi **GUTSCHEINE** bölümünde satılan hediye çekleriyle birlikte sayar. Satışı iptal etmek tutarı hediye çekinden geri alır, ancak yalnızca müşteri onu harcamamışsa.
+
+Neler ters gidebilir:
+
+- Yalnızca bir yönetici veya admin hediye çekine bakiye yükleyebilir.
+- İptal edilmiş bir hediye çekine veya belirli bir ürün için verilen hediye çekine bakiye yüklenemez — sayfa formu göstermek yerine nedenini söyler.
+- Tutar sıfırdan büyük olmalıdır ve bir hediye çekinin bakiyesi kasanın tek hediye çeki sınırını aşamaz.
+- Bir hediye çekine satış başına bir kez bakiye yüklenebilir ve hediye çeki kendi yüklemesini ödeyemez.
+- Bakiye yükleme için katalogda etkin bir hediye çeki ürünü gerekir — yoksa sayfa bunu söyler.
+- Yüklenen tutarın bir kısmı harcandıktan sonra satışı iptal etmek reddedilir.
+- Ek bir kasada sayfa, bakiyeyi ana kasada yüklemenizi ister.
 
 ## Gün sonu raporları ve diğer kasalar
 

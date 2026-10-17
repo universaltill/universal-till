@@ -104,7 +104,7 @@ func lanPath(p string) bool {
 	for _, prefix := range []string{
 		"/api/sync/",
 		"/self-order/", "/api/self-order/", "/o/",
-		"/public/", "/themes/", "/plugin-icons/",
+		"/public/", "/themes/", "/plugin-icons/", "/plugin-fonts/",
 	} {
 		if strings.HasPrefix(p, prefix) {
 			return true

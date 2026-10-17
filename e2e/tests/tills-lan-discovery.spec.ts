@@ -23,7 +23,7 @@ import { watchConsole } from './helpers';
 // the click handler that would have updated it was never even attached.
 // The request is held until "Searching…" has been seen; an instant answer
 // would otherwise replace it before the assertion could observe it.
-test('Find a primary on this network runs a real scan through to a result', async ({ page }) => {
+test('Find a main till on this network runs a real scan through to a result', async ({ page }) => {
   const assertClean = watchConsole(page);
   await page.goto('/tills');
 

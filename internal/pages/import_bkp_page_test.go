@@ -418,12 +418,59 @@ func TestImport_BkpCommitDedupesReusedProductNumberInsteadOfDropping(t *testing.
 	// (which a broken translation key falling through to Sprintf's
 	// %!(EXTRA ...) default-verb output would also satisfy — review
 	// finding N5).
-	if !strings.Contains(resp, `item number &quot;30006&quot; reused in this file`) {
-		t.Fatalf("response should render the reused-number status for PLU 30006, got: %s", resp)
+	if !strings.Contains(resp, `item number &quot;30006&quot; reused in this file — new number &quot;30006-3&quot;`) {
+		t.Fatalf("response should render the reused-number status naming the new SKU for PLU 30006, got: %s", resp)
 	}
 	// 4 = the base fixture's Latte (20001) + the 3 rows sharing PLU 30006 —
 	// the base fixture's deleted row (20002, Status=3) never counts.
 	if !strings.Contains(resp, "Imported: 4") {
 		t.Fatalf("summary should report all 4 rows as imported (deduped, not dropped), got: %s", resp)
+	}
+}
+
+// TestImport_BkpPreviewWarnsReusedProductNumberBeforeCommit pins
+// ut-docs#1235: the Preview an operator studies before committing must
+// already flag a row whose reused PLU is about to be renumbered — a
+// warned row (⚠, not a plain "ok") naming the number it will get — not
+// only the post-commit summary.
+func TestImport_BkpPreviewWarnsReusedProductNumberBeforeCommit(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	initAuthTestI18n(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	zipBytes := buildBkpZipForPagesTestWithTaxRows(t, []bkpTaxRow{
+		{ProductNumber: "30006", Name: "Slush Matcha", Category: "Drinks", Price: 2.50},
+		{ProductNumber: "30006", Name: "Affogato", Category: "Drinks", Price: 3.00},
+	})
+	body, ct := multipartFile(t, "Backup 2026-08-09.bkp", zipBytes, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview: code %d body %s", rec.Code, rec.Body.String())
+	}
+	resp := rec.Body.String()
+
+	var n int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE sku LIKE '30006%'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("a preview must not write items (n=%d err=%v)", n, err)
+	}
+	want := `item number &quot;30006&quot; reused in this file — new number &quot;30006-2&quot;`
+	i := strings.Index(resp, want)
+	if i < 0 {
+		t.Fatalf("preview should warn that Affogato's reused PLU becomes 30006-2, got: %s", resp)
+	}
+	// The warning sits on Affogato's own row, styled as a warned row.
+	rowStart := strings.LastIndex(resp[:i], "<tr")
+	if rowStart < 0 || !strings.HasPrefix(resp[rowStart:], `<tr class="row-warn">`) ||
+		!strings.Contains(resp[rowStart:i], "Affogato") {
+		t.Fatalf("the reused-PLU warning must be on Affogato's row-warn row, got row: %s", resp[max(rowStart, 0):i])
+	}
+	// The first row keeps the bare PLU and stays a plain "ok" row.
+	if strings.Count(resp, "reused in this file") != 1 {
+		t.Fatalf("only the renumbered row should carry the warning, got: %s", resp)
 	}
 }

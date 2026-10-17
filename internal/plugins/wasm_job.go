@@ -76,7 +76,7 @@ func (j JobCall) deadline() time.Duration {
 func hostJobProgress(ctx context.Context, m api.Module, pct, keyPtr, keyLen uint32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	if s.jobProgress == nil {
 		return hostErrNotFound

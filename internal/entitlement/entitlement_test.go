@@ -140,14 +140,16 @@ func TestBlockValues(t *testing.T) {
 		// cloud_link_test.go; this asserts only that Values wires it in.
 		KeyCloudLinkTier: "periodic",
 		KeyCloudLinkMode: "",
+		// No catalog_master either: ADR-0162 §1's fail-safe "till".
+		KeyCatalogMaster: "till",
 	}
 	for k, v := range want {
 		if got[k] != v {
 			t.Errorf("%s = %q, want %q", k, got[k], v)
 		}
 	}
-	if len(got) != 6 {
-		t.Errorf("Values returned %d keys, want exactly 6: %v", len(got), got)
+	if len(got) != 9 {
+		t.Errorf("Values returned %d keys, want exactly 9: %v", len(got), got)
 	}
 
 	// null expiry → empty string.

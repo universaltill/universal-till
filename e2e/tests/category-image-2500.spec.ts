@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, setBrowsingMode } from './helpers';
+import { watchConsole, setBrowsingMode, clickThenReload } from './helpers';
 import zlib from 'zlib';
 
 // ut-docs#2500 (slice 1): a category gets an image — a built-in icon or an
@@ -68,10 +68,10 @@ function solidPNG(r: number, g: number, b: number, size = 24): Buffer {
 }
 
 // Every successful dialog Save answers HX-Redirect — a real navigation back
-// to /categories; await the NEW document's load (categories-record-dialog-
-// 2010.spec.ts's clickThenReload, ut-docs#2345).
+// to /categories; await the NEW document's load (helpers.ts's
+// clickThenReload, ut-docs#2345).
 async function save(page: Page) {
-  await Promise.all([page.waitForEvent('load'), page.locator(`${DIALOG} .record-dialog-save`).click()]);
+  await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
 }
 
 function row(page: Page, name: string) {

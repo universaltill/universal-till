@@ -60,7 +60,7 @@
     </ul>
   </aside>
   <div class="settings-panel" id="settings-panel">
-    <button type="button" class="btn secondary settings-back" id="settings-back">← {{ T "settings.nav.back" }}</button>
+    <button type="button" class="btn secondary settings-back" id="settings-back"><span class="back-arrow" aria-hidden="true">←</span> {{ T "settings.nav.back" }}</button>
 <div class="settings-grid" id="settings-grid">
 {{/* ut-docs#4285: a renewal confirmed by Check now re-renders the
      registration card (cloud sync is back on), after a pause so the result
@@ -281,6 +281,7 @@
         data-progress="{{ T "settings.update.android.progress" }}"
         data-installing="{{ T "settings.update.android.installing" }}"
         data-retry="{{ T "settings.update.android.retry" }}"
+        data-again="{{ T "settings.update.android.install_again" }}"
         data-failed="{{ T "settings.update.android.failed" }}"
         data-locked="{{ T "auth.error.locked" }}"
         data-pinneeded="{{ T "settings.update.android.pin_needed" }}"
@@ -371,17 +372,13 @@
         msg.textContent = T({ locked: 'locked', uptodate: 'uptodate', nobridge: 'nobridge' }[outcome] || 'failed');
       });
     });
-    // The shell's own report: % while downloading, the installer opening, or
-    // a failure the operator can retry with the same button.
+    // The shell's own report: % while downloading, the installer opening, a
+    // failure the operator can retry with the same button, or (ut-docs#4495)
+    // 'closed' — the installer went away or never came up — which says so.
     document.addEventListener('ut:android-update', function (e) {
       var s = e.detail || {};
       msg.textContent = window.utAndroidUpdater.text(form, s);
       btn.disabled = s.state === 'downloading';
-    });
-    document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState !== 'visible' || !window.utAndroidUpdater) { return; }
-      var s = window.utAndroidUpdater.state();
-      if (s && (s.state === 'installing' || s.state === 'ready')) { btn.disabled = false; }
     });
   })();
   </script>
@@ -1982,6 +1979,10 @@
      renders for every session. -->
 <div class="card" id="settings-tills">
   <h2>🔗 {{ T "tills.title" }}</h2>
+  <!-- ut-docs#2782: which kind of till this is, and (on a joined till) the
+       main till it follows. -->
+  <p id="settings-till-role"><strong>{{ T "settings.tills.role_label" }}: {{ T .TillRoleKey }}</strong>
+    {{ if .MainTillAddr }}<br><span class="muted">{{ printf (T "settings.tills.main_till_addr") .MainTillAddr }}</span>{{ end }}</p>
   <!-- This till's own name, on every till (ut-docs#3292): the main till
        saves till.name; a joined till saves its own per-till sync.till_name,
        never till.name (which there holds the main till's name). -->
@@ -2018,7 +2019,8 @@
     </label>
     <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
     <span id="till-register-msg" aria-live="polite"></span>
-    <p class="muted">{{ T "settings.tills.register_help" }}</p>
+    <p class="muted">{{ T "settings.tills.register_help" }}
+      {{ if .CanManageRegisters }}<a href="/registers">{{ T "registers.title" }}</a>{{ end }}</p>
   </form>
   </div>
   <p class="muted">{{ T "settings.tills.help" }}</p>

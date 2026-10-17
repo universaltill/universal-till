@@ -78,7 +78,11 @@ type VoucherBlock struct {
 	Label  string // "Gift voucher"
 	Amount string // pre-formatted money
 	Holder string // "For: Anna"; empty = no row
-	Code   string
+	// Balance is the voucher's balance after a top-up (ut-docs#4252),
+	// pre-formatted with its label ("New balance £35.00"); empty = no row
+	// (every newly issued voucher — its balance is its value).
+	Balance string
+	Code    string
 	// Void, when set, is the notice printed for a voided voucher; its code
 	// then prints as text only, never as a scannable symbol.
 	Void string
@@ -117,13 +121,16 @@ var (
 	cmdKickDrawerPin5 = []byte{0x1b, 0x70, 0x01, 0x19, 0xfa} // ESC p 1 25 250 -- connector pin 5
 
 	cmdBarcodeHeight  = []byte{0x1d, 0x68, 0x50} // GS h 80 dots
-	cmdBarcodeWidth   = []byte{0x1d, 0x77, 0x02} // GS w module 2
 	cmdBarcodeHRI     = []byte{0x1d, 0x48, 0x02} // GS H print number below
 	cmdBarcodeCode128 = []byte{0x1d, 0x6b, 0x49} // GS k 73 <len> <data>
 )
 
-// barcodeEncodable reports whether code fits a CODE128 code set B symbol:
-// printable ASCII, at most 60 characters.
+// barcodeMaxDots is the printable dot width of the 80mm head, the only paper
+// width the till supports (same as rasterMaxWidth).
+const barcodeMaxDots = rasterMaxWidth
+
+// barcodeEncodable reports whether code is printable ASCII, at most 60
+// characters -- what a CODE128 code set B/C symbol can carry.
 func barcodeEncodable(code string) bool {
 	if code == "" || len(code) > 60 {
 		return false
@@ -136,14 +143,113 @@ func barcodeEncodable(code string) bool {
 	return true
 }
 
-// barcode emits a CODE128 symbol (code set B) for a printable-ASCII code.
-func barcode(b *bytes.Buffer, code string) {
-	if !barcodeEncodable(code) {
-		return // unencodable — skip rather than jam the printer
+// code128Data builds the ESC/POS GS k 73 payload for a printable-ASCII code
+// using code sets B and C with the fewest CODE128 symbols (ut-docs#4403).
+// Set C carries a digit pair per symbol, sent as one byte 0-99; a set switch
+// ({B / {C) costs a symbol, the starting set is free; ties prefer set B. A
+// literal '{' in set B is sent as "{{". symbols counts the data symbols
+// including switches, excluding start, check and stop.
+func code128Data(code string) (data []byte, symbols int) {
+	n := len(code)
+	const inf = 1 << 20
+	digitPair := func(i int) bool {
+		return i+1 < n && code[i] >= '0' && code[i] <= '9' && code[i+1] >= '0' && code[i+1] <= '9'
 	}
-	data := append([]byte{'{', 'B'}, []byte(code)...)
+	// f[i][0] / f[i][1]: fewest symbols to encode code[i:] currently in set B / C.
+	f := make([][2]int, n+2)
+	stay := func(i int) (b, c int) { // cost without switching at i
+		b = 1 + f[i+1][0]
+		c = inf
+		if digitPair(i) {
+			c = 1 + f[i+2][1]
+		}
+		return b, c
+	}
+	for i := n - 1; i >= 0; i-- {
+		b, c := stay(i)
+		f[i][0] = min(b, 1+c)
+		f[i][1] = min(c, 1+b)
+	}
+	inC := f[0][1] < f[0][0]
+	if inC {
+		data = append(data, '{', 'C')
+	} else {
+		data = append(data, '{', 'B')
+	}
+	for i := 0; i < n; {
+		b, c := stay(i)
+		if inC {
+			if c <= 1+b {
+				data = append(data, (code[i]-'0')*10+code[i+1]-'0')
+				symbols++
+				i += 2
+				continue
+			}
+			data = append(data, '{', 'B')
+			symbols++
+			inC = false
+			continue
+		}
+		if b <= 1+c {
+			if code[i] == '{' {
+				data = append(data, '{') // ESC/POS escape for a literal '{'
+			}
+			data = append(data, code[i])
+			symbols++
+			i++
+			continue
+		}
+		data = append(data, '{', 'C')
+		symbols++
+		inC = true
+	}
+	return data, symbols
+}
+
+// barcodeHRIDots is one font-A character of the HRI line under the bars.
+const barcodeHRIDots = 12
+
+// barcodeModuleWidth picks the GS w module width for code: 2 when the symbol
+// plus its 10X quiet zones fits barcodeMaxDots, else 1, else ok is false
+// (ut-docs#4403). Modules = 11 per symbol (start, data, check) + 13 stop +
+// 20 quiet zone. The HRI text must fit too, or the printer clips the code a
+// customer would type.
+func barcodeModuleWidth(code string) (width int, ok bool) {
+	if !barcodeEncodable(code) || len(code)*barcodeHRIDots > barcodeMaxDots {
+		return 0, false
+	}
+	_, symbols := code128Data(code)
+	modules := 11*(symbols+2) + 13 + 20
+	for _, w := range []int{2, 1} {
+		if modules*w <= barcodeMaxDots {
+			return w, true
+		}
+	}
+	return 0, false
+}
+
+// barcodePrintable reports whether code is encodable AND its symbol fits the
+// paper; false means print the code as text instead (ut-docs#4403).
+func barcodePrintable(code string) bool {
+	_, ok := barcodeModuleWidth(code)
+	return ok
+}
+
+// barcode emits a CODE128 symbol for a printable-ASCII code, at the widest
+// module width that fits the paper.
+func barcode(b *bytes.Buffer, code string) {
+	width, ok := barcodeModuleWidth(code)
+	if !ok {
+		return // unencodable or too wide -- skip rather than jam the printer
+	}
+	data, _ := code128Data(code)
 	b.Write(cmdBarcodeHeight)
-	b.Write(cmdBarcodeWidth)
+	if width == 1 {
+		// Some printers (Epson TM-T88: n = 2-6) ignore GS w 1; set 2 first so
+		// they print at 2, not ESC @'s default 3.
+		b.Write([]byte{0x1d, 0x77, 0x02})
+	}
+	b.Write([]byte{0x1d, 0x77, byte(width)}) // GS w n
 	b.Write(cmdBarcodeHRI)
 	b.Write(cmdBarcodeCode128)
 	b.WriteByte(byte(len(data)))
@@ -225,11 +331,14 @@ func Render(d Doc) []byte {
 			if v.Holder != "" {
 				line(clip(v.Holder, Width))
 			}
+			if v.Balance != "" {
+				line(clip(v.Balance, Width))
+			}
 			b.Write(cmdAlignMid)
 			if v.Void != "" {
 				line(clip(v.Void, Width))
 			}
-			if v.Void == "" && barcodeEncodable(v.Code) {
+			if v.Void == "" && barcodePrintable(v.Code) {
 				barcode(&b, v.Code) // HRI prints the code text under the bars
 			} else {
 				for _, row := range wrapRunes(v.Code, Width) {
@@ -631,6 +740,9 @@ func RenderText(d Doc) string {
 			if v.Holder != "" {
 				b.WriteString(clip(v.Holder, Width) + "\n")
 			}
+			if v.Balance != "" {
+				b.WriteString(clip(v.Balance, Width) + "\n")
+			}
 			if v.Void != "" {
 				center(v.Void)
 			}
@@ -710,7 +822,12 @@ func RenderLabelWithUnitPrice(name, price, unitPrice, code, charset string) []by
 		b.Write(enc(clip(unitPrice, Width)))
 		b.WriteByte('\n')
 	}
-	barcode(&b, code)
+	if barcodePrintable(code) {
+		barcode(&b, code)
+	} else if code != "" {
+		b.Write(enc(clip(code, Width))) // too wide for bars: keep the code as text
+		b.WriteByte('\n')
+	}
 	b.Write(cmdAlignLeft)
 	b.Write(cmdFeedCut)
 	return b.Bytes()

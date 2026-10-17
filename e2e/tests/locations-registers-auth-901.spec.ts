@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Locator, Page } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, clickThenReload } from './helpers';
 
 // ut-docs#901: /locations and /registers both 403'd permanently under
 // UT_AUTH=off (this suite's default project) because their requireManager
@@ -72,17 +72,11 @@ test.describe('/locations admin page (ut-docs#901)', () => {
     await page.locator('#locations-new').click();
     await expect(page.locator('#location-dialog')).toBeVisible();
     await page.locator('#location-form input[name="name"]').fill(name);
-    await Promise.all([
-      page.waitForURL((u) => u.pathname === '/locations'),
-      page.locator('#location-dialog .record-dialog-save').click(),
-    ]);
+    await clickThenReload(page, () => page.locator('#location-dialog .record-dialog-save').click());
     // HX-Redirect drives a real browser navigation (redirectLocations's own
-    // doc comment) -- waitForURL can resolve as soon as the new URL commits,
-    // before the fresh document has actually finished loading, so a click
-    // right after can land before record-dialog.js's own click delegation
-    // (registered at script-load time on the new page) is live. Explicit
-    // load-state wait, same fix this file needed for real in CI (ut-docs#2124).
-    await page.waitForLoadState('load');
+    // doc comment): clickThenReload awaits the new document's `load` (registered
+    // before the click), so record-dialog.js's click delegation is live for the
+    // next click (ut-docs#2124, ut-docs#4427; see helpers.ts).
 
     const row = page.locator('#locations-table .location-row', { hasText: name });
     await expect(row, 'newly created location must appear in the table').toBeVisible();
@@ -91,11 +85,7 @@ test.describe('/locations admin page (ut-docs#901)', () => {
     const renamed = `${name} Renamed`;
     await openRowDialog(page, row, '#location-dialog');
     await page.locator('#location-form input[name="name"]').fill(renamed);
-    await Promise.all([
-      page.waitForURL((u) => u.pathname === '/locations'),
-      page.locator('#location-dialog .record-dialog-save').click(),
-    ]);
-    await page.waitForLoadState('load');
+    await clickThenReload(page, () => page.locator('#location-dialog .record-dialog-save').click());
     const renamedRow = page.locator('#locations-table .location-row', { hasText: renamed });
     await expect(renamedRow).toBeVisible();
 
@@ -106,11 +96,7 @@ test.describe('/locations admin page (ut-docs#901)', () => {
     // it explicitly.
     await openRowDialog(page, renamedRow, '#location-dialog');
     page.once('dialog', (d) => d.accept());
-    await Promise.all([
-      page.waitForURL((u) => u.pathname === '/locations'),
-      page.locator('#location-dialog form[data-record-when="active=1"] button[type="submit"]').click(),
-    ]);
-    await page.waitForLoadState('load');
+    await clickThenReload(page, () => page.locator('#location-dialog form[data-record-when="active=1"] button[type="submit"]').click());
     await expect(renamedRow).toHaveAttribute('data-field-active', '0'); // now offers "activate" -> currently inactive
 
     // Reactivate. Leaves this test's own new/renamed row behind, active --
@@ -118,10 +104,7 @@ test.describe('/locations admin page (ut-docs#901)', () => {
     // /locations, so that's harmless, just not a full restore to the
     // state this test found (independent review finding, ut-docs#901).
     await openRowDialog(page, renamedRow, '#location-dialog');
-    await Promise.all([
-      page.waitForURL((u) => u.pathname === '/locations'),
-      page.locator('#location-dialog form[data-record-when="active=0"] button[type="submit"]').click(),
-    ]);
+    await clickThenReload(page, () => page.locator('#location-dialog form[data-record-when="active=0"] button[type="submit"]').click());
     await expect(renamedRow).toHaveAttribute('data-field-active', '1'); // now offers "deactivate" -> currently active
 
     assertClean();
@@ -151,11 +134,7 @@ test.describe('/registers admin page (ut-docs#901)', () => {
       await page.locator('#registers-new').click();
       await expect(page.locator('#register-dialog')).toBeVisible();
       await page.locator('#register-form input[name="name"]').fill(n);
-      await Promise.all([
-        page.waitForURL((u) => u.pathname === '/registers'),
-        page.locator('#register-dialog .record-dialog-save').click(),
-      ]);
-      await page.waitForLoadState('load');
+      await clickThenReload(page, () => page.locator('#register-dialog .record-dialog-save').click());
     }
 
     const rowA = page.locator('#registers-table .register-row', { hasText: nameA });
@@ -165,11 +144,7 @@ test.describe('/registers admin page (ut-docs#901)', () => {
     const renamedA = `${nameA} Renamed`;
     await openRowDialog(page, rowA, '#register-dialog');
     await page.locator('#register-form input[name="name"]').fill(renamedA);
-    await Promise.all([
-      page.waitForURL((u) => u.pathname === '/registers'),
-      page.locator('#register-dialog .record-dialog-save').click(),
-    ]);
-    await page.waitForLoadState('load');
+    await clickThenReload(page, () => page.locator('#register-dialog .record-dialog-save').click());
     const renamedRowA = page.locator('#registers-table .register-row', { hasText: renamedA });
     await expect(renamedRowA).toBeVisible();
 
@@ -179,20 +154,13 @@ test.describe('/registers admin page (ut-docs#901)', () => {
     // would silently no-op the click, so accept it explicitly.
     await openRowDialog(page, renamedRowA, '#register-dialog');
     page.once('dialog', (d) => d.accept());
-    await Promise.all([
-      page.waitForURL((u) => u.pathname === '/registers'),
-      page.locator('#register-dialog form[data-record-when="active=1"] button[type="submit"]').click(),
-    ]);
-    await page.waitForLoadState('load');
+    await clickThenReload(page, () => page.locator('#register-dialog form[data-record-when="active=1"] button[type="submit"]').click());
     await expect(renamedRowA).toHaveAttribute('data-field-active', '0'); // now offers "activate" -> currently inactive
 
     // Reactivate. Leaves both this test's new/renamed rows behind, active --
     // same server-state note as the locations spec above.
     await openRowDialog(page, renamedRowA, '#register-dialog');
-    await Promise.all([
-      page.waitForURL((u) => u.pathname === '/registers'),
-      page.locator('#register-dialog form[data-record-when="active=0"] button[type="submit"]').click(),
-    ]);
+    await clickThenReload(page, () => page.locator('#register-dialog form[data-record-when="active=0"] button[type="submit"]').click());
     await expect(renamedRowA).toHaveAttribute('data-field-active', '1'); // now offers "deactivate" -> currently active
 
     assertClean();

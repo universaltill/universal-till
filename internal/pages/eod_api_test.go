@@ -206,24 +206,33 @@ func TestPruneReportArchive_MainTillBothModePrunesAckedAndOld(t *testing.T) {
 	}
 }
 
-// A replica never uploads, so it never gates on cloud_acked_at: age only, in
-// every mode (ADR-0147 §2/§4).
-func TestPruneReportArchive_ReplicaPrunesByAgeInEveryMode(t *testing.T) {
-	for _, mode := range []string{"till", "cloud", "both"} {
-		t.Run(mode, func(t *testing.T) {
+// ut-docs#4438 (ADR-0147 amendment 2): an additional till uploads its own Z
+// chain, so once its rows are acked it prunes on the ack exactly like the
+// main till — same mode table, same keep-newest rule.
+func TestPruneReportArchive_ReplicaPrunesLikeMainTill(t *testing.T) {
+	cases := []struct {
+		mode string
+		want map[string]bool
+	}{
+		{"till", map[string]bool{"2010-01-01": false, "2011-01-01": false, "2026-01-01": true, "2026-02-01": true}},
+		{"cloud", map[string]bool{"2010-01-01": false, "2011-01-01": true, "2026-01-01": false, "2026-02-01": true}},
+		{"both", map[string]bool{"2010-01-01": false, "2011-01-01": true, "2026-01-01": true, "2026-02-01": true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.mode, func(t *testing.T) {
 			dp := newEODTestDeps(t)
-			repo := seedPruneRows(t, dp, "2026-01-01")
+			repo := seedPruneRows(t, dp, "2010-01-01", "2026-01-01")
 			if err := dp.Settings.Set(t.Context(), "sync.primary_url", "http://10.0.0.2:8080"); err != nil {
 				t.Fatal(err)
 			}
-			if err := dp.Settings.Set(t.Context(), common.KeyReportRetentionMode, mode); err != nil {
+			if err := dp.Settings.Set(t.Context(), common.KeyReportRetentionMode, tc.mode); err != nil {
 				t.Fatal(err)
 			}
 			lastPruneDay := ""
 			pruneReportArchive(t.Context(), dp, repo, time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC), &lastPruneDay)
-			assertArchivePeriods(t, repo, map[string]bool{"2010-01-01": false, "2011-01-01": false, "2026-01-01": true, "2026-02-01": true})
-			if a := lastPruneAudit(t, dp); a["mode"] != mode || a["main_till"] != false {
-				t.Fatalf("audit payload = %v, want mode=%s main_till=false", a, mode)
+			assertArchivePeriods(t, repo, tc.want)
+			if a := lastPruneAudit(t, dp); a["mode"] != tc.mode || a["main_till"] != false {
+				t.Fatalf("audit payload = %v, want mode=%s main_till=false", a, tc.mode)
 			}
 		})
 	}

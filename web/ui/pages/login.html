@@ -6,6 +6,7 @@
     <title>{{ T "auth.title" }}</title>
     <link rel="icon" type="image/x-icon" href="/public/assets/logo/ut-logo.ico">
     <link rel="stylesheet" href="/public/app.css?v={{ assetv "public/app.css" }}" />
+    <link rel="stylesheet" href="/plugin-fonts/bundle-fonts.css" />
     <!-- Vendored locally: the till must work fully offline. -->
     <script defer src="/public/vendor/alpine.min.js?v={{ assetv "public/vendor/alpine.min.js" }}"></script>
     <script defer src="/public/cursor.js?v={{ assetv "public/cursor.js" }}"></script>
@@ -61,7 +62,7 @@
         </div>
       </form>
       {{ if eq .next "kiosk" }}
-      <a class="btn secondary" href="/self-order">← {{ T "selforder.back" }}</a>
+      <a class="btn secondary" href="/self-order"><span class="back-arrow" aria-hidden="true">←</span> {{ T "selforder.back" }}</a>
       {{ end }}
 
       <!-- ut-docs#1099: the manager's escape hatch must be reachable FROM

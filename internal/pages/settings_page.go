@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/universaltill/universal-till/internal/db"
 	"html"
 	"html/template"
 	"net/http"
@@ -16,10 +15,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/db"
+
 	qrcode "github.com/skip2/go-qrcode"
 
+	"github.com/universaltill/universal-till/catimport/barcode"
 	"github.com/universaltill/universal-till/internal/auth"
-	"github.com/universaltill/universal-till/internal/barcode"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/data/seeddata"
@@ -152,13 +153,11 @@ func applyDisplayMode(ctx context.Context, d *common.Deps, rawMode string) error
 	if err := d.Settings.Set(ctx, "display.mode", mode); err != nil {
 		return err
 	}
-	// ut-docs#2099: keep httpx's live self-order flag (the post-update
-	// release notice's withholding, ut-docs#3091) in step with the mode
-	// that was JUST persisted — without this the flag would only ever
-	// reflect the value pages.Init read at boot, stale until the till
-	// restarts. Mirrors httpx.InitOSKMode(mode) in the OSK handler.
-	httpx.InitSelfOrderMode(mode == "self_order")
-	httpx.InitDisplayMode(mode) // ut-docs#2154, same live-update
+	// ut-docs#2154: keep httpx's live display mode in step with the mode
+	// that was JUST persisted — without this it would only reflect the value
+	// pages.Init read at boot, stale until the till restarts. Mirrors
+	// httpx.InitOSKMode(mode) in the OSK handler.
+	httpx.InitDisplayMode(mode)
 	return nil
 }
 
@@ -716,6 +715,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// like the other reads on this page, a count error just hides the
 		// card's warning line instead of failing the page.
 		isPrimaryTill := d.SyncPrimaryURL(r.Context()) == ""
+		// The Tills card's role line (ut-docs#2782): "Main till" on a main
+		// or standalone till, the joined role plus the main till's address
+		// on a joined one.
+		tillRoleKey, mainTillAddr := "settings.tills.role_main", ""
+		if role := ownTillRole(r.Context(), d); role != "" {
+			tillRoleKey = "tills.role.replica"
+			if role == data.TillRoleSatellite {
+				tillRoleKey = "tills.role.satellite"
+			}
+			mainTillAddr = mainTillHostPort(d.SyncPrimaryURL(r.Context()))
+		}
 		var quarantineCount int
 		var hasEnrolledTills bool
 		if isPrimaryTill {
@@ -747,7 +757,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// fix above closes).
 		showQuarantineSection := hasEnrolledTills || quarantineCount > 0
 		// Barcode symbology checklist (ADR-0059 Decision §2, ut-docs#935):
-		// every internal/barcode registry entry, plus whether this shop
+		// every catimport/barcode registry entry, plus whether this shop
 		// currently has it enabled. Best-effort like the other reads on
 		// this page — EnabledBarcodeSymbologies already falls back to the
 		// compatibility-preserving default set on error, so the checklist
@@ -864,20 +874,25 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// still silently staged on disk (db.PendingRestore is a
 			// persistent, on-disk fact; nothing else re-checks it once the
 			// original POST response is gone).
-			"restorePending":         backupRestorePending(d.Cfg.DBPath),
-			"restartSupported":       backupRestartSupported(),
-			"payMethods":             payMethods,
-			"payDefault":             payDefault,
-			"payFees":                feeRows,
-			"exportEntries":          exportEntries,
-			"autoUpdateFollowsMain":  autoUpdateFollowsMain,
-			"autoUpdateFollowLine":   autoUpdateFollowLine,
-			"autoUpdateMainVersion":  autoUpdateMainVersion,
-			"autoUpdateEnabled":      autoUpdateEnabled,
-			"autoUpdateTime":         autoUpdateTime,
-			"about":                  aboutView(r.Context(), d.Settings, locale), // ut-docs#3091
-			"TillName":               deviceNameOrDefault(r.Context(), d, locale),
-			"TillRegisterID":         tillRegisterID,
+			"restorePending":        backupRestorePending(d.Cfg.DBPath),
+			"restartSupported":      backupRestartSupported(),
+			"payMethods":            payMethods,
+			"payDefault":            payDefault,
+			"payFees":               feeRows,
+			"exportEntries":         exportEntries,
+			"autoUpdateFollowsMain": autoUpdateFollowsMain,
+			"autoUpdateFollowLine":  autoUpdateFollowLine,
+			"autoUpdateMainVersion": autoUpdateMainVersion,
+			"autoUpdateEnabled":     autoUpdateEnabled,
+			"autoUpdateTime":        autoUpdateTime,
+			"about":                 aboutView(r.Context(), d.Settings, locale), // ut-docs#3091
+			"TillName":              deviceNameOrDefault(r.Context(), d, locale),
+			"TillRegisterID":        tillRegisterID,
+			"TillRoleKey":           tillRoleKey,
+			"MainTillAddr":          mainTillAddr,
+			// The Registers link is only offered to whoever /registers admits
+			// (ut-docs#2782 review) — same action as its nav slot.
+			"CanManageRegisters":     canPerform(d, r, "stock_location_management"),
 			"registers":              registers,
 			"QuarantineCount":        quarantineCount,
 			"ShowQuarantineSection":  showQuarantineSection,
@@ -1843,7 +1858,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// Barcode symbology checklist (ADR-0059 Decision §2, ut-docs#935): one
-	// checkbox per internal/barcode registry entry, persisted immediately
+	// checkbox per catimport/barcode registry entry, persisted immediately
 	// via SettingsRepo.SetBarcodeSymbologyEnabled (through the main till on
 	// an additional till, ut-docs#2979) — same manager-gated,
 	// audit-writing, elevation-wired shape as launch-on-startup above.
@@ -3660,12 +3675,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// ut-docs#2121: this generic key/value door didn't get the same
 			// side effects as the dedicated POST /api/settings/display-mode
 			// handler above — same class of bug ut-docs#2099's review found
-			// in newRederiveSettings. Keep httpx's live self-order flag
-			// (httpx.SelfOrderMode) in step with what was just persisted,
-			// exactly as the dedicated handler does right after its own
-			// d.Settings.Set — without this it stays stale until restart.
-			httpx.InitSelfOrderMode(value == "self_order")
-			httpx.InitDisplayMode(value) // ut-docs#2154, same live-update
+			// in newRederiveSettings. Keep httpx's live display mode
+			// in step with what was just persisted, exactly as the
+			// dedicated handler does right after its own d.Settings.Set —
+			// without this it stays stale until restart.
+			httpx.InitDisplayMode(value) // ut-docs#2154
 			// ut-docs#1259 (pre-existing gap, not introduced by #2099): the
 			// dedicated handler revokes the acting session before entering
 			// self_order, since that mode is customer-facing and auth-exempt

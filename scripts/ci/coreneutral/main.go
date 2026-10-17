@@ -1,6 +1,7 @@
 // Command coreneutral is the Go half of guard-core-neutral.sh
 // (ut-docs#2888; owner rule 2026-09-25, #2848; mechanism ADR-0121 §11):
-// core Go under internal/, cmd/ and mobile/ must not select behaviour by a specific
+// core Go under internal/, cmd/, mobile/ and the shared catimport/ module
+// (ADR-0164 §1) must not select behaviour by a specific
 // country, vendor or first-party plugin. It parses every non-test file with
 // go/parser, so comments and string literals are the parser's problem, not
 // a text heuristic's (the first, awk-based version was blinded by a "/*"
@@ -580,16 +581,17 @@ func scanPackage(files map[string][]byte) ([]Finding, []string, error) {
 	return findings, problems, nil
 }
 
-// scanTree scans root/internal, root/cmd (both required) and root/mobile
-// (when present), skipping _test.go files, testdata/ trees and
+// scanTree scans root/internal, root/cmd (both required), root/mobile and
+// root/catimport (each when present; catimport is the shared parser module,
+// ADR-0164 §1 — no new vendor format is added to it), skipping _test.go files, testdata/ trees and
 // internal/db/migrations.
 func scanTree(root string) ([]Finding, []string, int, error) {
 	byDir := map[string]map[string][]byte{}
 	n := 0
-	for _, top := range []string{"internal", "cmd", "mobile"} {
+	for _, top := range []string{"catimport", "internal", "cmd", "mobile"} {
 		base := filepath.Join(root, top)
 		if _, err := os.Stat(base); err != nil {
-			if top == "mobile" && os.IsNotExist(err) {
+			if (top == "mobile" || top == "catimport") && os.IsNotExist(err) {
 				continue
 			}
 			return nil, nil, 0, fmt.Errorf("%s: %w", base, err)
@@ -747,7 +749,7 @@ func readAllowlist(p string) (Allowlist, []string) {
 }
 
 func main() {
-	root := flag.String("root", ".", "repo root (holds internal/, cmd/ and optionally mobile/)")
+	root := flag.String("root", ".", "repo root (holds internal/, cmd/ and optionally mobile/, catimport/)")
 	allowPath := flag.String("allowlist", "scripts/ci/core-neutral-allowlist.txt", "allow-list file")
 	basePath := flag.String("base-allowlist", "", "base branch's allow-list (enables the shrink-only check)")
 	flag.Parse()
@@ -758,7 +760,7 @@ func main() {
 		os.Exit(1)
 	}
 	if n == 0 {
-		fmt.Fprintln(os.Stderr, "❌ core-neutral guard: no Go files scanned under internal/, cmd/ or mobile/")
+		fmt.Fprintln(os.Stderr, "❌ core-neutral guard: no Go files scanned under internal/, cmd/, mobile/ or catimport/")
 		os.Exit(1)
 	}
 	al, errs := readAllowlist(*allowPath)

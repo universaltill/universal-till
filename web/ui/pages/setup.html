@@ -8,6 +8,7 @@
     <title>{{ T "setup.title" }}</title>
     <link rel="icon" type="image/x-icon" href="/public/assets/logo/ut-logo.ico">
     <link rel="stylesheet" href="/public/app.css?v={{ assetv "public/app.css" }}" />
+    <link rel="stylesheet" href="/plugin-fonts/bundle-fonts.css" />
     <!-- Vendored locally: the till must work fully offline. -->
     <!-- ut-docs#344: htmx is REQUIRED here, not optional polish. The
          join-an-existing-shop form below is driven entirely by hx-post and has
@@ -460,6 +461,12 @@
           {{/* Action-neutral wording, not tills.pairing.error.name_required —
                see tills.html's own comment on the same element. */}}
           <p id="setup-pairing-till-name-error" class="field-error-msg" role="alert" hidden>{{ T "tills.pairing.error.name_required_field" }}</p>
+          {{/* ut-docs#4560: a first-boot till normally has no sales, so the
+               replace-data confirm isn't rendered up front; a join refused
+               for sales (in practice a fail-closed DB error) fills this slot
+               out of band with it (join_replace_slot.html), and both tabs
+               include and validate it, so the refusal is no dead end. */}}
+          <div id="pairing-replace-slot"></div>
           {{/* ut-docs#2781: "Join as" — the role this till asks to join as. Shared
                by both tabs like the name above (hx-include'd by id); the main till's
                manager can still change it on the approval card or later on Tills. */}}
@@ -498,9 +505,9 @@
                  explicit reportValidity() guard the discover button already
                  needs for the same reason (ut-docs#1540) — was previously the
                  one till-name field in this wizard that was NOT required. -->
-            <form hx-post="/api/setup/join" hx-include="#setup-pairing-till-name, #setup-pairing-join-role" hx-target="#setup-join-msg" hx-swap="innerHTML"
+            <form hx-post="/api/setup/join" hx-include="#setup-pairing-till-name, #setup-pairing-join-role, #pairing-replace-local" hx-target="#setup-join-msg" hx-swap="innerHTML"
                   hx-indicator="#setup-join-msg" hx-disabled-elt="find button[type=submit]"
-                  data-before-request="trim-validate:setup-pairing-till-name">
+                  data-before-request="trim-validate:setup-pairing-till-name validate:pairing-replace-local">
               <!-- ut-docs#1179: was a raw '{"token":"…","url":"http://…"}' placeholder — the
                    wire shape, not something an operator can type or recognise. Reuse the same
                    friendly hint tills.html's join form already uses, so both screens read
@@ -630,7 +637,7 @@
                 return '<li style="padding:.3rem 0">' + esc(p.name)
                   + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + esc(p.till_id) + addrPart + '</span> '
                   + '<button type="button" class="btn secondary" hx-post="/api/setup/pair-start" '
-                  + 'hx-vals="' + escAttr(vals) + '" hx-include="#setup-pairing-till-name, #setup-pairing-join-role" '
+                  + 'hx-vals="' + escAttr(vals) + '" hx-include="#setup-pairing-till-name, #setup-pairing-join-role, #pairing-replace-local" '
                   // ut-docs#1540: this button lives outside any <form>, so
                   // the till-name input's own `required` attribute is
                   // never natively checked on click — htmx only validates
@@ -645,7 +652,7 @@
                   // very "the button does nothing" symptom this card is
                   // fixing. reportValidity() then shows the native bubble
                   // on the offending field, same as a real form submit.
-                  + 'data-before-request="trim-validate:setup-pairing-till-name" '
+                  + 'data-before-request="trim-validate:setup-pairing-till-name validate:pairing-replace-local" '
                   + 'hx-target="#setup-pairing-status-host" hx-swap="innerHTML">' + esc(i18n.requestBtn) + '</button></li>';
               }).join('') + '</ul>';
               htmx.process(out);

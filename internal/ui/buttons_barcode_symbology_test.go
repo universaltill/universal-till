@@ -31,7 +31,7 @@ import (
 const unresolvableSymbologyBarcode = "PLU-CATALOG-9001"
 
 // resolvableEAN13Barcode is a real, widely-published valid EAN13 example
-// (also used by internal/barcode's own tests) — resolves under the
+// (also used by catimport/barcode's own tests) — resolves under the
 // EAN13-only enabled set used throughout this file.
 const resolvableEAN13Barcode = "4006381333931"
 

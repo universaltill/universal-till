@@ -20,8 +20,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/universaltill/universal-till/catimport"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
-	"github.com/universaltill/universal-till/internal/catimport"
+	tillimport "github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/fleetlink"
@@ -56,6 +57,8 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewCatalogRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
 	settingsRepo := data.NewSettingsRepo(d.Db)
+	registerImportFromSystem(mux, d)
+	registerImportFromFile(mux, d)
 
 	mux.HandleFunc("GET /import", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "import_export") {
@@ -106,14 +109,24 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		if sampleErr != nil {
 			logging.L().Errorf("import page: count sample data: %v", sampleErr)
 		}
+		// ut-docs#4431: the installed API importers ("From another till
+		// system"). A read failure hides the section (logged); the file
+		// import never depends on it.
+		systemImporters, systemErr := importSystemEntries(r.Context(), d, httpx.RequestLocale(r))
+		if systemErr != nil {
+			logging.L().Errorf("import page: list API importers: %v", systemErr)
+		}
 		importData := map[string]any{
-			"title":           httpx.T(httpx.RequestLocale(r), "page.title.import"),
-			"theme":           d.CurrentState().Theme,
-			"menuItems":       d.MenuSnapshot(),
-			"welcome":         welcome,
-			"showSampleCard":  sampleErr == nil,
-			"sampleItemCount": sampleCount,
-			"sampleLoaded":    sampleLoaded,
+			"showSystemCard":   systemErr == nil,
+			"systemImporters":  systemImporters,
+			"canManagePlugins": canPerform(d, r, "plugin_management"),
+			"title":            httpx.T(httpx.RequestLocale(r), "page.title.import"),
+			"theme":            d.CurrentState().Theme,
+			"menuItems":        d.MenuSnapshot(),
+			"welcome":          welcome,
+			"showSampleCard":   sampleErr == nil,
+			"sampleItemCount":  sampleCount,
+			"sampleLoaded":     sampleLoaded,
 			// ut-docs#3709 review S2: a satellite till cannot load sample
 			// data (POST /api/import/sample-data refuses it) — the card
 			// says to use the main till instead of offering the button.
@@ -383,6 +396,18 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			}
 			defer f.Close()
 			file, fileSize = f, header.Size
+			// ADR-0164 §2 (ut-docs#4526): a fresh upload an installed
+			// file-rows entry claims (its extension and header row) is
+			// that plugin's to read — unless the operator chose the
+			// standard importer. Its preview and commit run through the
+			// plugin and catsync (import_file_rows.go); a staged commit
+			// (staged_id) is always the standard importer's own copy.
+			if !useStandardImporter(r) {
+				if entry, ok := claimingFileRowsEntry(r.Context(), d, header.Filename, f, header.Size); ok {
+					importPageFileRows(w, r, d, entry, f, header.Filename, header.Size, commit)
+					return
+				}
+			}
 		}
 		var err error
 
@@ -498,7 +523,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		var res catimport.Result
 		switch {
 		case isBkp:
-			res, err = catimport.ParseBkp(file, fileSize, httpx.ActiveCurrency().Decimals, enabledIDs, useItemNumbersAsBarcodes)
+			res, err = tillimport.ParseBkp(file, fileSize, httpx.ActiveCurrency().Decimals, enabledIDs, useItemNumbersAsBarcodes)
 		case isXLSX:
 			res, err = catimport.ParseXLSX(file, fileSize, httpx.ActiveCurrency().Decimals, enabledIDs, useItemNumbersAsBarcodes)
 		default:
@@ -515,14 +540,14 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			case errors.Is(err, catimport.ErrXLSXShopifyUnsupported):
 				http.Error(w, T("import.error.xlsx_shopify_unsupported"), http.StatusBadRequest)
 				return
-			case errors.Is(err, catimport.ErrBkpMissingFiles), errors.Is(err, catimport.ErrBkpInvalidMeta), errors.Is(err, catimport.ErrBkpTooLarge):
+			case errors.Is(err, tillimport.ErrBkpMissingFiles), errors.Is(err, tillimport.ErrBkpInvalidMeta), errors.Is(err, tillimport.ErrBkpTooLarge):
 				// The upload looked like a ZIP but isn't a recognisable
 				// .bkp backup — log the real detail, never raw text on the
 				// operator's screen (ut-docs#303's rule, same as below).
 				log.Printf("[import] bkp parse: %v", err)
 				http.Error(w, T("import.error.bkp_unrecognised"), http.StatusBadRequest)
 				return
-			case errors.Is(err, catimport.ErrBkpChecksumMismatch):
+			case errors.Is(err, tillimport.ErrBkpChecksumMismatch):
 				log.Printf("[import] bkp parse: %v", err)
 				http.Error(w, T("import.error.bkp_checksum_failed"), http.StatusBadRequest)
 				return
@@ -610,7 +635,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				}
 				switch {
 				case isBkp:
-					res, err = catimport.ParseBkp(file, fileSize, chosen.Decimals, enabledIDs, useItemNumbersAsBarcodes)
+					res, err = tillimport.ParseBkp(file, fileSize, chosen.Decimals, enabledIDs, useItemNumbersAsBarcodes)
 				case isXLSX:
 					res, err = catimport.ParseXLSX(file, fileSize, chosen.Decimals, enabledIDs, useItemNumbersAsBarcodes)
 				default:
@@ -861,7 +886,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			catimport.ImportItem
 			Status    string   // translated display text
 			Skipped   bool     // preview-time issue/duplicate — never entered the commit loop as importable
-			Warned    bool     // created, but with a warning
+			Warned    bool     // created (commit) or importable (preview), but with a warning
 			Failed    bool     // commit-time failure (category/department/item creation)
 			Idx       int      // stable 0-based row index for this parse (ut-docs#601) — field names row_include_<Idx> etc.
 			FixFields []string // "name"/"price", in order, when the row's issue is forceable with inline correction field(s), else nil — ut-docs#1713: a row can need both at once
@@ -930,6 +955,13 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			if !skipped {
 				importable++
 			}
+			// ut-docs#1235: a reused PLU renumbered at parse time is shown
+			// on the Preview too, as a warned row naming the new number —
+			// not a plain "ok" the operator only learns about after commit.
+			warnedPreview := false
+			if !commit && !skipped && it.SKUIssue != "" {
+				status, warnedPreview = translateSKUIssue(T, it.SKUIssue, it.SKUIssueRaw, it.SKU), true
+			}
 			generatedSKU := ""
 			if predictSKUs && !skipped && it.SKU == "" {
 				// Same department/category nesting the commit loop
@@ -942,7 +974,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					skuReserved[sku] = true
 				}
 			}
-			rows = append(rows, rowView{ImportItem: it, Status: status, Skipped: skipped, Idx: i, FixFields: fixFields, GeneratedSKU: generatedSKU})
+			rows = append(rows, rowView{ImportItem: it, Status: status, Skipped: skipped, Warned: warnedPreview, Idx: i, FixFields: fixFields, GeneratedSKU: generatedSKU})
 		}
 
 		// ut-docs#601: a preview stages the upload so the follow-up commit
@@ -976,6 +1008,10 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		overridesSet := 0
 		overridesFailed := false
 		overridesPluginDisabled := false
+		// ut-docs#4399: gift voucher rows this commit created, and the
+		// setup-seeded voucher item it retired because of them.
+		giftVouchersCreated := 0
+		seededVoucherRemoved, seededVoucherRemovedID := "", ""
 		if commit {
 			// Opening stock from the source file lands as a "receive"
 			// movement at the location THIS till's register is assigned
@@ -1347,7 +1383,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					}
 				}
 				if !imageSet {
-					if err := repo.EnsureDefaultThumbnail(r.Context(), itemID, catimport.PlaceholderIconPath(it.Name, it.Category)); err != nil {
+					if err := repo.EnsureDefaultThumbnail(r.Context(), itemID, tillimport.PlaceholderIconPath(it.Name, it.Category)); err != nil {
 						log.Printf("[import] set placeholder thumbnail for item %q: %v", it.Name, err)
 					}
 				}
@@ -1401,7 +1437,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				// the operator sees the number was reused rather than
 				// silently getting a "-2" SKU with no explanation.
 				if it.SKUIssue != "" {
-					warnings = append(warnings, translateSKUIssue(T, it.SKUIssue, it.SKUIssueRaw))
+					warnings = append(warnings, translateSKUIssue(T, it.SKUIssue, it.SKUIssueRaw, it.SKU))
 				}
 				// A present-but-invalid net quantity imported the item with
 				// none (ut-docs#3403) — warned, never silent, since it also
@@ -1444,6 +1480,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					rows[i].Status = createdStatus
 				}
 				created++
+				if it.ItemType == catalogtypes.ItemTypeGiftVoucher {
+					giftVouchersCreated++
+				}
 			}
 			// Populate ut-plugin-tax-de's takeaway_rate_overrides once, after
 			// the loop, so the merchant never hand-writes that JSON
@@ -1481,9 +1520,14 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				// #512's original design — a shop with no German tax plugin
 				// genuinely has nothing to configure.
 			}
+			if giftVouchersCreated > 0 {
+				seededVoucherRemovedID, seededVoucherRemoved = retireSeededGiftVoucherItem(r.Context(), d)
+			}
 			_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "catalog", "-", "import",
 				map[string]any{"format": res.Format, "created": created, "warned": warned, "failed": failed, "rows": len(rows),
 					"tax_codes_created": taxCodesCreated, "takeaway_overrides_set": overridesSet,
+					"seeded_gift_voucher_item_removed":   seededVoucherRemoved != "",
+					"seeded_gift_voucher_item_id":        seededVoucherRemovedID,
 					"takeaway_overrides_plugin_disabled": overridesPluginDisabled,
 					// ut-docs#970: record what currency these rows were
 					// actually priced under, alongside whether this request
@@ -1553,6 +1597,11 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					T("import.status.tax_overrides_plugin_disabled"))
 			}
 			b.WriteString(`</p>`)
+			if seededVoucherRemoved != "" {
+				// Both halves escaped; the key carries exactly one %s.
+				fmt.Fprintf(&b, `<p data-seeded-voucher-removed="1">%s</p>`,
+					fmt.Sprintf(htmlEscape(T("import.status.seeded_gift_voucher_removed")), htmlEscape(seededVoucherRemoved)))
+			}
 			// ut-docs#2112: from inside the /items shell's Import dialog, a
 			// plain navigation to bare /catalog is exactly the railless
 			// standalone destination #2090 moved every other in-shell exit
@@ -1908,7 +1957,7 @@ var confirmCarriedOverrideField = regexp.MustCompile(`^(row_(include|name|price|
 // active are system-formatted, not free text, so they're left untouched —
 // blanket-sanitizing every column corrupted a legitimate negative amount
 // last time this was tried (see #195's review). csvSafe's defusing "'" is
-// stripped back off by catimport's stripCSVDefuse on re-import, so the
+// stripped back off by catimport's StripCSVDefuse on re-import, so the
 // round trip stays lossless — see that function's doc comment.
 func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 	cw := csv.NewWriter(out)
@@ -2274,10 +2323,12 @@ func translateTaxIssue(T func(string) string, code, raw string) string {
 
 // translateSKUIssue is translateBarcodeIssue's counterpart for the
 // (non-blocking) SKUIssue reason code (ut-docs#1222).
-func translateSKUIssue(T func(string) string, code, raw string) string {
+// sku is the number the row was renumbered to, named in the message so the
+// operator can find the item later (ut-docs#1235).
+func translateSKUIssue(T func(string) string, code, raw, sku string) string {
 	switch code {
 	case catimport.SKUIssueDuplicateInFile:
-		return fmt.Sprintf(T("import.status.sku_reused_in_file"), raw)
+		return fmt.Sprintf(T("import.status.sku_reused_renumbered"), raw, sku)
 	default:
 		log.Printf("[import] unrecognised SKU issue reason code %q", code)
 		return T("import.status.unknown_issue")
@@ -2354,4 +2405,38 @@ func respondImportCurrencySaveError(w http.ResponseWriter, r *http.Request, T fu
 	}
 	log.Printf("[import] save currency confirmation: %v", err)
 	http.Error(w, T("import.error.invalid_file"), http.StatusInternalServerError)
+}
+
+// retireSeededGiftVoucherItem (ut-docs#4399) removes the gift voucher item
+// setup seeded once an import has created the shop's own, and returns its
+// id and name, or "" when nothing was removed. The repository deletes it only if
+// nothing has used it; the live cashier and kiosk baskets are memory-only,
+// so they are checked here first, as for the delete_item directive. An
+// item in a live basket is kept for now and retried by the next import.
+// Best-effort: the imported rows are committed, so a failure is logged and
+// the shop keeps both items.
+func retireSeededGiftVoucherItem(ctx context.Context, d *common.Deps) (id, name string) {
+	seededID, ok, err := data.NewCatalogRepo(d.Db).SeededGiftVoucherItemID(ctx)
+	if err != nil {
+		log.Printf("[import] seeded gift voucher item: %v", err)
+		return "", ""
+	}
+	if !ok {
+		return "", ""
+	}
+	if inBasket, err := itemInLiveBasket(ctx, d, seededID); err != nil || inBasket {
+		if err != nil {
+			log.Printf("[import] seeded gift voucher item: basket check: %v", err)
+		}
+		return "", ""
+	}
+	res, err := data.NewPOSRepo(d.Db).RetireSeededGiftVoucherItem(ctx)
+	if err != nil {
+		log.Printf("[import] seeded gift voucher item: %v", err)
+		return "", ""
+	}
+	if !res.Removed {
+		return "", ""
+	}
+	return res.ID, res.Name
 }

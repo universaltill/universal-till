@@ -24,7 +24,7 @@ This page is where those per-country defaults live. **The first-boot setup wizar
 
 ## Good to know
 
-- Tax is entered as a percentage — enter `19` for 19%. Fractional rates like `8.1` (or `8,1` — a dot or a comma both work) are fine and are saved exactly — and the setup wizard prefills a new till with the same exact rate, so `8.1` arrives there as `8.1`.
+- Tax is entered as a percentage — enter `19` for 19%. Fractional rates like `8.1` (or `8,1` — a dot or a comma both work) are fine, with at most two decimals (`8.25` yes, `8.875` no), and are saved exactly — and the setup wizard prefills a new till with the same exact rate, so `8.1` arrives there as `8.1`.
 - **Tax included in price** means the shelf price already contains the tax, which is normal in most of Europe. Leave it off where tax is added at the till instead.
 - **Archive retention** here is a floor you can raise but not lower below the minimum shown. It controls when a reset archive batch (Settings → Data → Reset archives) becomes eligible for permanent deletion: a batch holding real sales can't be deleted until this many days have passed since it was archived. Raising the value protects existing batches further out immediately; it never shortens protection already in effect. The Reset archives list itself shows each protected batch's retained-until date directly and hides its Delete-permanently button until then, so you never type the confirmation only to be refused.
 - Editing a country here does not change any shop already set up, and does not rewrite sales you have already taken.

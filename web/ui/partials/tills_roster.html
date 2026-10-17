@@ -125,6 +125,26 @@
   </tbody>
 </table>
 {{ if .LinkInfo }}<p class="muted"><small>{{ T "tills.link_help" }}</small></p>{{ end }}
+{{/* ut-docs#4423 (ADR-0114 §7): the main till's LAN TLS key — the one
+     every joined till pinned — and the manager's "Change key", which
+     starts a rotation now (till_rotate_tls_key.go). Only here, where the
+     live roster is (main till, TLS served). While a rotation is pending
+     the button is gone: a second press would only keep the same next key.
+     A refusal shows under the button (save-error, like Update now); the
+     10 s refresh then removes it. */}}
+{{ with .NetworkKey }}{{ if .Show }}
+<div class="tills-network-key" data-testid="tills-network-key" data-rotation="{{ if .Pending }}pending{{ else }}idle{{ end }}">
+  <p><strong>{{ T "tills.network_key.title" }}</strong><br>
+    <small class="muted">{{ if .Pending }}{{ T "tills.network_key.pending" }}{{ else }}{{ T "tills.network_key.idle" }}{{ end }}</small></p>
+  {{ if not .Pending }}
+  <form hx-post="/api/tills/rotate-tls-key" hx-swap="none"
+        hx-confirm="{{ T "tills.network_key.confirm" }}"
+        data-after-request="ok refresh-region:tills-roster; fail save-error:tills-network-key-error">
+    <button type="submit" class="btn secondary">{{ T "tills.network_key.btn" }}</button>
+  </form>
+  {{ end }}
+</div>
+{{ end }}{{ end }}
 {{ else }}
 <p class="muted">{{ T "tills.none" }}</p>
 {{ end }}

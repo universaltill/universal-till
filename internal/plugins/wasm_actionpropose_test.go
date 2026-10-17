@@ -166,11 +166,11 @@ func TestActionPropose_StockAdjustPlansBeforeAfter_2838(t *testing.T) {
 func TestAskOperatorFor_OnlyHopZeroUIAsk_2838(t *testing.T) {
 	op := agentaction.Operator{UserID: "u", Role: "manager", Session: "s", Request: "r"}
 	ctx := WithAskOperator(context.Background(), op)
-	if askOperatorFor(ctx, Event{Type: "ui.action.ask"}, false) == nil {
-		t.Fatal("hop-0 ui.action.ask lost its operator")
-	}
-	if askOperatorFor(ctx, Event{Type: "ui.view.ask"}, false) == nil {
-		t.Fatal("hop-0 ui.view.ask lost its operator")
+	for _, typ := range []string{"ui.action.ask", "ui.view.ask"} {
+		got, live := askOperatorFor(ctx, Event{Type: typ}, false)
+		if got == nil || live != nil {
+			t.Fatalf("hop-0 %s = %v, live check %v; want the operator, no check", typ, got, live != nil)
+		}
 	}
 	for _, c := range []struct {
 		ev  Event
@@ -179,14 +179,47 @@ func TestAskOperatorFor_OnlyHopZeroUIAsk_2838(t *testing.T) {
 		{Event{Type: "ui.action.ask", Hop: 1}, false},
 		{Event{Type: "sale.completed"}, false},
 		{Event{Type: "schedule.tick"}, false},
+		// A job without the page layer's session check (ut-docs#4143).
 		{Event{Type: "ui.action.ask"}, true},
+		{Event{Type: "com.x.ask"}, true},
 	} {
-		if askOperatorFor(ctx, c.ev, c.job) != nil {
+		if got, _ := askOperatorFor(ctx, c.ev, c.job); got != nil {
 			t.Errorf("%+v job=%v got an operator", c.ev, c.job)
 		}
 	}
-	if askOperatorFor(context.Background(), Event{Type: "ui.view.ask"}, false) != nil {
+	if got, _ := askOperatorFor(context.Background(), Event{Type: "ui.view.ask"}, false); got != nil {
 		t.Error("an unstamped context got an operator")
+	}
+}
+
+// ADR-0153 "Who is asking" (ut-docs#4143): a hop-0 job started from a ui
+// ask keeps the ask's operator (same request: one chat turn) with the
+// page layer's session check; a published (hop > 0) job event never.
+func TestAskOperatorFor_JobFromAskKeepsOperator_4143(t *testing.T) {
+	op := agentaction.Operator{UserID: "u", Role: "manager", Session: "s", Request: "r"}
+	ctx := WithAskSessionLive(WithAskOperator(context.Background(), op), func(context.Context) bool { return true })
+	got, live := askOperatorFor(ctx, Event{Type: "com.x.ask"}, true)
+	if got == nil || *got != op || live == nil {
+		t.Fatalf("job from an ask = %v (live check %v), want %v with a check", got, live != nil, op)
+	}
+	if got, _ := askOperatorFor(ctx, Event{Type: "com.x.ask", Hop: 1}, true); got != nil {
+		t.Fatal("a hop-1 job got an operator")
+	}
+	if got, _ := askOperatorFor(WithAskSessionLive(context.Background(), func(context.Context) bool { return true }), Event{Type: "com.x.ask"}, true); got != nil {
+		t.Fatal("a job with a session check but no operator got one")
+	}
+}
+
+// action_propose in a job whose session has ended is refused, audited.
+func TestActionPropose_EndedSessionRefused_4143(t *testing.T) {
+	d, s := proposeFixture(t, []string{"ai.agent", "ai.tools.write:stock"}, "ai.agent", "ai.tools.write:stock")
+	s.operatorLive = func(context.Context) bool { return false }
+	before := countAudit(t, d, "permission_denied")
+	if _, code := actionPropose(context.Background(), s, "stock.adjust.v1", []byte(`{"changes":[]}`)); code != hostErrDenied {
+		t.Fatalf("ended session = %d, want %d", code, hostErrDenied)
+	}
+	if after := countAudit(t, d, "permission_denied"); after <= before {
+		t.Fatalf("ended-session refusal not audited (%d → %d)", before, after)
 	}
 }
 
@@ -231,5 +264,33 @@ func TestActionPropose_ProposeRefusalDeniesAtProposeTime_4168(t *testing.T) {
 	}
 	if _, code := actionPropose(context.Background(), s, "stock.adjust.v1", []byte(`{"changes":[{"item_id":"`+id+`","delta":5}]}`)); code != 0 {
 		t.Fatalf("stock.adjust.v1 = %d, want 0 (the rule is catalogue-only)", code)
+	}
+}
+
+// ADR-0153 amendment 2026-10-15 (ut-docs#4444): the camera identify job's
+// operator is read-only — its view_query works, but action_propose is
+// refused and audited (identify suggests; it never proposes a change).
+func TestActionPropose_ReadOnlyOperatorRefused_4444(t *testing.T) {
+	d, s := proposeFixture(t, []string{"ai.agent", "ai.tools.write:catalog"}, "ai.agent", "ai.tools.write:catalog")
+	s.operatorReadOnly = true
+	before := countDenials(t, d, proposePlugin)
+	if out, code := actionPropose(context.Background(), s, "catalog.item.create.v1", []byte(createArgs)); code != hostErrDenied || out != nil {
+		t.Fatalf("read-only operator: code = %d (%s), want %d", code, out, hostErrDenied)
+	}
+	if countDenials(t, d, proposePlugin) != before+1 {
+		t.Error("the read-only refusal left no permission_denied audit row")
+	}
+}
+
+// askOperatorFor reports a job's read-only stamp; a ui ask is never
+// read-only (the stamp is only for jobs core starts itself).
+func TestAskOperatorFor_ReadOnlyJob_4444(t *testing.T) {
+	op := agentaction.Operator{UserID: "u", Role: "cashier", Session: "s", Request: "r"}
+	ctx := WithAskSessionLive(WithAskOperator(context.Background(), op), func(context.Context) bool { return true })
+	if AskReadOnlyFrom(ctx) {
+		t.Fatal("an unstamped context reads as read-only")
+	}
+	if !AskReadOnlyFrom(WithAskReadOnly(ctx)) {
+		t.Fatal("WithAskReadOnly not reported")
 	}
 }

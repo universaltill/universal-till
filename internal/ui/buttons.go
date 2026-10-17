@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/universaltill/universal-till/internal/barcode"
+	"github.com/universaltill/universal-till/catimport/barcode"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -1693,6 +1693,11 @@ type ButtonsHTTP struct {
 	// screen, so every existing ButtonsHTTP literal renders exactly as
 	// before.
 	EditMode bool
+	// SyncUnreachable (ut-docs#3605): EditMode only — this additional till
+	// can't reach its main till, so the Designer's category controls
+	// (write-through routes) render disabled. Never part of the sale
+	// screen's cached render (EditMode bypasses Cache).
+	SyncUnreachable bool
 	// Cache (ut-docs#2501) serves List (outside EditMode) and CategoryItems
 	// from rendered bytes while nothing they depend on has changed — see
 	// sellscreen_cache.go for the invalidation contract. nil = no caching:
@@ -2047,6 +2052,7 @@ func (h *ButtonsHTTP) renderList(w http.ResponseWriter, r *http.Request, chipPar
 		"Chip":            chip,
 		"ChipFiltered":    chipFiltered,
 		"EditMode":        h.EditMode,
+		"SyncUnreachable": h.EditMode && h.SyncUnreachable,
 		"AdminCategories": adminCats,
 		"ItemColors":      palette,
 		"HiddenItems":     hidden,
@@ -2569,7 +2575,7 @@ func (a PriceResolverAdapter) resolve(ctx context.Context, code string, byName b
 			line.Qty = w
 			line.QtyFromCode = true
 		} else {
-			// internal/barcode always formats EmbeddedWeight as "%d.%03d"
+			// catimport/barcode always formats EmbeddedWeight as "%d.%03d"
 			// (registry.go), so this should be unreachable — but if it ever
 			// isn't, fail safe: keep the caller-supplied qty (QtyFromCode
 			// stays false) rather than silently losing the decoded weight
@@ -2583,7 +2589,7 @@ func (a PriceResolverAdapter) resolve(ctx context.Context, code string, byName b
 	// PriceCents, which would silently drop one label's price. A zero
 	// decoded price likewise stays a visible zero-priced line.
 	if dec.HasEmbeddedPrice {
-		line.PriceCents = dec.EmbeddedPrice
+		line.PriceCents = money.FromMinor(dec.EmbeddedPriceMinor)
 		line.Qty = 1
 		line.QtyFromCode = true
 		line.NoMerge = true

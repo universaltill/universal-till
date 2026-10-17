@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, openNewItemForm, closeItemForm } from './helpers';
+import { watchConsole, openNewItemForm, closeItemForm, clickThenReload } from './helpers';
 
 // ut-docs#2010: /categories is the reference implementation of the app-wide
 // list/edit standard (ut-docs/reference/list-and-dialog-pattern.md):
@@ -28,18 +28,9 @@ import { watchConsole, openNewItemForm, closeItemForm } from './helpers';
 const DIALOG = '#category-dialog';
 const NAME = '#category-form input[name="name"]';
 
-// Every successful mutation here answers HX-Redirect (categories_page.go),
-// i.e. a REAL browser navigation back to /categories. The page is already
-// at /categories, so `page.waitForURL(/\/categories$/)` resolves at once
-// against the OLD document and guards nothing — the next row click can then
-// land in the NEW document before record-dialog.js has bound its document
-// click listener, and is silently dropped (seen live under 4 parallel
-// workers, ut-docs#2345: (b3) sat 30s on a Deactivate button inside a
-// dialog that never opened). Await the new document's `load` instead,
-// registered BEFORE the click that triggers it.
-async function clickThenReload(page: Page, click: () => Promise<void>) {
-  await Promise.all([page.waitForEvent('load'), click()]);
-}
+// Every successful mutation here answers HX-Redirect to the same URL (a real
+// navigation): await the new document's `load` via clickThenReload, not
+// waitForURL (ut-docs#2345, ut-docs#4427; see helpers.ts).
 
 async function createCategory(page: Page, name: string) {
   await page.locator('#categories-new').click();
@@ -803,5 +794,60 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
       expect(ring.width, sel).toBeGreaterThanOrEqual(2);
     }
     assertClean();
+  });
+
+  // ut-docs#4078: the focusin backstop in record-dialog.js only exempted
+  // #osk, so focusing the status bar or Lock was yanked back into the
+  // dialog -- against CLAUDE.md "Offline-first" (status and Lock stay
+  // reachable on every surface). It now shares base.html's allow-list
+  // (UT.focusTrapExempt); the page behind is still pulled back.
+  test('(k) ut-docs#4078: status bar and Lock keep keyboard focus while the dialog is open', async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 600 });
+    await page.goto('/categories');
+    await page.locator('#categories-new').click();
+    await expect(page.locator(DIALOG)).toBeVisible();
+    await page.locator(NAME).focus();
+
+    const focusOutside = (sel: string) => page.evaluate((s) => {
+      const el = document.querySelector(s) as HTMLElement | null;
+      if (!el) return 'none';
+      el.focus();
+      return document.activeElement === el ? 'ok' : 'stolen';
+    }, sel);
+
+    const sb = await focusOutside('.statusbar a[href], .statusbar button, .statusbar [tabindex]');
+    expect(sb, 'the status bar keeps focus while the record dialog is open').toBe('ok');
+
+    // Back into the dialog, then Lock. The Lock form renders only for a
+    // signed-in session, so on the auth-off default till a stand-in with
+    // the same class is planted: the exemption is selector-based, and an
+    // absent element must never turn this into a silent pass.
+    await page.locator(NAME).focus();
+    const lk = await page.evaluate(() => {
+      let btn = document.querySelector('.session-lock button') as HTMLElement | null;
+      if (!btn) {
+        const form = document.createElement('form');
+        form.className = 'session-lock';
+        btn = document.createElement('button');
+        btn.type = 'button';
+        form.appendChild(btn);
+        document.body.appendChild(form);
+      }
+      btn.focus();
+      return document.activeElement === btn ? 'ok' : 'stolen';
+    });
+    expect(lk, 'Lock keeps focus while the record dialog is open').toBe('ok');
+
+    // Anything else on the page behind is still pulled back in.
+    await page.locator(NAME).focus();
+    const pulledBack = await page.evaluate((dlg) => {
+      const d = document.querySelector(dlg)!;
+      const behind = Array.from(document.querySelectorAll('main button, main a[href], main input, .nav a[href]'))
+        .find((el) => !d.contains(el) && !(el as Element).closest('dialog, .statusbar, .session-lock, #osk') && (el as HTMLElement).getClientRects().length > 0) as HTMLElement | undefined;
+      if (!behind) return 'no focusable element behind the dialog';
+      behind.focus();
+      return d.contains(document.activeElement) ? 'ok' : `focus stayed on ${behind.outerHTML.slice(0, 80)}`;
+    }, DIALOG);
+    expect(pulledBack, 'focus on the page behind is pulled back into the dialog').toBe('ok');
   });
 });

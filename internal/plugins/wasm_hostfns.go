@@ -106,14 +106,28 @@ type hostState struct {
 	// published buffers this instance's accepted event_publish calls;
 	// handleEvent flushes them to the bus only after the instance exits.
 	published []Event
-	// operator is the signed-in operator of a hop-0 ui ask (ADR-0153
-	// "Who is asking", askOperatorFor); nil in every other context, so
-	// action_propose is refused there.
-	operator *agentaction.Operator
+	// operator is the signed-in operator of a hop-0 ui ask, or of a job
+	// started from one (ADR-0153 "Who is asking", askOperatorFor); nil in
+	// every other context, so action_propose and an ai.agent plugin's
+	// view_query are refused there. operatorLive is a job's session check
+	// (nil for the ask itself); askingOperator runs it on every use.
+	// operatorReadOnly (WithAskReadOnly): the operator may be read for but
+	// not proposed for — the camera identify job (ut-docs#4444).
+	operator         *agentaction.Operator
+	operatorLive     func(context.Context) bool
+	operatorReadOnly bool
 	// proposeKey/proposeOut: action_propose's buffer-ABI retry cache
 	// (one overflowed answer, like http_request's).
 	proposeKey []byte
 	proposeOut []byte
+	// importRows is the import run's row buffer (wasm_import_rows.go):
+	// an API-source run's (ADR-0161) or a file-rows run's (ADR-0164 §2);
+	// nil outside such an ask, so import_rows_submit is refused there.
+	importRows *ImportRowSink
+	// fileImport: this ask is a file-rows import run, so the instance is
+	// in the import sandbox — stateFrom refuses every host function but
+	// FileImportHostFunctions (wasm_file_import.go).
+	fileImport bool
 	// jobProgress is the job_progress sink when this call is a job
 	// (WithJob, wasm_job.go); nil otherwise.
 	jobProgress func(pct int, key string) error
@@ -125,9 +139,32 @@ func withHostState(ctx context.Context, s *hostState) context.Context {
 	return context.WithValue(ctx, hostStateKey{}, s)
 }
 
+// stateFrom is how a host function finds its caller. Inside a file-rows
+// import ask (the import sandbox, ADR-0164 §2) it finds none, so every
+// host function answers without acting — stateErr gives the code. Only
+// FileImportHostFunctions read the state with stateFromAny.
 func stateFrom(ctx context.Context) (*hostState, bool) {
+	s, ok := stateFromAny(ctx)
+	if !ok || s.fileImport {
+		return nil, false
+	}
+	return s, true
+}
+
+// stateFromAny is stateFrom without the sandbox refusal: for the import
+// sandbox's own host functions only (TestFileImportSandbox_OnlyAllowedFunctionsBypass).
+func stateFromAny(ctx context.Context) (*hostState, bool) {
 	s, ok := ctx.Value(hostStateKey{}).(*hostState)
 	return s, ok && s != nil && s.db != nil
+}
+
+// stateErr is a host function's answer when stateFrom found no caller:
+// denied inside the import sandbox, internal otherwise.
+func stateErr(ctx context.Context) int32 {
+	if s, ok := stateFromAny(ctx); ok && s.fileImport {
+		return hostErrDenied
+	}
+	return hostErrInternal
 }
 
 // readGuest returns a VIEW into guest module memory — not a copy. A caller
@@ -169,6 +206,7 @@ func instantiateHostModule(ctx context.Context, rt wazero.Runtime) error {
 		NewFunctionBuilder().WithFunc(hostImportFileSize).Export("import_file_size").
 		NewFunctionBuilder().WithFunc(hostImportFileRead).Export("import_file_read").
 		NewFunctionBuilder().WithFunc(hostImportFileClose).Export("import_file_close").
+		NewFunctionBuilder().WithFunc(hostImportRowsSubmit).Export("import_rows_submit").
 		NewFunctionBuilder().WithFunc(hostUploadOpen).Export("upload_open").
 		NewFunctionBuilder().WithFunc(hostUploadRead).Export("upload_read").
 		NewFunctionBuilder().WithFunc(hostUploadClose).Export("upload_close").
@@ -207,7 +245,7 @@ func instantiateHostModule(ctx context.Context, rt wazero.Runtime) error {
 func hostSettingsGet(ctx context.Context, m api.Module, keyPtr, keyLen, dstPtr, dstCap uint32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	key, ok := readGuest(m, keyPtr, keyLen)
 	if !ok || len(key) == 0 {
@@ -232,7 +270,7 @@ func hostSettingsGet(ctx context.Context, m api.Module, keyPtr, keyLen, dstPtr, 
 }
 
 func hostLogWrite(ctx context.Context, m api.Module, ptr, length uint32) {
-	s, ok := stateFrom(ctx)
+	s, ok := stateFromAny(ctx)
 	if !ok {
 		return
 	}
@@ -246,7 +284,7 @@ func hostLogWrite(ctx context.Context, m api.Module, ptr, length uint32) {
 func hostStorageGet(ctx context.Context, m api.Module, keyPtr, keyLen, dstPtr, dstCap uint32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	key, ok := readGuest(m, keyPtr, keyLen)
 	if !ok || len(key) == 0 {
@@ -268,7 +306,7 @@ func hostStorageGet(ctx context.Context, m api.Module, keyPtr, keyLen, dstPtr, d
 func hostStorageSet(ctx context.Context, m api.Module, keyPtr, keyLen, valPtr, valLen uint32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	key, kok := readGuest(m, keyPtr, keyLen)
 	val, vok := readGuest(m, valPtr, valLen)
@@ -321,7 +359,7 @@ func hostStorageSet(ctx context.Context, m api.Module, keyPtr, keyLen, valPtr, v
 func hostHTTPRequest(ctx context.Context, m api.Module, reqPtr, reqLen, dstPtr, dstCap uint32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	if httpEgressDemoDenied(s) {
 		return hostErrDenied

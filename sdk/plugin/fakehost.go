@@ -68,6 +68,16 @@ type FakeHost struct {
 	// InJob makes job_progress succeed (it is ErrNotFound outside a job).
 	InJob bool
 	Deny  map[string]bool
+	// FileImport is a file-rows import ask (ADR-0164 §2): every host
+	// function outside FileImportHostFunctions answers ErrDenied, as on
+	// the till and in ut-cloud's import host.
+	FileImport bool
+
+	// ImportRows records import_rows_submit batches by entity. Any entity
+	// is accepted unless ImportEntities is set, which then lists the ones
+	// the run resolved (others are ErrDenied, as on the till).
+	ImportRows     map[string][]json.RawMessage
+	ImportEntities map[string]bool
 
 	Logs      []string
 	Published []PublishedEvent
@@ -186,7 +196,16 @@ func enter(op string) (*FakeHost, bool) {
 	}
 	h.mu.Lock()
 	h.Calls[op]++
-	return h, h.Deny[op]
+	return h, h.Deny[op] || (h.FileImport && !fileImportAllowed(op))
+}
+
+func fileImportAllowed(op string) bool {
+	for _, f := range FileImportHostFunctions {
+		if f == op {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *FakeHost) handle() int32 { h.next++; return h.next }
@@ -432,6 +451,9 @@ func rawHTTPRead(id int32, dst []byte) int32 {
 func rawHTTPClose(id int32) int32 {
 	h, _ := enter("http_close")
 	defer h.mu.Unlock()
+	if h.FileImport {
+		return ErrDenied.Code
+	}
 	if _, ok := h.streams[id]; !ok {
 		return ErrNotFound.Code
 	}
@@ -500,6 +522,9 @@ func rawTCPRead(id int32, dst []byte, _ uint32) int32 {
 func rawTCPClose(id int32) int32 {
 	h, _ := enter("tcp_close")
 	defer h.mu.Unlock()
+	if h.FileImport {
+		return ErrDenied.Code
+	}
 	if c, ok := h.tcp[id]; ok {
 		delete(h.tcp, id)
 		h.unlocked(func() { _ = c.Close() })
@@ -540,6 +565,9 @@ func rawImportFileClose(id int32) int32 {
 func rawUploadOpen(tok []byte) int32 {
 	h, _ := enter("upload_open")
 	defer h.mu.Unlock()
+	if h.FileImport {
+		return ErrDenied.Code
+	}
 	f, ok := h.Uploads[string(tok)]
 	switch {
 	case !uploadTokenRe.Match(tok):
@@ -557,6 +585,9 @@ func rawUploadOpen(tok []byte) int32 {
 func rawUploadRead(id int32, dst []byte) int32 {
 	h, _ := enter("upload_read")
 	defer h.mu.Unlock()
+	if h.FileImport {
+		return ErrDenied.Code
+	}
 	u, ok := h.uploads[id]
 	if !ok {
 		return ErrNotFound.Code
@@ -569,6 +600,9 @@ func rawUploadRead(id int32, dst []byte) int32 {
 func rawUploadClose(id int32) int32 {
 	h, _ := enter("upload_close")
 	defer h.mu.Unlock()
+	if h.FileImport {
+		return ErrDenied.Code
+	}
 	if u, ok := h.uploads[id]; ok {
 		delete(h.Uploads, u.token)
 		for k, o := range h.uploads {
@@ -795,6 +829,9 @@ func rawItemImageRead(id int32, dst []byte) int32 {
 	// Deny["item_image_read"] has no effect here either (#4005 review).
 	h, _ := enter("item_image_read")
 	defer h.mu.Unlock()
+	if h.FileImport {
+		return ErrDenied.Code
+	}
 	r, ok := h.images[id]
 	switch {
 	case !ok:
@@ -807,6 +844,30 @@ func rawItemImageRead(id int32, dst []byte) int32 {
 		delete(h.images, id)
 	}
 	return int32(n)
+}
+
+func rawImportRowsSubmit(batch []byte) int32 {
+	h, denied := enter("import_rows_submit")
+	defer h.mu.Unlock()
+	var b struct {
+		Entity string            `json:"entity"`
+		Rows   []json.RawMessage `json:"rows"`
+	}
+	switch {
+	case denied:
+		return ErrDenied.Code
+	case json.Unmarshal(batch, &b) != nil || b.Entity == "":
+		return ErrInvalid.Code
+	case h.ImportEntities != nil && !h.ImportEntities[b.Entity]:
+		return ErrDenied.Code
+	case len(b.Rows) > ImportRowsMaxPerCall:
+		return ErrQuota.Code
+	}
+	if h.ImportRows == nil {
+		h.ImportRows = map[string][]json.RawMessage{}
+	}
+	h.ImportRows[b.Entity] = append(h.ImportRows[b.Entity], b.Rows...)
+	return int32(len(b.Rows))
 }
 
 func rawEventPublish(typ, payload []byte) int32 {
@@ -833,6 +894,9 @@ func rawEventPublish(typ, payload []byte) int32 {
 func rawJobProgress(pct uint32, key []byte) int32 {
 	h, _ := enter("job_progress")
 	defer h.mu.Unlock()
+	if h.FileImport {
+		return ErrDenied.Code
+	}
 	switch {
 	case !h.InJob:
 		return ErrNotFound.Code
@@ -850,7 +914,7 @@ func base64Encode(b []byte) string          { return base64.StdEncoding.EncodeTo
 func base64Decode(s string) ([]byte, error) { return base64.StdEncoding.DecodeString(s) }
 
 func (h *FakeHost) deviceInfo(op string, val func() []byte, dst []byte) int32 {
-	denied := h.Deny[op] || (h.DeviceID == "" && h.DeviceIPs == nil && h.DeviceTimezone == "")
+	denied := h.Deny[op] || (h.FileImport && !fileImportAllowed(op)) || (h.DeviceID == "" && h.DeviceIPs == nil && h.DeviceTimezone == "")
 	if denied {
 		return ErrDenied.Code
 	}

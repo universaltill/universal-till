@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, clickThenReload } from './helpers';
 
 // ut-docs#2284: the category dialog's three pickers — colour swatch grid,
 // customization-group checkboxes and kitchen-station checkboxes — on top
@@ -58,10 +58,7 @@ test.describe('category editor pickers (ut-docs#2284)', () => {
     await expect(stationLabel).toHaveCount(1);
     await stationLabel.locator('input[name="station_id"]').check();
 
-    await Promise.all([
-      page.waitForURL(/\/categories$/),
-      page.locator(`${DIALOG} .record-dialog-save`).click(),
-    ]);
+    await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
 
     // (a) The row carries the saved colour and station; opening it shows
     // the teal tile pressed and the station ticked.

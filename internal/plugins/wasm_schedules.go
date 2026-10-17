@@ -101,7 +101,7 @@ func (w *WasmRuntime) fireScheduled(ctx context.Context, pluginID string, ev Eve
 			logging.L().Infof("wasm %s schedule %s: stopped before it ran (plugins reloaded or till shutting down)", pluginID, ev.Type)
 			return
 		}
-		logging.L().Errorf("wasm %s schedule %s: %v", pluginID, ev.Type, err)
+		logEventErr("wasm %s schedule %s: %v", err, pluginID, ev.Type)
 	}
 }
 

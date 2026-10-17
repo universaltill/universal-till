@@ -51,11 +51,7 @@ func pinnedReplica(t *testing.T, m *tlsSyncMain, pin string) (*common.Deps, stri
 	if err := r.Settings.Set(t.Context(), discovery.PrimaryCertPinSettingKey, pin); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(lantls.SetPeerSource(func(ctx context.Context) (string, string, error) {
-		primary, _, _ := r.Settings.Get(ctx, "sync.primary_url")
-		p, _, _ := r.Settings.Get(ctx, discovery.PrimaryCertPinSettingKey)
-		return primary, p, nil
-	}))
+	pinSource(t, r)
 	return r, tillID
 }
 
@@ -96,7 +92,8 @@ func TestPinnedReplica_AllSyncTrafficIsPinnedTLS(t *testing.T) {
 
 // A main till presenting another certificate gets no request at all —
 // neither over TLS nor as a plain retry — and the replica treats it as
-// unreachable (re-proof is ut-docs#2737).
+// unreachable. No re-proof hook is installed here; with one, the real main
+// till re-proves (next test, ut-docs#4410).
 func TestPinnedReplica_AnotherCertificateGetsNothing(t *testing.T) {
 	m := newTLSSyncMain(t)
 	r, _ := pinnedReplica(t, m, strings.Repeat("0", 64))
@@ -112,6 +109,31 @@ func TestPinnedReplica_AnotherCertificateGetsNothing(t *testing.T) {
 	}
 	if n := m.plain.Load() + m.tls.Load(); n != 0 {
 		t.Fatalf("main till served %d /api/sync/* request(s) despite the pin mismatch", n)
+	}
+}
+
+// ADR-0114 §7 (ut-docs#4410), over real sockets and the real
+// primary-proof handler: the replica's held pin no longer matches (the main
+// till was restored onto new hardware with a new key). With the re-proof
+// hook wired as internal/app wires it, the first pull proves the main till
+// with no bearer, adopts its pin and goes through — no re-pairing, and
+// never a plain-HTTP request.
+func TestPinnedReplica_NewCertificateIsReprovenAndAdopted(t *testing.T) {
+	m := newTLSSyncMain(t)
+	registerPrimaryProof(m.f.mux, m.f.dp)
+	r, _ := pinnedReplica(t, m, strings.Repeat("0", 64))
+	watch := discovery.NewPrimaryWatch(r.Settings, nil) // as init.go builds it; no browse needed here
+	t.Cleanup(lantls.SetPeerReproof(watch.Reproof))
+
+	syncPullTick(t.Context(), r, lantls.NewPeerClient(5*time.Second), func(context.Context) {})
+	if settingOf(t, r, discovery.PrimaryCertPinSettingKey) != m.cert.Pin() {
+		t.Fatalf("pin = %q; want the main till's %q", settingOf(t, r, discovery.PrimaryCertPinSettingKey), m.cert.Pin())
+	}
+	if settingOf(t, r, "sync.pull_version") == "" {
+		t.Fatal("the pull was not retried under the adopted pin")
+	}
+	if m.plain.Load() != 0 {
+		t.Fatalf("main till got %d plain-HTTP /api/sync/* request(s)", m.plain.Load())
 	}
 }
 

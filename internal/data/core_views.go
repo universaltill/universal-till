@@ -71,6 +71,31 @@ var AIDataClasses = []string{
 	DataClassCustomers, DataClassStaff, DataClassTillHealth,
 }
 
+// aiReadRolePermission is the role permission the operator behind an
+// ai.agent plugin's request needs for a view of each data class (ADR-0153
+// Decision 1, "The operator's role still applies to reads", ut-docs#4143):
+// the permission the till's own screen for that data checks. "" = any
+// signed-in operator. A cashier (sale-only) holds none of them. customers
+// is absent on purpose: no customer view exists yet, and its rule is
+// decided with the first one (#2842) — until then it is refused (fail
+// closed). Custom roles (#2841) go through the same HasPermission check.
+var aiReadRolePermission = map[string]string{
+	DataClassShop:       "",
+	DataClassCatalog:    "",
+	DataClassStock:      "",
+	DataClassSales:      "reports",
+	DataClassStaff:      "user_management",
+	DataClassTillHealth: "audit",
+}
+
+// AIReadRolePermission returns the role permission an ai.agent read of a
+// view of class needs ("" = none); ok is false for a class with no rule,
+// which is refused.
+func AIReadRolePermission(class string) (perm string, ok bool) {
+	perm, ok = aiReadRolePermission[class]
+	return perm, ok
+}
+
 // CoreView is one registered read view.
 type CoreView struct {
 	Name       string // versioned, e.g. sales.by_day.v1

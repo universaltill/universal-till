@@ -5,6 +5,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pos"
 )
 
 // TestImport_GiftVoucherRowCommitsAsVoucherAndSaysSo (ut-docs#4225): a
@@ -95,5 +99,113 @@ func TestImport_GiftVoucherRowShowsTypeChipInPreview(t *testing.T) {
 	}
 	if strings.Contains(rowOf("Espresso"), "import-item-type") {
 		t.Errorf("standard row must not carry a chip")
+	}
+}
+
+// ut-docs#4399: a new shop's import that brings its own gift voucher item
+// retires the one setup seeded, while nothing has used it, and says so.
+
+func seedSetupGiftVoucherItem(t *testing.T, dp *common.Deps) string {
+	t.Helper()
+	repo := data.NewCatalogRepo(dp.Db)
+	if created, err := repo.SeedDefaultGiftVoucherItem(t.Context(), "Gift voucher"); err != nil || !created {
+		t.Fatalf("seed: created=%v err=%v", created, err)
+	}
+	id, ok, err := repo.SeededGiftVoucherItemID(t.Context())
+	if err != nil || !ok {
+		t.Fatalf("marker: ok=%v err=%v", ok, err)
+	}
+	return id
+}
+
+func commitImportCSV(t *testing.T, dp *common.Deps, csv string) string {
+	t.Helper()
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+	body, ct := multipartCSV(t, csv, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+	return rec.Body.String()
+}
+
+func giftVoucherItemCount(t *testing.T, dp *common.Deps) int {
+	t.Helper()
+	var n int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE item_type = 'gift_voucher'`).Scan(&n); err != nil {
+		t.Fatalf("count voucher items: %v", err)
+	}
+	return n
+}
+
+func TestImport_GiftVoucherRowRetiresTheSeededItem(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	seededID := seedSetupGiftVoucherItem(t, dp)
+
+	out := commitImportCSV(t, dp, "Name,SKU,Price,Category,Item type\n"+
+		"Gutscheine,30004,,Gutscheine,gift_voucher\n"+
+		"Espresso,10234,2.90,Coffee,standard\n")
+
+	if n := giftVoucherItemCount(t, dp); n != 1 {
+		t.Fatalf("voucher items = %d, want 1 (the imported one)", n)
+	}
+	var exists bool
+	if err := dp.Db.QueryRow(`SELECT EXISTS (SELECT 1 FROM items WHERE id = ?)`, seededID).Scan(&exists); err != nil || exists {
+		t.Fatalf("seeded item still exists (%v)", err)
+	}
+	want := "The gift voucher item “Gift voucher” created at setup was removed, because this import brought its own."
+	if !strings.Contains(out, `data-seeded-voucher-removed="1"`) || !strings.Contains(out, want) {
+		t.Errorf("summary does not say the seeded item was removed:\n%s", out)
+	}
+	var payload string
+	if err := dp.Db.QueryRow(`SELECT data_json FROM audit_log WHERE entity_type = 'catalog' AND action = 'import' ORDER BY rowid DESC LIMIT 1`).Scan(&payload); err != nil {
+		t.Fatalf("audit row: %v", err)
+	}
+	if !strings.Contains(payload, `"seeded_gift_voucher_item_removed":true`) {
+		t.Errorf("audit payload = %s, want seeded_gift_voucher_item_removed true", payload)
+	}
+}
+
+func TestImport_SeededGiftVoucherItemStaysWithoutAnImportedOne(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	seedSetupGiftVoucherItem(t, dp)
+
+	out := commitImportCSV(t, dp, "Name,SKU,Price,Category\nEspresso,10234,2.90,Coffee\n")
+
+	if n := giftVoucherItemCount(t, dp); n != 1 {
+		t.Fatalf("voucher items = %d, want the seeded one kept", n)
+	}
+	if strings.Contains(out, "data-seeded-voucher-removed") {
+		t.Errorf("summary claims a removal:\n%s", out)
+	}
+	if _, ok, _ := data.NewCatalogRepo(dp.Db).SeededGiftVoucherItemID(t.Context()); !ok {
+		t.Error("marker cleared by an import with no voucher item")
+	}
+}
+
+func TestImport_SeededGiftVoucherItemInTheLiveBasketIsKept(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	seededID := seedSetupGiftVoucherItem(t, dp)
+	dp.Engine = pos.NewServiceWithResolver(pos.Config{}, nil)
+	dp.Engine.AddLineWithModifiers(pos.BasketLine{SKU: "GV", Name: "Gift voucher", ItemID: seededID}, 1, nil)
+
+	out := commitImportCSV(t, dp, "Name,SKU,Price,Category,Item type\nGutscheine,30004,,Gutscheine,gift_voucher\n")
+
+	if n := giftVoucherItemCount(t, dp); n != 2 {
+		t.Fatalf("voucher items = %d, want 2 (seeded one is in the basket)", n)
+	}
+	if strings.Contains(out, "data-seeded-voucher-removed") {
+		t.Errorf("summary claims a removal:\n%s", out)
+	}
+	// Not decided yet: the next import may still retire it.
+	if _, ok, _ := data.NewCatalogRepo(dp.Db).SeededGiftVoucherItemID(t.Context()); !ok {
+		t.Error("marker cleared while the item was only in a live basket")
 	}
 }

@@ -872,20 +872,9 @@ func TestInitKioskExposedToTemplates(t *testing.T) {
 	}
 }
 
-// ut-docs#2099: SelfOrderMode reads back what InitSelfOrderMode published
-// (set at boot from the persisted display.mode, live-updated by the
-// settings handlers). ut-docs#4324: no template reads it — the record
-// dialog's status/lock/exit row is operator-only and never gated on it.
-func TestInitSelfOrderModeRoundTrips(t *testing.T) {
-	InitSelfOrderMode(true)
-	defer InitSelfOrderMode(false)
-	if !SelfOrderMode() {
-		t.Fatal("SelfOrderMode() = false after InitSelfOrderMode(true)")
-	}
-	InitSelfOrderMode(false)
-	if SelfOrderMode() {
-		t.Fatal("SelfOrderMode() = true after InitSelfOrderMode(false)")
-	}
+// ut-docs#4324, #4396: no "selforder" template func — a till-wide mode flag
+// can't tell a customer from a signed-in manager.
+func TestNoSelfOrderTemplateFunc(t *testing.T) {
 	if _, ok := FuncsFor("en")["selforder"]; ok {
 		t.Fatal(`"selforder" template func is back: a till-wide mode flag can't tell a customer from a signed-in manager (ut-docs#4324)`)
 	}
@@ -930,6 +919,25 @@ func TestIsRTL(t *testing.T) {
 	for locale, want := range cases {
 		if got := IsRTL(locale); got != want {
 			t.Fatalf("IsRTL(%q) = %v; want %v", locale, got, want)
+		}
+	}
+}
+
+// ut-docs#4375 (ADR-0160 §8): he and ur join ar/fa as right-to-left. IsRTL
+// alone is not the acceptance -- <html dir> comes from the template's `dir`
+// func, so pin that wiring for every RTL locale a bundle can bring.
+func TestDirFuncRTLLocales(t *testing.T) {
+	cases := map[string]string{
+		"ar": "rtl", "fa": "rtl", "he": "rtl", "he-IL": "rtl", "ur": "rtl", "ur_PK": "rtl",
+		"en": "ltr", "de": "ltr", "tr": "ltr",
+	}
+	for locale, want := range cases {
+		dir, ok := FuncsFor(locale)["dir"].(func() string)
+		if !ok {
+			t.Fatalf("FuncsFor(%q)[\"dir\"] is not a func() string", locale)
+		}
+		if got := dir(); got != want {
+			t.Errorf("dir() for %q = %q; want %q", locale, got, want)
 		}
 	}
 }

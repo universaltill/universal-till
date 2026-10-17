@@ -326,6 +326,16 @@ type Hooks struct {
 	// GuestOrderOutcome.Refusal (nothing written); a non-nil error is an
 	// internal failure and leaves the directive pending for the next tick.
 	GuestOrder func(ctx context.Context, o GuestOrder) (GuestOrderOutcome, error)
+	// CatalogItemInLiveBasket, CatalogTaxRateRefused and
+	// CatalogItemPhotoReplaced are the till-side rules the cloud catalogue
+	// pull (ADR-0162 §4, ut-docs#4463; catalog_pull.go) needs from the
+	// pages layer: whether the cashier or kiosk basket holds an item (a
+	// tombstoned one is then deactivated, never deleted), the shop
+	// country's tax-rate rule, and removing an upload a pulled icon
+	// replaced. Nil = none / no restriction / keep the file.
+	CatalogItemInLiveBasket  func(ctx context.Context, itemID string) (bool, error)
+	CatalogTaxRateRefused    func(rateBP int, takeawayBP *int) bool
+	CatalogItemPhotoReplaced func(itemID, clearedPath string)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can
 	// render a real design picker instead of a raw key/value form). Keys must
@@ -361,6 +371,16 @@ type Hooks struct {
 	// processed makes the next check-in POST without asking (checkin.go);
 	// the link records it before it kicks. Must not block.
 	LinkVersion func() int64
+	// ShopCurrency, when non-nil, reconciles this till's currency with the
+	// shop currency the cloud set for a my.-born store (ADR-0163 amendment
+	// 2026-10-16, ut-docs#4539; pages.reconcileShopCurrency): adopt it
+	// before the first sale, otherwise report the mismatch. Called once per
+	// tick that reached the cloud, after the sync response's entitlement
+	// block was cached, so it reads the fresh cache — a 402
+	// plan_required's cached block included (shopCurrencyAfterRefusal).
+	// Never on a failed tick, a block-less 402 or a gated (skipped) tick.
+	// Best-effort: it logs, it never fails the tick. Nil = unsupported.
+	ShopCurrency func(ctx context.Context)
 
 	// fetchCatalogImage is set by tick (it needs the cloud endpoint and
 	// credential from cfg) and bound into each set_catalog_image's
@@ -451,6 +471,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 			// start-up check-in follows it (amendment §4).
 			closeOperatorWindow(windowSeen)
 			disarmStartupCheckin()
+			shopCurrencyAfterRefusal(ctx, hooks, err)
 			err = markGatedRefusal(ctx, settings, err)
 		}
 		return false, err
@@ -470,11 +491,19 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 				// No retry until the next trigger (§4).
 				closeOperatorWindow(windowSeen)
 				disarmStartupCheckin()
+				shopCurrencyAfterRefusal(ctx, hooks, err)
 				err = markGatedRefusal(ctx, settings, err)
 			}
 			return false, err
 		}
 		plan.done(cfg)
+	}
+	// The cloud answered (a POST whose block is now cached, or a
+	// conditional check-in that found nothing changed and leaves the cache
+	// as the last POST wrote it): reconcile the till's currency with the
+	// shop's (ADR-0163 amendment 2026-10-16, ut-docs#4539).
+	if hooks.ShopCurrency != nil {
+		hooks.ShopCurrency(ctx)
 	}
 	// Catalog/inventory up-sync rides the same tick, but only when the shop's
 	// data actually changed (hash gate) — most ticks send nothing. Replicas
@@ -519,13 +548,13 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		// would double-report its own sales. Throttled and self-logging;
 		// never fails the tick.
 		pushSalesAggregates(ctx, cfg, db)
-		// Archived reports (ADR-0147 §2, ut-docs#574): only in retention
-		// mode cloud/both, and only from the main till — report_archive is
-		// per-till and not synced, so a replica uploading too would need a
-		// till key on the cloud row (a follow-up). Throttled and
-		// self-logging; never fails the tick.
-		pushReportArchives(ctx, cfg, db)
 	}
+	// Archived reports (ADR-0147 §2, ut-docs#574): only in retention mode
+	// cloud/both, from EVERY till — report_archive is per-till and not
+	// synced, so each till uploads its own Z chain, an additional till under
+	// its own till_id (ut-docs#4438, ADR-0147 amendment 2). Throttled and
+	// self-logging; never fails the tick.
+	pushReportArchives(ctx, cfg, db)
 	// Image fetches share one budget per tick: after the first
 	// transport-level failure (errImageFetchUnreachable) no further fetch is
 	// tried this tick, and each affected directive stays pending (no result
@@ -612,6 +641,15 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// till applies guest orders, so only it holds such results.
 	if isMainTill {
 		retryGuestOrderResults(ctx, cfg, db, guestAnswered)
+	}
+	// ADR-0162 §4 (ut-docs#4463): on a cloud-master store the main till
+	// pulls the cloud's catalogue after a check-in POST that reached the
+	// cloud (plan.post: a 304 means nothing changed — every catalogue write
+	// bumps link_version). Never a replica (it gets the rows over LAN
+	// sync), never after a mid-tick 402. A pull failure is logged and
+	// retried on the next trigger; it never fails the check-in.
+	if isMainTill && plan.post && !refusedMidTick && pullCloudCatalog(ctx, cfg, db, hooks) {
+		catalogApplied = true
 	}
 	// Fresh data in the same tick (contract §3.6): a catalog change the
 	// cloud just made is reported back now, not a tick later. The hash gate
@@ -847,14 +885,6 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 		// (deviceTargetSkipReason). The id and created_by the till audits
 		// come from the directive itself (ADR-0142 D3).
 		msg, err = hooks.KioskUnlock(ctx, d.ID, d.CreatedBy)
-	case "guest_order":
-		// Tick takes guest_order through handleGuestOrder (stored result,
-		// retry); this case serves apply's other callers the same outcome.
-		r := applyGuestOrder(ctx, d, hooks)
-		if r.deferred {
-			return "failed", "guest_order could not be applied now"
-		}
-		return r.status, r.msg
 	case "upsert_category":
 		if hooks.UpsertCategory == nil {
 			return "failed", "upsert_category is not supported on this till"
@@ -1522,6 +1552,19 @@ func cachePlanRequired(ctx context.Context, settings *data.SettingsRepo, err err
 	}
 }
 
+// shopCurrencyAfterRefusal runs Hooks.ShopCurrency after a check-in's 402
+// plan_required that carried an entitlement block: cachePlanRequired has
+// cached it (a lapsed store's block names its currency too), so the cloud
+// did answer and the till reconciles from that answer (ADR-0163 amendment
+// 2026-10-16, ut-docs#4539). A block-less 402 cached nothing: no call.
+func shopCurrencyAfterRefusal(ctx context.Context, hooks Hooks, err error) {
+	se, ok := planRequired(err)
+	if !ok || hooks.ShopCurrency == nil || len(se.Entitlement) == 0 || string(se.Entitlement) == "null" {
+		return
+	}
+	hooks.ShopCurrency(ctx)
+}
+
 // pushRefused reports whether a snapshot / order-tracking push's err is a
 // 402 plan_required and, if so, caches its entitlement block
 // (cachePlanRequired) so this till's ADR-0148 gate closes now rather than
@@ -2082,17 +2125,16 @@ func Start(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks, wg 
 				hooks.AfterTick(ctx, contacted, err)
 			}
 			// No kicks while backing off. That includes the flat hourly
-			// wait of an ADR-0116 D6 lock-out (schedule.go's authTracker): a
-			// credential written while the till waits — a pairing, a
-			// re-registration — is first tried on the next hourly tick, and
-			// the status chip stays until that tick succeeds. The "Pair with
-			// a shop" screen (ut-docs#3523) is where an earlier wake belongs;
-			// a cloud nudge can't be it, the link itself is refused on a 401.
-			// Exception (ADR-0148, ut-docs#3615): a kick that arrives while an
-			// operator check-in window is open is an operator action on this
-			// till, and it ends the backoff — otherwise an unpaid till whose
-			// window check-in failed once would wait out the backoff, long
-			// past its window. A kick outside a window is consumed and the
+			// wait of an ADR-0116 D6 lock-out (schedule.go's authTracker); a
+			// cloud nudge can't end it, the link itself is refused on a 401.
+			// Exception (ADR-0148 §2, ut-docs#3615): a kick that arrives while
+			// an operator check-in window is open is an operator action on
+			// this till, and it ends the backoff or the lock-out wait —
+			// otherwise an unpaid till whose window check-in failed once
+			// would wait out the backoff, long past its window. "Pair with a
+			// shop" (ut-docs#3523) opens one, so a new credential is tried
+			// within seconds and the chip clears on that check-in
+			// (ut-docs#3533). A kick outside a window is consumed and the
 			// wait goes on; the check-in the wait ends in satisfies it.
 			timer := time.NewTimer(sched.next(err))
 		wait:

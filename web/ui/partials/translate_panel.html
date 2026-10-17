@@ -1,0 +1,80 @@
+{{/* ut-docs#4370 (ADR-0160 §7): translate mode's key panel body, swapped
+     into base.html's #translate-panel-body by GET /ui/translate-mode/panel
+     and POST /api/translate-mode/override. The till only links to Weblate:
+     nothing here fetches or posts to it. */}}
+<div class="translate-panel-content" data-testid="translate-panel-content" data-key="{{ .key }}">
+  {{ if gt (len .keys) 1 }}
+  <p class="muted">{{ T "translations.mode.other_keys" }}</p>
+  <div class="translate-panel-keys" role="group">
+    {{ $cur := .key }}{{ $ns := .nsParam }}{{ $ks := .keysParam }}
+    {{ range .keys }}
+    <button type="button" class="btn secondary btn-touch{{ if eq . $cur }} is-current{{ end }}"
+            {{ if eq . $cur }}aria-current="true"{{ end }}
+            hx-get="/ui/translate-mode/panel?key={{ urlquery . }}&keys={{ urlquery $ks }}&ns={{ urlquery $ns }}"
+            hx-target="#translate-panel-body" hx-swap="innerHTML"><code>{{ . }}</code></button>
+    {{ end }}
+  </div>
+  {{ end }}
+
+  <dl class="translate-panel-facts">
+    <dt>{{ T "translations.mode.key" }}</dt>
+    <dd><code class="translate-panel-key" data-testid="translate-panel-key">{{ .key }}</code></dd>
+    <dt>{{ T "translations.mode.area" }}</dt>
+    <dd><code data-testid="translate-panel-area">{{ .area }}</code></dd>
+    <dt>{{ T "translations.mode.description" }}</dt>
+    <dd>{{ with .meta }}{{ if .Description }}{{ .Description }}{{ else }}<span class="muted">{{ T "translations.mode.no_description" }}</span>{{ end }}{{ else }}<span class="muted">{{ T "translations.mode.no_description" }}</span>{{ end }}</dd>
+    {{ with .meta }}{{ if .Placeholders }}
+    <dt>{{ T "translations.mode.placeholders" }}</dt>
+    <dd><ol class="translate-panel-placeholders">{{ range .Placeholders }}<li>{{ . }}</li>{{ end }}</ol></dd>
+    {{ end }}{{ if .MaxLength }}
+    <dt>{{ T "translations.mode.max_length" }}</dt>
+    <dd data-testid="translate-panel-max-length">{{ .MaxLength }}</dd>
+    {{ end }}{{ end }}
+    <dt>{{ T "translations.mode.current" }} (<code>{{ .locale }}</code>)</dt>
+    <dd class="translate-panel-value">{{ .value }}</dd>
+    {{ if and .reference (ne .reference .value) }}
+    <dt>{{ T "translations.mode.english" }}</dt>
+    <dd class="translate-panel-value">{{ .reference }}</dd>
+    {{ end }}
+  </dl>
+
+  {{ if .weblateURL }}
+  <section class="translate-panel-section" aria-labelledby="translate-panel-weblate-h">
+    <h4 id="translate-panel-weblate-h">{{ T "translations.mode.weblate_title" }}</h4>
+    <a class="btn btn-touch translate-panel-weblate" data-testid="translate-panel-weblate"
+       href="{{ .weblateURL }}" hx-boost="false" target="_blank" rel="noopener noreferrer">{{ T "translations.mode.open_weblate" }}</a>
+    {{ with .qr }}<img class="translate-panel-qr" src="{{ . }}" alt="{{ T "translations.mode.qr_alt" }}" width="200" height="200" data-testid="translate-panel-qr">{{ end }}
+    <p class="muted translate-panel-qr-hint">{{ T "translations.mode.qr_hint" }}</p>
+  </section>
+  {{ else }}
+  <p class="muted" data-testid="translate-panel-plugin-key">{{ T "translations.mode.plugin_key" }}</p>
+  {{ end }}
+
+  <section class="translate-panel-section" aria-labelledby="translate-panel-override-h">
+    <h4 id="translate-panel-override-h">{{ T "translations.mode.override_title" }}</h4>
+    <p class="muted">{{ T "translations.mode.override_help" }}</p>
+    <form hx-post="/api/translate-mode/override" hx-target="#translate-panel-body" hx-swap="innerHTML" class="translate-panel-override">
+      <input type="hidden" name="key" value="{{ .key }}">
+      <input type="hidden" name="keys" value="{{ .keysParam }}">
+      <input type="hidden" name="ns" value="{{ .nsParam }}">
+      <label class="visually-hidden" for="translate-panel-value">{{ T "translations.mode.override_title" }}</label>
+      <textarea id="translate-panel-value" name="value" rows="2"{{ with .meta }}{{ if .MaxLength }} maxlength="{{ .MaxLength }}"{{ end }}{{ end }}>{{ if .override }}{{ .overrideValue }}{{ else }}{{ .value }}{{ end }}</textarea>
+      <div class="translate-panel-actions">
+        <button type="submit" name="op" value="save" class="btn btn-touch" data-testid="translate-panel-save">{{ T "translations.save" }}</button>
+        {{ if .override }}<button type="submit" name="op" value="reset" class="btn secondary btn-touch" data-testid="translate-panel-reset">{{ T "translations.reset" }}</button>{{ end }}
+      </div>
+    </form>
+    {{ if eq .status "saved" }}<p role="status" class="translate-panel-status" data-testid="translate-panel-saved">{{ T "translations.mode.saved" }}</p>{{ end }}
+    {{ if eq .status "reset" }}<p role="status" class="translate-panel-status" data-testid="translate-panel-saved">{{ T "translations.mode.reset_done" }}</p>{{ end }}
+    {{ if eq .status "empty" }}<p role="alert" class="translate-panel-status">{{ T "translations.mode.empty" }}</p>{{ end }}
+    {{ if or (eq .status "saved") (eq .status "reset") }}<button type="button" class="btn secondary btn-touch" data-action="reload" data-testid="translate-panel-reload">{{ T "translations.mode.reload" }}</button>{{ end }}
+  </section>
+
+  <section class="translate-panel-section" aria-labelledby="translate-panel-areas-h">
+    <h4 id="translate-panel-areas-h">{{ T "translations.mode.page_areas" }}</h4>
+    <p class="muted">{{ T "translations.mode.page_areas_help" }}</p>
+    <ul class="translate-panel-areas">
+      {{ range .pageAreas }}<li data-testid="translate-panel-area-{{ . }}"><code>{{ . }}</code></li>{{ end }}
+    </ul>
+  </section>
+</div>

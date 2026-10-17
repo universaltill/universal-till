@@ -168,7 +168,7 @@ Ayarlar → Rapor saklama'da raporların nerede tutulacağını seçin:
   modern bir kasanın diskini doldurmaz.
 - **Yalnızca bulut** / **Kasa + bulut** — bulut yedeklemeyi içeren etkin bir
   abonelik gerektirir; abonelik yoksa gösterilir ama "etkin abonelik
-  gerekir" olarak işaretlenir. Ana kasa arşivlenen her raporu arka planda,
+  gerekir" olarak işaretlenir. Her kasa kendi arşivlenen raporlarını arka planda,
   yaklaşık 10 dakikada bir ve en eskiden başlayarak mağazanızın bulut
   hesabına yükler. **Yalnızca bulut** ile rapor, bulut aldığını onayladıktan
   sonra kasadan silinir; **Kasa + bulut** ile kasa onu 10 yılın tamamı
@@ -176,8 +176,9 @@ Ayarlar → Rapor saklama'da raporların nerede tutulacağını seçin:
 
 Kasa, bulut almış olsa bile en son gün sonu raporunu her zaman saklar;
 böylece bir sonraki gün sonu raporu Z numarası sırasını sürdürür ve bir
-öncekinin bittiği yerden başlar. Ek kasalar, ayar ne olursa olsun kendi
-raporlarını 10 yıl saklar; yalnızca ana kasa yükleme yapar.
+öncekinin bittiği yerden başlar. Her kasa kendi raporlarını saklar ve
+yükler: ek bir kasanın raporları bulutta o kasanın altında, ana kasanınkilerden
+ayrı tutulur ve onları oluşturan kasa, aynı ayara göre kaldırır.
 
 Bulut depolama açıkken aynı kart, yüklenmeyi bekleyen rapor sayısını
 gösterir. Bulut, abonelik etkin olmadığı için yüklemeyi reddederse kart
@@ -217,7 +218,7 @@ Depozito iadesi (Pfandrückgabe) çıkışı **bu cihazın kendi kasasının** a
 vardiyasına kaydedilir — aynı anda başka bir kasanın vardiyası açık olsa
 bile asla diğer çekmeceye düşmez. Birden fazla kasası olan bir mağazada
 cihazın önce hangi kasa olduğunu bilmesi gerekir: Ayarlar → Kasalar'da
-"Bu cihazın kasası"nı ayarlayın; yoksa çıkış, sizi oraya yönlendiren bir
+"Ödemeler için nakit kasası"nı ayarlayın; yoksa çıkış, sizi oraya yönlendiren bir
 mesajla reddedilir.
 
 Raporlar'daki Ödemeler ve kanallar sekmesi, seçili dönem için bir "Nedene

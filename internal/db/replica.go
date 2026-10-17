@@ -8,6 +8,7 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -80,6 +81,26 @@ func StageRestoreFromReader(dbPath string, r io.Reader) error {
 	return nil
 }
 
+// UnstageJoin withdraws a join staged by StageRestoreFromReader and
+// StageReplicaIdentity, so the next start keeps this till's own DB
+// (ut-docs#4560: a sale landed while the join was being staged). A file
+// that is already gone is not an error. Both removals are always tried;
+// the identity goes first, because an identity left without its restore
+// would point this till's own DB at the main till (half-joined), while a
+// restore left without its identity is no worse than before #4560.
+func UnstageJoin(dbPath string) error {
+	var errs []error
+	for _, p := range []string{
+		ReplicaIdentityPath(dbPath),
+		filepath.Join(filepath.Dir(dbPath), restorePendingName),
+	} {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // ApplyReplicaIdentity runs after Open when an identity file exists:
 // writes the sync settings, clears sessions (the snapshot carries the
 // primary's), and removes the file. Returns whether it applied.
@@ -111,6 +132,9 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 		// Always written, empty too: a till re-joining a main till must
 		// not keep trusting the previous main till's pin.
 		"sync.primary_cert_pin": id.PrimaryCertPin,
+		// A next pin (key rotation, ut-docs#4409) belongs to the pin it
+		// was announced under: never carried across a pairing.
+		"sync.primary_cert_next_pin": "",
 	} {
 		if err := set(k, v); err != nil {
 			return false, fmt.Errorf("apply identity %s: %w", k, err)

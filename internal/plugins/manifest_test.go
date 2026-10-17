@@ -385,6 +385,54 @@ func TestPersistManifest_MapDefaultValueWritesCanonicalShape(t *testing.T) {
 	}
 }
 
+// ADR-0161 (ut-docs#4429): an import entry may declare "source": "api" —
+// it then runs without an uploaded file. The declaration survives persist
+// and comes back from ListImportEntries; any other value, or a source on a
+// non-import entry, is refused at install.
+func TestPersistManifest_ImportEntrySourceAPI(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	manifest := func(entries string) *Manifest {
+		t.Helper()
+		m, err := ParseManifest(strings.NewReader(`{"id":"com.test.apiimport","name":"API Import","version":"1.0.0","entrypoint":"./plugin.wasm","runtime":"wasm","entries":[` + entries + `]}`))
+		if err != nil {
+			t.Fatalf("ParseManifest: %v", err)
+		}
+		return m
+	}
+	m := manifest(`{"type":"import","key":"api","label":"From another till system","entities":["items","stock"],"source":"api"},
+		{"type":"import","key":"file","label":"File","entities":["items"],"file_formats":[".csv"]}`)
+	if m.Entries[0].Source != "api" || m.Entries[1].Source != "" {
+		t.Fatalf("parsed source = %q / %q", m.Entries[0].Source, m.Entries[1].Source)
+	}
+	if err := PersistManifest(context.Background(), db, m, InstallOptions{}); err != nil {
+		t.Fatalf("PersistManifest: %v", err)
+	}
+	rows, err := data.NewPluginRepo(db).ListImportEntries(context.Background())
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("ListImportEntries = %+v, %v", rows, err)
+	}
+	got := map[string]string{}
+	for _, r := range rows {
+		got[r.Key] = r.Source
+	}
+	if got["api"] != "api" || got["file"] != "" {
+		t.Fatalf("source did not roundtrip: %v", got)
+	}
+
+	for name, entries := range map[string]string{
+		"unknown source":       `{"type":"import","key":"x","label":"X","entities":["items"],"source":"ftp"}`,
+		"source on export":     `{"type":"export","key":"x","label":"X","source":"api"}`,
+		"api with file format": `{"type":"import","key":"x","label":"X","entities":["items"],"source":"api","file_formats":[".csv"]}`,
+	} {
+		bad := manifest(entries)
+		bad.ID = "com.test.bad" + strings.ReplaceAll(name, " ", "")
+		if err := PersistManifest(context.Background(), db, bad, InstallOptions{}); err == nil || !strings.Contains(err.Error(), "source") {
+			t.Errorf("%s: PersistManifest err = %v, want a source refusal", name, err)
+		}
+	}
+}
+
 // TestPersistManifest_ImportEntryDeclarationsRoundtrip covers ut-docs#599's
 // manifest half: an import entry's entities/file_formats declarations
 // (ManifestEntry.Entities/.FileFormats) parse from plugin.json, survive

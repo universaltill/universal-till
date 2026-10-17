@@ -20,7 +20,7 @@
          - false (standalone page, e.g. a direct GET /import or another
            page's own back-link, ut-docs#2090's #1950/#1955 landings):
            unchanged plain link to /items. -->
-  <a class="btn secondary" href="/items"{{ if .InItemsShell }} data-action="close-closest"{{ end }}>← {{ T "nav.catalog" }}</a>
+  <a class="btn secondary" href="/items"{{ if .InItemsShell }} data-action="close-closest"{{ end }}><span class="back-arrow" aria-hidden="true">←</span> {{ T "nav.catalog" }}</a>
 </div>
 
 {{ if .welcome }}
@@ -40,6 +40,17 @@
         <a class="btn primary" href="#import-card">{{ T "import.welcome.file.action" }}</a>
       </div>
     </div>
+    {{ if .showSystemCard }}
+    <!-- ut-docs#4431: the fourth way — pull products straight from the
+         shop's old till system through an installed API importer. -->
+    <div class="import-welcome-option" data-welcome-option="system">
+      <h3>{{ T "import.welcome.system.title" }}</h3>
+      <p>{{ T "import.welcome.system.body" }}</p>
+      <div class="import-welcome-actions">
+        <a class="btn primary" href="#import-system-card">{{ T "import.welcome.system.action" }}</a>
+      </div>
+    </div>
+    {{ end }}
     <div class="import-welcome-option" data-welcome-option="sample">
       <h3>{{ T "import.welcome.sample.title" }}</h3>
       <p>{{ T "import.welcome.sample.body" }}</p>
@@ -135,6 +146,60 @@ document.getElementById('import-result').addEventListener('change', function (e)
   });
 });
 </script>
+
+{{ if .showSystemCard }}
+<!-- ut-docs#4431: "From another till system" — the installed API-source
+     import entries (ADR-0161), listed by plugin name; core names no vendor.
+     Keys are the plugin's own secret settings, edited in the plugin
+     settings editor (linked); here only set / not set, never a value.
+     Check & preview and Import post to /api/import/from-system, whose
+     fragment (partials/import_system_result.html) lands in the entry's
+     aria-live result area; errors too (rendered text/html, force-swapped by
+     app.js). The fieldset is the busy-disable scope for every button of
+     the entry, including the ones the result fragment adds. No importer
+     installed → a link to the plugin store's Import category. -->
+<div class="card" id="import-system-card" data-testid="import-system-card" style="margin-block-start:1rem">
+  <h3>{{ T "import.system.title" }}</h3>
+  <p class="muted">{{ T "import.system.help" }}</p>
+  {{ range $i, $e := .systemImporters }}
+  <section class="import-system-entry" data-import-system-entry="{{ $e.PluginID }}" aria-labelledby="import-system-name-{{ $i }}">
+    <h4 id="import-system-name-{{ $i }}">{{ $e.Name }}</h4>
+    {{ if $e.Secrets }}
+    <dl class="import-system-secrets" aria-label="{{ T "import.system.connection" }}">
+      {{ range $e.Secrets }}
+      <div><dt>{{ .Label }}</dt><dd data-secret-key="{{ .Key }}" data-secret-state="{{ if .Set }}set{{ else }}not-set{{ end }}">{{ if .Set }}{{ T "plugins.settings.secret_saved" }}{{ else }}{{ T "plugins.settings.secret_empty" }}{{ end }}</dd></div>
+      {{ end }}
+    </dl>
+    {{ end }}
+    <fieldset class="import-system-run">
+      <div class="import-system-actions">
+        {{ if $.canManagePlugins }}<a class="btn secondary" href="/plugins/{{ $e.PluginID }}/settings">{{ T "import.system.settings_link" }}</a>{{ end }}
+        <button type="button" class="btn"
+                hx-post="/api/import/from-system" hx-vals='{{ jsonVals "plugin_id" $e.PluginID "entry_key" $e.Key "mode" "preview" }}'
+                hx-target="next .import-system-result" hx-swap="innerHTML"
+                hx-indicator="closest .import-system-entry" hx-disabled-elt="closest fieldset">{{ T "import.system.preview" }}</button>
+        <button type="button" class="btn primary"
+                hx-post="/api/import/from-system" hx-vals='{{ jsonVals "plugin_id" $e.PluginID "entry_key" $e.Key "mode" "commit" }}'
+                hx-target="next .import-system-result" hx-swap="innerHTML"
+                hx-indicator="closest .import-system-entry" hx-disabled-elt="closest fieldset">{{ T "import.import" }}</button>
+      </div>
+      {{ if not $.canManagePlugins }}<p class="muted">{{ T "import.system.ask_manager" }}</p>{{ end }}
+      <div class="htmx-indicator import-system-busy"><span class="animate-spin" aria-hidden="true">⏳</span> {{ T "import.system.busy" }}</div>
+      <div class="import-system-result" aria-live="polite"></div>
+    </fieldset>
+  </section>
+  {{ else }}
+  <p data-import-system-none="1">{{ T "import.system.none" }}</p>
+  {{ if .canManagePlugins }}
+  <div class="import-system-actions">
+    <a class="btn primary" href="/plugins/store?type=import">{{ T "import.system.get_importer" }}</a>
+  </div>
+  {{ else }}
+  <p class="muted">{{ T "import.system.ask_manager" }}</p>
+  {{ end }}
+  {{ end }}
+</div>
+{{ end }}
 
 {{ if .showSampleCard }}
 <!-- ut-docs#3709: sample data moved here from the setup wizard. None

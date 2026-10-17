@@ -22,6 +22,22 @@ specs across projects, each against its own server(s):
   removal points at `fake-rembg-server.mjs` (port 8102), a stand-in for the
   shop's `rembg s`, for `photo-cutout-3127.spec.ts` (ut-docs#3127).
 
+**docs-shots font prerequisite (ut-docs#4407).** The app ships no webfont
+(`web/public/app.css` uses a system-font stack), so screenshots depend on the
+generating machine's fonts. `playwright.docs.config.ts` runs Chromium with
+`fontconfig/fonts.conf` (the system config plus aliases mapping the stack to
+Inter — no change to `/etc/fonts` needed), and the harness fails before the
+first shot unless Latin text really resolves to Inter, Arabic-script text
+to DejaVu Sans, `monospace` text (codes, chips, plugin ids — the config
+aliases `ui-monospace` and `monospace`) to DejaVu Sans Mono, and emoji (menu
+and status icons) to Noto Color Emoji (ut-docs#4425). Install `fonts-inter`,
+`fonts-dejavu-core` and `fonts-noto-color-emoji` (Debian/Ubuntu).
+macOS/Windows resolve the stack to their own OS font first and cannot match:
+run `make docs-shots` in a Linux container or the cloud lane. Still not
+checked: symbol glyphs Inter lacks (e.g. ☰) come from the system's fallback —
+DejaVu Sans on the reference machine. To check the alias by hand, escape the
+hyphen: `fc-match 'ui\-monospace'` (unescaped, fontconfig reads it as a size).
+
 `run-till.sh` (port 8091) is what the docs-shots harness
 (`playwright.docs.config.ts`) still boots; the per-worker till reproduces
 the same steps in-process. Every one of these builds the binary and runs

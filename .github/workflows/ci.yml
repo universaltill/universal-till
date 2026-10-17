@@ -55,6 +55,10 @@ jobs:
           version: v2.14.0
       - name: macOS minimum vs Go toolchain guard
         run: bash scripts/ci/guard-macos-min-version.sh && bash scripts/ci/guard-macos-min-version_test.sh
+      - name: Mail-address allow-list guard (ut-docs#4229)
+        run: bash scripts/ci/guard-mail-addresses.sh
+      - name: Mail-address allow-list guard regression test
+        run: bash scripts/ci/guard-mail-addresses_test.sh
       - name: Shellcheck version guard
         run: bash scripts/ci/guard-shellcheck-version.sh
       - name: Shellcheck version guard regression test
@@ -91,6 +95,10 @@ jobs:
         run: bash scripts/ci/guard-store-private.sh
       - name: Store-private guard regression test (ut-docs#3052)
         run: bash scripts/ci/guard-store-private_test.sh
+      - name: Every Version stamp also stamps BuildDate (ADR-0160 §6, ut-docs#4369)
+        run: bash scripts/ci/guard-builddate-stamped.sh
+      - name: BuildDate stamp guard regression test (ut-docs#4369)
+        run: bash scripts/ci/guard-builddate-stamped_test.sh
       - name: iOS app shell locks page zoom — wiring test (ut-docs#3350)
         run: bash scripts/ci/ios-webview-zoom_test.sh
       - name: iOS bug-report screenshot bridge — wiring test (ut-docs#3355)
@@ -141,6 +149,12 @@ jobs:
         run: bash scripts/ci/guard-no-showmodal.sh
       - name: No-showModal guard regression test
         run: bash scripts/ci/guard-no-showmodal_test.sh
+      # ut-docs#4375 (ADR-0160 §8): no physical left/right CSS -- the till lays
+      # out right-to-left for ar/fa/he/ur; shrink-only baseline for old lines.
+      - name: RTL logical-CSS guard
+        run: bash scripts/ci/guard-rtl-logical-css.sh
+      - name: RTL logical-CSS guard regression test
+        run: bash scripts/ci/guard-rtl-logical-css_test.sh
       - name: Demo-mode env read guard (ADR-0113)
         run: bash scripts/ci/guard-demo-env.sh
       - name: Demo-mode env read guard regression test
@@ -170,6 +184,23 @@ jobs:
         run: |
           go test -count=1 ./...
           GOOS=wasip1 GOARCH=wasm go vet ./...
+      # catimport is the shared catalogue parser, a nested module (ADR-0164
+      # §1, ut-docs#4525): the root `go build/test ./...` never reaches it.
+      - name: Shared catimport module build, vet and tests
+        working-directory: catimport
+        run: |
+          go build ./...
+          go vet ./...
+          go test -count=1 ./...
+      - name: Shared catimport module lint (golangci-lint, unused)
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14.0
+          working-directory: catimport
+      - name: catimport module guard (self-contained, used in-tree)
+        run: bash scripts/ci/guard-catimport-module.sh
+      - name: catimport module guard regression test
+        run: bash scripts/ci/guard-catimport-module_test.sh
       - name: i18n coverage guard
         run: bash scripts/ci/guard-i18n.sh
       - name: i18n coverage guard regression test
@@ -184,6 +215,15 @@ jobs:
         run: bash scripts/ci/guard-i18n_dupkey_test.sh
       - name: i18n coverage guard page-title regression test
         run: bash scripts/ci/guard-i18n_title_test.sh
+      - name: i18n key-metadata guard (ADR-0160, ut-docs#4362)
+        # checkout is depth 1 with no other refs: fetch main so the guard can
+        # refuse a placeholder change on an existing key and a growing
+        # baseline against origin/main.
+        run: |
+          git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+          bash scripts/ci/guard-i18n-meta.sh
+      - name: i18n key-metadata guard regression test
+        run: bash scripts/ci/guard-i18n-meta_test.sh
       - name: i18n guard tests run in a sandbox (ut-docs#4258)
         run: bash scripts/ci/guard-i18n-tests-sandboxed.sh
       - name: i18n guard sandbox enforcement regression test
@@ -382,14 +422,19 @@ jobs:
       - name: Vet Windows-only code (GOOS=windows, ut-docs#2760)
         # Nothing else on a PR compiles windows-tagged Go: the Windows shell
         # is a mingw cgo build that only release.yml runs. internal/procjob
-        # (the kill-on-close job that stops unitill-pos when the shell dies)
-        # and the data-dir lock are pure Go, so cross-vet them — tests
-        # included — to catch a wrong x/sys signature before a release.
+        # (the kill-on-close job that stops unitill-pos when the shell dies),
+        # the data-dir lock and internal/lantls's MachineGuid read
+        # (ut-docs#4450) are pure Go, so cross-vet them — tests included —
+        # to catch a wrong x/sys signature before a release.
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
           GOOS: windows
-        run: go vet ./internal/procjob/ ./internal/db/ ./cmd/unitill-desktop/
+        run: |
+          go vet ./internal/procjob/ ./internal/db/ ./internal/lantls/ ./cmd/unitill-desktop/
+          # The macOS hardware-UUID read (ut-docs#4450) is pure Go too;
+          # nothing else compiles darwin-tagged code before a release.
+          GOOS=darwin go vet ./internal/lantls/
       - name: Windows exe carries the app icon + VERSIONINFO (ut-docs#2786)
         # The release's goreleaser pre-build hook, end to end: winres.sh
         # writes the .syso, a cross-compiled unitill-pos.exe links it, and

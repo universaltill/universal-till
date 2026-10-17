@@ -450,7 +450,7 @@ func TestItemIDsWithVariants_ExcludesCodelessOnlyItem(t *testing.T) {
 // v-reg carries a REAL barcode (a valid EAN13). ut-docs#2229's review
 // checked this directly: the existing fixture's short 'C-R'-style codes DO
 // already match an enabled symbology under the registry's default-enabled
-// set (CODE128 is a deliberate permissive catch-all, internal/barcode/
+// set (CODE128 is a deliberate permissive catch-all, catimport/barcode/
 // barcode.go — every one of C-S/C-R/C-L/T-1 matches it), so there is no
 // fixture defect to fix here (an earlier draft of this comment claimed
 // otherwise — that claim was wrong, corrected after review). The real

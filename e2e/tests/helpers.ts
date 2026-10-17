@@ -381,13 +381,29 @@ export async function markTourDone(page: Page) {
 // whatever an earlier test left behind makes that true. Was duplicated
 // verbatim across four spec files before this extraction (ut-docs#1173
 // review finding); consolidated here rather than fixed a fifth time.
+// ut-docs#4458: every pass must deactivate one table. A refused Deactivate
+// redirects to `/tables?err=<key>` and leaves its button in place, so the
+// loop throws on the first pass that makes no progress (naming that key),
+// or that lands anywhere but /tables, instead of spinning until the test
+// timeout or returning with tables still active.
 export async function deactivateAllTables(page: Page) {
   await ensureOperator(page); // fresh Playwright context per test -> log in each time
   await page.goto('/tables');
-  for (;;) {
-    const btn = page.locator('form[action$="/active"] button', { hasText: 'Deactivate' }).first();
-    if ((await btn.count()) === 0) break;
-    await Promise.all([page.waitForURL((u) => u.pathname === '/tables'), btn.click()]);
+  const buttons = page.locator('form[action$="/active"] button', { hasText: 'Deactivate' });
+  let before = await buttons.count();
+  while (before > 0) {
+    // Same-URL 303: wait for the new document, not the old one (ut-docs#4440).
+    await clickThenReload(page, () => buttons.first().click());
+    const url = new URL(page.url());
+    if (url.pathname !== '/tables') {
+      throw new Error(`deactivateAllTables: Deactivate landed on ${url.pathname}, not /tables`);
+    }
+    const after = await buttons.count();
+    if (after >= before) {
+      const err = url.searchParams.get('err') ?? '(no ?err= in the URL)';
+      throw new Error(`deactivateAllTables: Deactivate made no progress (${after} still active): ${err}`);
+    }
+    before = after;
   }
 }
 
@@ -420,10 +436,10 @@ export async function clearAllHeldSales(page: Page) {
 // violation.
 export async function createTable(page: Page, label: string) {
   await page.locator('.users-form form[action="/api/tables"] input[name="label"]').fill(label);
-  await Promise.all([
-    page.waitForURL((u) => u.pathname === '/tables'),
+  // Same-URL 303: wait for the new document, not the old one (ut-docs#4440).
+  await clickThenReload(page, () =>
     page.locator('.users-form form[action="/api/tables"] button[type=submit]').click(),
-  ]);
+  );
 }
 
 // ut-docs#1901: the catalog add/edit-item form moved from an always-visible
@@ -678,4 +694,19 @@ export async function recordAlertAfterRequest(page: Page, pathFragment: string) 
     await page.waitForFunction(() => (window as any).__alertAfter !== undefined);
     return page.evaluate(() => (window as any).__alertAfter.hidden);
   };
+}
+
+// Click something whose server reply is `HX-Redirect` back to the SAME URL the
+// page is already at (every SUCCESSFUL record-dialog mutation), or a plain form
+// POST whose 303 lands on that same URL (/tables, /promotions — ut-docs#4440),
+// and wait for the fresh document. `page.waitForURL(<same url>)` resolves at once against
+// the OLD document, so the next click can land in the new document before the
+// deferred web/public/record-dialog.js has bound its click listener and is
+// silently dropped (ut-docs#2345, ut-docs#4427). The `load` listener is
+// registered BEFORE the click so the event cannot be missed. Only for clicks
+// that really navigate: a refused (4xx) mutation or a dismissed confirm never
+// fires `load`, so this would wait out the whole test timeout instead of
+// failing fast — assert those directly.
+export async function clickThenReload(page: Page, click: () => Promise<void>) {
+  await Promise.all([page.waitForEvent('load'), click()]);
 }

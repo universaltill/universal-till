@@ -110,7 +110,7 @@ func TestCatalogReplicaBannerNeverLinksAcrossDevices(t *testing.T) {
 		if strings.Contains(body, `href="http://primary.till.local:8080/catalog"`) {
 			t.Fatal("ut-docs#390: replica catalog banner still links the kiosk's own browser to the primary till's origin — this strands the operator on a kiosk with no way back")
 		}
-		if !strings.Contains(body, "Edit this on the primary till") {
+		if !strings.Contains(body, "Edit this on the main till") {
 			t.Fatal("ut-docs#390: replica banner should fall back to inert text (sync.banner_open_primary_unavailable) when crossdevicelinkactionable is false")
 		}
 	})
@@ -127,7 +127,7 @@ func TestCatalogReplicaBannerNeverLinksAcrossDevices(t *testing.T) {
 		if !strings.Contains(body, `href="http://primary.till.local:8080/catalog"`) {
 			t.Fatal("expected a clickable link to the primary till's origin when crossdevicelinkactionable is true")
 		}
-		if strings.Contains(body, "Edit this on the primary till") {
+		if strings.Contains(body, "Edit this on the main till") {
 			t.Fatal("did not expect the inert fallback text when crossdevicelinkactionable is true")
 		}
 	})

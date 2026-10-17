@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/universaltill/universal-till/internal/catimport"
+	"github.com/universaltill/universal-till/catimport"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -354,7 +354,7 @@ func TestImport_CommitRefusedOnReplica(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `class="pos-notice error"`) {
 		t.Fatalf("commit on replica body = %q, want a rendered .pos-notice error fragment", rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "primary") {
+	if !strings.Contains(rec.Body.String(), "main till") {
 		t.Fatalf("commit on replica body = %q, want the replica_use_primary message", rec.Body.String())
 	}
 	var n int
@@ -401,7 +401,7 @@ func TestImportSampleData_RefusedOnReplica(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 		t.Fatalf("sample data on replica Content-Type = %q, want text/html", ct)
 	}
-	if !strings.Contains(rec.Body.String(), `class="pos-notice error"`) || !strings.Contains(rec.Body.String(), "primary") {
+	if !strings.Contains(rec.Body.String(), `class="pos-notice error"`) || !strings.Contains(rec.Body.String(), "main till") {
 		t.Fatalf("sample data on replica body = %q, want the rendered replica_use_primary notice", rec.Body.String())
 	}
 	seedRepo := data.NewDemoSeedRepo(dp.Db)
@@ -1877,7 +1877,7 @@ BEGIN SELECT RAISE(ABORT, 'simulated stock movement failure'); END;`); err != ni
 // criteria run through the full HTTP import path: under the shop's DEFAULT
 // enabled symbologies (every permissive catch-all on, ADR-0059 §2), a
 // legitimate 4-digit produce PLU now matches CODE128's structural catch-all
-// via the shared internal/barcode registry and imports WITH its barcode
+// via the shared catimport/barcode registry and imports WITH its barcode
 // attached — superseding this test's own pre-#936 shape (formerly
 // TestImport_UnsupportedBarcodeShapeWarnsButStillImports), which asserted
 // the OLD ad hoc 6-14-digit rule's rejection of this exact code. See

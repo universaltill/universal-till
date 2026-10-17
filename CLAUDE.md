@@ -58,13 +58,23 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
 - No hardcoded user-facing strings: templates use `{{ T "key" }}`, and every
   key exists in every `web/locales/*.json` (en.json is the base) —
   `scripts/ci/guard-i18n.sh`. Go-side menu labels are `nav.*` keys.
+- Every `en.json` key has metadata in `web/i18n-meta/en.meta.json`:
+  `description` and `review` (`legal`|`standard`) required, `placeholders`
+  (one meaning per verb), optional `max_length`/`plural`/`area`; namespaces
+  map to areas in `areas.json`. A placeholder change on an existing key
+  needs a new key; legal namespaces need `review: legal` or a reviewed
+  `"review_exception"`. Pre-existing keys sit in the shrink-only
+  `i18n-baseline/key-meta-baseline.txt` — describe one, delete its line
+  (`scripts/ci/guard-i18n-meta.sh`, ADR-0160, #4362).
 - Inline `<script>` text is user-facing too: use a page-local
   `var T = { key: "{{ T "some.key" }}" }` (see
   `web/ui/partials/bugreport_panel.html`). The guard also scans
   `web/public/**/*.js` (not `vendor/`). Reviewed legacy exception:
   same-line `// i18n:ignore` (#205, #453).
 - RTL: `dir` comes from the locale (`httpx.IsRTL`); use logical CSS
-  properties (`margin-inline-start`, `text-align: start`), never left/right.
+  properties (`margin-inline-start`, `text-align: start`), never left/right
+  (`scripts/ci/guard-rtl-logical-css.sh`; shrink-only
+  `rtl-css-baseline.txt`; reviewed exception `rtl:allow <reason>`; #4375).
 - A new `en.json` key needs follow-up PRs in every `ut-plugin-language-*`
   pack `scripts/ci/check-lang-pack-drift.sh` checks — see that script's
   `PACKS` array for the current list; never hard-code pack names here.
@@ -87,6 +97,12 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   what they do. Scans `web/locales/*.json`, `web/help/**`, `web/ui/**`,
   `plugins/**/plugin.json` (+ their `locales/`). Reviewed exception
   (help/UI only): same-line `naming-rule:allow`.
+
+## Mail addresses (ut-docs#4229, `scripts/ci/guard-mail-addresses.sh`)
+- Only allow-listed `@universaltill.com` addresses (real M365 aliases, send-only
+  senders, test data) in tracked files; the list is inline in the guard,
+  byte-identical in four repos — see ut-docs `reference/mail-addresses.md`.
+  Reviewed exception: same-line `mail-address:allow <reason>`.
 
 ## Core neutrality (#2848, ADR-0121 §11; `scripts/ci/guard-core-neutral.sh`)
 - Country, vendor, vertical and integration code ships in its ut-plugin-* repo; core Go never tests a curated list of country codes, vendor names or plugin IDs (#2888).

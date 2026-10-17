@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -40,6 +41,11 @@ type Manager struct {
 	// view's text key must be one of them (ADR-0121 §7, ut-docs#3160).
 	ownKeysMu sync.RWMutex
 	ownKeys   map[string]map[string]bool
+
+	// fonts: every active language plugin's fonts/*.woff2, rebuilt by
+	// syncBundleFonts (ut-docs#4374). Read through BundleFonts.
+	fontsMu sync.RWMutex
+	fonts   []BundleFont
 }
 
 // OwnLocaleKeys returns the set of locale keys plugin id's own locale
@@ -55,7 +61,21 @@ func (m *Manager) OwnLocaleKeys(id string) map[string]bool {
 
 // Localizer is where plugin-shipped locale files land (the config.I18n).
 type Localizer interface {
-	SetOverlays(map[string]map[string]string)
+	SetPluginLocales(config.PluginLocales)
+}
+
+// FirstPartyIDPrefix is the plugin-id prefix the marketplace reserves for
+// Universal Till's own plugins (ut-cloud catalog.FirstPartySlugPrefix). A
+// signed manifest id under it is what makes a language bundle first-party
+// (ADR-0160 §6) — the signature alone doesn't, since the marketplace signs
+// every plugin with the same key.
+const FirstPartyIDPrefix = "com.universaltill."
+
+// bundleInfo is the part of a language bundle's bundle.json (package root,
+// covered by the signed content digest — ADR-0160 §5, ADR-0165) the
+// translator needs.
+type bundleInfo struct {
+	GeneratedAt string `json:"generated_at"`
 }
 
 // SetLocalizer wires the translator and applies current plugin locales.
@@ -65,36 +85,62 @@ func (m *Manager) SetLocalizer(l Localizer) {
 }
 
 // syncLocales merges locales/*.json from every ACTIVE installed plugin into
-// the translator as overlays (base files win on conflict). Language packs are
-// asset-only plugins (runtime "none", canonical_type "language") but any
-// active plugin may ship translations for its own strings (ADR-0010) — see
+// the translator's plugin layers (ADR-0160 §6). A plugin whose id carries
+// FirstPartyIDPrefix is first-party: its strings beat the built-in locale
+// files when its bundle.json generated_at is newer than this binary's
+// buildinfo.BuildDate ("fresh"), and only fill their gaps otherwise
+// ("stale" — also every first-party plugin with no bundle.json, such as
+// today's de/es/pt packs). Every other plugin is third-party and only adds
+// locales and fills gaps (ADR-0010). Language packs are asset-only plugins
+// (runtime "none", canonical_type "language") but any active plugin may ship
+// translations for its own strings — see
 // ut-docs/architecture/plugin-architecture.md's (sibling repo) "Plugin i18n"
 // section for the convention plugin authors should follow to avoid the
 // collision this function detects below.
 //
 // Plugins are processed in a stable sorted-by-id order (InstalledIDs, not the
 // bare m.Installed map) so that if two different plugins ever ship the same
-// overlay key for the same locale, which one wins is deterministic across
-// restarts rather than depending on Go's randomized map iteration — and the
-// collision is logged, naming both plugins, so it doesn't vanish silently
-// (same class of shadowed-key logging as loadMenuEntries' page-key collision,
-// ut-docs#472).
+// key for the same locale in the same layer, which one wins is deterministic
+// across restarts rather than depending on Go's randomized map iteration —
+// and the collision is logged, naming both plugins, so it doesn't vanish
+// silently (same class of shadowed-key logging as loadMenuEntries' page-key
+// collision, ut-docs#472).
 func (m *Manager) syncLocales() {
-	overlays := map[string]map[string]string{}
-	source := map[string]map[string]string{} // locale -> key -> plugin id that supplied the current value
+	layers := config.PluginLocales{
+		FirstPartyFresh: map[string]map[string]string{},
+		FirstPartyStale: map[string]map[string]string{},
+		ThirdParty:      map[string]map[string]string{},
+	}
+	// layer -> locale -> key -> plugin id that supplied the current value
+	source := map[string]map[string]map[string]string{}
 	own := map[string]map[string]bool{}
 	for _, id := range m.InstalledIDs() {
 		p := m.Installed[id]
-		dir := filepath.Join(paths.Plugins(), id, p.Version, "locales")
-		entries, err := os.ReadDir(dir)
+		root := filepath.Join(paths.Plugins(), id, p.Version)
+		entries, err := os.ReadDir(filepath.Join(root, "locales"))
 		if err != nil {
 			continue
+		}
+		name, layer := "third-party", layers.ThirdParty
+		if strings.HasPrefix(id, FirstPartyIDPrefix) {
+			name, layer = "first-party-stale", layers.FirstPartyStale
+			if raw, err := os.ReadFile(filepath.Join(root, "bundle.json")); err == nil {
+				var b bundleInfo
+				if err := json.Unmarshal(raw, &b); err != nil {
+					log.Printf("plugin %s: bad bundle.json, treated as older than this build: %v", id, err)
+				} else if buildinfo.NewerThanBuild(b.GeneratedAt) {
+					name, layer = "first-party-fresh", layers.FirstPartyFresh
+				}
+			}
+		}
+		if source[name] == nil {
+			source[name] = map[string]map[string]string{}
 		}
 		for _, e := range entries {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 				continue
 			}
-			raw, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			raw, err := os.ReadFile(filepath.Join(root, "locales", e.Name()))
 			if err != nil {
 				continue
 			}
@@ -104,20 +150,20 @@ func (m *Manager) syncLocales() {
 				continue
 			}
 			locale := strings.TrimSuffix(e.Name(), ".json")
-			if overlays[locale] == nil {
-				overlays[locale] = map[string]string{}
-				source[locale] = map[string]string{}
+			if layer[locale] == nil {
+				layer[locale] = map[string]string{}
+				source[name][locale] = map[string]string{}
 			}
 			if own[id] == nil {
 				own[id] = map[string]bool{}
 			}
 			for k, v := range msgs {
 				own[id][k] = true
-				if prevID, ok := source[locale][k]; ok && prevID != id {
+				if prevID, ok := source[name][locale][k]; ok && prevID != id {
 					log.Printf("plugin %s's locale key %q for %q is shadowed by plugin %s's overlay of the same key — only %s's translation is used; pick a non-colliding key name (see ut-docs/architecture/plugin-architecture.md's Plugin i18n section)", prevID, k, locale, id, id)
 				}
-				overlays[locale][k] = v
-				source[locale][k] = id
+				layer[locale][k] = v
+				source[name][locale][k] = id
 			}
 		}
 	}
@@ -125,7 +171,7 @@ func (m *Manager) syncLocales() {
 	m.ownKeys = own
 	m.ownKeysMu.Unlock()
 	if m.localizer != nil {
-		m.localizer.SetOverlays(overlays)
+		m.localizer.SetPluginLocales(layers)
 	}
 }
 
@@ -190,6 +236,7 @@ func Init(ctx context.Context, cfg *config.Config, db *sql.DB) (*Manager, error)
 	}
 	warnPaymentMethodAnomalies(ctx, repo)
 	m.Wasm.Sync(ctx, db)
+	m.syncBundleFonts()
 	return m, nil
 }
 
@@ -278,6 +325,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 	warnPaymentMethodAnomalies(ctx, repo)
 	m.Wasm.Sync(ctx, m.db)
 	m.syncLocales()
+	m.syncBundleFonts()
 	return nil
 }
 

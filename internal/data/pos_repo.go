@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/universaltill/universal-till/internal/barcode"
+	"github.com/universaltill/universal-till/catimport/barcode"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
@@ -4063,6 +4063,21 @@ WHERE status = 'completed' AND till_id = '' AND created_at > ?`, cursor).Scan(&n
 	return n, nil
 }
 
+// HasCompletedSales reports whether this till holds any finished sale —
+// completed or later voided (a void is fiscal history too), rung up here or
+// journaled in from a replica. Open baskets don't count. The ambient join notice
+// (ut-docs#3796) uses it to warn that linking replaces that history with
+// the main till's copy.
+func (r *POSRepo) HasCompletedSales(ctx context.Context) (bool, error) {
+	var has bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM sales WHERE status IN ('completed', 'voided'))`).Scan(&has)
+	if err != nil {
+		return false, fmt.Errorf("has completed sales: %w", err)
+	}
+	return has, nil
+}
+
 // OriginalSaleIDFor returns the linked original sale id for a return.
 func (r *POSRepo) OriginalSaleIDFor(ctx context.Context, returnSaleID string) (string, error) {
 	var id string
@@ -6641,6 +6656,13 @@ func (r *POSRepo) EraseCustomer(ctx context.Context, id, actorID, blockedActorID
 // cleanup. Since ut-docs#3452 reset-transactions archives shrinkage_events,
 // so the _archive clause follows the same reasoning as the other *_archive
 // clauses above.
+//
+// The gift voucher clause (ut-docs#4259) closes a fifth: a voucher sold
+// through a gift_voucher item is never a sale line (ut-docs#4214) and the
+// voucher row names no item, so the shop's voucher item looked "never
+// sold" however many vouchers it had sold. It is kept while the shop has
+// any active voucher (shop-wide, since vouchers carry no item id), the
+// same rule DeleteUnusedItem's itemOpenVouchersSQL applies.
 func obsoleteItemsPredicate(includeActive bool) string {
 	activeClause := "is_active = 0\nAND "
 	if includeActive {
@@ -6667,7 +6689,8 @@ AND NOT EXISTS (SELECT 1 FROM held_sales h JOIN item_variants v ON v.item_id = i
               WHERE h.payload LIKE '%"variant_id":"' || v.id || '"%')
 AND NOT EXISTS (SELECT 1 FROM held_sales_archive h WHERE h.payload LIKE '%"item_id":"' || items.id || '"%')
 AND NOT EXISTS (SELECT 1 FROM held_sales_archive h JOIN item_variants v ON v.item_id = items.id
-              WHERE h.payload LIKE '%"variant_id":"' || v.id || '"%')`
+              WHERE h.payload LIKE '%"variant_id":"' || v.id || '"%')
+AND NOT (items.item_type = 'gift_voucher' AND EXISTS (SELECT 1 FROM vouchers WHERE status = 'active'))`
 }
 
 // ObsoleteItem is a row in the catalog-cleanup preview.
@@ -7096,16 +7119,21 @@ LIMIT 1
 	return id, name, true
 }
 
+// activePromoWhere is the one definition of "promotion ?1 is usable now,
+// for customer ?2": shared by FindActivePromo and ScanCodeKinds so the
+// scan chooser can never offer a promo the apply path would refuse.
+const activePromoWhere = `code = ?1
+  AND is_active = 1
+  AND (customer_id IS NULL OR customer_id = ?2)
+  AND (starts_at IS NULL OR datetime(starts_at) <= CURRENT_TIMESTAMP)
+  AND (ends_at IS NULL OR datetime(ends_at) >= CURRENT_TIMESTAMP)`
+
 // FindActivePromo returns promo type/value if active and optionally targeted to the given customer.
 func (r *POSRepo) FindActivePromo(ctx context.Context, customerID string, code string) (string, int64, bool) {
 	row := r.db.QueryRowContext(ctx, `
 SELECT type, value
 FROM promotions
-WHERE code = ?
-  AND is_active = 1
-  AND (customer_id IS NULL OR customer_id = ?)
-  AND (starts_at IS NULL OR datetime(starts_at) <= CURRENT_TIMESTAMP)
-  AND (ends_at IS NULL OR datetime(ends_at) >= CURRENT_TIMESTAMP)
+WHERE `+activePromoWhere+`
 LIMIT 1
 `, strings.TrimSpace(code), nullIfEmpty(customerID))
 	var pType string
@@ -7120,6 +7148,25 @@ LIMIT 1
 		pType = "amount"
 	}
 	return pType, value, true
+}
+
+// ScanCodeKinds reports, in one round trip, whether a scanned code is a
+// voucher, a promotion usable now by customerID (the same rule as
+// FindActivePromo, including its value > 0 check) and a receipt number
+// (ut-docs#4344). The scan handler looks every code up as every kind; one
+// query instead of three keeps the commonest scan, an item, as fast as it
+// was (BenchmarkScanItemOnly in internal/pages).
+func (r *POSRepo) ScanCodeKinds(ctx context.Context, code, customerID string) (voucher, promo, receipt bool, err error) {
+	err = r.db.QueryRowContext(ctx, `
+SELECT
+  EXISTS(SELECT 1 FROM vouchers WHERE id = ?1),
+  EXISTS(SELECT 1 FROM promotions WHERE `+activePromoWhere+` AND value > 0),
+  EXISTS(SELECT 1 FROM sales WHERE receipt_no = ?1)
+`, strings.TrimSpace(code), nullIfEmpty(customerID)).Scan(&voucher, &promo, &receipt)
+	if err != nil {
+		return false, false, false, fmt.Errorf("scan code kinds: %w", err)
+	}
+	return voucher, promo, receipt, nil
 }
 
 // isUniqueViolation reports whether err is a SQLite UNIQUE constraint
@@ -7641,6 +7688,13 @@ type SaleDetailVoucherIssue struct {
 	// land a different tax_total/total than the replica journaled.
 	Purpose   string `json:"purpose,omitempty"`
 	VATRateBP *int   `json:"vat_rate_bp,omitempty"`
+	// TopUp (ut-docs#4252): this entry ADDED Amount to the existing voucher
+	// VoucherID (a 'top_up' ledger row) rather than issuing it. omitempty
+	// keeps every issue byte-identical on the wire. Replicas can't make
+	// top-ups yet (main till only), so no journal carries one today;
+	// applyJournal maps it through so a future replica top-up replays as a
+	// credit, never as a second issue of the same number.
+	TopUp bool `json:"top_up,omitempty"`
 }
 
 type SaleDetailLine struct {
@@ -7847,12 +7901,15 @@ FROM payments WHERE sale_id = ? ORDER BY paid_at`, d.ID)
 	// sale_id is a deliberately FK-less soft reference (migration 068's
 	// header), so this is a plain WHERE sale_id = ? join, not an FK
 	// traversal. The issue transaction's amount IS the face value; the
-	// holder label lives on the vouchers row.
+	// holder label lives on the vouchers row. A top-up (ut-docs#4252) rides
+	// the same list, flagged: its row's amount is what the sale ADDED to an
+	// existing voucher, and it is always multi-purpose (no purpose/rate on
+	// the wire, like any multi-purpose issue).
 	viRows, err := r.db.QueryContext(ctx, `
-SELECT vt.voucher_id, COALESCE(v.holder_label, ''), vt.amount, v.purpose, v.issue_vat_rate_bp
+SELECT vt.voucher_id, COALESCE(v.holder_label, ''), vt.amount, v.purpose, v.issue_vat_rate_bp, vt.type = 'top_up'
 FROM voucher_transactions vt
 JOIN vouchers v ON v.id = vt.voucher_id
-WHERE vt.sale_id = ? AND vt.type = 'issue'
+WHERE vt.sale_id = ? AND vt.type IN ('issue', 'top_up')
 ORDER BY vt.rowid`, d.ID)
 	if err != nil {
 		return SaleDetail{}, false, fmt.Errorf("get sale voucher issues: %w", err)
@@ -7862,13 +7919,13 @@ ORDER BY vt.rowid`, d.ID)
 		var vi SaleDetailVoucherIssue
 		var purpose string
 		var rate sql.NullInt64
-		if err := viRows.Scan(&vi.VoucherID, &vi.HolderLabel, &vi.Amount, &purpose, &rate); err != nil {
+		if err := viRows.Scan(&vi.VoucherID, &vi.HolderLabel, &vi.Amount, &purpose, &rate, &vi.TopUp); err != nil {
 			return SaleDetail{}, false, fmt.Errorf("scan sale voucher issue: %w", err)
 		}
 		// Only a single-purpose issue carries the two new fields on the
 		// wire (see SaleDetailVoucherIssue) — multi-purpose stays the
 		// pre-#1037 shape.
-		if purpose == VoucherPurposeSingle {
+		if purpose == VoucherPurposeSingle && !vi.TopUp {
 			vi.Purpose = purpose
 			if rate.Valid {
 				bp := int(rate.Int64)

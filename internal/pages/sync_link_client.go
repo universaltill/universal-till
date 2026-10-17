@@ -13,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/lantls"
@@ -101,15 +102,19 @@ func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.
 			// The main till sees which tills speak pinned TLS (ADR-0114 §7;
 			// its per-till plain-HTTP refusal is ut-docs#2737).
 			TLSPinned: lantls.PeerPinned(ctx),
+			// The main till's next pin this till holds: its confirmation
+			// that a key switch won't cut it off (ut-docs#4409).
+			NextPin: heldNextPin(ctx, d),
 			// This till's own name (sync.till_name), so the main till's
 			// Tills page follows a rename made here or from the cloud
 			// (ut-docs#3294). A change is sent at the next on-change check.
 			Name: enroll.DeviceName(ctx, d.Settings),
 		}
 	}
-	opts.OnHello = func(ctx context.Context, main fleetlink.Hello) {
+	opts.OnHello = func(ctx context.Context, main fleetlink.Hello, verifiedPin string) {
 		markLinkContact(ctx, d)
 		primaryContactOK(ctx, d)
+		applyMainHelloPins(ctx, d, main, verifiedPin)
 		// A cursor we don't have means something changed while we were
 		// not linked: pull now instead of at the (now 5-min) floor.
 		if main.Cursors.Admin != get(ctx, "sync.pull_version") ||
@@ -163,6 +168,91 @@ func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.
 		refreshLinkContact(ctx, d)
 	}
 	return fleetlink.NewClient(opts)
+}
+
+// heldNextPin is the main till's next pin this till holds, reported only
+// while its link is pinned.
+func heldNextPin(ctx context.Context, d *common.Deps) string {
+	if !lantls.PeerPinned(ctx) {
+		return ""
+	}
+	v, _, _ := d.Settings.Get(ctx, discovery.PrimaryCertNextPinSettingKey)
+	return strings.TrimSpace(v)
+}
+
+// isPin reports whether s is a pin as PinOf writes it: 64 lowercase hex.
+func isPin(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// applyMainHelloPins follows the main till's key rotation (ADR-0114 §7,
+// ut-docs#4409) from its hello. verifiedPin is the pin the peer transport
+// verified on the connection this hello arrived on — never the hello's
+// self-reported tls_pin, and never "whether a pin is held now": a hello
+// that came over plain HTTP (verifiedPin "") could have been rewritten by
+// anyone on path, even if a pin was learned meanwhile (the ContactOK
+// backfill runs during the first hello). The peer transport only completes
+// a handshake on the held pin or the held next pin, so:
+//   - the connection was verified under the held next pin: the main till
+//     switched — promote it, so the retired key stops being trusted;
+//   - it was verified under the held pin and the hello announces a next
+//     pin: hold it (trusted alongside by the peer transport) and confirm it
+//     in the report;
+//   - it was verified under the held pin and announces none: the rotation
+//     was abandoned — drop a stale next pin.
+func applyMainHelloPins(ctx context.Context, d *common.Deps, main fleetlink.Hello, verifiedPin string) {
+	if verifiedPin == "" {
+		return
+	}
+	get := func(k string) (string, bool) {
+		v, _, err := d.Settings.Get(ctx, k)
+		return strings.TrimSpace(v), err == nil
+	}
+	held, ok1 := get(discovery.PrimaryCertPinSettingKey)
+	next, ok2 := get(discovery.PrimaryCertNextPinSettingKey)
+	if !ok1 || !ok2 || held == "" {
+		return
+	}
+	served := verifiedPin
+	switch {
+	case next != "" && served == next:
+		// The next pin first: a power cut in between leaves it held as
+		// both, never the retired pin alone.
+		if err := d.Settings.Set(ctx, discovery.PrimaryCertPinSettingKey, next); err != nil {
+			logging.L().Warnf("sync link: adopt the main till's new LAN TLS pin: %v", err)
+			return
+		}
+		if err := d.Settings.Set(ctx, discovery.PrimaryCertNextPinSettingKey, ""); err != nil {
+			logging.L().Warnf("sync link: clear the main till's next LAN TLS pin: %v", err)
+		}
+		logging.L().Infof("sync link: the main till switched to its next LAN TLS key — new pin adopted, the old one no longer trusted")
+	case served != held:
+		// Verified under a pin no longer held (a re-pairing or re-proof
+		// since the dial): nothing to trust from this hello.
+	case main.NextPin != "" && main.NextPin != held && isPin(main.NextPin):
+		if main.NextPin == next {
+			return
+		}
+		if err := d.Settings.Set(ctx, discovery.PrimaryCertNextPinSettingKey, main.NextPin); err != nil {
+			logging.L().Warnf("sync link: hold the main till's next LAN TLS pin: %v", err)
+			return
+		}
+		logging.L().Infof("sync link: the main till announced its next LAN TLS key — trusting it alongside the current one")
+	case main.NextPin == "" && next != "":
+		if err := d.Settings.Set(ctx, discovery.PrimaryCertNextPinSettingKey, ""); err != nil {
+			logging.L().Warnf("sync link: clear the main till's next LAN TLS pin: %v", err)
+			return
+		}
+		logging.L().Infof("sync link: the main till no longer announces a next LAN TLS key — dropped it")
+	}
 }
 
 // linkScopesNeedPull reports whether a sync nudge names a scope the admin

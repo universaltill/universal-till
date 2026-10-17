@@ -48,7 +48,7 @@ func newPeerTill(t *testing.T) *peerTill {
 // usePeer points the shared peer transport at primary/pin for one test.
 func usePeer(t *testing.T, primary, pin string) {
 	t.Helper()
-	t.Cleanup(SetPeerSource(func(context.Context) (string, string, error) { return primary, pin, nil }))
+	t.Cleanup(SetPeerSource(func(context.Context) (PeerTarget, error) { return PeerTarget{PrimaryURL: primary, Pin: pin}, nil }))
 }
 
 func peerGet(t *testing.T, url string) (string, error) {
@@ -147,7 +147,7 @@ func TestPeerClient_OtherHostsAreUntouched(t *testing.T) {
 func TestPeerClient_PinChangeDropsVerifiedConnections(t *testing.T) {
 	main := newPeerTill(t)
 	pin := main.cert.Pin()
-	t.Cleanup(SetPeerSource(func(context.Context) (string, string, error) { return main.base, pin, nil }))
+	t.Cleanup(SetPeerSource(func(context.Context) (PeerTarget, error) { return PeerTarget{PrimaryURL: main.base, Pin: pin}, nil }))
 
 	if got, err := peerGet(t, main.base+"/"); err != nil || got != "tls=true" {
 		t.Fatalf("first request: %q, %v", got, err)
@@ -213,8 +213,8 @@ func TestSamePeerHost(t *testing.T) {
 // nothing (least of all a bearer) goes out over plain HTTP.
 func TestPeerClient_UnreadablePinFailsClosed(t *testing.T) {
 	main := newPeerTill(t)
-	t.Cleanup(SetPeerSource(func(context.Context) (string, string, error) {
-		return "", "", errors.New("database is locked")
+	t.Cleanup(SetPeerSource(func(context.Context) (PeerTarget, error) {
+		return PeerTarget{}, errors.New("database is locked")
 	}))
 
 	if _, err := peerGet(t, main.base+"/api/sync/admin"); err == nil {
@@ -225,5 +225,227 @@ func TestPeerClient_UnreadablePinFailsClosed(t *testing.T) {
 	}
 	if PeerPinned(t.Context()) {
 		t.Fatal("PeerPinned = true with the pin unreadable")
+	}
+}
+
+// usePeerVar points the peer transport at primary and *pin, read per request,
+// so a re-proof hook can change the held pin mid-test.
+func usePeerVar(t *testing.T, primary string, pin *atomic.Pointer[string]) {
+	t.Helper()
+	t.Cleanup(SetPeerSource(func(context.Context) (PeerTarget, error) {
+		return PeerTarget{PrimaryURL: primary, Pin: *pin.Load()}, nil
+	}))
+}
+
+// ADR-0114 §7 (ut-docs#4410): a certificate matching no held pin triggers a
+// re-proof; a valid one adopts the new pin and the request is retried at
+// once, over TLS, with the bearer only ever sent on the verified retry.
+func TestPeerClient_ReproofAdoptsNewPinAndRetries(t *testing.T) {
+	main := newPeerTill(t)
+	old := strings.Repeat("0", 64)
+	var pin atomic.Pointer[string]
+	pin.Store(&old)
+	usePeerVar(t, main.base, &pin)
+	var calls atomic.Int32
+	var gotPrimary, gotHeld string
+	t.Cleanup(SetPeerReproof(func(_ context.Context, primaryURL, heldPin string) error {
+		calls.Add(1)
+		gotPrimary, gotHeld = primaryURL, heldPin
+		p := main.cert.Pin()
+		pin.Store(&p)
+		return nil
+	}))
+
+	req, err := http.NewRequest(http.MethodPost, main.base+"/api/sync/push", strings.NewReader("journal"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer secret")
+	resp, err := NewPeerClient(0).Do(req)
+	if err != nil {
+		t.Fatalf("request after a valid re-proof: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if string(body) != "tls=true" {
+		t.Fatalf("retried request arrived as %q; want TLS", body)
+	}
+	if calls.Load() != 1 || gotPrimary != main.base || gotHeld != old {
+		t.Fatalf("re-proof calls=%d primary=%q held=%q; want 1, %q, the old pin", calls.Load(), gotPrimary, gotHeld, main.base)
+	}
+	if main.tls.Load() != 1 || main.plain.Load() != 0 {
+		t.Fatalf("main till served tls=%d plain=%d; want exactly the one verified retry", main.tls.Load(), main.plain.Load())
+	}
+}
+
+// The retried request carries its body again (GetBody), not an empty one.
+func TestPeerClient_ReproofRetryResendsTheBody(t *testing.T) {
+	c, err := LoadOrCreate(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got atomic.Pointer[string]
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		s := string(b)
+		got.Store(&s)
+	})}
+	go func() { _ = srv.Serve(Listen(inner, c.TLSConfig())) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	base := "http://" + inner.Addr().String()
+	old := strings.Repeat("0", 64)
+	var pin atomic.Pointer[string]
+	pin.Store(&old)
+	usePeerVar(t, base, &pin)
+	t.Cleanup(SetPeerReproof(func(context.Context, string, string) error {
+		p := c.Pin()
+		pin.Store(&p)
+		return nil
+	}))
+
+	resp, err := NewPeerClient(0).Post(base+"/api/sync/push", "application/json", strings.NewReader(`{"n":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if g := got.Load(); g == nil || *g != `{"n":1}` {
+		t.Fatalf("retried body = %v; want the original", g)
+	}
+}
+
+// A failed re-proof keeps the old pin: the request fails exactly as a
+// mismatch did before (unreachable → banner → re-discovery), and the device
+// presenting the certificate never sees a request.
+func TestPeerClient_FailedReproofKeepsTheMismatch(t *testing.T) {
+	main := newPeerTill(t)
+	usePeer(t, main.base, strings.Repeat("0", 64))
+	t.Cleanup(SetPeerReproof(func(context.Context, string, string) error {
+		return errors.New("proof does not match this till's pairing")
+	}))
+
+	if _, err := peerGet(t, main.base+"/api/sync/ping"); !errors.Is(err, ErrPinMismatch) {
+		t.Fatalf("err = %v; want ErrPinMismatch", err)
+	}
+	if n := main.plain.Load() + main.tls.Load(); n != 0 {
+		t.Fatalf("main till served %d request(s) after a failed re-proof", n)
+	}
+}
+
+// A re-proof that reports success but leaves the held pin unchanged is not
+// retried: the retry would only mismatch again.
+func TestPeerClient_ReproofWithoutNewPinIsNotRetried(t *testing.T) {
+	main := newPeerTill(t)
+	usePeer(t, main.base, strings.Repeat("0", 64))
+	var calls atomic.Int32
+	t.Cleanup(SetPeerReproof(func(context.Context, string, string) error {
+		calls.Add(1)
+		return nil
+	}))
+
+	if _, err := peerGet(t, main.base+"/"); !errors.Is(err, ErrPinMismatch) {
+		t.Fatalf("err = %v; want ErrPinMismatch", err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("re-proof ran %d times; want 1", calls.Load())
+	}
+}
+
+// A body that can't be replayed is not retried; the next request uses the
+// adopted pin.
+func TestPeerClient_ReproofDoesNotReplayAnUnrewindableBody(t *testing.T) {
+	main := newPeerTill(t)
+	old := strings.Repeat("0", 64)
+	var pin atomic.Pointer[string]
+	pin.Store(&old)
+	usePeerVar(t, main.base, &pin)
+	t.Cleanup(SetPeerReproof(func(context.Context, string, string) error {
+		p := main.cert.Pin()
+		pin.Store(&p)
+		return nil
+	}))
+
+	req, err := http.NewRequest(http.MethodPost, main.base+"/", io.NopCloser(strings.NewReader("x")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewPeerClient(0).Do(req); !errors.Is(err, ErrPinMismatch) {
+		t.Fatalf("err = %v; want the original ErrPinMismatch", err)
+	}
+	if got, err := peerGet(t, main.base+"/"); err != nil || got != "tls=true" {
+		t.Fatalf("next request: %q, %v; want TLS under the adopted pin", got, err)
+	}
+}
+
+// Key rotation, replica side (ADR-0114 §7, ut-docs#4409): a replica that
+// learned the main till's next pin trusts it alongside the held one, so
+// the main till's switch costs no re-proof.
+func TestPeerClient_HeldNextPinIsAcceptedWithoutReproof(t *testing.T) {
+	main := newPeerTill(t)
+	old := strings.Repeat("0", 64)
+	t.Cleanup(SetPeerSource(func(context.Context) (PeerTarget, error) {
+		return PeerTarget{PrimaryURL: main.base, Pin: old, NextPin: main.cert.Pin()}, nil
+	}))
+	var calls atomic.Int32
+	t.Cleanup(SetPeerReproof(func(context.Context, string, string) error { calls.Add(1); return nil }))
+
+	got, err := peerGet(t, main.base+"/api/sync/ping")
+	if err != nil {
+		t.Fatalf("main till serving the held next pin: %v", err)
+	}
+	if got != "tls=true" || calls.Load() != 0 {
+		t.Fatalf("got %q with %d re-proof(s); want TLS and none", got, calls.Load())
+	}
+}
+
+// A certificate matching neither the held pin nor the next one is still a
+// mismatch, re-proven with the held primary pin.
+func TestPeerClient_CertificateMatchingNeitherPinIsReproven(t *testing.T) {
+	main := newPeerTill(t)
+	held, next := strings.Repeat("0", 64), strings.Repeat("1", 64)
+	t.Cleanup(SetPeerSource(func(context.Context) (PeerTarget, error) {
+		return PeerTarget{PrimaryURL: main.base, Pin: held, NextPin: next}, nil
+	}))
+	var gotHeld string
+	t.Cleanup(SetPeerReproof(func(_ context.Context, _, heldPin string) error { gotHeld = heldPin; return nil }))
+
+	if _, err := peerGet(t, main.base+"/"); !errors.Is(err, ErrPinMismatch) {
+		t.Fatalf("err = %v; want ErrPinMismatch", err)
+	}
+	if gotHeld != held {
+		t.Fatalf("re-proof got held pin %q; want the primary pin %q", gotHeld, held)
+	}
+	if n := main.plain.Load() + main.tls.Load(); n != 0 {
+		t.Fatalf("main till served %d request(s)", n)
+	}
+}
+
+// Without the next pin, the switched main till is a mismatch.
+func TestPeerClient_OnlyTheOldPinMismatchesASwitchedMainTill(t *testing.T) {
+	main := newPeerTill(t)
+	usePeer(t, main.base, strings.Repeat("0", 64))
+	if _, err := peerGet(t, main.base+"/"); !errors.Is(err, ErrPinMismatch) {
+		t.Fatalf("err = %v; want ErrPinMismatch", err)
+	}
+}
+
+// The transport is bound to the (pin, next pin) pair: a connection
+// verified under a next pin is never reused once that next pin is dropped.
+func TestPeerClient_NextPinChangeDropsVerifiedConnections(t *testing.T) {
+	main := newPeerTill(t)
+	held := strings.Repeat("0", 64)
+	next := main.cert.Pin()
+	t.Cleanup(SetPeerSource(func(context.Context) (PeerTarget, error) {
+		return PeerTarget{PrimaryURL: main.base, Pin: held, NextPin: next}, nil
+	}))
+	if got, err := peerGet(t, main.base+"/"); err != nil || got != "tls=true" {
+		t.Fatalf("first request: %q, %v", got, err)
+	}
+	next = ""
+	if _, err := peerGet(t, main.base+"/"); !errors.Is(err, ErrPinMismatch) {
+		t.Fatalf("after the next pin was dropped: err = %v; want ErrPinMismatch", err)
 	}
 }

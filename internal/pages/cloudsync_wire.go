@@ -18,7 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/universaltill/universal-till/internal/barcode"
+	"github.com/universaltill/universal-till/catimport/barcode"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/clock"
 	"github.com/universaltill/universal-till/internal/cloudsync"
@@ -140,6 +140,12 @@ var allowedRemoteTillSettingKeys = map[string]bool{
 // currency changes the meaning of every price and report, and the shop type
 // drives tax/fiscal defaults. Never add one of these to
 // allowedRemoteTillSettingKeys without superseding that decision.
+//
+// The one gated cloud-driven currency write is not a directive: ADR-0163
+// amendment 2026-10-16 (ut-docs#4539) — the main till adopts the shop
+// currency from the cached entitlement block before its first sale, once
+// per shop value and never mid-sale (reconcileShopCurrency,
+// shop_currency.go).
 var reportedReadOnlyTillSettingKeys = []string{
 	common.KeyReportRetentionMode, // settings-retention
 	common.KeyCurrency,            // settings-currency
@@ -1364,6 +1370,17 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		DeleteItem: func(ctx context.Context, id string) (string, error) {
 			return cloudDeleteItem(ctx, d, id)
 		},
+		// The cloud catalogue pull's till-side rules (ADR-0162 §4,
+		// ut-docs#4463): the same live-basket check delete_item makes, the
+		// tax-code screen's country rate rule, and the upload clean-up
+		// cloudSaveItem does when an icon replaced a photo.
+		CatalogItemInLiveBasket: func(ctx context.Context, id string) (bool, error) {
+			return itemInLiveBasket(ctx, d, id)
+		},
+		CatalogTaxRateRefused: func(rateBP int, takeawayBP *int) bool {
+			return taxCodeRatesRefusedForCountry(d.CurrentState().Country, rateBP, takeawayBP)
+		},
+		CatalogItemPhotoReplaced: removeReplacedItemUpload,
 		SaveModifierGroup: func(ctx context.Context, p data.ModifierGroupSave) (string, error) {
 			return cloudSaveModifierGroup(ctx, d, p)
 		},
@@ -1538,6 +1555,9 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// Records whether the check-in carrying a roles report got through
 		// (rolesReportGate.commit). wireCloudLinkHooks chains onto it.
 		AfterTick: rolesGate.commit,
+		// ADR-0163 amendment 2026-10-16 (ut-docs#4539): adopt the shop's
+		// currency from my. before the first sale, else report it.
+		ShopCurrency: func(ctx context.Context) { reconcileShopCurrency(ctx, d) },
 	}
 }
 

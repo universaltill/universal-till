@@ -25,7 +25,8 @@ import (
 //     notice, no candidate, a caller who can't manage sync, or a till that
 //     already has enrolled replicas (it IS a main till — ut-docs#2721
 //     Tester finding: an empty sync.primary_url alone doesn't mean
-//     standalone).
+//     standalone). A till that already holds sales gets a warning that
+//     linking replaces them, plus a required confirm (ut-docs#3796).
 //   - POST /ui/join-notice/dismiss: a manager says "not this till", for
 //     good — sync.join_banner_dismissed, per-till and server-side, unlike
 //     the pairing notice's per-session dismiss.
@@ -68,10 +69,11 @@ func registerJoinNoticeUI(mux *http.ServeMux, d *common.Deps) {
 		banner := fmt.Sprintf(template.HTMLEscapeString(httpx.T(httpx.RequestLocale(r), "tills.discovery.ambient.banner")),
 			`<bdi class="join-notice-name">`+template.HTMLEscapeString(c.Name)+"</bdi>")
 		httpx.RenderPartial("ui/partials/join_notice.html", map[string]any{
-			"Banner":  template.HTML(banner), //nolint:gosec // both parts HTML-escaped above; <bdi> is a fixed literal
-			"Name":    c.Name,
-			"BaseURL": c.BaseURL,
-			"TillID":  c.TillID,
+			"Banner":   template.HTML(banner), //nolint:gosec // both parts HTML-escaped above; <bdi> is a fixed literal
+			"Name":     c.Name,
+			"BaseURL":  c.BaseURL,
+			"TillID":   c.TillID,
+			"HasSales": hasSalesHistory(ctx, d),
 		})(w, r)
 	})
 
@@ -91,6 +93,34 @@ func registerJoinNoticeUI(mux *http.ServeMux, d *common.Deps) {
 		// the notice in place; the next poll stays empty.
 		w.WriteHeader(http.StatusOK)
 	})
+}
+
+// hasSalesHistory reports whether this till already holds completed sales
+// (ut-docs#3796). Linking stages the main till's snapshot as a restore
+// (completeJoin), which replaces this till's whole DB — sales included; the
+// replaced file survives only as a pre-restore backup. The notice then warns
+// and asks for an explicit confirm. An error counts as "yes": a needless
+// warning costs one tick box, a missing one costs the shop's sales view.
+func hasSalesHistory(ctx context.Context, d *common.Deps) bool {
+	if d.Db == nil {
+		return true
+	}
+	has, err := data.NewPOSRepo(d.Db).HasCompletedSales(ctx)
+	if err != nil {
+		logging.L().Errorf("join-notice: has completed sales: %v", err)
+		return true
+	}
+	return has
+}
+
+// joinNeedsReplaceConfirm reports whether a join request must be refused
+// because this till already holds sales and the form lacks the explicit
+// replace_local_data=1 confirm (ut-docs#4507). Every path that ends in
+// completeJoin checks it server-side — pair-start, the code join and, for
+// a first sale that lands mid-approval, pair-status — not only the ambient
+// notice's tick box (ut-docs#3796). The form must already be parsed.
+func joinNeedsReplaceConfirm(r *http.Request, d *common.Deps) bool {
+	return r.Form.Get("replace_local_data") != "1" && hasSalesHistory(r.Context(), d)
 }
 
 // hasEnrolledTills reports whether this till has replicas enrolled — i.e.

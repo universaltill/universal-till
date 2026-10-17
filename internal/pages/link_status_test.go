@@ -264,6 +264,43 @@ func TestLinkChip_FollowsTheRealLinkAndWarnsOncePerOutage(t *testing.T) {
 	}
 }
 
+// ut-docs#4422: a main till that shuts down cleanly says bye, and the
+// chip read "polling" for a minute (PrimaryWatch's window) on the Tester's
+// two-till pairing, where a crash turned it in two seconds. A bye that
+// isn't followed by the main till coming back within one presence window
+// reads as unreachable since the bye.
+func TestLinkChip_CleanShutdownTurnsWithinOnePresenceWindow(t *testing.T) {
+	f := newSyncLinkFixture(t)
+	tillID := f.enrol(t, "Till 2", "token-abc")
+	opts := fastLinkClientOptions()
+	opts.PeerTimeout = 400 * time.Millisecond
+	replica := linkReplica(t, f.srv.URL, tillID, opts)
+	mux := http.NewServeMux()
+	registerMainTillStatus(mux, replica)
+	pulls := runReplica(t, replica, time.Hour, time.Hour)
+
+	if !waitFor(t, 3*time.Second, func() bool { return replica.LinkClient.Linked() && pulls.Load() >= 1 }) {
+		t.Fatal("never linked")
+	}
+
+	start := time.Now()
+	f.dp.Link.Close() // the main till's clean shutdown: bye on every link …
+	f.srv.Close()     // … then its process is gone
+	if !waitFor(t, 3*time.Second, func() bool {
+		return strings.Contains(getLinkChip(t, mux), `data-link-state="unreachable"`)
+	}) {
+		t.Fatalf("chip never turned after a clean shutdown: %s (inputs %+v)", getLinkChip(t, mux), linkInputsOf(t.Context(), replica))
+	}
+	// 2 s of slack: a retry probe that lands between the two closes above
+	// relinks once before the server goes (independent review).
+	if took := time.Since(start); took < opts.PeerTimeout || took > opts.PeerTimeout+2*time.Second {
+		t.Fatalf("chip turned after %v, want about one presence window (%v)", took, opts.PeerTimeout)
+	}
+	if chip := getLinkChip(t, mux); !strings.Contains(chip, "Main till not reachable since") {
+		t.Fatalf("unreachable chip has no time: %s", chip)
+	}
+}
+
 func heartbeatReportsProblem(t *testing.T, d *common.Deps, substr string) bool {
 	t.Helper()
 	for _, p := range collectProblems(t.Context(), d) {

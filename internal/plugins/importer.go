@@ -256,6 +256,23 @@ func (b *extractBudget) copy(dst io.Writer, src io.Reader) error {
 	return nil
 }
 
+// archiveEntryTarget resolves an archive entry name to its path under
+// destDir, refusing anything that escapes it. A directory entry naming the
+// root itself ("./", as `tar -C dir -czf x.tgz .` writes first) reports
+// isRoot so the caller skips it; any other entry naming the root is refused
+// (ut-docs#4563).
+func archiveEntryTarget(destDir, name string, isDir bool) (target string, isRoot bool, err error) {
+	root := filepath.Clean(destDir)
+	target = filepath.Join(root, name)
+	if target == root && isDir {
+		return target, true, nil
+	}
+	if !strings.HasPrefix(target, root+string(os.PathSeparator)) {
+		return "", false, fmt.Errorf("illegal file path in archive: %s", name)
+	}
+	return target, false, nil
+}
+
 // extractZip extracts a ZIP archive with security checks
 func (imp *Importer) extractZip(archivePath, destDir string) error {
 	reader, err := zip.OpenReader(archivePath)
@@ -266,11 +283,13 @@ func (imp *Importer) extractZip(archivePath, destDir string) error {
 
 	budget := imp.newExtractBudget()
 	for _, file := range reader.File {
-		target := filepath.Join(destDir, file.Name)
-
 		// Security: prevent path traversal
-		if !strings.HasPrefix(target, filepath.Clean(destDir)+string(os.PathSeparator)) {
-			return fmt.Errorf("illegal file path in archive: %s", file.Name)
+		target, isRoot, err := archiveEntryTarget(destDir, file.Name, file.FileInfo().IsDir())
+		if err != nil {
+			return err
+		}
+		if isRoot {
+			continue
 		}
 
 		if file.FileInfo().IsDir() {
@@ -335,11 +354,13 @@ func (imp *Importer) extractTarGz(archivePath, destDir string) error {
 			return fmt.Errorf("failed to read tar entry: %w", err)
 		}
 
-		target := filepath.Join(destDir, header.Name)
-
 		// Security: prevent path traversal
-		if !strings.HasPrefix(target, filepath.Clean(destDir)+string(os.PathSeparator)) {
-			return fmt.Errorf("illegal file path in archive: %s", header.Name)
+		target, isRoot, err := archiveEntryTarget(destDir, header.Name, header.Typeflag == tar.TypeDir)
+		if err != nil {
+			return err
+		}
+		if isRoot {
+			continue
 		}
 
 		switch header.Typeflag {

@@ -35,7 +35,7 @@
   <table class="table">
     <tbody>
       {{ range .Problems }}
-      <tr><td class="muted" style="white-space:nowrap">{{ .At.Format "15:04" }}</td><td>{{ .Level }}</td><td>{{ .Msg }}</td></tr>
+      <tr><td class="muted" style="white-space:nowrap">{{ .At.Format "15:04" }}</td><td>{{ .Level }}</td><td class="backoffice-problem-msg">{{ .Msg }}</td></tr>
       {{ end }}
     </tbody>
   </table>

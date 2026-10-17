@@ -60,8 +60,10 @@ func TestRenderBarcode(t *testing.T) {
 	d := sampleDoc()
 	d.Barcode = "000000042"
 	out := Render(d)
-	// GS k 73 <len> { B <data> — CODE128 code set B of the receipt no.
-	want := append([]byte{0x1d, 0x6b, 0x49, byte(len("{B000000042"))}, []byte("{B000000042")...)
+	// GS k 73 <len> <data> — CODE128 of the receipt no., sets B/C chosen for
+	// the fewest symbols (ut-docs#4403).
+	data, _ := code128Data("000000042")
+	want := append([]byte{0x1d, 0x6b, 0x49, byte(len(data))}, data...)
 	if !bytes.Contains(out, want) {
 		t.Error("CODE128 barcode sequence missing")
 	}
@@ -536,12 +538,17 @@ func leadingSpacesStr(t *testing.T, out string, want string) int {
 	return -1
 }
 
+func labelBarcodeData(code string) []byte {
+	data, _ := code128Data(code)
+	return data
+}
+
 func TestRenderLabel(t *testing.T) {
 	out := RenderLabelWithUnitPrice("Coca-Cola Can 330ml", "£1.40", "", "5000000000011", "utf8")
 	if !bytes.HasPrefix(out, cmdInit) || !bytes.HasSuffix(out, cmdFeedCut) {
 		t.Error("label must init and cut")
 	}
-	for _, want := range [][]byte{[]byte("Coca-Cola"), []byte("£1.40"), append([]byte("{B"), []byte("5000000000011")...), cmdDoubleOn} {
+	for _, want := range [][]byte{[]byte("Coca-Cola"), []byte("£1.40"), labelBarcodeData("5000000000011"), cmdDoubleOn} {
 		if !bytes.Contains(out, want) {
 			t.Errorf("label missing %q", want)
 		}
@@ -727,7 +734,7 @@ func TestRenderEmptyTrackingIsByteIdentical(t *testing.T) {
 	d := sampleDoc()
 	d.Barcode = "000000042"
 	d.TSEQR = RasterLogo(pngBytes(t, 16, 8))
-	if got := fmt.Sprintf("%x", sha256.Sum256(Render(d))); got != "98e7f69c7f5380109a3c3d04f8b3764e00fec7b0ac43c77fe77c15943ed95d40" {
+	if got := fmt.Sprintf("%x", sha256.Sum256(Render(d))); got != "a31173c3febee2dc00c28e0106d30d3df7b435bf386bef4a54c7acdea27a5f70" { // ut-docs#4403 re-pinned (barcode now set C)
 		t.Errorf("Render changed with no tracking QR: sha256 %s", got)
 	}
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(RenderText(d)))); got != "91d5d83e010994170afc2a88a44e82168558e04eb89820583110b12970e12bcf" {
@@ -786,7 +793,7 @@ func TestRenderVoucherBlock(t *testing.T) {
 		}
 	}
 	sym := func(code string) []byte {
-		data := "{B" + code
+		data, _ := code128Data(code)
 		return append([]byte{0x1d, 0x6b, 0x49, byte(len(data))}, data...)
 	}
 	if !bytes.Contains(out, sym("GV-12345")) {
@@ -833,5 +840,187 @@ func TestRenderTextVoucherBlock(t *testing.T) {
 	}
 	if strings.Contains(out, "║█║") {
 		t.Error("plain-text voucher block must not print fake barcode glyphs")
+	}
+}
+
+// code128Decode reverses code128Data: {B / {C switch sets, {{ is a literal
+// '{' in set B, and a byte 0-99 in set C is a digit pair (ut-docs#4403).
+func code128Decode(t *testing.T, data []byte) string {
+	t.Helper()
+	var out []byte
+	set := byte(0)
+	for i := 0; i < len(data); i++ {
+		c := data[i]
+		switch {
+		case set == 0:
+			if c != '{' || i+1 >= len(data) || (data[i+1] != 'B' && data[i+1] != 'C') {
+				t.Fatalf("data must start with a code-set selector, got %q", data)
+			}
+			set = data[i+1]
+			i++
+		case set == 'C' && c <= 99:
+			out = append(out, '0'+c/10, '0'+c%10)
+		case c == '{' && i+1 < len(data):
+			i++
+			switch data[i] {
+			case 'B', 'C':
+				set = data[i]
+			case '{':
+				if set != 'B' {
+					t.Fatalf("{{ outside set B in %q", data)
+				}
+				out = append(out, '{')
+			default:
+				t.Fatalf("bad escape {%c in %q", data[i], data)
+			}
+		case set == 'B':
+			out = append(out, c)
+		default:
+			t.Fatalf("byte %#x not valid in set %c in %q", c, set, data)
+		}
+	}
+	return string(out)
+}
+
+func TestCode128DataRoundTrip(t *testing.T) {
+	for _, code := range []string{
+		"A", "1", "12", "123", "4006381333931", "000000042", "GV-12345",
+		"1234abcd", "abcd1234", "ab1234cd", "ab123cd", "ab12345cd", "1ab", "12ab3",
+		"123{456", "{", "{{", "a{b", "12{34", "{12", "99", "00", "0",
+		"123e4567-e89b-12d3-a456-426614174000", "5000000000011",
+		strings.Repeat("7", 59), strings.Repeat("z", 60), "x 1 ~",
+	} {
+		data, symbols := code128Data(code)
+		if got := code128Decode(t, data); got != code {
+			t.Errorf("%q: round-trip gave %q (data %q)", code, got, data)
+		}
+		if symbols < 1 || symbols > len(code) {
+			t.Errorf("%q: symbols %d outside 1..%d", code, symbols, len(code))
+		}
+	}
+}
+
+func TestCode128DataExactBytes(t *testing.T) {
+	cases := []struct {
+		code    string
+		want    []byte
+		symbols int
+	}{
+		// 13 digits: pairs in set C, 8 symbols instead of 13.
+		{"4006381333931", []byte{'{', 'B', '4', '{', 'C', 0, 63, 81, 33, 39, 31}, 8},
+		{"000000042", []byte{'{', 'B', '0', '{', 'C', 0, 0, 0, 42}, 6},
+		{"GV-12345", []byte{'{', 'B', 'G', 'V', '-', '1', '{', 'C', 23, 45}, 7},
+		{"AB", []byte("{BAB"), 2},
+		{"1234", []byte{'{', 'C', 12, 34}, 2},
+		{"12", []byte{'{', 'C', 12}, 1},
+		{"7", []byte("{B7"), 1},
+		// literal '{' is escaped in set B (latent bug before ut-docs#4403).
+		{"a{b", []byte("{Ba{{b"), 3},
+	}
+	for _, c := range cases {
+		data, symbols := code128Data(c.code)
+		if !bytes.Equal(data, c.want) || symbols != c.symbols {
+			t.Errorf("%q: got %q/%d, want %q/%d", c.code, data, symbols, c.want, c.symbols)
+		}
+	}
+	if _, n := code128Data("4006381333931"); n >= 13 {
+		t.Errorf("all-digit code must beat set B's 13 symbols, got %d", n)
+	}
+}
+
+func TestBarcodeModuleWidth(t *testing.T) {
+	cases := []struct {
+		name  string
+		code  string
+		width int // 0 = does not fit
+	}{
+		{"short digits", "000000042", 2},
+		{"21 chars set B", "ABCDEFGHIJKLMNOPQRSTU", 2},           // 11*23+33=286 -> 572
+		{"22 chars set B", "ABCDEFGHIJKLMNOPQRSTUV", 1},          // 297 -> 594 > 576
+		{"25 lowercase", strings.Repeat("a", 25), 1},             // 330
+		{"uuid-like", "abcdefgh-ijkl-mnop-qrst-uvwxyz012345", 1}, // 34 symbols -> 429
+		{"47 chars set B", strings.Repeat("a", 47), 1},           // 11*49+33=572
+		{"48 chars set B", strings.Repeat("a", 48), 0},           // 583
+		{"60 chars set B", strings.Repeat("a", 60), 0},
+		{"48 digits", strings.Repeat("1", 48), 1}, // 24 symbols -> 319, x2 > 576; HRI 48*12 = 576
+		{"49 digits", strings.Repeat("1", 49), 0}, // bars fit at 1, but the HRI line (49*12 dots) does not
+		{"empty", "", 0},
+		{"non-ascii", "رسید", 0},
+	}
+	for _, c := range cases {
+		n, ok := barcodeModuleWidth(c.code)
+		if c.width == 0 {
+			if ok || barcodePrintable(c.code) {
+				t.Errorf("%s: must not fit, got width %d", c.name, n)
+			}
+			continue
+		}
+		if !ok || n != c.width || !barcodePrintable(c.code) {
+			t.Errorf("%s: width %d ok=%v, want %d", c.name, n, ok, c.width)
+		}
+		var b bytes.Buffer
+		barcode(&b, c.code)
+		if !bytes.Contains(b.Bytes(), []byte{0x1d, 0x77, byte(c.width)}) {
+			t.Errorf("%s: GS w %d missing from %q", c.name, c.width, b.Bytes())
+		}
+	}
+}
+
+// A printer that rejects GS w 1 (Epson TM-T88 documents 2-6) ignores it, so
+// GS w 2 goes first: such a printer keeps width 2 instead of ESC @'s 3.
+func TestBarcodeWidthOneSetsTwoFirst(t *testing.T) {
+	var b bytes.Buffer
+	barcode(&b, strings.Repeat("a", 25))
+	if !bytes.Contains(b.Bytes(), []byte{0x1d, 0x77, 0x02, 0x1d, 0x77, 0x01}) {
+		t.Errorf("width-1 barcode must send GS w 2 then GS w 1, got %q", b.Bytes())
+	}
+	b.Reset()
+	barcode(&b, "000000042")
+	if bytes.Contains(b.Bytes(), []byte{0x1d, 0x77, 0x01}) {
+		t.Errorf("width-2 barcode must not send GS w 1, got %q", b.Bytes())
+	}
+}
+
+// A label code too wide for the paper prints as text, so the label still
+// carries it (ut-docs#4403 review).
+func TestRenderLabelTooWideCodePrintsText(t *testing.T) {
+	code := strings.Repeat("a", 50)
+	out := RenderLabelWithUnitPrice("Tea", "2.50", "", code, "")
+	if bytes.Contains(out, cmdBarcodeCode128) {
+		t.Fatal("a code too wide for the paper must not print as a barcode")
+	}
+	if !bytes.Contains(out, []byte(code[:Width])) {
+		t.Errorf("label must print the unprintable code as text, got %q", out)
+	}
+	if bytes.Contains(RenderLabelWithUnitPrice("Tea", "2.50", "", "", ""), []byte("\n\n")) {
+		t.Error("an empty code must not add a blank text row")
+	}
+}
+
+func TestBarcodeUnprintableWritesNothing(t *testing.T) {
+	var b bytes.Buffer
+	barcode(&b, strings.Repeat("a", 60))
+	if b.Len() != 0 {
+		t.Errorf("a code too wide for the paper must write nothing, got %q", b.Bytes())
+	}
+}
+
+func TestRenderVoucherTooWideFallsBackToText(t *testing.T) {
+	code := strings.Repeat("V", 60)
+	d := sampleDoc()
+	d.Vouchers = []VoucherBlock{{Label: "Gift voucher", Amount: "€5.00", Code: code}}
+	out := Render(d)
+	if bytes.Contains(out, cmdBarcodeCode128) {
+		t.Error("code wider than the paper must not emit GS k")
+	}
+	for _, row := range wrapRunes(code, Width) {
+		if !bytes.Contains(out, []byte(row+"\n")) {
+			t.Errorf("voucher code text row %q missing", row)
+		}
+	}
+	// A code that fits keeps its symbol.
+	d.Vouchers[0].Code = "GV-12345"
+	if !bytes.Contains(Render(d), cmdBarcodeCode128) {
+		t.Error("fitting voucher code lost its barcode")
 	}
 }

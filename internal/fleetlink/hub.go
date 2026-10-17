@@ -297,6 +297,40 @@ func (h *Hub) RequestUpdate(tillID, target string) error {
 	return nil
 }
 
+// ResendHello sends every live link a fresh hello, so a change in it — a
+// key rotation's next pin started at runtime (ADR-0114 §7, ut-docs#4423) —
+// reaches the linked tills now instead of at their next reconnect. A
+// joined till takes a hello at any point of a link (Peer.dispatch) and
+// reports back. It returns how many links the hello was queued on.
+//
+// The hello is built once (its cursors read the database) and only
+// PeerTillID differs per link: HubOptions.Hello does not vary by till.
+func (h *Hub) ResendHello(ctx context.Context) int {
+	h.mu.Lock()
+	peers := make([]*Peer, 0, len(h.peers))
+	for _, p := range h.peers {
+		peers = append(peers, p)
+	}
+	h.mu.Unlock()
+	if len(peers) == 0 {
+		return 0
+	}
+	base, _ := h.helloFor(ctx, "").(Hello)
+	n := 0
+	for _, p := range peers {
+		hello := base
+		hello.PeerTillID = p.tillID
+		m, err := newMessage(p.nextID(), TypeHello, "", hello)
+		if err != nil {
+			continue
+		}
+		if p.enqueue(m) == nil {
+			n++
+		}
+	}
+	return n
+}
+
 // Disconnect closes tillID's link and forgets its report — called when the
 // till is revoked (§1).
 func (h *Hub) Disconnect(tillID string) {

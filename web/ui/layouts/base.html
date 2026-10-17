@@ -623,6 +623,8 @@
           // operator reproduces the problem (ut-docs#3212 review).
           return !!(t && t.closest && t.closest('.statusbar, .session-lock, #osk, #bugreport-panel'));
         }
+        // record-dialog.js's focusin backstop uses the same allow-list (ut-docs#4078).
+        UT.focusTrapExempt = escAllowed;
         window.addEventListener('keydown', function (e) {
           if (e.key !== 'Tab' || e.defaultPrevented) return;
           try {
@@ -1351,6 +1353,7 @@
     <title>{{ .title }}</title>
     <link rel="icon" type="image/x-icon" href="/public/assets/logo/ut-logo.ico">
     <link rel="stylesheet" href="/public/app.css?v={{ assetv "public/app.css" }}" />
+    <link rel="stylesheet" href="/plugin-fonts/bundle-fonts.css" />
     <!-- ut-docs#2343: id="theme-css" is ALWAYS rendered, even for the
          "default" theme (which has no override CSS of its own, hence no
          href below) -- the #theme-sync-poll listener below (a sibling of
@@ -1364,6 +1367,11 @@
          can't be swapped directly). -->
     <link id="theme-css" rel="stylesheet" data-theme="{{ .theme }}" {{ if and .theme (ne .theme "default") }}href="/themes/{{ .theme }}.css?v={{ assetv (printf "public/themes/%s.css" .theme) }}"{{ end }} />
     <!-- Vendored locally: the till must work fully offline. -->
+    {{/* ut-docs#4370 (ADR-0160 §7): translate mode only. FIRST of the
+         deferred scripts, so its capture-phase Alt+click / long-press
+         listeners run before any page or shell handler can act on that
+         click, and its marker sweep runs before other scripts read text. */}}
+    {{ if translatemode }}<script defer src="/public/translate-mode.js?v={{ assetv "public/translate-mode.js" }}"></script>{{ end }}
     <script defer src="/public/vendor/htmx.min.js?v={{ assetv "public/vendor/htmx.min.js" }}"></script>
     <script defer src="/public/vendor/alpine.min.js?v={{ assetv "public/vendor/alpine.min.js" }}"></script>
     <script defer src="/public/app.js?v={{ assetv "public/app.js" }}"></script>
@@ -1448,7 +1456,7 @@
         data-notice-dismiss="{{ T "notice.dismiss" }}"
         data-show-more="{{ T "common.show_more" }}" data-show-less="{{ T "common.show_less" }}"
         data-money-invalid="{{ if eq currency.Decimals 0 }}{{ T "common.money.invalid_whole" }}{{ else }}{{ T "common.money.invalid" }}{{ end }}"
-        data-percent-invalid="{{ T "common.money.invalid" }}"
+        data-percent-invalid="{{ T "common.percent.invalid" }}"
         {{ if idlelocksecs }}data-idle-lock="{{ idlelocksecs }}"{{ end }}>
     <!-- ut-docs#2224 / ADR-0098: everything a navigation changes lives in
          this one region; an <a> inside it is boosted and the response's own
@@ -1624,6 +1632,16 @@
            clean-up changes it); empty body otherwise. Same hx-preserve +
            default innerHTML swap as #sb-report-archive-mount. -->
       <span id="sb-disk-space-mount" hx-preserve hx-get="/ui/disk-space-chip" hx-trigger="load, every 60s"></span>
+      <!-- ut-docs#4539 (ADR-0163 amendment 2026-10-16): the shop's currency
+           on my. differs from this till's and the till did not adopt it
+           (it already has sales, or doesn't know the code) — "Currency
+           differs from shop" (web/ui/partials/shop_currency_chip.html), for
+           a viewer who may open Settings only. A status chip, never a
+           modal: selling carries on. Filled by GET /ui/shop-currency-chip
+           on load and every 60 s (the cloud check-in changes it); empty
+           body otherwise. Same hx-preserve + default innerHTML swap as
+           #sb-disk-space-mount. -->
+      <span id="sb-shop-currency-mount" hx-preserve hx-get="/ui/shop-currency-chip" hx-trigger="load, every 60s"></span>
       <!-- The network light: navigator.onLine, plus the till's own probe
            of its cloud host (ut-docs#3095). navigator.onLine only means a
            network interface is up, so on Wi-Fi whose router has no
@@ -1695,6 +1713,7 @@
                 data-progress="{{ T "settings.update.android.progress" }}"
                 data-installing="{{ T "settings.update.android.installing" }}"
                 data-retry="{{ T "settings.update.android.retry" }}"
+                data-again="{{ T "settings.update.android.install_again" }}"
                 data-failed="{{ T "settings.update.android.failed" }}"
                 data-locked="{{ T "auth.error.locked" }}"
                 data-nobridge="{{ T "settings.update.android.no_bridge" }}"
@@ -1771,8 +1790,10 @@
       {{ end }}
       {{ with releasenoticeversion }}{{ if allowed "settings" }}
       <!-- ut-docs#3091: once after an update — a non-blocking notice, never a
-           modal. releasenoticeversion is "" on the self-order kiosk; `allowed
-           "settings"` keeps it from a cashier (#3079). The link opens
+           modal. The customer-facing self-order kiosk pages never include this
+           layout, so a customer never sees it; `allowed "settings"` keeps it
+           from a cashier (#3079) while a manager on a self-order till still
+           gets it (ut-docs#4394). The link opens
            Settings → About and counts as seen (POST ?open=1, then HX-Redirect); × dismisses. -->
       <span class="sb-item sb-release-notes" id="sb-release-notes" data-testid="sb-release-notes">
         <a href="/settings#settings-about" hx-post="/api/release-notes/seen?open=1" hx-swap="none" data-testid="sb-release-notes-link"><span class="btn-ico" aria-hidden="true">{{ icon "eye" }}</span> <span class="sb-release-notes-text">{{ printf (T "status.release_notes_updated") . }}</span></a>
@@ -1781,6 +1802,16 @@
                 title="{{ T "status.release_notes_dismiss" }}" aria-label="{{ T "status.release_notes_dismiss" }}"><span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span></button>
       </span>
       {{ end }}{{ end }}
+      {{ if translatemode }}
+      {{/* ut-docs#4370: translate mode is on — its state, how to use it and
+           the way out, always in view while it lasts. */}}
+      <span class="sb-item sb-translate" data-testid="sb-translate-mode">
+        <strong>{{ T "translations.mode.title" }}</strong>
+        <span class="sb-translate-hint">{{ T "translations.mode.hint" }}</span>
+        <button type="button" class="sb-translate-off" data-testid="sb-translate-off"
+                hx-post="/api/translate-mode" hx-vals='{"on":"0"}' hx-swap="none">{{ T "translations.mode.turn_off" }}</button>
+      </span>
+      {{ end }}
       <span class="sb-item sb-ver" title="Universal Till">Universal&nbsp;Till&nbsp;v{{ appversion }}</span>
     </footer>
     <script>
@@ -1848,6 +1879,26 @@
         var mount = document.getElementById('sb-main-till-mount');
         var live = document.getElementById('sb-link-live');
         var lastState = null;
+        // ut-docs#3605: the catalogue's write-through controls sit in
+        // [data-main-till-lock] elements (a fieldset, server-rendered
+        // disabled while the main till is away) and the catalogue/inventory
+        // banner carries both texts ([data-main-till-away] /
+        // [data-main-till-here], the inactive one hidden). Keep them in
+        // step with the chip on an open page: on a change of its state —
+        // not every 5 s poll — and for content htmx swaps in later (the
+        // item dialog's variants/modifiers panels). Only a till that shows
+        // the chip (one that follows a main till) ever does this, and only
+        // elements carrying those attributes are touched.
+        var lockState = '';
+        function applyMainTillLock(root, away) {
+          function each(sel, fn) {
+            if (root.matches && root.matches(sel)) fn(root);
+            Array.prototype.forEach.call(root.querySelectorAll(sel), fn);
+          }
+          each('[data-main-till-lock]', function (el) { el.disabled = away; });
+          each('[data-main-till-away]', function (el) { el.hidden = !away; });
+          each('[data-main-till-here]', function (el) { el.hidden = away; });
+        }
         function followChip() {
           if (!mount || !bar) return;
           var chip = mount.querySelector('[data-link-state]');
@@ -1862,9 +1913,18 @@
             live.textContent = chip.textContent.replace(/\s+/g, ' ').trim();
           }
           lastState = state;
+          if (state && state !== lockState) {
+            lockState = state;
+            applyMainTillLock(document, state === 'unreachable');
+          }
         }
         document.body.addEventListener('htmx:afterSwap', function (e) {
           if (e.target === mount) followChip();
+        });
+        document.body.addEventListener('htmx:load', function (e) {
+          var el = e.detail && e.detail.elt;
+          if (!lockState || !el || !el.querySelectorAll || (mount && mount.contains(el))) return;
+          applyMainTillLock(el, lockState === 'unreachable');
         });
         followChip();
       })();
@@ -1945,15 +2005,11 @@
             clearTimeout(aTimer); aArmed = false;
             abtn.textContent = window.utAndroidUpdater.text(abtn, s);
             abtn.disabled = s.state === 'downloading';
-            aRetry = s.state === 'failed';
-          });
-          // Back from Android's installer, or from its "allow this app to
-          // install apps" settings on the first install of a build (the manual
-          // says to tap the chip again afterwards): tappable again.
-          document.addEventListener('visibilitychange', function () {
-            if (document.visibilityState !== 'visible' || !window.utAndroidUpdater) { return; }
-            var s = window.utAndroidUpdater.state();
-            if (s && (s.state === 'installing' || s.state === 'ready')) { aReset(); }
+            // ut-docs#4495: 'closed' — Android's installer went away or never
+            // came up (android-update.js reports it, also on the way back from
+            // its "allow this app to install apps" settings): one tap opens it
+            // again, reusing the download.
+            aRetry = s.state === 'failed' || s.state === 'closed';
           });
         }
       })();
@@ -2235,6 +2291,23 @@
          (a .show() dialog, a UT.popupOpened() panel). Shown and hidden only
          by the popup hooks in the first inline script above; app.css
          #ut-scrim. A tap on it reaches nothing behind. -->
+    {{ if translatemode }}
+    {{/* ut-docs#4370 (ADR-0160 §7): translate mode's key panel. A side
+         panel opened with .show() — never showModal — and data-ut-no-scrim:
+         the page beside it stays usable, so the next string can be
+         Alt+clicked or long-pressed while the panel is open. Filled by
+         web/public/translate-mode.js from /ui/translate-mode/panel. */}}
+    <dialog id="translate-panel" class="translate-panel" data-ut-no-scrim data-ut-escape-close
+            aria-labelledby="translate-panel-title" data-testid="translate-panel">
+      <div class="translate-panel-head">
+        <h3 id="translate-panel-title">{{ T "translations.mode.panel_title" }} {{ helpLink "translate-mode" }}</h3>
+        <button type="button" class="btn secondary btn-touch" aria-label="{{ T "common.close" }}"
+                data-action="close:translate-panel" data-testid="translate-panel-close"><span aria-hidden="true">✕</span></button>
+      </div>
+      <div id="translate-panel-body" class="translate-panel-body"></div>
+      <template id="translate-panel-loading"><p class="muted" role="status">{{ T "common.loading" }}</p></template>
+    </dialog>
+    {{ end }}
     <div id="ut-scrim" hidden aria-hidden="true"></div>
   </body>
 </html>

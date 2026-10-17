@@ -8,7 +8,7 @@ import (
 
 // SnapshotStateForTests captures every process-wide value this package publishes
 // (translator, default locale, currency, UI scale, OSK/effects/order-type
-// modes, idle lock, locale generation, kiosk/self-order/display mode, theme,
+// modes, idle lock, locale generation, kiosk/display mode, theme,
 // rail sources and the platform seams) and returns a func that puts them all
 // back. The func can be called any number of times. It restores which
 // translator is wired, not that translator's own overlay state: a test that
@@ -32,11 +32,11 @@ func SnapshotStateForTests() (restore func()) {
 	idle := idleLockSecs.Load()
 	localeGen := localeGeneration.Load()
 	kiosk := kioskMode.Load()
-	selfOrder := selfOrderMode.Load()
 	display := displayMode.Load()
 	theme := currentTheme.Load()
 	amendments := railAmendmentsSource.Load()
 	visibility := railVisibilitySource.Load()
+	translateMode := translateModeSource.Load()
 	cross, bridge, avail := CrossDeviceLinkActionable, UpdateInstallBridge, UpdateAvailable
 
 	// An atomic.Value can't go back to "never stored", so a value unset at
@@ -59,11 +59,11 @@ func SnapshotStateForTests() (restore func()) {
 		idleLockSecs.Store(idle)
 		localeGeneration.Store(localeGen)
 		kioskMode.Store(restoreValue(kiosk, false))
-		selfOrderMode.Store(restoreValue(selfOrder, false))
 		displayMode.Store(restoreValue(display, ""))
 		currentTheme.Store(restoreValue(theme, ""))
 		railAmendmentsSource.Store(restoreValue(amendments, (func() []uislot.Amendment)(nil)))
 		railVisibilitySource.Store(restoreValue(visibility, (func(*http.Request, string) bool)(nil)))
+		translateModeSource.Store(restoreValue(translateMode, (func(*http.Request) bool)(nil)))
 		CrossDeviceLinkActionable, UpdateInstallBridge, UpdateAvailable = cross, bridge, avail
 	}
 }

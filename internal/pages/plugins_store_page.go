@@ -190,12 +190,14 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 			return
 		}
 		items, err := storeListings(r, d)
+		cats := storeCategories(items)
 		httpx.Render("ui/pages/plugins_store.html", map[string]any{
 			"title":            httpx.T(httpx.RequestLocale(r), "page.title.plugin_store"),
 			"theme":            d.CurrentState().Theme,
 			"menuItems":        d.MenuSnapshot(),
 			"Items":            items,
-			"Categories":       storeCategories(items),
+			"Categories":       cats,
+			"ActiveCat":        storeActiveCategory(r.URL.Query().Get("type"), cats),
 			"EntitledFiltered": false,
 			"CatalogError":     err != nil,
 		})(w, r)
@@ -262,6 +264,19 @@ func storeCategories(items []storeItem) []storeCategory {
 	}
 	sort.Slice(cats, func(i, j int) bool { return cats[i].Type < cats[j].Type })
 	return cats
+}
+
+// storeActiveCategory is the category the store opens on: ?type=<t> when
+// the catalog has listings of that type (ut-docs#4431: the import page's
+// "Get the importer for your system" link), else "" (All) — a link never
+// opens an empty grid.
+func storeActiveCategory(want string, cats []storeCategory) string {
+	for _, c := range cats {
+		if c.Type == want {
+			return want
+		}
+	}
+	return ""
 }
 
 // registerPluginStoreAPI wires the store lifecycle actions.

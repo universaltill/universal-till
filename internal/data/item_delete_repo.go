@@ -23,6 +23,7 @@ const (
 	ItemUseStockHistory = "stock_history"
 	ItemUseQuickButton  = "quick_button"
 	ItemUseOpenBasket   = "open_basket"
+	ItemUseOpenVouchers = "open_vouchers"
 )
 
 // ItemInUseError refuses a delete. Its text is the owner-readable line the
@@ -45,6 +46,8 @@ func (e *ItemInUseError) Error() string {
 		return "it has stock history — deactivate it instead"
 	case ItemUseQuickButton:
 		return "it is on a quick button — deactivate it instead"
+	case ItemUseOpenVouchers:
+		return "the shop has open gift vouchers — deactivate it instead"
 	default:
 		return "it is in an open basket — deactivate it instead"
 	}
@@ -80,6 +83,14 @@ SELECT EXISTS (SELECT 1 FROM stock_movements WHERE item_id = ?)
     OR EXISTS (SELECT 1 FROM shrinkage_events WHERE item_id = ?)
     OR EXISTS (SELECT 1 FROM shrinkage_events_archive WHERE item_id = ?)`
 
+// itemOpenVouchersSQL (ut-docs#4259): a gift voucher item while the shop
+// has any active voucher. A voucher sold through the item is never a sale
+// line (ut-docs#4214) and carries no item id, so the guard is shop-wide.
+// Takes the item id once. obsoleteItemsPredicate carries the same clause.
+const itemOpenVouchersSQL = `
+SELECT EXISTS (SELECT 1 FROM items WHERE id = ? AND item_type = 'gift_voucher')
+   AND EXISTS (SELECT 1 FROM vouchers WHERE status = 'active')`
+
 // itemParkedSQL: a held (parked) sale or open tab, live or archived, with a
 // line for the item or one of its variants — the same payload match
 // obsoleteItemsPredicate uses. Takes the item id four times.
@@ -104,6 +115,13 @@ SELECT EXISTS (SELECT 1 FROM held_sales WHERE payload LIKE '%"item_id":"' || ? |
 // cleanup's own rule, so the two delete paths can never disagree about
 // what is safe to remove.
 func (r *POSRepo) DeleteUnusedItem(ctx context.Context, itemID string) (ItemDeleteResult, error) {
+	return r.deleteUnusedItem(ctx, itemID, nil)
+}
+
+// deleteUnusedItem is DeleteUnusedItem with an optional precondition run
+// inside the same write transaction, after the item is loaded and before
+// any use check: a non-nil error from it aborts with nothing changed.
+func (r *POSRepo) deleteUnusedItem(ctx context.Context, itemID string, pre func(*sql.Tx) error) (ItemDeleteResult, error) {
 	var res ItemDeleteResult
 	itemID = strings.TrimSpace(itemID)
 	if itemID == "" {
@@ -114,13 +132,41 @@ func (r *POSRepo) DeleteUnusedItem(ctx context.Context, itemID string) (ItemDele
 		return res, fmt.Errorf("delete item: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if res, err = deleteUnusedItemTx(ctx, tx, itemID, pre); err != nil || res.AlreadyDeleted {
+		return res, err
+	}
+	if err := tx.Commit(); err != nil {
+		return res, fmt.Errorf("delete item: commit: %w", err)
+	}
+	return res, nil
+}
 
+// DeleteUnusedItemTx is DeleteUnusedItem inside the caller's transaction
+// (the cloud catalogue pull's tombstone rule, ADR-0162 §4, ut-docs#4463):
+// the same use checks, the same *ItemInUseError refusal with nothing
+// changed. The caller checks the in-memory baskets first, as
+// DeleteUnusedItem's do.
+func (r *POSRepo) DeleteUnusedItemTx(ctx context.Context, tx *sql.Tx, itemID string) (ItemDeleteResult, error) {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return ItemDeleteResult{}, errors.New("missing id")
+	}
+	return deleteUnusedItemTx(ctx, tx, itemID, nil)
+}
+
+func deleteUnusedItemTx(ctx context.Context, tx *sql.Tx, itemID string, pre func(*sql.Tx) error) (ItemDeleteResult, error) {
+	var res ItemDeleteResult
 	if err := tx.QueryRowContext(ctx, `SELECT name FROM items WHERE id = ?`, itemID).Scan(&res.Name); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			res.AlreadyDeleted = true
 			return res, nil
 		}
 		return res, fmt.Errorf("delete item: load: %w", err)
+	}
+	if pre != nil {
+		if err := pre(tx); err != nil {
+			return res, err
+		}
 	}
 	var sales int64
 	if err := tx.QueryRowContext(ctx, itemSalesCountSQL, itemID, itemID, itemID, itemID).Scan(&sales); err != nil {
@@ -137,6 +183,7 @@ func (r *POSRepo) DeleteUnusedItem(ctx context.Context, itemID string) (ItemDele
 		{itemStockHistorySQL, 6, ItemUseStockHistory},
 		{`SELECT EXISTS (SELECT 1 FROM shortcut_buttons WHERE item_id = ?)`, 1, ItemUseQuickButton},
 		{itemParkedSQL, 4, ItemUseOpenBasket},
+		{itemOpenVouchersSQL, 1, ItemUseOpenVouchers},
 	} {
 		args := make([]any, c.n)
 		for i := range args {
@@ -170,9 +217,6 @@ func (r *POSRepo) DeleteUnusedItem(ctx context.Context, itemID string) (ItemDele
 		// The checks above passed, so the cleanup rule only disagrees if it
 		// grew a clause they lack: refuse rather than guess.
 		return res, &ItemInUseError{Reason: ItemUseStockHistory}
-	}
-	if err := tx.Commit(); err != nil {
-		return res, fmt.Errorf("delete item: commit: %w", err)
 	}
 	return res, nil
 }

@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test';
+import * as path from 'path';
 
 // A fixed instant (RFC3339, UTC) passed to both throwaway tills as
 // UT_DOCS_SHOTS_NOW so internal/clock.Now pins "now" for the run — the one
@@ -13,7 +14,21 @@ const DOCS_SHOTS_NOW = '2026-01-02T15:04:05Z';
 // roomy disk, so the host's free space never reaches a screenshot as the
 // "Storage almost full" chip. Like UT_DOCS_SHOTS_NOW, set ONLY here, never
 // in run-till*.sh, so the real e2e suite keeps the live probe.
-const DOCS_SHOTS_ENV = { UT_DOCS_SHOTS_NOW: DOCS_SHOTS_NOW, UT_DOCS_SHOTS_DISK_ROOMY: '1' };
+//
+// UT_DOCS_SHOTS_SEED_SALES makes run-till.sh also run e2e/seed_docs_sales:
+// three completed sales + two invoices at FIXED December-2025 dates
+// (ut-docs#359), so the `reports` and `invoices` topics show real data. Like
+// the two above, set ONLY here: the e2e suite's tills stay sale-free. The
+// screenshots address that fixed window through pinnedQuery in
+// tests-docs/docs-shots.spec.ts.
+const DOCS_SHOTS_ENV = {
+  // The server renders dates in time.Local; pin it so a regenerating machine
+  // in any timezone (e.g. UTC+13) prints the same dates as CI (ut-docs#359).
+  TZ: 'UTC',
+  UT_DOCS_SHOTS_NOW: DOCS_SHOTS_NOW,
+  UT_DOCS_SHOTS_DISK_ROOMY: '1',
+  UT_DOCS_SHOTS_SEED_SALES: '1',
+};
 
 // The manual's screenshot harness (`make docs-shots`) — captures every routed
 // help topic at 1024×600 in every shipped locale into web/help/img/.
@@ -147,6 +162,11 @@ export default defineConfig({
             '--default-tile-width=1024',
             '--default-tile-height=1024',
           ],
+          // ut-docs#4407: the app ships no webfont, so pin which system font
+          // its stack resolves to — Inter, via this harness's own fontconfig
+          // (system config + Inter aliases), never the machine's /etc/fonts.
+          // tests-docs/lib.js's font check fails the run if it didn't take.
+          env: { ...process.env, FONTCONFIG_FILE: path.join(__dirname, 'fontconfig', 'fonts.conf') },
           // Set by scripts/docs-shots.sh only when resolve-chromium.sh found
           // a pre-installed browser worth reusing (ut-docs#622) — unset (and
           // so this key is omitted) on any machine that ran the normal

@@ -139,8 +139,12 @@ ALLOWED_WRITERS=(
   "internal/data/pos_repo.go:CleanupObsoleteItems"
   # ut-docs#3317: the delete_item directive's one-item twin of the cleanup
   # (deletes the gone item's own rows only); its caller cloudDeleteItem is
-  # requirePrimaryDirective-gated.
-  "internal/data/item_delete_repo.go:DeleteUnusedItem"
+  # requirePrimaryDirective-gated. ut-docs#4399's import retire of the
+  # setup-seeded voucher item shares it; /api/import refuses on a replica.
+  # ut-docs#4463 moved the statements into deleteUnusedItemTx (same writer)
+  # so the cloud catalogue pull's tombstone rule can share it; the pull
+  # runs on the main till only (cloudsync's isMainTill gate).
+  "internal/data/item_delete_repo.go:deleteUnusedItemTx"
   # Single-demo-item removal mirrors remove_demo.sql's cleanup (ADR-0090).
   "internal/data/demo_seed_repo.go:RemoveDemoItem"
   # ut-docs#2314: execer-based twins of the append pair, sharing the

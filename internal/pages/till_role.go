@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -65,6 +66,26 @@ func ownTillRole(ctx context.Context, d *common.Deps) string {
 		}
 	}
 	return data.TillRoleAdditional
+}
+
+// mainTillHostPort is the host[:port] of the main till's URL, scheme and
+// path stripped, for display ("192.168.1.10:8080"). An unparseable value is
+// returned trimmed rather than hidden.
+func mainTillHostPort(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if u, err := url.Parse(raw); err == nil && u.Host != "" {
+		return u.Host
+	}
+	// No scheme: keep only the authority — drop any path and any
+	// "user:pass@" so a malformed setting never puts credentials on screen.
+	host := strings.TrimPrefix(strings.TrimPrefix(raw, "https://"), "http://")
+	if i := strings.IndexAny(host, "/?#"); i >= 0 {
+		host = host[:i]
+	}
+	if i := strings.LastIndex(host, "@"); i >= 0 {
+		host = host[i+1:]
+	}
+	return host
 }
 
 // validDisplayMode reports whether v is a device profile a generic setter

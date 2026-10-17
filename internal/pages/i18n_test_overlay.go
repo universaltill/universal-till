@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/plugins"
 )
 
@@ -50,8 +51,8 @@ func readTestI18nOverlays(dir string) (map[string]map[string]string, error) {
 // files into EVERY set of overlays the manager publishes, then forwards the
 // merged result to the real translator.
 //
-// This wrapper (rather than a one-shot config.I18n.SetOverlays call after
-// pm.SetLocalizer) is load-bearing, not defensive: SetOverlays atomically
+// This wrapper (rather than a one-shot config.I18n.SetPluginLocales call after
+// pm.SetLocalizer) is load-bearing, not defensive: SetPluginLocales atomically
 // REPLACES every overlay in one call, and the plugin manager re-publishes
 // its own overlays from scratch on every Manager.Reload — which
 // Deps.ReloadPlugins triggers on any plugin lifecycle change AND on two
@@ -84,12 +85,15 @@ func newTestI18nOverlayLocalizer(base plugins.Localizer, dir string) (*testI18nO
 	return &testI18nOverlayLocalizer{base: base, extra: extra}, nil
 }
 
-// SetOverlays merges the test overlays over whatever the plugin manager
-// published and forwards the result. The incoming map is never mutated — it
-// belongs to the caller.
-func (l *testI18nOverlayLocalizer) SetOverlays(overlays map[string]map[string]string) {
-	merged := make(map[string]map[string]string, len(overlays)+len(l.extra))
-	for locale, m := range overlays {
+// SetPluginLocales merges the test overlays over the stale first-party
+// layer the plugin manager published — the highest plugin layer that still
+// loses to the built-in locale files, so the test overlay beats every
+// installed language pack (none carries a bundle.json yet) and every
+// third-party plugin — then forwards the result. The incoming maps are never
+// mutated — they belong to the caller.
+func (l *testI18nOverlayLocalizer) SetPluginLocales(pl config.PluginLocales) {
+	merged := make(map[string]map[string]string, len(pl.FirstPartyStale)+len(l.extra))
+	for locale, m := range pl.FirstPartyStale {
 		cp := make(map[string]string, len(m))
 		for k, v := range m {
 			cp[k] = v
@@ -104,5 +108,6 @@ func (l *testI18nOverlayLocalizer) SetOverlays(overlays map[string]map[string]st
 			merged[locale][k] = v
 		}
 	}
-	l.base.SetOverlays(merged)
+	pl.FirstPartyStale = merged
+	l.base.SetPluginLocales(pl)
 }

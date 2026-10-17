@@ -183,9 +183,18 @@ func isTaxRateOverridesKey(key string) bool {
 // Second adopter (ut-docs#3126): the AI plugin's plain-text image_model,
 // when its stored value is set but off the licence-checked allow-list
 // (bgremove.ImageModelAllowed — rembg's bria-rmbg default among them). Resolution
-// turns background removal off for such a value; the generic editor has no
+// leaves the shop's own service unused for such a value and the till on its
+// built-in background removal (ut-docs#4137, #4448); the generic editor has no
 // per-plugin save-time validation, so this hint says why (never a modal).
 // value is the stored plain value; the resolver trims it the same way.
+//
+// Third adopter (ut-docs#4095): the AI plugin's plain-text image_endpoint,
+// when its stored value is set but not a plain http(s) URL
+// (plugins.ValidEndpointURL, the rule bgremove applies at resolve time). The
+// setting is deliberately not `type: "endpoint"` (that would grant the WASM
+// plugin http:lan egress to the rembg host), so save never checks it; such a
+// value leaves the shop's own service unused and the till on its built-in
+// background removal, and this hint says why.
 func settingNoticeKey(pluginID, key, value string) string {
 	if pluginID != AIPluginID {
 		return ""
@@ -196,6 +205,10 @@ func settingNoticeKey(pluginID, key, value string) string {
 	case "image_model":
 		if v := strings.TrimSpace(value); v != "" && !bgremove.ImageModelAllowed(v) {
 			return "plugins.settings.ai.image_model_unsupported"
+		}
+	case "image_endpoint":
+		if v := strings.TrimSpace(value); v != "" && !plugins.ValidEndpointURL(v) {
+			return "plugins.settings.ai.image_endpoint_invalid"
 		}
 	}
 	return ""

@@ -117,6 +117,21 @@
     return el.form || (el.closest ? el.closest('form') : null);
   }
   function xhrOf(ctx) { return ctx.detail && ctx.detail.xhr; }
+  // Persistent invalid state for a field and the hint it is described by;
+  // cleared on the field's first change that makes it valid.
+  function markInvalid(n) {
+    var hint = byId(n.getAttribute('aria-describedby'));
+    n.classList.add('field-invalid');
+    if (hint) hint.classList.add('field-invalid');
+    if (n.utInvalidWired) return;
+    n.utInvalidWired = true;
+    n.addEventListener('change', function () {
+      if (!n.validity.valid) return;
+      n.classList.remove('field-invalid');
+      var h = byId(n.getAttribute('aria-describedby'));
+      if (h) h.classList.remove('field-invalid');
+    });
+  }
   function header(ctx, name) {
     var x = xhrOf(ctx);
     try { return (x && x.getResponseHeader(name)) || ''; } catch (e) { return ''; }
@@ -361,6 +376,18 @@
       if (!n) return;
       n.value = n.value.trim();
       if (!n.reportValidity()) { preventDefault(ctx); return false; }
+    },
+    // ut-docs#4507: the same check for a field that needs no trimming (the
+    // Tills page's replace-data tick box): `required` speaks, an invalid
+    // field cancels the htmx request. Chain it after trim-validate.
+    // ut-docs#4560: the native bubble alone may never show (WebKitGTK
+    // kiosks), cancelling with nothing visible — so also mark the field and
+    // the hint its aria-describedby names with .field-invalid until it
+    // turns valid (the till-name field's persistent hint, ut-docs#1548).
+    'validate': function (ctx, id) {
+      var n = byId(id);
+      if (!n) return;
+      if (!n.reportValidity()) { markInvalid(n); preventDefault(ctx); return false; }
     },
 
     // ---- htmx ----
