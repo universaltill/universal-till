@@ -98,10 +98,14 @@ func cleanDescription(s string) (string, bool) {
 		return "", false
 	}
 	for _, r := range s {
-		if r == '\n' || r == '\r' || r == '\t' {
+		switch r {
+		// Line breaks and tabs; ZWNJ/ZWJ (Persian spelling, emoji); the
+		// soft hyphen (German supplier text); LRM/RLM (Arabic/Hebrew
+		// text). Bidi overrides and zero-width spaces stay refused.
+		case '\n', '\r', '\t', '\u200c', '\u200d', '\u00ad', '\u200e', '\u200f':
 			continue
 		}
-		if unicode.IsControl(r) || (unicode.Is(unicode.Cf, r) && r != '\u200c' && r != '\u200d') {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return "", false
 		}
 	}

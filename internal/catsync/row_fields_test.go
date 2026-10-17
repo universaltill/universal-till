@@ -102,6 +102,7 @@ func TestParseRow_DescriptionAndNetQuantityIssues(t *testing.T) {
 		{"too long", fmt.Sprintf(`"description":%q`, strings.Repeat("d", descriptionMaxRunes+1)), IssueDescriptionInvalid},
 		{"control char", `"description":"bell\u0007"`, IssueDescriptionInvalid},
 		{"bidi override", `"description":"abc‮def"`, IssueDescriptionInvalid},
+		{"zero-width space", `"description":"zero\u200bwidth"`, IssueDescriptionInvalid},
 		{"value only", `"net_quantity_value":250`, IssueNetQuantityInvalid},
 		{"unit only", `"net_quantity_unit":"g"`, IssueNetQuantityInvalid},
 		{"zero", `"net_quantity_value":0,"net_quantity_unit":"g"`, IssueNetQuantityInvalid},
@@ -117,6 +118,7 @@ func TestParseRow_DescriptionAndNetQuantityIssues(t *testing.T) {
 	}
 	ok := []string{
 		`"description":"line one\nline two\ttabbed"`,
+		`"description":"Kaffee\u00adbohnen, \u200fمرحبا\u200e, می\u200cخواهم"`, // soft hyphen, RLM/LRM, ZWNJ
 		fmt.Sprintf(`"description":%q`, strings.Repeat("d", descriptionMaxRunes)),
 		`"description":"   "`, // blank = absent
 		`"net_quantity_value":6,"net_quantity_unit":"ea"`,

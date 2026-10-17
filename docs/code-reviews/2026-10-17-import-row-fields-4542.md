@@ -37,6 +37,7 @@ was refused (out of usage credits), so Sonnet stood in, per MODEL-ROUTING.md.
 | 2 | major (ut-cloud) | The cloud's `CheckDescription` accepted control characters; the till refuses them. | Fixed in ut-cloud with the same character rule as catsync. |
 | 3 | minor | An explicit `age_restricted:false` from a plugin lifts an ID check. | Accepted: a present value is authoritative, the same as `active`. It is now documented in `reference/plugin-host-functions.md`. |
 | 4 | minor | The till's net quantity has no upper bound; the cloud caps it at MaxInt32. | Accepted. This was already documented as one of the cloud's stricter rules. |
+| 6 | low-medium (both repos, second-pass review) | Refusing every Unicode Cf character also refused the soft hyphen (German supplier text) and LRM/RLM (Arabic/Hebrew text), so the whole row was lost. | Fixed on both sides: U+00AD, U+200E and U+200F are allowed. Bidi overrides and zero-width spaces stay refused. A test case was added for each. |
 | 5 | nit | The cloud's description refusal reuses `invalid_name`. | This predates this change and is left as it is. |
 
 **Till side:** the reviewer found no defect in catsync. It checked:
