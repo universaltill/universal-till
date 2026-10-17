@@ -688,7 +688,7 @@ till-born store's block omits both.
   Replicas follow the main till's `store.currency` through the primary-wins
   settings pull (ADR-0011 §5).
 
-## Cloud catalogue pull — cloud_links (ut-docs#4463, ut-docs#4491, ut-docs#4521, ADR-0162 §4)
+## Cloud catalogue pull — cloud_links (ut-docs#4463, ut-docs#4491, ut-docs#4521, ut-docs#4522, ADR-0162 §4)
 
 On a paid store whose catalogue the cloud masters, the **main till** pulls the
 cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
@@ -708,7 +708,9 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   cloud-created row's local id is its `cloud_id`. `gen` is the resync
   generation that last saw the row. `cloud_apply_failures(entity, cloud_id,
   version, reason, at)` keeps the latest refusal per cloud row until a later
-  version of it applies.
+  version of it applies. `cloud_retired(entity, local_id, cloud_id,
+  retired_at, PK(entity, local_id))` (migration 083, ut-docs#4522) lists
+  option sets a tombstone could only retire; see Tombstones.
 - **State (settings, per-till `cloudsync.` family).**
   `cloudsync.catalog.cursor` (highest version fully applied),
   `cloudsync.catalog.applier_version` (a stored value below the code's
@@ -730,7 +732,13 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   whole) is applied in dependency order, not the feed's kind/`cloud_id`
   order: tax codes, then modifier groups, then option sets, then categories
   with a parent named in the group before its children, then items, then
-  item variants, then item barcodes, then every other kind. The order is settled over
+  item variants, then option-set tombstones (so a set deleted with its
+  last use is unused by then, ut-docs#4522), then item barcodes, then every
+  other kind. A row refused on its first attempt is applied once more at the
+  end of its group and only then recorded: an option or value moved between
+  groups or sets in one cloud transaction is refused by whichever side
+  applies first (ut-docs#4522). The cursor moves to a version only once all
+  its rows, retries included, are applied. The order is settled over
   the whole group before it is cut into chunks. A parent cycle falls back to
   feed order and is refused by the normal validation. A reference
   (`parent_cloud_id`, `category_cloud_id`, `tax_code_cloud_id`, a variant's or
@@ -814,8 +822,13 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   (`DeleteCategoryMoving`); a tax code is deactivated. A modifier group is
   deleted with `delete_modifier_group`'s cascade (options, item and category
   links, opt-outs; past sales keep their snapshots). An option set is deleted
-  when no active item has it applied, else deactivated
-  (`delete_option_set`'s rule). A variant is deactivated, never deleted; a
+  when no active item has it applied (`delete_option_set`'s rule), else
+  retired (ut-docs#4522): deactivated and renamed to free its UNIQUE name
+  (`Size (1a2b3c4d)`; retiring again keeps the name), so a later cloud set of
+  that name applies, and recorded in `cloud_retired`. Every chunk commit
+  retries those deletes: a set no active item uses any more is deleted
+  (audit `retired: true`); one reactivated on the till, or already gone, only
+  loses its record. A variant is deactivated, never deleted; a
   barcode is removed (one never pulled is a no-op). The link is removed. A resync's prune uses the
   same rules for every kind.
 - **409** `catalog_master_till` / `catalog_adopting` and **401/403** (e.g.

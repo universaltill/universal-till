@@ -481,6 +481,61 @@ func (r *OptionSetRepo) DeleteOptionSetIfUnusedTx(ctx context.Context, tx *sql.T
 	return deleteOptionSetIfUnusedTx(ctx, tx, id)
 }
 
+// RetireOptionSetTx deactivates a set and frees its name for a new set
+// (ut-docs#4522): the cloud pull's tombstone of a set an active item still
+// uses. option_sets.name is UNIQUE across inactive rows too, so a retired
+// set keeping its name would refuse a later set of that name. The new name
+// is the old one plus the id ("Size (1a2b3c4d)"; the whole id if that is
+// taken) — data, not UI text, so no locale applies. Retiring a retired set
+// keeps its name. An unknown id is ErrOptionSetNotFound.
+func (r *OptionSetRepo) RetireOptionSetTx(ctx context.Context, tx *sql.Tx, id string) error {
+	id = strings.TrimSpace(id)
+	var name string
+	err := tx.QueryRowContext(ctx, `SELECT name FROM option_sets WHERE id = ?`, id).Scan(&name)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return ErrOptionSetNotFound
+	case err != nil:
+		return fmt.Errorf("retire option set: load: %w", err)
+	}
+	short := id
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	freed := name + " (" + id + ")"
+	switch {
+	case strings.HasSuffix(name, " ("+short+")") || strings.HasSuffix(name, " ("+id+")"):
+		// Already retired (a resync's full pull re-sends the tombstone).
+		freed = name
+	case short != id:
+		taken, err := rowExistsArgs(ctx, tx, `SELECT 1 FROM option_sets WHERE name = ? AND id <> ?`, name+" ("+short+")", id)
+		if err != nil {
+			return fmt.Errorf("retire option set: name check: %w", err)
+		}
+		if !taken {
+			freed = name + " (" + short + ")"
+		}
+	}
+	off := false
+	_, err = saveOptionSetTx(ctx, tx, OptionSetSave{ID: id, Name: &freed, Active: &off}, nil)
+	return err
+}
+
+// OptionSetActiveTx reports whether a set exists and is active, in tx —
+// the cloud pull's retired-set retry deletes only a set still inactive
+// (ut-docs#4522: a set the shop reactivated is its own again).
+func (r *OptionSetRepo) OptionSetActiveTx(ctx context.Context, tx *sql.Tx, id string) (active, found bool, err error) {
+	var a int
+	err = tx.QueryRowContext(ctx, `SELECT is_active FROM option_sets WHERE id = ?`, strings.TrimSpace(id)).Scan(&a)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return false, false, nil
+	case err != nil:
+		return false, false, fmt.Errorf("option set active: %w", err)
+	}
+	return a == 1, true, nil
+}
+
 func deleteOptionSetIfUnusedTx(ctx context.Context, tx *sql.Tx, id string) (bool, error) {
 	inUse, err := rowExists(ctx, tx, `SELECT 1 FROM item_option_sets ios JOIN items i ON i.id = ios.item_id WHERE ios.option_set_id = ? AND i.is_active = 1 LIMIT 1`, id)
 	if err != nil {

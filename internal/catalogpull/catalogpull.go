@@ -20,8 +20,17 @@
 //   - Within one version group (one cloud transaction, which always
 //     arrives whole) rows are applied in dependency order — tax codes,
 //     modifier groups, option sets, categories parents-first, items,
-//     variants, barcodes, then the rest — not the feed's kind/cloud_id order, so references inside
-//     the group resolve.
+//     variants, option-set tombstones, barcodes, then the rest — not the
+//     feed's kind/cloud_id order, so references inside the group resolve.
+//     A row refused on its first attempt is applied once more at the end
+//     of its group, and only then recorded as refused: an option or value
+//     moved between groups or sets in one transaction is refused by
+//     whichever side applies first (ut-docs#4522).
+//   - An option set tombstoned while an active item still uses it is
+//     retired — deactivated under a freed name, so a later cloud set of
+//     that name applies — and recorded in cloud_retired; every chunk
+//     commit retries its delete, so it is deleted once unused
+//     (ut-docs#4522).
 //   - Every row gets its own savepoint: a row the till refuses (price
 //     ceiling, palette, unknown parent, …) rolls back alone, keeps the
 //     till's previous state, is upserted into cloud_apply_failures and
@@ -465,6 +474,9 @@ func (r *runner) applyPage(ctx context.Context, p Page, st *state, res *Result) 
 		return nil
 	}
 	commit := func(cursor int64) error {
+		if err := r.retryRetired(ctx, tx); err != nil {
+			return fmt.Errorf("catalogpull: retired: %w", err)
+		}
 		if err := r.settings.SetTx(ctx, tx, KeyCursor, itoa(cursor)); err != nil {
 			return fmt.Errorf("catalogpull: store cursor: %w", err)
 		}
@@ -491,26 +503,67 @@ func (r *runner) applyPage(ctx context.Context, p Page, st *state, res *Result) 
 	}
 	rows := dependencyOrder(p.Rows)
 	done, n := st.cursor, 0
-	for i, row := range rows {
+	// step applies one row; then, when the row ends its version group
+	// (no retry left), the cursor may move to that version, and a full
+	// chunk commits — unless the row ends the page (the final commit below).
+	step := func(row Row, final bool) (bool, error) {
 		if tx == nil {
 			if err := begin(); err != nil {
-				return err
+				return false, err
 			}
 		}
-		if err := r.applyRow(ctx, tx, row, st.gen, res); err != nil {
-			return err
+		retry, err := r.applyRow(ctx, tx, row, st.gen, res, final)
+		if err != nil {
+			return false, err
 		}
 		n++
-		last := i == len(rows)-1
-		if last || rows[i+1].Version != row.Version {
-			done = row.Version
+		return retry, nil
+	}
+	settle := func(groupEnd, pageEnd bool, version int64) error {
+		if groupEnd {
+			done = version
 		}
-		if n >= commitChunk && !last {
+		if n >= commitChunk && !pageEnd {
 			if err := commit(done); err != nil {
 				return err
 			}
 			n = 0
 		}
+		return nil
+	}
+	for i := 0; i < len(rows); {
+		j := i
+		for j < len(rows) && rows[j].Version == rows[i].Version {
+			j++
+		}
+		// A row refused on its first attempt is applied once more after the
+		// rest of its version group (ut-docs#4522): an option or value
+		// moved between groups or sets in one cloud transaction is refused
+		// by whichever side comes first until the other side releases it.
+		var retry []Row
+		for k := i; k < j; k++ {
+			again, err := step(rows[k], false)
+			if err != nil {
+				return err
+			}
+			if again {
+				retry = append(retry, rows[k])
+			}
+			end := k == j-1 && len(retry) == 0
+			if err := settle(end, end && j == len(rows), rows[k].Version); err != nil {
+				return err
+			}
+		}
+		for k, row := range retry {
+			if _, err := step(row, true); err != nil {
+				return err
+			}
+			end := k == len(retry)-1
+			if err := settle(end, end && j == len(rows), row.Version); err != nil {
+				return err
+			}
+		}
+		i = j
 	}
 	if tx == nil {
 		if err := begin(); err != nil {
@@ -524,8 +577,10 @@ func (r *runner) applyPage(ctx context.Context, p Page, st *state, res *Result) 
 // cloud transaction, which arrive whole and contiguous) reordered so a
 // row's references within the group are applied before it: tax codes,
 // then modifier groups, then option sets, then categories parents-first,
-// then items, then item variants, then item barcodes, then every other
-// kind. The server orders a group by kind
+// then items, then item variants, then option-set tombstones, then item
+// barcodes, then every other kind. An option-set tombstone follows the
+// items so a set deleted together with its last use is unused by then and
+// deleted, not retired (ut-docs#4522). The server orders a group by kind
 // then cloud_id (ut-cloud internal/catalogfeed/kinds.go), so an item
 // written with its tax code, or with a modifier group or option set it
 // names, or a child category whose cloud_id sorts before its new
@@ -550,7 +605,7 @@ func orderGroup(group []Row) []Row {
 	if len(group) < 2 {
 		return group
 	}
-	var tax, groups, sets, cats, items, variants, barcodes, other []Row
+	var tax, groups, sets, cats, items, variants, setTombs, barcodes, other []Row
 	for _, r := range group {
 		switch r.Kind {
 		case kindTaxCode:
@@ -558,7 +613,11 @@ func orderGroup(group []Row) []Row {
 		case kindModifierGroup:
 			groups = append(groups, r)
 		case kindOptionSet:
-			sets = append(sets, r)
+			if r.Deleted {
+				setTombs = append(setTombs, r)
+			} else {
+				sets = append(sets, r)
+			}
 		case kindCategory:
 			cats = append(cats, r)
 		case kindItem:
@@ -578,6 +637,7 @@ func orderGroup(group []Row) []Row {
 	out = append(out, parentsFirst(cats)...)
 	out = append(out, items...)
 	out = append(out, variants...)
+	out = append(out, setTombs...)
 	out = append(out, barcodes...)
 	return append(out, other...)
 }

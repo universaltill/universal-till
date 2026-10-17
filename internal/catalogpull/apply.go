@@ -44,11 +44,13 @@ const maxReasonRunes = 300
 
 // applyRow applies one row inside its own savepoint of tx. A refusal is
 // recorded and is not an error; an error return is fatal for the run (the
-// chunk rolls back).
-func (r *runner) applyRow(ctx context.Context, tx *sql.Tx, row Row, gen int64, res *Result) error {
+// chunk rolls back). On a first attempt (final false) a refusal is not
+// recorded: retry reports it, and applyPage applies the row once more at
+// the end of its version group (ut-docs#4522), where it is final.
+func (r *runner) applyRow(ctx context.Context, tx *sql.Tx, row Row, gen int64, res *Result, final bool) (retry bool, err error) {
 	if !appliedKinds[row.Kind] {
 		res.Skipped++
-		return nil
+		return false, nil
 	}
 	cloudID, idErr := canonicalID(row.CloudID)
 	if idErr != nil {
@@ -57,34 +59,36 @@ func (r *runner) applyRow(ctx context.Context, tx *sql.Tx, row Row, gen int64, r
 		// cloud would refuse the whole report), so the cloud does not hear
 		// of this one.
 		res.Refused++
-		return r.recordRefusal(ctx, tx, row.Kind, boundID(row.CloudID), row.Version, idErr)
+		return false, r.recordRefusal(ctx, tx, row.Kind, boundID(row.CloudID), row.Version, idErr)
 	}
 	row.CloudID = cloudID
 	var photos []replacedPhoto
-	err := data.WithSavepoint(ctx, tx, "cloud_pull_row", func() error {
+	err = data.WithSavepoint(ctx, tx, "cloud_pull_row", func() error {
 		var err error
 		photos, err = r.apply(ctx, tx, row, gen)
 		return err
 	})
 	switch {
 	case isInfra(ctx, err):
-		return fmt.Errorf("catalogpull: %w", errors.Join(err, ctx.Err()))
+		return false, fmt.Errorf("catalogpull: %w", errors.Join(err, ctx.Err()))
+	case err != nil && !final:
+		return true, nil
 	case err != nil:
 		res.Refused++
 		logging.L().Warnf("catalogpull: %s %s version %d refused, the till keeps its previous version: %s", row.Kind, row.CloudID, row.Version, reason(err))
 		if ferr := r.recordRefusal(ctx, tx, row.Kind, row.CloudID, row.Version, err); ferr != nil {
-			return ferr
+			return false, ferr
 		}
 		// The row still exists in the cloud: a resync must not prune it.
 		if terr := r.links.Touch(ctx, tx, row.Kind, row.CloudID, gen); terr != nil {
-			return fmt.Errorf("catalogpull: %w", terr)
+			return false, fmt.Errorf("catalogpull: %w", terr)
 		}
-		return nil
+		return false, nil
 	}
 	res.Applied++
 	res.Changed = true
 	r.photos = append(r.photos, photos...)
-	return nil
+	return false, nil
 }
 
 // infraError marks a failure that is not the till refusing the row — a
@@ -347,8 +351,9 @@ func kindLabel(kind string) string {
 //     group's cascade to its options, item/category links and opt-outs;
 //     past sales keep their sale_line_modifiers snapshots);
 //   - option set: deleted when no active item has it applied
-//     (DeleteOptionSetIfUnusedTx, delete_option_set's rule), else
-//     deactivated;
+//     (DeleteOptionSetIfUnusedTx, delete_option_set's rule), else retired
+//     (RetireOptionSetTx: deactivated under a freed name) and recorded in
+//     cloud_retired, whose deletes retryRetired re-runs (ut-docs#4522);
 //   - item variant: deactivated (DeactivateVariantTx) — a variant is never
 //     deleted (save_item_variant's rule; sales and stock reference it);
 //   - item barcode: removed from the owner its link stored
@@ -420,16 +425,22 @@ func (r *runner) tombstone(ctx context.Context, tx *sql.Tx, kind, cloudID, local
 		deleted, err := r.sets.DeleteOptionSetIfUnusedTx(ctx, tx, local)
 		switch {
 		case errors.Is(err, data.ErrOptionSetInUse):
-			off := false
-			_, err := r.sets.SaveOptionSetTx(ctx, tx, data.OptionSetSave{ID: local, Active: &off})
-			if err != nil {
+			if err := r.sets.RetireOptionSetTx(ctx, tx, local); err != nil {
+				return err
+			}
+			if err := r.links.RecordRetired(ctx, tx, kindOptionSet, local, cloudID); err != nil {
 				return err
 			}
 			what = "deactivated"
 		case err != nil:
 			return err
-		case deleted:
-			what = "deleted"
+		default:
+			if err := r.links.DropRetired(ctx, tx, kindOptionSet, local); err != nil {
+				return err
+			}
+			if deleted {
+				what = "deleted"
+			}
 		}
 	case kindItemVariant:
 		off, err := r.cat.DeactivateVariantTx(ctx, tx, local)
@@ -1120,4 +1131,53 @@ func (r *runner) applyBarcode(ctx context.Context, tx *sql.Tx, cloudID, prev str
 		return "", false, err
 	}
 	return local, created, nil
+}
+
+// retryRetired re-runs the delete of every option set a tombstone could
+// only retire (ut-docs#4522): the feed never names a tombstoned set again,
+// so without this a set its last item later drops would be orphaned. Run
+// in each chunk's transaction before the cursor is written. A set still in
+// use stays retired; one already gone, or reactivated on the till (the
+// shop took it back), just loses its record — a retired set is deleted
+// only while still inactive. A failure other than infrastructure is logged
+// and the record kept for the next commit: bookkeeping never wedges the
+// cursor.
+func (r *runner) retryRetired(ctx context.Context, tx *sql.Tx) error {
+	retired, err := r.links.Retired(ctx, tx, kindOptionSet)
+	if err != nil {
+		return err
+	}
+	for _, rt := range retired {
+		err := data.WithSavepoint(ctx, tx, "cloud_pull_retired", func() error {
+			return r.retryRetiredSet(ctx, tx, rt)
+		})
+		switch {
+		case isInfra(ctx, err):
+			return err
+		case err != nil:
+			logging.L().Warnf("catalogpull: retired option set %s (cloud %s) not deleted, retried on the next commit: %s", rt.LocalID, rt.CloudID, reason(err))
+		}
+	}
+	return nil
+}
+
+func (r *runner) retryRetiredSet(ctx context.Context, tx *sql.Tx, rt data.CloudRetired) error {
+	active, found, err := r.sets.OptionSetActiveTx(ctx, tx, rt.LocalID)
+	if err != nil {
+		return err
+	}
+	if found && !active {
+		deleted, err := r.sets.DeleteOptionSetIfUnusedTx(ctx, tx, rt.LocalID)
+		switch {
+		case errors.Is(err, data.ErrOptionSetInUse):
+			return nil
+		case err != nil:
+			return err
+		case deleted:
+			if err := r.audit(ctx, tx, kindOptionSet, rt.LocalID, "deleted", map[string]any{"cloud_id": rt.CloudID, "retired": true}); err != nil {
+				return err
+			}
+		}
+	}
+	return r.links.DropRetired(ctx, tx, kindOptionSet, rt.LocalID)
 }
