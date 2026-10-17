@@ -21,3 +21,4 @@ Owner-facing "What's new" notes for v0.34.9 in en/de/tr/ar/fa. There have been 6
 
 ## CI follow-up
 - `pages-shuffle (seed 22)` failed `TestSettingsPage_TillsCardShowsRoleAndMainTillAddress`. Settings → About renders the latest note, and the English bullet's literal "**This till: Main till**" matched the test's check on a joined till's page. The bullet was reworded ("the card now starts with the till's role: main till, additional till or satellite"). The full `go test -shuffle=22 ./internal/pages` now passes locally.
+- Rebased onto `main` after #2021 merged (phone order cards no longer show a blank strip). Added a Fixed bullet for it in all five locales, checked against that PR's description and its spec. The fa heading matches earlier notes ("رفع اشکال‌ها").
