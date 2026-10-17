@@ -424,9 +424,12 @@ func extractMarketplaceTarGz(archivePath, destDir string) error {
 			return err
 		}
 
-		target := filepath.Join(destDir, header.Name)
-		if !strings.HasPrefix(target, filepath.Clean(destDir)+string(os.PathSeparator)) {
-			return fmt.Errorf("illegal file path in archive: %s", header.Name)
+		target, isRoot, err := archiveEntryTarget(destDir, header.Name, header.Typeflag == tar.TypeDir)
+		if err != nil {
+			return err
+		}
+		if isRoot {
+			continue
 		}
 
 		switch header.Typeflag {
