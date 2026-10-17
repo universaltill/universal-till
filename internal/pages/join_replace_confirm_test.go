@@ -426,9 +426,9 @@ func TestSyncJoin_KeepsStagedJoinWhenConfirmedAndSaleLandsDuringJoin(t *testing.
 func TestSetupPage_JoinHasReplaceSlot(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	registerSyncAPI(mux, d)
-	req := httptest.NewRequest(http.MethodGet, "/setup", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	// ?lang=en: a first visit without it may redirect to a detected
+	// language (ut-docs#590), which depends on the machine's environment.
+	rec := getSetup(mux, "?lang=en", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /setup: %d", rec.Code)
 	}
