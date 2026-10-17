@@ -14,7 +14,8 @@ global, which is a write racing that read.
 - `internal/pages/plugin_job.go`: `pluginJobRegistry` gains a
   `wg sync.WaitGroup` that counts `startPluginJob`'s goroutines.
   `wg.Add(1)` runs before `go func()`, and `defer wg.Done()` is the
-  goroutine's first defer, so it runs last. Production behaviour is
+  goroutine's second defer, right after `RecoverAndLog`, so it still runs
+  after `cancel` and `ReleaseUploads`. Production behaviour is
   unchanged.
 - `internal/pages/plugin_job_test.go`: `drainPluginJobs(t, reg)` cancels
   the registry's running jobs, then waits (at most 5s) on `wg`. On timeout
@@ -68,3 +69,9 @@ adds a WaitGroup field and the calls that use it. So the surface hash was
 refreshed with `scripts/ci/update-docs-shots-surface-hash.sh` and committed
 with the `Docs-Shots-Unchanged: true` trailer, and no screenshots were
 regenerated.
+
+The second CI run failed `TestNoUnrecoveredGoroutines` (internal/logging).
+That test requires `defer logging.RecoverAndLog(...)` to be the first
+statement of every `go func`. `wg.Done` moved to the second defer: it
+still runs after `cancel` and `ReleaseUploads`, and still runs while a
+panic unwinds, before the recovery. The surface hash was refreshed again.

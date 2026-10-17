@@ -375,8 +375,8 @@ func startPluginJob(ctx context.Context, d *common.Deps, entry data.PageEntryRow
 
 	reg.wg.Add(1)
 	go func() {
-		defer reg.wg.Done()
 		defer logging.RecoverAndLog("pages.pluginJob")
+		defer reg.wg.Done()
 		defer cancel()
 		// Finished, failed, timed out, abandoned or panicked: the job's
 		// uploads go with it.
