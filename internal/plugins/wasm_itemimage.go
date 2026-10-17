@@ -116,7 +116,7 @@ func (r *itemImageHandles) closeAll() {
 func hostItemImageOpen(ctx context.Context, m api.Module, idPtr, idLen, rolePtr, roleLen uint32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	if !s.itemImages.countOpen() {
 		return hostErrQuota
@@ -172,7 +172,7 @@ func hostItemImageOpen(ctx context.Context, m api.Module, idPtr, idLen, rolePtr,
 func hostItemImageRead(ctx context.Context, m api.Module, h int32, dstPtr, dstCap uint32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	img, ok := s.itemImages.get(h)
 	if !ok {

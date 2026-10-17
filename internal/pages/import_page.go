@@ -58,6 +58,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 	settingsRepo := data.NewSettingsRepo(d.Db)
 	registerImportFromSystem(mux, d)
+	registerImportFromFile(mux, d)
 
 	mux.HandleFunc("GET /import", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "import_export") {
@@ -395,6 +396,18 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			}
 			defer f.Close()
 			file, fileSize = f, header.Size
+			// ADR-0164 §2 (ut-docs#4526): a fresh upload an installed
+			// file-rows entry claims (its extension and header row) is
+			// that plugin's to read — unless the operator chose the
+			// standard importer. Its preview and commit run through the
+			// plugin and catsync (import_file_rows.go); a staged commit
+			// (staged_id) is always the standard importer's own copy.
+			if !useStandardImporter(r) {
+				if entry, ok := claimingFileRowsEntry(r.Context(), d, header.Filename, f, header.Size); ok {
+					importPageFileRows(w, r, d, entry, f, header.Filename, header.Size, commit)
+					return
+				}
+			}
 		}
 		var err error
 

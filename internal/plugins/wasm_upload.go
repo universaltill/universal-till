@@ -308,7 +308,7 @@ func ReleaseUploads(pluginID string, tokens []string) {
 func hostUploadOpen(ctx context.Context, m api.Module, tokPtr, tokLen uint32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	if tokLen == 0 || tokLen > maxUploadTokenBytes {
 		return hostErrInvalid
@@ -328,7 +328,7 @@ func hostUploadOpen(ctx context.Context, m api.Module, tokPtr, tokLen uint32) in
 func hostUploadRead(ctx context.Context, m api.Module, handle int32, dstPtr, dstCap uint32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	f, ok := uploads.get(s.pluginID, handle)
 	if !ok {
@@ -362,7 +362,7 @@ func hostUploadRead(ctx context.Context, m api.Module, handle int32, dstPtr, dst
 func hostUploadClose(ctx context.Context, handle int32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	uploads.closeHandle(s.pluginID, handle)
 	return 0

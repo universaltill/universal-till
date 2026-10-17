@@ -13,14 +13,15 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
-// import_rows_submit (ADR-0161, ut-docs#4429): during an API-source
-// "import.requested.ask", the import plugin hands catalogue rows back to
-// core in batches. Core buffers them in the run's ImportRowSink and applies
+// import_rows_submit (ADR-0161, ut-docs#4429; ADR-0164 §2, ut-docs#4526):
+// during an API-source or file-rows "import.requested.ask", the import
+// plugin hands catalogue rows back to core in batches. Core buffers them in the run's ImportRowSink and applies
 // them (internal/catsync) only after the plugin answers ok. Docs:
 // architecture/wasm-runtime.md.
 //
 // Gates: the sink exists only for a hop-0, non-job "import.requested.ask"
-// raised by POST /api/data/import for an api-source entry, and only for
+// raised by POST /api/data/import (or the import page) for an api-source
+// or file-rows entry, and only for
 // the plugin it was made for (the handler resolved entry, entities and
 // grants first, like a file import). A batch for an entity the run did not
 // resolve is -2. Bounded: ImportRowsPerCall rows per call,
@@ -39,10 +40,13 @@ const (
 // ErrImportRowsCap is why a run over a cap is refused.
 var ErrImportRowsCap = errors.New("import plugin submitted more rows than an import run allows")
 
-// ImportRowSink is one API-source import run's row buffer.
+// ImportRowSink is one import run's row buffer: an API-source run's
+// (ADR-0161) or a file-rows run's (ADR-0164 §2, NewFileImportRowSink).
 type ImportRowSink struct {
 	pluginID string
 	entities map[string]bool
+	// file: a file-rows run — the ask runs in the import sandbox.
+	file bool
 
 	mu      sync.Mutex
 	rows    map[string][]json.RawMessage
@@ -58,6 +62,15 @@ func NewImportRowSink(pluginID string, entities []string) *ImportRowSink {
 	for _, e := range entities {
 		s.entities[e] = true
 	}
+	return s
+}
+
+// NewFileImportRowSink makes a file-rows run's buffer (ADR-0164 §2): the
+// same caps, and the ask it is handed to runs in the import sandbox
+// (FileImportHostFunctions only).
+func NewFileImportRowSink(pluginID string, entities []string) *ImportRowSink {
+	s := NewImportRowSink(pluginID, entities)
+	s.file = true
 	return s
 }
 
@@ -145,15 +158,15 @@ func (s *ImportRowSink) Refused() error {
 }
 
 // hostImportRowsSubmit: import_rows_submit(ptr, len) → rows accepted, or
-// -2 outside an API-source import ask / for an unresolved entity, -4 for a
+// -2 outside an API-source or file-rows import ask / for an unresolved entity, -4 for a
 // malformed batch, -5 over a cap (the run is then refused).
 func hostImportRowsSubmit(ctx context.Context, m api.Module, ptr, length uint32) int32 {
-	s, ok := stateFrom(ctx)
+	s, ok := stateFromAny(ctx)
 	if !ok {
 		return hostErrInternal
 	}
 	if s.importRows == nil {
-		logging.L().Infof("[wasm:%s] import_rows_submit denied: not inside an API-source import run", s.pluginID)
+		logging.L().Infof("[wasm:%s] import_rows_submit denied: not inside an API-source or file-rows import run", s.pluginID)
 		return hostErrDenied
 	}
 	if int64(length) > ImportBytesPerRun {

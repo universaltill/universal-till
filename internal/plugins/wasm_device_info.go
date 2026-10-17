@@ -84,7 +84,7 @@ func deviceInfoHandOut(ctx context.Context, m api.Module, s *hostState, function
 func hostDeviceIDGet(ctx context.Context, m api.Module, dstPtr, dstCap uint32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	if code := deviceInfoAllowed(ctx, s, "device_id_get"); code != 0 {
 		return code
@@ -105,7 +105,7 @@ func hostDeviceIDGet(ctx context.Context, m api.Module, dstPtr, dstCap uint32) i
 func hostDeviceLocalIPsGet(ctx context.Context, m api.Module, dstPtr, dstCap uint32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	if code := deviceInfoAllowed(ctx, s, "device_local_ips_get"); code != 0 {
 		return code
@@ -121,7 +121,7 @@ func hostDeviceLocalIPsGet(ctx context.Context, m api.Module, dstPtr, dstCap uin
 func hostDeviceTimezoneGet(ctx context.Context, m api.Module, dstPtr, dstCap uint32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	if code := deviceInfoAllowed(ctx, s, "device_timezone_get"); code != 0 {
 		return code

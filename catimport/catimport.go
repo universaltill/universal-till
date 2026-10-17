@@ -341,6 +341,37 @@ var columnSynonyms = map[string][]string{
 	"variant_id": {"variant id"},
 }
 
+// formatOnlyFields are the columnSynonyms fields read only to detect one
+// system's export or to name its variants (Square, Shopify, SumUp) — not
+// columns the standard importer reads in any catalogue file. Every other
+// field is a neutral catalogue column (NeutralHeader).
+var formatOnlyFields = map[string]bool{
+	"variation": true, "token": true, "handle": true,
+	"option1_value": true, "option2_value": true, "option3_value": true,
+	"variant_sku": true, "variant_price": true, "variant_barcode": true, "variant_stock": true,
+	"item_id": true, "variant_id": true,
+}
+
+// NeutralHeader reports whether h names a neutral catalogue column — one
+// the standard importer maps onto an ImportItem field in any file (name,
+// price, sku, barcode, category, tax, stock, …), matched the way the
+// importer matches it (case, spacing, a " [..]" or "(..)" suffix). A
+// file-rows import plugin's file_headers claim must name at least one
+// column that is not neutral (ADR-0164 §2, ut-docs#4526): a claim of
+// neutral columns only would take over ordinary catalogue files.
+func NeutralHeader(h string) bool {
+	h = foldHeader(strings.TrimPrefix(strings.TrimSpace(h), "\uFEFF"))
+	if h == "" {
+		return false
+	}
+	for field := range headerIndex([]string{h}) {
+		if !formatOnlyFields[field] {
+			return true
+		}
+	}
+	return false
+}
+
 // stripTrailingParen removes one trailing parenthesised suffix (and the
 // whitespace before it) from an already-lowercased header key, e.g.
 // "tax rate(%)" -> "tax rate", "vat rate (%)" -> "vat rate", "tax (%)" ->

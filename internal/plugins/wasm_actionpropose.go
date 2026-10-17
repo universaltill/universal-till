@@ -119,7 +119,7 @@ func (s *hostState) askingOperator(ctx context.Context) (*agentaction.Operator, 
 func hostActionPropose(ctx context.Context, m api.Module, namePtr, nameLen, argsPtr, argsLen, dstPtr, dstCap uint32) int32 {
 	s, ok := stateFrom(ctx)
 	if !ok {
-		return hostErrInternal
+		return stateErr(ctx)
 	}
 	if nameLen == 0 || nameLen > actionNameMax || argsLen > agentaction.MaxArgsBytes {
 		return hostErrInvalid
