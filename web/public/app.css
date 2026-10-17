@@ -2509,7 +2509,9 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
      e.g. "Doppelrahmfrischkäse") must wrap into the clamp, not clip
      mid-character past the box's hidden overflow edge. */
   overflow-wrap: anywhere; }
-.line-item small { font-size: .68rem; }
+/* ut-docs#3060: a 13-digit code is one unbreakable word; at ui_scale 2 it
+   was 183px in a 135px name cell and scrolled the basket sideways. */
+.line-item small { font-size: .68rem; overflow-wrap: anywhere; }
 .line-modifiers { list-style: none; margin: .15rem 0 0; padding: 0; }
 .line-modifiers li { font-size: .72rem; line-height: 1.3; }
 /* ut-docs#1314, phone tier (ut-docs#413's breakpoint): at 360px the whole
@@ -3550,6 +3552,56 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
   .basket th:nth-child(4), .basket td:nth-child(4) { grid-area: total; }
   .basket th:nth-child(5), .basket td:nth-child(5) { grid-area: remove; }
 }
+/* ut-docs#3060: tier 3 -- the basket is narrower than 24rem. At ui_scale 2
+   the rail, paddings and rem all double, so a 540-900px window leaves the
+   basket 7-18rem, and the stacked table's fixed rem tracks (4.3 + 4 + 4 +
+   2.8rem) ran past it: the name column went to 0px, the lines scrolled
+   sideways by 7px (800x1280), 39px (768x1024), 207px (600x960) and 267px
+   (540x720), and the remove button sat at x=673-725 on the 540-768px
+   screens. Each line becomes a small card:
+   the name with ✕ on the first row, the qty controls (wrapping, so the
+   discount drops under the steppers when even they don't fit) on the
+   second, price and total on the third. Content-sized tracks, no rem
+   budget to overflow. The Qty header has no column of its own here, so it
+   is hidden visually but kept for screen readers (.visually-hidden's
+   pattern); the remove header is empty. */
+@container basket (max-width: 23.99rem) {
+  .line-item { max-width: none; }
+  .line-inputs { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: .3rem; }
+  .qty-stepper { width: auto; gap: .3rem; }
+  .qty-step-btn { flex: 0 0 auto; min-width: 46px; min-height: 46px; }
+  .qty-input, .disc-input,
+  body.kiosk .line-inputs .qty-input, body.kiosk .line-inputs .disc-input { min-height: 46px; }
+  .basket table, .basket thead, .basket tbody { display: block; }
+  .basket tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas: "name  name  remove"
+                         "qty   qty   qty"
+                         ".     price total";
+    border-bottom: 1px solid var(--border);
+  }
+  .basket thead tr { border-bottom-width: 2px; grid-template-areas: "name price total"; }
+  .basket thead th:nth-child(2) { position: absolute; inline-size: 1px; block-size: 1px; padding: 0;
+                                  overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .basket thead th:nth-child(5) { display: none; }
+  .basket tbody tr:last-child { border-bottom: none; }
+  .basket th, .basket td { display: block; border-bottom: none; padding-block: .2rem; }
+  .basket th:nth-child(n), .basket td:nth-child(n) { width: auto; }
+  .basket th:nth-child(1), .basket td:nth-child(1) { grid-area: name; }
+  .basket td:nth-child(2) { grid-area: qty; }
+  .basket th:nth-child(3), .basket td:nth-child(3) { grid-area: price; }
+  .basket th:nth-child(4), .basket td:nth-child(4) { grid-area: total; }
+  .basket td:nth-child(5) { grid-area: remove; }
+  /* Dine in / Takeaway (the bulk segments): 400px at ui_scale 2 in a
+     246-306px basket scrolled the basket card 70-130px sideways. The group
+     keeps its one-row, content-sized look while it fits and stacks its two
+     segments (full labels, never ellipsized -- they set the VAT rate)
+     once it doesn't. */
+  .order-type-row { flex-wrap: wrap; }
+  .order-type-toggle-group { flex: 0 1 auto; flex-wrap: wrap; max-inline-size: 100%; border-radius: 1.25rem; }
+  .order-type-option { flex: 1 1 auto; }
+}
 /* ---------- Scan chooser (ut-docs#4344) ----------
    A scanned code matched more than one kind (item, voucher, ...): one row
    per answer at the top of #basket. In-flow like .pos-notice so it never
@@ -4109,7 +4161,13 @@ body.osk-padded .payment-overlay {
 .offline-toggle { display: flex; align-items: center; gap: .5rem; font-weight: 600;
                   font-size: .85rem; color: var(--muted); padding: .2rem .1rem; }
 .offline-toggle input { accent-color: var(--brand); }
-.split-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem .5rem; }
+/* ut-docs#3060: minmax(0, 1fr), not 1fr: a 1fr track's minimum is its
+   content's, so the voucher row (field + "Check balance", one full-width
+   row) pushed both tracks to 394px in a 330px phone overlay -- the method,
+   amount and voucher fields ran 49px past the screen. The fields fill
+   their track instead. */
+.split-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .4rem .5rem; }
+.split-grid input, .split-grid select { inline-size: 100%; min-inline-size: 0; }
 .split-tender-form label { display: flex; flex-direction: column; font-size: .8rem;
                            gap: .2rem; margin-bottom: 0; }
 .split-tender-form input, .split-tender-form select { padding: .45rem; border-radius: 6px;
@@ -5217,6 +5275,16 @@ body.login-screen {
   margin-inline-start: .5rem;
 }
 .statusbar .sb-enrol:hover { color: var(--ink, #111827); border-color: var(--muted, #6b7280); }
+/* ut-docs#3060: at ui_scale 2 on a 540-600px screen this hint alone (434px)
+   was wider than the bar (447px less padding) and, nowrap, scrolled the page
+   38-98px sideways. A wrapping flex line places it at its one-line width
+   first; flex-shrink: 0 keeps it from being squeezed into two lines beside
+   other items (the bar must stay one row, ut-docs#3459), and max-inline-size
+   caps it at the bar, so its text breaks only when it alone can't fit a
+   row. The phone tier keeps its own ellipsis cap (below). */
+@media (min-width: 481px) {
+  .statusbar .sb-enrol { white-space: normal; flex-shrink: 0; max-inline-size: 100%; }
+}
 /* Underpowered-PSU chip (ut-docs#1232) — reuses the shared --warning token
    (already used for `.tag.warn`/`.row-warn-icon` elsewhere) rather than
    inventing a second warning color. Persistent like sb-update, not a toast:
@@ -6528,7 +6596,15 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   .basket-phonebar:focus-visible { outline: 3px solid var(--focus-border); outline-offset: 2px; }
 
   /* The open sheet: products out, basket and tender stacked, scrolling. */
-  body.pos-sheet-open .pos-container { overflow-y: auto; }
+  /* ut-docs#3060: the status row is position:fixed over the sheet's foot
+     while a problem chip shows it. The sheet reserves its height as end
+     padding, so the content ends above the row; the tender's sticky
+     `bottom: 0` (below) is measured from that padding edge, so Pay still
+     pins right above the row. It used to be `bottom: var(--phone-sb-h)`
+     with no padding: scrolled to the end, the last --phone-sb-h px of the
+     sheet stayed under Pay for good (the receipt's Refund button at
+     y=552-603 under the tender at 568-695, 360x800, disk-low chip up). */
+  body.pos-sheet-open .pos-container { overflow-y: auto; padding-block-end: var(--phone-sb-h, 0px); }
   body.pos-sheet-open .pos-container > .products { display: none; }
   body.pos-sheet-open .basket-phonebar { display: none; }
   body.pos-sheet-open .pos-container > .basket {
@@ -6542,7 +6618,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   body.pos-sheet-open .pos-container > .tender:has(dialog[open]) { position: static; z-index: auto; }
   /* Pay stays in reach at the foot of the sheet while the lines scroll. */
   body.pos-sheet-open .pos-container > .tender {
-    flex: none; position: sticky; bottom: var(--phone-sb-h, 0px); z-index: 2;
+    flex: none; position: sticky; bottom: 0; z-index: 2;
     box-shadow: 0 -4px 16px rgba(15, 23, 42, .14);
   }
   /* The sheet has the whole screen, so the ±1 steppers the packed phone
