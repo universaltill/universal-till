@@ -101,19 +101,6 @@ func (*CloudOutboxRepo) OpenMarks(ctx context.Context, q SyncQuerier, after int6
 	return scanMarks(rows)
 }
 
-// MarkByChangeID returns the sealed mark of a change.
-func (*CloudOutboxRepo) MarkByChangeID(ctx context.Context, q SyncQuerier, changeID string) (OutboxMark, bool, error) {
-	rows, err := q.QueryContext(ctx, `SELECT `+outboxCols+` FROM cloud_outbox WHERE change_id = ?`, changeID)
-	if err != nil {
-		return OutboxMark{}, false, fmt.Errorf("cloud outbox mark: %w", err)
-	}
-	ms, err := scanMarks(rows)
-	if err != nil || len(ms) == 0 {
-		return OutboxMark{}, false, err
-	}
-	return ms[0], true, nil
-}
-
 // OpenMarkFor returns the open mark of (entity, localID), if any.
 func (*CloudOutboxRepo) OpenMarkFor(ctx context.Context, q SyncQuerier, entity, localID string) (OutboxMark, bool, error) {
 	rows, err := q.QueryContext(ctx, `SELECT `+outboxCols+` FROM cloud_outbox WHERE entity = ? AND local_id = ? AND sealed_at IS NULL`, entity, localID)
