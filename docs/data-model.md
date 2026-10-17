@@ -944,7 +944,10 @@ data/plugins/
 
 **Download Integrity**
 - SHA256 checksum validation during download
-- Ed25519 signature verification for marketplace artifacts
+- Ed25519 signature verification for marketplace artifacts: `signature` covers
+  `manifest.json`; `content_signature` binds `content_digest`, the SHA-256 of every
+  other file in the package, which the till recomputes from the extracted
+  directory (ADR-0165)
 - Resume support via HTTP Range requests
 - .part file promotion only after verification
 

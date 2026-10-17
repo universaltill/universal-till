@@ -72,7 +72,8 @@ type Localizer interface {
 const FirstPartyIDPrefix = "com.universaltill."
 
 // bundleInfo is the part of a language bundle's bundle.json (package root,
-// covered by the signed artifact hash — ADR-0160 §5) the translator needs.
+// covered by the signed content digest — ADR-0160 §5, ADR-0165) the
+// translator needs.
 type bundleInfo struct {
 	GeneratedAt string `json:"generated_at"`
 }

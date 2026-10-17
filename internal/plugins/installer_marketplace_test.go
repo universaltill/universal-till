@@ -2,8 +2,6 @@ package plugins
 
 import (
 	"archive/tar"
-	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -732,34 +730,11 @@ func signedMarketplaceArtifact(t *testing.T, privateKey ed25519.PrivateKey) ([]b
 
 func signedMarketplaceArtifactWithManifest(t *testing.T, privateKey ed25519.PrivateKey, manifest *Manifest) []byte {
 	t.Helper()
-	canonical := *manifest
-	canonical.Signature = ""
-	canonicalBytes, err := json.Marshal(canonical)
-	if err != nil {
-		t.Fatalf("marshal canonical manifest: %v", err)
-	}
-	manifest.Signature = hex.EncodeToString(ed25519.Sign(privateKey, canonicalBytes))
-
-	manifestBytes, err := json.Marshal(manifest)
-	if err != nil {
-		t.Fatalf("marshal manifest: %v", err)
-	}
-
-	var archive bytes.Buffer
-	gzWriter := gzip.NewWriter(&archive)
-	tarWriter := tar.NewWriter(gzWriter)
-
-	writeMarketplaceTarFile(t, tarWriter, "manifest.json", manifestBytes, 0o644)
-	writeMarketplaceTarFile(t, tarWriter, "plugin-bin", []byte("binary"), 0o755)
-
-	if err := tarWriter.Close(); err != nil {
-		t.Fatalf("close tar writer: %v", err)
-	}
-	if err := gzWriter.Close(); err != nil {
-		t.Fatalf("close gzip writer: %v", err)
-	}
-	manifest.ArtifactHash = checksumSHA256Hex(t, archive.Bytes())
-	return archive.Bytes()
+	files := []testPkgFile{{name: "plugin-bin", data: []byte("binary"), mode: 0o755}}
+	signTestManifest(t, manifest, privateKey, files)
+	archive := tarGzPackage(t, manifest, files)
+	manifest.ArtifactHash = checksumSHA256Hex(t, archive)
+	return archive
 }
 
 func checksumSHA256Hex(t *testing.T, data []byte) string {

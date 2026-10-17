@@ -84,22 +84,21 @@ func TestHostTCPOpenDeniedInDemoMode(t *testing.T) {
 
 // ADR-0113 §1.7: only bundled plugins run on the demo till, and they are
 // still Ed25519-verified before they load — demo mode never skips or relaxes
-// verification. With demo mode on, the real verifier still accepts the
-// genuinely signed fixture and still rejects a tampered copy of it and the
-// right manifest under the wrong key.
+// verification. With demo mode on, the real verifier still accepts a
+// genuinely signed package and still rejects a tampered manifest, a
+// tampered package file (ADR-0165) and the right manifest under the wrong key.
 func TestManifestSignatureStillVerifiedInDemoMode(t *testing.T) {
 	demoMode(t)
 
-	verifier, err := NewManifestVerifier(marketplaceTestPublicKeyHex)
-	if err != nil {
-		t.Fatalf("NewManifestVerifier: %v", err)
-	}
-	res, err := verifier.VerifyManifest("testdata/marketplace_signed_manifest.json")
+	verifier, priv := contentTestVerifier(t)
+	files := contentTestFiles()
+	path := writeSignedPackageDir(t, contentTestManifest(), priv, files)
+	res, err := verifier.VerifyManifest(path)
 	if err != nil || !res.SignatureVerified {
 		t.Fatalf("genuine signed manifest did not verify in demo mode: err=%v verified=%v", err, res != nil && res.SignatureVerified)
 	}
 
-	raw, err := os.ReadFile("testdata/marketplace_signed_manifest.json")
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,19 +108,28 @@ func TestManifestSignatureStillVerifiedInDemoMode(t *testing.T) {
 	}
 	m["name"] = fmt.Sprint(m["name"]) + " (tampered)"
 	tampered, _ := json.Marshal(m)
-	tamperedPath := filepath.Join(t.TempDir(), "manifest.json")
-	if err := os.WriteFile(tamperedPath, tampered, 0o600); err != nil {
+	if err := os.WriteFile(path, tampered, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if res, err := verifier.VerifyManifest(tamperedPath); err == nil && res.SignatureVerified {
+	if res, err := verifier.VerifyManifest(path); err == nil && res.SignatureVerified {
 		t.Fatal("tampered manifest verified in demo mode — verification was skipped or relaxed")
 	}
 
+	// A changed package file is refused too (ADR-0165).
+	path = writeSignedPackageDir(t, contentTestManifest(), priv, files)
+	if err := os.WriteFile(filepath.Join(filepath.Dir(path), "plugin.wasm"), []byte("swapped"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := verifier.VerifyManifest(path); err == nil && res.SignatureVerified {
+		t.Fatal("tampered package file verified in demo mode — verification was skipped or relaxed")
+	}
+
+	path = writeSignedPackageDir(t, contentTestManifest(), priv, files)
 	wrong, err := NewManifestVerifier("0000000000000000000000000000000000000000000000000000000000000000")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res, err := wrong.VerifyManifest("testdata/marketplace_signed_manifest.json"); err == nil && res.SignatureVerified {
+	if res, err := wrong.VerifyManifest(path); err == nil && res.SignatureVerified {
 		t.Fatal("manifest verified under the wrong key in demo mode")
 	}
 }

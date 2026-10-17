@@ -55,17 +55,12 @@ func compiledKeyManifest(id string) *Manifest {
 	}
 }
 
-// writeManifestFile writes m (signed with priv when non-nil) to a temp file.
+// writeManifestFile writes m (signed with priv when non-nil, ADR-0165 way,
+// for a package holding only manifest.json) to a temp file.
 func writeManifestFile(t *testing.T, m *Manifest, priv ed25519.PrivateKey) string {
 	t.Helper()
 	if priv != nil {
-		c := *m
-		c.Signature = ""
-		raw, err := json.Marshal(c)
-		if err != nil {
-			t.Fatalf("marshal: %v", err)
-		}
-		m.Signature = hex.EncodeToString(ed25519.Sign(priv, raw))
+		signTestManifest(t, m, priv, nil)
 	}
 	raw, err := json.Marshal(m)
 	if err != nil {

@@ -185,11 +185,7 @@ func signedManifest(t *testing.T, id, version string) (plugins.Manifest, string)
 		CanonicalType: "page",
 		DeviceArch:    "any",
 	}
-	canonical, err := json.Marshal(m)
-	if err != nil {
-		t.Fatalf("marshal canonical: %v", err)
-	}
-	m.Signature = hex.EncodeToString(ed25519.Sign(priv, canonical))
+	signPluginManifest(t, &m, priv, nil) // writePluginBundle packs manifest.json only
 	return m, hex.EncodeToString(pub)
 }
 
@@ -885,12 +881,8 @@ func signManifestWithTestKey(t *testing.T, m plugins.Manifest) (plugins.Manifest
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
-	m.Signature = ""
-	canonical, err := json.Marshal(m)
-	if err != nil {
-		t.Fatalf("marshal canonical: %v", err)
-	}
-	m.Signature = hex.EncodeToString(ed25519.Sign(priv, canonical))
+	m.Signature, m.ContentDigest, m.ContentSignature = "", "", ""
+	signPluginManifest(t, &m, priv, nil) // writePluginBundle packs manifest.json only
 	return m, hex.EncodeToString(pub)
 }
 
