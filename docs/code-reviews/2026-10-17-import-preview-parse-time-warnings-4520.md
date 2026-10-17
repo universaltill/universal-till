@@ -66,9 +66,16 @@ restoring it made them pass. Verdict: safe to merge.
   shared and RTL-safe).
 
 ## Gate
-`gofmt`, `go build ./...`, `golangci-lint` (0 issues), every guard in
-ci.yml's build job, and `go test -race ./...`.
-`guard-deadcode-baseline` and `guard-shellcheck-version` could not run in
-this container: the deadcode binary was built with Go 1.26 for a Go 1.27
-module, and shellcheck isn't installed. Neither guard is touched by this
-diff, and CI runs both.
+- `gofmt`, `go build ./...` and `golangci-lint` (0 issues) are clean.
+- Every guard in ci.yml's build job passes, including `guard-docs-shots`
+  after `make docs-shots`. That refreshed only `web/help/img/manifest.json`'s
+  hashes; the screenshots are byte-identical.
+- `go test ./...` passes.
+  - `go test -race ./...` hit this container's 30-minute background limit
+    and was not re-run.
+  - `internal/plugins` needs about 13 minutes here, so it was run with
+    `-timeout 30m`.
+- `guard-deadcode-baseline` and `guard-shellcheck-version` could not run in
+  this container: the deadcode binary was built with Go 1.26 for a Go 1.27
+  module, and shellcheck isn't installed. Neither guard is touched by this
+  diff, and CI runs both.
