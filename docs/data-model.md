@@ -842,9 +842,69 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   answer is applied as a normal page and the prune waits for a later run
   (`resync_gen` stays set), so on a feed written without pause the prune
   waits for a quiet run; stale links only linger meanwhile. A crash
-  mid-resync still prunes at the end. Not yet built: the outbox exemption
-  (ut-docs#4464) and reporting refusals back to the cloud as `apply_failed`
-  (ut-docs#4493).
+  mid-resync still prunes at the end. The prune spares a link whose create
+  is not accepted yet (version 0) and any row with an outbox mark: they
+  upload first (ut-docs#4464, below). Not yet built: reporting refusals
+  back to the cloud as `apply_failed` (ut-docs#4493).
+
+## Cloud catalogue upload — cloud_outbox (ut-docs#4464, ADR-0162 §5)
+
+The main till of a cloud-master store uploads its own catalogue edits
+(`internal/catalogpull` `Push`, contract ut-docs
+`reference/contracts/cloud-catalog-changes.md` 1.0.0), every tick **before**
+it pulls (`internal/cloudsync` `pullCloudCatalog`).
+
+- **What uploads (1.0.0):** items (`name`, `description`, `sku`,
+  `price_minor`, `category_cloud_id`, `tax_code_cloud_id`, `active`, and the
+  whole item-level `barcodes` set), categories (`name`, `parent_cloud_id`,
+  `sort_order`, `active`), tax codes (`name`, `rate_basis_points`,
+  `takeaway_rate_basis_points`, `active`). Other kinds and fields are not
+  uploaded yet (the cloud's write path does not take them); a pull still
+  overwrites them.
+- **Tables (migration 084, main-till only, never LAN-synced).**
+  `cloud_outbox(id, entity, local_id, created_at, change_id, body, sealed_at, seal_seq)`
+  — one open mark per row (partial unique index), sealed marks in
+  `seal_seq` order; `cloud_outbox_suppress(one)` — a flag row that exists
+  only inside the pull's own write transaction. `cloud_links` gains `base`
+  (JSON of the uploadable fields the till last adopted from the cloud) and
+  `echo_version`.
+- **Marks are written by triggers** on `items`, `item_barcodes`,
+  `categories` and `tax_codes` (insert, delete, update of an uploadable
+  column), in the same transaction as the write, whatever path wrote it.
+  They fire only while `entitlement.catalog_master` is `cloud` or
+  `adopting`, only on the main till (no `sync.primary_url`), and never
+  while the suppress flag exists (the pull and the upload's answer insert
+  it first and delete it before commit; SQLite's one writer keeps it
+  invisible to everyone else). `Push` removes a flag ever committed.
+- **Seal:** a mark becomes a change — the fields whose local value differs
+  from `base`, `before` = base — stored on the mark with a new `change_id`
+  and re-sent unchanged until answered. Nothing differs → the mark is
+  dropped. A row the cloud never had is a `create` under a cloud_id the
+  till mints and links at once (version 0); a referenced row with no
+  cloud_id is sealed first. A local delete of a linked item is a `delete`
+  carrying the whole base. An open mark is never sealed or dropped while
+  a sealed mark of the same row is unanswered (in flight): it seals once
+  that answer has moved the base. A change whose `created_at` is older
+  than 30 days when it is sent (first or re-sent) uploads `stale`.
+- **Answers** apply in one suppressed transaction: `accepted` → the
+  answer's current rows apply and become the base, the version is kept as
+  `echo_version` (the feed's row at it is skipped); `conflict` → the cloud's
+  current row overwrites the edit; no current row → the local row goes
+  through the tombstone rules; `rejected` (`cloud_id_unavailable`) → the
+  create is re-minted; `retry` → sent again. An answer to a create or
+  update of an item the till deleted meanwhile is not applied: the link
+  takes the cloud's row as base and version, and the delete uploads.
+- **The pull is field-wise:** a row with a mark keeps the fields whose local
+  value differs from its base; a tombstone of such a row, a live row the
+  till deleted, and an item-level barcode row of an item whose barcode set
+  differs from its base wait for the upload's answer. Applier version 4
+  re-pulls once so every row gets its base; before the first upload or the
+  re-pull, a link an older build made gets its base seeded from its local
+  row (what it last pulled), so a till edit made meanwhile stays pending.
+  A 410 resync forgets every `echo_version`.
+- **Not yet:** staff attribution (`staff_id` is sent empty: till edits are
+  not stamped with their editor, ut-docs#4558), and an edit made between a change's seal
+  and a conflict answer is replaced too (the cloud wins).
 
 ---
 
