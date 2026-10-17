@@ -33,6 +33,21 @@ type Row struct {
 	StockQty     *float64 `json:"stock_qty"`
 	Active       *bool    `json:"active"`
 	SoldByWeight bool     `json:"sold_by_weight"`
+	// Description is the item's free-text description (line breaks are
+	// fine). "" = leave the item's description as it is: a row can set one,
+	// never clear one. Additive under ADR-0051 §3 (ut-docs#4542).
+	Description string `json:"description,omitempty"`
+	// AgeRestricted marks an item the till sells only after a staff ID
+	// check (ut-docs#3340). nil = leave the item's flag as it is. Additive
+	// under ADR-0051 §3.
+	AgeRestricted *bool `json:"age_restricted,omitempty"`
+	// NetQuantityValue/NetQuantityUnit are a pre-packed item's net content
+	// (ut-docs#3391): a positive whole number of grams ("g"), millilitres
+	// ("ml") or items ("ea"), the pair catalogrules.ValidNetQuantity
+	// accepts. Both or neither; both nil = leave the item's as it is.
+	// Additive under ADR-0051 §3.
+	NetQuantityValue *int64  `json:"net_quantity_value,omitempty"`
+	NetQuantityUnit  *string `json:"net_quantity_unit,omitempty"`
 }
 
 // ExternalIDMaxRunes is ADR-0161 §3's bound on external_id; a longer
@@ -82,6 +97,20 @@ func RowFor(it ImportItem) (Row, bool) {
 	}
 	if utf8.RuneCountInString(it.ExternalID) <= ExternalIDMaxRunes {
 		r.ExternalID = it.ExternalID
+	}
+	r.Description = strings.TrimSpace(it.Description)
+	// Only true is a statement: a file without the "Age restricted" column
+	// parses exactly like one that says No, so false would clear a flag
+	// the merchant set at the till. An unrestricted item leaves it as is.
+	if it.AgeRestricted {
+		yes := true
+		r.AgeRestricted = &yes
+	}
+	// The parser keeps the pair only once catalogrules.ValidNetQuantity
+	// accepted it (a bad one is a NetQuantityIssue and left nil).
+	if it.NetQuantityValue != nil && it.NetQuantityUnit != nil {
+		v, u := *it.NetQuantityValue, *it.NetQuantityUnit
+		r.NetQuantityValue, r.NetQuantityUnit = &v, &u
 	}
 	// Department is the axis categories nest under (an ERP master), so it
 	// is the path's first level.

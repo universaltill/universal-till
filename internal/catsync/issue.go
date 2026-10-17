@@ -24,6 +24,8 @@ const (
 	IssueTooManyBarcodes      = "too_many_barcodes" // args: max barcodes
 	IssueBarcodeInvalid       = "barcode_invalid"
 	IssueBarcodeNotAccepted   = "barcode_not_accepted" // args: barcode
+	IssueDescriptionInvalid   = "description_invalid"
+	IssueNetQuantityInvalid   = "net_quantity_invalid"
 	IssueExternalIDDuplicate  = "external_id_duplicate"
 	IssueBarcodeDuplicate     = "barcode_duplicate" // args: barcode
 	IssueSKUDuplicate         = "sku_duplicate"
@@ -50,6 +52,8 @@ var issueText = map[string]string{
 	IssueTooManyBarcodes:      "more than %s barcodes",
 	IssueBarcodeInvalid:       "a barcode is invalid",
 	IssueBarcodeNotAccepted:   "barcode %s is not accepted by this till's barcode settings",
+	IssueDescriptionInvalid:   "description is too long or invalid",
+	IssueNetQuantityInvalid:   "net_quantity_value and net_quantity_unit are invalid",
 	IssueExternalIDDuplicate:  "external_id appears on more than one row",
 	IssueBarcodeDuplicate:     "barcode %s appears on more than one row",
 	IssueSKUDuplicate:         "sku appears on more than one row",

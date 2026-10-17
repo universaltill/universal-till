@@ -30,6 +30,11 @@ type SyncItemState struct {
 	HasTax         bool
 	IsActive       bool
 	StockUntracked bool
+	Description    string // "" = none
+	AgeRestricted  bool
+	// NetQuantityValue/NetQuantityUnit are the stored pair (both nil = none).
+	NetQuantityValue *int64
+	NetQuantityUnit  *string
 	// Barcodes are the item's own barcodes (not its variants').
 	Barcodes []string
 }
@@ -39,11 +44,14 @@ type SyncItemState struct {
 func (r *CatalogRepo) SyncItemState(ctx context.Context, q SyncQuerier, itemID string) (SyncItemState, bool, error) {
 	var st SyncItemState
 	var cat, tax sql.NullString
-	var rate sql.NullInt64
+	var rate, nqValue sql.NullInt64
+	var nqUnit sql.NullString
 	err := q.QueryRowContext(ctx, `
-SELECT i.id, i.name, COALESCE(i.sku, ''), i.base_price, i.category_id, i.tax_code_id, t.rate_basis_points, i.is_active, i.stock_untracked
+SELECT i.id, i.name, COALESCE(i.sku, ''), i.base_price, i.category_id, i.tax_code_id, t.rate_basis_points, i.is_active, i.stock_untracked,
+       COALESCE(i.description, ''), i.age_restricted, i.net_quantity_value, i.net_quantity_unit
 FROM items i LEFT JOIN tax_codes t ON t.id = i.tax_code_id
-WHERE i.id = ?`, itemID).Scan(&st.ID, &st.Name, &st.SKU, &st.BasePrice, &cat, &tax, &rate, &st.IsActive, &st.StockUntracked)
+WHERE i.id = ?`, itemID).Scan(&st.ID, &st.Name, &st.SKU, &st.BasePrice, &cat, &tax, &rate, &st.IsActive, &st.StockUntracked,
+		&st.Description, &st.AgeRestricted, &nqValue, &nqUnit)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SyncItemState{}, false, nil
 	}
@@ -53,6 +61,12 @@ WHERE i.id = ?`, itemID).Scan(&st.ID, &st.Name, &st.SKU, &st.BasePrice, &cat, &t
 	st.CategoryID = cat.String
 	st.TaxCodeID = tax.String
 	st.TaxRateBP, st.HasTax = rate.Int64, tax.Valid && rate.Valid
+	if nqValue.Valid {
+		st.NetQuantityValue = &nqValue.Int64
+	}
+	if nqUnit.Valid {
+		st.NetQuantityUnit = &nqUnit.String
+	}
 	rows, err := q.QueryContext(ctx, `SELECT barcode FROM item_barcodes WHERE item_id = ? ORDER BY is_primary DESC, barcode`, itemID)
 	if err != nil {
 		return SyncItemState{}, false, fmt.Errorf("sync item barcodes: %w", err)

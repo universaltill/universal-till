@@ -122,7 +122,8 @@ var importSystemChangeKeys = map[string]string{
 	"name": "import.system.change.name", "price": "import.system.change.price",
 	"category": "import.system.change.category", "vat": "import.system.change.vat",
 	"active": "import.system.change.active", "barcode": "import.system.change.barcode",
-	"stock": "import.system.change.stock",
+	"stock": "import.system.change.stock", "description": "import.system.change.description",
+	"age_restricted": "import.system.change.age_restricted", "net_quantity": "import.system.change.net_quantity",
 }
 
 // importSystemActionKeys maps catsync's sample actions to locale keys.

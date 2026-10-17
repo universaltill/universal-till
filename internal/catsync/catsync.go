@@ -468,6 +468,16 @@ func (rn *runner) planUpdate(ctx context.Context, r *row, p *plan) (plan, error)
 	if st.IsActive != r.active {
 		p.changes = append(p.changes, "active")
 	}
+	// Absent = leave as is; a present field that differs is the source's.
+	if r.desc != "" && st.Description != r.desc {
+		p.changes = append(p.changes, "description")
+	}
+	if r.age != nil && st.AgeRestricted != *r.age {
+		p.changes = append(p.changes, "age_restricted")
+	}
+	if r.nqValue != nil && !sameNetQuantity(st, r) {
+		p.changes = append(p.changes, "net_quantity")
+	}
 	have := map[string]bool{}
 	for _, b := range st.Barcodes {
 		have[b] = true
@@ -512,6 +522,27 @@ func (rn *runner) planUpdate(ctx context.Context, r *row, p *plan) (plan, error)
 		p.action = ActionUnchanged
 	}
 	return *p, nil
+}
+
+// sameNetQuantity reports whether the item already stores r's pair (r
+// carries one).
+func sameNetQuantity(st data.SyncItemState, r *row) bool {
+	return st.NetQuantityValue != nil && st.NetQuantityUnit != nil &&
+		*st.NetQuantityValue == *r.nqValue && *st.NetQuantityUnit == *r.nqUnit
+}
+
+// setOptionalFields copies the fields a row may leave out (description,
+// age check, net quantity) onto in, only where the row carries them.
+func setOptionalFields(in *catalogtypes.ItemInput, r *row) {
+	if r.desc != "" {
+		in.Description = r.desc
+	}
+	if r.age != nil {
+		in.AgeRestricted = *r.age
+	}
+	if r.nqValue != nil {
+		in.NetQuantityValue, in.NetQuantityUnit = r.nqValue, r.nqUnit
+	}
 }
 
 func pathKey(path []string) string { return strings.Join(path, "\x00") }
@@ -578,6 +609,7 @@ func (rn *runner) apply(ctx context.Context, r *row, p *plan) error {
 			Name: r.name, SKU: r.sku, BasePrice: r.price.Minor(), Unit: "each",
 			IsWeighed: r.weighed, IsActive: true,
 		}
+		setOptionalFields(&in, r)
 		var err error
 		if in.CategoryID, err = rn.ensureCategory(ctx, r.catPath); err != nil {
 			return err
@@ -623,7 +655,8 @@ func (rn *runner) applyUpdate(ctx context.Context, r *row, p *plan) error {
 	for _, c := range p.changes {
 		changed[c] = true
 	}
-	fields := changed["name"] || changed["price"] || changed["category"] || changed["vat"] || changed["active"]
+	fields := changed["name"] || changed["price"] || changed["category"] || changed["vat"] || changed["active"] ||
+		changed["description"] || changed["age_restricted"] || changed["net_quantity"]
 	// Barcodes attach to an active item: switch an inactive one on for
 	// the attach, then to the row's state.
 	tempActive := len(p.addBC) > 0 && !(p.state.IsActive && r.active)
@@ -636,6 +669,7 @@ func (rn *runner) applyUpdate(ctx context.Context, r *row, p *plan) error {
 			return fmt.Errorf("item %s vanished", p.target)
 		}
 		it.Name, it.BasePrice, it.IsActive = r.name, r.price.Minor(), r.active || tempActive
+		setOptionalFields(&it, r)
 		if changed["category"] {
 			if it.CategoryID, err = rn.ensureCategory(ctx, r.catPath); err != nil {
 				return err
