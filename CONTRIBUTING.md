@@ -60,6 +60,10 @@ every plugin before running it.
 
 `make docs-shots` regenerates the help-page screenshots under
 `web/help/img/`. Run it and commit the result whenever you change a screen.
+A string change alone doesn't trip the screenshot guard, so a weekly
+`docs-shots-locale-drift` workflow regenerates them on `main` and keeps one
+`docs-shots-drift` issue listing any screenshot that has gone stale (closed
+automatically once a run matches again).
 README images live in `docs/images/`, and
 `scripts/ci/guard-readme-local-links.sh` checks that every local link and
 image in this README exists.

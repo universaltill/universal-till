@@ -1,0 +1,71 @@
+name: docs-shots-locale-drift
+
+# ut-docs#4582: guard-docs-shots.sh deliberately leaves web/locales/**/*.json
+# out of its surface hash (every key touches every locale file — including it
+# would force a full screenshot regen on almost any string change). Accepted
+# cost: a copy change can go stale in a manual screenshot (an ar/fa page still
+# showing an old UI word) without tripping any guard. This catches that after
+# the fact, once a week, instead of on every PR:
+#   - regenerate docs-shots on main (byte-deterministic, ut-docs#2184);
+#   - any difference from the committed web/help/img/** → open or update ONE
+#     issue labelled docs-shots-drift listing the stale <locale>/<id>.png
+#     files, with the regenerated files as a run artifact;
+#   - no difference → close that issue if it is open; otherwise nothing.
+# The logic lives in scripts/ci/docs-shots-locale-drift.sh (tested by
+# docs-shots-locale-drift_test.sh, which also pins this file's shape).
+#
+# NON-BLOCKING by construction: schedule/workflow_dispatch only (no push or
+# pull_request trigger), drift never fails the job, and it never commits or
+# pushes — a bot-authored screenshot PR needs the bot-identity decision
+# ut-docs#3738 owns. Never make this a required status check.
+on:
+  schedule:
+    - cron: '30 5 * * 1' # 05:30 UTC Monday, after docs-shots-determinism (04:00)
+  workflow_dispatch: {}
+
+# Least privilege: read the code, write the one tracking issue (and its label).
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: docs-shots-locale-drift
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      # Same reference fonts as docs-shots-determinism.yml (ut-docs#4407,
+      # ut-docs#4425): without them the harness refuses to run.
+      - name: Install reference fonts
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-inter fonts-dejavu-core fonts-noto-color-emoji
+      - name: Regenerate the manual screenshots
+        run: make docs-shots
+      - name: Compare with the committed screenshots
+        id: drift
+        run: bash scripts/ci/docs-shots-locale-drift.sh collect "$RUNNER_TEMP/docs-shots-drift" >> "$GITHUB_OUTPUT"
+      - name: Upload the regenerated files
+        if: steps.drift.outputs.count != '0'
+        # The issue is the report; a failed upload must not skip it.
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: docs-shots-locale-drift
+          path: ${{ runner.temp }}/docs-shots-drift
+          retention-days: 30
+      - name: Open, update or close the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash scripts/ci/docs-shots-locale-drift.sh sync-issue "$RUNNER_TEMP/docs-shots-drift"
