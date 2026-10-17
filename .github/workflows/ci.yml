@@ -89,6 +89,12 @@ jobs:
         run: bash scripts/ci/release-macos-nonblocking_test.sh
       - name: Every release job is time-bounded — wiring test (ut-docs#4059)
         run: bash scripts/ci/release-job-timeouts_test.sh
+      - name: Heavy test runs stay parallel and complete — wiring test (ut-docs#4581)
+        # Runs `go list ./...`, so it shares the restored module cache.
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+        run: bash scripts/ci/ci-heavy-tests_test.sh
       - name: iOS TestFlight workflow never reaches its signing key from a PR — wiring test (ut-docs#3069)
         run: bash scripts/ci/ios-testflight-workflow_test.sh
       - name: App stores stay private until launch — no public release path (ut-docs#3052)
@@ -453,43 +459,18 @@ jobs:
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
-        # Excludes internal/plugins itself (own step below, ut-docs#643) and
-        # its oauth/marketplace subpackages (own step below, ut-docs#1630) —
-        # both run with -v there so a t.Skip is visible; this step stays
-        # plain, so don't run either a second time here. Also excludes
-        # internal/pages itself (own step below, ut-docs#1992) for the same
-        # margin reason as internal/plugins — see that step's comment — and
-        # internal/enroll, internal/logging, internal/netreach, internal/app
-        # and internal/server (own -race step below, ut-docs#3021,
-        # ut-docs#3410, ut-docs#3014).
+        # Excludes internal/plugins itself (own test-heavy leg, ut-docs#643)
+        # and its oauth/marketplace subpackages (own step below,
+        # ut-docs#1630) — both run with -v there so a t.Skip is visible; this
+        # step stays plain, so don't run either a second time here. Also
+        # excludes internal/pages itself (own test-heavy leg, ut-docs#1992)
+        # for the same margin reason as internal/plugins — see that leg's
+        # comment — and internal/enroll, internal/logging, internal/netreach,
+        # internal/app and internal/server (test-heavy's -race leg,
+        # ut-docs#3021, ut-docs#3410, ut-docs#3014). Every package excluded
+        # here must run somewhere else: ci-heavy-tests_test.sh checks it
+        # (ut-docs#4581).
         run: go test $(go list ./... | grep -vE '/internal/plugins$|/internal/plugins/(oauth|marketplace)$|/internal/pages$|/internal/(enroll|logging|netreach|app|server)$')
-      - name: Test internal/enroll, internal/logging, internal/netreach, internal/app, internal/server under -race (ut-docs#3021, ut-docs#3410, ut-docs#3014)
-        # internal/app and internal/server join this step (ut-docs#3014): the
-        # boot path starts background goroutines (the cloud link copies *cfg
-        # via enroll.Effective) before server.Start binds, so a write to any
-        # *cfg field in Start is a data race on every boot that plain
-        # `go test` never sees — it sat unseen until a chance local -race run
-        # (ut-docs#2990, TestStart_DoesNotWriteSharedConfigWhileOthersReadIt).
-        # Measured locally under -race: internal/app ~150s, internal/server
-        # ~45s, both under the default 600s per-package timeout; with the
-        # cold race-instrumented compile of internal/app's dependency tree
-        # expect the step to take ~3-6 min (the plain Test step sheds ~150s).
-        # internal/logging and internal/netreach join this step (ut-docs#3410):
-        # the recover path reaches the global logger from every background
-        # goroutine, and an unsynchronised L() init race only shows under -race.
-        # internal/enroll keeps its identity state (storeIDExplicit,
-        # tokenExplicit, cur) in package globals shared with background
-        # goroutines (the registration retry loop, the replica vouch loop) —
-        # exactly the shape that hid a real data race (Init writing a global
-        # without mu while a loop a previous test left running read it under
-        # mu.RLock) from the plain `go test` step above. Scoped to this one
-        # package rather than adding -race to the whole suite: internal/pages,
-        # internal/plugins and internal/data stay out because their -race
-        # runtimes don't fit (ut-docs#1034, ut-docs#2156, ut-docs#1366).
-        env:
-          GOMODCACHE: ${{ runner.temp }}/gomodcache
-          GOCACHE: ${{ runner.temp }}/gobuildcache
-        run: go test -race -count=1 ./internal/enroll/ ./internal/logging/ ./internal/netreach/ ./internal/app/ ./internal/server/
       - name: Test (internal/plugins/oauth and /marketplace — ut-docs#1630)
         # Same gap #1626 fixed for internal/plugins itself: the main Test
         # step above runs plain (no -v), so a t.Skip in these subpackages
@@ -505,140 +486,191 @@ jobs:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
         run: go test -v ./internal/plugins/oauth ./internal/plugins/marketplace
-      - name: Test (internal/plugins — wider timeout, ut-docs#643/#753/#776)
-        # internal/plugins hit the plain (this workflow uses -race only for the boot-path packages above)
-        # default 600s per-package `go test` timeout for real in CI (PR
-        # #316, "FAIL ... internal/plugins 600.015s") — not a deadlock: this
-        # session measured the package's own plain runtime at 83-93s and
-        # ut-docs#648 recorded the identical shape for internal/pages
-        # ("goroutine dump showed [a test] still runnable inside a DB
-        # query, not deadlocked, not a real hang" at 599.802s) — a `go
-        # test` timeout dumps every live goroutine at the deadline instant,
-        # and whichever one is transiently waiting on a shared resource
-        # (here internal/logging's package-global mutex) at that exact
-        # moment reads as "blocked" out of context. The git history since
-        # ut-docs#509 (draining Supervisor's monitorProcess goroutines)
-        # shows no reintroduced leak of that shape, and every
-        # WasmRuntime.Sync call in this package's tests that can actually
-        # register a subscriber already drains it (defer
-        # bus.ResetSubscribers()) — the rest never reach subscription at
-        # all (load failure short-circuits first) — so this is margin, not
-        # a bug. Run separately with a longer timeout rather than raising
-        # it for the whole suite, so a genuine hang anywhere else still
-        # fails fast (within the default 10m) instead of taking up to 20m
-        # to report. Scoped to the exact package (no trailing /...) so
-        # internal/plugins/marketplace and /oauth — covered by their own
-        # dedicated step above (ut-docs#1630), not the main Test step
-        # anymore — don't run a second time in this same job; see
-        # ut-docs#662's own comment on why re-running things twice in one
-        # job is exactly the kind of contention this package doesn't need
-        # more of.
-        # -v (ut-docs#1626): plain `go test` prints no `--- SKIP` line, so a
-        # test skipping here (e.g. TestReload_SurvivesRealisticPublisherContention's
-        # publisher-floor precondition, ut-docs#1198) was invisible — CI just
-        # reported `ok` whether the test actually ran or silently skipped.
-        env:
-          GOMODCACHE: ${{ runner.temp }}/gomodcache
-          GOCACHE: ${{ runner.temp }}/gobuildcache
-        run: go test -timeout 20m -v ./internal/plugins
-      - name: Test (internal/pages — wider timeout, ut-docs#1992)
-        # internal/pages hit the same plain (no -race) default 600s
-        # per-package `go test` timeout as internal/plugins did (ut-docs#643/
-        # #753/#776, comment above) — this time for real in CI on
-        # universal-till PR #1018, "FAIL ... internal/pages 600.022s"
-        # (goroutine dump caught inside InstallStatusRepo.Upsert's WAL
-        # commit-unlock path, an ordinary in-flight fcntl syscall, not a
-        # wait). Independently re-investigated for ut-docs#1992: this
-        # package's own plain local runtime is ~210-237s against the 600s
-        # budget, and sibling packages in the SAME incident's CI job
-        # measured 7.7-8.8x slower than their own local baseline under
-        # runner contention (internal/pos 8.8x, internal/settings 8.1x,
-        # internal/pages/common 7.7x) — that alone is enough to cross 600s
-        # without any hang, exactly ut-docs#648's already-documented
-        # "goroutine dump ≠ real hang" shape for this same package.
-        # Confirmed no actual deadlock/leak candidate in the path:
-        # `internal/db.Open`'s DSN already sets `busy_timeout(5000)` (rules
-        # out a SQLite lock explaining a 600s block) and an unbounded
-        # connection pool (rules out a `database/sql` pool-exhaustion
-        # wait); the specific test named in the incident
-        # (TestResolveAndInstallBasePlugin_PicksHighestSemverVersion) passed
-        # 40/40 local reruns with -race across two independent runs, ~1.9s/
-        # iteration. The real cost driver is fixture cost (~2200 tests each
-        # opening a fresh on-disk SQLite file and replaying all
-        # migrations), not a specific slow test, so shrinking one test's
-        # workload (ut-docs#648's own fix, applicable when one outlier test
-        # owns the margin) doesn't apply here. **The bigger effect is
-        # isolation, not the timeout itself**: run alone (as the two
-        # locale-specific reruns below already do) the package lands at
-        # ~204-214s — it's competing with ~70 sibling test binaries inside
-        # the blanket step that pushes it over 600s. This step's own
-        # `-timeout 20m` is belt-and-braces on top of that isolation, same
-        # as internal/plugins already does. Scoped to the exact package (no
-        # trailing /...) so the two OS-locale-specific internal/pages/...
-        # reruns below — already their own steps — don't run a third time
-        # here; they get their own `-timeout` below instead, for the same
-        # margin reason under whatever locale-specific contention they hit.
-        env:
-          GOMODCACHE: ${{ runner.temp }}/gomodcache
-          GOCACHE: ${{ runner.temp }}/gobuildcache
-        run: go test -timeout 20m ./internal/pages
-      - name: Test (with OS locale set — ut-docs#662)
-        # This runner's own container has no LANG, which is exactly what let
-        # ut-docs#662's OS-locale-detection redirect (ut-docs#590) hide 4
-        # failing tests from CI while they failed on every real developer
-        # machine. Re-running with a locale set catches this class of "only
-        # breaks off this specific runner" bug in the one package it can
-        # actually occur in today (internal/pages owns every OS-locale
-        # touchpoint in this repo — see setup_detect.go).
-        #
-        # Deliberately scoped to internal/pages/..., NOT the full `go test
-        # ./...` a second time (ut-docs#674, found same-day): running the
-        # entire suite twice in one job triggered a real CI failure in the
-        # unrelated internal/plugins package — a 600s test-binary timeout
-        # with goroutines blocked on internal/logging's mutex and
-        # database/sql's connection opener. Investigating ut-docs#674 found
-        # and fixed a genuine unbounded resource amplifier in
-        # internal/plugins (EventBus.publish's "channel full" path could
-        # perform ~16,700 unthrottled synchronous DB+stdout writes in one
-        # test) — so "no actual bug in internal/plugins" turned out to be
-        # wrong, there was one, now throttled. What independent review could
-        # NOT do is reproduce the double-run hang itself (several run
-        # patterns, pre- and post-fix) to confirm that bug was the cause of
-        # THIS incident specifically, so treat it as fixed-along-the-way
-        # hardening, not a confirmed root cause. main had 15 consecutive
-        # green runs before this step was widened to the whole tree, and
-        # failed on the very next merge after. If a locale-dependent bug
-        # ever surfaces outside internal/pages, that's the point to widen
-        # this scope again -- deliberately, with the same resource-
-        # contention risk in mind, not by reflex.
-        env:
-          GOMODCACHE: ${{ runner.temp }}/gomodcache
-          GOCACHE: ${{ runner.temp }}/gobuildcache
-          LANG: en_GB.UTF-8
-          LC_ALL: en_GB.UTF-8
-        # -timeout 20m (ut-docs#1992): same margin fix as the plain
-        # internal/pages step above — this rerun carries the identical
-        # fixture cost under whatever locale-specific contention it hits.
-        run: go test -timeout 20m ./internal/pages/...
-      - name: Test (with unavailable-language OS locale set — ut-docs#672)
-        # The en_GB run above only ever detects an AVAILABLE language ("en"
-        # is always in httpx.AvailableLocales()), so /setup's other
-        # detection outcome — language detected but not shipped
-        # (setup_page.go's "setup.detected_lang_unavailable" branch) — has
-        # never actually run against a real OS-locale env var in CI, only
-        # against tests that mock detection via withOSLocale. de_DE.UTF-8
-        # exercises that branch for real: German isn't one of web/locales'
-        # shipped locales (ar/en/fa/tr) today. Same scoping rationale as the
-        # en_GB step above (internal/pages/... only, not the whole tree —
-        # see ut-docs#674's comment there).
-        env:
-          GOMODCACHE: ${{ runner.temp }}/gomodcache
-          GOCACHE: ${{ runner.temp }}/gobuildcache
-          LANG: de_DE.UTF-8
-          LC_ALL: de_DE.UTF-8
-        # -timeout 20m (ut-docs#1992): same margin fix as the plain
-        # internal/pages step above.
-        run: go test -timeout 20m ./internal/pages/...
+
+  test-heavy:
+    # ut-docs#4581: the five heaviest test runs, one runner each, beside
+    # build. They used to be steps at the end of build, one after another:
+    # ~26 of build's ~35 min (run 39028767248), and desktop-shell,
+    # windows-shell, e2e and contract all `needs: build`, so they waited for
+    # them too. Each leg runs the exact command the step ran (same flags,
+    # -timeout, -v and locale env), still alone in its own test process —
+    # now on its own runner too, which is more isolation than the shared
+    # build job gave, not less (the contention notes below). No `needs:`,
+    # so the legs start with build instead of adding to its wall clock.
+    # scripts/ci/ci-heavy-tests_test.sh pins this wiring.
+    #
+    # The comments on each leg are the reasons its step carried; "above"
+    # and "below" in them meant neighbouring build steps.
+    runs-on: ubuntu-latest
+    # Bounds a wedged checkout/setup/download; each test binary keeps its
+    # own -timeout (20m, or go test's default 10m for the -race leg). 40, not
+    # pages-shuffle's 30: setup plus a cold compile plus a 20m deadline must
+    # still leave time for go test's timeout goroutine dump to print — the
+    # dump the ut-docs#643/#1992 diagnoses were made from.
+    #
+    # Cost (accepted): the legs share setup-go's one go.sum-keyed cache, so
+    # only one leg's build cache is saved per key; the others compile cold
+    # (the plugins leg's wasip1 guests, the -race leg's instrumented tree)
+    # — a few minutes each, still well under build's old serial wall clock.
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Test internal/enroll, internal/logging, internal/netreach, internal/app, internal/server under -race (ut-docs#3021, ut-docs#3410, ut-docs#3014)
+          # internal/app and internal/server join this step (ut-docs#3014): the
+          # boot path starts background goroutines (the cloud link copies *cfg
+          # via enroll.Effective) before server.Start binds, so a write to any
+          # *cfg field in Start is a data race on every boot that plain
+          # `go test` never sees — it sat unseen until a chance local -race run
+          # (ut-docs#2990, TestStart_DoesNotWriteSharedConfigWhileOthersReadIt).
+          # Measured locally under -race: internal/app ~150s, internal/server
+          # ~45s, both under the default 600s per-package timeout; with the
+          # cold race-instrumented compile of internal/app's dependency tree
+          # expect the step to take ~3-6 min (the plain Test step sheds ~150s).
+          # internal/logging and internal/netreach join this step (ut-docs#3410):
+          # the recover path reaches the global logger from every background
+          # goroutine, and an unsynchronised L() init race only shows under -race.
+          # internal/enroll keeps its identity state (storeIDExplicit,
+          # tokenExplicit, cur) in package globals shared with background
+          # goroutines (the registration retry loop, the replica vouch loop) —
+          # exactly the shape that hid a real data race (Init writing a global
+          # without mu while a loop a previous test left running read it under
+          # mu.RLock) from the plain `go test` step above. Scoped to this one
+          # package rather than adding -race to the whole suite: internal/pages,
+          # internal/plugins and internal/data stay out because their -race
+          # runtimes don't fit (ut-docs#1034, ut-docs#2156, ut-docs#1366).
+          - name: race - enroll, logging, netreach, app, server
+            cmd: go test -race -count=1 ./internal/enroll/ ./internal/logging/ ./internal/netreach/ ./internal/app/ ./internal/server/
+          # Test (internal/plugins — wider timeout, ut-docs#643/#753/#776)
+          # internal/plugins hit the plain (this workflow uses -race only for the boot-path packages above)
+          # default 600s per-package `go test` timeout for real in CI (PR
+          # #316, "FAIL ... internal/plugins 600.015s") — not a deadlock: this
+          # session measured the package's own plain runtime at 83-93s and
+          # ut-docs#648 recorded the identical shape for internal/pages
+          # ("goroutine dump showed [a test] still runnable inside a DB
+          # query, not deadlocked, not a real hang" at 599.802s) — a `go
+          # test` timeout dumps every live goroutine at the deadline instant,
+          # and whichever one is transiently waiting on a shared resource
+          # (here internal/logging's package-global mutex) at that exact
+          # moment reads as "blocked" out of context. The git history since
+          # ut-docs#509 (draining Supervisor's monitorProcess goroutines)
+          # shows no reintroduced leak of that shape, and every
+          # WasmRuntime.Sync call in this package's tests that can actually
+          # register a subscriber already drains it (defer
+          # bus.ResetSubscribers()) — the rest never reach subscription at
+          # all (load failure short-circuits first) — so this is margin, not
+          # a bug. Run separately with a longer timeout rather than raising
+          # it for the whole suite, so a genuine hang anywhere else still
+          # fails fast (within the default 10m) instead of taking up to 20m
+          # to report. Scoped to the exact package (no trailing /...) so
+          # internal/plugins/marketplace and /oauth — covered by their own
+          # dedicated step above (ut-docs#1630), not the main Test step
+          # anymore — don't run a second time in this same job; see
+          # ut-docs#662's own comment on why re-running things twice in one
+          # job is exactly the kind of contention this package doesn't need
+          # more of.
+          # -v (ut-docs#1626): plain `go test` prints no `--- SKIP` line, so a
+          # test skipping here (e.g. TestReload_SurvivesRealisticPublisherContention's
+          # publisher-floor precondition, ut-docs#1198) was invisible — CI just
+          # reported `ok` whether the test actually ran or silently skipped.
+          - name: internal/plugins
+            cmd: go test -timeout 20m -v ./internal/plugins
+          # Test (internal/pages — wider timeout, ut-docs#1992)
+          # internal/pages hit the same plain (no -race) default 600s
+          # per-package `go test` timeout as internal/plugins did (ut-docs#643/
+          # #753/#776, comment above) — this time for real in CI on
+          # universal-till PR #1018, "FAIL ... internal/pages 600.022s"
+          # (goroutine dump caught inside InstallStatusRepo.Upsert's WAL
+          # commit-unlock path, an ordinary in-flight fcntl syscall, not a
+          # wait). Independently re-investigated for ut-docs#1992: this
+          # package's own plain local runtime is ~210-237s against the 600s
+          # budget, and sibling packages in the SAME incident's CI job
+          # measured 7.7-8.8x slower than their own local baseline under
+          # runner contention (internal/pos 8.8x, internal/settings 8.1x,
+          # internal/pages/common 7.7x) — that alone is enough to cross 600s
+          # without any hang, exactly ut-docs#648's already-documented
+          # "goroutine dump ≠ real hang" shape for this same package.
+          # Confirmed no actual deadlock/leak candidate in the path:
+          # `internal/db.Open`'s DSN already sets `busy_timeout(5000)` (rules
+          # out a SQLite lock explaining a 600s block) and an unbounded
+          # connection pool (rules out a `database/sql` pool-exhaustion
+          # wait); the specific test named in the incident
+          # (TestResolveAndInstallBasePlugin_PicksHighestSemverVersion) passed
+          # 40/40 local reruns with -race across two independent runs, ~1.9s/
+          # iteration. The real cost driver is fixture cost (~2200 tests each
+          # opening a fresh on-disk SQLite file and replaying all
+          # migrations), not a specific slow test, so shrinking one test's
+          # workload (ut-docs#648's own fix, applicable when one outlier test
+          # owns the margin) doesn't apply here. **The bigger effect is
+          # isolation, not the timeout itself**: run alone (as the two
+          # locale-specific reruns below already do) the package lands at
+          # ~204-214s — it's competing with ~70 sibling test binaries inside
+          # the blanket step that pushes it over 600s. This step's own
+          # `-timeout 20m` is belt-and-braces on top of that isolation, same
+          # as internal/plugins already does. Scoped to the exact package (no
+          # trailing /...) so the two OS-locale-specific internal/pages/...
+          # reruns below — already their own steps — don't run a third time
+          # here; they get their own `-timeout` below instead, for the same
+          # margin reason under whatever locale-specific contention they hit.
+          - name: internal/pages
+            cmd: go test -timeout 20m ./internal/pages
+          # Test (with OS locale set — ut-docs#662)
+          # This runner's own container has no LANG, which is exactly what let
+          # ut-docs#662's OS-locale-detection redirect (ut-docs#590) hide 4
+          # failing tests from CI while they failed on every real developer
+          # machine. Re-running with a locale set catches this class of "only
+          # breaks off this specific runner" bug in the one package it can
+          # actually occur in today (internal/pages owns every OS-locale
+          # touchpoint in this repo — see setup_detect.go).
+          #
+          # Deliberately scoped to internal/pages/..., NOT the full `go test
+          # ./...` a second time (ut-docs#674, found same-day): running the
+          # entire suite twice in one job triggered a real CI failure in the
+          # unrelated internal/plugins package — a 600s test-binary timeout
+          # with goroutines blocked on internal/logging's mutex and
+          # database/sql's connection opener. Investigating ut-docs#674 found
+          # and fixed a genuine unbounded resource amplifier in
+          # internal/plugins (EventBus.publish's "channel full" path could
+          # perform ~16,700 unthrottled synchronous DB+stdout writes in one
+          # test) — so "no actual bug in internal/plugins" turned out to be
+          # wrong, there was one, now throttled. What independent review could
+          # NOT do is reproduce the double-run hang itself (several run
+          # patterns, pre- and post-fix) to confirm that bug was the cause of
+          # THIS incident specifically, so treat it as fixed-along-the-way
+          # hardening, not a confirmed root cause. main had 15 consecutive
+          # green runs before this step was widened to the whole tree, and
+          # failed on the very next merge after. If a locale-dependent bug
+          # ever surfaces outside internal/pages, that's the point to widen
+          # this scope again -- deliberately, with the same resource-
+          # contention risk in mind, not by reflex.
+          # -timeout 20m (ut-docs#1992): same margin fix as the plain
+          # internal/pages step above — this rerun carries the identical
+          # fixture cost under whatever locale-specific contention it hits.
+          - name: internal/pages/... en_GB locale
+            cmd: LANG=en_GB.UTF-8 LC_ALL=en_GB.UTF-8 go test -timeout 20m ./internal/pages/...
+          # Test (with unavailable-language OS locale set — ut-docs#672)
+          # The en_GB run above only ever detects an AVAILABLE language ("en"
+          # is always in httpx.AvailableLocales()), so /setup's other
+          # detection outcome — language detected but not shipped
+          # (setup_page.go's "setup.detected_lang_unavailable" branch) — has
+          # never actually run against a real OS-locale env var in CI, only
+          # against tests that mock detection via withOSLocale. de_DE.UTF-8
+          # exercises that branch for real: German isn't one of web/locales'
+          # shipped locales (ar/en/fa/tr) today. Same scoping rationale as the
+          # en_GB step above (internal/pages/... only, not the whole tree —
+          # see ut-docs#674's comment there).
+          # -timeout 20m (ut-docs#1992): same margin fix as the plain
+          # internal/pages step above.
+          - name: internal/pages/... de_DE locale
+            cmd: LANG=de_DE.UTF-8 LC_ALL=de_DE.UTF-8 go test -timeout 20m ./internal/pages/...
+    name: test-heavy (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod }
+      - name: Test ${{ matrix.name }}
+        run: ${{ matrix.cmd }}
 
   pages-shuffle:
     # ut-docs#3865 (follow-up to ut-docs#3822 / PR #1742): internal/pages
@@ -652,10 +684,10 @@ jobs:
     # turn main red at random, and a pinned one fails the same way on every
     # rerun and reproduces locally with the same flag.
     #
-    # Its own job, not more steps in `build`: build already runs this
-    # package three times (~3-5 min each, see its ut-docs#1992 comment), and
-    # running it alongside other test binaries is what pushed it past the
-    # timeout before. No `needs:` either, so the matrix legs run beside
+    # Its own job, not more steps in `build`: ci already runs this package
+    # three times (test-heavy's three internal/pages legs, ~3-5 min each,
+    # see their ut-docs#1992 comment), and running it alongside other test
+    # binaries is what pushed it past the timeout before. No `needs:` either, so the matrix legs run beside
     # build instead of adding to its wall clock.
     #
     # Reproduce a failure: go test -count=1 -shuffle=<seed> ./internal/pages
