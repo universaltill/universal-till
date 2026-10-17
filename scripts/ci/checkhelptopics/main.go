@@ -6,7 +6,9 @@
 // front matter doesn't parse — plus checks that every shipped locale has
 // translated every topic english has, and (ut-docs#326, closing ut-docs#365)
 // that every user-facing GET page route registered under internal/pages/**
-// is claimed by some topic's routes: front matter (see routecoverage.go).
+// is claimed by some topic's routes: front matter (see routecoverage.go), and
+// (ut-docs#381) that every literal {{ helpLink "id" }} in web/ui names a real
+// topic (see helplinks.go).
 //
 // This deliberately calls the real internal/manual package rather than
 // re-parsing front matter in bash/python the way guard-i18n.sh parses
@@ -76,10 +78,25 @@ func main() {
 		fmt.Fprintf(os.Stderr, "guard-help-topics: page routes with no claiming manual topic (add the route to a topic's routes: front matter under web/help/en/, or a minimal stub topic in every locale): %v\n", uncovered)
 	}
 
+	// helpLink ids (ut-docs#381): a typo'd {{ helpLink "id" }} degrades to the
+	// plain /help link at runtime, on purpose, so only this build-time check
+	// can catch it. See helplinks.go.
+	refs, err := helpLinkRefs(filepath.Join("web", "ui"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "guard-help-topics: scanning web/ui for helpLink calls: %v\n", err)
+		os.Exit(1)
+	}
+	if bad := unknownHelpLinks(refs, lib.IDs()); len(bad) > 0 {
+		fail = true
+		for _, line := range bad {
+			fmt.Fprintf(os.Stderr, "guard-help-topics: %s\n", line)
+		}
+	}
+
 	if fail {
 		os.Exit(1)
 	}
-	fmt.Println("✓ help-topics guard: no route conflicts, every topic parses, all shipped locales complete, every page route has a claiming topic")
+	fmt.Println("✓ help-topics guard: no route conflicts, every topic parses, all shipped locales complete, every page route has a claiming topic, every helpLink id is a real topic")
 }
 
 // manualOnlyLocales are locales whose USER MANUAL (web/help/<locale>) is

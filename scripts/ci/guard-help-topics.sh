@@ -43,6 +43,11 @@
 #      rule for test profiles would swallow that filename.)
 #      (ut-docs#326 — this closes the page-route coverage gap that was
 #      tracked as ut-docs#365.)
+#   5. Every literal {{ helpLink "id" }} in web/ui/**/*.html names a real
+#      manual topic (ut-docs#381). helpLinkHTML degrades an unknown id to the
+#      plain /help link at runtime on purpose, so a typo ("backupz") would
+#      otherwise ship silently. Computed arguments ({{ helpLink . }}) are
+#      skipped; see scripts/ci/checkhelptopics/helplinks.go.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
