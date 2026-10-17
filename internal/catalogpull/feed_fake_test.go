@@ -37,6 +37,10 @@ type fakeFeed struct {
 	stuck bool
 
 	sinces []int64
+	// latestOnly serves each row only at its latest version (the push
+	// harness: an upload answer's newer row must not be undone by an older
+	// version the real feed would never list).
+	latestOnly bool
 }
 
 type feedRow struct {
@@ -140,9 +144,18 @@ func (f *fakeFeed) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if f.limit > 0 {
 		limit = f.limit
 	}
+	// latestOnly: like the real feed, list each row once, at its latest
+	// version (a row re-written moves up). Off, every added version is
+	// served (the older tests feed one row's versions on purpose).
+	latest := map[string]int64{}
+	for _, row := range f.rows {
+		if k := row.Kind + ":" + row.CloudID; row.Version > latest[k] {
+			latest[k] = row.Version
+		}
+	}
 	var avail []feedRow
 	for _, row := range f.rows {
-		if row.Version > since && row.Version <= f.high {
+		if row.Version > since && row.Version <= f.high && (!f.latestOnly || row.Version == latest[row.Kind+":"+row.CloudID]) {
 			avail = append(avail, row)
 		}
 	}

@@ -102,7 +102,9 @@ import (
 // 1: tax codes, categories, items (ut-docs#4463). 2: modifier groups,
 // option sets and the link lists naming them (ut-docs#4491). 3: item
 // variants (with their option values) and item barcodes (ut-docs#4521).
-const ApplierVersion = 3
+// 4: every uploadable row's base, which the change upload diffs against
+// (ut-docs#4464); the re-pull also forgets every echo version.
+const ApplierVersion = 4
 
 // Settings keys of the pull state. "cloudsync." is a per-till settings
 // family (data.PerTillSettingPrefixes): never LAN-synced, so the main
@@ -176,6 +178,8 @@ type Result struct {
 	Applied int // rows written (saves and tombstones)
 	Refused int // rows the till's validation refused (recorded)
 	Skipped int // rows of kinds this applier does not handle
+	Echoed  int // rows at the version of this till's own accepted upload
+	Pending int // rows left for an unanswered local edit's upload
 	Pruned  int // links removed by a resync's prune
 	// Changed is true when the catalogue changed (the snapshot push and
 	// LAN replicas should notice).
@@ -261,15 +265,11 @@ func retireSeededGiftVoucherItem(ctx context.Context, db *sql.DB, opt Options) b
 func run(ctx context.Context, db *sql.DB, fetch Fetcher, opt Options) (Result, error) {
 	var res Result
 	settings := data.NewSettingsRepo(db)
-	st, err := loadState(ctx, settings)
+	st, err := loadState(ctx, db, settings)
 	if err != nil {
 		return res, err
 	}
-	r := &runner{
-		db: db, settings: settings, opt: opt,
-		cat: data.NewCatalogRepo(db), pos: data.NewPOSRepo(db), links: data.NewCloudLinkRepo(),
-		mods: data.NewModifierRepo(db), sets: data.NewOptionSetRepo(db),
-	}
+	r := newRunner(db, opt)
 	resynced := false
 	for pages := 0; pages < maxPagesPerRun; pages++ {
 		if err := ctx.Err(); err != nil {
@@ -286,6 +286,13 @@ func run(ctx context.Context, db *sql.DB, fetch Fetcher, opt Options) (Result, e
 				return res, fmt.Errorf("catalogpull: resync asked again at since=%d", st.cursor)
 			}
 			resynced = true
+			// A restored cloud may serve a different row at the version
+			// the till remembers as its own echo: the full pull applies
+			// every row again. Cleared before the resync is recorded, so
+			// a crash in between only re-applies rows.
+			if err := r.links.ClearEchoes(ctx, db); err != nil {
+				return res, fmt.Errorf("catalogpull: start resync: %w", err)
+			}
 			st.gen++
 			st.cursor, st.resyncGen = 0, st.gen
 			if err := settings.SetMany(ctx, map[string]string{
@@ -318,6 +325,7 @@ func (r *runner) takePage(ctx context.Context, p Page, st *state, res *Result) e
 	if err := validatePage(p, st.cursor, PageLimit); err != nil {
 		return err
 	}
+	r.resyncing = st.resyncGen != 0
 	if len(p.Rows) == 0 && p.Next == st.cursor && p.Next < p.HighWater {
 		return fmt.Errorf("catalogpull: the feed did not advance past %d (high_water %d)", st.cursor, p.HighWater)
 	}
@@ -365,7 +373,7 @@ func (r *runner) confirmAndPrune(ctx context.Context, fetch Fetcher, high int64,
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 
 // loadState reads the pull state and applies the applier-version rule.
-func loadState(ctx context.Context, settings *data.SettingsRepo) (state, error) {
+func loadState(ctx context.Context, db *sql.DB, settings *data.SettingsRepo) (state, error) {
 	var st state
 	read := func(key string) (int64, error) {
 		v, ok, err := settings.Get(ctx, key)
@@ -401,6 +409,19 @@ func loadState(ctx context.Context, settings *data.SettingsRepo) (state, error) 
 			logging.L().Infof("catalogpull: applier version %d → %d; pulling the whole catalogue again", applier, ApplierVersion)
 		}
 		st.cursor = 0
+		// A re-pull after a bump applies every row again: no row is an
+		// echo. (A first run — no stored applier — has none to forget.)
+		if applier > 0 {
+			if err := data.NewCloudLinkRepo().ClearEchoes(ctx, db); err != nil {
+				return st, fmt.Errorf("catalogpull: %w", err)
+			}
+			// Rows an older applier linked get a base before the re-pull
+			// reaches them (seedBases), so a till edit made meanwhile is a
+			// pending field, not overwritten.
+			if err := seedBases(ctx, db); err != nil {
+				return st, err
+			}
+		}
 		if err := settings.SetMany(ctx, map[string]string{KeyCursor: "0", KeyApplierVersion: itoa(ApplierVersion)}); err != nil {
 			return st, fmt.Errorf("catalogpull: store applier version: %w", err)
 		}
@@ -441,7 +462,15 @@ type runner struct {
 	mods     *data.ModifierRepo
 	sets     *data.OptionSetRepo
 	links    *data.CloudLinkRepo
+	outbox   *data.CloudOutboxRepo
 	opt      Options
+	// answering is set while an upload answer's current rows apply (no
+	// echo skip); forced additionally overwrites pending local edits (a
+	// conflict: the cloud wins).
+	answering, forced bool
+	// resyncing is set while a resync's full pull runs (a restored cloud
+	// may serve older versions than the links hold).
+	resyncing bool
 	// photos are thumbnails the open chunk's icons replaced, reported to
 	// opt.ItemPhotoReplaced once the chunk commits.
 	photos []replacedPhoto
@@ -471,7 +500,8 @@ func (r *runner) applyPage(ctx context.Context, p Page, st *state, res *Result) 
 		if tx, err = r.db.BeginTx(ctx, nil); err != nil {
 			return fmt.Errorf("catalogpull: begin: %w", err)
 		}
-		return nil
+		// The cloud's rows are not till edits: no outbox mark (084).
+		return r.outbox.Suppress(ctx, tx)
 	}
 	commit := func(cursor int64) error {
 		if err := r.retryRetired(ctx, tx); err != nil {
@@ -479,6 +509,9 @@ func (r *runner) applyPage(ctx context.Context, p Page, st *state, res *Result) 
 		}
 		if err := r.settings.SetTx(ctx, tx, KeyCursor, itoa(cursor)); err != nil {
 			return fmt.Errorf("catalogpull: store cursor: %w", err)
+		}
+		if err := r.outbox.Unsuppress(ctx, tx); err != nil {
+			return err
 		}
 		if beforeChunkCommit != nil {
 			if err := beforeChunkCommit(); err != nil {
@@ -722,7 +755,23 @@ func (r *runner) prune(ctx context.Context, st *state, res *Result) error {
 		if err != nil {
 			return fmt.Errorf("catalogpull: prune: begin: %w", err)
 		}
+		if err := r.outbox.Suppress(ctx, tx); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("catalogpull: prune: %w", err)
+		}
 		for _, l := range stale {
+			if exempt, err := r.pruneExempt(ctx, tx, l); err != nil {
+				_ = tx.Rollback()
+				return fmt.Errorf("catalogpull: prune: %w", err)
+			} else if exempt {
+				// Uploads first (ADR-0162 §4): re-stamped so the prune moves
+				// past it.
+				if err := r.links.Touch(ctx, tx, l.Entity, l.CloudID, st.resyncGen); err != nil {
+					_ = tx.Rollback()
+					return fmt.Errorf("catalogpull: prune: %w", err)
+				}
+				continue
+			}
 			err := data.WithSavepoint(ctx, tx, "cloud_pull_prune", func() error {
 				return r.tombstone(ctx, tx, l.Entity, l.CloudID, l.LocalID, l.Version)
 			})
@@ -745,12 +794,14 @@ func (r *runner) prune(ctx context.Context, st *state, res *Result) error {
 				res.Changed = true
 			}
 		}
+		if err := r.outbox.Unsuppress(ctx, tx); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("catalogpull: prune: %w", err)
+		}
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("catalogpull: prune: commit: %w", err)
 		}
 	}
-	// TODO(ut-docs#4464): links with a pending outbox create are exempt
-	// from the prune (ADR-0162 §4) — there is no outbox yet.
 	if err := r.settings.Delete(ctx, KeyResyncGen); err != nil {
 		return fmt.Errorf("catalogpull: end resync: %w", err)
 	}
