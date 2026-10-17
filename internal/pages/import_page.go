@@ -955,12 +955,16 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			if !skipped {
 				importable++
 			}
-			// ut-docs#1235: a reused PLU renumbered at parse time is shown
-			// on the Preview too, as a warned row naming the new number —
-			// not a plain "ok" the operator only learns about after commit.
+			// ut-docs#1235, #4520: every non-blocking issue known at parse
+			// time (renumbered PLU, dropped barcode, unread tax rate,
+			// refused net quantity, unresolved photo) is shown on the
+			// Preview too, as a warned row with the commit path's own text
+			// — not a plain "ok" the operator only learns about after commit.
 			warnedPreview := false
-			if !commit && !skipped && it.SKUIssue != "" {
-				status, warnedPreview = translateSKUIssue(T, it.SKUIssue, it.SKUIssueRaw, it.SKU), true
+			if !commit && !skipped {
+				if ws := parseTimeImportWarnings(T, it); len(ws) > 0 {
+					status, warnedPreview = strings.Join(ws, "; "), true
+				}
 			}
 			generatedSKU := ""
 			if predictSKUs && !skipped && it.SKU == "" {
@@ -1387,15 +1391,6 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 						log.Printf("[import] set placeholder thumbnail for item %q: %v", it.Name, err)
 					}
 				}
-				// The source referenced an image that never turned into
-				// usable bytes (dangling path, no documents.zip, oversized
-				// entry) — non-blocking, the row still imports with the
-				// placeholder icon set just above, but silently dropping
-				// the reference would be the same defect class as the
-				// dropped-barcode fix (ut-docs#293).
-				if it.ImageIssue != "" {
-					warnings = append(warnings, translateImageIssue(T, it.ImageIssue, it.ImageIssueRaw))
-				}
 				if it.Barcode != "" {
 					// Pass the symbology catimport already decoded as an
 					// explicit BarcodeType so AddBarcode does NOT re-run
@@ -1411,40 +1406,10 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 						// raw ID; logs the ID either way (ut-docs#303).
 						warnings = append(warnings, common.FriendlyBarcodeConflict(r.Context(), repo, locale, err))
 					}
-				} else if it.BarcodeIssue != "" {
-					// The CSV carried a barcode value, but it matched none
-					// of the shop's enabled symbologies (ADR-0059 Decision
-					// §3, ut-docs#936) — only reachable once a shop has
-					// disabled the default permissive catch-alls
-					// (CODE128/INTERNAL_PLU). The item still imports, but
-					// silently dropping the barcode with no trace is the
-					// same defect class this card exists to fix (ut-docs#293).
-					warnings = append(warnings, translateBarcodeIssue(T, it))
 				}
-				// A present-but-unparseable tax cell imported the row at the
-				// till's default rate — compliance-sensitive, so the drop is
-				// warned about, never silent (ut-docs#512; same defect class
-				// as the dropped-barcode fix, ut-docs#293).
-				if it.TaxIssue != "" {
-					warnings = append(warnings, translateTaxIssue(T, it.TaxIssue, it.TaxIssueRaw))
-				}
-				if it.TakeawayTaxIssue != "" {
-					warnings = append(warnings, translateTaxIssue(T, it.TakeawayTaxIssue, it.TakeawayTaxIssueRaw))
-				}
-				// A reused source product number was de-duplicated with a
-				// suffix, not dropped (ut-docs#1222) — surfaced the same
-				// non-blocking way as a dropped barcode/tax rate above, so
-				// the operator sees the number was reused rather than
-				// silently getting a "-2" SKU with no explanation.
-				if it.SKUIssue != "" {
-					warnings = append(warnings, translateSKUIssue(T, it.SKUIssue, it.SKUIssueRaw, it.SKU))
-				}
-				// A present-but-invalid net quantity imported the item with
-				// none (ut-docs#3403) — warned, never silent, since it also
-				// drops the shelf label's unit price (ut-docs#3391).
-				if it.NetQuantityIssue != "" {
-					warnings = append(warnings, translateNetQuantityIssue(T, it.NetQuantityIssue, it.NetQuantityIssueRaw))
-				}
+				// The parse-time issues — the same composer the Preview
+				// uses, so the two can't drift (ut-docs#4520).
+				warnings = append(warnings, parseTimeImportWarnings(T, it)...)
 				if takeawayOnlyNoDineIn {
 					warnings = append(warnings, T("import.status.tax_takeaway_only"))
 				}
@@ -2292,6 +2257,50 @@ func translateImportIssue(T func(string) string, it catimport.ImportItem) string
 		log.Printf("[import] unrecognised Issue reason code %q", it.Issue)
 		return T("import.status.unknown_issue")
 	}
+}
+
+// parseTimeImportWarnings composes the non-blocking warnings catimport
+// already knows at parse time, in display order. The Preview and the
+// commit loop both use it, so an operator sees on the Preview exactly what
+// the commit will report (ut-docs#4520); commit-only warnings (photo
+// decode/save, barcode attach conflict, stock) stay in the commit loop.
+// Each one is warned, never silent — the same defect class as the
+// dropped-barcode fix (ut-docs#293).
+func parseTimeImportWarnings(T func(string) string, it catimport.ImportItem) []string {
+	var warnings []string
+	// The source referenced an image that never turned into usable bytes
+	// (dangling path, no documents.zip, oversized entry) — the row still
+	// imports with the placeholder icon (ut-docs#1223).
+	if it.ImageIssue != "" {
+		warnings = append(warnings, translateImageIssue(T, it.ImageIssue, it.ImageIssueRaw))
+	}
+	// The file carried a barcode value that matched none of the shop's
+	// enabled symbologies (ADR-0059 Decision §3, ut-docs#936) — only
+	// reachable once a shop has disabled the permissive catch-alls
+	// (CODE128/INTERNAL_PLU). A barcode that did parse never reports one.
+	if it.Barcode == "" && it.BarcodeIssue != "" {
+		warnings = append(warnings, translateBarcodeIssue(T, it))
+	}
+	// A present-but-unparseable tax cell imports the row at the till's
+	// default rate — compliance-sensitive (ut-docs#512).
+	if it.TaxIssue != "" {
+		warnings = append(warnings, translateTaxIssue(T, it.TaxIssue, it.TaxIssueRaw))
+	}
+	if it.TakeawayTaxIssue != "" {
+		warnings = append(warnings, translateTaxIssue(T, it.TakeawayTaxIssue, it.TakeawayTaxIssueRaw))
+	}
+	// A reused source product number is de-duplicated with a suffix, not
+	// dropped (ut-docs#1222, #1235) — the operator sees why it got "-2".
+	if it.SKUIssue != "" {
+		warnings = append(warnings, translateSKUIssue(T, it.SKUIssue, it.SKUIssueRaw, it.SKU))
+	}
+	// A present-but-invalid net quantity imports the item with none
+	// (ut-docs#3403), which also drops the shelf label's unit price
+	// (ut-docs#3391).
+	if it.NetQuantityIssue != "" {
+		warnings = append(warnings, translateNetQuantityIssue(T, it.NetQuantityIssue, it.NetQuantityIssueRaw))
+	}
+	return warnings
 }
 
 // translateBarcodeIssue is translateImportIssue's counterpart for the
