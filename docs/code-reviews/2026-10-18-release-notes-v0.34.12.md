@@ -31,3 +31,14 @@ Owner-facing "What's new" notes for v0.34.12 in en/de/tr/fa/ar. A release is due
   - `scripts/ci/guard-release-notes.sh v0.34.12`
   - `go test ./internal/releasenotes/`
   - `go test ./internal/pages/ -run 'About|Settings|ReleaseNote|Whats'`
+
+## Addendum: #2054 (ut-docs#4650) added
+
+#2054 merged after the notes were written (`577f533`), so this release has 8 feat/fix merges. A new **Fixed** bullet, "Search in more languages", is now in all five locales. The stale-PR sweep (`lane:cloud-41`) added it, and a Sonnet subagent reviewed it independently.
+
+Findings (fixed):
+- Low-medium: "customer search" was too broad. The fold covers customer *names* only, not phone or email, and SKU and barcode are not covered. The bullet now says "customer name search" and "these name searches".
+- Low, de: "berücksichtigen" understated the change. It now says "behandeln … als denselben Buchstaben".
+- Low, accepted: the bullet repeats the voucher bullet's MÜLLER example. It is kept because it is now true for items and customers too.
+
+Verified against `28ab851bd`: the sell-screen search uses `SearchItemsForShortcuts`, which folds via `ut_search_fold`. ISPARTA, Isparta and ısparta all fold to `isparta`. ß folds to ss. NFD input is normalised to NFC. Re-ran `guard-release-notes.sh v0.34.12` and the page tests. Both pass.
