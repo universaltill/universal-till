@@ -275,6 +275,8 @@ jobs:
         run: bash scripts/ci/guard-docs-shots-cross-check_test.sh
       - name: "Manual screenshot freshness guard: surface-hash-only escape hatch (ut-docs#2102)"
         run: bash scripts/ci/update-docs-shots-surface-hash_test.sh
+      - name: "Weekly screenshot locale-drift report: script + workflow wiring (ut-docs#4582)"
+        run: bash scripts/ci/docs-shots-locale-drift_test.sh
       - name: Help-topic registry guard
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache

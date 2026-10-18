@@ -53,7 +53,9 @@
 #   web/locales/**/*.json is DELIBERATELY excluded: every i18n key touches
 #   every locale file, which would force a 40-screenshot regen on almost any
 #   string change. Accepted gap — a copy change can go stale in a screenshot
-#   without tripping this guard.
+#   without tripping this guard. docs-shots-locale-drift.yml catches it
+#   weekly instead (ut-docs#4582): it regenerates on main and keeps one
+#   issue listing the stale screenshots, without blocking anything.
 #
 # ESCAPE HATCH (ut-docs#2102, fourth narrowing): whole-file hashing means a
 # comment-only edit to a surface file trips this guard for zero pixel

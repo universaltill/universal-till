@@ -148,6 +148,10 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   - `docs-shots-determinism.yml` for docs-shots harness changes (paths in
     its `on:` block; + weekly cron, `workflow_dispatch`): two runs must
     produce byte-identical PNGs and `manifest.json` (#2184).
+  - `docs-shots-locale-drift.yml` (weekly cron + `workflow_dispatch`, no
+    PR trigger, never gates): regenerates docs-shots on `main` and keeps one
+    `docs-shots-drift` issue listing screenshots stale through
+    `web/locales/**`-only changes; never commits (#4582).
   - `locale-render-audit.yml` for i18n wiring / `e2e/tests-i18n-audit/**`:
     renders pages in German and fails on untranslated English; fails for
     real on PRs; exceptions in `e2e/tests-i18n-audit/allowlist.json`;
