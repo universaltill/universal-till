@@ -27,6 +27,7 @@ import (
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/directivekey"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/kiosk"
@@ -1300,8 +1301,8 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		},
 		// Remote stock adjustment: the same movement record + connector event
 		// a manual adjustment on the inventory page makes.
-		AdjustStock: func(ctx context.Context, itemID string, delta float64, reason string) (string, error) {
-			return cloudAdjustStock(ctx, d, itemID, delta, reason)
+		AdjustStock: func(ctx context.Context, itemID, variantID, locationID string, delta float64, reason string) (string, error) {
+			return cloudAdjustStock(ctx, d, itemID, variantID, locationID, delta, reason)
 		},
 		// fiscal_tse_ready (ADR-0053, ut-docs#802): the cloud finished
 		// reseller-provisioning this shop's TSE — fetch the operational
@@ -1999,16 +2000,79 @@ func cloudDeactivateItem(ctx context.Context, d *common.Deps, id string) (string
 }
 
 // cloudAdjustStock mirrors the inventory page's manual adjustment for a
-// directive: same stock-movement record, same connector event. The cloud has
-// no location picker, so the movement lands where the item already tracks
-// stock (else the shop's first stock location).
-func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID string, delta float64, reason string) (string, error) {
-	locationID := ""
-	if levels, err := data.NewPOSRepo(d.Db).ListStockLevels(ctx); err == nil {
-		for _, l := range levels {
-			if l.ItemID == itemID {
-				locationID = l.LocationID
+// directive: same stock-movement record, same connector event, same
+// linked-till stock nudge. my.'s inventory node (ut-docs#3643) names the
+// location and, for a variant-stocked item, the variant; both are optional
+// so an older cloud keeps working — with no location the movement lands
+// where the item (or variant) already tracks stock, else the shop's first
+// stock location, exactly as before.
+//
+// Checked before anything is written: the item exists and tracks stock; a
+// named variant belongs to the item, and with no variant named the item has
+// no active variant (ADR-0043); a named location exists and is active.
+// Refusals are English, like every other directive result: "item not
+// found", "item does not track stock", "variant not found", "item has
+// variants; choose a variant", "stock location not found", "stock location
+// is inactive", "no stock location configured".
+func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID, variantID, locationID string, delta float64, reason string) (string, error) {
+	item, ok, err := data.NewCatalogRepo(d.Db).GetItem(ctx, itemID)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", errors.New("item not found")
+	}
+	if item.StockUntracked {
+		return "", errors.New("item does not track stock")
+	}
+	if variantID != "" {
+		parent, ok, err := data.NewCatalogRepo(d.Db).ItemIDForVariant(ctx, variantID)
+		if err != nil {
+			return "", err
+		}
+		if !ok || parent != itemID {
+			return "", errors.New("variant not found")
+		}
+	} else {
+		// ADR-0043: an item with an active variant is stocked per variant,
+		// so an item-level adjustment has no row to land on — refuse it
+		// whichever producer sent the directive.
+		hasVariants, err := data.NewCatalogRepo(d.Db).HasActiveVariants(ctx, itemID)
+		if err != nil {
+			return "", err
+		}
+		if hasVariants {
+			return "", errors.New("item has variants; choose a variant")
+		}
+	}
+	if locationID != "" {
+		locs, err := data.NewPOSRepo(d.Db).ListStockLocationsForAdmin(ctx)
+		if err != nil {
+			return "", err
+		}
+		found := false
+		for _, l := range locs {
+			if l.ID == locationID {
+				if !l.IsActive {
+					return "", errors.New("stock location is inactive")
+				}
+				found = true
 				break
+			}
+		}
+		if !found {
+			return "", errors.New("stock location not found")
+		}
+	}
+	if locationID == "" {
+		if levels, err := data.NewPOSRepo(d.Db).ListStockLevels(ctx); err == nil {
+			for _, l := range levels {
+				// A variant row carries its parent's ItemID, so a variant
+				// adjustment matches on the variant itself.
+				if (variantID == "" && l.ItemID == itemID) || (variantID != "" && l.VariantID == variantID) {
+					locationID = l.LocationID
+					break
+				}
 			}
 		}
 	}
@@ -2023,8 +2087,14 @@ func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID string, delta 
 	if reason == "" {
 		reason = "cloud adjustment"
 	}
+	// A variant's stock is its own inventory row (ADR-0043): the movement
+	// is variant-scoped, item_id NULL, as RecordStockMovement requires.
+	movementItemID := itemID
+	if variantID != "" {
+		movementItemID = ""
+	}
 	if _, err := pos.RecordStockMovement(ctx, d.Db, pos.StockMovementInput{
-		ItemID: itemID, LocationID: locationID, Type: "adjust",
+		ItemID: movementItemID, VariantID: variantID, LocationID: locationID, Type: "adjust",
 		// audit_log.actor_id has a real FK to users(id) -- "cloud" was
 		// never a seeded user, so every real call here violated it (the
 		// old hand-rolled test schema had no such FK, which is why this
@@ -2038,9 +2108,12 @@ func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID string, delta 
 		return "", err
 	}
 	publishStockAdjusted(ctx, d, plugins.StockAdjustedEvent{
-		ItemID: itemID, DeltaQty: delta,
+		ItemID: itemID, VariantID: variantID, DeltaQty: delta,
 		Reason: stockMovementReason("adjust"), Location: locationID,
 	})
+	// The levels linked tills pull moved (ADR-0114 §2), as for the local
+	// adjust; nil-safe, a no-op with no link.
+	d.NudgeLink(fleetlink.ScopeStock)
 	return fmt.Sprintf("stock adjusted by %+g", delta), nil
 }
 

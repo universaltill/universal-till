@@ -474,6 +474,20 @@ func (r *CatalogRepo) ItemIDForVariant(ctx context.Context, variantID string) (s
 	return itemID, true, nil
 }
 
+// HasActiveVariants reports whether the item has any active variant — the
+// ADR-0043 "stocked per variant" test the cloud adjust_stock directive uses
+// to refuse an item-level adjustment (ut-docs#3643). Unlike
+// ItemIDsWithVariants it ignores SKUs/barcodes: any active variant counts.
+// An unknown item has none.
+func (r *CatalogRepo) HasActiveVariants(ctx context.Context, itemID string) (bool, error) {
+	var n int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM item_variants WHERE item_id = ? AND is_active = 1)`, itemID).Scan(&n); err != nil {
+		return false, fmt.Errorf("has active variants: %w", err)
+	}
+	return n == 1, nil
+}
+
 // ItemIDForBarcode resolves an attached barcode to the item whose catalog
 // row shows it — directly for an item barcode, via the parent item for a
 // variant barcode (ut-docs#1363; called BEFORE DeleteBarcode so the row

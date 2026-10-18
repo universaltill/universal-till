@@ -101,9 +101,10 @@ func TestCloudInstallPlugin_ConfigurationFailurePersistsOperatorVisibleStatus(t 
 
 func TestCloudAdjustStock_UsesExistingTrackedLocation(t *testing.T) {
 	dp := newCloudSyncTestDeps(t)
+	deactivateSeededVariant(t, dp) // item-level adjust (ADR-0043)
 	ctx := t.Context()
 
-	msg, err := cloudAdjustStock(ctx, dp, "itm1", 5, "restock")
+	msg, err := cloudAdjustStock(ctx, dp, "itm1", "", "", 5, "restock")
 	if err != nil {
 		t.Fatalf("cloudAdjustStock: %v", err)
 	}
@@ -146,7 +147,7 @@ func TestCloudAdjustStock_FallsBackToFirstStockLocationWhenUntracked(t *testing.
 		t.Fatalf("create item: %v", err)
 	}
 
-	msg, err := cloudAdjustStock(ctx, dp, id, 3, "initial stock")
+	msg, err := cloudAdjustStock(ctx, dp, id, "", "", 3, "initial stock")
 	if err != nil {
 		t.Fatalf("cloudAdjustStock: %v", err)
 	}
@@ -165,6 +166,7 @@ func TestCloudAdjustStock_FallsBackToFirstStockLocationWhenUntracked(t *testing.
 
 func TestCloudAdjustStock_NoStockLocationConfiguredReturnsError(t *testing.T) {
 	dp := newCloudSyncTestDeps(t)
+	deactivateSeededVariant(t, dp) // item-level adjust (ADR-0043)
 	ctx := t.Context()
 
 	if _, err := dp.Db.ExecContext(ctx, `DELETE FROM inventory`); err != nil {
@@ -174,7 +176,7 @@ func TestCloudAdjustStock_NoStockLocationConfiguredReturnsError(t *testing.T) {
 		t.Fatalf("clear stock_locations: %v", err)
 	}
 
-	_, err := cloudAdjustStock(ctx, dp, "itm1", 1, "restock")
+	_, err := cloudAdjustStock(ctx, dp, "itm1", "", "", 1, "restock")
 	if err == nil {
 		t.Fatalf("expected an error when no stock location is configured")
 	}
@@ -185,9 +187,10 @@ func TestCloudAdjustStock_NoStockLocationConfiguredReturnsError(t *testing.T) {
 
 func TestCloudAdjustStock_DefaultsReasonWhenEmpty(t *testing.T) {
 	dp := newCloudSyncTestDeps(t)
+	deactivateSeededVariant(t, dp) // item-level adjust (ADR-0043)
 	ctx := t.Context()
 
-	if _, err := cloudAdjustStock(ctx, dp, "itm1", 2, ""); err != nil {
+	if _, err := cloudAdjustStock(ctx, dp, "itm1", "", "", 2, ""); err != nil {
 		t.Fatalf("cloudAdjustStock: %v", err)
 	}
 
@@ -739,7 +742,7 @@ func TestCloudAdjustStock_AuditActorSatisfiesRealForeignKey(t *testing.T) {
 	}
 
 	dp := &common.Deps{Db: db}
-	if _, err := cloudAdjustStock(t.Context(), dp, "itm1", 5, "restock"); err != nil {
+	if _, err := cloudAdjustStock(t.Context(), dp, "itm1", "", "", 5, "restock"); err != nil {
 		t.Fatalf("cloudAdjustStock against a real migrated schema: %v", err)
 	}
 
