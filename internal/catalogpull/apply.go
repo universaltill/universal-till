@@ -190,6 +190,9 @@ func (r *runner) apply(ctx context.Context, tx *sql.Tx, row Row, gen int64) ([]r
 			return nil, err
 		}
 	}
+	// The cloud's own sku, read before a pending local edit drops it: it
+	// settles a seeded base (settleSeededSKU).
+	skuRaw, skuCarried, skuNull := f.get("sku")
 	// Field-wise apply (ADR-0162 §4): a field with an unanswered local
 	// edit waits for its upload's verdict; it keeps its base too.
 	var link data.CloudLinkState
@@ -267,6 +270,9 @@ func (r *runner) apply(ctx context.Context, tx *sql.Tx, row Row, gen int64) ([]r
 		base := baseFromRow(row.Kind, f, parseBase(link.Base))
 		if err := r.keptSKUBase(ctx, tx, row.Kind, local, f, base); err != nil {
 			return nil, err
+		}
+		if row.Kind == kindItem {
+			settleSeededSKU(base, skuCarried, skuNull || norm(skuRaw) == `""`)
 		}
 		if err := r.links.SetBase(ctx, tx, row.Kind, row.CloudID, base.encode()); err != nil {
 			return nil, err

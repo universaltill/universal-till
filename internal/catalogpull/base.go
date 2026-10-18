@@ -281,6 +281,34 @@ func baseFromRow(kind string, f fields, old values) values {
 // cloud one; not an upload field, never sent.
 const keptSKUField = "sku_kept"
 
+// seededSKUField marks an item base whose sku seedBases took from the
+// local row: an applier-3 build kept its own SKU for a blank cloud one, so
+// that sku may be the till's and not the cloud's. Not an upload field,
+// never sent. A change touching sku waits while it is set (sealMark), and
+// the next applied row carrying sku settles it (settleSeededSKU,
+// ut-docs#4623).
+const seededSKUField = "sku_seeded"
+
+// settleSeededSKU settles a seeded item base once a cloud row carrying
+// sku has been applied: a blank cloud SKU makes the base's sku the
+// cloud's "" and records the seeded one as the kept SKU (keptSKUBase's
+// shape), so a pending local SKU edit uploads with the cloud's value as
+// before; any other cloud SKU confirms the seeded one. cloudBlank reports
+// the cloud row's sku as blank (null or ""). Before the field-wise apply
+// drops a pending sku, so the caller reads it from the whole row.
+func settleSeededSKU(base values, carried, cloudBlank bool) {
+	if _, ok := base[seededSKUField]; !ok || !carried {
+		return
+	}
+	if cloudBlank && norm(base["sku"]) != `""` {
+		if _, kept := base[keptSKUField]; !kept {
+			base[keptSKUField] = base["sku"]
+		}
+		base["sku"] = rawJSON("")
+	}
+	delete(base, seededSKUField)
+}
+
 // keptSKUBase records in an item's base the SKU the till kept for a blank
 // cloud one (applyItem keeps or generates its own: never an item without
 // SKU, ut-docs#1459). The base's sku stays the cloud's "" (the change's
@@ -469,6 +497,9 @@ func (r *runner) seedChunk(ctx context.Context, kind, after string) (seeded int,
 				continue
 			}
 			base[f] = loc.vals[f]
+		}
+		if kind == kindItem {
+			base[seededSKUField] = rawJSON(true)
 		}
 		if err := r.links.SetBase(ctx, tx, kind, l.CloudID, base.encode()); err != nil {
 			return 0, "", 0, err
