@@ -111,7 +111,7 @@
         {{ range .Payments }}
           <li>
             <div>
-              <strong>{{ .Method }}</strong>
+              <strong>{{ tenderLabel .Method }}</strong>
               {{ if .MaskedPAN }}
                 <small>{{ .MaskedPAN }}{{ if .AuthCode }} &middot; {{ T "receipt.auth_code" }} {{ .AuthCode }}{{ end }}</small>
               {{ else if .VoucherID }}<small class="receipt-voucher-code">{{ .VoucherID }}{{ if .Reference }} &middot; {{ .Reference }}{{ end }}</small>

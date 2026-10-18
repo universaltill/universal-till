@@ -253,6 +253,7 @@ func TestRenderReceipt_MixedSaleMarksLines_UniformUnchanged(t *testing.T) {
 		"money":         func(v int64) string { return "x" },
 		"qty":           func(v any) string { return "x" },
 		"barcodesvg":    func(s string) template.HTML { return "" },
+		"tenderLabel":   func(s string) string { return s },
 		"barcode128svg": func(s string) template.HTML { return "" },
 		"bpPercent":     func(bp int64) string { return "" },
 		"T":             func(key string) string { return key },

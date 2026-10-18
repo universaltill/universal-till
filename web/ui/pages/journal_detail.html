@@ -119,7 +119,7 @@
         <tbody>
           {{ range .Sale.Payments }}
             <tr>
-              <td><strong>{{ .Method }}</strong>
+              <td><strong>{{ tenderLabel .Method }}</strong>
                 {{ if .MaskedPAN }}
                   <br><small class="muted">{{ .MaskedPAN }}{{ if .AuthCode }} &middot; {{ T "receipt.auth_code" }} {{ .AuthCode }}{{ end }}</small>
                 {{ else if .VoucherID }}<br><small class="muted" data-testid="journal-payment-voucher">{{ if $.CanViewVouchers }}<a href="{{ index $.VoucherHrefs .VoucherID }}"><code class="pill-code">{{ .VoucherID }}</code></a>{{ else }}<code class="pill-code">{{ .VoucherID }}</code>{{ end }}{{ if .Reference }} &middot; {{ .Reference }}{{ end }}</small>

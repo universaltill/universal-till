@@ -283,3 +283,13 @@ func TestReceiptPrintLabels_TurkishReprintBytesOnTheWire(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#4626: the legacy "gift" id prints its translated name too.
+func TestReceiptMethodLabel_GiftTranslated(t *testing.T) {
+	if got := receiptMethodLabel("fa", "gift"); got != "کارت هدیه" {
+		t.Errorf("receiptMethodLabel(fa, gift) = %q, want the fa tender.gift_card text", got)
+	}
+	if got := receiptMethodLabel("en", "sumup"); got != "Sumup" {
+		t.Errorf("plugin id keeps titleFirst fallback, got %q", got)
+	}
+}

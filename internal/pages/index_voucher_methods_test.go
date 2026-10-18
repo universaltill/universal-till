@@ -18,6 +18,8 @@ package pages
 // both present without any per-test seeding.
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -119,5 +121,36 @@ func TestIndexVoucherMethods_PayGridExcludesMixedCaseVoucherType(t *testing.T) {
 	}
 	if sel := splitMethodSelectSnippet(t, home); !strings.Contains(sel, `<option value="plugin_gs"`) {
 		t.Errorf("Split select must still offer the plugin voucher method: %s", sel)
+	}
+}
+
+// ut-docs#4626: the Split select shows each method's translated name (the
+// same `T .Name` the Pay grid uses), never the raw id as option text.
+func TestIndexSplitSelect_OptionsAreTranslatedLabels(t *testing.T) {
+	mux, dp := quickPayTestMux(t)
+	// seedForPages seeds plain-text cash/card names; a real till has the
+	// translator keys migration 022 repoints them at.
+	if _, err := dp.Db.Exec(`UPDATE payment_methods SET name = 'tender.' || id WHERE id IN ('cash','card')`); err != nil {
+		t.Fatalf("repoint built-in names: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/?lang=fa", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /?lang=fa: %d", rec.Code)
+	}
+	sel := splitMethodSelectSnippet(t, rec.Body.String())
+	for id, label := range map[string]string{
+		"cash": "نقدی", "card": "کارت", "voucher": "کوپن", "gift": "کارت هدیه",
+	} {
+		if !strings.Contains(sel, `value="`+id+`"`) {
+			t.Errorf("option value must stay the id %q:\n%s", id, sel)
+		}
+		if !strings.Contains(sel, ">"+label+"</option>") {
+			t.Errorf("option for %q must read %q:\n%s", id, label, sel)
+		}
+		if strings.Contains(sel, ">"+id+"</option>") {
+			t.Errorf("raw id %q leaked as option text:\n%s", id, sel)
+		}
 	}
 }

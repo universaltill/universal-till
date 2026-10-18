@@ -482,7 +482,7 @@ window.utCurrency = (function(){
         if (payment.reference) {
           details += '<br><small>' + escapeHtml(payment.reference) + '</small>';
         }
-        return '<div class="payment-pill"><div><strong>' + escapeHtml(payment.method) + '</strong><div class="pill-meta">' + details + '</div></div><button type="button" class="pill-remove" data-remove-payment="' + idx + '">&times;</button></div>';
+        return '<div class="payment-pill"><div><strong>' + escapeHtml(methodLabel(payment.method)) + '</strong><div class="pill-meta">' + details + '</div></div><button type="button" class="pill-remove" data-remove-payment="' + idx + '">&times;</button></div>';
       }).join('');
       paymentsList.innerHTML = html;
     }
@@ -513,6 +513,20 @@ window.utCurrency = (function(){
       var num = Number(text);
       if (!text || Number.isNaN(num)) return 0;
       return window.utCurrency.toMinor(num);
+    }
+
+    // ut-docs#4626: pills and the "added" status show the method's visible
+    // option text (translated), not its id. Display only: the payment object
+    // POSTed to the server keeps just the id.
+    function methodLabel(id){
+      if (methodSelect) {
+        for (var i = 0; i < methodSelect.options.length; i++) {
+          if (methodSelect.options[i].value === id) {
+            return (methodSelect.options[i].textContent || '').trim() || id;
+          }
+        }
+      }
+      return id;
     }
 
     function addPayment(){
@@ -555,7 +569,7 @@ window.utCurrency = (function(){
       payments.push(payment);
       renderPayments();
       clearForm();
-      setStatus(fmt(msg.msgAdded, method, formatMoney(payment.amount - (payment.change || 0))), 'success');
+      setStatus(fmt(msg.msgAdded, methodLabel(method), formatMoney(payment.amount - (payment.change || 0))), 'success');
       return true;
     }
 

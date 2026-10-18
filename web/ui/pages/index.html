@@ -889,7 +889,7 @@
           <label>{{ T "tender.method" }}
             <select name="method" id="split-tender-method" data-default="{{ $default }}" required>
               {{ range .paymentMethods }}
-                <option value="{{ . }}" {{ if eq . $default }}selected{{ end }}>{{ . }}</option>
+                <option value="{{ .ID }}" {{ if eq .ID $default }}selected{{ end }}>{{ T .Name }}</option>
               {{ end }}
             </select>
           </label>

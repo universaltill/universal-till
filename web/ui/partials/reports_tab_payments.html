@@ -3,7 +3,7 @@
   <table class="table">
     <tbody>
       {{ range .Methods }}
-      <tr><td><strong>{{ .Method }}</strong></td><td class="muted">×{{ .Count }}</td><td style="text-align:end">{{ money .Amount }}</td></tr>
+      <tr><td><strong>{{ tenderLabel .Method }}</strong></td><td class="muted">×{{ .Count }}</td><td style="text-align:end">{{ money .Amount }}</td></tr>
       {{ else }}
       <tr><td class="empty">{{ T "reports.none" }}</td></tr>
       {{ end }}

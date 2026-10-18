@@ -567,12 +567,12 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 
 // receiptMethodLabel names a payment on the printed receipt (ut-docs#4199).
 // The built-in method ids carry their tender.* key (en "Cash"/"Card"/
-// "Voucher", what the title-cased id printed before); any other id — a
-// plugin tender, the legacy "gift" row — keeps its title-cased id.
+// "Voucher", what the title-cased id printed before), as does the legacy
+// "gift" row (ut-docs#4626); any other id — a plugin tender — keeps its
+// title-cased id.
 func receiptMethodLabel(locale, method string) string {
-	switch method {
-	case "cash", "card", "voucher":
-		return httpx.T(locale, "tender."+method)
+	if key, ok := httpx.PaymentMethodKey(method); ok {
+		return httpx.T(locale, key)
 	}
 	return titleFirst(method)
 }

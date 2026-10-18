@@ -566,6 +566,7 @@ func renderHTMLReceiptForSale(t *testing.T, dp *common.Deps, saleID string) stri
 		"money":         func(v int64) string { return fmt.Sprintf("€%.2f", float64(v)/100) },
 		"qty":           func(v any) string { return fmt.Sprintf("%v", v) },
 		"barcodesvg":    httpx.BarcodeSVG,
+		"tenderLabel":   func(s string) string { return s },
 		"barcode128svg": httpx.Code128SVG,
 		"bpPercent":     func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T":             func(key string) string { return key },
