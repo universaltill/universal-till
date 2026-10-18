@@ -79,6 +79,16 @@ type Manifest struct {
 	DB        *ManifestDB        `json:"db,omitempty"`
 	Retention *ManifestRetention `json:"retention,omitempty"`
 	ViewsUsed []string           `json:"views_used,omitempty"`
+
+	// Plugin settings form v2 (ADR-0121 amendment, ut-docs#4156): S1 tabs,
+	// S5 Test connection buttons and the S7 setup flow. All omitempty, so a
+	// manifest without them marshals byte-identically to before and old
+	// signatures verify. Validated in settings_v2.go at both install paths.
+	// ut-cloud's internal/signing.CanonicalManifest must mirror every one
+	// (same position, same tags), and the nested types too.
+	SettingsTabs  []ManifestSettingsTab  `json:"settings_tabs,omitempty"`
+	SettingsTests []ManifestSettingsTest `json:"settings_tests,omitempty"`
+	SettingsSetup *ManifestSettingsSetup `json:"settings_setup,omitempty"`
 }
 
 // ManifestLimits are a plugin's resource requests (ADR-0121 §2). 0 means
@@ -267,7 +277,8 @@ type ManifestSetting struct {
 	// masks the value on the settings page and seals it at rest, regardless
 	// of the key name; "endpoint" (ADR-0121 §2) only accepts an http(s) URL
 	// when an operator saves it (ValidEndpointURL). Validated in
-	// ParseManifest; see secret_settings.go.
+	// ParseManifest; see secret_settings.go. Settings form v2 adds text,
+	// bool, number, percent, money, list and map (settings_v2.go).
 	Type string `json:"type,omitempty"`
 	// Settings-form metadata (ut-docs#2832, choice_settings.go): Label and
 	// Help are i18n keys (the plugin's own locales or core's) the settings
@@ -280,6 +291,32 @@ type ManifestSetting struct {
 	Help     string                    `json:"help,omitempty"`
 	Options  []ManifestSettingOption   `json:"options,omitempty"`
 	ShowWhen *ManifestSettingCondition `json:"show_when,omitempty"`
+	// Settings form v2 (ADR-0121 amendment S1–S6, ut-docs#4156,
+	// settings_v2.go): Tab names a settings_tabs id; Required/Min/Max/
+	// MaxLen/Placeholder are S2 constraints (Min/Max in the type's stored
+	// unit: bps for percent, minor units for money); Fields/TitleField/
+	// MinItems/MaxItems describe a `list`'s records (S3, one level);
+	// MapOver/Value a `map` (S4); OptionsAsk/DependsOn a choice filled by
+	// the plugin (S5); Guide/GuideURL/Paste/Notice are S6 guidance. All
+	// omitempty; ut-cloud's CanonicalSetting mirrors them.
+	Tab         string                   `json:"tab,omitempty"`
+	Required    bool                     `json:"required,omitempty"`
+	Min         *int64                   `json:"min,omitempty"`
+	Max         *int64                   `json:"max,omitempty"`
+	MaxLen      int                      `json:"max_len,omitempty"`
+	Placeholder string                   `json:"placeholder,omitempty"`
+	Fields      []ManifestSetting        `json:"fields,omitempty"`      // list
+	TitleField  string                   `json:"title_field,omitempty"` // list
+	MinItems    int                      `json:"min_items,omitempty"`   // list
+	MaxItems    int                      `json:"max_items,omitempty"`   // list
+	MapOver     string                   `json:"map_over,omitempty"`    // map
+	Value       *ManifestSettingMapValue `json:"value,omitempty"`       // map
+	OptionsAsk  bool                     `json:"options_ask,omitempty"`
+	DependsOn   []string                 `json:"depends_on,omitempty"`
+	Guide       string                   `json:"guide,omitempty"`
+	GuideURL    string                   `json:"guide_url,omitempty"`
+	Paste       bool                     `json:"paste,omitempty"`
+	Notice      string                   `json:"notice,omitempty"`
 }
 
 // ManifestSettingOption is one allowed value of a `type: "choice"` setting:
@@ -294,6 +331,51 @@ type ManifestSettingOption struct {
 type ManifestSettingCondition struct {
 	Key string   `json:"key"`
 	In  []string `json:"in"`
+}
+
+// ManifestSettingMapValue is the per-record value of a `type: "map"`
+// setting (S4): one scalar kind (SettingMapValueTypes) with that kind's
+// constraints.
+type ManifestSettingMapValue struct {
+	Type    string                  `json:"type"`
+	Min     *int64                  `json:"min,omitempty"`
+	Max     *int64                  `json:"max,omitempty"`
+	MaxLen  int                     `json:"max_len,omitempty"`
+	Options []ManifestSettingOption `json:"options,omitempty"`
+}
+
+// ManifestSettingsTab is one settings tab (S1), in display order: Label and
+// Help are i18n keys; ShowWhen hides the whole tab like a field's.
+type ManifestSettingsTab struct {
+	ID       string                    `json:"id"`
+	Label    string                    `json:"label"`
+	Help     string                    `json:"help,omitempty"`
+	ShowWhen *ManifestSettingCondition `json:"show_when,omitempty"`
+}
+
+// ManifestSettingsTest is a Test connection button (S5), answered by the
+// plugin's ui.settings.test.ask: on a tab, or (Record) in each list
+// record's panel.
+type ManifestSettingsTest struct {
+	ID     string `json:"id"`
+	Label  string `json:"label"`
+	Tab    string `json:"tab,omitempty"`
+	Record bool   `json:"record,omitempty"`
+}
+
+// ManifestSettingsSetup is the plugin's re-runnable setup flow (S7).
+type ManifestSettingsSetup struct {
+	Steps []ManifestSettingsSetupStep `json:"steps"`
+}
+
+// ManifestSettingsSetupStep is one setup screen: Fields name top-level
+// setting keys; Test names a non-record settings_tests id run after the
+// step saves.
+type ManifestSettingsSetupStep struct {
+	Title  string   `json:"title"`
+	Help   string   `json:"help,omitempty"`
+	Fields []string `json:"fields"`
+	Test   string   `json:"test,omitempty"`
 }
 
 // ManifestHook represents an event subscription
@@ -349,8 +431,8 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 				e.Key, e.Type, strings.Join(CanonicalTypes, "|"))
 		}
 	}
-	// Setting types likewise (ADR-0082, ADR-0121 §2): "", "secret" or
-	// "endpoint" — an unknown value is a typo that would otherwise silently
+	// Setting types likewise (ADR-0082, ADR-0121 §2, ut-docs#4156): see
+	// isValidSettingType — an unknown value is a typo that would otherwise silently
 	// leave a credential unsealed at rest, so it fails here, not at persist
 	// time.
 	for _, s := range m.Settings {
@@ -360,8 +442,12 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 		}
 	}
 	// Settings-form metadata (ut-docs#2832): choice options, label/help
-	// keys, show_when.
+	// keys, show_when; and the v2 form (ut-docs#4156): tabs, constraints,
+	// list/map, asked options, guidance, tests and setup.
 	if err := validateSettingForm(&m); err != nil {
+		return nil, err
+	}
+	if err := validateSettingsV2(&m); err != nil {
 		return nil, err
 	}
 	// An "endpoint"-typed setting's default_value, if present and non-empty,

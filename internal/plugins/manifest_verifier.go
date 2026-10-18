@@ -224,8 +224,12 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 				s.Key, s.Type, allowedSettingTypes()))
 		}
 	}
-	// Settings-form metadata, same as ParseManifest (ut-docs#2832).
+	// Settings-form metadata, same as ParseManifest (ut-docs#2832,
+	// ut-docs#4156).
 	if err := validateSettingForm(&manifest); err != nil {
+		result.Errors = append(result.Errors, err.Error())
+	}
+	if err := validateSettingsV2(&manifest); err != nil {
 		result.Errors = append(result.Errors, err.Error())
 	}
 	// Endpoint-typed setting defaults, same as ParseManifest (ut-docs#3552):

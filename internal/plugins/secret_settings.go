@@ -31,14 +31,30 @@ const SettingTypeSecret = "secret"
 // convention shared with secret-typed settings).
 const SettingTypeEndpoint = "endpoint"
 
+// settingTypes are the non-empty ManifestSetting.Type values, in the order
+// error messages name them (settings form v2 types: settings_v2.go).
+var settingTypes = []string{
+	SettingTypeSecret, SettingTypeEndpoint, SettingTypeChoice,
+	SettingTypeText, SettingTypeBool, SettingTypeNumber, SettingTypePercent, SettingTypeMoney,
+	SettingTypeList, SettingTypeMap,
+}
+
 // isValidSettingType is ParseManifest's enum check for ManifestSetting.Type.
 func isValidSettingType(t string) bool {
-	return t == "" || t == SettingTypeSecret || t == SettingTypeEndpoint || t == SettingTypeChoice
+	if t == "" {
+		return true
+	}
+	for _, v := range settingTypes {
+		if t == v {
+			return true
+		}
+	}
+	return false
 }
 
 // allowedSettingTypes names the non-empty setting types for error messages.
 func allowedSettingTypes() string {
-	return strings.Join([]string{SettingTypeSecret, SettingTypeEndpoint, SettingTypeChoice}, "|")
+	return strings.Join(settingTypes, "|")
 }
 
 // ValidEndpointURL reports whether v is http(s)://host[:port][/path]: an

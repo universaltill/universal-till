@@ -1,0 +1,166 @@
+{
+  "id": "t.settingsv2",
+  "name": "Settings v2 fixture",
+  "version": "1.0.0",
+  "description": "Uses every plugin settings form v2 field (ADR-0121 amendment S1-S8, ut-docs#4156).",
+  "author": "Universal Till",
+  "website": "https://universaltill.com",
+  "entrypoint": "",
+  "runtime": "none",
+  "canonical_type": "integration",
+  "device_arch": "any",
+  "min_pos_version": "1.0.0",
+  "settings": [
+    {
+      "key": "provider",
+      "type": "choice",
+      "default_value": "local",
+      "label": "t.provider",
+      "help": "t.provider.help",
+      "options": [
+        {"value": "local", "label": "t.provider.local"},
+        {"value": "hosted", "label": "t.provider.hosted"}
+      ],
+      "tab": "connection",
+      "required": true
+    },
+    {
+      "key": "enabled",
+      "type": "bool",
+      "default_value": true,
+      "label": "t.enabled"
+    },
+    {
+      "key": "display_name",
+      "type": "text",
+      "default_value": "Till",
+      "label": "t.display_name",
+      "required": true,
+      "max_len": 40,
+      "placeholder": "t.display_name.placeholder",
+      "paste": true,
+      "tab": "connection"
+    },
+    {
+      "key": "api_key",
+      "type": "secret",
+      "default_value": "",
+      "label": "t.api_key",
+      "tab": "connection",
+      "required": true,
+      "placeholder": "t.api_key.placeholder",
+      "guide": "t.api_key.guide",
+      "guide_url": "https://example.com/account/keys",
+      "paste": true,
+      "notice": "t.api_key.notice",
+      "show_when": {"key": "provider", "in": ["hosted"]}
+    },
+    {
+      "key": "server",
+      "type": "endpoint",
+      "default_value": "http://127.0.0.1:8080",
+      "label": "t.server",
+      "placeholder": "t.server.placeholder",
+      "tab": "connection"
+    },
+    {
+      "key": "timeout_s",
+      "type": "number",
+      "default_value": 30,
+      "label": "t.timeout",
+      "required": true,
+      "min": 1,
+      "max": 120,
+      "placeholder": "t.timeout.placeholder",
+      "tab": "advanced"
+    },
+    {
+      "key": "service_charge",
+      "type": "percent",
+      "default_value": 1250,
+      "label": "t.service_charge",
+      "min": 0,
+      "max": 10000,
+      "tab": "advanced"
+    },
+    {
+      "key": "tip_cap",
+      "type": "money",
+      "default_value": 5000,
+      "label": "t.tip_cap",
+      "min": 0,
+      "max": 100000,
+      "tab": "advanced"
+    },
+    {
+      "key": "model",
+      "type": "choice",
+      "default_value": "",
+      "label": "t.model",
+      "options_ask": true,
+      "depends_on": ["provider", "server"],
+      "tab": "connection"
+    },
+    {
+      "key": "connections",
+      "type": "list",
+      "label": "t.connections",
+      "help": "t.connections.help",
+      "tab": "connection",
+      "title_field": "name",
+      "min_items": 0,
+      "max_items": 10,
+      "fields": [
+        {"key": "name", "type": "text", "label": "t.conn.name", "required": true, "max_len": 60},
+        {"key": "kind", "type": "choice", "label": "t.conn.kind", "default_value": "a",
+         "options": [{"value": "a", "label": "t.conn.kind.a"}, {"value": "b", "label": "t.conn.kind.b"}]},
+        {"key": "conn_model", "type": "choice", "label": "t.conn.model", "options_ask": true, "depends_on": ["kind"]},
+        {"key": "api_key", "type": "secret", "label": "t.conn.key", "required": true, "paste": true,
+         "notice": "t.conn.key.notice", "guide": "t.conn.key.guide", "guide_url": "https://example.com/keys",
+         "show_when": {"key": "kind", "in": ["b"]}},
+        {"key": "active", "type": "bool", "label": "t.conn.active", "default_value": false},
+        {"key": "weight", "type": "number", "label": "t.conn.weight", "min": 0, "max": 10}
+      ]
+    },
+    {
+      "key": "takeaway_rate_overrides",
+      "type": "map",
+      "label": "t.takeaway",
+      "tab": "tax",
+      "map_over": "tax_codes",
+      "value": {"type": "percent", "min": 1, "max": 100000},
+      "default_value": {"std": 700}
+    },
+    {
+      "key": "method_accounts",
+      "type": "map",
+      "label": "t.method_accounts",
+      "tab": "tax",
+      "map_over": "payment_methods",
+      "value": {"type": "choice", "options": [{"value": "1200", "label": "t.acct.1200"}, {"value": "1360", "label": "t.acct.1360"}]}
+    },
+    {
+      "key": "method_notes",
+      "type": "map",
+      "label": "t.method_notes",
+      "tab": "tax",
+      "map_over": "payment_methods",
+      "value": {"type": "text", "max_len": 80}
+    }
+  ],
+  "settings_tabs": [
+    {"id": "connection", "label": "t.tab.connection", "help": "t.tab.connection.help"},
+    {"id": "advanced", "label": "t.tab.advanced"},
+    {"id": "tax", "label": "t.tab.tax", "show_when": {"key": "provider", "in": ["local", "hosted"]}}
+  ],
+  "settings_tests": [
+    {"id": "connection", "label": "t.test.connection", "tab": "connection"},
+    {"id": "record_check", "label": "t.test.record", "record": true}
+  ],
+  "settings_setup": {
+    "steps": [
+      {"title": "t.setup.provider", "help": "t.setup.provider.help", "fields": ["provider", "server"]},
+      {"title": "t.setup.key", "fields": ["api_key", "display_name"], "test": "connection"}
+    ]
+  }
+}
