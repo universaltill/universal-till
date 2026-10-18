@@ -6502,6 +6502,8 @@ type CustomerSummary struct {
 }
 
 // SearchCustomers finds customers by name/phone/email for the erasure picker.
+// The name matches on SearchFold (ut-docs#4650), so "MÜLLER" finds "Müller";
+// phone and email keep their LIKE substring match.
 func (r *POSRepo) SearchCustomers(ctx context.Context, q string, limit int) ([]CustomerSummary, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 25
@@ -6510,8 +6512,8 @@ func (r *POSRepo) SearchCustomers(ctx context.Context, q string, limit int) ([]C
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, name, COALESCE(phone,''), COALESCE(email,'')
 FROM customers
-WHERE name <> '' AND (name LIKE ? OR phone LIKE ? OR email LIKE ?)
-ORDER BY name LIMIT ?`, like, like, like, limit)
+WHERE name <> '' AND (instr(`+searchFoldSQLFunc+`(name), ?) > 0 OR phone LIKE ? OR email LIKE ?)
+ORDER BY name LIMIT ?`, SearchFold(q), like, like, limit)
 	if err != nil {
 		return nil, fmt.Errorf("search customers: %w", err)
 	}
@@ -8184,7 +8186,10 @@ FROM payment_methods WHERE is_active = 1 AND type != 'cash' ORDER BY sort_order,
 	return out, rows.Err()
 }
 
-// SearchItemsForShortcuts finds active items and primary barcodes to add as shortcuts.
+// SearchItemsForShortcuts finds active items and primary barcodes to add as
+// shortcuts; it is also the sell screen's live search. The name matches on
+// SearchFold (ut-docs#4650), so "MÜLLER" finds "Müller" and a Turkish
+// "ISPARTA" finds "ısparta"; SKU and barcode keep their LIKE substring match.
 func (r *POSRepo) SearchItemsForShortcuts(ctx context.Context, q string, offset, limit int) ([]ShortcutSearchResult, error) {
 	like := "%" + strings.TrimSpace(q) + "%"
 	if limit <= 0 {
@@ -8210,13 +8215,13 @@ SELECT i.id,
 FROM items i
 LEFT JOIN item_images img ON img.item_id = i.id AND img.role = 'thumbnail'
 WHERE i.is_active = 1 AND (
-	  i.name LIKE ?
+	  instr(`+searchFoldSQLFunc+`(i.name), ?) > 0
 	  OR i.sku LIKE ?
 	  OR EXISTS (SELECT 1 FROM item_barcodes ib2 WHERE ib2.item_id = i.id AND ib2.barcode LIKE ?)
 )
 ORDER BY i.name
 LIMIT ? OFFSET ?
-`, like, like, like, limit, offset)
+`, SearchFold(q), like, like, limit, offset)
 	if err != nil {
 		return nil, err
 	}
