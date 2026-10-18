@@ -498,3 +498,19 @@ func TestImportPage_AmbiguousClaimUsesStandardImporter(t *testing.T) {
 		t.Fatalf("one of two claiming plugins was picked: %s", rec.Body.String())
 	}
 }
+
+// ut-docs#4472: a file-rows entry's ask carries the operator's UI language.
+func TestFileRowsImport_PayloadCarriesLocale(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	registerImport(mux, dp)
+	seedFileRowsPlugin(t, dp.Db, []string{"items"})
+	captured := subscribeImportAsk(t, dp.Db, fileRowsPluginID, json.RawMessage(`{"ok":true}`))
+
+	rec := postMultipart(t, mux, "/api/data/import?lang=tr-TR", "export.csv", fixtureExport,
+		map[string]string{"entry_key": "export", "mode": "preview"}, nil)
+	decodeAPIImport(t, rec)
+	if !strings.Contains(string(captured.Payload), `"locale":"tr"`) {
+		t.Fatalf("payload lacks locale tr: %s", captured.Payload)
+	}
+}

@@ -104,3 +104,22 @@ func TestFakeHost_FileImportRefusesCloses(t *testing.T) {
 		t.Errorf("upload_close: %v", err)
 	}
 }
+
+// ut-docs#4472: the ask carries the operator's UI language; an older till
+// omits it and Locale decodes empty.
+func TestImportRequest_DecodesLocale(t *testing.T) {
+	var req ImportRequest
+	if err := json.Unmarshal([]byte(`{"entry_key":"export","mode":"preview","locale":"de"}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	if req.Locale != "de" {
+		t.Fatalf("Locale = %q, want de", req.Locale)
+	}
+	var old ImportRequest
+	if err := json.Unmarshal([]byte(`{"entry_key":"export"}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	if old.Locale != "" {
+		t.Fatalf("Locale = %q from a pre-#4472 till, want empty", old.Locale)
+	}
+}

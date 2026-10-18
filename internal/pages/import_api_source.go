@@ -33,6 +33,9 @@ type apiImportRequestPayload struct {
 	Entities []string `json:"entities"`
 	Mode     string   `json:"mode"`   // preview | commit
 	Source   string   `json:"source"` // always "api"
+	// Locale is the requesting operator's UI language (pluginAskLocale), so
+	// the plugin can answer in it (ut-docs#4472); empty from an older till.
+	Locale string `json:"locale"`
 }
 
 // apiImportCommitKey is reserveImportCommit's key for one entry's commits.
@@ -179,7 +182,8 @@ func executeRowsImport(r *http.Request, d *common.Deps, entry data.ImportEntryRo
 	)
 	if file == nil {
 		sink = plugins.NewImportRowSink(entry.PluginID, []string{catsync.EntityItems})
-		payload = apiImportRequestPayload{EntryKey: entry.Key, Entities: entities, Mode: mode, Source: plugins.ImportSourceAPI}
+		payload = apiImportRequestPayload{EntryKey: entry.Key, Entities: entities, Mode: mode, Source: plugins.ImportSourceAPI,
+			Locale: pluginAskLocale(r)}
 	} else {
 		if file.size > fileRowsMaxBytes {
 			return fail(http.StatusBadRequest, fileRowsErrTooLarge, fmt.Sprintf("the file is larger than the %d bytes an import plugin reads", fileRowsMaxBytes))
@@ -205,7 +209,8 @@ func executeRowsImport(r *http.Request, d *common.Deps, entry data.ImportEntryRo
 			name = filepath.Base(file.name)
 		}
 		payload = fileRowsRequestPayload{EntryKey: entry.Key, Entities: entities, FileHandle: handle,
-			FileName: name, FileSize: file.size, Mode: mode, Source: plugins.ImportSourceFile}
+			FileName: name, FileSize: file.size, Mode: mode, Source: plugins.ImportSourceFile,
+			Locale: pluginAskLocale(r)}
 	}
 	resp, ok, err := plugins.SharedBus(d.Db).AskPlugin(plugins.WithImportRowSink(r.Context(), sink), entry.PluginID, "import.requested.ask", payload)
 	if err != nil {

@@ -106,6 +106,20 @@ type exportRequestPayload struct {
 	// (declared+granted, register genuinely empty) must stay
 	// wire-distinguishable from null (not declared / not granted).
 	FiscalRegisterDE []data.FiscalRegisterDE `json:"fiscal_register_de"`
+	// Locale is the requesting operator's UI language (pluginAskLocale), so
+	// the plugin can answer in it (ut-docs#4472); empty from an older till.
+	Locale string `json:"locale"`
+}
+
+// pluginAskLocale is the Locale an import/export ask carries: the
+// operator's UI language (httpx.RequestLocale) matched onto an installed
+// locale ("DE-de" → "de"), else the shop default — so a raw ?lang= value
+// never reaches the plugin as typed (ut-docs#4472).
+func pluginAskLocale(r *http.Request) string {
+	if l := httpx.MatchLocale(httpx.RequestLocale(r), httpx.AvailableLocales()); l != "" {
+		return l
+	}
+	return httpx.DefaultLocale()
 }
 
 // exportResponse is the JSON a plugin writes to stdout to answer
@@ -138,6 +152,9 @@ type importRequestPayload struct {
 	FileHandle int32    `json:"file_handle"`
 	FileName   string   `json:"file_name"`
 	FileSize   int64    `json:"file_size"`
+	// Locale is the requesting operator's UI language (pluginAskLocale), so
+	// the plugin can answer in it (ut-docs#4472); empty from an older till.
+	Locale string `json:"locale"`
 }
 
 // importResponse is the JSON a plugin writes to stdout to answer
@@ -798,7 +815,7 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 		// plugin's answer to the same event type (ut-docs#189 review).
 		resp, ok, err := plugins.SharedBus(d.Db).AskPlugin(r.Context(), entry.PluginID, "export.requested.ask", exportRequestPayload{
 			From: from, To: to, EntryKey: entry.Key, Sales: sales, Stock: stock, Items: items, TaxCodes: taxCodes,
-			EODCloses: eodCloses, FiscalRegisterDE: fiscalRegisterDE,
+			EODCloses: eodCloses, FiscalRegisterDE: fiscalRegisterDE, Locale: pluginAskLocale(r),
 		})
 		if err != nil {
 			respond(w, http.StatusInternalServerError, false, err.Error())

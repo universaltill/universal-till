@@ -410,3 +410,17 @@ func TestAPIImport_SamplesCarryIssueCodeAndEnglish(t *testing.T) {
 		t.Errorf("sample 2: %+v", b)
 	}
 }
+
+// ut-docs#4472: an api entry's ask carries the operator's UI language.
+func TestAPIImport_PayloadCarriesLocale(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedAPIImportPlugin(t, dp.Db, apiImportPluginID, []string{"items"}, []string{"items"})
+	captured := subscribeImportAsk(t, dp.Db, apiImportPluginID, json.RawMessage(`{"ok":true}`))
+
+	rec := postForm(mux, "/api/data/import?lang=tr-TR", url.Values{"mode": {"preview"}}, nil)
+	decodeAPIImport(t, rec)
+	if !strings.Contains(string(captured.Payload), `"locale":"tr"`) {
+		t.Fatalf("payload lacks locale tr: %s", captured.Payload)
+	}
+}
