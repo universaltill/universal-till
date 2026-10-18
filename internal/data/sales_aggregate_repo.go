@@ -145,6 +145,65 @@ ORDER BY d, t`, selfTill, from, to, selfTill, from, to, selfTill, from, to)
 	return out, rows.Err()
 }
 
+// SalesAggregateFingerprint is one SalesAggregateKeys key with a digest of
+// the source rows its rollup reads (ut-docs#2559).
+type SalesAggregateFingerprint struct {
+	SalesAggregateKey
+	Fingerprint string
+}
+
+// SalesAggregateFingerprints lists the same (business date, till) keys as
+// SalesAggregateKeys, in the same order, each with a fingerprint of its
+// source rows, in one query: completed sales (count, Σ total, latest
+// created_at, returns), voids on their void day (count, latest voided_at)
+// and no-sale drawer opens (count, latest created_at). A late-journaled
+// sale, a void, a late no-sale open or a deleted sale moves it. Payments,
+// lines, modifiers and discounts are written only together with their sale,
+// so the sale count covers them; the uploader's once-a-day salt bounds
+// anything this misses to a day.
+func (r *POSRepo) SalesAggregateFingerprints(ctx context.Context, from, to, selfTill string) ([]SalesAggregateFingerprint, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT d, t, kind, n, amount, latest, returns FROM (
+  SELECT s.local_date AS d, `+tillKeyExpr+` AS t, 'c' AS kind, COUNT(*) AS n,
+    COALESCE(SUM(s.total), 0) AS amount, COALESCE(MAX(s.created_at), '') AS latest,
+    COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN 1 ELSE 0 END), 0) AS returns
+  FROM sales s
+  WHERE s.status = 'completed' AND s.local_date BETWEEN date(?) AND date(?)
+  GROUP BY d, t
+  UNION ALL
+  SELECT `+voidDayExpr+` AS d, `+tillKeyExpr+` AS t, 'v', COUNT(*), 0, COALESCE(MAX(s.voided_at), ''), 0
+  FROM sales s
+  WHERE s.status = 'voided' AND `+voidDayExpr+` BETWEEN date(?) AND date(?)
+  GROUP BY d, t
+  UNION ALL
+  SELECT e.local_date AS d, `+noSaleTillKeyExpr+` AS t, 'n', COUNT(*), 0, COALESCE(MAX(e.created_at), ''), 0
+  FROM no_sale_events e
+  WHERE e.local_date BETWEEN date(?) AND date(?)
+  GROUP BY d, t
+)
+ORDER BY d, t, kind`, selfTill, from, to, selfTill, from, to, selfTill, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("sales aggregate fingerprints: %w", err)
+	}
+	defer rows.Close()
+	var out []SalesAggregateFingerprint
+	for rows.Next() {
+		var k SalesAggregateKey
+		var kind, latest string
+		var n, amount, returns int64
+		if err := rows.Scan(&k.BusinessDate, &k.TillID, &kind, &n, &amount, &latest, &returns); err != nil {
+			return nil, fmt.Errorf("scan sales aggregate fingerprint: %w", err)
+		}
+		part := fmt.Sprintf("%s:%d:%d:%s:%d;", kind, n, amount, latest, returns)
+		if last := len(out) - 1; last >= 0 && out[last].SalesAggregateKey == k {
+			out[last].Fingerprint += part
+			continue
+		}
+		out = append(out, SalesAggregateFingerprint{SalesAggregateKey: k, Fingerprint: part})
+	}
+	return out, rows.Err()
+}
+
 // SalesAggregateForTill reads one (business date, till) rollup. Every slice
 // is ordered deterministically (hour; method; item id; staff id) so the
 // caller's content hash only moves when the figures do.
@@ -384,16 +443,60 @@ func (r *POSRepo) SalesAggregateUploadHash(ctx context.Context, businessDate, ti
 	return h, true, nil
 }
 
+// SalesAggregateLedgerRow is what the ledger holds for one accepted rollup:
+// the sent body's hash and the source fingerprint it was built from (""
+// when unknown).
+type SalesAggregateLedgerRow struct {
+	Hash        string
+	Fingerprint string
+}
+
+// SalesAggregateUploads reads every ledger row in [from, to] (YYYY-MM-DD,
+// inclusive), in one query.
+func (r *POSRepo) SalesAggregateUploads(ctx context.Context, from, to string) (map[SalesAggregateKey]SalesAggregateLedgerRow, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT business_date, till_id, content_hash, source_fingerprint FROM sales_aggregate_uploads WHERE business_date BETWEEN ? AND ?`, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("sales aggregate uploads: %w", err)
+	}
+	defer rows.Close()
+	out := map[SalesAggregateKey]SalesAggregateLedgerRow{}
+	for rows.Next() {
+		var k SalesAggregateKey
+		var row SalesAggregateLedgerRow
+		if err := rows.Scan(&k.BusinessDate, &k.TillID, &row.Hash, &row.Fingerprint); err != nil {
+			return nil, fmt.Errorf("scan sales aggregate upload: %w", err)
+		}
+		out[k] = row
+	}
+	return out, rows.Err()
+}
+
 // RecordSalesAggregateUpload upserts the ledger row for a rollup the cloud
 // accepted (HTTP 200) — call it only after a successful upload.
-func (r *POSRepo) RecordSalesAggregateUpload(ctx context.Context, businessDate, tillID, hash string, at time.Time) error {
+// fingerprint is the source fingerprint read before the rollup was built.
+func (r *POSRepo) RecordSalesAggregateUpload(ctx context.Context, businessDate, tillID, hash, fingerprint string, at time.Time) error {
 	_, err := r.db.ExecContext(ctx, `
-INSERT INTO sales_aggregate_uploads (business_date, till_id, content_hash, uploaded_at)
-VALUES (?, ?, ?, ?)
-ON CONFLICT (business_date, till_id) DO UPDATE SET content_hash = excluded.content_hash, uploaded_at = excluded.uploaded_at`,
-		businessDate, tillID, hash, at.UTC().Format(time.RFC3339))
+INSERT INTO sales_aggregate_uploads (business_date, till_id, content_hash, source_fingerprint, uploaded_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT (business_date, till_id) DO UPDATE SET content_hash = excluded.content_hash,
+  source_fingerprint = excluded.source_fingerprint, uploaded_at = excluded.uploaded_at`,
+		businessDate, tillID, hash, fingerprint, at.UTC().Format(time.RFC3339))
 	if err != nil {
 		return fmt.Errorf("record sales aggregate upload: %w", err)
+	}
+	return nil
+}
+
+// SetSalesAggregateFingerprint stamps the source fingerprint on an existing
+// ledger row whose rebuilt rollup matched the hash the cloud already holds —
+// nothing was sent, so content_hash and uploaded_at stay as they are.
+func (r *POSRepo) SetSalesAggregateFingerprint(ctx context.Context, businessDate, tillID, fingerprint string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE sales_aggregate_uploads SET source_fingerprint = ? WHERE business_date = ? AND till_id = ?`,
+		fingerprint, businessDate, tillID)
+	if err != nil {
+		return fmt.Errorf("set sales aggregate fingerprint: %w", err)
 	}
 	return nil
 }

@@ -7,11 +7,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/data"
 )
 
@@ -471,4 +473,154 @@ func keysOf(m map[string]map[string]any) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// recordAggBuilds counts the rollup builds of one test (ut-docs#2559): the
+// expensive step the fingerprint gate exists to skip.
+func recordAggBuilds(t *testing.T) func() []string {
+	t.Helper()
+	var mu sync.Mutex
+	var built []string
+	prev := buildSalesAggregateFn
+	buildSalesAggregateFn = func(ctx context.Context, repo *data.POSRepo, storeID string, k data.SalesAggregateKey, selfTill string, withCashiers bool) ([]byte, error) {
+		mu.Lock()
+		built = append(built, k.BusinessDate+"/"+k.TillID)
+		mu.Unlock()
+		return prev(ctx, repo, storeID, k, selfTill, withCashiers)
+	}
+	t.Cleanup(func() { buildSalesAggregateFn = prev })
+	return func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		out := append([]string(nil), built...)
+		built = built[:0]
+		sort.Strings(out)
+		return out
+	}
+}
+
+func postedDays(posts []aggPost) []string {
+	out := make([]string, 0, len(posts))
+	for _, p := range posts {
+		out = append(out, p.body["business_date"].(string)+"/"+p.body["till_id"].(string))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ut-docs#2559: a past day whose source rows did not change is not rebuilt;
+// today always is; a late void, a late no-sale open, a staff-toggle change
+// and a ledger row without a fingerprint each force the rebuild they need.
+func TestPushSalesAggregates_FingerprintGateSkipsUnchangedPastDays(t *testing.T) {
+	noAggThrottle(t)
+	builds := recordAggBuilds(t)
+	cloud := &aggCloud{}
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	f := seedAggFixture(t, "agg-fingerprint.db")
+	ctx := context.Background()
+	cfg := testCfg(srv.URL)
+	oldT := f.todayT.AddDate(0, 0, -3)
+	aggSeedSale(t, f.db, "s-old", oldT, 190, 1190)
+	old := aggDay(t, f.db, oldT)
+	today, prev := f.today+"/reg-A", f.prevDay+"/reg-A"
+	oldKey := old + "/reg-A"
+	round := func() (built, posted []string) {
+		t.Helper()
+		n := cloud.count()
+		salesAggregateLastNS.Store(0)
+		pushSalesAggregates(ctx, cfg, f.db)
+		return builds(), postedDays(cloud.since(n))
+	}
+	want := func(name string, got, want []string) {
+		t.Helper()
+		sort.Strings(want)
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Fatalf("%s = %v, want %v", name, got, want)
+		}
+	}
+
+	built, posted := round()
+	want("first round built", built, []string{oldKey, prev, today})
+	want("first round posted", posted, []string{oldKey, prev, today})
+
+	built, posted = round()
+	want("unchanged round built", built, []string{today})
+	want("unchanged round posted", posted, nil)
+
+	// A void today of yesterday's sale: yesterday loses the sale, today
+	// gains a void.
+	aggExec(t, f.db, `UPDATE sales SET status = 'voided', voided_at = ?, voided_local_date = ? WHERE id = 's-prev'`, aggAt(time.Now()), f.today)
+	// Yesterday has no completed sale left and no void of its own, so it is
+	// no key any more: the ledger row still brings it back, and the cloud
+	// gets the emptied rollup instead of keeping the voided sale's figures.
+	n := cloud.count()
+	built, posted = round()
+	want("late void built", built, []string{prev, today})
+	want("late void posted", posted, []string{prev, today})
+	for _, p := range cloud.since(n) {
+		if p.body["business_date"] == f.prevDay && len(p.body["hourly"].([]any)) != 0 {
+			t.Fatalf("yesterday's re-sent rollup still has sales: %s", p.raw)
+		}
+	}
+	built, posted = round()
+	want("after void built", built, []string{today})
+	want("after void posted", posted, nil)
+
+	// A late no-sale drawer open three days back.
+	if _, err := data.NewPOSRepo(f.db).InsertNoSaleEvent(ctx, nil, data.NoSaleEvent{CreatedAt: aggAt(oldT.Add(time.Hour)), RegisterID: "reg-A", ActorID: "u1"}); err != nil {
+		t.Fatal(err)
+	}
+	built, posted = round()
+	want("late no-sale built", built, []string{oldKey, today})
+	want("late no-sale posted", posted, []string{oldKey})
+
+	// The staff toggle reshapes every payload: every day rebuilds once.
+	if err := data.NewSettingsRepo(f.db).Set(ctx, "reports.cloud_staff_breakdown", "true"); err != nil {
+		t.Fatal(err)
+	}
+	built, posted = round()
+	want("toggle built", built, []string{oldKey, prev, today})
+	// Yesterday has no sales left, so its payload (by_cashier [] either
+	// way) is unchanged and is not re-sent.
+	want("toggle posted", posted, []string{oldKey, today})
+	built, _ = round()
+	want("after toggle built", built, []string{today})
+
+	// Ledger rows written before the fingerprint column (or by a failed
+	// stamp): rebuilt once, nothing re-sent since the hash matches, then
+	// gated again.
+	aggExec(t, f.db, `UPDATE sales_aggregate_uploads SET source_fingerprint = ''`)
+	built, posted = round()
+	want("backfill built", built, []string{oldKey, prev, today})
+	want("backfill posted", posted, nil)
+	built, posted = round()
+	want("after backfill built", built, []string{today})
+	want("after backfill posted", posted, nil)
+}
+
+func TestSalesAggregateFingerprint_EverySaltInputMovesIt(t *testing.T) {
+	base := salesAggregateFingerprint("store-1", "till-1", false, "2026-10-18", "c:1:100:x:0;")
+	if base != salesAggregateFingerprint("store-1", "till-1", false, "2026-10-18", "c:1:100:x:0;") {
+		t.Fatal("fingerprint is not deterministic")
+	}
+	for name, fp := range map[string]string{
+		"store":   salesAggregateFingerprint("store-2", "till-1", false, "2026-10-18", "c:1:100:x:0;"),
+		"till":    salesAggregateFingerprint("store-1", "till-2", false, "2026-10-18", "c:1:100:x:0;"),
+		"cashier": salesAggregateFingerprint("store-1", "till-1", true, "2026-10-18", "c:1:100:x:0;"),
+		"day":     salesAggregateFingerprint("store-1", "till-1", false, "2026-10-19", "c:1:100:x:0;"),
+		"source":  salesAggregateFingerprint("store-1", "till-1", false, "2026-10-18", "c:2:100:x:0;"),
+		// Field boundaries are unambiguous.
+		"split": salesAggregateFingerprint("store-1till-1", "", false, "2026-10-18", "c:1:100:x:0;"),
+	} {
+		if fp == base {
+			t.Errorf("changing %s left the fingerprint unchanged", name)
+		}
+	}
+	prev := buildinfo.Version
+	buildinfo.Version = "9.9.9-test"
+	t.Cleanup(func() { buildinfo.Version = prev })
+	if salesAggregateFingerprint("store-1", "till-1", false, "2026-10-18", "c:1:100:x:0;") == base {
+		t.Error("a new build version left the fingerprint unchanged")
+	}
 }
