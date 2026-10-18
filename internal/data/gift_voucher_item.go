@@ -84,6 +84,57 @@ func (r *CatalogRepo) SeededGiftVoucherItemID(ctx context.Context) (string, bool
 	return id, id != "", nil
 }
 
+// RenameSeededGiftVoucherItem renames the gift voucher item setup seeded
+// from from to to (ut-docs#4398): setup names it before a late language
+// pack is live, so the shop got from, the English word. It acts only while
+// the marker is set and the seeder wrote from, the item still carries
+// from, and it is the shop's only gift voucher item; anything else means
+// the shop has made its own choice, and it does nothing (false, nil). The
+// seeded-name marker follows the rename, so RetireSeededGiftVoucherItem
+// still sees the item as untouched. One write transaction.
+func (r *CatalogRepo) RenameSeededGiftVoucherItem(ctx context.Context, from, to string) (bool, error) {
+	to = strings.TrimSpace(to)
+	if to == "" {
+		return false, errors.New("rename seeded gift voucher item: name required")
+	}
+	if to == from {
+		return false, nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("rename seeded gift voucher item: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var id, seededName sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT (SELECT value FROM settings WHERE key = ?), (SELECT value FROM settings WHERE key = ?)`,
+		SeededGiftVoucherItemKey, seededGiftVoucherItemNameKey).Scan(&id, &seededName); err != nil {
+		return false, fmt.Errorf("rename seeded gift voucher item: marker: %w", err)
+	}
+	if id.String == "" || seededName.String != from {
+		return false, nil
+	}
+	res, err := tx.ExecContext(ctx, `
+UPDATE items SET name = ?, updated_at = datetime('now')
+WHERE id = ? AND name = ? AND item_type = ?
+  AND (SELECT COUNT(*) FROM items WHERE item_type = ?) = 1`,
+		to, id, from, catalogtypes.ItemTypeGiftVoucher, catalogtypes.ItemTypeGiftVoucher)
+	if err != nil {
+		return false, fmt.Errorf("rename seeded gift voucher item: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE settings SET value = ?, updated_at = ? WHERE key = ?`,
+		to, time.Now().UTC(), seededGiftVoucherItemNameKey); err != nil {
+		return false, fmt.Errorf("rename seeded gift voucher item: marker: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("rename seeded gift voucher item: commit: %w", err)
+	}
+	return true, nil
+}
+
 // SeededGiftVoucherRetireResult reports what RetireSeededGiftVoucherItem did.
 type SeededGiftVoucherRetireResult struct {
 	// Removed: the seeded item was deleted; ID and Name say which.
