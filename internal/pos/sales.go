@@ -533,7 +533,7 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucher
 			return 0, 0, 0, 0, 0, err
 		}
 		lineBase := AmountForQuantity(l.UnitPrice, l.Qty)
-		if l.LineDiscount.IsNegative() || l.LineDiscount > lineBase {
+		if LineDiscountExceeds(l.UnitPrice, l.Qty, l.LineDiscount) {
 			return 0, 0, 0, 0, 0, fmt.Errorf("invalid line discount for item %s", l.ItemID)
 		}
 		lineNet := lineBase.Sub(l.LineDiscount)

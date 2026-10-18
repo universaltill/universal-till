@@ -1583,17 +1583,18 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				discount = dVal
 			}
 		}
+		var updateErr error
 		if key != "" {
 			// qty→0 voids the line; if it was the last dine-in line the
 			// table clears (ADR-0073 D5) and its claim must go (ut-docs#1390).
 			prevTable := d.Engine.TableID()
-			d.Engine.UpdateLineByKey(key, qty, money.FromMinor(discount))
+			updateErr = d.Engine.UpdateLineByKey(key, qty, money.FromMinor(discount))
 			if prevTable != "" && d.Engine.TableID() == "" {
 				releaseTableClaim(r.Context(), d, repo, prevTable)
 			}
 		} else {
 			prevTable := d.Engine.TableID()
-			d.Engine.UpdateLine(code, qty, money.FromMinor(discount))
+			updateErr = d.Engine.UpdateLine(code, qty, money.FromMinor(discount))
 			if prevTable != "" && d.Engine.TableID() == "" {
 				releaseTableClaim(r.Context(), d, repo, prevTable)
 			}
@@ -1601,6 +1602,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
 		b := d.Engine.Basket()
+		// ut-docs#4627: a discount above the line's total (at the requested
+		// qty) is refused on entry, not first at tender: the engine left the
+		// line as it was, and the basket says why under it.
+		var tooLarge *pos.LineDiscountTooLargeError
+		if errors.As(updateErr, &tooLarge) {
+			b.DiscountErrorKey = tooLarge.LineKey
+			b.DiscountErrorLimit = tooLarge.Limit
+		}
 		_ = basketView.Render(w, b)
 	})
 
@@ -2091,6 +2100,26 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			w.WriteHeader(http.StatusOK)
 			_ = basketView.Render(w, b)
 			return
+		}
+
+		// ut-docs#4627: /api/pos/line refuses a discount above its line's
+		// total, but a held or older snapshot can still bring one back.
+		// computeSaleTotals would refuse it later as "invalid line discount"
+		// (generic tender-failed banner, after any card was charged); refuse
+		// it here, before any payment, and name the line.
+		for _, l := range saleLines {
+			if pos.LineDiscountExceeds(l.UnitPrice, l.Qty, l.LineDiscount) {
+				locale := httpx.ResolveLocale(w, r)
+				log.Printf("tender rejected: line discount %d above line total for %q (ut-docs#4627)", l.LineDiscount.Minor(), l.Name)
+				b := d.Engine.Basket()
+				b.ToastMessage = fmt.Sprintf(httpx.T(locale, "pos.toast.line_discount_too_large"), l.Name)
+				b.ToastLevel = "error"
+				basketView, _ := ui.NewBasketView(httpx.FuncsFor(locale))
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(http.StatusOK)
+				_ = basketView.Render(w, b)
+				return
+			}
 		}
 
 		var payments []pos.PaymentInput

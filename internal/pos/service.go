@@ -1,6 +1,7 @@
 package pos
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -545,6 +546,14 @@ type Basket struct {
 	// response, or a just-refused line showing its "remove the item"
 	// guidance). Handlers set it on their own Basket copy.
 	AgeCheckOpenKey string `json:"-"`
+	// DiscountErrorKey (ut-docs#4627) is a PER-RESPONSE render hint like
+	// AgeCheckOpenKey: the LineKey whose qty/discount update /api/pos/line
+	// just refused because the discount would be more than the line's
+	// total. basket.html shows the reason under that line's discount box,
+	// with DiscountErrorLimit (the line total at the requested qty) as the
+	// most the discount can be. Handlers set both on their own Basket copy.
+	DiscountErrorKey   string      `json:"-"`
+	DiscountErrorLimit money.Money `json:"-"`
 }
 
 // HasDineInLine reports whether any line is consumed on the premises --
@@ -1713,7 +1722,10 @@ func (s *Service) clearCacheForCode(code string) {
 // recomputes totals. Matches only the FIRST line for code — same caveat as
 // Remove (see its doc comment): unsafe once multiple modifier-distinct
 // lines can share a SKU. The cashier UI uses UpdateLineByKey instead.
-func (s *Service) UpdateLine(code string, qty float64, discount money.Money) {
+//
+// A discount above the line's total at the new qty is refused with a
+// *LineDiscountTooLargeError and the line is left unchanged (ut-docs#4627).
+func (s *Service) UpdateLine(code string, qty float64, discount money.Money) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if qty < 0 {
@@ -1721,15 +1733,41 @@ func (s *Service) UpdateLine(code string, qty float64, discount money.Money) {
 	}
 	for i := range s.lines {
 		if s.lines[i].SKU == code || (s.lines[i].ItemID == code || s.lines[i].VariantID == code) {
+			if err := lineDiscountRefusal(s.lines[i], qty, discount); err != nil {
+				return err
+			}
 			s.lines[i].Qty, s.lines[i].LineDiscount = lockedGiftVoucherQty(s.lines[i], qty, discount)
 			if s.lines[i].Qty == 0 {
 				s.removeLocked(s.lines[i].SKU)
-				return
+				return nil
 			}
 			s.recomputeTotals()
-			return
+			return nil
 		}
 	}
+	return nil
+}
+
+// LineDiscountTooLargeError (ut-docs#4627) is UpdateLine/UpdateLineByKey
+// refusing a discount above the line's total at the requested qty: Limit
+// is that total, the most the discount can be. The line is left as it was.
+type LineDiscountTooLargeError struct {
+	LineKey string
+	Limit   money.Money
+}
+
+func (e *LineDiscountTooLargeError) Error() string {
+	return fmt.Sprintf("line discount above line total %d for line %s", e.Limit.Minor(), e.LineKey)
+}
+
+// lineDiscountRefusal applies LineDiscountExceeds to an update of l. qty 0
+// (a void) and a gift voucher line (its discount is forced to 0 by
+// lockedGiftVoucherQty) are never refused.
+func lineDiscountRefusal(l BasketLine, qty float64, discount money.Money) error {
+	if qty == 0 || l.GiftVoucher != nil || !LineDiscountExceeds(l.PriceCents, qty, discount) {
+		return nil
+	}
+	return &LineDiscountTooLargeError{LineKey: l.LineKey, Limit: AmountForQuantity(l.PriceCents, qty)}
 }
 
 // lockedGiftVoucherQty (ut-docs#4214): a gift voucher line is always qty 1
@@ -1746,8 +1784,9 @@ func lockedGiftVoucherQty(l BasketLine, qty float64, discount money.Money) (floa
 }
 
 // UpdateLineByKey sets qty/discount for the single line matching key
-// exactly (ADR-0020) — safe even when multiple lines share a SKU.
-func (s *Service) UpdateLineByKey(key string, qty float64, discount money.Money) {
+// exactly (ADR-0020) — safe even when multiple lines share a SKU. Same
+// discount refusal as UpdateLine.
+func (s *Service) UpdateLineByKey(key string, qty float64, discount money.Money) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if qty < 0 {
@@ -1755,15 +1794,19 @@ func (s *Service) UpdateLineByKey(key string, qty float64, discount money.Money)
 	}
 	for i := range s.lines {
 		if s.lines[i].LineKey == key {
+			if err := lineDiscountRefusal(s.lines[i], qty, discount); err != nil {
+				return err
+			}
 			s.lines[i].Qty, s.lines[i].LineDiscount = lockedGiftVoucherQty(s.lines[i], qty, discount)
 			if s.lines[i].Qty == 0 {
 				s.removeLineLocked(key)
-				return
+				return nil
 			}
 			s.recomputeTotals()
-			return
+			return nil
 		}
 	}
+	return nil
 }
 
 // SetDiscount sets the sale-level discount (minor units) and recomputes totals.
