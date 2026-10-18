@@ -83,10 +83,9 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 		// pos.CompleteSale keys tracked redemptions on, and the legacy
 		// 'gift' row) belongs, next to the voucher-id field app.js reveals
 		// for it.
-		methods := make([]string, 0, len(payMethods))
-		for _, m := range payMethods {
-			methods = append(methods, m.ID)
-		}
+		// ut-docs#4626: the option text is the method's translated Name
+		// (the same `T .Name` the Pay grid renders), not its raw id.
+		methods := append([]data.PaymentMethod(nil), payMethods...)
 		// The Pay grid (its first button is the one-tap preferred method) gets the list WITHOUT
 		// voucher-type methods: those buttons tender "everything owed" in
 		// one tap with no further input, and a voucher redemption needs a
@@ -129,9 +128,12 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 		}
 		feesJSON, _ := json.Marshal(fees)
 		if len(methods) == 0 {
-			methods = []string{"cash", "card"}
+			methods = []data.PaymentMethod{
+				{ID: "cash", Name: "tender.cash"},
+				{ID: "card", Name: "tender.card"},
+			}
 		}
-		defaultMethod := methods[0]
+		defaultMethod := methods[0].ID
 		// gridMethods is already preferred-method-first (the reorder above
 		// ran on payMethods before the voucher filter), so its head IS the
 		// shop's default: the payment panel's first, highlighted Pay-grid

@@ -1365,10 +1365,10 @@ func FuncsFor(locale string) template.FuncMap {
 	// tenderLabel translates the sentinel values pos.deriveTenderType can
 	// itself produce ("unknown" — no payments at all, e.g. a zero-marginal-
 	// net partial refund, ut-docs#1579; "split" — more than one distinct
-	// payment method on the sale) through the locale table. Any other value
-	// is a payment plugin's own MethodID (cash, card, voucher, sumup, ...) —
-	// an open-ended set this till doesn't own the vocabulary for — and is
-	// rendered as-is, unchanged from before this function existed.
+	// payment method on the sale) and the built-in payment-method ids
+	// (PaymentMethodKey, ut-docs#4626) through the locale table. Any other
+	// value is a payment plugin's own MethodID (sumup, ...) — an open-ended
+	// set this till doesn't own the vocabulary for — and is rendered as-is.
 	funcs["tenderLabel"] = func(tenderType string) string {
 		var key string
 		switch tenderType {
@@ -1377,7 +1377,11 @@ func FuncsFor(locale string) template.FuncMap {
 		case "split":
 			key = "journal.tender.split"
 		default:
-			return tenderType
+			k, ok := PaymentMethodKey(tenderType)
+			if !ok {
+				return tenderType
+			}
+			key = k
 		}
 		if t := translator(); t != nil {
 			return t.T(locale, key)
@@ -1385,6 +1389,23 @@ func FuncsFor(locale string) template.FuncMap {
 		return tenderType
 	}
 	return funcs
+}
+
+// PaymentMethodKey maps a built-in payment-method id to its locale key
+// (ut-docs#4626). ok is false for any other id (a plugin's own method),
+// which callers show as-is. Case-insensitive on the trimmed id.
+func PaymentMethodKey(id string) (key string, ok bool) {
+	switch strings.ToLower(strings.TrimSpace(id)) {
+	case "cash":
+		return "tender.cash", true
+	case "card":
+		return "tender.card", true
+	case "voucher":
+		return "tender.voucher", true
+	case "gift":
+		return "tender.gift_card", true
+	}
+	return "", false
 }
 
 // renderFiles is the fixed file set every Render() call shares — only the
