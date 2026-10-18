@@ -882,7 +882,10 @@ it pulls (`internal/cloudsync` `pullCloudCatalog`).
   dropped. A row the cloud never had is a `create` under a cloud_id the
   till mints and links at once (version 0); a referenced row with no
   cloud_id is sealed first. A local delete of a linked item is a `delete`
-  carrying the whole base. An open mark is never sealed or dropped while
+  carrying the whole base. A local hard delete of a linked category or
+  tax code (the demo-data removal) is an `update` of `active` to `false`,
+  since the till never deletes either kind (nothing to send when the base
+  is already inactive; ut-docs#4623). An open mark is never sealed or dropped while
   a sealed mark of the same row is unanswered (in flight): it seals once
   that answer has moved the base. A change whose `created_at` is older
   than 30 days when it is sent (first or re-sent) uploads `stale`.
@@ -901,6 +904,13 @@ it pulls (`internal/cloudsync` `pullCloudCatalog`).
   re-pulls once so every row gets its base; before the first upload or the
   re-pull, a link an older build made gets its base seeded from its local
   row (what it last pulled), so a till edit made meanwhile stays pending.
+  A seeded item base cannot tell a SKU the till generated for a blank
+  cloud SKU from the cloud's own, so it is flagged (`sku_seeded`, never
+  uploaded): a change touching `sku` waits for the re-pull, which settles
+  the base (a blank cloud SKU becomes base `""` with the till's SKU kept)
+  and then uploads it without a false conflict; a delete of such an item
+  cannot wait, so it leaves the seeded `sku` out of `before`
+  (ut-docs#4623).
   A 410 resync forgets every `echo_version`.
 - **Not yet:** staff attribution (`staff_id` is sent empty: till edits are
   not stamped with their editor, ut-docs#4558), and an edit made between a change's seal

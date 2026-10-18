@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
@@ -33,7 +34,11 @@ import (
 //     referenced row with no cloud_id is sealed (sent) first. A linked row
 //     with no base (pulled by an applier-3 build) has one seeded from its
 //     local values before the first upload or re-pull (seedBases); one
-//     still without (its local row was gone) waits for the pull to set it.
+//     still without (its local row was gone) waits for the pull to set it,
+//     and a seeded item's sku change waits for the re-pull to settle the
+//     seeded sku (seededSKUField). A linked category or tax code deleted
+//     locally uploads as an update of active to false: the till never
+//     deletes either kind (ut-docs#4623).
 //   - In flight: an open mark is never sealed, nor dropped, while a sealed
 //     mark of the same row is unanswered. Its change is computed against
 //     the base that answer leaves (sealed against the old base it would
@@ -342,10 +347,23 @@ func (r *runner) sealMark(ctx context.Context, tx *sql.Tx, m data.OutboxMark, ge
 		// Created and removed before it ever uploaded.
 		res.Dropped++
 		return sealedRefs, r.outbox.DeleteMark(ctx, tx, m.ID)
+	case !l.exists && m.Entity != kindItem && link.Version != 0 && base != nil:
+		// A category or tax code hard-deleted on the till (the demo-data
+		// removal): the till never deletes either kind, it deactivates
+		// one, so the cloud hears an update of active (contract "op",
+		// ut-docs#4623). Already inactive in the base (or a base without
+		// active, which no applied row leaves): nothing to send.
+		if a, ok := base["active"]; !ok || norm(a) == "false" {
+			res.Dropped++
+			return sealedRefs, r.outbox.DeleteMark(ctx, tx, m.ID)
+		}
+		ch.Op, ch.CloudID, ch.ChangedFields = opUpdate, link.CloudID, []string{"active"}
+		ch.Before = map[string]json.RawMessage{"active": beforeValue("active", base["active"])}
+		ch.After = map[string]json.RawMessage{"active": rawJSON(false)}
 	case !l.exists:
 		if link.Version == 0 || base == nil || m.Entity != kindItem {
 			// Never accepted by the cloud (a create that did not reach it),
-			// or a kind the till never deletes: nothing to tell the cloud.
+			// or a row with no base yet: nothing to tell the cloud.
 			res.Dropped++
 			if link.Version == 0 {
 				if err := r.links.Delete(ctx, tx, m.Entity, link.CloudID); err != nil {
@@ -355,7 +373,15 @@ func (r *runner) sealMark(ctx context.Context, tx *sql.Tx, m data.OutboxMark, ge
 			return sealedRefs, r.outbox.DeleteMark(ctx, tx, m.ID)
 		}
 		ch.Op, ch.CloudID, ch.Before = opDelete, link.CloudID, map[string]json.RawMessage{}
+		_, seeded := base[seededSKUField]
 		for _, f := range uploadFields[m.Entity] {
+			if f == "sku" && seeded {
+				// An unsettled seeded sku may be the till's own SKU for a
+				// blank cloud one, and a deleted row cannot wait for the
+				// re-pull (it skips a marked row the till deleted): the
+				// cloud compares the fields it is sent (ut-docs#4623).
+				continue
+			}
 			if v, ok := base[f]; ok {
 				ch.Before[f] = beforeValue(f, v)
 			}
@@ -385,6 +411,13 @@ func (r *runner) sealMark(ctx context.Context, tx *sql.Tx, m data.OutboxMark, ge
 		if len(fields) == 0 {
 			res.Dropped++
 			return sealedRefs, r.outbox.DeleteMark(ctx, tx, m.ID)
+		}
+		if _, seeded := base[seededSKUField]; seeded && slices.Contains(fields, "sku") {
+			// A seeded sku may be the till's own SKU for a blank cloud
+			// one, not the cloud's value: sent as before it would be a
+			// false conflict. The re-pull settles it; the mark waits
+			// (ut-docs#4623).
+			return sealedRefs, nil
 		}
 		ch.Op, ch.CloudID = opUpdate, link.CloudID
 		ch.Before, ch.After = map[string]json.RawMessage{}, map[string]json.RawMessage{}
