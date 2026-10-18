@@ -91,6 +91,21 @@ most is.
   `deadcode` was built with go1.26 and the module needs go1.27. It fails
   the same way on `main`, so CI's run is the check.
 
+## CI follow-ups
+
+- **`build`:** the docs-shots guard flagged the changed basket surface and
+  `sell.md`. I ran `make docs-shots`: every PNG came out byte-identical,
+  because the note only renders on an error. Only `manifest.json`'s hashes
+  moved.
+- **`playwright`:** `basket-no-horizontal-scroll-391.spec.ts` typed a
+  deliberately wide `1234` discount on a £1.20 line, which this change now
+  correctly refuses. The spec now raises that line's qty to 11 first, so
+  1234 fits, and the qty box gets a two-digit value as well. 13 tests
+  failed for this one reason.
+- **5 flaky specs:** these passed on retry and touch nothing here
+  (locations dialog, money comma, settings two-pane, translate mode,
+  tree-pane zoom).
+
 ## Verdict
 
 Safe to merge. Language packs de/es/pt follow in the same cycle.

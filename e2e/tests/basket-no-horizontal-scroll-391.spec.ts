@@ -57,8 +57,18 @@ async function scan(page, code: string) {
 
 // ut-docs#3297: a zero discount renders as an empty box (its placeholder
 // shows), which would make the clipped-value checks below vacuous: give the
-// line a real, wide discount first.
+// line a real, wide discount first. ut-docs#4627: the basket refuses a
+// discount above the line total, so first raise the qty (11 × the £1.20
+// first code = 1320) until 1234 fits — which also makes the qty box's own
+// value two digits wide.
 async function setDiscount(page) {
+  const qty = page.locator('.qty-input').first();
+  await qty.fill('11');
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/pos/line')),
+    qty.press('Tab'),
+  ]);
+  await expect(page.locator('.qty-input').first()).toHaveValue('11');
   const disc = page.locator('.disc-input').first();
   await disc.fill('1234');
   await Promise.all([
