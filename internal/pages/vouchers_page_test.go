@@ -168,6 +168,65 @@ func TestVouchersPage_FragmentSearchAndStatusFilter(t *testing.T) {
 	}
 }
 
+// ut-docs#4257: the filtered list is addressable — an htmx search replaces
+// the page URL (HX-Replace-Url) so Back/reload keep it.
+func TestVouchersPage_FragmentReplacesURLWithNormalizedFilter(t *testing.T) {
+	mux, d := newVoucherImportTestMux(t)
+	vSeed(t, data.NewPOSRepo(d.Db), data.Voucher{ID: "GS-1", HolderLabel: "Müller", OriginalAmountMinor: 100, CreatedAt: "2026-10-01T10:00:00Z"})
+
+	cases := []struct {
+		name, path string
+		hx         bool
+		want       string
+	}{
+		{"query and status", "/ui/vouchers/list?lang=en&q=M%C3%BCller&status=active", true, "/vouchers?q=M%C3%BCller&status=active"},
+		{"no filter", "/ui/vouchers/list?lang=en", true, "/vouchers"},
+		{"bogus status not echoed", "/ui/vouchers/list?lang=en&q=x&status=bogus", true, "/vouchers?q=x"},
+		{"query is trimmed", "/ui/vouchers/list?lang=en&q=%20abc%20", true, "/vouchers?q=abc"},
+		{"not htmx", "/ui/vouchers/list?lang=en&q=x", false, ""},
+	}
+	for _, c := range cases {
+		rec := vGet(t, mux, c.path, &vManager, c.hx)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status %d", c.name, rec.Code)
+		}
+		if got := rec.Header().Get("HX-Replace-Url"); got != c.want {
+			t.Fatalf("%s: HX-Replace-Url = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestVouchersPage_UnicodeSearchFromURLKeepsInputValue(t *testing.T) {
+	mux, d := newVoucherImportTestMux(t)
+	repo := data.NewPOSRepo(d.Db)
+	vSeed(t, repo, data.Voucher{ID: "GS-M", HolderLabel: "Müller", OriginalAmountMinor: 100, CreatedAt: "2026-10-01T10:00:00Z"})
+	vSeed(t, repo, data.Voucher{ID: "GS-S", HolderLabel: "Schmidt", OriginalAmountMinor: 100, CreatedAt: "2026-10-02T10:00:00Z"})
+
+	body := vGet(t, mux, "/vouchers?lang=en&q="+url.QueryEscape("MÜLLER"), &vManager, false).Body.String()
+	if !strings.Contains(body, "GS-M") || strings.Contains(body, "GS-S") {
+		t.Fatalf("q=MÜLLER must list Müller's voucher only: %s", body)
+	}
+	if !strings.Contains(body, `name="q" value="MÜLLER"`) {
+		t.Fatalf("search input must keep its value: %s", body)
+	}
+}
+
+func TestVouchersPage_ExportRowOnlyWhenThereAreVouchers(t *testing.T) {
+	mux, d := newVoucherImportTestMux(t)
+	const link = `/api/vouchers/export`
+	for _, path := range []string{"/vouchers?lang=en", "/ui/vouchers/list?lang=en"} {
+		if body := vGet(t, mux, path, &vManager, true).Body.String(); strings.Contains(body, link) || strings.Contains(body, httpx.T("en", "vouchers.export_help")) {
+			t.Fatalf("GET %s on an empty list must not offer the export: %s", path, body)
+		}
+	}
+	vSeed(t, data.NewPOSRepo(d.Db), data.Voucher{ID: "GS-1", OriginalAmountMinor: 100, CreatedAt: "2026-10-01T10:00:00Z"})
+	for _, path := range []string{"/vouchers?lang=en", "/ui/vouchers/list?lang=en"} {
+		if body := vGet(t, mux, path, &vManager, true).Body.String(); !strings.Contains(body, link) {
+			t.Fatalf("GET %s with a voucher must offer the export: %s", path, body)
+		}
+	}
+}
+
 func TestVouchersPage_EmptyStateSaysWhatToDo(t *testing.T) {
 	mux, _ := newVoucherImportTestMux(t)
 	body := vGet(t, mux, "/vouchers?lang=en", &vManager, false).Body.String()

@@ -1017,10 +1017,13 @@ GROUP BY vt.type, (vt.sale_id IS NULL)`, args...)
 }
 
 // VoucherFilter narrows ListVouchers (the Gift vouchers page, ut-docs#4251).
-// Query is a case-insensitive substring of the voucher number or the
-// holder label (LIKE wildcards in it match themselves). Status is "" (all)
-// or one of active / redeemed / void — anything else is refused rather
-// than silently widened to "all". Limit <= 0 means unbounded (the CSV
+// Query is a case-insensitive substring of the voucher number or the holder
+// label, accented letters included (wildcard characters in it match
+// themselves). The match is done in Go with strings.ToLower, not SQL, since
+// SQLite's LIKE folds ASCII only (ut-docs#4257). Like FoldItemName it has no
+// locale rules: Turkish dotless ı, final sigma and ß↔ss don't meet.
+// Status is "" (all) or one of active / redeemed / void — anything else is
+// refused rather than silently widened to "all". Limit <= 0 means unbounded (the CSV
 // export); the page passes a bound.
 type VoucherFilter struct {
 	Query  string
@@ -1048,17 +1051,16 @@ type VoucherHistoryRow struct {
 	ActorName string `json:"actor_name"`
 }
 
-// likeContains escapes LIKE's own wildcards (and the escape character) so an
-// operator-typed term matches itself — same discipline as
-// SettingsRepo.GetByPrefix — and wraps it for a substring match.
-func likeContains(term string) string {
-	return "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(term) + "%"
-}
-
 // ListVouchers lists vouchers newest first (created_at, then insertion
 // order) for the Gift vouchers page and its CSV export (ut-docs#4251).
-// Read-only. SQLite's LIKE is case-insensitive for ASCII letters, which is
-// what the search box promises for voucher numbers.
+// Read-only. The status filter runs in SQL; the text search runs in Go,
+// because SQLite's LIKE folds ASCII letters only, so "MÜLLER" would never
+// find "Müller" (ut-docs#4257). Rows are scanned newest first and kept when
+// the folded query is a substring of the folded voucher number or holder
+// label (strings.ToLower, like FoldItemName), so wildcard characters match
+// only themselves. With a query, Limit is applied in Go once enough rows
+// match; without one it is the SQL LIMIT. No migration or folded column: the
+// vouchers table is small (a shop's gift vouchers), so one pass is cheap.
 func (r *POSRepo) ListVouchers(ctx context.Context, f VoucherFilter) ([]VoucherListRow, error) {
 	where := []string{"1=1"}
 	var args []any
@@ -1070,11 +1072,7 @@ func (r *POSRepo) ListVouchers(ctx context.Context, f VoucherFilter) ([]VoucherL
 	default:
 		return nil, fmt.Errorf("list vouchers: unknown status %q", f.Status)
 	}
-	if q := strings.TrimSpace(f.Query); q != "" {
-		where = append(where, `(v.id LIKE ? ESCAPE '\' OR COALESCE(v.holder_label, '') LIKE ? ESCAPE '\')`)
-		pat := likeContains(q)
-		args = append(args, pat, pat)
-	}
+	q := strings.ToLower(strings.TrimSpace(f.Query))
 	query := `
 SELECT v.id, v.holder_label, v.original_amount, v.balance, v.currency, v.voucher_type, v.purpose,
        v.issue_vat_rate_bp, v.status, v.issued_sale_id, v.created_at, COALESCE(s.receipt_no, '')
@@ -1082,7 +1080,7 @@ FROM vouchers v
 LEFT JOIN sales s ON s.id = v.issued_sale_id
 WHERE ` + strings.Join(where, " AND ") + `
 ORDER BY v.created_at DESC, v.rowid DESC`
-	if f.Limit > 0 {
+	if f.Limit > 0 && q == "" {
 		query += ` LIMIT ?`
 		args = append(args, f.Limit)
 	}
@@ -1101,12 +1099,18 @@ ORDER BY v.created_at DESC, v.rowid DESC`
 			return nil, fmt.Errorf("list vouchers: scan: %w", err)
 		}
 		row.HolderLabel = holder.String
+		if q != "" && !strings.Contains(strings.ToLower(row.ID), q) && !strings.Contains(strings.ToLower(row.HolderLabel), q) {
+			continue
+		}
 		row.IssuedSaleID = issuedSale.String
 		if rate.Valid {
 			bp := int(rate.Int64)
 			row.IssueVATRateBP = &bp
 		}
 		out = append(out, row)
+		if q != "" && f.Limit > 0 && len(out) >= f.Limit {
+			break
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("list vouchers: %w", err)

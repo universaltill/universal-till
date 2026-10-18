@@ -108,6 +108,43 @@ func TestListVouchers_NewestFirstSearchStatusLimit(t *testing.T) {
 	}
 }
 
+// ut-docs#4257: SQLite's LIKE folds ASCII only, so the search is matched in Go.
+func TestListVouchers_SearchIsUnicodeCaseInsensitive(t *testing.T) {
+	d := b8OpenDB(t, "voucher-list-unicode.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	vlSeed(t, ctx, repo, Voucher{ID: "GS-1", HolderLabel: "Müller", OriginalAmountMinor: 1000, CreatedAt: "2026-10-01T10:00:00Z"})
+	vlSeed(t, ctx, repo, Voucher{ID: "GS-2", HolderLabel: "Schmidt", OriginalAmountMinor: 1000, CreatedAt: "2026-10-02T10:00:00Z"})
+	vlSeed(t, ctx, repo, Voucher{ID: "GS-3", HolderLabel: "müller & Söhne", OriginalAmountMinor: 1000, Status: "redeemed", BalanceMinor: 0, CreatedAt: "2026-10-03T10:00:00Z"})
+	vlSeed(t, ctx, repo, Voucher{ID: "GS-4", HolderLabel: "MÜLLER", OriginalAmountMinor: 1000, CreatedAt: "2026-10-04T10:00:00Z"})
+
+	for _, q := range []string{"MÜLLER", "müller", "Müller", "  müLLer "} {
+		got, err := repo.ListVouchers(ctx, VoucherFilter{Query: q})
+		if err != nil || !vlEqual(vlIDs(got), []string{"GS-4", "GS-3", "GS-1"}) {
+			t.Fatalf("query %q: %v %v", q, vlIDs(got), err)
+		}
+	}
+	got, _ := repo.ListVouchers(ctx, VoucherFilter{Query: "Meier"})
+	if len(got) != 0 {
+		t.Fatalf("non-matching name: %v", vlIDs(got))
+	}
+	// Limit applies after the match, newest first.
+	got, _ = repo.ListVouchers(ctx, VoucherFilter{Query: "MÜLLER", Limit: 2})
+	if !vlEqual(vlIDs(got), []string{"GS-4", "GS-3"}) {
+		t.Fatalf("limit with query: %v", vlIDs(got))
+	}
+	// Status and query combine.
+	got, _ = repo.ListVouchers(ctx, VoucherFilter{Query: "MÜLLER", Status: "active"})
+	if !vlEqual(vlIDs(got), []string{"GS-4", "GS-1"}) {
+		t.Fatalf("status+query: %v", vlIDs(got))
+	}
+	got, _ = repo.ListVouchers(ctx, VoucherFilter{Query: "MÜLLER", Status: "redeemed"})
+	if !vlEqual(vlIDs(got), []string{"GS-3"}) {
+		t.Fatalf("redeemed+query: %v", vlIDs(got))
+	}
+}
+
 func TestVoucherTransactions_TimeOrderWithReceipt(t *testing.T) {
 	d := b8OpenDB(t, "voucher-history.db")
 	ctx := context.Background()

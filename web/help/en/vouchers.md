@@ -76,7 +76,7 @@ What can go wrong:
 
 **Menu → Gift vouchers** (manager only) lists every voucher this till knows about, newest first: its card number, who it is for, its original value, what is left on it, its status — **Active**, **Used up** or **Void** — and what it can be spent on (a specific-item voucher is marked). **Sold in** links to the receipt of the sale that sold it; an imported balance says so instead.
 
-1. Type in the **Search** box to find a voucher by card number or holder — the list updates as you type. Use **Status** to show only active, used-up or void vouchers.
+1. Type in the **Search** box to find a voucher by card number or holder — the list updates as you type. Use **Status** to show only active, used-up or void vouchers. Search ignores upper and lower case, accented letters included (**MÜLLER** finds *Müller*). The search and status stay in the page address, so going Back from a voucher, or reloading, keeps them.
 2. Tap a card number to see the voucher's **History**: when it was issued, every time it was redeemed and every correction, with the amount and a link to each sale's receipt.
 3. **Export CSV** downloads every voucher matching the current search and status — all of them, not just the ones on screen — with the columns `code`, `balance`, `label`, `original_amount`, `status`, `purpose` and `created_at`. The file can be imported on another till with **Import voucher balances** at the bottom of the same page (see [Import voucher balances](/help/voucher-import)).
 

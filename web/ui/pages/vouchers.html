@@ -19,10 +19,15 @@
   <p class="muted">{{ T "vouchers.intro" }}</p>
   {{/* The search box is type="search": osk.js gives it the on-screen
        keyboard on a touch till like every other admin search field, and
-       Enter submits this form (the htmx request below). */}}
+       Enter submits this form (the htmx request below).
+       ut-docs#4257: no "change" trigger. The select fires "input" too, and
+       osk.js dispatches "input", so "change" only added one more request
+       when the search box lost focus. Tapping a voucher does exactly that,
+       and that request's swap replaced the tapped link mid-navigation, so
+       the detail page never got its own URL and Back went wrong. */}}
   <form id="vouchers-filter" role="search" style="display:flex; flex-wrap:wrap; gap:.35rem .8rem; align-items:end"
         hx-get="/ui/vouchers/list" hx-target="#vouchers-list" hx-swap="outerHTML"
-        hx-trigger="input delay:300ms, change, submit">
+        hx-trigger="input delay:300ms, submit">
     <label>{{ T "translations.search" }}
       <input type="search" name="q" value="{{ .q }}" autocomplete="off" placeholder="{{ T "vouchers.search_ph" }}" style="inline-size:15rem; max-inline-size:100%">
     </label>
@@ -69,11 +74,11 @@
 {{ $l := .list }}
 <div id="vouchers-list" aria-live="polite"
      hx-get="/ui/vouchers/list" hx-trigger="vouchers-imported from:body" hx-include="#vouchers-filter" hx-swap="outerHTML">
+  {{ if $l.vouchers }}
   <div style="display:flex; flex-wrap:wrap; gap:.35rem .8rem; align-items:center; margin-block:.6rem">
     <a class="btn secondary" href="{{ $l.exportHref }}" hx-boost="false" download>{{ T "audit.export_btn" }}</a>
     <span class="muted">{{ T "vouchers.export_help" }}</span>
   </div>
-  {{ if $l.vouchers }}
   {{ if $l.truncated }}<p class="muted">{{ printf (T "vouchers.limit_note") $l.limit }}</p>{{ end }}
   <div style="overflow-x:auto">
     <table class="table">
