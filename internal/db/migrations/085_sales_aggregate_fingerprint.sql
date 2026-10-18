@@ -1,0 +1,12 @@
+-- 085_sales_aggregate_fingerprint.sql — universaltill/ut-docs#2559: a cheap
+-- gate in front of the sales-aggregate rebuild (internal/cloudsync).
+--
+-- source_fingerprint is a digest of the source rows behind a
+-- (business_date, till_id) rollup (POSRepo.SalesAggregateFingerprints) plus
+-- what else shapes the payload (build version, store, till, staff toggle,
+-- the round's local date). A past day whose fingerprint still matches is not
+-- rebuilt; content_hash keeps deciding whether a rebuilt day is sent.
+-- '' = unknown (every row written before this migration): that day rebuilds
+-- once and the uploader stamps the column. Nothing here is money or
+-- personal data.
+ALTER TABLE sales_aggregate_uploads ADD COLUMN source_fingerprint TEXT NOT NULL DEFAULT '';

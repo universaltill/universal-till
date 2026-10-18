@@ -7,12 +7,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/discovery"
@@ -160,25 +164,67 @@ func pushSalesAggregates(ctx context.Context, cfg *config.Config, db *sql.DB) {
 	if _, err := repo.PruneSalesAggregateUploads(ctx, from); err != nil {
 		logging.L().Warnf("cloudsync: sales aggregates: prune: %v", err)
 	}
-	keys, err := repo.SalesAggregateKeys(ctx, from, to, selfTill)
+	// The fingerprint gate (ut-docs#2559): one query for every key's source
+	// fingerprint and one for the ledger, so an unchanged past day costs no
+	// rebuild. Fingerprints are read BEFORE the builds: a row that lands in
+	// between leaves an older fingerprint beside newer content, which only
+	// costs one more rebuild next round — the reverse could pin stale content.
+	sources, err := repo.SalesAggregateFingerprints(ctx, from, to, selfTill)
 	if err != nil {
 		logging.L().Warnf("cloudsync: sales aggregates: list days: %v", err)
 		return
 	}
+	ledger, err := repo.SalesAggregateUploads(ctx, from, to)
+	if err != nil {
+		logging.L().Warnf("cloudsync: sales aggregates: read ledger: %v", err)
+		return
+	}
+	// A day the cloud holds a rollup for whose source rows are all gone (its
+	// only sale voided on a later day, or deleted) is no key any more; it
+	// is still revisited, with an empty source, so the cloud gets the
+	// emptied rollup instead of keeping the old figures.
+	listed := make(map[data.SalesAggregateKey]bool, len(sources))
+	for _, src := range sources {
+		listed[src.SalesAggregateKey] = true
+	}
+	for k := range ledger {
+		if !listed[k] {
+			sources = append(sources, data.SalesAggregateFingerprint{SalesAggregateKey: k})
+		}
+	}
+	sort.Slice(sources, func(i, j int) bool {
+		a, b := sources[i].SalesAggregateKey, sources[j].SalesAggregateKey
+		if a.BusinessDate != b.BusinessDate {
+			return a.BusinessDate < b.BusinessDate
+		}
+		return a.TillID < b.TillID
+	})
 	sent := 0
-	for _, k := range keys {
-		payload, err := buildSalesAggregate(ctx, repo, storeID, k, selfTill, withCashiers)
+	for _, src := range sources {
+		k := src.SalesAggregateKey
+		fp := salesAggregateFingerprint(storeID, selfTill, withCashiers, to, src.Fingerprint)
+		prev, uploaded := ledger[k]
+		if uploaded && k.BusinessDate != to && prev.Fingerprint == fp {
+			continue // nothing behind this past day's rollup changed
+		}
+		payload, err := buildSalesAggregateFn(ctx, repo, storeID, k, selfTill, withCashiers)
 		if err != nil {
 			logging.L().Warnf("cloudsync: sales aggregates: build %s/%s: %v", k.BusinessDate, k.TillID, err)
 			return
 		}
 		sum := sha256.Sum256(payload)
 		hash := hex.EncodeToString(sum[:])
-		if prev, ok, err := repo.SalesAggregateUploadHash(ctx, k.BusinessDate, k.TillID); err != nil {
-			logging.L().Warnf("cloudsync: sales aggregates: read ledger: %v", err)
-			return
-		} else if ok && prev == hash {
-			continue // the cloud already holds exactly this rollup
+		if uploaded && prev.Hash == hash {
+			// The cloud already holds exactly this rollup; remember what it
+			// was built from so the next round can skip it.
+			if prev.Fingerprint != fp {
+				// Only an optimisation: a failed stamp costs one more
+				// rebuild next round, never the rest of this one.
+				if err := repo.SetSalesAggregateFingerprint(ctx, k.BusinessDate, k.TillID, fp); err != nil {
+					logging.L().Warnf("cloudsync: sales aggregates: record fingerprint: %v", err)
+				}
+			}
+			continue
 		}
 		if _, err := post(ctx, cfg, salesAggregatePath, payload); err != nil {
 			var se *statusError
@@ -202,7 +248,7 @@ func pushSalesAggregates(ctx context.Context, cfg *config.Config, db *sql.DB) {
 			return
 		}
 		salesAggregateInactiveLogged.Store(false)
-		if err := repo.RecordSalesAggregateUpload(ctx, k.BusinessDate, k.TillID, hash, now); err != nil {
+		if err := repo.RecordSalesAggregateUpload(ctx, k.BusinessDate, k.TillID, hash, fp, now); err != nil {
 			logging.L().Warnf("cloudsync: sales aggregates: record upload: %v", err)
 			return
 		}
@@ -212,6 +258,25 @@ func pushSalesAggregates(ctx context.Context, cfg *config.Config, db *sql.DB) {
 		logging.L().Infof("cloudsync: sales aggregates pushed (%d day/till rollups)", sent)
 	}
 }
+
+// salesAggregateFingerprint is what the ledger stores beside a rollup's hash
+// (ut-docs#2559): the (day, till)'s source fingerprint
+// (data.POSRepo.SalesAggregateFingerprints) salted with everything else that
+// shapes the payload — the build version (a release may change the rollup
+// code), the store id, this till's own id and the staff toggle — and the
+// round's local date, so every day in the window is rebuilt once a day:
+// anything the source fingerprint misses is stale for at most a day.
+func salesAggregateFingerprint(storeID, selfTill string, withCashiers bool, today, source string) string {
+	h := sha256.New()
+	for _, part := range []string{buildinfo.Version, storeID, selfTill, strconv.FormatBool(withCashiers), today, source} {
+		_, _ = fmt.Fprintf(h, "%d:%s|", len(part), part)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// buildSalesAggregateFn is buildSalesAggregate; tests wrap it to count the
+// rebuilds the fingerprint gate skips.
+var buildSalesAggregateFn = buildSalesAggregate
 
 // buildSalesAggregate reads one (date, till) rollup and marshals the wire
 // body. Every breakdown is a non-nil slice so it encodes as [] (never null).

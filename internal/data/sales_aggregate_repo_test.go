@@ -256,16 +256,16 @@ func TestSalesAggregateUploads_HashUpsertPrune(t *testing.T) {
 	if h, ok, err := repo.SalesAggregateUploadHash(ctx, "2026-09-24", "reg-A"); err != nil || ok || h != "" {
 		t.Fatalf("empty lookup = %q %v %v", h, ok, err)
 	}
-	if err := repo.RecordSalesAggregateUpload(ctx, "2026-09-24", "reg-A", "h1", at); err != nil {
+	if err := repo.RecordSalesAggregateUpload(ctx, "2026-09-24", "reg-A", "h1", "", at); err != nil {
 		t.Fatalf("record: %v", err)
 	}
-	if err := repo.RecordSalesAggregateUpload(ctx, "2026-09-24", "reg-A", "h2", at); err != nil {
+	if err := repo.RecordSalesAggregateUpload(ctx, "2026-09-24", "reg-A", "h2", "", at); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 	if h, ok, err := repo.SalesAggregateUploadHash(ctx, "2026-09-24", "reg-A"); err != nil || !ok || h != "h2" {
 		t.Fatalf("after upsert = %q %v %v", h, ok, err)
 	}
-	if err := repo.RecordSalesAggregateUpload(ctx, "2026-09-01", "reg-A", "old", at); err != nil {
+	if err := repo.RecordSalesAggregateUpload(ctx, "2026-09-01", "reg-A", "old", "", at); err != nil {
 		t.Fatal(err)
 	}
 	n, err := repo.PruneSalesAggregateUploads(ctx, "2026-09-11")
@@ -301,5 +301,184 @@ func TestSalesAggregateForTill_ExpectedCashHoldsTipsOut(t *testing.T) {
 	p := agg.Payments[0]
 	if p.Amount.Minor() != 1100 || p.Tips.Minor() != 100 || p.ExpectedCash.Minor() != 1000 {
 		t.Fatalf("cash bucket = amount %d tips %d expected %d, want 1100/100/1000", p.Amount.Minor(), p.Tips.Minor(), p.ExpectedCash.Minor())
+	}
+}
+
+// ut-docs#2559: the fingerprint gate. SalesAggregateFingerprints covers
+// exactly SalesAggregateKeys' key set, in the same order, and a key's
+// fingerprint moves only when that (day, till)'s source rows do.
+func TestSalesAggregateFingerprints_SameKeysAsSalesAggregateKeys(t *testing.T) {
+	f := seedSalesAggregateFixture(t)
+	repo := NewPOSRepo(f.d.DB)
+	ctx := context.Background()
+	mustExec(t, f.d, `INSERT INTO no_sale_events (id, created_at, local_date, register_id) VALUES ('ns-only', ?, ?, 'reg-C')`,
+		f.yesterday.UTC().Format(time.RFC3339), f.prevDay)
+
+	keys, err := repo.SalesAggregateKeys(ctx, f.prevDay, f.day, "self-till")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fps, err := repo.SalesAggregateFingerprints(ctx, f.prevDay, f.day, "self-till")
+	if err != nil {
+		t.Fatalf("SalesAggregateFingerprints: %v", err)
+	}
+	got := make([]SalesAggregateKey, 0, len(fps))
+	for _, fp := range fps {
+		if fp.Fingerprint == "" {
+			t.Fatalf("empty fingerprint for %+v", fp.SalesAggregateKey)
+		}
+		got = append(got, fp.SalesAggregateKey)
+	}
+	if !reflect.DeepEqual(got, keys) {
+		t.Fatalf("fingerprint keys = %+v\nwant (SalesAggregateKeys) %+v", got, keys)
+	}
+}
+
+func TestSalesAggregateFingerprints_MoveOnlyWithSourceRows(t *testing.T) {
+	f := seedSalesAggregateFixture(t)
+	repo := NewPOSRepo(f.d.DB)
+	ctx := context.Background()
+	read := func() map[SalesAggregateKey]string {
+		t.Helper()
+		fps, err := repo.SalesAggregateFingerprints(ctx, f.prevDay, f.day, "self-till")
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[SalesAggregateKey]string{}
+		for _, fp := range fps {
+			out[fp.SalesAggregateKey] = fp.Fingerprint
+		}
+		return out
+	}
+	prevB := SalesAggregateKey{BusinessDate: f.prevDay, TillID: "reg-B"}
+	todayA := SalesAggregateKey{BusinessDate: f.day, TillID: "reg-A"}
+	changed := func(before, after map[SalesAggregateKey]string) []SalesAggregateKey {
+		var out []SalesAggregateKey
+		for k, v := range after {
+			if before[k] != v {
+				out = append(out, k)
+			}
+		}
+		for k := range before {
+			if _, ok := after[k]; !ok {
+				out = append(out, k)
+			}
+		}
+		sort.Slice(out, func(i, j int) bool {
+			if out[i].BusinessDate != out[j].BusinessDate {
+				return out[i].BusinessDate < out[j].BusinessDate
+			}
+			return out[i].TillID < out[j].TillID
+		})
+		return out
+	}
+
+	base := read()
+	if again := read(); !reflect.DeepEqual(base, again) {
+		t.Fatalf("fingerprints not stable across reads:\n%v\n%v", base, again)
+	}
+	// Rows the rollup never reads leave every fingerprint alone.
+	mustExec(t, f.d, `UPDATE sales SET order_status = 'ready', tracking_token = 'tok-' || id, customer_id = NULL, sync_attempts = 3`)
+	if after := read(); !reflect.DeepEqual(base, after) {
+		t.Fatalf("an unrelated column moved fingerprints: %v", changed(base, after))
+	}
+
+	// A late-journaled sale on yesterday moves yesterday/reg-B only.
+	saSale(t, f.d, "late", f.yesterday.Add(time.Hour), "completed", "sale", "", "reg-B", "u1", 100, 0, 0, 100)
+	step := read()
+	if got := changed(base, step); !reflect.DeepEqual(got, []SalesAggregateKey{prevB}) {
+		t.Fatalf("late sale changed %v, want only %v", got, prevB)
+	}
+
+	// A void today of yesterday's sale: yesterday loses a completed sale,
+	// and the void books on today's (void day) key.
+	mustExec(t, f.d, `UPDATE sales SET status = 'voided', voided_at = ?, voided_local_date = ? WHERE id = 's5'`,
+		f.today.UTC().Format(time.RFC3339), f.day)
+	before := step
+	step = read()
+	todayB := SalesAggregateKey{BusinessDate: f.day, TillID: "reg-B"}
+	if got := changed(before, step); !reflect.DeepEqual(got, []SalesAggregateKey{prevB, todayB}) {
+		t.Fatalf("void changed %v, want %v and %v", got, prevB, todayB)
+	}
+
+	// A late no-sale drawer open on today/reg-A.
+	mustExec(t, f.d, `INSERT INTO no_sale_events (id, created_at, local_date, register_id) VALUES ('ns-late', ?, ?, 'reg-A')`,
+		f.today.UTC().Format(time.RFC3339), f.day)
+	before = step
+	step = read()
+	if got := changed(before, step); !reflect.DeepEqual(got, []SalesAggregateKey{todayA}) {
+		t.Fatalf("no-sale open changed %v, want only %v", got, todayA)
+	}
+
+	// A deleted (archived) sale moves its day too.
+	mustExec(t, f.d, `DELETE FROM sale_lines WHERE sale_id = 's2'`)
+	mustExec(t, f.d, `DELETE FROM payments WHERE sale_id = 's2'`)
+	mustExec(t, f.d, `DELETE FROM sales WHERE id = 's2'`)
+	before = step
+	step = read()
+	if got := changed(before, step); !reflect.DeepEqual(got, []SalesAggregateKey{todayA}) {
+		t.Fatalf("deleted sale changed %v, want only %v", got, todayA)
+	}
+}
+
+func TestSalesAggregateUploads_LedgerAndFingerprint(t *testing.T) {
+	d := b8OpenDB(t, "sales-aggregate-ledger.db")
+	repo := NewPOSRepo(d.DB)
+	ctx := context.Background()
+	at := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
+	later := at.Add(time.Hour)
+
+	if err := repo.RecordSalesAggregateUpload(ctx, "2026-09-24", "reg-A", "h1", "fp1", at); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordSalesAggregateUpload(ctx, "2026-09-23", "reg-A", "h0", "fp0", at); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordSalesAggregateUpload(ctx, "2026-09-01", "reg-A", "old", "fpo", at); err != nil {
+		t.Fatal(err)
+	}
+	// A row dated after the window (clock skew) is not part of it.
+	if err := repo.RecordSalesAggregateUpload(ctx, "2026-09-30", "reg-A", "hf", "fpf", at); err != nil {
+		t.Fatal(err)
+	}
+	// A pre-#2559 row has no fingerprint yet.
+	mustExec(t, d, `INSERT INTO sales_aggregate_uploads (business_date, till_id, content_hash, uploaded_at) VALUES ('2026-09-24', 'reg-B', 'hb', ?)`,
+		at.Format(time.RFC3339))
+
+	ledger, err := repo.SalesAggregateUploads(ctx, "2026-09-11", "2026-09-24")
+	if err != nil {
+		t.Fatalf("SalesAggregateUploads: %v", err)
+	}
+	want := map[SalesAggregateKey]SalesAggregateLedgerRow{
+		{BusinessDate: "2026-09-24", TillID: "reg-A"}: {Hash: "h1", Fingerprint: "fp1"},
+		{BusinessDate: "2026-09-23", TillID: "reg-A"}: {Hash: "h0", Fingerprint: "fp0"},
+		{BusinessDate: "2026-09-24", TillID: "reg-B"}: {Hash: "hb", Fingerprint: ""},
+	}
+	if !reflect.DeepEqual(ledger, want) {
+		t.Fatalf("ledger = %+v\nwant %+v", ledger, want)
+	}
+
+	// Stamping a fingerprint keeps the hash and the upload time.
+	if err := repo.SetSalesAggregateFingerprint(ctx, "2026-09-24", "reg-B", "fpb"); err != nil {
+		t.Fatalf("SetSalesAggregateFingerprint: %v", err)
+	}
+	var hash, fp, up string
+	if err := d.DB.QueryRow(`SELECT content_hash, source_fingerprint, uploaded_at FROM sales_aggregate_uploads WHERE business_date = '2026-09-24' AND till_id = 'reg-B'`).Scan(&hash, &fp, &up); err != nil {
+		t.Fatal(err)
+	}
+	if hash != "hb" || fp != "fpb" || up != at.Format(time.RFC3339) {
+		t.Fatalf("after stamp = %q %q %q", hash, fp, up)
+	}
+
+	// An upsert replaces hash, fingerprint and time together.
+	if err := repo.RecordSalesAggregateUpload(ctx, "2026-09-24", "reg-A", "h2", "fp2", later); err != nil {
+		t.Fatal(err)
+	}
+	ledger, err = repo.SalesAggregateUploads(ctx, "2026-09-11", "2026-09-24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ledger[SalesAggregateKey{BusinessDate: "2026-09-24", TillID: "reg-A"}]; got != (SalesAggregateLedgerRow{Hash: "h2", Fingerprint: "fp2"}) {
+		t.Fatalf("after upsert = %+v", got)
 	}
 }
