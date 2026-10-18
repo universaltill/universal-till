@@ -172,7 +172,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		}
 		localizer = testLocalizer
 	}
-	pm.SetLocalizer(localizer)
+	// ut-docs#4398: a language pack that arrives after setup renames the
+	// gift voucher item setup seeded in English (seededGiftVoucherRenamer).
+	pm.SetLocalizer(seededGiftVoucherRenamer{Localizer: localizer, db: db})
 	// Shop translation overrides (manager edits) win over base + plugin
 	// strings; loaded once here, refreshed by the /translations editor.
 	if overrides, err := data.NewTranslationRepo(db).ListOverrides(ctx); err == nil {

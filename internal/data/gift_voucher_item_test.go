@@ -7,6 +7,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/db"
 )
 
 // ut-docs#4259: a new shop starts with one gift voucher item, and no delete
@@ -303,5 +304,140 @@ func TestActiveGiftVoucherItemID(t *testing.T) {
 	seedGiftVoucherItem(x, "gv-on", 1)
 	if id, ok, err := repo.ActiveGiftVoucherItemID(ctx); err != nil || !ok || id != "gv-on" {
 		t.Fatalf("id=%q ok=%v err=%v, want gv-on", id, ok, err)
+	}
+}
+
+// ut-docs#4398: a shop set up before its language pack arrived got an item
+// named in English; once the pack is live, the untouched seeded item takes
+// the shop's word for it.
+
+func seededVoucherName(t *testing.T, d *db.DB, id string) string {
+	t.Helper()
+	var name string
+	if err := d.DB.QueryRow(`SELECT name FROM items WHERE id = ?`, id).Scan(&name); err != nil {
+		t.Fatalf("load item %s: %v", id, err)
+	}
+	return name
+}
+
+func seededMarkerName(t *testing.T, d *db.DB) string {
+	t.Helper()
+	var name string
+	if err := d.DB.QueryRow(`SELECT value FROM settings WHERE key = 'catalog.seeded_gift_voucher_item_name'`).Scan(&name); err != nil {
+		t.Fatalf("load seeded-name marker: %v", err)
+	}
+	return name
+}
+
+func seedEnglishVoucherItem(t *testing.T, repo *data.CatalogRepo) string {
+	t.Helper()
+	ctx := context.Background()
+	if created, err := repo.SeedDefaultGiftVoucherItem(ctx, "Gift voucher"); err != nil || !created {
+		t.Fatalf("seed: created=%v err=%v", created, err)
+	}
+	id, ok, err := repo.SeededGiftVoucherItemID(ctx)
+	if err != nil || !ok {
+		t.Fatalf("seeded id: ok=%v err=%v", ok, err)
+	}
+	return id
+}
+
+func TestRenameSeededGiftVoucherItem_RenamesTheUntouchedItem(t *testing.T) {
+	d, _, _ := resetTestDB(t, "rename-seeded-voucher.db")
+	repo := data.NewCatalogRepo(d.DB)
+	id := seedEnglishVoucherItem(t, repo)
+
+	renamed, err := repo.RenameSeededGiftVoucherItem(context.Background(), "Gift voucher", "Geschenkgutschein")
+	if err != nil || !renamed {
+		t.Fatalf("rename: renamed=%v err=%v", renamed, err)
+	}
+	if got := seededVoucherName(t, d, id); got != "Geschenkgutschein" {
+		t.Fatalf("item name = %q, want Geschenkgutschein", got)
+	}
+	// The marker follows, so an import still recognises the item as the
+	// untouched seed (RetireSeededGiftVoucherItem) and a second run is a no-op.
+	if got := seededMarkerName(t, d); got != "Geschenkgutschein" {
+		t.Fatalf("seeded-name marker = %q, want Geschenkgutschein", got)
+	}
+	renamed, err = repo.RenameSeededGiftVoucherItem(context.Background(), "Gift voucher", "Geschenkgutschein")
+	if err != nil || renamed {
+		t.Fatalf("second rename: renamed=%v err=%v, want no-op", renamed, err)
+	}
+}
+
+func TestRenameSeededGiftVoucherItem_RetireStillSeesItAsUntouched(t *testing.T) {
+	d, x, _ := resetTestDB(t, "rename-seeded-voucher-retire.db")
+	repo := data.NewCatalogRepo(d.DB)
+	id := seedEnglishVoucherItem(t, repo)
+	if _, err := repo.RenameSeededGiftVoucherItem(context.Background(), "Gift voucher", "Geschenkgutschein"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	seedGiftVoucherItem(x, "gv-imported", 1)
+
+	res, err := data.NewPOSRepo(d.DB).RetireSeededGiftVoucherItem(context.Background())
+	if err != nil || !res.Removed || res.ID != id {
+		t.Fatalf("retire after rename = %+v, %v; want the renamed seed removed", res, err)
+	}
+}
+
+func TestRenameSeededGiftVoucherItem_LeavesTheShopsOwnChoicesAlone(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, d *db.DB, x func(string, ...any), id string)
+	}{
+		{"renamed by the owner", func(t *testing.T, d *db.DB, x func(string, ...any), id string) {
+			x(`UPDATE items SET name = 'Gutschein' WHERE id = ?`, id)
+		}},
+		{"a second gift voucher item", func(t *testing.T, d *db.DB, x func(string, ...any), id string) {
+			seedGiftVoucherItem(x, "gv-own", 0)
+		}},
+		{"marker cleared (the shop made it its own)", func(t *testing.T, d *db.DB, x func(string, ...any), id string) {
+			if err := data.NewPOSRepo(d.DB).ForgetSeededGiftVoucherItem(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"seeded in another language", func(t *testing.T, d *db.DB, x func(string, ...any), id string) {
+			x(`UPDATE items SET name = 'Hediye çeki' WHERE id = ?`, id)
+			x(`UPDATE settings SET value = 'Hediye çeki' WHERE key = 'catalog.seeded_gift_voucher_item_name'`)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d, x, _ := resetTestDB(t, "rename-seeded-voucher-keep.db")
+			repo := data.NewCatalogRepo(d.DB)
+			id := seedEnglishVoucherItem(t, repo)
+			tc.setup(t, d, x, id)
+			before := seededVoucherName(t, d, id)
+
+			renamed, err := repo.RenameSeededGiftVoucherItem(context.Background(), "Gift voucher", "Geschenkgutschein")
+			if err != nil || renamed {
+				t.Fatalf("rename: renamed=%v err=%v, want no-op", renamed, err)
+			}
+			if got := seededVoucherName(t, d, id); got != before {
+				t.Fatalf("item name = %q, want %q kept", got, before)
+			}
+		})
+	}
+}
+
+func TestRenameSeededGiftVoucherItem_NoSeedIsANoOp(t *testing.T) {
+	d, x, _ := resetTestDB(t, "rename-seeded-voucher-none.db")
+	seedGiftVoucherItem(x, "gv-imported", 1)
+
+	renamed, err := data.NewCatalogRepo(d.DB).RenameSeededGiftVoucherItem(context.Background(), "Gift voucher", "Geschenkgutschein")
+	if err != nil || renamed {
+		t.Fatalf("rename: renamed=%v err=%v, want no-op without the setup marker", renamed, err)
+	}
+	if got := seededVoucherName(t, d, "gv-imported"); got != "Gift voucher" {
+		t.Fatalf("imported item renamed to %q", got)
+	}
+}
+
+func TestRenameSeededGiftVoucherItem_RefusesBlankName(t *testing.T) {
+	d, _, _ := resetTestDB(t, "rename-seeded-voucher-blank.db")
+	repo := data.NewCatalogRepo(d.DB)
+	seedEnglishVoucherItem(t, repo)
+	if _, err := repo.RenameSeededGiftVoucherItem(context.Background(), "Gift voucher", " "); err == nil {
+		t.Fatal("blank name accepted")
 	}
 }
