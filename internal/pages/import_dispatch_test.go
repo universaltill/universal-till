@@ -514,3 +514,27 @@ func TestImportDispatch_RequiresManager(t *testing.T) {
 		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// ut-docs#4472: import.requested.ask carries the operator's UI language.
+func TestImportDispatch_PayloadCarriesLocale(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedImportPlugin(t, dp.Db, "com.t.imp1", "bkp", "BKP Import", []string{"items"}, []string{"items"})
+	captured := subscribeImportAsk(t, dp.Db, "com.t.imp1", json.RawMessage(`{"ok":true,"message":"parsed"}`))
+
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	fw, _ := w.CreateFormFile("file", "upload.bkp")
+	_, _ = fw.Write([]byte("data"))
+	_ = w.Close()
+	req := httptest.NewRequest(http.MethodPost, "/api/data/import?lang=tr-TR", &buf)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(string(captured.Payload), `"locale":"tr"`) {
+		t.Fatalf("payload lacks locale tr: %s", captured.Payload)
+	}
+}

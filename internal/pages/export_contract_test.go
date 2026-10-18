@@ -35,6 +35,7 @@ import (
 func TestExportRequestPayloadSchema_PinnedFields(t *testing.T) {
 	assertJSONFields(t, "exportRequestPayload", reflect.TypeOf(exportRequestPayload{}), []string{
 		"from", "to", "entry_key", "sales", "stock", "items", "tax_codes", "eod_closes", "fiscal_register_de",
+		"locale",
 	})
 }
 

@@ -60,6 +60,9 @@ type fileRowsRequestPayload struct {
 	FileSize   int64    `json:"file_size"`
 	Mode       string   `json:"mode"`   // preview | commit
 	Source     string   `json:"source"` // always "file"
+	// Locale is the requesting operator's UI language (pluginAskLocale), so
+	// the plugin can answer in it (ut-docs#4472); empty from an older till.
+	Locale string `json:"locale"`
 }
 
 // rowsImportFile is a file-rows run's staged upload. executeRowsImport owns

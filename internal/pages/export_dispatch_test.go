@@ -1810,3 +1810,32 @@ func TestExportDispatch_FiscalRegisterDEFieldPresentButEmptyInRange(t *testing.T
 		t.Fatalf(`expected a present-but-empty "fiscal_register_de":[] for an empty register, got %s`, payload.FiscalRegisterDE)
 	}
 }
+
+// ut-docs#4472: export.requested.ask carries the operator's UI language so
+// the plugin can answer (e.g. its message) in it.
+func TestExportDispatch_PayloadCarriesLocale(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPlugin(t, dp.Db, "com.t.exp1", "csv", "CSV Export")
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp1", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export?lang=tr-TR", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(string(captured.Payload), `"locale":"tr"`) {
+		t.Fatalf("payload lacks locale tr: %s", captured.Payload)
+	}
+}

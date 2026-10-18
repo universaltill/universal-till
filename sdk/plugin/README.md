@@ -30,7 +30,8 @@ func main() {
 - Tests run natively: `plugin.UseFakeHost(t, plugin.NewFakeHost())`.
 - **File-rows import entries** (`"source": "file"`, ADR-0164 §2): decode the
   ask into `plugin.ImportRequest`, read `req.File()`, hand rows back with
-  `ImportRowsSubmit`. The ask runs in the import sandbox — only
+  `ImportRowsSubmit`. `req.Locale` is the operator's UI language ("de"; empty
+  from an older till — fall back to "en"). The ask runs in the import sandbox — only
   `FileImportHostFunctions` act, on a till and in the cloud alike — so test
   with `FakeHost.FileImport = true`.
 

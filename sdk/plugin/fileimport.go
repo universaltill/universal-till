@@ -24,6 +24,9 @@ type ImportRequest struct {
 	FileSize   int64    `json:"file_size"`
 	Mode       string   `json:"mode"`
 	Source     string   `json:"source"`
+	// Locale is the operator's UI language, BCP-47 like "de" (ut-docs#4472);
+	// empty from an older till — fall back to "en".
+	Locale string `json:"locale"`
 }
 
 // File is the staged upload behind FileHandle (an io.Reader).

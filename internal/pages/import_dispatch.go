@@ -192,6 +192,7 @@ func registerImportDispatch(mux *http.ServeMux, d *common.Deps) {
 			FileHandle: handle,
 			FileName:   filepath.Base(fileName),
 			FileSize:   written,
+			Locale:     pluginAskLocale(r),
 		})
 		if err != nil {
 			dataAPIRespond(w, http.StatusInternalServerError, false, err.Error())
