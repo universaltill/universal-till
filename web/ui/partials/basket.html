@@ -257,6 +257,14 @@
                       </dialog>
                     </span>
                     {{ end }}
+                    {{/* ut-docs#4627: /api/pos/line refused this line's last
+                         qty/discount change because the discount would be
+                         more than the line total. In the item cell, which
+                         has the width the qty column lacks; per-render only
+                         (Basket.DiscountErrorKey). */}}
+                    {{ if and $.DiscountErrorKey (eq $.DiscountErrorKey .LineKey) }}
+                    <span class="line-discount-error" role="alert">{{ printf (T "basket.discount_too_large") (money $.DiscountErrorLimit) }}</span>
+                    {{ end }}
                   </span>
                 </div>
               </td>

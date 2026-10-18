@@ -43,7 +43,7 @@ There are two separate kinds of discount, and they don't stack the same way — 
 
 What can go wrong: the scan box doesn't tell a bad promo code apart from an unrecognized item barcode — an inactive, expired, or unknown code is refused with the same "Item not found" message a mystery barcode gets, so a code that never scanned probably means it isn't active (or the shop's clock has moved past its end date) rather than a scanner problem. A code restricted to a specific customer only applies once that customer is linked to the sale (see below) — scanned before that, it's refused the same way.
 
-A per-line discount that's bigger than the line itself is accepted while you're building the basket, but the sale is refused when you try to take payment, with a generic "couldn't be completed" message that doesn't say why — if a payment is unexpectedly refused, check that every line's discount is smaller than that line's own price.
+A per-line discount can't be bigger than the line's own total (its price × quantity). Type one that is, or lower the quantity below what the discount covers, and the change isn't made: the line keeps its old quantity and discount and a red note under the item name gives the most the discount can be. If a held sale brings back a line like that, payment is refused before anything is charged, with a message that names the line — lower its discount and pay again.
 
 ## Redeeming a Gutschein (voucher)
 

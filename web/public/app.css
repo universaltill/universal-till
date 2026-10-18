@@ -3145,6 +3145,8 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
 .age-check-sheet-prompt:focus { outline: none; }
 .age-check-sheet-item { margin: 0 0 .5rem; }
 .age-check-refused-hint { margin: 0 0 .5rem; color: var(--danger); font-weight: 600; }
+/* ut-docs#4627: refused line discount, under the item name. */
+.line-discount-error { display: block; margin-block-start: .2rem; color: var(--danger); font-size: .8rem; font-weight: 600; }
 .age-check-sheet-actions { display: flex; flex-direction: column; gap: .5rem; }
 .age-check-sheet-actions .btn { white-space: nowrap; }
 .shrinkage-remove { display: inline-block; }

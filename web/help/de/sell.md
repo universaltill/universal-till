@@ -43,7 +43,7 @@ Es gibt zwei getrennte Rabattarten, und sie stapeln sich nicht gleich — ein Ra
 
 Was schiefgehen kann: Das Scanfeld unterscheidet nicht zwischen einem ungültigen Aktionscode und einem nicht erkannten Artikelbarcode — ein inaktiver, abgelaufener oder unbekannter Code wird mit derselben Meldung „Artikel nicht gefunden“ wie ein rätselhafter Barcode abgelehnt, ein nie einlösbarer Code bedeutet also vermutlich, dass er nicht aktiv ist (oder die Uhr des Geschäfts sein Enddatum überschritten hat), statt eines Scannerproblems. Ein auf einen bestimmten Kunden beschränkter Code gilt erst, sobald dieser Kunde mit dem Verkauf verknüpft ist (siehe unten) — vorher gescannt, wird er auf dieselbe Weise abgelehnt.
 
-Ein Rabatt pro Zeile, der größer ist als die Zeile selbst, wird beim Aufbauen des Warenkorbs akzeptiert, der Verkauf wird jedoch bei der Zahlung mit einer allgemeinen Meldung „konnte nicht abgeschlossen werden“ abgelehnt, die den Grund nicht nennt — wird eine Zahlung unerwartet abgelehnt, prüfen Sie, ob der Rabatt jeder Zeile kleiner als der eigene Preis dieser Zeile ist.
+Ein Rabatt pro Zeile kann nicht größer sein als die Summe der Zeile selbst (Preis × Menge). Geben Sie einen solchen ein oder senken Sie die Menge unter das, was der Rabatt abdeckt, wird die Änderung nicht übernommen: Die Zeile behält ihre bisherige Menge und ihren Rabatt, und ein roter Hinweis unter dem Artikelnamen nennt den höchstmöglichen Rabatt. Bringt ein geparkter Verkauf eine solche Zeile zurück, wird die Zahlung abgelehnt, bevor etwas belastet wird, mit einer Meldung, die die Zeile nennt — senken Sie ihren Rabatt und zahlen Sie erneut.
 
 ## Vor Ort oder Außer Haus
 

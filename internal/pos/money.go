@@ -10,6 +10,15 @@ func AmountForQuantity(unitPrice money.Money, qty float64) money.Money {
 	return unitPrice.MulQty(qty)
 }
 
+// LineDiscountExceeds reports whether discount is negative or more than the
+// line's own total (unitPrice × qty). It is the one rule for a line
+// discount (ut-docs#4627): computeSaleTotals refuses such a line, and the
+// basket (/api/pos/line) and the tender pre-check ask the same question
+// first, so the basket can't accept a discount the sale write then refuses.
+func LineDiscountExceeds(unitPrice money.Money, qty float64, discount money.Money) bool {
+	return discount.IsNegative() || discount > AmountForQuantity(unitPrice, qty)
+}
+
 // ComputeTaxBasisPoints calculates tax using basis points; returns (tax, total).
 // Inclusive: subtotal already includes tax → compute embedded tax with half-up rounding.
 // Exclusive: subtotal excludes tax → add tax on top with half-up rounding.

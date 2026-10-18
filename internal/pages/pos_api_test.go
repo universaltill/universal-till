@@ -19,6 +19,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fiscal"
+	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -3167,5 +3168,98 @@ func TestTenderHandler_AmbiguousRegisterIdentityStillSellsFromMain(t *testing.T)
 	}
 	if got := inventoryQtyAt(t, dp, "itm1", "loc_main"); got != 49 {
 		t.Fatalf("expected the ambiguous case to keep drawing from Main (50 -> 49), got %v", got)
+	}
+}
+
+// ut-docs#4627: a line discount above the line's total used to be accepted
+// by the basket and only refused at tender ("invalid line discount", shown
+// as the generic tender-failed banner). The basket now refuses it on entry
+// — the line keeps its previous qty and discount — and says why on that
+// line.
+func TestLineHandler_DiscountAboveLineTotalRefused(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil { // £1.00
+		t.Fatalf("seed scan: %v", err)
+	}
+	key := dp.Engine.Basket().Lines[0].LineKey
+
+	rec := posPostForm(mux, "/api/pos/line", "key="+key+"&qty=1&discount=150")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 (basket re-render), got %d: %s", rec.Code, rec.Body.String())
+	}
+	line := dp.Engine.Basket().Lines[0]
+	if got := line.LineDiscount.Minor(); got != 0 {
+		t.Fatalf("discount above the line total must not be applied, got %d", got)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `class="line-discount-error"`) || !strings.Contains(body, "more than this line") {
+		t.Fatalf("expected the per-line discount message in the basket, got:\n%s", body)
+	}
+
+	// The message is per-render: the next good update clears it.
+	rec = posPostForm(mux, "/api/pos/line", "key="+key+"&qty=1&discount=100")
+	if got := dp.Engine.Basket().Lines[0].LineDiscount.Minor(); got != 100 {
+		t.Fatalf("discount equal to the line total must be accepted, got %d", got)
+	}
+	if strings.Contains(rec.Body.String(), `class="line-discount-error"`) {
+		t.Fatalf("message must not persist past a valid update:\n%s", rec.Body.String())
+	}
+}
+
+// ut-docs#4627: lowering the qty under an existing discount is the second
+// way to reach a discount above the line total; the − step is refused the
+// same way, so the cashier lowers the discount first.
+func TestLineHandler_QtyDropBelowDiscountRefused(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	key := dp.Engine.Basket().Lines[0].LineKey
+	posPostForm(mux, "/api/pos/line", "key="+key+"&qty=3&discount=250")
+
+	rec := posPostForm(mux, "/api/pos/line", "key="+key+"&delta=-1&discount=250")
+	line := dp.Engine.Basket().Lines[0]
+	if line.Qty != 3 || line.LineDiscount.Minor() != 250 {
+		t.Fatalf("refused step must leave the line as it was (qty 3, discount 250), got qty %v discount %d", line.Qty, line.LineDiscount.Minor())
+	}
+	if !strings.Contains(rec.Body.String(), `class="line-discount-error"`) {
+		t.Fatalf("expected the per-line discount message, got:\n%s", rec.Body.String())
+	}
+
+	// qty 0 still voids the line whatever its discount.
+	posPostForm(mux, "/api/pos/line", "key="+key+"&qty=0&discount=250")
+	if n := len(dp.Engine.Basket().Lines); n != 0 {
+		t.Fatalf("qty 0 must still void the line, got %d lines", n)
+	}
+}
+
+// ut-docs#4627: a line that still carries a discount above its total at
+// tender (a held basket, an older build's snapshot) is refused before any
+// payment is taken, and the toast names the line instead of the generic
+// "could not be completed".
+func TestTender_LineDiscountAboveLineTotalNamesLine(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	// The basket refuses this discount now, so plant it the way a held
+	// sale from an older build would bring it back.
+	snap := dp.Engine.Snapshot()
+	snap.Lines[0].LineDiscount = money.FromMinor(150)
+	dp.Engine.RestoreHeld(snap, pos.HeldOrigin{})
+	if got := dp.Engine.Basket().Lines[0].LineDiscount.Minor(); got != 150 {
+		t.Fatalf("setup: restored discount = %d, want 150", got)
+	}
+
+	rec := cashTender(mux)
+	body := rec.Body.String()
+	if !strings.Contains(body, "Apple") || !strings.Contains(body, "more than its line total") {
+		t.Fatalf("expected a toast naming the line, got %d:\n%s", rec.Code, body)
+	}
+	if n := countRows(t, dp, `SELECT COUNT(*) FROM sales`); n != 0 {
+		t.Fatalf("no sale may be written, got %d", n)
+	}
+	if len(dp.Engine.Basket().Lines) != 1 {
+		t.Fatalf("the basket must be kept for the cashier to fix")
 	}
 }

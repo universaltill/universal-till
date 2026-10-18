@@ -53,7 +53,7 @@ Bir grup zorunlu olabilir (**\*** ile işaretlenmiş) veya isteğe bağlı olabi
 
 Ne yanlış gidebilir: tarama kutusu kötü bir promosyon kodunu tanınmayan bir ürün barkodundan ayırt etmez — aktif olmayan, süresi dolmuş veya bilinmeyen bir kod, belirsiz bir barkodun aldığı aynı "Ürün bulunamadı" mesajıyla reddedilir, yani hiç taramayan bir kod muhtemelen aktif olmadığı anlamına gelir (veya dükkanın saati bitiş tarihini geçmiş) bir tarayıcı sorunu değil. Belirli bir müşteriye kısıtlı bir kod, o müşteri satışa bağlandıktan sonra uygulanır (aşağıya bakın) — bundan önce taranırsa, aynı şekilde reddedilir.
 
-Kendisinden daha büyük bir satır başına indirim, sepeti oluştururken kabul edilir, ama ödeme alınmaya çalışıldığında satış reddedilir, nedenini söylemeyen genel bir "tamamlanamadı" mesajıyla — beklenmedik bir ödeme reddedilirse, her satırın indiriminin o satırın kendi fiyatından küçük olduğundan emin olun.
+Satır başına indirim, satırın kendi toplamından (fiyat × miktar) büyük olamaz. Böyle bir indirim yazarsanız ya da miktarı indirimin karşıladığının altına düşürürseniz değişiklik yapılmaz: satır eski miktarını ve indirimini korur, ürün adının altındaki kırmızı not indirimin en fazla ne kadar olabileceğini gösterir. Bekletilen bir satış böyle bir satırı geri getirirse, ödeme hiçbir tutar çekilmeden reddedilir ve mesaj o satırın adını verir — indirimini düşürüp yeniden ödeyin.
 
 ## Müşteriyi bir satışa bağlama
 
