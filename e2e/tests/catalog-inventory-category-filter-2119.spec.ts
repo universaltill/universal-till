@@ -95,8 +95,11 @@ test.describe('catalog category filter (ut-docs#2119, popover shell ut-docs#2165
     await expect(cornflakes).toBeVisible();
 
     // Compose with search (AND, not replace): narrows further within the
-    // already-selected category. The popover stays open across all of
-    // this — nothing here closes it.
+    // already-selected category. The popover is closed first, as a real
+    // user must: it sits over #ut-scrim and traps focus (ut-docs#4079),
+    // so the search box behind it is unreachable while it is open.
+    await page.locator('#catalog-category-filter-dialog [data-category-filter-close]').click();
+    await expect(page.locator('#catalog-category-filter-dialog')).toBeHidden();
     const search = page.locator('#catalog-search');
     await search.fill('Bread');
     await expect(bread).toBeVisible();
@@ -111,6 +114,7 @@ test.describe('catalog category filter (ut-docs#2119, popover shell ut-docs#2165
     // "All categories" clears the category filter (search still applies)
     // and the trigger's badge goes away again.
     await search.fill('');
+    await trigger.click();
     await allChip.click();
     await expect(allChip).toHaveAttribute('aria-pressed', 'true');
     await expect(foodChip).toHaveAttribute('aria-pressed', 'false');
@@ -158,10 +162,15 @@ test.describe('inventory category filter (ut-docs#2119, popover shell ut-docs#21
 
     // Search text matching nothing under the active category filter shows
     // the distinct "no matches" row, not the true "no stock recorded yet" one.
+    // Close the popover first: its focus trap keeps the search box behind
+    // it unreachable while it is open (ut-docs#4079).
+    await page.locator('#inventory-category-filter-dialog [data-category-filter-close]').click();
+    await expect(page.locator('#inventory-category-filter-dialog')).toBeHidden();
     await page.locator('#stock-search').fill('Zzzznomatchxyz');
     await expect(page.locator('#stock-no-matches')).toBeVisible();
 
     await page.locator('#stock-search').fill('');
+    await trigger.click();
     await allChip.click();
     await expect(allChip).toHaveAttribute('aria-pressed', 'true');
     await expect(pepsiRow).toBeVisible();

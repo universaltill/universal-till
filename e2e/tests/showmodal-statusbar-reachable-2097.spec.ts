@@ -522,6 +522,21 @@ test.describe('ut-docs#4028 remaining non-modal till dialogs trap Tab', () => {
     assertClean();
   });
 
+  test('#catalog-category-filter-dialog and #inventory-category-filter-dialog (ut-docs#4079)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    for (const [route, id] of [['/catalog', 'catalog-category-filter'], ['/inventory', 'inventory-category-filter']]) {
+      await page.goto(route);
+      await page.locator(`#${id}-trigger`).click();
+      await assertFocusTrapped(page, `#${id}-dialog`);
+      // Escape stays bindPopover's (a keydown on the dialog) and still
+      // closes it; assertFocusTrapped left focus on the status bar.
+      await page.locator(`#${id}-dialog [data-category-filter-close]`).focus();
+      await page.keyboard.press('Escape');
+      await expect(page.locator(`#${id}-dialog`)).toBeHidden();
+    }
+    assertClean();
+  });
+
   test('.shrinkage-sheet (basket line remove)', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/');
