@@ -173,7 +173,7 @@ func TestTickPushesHeartbeatAndAppliesDirectives(t *testing.T) {
 			pricedItem, pricedMinor = itemID, priceMinor
 			return "price set", nil
 		},
-		AdjustStock: func(ctx context.Context, itemID string, delta float64, reason string) (string, error) {
+		AdjustStock: func(ctx context.Context, itemID, variantID, locationID string, delta float64, reason string) (string, error) {
 			adjustedItem, adjustedDelta, adjustedReason = itemID, delta, reason
 			return "adjusted", nil
 		},
@@ -965,7 +965,7 @@ func TestApplyUpsertModifierGroup(t *testing.T) {
 func TestApplyEmptyItemIDWithHookPresent(t *testing.T) {
 	hooks := Hooks{
 		SetPrice: func(ctx context.Context, itemID string, priceMinor int64) (string, error) { return "ok", nil },
-		AdjustStock: func(ctx context.Context, itemID string, delta float64, reason string) (string, error) {
+		AdjustStock: func(ctx context.Context, itemID, variantID, locationID string, delta float64, reason string) (string, error) {
 			return "ok", nil
 		},
 		RenameItem:     func(ctx context.Context, itemID, name string) (string, error) { return "ok", nil },
@@ -993,7 +993,7 @@ func TestApplyEmptyItemIDWithHookPresent(t *testing.T) {
 func TestApplyMissingNumericKeyRejected(t *testing.T) {
 	hooks := Hooks{
 		SetPrice: func(ctx context.Context, itemID string, priceMinor int64) (string, error) { return "ok", nil },
-		AdjustStock: func(ctx context.Context, itemID string, delta float64, reason string) (string, error) {
+		AdjustStock: func(ctx context.Context, itemID, variantID, locationID string, delta float64, reason string) (string, error) {
 			return "ok", nil
 		},
 	}
@@ -1100,7 +1100,7 @@ func TestApplyAcceptsStringFormNumbers(t *testing.T) {
 			pricedMinor = priceMinor
 			return "ok", nil
 		},
-		AdjustStock: func(ctx context.Context, itemID string, d float64, reason string) (string, error) {
+		AdjustStock: func(ctx context.Context, itemID, variantID, locationID string, d float64, reason string) (string, error) {
 			delta = d
 			return "ok", nil
 		},

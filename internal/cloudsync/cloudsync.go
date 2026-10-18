@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -112,7 +113,13 @@ type Hooks struct {
 	InstallPlugin  func(ctx context.Context, listingID string) (string, error)
 	RemovePlugin   func(ctx context.Context, pluginID string) (string, error)
 	SetPrice       func(ctx context.Context, itemID string, priceMinor int64) (string, error)
-	AdjustStock    func(ctx context.Context, itemID string, delta float64, reason string) (string, error)
+	// AdjustStock handles "adjust_stock" {item_id, qty_delta, reason,
+	// location_id?, variant_id?}; variantID/locationID are "" when absent
+	// (an older cloud) — the till then picks the location as before
+	// (ut-docs#3643), but an item with an active variant needs a variant
+	// (ADR-0043); the hook's refusal strings are listed on the till's
+	// implementation (pages.cloudAdjustStock).
+	AdjustStock    func(ctx context.Context, itemID, variantID, locationID string, delta float64, reason string) (string, error)
 	RenameItem     func(ctx context.Context, itemID, name string) (string, error)
 	DeactivateItem func(ctx context.Context, itemID string) (string, error)
 	CreateItem     func(ctx context.Context, name string, priceMinor int64, barcode string) (string, error)
@@ -798,7 +805,20 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 		if !ok || delta == 0 {
 			return "failed", "missing or zero qty_delta"
 		}
-		msg, err = hooks.AdjustStock(ctx, id, delta, str("reason"))
+		// Optional (ut-docs#3643): absent or blank → "" and the till picks
+		// the location as before, so an older cloud keeps working.
+		var variantID, locationID string
+		if v, ok := payload(d.Payload).optStr("variant_id"); !ok {
+			return "failed", "invalid variant_id"
+		} else if v != nil {
+			variantID = *v
+		}
+		if v, ok := payload(d.Payload).optStr("location_id"); !ok {
+			return "failed", "invalid location_id"
+		} else if v != nil {
+			locationID = *v
+		}
+		msg, err = hooks.AdjustStock(ctx, id, variantID, locationID, delta, str("reason"))
 	case "rename_item":
 		if hooks.RenameItem == nil {
 			return "failed", "rename_item is not supported on this till"
@@ -1699,6 +1719,45 @@ type snapshotRegisterRow struct {
 	LocationID string `json:"location_id"`
 }
 
+// snapshotStockLevelRow is one real inventory row in the catalog snapshot's
+// additive stock_levels field (ut-docs#3643): a variant row carries its
+// parent ItemID and its own VariantID, an item row VariantID "".
+type snapshotStockLevelRow struct {
+	ItemID     string  `json:"item_id"`
+	VariantID  string  `json:"variant_id"`
+	LocationID string  `json:"location_id"`
+	Qty        float64 `json:"qty"`
+}
+
+// maxSnapshotStockLevels is the cloud's own cap on stock_levels rows
+// (ut-docs#3643); rows past it would only be dropped there.
+const maxSnapshotStockLevels = 50000
+
+// snapshotStockLevels turns ListStockLevels' rows into the snapshot's
+// stock_levels: ordered by (item_id, variant_id, location_id) so the hashed
+// payload does not churn on name ties, and capped at maxSnapshotStockLevels.
+func snapshotStockLevels(levels []data.LowStockItem) []snapshotStockLevelRow {
+	out := make([]snapshotStockLevelRow, 0, len(levels))
+	for _, l := range levels {
+		out = append(out, snapshotStockLevelRow{ItemID: l.ItemID, VariantID: l.VariantID, LocationID: l.LocationID, Qty: l.CurrentQty})
+	}
+	sort.Slice(out, func(a, b int) bool {
+		x, y := out[a], out[b]
+		if x.ItemID != y.ItemID {
+			return x.ItemID < y.ItemID
+		}
+		if x.VariantID != y.VariantID {
+			return x.VariantID < y.VariantID
+		}
+		return x.LocationID < y.LocationID
+	})
+	if len(out) > maxSnapshotStockLevels {
+		logging.L().Warnf("cloudsync: %d stock level rows; the snapshot carries the first %d", len(out), maxSnapshotStockLevels)
+		out = out[:maxSnapshotStockLevels]
+	}
+	return out
+}
+
 // pushSnapshotIfChanged uploads the catalog + on-hand stock when it differs
 // from what the cloud already has (tracked via a content hash in settings).
 // Schema 2 (contract §3.7): every item, inactive included, with its full
@@ -1713,7 +1772,8 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 		return err
 	}
 	qty := map[string]float64{}
-	if levels, err := data.NewPOSRepo(db).ListStockLevels(ctx); err == nil {
+	levels, levelsErr := data.NewPOSRepo(db).ListStockLevels(ctx)
+	if levelsErr == nil {
 		for _, l := range levels {
 			// ut-docs#2082: ListStockLevels ALSO returns a variant's own row
 			// carrying its PARENT item's ItemID. Skip those, or a variant's
@@ -1810,6 +1870,16 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 			out = append(out, row)
 		}
 		body["registers"] = out
+	}
+	// Stock levels (ut-docs#3643): every real inventory row of an active,
+	// stock-tracked item or variant, per location, for my.'s inventory
+	// node — the same ListStockLevels read the items' summed qty comes
+	// from. Same rules as stock_locations: hashed (a stock-only change
+	// pushes), and a read error omits the field.
+	if levelsErr != nil {
+		logging.L().Warnf("cloudsync: snapshot stock levels: %v", levelsErr)
+	} else {
+		body["stock_levels"] = snapshotStockLevels(levels)
 	}
 	payload, _ := json.Marshal(body)
 
