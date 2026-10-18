@@ -1019,9 +1019,9 @@ GROUP BY vt.type, (vt.sale_id IS NULL)`, args...)
 // VoucherFilter narrows ListVouchers (the Gift vouchers page, ut-docs#4251).
 // Query is a case-insensitive substring of the voucher number or the holder
 // label, accented letters included (wildcard characters in it match
-// themselves). The match is done in Go with strings.ToLower, not SQL, since
-// SQLite's LIKE folds ASCII only (ut-docs#4257). Like FoldItemName it has no
-// locale rules: Turkish dotless ı, final sigma and ß↔ss don't meet.
+// themselves). The match is done in Go on SearchFold, not SQL LIKE, since
+// SQLite's LIKE folds ASCII only (ut-docs#4257, #4650): Turkish dotless ı,
+// final sigma, ß↔ss and an NFD paste meet too.
 // Status is "" (all) or one of active / redeemed / void — anything else is
 // refused rather than silently widened to "all". Limit <= 0 means unbounded (the CSV
 // export); the page passes a bound.
@@ -1057,7 +1057,7 @@ type VoucherHistoryRow struct {
 // because SQLite's LIKE folds ASCII letters only, so "MÜLLER" would never
 // find "Müller" (ut-docs#4257). Rows are scanned newest first and kept when
 // the folded query is a substring of the folded voucher number or holder
-// label (strings.ToLower, like FoldItemName), so wildcard characters match
+// label (SearchFold, ut-docs#4650), so wildcard characters match
 // only themselves. With a query, Limit is applied in Go once enough rows
 // match; without one it is the SQL LIMIT. No migration or folded column: the
 // vouchers table is small (a shop's gift vouchers), so one pass is cheap.
@@ -1072,7 +1072,7 @@ func (r *POSRepo) ListVouchers(ctx context.Context, f VoucherFilter) ([]VoucherL
 	default:
 		return nil, fmt.Errorf("list vouchers: unknown status %q", f.Status)
 	}
-	q := strings.ToLower(strings.TrimSpace(f.Query))
+	q := SearchFold(f.Query)
 	query := `
 SELECT v.id, v.holder_label, v.original_amount, v.balance, v.currency, v.voucher_type, v.purpose,
        v.issue_vat_rate_bp, v.status, v.issued_sale_id, v.created_at, COALESCE(s.receipt_no, '')
@@ -1099,7 +1099,7 @@ ORDER BY v.created_at DESC, v.rowid DESC`
 			return nil, fmt.Errorf("list vouchers: scan: %w", err)
 		}
 		row.HolderLabel = holder.String
-		if q != "" && !strings.Contains(strings.ToLower(row.ID), q) && !strings.Contains(strings.ToLower(row.HolderLabel), q) {
+		if q != "" && !strings.Contains(SearchFold(row.ID), q) && !strings.Contains(SearchFold(row.HolderLabel), q) {
 			continue
 		}
 		row.IssuedSaleID = issuedSale.String
