@@ -983,6 +983,19 @@
             stashReload(kind + ':' + p + (/\bevery\b/.test(trig) ? ':poll' : ''));
           } catch (err) { /* diagnostics only */ }
         });
+        // ut-docs#4257: a late response must not rewrite the address bar for
+        // a page the operator already left. A fragment that sets
+        // HX-Replace-Url / HX-Push-Url (the Gift vouchers search) can still
+        // be in flight when a boosted link swaps the page -- tapping a voucher
+        // blurs the search box, whose change event fires one more request --
+        // and htmx would apply the header after the new page pushed its own
+        // URL. Its requesting element is gone by then, so drop the response
+        // (htmx skips both swap and history when beforeOnLoad is cancelled).
+        document.addEventListener('htmx:beforeOnLoad', function (e) {
+          var d = e.detail || {}, xhr = d.xhr, elt = d.elt;
+          if (!xhr || !xhr.getResponseHeader || !elt || elt.isConnected) return;
+          if (xhr.getResponseHeader('HX-Replace-Url') || xhr.getResponseHeader('HX-Push-Url')) e.preventDefault();
+        });
         UT.ready(function () {
           try {
             var nav = performance.getEntriesByType ? performance.getEntriesByType('navigation')[0] : null;

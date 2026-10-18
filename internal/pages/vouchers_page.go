@@ -83,6 +83,20 @@ func voucherFilterFromQuery(r *http.Request) data.VoucherFilter {
 	return f
 }
 
+// voucherFilterParams is the filter as URL parameters (q, status), empty
+// values left out. The export link and the page address both use it, so a
+// copied /vouchers?q=… URL and the CSV always describe the same list.
+func voucherFilterParams(f data.VoucherFilter) url.Values {
+	params := url.Values{}
+	if f.Query != "" {
+		params.Set("q", f.Query)
+	}
+	if f.Status != "" {
+		params.Set("status", f.Status)
+	}
+	return params
+}
+
 func journalHref(receiptNo string) string {
 	if receiptNo == "" {
 		return ""
@@ -116,15 +130,8 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 				Imported:       row.IssuedSaleID == "",
 			})
 		}
-		params := url.Values{}
-		if f.Query != "" {
-			params.Set("q", f.Query)
-		}
-		if f.Status != "" {
-			params.Set("status", f.Status)
-		}
 		exportHref := "/api/vouchers/export"
-		if enc := params.Encode(); enc != "" {
+		if enc := voucherFilterParams(f).Encode(); enc != "" {
 			exportHref += "?" + enc
 		}
 		return map[string]any{
@@ -158,13 +165,27 @@ func registerVouchers(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// The list block alone, for the search box / status filter's htmx swap.
+	// An htmx request also sets HX-Replace-Url to the page address carrying
+	// the (normalized) filter, so the search and status stay in the URL
+	// (ut-docs#4257). Replace, not push: every keystroke would otherwise add a
+	// history entry. base.html's htmx config (historyCacheSize 0 +
+	// refreshOnHistoryMiss) makes Back re-fetch /vouchers?q=…, which
+	// GET /vouchers renders from q/status.
 	mux.HandleFunc("GET /ui/vouchers/list", func(w http.ResponseWriter, r *http.Request) {
 		if !requirePage(d, w, r, "settings") {
 			return
 		}
-		list, ok := listData(w, r, voucherFilterFromQuery(r))
+		f := voucherFilterFromQuery(r)
+		list, ok := listData(w, r, f)
 		if !ok {
 			return
+		}
+		if r.Header.Get("HX-Request") == "true" {
+			href := "/vouchers"
+			if enc := voucherFilterParams(f).Encode(); enc != "" {
+				href += "?" + enc
+			}
+			w.Header().Set("HX-Replace-Url", href)
 		}
 		httpx.RenderBlock("ui/pages/vouchers.html", "vouchers_list", map[string]any{"list": list})(w, r)
 	})

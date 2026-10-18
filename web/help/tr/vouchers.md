@@ -76,7 +76,7 @@ Neler ters gidebilir:
 
 **Menü → Hediye çekleri** (yalnızca yönetici), bu kasanın bildiği her hediye çekini en yenisi önce listeler: kart numarası, kimin için olduğu, ilk değeri, üzerinde kalan tutar, durumu — **Etkin**, **Tamamen kullanıldı** veya **İptal** — ve neye harcanabileceği (belirli bir ürün için olan çek işaretlenir). **Satıldığı fiş**, çeki satan satışın fişine bağlantı verir; içe aktarılan bir bakiyede bunun yerine bu yazar.
 
-1. Bir çeki kart numarasına veya sahibine göre bulmak için **Ara** kutusuna yazın — liste siz yazarken güncellenir. Yalnızca etkin, tamamen kullanılmış veya iptal edilmiş çekleri göstermek için **Durum**'u kullanın.
+1. Bir çeki kart numarasına veya sahibine göre bulmak için **Ara** kutusuna yazın — liste siz yazarken güncellenir. Yalnızca etkin, tamamen kullanılmış veya iptal edilmiş çekleri göstermek için **Durum**'u kullanın. Arama, aksanlı harfler dahil büyük ve küçük harf farkını yok sayar (**MÜLLER**, *Müller*'i bulur). Arama ve durum sayfa adresinde kalır; bu yüzden bir çekten Geri dönünce ya da sayfayı yenileyince korunurlar.
 2. Çekin **Geçmiş**ini görmek için bir kart numarasına dokunun: ne zaman düzenlendiği, her kullanıldığı an ve her düzeltme, tutarı ve her satışın fişine bağlantısıyla.
 3. **CSV dışa aktar**, geçerli arama ve durumla eşleşen her çeki indirir — yalnızca ekrandakileri değil, hepsini — `code`, `balance`, `label`, `original_amount`, `status`, `purpose` ve `created_at` sütunlarıyla. Dosya başka bir kasada aynı sayfanın altındaki **Kupon bakiyelerini içe aktar** ile içe aktarılabilir (bkz. [Kupon bakiyelerini içe aktar](/help/voucher-import)).
 
