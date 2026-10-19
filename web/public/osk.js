@@ -20,8 +20,9 @@
   var oskGuarded = new WeakSet();
   // Shared digits/decimal/backspace rows for `num`/`numSigned` below — kept
   // as ONE array so the two layouts can't quietly drift (independent
-  // review, ut-docs#1276): a future change to the shared keys (e.g. a
-  // decimal-comma key for de/es, ut-docs#1047) only has to happen once.
+  // review, ut-docs#1276): a future change to the shared keys only has to
+  // happen once. The '.' here is swapped per field in render() via
+  // decimalKey() (a ',' on comma-decimal tills, ut-docs#2971).
   var NUM_ROWS = [
     ['1','2','3'],
     ['4','5','6'],
@@ -417,13 +418,27 @@
     document.body.appendChild(osk);
   }
 
+  // ut-docs#2971: the numeric pad's decimal key types the shop language's
+  // separator (',' on de/es/fr/it/nl/pt/tr — <body data-number-decimal>)
+  // into a field whose reader accepts either: those carry data-money-local
+  // (httpx.MoneyPatternLocalAttr / PercentPatternLocalAttr — ParseMoneyMajor,
+  // ParsePercentBP, utCurrency.toMinor). Any other numeric field keeps '.',
+  // since its reader may be dot-only (strconv.ParseFloat, type=number).
+  function decimalKey() {
+    if (!current || current.type === 'number' || !current.hasAttribute('data-money-local')) return '.';
+    return document.body.dataset.numberDecimal === ',' ? ',' : '.';
+  }
+
   function render() {
     var rows = LAYOUTS[layer];
+    var numPad = layer === 'num' || layer === 'numSigned';
+    var dec = numPad ? decimalKey() : '.';
     osk.innerHTML = '';
     rows.forEach(function (row) {
       var r = document.createElement('div');
       r.className = 'osk-row';
       row.forEach(function (k) {
+        if (numPad && k === '.') k = dec;
         var b = document.createElement('button');
         b.type = 'button';
         b.dataset.k = k;
