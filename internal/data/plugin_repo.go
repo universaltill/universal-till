@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -943,39 +944,9 @@ func (r *PluginRepo) UpsertPluginSettingScoped(ctx context.Context, pluginID, ke
 	}
 	defer tx.Rollback()
 
-	// ut-docs#1941: read the stored bytes BEFORE the write (inside the same
-	// write-locked transaction, so this can't race a concurrent writer) to
-	// decide whether this call actually changes anything. Compared on the
-	// stored (post-seal) form, so a sealed secret — fresh nonce every write —
-	// always counts as changed; a plain value re-submitted unchanged does
-	// not, mirroring the `raw == row.ValueJSON → skip` diff guard the
-	// settings editor applies caller-side. The write itself is unchanged
-	// either way (updated_at still moves on an identical re-write, exactly
-	// as before) — this only gates the onSettingsChanged hook.
-	var prior sql.NullString
-	if scanErr := tx.QueryRowContext(ctx, `
-SELECT value_json FROM plugin_settings WHERE plugin_id = ? AND key = ? AND scope = ?
-LIMIT 1`, pluginID, key, scope).Scan(&prior); scanErr != nil && !errors.Is(scanErr, sql.ErrNoRows) {
-		err = pluginObs.wrap("upsert_setting", scanErr)
-		return err
-	}
-	changed := !prior.Valid || prior.String != valueJSON
-
-	res, err := tx.ExecContext(ctx, `
-UPDATE plugin_settings SET value_json = ?, updated_at = datetime('now')
-WHERE plugin_id = ? AND key = ? AND scope = ?`,
-		valueJSON, pluginID, key, scope)
+	changed, err := upsertPluginSettingTx(ctx, tx, pluginID, key, valueJSON, scope)
 	if err != nil {
 		return pluginObs.wrap("upsert_setting", err)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		if _, err = tx.ExecContext(ctx, `
-INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope)
-VALUES (?, ?, ?, ?, ?)`,
-			uuid.NewString(), pluginID, key, valueJSON, scope); err != nil {
-			return pluginObs.wrap("upsert_setting", err)
-		}
-		changed = true
 	}
 	if err = tx.Commit(); err != nil {
 		return pluginObs.wrap("upsert_setting", err)
@@ -986,6 +957,108 @@ VALUES (?, ?, ?, ?, ?)`,
 		r.onSettingsChanged()
 	}
 	return nil
+}
+
+// upsertPluginSettingTx writes one already-sealed setting value inside tx
+// (update-then-insert, see UpsertPluginSettingScoped for why not ON
+// CONFLICT) and reports whether it changed the stored bytes.
+//
+// ut-docs#1941: the stored bytes are read BEFORE the write (inside the same
+// write-locked transaction, so this can't race a concurrent writer) to
+// decide whether this call actually changes anything. Compared on the
+// stored (post-seal) form, so a sealed secret — fresh nonce every write —
+// always counts as changed; a plain value re-submitted unchanged does not,
+// mirroring the `raw == row.ValueJSON → skip` diff guard the settings
+// editor applies caller-side. The write itself is unchanged either way
+// (updated_at still moves on an identical re-write) — this only gates the
+// onSettingsChanged hook.
+func upsertPluginSettingTx(ctx context.Context, tx *sql.Tx, pluginID, key, valueJSON, scope string) (bool, error) {
+	var prior sql.NullString
+	if scanErr := tx.QueryRowContext(ctx, `
+SELECT value_json FROM plugin_settings WHERE plugin_id = ? AND key = ? AND scope = ?
+LIMIT 1`, pluginID, key, scope).Scan(&prior); scanErr != nil && !errors.Is(scanErr, sql.ErrNoRows) {
+		return false, scanErr
+	}
+	changed := !prior.Valid || prior.String != valueJSON
+
+	res, err := tx.ExecContext(ctx, `
+UPDATE plugin_settings SET value_json = ?, updated_at = datetime('now')
+WHERE plugin_id = ? AND key = ? AND scope = ?`,
+		valueJSON, pluginID, key, scope)
+	if err != nil {
+		return false, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		if _, err = tx.ExecContext(ctx, `
+INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope)
+VALUES (?, ?, ?, ?, ?)`,
+			uuid.NewString(), pluginID, key, valueJSON, scope); err != nil {
+			return false, err
+		}
+		changed = true
+	}
+	return changed, nil
+}
+
+// PluginSettingWrite is one setting value for SavePluginSettingsBatch:
+// ValueJSON is the plain (unsealed) value_json, Scope the row's own scope
+// (global|register|user), DeclaredSecret whether the manifest declares the
+// key `type: "secret"` (the key-name heuristic is applied regardless).
+type PluginSettingWrite struct {
+	Key, Scope, ValueJSON string
+	DeclaredSecret        bool
+}
+
+// SavePluginSettingsBatch saves a whole settings form at once (ADR-0121
+// amendment S2 "one save, one commit", ut-docs#4157): every value is
+// sealed first (a secret that can't be sealed fails the batch before the
+// write lock is taken — never a plaintext fallback), every upsert runs in
+// ONE transaction, and onSettingsChanged fires once, after the commit, iff
+// any stored value changed. Any failure rolls back every write in the
+// batch. changedKeys lists the keys whose stored bytes changed, sorted and
+// de-duplicated (a key with a global and a per-till row is named once).
+// Same per-row semantics as UpsertPluginSettingScoped (owns its own
+// transaction; don't call it while holding one on the same DB).
+func (r *PluginRepo) SavePluginSettingsBatch(ctx context.Context, pluginID string, writes []PluginSettingWrite) (changedKeys []string, err error) {
+	done := pluginObs.trace("save_settings_batch")
+	defer func() { done(err) }()
+	if len(writes) == 0 {
+		return nil, nil
+	}
+	sealed := make([]string, len(writes))
+	for i, w := range writes {
+		if sealed[i], err = sealSettingValue(ctx, w.Key, w.ValueJSON, w.DeclaredSecret); err != nil {
+			return nil, err
+		}
+	}
+	tx, txErr := r.db.BeginTx(ctx, nil)
+	if txErr != nil {
+		err = pluginObs.wrap("save_settings_batch", txErr)
+		return nil, err
+	}
+	defer tx.Rollback()
+	seen := map[string]bool{}
+	for i, w := range writes {
+		changed, upErr := upsertPluginSettingTx(ctx, tx, pluginID, w.Key, sealed[i], w.Scope)
+		if upErr != nil {
+			err = pluginObs.wrap("save_settings_batch", upErr)
+			return nil, err
+		}
+		if changed && !seen[w.Key] {
+			seen[w.Key] = true
+			changedKeys = append(changedKeys, w.Key)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		err = pluginObs.wrap("save_settings_batch", err)
+		return nil, err
+	}
+	sort.Strings(changedKeys)
+	// Only after the commit has actually landed (see UpsertPluginSettingScoped).
+	if len(changedKeys) > 0 && r.onSettingsChanged != nil {
+		r.onSettingsChanged()
+	}
+	return changedKeys, nil
 }
 
 // MergeAdditiveJSONMapSetting atomically merges newEntries into a JSON

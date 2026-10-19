@@ -335,7 +335,7 @@ func TestPersistManifest(t *testing.T) {
 // a manifest declaring default_value as a JSON object (decodes to a Go
 // map[string]interface{}) must seed plugin_settings.value_json in the same
 // JSON-string-wrapped canonical shape data.EncodeMapSettingValue produces
-// for MergeAdditiveJSONMapSetting/writeTaxOverrides (ut-docs#1269) — not the
+// for MergeAdditiveJSONMapSetting/taxOverridesWrite (ut-docs#1269) — not the
 // raw unwrapped object the install path wrote before this fix.
 func TestPersistManifest_MapDefaultValueWritesCanonicalShape(t *testing.T) {
 	db := setupTestDB(t)

@@ -7,56 +7,7 @@
 <div class="card" style="max-width:32rem">
   <p class="muted" style="font-family:monospace">{{ .PluginID }}</p>
   {{ if .Settings }}
-  <form hx-post="/api/plugins/{{ .PluginID }}/settings" hx-target="#ps-msg" hx-swap="innerHTML">
-    {{ range .Settings }}
-    <div class="ps-field" style="margin-block-end:.75rem"{{ if .ShowKey }} data-show-when-key="{{ .ShowKey }}" data-show-when-in="{{ .ShowIn }}"{{ if .Hidden }} hidden{{ end }}{{ end }}>
-    {{ if .Secret }}
-    {{ if .Notice }}<p class="muted">{{ T .Notice }}</p>{{ end }}
-    <label title="{{ .Key }}">{{ .Label }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }}{{ if .IsSet }} <span class="tag" style="display:inline-block; width:max-content; background:rgba(22,163,74,.12); color:var(--success)">{{ T "plugins.settings.secret_saved" }}</span>{{ end }} <input type="password" name="setting_{{ .Key }}" autocomplete="off" value="" placeholder="{{ if .IsSet }}{{ T "plugins.settings.secret_set" }}{{ else }}{{ T "plugins.settings.secret_empty" }}{{ end }}"></label>
-    {{ if .IsSet }}<label style="display:flex; gap:.4rem; align-items:center"><input type="checkbox" name="clear_setting_{{ .Key }}" value="1"> {{ T "plugins.settings.secret_remove" }}</label>{{ end }}
-    {{ if .Help }}<p class="muted">{{ .Help }}</p>{{ end }}
-    {{ else if .Choice }}
-    {{ if .Notice }}<p class="muted">{{ T .Notice }}</p>{{ end }}
-    <label title="{{ .Key }}">{{ .Label }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }} <select name="setting_{{ .Key }}">{{ range .Options }}<option value="{{ .Value }}"{{ if .Selected }} selected{{ end }}{{ if .Unknown }} data-unknown{{ end }}>{{ .Label }}</option>{{ end }}</select></label>
-    {{ if .Help }}<p class="muted">{{ .Help }}</p>{{ end }}
-    {{ else if .Typed }}
-    <fieldset class="ps-takeaway-fieldset" style="margin-block-end:.75rem">
-      <legend>{{ T "plugins.settings.takeaway.title" }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }}</legend>
-      <p class="muted">{{ T "plugins.settings.takeaway.help" }}</p>
-      <input type="hidden" name="setting_takeaway_typed" value="1">
-      <div style="overflow-x:auto">
-      <table>
-        <thead>
-          <tr>
-            <th>{{ T "plugins.settings.takeaway.tax_code" }}</th>
-            <th>{{ T "plugins.settings.takeaway.dine_in_rate" }}</th>
-            <th>{{ T "plugins.settings.takeaway.rate" }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {{ range .TaxRows }}
-          <tr>
-            <td>{{ if .Orphan }}{{ .Name }} <span class="muted">{{ T "plugins.settings.takeaway.deleted_code" }}</span>{{ else }}{{ .Name }}{{ end }}</td>
-            <td>{{ if .Orphan }}—{{ else }}{{ .DineInPercent }}%{{ end }}</td>
-            <td><input type="text" inputmode="decimal" {{ percentpatternlocal }} name="takeaway_pct_{{ .TaxCodeID }}" value="{{ .OverridePercent }}" placeholder="{{ .PlaceholderPercent }}"{{ if .InvalidStoredPercent }} aria-invalid="true" aria-describedby="takeaway-invalid-{{ .TaxCodeID }}"{{ end }}>{{ if .InvalidStoredPercent }}<p class="field-error-msg" id="takeaway-invalid-{{ .TaxCodeID }}">{{ T "plugins.settings.takeaway.invalid_rate" }}: {{ .InvalidStoredPercent }}%</p>{{ end }}</td>
-          </tr>
-          {{ end }}
-        </tbody>
-      </table>
-      </div>
-    </fieldset>
-    {{ else }}
-    {{ if .Notice }}<p class="muted">{{ T .Notice }}</p>{{ end }}
-    <label title="{{ .Key }}">{{ .Label }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }} <input type="text" name="setting_{{ .Key }}" value="{{ .Value }}"></label>
-    {{ if .Help }}<p class="muted">{{ .Help }}</p>{{ end }}
-    {{ end }}
-    </div>
-    {{ end }}
-    <div style="display:flex; gap:.4rem; align-items:center; margin-top:.5rem">
-      <button class="btn primary" type="submit">{{ T "plugins.settings.save" }}</button>
-      <span id="ps-msg" aria-live="polite"></span>
-    </div>
-  </form>
+  {{ template "plugin_settings_form" . }}
   {{ else }}
   <p class="muted">{{ T "plugins.settings.none" }}</p>
   {{ end }}
@@ -127,35 +78,126 @@
 <script>
 // ut-docs#2832: show_when — a field shows only while the setting it names
 // holds one of its listed values. The server renders the initial state;
-// this keeps it live as the operator changes a dropdown or types. A hidden
-// field keeps (and still submits) its value.
+// this keeps it live as the operator changes a dropdown, a switch or types.
+// A hidden field is neither validated nor saved (ut-docs#4157). Listens on
+// the document, not the form: a save swaps the whole form (hx-target=this).
 (function () {
-  var fields = document.querySelectorAll('[data-show-when-key]');
-  if (!fields.length) return;
-  var form = fields[0].closest('form');
-  function apply() {
-    fields.forEach(function (f) {
+  if (window.__utPsShowWhen) return;
+  window.__utPsShowWhen = true;
+  function apply(form) {
+    form.querySelectorAll('[data-show-when-key]').forEach(function (f) {
       var ctl = form.elements['setting_' + f.getAttribute('data-show-when-key')];
       if (!ctl) return;
-      var want = f.getAttribute('data-show-when-in').split(',');
       // An older free-text value outside the options hides nothing.
       var opt = ctl.selectedOptions && ctl.selectedOptions[0];
       if (opt && opt.hasAttribute('data-unknown')) { f.hidden = false; return; }
-      f.hidden = want.indexOf(ctl.value.trim()) < 0;
+      var v = ctl.type === 'checkbox' ? (ctl.checked ? 'true' : 'false') : String(ctl.value || '').trim();
+      f.hidden = f.getAttribute('data-show-when-in').split(',').indexOf(v) < 0;
     });
   }
-  form.addEventListener('change', apply);
-  form.addEventListener('input', apply);
+  function onEdit(ev) {
+    var form = ev.target && ev.target.closest && ev.target.closest('#ps-form');
+    if (form) apply(form);
+  }
+  document.addEventListener('change', onEdit);
+  document.addEventListener('input', onEdit);
 })();
 </script>
 
 <script>
-// htmx doesn't swap 4xx responses, so a validation error (e.g. an invalid
-// takeaway rate, served 400 with a localized body) would otherwise surface
-// only as the generic server-error banner — same pattern as refund.html.
-document.body.addEventListener('htmx:responseError', function (ev) {
-  var msg = document.getElementById('ps-msg');
-  if (msg) msg.textContent = '✗ ' + (ev.detail.xhr.responseText || 'error');
-});
+// ut-docs#4157 (ADR-0121 S2): a refused save answers 422 with the form
+// re-rendered — each bad field marked and explained. htmx doesn't swap a
+// 4xx by default, so let this form's 422 swap, then move focus to the first
+// bad field. Any other failure (403, 500: plain text) still lands in the
+// form's message line.
+(function () {
+  if (window.__utPsSwap) return;
+  window.__utPsSwap = true;
+  function fromForm(d) { return d && d.elt && d.elt.id === 'ps-form'; }
+  document.body.addEventListener('htmx:beforeSwap', function (ev) {
+    var d = ev.detail;
+    if (fromForm(d) && d.xhr && d.xhr.status === 422) {
+      d.shouldSwap = true;
+      d.isError = false;
+    }
+  });
+  document.body.addEventListener('htmx:afterSwap', function (ev) {
+    var d = ev.detail;
+    if (!d || !d.xhr || d.xhr.status !== 422) return;
+    var form = document.getElementById('ps-form');
+    var bad = form && form.querySelector('[aria-invalid="true"]:not([type="hidden"])');
+    if (bad && fromForm(d)) bad.focus();
+  });
+  document.body.addEventListener('htmx:responseError', function (ev) {
+    if (!fromForm(ev.detail)) return;
+    var msg = document.getElementById('ps-msg');
+    if (msg) msg.textContent = '✗ ' + (ev.detail.xhr.responseText || '');
+  });
+})();
 </script>
+{{ end }}
+
+{{ define "plugin_settings_form" }}
+{{/* novalidate (ut-docs#4157 review): the server validates every visible
+     field and answers with translated per-field errors. Browser constraint
+     checks would silently block Save on a required field hidden by
+     show_when, or on an invalid stored value prefilled into a pattern box
+     that the server keeps untouched. */}}
+<form id="ps-form" novalidate action="/api/plugins/{{ .PluginID }}/settings" method="post" hx-post="/api/plugins/{{ .PluginID }}/settings" hx-target="this" hx-swap="outerHTML">
+    {{ range .Settings }}
+    <div class="ps-field" style="margin-block-end:.75rem"{{ if .ShowKey }} data-show-when-key="{{ .ShowKey }}" data-show-when-in="{{ .ShowIn }}"{{ if .Hidden }} hidden{{ end }}{{ end }}>
+    {{ if .Secret }}
+    {{ if .Notice }}<p class="muted">{{ T .Notice }}</p>{{ end }}
+    <label title="{{ .Key }}">{{ .Label }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }}{{ if .IsSet }} <span class="tag" style="display:inline-block; width:max-content; background:rgba(22,163,74,.12); color:var(--success)">{{ T "plugins.settings.secret_saved" }}</span>{{ end }} <input type="password" name="setting_{{ .Key }}" autocomplete="off" value="" placeholder="{{ if .IsSet }}{{ T "plugins.settings.secret_set" }}{{ else }}{{ T "plugins.settings.secret_empty" }}{{ end }}"{{ if and .Required (not .IsSet) }} required{{ end }}{{ if .Error }} aria-invalid="true" aria-describedby="ps-err-{{ .Key }}"{{ end }}></label>
+    {{ if .IsSet }}<label style="display:flex; gap:.4rem; align-items:center"><input type="checkbox" name="clear_setting_{{ .Key }}" value="1"> {{ T "plugins.settings.secret_remove" }}</label>{{ end }}
+    {{ else if .Choice }}
+    {{ if .Notice }}<p class="muted">{{ T .Notice }}</p>{{ end }}
+    <label title="{{ .Key }}">{{ .Label }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }} <select name="setting_{{ .Key }}"{{ if .Required }} required{{ end }}{{ if .Error }} aria-invalid="true" aria-describedby="ps-err-{{ .Key }}"{{ end }}>{{ range .Options }}<option value="{{ .Value }}"{{ if .Selected }} selected{{ end }}{{ if .Unknown }} data-unknown{{ end }}>{{ .Label }}</option>{{ end }}</select></label>
+    {{ else if .Typed }}
+    <fieldset class="ps-takeaway-fieldset" style="margin-block-end:.75rem">
+      <legend>{{ T "plugins.settings.takeaway.title" }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }}</legend>
+      <p class="muted">{{ T "plugins.settings.takeaway.help" }}</p>
+      <input type="hidden" name="setting_takeaway_typed" value="1">
+      <div style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>{{ T "plugins.settings.takeaway.tax_code" }}</th>
+            <th>{{ T "plugins.settings.takeaway.dine_in_rate" }}</th>
+            <th>{{ T "plugins.settings.takeaway.rate" }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{ range .TaxRows }}
+          <tr>
+            <td>{{ if .Orphan }}{{ .Name }} <span class="muted">{{ T "plugins.settings.takeaway.deleted_code" }}</span>{{ else }}{{ .Name }}{{ end }}</td>
+            <td>{{ if .Orphan }}—{{ else }}{{ .DineInPercent }}%{{ end }}</td>
+            <td><input type="text" inputmode="decimal" {{ percentpatternlocal }} name="takeaway_pct_{{ .TaxCodeID }}" value="{{ .OverridePercent }}" placeholder="{{ .PlaceholderPercent }}"{{ if .Error }} aria-invalid="true" aria-describedby="takeaway-err-{{ .TaxCodeID }}"{{ else if .InvalidStoredPercent }} aria-invalid="true" aria-describedby="takeaway-invalid-{{ .TaxCodeID }}"{{ end }}>{{ if .Error }}<p class="field-error-msg" id="takeaway-err-{{ .TaxCodeID }}">{{ T "plugins.settings.takeaway.invalid_rate" }}</p>{{ else if .InvalidStoredPercent }}<p class="field-error-msg" id="takeaway-invalid-{{ .TaxCodeID }}">{{ T "plugins.settings.takeaway.invalid_rate" }}: {{ .InvalidStoredPercent }}%</p>{{ end }}</td>
+          </tr>
+          {{ end }}
+        </tbody>
+      </table>
+      </div>
+    </fieldset>
+    {{ else if eq .Kind "bool" }}
+    {{ if .Notice }}<p class="muted">{{ T .Notice }}</p>{{ end }}
+    <input type="hidden" name="present_setting_{{ .Key }}" value="1">
+    <label class="ps-switch" title="{{ .Key }}"><input type="checkbox" role="switch" name="setting_{{ .Key }}" value="1"{{ if .Checked }} checked{{ end }}{{ if .Error }} aria-invalid="true" aria-describedby="ps-err-{{ .Key }}"{{ end }}> <span>{{ .Label }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }}</span></label>
+    {{ else if .Kind }}
+    {{ if .Notice }}<p class="muted">{{ T .Notice }}</p>{{ end }}
+    <label title="{{ .Key }}">{{ .Label }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }}
+      <span class="ps-affix"><input type="text" name="setting_{{ .Key }}" value="{{ .Value }}" {{ if eq .Kind "number" }}inputmode="numeric"{{ else if eq .Kind "percent" }}inputmode="decimal" {{ percentpatternlocal }}{{ else }}inputmode="decimal" {{ moneypatternlocal currency.Decimals false }}{{ end }} autocomplete="off"{{ if .Placeholder }} placeholder="{{ .Placeholder }}"{{ end }}{{ if .Required }} required{{ end }}{{ if .Error }} aria-invalid="true" aria-describedby="ps-err-{{ .Key }}"{{ end }}>{{ if eq .Kind "percent" }}<span class="ps-suffix" aria-hidden="true">%</span>{{ else if eq .Kind "money" }}<span class="ps-suffix">{{ .Currency }}</span>{{ end }}</span></label>
+    {{ else }}
+    {{ if .Notice }}<p class="muted">{{ T .Notice }}</p>{{ end }}
+    <label title="{{ .Key }}">{{ .Label }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }} <input type="text" name="setting_{{ .Key }}" value="{{ .Value }}"{{ if .MaxLen }} maxlength="{{ .MaxLen }}"{{ end }}{{ if .Placeholder }} placeholder="{{ .Placeholder }}"{{ end }}{{ if .Required }} required{{ end }}{{ if .Error }} aria-invalid="true" aria-describedby="ps-err-{{ .Key }}"{{ end }}></label>
+    {{ end }}
+    {{ if .Error }}<p class="field-error-msg" id="ps-err-{{ .Key }}">{{ .Error }}</p>{{ end }}
+    {{ if and .Help (not .Typed) }}<p class="muted">{{ .Help }}</p>{{ end }}
+    </div>
+    {{ end }}
+    <div style="display:flex; gap:.4rem; align-items:center; margin-top:.5rem">
+      <button class="btn primary" type="submit">{{ T "plugins.settings.save" }}</button>
+      <span id="ps-msg" role="status">{{ if .Saved }}<span>✓ {{ T "plugins.settings.saved" }} ({{ .Changed }})</span>{{ else if .Refused }}<span class="field-error-msg">{{ T "plugins.settings.error.summary" }}</span>{{ end }}</span>
+    </div>
+</form>
 {{ end }}

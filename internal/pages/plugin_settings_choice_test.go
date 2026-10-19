@@ -2,7 +2,6 @@ package pages
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -132,7 +131,7 @@ func TestPluginSettingsPage_ChoiceKeepsUnknownStoredValue(t *testing.T) {
 	if got := stored("endpoint"); got != `"http://x:1"` {
 		t.Fatalf("sibling not saved: %s", got)
 	}
-	if rec := postChoice(t, mux, url.Values{"setting_provider": {"Claude"}}); rec.Code != http.StatusBadRequest {
+	if rec := postChoice(t, mux, url.Values{"setting_provider": {"Claude"}}); rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("a new non-option value must be refused, code %d", rec.Code)
 	}
 }
@@ -141,6 +140,7 @@ func postChoice(t *testing.T, mux *http.ServeMux, form url.Values) *httptest.Res
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	return rec
@@ -148,14 +148,15 @@ func postChoice(t *testing.T, mux *http.ServeMux, form url.Values) *httptest.Res
 
 func TestPluginSettingsAPI_POST_ChoiceValidated(t *testing.T) {
 	mux, stored := setupChoicePlugin(t)
-	wantMsg := fmt.Sprintf(httpx.T("en", "plugins.settings.invalid_choice"), "provider")
+	// ut-docs#4157: a refused choice is a 422 field error on the re-rendered form.
+	wantMsg := httpx.T("en", "plugins.settings.error.choice")
 	if strings.HasPrefix(wantMsg, "plugins.settings.") {
-		t.Fatal("missing en.json key plugins.settings.invalid_choice")
+		t.Fatal("missing en.json key plugins.settings.error.choice")
 	}
 	for _, bad := range []string{"OpenAI", "claude", ""} {
 		rec := postChoice(t, mux, url.Values{"setting_provider": {bad}, "setting_endpoint": {"http://changed:1"}})
-		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), wantMsg) {
-			t.Fatalf("%q: code %d body %q, want 400 %q", bad, rec.Code, rec.Body.String(), wantMsg)
+		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), wantMsg) {
+			t.Fatalf("%q: code %d body %q, want 422 %q", bad, rec.Code, rec.Body.String(), wantMsg)
 		}
 		if got := stored("provider"); got != `"hosted"` {
 			t.Fatalf("%q: provider stored %s despite refusal", bad, got)

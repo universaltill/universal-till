@@ -2,7 +2,6 @@ package pages
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -55,19 +54,21 @@ func TestPluginSettingsAPI_POST_EndpointSettingValidated(t *testing.T) {
 		form := url.Values{"setting_erp_url": {erpURL}, "setting_store_label": {label}}
 		req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		return rec
 	}
 
-	wantMsg := fmt.Sprintf(httpx.T("en", "plugins.settings.invalid_endpoint"), "erp_url")
+	// ut-docs#4157: a refused endpoint is a 422 field error on the re-rendered form.
+	wantMsg := httpx.T("en", "plugins.settings.error.url")
 	if strings.HasPrefix(wantMsg, "plugins.settings.") {
-		t.Fatalf("missing en.json key plugins.settings.invalid_endpoint")
+		t.Fatalf("missing en.json key plugins.settings.error.url")
 	}
 	for _, bad := range []string{"ftp://x", "not a url", "javascript:alert(1)"} {
 		rec := post(bad, "new")
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("%q: code %d, want 400 (body %q)", bad, rec.Code, rec.Body.String())
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("%q: code %d, want 422 (body %q)", bad, rec.Code, rec.Body.String())
 		}
 		if !strings.Contains(rec.Body.String(), wantMsg) {
 			t.Fatalf("%q: body %q, want the localized message %q", bad, rec.Body.String(), wantMsg)

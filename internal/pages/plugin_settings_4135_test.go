@@ -41,6 +41,7 @@ func TestPluginSettingsAPI_POST_NotInstalledIs404AndWritesNothing(t *testing.T) 
 
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/integration-ai/settings", strings.NewReader("setting_image_endpoint=http://10.0.0.5:7000"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {

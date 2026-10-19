@@ -246,6 +246,7 @@ func TestAskTaxRateBP_PluginSettingsSaveInvalidatesCache(t *testing.T) {
 	form := "setting_eatin_rate=1250"
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/com.universaltill.tax-uk/settings", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

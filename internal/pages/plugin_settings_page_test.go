@@ -126,6 +126,7 @@ func TestPluginSettingsAPI_POST_RequiresManager(t *testing.T) {
 	mux, _ := newPluginSettingsTestDeps(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader("setting_endpoint_url=x"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
@@ -157,6 +158,7 @@ func TestPluginSettingsPages_RealSessionGatesByRole(t *testing.T) {
 
 			postReq := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader("setting_endpoint_url=x")), auth.User{ID: "u1", Role: role})
 			postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			postReq.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 			postRec := httptest.NewRecorder()
 			mux.ServeHTTP(postRec, postReq)
 			wantPOST := http.StatusOK
@@ -182,6 +184,7 @@ func TestPluginSettingsAPI_POST_UpdatesDeclaredKeyIgnoresUndeclaredAndKeepsBlank
 		"&setting_not_declared=should-be-ignored"
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -227,6 +230,7 @@ func TestPluginSettingsAPI_POST_PerTillScopeStaysPerTillOnUpdate(t *testing.T) {
 	form := "setting_reader_id=reader-B"
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -387,6 +391,7 @@ func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_StoresAndBumpsGeneration(
 	form := "setting_takeaway_typed=1&takeaway_pct_tax_19=7"
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -425,6 +430,7 @@ func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_BlankClearsEntry(t *testi
 	form := "setting_takeaway_typed=1&takeaway_pct_tax_19="
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -457,10 +463,11 @@ func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_InvalidRateRejected(t *te
 	form := "setting_takeaway_typed=1&takeaway_pct_tax_19=150"
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for an out-of-range rate, got %d body %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnprocessableEntity { // ut-docs#4157: a field error on the re-rendered form
+		t.Fatalf("expected 422 for an out-of-range rate, got %d body %s", rec.Code, rec.Body.String())
 	}
 
 	rows, err := data.NewPluginRepo(dp.Db).ListPluginSettings(ctx, "p1")
@@ -483,6 +490,7 @@ func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_OrphanEntryClearable(t *t
 	form := "setting_takeaway_typed=1&takeaway_pct_tax_gone="
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -520,6 +528,7 @@ func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_IgnoresUnknownTaxCodeID(t
 	form := "setting_takeaway_typed=1&takeaway_pct_unknown_id=9&takeaway_pct_tax_19=7"
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -563,10 +572,11 @@ func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_NonFiniteAndOverflowRejec
 		form := "setting_takeaway_typed=1&takeaway_pct_tax_19=" + url.QueryEscape(bad)
 		req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("input %q: expected 400, got %d body %s", bad, rec.Code, rec.Body.String())
+		if rec.Code != http.StatusUnprocessableEntity { // ut-docs#4157
+			t.Fatalf("input %q: expected 422, got %d body %s", bad, rec.Code, rec.Body.String())
 		}
 	}
 
@@ -603,6 +613,7 @@ func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_AbsentFieldPreservesEntry
 	form := "setting_takeaway_typed=1&takeaway_pct_tax_19=8"
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -642,10 +653,11 @@ func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_InvalidRateLeavesSiblingS
 	form := "setting_api_endpoint=http%3A%2F%2Fnew.local&setting_takeaway_typed=1&takeaway_pct_tax_19=150"
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("POST: expected 400, got %d body %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusUnprocessableEntity { // ut-docs#4157
+		t.Fatalf("POST: expected 422, got %d body %s", rec.Code, rec.Body.String())
 	}
 
 	rows, err := data.NewPluginRepo(dp.Db).ListPluginSettings(ctx, "p1")
@@ -792,6 +804,7 @@ func TestPluginSettingsAPI_POST_ListFailureIsLocalized(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader("setting_x=y"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusInternalServerError {
@@ -820,6 +833,7 @@ func TestPluginSettingsAPI_POST_TaxCodesFailureIsLocalized(t *testing.T) {
 	form := "setting_takeaway_typed=1&takeaway_pct_tax_19=7"
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusInternalServerError {
@@ -835,7 +849,7 @@ func TestPluginSettingsAPI_POST_TaxCodesFailureIsLocalized(t *testing.T) {
 	}
 }
 
-// writeTaxOverrides' repo.UpsertPluginSettingScoped fails on a read-only
+// The batch save (SavePluginSettingsBatch, ut-docs#4157) fails on a read-only
 // connection while the earlier ListPluginSettings/ListTaxCodes SELECTs and
 // parseTaxOverrides validation all still succeed — isolates line 318.
 func TestPluginSettingsAPI_POST_TypedWriteFailureIsLocalized(t *testing.T) {
@@ -853,6 +867,7 @@ func TestPluginSettingsAPI_POST_TypedWriteFailureIsLocalized(t *testing.T) {
 	form := "setting_takeaway_typed=1&takeaway_pct_tax_19=7"
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusInternalServerError {
@@ -885,6 +900,7 @@ func TestPluginSettingsAPI_POST_PlainWriteFailureIsLocalized(t *testing.T) {
 	form := "setting_endpoint_url=https%3A%2F%2Fnew.example"
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusInternalServerError {
@@ -953,6 +969,7 @@ func TestPluginSettingsPage_ManifestDeclaredSecretIsMaskedAndSealed(t *testing.T
 	form := strings.NewReader("setting_merchant_code=M-new&setting_endpoint_url=https://plugin.example/api")
 	req = httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", form)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -1014,6 +1031,7 @@ func TestPluginSettingsAPI_POST_RefusesWriteWhenManifestUnreadable(t *testing.T)
 	form := strings.NewReader("setting_merchant_code=M-new")
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", form)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusInternalServerError {
@@ -1417,6 +1435,7 @@ func TestPluginSettingsAPI_POST_AuditRecordsChangedKeysNotValues(t *testing.T) {
 	form := "setting_endpoint_url=https%3A%2F%2Fnew-host.example&setting_api_key=new-secret-value&setting_label=same"
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -1470,6 +1489,7 @@ func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_AcceptsDecimalComma(t *te
 		form := "setting_takeaway_typed=1&takeaway_pct_tax_19=" + url.QueryEscape(c.in)
 		req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
@@ -1563,6 +1583,7 @@ func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_LocalizedPrefillRoundTrip
 	form := "setting_takeaway_typed=1&takeaway_pct_tax_19=" + url.QueryEscape(rows[0].OverridePercent)
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

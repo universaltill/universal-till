@@ -71,7 +71,9 @@ cd "${ROOT_DIR}"
 # SYNC_CLASSIFICATION_FILE) so the regression test can exercise the
 # "matched no production file" fail-closed path without needing a real
 # rename of these methods.
-WRITER_RE="${WRITER_RE:-\.(UpsertPluginSetting|UpsertPluginSettingScoped|MergeAdditiveJSONMapSetting)\(}"
+# ut-docs#4157: SavePluginSettingsBatch (the settings page's one-commit
+# form save) fires the same hook, so it is a writer too.
+WRITER_RE="${WRITER_RE:-\.(UpsertPluginSetting|UpsertPluginSettingScoped|MergeAdditiveJSONMapSetting|SavePluginSettingsBatch)\(}"
 DEFINITION_FILE="internal/data/plugin_repo.go"
 ALLOW_COMMENT="plugin-settings-bump:allow"
 
