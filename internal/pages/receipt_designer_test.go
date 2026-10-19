@@ -16,9 +16,11 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/print"
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
@@ -345,5 +347,112 @@ func TestReceiptDesignerTest_PrinterNotConfigured(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502 when no printer is configured, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// sampleLabelKeys are the six labels a real receipt builds in the shop
+// locale (ut-docs#4331, #4199), with the English text the old sample hard-coded.
+var sampleLabelKeys = []struct{ key, en string }{
+	{"receipt.paper.receipt_no", "Receipt 000000123"},
+	{"tender.cash", "Cash"},
+	{"receipt.change", "Change"},
+	{"basket.subtotal", "Subtotal"},
+	{"basket.tax", "Tax"},
+	{"receipt.paper.total", "TOTAL"},
+}
+
+func sampleLabelWant(locale, key string) string {
+	v := httpx.T(locale, key)
+	if key == "receipt.paper.receipt_no" {
+		return strings.Replace(v, "%s", "000000123", 1)
+	}
+	return v
+}
+
+// ut-docs#4331: the sample's labels follow the passed locale.
+func TestSampleReceiptDoc_LabelsFollowLocale(t *testing.T) {
+	chdirRoot(t)
+	initPagesI18n(t)
+	out := print.RenderText(sampleReceiptDoc("My Shop", receiptDesign{ShowTax: true}, "tr"))
+	for _, k := range sampleLabelKeys {
+		want := sampleLabelWant("tr", k.key)
+		if want == k.en {
+			t.Fatalf("tr value of %s equals English %q; test cannot discriminate", k.key, k.en)
+		}
+		if !strings.Contains(out, want) {
+			t.Errorf("tr sample lacks %q (%s):\n%s", want, k.key, out)
+		}
+	}
+	for _, lit := range []string{"Receipt 000000123", "Subtotal", "TOTAL", "Cash", "Change"} {
+		if strings.Contains(out, lit) {
+			t.Errorf("tr sample still has English literal %q:\n%s", lit, out)
+		}
+	}
+}
+
+// The English sample is unchanged byte for byte in its labels.
+func TestSampleReceiptDoc_EnglishLabelsUnchanged(t *testing.T) {
+	chdirRoot(t)
+	initPagesI18n(t)
+	out := print.RenderText(sampleReceiptDoc("My Shop", receiptDesign{ShowTax: true}, "en"))
+	for _, k := range sampleLabelKeys {
+		if !strings.Contains(out, k.en) {
+			t.Errorf("en sample lacks %q:\n%s", k.en, out)
+		}
+		if got := sampleLabelWant("en", k.key); got != k.en {
+			t.Errorf("en %s = %q; want %q", k.key, got, k.en)
+		}
+	}
+}
+
+// The preview uses the SHOP locale, not the request locale.
+func TestReceiptDesignerPreview_UsesShopLocaleNotRequestLocale(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newReceiptDesignerTestDeps(t)
+	t.Cleanup(httpx.SnapshotStateForTests())
+	httpx.SetDefaultLocale("tr")
+
+	form := "show_tax=on"
+	req := httptest.NewRequest(http.MethodPost, "/api/receipt-designer/preview?lang=en", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview: code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, k := range sampleLabelKeys {
+		if want := sampleLabelWant("tr", k.key); !strings.Contains(body, want) {
+			t.Errorf("preview lacks shop-locale label %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "Subtotal") || strings.Contains(body, "TOTAL") {
+		t.Errorf("preview leaked request-locale English labels:\n%s", body)
+	}
+}
+
+// The page's first-render preview uses the SHOP locale too (review of
+// ut-docs#4331): before any htmx refresh, it must already match a printed
+// receipt.
+func TestReceiptDesignerPage_PreviewUsesShopLocale(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newReceiptDesignerTestDeps(t)
+	t.Cleanup(httpx.SnapshotStateForTests())
+	httpx.SetDefaultLocale("tr")
+
+	req := httptest.NewRequest(http.MethodGet, "/receipt-designer?lang=en", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("page: code %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, key := range []string{"receipt.paper.receipt_no", "receipt.paper.total"} {
+		if want := sampleLabelWant("tr", key); !strings.Contains(body, want) {
+			t.Errorf("page preview lacks shop-locale label %q", want)
+		}
+	}
+	if strings.Contains(body, "Receipt 000000123") {
+		t.Errorf("page preview leaked the request-locale receipt number")
 	}
 }

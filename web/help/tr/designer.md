@@ -13,7 +13,7 @@ Fişinizde görünenleri (logo, başlık, alt yazı) özelleştirin — canlı �
 
 ## Nasıl kullanılır
 
-1. Logo ve fiş metnini değiştirmek için fiş tasarımcısını açın; değişiklikler anında önizlenir.
+1. Logo ve fiş metnini değiştirmek için fiş tasarımcısını açın; değişiklikler anında önizlenir. Kasayı başka bir dilde kullansanız bile, önizlemedeki etiketler (fiş numarası, ödeme, toplamlar) basılı fişlerde olduğu gibi işletmenizin dilindedir.
 
 Bu sayfadaki **Sipariş takip QR kodu (ücretli planlar)** kutusu, her satışın fişine müşterinin siparişini telefonundan izlemek için okuttuğu bir QR kodu ekler (bkz. [Müşteri sipariş takibi](/help/customer-order-tracking)). Yalnızca ücretli bir planda yazdırılır, iade fişlerinde, iptal edilen satışlarda veya ek bir kasanın fişlerinde asla yer almaz. Bu kutu şimdilik devre dışıdır ve yanında **Sipariş takibi bulutumuza taşındığında kullanılabilir.** notu yer alır. O zamana kadar hiçbir fişte takip QR kodu bulunmaz; tasarımı kaydetmek önceki seçimi korur.
 

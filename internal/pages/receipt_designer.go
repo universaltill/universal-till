@@ -45,8 +45,11 @@ func designFromForm(r *http.Request) receiptDesign {
 const sampleTrackingURL = "https://example.invalid/o/sample"
 
 // sampleReceiptDoc builds the designer's example ticket from a design.
-// locale only translates the tracking caption; the rest of the sample is
-// fixed English demo content.
+// The labels (receipt number, payment methods, change, subtotal, tax, total)
+// and the tracking caption follow locale, built from the same keys and
+// helpers as a real receipt; item names, SKUs, quantities and amounts are
+// fixed demo content. Callers pass the shop locale (httpx.DefaultLocale()),
+// as real receipts do (ut-docs#4331, #4199).
 func sampleReceiptDoc(storeName string, rd receiptDesign, locale string) print.Doc {
 	line := func(name, sku, qty, amount string) print.Line {
 		if rd.ShowSKU && sku != "" {
@@ -59,20 +62,20 @@ func sampleReceiptDoc(storeName string, rd receiptDesign, locale string) print.D
 		Header:    rd.Header,
 		// clock.Now (not time.Now) so this sample ticket's date is byte-stable
 		// under `make docs-shots` (ut-docs#930); real wall-clock everywhere else.
-		Meta: []string{"Receipt 000000123", clock.Now().Format("2006-01-02 15:04")},
+		Meta: []string{fmt.Sprintf(httpx.T(locale, "receipt.paper.receipt_no"), "000000123"), clock.Now().Format("2006-01-02 15:04")},
 		Lines: []print.Line{
 			line("Apples", "SKU-001", "2", "£4.32"),
 			line("Orange Juice 1L", "SKU-002", "1", "£2.64"),
 		},
-		Payments: []print.KV{{Label: "Cash", Amount: "£10.00"}, {Label: "Change", Amount: "£3.04"}},
+		Payments: []print.KV{{Label: receiptMethodLabel(locale, "cash"), Amount: "£10.00"}, {Label: httpx.T(locale, "receipt.change"), Amount: "£3.04"}},
 	}
 	if rd.ShowTax {
 		doc.Totals = []print.KV{
-			{Label: "Subtotal", Amount: "£5.80"},
-			{Label: "Tax", Amount: "£1.16"},
+			{Label: httpx.T(locale, "basket.subtotal"), Amount: "£5.80"},
+			{Label: httpx.T(locale, "basket.tax"), Amount: "£1.16"},
 		}
 	}
-	doc.Totals = append(doc.Totals, print.KV{Label: "TOTAL", Amount: "£6.96", Strong: true})
+	doc.Totals = append(doc.Totals, print.KV{Label: httpx.T(locale, "receipt.paper.total"), Amount: "£6.96", Strong: true})
 	if rd.ShowBarcode {
 		doc.Barcode = "000000123"
 	}
@@ -131,7 +134,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 			// ut-docs#4260: the tracking box is greyed out until the cloud
 			// tracking page exists (#4238).
 			"TrackingAvailable": orderTrackingLinksAvailable(),
-			"Preview":           print.RenderText(sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd, httpx.RequestLocale(r))),
+			"Preview":           print.RenderText(sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd, httpx.DefaultLocale())),
 		})(w, r)
 	})
 
@@ -143,7 +146,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		rd := designFromForm(r)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte(print.RenderText(sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd, httpx.RequestLocale(r)))))
+		_, _ = w.Write([]byte(print.RenderText(sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd, httpx.DefaultLocale()))))
 	})
 
 	mux.HandleFunc("POST /api/receipt-designer/save", func(w http.ResponseWriter, r *http.Request) {
@@ -261,11 +264,14 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.printer.test_failed"))
 			return
 		}
-		doc := sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd, locale)
+		// The sample is the shop's receipt, so it (and the caption's charset
+		// fallback) use the shop locale; locale above is for the UI messages.
+		shopLocale := httpx.DefaultLocale()
+		doc := sampleReceiptDoc(storeNameOrDefault(r.Context(), d), rd, shopLocale)
 		doc.Charset = cfg.Charset
 		if doc.TrackingCaption != "" {
 			// Same charset fallback as a real receipt's caption.
-			doc.TrackingCaption = kitchenTicketText(locale, cfg.Charset, "receipt.tracking.caption")
+			doc.TrackingCaption = kitchenTicketText(shopLocale, cfg.Charset, "receipt.tracking.caption")
 		}
 		doc.Logo = receiptLogoRaster(rd)
 		// PrintDoc picks ESC/POS (thermal) or plain text via lp (a regular
