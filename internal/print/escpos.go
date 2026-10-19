@@ -10,7 +10,6 @@ import (
 	"bytes"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/runes"
@@ -391,19 +390,20 @@ func Render(d Doc) []byte {
 
 // layoutLine renders one sale line: "qty x name" left, amount right; long
 // names wrap onto their own row with the amount on the last row. The
-// one-row/two-row threshold is rune-based, not byte-based -- Width tracks
-// visible columns, and kvRow (which this calls for the one-row case) pads
-// by rune count too, so a byte-based threshold here was inconsistent with
-// what kvRow can actually fit on one row: a multi-byte label/amount pair
-// (é/ö/ü/ß, ar/fa/tr text) sitting between the rune-count and byte-count
-// widths got routed to an unnecessary two-row fallback (ut-docs#438).
+// one-row/two-row threshold is measured in columns (displayWidth), not
+// bytes -- Width tracks visible columns, and kvRow (which this calls for the
+// one-row case) pads by displayWidth too, so a byte-based threshold here was
+// inconsistent with what kvRow can actually fit on one row: a multi-byte
+// label/amount pair (é/ö/ü/ß, ar/fa/tr text) sitting between the column and
+// byte widths got routed to an unnecessary two-row fallback (ut-docs#438,
+// ut-docs#4685).
 func layoutLine(l Line) []string {
 	label := l.Name
 	if l.Qty != "" && l.Qty != "1" {
 		label = l.Qty + " x " + l.Name
 	}
 	var rows []string
-	if utf8.RuneCountInString(label)+1+utf8.RuneCountInString(l.Amount) <= Width {
+	if displayWidth(label)+1+displayWidth(l.Amount) <= Width {
 		rows = []string{kvRow(label, l.Amount)}
 	} else {
 		rows = []string{clip(label, Width), kvRow("", l.Amount)}
@@ -423,42 +423,45 @@ func layoutLine(l Line) []string {
 const subIndent = "  "
 
 // kvRow right-aligns amount against label on one fixed-width row. Padding is
-// computed from rune count, not byte length — Width tracks visible columns,
-// and a byte-based calculation under-pads any label/amount containing a
-// multi-byte character (£, ä/ö/ü/ß, ar/fa/tr text), leaving the row one or
-// more columns narrower than Width actually intends (ut-docs#376).
+// computed from displayWidth, not byte length or rune count — Width tracks
+// visible columns: a byte-based calculation under-pads any label/amount
+// containing a multi-byte character (£, ä/ö/ü/ß, ar/fa/tr text,
+// ut-docs#376), and a rune count under-pads one carrying a ZWNJ or a
+// combining mark (fa receipt.change carries a ZWNJ, ut-docs#4685).
 func kvRow(label, amount string) string {
-	space := Width - utf8.RuneCountInString(label) - utf8.RuneCountInString(amount)
+	space := Width - displayWidth(label) - displayWidth(amount)
 	if space < 1 {
-		label = clip(label, Width-utf8.RuneCountInString(amount)-1)
+		label = clip(label, Width-displayWidth(amount)-1)
 		space = 1
 	}
 	return label + strings.Repeat(" ", space) + amount
 }
 
-// wrapRunes splits s into rows of at most max runes, keeping every
-// character: Meta lines carry fiscal evidence (a TSE signature is 88 base64
-// chars, a serial 64 hex chars) that must reach paper whole (ut-docs#2880).
-// A hard wrap, not a word wrap — the evidence has no spaces to break at.
+// wrapRunes splits s into rows of at most max columns (displayWidth),
+// keeping every character: Meta lines carry fiscal evidence (a TSE
+// signature is 88 base64 chars, a serial 64 hex chars) that must reach paper
+// whole (ut-docs#2880). A hard wrap, not a word wrap — the evidence has no
+// spaces to break at. Each cut is clip's, so a zero-width rune stays on the
+// row of the character before it (ut-docs#4685).
 func wrapRunes(s string, max int) []string {
-	r := []rune(s)
-	if max <= 0 || len(r) <= max {
+	if max <= 0 || displayWidth(s) <= max {
 		return []string{s}
 	}
-	rows := make([]string, 0, len(r)/max+1)
-	for len(r) > max {
-		rows = append(rows, string(r[:max]))
-		r = r[max:]
+	rows := make([]string, 0, displayWidth(s)/max+1)
+	for displayWidth(s) > max {
+		head := clip(s, max)
+		rows = append(rows, head)
+		s = s[len(head):]
 	}
-	return append(rows, string(r))
+	return append(rows, s)
 }
 
-// wrapWords splits s into rows of at most max runes, breaking at spaces
+// wrapWords splits s into rows of at most max columns, breaking at spaces
 // so a figure like "20.00%" never splits mid-number; a single word longer
 // than max falls back to wrapRunes' hard wrap. Every non-space character
 // is kept.
 func wrapWords(s string, max int) []string {
-	if max <= 0 || utf8.RuneCountInString(s) <= max {
+	if max <= 0 || displayWidth(s) <= max {
 		return []string{s}
 	}
 	var rows []string
@@ -467,13 +470,13 @@ func wrapWords(s string, max int) []string {
 		switch {
 		case cur == "":
 			cur = w
-		case utf8.RuneCountInString(cur)+1+utf8.RuneCountInString(w) <= max:
+		case displayWidth(cur)+1+displayWidth(w) <= max:
 			cur += " " + w
 		default:
 			rows = append(rows, cur)
 			cur = w
 		}
-		if utf8.RuneCountInString(cur) > max {
+		if displayWidth(cur) > max {
 			parts := wrapRunes(cur, max)
 			rows = append(rows, parts[:len(parts)-1]...)
 			cur = parts[len(parts)-1]
@@ -485,21 +488,29 @@ func wrapWords(s string, max int) []string {
 	return rows
 }
 
-// clip truncates s to at most max runes (characters), never bytes — Width
-// tracks visible columns, and a byte-based cut can split a multi-byte UTF-8
-// character (any non-ASCII locale string: ä/ö/ü/ß, ar/fa/tr text) mid-char,
-// producing invalid UTF-8 on the printer. max <= 0 clips to empty rather
-// than panicking — a caller computing max from column arithmetic (kvRow's
+// clip truncates s to at most max columns (displayWidth), never bytes —
+// Width tracks visible columns, and a byte-based cut can split a multi-byte
+// UTF-8 character (any non-ASCII locale string: ä/ö/ü/ß, ar/fa/tr text)
+// mid-char, producing invalid UTF-8 on the printer. Zero-width runes right
+// after the last kept character stay with it, so a combining mark is never
+// cut off its base (ut-docs#4685). max <= 0 clips to empty rather than
+// panicking — a caller computing max from column arithmetic (kvRow's
 // re-clip when a row overflows) can legitimately land at or below zero.
 func clip(s string, max int) string {
 	if max <= 0 {
 		return ""
 	}
-	if utf8.RuneCountInString(s) <= max {
-		return s
+	cols := 0
+	for i, r := range s {
+		if zeroWidth(r) {
+			continue
+		}
+		if cols == max {
+			return s[:i]
+		}
+		cols++
 	}
-	r := []rune(s)
-	return string(r[:max])
+	return s
 }
 
 // encodeText prepares a string for the printer. utf8 passes through (many
@@ -518,6 +529,9 @@ func encodeText(s, charset string) []byte {
 		}
 		out := make([]byte, 0, len(folded))
 		for _, r := range folded {
+			if zeroWidth(r) {
+				continue // takes no column in displayWidth, so prints nothing (ut-docs#4685)
+			}
 			if r < 0x20 || r > 0x7e {
 				if r == '\t' {
 					out = append(out, ' ')
@@ -621,6 +635,9 @@ func Encodable(s, charset string) bool {
 }
 
 func runeEncodable(r rune, charset string) bool {
+	if r == '\u200c' || r == '\u200d' {
+		return true // dropped by every arm, never degraded (ut-docs#4685)
+	}
 	switch charset {
 	case "ascii":
 		return r == '\t' || (r >= 0x20 && r <= 0x7e)
@@ -655,9 +672,18 @@ func charmapRuneEncodable(r rune, cp *charmap.Charmap) bool {
 
 // encodeCharmap transcodes s to cp per-rune, folding anything cp cannot
 // encode via foldToCharmap rather than erroring or corrupting the stream.
+//
+// s is NFC-composed first, so a decomposed accent (e + U+0301, as macOS
+// file names carry) encodes as the page's own 'é', and a zero-width rune
+// left over is dropped, not printed as '?': kvRow padded it as zero columns
+// (displayWidth), and a '?' would push the row one column past Width
+// (ut-docs#4685).
 func encodeCharmap(s string, cp *charmap.Charmap) []byte {
 	out := make([]byte, 0, len(s))
-	for _, r := range s {
+	for _, r := range norm.NFC.String(s) {
+		if zeroWidth(r) {
+			continue
+		}
 		if b, ok := cp.EncodeRune(r); ok {
 			out = append(out, b)
 			continue
@@ -698,7 +724,7 @@ func RenderText(d Doc) string {
 	var b strings.Builder
 	center := func(s string) {
 		s = clip(s, Width)
-		pad := (Width - utf8.RuneCountInString(s)) / 2
+		pad := (Width - displayWidth(s)) / 2
 		if pad < 0 {
 			pad = 0
 		}

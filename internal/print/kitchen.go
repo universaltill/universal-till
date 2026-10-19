@@ -3,7 +3,6 @@ package print
 import (
 	"bytes"
 	"strings"
-	"unicode/utf8"
 )
 
 // KitchenTicket is one kitchen-facing order ticket (docs:
@@ -139,7 +138,7 @@ func RenderKitchenTicket(t KitchenTicket) []byte {
 // preview yet, so nothing in production calls this. Its callers are
 // kitchen_test.go's byte-path/text-path parity tests, which pin that the
 // text path drops exactly the lines the byte path drops (ut-docs#261
-// review), centres by rune count not byte length (ut-docs#376) and
+// review), centres by display width, not byte length (ut-docs#376, #4685) and
 // carries the per-line Mode marker (ut-docs#1181). Whether to wire a
 // kitchen-ticket preview or drop this together with those tests is a
 // product call, deliberately not made here.
@@ -147,7 +146,7 @@ func RenderKitchenTicketText(t KitchenTicket) string {
 	var b strings.Builder
 	center := func(s string) {
 		s = clip(s, Width)
-		pad := (Width - utf8.RuneCountInString(s)) / 2
+		pad := (Width - displayWidth(s)) / 2
 		if pad < 0 {
 			pad = 0
 		}
