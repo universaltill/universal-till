@@ -56,6 +56,56 @@ func TestParseMapped_MappedColumnLeavesItsSynonymField(t *testing.T) {
 	}
 }
 
+// A field whose first synonym match was mapped away falls back to its
+// next synonym column (review finding 1).
+func TestParseMapped_EvictedSynonymReResolves(t *testing.T) {
+	csv := "Title,Name,Price (cost),Price\nCold and fizzy,Cola,0.40,1.50\n"
+	m := Mapping{"description": "Title"}
+	if err := ValidateMapping(strings.Split("Title,Name,Price (cost),Price", ","), m); err != nil {
+		t.Fatal(err)
+	}
+	res, err := ParseMapped(strings.NewReader(csv), m, 2, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it := res.Items[0]; it.Name != "Cola" || it.Description != "Cold and fizzy" || it.PriceMinor != 150 {
+		t.Fatalf("item = %+v", it)
+	}
+	// Mapping the exact "Price" away: price falls back to "Price (cost)".
+	res, err = ParseMapped(strings.NewReader(csv), Mapping{"description": "Title", "sku": "Price"}, 2, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it := res.Items[0]; it.SKU != "1.50" || it.PriceMinor != 40 {
+		t.Fatalf("item = %+v", it)
+	}
+}
+
+// A generic-ERP file (it has a department column) takes a mapping too.
+func TestParseMapped_GenericERP(t *testing.T) {
+	csv := "Bezeichnung,VK,Department\nCola,1.50,Drinks\n"
+	res, err := ParseMapped(strings.NewReader(csv), Mapping{"name": "Bezeichnung", "price": "VK"}, 2, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Format != FormatGenericERP || res.Items[0].Name != "Cola" || res.Items[0].Department != "Drinks" {
+		t.Fatalf("res = %+v", res)
+	}
+	if !IsGenericFormat(FormatGenericERP) || !IsGenericFormat(FormatGeneric) || IsGenericFormat(FormatSquare) {
+		t.Fatal("IsGenericFormat")
+	}
+}
+
+// An oversized header from a request is refused, and never echoed whole.
+func TestValidateMapping_OversizedHeader(t *testing.T) {
+	long := strings.Repeat("x", maxMappingHeaderBytes+1)
+	var me *MappingError
+	err := ValidateMapping([]string{"Name", long}, Mapping{"price": long})
+	if !errors.As(err, &me) || me.Code != MappingIssueHeaderNotFound || len(err.Error()) > 200 {
+		t.Fatalf("got %v", err)
+	}
+}
+
 // An empty header unmaps a field the synonyms matched.
 func TestParseMapped_EmptyHeaderDropsField(t *testing.T) {
 	csv := "Name,Price,Stock\nCola,1.50,12\n"

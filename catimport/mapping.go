@@ -74,14 +74,26 @@ func stripBOM(headers []string) []string {
 	return out
 }
 
+// IsGenericFormat reports whether a Result.Format takes a Mapping: a
+// generic file, not a known export (MappingIssueNotGeneric).
+func IsGenericFormat(format string) bool {
+	return format == FormatGeneric || format == FormatGenericERP
+}
+
+// maxMappingHeaderBytes bounds a mapped header: it comes from a web
+// request, and HeaderRow never returns a cell this long from a real file.
+const maxMappingHeaderBytes = 1024
+
 // mappedIndex is headerIndex with m applied on top. headers must already
-// have a leading BOM stripped.
+// have a leading BOM stripped. The synonyms are matched again with the
+// mapped columns blanked, so a field whose first synonym match the mapping
+// took falls back to its next one ("Title,Name" with Title mapped away
+// still finds Name).
 func mappedIndex(headers []string, format string, m Mapping) (map[string]int, error) {
-	idx := headerIndex(headers)
 	if len(m) == 0 {
-		return idx, nil
+		return headerIndex(headers), nil
 	}
-	if format != FormatGeneric && format != FormatGenericERP {
+	if !IsGenericFormat(format) {
 		return nil, &MappingError{Code: MappingIssueNotGeneric}
 	}
 	known := make(map[string]bool, len(mappableFields))
@@ -96,19 +108,22 @@ func mappedIndex(headers []string, format string, m Mapping) (map[string]int, er
 	}
 	if len(unknown) > 0 {
 		slices.Sort(unknown)
-		return nil, &MappingError{Code: MappingIssueUnknownField, Field: unknown[0]}
+		return nil, &MappingError{Code: MappingIssueUnknownField, Field: truncate(unknown[0])}
 	}
 	positions := map[string][]int{}
 	for i, h := range headers {
 		k := foldHeader(h)
 		positions[k] = append(positions[k], i)
 	}
-	mapped := map[string]int{}  // field → column
+	mapped := map[string]int{}  // field → column; -1 = not read
 	claimed := map[int]string{} // column → field
 	for _, field := range mappableFields {
 		h, ok := m[field]
 		if !ok {
 			continue
+		}
+		if len(h) > maxMappingHeaderBytes {
+			return nil, &MappingError{Code: MappingIssueHeaderNotFound, Field: field, Header: truncate(h)}
 		}
 		k := foldHeader(h)
 		if k == "" {
@@ -128,14 +143,11 @@ func mappedIndex(headers []string, format string, m Mapping) (map[string]int, er
 		mapped[field] = cols[0]
 		claimed[cols[0]] = field
 	}
-	for field, col := range idx {
-		if _, own := m[field]; own {
-			continue
-		}
-		if _, taken := claimed[col]; taken {
-			delete(idx, field)
-		}
+	rest := append([]string(nil), headers...)
+	for col := range claimed {
+		rest[col] = "" // matches no synonym in either pass
 	}
+	idx := headerIndex(rest)
 	for field, col := range mapped {
 		if col < 0 {
 			delete(idx, field)
@@ -144,4 +156,12 @@ func mappedIndex(headers []string, format string, m Mapping) (map[string]int, er
 		}
 	}
 	return idx, nil
+}
+
+// truncate keeps an untrusted value short enough for an error message.
+func truncate(s string) string {
+	if len(s) <= 64 {
+		return s
+	}
+	return strings.ToValidUTF8(s[:64], "") + "…"
 }
