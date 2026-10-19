@@ -153,6 +153,7 @@ func newTakeawayRealChainFixture(t *testing.T, saveOverrideViaEditor bool) *take
 		req := httptest.NewRequest(http.MethodPost, "/api/plugins/"+pluginID+"/settings",
 			strings.NewReader("setting_takeaway_typed=1&takeaway_pct_"+taxID+"=7"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 		// Same paths scope primary.install used (ADR-0082, ut-docs#1739):
 		// the settings handler now resolves the plugin's on-disk manifest
 		// (internal/plugins.InstalledManifest) to decide whether a key is

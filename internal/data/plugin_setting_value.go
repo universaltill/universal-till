@@ -18,7 +18,7 @@ import (
 //
 // ut-docs#1946: internal/plugins/manifest.go's install-time default-value
 // seeding is the third writer of a map-typed value_json (alongside
-// MergeAdditiveJSONMapSetting and writeTaxOverrides) and now also calls this
+// MergeAdditiveJSONMapSetting and taxOverridesWrite) and now also calls this
 // function for a manifest default_value declared as a JSON object, so a
 // freshly-installed plugin's row is canonical from the first write instead
 // of depending on the first merge/save to rewrite it. DecodeMapSettingValue

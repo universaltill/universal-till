@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -107,7 +109,8 @@ const undeclaredSettingOrder = 1 << 30
 // buildSettingForm derives one setting's form metadata from its manifest
 // declaration: translated label/help, dropdown options for a choice (a
 // stored value that is not an option stays selectable as itself), the
-// show_when condition evaluated against the stored values, and the
+// show_when condition evaluated against the controlling values in stored
+// (showWhenHidden), and the
 // declaration index the form is ordered by. A nil manifest or undeclared
 // key gives the plain text box, labelled with its key.
 func buildSettingForm(m *plugins.Manifest, key, value string, stored map[string]string, locale string) settingForm {
@@ -146,17 +149,9 @@ func buildSettingForm(m *plugins.Manifest, key, value string, stored map[string]
 	if w := decl.ShowWhen; w != nil {
 		f.ShowKey = w.Key
 		f.ShowIn = strings.Join(w.In, ",")
-		cur := stored[w.Key]
-		// A controlling choice holding a value outside its options (an
-		// older free-text entry) hides nothing: the plugin may still use
-		// the dependent fields, so the operator must see them.
-		ctl := m.SettingDecl(w.Key)
-		f.Hidden = !(ctl != nil && ctl.Type == plugins.SettingTypeChoice && cur != "" && !ctl.ChoiceAllows(cur))
-		for _, v := range w.In {
-			if cur == v {
-				f.Hidden = false
-			}
-		}
+		// stored holds the controlling values: the stored ones, or on a
+		// re-rendered refused save the submitted ones (controlValue).
+		f.Hidden = showWhenHidden(m, w, stored[w.Key])
 	}
 	return f
 }
@@ -230,6 +225,9 @@ type taxOverrideRow struct {
 	// row renders a blank input (a bad prefill would block the whole form) and
 	// a visible notice naming the stored value (ut-docs#4086).
 	InvalidStoredPercent string
+	// Error marks a submitted value the save refused (ut-docs#4157): the
+	// row keeps what was typed and says why under it.
+	Error bool
 }
 
 // unwrapSettingValue unwraps a plugin_settings.value_json's JSON-string
@@ -334,19 +332,22 @@ func (e httpStatusError) Error() string { return e.msg }
 // signs are refused by construction. A non-blank value of 0 bp is rejected
 // too: the plugin ignores bp<=0, so "saving" it would silently store nothing
 // while reporting success. Above 100% (10000 bp) is refused as well.
-func parseTaxOverrides(form map[string][]string, current map[string]int, taxCodes []data.TaxCodeView, locale string) (map[string]int, error) {
+//
+// bad names every tax_code_id whose submitted rate was refused (ut-docs#4157:
+// each becomes a field error on its row); the map is only usable when bad
+// is empty.
+func parseTaxOverrides(form map[string][]string, current map[string]int, taxCodes []data.TaxCodeView) (overrides map[string]int, bad map[string]bool) {
 	// Only tax_code_ids that are either an active tax code or an existing
 	// orphan entry are accepted — the form cannot invent entries.
 	allowed := map[string]bool{}
 	for _, tc := range taxCodes {
 		allowed[tc.ID] = true
 	}
-	overrides := map[string]int{}
+	overrides = map[string]int{}
 	for id, bp := range current {
 		allowed[id] = true
 		overrides[id] = bp
 	}
-	invalid := httpStatusError{status: http.StatusBadRequest, msg: httpx.T(locale, "plugins.settings.takeaway.invalid_rate")}
 	for id := range allowed {
 		vals, ok := form["takeaway_pct_"+id]
 		if !ok || len(vals) == 0 {
@@ -359,51 +360,391 @@ func parseTaxOverrides(form map[string][]string, current map[string]int, taxCode
 		}
 		bp, err := httpx.ParsePercentBP(val)
 		if err != nil || bp <= 0 || bp > 10000 {
-			return nil, invalid
+			if bad == nil {
+				bad = map[string]bool{}
+			}
+			bad[id] = true
+			continue
 		}
 		overrides[id] = int(bp)
 	}
-	return overrides, nil
+	return overrides, bad
 }
 
-// writeTaxOverrides persists an already-validated overrides map using the
-// exact same JSON-string encoding the generic settings path uses (so
+// taxOverridesWrite turns an already-validated overrides map into the
+// setting write for the batch save (ut-docs#4157), using the exact same
+// JSON-string encoding the generic settings path uses (so
 // settings_get/hostSettingsGet's unwrap keeps working unchanged) — via
 // data.EncodeMapSettingValue (ut-docs#1269), the shared encode seam also
-// used by MergeAdditiveJSONMapSetting's write side. Returns the number of
-// settings changed (0 or 1).
-func writeTaxOverrides(ctx context.Context, repo *data.PluginRepo, pluginID string, row data.PluginSettingRow, overrides map[string]int) (int, error) {
+// used by MergeAdditiveJSONMapSetting's write side. changed is false when
+// the encoded map equals what is stored (nothing to write).
+func taxOverridesWrite(row data.PluginSettingRow, overrides map[string]int) (w data.PluginSettingWrite, changed bool, err error) {
 	raw, err := data.EncodeMapSettingValue(overrides)
-	if err != nil {
-		return 0, err
-	}
-	if raw == row.ValueJSON {
-		return 0, nil
+	if err != nil || raw == row.ValueJSON {
+		return w, false, err
 	}
 	// A rate-override map is never a manifest-declared secret (declaredSecret
 	// false); the repository's key-name heuristic still applies regardless.
-	if err := repo.UpsertPluginSettingScoped(ctx, pluginID, row.Key, raw, row.Scope, false); err != nil {
-		return 0, err
-	}
-	// Diagnostic-mode provenance (ADR-0092 §2, ut-docs#2169): a manager's
-	// edit adds or removes active overrides per tax code. Tax code ids
-	// only — the rate value and the code's name never travel.
-	if diagnostics.Active() {
-		before := map[string]int{}
-		_ = json.Unmarshal([]byte(data.DecodeMapSettingValue(row.ValueJSON)), &before)
-		for id := range overrides {
-			if _, had := before[id]; !had {
-				diagnostics.Emit(diagnostics.TaxProvenance{TaxCodeID: id, From: diagnostics.ProvenanceAbsent, To: diagnostics.ProvenanceActiveOverride})
-			}
-		}
-		for id := range before {
-			if _, still := overrides[id]; !still {
-				diagnostics.Emit(diagnostics.TaxProvenance{TaxCodeID: id, From: diagnostics.ProvenanceActiveOverride, To: diagnostics.ProvenanceAbsent})
-			}
-		}
-	}
-	return 1, nil
+	return data.PluginSettingWrite{Key: row.Key, Scope: row.Scope, ValueJSON: raw}, true, nil
 }
+
+// emitTaxOverrideProvenance records, after a committed save, which tax
+// codes gained or lost an active takeaway override — diagnostic-mode
+// provenance (ADR-0092 §2, ut-docs#2169). Tax code ids only — the rate
+// value and the code's name never travel.
+func emitTaxOverrideProvenance(beforeValueJSON string, overrides map[string]int) {
+	if !diagnostics.Active() {
+		return
+	}
+	before := map[string]int{}
+	_ = json.Unmarshal([]byte(data.DecodeMapSettingValue(beforeValueJSON)), &before)
+	for id := range overrides {
+		if _, had := before[id]; !had {
+			diagnostics.Emit(diagnostics.TaxProvenance{TaxCodeID: id, From: diagnostics.ProvenanceAbsent, To: diagnostics.ProvenanceActiveOverride})
+		}
+	}
+	for id := range before {
+		if _, still := overrides[id]; !still {
+			diagnostics.Emit(diagnostics.TaxProvenance{TaxCodeID: id, From: diagnostics.ProvenanceActiveOverride, To: diagnostics.ProvenanceAbsent})
+		}
+	}
+}
+
+// pluginSettingView is one setting on the settings form.
+type pluginSettingView struct {
+	Key, Value  string
+	Secret      bool // rendered masked; its value is never sent to the page
+	IsSet       bool // a value already exists (for the "leave blank to keep" hint)
+	PerTill     bool // register-scoped: this till's own value, never synced
+	Typed       bool // rendered as the typed takeaway-overrides editor instead
+	TaxRows     []taxOverrideRow
+	Notice      string // i18n key of a disclosure shown above the input (settingNoticeKey); "" = none
+	settingForm        // settings-form metadata from the installed manifest (ut-docs#2832)
+	// Settings form v2, S2 (ut-docs#4157).
+	Kind        string // bool|number|percent|money (settingFieldKind); "" = text box / own branch
+	Checked     bool   // bool: the switch's state
+	Required    bool
+	MaxLen      int
+	Placeholder string // translated
+	Currency    string // money: the shop currency's code
+	Error       string // translated field error; "" = none
+}
+
+// settingsFormState carries a refused save back into the form it re-renders
+// (ut-docs#4157): the submitted values (kept, except secrets) and each bad
+// field's error. The zero value shows the stored values.
+type settingsFormState struct {
+	form        map[string][]string
+	errs        map[string]*fieldError
+	takeawayBad map[string]bool
+}
+
+// storedControlValues maps each key to its stored plain value, for show_when.
+// A key can have a global and a per-till row; show_when reads the shop-wide
+// one when both exist.
+func storedControlValues(rows []data.PluginSettingRow) map[string]string {
+	stored := make(map[string]string, len(rows))
+	for _, row := range rows {
+		if _, seen := stored[row.Key]; !seen || row.Scope == "global" {
+			stored[row.Key] = unwrapSettingValue(row.ValueJSON)
+		}
+	}
+	return stored
+}
+
+// controlValues is storedControlValues with each value the form submitted
+// in its place (controlValue), so show_when follows what was entered.
+func controlValues(m *plugins.Manifest, form map[string][]string, stored map[string]string) map[string]string {
+	if form == nil {
+		return stored
+	}
+	cur := make(map[string]string, len(stored))
+	for k := range stored {
+		cur[k] = controlValue(m, form, stored, k)
+	}
+	return cur
+}
+
+// buildPluginSettingViews assembles the settings form from the stored rows
+// and the installed manifest, in manifest order; st re-renders a refused
+// save. A manifest without v2 fields renders exactly as before S2.
+func buildPluginSettingViews(ctx context.Context, catalogRepo *data.CatalogRepo, pluginID string, rows []data.PluginSettingRow, manifest *plugins.Manifest, isSecret func(string) bool, locale string, st settingsFormState) ([]pluginSettingView, error) {
+	stored := storedControlValues(rows)
+	cur := controlValues(manifest, st.form, stored)
+	currency := httpx.ActiveCurrency()
+	submitted := func(key string) (string, bool) {
+		vals, ok := st.form["setting_"+key]
+		if !ok || len(vals) == 0 {
+			return "", false
+		}
+		return vals[0], true
+	}
+	var views []pluginSettingView
+	for _, row := range rows {
+		v := unwrapSettingValue(row.ValueJSON)
+		decl := manifest.SettingDecl(row.Key)
+		sv := pluginSettingView{Key: row.Key, Value: v, Secret: isSecret(row.Key), PerTill: row.Scope == "register", Notice: settingNoticeKey(pluginID, row.Key, v)}
+		formValue := v
+		if decl != nil && decl.Type == plugins.SettingTypeChoice {
+			// A re-rendered choice keeps the submitted option; a value
+			// outside the options (a tampered form) shows the stored one.
+			if sub, ok := submitted(row.Key); ok && (decl.ChoiceAllows(strings.TrimSpace(sub)) || strings.TrimSpace(sub) == strings.TrimSpace(v)) {
+				formValue = strings.TrimSpace(sub)
+			}
+		}
+		sv.settingForm = buildSettingForm(manifest, row.Key, formValue, cur, locale)
+		if decl != nil {
+			sv.Required = decl.Required
+			sv.MaxLen = decl.MaxLen
+			if decl.Placeholder != "" {
+				sv.Placeholder = httpx.T(locale, decl.Placeholder)
+			}
+		}
+		if e := st.errs[row.Key]; e != nil {
+			sv.Error = e.message(locale)
+		}
+		if sv.Secret {
+			sv.IsSet = v != ""
+			sv.Value = "" // never render a secret's value into the page — not even a refused, just-typed one
+			views = append(views, sv)
+			continue
+		}
+		if isTaxRateOverridesKey(row.Key) {
+			taxCodes, err := catalogRepo.ListTaxCodes(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if taxRows, ok := buildTaxOverrideRows(v, taxCodes, locale); ok {
+				sv.Typed = true
+				sv.Error = "" // shown per row instead
+				for i := range taxRows {
+					if vals, ok := st.form["takeaway_pct_"+taxRows[i].TaxCodeID]; ok && len(vals) > 0 {
+						taxRows[i].OverridePercent = vals[0]
+					}
+					taxRows[i].Error = st.takeawayBad[taxRows[i].TaxCodeID]
+				}
+				sv.TaxRows = taxRows
+				views = append(views, sv)
+				continue
+			}
+		}
+		sub, isSubmitted := submitted(row.Key)
+		switch kind := settingFieldKind(decl); kind {
+		case plugins.SettingTypeBool:
+			sv.Kind = kind
+			sf := readStoredField(kind, row.ValueJSON, currency.Decimals, locale)
+			sv.Checked = sf.Checked
+			if on, ok := submittedBool(st.form, row.Key); ok {
+				sv.Checked = on
+			}
+			if sf.Invalid && sv.Error == "" && !sv.Checked {
+				sv.Error = fmt.Sprintf("%s (%s)", httpx.T(locale, "plugins.settings.error.stored_invalid"), sf.Display)
+			}
+		case plugins.SettingTypeNumber, plugins.SettingTypePercent, plugins.SettingTypeMoney:
+			sv.Kind = kind
+			if kind == plugins.SettingTypeMoney {
+				sv.Currency = currency.Code
+			}
+			sf := readStoredField(kind, row.ValueJSON, currency.Decimals, locale)
+			sv.Value = sf.Display
+			if isSubmitted {
+				sv.Value = sub
+			}
+			if sf.Invalid && sv.Error == "" && strings.TrimSpace(sv.Value) == strings.TrimSpace(sf.Display) {
+				sv.Error = httpx.T(locale, "plugins.settings.error.stored_invalid")
+			}
+		default:
+			if isSubmitted && (decl == nil || decl.Type != plugins.SettingTypeChoice) {
+				sv.Value = sub
+			}
+		}
+		views = append(views, sv)
+	}
+	// The manifest's declaration order is the form's order (a provider
+	// choice before the fields it controls); storage order is by key.
+	sort.SliceStable(views, func(i, j int) bool { return views[i].order < views[j].order })
+	return views, nil
+}
+
+// validatePluginSettings checks a submitted settings form against the
+// manifest (ADR-0121 S2, ut-docs#4157) and returns the writes a save makes
+// — only values that differ from what is stored — or the errors that
+// refuse it. Every visible field is validated; a field hidden by show_when
+// (on the submitted controlling value, else the stored one) is neither
+// validated nor written. A stored value that doesn't read as its declared
+// kind is left untouched while the operator leaves it as it is. Pure: no
+// writes. takeaway lists the typed takeaway-overrides maps being written,
+// for provenance after the commit.
+func validatePluginSettings(ctx context.Context, catalogRepo *data.CatalogRepo, form map[string][]string, rows []data.PluginSettingRow, manifest *plugins.Manifest, isSecret, declaredSecret, declaredEndpoint func(string) bool, locale string) (writes []data.PluginSettingWrite, takeaway map[string]map[string]int, st settingsFormState, err error) {
+	st = settingsFormState{form: form, errs: map[string]*fieldError{}}
+	cur := controlValues(manifest, form, storedControlValues(rows))
+	decimals := httpx.ActiveCurrency().Decimals
+	add := func(row data.PluginSettingRow, valueJSON string) {
+		if valueJSON == row.ValueJSON {
+			return
+		}
+		writes = append(writes, data.PluginSettingWrite{Key: row.Key, Scope: row.Scope, ValueJSON: valueJSON, DeclaredSecret: declaredSecret(row.Key)})
+	}
+	jsonString := func(v string) string {
+		b, _ := json.Marshal(v) // a string always marshals
+		return string(b)
+	}
+	typedTakeaway := len(form["setting_takeaway_typed"]) > 0 && form["setting_takeaway_typed"][0] == "1"
+	var taxCodes []data.TaxCodeView
+	for _, row := range rows {
+		key := row.Key
+		decl := manifest.SettingDecl(key)
+		if typedTakeaway && isTaxRateOverridesKey(key) {
+			if taxCodes == nil {
+				if taxCodes, err = catalogRepo.ListTaxCodes(ctx); err != nil {
+					return nil, nil, st, err
+				}
+			}
+			current := map[string]int{}
+			_ = json.Unmarshal([]byte(unwrapSettingValue(row.ValueJSON)), &current)
+			parsed, bad := parseTaxOverrides(form, current, taxCodes)
+			if len(bad) > 0 {
+				st.takeawayBad = bad
+				st.errs[key] = &fieldError{key: "plugins.settings.takeaway.invalid_rate"}
+				continue
+			}
+			w, changed, encErr := taxOverridesWrite(row, parsed)
+			if encErr != nil {
+				return nil, nil, st, encErr
+			}
+			if changed {
+				writes = append(writes, w)
+				if takeaway == nil {
+					takeaway = map[string]map[string]int{}
+				}
+				takeaway[key] = parsed
+			}
+			continue
+		}
+		if decl != nil && decl.ShowWhen != nil && showWhenHidden(manifest, decl.ShowWhen, cur[decl.ShowWhen.Key]) {
+			continue // hidden: not validated, keeps its stored value
+		}
+		kind := settingFieldKind(decl)
+		if kind == plugins.SettingTypeBool {
+			on, present := submittedBool(form, key)
+			if !present {
+				continue
+			}
+			if !on && readStoredField(kind, row.ValueJSON, decimals, locale).Invalid {
+				continue // shown off with the stored-invalid note: left as it is
+			}
+			add(row, strconv.FormatBool(on))
+			continue
+		}
+		// Only keys the plugin declared are writable — the form cannot
+		// invent settings.
+		vals, ok := form["setting_"+key]
+		if !ok || len(vals) == 0 {
+			continue
+		}
+		val := strings.TrimSpace(vals[0])
+		isEndpoint := declaredEndpoint(key)
+		required := decl != nil && decl.Required
+		switch {
+		case isSecret(key):
+			// Secret fields aren't pre-filled, so a blank submission means
+			// "keep the current value" rather than "clear it" — unless the
+			// operator ticked "Remove saved key" (clear_setting_<key>,
+			// ut-docs#2832), which clears it.
+			clear := len(form["clear_setting_"+key]) > 0 && form["clear_setting_"+key][0] == "1"
+			if val == "" {
+				if required && (clear || strings.TrimSpace(unwrapSettingValue(row.ValueJSON)) == "") {
+					st.errs[key] = requiredError()
+				} else if clear {
+					add(row, `""`)
+				}
+				continue
+			}
+			if isEndpoint && !plugins.ValidEndpointURL(val) {
+				st.errs[key] = &fieldError{key: "plugins.settings.error.url"}
+				continue
+			}
+			add(row, jsonString(val))
+		case kind != "":
+			sf := readStoredField(kind, row.ValueJSON, decimals, locale)
+			if sf.Invalid && val == strings.TrimSpace(sf.Display) {
+				continue // an invalid stored value left as it is is never rewritten
+			}
+			vj, fe := validateNumberField(decl, val, decimals, locale)
+			if fe != nil {
+				st.errs[key] = fe
+				continue
+			}
+			add(row, vj)
+		case decl != nil && decl.Type == plugins.SettingTypeChoice:
+			// A submitted value must be one of the manifest's options, or
+			// the value already stored (an older install's free-text value
+			// is kept, never rewritten) (ut-docs#2832).
+			if required && val == "" {
+				st.errs[key] = requiredError()
+				continue
+			}
+			if !decl.ChoiceAllows(val) && val != strings.TrimSpace(unwrapSettingValue(row.ValueJSON)) {
+				st.errs[key] = &fieldError{key: "plugins.settings.error.choice"}
+				continue
+			}
+			add(row, jsonString(val))
+		case isEndpoint:
+			// ADR-0121 §2 (ut-docs#3328): a non-blank value must be
+			// http(s)://host[:port][/path]. Blank clears it.
+			if required && val == "" {
+				st.errs[key] = requiredError()
+				continue
+			}
+			if val != "" && !plugins.ValidEndpointURL(val) {
+				st.errs[key] = &fieldError{key: "plugins.settings.error.url"}
+				continue
+			}
+			add(row, jsonString(val))
+		default:
+			textDecl := decl
+			if !isTextKind(decl) {
+				textDecl = nil // list/map keep today's raw text box, unchecked
+			}
+			vj, fe := validateTextField(textDecl, val, locale)
+			if fe != nil {
+				st.errs[key] = fe
+				continue
+			}
+			add(row, vj)
+		}
+	}
+	return writes, takeaway, st, nil
+}
+
+// statusWriter answers with code instead of the 200 a template render
+// would send (a refused save's 422). Any other status the renderer sets
+// (a 500 from a failed template) goes through unchanged.
+type statusWriter struct {
+	http.ResponseWriter
+	code  int
+	wrote bool
+}
+
+func (s *statusWriter) WriteHeader(code int) {
+	if !s.wrote {
+		s.wrote = true
+		if code == http.StatusOK {
+			code = s.code
+		}
+		s.ResponseWriter.WriteHeader(code)
+	}
+}
+
+func (s *statusWriter) Write(b []byte) (int, error) {
+	s.WriteHeader(s.code)
+	return s.ResponseWriter.Write(b)
+}
+
+// pluginSettingsFormBlock is the {{ define }} name of the settings <form>
+// inside plugin_settings.html: the page includes it, and an htmx save
+// answers it alone (RenderBlock — one copy of the markup, no drift).
+const pluginSettingsFormBlock = "plugin_settings_form"
 
 // Generic plugin settings editor (docs: architecture/ai-plugin.md): any
 // installed plugin whose manifest declares settings gets an edit form.
@@ -413,23 +754,12 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 	// A setting can feed a plugin's ".ask" answers (settings_get host fn) —
 	// cached answers must be dropped or the till keeps charging the old rate
 	// until an unrelated reload (ut-docs#222). The bump is wired into the
-	// repo itself (ut-docs#1941) so every write through it — the generic
-	// loop below AND writeTaxOverrides, which shares this instance — fires
-	// it structurally, instead of each call site remembering to.
+	// repo itself (ut-docs#1941) so every write through it — the form's one
+	// batch save (SavePluginSettingsBatch, ut-docs#4157) included — fires it
+	// structurally, instead of each call site remembering to.
 	repo := data.NewPluginRepo(d.Db).OnSettingsChanged(func() { plugins.SharedBus(d.Db).BumpGeneration() })
 	posRepo := data.NewPOSRepo(d.Db)
 	catalogRepo := data.NewCatalogRepo(d.Db)
-
-	type settingView struct {
-		Key, Value  string
-		Secret      bool // rendered masked; its value is never sent to the page
-		IsSet       bool // a value already exists (for the "leave blank to keep" hint)
-		PerTill     bool // register-scoped: this till's own value, never synced
-		Typed       bool // rendered as the typed takeaway-overrides editor instead
-		TaxRows     []taxOverrideRow
-		Notice      string // i18n key of a disclosure shown above the input (settingNoticeKey); "" = none
-		settingForm        // settings-form metadata from the installed manifest (ut-docs#2832)
-	}
 
 	// permissionView is the read half of the permission-management surface
 	// (ut-docs#2240): the write half (POST /api/plugins/permissions/grant
@@ -439,6 +769,44 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 	type permissionView struct {
 		permissionBadge
 		Granted bool
+	}
+
+	// pageData assembles the whole page's data; formOnly skips the
+	// permissions section (an htmx save answers the form alone).
+	pageData := func(r *http.Request, pluginID string, views []pluginSettingView, formOnly bool, extra map[string]any) map[string]any {
+		out := map[string]any{
+			"title":     httpx.T(httpx.RequestLocale(r), "page.title.plugin_settings"),
+			"theme":     d.CurrentState().Theme,
+			"menuItems": d.MenuSnapshot(),
+			"PluginID":  pluginID,
+			"Settings":  views,
+		}
+		for k, v := range extra {
+			out[k] = v
+		}
+		if formOnly {
+			return out
+		}
+		// Display only, same standing as the settings list — a manifest
+		// read failure here degrades to an empty permissions section rather
+		// than failing the whole page; the write side (plugin_api.go's
+		// grant/revoke handlers) does its own gating independently.
+		perms, err := plugins.ListPluginPermissions(r.Context(), d.Db, pluginID)
+		if err != nil {
+			logging.L().Warnf("plugin settings: could not list permissions for %s (%v) — rendering with none", pluginID, err)
+			perms = nil
+		}
+		permViews := make([]permissionView, 0, len(perms))
+		for _, p := range perms {
+			b := describePermission(p.Name)
+			if b.SettingKeys != "" {
+				// Show what granting unlocks — a manifest default included.
+				b.Target, _ = plugins.SettingBoundTarget(r.Context(), d.Db, pluginID, p.Name)
+			}
+			permViews = append(permViews, permissionView{permissionBadge: b, Granted: p.Granted})
+		}
+		out["Permissions"] = permViews
+		return out
 	}
 
 	mux.HandleFunc("GET /plugins/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -467,66 +835,12 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 		// can't be resolved right now, per secretSettingCheck's doc comment.
 		isSecret, _, _, _ := secretSettingCheck(r.Context(), d, pluginID)
 		manifest := settingsFormManifest(r.Context(), d, pluginID)
-		locale := httpx.RequestLocale(r)
-		stored := make(map[string]string, len(rows))
-		for _, row := range rows {
-			// A key can have a global and a per-till row; show_when reads
-			// the shop-wide one when both exist.
-			if _, seen := stored[row.Key]; !seen || row.Scope == "global" {
-				stored[row.Key] = unwrapSettingValue(row.ValueJSON)
-			}
-		}
-		var views []settingView
-		for _, row := range rows {
-			v := unwrapSettingValue(row.ValueJSON)
-			sv := settingView{Key: row.Key, Value: v, Secret: isSecret(row.Key), PerTill: row.Scope == "register", Notice: settingNoticeKey(pluginID, row.Key, v)}
-			sv.settingForm = buildSettingForm(manifest, row.Key, v, stored, locale)
-			if sv.Secret {
-				sv.IsSet = v != ""
-				sv.Value = "" // never render a secret's value into the page
-			}
-			if isTaxRateOverridesKey(row.Key) {
-				taxCodes, err := catalogRepo.ListTaxCodes(r.Context())
-				if err != nil {
-					httpx.RenderError(w, r, http.StatusInternalServerError, "plugins.error.server", err)
-					return
-				}
-				if taxRows, ok := buildTaxOverrideRows(v, taxCodes, httpx.RequestLocale(r)); ok {
-					sv.Typed = true
-					sv.TaxRows = taxRows
-				}
-			}
-			views = append(views, sv)
-		}
-		// The manifest's declaration order is the form's order (a provider
-		// choice before the fields it controls); storage order is by key.
-		sort.SliceStable(views, func(i, j int) bool { return views[i].order < views[j].order })
-		// Display only, same standing as the settings list above — a manifest
-		// read failure here degrades to an empty permissions section rather
-		// than failing the whole page; the write side (plugin_api.go's
-		// grant/revoke handlers) does its own gating independently.
-		perms, err := plugins.ListPluginPermissions(r.Context(), d.Db, pluginID)
+		views, err := buildPluginSettingViews(r.Context(), catalogRepo, pluginID, rows, manifest, isSecret, httpx.RequestLocale(r), settingsFormState{})
 		if err != nil {
-			logging.L().Warnf("plugin settings: could not list permissions for %s (%v) — rendering with none", pluginID, err)
-			perms = nil
+			httpx.RenderError(w, r, http.StatusInternalServerError, "plugins.error.server", err)
+			return
 		}
-		permViews := make([]permissionView, 0, len(perms))
-		for _, p := range perms {
-			b := describePermission(p.Name)
-			if b.SettingKeys != "" {
-				// Show what granting unlocks — a manifest default included.
-				b.Target, _ = plugins.SettingBoundTarget(r.Context(), d.Db, pluginID, p.Name)
-			}
-			permViews = append(permViews, permissionView{permissionBadge: b, Granted: p.Granted})
-		}
-		httpx.Render("ui/pages/plugin_settings.html", map[string]any{
-			"title":       httpx.T(httpx.RequestLocale(r), "page.title.plugin_settings"),
-			"theme":       d.CurrentState().Theme,
-			"menuItems":   d.MenuSnapshot(),
-			"PluginID":    pluginID,
-			"Settings":    views,
-			"Permissions": permViews,
-		})(w, r)
+		httpx.Render("ui/pages/plugin_settings.html", pageData(r, pluginID, views, false, nil))(w, r)
 	})
 
 	mux.HandleFunc("POST /api/plugins/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -561,130 +875,68 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 				fmt.Errorf("plugin %s: manifest could not be resolved, refusing to save settings (ADR-0082)", pluginID))
 			return
 		}
-		changed := 0
-		// Keys (never values) whose stored value changed, for the audit row:
-		// a setting-bound grant moves with its setting (ut-docs#2899), so
-		// which setting moved must be traceable.
-		changedKeys := []string{}
 		locale := httpx.ResolveLocale(w, r)
-		// Validate any typed takeaway-overrides submission BEFORE the write
-		// loop: rows are written in key order, so a mid-loop validation abort
-		// would leave earlier keys' upserts committed with no generation bump
-		// and no audit row — a sibling setting half-saved while the plugin
-		// keeps serving cached answers (ut-docs#190 review finding).
-		// Same rule for `type: "endpoint"` settings (ADR-0121 §2,
-		// ut-docs#3328): a non-blank value must be http(s)://host[:port][/path]
-		// — checked for every row before the first write. Blank clears it.
-		for _, row := range rows {
-			if !declaredEndpoint(row.Key) {
-				continue
-			}
-			form, ok := r.Form["setting_"+row.Key]
-			if !ok || len(form) == 0 {
-				continue
-			}
-			if val := strings.TrimSpace(form[0]); val != "" && !plugins.ValidEndpointURL(val) {
-				http.Error(w, fmt.Sprintf(httpx.T(locale, "plugins.settings.invalid_endpoint"), row.Key), http.StatusBadRequest)
-				return
-			}
-		}
-		// `type: "choice"` (ut-docs#2832): a submitted value must be one of
-		// the manifest's options, or the value already stored (an older
-		// install's free-text value is kept, never rewritten) — checked for
-		// every row before the first write, like the endpoint rule above.
 		manifest := settingsFormManifest(r.Context(), d, pluginID)
-		for _, row := range rows {
-			decl := manifest.SettingDecl(row.Key)
-			if decl == nil || decl.Type != plugins.SettingTypeChoice {
-				continue
-			}
-			form, ok := r.Form["setting_"+row.Key]
-			if !ok || len(form) == 0 {
-				continue
-			}
-			if val := strings.TrimSpace(form[0]); !decl.ChoiceAllows(val) && val != strings.TrimSpace(unwrapSettingValue(row.ValueJSON)) {
-				http.Error(w, fmt.Sprintf(httpx.T(locale, "plugins.settings.invalid_choice"), row.Key), http.StatusBadRequest)
-				return
-			}
+		htmx := httpx.IsFragmentSwap(w, r)
+		// Validate the whole form BEFORE anything is written (ADR-0121 S2
+		// "one save, one commit"): a refused field refuses the save, so a
+		// sibling is never half-saved (ut-docs#190, #3328 review findings).
+		writes, takeaway, st, err := validatePluginSettings(r.Context(), catalogRepo, r.Form, rows, manifest, isSecret, declaredSecret, declaredEndpoint, locale)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
+			return
 		}
-		typedOverrides := map[string]map[string]int{}
-		if r.Form.Get("setting_takeaway_typed") == "1" {
-			for _, row := range rows {
-				if !isTaxRateOverridesKey(row.Key) {
-					continue
-				}
-				taxCodes, err := catalogRepo.ListTaxCodes(r.Context())
-				if err != nil {
-					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
-					return
-				}
-				current := map[string]int{}
-				_ = json.Unmarshal([]byte(unwrapSettingValue(row.ValueJSON)), &current)
-				parsed, err := parseTaxOverrides(r.Form, current, taxCodes, locale)
-				if err != nil {
-					if statusErr, ok := err.(httpStatusError); ok {
-						http.Error(w, statusErr.msg, statusErr.status)
-						return
-					}
-					// Defensive: parseTaxOverrides' only non-nil error today is
-					// the httpStatusError branch above — this exists so a future
-					// change to that function fails safely (localized, not raw)
-					// rather than silently regressing to a leak.
-					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
-					return
-				}
-				typedOverrides[row.Key] = parsed
-			}
-		}
-		for _, row := range rows {
-			if parsed, ok := typedOverrides[row.Key]; ok {
-				n, err := writeTaxOverrides(r.Context(), repo, pluginID, row, parsed)
-				if err != nil {
-					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
-					return
-				}
-				changed += n
-				if n > 0 {
-					changedKeys = append(changedKeys, row.Key)
-				}
-				continue
-			}
-			// Only keys the plugin declared are writable — the form cannot
-			// invent settings.
-			form, ok := r.Form["setting_"+row.Key]
-			if !ok || len(form) == 0 {
-				continue
-			}
-			val := strings.TrimSpace(form[0])
-			// Secret fields aren't pre-filled, so a blank submission means
-			// "keep the current value" rather than "clear it" — unless the
-			// operator ticked "Remove saved key" (clear_setting_<key>,
-			// ut-docs#2832), which clears it.
-			if val == "" && isSecret(row.Key) && r.Form.Get("clear_setting_"+row.Key) != "1" {
-				continue
-			}
-			raw, err := json.Marshal(val)
+		if len(st.errs) > 0 {
+			views, err := buildPluginSettingViews(r.Context(), catalogRepo, pluginID, rows, manifest, isSecret, locale, st)
 			if err != nil {
-				continue
-			}
-			if string(raw) == row.ValueJSON {
-				continue
-			}
-			// Write back into the row's own scope: a register-scoped setting
-			// (per-till, e.g. a card reader id) must not become shop-wide.
-			// A secret (declared or heuristic) is sealed at rest by the
-			// repository (ADR-0082).
-			if err := repo.UpsertPluginSettingScoped(r.Context(), pluginID, row.Key, string(raw), row.Scope, declaredSecret(row.Key)); err != nil {
 				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
 				return
 			}
-			changed++
-			changedKeys = append(changedKeys, row.Key)
+			extra := map[string]any{"Refused": true}
+			sw := &statusWriter{ResponseWriter: w, code: http.StatusUnprocessableEntity}
+			if htmx {
+				// The form is its own swap target (hx-target="this"); the
+				// page's htmx:beforeSwap hook lets this 422 swap.
+				httpx.RenderBlock("ui/pages/plugin_settings.html", pluginSettingsFormBlock, pageData(r, pluginID, views, true, extra))(sw, r)
+				return
+			}
+			httpx.Render("ui/pages/plugin_settings.html", pageData(r, pluginID, views, false, extra))(sw, r)
+			return
 		}
-		sort.Strings(changedKeys)
+		changedKeys, err := repo.SavePluginSettingsBatch(r.Context(), pluginID, writes)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
+			return
+		}
+		for _, row := range rows {
+			if parsed, ok := takeaway[row.Key]; ok {
+				emitTaxOverrideProvenance(row.ValueJSON, parsed)
+			}
+		}
+		if changedKeys == nil {
+			changedKeys = []string{}
+		}
+		// Keys (never values) whose stored value changed, for the audit row:
+		// a setting-bound grant moves with its setting (ut-docs#2899), so
+		// which setting moved must be traceable.
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "plugin", pluginID, "plugin_settings_saved",
-			map[string]any{"changed": changed, "keys": changedKeys}, time.Now().UTC().Format(time.RFC3339), "")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprintf(w, `<span>✓ %s (%d)</span>`, httpx.T(locale, "plugins.settings.saved"), changed)
+			map[string]any{"changed": len(changedKeys), "keys": changedKeys}, time.Now().UTC().Format(time.RFC3339), "")
+		if !htmx {
+			http.Redirect(w, r, "/plugins/"+url.PathEscape(pluginID)+"/settings", http.StatusSeeOther)
+			return
+		}
+		// htmx: the form comes back drawn from what is now stored, with the
+		// saved message inside it.
+		rows, err = repo.ListPluginSettings(r.Context(), pluginID)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
+			return
+		}
+		views, err := buildPluginSettingViews(r.Context(), catalogRepo, pluginID, rows, manifest, isSecret, locale, settingsFormState{})
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
+			return
+		}
+		httpx.RenderBlock("ui/pages/plugin_settings.html", pluginSettingsFormBlock, pageData(r, pluginID, views, true, map[string]any{"Saved": true, "Changed": len(changedKeys)}))(w, r)
 	})
 }

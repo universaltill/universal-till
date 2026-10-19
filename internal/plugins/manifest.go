@@ -1506,7 +1506,7 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 			// json.Marshal below the bare object shape rather than
 			// data.EncodeMapSettingValue's JSON-string-wrapped canonical
 			// shape — the same divergence ut-docs#1269 already closed for
-			// MergeAdditiveJSONMapSetting/writeTaxOverrides. Route through
+			// MergeAdditiveJSONMapSetting/taxOverridesWrite. Route through
 			// the shared seam so a fresh install's row is canonical from
 			// the start instead of depending on the first merge/save to
 			// rewrite it.

@@ -305,6 +305,7 @@ func TestTakeawayOverride_RealChain_ReenableNeverClobbersMerchantOverride(t *tes
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/"+taxDePluginID+"/settings",
 		strings.NewReader("setting_takeaway_typed=1&takeaway_pct_"+fx.taxID+"=5"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true") // the page posts with htmx (ut-docs#4157: a no-JS save redirects)
 	settingsMux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("save takeaway override: %d (%s)", rec.Code, rec.Body.String())

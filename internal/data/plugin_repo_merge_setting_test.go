@@ -309,7 +309,7 @@ func TestMergeAdditiveJSONMapSetting_DoubleEncodedButStillInvalidLeftUntouched(t
 }
 
 // ut-docs#1269: MergeAdditiveJSONMapSetting used to write the merged map as
-// a raw JSON object, while the tax-override editor's writeTaxOverrides
+// a raw JSON object, while the tax-override editor's taxOverridesWrite
 // (internal/pages/plugin_settings_page.go) JSON-string-wraps on every save —
 // the same setting's on-disk shape silently flipped depending on which path
 // wrote it last. The merge's write side must now also store the
