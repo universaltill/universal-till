@@ -577,6 +577,13 @@ func StripCSVDefuse(field string) string {
 // from its SKU/item number via DeriveNumberBarcode, unless that number is
 // shared by an earlier row in this file (BarcodeIssueDuplicateItemNumber).
 func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useItemNumbersAsBarcodes bool) (Result, error) {
+	return ParseMapped(r, nil, currencyDecimals, enabledSymbologyIDs, useItemNumbersAsBarcodes)
+}
+
+// ParseMapped is Parse with the shop's column Mapping applied to a generic
+// file (ut-docs#4550); a bad mapping is a *MappingError. A nil mapping is
+// Parse.
+func ParseMapped(r io.Reader, m Mapping, currencyDecimals int, enabledSymbologyIDs []string, useItemNumbersAsBarcodes bool) (Result, error) {
 	// The separator comes from the first record (ut-docs#4726): peek at it
 	// without consuming, then parse from the same buffered reader.
 	br := bufio.NewReaderSize(r, HeaderRowMaxBytes)
@@ -597,7 +604,10 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 		headers[0] = strings.TrimPrefix(headers[0], "\uFEFF")
 	}
 	res := Result{Format: DetectFormat(headers)}
-	idx := headerIndex(headers)
+	idx, err := mappedIndex(headers, res.Format, m)
+	if err != nil {
+		return Result{}, err
+	}
 	if _, ok := idx["name"]; !ok {
 		return Result{}, ErrNoNameColumn
 	}
