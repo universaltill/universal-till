@@ -60,18 +60,12 @@ func (e *MappingError) Error() string {
 // for the first problem found (fields in MappableFields order). It doesn't
 // check that the result has a name column; Parse's ErrNoNameColumn does.
 func ValidateMapping(headers []string, m Mapping) error {
-	headers = stripBOM(headers)
+	if len(headers) > 0 && strings.HasPrefix(headers[0], "\uFEFF") {
+		headers = append([]string(nil), headers...)
+		headers[0] = strings.TrimPrefix(headers[0], "\uFEFF")
+	}
 	_, err := mappedIndex(headers, DetectFormat(headers), m)
 	return err
-}
-
-func stripBOM(headers []string) []string {
-	if len(headers) == 0 || !strings.HasPrefix(headers[0], "\uFEFF") {
-		return headers
-	}
-	out := append([]string(nil), headers...)
-	out[0] = strings.TrimPrefix(out[0], "\uFEFF")
-	return out
 }
 
 // IsGenericFormat reports whether a Result.Format takes a Mapping: a
