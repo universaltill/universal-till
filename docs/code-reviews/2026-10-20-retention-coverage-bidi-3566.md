@@ -62,6 +62,12 @@ no-inline-handlers, compliance-claims, competitor-naming, help-topics,
 help-drift, mail-addresses, core-neutral, data-access, no-showmodal,
 kiosk-engine and page-http-error.
 
+CI round 1: `guard-docs-shots` reported the surface hash as stale. The
+changed line renders only when `report_archive` has rows. The docs-shots
+seed never archives a report, and no settings shot is full-page, so no
+pixel changes. The surface hash was refreshed with
+`update-docs-shots-surface-hash.sh` (`Docs-Shots-Unchanged: true`).
+
 ## Verdict
 
 Safe to merge.
