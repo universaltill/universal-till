@@ -53,9 +53,9 @@
     },
     "display": {
       "en": "9011aa9b971636d0004462bda4b3fed08d850c136fc69ac13beab2a2aa1f6bfb",
-      "fa": "3c6b9059ed1fba1bd5fc4dad1e52a6ba6840c67bad381534ffe6de949e0eab42",
+      "fa": "4f2757b73edb5c5745bbd60dab137d887866724f98fd1d1d6301dcb785b30d6f",
       "ar": "26d4a4c801ad8aa23a42c3875b23a7ac7a41a5f17556cce3e904ae5bf22bfc2a",
-      "tr": "6783c4191beaa29412633e640b32e7a4c5d96c14446fd7d39613923c71e5f089"
+      "tr": "e47c33bdc9adae99c0f7ca925e64de9922b3d24ffbb4d0199c75dc25e24b6ebc"
     },
     "fiscal-device": {
       "en": "380be3f9ac5ced3c7a9040ef6c98c49a949f6abe6dd9e74220c94f8ce3bdfd1c",
@@ -145,7 +145,7 @@
       "en": "acb5b1039eb1f0f78bb6b19833f76cfb5b5f23216db29835e22269fa40677fbd",
       "fa": "a5239c8fbee20d865ab557247daab2797a4c4e27fd25317e1bb665fa1f79e45b",
       "ar": "59f01a57ce84cdea17fe9738ea9acfb7ffdd96ccbdd07d1e68f8256b0bb8a08a",
-      "tr": "139437cfc1861529d3f0ecf63644928d3801c697d70ce7c1ea96d003f0ee5d23"
+      "tr": "da0e15643990266973f6d2a1ef9b4cc01d47154b8d2464688ccf3b629bcca277"
     },
     "tables": {
       "en": "ad289b0586c17df01ec263eae0aa375186aba55a9e0e05ecd33f476084009b40",
@@ -173,9 +173,9 @@
     },
     "users": {
       "en": "7996ed135894f1cb81e88403cd2eb13ac97d32ac73b434f8116ec92713f9ca9d",
-      "fa": "ffd7259983be9cf1d77efd0c1bf0779c67fbb69b6bae30c0b94c84a0600b666d",
+      "fa": "0cb7c74ce1ba93bfb4919185df7b5fcbf8fecce345b63b200c51c474a9196fec",
       "ar": "2b6bb7024b744a918c05ecfcedfb836b0db0bbc2559085491c282994002e1f16",
-      "tr": "5312a0404e9a355c55d2185a7a200c4f66b3f6f89a097d7d30292848451439c2"
+      "tr": "3c44607deb0660a1f8bc20aba6038cc7db42206cc4961395043a77272cdb485b"
     },
     "vouchers": {
       "en": "dad5acd5f71b8b8cd3d923fc5a12b197db193623dff2d2e7f0d0e286266fdd21",
