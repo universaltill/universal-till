@@ -62,20 +62,52 @@ func TestSettingsRetentionCoverage_IsolatedAndLocalized_3566(t *testing.T) {
 	}
 }
 
-// A period that isn't a parseable timestamp (a legacy bare-date "eod" row)
-// still renders — raw, but isolated — rather than as an empty cell.
+// A period that is neither a timestamp nor a bare date still renders — raw,
+// but isolated — rather than as an empty cell.
 func TestSettingsRetentionCoverage_UnparseablePeriodStaysVisible_3566(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	ctx := context.Background()
 	repo := data.NewPOSRepo(d.Db)
-	for _, p := range []string{"2026-08-03", "2026-09-21"} {
+	for _, p := range []string{"legacy-period-a", "legacy-period-b"} {
 		if _, err := repo.ArchiveReport(ctx, "eod", p, []byte(`{}`), "", "", time.Time{}); err != nil {
 			t.Fatalf("archive report %s: %v", p, err)
 		}
 	}
 	body := renderSettingsWith(t, mux, &http.Cookie{Name: "ut_lang", Value: httpx.LocaleOverrideValue("fa")})
 	m := coverageLineRE.FindStringSubmatch(body)
-	if m == nil || m[1] != "2026-08-03" || m[2] != "2026-09-21" {
-		t.Fatalf("bare-date coverage not rendered isolated and verbatim: %v", m)
+	if m == nil || m[1] != "legacy-period-a" || m[2] != "legacy-period-b" {
+		t.Fatalf("unparseable coverage not rendered isolated and verbatim: %v", m)
+	}
+}
+
+// ut-docs#4691: a legacy bare-date "eod" period is a calendar date; it must
+// render in the locale's convention (fa digits on fa), not raw Latin digits
+// beside a localized stamp.
+func TestSettingsRetentionCoverage_LegacyBareDateLocalized_4691(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	ctx := context.Background()
+	repo := data.NewPOSRepo(d.Db)
+	latest := time.Date(2026, 9, 21, 19, 40, 0, 0, time.Local)
+	if _, err := repo.ArchiveReport(ctx, "eod", "2026-08-03", []byte(`{}`), "", "", time.Time{}); err != nil {
+		t.Fatalf("archive bare-date report: %v", err)
+	}
+	if _, err := repo.ArchiveReport(ctx, "eod", latest.Format(time.RFC3339), []byte(`{}`), "", "", latest); err != nil {
+		t.Fatalf("archive latest report: %v", err)
+	}
+	day := time.Date(2026, 8, 3, 0, 0, 0, 0, time.UTC)
+	for _, loc := range []string{"fa", "en"} {
+		t.Run(loc, func(t *testing.T) {
+			body := renderSettingsWith(t, mux, &http.Cookie{Name: "ut_lang", Value: httpx.LocaleOverrideValue(loc)})
+			m := coverageLineRE.FindStringSubmatch(body)
+			if m == nil {
+				t.Fatalf("coverage line has no LTR-isolated <bdi> pair")
+			}
+			if want := httpx.FormatDate(day, loc); m[1] != want {
+				t.Fatalf("earliest = %q, want %q (localized date, no clock)", m[1], want)
+			}
+			if want := httpx.FormatDateTime(latest.Local(), loc); m[2] != want {
+				t.Fatalf("latest = %q, want %q", m[2], want)
+			}
+		})
 	}
 }
