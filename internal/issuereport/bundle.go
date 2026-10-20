@@ -166,9 +166,28 @@ func Save(note, locale string, audio, video []byte, images [][]byte) (string, er
 	return id, nil
 }
 
+// Voice-note file names a bundle can hold. WebM is what Chromium/Firefox
+// record; MP4 is the only container iOS < 26 WKWebView's MediaRecorder
+// produces (ut-docs#3416).
+const (
+	audioWebM = "audio.webm"
+	audioM4A  = "audio.m4a"
+)
+
+// AudioFileName picks the on-disk name for a voice note from its bytes,
+// never from a client-supplied name or type: an ISO-BMFF/MP4 file carries
+// the ASCII box type "ftyp" at bytes 4..8 and is stored as audio.m4a;
+// anything else is stored as audio.webm, as before (ut-docs#3416).
+func AudioFileName(b []byte) string {
+	if len(b) >= 8 && string(b[4:8]) == "ftyp" {
+		return audioM4A
+	}
+	return audioWebM
+}
+
 func saveBundleFiles(dir, id, note, locale string, audio, video []byte, images [][]byte) error {
 	if len(audio) > 0 {
-		if err := os.WriteFile(filepath.Join(dir, "audio.webm"), audio, 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, AudioFileName(audio)), audio, 0o644); err != nil {
 			return fmt.Errorf("issuereport: write audio: %w", err)
 		}
 	}
@@ -229,8 +248,13 @@ func Pending() ([]Bundle, error) {
 			continue
 		}
 		b := Bundle{Meta: meta, Dir: dir}
-		if _, err := os.Stat(filepath.Join(dir, "audio.webm")); err == nil {
-			b.AudioPath = filepath.Join(dir, "audio.webm")
+		// Either voice-note container (AudioFileName); audio.webm first so
+		// the pick stays deterministic should both ever exist.
+		for _, name := range []string{audioWebM, audioM4A} {
+			if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+				b.AudioPath = filepath.Join(dir, name)
+				break
+			}
 		}
 		if _, err := os.Stat(filepath.Join(dir, "video.webm")); err == nil {
 			b.VideoPath = filepath.Join(dir, "video.webm")

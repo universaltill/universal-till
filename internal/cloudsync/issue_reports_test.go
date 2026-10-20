@@ -74,6 +74,7 @@ func TestUploadIssueReportSendsMultipartBundle(t *testing.T) {
 
 	var gotStoreID, gotReportID, gotNote, gotAuth, gotCreatedAt, gotLocale string
 	var gotAudio, gotVideo []byte
+	var gotAudioName string
 	var gotLogs []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
@@ -88,6 +89,7 @@ func TestUploadIssueReportSendsMultipartBundle(t *testing.T) {
 		gotCreatedAt = r.FormValue("created_at")
 		gotLogs = append([]string(nil), r.MultipartForm.Value["logs"]...)
 		if fh := r.MultipartForm.File["audio"]; len(fh) == 1 {
+			gotAudioName = fh[0].Filename
 			f, _ := fh[0].Open()
 			gotAudio = make([]byte, fh[0].Size)
 			_, _ = f.Read(gotAudio)
@@ -120,6 +122,9 @@ func TestUploadIssueReportSendsMultipartBundle(t *testing.T) {
 	}
 	if string(gotAudio) != "fake-audio" {
 		t.Fatalf("audio = %q", gotAudio)
+	}
+	if gotAudioName != "audio.webm" {
+		t.Fatalf("audio filename = %q, want %q", gotAudioName, "audio.webm")
 	}
 	if string(gotVideo) != "fake-video" {
 		t.Fatalf("video = %q", gotVideo)
@@ -254,6 +259,39 @@ func TestUploadIssueReportOmitsVideoWhenAbsent(t *testing.T) {
 	}
 	if hadVideoPart {
 		t.Fatal("video part sent for a bundle with no recording")
+	}
+}
+
+// ut-docs#3416: an iOS MP4 voice note is stored as audio.m4a; the upload's
+// multipart filename must follow the stored file, not claim WebM.
+func TestUploadIssueReportAudioFilenameFollowsBundle(t *testing.T) {
+	dir := t.TempDir()
+	audioPath := filepath.Join(dir, "audio.m4a")
+	if err := os.WriteFile(audioPath, []byte("\x00\x00\x00\x1cftypM4A fake"), 0o644); err != nil {
+		t.Fatalf("write audio fixture: %v", err)
+	}
+	b := issuereport.Bundle{
+		Meta:      issuereport.Meta{ID: "report-m4a", Note: "n", CreatedAt: time.Now().UTC()},
+		Dir:       dir,
+		AudioPath: audioPath,
+	}
+	var gotName string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			t.Errorf("server: parse multipart: %v", err)
+			return
+		}
+		if fh := r.MultipartForm.File["audio"]; len(fh) == 1 {
+			gotName = fh[0].Filename
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	if err := uploadIssueReport(context.Background(), registeredCfg(srv.URL), b); err != nil {
+		t.Fatalf("uploadIssueReport: %v", err)
+	}
+	if gotName != "audio.m4a" {
+		t.Fatalf("audio filename = %q, want %q", gotName, "audio.m4a")
 	}
 }
 
