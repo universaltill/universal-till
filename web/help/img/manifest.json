@@ -23,9 +23,9 @@
     },
     "catalog": {
       "en": "904175d6d08ee25b124b0133a1b2f1eccc53c11cb630afd66888ec8bb8da4517",
-      "fa": "85223e1864ea31ca0c1df964892f775db2fcddab5bc44bd83c8810da1cb2b39a",
-      "ar": "678fb6012bf096674f8413f090579f169e5967e71870bda6c70c78d3b6812f76",
-      "tr": "84b42617e0d5d91340fc12404722a17087e35f3e2973006b79b3cc427364946c"
+      "fa": "8b9c2f1f7674b39d7591309f56d480d88e14d2907f5495379429fc2e94b12e88",
+      "ar": "a1f3955c30719029fdec5541e7c2a3df5bb473d4a9c2b61e36bb00b3e5fe4b8d",
+      "tr": "e25fc9d0d42dbaa8b8c5802d38746b1b85c395cae98e712b0a8e9e17e5f58812"
     },
     "categories": {
       "en": "b1bf5725bae4e1ce0b73e6d368ae52e5a5102f1129a149e072932b340e2516c8",
@@ -53,9 +53,9 @@
     },
     "display": {
       "en": "9011aa9b971636d0004462bda4b3fed08d850c136fc69ac13beab2a2aa1f6bfb",
-      "fa": "4f2757b73edb5c5745bbd60dab137d887866724f98fd1d1d6301dcb785b30d6f",
-      "ar": "26d4a4c801ad8aa23a42c3875b23a7ac7a41a5f17556cce3e904ae5bf22bfc2a",
-      "tr": "e47c33bdc9adae99c0f7ca925e64de9922b3d24ffbb4d0199c75dc25e24b6ebc"
+      "fa": "ea7495bbbf01b80de2cf3dfebd740ee862ffb9798566022c5d2e31fc53a172aa",
+      "ar": "757e4025ba2196cdb9bae6ce80187b91aac68f54fbeee2e8f620b0885d43fa93",
+      "tr": "d71855d30bf95da768d7b56d8568aa992f8e6a4347d180900fc78fb9a8b3f599"
     },
     "fiscal-device": {
       "en": "380be3f9ac5ced3c7a9040ef6c98c49a949f6abe6dd9e74220c94f8ce3bdfd1c",
@@ -119,9 +119,9 @@
     },
     "order-status": {
       "en": "866156db75b30c68d58ff358963bc6225707a4fba64379706074109aa78d0438",
-      "fa": "f2ac811b62dee13ec14b98d55a110af9da6d56e7dcffc8bc4501ceccc940a0cc",
-      "ar": "9979a11c130599353fab19d2e29d3c22f9e564e4fdf1a5a2e8c6d6b403e9346d",
-      "tr": "713dd6eae0ba30e37e07023885110c5773302abc7b8cde026050e483a1cc8b90"
+      "fa": "faebb9d7a613985225289035e203f7fc3f6437c87988b0ee7433fa644bba632e",
+      "ar": "04bd4cb821f2d0b7aaaed01cb7ff5a73cb1ad7f08fe2e89ed55ace306ff05c3f",
+      "tr": "25f8aff1b0c613309d1f79c454dda4dd676f82be6ecb69b464387e75eb98b0fb"
     },
     "plugins": {
       "en": "0e3d1ca7141a09efb3d19c6fde8d56ab71f7d43f441032a5be77188fc91d7e61",
