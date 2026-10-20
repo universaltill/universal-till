@@ -56,8 +56,10 @@ class as ut-docs#4281 (on-screen number digit shape).
 
 ## Gate
 
-`gofmt -l .` clean, `go build ./...`, `go test ./...`, `golangci-lint run
-./...` (0 issues). The template-relevant guards pass: i18n, rtl-logical-css,
+`gofmt -l .` clean, `go build ./...`, `golangci-lint run ./...` (0 issues).
+`go test ./...` passed in every package (`internal/pages` included) except
+`internal/plugins`. That package hit the 10-minute test timeout on the
+4-CPU session container. It is untouched by this diff, and CI runs it. The template-relevant guards pass: i18n, rtl-logical-css,
 no-inline-handlers, compliance-claims, competitor-naming, help-topics,
 help-drift, mail-addresses, core-neutral, data-access, no-showmodal,
 kiosk-engine and page-http-error.
