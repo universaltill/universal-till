@@ -44,7 +44,9 @@
   `guard-help-topics.sh`, `guard-i18n.sh`, `guard-compliance-claims.sh`,
   `guard-competitor-naming.sh`, `guard-mail-addresses.sh` and `guard-rtl-logical-css.sh` all pass.
   The reviewer re-ran the help guards independently.
-- `go test ./internal/manual/... ./scripts/ci/checkhelpdrift/... ./web/...` passes, as does the full `go test ./internal/...`.
+- `go test ./internal/manual/... ./scripts/ci/checkhelpdrift/... ./web/...` passes. The local full
+  `go test ./internal/...` ran 75 packages ok. `internal/plugins` hit the 600s package timeout in this
+  shared container (WASM-heavy; this diff touches no Go). CI's run on the PR is the authority for it.
 - The reviewer recomputed the manifest hashes and confirmed the baseline diff is exactly 3 entries removed.
   The reviewer also rendered the new bold constructs through goldmark to check the markup.
 - **Driven run:** a throwaway till was built from this branch. `/help/{order-status,display,catalog}`
