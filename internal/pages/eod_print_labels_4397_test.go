@@ -3,7 +3,6 @@ package pages
 import (
 	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"golang.org/x/text/encoding/charmap"
 
@@ -227,8 +226,8 @@ func TestEODPrintSections_TranslatedLinesFitAndEncode(t *testing.T) {
 	for _, locale := range []string{"en", "tr", "fa", "ar"} {
 		lines := buildSectionsEOD(t, locale, rep)
 		for _, line := range lines[1:] {
-			if n := utf8.RuneCountInString(line); n > print.Width {
-				t.Errorf("%s: footer line is %d runes, over print.Width %d: %q", locale, n, print.Width, line)
+			if n := print.DisplayWidth(line); n > print.Width {
+				t.Errorf("%s: footer line is %d columns, over print.Width %d: %q", locale, n, print.Width, line)
 			}
 		}
 		if locale != "tr" {
@@ -250,8 +249,8 @@ func TestEODRow_PadsLikeSprintfAndClipsOnlyOverflow(t *testing.T) {
 	}
 	long := strings.Repeat("ş", 40)
 	got := eodRow(long, "£1,234.56")
-	if n := utf8.RuneCountInString(got); n != print.Width {
-		t.Errorf("overflowing label: %d runes, want exactly print.Width %d: %q", n, print.Width, got)
+	if n := print.DisplayWidth(got); n != print.Width {
+		t.Errorf("overflowing label: %d columns, want exactly print.Width %d: %q", n, print.Width, got)
 	}
 	if !strings.HasSuffix(got, " £1,234.56") {
 		t.Errorf("overflowing label lost its amount: %q", got)
