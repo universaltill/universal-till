@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -166,8 +167,8 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 		// the table path can't exist, so such a request takes the walk-up
 		// path (the bind helper isn't consulted at all).
 		requestedTable := strings.TrimSpace(r.URL.Query().Get("table"))
+		bound := false
 		if d.KioskEngine != nil {
-			bound := false
 			if requestedTable != "" && d.SelfOrderSessions != nil {
 				var refusal pos.BindRefusal
 				bound, refusal = bindSelfOrderTableSession(w, r, d, requestedTable, time.Now(), limiter)
@@ -189,13 +190,98 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 				d.KioskEngine.Reset()
 			}
 		}
+		// The walk-up start screen also ends a customer's language pick
+		// (ut-docs#4200): the idle timeout, the confirmation screen's
+		// auto-return and Back all land here, and the next customer must
+		// meet the shop's language. A table-QR landing (?table=) keeps it —
+		// that is the guest's own phone, and the idle reset brings them
+		// back to this same URL mid-meal. Keyed on bound, the basket
+		// reset's own predicate: a ?table= that binds nothing (unknown or
+		// disabled table) is the walk-up path here too.
+		if !bound {
+			if _, err := r.Cookie(httpx.SelfOrderLocaleCookie); err == nil {
+				httpx.ClearSelfOrderLocale(w)
+				// This response must render in the shop's language too,
+				// not the pick the request still carries.
+				r = withoutSelfOrderLocale(r)
+			}
+		}
+		locale := httpx.RequestLocale(r)
 		st := d.CurrentState()
 		httpx.RenderPartial("ui/pages/self_order.html", map[string]any{
-			"title":         httpx.T(httpx.RequestLocale(r), "page.title.self_order"),
+			"title":         httpx.T(locale, "page.title.self_order"),
 			"idleResetSecs": st.KioskIdleResetSeconds,
 			"shopName":      kioskShopName(r.Context(), d),
+			"languages":     selfOrderLanguages(locale),
 		})(w, r)
 	})
+
+	// GET /self-order/language?code=<locale> — the start screen's language
+	// picker (ut-docs#4200). One tap starts the order in that language;
+	// the pick lives in a browser-session cookie that only the self-order
+	// routes read (httpx.SelfOrderLocaleCookie). Auth-exempt like the rest
+	// of /self-order/*, so the code is checked against the installed
+	// languages and anything else is dropped. A GET link, not a form: the
+	// only state it changes is the visitor's own cookie.
+	mux.HandleFunc("GET /self-order/language", func(w http.ResponseWriter, r *http.Request) {
+		code := r.URL.Query().Get("code")
+		if !httpx.InstalledLocale(code) {
+			http.Redirect(w, r, "/self-order", http.StatusSeeOther)
+			return
+		}
+		if baseLang(code) == baseLang(httpx.DefaultLocale()) {
+			// The shop's own language: drop the pick rather than store the
+			// bare tag (en for an en-GB shop), so money and number
+			// formatting keep the shop's regional tag.
+			httpx.ClearSelfOrderLocale(w)
+		} else {
+			httpx.WriteSelfOrderLocale(w, code)
+		}
+		http.Redirect(w, r, "/self-order/shop", http.StatusSeeOther)
+	})
+}
+
+// selfOrderLanguage is one start-screen picker button.
+type selfOrderLanguage struct {
+	Code       string
+	NativeName string
+	Current    bool
+}
+
+// selfOrderLanguages lists every installed language by its own name, for
+// the start screen's picker (ut-docs#4200). nil with fewer than two: there
+// is nothing to pick. No flags — a flag names a country, not a language.
+func selfOrderLanguages(current string) []selfOrderLanguage {
+	codes := httpx.AvailableLocales()
+	if len(codes) < 2 {
+		return nil
+	}
+	// The shop's language is often a regional tag (en-GB) while installed
+	// codes are bare (en): mark the exact match, else the first code with
+	// the same base language — installedLocaleFor's rule, from the other
+	// side.
+	mark := slices.Index(codes, current)
+	if mark < 0 {
+		mark = slices.IndexFunc(codes, func(c string) bool { return baseLang(c) == baseLang(current) })
+	}
+	out := make([]selfOrderLanguage, 0, len(codes))
+	for i, c := range codes {
+		out = append(out, selfOrderLanguage{Code: c, NativeName: httpx.NativeLanguageName(c), Current: i == mark})
+	}
+	return out
+}
+
+// withoutSelfOrderLocale is r minus its ut_self_order_lang cookie, for the
+// response that clears it.
+func withoutSelfOrderLocale(r *http.Request) *http.Request {
+	r2 := r.Clone(r.Context())
+	r2.Header.Del("Cookie")
+	for _, c := range r.Cookies() {
+		if c.Name != httpx.SelfOrderLocaleCookie {
+			r2.AddCookie(c)
+		}
+	}
+	return r2
 }
 
 // kioskShopName is the name the kiosk header shows: store.name read live
