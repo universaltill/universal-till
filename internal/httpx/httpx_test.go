@@ -257,11 +257,57 @@ func TestFuncsForExposesDateTime(t *testing.T) {
 	if got := dtUTCFn("2026-09-25 16:59:38"); got != "25.09.2026 16:59" {
 		t.Errorf("datetimeUTC(sqlite layout) = %q, want 25.09.2026 16:59", got)
 	}
-	if got := dtFn("2026-09-05"); got != "2026-09-05" {
-		t.Errorf("datetime(non-RFC3339) = %q, want the raw string back", got)
+	if got := dtFn("not-a-date"); got != "not-a-date" {
+		t.Errorf("datetime(garbage) = %q, want the raw string back", got)
 	}
 	if got := dtUTCFn("2026-09-05"); got != "2026-09-05" {
 		t.Errorf("datetimeUTC(non-RFC3339) = %q, want the raw string back", got)
+	}
+}
+
+// ut-docs#4691: a legacy bare YYYY-MM-DD period renders as a localized
+// calendar date (no clock, no time-zone shift), next to timestamps that
+// render with FormatDateTime.
+func TestFuncsForDateTimeBareDate_4691(t *testing.T) {
+	InitI18n(realI18n(t), "en")
+
+	la, err := time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+	orig := time.Local
+	time.Local = la
+	t.Cleanup(func() { time.Local = orig })
+
+	want := map[string]string{"fa": "۰۳/۰۸/۲۰۲۶", "de-DE": "03.08.2026", "en-US": "08/03/2026"}
+	for loc, w := range want {
+		dtFn, ok := FuncsFor(loc)["datetime"].(func(any) string)
+		if !ok {
+			t.Fatalf("datetime helper not found")
+		}
+		if got := dtFn("2026-08-03"); got != w {
+			t.Errorf("%s: datetime(bare date) = %q, want %q (no clock, day unshifted)", loc, got, w)
+		}
+		if got := dtFn(" 2026-08-03 "); got != w {
+			t.Errorf("%s: datetime(padded bare date) = %q, want %q", loc, got, w)
+		}
+		if got := dtFn("not-a-date"); got != "not-a-date" {
+			t.Errorf("%s: datetime(garbage) = %q, want raw string back", loc, got)
+		}
+	}
+
+	dtFn := FuncsFor("de-DE")["datetime"].(func(any) string)
+	if got := dtFn("2026-08-03T18:05:00Z"); got != "03.08.2026 11:05" {
+		t.Errorf("datetime(RFC3339) = %q, want 03.08.2026 11:05 (local, with clock)", got)
+	}
+
+	if d, ok := ParseStoredDate("2026-08-03"); !ok || d.Day() != 3 || d.Location() != time.UTC {
+		t.Errorf("ParseStoredDate = %v, %v", d, ok)
+	}
+	for _, bad := range []string{"", "2026-8-3", "2026-08-03T00:00:00Z", "2026-13-40"} {
+		if _, ok := ParseStoredDate(bad); ok {
+			t.Errorf("ParseStoredDate(%q) ok, want false", bad)
+		}
 	}
 }
 

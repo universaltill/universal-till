@@ -82,6 +82,19 @@ func ParseStoredTime(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
+// ParseStoredDate parses a bare calendar date "2006-01-02" (what a legacy
+// report_archive "eod" period holds) as midnight UTC. It is deliberately
+// separate from ParseStoredTime: a date has no instant or clock, so callers
+// render it with FormatDate and no Local() conversion, and the timestamp
+// helpers never show a fake "00:00" (ut-docs#4691).
+func ParseStoredDate(s string) (time.Time, bool) {
+	t, err := time.Parse("2006-01-02", strings.TrimSpace(s))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
 // FormatShortDateTime renders t as a bare 24-hour clock when it falls on
 // now's calendar day (both compared in t's own location), else as
 // FormatDateTime — for a status chip where "since 14:05" says it and a
