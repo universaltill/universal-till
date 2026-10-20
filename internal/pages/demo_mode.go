@@ -343,6 +343,7 @@ var demoDeniedRoutes = map[string]bool{
 	"GET /o/{token}":                           true,
 	"GET /o/{token}/status":                    true,
 	"GET /self-order":                          true,
+	"GET /self-order/language":                 true, // ut-docs#4200: kiosk language picker
 	"GET /self-order/shop":                     true,
 	"POST /api/self-order/checkout":            true,
 	"POST /api/self-order/line":                true,

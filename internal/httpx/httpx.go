@@ -895,6 +895,11 @@ func RequestLocale(r *http.Request) string {
 	if lang := r.URL.Query().Get("lang"); lang != "" {
 		return lang
 	}
+	// a self-order kiosk customer's pick, on the self-order routes only
+	// (ut-docs#4200)
+	if lang, ok := selfOrderLocale(r); ok {
+		return lang
+	}
 	// cookie — only while it is still a live preference, not a stale one
 	// (ut-docs#2135)
 	if lang, ok := LocaleOverride(r); ok {
