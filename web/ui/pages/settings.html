@@ -1675,7 +1675,10 @@
     {{ if eq .reportArchiveCoverage.Count 0 }}
     {{ T "settings.retention.coverage_none" }}
     {{ else }}
-    {{ T "settings.retention.coverage_label" }}: {{ .reportArchiveCoverage.Earliest }} – {{ .reportArchiveCoverage.Latest }} ({{ .reportArchiveCoverage.Count }})
+    {{/* Each stamp is LTR-isolated so an RTL locale keeps earliest – latest
+         readable and in order; `datetime` localizes it and leaves a
+         non-timestamp period verbatim (ut-docs#3566). */}}
+    {{ T "settings.retention.coverage_label" }}: <bdi dir="ltr" data-testid="retention-coverage-earliest">{{ datetime .reportArchiveCoverage.Earliest }}</bdi> – <bdi dir="ltr" data-testid="retention-coverage-latest">{{ datetime .reportArchiveCoverage.Latest }}</bdi> ({{ .reportArchiveCoverage.Count }})
     {{ end }}
   </p>
 

@@ -78,25 +78,6 @@
     },
     {
       "locale": "ar",
-      "topic": "order-status",
-      "signature": {
-        "headings": 4,
-        "numbered_steps": 7,
-        "sub_bullets": 0,
-        "top_bullets": 5,
-        "bold_leadins": 1
-      },
-      "english": {
-        "headings": 4,
-        "numbered_steps": 8,
-        "sub_bullets": 0,
-        "top_bullets": 5,
-        "bold_leadins": 1
-      },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
-    },
-    {
-      "locale": "ar",
       "topic": "payments",
       "signature": {
         "headings": 3,
@@ -382,25 +363,6 @@
     },
     {
       "locale": "fa",
-      "topic": "order-status",
-      "signature": {
-        "headings": 4,
-        "numbered_steps": 7,
-        "sub_bullets": 0,
-        "top_bullets": 5,
-        "bold_leadins": 2
-      },
-      "english": {
-        "headings": 4,
-        "numbered_steps": 8,
-        "sub_bullets": 0,
-        "top_bullets": 5,
-        "bold_leadins": 1
-      },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
-    },
-    {
-      "locale": "fa",
       "topic": "payments",
       "signature": {
         "headings": 3,
@@ -664,25 +626,6 @@
         "bold_leadins": 0
       },
       "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#3319: English and every locale gained one section (heading +1, top bullets +4, no bold lead-ins) on renaming, editing, deactivating and deleting a set; the pre-existing bold_leadins gap is unchanged, just shifted (headings 3->4, top_bullets 4->8). Updated ut-docs#4163: English and this locale gained one top-level bullet in lockstep (the 100-variant cap; top_bullets 8->9 / 8->9); the pre-existing bold_leadins gap is unchanged."
-    },
-    {
-      "locale": "tr",
-      "topic": "order-status",
-      "signature": {
-        "headings": 4,
-        "numbered_steps": 7,
-        "sub_bullets": 0,
-        "top_bullets": 5,
-        "bold_leadins": 2
-      },
-      "english": {
-        "headings": 4,
-        "numbered_steps": 8,
-        "sub_bullets": 0,
-        "top_bullets": 5,
-        "bold_leadins": 1
-      },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
     },
     {
       "locale": "tr",
