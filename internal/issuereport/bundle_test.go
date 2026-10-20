@@ -626,3 +626,93 @@ func TestSaveWritesRedactedLogsToMeta(t *testing.T) {
 		}
 	}
 }
+
+// mp4Audio is the start of a real ISO-BMFF file as iOS < 26 WKWebView's
+// MediaRecorder produces it: a 4-byte box size then "ftyp" (ut-docs#3416).
+var mp4Audio = []byte("\x00\x00\x00\x1cftypM4A \x00\x00\x00\x00M4A isommp42fake-aac")
+
+// webmAudio starts with the EBML magic every WebM recording carries.
+var webmAudio = []byte("\x1a\x45\xdf\xa3fake-opus")
+
+func TestAudioFileNameSniffsContainer(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []byte
+		want string
+	}{
+		{"mp4", mp4Audio, "audio.m4a"},
+		{"webm", webmAudio, "audio.webm"},
+		{"opaque", []byte("fake-audio"), "audio.webm"},
+		{"too short", []byte("\x00\x00\x00\x1cfty"), "audio.webm"},
+		{"ftyp at wrong offset", []byte("ftyp\x00\x00\x00\x00"), "audio.webm"},
+		{"empty", nil, "audio.webm"},
+	}
+	for _, tc := range cases {
+		if got := AudioFileName(tc.in); got != tc.want {
+			t.Errorf("%s: AudioFileName = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// ut-docs#3416: an MP4 voice note is stored as audio.m4a (by content, not by
+// any client-supplied name) and Pending() finds it.
+func TestSaveMP4AudioWritesM4AAndPendingFindsIt(t *testing.T) {
+	withTempPendingDir(t)
+	id, err := Save("", "", mp4Audio, nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	dir := filepath.Join(PendingDir, id)
+	if _, err := os.Stat(filepath.Join(dir, "audio.m4a")); err != nil {
+		t.Fatalf("audio.m4a not written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "audio.webm")); !os.IsNotExist(err) {
+		t.Fatalf("audio.webm must not exist for an MP4 voice note (stat err %v)", err)
+	}
+	bundles, err := Pending()
+	if err != nil || len(bundles) != 1 {
+		t.Fatalf("Pending = %v, %v; want 1 bundle", bundles, err)
+	}
+	if want := filepath.Join(dir, "audio.m4a"); bundles[0].AudioPath != want {
+		t.Fatalf("AudioPath = %q, want %q", bundles[0].AudioPath, want)
+	}
+}
+
+func TestSaveWebMAudioStillWritesWebM(t *testing.T) {
+	withTempPendingDir(t)
+	id, err := Save("", "", webmAudio, nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	dir := filepath.Join(PendingDir, id)
+	if _, err := os.Stat(filepath.Join(dir, "audio.m4a")); !os.IsNotExist(err) {
+		t.Fatalf("audio.m4a must not exist for a WebM voice note (stat err %v)", err)
+	}
+	bundles, err := Pending()
+	if err != nil || len(bundles) != 1 {
+		t.Fatalf("Pending = %v, %v; want 1 bundle", bundles, err)
+	}
+	if want := filepath.Join(dir, "audio.webm"); bundles[0].AudioPath != want {
+		t.Fatalf("AudioPath = %q, want %q", bundles[0].AudioPath, want)
+	}
+}
+
+// If both somehow exist, Pending() is deterministic: audio.webm wins.
+func TestPendingPrefersWebMWhenBothAudioFilesExist(t *testing.T) {
+	withTempPendingDir(t)
+	id, err := Save("", "", webmAudio, nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	dir := filepath.Join(PendingDir, id)
+	if err := os.WriteFile(filepath.Join(dir, "audio.m4a"), mp4Audio, 0o644); err != nil {
+		t.Fatalf("plant audio.m4a: %v", err)
+	}
+	bundles, err := Pending()
+	if err != nil || len(bundles) != 1 {
+		t.Fatalf("Pending = %v, %v; want 1 bundle", bundles, err)
+	}
+	if want := filepath.Join(dir, "audio.webm"); bundles[0].AudioPath != want {
+		t.Fatalf("AudioPath = %q, want %q", bundles[0].AudioPath, want)
+	}
+}

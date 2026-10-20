@@ -321,7 +321,9 @@ func uploadIssueReport(ctx context.Context, cfg *config.Config, b issuereport.Bu
 	_ = w.WriteField("locale", b.Meta.Locale)
 	_ = w.WriteField("created_at", b.Meta.CreatedAt.Format("2006-01-02T15:04:05.000000000Z07:00"))
 	if b.AudioPath != "" {
-		if err := attachFile(w, "audio", "audio.webm", b.AudioPath); err != nil {
+		// audio.webm or audio.m4a (iOS MP4, ut-docs#3416) — the stored
+		// name already reflects the sniffed container.
+		if err := attachFile(w, "audio", filepath.Base(b.AudioPath), b.AudioPath); err != nil {
 			return err
 		}
 	}
