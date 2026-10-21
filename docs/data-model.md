@@ -86,6 +86,14 @@ as `CODE128` so internal PLU/keypad codes remain supported.
   `sync.no_sale_push_cursor`), where they are stored with `till_id` = the
   reporting till's `tills.id`, so the main till's rollup counts every
   till's opens once (ut-docs#3562)
+- `cleared_baskets` — live baskets cleared with New sale before any tender
+  (ut-docs#1122; migration 086, with its `cleared_baskets_archive` reset
+  twin); the Z report's CLEARED BEFORE PAYMENT count and total. A replica
+  journals its own clears to the main till over LAN sync D3
+  (`POST /api/sync/cleared-baskets`, cursor
+  `sync.cleared_basket_push_cursor`), where they are stored with `till_id` =
+  the reporting till's `tills.id`, so the main till's report counts every
+  till's clears once (ut-docs#4711)
 
 ### 5. Shifts & audit
 
