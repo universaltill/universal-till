@@ -4,8 +4,7 @@
 entry is matched against) and `catimport.Parse` read the first record's
 separator, comma, semicolon or tab, whichever is most frequent outside
 quotes (tie or none: comma). `Parse` also drops a UTF-8 BOM before reading,
-so a BOM in front of a quoted header no longer fails. Help topic
-`catalog.md` (en, de, tr) says a German Excel CSV needs no conversion.
+so a BOM in front of a quoted header no longer fails.
 
 **Why:** the real Epos Now product export is `;`-separated. Read with the
 default comma, its header was one field, so no plugin could claim the file
@@ -27,13 +26,18 @@ reachable now that `;` Excel files arrive here). An error from `Peek` is
 deliberately ignored; the next `Read` retries the reader.
 
 **Verified:** `go test ./...` in `catimport`; `go build ./...`, and
-`go test` of `internal/catsync`, `internal/plugins` and `internal/pages`;
-`guard-help-topics.sh`, `guard-help-drift.sh`. The Epos Now plugin's
+`go test` of `internal/catsync`, `internal/plugins` and `internal/pages`. The Epos Now plugin's
 invented fixture is claimed by its manifest headers through the real
 `HeaderRow`/`HeadersClaim`.
 
 **Not verified:** ut-cloud's import job (it picks this up on its next
-`catimport` bump); help text in ar/fa (not edited, same structure).
+`catimport` bump).
+
+**Deferred (manual):** a one-sentence note in the `catalog` help topic (en,
+de, tr) that a German Excel CSV needs no conversion was written and then
+taken out of this PR: the topic has screenshots, the freshness guard then
+requires `make docs-shots`, and that harness pins Linux fonts (it fails on
+macOS). Follow-up card: add the note and regenerate the screenshots on Linux.
 
 **Verdict:** safe to merge. Release note: the Epos Now plugin's
 `min_pos_version` is the first till release that carries this change.
