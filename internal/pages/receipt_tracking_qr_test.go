@@ -243,7 +243,7 @@ func TestRenderReceipt_TrackingQRBlock(t *testing.T) {
 	funcs := httpx.FuncsFor("en")
 	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 100}}
 	view := &receiptTrackingView{QRDataURI: "data:image/png;base64,AAAA", URL: "http://192.168.1.20:8080/o/abc?lang=en"}
-	html, err := renderReceipt(funcs, "123", lines, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{}, "", nil, "", nil, view, "")
+	html, err := renderReceipt(funcs, "123", lines, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{}, "", nil, "", nil, view, "", "en")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestRenderReceipt_TrackingQRBlock(t *testing.T) {
 	if !strings.Contains(html, httpx.T("en", "receipt.tracking.caption")) {
 		t.Fatal("expected the tracking caption")
 	}
-	html, err = renderReceipt(funcs, "123", lines, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{}, "", nil, "", nil, nil, "")
+	html, err = renderReceipt(funcs, "123", lines, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{}, "", nil, "", nil, nil, "", "en")
 	if err != nil {
 		t.Fatal(err)
 	}
