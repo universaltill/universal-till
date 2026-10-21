@@ -455,3 +455,119 @@ func TestRun_NameAllowsZWNJButNotBidiOverride(t *testing.T) {
 	bidi := `{"external_id":"z-2","name":"abc‮def","price_minor":100,"active":true}`
 	wantCounts(t, run(t, sqlDB, true, zwnj, bidi), 1, 0, 0, 1)
 }
+
+// runAs is run with the link source (and legacy fallback) chosen by the test.
+func runAs(t *testing.T, sqlDB *sql.DB, source, legacy string, commit bool, rr ...string) Result {
+	t.Helper()
+	o := opts(t, sqlDB, commit)
+	o.Source, o.LegacySource = source, legacy
+	res, err := Run(context.Background(), sqlDB, rows(t, rr...), o)
+	if err != nil {
+		t.Fatalf("Run(%s, commit=%v): %v", source, commit, err)
+	}
+	return res
+}
+
+func linkUnder(t *testing.T, sqlDB *sql.DB, source, ext string) (string, bool) {
+	t.Helper()
+	id, ok, err := data.NewImportSourceLinkRepo().LocalID(context.Background(), sqlDB, source, "items", ext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id, ok
+}
+
+// ut-docs#4727: two link sources (two entries of one plugin) use different
+// external-id schemes; the second matches the first's item by barcode and
+// adds its own link, and the first keeps working afterwards.
+func TestRun_TwoSourcesShareItemByBarcode(t *testing.T) {
+	sqlDB := openDB(t)
+	const a, b = "plug#api", "plug#file"
+	rowA := `{"external_id":"123","name":"Flat white","barcodes":["5000000000017"],"price_minor":320}`
+	rowB := `{"external_id":"bc:5000000000017","name":"Flat white","barcodes":["5000000000017"],"price_minor":320}`
+	wantCounts(t, runAs(t, sqlDB, a, "", true, rowA), 1, 0, 0, 0)
+	idA, _ := linkUnder(t, sqlDB, a, "123")
+
+	res := runAs(t, sqlDB, b, "", true, rowB)
+	if res.Issues != 0 || res.New != 0 {
+		t.Fatalf("second source: %+v", res)
+	}
+	if idB, ok := linkUnder(t, sqlDB, b, "bc:5000000000017"); !ok || idB != idA {
+		t.Fatalf("B link = %q,%v want %q", idB, ok, idA)
+	}
+	if n := count(t, sqlDB, `SELECT COUNT(*) FROM items`); n != 1 {
+		t.Fatalf("items = %d, want 1", n)
+	}
+	changedA := strings.Replace(rowA, "320", "350", 1)
+	res = runAs(t, sqlDB, a, "", true, changedA)
+	wantCounts(t, res, 0, 1, 0, 0)
+	wantCounts(t, runAs(t, sqlDB, a, "", true, changedA), 0, 0, 1, 0)
+	wantCounts(t, runAs(t, sqlDB, b, "", true, strings.Replace(rowB, "320", "350", 1)), 0, 0, 1, 0)
+	if n := count(t, sqlDB, `SELECT COUNT(*) FROM items`); n != 1 {
+		t.Fatalf("items = %d, want 1", n)
+	}
+}
+
+// A link written before the per-entry source (bare plugin id) counts as
+// linked under the new source, even for a row with no barcode or SKU, and
+// is re-stamped under the new source on commit.
+func TestRun_LegacySourceLinkIsAdopted(t *testing.T) {
+	const legacy, src = "plug", "plug#api"
+	for _, tc := range []struct {
+		name    string
+		changed bool
+	}{{"changed", true}, {"unchanged", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			sqlDB := openDB(t)
+			row := `{"external_id":"123","name":"Loose item","price_minor":100}`
+			wantCounts(t, runAs(t, sqlDB, legacy, "", true, row), 1, 0, 0, 0)
+			id, _ := linkUnder(t, sqlDB, legacy, "123")
+			next := row
+			if tc.changed {
+				next = strings.Replace(row, "100", "120", 1)
+			}
+
+			// Preview: adopts, writes no link.
+			prev := runAs(t, sqlDB, src, legacy, false, next)
+			if prev.New != 0 || prev.Issues != 0 {
+				t.Fatalf("preview: %+v", prev)
+			}
+			if _, ok := linkUnder(t, sqlDB, src, "123"); ok {
+				t.Fatal("preview wrote a link")
+			}
+
+			res := runAs(t, sqlDB, src, legacy, true, next)
+			if res.New != 0 || res.Issues != 0 {
+				t.Fatalf("commit: %+v", res)
+			}
+			if got, ok := linkUnder(t, sqlDB, src, "123"); !ok || got != id {
+				t.Fatalf("new link = %q,%v want %q", got, ok, id)
+			}
+			if _, ok := linkUnder(t, sqlDB, legacy, "123"); !ok {
+				t.Fatal("legacy link was removed")
+			}
+			if n := count(t, sqlDB, `SELECT COUNT(*) FROM items`); n != 1 {
+				t.Fatalf("items = %d, want 1", n)
+			}
+			// Now linked under the new source: plain unchanged.
+			wantCounts(t, runAs(t, sqlDB, src, legacy, true, next), 0, 0, 1, 0)
+		})
+	}
+}
+
+// The legacy fallback never feeds the linked-elsewhere refusal: a bare link
+// from a different external id does not block a barcode match.
+func TestRun_LegacyLinkNeverLinkedElsewhere(t *testing.T) {
+	sqlDB := openDB(t)
+	const legacy, src = "plug", "plug#file"
+	wantCounts(t, runAs(t, sqlDB, legacy, "", true,
+		`{"external_id":"123","name":"Flat white","barcodes":["5000000000017"],"price_minor":320}`), 1, 0, 0, 0)
+	res := runAs(t, sqlDB, src, legacy, true,
+		`{"external_id":"bc:5000000000017","name":"Flat white","barcodes":["5000000000017"],"price_minor":320}`)
+	if res.Issues != 0 || res.New != 0 {
+		t.Fatalf("res = %+v", res)
+	}
+	if n := count(t, sqlDB, `SELECT COUNT(*) FROM items`); n != 1 {
+		t.Fatalf("items = %d, want 1", n)
+	}
+}
