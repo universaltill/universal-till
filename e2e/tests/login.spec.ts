@@ -177,7 +177,9 @@ test.describe.serial('first-boot setup and PIN login', () => {
       // No native <select> anywhere in the wizard — the whole point of
       // ut-docs#1095. Checked page-wide, not just within the two touched
       // steps, so a regression anywhere in the document is caught.
-      await expect(p.locator('select')).toHaveCount(0);
+      // ut-docs#4731: the one deliberate exception is step 1's language
+      // drop-down (owner decision); country and shop type stay tiles.
+      await expect(p.locator('select:not(#setup-language)')).toHaveCount(0);
 
       await p.locator('[data-step="1"] .setup-nav button', { hasText: 'Next' }).click();
 
