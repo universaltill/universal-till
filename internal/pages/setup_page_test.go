@@ -880,6 +880,38 @@ func TestSetupWizardLanguageStepShowsNativeNamesNotBareCodes(t *testing.T) {
 	}
 }
 
+// ut-docs#4731: step 1's language choice is a drop-down, not a row of
+// buttons, and the till's current locale (the system language on a first
+// run) is the preselected option.
+func TestSetupWizardLanguageStepIsADropDownWithCurrentLocaleSelected(t *testing.T) {
+	withOSLocale(t, "", "")
+	mux, _, _ := newFullAuthDeps(t)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/setup?lang=tr", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup?lang=tr: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	if !strings.Contains(body, `id="setup-language"`) {
+		t.Fatal("setup step 1 has no #setup-language drop-down")
+	}
+	if !regexp.MustCompile(`<option value="tr" selected>Türkçe</option>`).MatchString(body) {
+		t.Error("the current locale (tr) is not the preselected option")
+	}
+	// A locale that isn't bundled (and has no pack yet) must not leave the
+	// browser to preselect the first option (ar): English is the fallback.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/setup?lang=zz", nil))
+	if !strings.Contains(rec.Body.String(), `<option value="en" selected>`) {
+		t.Error("an unsupported locale does not fall back to a preselected English option")
+	}
+	if regexp.MustCompile(`class="btn[^"]*" href="/setup\?lang=`).MatchString(body) {
+		t.Error("setup step 1 still renders language buttons next to the drop-down")
+	}
+}
+
 // The manual pairing-code textbox's placeholder used to be the raw wire
 // shape (`{"token":"…","url":"http://…"}`) — a shop owner is never going to
 // hand-type or recognise that, and the screen's own copy already says

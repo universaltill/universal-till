@@ -5088,6 +5088,8 @@ body.login-screen {
 .setup-dot { inline-size: .6rem; block-size: .6rem; border-radius: 50%; background: var(--border); }
 .setup-dot.active { background: var(--accent); }
 .setup-langs { display: flex; gap: .5rem; justify-content: center; flex-wrap: wrap; }
+/* ut-docs#4731: the language drop-down; a full-size touch target. */
+.setup-language-select { min-width: min(18rem, 100%); min-height: 2.75rem; font-size: 1.05rem; }
 /* ut-docs#1180: the wizard's optional tax-plugin install prompt (step 3,
    Germany today). A subtle well inside the step so it reads as an aside to
    the business-details form rather than another field of it — the shipped

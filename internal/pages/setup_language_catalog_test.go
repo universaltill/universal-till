@@ -228,7 +228,7 @@ func TestSetupWizardCatalogUnreachableRendersBundledOnly(t *testing.T) {
 		t.Error(`missing the "more languages available once connected" note`)
 	}
 	// The bundled tiles are untouched.
-	if !strings.Contains(body, `href="/setup?lang=tr"`) {
+	if !strings.Contains(body, `<option value="tr"`) {
 		t.Error("bundled locale tiles must still render when the catalog is unreachable")
 	}
 }
@@ -255,13 +255,18 @@ func TestSetupWizardDedupsCatalogLocalesAlreadyBundled(t *testing.T) {
 	if !strings.Contains(body, `name="locale" value="de"`) {
 		t.Error("the genuinely-new de listing should have an install tile")
 	}
+	// ut-docs#4731: the drop-down option and the install form it submits are
+	// tied by this pair of ids; a typo in either only shows in a browser.
+	if !strings.Contains(body, `data-install-locale="de"`) || !strings.Contains(body, `id="lang-install-de"`) {
+		t.Error("the de catalog option and its #lang-install-de form must both render")
+	}
 	if strings.Contains(body, `name="locale" value="tr"`) {
 		t.Error("a catalog locale already bundled (tr) must not get a duplicate install tile")
 	}
 	if strings.Contains(body, `name="locale" value="es"`) {
 		t.Error("a non-language listing must never produce an install tile")
 	}
-	if !strings.Contains(body, `href="/setup?lang=tr"`) {
+	if !strings.Contains(body, `<option value="tr"`) {
 		t.Error("the bundled tr tile itself must stay")
 	}
 }

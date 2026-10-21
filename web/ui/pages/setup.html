@@ -96,26 +96,34 @@
           {{ if .installPendingLang }}
             <p class="muted" data-install-pending="{{ .installPendingLang }}">{{ printf (T "setup.language.install_pending") .installPendingLang (locale) }}</p>
           {{ end }}
-          <div class="setup-langs">
+          <div class="setup-langs" x-data="{ pick: '' }">
             {{ $current := locale }}
-            <!-- ut-docs#1125: native name (via nativelocalename), never the
-                 bare code — a non-technical shop owner doesn't know "fa" is
-                 فارسی. Deliberately no flag: a language isn't a country
-                 (research recorded on the ticket), and it's the same choice
-                 the marketplace catalog tiles below already made. -->
-            {{ range locales }}
-              <a class="btn{{ if eq . $current }} primary{{ end }}" href="/setup?lang={{ . }}">{{ nativelocalename . }}</a>
-            {{ end }}
-            <!-- ut-docs#1092: marketplace catalog languages not bundled yet.
-                 Each button submits its own plain POST form (this wizard is
-                 plain multi-page navigation, no htmx swaps) — the forms
-                 themselves live AFTER the wizard's main </form>, referenced
-                 via the button's form= attribute, because a <form> nested
-                 inside the wizard form would be dropped by the HTML parser
-                 and the button would submit the wizard instead. -->
-            {{ range .installableLangs }}
-              <button type="submit" class="btn setup-lang-install-btn" form="lang-install-{{ .Locale }}" data-install-locale="{{ .Locale }}">{{ .NativeName }}</button>
-            {{ end }}
+            <!-- ut-docs#4731: one drop-down, the till's current locale (the
+                 system language on a first run) preselected. No name=, so
+                 the wizard's own POST never carries it. Bundled locales
+                 reload /setup in that language; a catalog language
+                 (data-install-locale) submits its own install form, which
+                 lives AFTER the wizard's </form> (a nested form would be
+                 dropped by the HTML parser). ut-docs#1125: native names,
+                 never bare codes, no flags. -->
+            <select id="setup-language" class="setup-language-select" aria-label="{{ T "setup.language.title" }}"
+                    @change="const o = $event.target.selectedOptions[0]; pick = o.dataset.installLocale || ''; if (!pick) window.location.assign('/setup?lang=' + encodeURIComponent(o.value))">
+              {{ $hit := false }}{{ range locales }}{{ if eq . $current }}{{ $hit = true }}{{ end }}{{ end }}
+              {{ range locales }}
+                <option value="{{ . }}"{{ if or (eq . $current) (and (not $hit) (eq . "en")) }} selected{{ end }}>{{ nativelocalename . }}</option>
+              {{ end }}
+              <!-- ut-docs#1092: marketplace catalog languages not bundled yet. -->
+              {{ if .installableLangs }}
+                <optgroup label="{{ T "settings.language.download_group" }}">
+                  {{ range .installableLangs }}
+                    <option value="{{ .Locale }}" data-install-locale="{{ .Locale }}">{{ .NativeName }}</option>
+                  {{ end }}
+                </optgroup>
+              {{ end }}
+            </select>
+            <!-- A catalog language downloads only on an explicit press, never
+                 on a keyboard arrow landing on it (WCAG 3.2.2). -->
+            <button type="button" class="btn" data-lang-apply x-show="pick" x-cloak @click="document.getElementById('lang-install-' + pick).requestSubmit()">{{ T "settings.language.apply" }}</button>
           </div>
           {{ if .installableLangs }}
             <p class="muted">{{ T "setup.language.downloads_on_select" }}</p>
@@ -394,8 +402,8 @@
 
       <!-- ut-docs#1092: the install forms behind step 1's catalog-language
            buttons. Outside the wizard's own <form> on purpose (nested forms
-           are dropped by the HTML parser); each step-1 button targets its
-           form via the form= attribute. locale is all the handler needs — it
+           are dropped by the HTML parser); step 1's Apply button (#4731)
+           submits the form picked in the drop-down. locale is all the handler needs — it
            re-resolves the listing through the same server-side catalog cache,
            so the body can't pick an arbitrary listing. -->
       {{ range .installableLangs }}
@@ -403,8 +411,7 @@
            gap:.9rem` (app.css), so each of these empty forms would otherwise
            be a zero-height flex ITEM contributing a full .9rem gap of dead
            space under the wizard — once per catalog language, growing as the
-           catalog does. display:none does not affect submission: the visible
-           step-1 button owns this form via its form= attribute. -->
+           catalog does. display:none does not affect submission. -->
       <form method="post" action="/api/setup/language" id="lang-install-{{ .Locale }}" class="setup-lang-install" hidden>
         <input type="hidden" name="locale" value="{{ .Locale }}">
       </form>
@@ -566,7 +573,7 @@
         var T = { installing: "{{ T "setup.language.installing" }}" };
         document.querySelectorAll('form.setup-lang-install').forEach(function (f) {
           f.addEventListener('submit', function () {
-            var btn = document.querySelector('button[form="' + f.id + '"]');
+            var btn = document.querySelector('[data-lang-apply]');
             if (btn) { btn.disabled = true; btn.textContent = T.installing; }
           });
         });
