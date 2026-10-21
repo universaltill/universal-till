@@ -276,7 +276,7 @@
     <div class="receipt-ask" id="receipt-ask" role="group" aria-label="{{ T "receipt.ask.title" }}">
       <div class="receipt-ask-title">{{ T "receipt.ask.title" }}</div>
       <div class="receipt-ask-actions">
-        <button class="btn primary" type="button" data-action="receipt-ask-print:{{ .ReceiptNo }}">{{ T "receipt.ask.paper" }}</button>
+        <button class="btn primary" type="button" data-action="receipt-ask-print:{{ .ReceiptNo }}"{{ with .CustomerLocale }} data-customer-locale="{{ . }}"{{ end }}>{{ T "receipt.ask.paper" }}</button>
         <button class="btn secondary" type="button" data-action="hide:receipt-ask">{{ T "receipt.ask.none" }}</button>
       </div>
     </div>
@@ -287,7 +287,7 @@
          on it. In a suppressed market this partial is not rendered at all
          (sale_recorded.html replaces it); this is defence in depth. */}}
     <div class="actions">
-      <button class="btn primary" data-action="receipt-print:{{ .ReceiptNo }}" data-done-text="✓ {{ T "receipt.print" }}">{{ T "receipt.print" }}</button>
+      <button class="btn primary" data-action="receipt-print:{{ .ReceiptNo }}"{{ with .CustomerLocale }} data-customer-locale="{{ . }}"{{ end }} data-done-text="✓ {{ T "receipt.print" }}">{{ T "receipt.print" }}</button>
       <button class="btn secondary" type="button" data-testid="receipt-new-customer"
               hx-get="/ui/basket" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">{{ T "receipt.new_customer" }}</button>
       <button class="btn secondary" data-action="go:/refund/{{ .ReceiptNo }}">↩ {{ T "refund.title" }}</button>
