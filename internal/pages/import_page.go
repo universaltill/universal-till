@@ -124,9 +124,15 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			"theme":            d.CurrentState().Theme,
 			"menuItems":        d.MenuSnapshot(),
 			"welcome":          welcome,
-			"showSampleCard":   sampleErr == nil,
-			"sampleItemCount":  sampleCount,
-			"sampleLoaded":     sampleLoaded,
+			// ADR-0166 §5: the pair-first wizard lands here with the first
+			// pull running; a status chip, never a modal.
+			"cloudSyncing": welcome && r.URL.Query().Get("syncing") == "1",
+			// The wizard's pairing did not complete: a visible note, never
+			// a claim that the shop is syncing.
+			"cloudPairFailed": welcome && r.URL.Query().Get("pairfail") == "1",
+			"showSampleCard":  sampleErr == nil,
+			"sampleItemCount": sampleCount,
+			"sampleLoaded":    sampleLoaded,
 			// ut-docs#3709 review S2: a satellite till cannot load sample
 			// data (POST /api/import/sample-data refuses it) — the card
 			// says to use the main till instead of offering the button.

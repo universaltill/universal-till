@@ -288,6 +288,8 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/setup/join":                      true,
 	"POST /api/setup/language":                  true,
 	"POST /api/setup/pair-start":                true,
+	"POST /api/setup/cloud-pair":                true, // ut-docs#4610: pairs a till with a cloud shop
+	"POST /api/setup/cloud-unpair":              true,
 	"POST /api/setup/pairing-restart":           true,
 	"POST /api/setup/tax-plugin":                true,
 	"POST /api/setup/tax-plugin-skip":           true,

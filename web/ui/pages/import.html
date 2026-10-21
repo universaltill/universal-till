@@ -30,6 +30,8 @@
      rendered inside the /items Import dialog (import_page.go). Nothing here
      autofocuses: no keyboard pops up on a touch till. -->
 <section class="card import-welcome" data-testid="import-welcome" aria-labelledby="import-welcome-title">
+  {{ if .cloudPairFailed }}<p class="muted" role="alert" data-testid="cloud-pair-incomplete">{{ T "setup.cloud.pair_incomplete" }}</p>{{ end }}
+  {{ if .cloudSyncing }}<p class="muted" role="status" data-testid="cloud-syncing-chip">{{ T "setup.cloud.syncing" }}</p>{{ end }}
   <h2 id="import-welcome-title">{{ T "import.welcome.title" }}</h2>
   <p class="muted">{{ T "import.welcome.intro" }}</p>
   <div class="import-welcome-grid">
