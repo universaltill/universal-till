@@ -18,6 +18,14 @@ rows := catimport.ToRows(res) // []catimport.Row, money in minor units
   to the same plugin (ADR-0164 §2). `NeutralHeader` names the columns the
   standard importer reads in any file; a `file_headers` claim must include
   one that is not neutral.
+- **Column mapping (ut-docs#4550):** `ParseMapped` / `ParseXLSXMapped`
+  take a `Mapping` (neutral field → the file's header, `""` = don't read
+  the field) for a **generic** file whose headers the synonyms don't know.
+  `MappableFields` lists the fields; `ValidateMapping` checks a mapping
+  against `HeaderRow`'s headers and answers a `*MappingError` with a
+  stable `MappingIssue*` code. A mapped column feeds only its mapped
+  field. A known export (Loyverse, Square, SumUp, Shopify) refuses a
+  mapping (`not_generic`). A nil mapping is `Parse` / `ParseXLSX`.
 - **Packages:** `catimport` (CSV/XLSX parsing, detection, `Row`/`ToRows`),
   `catimport/barcode` (the ADR-0059 symbology registry), and
   `catimport/catalogrules` (item types, the net-quantity rule).

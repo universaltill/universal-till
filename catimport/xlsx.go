@@ -331,6 +331,13 @@ func LooksLikeXLSXZip(r io.ReaderAt, size int64) bool {
 // export doesn't show a literal "'=FOO" — a CSV-round-trip concern that
 // doesn't apply to a third-party spreadsheet export.
 func ParseXLSX(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyIDs []string, useItemNumbersAsBarcodes bool) (Result, error) {
+	return ParseXLSXMapped(r, size, nil, currencyDecimals, enabledSymbologyIDs, useItemNumbersAsBarcodes)
+}
+
+// ParseXLSXMapped is ParseXLSX with the shop's column Mapping applied to a
+// generic workbook (ut-docs#4550), the same way ParseMapped applies it to
+// a CSV. The merged-cell check guards the mapped columns.
+func ParseXLSXMapped(r io.ReaderAt, size int64, m Mapping, currencyDecimals int, enabledSymbologyIDs []string, useItemNumbersAsBarcodes bool) (Result, error) {
 	f, err := excelize.OpenReader(io.NewSectionReader(r, 0, size), xlsxOpenOptions())
 	if err != nil {
 		return Result{}, fmt.Errorf("open xlsx: %w", err)
@@ -364,7 +371,10 @@ func ParseXLSX(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbology
 	if res.Format == FormatShopify {
 		return Result{}, ErrXLSXShopifyUnsupported
 	}
-	idx := headerIndex(headers)
+	idx, err := mappedIndex(headers, res.Format, m)
+	if err != nil {
+		return Result{}, err
+	}
 	if _, ok := idx["name"]; !ok {
 		return Result{}, ErrNoNameColumn
 	}
