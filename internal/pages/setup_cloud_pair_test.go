@@ -68,7 +68,7 @@ func cloudWizard(t *testing.T) (*http.ServeMux, *common.Deps, *cloudPairStub, st
 	d.Cfg.Marketplace.EndpointURL = srv.URL + "/api"
 	d.CloudSyncNow = make(chan struct{}, 1)
 	// Mints the wizard nonce, as the browser's first load does.
-	rec := getSetup(mux, "", "en")
+	rec := getSetup(mux, "?lang=en", "en")
 	m := regexp.MustCompile(`name="setup_nonce" value="([^"]+)"`).FindStringSubmatch(rec.Body.String())
 	if m == nil {
 		t.Fatalf("GET /setup renders no setup_nonce field:\n%s", rec.Body.String())
@@ -160,7 +160,7 @@ func TestCloudPairPersistsNothingAndReopensOnYourShop(t *testing.T) {
 	}
 	// A reload (or a redirect back to /setup) opens the Your shop step with
 	// the cloud's facts, and flags the form as cloud-paired.
-	html := getSetup(mux, "", "en").Body.String()
+	html := getSetup(mux, "?lang=en", "en").Body.String()
 	for _, want := range []string{"step: 8", "Cloud Cafe", `name="cloud_paired" value="1"`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("GET /setup with a held pairing lacks %q", want)
@@ -174,7 +174,7 @@ func TestCloudPairPersistsNothingAndReopensOnYourShop(t *testing.T) {
 
 func TestCloudPairNonceIsStableAcrossLoads(t *testing.T) {
 	mux, _, _, nonce := cloudWizard(t)
-	again := regexp.MustCompile(`name="setup_nonce" value="([^"]+)"`).FindStringSubmatch(getSetup(mux, "", "en").Body.String())
+	again := regexp.MustCompile(`name="setup_nonce" value="([^"]+)"`).FindStringSubmatch(getSetup(mux, "?lang=en", "en").Body.String())
 	if again == nil || again[1] != nonce {
 		t.Fatal("the nonce changed on a later GET /setup: the wizard's own redirects would lose a held pairing")
 	}
@@ -204,7 +204,7 @@ func TestCloudPairErrorsShownInPlace(t *testing.T) {
 		t.Errorf("store_has_till message lacks the last-seen date: %s", b)
 	}
 	// Nothing was held by any of those: GET /setup stays on step 1.
-	if html := getSetup(mux, "", "en").Body.String(); strings.Contains(html, "step: 8") {
+	if html := getSetup(mux, "?lang=en", "en").Body.String(); strings.Contains(html, "step: 8") {
 		t.Fatal("a refused pairing was held")
 	}
 }
@@ -238,7 +238,7 @@ func TestCloudUnpairDropsHeldPairing(t *testing.T) {
 	if rec.Header().Get("HX-Redirect") != "/setup" {
 		t.Fatalf("unpair: code=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if html := getSetup(mux, "", "en").Body.String(); strings.Contains(html, "step: 8") || strings.Contains(html, "Cloud Cafe") {
+	if html := getSetup(mux, "?lang=en", "en").Body.String(); strings.Contains(html, "step: 8") || strings.Contains(html, "Cloud Cafe") {
 		t.Fatal("This is not my shop did not drop the pairing")
 	}
 	// Same guards as the pair call.
@@ -257,7 +257,7 @@ func TestCloudPairExpiresAfterThirtyMinutes(t *testing.T) {
 	t.Cleanup(func() { cloudPairNow = prev })
 	doCloudPair(mux, nonce, nil)
 	now = now.Add(31 * time.Minute)
-	if html := getSetup(mux, "", "en").Body.String(); strings.Contains(html, "step: 8") {
+	if html := getSetup(mux, "?lang=en", "en").Body.String(); strings.Contains(html, "step: 8") {
 		t.Fatal("a pairing older than 30 minutes still reopens step 2")
 	}
 	rec := finalCloudPost(mux, nonce, nil)
@@ -402,7 +402,7 @@ func TestCloudSetupFallsBackToLocalStepsForMissingFields(t *testing.T) {
 			mux, d, stub, nonce := cloudWizard(t)
 			stub.set(200, reply)
 			doCloudPair(mux, nonce, nil)
-			html := getSetup(mux, "", "en").Body.String()
+			html := getSetup(mux, "?lang=en", "en").Body.String()
 			if !strings.Contains(html, "step: 8") {
 				t.Fatal("pairing not held")
 			}
@@ -432,14 +432,14 @@ func TestCloudPairHeldStoreFieldsAreRenderedOnlyFromTheCloud(t *testing.T) {
 	mux, _, stub, nonce := cloudWizard(t)
 	stub.set(200, strings.Replace(cloudStoreAnswer, "Cloud Cafe", `<script>alert(1)</script>`, 1))
 	doCloudPair(mux, nonce, nil)
-	if html := getSetup(mux, "", "en").Body.String(); strings.Contains(html, "<script>alert(1)") {
+	if html := getSetup(mux, "?lang=en", "en").Body.String(); strings.Contains(html, "<script>alert(1)") {
 		t.Fatal("cloud-supplied store name rendered unescaped")
 	}
 }
 
 func TestJoinScreenOffersMainTillChoice(t *testing.T) {
 	mux, _, _, _ := cloudWizard(t)
-	html := getSetup(mux, "", "en").Body.String()
+	html := getSetup(mux, "?lang=en", "en").Body.String()
 	for _, want := range []string{`value="main"`, "Main till (first till of the shop)", `/api/setup/cloud-pair`, `hx-headers`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("join screen lacks %q", want)
@@ -468,7 +468,7 @@ func TestCloudShopNamedLikeThePlaceholderAsksForALocalName(t *testing.T) {
 		mux, d, stub, nonce := cloudWizard(t)
 		stub.set(200, strings.Replace(cloudStoreAnswer, "Cloud Cafe", cloudName, 1))
 		doCloudPair(mux, nonce, nil)
-		if html := getSetup(mux, "", "en").Body.String(); strings.Contains(html, ">"+cloudName+"<") {
+		if html := getSetup(mux, "?lang=en", "en").Body.String(); strings.Contains(html, ">"+cloudName+"<") {
 			t.Errorf("%q: the refused cloud name is shown as the shop's name", cloudName)
 		}
 		rec := finalCloudPost(mux, nonce, func(f url.Values) { f.Set("store_name", "Local Name") })
