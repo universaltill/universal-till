@@ -148,14 +148,14 @@ func TestPrinterConfig_ShadowMarketForcesNeverOverPluginAlways(t *testing.T) {
 	}
 }
 
-// --- the printReceipt choke point and the async (tender/refund) path -------
+// --- the printReceiptIn choke point and the async (tender/refund) path -------
 
 func TestPrintReceipt_ShadowMarketReturnsSentinelAndPrintsNothing(t *testing.T) {
 	h := newShadowDocsHarness(t, "PT", receiptPolicyAlways)
 	seedReceiptSale(t, h.dp, "sale-sd-1", "R-SD-1", "sale", "", 120, 0, 0)
-	err := printReceipt(context.Background(), h.dp, "R-SD-1")
+	err := printReceiptIn(context.Background(), h.dp, "R-SD-1", "")
 	if !errors.Is(err, errCustomerDocumentsSuppressed) {
-		t.Fatalf("printReceipt err = %v, want errCustomerDocumentsSuppressed", err)
+		t.Fatalf("printReceiptIn err = %v, want errCustomerDocumentsSuppressed", err)
 	}
 	if got := h.printer.Settle(0); len(got) != 0 {
 		t.Fatalf("printer received %d jobs, want 0", len(got))
@@ -178,9 +178,9 @@ func TestPrintReceiptAsync_ShadowMarketNeverCallsThePrinter(t *testing.T) {
 	restore := printReceiptFn
 	t.Cleanup(func() { printReceiptFn = restore })
 	called := 0
-	printReceiptFn = func(context.Context, *common.Deps, string) error { called++; return nil }
+	printReceiptFn = func(context.Context, *common.Deps, string, string) error { called++; return nil }
 
-	printReceiptAsync(dp, "R-SD-A", "")
+	printReceiptAsync(dp, "R-SD-A", "", "")
 	dp.WaitForAsyncWork()
 	if called != 0 {
 		t.Fatalf("printReceiptFn called %d times, want 0", called)
@@ -213,9 +213,12 @@ func TestPrintReceiptAsync_SuppressedRefusalIsNotAPrintFailure(t *testing.T) {
 	restore := printReceiptFn
 	t.Cleanup(func() { printReceiptFn = restore })
 	called := 0
-	printReceiptFn = func(context.Context, *common.Deps, string) error { called++; return errCustomerDocumentsSuppressed }
+	printReceiptFn = func(context.Context, *common.Deps, string, string) error {
+		called++
+		return errCustomerDocumentsSuppressed
+	}
 
-	printReceiptAsync(dp, "R-SD-B", "")
+	printReceiptAsync(dp, "R-SD-B", "", "")
 	dp.WaitForAsyncWork()
 	if called != 1 {
 		t.Fatalf("printReceiptFn called %d times, want 1 (fixture: the async path must reach it)", called)
@@ -508,7 +511,7 @@ func TestPrintReceiptAsync_ShadowMarketSettingsReadErrorIsNotAPrintFailure(t *te
 	if _, err := dp.Db.Exec(`DROP TABLE settings`); err != nil {
 		t.Fatalf("drop settings table: %v", err)
 	}
-	printReceiptAsync(dp, "R-SD-E", "")
+	printReceiptAsync(dp, "R-SD-E", "", "")
 	dp.WaitForAsyncWork()
 	var failures int
 	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_id = 'R-SD-E' AND action = 'print_failed'`).Scan(&failures); err != nil {

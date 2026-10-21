@@ -175,10 +175,12 @@
       return null;
     }
 
-    // The stored bundle is audio.webm (internal/issuereport), so only WebM/Ogg
-    // will do. iOS before 26 records MP4 only: say "not available" up front
-    // instead of asking for the microphone and then failing (ut-docs#3354).
-    var VOICE_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg'];
+    // The bundle sniffs the bytes and stores audio.webm or audio.m4a
+    // (internal/issuereport.AudioFileName). WebM/Ogg stay first so devices
+    // that have them keep recording WebM; audio/mp4 is last, for iOS before
+    // 26, which records MP4 only (ut-docs#3416; was "not available",
+    // ut-docs#3354). A browser with none of these still says so up front.
+    var VOICE_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg', 'audio/mp4'];
     if (typeof MediaRecorder === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !pickMimeType(VOICE_TYPES)) {
       voiceBtn.disabled = true;
       voiceBtn.textContent = T.voiceUnsupported;
@@ -204,6 +206,9 @@
           }
           voiceChunks = [];
           var voiceSeq = 0;
+          // MP4 chunks are persisted like WebM ones: the upload is these
+          // same chunks joined, so a rebuilt draft is the same file
+          // (ut-docs#3416).
           voiceRecorder.addEventListener('dataavailable', function (e) {
             if (!(e.data && e.data.size > 0)) return;
             voiceChunks.push(e.data);
@@ -577,7 +582,7 @@
       statusEl.textContent = T.saving;
       var fd = new FormData();
       fd.append('note', note);
-      if (voiceBlob) fd.append('audio', voiceBlob, 'audio.webm');
+      if (voiceBlob) fd.append('audio', voiceBlob, /^audio\/mp4/.test(voiceBlob.type) ? 'audio.m4a' : 'audio.webm');
       if (screenBlob) fd.append('video', screenBlob, 'video.webm');
       screenshots.forEach(function (s, i) {
         fd.append('image', s.blob, 'image-' + i + '.png');

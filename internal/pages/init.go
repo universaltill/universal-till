@@ -532,13 +532,14 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerJoinNoticeUI(mux, dp)                     // ADR-0033 amendment: standalone till offers to join a found main till (ut-docs#2721)
 	registerShopNameNoticeUI(mux, dp)                 // ut-docs#3114: "Name your shop" banner while store.name is a placeholder
 	registerSyncSales(mux, dp)
-	registerSyncNoSales(mux, dp)     // ut-docs#3562: replica no-sale opens (LAN sync D3)
-	registerSyncOrders(mux, dp)      // cross-till orders board, primary side (ut-docs#1350)
-	registerSyncTables(mux, dp)      // cross-till table occupancy, read-only, primary side (ut-docs#1392)
-	registerSyncTablesClaim(mux, dp) // cross-till table-claim write-through, primary side (ut-docs#1703)
-	registerSyncVouchers(mux, dp)    // cross-till voucher lookup + redemption write-through, primary side (ut-docs#1668)
-	registerSyncHeldSales(mux, dp)   // cross-till held-sale (open order) write-through + list, primary side (ADR-0093, ut-docs#1920)
-	registerSyncUsers(mux, dp)       // additional-till user/PIN write-through, main-till side (ADR-0115 §1, ut-docs#2755)
+	registerSyncNoSales(mux, dp)        // ut-docs#3562: replica no-sale opens (LAN sync D3)
+	registerSyncClearedBaskets(mux, dp) // ut-docs#4711: replica cleared baskets (LAN sync D3)
+	registerSyncOrders(mux, dp)         // cross-till orders board, primary side (ut-docs#1350)
+	registerSyncTables(mux, dp)         // cross-till table occupancy, read-only, primary side (ut-docs#1392)
+	registerSyncTablesClaim(mux, dp)    // cross-till table-claim write-through, primary side (ut-docs#1703)
+	registerSyncVouchers(mux, dp)       // cross-till voucher lookup + redemption write-through, primary side (ut-docs#1668)
+	registerSyncHeldSales(mux, dp)      // cross-till held-sale (open order) write-through + list, primary side (ADR-0093, ut-docs#1920)
+	registerSyncUsers(mux, dp)          // additional-till user/PIN write-through, main-till side (ADR-0115 §1, ut-docs#2755)
 	// ut-docs#2791: built here (it only closes over dp/i18n) so the
 	// settings write-through re-derives this till's cached globals exactly
 	// like a LAN pull or cloud directive does; StartSyncPull/StartCloudSync

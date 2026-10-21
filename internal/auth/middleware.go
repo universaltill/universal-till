@@ -57,6 +57,8 @@ func exempt(path string) bool {
 		// ut-docs#3562: the replica push tick's no-sale journal, syncTill-
 		// authed in the handler like /api/sync/sales.
 		"/api/sync/no-sales",
+		// ut-docs#4711: the same tick's cleared-basket journal, syncTill-authed.
+		"/api/sync/cleared-baskets",
 		// ut-docs#4566: a failed join withdraws its own enrolment with the
 		// bearer it was just issued, syncTill-authed in the handler.
 		"/api/sync/enroll/withdraw",
@@ -222,6 +224,13 @@ func exempt(path string) bool {
 		// operator to sign in as. TestSetupWizardEndpointsClearTheSessionWall
 		// pins this entry.
 		"/api/setup/tax-plugin-skip",
+		// ut-docs#4610 / ADR-0166: the wizard's "Main till" pairing with the
+		// shop on my.universaltill.com and its "This is not my shop" undo.
+		// Same first-boot-only window (firstBootGate in the handler), plus a
+		// per-process wizard nonce, a Host allow-list and Sec-Fetch-Site/
+		// Origin checks against cross-site pairing. TestSetupWizardEndpoints-
+		// ClearTheSessionWall pins these entries.
+		"/api/setup/cloud-pair", "/api/setup/cloud-unpair",
 		// ut-docs#1165: step 1's background update-check + its explicit
 		// apply action — same first-boot-only window as /api/setup/language
 		// above (NeedsFirstBoot refuses both once an operator exists).

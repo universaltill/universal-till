@@ -14,18 +14,6 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
-type staticTokenProvider struct {
-	token string
-}
-
-func (s staticTokenProvider) GetToken(_ context.Context) (string, error) {
-	return s.token, nil
-}
-
-func (s staticTokenProvider) ClearCache() error {
-	return nil
-}
-
 func TestMarketplaceListPluginsContract(t *testing.T) {
 	mockProvider, err := consumer.NewV2Pact(consumer.MockHTTPProviderConfig{
 		Consumer: "universal-till-pos",
@@ -43,7 +31,6 @@ func TestMarketplaceListPluginsContract(t *testing.T) {
 		Given("catalog has plugins").
 		UponReceiving("list plugins").
 		WithRequest("GET", "/v1/catalog/plugins", func(b *consumer.V2RequestBuilder) {
-			b.Header("Authorization", matchers.S("Bearer test-token"))
 			b.Header("x-marketplace-api-version", matchers.S("1.0.0"))
 			b.Query("locale", matchers.S("en-US"))
 			b.Query("arch", matchers.S("amd64"))
@@ -81,7 +68,7 @@ func TestMarketplaceListPluginsContract(t *testing.T) {
 				EndpointURL:       endpoint,
 				APIVersion:        "1.0.0",
 				RequestTimeoutSec: 5,
-			}, staticTokenProvider{token: "test-token"})
+			})
 
 			resp, err := client.ListPlugins(context.Background(), &marketplace.ListPluginsRequest{
 				Locale:     "en-US",
@@ -118,7 +105,7 @@ func TestMarketplaceIssueDownloadTokenContract(t *testing.T) {
 		Given("plugin artifact is available").
 		UponReceiving("issue download token").
 		WithRequest("POST", "/v1/downloads/tokens", func(b *consumer.V2RequestBuilder) {
-			b.Header("Authorization", matchers.S("Bearer test-token"))
+			b.Header("Authorization", matchers.S("Bearer device-credential"))
 			b.Header("x-marketplace-api-version", matchers.S("1.0.0"))
 			b.JSONBody(matchers.Map{
 				"listing_id":  matchers.Like("listing-123"),
@@ -149,7 +136,8 @@ func TestMarketplaceIssueDownloadTokenContract(t *testing.T) {
 				EndpointURL:       endpoint,
 				APIVersion:        "1.0.0",
 				RequestTimeoutSec: 5,
-			}, staticTokenProvider{token: "test-token"})
+				MerchantToken:     "device-credential",
+			})
 
 			resp, err := client.IssueDownloadToken(context.Background(), &marketplace.IssueDownloadTokenRequest{
 				PluginID:   "listing-123",

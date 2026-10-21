@@ -203,7 +203,7 @@ func TestAsyncPrintGoroutinesFinishBeforeWaitForAsyncWorkReturns(t *testing.T) {
 		const receiptNo = "receipt-does-not-exist"
 		// actorID "" -> audit_log.actor_id NULL (nullIfEmpty), so this
 		// doesn't need a seeded users row to satisfy the FK.
-		printReceiptAsync(dp, receiptNo, "")
+		printReceiptAsync(dp, receiptNo, "", "")
 		printKitchenAsync(dp, receiptNo, "", nil)
 		dp.WaitForAsyncWork()
 
@@ -424,7 +424,7 @@ func TestAsyncPrintFailureSetsFlagAndSuccessClears(t *testing.T) {
 		t.Fatalf("seed failing printer settings: %v", err)
 	}
 
-	printReceiptAsync(dp, "R-PF1", "")
+	printReceiptAsync(dp, "R-PF1", "", "")
 	printKitchenAsync(dp, "R-PF1", "", nil)
 	dp.WaitForAsyncWork()
 
@@ -453,7 +453,7 @@ func TestAsyncPrintFailureSetsFlagAndSuccessClears(t *testing.T) {
 		t.Fatalf("seed working printer settings: %v", err)
 	}
 
-	printReceiptAsync(dp, "R-PF1", "")
+	printReceiptAsync(dp, "R-PF1", "", "")
 	printKitchenAsync(dp, "R-PF1", "", nil)
 	dp.WaitForAsyncWork()
 
@@ -696,7 +696,7 @@ func TestAsyncPrintFailureIsRecordedWhenPrintCtxExpired(t *testing.T) {
 	// then fail with the context error, exactly as the real transports do.
 	// Two shapes: printKitchen's signature grew a station fan-out
 	// (ut-docs#516, total/failures/err) that printReceipt never had.
-	hang := func(ctx context.Context, _ *common.Deps, _ string) error {
+	hang := func(ctx context.Context, _ *common.Deps, _, _ string) error {
 		<-ctx.Done()
 		return fmt.Errorf("printer write: %w", ctx.Err())
 	}
@@ -722,7 +722,7 @@ func TestAsyncPrintFailureIsRecordedWhenPrintCtxExpired(t *testing.T) {
 	printAsyncTimeout = 400 * time.Millisecond
 	printReceiptFn, printKitchenFn = hang, hangKitchen
 
-	printReceiptAsync(dp, "R-EXP1", "")
+	printReceiptAsync(dp, "R-EXP1", "", "")
 	printKitchenAsync(dp, "R-EXP1", "", nil)
 	dp.WaitForAsyncWork()
 
@@ -770,7 +770,7 @@ func TestAsyncPrintFailureIsRecordedWhenSettingsReadFails(t *testing.T) {
 		t.Fatalf("drop settings table: %v", err)
 	}
 
-	printReceiptAsync(dp, "R-SR1", "")
+	printReceiptAsync(dp, "R-SR1", "", "")
 	printKitchenAsync(dp, "R-SR1", "", nil)
 	dp.WaitForAsyncWork()
 
@@ -811,7 +811,7 @@ func TestAsyncPrintNoFailureFlagWhenPrinterGenuinelyOff(t *testing.T) {
 	dp := newPrintFlagTestDeps(t)
 	seedReceiptSale(t, dp, "sale-off", "R-OFF1", "sale", "", 120, 0, 0)
 
-	printReceiptAsync(dp, "R-OFF1", "")
+	printReceiptAsync(dp, "R-OFF1", "", "")
 	printKitchenAsync(dp, "R-OFF1", "", nil)
 	dp.WaitForAsyncWork()
 

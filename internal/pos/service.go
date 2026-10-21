@@ -105,6 +105,11 @@ type Service struct {
 	// orderTrackingToken (ut-docs#4206) is the resumed order's
 	// BasketSnapshot.TrackingToken; cleared wherever orderDisplayNo is.
 	orderTrackingToken string
+	// customerLocale (ut-docs#4705) is the self-order kiosk customer's
+	// language pick for this basket's order (BasketSnapshot.CustomerLocale);
+	// cleared wherever orderDisplayNo is. Only the customer's printed
+	// receipt reads it — the sale itself is recorded in the shop's language.
+	customerLocale string
 	// taxAsker, when set, can override a line's tax rate per the current
 	// order type — see TaxRateAsker. nil (the default) means core just uses
 	// each line's own configured rate, unaffected by order type.
@@ -1291,6 +1296,7 @@ func (s *Service) Tender(amount money.Money, method string) (map[string]any, err
 	s.heldOrigin = HeldOrigin{}
 	s.orderDisplayNo = ""
 	s.orderTrackingToken = ""
+	s.customerLocale = ""
 	return map[string]any{"status": "ok", "method": method, "amount": amount}, nil
 }
 
@@ -1598,6 +1604,7 @@ func (s *Service) removeLocked(sku string) {
 		s.heldOrigin = HeldOrigin{}
 		s.orderDisplayNo = ""
 		s.orderTrackingToken = ""
+		s.customerLocale = ""
 	}
 	s.recomputeTotals()
 }
@@ -1629,6 +1636,7 @@ func (s *Service) removeLineLocked(key string) {
 		s.heldOrigin = HeldOrigin{}
 		s.orderDisplayNo = ""
 		s.orderTrackingToken = ""
+		s.customerLocale = ""
 	}
 	s.recomputeTotals()
 }
@@ -1638,6 +1646,17 @@ func (s *Service) Reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.resetLocked()
+}
+
+// ResetAndSnapshot clears the basket like Reset and returns what it held,
+// under one lock (ut-docs#1122): a scan landing between a separate
+// Snapshot and Reset would be wiped without being in the snapshot.
+func (s *Service) ResetAndSnapshot() BasketSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snap := s.snapshotLocked()
+	s.resetLocked()
+	return snap
 }
 
 // TenderAttemptID returns a stable id for the current basket's tender
@@ -1694,6 +1713,7 @@ func (s *Service) resetLocked() {
 	s.heldOrigin = HeldOrigin{}
 	s.orderDisplayNo = ""
 	s.orderTrackingToken = ""
+	s.customerLocale = ""
 	// ut-docs#3340: an ID check belongs to ONE sale's customer — never
 	// carried into the next basket. (s.basket = Basket{} above already
 	// clears the published AgeChecks copy.)

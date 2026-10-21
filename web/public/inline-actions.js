@@ -150,8 +150,16 @@
   // Receipt reprint (receipt.html): the same POST as before; a 451 is the
   // customer-document gate's refusal (ADR-0124), never a printer fault, so
   // it never falls back to window.print().
-  function reprint(no) {
-    return fetch('/api/print/receipt/' + encodeURIComponent(no), { method: 'POST' });
+  // ut-docs#4714: a self-order customer's language pick (the Print button's
+  // data-customer-locale) rides along so a manual print matches the
+  // auto-print; the journal's reprint sends none (the shop's copy).
+  function reprint(no, locale) {
+    var opts = { method: 'POST' };
+    if (locale) {
+      opts.headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
+      opts.body = 'customer_locale=' + encodeURIComponent(locale);
+    }
+    return fetch('/api/print/receipt/' + encodeURIComponent(no), opts);
   }
   // Where the save-error step's line goes: right after the posting form;
   // a form-less carrier (a lone checkbox) uses its card.
@@ -449,7 +457,7 @@
     // window.print() fallback, so the question never lands on paper.
     'receipt-ask-print': function (ctx, no) {
       var el = byId('receipt-ask');
-      reprint(no).then(function (r) {
+      reprint(no, ctx.el.getAttribute('data-customer-locale')).then(function (r) {
         if (el) el.hidden = true;
         if (!r.ok && r.status !== 451) window.print();
       }).catch(function () {
@@ -461,7 +469,7 @@
     // 451 gate, browser print dialog on any other failure.
     'receipt-print': function (ctx, no) {
       var b = ctx.el;
-      reprint(no).then(function (r) {
+      reprint(no, b.getAttribute('data-customer-locale')).then(function (r) {
         if (r.ok) b.textContent = b.getAttribute('data-done-text') || b.textContent;
         else if (r.status === 451) b.disabled = true;
         else window.print();

@@ -75,12 +75,10 @@ Edit `pos.env.dev`:
 # For mock marketplace (local testing)
 UT_MARKETPLACE_ENDPOINT_URL=http://localhost:8082
 UT_MARKETPLACE_CLIENT_ID=pos-client
-UT_MARKETPLACE_CLIENT_SECRET=dev-secret
 
 # For production marketplace
 UT_MARKETPLACE_ENDPOINT_URL=https://cloud.universaltill.com/api
 UT_MARKETPLACE_CLIENT_ID=your-client-id
-UT_MARKETPLACE_CLIENT_SECRET=your-client-secret
 ```
 
 Then run with:
@@ -94,7 +92,6 @@ Then run with:
 # Mock marketplace
 export UT_MARKETPLACE_ENDPOINT_URL=http://localhost:8082
 export UT_MARKETPLACE_CLIENT_ID=pos-client
-export UT_MARKETPLACE_CLIENT_SECRET=dev-secret
 
 # Run
 ./bin/unitill-pos
@@ -105,7 +102,6 @@ export UT_MARKETPLACE_CLIENT_SECRET=dev-secret
 ```bash
 UT_MARKETPLACE_ENDPOINT_URL=http://localhost:8082 \
 UT_MARKETPLACE_CLIENT_ID=pos-client \
-UT_MARKETPLACE_CLIENT_SECRET=dev-secret \
 ./bin/unitill-pos
 ```
 
@@ -145,23 +141,16 @@ UT_MARKETPLACE_CLIENT_SECRET=dev-secret \
    ./scripts/dev.sh
    ```
 
-## OAuth2 Configuration
+## Authentication
 
-### Mock Marketplace (Development)
-
-Uses simple client credentials flow:
-- **Client ID**: `pos-client`
-- **Client Secret**: `dev-secret`
-- **Grant Type**: `client_credentials`
-- **Token Endpoint**: `http://localhost:8082/oauth2/token`
-
-### Production Marketplace
-
-Contact marketplace provider for:
-- Production Client ID
-- Production Client Secret
-- Token endpoint URL
-- API documentation
+The till has no marketplace client secret. Browsing the catalogue needs no
+credential; requests that act for a store (for example a paid plugin's
+download token) carry the till's ADR-0116 device credential, which
+enrolment sets up (`UT_MARKETPLACE_MERCHANT_TOKEN` overrides it). The old OAuth2
+client-credentials flow (`UT_MARKETPLACE_CLIENT_SECRET`, a merchant token
+from `/v1/auth/merchant-token`) was retired by the cloud under ADR-0120 and
+removed from the till in ut-docs#3577. `UT_MARKETPLACE_CLIENT_ID` stays: it
+is the merchant id the till names in its requests.
 
 ## Troubleshooting
 
@@ -212,8 +201,8 @@ source <(grep -v '^#' pos.env.dev | grep -v '^$' | sed 's/^/export /')
 
 ## Security Notes
 
-- **Development**: Mock uses simple OAuth2 with hardcoded credentials
-- **Production**: Use secure credentials, HTTPS, and proper OAuth2 flows
+- **Production**: HTTPS only; the device credential is the till's only
+  marketplace secret and is never logged
 - **Never commit** production credentials to version control
 - Use environment-specific `.env` files (`.gitignore`'d)
 

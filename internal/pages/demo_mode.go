@@ -288,6 +288,8 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/setup/join":                      true,
 	"POST /api/setup/language":                  true,
 	"POST /api/setup/pair-start":                true,
+	"POST /api/setup/cloud-pair":                true, // ut-docs#4610: pairs a till with a cloud shop
+	"POST /api/setup/cloud-unpair":              true,
 	"POST /api/setup/pairing-restart":           true,
 	"POST /api/setup/tax-plugin":                true,
 	"POST /api/setup/tax-plugin-skip":           true,
@@ -302,6 +304,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/sync/held-sales/upsert":          true,
 	"POST /api/sync/join":                       true,
 	"POST /api/sync/no-sales":                   true, // ut-docs#3562: replica no-sale journal
+	"POST /api/sync/cleared-baskets":            true, // ut-docs#4711: replica cleared-basket journal
 	"POST /api/sync/orders/{receipt_no}/status": true,
 	"POST /api/sync/pair-request":               true,
 	"POST /api/sync/pair-requests/{id}/approve": true,
@@ -343,6 +346,7 @@ var demoDeniedRoutes = map[string]bool{
 	"GET /o/{token}":                           true,
 	"GET /o/{token}/status":                    true,
 	"GET /self-order":                          true,
+	"GET /self-order/language":                 true, // ut-docs#4200: kiosk language picker
 	"GET /self-order/shop":                     true,
 	"POST /api/self-order/checkout":            true,
 	"POST /api/self-order/line":                true,

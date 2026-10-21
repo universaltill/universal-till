@@ -23,7 +23,6 @@ import (
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
-	"github.com/universaltill/universal-till/internal/plugins/oauth"
 	"github.com/universaltill/universal-till/internal/uislot"
 )
 
@@ -202,7 +201,7 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 		checkinAfterRegistration(d, effCfg) // ADR-0148 §2: an operator's install
 		// The signing key is fetched lazily (ADR-0148 audit item 3).
 		effCfg = enroll.EnsureSigningKey(ctx, d.Cfg, d.Settings)
-		client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
+		client := marketplace.NewClient(&effCfg.Marketplace)
 		installer, err := plugins.NewMarketplaceInstaller(&effCfg, client, d.Db)
 		if err != nil {
 			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
@@ -678,7 +677,7 @@ func applyPluginUpdate(ctx context.Context, d *common.Deps, pluginID string) (fr
 	checkinAfterRegistration(d, effCfg) // ADR-0148 §2: an operator's update (handleUpdatePlugin)
 	// The signing key is fetched lazily (ADR-0148 audit item 3).
 	effCfg = enroll.EnsureSigningKey(ctx, d.Cfg, d.Settings)
-	client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
+	client := marketplace.NewClient(&effCfg.Marketplace)
 	installer, err := plugins.NewMarketplaceInstaller(&effCfg, client, d.Db)
 	if err != nil {
 		return "", "", ErrPluginUpdateNoMarketplace

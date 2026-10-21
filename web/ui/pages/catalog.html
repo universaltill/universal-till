@@ -25,10 +25,15 @@
          <dialog> (#item-form-modal, below) instead of an always-visible
          360px side panel, so creating a NEW item needs an explicit
          trigger — clearForm() resets it to create-mode before opening. -->
+    {{/* ut-docs#4418: a new item's form is disabled while this
+         additional till can't reach its main till, so the button that
+         opens it is too. */}}
+    <fieldset data-main-till-lock{{ if .SyncUnreachable }} disabled{{ end }}>
     <button id="item-form-add-btn" class="btn primary btn-icon" type="button"
             aria-label="{{ T "catalog.add_item_btn" }}" title="{{ T "catalog.add_item_btn" }}">
       <span class="btn-ico" aria-hidden="true">{{ icon "plus" }}</span>
     </button>
+    </fieldset>
     <!-- ut-docs#2095 (merge of #2092's icon-only row + this card's dialog
          behaviour — #2092's own comment on this button anticipated exactly
          this): Import is NOT an /items rail section (itemsnav.Resolve's
@@ -258,8 +263,10 @@
                hidden. setMode() below keeps all three text sources (label
                span, aria-label, title) for Save in sync when it toggles
                create/edit wording. -->
+          <fieldset data-main-till-lock{{ if .SyncUnreachable }} disabled{{ end }}>
           <button class="btn secondary" type="button" id="item-form-reset" hidden
                   aria-label="{{ T "catalog.plus_new" }}" title="{{ T "catalog.plus_new" }}">{{ T "catalog.plus_new" }}</button>
+          </fieldset>
           <button class="btn secondary" type="button" id="item-form-close-btn" data-action="close:item-form-modal"
                   aria-label="{{ T "common.close" }}" title="{{ T "common.close" }}">
             <span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span>

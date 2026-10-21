@@ -175,8 +175,8 @@ func TestFileRowsImport_JSONAPI_PreviewThenCommit(t *testing.T) {
 	if c.Counts.New != 2 {
 		t.Fatalf("commit %+v", c)
 	}
-	if n := apiImportCount(t, dp.Db, `SELECT COUNT(*) FROM import_source_links WHERE source = ?`, fileRowsPluginID); n != 2 {
-		t.Fatalf("links = %d, want 2 under the plugin id", n)
+	if n := apiImportCount(t, dp.Db, `SELECT COUNT(*) FROM import_source_links WHERE source = ?`, importLinkSource(fileRowsPluginID, "export")); n != 2 {
+		t.Fatalf("links = %d, want 2 under the per-entry source", n)
 	}
 	if n := apiImportCount(t, dp.Db, `SELECT COUNT(*) FROM items i JOIN import_source_links l ON l.local_id = i.id WHERE l.external_id = 'r1' AND i.name = 'Tea' AND i.base_price = 250`); n != 1 {
 		t.Fatal("row r1 not applied as Tea at 250")

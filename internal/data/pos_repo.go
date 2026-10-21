@@ -2479,15 +2479,24 @@ type EODReport struct {
 	// live sale in this till lives only in memory until CompleteSale
 	// (the tender path, the only writer of a 'sales' row — see
 	// dateRangeSummary's own doc comment on this query) runs, or in
-	// held_sales if explicitly parked, so there is nothing in the
-	// 'sales' table to count before completion. A voided sale is
-	// excluded from Gross/Net entirely (dateRangeSummary only scans
-	// status = 'completed'), so this is purely informational — it never
-	// participates in the Net calculation below.
+	// held_sales if explicitly parked, so the 'sales' table has nothing
+	// to count before completion — a basket cleared with New sale before
+	// tender is ClearedBasketCount/ClearedBasketTotal below (ut-docs#1122).
+	// A voided sale is excluded from Gross/Net entirely (dateRangeSummary
+	// only scans status = 'completed'), so this is purely informational —
+	// it never participates in the Net calculation below.
 	CancelCount int   `json:"cancel_count"`
 	CancelTotal int64 `json:"cancel_total"`
-	Net         int64 `json:"net"`
-	TaxNet      int64 `json:"tax_net"`
+	// ClearedBasketCount/ClearedBasketTotal (ut-docs#1122) are live
+	// cashier baskets with at least one line cleared with New sale before
+	// any tender and without being re-parked (cleared_baskets, migration
+	// 086): how many, and their basket totals in minor units at the moment
+	// of clearing. No sale happened, so — like CancelCount — purely
+	// informational: never folded into Gross/Net/Refunds/Cancel*.
+	ClearedBasketCount int   `json:"cleared_basket_count"`
+	ClearedBasketTotal int64 `json:"cleared_basket_total"`
+	Net                int64 `json:"net"`
+	TaxNet             int64 `json:"tax_net"`
 	// TaxBands is the per-VAT-rate net/tax/gross breakdown (ut-docs#1003).
 	// Filled by internal/pages' attachEODTaxBands, NOT by EndOfDay/
 	// EndOfDayRange themselves — the banding math (discount proration +
@@ -2825,7 +2834,8 @@ WHERE status = 'completed' AND local_date BETWEEN date(?) AND date(?)`,
 	// it never matches that query's WHERE at all. This is NOT a
 	// pre-tender abandoned-basket count: see CancelCount's own doc
 	// comment on EODReport for why the 'sales' table has nothing to
-	// count before a sale completes. Matched on voided_at's local
+	// count before a sale completes (cleared baskets are the separate
+	// cleared_baskets scan below, ut-docs#1122). Matched on voided_at's local
 	// calendar day (not created_at): a sale can complete one day and be
 	// voided the next, and the cancellation as an audit event belongs to
 	// the day it was actually cancelled. Falling back to local_date when
@@ -2858,6 +2868,18 @@ WHERE status = 'voided' AND (
 		from, to, from, to).Scan(&rep.CancelCount, &rep.CancelTotal)
 	if err != nil {
 		return rep, fmt.Errorf("eod cancellations: %w", err)
+	}
+
+	// Cleared baskets (ut-docs#1122) — baskets cleared with New sale before
+	// tender (cleared_baskets, migration 086), on the same local-calendar-
+	// day window as the totals query, sargable on idx_cleared_baskets_
+	// local_date. Never folded into Gross/Net/RefundTotal/Cancel*.
+	err = r.db.QueryRowContext(ctx, `
+SELECT COUNT(*), COALESCE(SUM(total_minor), 0)
+FROM cleared_baskets
+WHERE local_date BETWEEN date(?) AND date(?)`, from, to).Scan(&rep.ClearedBasketCount, &rep.ClearedBasketTotal)
+	if err != nil {
+		return rep, fmt.Errorf("eod cleared baskets: %w", err)
 	}
 
 	// Voucher flows (ut-docs#1008) — same local-calendar-day window as the
@@ -3114,6 +3136,17 @@ FROM sales
 WHERE status = 'voided' AND `+vwin, vargs...).Scan(&rep.CancelCount, &rep.CancelTotal)
 	if err != nil {
 		return rep, fmt.Errorf("eod instant cancellations: %w", err)
+	}
+
+	// Cleared baskets (ut-docs#1122) — same separate scan as
+	// dateRangeSummary, instant-windowed on created_at like the totals.
+	cwin, cargs := instantWindow("created_at", from, to)
+	err = r.db.QueryRowContext(ctx, `
+SELECT COUNT(*), COALESCE(SUM(total_minor), 0)
+FROM cleared_baskets
+WHERE `+cwin, cargs...).Scan(&rep.ClearedBasketCount, &rep.ClearedBasketTotal)
+	if err != nil {
+		return rep, fmt.Errorf("eod instant cleared baskets: %w", err)
 	}
 
 	// Voucher flows (ut-docs#1008) — the instant sibling lives in

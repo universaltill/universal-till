@@ -132,6 +132,16 @@ mixed into one figure — voiding a sale already carries no revenue and
 never changes the day's Net. The section is absent entirely on a day with
 none.
 
+A basket that is cleared with **New sale** before anyone pays — it had at
+least one item on it, and it wasn't an open order going back on hold — is
+counted too: on a day with at least one, the printed report shows a section
+headed **CLEARED BEFORE PAYMENT** with how many baskets were cleared and
+what they added up to at the moment they were cleared. On a shop with
+several tills, the main till's report includes baskets cleared on every
+till, once they have synced. No sale happened, so this never changes Gross,
+Net, Refunds or the STORNOS figure. The section is absent on a day with
+none.
+
 The report also always prints **Erstellt von** (who ran the close) — the
 person's display name, or "System" for the automatic scheduled close — so
 there's a record of who closed the day even without checking the Audit

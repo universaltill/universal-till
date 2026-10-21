@@ -193,24 +193,6 @@ var mockCatalog = []PluginSummary{
 func main() {
 	mux := http.NewServeMux()
 
-	// OAuth2 token endpoint (simplified mock)
-	mux.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		// Return a mock OAuth2 token response
-		resp := map[string]interface{}{
-			"access_token": "mock-access-token-12345",
-			"token_type":   "Bearer",
-			"expires_in":   3600, // 1 hour
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-	})
-
 	// Health check
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -328,7 +310,6 @@ func main() {
 	log.Println("Mock Marketplace Server")
 	log.Println("Listening on: :8082 (production marketplace typically uses :8081)")
 	log.Println("Endpoints:")
-	log.Println("  POST /oauth/token (OAuth2 client credentials)")
 	log.Println("  GET  /health")
 	log.Println("  GET  /v1/catalog/plugins?device_arch=&capability=")
 	log.Println("  POST /v1/download/token")

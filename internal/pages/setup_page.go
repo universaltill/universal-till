@@ -191,6 +191,8 @@ func isRefusedStoreName(r *http.Request, name string) bool {
 // picks how to fill its catalog: import a file, load sample data, or skip.
 func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	posRepo := data.NewPOSRepo(d.Db)
+	cloud := &setupCloudState{}
+	registerSetupCloudPair(mux, d, cloud, uiAllowNets(d))
 
 	renderWizard := func(w http.ResponseWriter, r *http.Request, errKey string, langUnavailableCode string) {
 		// Best-effort, matching every other failure this wizard already
@@ -234,6 +236,21 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		//     below). Same "never re-detect over the operator's own pick"
 		//     reasoning as the POST branch.
 		code := detectCountry(wizardCountryCodes(countries))
+		// ADR-0166: the wizard nonce, and a held cloud pairing's shop facts
+		// (country/currency win over OS detection on a GET).
+		data["setupNonce"] = cloud.ensureNonce()
+		held := cloud.current()
+		if held != nil {
+			shop := cloudShopView(r, held, countries)
+			data["cloudShop"] = shop
+			if shop.HasName {
+				data["storeName"] = shop.Name
+			}
+			data["tillName"] = held.tillName
+			if shop.HasCountry && r.Method == http.MethodGet {
+				code = shop.CountryCode
+			}
+		}
 		if r.Method == http.MethodPost {
 			code = strings.ToUpper(strings.TrimSpace(r.PostFormValue("country")))
 		}
@@ -267,6 +284,9 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				if c.Code == code {
 					data["detectedCountry"] = c.Code
 					data["detectedCurrency"] = c.Currency
+					if shop, ok := data["cloudShop"].(cloudShop); ok && shop.Currency != "" {
+						data["detectedCurrency"] = shop.Currency
+					}
 					data["detectedTaxRate"] = c.TaxRate
 					data["detectedTaxInclusive"] = c.TaxInclusive
 					break
@@ -373,6 +393,9 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if errKey == keyStoreNameRequired || errKey == keyTillNameRequired {
 			errStep = 4 // the shop/till-name step (ut-docs#3096, ut-docs#4146)
 		}
+		if errKey == keyCloudExpired {
+			errStep = 1 // the pairing is gone: start over
+		}
 		data["errStep"] = errStep
 		// startStep is the step the wizard actually opens on: an error
 		// re-render lands on errStep, an explicit tax-plugin skip (ut-docs#1506)
@@ -387,6 +410,8 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			startStep = 4
 		case resumeTaxCountry != "":
 			startStep = 3
+		case held != nil:
+			startStep = 8 // ADR-0166 §4: a held pairing reopens "Your shop"
 		}
 		data["startStep"] = startStep
 		if r.Method == http.MethodPost {
@@ -536,6 +561,21 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		_ = r.ParseForm()
 
+		// ADR-0166 §4: the cloud path. Guarded like cloud-pair; the held
+		// pairing's shop facts replace the posted ones.
+		var cloudHeld *heldCloudPairing
+		cloudSyncing, cloudPairFailed := false, false
+		if r.PostFormValue("cloud_paired") == "1" {
+			if !cloud.guard(uiAllowNets(d), w, r) {
+				return
+			}
+			if cloudHeld = cloud.current(); cloudHeld == nil {
+				renderWizard(w, r, keyCloudExpired, "")
+				return
+			}
+			applyCloudShop(r, d, cloudHeld)
+		}
+
 		pin, pin2 := r.PostFormValue("pin"), r.PostFormValue("pin_confirm")
 		if auth.ValidatePINFormat(pin) != nil {
 			renderWizard(w, r, "auth.error.pin_format", "")
@@ -643,6 +683,9 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			return
 		}
 		d.SetState(st)
+		if cloudHeld != nil {
+			persistCloudShopCurrency(r, d, cloudHeld)
+		}
 		httpx.InitCurrency(st.Currency)
 		// ut-docs#1027: live-apply the just-derived locale, same posture as
 		// InitCurrency above — SetDefaultLocale no-ops on an empty value, so
@@ -762,8 +805,26 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// "no"/absent answer changes nothing about today's lazy registration.
 		// Truthy check matches the telemetry checkbox convention
 		// (settings_page.go): "on" from the checkbox, "1" as the alternative.
-		autoRegisterForSetup(r.Context(), d,
-			r.Form.Get("auto_register") == "on" || r.Form.Get("auto_register") == "1")
+		if cloudHeld != nil {
+			// ADR-0166 §4 step 6: the seed above is written, so persist the
+			// credential now and ask for a check-in. Pairing already
+			// registered the till: no ADR-0071 question on this path.
+			// A failure cannot be retried here: setup is complete, so the
+			// first-boot gate closes this wizard. The code is spent; the
+			// welcome page says so and Settings -> Tills pairs again with
+			// a new code.
+			if err := commitCloudPairing(r.Context(), d, cloudHeld.p); err != nil {
+				logging.L().Warnf("setup wizard: saving the cloud pairing failed; pair again in Settings: %v", err)
+				cloudPairFailed = true
+			} else {
+				requestOperatorCheckin(d, operatorCheckinWindow)
+				cloudSyncing = true
+			}
+		} else {
+			autoRegisterForSetup(r.Context(), d,
+				r.Form.Get("auto_register") == "on" || r.Form.Get("auto_register") == "1")
+		}
+		cloud.finish()
 
 		// German TSE provisioning kickoff (ADR-0053, ut-docs#802): same
 		// best-effort posture as the base-plugin install above — the pending
@@ -791,6 +852,12 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// background ticker plus Settings already cover it, and /import
 		// stays reachable from the catalog's Import button.
 		redirectTo := "/import?welcome=1"
+		if cloudSyncing {
+			redirectTo += "&syncing=1"
+		}
+		if cloudPairFailed {
+			redirectTo += "&pairfail=1"
+		}
 		if st, err := loadTSEProvisioningState(r.Context(), d); err == nil && st != nil && st.Status == tseStatusKickoffRejected {
 			redirectTo = "/?tse_setup=rejected"
 		}

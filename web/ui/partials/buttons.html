@@ -63,7 +63,7 @@
      inherits hx-include, so without it every tile/badge/search request
      inside this root would carry category= too. Placed AFTER
      hx-trigger, never between hx-get and hx-trigger: buttons_all_tab_test.go
-     pins that exact adjacent pair as one literal substring. */}}{{ if and (eq .BrowsingMode "all_filter_chips") .AllButtons }} hx-include="#browsing-chip-input" hx-disinherit="hx-include"{{ end }} hx-swap="outerHTML"{{ with .SellVersion }} data-sell-version="{{ . }}"{{ end }}>
+     pins that exact adjacent pair as one literal substring. */}}{{ if and (eq .BrowsingMode "all_filter_chips") .AllButtons }} hx-include="#browsing-chip-input" hx-disinherit="hx-include"{{ end }} hx-swap="outerHTML"{{ with .SellVersion }} data-sell-version="{{ . }}"{{ end }}{{ if .EditMode }} data-main-till-gate{{ if .SyncUnreachable }} data-main-till-locked{{ end }}{{ end }}>
   {{/* ut-docs#2989: data-sell-version is the catalog generation this grid
        was rendered at (ui.serveSellScreen) -- the X-UT-Sell-Version header's
        value, carried in the markup too because GET / now inlines this
@@ -860,6 +860,11 @@
         <span class="jiggle-bar-title">{{ if eq $mode "all_filter_chips" }}{{ T "buttons.edit_mode.title_all_grid" }}{{ else }}{{ T "buttons.edit_mode.title" }}{{ end }}</span>
         <button type="button" class="btn primary compact jiggle-done" data-testid="jiggle-done">{{ T "common.done" }}</button>
       </div>
+      {{/* ut-docs#4418: on an additional till edit mode doesn't open while
+           the main till can't be reached (every save would be refused);
+           app.js's utTileJiggle shows this instead of the Done bar, and
+           hides it when the main till is back. */}}
+      <p class="set-lock-note jiggle-lock-note" data-jiggle-lock-note data-testid="jiggle-lock-note" role="status" data-msg="{{ T "sync.banner_replica_main_till_unreachable" }}" hidden></p>
       {{/* ut-docs#2294: search results are a SEPARATE view from the tabs/
            grid below, not a filter layered on top of them — while q is
            non-empty, #buttons-grid hides (x-show="!q" below) and this
@@ -1120,6 +1125,10 @@
     <h3 id="designer-categories-title">{{ T "categories.title" }}</h3>
     <p class="muted designer-categories-help" id="designer-categories-help">{{ T "designer.categories.help" }}</p>
   </div>
+  {{/* ut-docs#4418: says why the category controls below are greyed out
+       while this additional till can't reach its main till (followed live
+       by base.html's chip handler; a main till never shows it). */}}
+  <p class="set-lock-note" data-main-till-away role="status" data-testid="designer-lock-note"{{ if not .SyncUnreachable }} hidden{{ end }}>{{ T "sync.banner_replica_main_till_unreachable" }}</p>
   <div id="designer-categories-msg" class="designer-cat-msg" role="status" aria-live="polite"></div>
   <div id="designer-categories-live" class="visually-hidden" role="status" aria-live="polite"></div>
   {{/* No arithmetic funcs in the template set: find the last row's id with
@@ -1138,6 +1147,7 @@
        on every row's button — a screen reader would repeat it per row);
        each row's button only names its keys (aria-keyshortcuts). */}}
   <ol class="designer-cat-list" aria-describedby="designer-categories-help" data-reorder-list
+      data-main-till-gate{{ if .SyncUnreachable }} data-main-till-locked{{ end }}
       data-reorder-url="/api/designer/categories/reorder"
       data-reorder-live="designer-categories-live"
       data-reorder-msg="designer-categories-msg"
@@ -1166,7 +1176,9 @@
              additional till (catalogsync.Routes) — the deactivate/activate
              and edit forms sit in fieldset[data-main-till-lock], disabled
              while it can't be reached (followed live by base.html's chip
-             handler). The quick-button editing above is NOT locked here. */}}
+             handler). The quick-button editing above (edit mode) and the
+             list's drag reorder are locked in app.js / list-reorder.js
+             instead, off data-main-till-locked (ut-docs#4418). */}}
         <fieldset data-main-till-lock{{ if $.SyncUnreachable }} disabled{{ end }}>
         {{ if $c.IsActive }}
         <form hx-post="/api/designer/categories/{{ $c.ID }}/active" hx-target="#designer-cat-msg-{{ $c.ID }}" hx-swap="innerHTML"
@@ -1227,8 +1239,8 @@
     {{ end }}
   </ol>
   <div class="designer-cat-new" x-data="{ creating: false }">
-    <button type="button" class="btn primary compact" id="designer-cat-new" :aria-expanded="creating" aria-controls="designer-cat-form-new" @click="creating = !creating">+ {{ T "categories.new" }}</button>
     <fieldset data-main-till-lock{{ if .SyncUnreachable }} disabled{{ end }}>
+    <button type="button" class="btn primary compact" id="designer-cat-new" :aria-expanded="creating" aria-controls="designer-cat-form-new" @click="creating = !creating">+ {{ T "categories.new" }}</button>
     <form class="designer-cat-form" id="designer-cat-form-new" x-show="creating" x-cloak
           hx-post="/api/designer/categories" hx-target="#designer-categories-msg" hx-swap="innerHTML" autocomplete="off">
       <label class="designer-cat-field">{{ T "categories.col.name" }}

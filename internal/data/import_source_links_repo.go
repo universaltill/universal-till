@@ -72,3 +72,48 @@ ON CONFLICT(source, entity, external_id) DO UPDATE SET local_id = excluded.local
 	}
 	return nil
 }
+
+// SiblingItemsByName returns, by exact item name, the ids of items a
+// sibling link source brought in: a source of the form "<plugin>#<entry>"
+// other than own, or legacy (the bare plugin id of pre-per-entry links)
+// when non-empty. Items that already carry a link under own are excluded.
+// plugin "" means no sibling prefix, so only legacy counts. One query per
+// run: the caller snapshots it before applying rows, so a preview and a
+// commit see the same candidates (ut-docs#4734, ADR-0161 Amendment 2).
+//
+// The prefix test is a half-open range on the source index, not LIKE, so a
+// plugin id containing '_' or '%' is matched literally: every source that
+// starts with "<plugin>#" sorts in [plugin+"#", plugin+"$") ('$' is the
+// byte after '#').
+func (*ImportSourceLinkRepo) SiblingItemsByName(ctx context.Context, q SyncQuerier, plugin, own, legacy string) (map[string][]string, error) {
+	lo, hi := "", ""
+	if plugin != "" {
+		lo, hi = plugin+"#", plugin+"$"
+	}
+	rows, err := q.QueryContext(ctx, `
+SELECT DISTINCT i.name, i.id
+FROM items i
+JOIN import_source_links l ON l.local_id = i.id AND l.entity = 'items'
+WHERE l.source <> ?
+  AND ((? <> '' AND l.source >= ? AND l.source < ?) OR (? <> '' AND l.source = ?))
+  AND NOT EXISTS (
+        SELECT 1 FROM import_source_links o
+        WHERE o.entity = 'items' AND o.local_id = i.id AND o.source = ?)
+ORDER BY i.id`, own, lo, lo, hi, legacy, legacy, own)
+	if err != nil {
+		return nil, fmt.Errorf("import link siblings: %w", err)
+	}
+	defer rows.Close()
+	byName := map[string][]string{}
+	for rows.Next() {
+		var name, id string
+		if err := rows.Scan(&name, &id); err != nil {
+			return nil, fmt.Errorf("import link siblings: %w", err)
+		}
+		byName[name] = append(byName[name], id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("import link siblings: %w", err)
+	}
+	return byName, nil
+}

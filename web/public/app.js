@@ -2081,6 +2081,36 @@ utSellCamera(function(){
   var drag = null;      // { tile, cell, pointerId, offX, offY, moved, onLost }
 
   function grid() { return document.getElementById('buttons-grid'); }
+  // ut-docs#4418: on an additional till every edit-mode save travels to
+  // the main till (/api/buttons/* in catalogsync.Routes) and is refused
+  // while it can't be reached, so the mode doesn't open then: a hold or a
+  // right-click shows the lock note instead, and a lock that arrives while
+  // editing ends the mode. The live state is base.html's
+  // data-main-till-locked on <html>; the Designer's replica also renders
+  // it on its own .products root (EditMode knows SyncUnreachable).
+  // The refused hold's trailing click must not ring the tile up; only a
+  // pointer click is eaten (a keyboard Enter/Space has e.detail 0), and the
+  // flag dies right after the gesture's release, click or not.
+  var eatLockClick = false;
+  function mainTillLocked() {
+    var g = grid();
+    return document.documentElement.hasAttribute('data-main-till-locked') ||
+      !!(g && g.closest('[data-main-till-locked]'));
+  }
+  function lockNote() { return document.querySelector('.products-finder [data-jiggle-lock-note]'); }
+  function refuseLocked() {
+    var n = lockNote();
+    if (!n) return;
+    n.hidden = false;
+    // Re-set after a tick so a second refusal is announced again.
+    n.textContent = '';
+    setTimeout(function () { n.textContent = n.getAttribute('data-msg') || ''; }, 30);
+  }
+  window.addEventListener('ut-main-till-lock', function (e) {
+    if (e.detail && e.detail.locked) { exit(); return; }
+    var n = lockNote();
+    if (n) n.hidden = true;
+  });
   function translateModeOn() { return document.documentElement.classList.contains('ut-translate-mode'); }
   function bar() { return document.querySelector('.products-finder .jiggle-bar'); }
   // ut-docs#2294 fallout: #buttons-grid-all (the All grid, every active
@@ -2495,6 +2525,9 @@ utSellCamera(function(){
     if (hold) { clearTimeout(hold.timer); hold = null; }
   }
   document.addEventListener('pointerdown', function (e) {
+    // A new gesture: a refused hold's trailing click (ut-docs#4418) is not
+    // coming any more -- released off the tile, the browser sends none.
+    eatLockClick = false;
     if (!grid()) return;
     if (e.button !== undefined && e.button !== 0) return; // right-click: see contextmenu below
     if (badgeFor(e.target)) return; // a badge tap is that badge's own action, never a hold or a drag
@@ -2518,6 +2551,7 @@ utSellCamera(function(){
     var h = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, tile: tile };
     h.timer = setTimeout(function () {
       hold = null;
+      if (mainTillLocked()) { eatLockClick = true; refuseLocked(); return; }
       if (navigator.vibrate) navigator.vibrate(15);
       enter();
       // The finger is still down on this tile: let the very same gesture
@@ -2538,10 +2572,13 @@ utSellCamera(function(){
   document.addEventListener('pointerup', function (e) {
     if (hold && e.pointerId === hold.pointerId) clearHold();
     endDrag(e);
+    // The trailing click (if any) is dispatched before this timeout runs.
+    if (eatLockClick) setTimeout(function () { eatLockClick = false; }, 0);
   });
   document.addEventListener('pointercancel', function (e) {
     if (hold && e.pointerId === hold.pointerId) clearHold();
     endDrag(e);
+    eatLockClick = false;
   });
   document.addEventListener('contextmenu', function (e) {
     var tile = tileFor(e.target);
@@ -2549,6 +2586,7 @@ utSellCamera(function(){
     if (translateModeOn() && !active) return; // ut-docs#4370: see pointerdown
     e.preventDefault(); // desktop right-click, and Android's own long-press-to-contextmenu
     clearHold();
+    if (!active && mainTillLocked()) { eatLockClick = true; refuseLocked(); return; }
     if (!active) enter();
   });
 
@@ -2559,6 +2597,11 @@ utSellCamera(function(){
   // result must not ring it up; its own "Add to quick buttons" action (a
   // sibling, not a .btn-tile) is how a result is used in edit mode.
   document.addEventListener('click', function (e) {
+    if (eatLockClick && e.detail !== 0 && tileFor(e.target)) {
+      eatLockClick = false;
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      return;
+    }
     if (!active) return;
     var result = e.target.closest ? e.target.closest('#search-results .btn-tile') : null;
     if (!tileFor(e.target) && !result) return;

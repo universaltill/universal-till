@@ -96,7 +96,6 @@ func TestMarketplaceInstallerInstallSuccess(t *testing.T) {
 			EndpointURL:       server.URL,
 			APIVersion:        "1.0.0",
 			ClientID:          "merchant-1",
-			ClientSecret:      "secret-1",
 			StoreID:           "store-1",
 			DeviceID:          "device-1",
 			PublicKey:         hex.EncodeToString(publicKey),
@@ -165,7 +164,6 @@ func TestMarketplaceInstallerAcksSuccessfulDownload(t *testing.T) {
 			EndpointURL:       server.URL,
 			APIVersion:        "1.0.0",
 			ClientID:          "merchant-1",
-			ClientSecret:      "secret-1",
 			StoreID:           "store-1",
 			DeviceID:          "device-1",
 			PublicKey:         hex.EncodeToString(publicKey),
@@ -241,7 +239,6 @@ func TestMarketplaceInstallerAcksFailedDownload(t *testing.T) {
 			EndpointURL:       server.URL,
 			APIVersion:        "1.0.0",
 			ClientID:          "merchant-1",
-			ClientSecret:      "secret-1",
 			StoreID:           "store-1",
 			DeviceID:          "device-1",
 			PublicKey:         hex.EncodeToString(publicKey),
@@ -320,7 +317,6 @@ func TestMarketplaceInstallerDoesNotAckBeforeDownloadAttempted(t *testing.T) {
 			EndpointURL:       server.URL,
 			APIVersion:        "1.0.0",
 			ClientID:          "merchant-1",
-			ClientSecret:      "secret-1",
 			StoreID:           "store-1",
 			DeviceID:          "device-1",
 			PublicKey:         hex.EncodeToString(publicKey),
@@ -379,7 +375,6 @@ func TestMarketplaceInstallerRejectsMissingIntegrityMetadata(t *testing.T) {
 			EndpointURL:       server.URL,
 			APIVersion:        "1.0.0",
 			ClientID:          "merchant-1",
-			ClientSecret:      "secret-1",
 			StoreID:           "store-1",
 			DeviceID:          "device-1",
 			PublicKey:         hex.EncodeToString(publicKey),
@@ -433,7 +428,6 @@ func TestMarketplaceInstallerRejectsBadSignature(t *testing.T) {
 			EndpointURL:       server.URL,
 			APIVersion:        "1.0.0",
 			ClientID:          "merchant-1",
-			ClientSecret:      "secret-1",
 			StoreID:           "store-1",
 			DeviceID:          "device-1",
 			PublicKey:         hex.EncodeToString(publicKey),
@@ -487,7 +481,6 @@ func TestMarketplaceInstallerRejectsChecksumMismatch(t *testing.T) {
 			EndpointURL:       server.URL,
 			APIVersion:        "1.0.0",
 			ClientID:          "merchant-1",
-			ClientSecret:      "secret-1",
 			StoreID:           "store-1",
 			DeviceID:          "device-1",
 			PublicKey:         hex.EncodeToString(publicKey),
@@ -543,7 +536,6 @@ func TestMarketplaceInstallerRejectsTamperedBundlePayload(t *testing.T) {
 			EndpointURL:       server.URL,
 			APIVersion:        "1.0.0",
 			ClientID:          "merchant-1",
-			ClientSecret:      "secret-1",
 			StoreID:           "store-1",
 			DeviceID:          "device-1",
 			PublicKey:         hex.EncodeToString(publicKey),
@@ -600,7 +592,6 @@ func TestMarketplaceInstallerNormalizesEntrypointFromExecutable(t *testing.T) {
 			EndpointURL:       server.URL,
 			APIVersion:        "1.0.0",
 			ClientID:          "merchant-1",
-			ClientSecret:      "secret-1",
 			StoreID:           "store-1",
 			DeviceID:          "device-1",
 			PublicKey:         hex.EncodeToString(publicKey),
@@ -632,7 +623,7 @@ func TestMarketplaceInstallerNormalizesEntrypointFromExecutable(t *testing.T) {
 
 func newTestMarketplaceInstaller(t *testing.T, cfg *config.Config, db *sql.DB) *MarketplaceInstaller {
 	t.Helper()
-	client := marketplace.NewClient(&cfg.Marketplace, &mockTokenClient{token: "test-token"})
+	client := marketplace.NewClient(&cfg.Marketplace)
 	installer, err := NewMarketplaceInstaller(cfg, client, db)
 	if err != nil {
 		t.Fatalf("NewMarketplaceInstaller: %v", err)
@@ -764,18 +755,6 @@ func assertPluginNotInstalled(t *testing.T, db *sql.DB, pluginID string) {
 	}
 }
 
-type mockTokenClient struct {
-	token string
-}
-
-func (m *mockTokenClient) GetToken(ctx context.Context) (string, error) {
-	return m.token, nil
-}
-
-func (m *mockTokenClient) ClearCache() error {
-	return nil
-}
-
 // Found by the independent review of ut-docs#15 / logged as ut-docs#16:
 // upsertCatalogEntry runs BEFORE PersistManifest, so a manifest that fails
 // PersistManifest's own validation (here: a payment entry key colliding
@@ -827,7 +806,6 @@ func TestMarketplaceInstallerLeavesNoCatalogRowOnRejectedInstall(t *testing.T) {
 			EndpointURL:       server.URL,
 			APIVersion:        "1.0.0",
 			ClientID:          "merchant-1",
-			ClientSecret:      "secret-1",
 			StoreID:           "store-1",
 			DeviceID:          "device-1",
 			PublicKey:         hex.EncodeToString(publicKey),

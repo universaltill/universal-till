@@ -14,6 +14,10 @@
       .selforder-shop { font-size:1.4rem; font-weight:700; margin:0; }
       .selforder-hint { color:var(--muted, #6b7280); max-width:32rem; }
       .selforder-start { min-height:64px; padding-inline:2.5rem; font-size:1.15rem; }
+      .selforder-langs { display:flex; flex-wrap:wrap; justify-content:center; gap:.75rem;
+        margin-block-start:2rem; max-width:40rem; }
+      .selforder-lang { min-height:56px; min-inline-size:8rem; padding-inline:1.25rem; font-size:1.05rem; }
+      .selforder-lang[aria-current="true"] { outline:3px solid var(--accent, #4f46e5); outline-offset:2px; }
     </style>
     <script defer src="/public/cursor.js?v={{ assetv "public/cursor.js" }}"></script>
     <!-- ut-docs#400: see web/public/autofill.js's own comment for why this
@@ -58,6 +62,15 @@
       <a class="btn primary selforder-start" href="/self-order/shop">
         {{ T "selforder.tap_to_start" }}
       </a>
+      {{ with .languages }}
+      {{/* ut-docs#4200: the customer's own language for this order. Each
+           name in its own language and tagged with it (font, shaping,
+           screen-reader voice); no flags — a flag names a country. */}}
+      <nav class="selforder-langs" aria-label="{{ T "setup.language.title" }}">
+        {{ range . }}<a class="btn secondary selforder-lang" href="/self-order/language?code={{ .Code }}" lang="{{ .Code }}"{{ if .Current }} aria-current="true"{{ end }}>{{ .NativeName }}</a>
+        {{ end }}
+      </nav>
+      {{ end }}
       {{ end }}
     </main>
     <script>

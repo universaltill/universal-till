@@ -20,7 +20,12 @@
      aria-label + title pair is therefore mandatory (an icon with no
      accessible name is unusable), never optional. The req guard on the
      first line fails the render, naming the key, when a required dict key
-     is missing or empty; "emptyTarget" is the one optional key. */}}
+     is missing or empty; "emptyTarget" is optional, and so is the
+     ut-docs#4418 pair "mainTillLock" (true on a catalogue screen whose
+     creates travel to the main till) + "mainTillLocked" (the page's
+     SyncUnreachable): New then sits in a fieldset[data-main-till-lock],
+     disabled while the main till can't be reached and followed live by
+     base.html's chip handler. */}}
 {{ define "list_header" }}
 {{ $_ := req . "searchID" "searchLabelKey" "filterTarget" "newID" "newLabelKey" "dialogID" }}
 <div class="list-header">
@@ -30,10 +35,12 @@
            placeholder="{{ T .searchLabelKey }}" aria-label="{{ T .searchLabelKey }}"
            data-list-filter="{{ .filterTarget }}"{{ if .emptyTarget }} data-list-empty="{{ .emptyTarget }}"{{ end }} />
   </div>
+  {{ if .mainTillLock }}<fieldset data-main-till-lock{{ if .mainTillLocked }} disabled{{ end }}>{{ end }}
   <button type="button" id="{{ .newID }}" class="btn primary btn-icon list-header-new"
           aria-label="{{ T .newLabelKey }}" title="{{ T .newLabelKey }}"
           data-record-dialog-open="{{ .dialogID }}">
     <span class="btn-ico" aria-hidden="true">{{ icon "plus" }}</span>
   </button>
+  {{ if .mainTillLock }}</fieldset>{{ end }}
 </div>
 {{ end }}

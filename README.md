@@ -264,7 +264,7 @@ For development and testing with plugin-marketplace features:
 `./scripts/dev.sh` loads `pos.env.dev`, which points at the **deployed dev
 marketplace** in the homelab cluster
 (`https://cloud.home.taskrunnertech.co.uk/api`). It runs with auth disabled,
-so **no OAuth client secret / API key is required** — you can browse the plugin
+so **no API key is required** — you can browse the plugin
 store and one-click install the FAQ plugin out of the box. `pos.env.dev` also
 carries the marketplace's Ed25519 signing public key, which the POS uses to verify
 plugin signatures before installing.
@@ -331,7 +331,6 @@ UT_MARKETPLACE_PUBLIC_KEY=             # Ed25519 signing key (hex); source build
 UT_MARKETPLACE_CLIENT_ID=              # Doubles as merchant_id on the install path
 UT_MARKETPLACE_STORE_ID=               # Store identifier for entitlement/install
 UT_MARKETPLACE_DEVICE_ID=              # Device identifier (defaults to hostname)
-UT_MARKETPLACE_CLIENT_SECRET=          # OAuth2 client secret (only if the marketplace enforces auth)
 UT_MARKETPLACE_API_VERSION=1.0.0       # Marketplace API version
 UT_DEV_MODE=false                      # Enable developer mode features
 UT_MARKETPLACE_DEV_OVERRIDE_URL=       # Local marketplace override (dev mode only)
@@ -767,7 +766,7 @@ time (remote support, migration).
 
 ### What's in each plan
 
-| | **Local** | **Shop** | **Pro** | **Chain** |
+| | **Local** | **Shop** | **Pro** | **Multi-location** |
 |---|---|---|---|---|
 | **Core POS, offline forever** | ✅ | ✅ | ✅ | ✅ |
 | **Tills (software)** | **unlimited** | **unlimited** | **unlimited** | **unlimited** |
@@ -803,7 +802,7 @@ stops being what's on this page.
 
 ### Prices by country
 
-| Market | | **Local** | **Shop** | **Pro** | **Chain** |
+| Market | | **Local** | **Shop** | **Pro** | **Multi-location** |
 |---|---|---|---|---|---|
 | 🇩🇪 🇦🇹 🇮🇪 🇪🇸 🇮🇹 🇫🇷 🇳🇱 **Eurozone** | monthly | **€0** | **€49** | **€69** | **€149** |
 | | annual *(per month)* | €0 | €40.83 | €57.50 | €124.17 |

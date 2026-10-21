@@ -228,6 +228,10 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// order-tracking token (placed on a Shop-plan till); read before
 	// engine.Reset() below, handed to the sale once it is committed.
 	trackingToken := engine.OrderTrackingToken()
+	// ut-docs#4705: a self-order customer's language pick (the kiosk's own
+	// basket, or a pay-at-counter order resumed here) — only their printed
+	// receipt uses it. Read before engine.Reset() below, like the token.
+	customerLocale := engine.CustomerLocale()
 	// ADR-0138 D2 (ut-docs#3310): carry the held order this basket was
 	// resumed from — read off THIS engine (the kiosk's own engine on a kiosk
 	// checkout, never d.Engine), before engine.Reset() below clears it — so
@@ -757,7 +761,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 
 	// Silent receipt print (docs: receipt-printing.md) — fired async,
 	// never blocks or fails the tender.
-	printReceiptAsync(d, receiptNo, actorID)
+	printReceiptAsync(d, receiptNo, actorID, customerLocale)
 	// Kitchen ticket to the separate kitchen printer, if one is
 	// configured (docs: arch/restaurant-phone-orders.md) — also async
 	// and best-effort; a no-op when no kitchen printer is set.
@@ -1773,6 +1777,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	// nothing in it has nothing to lose and is still just cleared. If the
 	// re-park itself fails the order stays live in the basket with an error
 	// toast rather than being lost.
+	//
+	// ut-docs#1122: any other basket with lines that New sale clears (no
+	// tender, no re-park) is recorded in cleared_baskets for the Z report,
+	// best-effort (recordClearedBasket).
 	mux.HandleFunc("/api/pos/reset", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		funcs := httpx.FuncsFor(locale)
@@ -1794,7 +1802,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		tableToRelease := d.Engine.TableID()
-		d.Engine.Reset()
+		// ut-docs#1122: a basket with lines cleared here (no tender, no
+		// re-park) is recorded in cleared_baskets for the Z report. Read
+		// and cleared under one lock; recorded best-effort after it.
+		cleared := d.Engine.ResetAndSnapshot()
+		recordClearedBasket(r.Context(), d, r, cleared)
 		releaseTableClaim(r.Context(), d, repo, tableToRelease)
 		b, _ := d.Engine.Scan("")
 		_ = basketView.Render(w, b)
@@ -2414,6 +2426,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			// transaction, keyed by the real new sale id.
 			AgeVerifications: pos.AgeVerificationsForSale(lines, ageChecks),
 		}
+		// ut-docs#4714: completeTender resets the engine, so read a
+		// self-order customer's language pick (carried by a resumed
+		// pay-at-counter order, ut-docs#4705) first; the receipt screen's
+		// Print button hands it back so a manual print matches auto-print.
+		customerLocale := d.Engine.CustomerLocale()
 		saleID, err := completeTender(r.Context(), d, d.Engine, repo, saleInput, payments, getSessionUserID(r), kitchenDeltaFilter(goodsLines))
 		if err != nil {
 			var declined *paymentDeclinedError
@@ -2664,8 +2681,16 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// best-effort: nil renders the receipt without it. The sale is
 		// already committed, so this can never affect it.
 		trackingView := receiptTrackingScreenView(r, d, receiptNo, saleInput.SaleType, locale, design)
+		// ut-docs#4730: the print-only copy in the customer's language gets
+		// a QR that opens the tracking page in that language too, like the
+		// thermal print's (same idempotent token).
+		if trackingView != nil && customerLocale != "" && customerLocale != locale && httpx.InstalledLocale(customerLocale) {
+			if qr, u := orderTrackingQRView(r, repo, receiptNo, customerLocale); qr != "" {
+				trackingView.CustomerCopy = &receiptTrackingView{QRDataURI: qr, URL: u}
+			}
+		}
 		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable, unsignedOverride, unsignedFiscalSigning, unsignedCannotSign, tseSignature, deviceReceipt,
-			storeNameOrDefault(r.Context(), d), design, tableLabelForReceipt, issuedVouchers, printerCfg.ReceiptPolicy, receiptEvidence, trackingView)
+			storeNameOrDefault(r.Context(), d), design, tableLabelForReceipt, issuedVouchers, printerCfg.ReceiptPolicy, receiptEvidence, trackingView, customerLocale, locale)
 		if renderErr != nil {
 			printerUnavailable = true
 			receiptHTML = `<div class="receipt-printer-warning"><span class="receipt-printer-message">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.unavailable")) + `</span><button class="btn secondary receipt-printer-retry" type="button" data-action="print">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.retry")) + `</button></div>`
@@ -2920,7 +2945,7 @@ func normalizeLegalLines(text string, lines []string) []string {
 // receiptPolicy (ADR-0089) is the shop's resolved receipt policy: "ask"
 // renders the "would you like a receipt?" prompt above the action row;
 // "always"/"never" (or "") render the receipt exactly as before.
-func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, deviceReceipt *data.FiscalDeviceReceipt, storeName string, design receiptDesign, tableLabel string, issuedVouchers []receiptVoucherIssue, receiptPolicy string, receiptEvidence *data.FiscalReceiptEvidence, tracking *receiptTrackingView) (string, error) {
+func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, deviceReceipt *data.FiscalDeviceReceipt, storeName string, design receiptDesign, tableLabel string, issuedVouchers []receiptVoucherIssue, receiptPolicy string, receiptEvidence *data.FiscalReceiptEvidence, tracking *receiptTrackingView, customerLocale, screenLocale string) (string, error) {
 	// Fixed file set, parsed once and cloned per call thereafter
 	// (ut-docs#1320) — this runs on every completed sale.
 	t, err := httpx.ClonedTemplate("pages.renderReceipt", "receipt.html", funcs,
@@ -3066,12 +3091,53 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		"ShowBarcode":   design.ShowBarcode,
 		// ut-docs#908: the customer order-tracking QR — nil means no block.
 		"Tracking": tracking,
+		// ut-docs#4714: the Print buttons carry it (data-customer-locale).
+		"CustomerLocale": customerLocale,
+	}
+	// ut-docs#4730: a receipt printed through the browser's print dialog is
+	// the page itself, so a self-order customer's pick (installed, and not
+	// the screen's language) rides along as a second, print-only copy of the
+	// receipt body in their language. A failure degrades to the screen copy
+	// only, never to no receipt.
+	if customerLocale != "" && customerLocale != screenLocale && httpx.InstalledLocale(customerLocale) {
+		if copyHTML, perr := renderReceiptPrintCopy(customerLocale, data); perr != nil {
+			log.Printf("receipt print copy (%s) skipped: %v", customerLocale, perr)
+		} else {
+			data["PrintCopy"] = copyHTML
+			data["PrintCopyLocale"] = customerLocale
+			data["PrintCopyDir"] = map[bool]string{true: "rtl", false: "ltr"}[httpx.IsRTL(customerLocale)]
+		}
 	}
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "receipt", data); err != nil {
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+// renderReceiptPrintCopy executes the receipt's customer-facing body in the
+// given locale (ut-docs#4730).
+func renderReceiptPrintCopy(locale string, data map[string]any) (template.HTML, error) {
+	if tv, ok := data["Tracking"].(*receiptTrackingView); ok && tv != nil && tv.CustomerCopy != nil {
+		copyData := make(map[string]any, len(data))
+		for k, v := range data {
+			copyData[k] = v
+		}
+		copyData["Tracking"] = tv.CustomerCopy
+		data = copyData
+	}
+	t, err := httpx.ClonedTemplate("pages.renderReceipt", "receipt.html", httpx.FuncsFor(locale),
+		"ui/partials/receipt.html",
+		"ui/partials/receipt_auto_reset.html",
+	)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	if err := t.ExecuteTemplate(&buf, "receipt_body", data); err != nil {
+		return "", err
+	}
+	return template.HTML(buf.String()), nil //nolint:gosec // output of an html/template execution
 }
 
 func looksLikeCustomerCode(code string) bool {

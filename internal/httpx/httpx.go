@@ -895,6 +895,11 @@ func RequestLocale(r *http.Request) string {
 	if lang := r.URL.Query().Get("lang"); lang != "" {
 		return lang
 	}
+	// a self-order kiosk customer's pick, on the self-order routes only
+	// (ut-docs#4200)
+	if lang, ok := SelfOrderLocale(r); ok {
+		return lang
+	}
 	// cookie — only while it is still a live preference, not a stale one
 	// (ut-docs#2135)
 	if lang, ok := LocaleOverride(r); ok {
@@ -1161,7 +1166,9 @@ func FuncsFor(locale string) template.FuncMap {
 	// per-event timestamp where the time of day matters (a journal row, an
 	// audit entry) — as opposed to `date`'s date-only rendering (ut-docs#1632).
 	// Same accepted-value contract and same-string-back-on-parse-failure
-	// behavior as `date` above.
+	// behavior as `date` above — except a bare "YYYY-MM-DD" string (a legacy
+	// report period) renders as FormatDate: date only, no clock, and no
+	// Local() conversion since a calendar date has no instant (ut-docs#4691).
 	funcs["datetime"] = func(v any) string {
 		switch t := v.(type) {
 		case time.Time:
@@ -1169,6 +1176,9 @@ func FuncsFor(locale string) template.FuncMap {
 		case string:
 			parsed, ok := ParseStoredTime(t)
 			if !ok {
+				if d, isDate := ParseStoredDate(t); isDate {
+					return FormatDate(d, locale)
+				}
 				return t
 			}
 			return FormatDateTime(parsed.Local(), locale)

@@ -688,7 +688,8 @@ func StartSyncPush(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) {
 // StartSyncPush so it can be driven directly in tests instead of only via
 // the real 30s ticker. It pushes the sales journal, then — whatever the
 // sales push did, including having nothing to send — the no-sale journal
-// (ut-docs#3562). No primary or bearer configured: neither runs.
+// (ut-docs#3562) and the cleared-basket journal (ut-docs#4711). No primary
+// or bearer configured: none runs.
 func syncPushTick(ctx context.Context, d *common.Deps, client *http.Client) {
 	get := func(k string) string {
 		v, _, _ := d.Settings.Get(ctx, k)
@@ -700,6 +701,7 @@ func syncPushTick(ctx context.Context, d *common.Deps, client *http.Client) {
 	}
 	syncPushSales(ctx, d, client, primary, bearer)
 	syncPushNoSales(ctx, d, client, primary, bearer)
+	syncPushClearedBaskets(ctx, d, client, primary, bearer)
 }
 
 // syncPushSales is syncPushTick's sales-journal step: push local sales past

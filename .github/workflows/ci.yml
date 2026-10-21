@@ -462,8 +462,8 @@ jobs:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
         # Excludes internal/plugins itself (own test-heavy leg, ut-docs#643)
-        # and its oauth/marketplace subpackages (own step below,
-        # ut-docs#1630) — both run with -v there so a t.Skip is visible; this
+        # and its marketplace subpackage (own step below, ut-docs#1630) —
+        # each runs with -v in its own step so a t.Skip is visible; this
         # step stays plain, so don't run either a second time here. Also
         # excludes internal/pages itself (own test-heavy leg, ut-docs#1992)
         # for the same margin reason as internal/plugins — see that leg's
@@ -472,22 +472,22 @@ jobs:
         # ut-docs#3021, ut-docs#3410, ut-docs#3014). Every package excluded
         # here must run somewhere else: ci-heavy-tests_test.sh checks it
         # (ut-docs#4581).
-        run: go test $(go list ./... | grep -vE '/internal/plugins$|/internal/plugins/(oauth|marketplace)$|/internal/pages$|/internal/(enroll|logging|netreach|app|server)$')
-      - name: Test (internal/plugins/oauth and /marketplace — ut-docs#1630)
+        run: go test $(go list ./... | grep -vE '/internal/plugins$|/internal/plugins/marketplace$|/internal/pages$|/internal/(enroll|logging|netreach|app|server)$')
+      - name: Test (internal/plugins/marketplace — ut-docs#1630)
         # Same gap #1626 fixed for internal/plugins itself: the main Test
-        # step above runs plain (no -v), so a t.Skip in these subpackages
-        # (both have a real one, gated on os.Hostname() being empty —
-        # internal/plugins/oauth/token_client_test.go and
+        # step above runs plain (no -v), so a t.Skip in this subpackage
+        # (it has a real one, gated on os.Hostname() being empty —
         # internal/plugins/marketplace/client_more_test.go) prints no
         # `--- SKIP` line and CI just reports `ok` whether the test actually
-        # ran or silently skipped. Scoped to exactly these two packages (no
-        # trailing /...) so they don't also run inside the main Test step's
+        # ran or silently skipped. Scoped to exactly this package (no
+        # trailing /...) so it doesn't also run inside the main Test step's
         # `go test ./...` above — see that step's own exclude and ut-docs#662
         # on why re-running things twice in one job is worth avoiding.
+        # (The oauth package that shared this step is gone, ut-docs#3577.)
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
-        run: go test -v ./internal/plugins/oauth ./internal/plugins/marketplace
+        run: go test -v ./internal/plugins/marketplace
 
   test-heavy:
     # ut-docs#4581: the five heaviest test runs, one runner each, beside
@@ -566,7 +566,7 @@ jobs:
           # it for the whole suite, so a genuine hang anywhere else still
           # fails fast (within the default 10m) instead of taking up to 20m
           # to report. Scoped to the exact package (no trailing /...) so
-          # internal/plugins/marketplace and /oauth — covered by their own
+          # internal/plugins/marketplace — covered by its own
           # dedicated step above (ut-docs#1630), not the main Test step
           # anymore — don't run a second time in this same job; see
           # ut-docs#662's own comment on why re-running things twice in one

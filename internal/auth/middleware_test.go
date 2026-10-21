@@ -150,6 +150,8 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		"/api/sync/sales",
 		// ut-docs#3562: the replica push tick's no-sale journal.
 		"/api/sync/no-sales",
+		// ut-docs#4711: the same push tick's cleared-basket journal.
+		"/api/sync/cleared-baskets",
 		// ut-docs#4566: a failed join's best-effort enrolment withdrawal.
 		"/api/sync/enroll/withdraw",
 		"/api/sync/admin",

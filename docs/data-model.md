@@ -86,6 +86,14 @@ as `CODE128` so internal PLU/keypad codes remain supported.
   `sync.no_sale_push_cursor`), where they are stored with `till_id` = the
   reporting till's `tills.id`, so the main till's rollup counts every
   till's opens once (ut-docs#3562)
+- `cleared_baskets` — live baskets cleared with New sale before any tender
+  (ut-docs#1122; migration 086, with its `cleared_baskets_archive` reset
+  twin); the Z report's CLEARED BEFORE PAYMENT count and total. A replica
+  journals its own clears to the main till over LAN sync D3
+  (`POST /api/sync/cleared-baskets`, cursor
+  `sync.cleared_basket_push_cursor`), where they are stored with `till_id` =
+  the reporting till's `tills.id`, so the main till's report counts every
+  till's clears once (ut-docs#4711)
 
 ### 5. Shifts & audit
 
@@ -942,8 +950,6 @@ data/plugins/
 │   └── prod.catalog.json    # Cached marketplace catalog
 ├── tmp/                      # Temporary downloads
 │   └── *.part               # Resume-capable partial downloads
-├── auth/                     # OAuth2 credentials cache
-│   └── token.json           # Marketplace access token
 └── {plugin_id}/             # Plugin installations
     ├── {version}/           # Current active version
     │   ├── manifest.json    # Plugin metadata
@@ -1002,11 +1008,11 @@ data/plugins/
 
 ### API Integration
 
-**OAuth2 Flow**
-- Client credentials grant for device authentication
-- Tokens cached with expiry tracking
-- Automatic refresh before expiration
-- Secure storage at `data/plugins/auth/token.json`
+**Authentication**
+- The catalogue is fetched with no credential; store-scoped requests (a
+  paid plugin's download token) carry the till's ADR-0116 device
+  credential. The old OAuth2 merchant token and its
+  `data/plugins/auth/token.json` cache are gone (ut-docs#3577).
 
 **Catalog Endpoint**
 - `GET /v1/catalog?locale={locale}&arch={os}/{arch}`

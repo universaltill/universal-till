@@ -1,3 +1,5 @@
+catimport/mapping.go: unreachable func: MappableFields
+catimport/mapping.go: unreachable func: ValidateMapping
 catimport/rows.go: unreachable func: RowFor
 catimport/rows.go: unreachable func: ToRows
 cmd/unitill-desktop/control.go: unreachable func: controlServer.LastInputAt

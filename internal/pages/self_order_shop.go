@@ -690,6 +690,13 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			AllowNegativeInventory: allowNegative,
 			ActorID:                "kiosk",
 		}
+		// ut-docs#4705: the customer's receipt prints in their language
+		// pick (ut-docs#4200). Always written, "" for no pick, so a pick
+		// left on this shared walk-up basket by a failed checkout never
+		// reaches the next customer's receipt; completeTender's Reset
+		// clears it.
+		pick, _ := httpx.SelfOrderLocale(r)
+		eng.SetCustomerLocale(pick)
 		saleID, err := completeTender(r.Context(), d, eng, repo, saleInput, saleInput.Payments, "kiosk", kitchenDeltaFilter(lines))
 		if err != nil {
 			var declined *paymentDeclinedError
@@ -900,6 +907,10 @@ func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *com
 		http.Error(w, "basket is empty", http.StatusBadRequest)
 		return
 	}
+	// ut-docs#4705: the parked order carries the customer's language pick,
+	// so the receipt printed when the cashier takes payment is in it. Set
+	// from this request, never left from the basket (see the card path).
+	snap.CustomerLocale, _ = httpx.SelfOrderLocale(r)
 	// offline is the kiosk's #selforder-offline-flag, hx-included into this
 	// checkout form (same signal the kiosk card checkout threads into
 	// SaleInput.Offline) — see placeCounterOrder's fiscal order start.

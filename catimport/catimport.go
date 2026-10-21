@@ -19,6 +19,8 @@
 package catimport
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -575,7 +577,16 @@ func StripCSVDefuse(field string) string {
 // from its SKU/item number via DeriveNumberBarcode, unless that number is
 // shared by an earlier row in this file (BarcodeIssueDuplicateItemNumber).
 func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useItemNumbersAsBarcodes bool) (Result, error) {
-	cr := csv.NewReader(r)
+	// The separator comes from the first record (ut-docs#4726): peek at it
+	// without consuming, then parse from the same buffered reader.
+	br := bufio.NewReaderSize(r, HeaderRowMaxBytes)
+	head, _ := br.Peek(HeaderRowMaxBytes)
+	if bytes.HasPrefix(head, utf8BOM) { // a BOM in front of a quoted header breaks the CSV reader
+		_, _ = br.Discard(len(utf8BOM))
+		head = head[len(utf8BOM):]
+	}
+	cr := csv.NewReader(br)
+	cr.Comma = sniffDelimiter(head)
 	cr.FieldsPerRecord = -1 // exports are ragged in the wild
 	headers, err := cr.Read()
 	if err != nil {

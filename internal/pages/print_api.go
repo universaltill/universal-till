@@ -275,6 +275,63 @@ func receiptDesignFromSettings(ctx context.Context, d *common.Deps) receiptDesig
 
 // buildReceiptDoc assembles the printable receipt for a completed sale.
 func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (print.Doc, error) {
+	return buildReceiptDocIn(ctx, d, receiptNo, httpx.DefaultLocale())
+}
+
+// customerReceiptDoc is the receipt a self-order kiosk customer takes away
+// (ut-docs#4705): in the language they picked at the kiosk (ut-docs#4200),
+// or the shop's when customerLocale is "" or not an installed locale (it
+// can arrive on a replica's held-order payload, so it is device input).
+// A restricted-charset printer that cannot encode that language — a cp858
+// printer and a Persian pick, say — prints the shop's language instead:
+// the shop's own receipt beats a page of '?'. Reprints from the journal and
+// every other print stay in the shop's language (buildReceiptDoc).
+func customerReceiptDoc(ctx context.Context, d *common.Deps, receiptNo, customerLocale string) (print.Doc, error) {
+	if customerLocale == httpx.DefaultLocale() || !httpx.InstalledLocale(customerLocale) {
+		return buildReceiptDoc(ctx, d, receiptNo)
+	}
+	doc, err := buildReceiptDocIn(ctx, d, receiptNo, customerLocale)
+	if err != nil || receiptDocEncodable(doc) {
+		return doc, err
+	}
+	// Fall back only when the shop's own receipt does print: text that is
+	// the same in every language (a store name, an item name) and does not
+	// encode is no reason to drop the customer's language.
+	shopDoc, err := buildReceiptDoc(ctx, d, receiptNo)
+	if err != nil || !receiptDocEncodable(shopDoc) {
+		return doc, nil
+	}
+	return shopDoc, nil
+}
+
+// receiptDocEncodable reports whether every text the receipt prints
+// survives its printer's charset (print.Encodable) — the same test the
+// kitchen ticket applies to its translated labels (kitchenTicketText).
+func receiptDocEncodable(doc print.Doc) bool {
+	texts := []string{doc.StoreName, doc.TrackingCaption, doc.VoucherHeading}
+	texts = append(texts, doc.Header...)
+	texts = append(texts, doc.Meta...)
+	texts = append(texts, doc.Footer...)
+	for _, l := range doc.Lines {
+		texts = append(texts, l.Name, l.Qty, l.Amount, l.Sub)
+	}
+	for _, kv := range append(append([]print.KV(nil), doc.Totals...), doc.Payments...) {
+		texts = append(texts, kv.Label, kv.Amount)
+	}
+	for _, v := range doc.Vouchers {
+		texts = append(texts, v.Label, v.Amount, v.Holder, v.Balance, v.Void)
+	}
+	for _, t := range texts {
+		if !print.Encodable(t, doc.Charset) {
+			return false
+		}
+	}
+	return true
+}
+
+// buildReceiptDocIn renders the receipt with every label, number and date
+// in printLocale.
+func buildReceiptDocIn(ctx context.Context, d *common.Deps, receiptNo, printLocale string) (print.Doc, error) {
 	detail, ok, err := data.NewPOSRepo(d.Db).GetSaleDetail(ctx, receiptNo)
 	if err != nil {
 		return print.Doc{}, err
@@ -296,7 +353,8 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	// convention). The receipt.paper.* keys are printf formats so a
 	// language can put the value first; their en values are the literals
 	// this function used to print, so an en receipt is unchanged.
-	printLocale := httpx.DefaultLocale()
+	// printLocale is the shop's except on a kiosk customer's own receipt
+	// (customerReceiptDoc, ut-docs#4705).
 	money := func(minor int64) string { return httpx.FormatMoneyLatin(minor, printLocale) }
 	T := func(key string) string { return httpx.T(printLocale, key) }
 	Tf := func(key string, args ...any) string { return fmt.Sprintf(T(key), args...) }
@@ -585,7 +643,7 @@ func receiptMethodLabel(locale, method string) string {
 // calls, purely for that — nothing outside _test.go ever reassigns them.
 var (
 	printAsyncTimeout = 15 * time.Second
-	printReceiptFn    = printReceipt
+	printReceiptFn    = printReceiptIn
 	printKitchenFn    = printKitchenFiltered
 )
 
@@ -596,7 +654,7 @@ var (
 // that is out of paper, unplugged mid-write or hung does not fail fast: both
 // transports block until the print context's deadline (deviceTransport selects
 // on ctx.Done(); networkTransport hands the deadline to SetWriteDeadline), so
-// by the time printReceipt/printKitchen returns that error, its context is
+// by the time printReceiptIn/printKitchen returns that error, its context is
 // already expired — and every write made with it would be dropped by
 // database/sql before touching the DB. Reusing it would silently lose exactly
 // the failures this feature exists to surface.
@@ -610,7 +668,9 @@ func recordPrintFailureCtx() (context.Context, context.CancelFunc) {
 // Tracked on d.AsyncWork (ut-docs#425) so a caller tearing down shared state
 // (a test closing Db, graceful shutdown) can wait for it to actually finish
 // instead of racing it — see AsyncWork's doc comment on common.Deps.
-func printReceiptAsync(d *common.Deps, receiptNo string, actorID string) {
+// customerLocale is a self-order customer's language pick for their receipt
+// (customerReceiptDoc); "" prints in the shop's language.
+func printReceiptAsync(d *common.Deps, receiptNo, actorID, customerLocale string) {
 	d.AsyncWork.Add(1)
 	go func() {
 		defer logging.RecoverAndLog("pages.printReceiptAsync")
@@ -643,7 +703,7 @@ func printReceiptAsync(d *common.Deps, receiptNo string, actorID string) {
 			// real prior failure nor falsely clear one.
 			return
 		}
-		if err := printReceiptFn(ctx, d, receiptNo); err != nil {
+		if err := printReceiptFn(ctx, d, receiptNo, customerLocale); err != nil {
 			if errors.Is(err, errCustomerDocumentsSuppressed) {
 				// A withheld document (ADR-0124) is not a broken printer:
 				// no audit failure, no /orders warning.
@@ -661,7 +721,9 @@ func printReceiptAsync(d *common.Deps, receiptNo string, actorID string) {
 	}()
 }
 
-func printReceipt(ctx context.Context, d *common.Deps, receiptNo string) error {
+// printReceiptIn prints a receipt; customerLocale is a kiosk customer's own
+// language for their receipt (customerReceiptDoc), "" the shop's language.
+func printReceiptIn(ctx context.Context, d *common.Deps, receiptNo, customerLocale string) error {
 	// ADR-0124 §3: the shared choke point every receipt print path reaches
 	// (tender and refund auto-print, manual print, reprint) refuses here as
 	// well, so a handler that misses the gate still cannot print.
@@ -672,7 +734,7 @@ func printReceipt(ctx context.Context, d *common.Deps, receiptNo string) error {
 	if !cfg.Enabled() {
 		return fmt.Errorf("no printer configured")
 	}
-	doc, err := buildReceiptDoc(ctx, d, receiptNo)
+	doc, err := customerReceiptDoc(ctx, d, receiptNo, customerLocale)
 	if err != nil {
 		return err
 	}
@@ -924,7 +986,17 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		receiptNo := r.PathValue("receiptNo")
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
-		err := printReceipt(ctx, d, receiptNo)
+		// ut-docs#4714: the receipt screen's Print button sends the
+		// self-order customer's language pick so a manual print matches
+		// the auto-print (ut-docs#4705); the journal sends none, so its
+		// reprint stays the shop's copy. External input: an uninstalled
+		// value falls back to the shop's language, never an error.
+		_ = r.ParseForm()
+		loc := strings.TrimSpace(r.PostForm.Get("customer_locale"))
+		if !httpx.InstalledLocale(loc) {
+			loc = ""
+		}
+		err := printReceiptIn(ctx, d, receiptNo, loc)
 		now := time.Now().UTC().Format(time.RFC3339)
 		if errors.Is(err, errCustomerDocumentsSuppressed) {
 			// ADR-0124 §3: refused, with a distinct status the receipt
@@ -935,8 +1007,12 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 			writeCustomerDocumentsRefused(w, r)
 			return
 		}
+		audit := map[string]any{"ok": err == nil}
+		if loc != "" {
+			audit["customer_locale"] = loc
+		}
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "sale", receiptNo, "receipt_reprint",
-			map[string]any{"ok": err == nil}, now, "")
+			audit, now, "")
 		// Keep the /orders warning honest (ut-docs#517a), same as the manual
 		// kitchen reprint. Without this the receipt warning would be
 		// UNCLEARABLE: a receipt only auto-prints once, at tender, so the

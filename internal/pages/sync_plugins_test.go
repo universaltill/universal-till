@@ -300,10 +300,9 @@ func (m *fakeMarketplace) publishMismatchedRelease(t *testing.T, listingID, plug
 
 // newFakeMarketplace serves the minimal marketplace surface a real install
 // needs: download-token issue + bundle download. Deliberately NOT served:
-// /v1/stores/register and /v1/auth/merchant-token (404) — enrolment and
-// token failures must stay non-fatal on this path, exactly as offline-first
-// demands, and serving register would mutate the enroll package's process
-// globals across tests.
+// /v1/stores/register (404) — an enrolment failure must stay non-fatal on
+// this path, exactly as offline-first demands, and serving register would
+// mutate the enroll package's process globals across tests.
 func newFakeMarketplace(t *testing.T, pluginIDByListing map[string]string) *fakeMarketplace {
 	t.Helper()
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
@@ -461,7 +460,6 @@ func (m *fakeMarketplace) config() config.MarketplaceConfig {
 		EndpointURL:       m.server.URL,
 		APIVersion:        "1.0.0",
 		ClientID:          "merchant-1",
-		ClientSecret:      "secret-1",
 		StoreID:           "store-1",
 		DeviceID:          "device-1",
 		PublicKey:         hex.EncodeToString(m.publicKey),

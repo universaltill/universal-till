@@ -36,7 +36,7 @@ func TestNewClient_DevOverrideIgnoredWhenDevModeOff(t *testing.T) {
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 5,
 	}
-	client := NewClient(cfg, &mockTokenClient{token: "t"})
+	client := NewClient(cfg)
 
 	if client.devOverrideActive {
 		t.Fatal("expected the dev override to be inactive when DevMode is off, regardless of health")
@@ -57,7 +57,7 @@ func TestNewClient_DevOverrideIgnoredWhenURLInvalid(t *testing.T) {
 		RequestTimeoutSec:     5,
 		HealthCheckTimeoutSec: 1,
 	}
-	client := NewClient(cfg, &mockTokenClient{token: "t"})
+	client := NewClient(cfg)
 
 	if client.devOverrideActive {
 		t.Fatal("expected an invalid dev override URL to be ignored")
@@ -82,7 +82,7 @@ func TestNewClient_DevOverrideIgnoredWhenUnhealthy(t *testing.T) {
 		RequestTimeoutSec:     5,
 		HealthCheckTimeoutSec: 1,
 	}
-	client := NewClient(cfg, &mockTokenClient{token: "t"})
+	client := NewClient(cfg)
 
 	if client.devOverrideActive {
 		t.Fatal("expected an unhealthy dev override to be ignored")
@@ -104,7 +104,7 @@ func TestNewClient_DevOverrideActiveWhenHealthy(t *testing.T) {
 		RequestTimeoutSec:     5,
 		HealthCheckTimeoutSec: 1,
 	}
-	client := NewClient(cfg, &mockTokenClient{token: "t"})
+	client := NewClient(cfg)
 
 	if !client.devOverrideActive {
 		t.Fatal("expected a healthy, valid dev override under DevMode to be active")
@@ -143,7 +143,7 @@ func TestNewClient_SelfSignedHTTPSOverrideActivates(t *testing.T) {
 		RequestTimeoutSec:     5,
 		HealthCheckTimeoutSec: 2,
 	}
-	client := NewClient(cfg, &mockTokenClient{token: "t"})
+	client := NewClient(cfg)
 
 	if !client.devOverrideActive {
 		t.Fatal("expected a self-signed HTTPS dev override to pass its health check and activate")
@@ -175,7 +175,7 @@ func TestNewClient_CloudTLSNeverBypassedByDevOverrideConfig(t *testing.T) {
 		RequestTimeoutSec:     5,
 		HealthCheckTimeoutSec: 1,
 	}
-	client := NewClient(cfg, &mockTokenClient{token: "t"})
+	client := NewClient(cfg)
 
 	if client.devOverrideActive {
 		t.Fatal("expected the unreachable dev override to fail its health check")
@@ -216,7 +216,7 @@ func TestDoRequest_FallsBackToCloudWhenDevOverrideDiesMidSession(t *testing.T) {
 		HealthCheckTimeoutSec: 1,
 		FallbackTimeoutSec:    1,
 	}
-	client := NewClient(cfg, &mockTokenClient{token: "t"})
+	client := NewClient(cfg)
 	if !client.devOverrideActive {
 		t.Fatal("expected the dev override to be active after passing its startup health check")
 	}
