@@ -258,7 +258,7 @@
   // Move down buttons call it.
   function move(item, step) {
     var list = listOf(item);
-    if (!list || !step) return false;
+    if (!list || !step || locked(list)) return false;
     state(list);
     var vis = peers(list, item);
     var i = vis.indexOf(item);
@@ -271,6 +271,15 @@
     announceMoved(list, item);
     persist(list);
     return true;
+  }
+  // ut-docs#4418: on an additional till a list's reorder save travels to
+  // the main till and is refused while it can't be reached, so the list
+  // doesn't move at all then: base.html keeps data-main-till-locked on
+  // <html> and on the list itself (a [data-main-till-gate] the page
+  // rendered locked) in step with the main-till chip.
+  function locked(list) {
+    return document.documentElement.hasAttribute('data-main-till-locked') ||
+      !!(list && list.closest && list.closest('[data-main-till-locked]'));
   }
   function canMove(item, step) {
     var list = listOf(item);
@@ -376,7 +385,7 @@
     if (e.button !== undefined && e.button !== 0) return;
     if (e.isPrimary === false) { clearHold(); return; }
     var item = itemFor(e.target);
-    if (!item || ignoredTarget(e.target)) return;
+    if (!item || ignoredTarget(e.target) || locked(listOf(item))) return;
     clearHold();
     var h = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, item: item, list: listOf(item) };
     h.timer = setTimeout(function () { arm(h); }, HOLD_MS);

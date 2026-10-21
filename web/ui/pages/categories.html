@@ -39,7 +39,9 @@
      "emptyTarget"    "#categories-no-results"
      "newID"          "categories-new"
      "newLabelKey"    "categories.new"
-     "dialogID"       "category-dialog") }}
+     "dialogID"       "category-dialog"
+     "mainTillLock"   true
+     "mainTillLocked" .SyncUnreachable) }}
 
 <div class="card list-card">
   {{ if not .categories }}
@@ -68,6 +70,7 @@
          every id in the new order to the existing reorder endpoint, and
          puts the rows back if the till refuses. */}}
     <tbody data-reorder-list
+           data-main-till-gate{{ if .SyncUnreachable }} data-main-till-locked{{ end }}
            data-reorder-url="/api/categories/reorder"
            data-reorder-live="categories-reorder-live"
            data-reorder-msg="categories-reorder-msg"

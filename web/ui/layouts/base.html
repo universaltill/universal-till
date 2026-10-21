@@ -1916,6 +1916,16 @@
           each('[data-main-till-lock]', function (el) { el.disabled = away; });
           each('[data-main-till-away]', function (el) { el.hidden = !away; });
           each('[data-main-till-here]', function (el) { el.hidden = away; });
+          // ut-docs#4418: gestures no fieldset can disable (the sale
+          // screen's edit mode, list-reorder.js's long-press drag) read
+          // data-main-till-locked instead — on <html> for the live state
+          // (the sale screen renders none of its own), and on any
+          // [data-main-till-gate] element a page rendered locked.
+          each('[data-main-till-gate]', function (el) { el.toggleAttribute('data-main-till-locked', away); });
+          if (root === document) {
+            document.documentElement.toggleAttribute('data-main-till-locked', away);
+            window.dispatchEvent(new CustomEvent('ut-main-till-lock', { detail: { locked: away } }));
+          }
         }
         function followChip() {
           if (!mount || !bar) return;
@@ -1931,6 +1941,14 @@
             live.textContent = chip.textContent.replace(/\s+/g, ' ').trim();
           }
           lastState = state;
+          // ut-docs#4418 review: the chip going away (this till was
+          // promoted, or stopped following a main till) lifts the lock —
+          // <html>'s data-main-till-locked outlives boosted navigations,
+          // so nothing else would ever clear it.
+          if (!state && lockState) {
+            lockState = '';
+            applyMainTillLock(document, false);
+          }
           if (state && state !== lockState) {
             lockState = state;
             applyMainTillLock(document, state === 'unreachable');
