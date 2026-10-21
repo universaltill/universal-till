@@ -756,3 +756,26 @@ func TestRun_NameFallbackNeverTakesItemALaterRowMatchesByCode(t *testing.T) {
 		wantCounts(t, res, 1, 1, 0, 0)
 	}
 }
+
+// Two rows of one run that match the same unlinked item (the first by
+// barcode, the second by SKU) report the same issue in preview and commit:
+// the in-run claim wins over the link the first row just wrote (ut-docs#4740).
+func TestRun_SecondRowMatchingClaimedItemIsAlreadyMatchedInPreviewAndCommit(t *testing.T) {
+	for _, commit := range []bool{false, true} {
+		sqlDB := openDB(t)
+		seedItem(t, sqlDB, "Local name", "FW-1", "5000000000017")
+		r1 := `{"external_id":"p-1","name":"Flat white","barcodes":["5000000000017"],"price_minor":320}`
+		r2 := `{"external_id":"p-2","name":"Flat white 2","sku":"FW-1","price_minor":320}`
+		res := run(t, sqlDB, commit, r1, r2)
+		wantCounts(t, res, 0, 1, 0, 1)
+		var got []Sample
+		for _, s := range res.Samples {
+			if s.Action == ActionIssue {
+				got = append(got, s)
+			}
+		}
+		if len(got) != 1 || got[0].IssueCode != IssueItemAlreadyMatched {
+			t.Fatalf("commit=%v: issue samples = %+v, want one %q", commit, got, IssueItemAlreadyMatched)
+		}
+	}
+}

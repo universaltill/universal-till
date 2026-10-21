@@ -375,6 +375,13 @@ func (rn *runner) plan(ctx context.Context, r *row) (plan, error) {
 			return plan{}, err
 		}
 		if cand != "" {
+			// An earlier row of this run already claimed cand: report that
+			// before the link check, which on a commit would see the link
+			// that row just wrote and say "linked elsewhere" where a
+			// preview says "already matched" (ut-docs#4740).
+			if other, ok := rn.claimedItem[cand]; ok && other != r.ext {
+				return issue(IssueItemAlreadyMatched), nil
+			}
 			if ext, ok, err := rn.links.ExternalIDFor(ctx, rn.q, rn.opt.Source, EntityItems, cand); err != nil {
 				return plan{}, err
 			} else if ok && ext != r.ext {
