@@ -197,6 +197,10 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 	if err := set("sync.no_sale_push_cursor", nowUTC()+"|"); err != nil {
 		return false, fmt.Errorf("apply identity no-sale cursor: %w", err)
 	}
+	// And for the primary's cleared baskets (ut-docs#4711), same reasoning.
+	if err := set("sync.cleared_basket_push_cursor", nowUTC()+"|"); err != nil {
+		return false, fmt.Errorf("apply identity cleared-basket cursor: %w", err)
+	}
 	// The snapshot carried the primary's own register identity
 	// (sync.till_register_id, ut-docs#268) baked into its settings row —
 	// this replica must NOT start life believing it's the primary's

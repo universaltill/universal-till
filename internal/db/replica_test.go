@@ -594,3 +594,43 @@ func TestUnstageJoinTriesBothAndReportsFailure(t *testing.T) {
 		t.Errorf("the identity must still be removed (stat err %v)", err)
 	}
 }
+
+// ut-docs#4711: same for the primary's cleared baskets — they came in the
+// snapshot with an empty till_id and must not be journaled back as this
+// replica's own.
+func TestApplyReplicaIdentityStartsClearedBasketPushCursorAtJoin(t *testing.T) {
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init("") })
+
+	path := filepath.Join(t.TempDir(), "data", "unitill-pos.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+
+	inherited := "2026-01-02T03:04:05Z"
+	if _, err := d.Exec(`INSERT INTO cleared_baskets (id, created_at, local_date, line_count, total_minor) VALUES ('primary-clear', ?, '2026-01-02', 1, 100)`, inherited); err != nil {
+		t.Fatalf("seed inherited clear: %v", err)
+	}
+	if err := StageReplicaIdentity(path, ReplicaIdentity{
+		PrimaryURL: "http://primary.local", TillID: "till-2", Bearer: "b", ReceiptPrefix: "T2-",
+	}); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if applied, err := ApplyReplicaIdentity(d.DB, path); err != nil || !applied {
+		t.Fatalf("apply: applied=%v err=%v", applied, err)
+	}
+
+	var cursor string
+	_ = d.QueryRow(`SELECT value FROM settings WHERE key = 'sync.cleared_basket_push_cursor'`).Scan(&cursor)
+	at, id, ok := strings.Cut(cursor, "|")
+	if !ok || id != "" || at <= inherited {
+		t.Fatalf("sync.cleared_basket_push_cursor = %q, want \"<join time>|\" after the inherited clear %s", cursor, inherited)
+	}
+	var n int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM cleared_baskets
+WHERE (till_id IS NULL OR till_id = '') AND (created_at > ? OR (created_at = ? AND id > ?))`, at, at, id).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("inherited clears past the join cursor = %d (err %v), want 0", n, err)
+	}
+}
