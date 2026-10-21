@@ -33,6 +33,7 @@ printed the shop's language.
 | 2 | blocking (test) | e2e spec clicked a `.tile` that doesn't exist on the sale screen | fixed — adds the item through the scan row |
 | 3 | minor | `web/help/img/manifest.json` hash refresh was uncommitted | fixed — committed |
 | 4 | minor (docs) | the browser-dialog fallback (`window.print()`, no receipt printer or failed POST) prints the on-screen receipt in the cashier's language; help didn't say so | fixed — one sentence in all five help files + architecture doc |
+| 6 | blocking (CI) | `guard-deadcode-baseline`: `printReceipt` had no production caller once the handler called `printReceiptIn` | fixed — removed; its one test caller uses `printReceiptIn(..., "")` |
 | 5 | nit | the handler reads the locale separately from `completeTender`'s own read; a mutation between them is unreachable with one cashier basket | accepted |
 
 Verified by the reviewer: no other `renderReceipt` caller or receipt render
