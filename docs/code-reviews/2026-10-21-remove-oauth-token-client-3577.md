@@ -86,3 +86,4 @@ The reviewer confirmed:
 ## Verdict
 
 Safe to merge.
+- **CI round 1:** `build` failed on the docs-shots surface hash, because `internal/pages/*.go` changed. There was no pixel change, so the hash was refreshed with `update-docs-shots-surface-hash.sh` (`Docs-Shots-Unchanged: true`).
