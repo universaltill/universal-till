@@ -2,9 +2,9 @@
 // named per ADR-0081): the till's at-rest home for the merchant-scoped
 // signing credential fetched once from Universal Till Cloud after reseller
 // provisioning completes. This is the till's FIRST arbitrary-merchant-secret
-// storage primitive — deliberately minimal, following
-// internal/plugins/oauth/token_client.go's mechanics (restrictive file
-// permissions, MkdirAll first, JSON on disk) but under paths.Data
+// storage primitive — deliberately minimal (restrictive file permissions,
+// MkdirAll first, JSON on disk — the mechanics of the since-removed
+// marketplace OAuth token cache, ut-docs#3577) but under paths.Data
 // (till-operational secret data), NOT paths.Plugins (plugin auth cache — a
 // different data class).
 //

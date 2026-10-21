@@ -6,31 +6,13 @@ set -e
 echo "=== Testing Marketplace Integration ==="
 echo ""
 
-# 1. Test authentication endpoint
-echo "1. Testing JWT authentication..."
-AUTH_RESPONSE=$(curl -s -k -X POST https://127.0.0.1:8081/api/v1/auth/merchant-token \
-  -H "Content-Type: application/json" \
-  -d '{
-    "merchant_id": "pos-client",
-    "device_id": "dev-secret",
-    "pos_version": "0.1.0"
-  }')
+# The catalogue needs no credential: the till's only marketplace secret is
+# its ADR-0116 device credential (the merchant-token route is retired,
+# ut-docs#3577).
 
-echo "Auth response: $AUTH_RESPONSE"
-TOKEN=$(echo "$AUTH_RESPONSE" | jq -r '.token // empty')
-
-if [ -z "$TOKEN" ]; then
-  echo "❌ Failed to get JWT token"
-  exit 1
-fi
-
-echo "✓ JWT token received: ${TOKEN:0:20}..."
-echo ""
-
-# 2. Test catalog endpoint
-echo "2. Testing catalog fetch..."
-CATALOG_RESPONSE=$(curl -s -k -X GET "https://127.0.0.1:8081/api/v1/catalog/plugins?arch=amd64&page=1&page_size=10" \
-  -H "Authorization: Bearer $TOKEN")
+# 1. Test catalog endpoint
+echo "1. Testing catalog fetch..."
+CATALOG_RESPONSE=$(curl -s -k -X GET "https://127.0.0.1:8081/api/v1/catalog/plugins?arch=amd64&page=1&page_size=10")
 
 echo "Catalog response preview:"
 echo "$CATALOG_RESPONSE" | jq '.plugins[:2] | .[] | {id, name, version, vendor: .vendor.name}'

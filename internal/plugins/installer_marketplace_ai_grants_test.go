@@ -83,7 +83,7 @@ func tryInstallAIManifest(t *testing.T, db *sql.DB, publicKey ed25519.PublicKey,
 	})
 	defer server.Close()
 	cfg := &config.Config{Marketplace: config.MarketplaceConfig{
-		EndpointURL: server.URL, APIVersion: "1.0.0", ClientID: "merchant-1", ClientSecret: "secret-1",
+		EndpointURL: server.URL, APIVersion: "1.0.0", ClientID: "merchant-1",
 		StoreID: "store-1", DeviceID: "device-1", PublicKey: hex.EncodeToString(publicKey), RequestTimeoutSec: 30,
 	}}
 	_, err := newTestMarketplaceInstaller(t, cfg, db).Install(context.Background(), MarketplaceInstallRequest{

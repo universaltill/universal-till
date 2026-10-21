@@ -16,7 +16,6 @@ import (
 
 func TestCatalogRepository_FetchAndGet(t *testing.T) {
 	// Setup mock client
-	mockToken := &mockTokenClient{token: "test-token"}
 	// Start mock marketplace server
 	mockPlugins := []map[string]interface{}{
 		{
@@ -40,7 +39,7 @@ func TestCatalogRepository_FetchAndGet(t *testing.T) {
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
-	client := NewClient(cfg, mockToken)
+	client := NewClient(cfg)
 
 	tmpDir := t.TempDir()
 	repo, err := NewCatalogRepository(client, tmpDir)
@@ -74,7 +73,6 @@ func TestCatalogRepository_FetchAndGet(t *testing.T) {
 
 func TestCatalogRepository_StaleDetection(t *testing.T) {
 	tmpDir := t.TempDir()
-	mockToken := &mockTokenClient{token: "test-token"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]interface{}{"plugins": []map[string]interface{}{
 			{
@@ -96,7 +94,7 @@ func TestCatalogRepository_StaleDetection(t *testing.T) {
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
-	client := NewClient(cfg, mockToken)
+	client := NewClient(cfg)
 
 	repo, err := NewCatalogRepository(client, tmpDir)
 	if err != nil {
@@ -125,7 +123,6 @@ func TestCatalogRepository_StaleDetection(t *testing.T) {
 
 func TestCatalogRepository_DiskPersistence(t *testing.T) {
 	tmpDir := t.TempDir()
-	mockToken := &mockTokenClient{token: "test-token"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]interface{}{"plugins": []map[string]interface{}{
 			{
@@ -147,7 +144,7 @@ func TestCatalogRepository_DiskPersistence(t *testing.T) {
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
-	client := NewClient(cfg, mockToken)
+	client := NewClient(cfg)
 
 	repo1, err := NewCatalogRepository(client, tmpDir)
 	if err != nil {
@@ -177,7 +174,6 @@ func TestCatalogRepository_DiskPersistence(t *testing.T) {
 
 func TestCatalogRepository_Filter(t *testing.T) {
 	tmpDir := t.TempDir()
-	mockToken := &mockTokenClient{token: "test-token"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]interface{}{"plugins": []map[string]interface{}{
 			{
@@ -207,7 +203,7 @@ func TestCatalogRepository_Filter(t *testing.T) {
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
-	client := NewClient(cfg, mockToken)
+	client := NewClient(cfg)
 
 	repo, err := NewCatalogRepository(client, tmpDir)
 	if err != nil {
@@ -243,7 +239,6 @@ func TestCatalogRepository_Filter(t *testing.T) {
 // the fetch to follow next_page_token to find the second one at all.
 func TestCatalogRepository_FetchPagesThroughFullCatalog(t *testing.T) {
 	tmpDir := t.TempDir()
-	mockToken := &mockTokenClient{token: "test-token"}
 	var hits int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits++
@@ -278,7 +273,7 @@ func TestCatalogRepository_FetchPagesThroughFullCatalog(t *testing.T) {
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
-	client := NewClient(cfg, mockToken)
+	client := NewClient(cfg)
 
 	repo, err := NewCatalogRepository(client, tmpDir)
 	if err != nil {
@@ -313,7 +308,6 @@ func TestCatalogRepository_FetchPagesThroughFullCatalog(t *testing.T) {
 // bounded the same way its two package siblings are, by catalogFetchMaxPages.
 func TestCatalogRepository_FetchPaginationCapPreventsInfiniteLoop(t *testing.T) {
 	tmpDir := t.TempDir()
-	mockToken := &mockTokenClient{token: "test-token"}
 	var hits int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits++
@@ -333,7 +327,7 @@ func TestCatalogRepository_FetchPaginationCapPreventsInfiniteLoop(t *testing.T) 
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
-	client := NewClient(cfg, mockToken)
+	client := NewClient(cfg)
 
 	repo, err := NewCatalogRepository(client, tmpDir)
 	if err != nil {
@@ -360,7 +354,6 @@ func TestCatalogRepository_FetchPaginationCapPreventsInfiniteLoop(t *testing.T) 
 
 func TestCatalogRepository_OfflineReplay(t *testing.T) {
 	tmpDir := t.TempDir()
-	mockToken := &mockTokenClient{token: "test-token"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]interface{}{"plugins": []map[string]interface{}{
 			{
@@ -382,7 +375,7 @@ func TestCatalogRepository_OfflineReplay(t *testing.T) {
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
-	client := NewClient(cfg, mockToken)
+	client := NewClient(cfg)
 
 	repo, err := NewCatalogRepository(client, tmpDir)
 	if err != nil {
@@ -416,7 +409,6 @@ func TestCatalogRepository_OfflineReplay(t *testing.T) {
 // blocking the caller for the marketplace client's own request timeout.
 func TestCatalogRepository_GetOrFetch_StaleCacheReturnsImmediatelyOnUnreachableMarketplace(t *testing.T) {
 	tmpDir := t.TempDir()
-	mockToken := &mockTokenClient{token: "test-token"}
 
 	// A dead/blackholed network route: the listener accepts the TCP
 	// connection but never responds, so a request against it hangs until
@@ -460,7 +452,7 @@ func TestCatalogRepository_GetOrFetch_StaleCacheReturnsImmediatelyOnUnreachableM
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 1, // long enough that a synchronous block would be obvious, short enough to keep the background attempt's own log line from outliving the test by much
 	}
-	client := NewClient(cfg, mockToken)
+	client := NewClient(cfg)
 
 	repo, err := NewCatalogRepository(client, tmpDir)
 	if err != nil {
@@ -514,7 +506,6 @@ func TestCatalogRepository_GetOrFetch_StaleCacheReturnsImmediatelyOnUnreachableM
 // five concurrent callers have a real chance to race.
 func TestCatalogRepository_GetOrFetch_NoDuplicateConcurrentBackgroundRefresh(t *testing.T) {
 	tmpDir := t.TempDir()
-	mockToken := &mockTokenClient{token: "test-token"}
 
 	var inFlight int32
 	var maxConcurrent int32
@@ -554,7 +545,7 @@ func TestCatalogRepository_GetOrFetch_NoDuplicateConcurrentBackgroundRefresh(t *
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
-	client := NewClient(cfg, mockToken)
+	client := NewClient(cfg)
 
 	repo, err := NewCatalogRepository(client, tmpDir)
 	if err != nil {
@@ -627,7 +618,6 @@ func TestCatalogRepository_GetOrFetch_NoDuplicateConcurrentBackgroundRefresh(t *
 // that one result.
 func TestCatalogRepository_GetOrFetch_NoCacheAtAllCoalescesConcurrentCallers(t *testing.T) {
 	tmpDir := t.TempDir()
-	mockToken := &mockTokenClient{token: "test-token"}
 
 	var totalRequests int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -652,7 +642,7 @@ func TestCatalogRepository_GetOrFetch_NoCacheAtAllCoalescesConcurrentCallers(t *
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
-	client := NewClient(cfg, mockToken)
+	client := NewClient(cfg)
 
 	repo, err := NewCatalogRepository(client, tmpDir)
 	if err != nil {
@@ -698,7 +688,6 @@ func TestCatalogRepository_GetOrFetch_NoCacheAtAllCoalescesConcurrentCallers(t *
 // cache nor the on-disk snapshot may be replaced by the older result.
 func TestCatalogRepository_Fetch_NeverOverwritesCacheWithOlderResult(t *testing.T) {
 	tmpDir := t.TempDir()
-	mockToken := &mockTokenClient{token: "test-token"}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]interface{}{"plugins": []map[string]interface{}{
@@ -721,7 +710,7 @@ func TestCatalogRepository_Fetch_NeverOverwritesCacheWithOlderResult(t *testing.
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
-	client := NewClient(cfg, mockToken)
+	client := NewClient(cfg)
 
 	repo, err := NewCatalogRepository(client, tmpDir)
 	if err != nil {
@@ -807,7 +796,6 @@ func TestCatalogRepository_Fetch_NeverOverwritesCacheWithOlderResult(t *testing.
 // actual regression test that fails pre-fix.
 func TestCatalogRepository_Fetch_ConcurrentDifferentParamsEachCallerGetsOwnResult(t *testing.T) {
 	tmpDir := t.TempDir()
-	mockToken := &mockTokenClient{token: "test-token"}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		locale := r.URL.Query().Get("locale")
@@ -844,7 +832,7 @@ func TestCatalogRepository_Fetch_ConcurrentDifferentParamsEachCallerGetsOwnResul
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 30,
 	}
-	client := NewClient(cfg, mockToken)
+	client := NewClient(cfg)
 
 	repo, err := NewCatalogRepository(client, tmpDir)
 	if err != nil {

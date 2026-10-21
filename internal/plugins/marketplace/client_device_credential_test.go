@@ -49,32 +49,27 @@ func issueTestToken(t *testing.T, client *Client) {
 
 // ADR-0120 Phase 2 F1 (ut-docs#2930): the cloud issues a paid plugin only
 // to a till that authenticates with its ADR-0116 device credential, so the
-// download-token request carries it — ahead of any OAuth token, which the
-// cloud never treats as store authentication.
+// download-token request carries it.
 func TestIssueDownloadToken_SendsDeviceCredential(t *testing.T) {
-	for name, oauthToken := range map[string]string{"no oauth token": "", "with oauth token": "jwt.oauth.token"} {
-		t.Run(name, func(t *testing.T) {
-			srv, seen := recordingTokenServer(t)
-			cfg := &config.MarketplaceConfig{
-				EndpointURL:       srv.URL,
-				APIVersion:        "1.0.0",
-				RequestTimeoutSec: 5,
-				MerchantToken:     "device-credential-hex",
-			}
-			issueTestToken(t, NewClient(cfg, &mockTokenClient{token: oauthToken}))
-			if got := seen(); len(got) != 1 || got[0] != "Bearer device-credential-hex" {
-				t.Fatalf("Authorization = %q, want the device credential", got)
-			}
-		})
+	srv, seen := recordingTokenServer(t)
+	cfg := &config.MarketplaceConfig{
+		EndpointURL:       srv.URL,
+		APIVersion:        "1.0.0",
+		RequestTimeoutSec: 5,
+		MerchantToken:     "device-credential-hex",
+	}
+	issueTestToken(t, NewClient(cfg))
+	if got := seen(); len(got) != 1 || got[0] != "Bearer device-credential-hex" {
+		t.Fatalf("Authorization = %q, want the device credential", got)
 	}
 }
 
-// An unenrolled till has no credential: the request stays as before (the
-// OAuth token when configured, else none) and free plugins still install.
-func TestIssueDownloadToken_NoDeviceCredentialKeepsOldAuth(t *testing.T) {
+// An unenrolled till has no credential: the request goes out with no
+// bearer at all, and free plugins still install.
+func TestIssueDownloadToken_NoDeviceCredentialSendsNoBearer(t *testing.T) {
 	srv, seen := recordingTokenServer(t)
 	cfg := &config.MarketplaceConfig{EndpointURL: srv.URL, APIVersion: "1.0.0", RequestTimeoutSec: 5}
-	issueTestToken(t, NewClient(cfg, &mockTokenClient{token: ""}))
+	issueTestToken(t, NewClient(cfg))
 	if got := seen(); len(got) != 1 || got[0] != "" {
 		t.Fatalf("Authorization = %q, want none", got)
 	}
@@ -95,7 +90,7 @@ func TestIssueDownloadToken_DeviceCredentialNeverSentToDevOverride(t *testing.T)
 		FallbackTimeoutSec:    1,
 		MerchantToken:         "device-credential-hex",
 	}
-	client := NewClient(cfg, &mockTokenClient{token: ""})
+	client := NewClient(cfg)
 	if !client.devOverrideActive {
 		t.Fatal("expected the dev override to be active")
 	}
@@ -112,5 +107,48 @@ func TestIssueDownloadToken_DeviceCredentialNeverSentToDevOverride(t *testing.T)
 	issueTestToken(t, client)
 	if got := cloudSeen(); len(got) != 1 || got[0] != "Bearer device-credential-hex" {
 		t.Fatalf("cloud saw Authorization %q, want the device credential", got)
+	}
+}
+
+// ut-docs#3577: the scheme-(b) OAuth merchant token is gone (the cloud has
+// refused to issue one since ut-docs#3540), so no request carries any
+// bearer but the ADR-0116 device credential: the catalogue list and the
+// acknowledgement go out with none, even on an enrolled till.
+func TestNoRequestCarriesAnOAuthBearer(t *testing.T) {
+	var mu sync.Mutex
+	seen := map[string]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen[r.URL.Path] = r.Header.Get("Authorization")
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/catalog/plugins" {
+			_, _ = w.Write([]byte(`{"plugins":[]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(srv.Close)
+	cfg := &config.MarketplaceConfig{
+		EndpointURL:       srv.URL,
+		APIVersion:        "1.0.0",
+		RequestTimeoutSec: 5,
+		ClientID:          "merchant-1",
+		MerchantToken:     "device-credential-hex",
+	}
+	client := NewClient(cfg)
+	if _, err := client.ListPlugins(context.Background(), &ListPluginsRequest{}); err != nil {
+		t.Fatalf("ListPlugins: %v", err)
+	}
+	_ = client.AckDownload(context.Background(), &AckDownloadRequest{PluginID: "p", Version: "1.0.0", Token: "tok-1", Success: true})
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 2 {
+		t.Fatalf("requests seen = %v, want the list and the ack", seen)
+	}
+	for path, auth := range seen {
+		if auth != "" {
+			t.Errorf("%s carried Authorization %q, want none", path, auth)
+		}
 	}
 }

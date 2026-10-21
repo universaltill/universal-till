@@ -24,7 +24,7 @@ func compatTestClient(t *testing.T, plugins []PluginSummary, gotQuery *url.Value
 	}))
 	t.Cleanup(server.Close)
 	cfg := &config.MarketplaceConfig{EndpointURL: server.URL, APIVersion: "1.0.0", RequestTimeoutSec: 5}
-	return NewClient(cfg, &mockTokenClient{token: "t"})
+	return NewClient(cfg)
 }
 
 func withHostVersion(t *testing.T, v string) {

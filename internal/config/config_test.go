@@ -13,7 +13,7 @@ var configEnvKeys = []string{
 	"UT_THEME", "UT_DEV_MODE",
 	"UT_MARKETPLACE_ENDPOINT_URL", "UT_MARKETPLACE_STORE_ID", "UT_MARKETPLACE_DEVICE_ID",
 	"UT_MARKETPLACE_PUBLIC_KEY", "UT_MARKETPLACE_UPLOAD_TOKEN", "UT_MARKETPLACE_MERCHANT_TOKEN",
-	"UT_MARKETPLACE_CLIENT_ID", "UT_MARKETPLACE_CLIENT_SECRET", "UT_MARKETPLACE_API_VERSION",
+	"UT_MARKETPLACE_CLIENT_ID", "UT_MARKETPLACE_API_VERSION",
 	"UT_MARKETPLACE_DEV_OVERRIDE_URL",
 	"UT_MARKETPLACE_HEALTH_CHECK_TIMEOUT_SEC", "UT_MARKETPLACE_FALLBACK_TIMEOUT_SEC",
 	"UT_TAX_RATE", "UT_TAX_INCLUSIVE", "UT_CURRENCY",
@@ -139,7 +139,6 @@ func TestInitHonorsEnvOverrides(t *testing.T) {
 	t.Setenv("UT_MARKETPLACE_UPLOAD_TOKEN", "up-tok")
 	t.Setenv("UT_MARKETPLACE_MERCHANT_TOKEN", "mt-tok")
 	t.Setenv("UT_MARKETPLACE_CLIENT_ID", "cid")
-	t.Setenv("UT_MARKETPLACE_CLIENT_SECRET", "csec")
 	t.Setenv("UT_MARKETPLACE_API_VERSION", "2.1.0")
 	t.Setenv("UT_MARKETPLACE_DEV_OVERRIDE_URL", "http://localhost:9999")
 	t.Setenv("UT_MARKETPLACE_HEALTH_CHECK_TIMEOUT_SEC", "9")
@@ -185,8 +184,8 @@ func TestInitHonorsEnvOverrides(t *testing.T) {
 	if m.DeviceID != "dev-1" || m.PublicKey != "pk-abc" || m.UploadToken != "up-tok" || m.MerchantToken != "mt-tok" {
 		t.Errorf("marketplace identity/token fields: %+v", m)
 	}
-	if m.ClientID != "cid" || m.ClientSecret != "csec" {
-		t.Errorf("oauth fields: %+v", m)
+	if m.ClientID != "cid" {
+		t.Errorf("client id: %+v", m)
 	}
 	if m.APIVersion != "2.1.0" {
 		t.Errorf("APIVersion = %q", m.APIVersion)

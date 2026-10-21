@@ -15,9 +15,9 @@ import (
 func TestClient_ListPlugins(t *testing.T) {
 	// Mock marketplace server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify auth header
-		if r.Header.Get("Authorization") != "Bearer test-token" {
-			t.Errorf("missing or invalid auth header")
+		// No bearer: the catalogue is public (ut-docs#3577).
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Errorf("unexpected auth header %q", got)
 		}
 		// Verify API version header
 		if r.Header.Get("x-marketplace-api-version") != "1.0.0" {
@@ -51,13 +51,11 @@ func TestClient_ListPlugins(t *testing.T) {
 		EndpointURL:       server.URL,
 		APIVersion:        "1.0.0",
 		ClientID:          "test",
-		ClientSecret:      "secret",
 		RequestTimeoutSec: 30,
 	}
 
 	// Mock token client
-	tokenClient := &mockTokenClient{token: "test-token"}
-	client := NewClient(cfg, tokenClient)
+	client := NewClient(cfg)
 
 	// Test ListPlugins
 	ctx := context.Background()
@@ -85,7 +83,7 @@ func TestClient_IssueDownloadToken(t *testing.T) {
 		if r.URL.Path != "/v1/downloads/tokens" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
-		if r.Header.Get("Authorization") != "Bearer test-token" {
+		if r.Header.Get("Authorization") != "" {
 			t.Fatalf("unexpected auth header %q", r.Header.Get("Authorization"))
 		}
 
@@ -120,10 +118,9 @@ func TestClient_IssueDownloadToken(t *testing.T) {
 		EndpointURL:       server.URL,
 		APIVersion:        "1.0.0",
 		ClientID:          "test",
-		ClientSecret:      "secret",
 		RequestTimeoutSec: 30,
 	}
-	client := NewClient(cfg, &mockTokenClient{token: "test-token"})
+	client := NewClient(cfg)
 
 	resp, err := client.IssueDownloadToken(context.Background(), &IssueDownloadTokenRequest{
 		PluginID:   "listing-1",
@@ -163,10 +160,9 @@ func TestClient_IssueDownloadToken_NotEntitled(t *testing.T) {
 		EndpointURL:       server.URL,
 		APIVersion:        "1.0.0",
 		ClientID:          "test",
-		ClientSecret:      "secret",
 		RequestTimeoutSec: 30,
 	}
-	client := NewClient(cfg, &mockTokenClient{token: "test-token"})
+	client := NewClient(cfg)
 
 	_, err := client.IssueDownloadToken(context.Background(), &IssueDownloadTokenRequest{
 		PluginID:   "listing-1",
@@ -188,19 +184,6 @@ func TestClient_IssueDownloadToken_NotEntitled(t *testing.T) {
 	if apiErr.Message != "store is not entitled to download this plugin" {
 		t.Errorf("Message = %q", apiErr.Message)
 	}
-}
-
-// mockTokenClient implements oauth.TokenClient interface for testing
-type mockTokenClient struct {
-	token string
-}
-
-func (m *mockTokenClient) GetToken(ctx context.Context) (string, error) {
-	return m.token, nil
-}
-
-func (m *mockTokenClient) ClearCache() error {
-	return nil
 }
 
 // TestPluginSummary_DecodesLiveWireFormat pins the flattened camelCase schema

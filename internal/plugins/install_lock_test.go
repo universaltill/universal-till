@@ -121,7 +121,6 @@ func TestMarketplaceInstall_WaitsForConcurrentRollback(t *testing.T) {
 			EndpointURL:       server.URL,
 			APIVersion:        "1.0.0",
 			ClientID:          "merchant-1",
-			ClientSecret:      "secret-1",
 			StoreID:           "store-1",
 			DeviceID:          "device-1",
 			PublicKey:         hex.EncodeToString(publicKey),

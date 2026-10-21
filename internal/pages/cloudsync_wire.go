@@ -36,7 +36,6 @@ import (
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
-	"github.com/universaltill/universal-till/internal/plugins/oauth"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -1669,7 +1668,7 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 	_ = enroll.EnsureRegistered(ctx, d.Cfg, d.Settings)
 	// The signing key is fetched lazily (ADR-0148 audit item 3).
 	effCfg := enroll.EnsureSigningKey(ctx, d.Cfg, d.Settings)
-	client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
+	client := marketplace.NewClient(&effCfg.Marketplace)
 	installer, err := plugins.NewMarketplaceInstaller(&effCfg, client, d.Db)
 	if err != nil {
 		saveFailed("plugins.install.error.configuration", false)

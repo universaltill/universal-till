@@ -18,14 +18,12 @@ import (
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/netaccess"
-	"github.com/universaltill/universal-till/internal/plugins/oauth"
 )
 
 // Client provides HTTP/REST access to marketplace services.
 // For production deployments, this can be replaced with gRPC implementations.
 type Client struct {
-	cfg         *config.MarketplaceConfig
-	tokenClient oauth.TokenProvider
+	cfg *config.MarketplaceConfig
 	// cloudClient always talks to cfg.EndpointURL, on its own transport —
 	// its TLS verification is never affected by dev-override configuration
 	// or activity. devClient is nil unless a syntactically valid dev
@@ -48,8 +46,10 @@ type Client struct {
 	devOverrideActive bool
 }
 
-// NewClient creates a marketplace client with OAuth2 authentication.
-func NewClient(cfg *config.MarketplaceConfig, tokenClient oauth.TokenProvider) *Client {
+// NewClient creates a marketplace client. The only credential it ever sends
+// is the till's ADR-0116 device credential (doRequestAs, cloud endpoint
+// only); the scheme-(b) OAuth merchant token is retired (ut-docs#3577).
+func NewClient(cfg *config.MarketplaceConfig) *Client {
 	cloudTransport := http.DefaultTransport.(*http.Transport).Clone()
 	// Skip TLS verification for localhost/127.0.0.1 (development only) —
 	// this is about EndpointURL itself pointing at a local dev marketplace,
@@ -89,7 +89,6 @@ func NewClient(cfg *config.MarketplaceConfig, tokenClient oauth.TokenProvider) *
 
 	return &Client{
 		cfg:               cfg,
-		tokenClient:       tokenClient,
 		cloudClient:       cloudClient,
 		devClient:         devClient,
 		devOverrideActive: devOverrideActive,
@@ -187,17 +186,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 }
 
 // doRequestAs is doRequest with cloudBearer — the till's ADR-0116 device
-// credential — taking the place of the OAuth token, but only on a request
-// to the configured cloud endpoint: a dev override never receives it.
+// credential — sent as the bearer, but only on a request to the configured
+// cloud endpoint: a dev override never receives it.
 func (c *Client) doRequestAs(ctx context.Context, method, path string, body io.Reader, cloudBearer string) (*http.Response, error) {
-	// Auth is optional: when marketplace OAuth2 credentials are not configured
-	// (or the marketplace has auth disabled), proceed unauthenticated.
-	token, tokenErr := c.tokenClient.GetToken(ctx)
-	if tokenErr != nil {
-		log.Printf("[DEBUG] proceeding without marketplace auth token: %v", tokenErr)
-		token = ""
-	}
-
 	// Buffered once so a dev-override retry against the cloud endpoint can
 	// send the same body again — an io.Reader can only be consumed once.
 	var bodyBytes []byte
@@ -227,14 +218,9 @@ func (c *Client) doRequestAs(ctx context.Context, method, path string, body io.R
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
 
-		// The device credential (cloud endpoint only), else the OAuth2
-		// bearer token when present. Never logged.
-		bearer := token
+		// The device credential, cloud endpoint only. Never logged.
 		if cloudBearer != "" && endpoint == c.cfg.EndpointURL {
-			bearer = cloudBearer
-		}
-		if bearer != "" {
-			req.Header.Set("Authorization", "Bearer "+bearer)
+			req.Header.Set("Authorization", "Bearer "+cloudBearer)
 		}
 		// Add API version metadata per FR-016
 		req.Header.Set("x-marketplace-api-version", c.cfg.APIVersion)
@@ -633,14 +619,6 @@ func (c *Client) ListPlugins(ctx context.Context, req *ListPluginsRequest) (*Lis
 		params.Set("page_token", req.PageToken)
 	}
 
-	// Auth is optional: when marketplace OAuth2 credentials are not configured
-	// (or the marketplace has auth disabled), proceed unauthenticated.
-	token, tokenErr := c.tokenClient.GetToken(ctx)
-	if tokenErr != nil {
-		log.Printf("[DEBUG] proceeding without marketplace auth token: %v", tokenErr)
-		token = ""
-	}
-
 	resp, err := c.doWithFallback(ctx, func(ctx context.Context, endpoint string, client *http.Client) (*http.Response, error) {
 		reqURL, err := url.JoinPath(endpoint, "/v1/catalog/plugins")
 		if err != nil {
@@ -655,9 +633,6 @@ func (c *Client) ListPlugins(ctx context.Context, req *ListPluginsRequest) (*Lis
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
-		}
-		if token != "" {
-			httpReq.Header.Set("Authorization", "Bearer "+token)
 		}
 		httpReq.Header.Set("x-marketplace-api-version", c.cfg.APIVersion)
 
@@ -878,22 +853,11 @@ func (c *Client) GetRevocations(ctx context.Context, req *GetRevocationsRequest)
 	query.Set("since_version", fmt.Sprintf("%d", req.SinceVersion))
 	parsedURL.RawQuery = query.Encode()
 
-	// Auth is optional: when marketplace OAuth2 credentials are not configured
-	// (or the marketplace has auth disabled), proceed unauthenticated.
-	token, tokenErr := c.tokenClient.GetToken(ctx)
-	if tokenErr != nil {
-		log.Printf("[DEBUG] proceeding without marketplace auth token: %v", tokenErr)
-		token = ""
-	}
-
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	if token != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+token)
-	}
 	httpReq.Header.Set("x-marketplace-api-version", c.cfg.APIVersion)
 
 	// Dead code today (zero callers — revocation checking uses a separate
