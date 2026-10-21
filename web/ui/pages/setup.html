@@ -48,11 +48,21 @@
          finishing lands on /import?welcome=1, which offers importing a
          file, loading sample data, or skipping. Steps: 1 language,
          2 country, 3 business identity (DE), 4 shop name, 5 shop type,
-         6 admin PIN, 7 done. -->
+         6 admin PIN, 7 done. Step 8 (ADR-0166, ut-docs#4610) is the pair-first
+         path's "Your shop": a till paired with its my.universaltill.com shop
+         opens on it, and nxt()/prv() skip the steps the cloud already
+         answered (country, shop name) and the Germany-only one. -->
     <main class="setup-card" x-data="{ step: {{ .startStep }}, last: 7,
                                        country: '{{ .detectedCountry }}', currency: '{{ .detectedCurrency }}',
                                        tax: '{{ .detectedTaxRate }}', taxinc: '{{ if .detectedTaxInclusive }}on{{ else }}off{{ end }}',
-                                       currencyTouched: false }">
+                                       currencyTouched: false,
+                                       cloud: {{ if .cloudShop }}true{{ else }}false{{ end }},
+                                       cloudCountry: {{ if .cloudShop }}{{ if .cloudShop.HasCountry }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
+                                       cloudName: {{ if .cloudShop }}{{ if .cloudShop.HasName }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
+                                       seq: [2, 3, 4, 5, 6, 7],
+                                       skip(s) { return (s === 2 && this.cloud && this.cloudCountry) || (s === 3 && this.country !== 'DE') || (s === 4 && this.cloud && this.cloudName); },
+                                       nxt(f) { let i = this.seq.indexOf(f); for (i++; i < this.seq.length; i++) { if (!this.skip(this.seq[i])) return this.seq[i]; } return 7; },
+                                       prv(f) { let i = this.seq.indexOf(f); for (i--; i >= 0; i--) { if (!this.skip(this.seq[i])) return this.seq[i]; } return this.cloud ? 8 : 1; } }">
       <img class="login-logo" src="/public/assets/logo/unitill-logo.svg" alt="Universal Till" />
       <div class="setup-dots" aria-hidden="true">
         <template x-for="i in last"><span class="setup-dot" :class="{ active: i <= step }"></span></template>
@@ -61,6 +71,8 @@
       {{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
 
       <form method="post" action="/api/setup">
+        <input type="hidden" name="setup_nonce" value="{{ .setupNonce }}">
+        {{ if .cloudShop }}<input type="hidden" name="cloud_paired" value="1">{{ end }}
         <!-- Step 1 · language (reloads with the chosen locale) -->
         <section x-show="step === 1" x-cloak.important data-step="1">
           <!-- ut-docs#1165: checks for a newer release in the background and,
@@ -189,8 +201,8 @@
           <input type="hidden" name="currency_touched" :value="currencyTouched ? '1' : '0'">
           <p class="muted" x-show="currency"><span x-text="currency"></span> · <span x-text="tax"></span>% </p>
           <div class="setup-nav">
-            <button type="button" class="btn secondary" @click="step = 1">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" @click="step = country === 'DE' ? 3 : 4">{{ T "setup.next" }}</button>
+            <button type="button" class="btn secondary" @click="step = prv(2)">{{ T "setup.back" }}</button>
+            <button type="button" class="btn primary" @click="step = nxt(2)">{{ T "setup.next" }}</button>
           </div>
         </section>
 
@@ -261,7 +273,7 @@
           </label>
           <p class="muted">{{ T "setup.tse.custody_note" }}</p>
           <div class="setup-nav">
-            <button type="button" class="btn secondary" @click="step = 2">{{ T "setup.back" }}</button>
+            <button type="button" class="btn secondary" @click="step = prv(3)">{{ T "setup.back" }}</button>
             <!-- ut-docs#1506 review finding B1: Skip is not the only door off
                  this step that leaves the tile's plugin uninstalled — Next
                  is the PRIMARY button, and an operator who dutifully filled
@@ -282,7 +294,7 @@
                  addPendingBasePlugins already dedupes, but no reason to. -->
             <button type="button" class="btn primary"
                     {{ if .installableTaxPlugin }}hx-post="/api/setup/tax-plugin-skip" hx-include="#tax-plugin-skip" hx-swap="none" hx-trigger="click once"{{ end }}
-                    @click="step = 4">{{ T "setup.next" }}</button>
+                    @click="step = nxt(3)">{{ T "setup.next" }}</button>
             <!-- Skip clears the fields so a half-typed form can't fail the
                  final submit's all-or-nothing validation later.
                  ut-docs#1506: when the tile above is still showing (a fiscal
@@ -299,7 +311,7 @@
                  queue), it stays the original client-only step change. -->
             <button type="{{ if .installableTaxPlugin }}submit{{ else }}button{{ end }}" class="btn secondary" style="margin-top:.4rem"
                     {{ if .installableTaxPlugin }}form="tax-plugin-skip"{{ end }}
-                    @click="document.querySelectorAll('.tse-field').forEach(el => el.value = '');{{ if not .installableTaxPlugin }} step = 4;{{ end }}">{{ T "setup.tse.skip" }}</button>
+                    @click="document.querySelectorAll('.tse-field').forEach(el => el.value = '');{{ if not .installableTaxPlugin }} step = nxt(3);{{ end }}">{{ T "setup.tse.skip" }}</button>
           </div>
         </section>
 
@@ -329,8 +341,8 @@
             <input type="text" name="till_name" maxlength="60" value="{{ .tillName }}" x-model="tillName" aria-required="true">
           </label>
           <div class="setup-nav">
-            <button type="button" class="btn secondary" @click="step = country === 'DE' ? 3 : 2">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" :disabled="storeName.trim() === '' || tillName.trim() === ''" @click="step = 5">{{ T "setup.next" }}</button>
+            <button type="button" class="btn secondary" @click="step = prv(4)">{{ T "setup.back" }}</button>
+            <button type="button" class="btn primary" :disabled="storeName.trim() === '' || tillName.trim() === ''" @click="step = nxt(4)">{{ T "setup.next" }}</button>
           </div>
         </section>
 
@@ -352,8 +364,8 @@
             {{ end }}
           </div>
           <div class="setup-nav">
-            <button type="button" class="btn secondary" @click="step = 4">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" @click="step = 6">{{ T "setup.next" }}</button>
+            <button type="button" class="btn secondary" @click="step = prv(5)">{{ T "setup.back" }}</button>
+            <button type="button" class="btn primary" @click="step = nxt(5)">{{ T "setup.next" }}</button>
           </div>
         </section>
 
@@ -368,8 +380,8 @@
             <input type="password" name="pin_confirm" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8">
           </label>
           <div class="setup-nav">
-            <button type="button" class="btn secondary" @click="step = 5">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" @click="step = 7">{{ T "setup.next" }}</button>
+            <button type="button" class="btn secondary" @click="step = prv(6)">{{ T "setup.back" }}</button>
+            <button type="button" class="btn primary" @click="step = nxt(6)">{{ T "setup.next" }}</button>
           </div>
         </section>
 
@@ -394,10 +406,29 @@
                so they carry no forms (safe inside this <form>). */}}
           {{ if .pluginSlot }}{{ .pluginSlot }}{{ end }}
           <div class="setup-nav">
-            <button type="button" class="btn secondary" @click="step = 6">{{ T "setup.back" }}</button>
+            <button type="button" class="btn secondary" @click="step = prv(7)">{{ T "setup.back" }}</button>
             <button type="submit" class="btn primary">{{ T "setup.finish" }}</button>
           </div>
         </section>
+
+        {{/* Step 8 · "Your shop" (ADR-0166 §1, ut-docs#4610): what the cloud
+             sent for the paired shop. Only rendered while a pairing is held
+             in memory; nothing is saved until the final submit. Escaped by
+             html/template: the name is the cloud's, not trusted markup. */}}
+        {{ if .cloudShop }}
+        <section x-show="step === 8" x-cloak data-step="8" data-testid="setup-cloud-shop">
+          <h1>{{ T "setup.cloud.title" }}</h1>
+          {{ if .cloudShop.HasName }}<p>{{ T "setup.cloud.shop_name" }}: <strong data-cloud-field="name">{{ .cloudShop.Name }}</strong></p>{{ end }}
+          {{ if .cloudShop.HasCountry }}<p>{{ T "setup.cloud.shop_country" }}: <strong data-cloud-field="country">{{ T .cloudShop.CountryNameKey }}</strong></p>{{ end }}
+          {{ if .cloudShop.Currency }}<p>{{ T "setup.cloud.shop_currency" }}: <strong data-cloud-field="currency">{{ .cloudShop.Currency }}</strong></p>{{ end }}
+          <p class="muted">{{ T "setup.cloud.hint" }}</p>
+          <div class="setup-nav">
+            <button type="button" class="btn secondary" hx-post="/api/setup/cloud-unpair" hx-params="none"
+                    hx-headers='{"X-UT-Setup-Nonce": "{{ .setupNonce }}"}'>{{ T "setup.cloud.not_mine" }}</button>
+            <button type="button" class="btn primary" @click="step = nxt(8)">{{ T "setup.cloud.continue" }}</button>
+          </div>
+        </section>
+        {{ end }}
       </form>
 
       <!-- ut-docs#1092: the install forms behind step 1's catalog-language
@@ -450,6 +481,7 @@
              (shopType) already uses inside the root step-nav x-data. */}}
         <div x-data="{
           tab: 'discover',
+          role: 'additional',
           focusTab(dir) {
             const tabs = Array.from(this.$el.querySelectorAll('[role=tab]'));
             if (!tabs.length) return;
@@ -458,7 +490,7 @@
             next.click(); next.focus();
           }
         }">
-          <div class="tab-bar" role="tablist" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
+          <div class="tab-bar" role="tablist" x-show="role !== 'main'" x-effect="if (role === 'main') tab = 'code'" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
             <button type="button" id="setup-tab-discover" class="tab" role="tab" :class="tab === 'discover' && 'active'" :aria-selected="tab === 'discover'" :tabindex="tab === 'discover' ? 0 : -1" aria-controls="setup-panel-discover" @click="tab = 'discover'">{{ T "tills.join_tabs.discover" }}</button>
             <button type="button" id="setup-tab-code" class="tab" role="tab" :class="tab === 'code' && 'active'" :aria-selected="tab === 'code'" :tabindex="tab === 'code' ? 0 : -1" aria-controls="setup-panel-code" @click="tab = 'code'">{{ T "tills.join_tabs.code" }}</button>
           </div>
@@ -479,10 +511,13 @@
                manager can still change it on the approval card or later on Tills. */}}
           <fieldset class="join-role" id="setup-pairing-join-role">
             <legend>{{ T "tills.join_role.label" }}</legend>
-            <label><input type="radio" name="role" value="additional" checked> {{ T "tills.role.replica" }}
+            <label><input type="radio" name="role" value="additional" x-model="role" checked> {{ T "tills.role.replica" }}
               <small class="muted">{{ T "tills.join_role.additional_help" }}</small></label>
-            <label><input type="radio" name="role" value="satellite"> {{ T "tills.role.satellite" }}
+            <label><input type="radio" name="role" value="satellite" x-model="role"> {{ T "tills.role.satellite" }}
               <small class="muted">{{ T "tills.join_role.satellite_help" }}</small></label>
+            {{/* ADR-0166 / ut-docs#4610: the first till of a shop already set up on my.universaltill.com. Pairs with the cloud instead of a LAN main till. */}}
+            <label><input type="radio" name="role" value="main" x-model="role"> {{ T "setup.join.role_main" }}
+              <small class="muted">{{ T "setup.join.main_help" }}</small></label>
           </fieldset>
           <!-- ut-docs#289: LAN discovery + approve-to-pair, first-boot flavour.
                Same mechanism the Tills page uses (ADR-0033 parts 1+3), pointed
@@ -493,7 +528,7 @@
                here and the primary manager approving after comparing the
                6-digit code. The paste-a-code tab stays as the documented
                fallback. -->
-          <div class="tab-panel" id="setup-panel-discover" role="tabpanel" aria-labelledby="setup-tab-discover" x-show="tab === 'discover'">
+          <div class="tab-panel" id="setup-panel-discover" role="tabpanel" aria-labelledby="setup-tab-discover" x-show="tab === 'discover' && role !== 'main'">
             <p class="muted">{{ T "setup.join.discover_help" }}</p>
             <button id="setup-discover-btn" class="btn secondary" type="button">{{ T "tills.discovery.find_button" }}</button>
             <div id="setup-discover-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
@@ -512,7 +547,7 @@
                  explicit reportValidity() guard the discover button already
                  needs for the same reason (ut-docs#1540) — was previously the
                  one till-name field in this wizard that was NOT required. -->
-            <form hx-post="/api/setup/join" hx-include="#setup-pairing-till-name, #setup-pairing-join-role, #pairing-replace-local" hx-target="#setup-join-msg" hx-swap="innerHTML"
+            <form x-show="role !== 'main'" hx-post="/api/setup/join" hx-include="#setup-pairing-till-name, #setup-pairing-join-role, #pairing-replace-local" hx-target="#setup-join-msg" hx-swap="innerHTML"
                   hx-indicator="#setup-join-msg" hx-disabled-elt="find button[type=submit]"
                   data-before-request="trim-validate:setup-pairing-till-name validate:pairing-replace-local">
               <!-- ut-docs#1179: was a raw '{"token":"…","url":"http://…"}' placeholder — the
@@ -529,6 +564,21 @@
               </label>
               <button class="btn primary" type="submit">{{ T "tills.join_btn" }}</button>
               <div id="setup-join-msg" aria-live="polite" style="min-height:1.4rem; margin-top:.4rem"></div>
+            </form>
+            {{/* ADR-0166 §2: the main-till choice. Posts the my.universaltill.com
+                 code to the guarded first-boot route (nonce header), which holds
+                 the pairing in memory and reloads /setup on "Your shop". No
+                 address: the cloud is the other end. Errors land in place. */}}
+            <form x-show="role === 'main'" x-cloak hx-post="/api/setup/cloud-pair" hx-include="#setup-pairing-till-name" hx-target="#setup-cloud-msg" hx-swap="innerHTML"
+                  hx-headers='{"X-UT-Setup-Nonce": "{{ .setupNonce }}"}'
+                  hx-indicator="#setup-cloud-msg" hx-disabled-elt="find button[type=submit]"
+                  data-before-request="trim-validate:setup-pairing-till-name">
+              <p class="muted">{{ T "setup.cloud.code_help" }}</p>
+              <label>{{ T "tills.join_code" }}
+                <input type="text" name="code" id="setup-cloud-code" dir="ltr" autocapitalize="characters" autocomplete="off" spellcheck="false" maxlength="64" required>
+              </label>
+              <button class="btn primary" type="submit">{{ T "setup.cloud.pair_btn" }}</button>
+              <div id="setup-cloud-msg" aria-live="polite" style="min-height:1.4rem; margin-top:.4rem"></div>
             </form>
           </div>
         </div>
@@ -552,11 +602,19 @@
          their own prefixes AND to 4xx, so neither would cover a 502 from here
          even if this page loaded app.js (it doesn't). -->
     <script>
+      var T_CLOUD = { tooMany: "{{ T "setup.cloud.error.too_many" }}", failed: "{{ T "setup.cloud.error.failed" }}" };
       document.body.addEventListener('htmx:beforeSwap', function (ev) {
         var path = ev.detail.requestConfig && ev.detail.requestConfig.path;
         if (path === '/api/setup/join' && ev.detail.xhr.status >= 400) {
           ev.detail.shouldSwap = true;
           ev.detail.isError = false;
+        }
+        // ADR-0166: the cloud-pair route answers its refusals (rate limit,
+        // wrong nonce) as bare 4xx; show them in place instead of nothing.
+        if (path === '/api/setup/cloud-pair' && ev.detail.xhr.status >= 400) {
+          ev.detail.shouldSwap = false;
+          var msg = document.getElementById('setup-cloud-msg');
+          if (msg) { msg.textContent = ev.detail.xhr.status === 429 ? T_CLOUD.tooMany : T_CLOUD.failed; }
         }
       });
     </script>
