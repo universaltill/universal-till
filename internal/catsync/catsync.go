@@ -500,6 +500,23 @@ func (rn *runner) snapshotNameFallback(ctx context.Context, db *sql.DB, parsed [
 		return err
 	}
 	rn.sibByName, rn.reserved = byName, map[string]bool{}
+	if len(byName) == 0 {
+		return nil
+	}
+	// A row that names an item by barcode or SKU keeps it: a code-less row
+	// listed before it never takes that item by name.
+	for i := range parsed {
+		if !issues[i].none() || (len(parsed[i].barcodes) == 0 && parsed[i].sku == "") {
+			continue
+		}
+		id, err := rn.match(ctx, &parsed[i]) // codes only: never reaches the name step
+		if err != nil {
+			return err
+		}
+		if id != "" {
+			rn.reserved[id] = true
+		}
+	}
 	if legacy == "" {
 		return nil
 	}

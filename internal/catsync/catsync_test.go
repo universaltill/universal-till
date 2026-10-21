@@ -712,6 +712,14 @@ func TestRun_NameFallbackSkipsItemClaimedInRun(t *testing.T) {
 		bcB := `{"external_id":"b-1","name":"Tea (barcode)","barcodes":["5000000000017"],"price_minor":100}`
 		res := runAs(t, sqlDB, "p#b", "", commit, bcB, nameRow("b-2", "Loose tea"))
 		wantCounts(t, res, 1, 1, 0, 0)
+		if commit {
+			if n := itemCount(t, sqlDB); n != 2 {
+				t.Fatalf("items = %d, want 2", n)
+			}
+			if n := count(t, sqlDB, `SELECT COUNT(*) FROM items WHERE name = 'Tea (barcode)'`); n != 1 {
+				t.Fatalf("barcode row did not update its item")
+			}
+		}
 	}
 }
 
@@ -722,14 +730,29 @@ func TestRun_NameFallbackNeverTakesLegacyAdoptedItem(t *testing.T) {
 		sqlDB := openDB(t)
 		wantCounts(t, runAs(t, sqlDB, "p", "", true, nameRow("e1", "Loose tea")), 1, 0, 0, 0)
 		idX, _ := linkUnder(t, sqlDB, "p", "e1")
-		res := runAs(t, sqlDB, "p#b", "p", commit, nameRow("e2", "Loose tea"), nameRow("e1", "Loose tea"))
-		if res.Issues != 0 || res.New != 1 {
-			t.Fatalf("commit=%v: counts %+v, want e2 new and e1 kept on its item", commit, res)
-		}
+		// e1 was renamed upstream, so only the reservation protects X.
+		res := runAs(t, sqlDB, "p#b", "p", commit, nameRow("e2", "Loose tea"), nameRow("e1", "Loose tea (renamed)"))
+		wantCounts(t, res, 1, 1, 0, 0)
 		if commit {
 			if id, ok := linkUnder(t, sqlDB, "p#b", "e1"); !ok || id != idX {
 				t.Fatalf("e1 link = %q,%v want %q", id, ok, idX)
 			}
+			if n := itemCount(t, sqlDB); n != 2 {
+				t.Fatalf("items = %d, want 2", n)
+			}
 		}
+	}
+}
+
+// A row that names an item by barcode keeps it, even when a code-less row
+// with that item's name is listed first.
+func TestRun_NameFallbackNeverTakesItemALaterRowMatchesByCode(t *testing.T) {
+	for _, commit := range []bool{false, true} {
+		sqlDB := openDB(t)
+		bc := `{"external_id":"a-1","name":"Loose tea","barcodes":["5000000000017"],"price_minor":100}`
+		wantCounts(t, runAs(t, sqlDB, "p#a", "", true, bc), 1, 0, 0, 0)
+		bcB := `{"external_id":"b-2","name":"Tea (barcode)","barcodes":["5000000000017"],"price_minor":100}`
+		res := runAs(t, sqlDB, "p#b", "", commit, nameRow("b-1", "Loose tea"), bcB)
+		wantCounts(t, res, 1, 1, 0, 0)
 	}
 }
