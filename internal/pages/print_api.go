@@ -654,7 +654,7 @@ var (
 // that is out of paper, unplugged mid-write or hung does not fail fast: both
 // transports block until the print context's deadline (deviceTransport selects
 // on ctx.Done(); networkTransport hands the deadline to SetWriteDeadline), so
-// by the time printReceipt/printKitchen returns that error, its context is
+// by the time printReceiptIn/printKitchen returns that error, its context is
 // already expired — and every write made with it would be dropped by
 // database/sql before touching the DB. Reusing it would silently lose exactly
 // the failures this feature exists to surface.
@@ -721,12 +721,8 @@ func printReceiptAsync(d *common.Deps, receiptNo, actorID, customerLocale string
 	}()
 }
 
-func printReceipt(ctx context.Context, d *common.Deps, receiptNo string) error {
-	return printReceiptIn(ctx, d, receiptNo, "")
-}
-
-// printReceiptIn is printReceipt for a kiosk customer's own receipt
-// (customerReceiptDoc); customerLocale "" is the shop's language.
+// printReceiptIn prints a receipt; customerLocale is a kiosk customer's own
+// language for their receipt (customerReceiptDoc), "" the shop's language.
 func printReceiptIn(ctx context.Context, d *common.Deps, receiptNo, customerLocale string) error {
 	// ADR-0124 §3: the shared choke point every receipt print path reaches
 	// (tender and refund auto-print, manual print, reprint) refuses here as

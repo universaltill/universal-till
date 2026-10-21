@@ -7,7 +7,7 @@ package pages
 //   - printerConfigChecked forces the effective receipt policy to "never"
 //     (after the receipt.policy.ask clamp, so no plugin answer re-enables
 //     it), which stops the tender and refund auto-print;
-//   - printReceipt, the shared print choke point every receipt print path
+//   - printReceiptIn, the shared print choke point every receipt print path
 //     reaches, refuses with errCustomerDocumentsSuppressed;
 //   - POST /api/print/receipt/{receiptNo} and POST /api/receipt-designer/test
 //     answer 451 with the localized refusal (writeCustomerDocumentsRefused);
@@ -34,7 +34,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
-// errCustomerDocumentsSuppressed is printReceipt's refusal when the gate
+// errCustomerDocumentsSuppressed is printReceiptIn's refusal when the gate
 // says suppressed. Callers map it to the localized refusal, and it is NOT a
 // printer failure: it must never set the /orders print-failed warning.
 var errCustomerDocumentsSuppressed = errors.New("customer documents are withheld: shadow mode in a market that forbids them (ADR-0124)")
