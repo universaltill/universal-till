@@ -93,3 +93,51 @@ func TestNeutralHeader(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#4726: Epos Now and German Excel exports separate with ";" (or a
+// tab), so the header row is read with the separator the file uses.
+func TestHeaderRow_Delimiters(t *testing.T) {
+	for name, in := range map[string]string{
+		"semicolon":        "Name;CategoryId;SalePriceIncTax\r\nTea;Drinks;2.00\r\n",
+		"semicolon bom":    "\uFEFFName;CategoryId;SalePriceIncTax\r\nTea;Drinks;2.00\r\n",
+		"semicolon quoted": "\"Name\";\"CategoryId\";\"SalePriceIncTax\"\n",
+		"tab":              "Name\tCategoryId\tSalePriceIncTax\nTea\tDrinks\t2.00\n",
+		"comma":            "Name,CategoryId,SalePriceIncTax\nTea,Drinks,2.00\n",
+	} {
+		got, err := HeaderRow(strings.NewReader(in), int64(len(in)), "export.csv")
+		if err != nil || strings.Join(got, "|") != "Name|CategoryId|SalePriceIncTax" {
+			t.Errorf("%s: HeaderRow = %q, %v", name, got, err)
+		}
+	}
+}
+
+// A separator that only appears inside a quoted field is not the separator.
+func TestHeaderRow_DelimiterInQuotes(t *testing.T) {
+	in := "Name,\"Tax; rate\",Price\nTea,20,2.00\n"
+	got, err := HeaderRow(strings.NewReader(in), int64(len(in)), "export.csv")
+	if err != nil || strings.Join(got, "|") != "Name|Tax; rate|Price" {
+		t.Fatalf("HeaderRow = %q, %v", got, err)
+	}
+}
+
+func TestParse_SemicolonAndTab(t *testing.T) {
+	for name, in := range map[string]string{
+		"semicolon": "Name;Price;SKU\r\nTea;2.00;T-1\r\n",
+		"tab":       "Name\tPrice\tSKU\nTea\t2.00\tT-1\n",
+	} {
+		res, err := Parse(strings.NewReader(in), 2, nil, false)
+		if err != nil || len(res.Items) != 1 || res.Items[0].Name != "Tea" || res.Items[0].SKU != "T-1" {
+			t.Errorf("%s: Parse = %+v, %v", name, res.Items, err)
+		}
+	}
+}
+
+// A BOM in front of a quoted header, with no ";"/"," tricks: Parse reads it
+// as HeaderRow does (review of ut-docs#4726).
+func TestParse_BOMBeforeQuotedHeader(t *testing.T) {
+	in := "\uFEFF\"Name\";\"Price\";\"SKU\"\r\n\"Tea\";\"2.00\";\"T-1\"\r\n"
+	res, err := Parse(strings.NewReader(in), 2, nil, false)
+	if err != nil || len(res.Items) != 1 || res.Items[0].Name != "Tea" {
+		t.Fatalf("Parse = %+v, %v", res.Items, err)
+	}
+}

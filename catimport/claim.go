@@ -69,6 +69,7 @@ func HeaderRow(r io.ReaderAt, size int64, fileName string) ([]string, error) {
 	// field it would keep that field's quotes in its value.
 	body := bytes.TrimPrefix(head, utf8BOM)
 	cr := csv.NewReader(bytes.NewReader(body))
+	cr.Comma = sniffDelimiter(body)
 	cr.FieldsPerRecord = -1
 	cr.LazyQuotes = true
 	rec, err := cr.Read()
@@ -80,6 +81,34 @@ func HeaderRow(r io.ReaderAt, size int64, fileName string) ([]string, error) {
 		return nil, ErrHeaderRowTooLong
 	}
 	return rec, nil
+}
+
+// sniffDelimiter is the separator a CSV's first record uses: whichever of
+// comma, semicolon or tab is most frequent outside quotes (Epos Now and
+// German Excel write ";"). A tie, or none, is the comma. Only the first
+// record is read, so a later row never changes the answer (ut-docs#4726).
+func sniffDelimiter(head []byte) rune {
+	counts := map[byte]int{}
+	inQuotes := false
+scan:
+	for _, c := range head {
+		switch {
+		case c == '"':
+			inQuotes = !inQuotes
+		case inQuotes:
+		case c == '\n' || c == '\r':
+			break scan
+		case c == ',' || c == ';' || c == '\t':
+			counts[c]++
+		}
+	}
+	best, bestN := byte(','), counts[',']
+	for _, c := range []byte{';', '\t'} {
+		if counts[c] > bestN {
+			best, bestN = c, counts[c]
+		}
+	}
+	return rune(best)
 }
 
 // xlsxHeaderRow is the first non-blank row of the first sheet, read with
