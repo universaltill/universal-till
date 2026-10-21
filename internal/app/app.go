@@ -38,7 +38,6 @@ import (
 	"github.com/universaltill/universal-till/internal/pihealth"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
-	"github.com/universaltill/universal-till/internal/plugins/oauth"
 	"github.com/universaltill/universal-till/internal/procrestart"
 	"github.com/universaltill/universal-till/internal/recovery"
 	"github.com/universaltill/universal-till/internal/secrets"
@@ -385,8 +384,7 @@ func Run(ctx context.Context) error {
 	var catalogRepo *marketplace.CatalogRepository
 	if cfg.Marketplace.EndpointURL != "" {
 		netaccess.StartService("marketplace catalog, revocation and telemetry", func() {
-			tokenClient := oauth.NewTokenClient(&cfg.Marketplace)
-			marketplaceClient := marketplace.NewClient(&cfg.Marketplace, tokenClient)
+			marketplaceClient := marketplace.NewClient(&cfg.Marketplace)
 			catalogRepo, err = marketplace.NewCatalogRepository(marketplaceClient, paths.Plugins("cache"))
 		})
 		if err != nil {

@@ -9,7 +9,6 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
-	"github.com/universaltill/universal-till/internal/plugins/oauth"
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
@@ -49,7 +48,7 @@ func TestPluginStoreShowsCatalogForAnonymousTill(t *testing.T) {
 		Locales:       config.Locales{Currency: "GBP", TaxRateBP: 2000},
 		Marketplace:   config.MarketplaceConfig{EndpointURL: mp.URL},
 	}
-	client := marketplace.NewClient(&cfg.Marketplace, oauth.NewTokenClient(&cfg.Marketplace))
+	client := marketplace.NewClient(&cfg.Marketplace)
 	catalogRepo, err := marketplace.NewCatalogRepository(client, t.TempDir())
 	if err != nil {
 		t.Fatalf("catalog repo: %v", err)

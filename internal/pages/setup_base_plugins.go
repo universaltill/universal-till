@@ -19,7 +19,6 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
-	"github.com/universaltill/universal-till/internal/plugins/oauth"
 	"github.com/universaltill/universal-till/internal/updates"
 	"github.com/universaltill/universal-till/web/locales"
 )
@@ -312,7 +311,7 @@ func resolveAndInstallBasePlugin(ctx context.Context, d *common.Deps, spec baseP
 	// install. cloudInstallPluginVersion below still calls EnsureRegistered
 	// itself, so the ADR's trigger 1 is unchanged.
 	effCfg := enroll.Effective(d.Cfg)
-	client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
+	client := marketplace.NewClient(&effCfg.Marketplace)
 
 	var all []marketplace.PluginSummary
 	pageToken := ""

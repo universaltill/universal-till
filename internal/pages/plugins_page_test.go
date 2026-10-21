@@ -12,7 +12,6 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
-	"github.com/universaltill/universal-till/internal/plugins/oauth"
 )
 
 // pluginsManagerTestDeps reuses pluginPageTestDeps' schema/deps. The real
@@ -224,7 +223,7 @@ func withCatalog(t *testing.T, d *common.Deps, catalogBody string) {
 	}))
 	t.Cleanup(mp.Close)
 	cfg := &config.MarketplaceConfig{EndpointURL: mp.URL}
-	client := marketplace.NewClient(cfg, oauth.NewTokenClient(cfg))
+	client := marketplace.NewClient(cfg)
 	repo, err := marketplace.NewCatalogRepository(client, t.TempDir())
 	if err != nil {
 		t.Fatalf("catalog repo: %v", err)
@@ -349,7 +348,7 @@ func TestPluginsPage_ReadsTillCatalogKeyNotUILocale(t *testing.T) {
 	}))
 	t.Cleanup(mp.Close)
 	cfg := &config.MarketplaceConfig{EndpointURL: mp.URL}
-	repo, err := marketplace.NewCatalogRepository(marketplace.NewClient(cfg, oauth.NewTokenClient(cfg)), t.TempDir())
+	repo, err := marketplace.NewCatalogRepository(marketplace.NewClient(cfg), t.TempDir())
 	if err != nil {
 		t.Fatalf("catalog repo: %v", err)
 	}

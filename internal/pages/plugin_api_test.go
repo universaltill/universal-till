@@ -28,7 +28,6 @@ import (
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
-	"github.com/universaltill/universal-till/internal/plugins/oauth"
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
@@ -443,7 +442,7 @@ func TestApplyPluginUpdate_NoListingButCatalogMatchFound_PastNoListingGate(t *te
 
 	cfg := basePluginCfg()
 	cfg.Marketplace = config.MarketplaceConfig{EndpointURL: mp.URL}
-	client := marketplace.NewClient(&cfg.Marketplace, oauth.NewTokenClient(&cfg.Marketplace))
+	client := marketplace.NewClient(&cfg.Marketplace)
 	catalogRepo, err := marketplace.NewCatalogRepository(client, t.TempDir())
 	if err != nil {
 		t.Fatalf("catalog repo: %v", err)

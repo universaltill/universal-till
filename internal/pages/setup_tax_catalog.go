@@ -15,7 +15,6 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
-	"github.com/universaltill/universal-till/internal/plugins/oauth"
 	"github.com/universaltill/universal-till/internal/updates"
 )
 
@@ -149,7 +148,7 @@ func setupTaxCatalogEntries(ctx context.Context, d *common.Deps) (entries []mark
 	// store registration) reasoning as setupLanguageCatalogEntries: browsing
 	// the catalog must never mint the shop's cloud store identity.
 	effCfg := enroll.Effective(d.Cfg)
-	client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
+	client := marketplace.NewClient(&effCfg.Marketplace)
 	var all []marketplace.PluginSummary
 	pageToken := ""
 	for page := 0; page < setupTaxCatalogMaxPages; page++ {

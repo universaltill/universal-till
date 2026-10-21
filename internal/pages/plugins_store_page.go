@@ -18,7 +18,6 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
-	"github.com/universaltill/universal-till/internal/plugins/oauth"
 )
 
 // storeItem is one listing in the plugin store: a tile on /plugins/store and
@@ -72,7 +71,7 @@ func trustTierOf(pluginID, trustTier string) string {
 // effective config is returned too for request identity fields.
 func storeInstaller(d *common.Deps) (*plugins.MarketplaceInstaller, *config.Config, error) {
 	effCfg := enroll.Effective(d.Cfg)
-	client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
+	client := marketplace.NewClient(&effCfg.Marketplace)
 	installer, err := plugins.NewMarketplaceInstaller(&effCfg, client, d.Db)
 	return installer, &effCfg, err
 }

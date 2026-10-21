@@ -15,7 +15,6 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
-	"github.com/universaltill/universal-till/internal/plugins/oauth"
 )
 
 // ut-docs#1092: the setup wizard's language step lists not just the bundled
@@ -145,7 +144,7 @@ func setupLanguageCatalogEntries(ctx context.Context, d *common.Deps) (entries [
 	//     and never touches the network, so the fetch timeout is the real
 	//     bound here either way.
 	effCfg := enroll.Effective(d.Cfg)
-	client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
+	client := marketplace.NewClient(&effCfg.Marketplace)
 	// No Locale filter: browsing wants every language listing. Capability is
 	// the server-side canonical-type filter; installableSetupLanguages still
 	// re-checks CanonicalType client-side (the server-side filter isn't

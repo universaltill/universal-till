@@ -942,8 +942,6 @@ data/plugins/
 │   └── prod.catalog.json    # Cached marketplace catalog
 ├── tmp/                      # Temporary downloads
 │   └── *.part               # Resume-capable partial downloads
-├── auth/                     # OAuth2 credentials cache
-│   └── token.json           # Marketplace access token
 └── {plugin_id}/             # Plugin installations
     ├── {version}/           # Current active version
     │   ├── manifest.json    # Plugin metadata
@@ -1002,11 +1000,11 @@ data/plugins/
 
 ### API Integration
 
-**OAuth2 Flow**
-- Client credentials grant for device authentication
-- Tokens cached with expiry tracking
-- Automatic refresh before expiration
-- Secure storage at `data/plugins/auth/token.json`
+**Authentication**
+- The catalogue is fetched with no credential; store-scoped requests (a
+  paid plugin's download token) carry the till's ADR-0116 device
+  credential. The old OAuth2 merchant token and its
+  `data/plugins/auth/token.json` cache are gone (ut-docs#3577).
 
 **Catalog Endpoint**
 - `GET /v1/catalog?locale={locale}&arch={os}/{arch}`

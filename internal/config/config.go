@@ -51,9 +51,10 @@ type MarketplaceConfig struct {
 	// download-token request (ut-docs#2930).
 	MerchantToken string
 
-	// OAuth2 client credentials for marketplace authentication (FR-018)
-	ClientID     string
-	ClientSecret string
+	// ClientID is the merchant id the till names in marketplace requests.
+	// (Its old OAuth2 ClientSecret partner is gone with the retired
+	// scheme-(b) merchant token, ut-docs#3577.)
+	ClientID string
 
 	// API version pinning (FR-016)
 	APIVersion string // semver format: "1.2.3"
@@ -265,7 +266,6 @@ func Init() (*Config, error) {
 			UploadToken:           getenv("UT_MARKETPLACE_UPLOAD_TOKEN", ""),
 			MerchantToken:         getenv("UT_MARKETPLACE_MERCHANT_TOKEN", ""),
 			ClientID:              getenv("UT_MARKETPLACE_CLIENT_ID", ""),
-			ClientSecret:          getenv("UT_MARKETPLACE_CLIENT_SECRET", ""),
 			APIVersion:            getenv("UT_MARKETPLACE_API_VERSION", "1.0.0"),
 			DevMode:               devMode,
 			DevOverrideURL:        getenv("UT_MARKETPLACE_DEV_OVERRIDE_URL", ""),

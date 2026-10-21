@@ -264,7 +264,7 @@ For development and testing with plugin-marketplace features:
 `./scripts/dev.sh` loads `pos.env.dev`, which points at the **deployed dev
 marketplace** in the homelab cluster
 (`https://cloud.home.taskrunnertech.co.uk/api`). It runs with auth disabled,
-so **no OAuth client secret / API key is required** — you can browse the plugin
+so **no API key is required** — you can browse the plugin
 store and one-click install the FAQ plugin out of the box. `pos.env.dev` also
 carries the marketplace's Ed25519 signing public key, which the POS uses to verify
 plugin signatures before installing.
@@ -331,7 +331,6 @@ UT_MARKETPLACE_PUBLIC_KEY=             # Ed25519 signing key (hex); source build
 UT_MARKETPLACE_CLIENT_ID=              # Doubles as merchant_id on the install path
 UT_MARKETPLACE_STORE_ID=               # Store identifier for entitlement/install
 UT_MARKETPLACE_DEVICE_ID=              # Device identifier (defaults to hostname)
-UT_MARKETPLACE_CLIENT_SECRET=          # OAuth2 client secret (only if the marketplace enforces auth)
 UT_MARKETPLACE_API_VERSION=1.0.0       # Marketplace API version
 UT_DEV_MODE=false                      # Enable developer mode features
 UT_MARKETPLACE_DEV_OVERRIDE_URL=       # Local marketplace override (dev mode only)

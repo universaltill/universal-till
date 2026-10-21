@@ -22,7 +22,7 @@ func testClient(t *testing.T, endpoint string) *Client {
 		APIVersion:        "1.0.0",
 		RequestTimeoutSec: 5,
 	}
-	return NewClient(cfg, &mockTokenClient{token: "test-token"})
+	return NewClient(cfg)
 }
 
 func TestResolveURL(t *testing.T) {

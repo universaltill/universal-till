@@ -62,7 +62,7 @@ func TestMarketplaceInstallerEnforcesEventNamespace(t *testing.T) {
 			db := openMarketplaceInstallerDB(t)
 			defer db.Close()
 			cfg := &config.Config{Marketplace: config.MarketplaceConfig{
-				EndpointURL: server.URL, APIVersion: "1.0.0", ClientID: "merchant-1", ClientSecret: "secret-1",
+				EndpointURL: server.URL, APIVersion: "1.0.0", ClientID: "merchant-1",
 				StoreID: "store-1", DeviceID: "device-1", PublicKey: hex.EncodeToString(publicKey), RequestTimeoutSec: 30,
 			}}
 
