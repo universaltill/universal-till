@@ -27,7 +27,7 @@ worktree), fix round written inline by Opus and reviewed by Sonnet.
 | 4 | Low-Med | A code-less row could take an item a later row names by barcode/SKU. | Fixed: those items are reserved too; test `NeverTakesItemALaterRowMatchesByCode` (fails with `reserved` mutated out). |
 | 5 | Low | Test gaps: `pp#a` check ran in the wrong order; price update unasserted; no `p"#a`/`p$a` boundary case. | Fixed. |
 | 6 | Low | `codelessNames` also counts rows already linked under own source, so a re-sync with a linked "Tea" plus a new code-less "Tea" never name-matches. | Accepted: conservative, matches the ADR wording ("two or more code-less rows of one name"); preview and commit agree. |
-| 7 | Low | Pre-existing: a mid-run claimed item reports `item_linked_elsewhere` in commit vs `item_already_matched` in preview. | Accepted, not introduced here; row is an issue either way. |
+| 7 | Low | Pre-existing: a mid-run claimed item reports `item_linked_elsewhere` in commit vs `item_already_matched` in preview. | Accepted, not introduced here; row is an issue either way. Fixed later by ut-docs#4740 (`2026-10-21-catsync-claim-before-link-4740.md`). |
 | 8 | Info | Snapshot can go stale if an item is renamed mid-run. | Accepted: deletion is handled by `SyncItemState`; one commit per entry at a time. |
 
 ## Verified
