@@ -22,7 +22,7 @@ func TestOnScreenReceipt_PaymentMethodTranslated(t *testing.T) {
 		{MethodID: "gift", Amount: 300},
 		{MethodID: "sumup", Amount: 200},
 	}
-	html, err := renderReceipt(httpx.FuncsFor("fa"), "R1", lines, payments, 1000, 0, 1000, false, 0, "amount", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil)
+	html, err := renderReceipt(httpx.FuncsFor("fa"), "R1", lines, payments, 1000, 0, 1000, false, 0, "amount", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "")
 	if err != nil {
 		t.Fatalf("renderReceipt: %v", err)
 	}

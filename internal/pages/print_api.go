@@ -990,7 +990,17 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		receiptNo := r.PathValue("receiptNo")
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
-		err := printReceipt(ctx, d, receiptNo)
+		// ut-docs#4714: the receipt screen's Print button sends the
+		// self-order customer's language pick so a manual print matches
+		// the auto-print (ut-docs#4705); the journal sends none, so its
+		// reprint stays the shop's copy. External input: an uninstalled
+		// value falls back to the shop's language, never an error.
+		_ = r.ParseForm()
+		loc := strings.TrimSpace(r.PostForm.Get("customer_locale"))
+		if !httpx.InstalledLocale(loc) {
+			loc = ""
+		}
+		err := printReceiptIn(ctx, d, receiptNo, loc)
 		now := time.Now().UTC().Format(time.RFC3339)
 		if errors.Is(err, errCustomerDocumentsSuppressed) {
 			// ADR-0124 §3: refused, with a distinct status the receipt
@@ -1001,8 +1011,12 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 			writeCustomerDocumentsRefused(w, r)
 			return
 		}
+		audit := map[string]any{"ok": err == nil}
+		if loc != "" {
+			audit["customer_locale"] = loc
+		}
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "sale", receiptNo, "receipt_reprint",
-			map[string]any{"ok": err == nil}, now, "")
+			audit, now, "")
 		// Keep the /orders warning honest (ut-docs#517a), same as the manual
 		// kitchen reprint. Without this the receipt warning would be
 		// UNCLEARABLE: a receipt only auto-prints once, at tender, so the
