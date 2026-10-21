@@ -933,6 +933,9 @@ func TestFriendlyJoinError_TranslatesEachKind(t *testing.T) {
 		{"need address", &joinError{kind: joinErrNeedAddress}, "tills.join_error.need_address", ""},
 		{"bad address", &joinError{kind: joinErrBadAddress}, "tills.join_error.bad_address", ""},
 		{"too many attempts", &joinError{kind: joinErrTooManyAttempts}, "tills.join_error.too_many_attempts", ""},
+		{"tls only", &joinError{kind: joinErrTLSOnly}, "tills.join_error.tls_only", ""},
+		{"satellite tls only", &joinError{kind: joinErrSatelliteTLSOnly}, "tills.join_error.satellite_tls_only", ""},
+		{"main no tls", &joinError{kind: joinErrSatelliteNoTLS}, "tills.join_error.main_no_tls", ""},
 	}
 	for _, locale := range []string{"en", "ar", "fa", "tr"} {
 		for _, tt := range tests {

@@ -756,3 +756,70 @@ func mustParseURL(t *testing.T, raw string) *url.URL {
 	}
 	return u
 }
+
+// ut-docs#4451: a plain-HTTP refusal that carries the stable reason header
+// shows the person what to do; the same 403 without it stays generic.
+func TestPairJoin_PlainRefusalHeaderShowsActionableMessage(t *testing.T) {
+	cases := []struct {
+		hdr      string
+		startKey string
+		pollKey  string
+	}{
+		{"", "tills.pairing.error.refused", "tills.pairing.error.unexpected_response_status"},
+		{"unknown", "tills.pairing.error.refused", "tills.pairing.error.unexpected_response_status"},
+		{plainRefusedTLSOnly, "tills.join_error.tls_only", "tills.join_error.tls_only"},
+		{plainRefusedSatelliteTLSOnly, "tills.join_error.satellite_tls_only", "tills.join_error.satellite_tls_only"},
+		{plainRefusedSatelliteNoTLS, "tills.join_error.main_no_tls", "tills.join_error.main_no_tls"},
+	}
+	for _, tc := range cases {
+		t.Run("start/"+tc.hdr, func(t *testing.T) {
+			t.Setenv("UT_AUTH", "off")
+			primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.hdr != "" {
+					w.Header().Set(plainRefusedHeader, tc.hdr)
+				}
+				http.Error(w, "no", http.StatusForbidden)
+			}))
+			t.Cleanup(primary.Close)
+			replica, _ := newSyncDepsWithPath(t, "replica.db")
+			rmux := http.NewServeMux()
+			registerPairingJoinAPI(rmux, replica)
+			rec := postPairStart(t, rmux, primary.URL, "primary-till-1", "Bar Till")
+			want := strings.SplitN(httpx.T("en", tc.startKey), "%s", 2)[0]
+			if !strings.Contains(html.UnescapeString(rec.Body.String()), want) {
+				t.Fatalf("pair-start body lacks %q: %s", want, rec.Body.String())
+			}
+		})
+		t.Run("poll/"+tc.hdr, func(t *testing.T) {
+			t.Setenv("UT_AUTH", "off")
+			primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost && r.URL.Path == "/api/sync/pair-request" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"data":{"id":"req-1"},"error":null}`))
+					return
+				}
+				if tc.hdr != "" {
+					w.Header().Set(plainRefusedHeader, tc.hdr)
+				}
+				http.Error(w, "no", http.StatusForbidden)
+			}))
+			t.Cleanup(primary.Close)
+			replica, _ := newSyncDepsWithPath(t, "replica.db")
+			rmux := http.NewServeMux()
+			registerPairingJoinAPI(rmux, replica)
+			if rec := postPairStart(t, rmux, primary.URL, "primary-till-1", "Bar Till"); rec.Code != http.StatusOK {
+				t.Fatalf("pair-start: %d %s", rec.Code, rec.Body.String())
+			}
+			want := strings.SplitN(httpx.T("en", tc.pollKey), "%s", 2)[0]
+			for i := 0; i < 2; i++ { // the stored message survives the next tick
+				body := html.UnescapeString(getPairStatus(t, rmux).Body.String())
+				if !strings.Contains(body, want) {
+					t.Fatalf("tick %d: pair-status body lacks %q: %s", i, want, body)
+				}
+				if !strings.Contains(body, `hx-trigger="every 15s"`) {
+					t.Fatalf("tick %d: error state must keep polling: %s", i, body)
+				}
+			}
+		})
+	}
+}
