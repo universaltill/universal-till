@@ -262,6 +262,10 @@ func receiptTrackingPrint(ctx context.Context, d *common.Deps, receiptNo, locale
 type receiptTrackingView struct {
 	QRDataURI template.URL
 	URL       string
+	// CustomerCopy (ut-docs#4730) is the same link opening in a self-order
+	// customer's language, for the receipt's print-only copy; nil when the
+	// receipt has no such copy.
+	CustomerCopy *receiptTrackingView
 }
 
 // receiptTrackingScreenView is the on-screen counterpart of

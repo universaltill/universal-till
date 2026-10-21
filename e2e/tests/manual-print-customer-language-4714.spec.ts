@@ -55,6 +55,20 @@ test('Print on the receipt screen sends the kiosk customer\'s language', async (
   const receipt = page.locator('#basket.receipt-view');
   await expect(receipt).toBeVisible();
 
+  // ut-docs#4730: the browser-print fallback prints the page, so the page
+  // carries a print-only copy in the customer's language: hidden on screen,
+  // and the only receipt card shown in print media.
+  const screenCard = receipt.locator('.receipt-card:not(.receipt-print-copy)');
+  const printCopy = receipt.locator('.receipt-print-copy');
+  await expect(printCopy).toHaveAttribute('lang', 'tr');
+  await expect(printCopy).toBeHidden();
+  await expect(screenCard).toBeVisible();
+  await page.emulateMedia({ media: 'print' });
+  await expect(printCopy).toBeVisible();
+  await expect(printCopy).toContainText('Fiş #');
+  await expect(screenCard).toBeHidden();
+  await page.emulateMedia({ media: 'screen' });
+
   const print = receipt.locator('[data-action^="receipt-print:"]');
   await expect(print).toHaveAttribute('data-customer-locale', 'tr');
   const [req] = await Promise.all([

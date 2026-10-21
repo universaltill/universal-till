@@ -59,7 +59,11 @@
   .receipt-ask-title {font-weight: 600; margin-bottom: 0.5rem;}
   .receipt-ask-actions {display: flex; gap: 0.5rem;}
   .receipt-ask-actions .btn {flex: 1; min-height: 3rem;}
+  .receipt-print-copy {display: none;}
   @media print {
+    /* ut-docs#4730: print the customer-language copy instead of the screen card. */
+    .receipt-wrap.has-print-copy > .receipt-card:not(.receipt-print-copy) {display: none;}
+    .receipt-print-copy {display: block;}
     /* Take the receipt OUT of the sale-screen grid: the fixed-height kiosk
        grid pins the basket to a narrow side column (the opposite side in
        RTL) and overflow:hidden clips anything past one page. Block flow +
@@ -80,178 +84,9 @@
     .receipt-ask {display: none;}
   }
 </style>
-<div class="receipt-wrap">
+<div class="receipt-wrap{{ if .PrintCopy }} has-print-copy{{ end }}">
   <div class="receipt-card">
-    {{ if .StoreName }}<h2 class="receipt-store">{{ .StoreName }}</h2>{{ end }}
-    {{ range .DesignHeader }}<div class="receipt-design-line"><small>{{ . }}</small></div>{{ end }}
-    <h2>{{ T "receipt.title" }} #{{ .ReceiptNo }}</h2>
-    {{ if .TableLabel }}<p class="receipt-table"><small>{{ T "basket.table.label" }}: {{ .TableLabel }}</small></p>{{ end }}
-    {{/* ut-docs#1181 (ADR-0073 Decision 7): only a MIXED sale marks its
-         mode -- a uniform sale's receipt is unchanged. */}}
-    {{ if .MixedOrder }}<p class="receipt-mixed" data-testid="receipt-mixed"><small>{{ T "basket.order_type.mixed" }}</small></p>{{ end }}
-    {{ if .OriginalReceiptNo }}<p><small>{{ T "receipt.return_for" }}: {{ .OriginalReceiptNo }}</small></p>{{ end }}
-    {{ if .ShowBarcode }}<div class="barcode">{{ barcodesvg .ReceiptNo }}<small>{{ .ReceiptNo }}</small></div>{{ end }}
-    <ul class="receipt-lines">
-      {{ range .Lines }}
-      <li><span>{{ .Name }}{{ if .SKU }} <small class="muted">{{ .SKU }}</small>{{ end }} x{{ qty .Qty }}{{ if .Mixed }} <small class="muted receipt-line-mode">{{ if eq .OrderType "takeaway" }}🥡 {{ T "basket.order_type.takeaway" }}{{ else }}🍽️ {{ T "basket.order_type.dine_in" }}{{ end }}</small>{{ end }}</span><span>{{ money .TotalAfterTax }}</span></li>
-      {{ end }}
-    </ul>
-    <div class="totals">
-      {{ if .ShowTax }}
-      <div>{{ T "basket.subtotal" }}: {{ money .Subtotal }}</div>
-      <div>{{ T "basket.tax" }}: {{ money .TaxTotal }}</div>
-      {{ end }}
-      {{ if gt .SaleDiscount 0 }}<div>{{ T "basket.discount" }}{{ if eq .SaleDiscountType "percent" }} ({{ bpPercent .SaleDiscountRaw }}){{ end }}: -{{ money .SaleDiscount }}</div>{{ end }}
-      <div><strong>{{ T "basket.total" }}: {{ money .Total }}</strong></div>
-    </div>
-    {{ if .Payments }}
-    <div class="receipt-payments">
-      <h3>{{ T "receipt.payments" }}</h3>
-      <ul>
-        {{ range .Payments }}
-          <li>
-            <div>
-              <strong>{{ tenderLabel .Method }}</strong>
-              {{ if .MaskedPAN }}
-                <small>{{ .MaskedPAN }}{{ if .AuthCode }} &middot; {{ T "receipt.auth_code" }} {{ .AuthCode }}{{ end }}</small>
-              {{ else if .VoucherID }}<small class="receipt-voucher-code">{{ .VoucherID }}{{ if .Reference }} &middot; {{ .Reference }}{{ end }}</small>
-              {{ else if .Reference }}<small>{{ .Reference }}</small>{{ end }}
-            </div>
-            <div>
-              {{ money .Applied }}
-              {{ if gt .Change 0 }}<small>{{ T "receipt.change" }} {{ money .Change }}</small>{{ end }}
-              {{ if gt .Tip 0 }}<small>{{ T "receipt.tip" }} {{ money .Tip }}</small>{{ end }}
-            </div>
-          </li>
-        {{ end }}
-      </ul>
-    </div>
-    {{ end }}
-    {{ if .IssuedVouchers }}
-    <!-- ut-docs#1832: every voucher this sale ISSUED, with its final code —
-         the operator's preprinted one, or the code the till generated for
-         a blank entry. The receipt is the only place a generated code is
-         ever shown, so this is what the customer spends later. Same block
-         shape as Payments above; absent entirely when nothing was issued. -->
-    <div class="receipt-payments receipt-vouchers">
-      <h3>{{ T "receipt.vouchers.issued" }}</h3>
-      <ul>
-        {{ range .IssuedVouchers }}
-          <li>
-            {{/* ut-docs#4252: a top-up of an existing voucher is labelled as
-                 one: the value added, then the voucher's new balance. */}}
-            {{ if .TopUp }}<div class="receipt-voucher-top-up">{{ T "receipt.vouchers.top_up" }}</div>{{ end }}
-            <div class="receipt-voucher-num"><strong class="receipt-voucher-code">{{ .Code }}</strong></div>
-            <div>{{ if .TopUp }}+{{ end }}{{ money .Amount }}</div>
-            {{ if .HasBalance }}<div class="receipt-voucher-balance">{{ printf (T "receipt.vouchers.new_balance") (money .Balance) }}</div>{{ end }}
-            {{ if .Holder }}<div class="receipt-voucher-holder">{{ printf (T "basket.gift_voucher.for") .Holder }}</div>{{ end }}
-            <!-- ut-docs#4224: the code as a barcode, so scanning the receipt redeems it.
-                 CODE128 like the printed receipt (ut-docs#4248): a card number can be
-                 lowercase or longer than CODE39's 32 characters. -->
-            {{ with barcode128svg .Code }}<div class="barcode">{{ . }}</div>{{ end }}
-          </li>
-        {{ end }}
-      </ul>
-    </div>
-    {{ end }}
-    {{ if .LegalBlocks }}
-    <div class="receipt-legal">
-      {{ range .LegalBlocks }}
-      <div class="receipt-legal-block">
-        <div class="receipt-legal-label">{{ printf (T "receipt.legal.plugin_label") .PluginName .PluginVersion }}</div>
-        {{ range .Lines }}
-        <div class="receipt-legal-line">{{ . }}</div>
-        {{ end }}
-      </div>
-      {{ end }}
-    </div>
-    {{ end }}
-    {{ if .UnsignedOverride }}
-    <!-- ADR-0048: sale taken during an active TSE-override window — the
-         receipt says so factually (what happened), never a compliance
-         outcome claim (ADR-0040). -->
-    <div class="receipt-legal">
-      <div class="receipt-legal-line">{{ T "receipt.fiscal.unsigned_override" }}</div>
-    </div>
-    {{ end }}
-    {{ if .UnsignedFiscalSigning }}
-    <!-- ADR-0044 proceed-and-declare (ut-docs#675): the fiscal.sign.ask
-         dispatch failed or was skipped known-offline, so this sale went
-         out unsigned — stated factually on the receipt, never silently
-         (ADR-0041 Decision E), and never as a compliance outcome claim
-         (ADR-0040). The gap is permanent: signing is never re-attempted
-         for a completed sale (ADR-0056, ut-docs#839). -->
-    <div class="receipt-legal">
-      <div class="receipt-legal-line">{{ T "receipt.fiscal.unsigned_signing" }}</div>
-    </div>
-    {{ end }}
-    {{ if .UnsignedCannotSign }}
-    <!-- ut-docs#835: the signer explicitly declared this sale cannot be
-         signed as presented — a property of the sale's own data (never a
-         connectivity problem), stated factually, never as a compliance
-         outcome claim (ADR-0040). Mutually exclusive with the outage
-         notice above. -->
-    <div class="receipt-legal">
-      <div class="receipt-legal-line">{{ T "receipt.fiscal.unsigned_cannot_sign" }}</div>
-    </div>
-    {{ end }}
-    {{ if .TSESignature }}
-    <!-- ut-docs#585 (fiscal.sign.ask contract v1.1.0): the sale's recorded
-         §6 KassenSichV TSE evidence, rendered from the persisted
-         fiscal_tse_signatures row — real recorded values only; this whole
-         block is absent when no evidence was recorded, and individual
-         fields the signer didn't return are skipped, never placeholders.
-         Factual data display, no compliance-outcome claim (ADR-0040). The
-         QR is not built from these fields — see the FiscalReceipt block
-         below (ut-docs#2880). -->
-    <div class="receipt-legal receipt-tse">
-      <div class="receipt-legal-label">{{ T "receipt.fiscal.tse.title" }}</div>
-      {{ if .TSESignature.SerialNumber }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.serial_number" }}: {{ .TSESignature.SerialNumber }}</div>{{ end }}
-      {{ if .TSESignature.TransactionNumber }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.transaction_number" }}: {{ .TSESignature.TransactionNumber }}</div>{{ end }}
-      {{ if .TSESignature.SignatureCounter }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.signature_counter" }}: {{ .TSESignature.SignatureCounter }}</div>{{ end }}
-      {{ if .TSESignature.StartTime }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.start_time" }}: {{ .TSESignature.StartTime }}</div>{{ end }}
-      {{ if .TSESignature.LogTime }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.log_time" }}: {{ .TSESignature.LogTime }}</div>{{ end }}
-      {{ if .TSESignature.SignatureAlgorithm }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.signature_algorithm" }}: {{ .TSESignature.SignatureAlgorithm }}</div>{{ end }}
-      {{ if .TSESignature.Signature }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.signature" }}: <span class="receipt-tse-signature">{{ .TSESignature.Signature }}</span></div>{{ end }}
-    </div>
-    {{ end }}
-    {{ if .FiscalReceipt }}
-    <!-- ut-docs#2880 (fiscal.sign.ask contract 1.10.0): the signer's own
-         receipt object, stored per sale at tender time — its extra lines
-         (plugin text, auto-escaped) and a QR encoding the stored
-         qr_payload verbatim (for Germany: fiskaly's DSFinV-K "V0;…"
-         string). Core never builds the payload; no stored row, no block. -->
-    <div class="receipt-legal receipt-fiscal-receipt">
-      {{ range .FiscalReceipt.Lines }}<div class="receipt-legal-line">{{ . }}</div>{{ end }}
-      {{ if .FiscalReceipt.QRDataURI }}<div class="receipt-tse-qr"><img src="{{ .FiscalReceipt.QRDataURI }}" alt="" width="140" height="140"></div>{{ end }}
-    </div>
-    {{ end }}
-    {{ if .DeviceReceipt }}
-    <!-- Fiscal DEVICE receipt (Turkey's YN ÖKC, fiscal_device_hook.go): the
-         certified device printed the legal receipt (mali fiş); this copy
-         shows the device's own receipt number, serial and Z counter so the
-         two can be matched. Real recorded values only, absent fields
-         skipped — factual data display, no compliance-outcome claim
-         (ADR-0040). -->
-    <div class="receipt-legal receipt-fiscal-device">
-      <div class="receipt-legal-label">{{ T "receipt.fiscal.device.title" }}</div>
-      <div class="receipt-legal-line">{{ T "receipt.fiscal.device.receipt_no" }}: {{ .DeviceReceipt.ReceiptNo }}</div>
-      {{ if .DeviceReceipt.Serial }}<div class="receipt-legal-line">{{ T "receipt.fiscal.device.serial" }}: {{ .DeviceReceipt.Serial }}</div>{{ end }}
-      {{ if .DeviceReceipt.ZNo }}<div class="receipt-legal-line">{{ T "receipt.fiscal.device.z_no" }}: {{ .DeviceReceipt.ZNo }}</div>{{ end }}
-      {{ if .DeviceReceipt.IssuedAt }}<div class="receipt-legal-line">{{ T "receipt.fiscal.device.issued_at" }}: {{ .DeviceReceipt.IssuedAt }}</div>{{ end }}
-    </div>
-    {{ end }}
-    {{ if .Tracking }}
-    <!-- ut-docs#908: the customer order-tracking QR (/o/{token}) on a
-         counter sale's receipt — only on a plan that offers order
-         tracking, with receipt.show_tracking_qr on. Deliberately NOT in
-         the @media print hide list: the browser-printed receipt keeps it. -->
-    <div class="receipt-tracking-qr" data-testid="receipt-tracking-qr">
-      <img src="{{ .Tracking.QRDataURI }}" alt="{{ T "receipt.tracking.caption" }}" width="160" height="160">
-      <small class="receipt-tracking-caption">{{ T "receipt.tracking.caption" }}</small>
-    </div>
-    {{ end }}
-    {{ if .DesignFooter }}<div class="receipt-design-line" style="margin-top:.5rem"><small>{{ .DesignFooter }}</small></div>{{ end }}
+    {{ template "receipt_body" . }}
     {{ if .PrinterUnavailable }}
     <div class="receipt-printer-warning">
       <span class="receipt-printer-message">{{ T "receipt.printer.unavailable" }}</span>
@@ -294,6 +129,187 @@
     </div>
     <small>{{ T "receipt.auto_reset" }}</small>
   </div>
+  {{/* ut-docs#4730: the customer's-language copy of the receipt, shown only
+       when the browser prints (see the @media print rules above). Hidden on
+       screen and from assistive tech; renderReceipt sets .PrintCopy only for
+       an installed customer language different from the screen's. */}}
+  {{ with .PrintCopy }}<div class="receipt-card receipt-print-copy" lang="{{ $.PrintCopyLocale }}" dir="{{ $.PrintCopyDir }}" aria-hidden="true">{{ . }}</div>{{ end }}
 </div>
 {{ template "receipt_auto_reset" . }}
+{{ end }}
+
+{{/* ut-docs#4730: the customer-facing receipt content, executed once in the
+     screen's language and, for a self-order customer's pick, again in theirs
+     (the browser-print copy). Keep ids out of here: both copies are in the page. */}}
+{{ define "receipt_body" }}
+{{ if .StoreName }}<h2 class="receipt-store">{{ .StoreName }}</h2>{{ end }}
+{{ range .DesignHeader }}<div class="receipt-design-line"><small>{{ . }}</small></div>{{ end }}
+<h2>{{ T "receipt.title" }} #{{ .ReceiptNo }}</h2>
+{{ if .TableLabel }}<p class="receipt-table"><small>{{ T "basket.table.label" }}: {{ .TableLabel }}</small></p>{{ end }}
+{{/* ut-docs#1181 (ADR-0073 Decision 7): only a MIXED sale marks its
+     mode -- a uniform sale's receipt is unchanged. */}}
+{{ if .MixedOrder }}<p class="receipt-mixed" data-testid="receipt-mixed"><small>{{ T "basket.order_type.mixed" }}</small></p>{{ end }}
+{{ if .OriginalReceiptNo }}<p><small>{{ T "receipt.return_for" }}: {{ .OriginalReceiptNo }}</small></p>{{ end }}
+{{ if .ShowBarcode }}<div class="barcode">{{ barcodesvg .ReceiptNo }}<small>{{ .ReceiptNo }}</small></div>{{ end }}
+<ul class="receipt-lines">
+  {{ range .Lines }}
+  <li><span>{{ .Name }}{{ if .SKU }} <small class="muted">{{ .SKU }}</small>{{ end }} x{{ qty .Qty }}{{ if .Mixed }} <small class="muted receipt-line-mode">{{ if eq .OrderType "takeaway" }}🥡 {{ T "basket.order_type.takeaway" }}{{ else }}🍽️ {{ T "basket.order_type.dine_in" }}{{ end }}</small>{{ end }}</span><span>{{ money .TotalAfterTax }}</span></li>
+  {{ end }}
+</ul>
+<div class="totals">
+  {{ if .ShowTax }}
+  <div>{{ T "basket.subtotal" }}: {{ money .Subtotal }}</div>
+  <div>{{ T "basket.tax" }}: {{ money .TaxTotal }}</div>
+  {{ end }}
+  {{ if gt .SaleDiscount 0 }}<div>{{ T "basket.discount" }}{{ if eq .SaleDiscountType "percent" }} ({{ bpPercent .SaleDiscountRaw }}){{ end }}: -{{ money .SaleDiscount }}</div>{{ end }}
+  <div><strong>{{ T "basket.total" }}: {{ money .Total }}</strong></div>
+</div>
+{{ if .Payments }}
+<div class="receipt-payments">
+  <h3>{{ T "receipt.payments" }}</h3>
+  <ul>
+    {{ range .Payments }}
+      <li>
+        <div>
+          <strong>{{ tenderLabel .Method }}</strong>
+          {{ if .MaskedPAN }}
+            <small>{{ .MaskedPAN }}{{ if .AuthCode }} &middot; {{ T "receipt.auth_code" }} {{ .AuthCode }}{{ end }}</small>
+          {{ else if .VoucherID }}<small class="receipt-voucher-code">{{ .VoucherID }}{{ if .Reference }} &middot; {{ .Reference }}{{ end }}</small>
+          {{ else if .Reference }}<small>{{ .Reference }}</small>{{ end }}
+        </div>
+        <div>
+          {{ money .Applied }}
+          {{ if gt .Change 0 }}<small>{{ T "receipt.change" }} {{ money .Change }}</small>{{ end }}
+          {{ if gt .Tip 0 }}<small>{{ T "receipt.tip" }} {{ money .Tip }}</small>{{ end }}
+        </div>
+      </li>
+    {{ end }}
+  </ul>
+</div>
+{{ end }}
+{{ if .IssuedVouchers }}
+<!-- ut-docs#1832: every voucher this sale ISSUED, with its final code —
+     the operator's preprinted one, or the code the till generated for
+     a blank entry. The receipt is the only place a generated code is
+     ever shown, so this is what the customer spends later. Same block
+     shape as Payments above; absent entirely when nothing was issued. -->
+<div class="receipt-payments receipt-vouchers">
+  <h3>{{ T "receipt.vouchers.issued" }}</h3>
+  <ul>
+    {{ range .IssuedVouchers }}
+      <li>
+        {{/* ut-docs#4252: a top-up of an existing voucher is labelled as
+             one: the value added, then the voucher's new balance. */}}
+        {{ if .TopUp }}<div class="receipt-voucher-top-up">{{ T "receipt.vouchers.top_up" }}</div>{{ end }}
+        <div class="receipt-voucher-num"><strong class="receipt-voucher-code">{{ .Code }}</strong></div>
+        <div>{{ if .TopUp }}+{{ end }}{{ money .Amount }}</div>
+        {{ if .HasBalance }}<div class="receipt-voucher-balance">{{ printf (T "receipt.vouchers.new_balance") (money .Balance) }}</div>{{ end }}
+        {{ if .Holder }}<div class="receipt-voucher-holder">{{ printf (T "basket.gift_voucher.for") .Holder }}</div>{{ end }}
+        <!-- ut-docs#4224: the code as a barcode, so scanning the receipt redeems it.
+             CODE128 like the printed receipt (ut-docs#4248): a card number can be
+             lowercase or longer than CODE39's 32 characters. -->
+        {{ with barcode128svg .Code }}<div class="barcode">{{ . }}</div>{{ end }}
+      </li>
+    {{ end }}
+  </ul>
+</div>
+{{ end }}
+{{ if .LegalBlocks }}
+<div class="receipt-legal">
+  {{ range .LegalBlocks }}
+  <div class="receipt-legal-block">
+    <div class="receipt-legal-label">{{ printf (T "receipt.legal.plugin_label") .PluginName .PluginVersion }}</div>
+    {{ range .Lines }}
+    <div class="receipt-legal-line">{{ . }}</div>
+    {{ end }}
+  </div>
+  {{ end }}
+</div>
+{{ end }}
+{{ if .UnsignedOverride }}
+<!-- ADR-0048: sale taken during an active TSE-override window — the
+     receipt says so factually (what happened), never a compliance
+     outcome claim (ADR-0040). -->
+<div class="receipt-legal">
+  <div class="receipt-legal-line">{{ T "receipt.fiscal.unsigned_override" }}</div>
+</div>
+{{ end }}
+{{ if .UnsignedFiscalSigning }}
+<!-- ADR-0044 proceed-and-declare (ut-docs#675): the fiscal.sign.ask
+     dispatch failed or was skipped known-offline, so this sale went
+     out unsigned — stated factually on the receipt, never silently
+     (ADR-0041 Decision E), and never as a compliance outcome claim
+     (ADR-0040). The gap is permanent: signing is never re-attempted
+     for a completed sale (ADR-0056, ut-docs#839). -->
+<div class="receipt-legal">
+  <div class="receipt-legal-line">{{ T "receipt.fiscal.unsigned_signing" }}</div>
+</div>
+{{ end }}
+{{ if .UnsignedCannotSign }}
+<!-- ut-docs#835: the signer explicitly declared this sale cannot be
+     signed as presented — a property of the sale's own data (never a
+     connectivity problem), stated factually, never as a compliance
+     outcome claim (ADR-0040). Mutually exclusive with the outage
+     notice above. -->
+<div class="receipt-legal">
+  <div class="receipt-legal-line">{{ T "receipt.fiscal.unsigned_cannot_sign" }}</div>
+</div>
+{{ end }}
+{{ if .TSESignature }}
+<!-- ut-docs#585 (fiscal.sign.ask contract v1.1.0): the sale's recorded
+     §6 KassenSichV TSE evidence, rendered from the persisted
+     fiscal_tse_signatures row — real recorded values only; this whole
+     block is absent when no evidence was recorded, and individual
+     fields the signer didn't return are skipped, never placeholders.
+     Factual data display, no compliance-outcome claim (ADR-0040). The
+     QR is not built from these fields — see the FiscalReceipt block
+     below (ut-docs#2880). -->
+<div class="receipt-legal receipt-tse">
+  <div class="receipt-legal-label">{{ T "receipt.fiscal.tse.title" }}</div>
+  {{ if .TSESignature.SerialNumber }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.serial_number" }}: {{ .TSESignature.SerialNumber }}</div>{{ end }}
+  {{ if .TSESignature.TransactionNumber }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.transaction_number" }}: {{ .TSESignature.TransactionNumber }}</div>{{ end }}
+  {{ if .TSESignature.SignatureCounter }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.signature_counter" }}: {{ .TSESignature.SignatureCounter }}</div>{{ end }}
+  {{ if .TSESignature.StartTime }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.start_time" }}: {{ .TSESignature.StartTime }}</div>{{ end }}
+  {{ if .TSESignature.LogTime }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.log_time" }}: {{ .TSESignature.LogTime }}</div>{{ end }}
+  {{ if .TSESignature.SignatureAlgorithm }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.signature_algorithm" }}: {{ .TSESignature.SignatureAlgorithm }}</div>{{ end }}
+  {{ if .TSESignature.Signature }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.signature" }}: <span class="receipt-tse-signature">{{ .TSESignature.Signature }}</span></div>{{ end }}
+</div>
+{{ end }}
+{{ if .FiscalReceipt }}
+<!-- ut-docs#2880 (fiscal.sign.ask contract 1.10.0): the signer's own
+     receipt object, stored per sale at tender time — its extra lines
+     (plugin text, auto-escaped) and a QR encoding the stored
+     qr_payload verbatim (for Germany: fiskaly's DSFinV-K "V0;…"
+     string). Core never builds the payload; no stored row, no block. -->
+<div class="receipt-legal receipt-fiscal-receipt">
+  {{ range .FiscalReceipt.Lines }}<div class="receipt-legal-line">{{ . }}</div>{{ end }}
+  {{ if .FiscalReceipt.QRDataURI }}<div class="receipt-tse-qr"><img src="{{ .FiscalReceipt.QRDataURI }}" alt="" width="140" height="140"></div>{{ end }}
+</div>
+{{ end }}
+{{ if .DeviceReceipt }}
+<!-- Fiscal DEVICE receipt (Turkey's YN ÖKC, fiscal_device_hook.go): the
+     certified device printed the legal receipt (mali fiş); this copy
+     shows the device's own receipt number, serial and Z counter so the
+     two can be matched. Real recorded values only, absent fields
+     skipped — factual data display, no compliance-outcome claim
+     (ADR-0040). -->
+<div class="receipt-legal receipt-fiscal-device">
+  <div class="receipt-legal-label">{{ T "receipt.fiscal.device.title" }}</div>
+  <div class="receipt-legal-line">{{ T "receipt.fiscal.device.receipt_no" }}: {{ .DeviceReceipt.ReceiptNo }}</div>
+  {{ if .DeviceReceipt.Serial }}<div class="receipt-legal-line">{{ T "receipt.fiscal.device.serial" }}: {{ .DeviceReceipt.Serial }}</div>{{ end }}
+  {{ if .DeviceReceipt.ZNo }}<div class="receipt-legal-line">{{ T "receipt.fiscal.device.z_no" }}: {{ .DeviceReceipt.ZNo }}</div>{{ end }}
+  {{ if .DeviceReceipt.IssuedAt }}<div class="receipt-legal-line">{{ T "receipt.fiscal.device.issued_at" }}: {{ .DeviceReceipt.IssuedAt }}</div>{{ end }}
+</div>
+{{ end }}
+{{ if .Tracking }}
+<!-- ut-docs#908: the customer order-tracking QR (/o/{token}) on a
+     counter sale's receipt — only on a plan that offers order
+     tracking, with receipt.show_tracking_qr on. Deliberately NOT in
+     the @media print hide list: the browser-printed receipt keeps it. -->
+<div class="receipt-tracking-qr" data-testid="receipt-tracking-qr">
+  <img src="{{ .Tracking.QRDataURI }}" alt="{{ T "receipt.tracking.caption" }}" width="160" height="160">
+  <small class="receipt-tracking-caption">{{ T "receipt.tracking.caption" }}</small>
+</div>
+{{ end }}
+{{ if .DesignFooter }}<div class="receipt-design-line" style="margin-top:.5rem"><small>{{ .DesignFooter }}</small></div>{{ end }}
 {{ end }}

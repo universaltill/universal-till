@@ -526,10 +526,13 @@ func TestSetupWizardShowsTaxPluginInstallTileForDEOnly(t *testing.T) {
 	// step for every country) could ship this tile to a French operator
 	// with an otherwise fully green suite. Pin both ternaries that gate it
 	// (step 2's Next, step 4's Back) directly.
-	if !strings.Contains(body, `step = country === 'DE' ? 3 : 4`) {
+	// ut-docs#4610: the two ternaries became nxt()/prv() (they also skip
+	// the steps a pair-first wizard already has answered); Germany-only
+	// routing now lives in skip(3).
+	if !strings.Contains(body, `step = nxt(2)`) || !strings.Contains(body, `(s === 3 && this.country !== 'DE')`) {
 		t.Error("step 2's Next must stay Germany-only — it is what keeps the unconditionally-rendered DE tax tile off a non-DE operator's screen (ut-docs#1460)")
 	}
-	if !strings.Contains(body, `step = country === 'DE' ? 3 : 2`) {
+	if !strings.Contains(body, `step = prv(4)`) {
 		t.Error("step 4's Back must stay Germany-only for the same reason (ut-docs#1460)")
 	}
 }

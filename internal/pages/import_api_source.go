@@ -38,6 +38,13 @@ type apiImportRequestPayload struct {
 	Locale string `json:"locale"`
 }
 
+// importLinkSource is the import_source_links source of one import entry:
+// "<plugin id>#<entry key>" (ADR-0161 amendment, ut-docs#4727). Core-stamped,
+// never read from a row.
+func importLinkSource(pluginID, entryKey string) string {
+	return pluginID + "#" + entryKey
+}
+
 // apiImportCommitKey is reserveImportCommit's key for one entry's commits.
 func apiImportCommitKey(pluginID, entryKey string) string {
 	return "api-import\x00" + pluginID + "\x00" + entryKey
@@ -139,9 +146,12 @@ func executeRowsImport(r *http.Request, d *common.Deps, entry data.ImportEntryRo
 	if mode != "preview" && mode != "commit" {
 		return fail(http.StatusBadRequest, apiImportErrBadMode, "mode must be preview or commit")
 	}
-	// The plugin's own source id stamps every link (ADR-0161 §2): an api
-	// and a file entry of one plugin share it, so a re-import through
-	// either updates the same items.
+	// Links are stamped per entry (importLinkSource, ADR-0161 amendment,
+	// ut-docs#4727): an api and a file entry of one plugin keep separate
+	// link namespaces, because their external ids use different schemes.
+	// The second entry matches the first's items by barcode, then SKU, and
+	// adds its own link. Links an older till wrote under the bare plugin id
+	// are read as a fallback (Options.LegacySource) and re-stamped.
 	// Core applies items today; stock rides on item rows (ADR-0161).
 	var entities []string
 	stock := false
@@ -235,7 +245,7 @@ func executeRowsImport(r *http.Request, d *common.Deps, entry data.ImportEntryRo
 		return apiImportOutcome{}, &apiImportError{status: http.StatusBadRequest, key: apiImportErrDeclined, msg: msg, detail: parsed.Error}
 	}
 
-	opt := catsync.Options{Source: entry.PluginID, Commit: commit, ActorID: getSessionUserID(r), Stock: stock}
+	opt := catsync.Options{Source: importLinkSource(entry.PluginID, entry.Key), LegacySource: entry.PluginID, Commit: commit, ActorID: getSessionUserID(r), Stock: stock}
 	if stock {
 		loc, lerr := pos.ResolveStockLocationID(r.Context(), d.Db, tillRegisterIDBestEffort(r.Context(), d))
 		if lerr != nil {
@@ -251,7 +261,7 @@ func executeRowsImport(r *http.Request, d *common.Deps, entry data.ImportEntryRo
 	if commit && (err == nil || partial) {
 		// Plugin, source and counts only — never row contents, the file's
 		// name or credentials. A file run names the file by its SHA-256.
-		auditData := map[string]any{"plugin": entry.PluginID, "entry_key": entry.Key, "source": entry.PluginID,
+		auditData := map[string]any{"plugin": entry.PluginID, "entry_key": entry.Key, "source": importLinkSource(entry.PluginID, entry.Key),
 			"entity": catsync.EntityItems, "rows": sink.Len(), "stock": stock, "partial": partial,
 			"new": res.New, "updated": res.Updated, "unchanged": res.Unchanged, "issues": res.Issues, "kind": plugins.ImportSourceAPI}
 		if file != nil {

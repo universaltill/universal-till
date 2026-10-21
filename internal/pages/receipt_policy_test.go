@@ -751,7 +751,7 @@ func TestRenderReceipt_AskPromptOnlyForAskPolicy(t *testing.T) {
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100, Reference: "REF"}}
 
 	render := func(policy string) string {
-		html, err := renderReceipt(funcs, "R-ASK", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, policy, nil, nil, "")
+		html, err := renderReceipt(funcs, "R-ASK", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, policy, nil, nil, "", "en")
 		if err != nil {
 			t.Fatalf("renderReceipt(%q): %v", policy, err)
 		}

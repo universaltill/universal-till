@@ -309,8 +309,8 @@ func TestAPIImport_EndToEnd_RealGuest(t *testing.T) {
 	if n := apiImportCount(t, dp.Db, `SELECT COUNT(*) FROM items`); n != itemsBefore+2 {
 		t.Fatalf("items after commit = %d, want %d", n, itemsBefore+2)
 	}
-	if n := apiImportCount(t, dp.Db, `SELECT COUNT(*) FROM import_source_links WHERE source = ?`, apiImportPluginID); n != 2 {
-		t.Fatalf("links = %d, want 2 (source = the plugin id)", n)
+	if n := apiImportCount(t, dp.Db, `SELECT COUNT(*) FROM import_source_links WHERE source = ?`, importLinkSource(apiImportPluginID, "api")); n != 2 {
+		t.Fatalf("links = %d, want 2 (source = plugin#entry)", n)
 	}
 
 	again := decodeAPIImport(t, postAPIImport(t, mux, url.Values{"mode": {"commit"}}, nil))

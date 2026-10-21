@@ -5,7 +5,10 @@
 //
 // Order per row: a row whose (source, external_id) is linked updates that
 // item; an unlinked row that matches an item by barcode, then SKU, links
-// to it and updates it; anything else is created with the repository
+// to it and updates it; an unlinked row with neither barcode nor SKU, after
+// those found nothing, matches by exact name — but only an item a sibling
+// entry of the same plugin linked, and only when exactly one such item has
+// that name (ADR-0161 Amendment 2, ut-docs#4734); anything else is created with the repository
 // primitives the file importer uses (EnsureCategoryUnder,
 // FindOrCreateTaxCode, CreateItemTx's SKU rule, an opening stock movement).
 // A link whose item is gone is recreated and re-pointed. Stock is set
@@ -73,9 +76,17 @@ var applyFault func(externalID string) error
 
 // Options is one run's context.
 type Options struct {
-	// Source is the importing plugin's id — core-stamped, never a row
-	// field. Required.
+	// Source is the link source of the importing entry ("<plugin id>#<entry
+	// key>", ut-docs#4727) — core-stamped, never a row field. Required.
 	Source string
+	// LegacySource, when non-empty and different from Source, is a link
+	// source older runs stamped (the bare plugin id, before links were per
+	// entry — ut-docs#4727). It also counts as a sibling for the exact-name
+	// fallback (ut-docs#4734). A row with no link under Source but one under
+	// LegacySource is treated as linked, and its link is written under
+	// Source on commit. It is never consulted for the linked-elsewhere
+	// refusal, and old rows are left in place.
+	LegacySource string
 	// Commit applies the plan; false is a preview (no writes).
 	Commit bool
 	// LocationID is the stock location stock rows are set at.
@@ -153,6 +164,14 @@ type runner struct {
 	claimedItem    map[string]string
 	claimedBarcode map[string]string
 	claimedSKU     map[string]string
+
+	// Exact-name fallback (ut-docs#4734), snapshotted before any row is
+	// applied so a preview and a commit decide alike: sibling-linked items
+	// by name, items this run's rows adopt through LegacySource (never a
+	// name candidate), and how many code-less rows carry each name.
+	sibByName     map[string][]string
+	reserved      map[string]bool
+	codelessNames map[string]int
 }
 
 // Run plans rows and, when opt.Commit, applies them in transactions of at
@@ -196,6 +215,9 @@ func Run(ctx context.Context, db *sql.DB, rows []json.RawMessage, opt Options) (
 			seenExt[ext] = true
 		}
 		parsed[i], issues[i] = r, issue
+	}
+	if err := rn.snapshotNameFallback(ctx, db, parsed, issues); err != nil {
+		return Result{}, err
 	}
 
 	// committed is res as of the last chunk commit: what an error return
@@ -328,7 +350,16 @@ func (rn *runner) plan(ctx context.Context, r *row) (plan, error) {
 	if err != nil {
 		return plan{}, err
 	}
+	adopted := false
+	if !isLinked && rn.opt.LegacySource != "" && rn.opt.LegacySource != rn.opt.Source {
+		linked, isLinked, err = rn.links.LocalID(ctx, rn.q, rn.opt.LegacySource, EntityItems, r.ext)
+		if err != nil {
+			return plan{}, err
+		}
+		adopted = isLinked
+	}
 	if isLinked {
+		p.relink = adopted // a legacy link is re-stamped under Source
 		st, ok, err := rn.cat.SyncItemState(ctx, rn.q, linked)
 		if err != nil {
 			return plan{}, err
@@ -344,6 +375,13 @@ func (rn *runner) plan(ctx context.Context, r *row) (plan, error) {
 			return plan{}, err
 		}
 		if cand != "" {
+			// An earlier row of this run already claimed cand: report that
+			// before the link check, which on a commit would see the link
+			// that row just wrote and say "linked elsewhere" where a
+			// preview says "already matched" (ut-docs#4740).
+			if other, ok := rn.claimedItem[cand]; ok && other != r.ext {
+				return issue(IssueItemAlreadyMatched), nil
+			}
 			if ext, ok, err := rn.links.ExternalIDFor(ctx, rn.q, rn.opt.Source, EntityItems, cand); err != nil {
 				return plan{}, err
 			} else if ok && ext != r.ext {
@@ -403,6 +441,11 @@ func (rn *runner) releaseClaims(r *row, p *plan) {
 }
 
 // match finds an existing item for an unlinked row: barcode first, then SKU.
+// A row with neither falls back to an exact name match (ut-docs#4734,
+// ADR-0161 Amendment 2): among items linked by a sibling entry of the same
+// plugin (source "<plugin id>#<other entry>", or LegacySource), not yet
+// linked under Source, and only when exactly one item has that name. A row
+// that carries a barcode or SKU never uses its name.
 func (rn *runner) match(ctx context.Context, r *row) (string, error) {
 	for _, b := range r.barcodes {
 		id, ok, err := rn.cat.SyncBarcodeOwner(ctx, rn.q, b.Barcode)
@@ -416,7 +459,92 @@ func (rn *runner) match(ctx context.Context, r *row) (string, error) {
 			return id, err
 		}
 	}
-	return "", nil
+	if len(r.barcodes) > 0 || r.sku != "" || rn.codelessNames[r.name] > 1 {
+		return "", nil
+	}
+	var cand []string
+	for _, id := range rn.sibByName[r.name] {
+		if rn.reserved[id] {
+			continue
+		}
+		if other, ok := rn.claimedItem[id]; ok && other != r.ext {
+			continue
+		}
+		cand = append(cand, id)
+	}
+	if len(cand) != 1 {
+		return "", nil
+	}
+	return cand[0], nil
+}
+
+// snapshotNameFallback loads match()'s name-fallback state once per run,
+// through the pool and before the first transaction, and only when a valid
+// row has neither barcode nor SKU.
+func (rn *runner) snapshotNameFallback(ctx context.Context, db *sql.DB, parsed []row, issues []rowIssue) error {
+	rn.codelessNames = map[string]int{}
+	for i := range parsed {
+		if issues[i].none() && len(parsed[i].barcodes) == 0 && parsed[i].sku == "" {
+			rn.codelessNames[parsed[i].name]++
+		}
+	}
+	if len(rn.codelessNames) == 0 {
+		return nil
+	}
+	plugin := ""
+	if i := strings.IndexByte(rn.opt.Source, '#'); i >= 0 {
+		plugin = rn.opt.Source[:i]
+	}
+	legacy := rn.opt.LegacySource
+	if legacy == rn.opt.Source {
+		legacy = ""
+	}
+	if plugin == "" && legacy == "" {
+		return nil
+	}
+	byName, err := rn.links.SiblingItemsByName(ctx, db, plugin, rn.opt.Source, legacy)
+	if err != nil {
+		return err
+	}
+	rn.sibByName, rn.reserved = byName, map[string]bool{}
+	if len(byName) == 0 {
+		return nil
+	}
+	// A row that names an item by barcode or SKU keeps it: a code-less row
+	// listed before it never takes that item by name.
+	for i := range parsed {
+		if !issues[i].none() || (len(parsed[i].barcodes) == 0 && parsed[i].sku == "") {
+			continue
+		}
+		id, err := rn.match(ctx, &parsed[i]) // codes only: never reaches the name step
+		if err != nil {
+			return err
+		}
+		if id != "" {
+			rn.reserved[id] = true
+		}
+	}
+	if legacy == "" {
+		return nil
+	}
+	for i := range parsed {
+		if !issues[i].none() {
+			continue
+		}
+		if _, own, err := rn.links.LocalID(ctx, db, rn.opt.Source, EntityItems, parsed[i].ext); err != nil {
+			return err
+		} else if own {
+			continue // linked under Source: the legacy link is never read
+		}
+		id, ok, err := rn.links.LocalID(ctx, db, legacy, EntityItems, parsed[i].ext)
+		if err != nil {
+			return err
+		}
+		if ok {
+			rn.reserved[id] = true
+		}
+	}
+	return nil
 }
 
 func (rn *runner) planNew(ctx context.Context, r *row, p *plan) (plan, error) {

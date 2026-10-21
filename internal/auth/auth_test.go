@@ -408,6 +408,9 @@ func TestMiddlewareExemptsFirstBootPairingRoutes(t *testing.T) {
 		// 401 below instead of installing. internal/pages' own tests drive
 		// the handler on a bare mux, so they never saw the wall.
 		"/api/setup/tax-plugin",
+		// ut-docs#4610 / ADR-0166: pair-first setup and its undo.
+		"/api/setup/cloud-pair",
+		"/api/setup/cloud-unpair",
 	} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))
