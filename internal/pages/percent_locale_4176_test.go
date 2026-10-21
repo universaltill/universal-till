@@ -52,7 +52,7 @@ func TestPercentLocale_OnScreenReceiptDiscount(t *testing.T) {
 	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 1000, TaxRateBasisPoints: 0}}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 925}}
 	for lang, want := range map[string]string{"en": "(7.50%)", "de": "(7,50%)"} {
-		html, err := renderReceipt(httpx.FuncsFor(lang), "R1", lines, payments, 1000, 0, 925, false, 75, "percent", 750, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "")
+		html, err := renderReceipt(httpx.FuncsFor(lang), "R1", lines, payments, 1000, 0, 925, false, 75, "percent", 750, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "", "en")
 		if err != nil {
 			t.Fatalf("%s: renderReceipt: %v", lang, err)
 		}

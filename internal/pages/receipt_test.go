@@ -54,7 +54,7 @@ func TestRenderReceipt_WorksFromAnyWorkingDirectory(t *testing.T) {
 	}
 	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0}}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100, Reference: "REF"}}
-	if _, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, "", nil, "", nil, nil, ""); err != nil {
+	if _, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, "", nil, "", nil, nil, "", "en"); err != nil {
 		t.Fatalf("renderReceipt from an unrelated CWD: %v", err)
 	}
 }
@@ -81,7 +81,7 @@ func TestRenderReceipt_TableLabelShownWhenAssigned(t *testing.T) {
 	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0}}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100, Reference: "REF"}}
 
-	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, "T7", nil, "", nil, nil, "")
+	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, "T7", nil, "", nil, nil, "", "en")
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestRenderReceipt_TableLabelShownWhenAssigned(t *testing.T) {
 		t.Fatalf("expected the assigned table label on the receipt, got: %s", html)
 	}
 
-	htmlNoTable, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, "", nil, "", nil, nil, "")
+	htmlNoTable, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, "", nil, "", nil, nil, "", "en")
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestRenderReceipt_DiscountShown(t *testing.T) {
 		{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0},
 	}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100, ChangeGiven: 10, Reference: "REF"}}
-	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 90, false, 10, "amount", 10, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, "", nil, "", nil, nil, "")
+	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 90, false, 10, "amount", 10, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, "", nil, "", nil, nil, "", "en")
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestRenderReceipt_ShowsMaskedPANAndAuthCode(t *testing.T) {
 		// generic-Reference-line fallback rather than both rendering.
 		Reference: "should-not-appear",
 	}}
-	html, err := renderReceipt(funcs, "123", lines, payments, 370, 0, 370, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, "", nil, "", nil, nil, "")
+	html, err := renderReceipt(funcs, "123", lines, payments, 370, 0, 370, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, "", nil, "", nil, nil, "", "en")
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestRenderReceipt_NoCardPresentFieldsFallsBackToReference(t *testing.T) {
 	}
 	lines := []pos.SaleLineInput{{Name: "Tea", Qty: 1, UnitPrice: 250, TaxRateBasisPoints: 0}}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 250, Reference: "sumup-ref-1"}}
-	html, err := renderReceipt(funcs, "123", lines, payments, 250, 0, 250, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, "", nil, "", nil, nil, "")
+	html, err := renderReceipt(funcs, "123", lines, payments, 250, 0, 250, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, "", nil, "", nil, nil, "", "en")
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestRenderReceipt_LegalText(t *testing.T) {
 			Lines:         []string{"VAT Reg 123"},
 		},
 	}
-	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, legalBlocks, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, "", nil, "", nil, nil, "")
+	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, legalBlocks, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, "", nil, "", nil, nil, "", "en")
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
@@ -309,7 +309,7 @@ func TestRenderReceipt_NoLegalText(t *testing.T) {
 		{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0},
 	}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100, ChangeGiven: 0}}
-	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, "", nil, "", nil, nil, "")
+	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true, ShowBarcode: true}, "", nil, "", nil, nil, "", "en")
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
@@ -340,7 +340,7 @@ func TestRenderReceiptHonorsDesign(t *testing.T) {
 		ShowSKU: true,
 		// ShowTax and ShowBarcode off: subtotal/tax rows + barcode hidden.
 	}
-	html, err := renderReceipt(funcs, "123", lines, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "Corner Shop", design, "", nil, "", nil, nil, "")
+	html, err := renderReceipt(funcs, "123", lines, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "Corner Shop", design, "", nil, "", nil, nil, "", "en")
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestRenderReceipt_UnsignedOverrideLine(t *testing.T) {
 	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0}}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100}}
 
-	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, true, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "")
+	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, true, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "", "en")
 	if err != nil {
 		t.Fatalf("renderReceipt: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestRenderReceipt_UnsignedOverrideLine(t *testing.T) {
 		t.Fatalf("expected the unsigned-override marker line, got: %s", html)
 	}
 
-	html, err = renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "")
+	html, err = renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "", "en")
 	if err != nil {
 		t.Fatalf("renderReceipt: %v", err)
 	}
@@ -404,7 +404,7 @@ func TestRenderReceipt_UnsignedFiscalSigningLine(t *testing.T) {
 	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0}}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100}}
 
-	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, true, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "")
+	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, true, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "", "en")
 	if err != nil {
 		t.Fatalf("renderReceipt: %v", err)
 	}
@@ -412,7 +412,7 @@ func TestRenderReceipt_UnsignedFiscalSigningLine(t *testing.T) {
 		t.Fatalf("expected the fiscal-signing outage line, got: %s", html)
 	}
 
-	html, err = renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "")
+	html, err = renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "", "en")
 	if err != nil {
 		t.Fatalf("renderReceipt: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestRenderReceipt_UnsignedCannotSignLine(t *testing.T) {
 	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 0}}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 100}}
 
-	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, true, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "")
+	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, true, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "", "en")
 	if err != nil {
 		t.Fatalf("renderReceipt: %v", err)
 	}
@@ -451,7 +451,7 @@ func TestRenderReceipt_UnsignedCannotSignLine(t *testing.T) {
 		t.Fatalf("cannot-sign must not also render the outage-wording key, got: %s", html)
 	}
 
-	html, err = renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "")
+	html, err = renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "", "en")
 	if err != nil {
 		t.Fatalf("renderReceipt: %v", err)
 	}
@@ -493,7 +493,7 @@ func TestRenderReceipt_TSEQRDataURIRendersNotZgotmplZ(t *testing.T) {
 	// ut-docs#2880: the QR comes from the signer's stored receipt payload.
 	ev := &data.FiscalReceiptEvidence{SaleID: "s1", QRPayload: fiskalyStyleQR, Lines: []string{"Signer line"}}
 
-	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, sig, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", ev, nil, "")
+	html, err := renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, sig, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", ev, nil, "", "en")
 	if err != nil {
 		t.Fatalf("renderReceipt: %v", err)
 	}
@@ -508,7 +508,7 @@ func TestRenderReceipt_TSEQRDataURIRendersNotZgotmplZ(t *testing.T) {
 	}
 
 	// Same sale without a stored receipt object: TSE lines, no QR.
-	html, err = renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, sig, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "")
+	html, err = renderReceipt(funcs, "123", lines, payments, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, sig, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "", "en")
 	if err != nil {
 		t.Fatalf("renderReceipt: %v", err)
 	}
@@ -539,7 +539,7 @@ func TestRenderReceipt_IssuedVouchersListed(t *testing.T) {
 		{Code: "8b1c2d3e-0000-4000-8000-000000000001", Amount: 1000},
 	}
 
-	html, err := renderReceipt(funcs, "123", nil, payments, 0, 0, 2500, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", issued, "", nil, nil, "")
+	html, err := renderReceipt(funcs, "123", nil, payments, 0, 0, 2500, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", issued, "", nil, nil, "", "en")
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
@@ -560,7 +560,7 @@ func TestRenderReceipt_IssuedVouchersListed(t *testing.T) {
 		t.Fatalf("uuid voucher code has no barcode: %s", html)
 	}
 
-	plain, err := renderReceipt(funcs, "124", nil, payments, 0, 0, 2500, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "")
+	plain, err := renderReceipt(funcs, "124", nil, payments, 0, 0, 2500, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "", "en")
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}
@@ -586,7 +586,7 @@ func TestRenderReceipt_VoucherRedemptionShowsCode(t *testing.T) {
 	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 300, TaxRateBasisPoints: 0}}
 	payments := []pos.PaymentInput{{MethodID: "voucher", Amount: 300, VoucherID: "GS-REDEEM-9"}}
 
-	html, err := renderReceipt(funcs, "123", lines, payments, 300, 0, 300, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "")
+	html, err := renderReceipt(funcs, "123", lines, payments, 300, 0, 300, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "", "en")
 	if err != nil {
 		t.Fatalf("renderReceipt error: %v", err)
 	}

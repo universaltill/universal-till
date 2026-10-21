@@ -111,7 +111,7 @@ func TestManualPrint_UnknownCustomerLocaleFallsBackToShop(t *testing.T) {
 func TestRenderReceipt_PrintButtonsCarryCustomerLocale(t *testing.T) {
 	funcs := httpx.FuncsFor("en")
 	for _, policy := range []string{"", "ask"} {
-		with, err := renderReceipt(funcs, "123", nil, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{}, "", nil, policy, nil, nil, "de")
+		with, err := renderReceipt(funcs, "123", nil, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{}, "", nil, policy, nil, nil, "de", "en")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -122,7 +122,7 @@ func TestRenderReceipt_PrintButtonsCarryCustomerLocale(t *testing.T) {
 		if got := strings.Count(with, `data-customer-locale="de"`); got != want {
 			t.Fatalf("policy %q: %d buttons carry the pick, want %d", policy, got, want)
 		}
-		without, err := renderReceipt(funcs, "123", nil, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{}, "", nil, policy, nil, nil, "")
+		without, err := renderReceipt(funcs, "123", nil, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{}, "", nil, policy, nil, nil, "", "en")
 		if err != nil {
 			t.Fatal(err)
 		}
