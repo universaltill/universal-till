@@ -587,10 +587,9 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	// "STORNOS" is the reference day-close's own term for exactly this
 	// concept (a cancelled/reversed receipt), same fixed-vocabulary
 	// convention as GUTSCHEINE above; it is NOT a pre-tender abandoned-
-	// basket count — this till never persists an abandoned basket as a
-	// row at all (a live sale lives only in memory until tendered, or in
-	// held_sales if explicitly parked), so there is nothing to count
-	// before completion. A voided sale is already excluded from
+	// basket count — a basket cleared with New sale before tender is the
+	// separate cleared-baskets section below (cleared_baskets,
+	// ut-docs#1122), never a voided sale. A voided sale is already excluded from
 	// Gross/Net (status != 'completed'), so this is purely
 	// informational — never summed into doc.Totals, same reasoning as
 	// GUTSCHEINE's issued/redeemed lines. Omitted entirely on a day with
@@ -599,6 +598,14 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	if rep.CancelCount > 0 {
 		doc.Footer = append(doc.Footer, "", "STORNOS ("+T("reports.zpaper.stornos_note")+")")
 		doc.Footer = append(doc.Footer, eodRow(fmt.Sprintf(T("reports.zpaper.voided"), rep.CancelCount), money(rep.CancelTotal)))
+	}
+	// Cleared baskets (ut-docs#1122): live baskets with lines cleared with
+	// New sale before any tender (and not re-parked) — no sale happened, so
+	// purely informational, never summed into doc.Totals. Its own section,
+	// omitted on a day with none (same convention as STORNOS above).
+	if rep.ClearedBasketCount > 0 {
+		doc.Footer = append(doc.Footer, "", T("reports.zpaper.cleared_title"))
+		doc.Footer = append(doc.Footer, eodRow(fmt.Sprintf(T("reports.zpaper.cleared_baskets"), rep.ClearedBasketCount), money(rep.ClearedBasketTotal)))
 	}
 	// Cash-drawer reconciliation (ut-docs#1006) — printed only when at
 	// least one shift was closed that day; a day-close without one still

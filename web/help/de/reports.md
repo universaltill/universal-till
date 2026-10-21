@@ -80,6 +80,15 @@ sie nie in einer Zahl vermischt — das Stornieren eines Verkaufs trägt von
 vornherein keinen Umsatz und ändert nie den Netto-Betrag des Tages. Der
 Abschnitt entfällt vollständig an einem Tag ohne Stornierungen.
 
+Auch ein Warenkorb, der mit **Neuer Verkauf** geleert wird, bevor jemand
+bezahlt — er enthielt mindestens einen Artikel und war keine offene
+Bestellung, die wieder geparkt wird —, wird gezählt: An einem Tag mit
+mindestens einem solchen Warenkorb zeigt der gedruckte Bericht einen
+Abschnitt **VOR ZAHLUNG GELEERT** mit der Anzahl der geleerten Warenkörbe
+und ihrer Summe im Moment des Leerens. Es kam kein Verkauf zustande, daher
+ändert dies nie Brutto, Netto, Rückerstattungen oder die STORNOS-Zahl. An
+einem Tag ohne solche Warenkörbe entfällt der Abschnitt.
+
 Der Bericht druckt außerdem immer **Erstellt von** (wer den Abschluss
 durchgeführt hat) — den Anzeigenamen der Person, oder „System“ für den
 automatischen geplanten Abschluss —, sodass es einen Nachweis gibt, wer den Tag

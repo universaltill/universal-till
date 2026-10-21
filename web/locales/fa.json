@@ -2244,6 +2244,8 @@
   "reports.zpaper.vouchers_adjusted": "اصلاح‌شده (%d)",
   "reports.zpaper.stornos_note": "رسیدهای باطل‌شده، خارج از درآمد",
   "reports.zpaper.voided": "باطل‌شده (%d)",
+  "reports.zpaper.cleared_title": "پاک‌شده پیش از پرداخت",
+  "reports.zpaper.cleared_baskets": "سبد پاک‌شده (%d)",
   "reports.zpaper.cash.title": "تطبیق نقدی صندوق",
   "reports.zpaper.cash.opening_float": "وجه ابتدای شیفت",
   "reports.zpaper.cash.cash_sales": "فروش نقدی",

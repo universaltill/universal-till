@@ -2244,6 +2244,8 @@
   "reports.zpaper.vouchers_adjusted": "Düzeltilen (%d)",
   "reports.zpaper.stornos_note": "iptal fişleri, ciro dışı",
   "reports.zpaper.voided": "İptal (%d)",
+  "reports.zpaper.cleared_title": "ÖDEME ÖNCESİ BOŞALTILAN",
+  "reports.zpaper.cleared_baskets": "Boşaltılan (%d)",
   "reports.zpaper.cash.title": "KASA MUTABAKATI",
   "reports.zpaper.cash.opening_float": "Açılış nakiti",
   "reports.zpaper.cash.cash_sales": "Nakit satışlar",

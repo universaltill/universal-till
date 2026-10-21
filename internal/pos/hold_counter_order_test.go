@@ -222,3 +222,23 @@ func TestSnapshot_TrackingTokenTravelsWithTheOrder(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#1122: New sale records what it cleared, so the snapshot and the
+// reset are one step — the returned snapshot is the basket as it was, and
+// the basket is empty afterwards.
+func TestResetAndSnapshot_ReturnsTheClearedBasket(t *testing.T) {
+	s := newHoldService()
+	_, _ = s.Scan("A")
+	_, _ = s.Scan("A")
+	want := s.Basket().Total
+	snap := s.ResetAndSnapshot()
+	if len(snap.Lines) != 1 || snap.Lines[0].Qty != 2 || snap.Total != want {
+		t.Fatalf("snapshot = %+v, want one line of qty 2 totalling %v", snap, want)
+	}
+	if s.HasItemsOrByHand() {
+		t.Fatal("ResetAndSnapshot must leave the basket empty")
+	}
+	if again := s.ResetAndSnapshot(); len(again.Lines) != 0 || len(again.AddByHand) != 0 {
+		t.Fatalf("an empty basket snapshots empty: %+v", again)
+	}
+}
