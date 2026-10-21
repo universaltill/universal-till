@@ -242,3 +242,42 @@ func TestResetAndSnapshot_ReturnsTheClearedBasket(t *testing.T) {
 		t.Fatalf("an empty basket snapshots empty: %+v", again)
 	}
 }
+
+// ut-docs#4705: a self-order customer's language pick rides the held
+// payload exactly like the tracking token: omitted when unset, kept by
+// resume and re-park, cleared by Reset and by voiding the last line.
+func TestSnapshot_CustomerLocaleLifecycle(t *testing.T) {
+	s := newHoldService()
+	_, _ = s.Scan("A")
+	raw, err := json.Marshal(s.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "customer_locale") {
+		t.Fatalf("a payload with no pick must omit customer_locale: %s", raw)
+	}
+	s.SetCustomerLocale("tr")
+	raw, err = json.Marshal(s.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"customer_locale":"tr"`) {
+		t.Fatalf("payload must carry customer_locale: %s", raw)
+	}
+	var back BasketSnapshot
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	s.Reset()
+	if s.CustomerLocale() != "" {
+		t.Fatal("Reset must clear the customer locale")
+	}
+	s.RestoreHeld(back, HeldOrigin{ID: "h1"})
+	if s.CustomerLocale() != "tr" || s.Snapshot().CustomerLocale != "tr" {
+		t.Fatalf("resume/re-park lost the pick: %q", s.CustomerLocale())
+	}
+	s.RemoveLine(s.Basket().Lines[0].LineKey)
+	if s.CustomerLocale() != "" {
+		t.Fatalf("voiding the last line must clear the pick: %q", s.CustomerLocale())
+	}
+}

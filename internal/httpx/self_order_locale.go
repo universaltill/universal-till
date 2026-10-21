@@ -54,9 +54,10 @@ func isSelfOrderPath(path string) bool {
 	return path == "/self-order" || strings.HasPrefix(path, "/self-order/") || strings.HasPrefix(path, "/api/self-order/")
 }
 
-// selfOrderLocale returns this request's kiosk customer pick, if it is a
-// self-order request carrying a pick for an installed language.
-func selfOrderLocale(r *http.Request) (string, bool) {
+// SelfOrderLocale returns this request's kiosk customer pick, if it is a
+// self-order request carrying a pick for an installed language. The
+// checkout records it for the customer's printed receipt (ut-docs#4705).
+func SelfOrderLocale(r *http.Request) (string, bool) {
 	if !isSelfOrderPath(r.URL.Path) {
 		return "", false
 	}

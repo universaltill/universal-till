@@ -228,6 +228,10 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// order-tracking token (placed on a Shop-plan till); read before
 	// engine.Reset() below, handed to the sale once it is committed.
 	trackingToken := engine.OrderTrackingToken()
+	// ut-docs#4705: a self-order customer's language pick (the kiosk's own
+	// basket, or a pay-at-counter order resumed here) — only their printed
+	// receipt uses it. Read before engine.Reset() below, like the token.
+	customerLocale := engine.CustomerLocale()
 	// ADR-0138 D2 (ut-docs#3310): carry the held order this basket was
 	// resumed from — read off THIS engine (the kiosk's own engine on a kiosk
 	// checkout, never d.Engine), before engine.Reset() below clears it — so
@@ -757,7 +761,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 
 	// Silent receipt print (docs: receipt-printing.md) — fired async,
 	// never blocks or fails the tender.
-	printReceiptAsync(d, receiptNo, actorID)
+	printReceiptAsync(d, receiptNo, actorID, customerLocale)
 	// Kitchen ticket to the separate kitchen printer, if one is
 	// configured (docs: arch/restaurant-phone-orders.md) — also async
 	// and best-effort; a no-op when no kitchen printer is set.

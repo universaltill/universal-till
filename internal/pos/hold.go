@@ -113,6 +113,13 @@ type BasketSnapshot struct {
 	// at the kiosk keeps working once the order is paid. Until then
 	// /o/{token} finds the order through this payload field.
 	TrackingToken string `json:"tracking_token,omitempty"`
+	// CustomerLocale (ut-docs#4705) is the language a self-order kiosk
+	// customer picked (ut-docs#4200) for a pay-at-counter order, "" when
+	// they kept the shop's. Carried like TrackingToken, so the receipt
+	// printed when the cashier takes payment is in the customer's language.
+	// Device input on a replica's payload: the print path accepts only an
+	// installed locale.
+	CustomerLocale string `json:"customer_locale,omitempty"`
 	// AddByHand (ut-docs#2703, reopened) lists the lines of a legacy
 	// pay-at-counter order that could not be matched to the catalog when it
 	// was converted into this held sale. Carried IN the payload so it
@@ -235,6 +242,23 @@ func (s *Service) OrderTrackingToken() string {
 	return s.orderTrackingToken
 }
 
+// CustomerLocale (ut-docs#4705) returns the self-order customer's language
+// pick for this basket's order, or "" (print in the shop's language). Same
+// lifecycle as OrderDisplayNo.
+func (s *Service) CustomerLocale() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.customerLocale
+}
+
+// SetCustomerLocale records the self-order customer's language pick ("" for
+// none) on the kiosk's basket just before its checkout; Reset clears it.
+func (s *Service) SetCustomerLocale(locale string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.customerLocale = locale
+}
+
 // HasItems reports whether the current basket has any priced lines.
 func (s *Service) HasItems() bool {
 	s.mu.Lock()
@@ -278,6 +302,7 @@ func (s *Service) snapshotLocked() BasketSnapshot {
 		Total:             s.basket.Total,
 		DisplayNo:         s.orderDisplayNo,
 		TrackingToken:     s.orderTrackingToken,
+		CustomerLocale:    s.customerLocale,
 		AddByHand:         append([]ByHandLine(nil), s.basket.AddByHand...),
 	}
 	for _, l := range s.lines {
@@ -321,6 +346,7 @@ func (s *Service) RestoreHeld(snap BasketSnapshot, origin HeldOrigin) {
 	s.heldOrigin = origin
 	s.orderDisplayNo = snap.DisplayNo
 	s.orderTrackingToken = snap.TrackingToken
+	s.customerLocale = snap.CustomerLocale
 	s.basket.AddByHand = append([]ByHandLine(nil), snap.AddByHand...)
 	// ADR-0073 legacy rule: a pre-ADR-0073 payload has no per-line values
 	// and its header IS the mode of every line. A new payload always writes

@@ -503,12 +503,12 @@ func TestPrintReceiptAsync_HonoursReceiptPolicy(t *testing.T) {
 			restore := printReceiptFn
 			t.Cleanup(func() { printReceiptFn = restore })
 			printed := 0
-			printReceiptFn = func(ctx context.Context, _ *common.Deps, _ string) error {
+			printReceiptFn = func(ctx context.Context, _ *common.Deps, _, _ string) error {
 				printed++
 				return nil
 			}
 
-			printReceiptAsync(dp, "R-RP-"+policy, "")
+			printReceiptAsync(dp, "R-RP-"+policy, "", "")
 			dp.WaitForAsyncWork()
 
 			want := 0

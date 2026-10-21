@@ -1139,7 +1139,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps) {
 			_ = repo.InsertAudit(r.Context(), nil, actorID, "sale", newReceipt, "refund",
 				refundAuditPayload, refundAuditAt, "")
 		}
-		printReceiptAsync(d, newReceipt, actorID)
+		printReceiptAsync(d, newReceipt, actorID, "")
 		// Invoiced sale? A credit note follows automatically (G31).
 		maybeIssueCreditNote(r.Context(), d, newReceipt, detail.ID, actorID)
 		w.Header().Set("HX-Redirect", "/journal/"+newReceipt)
