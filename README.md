@@ -766,7 +766,7 @@ time (remote support, migration).
 
 ### What's in each plan
 
-| | **Local** | **Shop** | **Pro** | **Chain** |
+| | **Local** | **Shop** | **Pro** | **Multi-location** |
 |---|---|---|---|---|
 | **Core POS, offline forever** | ✅ | ✅ | ✅ | ✅ |
 | **Tills (software)** | **unlimited** | **unlimited** | **unlimited** | **unlimited** |
@@ -802,7 +802,7 @@ stops being what's on this page.
 
 ### Prices by country
 
-| Market | | **Local** | **Shop** | **Pro** | **Chain** |
+| Market | | **Local** | **Shop** | **Pro** | **Multi-location** |
 |---|---|---|---|---|---|
 | 🇩🇪 🇦🇹 🇮🇪 🇪🇸 🇮🇹 🇫🇷 🇳🇱 **Eurozone** | monthly | **€0** | **€49** | **€69** | **€149** |
 | | annual *(per month)* | €0 | €40.83 | €57.50 | €124.17 |
