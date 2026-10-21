@@ -259,6 +259,12 @@ func (s *Service) HasItemsOrByHand() bool {
 func (s *Service) Snapshot() BasketSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.snapshotLocked()
+}
+
+// snapshotLocked is Snapshot's lock-free core — also called by
+// ResetAndSnapshot. Caller must hold s.mu.
+func (s *Service) snapshotLocked() BasketSnapshot {
 	s.recomputeTotals()
 	snap := BasketSnapshot{
 		DiscountType:      s.discountType,

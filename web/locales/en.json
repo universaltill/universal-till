@@ -2229,6 +2229,8 @@
   "reports.zpaper.vouchers_adjusted": "Adjusted (%d)",
   "reports.zpaper.stornos_note": "voided receipts, not in revenue",
   "reports.zpaper.voided": "Voided (%d)",
+  "reports.zpaper.cleared_title": "CLEARED BEFORE PAYMENT",
+  "reports.zpaper.cleared_baskets": "Cleared baskets (%d)",
   "reports.zpaper.cash.title": "CASH RECONCILIATION",
   "reports.zpaper.cash.opening_float": "Opening float",
   "reports.zpaper.cash.cash_sales": "Cash sales",

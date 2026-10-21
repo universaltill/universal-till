@@ -1773,6 +1773,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	// nothing in it has nothing to lose and is still just cleared. If the
 	// re-park itself fails the order stays live in the basket with an error
 	// toast rather than being lost.
+	//
+	// ut-docs#1122: any other basket with lines that New sale clears (no
+	// tender, no re-park) is recorded in cleared_baskets for the Z report,
+	// best-effort (recordClearedBasket).
 	mux.HandleFunc("/api/pos/reset", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		funcs := httpx.FuncsFor(locale)
@@ -1794,7 +1798,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		tableToRelease := d.Engine.TableID()
-		d.Engine.Reset()
+		// ut-docs#1122: a basket with lines cleared here (no tender, no
+		// re-park) is recorded in cleared_baskets for the Z report. Read
+		// and cleared under one lock; recorded best-effort after it.
+		cleared := d.Engine.ResetAndSnapshot()
+		recordClearedBasket(r.Context(), d, r, cleared)
 		releaseTableClaim(r.Context(), d, repo, tableToRelease)
 		b, _ := d.Engine.Scan("")
 		_ = basketView.Render(w, b)

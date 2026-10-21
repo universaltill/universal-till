@@ -58,6 +58,14 @@ eder, bu yüzden asla tek bir rakamda birleştirilmezler — bir satışı iptal
 etmek zaten hiçbir hasılat taşımaz ve günün Net tutarını hiçbir zaman
 değiştirmez. Hiç iptal olmayan bir günde bölüm tamamen bulunmaz.
 
+Kimse ödeme yapmadan **Yeni satış** ile boşaltılan bir sepet de — üzerinde
+en az bir ürün vardı ve yeniden bekletmeye alınan açık bir sipariş değildi —
+sayılır: en az bir tane olan günlerde basılı rapor, kaç sepetin boşaltıldığını
+ve boşaltıldıkları anda tutarlarının toplamını gösteren, **ÖDEME ÖNCESİ BOŞALTILAN**
+başlıklı bir bölüm gösterir. Satış gerçekleşmediği için bu, Brüt, Net,
+İadeler veya STORNOS rakamını hiçbir zaman değiştirmez. Hiç olmayan bir
+günde bölüm bulunmaz.
+
 Rapor ayrıca her zaman **Erstellt von** (kapanışı kim yaptı) satırını
 yazdırır — kişinin görünen adı, ya da otomatik zamanlanmış kapanış için
 "System" — böylece Denetim sayfasını açmadan bile günü kimin kapattığının

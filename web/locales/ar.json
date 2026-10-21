@@ -2244,6 +2244,8 @@
   "reports.zpaper.vouchers_adjusted": "معدّلة (%d)",
   "reports.zpaper.stornos_note": "إيصالات ملغاة، خارج الإيرادات",
   "reports.zpaper.voided": "ملغاة (%d)",
+  "reports.zpaper.cleared_title": "أُفرغت قبل الدفع",
+  "reports.zpaper.cleared_baskets": "سلال مُفرغة (%d)",
   "reports.zpaper.cash.title": "مطابقة النقد",
   "reports.zpaper.cash.opening_float": "النقد الافتتاحي",
   "reports.zpaper.cash.cash_sales": "المبيعات النقدية",

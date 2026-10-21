@@ -1640,6 +1640,17 @@ func (s *Service) Reset() {
 	s.resetLocked()
 }
 
+// ResetAndSnapshot clears the basket like Reset and returns what it held,
+// under one lock (ut-docs#1122): a scan landing between a separate
+// Snapshot and Reset would be wiped without being in the snapshot.
+func (s *Service) ResetAndSnapshot() BasketSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	snap := s.snapshotLocked()
+	s.resetLocked()
+	return snap
+}
+
 // TenderAttemptID returns a stable id for the current basket's tender
 // attempt, minting one on first call after the last reset (ut-docs#1762).
 // Every retried tender POST against the SAME basket (the operator re-

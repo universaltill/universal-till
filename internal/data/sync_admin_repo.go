@@ -542,6 +542,8 @@ var nonAdminTables = map[string]string{
 	"shrinkage_events_archive":  "archived shrinkage_events (reset-transactions twin, migration 063, ut-docs#3452) — same reasoning",
 	"no_sale_events":            "no-sale cash-drawer open log (ut-docs#2558, migration 064) — append-only per-till history, same reasoning as shrinkage_events; a replica's own opens reach the main till via the D3 journal (POST /api/sync/no-sales, ut-docs#3562), not this bundle",
 	"no_sale_events_archive":    "archived no_sale_events (reset-transactions twin, migration 064) — same reasoning",
+	"cleared_baskets":           "baskets cleared with New sale before tender (ut-docs#1122, migration 086) — append-only per-till history, same reasoning as no_sale_events; journaling a replica's clears to the main till is a follow-up (like ut-docs#3562), not this bundle",
+	"cleared_baskets_archive":   "archived cleared_baskets (reset-transactions twin, migration 086) — same reasoning",
 
 	// Resolved classification (ADR-0099, ut-docs#2348, closing the question
 	// ut-docs#1671 deferred): correctly excluded. NOT a pure append-only
