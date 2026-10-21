@@ -73,9 +73,16 @@ var applyFault func(externalID string) error
 
 // Options is one run's context.
 type Options struct {
-	// Source is the importing plugin's id — core-stamped, never a row
-	// field. Required.
+	// Source is the link source of the importing entry ("<plugin id>#<entry
+	// key>", ut-docs#4727) — core-stamped, never a row field. Required.
 	Source string
+	// LegacySource, when non-empty and different from Source, is a link
+	// source older runs stamped (the bare plugin id, before links were per
+	// entry — ut-docs#4727). A row with no link under Source but one under
+	// LegacySource is treated as linked, and its link is written under
+	// Source on commit. It is never consulted for the linked-elsewhere
+	// refusal, and old rows are left in place.
+	LegacySource string
 	// Commit applies the plan; false is a preview (no writes).
 	Commit bool
 	// LocationID is the stock location stock rows are set at.
@@ -328,7 +335,16 @@ func (rn *runner) plan(ctx context.Context, r *row) (plan, error) {
 	if err != nil {
 		return plan{}, err
 	}
+	adopted := false
+	if !isLinked && rn.opt.LegacySource != "" && rn.opt.LegacySource != rn.opt.Source {
+		linked, isLinked, err = rn.links.LocalID(ctx, rn.q, rn.opt.LegacySource, EntityItems, r.ext)
+		if err != nil {
+			return plan{}, err
+		}
+		adopted = isLinked
+	}
 	if isLinked {
+		p.relink = adopted // a legacy link is re-stamped under Source
 		st, ok, err := rn.cat.SyncItemState(ctx, rn.q, linked)
 		if err != nil {
 			return plan{}, err
