@@ -897,7 +897,7 @@ func RequestLocale(r *http.Request) string {
 	}
 	// a self-order kiosk customer's pick, on the self-order routes only
 	// (ut-docs#4200)
-	if lang, ok := selfOrderLocale(r); ok {
+	if lang, ok := SelfOrderLocale(r); ok {
 		return lang
 	}
 	// cookie — only while it is still a live preference, not a stale one
