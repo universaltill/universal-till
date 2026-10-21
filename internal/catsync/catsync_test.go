@@ -571,3 +571,165 @@ func TestRun_LegacyLinkNeverLinkedElsewhere(t *testing.T) {
 		t.Fatalf("items = %d, want 1", n)
 	}
 }
+
+// ut-docs#4734: a row with neither barcode nor SKU from a second entry of
+// the same plugin matches the sibling entry's item by exact name.
+func nameRow(ext, name string) string {
+	return `{"external_id":"` + ext + `","name":"` + name + `","price_minor":100}`
+}
+
+func itemCount(t *testing.T, sqlDB *sql.DB) int {
+	t.Helper()
+	return count(t, sqlDB, `SELECT COUNT(*) FROM items`)
+}
+
+func TestRun_NameFallbackMatchesSiblingEntryItem(t *testing.T) {
+	sqlDB := openDB(t)
+	wantCounts(t, runAs(t, sqlDB, "p#a", "", true, nameRow("a-1", "Loose tea")), 1, 0, 0, 0)
+	idA, _ := linkUnder(t, sqlDB, "p#a", "a-1")
+
+	res := runAs(t, sqlDB, "p#b", "", true, nameRow("b-9", "Loose tea"))
+	wantCounts(t, res, 0, 1, 0, 0) // matched: the new link is the change
+	if n := itemCount(t, sqlDB); n != 1 {
+		t.Fatalf("items = %d, want 1", n)
+	}
+	if id, ok := linkUnder(t, sqlDB, "p#b", "b-9"); !ok || id != idA {
+		t.Fatalf("B link = %q,%v want %q", id, ok, idA)
+	}
+	// Now linked under B: a re-run is a plain unchanged.
+	wantCounts(t, runAs(t, sqlDB, "p#b", "", true, nameRow("b-9", "Loose tea")), 0, 0, 1, 0)
+}
+
+func TestRun_NameFallbackTwoCandidatesCreatesNew(t *testing.T) {
+	sqlDB := openDB(t)
+	wantCounts(t, runAs(t, sqlDB, "p#a", "", true, nameRow("a-1", "Loose tea"), nameRow("a-2", "Loose tea")), 2, 0, 0, 0)
+	wantCounts(t, runAs(t, sqlDB, "p#b", "", true, nameRow("b-9", "Loose tea")), 1, 0, 0, 0)
+	if n := itemCount(t, sqlDB); n != 3 {
+		t.Fatalf("items = %d, want 3", n)
+	}
+}
+
+func TestRun_NameFallbackIgnoresOtherPluginAndManualItems(t *testing.T) {
+	sqlDB := openDB(t)
+	wantCounts(t, runAs(t, sqlDB, "q#a", "", true, nameRow("q-1", "Loose tea")), 1, 0, 0, 0)
+	seedItem(t, sqlDB, "Loose coffee", "", "")
+	// A plugin id that merely starts with the same letters is not a sibling.
+	wantCounts(t, runAs(t, sqlDB, "pp#a", "", true, nameRow("pp-1", "Loose tea")), 1, 0, 0, 0)
+	wantCounts(t, runAs(t, sqlDB, "p#b", "", true, nameRow("b-1", "Loose tea"), nameRow("b-2", "Loose coffee")), 2, 0, 0, 0)
+	if n := itemCount(t, sqlDB); n != 5 {
+		t.Fatalf("items = %d, want 5", n)
+	}
+}
+
+func TestRun_NameFallbackNeverForRowWithCodes(t *testing.T) {
+	sqlDB := openDB(t)
+	wantCounts(t, runAs(t, sqlDB, "p#a", "", true, nameRow("a-1", "Loose tea")), 1, 0, 0, 0)
+	withBarcode := `{"external_id":"b-1","name":"Loose tea","barcodes":["5000000000017"],"price_minor":100}`
+	withSKU := `{"external_id":"b-2","name":"Loose tea","sku":"LT-2","price_minor":100}`
+	wantCounts(t, runAs(t, sqlDB, "p#b", "", true, withBarcode, withSKU), 2, 0, 0, 0)
+	if n := itemCount(t, sqlDB); n != 3 {
+		t.Fatalf("items = %d, want 3", n)
+	}
+}
+
+func TestRun_NameFallbackLegacySource(t *testing.T) {
+	sqlDB := openDB(t)
+	wantCounts(t, runAs(t, sqlDB, "p", "", true, nameRow("old-1", "Loose tea")), 1, 0, 0, 0)
+	idOld, _ := linkUnder(t, sqlDB, "p", "old-1")
+	// Both the sibling prefix and the bare legacy source count.
+	res := runAs(t, sqlDB, "p#b", "p", true, nameRow("b-9", "Loose tea"))
+	wantCounts(t, res, 0, 1, 0, 0)
+	if id, ok := linkUnder(t, sqlDB, "p#b", "b-9"); !ok || id != idOld {
+		t.Fatalf("B link = %q,%v want %q", id, ok, idOld)
+	}
+	if n := itemCount(t, sqlDB); n != 1 {
+		t.Fatalf("items = %d, want 1", n)
+	}
+}
+
+func TestRun_NameFallbackNoHashSourceUsesOnlyLegacy(t *testing.T) {
+	sqlDB := openDB(t)
+	wantCounts(t, runAs(t, sqlDB, "p#a", "", true, nameRow("a-1", "Loose tea")), 1, 0, 0, 0)
+	// "solo" has no '#': no sibling prefix, and no legacy source -> no match.
+	wantCounts(t, runAs(t, sqlDB, "solo", "", true, nameRow("s-1", "Loose tea")), 1, 0, 0, 0)
+}
+
+func TestRun_NameFallbackSkipsItemAlreadyLinkedUnderOwnSource(t *testing.T) {
+	sqlDB := openDB(t)
+	wantCounts(t, runAs(t, sqlDB, "p#a", "", true, nameRow("a-1", "Loose tea")), 1, 0, 0, 0)
+	wantCounts(t, runAs(t, sqlDB, "p#b", "", true, nameRow("b-1", "Loose tea")), 0, 1, 0, 0)
+	// A different B external id with the same name: A's item is already
+	// linked under B, so it is not a candidate; a new item is created.
+	wantCounts(t, runAs(t, sqlDB, "p#b", "", true, nameRow("b-2", "Loose tea")), 1, 0, 0, 0)
+	if n := itemCount(t, sqlDB); n != 2 {
+		t.Fatalf("items = %d, want 2", n)
+	}
+}
+
+func TestRun_NameFallbackPreviewReportsMatch(t *testing.T) {
+	sqlDB := openDB(t)
+	wantCounts(t, runAs(t, sqlDB, "p#a", "", true, nameRow("a-1", "Loose tea")), 1, 0, 0, 0)
+	wantCounts(t, runAs(t, sqlDB, "p#b", "", false, nameRow("b-1", "Loose tea")), 0, 1, 0, 0)
+	if _, ok := linkUnder(t, sqlDB, "p#b", "b-1"); ok {
+		t.Fatal("preview wrote a link")
+	}
+	if n := itemCount(t, sqlDB); n != 1 {
+		t.Fatalf("items = %d, want 1", n)
+	}
+}
+
+func TestRun_NameFallbackUpdatesMatchedItem(t *testing.T) {
+	sqlDB := openDB(t)
+	wantCounts(t, runAs(t, sqlDB, "p#a", "", true, nameRow("a-1", "Loose tea")), 1, 0, 0, 0)
+	changed := strings.Replace(nameRow("b-1", "Loose tea"), "100", "150", 1)
+	wantCounts(t, runAs(t, sqlDB, "p#b", "", true, changed), 0, 1, 0, 0)
+	if n := itemCount(t, sqlDB); n != 1 {
+		t.Fatalf("items = %d, want 1", n)
+	}
+	if p := count(t, sqlDB, `SELECT base_price FROM items`); p != 150 {
+		t.Fatalf("base_price = %d, want 150", p)
+	}
+}
+
+// Two code-less rows of one name in one run: which of them is the sibling's
+// item is ambiguous, so neither matches — and preview and commit agree.
+func TestRun_NameFallbackSameNameTwiceInRun(t *testing.T) {
+	for _, commit := range []bool{false, true} {
+		sqlDB := openDB(t)
+		wantCounts(t, runAs(t, sqlDB, "p#a", "", true, nameRow("a-1", "Loose tea")), 1, 0, 0, 0)
+		res := runAs(t, sqlDB, "p#b", "", commit, nameRow("b-1", "Loose tea"), nameRow("b-2", "Loose tea"))
+		wantCounts(t, res, 2, 0, 0, 0)
+	}
+}
+
+// An item an earlier row of the run claimed (here by barcode) is not a name
+// candidate for a later row, in preview and commit alike.
+func TestRun_NameFallbackSkipsItemClaimedInRun(t *testing.T) {
+	for _, commit := range []bool{false, true} {
+		sqlDB := openDB(t)
+		bc := `{"external_id":"a-1","name":"Loose tea","barcodes":["5000000000017"],"price_minor":100}`
+		wantCounts(t, runAs(t, sqlDB, "p#a", "", true, bc), 1, 0, 0, 0)
+		bcB := `{"external_id":"b-1","name":"Tea (barcode)","barcodes":["5000000000017"],"price_minor":100}`
+		res := runAs(t, sqlDB, "p#b", "", commit, bcB, nameRow("b-2", "Loose tea"))
+		wantCounts(t, res, 1, 1, 0, 0)
+	}
+}
+
+// A row adopting its item through a legacy link keeps it: a new code-less
+// row of the same entry with that item's name, listed first, never takes it.
+func TestRun_NameFallbackNeverTakesLegacyAdoptedItem(t *testing.T) {
+	for _, commit := range []bool{false, true} {
+		sqlDB := openDB(t)
+		wantCounts(t, runAs(t, sqlDB, "p", "", true, nameRow("e1", "Loose tea")), 1, 0, 0, 0)
+		idX, _ := linkUnder(t, sqlDB, "p", "e1")
+		res := runAs(t, sqlDB, "p#b", "p", commit, nameRow("e2", "Loose tea"), nameRow("e1", "Loose tea"))
+		if res.Issues != 0 || res.New != 1 {
+			t.Fatalf("commit=%v: counts %+v, want e2 new and e1 kept on its item", commit, res)
+		}
+		if commit {
+			if id, ok := linkUnder(t, sqlDB, "p#b", "e1"); !ok || id != idX {
+				t.Fatalf("e1 link = %q,%v want %q", id, ok, idX)
+			}
+		}
+	}
+}

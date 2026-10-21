@@ -3,6 +3,8 @@ package data
 import (
 	"context"
 	"testing"
+
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 )
 
 // ADR-0161 §5 (ut-docs#4429): import_source_links remembers which local
@@ -52,5 +54,78 @@ func TestImportSourceLinks_UpsertLookupAndReverse(t *testing.T) {
 	var n int
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM import_source_links`).Scan(&n); err != nil || n != 2 {
 		t.Fatalf("rows = %d (%v), want 2", n, err)
+	}
+}
+
+// ut-docs#4734: SiblingItemsByName finds items of an exact name linked by a
+// sibling source (prefix "<plugin>#") or the legacy bare source, excluding
+// items already linked under the caller's own source, capped at two ids.
+func TestImportSourceLinks_SiblingItemsByName(t *testing.T) {
+	d := openMigratedDB(t, "import-source-links-sibling.db")
+	ctx := context.Background()
+	links := NewImportSourceLinkRepo()
+	cat := NewCatalogRepo(d.DB)
+	mk := func(name string) string {
+		id, err := cat.CreateItem(ctx, catalogtypes.ItemInput{Name: name, BasePrice: 100, IsActive: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	link := func(source, ext, id string) {
+		tx, _ := d.DB.BeginTx(ctx, nil)
+		if err := links.Upsert(ctx, tx, source, "items", ext, id); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	find := func(name, plugin, own, legacy string) []string {
+		byName, err := links.SiblingItemsByName(ctx, d.DB, plugin, own, legacy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return byName[name]
+	}
+	a, legacy, other, own := mk("Tea"), mk("Tea"), mk("Tea"), mk("Tea")
+	link("p#a", "1", a)
+	link("p#a", "2", a) // two links, one distinct item
+	link("p", "3", legacy)
+	link("q#a", "4", other)
+	link("p#b", "5", own)
+	link("p#a", "6", own) // also linked by a sibling, but under own source too
+
+	got := find("Tea", "p", "p#b", "p")
+	if len(got) != 2 || got[0] == got[1] {
+		t.Fatalf("got %v, want the two distinct candidates a and legacy", got)
+	}
+	for _, id := range got {
+		if id != a && id != legacy {
+			t.Fatalf("unexpected candidate %q (a=%q legacy=%q)", id, a, legacy)
+		}
+	}
+	if got := find("tea", "p", "p#b", "p"); len(got) != 0 {
+		t.Fatalf("case-folded match: %v", got)
+	}
+	if got := find("Tea", "", "solo", ""); len(got) != 0 {
+		t.Fatalf("no prefix, no legacy: %v", got)
+	}
+	if got := find("Tea", "", "solo", "p"); len(got) != 1 || got[0] != legacy {
+		t.Fatalf("legacy only: %v", got)
+	}
+	// '_' and '%' in a plugin id are literal.
+	link("p_x#a", "7", mk("Scone"))
+	if got := find("Scone", "pax", "pax#b", ""); len(got) != 0 {
+		t.Fatalf("wildcard leaked: %v", got)
+	}
+	if got := find("Scone", "p_x", "p_x#b", ""); len(got) != 1 {
+		t.Fatalf("literal underscore: %v", got)
+	}
+	// Sources just outside the [p#, p$) range are not siblings.
+	link(`p"#a`, "8", mk("Bun"))
+	link("p$a", "9", mk("Bun"))
+	if got := find("Bun", "p", "p#b", ""); len(got) != 0 {
+		t.Fatalf("range boundary leaked: %v", got)
 	}
 }
