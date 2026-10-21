@@ -3515,7 +3515,7 @@
   "subscription.plan.local": "Local (free)",
   "subscription.plan.shop": "Shop",
   "subscription.plan.pro": "Pro",
-  "subscription.plan.chain": "Chain",
+  "subscription.plan.chain": "Multi-location",
   "subscription.status.active": "Active",
   "subscription.status.lapsed": "Ended",
   "subscription.status.none": "No subscription",

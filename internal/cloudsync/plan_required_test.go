@@ -26,7 +26,7 @@ import (
 const planRequiredBlock = `{"plan":"local","subscription_status":"none","expires_at":null,"refreshed_at":"2026-10-04T10:00:00Z","cloud_link":"periodic"}`
 
 func planRequiredBody() string {
-	return `{"data":{"entitlement":` + planRequiredBlock + `},"error":{"code":"plan_required","message":"cloud sync needs an active Shop, Pro or Chain plan"}}`
+	return `{"data":{"entitlement":` + planRequiredBlock + `},"error":{"code":"plan_required","message":"cloud sync needs an active Shop, Pro or Multi-location plan"}}`
 }
 
 func writePlanRequired(w http.ResponseWriter) {
