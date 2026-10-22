@@ -283,6 +283,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/enrol/claim-code":                true,
 	"POST /api/enrol/now":                       true,
 	"POST /api/enrol/pair":                      true,
+	"POST /api/enrol/terms":                     true, // ut-docs#4792: a demo till never contacts the cloud
 	"POST /api/settings/auto-register":          true,
 	"POST /api/settings/telemetry":              true,
 	"POST /api/setup/join":                      true,

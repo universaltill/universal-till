@@ -393,6 +393,7 @@ func TestSettingScope_Classification(t *testing.T) {
 		{"marketplace.terms_version", SettingPerTill},
 		{"marketplace.terms_locale", SettingPerTill},
 		{"marketplace.terms_accepted_at", SettingPerTill},
+		{"marketplace.terms_sent_version", SettingPerTill}, // ut-docs#4792
 		// ut-docs#2950: one till's own state.
 		{"diagnostics.active", SettingPerTill},
 		{"cloudsync.snapshot_hash", SettingPerTill},
