@@ -13,9 +13,12 @@
 // module path sits under the till's, but the cloud could then not build it
 // (scripts/ci/guard-catimport-module.sh). Money is integer minor units.
 // The till-only importers (.bkp, gift-voucher balances) stay in
-// universal-till/internal/catimport and build on this package. No new
-// vendor format is added here: vendor formats are import plugins
-// (ADR-0164 §2); the ones below are grandfathered.
+// universal-till/internal/catimport and build on this package. Vendor
+// formats are import plugins (ADR-0164 §2); the ones below are
+// grandfathered, and Epos Now's products export is the one built-in shape
+// admitted since, because a real export is in hand (ADR-0168 §1). Only a
+// format with a real export in hand is added. smart.go has the
+// kind/source detection and the row issues with suggestions (ADR-0168).
 package catimport
 
 import (
@@ -264,6 +267,29 @@ type ImportItem struct {
 	// present net quantity didn't validate. Never blocks the row.
 	NetQuantityIssue    string
 	NetQuantityIssueRaw string
+
+	// Row is the 1-based record number in the file, header = 1, so the
+	// first item is row 2 (ut-docs#4747). Set by ParseProducts (and
+	// ParseMapped for a CSV); 0 = not known (XLSX, .bkp).
+	Row int
+	// The fields below are read by the smart-import shapes (ADR-0168) and
+	// are zero for every older format. Active/HasActive say whether the
+	// source hides the item from the till (Epos Now SellOnTill, a till or
+	// my. export's Active column); CostMinor, CompareAtMinor and
+	// PriceExTaxMinor are minor units; TaxGroup is the source's own tax
+	// group id, kept so the rate can be derived and verified.
+	Active          bool
+	HasActive       bool
+	CostMinor       int64
+	HasCost         bool
+	CompareAtMinor  int64
+	HasCompareAt    bool
+	PriceExTaxMinor int64
+	TaxGroup        string
+	Brand           string
+	Supplier        string
+	ImageURL        string
+	VariablePrice   bool
 }
 
 // Result is a parsed file.
@@ -276,6 +302,13 @@ type Result struct {
 	// reads a sheet other than the first without the operator being told
 	// which one it was.
 	SheetName string
+	// Source and Kind are set by the smart-import entry points
+	// (ParseProducts, ADR-0168): the detected DetectSource value and
+	// KindProducts. Issues are the row issues with their suggestions
+	// (ADR-0168 §3a), ordered by row. All empty for Parse/ParseMapped.
+	Source string
+	Kind   string
+	Issues []RowIssue
 }
 
 // column synonym sets, matched case-insensitively against trimmed headers.
@@ -648,11 +681,13 @@ func ParseMapped(r io.Reader, m Mapping, currencyDecimals int, enabledSymbologyI
 	// SKU wins it, same "first claims it" convention ParseBkp's own in-file
 	// dedup already uses for the SKU itself (ut-docs#1222).
 	seenForBarcode := map[string]bool{}
+	rowNo := 1
 	for {
 		rec, err := cr.Read()
 		if err == io.EOF {
 			break
 		}
+		rowNo++
 		if err != nil {
 			return res, fmt.Errorf("row %d: %w", len(res.Items)+2, err)
 		}
@@ -681,6 +716,7 @@ func ParseMapped(r io.Reader, m Mapping, currencyDecimals int, enabledSymbologyI
 		rawBarcode := StripCSVDefuse(shopifyFallback(rec, "barcode", "variant_barcode"))
 		dec, barcodeMatched := normalizeBarcode(rawBarcode, enabledSymbologyIDs)
 		item := ImportItem{
+			Row:           rowNo,
 			Name:          name,
 			SKU:           StripCSVDefuse(shopifyFallback(rec, "sku", "variant_sku")),
 			Barcode:       dec.LookupKey,

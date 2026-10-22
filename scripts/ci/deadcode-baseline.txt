@@ -36,7 +36,6 @@ catimport/smart_products.go: unreachable func: eposTax
 catimport/smart_products.go: unreachable func: finishProducts
 catimport/smart_products.go: unreachable func: groupRateBP
 catimport/smart_products.go: unreachable func: guessNumber
-catimport/smart_products.go: unreachable func: hasIssue
 catimport/smart_products.go: unreachable func: mapItemIssues
 catimport/smart_products.go: unreachable func: nearestRate
 catimport/smart_products.go: unreachable func: parseBoolLoose

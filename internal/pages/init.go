@@ -694,7 +694,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	}
 	// Boosted navigation (ADR-0098) is addressed per response, innermost so
 	// auth's own HX-Redirect for an expired session is untouched.
-	boosted := httpx.BoostedNavigation(mux)
+	boosted := httpx.BoostedNavigation(catalogKickWrap(mux, dp))
 	// Public demo mode (ADR-0113, ut-docs#2687): the demo middleware is the
 	// outermost handler inside recoverMiddleware, installed only in demo
 	// mode — with demo off the chain is exactly what it always was.
