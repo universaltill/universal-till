@@ -51,16 +51,18 @@
          6 admin PIN, 7 done. Step 8 (ADR-0166, ut-docs#4610) is the pair-first
          path's "Your shop": a till paired with its my.universaltill.com shop
          opens on it, and nxt()/prv() skip the steps the cloud already
-         answered (country, shop name) and the Germany-only one. -->
+         answered (country, shop name, shop type - ADR-0171) and the Germany-only one. -->
     <main class="setup-card" x-data="{ step: {{ .startStep }}, last: 7,
                                        country: '{{ .detectedCountry }}', currency: '{{ .detectedCurrency }}',
                                        tax: '{{ .detectedTaxRate }}', taxinc: '{{ if .detectedTaxInclusive }}on{{ else }}off{{ end }}',
                                        currencyTouched: false,
+                                       autoReg: false,
                                        cloud: {{ if .cloudShop }}true{{ else }}false{{ end }},
                                        cloudCountry: {{ if .cloudShop }}{{ if .cloudShop.HasCountry }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
                                        cloudName: {{ if .cloudShop }}{{ if .cloudShop.HasName }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
+                                       cloudShopType: {{ if .cloudShop }}{{ if .cloudShop.ShopType }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
                                        seq: [2, 3, 4, 5, 6, 7],
-                                       skip(s) { return (s === 2 && this.cloud && this.cloudCountry) || (s === 3 && this.country !== 'DE') || (s === 4 && this.cloud && this.cloudName); },
+                                       skip(s) { return (s === 2 && this.cloud && this.cloudCountry) || (s === 3 && this.country !== 'DE') || (s === 4 && this.cloud && this.cloudName) || (s === 5 && this.cloud && this.cloudShopType); },
                                        nxt(f) { let i = this.seq.indexOf(f); for (i++; i < this.seq.length; i++) { if (!this.skip(this.seq[i])) return this.seq[i]; } return 7; },
                                        prv(f) { let i = this.seq.indexOf(f); for (i--; i >= 0; i--) { if (!this.skip(this.seq[i])) return this.seq[i]; } return this.cloud ? 8 : 1; } }">
       <img class="login-logo" src="/public/assets/logo/unitill-logo.svg" alt="Universal Till" />
@@ -354,6 +356,10 @@
              show every tile directly, no "show all" toggle needed. Its own
              local x-data (shopType), nested inside the root step-nav
              x-data. -->
+        {{/* ADR-0171: not rendered at all when the cloud supplied the type, so
+             no shop_type field is posted from here (the server uses the held
+             pairing's value regardless). */}}
+        {{ if not (and .cloudShop .cloudShop.ShopType) }}
         <section x-show="step === 5" x-cloak data-step="5" x-data="{ shopType: '' }">
           <h1>{{ T "setup.shop_type.title" }}</h1>
           <p class="muted">{{ T "setup.shop_type.hint" }}</p>
@@ -368,6 +374,7 @@
             <button type="button" class="btn primary" @click="step = nxt(5)">{{ T "setup.next" }}</button>
           </div>
         </section>
+        {{ end }}
 
         <!-- Step 6 · admin PIN -->
         <section x-show="step === 6" x-cloak data-step="6">
@@ -395,11 +402,29 @@
                time-boxed registration attempt; on no (the default) the till
                keeps today's lazy registration (ADR-0015). Same
                labelled-checkbox idiom as the rest of the wizard. -->
+          {{/* ut-docs#4803: a till that joined a my. shop is already registered
+               and paired (ADR-0166), so the opt-in and the terms box are
+               not asked; the server ignores them on this path. */}}
+          {{ if .cloudShop }}
+          {{ if .cloudShop.HasName }}<p data-testid="setup-joined-shop">{{ T "setup.cloud.shop_name" }}: <strong>{{ .cloudShop.Name }}</strong></p>{{ end }}
+          {{ else }}
           <label class="set-row" style="margin-top:.6rem">
-            <input type="checkbox" name="auto_register">
+            <input type="checkbox" name="auto_register" x-model="autoReg">
             {{ T "setup.auto_register.label" }}
           </label>
           <p class="muted">{{ T "setup.auto_register.hint" }}</p>
+          {{/* ut-docs#4720: the cloud terms, asked only while the opt-in
+               above is ticked (shown + required then); without the tick the
+               server saves the opt-in as off and does not register. */}}
+          {{ if .terms.accepted }}
+          <p class="muted" data-testid="terms-accepted">{{ .terms.line }}</p>
+          {{ else }}
+          <div class="terms-accept set-gap-s" x-show="autoReg" x-cloak>
+            <label class="set-row"><input type="checkbox" id="setup-accept-terms" name="accept_terms" :required="autoReg"> {{ .terms.label }}</label>
+            <a href="{{ .terms.url }}" target="_blank" rel="noopener" hx-boost="false">{{ T "settings.enrol.terms.link" }}</a>
+          </div>
+          {{ end }}
+          {{ end }}
           {{/* ADR-0121 §7 (ut-docs#3872): plugin panels (setup.wizard.steps),
                rendered inline by the handler (renderSetupSlot) and
                read-only: the wizard is auth-exempt, plugin routes are not,
@@ -421,6 +446,7 @@
           {{ if .cloudShop.HasName }}<p>{{ T "setup.cloud.shop_name" }}: <strong data-cloud-field="name">{{ .cloudShop.Name }}</strong></p>{{ end }}
           {{ if .cloudShop.HasCountry }}<p>{{ T "setup.cloud.shop_country" }}: <strong data-cloud-field="country">{{ T .cloudShop.CountryNameKey }}</strong></p>{{ end }}
           {{ if .cloudShop.Currency }}<p>{{ T "setup.cloud.shop_currency" }}: <strong data-cloud-field="currency">{{ .cloudShop.Currency }}</strong></p>{{ end }}
+          {{ if .cloudShop.ShopType }}<p>{{ T "setup.cloud.shop_type" }}: <strong data-cloud-field="shop_type">{{ T (printf "setup.shop_type.%s" .cloudShop.ShopType) }}</strong></p>{{ end }}
           <p class="muted">{{ T "setup.cloud.hint" }}</p>
           <div class="setup-nav">
             <button type="button" class="btn secondary" hx-post="/api/setup/cloud-unpair" hx-params="none"

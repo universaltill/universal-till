@@ -762,6 +762,18 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 		fields["till_id"] = strings.TrimSpace(tid)
 	}
 	fields["platform"] = devicePlatform()
+	// The operator's acceptance of the cloud terms (ut-docs#4717), only when
+	// the current version was accepted on this till. Operator-initiated
+	// registrations collect it first; EnsureRegistered from a plugin install
+	// never asks and sends it only if already recorded.
+	termsSent := ""
+	if v, loc, _, ok := AcceptedTerms(ctx, kv); ok {
+		termsSent = v
+		fields["terms_version"] = v
+		if loc != "" {
+			fields["terms_locale"] = loc
+		}
+	}
 	payload, err := json.Marshal(fields)
 	if err != nil {
 		return err
@@ -800,6 +812,12 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 	}
 
 	log := logging.L()
+	if termsSent != "" {
+		// The cloud now has the acceptance (ut-docs#4792): no resend needed.
+		if err := markTermsSent(ctx, kv, termsSent); err != nil {
+			log.Warnf("enrolment: persist terms sent marker: %v", err)
+		}
+	}
 	for key, value := range map[string]string{
 		keyStoreID:          d.StoreID,
 		keyMerchantID:       d.MerchantID,

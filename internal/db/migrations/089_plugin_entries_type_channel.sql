@@ -1,4 +1,4 @@
--- 088_plugin_entries_type_channel.sql — ADR-0169 (ut-docs#4187, #4759): the
+-- 089_plugin_entries_type_channel.sql — ADR-0169 (ut-docs#4187, #4759): the
 -- plugin-type taxonomy gains `channel` (the 23rd type: the cloud-hosted
 -- adapter of a sales channel), so the plugin_entries.type CHECK constraint
 -- has to admit it. ADR-0002's price for a new type is "ADR + code + CHECK +

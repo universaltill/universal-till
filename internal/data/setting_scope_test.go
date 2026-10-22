@@ -388,6 +388,12 @@ func TestSettingScope_Classification(t *testing.T) {
 		{"theme", SettingPerTill},
 		{"marketplace.device_id", SettingPerTill},
 		{"marketplace.token", SettingPerTill},
+		// ut-docs#4720: the cloud-terms acceptance belongs to the till that
+		// registered.
+		{"marketplace.terms_version", SettingPerTill},
+		{"marketplace.terms_locale", SettingPerTill},
+		{"marketplace.terms_accepted_at", SettingPerTill},
+		{"marketplace.terms_sent_version", SettingPerTill}, // ut-docs#4792
 		// ut-docs#2950: one till's own state.
 		{"diagnostics.active", SettingPerTill},
 		{"cloudsync.snapshot_hash", SettingPerTill},

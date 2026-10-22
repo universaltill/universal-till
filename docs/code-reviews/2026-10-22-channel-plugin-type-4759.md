@@ -6,7 +6,7 @@ business questions (#4187/#4758) are open, so only account-free, channel-neutral
 
 ## What shipped (three repos, one change)
 - **universal-till** `internal/plugins`: `channel` is the 23rd `CanonicalTypes` entry;
-  migration `088_plugin_entries_type_channel.sql` rebuilds `plugin_entries` to widen the
+  migration `089_plugin_entries_type_channel.sql` rebuilds `plugin_entries` to widen the
   `type` CHECK (018's recipe; checksum pinned; row/index preservation test). The manifest
   gains `hosts` (default `["till"]`), `channel_contract` and the `channel` block
   (`manifest.go` structs, `manifest_channel.go` validation at both install paths).

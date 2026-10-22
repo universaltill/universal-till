@@ -513,6 +513,9 @@ var nonAdminTables = map[string]string{
 	// cloud — per-till delivery bookkeeping, like issue_reports_sent below.
 	"till_tls_pinned":     "main-till record of which enrolled tills have authenticated over pinned LAN TLS, so their bearer is refused on plain HTTP — main-till bookkeeping, never synced (ut-docs#2737)",
 	"guest_order_results": "guest_order directive results awaiting (or past) cloud delivery — per-till bookkeeping, never synced (ut-docs#4337)",
+	// ut-docs#4797: the till's record of each generic directive it applied,
+	// so a re-delivery re-posts the result instead of applying twice.
+	"directive_results": "generic directive results kept so a re-delivered directive is not applied twice — per-till bookkeeping, never synced (ut-docs#4797)",
 	// ADR-0161 §5 (ut-docs#4429): imports are applied only on the main
 	// till; additional tills get the resulting catalogue rows, never the
 	// foreign-id bookkeeping behind them.
@@ -735,6 +738,11 @@ var PerTillSettingPrefixes = []string{
 	// TestPerTillSettingsCoverTillCloudIdentity keeps them in step.
 	"marketplace.device_", "marketplace.token", "marketplace.enrolled_at",
 	"marketplace.public_key",
+	// ut-docs#4720: the operator's acceptance of the cloud terms is this
+	// till's own (it registered under it); also in
+	// db.TillCloudIdentityPrefixes so a joining replica is not handed the
+	// main till's acceptance.
+	"marketplace.terms_",
 	// ut-docs#2792: this till's own cache of its cloud entitlement (ADR-0060
 	// §4, internal/entitlement's Key* constants), rewritten with a fresh
 	// last_confirmed_at on every cloud sync tick. Synced, that timestamp

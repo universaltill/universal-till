@@ -5,12 +5,12 @@ import (
 	"testing"
 )
 
-// 088 widens plugin_entries.type to admit `channel` (ADR-0169, ut-docs#4759)
+// 089 widens plugin_entries.type to admit `channel` (ADR-0169, ut-docs#4759)
 // by rebuilding the table. The rebuild must keep every existing entry
 // byte-for-byte (a child table: nothing may cascade away), keep the indexes,
 // admit `channel`, and still refuse an unknown type.
-func TestMigration088_PluginEntriesTypeChannel(t *testing.T) {
-	const version = 88
+func TestMigration089_PluginEntriesTypeChannel(t *testing.T) {
+	const version = 89
 	d, path := openAtPreMigrationSchema(t, version, "plugin-entries-channel.db")
 
 	if _, err := d.DB.Exec(`INSERT INTO plugin_catalog (id, version, name, description, author, website, runtime, entrypoint, package_url, sha256, min_pos_version, api_version, tags_json, published_at)
@@ -24,9 +24,9 @@ func TestMigration088_PluginEntriesTypeChannel(t *testing.T) {
 		VALUES ('e1', 'demo.p', 'page', 'main', 'Main page', '/plugin/demo', '{"a":1}', 7)`); err != nil {
 		t.Fatalf("seed entry: %v", err)
 	}
-	// Before 088 the CHECK refuses channel.
+	// Before 089 the CHECK refuses channel.
 	if _, err := d.DB.Exec(`INSERT INTO plugin_entries (id, plugin_id, type, key, label) VALUES ('e0', 'demo.p', 'channel', 'c0', 'C')`); err == nil {
-		t.Fatal("pre-088 schema should refuse type channel")
+		t.Fatal("pre-089 schema should refuse type channel")
 	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
@@ -34,7 +34,7 @@ func TestMigration088_PluginEntriesTypeChannel(t *testing.T) {
 
 	d, err := Open(path)
 	if err != nil {
-		t.Fatalf("Open (applies 088): %v", err)
+		t.Fatalf("Open (applies 089): %v", err)
 	}
 	defer d.Close()
 
@@ -47,7 +47,7 @@ func TestMigration088_PluginEntriesTypeChannel(t *testing.T) {
 		t.Fatalf("existing entry changed: %q %q %q %q %d", typ, label, route, cfg, order)
 	}
 	if _, err := d.DB.Exec(`INSERT INTO plugin_entries (id, plugin_id, type, key, label) VALUES ('e2', 'demo.p', 'channel', 'c1', 'Channel')`); err != nil {
-		t.Fatalf("channel must be admitted after 088: %v", err)
+		t.Fatalf("channel must be admitted after 089: %v", err)
 	}
 	if _, err := d.DB.Exec(`INSERT INTO plugin_entries (id, plugin_id, type, key, label) VALUES ('e3', 'demo.p', 'gadget', 'g1', 'G')`); err == nil {
 		t.Fatal("an unknown type must still be refused")

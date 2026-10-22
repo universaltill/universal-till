@@ -43,7 +43,20 @@ const autoRegisterAttemptTimeout = 5 * time.Second
 // Settings → "Register now". Settings' enrolment card shows the till as not
 // registered until then, which is the operator's signal. On no/absent, no
 // call at all — ADR-0015's lazy registration stays exactly as it is.
-func autoRegisterForSetup(ctx context.Context, d *common.Deps, optIn bool) {
+func autoRegisterForSetup(ctx context.Context, d *common.Deps, optIn, acceptedTerms bool, locale string) {
+	// ut-docs#4720: registering sends the cloud-terms acceptance, so an
+	// opt-in without it (neither ticked now nor accepted before) is not a
+	// valid opt-in: it is saved as "false", logged, and nothing is sent.
+	// A tick records the acceptance first, then registers as before.
+	if optIn && !acceptedTerms && !termsAlreadyAccepted(ctx, d) {
+		logging.L().Infof("setup wizard: auto-register opted in without accepting the cloud terms; not registering")
+		optIn = false
+	} else if optIn && !termsAlreadyAccepted(ctx, d) {
+		if err := enroll.RecordTermsAcceptance(ctx, d.Settings, locale); err != nil {
+			logging.L().Errorf("setup wizard: record terms acceptance: %v", err)
+			optIn = false
+		}
+	}
 	val := "false"
 	if optIn {
 		val = "true"
@@ -79,6 +92,44 @@ type setupCountry struct {
 var setupShopTypes = plugins.ShopTypes()
 
 func isValidShopType(v string) bool { return plugins.IsKnownShopType(v) }
+
+// saveSetupShopType persists the wizard's shop type and runs what it drives
+// (ut-docs#539, taxonomy per ADR-0026): optional, only a known value is
+// saved - a garbage/absent value leaves the key unset, nothing else depends
+// on it being present. The one save for a picked type and a cloud-supplied
+// one (ADR-0171 §4). An error means the setting could not be written.
+func saveSetupShopType(ctx context.Context, d *common.Deps, raw string) error {
+	v := strings.TrimSpace(raw)
+	if v == "" || !isValidShopType(v) {
+		return nil
+	}
+	if err := d.Settings.Set(ctx, common.KeyShopType, v); err != nil {
+		return err
+	}
+	// ut-docs#1902: shop_type=service activates the builtin Salon
+	// layout (ADR-0088) - hides Tables/Kitchen stations, relabels
+	// Items to Services. Best-effort: a failure here must never
+	// block finishing setup over a cosmetic menu personalization -
+	// the shop still works, just with the generic everything-visible
+	// menu until a later Settings save retries it.
+	// ut-docs#2006: reload unless it's a genuine no-op (no error,
+	// nothing changed) - an error still reloads, since a failed
+	// reinstall can leave the DB changed (removeBuiltin succeeded)
+	// even though Sync itself returned an error.
+	changed, err := builtinlayouts.Sync(ctx, d.Db, v)
+	if err != nil {
+		logging.L().Warnf("setup: could not sync builtin layout for shop_type %q: %v", v, err)
+	}
+	if err != nil || changed {
+		if err := d.ReloadPlugins(ctx); err != nil {
+			logging.L().Warnf("setup: could not reload plugins after shop_type layout sync: %v", err)
+		}
+	}
+	// ut-docs#3632: a retail/service shop has no eat-in, so it
+	// starts with the dine-in/takeaway choice switched off.
+	applyShopTypeOrderTypeDefault(ctx, d, v)
+	return nil
+}
 
 // wizardCountries reads the wizard's country list from country_settings
 // (ut-docs#660) — the compile-time setupCountries slice that used to live
@@ -437,6 +488,8 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// ut-docs#3872: plugin panels for setup.wizard.steps, asked in
 		// parallel within the 2 s slot budget; "" when none answers.
 		data["pluginSlot"] = renderSetupSlot(r, d, httpx.RequestLocale(r))
+		// ut-docs#4720: the cloud-terms accept step under the opt-in.
+		data["terms"] = termsView(r.Context(), d, httpx.RequestLocale(r))
 		httpx.RenderPartial("ui/pages/setup.html", data)(w, r)
 	}
 
@@ -715,36 +768,11 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			http.Error(w, "setup failed", http.StatusInternalServerError)
 			return
 		}
-		// Shop type (ut-docs#539, taxonomy per ADR-0026): optional, only a
-		// known value is persisted — a garbage/absent value just leaves the
-		// key unset, nothing else depends on it being present.
-		if v := strings.TrimSpace(r.Form.Get("shop_type")); v != "" && isValidShopType(v) {
-			if err := d.Settings.Set(r.Context(), common.KeyShopType, v); err != nil {
-				http.Error(w, "setup failed", http.StatusInternalServerError)
-				return
-			}
-			// ut-docs#1902: shop_type=service activates the builtin Salon
-			// layout (ADR-0088) — hides Tables/Kitchen stations, relabels
-			// Items to Services. Best-effort: a failure here must never
-			// block finishing setup over a cosmetic menu personalization —
-			// the shop still works, just with the generic everything-visible
-			// menu until a later Settings save retries it.
-			// ut-docs#2006: reload unless it's a genuine no-op (no error,
-			// nothing changed) — an error still reloads, since a failed
-			// reinstall can leave the DB changed (removeBuiltin succeeded)
-			// even though Sync itself returned an error.
-			changed, err := builtinlayouts.Sync(r.Context(), d.Db, v)
-			if err != nil {
-				logging.L().Warnf("setup: could not sync builtin layout for shop_type %q: %v", v, err)
-			}
-			if err != nil || changed {
-				if err := d.ReloadPlugins(r.Context()); err != nil {
-					logging.L().Warnf("setup: could not reload plugins after shop_type layout sync: %v", err)
-				}
-			}
-			// ut-docs#3632: a retail/service shop has no eat-in, so it
-			// starts with the dine-in/takeaway choice switched off.
-			applyShopTypeOrderTypeDefault(r.Context(), d, v)
+		// Shop type (ut-docs#539, ADR-0026). On the cloud path applyCloudShop
+		// already replaced the posted value with the cloud's (ADR-0171 §4).
+		if err := saveSetupShopType(r.Context(), d, r.Form.Get("shop_type")); err != nil {
+			http.Error(w, "setup failed", http.StatusInternalServerError)
+			return
 		}
 		if err := d.Settings.Set(r.Context(), "setup.completed", "true"); err != nil {
 			http.Error(w, "setup failed", http.StatusInternalServerError)
@@ -822,7 +850,11 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			}
 		} else {
 			autoRegisterForSetup(r.Context(), d,
-				r.Form.Get("auto_register") == "on" || r.Form.Get("auto_register") == "1")
+				r.Form.Get("auto_register") == "on" || r.Form.Get("auto_register") == "1",
+				// The language the terms were shown in (termsView renders from the
+				// request locale), not st.Locale, which is the shop country's
+				// default by now (ut-docs#4720 review).
+				termsTicked(r), httpx.RequestLocale(r))
 		}
 		cloud.finish()
 

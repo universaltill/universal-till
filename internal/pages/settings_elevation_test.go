@@ -524,11 +524,11 @@ func TestEnrolClaimCodeAndNow_ElevationGateClears(t *testing.T) {
 
 	for _, path := range []string{"/api/enrol/claim-code", "/api/enrol/now"} {
 		t.Run(path+"/deny_no_pin", func(t *testing.T) {
-			rec := postForm(mux, path, url.Values{}, &cashier)
+			rec := postForm(mux, path, url.Values{"accept_terms": {"on"}}, &cashier) // terms are checked before the gate (ut-docs#4720)
 			assertElevationPrompt(t, path, rec.Code, rec.Body.String())
 		})
 		t.Run(path+"/elevate_valid_pin", func(t *testing.T) {
-			rec := postForm(mux, path, url.Values{"override_pin": {"555222"}}, &cashier)
+			rec := postForm(mux, path, url.Values{"override_pin": {"555222"}, "accept_terms": {"on"}}, &cashier)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("%s elevated = %d, want 200", path, rec.Code)
 			}

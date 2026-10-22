@@ -14,14 +14,15 @@ Kayıt, kasanızı Universal Till marketplace'e bağlar; sahiplenme mağazayı S
 ## Nasıl kullanılır
 
 1. Ayarlar → Kasa kaydı mağaza kimliğini gösterir; gerekirse Şimdi kaydet ile bağlayın. Katılmış bir kasada kaydı ana kasa sizin için yapar: bu kart o zaman kasanın ana kasa üzerinden kayıtlı olduğunu söyler ve sahiplenme ana kasada yapılır.
-2. Bu mağazayı sahiplen'e tıklayıp kısa kodu (15 dakika geçerli) ve QR'ı alın — telefonunuzla tarayıp oradan sahiplenin.
-3. Universal Till kimliğinizle marketplace'e giriş yapın, sahiplenme sayfasını açın ve kodu girin.
+2. Kaydolmadan önce "Universal Till bulut hizmeti şartlarını kabul ediyorum (sürüm v0.1-draft)" kutusunu işaretleyin; "Şartları oku" şartları yeni bir sekmede açar. İşaret yoksa Şimdi kaydet hiçbir şey yapmaz ve bunu size söyler. Şartları her sürüm için bir kez kabul edersiniz: sonrasında kart kutu yerine tarihle birlikte "Şartlar kabul edildi: sürüm v0.1-draft" gösterir ve kasa kabulünüzü (sürümü ve dilinizi) kayıtla birlikte gönderir. Bu adımdan önce (ya da bir eklenti kurulumuyla) kaydedilmiş bir kasa, Kasa kaydı altında aynı kutuyu **Şartları kabul et** düğmesiyle gösterir: kutuyu işaretleyip düğmeye basın. Kasa çevrimdışıysa kabulünüz kasada saklanır ve kart henüz buluta ulaşmadığını söyler; tekrar çevrimiçi olunca **Buluta gönder**'e basın. Satış hiçbir zaman etkilenmez.
+3. Bu mağazayı sahiplen'e tıklayıp kısa kodu (15 dakika geçerli) ve QR'ı alın — telefonunuzla tarayıp oradan sahiplenin.
+4. Universal Till kimliğinizle marketplace'e giriş yapın, sahiplenme sayfasını açın ve kodu girin.
 
 ## Otomatik kayıt — kurulumda sizin seçiminiz
 
 Kurulum sihirbazının son ekranı, kasayı hemen kaydetmek isteyip istemediğinizi bir kez sorar — siz işaretlemedikçe işaretli değildir. Aynı seçenek Ayarlar → Kasa kaydı altında "Bu kasayı pazaryerine otomatik olarak kaydet" olarak da bulunur:
 
-1. Açarsanız kasa; cihaz kimliğini, mağaza adını, mağaza ülkesini, mağaza bölgesini ve yazılım sürümünü (destek, güncellemeler ve lisanslama için kullanılır) Universal Till bulut pazaryerine gönderir ve hemen kaydolur. Adresiniz gönderilmez. O an çevrimdışı mı? Hiçbir şey beklemez, kurulum yine de tamamlanır — ama kasa, eklenti mağazasını açana veya Şimdi kaydol'a basana kadar kayıtsız kalır; yeniden çevrimiçi olduğunuzda Ayarlar → Kasa kaydı bölümünü kontrol edin.
+1. Açarsanız kasa; cihaz kimliğini, mağaza adını, mağaza ülkesini, mağaza bölgesini ve yazılım sürümünü (destek, güncellemeler ve lisanslama için kullanılır) Universal Till bulut pazaryerine gönderir ve hemen kaydolur. Adresiniz gönderilmez. O an çevrimdışı mı? Hiçbir şey beklemez, kurulum yine de tamamlanır — ama kasa, eklenti mağazasını açana veya Şimdi kaydol'a basana kadar kayıtsız kalır; yeniden çevrimiçi olduğunuzda Ayarlar → Kasa kaydı bölümünü kontrol edin. Seçenek işaretliyken şartlar kutusu altında görünür; seçeneği işaretleyip şartları işaretlemezseniz seçenek kapalı olarak kaydedilir ve hiçbir şey gönderilmez. Ayarlar'da açmak aynı işareti gerektirir (daha önce kabul etmediyseniz ve kasa henüz kayıtlı değilse); kapatmak hiçbir zaman gerektirmez.
 2. Kapatırsanız kasa yalnızca eklenti mağazasını ilk kullandığınızda veya Şimdi kaydol'a bastığınızda kaydolmaya döner. Kapatmak, daha önce yapılmış bir kaydı asla kaldırmaz.
 
 ## Abonelik
@@ -58,6 +59,9 @@ Bir yönetici uyarıya dokunarak Ayarlar → Kasa kaydı'nı açabilir. Uyarı, 
 
 Kart sorunu tek satırda söyler; satış hiçbir zaman etkilenmez:
 
+- **Bu kasayı kaydetmek için Universal Till bulut hizmeti şartlarını kabul edin**: şartlar kutusu işaretli değildi, bu yüzden hiçbir şey gönderilmedi. Kutuyu işaretleyin (veya otomatik kaydı kutu işaretliyken açın) ve yeniden deneyin.
+- **Universal Till bulut hizmeti şartlarını kabul etmek için kutuyu işaretleyin**: Zaten kayıtlı bir kasada kutu işaretlenmeden Şartları kabul et'e basıldı, bu yüzden hiçbir şey kaydedilmedi veya gönderilmedi. Kutuyu işaretleyip Şartları kabul et'e yeniden basın.
+- **Buluta ulaşılamadı. Kabulünüz bu kasada kayıtlı**: Kabul kasada saklanır; internet bağlantısını kontrol edip Buluta gönder'e yeniden basın.
 - **Universal Till bulutu bu mağaza için kullanılamıyor**: bulut bu mağazaya hizmet vermiyor. Katılmış bir kasada bu mesaj ana kasadan gelir. Kasa çevrimdışı çalışmaya devam eder.
 - **Bu kasada bulut adresi ayarlanmamış**: kasa bulut adresi olmadan kuruldu, bu yüzden kaydolamıyor. Kurulumu yapan kişiden bir adres ayarlamasını isteyin.
 - **Başka bir kayıt denemesi hâlâ sürüyor**: kasa zaten arka planda kaydoluyor. Biraz bekleyip yeniden deneyin.
