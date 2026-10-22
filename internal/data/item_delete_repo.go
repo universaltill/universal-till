@@ -21,9 +21,14 @@ import (
 const (
 	ItemUseSold         = "sold"
 	ItemUseStockHistory = "stock_history"
-	ItemUseQuickButton  = "quick_button"
-	ItemUseOpenBasket   = "open_basket"
-	ItemUseOpenVouchers = "open_vouchers"
+	// ItemUseShrinkage: a live comp or waste (a void is not history, see
+	// DeleteUnusedItem). ItemUseArchivedShrinkage: any shrinkage row in a
+	// transaction-reset archive, which a restore would need the item for.
+	ItemUseShrinkage         = "shrinkage"
+	ItemUseArchivedShrinkage = "archived_shrinkage"
+	ItemUseQuickButton       = "quick_button"
+	ItemUseOpenBasket        = "open_basket"
+	ItemUseOpenVouchers      = "open_vouchers"
 )
 
 // ItemInUseError refuses a delete. Its text is the owner-readable line the
@@ -33,6 +38,8 @@ type ItemInUseError struct {
 	// Sales is the number of sales (live and archived) with a line for the
 	// item or one of its variants. Set only for ItemUseSold.
 	Sales int64
+	// Count is the number of comp/waste events. Set only for ItemUseShrinkage.
+	Count int64
 }
 
 func (e *ItemInUseError) Error() string {
@@ -44,6 +51,13 @@ func (e *ItemInUseError) Error() string {
 		return fmt.Sprintf("sold %d times — deactivate it instead", e.Sales)
 	case ItemUseStockHistory:
 		return "it has stock history — deactivate it instead"
+	case ItemUseShrinkage:
+		if e.Count == 1 {
+			return "it was comped or wasted 1 time — deactivate it instead"
+		}
+		return fmt.Sprintf("it was comped or wasted %d times — deactivate it instead", e.Count)
+	case ItemUseArchivedShrinkage:
+		return "its voids sit in an archived reset that can still be restored — deactivate it instead"
 	case ItemUseQuickButton:
 		return "it is on a quick button — deactivate it instead"
 	case ItemUseOpenVouchers:
@@ -57,6 +71,8 @@ func (e *ItemInUseError) Error() string {
 type ItemDeleteResult struct {
 	Name           string
 	AlreadyDeleted bool
+	// Voids is the number of recorded voids detached from the item.
+	Voids int64
 }
 
 // itemSalesCountSQL counts the sales (live, and archived by a transaction
@@ -70,18 +86,20 @@ SELECT COUNT(DISTINCT sale_id) FROM (
   UNION ALL SELECT sale_id FROM sale_lines_archive WHERE variant_id IN (SELECT id FROM item_variants WHERE item_id = ?)
 )`
 
-// itemStockHistorySQL: stock movements (live or archived) or a recorded
-// void/comp/waste (live or archived, ut-docs#3452) for the item or its
-// variants. Takes the item id six times. shrinkage_events.item_id has no
-// cascade, so it would block the delete anyway; the archived row would
-// make its reset batch unrestorable (ErrArchiveReferencesRemoved).
+// itemStockHistorySQL: a real stock movement (live with a non-zero
+// quantity, or any archived one) for the item or its variants. Takes the
+// item id four times. Zero-quantity live movements move no stock and are
+// removed by the delete (ut-docs#4746).
 const itemStockHistorySQL = `
-SELECT EXISTS (SELECT 1 FROM stock_movements WHERE item_id = ?)
-    OR EXISTS (SELECT 1 FROM stock_movements WHERE variant_id IN (SELECT id FROM item_variants WHERE item_id = ?))
+SELECT EXISTS (SELECT 1 FROM stock_movements WHERE item_id = ? AND quantity <> 0)
+    OR EXISTS (SELECT 1 FROM stock_movements WHERE quantity <> 0 AND variant_id IN (SELECT id FROM item_variants WHERE item_id = ?))
     OR EXISTS (SELECT 1 FROM stock_movements_archive WHERE item_id = ?)
-    OR EXISTS (SELECT 1 FROM stock_movements_archive WHERE variant_id IN (SELECT id FROM item_variants WHERE item_id = ?))
-    OR EXISTS (SELECT 1 FROM shrinkage_events WHERE item_id = ?)
-    OR EXISTS (SELECT 1 FROM shrinkage_events_archive WHERE item_id = ?)`
+    OR EXISTS (SELECT 1 FROM stock_movements_archive WHERE variant_id IN (SELECT id FROM item_variants WHERE item_id = ?))`
+
+// itemArchivedShrinkageSQL: the item in an archived shrinkage row. Such a
+// row would make its reset batch unrestorable (ErrArchiveReferencesRemoved)
+// once the item is gone. Takes the item id once.
+const itemArchivedShrinkageSQL = `SELECT EXISTS (SELECT 1 FROM shrinkage_events_archive WHERE item_id = ?)`
 
 // itemOpenVouchersSQL (ut-docs#4259): a gift voucher item while the shop
 // has any active voucher. A voucher sold through the item is never a sale
@@ -180,7 +198,8 @@ func deleteUnusedItemTx(ctx context.Context, tx *sql.Tx, itemID string, pre func
 		n      int
 		reason string
 	}{
-		{itemStockHistorySQL, 6, ItemUseStockHistory},
+		{itemStockHistorySQL, 4, ItemUseStockHistory},
+		{itemArchivedShrinkageSQL, 1, ItemUseArchivedShrinkage},
 		{`SELECT EXISTS (SELECT 1 FROM shortcut_buttons WHERE item_id = ?)`, 1, ItemUseQuickButton},
 		{itemParkedSQL, 4, ItemUseOpenBasket},
 		{itemOpenVouchersSQL, 1, ItemUseOpenVouchers},
@@ -198,7 +217,26 @@ func deleteUnusedItemTx(ctx context.Context, tx *sql.Tx, itemID string, pre func
 		}
 	}
 
+	// A comp or waste is a real loss record: it keeps the item. A void is
+	// not (ut-docs#4746): the line was taken back before any sale, so the
+	// void rows are detached below and keep their item_name.
+	var comped int64
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM shrinkage_events WHERE item_id = ? AND reason_category <> 'void'`, itemID).Scan(&comped); err != nil {
+		return res, fmt.Errorf("delete item: shrinkage: %w", err)
+	}
+	if comped > 0 {
+		return res, &ItemInUseError{Reason: ItemUseShrinkage, Count: comped}
+	}
+
 	variants := `SELECT id FROM item_variants WHERE item_id = ?`
+	voids, err := tx.ExecContext(ctx, `UPDATE shrinkage_events SET item_id = NULL WHERE item_id = ? AND reason_category = 'void'`, itemID)
+	if err != nil {
+		return res, fmt.Errorf("delete item: detach voids: %w", err)
+	}
+	res.Voids, _ = voids.RowsAffected()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM stock_movements WHERE quantity = 0 AND (item_id = ? OR variant_id IN (`+variants+`))`, itemID, itemID); err != nil {
+		return res, fmt.Errorf("delete item: zero movements: %w", err)
+	}
 	for _, s := range []string{
 		`DELETE FROM inventory     WHERE item_id = ? OR variant_id IN (` + variants + `)`,
 		`DELETE FROM price_history WHERE item_id = ? OR variant_id IN (` + variants + `)`,

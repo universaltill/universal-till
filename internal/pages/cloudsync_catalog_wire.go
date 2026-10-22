@@ -226,7 +226,13 @@ func cloudDeleteItem(ctx context.Context, d *common.Deps, id string) (string, er
 	if res.AlreadyDeleted {
 		return "already deleted", nil
 	}
-	auditCloudDirective(ctx, d, "item", id, "cloud_item_deleted", map[string]any{"name": res.Name})
+	audit := map[string]any{"name": res.Name}
+	if res.Voids > 0 {
+		// ut-docs#4746: the voids were detached with the item.
+		audit["voids"] = res.Voids
+		audit["note"] = fmt.Sprintf("item deleted with %d voids", res.Voids)
+	}
+	auditCloudDirective(ctx, d, "item", id, "cloud_item_deleted", audit)
 	return "deleted item " + res.Name, nil
 }
 
