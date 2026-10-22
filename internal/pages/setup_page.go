@@ -43,7 +43,20 @@ const autoRegisterAttemptTimeout = 5 * time.Second
 // Settings → "Register now". Settings' enrolment card shows the till as not
 // registered until then, which is the operator's signal. On no/absent, no
 // call at all — ADR-0015's lazy registration stays exactly as it is.
-func autoRegisterForSetup(ctx context.Context, d *common.Deps, optIn bool) {
+func autoRegisterForSetup(ctx context.Context, d *common.Deps, optIn, acceptedTerms bool, locale string) {
+	// ut-docs#4720: registering sends the cloud-terms acceptance, so an
+	// opt-in without it (neither ticked now nor accepted before) is not a
+	// valid opt-in: it is saved as "false", logged, and nothing is sent.
+	// A tick records the acceptance first, then registers as before.
+	if optIn && !acceptedTerms && !termsAlreadyAccepted(ctx, d) {
+		logging.L().Infof("setup wizard: auto-register opted in without accepting the cloud terms; not registering")
+		optIn = false
+	} else if optIn && !termsAlreadyAccepted(ctx, d) {
+		if err := enroll.RecordTermsAcceptance(ctx, d.Settings, locale); err != nil {
+			logging.L().Errorf("setup wizard: record terms acceptance: %v", err)
+			optIn = false
+		}
+	}
 	val := "false"
 	if optIn {
 		val = "true"
@@ -437,6 +450,8 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// ut-docs#3872: plugin panels for setup.wizard.steps, asked in
 		// parallel within the 2 s slot budget; "" when none answers.
 		data["pluginSlot"] = renderSetupSlot(r, d, httpx.RequestLocale(r))
+		// ut-docs#4720: the cloud-terms accept step under the opt-in.
+		data["terms"] = termsView(r.Context(), d, httpx.RequestLocale(r))
 		httpx.RenderPartial("ui/pages/setup.html", data)(w, r)
 	}
 
@@ -822,7 +837,11 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			}
 		} else {
 			autoRegisterForSetup(r.Context(), d,
-				r.Form.Get("auto_register") == "on" || r.Form.Get("auto_register") == "1")
+				r.Form.Get("auto_register") == "on" || r.Form.Get("auto_register") == "1",
+				// The language the terms were shown in (termsView renders from the
+				// request locale), not st.Locale, which is the shop country's
+				// default by now (ut-docs#4720 review).
+				termsTicked(r), httpx.RequestLocale(r))
 		}
 		cloud.finish()
 

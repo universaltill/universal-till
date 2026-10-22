@@ -56,6 +56,7 @@
                                        country: '{{ .detectedCountry }}', currency: '{{ .detectedCurrency }}',
                                        tax: '{{ .detectedTaxRate }}', taxinc: '{{ if .detectedTaxInclusive }}on{{ else }}off{{ end }}',
                                        currencyTouched: false,
+                                       autoReg: false,
                                        cloud: {{ if .cloudShop }}true{{ else }}false{{ end }},
                                        cloudCountry: {{ if .cloudShop }}{{ if .cloudShop.HasCountry }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
                                        cloudName: {{ if .cloudShop }}{{ if .cloudShop.HasName }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
@@ -396,10 +397,21 @@
                keeps today's lazy registration (ADR-0015). Same
                labelled-checkbox idiom as the rest of the wizard. -->
           <label class="set-row" style="margin-top:.6rem">
-            <input type="checkbox" name="auto_register">
+            <input type="checkbox" name="auto_register" x-model="autoReg">
             {{ T "setup.auto_register.label" }}
           </label>
           <p class="muted">{{ T "setup.auto_register.hint" }}</p>
+          {{/* ut-docs#4720: the cloud terms, asked only while the opt-in
+               above is ticked (shown + required then); without the tick the
+               server saves the opt-in as off and does not register. */}}
+          {{ if .terms.accepted }}
+          <p class="muted" data-testid="terms-accepted">{{ .terms.line }}</p>
+          {{ else }}
+          <div class="terms-accept set-gap-s" x-show="autoReg" x-cloak>
+            <label class="set-row"><input type="checkbox" id="setup-accept-terms" name="accept_terms" :required="autoReg"> {{ .terms.label }}</label>
+            <a href="{{ .terms.url }}" target="_blank" rel="noopener" hx-boost="false">{{ T "settings.enrol.terms.link" }}</a>
+          </div>
+          {{ end }}
           {{/* ADR-0121 §7 (ut-docs#3872): plugin panels (setup.wizard.steps),
                rendered inline by the handler (renderSetupSlot) and
                read-only: the wizard is auth-exempt, plugin routes are not,

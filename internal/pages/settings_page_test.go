@@ -2395,7 +2395,10 @@ func TestEnrolClaimCodeAndNow_RefuseNonManagerViaElevation(t *testing.T) {
 	mux, _, _ := newFullAuthDeps(t)
 
 	for _, path := range []string{"/api/enrol/claim-code", "/api/enrol/now"} {
-		req := auth.WithUser(httptest.NewRequest(http.MethodPost, path, nil), cashUser)
+		// accept_terms: the terms check runs before the elevation gate
+		// (ut-docs#4720), so tick it to reach the gate under test.
+		req := auth.WithUser(httptest.NewRequest(http.MethodPost, path, strings.NewReader("accept_terms=on")), cashUser)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "elevation-dialog") ||
@@ -2478,7 +2481,7 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 		{"payments-default", http.MethodPost, "/api/settings/payments-default", url.Values{"method": {"cash"}}, gateElevation},
 		{"payments-fee", http.MethodPost, "/api/settings/payments-fee", url.Values{"method": {"cash"}, "percent": {"1"}}, gateElevation},
 		{"enrol-claim-code", http.MethodPost, "/api/enrol/claim-code", nil, gateElevation},
-		{"enrol-now", http.MethodPost, "/api/enrol/now", nil, gateElevation},
+		{"enrol-now", http.MethodPost, "/api/enrol/now", url.Values{"accept_terms": {"on"}}, gateElevation},
 		{"enrol-pair", http.MethodPost, "/api/enrol/pair", nil, gateElevation},
 		{"enrol-check-plan", http.MethodPost, "/api/enrol/check-plan", nil, gateElevation},
 		{"enrol-devices", http.MethodGet, "/api/enrol/devices", nil, gateForbiddenSpan},

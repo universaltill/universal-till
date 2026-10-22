@@ -14,14 +14,15 @@ Die Registrierung verbindet Ihre Kasse mit dem Universal-Till-Marktplatz; die Be
 ## Verwendung
 
 1. Einstellungen → Kassenregistrierung zeigt die Geschäftsidentität; „Jetzt registrieren“ verbindet sie bei Bedarf. Auf einer verbundenen Kasse registriert die Hauptkasse sie für Sie: Diese Karte meldet dann, dass sie über die Hauptkasse registriert ist, und das Beanspruchen erfolgt an der Hauptkasse.
-2. Klicken Sie auf „Dieses Geschäft übernehmen“, um einen kurzen Code (15 Minuten gültig) und einen QR-Code zu erhalten — scannen Sie ihn mit Ihrem Telefon, um von dort aus zu beanspruchen.
-3. Melden Sie sich mit Ihrer Universal-Till-ID im Marktplatz an, öffnen Sie die Beanspruchungsseite und geben Sie den Code ein.
+2. Setzen Sie vor dem Registrieren das Häkchen bei „Ich akzeptiere die Bedingungen für den Cloud-Dienst von Universal Till (Version v0.1-draft).“; über „Bedingungen lesen“ öffnen Sie sie in einem neuen Tab. Ohne Häkchen unternimmt „Jetzt registrieren“ nichts und sagt Ihnen das. Sie stimmen einmal je Version der Bedingungen zu: Danach zeigt die Karte statt des Kästchens „Bedingungen akzeptiert: Version v0.1-draft“ mit dem Datum, und die Kasse sendet Ihre Zustimmung (die Version und Ihre Sprache) mit der Registrierung.
+3. Klicken Sie auf „Dieses Geschäft übernehmen“, um einen kurzen Code (15 Minuten gültig) und einen QR-Code zu erhalten — scannen Sie ihn mit Ihrem Telefon, um von dort aus zu beanspruchen.
+4. Melden Sie sich mit Ihrer Universal-Till-ID im Marktplatz an, öffnen Sie die Beanspruchungsseite und geben Sie den Code ein.
 
 ## Automatische Registrierung — Ihre Wahl bei der Einrichtung
 
 Der letzte Bildschirm des Einrichtungsassistenten fragt einmalig, ob die Kasse sofort registriert werden soll — standardmäßig nicht angehakt. Dieselbe Wahl finden Sie unter Einstellungen → Kassenregistrierung als „Diese Kasse automatisch beim Marktplatz registrieren“:
 
-1. Schalten Sie es ein, sendet die Kasse ihre Geräte-ID, den Geschäftsnamen, das Land, die Region und die Softwareversion an den Universal-Till-Cloud-Marktplatz (verwendet für Support, Updates und Lizenzierung) und registriert sich sofort. Ihre Adresse wird nicht gesendet. Sind Sie in diesem Moment offline? Es entsteht keine Verzögerung, und die Einrichtung wird trotzdem abgeschlossen — die Kasse bleibt jedoch unregistriert, bis Sie den Plugin-Store öffnen oder „Jetzt registrieren“ drücken. Prüfen Sie daher Einstellungen → Kassenregistrierung, sobald Sie wieder online sind.
+1. Schalten Sie es ein, sendet die Kasse ihre Geräte-ID, den Geschäftsnamen, das Land, die Region und die Softwareversion an den Universal-Till-Cloud-Marktplatz (verwendet für Support, Updates und Lizenzierung) und registriert sich sofort. Ihre Adresse wird nicht gesendet. Sind Sie in diesem Moment offline? Es entsteht keine Verzögerung, und die Einrichtung wird trotzdem abgeschlossen — die Kasse bleibt jedoch unregistriert, bis Sie den Plugin-Store öffnen oder „Jetzt registrieren“ drücken. Prüfen Sie daher Einstellungen → Kassenregistrierung, sobald Sie wieder online sind. Das Kästchen für die Bedingungen erscheint unter der Auswahl, solange sie angehakt ist; wenn Sie die Auswahl, aber nicht die Bedingungen anhaken, wird die Auswahl als aus gespeichert und nichts gesendet. In den Einstellungen braucht das Einschalten dasselbe Häkchen (außer Sie haben bereits zugestimmt oder die Kasse ist schon registriert); das Ausschalten nie.
 2. Schalten Sie es aus, registriert sich die Kasse erst wieder, wenn Sie zum ersten Mal den Plugin-Store nutzen oder „Jetzt registrieren“ drücken. Das Ausschalten entfernt niemals eine bereits erfolgte Registrierung.
 
 ## Abonnement
@@ -58,6 +59,7 @@ Ein Manager öffnet mit einem Tipp auf den Hinweis Einstellungen → Kassenregis
 
 Die Karte nennt die Ursache in einer Zeile; der Verkauf ist nie betroffen:
 
+- **Akzeptieren Sie die Bedingungen für den Cloud-Dienst von Universal Till, um diese Kasse zu registrieren**: Das Kästchen für die Bedingungen war nicht angehakt, daher wurde nichts gesendet. Haken Sie es an (oder schalten Sie die automatische Registrierung mit angehaktem Kästchen ein) und versuchen Sie es erneut.
 - **Universal Till Cloud ist für dieses Geschäft nicht verfügbar**: Die Cloud bedient dieses Geschäft nicht. Auf einer verbundenen Kasse kommt diese Meldung von der Hauptkasse. Die Kasse arbeitet offline weiter.
 - **Auf dieser Kasse ist keine Cloud-Adresse eingerichtet**: Die Kasse wurde ohne Cloud-Adresse installiert und kann sich daher nicht registrieren. Bitten Sie die Person, die sie installiert hat, eine einzurichten.
 - **Ein anderer Registrierungsversuch läuft noch**: Die Kasse registriert sich bereits im Hintergrund. Warten Sie kurz und versuchen Sie es erneut.
