@@ -84,6 +84,7 @@
   </div>
   {{ if enrolled }}
     <p>✅ {{ T "settings.enrol.registered" }}</p>
+    {{ if .terms.accepted }}<p class="muted">{{ .terms.line }}</p>{{ end }}
     {{ if enrolstore }}<p class="muted">{{ T "settings.enrol.store" }}: <code>{{ enrolstore }}</code></p>{{ end }}
     {{ if enroldevice }}<p class="muted">{{ T "settings.enrol.device" }}: <code>{{ enroldevice }}</code></p>{{ end }}
     {{/* ADR-0148 (ut-docs#3615): the fleet list is a cloud call
@@ -129,8 +130,12 @@
     <p>⚠️ {{ T "settings.enrol.not_registered" }}</p>
     <p class="muted">{{ T "settings.enrol.benefits" }}</p>
     <!-- ut-docs#867: unconditional — elevation-wired (see claim-code above). -->
+    {{/* ut-docs#4720: the cloud-terms accept step. Not a form (no native
+         submit): the button's hx-include carries the tick. Once the current
+         version is accepted only the muted line shows. */}}
+    {{ template "enrol_terms.html" (dict "terms" .terms "id" "enrol-accept-terms") }}
     <div class="set-row">
-      <button class="btn btn-touch" hx-post="/api/enrol/now" hx-target="#enrol-msg" hx-swap="innerHTML">{{ T "settings.enrol.retry" }}</button>
+      <button class="btn btn-touch" hx-post="/api/enrol/now" hx-target="#enrol-msg" hx-swap="innerHTML" hx-include="#enrol-accept-terms">{{ T "settings.enrol.retry" }}</button>
       <span id="enrol-msg" aria-live="polite"></span>
     </div>
   {{ end }}
@@ -172,6 +177,11 @@
     <form hx-post="/api/settings/auto-register" hx-swap="none" data-after-request="ok not-html reload:settings-auto-register; fail save-error:settings-save-error">
       <label><input type="checkbox" name="optIn" {{ if eq (index .settingsMap "marketplace.auto_register_opt_in") "true" }}checked{{ end }}> {{ T "settings.enrol.auto_register.label" }}</label>
       <p class="muted">{{ T "settings.enrol.auto_register.help" }}</p>
+      {{/* ut-docs#4720: turning registration ON needs the cloud terms
+           accepted (once per version); OFF never does. A registered till
+           can't register again from here, so it isn't asked (and the
+           accepted line already shows at the top of the card). */}}
+      {{ if not (or enrolled enrolledviamain) }}{{ template "enrol_terms.html" (dict "terms" .terms "id" "auto-register-accept-terms") }}{{ end }}
       <div class="set-gap-s">
         <button class="btn" type="submit">{{ T "common.save" }}</button>
         <span id="auto-register-msg" aria-live="polite"></span>

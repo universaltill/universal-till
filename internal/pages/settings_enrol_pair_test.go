@@ -253,7 +253,7 @@ func TestEnrolNow_ServiceRefusedShowsTranslatedMessageOnly(t *testing.T) {
 	d.Cfg.Marketplace.EndpointURL = srv.URL + "/api"
 	nameShop(t, d) // an unnamed shop never reaches the cloud (ut-docs#4272)
 
-	rec := postForm(mux, "/api/enrol/now", url.Values{}, &mgrUser)
+	rec := postForm(mux, "/api/enrol/now", url.Values{"accept_terms": {"on"}}, &mgrUser)
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK || !strings.Contains(body, `class="error"`) {
 		t.Fatalf("refused register = %d %s, want 200 with the failure span", rec.Code, body)
@@ -300,7 +300,7 @@ func TestEnrolNow_UnnamedShopAsksForNameAndLinksToCard(t *testing.T) {
 	d.Cfg.Marketplace.EndpointURL = srv.URL + "/api"
 	d.Cfg.Marketplace.PublicKey = strings.Repeat("ab", 32) // no signing-key fetch
 
-	rec := postForm(mux, "/api/enrol/now", url.Values{}, &mgrUser)
+	rec := postForm(mux, "/api/enrol/now", url.Values{"accept_terms": {"on"}}, &mgrUser)
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK || !strings.Contains(body, `class="error"`) {
 		t.Fatalf("unnamed register = %d %s, want 200 with the failure span", rec.Code, body)
@@ -329,7 +329,7 @@ func TestEnrolNow_OtherFailureShowsGenericMessageNotRawBody(t *testing.T) {
 	d.Cfg.Marketplace.EndpointURL = srv.URL + "/api"
 	nameShop(t, d) // an unnamed shop never reaches the cloud (ut-docs#4272)
 
-	rec := postForm(mux, "/api/enrol/now", url.Values{}, &mgrUser)
+	rec := postForm(mux, "/api/enrol/now", url.Values{"accept_terms": {"on"}}, &mgrUser)
 	body := rec.Body.String()
 	if !strings.Contains(body, "Registration failed") {
 		t.Fatalf("missing the generic failure text: %s", body)
@@ -419,7 +419,7 @@ func TestEnrolNow_NotConfiguredHasOwnMessage(t *testing.T) {
 	enroll.Init(t.Context(), &config.Config{}, d.Settings, &sync.WaitGroup{})
 	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
 	d.Cfg.Marketplace.EndpointURL = ""
-	rec := postForm(mux, "/api/enrol/now", url.Values{}, &mgrUser)
+	rec := postForm(mux, "/api/enrol/now", url.Values{"accept_terms": {"on"}}, &mgrUser)
 	body := rec.Body.String()
 	if !strings.Contains(body, "No cloud address is set up on this till") {
 		t.Fatalf("missing the not-configured text: %s", body)
@@ -457,7 +457,7 @@ func TestEnrolNow_BusySlotHasOwnMessage(t *testing.T) {
 	<-entered
 	t.Cleanup(func() { close(release); <-done })
 
-	form := url.Values{}
+	form := url.Values{"accept_terms": {"on"}}
 	req := httptest.NewRequest(http.MethodPost, "/api/enrol/now", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req = auth.WithUser(req, mgrUser)

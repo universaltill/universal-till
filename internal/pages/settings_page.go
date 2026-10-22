@@ -951,6 +951,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// ut-docs#2981: shop-wide regions render read-only while this
 			// additional till cannot reach its main till.
 			"lockedRegions": lockedSettingsRegions(r.Context(), d),
+			// ut-docs#4720: the cloud-terms accept step / accepted line.
+			"terms": termsView(r.Context(), d, locale),
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})
@@ -1211,11 +1213,29 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// place of the flat forbidden span. No other form fields, so
 		// ParseForm only reads override_pin.
 		_ = r.ParseForm()
+		// ut-docs#4720: the cloud terms must be accepted (once per version)
+		// before anything is sent. Validated BEFORE checkOrElevate - a
+		// request that would be refused must not burn an approver's PIN.
+		accepted := termsAlreadyAccepted(r.Context(), d)
+		if !accepted && !termsTicked(r) {
+			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, "settings.enrol.terms_required")))
+			return
+		}
 		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
 			renderElevationPrompt(w, r, "/api/enrol/now", "#enrol-msg",
-				httpx.T(locale, "elevation.summary.enrol_now"), nil, elev)
+				httpx.T(locale, "elevation.summary.enrol_now"),
+				[]elevationHiddenField{{Name: "accept_terms", Value: r.Form.Get("accept_terms")}}, elev)
 			return
+		}
+		if !accepted {
+			if err := enroll.RecordTermsAcceptance(r.Context(), d.Settings, locale); err != nil {
+				// Without a stored acceptance register() would send none:
+				// do not register, tell the operator to retry.
+				logging.L().Errorf("enrol now: record terms acceptance: %v", err)
+				fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, "settings.error.save_failed")))
+				return
+			}
 		}
 		status, err := enroll.RegisterNow(r.Context(), d.Cfg, d.Settings)
 		if err != nil || !(status.Registered || status.ViaMainTill) {
@@ -1255,7 +1275,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(w, `<span class="error">❌ %s (%s)</span>`, httpx.T(locale, "settings.enrol.failed"), endpoint)
 			return
 		}
-		settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "enrol_now_registered", map[string]any{"store_id": status.StoreID})
+		settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "enrol_now_registered", map[string]any{"store_id": status.StoreID, "terms_version": enroll.TermsVersion})
 		requestOperatorCheckin(d, operatorCheckinWindow) // ADR-0148 §2
 		if !status.Registered {
 			// ut-docs#2753: a replica its main till registered — no store
@@ -1409,6 +1429,20 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if r.Form.Get("optIn") == "on" || r.Form.Get("optIn") == "1" {
 			optIn = "true"
 		}
+		// ut-docs#4720: turning registration ON needs the cloud terms
+		// accepted (once per version); turning it OFF never does. Refused
+		// before checkOrElevate, like a bad value: nothing is saved and no
+		// approver PIN is spent. The form's `fail save-error` path shows
+		// the (marked, translated) reason.
+		// A till already registered (itself or through its main till) can't
+		// register again from here, so it isn't asked (review: re-saving an
+		// unchanged opt-in was refused).
+		st := enroll.CurrentStatus()
+		accepted := termsAlreadyAccepted(r.Context(), d)
+		if optIn == "true" && !st.Registered && !st.ViaMainTill && !accepted && !termsTicked(r) {
+			httpx.RefuseText(w, httpx.T(locale, "settings.enrol.terms_required"), http.StatusBadRequest)
+			return
+		}
 		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
 			summaryKey := "elevation.summary.auto_register_off"
@@ -1417,8 +1451,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			}
 			renderElevationPrompt(w, r, "/api/settings/auto-register", "#auto-register-msg",
 				httpx.T(locale, summaryKey),
-				[]elevationHiddenField{{Name: "optIn", Value: r.Form.Get("optIn")}}, elev)
+				[]elevationHiddenField{
+					{Name: "optIn", Value: r.Form.Get("optIn")},
+					{Name: "accept_terms", Value: r.Form.Get("accept_terms")},
+				}, elev)
 			return
+		}
+		if optIn == "true" && !accepted && termsTicked(r) {
+			if err := enroll.RecordTermsAcceptance(r.Context(), d.Settings, locale); err != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings_auto_register_terms", err)
+				return
+			}
 		}
 		if err := saveShopSettings(r.Context(), d, elev, map[string]string{common.KeyAutoRegisterOptIn: optIn}); err != nil {
 			if respondSettingsSyncError(w, r, err) {
@@ -1427,7 +1470,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings_auto_register", err)
 			return
 		}
-		settingsAudit(r, posRepo, elev, "settings", common.KeyAutoRegisterOptIn, "auto_register_opt_in_changed", map[string]any{"opt_in": optIn})
+		auditPayload := map[string]any{"opt_in": optIn}
+		if optIn == "true" && termsAlreadyAccepted(r.Context(), d) {
+			auditPayload["terms_version"] = enroll.TermsVersion
+		}
+		settingsAudit(r, posRepo, elev, "settings", common.KeyAutoRegisterOptIn, "auto_register_opt_in_changed", auditPayload)
 		if optIn == "true" {
 			// Best-effort and bounded, exactly like the wizard's own opt-in
 			// attempt (autoRegisterForSetup): EnsureRegistered logs and
