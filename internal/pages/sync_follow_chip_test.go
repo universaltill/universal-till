@@ -3,10 +3,13 @@ package pages
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
 )
 
 // ut-docs#2984: when an additional till follows the main till's plugin
@@ -111,5 +114,29 @@ func TestConvergePluginSet_AlreadyFollowingDoesNotRecompute(t *testing.T) {
 
 	if len(*calls) != 0 || *recomputes != 0 {
 		t.Fatalf("steady state: installs %v, recomputes %d; want none (this runs every 30 s)", *calls, *recomputes)
+	}
+}
+
+// ADR-0169 / ut-docs#4759: a listing whose plugin runs in the cloud (type
+// `channel`, hosts ["cloud"]) is never installed on a replica. The follower
+// meets the refusal once, treats it as "nothing to follow" and does not hold
+// the whole plugin set unconverged or raise a retry problem every tick.
+func TestConvergePluginSet_CloudHostedListingIsNothingToFollow(t *testing.T) {
+	dp := newMigratedSyncDeps(t, "follow-cloud-hosted.db")
+	calls := stubPluginSyncInstall(t, fmt.Errorf("verify: %w", plugins.ErrCloudHostedPlugin))
+	recomputes := stubRecompute(t)
+	row := data.PluginSyncRow{ListingID: "listing-channel", PluginID: "com.test.channel", PluginName: "Channel", Version: "1.0.0"}
+
+	if !convergePluginSet(t.Context(), dp, []data.PluginSyncRow{row}) {
+		t.Fatal("a cloud-hosted listing is not a failed convergence: nothing on a till can follow it")
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("the follower should try once and meet the refusal, got %v", *calls)
+	}
+	if *recomputes != 0 {
+		t.Fatalf("nothing was installed, so the chip is not recomputed (got %d)", *recomputes)
+	}
+	if logging.HasOpenProblem(pluginSyncInstallKeyPrefix + row.ListingID) {
+		t.Fatal("a permanent, expected refusal must not raise a retry problem")
 	}
 }
