@@ -119,7 +119,12 @@ type Hooks struct {
 	// (ut-docs#3643), but an item with an active variant needs a variant
 	// (ADR-0043); the hook's refusal strings are listed on the till's
 	// implementation (pages.cloudAdjustStock).
-	AdjustStock    func(ctx context.Context, itemID, variantID, locationID string, delta float64, reason string) (string, error)
+	AdjustStock func(ctx context.Context, itemID, variantID, locationID string, delta float64, reason string) (string, error)
+	// CountStock handles "adjust_stock" with mode "count" (ADR-0168 §4,
+	// ut-docs#4749): set the item to the counted quantity while keeping
+	// every movement recorded since the count. nil on a till without the
+	// mode, which then refuses the directive.
+	CountStock     func(ctx context.Context, req CountStockRequest) (string, error)
 	RenameItem     func(ctx context.Context, itemID, name string) (string, error)
 	DeactivateItem func(ctx context.Context, itemID string) (string, error)
 	CreateItem     func(ctx context.Context, name string, priceMinor int64, barcode string) (string, error)
@@ -402,6 +407,27 @@ type directive struct {
 	// CreatedBy is the cloud's queuing actor, when the cloud sends it (the
 	// user directives' audit provenance); "" otherwise.
 	CreatedBy string `json:"created_by"`
+	// ServerTime is the cloud's clock when it served this directive (the
+	// sync response's server_time); zero when the cloud did not send it.
+	// adjust_stock count mode (ut-docs#4749) converts the cloud's
+	// counted_at into the till's clock with it.
+	ServerTime time.Time `json:"-"`
+	// ReceivedAt is the till's clock when the sync response arrived; with
+	// ServerTime it gives the clock offset at receipt, not at apply time.
+	ReceivedAt time.Time `json:"-"`
+}
+
+// CountStockRequest is one adjust_stock count-mode directive: Target is the
+// counted quantity as of CountedAt (the cloud's clock). CloudNow is the
+// cloud's clock when it served the directive, zero when unknown; the hook
+// uses it to convert CountedAt into the till's clock and to report skew.
+type CountStockRequest struct {
+	ItemID, VariantID, LocationID string
+	Target                        float64
+	CountedAt                     time.Time
+	CloudNow                      time.Time
+	ReceivedAt                    time.Time // the till's clock when CloudNow was received
+	Reason                        string
 }
 
 // ModifierGroupOption is one option inside an upsert_modifier_group
@@ -794,6 +820,19 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 		}
 		msg, err = hooks.SetPrice(ctx, id, price)
 	case "adjust_stock":
+		if m, present := d.Payload["mode"]; present {
+			mode, isText := m.(string)
+			if !isText {
+				return "failed", "unsupported adjust_stock mode"
+			}
+			switch mode {
+			case "", "delta":
+			case "count":
+				return applyCountStock(ctx, d, hooks)
+			default:
+				return "failed", "unsupported adjust_stock mode"
+			}
+		}
 		if hooks.AdjustStock == nil {
 			return "failed", "adjust_stock is not supported on this till"
 		}
@@ -1452,12 +1491,22 @@ func pushSync(ctx context.Context, cfg *config.Config, settings *data.SettingsRe
 			// DeviceToken is a secret: never log it or this struct.
 			DeviceID    string `json:"device_id"`
 			DeviceToken string `json:"device_token"`
+			// ServerTime: the cloud's clock (RFC 3339), for stock count
+			// mode's clock conversion (ut-docs#4749). Optional.
+			ServerTime string `json:"server_time"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("cloudsync: decode sync response: %w", err)
 	}
 	cacheEntitlement(ctx, settings, resp.Data.Entitlement, time.Now())
+	if st, err := time.Parse(time.RFC3339, resp.Data.ServerTime); err == nil {
+		received := time.Now()
+		for i := range resp.Data.Directives {
+			resp.Data.Directives[i].ServerTime = st
+			resp.Data.Directives[i].ReceivedAt = received
+		}
+	}
 	// Kept only for this till's own device id and only when the environment
 	// doesn't pin the token; every cloud caller sends it from the next
 	// request (enroll.Effective). Never fails the sync.
