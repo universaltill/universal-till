@@ -100,6 +100,33 @@ fetch() {
     fi
 }
 
+# check_plan_names PACK_LOCALE_JSON (ut-docs#4742; ADR-0060 amendment
+# 2026-10-17 point 2): plan names are product names. Every
+# subscription.plan.<id> label in a pack must equal core's English one,
+# bar subscription.plan.local, which must start with "Local" (only its
+# "(free)" suffix is translated) -- core's web/locales/plan_names_test.go
+# applies the same rule to core's own locales. The pack's own
+# check-key-drift.sh can't catch this: a translated value is what it
+# asks for. Keys the pack lacks are that script's missing-key drift.
+check_plan_names() {
+    python3 - "$CORE_EN_JSON" "$1" <<'PY'
+import json, re, sys
+core = json.load(open(sys.argv[1]))
+pack = json.load(open(sys.argv[2]))
+plan = re.compile(r"subscription\.plan\.[a-z0-9_]+")
+bad = []
+for k in sorted(k for k in core if plan.fullmatch(k) and k in pack):
+    if k == "subscription.plan.local":
+        if not pack[k].startswith("Local"):
+            bad.append(f"{k} = {pack[k]!r}, want it to start with the product name 'Local'")
+    elif pack[k] != core[k]:
+        bad.append(f"{k} = {pack[k]!r}, want the product name {core[k]!r}")
+for b in bad:
+    print(f"check-lang-pack-drift: plan name translated (ADR-0060): {b}", file=sys.stderr)
+sys.exit(1 if bad else 0)
+PY
+}
+
 overall_fail=0
 # Names of packs that failed their check this run (ut-docs#1857) -- kept
 # separate from overall_fail (a plain flag) so the end-of-run summary can
@@ -145,7 +172,10 @@ for entry in "${PACKS[@]}"; do
         continue
     fi
 
-    if ! UT_CORE_EN_JSON="$CORE_EN_JSON" bash "${pack_dir}/scripts/check-key-drift.sh"; then
+    pack_ok=1
+    UT_CORE_EN_JSON="$CORE_EN_JSON" bash "${pack_dir}/scripts/check-key-drift.sh" || pack_ok=0
+    check_plan_names "${pack_dir}/locales/${code}.json" || pack_ok=0
+    if [ "$pack_ok" -eq 0 ]; then
         echo "check-lang-pack-drift: ${repo} FAILED (see above)" >&2
         overall_fail=1
         FAILED_REPOS+=("$repo")

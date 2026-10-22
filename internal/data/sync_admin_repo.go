@@ -141,7 +141,7 @@ var adminTables = []adminTable{
 	// (ut-docs#3200) are personal data like the rest.
 	{name: "customers", pk: []string{"id"}, unique: []string{"loyalty_no"},
 		scrubOnRetire: []scrubCol{{"name", "''"}, {"phone", "NULL"}, {"email", "NULL"}, {"address", "NULL"}, {"loyalty_no", "NULL"},
-			{"notes", "NULL"}, {"phone_e164", "NULL"}},
+			{"notes", "NULL"}, {"phone_e164", "NULL"}, {"postcode", "NULL"}},
 		onPrune: func(ctx context.Context, tx *sql.Tx, id any) error {
 			return stripCustomerFromHeldSales(ctx, tx, fmt.Sprint(id), false)
 		}},
@@ -520,11 +520,16 @@ var nonAdminTables = map[string]string{
 	// ADR-0162 §4 (ut-docs#4463): only the main till pulls the cloud
 	// catalogue; additional tills get the resulting catalogue rows, never
 	// the cloud-id bookkeeping or its refusal log.
-	"cloud_links":           "which local record a cloud catalogue row (entity, cloud_id) became — main-till pull bookkeeping, never synced (ut-docs#4463)",
-	"cloud_apply_failures":  "the latest refusal per pulled cloud catalogue row — main-till pull bookkeeping, never synced (ut-docs#4463)",
-	"cloud_retired":         "option sets the cloud pull could only retire, whose delete it retries — main-till pull bookkeeping, never synced (ut-docs#4522)",
-	"cloud_outbox":          "the main till's catalogue edits not yet answered by the cloud — main-till upload bookkeeping, never synced (ut-docs#4464)",
-	"cloud_outbox_suppress": "a flag row that lives only inside the pull's own write transaction — never synced (ut-docs#4464)",
+	// ADR-0168 §5 (ut-docs#4748): the sealed customer import is applied on
+	// the main till only; its salt and the erased-customer suppression
+	// hashes stay on that till (the salt never leaves it).
+	"customer_import_salt":    "this till's random salt for customer-import baselines and erasure hashes — main-till only, never synced, never leaves the till (ut-docs#4748)",
+	"customer_erasure_hashes": "salted email/phone hashes of customers erased on this till, so an import never recreates them — main-till bookkeeping, never synced (ut-docs#4748)",
+	"cloud_links":             "which local record a cloud catalogue row (entity, cloud_id) became — main-till pull bookkeeping, never synced (ut-docs#4463)",
+	"cloud_apply_failures":    "the latest refusal per pulled cloud catalogue row — main-till pull bookkeeping, never synced (ut-docs#4463)",
+	"cloud_retired":           "option sets the cloud pull could only retire, whose delete it retries — main-till pull bookkeeping, never synced (ut-docs#4522)",
+	"cloud_outbox":            "the main till's catalogue edits not yet answered by the cloud — main-till upload bookkeeping, never synced (ut-docs#4464)",
+	"cloud_outbox_suppress":   "a flag row that lives only inside the pull's own write transaction — never synced (ut-docs#4464)",
 
 	// Local bookkeeping with no shop-wide meaning.
 	"issue_reports_sent": "dedup record of bug reports already sent FROM this till",

@@ -163,6 +163,12 @@ fresh_case() {
 #              with the thing under test)
 #   drift   -- locale file missing one key core has (real new drift, not
 #              in any baseline)
+#   plans   -- like sync, but the plan-name keys (ut-docs#4742) follow
+#              ADR-0060: every subscription.plan.<id> equals core's, bar
+#              .local, which keeps "Local" and translates its suffix. The
+#              kept names go in the same-as-en allowlist, as in the real
+#              packs. $plan_override ("key=value") then sets one key, so a
+#              case can break the rule on exactly one key.
 # All fixtures get empty baseline/allowlist files (ratcheting behavior is
 # tested by the pack-side check-key-drift.test.sh, not re-tested here).
 _write_pack_content() {
@@ -193,6 +199,30 @@ core = json.load(open(sys.argv[1]))
 dropped = sorted(core.keys())[0]
 pack = {k: f"[xx] {v}" for k, v in core.items() if k != dropped}
 json.dump(pack, open(sys.argv[2], "w"))
+PY
+    elif [ "$mode" = "plans" ]; then
+        PLAN_OVERRIDE="${plan_override:-}" python3 - "$core_json" "${content_dir}/locales/${code}.json" \
+            "${content_dir}/i18n-baseline/${code}.same-as-en.txt" <<'PY'
+import json, os, re, sys
+core = json.load(open(sys.argv[1]))
+plan = re.compile(r"subscription\.plan\.[a-z0-9_]+")
+pack, same = {}, []
+for k, v in core.items():
+    if k == "subscription.plan.local":
+        pack[k] = "Local (xx)"
+    elif plan.fullmatch(k):
+        pack[k] = v
+        same.append(k)
+    else:
+        pack[k] = f"[xx] {v}"
+override = os.environ["PLAN_OVERRIDE"]
+if override:
+    k, v = override.split("=", 1)
+    pack[k] = v
+    if k in same and v != core[k]:
+        same.remove(k)
+json.dump(pack, open(sys.argv[2], "w"))
+open(sys.argv[3], "w").write("".join(k + "\n" for k in sorted(same)))
 PY
     else
         echo "_write_pack_content: unknown mode $mode" >&2
@@ -326,6 +356,14 @@ assert_fail_repos() {
         FAILS=$((FAILS + 1))
         return
     fi
+    # expect_msg (ut-docs#4742 review): a case may also pin WHY it failed,
+    # so a fixture that starts tripping a different check can't keep it green.
+    if [ -n "${expect_msg:-}" ] && ! grep -qF "$expect_msg" <<<"$out"; then
+        echo "FAIL [$name]: output lacks \"$expect_msg\". Output:"
+        echo "$out"
+        FAILS=$((FAILS + 1))
+        return
+    fi
     echo "ok   [$name]"
 }
 
@@ -409,6 +447,55 @@ fixture_pack ut-plugin-language-pt pt sync
 _write_pack_content ut-plugin-language-de de sync "${server_root}/ut-plugin-language-de/main"
 start_server
 assert_pass "falls back to the main ref when the commit-SHA lookup itself fails"
+
+# --- Cases 7-10 (ut-docs#4742, ADR-0060 amendment 2026-10-17 point 2):
+# plan names are product names. A pack whose paid-plan label differs from
+# core's English, or whose free-plan label drops "Local", has drifted even
+# though no key is missing -- the pack-side check-key-drift.sh can't see
+# it, because a translated value is exactly what that check asks for. ---
+plan_core='{"a.b":"Hello","subscription.plan_label":"Plan:","subscription.plan.local":"Local (free)","subscription.plan.shop":"Shop","subscription.plan.pro":"Pro","subscription.plan.chain":"Multi-location","subscription.plan.local_plus":"Local Plus"}'
+
+fresh_case
+printf '%s' "$plan_core" > "$core_json"
+plan_override=""
+fixture_pack ut-plugin-language-de de plans
+fixture_pack ut-plugin-language-es es plans
+fixture_pack ut-plugin-language-pt pt plans
+start_server
+assert_pass "plan names kept as core's product names"
+
+fresh_case
+printf '%s' "$plan_core" > "$core_json"
+plan_override=""
+expect_msg="plan name translated (ADR-0060)"
+fixture_pack ut-plugin-language-de de plans
+fixture_pack ut-plugin-language-pt pt plans
+plan_override="subscription.plan.chain=Chain"
+fixture_pack ut-plugin-language-es es plans
+start_server
+assert_fail_repos "a pack keeps an old paid-plan name" "https://github.com/universaltill/ut-plugin-language-es"
+
+fresh_case
+printf '%s' "$plan_core" > "$core_json"
+plan_override=""
+fixture_pack ut-plugin-language-es es plans
+fixture_pack ut-plugin-language-pt pt plans
+plan_override="subscription.plan.local=Lokal (kostenlos)"
+fixture_pack ut-plugin-language-de de plans
+start_server
+assert_fail_repos "a pack translates the free plan's name" "https://github.com/universaltill/ut-plugin-language-de"
+
+fresh_case
+printf '%s' "$plan_core" > "$core_json"
+plan_override=""
+fixture_pack ut-plugin-language-de de plans
+fixture_pack ut-plugin-language-es es plans
+plan_override="subscription.plan.local_plus=Local Mais"
+fixture_pack ut-plugin-language-pt pt plans
+start_server
+assert_fail_repos "a pack translates a plan key added after the rule" "https://github.com/universaltill/ut-plugin-language-pt"
+plan_override=""
+expect_msg=""
 
 echo
 if [ "$FAILS" -ne 0 ]; then

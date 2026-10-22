@@ -668,6 +668,13 @@ erDiagram
 - `POSRepo.BackfillCustomerPhoneE164` fills `NULL` rows in chunks, in the background after start-up on every till (main and replica); when `store.country` differs from the per-till marker `customers.phone_e164_region` it recomputes every row first. Idempotent.
 - `POSRepo.LookupCustomersByPhone` (caller ID): every non-erased customer whose `phone_e164` equals the caller's normalised number, else matches on the trailing 9 digits; at most 10, by name, each with its last 5 completed sales (date, total, line count). Rows still `NULL` are normalised in Go, so the lookup is right before the back-fill finishes. Migration 069 also adds `idx_sales_customer_id` for the last-5-sales query.
 
+## Customers — sealed import (ut-docs#4748, ADR-0168 §5)
+
+- Migration 087: `customers.postcode TEXT` (personal data like the rest: syncs to replicas, blanked on an erased shell), expression indexes on `lower(email)` and the postcode without spaces in upper case, `import_source_links.baseline_hash` / `erased_at`, and the main-till-only tables `customer_import_salt` (one random salt that never leaves the till) and `customer_erasure_hashes` (salted email/phone hashes of erased customers). None of the new tables syncs.
+- `internal/customerimport.Apply` applies one sealed `import_customers` chunk (at most 200 rows, 64 KiB) in one transaction: tombstoned link, then link, folded email, `phone_e164`, name + postcode only when exactly one customer fits; two candidates are `ambiguous_match`, an email and a phone naming different people `conflicting_match`; empty fields are filled, a differing field is kept and reported as row number + field name only; `force_fields` overwrites exactly the fields it names; each link stores a salted hash of the fields last imported, so the same rows again change nothing.
+- `POSRepo.EraseCustomer` writes the suppression hashes and turns the customer's import links into tombstones in its own transaction; a later import skips that person and counts `erased_on_till`. A customer erased with neither an email, a phone nor an import link leaves nothing to match on.
+- The directive (`import_customers`: `job_id`, `chunk_index`, `sealed`) is main-till only; the seal is HPKE to the directive key with info `universaltill/import-customers/v1` and AAD store, directive id, type, job id and chunk index (`directivekey.CustomersAAD`). No customer value is logged or audited: audit rows and the result carry ids, counts and field names.
+
 ## Shop currency from the cloud (ut-docs#4539, ADR-0163 amendment 2026-10-16)
 
 A store born on my. has a currency the cloud set. The `POST /v1/stores/sync`
