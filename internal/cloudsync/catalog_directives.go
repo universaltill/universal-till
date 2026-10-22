@@ -1,10 +1,12 @@
 package cloudsync
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
@@ -506,4 +508,50 @@ func decodeSaveModifierGroup(p payload) (data.ModifierGroupSave, string) {
 		}
 	}
 	return out, ""
+}
+
+// maxCountStockTarget bounds a counted quantity (matches the cloud's
+// MaxStockAdjustDelta) so a corrupt row can never write an absurd level.
+const maxCountStockTarget = 1_000_000
+
+// applyCountStock validates an adjust_stock count-mode payload (ADR-0168 §4)
+// and routes it to the CountStock hook. Payload: item_id, optional
+// variant_id / location_id / reason, target (a finite number >= 0) and
+// counted_at (RFC 3339, the cloud's clock). The refusals are English, like
+// every other directive result.
+func applyCountStock(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
+	if hooks.CountStock == nil {
+		return "failed", "adjust_stock count mode is not supported on this till"
+	}
+	p := payload(d.Payload)
+	id, ok := p.optStr("item_id")
+	if !ok || id == nil || *id == "" {
+		return "failed", "missing item_id"
+	}
+	req := CountStockRequest{ItemID: *id, CloudNow: d.ServerTime, ReceivedAt: d.ReceivedAt}
+	for k, dst := range map[string]*string{"variant_id": &req.VariantID, "location_id": &req.LocationID, "reason": &req.Reason} {
+		v, ok := p.optStr(k)
+		if !ok {
+			return "failed", "invalid " + k
+		}
+		if v != nil {
+			*dst = *v
+		}
+	}
+	target, ok := d.Payload["target"].(float64)
+	if !ok || math.IsNaN(target) || math.IsInf(target, 0) || target < 0 || target > maxCountStockTarget {
+		return "failed", "missing or invalid target"
+	}
+	req.Target = target
+	raw, _ := d.Payload["counted_at"].(string)
+	at, err := time.Parse(time.RFC3339, strings.TrimSpace(raw))
+	if err != nil {
+		return "failed", "missing or invalid counted_at"
+	}
+	req.CountedAt = at
+	out, err := hooks.CountStock(ctx, req)
+	if err != nil {
+		return "failed", err.Error()
+	}
+	return "applied", out
 }
