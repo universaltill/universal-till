@@ -178,3 +178,20 @@ func TestEncodableAcceptsZeroWidthJoiners(t *testing.T) {
 		t.Error("a ZWNJ is dropped on cp858, not degraded: want Encodable")
 	}
 }
+
+// The exported wrappers (ut-docs#4689) must agree with the internal helpers.
+func TestExportedDisplayWidthAndClip(t *testing.T) {
+	for _, s := range []string{"", "abc", "باقی‌مانده", "éa", "£1.00"} {
+		if got, want := DisplayWidth(s), displayWidth(s); got != want {
+			t.Errorf("DisplayWidth(%q) = %d, want %d", s, got, want)
+		}
+		for _, max := range []int{-1, 0, 1, 3, 20} {
+			if got, want := Clip(s, max), clip(s, max); got != want {
+				t.Errorf("Clip(%q, %d) = %q, want %q", s, max, got, want)
+			}
+		}
+	}
+	if got := DisplayWidth("باقی‌مانده"); got != 9 {
+		t.Errorf("DisplayWidth(fa ZWNJ label) = %d, want 9", got)
+	}
+}
