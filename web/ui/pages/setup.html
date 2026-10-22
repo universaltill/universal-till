@@ -396,6 +396,12 @@
                time-boxed registration attempt; on no (the default) the till
                keeps today's lazy registration (ADR-0015). Same
                labelled-checkbox idiom as the rest of the wizard. -->
+          {{/* ut-docs#4803: a till that joined a my. shop is already registered
+               and paired (ADR-0166), so the opt-in and the terms box are
+               not asked; the server ignores them on this path. */}}
+          {{ if .cloudShop }}
+          {{ if .cloudShop.HasName }}<p data-testid="setup-joined-shop">{{ T "setup.cloud.shop_name" }}: <strong>{{ .cloudShop.Name }}</strong></p>{{ end }}
+          {{ else }}
           <label class="set-row" style="margin-top:.6rem">
             <input type="checkbox" name="auto_register" x-model="autoReg">
             {{ T "setup.auto_register.label" }}
@@ -411,6 +417,7 @@
             <label class="set-row"><input type="checkbox" id="setup-accept-terms" name="accept_terms" :required="autoReg"> {{ .terms.label }}</label>
             <a href="{{ .terms.url }}" target="_blank" rel="noopener" hx-boost="false">{{ T "settings.enrol.terms.link" }}</a>
           </div>
+          {{ end }}
           {{ end }}
           {{/* ADR-0121 §7 (ut-docs#3872): plugin panels (setup.wizard.steps),
                rendered inline by the handler (renderSetupSlot) and
