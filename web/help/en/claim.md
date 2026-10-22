@@ -14,13 +14,13 @@ Registering connects your till to the Universal Till marketplace; claiming links
 ## How to use it
 
 1. Settings → Till registration shows the store identity; Register now connects it if needed. On a joined till, the main till registers it for you: this card then says it is registered through the main till, and claiming is done on the main till.
-2. Tick the box "I accept the Universal Till cloud service terms (version v0.1-draft)" before registering; "Read the terms" opens them in a new tab. Without the tick, Register now does nothing and tells you so. You accept once per terms version: afterwards the card shows "Terms accepted: version v0.1-draft" with the date instead of the box, and the till sends your acceptance (the version and your language) with the registration.
+2. Tick the box "I accept the Universal Till cloud service terms (version v0.1-draft)" before registering; "Read the terms" opens them in a new tab. Without the tick, Register now does nothing and tells you so. You accept once per terms version: afterwards the card shows "Terms accepted: version v0.1-draft" with the date instead of the box, and the till sends your acceptance (the version and your language) with the registration. A till that was registered before this step existed (or through a plugin install) shows the same box under Till registration with an **Accept terms** button: tick the box and press it. If the till is offline, your acceptance is kept on the till and the card says it has not reached the cloud yet; press **Send to the cloud** once you are back online. Selling is never affected.
 3. Click Claim this store to get a short code (valid 15 minutes) and a QR — scan it with your phone to claim from there.
 4. Sign in to the marketplace with your Universal Till ID, open the claim page and enter the code.
 
 ## Automatic registration — your choice at setup
 
-The setup wizard's last screen asks once whether to register the till right away — not ticked unless you tick it. The same choice lives in Settings → Till registration as "Register this till with the marketplace automatically":
+The setup wizard's last screen asks once whether to register the till right away — not ticked unless you tick it (a till that joined a shop with a pairing code is not asked: pairing already registered it). The same choice lives in Settings → Till registration as "Register this till with the marketplace automatically":
 
 1. Turn it on and the till sends its device ID, store name, shop country, region and software version to the Universal Till cloud marketplace (used for support, updates and licensing) and registers straight away. Your address is not sent. Offline just then? Nothing is held up and setup still finishes — but the till stays unregistered until you open the plugin store or press Register now, so check Settings → Till registration once you are back online. The terms box appears under the choice while it is ticked; if you tick the choice but not the terms, the choice is saved as off and nothing is sent. In Settings, turning it on needs the same tick (unless you already accepted or the till is already registered); turning it off never does.
 2. Turn it off and the till goes back to registering only when you first use the plugin store or press Register now. Turning it off never removes a registration that already happened.
@@ -60,6 +60,8 @@ A manager can tap the chip to open Settings → Till registration, straight to P
 The card says what went wrong in one line; selling is never affected:
 
 - **Accept the Universal Till cloud service terms to register this till**: the terms box was not ticked, so nothing was sent. Tick it (or turn on automatic registration with the box ticked) and try again.
+- **Tick the box to accept the Universal Till cloud service terms**: on an already registered till, Accept terms was pressed without ticking the box, so nothing was recorded or sent. Tick it and press Accept terms again.
+- **Couldn't reach the cloud. Your acceptance is saved on this till**: the acceptance is kept on the till; check the internet connection and press Send to the cloud again.
 - **The Universal Till cloud is not available for this shop**: the cloud does not serve this shop. On a joined till this comes from the main till. The till keeps working offline.
 - **No cloud address is set up on this till**: the till was installed without a cloud address, so it can't register. Ask whoever installed it to set one up.
 - **Another registration attempt is still running**: the till is already registering in the background. Wait a moment and try again.

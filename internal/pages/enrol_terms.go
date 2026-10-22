@@ -40,6 +40,10 @@ func termsView(ctx context.Context, d *common.Deps, locale string) map[string]an
 		"url":     enroll.TermsURL(locale),
 		"label":   fmt.Sprintf(httpx.T(locale, "settings.enrol.terms.label"), enroll.TermsVersion),
 		"version": enroll.TermsVersion,
+		// ut-docs#4792: false when the acceptance is stored on this till but
+		// the cloud has not confirmed it yet (registered before the terms
+		// step, or the till was offline).
+		"sent": enroll.TermsSent(ctx, d.Settings),
 	}
 	if version, _, at, ok := enroll.AcceptedTerms(ctx, d.Settings); ok {
 		date := at

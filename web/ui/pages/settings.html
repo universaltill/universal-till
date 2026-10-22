@@ -84,7 +84,27 @@
   </div>
   {{ if enrolled }}
     <p>✅ {{ T "settings.enrol.registered" }}</p>
-    {{ if .terms.accepted }}<p class="muted">{{ .terms.line }}</p>{{ end }}
+    {{/* ut-docs#4792: a till registered before the terms step (or via a
+         plugin install) accepts here; an acceptance the cloud has not
+         received yet (offline) is re-sent. #terms-block is swapped out
+         (hx-swap-oob) by the handler once done. Not a form: the button's
+         hx-include carries the tick. */}}
+    {{ if and .terms.accepted .terms.sent }}
+    <p class="muted" data-testid="terms-accepted">{{ .terms.line }}</p>
+    {{ else if .terms.accepted }}
+    <div id="terms-block" class="set-gap-s">
+      <p class="muted" data-testid="terms-accepted">{{ .terms.line }}</p>
+      <p class="muted">{{ T "settings.enrol.terms.unsent" }}</p>
+      <button class="btn btn-touch" hx-post="/api/enrol/terms" hx-target="#terms-msg" hx-swap="innerHTML" hx-sync="this:drop" hx-disabled-elt="this">{{ T "settings.enrol.terms.send_btn" }}</button>
+    </div>
+    <span id="terms-msg" aria-live="polite"></span>
+    {{ else }}
+    <div id="terms-block" class="set-gap-s">
+      {{ template "enrol_terms.html" (dict "terms" .terms "id" "registered-accept-terms") }}
+      <button class="btn btn-touch" hx-post="/api/enrol/terms" hx-target="#terms-msg" hx-swap="innerHTML" hx-include="#registered-accept-terms" hx-sync="this:drop" hx-disabled-elt="this">{{ T "settings.enrol.terms.accept_btn" }}</button>
+    </div>
+    <span id="terms-msg" aria-live="polite"></span>
+    {{ end }}
     {{ if enrolstore }}<p class="muted">{{ T "settings.enrol.store" }}: <code>{{ enrolstore }}</code></p>{{ end }}
     {{ if enroldevice }}<p class="muted">{{ T "settings.enrol.device" }}: <code>{{ enroldevice }}</code></p>{{ end }}
     {{/* ADR-0148 (ut-docs#3615): the fleet list is a cloud call

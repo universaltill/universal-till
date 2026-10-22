@@ -14,9 +14,11 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
 )
 
 // ADR-0166 / ut-docs#4610: the wizard's "Main till" join choice pairs with the
@@ -508,5 +510,118 @@ func TestImportWelcomeShowsPairingIncompleteNoteNotSyncing(t *testing.T) {
 	}
 	if plain := getImportAs(mux, "/import?welcome=1", mgrUser, false).Body.String(); strings.Contains(plain, "cloud-pair-incomplete") {
 		t.Error("note shown without pairfail=1")
+	}
+}
+
+// ut-docs#4803: a till that joined a my. shop is already registered, so the
+// last step must not ask the ADR-0071 opt-in or the terms; a fresh wizard still does.
+func TestSetupDoneStepAsksRegistrationOnlyOffThePairedPath(t *testing.T) {
+	mux, _, _, nonce := cloudWizard(t)
+	fresh := getSetup(mux, "?lang=en", "en").Body.String()
+	for _, want := range []string{`name="auto_register"`, `name="accept_terms"`} {
+		if !strings.Contains(fresh, want) {
+			t.Errorf("unpaired wizard lacks %q", want)
+		}
+	}
+	doCloudPair(mux, nonce, nil)
+	paired := getSetup(mux, "?lang=en", "en").Body.String()
+	for _, bad := range []string{`name="auto_register"`, `name="accept_terms"`} {
+		if strings.Contains(paired, bad) {
+			t.Errorf("paired wizard still renders %q", bad)
+		}
+	}
+	if !strings.Contains(paired, `data-testid="setup-joined-shop"`) || !strings.Contains(paired, "Cloud Cafe") {
+		t.Error("paired wizard does not show the joined shop on the last step")
+	}
+}
+
+// ADR-0171 §4 (ut-docs#4830): a shop type chosen on my. is kept with the held
+// pairing, the wizard skips its shop-type step and shows the type read-only,
+// and the SERVER saves the cloud's value whatever the form posts.
+
+func cloudAnswerWithShopType(st string) string {
+	return `{"data":{"store_id":"` + pairPageStore + `","merchant_id":"merchant-1","device_id":"x","device_token":"` + pairPageToken + `",` +
+		`"store":{"name":"Cloud Cafe","country":"DE","currency":"EUR","currency_decimals":2,"catalog_master":"cloud","shop_type":"` + st + `"}},"error":null}`
+}
+
+func heldWizardPage(t *testing.T, shopType string) (*http.ServeMux, *common.Deps, string, string) {
+	t.Helper()
+	mux, d, stub, nonce := cloudWizard(t)
+	stub.set(200, cloudAnswerWithShopType(shopType))
+	doCloudPair(mux, nonce, nil)
+	return mux, d, nonce, getSetup(mux, "?lang=en", "en").Body.String()
+}
+
+func TestCloudWizardWithKnownShopTypeSkipsTheShopTypeStep(t *testing.T) {
+	_, _, _, page := heldWizardPage(t, "cafe")
+	if strings.Contains(page, `data-step="5"`) || strings.Contains(page, `name="shop_type"`) {
+		t.Error("the shop-type step is still rendered for a cloud-known type")
+	}
+	if !strings.Contains(page, `data-cloud-field="shop_type"`) || !strings.Contains(page, "Café / coffee shop") {
+		t.Error("the Your shop step lacks the read-only type line")
+	}
+	if !strings.Contains(page, "cloudShopType: true") {
+		t.Error("the step navigator is not told to skip step 5")
+	}
+	// Without the rule itself, Next from step 4 lands on a step 5 that is not
+	// on the page: an empty card the owner cannot leave.
+	if !strings.Contains(page, "(s === 5 && this.cloud && this.cloudShopType)") {
+		t.Error("the step navigator has no rule that skips step 5")
+	}
+}
+
+func TestCloudWizardWithoutShopTypeStillAsksIt(t *testing.T) {
+	for _, st := range []string{"", "spaceship"} {
+		_, _, _, page := heldWizardPage(t, st)
+		if !strings.Contains(page, `data-step="5"`) || !strings.Contains(page, `name="shop_type"`) {
+			t.Errorf("shop_type=%q: the step is not asked", st)
+		}
+		if strings.Contains(page, `data-cloud-field="shop_type"`) {
+			t.Errorf("shop_type=%q: a read-only type line was shown", st)
+		}
+		if !strings.Contains(page, "cloudShopType: false") {
+			t.Errorf("shop_type=%q: navigator would skip the step", st)
+		}
+	}
+}
+
+func TestCloudSetupSavesTheCloudsShopTypeAndIgnoresAPostedOne(t *testing.T) {
+	mux, d, nonce, _ := heldWizardPage(t, "cafe")
+	rec := finalCloudPost(mux, nonce, func(f url.Values) { f.Set("shop_type", "retail") })
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("code=%d body=%.300s", rec.Code, rec.Body.String())
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), common.KeyShopType); v != "cafe" {
+		t.Fatalf("shop.type = %q, want the cloud's cafe (a crafted post must not override it)", v)
+	}
+}
+
+func TestCloudSetupWithAnEmptyCloudTypeAcceptsThePostedOne(t *testing.T) {
+	mux, d, nonce, _ := heldWizardPage(t, "")
+	rec := finalCloudPost(mux, nonce, func(f url.Values) { f.Set("shop_type", "retail") })
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("code=%d body=%.300s", rec.Code, rec.Body.String())
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), common.KeyShopType); v != "retail" {
+		t.Fatalf("shop.type = %q, want the posted retail", v)
+	}
+}
+
+func TestCloudSetupShopTypeSideEffectsRunForTheCloudType(t *testing.T) {
+	orig := paths.DataDir()
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init(orig) })
+	mux, d, nonce, _ := heldWizardPage(t, "service")
+	// A posted cafe must not win over the cloud's service.
+	rec := finalCloudPost(mux, nonce, func(f url.Values) { f.Set("shop_type", "cafe") })
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("code=%d body=%.300s", rec.Code, rec.Body.String())
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), common.KeyShopType); v != "service" {
+		t.Fatalf("shop.type = %q, want service", v)
+	}
+	// applyShopTypeOrderTypeDefault ran: a service shop has no eat-in.
+	if v, _, _ := d.Settings.Get(t.Context(), data.OrderTypePromptModeKey); v != data.OrderTypePromptModeOff {
+		t.Fatalf("%s = %q, want off for a service shop", data.OrderTypePromptModeKey, v)
 	}
 }
