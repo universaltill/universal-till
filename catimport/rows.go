@@ -119,6 +119,12 @@ func RowFor(it ImportItem) (Row, bool) {
 			r.CategoryPath = append(r.CategoryPath, level)
 		}
 	}
+	// Only a source that said so (Epos Now SellOnTill, an export's Active
+	// column) states it; every other row leaves the item's flag as it is.
+	if it.HasActive {
+		a := it.Active
+		r.Active = &a
+	}
 	if it.HasTax {
 		bp := int64(it.TaxRateBP)
 		r.VATRateBP = &bp

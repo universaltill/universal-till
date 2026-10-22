@@ -2517,6 +2517,7 @@
   "settings.enrol.pair_busy": "Pairing…",
   "settings.enrol.pair_failed": "Pairing failed — check the code and the internet connection, then try again",
   "settings.enrol.pair_help": "Got a pairing code from your shop's cloud account (“Add or re-pair a till”)? Enter it here to add this till to that shop, or to reconnect a till that was removed or needs pairing again. This replaces only this till's cloud connection; its sales, products and settings stay.",
+  "settings.enrol.pair_identity_pinned": "This till's cloud connection is set by whoever installed it, so it can't be paired here. Ask them to remove that setting, then try again.",
   "settings.enrol.pair_placeholder": "Pairing code",
   "settings.enrol.pair_replica_no_store": "This till has not received its shop from the main till yet, so the code was not used. Wait for the main till to sync (or check it is reachable), then try again.",
   "settings.enrol.pair_store_mismatch": "This code belongs to a different shop than this till's main till. Ask for a pairing code for this shop and try again.",

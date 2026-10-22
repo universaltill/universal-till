@@ -49,7 +49,7 @@ var ErrPairReplicaNoStore = errors.New("this till has not received its shop from
 
 // ErrPairIdentityPinned: UT_MARKETPLACE_* pins this till's cloud identity, so
 // a paired one would only burn the single-use code (Effective keeps the
-// pinned one). Exported so the setup wizard can show its own message.
+// pinned one). Exported so the setup wizard and Settings → Pair with a shop can show their own message.
 var ErrPairIdentityPinned = errors.New("this till's cloud identity is set in the environment (UT_MARKETPLACE_*); remove it before pairing")
 
 // errPairAnswerRejected: the cloud answered 200 but without a store, a

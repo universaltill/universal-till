@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -1303,6 +1304,9 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		AdjustStock: func(ctx context.Context, itemID, variantID, locationID string, delta float64, reason string) (string, error) {
 			return cloudAdjustStock(ctx, d, itemID, variantID, locationID, delta, reason)
 		},
+		CountStock: func(ctx context.Context, req cloudsync.CountStockRequest) (string, error) {
+			return cloudCountStock(ctx, d, req)
+		},
 		// fiscal_tse_ready (ADR-0053, ut-docs#802): the cloud finished
 		// reseller-provisioning this shop's TSE — fetch the operational
 		// credential once (single-use endpoint) and store it at rest;
@@ -1998,39 +2002,30 @@ func cloudDeactivateItem(ctx context.Context, d *common.Deps, id string) (string
 	return "variant deactivated", nil
 }
 
-// cloudAdjustStock mirrors the inventory page's manual adjustment for a
-// directive: same stock-movement record, same connector event, same
-// linked-till stock nudge. my.'s inventory node (ut-docs#3643) names the
-// location and, for a variant-stocked item, the variant; both are optional
-// so an older cloud keeps working — with no location the movement lands
-// where the item (or variant) already tracks stock, else the shop's first
-// stock location, exactly as before.
-//
-// Checked before anything is written: the item exists and tracks stock; a
-// named variant belongs to the item, and with no variant named the item has
-// no active variant (ADR-0043); a named location exists and is active.
-// Refusals are English, like every other directive result: "item not
-// found", "item does not track stock", "variant not found", "item has
-// variants; choose a variant", "stock location not found", "stock location
-// is inactive", "no stock location configured".
-func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID, variantID, locationID string, delta float64, reason string) (string, error) {
+// resolveStockSlot is the validation both stock directives share (delta and
+// count mode): the item exists and tracks stock; a named variant belongs to
+// the item and, with none named, the item has no active variant (ADR-0043);
+// a named location exists and is active; with no location the one the item
+// (or variant) already tracks stock at, else the shop's first. The refusal
+// strings are the ones listed on cloudAdjustStock.
+func resolveStockSlot(ctx context.Context, d *common.Deps, itemID, variantID, locationID string) (catalogtypes.ItemInput, string, error) {
 	item, ok, err := data.NewCatalogRepo(d.Db).GetItem(ctx, itemID)
 	if err != nil {
-		return "", err
+		return item, "", err
 	}
 	if !ok {
-		return "", errors.New("item not found")
+		return item, "", errors.New("item not found")
 	}
 	if item.StockUntracked {
-		return "", errors.New("item does not track stock")
+		return item, "", errors.New("item does not track stock")
 	}
 	if variantID != "" {
 		parent, ok, err := data.NewCatalogRepo(d.Db).ItemIDForVariant(ctx, variantID)
 		if err != nil {
-			return "", err
+			return item, "", err
 		}
 		if !ok || parent != itemID {
-			return "", errors.New("variant not found")
+			return item, "", errors.New("variant not found")
 		}
 	} else {
 		// ADR-0043: an item with an active variant is stocked per variant,
@@ -2038,29 +2033,29 @@ func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID, variantID, lo
 		// whichever producer sent the directive.
 		hasVariants, err := data.NewCatalogRepo(d.Db).HasActiveVariants(ctx, itemID)
 		if err != nil {
-			return "", err
+			return item, "", err
 		}
 		if hasVariants {
-			return "", errors.New("item has variants; choose a variant")
+			return item, "", errors.New("item has variants; choose a variant")
 		}
 	}
 	if locationID != "" {
 		locs, err := data.NewPOSRepo(d.Db).ListStockLocationsForAdmin(ctx)
 		if err != nil {
-			return "", err
+			return item, "", err
 		}
 		found := false
 		for _, l := range locs {
 			if l.ID == locationID {
 				if !l.IsActive {
-					return "", errors.New("stock location is inactive")
+					return item, "", errors.New("stock location is inactive")
 				}
 				found = true
 				break
 			}
 		}
 		if !found {
-			return "", errors.New("stock location not found")
+			return item, "", errors.New("stock location not found")
 		}
 	}
 	if locationID == "" {
@@ -2081,7 +2076,30 @@ func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID, variantID, lo
 		}
 	}
 	if locationID == "" {
-		return "", fmt.Errorf("no stock location configured")
+		return item, "", fmt.Errorf("no stock location configured")
+	}
+	return item, locationID, nil
+}
+
+// cloudAdjustStock mirrors the inventory page's manual adjustment for a
+// directive: same stock-movement record, same connector event, same
+// linked-till stock nudge. my.'s inventory node (ut-docs#3643) names the
+// location and, for a variant-stocked item, the variant; both are optional
+// so an older cloud keeps working — with no location the movement lands
+// where the item (or variant) already tracks stock, else the shop's first
+// stock location, exactly as before.
+//
+// Checked before anything is written: the item exists and tracks stock; a
+// named variant belongs to the item, and with no variant named the item has
+// no active variant (ADR-0043); a named location exists and is active.
+// Refusals are English, like every other directive result: "item not
+// found", "item does not track stock", "variant not found", "item has
+// variants; choose a variant", "stock location not found", "stock location
+// is inactive", "no stock location configured".
+func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID, variantID, locationID string, delta float64, reason string) (string, error) {
+	_, locationID, err := resolveStockSlot(ctx, d, itemID, variantID, locationID)
+	if err != nil {
+		return "", err
 	}
 	if reason == "" {
 		reason = "cloud adjustment"
@@ -2114,6 +2132,84 @@ func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID, variantID, lo
 	// adjust; nil-safe, a no-op with no link.
 	d.NudgeLink(fleetlink.ScopeStock)
 	return fmt.Sprintf("stock adjusted by %+g", delta), nil
+}
+
+// countSkewReportThreshold is the clock difference between the cloud and
+// the till above which a count's result says so (ADR-0168 §4).
+const countSkewReportThreshold = 5 * time.Minute
+
+// cloudCountStock is adjust_stock's count mode (ADR-0168 §4, ut-docs#4749):
+// the cloud's stock-file import says "this many were on the shelf at
+// counted_at". The till sets the item to that quantity but keeps every
+// movement recorded since (sales, refunds, receipts, waste, transfers), so
+// nothing sold after the count is overwritten; the same count applied twice
+// moves nothing. counted_at is the cloud's clock: when the cloud's own
+// "now" came with the directive the offset to the till's clock is applied,
+// and an offset above five minutes is named in the result. Same slot
+// validation as the delta mode; a whole-number-only item refuses a
+// fractional target, a weighed item takes up to three decimals.
+func cloudCountStock(ctx context.Context, d *common.Deps, req cloudsync.CountStockRequest) (string, error) {
+	item, locationID, err := resolveStockSlot(ctx, d, req.ItemID, req.VariantID, req.LocationID)
+	if err != nil {
+		return "", err
+	}
+	if req.Target < 0 || math.IsNaN(req.Target) || math.IsInf(req.Target, 0) {
+		return "", errors.New("target must be zero or more")
+	}
+	if math.Abs(req.Target*1000-math.Round(req.Target*1000)) > 1e-6 {
+		return "", errors.New("target has more than 3 decimals")
+	}
+	if !item.IsWeighed && req.Target != math.Trunc(req.Target) {
+		return "", errors.New("target must be a whole number for this item")
+	}
+	if req.CountedAt.IsZero() {
+		return "", errors.New("counted_at required")
+	}
+	now := time.Now()
+	countedAt := req.CountedAt
+	var skew time.Duration
+	if !req.CloudNow.IsZero() {
+		// The offset is the one measured when the response arrived, not
+		// now: the directive may have waited behind others in the same
+		// tick (and a retry must compute the same boundary).
+		received := req.ReceivedAt
+		if received.IsZero() {
+			received = now
+		}
+		skew = received.Sub(req.CloudNow)
+		countedAt = countedAt.Add(skew)
+	}
+	if countedAt.After(now.Add(countSkewReportThreshold)) {
+		return "", errors.New("counted_at is in the future")
+	}
+	reason := "import"
+	if req.Reason != "" {
+		reason = req.Reason
+	}
+	in := data.StockCountInput{
+		ItemID: req.ItemID, VariantID: req.VariantID, LocationID: locationID,
+		Target: req.Target, CountedAt: countedAt, ActorID: "system", Reason: reason,
+	}
+	if req.VariantID != "" {
+		in.ItemID = ""
+	}
+	res, err := data.NewPOSRepo(d.Db).ApplyStockCount(ctx, in)
+	if err != nil {
+		return "", err
+	}
+	msg := "stock already at the counted quantity"
+	if res.Delta != 0 {
+		publishStockAdjusted(ctx, d, plugins.StockAdjustedEvent{
+			ItemID: req.ItemID, VariantID: req.VariantID, DeltaQty: res.Delta,
+			Reason: stockMovementReason(data.StockCountMovementType), Location: locationID,
+		})
+		d.NudgeLink(fleetlink.ScopeStock)
+		msg = fmt.Sprintf("stock counted: adjusted by %+g", res.Delta)
+	}
+	if skew > countSkewReportThreshold || skew < -countSkewReportThreshold {
+		msg += fmt.Sprintf("; clock skew %s between cloud and till", skew.Round(time.Second))
+	}
+	return msg, nil
 }
 
 // cloudUpsertCategory is the upsert_category hook (ut-docs#2323, ADR-0095

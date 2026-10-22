@@ -144,7 +144,9 @@ ALLOWED_WRITERS=(
   # ut-docs#4463 moved the statements into deleteUnusedItemTx (same writer)
   # so the cloud catalogue pull's tombstone rule can share it; the pull
   # runs on the main till only (cloudsync's isMainTill gate).
-  "internal/data/item_delete_repo.go:deleteUnusedItemTx"
+  # ut-docs#4746 moved the writes into deleteUnusedItemWrites, run inside
+  # deleteUnusedItemTx's savepoint (same writer, same callers).
+  "internal/data/item_delete_repo.go:deleteUnusedItemWrites"
   # Single-demo-item removal mirrors remove_demo.sql's cleanup (ADR-0090).
   "internal/data/demo_seed_repo.go:RemoveDemoItem"
   # ut-docs#2314: execer-based twins of the append pair, sharing the
