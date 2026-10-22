@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/shoptype"
 )
 
 // ADR-0129 §2: the closed set of `provides` capabilities. New values need an
@@ -27,24 +28,16 @@ const (
 	CapabilityLayoutShopTypePrefix = "layout.shop_type:"
 )
 
-// shopTypes is the ADR-0026 shop-type taxonomy (café, retail, service trade,
-// hospitality, market stall/pop-up, other). The setup wizard and Settings
-// offer exactly these; `layout.shop_type:<type>` must name one of them.
-// ut-cloud's pkg/manifest mirrors it (TestProvidesClosedSetMirrorsPOS).
-var shopTypes = []string{"cafe", "retail", "service", "hospitality", "market_stall", "other"}
+// The ADR-0026 shop-type taxonomy (café, retail, service trade, hospitality,
+// market stall/pop-up, other) lives in internal/shoptype. The setup wizard
+// and Settings offer exactly these; `layout.shop_type:<type>` must name one
+// of them. ut-cloud's pkg/manifest mirrors it (TestProvidesClosedSetMirrorsPOS).
 
 // ShopTypes returns a copy of the ADR-0026 shop types, in display order.
-func ShopTypes() []string { return append([]string(nil), shopTypes...) }
+func ShopTypes() []string { return shoptype.List() }
 
 // IsKnownShopType reports whether v is one of ShopTypes.
-func IsKnownShopType(v string) bool {
-	for _, t := range shopTypes {
-		if v == t {
-			return true
-		}
-	}
-	return false
-}
+func IsKnownShopType(v string) bool { return shoptype.IsKnown(v) }
 
 // IsKnownCapability reports whether v is in the ADR-0129 closed set.
 func IsKnownCapability(v string) bool {
@@ -69,7 +62,7 @@ func validateProvidesAndMarkets(m *Manifest) error {
 		if !IsKnownCapability(p) {
 			return fmt.Errorf("manifest provides %q is not a known capability (allowed: %s, %s, %s, %s<%s>)",
 				p, CapabilityFiscalDevice, CapabilityFiscalRegister, CapabilityAI,
-				CapabilityLayoutShopTypePrefix, strings.Join(shopTypes, "|"))
+				CapabilityLayoutShopTypePrefix, strings.Join(ShopTypes(), "|"))
 		}
 		if seen[p] {
 			return fmt.Errorf("manifest provides %q more than once", p)

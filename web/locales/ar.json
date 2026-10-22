@@ -3584,6 +3584,7 @@
   "setup.cloud.shop_name": "اسم المتجر",
   "setup.cloud.shop_country": "البلد",
   "setup.cloud.shop_currency": "العملة",
+  "setup.cloud.shop_type": "نوع المتجر",
   "setup.cloud.continue": "متابعة",
   "setup.cloud.not_mine": "هذا ليس متجري",
   "setup.cloud.pair_incomplete": "لم يكتمل الاقتران بمتجرك على الإنترنت، لذلك لا تتم مزامنة هذه الكاشيرة بعد. تم استهلاك الرمز. أنشئ رمزًا جديدًا على my.universaltill.com ثم أعد الاقتران من الإعدادات، الكاشيرات.",
