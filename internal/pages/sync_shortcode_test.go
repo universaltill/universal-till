@@ -601,3 +601,67 @@ func assertJoinFormFields(t *testing.T, page, body string) {
 		}
 	}
 }
+
+func TestPlainRefusalKind(t *testing.T) {
+	mk := func(code int, hdr string) *http.Response {
+		r := &http.Response{StatusCode: code, Header: http.Header{}}
+		if hdr != "" {
+			r.Header.Set(plainRefusedHeader, hdr)
+		}
+		return r
+	}
+	tests := []struct {
+		name string
+		resp *http.Response
+		want joinErrKind
+		ok   bool
+	}{
+		{"tls-only", mk(403, plainRefusedTLSOnly), joinErrTLSOnly, true},
+		{"satellite-tls-only", mk(403, plainRefusedSatelliteTLSOnly), joinErrSatelliteTLSOnly, true},
+		{"satellite-no-tls", mk(403, plainRefusedSatelliteNoTLS), joinErrSatelliteNoTLS, true},
+		{"403 no header", mk(403, ""), 0, false},
+		{"403 unknown value", mk(403, "something-new"), 0, false},
+		{"200 with header", mk(200, plainRefusedTLSOnly), 0, false},
+		{"409 with header", mk(409, plainRefusedTLSOnly), 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			k, ok := plainRefusalKind(tt.resp)
+			if ok != tt.ok || (ok && k != tt.want) {
+				t.Fatalf("plainRefusalKind = (%v, %v), want (%v, %v)", k, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
+func TestCompleteJoin_PlainRefusalHeaderMapsToItsKind(t *testing.T) {
+	cases := []struct {
+		hdr  string
+		want joinErrKind
+	}{
+		{"", joinErrRefused},
+		{"unknown", joinErrRefused},
+		{plainRefusedTLSOnly, joinErrTLSOnly},
+		{plainRefusedSatelliteTLSOnly, joinErrSatelliteTLSOnly},
+		{plainRefusedSatelliteNoTLS, joinErrSatelliteNoTLS},
+	}
+	for _, tc := range cases {
+		t.Run(tc.hdr, func(t *testing.T) {
+			stub := http.NewServeMux()
+			stub.HandleFunc("POST /api/sync/enroll", func(w http.ResponseWriter, r *http.Request) {
+				if tc.hdr != "" {
+					w.Header().Set(plainRefusedHeader, tc.hdr)
+				}
+				http.Error(w, "no", http.StatusForbidden)
+			})
+			srv := httptest.NewServer(stub)
+			t.Cleanup(srv.Close)
+			replica, _ := newSyncDepsWithPath(t, "replica.db")
+			r := httptest.NewRequest(http.MethodPost, "/api/sync/join", nil)
+			_, err := completeJoin(r, replica, srv.URL, "K7P4XQ", "Till 2", "additional", "", false)
+			if k := joinKind(t, err); k != tc.want {
+				t.Fatalf("kind = %v, want %v", k, tc.want)
+			}
+		})
+	}
+}
