@@ -1409,6 +1409,10 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// main-till only, PIN opened with the directive key, one
 		// transaction each, audited, idempotent. See
 		// cloud_user_directives.go.
+		// Sealed customer rows (ADR-0168 §5, ut-docs#4748): main till only.
+		ImportCustomers: func(ctx context.Context, dir cloudsync.ImportCustomersDirective) (cloudsync.ImportCustomersResult, error) {
+			return cloudImportCustomers(ctx, d, directiveKeys, dir)
+		},
 		SaveUser: func(ctx context.Context, u cloudsync.UserDirective) (string, error) {
 			return cloudSaveUser(ctx, d, directiveKeys, u)
 		},

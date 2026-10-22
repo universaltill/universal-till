@@ -6631,6 +6631,11 @@ func (r *POSRepo) EraseCustomer(ctx context.Context, id, actorID, blockedActorID
 	if err := stripCustomerFromHeldSales(ctx, tx, id, true); err != nil {
 		return false, fmt.Errorf("erase customer: %w", err)
 	}
+	// ADR-0168 §5: remember the erasure (salted hashes + link tombstones)
+	// before the row, and with it the email and phone, is gone.
+	if err := recordCustomerErasure(ctx, &CustomerImportRepo{}, tx, id); err != nil {
+		return false, err
+	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM customers WHERE id = ?`, id)
 	if err != nil {
 		return false, fmt.Errorf("erase customer: %w", err)

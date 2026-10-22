@@ -28,6 +28,9 @@ import (
 // requirePrimaryDirective refusal; the cloud's delivery filter (§2.10)
 // covers them.
 var mainTillOnlyTypes = map[string]bool{
+	// ADR-0168 §5: customers are sealed to the main till's key and applied
+	// there only (ut-docs#4748).
+	"import_customers":       true,
 	"save_item":              true,
 	"save_category":          true,
 	"delete_category":        true,
