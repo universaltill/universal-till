@@ -58,10 +58,13 @@ func (r *ShortcutsRepo) loadButtons(ctx context.Context, op string, withHidden b
 	var err error
 	done := shortcutsObs.trace(op)
 	defer func() { done(err) }()
-	// image_path falls back to the item's own catalog image (item_images,
-	// role='thumbnail' — same source the catalog list and barcode/scan
-	// resolvers already use) when the button has no image of its own set
-	// explicitly. Without this, a shop's catalog-uploaded item photo showed
+	// ut-docs#4838: the item's own catalog photo (item_images,
+	// role='thumbnail' — same source the catalog list, basket and scan
+	// resolvers use) WINS over the button's own image_path, which the
+	// designer's save can freeze as a library/placeholder tile; the button's
+	// image is only the fallback for an item with no photo row. Before, a
+	// photo set in the item editor never replaced such a frozen tile.
+	// Without the catalog lookup, a shop's catalog-uploaded item photo showed
 	// up in the catalog list but never on the actual sale-screen tile,
 	// since shortcut_buttons.image_path is a separate column nothing ever
 	// populates from a plain catalog image upload — confirmed live 2026-07-29.
@@ -90,7 +93,7 @@ func (r *ShortcutsRepo) loadButtons(ctx context.Context, op string, withHidden b
 	// empty in the first place (ButtonStore.Add rejects a blank label).
 	rows, err := r.db.QueryContext(ctx, `
 SELECT COALESCE(NULLIF(sb.label, ''), i.name), sb.barcode, sb.item_id,
-       COALESCE(sb.image_path, (SELECT path FROM item_images img WHERE img.item_id = sb.item_id AND img.role = 'thumbnail' LIMIT 1)),
+       COALESCE((SELECT path FROM item_images img WHERE img.item_id = sb.item_id AND img.role = 'thumbnail' LIMIT 1), sb.image_path),
        COALESCE(i.base_price, 0), COALESCE(i.category_id, ''), COALESCE(i.color, ''), i.sell_screen_hidden
 FROM shortcut_buttons sb
 JOIN items i ON i.id = sb.item_id AND i.is_active = 1 AND i.sell_screen_removed = 0 AND (? OR i.sell_screen_hidden = 0)
