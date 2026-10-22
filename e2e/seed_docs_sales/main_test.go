@@ -142,3 +142,17 @@ func TestSeed_MarksSeededOrdersCollectedAtTheirFixedTime(t *testing.T) {
 		t.Errorf("%d order_status_events carry a wall-clock created_at", events)
 	}
 }
+
+// ut-docs#4768: the channel-orders help screenshot needs populated rows.
+func TestSeed_WritesChannelOrders(t *testing.T) {
+	conn := newSeededDB(t)
+	for i := 0; i < 2; i++ { // second run proves idempotence
+		if err := seed(context.Background(), conn.DB); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	var n int
+	if err := conn.DB.QueryRow(`SELECT COUNT(*) FROM channel_orders`).Scan(&n); err != nil || n != 3 {
+		t.Fatalf("channel orders = %d err=%v, want 3", n, err)
+	}
+}
