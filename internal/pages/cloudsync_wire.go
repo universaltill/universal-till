@@ -1304,6 +1304,11 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		AdjustStock: func(ctx context.Context, itemID, variantID, locationID string, delta float64, reason string) (string, error) {
 			return cloudAdjustStock(ctx, d, itemID, variantID, locationID, delta, reason)
 		},
+		// type=receive (ut-docs#4795): the receipt the inventory page's goods-in
+		// form records, with the unit cost.
+		ReceiveStock: func(ctx context.Context, req cloudsync.ReceiveStockRequest) (string, error) {
+			return cloudReceiveStock(ctx, d, req.ItemID, req.VariantID, req.LocationID, req.Quantity, req.CostPrice, req.Reason)
+		},
 		CountStock: func(ctx context.Context, req cloudsync.CountStockRequest) (string, error) {
 			return cloudCountStock(ctx, d, req)
 		},
@@ -2101,6 +2106,32 @@ func resolveStockSlot(ctx context.Context, d *common.Deps, itemID, variantID, lo
 // variants; choose a variant", "stock location not found", "stock location
 // is inactive", "no stock location configured".
 func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID, variantID, locationID string, delta float64, reason string) (string, error) {
+	if _, err := cloudRecordStock(ctx, d, "adjust", itemID, variantID, locationID, delta, 0, reason); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("stock adjusted by %+g", delta), nil
+}
+
+// cloudReceiveStock is adjust_stock's type=receive (ut-docs#4795): the same
+// movement record as the till's own goods-in form (POST /api/inventory/
+// receipt: type "receive", the unit cost, the audit row, the connector
+// event, the link nudge), through cloudRecordStock like cloudAdjustStock,
+// with the same slot checks and refusals. quantity is above zero; costMinor
+// is the unit cost in minor units, 0 meaning none.
+func cloudReceiveStock(ctx context.Context, d *common.Deps, itemID, variantID, locationID string, quantity float64, costMinor int64, reason string) (string, error) {
+	if quantity <= 0 || costMinor < 0 {
+		return "", errors.New("a stock receipt needs a quantity above zero and a cost of zero or more")
+	}
+	if _, err := cloudRecordStock(ctx, d, "receive", itemID, variantID, locationID, quantity, costMinor, reason); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("stock received: %+g", quantity), nil
+}
+
+// cloudRecordStock books one directive-driven movement of typ ("adjust" or
+// "receive") after resolveStockSlot's checks, and returns the location it
+// landed in.
+func cloudRecordStock(ctx context.Context, d *common.Deps, typ, itemID, variantID, locationID string, delta float64, costMinor int64, reason string) (string, error) {
 	_, locationID, err := resolveStockSlot(ctx, d, itemID, variantID, locationID)
 	if err != nil {
 		return "", err
@@ -2115,7 +2146,7 @@ func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID, variantID, lo
 		movementItemID = ""
 	}
 	if _, err := pos.RecordStockMovement(ctx, d.Db, pos.StockMovementInput{
-		ItemID: movementItemID, VariantID: variantID, LocationID: locationID, Type: "adjust",
+		ItemID: movementItemID, VariantID: variantID, LocationID: locationID, Type: typ,
 		// audit_log.actor_id has a real FK to users(id) -- "cloud" was
 		// never a seeded user, so every real call here violated it (the
 		// old hand-rolled test schema had no such FK, which is why this
@@ -2124,18 +2155,18 @@ func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID, variantID, lo
 		// The "cloud: " prefix keeps the adjustment's real origin visible
 		// in the audit payload's reason field now that the actor itself
 		// can no longer say so.
-		Quantity: delta, Reason: "cloud: " + reason, ActorID: "system",
+		Quantity: delta, CostPrice: costMinor, Reason: "cloud: " + reason, ActorID: "system",
 	}); err != nil {
 		return "", err
 	}
 	publishStockAdjusted(ctx, d, plugins.StockAdjustedEvent{
 		ItemID: itemID, VariantID: variantID, DeltaQty: delta,
-		Reason: stockMovementReason("adjust"), Location: locationID,
+		Reason: stockMovementReason(typ), Location: locationID,
 	})
 	// The levels linked tills pull moved (ADR-0114 §2), as for the local
 	// adjust; nil-safe, a no-op with no link.
 	d.NudgeLink(fleetlink.ScopeStock)
-	return fmt.Sprintf("stock adjusted by %+g", delta), nil
+	return locationID, nil
 }
 
 // countSkewReportThreshold is the clock difference between the cloud and

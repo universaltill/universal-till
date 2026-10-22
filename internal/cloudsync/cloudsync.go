@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"runtime"
@@ -120,6 +121,11 @@ type Hooks struct {
 	// (ADR-0043); the hook's refusal strings are listed on the till's
 	// implementation (pages.cloudAdjustStock).
 	AdjustStock func(ctx context.Context, itemID, variantID, locationID string, delta float64, reason string) (string, error)
+	// ReceiveStock handles "adjust_stock" with type "receive" (ut-docs#4795):
+	// goods in at a location with an optional unit cost (minor units), booked
+	// like the till's own POST /api/inventory/receipt. nil on a till without
+	// it, which then refuses the directive instead of booking an adjustment.
+	ReceiveStock func(ctx context.Context, req ReceiveStockRequest) (string, error)
 	// CountStock handles "adjust_stock" with mode "count" (ADR-0168 §4,
 	// ut-docs#4749): set the item to the counted quantity while keeping
 	// every movement recorded since the count. nil on a till without the
@@ -420,6 +426,19 @@ type directive struct {
 	// ServerTime it gives the clock offset at receipt, not at apply time.
 	ReceivedAt time.Time `json:"-"`
 }
+
+// ReceiveStockRequest is one adjust_stock type=receive directive: Quantity
+// is above zero, CostPrice the unit cost in minor units (0 = none).
+type ReceiveStockRequest struct {
+	ItemID, VariantID, LocationID string
+	Quantity                      float64
+	CostPrice                     int64
+	Reason                        string
+}
+
+// MaxReceiveCostMinor bounds a receipt's unit cost: the till's item price
+// ceiling (data.maxItemPriceMinor), the cloud's claims.MaxStockCostMinor.
+const MaxReceiveCostMinor = 999_999_999
 
 // CountStockRequest is one adjust_stock count-mode directive: Target is the
 // counted quantity as of CountedAt (the cloud's clock). CloudNow is the
@@ -864,6 +883,40 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "invalid location_id"
 		} else if v != nil {
 			locationID = *v
+		}
+		// type (ut-docs#4795): absent, "" or "adjust" is the signed adjustment
+		// above; "receive" is goods in, with an optional cost. Anything else
+		// fails rather than being read as an adjustment.
+		typ := "adjust"
+		if v, present := d.Payload["type"]; present {
+			s, isText := v.(string)
+			if !isText || (s != "" && s != "adjust" && s != "receive") {
+				return "failed", "unsupported adjust_stock type"
+			}
+			if s != "" {
+				typ = s
+			}
+		}
+		var cost int64
+		if c, present := d.Payload["cost_price"]; present {
+			f, isNum := c.(float64)
+			if typ != "receive" || !isNum || f != math.Trunc(f) || f < 0 || f > MaxReceiveCostMinor {
+				return "failed", "invalid cost_price"
+			}
+			cost = int64(f)
+		}
+		if typ == "receive" {
+			if hooks.ReceiveStock == nil {
+				return "failed", "stock receipts are not supported on this till"
+			}
+			if delta < 0 {
+				return "failed", "a stock receipt needs a quantity above zero"
+			}
+			msg, err = hooks.ReceiveStock(ctx, ReceiveStockRequest{
+				ItemID: id, VariantID: variantID, LocationID: locationID,
+				Quantity: delta, CostPrice: cost, Reason: str("reason"),
+			})
+			break
 		}
 		msg, err = hooks.AdjustStock(ctx, id, variantID, locationID, delta, str("reason"))
 	case "rename_item":
