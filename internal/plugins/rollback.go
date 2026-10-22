@@ -250,6 +250,10 @@ func (rm *RollbackManager) rollback(ctx context.Context, pluginID, targetVersion
 	if err != nil {
 		return fmt.Errorf("failed to parse manifest: %w", err)
 	}
+	// ADR-0169: a cloud-hosted plugin never has a version to restore on a till.
+	if err := manifest.RefuseOnTill(); err != nil {
+		return err
+	}
 
 	// Begin transaction
 	tx, err := rm.db.BeginTx(ctx, nil)

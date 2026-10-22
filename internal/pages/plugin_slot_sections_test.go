@@ -81,7 +81,7 @@ func TestPluginSlot_EntryRoute_3946(t *testing.T) {
 	// A plugin that fails keeps its heading and says so.
 	h.answerWith(`{"not":"a document"}`)
 	body = h.do(http.MethodGet, "/ui/slot/settings.sections/com.test.views/panel", nil, true).Body.String()
-	if !strings.Contains(body, `<h2 class="plugin-view-title">Views panel</h2>`) || !strings.Contains(body, "plugin-view-notice warn") {
+	if !strings.Contains(body, `<h2 class="plugin-view-title" dir="auto">Views panel</h2>`) || !strings.Contains(body, "plugin-view-notice warn") {
 		t.Fatalf("failed entry must show its label and the unavailable notice:\n%s", body)
 	}
 

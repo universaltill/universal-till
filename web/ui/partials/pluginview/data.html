@@ -4,7 +4,7 @@
 {{ define "pluginview_stat_tiles" }}
 <div class="report-cards plugin-view-tiles">
   {{- range .Tiles }}
-  <div class="card kpi"><div class="kpi-label">{{ .Label }}</div><div class="kpi-value">{{ .Value }}</div></div>
+  <div class="card kpi"><div class="kpi-label"><bdi>{{ .Label }}</bdi></div><div class="kpi-value">{{ .Value }}</div></div>
   {{- end }}
 </div>
 {{ end }}
@@ -12,10 +12,10 @@
 {{ define "pluginview_table" }}
 <div class="card plugin-view-table-wrap">
 <table class="table plugin-view-table">
-  <thead><tr>{{ range .Columns }}<th{{ if ne .Kind "text" }} class="num"{{ end }}>{{ .Label }}</th>{{ end }}</tr></thead>
+  <thead><tr>{{ range .Columns }}<th{{ if ne .Kind "text" }} class="num"{{ end }}><bdi>{{ .Label }}</bdi></th>{{ end }}</tr></thead>
   <tbody>
     {{- range .Rows }}
-    <tr>{{ range . }}<td{{ if ne .Kind "text" }} class="num"{{ end }}>{{ .Value }}</td>{{ end }}</tr>
+    <tr>{{ range . }}<td{{ if ne .Kind "text" }} class="num">{{ .Value }}{{ else }}>{{ with .Value }}<bdi>{{ . }}</bdi>{{ end }}{{ end }}</td>{{ end }}</tr>
     {{- end }}
   </tbody>
 </table>
@@ -38,7 +38,7 @@
 {{ define "pluginview_qr" }}
 <figure class="card plugin-view-qr">
   <img src="{{ .QR }}" alt="{{ .Alt }}" width="{{ .QRSize }}" height="{{ .QRSize }}">
-  {{- if .Label }}<figcaption>{{ .Label }}</figcaption>{{ end }}
+  {{- if .Label }}<figcaption dir="auto">{{ .Label }}</figcaption>{{ end }}
 </figure>
 {{ end }}
 
@@ -51,7 +51,7 @@
   <p class="plugin-view-wizard-pos">{{ .Text }}</p>
   <ol class="plugin-view-wizard-steps" aria-label="{{ T "plugin.view.wizard_label" }}">
     {{- range .Steps }}
-    <li class="{{ .State }}"{{ if eq .State "current" }} aria-current="step"{{ end }}>{{ if eq .State "done" }}<span aria-hidden="true">✓ </span>{{ end }}{{ .Label }}{{ if eq .State "done" }}<span class="visually-hidden"> {{ T "plugin.view.step_done" }}</span>{{ end }}</li>
+    <li class="{{ .State }}"{{ if eq .State "current" }} aria-current="step"{{ end }}>{{ if eq .State "done" }}<span aria-hidden="true">✓ </span>{{ end }}<bdi>{{ .Label }}</bdi>{{ if eq .State "done" }}<span class="visually-hidden"> {{ T "plugin.view.step_done" }}</span>{{ end }}</li>
     {{- end }}
   </ol>
 </div>

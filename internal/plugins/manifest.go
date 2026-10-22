@@ -89,6 +89,16 @@ type Manifest struct {
 	SettingsTabs  []ManifestSettingsTab  `json:"settings_tabs,omitempty"`
 	SettingsTests []ManifestSettingsTest `json:"settings_tests,omitempty"`
 	SettingsSetup *ManifestSettingsSetup `json:"settings_setup,omitempty"`
+
+	// Sales channels (ADR-0169, ut-docs#4759): where the plugin runs, and
+	// the adapter block of a `channel` plugin (manifest_channel.go). All
+	// omitempty, so a manifest without them marshals byte-identically to
+	// before and old signatures verify. Hosts absent means ["till"].
+	// ut-cloud's internal/signing.CanonicalManifest must mirror every one
+	// (same position, same tags), and the nested types too.
+	Hosts           []string         `json:"hosts,omitempty"`
+	ChannelContract int              `json:"channel_contract,omitempty"`
+	Channel         *ManifestChannel `json:"channel,omitempty"`
 }
 
 // ManifestLimits are a plugin's resource requests (ADR-0121 §2). 0 means
@@ -478,6 +488,10 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 		return nil, err
 	}
 	if err := validateABI3Fields(&m); err != nil {
+		return nil, err
+	}
+	// Sales-channel fields (ADR-0169): hosts, channel_contract, channel.
+	if err := validateChannelFields(&m); err != nil {
 		return nil, err
 	}
 
@@ -1309,6 +1323,12 @@ func validateLayoutPresetExclusivity(ctx context.Context, repo *data.PluginRepo,
 }
 
 func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallOptions) error {
+	// A cloud-hosted plugin (ADR-0169: the `channel` type) is listed by the
+	// marketplace but never installed on a till — this is the backstop for
+	// every install path, whichever of them forgot to check first.
+	if err := m.RefuseOnTill(); err != nil {
+		return err
+	}
 	repo := data.NewPluginRepo(db)
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1596,4 +1616,57 @@ type InstallOptions struct {
 	SHA256           string
 	TrustLevel       string // untrusted|trusted|system
 	Uploader         string // user/source identifier
+}
+
+// The sales-channel manifest block (ADR-0169, ut-docs#4759; validation in
+// manifest_channel.go). Kept in this file because ut-cloud's signing mirror
+// test reads the struct definitions from here.
+
+// ManifestChannel is the `channel` block of the contract (section 1).
+type ManifestChannel struct {
+	Kind           string                  `json:"kind"`
+	Account        string                  `json:"account"`
+	AccountSuffix  string                  `json:"account_suffix"`
+	Auth           *ManifestChannelAuth    `json:"auth,omitempty"`
+	Capabilities   map[string]string       `json:"capabilities,omitempty"`
+	Limits         *ManifestChannelLimits  `json:"limits,omitempty"`
+	StockLocations bool                    `json:"stock_locations,omitempty"`
+	Webhooks       *ManifestChannelWebhook `json:"webhooks,omitempty"`
+	Schedules      []ManifestSchedule      `json:"schedules,omitempty"`
+}
+
+// ManifestChannelAuth says how the host obtains and injects the credential.
+// The plugin never sees the credential.
+type ManifestChannelAuth struct {
+	Grants       []string                   `json:"grants,omitempty"`
+	AuthorizeURL string                     `json:"authorize_url,omitempty"`
+	TokenURL     string                     `json:"token_url,omitempty"`
+	Scopes       []string                   `json:"scopes,omitempty"`
+	Inject       *ManifestChannelAuthInject `json:"inject,omitempty"`
+}
+
+// ManifestChannelAuthInject names the request header that carries the
+// credential on every call the host makes for the plugin.
+type ManifestChannelAuthInject struct {
+	Header string `json:"header"`
+}
+
+// ManifestChannelLimits are the channel's own catalogue limits.
+type ManifestChannelLimits struct {
+	MaxOptions  int `json:"max_options,omitempty"`
+	MaxVariants int `json:"max_variants,omitempty"`
+}
+
+// ManifestChannelWebhook lists the topics the channel sends and how the HOST
+// verifies a signature (the plugin only parses a webhook already verified).
+type ManifestChannelWebhook struct {
+	Topics []string                      `json:"topics,omitempty"`
+	Verify *ManifestChannelWebhookVerify `json:"verify,omitempty"`
+}
+
+// ManifestChannelWebhookVerify is the signature rule.
+type ManifestChannelWebhookVerify struct {
+	Header   string `json:"header"`
+	Alg      string `json:"alg"`
+	Encoding string `json:"encoding"`
 }

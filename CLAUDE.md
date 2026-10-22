@@ -116,6 +116,11 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   `PersistManifest`, `/enable` (409) and `Rollback`, mirroring the
   fiscal-sign exclusive group; fail closed on DB error.
 
+- A manifest whose `hosts` lacks `till` (type `channel`, ADR-0169, #4759) is
+  listed, never installed or loaded on a till: `Manifest.RefuseOnTill` in
+  `PersistManifest`, both installers and `WasmRuntime.Sync`. The `channel`
+  block stays in `manifest.go` (ut-cloud's signing mirror reads it there).
+
 ## Agent worktree hygiene
 - `.claude/worktrees/` accumulates stale agent worktrees that pollute
   repo-wide greps (#1567). Run `make prune-worktrees` periodically or when a

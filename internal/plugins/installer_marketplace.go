@@ -268,6 +268,11 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 	if manifest == nil {
 		return nil, fmt.Errorf("verify manifest: manifest missing")
 	}
+	// ADR-0169: a cloud-hosted plugin (type `channel`) runs in the ut-cloud
+	// channel host, never on a till. Refused before anything is installed.
+	if err := manifest.RefuseOnTill(); err != nil {
+		return nil, err
+	}
 	if manifest.Signature != spec.Signature {
 		return nil, fmt.Errorf("signature mismatch between marketplace metadata and manifest")
 	}
