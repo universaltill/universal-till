@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -893,6 +894,13 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 				row.PluginName, row.ListingID, row.Version)
 		}
 		if _, err := pluginSyncInstall(ctx, d, row.ListingID, row.Version); err != nil {
+			// ADR-0169: a plugin that runs in the cloud (type `channel`) can
+			// never be installed on a till, so there is nothing to follow —
+			// not a failure to retry every tick.
+			if errors.Is(err, plugins.ErrCloudHostedPlugin) {
+				logging.L().Infof("plugin sync: %s (%s) runs in the cloud, not on a till — nothing to follow", row.PluginName, row.ListingID)
+				continue
+			}
 			warnPluginSyncOnce(pluginSyncInstallKeyPrefix+row.ListingID, "plugin sync: install %s (%s@%s) from the marketplace failed (will retry): %v",
 				row.PluginName, row.ListingID, row.Version, err)
 			converged = false

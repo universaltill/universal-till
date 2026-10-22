@@ -138,6 +138,10 @@ func (imp *Importer) Import(ctx context.Context, req *ImportRequest) (*ImportRes
 	if err != nil {
 		return nil, fmt.Errorf("invalid manifest: %w", err)
 	}
+	// ADR-0169: a cloud-hosted plugin never installs on a till.
+	if err := manifest.RefuseOnTill(); err != nil {
+		return nil, err
+	}
 
 	// Verify manifest (signature check skippable only in a devplugins build). The
 	// manifest was already parsed above; VerifyManifest re-reads the file

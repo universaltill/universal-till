@@ -38,6 +38,13 @@ func main() {
 Reference (every host function, permissions, limits): ut-docs
 `reference/plugin-host-functions.md`.
 
+- **Sales-channel adapters** (`sdk/plugin/channel`, ADR-0169): the guest SDK
+  of a `channel` plugin, which runs in the ut-cloud channel host and never on
+  a till. It imports only the `"channel"` host module (`channel_http`,
+  `cursor_get/set`, `channel_submit`, `outbox_next/ack`, `log`), never the
+  `"ut"` module above, and has its own `FakeHost`. Contract:
+  ut-docs `reference/contracts/sales-channel-v1.md`.
+
 **For host changes:** a new host function lands in the same PR as its
 `//go:wasmimport` + `raw*` shim in `raw_wasip1.go`, the same shim in
 `fakehost.go`, a typed wrapper, and its reference entry —

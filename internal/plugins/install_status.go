@@ -141,6 +141,12 @@ func ClassifyInstallError(err error) InstallFailure {
 		return InstallFailure{MessageKey: "plugins.install.error.not_found", Message: "The selected plugin was not found in the catalog.", Retryable: false}
 	}
 
+	// ADR-0169: a cloud-hosted plugin (type `channel`) can never run on a
+	// till, so a retry can never succeed.
+	if errors.Is(err, ErrCloudHostedPlugin) {
+		return InstallFailure{MessageKey: "plugins.install.error.incompatible", Message: "This plugin is not compatible with this till.", Retryable: false}
+	}
+
 	msg := strings.ToLower(strings.TrimSpace(err.Error()))
 	switch {
 	case msg == "":
