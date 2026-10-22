@@ -1,0 +1,14 @@
+{{/* ut-docs#4720: the cloud-terms accept step under Settings -> Till
+     registration (Register now and the auto-register toggle). Args: terms
+     (the pages.termsView map), id (the checkbox id). Once the current version
+     is accepted only the muted line shows. The setup wizard inlines its own
+     variant (it renders standalone, without this partial). Logical CSS only;
+     the link opens in a new tab like the claim link. */}}
+{{ if .terms.accepted }}
+<p class="muted" data-testid="terms-accepted">{{ .terms.line }}</p>
+{{ else }}
+<div class="terms-accept set-gap-s">
+  <label class="set-row"><input type="checkbox" id="{{ .id }}" name="accept_terms"> {{ .terms.label }}</label>
+  <a href="{{ .terms.url }}" target="_blank" rel="noopener" hx-boost="false">{{ T "settings.enrol.terms.link" }}</a>
+</div>
+{{ end }}

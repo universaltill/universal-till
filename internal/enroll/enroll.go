@@ -762,6 +762,16 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 		fields["till_id"] = strings.TrimSpace(tid)
 	}
 	fields["platform"] = devicePlatform()
+	// The operator's acceptance of the cloud terms (ut-docs#4717), only when
+	// the current version was accepted on this till. Operator-initiated
+	// registrations collect it first; EnsureRegistered from a plugin install
+	// never asks and sends it only if already recorded.
+	if v, loc, _, ok := AcceptedTerms(ctx, kv); ok {
+		fields["terms_version"] = v
+		if loc != "" {
+			fields["terms_locale"] = loc
+		}
+	}
 	payload, err := json.Marshal(fields)
 	if err != nil {
 		return err

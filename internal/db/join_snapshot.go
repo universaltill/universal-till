@@ -137,11 +137,14 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 // device_id_get hands a plugin: copied to a joining replica, two tills would
 // report the same device id.
 //
+// marketplace.terms_* (ut-docs#4720) is the cloud-terms acceptance the
+// operator gave on THIS till; a joining replica must accept for itself.
+//
 // cloudsync.unpaid_checkin.* (ut-docs#3673, ADR-0148 amendment §2) is the
 // version and date of this till's last answered unpaid check-in: what the
 // cloud last saw of this device. Copied to a joining replica, the main
 // till's markers would cancel the replica's own first-run check-in.
-var TillCloudIdentityPrefixes = []string{"marketplace.device_", "marketplace.token", "marketplace.enrolled_at", "till_identity.", "cloudsync.unpaid_checkin."}
+var TillCloudIdentityPrefixes = []string{"marketplace.device_", "marketplace.token", "marketplace.enrolled_at", "marketplace.terms_", "till_identity.", "cloudsync.unpaid_checkin."}
 
 // DeleteTillCloudIdentity removes every TillCloudIdentityPrefixes row from
 // the settings table behind exec: the join-snapshot copy served to a joining

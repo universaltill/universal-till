@@ -1445,6 +1445,9 @@ var renderFiles = []string{
 	// TSE block) by file name.
 	"ui/partials/subscription_block.html",
 	"ui/partials/subscription_paused_banner.html",
+	// ut-docs#4720: the cloud-terms accept step under Register now and the
+	// auto-register toggle (the setup wizard, rendered standalone, inlines it).
+	"ui/partials/enrol_terms.html",
 	// ut-docs#1613: same reasoning — POST /api/backup/restore's success
 	// response AND settings.html's own page render (when a restore is
 	// already staged from an earlier visit) both need this exact markup,

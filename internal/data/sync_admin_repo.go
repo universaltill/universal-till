@@ -735,6 +735,11 @@ var PerTillSettingPrefixes = []string{
 	// TestPerTillSettingsCoverTillCloudIdentity keeps them in step.
 	"marketplace.device_", "marketplace.token", "marketplace.enrolled_at",
 	"marketplace.public_key",
+	// ut-docs#4720: the operator's acceptance of the cloud terms is this
+	// till's own (it registered under it); also in
+	// db.TillCloudIdentityPrefixes so a joining replica is not handed the
+	// main till's acceptance.
+	"marketplace.terms_",
 	// ut-docs#2792: this till's own cache of its cloud entitlement (ADR-0060
 	// §4, internal/entitlement's Key* constants), rewritten with a fresh
 	// last_confirmed_at on every cloud sync tick. Synced, that timestamp
