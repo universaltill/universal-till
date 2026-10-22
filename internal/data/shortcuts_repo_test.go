@@ -33,10 +33,15 @@ func TestLoadButtons_FallsBackToCatalogImage(t *testing.T) {
 	ex(`INSERT INTO item_images (id, item_id, path, role) VALUES ('img-a','item-a','/public/assets/items/item-a/thumb.png','thumbnail')`)
 	ex(`INSERT INTO shortcut_buttons (barcode, item_id, label, sort_order) VALUES ('BTN-A','item-a','Latte',1)`)
 
-	// item-b: an explicit button image set — must win over the catalog image.
+	// item-b: an explicit button image AND a catalog photo — the photo wins
+	// (ut-docs#4838); the button image is only the fallback for a photo-less item.
 	ex(`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit) VALUES ('item-b','SKU-B','Cappuccino',320,1,0,'each')`)
 	ex(`INSERT INTO item_images (id, item_id, path, role) VALUES ('img-b','item-b','/public/assets/items/item-b/thumb.png','thumbnail')`)
 	ex(`INSERT INTO shortcut_buttons (barcode, item_id, label, image_path, sort_order) VALUES ('BTN-B','item-b','Cappuccino','/public/images/custom-cappuccino.png',2)`)
+
+	// item-d: explicit button image, no catalog photo — the fallback applies.
+	ex(`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit) VALUES ('item-d','SKU-D','Muffin',250,1,0,'each')`)
+	ex(`INSERT INTO shortcut_buttons (barcode, item_id, label, image_path, sort_order) VALUES ('BTN-D','item-d','Muffin','/public/images/custom-muffin.png',4)`)
 
 	// item-c: neither — must stay empty, not error.
 	ex(`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit) VALUES ('item-c','SKU-C','Croissant',195,1,0,'each')`)
@@ -61,8 +66,11 @@ func TestLoadButtons_FallsBackToCatalogImage(t *testing.T) {
 	if got := byLabel["Latte"].ImageURL; got != "/public/assets/items/item-a/thumb.png" {
 		t.Fatalf("expected catalog-image fallback for Latte, got %q", got)
 	}
-	if got := byLabel["Cappuccino"].ImageURL; got != "/public/images/custom-cappuccino.png" {
-		t.Fatalf("expected the explicit button image to win for Cappuccino, got %q", got)
+	if got := byLabel["Cappuccino"].ImageURL; got != "/public/assets/items/item-b/thumb.png" {
+		t.Fatalf("expected the catalog photo to win over the button image for Cappuccino (ut-docs#4838), got %q", got)
+	}
+	if got := byLabel["Muffin"].ImageURL; got != "/public/images/custom-muffin.png" {
+		t.Fatalf("expected the button image as fallback for photo-less Muffin, got %q", got)
 	}
 	if got := byLabel["Croissant"].ImageURL; got != "" {
 		t.Fatalf("expected no image for Croissant, got %q", got)
