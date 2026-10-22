@@ -177,6 +177,27 @@ func TestEnrolPair_ReplicaWithoutStoreHasOwnMessage(t *testing.T) {
 	}
 }
 
+// An env-pinned cloud identity gets its own translated message (the code was
+// not spent and a new one will never work), not the generic failure
+// (ut-docs#4062).
+func TestEnrolPair_PinnedIdentityHasOwnMessage(t *testing.T) {
+	t.Setenv("UT_MARKETPLACE_STORE_ID", "store-pinned-by-env")
+	mux, _, d := newFullAuthDeps(t)
+	calls := pairDeps(t, d)
+
+	rec := postForm(mux, "/api/enrol/pair", url.Values{"code": {pairPageCode}}, &mgrUser)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, `class="error"`) || !strings.Contains(body, "set by whoever installed it") {
+		t.Fatalf("pinned identity = %d %s, want the pinned-identity message", rec.Code, body)
+	}
+	if strings.Contains(body, "Pairing failed") {
+		t.Fatalf("pinned identity shows the generic failure: %s", body)
+	}
+	if n := calls.Load(); n != 0 {
+		t.Fatalf("pair calls = %d, want 0 (the single-use code must not be burnt)", n)
+	}
+}
+
 func TestSettingsPage_ShowsPairWithAShop(t *testing.T) {
 	mux, _, _ := newFullAuthDeps(t)
 	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/settings", nil), mgrUser)
