@@ -1321,12 +1321,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		status, err := enroll.Pair(r.Context(), d.Cfg, d.Settings, code)
-		// The two refusals an operator can act on get their own translated
+		// The refusals an operator can act on get their own translated
 		// message; everything else is the generic failure (the raw reason is only logged).
 		switch {
 		case errors.Is(err, enroll.ErrPairStoreMismatch):
 			fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
 				html.EscapeString(httpx.T(locale, "settings.enrol.pair_store_mismatch")))
+			return
+		case errors.Is(err, enroll.ErrPairIdentityPinned):
+			fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
+				html.EscapeString(httpx.T(locale, "settings.enrol.pair_identity_pinned")))
 			return
 		case errors.Is(err, enroll.ErrPairReplicaNoStore):
 			fmt.Fprintf(w, `<span class="error">❌ %s</span>`,
