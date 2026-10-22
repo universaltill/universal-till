@@ -131,8 +131,8 @@ func TestCleanup_ArchivedShrinkageKeepsItemUntilBatchPurged(t *testing.T) {
 			t.Fatalf("includeActive=%v: item referenced only by an archived shrinkage event was removed", includeActive)
 		}
 		var inUse *data.ItemInUseError
-		if _, err := repo.DeleteUnusedItem(ctx, "voided"); !errors.As(err, &inUse) || inUse.Reason != data.ItemUseStockHistory {
-			t.Fatalf("includeActive=%v DeleteUnusedItem = %v, want ItemInUseError{%s}", includeActive, err, data.ItemUseStockHistory)
+		if _, err := repo.DeleteUnusedItem(ctx, "voided"); !errors.As(err, &inUse) || inUse.Reason != data.ItemUseArchivedShrinkage {
+			t.Fatalf("includeActive=%v DeleteUnusedItem = %v, want ItemInUseError{%s}", includeActive, err, data.ItemUseArchivedShrinkage)
 		}
 
 		// sales_count = 0: purgeable straight away (no retention window).
