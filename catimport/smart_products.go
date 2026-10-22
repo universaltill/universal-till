@@ -97,9 +97,14 @@ func withAliasMapping(headers []string, user Mapping) Mapping {
 		if _, ok := user[f.field]; ok {
 			continue
 		}
-		col := colFor(headers, f.set)
-		for col >= 0 && (claimed[col] || userHeaders[foldHeader(headers[col])]) {
-			col = colFor(headers, f.set, append(claimedCols(claimed), col)...)
+		// skip grows monotonically, so the walk always ends (review B1: a
+		// skip list that dropped the previous column looped forever when two
+		// alias columns were both mapped elsewhere by the shop).
+		skip := claimedCols(claimed)
+		col := colFor(headers, f.set, skip...)
+		for col >= 0 && userHeaders[foldHeader(headers[col])] {
+			skip = append(skip, col)
+			col = colFor(headers, f.set, skip...)
 		}
 		if col < 0 || dupHeader(headers, col) {
 			continue
@@ -338,13 +343,12 @@ func parseEposNow(buf []byte, comma rune, headers []string, o Options) (Result, 
 			}
 		}
 
-		// price: SalePriceIncTax. Blank = missing (finishProducts), bad = blocking.
+		// price: SalePriceIncTax. Blank = missing (blocking unless the item
+		// is priced at sale, below), bad = blocking.
 		incRaw, exRaw := get("salepriceinctax"), get("salepriceextax")
 		var inc, ex int64
 		incOK, exOK := false, false
-		if incRaw == "" {
-			add(IssueCodeMissingPrice, SeverityWarning, "price", "", nil)
-		} else {
+		if incRaw != "" {
 			if v, err := ParsePrice(incRaw, o.CurrencyDecimals); err == nil {
 				inc, incOK = v, true
 				it.PriceMinor = v
@@ -405,6 +409,11 @@ func parseEposNow(buf []byte, comma rune, headers []string, o Options) (Result, 
 		it.TracksStock, it.HasTracksStock = boolCol("isstocktracked", "track_stock")
 		it.Active, it.HasActive = boolCol("sellontill", "active")
 		it.VariablePrice, _ = boolCol("isvariableprice", "variable_price")
+		// A blank price is an error, never a free item (review B3); a
+		// variable-price item is priced at sale, so blank is no issue.
+		if incRaw == "" && !it.VariablePrice {
+			add(IssueCodeMissingPrice, SeverityError, "price", "", nil)
+		}
 
 		// tax: derived from inc/ex, snapped to the store's rates
 		bp, has, iss := eposTax(ex, exOK, inc, incOK, it.TaxGroup, o.KnownTaxRatesBP)
@@ -532,6 +541,16 @@ func eposTax(ex int64, exOK bool, inc int64, incOK bool, group string, known []i
 // price. pre are the issues the source's own parse raised.
 func finishProducts(res *Result, pre []RowIssue, o Options) []RowIssue {
 	issues := append([]RowIssue(nil), pre...)
+	// had[row,code]: O(1) "this row already has that issue" (review M2:
+	// scanning every issue per row was quadratic in the file's rows).
+	type rowCode struct {
+		row  int
+		code string
+	}
+	had := map[rowCode]bool{}
+	for _, is := range pre {
+		had[rowCode{is.Row, is.Code}] = true
+	}
 	known := map[string]bool{}
 	for _, c := range o.KnownCategories {
 		known[strings.ToLower(strings.TrimSpace(c))] = true
@@ -552,6 +571,7 @@ func finishProducts(res *Result, pre []RowIssue, o Options) []RowIssue {
 		}
 		add := func(code, sev, field, orig string, sug *string) {
 			issues = append(issues, RowIssue{Row: row, Code: code, Severity: sev, Field: field, Original: orig, Suggested: sug})
+			had[rowCode{row, code}] = true
 		}
 		if it.Issue != "" && it.Issue != IssueBadPrice && it.Issue != IssueMissingName && it.Issue != IssueMissingNameAndBadPrice {
 			continue // a source-specific blocking issue is mapped by the source
@@ -573,7 +593,7 @@ func finishProducts(res *Result, pre []RowIssue, o Options) []RowIssue {
 				add(IssueCodeMissingSKU, SeverityWarning, "sku", "", sp(sku))
 			}
 		}
-		if it.Barcode == "" && it.BarcodeIssue == "" && !hasIssue(issues, row, IssueCodeDuplicateBarcode) {
+		if it.Barcode == "" && it.BarcodeIssue == "" && !had[rowCode{row, IssueCodeDuplicateBarcode}] {
 			is := RowIssue{Row: row, Code: IssueCodeMissingBarcode, Severity: SeverityWarning, Field: "barcode"}
 			if it.SKU != "" {
 				if code, _, iss, _ := DeriveNumberBarcode(it.SKU, o.EnabledSymbologyIDs); iss == "" && code != "" {
@@ -581,25 +601,17 @@ func finishProducts(res *Result, pre []RowIssue, o Options) []RowIssue {
 				}
 			}
 			issues = append(issues, is)
+			had[rowCode{row, is.Code}] = true
 		}
 		if o.KnownCategories != nil && strings.TrimSpace(it.Category) != "" && !known[strings.ToLower(strings.TrimSpace(it.Category))] {
 			add(IssueCodeUnknownCategory, SeverityWarning, "category", it.Category, sp(it.Category))
 		}
-		if it.Issue == "" && it.PriceMinor == 0 && !it.VariablePrice && !hasIssue(issues, row, IssueCodeMissingPrice) {
+		if it.Issue == "" && it.PriceMinor == 0 && !it.VariablePrice && !had[rowCode{row, IssueCodeMissingPrice}] {
 			add(IssueCodeZeroPrice, SeverityWarning, "price", "0", nil)
 		}
 	}
 	sort.SliceStable(issues, func(a, b int) bool { return issues[a].Row < issues[b].Row })
 	return issues
-}
-
-func hasIssue(issues []RowIssue, row int, code string) bool {
-	for _, i := range issues {
-		if i.Row == row && i.Code == code {
-			return true
-		}
-	}
-	return false
 }
 
 // shorten cuts s to at most max runes on a word boundary where one is near

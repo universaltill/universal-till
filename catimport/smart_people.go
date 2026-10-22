@@ -296,20 +296,28 @@ func findSynonymCol(headers []string, field string) int {
 	return -1
 }
 
-// parseQuantity reads a counted quantity: "." is always the decimal
-// point; "," is a thousands separator when exactly three digits follow it
-// ("1,000"), else a decimal comma ("2,5").
+// parseQuantity reads a counted quantity. With both "." and "," the last
+// one is the decimal mark ("1.234,5" DE/TR, "1,234.5" EN); a mark that
+// repeats is a thousands separator ("1.000.000"); a single "," is a
+// thousands separator when exactly three digits follow it ("1,000"), else
+// a decimal comma ("2,5"); a single "." is the decimal point (review M1).
 func parseQuantity(raw string) (float64, bool) {
 	s := strings.ReplaceAll(strings.TrimSpace(raw), " ", "")
 	if s == "" {
 		return 0, false
 	}
-	if i := strings.LastIndexByte(s, ','); i >= 0 {
-		if strings.Contains(s, ".") || (len(s)-i-1 == 3 && strings.Count(s, ",") >= 1) {
-			s = strings.ReplaceAll(s, ",", "")
-		} else {
-			s = strings.ReplaceAll(s, ",", ".")
-		}
+	dot, comma := strings.LastIndexByte(s, '.'), strings.LastIndexByte(s, ',')
+	switch {
+	case dot >= 0 && comma >= 0 && dot > comma:
+		s = strings.ReplaceAll(s, ",", "")
+	case dot >= 0 && comma >= 0:
+		s = strings.ReplaceAll(strings.ReplaceAll(s, ".", ""), ",", ".")
+	case comma >= 0 && (strings.Count(s, ",") > 1 || len(s)-comma-1 == 3):
+		s = strings.ReplaceAll(s, ",", "")
+	case comma >= 0:
+		s = strings.ReplaceAll(s, ",", ".")
+	case strings.Count(s, ".") > 1:
+		s = strings.ReplaceAll(s, ".", "")
 	}
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {

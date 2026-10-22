@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // All headers and rows below are invented (ut-docs#4747); the Epos Now
@@ -546,3 +547,75 @@ func TestRowForCarriesActiveOnlyWhenTheSourceSaidSo(t *testing.T) {
 		t.Fatalf("no Active column, no statement: %v", *r.Active)
 	}
 }
+
+// Independent review (Opus, 2026-10-22) findings, written failing first.
+
+// B1: two alias-matching columns both named by the shop's mapping (to other
+// fields) used to send withAliasMapping into an endless loop.
+func TestWithAliasMappingTerminatesWhenAliasColumnsAreMapped(t *testing.T) {
+	done := make(chan Mapping, 1)
+	go func() {
+		done <- withAliasMapping([]string{"Bezeichnung", "Artikelname", "Preis"},
+			Mapping{"description": "Bezeichnung", "sku": "Artikelname"})
+	}()
+	select {
+	case m := <-done:
+		if _, ok := m["name"]; ok {
+			t.Fatalf("a header the shop mapped elsewhere must not become the name: %v", m)
+		}
+	case <-timeAfter(3):
+		t.Fatal("withAliasMapping never returned")
+	}
+}
+
+// B2: a grandfathered Shopify export (Title + Variant Price) is a products
+// file, not unknown_kind.
+func TestShopifyExportIsAProductsFile(t *testing.T) {
+	h := strings.Split(strings.SplitN(shopifyCSV, "\n", 2)[0], ",")
+	if d := DetectKind(h); d.Kind != KindProducts {
+		t.Fatalf("shopify header: %+v", d)
+	}
+	res, err := ParseProducts(strings.NewReader(shopifyCSV), smartOpts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Format != FormatShopify || len(res.Items) == 0 || res.Items[0].PriceMinor == 0 {
+		t.Fatalf("shopify parse: %+v", res.Items)
+	}
+}
+
+// B3: an Epos Now row with no SalePriceIncTax must not import as a free
+// item: missing_price is an error, unless the item is variable-price
+// (priced at sale), where a blank price is no issue at all.
+func TestParseProductsEposNowMissingPriceBlocksUnlessVariable(t *testing.T) {
+	file := eposFile(t,
+		map[string]string{"Name": "No Price", "CategoryId": "Food", "SalePriceTaxGroupId": "20VAT", "ArticleCode": "NP-1", "IsVariablePrice": "no"},
+		map[string]string{"Name": "Open Price", "CategoryId": "Food", "SalePriceTaxGroupId": "20VAT", "ArticleCode": "OP-1", "IsVariablePrice": "yes"},
+	)
+	res, err := ParseProducts(strings.NewReader(file), smartOpts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mp := issuesByCode(res.Issues, IssueCodeMissingPrice)
+	if len(mp) != 1 || mp[0].Row != 2 || mp[0].Severity != SeverityError {
+		t.Fatalf("missing_price: %+v", mp)
+	}
+	if z := issuesByCode(res.Issues, IssueCodeZeroPrice); len(z) != 0 {
+		t.Fatalf("zero_price on a missing/variable price: %+v", z)
+	}
+}
+
+// M1: a DE/TR count with both separators reads the last one as the decimal
+// mark; repeated separators are thousands.
+func TestParseQuantityBothSeparators(t *testing.T) {
+	for in, want := range map[string]float64{
+		"1.234,5": 1234.5, "1,234.5": 1234.5, "1.000.000": 1000000, "1,000,000": 1000000,
+		"2,5": 2.5, "12": 12, "1.234.567,25": 1234567.25,
+	} {
+		if got, ok := parseQuantity(in); !ok || got != want {
+			t.Errorf("parseQuantity(%q) = %v, %v; want %v", in, got, ok, want)
+		}
+	}
+}
+
+func timeAfter(sec int) <-chan time.Time { return time.After(time.Duration(sec) * time.Second) }

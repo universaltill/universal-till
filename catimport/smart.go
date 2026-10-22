@@ -341,7 +341,10 @@ func profileOf(headers []string) profile {
 	var p profile
 	p.eposNow = DetectSource(headers) == SourceEposNow
 	p.name = hasField(headers, "name", aliasName)
-	p.price = hasField(headers, "price", aliasPrice) || p.eposNow
+	// Shopify's grandfathered export prices per variant ("Variant Price"),
+	// which ParseMapped reads; it is a products file (review B2).
+	p.price = hasField(headers, "price", aliasPrice) || p.eposNow ||
+		(DetectFormat(headers) == FormatShopify && hasExactHeader(headers, "variant price"))
 	p.hasSKU = hasField(headers, "sku", aliasSKU)
 	p.hasBarcode = hasField(headers, "barcode", aliasBarcode)
 	p.key = p.hasSKU || p.hasBarcode
