@@ -30,7 +30,11 @@ import (
 var mainTillOnlyTypes = map[string]bool{
 	// ADR-0168 §5: customers are sealed to the main till's key and applied
 	// there only (ut-docs#4748).
-	"import_customers":       true,
+	"import_customers": true,
+	// ADR-0169 §9 (ut-docs#4768): channel orders are recorded on the main
+	// till only, the sole stock master.
+	"channel_order":          true,
+	"channel_order_update":   true,
 	"save_item":              true,
 	"save_category":          true,
 	"delete_category":        true,
@@ -86,6 +90,8 @@ var catalogTypes = map[string]bool{
 	"create_stock_location": true, "rename_stock_location": true, "set_stock_location_active": true,
 	// ...and registers (ut-docs#3642).
 	"set_register_location": true,
+	// A channel order moves stock, which the snapshot reports (ut-docs#4768).
+	"channel_order": true, "channel_order_update": true,
 }
 
 // payload is a presence-aware reader over a directive's payload: every

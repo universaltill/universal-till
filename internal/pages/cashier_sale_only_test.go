@@ -41,6 +41,9 @@ var saleOnlyRoutes = []saleOnlyRoute{
 	{http.MethodGet, "/plugins/store", "", []int{http.StatusOK, http.StatusServiceUnavailable}},
 	// ut-docs#4180: a listing's own page, same gate as the store.
 	{http.MethodGet, "/plugins/store/some-listing", "", []int{http.StatusOK, http.StatusServiceUnavailable, http.StatusNotFound}},
+	// ut-docs#4768: Online orders is a Reports-gated page (ADR-0169 §9).
+	{http.MethodGet, "/channel-orders", `channel-orders-intro`, []int{http.StatusOK}},
+	{http.MethodGet, "/channel-orders/some-order", "", []int{http.StatusNotFound}},
 	{http.MethodPost, "/api/inventory/receipt", "", []int{http.StatusBadRequest}},
 	// Review of this card: the same data/writes, left ungated.
 	{http.MethodGet, "/api/inventory/low-stock", "", []int{http.StatusOK}},
@@ -58,6 +61,7 @@ func newSaleOnlyMux(t *testing.T) *http.ServeMux {
 	mux := http.NewServeMux()
 	registerSettings(mux, dp)
 	registerReportsPage(mux, dp)
+	registerChannelOrdersPage(mux, dp)
 	registerInventoryPage(mux, dp)
 	registerInventoryAPI(mux, dp)
 	registerPluginsPage(mux, dp)

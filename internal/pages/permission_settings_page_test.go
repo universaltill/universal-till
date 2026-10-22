@@ -512,8 +512,8 @@ func TestPermissionSettingsPage_GET_GroupedDescribedWithUnlocks(t *testing.T) {
 		t.Fatalf("expected the reports description, got: %s", body)
 	}
 	// The Unlocks list: reports → the Reports tile.
-	if !strings.Contains(body, "Unlocks: Reports<") {
-		t.Fatalf(`expected "Unlocks: Reports" under the reports action, got: %s`, body)
+	if !strings.Contains(body, "Unlocks: Reports, Online orders<") {
+		t.Fatalf(`expected "Unlocks: Reports, Online orders" under the reports action, got: %s`, body)
 	}
 	// Composite fiscal tiles only show where the shop has them (not DE here).
 	if strings.Contains(body, httpx.T("en", "fiscalregister.title")) {

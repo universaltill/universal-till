@@ -7004,3 +7004,18 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
   .translate-panel { inset-inline: 0; inset-block: 0 2.6rem; inline-size: 100vw; border-radius: 0; }
   .statusbar .sb-translate-hint { display: none; }
 }
+
+/* Online orders (ADR-0169 §9, ut-docs#4768): logical properties only. */
+.channel-orders-intro { margin-block: .25rem .75rem; max-inline-size: 60ch; }
+.channel-orders-num { text-align: end; font-variant-numeric: tabular-nums; }
+.channel-order-status { display: inline-block; padding-block: .1rem; padding-inline: .55rem; border-radius: 999px;
+  border: 1px solid var(--border, currentColor); font-size: .8rem; white-space: nowrap; }
+.channel-order-status[data-status="cancelled"], .channel-order-status[data-status="refunded"],
+.channel-order-status[data-status="partially_refunded"], .channel-order-status[data-status="unmatched"] { font-weight: 600; }
+.channel-order-facts { display: grid; grid-template-columns: max-content 1fr; column-gap: 1rem; row-gap: .35rem; margin: 0; }
+.channel-order-facts dt { color: var(--muted, inherit); }
+.channel-order-facts dd { margin: 0; margin-inline-start: 0; }
+.channel-order-totals { margin-block-start: .75rem; justify-content: end; }
+.channel-order-scroll { overflow-x: auto; max-inline-size: 100%; }
+.channel-order-link { display: inline-flex; align-items: center; min-block-size: 44px; min-inline-size: 44px; }
+.channel-order-key { overflow-wrap: anywhere; word-break: break-all; }

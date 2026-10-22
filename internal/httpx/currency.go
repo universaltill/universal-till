@@ -105,6 +105,20 @@ func CurrencyByCode(code string) CurrencyInfo {
 	return CurrencyInfo{Code: code, Name: code, Display: code + " ", Decimals: 2}
 }
 
+// isoMinorUnits is the ISO 4217 minor-unit exponent of a code the registry
+// does not carry, for an amount that arrives with its own currency (a channel
+// order, a plugin cell). Only the currencies that are not two-decimal are
+// listed; everything else is 2.
+func isoMinorUnits(code string) int {
+	switch code {
+	case "BIF", "CLP", "DJF", "GNF", "ISK", "KMF", "KRW", "PYG", "RWF", "UGX", "UYI", "VND", "VUV", "XAF", "XOF", "XPF", "JPY":
+		return 0
+	case "BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND":
+		return 3
+	}
+	return 2
+}
+
 // IsKnownCurrency reports whether code is a real entry in the registry (the
 // only set the Settings/setup currency pickers actually offer) — unlike
 // CurrencyByCode, this genuinely rejects an unrecognised code instead of
@@ -353,7 +367,14 @@ func formatMoney(minor int64, locale string, digitShape bool) string {
 // money cell, ADR-0121 §7, ut-docs#3160). An unknown code renders as
 // "CODE 1.23" (CurrencyByCode's fallback).
 func FormatMoneyIn(minor int64, code, locale string) string {
-	return formatMoneyCurrency(minor, CurrencyByCode(code), locale, true)
+	c := CurrencyByCode(code)
+	if !IsKnownCurrency(code) {
+		// Not offered by the pickers: the ISO 4217 exponent, so a KWD amount
+		// is 12.500, not 125.00 (ut-docs#4768). CurrencyByCode keeps its
+		// two-decimal fallback for the active-currency paths.
+		c.Decimals = isoMinorUnits(c.Code)
+	}
+	return formatMoneyCurrency(minor, c, locale, true)
 }
 
 // FormatDecimal renders a plain decimal string ("-1234.5", digits with one

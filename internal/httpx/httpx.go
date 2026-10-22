@@ -1105,6 +1105,16 @@ func FuncsFor(locale string) template.FuncMap {
 		}
 		return FormatMoneyDisplay(cents, locale)
 	}
+	// {{ moneyIn .Total .Currency }}: an amount that carries its own ISO 4217
+	// code (a channel order placed in another currency than the till's),
+	// formatted by that code's minor unit and symbol (ut-docs#4768).
+	funcs["moneyIn"] = func(amount any, code string) string {
+		minor, ok := minorUnits(amount)
+		if !ok {
+			return ""
+		}
+		return FormatMoneyIn(minor, code, locale)
+	}
 	// {{ bpPercent .Raw }}: a percent discount's rate in the request
 	// locale's decimal separator, next to the locale-bound money above
 	// (ut-docs#4176). The base func stays for non-request callers.
