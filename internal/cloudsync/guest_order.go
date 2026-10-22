@@ -303,7 +303,7 @@ func postStoredGuestOrderResult(ctx context.Context, cfg *config.Config, repo *d
 	}
 	err := postResult(ctx, cfg, directiveID, g.Status, g.Message, dataObj)
 	var se *statusError
-	if err != nil && !(errors.As(err, &se) && guestResultStatusIsFinal(se.StatusCode)) {
+	if err != nil && !(errors.As(err, &se) && resultStatusIsFinal(se.StatusCode)) {
 		logging.L().Warnf("cloudsync: guest_order %s result not delivered (retried next tick): %v", g.GuestOrderID, err)
 		return false
 	}
@@ -320,13 +320,14 @@ func postStoredGuestOrderResult(ctx context.Context, cfg *config.Config, repo *d
 	return true
 }
 
-// guestResultStatusIsFinal reports whether a non-200 answer to a
-// guest_order result post ends its retries. 404 (the cloud no longer holds
+// resultStatusIsFinal reports whether a non-200 answer to a directive
+// result post (guest_order, or a generic directive's stored result —
+// ut-docs#4797) ends its retries. 404 (the cloud no longer holds
 // the directive) is the ADR-0159 §4 case; any other 4xx except 401 (a
 // credential being rotated), 408 and 429 is a permanent refusal too — retrying it could never succeed, and since
 // retries run oldest first and stop at the first failure, one such row
 // would otherwise starve every later result (review of ut-docs#4337).
-func guestResultStatusIsFinal(code int) bool {
+func resultStatusIsFinal(code int) bool {
 	return code >= 400 && code < 500 && code != http.StatusUnauthorized && code != http.StatusRequestTimeout && code != http.StatusTooManyRequests
 }
 

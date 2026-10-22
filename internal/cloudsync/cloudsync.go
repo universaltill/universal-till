@@ -679,22 +679,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 			handleGuestOrder(ctx, cfg, db, d, hooks)
 			continue
 		}
-		fetchDeferred = false
-		status, msg := apply(ctx, d, hooks)
-		if fetchDeferred && status == "failed" {
-			logging.L().Warnf("cloudsync: directive %s (%s) left pending: %s", d.ID, d.Type, msg)
-			continue
-		}
-		if status == "applied" && catalogTypes[d.Type] {
-			catalogApplied = true
-		}
-		if err := postResult(ctx, cfg, d.ID, status, msg, nil); err != nil {
-			// Leave it pending on the cloud; the next tick re-applies (the
-			// hooks are idempotent for the supported types) and re-reports.
-			logging.L().Warnf("cloudsync: result for %s not delivered: %v", d.ID, err)
-		} else {
-			logging.L().Infof("cloudsync: directive %s (%s) %s: %s", d.ID, d.Type, status, msg)
-		}
+		handleGenericDirective(ctx, cfg, db, d, hooks, &fetchDeferred, &catalogApplied)
 	}
 	// A guest_order result the cloud did not acknowledge on an earlier tick
 	// is re-posted until it answers 200 or 404 (ADR-0159 §4). Only the main
