@@ -145,7 +145,13 @@ func readExportExtras(buf []byte, headers []string, source string, o Options, re
 	barcodes, idCol := -1, -1
 	if source == SourceMyExport {
 		barcodes = colFor(headers, aliases("barcodes"))
-		idCol = exactHeaderIndex(headers, "id")
+		// the my. export writes a lowercase "id" (ADR-0168 §3); match it exactly
+		for i, h := range headers {
+			if strings.ToLower(strings.TrimSpace(strings.TrimPrefix(h, "\uFEFF"))) == "id" {
+				idCol = i
+				break
+			}
+		}
 	}
 	if active < 0 && barcodes < 0 && idCol < 0 {
 		return
@@ -173,7 +179,13 @@ func readExportExtras(buf []byte, headers []string, source string, o Options, re
 			}
 		}
 		if idCol >= 0 && idCol < len(rec) {
-			it.ItemID = cleanItemID(rec[idCol])
+			// kept only when it fits maxItemIDLen and holds no control
+			// character or whitespace; anything else is no id at all
+			id := StripCSVDefuse(strings.TrimSpace(rec[idCol]))
+			if len(id) > maxItemIDLen || strings.ContainsFunc(id, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) {
+				id = ""
+			}
+			it.ItemID = id
 		}
 		if barcodes >= 0 && barcodes < len(rec) {
 			first, _, _ := strings.Cut(rec[barcodes], ";")
@@ -192,32 +204,6 @@ func readExportExtras(buf []byte, headers []string, source string, o Options, re
 
 // maxItemIDLen bounds the my. export id carried in ImportItem.ItemID.
 const maxItemIDLen = 64
-
-// exactHeaderIndex is the index of the first header equal to name after
-// BOM-strip, trim and case folding, or -1.
-func exactHeaderIndex(headers []string, name string) int {
-	for i, h := range headers {
-		if strings.ToLower(strings.TrimSpace(strings.TrimPrefix(h, "\uFEFF"))) == name {
-			return i
-		}
-	}
-	return -1
-}
-
-// cleanItemID returns the export id cell, or "" when it is over
-// maxItemIDLen bytes or holds a control character or inner whitespace.
-func cleanItemID(raw string) string {
-	id := StripCSVDefuse(strings.TrimSpace(raw))
-	if len(id) > maxItemIDLen {
-		return ""
-	}
-	for _, r := range id {
-		if unicode.IsControl(r) || unicode.IsSpace(r) {
-			return ""
-		}
-	}
-	return id
-}
 
 // boolGuess is a parsed yes/no cell: exact when the cell is a recognised
 // yes/no word, otherwise a best guess from its first letter.
