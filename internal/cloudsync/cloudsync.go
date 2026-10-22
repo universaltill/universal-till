@@ -124,11 +124,15 @@ type Hooks struct {
 	// ut-docs#4749): set the item to the counted quantity while keeping
 	// every movement recorded since the count. nil on a till without the
 	// mode, which then refuses the directive.
-	CountStock     func(ctx context.Context, req CountStockRequest) (string, error)
-	RenameItem     func(ctx context.Context, itemID, name string) (string, error)
-	DeactivateItem func(ctx context.Context, itemID string) (string, error)
-	CreateItem     func(ctx context.Context, name string, priceMinor int64, barcode string) (string, error)
-	AddBarcode     func(ctx context.Context, itemID, barcode string) (string, error)
+	CountStock func(ctx context.Context, req CountStockRequest) (string, error)
+	// ImportCustomers handles "import_customers" (ADR-0168 §5): the hook
+	// opens the sealed rows, applies them and returns counts and per-row
+	// outcomes. nil on a till without it, which then fails the directive.
+	ImportCustomers func(ctx context.Context, d ImportCustomersDirective) (ImportCustomersResult, error)
+	RenameItem      func(ctx context.Context, itemID, name string) (string, error)
+	DeactivateItem  func(ctx context.Context, itemID string) (string, error)
+	CreateItem      func(ctx context.Context, name string, priceMinor int64, barcode string) (string, error)
+	AddBarcode      func(ctx context.Context, itemID, barcode string) (string, error)
 	// FiscalTSEReady handles the payload-less "fiscal_tse_ready" directive
 	// (ADR-0053, ut-docs#802): the cloud finished reseller-provisioning this
 	// shop's TSE, so the till must fetch its operational signing credential
@@ -637,6 +641,10 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 			} else if firstTargetSkip(d.ID) {
 				logging.L().Infof("cloudsync: directive %s (%s) skipped: %s", d.ID, d.Type, reason)
 			}
+			continue
+		}
+		if d.Type == "import_customers" {
+			handleImportCustomers(ctx, cfg, d, hooks)
 			continue
 		}
 		if d.Type == "guest_order" {

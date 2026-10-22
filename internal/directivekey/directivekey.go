@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,6 +41,10 @@ var relPath = []string{"secrets", "directive-x25519.key"}
 
 // Info is the HPKE info string of the till-user PIN seal (contract §2).
 const Info = "universaltill/till-user-pin/v1"
+
+// CustomersInfo is the HPKE info string of the import_customers payload seal
+// (ADR-0168 §5): same key and wire form as a PIN, a different purpose.
+const CustomersInfo = "universaltill/import-customers/v1"
 
 // keySize is the raw X25519 private-key length.
 const keySize = 32
@@ -76,6 +81,13 @@ func (s *Store) Path() string { return s.path }
 // directive type and user id, joined by "\n" (contract §2).
 func AAD(storeExternalID, directiveID, directiveType, userID string) string {
 	return storeExternalID + "\n" + directiveID + "\n" + directiveType + "\n" + userID
+}
+
+// CustomersAAD is the import_customers seal's additional data: store
+// external id, directive id, directive type, job id and chunk index, joined
+// by "\n" (ADR-0168 §5).
+func CustomersAAD(storeExternalID, directiveID, directiveType, jobID string, chunk int) string {
+	return storeExternalID + "\n" + directiveID + "\n" + directiveType + "\n" + jobID + "\n" + strconv.Itoa(chunk)
 }
 
 // KID is the key id: the first 16 lowercase hex chars of SHA-256 over the
@@ -187,30 +199,38 @@ func (s *Store) Report() map[string]string {
 // open all return ErrKeyGone. A value that is not the v1 wire form returns
 // ErrMalformed. Neither error carries any part of the input.
 func (s *Store) OpenPIN(pinSealed, aad string) (string, error) {
-	parts := strings.Split(pinSealed, ".")
+	pt, err := s.OpenSealed(pinSealed, Info, aad)
+	return string(pt), err
+}
+
+// OpenSealed opens a v1 sealed value for the given HPKE info and AAD with
+// the same rules as OpenPIN. The caller owns the returned plaintext and
+// should not keep it (the import_customers payload is personal data).
+func (s *Store) OpenSealed(sealed, info, aad string) ([]byte, error) {
+	parts := strings.Split(sealed, ".")
 	if len(parts) != 4 || parts[0] != "v1" || len(parts[1]) != 16 {
-		return "", ErrMalformed
+		return nil, ErrMalformed
 	}
 	enc, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil || len(enc) != hpke.EncSize {
-		return "", ErrMalformed
+		return nil, ErrMalformed
 	}
 	ct, err := base64.RawURLEncoding.DecodeString(parts[3])
 	if err != nil || len(ct) == 0 {
-		return "", ErrMalformed
+		return nil, ErrMalformed
 	}
 	s.mu.Lock()
 	k, found, err := s.load()
 	s.mu.Unlock()
 	if err != nil || !found {
-		return "", ErrKeyGone
+		return nil, ErrKeyGone
 	}
 	if KID(k.PublicKey().Bytes()) != parts[1] {
-		return "", ErrKeyGone
+		return nil, ErrKeyGone
 	}
-	pt, err := hpke.Open(k, enc, []byte(Info), []byte(aad), ct)
+	pt, err := hpke.Open(k, enc, []byte(info), []byte(aad), ct)
 	if err != nil {
-		return "", ErrKeyGone
+		return nil, ErrKeyGone
 	}
-	return string(pt), nil
+	return pt, nil
 }
