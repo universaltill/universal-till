@@ -1,9 +1,16 @@
 package enroll
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
 	"strings"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/config"
 )
 
 // TermsVersion is the cloud-service terms version this till build asks the
@@ -19,7 +26,15 @@ const (
 	keyTermsVersion    = "marketplace.terms_version"
 	keyTermsLocale     = "marketplace.terms_locale"
 	keyTermsAcceptedAt = "marketplace.terms_accepted_at" // RFC3339 UTC
+	// keyTermsSentVersion is the terms version the cloud has confirmed for
+	// this till (register() sent it, or POST /v1/stores/terms answered 200).
+	// Same terms_ prefix, so it is per-till and never joins/syncs.
+	keyTermsSentVersion = "marketplace.terms_sent_version"
 )
+
+// ErrNoTermsAcceptance: SendTermsAcceptance was called with no acceptance of
+// the current TermsVersion recorded on this till.
+var ErrNoTermsAcceptance = errors.New("no cloud-terms acceptance recorded on this till")
 
 // TermsURL is where the operator reads the cloud terms in their language.
 // Paths are region-tagged (ADR-0038); the interim page is published by
@@ -75,4 +90,59 @@ func AcceptedTerms(ctx context.Context, kv Settings) (version, locale, acceptedA
 	locale, _, _ = kv.Get(ctx, keyTermsLocale)
 	acceptedAt, _, _ = kv.Get(ctx, keyTermsAcceptedAt)
 	return version, locale, acceptedAt, true
+}
+
+// TermsSent reports whether the cloud has been told about this till's
+// acceptance of the current TermsVersion.
+func TermsSent(ctx context.Context, kv Settings) bool {
+	v, _, _ := kv.Get(ctx, keyTermsSentVersion)
+	return v == TermsVersion
+}
+
+// markTermsSent stores that the cloud has the acceptance of version v.
+func markTermsSent(ctx context.Context, kv Settings, v string) error {
+	return kv.Set(ctx, keyTermsSentVersion, v)
+}
+
+// SendTermsAcceptance sends the stored acceptance of an already registered
+// till to the cloud (POST /v1/stores/terms, store-token Bearer;
+// ut-docs#4792): a till registered before the terms step, or through a
+// plugin install, never sent one. On 200 it records the sent marker. An
+// error leaves the local acceptance intact so the operator can retry; the
+// caller logs the raw error and shows a translated message.
+func SendTermsAcceptance(ctx context.Context, cfg *config.Config, kv Settings) error {
+	m := Effective(cfg).Marketplace
+	storeID, token := currentStoreAuth(m)
+	if m.EndpointURL == "" || storeID == "" || token == "" {
+		return ErrTillNotRegistered
+	}
+	version, locale, _, ok := AcceptedTerms(ctx, kv)
+	if !ok {
+		return ErrNoTermsAcceptance
+	}
+	fields := map[string]string{"store_id": storeID, "terms_version": version}
+	if locale != "" {
+		fields["terms_locale"] = locale
+	}
+	payload, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	url := strings.TrimRight(m.EndpointURL, "/") + "/v1/stores/terms"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return newCloudHTTPError("terms", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return markTermsSent(ctx, kv, version)
 }

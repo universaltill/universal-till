@@ -1287,6 +1287,64 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			httpx.T(locale, "settings.enrol.registered"), status.StoreID)
 	})
 
+	// ut-docs#4792: a till that registered before the terms step (or through
+	// a plugin install) accepts the cloud terms here, or re-sends an
+	// acceptance the cloud has not received. Same always-200 HTMX shape as
+	// POST /api/enrol/now; offline it only shows a message - the acceptance
+	// stays on the till and the button retries. Never touches checkout.
+	mux.HandleFunc("POST /api/enrol/terms", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = r.ParseForm()
+		status := enroll.CurrentStatus()
+		if !status.Registered {
+			// A replica registered through its main till has no store token
+			// of its own, so there is nothing for it to send.
+			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, "settings.enrol.not_registered")))
+			return
+		}
+		// Validated BEFORE checkOrElevate, like /api/enrol/now: a request
+		// that would be refused must not burn an approver's PIN.
+		accepted := termsAlreadyAccepted(r.Context(), d)
+		if !accepted && !termsTicked(r) {
+			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, "settings.enrol.terms.accept_required")))
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/enrol/terms", "#terms-msg",
+				httpx.T(locale, "elevation.summary.enrol_terms"),
+				[]elevationHiddenField{{Name: "accept_terms", Value: r.Form.Get("accept_terms")}}, elev)
+			return
+		}
+		if !accepted {
+			if err := enroll.RecordTermsAcceptance(r.Context(), d.Settings, locale); err != nil {
+				logging.L().Errorf("enrol terms: record terms acceptance: %v", err)
+				fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, "settings.error.save_failed")))
+				return
+			}
+		}
+		if err := enroll.SendTermsAcceptance(r.Context(), d.Cfg, d.Settings); err != nil {
+			// The raw reason (the cloud's English JSON or a transport error
+			// naming the endpoint) is logged, never rendered (ut-docs#3861).
+			logging.L().Warnf("enrol terms send failed: %v", err)
+			key := "settings.enrol.terms.send_failed"
+			switch {
+			case enroll.IsServiceRefused(err):
+				key = "settings.enrol.service_unavailable"
+			case errors.Is(err, enroll.ErrTillNotRegistered):
+				key = "settings.enrol.not_registered"
+			}
+			fmt.Fprintf(w, `<span class="error">❌ %s</span>`, html.EscapeString(httpx.T(locale, key)))
+			return
+		}
+		settingsAudit(r, posRepo, elev, "enrollment", status.StoreID, "terms_accepted", map[string]any{"terms_version": enroll.TermsVersion})
+		line, _ := termsView(r.Context(), d, locale)["line"].(string)
+		// The out-of-band swap removes the accept box and button now that
+		// there is nothing left to do.
+		fmt.Fprintf(w, `<span>✅ %s</span><div id="terms-block" hx-swap-oob="true" hidden></div>`, html.EscapeString(line))
+	})
+
 	// "Check for a paid plan" (ADR-0148 §2, ut-docs#3615): only a paid store
 	// checks in periodically, so an unpaid till learns that the shop moved
 	// to a paid plan only when an operator asks. This opens the short
