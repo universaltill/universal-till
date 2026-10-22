@@ -26,6 +26,7 @@ const (
 	// transaction-reset archive, which a restore would need the item for.
 	ItemUseShrinkage         = "shrinkage"
 	ItemUseArchivedShrinkage = "archived_shrinkage"
+	ItemUseAgeCheck          = "age_check"
 	ItemUseQuickButton       = "quick_button"
 	ItemUseOpenBasket        = "open_basket"
 	ItemUseOpenVouchers      = "open_vouchers"
@@ -57,7 +58,9 @@ func (e *ItemInUseError) Error() string {
 		}
 		return fmt.Sprintf("it was comped or wasted %d times — deactivate it instead", e.Count)
 	case ItemUseArchivedShrinkage:
-		return "its voids sit in an archived reset that can still be restored — deactivate it instead"
+		return "its voids, comps or wastes sit in an archived reset that can still be restored — deactivate it instead"
+	case ItemUseAgeCheck:
+		return "its ID checks are on record — deactivate it instead"
 	case ItemUseQuickButton:
 		return "it is on a quick button — deactivate it instead"
 	case ItemUseOpenVouchers:
@@ -100,6 +103,15 @@ SELECT EXISTS (SELECT 1 FROM stock_movements WHERE item_id = ? AND quantity <> 0
 // row would make its reset batch unrestorable (ErrArchiveReferencesRemoved)
 // once the item is gone. Takes the item id once.
 const itemArchivedShrinkageSQL = `SELECT EXISTS (SELECT 1 FROM shrinkage_events_archive WHERE item_id = ?)`
+
+// itemAgeCheckSQL: an ID check recorded for the item, live or archived
+// (age_verifications, ut-docs#3340) — due-diligence evidence the cleanup
+// rule (obsoleteItemsPredicate) keeps the item for. Checked by name before
+// anything changes (independent review of ut-docs#4746). Takes the item id
+// twice.
+const itemAgeCheckSQL = `
+SELECT EXISTS (SELECT 1 FROM age_verifications WHERE item_id = ?)
+    OR EXISTS (SELECT 1 FROM age_verifications_archive WHERE item_id = ?)`
 
 // itemOpenVouchersSQL (ut-docs#4259): a gift voucher item while the shop
 // has any active voucher. A voucher sold through the item is never a sale
@@ -200,6 +212,7 @@ func deleteUnusedItemTx(ctx context.Context, tx *sql.Tx, itemID string, pre func
 	}{
 		{itemStockHistorySQL, 4, ItemUseStockHistory},
 		{itemArchivedShrinkageSQL, 1, ItemUseArchivedShrinkage},
+		{itemAgeCheckSQL, 2, ItemUseAgeCheck},
 		{`SELECT EXISTS (SELECT 1 FROM shortcut_buttons WHERE item_id = ?)`, 1, ItemUseQuickButton},
 		{itemParkedSQL, 4, ItemUseOpenBasket},
 		{itemOpenVouchersSQL, 1, ItemUseOpenVouchers},
@@ -228,6 +241,29 @@ func deleteUnusedItemTx(ctx context.Context, tx *sql.Tx, itemID string, pre func
 		return res, &ItemInUseError{Reason: ItemUseShrinkage, Count: comped}
 	}
 
+	// Every write below sits in one savepoint: a refusal after it (the
+	// cleanup predicate disagreeing) undoes them even inside a caller's
+	// transaction that commits after a refusal (DeleteUnusedItemTx: the
+	// catalogue pull deactivates instead), so a refused delete never leaves
+	// voids detached from a kept item (independent review, ut-docs#4746).
+	if _, err := tx.ExecContext(ctx, `SAVEPOINT delete_unused_item`); err != nil {
+		return res, fmt.Errorf("delete item: savepoint: %w", err)
+	}
+	res, err := deleteUnusedItemWrites(ctx, tx, itemID, res)
+	if err != nil {
+		if _, rbErr := tx.ExecContext(ctx, `ROLLBACK TO delete_unused_item`); rbErr != nil {
+			return res, errors.Join(err, fmt.Errorf("delete item: rollback to savepoint: %w", rbErr))
+		}
+	}
+	if _, relErr := tx.ExecContext(ctx, `RELEASE delete_unused_item`); relErr != nil && err == nil {
+		return res, fmt.Errorf("delete item: release savepoint: %w", relErr)
+	}
+	return res, err
+}
+
+// deleteUnusedItemWrites is deleteUnusedItemTx's write half, run inside its
+// savepoint once every use check passed.
+func deleteUnusedItemWrites(ctx context.Context, tx *sql.Tx, itemID string, res ItemDeleteResult) (ItemDeleteResult, error) {
 	variants := `SELECT id FROM item_variants WHERE item_id = ?`
 	voids, err := tx.ExecContext(ctx, `UPDATE shrinkage_events SET item_id = NULL WHERE item_id = ? AND reason_category = 'void'`, itemID)
 	if err != nil {

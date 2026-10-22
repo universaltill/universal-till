@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -49,4 +50,46 @@ func TestCatalogKickWrap(t *testing.T) {
 	}
 	// No loop (nil channel) is fine.
 	catalogKickWrap(inner, &common.Deps{}).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/catalog/item/deactivate", nil))
+}
+
+// Independent review (ut-docs#4746): an edit storm must not turn into
+// back-to-back check-ins (each one rebuilds and pushes the whole catalogue
+// snapshot, since every edit changes its hash). The first edit kicks at
+// once; edits within catalogKickGap of the last kick share one trailing
+// kick, so the last edit still reaches the cloud promptly.
+func TestCatalogKickWrap_StormIsThrottledWithATrailingKick(t *testing.T) {
+	old := catalogKickGap
+	catalogKickGap = 150 * time.Millisecond
+	t.Cleanup(func() { catalogKickGap = old })
+	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	d := &common.Deps{CloudSyncNow: make(chan struct{}, 1)}
+	h := catalogKickWrap(inner, d)
+	edit := func() {
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/catalog/item/deactivate", nil))
+	}
+	edit()
+	select {
+	case <-d.CloudSyncNow: // the loop takes it at once
+	default:
+		t.Fatal("first edit did not kick at once")
+	}
+	for range 20 {
+		edit()
+	}
+	if len(d.CloudSyncNow) != 0 {
+		t.Fatal("an edit within the gap kicked straight away: a storm would run check-ins back to back")
+	}
+	kicks := 0
+	deadline := time.After(catalogKickGap * 4)
+	for done := false; !done; {
+		select {
+		case <-d.CloudSyncNow:
+			kicks++
+		case <-deadline:
+			done = true
+		}
+	}
+	if kicks != 1 {
+		t.Fatalf("trailing kicks = %d, want exactly 1 for the 20 edits in the gap", kicks)
+	}
 }

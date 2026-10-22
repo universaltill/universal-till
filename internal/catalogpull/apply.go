@@ -411,6 +411,7 @@ func kindLabel(kind string) string {
 //     barcode row's link also names, is left alone.
 func (r *runner) tombstone(ctx context.Context, tx *sql.Tx, kind, cloudID, local string, version int64) error {
 	what := ""
+	payload := map[string]any{"cloud_id": cloudID, "version": version}
 	switch kind {
 	case kindItem:
 		deactivate := false
@@ -431,6 +432,11 @@ func (r *runner) tombstone(ctx context.Context, tx *sql.Tx, kind, cloudID, local
 				return err
 			case !res.AlreadyDeleted:
 				what = "deleted"
+				if res.Voids > 0 {
+					// ut-docs#4746: the voids were detached with the item.
+					payload["voids"] = res.Voids
+					payload["note"] = fmt.Sprintf("item deleted with %d voids", res.Voids)
+				}
 			}
 		}
 		if deactivate {
@@ -518,7 +524,7 @@ func (r *runner) tombstone(ctx context.Context, tx *sql.Tx, kind, cloudID, local
 	if what == "" {
 		return nil
 	}
-	return r.audit(ctx, tx, kind, local, what, map[string]any{"cloud_id": cloudID, "version": version})
+	return r.audit(ctx, tx, kind, local, what, payload)
 }
 
 // fields is a row's data object, key → raw JSON, so the applier can tell
