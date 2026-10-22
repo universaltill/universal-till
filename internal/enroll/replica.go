@@ -177,6 +177,7 @@ func repairCopiedIdentity(ctx context.Context, kv Settings, get func(string) str
 		{keyDeviceID, fresh},
 		{keyDeviceRegistered, ""},
 		{keyEnrolledAt, ""},
+		{keyPairedAt, ""},
 		{keyDeviceTillID, tillID},
 	} {
 		if err := kv.Set(ctx, kvp[0], kvp[1]); err != nil {

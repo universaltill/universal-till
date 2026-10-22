@@ -82,6 +82,10 @@ const (
 	keyToken      = "marketplace.token"
 	keyPublicKey  = "marketplace.public_key"
 	keyEnrolledAt = "marketplace.enrolled_at"
+	// keyPairedAt (RFC3339) marks a till paired with a my. shop (adoptPaired
+	// only, never anonymous registration); discovery reads it to hide the
+	// "join a main till" banner (ut-docs#4836). Cleared on identity reset.
+	keyPairedAt = discovery.CloudPairedAtSettingKey
 	// keyDeviceRegistered holds the device_id last registered as a device under
 	// the store. When it differs from the current device_id (a replica that
 	// joined a shop and minted its own device id), the till registers itself as

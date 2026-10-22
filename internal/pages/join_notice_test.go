@@ -320,15 +320,20 @@ func TestJoinNoticeUI_EmptyOnTillPairedWithMyShopAsMain(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, _ := newPairingAPITestDeps(t)
 	registerJoinNoticeUI(mux, dp)
-	for k, v := range map[string]string{"marketplace.store_id": "store-4836", "marketplace.token": "tok-4836"} {
+	if list, err := data.NewTillsRepo(dp.Db).ListTills(t.Context()); err != nil || len(list) != 0 {
+		t.Fatalf("precondition: expected zero enrolled tills, got %d (%v)", len(list), err)
+	}
+	// The candidate is held BEFORE the pairing is recorded, so only the
+	// handler's own check can hide the notice (the watch already has it).
+	withJoinCandidate(t, dp, joinNoticeMain)
+	if _, ok := dp.JoinWatch.Candidate(); !ok {
+		t.Fatal("precondition: the watch should hold a candidate")
+	}
+	for k, v := range map[string]string{"marketplace.store_id": "store-4836", "marketplace.token": "tok-4836", discovery.CloudPairedAtSettingKey: "2026-10-22T10:00:00Z"} {
 		if err := dp.Settings.Set(t.Context(), k, v); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if list, err := data.NewTillsRepo(dp.Db).ListTills(t.Context()); err != nil || len(list) != 0 {
-		t.Fatalf("precondition: expected zero enrolled tills, got %d (%v)", len(list), err)
-	}
-	withJoinCandidate(t, dp, joinNoticeMain)
 	assertEmpty200(t, getJoinNotice(t, mux), "main till paired with a my. shop, no replicas yet")
 }
 
@@ -336,7 +341,7 @@ func TestJoinNoticeUI_EmptyOnTillPairedWithMyShopAsMain(t *testing.T) {
 // is ever held for it.
 func TestJoinWatch_NoCandidateOnTillPairedWithMyShop(t *testing.T) {
 	_, dp, _ := newPairingAPITestDeps(t)
-	for k, v := range map[string]string{"marketplace.store_id": "store-4836", "marketplace.token": "tok-4836"} {
+	for k, v := range map[string]string{"marketplace.store_id": "store-4836", "marketplace.token": "tok-4836", discovery.CloudPairedAtSettingKey: "2026-10-22T10:00:00Z"} {
 		if err := dp.Settings.Set(t.Context(), k, v); err != nil {
 			t.Fatal(err)
 		}
@@ -344,5 +349,22 @@ func TestJoinWatch_NoCandidateOnTillPairedWithMyShop(t *testing.T) {
 	withJoinCandidate(t, dp, joinNoticeMain)
 	if _, ok := dp.JoinWatch.Candidate(); ok {
 		t.Fatal("a till paired with a my. shop must not hold a join candidate")
+	}
+}
+
+// A standalone till that registered anonymously (ADR-0013) holds store_id and
+// token but no paired_at: it is not a my. shop main till and keeps the banner.
+func TestJoinNoticeUI_ShownOnAnonymouslyRegisteredStandaloneTill(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+	registerJoinNoticeUI(mux, dp)
+	for k, v := range map[string]string{"marketplace.store_id": "store-anon", "marketplace.token": "tok-anon"} {
+		if err := dp.Settings.Set(t.Context(), k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	withJoinCandidate(t, dp, joinNoticeMain)
+	if body := getJoinNotice(t, mux).Body.String(); !strings.Contains(body, `id="join-notice"`) {
+		t.Fatalf("anonymously registered standalone till must still see the notice, got: %s", body)
 	}
 }

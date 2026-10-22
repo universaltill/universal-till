@@ -831,6 +831,26 @@ func TestRegisterSendsDeviceNameFromTillName(t *testing.T) {
 	}
 }
 
+// ut-docs#4836: anonymous registration writes store_id and token but is NOT
+// a my. shop pairing, so it must leave paired_at unset (the join banner
+// stays on for a standalone till).
+func TestRegisterAnonymousDoesNotSetPairedAt(t *testing.T) {
+	resetState()
+	var gotBody map[string]any
+	srv := registerTestServer(t, &gotBody)
+	kv := newFakeKV()
+	m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
+	if err := register(context.Background(), m, "Corner Shop", kv); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if kv.get(keyStoreID) == "" || kv.get(keyToken) == "" {
+		t.Fatalf("precondition: register should store identity, store=%q token=%q", kv.get(keyStoreID), kv.get(keyToken))
+	}
+	if got := kv.get(keyPairedAt); got != "" {
+		t.Fatalf("paired_at = %q after anonymous registration, want unset", got)
+	}
+}
+
 // RegisterNow must read the shop's chosen country from settings (via
 // register()) so a German till's marketplace registration carries region
 // "de" with no extra setup step for the shop owner.
