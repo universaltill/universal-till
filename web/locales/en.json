@@ -3584,6 +3584,7 @@
   "setup.cloud.shop_name": "Shop name",
   "setup.cloud.shop_country": "Country",
   "setup.cloud.shop_currency": "Currency",
+  "setup.cloud.shop_type": "Shop type",
   "setup.cloud.continue": "Continue",
   "setup.cloud.not_mine": "This is not my shop",
   "setup.cloud.pair_incomplete": "Pairing with your online shop did not complete, so this till is not syncing yet. The code was used up. Make a new one on my.universaltill.com and pair again in Settings, Tills.",

@@ -3584,6 +3584,7 @@
   "setup.cloud.shop_name": "Mağaza adı",
   "setup.cloud.shop_country": "Ülke",
   "setup.cloud.shop_currency": "Para birimi",
+  "setup.cloud.shop_type": "İşletme türü",
   "setup.cloud.continue": "Devam",
   "setup.cloud.not_mine": "Bu benim mağazam değil",
   "setup.cloud.pair_incomplete": "Çevrimiçi mağazanızla eşleştirme tamamlanamadı, bu yüzden bu kasa henüz eşitlenmiyor. Kod kullanıldı. my.universaltill.com adresinde yeni bir kod oluşturun ve Ayarlar, Kasalar bölümünden yeniden eşleştirin.",

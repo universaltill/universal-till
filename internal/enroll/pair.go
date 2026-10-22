@@ -16,6 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/shoptype"
 )
 
 // Pairing a till with a shop (ADR-0116 D5/D6, ut-docs#3523).
@@ -226,6 +227,29 @@ type PairProfile struct {
 	Currency         string `json:"currency"`
 	CurrencyDecimals *int   `json:"currency_decimals"`
 	CatalogMaster    string `json:"catalog_master"`
+	// ShopType is the ADR-0026 type chosen on my. (ADR-0171 §3): one of
+	// shoptype.List, else "" (old cloud, unknown or mistyped value).
+	// Validated on parse by UnmarshalJSON, never taken raw.
+	ShopType string `json:"-"`
+}
+
+// UnmarshalJSON reads the store block and keeps shop_type only when it is a
+// string naming a known ADR-0026 shop type; anything else is "" (ADR-0171 §4).
+func (p *PairProfile) UnmarshalJSON(b []byte) error {
+	type plain PairProfile
+	aux := struct {
+		*plain
+		ShopType json.RawMessage `json:"shop_type"`
+	}{plain: (*plain)(p)}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	p.ShopType = ""
+	var st string
+	if json.Unmarshal(aux.ShopType, &st) == nil && shoptype.IsKnown(st) {
+		p.ShopType = st
+	}
+	return nil
 }
 
 // StoreHasTillError: a first_till pairing for a shop that already has a

@@ -51,7 +51,7 @@
          6 admin PIN, 7 done. Step 8 (ADR-0166, ut-docs#4610) is the pair-first
          path's "Your shop": a till paired with its my.universaltill.com shop
          opens on it, and nxt()/prv() skip the steps the cloud already
-         answered (country, shop name) and the Germany-only one. -->
+         answered (country, shop name, shop type - ADR-0171) and the Germany-only one. -->
     <main class="setup-card" x-data="{ step: {{ .startStep }}, last: 7,
                                        country: '{{ .detectedCountry }}', currency: '{{ .detectedCurrency }}',
                                        tax: '{{ .detectedTaxRate }}', taxinc: '{{ if .detectedTaxInclusive }}on{{ else }}off{{ end }}',
@@ -60,8 +60,9 @@
                                        cloud: {{ if .cloudShop }}true{{ else }}false{{ end }},
                                        cloudCountry: {{ if .cloudShop }}{{ if .cloudShop.HasCountry }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
                                        cloudName: {{ if .cloudShop }}{{ if .cloudShop.HasName }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
+                                       cloudShopType: {{ if .cloudShop }}{{ if .cloudShop.ShopType }}true{{ else }}false{{ end }}{{ else }}false{{ end }},
                                        seq: [2, 3, 4, 5, 6, 7],
-                                       skip(s) { return (s === 2 && this.cloud && this.cloudCountry) || (s === 3 && this.country !== 'DE') || (s === 4 && this.cloud && this.cloudName); },
+                                       skip(s) { return (s === 2 && this.cloud && this.cloudCountry) || (s === 3 && this.country !== 'DE') || (s === 4 && this.cloud && this.cloudName) || (s === 5 && this.cloud && this.cloudShopType); },
                                        nxt(f) { let i = this.seq.indexOf(f); for (i++; i < this.seq.length; i++) { if (!this.skip(this.seq[i])) return this.seq[i]; } return 7; },
                                        prv(f) { let i = this.seq.indexOf(f); for (i--; i >= 0; i--) { if (!this.skip(this.seq[i])) return this.seq[i]; } return this.cloud ? 8 : 1; } }">
       <img class="login-logo" src="/public/assets/logo/unitill-logo.svg" alt="Universal Till" />
@@ -355,6 +356,10 @@
              show every tile directly, no "show all" toggle needed. Its own
              local x-data (shopType), nested inside the root step-nav
              x-data. -->
+        {{/* ADR-0171: not rendered at all when the cloud supplied the type, so
+             no shop_type field is posted from here (the server uses the held
+             pairing's value regardless). */}}
+        {{ if not (and .cloudShop .cloudShop.ShopType) }}
         <section x-show="step === 5" x-cloak data-step="5" x-data="{ shopType: '' }">
           <h1>{{ T "setup.shop_type.title" }}</h1>
           <p class="muted">{{ T "setup.shop_type.hint" }}</p>
@@ -369,6 +374,7 @@
             <button type="button" class="btn primary" @click="step = nxt(5)">{{ T "setup.next" }}</button>
           </div>
         </section>
+        {{ end }}
 
         <!-- Step 6 · admin PIN -->
         <section x-show="step === 6" x-cloak data-step="6">
@@ -440,6 +446,7 @@
           {{ if .cloudShop.HasName }}<p>{{ T "setup.cloud.shop_name" }}: <strong data-cloud-field="name">{{ .cloudShop.Name }}</strong></p>{{ end }}
           {{ if .cloudShop.HasCountry }}<p>{{ T "setup.cloud.shop_country" }}: <strong data-cloud-field="country">{{ T .cloudShop.CountryNameKey }}</strong></p>{{ end }}
           {{ if .cloudShop.Currency }}<p>{{ T "setup.cloud.shop_currency" }}: <strong data-cloud-field="currency">{{ .cloudShop.Currency }}</strong></p>{{ end }}
+          {{ if .cloudShop.ShopType }}<p>{{ T "setup.cloud.shop_type" }}: <strong data-cloud-field="shop_type">{{ T (printf "setup.shop_type.%s" .cloudShop.ShopType) }}</strong></p>{{ end }}
           <p class="muted">{{ T "setup.cloud.hint" }}</p>
           <div class="setup-nav">
             <button type="button" class="btn secondary" hx-post="/api/setup/cloud-unpair" hx-params="none"

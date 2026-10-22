@@ -209,6 +209,7 @@
   "setup.cloud.shop_name": {"description": "Label of the shop name on the 'Your shop' step.", "review": "standard"},
   "setup.cloud.shop_country": {"description": "Label of the country on the 'Your shop' step.", "review": "standard"},
   "setup.cloud.shop_currency": {"description": "Label of the currency on the 'Your shop' step.", "review": "standard"},
+  "setup.cloud.shop_type": {"description": "Label of the shop type (café, retail, ...) on the 'Your shop' step, shown when the shop type was chosen on my.universaltill.com.", "review": "standard"},
   "setup.cloud.continue": {"description": "Button that accepts the shop details on the 'Your shop' step.", "review": "standard"},
   "setup.cloud.not_mine": {"description": "Button that drops the pairing and returns to the first step.", "review": "standard"},
   "setup.cloud.pair_incomplete": {"description": "Note on the welcome page when the wizard could not save the cloud pairing: the code is spent, so the till is not syncing; pair again with a new code in Settings, Tills.", "review": "standard"},

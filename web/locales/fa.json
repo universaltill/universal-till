@@ -3584,6 +3584,7 @@
   "setup.cloud.shop_name": "نام فروشگاه",
   "setup.cloud.shop_country": "کشور",
   "setup.cloud.shop_currency": "واحد پول",
+  "setup.cloud.shop_type": "نوع فروشگاه",
   "setup.cloud.continue": "ادامه",
   "setup.cloud.not_mine": "این فروشگاه من نیست",
   "setup.cloud.pair_incomplete": "جفت‌سازی با فروشگاه آنلاین شما کامل نشد، پس این صندوق هنوز همگام‌سازی نمی‌شود. کد مصرف شد. در my.universaltill.com کد تازه‌ای بسازید و از تنظیمات، صندوق‌ها دوباره جفت کنید.",

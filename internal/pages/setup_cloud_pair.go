@@ -280,6 +280,9 @@ type cloudShop struct {
 	Currency        string // a code this build knows, else ""
 	CurrencyDecimal *int
 	Tax             setupCountry
+	// ShopType is the type chosen on my. (ADR-0171), a valid ADR-0026 value
+	// or "": when set the wizard skips its shop-type step.
+	ShopType string
 }
 
 func cloudShopView(r *http.Request, h *heldCloudPairing, countries []setupCountry) cloudShop {
@@ -292,6 +295,9 @@ func cloudShopView(r *http.Request, h *heldCloudPairing, countries []setupCountr
 	// localized placeholder): a name it would refuse is asked locally.
 	if n := strings.TrimSpace(st.Name); n != "" && !isRefusedStoreName(r, n) {
 		v.Name, v.HasName = n, true
+	}
+	if isValidShopType(st.ShopType) {
+		v.ShopType = st.ShopType
 	}
 	code := strings.ToUpper(strings.TrimSpace(st.Country))
 	for _, c := range countries {
@@ -338,6 +344,12 @@ func applyCloudShop(r *http.Request, d *common.Deps, h *heldCloudPairing) {
 	if shop.Currency != "" {
 		set("currency", shop.Currency)
 		set("currency_touched", "1") // the shop chose it: KeyCurrencyConfirmed
+	}
+	// ADR-0171 §4: the cloud's shop type wins over any posted one, so the
+	// one shop-type save (saveSetupShopType) cannot be steered by a crafted
+	// post. With none from the cloud the posted value stays (asked locally).
+	if shop.ShopType != "" {
+		set("shop_type", shop.ShopType)
 	}
 }
 

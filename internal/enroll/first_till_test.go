@@ -208,3 +208,33 @@ func TestFirstTillPairingCommitPersistsCredential(t *testing.T) {
 		t.Fatalf("effective marketplace = %+v", m)
 	}
 }
+
+// ADR-0171 §3-4 (ut-docs#4830): the pair answer's store.shop_type is kept
+// only when it is an ADR-0026 value; unknown, mistyped or missing is "".
+func TestPairFirstTillParsesShopType(t *testing.T) {
+	answer := func(storeJSON string) string {
+		return `{"data":{"store_id":"s","merchant_id":"m","device_id":"x","device_token":"` + pairToken + `","store":` + storeJSON + `},"error":null}`
+	}
+	cases := []struct{ name, store, want string }{
+		{"valid", `{"name":"A","shop_type":"cafe"}`, "cafe"},
+		{"valid market_stall", `{"name":"A","shop_type":"market_stall"}`, "market_stall"},
+		{"unknown value", `{"name":"A","shop_type":"spaceship"}`, ""},
+		{"wrong case is unknown", `{"name":"A","shop_type":"Cafe"}`, ""},
+		{"empty", `{"name":"A","shop_type":""}`, ""},
+		{"missing (old cloud)", `{"name":"A"}`, ""},
+		{"wrong json type", `{"name":"A","shop_type":7}`, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cloud := newFirstTillCloud(t, 200, answer(tc.store))
+			_, cfg := bootFirstBoot(t, cloud.srv.URL)
+			p, err := PairFirstTill(context.Background(), cfg, pairCode, "Till 1")
+			if err != nil {
+				t.Fatalf("PairFirstTill: %v", err)
+			}
+			if p.Store == nil || p.Store.ShopType != tc.want {
+				t.Fatalf("ShopType = %+v, want %q", p.Store, tc.want)
+			}
+		})
+	}
+}
