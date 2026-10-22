@@ -142,11 +142,12 @@ func dupHeader(headers []string, col int) bool {
 // ";"-joined barcodes.
 func readExportExtras(buf []byte, headers []string, source string, o Options, res *Result) {
 	active := colFor(headers, aliases("active"))
-	barcodes := -1
+	barcodes, idCol := -1, -1
 	if source == SourceMyExport {
 		barcodes = colFor(headers, aliases("barcodes"))
+		idCol = exactHeaderIndex(headers, "id")
 	}
-	if active < 0 && barcodes < 0 {
+	if active < 0 && barcodes < 0 && idCol < 0 {
 		return
 	}
 	cr := csv.NewReader(bytes.NewReader(buf))
@@ -171,6 +172,9 @@ func readExportExtras(buf []byte, headers []string, source string, o Options, re
 				it.Active, it.HasActive = v.val, true
 			}
 		}
+		if idCol >= 0 && idCol < len(rec) {
+			it.ItemID = cleanItemID(rec[idCol])
+		}
 		if barcodes >= 0 && barcodes < len(rec) {
 			first, _, _ := strings.Cut(rec[barcodes], ";")
 			first = StripCSVDefuse(strings.TrimSpace(first))
@@ -184,6 +188,35 @@ func readExportExtras(buf []byte, headers []string, source string, o Options, re
 			}
 		}
 	}
+}
+
+// maxItemIDLen bounds the my. export id carried in ImportItem.ItemID.
+const maxItemIDLen = 64
+
+// exactHeaderIndex is the index of the first header equal to name after
+// BOM-strip, trim and case folding, or -1.
+func exactHeaderIndex(headers []string, name string) int {
+	for i, h := range headers {
+		if strings.ToLower(strings.TrimSpace(strings.TrimPrefix(h, "\uFEFF"))) == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// cleanItemID returns the export id cell, or "" when it is over
+// maxItemIDLen bytes or holds a control character or inner whitespace.
+func cleanItemID(raw string) string {
+	id := StripCSVDefuse(strings.TrimSpace(raw))
+	if len(id) > maxItemIDLen {
+		return ""
+	}
+	for _, r := range id {
+		if unicode.IsControl(r) || unicode.IsSpace(r) {
+			return ""
+		}
+	}
+	return id
 }
 
 // boolGuess is a parsed yes/no cell: exact when the cell is a recognised
