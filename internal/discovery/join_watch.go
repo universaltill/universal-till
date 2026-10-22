@@ -34,6 +34,29 @@ import (
 // (data.PerTillSettingPrefixes).
 const JoinBannerDismissedSettingKey = "sync.join_banner_dismissed"
 
+// Settings keys of a till's my. (cloud) shop identity. They are the
+// enroll package's marketplace.store_id / marketplace.token (kept as
+// literals here so discovery does not import enroll; the test
+// TestJoinNoticeUI_EmptyOnTillPairedWithMyShopAsMain would fail if they
+// drifted). Both are written by the setup wizard's "Join as Main till"
+// (ADR-0166, #4610) and by Settings pairing.
+const (
+	cloudStoreIDSettingKey = "marketplace.store_id"
+	cloudTokenSettingKey   = "marketplace.token"
+)
+
+// PairedWithCloudShop reports whether this till holds a my. shop identity
+// (store id and device token). Such a till is its shop's MAIN till even
+// with no replica enrolled yet and an empty sync.primary_url, so it must
+// never be offered "link this till to another main till" (ut-docs#4836).
+func PairedWithCloudShop(ctx context.Context, settings WatchSettings) bool {
+	get := func(key string) string {
+		v, _, _ := settings.Get(ctx, key)
+		return strings.TrimSpace(v)
+	}
+	return get(cloudStoreIDSettingKey) != "" && get(cloudTokenSettingKey) != ""
+}
+
 // JoinWatch caches the main till a standalone till could join. Safe for
 // concurrent use: the pull loop ticks it while the notice handler reads
 // Candidate. A nil *JoinWatch is valid and never has a candidate.
@@ -69,7 +92,8 @@ func (w *JoinWatch) Tick(ctx context.Context) {
 	if w == nil {
 		return
 	}
-	if w.get(ctx, "sync.primary_url") != "" || w.get(ctx, JoinBannerDismissedSettingKey) != "" {
+	if w.get(ctx, "sync.primary_url") != "" || w.get(ctx, JoinBannerDismissedSettingKey) != "" ||
+		PairedWithCloudShop(ctx, w.settings) {
 		w.mu.Lock()
 		w.candidate, w.found = Candidate{}, false
 		w.mu.Unlock()
