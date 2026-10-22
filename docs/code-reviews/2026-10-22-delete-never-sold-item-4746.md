@@ -99,7 +99,16 @@ Findings:
    lockstep and ar/fa one bullet further behind. The writes' move into
    `deleteUnusedItemWrites` is recorded in `guard-price-history-sync.sh`'s
    allow-list (same writer, same callers).
-5. **Low, fixed.** The archived-shrinkage refusal said "its voids" for
+5. **Medium (CI blocker), fixed. `guard-docs-shots` failed** (the `build`
+   job's "Manual screenshot freshness guard regression test" step, already
+   on the PR head): `internal/pages` Go and the en/tr catalog topics
+   changed with no `make docs-shots`. Regenerated in a Linux container
+   (Playwright 1.61.1 noble image + the pinned Inter/DejaVu/Noto fonts —
+   macOS cannot satisfy the font pin). Only `web/help/img/manifest.json` is
+   committed: the new middleware draws nothing and the help text is not in
+   the screenshots (they capture app routes), and the arm64 re-render
+   changed every PNG's bytes, which would only be renderer churn.
+6. **Low, fixed.** The archived-shrinkage refusal said "its voids" for
    archived comps and wastes too; now "its voids, comps or wastes".
    Help topics (en/de/tr) list the ID-check refusal.
 
