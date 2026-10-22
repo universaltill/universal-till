@@ -510,3 +510,25 @@ func TestImportWelcomeShowsPairingIncompleteNoteNotSyncing(t *testing.T) {
 		t.Error("note shown without pairfail=1")
 	}
 }
+
+// ut-docs#4803: a till that joined a my. shop is already registered, so the
+// last step must not ask the ADR-0071 opt-in or the terms; a fresh wizard still does.
+func TestSetupDoneStepAsksRegistrationOnlyOffThePairedPath(t *testing.T) {
+	mux, _, _, nonce := cloudWizard(t)
+	fresh := getSetup(mux, "?lang=en", "en").Body.String()
+	for _, want := range []string{`name="auto_register"`, `name="accept_terms"`} {
+		if !strings.Contains(fresh, want) {
+			t.Errorf("unpaired wizard lacks %q", want)
+		}
+	}
+	doCloudPair(mux, nonce, nil)
+	paired := getSetup(mux, "?lang=en", "en").Body.String()
+	for _, bad := range []string{`name="auto_register"`, `name="accept_terms"`} {
+		if strings.Contains(paired, bad) {
+			t.Errorf("paired wizard still renders %q", bad)
+		}
+	}
+	if !strings.Contains(paired, `data-testid="setup-joined-shop"`) || !strings.Contains(paired, "Cloud Cafe") {
+		t.Error("paired wizard does not show the joined shop on the last step")
+	}
+}
