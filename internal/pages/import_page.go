@@ -1174,11 +1174,13 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				// partially-built item, exactly like a mid-row crash always
 				// implicitly would have. Barcode attach deliberately stays
 				// OUTSIDE this transaction, attempted only after it commits:
-				// AddBarcode owns its own #304 BEGIN IMMEDIATE transaction on
-				// a separate connection, which can't see this transaction's
-				// writes until they're committed, and folding it in would
-				// mean re-implementing #304's race protection here (see the
-				// card's own discussion of why that's out of scope).
+				// AddBarcode runs in its own transaction on a separate pooled
+				// connection (BEGIN IMMEDIATE via the DSN-wide
+				// _txlock=immediate, ut-docs#311; #304's race protection),
+				// which can't see this transaction's writes until they're
+				// committed, and folding it in would mean re-implementing
+				// that protection here (see the card's own discussion of why
+				// that's out of scope).
 				// ut-docs#3098: a row with no SKU of its own was shown a
 				// generated one in the preview's row_sku_<i> field. Kept or
 				// edited → it is this row's explicit SKU (a clash is the
