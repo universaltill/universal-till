@@ -39,6 +39,43 @@ var keywordIcons = []struct {
 	// Two-word keywords match as adjacent whole words and sit first,
 	// ahead of the single words they contain ("Hot Chocolate" is a drink,
 	// not a chocolate bar; "Ginger Beer" is a soft drink).
+	// ut-docs#4840: barber-shop words come FIRST so they beat the cafe words
+	// ("Tea Tree Shampoo" is shampoo, not tea; "Lemon Aftershave" is
+	// aftershave). Two-word rows stand in for words too common alone (oil,
+	// cream, gel, spray, brush, wax, water); only unambiguous single words
+	// are listed. Plurals ("Clippers", "Combs") are covered by matchKeyword.
+	{"tea tree", "shampoo"},
+	{"cape gooseberry", "berries"},
+	{"cape malay", "bowl"},
+	{"honey comb", "candy"},
+	{"beard papa", "pastry"},
+	{"charger plate", "generic"},
+	{"hair dryer", "hair-dryer"},
+	{"shaving brush", "shaving-brush"},
+	{"neck duster", "shaving-brush"},
+	{"razor blades", "blades"},
+	{"spray bottle", "spray-bottle"},
+	{"beard oil", "beard-oil"},
+	{"clipper oil", "clipper-oil"},
+	{"blade oil", "clipper-oil"},
+	{"shaving cream", "cream-tube"},
+	{"hair gel", "cream-tube"},
+	{"hair spray", "hair-spray"},
+	{"hair wax", "pomade"},
+	{"trimmer", "trimmer"},
+	{"shaver", "shaver"},
+	{"blades", "blades"},
+	{"scissors", "scissors"},
+	{"shears", "shears"},
+	{"hairbrush", "hairbrush"},
+	{"pomade", "pomade"},
+	{"shampoo", "shampoo"},
+	{"conditioner", "shampoo"},
+	{"aftershave", "aftershave"},
+	{"moustache", "beard"},
+	{"mustache", "beard"},
+	{"barbicide", "disinfectant"},
+	{"disinfectant", "disinfectant"},
 	{"hot chocolate", "hot-chocolate"},
 	{"hot dog", "hot-dog"},
 	{"hot drinks", "coffee"},
@@ -184,6 +221,20 @@ var keywordIcons = []struct {
 	{"sweets", "candy"},
 	{"gift", "gift"},
 	{"voucher", "gift"},
+	// ut-docs#4840 review R1: barber words that are also café/food words
+	// ("Clipper Green Tea", "Honey Comb", "Razor Clams", "Cologne Sausage")
+	// sit BELOW every café row, so a food name always wins and the barber
+	// word only decides when nothing else matched.
+	{"clam", "seafood"},
+	{"clipper", "clippers"},
+	{"razor", "razor"},
+	{"shavette", "razor"},
+	{"comb", "comb"},
+	{"cape", "cape"},
+	{"cologne", "aftershave"},
+	{"beard", "beard"},
+	{"charger", "charger"},
+	{"blade", "blades"},
 }
 
 // PlaceholderIcon picks an icon key for an item with no source image,

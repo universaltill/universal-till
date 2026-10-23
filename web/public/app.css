@@ -5165,6 +5165,9 @@ body.login-screen {
   flex-direction: column; gap: .3rem;
   min-block-size: 3.6rem; padding: .5rem .4rem;
   font-size: .78rem; font-weight: 500;
+  /* ut-docs#4840 UX1: a long unbroken label ("Haarschneidemaschine") wraps
+     inside the tile instead of overflowing it; logical-safe in RTL. */
+  overflow-wrap: anywhere; min-inline-size: 0;
 }
 .builtin-icon-tile img { display: block; }
 /* ut-docs#2506: ~70 icons in sections. The grid scrolls inside its own
