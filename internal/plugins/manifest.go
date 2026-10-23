@@ -817,7 +817,7 @@ func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql
 var reservedPageRoutePrefixes = []string{
 	"/api", "/ui", "/v1", "/public", "/ext", "/plugin-icons", "/plugin-fonts", "/self-order", "/o", "/themes",
 	"/help", "/orders", "/journal", "/plugins", "/refund", "/invoice", "/kitchen-display", "/vouchers",
-	"/settings", "/catalog", "/users", "/open-orders", "/recovery",
+	"/settings", "/catalog", "/users", "/open-orders", "/recovery", "/channel-orders",
 }
 
 // ReservedPageRoutePrefix returns the core-reserved prefix route falls under

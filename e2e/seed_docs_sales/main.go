@@ -86,6 +86,37 @@ var sales = []saleSpec{
 		lines: []lineSpec{qty(water, 3), cola}},
 }
 
+// channelOrders are the "Online orders" page's sample rows (ut-docs#4768, the
+// channel-orders help topic): three web-shop orders at fixed October-2025
+// times, one shipped, one new and one partly refunded with a unit restocked,
+// so the screenshot shows every column the help text describes. Written
+// through the real ChannelOrdersRepo.Apply (stock lowered by channel_sale
+// movements), so the page is exactly what a recorded order looks like. Not
+// till sales: they add nothing to /reports or /invoices.
+func channelOrders() []data.ChannelOrderInput {
+	line := func(id string, l lineSpec, n, refunded, restocked int64) data.ChannelOrderLineInput {
+		return data.ChannelOrderLineInput{LineID: id, CloudItemID: l.itemID, SKU: l.sku, Name: l.name, Qty: n,
+			UnitPrice: money.FromMinor(l.unitMinor), TaxBP: int64(l.rateBP), TaxIncluded: true,
+			RefundedQuantity: refunded, RestockedQuantity: restocked}
+	}
+	order := func(n int, placed, status, payment string, total, refund int64, lines ...data.ChannelOrderLineInput) data.ChannelOrderInput {
+		return data.ChannelOrderInput{
+			DirectiveID: fmt.Sprintf("docs-dir-%d", n), ConnectionID: "docs-conn-1",
+			PluginKey: "demo.webshop", ExternalOrderID: fmt.Sprintf("docs-ext-%d", n),
+			ExternalVersion: "1", Revision: 1, OrderNumber: fmt.Sprintf("#%d", 1000+n), PlacedAt: placed,
+			Currency: "GBP", Status: status, PaymentState: payment,
+			Shipping: money.FromMinor(399), ShippingTaxIncluded: true,
+			RefundTotal: money.FromMinor(refund), Total: money.FromMinor(total), CustomerCountry: "GB",
+			LocationID: "loc_main", ActorID: "system", Lines: lines,
+		}
+	}
+	return []data.ChannelOrderInput{
+		order(1, "2025-10-20T09:30:00Z", "shipped", "paid", 859, 0, line("l-1", cola, 2, 0, 0), line("l-2", orange, 1, 0, 0)),
+		order(2, "2025-10-21T14:05:00Z", "new", "paid", 894, 0, line("l-1", pepsi, 1, 0, 0), line("l-2", milk, 2, 0, 0)),
+		order(3, "2025-10-22T16:45:00Z", "partially_refunded", "partially_refunded", 654, 85, line("l-1", water, 3, 1, 1)),
+	}
+}
+
 func fatalf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 	os.Exit(2)
@@ -202,6 +233,13 @@ func seed(ctx context.Context, sqlDB *sql.DB) error {
 			IssuedAt:         s.at, IssuedBy: "system",
 		}); err != nil {
 			return fmt.Errorf("invoice for %s: %w", s.id, err)
+		}
+	}
+	// Idempotent through the repo's own duplicate-directive check.
+	co := data.NewChannelOrdersRepo(sqlDB)
+	for _, o := range channelOrders() {
+		if _, err := co.Apply(ctx, o); err != nil {
+			return fmt.Errorf("channel order %s: %w", o.OrderNumber, err)
 		}
 	}
 	return nil

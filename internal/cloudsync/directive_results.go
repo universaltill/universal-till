@@ -53,12 +53,16 @@ func handleGenericDirective(ctx context.Context, cfg *config.Config, db *sql.DB,
 		logging.L().Warnf("cloudsync: directive %s (%s) left pending: %s", d.ID, d.Type, msg)
 		return
 	}
+	if status == statusRetry {
+		logging.L().Warnf("cloudsync: directive %s (%s) left pending, will retry: %s", d.ID, d.Type, msg)
+		return
+	}
 	if status == "applied" && catalogTypes[d.Type] {
 		*catalogApplied = true
 	}
-	// A failed apply is stored too, even a transient one (a locked DB):
-	// the cloud then shows it failed and the owner saves again under a new
-	// directive id — the same outcome as a first post that got through.
+	// A failed apply is stored too (the cloud shows it failed and the owner
+	// saves again under a new directive id), except one a hook reports as
+	// retryable (statusRetry above), which stays pending.
 	stored = data.DirectiveResult{DirectiveID: d.ID, DirectiveType: d.Type, Status: status, Message: msg}
 	if err := repo.Save(ctx, stored); err != nil {
 		// Same as guest orders: still report it; only the dedupe of a

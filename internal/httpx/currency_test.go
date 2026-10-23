@@ -3,6 +3,8 @@ package httpx
 import (
 	"regexp"
 	"testing"
+
+	moneypkg "github.com/universaltill/universal-till/internal/money"
 )
 
 func TestFormatMoney(t *testing.T) {
@@ -599,5 +601,37 @@ func TestFuncsForBPPercentIsLocaleBound(t *testing.T) {
 		if got := fn(750); got != want {
 			t.Errorf("FuncsFor(%q) bpPercent(750) = %q, want %q", locale, got, want)
 		}
+	}
+}
+
+// An amount that carries its own currency code is formatted by that code's
+// ISO 4217 minor unit, whether or not the Settings picker offers it
+// (ut-docs#4768 review D1: a KWD channel order showed 125.00).
+func TestFormatMoneyIn_UsesTheCodesMinorUnit(t *testing.T) {
+	for _, c := range []struct {
+		minor      int64
+		code, want string
+	}{
+		{1200, "JPY", "¥1,200"},
+		{12500, "KWD", "KWD 12.500"},
+		{1250, "BHD", "BHD 1.250"},
+		{1200, "KRW", "KRW 1,200"},
+		{12345, "EUR", "€123.45"},
+		{12345, "CHF", "CHF 123.45"},
+	} {
+		if got := FormatMoneyIn(c.minor, c.code, "en"); got != c.want {
+			t.Errorf("FormatMoneyIn(%d, %s) = %q, want %q", c.minor, c.code, got, c.want)
+		}
+	}
+}
+
+// {{ moneyIn amount code }} is the template form.
+func TestMoneyInTemplateFunc(t *testing.T) {
+	f := FuncsFor("en")["moneyIn"].(func(any, string) string)
+	if got := f(int64(12500), "KWD"); got != "KWD 12.500" {
+		t.Errorf("moneyIn = %q", got)
+	}
+	if got := f(moneypkg.FromMinor(1200), "JPY"); got != "¥1,200" {
+		t.Errorf("moneyIn money = %q", got)
 	}
 }

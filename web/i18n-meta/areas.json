@@ -61,7 +61,8 @@
         "kitchenstations",
         "kitchen",
         "kitchendisplay",
-        "tracking"
+        "tracking",
+        "channel_orders"
       ]
     },
     "reports": {

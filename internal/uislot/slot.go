@@ -266,6 +266,10 @@ var CoreMenu = []Entry{
 	// bell would just be clutter). Not part of d.MenuSnapshot() either, so
 	// it must be declared here to render at all.
 	{Key: "/open-orders", Href: "/open-orders", LabelKey: "open_orders.title", Icon: "monitor", Order: 1900},
+	// ADR-0169 §9 (ut-docs#4768): orders taken at a web shop or marketplace.
+	// Launcher tile only, not the rail (sell-screen space wins); the same
+	// "reports" gate as the page (a cashier is sale-only, ut-docs#3079).
+	{Key: "/channel-orders", Href: "/channel-orders", LabelKey: "channel_orders.title", Icon: "download", Order: 1950, VisibleIf: "reports"},
 	{Key: "/help", Href: "/help", LabelKey: "nav.help", Icon: "help", Order: 2000},
 	{Key: "/users", Href: "/users", LabelKey: "users.title", Icon: "users", Order: 2100, VisibleIf: "settings"},
 	// ut-docs#4251: every gift voucher, its history, CSV export and the

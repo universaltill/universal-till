@@ -135,10 +135,14 @@ type Hooks struct {
 	// opens the sealed rows, applies them and returns counts and per-row
 	// outcomes. nil on a till without it, which then fails the directive.
 	ImportCustomers func(ctx context.Context, d ImportCustomersDirective) (ImportCustomersResult, error)
-	RenameItem      func(ctx context.Context, itemID, name string) (string, error)
-	DeactivateItem  func(ctx context.Context, itemID string) (string, error)
-	CreateItem      func(ctx context.Context, name string, priceMinor int64, barcode string) (string, error)
-	AddBarcode      func(ctx context.Context, itemID, barcode string) (string, error)
+	// ApplyChannelOrder handles "channel_order" and "channel_order_update"
+	// (ADR-0169 §9, ut-docs#4768): record the channel's order and move stock
+	// (pages.cloudApplyChannelOrder). Idempotent on the order's revision.
+	ApplyChannelOrder func(ctx context.Context, o ChannelOrderDirective) (string, error)
+	RenameItem        func(ctx context.Context, itemID, name string) (string, error)
+	DeactivateItem    func(ctx context.Context, itemID string) (string, error)
+	CreateItem        func(ctx context.Context, name string, priceMinor int64, barcode string) (string, error)
+	AddBarcode        func(ctx context.Context, itemID, barcode string) (string, error)
 	// FiscalTSEReady handles the payload-less "fiscal_tse_ready" directive
 	// (ADR-0053, ut-docs#802): the cloud finished reseller-provisioning this
 	// shop's TSE, so the till must fetch its operational signing credential
@@ -729,6 +733,11 @@ const maxCategoryLinkIDs = 200
 
 // apply routes one directive to its hook. Unknown types and nil hooks fail
 // cleanly so the cloud shows WHY nothing happened.
+// statusRetry is apply's status for a directive that failed for a reason on
+// this till that may pass: nothing is stored or posted, the cloud delivers it
+// again (handleGenericDirective).
+const statusRetry = "retry"
+
 func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 	str := func(k string) string { v, _ := d.Payload[k].(string); return strings.TrimSpace(v) }
 	// JSON numbers decode as float64; tolerate string form too.
@@ -1350,6 +1359,22 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", bad
 		}
 		msg, err = hook(ctx, r)
+	case "channel_order", "channel_order_update":
+		// ADR-0169 §9 (ut-docs#4768): main till only (mainTillOnlyTypes).
+		if hooks.ApplyChannelOrder == nil {
+			return "failed", d.Type + " is not supported on this till"
+		}
+		o, bad := decodeChannelOrder(d)
+		if bad != "" {
+			return "failed", bad
+		}
+		// Decode refusals above are final. Anything the hook fails on (db
+		// busy, no stock location yet, a cancelled context) is the till's
+		// state, not the payload's: leave the directive pending so the next
+		// delivery retries it (sales-channel-v1.md §5.1).
+		if msg, err = hooks.ApplyChannelOrder(ctx, o); err != nil {
+			return statusRetry, err.Error()
+		}
 	default:
 		return "failed", "unknown directive type " + d.Type
 	}

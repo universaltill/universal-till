@@ -1312,7 +1312,7 @@ func TestHandleInstallFromMarketplace_AppliesLocaleCatchUpForLanguagePack(t *tes
 	mux := http.NewServeMux()
 	registerPluginAPI(mux, dp)
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/install-from-marketplace",
-		strings.NewReader(`{"listing_id":"listing-lang-ur"}`))
+		strings.NewReader(`{"listing_id":"listing-lang-ur","accept_terms":true}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -1364,7 +1364,7 @@ func TestHandleInstallFromMarketplace_LocaleCatchUpFindsListingBeyondFirstCatalo
 	mux := http.NewServeMux()
 	registerPluginAPI(mux, dp)
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/install-from-marketplace",
-		strings.NewReader(`{"listing_id":"listing-lang-ur"}`))
+		strings.NewReader(`{"listing_id":"listing-lang-ur","accept_terms":true}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)

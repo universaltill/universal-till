@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://docs.universaltill.com/contracts/channel-order-v1.json",
+  "title": "channel_order / channel_order_update directive payload, v1",
+  "description": "Payload of the cloud-to-till directives `channel_order` and `channel_order_update` (reference/contracts/sales-channel-v1.md section 5.1). The directive envelope (StoreDirective) has exactly two required fields, `type` and `payload`, plus the envelope `id` which is the directive's identity (the payload has no id of its own); this schema is the `payload`. Money is an integer in minor units (7399, never 7399.0), tax in basis points, time RFC 3339 UTC with a `Z` suffix. No customer name, address, email or phone: contact details are only ever fetched live (channel.contact.ask). `channel_order_update` carries the full current order; the till applies a payload only when its `revision` is higher than the last applied one for (connection_id, external_order_id). Validators MUST enable format checking (`uuid`, `date-time`); the patterns make the shape hold even where they do not. `qty` is the quantity as ordered plus units added by later edits and is never lowered; removal, cancellation and refund are expressed only through refunded_quantity / restocked_quantity. Cross-field rules (total formula, refunded_quantity <= qty, restocked_quantity <= refunded_quantity, discount_line_minor <= qty*unit_price_minor, refund_total_minor <= total_minor) cannot be expressed in JSON Schema and are enforced by the cloud (section 5.1 'Cloud-enforced checks').",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "connection_id",
+    "plugin_key",
+    "external_order_id",
+    "revision",
+    "order_number",
+    "placed_at",
+    "currency",
+    "status",
+    "lines",
+    "shipping_minor",
+    "shipping_tax_bp",
+    "shipping_tax_included",
+    "order_discount_minor",
+    "tax_added_minor",
+    "refund_total_minor",
+    "total_minor"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "type": "integer",
+      "description": "Payload schema version. A till that does not advertise support for it is never sent this directive (section 5.1)."
+    },
+    "connection_id": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "plugin_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "external_order_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The order record's `external_id` (contract section 2)."
+    },
+    "external_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Informational only (display, support). Never compared for ordering."
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Issued by the cloud per (connection_id, external_order_id), strictly increasing by 1 per stored change. The only ordering key."
+    },
+    "order_number": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "Shop-facing number as the shop knows it, e.g. \"#1001\"."
+    },
+    "placed_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "description": "UTC with a `Z` suffix only; offsets are rejected."
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "status": {
+      "enum": [
+        "new",
+        "accepted",
+        "picked",
+        "packed",
+        "shipped",
+        "cancelled",
+        "refunded",
+        "partially_refunded"
+      ],
+      "description": "ADR-0169 section 9 machine. The cloud's canonical status (the plugin's is only channel-reported, section 2); transitions in section 5.1."
+    },
+    "payment_state": {
+      "enum": [
+        "pending",
+        "authorized",
+        "paid",
+        "partially_refunded",
+        "refunded",
+        "voided"
+      ],
+      "description": "The channel's payment state, informational; never drives `status`."
+    },
+    "lines": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "external_id",
+          "sku",
+          "name",
+          "qty",
+          "unit_price_minor",
+          "tax_bp",
+          "tax_included",
+          "discount_line_minor",
+          "refunded_quantity",
+          "restocked_quantity"
+        ],
+        "properties": {
+          "external_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The channel's line id; stable across revisions (contract section 2)."
+          },
+          "cloud_item_id": {
+            "type": "string",
+            "description": "Absent when the line could not be linked to a UT item; never an empty string.",
+            "minLength": 1
+          },
+          "cloud_variant_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Absent when the line is not linked to a variant; never an empty string."
+          },
+          "sku": {
+            "type": "string",
+            "description": "Empty string for a line that is not linked to a SKU."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Product title as sold, for display of unlinked lines."
+          },
+          "qty": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Quantity as ordered plus units added by later order edits. Lines never disappear and qty is never lowered: a removed, cancelled or refunded unit is expressed only through refunded_quantity (and restocked_quantity). Reporting a lowered qty together with a restocked refund double-counts stock and is non-conformant (section 5.1)."
+          },
+          "unit_price_minor": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "tax_bp": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000,
+            "description": "Basis points, 0 to 10000 (100%)."
+          },
+          "tax_included": {
+            "type": "boolean",
+            "description": "True when unit_price_minor already contains the tax."
+          },
+          "discount_line_minor": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total discount for the whole line (all units), not per unit."
+          },
+          "refunded_quantity": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Cumulative units refunded or cancelled so far, 0 to qty (cloud-enforced)."
+          },
+          "restocked_quantity": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Running total of refunded units that went back into stock, 0 to refunded_quantity (cloud-enforced). Stock moves by the difference from the last applied revision."
+          }
+        }
+      }
+    },
+    "shipping_minor": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "shipping_tax_bp": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000
+    },
+    "shipping_tax_included": {
+      "type": "boolean"
+    },
+    "order_discount_minor": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Discounts not attributed to a line (order-level codes, shipping discounts)."
+    },
+    "tax_added_minor": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Tax the channel added on top of tax-exclusive lines and shipping; 0 when everything is tax-inclusive."
+    },
+    "refund_total_minor": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Cumulative amount refunded so far, at most total_minor."
+    },
+    "total_minor": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "sum(qty * unit_price_minor - discount_line_minor) + shipping_minor - order_discount_minor + tax_added_minor."
+    },
+    "customer_country": {
+      "type": "string",
+      "pattern": "^[A-Z]{2}$"
+    }
+  }
+}
