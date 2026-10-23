@@ -365,3 +365,36 @@ func TestSettingsV2_LegacyManifestBytesUnchanged(t *testing.T) {
 		t.Fatalf("legacy manifest bytes changed:\n got %s\nwant %s", got, want)
 	}
 }
+
+// ut-docs#4885: a visibility cycle (show_when chains, including through a
+// tab's show_when) is refused at both install paths; acyclic chains stay.
+func TestSettingsV2_ShowWhenCycles(t *testing.T) {
+	two := `,"settings_tabs":[{"id":"t1","label":"l"},{"id":"t2","label":"l","show_when":{"key":"a","in":["x"]}}]`
+	cases := []struct {
+		name, settings, extra, want string // want "" = accepted
+	}{
+		{"two-cycle", `{"key":"a","show_when":{"key":"b","in":["x"]}},{"key":"b","show_when":{"key":"a","in":["x"]}}`, "", "show_when cycle a → b → a"},
+		{"three-cycle", `{"key":"a","show_when":{"key":"b","in":["x"]}},{"key":"b","show_when":{"key":"c","in":["x"]}},{"key":"c","show_when":{"key":"a","in":["x"]}}`, "", "show_when cycle a → b → c → a"},
+		{"tab controlled by its own setting", `{"key":"a","tab":"main"}`, `,"settings_tabs":[{"id":"main","label":"l","show_when":{"key":"a","in":["x"]}}]`, "show_when cycle a → a"},
+		{"cycle through a tab", `{"key":"a","tab":"main"},{"key":"b","show_when":{"key":"a","in":["x"]}},{"key":"c"}`, `,"settings_tabs":[{"id":"main","label":"l","show_when":{"key":"b","in":["x"]}}]`, "show_when cycle a → b → a"},
+		{"record field cycle", `{"key":"conns","type":"list","fields":[{"key":"name","show_when":{"key":"b","in":["x"]}},{"key":"b","show_when":{"key":"name","in":["x"]}}],"title_field":"name","max_items":5}`, "", "show_when cycle name → b → name"},
+		{"cycle through a key repeated in another scope", `{"key":"a","show_when":{"key":"b","in":["x"]}},{"key":"a","scope":"register"},{"key":"b","show_when":{"key":"a","in":["x"]}}`, "", "show_when cycle a → b → a"},
+		{"chain a<-b<-c", `{"key":"a","show_when":{"key":"b","in":["x"]}},{"key":"b","show_when":{"key":"c","in":["x"]}},{"key":"c"}`, "", ""},
+		{"tab controlled from another tab", `{"key":"a","tab":"t1"},{"key":"b","tab":"t2"}`, two, ""},
+		{"tab controlled from no tab", `{"key":"a"},{"key":"b","tab":"main"}`, `,"settings_tabs":[{"id":"main","label":"l","show_when":{"key":"a","in":["x"]}}]`, ""},
+		{"record field chain", `{"key":"conns","type":"list","fields":[{"key":"name","show_when":{"key":"b","in":["x"]}},{"key":"b"}],"title_field":"name","max_items":5}`, "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			parseErr, verifyErr := bothInstallPaths(t, v2Manifest(c.settings, c.extra))
+			for _, err := range []error{parseErr, verifyErr} {
+				if c.want == "" && err != nil {
+					t.Errorf("refused: %v", err)
+				}
+				if c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
+					t.Errorf("want error containing %q, got %v", c.want, err)
+				}
+			}
+		})
+	}
+}
