@@ -47,8 +47,9 @@ yeniden ister.
 ## Self-servis kioskta
 
 Self-servis kiosk kimseyin kimliğini kontrol edemez, bu yüzden yaş sınırlı bir
-ürün içeren siparişin ödemesini almaz. Müşteri, personelin kimliği kontrol
-edeceği kasada ödeme yapmasını isteyen bir mesaj görür. Hiçbir ücret alınmaz ve
+ürün içeren siparişin ödemesini almaz. Müşteri ödemeye geçtiğinde, personelin
+kimliği kontrol edeceği kasada ödeme yapmasını isteyen bir mesaj görür ve ona
+seçebileceği bir ödeme yöntemi sunulmaz. Hiçbir ücret alınmaz ve
 sepeti olduğu gibi kalır. Kasada ödeme modunda sipariş her zamanki gibi kasaya
 gönderilir ve kasada ödenirken kasiyerin kimlik kontrolü uygulanır.
 

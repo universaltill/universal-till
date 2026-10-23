@@ -254,5 +254,6 @@
   "catalog.builtin_icon.hair-colour": {"description": "Label of a built-in item/category picture in the image picker: hair colour or dye.", "review": "standard", "max_length": 24},
   "catalog.builtin_icon.massage": {"description": "Label of a built-in item/category picture in the image picker: massage or treatment.", "review": "standard", "max_length": 24},
   "catalog.builtin_icon.group.barber": {"description": "Heading of the image picker section for barber tools (clippers, razors, combs and so on).", "review": "standard", "max_length": 24},
-  "catalog.builtin_icon.group.grooming": {"description": "Heading of the image picker section for hair and skin care products.", "review": "standard", "max_length": 24}
+  "catalog.builtin_icon.group.grooming": {"description": "Heading of the image picker section for hair and skin care products.", "review": "standard", "max_length": 24},
+  "selforder.counter.title": {"description": "Heading of the self-order kiosk's checkout dialog when the customer pays at the counter instead of at the kiosk: the pay-at-counter confirm screen, and the payment picker when the basket holds an age-restricted item.", "review": "standard", "max_length": 40}
 }
