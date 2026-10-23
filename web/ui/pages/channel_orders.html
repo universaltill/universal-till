@@ -1,0 +1,39 @@
+{{ define "content" }}
+{{/* Online orders (ADR-0169 §9, ut-docs#4768): read-only list of the orders
+     the cloud's channel host recorded on this till. Not till sales: not in the
+     drawer, the Z report or the fiscal journal. */}}
+<div class="page-head">
+  <h1>{{ T "channel_orders.title" }} {{ helpLink "channel-orders" }}</h1>
+</div>
+<p class="muted channel-orders-intro">{{ T "channel_orders.intro" }}</p>
+<div class="card">
+  {{ if .Orders }}
+  <div class="channel-order-scroll">
+  <table class="table" id="channel-orders-table">
+    <thead>
+      <tr>
+        <th>{{ T "channel_orders.col.number" }}</th>
+        <th>{{ T "channel_orders.col.placed" }}</th>
+        <th>{{ T "channel_orders.col.channel" }}</th>
+        <th>{{ T "channel_orders.col.status" }}</th>
+        <th class="channel-orders-num">{{ T "channel_orders.col.lines" }}</th>
+        <th class="channel-orders-num">{{ T "channel_orders.col.total" }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Orders }}
+      <tr data-testid="channel-order-row">
+        <td><a class="channel-order-link" href="/channel-orders/{{ .ID }}">{{ .OrderNumber }}</a></td>
+        <td class="muted">{{ datetime .PlacedAt }}</td>
+        <td class="muted"><code class="channel-order-key">{{ .PluginKey }}</code></td>
+        <td><span class="channel-order-status" data-status="{{ .Status }}">{{ T (printf "channel_orders.status.%s" .Status) }}</span></td>
+        <td class="channel-orders-num">{{ qty .LineCount }}</td>
+        <td class="channel-orders-num">{{ moneyIn .Total .Currency }}</td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  </div>
+  {{ else }}<p class="muted" data-testid="channel-orders-empty">{{ T "channel_orders.empty" }}</p>{{ end }}
+</div>
+{{ end }}

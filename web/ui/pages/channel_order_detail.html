@@ -1,0 +1,62 @@
+{{ define "content" }}
+{{/* One online order (ADR-0169 §9, ut-docs#4768). Customer country only: the
+     directive carries no name, address, e-mail or phone.
+
+     TODO(accept/pick/pack/ship): the till-to-cloud action payload is not
+     designed yet (sales-channel-v1.md §5.1, "Out of scope of v1"). Until its
+     card lands there are NO action buttons here; the note below says where
+     the actions are taken. Do not add disabled teaser buttons. */}}
+{{ $o := .Order }}
+<div class="page-head">
+  <h1>{{ T "channel_orders.detail.title" }} {{ $o.OrderNumber }} {{ helpLink "channel-orders" }}</h1>
+  <a class="btn secondary" href="/channel-orders">{{ T "channel_orders.detail.back" }}</a>
+</div>
+<div class="card">
+  <dl class="channel-order-facts">
+    <dt>{{ T "channel_orders.col.status" }}</dt>
+    <dd><span class="channel-order-status" data-status="{{ $o.Status }}">{{ T (printf "channel_orders.status.%s" $o.Status) }}</span></dd>
+    {{ if $o.PaymentState }}<dt>{{ T "channel_orders.detail.payment" }}</dt><dd>{{ T (printf "channel_orders.payment.%s" $o.PaymentState) }}</dd>{{ end }}
+    <dt>{{ T "channel_orders.col.placed" }}</dt><dd>{{ datetime $o.PlacedAt }}</dd>
+    <dt>{{ T "channel_orders.col.channel" }}</dt><dd><code class="channel-order-key">{{ $o.PluginKey }}</code></dd>
+    {{ if $o.CustomerCountry }}<dt>{{ T "channel_orders.detail.country" }}</dt><dd>{{ $o.CustomerCountry }}</dd>{{ end }}
+  </dl>
+  {{ if $o.CurrencyMismatch }}<p class="login-error">{{ T "channel_orders.detail.currency_mismatch" }} ({{ $o.Currency }})</p>{{ end }}
+  {{ if $o.TotalMismatch }}<p class="login-error">{{ T "channel_orders.detail.total_mismatch" }}</p>{{ end }}
+</div>
+<div class="card" style="margin-block-start:1rem">
+  <div class="channel-order-scroll">
+  <table class="table" id="channel-order-lines">
+    <thead>
+      <tr>
+        <th>{{ T "channel_orders.detail.col.item" }}</th>
+        <th>{{ T "channel_orders.detail.col.sku" }}</th>
+        <th class="channel-orders-num">{{ T "channel_orders.detail.col.qty" }}</th>
+        <th class="channel-orders-num">{{ T "channel_orders.detail.col.price" }}</th>
+        <th class="channel-orders-num">{{ T "channel_orders.detail.col.refunded" }}</th>
+        <th class="channel-orders-num">{{ T "channel_orders.detail.col.restocked" }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range $o.Lines }}
+      <tr data-testid="channel-order-line">
+        <td>{{ .Name }}{{ if .Unmatched }} <span class="channel-order-status" data-status="unmatched">{{ T "channel_orders.detail.unmatched_line" }}</span>{{ end }}</td>
+        <td class="muted">{{ .SKU }}</td>
+        <td class="channel-orders-num">{{ qty .Qty }}</td>
+        <td class="channel-orders-num">{{ moneyIn .UnitPrice $o.Currency }}</td>
+        <td class="channel-orders-num">{{ qty .RefundedQuantity }}</td>
+        <td class="channel-orders-num">{{ qty .RestockedQuantity }}</td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  </div>
+  <dl class="channel-order-facts channel-order-totals">
+    <dt>{{ T "channel_orders.detail.shipping" }}</dt><dd>{{ moneyIn $o.Shipping $o.Currency }}</dd>
+    {{ if $o.OrderDiscount.IsPositive }}<dt>{{ T "channel_orders.detail.discount" }}</dt><dd>{{ moneyIn $o.OrderDiscount $o.Currency }}</dd>{{ end }}
+    {{ if $o.TaxAdded.IsPositive }}<dt>{{ T "channel_orders.detail.tax_added" }}</dt><dd>{{ moneyIn $o.TaxAdded $o.Currency }}</dd>{{ end }}
+    <dt>{{ T "channel_orders.col.total" }}</dt><dd>{{ moneyIn $o.Total $o.Currency }}</dd>
+    {{ if $o.RefundTotal.IsPositive }}<dt>{{ T "channel_orders.detail.refunded_total" }}</dt><dd>{{ moneyIn $o.RefundTotal $o.Currency }}</dd>{{ end }}
+  </dl>
+</div>
+<p class="muted channel-orders-intro">{{ T "channel_orders.detail.actions_note" }}</p>
+{{ end }}

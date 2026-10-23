@@ -52,6 +52,7 @@ func getMenu(t *testing.T, mux *http.ServeMux) string {
 var goldenManagerTiles = []string{
 	"/designer", "/shifts", "/journal", "/orders", "/reports", "/settings", "/plugins", "/items",
 	"/open-orders",
+	"/channel-orders", // ut-docs#4768: Reports-gated Online orders (ADR-0169 §9)
 	"/help",
 	// ut-docs#4251: /vouchers (Order 2150, settings-gated) right after /users.
 	"/users", "/vouchers", "/kitchen-stations", "/bluetooth-devices", "/tables", "/report-issue", "/admin",

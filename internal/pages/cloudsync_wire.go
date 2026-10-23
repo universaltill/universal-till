@@ -1418,6 +1418,10 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		ImportCustomers: func(ctx context.Context, dir cloudsync.ImportCustomersDirective) (cloudsync.ImportCustomersResult, error) {
 			return cloudImportCustomers(ctx, d, directiveKeys, dir)
 		},
+		// Channel orders (ADR-0169 §9, ut-docs#4768): main till only.
+		ApplyChannelOrder: func(ctx context.Context, o cloudsync.ChannelOrderDirective) (string, error) {
+			return cloudApplyChannelOrder(ctx, d, o)
+		},
 		SaveUser: func(ctx context.Context, u cloudsync.UserDirective) (string, error) {
 			return cloudSaveUser(ctx, d, directiveKeys, u)
 		},

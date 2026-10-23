@@ -168,6 +168,10 @@ var demoDeniedRoutes = map[string]bool{
 	// demo visitor needs.
 	"POST /csp-report": true,
 	"GET /csp-report":  true,
+	// Online orders (ADR-0169 §9, ut-docs#4768): a demo till has no sales
+	// channel; the pages are shop data a public visitor has no use for.
+	"GET /channel-orders":      true,
+	"GET /channel-orders/{id}": true,
 	// Plugins: install, update, side-load, rollback, enable/disable, trust and
 	// permission grants, the plugin store, plugin-owned
 	// pages/settings/actions (plugin settings can take endpoints) and the
