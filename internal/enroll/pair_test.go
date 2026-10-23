@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/discovery"
 )
 
 // ut-docs#3523, ADR-0116 D5/D6: Settings → Cloud → "Pair with a shop". The
@@ -366,6 +367,10 @@ func TestPairMainTillAdoptsPairedIdentity(t *testing.T) {
 			t.Fatalf("%s = %q, want %q", key, got, want)
 		}
 	}
+	// ut-docs#4836: adoption marks the till as paired with a my. shop.
+	if _, err := time.Parse(time.RFC3339, kv.get(keyPairedAt)); err != nil {
+		t.Fatalf("paired_at = %q, want an RFC3339 timestamp: %v", kv.get(keyPairedAt), err)
+	}
 	if kv.get(keyEnrolledAt) == "" || kv.get(keyEnrolledAt) == "2026-01-01T00:00:00Z" {
 		t.Fatalf("enrolled_at = %q, want a fresh timestamp", kv.get(keyEnrolledAt))
 	}
@@ -402,6 +407,9 @@ func TestPairRefusedLeavesIdentityCleared(t *testing.T) {
 	}
 	if st.Registered {
 		t.Fatalf("status = %+v after a refused pair, want not registered", st)
+	}
+	if kv.get(keyPairedAt) != "" {
+		t.Fatalf("paired_at = %q survived the identity reset, want cleared", kv.get(keyPairedAt))
 	}
 	if kv.get(keyToken) != "" || kv.get(keyStoreID) != "" || kv.get(keyEnrolledAt) != "" {
 		t.Fatalf("old identity survived: token=%q store=%q enrolled_at=%q", kv.get(keyToken), kv.get(keyStoreID), kv.get(keyEnrolledAt))
@@ -623,4 +631,14 @@ func TestPairReplicaStoreMismatchRefused(t *testing.T) {
 		t.Fatalf("the mismatch warning does not name the paired store:\n%s", logs.String())
 	}
 	assertPairSecretsNotLogged(t, logs)
+}
+
+// ut-docs#4836: the paired_at key discovery reads is the one enroll writes.
+func TestPairedAtKeyMatchesDiscovery(t *testing.T) {
+	if keyPairedAt != "marketplace.paired_at" || discovery.CloudPairedAtSettingKey != keyPairedAt {
+		t.Fatalf("paired_at key drift: enroll=%q discovery=%q", keyPairedAt, discovery.CloudPairedAtSettingKey)
+	}
+	if keyStoreID != "marketplace.store_id" || keyToken != "marketplace.token" {
+		t.Fatalf("store/token keys drifted from the literals in internal/discovery/join_watch.go")
+	}
 }

@@ -144,7 +144,7 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 // version and date of this till's last answered unpaid check-in: what the
 // cloud last saw of this device. Copied to a joining replica, the main
 // till's markers would cancel the replica's own first-run check-in.
-var TillCloudIdentityPrefixes = []string{"marketplace.device_", "marketplace.token", "marketplace.enrolled_at", "marketplace.terms_", "till_identity.", "cloudsync.unpaid_checkin."}
+var TillCloudIdentityPrefixes = []string{"marketplace.device_", "marketplace.token", "marketplace.enrolled_at", "marketplace.paired_at", "marketplace.terms_", "till_identity.", "cloudsync.unpaid_checkin."}
 
 // DeleteTillCloudIdentity removes every TillCloudIdentityPrefixes row from
 // the settings table behind exec: the join-snapshot copy served to a joining
