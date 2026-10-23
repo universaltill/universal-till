@@ -2147,7 +2147,6 @@ selforder.confirm.receipt
 selforder.confirm.title
 selforder.counter.hint
 selforder.counter.place_order
-selforder.counter.title
 selforder.decrease
 selforder.exit
 selforder.increase

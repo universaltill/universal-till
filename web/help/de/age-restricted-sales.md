@@ -53,8 +53,9 @@ ein geparkter Vorgang fragt beim Fortsetzen erneut.
 
 Ein Selbstbedienungsterminal kann niemandes Ausweis prüfen. Deshalb nimmt es
 für eine Bestellung mit einem altersbeschränkten Artikel keine Zahlung an. Die
-Kundschaft sieht eine Meldung mit der Bitte, an der Kasse zu bezahlen, wo das
-Personal den Ausweis prüft. Es wird nichts belastet, und der Warenkorb bleibt
+Kundschaft sieht schon beim Bezahlen eine Meldung mit der Bitte, an der Kasse
+zu bezahlen, wo das Personal den Ausweis prüft, und bekommt keine Zahlungsart
+zur Auswahl. Es wird nichts belastet, und der Warenkorb bleibt
 unverändert. Im Modus „An der Kasse bezahlen“ geht die Bestellung wie gewohnt an
 die Kasse, und beim Bezahlen dort gilt die Ausweiskontrolle der Kasse.
 
