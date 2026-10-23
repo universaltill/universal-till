@@ -738,6 +738,9 @@ var PerTillSettingPrefixes = []string{
 	// TestPerTillSettingsCoverTillCloudIdentity keeps them in step.
 	"marketplace.device_", "marketplace.token", "marketplace.enrolled_at",
 	"marketplace.public_key",
+	// ut-docs#4836: when THIS till paired with a my. shop (the join banner's
+	// "set up as a main till" marker) — per till, never copied to a replica.
+	"marketplace.paired_at",
 	// ut-docs#4720: the operator's acceptance of the cloud terms is this
 	// till's own (it registered under it); also in
 	// db.TillCloudIdentityPrefixes so a joining replica is not handed the

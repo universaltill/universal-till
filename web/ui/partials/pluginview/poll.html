@@ -5,11 +5,12 @@
      reachable. htmx re-asks the entry's own route about every second and
      swaps the answer in: this poll again, or the job's result. The refresh
      link is the no-JS fallback. .Route and .Job.ID are set by core (the id
-     is 32 hex characters); html/template escapes both. */}}
+     is 32 hex characters); html/template escapes both. The plugin's own
+     progress text is a <bdi> (ut-docs#4834). */}}
 {{ define "pluginview_poll" }}
 <div class="plugin-view-poll" role="status" aria-live="polite"
      hx-get="{{ .Route }}?_job={{ .Job.ID }}" hx-trigger="every 1s" hx-target="#{{ .TargetID }}" hx-swap="innerHTML">
-  <span id="{{ .TargetID }}-poll-msg" class="plugin-view-poll-msg">{{ if .Job.Message }}{{ .Job.Message }}{{ else }}{{ T "plugin.job.running" }}{{ end }}</span>
+  <span id="{{ .TargetID }}-poll-msg" class="plugin-view-poll-msg">{{ if .Job.Message }}<bdi>{{ .Job.Message }}</bdi>{{ else }}{{ T "plugin.job.running" }}{{ end }}</span>
   {{- if .Job.HasPct }}
   <progress class="plugin-view-poll-bar" max="100" value="{{ .Job.Pct }}" aria-labelledby="{{ .TargetID }}-poll-msg">{{ .Job.Pct }}%</progress>
   {{- else }}

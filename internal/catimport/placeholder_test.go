@@ -59,6 +59,35 @@ func TestPlaceholderIcon_KeywordMatch(t *testing.T) {
 		{"Toast", "", "bread"},
 		{"Ice Cream Sundae", "", "ice-cream"},
 		{"Hot Sauce", "", "generic"}, // "hot" alone is no keyword
+		// ut-docs#4840: barber catalogue words beat the cafe words.
+		{"Wahl Magic Clip Cordless Clipper", "", "clippers"},
+		{"Andis Clippers", "", "clippers"},
+		{"Tea Tree Shampoo", "", "shampoo"},
+		{"Lemon Aftershave", "", "aftershave"},
+		{"Beard Oil 30ml", "", "beard-oil"},
+		{"Razor Blades x100", "", "blades"},
+		{"Hair Wax", "", "pomade"},
+		{"Shaving Cream", "", "cream-tube"},
+		{"Cutting Combs", "", "comb"},
+		{"Barber Water Spray Bottle", "", "spray-bottle"},
+		// Review R1: barber single words sit BELOW the cafe rows.
+		{"Clipper Green Tea", "", "tea"},
+		{"Clipper Teas Earl Grey", "", "tea"},
+		{"Clipper Fairtrade Coffee", "", "coffee"},
+		{"Cape Gooseberry Tart", "", "berries"},
+		{"Cape Malay Curry", "", "bowl"},
+		{"Honey Comb Crunch", "", "candy"},
+		{"Razor Clams", "", "seafood"},
+		{"Cologne Sausage", "", "hot-dog"},
+		{"Charger Plate", "", "generic"},
+		{"Beard Papa Cream Puff", "", "pastry"},
+		{"Tea Tree Oil", "", "shampoo"},
+		{"Blade", "", "blades"},
+		{"Cutting Cape", "", "cape"},
+		{"Clipper Charger", "", "clippers"},
+		{"Cologne", "", "aftershave"},
+		{"Beard", "", "beard"},
+		{"Razor", "", "razor"},
 	}
 	for _, c := range cases {
 		if got := PlaceholderIcon(c.name, c.category); got != c.want {

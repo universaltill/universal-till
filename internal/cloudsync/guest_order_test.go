@@ -489,3 +489,38 @@ func TestApply_NeverRunsTheGuestOrderHook(t *testing.T) {
 		t.Fatalf("apply(guest_order) = %s, hook called %v", status, called)
 	}
 }
+
+// ut-docs#4715: the optional locale is untrusted — a good one is kept, any
+// other shape is dropped, and none of them refuses the order.
+func TestDecodeGuestOrder_Locale(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		v    any
+		want string
+	}{
+		{"good", "tr-TR", "tr-TR"},
+		{"trimmed", "  de-DE ", "de-DE"},
+		{"underscore", "pt_PT", "pt_PT"},
+		{"non-string", 42, ""},
+		{"over-long", strings.Repeat("a", maxGuestOrderLocaleLen+1), ""},
+		{"at the bound", strings.Repeat("a", maxGuestOrderLocaleLen), strings.Repeat("a", maxGuestOrderLocaleLen)},
+		{"space inside", "tr TR", ""},
+		{"markup", "<x>", ""},
+		{"empty", "", ""},
+	} {
+		d := guestDirective("d1", "g1", guestLine("itm-1", 1))
+		d["payload"].(map[string]any)["locale"] = tc.v
+		o, refusal := decodeGuestOrder(toDirective(t, d))
+		if refusal != "" {
+			t.Errorf("%s: refusal %q, want none", tc.name, refusal)
+		}
+		if o.Locale != tc.want {
+			t.Errorf("%s: Locale = %q, want %q", tc.name, o.Locale, tc.want)
+		}
+	}
+	// Absent key: no locale, no refusal.
+	o, refusal := decodeGuestOrder(toDirective(t, guestDirective("d1", "g1", guestLine("itm-1", 1))))
+	if refusal != "" || o.Locale != "" {
+		t.Fatalf("absent: %q %q", o.Locale, refusal)
+	}
+}

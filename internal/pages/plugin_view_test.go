@@ -416,7 +416,7 @@ func TestPluginView_FullVocabularyRenders_3160(t *testing.T) {
 		`class="btn btn-touch danger"`,
 		`name="_kind.qty" value="number"`,
 		`inputmode="decimal"`,
-		`<option value="b" selected>`,
+		`<option value="b" selected dir="auto">`,
 		`name="_kind.on" value="toggle"`,
 		`type="checkbox" name="on" value="true" checked`,
 	} {
@@ -656,7 +656,7 @@ func assertRefilledPage(t *testing.T, rec *httptest.ResponseRecorder, wantStatus
 	}
 	for _, want := range []string{
 		`name="note" value="typed &lt;b&gt;"`,
-		`<option value="b" selected>`,
+		`<option value="b" selected dir="auto">`,
 		`type="password" name="api_key" value=""`,
 	} {
 		if !strings.Contains(body, want) {

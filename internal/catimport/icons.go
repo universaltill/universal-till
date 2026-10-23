@@ -5,7 +5,8 @@ import "github.com/universaltill/universal-till/internal/iconid"
 // Built-in category/item icon library (ut-docs#2506, first cut).
 //
 // Every icon is generated from a vendored upstream SVG under iconsrc/
-// (Lucide — ISC, Tabler — MIT; both LICENSE files sit next to the SVGs)
+// (Lucide — ISC, Tabler — MIT, and "ut", Universal Till's own artwork,
+// ut-docs#4840; each set's LICENSE file sits next to its SVGs)
 // into a 64×64 tile at web/public/assets/category-icons/<key>.svg by the
 // golden-file test in icons_render_test.go. TestCategoryIconTiles_InSync
 // fails when a tile, this registry and its source drift, so the files are
@@ -52,6 +53,8 @@ var iconGroups = []iconGroup{
 	{Key: "meals", Background: "#FFE4E6", Stroke: "#9F1239"},
 	{Key: "produce", Background: "#DCFCE7", Stroke: "#166534"},
 	{Key: "sweets", Background: "#FCE7F3", Stroke: "#9D174D"},
+	{Key: "barber", Background: "#E0E7FF", Stroke: "#3730A3"},
+	{Key: "grooming", Background: "#CCFBF1", Stroke: "#115E59"},
 	{Key: "general", Background: "#E2E8F0", Stroke: "#334155"},
 }
 

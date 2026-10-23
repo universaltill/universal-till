@@ -140,7 +140,7 @@ func Pair(ctx context.Context, cfg *config.Config, kv Settings, code string) (St
 // holds the attempt slot.
 func resetIdentityForPair(ctx context.Context, kv Settings, replica bool, newID string) {
 	log := logging.L()
-	wipe := []string{keyToken, keyEnrolledAt, keyDeviceRegistered, keyDeviceTillID}
+	wipe := []string{keyToken, keyEnrolledAt, keyPairedAt, keyDeviceRegistered, keyDeviceTillID}
 	if !replica {
 		wipe = append(wipe, keyStoreID, keyMerchantID)
 	}
@@ -183,7 +183,8 @@ func adoptPaired(ctx context.Context, kv Settings, replica bool, newID, storeID,
 	adoptOwnCredential(ctx, kv, token, storeID)
 	persist := [][2]string{
 		{keyEnrolledAt, time.Now().UTC().Format(time.RFC3339)},
-		{keyDeviceRegistered, newID}, // /pair recorded this device under the store
+		{keyPairedAt, time.Now().UTC().Format(time.RFC3339)}, // ut-docs#4836
+		{keyDeviceRegistered, newID},                         // /pair recorded this device under the store
 	}
 	if !replica {
 		persist = append(persist, [2]string{keyStoreID, storeID}, [2]string{keyMerchantID, merchantID})

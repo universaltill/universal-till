@@ -31,7 +31,50 @@ var (
 	svgElement   = regexp.MustCompile(`(?s)<[a-z]+\b[^>]*/>`)
 	tablerFiller = regexp.MustCompile(`stroke="none"`)
 	spaceRun     = regexp.MustCompile(`\s+`)
+	elementName  = regexp.MustCompile(`^<([a-z]+)\b`)
+	attrPair     = regexp.MustCompile(`([a-zA-Z0-9:-]+)\s*=\s*"([^"]*)"`)
 )
+
+// Review R4 (ut-docs#4840): the vendored/own glyphs are inlined into the
+// committed tiles, so the generator only lets drawing primitives through,
+// with a fixed attribute set (the same stance as my.'s parseGlyph). A
+// <script>, <image>, <use>, <style>, an on* handler, an href or a url()
+// reference fails the generator instead of reaching a served tile.
+var (
+	allowedIconElements = map[string]bool{
+		"path": true, "circle": true, "rect": true, "line": true,
+		"polyline": true, "polygon": true, "ellipse": true,
+	}
+	allowedIconAttrs = map[string]bool{
+		"d": true, "cx": true, "cy": true, "r": true, "rx": true, "ry": true,
+		"x": true, "y": true, "x1": true, "y1": true, "x2": true, "y2": true,
+		"width": true, "height": true, "points": true,
+		"fill": true, "stroke": true, "stroke-width": true,
+		"stroke-linecap": true, "stroke-linejoin": true,
+	}
+)
+
+// checkIconElement rejects any element or attribute outside the allowlist.
+func checkIconElement(el string) error {
+	m := elementName.FindStringSubmatch(el)
+	if m == nil || !allowedIconElements[m[1]] {
+		return fmt.Errorf("element %q is not an allowed drawing element", el)
+	}
+	rest := strings.TrimSuffix(strings.TrimPrefix(el, "<"+m[1]), "/>")
+	if left := strings.TrimSpace(attrPair.ReplaceAllString(rest, "")); left != "" {
+		return fmt.Errorf("malformed attributes %q in %q", left, el)
+	}
+	for _, a := range attrPair.FindAllStringSubmatch(rest, -1) {
+		if !allowedIconAttrs[a[1]] {
+			return fmt.Errorf("attribute %q is not allowed in %q", a[1], el)
+		}
+		v := strings.ToLower(a[2])
+		if strings.Contains(v, "url(") || strings.Contains(v, "javascript") || strings.ContainsAny(v, "<>&") {
+			return fmt.Errorf("attribute %q has an unsafe value in %q", a[1], el)
+		}
+	}
+	return nil
+}
 
 // iconSourceChildren extracts the drawing elements from one upstream
 // 24×24 SVG: every self-closing child element, whitespace-normalised,
@@ -46,10 +89,18 @@ func iconSourceChildren(src []byte) ([]string, error) {
 		return nil, fmt.Errorf("not an <svg> document")
 	}
 	body := s[loc[1]:end]
+	// Anything that is not a self-closing child (a <script>…</script>, a
+	// <g>, a <style>) must not slip past the element regexp unnoticed.
+	if left := svgElement.ReplaceAllString(body, ""); strings.Contains(left, "<") {
+		return nil, fmt.Errorf("source has a non self-closing element")
+	}
 	var out []string
 	for _, el := range svgElement.FindAllString(body, -1) {
 		if tablerFiller.MatchString(el) {
 			continue
+		}
+		if err := checkIconElement(el); err != nil {
+			return nil, err
 		}
 		el = spaceRun.ReplaceAllString(el, " ")
 		el = strings.Replace(el, " />", "/>", 1)

@@ -48,8 +48,9 @@ when it is resumed.
 ## On the self-order kiosk
 
 A self-order kiosk cannot check anyone's ID, so it will not take payment for
-an order that includes an age-restricted item. The customer sees a message
-asking them to pay at the counter, where staff will check ID. Nothing is
+an order that includes an age-restricted item. When the customer goes to
+pay, the kiosk shows a message asking them to pay at the counter, where staff
+will check ID, and offers no payment method to tap. Nothing is
 charged and their basket is left as it was. In pay-at-counter mode the order
 is simply sent to the counter as usual, and the cashier's ID check applies
 when it is paid at the till.
