@@ -50,7 +50,7 @@ func installTaxDeViaHTTP(t *testing.T, primary *syncPluginsPrimary, listingID st
 	mux := http.NewServeMux()
 	registerPluginAPI(mux, primary.dp)
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/install-from-marketplace",
-		strings.NewReader(`{"listing_id":"`+listingID+`"}`))
+		strings.NewReader(`{"listing_id":"`+listingID+`","accept_terms":true}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	withPaths(primary.dataDir, func() { mux.ServeHTTP(rec, req) })

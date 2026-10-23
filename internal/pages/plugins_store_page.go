@@ -219,13 +219,19 @@ func PluginStoreDetailHandler(d *common.Deps) http.HandlerFunc {
 		}
 		listingID := r.PathValue("listing_id")
 		items, err := storeListings(r, d)
+		locale := httpx.RequestLocale(r)
+		termsGate := !enroll.CurrentStatus().Registered && d.SyncPrimaryURL(r.Context()) == "" && !termsAlreadyAccepted(r.Context(), d)
 		for _, it := range items {
 			if it.ListingID == listingID {
 				httpx.Render("ui/pages/plugins_store_detail.html", map[string]any{
-					"title":     it.Name + " — " + httpx.T(httpx.RequestLocale(r), "page.title.plugin_store"),
+					"title":     it.Name + " — " + httpx.T(locale, "page.title.plugin_store"),
 					"theme":     d.CurrentState().Theme,
 					"menuItems": d.MenuSnapshot(),
 					"Item":      it,
+					// ut-docs#4791: the first Download registers an
+					// unregistered till, so ask for the cloud terms there.
+					"TermsGate": termsGate,
+					"terms":     termsView(r.Context(), d, locale),
 				})(w, r)
 				return
 			}
@@ -319,6 +325,19 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 		listingID := listingFrom(r)
 		if listingID == "" {
 			respond(w, http.StatusBadRequest, "listing_id required")
+			return
+		}
+		// ut-docs#4791: the first Download on an unregistered till registers
+		// it, so the cloud terms must be ticked first; refused = nothing is
+		// registered or downloaded. The error is the i18n key.
+		refuse, gerr := termsGateLazyRegistration(r.Context(), d, termsTicked(r), httpx.RequestLocale(r))
+		if gerr != nil {
+			logging.L().Errorf("store download: record terms acceptance: %v", gerr)
+			respond(w, http.StatusInternalServerError, "settings.error.save_failed")
+			return
+		}
+		if refuse {
+			respond(w, http.StatusPreconditionRequired, "settings.enrol.terms_required")
 			return
 		}
 		// Store registration is lazy — a download is the first interaction

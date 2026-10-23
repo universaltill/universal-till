@@ -8,6 +8,9 @@
   .store-detail-desc { white-space:pre-line; overflow-wrap:anywhere; margin:0; }
   .store-detail-actions { display:flex; gap:.5rem; flex-wrap:wrap; }
   .store-detail-actions .btn { min-height:44px; }
+  /* ut-docs#4791: keep the terms checkbox beside its (wrapping) label on a phone. */
+  .store-terms .set-row { flex-wrap:nowrap; align-items:flex-start; }
+  .store-terms input[type=checkbox] { flex:none; inline-size:1.25rem; block-size:1.25rem; margin-block-start:.1rem; }
 </style>
 
 <div class="page-head">
@@ -68,6 +71,10 @@
     <button class="btn" data-store-action="install" data-listing-id="{{ .ListingID }}">{{ T "plugins.store.action.install" }}</button>
     <button class="btn secondary" data-store-action="delete-download" data-listing-id="{{ .ListingID }}">{{ T "plugins.store.action.delete" }}</button>
     {{ else }}
+    {{ if $.TermsGate }}
+    {{/* ut-docs#4791: the first Download registers this till with the cloud. */}}
+    <div class="store-terms" style="flex-basis:100%">{{ template "enrol_terms.html" (dict "terms" $.terms "id" "store-accept-terms") }}</div>
+    {{ end }}
     <button class="btn" data-store-action="download" data-listing-id="{{ .ListingID }}">{{ T "plugins.store.action.download" }}</button>
     {{ end }}
   </div>
@@ -92,7 +99,9 @@ window.utTrustPrompt = {{ T "plugins.trust.confirm" }};
     'plugins.install.error.replica_use_primary': '{{ T "plugins.install.error.replica_use_primary" }}',
     'plugins.install.error.not_entitled': '{{ T "plugins.install.error.not_entitled" }}',
     'plugins.install.error.not_found': '{{ T "plugins.install.error.not_found" }}',
-    'plugins.install.error.registered_required': '{{ T "plugins.install.error.registered_required" }}'
+    'plugins.install.error.registered_required': '{{ T "plugins.install.error.registered_required" }}',
+    'settings.enrol.terms_required': '{{ T "settings.enrol.terms_required" }}',
+    'settings.error.save_failed': '{{ T "settings.error.save_failed" }}'
   };
   document.addEventListener('click', function (ev) {
     var btn = ev.target.closest('[data-store-action]');
@@ -100,6 +109,14 @@ window.utTrustPrompt = {{ T "plugins.trust.confirm" }};
     var action = btn.getAttribute('data-store-action');
     var listing = btn.getAttribute('data-listing-id');
     var card = btn.closest('.store-detail');
+    // ut-docs#4791: an unticked terms box stops the Download here (before the
+    // trust prompt); the server refuses it with the same key regardless.
+    var termsBox = document.getElementById('store-accept-terms');
+    if (action === 'download' && termsBox && !termsBox.checked) {
+      msg.textContent = '✗ ' + T['settings.enrol.terms_required'];
+      termsBox.focus();
+      return;
+    }
     // Unverified publisher: the operator must explicitly consent before the
     // plugin lands on the till (trust chain surface, ADR-0006).
     if ((action === 'download' || action === 'install') && card &&
@@ -111,10 +128,12 @@ window.utTrustPrompt = {{ T "plugins.trust.confirm" }};
     card.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
     msg.textContent = '⏳ ' + action + '…';
 
+    var body = { listing_id: listing };
+    if (action === 'download' && termsBox && termsBox.checked) body.accept_terms = 'on';
     fetch('/api/plugins/store/' + action, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ listing_id: listing }).toString()
+      body: new URLSearchParams(body).toString()
     }).then(function (res) { return res.json().catch(function () { return {}; }).then(function (j) {
       if (res.ok) { UT.reload('plugin-store:' + action); return; }
       msg.textContent = '✗ ' + (T[j.error] || j.error || ('HTTP ' + res.status));

@@ -170,7 +170,8 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 
 		// Parse request
 		var req struct {
-			ListingID string `json:"listing_id"`
+			ListingID   string `json:"listing_id"`
+			AcceptTerms bool   `json:"accept_terms"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeInstallResponse(w, http.StatusBadRequest, false, "", "plugins.install.error.invalid_request")
@@ -179,6 +180,20 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 
 		if req.ListingID == "" {
 			writeInstallResponse(w, http.StatusBadRequest, false, "", "plugins.install.error.invalid_request")
+			return
+		}
+
+		// ut-docs#4791: an install on an unregistered till registers it, so
+		// the cloud terms must be accepted first. Gated before the status
+		// record below so a refusal leaves no "requested" state behind.
+		refuse, gerr := termsGateLazyRegistration(ctx, d, req.AcceptTerms, httpx.RequestLocale(r))
+		if gerr != nil {
+			log.Printf("install from marketplace: record terms acceptance: %v", gerr)
+			writeInstallResponse(w, http.StatusInternalServerError, false, "", "settings.error.save_failed")
+			return
+		}
+		if refuse {
+			writeInstallResponse(w, http.StatusPreconditionRequired, false, "", "settings.enrol.terms_required")
 			return
 		}
 
