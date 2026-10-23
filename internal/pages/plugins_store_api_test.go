@@ -91,7 +91,7 @@ func TestStoreAPI_InstallerNotConfigured_500(t *testing.T) {
 		PublicKey:   "not-hex-at-all",
 	})
 
-	form := url.Values{"listing_id": {"lst-1"}}
+	form := url.Values{"listing_id": {"lst-1"}, "accept_terms": {"on"}}
 	for _, path := range []string{
 		"/api/plugins/store/download",
 		"/api/plugins/store/install",
@@ -115,7 +115,7 @@ func TestStoreAPI_DownloadFailureIs502(t *testing.T) {
 	t.Cleanup(srv.Close)
 	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: srv.URL})
 
-	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-1"}}, nil)
+	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-1"}, "accept_terms": {"on"}}, nil)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("download from empty marketplace = %d, want 502 (%s)", rec.Code, rec.Body.String())
 	}
@@ -139,7 +139,7 @@ func TestStoreAPI_DownloadNotEntitled_403(t *testing.T) {
 	t.Cleanup(srv.Close)
 	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: srv.URL})
 
-	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-paid"}}, nil)
+	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-paid"}, "accept_terms": {"on"}}, nil)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("download of a not-entitled listing = %d, want 403 (%s)", rec.Code, rec.Body.String())
 	}
@@ -163,7 +163,7 @@ func TestStoreAPI_DownloadListingNotFound_404(t *testing.T) {
 	t.Cleanup(srv.Close)
 	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: srv.URL})
 
-	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-stale"}}, nil)
+	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-stale"}, "accept_terms": {"on"}}, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("download of an unknown listing = %d, want 404 (%s)", rec.Code, rec.Body.String())
 	}
@@ -187,7 +187,7 @@ func TestStoreAPI_DownloadRegisteredRequired_403(t *testing.T) {
 	t.Cleanup(srv.Close)
 	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: srv.URL})
 
-	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-registered"}}, nil)
+	rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-registered"}, "accept_terms": {"on"}}, nil)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("download of a registered-required listing = %d, want 403 (%s)", rec.Code, rec.Body.String())
 	}

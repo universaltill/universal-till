@@ -89,6 +89,12 @@ func TestStoreInitial(t *testing.T) {
 // snapshot (nil marketplace client: never reaches the network).
 func newStoreDetailMux(t *testing.T, plugins ...marketplace.PluginSummary) *http.ServeMux {
 	t.Helper()
+	mux, _ := newStoreDetailMuxDeps(t, plugins...)
+	return mux
+}
+
+func newStoreDetailMuxDeps(t *testing.T, plugins ...marketplace.PluginSummary) (*http.ServeMux, *common.Deps) {
+	t.Helper()
 	chdirRoot(t)
 	initPagesI18n(t)
 	db := openPagesTestDB(t)
@@ -106,7 +112,7 @@ func newStoreDetailMux(t *testing.T, plugins ...marketplace.PluginSummary) *http
 	mux := http.NewServeMux()
 	registerPluginSettings(mux, dp)
 	registerPluginStore(mux, dp)
-	return mux
+	return mux, dp
 }
 
 func TestPluginStoreDetailPageRendersEverythingTheCardUsedTo(t *testing.T) {

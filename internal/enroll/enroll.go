@@ -768,8 +768,10 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 	fields["platform"] = devicePlatform()
 	// The operator's acceptance of the cloud terms (ut-docs#4717), only when
 	// the current version was accepted on this till. Operator-initiated
-	// registrations collect it first; EnsureRegistered from a plugin install
-	// never asks and sends it only if already recorded.
+	// registrations collect it first, as do the plugin store's Download and
+	// install-from-marketplace (ut-docs#4791); the other lazy triggers
+	// (wizard base plugins, cloud-directed installs, update, TSE) send it only
+	// if already recorded.
 	termsSent := ""
 	if v, loc, _, ok := AcceptedTerms(ctx, kv); ok {
 		termsSent = v
