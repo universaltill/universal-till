@@ -98,8 +98,13 @@ type settingForm struct {
 	Options []choiceOptionView // dropdown entries, Selected = the stored value
 	ShowKey string             // show_when.key; "" = always shown
 	ShowIn  string             // show_when.in, comma-joined (values carry no comma, validated)
-	Hidden  bool               // show_when not met by the stored values
-	order   int                // manifest declaration index; undeclared keys sort last
+	Hidden  bool               // show_when not met (chain-aware: visibility)
+	// ShowStored is the controlling setting's stored value, set only when
+	// that controller can itself be hidden: a hidden controller counts as
+	// holding it (chained show_when, ut-docs#4666). "" and unset = none.
+	ShowStored    string
+	HasShowStored bool
+	order         int // manifest declaration index; undeclared keys sort last
 }
 
 // undeclaredSettingOrder sorts settings the manifest doesn't declare after
@@ -471,6 +476,7 @@ func controlValues(m *plugins.Manifest, form map[string][]string, stored map[str
 func buildPluginSettingViews(ctx context.Context, catalogRepo *data.CatalogRepo, pluginID string, rows []data.PluginSettingRow, manifest *plugins.Manifest, isSecret func(string) bool, locale string, st settingsFormState) ([]pluginSettingView, error) {
 	stored := storedControlValues(rows)
 	cur := controlValues(manifest, st.form, stored)
+	vis := newSettingVisibility(manifest, st.form, stored)
 	currency := httpx.ActiveCurrency()
 	submitted := func(key string) (string, bool) {
 		vals, ok := st.form["setting_"+key]
@@ -493,6 +499,12 @@ func buildPluginSettingViews(ctx context.Context, catalogRepo *data.CatalogRepo,
 			}
 		}
 		sv.settingForm = buildSettingForm(manifest, row.Key, formValue, cur, locale)
+		if decl != nil && decl.ShowWhen != nil {
+			sv.Hidden = vis.fieldHidden(row.Key)
+			if vis.hideable(decl.ShowWhen.Key) {
+				sv.ShowStored, sv.HasShowStored = stored[decl.ShowWhen.Key], true
+			}
+		}
 		if decl != nil {
 			sv.Required = decl.Required
 			sv.MaxLen = decl.MaxLen
@@ -566,6 +578,95 @@ func buildPluginSettingViews(ctx context.Context, catalogRepo *data.CatalogRepo,
 	return views, nil
 }
 
+// settingsTabView is one tab of a manifest that declares settings_tabs
+// (S1, ut-docs#4666).
+type settingsTabView struct {
+	ID         string // DOM id part; generalTabID for the core General tab
+	Label      string
+	Help       string
+	Hidden     bool // the tab's show_when is unmet
+	ShowKey    string
+	ShowIn     string
+	ShowStored string
+	HasStored  bool
+	Active     bool // opened: the first tab holding errors, else the first visible one
+	ErrorCount int
+	ErrorLabel string // accessible name of the error badge
+	Settings   []pluginSettingView
+}
+
+// generalTabID is the DOM id of the core "General" tab. Plugin tab ids must
+// start with [a-z], so it cannot collide with one.
+const generalTabID = "_general"
+
+// groupSettingTabs splits the flat, manifest-ordered views into tabs: the
+// settings without a tab (and any stored key the manifest doesn't declare)
+// in a core General tab first, then the declared tabs in manifest order. A
+// tab with no settings is not drawn. A manifest without settings_tabs gives
+// nil, which the template draws as the plain list.
+func groupSettingTabs(m *plugins.Manifest, views []pluginSettingView, st settingsFormState, stored map[string]string, locale string) []settingsTabView {
+	if m == nil || len(m.SettingsTabs) == 0 {
+		return nil
+	}
+	vis := newSettingVisibility(m, st.form, stored)
+	byTab := map[string][]pluginSettingView{}
+	for _, sv := range views {
+		id := generalTabID
+		if decl := m.SettingDecl(sv.Key); decl != nil && decl.Tab != "" {
+			id = decl.Tab
+		}
+		byTab[id] = append(byTab[id], sv)
+	}
+	var tabs []settingsTabView
+	add := func(t settingsTabView) {
+		for _, sv := range t.Settings {
+			if sv.Error != "" || st.errs[sv.Key] != nil {
+				t.ErrorCount++
+			}
+		}
+		if t.Hidden {
+			t.ErrorCount = 0
+		}
+		if t.ErrorCount > 0 {
+			t.ErrorLabel = fmt.Sprintf(httpx.T(locale, "plugins.settings.tab.errors"), t.ErrorCount)
+		}
+		tabs = append(tabs, t)
+	}
+	if g := byTab[generalTabID]; len(g) > 0 {
+		add(settingsTabView{ID: generalTabID, Label: httpx.T(locale, "plugins.settings.tab.general"), Settings: g})
+	}
+	for _, d := range m.SettingsTabs {
+		if len(byTab[d.ID]) == 0 {
+			continue
+		}
+		t := settingsTabView{ID: d.ID, Label: httpx.T(locale, d.Label), Settings: byTab[d.ID], Hidden: vis.tabHidden(d.ID)}
+		if d.Help != "" {
+			t.Help = httpx.T(locale, d.Help)
+		}
+		if w := d.ShowWhen; w != nil {
+			t.ShowKey, t.ShowIn = w.Key, strings.Join(w.In, ",")
+			if vis.hideable(w.Key) {
+				t.ShowStored, t.HasStored = stored[w.Key], true
+			}
+		}
+		add(t)
+	}
+	open := -1
+	for i, t := range tabs {
+		if t.ErrorCount > 0 {
+			open = i
+			break
+		}
+		if open < 0 && !t.Hidden {
+			open = i
+		}
+	}
+	if open >= 0 { // the first tab with errors, else the first visible one
+		tabs[open].Active = true
+	}
+	return tabs
+}
+
 // validatePluginSettings checks a submitted settings form against the
 // manifest (ADR-0121 S2, ut-docs#4157) and returns the writes a save makes
 // — only values that differ from what is stored — or the errors that
@@ -577,7 +678,7 @@ func buildPluginSettingViews(ctx context.Context, catalogRepo *data.CatalogRepo,
 // for provenance after the commit.
 func validatePluginSettings(ctx context.Context, catalogRepo *data.CatalogRepo, form map[string][]string, rows []data.PluginSettingRow, manifest *plugins.Manifest, isSecret, declaredSecret, declaredEndpoint func(string) bool, locale string) (writes []data.PluginSettingWrite, takeaway map[string]map[string]int, st settingsFormState, err error) {
 	st = settingsFormState{form: form, errs: map[string]*fieldError{}}
-	cur := controlValues(manifest, form, storedControlValues(rows))
+	vis := newSettingVisibility(manifest, form, storedControlValues(rows))
 	decimals := httpx.ActiveCurrency().Decimals
 	add := func(row data.PluginSettingRow, valueJSON string) {
 		if valueJSON == row.ValueJSON {
@@ -594,6 +695,9 @@ func validatePluginSettings(ctx context.Context, catalogRepo *data.CatalogRepo, 
 	for _, row := range rows {
 		key := row.Key
 		decl := manifest.SettingDecl(key)
+		if vis.skipped(key) {
+			continue // hidden by its show_when or its tab: not validated, keeps its stored value
+		}
 		if typedTakeaway && isTaxRateOverridesKey(key) {
 			if taxCodes == nil {
 				if taxCodes, err = catalogRepo.ListTaxCodes(ctx); err != nil {
@@ -620,9 +724,6 @@ func validatePluginSettings(ctx context.Context, catalogRepo *data.CatalogRepo, 
 				takeaway[key] = parsed
 			}
 			continue
-		}
-		if decl != nil && decl.ShowWhen != nil && showWhenHidden(manifest, decl.ShowWhen, cur[decl.ShowWhen.Key]) {
-			continue // hidden: not validated, keeps its stored value
 		}
 		kind := settingFieldKind(decl)
 		if kind == plugins.SettingTypeBool {
@@ -840,7 +941,8 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "plugins.error.server", err)
 			return
 		}
-		httpx.Render("ui/pages/plugin_settings.html", pageData(r, pluginID, views, false, nil))(w, r)
+		tabs := groupSettingTabs(manifest, views, settingsFormState{}, storedControlValues(rows), httpx.RequestLocale(r))
+		httpx.Render("ui/pages/plugin_settings.html", pageData(r, pluginID, views, false, map[string]any{"Tabs": tabs}))(w, r)
 	})
 
 	mux.HandleFunc("POST /api/plugins/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -892,7 +994,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
 				return
 			}
-			extra := map[string]any{"Refused": true}
+			extra := map[string]any{"Refused": true, "Tabs": groupSettingTabs(manifest, views, st, storedControlValues(rows), locale)}
 			sw := &statusWriter{ResponseWriter: w, code: http.StatusUnprocessableEntity}
 			if htmx {
 				// The form is its own swap target (hx-target="this"); the
@@ -937,6 +1039,6 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
 			return
 		}
-		httpx.RenderBlock("ui/pages/plugin_settings.html", pluginSettingsFormBlock, pageData(r, pluginID, views, true, map[string]any{"Saved": true, "Changed": len(changedKeys)}))(w, r)
+		httpx.RenderBlock("ui/pages/plugin_settings.html", pluginSettingsFormBlock, pageData(r, pluginID, views, true, map[string]any{"Saved": true, "Changed": len(changedKeys), "Tabs": groupSettingTabs(manifest, views, settingsFormState{}, storedControlValues(rows), locale)}))(w, r)
 	})
 }

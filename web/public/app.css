@@ -1120,6 +1120,23 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 .ps-affix { display: flex; align-items: center; gap: .4rem; }
 .ps-affix input { flex: 1 1 auto; min-inline-size: 0; }
 .ps-suffix { flex: none; color: var(--muted); }
+/* Settings tabs (S1, ut-docs#4666). The server draws every tab as an open
+   <details> (no JS: one after another, all expanded). With JS, at 600px and
+   up a tab strip replaces the summaries and one panel shows; below 600px the
+   <details> stay an accordion (the active one opened). Logical properties only. */
+.ps-tab { margin-block-end: .5rem; }
+.ps-tab > summary { cursor: pointer; padding-block: .6rem; min-block-size: 44px; font-weight: 600; }
+.ps-tab > summary:focus-visible { outline: 2px solid var(--focus-border); outline-offset: 2px; }
+.ps-tab-errs { color: var(--danger); font-weight: 600; white-space: nowrap; margin-inline-start: .5rem; }
+.ps-tab-help { margin-block: 0 .75rem; }
+.ps-tabs--strip > .ps-tab > summary { display: none; }
+.ps-tabs--strip > .ps-tab[data-ps-off] { display: none; }
+.ps-tablist { display: flex; gap: .25rem; overflow-x: auto; border-block-end: 1px solid var(--border); margin-block-end: .75rem; }
+.ps-tablist button { flex: none; min-block-size: 44px; min-inline-size: 44px; padding-inline: .9rem; background: transparent;
+                     border: 0; border-block-end: 3px solid transparent; color: inherit; font: inherit; cursor: pointer; white-space: nowrap; }
+.ps-tablist button[aria-selected="true"] { border-block-end-color: var(--accent); font-weight: 600; }
+.ps-tablist button:focus-visible { outline: 2px solid var(--focus-border); outline-offset: -2px; }
+.ps-tablist button[hidden] { display: none; }
 .modifier-attach-option { display: flex; flex-direction: row; align-items: center; gap: .5rem;
                            min-height: 44px; padding-inline: .25rem; }
 .modifier-attach-option input[type="checkbox"] { inline-size: 1.25rem; block-size: 1.25rem;

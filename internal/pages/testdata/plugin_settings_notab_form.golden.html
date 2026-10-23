@@ -1,0 +1,94 @@
+<form id="ps-form" novalidate action="/api/plugins/p1/settings" method="post" hx-post="/api/plugins/p1/settings" hx-target="this" hx-swap="outerHTML">
+    
+    <div class="ps-field" style="margin-block-end:.75rem">
+    
+    
+    <input type="hidden" name="present_setting_enabled" value="1">
+    <label class="ps-switch" title="enabled"><input type="checkbox" role="switch" name="setting_enabled" value="1" checked> <span>Save settings</span></label>
+    
+    
+    
+    </div>
+    
+    <div class="ps-field" style="margin-block-end:.75rem">
+    
+    
+    <label title="max_items">max_items
+      <span class="ps-affix"><input type="text" name="setting_max_items" value="5" inputmode="numeric" autocomplete="off" required></span></label>
+    
+    
+    
+    </div>
+    
+    <div class="ps-field" style="margin-block-end:.75rem">
+    
+    
+    <label title="discount">discount
+      <span class="ps-affix"><input type="text" name="setting_discount" value="7.50" inputmode="decimal" pattern="[0-9]+([.,][0-9]{1,2})?" data-money-local="percent" autocomplete="off"><span class="ps-suffix" aria-hidden="true">%</span></span></label>
+    
+    
+    
+    </div>
+    
+    <div class="ps-field" style="margin-block-end:.75rem">
+    
+    
+    <label title="fee">fee
+      <span class="ps-affix"><input type="text" name="setting_fee" value="12.50" inputmode="decimal" pattern="[0-9]+([.,][0-9]{1,2})?" data-money-local autocomplete="off"><span class="ps-suffix">GBP</span></span></label>
+    
+    
+    
+    </div>
+    
+    <div class="ps-field" style="margin-block-end:.75rem">
+    
+    
+    <label title="shop_note">shop_note <input type="text" name="setting_shop_note" value="hello" maxlength="10" placeholder="this till only"></label>
+    
+    
+    
+    </div>
+    
+    <div class="ps-field" style="margin-block-end:.75rem">
+    
+    
+    <label title="mode">mode <select name="setting_mode"><option value="a" selected>Granted</option><option value="b">Not granted</option></select></label>
+    
+    
+    
+    </div>
+    
+    <div class="ps-field" style="margin-block-end:.75rem" data-show-when-key="mode" data-show-when-in="b" hidden>
+    
+    
+    <label title="extra">extra
+      <span class="ps-affix"><input type="text" name="setting_extra" value="" inputmode="numeric" autocomplete="off" required></span></label>
+    
+    
+    
+    </div>
+    
+    <div class="ps-field" style="margin-block-end:.75rem">
+    
+    
+    <label title="token">token <span class="tag" style="display:inline-block; width:max-content; background:rgba(22,163,74,.12); color:var(--success)">✓ Saved</span> <input type="password" name="setting_token" autocomplete="off" value="" placeholder="•••••••• set — leave blank to keep"></label>
+    <label style="display:flex; gap:.4rem; align-items:center"><input type="checkbox" name="clear_setting_token" value="1"> Remove saved key</label>
+    
+    
+    
+    </div>
+    
+    <div class="ps-field" style="margin-block-end:.75rem">
+    
+    
+    <label title="erp_url">erp_url <input type="text" name="setting_erp_url" value="https://erp.lan/api"></label>
+    
+    
+    
+    </div>
+    
+    <div style="display:flex; gap:.4rem; align-items:center; margin-top:.5rem">
+      <button class="btn primary" type="submit">Save settings</button>
+      <span id="ps-msg" role="status"></span>
+    </div>
+</form>
