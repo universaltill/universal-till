@@ -76,24 +76,47 @@
 </script>
 
 <script>
-// ut-docs#2832: show_when — a field shows only while the setting it names
+// ut-docs#2832: show_when — a field (or, ut-docs#4666, a whole tab) shows only while the setting it names
 // holds one of its listed values. The server renders the initial state;
 // this keeps it live as the operator changes a dropdown, a switch or types.
 // A hidden field is neither validated nor saved (ut-docs#4157). Listens on
 // the document, not the form: a save swaps the whole form (hx-target=this).
 (function () {
-  if (window.__utPsShowWhen) return;
-  window.__utPsShowWhen = true;
+  // A controlling setting that is itself hidden (by its own show_when or by
+  // its tab) counts as holding its stored value, which the server renders as
+  // data-show-when-stored on the dependent (ut-docs#4666) — as the save sees
+  // it. Passes repeat until nothing changes, bounded by the element count.
+  function stored(f, ctl) {
+    var s = f.getAttribute('data-show-when-stored');
+    // A stored value outside a choice's options hides nothing.
+    if (ctl.options && s !== '' && !Array.prototype.some.call(ctl.options, function (o) { return o.value === s && !o.hasAttribute('data-unknown'); })) return null;
+    return s;
+  }
   function apply(form) {
-    form.querySelectorAll('[data-show-when-key]').forEach(function (f) {
-      var ctl = form.elements['setting_' + f.getAttribute('data-show-when-key')];
-      if (!ctl) return;
-      // An older free-text value outside the options hides nothing.
-      var opt = ctl.selectedOptions && ctl.selectedOptions[0];
-      if (opt && opt.hasAttribute('data-unknown')) { f.hidden = false; return; }
-      var v = ctl.type === 'checkbox' ? (ctl.checked ? 'true' : 'false') : String(ctl.value || '').trim();
-      f.hidden = f.getAttribute('data-show-when-in').split(',').indexOf(v) < 0;
-    });
+    var els = form.querySelectorAll('[data-show-when-key]');
+    for (var pass = 0; pass <= els.length; pass++) {
+      var changed = false;
+      els.forEach(function (f) {
+        var ctl = form.elements['setting_' + f.getAttribute('data-show-when-key')];
+        if (!ctl) return;
+        var v, h;
+        var inactive = f.hasAttribute('data-show-when-stored') && ctl.closest('[hidden]');
+        if (inactive) {
+          v = stored(f, ctl);
+          h = v !== null && f.getAttribute('data-show-when-in').split(',').indexOf(v) < 0;
+        } else {
+          // An older free-text value outside the options hides nothing.
+          var opt = ctl.selectedOptions && ctl.selectedOptions[0];
+          if (opt && opt.hasAttribute('data-unknown')) { h = false; }
+          else {
+            v = ctl.type === 'checkbox' ? (ctl.checked ? 'true' : 'false') : String(ctl.value || '').trim();
+            h = f.getAttribute('data-show-when-in').split(',').indexOf(v) < 0;
+          }
+        }
+        if (f.hidden !== h) { f.hidden = h; changed = true; }
+      });
+      if (!changed) break;
+    }
   }
   function onEdit(ev) {
     var form = ev.target && ev.target.closest && ev.target.closest('#ps-form');
@@ -105,14 +128,129 @@
 </script>
 
 <script>
+// ut-docs#4666 (ADR-0121 S1): settings tabs. The server draws every tab as an
+// open <details> inside [data-ps-tabs] (JS off: all tabs one after another).
+// At 600px and up this builds a tablist strip and shows the active panel only
+// (Left/Right/Home/End move between tabs, mirrored in RTL); below it the
+// <details> stay as an accordion with the active one open. A tab hidden by
+// show_when ([hidden], kept live by the script above) is skipped and its
+// button hidden. Re-applied after every swap of the form (a save re-renders it).
+(function () {
+  var T = { list: "{{ T "plugins.settings.tab.list" }}" };
+  var mq = window.matchMedia ? window.matchMedia('(min-width: 600px)') : { matches: false };
+  function panels(box) { return Array.prototype.slice.call(box.querySelectorAll(':scope > [data-ps-tab]')); }
+  function visible(p) { return !p.hidden; }
+  function strip(box) { return box.previousElementSibling && box.previousElementSibling.classList.contains('ps-tablist') ? box.previousElementSibling : null; }
+  function activeOf(box) {
+    var ps = panels(box);
+    var a = ps.filter(function (p) { return p.hasAttribute('data-ps-active') && visible(p); })[0] || ps.filter(visible)[0];
+    return a || null;
+  }
+  function setActive(box, panel) {
+    panels(box).forEach(function (p) { if (p === panel) p.setAttribute('data-ps-active', ''); else p.removeAttribute('data-ps-active'); });
+    render(box, true);
+  }
+  // fresh: (re)set which <details> is open in accordion mode — on first
+  // draw, a layout change or a tab choice, not on every keystroke, so an
+  // accordion section the operator opened by hand stays open.
+  function render(box, fresh) {
+    var a = activeOf(box), bar = strip(box), strip_ = mq.matches;
+    if (a && !a.hasAttribute('data-ps-active')) {
+      panels(box).forEach(function (p) { p.removeAttribute('data-ps-active'); });
+      a.setAttribute('data-ps-active', '');
+    }
+    box.classList.toggle('ps-tabs--strip', strip_);
+    if (strip_ && !bar) {
+      bar = document.createElement('div');
+      bar.className = 'ps-tablist';
+      bar.setAttribute('role', 'tablist');
+      bar.setAttribute('aria-label', T.list);
+      panels(box).forEach(function (p) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.setAttribute('role', 'tab');
+        b.id = 'ps-tabbtn-' + p.getAttribute('data-ps-tab');
+        b.setAttribute('aria-controls', p.id);
+        b.setAttribute('data-ps-for', p.getAttribute('data-ps-tab'));
+        var t = p.querySelector('summary');
+        Array.prototype.forEach.call(t.childNodes, function (n) { b.appendChild(n.cloneNode(true)); });
+        p.setAttribute('role', 'tabpanel');
+        p.tabIndex = 0;
+        p.setAttribute('aria-labelledby', b.id);
+        b.addEventListener('click', function () { setActive(box, p); });
+        bar.appendChild(b);
+      });
+      bar.addEventListener('keydown', onKey);
+      box.parentNode.insertBefore(bar, box);
+    } else if (!strip_ && bar) {
+      bar.parentNode.removeChild(bar);
+      bar = null;
+      panels(box).forEach(function (p) { p.removeAttribute('role'); p.removeAttribute('aria-labelledby'); p.removeAttribute('tabindex'); p.removeAttribute('data-ps-off'); });
+    }
+    panels(box).forEach(function (p) {
+      var on = p === a;
+      if (strip_) { p.open = true; if (on) p.removeAttribute('data-ps-off'); else p.setAttribute('data-ps-off', ''); }
+      else if (fresh) { p.open = on; }
+      var b = bar && bar.querySelector('[data-ps-for="' + p.getAttribute('data-ps-tab') + '"]');
+      if (b) {
+        b.hidden = p.hidden;
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+        b.tabIndex = on ? 0 : -1;
+      }
+    });
+  }
+  function onKey(ev) {
+    var bar = ev.currentTarget, box = bar.nextElementSibling;
+    var bs = Array.prototype.slice.call(bar.querySelectorAll('[role="tab"]')).filter(function (b) { return !b.hidden; });
+    var i = bs.indexOf(document.activeElement);
+    if (i < 0) return;
+    var rtl = getComputedStyle(bar).direction === 'rtl';
+    var k = ev.key, n = -1;
+    if (k === 'ArrowRight') n = i + (rtl ? -1 : 1);
+    else if (k === 'ArrowLeft') n = i + (rtl ? 1 : -1);
+    else if (k === 'Home') n = 0;
+    else if (k === 'End') n = bs.length - 1;
+    else return;
+    ev.preventDefault();
+    n = (n + bs.length) % bs.length;
+    bs[n].focus();
+    var p = box.querySelector('[data-ps-tab="' + bs[n].getAttribute('data-ps-for') + '"]');
+    if (p) setActive(box, p);
+  }
+  function init(root) {
+    var box = (root || document).querySelector('#ps-form [data-ps-tabs]');
+    if (box) render(box, true);
+  }
+  var onSync = function (ev) {
+    var form = ev.target && ev.target.closest && ev.target.closest('#ps-form');
+    var box = form && form.querySelector('[data-ps-tabs]');
+    if (box) render(box);
+  };
+  document.addEventListener('change', onSync);
+  document.addEventListener('input', onSync);
+  document.body.addEventListener('htmx:afterSwap', function (ev) {
+    if (ev.detail && ev.detail.elt && ev.detail.elt.id === 'ps-form') init(document);
+  });
+  var rerender = function () { var box = document.querySelector('#ps-form [data-ps-tabs]'); if (box) render(box, true); };
+  // The shell drops this page's window/document/body listeners when it is
+  // swapped away (base.html), so every boosted visit re-runs this script
+  // with no run-once flag. A MediaQueryList listener isn't one of those:
+  // replace the previous visit's instead of stacking one per visit.
+  var prev = window.__utPsTabsMq;
+  if (prev && prev.mq) { if (prev.mq.removeEventListener) prev.mq.removeEventListener('change', prev.fn); else if (prev.mq.removeListener) prev.mq.removeListener(prev.fn); }
+  window.__utPsTabsMq = { mq: mq, fn: rerender };
+  if (mq.addEventListener) mq.addEventListener('change', rerender); else if (mq.addListener) mq.addListener(rerender);
+  init(document);
+})();
+</script>
+
+<script>
 // ut-docs#4157 (ADR-0121 S2): a refused save answers 422 with the form
 // re-rendered — each bad field marked and explained. htmx doesn't swap a
 // 4xx by default, so let this form's 422 swap, then move focus to the first
 // bad field. Any other failure (403, 500: plain text) still lands in the
 // form's message line.
 (function () {
-  if (window.__utPsSwap) return;
-  window.__utPsSwap = true;
   function fromForm(d) { return d && d.elt && d.elt.id === 'ps-form'; }
   document.body.addEventListener('htmx:beforeSwap', function (ev) {
     var d = ev.detail;
@@ -144,8 +282,24 @@
      show_when, or on an invalid stored value prefilled into a pattern box
      that the server keeps untouched. */}}
 <form id="ps-form" novalidate action="/api/plugins/{{ .PluginID }}/settings" method="post" hx-post="/api/plugins/{{ .PluginID }}/settings" hx-target="this" hx-swap="outerHTML">
-    {{ range .Settings }}
-    <div class="ps-field" style="margin-block-end:.75rem"{{ if .ShowKey }} data-show-when-key="{{ .ShowKey }}" data-show-when-in="{{ .ShowIn }}"{{ if .Hidden }} hidden{{ end }}{{ end }}>
+    {{ if .Tabs }}<div class="ps-tabs" data-ps-tabs>
+      {{ range .Tabs }}
+      <details class="ps-tab" id="ps-tab-{{ .ID }}" data-ps-tab="{{ .ID }}" open{{ if .Active }} data-ps-active{{ end }}{{ if .ShowKey }} data-show-when-key="{{ .ShowKey }}" data-show-when-in="{{ .ShowIn }}"{{ if .HasStored }} data-show-when-stored="{{ .ShowStored }}"{{ end }}{{ if .Hidden }} hidden{{ end }}{{ end }}>
+        <summary class="ps-tab-title"><span class="ps-tab-label">{{ .Label }}</span>{{ if .ErrorCount }} <span class="ps-tab-errs" role="img" aria-label="{{ .ErrorLabel }}"><span aria-hidden="true">⚠ {{ .ErrorCount }}</span></span>{{ end }}</summary>
+        {{ if .Help }}<p class="muted ps-tab-help">{{ .Help }}</p>{{ end }}
+        {{ range .Settings }}{{ template "plugin_setting_field" . }}{{ end }}
+      </details>
+      {{ end }}
+    </div>{{ else }}{{ range .Settings }}{{ template "plugin_setting_field" . }}{{ end }}{{ end }}
+    <div style="display:flex; gap:.4rem; align-items:center; margin-top:.5rem">
+      <button class="btn primary" type="submit">{{ T "plugins.settings.save" }}</button>
+      <span id="ps-msg" role="status">{{ if .Saved }}<span>✓ {{ T "plugins.settings.saved" }} ({{ .Changed }})</span>{{ else if .Refused }}<span class="field-error-msg">{{ T "plugins.settings.error.summary" }}</span>{{ end }}</span>
+    </div>
+</form>
+{{ end }}
+
+{{ define "plugin_setting_field" }}
+    <div class="ps-field" style="margin-block-end:.75rem"{{ if .ShowKey }} data-show-when-key="{{ .ShowKey }}" data-show-when-in="{{ .ShowIn }}"{{ if .HasShowStored }} data-show-when-stored="{{ .ShowStored }}"{{ end }}{{ if .Hidden }} hidden{{ end }}{{ end }}>
     {{ if .Secret }}
     {{ if .Notice }}<p class="muted">{{ T .Notice }}</p>{{ end }}
     <label title="{{ .Key }}">{{ .Label }}{{ if .PerTill }} <span class="muted">({{ T "plugins.settings.per_till" }})</span>{{ end }}{{ if .IsSet }} <span class="tag" style="display:inline-block; width:max-content; background:rgba(22,163,74,.12); color:var(--success)">{{ T "plugins.settings.secret_saved" }}</span>{{ end }} <input type="password" name="setting_{{ .Key }}" autocomplete="off" value="" placeholder="{{ if .IsSet }}{{ T "plugins.settings.secret_set" }}{{ else }}{{ T "plugins.settings.secret_empty" }}{{ end }}"{{ if and .Required (not .IsSet) }} required{{ end }}{{ if .Error }} aria-invalid="true" aria-describedby="ps-err-{{ .Key }}"{{ end }}></label>
@@ -195,9 +349,3 @@
     {{ if and .Help (not .Typed) }}<p class="muted">{{ .Help }}</p>{{ end }}
     </div>
     {{ end }}
-    <div style="display:flex; gap:.4rem; align-items:center; margin-top:.5rem">
-      <button class="btn primary" type="submit">{{ T "plugins.settings.save" }}</button>
-      <span id="ps-msg" role="status">{{ if .Saved }}<span>✓ {{ T "plugins.settings.saved" }} ({{ .Changed }})</span>{{ else if .Refused }}<span class="field-error-msg">{{ T "plugins.settings.error.summary" }}</span>{{ end }}</span>
-    </div>
-</form>
-{{ end }}
