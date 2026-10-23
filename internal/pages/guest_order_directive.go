@@ -115,6 +115,9 @@ func cloudGuestOrder(ctx context.Context, d *common.Deps, o cloudsync.GuestOrder
 	if len(snap.Lines) == 0 {
 		return refuseGuestOrder(cloudsync.GuestOrderItemUnavailable), nil
 	}
+	// The receipt printed at payment is in the guest's language (ut-docs#4715,
+	// #4705); a language this till has not installed → "" = shop language.
+	snap.CustomerLocale = httpx.MatchLocale(o.Locale, httpx.AvailableLocales())
 	placed, err := placeCounterOrder(ctx, d, counterOrderRequest{
 		Snap:         snap,
 		OrderType:    eng.OrderType(),
