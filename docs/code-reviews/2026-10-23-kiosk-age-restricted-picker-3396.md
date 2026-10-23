@@ -70,6 +70,16 @@ the GET hunk: the test fails, and passes again once restored.
 
   Both fail identically on `main` in this container.
 
+## CI follow-up
+
+On the first push, `build` failed `guard-docs-shots_test.sh`. The app surface
+changed, so `web/help/img/manifest.json`'s `surface_sha256` was stale. No
+docs-shots spec renders the self-order kiosk or its payment picker
+(`e2e/tests-docs` has no self-order route), so no manual screenshot's pixels
+change. I refreshed the hash with
+`scripts/ci/update-docs-shots-surface-hash.sh` rather than regenerating
+the shots.
+
 ## Verdict
 
 Safe to merge. Deferred: nothing.
