@@ -261,7 +261,7 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 		// verbatim — `message` is kept for non-browser API callers.
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
-			"message":  fmt.Sprintf("archived %d sales and related records (batch %s) — restorable from Settings → Data until the till trades again", n, batchID),
+			"message":  fmt.Sprintf("archived %d sales and related records (batch %s) — restorable from Settings → Data management until the till trades again", n, batchID),
 			"archived": n,
 			"batch_id": batchID,
 		}, "error": nil})

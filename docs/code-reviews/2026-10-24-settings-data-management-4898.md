@@ -1,0 +1,26 @@
+# Review — "Settings → Data" now names the section "Data management" (ut-docs#4898)
+
+- **Date:** 2026-10-24 · **Built by:** Opus 5.5 (inline, mechanical value edit) · **Reviewed by:** Sonnet 5.5, fresh context (different model from the author)
+- **Scope:** value-only changes, no key added or removed.
+  - `web/locales/{en,ar,fa,tr}.json`: the ten strings that send the operator to the section now use each locale's own `settings.data.title`. The keys are `elevation.summary.data_reset_transactions`, `import.sample.{already_loaded,help,present,settings_link}`, `import.welcome.sample.body`, `settings.data.{demo_item_has_history,demo_kept_reason_history,reset_done}` and `settings.language.install_unavailable`. `import.sample.help` was not on the card's list but had the same wording. ar and tr already had the full name in the elevation string, and fa had "مدیریت داده" without "ها".
+  - `internal/pages/data_api.go`: the English `message` for non-browser API callers.
+  - `web/ui/pages/import.html`: a comment.
+  - New `web/locales/settings_data_title_test.go`.
+  - The matching values ship in the de/es/pt pack PRs (same branch name in `ut-plugin-language-{de,es,pt}`).
+- **TDD:** I wrote the test first. Against the old locale files it failed 38 times; after the fix it passes. I re-verified this after the fix: reverted the four locale files, saw the failures, restored them, and the test passed.
+- **Checks:**
+  - `gofmt`, `go build ./...` and `go vet` on the touched packages: clean.
+  - `go test ./web/... ./internal/pages/`: pass.
+  - Every guard in `ci.yml`'s build job passes, except two that cannot run in this container:
+    - `guard-deadcode-baseline`: the installed deadcode binary was built with Go 1.26 and the module needs 1.27. It fails identically on `main`.
+    - `guard-shellcheck-version`: shellcheck is not installed. No shell files changed.
+  - `check-lang-pack-drift.sh`: in sync.
+  - Packs: `validate.sh` and `check-key-drift.sh` pass against both current `main` and the new `en.json` (3675/3675 keys translated, 0 drift).
+- **Driven run:** a throwaway till (`e2e/run-till.sh`) with sample data loaded, `/import` Sample data card.
+  - Looked at: en at 390×844 and 1024×600, fa and tr at 390×844, ar at 1024×600. The label is longer, but the "Open Settings → Data management" button never overflows (`scrollWidth ≤ clientWidth`). The fa card screenshot reads correctly right-to-left.
+  - Not looked at: de/es/pt, which need the pack installed. Their strings are no longer than fa's.
+- **Findings:**
+  - Low, accepted: historical release notes (`web/release-notes/en/v0.30.10.md`, `v0.31.6.md`, `v0.30.20.md`) still say "Settings → Data". They describe past releases and are left as they were.
+  - Go/CSS/e2e comments elsewhere are not user-facing.
+  - `web/help` is handled by the open #4891 PR.
+- **Verdict:** safe to merge.
