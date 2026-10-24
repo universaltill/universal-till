@@ -390,6 +390,252 @@ test('variant photo: a pick waits for the offer; Use this uploads the tile as th
   assertClean();
 });
 
+// ut-docs#4839: "Remove background" on the photo a record ALREADY has. A
+// button next to the current photo re-offers the saved image to the same
+// panel; Use original photo changes nothing (no upload, no pending file).
+
+// Save `name` as an item photo through the normal path (offer → Use original
+// photo → Upload Image) and wait for it; the item then has a custom photo.
+async function uploadItemPhoto(page: Page, item: string, file = 'saved.png') {
+  await openItemImageTab(page, item);
+  await page.locator('#image-file').setInputFiles(photo(file));
+  await page.locator('#image-cutout [data-cutout-action="original"]').click();
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/catalog/item/image') && r.request().method() === 'POST'),
+    page.locator('#image-form button[type=submit]').click(),
+  ]);
+  await expect(page.locator('#image-msg')).toContainText('updated');
+}
+
+// The corner pixel of an <img> (what the till composited).
+async function imgCorner(page: Page, sel: string): Promise<number[]> {
+  return page.locator(sel).evaluate(async (img: HTMLImageElement) => {
+    if (!img.complete) await new Promise((r) => img.addEventListener('load', r, { once: true }));
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    const ctx = c.getContext('2d')!;
+    ctx.drawImage(img, 0, 0);
+    return Array.from(ctx.getImageData(1, 1, 1, 1).data);
+  });
+}
+
+test('existing item photo: the button offers it, Use this saves the cutout tile', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  const item = 'Apple Juice 1L';
+  const btn = page.locator('#image-current-cutout-btn');
+  await uploadItemPhoto(page, item);
+  // The saved photo is the flat blue upload.
+  await page.reload();
+  await page.locator('.catalog-row', { hasText: item }).first().click();
+  await page.locator('#item-form-tab-image').click();
+  await expect(btn).toBeVisible();
+  await expect(btn).toHaveText('Remove background');
+  await expect.poll(async () => (await imgCorner(page, '#image-current')).slice(0, 3)).toEqual([40, 120, 200]);
+  await fakeReset();
+
+  // Tap → the panel, with the saved photo as "original"; nothing sent yet.
+  await btn.click();
+  const P = '#image-cutout';
+  await expect(page.locator(P)).toBeVisible();
+  await expect(btn).toBeHidden();
+  expect((await fakeLast()).calls).toBe(0);
+  await removeBackground(page, P);
+  expect((await fakeLast()).calls).toBe(1);
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/catalog/item/image') && r.request().method() === 'POST'),
+    page.locator(`${P} [data-cutout-action="accept"]`).click(),
+  ]);
+  await expect(page.locator('#image-msg')).toContainText('updated');
+  await expect(page.locator(P)).toBeHidden();
+  expect((await fakeLast()).calls).toBe(1);
+  // The saved photo is now the tile (no longer the flat blue upload), and
+  // the button is back for it.
+  await expect.poll(async () => (await imgCorner(page, '#image-current')).slice(0, 3)).not.toEqual([40, 120, 200]);
+  expect(await page.locator('#image-current').evaluate((i: HTMLImageElement) => [i.naturalWidth, i.naturalHeight])).toEqual([512, 512]);
+  await expect(btn).toBeVisible();
+  assertClean();
+});
+
+test('existing item photo: Use original photo uploads nothing and the button comes back', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  const item = 'Orange Juice 1L';
+  await uploadItemPhoto(page, item);
+  await page.reload();
+  await page.locator('.catalog-row', { hasText: item }).first().click();
+  await page.locator('#item-form-tab-image').click();
+  const btn = page.locator('#image-current-cutout-btn');
+  await expect(btn).toBeVisible();
+  const src = await page.locator('#image-current').getAttribute('src');
+  let uploads = 0;
+  page.on('request', (r) => { if (r.url().includes('/api/catalog/item/image') && r.method() === 'POST') uploads++; });
+  await fakeReset();
+
+  await btn.click();
+  await expect(page.locator('#image-cutout')).toBeVisible();
+  await page.locator('#image-cutout [data-cutout-action="original"]').click();
+  await expect(page.locator('#image-cutout')).toBeHidden();
+  await expect(btn).toBeVisible();
+  // Nothing pending: no file in the input, no name, the same picture.
+  expect(await page.locator('#image-file').evaluate((i: HTMLInputElement) => i.files!.length)).toBe(0);
+  await expect(page.locator('#image-file-name')).toHaveText('');
+  expect(await page.locator('#image-current').getAttribute('src')).toBe(src);
+  // A stray Upload Image tap finds nothing to send.
+  await page.locator('#image-form button[type=submit]').click();
+  await expect(page.locator('#image-msg')).not.toContainText('updated');
+  expect(uploads).toBe(0);
+  expect((await fakeLast()).calls).toBe(0);
+
+  // Retake clears the copy of the saved photo before the camera opens.
+  await btn.click();
+  await expect(page.locator('#image-cutout')).toBeVisible();
+  await page.locator('#image-cutout [data-cutout-action="remove"]').click();
+  await expect(page.locator('#image-cutout [data-cutout-action="retake"]')).toBeVisible();
+  await page.locator('#image-file').evaluate((i: HTMLInputElement) => {
+    document.getElementById('image-camera-btn')!.addEventListener('click', () => {
+      (window as any).__atRetake = i.files!.length;
+    }, { capture: true });
+  });
+  await page.locator('#image-cutout [data-cutout-action="retake"]').click();
+  expect(await page.evaluate(() => (window as any).__atRetake)).toBe(0);
+  // Review of ut-docs#4839: with the camera not used, the saved photo's
+  // button is back (photo-cutout:cleared repaints it).
+  await expect(btn).toBeVisible();
+  expect(uploads).toBe(0);
+  assertClean();
+});
+
+test('existing item photo: a fetch that lands after an item switch is dropped', async ({ page }) => {
+  // Review of ut-docs#4839 (finding 1): item A's photo, still loading when
+  // the operator opens item B, must never land in B's input or panel.
+  const assertClean = watchConsole(page);
+  const a = 'Apple Juice 1L';
+  const b = 'Orange Juice 1L';
+  await uploadItemPhoto(page, a);
+  await page.reload();
+  await page.locator('.catalog-row', { hasText: a }).first().click();
+  await page.locator('#item-form-tab-image').click();
+  const btn = page.locator('#image-current-cutout-btn');
+  await expect(btn).toBeVisible();
+  const src = (await page.locator('#image-current').getAttribute('src'))!;
+  const photoPath = new URL(src, page.url()).pathname;
+  let release!: () => void;
+  const held = new Promise<void>((r) => { release = r; });
+  await page.route((u) => u.pathname === photoPath, async (route) => { await held; await route.continue(); });
+  let uploads = 0;
+  page.on('request', (r) => { if (r.url().includes('/api/catalog/item/image') && r.method() === 'POST') uploads++; });
+
+  const fetched = page.waitForResponse((r) => new URL(r.url()).pathname === photoPath);
+  await btn.click();
+  await closeItemForm(page);
+  await page.locator('.catalog-row', { hasText: b }).first().click();
+  await page.locator('#item-form-tab-image').click();
+  await expect(page.locator('#image-item-label')).toHaveValue(b);
+  release();
+  await fetched;
+  // Give the page a moment to (wrongly) act on the late answer.
+  await page.waitForTimeout(500);
+  await expect(page.locator('#image-cutout')).toBeHidden();
+  expect(await page.locator('#image-file').evaluate((i: HTMLInputElement) => i.files!.length)).toBe(0);
+  expect(uploads).toBe(0);
+  await page.unroute((u) => u.pathname === photoPath);
+  assertClean();
+});
+
+test('existing category photo: the button offers it; Use original changes nothing, Use this is saved by Save', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  const name = `Cutout Existing Cat ${RUN}`;
+  const P = '#category-image-cutout';
+  const btn = page.locator('#category-image-current-cutout-btn');
+  await page.goto('/categories');
+  await page.locator('#categories-new').click();
+  await page.locator('#category-form input[name="name"]').fill(name);
+  await expect(btn).toBeHidden();
+  await page.locator('#category-image-file').setInputFiles(photo('soup.png'));
+  await page.locator(`${P} [data-cutout-action="original"]`).click();
+  await clickThenReload(page, () => page.locator('#category-dialog .record-dialog-save').click());
+  const row = page.locator('#categories-table .category-row', { hasText: name }).first();
+  const id = (await row.getAttribute('data-id'))!;
+  await row.locator('.category-row-open').click();
+  await expect(page.locator('#category-image-current')).toBeVisible();
+  await expect(btn).toBeVisible();
+  await expect(btn).toHaveText('Remove background');
+  await fakeReset();
+
+  // Use original photo: the form stays as it was.
+  await btn.click();
+  await expect(page.locator(P)).toBeVisible();
+  await expect(btn).toBeHidden();
+  expect((await fakeLast()).calls).toBe(0);
+  await page.locator(`${P} [data-cutout-action="original"]`).click();
+  await expect(page.locator(P)).toBeHidden();
+  await expect(btn).toBeVisible();
+  await expect(page.locator('#category-image-name')).toHaveValue('');
+  await expect(page.locator('#category-image-file-name')).toHaveText('');
+  expect(await page.locator('#category-image-file').evaluate((i: HTMLInputElement) => i.files!.length)).toBe(0);
+  expect((await fakeLast()).calls).toBe(0);
+
+  // Remove background → Use this: the tile is in the form; Save stores it.
+  await btn.click();
+  await removeBackground(page, P);
+  await page.locator(`${P} [data-cutout-action="accept"]`).click();
+  await expect(page.locator(P)).toBeHidden();
+  expect((await fakeLast()).calls).toBe(1);
+  await expect(page.locator('#category-image-name')).toHaveValue('photo-cutout.png');
+  await expect(btn).toBeHidden(); // a new file is pending
+  await clickThenReload(page, () => page.locator('#category-dialog .record-dialog-save').click());
+  const saved = page.locator('#categories-table .category-row', { hasText: name }).first();
+  await saved.locator('.category-row-open').click();
+  await expect(page.locator('#category-image-preview')).toHaveJSProperty('complete', true);
+  await expect.poll(async () => (await imgCorner(page, '#category-image-preview')).slice(0, 3)).toEqual([255, 255, 255]);
+  await expect(btn).toBeVisible();
+  await page.request.post(`/api/categories/${id}/active`, { form: { active: '0' } });
+  assertClean();
+});
+
+test('a built-in icon is not a photo: no Remove background button on item or category', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  const item = 'Still Water 1.5L';
+  const btn = page.locator('#image-current-cutout-btn');
+  await openItemImageTab(page, item);
+  const tile = page.locator('#builtin-icon-grid .builtin-icon-tile:not([data-icon="none"])').first();
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/catalog/item/') && r.request().method() === 'POST'),
+    tile.click(),
+  ]);
+  await page.reload();
+  await page.locator('.catalog-row', { hasText: item }).first().click();
+  await page.locator('#item-form-tab-image').click();
+  await expect(page.locator('#image-current')).toBeVisible(); // the icon is shown…
+  await expect(btn).toBeHidden(); // …but is not offered for cutout
+  // A photo uploaded later brings the button; picking an icon over it removes it.
+  await uploadItemPhoto(page, item, 'then-photo.png');
+  await page.reload();
+  await page.locator('.catalog-row', { hasText: item }).first().click();
+  await page.locator('#item-form-tab-image').click();
+  await expect(btn).toBeVisible();
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/catalog/item/') && r.request().method() === 'POST'),
+    tile.click(),
+  ]);
+  await expect(btn).toBeHidden();
+
+  // Category: a dialog opened for a category with an icon, then an icon tapped.
+  const name = `Cutout Icon Cat ${RUN}`;
+  await page.goto('/categories');
+  await page.locator('#categories-new').click();
+  await page.locator('#category-form input[name="name"]').fill(name);
+  await page.locator('#category-icon-grid .builtin-icon-tile:not([data-icon="none"])').first().click();
+  await expect(page.locator('#category-image-current-cutout-btn')).toBeHidden();
+  await clickThenReload(page, () => page.locator('#category-dialog .record-dialog-save').click());
+  const row = page.locator('#categories-table .category-row', { hasText: name }).first();
+  const id = (await row.getAttribute('data-id'))!;
+  await row.locator('.category-row-open').click();
+  await expect(page.locator('#category-image-current-cutout-btn')).toBeHidden();
+  await page.request.post(`/api/categories/${id}/active`, { form: { active: '0' } });
+  assertClean();
+});
+
 // Screenshots of the offer panel for the UX gate (ut-docs#3127): the result
 // state on all three surfaces at the 1024×600 floor and at 360 px, in
 // English and German (the longest shipped locale; a till only has German

@@ -478,6 +478,10 @@
             <!-- ut-docs#3133: the item's current picture (from icon-state's
                  thumbnail_url), or the photo just taken/chosen. -->
             <img id="image-current" class="item-image-current" alt="" hidden>
+            {{/* ut-docs#4839: "Remove background" for the uploaded photo the
+                 item already has; shown by the script below only for a custom
+                 photo with nothing pending (never for a built-in icon). */}}
+            {{ if .AICutout }}<button type="button" class="btn secondary" id="image-current-cutout-btn" hidden>{{ T "catalog.image.remove_background" }}</button>{{ end }}
             <div class="muted">{{ T "catalog.image_types" }}</div>
             <div class="field-pair">
               <button type="button" class="btn secondary" id="image-camera-btn">{{ T "catalog.take_photo" }}</button>
@@ -1577,6 +1581,15 @@
   // replaced so repeated captures don't leak blobs.
   var imageCurrent = document.getElementById('image-current');
   var pendingPreviewURL = null;
+  // ut-docs#4839: the URL of the item's saved custom photo ('' for none or a
+  // built-in icon) and the button that offers "Remove background" for it.
+  var existingCutoutBtn = document.getElementById('image-current-cutout-btn');
+  var existingPhotoURL = '';
+  function paintExistingCutout() {
+    if (!existingCutoutBtn) return;
+    var pending = !!(imageFileInput.files && imageFileInput.files.length);
+    existingCutoutBtn.hidden = !existingPhotoURL || pending;
+  }
   function showImagePreview(src) {
     if (pendingPreviewURL && pendingPreviewURL !== src) { URL.revokeObjectURL(pendingPreviewURL); pendingPreviewURL = null; }
     if (!imageCurrent) return;
@@ -1599,6 +1612,7 @@
     if (pendingPreviewURL) showImagePreview('');
     // ut-docs#3127: the "Remove background" offer goes with the pick.
     if (window.utPhotoCutout) window.utPhotoCutout.reset('image-cutout');
+    paintExistingCutout();
   }
   // ut-docs#3127: with background removal configured, a photo assigned
   // here (camera input, viewfinder capture — DataTransfer fires no
@@ -1615,6 +1629,7 @@
     var url = URL.createObjectURL(file);
     showImagePreview(url);
     pendingPreviewURL = url;
+    paintExistingCutout();
   }
   // True from the moment getUserMedia is requested until stopViewfinder()
   // runs (covering both "already open" and "still starting") so a second
@@ -1761,7 +1776,20 @@
     var d = ev.detail || {};
     if (d.file) { imageFileNameEl.textContent = d.file.name; showPendingFile(d.file); }
     if (d.cutout || d.autoSave) imageForm.dispatchEvent(new Event('submit', { cancelable: true }));
+    // ut-docs#4839: "Use original photo" on the saved photo changes nothing
+    // (file is null, nothing pending): the button is there again.
+    paintExistingCutout();
   });
+  if (existingCutoutBtn) existingCutoutBtn.addEventListener('click', function () {
+    if (!existingPhotoURL || !window.utPhotoCutout) return;
+    // Hidden at once (a double tap would start a second fetch); the copy
+    // lands in the input without an event: repaint once it has.
+    existingCutoutBtn.hidden = true;
+    window.utPhotoCutout.offerExisting(imageFileInput, existingPhotoURL).then(paintExistingCutout);
+  });
+  // ut-docs#4839: Retake dropped the saved photo's copy; the button is back
+  // if the camera is cancelled.
+  if (imageFileInput) imageFileInput.addEventListener('photo-cutout:cleared', paintExistingCutout);
   imageFileInput.addEventListener('change', function (ev) {
     if (this.files && this.files[0]) { imageFileNameEl.textContent = this.files[0].name; showPendingFile(this.files[0]); }
     if (appleTouch && this.files && this.files[0]) {
@@ -1888,6 +1916,8 @@
     // ut-docs#2506: a new item selected → drop the previous item's search,
     // or its suggested/current tile could be the one the filter hid.
     if (!preserveMsg && window.clearIconFilter) window.clearIconFilter('builtin-icon-grid');
+    existingPhotoURL = '';
+    paintExistingCutout();
     if (!itemId) { setBuiltinIconTiles('', '', false, preserveMsg); clearPendingImage(); showImagePreview(''); return; }
     // ut-docs#3133 review: a response for an item the operator has since
     // left (an upload finishing late, out-of-order reads) must not paint
@@ -1900,6 +1930,8 @@
         var d = (r && r.data) || {};
         setBuiltinIconTiles(d.selected_key || '', d.suggested_key || '', !!d.is_custom, preserveMsg);
         showImagePreview(d.thumbnail_url || '');
+        existingPhotoURL = d.is_custom && d.thumbnail_url ? d.thumbnail_url : '';
+        paintExistingCutout();
       })
       // Best-effort: a failed read just leaves the grid showing no
       // selection/suggestion rather than blocking the row selection itself.
@@ -1907,6 +1939,8 @@
         if (!stillCurrent()) return;
         setBuiltinIconTiles('', '', false, preserveMsg);
         showImagePreview('');
+        existingPhotoURL = '';
+        paintExistingCutout();
       });
   }
 

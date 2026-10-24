@@ -237,6 +237,18 @@
   var imageCurrent = document.getElementById('category-image-current');
   var imagePreview = document.getElementById('category-image-preview');
   var currentImage = '';
+  // ut-docs#4839: "Remove background" for the saved uploaded photo shown in
+  // #category-image-current (never for a built-in icon). Visible only while
+  // that photo is what the category has: not once a file is pending (a new
+  // pick, or the copy being cut out) nor an icon chosen.
+  var existingCutoutBtn = document.getElementById('category-image-current-cutout-btn');
+  var savedUploadURL = '';
+  function paintExistingCutout() {
+    if (!existingCutoutBtn) return;
+    var pending = !!(imageFile && imageFile.files && imageFile.files.length);
+    var iconPicked = !!(iconInput && iconInput.value);
+    existingCutoutBtn.hidden = !savedUploadURL || pending || iconPicked;
+  }
 
   function paintIcons(pressedKey) {
     if (!iconGrid) return;
@@ -287,6 +299,7 @@
     if (imageFileName) imageFileName.textContent = '';
     // ut-docs#3127: the "Remove background" offer goes with the pick.
     if (window.utPhotoCutout) window.utPhotoCutout.reset('category-image-cutout');
+    paintExistingCutout();
   }
 
   function filePicked(file) {
@@ -295,6 +308,7 @@
     if (imageName) imageName.value = file.name;
     if (imageFileName) imageFileName.textContent = file.name;
     paintIcons(null);
+    paintExistingCutout();
   }
 
   if (iconGrid) {
@@ -305,6 +319,7 @@
       clearPickedFile();
       if (imageCurrent) imageCurrent.hidden = true;
       paintIcons(btn.dataset.icon);
+      paintExistingCutout();
       btn.focus();
     });
     iconGrid.addEventListener('keydown', function (ev) {
@@ -350,7 +365,21 @@
   // name (the discard guard's #category-image-name too). Save sends it.
   if (imageFile) imageFile.addEventListener('photo-cutout:accept', function (ev) {
     filePicked(ev.detail && ev.detail.file);
+    // ut-docs#4839: "Use original photo" on the saved photo (file is null)
+    // leaves the form as it was; the button is back.
+    paintExistingCutout();
   });
+  if (existingCutoutBtn && imagePreview) existingCutoutBtn.addEventListener('click', function () {
+    var url = imagePreview.getAttribute('src') || savedUploadURL;
+    if (!url || !window.utPhotoCutout) return;
+    // Hidden at once (a double tap would start a second fetch); the copy
+    // lands in the input without an event: repaint once it has.
+    existingCutoutBtn.hidden = true;
+    window.utPhotoCutout.offerExisting(imageFile, url).then(paintExistingCutout);
+  });
+  // ut-docs#4839: Retake dropped the saved photo's copy; the button is back
+  // if the camera is cancelled.
+  if (imageFile) imageFile.addEventListener('photo-cutout:cleared', paintExistingCutout);
 
   // ut-docs#2699: Move up / Move down for the row this dialog was opened
   // on. The row itself is moved (list-reorder.js reorders the tbody,
@@ -400,7 +429,9 @@
       var isUpload = key === null && url !== '' && !isLibraryPath(currentImage);
       imageCurrent.hidden = !isUpload;
       if (isUpload) imagePreview.setAttribute('src', url); else imagePreview.removeAttribute('src');
+      savedUploadURL = isUpload ? url : '';
     }
+    paintExistingCutout();
     paintColor();
     tick('group_id', row ? row.getAttribute('data-groups') : '');
     tick('station_id', row ? row.getAttribute('data-stations') : '');
@@ -523,6 +554,8 @@
     <div id="category-image-current" class="category-image-current" hidden>
       <img id="category-image-preview" src="" alt="" width="40" height="40">
       <span class="muted">{{ T "catalog.builtin_icon.custom_active" }}</span>
+      {{/* ut-docs#4839: "Remove background" for this saved photo. */}}
+      {{ if .root.AICutout }}<button type="button" class="btn secondary" id="category-image-current-cutout-btn" hidden>{{ T "catalog.image.remove_background" }}</button>{{ end }}
     </div>
     <div class="muted">{{ T "catalog.image_types" }}</div>
     <div class="field-pair">

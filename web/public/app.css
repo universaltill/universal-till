@@ -4872,6 +4872,8 @@ body.login-screen {
   background: var(--surface);
 }
 .item-image-current[hidden] { display: none; }
+/* ut-docs#4839: "Remove background" for the saved photo, under it. */
+#image-current-cutout-btn { margin-block-end: 0.5rem; }
 /* ut-docs#3127: the "Remove background" offer under a photo picker
    (web/ui/partials/photo_cutout.html, web/public/photo-cutout.js) — item
    form, category form, variants panel. Inline, never a dialog. Logical
@@ -5258,7 +5260,8 @@ body.login-screen {
 /* ut-docs#2500: the category dialog's image picker — the current uploaded
    photo's preview line, and breathing room between the upload buttons and
    the built-in icon grid. [hidden] must win over the flex display. */
-.category-image-current { display: flex; align-items: center; gap: .5rem; margin-block-end: .4rem; }
+.category-image-current { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-block-end: .4rem; }
+.category-image-current > span { flex: 1 1 12rem; }
 .category-image-current[hidden] { display: none; }
 .category-image-current img { inline-size: 2.5rem; block-size: 2.5rem; object-fit: contain; border-radius: var(--radius); }
 #category-icon-grid { margin-block-start: .4rem; }
