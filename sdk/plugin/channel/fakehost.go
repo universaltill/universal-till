@@ -146,7 +146,7 @@ func rawHTTP(req, dst []byte) int32 {
 	if err := json.Unmarshal(req, &w); err != nil || w.URL == "" {
 		return ErrInvalid.Code
 	}
-	r := HTTPRequest{Method: w.Method, URL: w.URL, Headers: w.Headers, CostHint: w.CostHint}
+	r := HTTPRequest{Method: w.Method, URL: w.URL, Headers: w.Headers, CostHint: w.CostHint, Throttle: w.Throttle}
 	if w.BodyB64 != "" {
 		b, err := base64.StdEncoding.DecodeString(w.BodyB64)
 		if err != nil {

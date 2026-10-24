@@ -151,13 +151,30 @@ type AckError struct {
 // "/", "?", "#" or nothing) and the host fills in the verified account before
 // its egress rules run. The host adds the credential header, so a guest never
 // sets (and cannot read) it. CostHint is optional
-// (for example a GraphQL query cost) and only feeds pacing.
+// (for example a GraphQL query cost) and only feeds pacing. Throttle is
+// optional too: the channel's cost bucket as the guest last observed it, so
+// the host can space requests to what the channel will actually allow.
 type HTTPRequest struct {
 	Method   string            `json:"method,omitempty"`
 	URL      string            `json:"url"`
 	Headers  map[string]string `json:"headers,omitempty"`
 	Body     []byte            `json:"-"`
 	CostHint int               `json:"cost_hint,omitempty"`
+	Throttle *Throttle         `json:"throttle,omitempty"`
+}
+
+// Throttle is a channel's cost bucket as the guest last observed it, for
+// example Shopify's extensions.cost.throttleStatus (currentlyAvailable,
+// maximumAvailable, restoreRate; round its floats to whole points). Report
+// it once, on the next HTTPRequest after the response it was read from, and
+// never replay it: each report resets the host's estimate as of now. The
+// host spends CostHint against it and waits for the refill instead of
+// sending into a THROTTLED answer. The host clamps every value, and ignores a
+// report whose Maximum or RestoreRate is not positive. Absent means no report.
+type Throttle struct {
+	Available   int `json:"available"`    // points available now
+	Maximum     int `json:"maximum"`      // size of the bucket
+	RestoreRate int `json:"restore_rate"` // points restored per second
 }
 
 // HTTPResponse is the proxied answer. The body is capped by the host.

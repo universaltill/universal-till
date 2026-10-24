@@ -114,7 +114,7 @@ func TestHTTP_RoundTripAndBufferRetry(t *testing.T) {
 		return HTTPResponse{Status: 200, Headers: map[string]string{"X-A": "b"}, Body: big}, nil
 	}
 	UseFakeHost(t, h)
-	resp, err := HTTP(HTTPRequest{Method: "POST", URL: "https://a.demo-shop.example/api", Body: []byte(`{"q":1}`), CostHint: 12})
+	resp, err := HTTP(HTTPRequest{Method: "POST", URL: "https://a.demo-shop.example/api", Body: []byte(`{"q":1}`), CostHint: 12, Throttle: &Throttle{Available: 900, Maximum: 1000, RestoreRate: 50}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,6 +123,9 @@ func TestHTTP_RoundTripAndBufferRetry(t *testing.T) {
 	}
 	if seen.Method != "POST" || string(seen.Body) != `{"q":1}` || seen.CostHint != 12 {
 		t.Fatalf("request did not survive: %+v", seen)
+	}
+	if seen.Throttle == nil || *seen.Throttle != (Throttle{Available: 900, Maximum: 1000, RestoreRate: 50}) {
+		t.Fatalf("throttle report did not survive: %+v", seen.Throttle)
 	}
 	if h.Calls[FnHTTP] != 2 {
 		t.Fatalf("the oversize first answer is retried once (2 calls), got %d", h.Calls[FnHTTP])
@@ -284,5 +287,19 @@ func TestWasmImportsMatchHostFunctionNames(t *testing.T) {
 	sort.Strings(want)
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("wasmimports %v != host function names %v", got, want)
+	}
+}
+
+func TestHTTP_NoThrottleStaysAbsentOnTheWire(t *testing.T) {
+	b, err := json.Marshal(HTTPRequest{URL: "https://a.demo-shop.example/x", CostHint: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "throttle") {
+		t.Fatalf("an absent report must not be sent: %s", b)
+	}
+	b, _ = json.Marshal(wireHTTPRequest{URL: "u", Throttle: &Throttle{Available: 1, Maximum: 2, RestoreRate: 3}})
+	if !strings.Contains(string(b), `"throttle":{"available":1,"maximum":2,"restore_rate":3}`) {
+		t.Fatalf("wire shape: %s", b)
 	}
 }
