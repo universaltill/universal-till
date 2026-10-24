@@ -97,17 +97,25 @@
    vertical budget (independent review of ut-docs#161 caught this live:
    width-only growth clipped the Cash/Card/Gift Card buttons on exactly
    that class of screen) — height, not just width, bounds the growth.
-   Composed with --ui-scale (base.html, login.html, setup.html — from the
-   operator's Settings > UI scale choice, default 1) so that existing
-   manual scale-up still layers on top of the automatic viewport fit
-   instead of replacing it. --ui-scale is still unset on the remaining
-   standalone kiosk screens (self_order.html, self_order_shop.html,
-   order_tracking.html — ut-docs#1126 found and fixed login/setup, ut-docs#1175
-   tracks these three) that still set an inline px font-size directly —
-   that inline value always wins over this rule there, so the "1" fallback
-   below is inert for them, not load-bearing. */
-:root { --fluid-fs: clamp(17px, min(13.57px + 0.335vw, 13.25px + 0.625vh), 20px); }
-html { font-size: calc(var(--ui-scale, 1) * var(--fluid-fs)); }
+   Composed with --ui-scale (the operator's Settings > UI scale choice,
+   default 1, set on <html> by every page that loads this file) so manual
+   scale-up layers on top of the automatic viewport fit.
+   The manual scale is bounded by window WIDTH too (ut-docs#4625):
+   breakpoints are px but the scale multiplies rem, so at scale 2 a 540px
+   window had less rem-width than a 360px phone at scale 1 (scan row, Pay
+   and status bar clipped), and a 1000-1550px window could not hold the
+   side-by-side grid (the page scrolled sideways by up to 556px).
+   --ui-scale-min-width is the rem-width each tier needs, as px per rem:
+   28.3rem for the stacked tier (its narrowest width at scale 1, 481px /
+   17px) and 46rem for the side-by-side grid (rail + basket + divider +
+   products, measured 45.8rem). Scale <= 1 is never touched, and a scale
+   the window has room for is kept in full (1920 wide at 2). */
+:root {
+  --fluid-fs: clamp(17px, min(13.57px + 0.335vw, 13.25px + 0.625vh), 20px);
+  --ui-scale-min-width: calc(100vw / 28.3);
+}
+@media (min-width: 901px) { :root { --ui-scale-min-width: calc(100vw / 46); } }
+html { font-size: min(calc(var(--ui-scale, 1) * var(--fluid-fs)), max(var(--fluid-fs), var(--ui-scale-min-width))); }
 /* --ut-bundle-fonts: the font subsets installed language bundles ship
    (ADR-0160 §8, ut-docs#4374), declared by /plugin-fonts/bundle-fonts.css.
    They sit AFTER the generic sans-serif on purpose: a bundle font only

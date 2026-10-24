@@ -31,7 +31,10 @@ import { watchConsole } from './helpers';
 // card and its lines never scroll sideways, the remove button stays inside
 // the basket. (The rest of the sale screen at that scale on a 540-600px
 // window -- the tender panel and the product tabs -- has no room left at
-// all; that is filed as its own card, not asserted here.)
+// all; ut-docs#4625 bounds the scale by the window width, and the second
+// test of the last block asserts it: the tender panel and the product tabs
+// pass the sweep, Pay shows its full label, and the scan-row and footer
+// controls sit inside the tender card.)
 
 // Demo-seed barcodes (portrait-tablet-sale-3050's list); some are variant
 // items, whose scan opens the variant picker.
@@ -398,10 +401,71 @@ test.describe('portrait + phone no-clip sweep (ut-docs#3060)', () => {
             fails.push(`${tag}: remove button [${Math.round(b.l)}-${Math.round(b.r)}] outside the basket [${Math.round(b.scL)}-${Math.round(b.scR)}] / screen ${m.cw}`);
           }
         }
-        // The basket only: at 540x720 the rest of the sale screen at this
-        // scale has no room left (filed separately, see the card).
+        // The basket only; the tender panel and the products have their own
+        // test below (ut-docs#4625).
         const swept = await sweep(page, tag, '#basket');
         fails.push(...swept);
+      }
+      expect(fails, fails.join('\n')).toEqual([]);
+    });
+
+    // ut-docs#4625: ui_scale scales rem but breakpoints are px, so at
+    // scale 2 a 540px window had less rem-width than a 360px phone at scale
+    // 1 (the scan-row buttons clipped by the tender card, Pay read "Pa...",
+    // the Pay row below the card's clipped bottom), and a 1000-1550px
+    // window could not hold the side-by-side grid (the page scrolled
+    // sideways by up to 556px). app.css bounds the scale by the window's
+    // width: 28.3rem stacked (<= 900px), 46rem side by side. The root size
+    // is pinned too, so a change that dropped the scale altogether, or
+    // capped a window that has room (1920 wide), fails here.
+    test('540-1920px wide at ui_scale 2: the scale fits the window, tender panel and products whole, Pay reads in full', async ({ page }) => {
+      expect((await page.request.post('/api/settings/ui-scale', { form: { scale: '2' } })).ok()).toBe(true);
+      const fails: string[] = [];
+      for (const [w, h] of [[540, 720], [600, 960], [768, 1024], [800, 1280], [1024, 600], [1280, 800], [1440, 900], [1920, 1080]]) {
+        await page.setViewportSize({ width: w, height: h });
+        expect((await page.request.post('/api/pos/reset')).ok()).toBe(true);
+        await page.goto('/');
+        await page.waitForSelector('.pos-container');
+        // One plain line (a variant item's picker is closed unused).
+        for (const code of CODES) {
+          await scan(page, code);
+          if (!(await modifierOpen(page))) break;
+          await closeModifier(page);
+        }
+        await expect(page.locator('#basket tbody tr')).toHaveCount(1);
+        const tag = `${w}x${h} ui_scale 2`;
+        // Expected root size: twice the fluid size, unless the window is
+        // narrower than the tier needs (the --fluid-fs curve from app.css).
+        const fluid = Math.min(20, Math.max(17, Math.min(13.57 + 0.00335 * w, 13.25 + 0.00625 * h)));
+        const want = Math.min(2 * fluid, Math.max(fluid, w / (w <= 900 ? 28.3 : 46)));
+        const root = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize));
+        if (Math.abs(root - want) > 0.25) fails.push(`${tag}: root font-size ${root}px, want ${want.toFixed(2)}px`);
+        const page_ = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth }));
+        if (page_.sw > page_.cw + 1) fails.push(`${tag}: page scrolls sideways by ${page_.sw - page_.cw}px`);
+        fails.push(...await sweep(page, tag, '.pos-container > .tender'));
+        fails.push(...await sweep(page, tag, '.pos-container > .products'));
+        const m = await page.evaluate(() => {
+          const card = document.querySelector('.pos-container > .tender') as HTMLElement;
+          const c = card.getBoundingClientRect();
+          const pay = document.querySelector('[data-testid=payment-open]') as HTMLElement;
+          const outside: string[] = [];
+          for (const root of ['.scan-row', '.tender-default-footer']) {
+            for (const el of document.querySelectorAll(`.pos-container > .tender ${root} :is(button, a, input, select, textarea)`)) {
+              const r = el.getBoundingClientRect();
+              if (r.width === 0 || r.height === 0) continue; // hidden control
+              if (r.left < c.left - 1 || r.right > c.right + 1 || r.top < c.top - 1 || r.bottom > c.bottom + 1) {
+                const n = (el.getAttribute('data-testid') || el.id || el.className || el.tagName).toString().slice(0, 30);
+                outside.push(`${root} ${n} [${Math.round(r.left)}-${Math.round(r.right)} x ${Math.round(r.top)}-${Math.round(r.bottom)}] outside the tender card [${Math.round(c.left)}-${Math.round(c.right)} x ${Math.round(c.top)}-${Math.round(c.bottom)}]`);
+              }
+            }
+          }
+          return { payOver: pay.scrollWidth - pay.clientWidth, payText: (pay.textContent || '').trim().replace(/\s+/g, ' '), outside };
+        });
+        // Stacked tier only: side by side, Pay's ellipsis at a high scale
+        // is the footer's own layout (Pay + three icons in the products
+        // column), not the window bound: ut-docs#4897.
+        if (w <= 900 && m.payOver > 1) fails.push(`${tag}: Pay label "${m.payText}" is clipped by ${m.payOver}px`);
+        for (const o of m.outside) fails.push(`${tag}: ${o}`);
       }
       expect(fails, fails.join('\n')).toEqual([]);
     });
