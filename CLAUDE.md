@@ -183,5 +183,8 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   `guard-help-drift.sh` fails when a translation's structure drifts from
   English unless recorded in
   `scripts/ci/i18n-baseline/help-drift-baseline.json` (#1962).
+  `guard-help-breadcrumbs.sh`: a translated `Settings → X` breadcrumb must use
+  the locale's own label for that section; shrink-only baseline
+  `scripts/ci/i18n-baseline/help-breadcrumb-baseline.txt` (#4696).
 - Keep `README.md` current in the same session whenever a change makes it
   stale.

@@ -124,6 +124,9 @@ func validateSettingsV2(m *Manifest) error {
 			hasList = true
 		}
 	}
+	if err := validateShowWhenAcyclic("manifest settings", m.Settings, m.SettingsTabs); err != nil {
+		return err
+	}
 
 	if len(m.SettingsTests) > maxSettingsTests {
 		return fmt.Errorf("manifest declares %d settings_tests, at most %d are allowed", len(m.SettingsTests), maxSettingsTests)
@@ -329,6 +332,70 @@ func validateListSetting(where string, s ManifestSetting) error {
 	}
 	if s.MinItems < 0 || s.MinItems > s.MaxItems {
 		return fmt.Errorf("%s: min_items must be 0..max_items (%d), is %d", where, s.MaxItems, s.MinItems)
+	}
+	return validateShowWhenAcyclic(where, s.Fields, nil)
+}
+
+// validateShowWhenAcyclic refuses a visibility cycle (ut-docs#4885): node =
+// setting key, edge S→K when S.show_when names K, or when S sits in a tab
+// whose show_when names K (so a setting in the tab it controls is a K→K
+// loop). Edges to unknown keys are ignored (other checks refuse them). DFS
+// in declared order with white/grey/black colouring; the error names the
+// path, e.g. "a → b → a".
+func validateShowWhenAcyclic(where string, settings []ManifestSetting, tabs []ManifestSettingsTab) error {
+	tabCond := make(map[string]string, len(tabs))
+	for _, t := range tabs {
+		if t.ShowWhen != nil {
+			tabCond[t.ID] = t.ShowWhen.Key
+		}
+	}
+	edges := make(map[string][]string, len(settings))
+	for _, s := range settings {
+		var out []string
+		if s.ShowWhen != nil {
+			out = append(out, s.ShowWhen.Key)
+		}
+		if k, ok := tabCond[s.Tab]; ok && s.Tab != "" {
+			out = append(out, k)
+		}
+		// A key repeated in another scope (validateSettingKeys allows it)
+		// adds its edges rather than replacing the first entry's.
+		edges[s.Key] = append(edges[s.Key], out...)
+	}
+	const grey, black = 1, 2
+	color := make(map[string]int, len(settings))
+	var path []string
+	var visit func(k string) []string
+	visit = func(k string) []string {
+		color[k] = grey
+		path = append(path, k)
+		for _, n := range edges[k] {
+			if _, known := edges[n]; !known {
+				continue
+			}
+			switch color[n] {
+			case grey:
+				i := len(path) - 1
+				for path[i] != n {
+					i--
+				}
+				return append(append([]string(nil), path[i:]...), n)
+			case 0:
+				if c := visit(n); c != nil {
+					return c
+				}
+			}
+		}
+		path = path[:len(path)-1]
+		color[k] = black
+		return nil
+	}
+	for _, s := range settings {
+		if color[s.Key] == 0 {
+			if c := visit(s.Key); c != nil {
+				return fmt.Errorf("%s: show_when cycle %s", where, strings.Join(c, " → "))
+			}
+		}
 	}
 	return nil
 }

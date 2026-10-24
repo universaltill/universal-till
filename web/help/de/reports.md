@@ -164,7 +164,7 @@ Jeder archivierte Tagesabschlussbericht wird **10 Jahre** lang aufbewahrt —
 dies ist ein gesetzlicher Nachweis, und die Reset-Schaltfläche „Transaktionshistorie
 löschen“ in der Datenverwaltung berührt ihn nie. (Diese Schaltfläche zerstört
 inzwischen überhaupt nichts mehr: Sie verschiebt Ihre Transaktionshistorie in
-ein Reset-Archiv, und ein archivierter Stapel kann unter Einstellungen → Daten
+ein Reset-Archiv, und ein archivierter Stapel kann unter Einstellungen → Datenverwaltung
 wiederhergestellt werden, solange die Kasse seit dem Reset nicht gehandelt
 hat.) Sobald ein Bericht seinen 10-jährigen Jahrestag überschreitet, wird er
 automatisch und dauerhaft im Hintergrund gelöscht — es gibt keinen manuellen
@@ -172,7 +172,7 @@ Schritt und keine Bestätigungsabfrage, exportieren Sie also alles, was Sie
 länger aufbewahren möchten, vorher.
 
 Ein Reset-Archivstapel kann außerdem **endgültig gelöscht** werden, aus
-derselben Liste unter Einstellungen → Daten, jedoch erst, sobald er alt genug
+derselben Liste unter Einstellungen → Datenverwaltung, jedoch erst, sobald er alt genug
 ist: Ein Stapel mit echten Verkäufen ist geschützt, bis das Aufbewahrungsfenster
 Ihres Landes (auf der Seite Ländereinstellungen festgelegt) seit seiner
 Archivierung verstrichen ist — ein früheres Löschen wird abgelehnt, und die

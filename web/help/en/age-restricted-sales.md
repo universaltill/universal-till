@@ -63,7 +63,7 @@ and when. A refusal is kept even when the refused item was removed and the
 rest of the sale went ahead. The record is written together with the sale
 itself, so there is never a check without a sale.
 
-These records are part of your shop's history. **Clear transaction history** (Settings → Data) archives them together with the sales and brings them back if you restore that archive, and **Catalog cleanup** and **Remove sample data** keep any item an ID check was recorded for, even one that was only ever refused.
+These records are part of your shop's history. **Clear transaction history** (Settings → Data management) archives them together with the sales and brings them back if you restore that archive, and **Catalog cleanup** and **Remove sample data** keep any item an ID check was recorded for, even one that was only ever refused.
 
 ## What this does and does not do
 

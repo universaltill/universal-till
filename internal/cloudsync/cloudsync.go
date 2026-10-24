@@ -700,6 +700,15 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	if isMainTill && plan.post && !refusedMidTick && pullCloudCatalog(ctx, cfg, db, hooks) {
 		catalogApplied = true
 	}
+	// ADR-0169 §8 (ut-docs#4763): the main till of a cloud-master store
+	// uploads its changed on-hand rows after a check-in that reached the
+	// cloud, after the catalogue pull/upload above (so a just-created item's
+	// cloud link exists). Logged, never returned: the marks stay and the next
+	// trigger retries, so it can never fail the check-in (or a sale, which
+	// only writes the marks).
+	if isMainTill && !refusedMidTick {
+		uploadCloudStock(ctx, cfg, db)
+	}
 	// Fresh data in the same tick (contract §3.6): a catalog change the
 	// cloud just made is reported back now, not a tick later. The hash gate
 	// makes this free when nothing actually changed.

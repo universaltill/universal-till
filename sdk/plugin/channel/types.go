@@ -146,8 +146,11 @@ type AckError struct {
 }
 
 // HTTPRequest is a request the host sends on the guest's behalf. URL must be
-// https on the connection's own account host; the host adds the credential
-// header, so a guest never sets (and cannot read) it. CostHint is optional
+// https on the connection's own account host; a guest is never told its
+// account, so it writes https://{account}/path (that exact prefix, followed by
+// "/", "?", "#" or nothing) and the host fills in the verified account before
+// its egress rules run. The host adds the credential header, so a guest never
+// sets (and cannot read) it. CostHint is optional
 // (for example a GraphQL query cost) and only feeds pacing.
 type HTTPRequest struct {
 	Method   string            `json:"method,omitempty"`

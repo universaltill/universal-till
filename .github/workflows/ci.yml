@@ -290,6 +290,16 @@ jobs:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
         run: bash scripts/ci/guard-help-drift.sh
+      - name: Help-topic breadcrumb guard
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+        run: bash scripts/ci/guard-help-breadcrumbs.sh
+      - name: Help-topic breadcrumb guard regression test
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+        run: bash scripts/ci/guard-help-breadcrumbs_test.sh
       - name: Linux desktop webkit2gtk version guard
         run: bash scripts/ci/guard-webkit-version.sh
       - name: Linux desktop webkit2gtk version guard regression test

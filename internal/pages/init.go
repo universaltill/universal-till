@@ -14,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/bgremove"
 	"github.com/universaltill/universal-till/internal/buildinfo"
+	"github.com/universaltill/universal-till/internal/cloudsync"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
@@ -601,6 +602,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	StartShopTypeLayoutReconcile(bgCtx, dp, wg)                                                                       // builtin layout follows a pulled/remote shop_type between sales (ut-docs#2793); joined by app.Run's drain
 	netaccess.StartService("cloud sync", func() { StartCloudSync(bgCtx, dp, rederiveSettings, wg) })                  // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain
 	netaccess.StartService("cloud link", func() { StartCloudLink(bgCtx, dp, wg) })                                    // ADR-0117 main-till cloud link on the realtime tier; joined by app.Run's drain
+	netaccess.StartService("stock upload", func() { cloudsync.StartStockUpload(bgCtx, dp.Cfg, dp.Db, wg) })           // ADR-0169 §8 main-till on-hand upload to the cloud's stock mirror, realtime tier (ut-docs#4763); joined by app.Run's drain
 	StartEODScheduler(bgCtx, dp, wg)                                                                                  // background Z-report (docs: G30); joined by app.Run's drain
 	netaccess.StartService("auto-update scheduler", func() { StartAutoUpdateScheduler(bgCtx, dp, wg) })               // background unattended update (ut-docs#79); joined by app.Run's drain
 	netaccess.StartService("plugin update scheduler", func() { StartPluginUpdateScheduler(bgCtx, dp, wg) })           // background installed-plugin update check + language-pack auto-apply (ut-docs#1953); joined by app.Run's drain

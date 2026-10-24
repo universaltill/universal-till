@@ -61,7 +61,7 @@ onaylanıp onaylanmadığı, hangi personelin yanıtladığı ve ne zaman. Redde
 Kayıt satışın kendisiyle birlikte yazılır; bu nedenle satışı olmayan bir kontrol
 asla bulunmaz.
 
-Bu kayıtlar mağazanızın geçmişinin bir parçasıdır. **İşlem geçmişini temizle** (Ayarlar → Veriler) bunları satışlarla birlikte arşivler ve o arşivi geri yüklerseniz geri getirir; **Katalog temizliği** ve **Örnek veriler** ise kimlik kontrolü kaydedilmiş her ürünü — yalnızca reddedilmiş olsa bile — korur.
+Bu kayıtlar mağazanızın geçmişinin bir parçasıdır. **İşlem geçmişini temizle** (Ayarlar → Veri yönetimi) bunları satışlarla birlikte arşivler ve o arşivi geri yüklerseniz geri getirir; **Katalog temizliği** ve **Örnek veriler** ise kimlik kontrolü kaydedilmiş her ürünü — yalnızca reddedilmiş olsa bile — korur.
 
 ## Bu özellik neyi yapar, neyi yapmaz
 
