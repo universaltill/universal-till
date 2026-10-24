@@ -312,15 +312,28 @@ func TestApply_ErasedCustomersAreNeverRecreated(t *testing.T) {
 	if n := count(t, d, `SELECT COUNT(*) FROM customers`); n != 1 {
 		t.Fatalf("customers = %d, only the stranger may exist", n)
 	}
-	// The suppression rows are hashes, not the address or number.
-	rs, _ := d.Query(`SELECT hash FROM customer_erasure_hashes`)
+	// The suppression rows are hashes, not the address or number. Rae's
+	// email and phone plus Sol's email give at least three, so the loop
+	// below cannot pass by seeing none.
+	if n := count(t, d, `SELECT COUNT(*) FROM customer_erasure_hashes`); n < 3 {
+		t.Fatalf("suppression rows = %d, want at least 3", n)
+	}
+	rs, err := d.Query(`SELECT hash FROM customer_erasure_hashes`)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer rs.Close()
 	for rs.Next() {
 		var h string
-		_ = rs.Scan(&h)
+		if err := rs.Scan(&h); err != nil {
+			t.Fatal(err)
+		}
 		if !isHexHMAC(h) {
 			t.Fatalf("a plain value in the suppression list: %q", h)
 		}
+	}
+	if err := rs.Err(); err != nil {
+		t.Fatal(err)
 	}
 }
 
