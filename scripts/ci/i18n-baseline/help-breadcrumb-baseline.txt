@@ -3,7 +3,3 @@
 #   <loc>/<topic>.md:<item n>:<settings key> <concrete reason>
 # An entry that matches no current mismatch is stale and fails the guard --
 # delete the line once the translated breadcrumb uses the locale's label.
-de/backups.md:1:settings.backup.title de pack lacks the key (till shows "Backups"); fix tracked on ut-docs#4891
-de/catalog.md:3:settings.catalog_import_barcode_default.title help predates the pack label; ut-docs#4891
-de/display.md:12:settings.language.title last English sentence never translated; ut-docs#4891
-de/users.md:18:settings.idle_lock.title help says "Auto-Sperre", till "Automatische Sperre"; ut-docs#4891

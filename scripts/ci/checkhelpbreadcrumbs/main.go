@@ -10,7 +10,9 @@
 //  1. finds every `Settings → <Section>` breadcrumb in the English topic,
 //     per top-level numbered list item;
 //  2. maps the English section name to its web/locales/en.json key (a
-//     `settings.*.title` / `.label` key whose value is short);
+//     `settings.*.title` / `.label` key whose value is short; failing that
+//     or one of the extraSectionKeys the Settings screen also shows as a
+//     section name);
 //  3. requires the same-ordinal numbered item of the translated topic to
 //     contain that key's value in the locale's JSON.
 //
@@ -82,19 +84,44 @@ func parseItems(src string) []item {
 	return items
 }
 
+// extraSectionKeys are the on-screen Settings section names whose keys don't
+// follow the `settings.*.title|.label` shape (ut-docs#4891). Each is the key
+// the Settings page itself renders, never a browser-title `page.title.*` key
+// (those can differ in a locale: tr page.title.tills "Cihazlar" vs the
+// section's tills.title "Kasalar").
+var extraSectionKeys = map[string]bool{
+	"settings.all":                       true, // "All Settings" (settings.html)
+	"settings.barcode.symbologies_title": true, // "Barcode types"
+	"tills.title":                        true, // "Tills" (uislot settings-tills)
+	"menulayout.title":                   true, // "Hidden menu tiles"
+}
+
+// labelTier ranks how a key may name a settings section: 0 = not a section
+// label, 1 = `settings.*.title|.label` (primary), 2 = an extraSectionKeys key.
+func labelTier(k string) int {
+	switch {
+	case strings.HasPrefix(k, "settings.") && (strings.HasSuffix(k, ".title") || strings.HasSuffix(k, ".label")):
+		return 1
+	case extraSectionKeys[k]:
+		return 2
+	}
+	return 0
+}
+
 // labelMap maps an English label value to its key, from the flat en.json.
+// When two keys share a value a primary (tier 1) key beats an extra (tier 2)
+// one; within a tier the fewest dots, then the lowest key, wins.
 func labelMap(en map[string]string) map[string]string {
 	out := map[string]string{}
 	for k, v := range en {
-		if !strings.HasPrefix(k, "settings.") || !(strings.HasSuffix(k, ".title") || strings.HasSuffix(k, ".label")) {
-			continue
-		}
-		if v == "" || utf8.RuneCountInString(v) > maxLabelLen {
+		tier := labelTier(k)
+		if tier == 0 || v == "" || utf8.RuneCountInString(v) > maxLabelLen {
 			continue
 		}
 		if old, ok := out[v]; ok {
+			ot := labelTier(old)
 			dk, do := strings.Count(k, "."), strings.Count(old, ".")
-			if dk > do || (dk == do && k > old) {
+			if tier > ot || (tier == ot && (dk > do || (dk == do && k > old))) {
 				continue
 			}
 		}
