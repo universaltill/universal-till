@@ -403,7 +403,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			locale := httpx.ResolveLocale(w, r)
 			taxRows := make([]taxRow, 0, len(taxBands))
 			for _, b := range taxBands {
-				taxRows = append(taxRows, taxRow{Rate: httpx.LocalizeMajor(taxrate.FormatPercent(int(b.RateBP)), locale) + "%", Net: b.Net, Tax: b.Tax})
+				taxRows = append(taxRows, taxRow{Rate: httpx.FormatPercentDisplay(taxrate.FormatPercent(int(b.RateBP)), locale), Net: b.Net, Tax: b.Tax})
 			}
 			httpx.RenderPartial("ui/partials/reports_tab_tax.html", map[string]any{
 				"TaxRows": taxRows,

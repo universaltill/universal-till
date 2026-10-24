@@ -1118,7 +1118,7 @@ func FuncsFor(locale string) template.FuncMap {
 	// {{ bpPercent .Raw }}: a percent discount's rate in the request
 	// locale's decimal separator, next to the locale-bound money above
 	// (ut-docs#4176). The base func stays for non-request callers.
-	funcs["bpPercent"] = func(bp int64) string { return FormatPercentBP(bp, locale) }
+	funcs["bpPercent"] = func(bp int64) string { return FormatPercentBPDisplay(bp, locale) }
 	// {{ qty .Qty }}: locale digit-shape/grouping for an on-screen sale-line
 	// quantity, the quantity-side twin of money above (ut-docs#2221) — an
 	// on-screen amount already gets digit-shape substitution via money;
