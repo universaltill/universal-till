@@ -16,6 +16,20 @@
 // into the SAME input, so the page's own save runs unchanged, and tells the
 // page with `photo-cutout:accept` ({file, cutout: true|false}).
 //
+// Existing photo (ut-docs#4839): offerExisting(input, url) runs the SAME
+// flow on the photo a record already has. The page's "Remove background"
+// button next to the current picture hands over its same-origin URL; the
+// image is fetched into a File in the input and offered as above (the
+// session is marked `existing`). Use this behaves exactly as for a new pick
+// (detail.existing: true). Use original photo re-uploads nothing: the input
+// is emptied, the current photo stays as it is, and the page hears
+// {file: null, cutout: false, existing: true}. Retake empties it too, so a
+// cancelled camera leaves no stale copy pending, and fires
+// `photo-cutout:cleared`. A fetch superseded by a reset (item switch,
+// dialog reopen, new pick) is dropped. If the photo cannot be
+// fetched or copied, the panel shows its "unavailable" message and the
+// input stays empty — never an error thrown at the page.
+//
 // Engines (ut-docs#4137, ADR-0154): the panel's data-cutout-engine says
 // which. "service" posts the photo to the shop's rembg service through
 // /api/catalog/image/cutout (the flow above). "builtin" — the default when
@@ -49,6 +63,12 @@
   // whole round trip a little more, then call it unavailable.
   var TIMEOUT_MS = 100000;
   var states = new WeakMap();
+  // ut-docs#4839: per-panel generation, bumped by every reset (item switch,
+  // dialog reopen, a new pick). An existing-photo fetch that lands after
+  // its generation moved on is dropped, so record A's photo never reaches
+  // record B's input.
+  var fetchGen = new WeakMap();
+  function bumpGen(panel) { var g = (fetchGen.get(panel) || 0) + 1; fetchGen.set(panel, g); return g; }
 
   function panelFor(input) {
     if (!input || input.type !== 'file') return null;
@@ -96,6 +116,7 @@
   function reset(panel, hide) {
     if (typeof panel === 'string') panel = document.getElementById(panel);
     if (!panel) return;
+    bumpGen(panel);
     var st = states.get(panel);
     revoke(st);
     if (st) {
@@ -135,9 +156,9 @@
 
   function offer(input, opts) {
     var panel = panelFor(input);
-    if (!panel) return;
+    if (!panel) return null;
     var file = input.files && input.files[0];
-    if (!file) { reset(panel, true); return; }
+    if (!file) { reset(panel, true); return null; }
     var prev = states.get(panel);
     revoke(prev);
     if (prev && prev.ctl) { prev.ctl.abort(); prev.ctl = null; }
@@ -154,7 +175,8 @@
       seq: prev ? prev.seq + 1 : 1,
       originalURL: null,
       returnFocus: document.activeElement && document.activeElement !== document.body ? document.activeElement : null,
-      autoSave: !!(opts && opts.autoSave)
+      autoSave: !!(opts && opts.autoSave),
+      existing: false
     };
     states.set(panel, st);
     reset(panel, false);
@@ -171,6 +193,48 @@
     }
     panel.hidden = false;
     if (panel.scrollIntoView) panel.scrollIntoView({ block: 'nearest' });
+    return st;
+  }
+
+  // ut-docs#4839: the same offer for the photo the record already has.
+  // Returns a promise (never rejected) that settles once the panel shows the
+  // photo or its "unavailable" message, so the page can re-evaluate its own
+  // controls (a DataTransfer assignment fires no event).
+  function offerExisting(input, url) {
+    var panel = panelFor(input);
+    if (!panel || !url) return Promise.resolve();
+    var gen = bumpGen(panel);
+    function current() { return fetchGen.get(panel) === gen; }
+    function unavailable() {
+      if (!current()) return; // superseded: not this record's message
+      try {
+        input.value = '';
+        var prev = states.get(panel);
+        if (prev) { revoke(prev); if (prev.ctl) prev.ctl.abort(); stopWorker(prev); states.delete(panel); }
+        reset(panel, false);
+        btn(panel, 'remove').hidden = true; // nothing loaded to cut out
+        setStatus(panel, 'error', panel.dataset.msgUnavailable);
+        panel.hidden = false;
+        if (panel.scrollIntoView) panel.scrollIntoView({ block: 'nearest' });
+      } catch (e) { /* never throw at the page */ }
+    }
+    try {
+      if (typeof DataTransfer !== 'function' || typeof fetch !== 'function') { unavailable(); return Promise.resolve(); }
+      return fetch(url, { credentials: 'same-origin' }).then(function (res) {
+        var type = (res.headers.get('Content-Type') || '').toLowerCase();
+        var png = type.indexOf('image/png') === 0;
+        if (!res.ok || (!png && type.indexOf('image/jpeg') !== 0)) throw new Error('not an image');
+        return res.blob().then(function (blob) {
+          if (!current()) return; // the page moved on (item switch, reopen)
+          var f = new File([blob], png ? 'photo.png' : 'photo.jpg', { type: png ? 'image/png' : 'image/jpeg' });
+          var dt = new DataTransfer();
+          dt.items.add(f);
+          input.files = dt.files;
+          var st = offer(input, null);
+          if (st) st.existing = true;
+        });
+      }).then(null, unavailable);
+    } catch (e) { unavailable(); return Promise.resolve(); }
   }
 
   // The tile-colour swatch follows the form's colour field, which the
@@ -420,12 +484,16 @@
     }
     var autoSave = st.autoSave;
     var cutout = !!(useCutout && st.current);
+    var existing = !!st.existing;
     var submit = panel.dataset.cutoutSubmit === '1';
+    // Existing photo, kept as it is: nothing to upload (the copy in the
+    // input was only there to be cut out).
+    if (existing && !cutout) { input.value = ''; file = null; autoSave = false; submit = false; }
     reset(panel, true);
     states.delete(panel);
     input.dispatchEvent(new CustomEvent('photo-cutout:accept', {
       bubbles: true,
-      detail: { file: file, cutout: cutout, autoSave: autoSave }
+      detail: { file: file, cutout: cutout, autoSave: autoSave, existing: existing }
     }));
     if (submit && input.form) {
       if (input.form.requestSubmit) input.form.requestSubmit();
@@ -458,7 +526,14 @@
       case 'retake': {
         var id = panel.dataset.cutoutRetake;
         var trigger = id ? document.getElementById(id) : (st && st.input);
+        // An existing photo's copy must not stay pending behind a camera
+        // the operator may cancel.
+        var cleared = st && st.existing && st.input;
+        if (cleared) st.input.value = '';
         reset(panel, true);
+        // Tell the page the copy is gone (no change event), so its own
+        // button for the saved photo can come back if the camera is cancelled.
+        if (cleared) cleared.dispatchEvent(new CustomEvent('photo-cutout:cleared', { bubbles: true }));
         if (trigger) trigger.click();
         break;
       }
@@ -469,6 +544,7 @@
   // without any event; they call reset(id) so the offer goes with it.
   window.utPhotoCutout = {
     reset: function (panelOrId) { reset(panelOrId, true); },
-    available: function (input) { return !!panelFor(input); }
+    available: function (input) { return !!panelFor(input); },
+    offerExisting: offerExisting
   };
 })();
