@@ -216,8 +216,11 @@ func (w *WasmRuntime) runSchedule(ctx context.Context, gen int, deps scheduleDep
 		go func() {
 			defer logging.RecoverAndLog("plugins.wasmScheduleTick")
 			defer w.wg.Done()
-			defer w.schedBusy.Delete(busyKey)
+			// Defers run last-first: the busy key is released before the
+			// in-flight count drops, so a zero count means the next tick
+			// can be admitted (ut-docs#4903).
 			defer w.schedRunsInFlight.Add(-1)
+			defer w.schedBusy.Delete(busyKey)
 			deps.fire(ctx, pluginID, ev)
 		}()
 	}

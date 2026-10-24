@@ -97,9 +97,12 @@ type firedTick struct {
 
 // recordingFire is a fire seam that reports each call and, while block is
 // non-nil, holds the call until block is closed (a still-running tick).
+// tail delays its return after reporting, widening the window in which the
+// run still holds its busy key (ut-docs#4903).
 type recordingFire struct {
 	fired chan firedTick
 	block chan struct{}
+	tail  time.Duration
 }
 
 func newRecordingFire() *recordingFire {
@@ -111,6 +114,7 @@ func (f *recordingFire) fire(_ context.Context, pluginID string, ev Event) {
 	if f.block != nil {
 		<-f.block
 	}
+	time.Sleep(f.tail)
 }
 
 func (f *recordingFire) expect(t *testing.T) firedTick {
@@ -182,6 +186,21 @@ func waitSchedActive(t *testing.T, w *WasmRuntime, want int64) {
 	}
 }
 
+// waitSchedRunsIdle waits until no tick run is in flight. A tick is
+// reported from inside the fire seam, before its run releases the busy key,
+// so a test must call this before advancing to a tick it expects to fire —
+// or that tick is skipped as "previous tick still running" (ut-docs#4903).
+func waitSchedRunsIdle(t *testing.T, w *WasmRuntime) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for w.schedRunsInFlight.Load() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("schedule runs in flight = %d, want 0", w.schedRunsInFlight.Load())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func TestSchedule_FiresAtEveryPlusJitter(t *testing.T) {
 	clk := newFakeSchedClock()
 	fire := newRecordingFire()
@@ -218,14 +237,18 @@ func TestSchedule_FiresAtEveryPlusJitter(t *testing.T) {
 	if d := clk.nextAfter(t); d != 67*time.Second {
 		t.Fatalf("second wait = %s, want 67s", d)
 	}
+	waitSchedRunsIdle(t, w)
 	clk.Advance(67 * time.Second)
 	fire.expect(t)
 }
 
-// jitter_s = 0 waits exactly every_s, with the real jitter source.
+// jitter_s = 0 waits exactly every_s, with the real jitter source. Each run
+// returns slowly (tail), as a loaded CI runner can make it: the next tick
+// must still fire once the run has ended (ut-docs#4903).
 func TestSchedule_ZeroJitterIsExact(t *testing.T) {
 	clk := newFakeSchedClock()
 	fire := newRecordingFire()
+	fire.tail = 100 * time.Millisecond
 	w := schedTestRuntime(t, clk, fire, 0)
 	w.sched.jitter = defaultScheduleJitter
 	startTestSchedule(t, w, "com.test.exact", data.PluginScheduleRow{PluginID: "com.test.exact", Event: "com.test.exact.tick", EveryS: 30})
@@ -233,6 +256,7 @@ func TestSchedule_ZeroJitterIsExact(t *testing.T) {
 		if d := clk.nextAfter(t); d != 30*time.Second {
 			t.Fatalf("wait %d = %s, want exactly 30s", i, d)
 		}
+		waitSchedRunsIdle(t, w)
 		clk.Advance(30 * time.Second)
 		fire.expect(t)
 	}
@@ -284,13 +308,7 @@ func TestSchedule_SkipsTickWhilePreviousRunStillRunning(t *testing.T) {
 	fire.expectNone(t)
 
 	release() // run 1 ends (later runs pass the closed channel)
-	deadline := time.Now().Add(5 * time.Second)
-	for w.schedRunsInFlight.Load() != 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("run 1 never finished")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	waitSchedRunsIdle(t, w)
 	clk.Advance(30 * time.Second)
 	fire.expect(t) // tick 3 fires again
 }
@@ -406,6 +424,8 @@ func TestSchedule_StopsAtNextTickWhenPermissionRevokedLive(t *testing.T) {
 	granted = false
 	mu.Unlock()
 	clk.nextAfter(t)
+	// Idle first, so no tick can pass by being skipped as busy.
+	waitSchedRunsIdle(t, w)
 	clk.Advance(30 * time.Second)
 	waitSchedActive(t, w, 0)
 	fire.expectNone(t)
@@ -640,13 +660,7 @@ func TestSchedule_SkipWhileRunningSpansResync(t *testing.T) {
 	fire.expectNone(t)
 
 	release()
-	deadline := time.Now().Add(5 * time.Second)
-	for w.schedRunsInFlight.Load() != 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("old run never finished")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	waitSchedRunsIdle(t, w)
 	clk.Advance(30 * time.Second)
 	fire.expect(t)
 }
