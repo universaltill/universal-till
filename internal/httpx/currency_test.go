@@ -573,13 +573,17 @@ func TestFormatPercentBP(t *testing.T) {
 		want   string
 	}{
 		{750, "en", "7.50%"},
-		{750, "de", "7,50%"},
-		{750, "de-DE", "7,50%"},
-		{2000, "fr", "20,00%"},
-		{0, "tr", "0,00%"},
-		{1950, "pt", "19,50%"},
-		// fa/ar: no digit shaping here (Latin digits, '.' separator), as
-		// LocalizeMajor -- asserted so the behaviour is explicit.
+		{750, "pt", "7,50%"},
+		{750, "de", "7,50 %"},
+		{750, "de-DE", "7,50 %"},
+		{750, "es", "7,50 %"},
+		{2000, "fr", "20,00 %"},
+		{0, "tr", "%0,00"},
+		{750, "tr", "%7,50"},
+		{-750, "tr", "-%7,50"},
+		{-750, "de", "-7,50 %"},
+		{1950, "it", "19,50%"},
+		// fa/ar: print path stays Latin digits and ASCII % (ut-docs#4281).
 		{750, "fa", "7.50%"},
 		{750, "ar", "7.50%"},
 	}
@@ -590,10 +594,68 @@ func TestFormatPercentBP(t *testing.T) {
 	}
 }
 
+// ut-docs#4281: the print variant must stay pure ASCII for every locale.
+func TestFormatPercentBP_PrintIsASCII(t *testing.T) {
+	for _, l := range []string{"en", "de", "es", "fr", "pt", "tr", "fa", "ar"} {
+		for _, bp := range []int64{750, -750, 0} {
+			for _, r := range FormatPercentBP(bp, l) {
+				if r > 0x7e {
+					t.Errorf("FormatPercentBP(%d, %q) has non-ASCII %U", bp, l, r)
+				}
+			}
+		}
+	}
+}
+
+func TestFormatPercentBPDisplay(t *testing.T) {
+	cases := []struct {
+		bp     int64
+		locale string
+		want   string
+	}{
+		{750, "en", "7.50%"},
+		{750, "pt", "7,50%"},
+		{750, "de", "7,50\u00a0%"},
+		{750, "es", "7,50\u00a0%"},
+		{750, "fr", "7,50\u202f%"},
+		{750, "tr", "%7,50"},
+		{-750, "tr", "-%7,50"},
+		{-750, "de", "-7,50\u00a0%"},
+		{750, "fa", "۷٫۵۰٪"},
+		{750, "ar", "٧٫٥٠٪"},
+	}
+	for _, c := range cases {
+		if got := FormatPercentBPDisplay(c.bp, c.locale); got != c.want {
+			t.Errorf("FormatPercentBPDisplay(%d, %q) = %q, want %q", c.bp, c.locale, got, c.want)
+		}
+	}
+}
+
+func TestFormatPercentDisplay(t *testing.T) {
+	cases := []struct {
+		plain, locale, want string
+	}{
+		{"7.5", "en", "7.5%"},
+		{"20", "en", "20%"},
+		{"7.5", "de", "7,5\u00a0%"},
+		{"20", "fr", "20\u202f%"},
+		{"7.5", "tr", "%7,5"},
+		{"-3", "tr", "-%3"},
+		{"-3", "de", "-3\u00a0%"},
+		{"7.5", "fa", "۷٫۵٪"},
+		{"20", "ar", "٢٠٪"},
+	}
+	for _, c := range cases {
+		if got := FormatPercentDisplay(c.plain, c.locale); got != c.want {
+			t.Errorf("FormatPercentDisplay(%q, %q) = %q, want %q", c.plain, c.locale, got, c.want)
+		}
+	}
+}
+
 // ut-docs#4176: {{ bpPercent }} in a request-scoped template (sale-screen
 // discount label, receipt) is bound to the request locale.
 func TestFuncsForBPPercentIsLocaleBound(t *testing.T) {
-	for locale, want := range map[string]string{"en": "7.50%", "de": "7,50%"} {
+	for locale, want := range map[string]string{"en": "7.50%", "de": "7,50\u00a0%"} {
 		fn, ok := FuncsFor(locale)["bpPercent"].(func(int64) string)
 		if !ok {
 			t.Fatalf("FuncsFor(%q)[bpPercent] has the wrong type", locale)

@@ -266,6 +266,10 @@ func buildTaxOverrideRows(currentValue string, taxCodes []data.TaxCodeView, loca
 		return nil, false
 	}
 	pct := func(bp int) string { return httpx.LocalizeMajor(taxrate.FormatPercent(bp), locale) }
+	// The read-only rate and the invalid-entry message are on-screen text
+	// with the sign and digits of the locale (ut-docs#4281); input values
+	// keep pct (the field reads them back).
+	shown := func(bp int) string { return httpx.FormatPercentDisplay(taxrate.FormatPercent(bp), locale) }
 	valid := func(bp int) bool { return bp > 0 && bp <= taxrate.MaxBP }
 	var rows []taxOverrideRow
 	seen := map[string]bool{}
@@ -274,13 +278,13 @@ func buildTaxOverrideRows(currentValue string, taxCodes []data.TaxCodeView, loca
 		row := taxOverrideRow{
 			TaxCodeID:     tc.ID,
 			Name:          tc.Name,
-			DineInPercent: pct(int(tc.RateBP)),
+			DineInPercent: shown(int(tc.RateBP)),
 		}
 		if bp, ok := overrides[tc.ID]; ok {
 			if valid(bp) {
 				row.OverridePercent = pct(bp)
 			} else {
-				row.InvalidStoredPercent = pct(bp)
+				row.InvalidStoredPercent = shown(bp)
 			}
 		}
 		if tc.TakeawayRateBP != nil {
@@ -300,7 +304,7 @@ func buildTaxOverrideRows(currentValue string, taxCodes []data.TaxCodeView, loca
 		if bp := overrides[id]; valid(bp) {
 			row.OverridePercent = pct(bp)
 		} else {
-			row.InvalidStoredPercent = pct(bp)
+			row.InvalidStoredPercent = shown(bp)
 		}
 		rows = append(rows, row)
 	}

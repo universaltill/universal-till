@@ -706,7 +706,7 @@ func TestInvoiceLineSub_AfterDiscountMarker(t *testing.T) {
 		Name: "Wine", Qty: 3, TaxRateBP: 2000, TaxAmount: 500,
 		LineTotal: 3000, LineDiscount: 600,
 	}
-	got := invoiceLineSub(discounted, "en", " - ")
+	got := invoiceLineSub(discounted, "en", " - ", false)
 	want := "Unit price (excl. VAT): £8.33 (after discount) - VAT 20.00%"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -716,7 +716,7 @@ func TestInvoiceLineSub_AfterDiscountMarker(t *testing.T) {
 		Name: "Bread", Qty: 2, TaxRateBP: 0, TaxAmount: 0,
 		LineTotal: 300, LineDiscount: 0,
 	}
-	got = invoiceLineSub(undiscounted, "en", " - ")
+	got = invoiceLineSub(undiscounted, "en", " - ", false)
 	if strings.Contains(got, "after discount") {
 		t.Fatalf("an undiscounted line must not carry the after-discount marker, got %q", got)
 	}

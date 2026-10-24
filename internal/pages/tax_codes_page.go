@@ -25,20 +25,26 @@ import (
 type taxCodeRow struct {
 	ID              string
 	Name            string
-	RatePercent     string
+	RatePercent     string // raw machine value (data-rate, edit JS)
+	RateDisplay     string // locale-formatted for the cell (ut-docs#4281)
 	TakeawayPercent string // "" when no takeaway override is pinned
+	TakeawayDisplay string // locale-formatted, "" when none (ut-docs#4281)
 	IsActive        bool
 	ToggleVals      string
 }
 
 // buildTaxCodeRows assembles the table's view rows from the repository's
 // TaxCodeView rows.
-func buildTaxCodeRows(views []data.TaxCodeView) []taxCodeRow {
+func buildTaxCodeRows(views []data.TaxCodeView, locale string) []taxCodeRow {
 	rows := make([]taxCodeRow, 0, len(views))
 	for _, v := range views {
 		takeawayPct := ""
 		if v.TakeawayRateBP != nil {
 			takeawayPct = taxrate.FormatPercent(int(*v.TakeawayRateBP))
+		}
+		takeawayDisplay := ""
+		if takeawayPct != "" {
+			takeawayDisplay = httpx.FormatPercentDisplay(takeawayPct, locale)
 		}
 		vals, _ := json.Marshal(map[string]any{
 			"id":           v.ID,
@@ -51,6 +57,8 @@ func buildTaxCodeRows(views []data.TaxCodeView) []taxCodeRow {
 			ID:              v.ID,
 			Name:            v.Name,
 			RatePercent:     taxrate.FormatPercent(int(v.RateBP)),
+			RateDisplay:     httpx.FormatPercentDisplay(taxrate.FormatPercent(int(v.RateBP)), locale),
+			TakeawayDisplay: takeawayDisplay,
 			TakeawayPercent: takeawayPct,
 			IsActive:        v.IsActive,
 			ToggleVals:      string(vals),
@@ -203,7 +211,7 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		httpx.RenderWith([]string{
 			filepath.Join("web", "ui", "partials", "tax_codes_table.html"),
-		}, funcs)("tax_codes_table", map[string]any{"TaxCodes": buildTaxCodeRows(views)})(w, r)
+		}, funcs)("tax_codes_table", map[string]any{"TaxCodes": buildTaxCodeRows(views, httpx.ResolveLocale(w, r))})(w, r)
 	}
 
 	mux.HandleFunc("GET /catalog/tax-codes", func(w http.ResponseWriter, r *http.Request) {
@@ -221,7 +229,7 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 			"title":     httpx.T(httpx.RequestLocale(r), "page.title.tax_codes"),
 			"menuItems": d.MenuSnapshot(),
 			"theme":     d.CurrentState().Theme,
-			"TaxCodes":  buildTaxCodeRows(views),
+			"TaxCodes":  buildTaxCodeRows(views, httpx.RequestLocale(r)),
 			// ut-docs#2095: /catalog/tax-codes is NOT an /items rail section
 			// (unlike /catalog, /modifiers, /catalog/option-sets,
 			// ut-docs#2090) -- Catalog's Tax codes button opens it as a
