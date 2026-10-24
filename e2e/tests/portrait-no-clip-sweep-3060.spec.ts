@@ -405,5 +405,52 @@ test.describe('portrait + phone no-clip sweep (ut-docs#3060)', () => {
       }
       expect(fails, fails.join('\n')).toEqual([]);
     });
+
+    // ut-docs#4897: side by side (wider than 900px) the tender column is too
+    // narrow at a high scale for Pay's label plus the three icons; Pay used
+    // to ellipsise to "Pa...". The row wraps instead.
+    test('side by side at ui_scale 1.5 and 2: Pay shows its full label, icons stay in the tender column', async ({ page }) => {
+      const fails: string[] = [];
+      for (const scale of ['1.5', '2']) {
+        expect((await page.request.post('/api/settings/ui-scale', { form: { scale } })).ok()).toBe(true);
+        for (const [w, h] of [[1024, 600], [1280, 800], [1920, 1080]]) {
+          await page.setViewportSize({ width: w, height: h });
+          await page.request.post('/api/pos/reset');
+          await page.goto('/');
+          await page.waitForSelector('.pos-container');
+          let lines = 0;
+          for (const code of CODES) {
+            await scan(page, code);
+            if (await modifierOpen(page)) { await closeModifier(page); continue; }
+            if (++lines === 1) break;
+          }
+          await expect(page.locator('#basket tbody tr')).toHaveCount(1);
+          const m = await page.evaluate(() => {
+            const pay = document.querySelector('[data-testid="payment-open"]') as HTMLElement;
+            // Bounded by the tender column, not the viewport: at 1024px and
+            // scale 1.5 the whole sale grid is wider than the window on main
+            // (a separate overflow, filed on its own card).
+            const t = document.querySelector('.tender')!.getBoundingClientRect();
+            return {
+              clipped: pay.scrollWidth - pay.clientWidth,
+              payBox: (({ left, right }) => ({ l: left, r: right }))(pay.getBoundingClientRect()),
+              tenderOver: document.querySelector('.tender')!.scrollWidth - document.querySelector('.tender')!.clientWidth,
+              icons: [...document.querySelectorAll('.tender-default-footer .tender-icon-btn')].map((b) => {
+                const r = b.getBoundingClientRect();
+                return { l: r.left, r: r.right, tl: t.left, tr: t.right };
+              }),
+            };
+          });
+          const tag = `${w}x${h} ui_scale ${scale}`;
+          if (m.clipped > 0) fails.push(`${tag}: Pay label clipped by ${m.clipped}px`);
+          if (m.tenderOver > 1) fails.push(`${tag}: tender column scrolls sideways by ${m.tenderOver}px`);
+          if (m.payBox.r > m.icons[0].tr + 1) fails.push(`${tag}: Pay pokes out of the tender column`);
+          for (const i of m.icons) {
+            if (i.l < i.tl - 1 || i.r > i.tr + 1) fails.push(`${tag}: tender icon [${Math.round(i.l)}-${Math.round(i.r)}] outside the tender column [${Math.round(i.tl)}-${Math.round(i.tr)}]`);
+          }
+        }
+      }
+      expect(fails, fails.join('\n')).toEqual([]);
+    });
   });
 });

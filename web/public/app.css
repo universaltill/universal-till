@@ -3846,14 +3846,20 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    NOT in the dialog (independent review) — a "step away from checkout"
    action must not cost a trip through Payment. flex-shrink: 0 so the row is
    never squeezed. Full history of this row's sizing: git log -p. */
-.tender-default-footer { display: flex; flex-direction: row; gap: .4rem; flex-shrink: 0; align-items: center; }
+.tender-default-footer { display: flex; flex-direction: row; flex-wrap: wrap; gap: .4rem; flex-shrink: 0; align-items: center; }
 /* ut-docs#2702: ONE action row — Pay takes every pixel the three 44px icon
    buttons (.tender-icon-btn above) leave. Pay is the one primary, text-
    labelled action here; it keeps the 2.75rem (44px) touch floor the icons
    use, so the row is one even height. min-width: 0 + ellipsis: a long
    "Pay £1,234.56" in a long locale shrinks inside its own box instead of
    pushing the icons off the row. */
-.tender-default-footer > .payment-trigger { flex: 1 1 auto; min-width: 0; min-height: 2.75rem;
+/* ut-docs#4897: at a high UI scale the side-by-side tender column is too
+   narrow (in rem) for Pay's label plus the three icons, and Pay gave way to
+   "Pa…". The row now wraps: Pay's basis is 7rem (about "Pay £12.50"), so
+   when it cannot keep that the icons drop beneath it. A longer label in a
+   row that still fits ellipsises inside its own box as before (#2702);
+   max-inline-size: 100% keeps it inside the column once on its own line. */
+.tender-default-footer > .payment-trigger { flex: 1 1 7rem; min-inline-size: 0; max-inline-size: 100%; min-height: 2.75rem;
   block-size: 2.75rem; padding: 0 .8rem; font-size: 1rem; font-weight: 700; line-height: 2.75rem;
   /* block (not .btn's inline-flex): text-overflow only applies to a block
      container's own text, never to a flex container's anonymous item. */
