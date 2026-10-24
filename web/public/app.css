@@ -1184,8 +1184,7 @@ body.kiosk .modifiers-filter-unassigned { min-block-size: 2.75rem; }
 body.kiosk .modifier-assign-cat,
 body.kiosk .modifier-assign-item { min-block-size: 2.75rem; }
 body.kiosk .modifier-chip-remove { inline-size: 2.75rem; block-size: 2.75rem; }
-body.kiosk .modifier-assign-add-item .btn,
-body.kiosk .modifier-assign-add-item .modifiers-item-search { min-block-size: 2.75rem; }
+body.kiosk .modifier-assign-add-item .btn { min-block-size: 2.75rem; }
 /* ---------- Option sets (ut-docs#1900) ---------- */
 /* The item panel's apply/generate block, above the variant grid. Flex-wrap
    so the checkbox row folds cleanly at 360px; logical properties only. */
@@ -1226,7 +1225,11 @@ body.kiosk .modifier-assign-add-item .modifiers-item-search { min-block-size: 2.
 /* Width follows the text: the size attribute (set from the value's length)
    for any engine, field-sizing where supported; bounded either way. */
 .option-set-value-edit input[type="text"] { border: 0; background: transparent; padding: .1rem; font: inherit; color: inherit;
-                                            inline-size: auto; field-sizing: content; min-inline-size: 2ch; max-inline-size: 14rem; }
+                                            inline-size: auto; field-sizing: content; min-inline-size: 2ch; max-inline-size: 14rem;
+                                            /* ut-docs#3882 named exception: borderless text INSIDE a pill chip;
+                                               a 46px floor would turn every value chip into a 46px bar. The chip's
+                                               ✕/↑↓ buttons (and kiosk's 2.75rem below) are its touch targets. */
+                                            min-block-size: 0; }
 .option-set-value-edit input[type="text"]:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 1px; }
 .chip .option-set-chip-btn { inline-size: 1.75rem; block-size: 1.75rem; border-radius: 999px; font-size: .95rem;
                              display: inline-flex; align-items: center; justify-content: center; }
@@ -1240,7 +1243,6 @@ body.kiosk .modifier-assign-add-item .modifiers-item-search { min-block-size: 2.
                           padding-block-start: .6rem; border-block-start: 1px solid var(--border); }
 body.kiosk .chip .option-set-chip-btn { inline-size: 2.75rem; block-size: 2.75rem; }
 body.kiosk .option-set-value-edit input[type="text"],
-body.kiosk .option-set-rename input[type="text"],
 body.kiosk .option-set-card-footer .btn { min-block-size: 2.75rem; }
 
 .chip-row { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; min-block-size: 1.6rem; }
@@ -2006,6 +2008,17 @@ input, select, textarea {
 @media (max-width: 480px) {
   input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color])),
   select, textarea, input.qty-input, input.disc-input { font-size: max(16px, 1em); }
+}
+/* ut-docs#3882: touch floor for text-like fields and selects. They rendered
+   40-42px (38px in kiosk) -- under the 46px floor .btn-touch holds (and a
+   kiosk must never be SMALLER than windowed, ut-docs#161). :where() keeps
+   this at zero specificity, so a class rule that deliberately sizes a field
+   (the basket's .qty-input/.disc-input, the borderless inline editors) still
+   wins; * { box-sizing: border-box } makes 46px the border box. textarea and
+   the non-text input types (checkbox, radio, range, color, file, buttons)
+   are excluded. */
+:where(input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]):not([type=file]):not([type=hidden]):not([type=image]):not([type=button]):not([type=submit]):not([type=reset]), select) {
+  min-block-size: 46px;
 }
 input:focus, select:focus, textarea:focus {
   outline: 2px solid rgba(37, 99, 235, .35); outline-offset: 1px; border-color: var(--focus-border);
@@ -3122,8 +3135,12 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    44px target, in BOTH kiosk and non-kiosk — kiosk's own 2.1rem/37.5px
    floor is also under 44px); this compact input stays for the rarer
    "type an exact number" path and is out of scope there. */
-.qty-input { width: 3.4rem; padding: .25rem .3rem; font-size: .85rem; line-height: 1.2; }
-.disc-input { width: 3.4rem; padding: .25rem .3rem; font-size: .8rem; line-height: 1.2; }
+/* ut-docs#3882 named exception to the shared 46px field floor: the basket
+   line's qty/discount fields live in a deliberately budgeted compact row
+   with their own tier rules below (>=4 lines visible, ut-docs#213). A 46px
+   floor here grew each line to ~159px. */
+.qty-input { width: 3.4rem; padding: .25rem .3rem; font-size: .85rem; line-height: 1.2; min-block-size: 0; }
+.disc-input { width: 3.4rem; padding: .25rem .3rem; font-size: .8rem; line-height: 1.2; min-block-size: 0; }
 .btn-x { padding: .3rem .4rem; font-size: .8rem; min-height: 0; }
 /* Shrinkage reason sheet (ut-docs#1465, G41): the toggle button is
    .btn-x itself (same touch target as the plain remove button it
@@ -3744,8 +3761,11 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    admin page) — smaller here, since this row is tapped/scanned dozens
    of times a shift and doesn't need that much padding to stay usable.
    ut-docs#2702: thinner still — a fixed 2.5rem field ("barcode box can be
-   thinner smaller with its belongings"); body.kiosk's 2.4rem input floor
-   stays below it, so kiosk is never smaller than this. */
+   thinner smaller with its belongings").
+   ut-docs#3882 named exception to the shared 46px field floor: this fixed
+   2.5rem size is the product owner's explicit call, and the sale screen's
+   height budget at 1024x600 is tight; the explicit min-height keeps the
+   floor from growing it (the row's Add/scan buttons are its touch targets). */
 .scan-row input { padding: .3rem .55rem; block-size: 2.5rem; min-height: 2.5rem; }
 .scan-row input[name="code"] { flex: 1; min-width: 0; }
 .scan-row input[name="qty"] { width: 3.4rem; text-align: center; }
@@ -4258,7 +4278,7 @@ body.osk-padded .payment-overlay {
                                          padding-block: .5rem 1.25rem; background: var(--surface, Canvas); }
 .gift-voucher-row { display: flex; align-items: flex-end; gap: .5rem; }
 .gift-voucher-field { display: flex; flex-direction: column; gap: .25rem; flex: 1 1 auto; min-inline-size: 0; }
-.gift-voucher-field input { min-block-size: 44px; inline-size: 100%; }
+.gift-voucher-field input { inline-size: 100%; }
 .gift-voucher-field input[name="gv_code"] { font-family: monospace; font-size: 1.1rem; }
 .gift-voucher-value { font-size: 1.25rem; text-align: end; font-variant-numeric: tabular-nums; }
 .gift-voucher-hint { margin: -.2rem 0 0; font-size: .8rem; }
@@ -4439,7 +4459,7 @@ body.kiosk .basket th, body.kiosk .journal th {
    (real screens, real fingers) — previously 2.75rem/5.4rem here shrank
    below the 3rem/8.5rem base rules and fell under a 48px effective floor
    at common till widths (ut-docs#161). Kiosk now inherits the base sizes. */
-body.kiosk input, body.kiosk select { min-height: 2.4rem; }
+/* Fields likewise (ut-docs#3882): kiosk inherits the 46px base floor. */
 body.kiosk .qty-input, body.kiosk .disc-input { min-height: 2.1rem; }
 body.kiosk .basket .total { font-size: 1.45rem; }
 
@@ -4965,7 +4985,7 @@ body.login-screen {
      already draws it pointing inline-start (a scaleX(-1) would undo that). */
 }
 .manual-search input { inline-size: 100%; padding: .55rem .7rem; font-size: 1rem;
-                       min-block-size: 44px; border: 1px solid var(--border); border-radius: .5rem;
+                       border: 1px solid var(--border); border-radius: .5rem;
                        background: var(--panel, #fff); color: inherit; }
 .manual-tree ul { list-style: none; margin: 0 0 .9rem; padding: 0; }
 .manual-tree li { margin-block-end: .15rem; }
@@ -5109,7 +5129,7 @@ body.login-screen {
 .setup-dot.active { background: var(--accent); }
 .setup-langs { display: flex; gap: .5rem; justify-content: center; flex-wrap: wrap; }
 /* ut-docs#4731: the language drop-down; a full-size touch target. */
-.setup-language-select { min-width: min(18rem, 100%); min-height: 2.75rem; font-size: 1.05rem; }
+.setup-language-select { min-width: min(18rem, 100%); font-size: 1.05rem; }
 /* ut-docs#1180: the wizard's optional tax-plugin install prompt (step 3,
    Germany today). A subtle well inside the step so it reads as an aside to
    the business-details form rather than another field of it — the shipped
@@ -5621,7 +5641,7 @@ body.login-screen {
                 overflow-y: auto; padding-inline-end: .4rem; }
 .settings-search { margin-block-end: .6rem; }
 .settings-search input { inline-size: 100%; padding: .55rem .7rem; font-size: 1rem;
-                         min-block-size: 44px; border: 1px solid var(--control-border);
+                         border: 1px solid var(--control-border);
                          border-radius: var(--radius); background: var(--surface); color: inherit; }
 .settings-tree { list-style: none; margin: 0; padding: 0; }
 .settings-tree li { margin-block-end: .15rem; }
@@ -5693,9 +5713,6 @@ body.login-screen {
   #settings-shell.has-selection .settings-back { display: inline-flex; }
 }
 .settings-grid h2 { margin-block: 0 .6rem; font-size: 1.05rem; }
-.settings-grid form select, .settings-grid form input[type="text"],
-.settings-grid form input[type="number"], .settings-grid form input[type="password"] {
-  min-block-size: 2.3rem; }
 /* Payments card fee rows: a fixed grid so a long provider name (e.g.
    "Card (Stripe)") never wraps the percent/fixed inputs onto a second
    line — it ellipsizes instead, which is the correct tradeoff at this
