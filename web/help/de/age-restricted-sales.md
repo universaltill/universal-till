@@ -68,7 +68,7 @@ bleibt erhalten, auch wenn der abgelehnte Artikel entfernt wurde und der Rest
 des Verkaufs stattgefunden hat. Der Eintrag wird zusammen mit dem Verkauf selbst
 geschrieben, es gibt also nie eine Kontrolle ohne Verkauf.
 
-Diese Einträge gehören zur Geschichte Ihres Geschäfts. **Transaktionshistorie löschen** (Einstellungen → Daten) archiviert sie zusammen mit den Verkäufen und stellt sie wieder her, wenn Sie dieses Archiv wiederherstellen; die **Katalogbereinigung** und das Entfernen der **Beispieldaten** behalten jeden Artikel, für den eine Ausweiskontrolle festgehalten wurde – auch einen, der nur abgelehnt wurde.
+Diese Einträge gehören zur Geschichte Ihres Geschäfts. **Transaktionshistorie löschen** (Einstellungen → Datenverwaltung) archiviert sie zusammen mit den Verkäufen und stellt sie wieder her, wenn Sie dieses Archiv wiederherstellen; die **Katalogbereinigung** und das Entfernen der **Beispieldaten** behalten jeden Artikel, für den eine Ausweiskontrolle festgehalten wurde – auch einen, der nur abgelehnt wurde.
 
 ## Was diese Funktion leistet und was nicht
 

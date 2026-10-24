@@ -222,14 +222,14 @@ Every archived end-of-day report is kept for **10 years** — this is a legal
 record, and the "Clear transaction history" reset button in Data management
 never touches it. (That button no longer destroys anything at all: it moves
 your transaction history into a reset archive, and an archived batch can be
-restored from Settings → Data as long as the till has not traded since the
+restored from Settings → Data management as long as the till has not traded since the
 reset.) Once a report passes its 10-year anniversary, it is
 automatically and permanently deleted in the background — there is no
 manual step and no confirmation prompt, so export anything you need to keep
 longer before then.
 
 A reset archive batch can also be **permanently deleted** from the same
-Settings → Data list, but only once it is old enough: a batch holding real
+Settings → Data management list, but only once it is old enough: a batch holding real
 sales is protected until your shop's country's retention window (set on
 the Country settings page) has passed since it was archived — deleting it
 earlier is refused, and the message tells you the date it becomes
@@ -377,7 +377,7 @@ for the most shrinkage value, so a pattern (one item dropped constantly,
 one line comped every shift) is visible without digging through the
 audit log.
 
-Settings → Data → **Clear transaction history** moves these records into
+Settings → Data management → **Clear transaction history** moves these records into
 the reset archive together with the sales, so voids, comps and waste rung
 up while you were training before going live leave this report too.
 Restoring that archive brings them back, as long as no void, comp or

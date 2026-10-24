@@ -39,6 +39,55 @@ func TestLabelMapPrefersFewestDotsThenLowest(t *testing.T) {
 	}
 }
 
+func TestLabelMapExtraKeys(t *testing.T) {
+	tests := []struct {
+		name string
+		en   map[string]string
+		want map[string]string
+	}{
+		{"extra keys", map[string]string{
+			"settings.all":                       "All Settings",
+			"settings.barcode.symbologies_title": "Barcode types",
+			"tills.title":                        "Tills",
+			"menulayout.title":                   "Hidden menu tiles",
+			"page.title.tills":                   "Nope",
+			"settings.other_title":               "Nope2",
+			"settings.x.hint":                    "Nope3",
+		}, map[string]string{
+			"All Settings":      "settings.all",
+			"Barcode types":     "settings.barcode.symbologies_title",
+			"Tills":             "tills.title",
+			"Hidden menu tiles": "menulayout.title",
+		}},
+		{"primary beats extra", map[string]string{
+			"tills.title":           "Dup",
+			"settings.deep.b.title": "Dup",
+		}, map[string]string{"Dup": "settings.deep.b.title"}},
+		{"primary beats extra either order", map[string]string{
+			"settings.z.label": "Dup",
+			"settings.all":     "Dup",
+		}, map[string]string{"Dup": "settings.z.label"}},
+		{"extra tier fewest dots then lowest", map[string]string{
+			"settings.barcode.symbologies_title": "Dup",
+			"tills.title":                        "Dup",
+			"settings.all":                       "Dup",
+		}, map[string]string{"Dup": "settings.all"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := labelMap(tc.en)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for k, v := range tc.want {
+				if got[k] != v {
+					t.Errorf("%q -> %q, want %q", k, got[k], v)
+				}
+			}
+		})
+	}
+}
+
 func TestFindBreadcrumbsLongestAndBoundary(t *testing.T) {
 	labels := map[string]string{"Data": "settings.data", "Data management": "settings.dm", "Display": "settings.display"}
 	got := findBreadcrumbs("see Settings → Data management and **Settings → **Display** then Settings → Datasheet, Settings → Data.", labels)

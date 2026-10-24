@@ -3,7 +3,8 @@
 # Help-topic breadcrumb guard (ut-docs#4696): a help topic names a settings
 # section as "Settings → <Section>". The translated topic must call that
 # section what the till's own translated UI calls it (the web/locales
-# settings.*.title / .label value), or the reader looks for a label that is
+# settings.*.title / .label value, or one of the few other keys the Settings
+# page shows as a section name -- extraSectionKeys), or the reader looks for a label that is
 # not on screen. guard-help-drift.sh only compares structure, so it cannot
 # see this.
 #
