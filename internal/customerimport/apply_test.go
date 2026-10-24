@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -317,8 +318,33 @@ func TestApply_ErasedCustomersAreNeverRecreated(t *testing.T) {
 	for rs.Next() {
 		var h string
 		_ = rs.Scan(&h)
-		if strings.Contains(h, "example") || strings.Contains(h, "7700") {
+		if !isHexHMAC(h) {
 			t.Fatalf("a plain value in the suppression list: %q", h)
+		}
+	}
+}
+
+// hexHMAC is the shape of data.Hash: hex HMAC-SHA256. No email or phone, in
+// any normalised form, has it. A substring check for the plain value would
+// match a random hash by chance (ut-docs#4910).
+var hexHMAC = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+func isHexHMAC(s string) bool { return hexHMAC.MatchString(s) }
+
+func TestIsHexHMAC(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want bool
+	}{
+		{"433077005d021d9ec6bd4a849d7eb2a3c7d19d1f4bedfa4df7704f7964c88b8e", true}, // contains "7700" by chance
+		{"rae@example.test", false},
+		{"+447700900900", false},
+		{"07700900900", false},
+		{"447700900900", false},
+		{"", false},
+	} {
+		if got := isHexHMAC(tc.in); got != tc.want {
+			t.Errorf("isHexHMAC(%q) = %v, want %v", tc.in, got, tc.want)
 		}
 	}
 }
