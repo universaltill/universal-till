@@ -23,4 +23,5 @@
   - Low, accepted: historical release notes (`web/release-notes/en/v0.30.10.md`, `v0.31.6.md`, `v0.30.20.md`) still say "Settings → Data". They describe past releases and are left as they were.
   - Go/CSS/e2e comments elsewhere are not user-facing.
   - `web/help` is handled by the open #4891 PR.
+- **CI follow-up:** the first CI run failed `guard-docs-shots`. The `import.html` comment and the `data_api.go` API message changed the app-surface hash, but neither changes a rendered pixel. Fixed with `update-docs-shots-surface-hash.sh` (`Docs-Shots-Unchanged: true`); the guard and its `_test.sh` now pass locally. The local gate missed it because `ci.yml` runs that guard through `run-docs-shots-guard.sh`, not as a direct `guard-*.sh` call.
 - **Verdict:** safe to merge.
