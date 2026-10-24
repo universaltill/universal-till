@@ -432,11 +432,9 @@ func (r *runner) tombstone(ctx context.Context, tx *sql.Tx, kind, cloudID, local
 				return err
 			case !res.AlreadyDeleted:
 				what = "deleted"
-				if res.Voids > 0 {
-					// ut-docs#4746: the voids were detached with the item.
-					payload["voids"] = res.Voids
-					payload["note"] = fmt.Sprintf("item deleted with %d voids", res.Voids)
-				}
+				// ut-docs#4746, #4778: live voids, comps, wastes and ID
+				// checks were detached with the item.
+				res.AddDetachedToAudit(payload)
 			}
 		}
 		if deactivate {
