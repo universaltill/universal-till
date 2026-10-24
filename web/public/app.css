@@ -4640,6 +4640,12 @@ body.login-screen {
     display: inline-block; inline-size: 40%; margin-inline-end: .5rem; vertical-align: top;
     font-size: .75rem; line-height: 1.6; font-weight: 600; text-transform: uppercase;
     letter-spacing: .04em; color: var(--muted);
+    /* ut-docs#3881: the cell's anywhere-wrap is for data; inherited here it
+       split a long one-word header between any two letters ("GESAMTBETR" /
+       "AG" in German). A label breaks only between words or at a hyphenation
+       point of the page language, and its column grows past 40% to fit a
+       word that is longer than that. */
+    overflow-wrap: normal; hyphens: auto; min-inline-size: min-content;
   }
   /* ut-docs#3441: `:empty` alone misses a cell whose template left only
      whitespace text nodes (e.g. /orders' print-warning cell when nothing
