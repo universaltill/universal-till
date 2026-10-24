@@ -2167,6 +2167,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			}
 			log.Printf("[catalog] %v", err)
 		}
+		RefreshBasketPhoto(r.Context(), d, repo, itemID)
 		// The photo is a file on /api/sync/assets, not an admin-table row:
 		// no trigger moves for it, so tell linked tills to pull now
 		// (ADR-0114 §2) instead of at their 5-min floor.
@@ -2287,6 +2288,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 				return
 			}
+			RefreshBasketPhoto(r.Context(), d, repo, itemID)
 			writeRowOOB(w, r, itemID, false)
 			return
 		}
@@ -2300,6 +2302,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		removeUploadedThumbnail(itemID)
+		RefreshBasketPhoto(r.Context(), d, repo, itemID)
 		writeRowOOB(w, r, itemID, false)
 	})
 
@@ -2777,6 +2780,23 @@ func ItemThumbURL(itemID string) string { return "/public/assets/items/" + itemI
 
 func itemThumbFile(itemID string) string {
 	return filepath.Join(paths.Data("public", "assets", "items", itemID), "thumb.png")
+}
+
+// RefreshBasketPhoto pushes an item's current thumbnail (item_images; "" when
+// none) onto the open sale's basket rows, so a photo added, replaced or
+// removed mid-sale shows on the next render instead of only on a fresh sale
+// (ut-docs#4838). Best-effort: the write already succeeded, so a read error
+// logs. The cashier engine only — never the self-order kiosk's.
+func RefreshBasketPhoto(ctx context.Context, d *common.Deps, repo *data.CatalogRepo, itemID string) {
+	if d == nil || d.Engine == nil {
+		return
+	}
+	path, err := repo.ItemThumbnailFor(ctx, itemID)
+	if err != nil {
+		log.Printf("[catalog] refresh basket photo %s: %v", itemID, err)
+		return
+	}
+	d.Engine.SetItemImage(itemID, path)
 }
 
 // ErrItemThumbRow marks a StoreItemPhoto whose file was written but whose
