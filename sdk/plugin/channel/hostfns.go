@@ -104,6 +104,7 @@ type wireHTTPRequest struct {
 	Headers  map[string]string `json:"headers,omitempty"`
 	BodyB64  string            `json:"body_b64,omitempty"`
 	CostHint int               `json:"cost_hint,omitempty"`
+	Throttle *Throttle         `json:"throttle,omitempty"`
 }
 
 type wireHTTPResponse struct {
@@ -117,7 +118,7 @@ type wireHTTPResponse struct {
 // account, adds the credential, paces, retries 429/THROTTLED/5xx with
 // jitter and caps the response.
 func HTTP(req HTTPRequest) (*HTTPResponse, error) {
-	w := wireHTTPRequest{Method: req.Method, URL: req.URL, Headers: req.Headers, CostHint: req.CostHint}
+	w := wireHTTPRequest{Method: req.Method, URL: req.URL, Headers: req.Headers, CostHint: req.CostHint, Throttle: req.Throttle}
 	if len(req.Body) > 0 {
 		w.BodyB64 = base64.StdEncoding.EncodeToString(req.Body)
 	}
