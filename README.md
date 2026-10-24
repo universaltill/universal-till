@@ -766,18 +766,21 @@ time (remote support, migration).
 
 ### What's in each plan
 
+Local Plus (£10 / €10 a month) sits between Local and Shop; the matrix below
+shows the other four plans.
+
 | | **Local** | **Shop** | **Pro** | **Multi-location** |
 |---|---|---|---|---|
 | **Core POS, offline forever** | ✅ | ✅ | ✅ | ✅ |
 | **Tills (software)** | **unlimited** | **unlimited** | **unlimited** | **unlimited** |
-| **Locations** | 1 | 1 | 1 | 3 (+€39 each, to 10) |
+| **Locations** | 1 | 1 | 1 | 3 (+£33 / €33 each, to 10) |
 | Unlimited products & transactions | ✅ | ✅ | ✅ | ✅ |
 | All free plugins | ✅ | ✅ | ✅ | ✅ |
 | Local backup / restore | ✅ | ✅ | ✅ | ✅ |
 | Encrypted off-site cloud backup | ❌ | ✅ | ✅ | ✅ |
 | Multi-till sync | ❌ | ✅ | ✅ | ✅ |
 | Manage prices & catalog from a browser | ❌ | ✅ | ✅ | ✅ |
-| **Managed fiscal device where a market requires one** (e.g. German TSE) | bring your own | ✅ included | ✅ included | ✅ included |
+| **Managed fiscal device where a market requires one** (e.g. German TSE) | bring your own | ✅ managed, +€12 per main till a month (Germany) | ✅ managed, +€12 per main till a month (Germany) | ✅ managed, +€12 per main till a month (Germany) |
 | **Legally required fiscal audit export** (e.g. German DSFinV-K) | ✅ | ✅ | ✅ | ✅ |
 | Table plan, stock, kitchen routing, self-order kiosk, staff & shifts | ✅ | ✅ | ✅ | ✅ |
 | Accountant export (e.g. German DATEV) | ✅ | ✅ | ✅ | ✅ |
@@ -788,7 +791,7 @@ time (remote support, migration).
 | **Remote support session** | ❌ | ✅ | ✅ priority | ✅ on demand |
 | Support | Community | Email/ticket, Mon–Sat | Priority, same business day | Named contact + phone |
 
-Extra location **€39/month** (published up to 10) · **software carries no
+Extra location **£33 / €33 a month** (published up to 10) · **software carries no
 per-till charge, ever** (a mandated device's real per-till cost, where one
 exists, is a disclosed line — [ADR-0047](https://github.com/universaltill/ut-docs/blob/main/adr/0047-free-tier-excludes-mandated-third-party-costs.md)) ·
 **no activation fee** · no minimum term on monthly billing · annual billing =
@@ -800,28 +803,23 @@ Not because the price stops working (at 25 sites the published ladder is
 still ~44% under the incumbents) but because at that point what you need
 stops being what's on this page.
 
-### Prices by country
+### Prices
 
-| Market | | **Local** | **Shop** | **Pro** | **Multi-location** |
-|---|---|---|---|---|---|
-| 🇩🇪 🇦🇹 🇮🇪 🇪🇸 🇮🇹 🇫🇷 🇳🇱 **Eurozone** | monthly | **€0** | **€49** | **€69** | **€149** |
-| | annual *(per month)* | €0 | €40.83 | €57.50 | €124.17 |
-| 🇬🇧 **United Kingdom** | monthly | **£0** | **£42** | **£59** | **£127** |
-| | annual *(per month)* | £0 | £35.00 | £49.17 | £105.83 |
-| 🇦🇪 🇶🇦 🇧🇭 🇴🇲 **GCC** | monthly | **$0** | **$55** | **$79** | **$169** |
-| | annual *(per month)* | $0 | $45.83 | $65.83 | $140.83 |
-| 🇹🇷 **Turkey** | monthly | **₺0** | *≈€27* | *≈€39* | *≈€82* |
-| 🌍 **Rest of world** | monthly | **$0** | **$55** | **$79** | **$169** |
+Monthly, **excluding VAT**. The euro area pays the same numbers in EUR.
+Annual billing is two months free (per month: Local Plus 8.33, Shop 24.17,
+Pro 40.83, Multi-location 100.00).
 
-All prices **exclude VAT / sales tax**.
+| Market | | **Local** | **Local Plus** | **Shop** | **Pro** | **Multi-location** |
+|---|---|---|---|---|---|---|
+| 🇬🇧 **United Kingdom** | monthly | **£0** | **£10** | **£29** | **£49** | **£120** |
+| | annual *(per month)* | £0 | £8.33 | £24.17 | £40.83 | £100.00 |
+| 🇩🇪 🇦🇹 🇮🇪 🇪🇸 🇮🇹 🇫🇷 🇳🇱 **Euro area** | monthly | **€0** | **€10** | **€29** | **€49** | **€120** |
+| | annual *(per month)* | €0 | €8.33 | €24.17 | €40.83 | €100.00 |
 
-- **Turkey** is priced on local purchasing power rather than exchange rate,
-  billed in TRY at the prevailing rate and repriced quarterly. Not available
-  until GİB fiscal certification is complete.
-- **GCC** currencies are USD-pegged, so the USD list price is stable locally.
-  Local-currency billing is planned.
-- **Founding customers:** the first 25 German merchants get Shop at €39 and
-  Pro at €59, locked for 24 months.
+Other markets: not published yet. Extra location £33 / €33 a month
+(up to 10). **Germany** adds €12 a month for each registered main till for
+the managed TSE, from Shop up (its own line, see below). The canonical
+numbers live in ut-docs `reference/plan-prices.md`.
 
 ### 🇩🇪 A note for German merchants — being straight with you
 
@@ -832,19 +830,17 @@ for a hardware dongle that lasts about five years.
 
 So:
 
-- On a **paid plan**, the TSE is **included** — we provision it, monitor it
-  and renew it, and you never see TSE paperwork.
+- On **Shop and up**, the managed TSE costs **€12 a month for each registered
+  main till**, as its own line on the invoice, never hidden in the plan price —
+  we provision it, monitor it and renew it, and you never see TSE paperwork.
 - On the **free plan**, you bring your own — a dongle you buy, or your own
   cloud TSE account. Both are fully supported, first-class paths.
 
 We would rather say this plainly than let "free forever" imply a total cost
 of zero in a market where it isn't.
 
-*(2026-08-25: our TSE provider bills us per till rather than a flat fee per
-shop, which affects how "included" scales for a multi-till subscription —
-see [ADR-0047](https://github.com/universaltill/ut-docs/blob/main/adr/0047-free-tier-excludes-mandated-third-party-costs.md)'s
-2026-08-25 amendment. The figures above are unaffected; how the multi-till
-case is priced is still being worked out.)*
+*(Our TSE provider bills us per till, so the managed TSE is priced per registered
+main till; see [ADR-0047](https://github.com/universaltill/ut-docs/blob/main/adr/0047-free-tier-excludes-mandated-third-party-costs.md).)*
 
 **What is never behind a paywall:** the **DSFinV-K** export a tax auditor
 asks for is available on every plan, including the free one, wherever a TSE
@@ -863,8 +859,8 @@ obligations remain yours.*
 > record — e.g. Germany's TSE (Technische Sicherheitseinrichtung) under
 > KassenSichV. That component is not Universal Till software, is not
 > included in the free tier, and its cost is unaffected by anything above:
-> bring your own on Free, or it's included in the subscription price on a
-> paid tier. See
+> bring your own on Free, or the managed one at €12 a month per registered
+> main till on Shop and up. See
 > [ADR-0047](https://github.com/universaltill/ut-docs/blob/main/adr/0047-free-tier-excludes-mandated-third-party-costs.md).
 > The till enforces this on a per-market basis: a shop switched to
 > system-of-record mode cannot complete a real sale until its market's
