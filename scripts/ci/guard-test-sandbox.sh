@@ -32,7 +32,10 @@ enter_guard_test_sandbox() {
   # remove_guard_test_sandbox), a failure or kill must not orphan the copy.
   trap remove_guard_test_sandbox EXIT
   trap 'exit 130' INT TERM
-  # A failed copy removes the half-built sandbox itself.
+  # A failed copy removes the half-built sandbox itself. Auto-gc and
+  # auto-maintenance are off in the sandbox repo: a test's own `git commit`
+  # could otherwise start a detached gc that is still writing .git/objects
+  # when the cleanup's rm -rf runs, failing the job (ut-docs#4941).
   if ! (
     cd "${real_root}" || exit 1
     git ls-files -z --cached --others --exclude-standard -- \
@@ -44,6 +47,8 @@ enter_guard_test_sandbox() {
       tar --null -T - -cf -
   ) | tar -xf - -C "${GUARD_TEST_SANDBOX}" ||
     ! git -C "${GUARD_TEST_SANDBOX}" init -q ||
+    ! git -C "${GUARD_TEST_SANDBOX}" config gc.auto 0 ||
+    ! git -C "${GUARD_TEST_SANDBOX}" config maintenance.auto false ||
     ! git -C "${GUARD_TEST_SANDBOX}" add -A -f; then
     echo "guard-test-sandbox: could not build the sandbox copy for: $*" >&2
     remove_guard_test_sandbox
