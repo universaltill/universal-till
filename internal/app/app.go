@@ -144,6 +144,7 @@ func Run(ctx context.Context) error {
 	// deliberately NOT part of this loop; see recovery.Classify's doc
 	// comment for why that stays a hard exit.
 	var database *db.DB
+	restoreApplied := false
 	for {
 		paths.MigrateLegacyData(cfg.DBPath)
 
@@ -153,6 +154,7 @@ func Run(ctx context.Context) error {
 		} else {
 			if applied {
 				log.Infof("staged backup restore applied to %s", cfg.DBPath)
+				restoreApplied = true
 			}
 			// Put back the photos a restored backup carries (ut-docs#2724).
 			// Every boot, so an interrupted restore finishes; best-effort,
@@ -200,6 +202,9 @@ func Run(ctx context.Context) error {
 		// result == recovery.Retry: loop back and re-attempt.
 	}
 	defer database.Close()
+	if restoreApplied {
+		rotateStockStreamAfterRestore(ctx, database.DB, log)
+	}
 
 	// Public-demo start gate (ADR-0113 §1.2, ut-docs#2687): after the
 	// database is open and migrated, before anything else touches it or
