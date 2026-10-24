@@ -41,6 +41,7 @@ var networkServices = []string{
 	"held-order table-claim re-affirm",
 	"cloud sync",
 	"cloud link",
+	"stock upload",
 	"auto-update scheduler",
 	"plugin update scheduler",
 	"base-plugin auto-install retry",

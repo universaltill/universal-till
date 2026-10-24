@@ -864,6 +864,67 @@ cloud's catalogue feed (ut-docs `reference/contracts/cloud-catalog-feed.md`,
   upload first (ut-docs#4464, below). Not yet built: reporting refusals
   back to the cloud as `apply_failed` (ut-docs#4493).
 
+## Stock on-hand upload — stock_upload_outbox (ut-docs#4763, ADR-0169 §8)
+
+The main till masters stock (ADR-0036); the cloud keeps a read-only
+`StockLevelMirror` so its allocation engine can push `stock.set` to sales
+channels. `internal/stockupload` uploads the rows whose quantity changed;
+`internal/cloudsync` (`stock_upload.go`) decides when and who.
+
+- **Tables (migration 091, main-till bookkeeping, never LAN-synced).**
+  `stock_upload_outbox(seq AUTOINCREMENT, item_id, variant_id, location_id, marked_at, attempts, retry_after)`
+  — one mark per inventory row, unique on (item, variant, location), so it
+  never outgrows `inventory`; `stock_upload_state(one, stream_id, started_at, rotated_at)`
+  — this till's stream id (a UUID naming its sequence) and when it began.
+- **Marks are written by triggers** on `inventory` (insert, and update of
+  `quantity` to a different value), in the same transaction as the write —
+  a sale, receipt, count, import, directive or LAN correction alike. A
+  re-mark replaces the row's mark under a fresh, higher `seq` (the till's
+  movement sequence). They run on every till, replica or not; only the main
+  till of a cloud-master store sends them. A deleted inventory row leaves no
+  mark. The migration marks every existing inventory row once.
+- **Upload:** `Pending` joins mark, inventory and `cloud_links` in one
+  statement (quantity and `seq` always agree). A row whose item (and variant)
+  has no cloud link waits. The quantity is sent as integer thousandths
+  (`on_hand_milli`, stock is kept to three decimals), clamped to +/- 10^12;
+  no float leaves the till. 500 rows per request, up to 20 requests per run,
+  a run bounded to 60 s. The inventory join uses `IS` so it probes
+  `ux_inventory_item` (a `COALESCE(..) = COALESCE(..)` join scanned inventory
+  once per mark: 12.9 s at 20,000 rows; `TestStockUploadQueriesUseTheInventoryIndex`
+  pins the plan). The cloud answers per row (`applied`, `stale`, `rejected`); a
+  mark is removed by its exact `seq`, so a sale made while the request was in
+  flight stays owed. Nothing is removed on a transport error or a refusal.
+  Poison control: a row whose cloud id is not a UUID, or whose location id the
+  cloud would refuse, is dropped before sending (logged by code); a batch the
+  cloud refuses with a 400 is bisected and only the single refused row dropped
+  (only if some part of the batch was accepted: a refusal of the whole request
+  keeps every mark); `rejected unknown_item` keeps the mark and retries up to 5
+  times, 15 min x attempt apart (`attempts`, `retry_after`), then drops it with
+  a log code. Orphan marks (inventory row gone) are purged in chunks of 1000
+  once nothing is left to send.
+- **When:** at the end of every check-in that reached the cloud (any tier,
+  after the catalogue pull/upload); on the realtime tier also from a loop that
+  wakes every 5 s, so a burst of sales is one request. Failures back the loop
+  off (30 s up to 5 min); it only starts a run when a mark is sendable (has an
+  inventory row and cloud links, and is not waiting out a retry delay), so marks
+  that can never be sent do not keep it dialling. **Who:** no `sync.primary_url`, cached
+  `catalog_master` = `cloud`, complete cloud enrolment. Never a sale gate.
+- **Self-heal:** a `stale` answer whose `stored_seq` is above the row's own
+  `seq`, or a stale answer coded `older_stream`, means this till's sequence
+  restarted below the cloud's or the cloud holds a newer stream; the till
+  rotates the stream (new `stream_id`, `started_at` strictly later), re-marks
+  everything, and the cloud replaces its rows only for a stream that started
+  later than the stored one (so a delayed request of an old stream changes
+  nothing). The request carries `stream_started_at`. A staged backup restore
+  rotates the stream at boot (`app.rotateStockStreamAfterRestore`), so the
+  mirror is re-sent in full instead of waiting for each row to change.
+  An `older_stream` answer is never acknowledged: at most one rotation per Run
+  and per 30 minutes (`stock_upload_state.rotated_at`), then the Run fails
+  (`stock_upload_stream_conflict`, marks kept, backoff). A stream start more
+  than a minute in the future is reset to now.
+- Endpoint and payload: ut-cloud `docs/api-reference.md`,
+  `POST /api/v1/stores/stock/levels`.
+
 ## Cloud catalogue upload — cloud_outbox (ut-docs#4464, ADR-0162 §5)
 
 The main till of a cloud-master store uploads its own catalogue edits
