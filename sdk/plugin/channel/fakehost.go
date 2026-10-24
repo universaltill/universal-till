@@ -270,7 +270,14 @@ func rawOutboxAck(id, ack []byte) int32 {
 		return ErrDenied.Code
 	}
 	var a Ack
-	if err := json.Unmarshal(ack, &a); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(ack))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&a); err != nil {
+		return ErrInvalid.Code
+	}
+	// The refunded amount is refused as the cloud host refuses it
+	// (ut-docs#4904): beside an error, negative, or above 2^50.
+	if r := a.RefundedAmountMinor; r != nil && (a.Error != nil || *r < 0 || *r > 1<<50) {
 		return ErrInvalid.Code
 	}
 	idx := -1

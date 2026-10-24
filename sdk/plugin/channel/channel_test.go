@@ -303,3 +303,43 @@ func TestHTTP_NoThrottleStaysAbsentOnTheWire(t *testing.T) {
 		t.Fatalf("wire shape: %s", b)
 	}
 }
+
+// ut-docs#4904: a refund.create ack may report the refund money it moved; the
+// field is omitted when unset, so an older host never sees it.
+func TestAckRefundedAmountMinorIsOptionalOnTheWire(t *testing.T) {
+	if b, _ := json.Marshal(Ack{ExternalID: "o-1"}); strings.Contains(string(b), "refunded_amount_minor") {
+		t.Fatalf("an unset amount was sent: %s", b)
+	}
+	amount := int64(4000)
+	b, _ := json.Marshal(Ack{ExternalID: "o-1", RefundedAmountMinor: &amount})
+	if !strings.Contains(string(b), `"refunded_amount_minor":4000`) {
+		t.Fatalf("the amount is not on the wire: %s", b)
+	}
+	h := NewFakeHost()
+	h.Outbox = []OutboxOp{{ID: "op-r", Kind: OpRefundCreate}}
+	UseFakeHost(t, h)
+	if err := OutboxAck("op-r", Ack{ExternalID: "o-1", RefundedAmountMinor: &amount}); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.Acks["op-r"].RefundedAmountMinor; got == nil || *got != 4000 {
+		t.Fatalf("the host did not receive the amount: %v", got)
+	}
+}
+
+// ut-docs#4904: the fake host refuses an amount the cloud host refuses, so an
+// adapter's unit tests see the same -4 the real host answers.
+func TestFakeHostRefusesARefundedAmountTheCloudHostRefuses(t *testing.T) {
+	neg, huge, ok := int64(-1), int64(1)<<50+1, int64(10)
+	for name, a := range map[string]Ack{
+		"negative":        {RefundedAmountMinor: &neg},
+		"above 2^50":      {RefundedAmountMinor: &huge},
+		"beside an error": {RefundedAmountMinor: &ok, Error: &AckError{Code: "refund_exceeds_ceiling"}},
+	} {
+		h := NewFakeHost()
+		h.Outbox = []OutboxOp{{ID: "op-r", Kind: OpRefundCreate}}
+		UseFakeHost(t, h)
+		if err := OutboxAck("op-r", a); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: want ErrInvalid, got %v", name, err)
+		}
+	}
+}
