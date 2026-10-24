@@ -63,3 +63,7 @@ Reviewer also confirmed:
 ## Verdict
 
 Safe to merge once CI is green.
+
+## Follow-up: CI
+
+The first CI run went red on `guard-docs-shots`, because the taller fields change rendered pixels. I regenerated the manual's screenshots with `make docs-shots`: 124/124 shots across 31 topics × 4 locales, with Inter, DejaVu and Noto Emoji verified. Only `web/help/img/` changed. `guard-docs-shots.sh` and its `_test.sh` pass, and every other single-line guard in the `build` job passes locally. `guard-shellcheck-version` was skipped because this container has no shellcheck binary, and no shell file changed.
