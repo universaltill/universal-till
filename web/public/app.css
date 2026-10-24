@@ -97,17 +97,25 @@
    vertical budget (independent review of ut-docs#161 caught this live:
    width-only growth clipped the Cash/Card/Gift Card buttons on exactly
    that class of screen) — height, not just width, bounds the growth.
-   Composed with --ui-scale (base.html, login.html, setup.html — from the
-   operator's Settings > UI scale choice, default 1) so that existing
-   manual scale-up still layers on top of the automatic viewport fit
-   instead of replacing it. --ui-scale is still unset on the remaining
-   standalone kiosk screens (self_order.html, self_order_shop.html,
-   order_tracking.html — ut-docs#1126 found and fixed login/setup, ut-docs#1175
-   tracks these three) that still set an inline px font-size directly —
-   that inline value always wins over this rule there, so the "1" fallback
-   below is inert for them, not load-bearing. */
-:root { --fluid-fs: clamp(17px, min(13.57px + 0.335vw, 13.25px + 0.625vh), 20px); }
-html { font-size: calc(var(--ui-scale, 1) * var(--fluid-fs)); }
+   Composed with --ui-scale (the operator's Settings > UI scale choice,
+   default 1, set on <html> by every page that loads this file) so manual
+   scale-up layers on top of the automatic viewport fit.
+   The manual scale is bounded by window WIDTH too (ut-docs#4625):
+   breakpoints are px but the scale multiplies rem, so at scale 2 a 540px
+   window had less rem-width than a 360px phone at scale 1 (scan row, Pay
+   and status bar clipped), and a 1000-1550px window could not hold the
+   side-by-side grid (the page scrolled sideways by up to 556px).
+   --ui-scale-min-width is the rem-width each tier needs, as px per rem:
+   28.3rem for the stacked tier (its narrowest width at scale 1, 481px /
+   17px) and 46rem for the side-by-side grid (rail + basket + divider +
+   products, measured 45.8rem). Scale <= 1 is never touched, and a scale
+   the window has room for is kept in full (1920 wide at 2). */
+:root {
+  --fluid-fs: clamp(17px, min(13.57px + 0.335vw, 13.25px + 0.625vh), 20px);
+  --ui-scale-min-width: calc(100vw / 28.3);
+}
+@media (min-width: 901px) { :root { --ui-scale-min-width: calc(100vw / 46); } }
+html { font-size: min(calc(var(--ui-scale, 1) * var(--fluid-fs)), max(var(--fluid-fs), var(--ui-scale-min-width))); }
 /* --ut-bundle-fonts: the font subsets installed language bundles ship
    (ADR-0160 §8, ut-docs#4374), declared by /plugin-fonts/bundle-fonts.css.
    They sit AFTER the generic sans-serif on purpose: a bundle font only
@@ -3846,14 +3854,20 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    NOT in the dialog (independent review) — a "step away from checkout"
    action must not cost a trip through Payment. flex-shrink: 0 so the row is
    never squeezed. Full history of this row's sizing: git log -p. */
-.tender-default-footer { display: flex; flex-direction: row; gap: .4rem; flex-shrink: 0; align-items: center; }
+.tender-default-footer { display: flex; flex-direction: row; flex-wrap: wrap; gap: .4rem; flex-shrink: 0; align-items: center; }
 /* ut-docs#2702: ONE action row — Pay takes every pixel the three 44px icon
    buttons (.tender-icon-btn above) leave. Pay is the one primary, text-
    labelled action here; it keeps the 2.75rem (44px) touch floor the icons
    use, so the row is one even height. min-width: 0 + ellipsis: a long
    "Pay £1,234.56" in a long locale shrinks inside its own box instead of
    pushing the icons off the row. */
-.tender-default-footer > .payment-trigger { flex: 1 1 auto; min-width: 0; min-height: 2.75rem;
+/* ut-docs#4897: at a high UI scale the side-by-side tender column is too
+   narrow (in rem) for Pay's label plus the three icons, and Pay gave way to
+   "Pa…". The row now wraps: Pay's basis is 7rem (about "Pay £12.50"), so
+   when it cannot keep that the icons drop beneath it. A longer label in a
+   row that still fits ellipsises inside its own box as before (#2702);
+   max-inline-size: 100% keeps it inside the column once on its own line. */
+.tender-default-footer > .payment-trigger { flex: 1 1 7rem; min-inline-size: 0; max-inline-size: 100%; min-height: 2.75rem;
   block-size: 2.75rem; padding: 0 .8rem; font-size: 1rem; font-weight: 700; line-height: 2.75rem;
   /* block (not .btn's inline-flex): text-overflow only applies to a block
      container's own text, never to a flex container's anonymous item. */
@@ -4626,6 +4640,12 @@ body.login-screen {
     display: inline-block; inline-size: 40%; margin-inline-end: .5rem; vertical-align: top;
     font-size: .75rem; line-height: 1.6; font-weight: 600; text-transform: uppercase;
     letter-spacing: .04em; color: var(--muted);
+    /* ut-docs#3881: the cell's anywhere-wrap is for data; inherited here it
+       split a long one-word header between any two letters ("GESAMTBETR" /
+       "AG" in German). A label breaks only between words or at a hyphenation
+       point of the page language, and its column grows past 40% to fit a
+       word that is longer than that. */
+    overflow-wrap: normal; hyphens: auto; min-inline-size: min-content;
   }
   /* ut-docs#3441: `:empty` alone misses a cell whose template left only
      whitespace text nodes (e.g. /orders' print-warning cell when nothing

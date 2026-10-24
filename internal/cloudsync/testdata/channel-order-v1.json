@@ -135,7 +135,8 @@
           "name": {
             "type": "string",
             "minLength": 1,
-            "description": "Product title as sold, for display of unlinked lines."
+            "maxLength": 256,
+            "description": "Product title as sold, for display of unlinked lines. At most 256, the bound of the channel host's personal-data gate, which lets this one free-text key through (sales-channel-v1.md section 9.3)."
           },
           "qty": {
             "type": "integer",
