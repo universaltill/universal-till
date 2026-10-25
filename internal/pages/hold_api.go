@@ -529,7 +529,6 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 		}
 		return resumeFailed
 	}
-	refreshHeldLinePhotos(ctx, data.NewCatalogRepo(d.Db), &snap)
 	// ut-docs#1919, independent review: the live basket can already BE this
 	// exact order (HeldOrigin().ID == id) -- most plausibly when a prior
 	// resume's repo.Delete below failed and left the row behind (the
@@ -599,6 +598,7 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 	// row simply stays ours. A failed/lost claim is logged, never fails
 	// the resume: the sale is restored either way, same philosophy as
 	// the Delete below.
+	refreshHeldLinePhotos(ctx, data.NewCatalogRepo(d.Db), &snap)
 	prevTable := d.Engine.TableID()
 	// ut-docs#1918: RestoreHeld, not Restore -- the resumed basket
 	// remembers which row it came from (id, label, first-parked time),

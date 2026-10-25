@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,19 +21,26 @@ func TestResumeHeldSale_ShowsCurrentItemPhoto_4958(t *testing.T) {
 	const newPhoto = "/public/assets/items/itm1/new-thumb.png"
 	cases := []struct {
 		name   string
-		change func(t *testing.T, repo *data.CatalogRepo)
+		change func(t *testing.T, repo *data.CatalogRepo, db *sql.DB)
 		want   string
 	}{
-		{"photo replaced while held", func(t *testing.T, repo *data.CatalogRepo) {
+		{"photo replaced while held", func(t *testing.T, repo *data.CatalogRepo, db *sql.DB) {
 			if err := repo.SetItemThumbnail(context.Background(), "itm1", newPhoto); err != nil {
 				t.Fatal(err)
 			}
 		}, newPhoto},
-		{"photo removed while held", func(t *testing.T, repo *data.CatalogRepo) {
+		{"photo removed while held", func(t *testing.T, repo *data.CatalogRepo, db *sql.DB) {
 			if err := repo.ClearItemThumbnail(context.Background(), "itm1"); err != nil {
 				t.Fatal(err)
 			}
 		}, ""},
+		// Best-effort: a photo read that fails keeps the snapshot's value and
+		// the resume still succeeds -- it never fails over a photo.
+		{"photo read fails", func(t *testing.T, repo *data.CatalogRepo, db *sql.DB) {
+			if _, err := db.Exec(`DROP TABLE item_images`); err != nil {
+				t.Fatal(err)
+			}
+		}, oldPhoto},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -71,7 +79,7 @@ func TestResumeHeldSale_ShowsCurrentItemPhoto_4958(t *testing.T) {
 				t.Fatalf("test setup: the snapshot should carry the old photo, got %s", payload)
 			}
 
-			tc.change(t, repo)
+			tc.change(t, repo, dp.Db)
 
 			req := httptest.NewRequest(http.MethodPost, "/api/pos/resume", strings.NewReader("id="+id))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
