@@ -205,6 +205,47 @@ func TestItemThumbnails_ReturnsPathsForItemsThatHaveOne(t *testing.T) {
 	}
 }
 
+// TestItemThumbnailsFor_BatchLookup (ut-docs#4958): only the asked-for ids
+// come back, an id without a thumbnail has no entry, empty input is an
+// empty map.
+func TestItemThumbnailsFor_BatchLookup(t *testing.T) {
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	ctx := context.Background()
+	repo := data.NewCatalogRepo(d.DB)
+
+	var ids []string
+	for _, n := range []string{"Latte", "Water", "Tea"} {
+		id, err := repo.CreateItem(ctx, catalogtypes.ItemInput{Name: n, BasePrice: 150, IsActive: true})
+		if err != nil {
+			t.Fatalf("CreateItem: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	latte, water, tea := ids[0], ids[1], ids[2]
+	for _, id := range []string{latte, tea} {
+		if err := repo.SetItemThumbnail(ctx, id, "/public/assets/items/"+id+"/thumb.png"); err != nil {
+			t.Fatalf("SetItemThumbnail: %v", err)
+		}
+	}
+
+	got, err := repo.ItemThumbnailsFor(ctx, []string{latte, water})
+	if err != nil {
+		t.Fatalf("ItemThumbnailsFor: %v", err)
+	}
+	if len(got) != 1 || got[latte] != "/public/assets/items/"+latte+"/thumb.png" {
+		t.Fatalf("ItemThumbnailsFor = %v, want only %s's thumb", got, latte)
+	}
+
+	empty, err := repo.ItemThumbnailsFor(ctx, nil)
+	if err != nil || empty == nil || len(empty) != 0 {
+		t.Fatalf("ItemThumbnailsFor(nil) = %v, %v; want empty non-nil map, nil", empty, err)
+	}
+}
+
 // TestItemThumbnailFor_EmptyWhenNone mirrors ItemBarcodesFor's single-item
 // counterpart: writeCatalogRowOOB needs one item's thumbnail path without
 // paying for the whole-table map.

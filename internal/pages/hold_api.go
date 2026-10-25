@@ -447,6 +447,42 @@ func cancelHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 	return cancelOK
 }
 
+// refreshHeldLinePhotos (ut-docs#4958) sets every item line of a recalled
+// held sale to its item's CURRENT thumbnail, or "" when it has none now: the
+// snapshot's ImageURL is a hold-time copy, so a photo replaced or removed
+// while the sale was parked would otherwise come back (or point at an upload
+// file that no longer exists). Same rule as the ut-docs#820 table label in
+// resumeHeldSale -- catalogue-derived display data is re-resolved, never
+// trusted from the payload. Item photos are per-till local files, so reading
+// this till's own item_images is also right for an order parked on another
+// till (replica/primary). Each distinct item id is read once, in one query;
+// lines without an ItemID keep their value. Best-effort like
+// catalog.RefreshBasketPhoto: a read error is logged and the snapshot values
+// stay, a resume never fails over a photo (offline-first).
+func refreshHeldLinePhotos(ctx context.Context, catRepo *data.CatalogRepo, snap *pos.BasketSnapshot) {
+	seen := map[string]bool{}
+	var ids []string
+	for _, l := range snap.Lines {
+		if l.ItemID != "" && !seen[l.ItemID] {
+			seen[l.ItemID] = true
+			ids = append(ids, l.ItemID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	thumbs, err := catRepo.ItemThumbnailsFor(ctx, ids)
+	if err != nil {
+		log.Printf("resume: refresh held line photos: %v", err)
+		return
+	}
+	for i := range snap.Lines {
+		if id := snap.Lines[i].ItemID; id != "" {
+			snap.Lines[i].ImageURL = thumbs[id]
+		}
+	}
+}
+
 // resumeHeldSale resumes held sale `id` into the live basket. ut-docs#1919:
 // a busy basket (HasItems()) is no longer refused -- it is auto-parked first
 // (parkCurrentBasket, the identical path a manual Hold takes), so switching
@@ -493,6 +529,7 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 		}
 		return resumeFailed
 	}
+	refreshHeldLinePhotos(ctx, data.NewCatalogRepo(d.Db), &snap)
 	// ut-docs#1919, independent review: the live basket can already BE this
 	// exact order (HeldOrigin().ID == id) -- most plausibly when a prior
 	// resume's repo.Delete below failed and left the row behind (the
