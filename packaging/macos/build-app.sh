@@ -105,10 +105,21 @@ else
   SIGN_ARGS=(--force --timestamp=none --sign -)
 fi
 # Sign inner binaries first, then the bundle, so --verify passes.
-codesign "${SIGN_ARGS[@]}" "$APP/Contents/MacOS/unitill-pos"
+# unitill-pos needs allow-unsigned-executable-memory (wazero compiles WASM to
+# machine code with mmap+mprotect) or the hardened runtime kills it on start
+# (ut-docs#5023). The bundle pass has no --deep: it re-signs nested code
+# and silently drops the entitlements just applied (the check below guards it).
+ENTITLEMENTS="$REPO_ROOT/packaging/macos/entitlements.plist"
+codesign "${SIGN_ARGS[@]}" --entitlements "$ENTITLEMENTS" "$APP/Contents/MacOS/unitill-pos"
 codesign "${SIGN_ARGS[@]}" "$APP/Contents/MacOS/unitill-desktop"
-codesign "${SIGN_ARGS[@]}" --deep "$APP"
-codesign --verify --deep --strict "$APP" && echo "    signature valid"
+codesign "${SIGN_ARGS[@]}" "$APP"
+codesign --verify --deep --strict "$APP" || { echo "ERROR: bundle signature invalid" >&2; exit 1; }
+echo "    signature valid"
+POS_ENTS="$(codesign -d --entitlements - "$APP/Contents/MacOS/unitill-pos" 2>&1)" || true
+case "$POS_ENTS" in
+  *com.apple.security.cs.allow-unsigned-executable-memory*"[Bool] true"*) ;;
+  *) echo "ERROR: unitill-pos lost its allow-unsigned-executable-memory entitlement" >&2; exit 1 ;;
+esac
 
 echo
 echo "Built: $APP"
