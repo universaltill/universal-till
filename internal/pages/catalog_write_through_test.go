@@ -2,8 +2,10 @@ package pages
 
 import (
 	"bytes"
+	"fmt"
 	"html"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -35,24 +37,80 @@ var (
 	catalogCashier = auth.User{ID: "c-1", Username: "cara", DisplayName: "Cara", Role: "cashier"}
 )
 
+// catalogPairSeq numbers the pairs of this test binary (see
+// newCatalogWriteThroughPairOn).
+var catalogPairSeq atomic.Int64
+
 type catalogWriteThroughPair struct {
 	main    *syncCatalogMain
 	replica *syncCatalogMain
 	calls   *atomic.Int64
+	mainURL string
 }
 
 func newCatalogWriteThroughPair(t *testing.T) catalogWriteThroughPair {
 	t.Helper()
+	return newCatalogWriteThroughPairOn(t, nil)
+}
+
+// newCatalogWriteThroughPairOn builds the pair with the main till listening
+// on ln (nil: an ephemeral port). Every pair's main-till URL carries a unique
+// path prefix: the kernel hands a closed test server's port to a later one,
+// and catalogsync's in-memory save chains are keyed by main-till URL, so a
+// bare host:port would let a pair inherit an earlier pair's chain
+// (ut-docs#4985).
+func newCatalogWriteThroughPairOn(t *testing.T, ln net.Listener) catalogWriteThroughPair {
+	t.Helper()
 	main := newSyncCatalogMain(t)
 	calls := &atomic.Int64{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	prefix := fmt.Sprintf("/pair-%d", catalogPairSeq.Add(1))
+	srv := httptest.NewUnstartedServer(http.StripPrefix(prefix, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		main.mux.ServeHTTP(w, r)
-	}))
+	})))
+	if ln != nil {
+		_ = srv.Listener.Close()
+		srv.Listener = ln
+	}
+	srv.Start()
 	t.Cleanup(srv.Close)
+	mainURL := srv.URL + prefix
 	replica := newCatalogTill(t)
-	setReplicaSettings(t, replica.dp.Settings, srv.URL, syncCatalogBearer)
-	return catalogWriteThroughPair{main: main, replica: replica, calls: calls}
+	setReplicaSettings(t, replica.dp.Settings, mainURL, syncCatalogBearer)
+	return catalogWriteThroughPair{main: main, replica: replica, calls: calls, mainURL: mainURL}
+}
+
+// ut-docs#4985: httptest closes a test's main till and the kernel reuses its
+// 127.0.0.1:PORT for a later one, while every pair seeds cat1 with the same
+// stamp. Pairs carry a unique main-till URL, so a pair at a reused address
+// shares none of the earlier one's recentSaves entries; otherwise its first
+// save is sent with a stale "latest" stamp and the fresh main till refuses it
+// (409).
+func TestCatalogWriteThrough_PairAtAReusedAddressStartsClean(t *testing.T) {
+	save := func(p catalogWriteThroughPair) int {
+		return postFormHtmx(p.replica.mux, "/api/designer/categories/cat1",
+			url.Values{"name": {"One"}, "base_updated_at": {"2026-01-01 08:00:00"}}, &catalogMgr).Code
+	}
+	var addr string
+	t.Run("earlier pair", func(t *testing.T) {
+		p := newCatalogWriteThroughPair(t)
+		u, err := url.Parse(p.mainURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		addr = u.Host
+		if code := save(p); code != http.StatusNoContent {
+			t.Fatalf("earlier pair save = %d, want 204", code)
+		}
+	})
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("re-listen on %s: %v", addr, err)
+	}
+	p := newCatalogWriteThroughPairOn(t, ln)
+	if code := save(p); code != http.StatusNoContent {
+		t.Fatalf("first save on a fresh pair at a reused address = %d, want 204", code)
+	}
 }
 
 func newCatalogReplicaOf(t *testing.T, mainURL string) *syncCatalogMain {
