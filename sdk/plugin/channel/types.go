@@ -62,28 +62,52 @@ type StockObserved struct {
 	Available int64  `json:"available"`
 }
 
-// Order (record kind "order"). It carries no customer name, address, email
-// or phone: those are fetched live through AskContact and never stored.
+// Order (record kinds "order", "order_update" and "refund"; contract
+// sections 2 and 9.1). It carries no customer name, address, email or phone:
+// those are fetched live through AskContact and never stored. Money is
+// integer minor units and tax is basis points. Every field except
+// CloudID, PaymentState and Customer is required by the cloud intake, so
+// none of them uses omitempty: a zero amount, a 0 tax_bp or a false
+// tax_included must be on the wire, or the record is rejected
+// (invalid_order, bad_amount, bad_tax_rate, ...). Identity is
+// shared with the other kinds, so its ExternalVersion keeps omitempty here;
+// an order must still set it (the cloud rejects a missing external_version).
 type Order struct {
 	Identity
-	PlacedAt      string       `json:"placed_at"`
-	Currency      string       `json:"currency"`
-	Status        string       `json:"status"`
-	Lines         []OrderLine  `json:"lines"`
-	ShippingMinor int64        `json:"shipping_minor,omitempty"`
-	TotalMinor    int64        `json:"total_minor"`
-	Customer      *CustomerRef `json:"customer,omitempty"`
+	OrderNumber         string       `json:"order_number"`
+	PlacedAt            string       `json:"placed_at"`
+	Currency            string       `json:"currency"`
+	Status              string       `json:"status"` // as the channel reports it; the cloud owns the canonical status
+	PaymentState        string       `json:"payment_state,omitempty"`
+	Lines               []OrderLine  `json:"lines"`
+	ShippingMinor       int64        `json:"shipping_minor"`
+	ShippingTaxBP       int64        `json:"shipping_tax_bp"`
+	ShippingTaxIncluded bool         `json:"shipping_tax_included"`
+	OrderDiscountMinor  int64        `json:"order_discount_minor"`
+	TaxAddedMinor       int64        `json:"tax_added_minor"`
+	RefundTotalMinor    int64        `json:"refund_total_minor"`
+	TotalMinor          int64        `json:"total_minor"`
+	Customer            *CustomerRef `json:"customer,omitempty"`
 }
 
-// OrderLine is one line of an Order.
+// OrderLine is one line of an Order. Name is the product title (the one
+// `name` the personal-data gate lets through, section 9.3): keep it at most
+// 250 bytes. DiscountLineMinor is the discount on the whole line, not per
+// unit. Qty is the quantity ordered and is never lowered by a refund;
+// RefundedQuantity and RestockedQuantity are cumulative, and
+// RestockedQuantity never exceeds RefundedQuantity, which never exceeds Qty.
 type OrderLine struct {
 	ExternalID        string `json:"external_id"`
 	VariantExternalID string `json:"variant_external_id,omitempty"`
-	SKU               string `json:"sku,omitempty"`
+	SKU               string `json:"sku"` // "" when the line is not linked to a SKU
+	Name              string `json:"name"`
 	Qty               int64  `json:"qty"`
 	UnitPriceMinor    int64  `json:"unit_price_minor"`
-	TaxBP             int64  `json:"tax_bp,omitempty"`
-	DiscountMinor     int64  `json:"discount_minor,omitempty"`
+	TaxBP             int64  `json:"tax_bp"`
+	TaxIncluded       bool   `json:"tax_included"`
+	DiscountLineMinor int64  `json:"discount_line_minor"`
+	RefundedQuantity  int64  `json:"refunded_quantity"`
+	RestockedQuantity int64  `json:"restocked_quantity"`
 }
 
 // CustomerRef is the only customer data an order carries.
@@ -92,19 +116,15 @@ type CustomerRef struct {
 	Country    string `json:"country,omitempty"`
 }
 
-// OrderUpdate (record kind "order_update") moves an order's status.
-type OrderUpdate struct {
-	Identity
-	Status string `json:"status"`
-}
+// OrderUpdate (record kind "order_update") is the same full-order shape as
+// Order, not a delta (contract 9.1): the kind only says why the plugin sends
+// it. Send the whole current order.
+type OrderUpdate = Order
 
-// Refund (record kind "refund").
-type Refund struct {
-	Identity
-	OrderExternalID string `json:"order_external_id"`
-	AmountMinor     int64  `json:"amount_minor"`
-	Currency        string `json:"currency"`
-}
+// Refund (record kind "refund") is likewise the whole current order with the
+// refund fields (RefundTotalMinor, each line's RefundedQuantity and
+// RestockedQuantity) filled in (contract 9.1).
+type Refund = Order
 
 // Customer (record kind "customer"), only when customer sync is on.
 type Customer struct {
