@@ -81,4 +81,12 @@ worktree.
 - `go test ./...` failed once, in an unrelated package:
   `cloudsync.TestStockUploadLoopDebouncesOnTheRealtimeTier`. That run
   overlapped the reviewer's race runs. The test passes 10 times out of 10 on
-  its own, and it is filed as a Backlog flake card.
+  its own, and it is filed as a Backlog flake card. In that same loaded run,
+  `internal/plugins` hit Go's default 10-minute test timeout. This diff
+  doesn't touch that package; CI's `test-heavy (internal/plugins)` job is
+  the gate for it.
+- The first CI run failed `build` on `guard-docs-shots_test.sh`: the
+  `forward.go` comment changed the docs-shots surface hash. No rendered
+  pixel changes (one comment, plus test files outside the surface), so the
+  hash was refreshed with `scripts/ci/update-docs-shots-surface-hash.sh`
+  (`Docs-Shots-Unchanged: true`), not by regenerating screenshots.
