@@ -673,6 +673,37 @@ func (s *Service) ScanQtyWithResult(code string, qty float64) (*Basket, bool, er
 	return s.basketCopyLocked(), found, nil
 }
 
+// SetItemImage points every open-sale line (and cached scan) of itemID at
+// imageURL — "" clears it — so a photo added, replaced or removed in the
+// item editor mid-sale shows on that sale's basket row without a re-ring
+// (ut-docs#4838). Without it the lines keep the ImageURL resolved when the
+// item was first rung up and the scan cache replays it on every repeat
+// scan; mergeResolved never overwrites with an empty one. No-op for an
+// empty itemID. Republishes the basket when anything changed.
+func (s *Service) SetItemImage(itemID, imageURL string) {
+	if itemID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := false
+	for i := range s.lines {
+		if s.lines[i].ItemID == itemID && s.lines[i].ImageURL != imageURL {
+			s.lines[i].ImageURL = imageURL
+			changed = true
+		}
+	}
+	for code, l := range s.scanCache {
+		if l.ItemID == itemID && l.ImageURL != imageURL {
+			l.ImageURL = imageURL
+			s.scanCache[code] = l
+		}
+	}
+	if changed {
+		s.recomputeTotals()
+	}
+}
+
 // scanQty is the lock-free core shared by Scan/ScanQty/ScanQtyWithResult.
 // Caller must hold s.mu.
 func (s *Service) scanQty(code string, qty float64) (*Basket, bool) {
