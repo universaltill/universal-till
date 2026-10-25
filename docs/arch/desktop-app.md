@@ -34,6 +34,20 @@ still asks the user to confirm the first launch. The `.dmg`
 - double-click **“Open Universal Till.command”** in the DMG, which clears the
   quarantine attribute and launches it.
 
+### Hardened runtime and entitlements (ut-docs#5023)
+
+A Developer ID build (`MACOS_SIGN_IDENTITY` set) signs with the hardened
+runtime, which forbids making memory executable. `unitill-pos` compiles WASM
+plugins to machine code at runtime (wazero: `mmap` + `mprotect(RX)`, not
+`MAP_JIT`), so it carries `com.apple.security.cs.allow-unsigned-executable-memory`
+from `packaging/macos/entitlements.plist` — and only that one;
+`allow-jit` alone is not enough. `unitill-desktop` (WKWebView) needs none.
+Inner binaries are signed first, then the bundle **without `--deep`**
+(`--deep` re-signs nested code and drops its entitlements); the script fails
+the build if the entitlement is missing. An ad-hoc build has no hardened
+runtime, so it runs even without the entitlement: only a hardened build proves
+the fix.
+
 ## Building
 
 ```sh
