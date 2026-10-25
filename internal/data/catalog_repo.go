@@ -2835,6 +2835,38 @@ func (r *CatalogRepo) ItemThumbnailFor(ctx context.Context, itemID string) (stri
 	return path, nil
 }
 
+// ItemThumbnailsFor returns the current thumbnail path (item_images,
+// role=thumbnail) of each of itemIDs, keyed by item id, in one query -- the
+// batch counterpart to ItemThumbnailFor for a caller holding a handful of
+// ids (a recalled held sale's lines, ut-docs#4958) that would otherwise pay
+// one query per line or load the whole-table ItemThumbnails map. An id with
+// no thumbnail row has no entry; empty input returns an empty map without
+// touching the database.
+func (r *CatalogRepo) ItemThumbnailsFor(ctx context.Context, itemIDs []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(itemIDs) == 0 {
+		return out, nil
+	}
+	args := make([]any, len(itemIDs))
+	for i, id := range itemIDs {
+		args[i] = id
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT item_id, path FROM item_images WHERE role = 'thumbnail' AND item_id IN (?`+strings.Repeat(",?", len(itemIDs)-1)+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, path string
+		if err := rows.Scan(&id, &path); err != nil {
+			return nil, err
+		}
+		out[id] = path
+	}
+	return out, rows.Err()
+}
+
 // SetItemThumbnail unconditionally sets an item's thumbnail (item_images,
 // role=thumbnail) to path — updating an existing row if one exists,
 // inserting one if not. Unlike EnsureDefaultThumbnail above, this DOES

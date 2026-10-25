@@ -134,9 +134,17 @@ type OutboxOp struct {
 // Ack acknowledges one OutboxOp. An Error with Retryable false dead-letters
 // the operation.
 type Ack struct {
-	ExternalID      string    `json:"external_id,omitempty"`
-	ExternalVersion string    `json:"external_version,omitempty"`
-	Error           *AckError `json:"error,omitempty"`
+	ExternalID      string `json:"external_id,omitempty"`
+	ExternalVersion string `json:"external_version,omitempty"`
+	// RefundedAmountMinor is, on the success of a `refund.create`, the refund
+	// money (integer minor units) the channel moved for it, read back from the
+	// channel (sales-channel-v1 §8.5, ut-docs#4904). The cloud counts it
+	// instead of the operation's whole max_amount_minor when it works out the
+	// next refund's ceiling. Optional, and never together with Error. Send it
+	// only to a host that lists it: an older host refuses an ack object with
+	// an unknown field (-4).
+	RefundedAmountMinor *int64    `json:"refunded_amount_minor,omitempty"`
+	Error               *AckError `json:"error,omitempty"`
 }
 
 // AckError is a failed operation.

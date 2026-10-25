@@ -503,6 +503,9 @@ func cloudSetCatalogImage(ctx context.Context, d *common.Deps, img cloudsync.Cat
 		if err != nil {
 			return "", err
 		}
+		if img.Entity == "item" {
+			catalog.RefreshBasketPhoto(ctx, d, repo, img.ID)
+		}
 		audit("cloud_catalog_image_cleared", nil)
 		return msg, nil
 	}
@@ -532,6 +535,9 @@ func cloudSetCatalogImage(ctx context.Context, d *common.Deps, img cloudsync.Cat
 	}
 	if err != nil {
 		return "", err
+	}
+	if img.Entity == "item" {
+		catalog.RefreshBasketPhoto(ctx, d, repo, img.ID)
 	}
 	if after := cloudsync.ServedImageSHA256(target); before == "" || after != before {
 		audit("cloud_catalog_image_set", map[string]any{"sha256": img.SHA256, "size": img.Size})
