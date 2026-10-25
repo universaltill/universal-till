@@ -244,12 +244,15 @@ type WebhookInput struct {
 
 // WebhookResult is what the guest returns. Event is one of the Event*
 // constants. The host takes the tenant from its own verification, never from
-// this output.
+// this output. OrderIDs is for EventCustomerRedact only: the external order
+// ids the channel says belong to the erased customer, so the host can flag
+// orders that carry no customer id (ut-docs#4929).
 type WebhookResult struct {
 	Account     string   `json:"account"`
 	DedupeID    string   `json:"dedupe_id"`
 	Event       string   `json:"event"`
 	ResourceIDs []string `json:"resource_ids,omitempty"`
+	OrderIDs    []string `json:"order_ids,omitempty"`
 }
 
 // ContactInput / ContactResult: AskContact returns an order's customer
