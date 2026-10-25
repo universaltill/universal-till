@@ -214,7 +214,8 @@ func hasFile(r *http.Request) bool {
 // recentSavesTTL (many admin pulls), the oldest is dropped past
 // recentSavesMax records, and a restart forgets everything (the next pull
 // makes the re-rendered stamps current again). Entries are keyed per main
-// till URL, so tests (each pair on its own httptest server) never share one.
+// till URL; test pairs give each main till a unique URL path, because
+// the kernel reuses a closed server's port (ut-docs#4985).
 var recentSaves = &savedStamps{m: map[string]*savedStamp{}, now: time.Now}
 
 const (
