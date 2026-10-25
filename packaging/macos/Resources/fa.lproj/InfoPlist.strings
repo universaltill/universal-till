@@ -1,0 +1,2 @@
+/* Local Network permission text (ut-docs#5026). */
+"NSLocalNetworkUsageDescription" = "برنامهٔ Universal Till در شبکهٔ فروشگاه شما چاپگرهای رسید و صندوق‌های دیگرتان را جستجو می‌کند تا بدون نوشتن نشانی آن‌ها را وصل کنید.";

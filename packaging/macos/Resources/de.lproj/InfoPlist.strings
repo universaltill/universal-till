@@ -1,0 +1,2 @@
+/* Local Network permission text (ut-docs#5026). */
+"NSLocalNetworkUsageDescription" = "Universal Till sucht in Ihrem Geschäftsnetzwerk nach Bondruckern und Ihren anderen Kassen, damit Sie diese verbinden können, ohne Adressen einzutippen.";

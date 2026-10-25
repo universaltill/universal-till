@@ -56,6 +56,9 @@ cp packaging/pos.env.example "$APP/Contents/Resources/pos.env"
 
 echo "==> Info.plist"
 sed "s/__VERSION__/${VERSION}/g" packaging/macos/Info.plist > "$APP/Contents/Info.plist"
+# Localised Local Network permission text (<lang>.lproj/InfoPlist.strings,
+# ut-docs#5026). Staged before codesign so the bundle seal covers it.
+cp -R packaging/macos/Resources/. "$APP/Contents/Resources/"
 
 echo "==> app icon"
 ICONSET="$(mktemp -d)/AppIcon.iconset"
