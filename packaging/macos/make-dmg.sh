@@ -39,8 +39,28 @@ DATA_DIR="$HOME/Library/Application Support/UniversalTill"
 echo "Universal Till - uninstall"
 echo
 osascript -e 'quit app "Universal Till"' 2>/dev/null || true
-pkill -x unitill-pos 2>/dev/null || true
-sleep 1
+# Wait for the till to really exit before deleting anything (ut-docs#5049).
+pkill -u "$(id -u)" -x unitill-pos 2>/dev/null || true
+n=0
+while pgrep -u "$(id -u)" -x unitill-pos >/dev/null 2>&1 && [ "$n" -lt 15 ]; do
+  sleep 1
+  n=$((n + 1))
+done
+if pgrep -u "$(id -u)" -x unitill-pos >/dev/null 2>&1; then
+  pkill -9 -u "$(id -u)" -x unitill-pos 2>/dev/null || true
+  n=0
+  while pgrep -u "$(id -u)" -x unitill-pos >/dev/null 2>&1 && [ "$n" -lt 5 ]; do
+    sleep 1
+    n=$((n + 1))
+  done
+fi
+if pgrep -u "$(id -u)" -x unitill-pos >/dev/null 2>&1; then
+  echo "The till is still running and could not be stopped."
+  echo "Quit Universal Till, then run this uninstaller again."
+  echo "Nothing was deleted."
+  read -r -p "Press Return to close." _
+  exit 1
+fi
 if [ -d "/Applications/Universal Till.app" ]; then
   rm -rf "/Applications/Universal Till.app"
   echo "Removed /Applications/Universal Till.app"
