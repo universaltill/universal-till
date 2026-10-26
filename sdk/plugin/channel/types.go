@@ -253,6 +253,10 @@ type WebhookResult struct {
 	Event       string   `json:"event"`
 	ResourceIDs []string `json:"resource_ids,omitempty"`
 	OrderIDs    []string `json:"order_ids,omitempty"`
+	// OrderIDsTruncated is for EventCustomerRedact only: the channel named
+	// more than the host's 10,000 order ids; OrderIDs holds the first 10,000
+	// distinct ones (ut-docs#5002).
+	OrderIDsTruncated bool `json:"order_ids_truncated,omitempty"`
 }
 
 // ContactInput / ContactResult: AskContact returns an order's customer
