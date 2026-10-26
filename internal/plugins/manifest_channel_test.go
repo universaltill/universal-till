@@ -341,3 +341,20 @@ func TestParseManifest_ChannelRealShopifyShapedSuffixIsAccepted(t *testing.T) {
 		t.Fatalf("a private platform suffix must be accepted: %v", err)
 	}
 }
+
+// ut-docs#4907: item_create is an optional capability; only push is read.
+func TestParseManifest_ChannelItemCreateCapability(t *testing.T) {
+	for _, dir := range []string{"push", "pull", "both"} {
+		t.Run(dir, func(t *testing.T) {
+			m := channelFixture(t)
+			setPath(t, m, "channel.capabilities.item_create", dir)
+			mf, err := parseChannel(t, m)
+			if err != nil {
+				t.Fatalf("item_create %q must be accepted: %v", dir, err)
+			}
+			if got := mf.Channel.Capabilities["item_create"]; got != dir {
+				t.Fatalf("item_create = %q, want %q", got, dir)
+			}
+		})
+	}
+}

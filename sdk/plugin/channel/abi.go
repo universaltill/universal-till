@@ -76,6 +76,7 @@ const (
 	CapCancel     = "cancel"
 	CapCustomers  = "customers"
 	CapCompareAt  = "compare_at"
+	CapItemCreate = "item_create" // only push is read; absent = cannot create products
 
 	DirPush = "push" // UT to channel
 	DirPull = "pull" // channel to UT
