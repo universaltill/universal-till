@@ -14,6 +14,10 @@
 
 Every English bullet was fact-checked against the merged diffs and help topics; headings match each locale's previous notes. `guard-release-notes.sh v0.34.20` ok; `go test ./internal/releasenotes/...` ok; compliance and competitor-naming guards ok.
 
+## Addendum (rebase onto main)
+
+Main gained #2163 (backup copy-off reminder chip) before merge; it ships in v0.34.20, so one Improved bullet was added in all five languages using each locale's own chip text. Second Sonnet check: approved, wording matches the locale strings and help, managers-only and what clears it verified in the handler.
+
 ## Verdict
 
 Safe to merge.
