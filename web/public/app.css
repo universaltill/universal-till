@@ -7059,3 +7059,11 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 .channel-order-scroll { overflow-x: auto; max-inline-size: 100%; }
 .channel-order-link { display: inline-flex; align-items: center; min-block-size: 44px; min-inline-size: 44px; }
 .channel-order-key { overflow-wrap: anywhere; word-break: break-all; }
+/* ut-docs#5070: Settings → Backups → Restore from a file, and the welcome
+   page's restore line. Logical properties only (RTL). */
+.backup-upload { margin-block-start: 1rem; }
+.backup-upload h3 { margin-block: 0 .25rem; }
+.backup-upload-form input[type="file"] { max-inline-size: 100%; min-block-size: 44px; }
+.backup-upload-facts { margin-block: .25rem .5rem; padding-inline-start: 1.25rem; }
+.backup-upload-ready form { margin-block-start: .5rem; }
+.import-welcome-restore { margin-block-start: 1rem; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }

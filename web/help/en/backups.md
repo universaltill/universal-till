@@ -28,6 +28,20 @@ instead.
 
 A restore keeps this till's own connection to your shop's cloud account, also when the backup was made on another till. If the file turns out not to be a backup this till can use, it keeps your current data, and Settings → Backups says the restore was not applied.
 
+## Restoring from a file
+
+Use this on a new till, or on one that replaces a broken till, with a backup file you copied off the old till (a USB stick, another computer, the Downloads folder).
+
+1. Settings → Backups → **Restore from a file**: choose the file (it is named `unitill-pos-….db`) and press **Check the file**.
+2. The till checks that the file is a Universal Till backup of this shop, made by this version or an older one, and shows the shop name, how many sales it holds and the newest sale. Sales made after that are not in the backup.
+3. Press **Restore this backup** and confirm with your manager PIN. The till backs up its current data first; then restart it as described above.
+
+Use a file from the old till's `backups` folder or one saved with **Save to Downloads**. If you copy the live database file `unitill-pos.db` from a broken till's disk instead, copy the `unitill-pos.db-wal` and `unitill-pos.db-shm` files next to it too, or the last sales are missing.
+
+At the end of setup, the welcome page has a **Restore a backup** button that opens the same place.
+
+A restored backup brings back products, sales, receipts, staff with their PINs, customers, settings, stock levels and photos as they were when the backup was made. Card terminal and payment plugin keys are not in a backup: enter them again.
+
 ## Automatic clean-up
 
 Once a day the till removes files it no longer needs, so its disk doesn't fill up:

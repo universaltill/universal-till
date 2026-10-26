@@ -337,6 +337,11 @@ func keepLiveCloudIdentity(dbPath, pending string) error {
 		return fmt.Errorf("open staged restore: %w", err)
 	}
 	werr := func() error {
+		// A trigger the file brought along must not act on the rewrite
+		// (ut-docs#5070 review: one could re-insert the backup's token).
+		if err := checkSettingsTriggers(pd, filepath.Join(filepath.Dir(pending), backupDirName)); err != nil {
+			return err
+		}
 		tx, err := pd.Begin()
 		if err != nil {
 			return err

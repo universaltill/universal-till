@@ -2,6 +2,7 @@ package pages
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -13,7 +14,9 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/diskspace"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/procrestart"
@@ -277,6 +280,23 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 			_ = posRepo.InsertAudit(r.Context(), nil, actorID, "backup", "-", action, payload, now, "")
 		}
+		// ut-docs#5070: back up the current data first, so whatever the
+		// restore replaces is one ordinary backup away (besides the
+		// pre-restore copy boot sets aside). No snapshot, no restore. A
+		// snapshot whose photos could not be added still holds every row.
+		if dir, derr := db.BackupDir(dbPath); derr == nil {
+			if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+				auditElev("restore_stage_failed", map[string]any{"file": name, "error": err.Error()})
+				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "settings.backup.stage_failed", "backup_restore", err)
+				return
+			}
+		}
+		safety, serr := snapshotWithAssets(d.Db, dbPath, paths.Data("public", "assets"))
+		if safety == "" {
+			auditElev("restore_stage_failed", map[string]any{"file": name, "error": fmt.Sprintf("safety backup: %v", serr)})
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.backup.safety_failed", "backup_restore", serr)
+			return
+		}
 		if err := db.StageRestore(dbPath, name); err != nil {
 			// Raw err.Error() here is intentional, not a leak (ut-docs#947
 			// Problem 1 — see the same note on "backup_failed" above).
@@ -284,7 +304,10 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "settings.backup.stage_failed", "backup_restore", err)
 			return
 		}
-		auditElev("restore_staged", map[string]any{"file": name})
+		auditElev("restore_staged", map[string]any{"file": name, "safety_backup": filepath.Base(safety)})
+		// After staging, never before: pruning first could remove the very
+		// (oldest) backup being restored.
+		_ = db.PruneBackups(dbPath, db.DefaultBackupKeep)
 		// ut-docs#1613: the old flat "restart the till to finish" text was a
 		// dead end identical to pairing_wait.html's pre-#1550 "joined"
 		// screen — this reuses the same internal/procrestart mechanism via
@@ -292,6 +315,105 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 		// instruction they can't act on.
 		httpx.RenderPartial("ui/partials/backup_restore_staged.html", map[string]any{
 			"restartSupported": backupRestartSupported(),
+		})(w, r)
+	})
+
+	// ut-docs#5070: "Restore from a file". The upload is checked and kept
+	// as an ordinary backup (db.ImportBackupFile: SQLite header, integrity,
+	// schema not newer than this build, the same shop, opened through the
+	// real boot path), then the answer shows what is in it and a Restore
+	// button for exactly that file — the existing step-up restore above.
+	// Nothing changes until then. deny() first: a cashier is refused on the
+	// server, not only by the hidden form (cashier-is-sale-only).
+	mux.HandleFunc("POST /api/backup/upload", func(w http.ResponseWriter, r *http.Request) {
+		if deny(w, r) {
+			return
+		}
+		locale := httpx.ResolveLocale(w, r)
+		fail := func(status int, msg string) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(status)
+			fmt.Fprintf(w, `<p role="alert" data-testid="backup-upload-error"><span class="row-warn-icon" aria-hidden="true">⚠</span>%s</p>`, template.HTMLEscapeString(msg))
+		}
+		dir, err := db.BackupDir(dbPath)
+		if err != nil {
+			logging.L().Errorf("[backup_upload] %v", err)
+			fail(http.StatusInternalServerError, httpx.T(locale, "settings.backup.upload.error.failed"))
+			return
+		}
+		limit := backupUploadCap(dir)
+		if limit <= 0 {
+			fail(http.StatusInsufficientStorage, httpx.T(locale, "settings.backup.upload.error.no_space"))
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, limit+backupUploadFormOverhead)
+		mr, err := r.MultipartReader()
+		if err != nil {
+			fail(http.StatusBadRequest, httpx.T(locale, "settings.backup.upload.error.no_file"))
+			return
+		}
+		var (
+			got     db.ImportedBackup
+			haveOne bool
+			ierr    error
+		)
+		for {
+			part, perr := mr.NextPart()
+			if perr != nil {
+				if perr != io.EOF {
+					ierr = perr
+				}
+				break
+			}
+			if part.FormName() != "file" || haveOne {
+				_ = part.Close()
+				continue
+			}
+			haveOne = true
+			got, ierr = db.ImportBackupFile(dbPath, part, limit, backupLiveStoreID(r, d))
+			_ = part.Close()
+			if ierr != nil {
+				break
+			}
+		}
+		var maxErr *http.MaxBytesError
+		switch {
+		case errors.Is(ierr, db.ErrBackupTooLarge) || errors.As(ierr, &maxErr):
+			fail(http.StatusRequestEntityTooLarge, fmt.Sprintf(httpx.T(locale, "settings.backup.upload.error.too_large"), formatBackupBytes(limit)))
+			return
+		case errors.Is(ierr, db.ErrBackupTooOld):
+			fail(http.StatusConflict, httpx.T(locale, "settings.backup.upload.error.too_old"))
+			return
+		case errors.Is(ierr, db.ErrBackupNewer):
+			fail(http.StatusConflict, httpx.T(locale, "settings.backup.upload.error.newer"))
+			return
+		case errors.Is(ierr, db.ErrBackupOtherShop):
+			fail(http.StatusConflict, httpx.T(locale, "settings.backup.upload.error.other_shop"))
+			return
+		case errors.Is(ierr, db.ErrNotTillBackup):
+			logging.L().Infof("[backup_upload] refused: %v", ierr)
+			fail(http.StatusBadRequest, httpx.T(locale, "settings.backup.upload.error.not_backup"))
+			return
+		case ierr != nil:
+			logging.L().Errorf("[backup_upload] %v", ierr)
+			fail(http.StatusInternalServerError, httpx.T(locale, "settings.backup.upload.error.failed"))
+			return
+		case !haveOne:
+			fail(http.StatusBadRequest, httpx.T(locale, "settings.backup.upload.error.no_file"))
+			return
+		}
+		audit(r, "backup_uploaded", map[string]any{"file": got.Name, "sales": got.Sales})
+		hasSales, _ := posRepo.HasCompletedSales(r.Context())
+		newest := ""
+		if !got.NewestSale.IsZero() {
+			newest = httpx.FormatDateTime(got.NewestSale.Local(), locale)
+		}
+		httpx.RenderPartial("ui/partials/backup_upload_ready.html", map[string]any{
+			"name":         got.Name,
+			"shopName":     got.ShopName,
+			"sales":        got.Sales,
+			"newestSale":   newest,
+			"hasLiveSales": hasSales,
 		})(w, r)
 	})
 
@@ -323,4 +445,52 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 		backupRestartFn()
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]bool{"restarting": true}, "error": nil})
 	})
+}
+
+// maxBackupUploadBytes is the most a "Restore from a file" upload may be
+// (ut-docs#5070): far above a real shop's backup with photos, and below
+// what a small till's disk can take twice (the upload plus its restore).
+const maxBackupUploadBytes int64 = 4 << 30
+
+// backupUploadFormOverhead is the multipart framing allowed on top.
+const backupUploadFormOverhead int64 = 1 << 20
+
+// backupUploadCap is the size cap for an upload into dir: at most
+// maxBackupUploadBytes and at most a third of the space left above the
+// low-disk floor: the restore then copies the file once more and first
+// takes a safety snapshot of the current data. 0 = no room. Unknown
+// free space (no probe on this platform) leaves the fixed cap. A var so
+// tests can pin it.
+var backupUploadCap = func(dir string) int64 {
+	u, err := diskspace.Probe(dir)
+	if err != nil {
+		return maxBackupUploadBytes
+	}
+	floor := diskspace.Floor(u.Total)
+	if u.Free <= floor {
+		return 0
+	}
+	return min(maxBackupUploadBytes, int64((u.Free-floor)/3))
+}
+
+// formatBackupBytes renders a size cap for the too-large message.
+func formatBackupBytes(n int64) string {
+	if n >= 1<<30 {
+		return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))
+	}
+	return fmt.Sprintf("%.0f MB", float64(n)/(1<<20))
+}
+
+// backupLiveStoreID is the my. shop this till is paired with ("" when
+// none): an uploaded backup naming another shop is refused.
+func backupLiveStoreID(r *http.Request, d *common.Deps) string {
+	if d.Settings != nil {
+		if v, _, err := d.Settings.Get(r.Context(), "marketplace.store_id"); err == nil && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	if d.Cfg != nil {
+		return strings.TrimSpace(d.Cfg.Marketplace.StoreID)
+	}
+	return ""
 }

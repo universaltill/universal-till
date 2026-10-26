@@ -227,6 +227,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/backup/restart-now":      true,
 	"POST /api/backup/restore":          true,
 	"POST /api/backup/save-copy/{name}": true,
+	"POST /api/backup/upload":           true,
 	// Uploads with their own endpoint (item/variant photos, receipt logo) —
 	// the multipart file filter also covers them; denied outright here.
 	"POST /api/catalog/item/image":    true,

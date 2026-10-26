@@ -172,6 +172,12 @@ func Run(ctx context.Context) error {
 			} else if n > 0 {
 				log.Infof("swept %d orphaned join-snapshot file(s)", n)
 			}
+			// Uploads a crash left mid-check (ut-docs#5070), same terms.
+			if n, sweepErr := db.SweepOrphanedUploads(cfg.DBPath, time.Now()); sweepErr != nil {
+				log.Warnf("sweep orphaned backup uploads: %v", sweepErr)
+			} else if n > 0 {
+				log.Infof("swept %d orphaned backup upload file(s)", n)
+			}
 			database, attemptErr = db.Open(cfg.DBPath)
 		}
 

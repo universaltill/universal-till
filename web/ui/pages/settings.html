@@ -1116,6 +1116,26 @@
   {{ end }}
   </div>
   {{ if .isManager }}
+  {{/* ut-docs#5070: Restore from a file — a backup brought from a USB
+       stick, another computer or the Downloads folder (a new or
+       replacement till). Manager only here AND refused on the server for
+       anyone else. hx-encoding streams the file; the answer (checked
+       summary + Restore button, or the reason it was refused) lands in
+       #backup-upload-msg (full-contrast text, not the muted #restore-msg);
+       its Restore button answers into #restore-msg like the list's. No accept= filter: Android's picker hides .db
+       files behind an unknown type; the server checks the file. */}}
+  <div class="backup-upload" id="settings-backup-upload" data-testid="backup-upload">
+    <h3>{{ T "settings.backup.upload.title" }}</h3>
+    <p class="muted">{{ T "settings.backup.upload.help" }}</p>
+    <form class="set-row set-below backup-upload-form" hx-post="/api/backup/upload" hx-encoding="multipart/form-data"
+          hx-target="#backup-upload-msg" hx-swap="innerHTML" hx-disabled-elt="find button" hx-indicator="#backup-upload-busy">
+      <label for="backup-upload-file">{{ T "settings.backup.upload.label" }}</label>
+      <input id="backup-upload-file" type="file" name="file" required>
+      <button class="btn secondary" type="submit">{{ T "settings.backup.upload.action" }}</button>
+      <span id="backup-upload-busy" class="htmx-indicator muted" aria-live="polite">{{ T "settings.backup.upload.checking" }}</span>
+    </form>
+    <div id="backup-upload-msg" aria-live="polite"></div>
+  </div>
   <!-- ut-docs#1613: deliberately OUTSIDE the `.backups` branch above — a
        restore staged in an earlier visit is a persistent, on-disk fact
        (db.PendingRestore) independent of whatever the snapshot list looks
