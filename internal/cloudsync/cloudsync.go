@@ -473,6 +473,8 @@ type ModifierGroupOption struct {
 // till's early return or an unpaid till's gated one (ADR-0148; nil error,
 // no contact) and for any failure.
 func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (contacted bool, err error) {
+	// ut-docs#5058: a replaced till records it on the first such answer.
+	defer func() { recordReplaced(ctx, db, err) }()
 	// Issue-report uploads (ADR-0022, spec 012) get a chance on EVERY tick,
 	// before the registration/connectivity gates below — ut-docs#637 review:
 	// this used to sit at the tail of Tick (see the pull side, still there),
@@ -2167,6 +2169,7 @@ func postBody(ctx context.Context, cfg *config.Config, path string, payload []by
 		switch resp.StatusCode {
 		case http.StatusUnauthorized:
 			se.Code, _ = parseCloudErrorEnvelope(buf.Bytes())
+			se.Replaced = parseReplacedSignal(buf.Bytes())
 		case http.StatusPaymentRequired:
 			se.Entitlement = planRequiredEntitlement(buf.Bytes())
 		}
@@ -2214,6 +2217,10 @@ type statusError struct {
 	// and its own ADR-0148 gate takes over. Decoded for 402 only; empty for
 	// every other status and when the body carries no block.
 	Entitlement json.RawMessage
+	// Replaced is a 401 device_revoked's data {reason: "replaced",
+	// replaced_at, replaced_by} (ut-docs#5058, design C6): the owner
+	// replaced this till as the shop's main till. nil for any other 401.
+	Replaced *ReplacedSignal
 }
 
 func (e *statusError) Error() string {

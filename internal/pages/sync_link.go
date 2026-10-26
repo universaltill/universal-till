@@ -199,6 +199,10 @@ func registerSyncLink(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "connect to the main till", http.StatusConflict)
 			return
 		}
+		// ut-docs#5058: a replaced main till holds no links.
+		if refuseIfReplaced(w, r, d) {
+			return
+		}
 		if d.Link == nil {
 			http.Error(w, "link unavailable", http.StatusServiceUnavailable)
 			return

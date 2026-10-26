@@ -177,3 +177,18 @@ func advertisedName(ctx context.Context, settings *data.SettingsRepo, tillID str
 	}
 	return "this shop (" + suffix + ")"
 }
+
+// GateOnReplaced wraps a RoleCheck so a till the shop's owner replaced as
+// main till (ut-docs#5058, ADR-0117 amendment 2026-10-26) never advertises
+// itself again: its local role still says primary, but the new main till
+// holds the role, and two adverts would split the shop's tills.
+// isReplaced reads the persisted state (enroll.ReplacedState); injected
+// so this package needs no enrolment wiring.
+func GateOnReplaced(inner RoleCheck, isReplaced func(ctx context.Context) bool) RoleCheck {
+	return func(ctx context.Context) bool {
+		if !inner(ctx) {
+			return false
+		}
+		return !isReplaced(ctx)
+	}
+}

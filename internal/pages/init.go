@@ -532,6 +532,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerPendingPairingsUI(mux, dp)                // ADR-0033 part 3/3 (primary side)
 	registerJoinNoticeUI(mux, dp)                     // ADR-0033 amendment: standalone till offers to join a found main till (ut-docs#2721)
 	registerShopNameNoticeUI(mux, dp)                 // ut-docs#3114: "Name your shop" banner while store.name is a placeholder
+	registerReplacedBanner(mux, dp)                   // ut-docs#5058: "Replaced by <name>" banner on a replaced main till
 	registerSyncSales(mux, dp)
 	registerSyncNoSales(mux, dp)        // ut-docs#3562: replica no-sale opens (LAN sync D3)
 	registerSyncClearedBaskets(mux, dp) // ut-docs#4711: replica cleared baskets (LAN sync D3)

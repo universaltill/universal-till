@@ -149,6 +149,8 @@ func resetIdentityForPair(ctx context.Context, kv Settings, replica bool, newID 
 			log.Warnf("enrolment: pair: clear %s: %v", key, err)
 		}
 	}
+	// A new identity is not the replaced one (ut-docs#5058).
+	clearReplaced(ctx, kv)
 	// A fresh device id: re-pairing is always as a new device.
 	if err := kv.Set(ctx, keyDeviceID, newID); err != nil {
 		log.Warnf("enrolment: pair: persist device_id: %v", err)

@@ -33,6 +33,7 @@ const (
 	cloudAuthRevoked  = "revoked"
 	cloudAuthRepair   = "repair"
 	cloudAuthRegister = "register"
+	cloudAuthReplaced = "replaced" // ut-docs#5058: replaced as main till
 )
 
 // cloudAuthChipVariant picks the chip's words.
@@ -84,6 +85,19 @@ func storeHasOwner(ctx context.Context, kv interface {
 // Settings → Registration only for a viewer who may open Settings.
 func registerCloudAuthChip(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /ui/cloud-auth-chip", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#5058: a till the owner replaced says so, by name, from
+		// its first refused call and across restarts (persisted), whatever
+		// the 401 streak says.
+		if rp, replaced := tillReplaced(r, d); replaced {
+			locale := httpx.ResolveLocale(w, r)
+			httpx.RenderPartial("ui/partials/cloud_auth_chip.html", map[string]any{
+				"variant":      cloudAuthReplaced,
+				"canManage":    canPerform(d, r, "settings"),
+				"replacedBy":   replacedByText(locale, rp),
+				"replacedHint": replacedHintText(locale, rp),
+			})(w, r)
+			return
+		}
 		st := cloudAuthChipStatus()
 		if !st.Show {
 			w.WriteHeader(http.StatusOK)

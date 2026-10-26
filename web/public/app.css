@@ -7101,3 +7101,12 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 }
 .statusbar a.sb-backup-copy:hover { filter: brightness(0.92); }
 #sb-backup-copy-mount:empty { display: none; }
+/* ut-docs#5058: the shop's owner replaced this till as main till
+   (replaced_banner.html). The danger tint of .pos-notice.error, full width
+   above the page like .pairing-notice; never dismissed, never a modal. */
+.replaced-banner { display: flex; align-items: center; gap: .6rem;
+  padding: .55rem 1rem; font-weight: 600; font-size: .92rem;
+  background: var(--danger-tint); color: var(--danger);
+  border-block-end: 1px solid var(--danger-tint-border); }
+.replaced-banner-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+#replaced-banner-mount:empty { display: none; }

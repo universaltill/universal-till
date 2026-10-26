@@ -643,6 +643,10 @@ func (c *Client) Run(ctx context.Context) {
 				revokedFor = t.Bearer
 				c.setState(StateRevoked, WaitReasonNone)
 				logging.L().Warnf("cloudlink: the cloud refused this till's credential; not dialling until it changes")
+				// ut-docs#5058: one check-in now, so cloudsync learns why
+				// (a replaced main till's 401 says so) and the till stops
+				// acting as main till without waiting for its next tick.
+				c.kick()
 			}
 		}
 		if !c.wait(ctx, kind, delay) {

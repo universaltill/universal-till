@@ -449,6 +449,11 @@ func Run(ctx context.Context) error {
 	discoverySettings := data.NewSettingsRepo(database.DB)
 	discoveryAuth := auth.NewService(database.DB)
 	discoveryRoleCheck := discovery.GateOnFirstBoot(discovery.RoleCheckFromSettings(discoverySettings), discoveryAuth)
+	// ut-docs#5058: a till replaced as main till never advertises again.
+	discoveryRoleCheck = discovery.GateOnReplaced(discoveryRoleCheck, func(ctx context.Context) bool {
+		_, replaced := enroll.ReplacedState(ctx, discoverySettings)
+		return replaced
+	})
 	discoveryAdvertiser := discovery.NewAdvertiser(discoverySettings, discoveryRoleCheck, listenPort(cfg.ListenAddr))
 	netaccess.StartService("mDNS advertising", func() { discoveryAdvertiser.Start(bgCtx, &wg) })
 
