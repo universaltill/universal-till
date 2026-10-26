@@ -318,8 +318,13 @@ var RestoreKeepsLivePrefixes = append(append([]string(nil), TillCloudIdentityPre
 // data.BackupCopySinceSettingsKey) is dropped too: an old backup's dates
 // would show "no backup copied" right after a restore; the reminder starts
 // again from the first check after it.
+//
+// The sales copy's epoch (ut-docs#5074) is dropped too: the restored change
+// log's seqs may go backwards from what the additional tills already hold,
+// so the main till mints a new epoch on its next feed request or
+// maintenance tick and every additional till re-syncs by state.
 var RestoreDropKeys = []string{"cloudsync.snapshot_hash", "cloudsync.order_tracking_hash",
-	"backup.last_copied_at", "backup.copy_reminder_since"}
+	"backup.last_copied_at", "backup.copy_reminder_since", "sales_mirror.epoch"}
 
 // keepLiveCloudIdentity rewrites the staged restore so its
 // RestoreKeepsLivePrefixes rows are exactly the live DB's: the backup's are

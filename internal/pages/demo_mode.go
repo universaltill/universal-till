@@ -320,23 +320,30 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/sync/primary-proof":              true,
 	"POST /api/sync/promote":                    true,
 	"POST /api/sync/sales":                      true,
-	"POST /api/sync/tables/claim":               true,
-	"POST /api/sync/tables/release":             true,
-	"POST /api/sync/tables/release-all":         true,
-	"POST /api/sync/tills/{id}/revoke":          true,
-	"POST /api/sync/till-role":                  true, // ut-docs#2781: a joined till's own role report
-	"POST /api/tills/{id}/role":                 true, // ut-docs#2781: Tills page Change role
-	"POST /api/tills/{id}/update-now":           true, // ut-docs#2945: Tills page Update now
-	"POST /api/tills/rotate-tls-key":            true, // ut-docs#4423: Tills page Change network key
-	"POST /api/sync/settings/apply":             true,
-	"POST /api/sync/catalog/apply":              true,
-	"POST /api/sync/users/apply":                true,
-	"POST /api/sync/vouchers/{id}/redeem":       true,
-	"POST /api/sync/vouchers/{id}/release":      true,
-	"POST /api/sync/vouchers/{id}/adjust":       true, // ut-docs#4253
-	"POST /ui/join-notice/dismiss":              true, // ut-docs#2721: writes sync.join_banner_dismissed
-	"POST /ui/agent/proposals/{id}/confirm":     true, // ut-docs#2838: applies an AI-agent change
-	"POST /ui/agent/proposals/{id}/cancel":      true, // ut-docs#2838: AI-agent proposals (no agent writes in the demo)
+	// ut-docs#5074: the read-only sales copy (peer feed + the manager switch
+	// and status); a demo till has no peers and no shop to copy.
+	"GET /api/sync/sales-mirror":            true,
+	"GET /api/sync/sales-mirror/state":      true,
+	"GET /api/sync/sales-mirror/status":     true,
+	"POST /api/sync/sales-mirror/enable":    true,
+	"POST /api/sync/sales-mirror/disable":   true,
+	"POST /api/sync/tables/claim":           true,
+	"POST /api/sync/tables/release":         true,
+	"POST /api/sync/tables/release-all":     true,
+	"POST /api/sync/tills/{id}/revoke":      true,
+	"POST /api/sync/till-role":              true, // ut-docs#2781: a joined till's own role report
+	"POST /api/tills/{id}/role":             true, // ut-docs#2781: Tills page Change role
+	"POST /api/tills/{id}/update-now":       true, // ut-docs#2945: Tills page Update now
+	"POST /api/tills/rotate-tls-key":        true, // ut-docs#4423: Tills page Change network key
+	"POST /api/sync/settings/apply":         true,
+	"POST /api/sync/catalog/apply":          true,
+	"POST /api/sync/users/apply":            true,
+	"POST /api/sync/vouchers/{id}/redeem":   true,
+	"POST /api/sync/vouchers/{id}/release":  true,
+	"POST /api/sync/vouchers/{id}/adjust":   true, // ut-docs#4253
+	"POST /ui/join-notice/dismiss":          true, // ut-docs#2721: writes sync.join_banner_dismissed
+	"POST /ui/agent/proposals/{id}/confirm": true, // ut-docs#2838: applies an AI-agent change
+	"POST /ui/agent/proposals/{id}/cancel":  true, // ut-docs#2838: AI-agent proposals (no agent writes in the demo)
 	// First-run setup wizard and first-owner creation (the demo template is
 	// already set up).
 	"GET /setup":           true,

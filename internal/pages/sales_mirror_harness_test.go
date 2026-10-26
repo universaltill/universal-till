@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/discovery"
@@ -31,6 +32,7 @@ type mirrorTill struct {
 	mux    *http.ServeMux
 	tillID string // the id M's roster knows it by ('' for M itself)
 	bearer string
+	sold   int
 }
 
 type mirrorShop struct {
@@ -40,13 +42,14 @@ type mirrorShop struct {
 	server *httptest.Server
 	client *http.Client
 	tills  map[string]*mirrorTill
+	feed   *salesMirrorServer
 }
 
 func newMirrorShop(t *testing.T, additional ...string) *mirrorShop {
 	t.Helper()
 	mux, dp := newSyncSalesTestDeps(t)
 	shop := &mirrorShop{t: t, main: &mirrorTill{name: "M", d: dp, mux: mux}, tills: map[string]*mirrorTill{}}
-	registerMirrorMainRoutes(mux, dp)
+	shop.feed = registerMirrorMainRoutes(mux, dp)
 	shop.server = httptest.NewTLSServer(mux)
 	t.Cleanup(shop.server.Close)
 	shop.client = shop.server.Client()
@@ -62,8 +65,10 @@ func newMirrorShop(t *testing.T, additional ...string) *mirrorShop {
 }
 
 // registerMirrorMainRoutes adds the main till's routes beyond the journal
-// (registerSyncSales, already on the mux): grows with M2.
-func registerMirrorMainRoutes(_ *http.ServeMux, _ *common.Deps) {}
+// (registerSyncSales, already on the mux): the sales-copy feed (M2).
+func registerMirrorMainRoutes(mux *http.ServeMux, d *common.Deps) *salesMirrorServer {
+	return registerSyncSalesMirror(mux, d)
+}
 
 func (s *mirrorShop) addTill(name string, tillNo int) *mirrorTill {
 	t := s.t
@@ -123,6 +128,18 @@ func (s *mirrorShop) sell(till *mirrorTill, amount int64) string {
 	})
 	if err != nil {
 		s.t.Fatalf("sell on %s: %v", till.name, err)
+	}
+	if till.tillID != "" {
+		// The journal push's cursor is created_at at one-second precision
+		// and it sends 50 at a time, so a batch boundary inside one second
+		// would skip the rest of that second (a pre-existing journal limit,
+		// reported separately; real tills never ring 50 sales a second).
+		// Give each harness sale on an additional till its own second.
+		till.sold++
+		at := time.Now().UTC().Add(-2 * time.Hour).Add(time.Duration(till.sold) * time.Second).Format(time.RFC3339)
+		if _, err := till.d.Db.Exec(`UPDATE sales SET created_at = ?, completed_at = ? WHERE id = ?`, at, at, id); err != nil {
+			s.t.Fatal(err)
+		}
 	}
 	return id
 }

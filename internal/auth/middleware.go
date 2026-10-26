@@ -62,6 +62,11 @@ func exempt(path string) bool {
 		// ut-docs#4566: a failed join withdraws its own enrolment with the
 		// bearer it was just issued, syncTill-authed in the handler.
 		"/api/sync/enroll/withdraw",
+		// ut-docs#5074: the read-only sales copy's feed and state re-sync,
+		// syncTill-authed (and pinned-TLS-only) in the handler. NOT the
+		// copy's /status, /enable or /disable: those are a manager's
+		// session routes.
+		"/api/sync/sales-mirror", "/api/sync/sales-mirror/state",
 		"/api/sync/stock", "/api/sync/plugins", "/api/sync/assets", "/api/sync/assets/file",
 		// ut-docs#2566: uploaded category photos, the categories scope of
 		// the same bearer-authed asset surface (sync_assets.go).
