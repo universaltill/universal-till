@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/discovery"
+	"github.com/universaltill/universal-till/internal/diskspace"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -33,6 +36,7 @@ type mirrorTill struct {
 	tillID string // the id M's roster knows it by ('' for M itself)
 	bearer string
 	sold   int
+	puller *salesMirrorPuller
 }
 
 type mirrorShop struct {
@@ -43,6 +47,8 @@ type mirrorShop struct {
 	client *http.Client
 	tills  map[string]*mirrorTill
 	feed   *salesMirrorServer
+	// copyRequests counts every request to the sales-copy routes on M.
+	copyRequests atomic.Int64
 }
 
 func newMirrorShop(t *testing.T, additional ...string) *mirrorShop {
@@ -50,7 +56,12 @@ func newMirrorShop(t *testing.T, additional ...string) *mirrorShop {
 	mux, dp := newSyncSalesTestDeps(t)
 	shop := &mirrorShop{t: t, main: &mirrorTill{name: "M", d: dp, mux: mux}, tills: map[string]*mirrorTill{}}
 	shop.feed = registerMirrorMainRoutes(mux, dp)
-	shop.server = httptest.NewTLSServer(mux)
+	shop.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/sync/sales-mirror") {
+			shop.copyRequests.Add(1)
+		}
+		mux.ServeHTTP(w, r)
+	}))
 	t.Cleanup(shop.server.Close)
 	shop.client = shop.server.Client()
 	id, err := discovery.TillID(t.Context(), dp.Settings)
@@ -211,4 +222,91 @@ func TestSalesMirrorHarness_M1_LogCoversJournaledAndOwnSales(t *testing.T) {
 			}
 		})
 	}
+}
+
+// --- M3: the additional tills' pull ---
+
+// puller returns till's sales-copy puller, wired to the shop's TLS client
+// (the harness trusts the test server's certificate in place of a pin),
+// no page pause, and a roomy disk.
+func (s *mirrorShop) puller(till *mirrorTill) *salesMirrorPuller {
+	if till.puller == nil {
+		p := newSalesMirrorPuller(till.d, s.client)
+		p.pinned = func(context.Context) bool { return true }
+		p.pause = 0
+		p.probe = func(string) (diskspace.Usage, error) { return diskspace.Usage{Total: 100 << 30, Free: 50 << 30}, nil }
+		till.puller = p
+	}
+	return till.puller
+}
+
+// pull runs one real pull tick on till.
+func (s *mirrorShop) pull(till *mirrorTill) {
+	s.t.Helper()
+	s.puller(till).tick(s.t.Context())
+}
+
+type copyRow struct {
+	status, receipt, origin string
+	total                   int64
+	lines, payments         int
+}
+
+func copyRows(t *testing.T, db *sql.DB, table, linesTable, payTable, originExpr string) map[string]copyRow {
+	t.Helper()
+	rows, err := db.Query(`SELECT s.id, s.status, s.receipt_no, ` + originExpr + `, s.total,
+  (SELECT COUNT(*) FROM ` + linesTable + ` l WHERE l.sale_id = s.id),
+  (SELECT COUNT(*) FROM ` + payTable + ` p WHERE p.sale_id = s.id)
+FROM ` + table + ` s WHERE s.status IN ('completed', 'voided')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	out := map[string]copyRow{}
+	for rows.Next() {
+		var id string
+		var r copyRow
+		if err := rows.Scan(&id, &r.status, &r.receipt, &r.origin, &r.total, &r.lines, &r.payments); err != nil {
+			t.Fatal(err)
+		}
+		out[id] = r
+	}
+	return out
+}
+
+// assertCopyEqualsMain checks till's copy holds exactly the main till's
+// current state of every sale but till's own: same status, receipt, origin,
+// total and children; nothing extra (no duplicates, no own sales).
+func (s *mirrorShop) assertCopyEqualsMain(till *mirrorTill) {
+	t := s.t
+	t.Helper()
+	want := copyRows(t, s.main.d.Db, "sales", "sale_lines", "payments", "CASE WHEN s.till_id = '' THEN '"+s.mainID+"' ELSE s.till_id END")
+	got := copyRows(t, till.d.Db, "mirror_sales", "mirror_sale_lines", "mirror_payments", "s.origin_till_id")
+	for id, w := range want {
+		if w.origin == till.tillID {
+			if _, ok := got[id]; ok {
+				t.Errorf("%s holds a copy of its own sale %s", till.name, id)
+			}
+			continue
+		}
+		g, ok := got[id]
+		if !ok {
+			t.Errorf("%s's copy is missing sale %s (%+v)", till.name, id, w)
+			continue
+		}
+		if g != w {
+			t.Errorf("%s's copy of %s = %+v, main till has %+v", till.name, id, g, w)
+		}
+	}
+	for id := range got {
+		if _, ok := want[id]; !ok {
+			t.Errorf("%s's copy holds %s, which the main till does not", till.name, id)
+		}
+	}
+}
+
+func (s *mirrorShop) seqAcked(till *mirrorTill) int64 {
+	var n int64
+	_ = s.main.d.Db.QueryRow(`SELECT COALESCE(MAX(acked_seq), -1) FROM sales_mirror_acks WHERE till_id = ?`, till.tillID).Scan(&n)
+	return n
 }

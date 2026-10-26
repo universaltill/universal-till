@@ -225,6 +225,12 @@ type Deps struct {
 	// the loop drains it coalesce into one pull.
 	SyncPullNow chan struct{}
 
+	// SalesMirrorPullNow, when non-nil, asks the additional till's sales-copy
+	// pull loop (pages.StartSalesMirrorPull, ut-docs#5074) for one pull now —
+	// a gap in a link frame or the link's sales_mirror nudge. Capacity 1,
+	// coalesced like SyncPullNow.
+	SalesMirrorPullNow chan struct{}
+
 	// AsyncWork tracks best-effort, fire-and-forget goroutines started
 	// after a request already responded — printReceiptAsync (ut-docs#425)
 	// is the first user: checkout must never block on a slow/absent
