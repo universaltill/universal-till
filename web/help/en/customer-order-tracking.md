@@ -3,7 +3,7 @@ id: customer-order-tracking
 title: Customer order tracking (QR)
 section: Everyday selling
 order: 46
-summary: "Customers scan a QR code, on the self-order kiosk's confirmation or on the receipt of a sale rung up at the till, to follow their order's status on their own phone. Part of the Shop plan and up."
+summary: "Customers scan a QR code, on the self-order kiosk's confirmation or on the receipt of a sale rung up at the till, to follow their order's status on their own phone. Part of the paid plans."
 routes: [/o/{token}, /o/{token}/status]
 keywords: [tracking, QR, customer, order status, self order, phone, receipt, counter]
 ---
@@ -30,7 +30,7 @@ Customers scan a QR code to follow their order's status on their own phone: afte
 
 ## Notes
 
-- Order tracking is part of the Shop plan and up. On the free Local plan or Local Plus, or while paid features are paused (the subscription ended, or the till couldn't confirm it with the cloud for more than 7 days), the confirmation and receipts show without a QR; the order or sale itself is never affected.
+- Order tracking is part of the paid plans. On the free Local plan, or while paid features are paused (the subscription ended, or the till couldn't confirm it with the cloud for more than 7 days), the confirmation and receipts show without a QR; the order or sale itself is never affected.
 - The tracking page will be hosted in our cloud, so a customer's phone won't need your shop's Wi-Fi, and the till's own network address never appears on a QR code or a receipt.
 - If your shop has several tills and the order is paid on a different till from the kiosk, the kiosk's link can't see the payment: it keeps showing **Waiting for payment at the counter** for up to about 2 hours, then stops answering. Until order tracking moves to our cloud, take payment for kiosk orders on the kiosk's own till to avoid this.
 - The **Order tracking QR (paid plans)** box in the [Receipt designer](/help/designer) turns the QR on till receipts on or off. Until you first save the receipt designer, it is on, unless your shop doesn't ask "dine in or takeaway" (retail and service shops start with that question switched off), in which case it is off. Saving the designer keeps the box as it is shown. Receipts of refunds and voided sales never carry a QR, and neither do receipts from an additional till in a shop with several tills: the main till's **Orders** screen can't see that till's tracking link until order tracking moves to our cloud.
