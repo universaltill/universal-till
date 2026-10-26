@@ -2297,6 +2297,8 @@
   "reports.zpaper.cash.calculated": "المتوقع",
   "reports.zpaper.cash.new_float": "الرصيد الجديد",
   "reports.zpaper.receipts_range": "الإيصالات %s - %s",
+  "reports.zpaper.restored_receipts": "تمت الاستعادة من نسخة احتياطية: تستمر الإيصالات من %s (آخر إيصال في النسخة الاحتياطية: %s)",
+  "reports.zpaper.restored_z": "تستمر أرقام Z من %d (آخر رقم في النسخة الاحتياطية: %d)",
   "scan.camera.button": "المسح بالكاميرا",
   "scan.camera.camera_busy": "الكاميرا قيد الاستخدام بواسطة تطبيق آخر. أغلق التطبيق الآخر وحاول مرة أخرى.",
   "scan.camera.camera_error": "الكاميرا غير متاحة",

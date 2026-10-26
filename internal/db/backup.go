@@ -251,9 +251,19 @@ func ApplyPendingRestore(dbPath string) (bool, error) {
 			return false, nil
 		}
 	}
+	// A backup restore (not a LAN join) lacks the receipts and Zs the lost
+	// till issued after the backup. Owe the number jump BEFORE the swap, so
+	// a crash between the swap and the jump still jumps on the next boot
+	// (ut-docs#5068).
+	if _, err := os.Stat(ReplicaIdentityPath(dbPath)); err != nil {
+		if err := os.WriteFile(numberJumpPendingPath(dbPath), []byte(time.Now().UTC().Format(time.RFC3339Nano)+"\n"), 0o644); err != nil {
+			return false, fmt.Errorf("record the owed number jump: %w", err)
+		}
+	}
 	if _, err := os.Stat(dbPath); err == nil {
 		aside := filepath.Join(dir, preRestorePrefix+time.Now().UTC().Format(backupTimeLayout)+".db")
 		if err := os.Rename(dbPath, aside); err != nil {
+			ClearNumberJumpPending(dbPath) // nothing was swapped: no jump owed
 			return false, fmt.Errorf("set aside current db: %w", err)
 		}
 		// SQLite sidecar files from the old DB must not pollute the restored one.
@@ -261,9 +271,45 @@ func ApplyPendingRestore(dbPath string) (bool, error) {
 		_ = os.Remove(dbPath + "-shm")
 	}
 	if err := os.Rename(pending, dbPath); err != nil {
+		ClearNumberJumpPending(dbPath) // the swap failed: no jump owed
 		return false, fmt.Errorf("apply restore: %w", err)
 	}
 	return true, nil
+}
+
+// numberJumpPendingName is the marker file ApplyPendingRestore leaves next to
+// the DB when a backup restore was applied: receipt and Z numbers still owe
+// their jump (data.POSRepo.JumpNumbersAfterRestore). The file, not the
+// in-memory restoreApplied flag, is what survives a crash after the swap.
+const numberJumpPendingName = "restore-numbers-pending"
+
+func numberJumpPendingPath(dbPath string) string {
+	return filepath.Join(filepath.Dir(dbPath), numberJumpPendingName)
+}
+
+// NumberJumpPending reports whether a restored backup still owes its
+// receipt/Z number jump.
+func NumberJumpPending(dbPath string) bool {
+	_, err := os.Stat(numberJumpPendingPath(dbPath))
+	return err == nil
+}
+
+// NumberJumpToken is the marker file's content: a unique id of this restore
+// (written as a timestamp). data.POSRepo.JumpNumbersAfterRestore stores it
+// with the jump so one restore never jumps twice.
+func NumberJumpToken(dbPath string) string {
+	raw, err := os.ReadFile(numberJumpPendingPath(dbPath))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+// ClearNumberJumpPending drops the marker once the jump is recorded.
+func ClearNumberJumpPending(dbPath string) {
+	if err := os.Remove(numberJumpPendingPath(dbPath)); err != nil && !os.IsNotExist(err) {
+		logging.L().Warnf("restore: clear the number-jump marker: %v", err)
+	}
 }
 
 // restoreRefusedName is the marker ApplyPendingRestore leaves next to the DB

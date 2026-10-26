@@ -22,6 +22,8 @@ Beim Wiederherstellen werden alle aktuellen Daten durch die gewählte Sicherung 
 
 Eine Wiederherstellung behält die eigene Verbindung dieser Kasse mit dem Cloud-Konto Ihres Geschäfts, auch wenn die Sicherung auf einer anderen Kasse erstellt wurde. Ist die Datei keine Sicherung, die diese Kasse verwenden kann, behält sie Ihre aktuellen Daten, und unter Einstellungen → Backups steht, dass die Wiederherstellung nicht angewendet wurde.
 
+Nach einer Wiederherstellung springen Belegnummern und Z-Nummern nach vorn, damit eine Nummer, die die Kasse nach der Sicherung vergeben hat, nie ein zweites Mal verwendet wird. Der erste Tagesabschluss danach weist darauf hin, dass die Kasse aus einer Sicherung wiederhergestellt wurde, und nennt die Nummern, ab denen es weitergeht.
+
 ## Aus einer Datei wiederherstellen
 
 Nutzen Sie dies auf einer neuen Kasse oder auf einer, die eine defekte Kasse ersetzt, mit einer Sicherungsdatei, die Sie von der alten Kasse kopiert haben (ein USB-Stick, ein anderer Computer, der Download-Ordner).

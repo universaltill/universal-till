@@ -2297,6 +2297,8 @@
   "reports.zpaper.cash.calculated": "مورد انتظار",
   "reports.zpaper.cash.new_float": "موجودی جدید",
   "reports.zpaper.receipts_range": "رسیدها %s - %s",
+  "reports.zpaper.restored_receipts": "بازیابی‌شده از پشتیبان: رسیدها از %s ادامه می‌یابند (آخرین رسید در پشتیبان: %s)",
+  "reports.zpaper.restored_z": "شماره‌های Z از %d ادامه می‌یابند (آخرین شماره در پشتیبان: %d)",
   "scan.camera.button": "اسکن با دوربین",
   "scan.camera.camera_busy": "دوربین در حال استفاده توسط برنامه‌ای دیگر است. برنامه دیگر را ببندید و دوباره تلاش کنید.",
   "scan.camera.camera_error": "دوربین در دسترس نیست",

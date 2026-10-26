@@ -740,6 +740,10 @@ const (
 // /api/sync/cloud-device) without any credential crossing the LAN.
 var PerTillSettingPrefixes = []string{
 	BackupCopiedAtSettingsKey, BackupCopySinceSettingsKey,
+	// ut-docs#5068: the number floors and marker a backup restore leaves on
+	// THIS till ("restore.receipt_floor", "restore.z_floor.<kind>",
+	// "restore.marker"): they guard this till's own receipt/Z sequences.
+	"restore.",
 	"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey, AutoUpdateLastAttemptSettingsKey,
 	// ut-docs#2738: this replica's follow bookkeeping (full keys, like the
 	// one above). sync.main_version, the main till's pinged version, is

@@ -469,3 +469,28 @@ func TestRedactedJoinSnapshot_StripsUnpaidCheckinMarkers(t *testing.T) {
 		t.Errorf("LIVE DB markers mutated: rows=%d (err %v), want 2", n, err)
 	}
 }
+
+func TestRedactedJoinSnapshot_StripsRestoreState(t *testing.T) {
+	path := testDBPath(t)
+	d := openTest(t, path)
+	if _, err := d.Exec(`INSERT OR REPLACE INTO settings (key, value) VALUES ('restore.marker', '{}'), ('restore.receipt_floor', '9000'), ('store.name', 'Shop')`); err != nil {
+		t.Fatal(err)
+	}
+	copyPath, cleanup, err := RedactedJoinSnapshot(d.DB, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	c := openTest(t, copyPath)
+	var n int
+	if err := c.QueryRow(`SELECT COUNT(*) FROM settings WHERE key LIKE 'restore.%'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("restore.* in the join snapshot: %d %v", n, err)
+	}
+	if err := c.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = 'store.name'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("other settings must stay: %d %v", n, err)
+	}
+	var live int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM settings WHERE key LIKE 'restore.%'`).Scan(&live); err != nil || live != 2 {
+		t.Fatalf("the live DB must keep its rows: %d %v", live, err)
+	}
+}

@@ -634,3 +634,31 @@ WHERE (till_id IS NULL OR till_id = '') AND (created_at > ? OR (created_at = ? A
 		t.Fatalf("inherited clears past the join cursor = %d (err %v), want 0", n, err)
 	}
 }
+
+// ut-docs#5068: the main till's restore number floors, jump token and marker
+// must not reach a joining replica (its first Z would claim a restore).
+func TestApplyReplicaIdentityClearsInheritedRestoreState(t *testing.T) {
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init("") })
+	path := filepath.Join(t.TempDir(), "data", "unitill-pos.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	for _, k := range []string{"restore.receipt_floor", "restore.receipt_floor_prefix", "restore.z_floor.eod", "restore.marker", "restore.jump_token"} {
+		if _, err := d.Exec(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, 'x')`, k); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := StageReplicaIdentity(path, ReplicaIdentity{PrimaryURL: "http://primary.local", TillID: "till-2", Bearer: "b", ReceiptPrefix: "T2-", TillName: "Back"}); err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := ApplyReplicaIdentity(d.DB, path); err != nil || !applied {
+		t.Fatalf("apply: %v %v", applied, err)
+	}
+	var n int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM settings WHERE substr(key, 1, 8) = 'restore.'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("restore.* rows survived the join: %d %v", n, err)
+	}
+}

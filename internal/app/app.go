@@ -225,6 +225,9 @@ func Run(ctx context.Context) error {
 	if restoreApplied {
 		rotateStockStreamAfterRestore(ctx, database.DB, log)
 	}
+	// Owed by every applied backup restore (a file, so a crash after the
+	// swap still jumps); a no-op on every other boot (ut-docs#5068).
+	jumpNumbersAfterRestore(ctx, database.DB, cfg.DBPath, time.Now(), log)
 
 	// Public-demo start gate (ADR-0113 §1.2, ut-docs#2687): after the
 	// database is open and migrated, before anything else touches it or

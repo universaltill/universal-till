@@ -2297,6 +2297,8 @@
   "reports.zpaper.cash.calculated": "Beklenen",
   "reports.zpaper.cash.new_float": "Yeni bakiye",
   "reports.zpaper.receipts_range": "Fişler %s - %s",
+  "reports.zpaper.restored_receipts": "Yedekten geri yüklendi: fişler %s numarasından devam ediyor (yedekteki son: %s)",
+  "reports.zpaper.restored_z": "Z numaraları %d numarasından devam ediyor (yedekteki son: %d)",
   "scan.camera.button": "Kamerayla tara",
   "scan.camera.camera_busy": "Kamera başka bir uygulama tarafından kullanılıyor. Diğer uygulamayı kapatın ve tekrar deneyin.",
   "scan.camera.camera_error": "Kamera kullanılamıyor",

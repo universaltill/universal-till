@@ -2579,6 +2579,10 @@ type EODReport struct {
 	// Departments/Tills): nil on range reports, and nil when no shift was
 	// closed that day — a day-close still completes without one.
 	CashReconciliation *CashReconciliation `json:"cash_reconciliation,omitempty"`
+	// RestoredFromBackup (ut-docs#5068) is set on the first Z report after
+	// a backup restore: where the receipt and Z numbers continue and what
+	// the backup's last ones were. Later reports omit it.
+	RestoredFromBackup *RestoreMarker `json:"restored_from_backup,omitempty"`
 }
 
 // CashReconciliationForLocalDay aggregates the cash-drawer reconciliation
@@ -3654,8 +3658,15 @@ GROUP BY p.sale_id, p.method_id ORDER BY p.sale_id, p.method_id`, sargs...)
 // pre-migration legacy row (never numbered) can't be picked up as the
 // "previous close" while prev_z_number stays NULL.
 //
+// A backup restore is the one place the sequence deliberately jumps
+// (ut-docs#5068): the restored database lacks the Zs the lost till issued
+// after the backup, so JumpNumbersAfterRestore records a per-kind floor
+// (settings restore.z_floor.<kind>) and z_number = max(MAX(z_number),
+// floor)+1, the floor being the last Z plus the days since last activity. prev_z_number stays the real MAX(z_number), so the gap is
+// visible on the report.
+//
 // "Gapless" describes allocation: no number is ever skipped or handed out
-// twice while the rows exist. Age-based retention still applies on top --
+// twice while the rows exist, except across a recorded restore jump. Age-based retention still applies on top --
 // PruneReportArchiveOlderThan (ADR-0040 §2) and the cloud-ack prunes delete
 // old rows, so the surviving sequence can start above 1. Every prune keeps
 // each kind's highest-Z and newest row (ADR-0147 §4,
@@ -3712,7 +3723,8 @@ func (r *POSRepo) ArchiveReport(ctx context.Context, kind, period string, conten
 	query := `
 INSERT INTO report_archive (id, kind, period, content_json, z_number, prev_z_number, prev_closed_at, first_receipt, last_receipt)
 SELECT ?, ?, ?, ?,
-  COALESCE(MAX(z_number), 0) + 1,
+  MAX(COALESCE(MAX(z_number), 0),
+      COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'restore.z_floor.' || ?), 0)) + 1,
   MAX(z_number),
   (SELECT created_at FROM report_archive
      WHERE kind = ? AND z_number IS NOT NULL
@@ -3720,13 +3732,14 @@ SELECT ?, ?, ?, ?,
   ?, ?
 FROM report_archive WHERE kind = ?
 ON CONFLICT (kind, period) DO NOTHING`
-	args := []any{id, kind, period, string(content), kind, firstReceipt, lastReceipt, kind}
+	args := []any{id, kind, period, string(content), kind, kind, firstReceipt, lastReceipt, kind}
 	if !closedAt.IsZero() {
 		closedAtStr := closedAt.UTC().Format(archiveTimestampFmt)
 		query = `
 INSERT INTO report_archive (id, kind, period, content_json, z_number, prev_z_number, prev_closed_at, first_receipt, last_receipt, created_at)
 SELECT ?, ?, ?, ?,
-  COALESCE(MAX(z_number), 0) + 1,
+  MAX(COALESCE(MAX(z_number), 0),
+      COALESCE((SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'restore.z_floor.' || ?), 0)) + 1,
   MAX(z_number),
   (SELECT created_at FROM report_archive
      WHERE kind = ? AND z_number IS NOT NULL
@@ -3738,7 +3751,7 @@ HAVING (? != 'eod' OR NOT EXISTS (
   WHERE ra2.kind = 'eod'
     AND date(ra2.created_at, 'localtime') = date(?, 'localtime')))
 ON CONFLICT (kind, period) DO NOTHING`
-		args = []any{id, kind, period, string(content), kind, firstReceipt, lastReceipt,
+		args = []any{id, kind, period, string(content), kind, kind, firstReceipt, lastReceipt,
 			closedAtStr, kind, kind, closedAtStr}
 	}
 	var lastErr error
@@ -5172,7 +5185,21 @@ FROM sales WHERE receipt_no LIKE ? || '%'`,
 		len(prefix)+1, prefix).Scan(&maxVal); err != nil {
 		return "", fmt.Errorf("next receipt no: %w", err)
 	}
-	next := maxVal.Int64 + 1
+	top := maxVal.Int64
+	// A restore jump (restore_numbers.go) reserves a block of numbers the
+	// lost till may have issued after the backup; its floor only applies to
+	// the prefix it was computed for.
+	var floorPrefix, floorVal string
+	if err := exec.QueryRowContext(ctx,
+		`SELECT value FROM settings WHERE key = ?`, RestoreReceiptFloorPrefixKey).Scan(&floorPrefix); err == nil && floorPrefix == prefix {
+		if err := exec.QueryRowContext(ctx,
+			`SELECT value FROM settings WHERE key = ?`, RestoreReceiptFloorKey).Scan(&floorVal); err == nil {
+			if f, perr := strconv.ParseInt(floorVal, 10, 64); perr == nil && f > top {
+				top = f
+			}
+		}
+	}
+	next := top + 1
 	if next < 1 {
 		next = 1
 	}
