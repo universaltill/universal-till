@@ -23,23 +23,33 @@ func (errReader) Get(context.Context, string) (string, bool, error) {
 }
 
 func TestAllows(t *testing.T) {
-	shopPlus := []Capability{CapCloudBackup, CapCloudSync, CapBrowserCatalog, CapManagedTSE}
+	// Local Plus carries the three cloud capabilities and nothing of Shop's
+	// (ut-docs#4243, #5067); mirrors ut-cloud's subscription.minTier.
+	localPlusUp := []Capability{CapCloudBackup, CapCloudSync, CapBrowserCatalog}
+	for _, c := range localPlusUp {
+		for plan, want := range map[Plan]bool{PlanLocal: false, PlanLocalPlus: true, PlanShop: true, PlanPro: true, PlanChain: true, Plan("gold"): false, Plan(""): false} {
+			if got := Allows(plan, c); got != want {
+				t.Errorf("Allows(%q, %q) = %v, want %v", plan, c, got, want)
+			}
+		}
+	}
+	shopPlus := []Capability{CapManagedTSE, CapOrderTracking}
 	chainOnly := []Capability{CapCentralCatalog, CapConsolidatedReporting}
 	for _, c := range shopPlus {
-		for plan, want := range map[Plan]bool{PlanLocal: false, PlanShop: true, PlanPro: true, PlanChain: true, Plan("gold"): false, Plan(""): false} {
+		for plan, want := range map[Plan]bool{PlanLocal: false, PlanLocalPlus: false, PlanShop: true, PlanPro: true, PlanChain: true, Plan("gold"): false, Plan(""): false} {
 			if got := Allows(plan, c); got != want {
 				t.Errorf("Allows(%q, %q) = %v, want %v", plan, c, got, want)
 			}
 		}
 	}
 	for _, c := range chainOnly {
-		for plan, want := range map[Plan]bool{PlanLocal: false, PlanShop: false, PlanPro: false, PlanChain: true, Plan("gold"): false} {
+		for plan, want := range map[Plan]bool{PlanLocal: false, PlanLocalPlus: false, PlanShop: false, PlanPro: false, PlanChain: true, Plan("gold"): false} {
 			if got := Allows(plan, c); got != want {
 				t.Errorf("Allows(%q, %q) = %v, want %v", plan, c, got, want)
 			}
 		}
 	}
-	for _, plan := range []Plan{PlanLocal, PlanShop, PlanPro, PlanChain} {
+	for _, plan := range []Plan{PlanLocal, PlanLocalPlus, PlanShop, PlanPro, PlanChain} {
 		if Allows(plan, Capability("teleport")) {
 			t.Errorf("Allows(%q, unknown capability) = true, want false", plan)
 		}
@@ -191,7 +201,7 @@ func TestBlockValuesUnparsableExpiresIsDropped(t *testing.T) {
 }
 
 func TestCapabilitiesListsEveryCapability(t *testing.T) {
-	want := []Capability{CapBrowserCatalog, CapCentralCatalog, CapCloudBackup, CapCloudSync, CapConsolidatedReporting, CapManagedTSE}
+	want := []Capability{CapBrowserCatalog, CapCentralCatalog, CapCloudBackup, CapCloudSync, CapConsolidatedReporting, CapManagedTSE, CapOrderTracking}
 	got := Capabilities()
 	if len(got) != len(want) {
 		t.Fatalf("Capabilities() = %v, want %v", got, want)

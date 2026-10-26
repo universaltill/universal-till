@@ -78,6 +78,10 @@ func TestReceiptTrackingQROffered(t *testing.T) {
 	if receiptTrackingQROffered(ctx, dp, "sale", "completed", on) {
 		t.Fatal("a Local till (no entitlement) must not offer a receipt tracking QR")
 	}
+	seedTrackingPlan(t, dp, entitlement.PlanLocalPlus)
+	if receiptTrackingQROffered(ctx, dp, "sale", "completed", on) {
+		t.Fatal("Local Plus does not include order tracking (Shop and up, ut-docs#4243)")
+	}
 	seedTrackingPlan(t, dp, entitlement.PlanShop)
 	if !receiptTrackingQROffered(ctx, dp, "sale", "completed", on) {
 		t.Fatal("a Shop till with the setting on must offer the QR on a normal sale")
