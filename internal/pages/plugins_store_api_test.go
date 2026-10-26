@@ -65,7 +65,8 @@ func storeRespOf(t *testing.T, rec *httptest.ResponseRecorder) (bool, string) {
 
 func TestStoreAPI_MissingListingID_400(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:0"})
+	// Never dialled: port 1 on loopback is refused at once (ut-docs#5080; port 0 is not dialable).
+	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:1"})
 
 	for _, path := range []string{
 		"/api/plugins/store/download",
@@ -86,8 +87,9 @@ func TestStoreAPI_InstallerNotConfigured_500(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	// An invalid public key makes the manifest verifier (and so the
 	// installer) unconstructable — every lifecycle action must fail loudly.
+	// Never dialled: port 1 on loopback is refused at once (ut-docs#5080; port 0 is not dialable).
 	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{
-		EndpointURL: "http://127.0.0.1:0",
+		EndpointURL: "http://127.0.0.1:1",
 		PublicKey:   "not-hex-at-all",
 	})
 
@@ -198,8 +200,9 @@ func TestStoreAPI_DownloadRegisteredRequired_403(t *testing.T) {
 
 func TestStoreAPI_InstallWithoutStagedDownload_400(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
+	// Never dialled: port 1 on loopback is refused at once (ut-docs#5080; port 0 is not dialable).
 	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{
-		EndpointURL: "http://127.0.0.1:0",
+		EndpointURL: "http://127.0.0.1:1",
 		PublicKey:   validStorePublicKey(t),
 	})
 
@@ -214,7 +217,8 @@ func TestStoreAPI_InstallWithoutStagedDownload_400(t *testing.T) {
 
 func TestStoreAPI_DeleteDownloadRemovesStagedBundle(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:0"})
+	// Never dialled: port 1 on loopback is refused at once (ut-docs#5080; port 0 is not dialable).
+	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:1"})
 
 	// Stage fake download files where the installer keeps them.
 	downloads := paths.Plugins("downloads")
@@ -252,7 +256,8 @@ func TestStoreAPI_DeleteDownloadRemovesStagedBundle(t *testing.T) {
 // directly (storeRespOf above hides it behind a compatibility shim).
 func TestStoreAPI_ResponsesUseDataErrorEnvelope(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:0"})
+	// Never dialled: port 1 on loopback is refused at once (ut-docs#5080; port 0 is not dialable).
+	mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:1"})
 
 	// Failure: data null, error carries the message.
 	rec := postForm(mux, "/api/plugins/store/download", url.Values{}, nil)
@@ -382,8 +387,9 @@ func TestStoreAPI_InstallFromStagedBundleSucceeds(t *testing.T) {
 	// A signed, asset-only (runtime "none") manifest — no executable needed.
 	m, pubHex := signedAssetOnlyManifest(t, "com.test.storeinstall", "Store Install Plugin")
 
+	// Never dialled: port 1 on loopback is refused at once (ut-docs#5080; port 0 is not dialable).
 	mux, d := newStoreAPIMux(t, config.MarketplaceConfig{
-		EndpointURL: "http://127.0.0.1:0",
+		EndpointURL: "http://127.0.0.1:1",
 		PublicKey:   pubHex,
 	})
 

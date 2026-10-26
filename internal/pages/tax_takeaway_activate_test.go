@@ -257,8 +257,9 @@ func TestTakeawayOverride_ImportFromFileReconciles(t *testing.T) {
 func TestTakeawayOverride_StoreInstallReconciles(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	m, pubHex := signedAssetOnlyManifest(t, taxDePluginID, "Tax DE (store)")
+	// Never dialled: port 1 on loopback is refused at once (ut-docs#5080; port 0 is not dialable).
 	mux, d := newStoreAPIMux(t, config.MarketplaceConfig{
-		EndpointURL: "http://127.0.0.1:0",
+		EndpointURL: "http://127.0.0.1:1",
 		PublicKey:   pubHex,
 	})
 

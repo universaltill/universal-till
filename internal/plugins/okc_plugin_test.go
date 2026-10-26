@@ -198,10 +198,9 @@ func TestOKCPlugin_RefusesTenderWhenDeviceCannotPrint(t *testing.T) {
 		}
 	})
 	t.Run("unreachable", func(t *testing.T) {
-		s := startOKCSim(t, sim.Options{})
-		port := s.Port()
-		s.Close()
-		seedOKCSettings(t, repo, pluginID, port)
+		// Port 1 on loopback is refused at once; a closed sim's port could be
+		// reused by a later listener in this binary (ut-docs#5080).
+		seedOKCSettings(t, repo, pluginID, 1)
 		if _, err := runOKCEvent(t, w, repo, db, pluginID, "payment.okc.authorize", authorizePayload(3000, 3000)); err == nil {
 			t.Fatal("an unreachable device must refuse the tender")
 		}

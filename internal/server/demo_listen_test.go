@@ -33,6 +33,7 @@ func TestBindListener_DemoBusyPortFailsInsteadOfFallingBack(t *testing.T) {
 }
 
 func TestBindListener_DemoFreePortBindsExactly(t *testing.T) {
+	// Needs a FREE port to bind next (not a refused one): reserve, release, rebind.
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

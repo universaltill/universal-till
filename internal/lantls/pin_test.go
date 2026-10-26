@@ -159,12 +159,9 @@ func TestExchange_PlainOKOnlyWhenTheTillTookNoRequest(t *testing.T) {
 	}
 
 	// Nobody listening: a plain retry would only fail the same way.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	dead := ln.Addr().String()
-	ln.Close()
+	// Port 1 on loopback is refused at once; a closed ephemeral port can be
+	// reused by a later listener in the same binary (ut-docs#5080).
+	const dead = "127.0.0.1:1"
 	if _, ok, err := NewPinnedClient(0, "").Exchange(newReq("https://" + dead + "/")); err == nil || ok {
 		t.Errorf("dead address: err=%v plainOK=%v, want no fallback", err, ok)
 	}

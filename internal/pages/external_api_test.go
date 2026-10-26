@@ -58,7 +58,8 @@ func TestExternalProxy_ProxiesUpstreamBody(t *testing.T) {
 }
 
 func TestExternalProxy_UnknownAndEmptyPlugin(t *testing.T) {
-	dp := newExternalProxyDeps(t, "http://127.0.0.1:0")
+	// Never dialled: port 1 on loopback is refused at once (ut-docs#5080; port 0 is not dialable).
+	dp := newExternalProxyDeps(t, "http://127.0.0.1:1")
 	mux := http.NewServeMux()
 	registerExternalProxy(mux, dp)
 
