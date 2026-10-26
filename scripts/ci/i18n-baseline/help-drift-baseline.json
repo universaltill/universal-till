@@ -118,20 +118,20 @@
       "locale": "ar",
       "topic": "recovery",
       "signature": {
-        "headings": 6,
-        "numbered_steps": 0,
+        "headings": 7,
+        "numbered_steps": 3,
         "sub_bullets": 0,
         "top_bullets": 7,
         "bold_leadins": 5
       },
       "english": {
-        "headings": 6,
-        "numbered_steps": 0,
+        "headings": 7,
+        "numbered_steps": 3,
         "sub_bullets": 0,
         "top_bullets": 7,
         "bold_leadins": 7
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#2720: English and every locale gained one section (heading +1, top bullets +4, bold lead-ins +4) for where the log file is — the pre-existing 2-bold-lead-in gap this entry tracks is unchanged in size, just shifted. ut-docs#2761: English and every locale gained one section (heading +1, no bullets or bold lead-ins) for the Windows browser fallback — the gap is unchanged."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#2720: English and every locale gained one section (heading +1, top bullets +4, bold lead-ins +4) for where the log file is — the pre-existing 2-bold-lead-in gap this entry tracks is unchanged in size, just shifted. ut-docs#2761: English and every locale gained one section (heading +1, no bullets or bold lead-ins) for the Windows browser fallback — the gap is unchanged. ut-docs#5021: English and every locale gained one section (heading +1, numbered steps +3, no bullets or bold lead-ins) for the startup-failure window — the gap is unchanged."
     },
     {
       "locale": "ar",
@@ -422,20 +422,20 @@
       "locale": "fa",
       "topic": "recovery",
       "signature": {
-        "headings": 6,
-        "numbered_steps": 0,
+        "headings": 7,
+        "numbered_steps": 3,
         "sub_bullets": 0,
         "top_bullets": 7,
         "bold_leadins": 5
       },
       "english": {
-        "headings": 6,
-        "numbered_steps": 0,
+        "headings": 7,
+        "numbered_steps": 3,
         "sub_bullets": 0,
         "top_bullets": 7,
         "bold_leadins": 7
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#2720: English and every locale gained one section (heading +1, top bullets +4, bold lead-ins +4) for where the log file is — the pre-existing 2-bold-lead-in gap this entry tracks is unchanged in size, just shifted. ut-docs#2761: English and every locale gained one section (heading +1, no bullets or bold lead-ins) for the Windows browser fallback — the gap is unchanged."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#2720: English and every locale gained one section (heading +1, top bullets +4, bold lead-ins +4) for where the log file is — the pre-existing 2-bold-lead-in gap this entry tracks is unchanged in size, just shifted. ut-docs#2761: English and every locale gained one section (heading +1, no bullets or bold lead-ins) for the Windows browser fallback — the gap is unchanged. ut-docs#5021: English and every locale gained one section (heading +1, numbered steps +3, no bullets or bold lead-ins) for the startup-failure window — the gap is unchanged."
     },
     {
       "locale": "fa",
@@ -688,20 +688,20 @@
       "locale": "tr",
       "topic": "recovery",
       "signature": {
-        "headings": 6,
-        "numbered_steps": 0,
+        "headings": 7,
+        "numbered_steps": 3,
         "sub_bullets": 0,
         "top_bullets": 7,
         "bold_leadins": 5
       },
       "english": {
-        "headings": 6,
-        "numbered_steps": 0,
+        "headings": 7,
+        "numbered_steps": 3,
         "sub_bullets": 0,
         "top_bullets": 7,
         "bold_leadins": 7
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#2720: English and every locale gained one section (heading +1, top bullets +4, bold lead-ins +4) for where the log file is — the pre-existing 2-bold-lead-in gap this entry tracks is unchanged in size, just shifted. ut-docs#2761: English and every locale gained one section (heading +1, no bullets or bold lead-ins) for the Windows browser fallback — the gap is unchanged."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#2720: English and every locale gained one section (heading +1, top bullets +4, bold lead-ins +4) for where the log file is — the pre-existing 2-bold-lead-in gap this entry tracks is unchanged in size, just shifted. ut-docs#2761: English and every locale gained one section (heading +1, no bullets or bold lead-ins) for the Windows browser fallback — the gap is unchanged. ut-docs#5021: English and every locale gained one section (heading +1, numbered steps +3, no bullets or bold lead-ins) for the startup-failure window — the gap is unchanged."
     },
     {
       "locale": "tr",
