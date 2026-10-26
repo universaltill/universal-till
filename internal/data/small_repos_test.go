@@ -377,19 +377,9 @@ func TestHeldSalesRepo_TableID(t *testing.T) {
 
 func newTillsTestDB(t *testing.T) *TillsRepo {
 	t.Helper()
-	dbc, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = dbc.Close() })
-	if _, err := dbc.Exec(`CREATE TABLE tills (id TEXT PRIMARY KEY, name TEXT NOT NULL, bearer_hash TEXT NOT NULL UNIQUE, enrolled_at TEXT NOT NULL DEFAULT (datetime('now')), last_seen_at TEXT, role TEXT NOT NULL DEFAULT 'additional')`); err != nil {
-		t.Fatal(err)
-	}
-	// TillByBearerHash joins the main till's TLS-pinned record (migration 079).
-	if _, err := dbc.Exec(`CREATE TABLE till_tls_pinned (till_id TEXT PRIMARY KEY REFERENCES tills(id) ON DELETE CASCADE, pinned_at TEXT NOT NULL)`); err != nil {
-		t.Fatal(err)
-	}
-	return NewTillsRepo(dbc)
+	// A real migrated schema: enrolment reads sales, settings and the
+	// archive to grant a receipt prefix (ut-docs#5074).
+	return NewTillsRepo(openMigratedDB(t, "tills.db").DB)
 }
 
 func TestTillsRepo_EnrollListLookupDelete(t *testing.T) {

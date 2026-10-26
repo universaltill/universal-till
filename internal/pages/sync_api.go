@@ -13,7 +13,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -696,7 +695,12 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		raw := make([]byte, 32)
 		_, _ = rand.Read(raw)
 		bearer := hex.EncodeToString(raw)
-		tillID, err := repo.InsertTillWithRole(r.Context(), name, hashBearer(bearer), role)
+		// ut-docs#5074 S0: the till row and its receipt prefix in one
+		// transaction. The primary is till 1; additional tills number from
+		// 2, and a number once granted is never granted to another till
+		// (revoked, withdrawn or promoted tills included). A re-joining till
+		// keeps its own when it is free (ut-docs#5058 UT-5).
+		tillID, tillNo, err := repo.EnrolTill(r.Context(), name, hashBearer(bearer), role, in.ReceiptPrefix)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
@@ -745,15 +749,11 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			registerID, registerName = "", ""
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, "system", "till", tillID, "till_enrolled",
-			map[string]any{"name": name, "register_id": registerID, "register_name": registerName, "role": role},
+			map[string]any{"name": name, "register_id": registerID, "register_name": registerName, "role": role,
+				// ut-docs#5074: which number it got, and whether it was the
+				// one it asked for (a re-join), so a reclaimed number shows.
+				"till_no": tillNo, "requested_prefix": in.ReceiptPrefix},
 			time.Now().UTC().Format(time.RFC3339), "")
-		// The primary is till 1; replicas number from 2 (receipt prefixes).
-		// ut-docs#5058 UT-5: never a prefix another till holds or has sales
-		// under; a re-joining till keeps its own when it is free.
-		tillNo := chooseTillNo(r.Context(), repo, in.ReceiptPrefix)
-		if err := repo.SetReceiptPrefix(r.Context(), tillID, fmt.Sprintf("T%d-", tillNo)); err != nil {
-			logging.L().Warnf("record receipt prefix of enrolling till %s: %v", tillID, err)
-		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{
@@ -1493,39 +1493,4 @@ func withdrawEnrolment(ctx context.Context, client *http.Client, base, bearer st
 	if resp.StatusCode != http.StatusNoContent {
 		logging.L().Warnf("join: withdraw the enrolment on the main till: %s", resp.Status)
 	}
-}
-
-// tillPrefixRe is a joined till's receipt prefix, T<n>- with n >= 2 (the main
-// till is till 1 and has none).
-var tillPrefixRe = regexp.MustCompile(`^T([2-9]|[1-9][0-9]{1,3})-$`)
-
-// chooseTillNo picks the number (receipt prefix T<n>-) for a till enrolling
-// now (ut-docs#5058 UT-5). requested is the joining till's own prefix ("" for
-// a till that never joined): it is kept when valid and no other till holds
-// it or has sales under it, so a till re-joining a new main till goes on
-// numbering where it left off and its replayed sales keep their numbers.
-// Otherwise the number is past every prefix in use and past the till count
-// (the old rule), so it can never be one another till's queued sales carry.
-func chooseTillNo(ctx context.Context, repo *data.TillsRepo, requested string) int {
-	used, err := repo.ReceiptPrefixesInUse(ctx)
-	if err != nil {
-		logging.L().Warnf("enrolment: receipt prefixes in use: %v", err)
-		used = map[string]bool{}
-	}
-	if m := tillPrefixRe.FindStringSubmatch(strings.TrimSpace(requested)); m != nil && !used[m[0]] {
-		n, _ := strconv.Atoi(m[1])
-		return n
-	}
-	next := 2
-	if list, err := repo.ListTills(ctx); err == nil {
-		next = len(list) + 1
-	}
-	for p := range used {
-		if m := tillPrefixRe.FindStringSubmatch(p); m != nil {
-			if n, _ := strconv.Atoi(m[1]); n >= next {
-				next = n + 1
-			}
-		}
-	}
-	return next
 }
