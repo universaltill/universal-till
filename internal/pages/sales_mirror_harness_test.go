@@ -185,6 +185,12 @@ func TestSalesMirrorHarness_M1_LogCoversJournaledAndOwnSales(t *testing.T) {
 				if got != origin {
 					t.Errorf("sale %s logged with origin %q, want %q", sale, got, origin)
 				}
+				// S0b (#2168): a journaled sale is one INSERT with its final
+				// provenance, and the no-op provenance stamp after it changes
+				// no logged column, so each sale is logged exactly once.
+				if n := harnessCount(t, mdb, `SELECT COUNT(*) FROM sales_mirror_log WHERE ref_id = ?`, sale); n != 1 {
+					t.Errorf("sale %s logged %d times, want once", sale, n)
+				}
 			}
 		})
 	}

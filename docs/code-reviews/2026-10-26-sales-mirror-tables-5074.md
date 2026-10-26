@@ -76,6 +76,24 @@ ADR-0011 / ADR-0114 "Amendment 2026-10-26", contract
 reviewer's independent run (800 × 3): 0.80–0.88 / 0.79–0.85 / 0.80–0.81 ms.
 Both put the trigger cost within noise. Pi 5 measurement is M8's.
 
+Raspberry Pi 5 (the pilot hardware class), the same benchmark interleaved
+3 × 500 sales per mode on its NVMe: no triggers 2.72 ms, off 2.93–3.06 ms,
+on 3.02–3.12 ms per `CompleteSale` — the triggers cost about 0.2–0.3 ms a
+sale with the copy off (one settings lookup per firing on `sales`), a
+little more on. Within the 4 s sale budget by four orders of magnitude;
+a cheaper gate is on the follow-up card (ut-docs#5091).
+
+## After S0 / S0b (#2168)
+
+- `receiptPrefixesInUse` now also counts every `T<n>-` prefix in the sales
+  copy (`mirror_sales`, via `mirrorReceiptPrefixesInUse` in this repository
+  file), design §3.6: a promoted till that holds the copy never grants a
+  prefix another till already used (TDD: the new test failed with an empty
+  set before the change).
+- A journaled sale is now one `INSERT` with its final provenance, and the
+  remaining no-op provenance stamp changes no logged column, so each
+  journaled sale is logged exactly once (asserted in the harness).
+
 ## Independent review (Fable, strict)
 
 Verdict: safe to merge dark. Findings:

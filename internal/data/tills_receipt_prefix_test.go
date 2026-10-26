@@ -184,3 +184,31 @@ func TestEnrolTill_HighWaterTravelsInTheAdminBundle(t *testing.T) {
 		t.Fatalf("replica's %s = %q after the admin pull, want 2", TillNoHighWaterSettingsKey, v)
 	}
 }
+
+// ut-docs#5074 design §3.6: a prefix seen only in this till's read-only sales
+// copy (another till's sales, mirror_sales) is taken too — a promoted till
+// that holds the copy must never hand that prefix out again.
+func TestTillsRepo_ReceiptPrefixesInUseIncludesTheSalesCopy(t *testing.T) {
+	d := openMigratedDB(t, "tills-prefix-copy.db")
+	ctx := context.Background()
+	mustExec(t, d, `INSERT INTO mirror_sales (id, src_seq, epoch, origin_till_id, receipt_no, status, sale_type, tender_type,
+  currency, subtotal, discount_total, tax_total, total, rounding, service_charge_amount, service_charge_tax_basis_bp,
+  voucher_issue_total, offline, created_at, local_date, received_at)
+  VALUES ('m1', 1, 'e', 't9', 'T9-000000003', 'completed', 'sale', 'cash', 'GBP', 1, 0, 0, 1, 0, 0, 0, 0, 0, 'x', '2026-10-26', 'x'),
+         ('m2', 2, 'e', 'main', '000000004', 'completed', 'sale', 'cash', 'GBP', 1, 0, 0, 1, 0, 0, 0, 0, 0, 'x', '2026-10-26', 'x')`)
+	got, err := receiptPrefixesInUse(ctx, d.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got["T9-"] || len(got) != 1 {
+		t.Fatalf("prefixes in use = %v, want T9- from the sales copy only", got)
+	}
+	// The enrolment that follows numbers past it.
+	_, no, err := NewTillsRepo(d.DB).EnrolTill(ctx, "Till X", "hash-x", TillRoleAdditional, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if no <= 9 {
+		t.Fatalf("new till number %d reuses or precedes T9- seen only in the copy", no)
+	}
+}

@@ -13,6 +13,11 @@ package data
 // never counts" holds by construction. scripts/ci/guard-sales-mirror-isolation.sh
 // fails CI when any other non-test file names one of these tables.
 
+import (
+	"context"
+	"fmt"
+)
+
 // Settings keys (design §3.3). sales_mirror.* are shop-wide (the admin
 // bundle carries them from the main till); sync.sales_mirror_off is per till
 // (the "sync." family of PerTillSettingPrefixes).
@@ -35,3 +40,27 @@ const (
 	SalesMirrorDefaultLogMaxDays = 30
 	SalesMirrorDefaultLogMaxRows = 250000
 )
+
+// mirrorReceiptPrefixesInUse is every T<n>- receipt prefix in this till's
+// read-only sales copy (design §3.6): another till's numbers a promoted till
+// must never grant again. receiptPrefixesInUse (tills_receipt_prefix.go)
+// adds them; this is the copy's side of that query, kept here because only
+// this file may read the copy.
+func mirrorReceiptPrefixesInUse(ctx context.Context, q dbExecutor) ([]string, error) {
+	rows, err := q.QueryContext(ctx, `
+SELECT DISTINCT substr(receipt_no, 1, instr(receipt_no, '-')) FROM mirror_sales
+WHERE receipt_no GLOB 'T[0-9]*-*'`)
+	if err != nil {
+		return nil, fmt.Errorf("receipt prefixes in the sales copy: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, fmt.Errorf("scan copied receipt prefix: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
