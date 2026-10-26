@@ -115,3 +115,5 @@ dependency.
   transactions.
 - `syncPushSales` advances to the batch's max `created_at`: a sale in the
   same second beyond the batch is skipped forever (pre-existing).
+
+- Manual screenshots: regenerated `web/help/img/*/multitill.png` and `manifest.json` on Linux (ubuntu:24.04 amd64 container, Go 1.27.1, Node 26, fonts-inter 4.0 + DejaVu + Noto Color Emoji, `make docs-shots`, ut-docs#4407); `guard-docs-shots.sh` passes. The other 120 PNGs regenerated with sub-pixel text differences and were left as committed to avoid unrelated churn.
