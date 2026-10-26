@@ -61,20 +61,20 @@
       "locale": "ar",
       "topic": "multitill",
       "signature": {
-        "headings": 6,
-        "numbered_steps": 17,
+        "headings": 7,
+        "numbered_steps": 22,
         "sub_bullets": 1,
         "top_bullets": 11,
         "bold_leadins": 3
       },
       "english": {
-        "headings": 6,
-        "numbered_steps": 17,
+        "headings": 7,
+        "numbered_steps": 22,
         "sub_bullets": 3,
         "top_bullets": 11,
         "bold_leadins": 2
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2722: English and every locale gained one section (heading +1, steps +4) on a joined till that cannot reach the main till; the pre-existing sub_bullets/bold_leadins gap is untouched. Updated ut-docs#2791: English and every locale gained one numbered step (steps 16->17) on shop-wide settings writing through to the main till; the gap is unchanged. Updated ut-docs#2781: English and every locale gained one section (heading +1, top bullets +4) on till roles (additional/satellite); the gap is unchanged. Updated ut-docs#4022: one top-level bullet (a register keeps its till's name; inactive registers grouped) added to English and this locale in lockstep (top_bullets 8->9 on both sides); the pre-existing gap is unchanged. Updated ut-docs#5058: English and every locale gained one section \"When the main till was replaced\" (heading +1, two top-level bullets, each with a bold lead-in) in lockstep; the pre-existing sub_bullets/bold_leadins gap is unchanged in size."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2722: English and every locale gained one section (heading +1, steps +4) on a joined till that cannot reach the main till; the pre-existing sub_bullets/bold_leadins gap is untouched. Updated ut-docs#2791: English and every locale gained one numbered step (steps 16->17) on shop-wide settings writing through to the main till; the gap is unchanged. Updated ut-docs#2781: English and every locale gained one section (heading +1, top bullets +4) on till roles (additional/satellite); the gap is unchanged. Updated ut-docs#4022: one top-level bullet (a register keeps its till's name; inactive registers grouped) added to English and this locale in lockstep (top_bullets 8->9 on both sides); the pre-existing gap is unchanged. Updated ut-docs#5058: English and every locale gained one section \"When the main till was replaced\" (heading +1, two top-level bullets, each with a bold lead-in) in lockstep; the pre-existing sub_bullets/bold_leadins gap is unchanged in size. Updated ut-docs#5074: English and every locale gained one section (heading +1, steps +5, no bold lead-ins) on the read-only copy of every sale on each till; the gap is unchanged."
     },
     {
       "locale": "ar",
@@ -308,20 +308,20 @@
       "locale": "fa",
       "topic": "multitill",
       "signature": {
-        "headings": 6,
-        "numbered_steps": 17,
+        "headings": 7,
+        "numbered_steps": 22,
         "sub_bullets": 1,
         "top_bullets": 11,
         "bold_leadins": 3
       },
       "english": {
-        "headings": 6,
-        "numbered_steps": 17,
+        "headings": 7,
+        "numbered_steps": 22,
         "sub_bullets": 3,
         "top_bullets": 11,
         "bold_leadins": 2
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2722: English and every locale gained one section (heading +1, steps +4) on a joined till that cannot reach the main till; the pre-existing sub_bullets/bold_leadins gap is untouched. Updated ut-docs#2791: English and every locale gained one numbered step (steps 16->17) on shop-wide settings writing through to the main till; the gap is unchanged. Updated ut-docs#2781: English and every locale gained one section (heading +1, top bullets +4) on till roles (additional/satellite); the gap is unchanged. Updated ut-docs#4022: one top-level bullet (a register keeps its till's name; inactive registers grouped) added to English and this locale in lockstep (top_bullets 8->9 on both sides); the pre-existing gap is unchanged. Updated ut-docs#5058: English and every locale gained one section \"When the main till was replaced\" (heading +1, two top-level bullets, each with a bold lead-in) in lockstep; the pre-existing sub_bullets/bold_leadins gap is unchanged in size."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2722: English and every locale gained one section (heading +1, steps +4) on a joined till that cannot reach the main till; the pre-existing sub_bullets/bold_leadins gap is untouched. Updated ut-docs#2791: English and every locale gained one numbered step (steps 16->17) on shop-wide settings writing through to the main till; the gap is unchanged. Updated ut-docs#2781: English and every locale gained one section (heading +1, top bullets +4) on till roles (additional/satellite); the gap is unchanged. Updated ut-docs#4022: one top-level bullet (a register keeps its till's name; inactive registers grouped) added to English and this locale in lockstep (top_bullets 8->9 on both sides); the pre-existing gap is unchanged. Updated ut-docs#5058: English and every locale gained one section \"When the main till was replaced\" (heading +1, two top-level bullets, each with a bold lead-in) in lockstep; the pre-existing sub_bullets/bold_leadins gap is unchanged in size. Updated ut-docs#5074: English and every locale gained one section (heading +1, steps +5, no bold lead-ins) on the read-only copy of every sale on each till; the gap is unchanged."
     },
     {
       "locale": "fa",
@@ -593,20 +593,20 @@
       "locale": "tr",
       "topic": "multitill",
       "signature": {
-        "headings": 6,
-        "numbered_steps": 17,
+        "headings": 7,
+        "numbered_steps": 22,
         "sub_bullets": 1,
         "top_bullets": 11,
         "bold_leadins": 7
       },
       "english": {
-        "headings": 6,
-        "numbered_steps": 17,
+        "headings": 7,
+        "numbered_steps": 22,
         "sub_bullets": 3,
         "top_bullets": 11,
         "bold_leadins": 2
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2722: English and every locale gained one section (heading +1, steps +4) on a joined till that cannot reach the main till; the pre-existing sub_bullets/bold_leadins gap is untouched. Updated ut-docs#2791: English and every locale gained one numbered step (steps 16->17) on shop-wide settings writing through to the main till; the gap is unchanged. Updated ut-docs#2781: English and every locale gained one section (heading +1, top bullets +4) on till roles (additional/satellite); the gap is unchanged. Updated ut-docs#4022: one top-level bullet (a register keeps its till's name; inactive registers grouped) added to English and this locale in lockstep (top_bullets 8->9 on both sides); the pre-existing gap is unchanged. Updated ut-docs#5058: English and every locale gained one section \"When the main till was replaced\" (heading +1, two top-level bullets, each with a bold lead-in) in lockstep; the pre-existing sub_bullets/bold_leadins gap is unchanged in size."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2722: English and every locale gained one section (heading +1, steps +4) on a joined till that cannot reach the main till; the pre-existing sub_bullets/bold_leadins gap is untouched. Updated ut-docs#2791: English and every locale gained one numbered step (steps 16->17) on shop-wide settings writing through to the main till; the gap is unchanged. Updated ut-docs#2781: English and every locale gained one section (heading +1, top bullets +4) on till roles (additional/satellite); the gap is unchanged. Updated ut-docs#4022: one top-level bullet (a register keeps its till's name; inactive registers grouped) added to English and this locale in lockstep (top_bullets 8->9 on both sides); the pre-existing gap is unchanged. Updated ut-docs#5058: English and every locale gained one section \"When the main till was replaced\" (heading +1, two top-level bullets, each with a bold lead-in) in lockstep; the pre-existing sub_bullets/bold_leadins gap is unchanged in size. Updated ut-docs#5074: English and every locale gained one section (heading +1, steps +5, no bold lead-ins) on the read-only copy of every sale on each till; the gap is unchanged."
     },
     {
       "locale": "tr",

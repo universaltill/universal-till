@@ -1,0 +1,24 @@
+{{/* ut-docs#5074 M5: the read-only sales copy on the Tills page, loaded by
+     GET /ui/tills/sales-mirror (sync_sales_mirror_ui.go). On the main till:
+     the shop switch (manager; the page itself is manager-only) and how far
+     behind each additional till is. On an additional till: the state of this
+     till's copy. In place, no dialog; words first, never colour alone. */}}
+<div class="card" id="tills-sales-mirror" data-testid="tills-sales-mirror">
+  <h3>{{ T "tills.sales_mirror.title" }} {{ helpLink "multitill" }}</h3>
+  <p class="muted">{{ T "tills.sales_mirror.help" }}</p>
+  {{ if .IsMain }}
+    <p data-testid="sales-mirror-state"><strong>{{ if .Killed }}{{ T "tills.sales_mirror.state.off_here" }}{{ else if .On }}{{ T "tills.sales_mirror.status_on" }}{{ else }}{{ T "tills.sales_mirror.status_off" }}{{ end }}</strong>{{ if and .On (not .Killed) }} — {{ printf (T "tills.sales_mirror.window") .WindowDays }}{{ end }}</p>
+    {{ if and .On .Tills }}
+    <ul>
+      {{ range .Tills }}<li>{{ if .Waiting }}{{ printf (T "tills.sales_mirror.till_waiting") .Name }}{{ else if .Behind }}{{ printf (T "tills.sales_mirror.till_catching_up") .Name .Behind }}{{ else }}{{ printf (T "tills.sales_mirror.till_up_to_date") .Name }}{{ end }}</li>{{ end }}
+    </ul>
+    {{ end }}
+    {{ if not .Killed }}<form hx-post="/api/sync/sales-mirror/{{ if .On }}disable{{ else }}enable{{ end }}" hx-target="#tills-sales-mirror" hx-swap="outerHTML">
+      <button class="btn" type="submit" data-testid="sales-mirror-toggle">{{ if .On }}{{ T "tills.sales_mirror.turn_off" }}{{ else }}{{ T "tills.sales_mirror.turn_on" }}{{ end }}</button>
+    </form>{{ end }}
+    <div class="muted" aria-live="polite" data-testid="sales-mirror-msg">{{ if .ErrKey }}✗ {{ T .ErrKey }}{{ end }}</div>
+  {{ else }}
+    <p data-testid="sales-mirror-state"><strong>{{ T .StateKey }}</strong>{{ if .Behind }} — {{ printf (T "tills.sales_mirror.copy_behind") .Behind }}{{ end }}</p>
+    {{ if and .Sales .Since }}<p class="muted">{{ printf (T "tills.sales_mirror.copy_summary") .Sales (datetime .Since) }}</p>{{ else if .On }}<p class="muted">{{ T "tills.sales_mirror.copy_empty" }}</p>{{ end }}
+  {{ end }}
+</div>

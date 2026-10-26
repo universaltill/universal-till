@@ -155,6 +155,9 @@
     <div hx-get="/ui/tills/pending-pairings" hx-trigger="load" hx-swap="outerHTML"></div>
   </div>
 
+  {{/* ut-docs#5074 M5: the read-only sales copy (its own partial). */}}
+  <div id="tills-sales-mirror" hx-get="/ui/tills/sales-mirror" hx-trigger="load" hx-swap="outerHTML"></div>
+
   {{ if .SyncPrimary }}
   <div class="card">
     <h3>{{ T "tills.promote_title" }}</h3>

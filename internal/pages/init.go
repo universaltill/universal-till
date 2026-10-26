@@ -537,6 +537,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncSalesMirror(mux, dp)    // ut-docs#5074: the read-only sales copy's feed, main-till side (ships dark)
 	registerSyncPeerCloses(mux, dp)     // ut-docs#5074 M7: additional tills' own day closes for the copy
 	registerSalesMirrorStatus(mux, dp)  // ut-docs#5074: this till's copy status (manager)
+	registerSalesMirrorUI(mux, dp)      // ut-docs#5074 M5: the Tills page's sales-copy card
 	registerSyncNoSales(mux, dp)        // ut-docs#3562: replica no-sale opens (LAN sync D3)
 	registerSyncClearedBaskets(mux, dp) // ut-docs#4711: replica cleared baskets (LAN sync D3)
 	registerSyncOrders(mux, dp)         // cross-till orders board, primary side (ut-docs#1350)

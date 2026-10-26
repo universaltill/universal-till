@@ -634,7 +634,12 @@ func (s *salesMirrorServer) state(w http.ResponseWriter, r *http.Request) {
 // keeps every copy and the epoch.
 func (s *salesMirrorServer) toggle(on bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		hx := r.Header.Get("HX-Request") != ""
 		if !canPerform(s.d, r, "sync_management") {
+			if hx {
+				renderSalesMirrorCardErr(w, r, s.d, "common.error.manager_or_admin_required")
+				return
+			}
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
@@ -645,18 +650,35 @@ func (s *salesMirrorServer) toggle(on bool) http.HandlerFunc {
 		kv := map[string]string{data.SalesMirrorEnabledKey: "0"}
 		action := "sales_mirror_disabled"
 		epoch, _, _ := s.d.Settings.Get(r.Context(), data.SalesMirrorEpochKey)
-		if on {
+		was, _, _ := s.d.Settings.Get(r.Context(), data.SalesMirrorEnabledKey)
+		if on && strings.TrimSpace(was) == "1" && epoch != "" {
+			// Already on (a second press, a stale tab): nothing changes —
+			// a new epoch would send every till into a re-sync for nothing.
+			kv, action = nil, ""
+		} else if on {
 			epoch = uuid.NewString()
 			kv = map[string]string{data.SalesMirrorEnabledKey: "1", data.SalesMirrorEpochKey: epoch}
 			action = "sales_mirror_enabled"
 		}
-		// settings-write:allow the shop switch is written on the main till only (an additional till is refused above), where shop settings are authoritative; the admin bundle carries it to every till
-		if err := s.d.Settings.SetMany(r.Context(), kv); err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sales_mirror", err)
+		if kv != nil {
+			// settings-write:allow the shop switch is written on the main till only (an additional till is refused above), where shop settings are authoritative; the admin bundle carries it to every till
+			if err := s.d.Settings.SetMany(r.Context(), kv); err != nil {
+				if hx {
+					logging.L().Errorf("sales mirror: switch: %v", err)
+					renderSalesMirrorCardErr(w, r, s.d, "sync.error.server")
+					return
+				}
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sales_mirror", err)
+				return
+			}
+			_ = data.NewPOSRepo(s.d.Db).InsertAudit(r.Context(), nil, getSessionUserID(r), "setting", data.SalesMirrorEnabledKey, action,
+				nil, time.Now().UTC().Format(time.RFC3339), "")
+		}
+		if hx {
+			// The Tills page's card (M5): re-render it in place.
+			renderSalesMirrorCard(w, r, s.d)
 			return
 		}
-		_ = data.NewPOSRepo(s.d.Db).InsertAudit(r.Context(), nil, getSessionUserID(r), "setting", data.SalesMirrorEnabledKey, action,
-			nil, time.Now().UTC().Format(time.RFC3339), "")
 		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"enabled": on, "epoch": epoch}, "error": nil})
 	}
 }
