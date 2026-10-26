@@ -26,6 +26,8 @@ itself — no need to reach for a keyboard or a plug. On Windows the till
 can't restart itself yet — close the window and reopen Universal Till
 instead.
 
+A restore keeps this till's own connection to your shop's cloud account, also when the backup was made on another till. If the file turns out not to be a backup this till can use, it keeps your current data, and Settings → Backups says the restore was not applied.
+
 ## Automatic clean-up
 
 Once a day the till removes files it no longer needs, so its disk doesn't fill up:

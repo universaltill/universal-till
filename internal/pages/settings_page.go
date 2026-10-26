@@ -876,6 +876,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// persistent, on-disk fact; nothing else re-checks it once the
 			// original POST response is gone).
 			"restorePending":        backupRestorePending(d.Cfg.DBPath),
+			"restoreRefused":        db.RestoreRefused(d.Cfg.DBPath),
 			"restartSupported":      backupRestartSupported(),
 			"payMethods":            payMethods,
 			"payDefault":            payDefault,

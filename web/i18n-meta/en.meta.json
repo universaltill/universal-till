@@ -305,5 +305,6 @@
   "desktop.startup_failed.step_retry": {"description": "First step in the numbered list: close the window and open the app again.", "review": "standard"},
   "desktop.startup_failed.step_reinstall": {"description": "Second step in the numbered list: reinstall from the latest installer; saved data is kept. Keep the product name unchanged.", "review": "standard"},
   "desktop.startup_failed.logs": {"description": "Sentence introducing the data folder path, asking the user to send the two log files from it to support. File names desktop.log and till.log stay unchanged.", "review": "standard"},
-  "desktop.startup_failed.detail": {"description": "Label before the technical reason (for example an exit status) shown in small text for support.", "review": "standard"}
+  "desktop.startup_failed.detail": {"description": "Label before the technical reason (for example an exit status) shown in small text for support.", "review": "standard"},
+  "settings.backup.restore_refused": {"description": "Notice in Settings → Backups after the till refused, at restart, a staged restore whose file was not a usable till database. Shown until the next restore is staged.", "review": "standard"}
 }

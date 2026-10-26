@@ -1121,6 +1121,10 @@
        (db.PendingRestore) independent of whatever the snapshot list looks
        like on THIS render, so its restart trigger must not be tied to
        `.backups` happening to be non-empty this time. -->
+  {{/* ut-docs#5069: the last staged restore was refused at boot (not a
+       usable till database); the data was not changed. Cleared when the
+       next restore is staged. */}}
+  {{ if .restoreRefused }}<p class="muted" role="status" data-testid="backup-restore-refused"><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T "settings.backup.restore_refused" }}</p>{{ end }}
   <div id="restore-msg" class="muted" aria-live="polite" style="min-height:1.2rem">{{ if .restorePending }}{{ template "backup_restore_staged.html" . }}{{ end }}</div>
   {{ end }}
 </div>

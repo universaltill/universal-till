@@ -2361,6 +2361,7 @@
   "settings.backup.restarting_slow": "Hâlâ yeniden başlatılıyor — büyük bir geri yüklemede bu biraz daha uzun sürebilir.",
   "settings.backup.restore": "Geri yükle",
   "settings.backup.restore_note": "Geri yükleme, TÜM mevcut verileri yedekle değiştirir (değiştirilen veriler yedekler klasöründe tutulur). Kasa bunu bir sonraki yeniden başlatmada uygular.",
+  "settings.backup.restore_refused": "Son geri yükleme uygulanmadı: dosya bu kasanın kullanabileceği bir yedek değil. Verileriniz değişmedi.",
   "settings.backup.save_failed": "Yedek kopyası kaydedilemedi.",
   "settings.backup.saved_to": "Kaydedildi:",
   "settings.backup.stage_failed": "Geri yükleme hazırlanamadı — tekrar deneyin.",
