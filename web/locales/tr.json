@@ -2967,6 +2967,8 @@
   "status.register_till": "Pazar yeri: bağlı değil",
   "status.disk_low.hint": "Bu kasanın diski neredeyse dolu. Eski yedekler ve artık dosyalar zaten silindi. Cihazda biraz yer açın veya cihazı kuran kişiye sorun. Satış devam eder.",
   "status.disk_low.label": "Depolama neredeyse dolu",
+  "status.backup_copy.label": "7 gündür bu kasadan dışarı yedek kopyalanmadı",
+  "status.backup_copy.hint": "Bu kasada kalan bir yedek, kasayla birlikte kaybolur. Ayarlar → Yedekler'de İndirilenler’e kaydet’e basın ve dosyayı bir USB bellekte veya başka bir bilgisayarda saklayın.",
   "status.shop_currency_mismatch.hint": "Bu kasa %[1]s ile satış yapıyor; my. üzerindeki mağazanız %[2]s kullanıyor. Kayıtlarınız için güvenli olduğunda kasanın para birimini Ayarlar'dan değiştirin. Satış devam eder.",
   "status.shop_currency_mismatch.label": "Para birimi mağazadan farklı",
   "status.report_archive.hint": "Abonelik etkin olmadığı için bulut rapor yüklemesini reddetti. Raporlar bu kasada kalır ve abonelik yeniden etkin olduğunda yüklenir.",

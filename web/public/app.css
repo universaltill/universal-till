@@ -7069,3 +7069,15 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 .backup-upload-facts { margin-block: .25rem .5rem; padding-inline-start: 1.25rem; }
 .backup-upload-ready form { margin-block-start: .5rem; }
 .import-welcome-restore { margin-block-start: 1rem; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+/* ut-docs#5071: no backup copied off this till in 7 days
+   (backup_copy_chip.html). Same amber pill as sb-disk-low; deliberately
+   NOT in the sale-screen :has() list that shows the status bar there, so
+   the sell screen keeps its space. Wraps (long in some locales). */
+.statusbar .sb-backup-copy {
+  color: #451a03; background: var(--warning, #d97706);
+  text-decoration: none; white-space: normal;
+  padding: .05rem .5rem; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem;
+}
+.statusbar a.sb-backup-copy:hover { filter: brightness(0.92); }
+#sb-backup-copy-mount:empty { display: none; }

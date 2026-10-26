@@ -200,6 +200,9 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		audit(r, "backup_downloaded", map[string]any{"file": name})
+		if r.Method == http.MethodGet { // not a HEAD probe (ut-docs#5071)
+			recordBackupCopied(r.Context(), d)
+		}
 		w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
 		w.Header().Set("Content-Type", "application/octet-stream")
 		http.ServeFile(w, r, full)
@@ -235,6 +238,7 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		audit(r, "backup_saved_copy", map[string]any{"file": name, "dest": dst})
+		recordBackupCopied(r.Context(), d) // ut-docs#5071
 		fmt.Fprintf(w, `<span>✓ %s <code>%s</code></span>`, httpx.T(locale, "settings.backup.saved_to"), dst)
 	})
 

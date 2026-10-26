@@ -1650,6 +1650,14 @@
            clean-up changes it); empty body otherwise. Same hx-preserve +
            default innerHTML swap as #sb-report-archive-mount. -->
       <span id="sb-disk-space-mount" hx-preserve hx-get="/ui/disk-space-chip" hx-trigger="load, every 60s"></span>
+      <!-- ut-docs#5071: no backup was copied off this till (downloaded or
+           saved to Downloads) in 7 days — "No backup copied off this till
+           in 7 days" (web/ui/partials/backup_copy_chip.html), for a viewer
+           who may manage backups only. A status chip, never a modal; it
+           does not bring the status bar onto the sale screen (app.css).
+           Filled by GET /ui/backup-copy-chip on load and every 10 min;
+           empty body otherwise. -->
+      <span id="sb-backup-copy-mount" hx-preserve hx-get="/ui/backup-copy-chip" hx-trigger="load, every 600s"></span>
       <!-- ut-docs#4539 (ADR-0163 amendment 2026-10-16): the shop's currency
            on my. differs from this till's and the till did not adopt it
            (it already has sales, or doesn't know the code) — "Currency
