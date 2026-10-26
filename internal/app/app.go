@@ -145,11 +145,19 @@ func Run(ctx context.Context) error {
 	// comment for why that stays a hard exit.
 	var database *db.DB
 	restoreApplied := false
+	// A crash between the two renames of a restore leaves no database file;
+	// finish or undo it before anything below opens (and so creates) one
+	// (ut-docs#5089).
+	if recovered, recErr := db.RecoverInterruptedRestore(cfg.DBPath); recErr != nil {
+		log.Errorf("restore: recover an interrupted restore: %v", recErr)
+	} else if recovered {
+		restoreApplied = true
+	}
 	// ut-docs#5058 UT-5: a staged JOIN wipes this database on the apply
 	// below. Sales rung since it was staged go to the new main till first
 	// (bounded, best effort; a failure is logged and they stay in the
 	// pre-restore copy in the backups folder).
-	if db.PendingRestore(cfg.DBPath) {
+	if db.PendingRestore(cfg.DBPath) && !db.RestoreSwapPending(cfg.DBPath) {
 		if _, statErr := os.Stat(db.ReplicaIdentityPath(cfg.DBPath)); statErr == nil {
 			if old, openErr := db.Open(cfg.DBPath); openErr == nil {
 				pages.ReplayStagedJoinAtStart(ctx, old.DB, cfg.DBPath)
@@ -160,7 +168,11 @@ func Run(ctx context.Context) error {
 		}
 	}
 	for {
-		paths.MigrateLegacyData(cfg.DBPath)
+		// Not while a restore swap is unfinished: a copied-in legacy DB would
+		// hide the missing file and the journal would be dropped (ut-docs#5089).
+		if !db.RestoreSwapPending(cfg.DBPath) {
+			paths.MigrateLegacyData(cfg.DBPath)
+		}
 
 		var attemptErr error
 		if applied, restoreErr := db.ApplyPendingRestore(cfg.DBPath); restoreErr != nil {
