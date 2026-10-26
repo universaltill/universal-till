@@ -423,6 +423,11 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 			return
 		}
 		defer resp.Body.Close()
+		if answerIsTillReplaced(resp) {
+			// ut-docs#5058: the shop's owner replaced that main till.
+			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, "tills.join_error.replaced"))
+			return
+		}
 		if resp.StatusCode != http.StatusOK {
 			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, "tills.pairing.error.refused"))
 			return

@@ -131,7 +131,7 @@ func newHeldSaleProxyPrimary(t *testing.T, applied bool, listRows ...syncHeldSal
 // it and a dial is refused at once. A closed server's port could be reused by
 // a later one in the package (ut-docs#4996).
 func deadPrimaryURL() string {
-	return "http://127.0.0.1:1"
+	return unreachableURL()
 }
 
 func heldSaleRowOnLocal(t *testing.T, dp *common.Deps, id string) (data.HeldSale, bool) {

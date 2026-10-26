@@ -13,7 +13,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -503,6 +502,11 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Error(w, "pair new tills on the primary till", http.StatusConflict)
 			return
 		}
+		// ut-docs#5058: a replaced main till shows no pairing code.
+		if _, replaced := tillReplaced(r, d); replaced {
+			common.LocalizedError(w, r, http.StatusConflict, "tills.pairing.error.this_till_replaced")
+			return
+		}
 		_ = r.ParseForm()
 		tok, short := tokens.issueWithShort()
 		// The replica needs OUR address as it sees us; take the Host the
@@ -581,6 +585,10 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// prevents.
 		if d.SyncPrimaryURL(r.Context()) != "" {
 			http.Error(w, "pair new tills on the primary till", http.StatusConflict)
+			return
+		}
+		// ut-docs#5058: nor a code shown before the replacement.
+		if refuseIfReplaced(w, r, d) {
 			return
 		}
 		var in struct {
@@ -687,7 +695,12 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		raw := make([]byte, 32)
 		_, _ = rand.Read(raw)
 		bearer := hex.EncodeToString(raw)
-		tillID, err := repo.InsertTillWithRole(r.Context(), name, hashBearer(bearer), role)
+		// ut-docs#5074 S0: the till row and its receipt prefix in one
+		// transaction. The primary is till 1; additional tills number from
+		// 2, and a number once granted is never granted to another till
+		// (revoked, withdrawn or promoted tills included). A re-joining till
+		// keeps its own when it is free (ut-docs#5058 UT-5).
+		tillID, tillNo, err := repo.EnrolTill(r.Context(), name, hashBearer(bearer), role, in.ReceiptPrefix)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
@@ -736,15 +749,11 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			registerID, registerName = "", ""
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, "system", "till", tillID, "till_enrolled",
-			map[string]any{"name": name, "register_id": registerID, "register_name": registerName, "role": role},
+			map[string]any{"name": name, "register_id": registerID, "register_name": registerName, "role": role,
+				// ut-docs#5074: which number it got, and whether it was the
+				// one it asked for (a re-join), so a reclaimed number shows.
+				"till_no": tillNo, "requested_prefix": in.ReceiptPrefix},
 			time.Now().UTC().Format(time.RFC3339), "")
-		// The primary is till 1; replicas number from 2 (receipt prefixes).
-		// ut-docs#5058 UT-5: never a prefix another till holds or has sales
-		// under; a re-joining till keeps its own when it is free.
-		tillNo := chooseTillNo(r.Context(), repo, in.ReceiptPrefix)
-		if err := repo.SetReceiptPrefix(r.Context(), tillID, fmt.Sprintf("T%d-", tillNo)); err != nil {
-			logging.L().Warnf("record receipt prefix of enrolling till %s: %v", tillID, err)
-		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{
@@ -839,11 +848,17 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
 			return
 		}
+		// ut-docs#5058: a replaced main till advertises no link (its link
+		// route refuses), so its tills poll instead of redialling every 30s.
+		link := 1
+		if _, replaced := tillReplaced(r, d); replaced {
+			link = 0
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			// link: this main till serves GET /api/sync/link at this level
 			// (ADR-0114 §11) — a replica dials only when advertised.
 			// version: what a replica without the link follows (ut-docs#2738).
-			"data": map[string]any{"till_id": till.ID, "shop_name": storeNameOrDefault(r.Context(), d), "link": 1,
+			"data": map[string]any{"till_id": till.ID, "shop_name": storeNameOrDefault(r.Context(), d), "link": link,
 				"version": buildinfo.Version},
 			"error": nil,
 		})
@@ -1101,6 +1116,7 @@ const (
 	joinErrUnsentNotSent
 	joinErrUnsentDayCloses
 	joinErrUnsentDayClosesRefused
+	joinErrMainReplaced // ut-docs#5058: that main till was replaced
 )
 
 // joinErrLocaleKey maps each kind to its web/locales/*.json key. Every key
@@ -1123,6 +1139,7 @@ var joinErrLocaleKey = map[joinErrKind]string{
 	joinErrUnsentNotSent:          "tills.join_error.unsent_not_sent",
 	joinErrUnsentDayCloses:        "tills.join_error.unsent_day_closes",
 	joinErrUnsentDayClosesRefused: "tills.join_error.unsent_day_closes_refused",
+	joinErrMainReplaced:           "tills.join_error.replaced",
 }
 
 // joinError is what every joinPrimary/completeJoin failure path returns.
@@ -1329,6 +1346,10 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 		// source — "wait a minute", not "the code is wrong".
 		return "", &joinError{kind: joinErrTooManyAttempts}
 	}
+	if answerIsTillReplaced(resp) {
+		// ut-docs#5058: the shop's owner replaced that main till.
+		return "", &joinError{kind: joinErrMainReplaced}
+	}
 	if resp.StatusCode == http.StatusUnprocessableEntity {
 		// ut-docs#1264: the primary rejected the name as already in use on
 		// this shop's network. 422 is reserved for exactly this on
@@ -1472,39 +1493,4 @@ func withdrawEnrolment(ctx context.Context, client *http.Client, base, bearer st
 	if resp.StatusCode != http.StatusNoContent {
 		logging.L().Warnf("join: withdraw the enrolment on the main till: %s", resp.Status)
 	}
-}
-
-// tillPrefixRe is a joined till's receipt prefix, T<n>- with n >= 2 (the main
-// till is till 1 and has none).
-var tillPrefixRe = regexp.MustCompile(`^T([2-9]|[1-9][0-9]{1,3})-$`)
-
-// chooseTillNo picks the number (receipt prefix T<n>-) for a till enrolling
-// now (ut-docs#5058 UT-5). requested is the joining till's own prefix ("" for
-// a till that never joined): it is kept when valid and no other till holds
-// it or has sales under it, so a till re-joining a new main till goes on
-// numbering where it left off and its replayed sales keep their numbers.
-// Otherwise the number is past every prefix in use and past the till count
-// (the old rule), so it can never be one another till's queued sales carry.
-func chooseTillNo(ctx context.Context, repo *data.TillsRepo, requested string) int {
-	used, err := repo.ReceiptPrefixesInUse(ctx)
-	if err != nil {
-		logging.L().Warnf("enrolment: receipt prefixes in use: %v", err)
-		used = map[string]bool{}
-	}
-	if m := tillPrefixRe.FindStringSubmatch(strings.TrimSpace(requested)); m != nil && !used[m[0]] {
-		n, _ := strconv.Atoi(m[1])
-		return n
-	}
-	next := 2
-	if list, err := repo.ListTills(ctx); err == nil {
-		next = len(list) + 1
-	}
-	for p := range used {
-		if m := tillPrefixRe.FindStringSubmatch(p); m != nil {
-			if n, _ := strconv.Atoi(m[1]); n >= next {
-				next = n + 1
-			}
-		}
-	}
-	return next
 }

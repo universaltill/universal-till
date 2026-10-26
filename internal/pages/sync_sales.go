@@ -316,7 +316,11 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 		// through here means CompleteSale reuses it AS GIVEN rather than
 		// independently re-deriving a (possibly different) one on this
 		// replica -- see pos.SaleInput.DisplayNo's own doc comment.
-		DisplayNo:              j.Sale.DisplayNo,
+		DisplayNo: j.Sale.DisplayNo,
+		// ut-docs#5074 S0b: provenance rides the sale's own INSERT, in its
+		// transaction (SetSaleProvenance below is now a no-op fallback).
+		TillID:                 tillID,
+		CreatedAt:              j.Sale.CreatedAt,
 		Currency:               j.Sale.Currency,
 		TaxInclusive:           saleIsTaxInclusive(j.Sale),
 		CashierID:              j.Sale.CashierID,
@@ -617,6 +621,11 @@ func registerSyncSales(mux *http.ServeMux, d *common.Deps) {
 		if !ok {
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
+			return
+		}
+		// ut-docs#5058: a replaced main till's sales reach no one; refused,
+		// they stay queued on the till that rang them (cursor unmoved).
+		if refuseIfReplaced(w, r, d) {
 			return
 		}
 		var batch []journalSale

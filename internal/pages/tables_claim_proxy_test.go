@@ -151,9 +151,7 @@ func TestTableClaimWriteThrough_ReplicaRejectedByPrimaryRendersOccupied(t *testi
 func TestTableClaimWriteThrough_ReplicaFallsBackToLocalWhenPrimaryUnreachable(t *testing.T) {
 	mux, dp := newPOSTestDeps(t)
 	t1 := createTestTable(t, dp, "T1")
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	deadURL := dead.URL
-	dead.Close()
+	deadURL := unreachableURL()
 	setReplicaSettings(t, dp.Settings, deadURL, "b-123")
 
 	rec := posPostForm(mux, "/api/pos/table", "table_id="+t1)
@@ -248,9 +246,7 @@ func TestTableClaimWriteThrough_ReleaseStillClearsLocallyWhenPrimaryUnreachable(
 	if rec := posPostForm(mux, "/api/pos/table", "table_id="+t1); rec.Code != http.StatusOK {
 		t.Fatalf("pick: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	deadURL := dead.URL
-	dead.Close()
+	deadURL := unreachableURL()
 	setReplicaSettings(t, dp.Settings, deadURL, "b-123")
 
 	if rec := posPostForm(mux, "/api/pos/table", "table_id="); rec.Code != http.StatusOK {

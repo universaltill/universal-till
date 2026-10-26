@@ -421,3 +421,20 @@ func TestGateOnFirstBoot_ShortCircuitsWithoutCallingCheckerWhenNotPrimary(t *tes
 type firstBootCheckerFunc func(context.Context) (bool, error)
 
 func (f firstBootCheckerFunc) NeedsFirstBoot(ctx context.Context) (bool, error) { return f(ctx) }
+
+// ut-docs#5058 (design T2): a till the owner replaced as main till stops
+// advertising itself as a join target, whatever its local role says, so it
+// never competes with the new main till on the shop network.
+func TestGateOnReplaced_WithholdsAdvertisingOnceReplaced(t *testing.T) {
+	inner := func(context.Context) bool { return true }
+	if !GateOnReplaced(inner, func(context.Context) bool { return false })(context.Background()) {
+		t.Fatal("a main till that was not replaced stopped advertising")
+	}
+	if GateOnReplaced(inner, func(context.Context) bool { return true })(context.Background()) {
+		t.Fatal("a replaced till still advertises itself as the main till")
+	}
+	replica := func(context.Context) bool { return false }
+	if GateOnReplaced(replica, func(context.Context) bool { return false })(context.Background()) {
+		t.Fatal("the gate turned a replica into an advertiser")
+	}
+}
