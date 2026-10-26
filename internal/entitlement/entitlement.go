@@ -36,7 +36,7 @@ import (
 // in internal/pages/common, for the same reason internal/fiscal's Key*
 // constants do: the writer (internal/cloudsync) is not a page package.
 const (
-	// KeyPlan: local | shop | pro | chain.
+	// KeyPlan: local | local_plus | shop | pro | chain.
 	KeyPlan = "entitlement.plan"
 	// KeySubscriptionStatus: active | lapsed | none.
 	KeySubscriptionStatus = "entitlement.subscription_status"
@@ -162,14 +162,18 @@ type Plan string
 
 const (
 	PlanLocal Plan = "local" // the free tier; also the effective plan of an unenrolled till
-	PlanShop  Plan = "shop"
-	PlanPro   Plan = "pro"
-	PlanChain Plan = "chain"
+	// PlanLocalPlus is the cheapest paid rung: off-site backup, cloud sync
+	// and the browser catalogue, nothing that is Shop's (ut-docs#4243,
+	// #5067). Mirrors ut-cloud's subscription.LocalPlus.
+	PlanLocalPlus Plan = "local_plus"
+	PlanShop      Plan = "shop"
+	PlanPro       Plan = "pro"
+	PlanChain     Plan = "chain"
 )
 
-var rank = map[Plan]int{PlanLocal: 0, PlanShop: 1, PlanPro: 2, PlanChain: 3}
+var rank = map[Plan]int{PlanLocal: 0, PlanLocalPlus: 1, PlanShop: 2, PlanPro: 3, PlanChain: 4}
 
-// Valid reports whether p is one of the four known tiers.
+// Valid reports whether p is one of the five known tiers.
 func (p Plan) Valid() bool {
 	_, ok := rank[p]
 	return ok
@@ -194,15 +198,17 @@ const (
 	CapCloudSync             Capability = "cloud_sync"
 	CapBrowserCatalog        Capability = "browser_catalog"
 	CapManagedTSE            Capability = "managed_tse"
+	CapOrderTracking         Capability = "order_tracking"
 	CapCentralCatalog        Capability = "central_catalog"
 	CapConsolidatedReporting Capability = "consolidated_reporting"
 )
 
 var minTier = map[Capability]Plan{
-	CapCloudBackup:           PlanShop,
-	CapCloudSync:             PlanShop,
-	CapBrowserCatalog:        PlanShop,
+	CapCloudBackup:           PlanLocalPlus,
+	CapCloudSync:             PlanLocalPlus,
+	CapBrowserCatalog:        PlanLocalPlus,
 	CapManagedTSE:            PlanShop,
+	CapOrderTracking:         PlanShop,
 	CapCentralCatalog:        PlanChain,
 	CapConsolidatedReporting: PlanChain,
 }

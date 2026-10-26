@@ -65,12 +65,12 @@ func TestDescribePaused(t *testing.T) {
 		return mapReader{KeyPlan: plan, KeySubscriptionStatus: "active", KeyLastConfirmedAt: now.Add(-30 * 24 * time.Hour).Format(time.RFC3339)}
 	}
 	shop := Describe(context.Background(), stale("shop"), now)
-	wantShop := []Capability{CapBrowserCatalog, CapCloudBackup, CapCloudSync, CapManagedTSE}
+	wantShop := []Capability{CapBrowserCatalog, CapCloudBackup, CapCloudSync, CapManagedTSE, CapOrderTracking}
 	if !reflect.DeepEqual(shop.Paused, wantShop) {
 		t.Fatalf("shop→local Paused = %v, want %v", shop.Paused, wantShop)
 	}
 	chain := Describe(context.Background(), stale("chain"), now)
-	wantChain := []Capability{CapBrowserCatalog, CapCentralCatalog, CapCloudBackup, CapCloudSync, CapConsolidatedReporting, CapManagedTSE}
+	wantChain := []Capability{CapBrowserCatalog, CapCentralCatalog, CapCloudBackup, CapCloudSync, CapConsolidatedReporting, CapManagedTSE, CapOrderTracking}
 	if !reflect.DeepEqual(chain.Paused, wantChain) {
 		t.Fatalf("chain→local Paused = %v, want %v", chain.Paused, wantChain)
 	}

@@ -27,6 +27,7 @@ func TestSyncAllowed(t *testing.T) {
 	}{
 		{"no cache (never confirmed)", mapReader{}, false},
 		{"fresh active shop", cache("shop", "active", ts(-time.Minute)), true},
+		{"fresh active local_plus (ut-docs#5067)", cache("local_plus", "active", ts(-time.Minute)), true},
 		{"fresh active pro", cache("pro", "active", ts(0)), true},
 		{"fresh active chain", cache("chain", "active", ts(-time.Hour)), true},
 		{"paid but stale by 30 days still allowed", cache("shop", "active", ts(-30*24*time.Hour)), true},
