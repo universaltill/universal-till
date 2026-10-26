@@ -224,7 +224,7 @@ func Init() (*Config, error) {
 	// Resolve the stable data directory FIRST so every data path (DB, backups,
 	// plugins, caches) hangs off it. Defaults to a per-user OS location so data
 	// survives version upgrades; override with UT_DATA_DIR (the .deb uses
-	// /var/lib/unitill). paths.Init makes it available to the plugin subsystem.
+	// /opt/unitill/data). paths.Init makes it available to the plugin subsystem.
 	dataDir := getenv("UT_DATA_DIR", paths.Default())
 	paths.Init(dataDir)
 

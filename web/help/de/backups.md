@@ -36,6 +36,24 @@ Am Ende der Einrichtung bietet die Willkommensseite die Schaltfläche **Sicherun
 
 Eine wiederhergestellte Sicherung bringt Produkte, Verkäufe, Belege, Mitarbeitende mit ihren PINs, Kunden, Einstellungen, Bestände und Fotos zurück, so wie sie beim Erstellen der Sicherung waren. Schlüssel für Kartenterminal und Zahlungs-Plugins sind nicht in einer Sicherung: Geben Sie sie erneut ein.
 
+## Eine Kasse ersetzen
+
+Nur mit einer Sicherung kommen Verkäufe, Belege, Kunden und die PINs der Mitarbeitenden auf eine neue Kasse zurück: Die Cloud speichert sie in keinem Tarif. Bewahren Sie eine aktuelle Kopie außerhalb der Kasse auf. Führungskräfte sehen in der Statusleiste **Seit 7 Tagen keine Sicherung von dieser Kasse kopiert**, bis eine Sicherung von ihr gespeichert wurde.
+
+Wo die Kasse ihre Sicherungen ablegt (die neuesten 14):
+
+- macOS: `~/Library/Application Support/UniversalTill/backups`
+- Windows: `%LOCALAPPDATA%\UniversalTill\backups`
+- Linux: `~/.local/share/universal-till/backups` standardmäßig (aus dem `.deb`-Paket installiert: `/opt/unitill/data/backups`)
+- Android und iOS: in der App, nicht erreichbar — nutzen Sie **In Downloads speichern**.
+
+1. Wenn die alte Kasse noch startet: Einstellungen → Backups → **Jetzt sichern**, dann **In Downloads speichern** neben der neuen Sicherung, und kopieren Sie die Datei auf einen USB-Stick oder einen anderen Computer.
+2. Startet sie nicht, ist ihre Festplatte aber lesbar, nehmen Sie die neueste Datei aus ihrem Ordner `backups`.
+3. Schließen Sie auf der neuen Kasse die Einrichtung ab (für ein Geschäft auf my.universaltill.com: als Hauptkasse beitreten), tippen Sie dann auf der Willkommensseite auf **Sicherung wiederherstellen** oder öffnen Sie Einstellungen → Backups → **Aus Datei wiederherstellen**, und folgen Sie „Aus einer Datei wiederherstellen“ oben.
+4. Stellen Sie wieder her, bevor die neue Kasse ihren ersten Verkauf bucht: Eine Wiederherstellung ersetzt die Daten der Kasse, sie führt sie nicht zusammen.
+
+Verkäufe, die nach der Sicherung auf der alten Kasse gemacht wurden, sind nicht darin.
+
 ## Automatisches Aufräumen
 
 Einmal am Tag löscht die Kasse Dateien, die sie nicht mehr braucht, damit der Speicher nicht vollläuft:

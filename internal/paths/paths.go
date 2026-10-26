@@ -8,7 +8,7 @@
 //   - macOS   ~/Library/Application Support/UniversalTill
 //   - Windows %LOCALAPPDATA%\UniversalTill
 //   - Linux   $XDG_DATA_HOME/universal-till (or ~/.local/share/universal-till)
-//   - server  set UT_DATA_DIR explicitly (the .deb uses /var/lib/unitill)
+//   - server  set UT_DATA_DIR explicitly (the .deb uses /opt/unitill/data, packaging/systemd/unitill-pos.service)
 //
 // The root is overridable with UT_DATA_DIR; individual files can still be
 // overridden (e.g. UT_DB_PATH). Init is called once during config load.

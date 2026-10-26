@@ -313,7 +313,13 @@ var RestoreKeepsLivePrefixes = append(append([]string(nil), TillCloudIdentityPre
 // the restored data), so the next sync pushes the restored state: with the
 // backup's, a replacement whose cloud copy was overwritten since could
 // skip the push as "unchanged".
-var RestoreDropKeys = []string{"cloudsync.snapshot_hash", "cloudsync.order_tracking_hash"}
+//
+// The backup-copy reminder (ut-docs#5071, data.BackupCopiedAtSettingsKey and
+// data.BackupCopySinceSettingsKey) is dropped too: an old backup's dates
+// would show "no backup copied" right after a restore; the reminder starts
+// again from the first check after it.
+var RestoreDropKeys = []string{"cloudsync.snapshot_hash", "cloudsync.order_tracking_hash",
+	"backup.last_copied_at", "backup.copy_reminder_since"}
 
 // keepLiveCloudIdentity rewrites the staged restore so its
 // RestoreKeepsLivePrefixes rows are exactly the live DB's: the backup's are

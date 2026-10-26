@@ -4,7 +4,7 @@ title: Backups
 section: Running the business
 order: 250
 summary: Snapshots of all your shop data (catalog, sales, settings) that you can download and keep somewhere safe.
-keywords: [backup, restore, download, copy, uninstall, remove]
+keywords: [backup, restore, download, copy, uninstall, remove, replace, new till, broken]
 ---
 
 # Backups
@@ -41,6 +41,24 @@ Use a file from the old till's `backups` folder or one saved with **Save to Down
 At the end of setup, the welcome page has a **Restore a backup** button that opens the same place.
 
 A restored backup brings back products, sales, receipts, staff with their PINs, customers, settings, stock levels and photos as they were when the backup was made. Card terminal and payment plugin keys are not in a backup: enter them again.
+
+## Replacing a till
+
+A backup is the only way to bring sales, receipts, customers and staff PINs back on a new till: the cloud does not keep them on any plan. Keep a recent copy off the till. Managers see **No backup copied off this till in 7 days** in the status bar until a backup has been saved off it.
+
+Where the till keeps its backups (the newest 14):
+
+- macOS: `~/Library/Application Support/UniversalTill/backups`
+- Windows: `%LOCALAPPDATA%\UniversalTill\backups`
+- Linux: `~/.local/share/universal-till/backups` by default (installed from the `.deb` package: `/opt/unitill/data/backups`)
+- Android and iOS: inside the app, out of reach — use **Save to Downloads**.
+
+1. If the old till still starts: Settings → Backups → **Back up now**, then **Save to Downloads** next to the new backup, and copy the file to a USB stick or another computer.
+2. If it does not start but its disk can be read, take the newest file from its `backups` folder.
+3. On the new till, finish setup (for a shop on my.universaltill.com, join it as the main till), then press **Restore a backup** on the welcome page, or open Settings → Backups → **Restore from a file**, and follow "Restoring from a file" above.
+4. Restore before the new till rings its first sale: a restore replaces the till's data, it does not merge it.
+
+Sales made on the old till after the backup was taken are not in it.
 
 ## Automatic clean-up
 

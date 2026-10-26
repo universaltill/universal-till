@@ -2952,6 +2952,8 @@
   "status.register_till": "Marketplace: not connected",
   "status.disk_low.hint": "This till's disk is almost full. Old backups and leftover files were already removed. Free some space on the device, or ask whoever set it up. Selling carries on.",
   "status.disk_low.label": "Storage almost full",
+  "status.backup_copy.label": "No backup copied off this till in 7 days",
+  "status.backup_copy.hint": "A backup that stays on this till is lost with it. In Settings → Backups, press Save to Downloads and keep the file on a USB stick or another computer.",
   "status.shop_currency_mismatch.hint": "This till sells in %[1]s; your shop on my. uses %[2]s. Change the till's currency in Settings once it is safe for your records. Selling carries on.",
   "status.shop_currency_mismatch.label": "Currency differs from shop",
   "status.report_archive.hint": "The cloud refused the report upload because the subscription is not active. Reports stay on this till and upload once it is active again.",

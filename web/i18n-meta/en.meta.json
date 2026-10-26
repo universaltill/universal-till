@@ -337,5 +337,7 @@
   "import.welcome.restore.action": {"description": "Button on the welcome page that opens Settings → Backups → Restore from a file.", "review": "standard", "max_length": 30},
   "settings.backup.upload.ready": {"description": "Shown after an uploaded backup passed every check; the file name follows on the same line. Product name stays unchanged.", "review": "standard"},
   "settings.backup.upload.error.too_old": {"description": "Error when the uploaded backup comes from a version before the database schema reset, which this build cannot open.", "review": "standard"},
-  "settings.backup.upload.error.too_large": {"description": "Error when the uploaded file is over the size cap (a fixed maximum, or less when the disk is fuller).", "review": "standard", "placeholders": ["the largest file size allowed, for example 1.5 GB"]}
+  "settings.backup.upload.error.too_large": {"description": "Error when the uploaded file is over the size cap (a fixed maximum, or less when the disk is fuller).", "review": "standard", "placeholders": ["the largest file size allowed, for example 1.5 GB"]},
+  "status.backup_copy.label": {"description": "Status-bar chip for managers: no backup was downloaded or saved off this till in the last 7 days. Links to Settings → Backups.", "review": "standard", "max_length": 60},
+  "status.backup_copy.hint": {"description": "Tooltip of the no-backup-copied chip: why and how to copy a backup off the till.", "review": "standard"}
 }

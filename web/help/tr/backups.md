@@ -41,6 +41,24 @@ Kurulumun sonunda karşılama sayfasında aynı yeri açan bir **Yedeği geri y�
 
 Geri yüklenen bir yedek; ürünleri, satışları, fişleri, PIN'leriyle birlikte personeli, müşterileri, ayarları, stok seviyelerini ve fotoğrafları yedeğin alındığı andaki hâliyle geri getirir. Kart terminali ve ödeme eklentisi anahtarları yedekte yoktur: onları yeniden girin.
 
+## Bir kasayı değiştirme
+
+Satışları, fişleri, müşterileri ve personel PIN'lerini yeni bir kasaya geri getirmenin tek yolu bir yedektir: bulut bunları hiçbir planda saklamaz. Güncel bir kopyayı kasanın dışında tutun. Yöneticiler, kasadan bir yedek dışarı kaydedilene kadar durum çubuğunda **7 gündür bu kasadan dışarı yedek kopyalanmadı** uyarısını görür.
+
+Kasanın yedeklerini tuttuğu yer (en yeni 14 tanesi):
+
+- macOS: `~/Library/Application Support/UniversalTill/backups`
+- Windows: `%LOCALAPPDATA%\UniversalTill\backups`
+- Linux: `~/.local/share/universal-till/backups` varsayılan olarak (`.deb` paketinden kurulduysa: `/opt/unitill/data/backups`)
+- Android ve iOS: uygulamanın içinde, erişilemez — **İndirilenler’e kaydet**’i kullanın.
+
+1. Eski kasa hâlâ açılıyorsa: Ayarlar → Yedekler → **Şimdi yedekle**, ardından yeni yedeğin yanındaki **İndirilenler’e kaydet**; dosyayı bir USB belleğe veya başka bir bilgisayara kopyalayın.
+2. Açılmıyor ama diski okunabiliyorsa, `backups` klasöründeki en yeni dosyayı alın.
+3. Yeni kasada kurulumu tamamlayın (my.universaltill.com'daki bir mağaza için ana kasa olarak katılın), ardından karşılama sayfasında **Yedeği geri yükle**'ye basın ya da Ayarlar → Yedekler → **Dosyadan geri yükle**'yi açın ve yukarıdaki "Bir dosyadan geri yükleme" adımlarını izleyin.
+4. Yeni kasa ilk satışını yapmadan önce geri yükleyin: geri yükleme kasanın verilerini değiştirir, onlarla birleştirmez.
+
+Yedek alındıktan sonra eski kasada yapılan satışlar yedekte yoktur.
+
 ## Otomatik temizlik
 
 Kasa, diski dolmasın diye günde bir kez artık gerekmeyen dosyaları siler:
