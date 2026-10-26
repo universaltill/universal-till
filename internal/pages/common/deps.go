@@ -227,9 +227,14 @@ type Deps struct {
 
 	// SalesMirrorPullNow, when non-nil, asks the additional till's sales-copy
 	// pull loop (pages.StartSalesMirrorPull, ut-docs#5074) for one pull now —
-	// a gap in a link frame or the link's sales_mirror nudge. Capacity 1,
+	// the link's sales_mirror nudge, or the link coming up. Capacity 1,
 	// coalesced like SyncPullNow.
 	SalesMirrorPullNow chan struct{}
+
+	// SalesMirrorNudgeNow, when non-nil, wakes the main till's sales-copy
+	// nudge watcher (pages.StartSalesMirrorNudge, ut-docs#5074 M4) at once:
+	// the journal just applied another till's sales. Capacity 1, coalesced.
+	SalesMirrorNudgeNow chan struct{}
 
 	// AsyncWork tracks best-effort, fire-and-forget goroutines started
 	// after a request already responded — printReceiptAsync (ut-docs#425)
@@ -696,6 +701,31 @@ func (d *Deps) RequestSyncPull() {
 	}
 	select {
 	case d.SyncPullNow <- struct{}{}:
+	default:
+	}
+}
+
+// RequestSalesMirrorPull asks the sales-copy pull loop for one pull now
+// (ut-docs#5074): the link's sales_mirror nudge, or the link coming up.
+// Non-blocking and coalesced; a no-op with no loop running.
+func (d *Deps) RequestSalesMirrorPull() {
+	if d.SalesMirrorPullNow == nil {
+		return
+	}
+	select {
+	case d.SalesMirrorPullNow <- struct{}{}:
+	default:
+	}
+}
+
+// PokeSalesMirrorNudge wakes the sales-copy nudge watcher on the main till.
+// Non-blocking and coalesced; a no-op with no watcher running.
+func (d *Deps) PokeSalesMirrorNudge() {
+	if d.SalesMirrorNudgeNow == nil {
+		return
+	}
+	select {
+	case d.SalesMirrorNudgeNow <- struct{}{}:
 	default:
 	}
 }

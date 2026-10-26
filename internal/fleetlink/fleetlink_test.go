@@ -74,6 +74,22 @@ func TestScopes_MaskOrderIsStable(t *testing.T) {
 	if scopeBit("bogus") != 0 {
 		t.Fatal("an unknown scope must own no bit")
 	}
+	// ut-docs#5074 M4: every scope owns its own bit and round-trips, the
+	// sales_mirror one included (without a bit Hub.Nudge drops it).
+	seen := uint32(0)
+	for _, s := range allScopes {
+		b := scopeBit(s)
+		if b == 0 || seen&b != 0 {
+			t.Fatalf("scope %q has bit %b (seen %b)", s, b, seen)
+		}
+		seen |= b
+		if got := scopesOf(b); len(got) != 1 || got[0] != s {
+			t.Fatalf("scope %q round-trips as %v", s, got)
+		}
+	}
+	if scopeBit(ScopeSalesMirror) == 0 {
+		t.Fatal("sales_mirror owns no bit")
+	}
 }
 
 func TestReport_ClipsFields(t *testing.T) {
