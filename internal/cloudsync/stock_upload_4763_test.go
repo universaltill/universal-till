@@ -309,12 +309,21 @@ func TestStockUploadLoopDebouncesOnTheRealtimeTier(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	waitFor(t, "the follow-up upload", func() bool { return len(stock.requests()) >= 2 })
-	reqs := stock.requests()
-	last := reqs[len(reqs)-1]["rows"].([]any)[0].(map[string]any)
-	if last["on_hand_milli"] != float64(5000) {
-		t.Fatalf("last row = %v, want 5000", last)
+	// A tick can land between two of the burst's commits and upload a
+	// mid-burst quantity, so wait for the latest value, not for a second
+	// request (#4995).
+	lastRow := func() map[string]any {
+		reqs := stock.requests()
+		if len(reqs) < 2 {
+			return nil
+		}
+		return reqs[len(reqs)-1]["rows"].([]any)[0].(map[string]any)
 	}
+	waitFor(t, "an upload carrying the latest quantity", func() bool {
+		r := lastRow()
+		return r != nil && r["on_hand_milli"] == float64(5000)
+	})
+	reqs := stock.requests()
 	for _, r := range reqs[1:] {
 		if n := len(r["rows"].([]any)); n != 1 {
 			t.Fatalf("a request carried %d rows for one inventory row", n)
