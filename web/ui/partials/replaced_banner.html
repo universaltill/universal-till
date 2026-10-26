@@ -1,0 +1,12 @@
+{{/* ut-docs#5058 (design §4.4, AC12): the shop's owner replaced this till as
+     main till. GET /ui/replaced-banner (replaced_till.go) renders it on every
+     page, the sale screen included, from base.html's #replaced-banner-mount.
+     It cannot be dismissed: sales rung here reach neither the cloud nor the
+     main till. A banner, never a modal: selling carries on (decision D4,
+     ADR-0116 D6). Words and an icon, not colour alone; the help link says
+     what to do. */}}
+<div id="replaced-banner" class="replaced-banner" role="status" data-testid="replaced-banner">
+  <span class="btn-ico" aria-hidden="true">{{ icon "rotate-ccw" }}</span>
+  <span class="replaced-banner-text">{{ .text }}</span>
+  {{ helpLink "multitill" }}
+</div>

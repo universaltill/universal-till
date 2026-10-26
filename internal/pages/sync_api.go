@@ -503,6 +503,11 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Error(w, "pair new tills on the primary till", http.StatusConflict)
 			return
 		}
+		// ut-docs#5058: a replaced main till shows no pairing code.
+		if _, replaced := tillReplaced(r, d); replaced {
+			common.LocalizedError(w, r, http.StatusConflict, "tills.pairing.error.this_till_replaced")
+			return
+		}
 		_ = r.ParseForm()
 		tok, short := tokens.issueWithShort()
 		// The replica needs OUR address as it sees us; take the Host the
@@ -581,6 +586,10 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// prevents.
 		if d.SyncPrimaryURL(r.Context()) != "" {
 			http.Error(w, "pair new tills on the primary till", http.StatusConflict)
+			return
+		}
+		// ut-docs#5058: nor a code shown before the replacement.
+		if refuseIfReplaced(w, r, d) {
 			return
 		}
 		var in struct {
@@ -839,11 +848,17 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
 			return
 		}
+		// ut-docs#5058: a replaced main till advertises no link (its link
+		// route refuses), so its tills poll instead of redialling every 30s.
+		link := 1
+		if _, replaced := tillReplaced(r, d); replaced {
+			link = 0
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			// link: this main till serves GET /api/sync/link at this level
 			// (ADR-0114 §11) — a replica dials only when advertised.
 			// version: what a replica without the link follows (ut-docs#2738).
-			"data": map[string]any{"till_id": till.ID, "shop_name": storeNameOrDefault(r.Context(), d), "link": 1,
+			"data": map[string]any{"till_id": till.ID, "shop_name": storeNameOrDefault(r.Context(), d), "link": link,
 				"version": buildinfo.Version},
 			"error": nil,
 		})
@@ -1101,6 +1116,7 @@ const (
 	joinErrUnsentNotSent
 	joinErrUnsentDayCloses
 	joinErrUnsentDayClosesRefused
+	joinErrMainReplaced // ut-docs#5058: that main till was replaced
 )
 
 // joinErrLocaleKey maps each kind to its web/locales/*.json key. Every key
@@ -1123,6 +1139,7 @@ var joinErrLocaleKey = map[joinErrKind]string{
 	joinErrUnsentNotSent:          "tills.join_error.unsent_not_sent",
 	joinErrUnsentDayCloses:        "tills.join_error.unsent_day_closes",
 	joinErrUnsentDayClosesRefused: "tills.join_error.unsent_day_closes_refused",
+	joinErrMainReplaced:           "tills.join_error.replaced",
 }
 
 // joinError is what every joinPrimary/completeJoin failure path returns.
@@ -1328,6 +1345,10 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 		// ut-docs#3219: the main till throttles short-code attempts per
 		// source — "wait a minute", not "the code is wrong".
 		return "", &joinError{kind: joinErrTooManyAttempts}
+	}
+	if answerIsTillReplaced(resp) {
+		// ut-docs#5058: the shop's owner replaced that main till.
+		return "", &joinError{kind: joinErrMainReplaced}
 	}
 	if resp.StatusCode == http.StatusUnprocessableEntity {
 		// ut-docs#1264: the primary rejected the name as already in use on

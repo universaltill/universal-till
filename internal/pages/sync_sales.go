@@ -619,6 +619,11 @@ func registerSyncSales(mux *http.ServeMux, d *common.Deps) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
 			return
 		}
+		// ut-docs#5058: a replaced main till's sales reach no one; refused,
+		// they stay queued on the till that rang them (cursor unmoved).
+		if refuseIfReplaced(w, r, d) {
+			return
+		}
 		var batch []journalSale
 		if err := json.NewDecoder(r.Body).Decode(&batch); err != nil || len(batch) > 100 {
 			common.LocalizedError(w, r, http.StatusBadRequest, "sync.error.bad_batch")

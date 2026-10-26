@@ -1543,6 +1543,12 @@
          navigation keeps it (and its poll) instead of re-creating it. A
          rename changes rarely, so 60s is plenty. -->
     <div id="shop-name-notice-mount" hx-get="/ui/shop-name-notice" hx-trigger="load, every 60s" hx-preserve></div>
+    <!-- ut-docs#5058: "Replaced by <name>: sales here are not reported" —
+         GET /ui/replaced-banner (replaced_till.go, replaced_banner.html),
+         empty unless the shop's owner replaced this till as main till. Same
+         innerHTML-swap placeholder shape and reasons as the mounts above;
+         the state changes at most once, so 60s is plenty. -->
+    <div id="replaced-banner-mount" hx-get="/ui/replaced-banner" hx-trigger="load, every 60s" hx-preserve></div>
     <!-- ut-docs#2343: theme-sync poll, every 30s from every open page.
          hx-swap="none" -- GET /ui/theme-sync's response is an OOB swap of
          THIS div's own id (id="theme-sync-poll", carrying the live theme

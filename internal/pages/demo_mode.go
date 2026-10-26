@@ -506,6 +506,7 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /ui/join-notice":                  true, // ut-docs#2721; always empty in the demo (no LAN browse)
 	"GET /ui/pairing-notice":               true,
 	"GET /ui/shop-name-notice":             true, // ut-docs#3114
+	"GET /ui/replaced-banner":              true, // ut-docs#5058: read-only banner, empty unless replaced
 	"GET /ui/plugin-buttons":               true,
 	"GET /ui/slot/{slot}":                  true, // ut-docs#3872: core pages' content-slot placeholders; a demo installs no plugins, so it answers empty (panel actions post to /plugin/..., denied above)
 	"GET /ui/slot/{slot}/{plugin}/{entry}": true, // ut-docs#3946: one Settings plugin section's panel; read-only like the route above, and 404 in a demo (no plugins installed)
