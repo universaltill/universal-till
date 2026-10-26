@@ -387,6 +387,7 @@ var backgroundPollPaths = map[string]bool{
 	"/ui/report-archive-chip": true, // refused report upload (ADR-0147, ut-docs#574)
 	"/ui/disk-space-chip":     true, // low-disk chip, every 60 s (ut-docs#3121)
 	"/ui/backup-copy-chip":    true, // copy-a-backup-off reminder, every 10 min (ut-docs#5071)
+	"/ui/replaced-banner":     true, // this till was replaced as main till (ut-docs#5058)
 	"/ui/shop-currency-chip":  true, // shop currency differs, every 60 s (ut-docs#4539)
 	// Settings → Language download chip, every 3 s (ut-docs#4477).
 	"/ui/settings/language-install": true,
@@ -499,6 +500,7 @@ var shellGetPaths = map[string]bool{
 	"/ui/report-archive-chip": true,
 	"/ui/disk-space-chip":     true,
 	"/ui/backup-copy-chip":    true, // ut-docs#5071
+	"/ui/replaced-banner":     true, // ut-docs#5058
 	"/ui/shop-currency-chip":  true, // ut-docs#4539
 }
 

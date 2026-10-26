@@ -119,3 +119,12 @@ Checked against the merged, deployed ut-cloud contract (CL-5):
   app/pages/db/httpx/web, data-access, i18n, i18n-meta, help-topics guards
   green; docs-shots regenerated on Linux (manifest only; no screenshot of a
   changed topic differed).
+- CI on the rebased head failed twice for one reason: main's idle-board
+  rules (`internal/auth`: `TestEveryPollerIsClassified`,
+  `TestShellRequestsAreBoardScoped`, and the e2e `session-display-board-idle`
+  spec, which got redirected to /login) did not know this PR's
+  `/ui/replaced-banner` poll from `base.html`. Added it to
+  `backgroundPollPaths` and `shellGetPaths` in `internal/auth/middleware.go`
+  (the two Go tests failed first with the exact "unclassified" messages, then
+  pass). Like the other status chips, the banner mount is a passive poll that
+  must not count as touch and must not be refused on an idle display board.
