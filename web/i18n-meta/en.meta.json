@@ -1,5 +1,7 @@
 {
   "app.name": {"description": "The product name, shown in the window title, the header and the about page. A brand name: never translate it.", "review": "standard"},
+  "subscription.cap.order_tracking": {"description": "Name of the paid capability customer order tracking (tracking QR on the kiosk confirmation and receipt), listed on the Subscription card and in the paused-feature banner when the shop's plan no longer includes it.", "review": "standard"},
+  "subscription.plan.local_plus": {"description": "Name of the Local Plus subscription plan (the cheapest paid tier), shown as the shop's plan on the Subscription card and status chip. A product name: never translate it.", "review": "standard"},
   "tills.main_unreachable_help_offline": {"description": "Notice on a joined till's Tills page while the main till is not answering: the till keeps selling, reconnects by itself, what to check.", "review": "standard"},
   "tills.join.rejoin_sales_warning": {"description": "Warning above the join tabs on a till that is already joined to a main till and has sales: joining another main till replaces its data, but its unsent sales are sent there first.", "review": "standard"},
   "tills.join_error.unsent_day_closes_refused": {"description": "Join error on a joined till whose day closes cannot reach the cloud because the cloud refuses uploads (subscription not active).", "review": "standard", "placeholders": ["how many day closes are not in the cloud yet"]},

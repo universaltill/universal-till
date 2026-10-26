@@ -114,7 +114,8 @@ func orderTrackingResumeGrace(r *http.Request) int {
 // orderTrackingOffered (ut-docs#4206) is the plan gate on customer order
 // tracking: a Shop-and-up feature (it is served through our cloud), so the
 // kiosk confirmation shows a tracking QR, and a token is minted at all,
-// only while this till's cached entitlement allows cloud_sync — the same
+// only while this till's cached entitlement allows order_tracking (Shop,
+// not Local Plus, ut-docs#4243, #5067) — the same
 // fail-closed EffectivePlan read every paid capability uses (no cache,
 // stale past grace, lapsed → Local → no QR). Used by BOTH kiosk checkout
 // paths (pay at kiosk, pay at counter). Display-only, never a sale gate
@@ -126,7 +127,7 @@ func orderTrackingOffered(ctx context.Context, d *common.Deps) bool {
 	if d == nil || d.Settings == nil {
 		return false
 	}
-	return entitlement.Allows(entitlement.EffectivePlan(ctx, d.Settings, time.Now()), entitlement.CapCloudSync)
+	return entitlement.Allows(entitlement.EffectivePlan(ctx, d.Settings, time.Now()), entitlement.CapOrderTracking)
 }
 
 // orderTrackingQRView mints the sale's tracking token and builds the QR the
