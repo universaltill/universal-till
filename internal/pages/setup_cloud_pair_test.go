@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
 	"html"
 	"net/http"
 	"net/http/httptest"
@@ -34,6 +35,13 @@ type cloudPairStub struct {
 	mu     sync.Mutex
 	status int
 	reply  string
+	last   map[string]any // the latest /pair request body
+}
+
+func (c *cloudPairStub) lastBody() map[string]any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.last
 }
 
 func (c *cloudPairStub) set(status int, reply string) {
@@ -56,6 +64,11 @@ func cloudWizard(t *testing.T) (*http.ServeMux, *common.Deps, *cloudPairStub, st
 		// same endpoint.
 		if strings.HasSuffix(r.URL.Path, "/v1/stores/pair") {
 			stub.calls.Add(1)
+			var b map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&b)
+			stub.mu.Lock()
+			stub.last = b
+			stub.mu.Unlock()
 		}
 		stub.mu.Lock()
 		st, rep := stub.status, stub.reply

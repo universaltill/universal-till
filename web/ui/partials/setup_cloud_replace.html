@@ -1,0 +1,28 @@
+{{/* ut-docs#5058 (design §4.2, ADR-0166 §3 amendment 2026-10-26): the
+     wizard's "Replace <old till>?" confirmation. POST /api/setup/cloud-pair
+     renders it into #setup-cloud-msg, inside the Main till form, when the
+     cloud answers 409 replace_confirm_required for a replace code. Nothing is
+     held and the code stays usable. In place, never a modal; setup.html's
+     script moves focus to the heading (tabindex=-1), never a field, so no
+     keyboard pops up, and wires Cancel (no inline handlers).
+       Replace — a submit of the same form: the code and till name travel
+                 again, plus confirm_replace=1 (only from this button) and
+                 the hidden replace_device_id the cloud named.
+       Cancel  — clears the panel; the code stays valid until it expires.
+     Every value is the cloud's, so html/template escapes it; names and
+     dates arrive wrapped in bidi isolates for the RTL locales. */}}
+<section class="setup-replace-panel" data-testid="setup-cloud-replace" aria-labelledby="setup-cloud-replace-title">
+  <h2 id="setup-cloud-replace-title" tabindex="-1">{{ printf (T "setup.cloud.replace.title") .Name }}</h2>
+  <p>{{ printf (T "setup.cloud.replace.body") .Name .LastSeen }}</p>
+  {{ if .HasLastSeen }}<p class="setup-replace-loss"><strong>{{ printf (T "setup.cloud.replace.loss") .Name .LastSeen }}</strong></p>{{ end }}
+  {{ if .CloudCatalog }}<p>{{ T "setup.cloud.replace.copies_cloud" }}</p>{{ else }}<p>{{ T "setup.cloud.replace.copies_till_master" }}</p>{{ end }}
+  <p class="muted">{{ printf (T "setup.cloud.replace.backup") .Name }}</p>
+  <input type="hidden" name="replace_device_id" value="{{ .DeviceID }}">
+  <div class="setup-replace-actions">
+    <button type="button" class="btn secondary" data-replace-cancel data-testid="setup-cloud-replace-cancel">{{ T "common.cancel" }}</button>
+    <button type="submit" class="btn danger" name="confirm_replace" value="1" data-testid="setup-cloud-replace-confirm">
+      <span class="btn-ico" aria-hidden="true">{{ icon "rotate-ccw" }}</span>
+      <span>{{ printf (T "setup.cloud.replace.confirm") .Name }}</span>
+    </button>
+  </div>
+</section>

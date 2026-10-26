@@ -3904,5 +3904,11 @@ func enrolFailureKey(err error) string {
 	case errors.Is(err, enroll.ErrStoreUnnamed):
 		return "settings.enrol.name_required"
 	}
+	// ut-docs#5058: a replace code pairs only a new main till in the setup
+	// wizard; say so instead of the generic failure.
+	var he *enroll.RegisterHTTPError
+	if errors.As(err, &he) && he.Status == http.StatusConflict && he.Code == "replace_code_main_till_only" {
+		return "setup.cloud.error.replace_main_till_only"
+	}
 	return ""
 }
