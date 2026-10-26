@@ -20,6 +20,8 @@ Momentaufnahmen aller Ihrer Geschäftsdaten (Katalog, Verkäufe, Einstellungen),
 
 Beim Wiederherstellen werden alle aktuellen Daten durch die gewählte Sicherung ersetzt — bestätigen Sie mit der PIN einer Führungskraft, da dies über die Einstellungsseite selbst nicht rückgängig gemacht werden kann (die ersetzten Daten werden als eigene Sicherung aufbewahrt, falls Sie sie wiederhaben möchten). Klicken Sie nach der Wiederherstellung auf **Jetzt neu starten**, und die Kasse startet sich selbst neu — kein Griff zu Tastatur oder Steckdose nötig. Unter Windows kann sich die Kasse noch nicht selbst neu starten — schließen Sie stattdessen das Fenster und öffnen Sie Universal Till erneut.
 
+Eine Wiederherstellung behält die eigene Verbindung dieser Kasse mit dem Cloud-Konto Ihres Geschäfts, auch wenn die Sicherung auf einer anderen Kasse erstellt wurde. Ist die Datei keine Sicherung, die diese Kasse verwenden kann, behält sie Ihre aktuellen Daten, und unter Einstellungen → Backups steht, dass die Wiederherstellung nicht angewendet wurde.
+
 ## Automatisches Aufräumen
 
 Einmal am Tag löscht die Kasse Dateien, die sie nicht mehr braucht, damit der Speicher nicht vollläuft:

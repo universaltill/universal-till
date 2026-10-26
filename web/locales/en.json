@@ -2346,6 +2346,7 @@
   "settings.backup.restarting_slow": "Still restarting — this can take longer on a large restore.",
   "settings.backup.restore": "Restore",
   "settings.backup.restore_note": "Restoring replaces ALL current data with the backup (the replaced data is kept in the backups folder). The till applies it on the next restart.",
+  "settings.backup.restore_refused": "The last restore was not applied: the file is not a backup this till can use. Your data was not changed.",
   "settings.backup.save_failed": "Could not save the backup copy.",
   "settings.backup.saved_to": "Saved to",
   "settings.backup.stage_failed": "Could not prepare the restore — try again.",

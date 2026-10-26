@@ -25,6 +25,8 @@ tıklayın; kasa kendini yeniden başlatır — klavyeye ya da fişi çekmeye
 gerek yok. Windows'ta kasa henüz kendini yeniden başlatamaz — bunun
 yerine pencereyi kapatıp Universal Till'i yeniden açın.
 
+Geri yükleme, yedek başka bir kasada alınmış olsa bile bu kasanın mağazanızın bulut hesabıyla kendi bağlantısını korur. Dosya bu kasanın kullanabileceği bir yedek değilse, kasa mevcut verilerinizi korur ve Ayarlar → Yedekler geri yüklemenin uygulanmadığını söyler.
+
 ## Otomatik temizlik
 
 Kasa, diski dolmasın diye günde bir kez artık gerekmeyen dosyaları siler:

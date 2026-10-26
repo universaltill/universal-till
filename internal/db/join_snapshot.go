@@ -154,7 +154,16 @@ var TillCloudIdentityPrefixes = []string{"marketplace.device_", "marketplace.tok
 func DeleteTillCloudIdentity(exec interface {
 	Exec(query string, args ...any) (sql.Result, error)
 }) error {
-	for _, p := range TillCloudIdentityPrefixes {
+	return deleteSettingsPrefixes(exec, TillCloudIdentityPrefixes)
+}
+
+// deleteSettingsPrefixes removes every settings row whose key starts with
+// one of prefixes. A prefix match via substr, not LIKE: '_' in "device_" is
+// a LIKE wildcard.
+func deleteSettingsPrefixes(exec interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}, prefixes []string) error {
+	for _, p := range prefixes {
 		if _, err := exec.Exec(`DELETE FROM settings WHERE substr(key, 1, length(?)) = ?`, p, p); err != nil {
 			return fmt.Errorf("delete %s* settings: %w", p, err)
 		}
