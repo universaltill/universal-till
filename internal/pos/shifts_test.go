@@ -650,7 +650,7 @@ CREATE TABLE shifts (
 );
 
 CREATE TABLE sales (
-  id TEXT PRIMARY KEY,
+  id TEXT PRIMARY KEY, till_id TEXT NOT NULL DEFAULT '',
   receipt_no TEXT NOT NULL UNIQUE,
   status TEXT NOT NULL,
   sale_type TEXT NOT NULL,

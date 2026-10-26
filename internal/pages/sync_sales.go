@@ -316,7 +316,11 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 		// through here means CompleteSale reuses it AS GIVEN rather than
 		// independently re-deriving a (possibly different) one on this
 		// replica -- see pos.SaleInput.DisplayNo's own doc comment.
-		DisplayNo:              j.Sale.DisplayNo,
+		DisplayNo: j.Sale.DisplayNo,
+		// ut-docs#5074 S0b: provenance rides the sale's own INSERT, in its
+		// transaction (SetSaleProvenance below is now a no-op fallback).
+		TillID:                 tillID,
+		CreatedAt:              j.Sale.CreatedAt,
 		Currency:               j.Sale.Currency,
 		TaxInclusive:           saleIsTaxInclusive(j.Sale),
 		CashierID:              j.Sale.CashierID,

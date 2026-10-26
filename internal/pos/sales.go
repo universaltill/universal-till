@@ -155,6 +155,15 @@ type SaleInput struct {
 	// customer/kitchen ticket already showed, rather than independently
 	// re-deriving a possibly-different one.
 	DisplayNo string
+	// TillID and CreatedAt (ut-docs#5074 S0b) are a journaled sale's
+	// provenance: the enrolled till it was rung on and its own creation
+	// time. The journal replay (sync_sales.go's applyJournal) sets both so
+	// they are written by the sale's own INSERT, in the sale's transaction,
+	// and no reader ever sees the sale as this till's own at the replay
+	// time. "" (every live checkout path) means this till's own sale, now.
+	// completed_at stays the time this till recorded the sale.
+	TillID    string
+	CreatedAt string
 	ActorID   string
 	// AllowNegativeInventory, when false, makes CompleteSale reject any sale
 	// line that would take THIS till's local stock copy negative. It is a
@@ -1155,7 +1164,9 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				ServiceChargeTaxBasisBP: derivedChargeTaxBasisBP(in.Charges),
 				VoucherIssueTotal:       voucherIssueTotal.Minor(),
 				Note:                    in.Note,
-				CreatedAt:               now,
+				CreatedAt:               valueOrDefault(in.CreatedAt, now),
+				CompletedAt:             now,
+				TillID:                  in.TillID,
 				TenderType:              tenderType,
 				OrderType:               in.OrderType,
 				TableID:                 in.TableID,
