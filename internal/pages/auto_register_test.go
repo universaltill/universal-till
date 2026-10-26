@@ -87,13 +87,11 @@ func TestSetupWizardAutoRegisterSendsTheTypedShopName(t *testing.T) {
 // BEFORE the network attempt, so it survives), and still sign the admin in.
 func TestSetupWizardAutoRegisterOptInOfflineStillCompletesSetup(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
-	// A closed local server: connections are refused immediately, so the
-	// test exercises a genuine "marketplace unreachable" failure without
+	// Port 1 on loopback (unreachableURL): connections are refused at once,
+	// so the test exercises a genuine "marketplace unreachable" failure without
 	// paying the attempt timeout (same shape as
 	// TestSetupWizardDE_OfflineCompletesAndLeavesPendingForRetry).
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	d.Cfg.Marketplace.EndpointURL = dead.URL
-	dead.Close()
+	d.Cfg.Marketplace.EndpointURL = unreachableURL()
 
 	rec := postForm(mux, "/api/setup", url.Values{
 		"pin":           {"2468"},

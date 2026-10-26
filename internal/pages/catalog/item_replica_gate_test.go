@@ -293,9 +293,8 @@ func TestCatalogItemMutations_WriteThroughSendsConflictBase(t *testing.T) {
 // Main till unreachable: every save is refused with the "change it when the
 // main till is reachable" message (502) and nothing changes locally.
 func TestCatalogItemMutations_MainUnreachableRefusedWithoutLocalWrite(t *testing.T) {
-	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	deadURL := dead.URL
-	dead.Close()
+	// Same refused address as pages.unreachableURL (ut-docs#5019).
+	deadURL := "http://127.0.0.1:1"
 	rc := newReplicaCatalog(t, deadURL)
 	before := rc.localState(t)
 	for _, c := range writeThroughCases {
