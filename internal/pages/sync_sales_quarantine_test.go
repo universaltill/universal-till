@@ -263,7 +263,7 @@ VALUES('push-poison-1-pay', 'push-poison-1', 'voucher', 500, 'GBP', '2026-01-01T
 	// the replica's subsequent replication, not just "the primary returned
 	// 200" (which a client-side bug could ignore).
 	cursor, _, _ := replicaDp.Settings.Get(ctx, "sync.push_cursor")
-	if cursor != "2026-01-01T10:00:00Z" {
+	if cursor != "2026-01-01T10:00:00Z|push-poison-1" {
 		t.Fatalf("expected sync.push_cursor to advance past the quarantined entry, got %q", cursor)
 	}
 
