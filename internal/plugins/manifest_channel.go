@@ -50,7 +50,7 @@ var ErrCloudHostedPlugin = errors.New("plugin runs in the cloud, not on a till")
 var (
 	channelCapabilityEntities = []string{
 		"items", "variants", "categories", "images", "stock", "orders",
-		"fulfilment", "refunds", "cancel", "customers", "compare_at",
+		"fulfilment", "refunds", "cancel", "customers", "compare_at", "item_create",
 	}
 	channelCapabilityDirections = []string{"push", "pull", "both"}
 	channelKinds                = []string{"webshop", "marketplace"}
