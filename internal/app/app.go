@@ -145,6 +145,20 @@ func Run(ctx context.Context) error {
 	// comment for why that stays a hard exit.
 	var database *db.DB
 	restoreApplied := false
+	// ut-docs#5058 UT-5: a staged JOIN wipes this database on the apply
+	// below. Sales rung since it was staged go to the new main till first
+	// (bounded, best effort; a failure is logged and they stay in the
+	// pre-restore copy in the backups folder).
+	if db.PendingRestore(cfg.DBPath) {
+		if _, statErr := os.Stat(db.ReplicaIdentityPath(cfg.DBPath)); statErr == nil {
+			if old, openErr := db.Open(cfg.DBPath); openErr == nil {
+				pages.ReplayStagedJoinAtStart(ctx, old.DB, cfg.DBPath)
+				_ = old.Close()
+			} else {
+				log.Errorf("join: open this till's database to send its latest sales before the join is applied: %v", openErr)
+			}
+		}
+	}
 	for {
 		paths.MigrateLegacyData(cfg.DBPath)
 

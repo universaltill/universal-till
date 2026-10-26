@@ -1,5 +1,12 @@
 {
   "app.name": {"description": "The product name, shown in the window title, the header and the about page. A brand name: never translate it.", "review": "standard"},
+  "tills.main_unreachable_help_offline": {"description": "Notice on a joined till's Tills page while the main till is not answering: the till keeps selling, reconnects by itself, what to check.", "review": "standard"},
+  "tills.join.rejoin_sales_warning": {"description": "Warning above the join tabs on a till that is already joined to a main till and has sales: joining another main till replaces its data, but its unsent sales are sent there first.", "review": "standard"},
+  "tills.join_error.unsent_day_closes_refused": {"description": "Join error on a joined till whose day closes cannot reach the cloud because the cloud refuses uploads (subscription not active).", "review": "standard", "placeholders": ["how many day closes are not in the cloud yet"]},
+  "tills.join_error.unsent_not_sent": {"description": "Join error on a joined till re-joining a (new) main till: its sales that never reached a main till could not be sent there first, so the join was refused and nothing on this till changed.", "review": "standard", "placeholders": ["how many unsent sales this till has"]},
+  "tills.join_error.unsent_day_closes": {"description": "Join error on a joined till: its day closes (Z reports) that the cloud must keep are not uploaded yet; joining would wipe them, so the join waits.", "review": "standard", "placeholders": ["how many day closes are not in the cloud yet"]},
+  "tills.main_unreachable_replaced": {"description": "Line in the 'main till isn't answering' notice on a joined till's Tills page: what to do when the main till was replaced, and that unsent sales go to the new main till first.", "review": "standard"},
+  "tills.join.rejoin_note": {"description": "Note in a joined till's 'join an existing shop' section: joining another main till sends its unsent sales there first.", "review": "standard", "placeholders": ["how many unsent sales this till has"]},
   "common.back": {"description": "Button that returns to the previous screen or step.", "review": "standard", "max_length": 24},
   "common.cancel": {"description": "Button that closes a dialog or form without saving anything.", "review": "standard", "max_length": 24},
   "common.clear": {"description": "Button that empties a field, search or selection.", "review": "standard", "max_length": 24},

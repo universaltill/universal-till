@@ -3103,7 +3103,6 @@ tills.joined
 tills.link.down
 tills.link.up
 tills.link_help
-tills.main_unreachable_help
 tills.main_unreachable_title
 tills.network_key.btn
 tills.network_key.confirm
