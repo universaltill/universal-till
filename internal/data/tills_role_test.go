@@ -34,7 +34,7 @@ func TestTillsRole_SatelliteRoundTrips(t *testing.T) {
 	d := openMigratedDB(t, "tills-role-satellite.db")
 	ctx := context.Background()
 	repo := NewTillsRepo(d.DB)
-	id, err := repo.InsertTillWithRole(ctx, "Kiosk", "hash-k", TillRoleSatellite)
+	id, _, err := repo.EnrolTill(ctx, "Kiosk", "hash-k", TillRoleSatellite, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,8 +63,8 @@ func TestTillsRole_CheckConstraintRejectsBogusValue(t *testing.T) {
 	if _, err := d.Exec(`UPDATE tills SET role = 'kiosk' WHERE id = 'till-c'`); err == nil {
 		t.Fatal("an UPDATE to a bogus role must be refused too")
 	}
-	if _, err := NewTillsRepo(d.DB).InsertTillWithRole(context.Background(), "Till 5", "hash-5", "bogus"); err == nil {
-		t.Fatal("InsertTillWithRole must refuse a bogus role")
+	if _, _, err := NewTillsRepo(d.DB).EnrolTill(context.Background(), "Till 5", "hash-5", "bogus", ""); err == nil {
+		t.Fatal("EnrolTill must refuse a bogus role")
 	}
 }
 

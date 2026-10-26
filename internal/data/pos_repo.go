@@ -4051,10 +4051,16 @@ func (r *POSRepo) SaleExists(ctx context.Context, saleID string) (bool, error) {
 // reconnecting the next morning being the obvious case). Same
 // COALESCE(...,”) guard as InsertSale's own write, for a malformed
 // createdAt arriving from a peer's journal.
+//
+// ut-docs#5074 S0b: the journal replay now passes provenance into
+// pos.CompleteSale, so the sale's own INSERT carries it and this is a
+// fallback that changes nothing (and so writes nothing, firing no UPDATE
+// trigger) when the row already says the same.
 func (r *POSRepo) SetSaleProvenance(ctx context.Context, saleID, tillID, createdAt string) error {
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE sales SET till_id = ?, created_at = ?, local_date = COALESCE(date(?, 'localtime'), '') WHERE id = ?`,
-		tillID, createdAt, createdAt, saleID)
+		`UPDATE sales SET till_id = ?, created_at = ?, local_date = COALESCE(date(?, 'localtime'), '')
+WHERE id = ? AND (till_id IS NOT ? OR created_at IS NOT ?)`,
+		tillID, createdAt, createdAt, saleID, tillID, createdAt)
 	if err != nil {
 		return fmt.Errorf("set provenance: %w", err)
 	}
@@ -6010,6 +6016,13 @@ type InsertSaleParams struct {
 	VoucherIssueTotal int64
 	Note              string
 	CreatedAt         string
+	// CompletedAt is completed_at; "" means CreatedAt (ut-docs#5074 S0b:
+	// a journaled sale is created at its origin time and completed here,
+	// now).
+	CompletedAt string
+	// TillID is sales.till_id, the enrolled till a journaled sale was rung
+	// on; "" is this till's own sale (ut-docs#5074 S0b).
+	TillID            string
 	TenderType        string
 	OrderType         string
 	TableID           string
@@ -6067,9 +6080,9 @@ func (r *POSRepo) InsertSale(ctx context.Context, tx *sql.Tx, p InsertSaleParams
 		offlineVal = 1
 	}
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, order_type, table_id, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, voucher_issue_total, rounding, note, created_at, completed_at, local_date, display_no)
-VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, COALESCE(date(?, 'localtime'), ''), ?)
-`, p.SaleID, p.ReceiptNo, p.SaleType, p.TenderType, p.OrderType, nullIfEmpty(p.TableID), offlineVal, p.SyncStatus, p.SyncAttempts, nullIfEmpty(p.SyncNextAttemptAt), nullIfEmpty(p.SyncLastError), nullIfEmpty(p.RegisterID), nullIfEmpty(p.CashierID), nullIfEmpty(p.CustomerID), p.Currency, p.Subtotal, p.DiscountTotal, p.TaxTotal, p.Total, p.ServiceCharge, p.ServiceChargeTaxBasisBP, p.VoucherIssueTotal, nullIfEmpty(p.Note), p.CreatedAt, p.CreatedAt, p.CreatedAt, nullIfEmpty(p.DisplayNo))
+INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, order_type, table_id, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, voucher_issue_total, rounding, note, created_at, completed_at, local_date, display_no, till_id)
+VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, COALESCE(date(?, 'localtime'), ''), ?, ?)
+`, p.SaleID, p.ReceiptNo, p.SaleType, p.TenderType, p.OrderType, nullIfEmpty(p.TableID), offlineVal, p.SyncStatus, p.SyncAttempts, nullIfEmpty(p.SyncNextAttemptAt), nullIfEmpty(p.SyncLastError), nullIfEmpty(p.RegisterID), nullIfEmpty(p.CashierID), nullIfEmpty(p.CustomerID), p.Currency, p.Subtotal, p.DiscountTotal, p.TaxTotal, p.Total, p.ServiceCharge, p.ServiceChargeTaxBasisBP, p.VoucherIssueTotal, nullIfEmpty(p.Note), p.CreatedAt, valueOrDefault(p.CompletedAt, p.CreatedAt), p.CreatedAt, nullIfEmpty(p.DisplayNo), p.TillID)
 	if err != nil {
 		return fmt.Errorf("insert sale: %w", err)
 	}
