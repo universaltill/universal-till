@@ -1,0 +1,39 @@
+# Compile the macOS desktop shell on a PR that changes it (ut-docs#5021).
+#
+# ci.yml's desktop job builds cmd/unitill-desktop with the desktop tag on
+# Linux (and Windows), but webkit_darwin.go — the Cocoa/WKWebView shell and
+# its Objective-C — was compiled only by release.yml's macos-app job, so a
+# cgo/Objective-C mistake surfaced only when a release was already being
+# cut. This builds and vets the darwin shell on a GitHub-hosted macOS runner
+# (public repo: never self-hosted) whenever the shell or the embedded
+# locales it reads change.
+#
+# Path-scoped, so most PRs get no run: never make it a required check.
+name: desktop-darwin
+on:
+  pull_request:
+    paths:
+      - "cmd/unitill-desktop/**"
+      - "web/locales/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/desktop-darwin.yml"
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: go.mod }
+      - name: Build unitill-desktop (desktop build tag, darwin)
+        env:
+          CGO_ENABLED: 1
+        run: go build -tags desktop -o "$RUNNER_TEMP/unitill-desktop" ./cmd/unitill-desktop
+      - name: Vet unitill-desktop (desktop build tag, darwin)
+        env:
+          CGO_ENABLED: 1
+        run: go vet -tags desktop ./cmd/unitill-desktop

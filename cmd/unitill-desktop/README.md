@@ -171,11 +171,21 @@ writing" on `unitill-pos.exe`. Three changes close this:
   and refuses to start inside a kill-on-close job without it. A
   failure to create/assign the job is a warning in `desktop.log`, never
   fatal. No-op on other platforms.
-- **Early exit is logged** (`child_wait.go`): the ~10s wait for the server
-  stops as soon as the child exits and `desktop.log` records its exit
-  status, instead of polling a dead port and recording nothing. Not on
-  macOS: reaping the child there would let its PID be reused before the
-  window-close handler SIGTERMs it.
+- **Early exit is detected and explained** (`child_wait.go`,
+  `startup_failure.go`, ut-docs#2760, ut-docs#5021): the ~10s wait for the
+  server stops as soon as the child exits and `desktop.log` records its exit
+  status. The child is reaped on every OS, macOS included (a kernel SIGKILL
+  for an invalid code signature used to look like a 10s timeout and a blank
+  window): `markChildReaped` runs right after `cmd.Wait()` and, on macOS,
+  zeroes the PID the Cocoa close handler would SIGTERM, so a recycled PID is
+  never signalled (the remaining microsecond race is documented in
+  `webkit_darwin.go`). On an early exit the shell then shows a static,
+  translated "Universal Till could not start" page (`showStartupFailure`;
+  language from `LC_ALL`/`LC_MESSAGES`/`LANG`, else the macOS preferred
+  language, else English; strings from the embedded `web/locales`, keys
+  `desktop.startup_failed.*`) with the retry/reinstall steps and the log
+  folder, instead of opening the window on the dead server URL. A server that
+  is merely slow (timeout) still opens the window anyway.
 - **Installer/uninstaller** (`packaging/windows/installer.nsi`,
   `StopRunningTill`): before extracting or deleting, stop any
   `unitill-desktop.exe`/`unitill-pos.exe` whose image lives under

@@ -299,5 +299,11 @@
   "channel_orders.detail.refunded_total": {"description": "Label: total amount refunded so far.", "review": "standard"},
   "channel_orders.detail.actions_note": {"description": "Note under an online order: where status actions are taken. my.universaltill.com is a web address; keep it.", "review": "standard"},
   "channel_orders.error.load_failed": {"description": "Error shown when the Online orders list or an order cannot be read.", "review": "standard"},
-  "channel_orders.error.not_found": {"description": "Error shown when an order id is unknown.", "review": "standard"}
+  "channel_orders.error.not_found": {"description": "Error shown when an order id is unknown.", "review": "standard"},
+  "desktop.startup_failed.title": {"description": "Heading of the window the desktop app shows when the till program stopped right after it was opened.", "review": "standard"},
+  "desktop.startup_failed.body": {"description": "Paragraph under the heading explaining that the till program stopped right after opening.", "review": "standard"},
+  "desktop.startup_failed.step_retry": {"description": "First step in the numbered list: close the window and open the app again.", "review": "standard"},
+  "desktop.startup_failed.step_reinstall": {"description": "Second step in the numbered list: reinstall from the latest installer; saved data is kept. Keep the product name unchanged.", "review": "standard"},
+  "desktop.startup_failed.logs": {"description": "Sentence introducing the data folder path, asking the user to send the two log files from it to support. File names desktop.log and till.log stay unchanged.", "review": "standard"},
+  "desktop.startup_failed.detail": {"description": "Label before the technical reason (for example an exit status) shown in small text for support.", "review": "standard"}
 }
