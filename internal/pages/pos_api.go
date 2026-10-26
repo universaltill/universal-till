@@ -392,6 +392,16 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			"amount":    amount.Minor(),
 			"reference": p.Reference,
 		}
+		// ut-docs#5033: the sale's currency, so a payment plugin need not read
+		// it from view:shop. The kiosk path sets it per payment only, hence
+		// the fallback; a malformed value is omitted, never forwarded.
+		payCurrency := saleInput.Currency
+		if payCurrency == "" {
+			payCurrency = p.Currency
+		}
+		if isISO4217Code(payCurrency) {
+			payload["currency"] = payCurrency
+		}
 		if p.MethodID == fiscal.MethodKeyOKC {
 			for k, v := range deviceExtras {
 				payload[k] = v
@@ -3363,4 +3373,17 @@ func reverseCapturedPaymentLegs(ctx context.Context, d *common.Deps, currency st
 			logging.L().Warnf("fiscal signing: tender refused as cannot-sign, but reversing captured payment FAILED — method %q, amount %d %s, authorize_request_id %s: %v — check the payment provider and refund manually if the capture stands (ADR-0136, ut-docs#3309)", p.MethodID, amount.Minor(), legCurrency, leg.requestID, err)
 		}
 	}
+}
+
+// isISO4217Code reports whether c is three uppercase ASCII letters.
+func isISO4217Code(c string) bool {
+	if len(c) != 3 {
+		return false
+	}
+	for i := 0; i < 3; i++ {
+		if c[i] < 'A' || c[i] > 'Z' {
+			return false
+		}
+	}
+	return true
 }
