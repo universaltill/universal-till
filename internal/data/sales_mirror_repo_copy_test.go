@@ -347,3 +347,39 @@ func BenchmarkSalesMirrorApplyFeedPage100(b *testing.B) {
 		cursor += 100
 	}
 }
+
+// The previous main till's own sales are adopted under their register (the
+// key its cloud sales aggregates used), another till's under that till's id
+// (M6 review finding 1).
+func TestSalesMirrorRepo_AdoptKeepsTheAggregateTillKey(t *testing.T) {
+	sqlDB := openMirrorRepoDB(t)
+	r := NewSalesMirrorRepo(sqlDB)
+	ctx := context.Background()
+	if _, err := sqlDB.Exec(`INSERT INTO registers (id, name, is_active) VALUES ('reg-m', 'Front', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqlDB.Exec(`INSERT OR IGNORE INTO payment_methods (id, name, type, is_active) VALUES ('card', 'Card', 'card', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	startCopy(t, r, "e1", 0)
+	m := testMirrorSale("m1", "main-id", 100)
+	m.RegisterID = strp("reg-m")
+	m.Lines, m.CustomerID = nil, nil
+	other := testMirrorSale("a1", "till-a", 100)
+	other.Lines, other.CustomerID = nil, nil
+	if _, err := r.ApplyFeedPage(ctx, MirrorFeedPage{Epoch: "e1", MainTillID: "main-id", FromSeq: 0, ToSeq: 2,
+		Records: []MirrorRecord{saleRec(1, m), saleRec(2, other)}}, MirrorApplyOpts{SelfTillID: "till-b", Now: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := r.AdoptCopy(ctx)
+	if err != nil || res.Adopted != 2 {
+		t.Fatalf("adopt: %+v err %v", res, err)
+	}
+	for id, want := range map[string]string{"m1": "reg-m", "a1": "till-a"} {
+		var got string
+		_ = sqlDB.QueryRow(`SELECT till_id FROM sales WHERE id = ?`, id).Scan(&got)
+		if got != want {
+			t.Errorf("%s adopted under %q, want %q", id, got, want)
+		}
+	}
+}

@@ -3757,5 +3757,10 @@
   "tills.sales_mirror.state.needs_tls": "اتصال امن لازم است: این صندوق را دوباره جفت کنید",
   "tills.sales_mirror.state.main_off": "روی صندوق اصلی خاموش است",
   "tills.sales_mirror.state.satellite": "روی صندوق وابسته نگه داشته نمی‌شود",
-  "tills.sales_mirror.state.catching_up": "در حال به‌روز شدن"
+  "tills.sales_mirror.state.catching_up": "در حال به‌روز شدن",
+  "tills.promote_adopted": "فروش‌های کپی‌شده از صندوق‌های دیگر که به سابقهٔ این صندوق افزوده شد: %d.",
+  "tills.promote_adopt_failed": "فروش‌های کپی‌شده‌ای که اضافه نشد و در نسخه می‌ماند: %d (فهرست مشکلات را ببینید).",
+  "tills.promote_adopt_voided": "فروش‌های این صندوق که مانند نسخه باطل‌شده علامت خورد: %d.",
+  "tills.promote_adopt_resumes": "افزودن نسخه نیمه‌کاره ماند؛ نسخه حفظ می‌شود و ظرف چند دقیقه خودش کامل می‌شود.",
+  "tills.promote_outside_z": "فروش‌هایی پیش از آخرین بستن صندوق اصلی قبلی که شاید در هیچ گزارش Z نباشند: %d. آن‌ها را در گزارش‌ها بررسی کنید."
 }

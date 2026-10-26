@@ -942,10 +942,17 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			actorID = elev.ApproverID
 		}
 
+		// ut-docs#5074 M6: what this till had sent its main till, read before
+		// the identity (and with it the push cursor) is cleared.
+		pushedUpTo, _, _ := d.Settings.Get(r.Context(), "sync.push_cursor")
 		if err := data.NewSettingsRepo(d.Db).ClearReplicaIdentity(r.Context()); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
 		}
+		// ut-docs#5074 M6: this till's read-only copy of the shop's sales
+		// becomes its record (no stock, voucher or receipt-counter
+		// movement); a no-op when the copy was never on.
+		adopted := adoptSalesMirrorOnPromote(r.Context(), d, actorID, pushedUpTo)
 		// ut-docs#2753: no longer a replica, so no main till vouches for it.
 		enroll.ForgetReplicaVouch()
 		resolveReplicaSyncProblems()
@@ -956,6 +963,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			_ = posRepo.InsertAudit(r.Context(), nil, actorID, "till", "-", "till_promoted", nil, now, "")
 		}
 		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "tills.promoted"))
+		writeAdoptionNote(w, locale, adopted)
 	})
 
 	// Replica side (manager): join a primary. Enrols, downloads the full
