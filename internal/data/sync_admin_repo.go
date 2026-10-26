@@ -617,6 +617,25 @@ var nonAdminTables = map[string]string{
 	// validates locally and the replay force-applies as before
 	// (AllowVoucherOverdraft, ut-docs#1053).
 	"vouchers": "shop-wide voucher balance, runtime-mutable across tills — kept per-till; cross-till redemption is reserved live on the primary and keyed (voucher_id, sale_id) for the journal replay (ADR-0084), not a synced table",
+
+	// ut-docs#5074: the read-only sales copy and the main till's change log.
+	// The copy travels by its own feed (GET /api/sync/sales-mirror, one-way,
+	// main → additional till), never in the admin bundle: a primary-wins
+	// bundle with deleteMissing would wipe every additional till's copy of
+	// other tills' sales, and the copy is per-till state by nature. Only
+	// internal/data/sales_mirror_repo.go reads these tables
+	// (guard-sales-mirror-isolation.sh); the names below are classification only.
+	"mirror_sales":               "read-only copy of the shop's sales on an additional till (ut-docs#5074) — its own feed, never the admin bundle", // sales-mirror:allow table classification
+	"mirror_sale_lines":          "child of mirror_sales (ut-docs#5074) — same reasoning",                                                          // sales-mirror:allow table classification
+	"mirror_sale_line_modifiers": "child of mirror_sale_lines (ut-docs#5074) — same reasoning",                                                     // sales-mirror:allow table classification
+	"mirror_payments":            "child of mirror_sales (ut-docs#5074) — same reasoning",                                                          // sales-mirror:allow table classification
+	"mirror_sale_charges":        "child of mirror_sales (ut-docs#5074) — same reasoning",                                                          // sales-mirror:allow table classification
+	"mirror_sale_discounts":      "child of mirror_sales (ut-docs#5074) — same reasoning",                                                          // sales-mirror:allow table classification
+	"mirror_sale_links":          "child of mirror_sales (ut-docs#5074) — same reasoning",                                                          // sales-mirror:allow table classification
+	"mirror_closes":              "read-only copy of every till's day closes (ut-docs#5074) — never report_archive, never the admin bundle",        // sales-mirror:allow table classification
+	"mirror_state":               "this till's own copy cursor/epoch/pause state (ut-docs#5074) — purely local",                                    // sales-mirror:allow table classification
+	"sales_mirror_log":           "the main till's change log feeding the sales copy (ut-docs#5074) — main-till-local, served by its own feed",     // sales-mirror:allow table classification
+	"sales_mirror_acks":          "the main till's per-till copy acknowledgements (ut-docs#5074) — main-till-local prune state",                    // sales-mirror:allow table classification
 }
 
 // FiscalPendingSignRetriesSettingsKey is the settings.key the pre-1.4.0
@@ -2189,6 +2208,11 @@ var ShopWideSettingPrefixes = []string{
 	// Fiscal posture and override state (fiscal.pending_sign_retries is
 	// per-till, above).
 	"fiscal.",
+	// The read-only sales copy's shop switch, epoch, window and caps
+	// (ut-docs#5074): set on the main till, carried to every till so each
+	// additional till knows whether to copy (sync.sales_mirror_off, the
+	// per-till kill switch, is under "sync." above).
+	"sales_mirror.",
 	// Kiosk behaviour, the idle-lock policy, shop-wide report options
 	// (reports.eod_* is per-till), auto-update schedule, setup state.
 	"kiosk.", "auth.", "reports.", "update.", "setup.",
