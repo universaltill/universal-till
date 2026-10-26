@@ -63,6 +63,15 @@ func anotherTillsBackup(t *testing.T, storeID string) []byte {
 	return raw
 }
 
+// pinBackupUploadCap makes the size cap independent of the host's free disk
+// space (a nearly full developer disk would answer 507 for every upload).
+func pinBackupUploadCap(t *testing.T, n int64) {
+	t.Helper()
+	orig := backupUploadCap
+	backupUploadCap = func(string) int64 { return n }
+	t.Cleanup(func() { backupUploadCap = orig })
+}
+
 func postBackupUpload(mux *http.ServeMux, body *bytes.Buffer, ct string, user *auth.User) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, "/api/backup/upload", body)
 	req.Header.Set("Content-Type", ct)
@@ -77,6 +86,7 @@ func postBackupUpload(mux *http.ServeMux, body *bytes.Buffer, ct string, user *a
 // ut-docs#5070 (BINDING cashier-is-sale-only): the upload is refused on the
 // server for a cashier, not only hidden.
 func TestBackupUpload_RefusedForCashier(t *testing.T) {
+	pinBackupUploadCap(t, 1<<30)
 	t.Setenv("UT_AUTH", "")
 	mux, dp, dbPath := newBackupTestDeps(t)
 	dp.AuthSvc = auth.NewService(dp.Db)
@@ -94,6 +104,7 @@ func TestBackupUpload_RefusedForCashier(t *testing.T) {
 // restorable backup, and the answer shows what is in it, the cut-off, and
 // a Restore button for exactly that file (which then asks for the PIN).
 func TestBackupUpload_ManagerGetsTheCheckedSummary(t *testing.T) {
+	pinBackupUploadCap(t, 1<<30)
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, dbPath := newBackupTestDeps(t)
 	body, ct := uploadBackupBody(t, "unitill-pos-20261020-180000.db", anotherTillsBackup(t, "store-a"))
@@ -150,9 +161,9 @@ func TestBackupUpload_Refusals(t *testing.T) {
 				}
 			}
 			if c.capBytes > 0 {
-				orig := backupUploadCap
-				backupUploadCap = func(string) int64 { return c.capBytes }
-				t.Cleanup(func() { backupUploadCap = orig })
+				pinBackupUploadCap(t, c.capBytes)
+			} else {
+				pinBackupUploadCap(t, 1<<30)
 			}
 			body, ct := uploadBackupBody(t, "file.db", c.content(t))
 			rec := postBackupUpload(mux, body, ct, nil)
@@ -172,6 +183,7 @@ func TestBackupUpload_Refusals(t *testing.T) {
 // ut-docs#5070: a restore first backs up the current data, so the
 // replaced data can be got back from the list like any backup.
 func TestRestoreBackup_TakesASafetyBackupFirst(t *testing.T) {
+	pinBackupUploadCap(t, 1<<30)
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, dbPath := newBackupTestDeps(t)
 	if _, err := dp.Db.Exec(`INSERT INTO settings (key, value) VALUES ('marker.live', 'current-data')`); err != nil {
@@ -214,5 +226,20 @@ func TestRestoreBackup_TakesASafetyBackupFirst(t *testing.T) {
 	var payload string
 	if err := dp.Db.QueryRow(`SELECT data_json FROM audit_log WHERE action = 'restore_staged'`).Scan(&payload); err != nil || !strings.Contains(payload, safety) {
 		t.Fatalf("restore_staged audit must name the safety backup: %q %v", payload, err)
+	}
+}
+
+// No room above the low-disk floor: the upload is refused before reading.
+func TestBackupUpload_NoSpace(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	pinBackupUploadCap(t, 0)
+	mux, _, dbPath := newBackupTestDeps(t)
+	body, ct := uploadBackupBody(t, "x.db", []byte("anything"))
+	rec := postBackupUpload(mux, body, ct, nil)
+	if rec.Code != http.StatusInsufficientStorage || !strings.Contains(rec.Body.String(), "not enough free space") {
+		t.Fatalf("= %d %s", rec.Code, rec.Body.String())
+	}
+	if list, _ := db.ListBackups(dbPath); len(list) != 0 {
+		t.Fatalf("kept: %v", list)
 	}
 }
