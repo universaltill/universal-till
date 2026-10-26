@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/lantls"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/netaccess"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/procrestart"
@@ -311,6 +313,17 @@ func pairingRestartHandler(d *common.Deps, gate apiGate) http.HandlerFunc {
 			locale := httpx.ResolveLocale(w, r)
 			w.WriteHeader(http.StatusConflict)
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": httpx.T(locale, "tills.pairing.nothing_to_restart")})
+			return
+		}
+		// ut-docs#5058 UT-5: a sale rung since the join was staged goes to
+		// the new main till before the restart wipes this database. If it
+		// cannot, the restart waits (the manager retries); nothing is lost.
+		if _, err := replayStagedJoin(r.Context(), d, d.Cfg.DBPath); err != nil {
+			logging.L().Errorf("join: send this till's latest sales to the new main till before the restart: %v", err)
+			locale := httpx.ResolveLocale(w, r)
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil,
+				"error": fmt.Sprintf(httpx.T(locale, "tills.join_error.unsent_not_sent"), strconv.Itoa(countUnsentSales(r.Context(), d)))})
 			return
 		}
 		pairingRestartFn()
