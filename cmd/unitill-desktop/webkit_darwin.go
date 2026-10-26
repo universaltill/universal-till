@@ -8,8 +8,34 @@ package main
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
 #include <signal.h>
+#include <stdlib.h>
+#include <string.h>
 
-static pid_t gChildPid = 0;
+// gChildPid is the spawned till server, SIGTERMed when the window closes.
+// Set from Go at spawn time (UTSetChildPid) and zeroed (UTClearChildPid) as
+// soon as the shell has reaped the child, so a reaped PID is never signalled.
+// The close handler runs on the main thread while the reaper is a Go thread,
+// hence the atomic accesses.
+//
+// Remaining tiny race: between wait4 returning inside cmd.Wait() and
+// UTClearChildPid running, the kernel could in theory recycle the PID and
+// the window could be closed in exactly that gap. The window is microseconds
+// wide and PIDs are not reused immediately, which is why reaping on macOS is
+// accepted.
+static volatile pid_t gChildPid = 0;
+
+void UTSetChildPid(int pid) { __atomic_store_n(&gChildPid, (pid_t)pid, __ATOMIC_SEQ_CST); }
+void UTClearChildPid(void) { __atomic_store_n(&gChildPid, (pid_t)0, __ATOMIC_SEQ_CST); }
+
+// UTPreferredLanguage returns the user's first preferred language tag
+// ("tr-TR"), "" when unknown. A Finder-launched app has no LANG, so this is
+// the only language hint the startup-failure page has. Caller frees.
+char *UTPreferredLanguage(void) {
+    @autoreleasepool {
+        NSString *l = [[NSLocale preferredLanguages] firstObject];
+        return strdup(l ? [l UTF8String] : "");
+    }
+}
 
 // UTDelegate wires the WebView capabilities a real browser has but the bare
 // webview lacks: file pickers, camera permission, popups and JS dialogs; plus
@@ -20,7 +46,8 @@ static pid_t gChildPid = 0;
 @implementation UTDelegate
 
 - (void)windowWillClose:(NSNotification *)n {
-    if (gChildPid > 0) kill(gChildPid, SIGTERM); // stop the POS server
+    pid_t pid = __atomic_load_n(&gChildPid, __ATOMIC_SEQ_CST);
+    if (pid > 0) kill(pid, SIGTERM); // stop the POS server (0 once reaped)
     [NSApp terminate:nil];
 }
 
@@ -211,37 +238,58 @@ static void buildMenu(void) {
     [editItem setSubmenu:edit];
 }
 
-void RunWebView(const char *curl, const char *ctitle, int childPid) {
-    gChildPid = (pid_t)childPid;
+// openWindow creates the shared 1280x860 window with a WKWebView as content
+// and returns the web view (nil-safe: always non-nil). Used by both RunWebView
+// (the till) and RunWebViewHTML (the startup-failure page). Must be called
+// inside an @autoreleasepool, before [NSApp run].
+static WKWebView *openWindow(const char *ctitle) {
+    [NSApplication sharedApplication];
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    buildMenu();
+
+    NSRect frame = NSMakeRect(0, 0, 1280, 860);
+    NSWindow *window = [[NSWindow alloc]
+        initWithContentRect:frame
+        styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                   NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable)
+        backing:NSBackingStoreBuffered
+        defer:NO];
+
+    WKWebViewConfiguration *cfg = [[WKWebViewConfiguration alloc] init];
+    WKWebView *webview = [[WKWebView alloc] initWithFrame:frame configuration:cfg];
+    [webview setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+
+    UTDelegate *del = [[UTDelegate alloc] init]; // never released: lives for the app
+    webview.UIDelegate = del;
+    webview.navigationDelegate = del; // pins the view to the till; external links → browser
+    window.delegate = del;
+
+    [window setTitle:[NSString stringWithUTF8String:ctitle]];
+    [window setContentView:webview];
+    [window center];
+    [window makeKeyAndOrderFront:nil];
+    return webview;
+}
+
+void RunWebView(const char *curl, const char *ctitle) {
     @autoreleasepool {
-        [NSApplication sharedApplication];
-        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-        buildMenu();
-
-        NSRect frame = NSMakeRect(0, 0, 1280, 860);
-        NSWindow *window = [[NSWindow alloc]
-            initWithContentRect:frame
-            styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                       NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable)
-            backing:NSBackingStoreBuffered
-            defer:NO];
-
-        WKWebViewConfiguration *cfg = [[WKWebViewConfiguration alloc] init];
-        WKWebView *webview = [[WKWebView alloc] initWithFrame:frame configuration:cfg];
-        [webview setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
-
-        UTDelegate *del = [[UTDelegate alloc] init]; // never released: lives for the app
-        webview.UIDelegate = del;
-        webview.navigationDelegate = del; // pins the view to the till; external links → browser
-        window.delegate = del;
-
-        [window setTitle:[NSString stringWithUTF8String:ctitle]];
-        [window setContentView:webview];
-        [window center];
-        [window makeKeyAndOrderFront:nil];
-
+        WKWebView *webview = openWindow(ctitle);
         NSURL *url = [NSURL URLWithString:[NSString stringWithUTF8String:curl]];
         [webview loadRequest:[NSURLRequest requestWithURL:url]];
+
+        [NSApp activateIgnoringOtherApps:YES];
+        [NSApp run];
+    }
+}
+
+// RunWebViewHTML shows a static, self-contained HTML document (the
+// startup-failure page) in the same window and blocks until it closes. The
+// delegate's windowWillClose also terminates the app; gChildPid is 0 by then
+// (the child is already reaped), so no kill is sent.
+void RunWebViewHTML(const char *chtml, const char *ctitle) {
+    @autoreleasepool {
+        WKWebView *webview = openWindow(ctitle);
+        [webview loadHTMLString:[NSString stringWithUTF8String:chtml] baseURL:nil];
 
         [NSApp activateIgnoringOtherApps:YES];
         [NSApp run];
@@ -252,8 +300,26 @@ import "C"
 
 import "unsafe"
 
+// setChildPid records the spawned till server for the close handler to
+// SIGTERM; markChildReaped clears it right after cmd.Wait() returned so a
+// recycled PID is never signalled (ut-docs#5021). See gChildPid above for
+// the remaining microsecond race.
+func setChildPid(pid int) { C.UTSetChildPid(C.int(pid)) }
+
+func markChildReaped() { C.UTClearChildPid() }
+
+// platformPreferredLang is the user's first macOS preferred language
+// ("tr-TR"), used for the startup-failure page because a GUI-launched app
+// has no LANG.
+func platformPreferredLang() string {
+	c := C.UTPreferredLanguage()
+	defer C.free(unsafe.Pointer(c))
+	return C.GoString(c)
+}
+
 // showWindow opens the native WKWebView window and blocks until it closes.
-// childPid is the POS server process, stopped when the window closes.
+// The POS server is stopped by the close handler through gChildPid (set by
+// setChildPid at spawn time); childPid is unused here.
 //
 // ctl: the control channel runs on macOS too (it's plain Go, no cgo), but
 // wiring it into the actual Cocoa window is ut-docs#609's own scope (this
@@ -276,5 +342,24 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 	cTitle := C.CString(title)
 	defer C.free(unsafe.Pointer(cURL))
 	defer C.free(unsafe.Pointer(cTitle))
-	C.RunWebView(cURL, cTitle, C.int(childPid))
+	C.RunWebView(cURL, cTitle)
+}
+
+// showStartupFailure shows the static startup-failure page (ut-docs#5021) in
+// the same native window and blocks until it closes. No till machinery: no
+// prefs fetch, no polling. ctl, if any, gets no-op ops like showWindow and is
+// closed here.
+func showStartupFailure(title, html string, ctl *controlServer) {
+	if ctl != nil {
+		defer ctl.Close()
+		ctl.SetOps(&windowOps{
+			ExitToOS:  func() error { return nil },
+			ApplyMode: func(string) error { return nil },
+		})
+	}
+	cHTML := C.CString(html)
+	cTitle := C.CString(title)
+	defer C.free(unsafe.Pointer(cHTML))
+	defer C.free(unsafe.Pointer(cTitle))
+	C.RunWebViewHTML(cHTML, cTitle)
 }

@@ -272,3 +272,17 @@ func TestImport_NoAnonymousFirstBootPreview(t *testing.T) {
 		t.Fatalf("anonymous first-boot preview: code=%d, want 403", rec.Code)
 	}
 }
+
+// ut-docs#5070: the end of setup (the welcome page) tells a new device that
+// is replacing a broken till where to restore its backup instead of
+// starting again — a line under the options, not a wizard step (#3709).
+func TestImportPage_WelcomeOffersRestoreFromAFile(t *testing.T) {
+	mux, _, _ := newSampleDataDeps(t)
+	body := getImportAs(mux, "/import?welcome=1", mgrUser, false).Body.String()
+	if !strings.Contains(body, `data-testid="import-welcome-restore"`) || !strings.Contains(body, `href="/settings#settings-backup-upload"`) {
+		t.Fatalf("welcome page lacks the restore-a-backup line")
+	}
+	if body := getImportAs(mux, "/import", mgrUser, false).Body.String(); strings.Contains(body, `data-testid="import-welcome-restore"`) {
+		t.Error("plain /import shows the welcome restore line")
+	}
+}

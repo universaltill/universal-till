@@ -13,6 +13,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -472,6 +474,11 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// ut-docs#4507: joining replaces this till's sales too — the join
 		// section warns and asks for a confirm (same as the join notice).
 		m["HasSales"] = hasSalesHistory(r.Context(), d)
+		// ut-docs#5058 UT-5: a joined till's re-join sends these first.
+		if isJoinedTill(r.Context(), d) {
+			m["IsJoinedTill"] = true
+			m["UnsentSales"] = countUnsentSales(r.Context(), d)
+		}
 		httpx.Render("ui/pages/tills.html", m)(w, r)
 	})
 
@@ -494,6 +501,11 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// later with no explanation. Fail here, before ever showing a QR.
 		if d.SyncPrimaryURL(r.Context()) != "" {
 			http.Error(w, "pair new tills on the primary till", http.StatusConflict)
+			return
+		}
+		// ut-docs#5058: a replaced main till shows no pairing code.
+		if _, replaced := tillReplaced(r, d); replaced {
+			common.LocalizedError(w, r, http.StatusConflict, "tills.pairing.error.this_till_replaced")
 			return
 		}
 		_ = r.ParseForm()
@@ -576,18 +588,26 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Error(w, "pair new tills on the primary till", http.StatusConflict)
 			return
 		}
+		// ut-docs#5058: nor a code shown before the replacement.
+		if refuseIfReplaced(w, r, d) {
+			return
+		}
 		var in struct {
 			Token string `json:"token"`
 			Name  string `json:"name"`
 			// ut-docs#2781: the role the joining till chose; absent (an
 			// older till) means an additional till.
 			Role string `json:"role"`
+			// ut-docs#5058 UT-5: a re-joining till's own receipt prefix
+			// (T<n>-), kept when no other till holds or used it.
+			ReceiptPrefix string `json:"receipt_prefix"`
 		}
 		if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
 			_ = json.NewDecoder(r.Body).Decode(&in)
 		} else {
 			_ = r.ParseForm()
 			in.Token, in.Name, in.Role = r.Form.Get("token"), r.Form.Get("name"), r.Form.Get("role")
+			in.ReceiptPrefix = r.Form.Get("receipt_prefix")
 		}
 		// Validated before the one-time token is spent below.
 		role, ok := tillRoleFromForm(in.Role)
@@ -728,9 +748,11 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			map[string]any{"name": name, "register_id": registerID, "register_name": registerName, "role": role},
 			time.Now().UTC().Format(time.RFC3339), "")
 		// The primary is till 1; replicas number from 2 (receipt prefixes).
-		tillNo := 2
-		if list, err := repo.ListTills(r.Context()); err == nil {
-			tillNo = len(list) + 1
+		// ut-docs#5058 UT-5: never a prefix another till holds or has sales
+		// under; a re-joining till keeps its own when it is free.
+		tillNo := chooseTillNo(r.Context(), repo, in.ReceiptPrefix)
+		if err := repo.SetReceiptPrefix(r.Context(), tillID, fmt.Sprintf("T%d-", tillNo)); err != nil {
+			logging.L().Warnf("record receipt prefix of enrolling till %s: %v", tillID, err)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -826,11 +848,17 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
 			return
 		}
+		// ut-docs#5058: a replaced main till advertises no link (its link
+		// route refuses), so its tills poll instead of redialling every 30s.
+		link := 1
+		if _, replaced := tillReplaced(r, d); replaced {
+			link = 0
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			// link: this main till serves GET /api/sync/link at this level
 			// (ADR-0114 §11) — a replica dials only when advertised.
 			// version: what a replica without the link follows (ut-docs#2738).
-			"data": map[string]any{"till_id": till.ID, "shop_name": storeNameOrDefault(r.Context(), d), "link": 1,
+			"data": map[string]any{"till_id": till.ID, "shop_name": storeNameOrDefault(r.Context(), d), "link": link,
 				"version": buildinfo.Version},
 			"error": nil,
 		})
@@ -1082,25 +1110,36 @@ const (
 	// ut-docs#4560: a sale landed while the join was being staged, and the
 	// manager had not confirmed replacing this till's sales.
 	joinErrHasSales
+	// ut-docs#5058 UT-5: a re-join that could not send this till's unsent
+	// journal to the new main till, and one refused while day closes are
+	// not in the cloud yet. detail is the count.
+	joinErrUnsentNotSent
+	joinErrUnsentDayCloses
+	joinErrUnsentDayClosesRefused
+	joinErrMainReplaced // ut-docs#5058: that main till was replaced
 )
 
 // joinErrLocaleKey maps each kind to its web/locales/*.json key. Every key
 // here must exist, translated, in every locale file — guard-i18n.sh enforces
 // that the locale files' key sets match en.json exactly.
 var joinErrLocaleKey = map[joinErrKind]string{
-	joinErrBadCode:             "tills.join_error.bad_code",
-	joinErrRequestFailed:       "tills.join_error.request_failed",
-	joinErrUnreachable:         "tills.join_error.unreachable",
-	joinErrNotATill:            "tills.join_error.not_a_till",
-	joinErrRefused:             "tills.join_error.refused",
-	joinErrNameTaken:           "tills.join_error.name_taken",
-	joinErrSnapshotFailed:      "tills.join_error.snapshot_failed",
-	joinErrStageSnapshotFailed: "tills.join_error.stage_snapshot_failed",
-	joinErrStageIdentityFailed: "tills.join_error.stage_identity_failed",
-	joinErrNeedAddress:         "tills.join_error.need_address",
-	joinErrBadAddress:          "tills.join_error.bad_address",
-	joinErrTooManyAttempts:     "tills.join_error.too_many_attempts",
-	joinErrHasSales:            "tills.discovery.ambient.has_sales_warning",
+	joinErrBadCode:                "tills.join_error.bad_code",
+	joinErrRequestFailed:          "tills.join_error.request_failed",
+	joinErrUnreachable:            "tills.join_error.unreachable",
+	joinErrNotATill:               "tills.join_error.not_a_till",
+	joinErrRefused:                "tills.join_error.refused",
+	joinErrNameTaken:              "tills.join_error.name_taken",
+	joinErrSnapshotFailed:         "tills.join_error.snapshot_failed",
+	joinErrStageSnapshotFailed:    "tills.join_error.stage_snapshot_failed",
+	joinErrStageIdentityFailed:    "tills.join_error.stage_identity_failed",
+	joinErrNeedAddress:            "tills.join_error.need_address",
+	joinErrBadAddress:             "tills.join_error.bad_address",
+	joinErrTooManyAttempts:        "tills.join_error.too_many_attempts",
+	joinErrHasSales:               "tills.discovery.ambient.has_sales_warning",
+	joinErrUnsentNotSent:          "tills.join_error.unsent_not_sent",
+	joinErrUnsentDayCloses:        "tills.join_error.unsent_day_closes",
+	joinErrUnsentDayClosesRefused: "tills.join_error.unsent_day_closes_refused",
+	joinErrMainReplaced:           "tills.join_error.replaced",
 }
 
 // joinError is what every joinPrimary/completeJoin failure path returns.
@@ -1200,6 +1239,24 @@ func primaryURLFromAddress(address string) (string, bool) {
 // already holds — that flow never has an encodeEnrollCode-packed code to
 // decode, just the two values decodeEnrollCode would have produced.
 func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role, primaryCertPin string, replaceConfirmed bool) (string, error) {
+	// ut-docs#5058 UT-5 (rejoin_replay.go): a joined till re-joining sends
+	// its unsent journal to the new main till before the wipe. Day closes
+	// the cloud has not acknowledged would be wiped instead: refuse first,
+	// before anything is enrolled.
+	rejoin := isJoinedTill(r.Context(), d)
+	if rejoin {
+		n, err := rejoinUnsentDayCloses(r.Context(), d)
+		if err != nil {
+			return "", &joinError{kind: joinErrRequestFailed, detail: err.Error()}
+		}
+		if n > 0 {
+			kind := joinErrUnsentDayCloses
+			if settingTrim(r.Context(), d, data.ReportArchiveCloudRefusedAtKey) != "" {
+				kind = joinErrUnsentDayClosesRefused // waiting would not help
+			}
+			return "", &joinError{kind: kind, detail: strconv.Itoa(n)}
+		}
+	}
 	base := strings.TrimSuffix(primaryURL, "/")
 	client := netaccess.NewClient(60 * time.Second)
 	if primaryCertPin != "" {
@@ -1213,7 +1270,12 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 		base, client = tlsBase, lantls.NewPinnedClient(60*time.Second, primaryCertPin).Client
 	}
 
-	body, _ := json.Marshal(map[string]string{"token": token, "name": name, "role": role})
+	enrol := map[string]string{"token": token, "name": name, "role": role}
+	if rejoin {
+		// ut-docs#5058 UT-5: keep numbering where this till left off.
+		enrol["receipt_prefix"] = settingTrim(r.Context(), d, "sync.receipt_prefix")
+	}
+	body, _ := json.Marshal(enrol)
 	var resp *http.Response
 	if primaryCertPin == "" {
 		// A code join (QR, long or short code) tries TLS on the main till's
@@ -1284,6 +1346,10 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 		// source — "wait a minute", not "the code is wrong".
 		return "", &joinError{kind: joinErrTooManyAttempts}
 	}
+	if answerIsTillReplaced(resp) {
+		// ut-docs#5058: the shop's owner replaced that main till.
+		return "", &joinError{kind: joinErrMainReplaced}
+	}
 	if resp.StatusCode == http.StatusUnprocessableEntity {
 		// ut-docs#1264: the primary rejected the name as already in use on
 		// this shop's network. 422 is reserved for exactly this on
@@ -1301,6 +1367,19 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 	fail := func(je *joinError) (string, error) {
 		withdrawEnrolment(r.Context(), client, base, out.Data.Bearer)
 		return "", je
+	}
+
+	// ut-docs#5058 UT-5: the unsent journal goes to the new main till
+	// FIRST, so the copy downloaded next already holds it.
+	var replay rejoinReplay
+	if rejoin {
+		unsent := countUnsentSales(r.Context(), d)
+		var rerr error
+		replay, rerr = replayUnsentJournal(r.Context(), d, client, base, out.Data.Bearer, "")
+		if rerr != nil {
+			logging.L().Errorf("re-join: send this till's unsent journal to the new main till: %v", rerr)
+			return fail(&joinError{kind: joinErrUnsentNotSent, detail: strconv.Itoa(unsent)})
+		}
 	}
 
 	// Download the shop snapshot with our new bearer and stage it.
@@ -1358,7 +1437,33 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 		}
 		return fail(&joinError{kind: joinErrHasSales})
 	}
+	if rejoin {
+		// A sale rung while the copy downloaded is not in it: a last pass
+		// sends it on, or the staged wipe is withdrawn.
+		// From the stored cursor again, not from the newest sale sent: a sale
+		// in the same second would be skipped, and the main till's apply
+		// skips what it already has.
+		last, err := replayUnsentJournal(r.Context(), d, client, base, out.Data.Bearer, "")
+		if err != nil {
+			logging.L().Errorf("re-join: last pass of this till's journal: %v", err)
+			if uerr := db.UnstageJoin(d.Cfg.DBPath); uerr != nil {
+				logging.L().Errorf("join: withdraw the staged join after the last journal pass failed: %v", uerr)
+				return "", &joinError{kind: joinErrStageSnapshotFailed, detail: uerr.Error()}
+			}
+			return fail(&joinError{kind: joinErrUnsentNotSent, detail: strconv.Itoa(countUnsentSales(r.Context(), d))})
+		}
+		replay.Sales += last.Sales
+		replay.NoSales += last.NoSales
+		replay.ClearedBaskets += last.ClearedBaskets
+	}
 	posRepo := data.NewPOSRepo(d.Db)
+	if rejoin {
+		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", out.Data.TillID, "rejoin_journal_sent",
+			map[string]any{"primary": primaryURL, "sales": replay.Sales, "no_sales": replay.NoSales, "cleared_baskets": replay.ClearedBaskets},
+			time.Now().UTC().Format(time.RFC3339), "")
+		logging.L().Infof("re-join: sent %d unsent sale(s), %d no-sale open(s), %d cleared basket(s) to the new main till before the wipe (ut-docs#5058)",
+			replay.Sales, replay.NoSales, replay.ClearedBaskets)
+	}
 	_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", out.Data.TillID, "joined_primary",
 		map[string]any{"primary": primaryURL}, time.Now().UTC().Format(time.RFC3339), "")
 	return out.Data.ShopName, nil
@@ -1388,4 +1493,39 @@ func withdrawEnrolment(ctx context.Context, client *http.Client, base, bearer st
 	if resp.StatusCode != http.StatusNoContent {
 		logging.L().Warnf("join: withdraw the enrolment on the main till: %s", resp.Status)
 	}
+}
+
+// tillPrefixRe is a joined till's receipt prefix, T<n>- with n >= 2 (the main
+// till is till 1 and has none).
+var tillPrefixRe = regexp.MustCompile(`^T([2-9]|[1-9][0-9]{1,3})-$`)
+
+// chooseTillNo picks the number (receipt prefix T<n>-) for a till enrolling
+// now (ut-docs#5058 UT-5). requested is the joining till's own prefix ("" for
+// a till that never joined): it is kept when valid and no other till holds
+// it or has sales under it, so a till re-joining a new main till goes on
+// numbering where it left off and its replayed sales keep their numbers.
+// Otherwise the number is past every prefix in use and past the till count
+// (the old rule), so it can never be one another till's queued sales carry.
+func chooseTillNo(ctx context.Context, repo *data.TillsRepo, requested string) int {
+	used, err := repo.ReceiptPrefixesInUse(ctx)
+	if err != nil {
+		logging.L().Warnf("enrolment: receipt prefixes in use: %v", err)
+		used = map[string]bool{}
+	}
+	if m := tillPrefixRe.FindStringSubmatch(strings.TrimSpace(requested)); m != nil && !used[m[0]] {
+		n, _ := strconv.Atoi(m[1])
+		return n
+	}
+	next := 2
+	if list, err := repo.ListTills(ctx); err == nil {
+		next = len(list) + 1
+	}
+	for p := range used {
+		if m := tillPrefixRe.FindStringSubmatch(p); m != nil {
+			if n, _ := strconv.Atoi(m[1]); n >= next {
+				next = n + 1
+			}
+		}
+	}
+	return next
 }

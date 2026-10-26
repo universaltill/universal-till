@@ -671,3 +671,20 @@ func TestNextAttemptClearsWhenTheTimerFires(t *testing.T) {
 	close(gate)
 	h.cloud.nextConn(t)
 }
+
+// ut-docs#5058: a 4003 close kicks one check-in, so cloudsync learns at once
+// WHY the credential was refused — a replaced main till's check-in 401
+// carries reason "replaced" — and the till stops acting as main till without
+// waiting for its next scheduled tick.
+func TestRevokedKicksOneCheckIn(t *testing.T) {
+	h := newHarness(t, nil)
+	c := h.cloud.nextConn(t)
+	c.frame(t, "hello")
+	before := h.kicks.Load()
+	c.closeWith(4003, "revoked")
+	eventually(t, "a check-in kick after 4003", func() bool { return h.kicks.Load() == before+1 })
+	time.Sleep(150 * time.Millisecond)
+	if k := h.kicks.Load(); k != before+1 {
+		t.Fatalf("kicks after 4003 = %d, want exactly one more than %d", k, before)
+	}
+}

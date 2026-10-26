@@ -1,0 +1,2 @@
+/* Local Network permission text (ut-docs#5026). */
+"NSLocalNetworkUsageDescription" = "يبحث Universal Till في شبكة متجرك عن طابعات الإيصالات وعن صناديقك الأخرى، حتى تتمكن من ربطها دون كتابة العناوين.";

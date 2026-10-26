@@ -132,7 +132,9 @@ func TestSyncAdminVersion_TillsColumnSetPinsTheGatedTrigger(t *testing.T) {
 	// role (ut-docs#2781) travels in the bundle and has its own WHEN-gated
 	// UPDATE trigger, migration 067's trg_sync_admin_version_tills_role_upd
 	// (TestTillsRepo_SetRoleBumpsAdminGenerationOnlyOnChange).
-	want := []string{"bearer_hash", "enrolled_at", "id", "last_seen_at", "name", "role"}
+	// receipt_prefix (ut-docs#5058 UT-5) travels too, gated by migration
+	// 092's trg_sync_admin_version_tills_prefix_upd.
+	want := []string{"bearer_hash", "enrolled_at", "id", "last_seen_at", "name", "receipt_prefix", "role"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("tills columns = %v, want %v — migration 022's gated tills UPDATE trigger\n"+
 			"(WHEN NOT (OLD.name IS NEW.name AND OLD.enrolled_at IS NEW.enrolled_at))\n"+

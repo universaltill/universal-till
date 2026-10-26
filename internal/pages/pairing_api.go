@@ -143,6 +143,10 @@ func registerPairingAPI(mux *http.ServeMux, d *common.Deps, svc *auth.Service, t
 		if refusePlainSyncWhenClosed(w, r, tillsRepo) {
 			return
 		}
+		// ut-docs#5058: a replaced main till takes no new tills.
+		if refuseIfReplaced(w, r, d) {
+			return
+		}
 		if !limiter.allow(sourceOf(r)) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)

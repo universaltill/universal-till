@@ -876,6 +876,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// persistent, on-disk fact; nothing else re-checks it once the
 			// original POST response is gone).
 			"restorePending":        backupRestorePending(d.Cfg.DBPath),
+			"restoreRefused":        db.RestoreRefused(d.Cfg.DBPath),
 			"restartSupported":      backupRestartSupported(),
 			"payMethods":            payMethods,
 			"payDefault":            payDefault,
@@ -3902,6 +3903,12 @@ func enrolFailureKey(err error) string {
 		return "settings.enrol.busy"
 	case errors.Is(err, enroll.ErrStoreUnnamed):
 		return "settings.enrol.name_required"
+	}
+	// ut-docs#5058: a replace code pairs only a new main till in the setup
+	// wizard; say so instead of the generic failure.
+	var he *enroll.RegisterHTTPError
+	if errors.As(err, &he) && he.Status == http.StatusConflict && he.Code == "replace_code_main_till_only" {
+		return "setup.cloud.error.replace_main_till_only"
 	}
 	return ""
 }

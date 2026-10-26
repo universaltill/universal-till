@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -2321,5 +2322,25 @@ func TestAdminDumpApplyRoundTrip_UpdateFollowKeysNeverSync(t *testing.T) {
 	_ = replica.QueryRow(`SELECT COUNT(*) FROM settings WHERE key LIKE 'update.follow_%'`).Scan(&n)
 	if n != 0 {
 		t.Fatal("the main till's follow bookkeeping synced onto the replica")
+	}
+}
+
+// ut-docs#5071: the backup-copy reminder is about THIS till's disk; the
+// admin sync must never carry the main till's "last copied" to a replica.
+func TestPerTillSettingsCoverBackupCopyReminder(t *testing.T) {
+	for _, k := range []string{BackupCopiedAtSettingsKey, BackupCopySinceSettingsKey} {
+		if !perTillSetting(k) {
+			t.Errorf("%s is not per-till", k)
+		}
+	}
+}
+
+// ut-docs#5071: a restore drops the backup-copy reminder (an old backup's
+// dates would show the chip right after a restore).
+func TestRestoreDropsBackupCopyReminder(t *testing.T) {
+	for _, k := range []string{BackupCopiedAtSettingsKey, BackupCopySinceSettingsKey} {
+		if !slices.Contains(db.RestoreDropKeys, k) {
+			t.Errorf("%s is not in db.RestoreDropKeys", k)
+		}
 	}
 }

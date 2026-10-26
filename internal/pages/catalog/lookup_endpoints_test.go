@@ -164,12 +164,12 @@ func TestCatalogLookup_UnreachableSourcesAre502(t *testing.T) {
 	db := setupCatalogPageDB(t)
 	defer db.Close()
 	addAuditTable(t, db)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	srv.Close() // connection refused from here on
+	// Port 1 on loopback is refused at once; a closed ephemeral port can be
+	// reused by a later listener in the same binary (ut-docs#5080).
 	orig := newLookupClient
 	t.Cleanup(func() { newLookupClient = orig })
 	newLookupClient = func() *productlookup.Client {
-		return productlookup.NewClient(nil, []productlookup.Source{{Name: "dead", BaseURL: srv.URL}})
+		return productlookup.NewClient(nil, []productlookup.Source{{Name: "dead", BaseURL: "http://127.0.0.1:1"}})
 	}
 
 	mux := http.NewServeMux()

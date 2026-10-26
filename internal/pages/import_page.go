@@ -124,6 +124,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			"theme":            d.CurrentState().Theme,
 			"menuItems":        d.MenuSnapshot(),
 			"welcome":          welcome,
+			// ut-docs#5070: a replacement till restores its backup instead
+			// (Settings → Backups → Restore from a file, manager only).
+			"canRestoreBackup": canPerform(d, r, "data_management"),
 			// ADR-0166 §5: the pair-first wizard lands here with the first
 			// pull running; a status chip, never a modal.
 			"cloudSyncing": welcome && r.URL.Query().Get("syncing") == "1",

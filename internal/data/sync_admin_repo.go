@@ -704,6 +704,14 @@ const TillIdentityCloudIDSettingsKey = "till_identity.cloud_id"
 // db.TillCloudIdentityPrefixes): synced, two tills would report the same id.
 const DeviceInfoIDSettingsKey = "till_identity.device_info_id"
 
+// ut-docs#5071: when a backup was last copied off THIS till (download or
+// save-copy) and when its "copy a backup off" reminder clock started. Each
+// till's backups are on its own disk, so both are per till.
+const (
+	BackupCopiedAtSettingsKey  = "backup.last_copied_at"
+	BackupCopySinceSettingsKey = "backup.copy_reminder_since"
+)
+
 // PerTillSettingPrefixes are settings that belong to ONE till, never synced:
 // the replica's own sync identity/cursors, its printer, its screen, its own
 // end-of-day schedule (a replica Z-report would only cover local data), and
@@ -731,6 +739,7 @@ const DeviceInfoIDSettingsKey = "till_identity.device_info_id"
 // registers each replica's own device (internal/enroll, POST
 // /api/sync/cloud-device) without any credential crossing the LAN.
 var PerTillSettingPrefixes = []string{
+	BackupCopiedAtSettingsKey, BackupCopySinceSettingsKey,
 	"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey, AutoUpdateLastAttemptSettingsKey,
 	// ut-docs#2738: this replica's follow bookkeeping (full keys, like the
 	// one above). sync.main_version, the main till's pinged version, is

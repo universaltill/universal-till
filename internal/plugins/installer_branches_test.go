@@ -26,7 +26,7 @@ func installerForBundleTests(t *testing.T, publicKey ed25519.PublicKey) *Marketp
 	t.Helper()
 	db := openMarketplaceInstallerDB(t)
 	t.Cleanup(func() { db.Close() })
-	cfg := storeTestConfig("http://127.0.0.1:0", hex.EncodeToString(publicKey))
+	cfg := storeTestConfig("http://127.0.0.1:1", hex.EncodeToString(publicKey))
 	return newTestMarketplaceInstaller(t, cfg, db)
 }
 

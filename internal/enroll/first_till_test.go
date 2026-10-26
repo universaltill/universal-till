@@ -72,7 +72,7 @@ func TestPairFirstTillSendsFirstTillAndPersistsNothing(t *testing.T) {
 	kv, cfg := bootFirstBoot(t, cloud.srv.URL)
 	before := len(kv.writes)
 
-	p, err := PairFirstTill(context.Background(), cfg, "  "+pairCode+" ", "Till 1")
+	p, err := PairFirstTill(context.Background(), cfg, "  "+pairCode+" ", "Till 1", "")
 	if err != nil {
 		t.Fatalf("PairFirstTill: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestPairFirstTillSendsFirstTillAndPersistsNothing(t *testing.T) {
 func TestPairFirstTillOlderCloudHasNoStoreBlock(t *testing.T) {
 	cloud := newFirstTillCloud(t, 200, `{"data":{"store_id":"s","merchant_id":"m","device_id":"x","device_token":"`+pairToken+`"},"error":null}`)
 	_, cfg := bootFirstBoot(t, cloud.srv.URL)
-	p, err := PairFirstTill(context.Background(), cfg, pairCode, "Till 1")
+	p, err := PairFirstTill(context.Background(), cfg, pairCode, "Till 1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestPairFirstTillOlderCloudHasNoStoreBlock(t *testing.T) {
 func TestPairFirstTillStoreHasTill(t *testing.T) {
 	cloud := newFirstTillCloud(t, 409, `{"data":{"existing_till":{"name":"Front counter","last_used_at":"2026-10-20T09:30:00Z"}},"error":{"code":"store_has_till","message":"x"}}`)
 	_, cfg := bootFirstBoot(t, cloud.srv.URL)
-	_, err := PairFirstTill(context.Background(), cfg, pairCode, "Till 1")
+	_, err := PairFirstTill(context.Background(), cfg, pairCode, "Till 1", "")
 	var has *StoreHasTillError
 	if !errors.As(err, &has) {
 		t.Fatalf("err = %v, want *StoreHasTillError", err)
@@ -131,7 +131,7 @@ func TestPairFirstTillCloudErrorsKeepStatusAndCode(t *testing.T) {
 	}{{403, "invalid_code"}, {429, "rate_limited"}} {
 		cloud := newFirstTillCloud(t, tc.status, `{"data":null,"error":{"code":"`+tc.code+`","message":"nope"}}`)
 		_, cfg := bootFirstBoot(t, cloud.srv.URL)
-		_, err := PairFirstTill(context.Background(), cfg, pairCode, "Till 1")
+		_, err := PairFirstTill(context.Background(), cfg, pairCode, "Till 1", "")
 		var he *RegisterHTTPError
 		if !errors.As(err, &he) || he.Status != tc.status || he.Code != tc.code {
 			t.Fatalf("%d: err = %v", tc.status, err)
@@ -144,7 +144,7 @@ func TestPairFirstTillRefusals(t *testing.T) {
 
 	_, cfg := bootFirstBoot(t, cloud.srv.URL)
 	cfg.Marketplace.EndpointURL = ""
-	if _, err := PairFirstTill(context.Background(), cfg, pairCode, "T"); !errors.Is(err, ErrNotConfigured) {
+	if _, err := PairFirstTill(context.Background(), cfg, pairCode, "T", ""); !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("no endpoint: err = %v, want ErrNotConfigured", err)
 	}
 
@@ -152,7 +152,7 @@ func TestPairFirstTillRefusals(t *testing.T) {
 	mu.Lock()
 	tokenExplicit = true
 	mu.Unlock()
-	if _, err := PairFirstTill(context.Background(), cfg, pairCode, "T"); !errors.Is(err, ErrPairIdentityPinned) {
+	if _, err := PairFirstTill(context.Background(), cfg, pairCode, "T", ""); !errors.Is(err, ErrPairIdentityPinned) {
 		t.Fatalf("pinned identity: err = %v, want ErrPairIdentityPinned", err)
 	}
 	if cloud.sent() != nil {
@@ -160,7 +160,7 @@ func TestPairFirstTillRefusals(t *testing.T) {
 	}
 
 	_, cfg = bootFirstBoot(t, cloud.srv.URL)
-	if _, err := PairFirstTill(context.Background(), cfg, "  ", "T"); err == nil {
+	if _, err := PairFirstTill(context.Background(), cfg, "  ", "T", ""); err == nil {
 		t.Fatal("blank code accepted")
 	}
 }
@@ -168,8 +168,8 @@ func TestPairFirstTillRefusals(t *testing.T) {
 func TestPairFirstTillFreshDeviceIDEveryRun(t *testing.T) {
 	cloud := newFirstTillCloud(t, 200, firstTillAnswer)
 	_, cfg := bootFirstBoot(t, cloud.srv.URL)
-	a, err1 := PairFirstTill(context.Background(), cfg, pairCode, "T")
-	b, err2 := PairFirstTill(context.Background(), cfg, pairCode, "T")
+	a, err1 := PairFirstTill(context.Background(), cfg, pairCode, "T", "")
+	b, err2 := PairFirstTill(context.Background(), cfg, pairCode, "T", "")
 	if err1 != nil || err2 != nil || a.DeviceID == b.DeviceID {
 		t.Fatalf("device ids (%v %v), want two fresh ones", err1, err2)
 	}
@@ -178,7 +178,7 @@ func TestPairFirstTillFreshDeviceIDEveryRun(t *testing.T) {
 func TestFirstTillPairingCommitPersistsCredential(t *testing.T) {
 	cloud := newFirstTillCloud(t, 200, firstTillAnswer)
 	kv, cfg := bootFirstBoot(t, cloud.srv.URL)
-	p, err := PairFirstTill(context.Background(), cfg, pairCode, "Till 1")
+	p, err := PairFirstTill(context.Background(), cfg, pairCode, "Till 1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestPairFirstTillParsesShopType(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cloud := newFirstTillCloud(t, 200, answer(tc.store))
 			_, cfg := bootFirstBoot(t, cloud.srv.URL)
-			p, err := PairFirstTill(context.Background(), cfg, pairCode, "Till 1")
+			p, err := PairFirstTill(context.Background(), cfg, pairCode, "Till 1", "")
 			if err != nil {
 				t.Fatalf("PairFirstTill: %v", err)
 			}
@@ -236,5 +236,89 @@ func TestPairFirstTillParsesShopType(t *testing.T) {
 				t.Fatalf("ShopType = %+v, want %q", p.Store, tc.want)
 			}
 		})
+	}
+}
+
+// ut-docs#5058 (ADR-0166 §3 amendment 2026-10-26): replace codes. A replace
+// code without replace_device_id answers 409 replace_confirm_required with
+// the old till and the store block; the wizard confirms by sending the same
+// request again with replace_device_id.
+
+const replaceConfirmAnswer = `{"data":{"existing_till":{"device_id":"till-old","name":"Counter till","last_used_at":"2026-10-25T18:04:00Z"},` +
+	`"store":{"name":"Corner Shop","country":"GB","currency":"GBP","currency_decimals":2,"catalog_master":"cloud","shop_type":"cafe"}},` +
+	`"error":{"code":"replace_confirm_required","message":"x"}}`
+
+func TestPairFirstTillReplaceConfirmRequired(t *testing.T) {
+	cloud := newFirstTillCloud(t, 409, replaceConfirmAnswer)
+	kv, cfg := bootFirstBoot(t, cloud.srv.URL)
+	before := len(kv.writes)
+	_, err := PairFirstTill(context.Background(), cfg, pairCode, "Till 1", "")
+	var rc *ReplaceConfirmError
+	if !errors.As(err, &rc) {
+		t.Fatalf("err = %v, want *ReplaceConfirmError", err)
+	}
+	if rc.DeviceID != "till-old" || rc.Name != "Counter till" || rc.LastUsedAt != "2026-10-25T18:04:00Z" {
+		t.Fatalf("existing till = %+v", rc)
+	}
+	if rc.Store == nil || rc.Store.Name != "Corner Shop" || rc.Store.CatalogMaster != "cloud" {
+		t.Fatalf("store block = %+v", rc.Store)
+	}
+	if _, sent := cloud.sent()[replaceDeviceIDField]; sent {
+		t.Fatal("an unconfirmed pairing sent replace_device_id")
+	}
+	if len(kv.writes) != before {
+		t.Fatalf("a 409 wrote %d settings", len(kv.writes)-before)
+	}
+}
+
+func TestPairFirstTillReplaceSendsTargetAndReadsReplaced(t *testing.T) {
+	answer := `{"data":{"store_id":"store-paired","merchant_id":"merchant-paired","device_id":"x","device_token":"` + pairToken + `",` +
+		`"store":{"name":"Corner Shop","country":"GB","currency":"GBP","catalog_master":"cloud"},` +
+		`"replaced":{"device_id":"till-old","name":"Counter till"}},"error":null}`
+	cloud := newFirstTillCloud(t, 200, answer)
+	_, cfg := bootFirstBoot(t, cloud.srv.URL)
+	p, err := PairFirstTill(context.Background(), cfg, pairCode, "Till 1", "till-old")
+	if err != nil {
+		t.Fatalf("PairFirstTillReplace: %v", err)
+	}
+	b := cloud.sent()
+	if b[replaceDeviceIDField] != "till-old" || b["first_till"] != true {
+		t.Fatalf("request = %v, want first_till and replace_device_id=till-old", b)
+	}
+	if p.Replaced == nil || p.Replaced.DeviceID != "till-old" || p.Replaced.Name != "Counter till" {
+		t.Fatalf("Replaced = %+v", p.Replaced)
+	}
+}
+
+func TestPairFirstTillReplaceRefusesAnOversizedTarget(t *testing.T) {
+	cloud := newFirstTillCloud(t, 200, firstTillAnswer)
+	_, cfg := bootFirstBoot(t, cloud.srv.URL)
+	if _, err := PairFirstTill(context.Background(), cfg, pairCode, "T", strings.Repeat("x", 201)); err == nil {
+		t.Fatal("a 201-character replace_device_id was sent")
+	}
+	if cloud.sent() != nil {
+		t.Fatal("the refused request reached the cloud and could burn the code")
+	}
+}
+
+func TestPairFirstTillMainTillOnline(t *testing.T) {
+	cloud := newFirstTillCloud(t, 409, `{"data":{"last_seen":"2026-10-26T10:01:00Z"},"error":{"code":"main_till_online","message":"x"}}`)
+	_, cfg := bootFirstBoot(t, cloud.srv.URL)
+	_, err := PairFirstTill(context.Background(), cfg, pairCode, "Till 1", "till-old")
+	var on *MainTillOnlineError
+	if !errors.As(err, &on) || on.LastSeen != "2026-10-26T10:01:00Z" {
+		t.Fatalf("err = %v, want *MainTillOnlineError with last_seen", err)
+	}
+}
+
+func TestPairFirstTillReplaceRefusalsKeepTheirCode(t *testing.T) {
+	for _, code := range []string{"replace_target_changed", "replace_needs_owner", "replace_code_main_till_only"} {
+		cloud := newFirstTillCloud(t, 409, `{"data":null,"error":{"code":"`+code+`","message":"x"}}`)
+		_, cfg := bootFirstBoot(t, cloud.srv.URL)
+		_, err := PairFirstTill(context.Background(), cfg, pairCode, "Till 1", "till-old")
+		var he *RegisterHTTPError
+		if !errors.As(err, &he) || he.Status != 409 || he.Code != code {
+			t.Fatalf("%s: err = %v", code, err)
+		}
 	}
 }

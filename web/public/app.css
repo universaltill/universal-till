@@ -5163,6 +5163,26 @@ body.login-screen {
 }
 .setup-update-banner p { margin-block: 0 .5rem; }
 .setup-update-banner .btn { inline-size: 100%; }
+/* ut-docs#5058: the wizard's "Replace <old till>?" confirmation, in place in
+   the Main till form (never a modal). The same well as the asides above with
+   a danger edge; the danger button carries an icon and words, not colour
+   alone. Buttons stack full-width and wrap their text, so the longest locale
+   (de "Ersetzen: …") wraps rather than clips; 48px touch floor. */
+.setup-replace-panel {
+  background: var(--surface-2);
+  border: 1px solid var(--danger-tint-border);
+  border-inline-start: 4px solid var(--danger);
+  border-radius: var(--radius);
+  padding-block: .7rem; padding-inline: .8rem;
+  margin-block: .7rem 0;
+  text-align: start;
+}
+.setup-replace-panel h2 { font-size: 1.1rem; margin-block: 0 .4rem; text-transform: none; letter-spacing: normal; }
+.setup-replace-panel h2:focus { outline: none; }
+.setup-replace-panel h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.setup-replace-panel p { margin-block: 0 .5rem; overflow-wrap: anywhere; }
+.setup-replace-actions { display: flex; flex-direction: column; gap: .5rem; margin-block-start: .6rem; }
+.setup-replace-actions .btn { inline-size: 100%; min-block-size: 48px; white-space: normal; display: inline-flex; align-items: center; justify-content: center; gap: .4rem; }
 .setup-nav { display: flex; gap: .6rem; justify-content: center; margin-block-start: .4rem; flex-wrap: wrap; }
 
 /* Touch-first tile picker (setup wizard country/shop-type, ut-docs#1095) —
@@ -6549,8 +6569,10 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
      `body` matches the specificity of the body.sale-screen/menu-screen
      hide rules; this block comes later, so it wins. */
   body .nav-drawer .session-admin-link { display: flex; }
-  /* ut-docs#3297: the Lock button, a row like every other drawer item. */
-  .nav-drawer .btn-lock { padding: .5rem .75rem; }
+  /* ut-docs#3297: the Lock button, a row like every other drawer item.
+     ut-docs#3407: same padding as every other drawer row's .nav-toggle at
+     <=480px, so the Lock icon column lines up with theirs. */
+  .nav-drawer .btn-lock { padding: .6rem 1.1rem; }
   body.nav-drawer-open .nav-drawer-backdrop {
     display: block; position: fixed; inset: 0; z-index: 1;
     background: rgba(15, 23, 42, .45);
@@ -7059,3 +7081,32 @@ html.ut-translate-mode [data-i18n-key] { -webkit-touch-callout: none; -webkit-us
 .channel-order-scroll { overflow-x: auto; max-inline-size: 100%; }
 .channel-order-link { display: inline-flex; align-items: center; min-block-size: 44px; min-inline-size: 44px; }
 .channel-order-key { overflow-wrap: anywhere; word-break: break-all; }
+/* ut-docs#5070: Settings → Backups → Restore from a file, and the welcome
+   page's restore line. Logical properties only (RTL). */
+.backup-upload { margin-block-start: 1rem; }
+.backup-upload h3 { margin-block: 0 .25rem; }
+.backup-upload-form input[type="file"] { max-inline-size: 100%; min-block-size: 44px; }
+.backup-upload-facts { margin-block: .25rem .5rem; padding-inline-start: 1.25rem; }
+.backup-upload-ready form { margin-block-start: .5rem; }
+.import-welcome-restore { margin-block-start: 1rem; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+/* ut-docs#5071: no backup copied off this till in 7 days
+   (backup_copy_chip.html). Same amber pill as sb-disk-low; deliberately
+   NOT in the sale-screen :has() list that shows the status bar there, so
+   the sell screen keeps its space. Wraps (long in some locales). */
+.statusbar .sb-backup-copy {
+  color: #451a03; background: var(--warning, #d97706);
+  text-decoration: none; white-space: normal;
+  padding: .05rem .5rem; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem;
+}
+.statusbar a.sb-backup-copy:hover { filter: brightness(0.92); }
+#sb-backup-copy-mount:empty { display: none; }
+/* ut-docs#5058: the shop's owner replaced this till as main till
+   (replaced_banner.html). The danger tint of .pos-notice.error, full width
+   above the page like .pairing-notice; never dismissed, never a modal. */
+.replaced-banner { display: flex; align-items: center; gap: .6rem;
+  padding: .55rem 1rem; font-weight: 600; font-size: .92rem;
+  background: var(--danger-tint); color: var(--danger);
+  border-block-end: 1px solid var(--danger-tint-border); }
+.replaced-banner-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+#replaced-banner-mount:empty { display: none; }

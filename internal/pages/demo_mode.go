@@ -227,6 +227,7 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/backup/restart-now":      true,
 	"POST /api/backup/restore":          true,
 	"POST /api/backup/save-copy/{name}": true,
+	"POST /api/backup/upload":           true,
 	// Uploads with their own endpoint (item/variant photos, receipt logo) —
 	// the multipart file filter also covers them; denied outright here.
 	"POST /api/catalog/item/image":    true,
@@ -495,6 +496,7 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /ui/bugreport-chip":               true,
 	"GET /ui/cloud-auth-chip":              true,
 	"GET /ui/disk-space-chip":              true, // ut-docs#3121; local statfs only
+	"GET /ui/backup-copy-chip":             true, // ut-docs#5071; reads two settings
 	"GET /ui/settings/language-install":    true, // ut-docs#4477; reads local settings only
 	"GET /ui/shop-currency-chip":           true, // ut-docs#4539; local settings read only
 	"GET /ui/diagnostics-chip":             true,
@@ -504,6 +506,7 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /ui/join-notice":                  true, // ut-docs#2721; always empty in the demo (no LAN browse)
 	"GET /ui/pairing-notice":               true,
 	"GET /ui/shop-name-notice":             true, // ut-docs#3114
+	"GET /ui/replaced-banner":              true, // ut-docs#5058: read-only banner, empty unless replaced
 	"GET /ui/plugin-buttons":               true,
 	"GET /ui/slot/{slot}":                  true, // ut-docs#3872: core pages' content-slot placeholders; a demo installs no plugins, so it answers empty (panel actions post to /plugin/..., denied above)
 	"GET /ui/slot/{slot}/{plugin}/{entry}": true, // ut-docs#3946: one Settings plugin section's panel; read-only like the route above, and 404 in a demo (no plugins installed)

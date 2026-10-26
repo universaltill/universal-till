@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 const (
@@ -189,6 +191,7 @@ func StageRestore(dbPath, backupName string) error {
 		return err
 	}
 	defer in.Close()
+	clearRestoreRefused(dbPath)
 	pending := filepath.Join(filepath.Dir(dbPath), restorePendingName)
 	out, err := os.OpenFile(pending, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
@@ -215,6 +218,14 @@ func PendingRestore(dbPath string) bool {
 // ApplyPendingRestore swaps a staged restore into place. Call BEFORE Open.
 // The replaced DB is kept as pre-restore-<ts>.db in the backup dir.
 // Returns whether a restore was applied.
+//
+// A backup restore (no replica identity staged) keeps THIS till's cloud
+// identity (ut-docs#5069, keepLiveCloudIdentity): a file taken on another
+// device — a dead till being replaced — must never bring back that device's
+// credential. A staged file that cannot be made safe that way is removed
+// (it is a copy of a file still in the backups folder), the live DB stays,
+// RestoreRefused turns true for Settings → Backups to say so, and boot goes
+// on (false, nil) rather than swap in an unchecked file.
 func ApplyPendingRestore(dbPath string) (bool, error) {
 	pending := filepath.Join(filepath.Dir(dbPath), restorePendingName)
 	if _, err := os.Stat(pending); err != nil {
@@ -223,6 +234,22 @@ func ApplyPendingRestore(dbPath string) (bool, error) {
 	dir, err := BackupDir(dbPath)
 	if err != nil {
 		return false, err
+	}
+	// A LAN join stages the main till's snapshot through the same file;
+	// ApplyReplicaIdentity gives that DB its own identity after Open, and
+	// the shop's store link must travel with it, so it is left alone here.
+	if _, err := os.Stat(ReplicaIdentityPath(dbPath)); err != nil {
+		if kerr := keepLiveCloudIdentity(dbPath, pending); kerr != nil {
+			if rerr := os.Remove(pending); rerr != nil && !os.IsNotExist(rerr) {
+				return false, fmt.Errorf("withdraw a restore that could not be checked (%v): %w", kerr, rerr)
+			}
+			_ = os.Remove(pending + "-journal")
+			_ = os.Remove(pending + "-wal")
+			_ = os.Remove(pending + "-shm")
+			markRestoreRefused(dbPath)
+			logging.L().Errorf("restore refused, the current data is kept: %v", kerr)
+			return false, nil
+		}
 	}
 	if _, err := os.Stat(dbPath); err == nil {
 		aside := filepath.Join(dir, preRestorePrefix+time.Now().UTC().Format(backupTimeLayout)+".db")
@@ -237,4 +264,163 @@ func ApplyPendingRestore(dbPath string) (bool, error) {
 		return false, fmt.Errorf("apply restore: %w", err)
 	}
 	return true, nil
+}
+
+// restoreRefusedName is the marker ApplyPendingRestore leaves next to the DB
+// when it refused a staged file; staging a new restore clears it.
+const restoreRefusedName = "restore-refused"
+
+func markRestoreRefused(dbPath string) {
+	p := filepath.Join(filepath.Dir(dbPath), restoreRefusedName)
+	if err := os.WriteFile(p, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
+		logging.L().Warnf("restore: record the refused restore: %v", err)
+	}
+}
+
+// RestoreRefused reports whether the last staged restore was refused at
+// boot (the file was not a usable till database) and no restore has been
+// staged since. Settings → Backups shows it so the manager is not left
+// wondering why the data did not change.
+func RestoreRefused(dbPath string) bool {
+	_, err := os.Stat(filepath.Join(filepath.Dir(dbPath), restoreRefusedName))
+	return err == nil
+}
+
+// clearRestoreRefused drops the marker; every staging path calls it.
+func clearRestoreRefused(dbPath string) {
+	_ = os.Remove(filepath.Join(filepath.Dir(dbPath), restoreRefusedName))
+}
+
+// RestoreKeepsLivePrefixes are the settings a backup restore takes from the
+// running till instead of the backup (ut-docs#5069): the till's cloud
+// identity (TillCloudIdentityPrefixes: device id, credential, enrolment and
+// terms markers, unpaid check-in) plus what is only valid together with
+// that credential — the store and merchant it authenticates for, the
+// pinned marketplace key, and the entitlement and cloud-link tier the cloud
+// answered it — and this device's own support session (diagnostics.*,
+// dropped on a LAN join for the same reason, ut-docs#2950). Taken from a
+// dead till's backup, these made a replacement till log in as the
+// tombstoned till ("Replaced").
+//
+// The catalogue pull state (cloudsync.catalog.*) is NOT here: it describes
+// the rows in the restored file (the generation each row is stamped with),
+// so it stays the backup's.
+var RestoreKeepsLivePrefixes = append(append([]string(nil), TillCloudIdentityPrefixes...),
+	"marketplace.store_id", "marketplace.merchant_id", "marketplace.public_key", "entitlement.", "cloud.link_", "diagnostics.")
+
+// RestoreDropKeys are the hashes of what a till last pushed to the cloud.
+// A restore drops them (neither the backup's nor the live till's apply to
+// the restored data), so the next sync pushes the restored state: with the
+// backup's, a replacement whose cloud copy was overwritten since could
+// skip the push as "unchanged".
+//
+// The backup-copy reminder (ut-docs#5071, data.BackupCopiedAtSettingsKey and
+// data.BackupCopySinceSettingsKey) is dropped too: an old backup's dates
+// would show "no backup copied" right after a restore; the reminder starts
+// again from the first check after it.
+var RestoreDropKeys = []string{"cloudsync.snapshot_hash", "cloudsync.order_tracking_hash",
+	"backup.last_copied_at", "backup.copy_reminder_since"}
+
+// keepLiveCloudIdentity rewrites the staged restore so its
+// RestoreKeepsLivePrefixes rows are exactly the live DB's: the backup's are
+// deleted (secure_delete, so the other till's token bytes are zeroed) and
+// the live till's copied in. No live DB (or one without a settings table)
+// leaves none: the till mints and pairs a fresh identity, never the
+// backup's.
+//
+// A live DB that exists but cannot be read is the corrupt-database case a
+// restore is the cure for, almost always with this till's own backup: the
+// backup's identity is then kept as it is (the pre-#5069 behaviour), so the
+// recovered till stays paired instead of having to pair again. An error
+// means the staged file itself is not a usable till database.
+func keepLiveCloudIdentity(dbPath, pending string) error {
+	keep, readable, err := liveIdentityRows(dbPath)
+	if err != nil {
+		logging.L().Warnf("restore: the current database could not be read (%v); the backup's own cloud identity is kept", err)
+	}
+	pd, err := sql.Open("sqlite", fmt.Sprintf("file:%s?_pragma=secure_delete(1)&_pragma=temp_store(2)&_pragma=busy_timeout(5000)", escapeSQLiteURIPath(pending)))
+	if err != nil {
+		return fmt.Errorf("open staged restore: %w", err)
+	}
+	werr := func() error {
+		// A trigger the file brought along must not act on the rewrite
+		// (ut-docs#5070 review: one could re-insert the backup's token).
+		if err := checkSettingsTriggers(pd, filepath.Join(filepath.Dir(pending), backupDirName)); err != nil {
+			return err
+		}
+		tx, err := pd.Begin()
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback() }()
+		if readable {
+			if err := deleteSettingsPrefixes(tx, RestoreKeepsLivePrefixes); err != nil {
+				return err
+			}
+			for _, kv := range keep {
+				if _, err := tx.Exec(`INSERT INTO settings (key, value) VALUES (?, ?)`, kv[0], kv[1]); err != nil {
+					return fmt.Errorf("keep %s: %w", kv[0], err)
+				}
+			}
+		}
+		for _, k := range RestoreDropKeys {
+			if _, err := tx.Exec(`DELETE FROM settings WHERE key = ?`, k); err != nil {
+				return fmt.Errorf("clear %s: %w", k, err)
+			}
+		}
+		return tx.Commit()
+	}()
+	if cerr := pd.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		return fmt.Errorf("keep this till's cloud identity: %w", werr)
+	}
+	if readable {
+		logging.L().Infof("restore: kept this till's own cloud identity (%d setting(s)); the backup's was dropped", len(keep))
+	}
+	return nil
+}
+
+// liveIdentityRows reads the live DB's RestoreKeepsLivePrefixes rows.
+// readable is false only when a live DB exists and could not be read (err
+// says why); no live DB, or one without a settings table, is readable with
+// no rows.
+func liveIdentityRows(dbPath string) (rows [][2]string, readable bool, err error) {
+	if _, err := os.Stat(dbPath); err != nil {
+		return nil, true, nil
+	}
+	ld, err := openBackupFile(dbPath)
+	if err != nil {
+		return nil, false, err
+	}
+	defer ld.Close()
+	var n int
+	if err := ld.QueryRow(`SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'settings'`).Scan(&n); err != nil {
+		return nil, false, err
+	}
+	if n == 0 {
+		return nil, true, nil
+	}
+	q, err := ld.Query(`SELECT key, value FROM settings`)
+	if err != nil {
+		return nil, false, err
+	}
+	defer q.Close()
+	for q.Next() {
+		var k, v string
+		if err := q.Scan(&k, &v); err != nil {
+			return nil, false, err
+		}
+		for _, p := range RestoreKeepsLivePrefixes {
+			if strings.HasPrefix(k, p) {
+				rows = append(rows, [2]string{k, v})
+				break
+			}
+		}
+	}
+	if err := q.Err(); err != nil {
+		return nil, false, err
+	}
+	return rows, true, nil
 }

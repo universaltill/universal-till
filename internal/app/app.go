@@ -145,6 +145,20 @@ func Run(ctx context.Context) error {
 	// comment for why that stays a hard exit.
 	var database *db.DB
 	restoreApplied := false
+	// ut-docs#5058 UT-5: a staged JOIN wipes this database on the apply
+	// below. Sales rung since it was staged go to the new main till first
+	// (bounded, best effort; a failure is logged and they stay in the
+	// pre-restore copy in the backups folder).
+	if db.PendingRestore(cfg.DBPath) {
+		if _, statErr := os.Stat(db.ReplicaIdentityPath(cfg.DBPath)); statErr == nil {
+			if old, openErr := db.Open(cfg.DBPath); openErr == nil {
+				pages.ReplayStagedJoinAtStart(ctx, old.DB, cfg.DBPath)
+				_ = old.Close()
+			} else {
+				log.Errorf("join: open this till's database to send its latest sales before the join is applied: %v", openErr)
+			}
+		}
+	}
 	for {
 		paths.MigrateLegacyData(cfg.DBPath)
 
@@ -171,6 +185,12 @@ func Run(ctx context.Context) error {
 				log.Warnf("sweep orphaned join snapshots: %v", sweepErr)
 			} else if n > 0 {
 				log.Infof("swept %d orphaned join-snapshot file(s)", n)
+			}
+			// Uploads a crash left mid-check (ut-docs#5070), same terms.
+			if n, sweepErr := db.SweepOrphanedUploads(cfg.DBPath, time.Now()); sweepErr != nil {
+				log.Warnf("sweep orphaned backup uploads: %v", sweepErr)
+			} else if n > 0 {
+				log.Infof("swept %d orphaned backup upload file(s)", n)
 			}
 			database, attemptErr = db.Open(cfg.DBPath)
 		}
@@ -429,6 +449,11 @@ func Run(ctx context.Context) error {
 	discoverySettings := data.NewSettingsRepo(database.DB)
 	discoveryAuth := auth.NewService(database.DB)
 	discoveryRoleCheck := discovery.GateOnFirstBoot(discovery.RoleCheckFromSettings(discoverySettings), discoveryAuth)
+	// ut-docs#5058: a till replaced as main till never advertises again.
+	discoveryRoleCheck = discovery.GateOnReplaced(discoveryRoleCheck, func(ctx context.Context) bool {
+		_, replaced := enroll.ReplacedState(ctx, discoverySettings)
+		return replaced
+	})
 	discoveryAdvertiser := discovery.NewAdvertiser(discoverySettings, discoveryRoleCheck, listenPort(cfg.ListenAddr))
 	netaccess.StartService("mDNS advertising", func() { discoveryAdvertiser.Start(bgCtx, &wg) })
 

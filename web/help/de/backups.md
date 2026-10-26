@@ -20,6 +20,40 @@ Momentaufnahmen aller Ihrer Geschäftsdaten (Katalog, Verkäufe, Einstellungen),
 
 Beim Wiederherstellen werden alle aktuellen Daten durch die gewählte Sicherung ersetzt — bestätigen Sie mit der PIN einer Führungskraft, da dies über die Einstellungsseite selbst nicht rückgängig gemacht werden kann (die ersetzten Daten werden als eigene Sicherung aufbewahrt, falls Sie sie wiederhaben möchten). Klicken Sie nach der Wiederherstellung auf **Jetzt neu starten**, und die Kasse startet sich selbst neu — kein Griff zu Tastatur oder Steckdose nötig. Unter Windows kann sich die Kasse noch nicht selbst neu starten — schließen Sie stattdessen das Fenster und öffnen Sie Universal Till erneut.
 
+Eine Wiederherstellung behält die eigene Verbindung dieser Kasse mit dem Cloud-Konto Ihres Geschäfts, auch wenn die Sicherung auf einer anderen Kasse erstellt wurde. Ist die Datei keine Sicherung, die diese Kasse verwenden kann, behält sie Ihre aktuellen Daten, und unter Einstellungen → Backups steht, dass die Wiederherstellung nicht angewendet wurde.
+
+## Aus einer Datei wiederherstellen
+
+Nutzen Sie dies auf einer neuen Kasse oder auf einer, die eine defekte Kasse ersetzt, mit einer Sicherungsdatei, die Sie von der alten Kasse kopiert haben (ein USB-Stick, ein anderer Computer, der Download-Ordner).
+
+1. Einstellungen → Backups → **Aus Datei wiederherstellen**: Wählen Sie die Datei (sie heißt `unitill-pos-….db`) und tippen Sie auf **Datei prüfen**.
+2. Die Kasse prüft, ob die Datei eine Universal-Till-Sicherung dieses Geschäfts ist, erstellt mit dieser oder einer älteren Version, und zeigt den Namen des Geschäfts, wie viele Verkäufe sie enthält und den neuesten Verkauf. Verkäufe danach sind nicht in der Sicherung.
+3. Tippen Sie auf **Diese Sicherung wiederherstellen** und bestätigen Sie mit der PIN einer Führungskraft. Die Kasse sichert zuerst ihre aktuellen Daten; starten Sie sie dann wie oben beschrieben neu.
+
+Verwenden Sie eine Datei aus dem Ordner `backups` der alten Kasse oder eine mit **In Downloads speichern** gesicherte. Kopieren Sie stattdessen die laufende Datenbankdatei `unitill-pos.db` von der Festplatte einer defekten Kasse, kopieren Sie die Dateien `unitill-pos.db-wal` und `unitill-pos.db-shm` daneben mit, sonst fehlen die letzten Verkäufe.
+
+Am Ende der Einrichtung bietet die Willkommensseite die Schaltfläche **Sicherung wiederherstellen**, die dieselbe Stelle öffnet.
+
+Eine wiederhergestellte Sicherung bringt Produkte, Verkäufe, Belege, Mitarbeitende mit ihren PINs, Kunden, Einstellungen, Bestände und Fotos zurück, so wie sie beim Erstellen der Sicherung waren. Schlüssel für Kartenterminal und Zahlungs-Plugins sind nicht in einer Sicherung: Geben Sie sie erneut ein.
+
+## Eine Kasse ersetzen
+
+Nur mit einer Sicherung kommen Verkäufe, Belege, Kunden und die PINs der Mitarbeitenden auf eine neue Kasse zurück: Die Cloud speichert sie in keinem Tarif. Bewahren Sie eine aktuelle Kopie außerhalb der Kasse auf. Führungskräfte sehen in der Statusleiste **Seit 7 Tagen keine Sicherung von dieser Kasse kopiert**, bis eine Sicherung von ihr gespeichert wurde.
+
+Wo die Kasse ihre Sicherungen ablegt (die neuesten 14):
+
+- macOS: `~/Library/Application Support/UniversalTill/backups`
+- Windows: `%LOCALAPPDATA%\UniversalTill\backups`
+- Linux: `~/.local/share/universal-till/backups` standardmäßig (aus dem `.deb`-Paket installiert: `/opt/unitill/data/backups`)
+- Android und iOS: in der App, nicht erreichbar — nutzen Sie **In Downloads speichern**.
+
+1. Wenn die alte Kasse noch startet: Einstellungen → Backups → **Jetzt sichern**, dann **In Downloads speichern** neben der neuen Sicherung, und kopieren Sie die Datei auf einen USB-Stick oder einen anderen Computer.
+2. Startet sie nicht, ist ihre Festplatte aber lesbar, nehmen Sie die neueste Datei aus ihrem Ordner `backups`.
+3. Schließen Sie auf der neuen Kasse die Einrichtung ab (für ein Geschäft auf my.universaltill.com: als Hauptkasse beitreten), tippen Sie dann auf der Willkommensseite auf **Sicherung wiederherstellen** oder öffnen Sie Einstellungen → Backups → **Aus Datei wiederherstellen**, und folgen Sie „Aus einer Datei wiederherstellen“ oben.
+4. Stellen Sie wieder her, bevor die neue Kasse ihren ersten Verkauf bucht: Eine Wiederherstellung ersetzt die Daten der Kasse, sie führt sie nicht zusammen.
+
+Verkäufe, die nach der Sicherung auf der alten Kasse gemacht wurden, sind nicht darin.
+
 ## Automatisches Aufräumen
 
 Einmal am Tag löscht die Kasse Dateien, die sie nicht mehr braucht, damit der Speicher nicht vollläuft:

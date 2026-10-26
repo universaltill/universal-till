@@ -69,6 +69,16 @@
       </div>
     </div>
   </div>
+  {{ if .canRestoreBackup }}
+  {{/* ut-docs#5070: a new device replacing a broken till starts from the
+       old till's backup, not from scratch. A line under the options, not
+       a fifth card (the intro counts the ways to start) and not a wizard
+       step (#3709 took restore out of the wizard). */}}
+  <p class="import-welcome-restore" data-testid="import-welcome-restore">
+    {{ T "import.welcome.restore.body" }}
+    <a class="btn secondary" href="/settings#settings-backup-upload">{{ T "import.welcome.restore.action" }}</a>
+  </p>
+  {{ end }}
 </section>
 {{ end }}
 

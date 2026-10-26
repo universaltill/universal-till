@@ -157,6 +157,9 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
     PR trigger, never gates): regenerates docs-shots on `main` and keeps one
     `docs-shots-drift` issue listing screenshots stale through
     `web/locales/**`-only changes; never commits (#4582).
+  - `desktop-darwin.yml` for `cmd/unitill-desktop/**` / `web/locales/**`:
+    builds and vets the macOS shell (cgo/Objective-C) on `macos-14`, which
+    otherwise compiled only at release time (ut-docs#5021).
   - `locale-render-audit.yml` for i18n wiring / `e2e/tests-i18n-audit/**`:
     renders pages in German and fails on untranslated English; fails for
     real on PRs; exceptions in `e2e/tests-i18n-audit/allowlist.json`;

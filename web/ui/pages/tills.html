@@ -11,7 +11,10 @@
 <div class="notice-block-warn" role="status" data-testid="tills-main-unreachable">
   <strong><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T "tills.main_unreachable_title" }}</strong>
   — {{ if .MainUnreachableSince }}{{ printf (T "sync.main_till_unreachable_since") (datetime .MainUnreachableSince) }}{{ else }}{{ T "sync.main_till_unreachable" }}{{ end }}
-  <p>{{ T "tills.main_unreachable_help" }}</p>
+  <p>{{ T "tills.main_unreachable_help_offline" }}</p>
+  {{/* ut-docs#5058 UT-5: the main till may have been replaced on my.; say
+       how to re-join, and that unsent sales move with this till. */}}
+  <p data-testid="tills-main-replaced-hint">{{ T "tills.main_unreachable_replaced" }}</p>
 </div>
 {{ end }}
 
@@ -96,8 +99,11 @@
          refused for sales fills it out of band (join_replace_slot.html,
          keep the two identical) when the first sale landed after this
          page rendered. */}}
+    {{/* ut-docs#5058 UT-5: a joined till re-joining sends its unsent
+         journal to the new main till first (rejoin_replay.go). */}}
+    {{ if .IsJoinedTill }}<p class="muted" data-testid="tills-rejoin-note">{{ printf (T "tills.join.rejoin_note") .UnsentSales }}</p>{{ end }}
     <div id="pairing-replace-slot">{{ if .HasSales }}
-      <p class="join-notice-warning join-replace-warning" id="pairing-replace-warning">{{ T "tills.discovery.ambient.has_sales_warning" }}</p>
+      <p class="join-notice-warning join-replace-warning" id="pairing-replace-warning">{{ if .IsJoinedTill }}{{ T "tills.join.rejoin_sales_warning" }}{{ else }}{{ T "tills.discovery.ambient.has_sales_warning" }}{{ end }}</p>
       <span class="join-notice-confirm">
         <input type="checkbox" id="pairing-replace-local" name="replace_local_data" value="1" required hx-preserve aria-describedby="pairing-replace-warning">
         <label class="join-notice-label" for="pairing-replace-local">{{ T "tills.discovery.ambient.has_sales_confirm" }}</label>

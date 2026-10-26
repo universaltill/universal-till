@@ -299,11 +299,14 @@ func TestStartupCheckinWithoutAnswerRecordsNothing(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, srv, db, _ := startupFixture(t, tc.status)
+			url := srv.URL
 			if tc.status == 0 {
-				srv.Close()
+				// Port 1 on loopback is refused at once; a closed ephemeral
+				// port can be reused by a later listener (ut-docs#5080).
+				url = "http://127.0.0.1:1"
 			}
 			armStartup()
-			if _, err := tick(context.Background(), testCfg(srv.URL), db, Hooks{}); err == nil {
+			if _, err := tick(context.Background(), testCfg(url), db, Hooks{}); err == nil {
 				t.Fatal("tick = nil error, want the start-up check-in's failure")
 			}
 			if v, d := unpaidMarkers(t, db); v != "" || d != "" {

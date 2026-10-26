@@ -68,6 +68,7 @@ func StageReplicaIdentity(dbPath string, id ReplicaIdentity) error {
 // StageRestoreFromReader stages a downloaded snapshot as the pending
 // restore (applied by ApplyPendingRestore on next start).
 func StageRestoreFromReader(dbPath string, r io.Reader) error {
+	clearRestoreRefused(dbPath)
 	pending := filepath.Join(filepath.Dir(dbPath), restorePendingName)
 	f, err := os.Create(pending)
 	if err != nil {

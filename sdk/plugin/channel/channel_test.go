@@ -354,6 +354,26 @@ func TestWebhookResult_OrderIDsRoundTripAndOmitWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestWebhookResult_OrderIDsTruncatedRoundTripAndOmitWhenFalse(t *testing.T) {
+	in := WebhookResult{Account: "a", DedupeID: "d", Event: EventCustomerRedact, ResourceIDs: []string{"c-1"}, OrderIDs: []string{"o-1"}, OrderIDsTruncated: true}
+	b, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res WebhookResult
+	if err := json.Unmarshal(b, &res); err != nil || !res.OrderIDsTruncated {
+		t.Fatalf("order_ids_truncated lost: %s %v", b, err)
+	}
+	if !strings.Contains(string(b), `"order_ids_truncated":true`) {
+		t.Fatalf("wrong key: %s", b)
+	}
+	in.OrderIDsTruncated = false
+	b, _ = json.Marshal(in)
+	if strings.Contains(string(b), "order_ids_truncated") {
+		t.Fatalf("false must be omitted: %s", b)
+	}
+}
+
 // The guest must link ONLY the "channel" module: importing the till's "ut"
 // SDK would add `ut` imports (storage, raw http, settings, secrets) a channel
 // guest must never have.

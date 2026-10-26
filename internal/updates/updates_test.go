@@ -100,11 +100,11 @@ func TestCheckFailuresLeaveStateUntouched(t *testing.T) {
 
 func TestCheckOnceUnreachableServer(t *testing.T) {
 	resetState(t)
-	// A server that is already closed → connection refused, state untouched.
-	srv := httptest.NewServer(http.NotFoundHandler())
-	srv.Close()
+	// Nothing listening → connection refused, state untouched. Port 1 on
+	// loopback is refused at once; a closed ephemeral port can be reused by a
+	// later listener in the same binary (ut-docs#5080).
 	old := releasesURL
-	releasesURL = srv.URL
+	releasesURL = "http://127.0.0.1:1"
 	t.Cleanup(func() { releasesURL = old })
 	if got := CheckNow(context.Background()); got != (Status{}) {
 		t.Fatalf("unreachable server changed state: %+v", got)

@@ -126,12 +126,12 @@ func newHeldSaleProxyPrimary(t *testing.T, applied bool, listRows ...syncHeldSal
 	return p
 }
 
-// deadPrimaryURL is a URL nothing listens on any more.
+// deadPrimaryURL is a URL nothing can answer: port 1 is privileged and below
+// every OS's ephemeral range, so no httptest server (port 0) is ever handed
+// it and a dial is refused at once. A closed server's port could be reused by
+// a later one in the package (ut-docs#4996).
 func deadPrimaryURL() string {
-	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	u := dead.URL
-	dead.Close()
-	return u
+	return unreachableURL()
 }
 
 func heldSaleRowOnLocal(t *testing.T, dp *common.Deps, id string) (data.HeldSale, bool) {

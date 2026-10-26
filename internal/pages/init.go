@@ -532,6 +532,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerPendingPairingsUI(mux, dp)                // ADR-0033 part 3/3 (primary side)
 	registerJoinNoticeUI(mux, dp)                     // ADR-0033 amendment: standalone till offers to join a found main till (ut-docs#2721)
 	registerShopNameNoticeUI(mux, dp)                 // ut-docs#3114: "Name your shop" banner while store.name is a placeholder
+	registerReplacedBanner(mux, dp)                   // ut-docs#5058: "Replaced by <name>" banner on a replaced main till
 	registerSyncSales(mux, dp)
 	registerSyncNoSales(mux, dp)        // ut-docs#3562: replica no-sale opens (LAN sync D3)
 	registerSyncClearedBaskets(mux, dp) // ut-docs#4711: replica cleared baskets (LAN sync D3)
@@ -564,6 +565,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerMainTillStatus(mux, dp)     // replica's main-till connectivity chip (ut-docs#2722, #2742)
 	registerCloudAuthChip(mux, dp)      // refused cloud credential chip (ADR-0116 D6, ut-docs#3524)
 	registerDiskSpaceChip(mux, dp)      // low-disk chip for managers (ut-docs#3121)
+	registerBackupCopyChip(mux, dp)     // copy-a-backup-off reminder (ut-docs#5071)
 	registerShopCurrencyChip(mux, dp)   // shop currency differs, for managers (ut-docs#4539)
 	registerReportArchiveChip(mux, dp)  // refused report upload chip (ADR-0147, ut-docs#574)
 	registerTillsRoster(mux, dp)        // Tills page roster, live link per till (ut-docs#2742)

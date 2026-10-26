@@ -1630,6 +1630,7 @@ type ManifestChannel struct {
 	Auth           *ManifestChannelAuth    `json:"auth,omitempty"`
 	Capabilities   map[string]string       `json:"capabilities,omitempty"`
 	Limits         *ManifestChannelLimits  `json:"limits,omitempty"`
+	PushFields     []string                `json:"push_fields,omitempty"`
 	StockLocations bool                    `json:"stock_locations,omitempty"`
 	Webhooks       *ManifestChannelWebhook `json:"webhooks,omitempty"`
 	Schedules      []ManifestSchedule      `json:"schedules,omitempty"`

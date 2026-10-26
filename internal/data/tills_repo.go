@@ -271,3 +271,36 @@ func (r *TillsRepo) BearerHashByID(ctx context.Context, id string) (string, bool
 	}
 	return h, true, nil
 }
+
+// SetReceiptPrefix records the receipt prefix (T<n>-) this main till granted
+// an enrolled till (ut-docs#5058 UT-5).
+func (r *TillsRepo) SetReceiptPrefix(ctx context.Context, id, prefix string) error {
+	if _, err := r.db.ExecContext(ctx, `UPDATE tills SET receipt_prefix = ? WHERE id = ?`, prefix, id); err != nil {
+		return fmt.Errorf("set till receipt prefix: %w", err)
+	}
+	return nil
+}
+
+// ReceiptPrefixesInUse is every T<n>- receipt prefix this main till knows to
+// be taken: granted to an enrolled till, or carried by a sale it holds (a
+// till enrolled before migration 092, or one since removed). ut-docs#5058.
+func (r *TillsRepo) ReceiptPrefixesInUse(ctx context.Context) (map[string]bool, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT receipt_prefix FROM tills WHERE receipt_prefix != ''
+UNION
+SELECT DISTINCT substr(receipt_no, 1, instr(receipt_no, '-')) FROM sales
+WHERE receipt_no GLOB 'T[0-9]*-*'`)
+	if err != nil {
+		return nil, fmt.Errorf("receipt prefixes in use: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, fmt.Errorf("scan receipt prefix: %w", err)
+		}
+		out[p] = true
+	}
+	return out, rows.Err()
+}

@@ -223,6 +223,10 @@ func TestParseManifest_ChannelRefusals(t *testing.T) {
 			setPath(t, m, "channel.schedules", []map[string]any{{"event": "sale.created", "every_s": 60}})
 		}, "event"},
 		{"negative limit", func(t *testing.T, m map[string]any) { setPath(t, m, "channel.limits.max_variants", -1) }, "limits"},
+		{"push_fields unknown", func(t *testing.T, m map[string]any) {
+			setPath(t, m, "channel.push_fields", []string{"price", "colour"})
+		}, "push_fields"},
+		{"push_fields duplicate", func(t *testing.T, m map[string]any) { setPath(t, m, "channel.push_fields", []string{"price", "price"}) }, "twice"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -234,6 +238,33 @@ func TestParseManifest_ChannelRefusals(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("error %q should mention %q", err, c.want)
+			}
+		})
+	}
+}
+
+func TestParseManifest_ChannelPushFields(t *testing.T) {
+	all := []string{"name", "description", "sku", "barcodes", "price", "compare_at", "category_path"}
+	for _, c := range []struct {
+		name string
+		set  any
+		want []string
+	}{
+		{"absent", nil, nil},
+		{"price only", []string{"price"}, []string{"price"}},
+		{"every field", all, all},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m := channelFixture(t)
+			if c.set != nil {
+				setPath(t, m, "channel.push_fields", c.set)
+			}
+			mf, err := parseChannel(t, m)
+			if err != nil {
+				t.Fatalf("manifest must be accepted: %v", err)
+			}
+			if !slices.Equal(mf.Channel.PushFields, c.want) {
+				t.Fatalf("push_fields = %v, want %v", mf.Channel.PushFields, c.want)
 			}
 		})
 	}
@@ -308,5 +339,22 @@ func TestParseManifest_ChannelRealShopifyShapedSuffixIsAccepted(t *testing.T) {
 	setPath(t, m, "channel.account", `^[a-z0-9][a-z0-9-]*\.myshopify\.com$`)
 	if _, err := parseChannel(t, m); err != nil {
 		t.Fatalf("a private platform suffix must be accepted: %v", err)
+	}
+}
+
+// ut-docs#4907: item_create is an optional capability; only push is read.
+func TestParseManifest_ChannelItemCreateCapability(t *testing.T) {
+	for _, dir := range []string{"push", "pull", "both"} {
+		t.Run(dir, func(t *testing.T) {
+			m := channelFixture(t)
+			setPath(t, m, "channel.capabilities.item_create", dir)
+			mf, err := parseChannel(t, m)
+			if err != nil {
+				t.Fatalf("item_create %q must be accepted: %v", dir, err)
+			}
+			if got := mf.Channel.Capabilities["item_create"]; got != dir {
+				t.Fatalf("item_create = %q, want %q", got, dir)
+			}
+		})
 	}
 }

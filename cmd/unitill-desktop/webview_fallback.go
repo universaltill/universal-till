@@ -213,6 +213,45 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 	w.Run()
 }
 
+// setChildPid, markChildReaped and platformPreferredLang are the macOS
+// close-handler PID hooks and locale hint (webkit_darwin.go); no-ops here —
+// other platforms stop the server through main's deferred Kill, and take
+// the page language from the environment alone.
+func setChildPid(int) {}
+
+func markChildReaped() {}
+
+func platformPreferredLang() string { return "" }
+
+// showStartupFailure shows the static startup-failure page (ut-docs#5021)
+// in a native window the size of the till's and blocks until it closes. No
+// till machinery: no prefs fetch, no polling, no live control ops (ctl, when
+// present, gets no-op ops like the other fallback paths and is closed here).
+// When the system WebView cannot be created the reason is logged and the
+// function returns: the server is dead, so opening a browser on its URL would
+// only recreate the blank page this exists to replace.
+func showStartupFailure(title, html string, ctl *controlServer) {
+	if ctl != nil {
+		defer ctl.Close()
+		ctl.SetOps(&windowOps{
+			ExitToOS:  func() error { return nil },
+			ApplyMode: func(string) error { return nil },
+		})
+	}
+	waitForSafeStartup() // same reason as showWindow: before the window exists
+	w := newWebView(false)
+	if w == nil {
+		logging.L().Errorf("cannot show the startup-failure window: %s",
+			webViewInitFailureReason(webview.LastInitError(), webViewRuntimeVersion()))
+		return
+	}
+	defer w.Destroy()
+	w.SetTitle(title)
+	w.SetSize(1280, 860, webview.HintNone)
+	w.SetHtml(html)
+	w.Run()
+}
+
 // desktopWindowOps builds the windowOps this file wires into ctl once a
 // real native window exists. Extracted from showWindow (ut-docs#1382) so
 // it's callable against a real webview under a test display, independent

@@ -257,10 +257,10 @@ func TestGetOrFetchFetchesWhenNoCache(t *testing.T) {
 }
 
 func TestGetOrFetchErrorsWhenOfflineAndNoCache(t *testing.T) {
-	// A closed server: connection refused, and nothing cached on disk.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	url := server.URL
-	server.Close()
+	// Connection refused, and nothing cached on disk. Port 1 on loopback is
+	// refused at once; a closed ephemeral port can be reused by a later
+	// listener in the same binary (ut-docs#5080).
+	url := "http://127.0.0.1:1"
 
 	repo, err := NewCatalogRepository(testClient(t, url), t.TempDir())
 	if err != nil {
