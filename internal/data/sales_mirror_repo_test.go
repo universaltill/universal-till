@@ -90,7 +90,7 @@ func TestSalesMirrorRepo_PruneLog(t *testing.T) {
 	tills := NewTillsRepo(sqlDB)
 	b, _ := tills.InsertTill(ctx, "Till 2", "hb")
 	c, _ := tills.InsertTill(ctx, "Till 3", "hc")
-	sat, _ := tills.InsertTillWithRole(ctx, "Kiosk", "hs", TillRoleSatellite)
+	sat, _, _ := tills.EnrolTill(ctx, "Kiosk", "hs", TillRoleSatellite, "")
 	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
 	seedLog(t, sqlDB, 100, now.Format("2006-01-02T15:04:05Z"))
 	_ = r.UpsertAck(ctx, b, "e1", 70, now)
