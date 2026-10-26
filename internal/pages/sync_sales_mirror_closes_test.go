@@ -14,6 +14,15 @@ import (
 
 // Additional tills' own closes reach the main till (ut-docs#5074 M7).
 
+// localNoonDaysAgo is local noon n days back: one close per local day,
+// clear of midnight and of daylight-saving changes (a close an exact 24 h
+// apart can land on the same local day across a DST change, and
+// ArchiveReport then refuses the second).
+func localNoonDaysAgo(n int) time.Time {
+	now := time.Now()
+	return time.Date(now.Year(), now.Month(), now.Day()-n, 12, 0, 0, 0, now.Location())
+}
+
 func closeOn(t *testing.T, till *mirrorTill, period string, at time.Time) string {
 	t.Helper()
 	if _, err := data.NewPOSRepo(till.d.Db).ArchiveReport(t.Context(), "eod", period, []byte(`{"till":"`+till.name+`"}`), "", "", at); err != nil {
@@ -32,7 +41,7 @@ func TestSalesMirrorCloses_PushStoresAsPeerCloseAndLogs(t *testing.T) {
 	ctx := t.Context()
 	mdb := shop.main.d.Db
 	// Off: the push step sends nothing; nothing is stored or logged.
-	closeOn(t, b, "p-off", time.Now().Add(-48*time.Hour))
+	closeOn(t, b, "p-off", localNoonDaysAgo(3))
 	shop.pushCloses(b)
 	if n := harnessCount(t, mdb, `SELECT COUNT(*) FROM peer_closes`); n != 0 {
 		t.Fatalf("closes pushed with the copy off: %d", n)
@@ -46,7 +55,7 @@ func TestSalesMirrorCloses_PushStoresAsPeerCloseAndLogs(t *testing.T) {
 	if _, err := b.d.Db.Exec(`INSERT INTO report_archive (id, kind, period, content_json, created_at) VALUES ('main-own', 'eod', 'm1', '{}', datetime('now', '-3 hours'))`); err != nil {
 		t.Fatal(err)
 	}
-	own := closeOn(t, b, "p-on", time.Now().Add(-24*time.Hour))
+	own := closeOn(t, b, "p-on", localNoonDaysAgo(2))
 	shop.pushCloses(b)
 	shop.pushCloses(b) // idempotent
 	if n := harnessCount(t, mdb, `SELECT COUNT(*) FROM peer_closes WHERE till_id = ? AND id = ?`, b.tillID, own); n != 1 {
@@ -104,9 +113,9 @@ func TestSalesMirrorCloses_RelayedToEveryOtherTill(t *testing.T) {
 	a, b, c := shop.tills["A"], shop.tills["B"], shop.tills["C"]
 	shop.pull(a)
 	shop.pull(b)
-	zB := closeOn(t, b, "b-day", time.Now().Add(-24*time.Hour))
+	zB := closeOn(t, b, "b-day", localNoonDaysAgo(2))
 	shop.pushCloses(b)
-	closeOn(t, shop.main, "m-day", time.Now().Add(-48*time.Hour))
+	closeOn(t, shop.main, "m-day", localNoonDaysAgo(3))
 	shop.pull(a) // by the feed
 	shop.pull(b)
 	shop.pull(c) // first pull: by the state re-sync
@@ -213,7 +222,7 @@ func TestSalesMirrorCloses_SatelliteSendsNothing(t *testing.T) {
 	shop.enable()
 	b := shop.tills["B"]
 	_ = b.d.Settings.Set(t.Context(), "sync.till_role", "satellite")
-	closeOn(t, b, "s-day", time.Now().Add(-24*time.Hour))
+	closeOn(t, b, "s-day", localNoonDaysAgo(2))
 	before := shop.copyRequests.Load()
 	shop.pushCloses(b)
 	if n := harnessCount(t, shop.main.d.Db, `SELECT COUNT(*) FROM peer_closes`); n != 0 {
@@ -229,7 +238,7 @@ func TestSalesMirrorCloses_StatePagesPeerClosesAndGone(t *testing.T) {
 	epoch := shop.enable()
 	a, b := shop.tills["A"], shop.tills["B"]
 	for i := range 5 {
-		closeOn(t, b, fmt.Sprintf("b-%d", i), time.Now().Add(-time.Duration(24*(i+1))*time.Hour))
+		closeOn(t, b, fmt.Sprintf("b-%d", i), localNoonDaysAgo(i+2))
 	}
 	for range 3 {
 		shop.pushCloses(b)
