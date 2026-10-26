@@ -898,12 +898,13 @@ func TestTenderHandler_NonOKCPluginDoesNotReceiveBasketDetail(t *testing.T) {
 	if received == nil {
 		t.Fatal("plugin never received an authorize call")
 	}
-	for _, leaked := range []string{"lines", "sale_discount", "service_charge", "tax_inclusive", "currency", "total"} {
+	for _, leaked := range []string{"lines", "sale_discount", "service_charge", "tax_inclusive", "total"} {
 		if _, ok := received[leaked]; ok {
 			t.Fatalf("demopay is not the fiscal-device plugin — its authorize payload must not carry %q, got %+v", leaked, received)
 		}
 	}
-	for _, want := range []string{"method", "amount", "reference"} {
+	// ut-docs#5033: the sale's currency is part of the base contract.
+	for _, want := range []string{"method", "amount", "reference", "currency"} {
 		if _, ok := received[want]; !ok {
 			t.Fatalf("authorize payload dropped the base contract field %q, got %+v", want, received)
 		}
