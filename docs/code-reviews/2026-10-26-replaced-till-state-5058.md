@@ -90,3 +90,32 @@ inert (no signal, no state).
 
 - Replica-side signal of a replaced main (design N3, cloud-vouched re-home).
 - New `en.json` keys need the language-pack PRs (orchestrator).
+
+## Rebase + contract verification (2026-10-26, before merge)
+
+Rebased onto `origin/main`. Conflicts in `sync_api.go` (the join-error kinds
+of UT-5 and this PR both added: both kept), the locale files and
+`en.meta.json` (main's replace-confirm and UT-5 keys kept; the old
+`setup.cloud.error.store_has_till` stays removed), and `app.css` (both
+blocks kept). No line of main was dropped; no key appears twice.
+
+Checked against the merged, deployed ut-cloud contract (CL-5):
+
+- A replaced till's calls answer `401 device_revoked` with `data{reason:
+  "replaced", replaced_at, replaced_by}`; any other removal has `data: null`.
+  `parseReplacedSignal` requires both the code and `reason == "replaced"`, so
+  a plain removal records nothing. Matches.
+- `replaced_by` is `""` until the successor's first check-in: `MarkReplaced`
+  never erases a known name with `""`, and the chip and banner fall back to
+  "the new main till". Matches.
+- The 4003 socket close, and the code staying `device_revoked` (older tills
+  behave as for any removal): unchanged behaviour here. Matches.
+- No mismatch found. One comment fixed: ut-docs#5069 has merged
+  (`db.RestoreKeepsLivePrefixes` includes `till_identity.*`), so restoring
+  the old till's backup onto its replacement no longer carries the replaced
+  flag; the "until #5069" caveat in `enroll/replaced.go` (and finding 1's
+  dependency above) is closed.
+- Gate re-run: build, vet, `go test` enroll/cloudsync/cloudlink/discovery/
+  app/pages/db/httpx/web, data-access, i18n, i18n-meta, help-topics guards
+  green; docs-shots regenerated on Linux (manifest only; no screenshot of a
+  changed topic differed).

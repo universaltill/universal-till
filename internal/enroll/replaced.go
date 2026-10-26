@@ -22,10 +22,10 @@ import (
 // The keys sit under till_identity.* (db.TillCloudIdentityPrefixes): they
 // belong to this device's cloud identity, so they never travel in a join
 // snapshot, and a fresh pairing (resetIdentityForPair) clears them — a new
-// identity is not the replaced one. A restored backup still carries them
-// until ut-docs#5069 (restore keeps the live till's own identity rows) has
-// landed: restoring the old till's backup onto its replacement before then
-// makes the replacement read as replaced (Settings → Pair clears it).
+// identity is not the replaced one. A restored backup keeps this till's own
+// rows (db.RestoreKeepsLivePrefixes, ut-docs#5069), so restoring the old
+// till's backup onto its replacement never makes the replacement read as
+// replaced.
 const (
 	keyReplaced   = "till_identity.replaced"
 	keyReplacedBy = "till_identity.replaced_by"
