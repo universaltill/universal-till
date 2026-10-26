@@ -5163,6 +5163,26 @@ body.login-screen {
 }
 .setup-update-banner p { margin-block: 0 .5rem; }
 .setup-update-banner .btn { inline-size: 100%; }
+/* ut-docs#5058: the wizard's "Replace <old till>?" confirmation, in place in
+   the Main till form (never a modal). The same well as the asides above with
+   a danger edge; the danger button carries an icon and words, not colour
+   alone. Buttons stack full-width and wrap their text, so the longest locale
+   (de "Ersetzen: …") wraps rather than clips; 48px touch floor. */
+.setup-replace-panel {
+  background: var(--surface-2);
+  border: 1px solid var(--danger-tint-border);
+  border-inline-start: 4px solid var(--danger);
+  border-radius: var(--radius);
+  padding-block: .7rem; padding-inline: .8rem;
+  margin-block: .7rem 0;
+  text-align: start;
+}
+.setup-replace-panel h2 { font-size: 1.1rem; margin-block: 0 .4rem; text-transform: none; letter-spacing: normal; }
+.setup-replace-panel h2:focus { outline: none; }
+.setup-replace-panel h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.setup-replace-panel p { margin-block: 0 .5rem; overflow-wrap: anywhere; }
+.setup-replace-actions { display: flex; flex-direction: column; gap: .5rem; margin-block-start: .6rem; }
+.setup-replace-actions .btn { inline-size: 100%; min-block-size: 48px; white-space: normal; display: inline-flex; align-items: center; justify-content: center; gap: .4rem; }
 .setup-nav { display: flex; gap: .6rem; justify-content: center; margin-block-start: .4rem; flex-wrap: wrap; }
 
 /* Touch-first tile picker (setup wizard country/shop-type, ut-docs#1095) —

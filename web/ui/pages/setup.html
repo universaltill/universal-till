@@ -448,9 +448,13 @@
           {{ if .cloudShop.Currency }}<p>{{ T "setup.cloud.shop_currency" }}: <strong data-cloud-field="currency">{{ .cloudShop.Currency }}</strong></p>{{ end }}
           {{ if .cloudShop.ShopType }}<p>{{ T "setup.cloud.shop_type" }}: <strong data-cloud-field="shop_type">{{ T (printf "setup.shop_type.%s" .cloudShop.ShopType) }}</strong></p>{{ end }}
           <p class="muted">{{ T "setup.cloud.hint" }}</p>
+          {{/* ut-docs#5058: after a confirmed replace the old till is already
+               gone, so "This is not my shop" is not offered (ADR-0166 §4
+               amendment); the step names the till this one replaced. */}}
+          {{ if .cloudShop.Replaced }}<p data-testid="setup-cloud-replaced">{{ printf (T "setup.cloud.replaced_note") (or .cloudShop.ReplacedName (T "setup.cloud.error.unnamed_till")) }}</p>{{ end }}
           <div class="setup-nav">
-            <button type="button" class="btn secondary" hx-post="/api/setup/cloud-unpair" hx-params="none"
-                    hx-headers='{"X-UT-Setup-Nonce": "{{ .setupNonce }}"}'>{{ T "setup.cloud.not_mine" }}</button>
+            {{ if not .cloudShop.Replaced }}<button type="button" class="btn secondary" hx-post="/api/setup/cloud-unpair" hx-params="none"
+                    hx-headers='{"X-UT-Setup-Nonce": "{{ .setupNonce }}"}'>{{ T "setup.cloud.not_mine" }}</button>{{ end }}
             <button type="button" class="btn primary" @click="step = nxt(8)">{{ T "setup.cloud.continue" }}</button>
           </div>
         </section>
@@ -595,9 +599,14 @@
                  code to the guarded first-boot route (nonce header), which holds
                  the pairing in memory and reloads /setup on "Your shop". No
                  address: the cloud is the other end. Errors land in place. */}}
-            <form x-show="role === 'main'" x-cloak hx-post="/api/setup/cloud-pair" hx-include="#setup-pairing-till-name" hx-target="#setup-cloud-msg" hx-swap="innerHTML"
+            {{/* ut-docs#5058: hx-disabled-elt names every submit by id, not
+                 "find …": htmx 1.9's find matches ONE element, and the
+                 Replace button of the confirm panel (swapped into
+                 #setup-cloud-msg) must be disabled during its request too,
+                 or a double tap sends two confirmations. */}}
+            <form id="setup-cloud-form" x-show="role === 'main'" x-cloak hx-post="/api/setup/cloud-pair" hx-include="#setup-pairing-till-name" hx-target="#setup-cloud-msg" hx-swap="innerHTML"
                   hx-headers='{"X-UT-Setup-Nonce": "{{ .setupNonce }}"}'
-                  hx-indicator="#setup-cloud-msg" hx-disabled-elt="find button[type=submit]"
+                  hx-indicator="#setup-cloud-msg" hx-disabled-elt="#setup-cloud-form button"
                   data-before-request="trim-validate:setup-pairing-till-name">
               <p class="muted">{{ T "setup.cloud.code_help" }}</p>
               <label>{{ T "tills.join_code" }}
@@ -642,6 +651,21 @@
           var msg = document.getElementById('setup-cloud-msg');
           if (msg) { msg.textContent = ev.detail.xhr.status === 429 ? T_CLOUD.tooMany : T_CLOUD.failed; }
         }
+      });
+      // ut-docs#5058: the "Replace <till>?" panel (setup_cloud_replace.html).
+      // Focus its heading, not a field, so no keyboard pops up; Cancel clears
+      // it and the code stays valid until it expires.
+      document.body.addEventListener('htmx:afterSwap', function (ev) {
+        if (ev.detail.target && ev.detail.target.id === 'setup-cloud-msg') {
+          var h = document.getElementById('setup-cloud-replace-title');
+          if (h) { h.focus(); }
+        }
+      });
+      document.body.addEventListener('click', function (ev) {
+        var btn = ev.target.closest && ev.target.closest('[data-replace-cancel]');
+        if (!btn) { return; }
+        var msg = document.getElementById('setup-cloud-msg');
+        if (msg) { msg.innerHTML = ''; }
       });
     </script>
 
