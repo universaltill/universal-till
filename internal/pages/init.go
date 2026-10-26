@@ -535,6 +535,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerReplacedBanner(mux, dp)                   // ut-docs#5058: "Replaced by <name>" banner on a replaced main till
 	registerSyncSales(mux, dp)
 	registerSyncSalesMirror(mux, dp)    // ut-docs#5074: the read-only sales copy's feed, main-till side (ships dark)
+	registerSyncPeerCloses(mux, dp)     // ut-docs#5074 M7: additional tills' own day closes for the copy
 	registerSalesMirrorStatus(mux, dp)  // ut-docs#5074: this till's copy status (manager)
 	registerSyncNoSales(mux, dp)        // ut-docs#3562: replica no-sale opens (LAN sync D3)
 	registerSyncClearedBaskets(mux, dp) // ut-docs#4711: replica cleared baskets (LAN sync D3)

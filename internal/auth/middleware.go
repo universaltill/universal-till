@@ -67,6 +67,9 @@ func exempt(path string) bool {
 		// copy's /status, /enable or /disable: those are a manager's
 		// session routes.
 		"/api/sync/sales-mirror", "/api/sync/sales-mirror/state",
+		// ut-docs#5074 M7: an additional till's own closes for the copy,
+		// syncTill-authed and pinned-TLS-only in the handler.
+		"/api/sync/closes",
 		"/api/sync/stock", "/api/sync/plugins", "/api/sync/assets", "/api/sync/assets/file",
 		// ut-docs#2566: uploaded category photos, the categories scope of
 		// the same bearer-authed asset surface (sync_assets.go).

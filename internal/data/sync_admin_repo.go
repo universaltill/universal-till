@@ -625,17 +625,18 @@ var nonAdminTables = map[string]string{
 	// other tills' sales, and the copy is per-till state by nature. Only
 	// internal/data/sales_mirror_repo.go reads these tables
 	// (guard-sales-mirror-isolation.sh); the names below are classification only.
-	"mirror_sales":               "read-only copy of the shop's sales on an additional till (ut-docs#5074) — its own feed, never the admin bundle", // sales-mirror:allow table classification
-	"mirror_sale_lines":          "child of mirror_sales (ut-docs#5074) — same reasoning",                                                          // sales-mirror:allow table classification
-	"mirror_sale_line_modifiers": "child of mirror_sale_lines (ut-docs#5074) — same reasoning",                                                     // sales-mirror:allow table classification
-	"mirror_payments":            "child of mirror_sales (ut-docs#5074) — same reasoning",                                                          // sales-mirror:allow table classification
-	"mirror_sale_charges":        "child of mirror_sales (ut-docs#5074) — same reasoning",                                                          // sales-mirror:allow table classification
-	"mirror_sale_discounts":      "child of mirror_sales (ut-docs#5074) — same reasoning",                                                          // sales-mirror:allow table classification
-	"mirror_sale_links":          "child of mirror_sales (ut-docs#5074) — same reasoning",                                                          // sales-mirror:allow table classification
-	"mirror_closes":              "read-only copy of every till's day closes (ut-docs#5074) — never report_archive, never the admin bundle",        // sales-mirror:allow table classification
-	"mirror_state":               "this till's own copy cursor/epoch/pause state (ut-docs#5074) — purely local",                                    // sales-mirror:allow table classification
-	"sales_mirror_log":           "the main till's change log feeding the sales copy (ut-docs#5074) — main-till-local, served by its own feed",     // sales-mirror:allow table classification
-	"sales_mirror_acks":          "the main till's per-till copy acknowledgements (ut-docs#5074) — main-till-local prune state",                    // sales-mirror:allow table classification
+	"mirror_sales":               "read-only copy of the shop's sales on an additional till (ut-docs#5074) — its own feed, never the admin bundle",                                    // sales-mirror:allow table classification
+	"mirror_sale_lines":          "child of mirror_sales (ut-docs#5074) — same reasoning",                                                                                             // sales-mirror:allow table classification
+	"mirror_sale_line_modifiers": "child of mirror_sale_lines (ut-docs#5074) — same reasoning",                                                                                        // sales-mirror:allow table classification
+	"mirror_payments":            "child of mirror_sales (ut-docs#5074) — same reasoning",                                                                                             // sales-mirror:allow table classification
+	"mirror_sale_charges":        "child of mirror_sales (ut-docs#5074) — same reasoning",                                                                                             // sales-mirror:allow table classification
+	"mirror_sale_discounts":      "child of mirror_sales (ut-docs#5074) — same reasoning",                                                                                             // sales-mirror:allow table classification
+	"mirror_sale_links":          "child of mirror_sales (ut-docs#5074) — same reasoning",                                                                                             // sales-mirror:allow table classification
+	"mirror_closes":              "read-only copy of every till's day closes (ut-docs#5074) — never report_archive, never the admin bundle",                                           // sales-mirror:allow table classification
+	"mirror_state":               "this till's own copy cursor/epoch/pause state (ut-docs#5074) — purely local",                                                                       // sales-mirror:allow table classification
+	"sales_mirror_log":           "the main till's change log feeding the sales copy (ut-docs#5074) — main-till-local, served by its own feed",                                        // sales-mirror:allow table classification
+	"sales_mirror_acks":          "the main till's per-till copy acknowledgements (ut-docs#5074) — main-till-local prune state",                                                       // sales-mirror:allow table classification
+	"peer_closes":                "the additional tills' own day closes the main till relays in the sales copy (ut-docs#5074 M7) — never the admin bundle, never this till's Z chain", // sales-mirror:allow table classification
 }
 
 // FiscalPendingSignRetriesSettingsKey is the settings.key the pre-1.4.0

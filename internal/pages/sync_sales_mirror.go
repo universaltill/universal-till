@@ -341,12 +341,17 @@ func (s *salesMirrorServer) feed(w http.ResponseWriter, r *http.Request) {
 // the same current state either way).
 func buildMirrorRecords(ctx context.Context, repo *data.SalesMirrorRepo, entries []data.MirrorLogEntry, after int64, callerTill string, src data.MirrorSource) ([]data.MirrorRecord, int64, error) {
 	var saleIDs, closeIDs []string
+	var peerKeys []data.MirrorPeerCloseKey
 	for _, e := range entries {
 		switch e.Op {
 		case data.MirrorOpSale:
 			saleIDs = append(saleIDs, e.RefID)
 		case data.MirrorOpClose:
-			closeIDs = append(closeIDs, e.RefID)
+			if e.OriginTillID == "" {
+				closeIDs = append(closeIDs, e.RefID)
+			} else {
+				peerKeys = append(peerKeys, data.MirrorPeerCloseKey{TillID: e.OriginTillID, ID: e.RefID})
+			}
 		}
 	}
 	sales, err := repo.LoadMirrorSales(ctx, saleIDs, src)
@@ -354,6 +359,10 @@ func buildMirrorRecords(ctx context.Context, repo *data.SalesMirrorRepo, entries
 		return nil, after, err
 	}
 	closes, err := repo.LoadMirrorCloses(ctx, closeIDs, src)
+	if err != nil {
+		return nil, after, err
+	}
+	peerCloses, err := repo.LoadMirrorPeerCloses(ctx, peerKeys)
 	if err != nil {
 		return nil, after, err
 	}
@@ -378,6 +387,15 @@ func buildMirrorRecords(ctx context.Context, repo *data.SalesMirrorRepo, entries
 			}
 		case data.MirrorOpClose:
 			c := closes[e.RefID]
+			if e.OriginTillID != "" {
+				// An additional till's own close (M7), relayed from
+				// peer_closes; never sent back to that till.
+				if e.OriginTillID == callerTill {
+					toSeq = e.Seq
+					continue
+				}
+				c = peerCloses[data.MirrorPeerCloseKey{TillID: e.OriginTillID, ID: e.RefID}]
+			}
 			if c == nil {
 				rec = data.MirrorRecord{Seq: e.Seq, Op: e.Op, ID: e.RefID, Gone: true}
 			} else {
@@ -392,6 +410,11 @@ func buildMirrorRecords(ctx context.Context, repo *data.SalesMirrorRepo, entries
 			return nil, after, err
 		}
 		key := e.Op + "\x00" + e.RefID
+		if e.Op == data.MirrorOpClose {
+			// Closes are keyed by their till (M7 review F2): another till's
+			// close may carry the same id.
+			key += "\x00" + e.OriginTillID
+		}
 		prev, dup := index[key]
 		grow := len(raw)
 		if dup {
@@ -439,7 +462,7 @@ func decodeMirrorStateCursor(c string) (data.MirrorStateKey, bool) {
 		return data.MirrorStateKey{}, false
 	}
 	parts := strings.Split(string(raw), "\x00")
-	if len(parts) != 3 || (parts[0] != "sales" && parts[0] != "closes") {
+	if len(parts) != 3 || (parts[0] != "sales" && parts[0] != "closes" && parts[0] != "peer") {
 		return data.MirrorStateKey{}, false
 	}
 	return data.MirrorStateKey{Phase: parts[0], A: parts[1], B: parts[2]}, true
@@ -559,7 +582,44 @@ func (s *salesMirrorServer) state(w http.ResponseWriter, r *http.Request) {
 			}
 			next = data.MirrorStateKey{Phase: "closes", A: created[i], B: id}
 		}
-		page.More = cut || len(ids) >= limit
+		page.More = true
+		if !cut && len(ids) < limit {
+			next = data.MirrorStateKey{Phase: "peer"}
+		}
+	case "peer":
+		// The additional tills' own closes (M7), never the caller's own.
+		afterRow := int64(-1)
+		if key.B != "" {
+			if afterRow, err = strconv.ParseInt(key.B, 10, 64); err != nil {
+				writeSalesMirrorError(w, http.StatusBadRequest, salesMirrorError{Code: "bad_request", Message: "a valid cursor is required"})
+				return
+			}
+		}
+		keys, created, rowids, err := s.repo.StatePeerCloseKeys(ctx, fromDate, key.A, afterRow, till.ID, limit)
+		if err != nil {
+			writeSalesMirrorError(w, http.StatusInternalServerError, salesMirrorError{Code: "server", Message: "could not read closes"})
+			return
+		}
+		closes, err := s.repo.LoadMirrorPeerCloses(ctx, keys)
+		if err != nil {
+			writeSalesMirrorError(w, http.StatusInternalServerError, salesMirrorError{Code: "server", Message: "could not read closes"})
+			return
+		}
+		cut := false
+		for i, k := range keys {
+			if c := closes[k]; c != nil {
+				rec := data.MirrorRecord{Seq: resume, Op: data.MirrorOpClose, Close: c}
+				raw, _ := json.Marshal(rec)
+				if len(page.Records) > 0 && total+len(raw) > salesMirrorMaxPageBytes {
+					cut = true
+					break
+				}
+				total += len(raw)
+				page.Records = append(page.Records, rec)
+			}
+			next = data.MirrorStateKey{Phase: "peer", A: created[i], B: strconv.FormatInt(rowids[i], 10)}
+		}
+		page.More = cut || len(keys) >= limit
 	}
 	if page.More {
 		page.NextCursor = encodeMirrorStateCursor(next)

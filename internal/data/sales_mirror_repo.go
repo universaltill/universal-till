@@ -818,3 +818,146 @@ WHERE receipt_no GLOB 'T[0-9]*-*'`)
 	}
 	return out, rows.Err()
 }
+
+// ---------------------------------------------------------------------
+// Additional tills' own closes (ut-docs#5074 M7, design D9).
+// ---------------------------------------------------------------------
+
+// MirrorCloseCursor is a position in this till's report_archive, in
+// (created_at, id) order.
+type MirrorCloseCursor struct{ CreatedAt, ID string }
+
+// OwnClosesAfter lists this till's own archived closes strictly after c, in
+// (created_at, id) order, as close records (origin is filled by the main
+// till from the pushing till's identity).
+func (r *SalesMirrorRepo) OwnClosesAfter(ctx context.Context, c MirrorCloseCursor, limit int) ([]MirrorClose, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, kind, period, z_number, prev_z_number, prev_closed_at, first_receipt, last_receipt, content_json, created_at
+FROM report_archive
+WHERE created_at > ? OR (created_at = ? AND id > ?)
+ORDER BY created_at, id LIMIT ?`, c.CreatedAt, c.CreatedAt, c.ID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("sales mirror: own closes: %w", err)
+	}
+	defer rows.Close()
+	var out []MirrorClose
+	for rows.Next() {
+		var m MirrorClose
+		if err := rows.Scan(&m.ID, &m.Kind, &m.Period, &m.ZNumber, &m.PrevZNumber, &m.PrevClosedAt, &m.FirstReceipt,
+			&m.LastReceipt, &m.ContentJSON, &m.CreatedAt); err != nil {
+			return nil, fmt.Errorf("sales mirror: scan own close: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// InsertPeerCloses stores closes an additional till pushed. A close is
+// immutable: one already held (same till, kind and period, or same id) is
+// kept as it is. A close whose id is in this till's own report_archive is
+// this till's own close, inherited by the pushing till in its join
+// snapshot, and is never stored as that till's. (Accepted edge: after the
+// main till restores a backup that lacks a close it had already handed out
+// in a join snapshot, a till joined before ut-docs#5074 — no push cursor —
+// could push that close as its own; every later join seeds the cursor.)
+// Returns how many were new.
+func (r *SalesMirrorRepo) InsertPeerCloses(ctx context.Context, tillID string, closes []MirrorClose, now time.Time) (int, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("peer closes: begin: %w", err)
+	}
+	defer tx.Rollback()
+	at := now.UTC().Format(time.RFC3339)
+	n := 0
+	for _, c := range closes {
+		res, err := tx.ExecContext(ctx, `
+INSERT INTO peer_closes (till_id, id, kind, period, z_number, prev_z_number, prev_closed_at, first_receipt, last_receipt,
+  content_json, created_at, received_at)
+SELECT ?,?,?,?,?,?,?,?,?,?,?,?
+WHERE NOT EXISTS (SELECT 1 FROM report_archive WHERE id = ?)
+ON CONFLICT DO NOTHING`,
+			tillID, c.ID, c.Kind, c.Period, c.ZNumber, c.PrevZNumber, c.PrevClosedAt, c.FirstReceipt, c.LastReceipt,
+			c.ContentJSON, c.CreatedAt, at, c.ID)
+		if err != nil {
+			return 0, fmt.Errorf("peer close %s: %w", c.ID, err)
+		}
+		if k, _ := res.RowsAffected(); k > 0 {
+			n++
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("peer closes: commit: %w", err)
+	}
+	return n, nil
+}
+
+// MirrorPeerCloseKey names one additional till's close in peer_closes.
+type MirrorPeerCloseKey struct{ TillID, ID string }
+
+// LoadMirrorPeerCloses reads the given additional tills' closes as feed
+// records (origin = the till that closed), in batched reads.
+func (r *SalesMirrorRepo) LoadMirrorPeerCloses(ctx context.Context, keys []MirrorPeerCloseKey) (map[MirrorPeerCloseKey]*MirrorClose, error) {
+	out := make(map[MirrorPeerCloseKey]*MirrorClose, len(keys))
+	for start := 0; start < len(keys); start += mirrorInChunk / 2 {
+		chunk := keys[start:min(start+mirrorInChunk/2, len(keys))]
+		args := make([]any, 0, 2*len(chunk))
+		for _, k := range chunk {
+			args = append(args, k.TillID, k.ID)
+		}
+		rows, err := r.db.QueryContext(ctx, fmt.Sprintf(mirrorLoadPeerClosesSQL, strings.TrimSuffix(strings.Repeat("(?,?),", len(chunk)), ",")), args...)
+		if err != nil {
+			return nil, fmt.Errorf("sales mirror: load peer closes: %w", err)
+		}
+		for rows.Next() {
+			c := &MirrorClose{}
+			if err := rows.Scan(&c.OriginTillID, &c.OriginTillName, &c.ID, &c.Kind, &c.Period, &c.ZNumber, &c.PrevZNumber,
+				&c.PrevClosedAt, &c.FirstReceipt, &c.LastReceipt, &c.ContentJSON, &c.CreatedAt); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("sales mirror: scan peer close: %w", err)
+			}
+			out[MirrorPeerCloseKey{TillID: c.OriginTillID, ID: c.ID}] = c
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+const mirrorLoadPeerClosesSQL = `
+SELECT p.till_id, COALESCE(t.name, ''), p.id, p.kind, p.period, p.z_number, p.prev_z_number, p.prev_closed_at,
+  p.first_receipt, p.last_receipt, p.content_json, p.created_at
+FROM peer_closes p LEFT JOIN tills t ON t.id = p.till_id
+WHERE (p.till_id, p.id) IN (VALUES %s)`
+
+// StatePeerCloseKeys pages the additional tills' closes created on or after
+// fromDate, strictly after (afterCreated, afterRowID), leaving out
+// excludeTill's own.
+func (r *SalesMirrorRepo) StatePeerCloseKeys(ctx context.Context, fromDate, afterCreated string, afterRowID int64, excludeTill string, limit int) ([]MirrorPeerCloseKey, []string, []int64, error) {
+	if afterCreated < fromDate {
+		afterCreated, afterRowID = fromDate, -1
+	}
+	rows, err := r.db.QueryContext(ctx, `
+SELECT till_id, id, created_at, rowid FROM peer_closes INDEXED BY idx_peer_closes_created
+WHERE (created_at > ? OR (created_at = ? AND rowid > ?)) AND till_id <> ?
+ORDER BY created_at, rowid LIMIT ?`, afterCreated, afterCreated, afterRowID, excludeTill, limit)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("sales mirror: state peer closes: %w", err)
+	}
+	defer rows.Close()
+	var keys []MirrorPeerCloseKey
+	var created []string
+	var rowids []int64
+	for rows.Next() {
+		var k MirrorPeerCloseKey
+		var c string
+		var rid int64
+		if err := rows.Scan(&k.TillID, &k.ID, &c, &rid); err != nil {
+			return nil, nil, nil, fmt.Errorf("sales mirror: scan state peer close: %w", err)
+		}
+		keys, created, rowids = append(keys, k), append(created, c), append(rowids, rid)
+	}
+	return keys, created, rowids, rows.Err()
+}

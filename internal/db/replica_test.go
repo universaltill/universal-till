@@ -634,3 +634,39 @@ WHERE (till_id IS NULL OR till_id = '') AND (created_at > ? OR (created_at = ? A
 		t.Fatalf("inherited clears past the join cursor = %d (err %v), want 0", n, err)
 	}
 }
+
+// ut-docs#5074 M7: same for the primary's day closes — report_archive rows
+// came in the snapshot and must never be pushed back as this till's own.
+// The cursor is in report_archive.created_at's text form, so a close this
+// till makes later the same day still sorts after it.
+func TestApplyReplicaIdentityStartsClosePushCursorAtJoin(t *testing.T) {
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init("") })
+	path := filepath.Join(t.TempDir(), "data", "unitill-pos.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+	if _, err := d.Exec(`INSERT INTO report_archive (id, kind, period, content_json, created_at) VALUES ('main-z', 'eod', 'p1', '{}', datetime('now', '-1 hour'))`); err != nil {
+		t.Fatal(err)
+	}
+	if err := StageReplicaIdentity(path, ReplicaIdentity{PrimaryURL: "http://primary.local", TillID: "till-2", Bearer: "b", ReceiptPrefix: "T2-"}); err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := ApplyReplicaIdentity(d.DB, path); err != nil || !applied {
+		t.Fatalf("apply: applied=%v err=%v", applied, err)
+	}
+	var cursor string
+	_ = d.QueryRow(`SELECT value FROM settings WHERE key = 'sync.close_push_cursor'`).Scan(&cursor)
+	at, id, ok := strings.Cut(cursor, "|")
+	if !ok || id != "" {
+		t.Fatalf("cursor = %q", cursor)
+	}
+	var inheritedAfter, laterAfter int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM report_archive WHERE created_at > ?`, at).Scan(&inheritedAfter)
+	_ = d.QueryRow(`SELECT datetime('now', '+1 minute') > ?`, at).Scan(&laterAfter)
+	if inheritedAfter != 0 || laterAfter != 1 {
+		t.Fatalf("cursor %q: inherited closes after it = %d (want 0); a later close sorts after it = %d (want 1)", at, inheritedAfter, laterAfter)
+	}
+}

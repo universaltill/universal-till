@@ -25,7 +25,7 @@ ALLOWED_FILE="internal/data/sales_mirror_repo.go"
 # The repository is split by side into sales_mirror_repo.go (main till) and
 # sales_mirror_repo_copy.go (additional till): still one SalesMirrorRepo.
 ALLOWED_COPY_FILE="internal/data/sales_mirror_repo_copy.go"
-PATTERN='(^|[^A-Za-z0-9_])(mirror_sales|mirror_sale_[a-z_]+|mirror_payments|mirror_closes|mirror_state|sales_mirror_log|sales_mirror_acks)([^A-Za-z0-9_]|$)'
+PATTERN='(^|[^A-Za-z0-9_])(mirror_sales|mirror_sale_[a-z_]+|mirror_payments|mirror_closes|mirror_state|sales_mirror_log|sales_mirror_acks|peer_closes)([^A-Za-z0-9_]|$)'
 
 if [[ ! -f "${ALLOWED_FILE}" ]]; then
   echo "❌ sales-mirror isolation guard: ${ALLOWED_FILE} is missing" >&2
