@@ -99,3 +99,13 @@ older Go); CI runs it.
 Safe to merge. UI: one notice line in Settings → Backups (text only,
 existing `row-warn-icon` style); not looked at in a browser in this card —
 the Backups card is screenshot-checked with #5070's changes.
+
+## Docs-shots
+
+`make docs-shots` cannot run on this Mac (its font pin needs the Linux
+reference fonts). No captured pixel changes: the only screenshotted route
+touched is `/settings` (the display topic), whose shot shows the default
+section, not the Backups card, and the new notice renders only after a
+refused restore; `backups.md` has no `routes:`. The manifest's
+surface hash was refreshed with the generator's own
+`e2e/tests-docs/write-manifest.js` (`Docs-Shots-Unchanged: true`).
