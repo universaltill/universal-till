@@ -224,6 +224,8 @@
   "setup.cloud.not_mine": {"description": "Button that drops the pairing and returns to the first step.", "review": "standard"},
   "setup.cloud.pair_incomplete": {"description": "Note on the welcome page when the wizard could not save the cloud pairing: the code is spent, so the till is not syncing; pair again with a new code in Settings, Tills.", "review": "standard"},
   "setup.cloud.syncing": {"description": "Status chip on the welcome page right after a till paired with the cloud shop in setup; the first sync runs in the background.", "review": "standard"},
+  "setup.cloud.syncing_title": {"description": "Heading of the syncing state a till shows after joining a cloud shop, while the shop's products are still being received.", "review": "standard"},
+  "setup.cloud.syncing_body": {"description": "Body of the syncing state after joining a cloud shop: products are arriving, the sale screen opens by itself, selling can start now.", "review": "standard"},
   "setup.cloud.error.invalid_code": {"description": "Inline error: the pairing code was refused (wrong, used or expired).", "review": "standard"},
   "setup.cloud.error.too_many": {"description": "Inline error: the cloud or this till rate-limited the pairing attempts (HTTP 429).", "review": "standard"},
   "setup.cloud.error.no_network": {"description": "Inline error: pairing needs the internet and none was reachable.", "review": "standard"},
