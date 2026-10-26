@@ -2,7 +2,6 @@ package netreach
 
 import (
 	"errors"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -160,12 +159,9 @@ func TestServerErrorStillReachable(t *testing.T) {
 }
 
 func TestRefusedIsUnreachable(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	_ = ln.Close() // nothing listens there now
+	// Port 1 on loopback is refused at once; a closed ephemeral port can be
+	// reused by a later listener in the same binary (ut-docs#5080).
+	const addr = "127.0.0.1:1"
 	m := newTestMonitor(t, "http://"+addr+"/api", newClock(), &http.Client{})
 	m.Status()
 	waitSettled(t, m, Unreachable)

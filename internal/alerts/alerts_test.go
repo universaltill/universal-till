@@ -455,10 +455,10 @@ func TestPushNotify_MalformedEndpointURL(t *testing.T) {
 }
 
 func TestPushNotify_TransportError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	srv.Close() // connection refused from here on
+	// Port 1 on loopback is refused at once; a closed ephemeral port can be
+	// reused by a later listener in the same binary (ut-docs#5080).
 	cfg := &config.Config{Marketplace: config.MarketplaceConfig{
-		EndpointURL: srv.URL, StoreID: "store-x", MerchantToken: "tok",
+		EndpointURL: "http://127.0.0.1:1", StoreID: "store-x", MerchantToken: "tok",
 	}}
 	if err := pushNotify(context.Background(), cfg, "t", nil); err == nil {
 		t.Fatal("want a transport error when the marketplace is unreachable")
