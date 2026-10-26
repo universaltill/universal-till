@@ -6549,8 +6549,10 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
      `body` matches the specificity of the body.sale-screen/menu-screen
      hide rules; this block comes later, so it wins. */
   body .nav-drawer .session-admin-link { display: flex; }
-  /* ut-docs#3297: the Lock button, a row like every other drawer item. */
-  .nav-drawer .btn-lock { padding: .5rem .75rem; }
+  /* ut-docs#3297: the Lock button, a row like every other drawer item.
+     ut-docs#3407: same padding as every other drawer row's .nav-toggle at
+     <=480px, so the Lock icon column lines up with theirs. */
+  .nav-drawer .btn-lock { padding: .6rem 1.1rem; }
   body.nav-drawer-open .nav-drawer-backdrop {
     display: block; position: fixed; inset: 0; z-index: 1;
     background: rgba(15, 23, 42, .45);
