@@ -22,6 +22,20 @@ Beim Wiederherstellen werden alle aktuellen Daten durch die gewählte Sicherung 
 
 Eine Wiederherstellung behält die eigene Verbindung dieser Kasse mit dem Cloud-Konto Ihres Geschäfts, auch wenn die Sicherung auf einer anderen Kasse erstellt wurde. Ist die Datei keine Sicherung, die diese Kasse verwenden kann, behält sie Ihre aktuellen Daten, und unter Einstellungen → Backups steht, dass die Wiederherstellung nicht angewendet wurde.
 
+## Aus einer Datei wiederherstellen
+
+Nutzen Sie dies auf einer neuen Kasse oder auf einer, die eine defekte Kasse ersetzt, mit einer Sicherungsdatei, die Sie von der alten Kasse kopiert haben (ein USB-Stick, ein anderer Computer, der Download-Ordner).
+
+1. Einstellungen → Backups → **Aus Datei wiederherstellen**: Wählen Sie die Datei (sie heißt `unitill-pos-….db`) und tippen Sie auf **Datei prüfen**.
+2. Die Kasse prüft, ob die Datei eine Universal-Till-Sicherung dieses Geschäfts ist, erstellt mit dieser oder einer älteren Version, und zeigt den Namen des Geschäfts, wie viele Verkäufe sie enthält und den neuesten Verkauf. Verkäufe danach sind nicht in der Sicherung.
+3. Tippen Sie auf **Diese Sicherung wiederherstellen** und bestätigen Sie mit der PIN einer Führungskraft. Die Kasse sichert zuerst ihre aktuellen Daten; starten Sie sie dann wie oben beschrieben neu.
+
+Verwenden Sie eine Datei aus dem Ordner `backups` der alten Kasse oder eine mit **In Downloads speichern** gesicherte. Kopieren Sie stattdessen die laufende Datenbankdatei `unitill-pos.db` von der Festplatte einer defekten Kasse, kopieren Sie die Dateien `unitill-pos.db-wal` und `unitill-pos.db-shm` daneben mit, sonst fehlen die letzten Verkäufe.
+
+Am Ende der Einrichtung bietet die Willkommensseite die Schaltfläche **Sicherung wiederherstellen**, die dieselbe Stelle öffnet.
+
+Eine wiederhergestellte Sicherung bringt Produkte, Verkäufe, Belege, Mitarbeitende mit ihren PINs, Kunden, Einstellungen, Bestände und Fotos zurück, so wie sie beim Erstellen der Sicherung waren. Schlüssel für Kartenterminal und Zahlungs-Plugins sind nicht in einer Sicherung: Geben Sie sie erneut ein.
+
 ## Automatisches Aufräumen
 
 Einmal am Tag löscht die Kasse Dateien, die sie nicht mehr braucht, damit der Speicher nicht vollläuft:

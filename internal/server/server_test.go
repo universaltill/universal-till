@@ -1228,3 +1228,31 @@ func TestRunHousekeeping_UnknownFreeSpaceChangesNothing(t *testing.T) {
 		t.Fatalf("unknown free space raised %v", got)
 	}
 }
+
+// ut-docs#5070: a backup file a manager uploaded (another till's data) is
+// not a snapshot of THIS till: it must not stop today's daily backup.
+func TestRunDailyBackup_UploadedFileIsNotAFreshBackup(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "till.db")
+	assetsRoot := filepath.Join(t.TempDir(), "assets")
+	d, err := appdb.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+	backupDir, err := appdb.BackupDir(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploaded := "unitill-pos-" + time.Now().UTC().Format("20060102-150405") + "-file.db"
+	if err := os.WriteFile(filepath.Join(backupDir, uploaded), []byte("uploaded"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runDailyBackup(d.DB, dbPath, assetsRoot)
+	list, err := appdb.ListBackups(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("%d backups, want the uploaded file plus today's snapshot: %v", len(list), list)
+	}
+}

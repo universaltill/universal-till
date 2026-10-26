@@ -312,8 +312,17 @@ var snapshotWithAssets = dbpkg.SnapshotWithAssets
 // already exists, then prunes old snapshots to the newest DefaultBackupKeep.
 func runDailyBackup(db *sql.DB, dbPath, assetsRoot string) {
 	list, err := dbpkg.ListBackups(dbPath)
-	if err == nil && len(list) > 0 && time.Since(list[0].ModTime) < 24*time.Hour {
-		checkFreshBackup(dbPath, assetsRoot, list[0].Name)
+	// A backup file a manager uploaded (ut-docs#5070) holds another copy
+	// of the shop, not a snapshot of this till's data: it never counts as
+	// today's backup.
+	own := list[:0:0]
+	for _, b := range list {
+		if !dbpkg.IsUploadedBackupName(b.Name) {
+			own = append(own, b)
+		}
+	}
+	if err == nil && len(own) > 0 && time.Since(own[0].ModTime) < 24*time.Hour {
+		checkFreshBackup(dbPath, assetsRoot, own[0].Name)
 		return
 	}
 	// Uploaded photos ride inside the snapshot (ut-docs#2724). A photo

@@ -101,6 +101,7 @@ func TestBackupAPI_AllEndpointsRequireManager(t *testing.T) {
 		{http.MethodPost, "/api/backup/save-copy/whatever.db"},
 		{http.MethodPost, "/api/backup/restore"},
 		{http.MethodPost, "/api/backup/restart-now"},
+		{http.MethodPost, "/api/backup/upload"},
 	}
 	for _, c := range cases {
 		req := httptest.NewRequest(c.method, c.path, nil)
