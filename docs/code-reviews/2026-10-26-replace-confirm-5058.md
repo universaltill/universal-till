@@ -106,3 +106,26 @@ merged and deployed**: before that, Replace always ends in the
 
 - Cross-repo e2e (AC11) once CL-2 is live on the e2e cloud.
 - New `en.json` keys need the language-pack PRs (orchestrator).
+
+## Rebase + contract verification (2026-10-26, before merge)
+
+Rebased onto `origin/main` (no conflicts) and checked against the merged,
+deployed ut-cloud contract (`docs/api-reference.md`, PRs #680, #684-#686):
+
+- `409 replace_confirm_required` (`data.existing_till{device_id,name,
+  last_used_at}` + `data.store`), the confirm request with
+  `replace_device_id`, `200` with `data.replaced`, `409 main_till_online`
+  (`data.last_seen`), `replace_target_changed`, `replace_needs_owner`,
+  `replace_code_main_till_only`: all match what this PR parses and shows.
+- The wizard sends `replace_device_id` only on the confirm submit and only
+  with `first_till`; the Additional-till and Satellite paths never send it.
+- A replay of a confirmed replace answers `403 invalid_code`: the existing
+  message already tells the owner to make a new code under Tills, Add a till.
+- A reused `device_id` (`409 device_revoked`) cannot happen: every wizard run
+  sends a fresh id.
+- No mismatch found, no code change. `replace_unsupported` ("cannot replace a
+  till yet") now guards only a cloud that ignores the confirmation; the live
+  cloud never does. Left as the loop guard.
+- Gate re-run: build, vet, `go test` pages/enroll/httpx/web, data-access,
+  i18n, i18n-meta guards green; docs-shots regenerated on Linux (only the
+  manifest changed; no screenshot of a changed topic differed).
