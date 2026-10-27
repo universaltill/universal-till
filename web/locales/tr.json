@@ -698,7 +698,7 @@
   "designer.receipt.show_logo": "Logoyu üstte yazdır",
   "designer.receipt.show_sku": "Ürün kodlarını (SKU) göster",
   "designer.receipt.show_tax": "Ara toplam ve vergi satırlarını göster",
-  "designer.receipt.show_tracking_qr": "Sipariş takip QR kodu (ücretli planlar)",
+  "designer.receipt.show_tracking_qr": "Sipariş takip QR kodu (Shop planı ve üstü)",
   "designer.receipt.tracking_qr_needs_cloud": "Sipariş takibi bulutumuza taşındığında kullanılabilir.",
   "designer.receipt.title": "Fiş tasarımcısı",
   "designer.reorder_hint": "Burada yaptığınız her değişiklik satış ekranında hemen görünür.",

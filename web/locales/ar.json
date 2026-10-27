@@ -698,7 +698,7 @@
   "designer.receipt.show_logo": "طباعة الشعار في الأعلى",
   "designer.receipt.show_sku": "إظهار رموز الأصناف (SKU)",
   "designer.receipt.show_tax": "إظهار أسطر المجموع الفرعي والضريبة",
-  "designer.receipt.show_tracking_qr": "رمز QR لتتبّع الطلب (الخطط المدفوعة)",
+  "designer.receipt.show_tracking_qr": "رمز QR لتتبّع الطلب (خطة Shop وما فوقها)",
   "designer.receipt.tracking_qr_needs_cloud": "سيتوفر عند نقل تتبع الطلبات إلى السحابة الخاصة بنا.",
   "designer.receipt.title": "مصمّم الإيصال",
   "designer.reorder_hint": "كل ما تغيّره هنا يظهر على شاشة البيع فورًا.",
