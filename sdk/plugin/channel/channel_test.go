@@ -374,6 +374,28 @@ func TestWebhookResult_OrderIDsTruncatedRoundTripAndOmitWhenFalse(t *testing.T) 
 	}
 }
 
+func TestConnectTestResult_LocationListEncodesSnakeCaseAndOmitsWhenEmpty(t *testing.T) {
+	b, err := json.Marshal(ConnectTestResult{AccountName: "Demo Shop", LocationList: []Location{
+		{ID: "gid://demo/Location/7", Name: "Main street", Active: true},
+		{ID: "gid://demo/Location/9", Name: "Warehouse", Active: false},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"location_list":[{"id":"gid://demo/Location/7","name":"Main street","active":true},{"id":"gid://demo/Location/9","name":"Warehouse","active":false}]`
+	if !strings.Contains(string(b), want) {
+		t.Fatalf("location_list wrong on the wire: %s", b)
+	}
+	var back ConnectTestResult
+	if err := json.Unmarshal(b, &back); err != nil || len(back.LocationList) != 2 || back.LocationList[1].Active {
+		t.Fatalf("location_list lost: %s %v", b, err)
+	}
+	empty, _ := json.Marshal(ConnectTestResult{AccountName: "Demo Shop"})
+	if strings.Contains(string(empty), "location_list") {
+		t.Fatalf("empty location_list must be omitted: %s", empty)
+	}
+}
+
 // The guest must link ONLY the "channel" module: importing the till's "ut"
 // SDK would add `ut` imports (storage, raw http, settings, secrets) a channel
 // guest must never have.
