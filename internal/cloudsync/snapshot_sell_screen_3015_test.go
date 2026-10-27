@@ -38,7 +38,7 @@ func TestSnapshotItemSellScreen(t *testing.T) {
 		}
 	}
 
-	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), db); err != nil {
+	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), db, nil); err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]string{"it-hidden": "hidden", "it-removed": "removed", "it-both": "removed"}

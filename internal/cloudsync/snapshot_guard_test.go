@@ -60,7 +60,7 @@ func newSnapshotGuardFixture(t *testing.T) *snapshotGuardFixture {
 
 func (f *snapshotGuardFixture) push(t *testing.T) {
 	t.Helper()
-	if err := pushSnapshotIfChanged(context.Background(), testCfg(f.srv.URL), f.db); err != nil {
+	if err := pushSnapshotIfChanged(context.Background(), testCfg(f.srv.URL), f.db, nil); err != nil {
 		t.Fatalf("a refused snapshot must not fail the tick again every time: %v", err)
 	}
 }
