@@ -60,6 +60,9 @@ till program stopped right after it was opened, so there is nothing to show
 yet. It is not the recovery screen above: that one needs the till program to
 be running. The window also shows the folder with the log files and, in
 small text, a technical detail for support.
+The window is in your computer's language when the till is available in
+it, otherwise in English. On a Windows computer without WebView2 (see the
+next section) the same message opens in your default web browser instead.
 
 1. Close the window and open Universal Till again.
 2. If it still does not start, reinstall Universal Till from the latest

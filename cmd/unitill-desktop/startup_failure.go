@@ -47,6 +47,17 @@ func shellLang(getenv func(string) string, platformPreferred string) string {
 	return "en"
 }
 
+// firstUILanguage returns the first non-blank entry of an OS-ordered UI
+// language list ("tr-TR"), trimmed; "" when there is none (ut-docs#5051).
+func firstUILanguage(langs []string) string {
+	for _, l := range langs {
+		if l = strings.TrimSpace(l); l != "" {
+			return l
+		}
+	}
+	return ""
+}
+
 // primarySubtag reduces "tr_TR.UTF-8", "ar-EG" or "en" to the lowercase
 // language code; "" for empty input and the C/POSIX locales.
 func primarySubtag(locale string) string {
