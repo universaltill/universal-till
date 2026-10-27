@@ -13,3 +13,24 @@ func TestWin32PreferredUILanguage(t *testing.T) {
 		t.Fatalf("platformPreferredLang() = %q, want a language with a primary subtag", l)
 	}
 }
+
+// TestWin32FirstUILanguage: the first non-blank, trimmed entry of the OS list
+// (ut-docs#5051).
+func TestWin32FirstUILanguage(t *testing.T) {
+	cases := []struct {
+		name  string
+		langs []string
+		want  string
+	}{
+		{"nil", nil, ""},
+		{"empty", []string{}, ""},
+		{"blanks", []string{"", "  "}, ""},
+		{"first", []string{"tr-TR", "en-US"}, "tr-TR"},
+		{"skips blank, trims", []string{"", "  ar-EG ", "en-US"}, "ar-EG"},
+	}
+	for _, c := range cases {
+		if got := firstUILanguage(c.langs); got != c.want {
+			t.Errorf("%s: firstUILanguage = %q, want %q", c.name, got, c.want)
+		}
+	}
+}

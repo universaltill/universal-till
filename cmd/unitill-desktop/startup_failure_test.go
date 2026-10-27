@@ -188,32 +188,11 @@ func TestAvailableShellLang(t *testing.T) {
 	}
 }
 
-// TestFirstUILanguage is ut-docs#5051: Windows reports its UI languages as an
-// ordered list; the first non-blank entry is the user's preference.
-func TestFirstUILanguage(t *testing.T) {
-	cases := []struct {
-		name  string
-		langs []string
-		want  string
-	}{
-		{"nil", nil, ""},
-		{"empty", []string{}, ""},
-		{"blanks", []string{"", "  "}, ""},
-		{"first", []string{"tr-TR", "en-US"}, "tr-TR"},
-		{"skips blank, trims", []string{"", "  ar-EG ", "en-US"}, "ar-EG"},
-	}
-	for _, c := range cases {
-		if got := firstUILanguage(c.langs); got != c.want {
-			t.Errorf("%s: firstUILanguage = %q, want %q", c.name, got, c.want)
-		}
-	}
-}
-
 // ut-docs#5051: a Windows GUI app has no LANG, so the Windows UI language
 // ("tr-TR") must drive the page.
 func TestShellLang_WindowsUILanguageWithoutEnv(t *testing.T) {
 	empty := func(string) string { return "" }
-	if got := shellLang(empty, firstUILanguage([]string{"tr-TR", "en-US"})); got != "tr" {
+	if got := shellLang(empty, "tr-TR"); got != "tr" {
 		t.Errorf("shellLang = %q, want tr", got)
 	}
 }

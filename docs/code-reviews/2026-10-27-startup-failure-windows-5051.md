@@ -44,6 +44,7 @@ Built by Sonnet; independent review by Opus 5.5 in a separate worktree.
 | 7 | `platformPreferredLang` undefined for a `desktop` build on other OSes (freebsd) | nit | Fixed: `platform_lang_other.go`; `GOOS=freebsd go vet` clean |
 | 8 | `"rel"` relative-dir case passed even without the `IsAbs` check (dir didn't exist) | nit | Fixed: test creates `rel/`; re-verified it fails with the check removed |
 | 9 | README line too long | nit | Fixed |
+| 10 | CI `desktop-shell` → `guard-deadcode-baseline`: `firstUILanguage` in untagged `startup_failure.go` is unreachable in the Linux whole-program pass (its only caller is Windows-only) | must-fix (CI) | Fixed: moved into `ui_lang_windows.go`; its table test is now `TestWin32FirstUILanguage` (runs in `windows-shell`); no baseline entry |
 
 Reviewer also checked and found no problem: `html/template` escaping of the
 exit reason, `<meta charset>` for file-opened pages, the linger blocking
@@ -62,9 +63,9 @@ nothing (child already reaped; no single-instance lock), error joining.
   `golangci-lint run ./...` (0 issues), `go test ./...`, guard-help-drift,
   guard-help-topics, guard-help-breadcrumbs, guard-i18n,
   guard-compliance-claims.
-- `guard-deadcode-baseline.sh` could not run here (x/tools v0.48 deadcode
-  rejects go1.27 packages in this container) — fails identically on `main`;
-  CI runs it.
+- `guard-deadcode-baseline.sh`: first attempt here failed on the toolchain
+  (deadcode built by a go1.26 auto-toolchain), so finding 10 surfaced in CI;
+  with `GOTOOLCHAIN=go1.27.1` it runs locally and passes after the fix.
 - **Not verified:** `TestWin32PreferredUILanguage` and the browser opening
   on a real Windows machine without WebView2 — no Windows host here. The
   test runs in CI's `windows-shell` job (`-run "Win32|..."`).
