@@ -182,6 +182,7 @@ func TestFiscalOrderStart_KnownOfflineParkSkipsDispatch(t *testing.T) {
 				n.Add(1)
 				return json.RawMessage(`{"status":"acknowledged","tx_id":"tx","tx_revision":1}`), nil
 			})
+			grantSignerPerm(t, dp, "com.test.order-start-offline", "net:*") // ut-docs#3137
 			if _, err := dp.Engine.Scan("ABC"); err != nil {
 				t.Fatal(err)
 			}
@@ -470,7 +471,9 @@ func TestFiscalOrderStart_CounterCheckoutDispatchesEveryOrder(t *testing.T) {
 		t.Fatal("two counter orders must dispatch two distinct order ids")
 	}
 
-	// Known-offline kiosk: the order is still placed, nothing is dispatched.
+	// Known-offline kiosk: the order is still placed, nothing is dispatched
+	// (to a signer that needs the network, ut-docs#3137).
+	grantSignerPerm(t, dp, "com.test.order-start-counter", "net:*")
 	postOrderForm(t, mux, "/api/self-order/scan", "code=5000001")
 	if r := postOrderForm(t, mux, "/api/self-order/checkout", "offline=1"); r.Code != http.StatusOK {
 		t.Fatalf("offline counter checkout must still place the order: %d", r.Code)
