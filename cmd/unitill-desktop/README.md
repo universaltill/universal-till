@@ -181,10 +181,15 @@ writing" on `unitill-pos.exe`. Three changes close this:
   never signalled (the remaining microsecond race is documented in
   `webkit_darwin.go`). On an early exit the shell then shows a static,
   translated "Universal Till could not start" page (`showStartupFailure`;
-  language from `LC_ALL`/`LC_MESSAGES`/`LANG`, else the macOS preferred
-  language, else English; strings from the embedded `web/locales`, keys
-  `desktop.startup_failed.*`) with the retry/reinstall steps and the log
-  folder, instead of opening the window on the dead server URL. A server that
+  language from `LC_ALL`/`LC_MESSAGES`/`LANG`, else the OS preferred
+  language — macOS preferred languages, Windows first user UI language
+  (`ui_lang_windows.go`) — else English; strings from the embedded
+  `web/locales`, keys `desktop.startup_failed.*`) with the retry/reinstall
+  steps and the log folder, instead of opening the window on the dead
+  server URL. Without a system WebView (no WebView2 on Windows) the same
+  page is written to a temp file, opened in the default browser by its
+  `file://` URL and removed 5 minutes later (`startupFailureInBrowser`,
+  ut-docs#5051). A server that
   is merely slow (timeout) still opens the window anyway.
 - **Installer/uninstaller** (`packaging/windows/installer.nsi`,
   `StopRunningTill`): before extracting or deleting, stop any
