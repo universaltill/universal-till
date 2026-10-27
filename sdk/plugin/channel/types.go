@@ -219,6 +219,21 @@ type ConnectTestResult struct {
 	Locations   []string `json:"locations,omitempty"`
 	Products    int64    `json:"products"`
 	Orders      int64    `json:"orders"`
+	// LocationList is the channel's own locations as the shop maps them
+	// (contract sales-channel-v1 section 4.1, ut-docs#5008). Optional: an
+	// adapter that sends none cannot list its locations and the merchant
+	// types a location id instead. Locations stays the names-only list.
+	LocationList []Location `json:"location_list,omitempty"`
+}
+
+// Location is one entry of ConnectTestResult.LocationList. ID is the
+// channel's location id, the value an op's payload.location carries; Name is
+// for display (the host cuts it to 120 bytes). Active absent counts as true
+// on the host side, so adapters should always set it.
+type Location struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Active bool   `json:"active"`
 }
 
 // OAuthCallbackInput is the AskOAuthCallback payload: parameters the host
