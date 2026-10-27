@@ -689,6 +689,37 @@ WHERE v.is_active = 1
 	return result, rows.Err()
 }
 
+// ItemCategoryIDs returns each listed item's category id ("" for an item with
+// no category), for the set_category_item_order cloud directive (ut-docs#3105,
+// manage-shop contract §3.14): one batched read so the hook can refuse an
+// unknown item or one in another category before anything is written. An id
+// with no items row (active or not) is absent from the map. Chunked like the
+// other id-set lookups.
+func (r *CatalogRepo) ItemCategoryIDs(ctx context.Context, itemIDs []string) (map[string]string, error) {
+	out := make(map[string]string, len(itemIDs))
+	for _, chunk := range ChunkStrings(itemIDs, IDChunkSize) {
+		placeholders, args := inPlaceholders(chunk)
+		rows, err := r.db.QueryContext(ctx, `SELECT id, COALESCE(category_id, '') FROM items WHERE id IN (`+placeholders+`)`, args...)
+		if err != nil {
+			return nil, fmt.Errorf("item category ids: %w", err)
+		}
+		for rows.Next() {
+			var id, cat string
+			if err := rows.Scan(&id, &cat); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan item category id: %w", err)
+			}
+			out[id] = cat
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("item category ids: %w", err)
+		}
+		rows.Close()
+	}
+	return out, nil
+}
+
 // ItemCurrentPrices is ItemVariantsForSale's item-level counterpart
 // (ut-docs#2258): for the given item ids, returns each item's CURRENT
 // EFFECTIVE price — an active price_history row when one exists, else the

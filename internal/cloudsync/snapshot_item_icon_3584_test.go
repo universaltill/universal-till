@@ -34,7 +34,7 @@ func TestSnapshotItemIcon(t *testing.T) {
 	testsupport.SeedImage(t, db, "img-1", "it-tile", "/public/assets/category-icons/coffee.svg")
 	testsupport.SeedImage(t, db, "img-2", "it-photo", "/public/assets/items/it-photo/thumb.png")
 
-	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), db); err != nil {
+	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), db, nil); err != nil {
 		t.Fatal(err)
 	}
 	got := map[string]any{}

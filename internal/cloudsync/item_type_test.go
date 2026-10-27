@@ -25,7 +25,7 @@ func TestSnapshotCarriesItemType(t *testing.T) {
 	if _, err := db.Exec(`UPDATE items SET item_type = 'gift_voucher' WHERE id = 'it-1'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), db); err != nil {
+	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), db, nil); err != nil {
 		t.Fatal(err)
 	}
 	items := cloud.snapshots[0]["items"].([]any)
