@@ -517,7 +517,7 @@ func TestSnapshotSchema2Shape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), db); err != nil {
+	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), db, nil); err != nil {
 		t.Fatal(err)
 	}
 	snap := cloud.snapshots[0]
@@ -640,7 +640,7 @@ func TestSnapshotReportsEverSold(t *testing.T) {
 		}
 		return out
 	}
-	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), d.DB); err != nil {
+	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), d.DB, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := everSold(cloud.snapshots[0]); got["es-sold"] != false || got["es-new"] != false {
@@ -654,7 +654,7 @@ func TestSnapshotReportsEverSold(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), d.DB); err != nil {
+	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), d.DB, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(cloud.snapshots) != 2 {

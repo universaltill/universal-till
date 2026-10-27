@@ -13,6 +13,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/ui"
 )
 
 // The till-side hooks behind the manage-shop catalog directives (ut-docs
@@ -182,6 +183,86 @@ func categoryOrderAlreadyApplied(current []data.CategoryNode, ids []string) bool
 		}
 	}
 	return true
+}
+
+// cloudButtonStore is the sale-screen tile store the item-order directive
+// and the snapshot's tile_pos read: the shared one, or a fresh one over the
+// same DB when the deps carry none (tests).
+func cloudButtonStore(d *common.Deps) *ui.ButtonStore {
+	if d.BtnStore != nil {
+		return d.BtnStore
+	}
+	return ui.NewButtonStore(d.Db)
+}
+
+// cloudSetCategoryItemOrder is the set_category_item_order hook (contract
+// §3.14, ut-docs#3105): the owner's order of one category's items from my.
+// Primary-gated like every catalog directive; shortcut_buttons sync
+// primary-wins, so the order reaches satellite tills through that sync.
+//
+// The cloud-side decode already refuses a blank or duplicate id; this
+// re-checks, because nothing else validates a directive against the till.
+// Every refusal -- an unknown category (active or inactive both count), an
+// item with no items row, an item filed under a different category -- is
+// decided before anything is written. The tiles are then dealt into the
+// slots the category's tiles already hold (ButtonStore.UpdateCategoryOrder),
+// so no other category's tile moves; items the list leaves out follow in
+// their old order, and a listed item with no tile is skipped. Idempotent:
+// when the grid already has this order (a lost-result replay) nothing is
+// written and no audit row added, and the result is the same text.
+func cloudSetCategoryItemOrder(ctx context.Context, d *common.Deps, categoryID string, itemIDs []string) (string, error) {
+	if len(itemIDs) == 0 {
+		return "", errors.New("missing item_ids")
+	}
+	seen := make(map[string]bool, len(itemIDs))
+	for _, id := range itemIDs {
+		if strings.TrimSpace(id) == "" {
+			return "", errors.New("blank item id")
+		}
+		if seen[id] {
+			return "", fmt.Errorf("duplicate item id %s", id)
+		}
+		seen[id] = true
+	}
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	repo := data.NewCatalogRepo(d.Db)
+	cats, err := repo.ListCategories(ctx)
+	if err != nil {
+		return "", err
+	}
+	catName, found := "", false
+	for _, c := range cats {
+		if c.ID == categoryID {
+			catName, found = c.Name, true
+			break
+		}
+	}
+	if !found {
+		return "", fmt.Errorf("category %s is not on this till", categoryID)
+	}
+	itemCats, err := repo.ItemCategoryIDs(ctx, itemIDs)
+	if err != nil {
+		return "", err
+	}
+	for _, id := range itemIDs {
+		cat, ok := itemCats[id]
+		if !ok {
+			return "", fmt.Errorf("item %s is not on this till", id)
+		}
+		if cat != categoryID {
+			return "", fmt.Errorf("item %s is not in category %s on this till", id, categoryID)
+		}
+	}
+	tiles, changed, err := cloudButtonStore(d).UpdateCategoryOrder(ctx, categoryID, itemIDs)
+	if err != nil {
+		return "", err
+	}
+	if changed {
+		auditCloudDirective(ctx, d, "category", categoryID, "cloud_category_item_order_set", map[string]any{"category_id": categoryID, "item_ids": itemIDs})
+	}
+	return fmt.Sprintf("item order applied to %d items in category %s", tiles, catName), nil
 }
 
 func cloudDeleteCategory(ctx context.Context, d *common.Deps, id, moveItemsTo string) (string, error) {
