@@ -125,6 +125,7 @@ func TestRefundFiscalSignAsk_KnownOfflineShortCircuits(t *testing.T) {
 		invocations.Add(1)
 		return json.RawMessage(`{"status":"approved"}`), nil
 	})
+	grantSignerPerm(t, dp, "com.test.fiscal-sign-offline-refund", "net:*") // ut-docs#3137
 	_, receiptNo := seedCompletedSaleForRefund(t, dp)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2&offline=1"))

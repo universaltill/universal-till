@@ -576,6 +576,18 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// lazily on /ui/net-status polls, each bounded by netreach's 5 s
 	// timeout and cancelled by bgCtx on shutdown.
 	dp.NetReach = netreach.New(netreach.Options{Endpoint: cfg.Marketplace.EndpointURL, Ctx: bgCtx})
+	// ut-docs#3137: per-signer backend probes for the fiscal known-offline
+	// check; a short TTL, since a false skip costs a signature (ADR-0056).
+	// The client dials direct like plugin egress (no environment proxy, no
+	// redirect follow), so the probe sees what the signer's request would.
+	// Refresh keeps held hosts fresh between sales.
+	dp.SignerReach = netreach.NewSet(netreach.SetOptions{Ctx: bgCtx, Client: signerProbeClient(), TTL: 30 * time.Second, Timeout: 3 * time.Second, Path: "/", DownOnly: true})
+	netaccess.StartService("signer backend probe refresh", func() {
+		go func() {
+			defer logging.RecoverAndLog("netreach.signer-refresh")
+			dp.SignerReach.RunRefresh(bgCtx, 10*time.Second)
+		}()
+	})
 	registerNetStatus(mux, dp)
 	dp.PrimaryWatch = discovery.NewPrimaryWatch(dp.Settings, discovery.Browse)
 	// ut-docs#2774: when mDNS finds nothing, ask the cloud where the main

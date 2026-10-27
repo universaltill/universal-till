@@ -47,6 +47,7 @@ var networkServices = []string{
 	"base-plugin auto-install retry",
 	"TSE provisioning retry",
 	"order-status stream bridge",
+	"signer backend probe refresh",
 }
 
 type serviceLog struct {

@@ -186,10 +186,15 @@ type Deps struct {
 
 	// NetReach probes the cloud host's /healthz for the status-bar light
 	// (ut-docs#3095): "No internet" when the network is up but the cloud
-	// is not. Display-only — checkout never reads it. Built once in
-	// pages.Init; disabled on a loopback/empty endpoint; nil in bare-Deps
-	// tests — its methods are nil-safe.
+	// is not. Display-only. Built once in pages.Init; disabled on a
+	// loopback/empty endpoint; nil in bare-Deps tests — its methods are
+	// nil-safe.
 	NetReach *netreach.Monitor
+
+	// SignerReach probes each fiscal signer's backend host for the per-signer
+	// known-offline check (ut-docs#3137): background, cached, never waited
+	// on. nil in bare-Deps tests — nil-safe (every host reads Unknown).
+	SignerReach *netreach.Set
 
 	// CloudSyncNow asks the cloudsync loop for a check-in now
 	// (cloudsync.Hooks.Kick). Capacity 1: kicks coalesce, and one that
