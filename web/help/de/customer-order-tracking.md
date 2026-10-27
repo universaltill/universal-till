@@ -3,7 +3,7 @@ id: customer-order-tracking
 title: Kundenbestellverfolgung (QR)
 section: Täglicher Verkauf
 order: 46
-summary: "Kunden scannen einen QR-Code, auf der Bestätigung des Selbstbedienungskiosks oder auf dem Beleg eines an der Kasse bonierten Verkaufs, um den Status ihrer Bestellung auf ihrem eigenen Telefon zu verfolgen. Teil der kostenpflichtigen Tarife."
+summary: "Kunden scannen einen QR-Code, auf der Bestätigung des Selbstbedienungskiosks oder auf dem Beleg eines an der Kasse bonierten Verkaufs, um den Status ihrer Bestellung auf ihrem eigenen Telefon zu verfolgen. Teil der Tarife Shop, Pro und Multi-location."
 routes: [/o/{token}, /o/{token}/status]
 keywords: [verfolgung, QR, kunde, bestellstatus, selbstbedienung, telefon, beleg, kasse]
 ---
@@ -30,7 +30,7 @@ Kunden scannen einen QR-Code, um den Status ihrer Bestellung auf ihrem eigenen T
 
 ## Hinweise
 
-- Die Bestellverfolgung gehört zu den kostenpflichtigen Tarifen. Im kostenlosen Tarif Lokal oder solange kostenpflichtige Funktionen pausiert sind (Abonnement beendet, oder die Kasse konnte es seit mehr als 7 Tagen nicht bei der Cloud bestätigen), zeigen Bestätigung und Belege keinen QR-Code; die Bestellung oder der Verkauf selbst ist davon nie betroffen.
+- Die Bestellverfolgung gehört zu den Tarifen Shop, Pro und Multi-location. Im kostenlosen Tarif Lokal, im Tarif Local Plus oder solange kostenpflichtige Funktionen pausiert sind (Abonnement beendet, oder die Kasse konnte es seit mehr als 7 Tagen nicht bei der Cloud bestätigen), zeigen Bestätigung und Belege keinen QR-Code; die Bestellung oder der Verkauf selbst ist davon nie betroffen.
 - Die Verfolgungsseite wird in unserer Cloud bereitgestellt: Das Telefon des Kunden braucht das WLAN Ihres Geschäfts nicht, und die eigene Netzwerkadresse der Kasse erscheint nie auf einem QR-Code oder Beleg.
 - Hat Ihr Geschäft mehrere Kassen und wird die Bestellung an einer anderen Kasse als dem Kiosk bezahlt, sieht der Link des Kiosks die Zahlung nicht: Er zeigt bis zu etwa 2 Stunden lang **Wartet auf Zahlung an der Theke** und antwortet danach nicht mehr. Bis die Bestellverfolgung über unsere Cloud läuft, kassieren Sie Kiosk-Bestellungen deshalb an der Kasse des Kiosks selbst.
 - Das Kästchen **Bestellverfolgungs-QR-Code (kostenpflichtige Tarife)** im [Belegdesigner](/help/designer) schaltet den QR-Code auf Kassenbelegen ein oder aus. Bis Sie den Belegdesigner zum ersten Mal speichern, ist es eingeschaltet, außer Ihr Geschäft fragt nicht nach „Vor Ort oder zum Mitnehmen“ (Einzelhandels- und Dienstleistungsgeschäfte starten mit ausgeschalteter Frage); dann ist es ausgeschaltet. Beim Speichern des Designers bleibt das Kästchen so, wie es angezeigt wird. Belege von Rückgaben und stornierten Verkäufen tragen nie einen QR-Code, ebenso wenig Belege einer zusätzlichen Kasse in einem Geschäft mit mehreren Kassen: Der Bildschirm **Bestellungen** der Hauptkasse sieht deren Verfolgungslink erst, wenn die Bestellverfolgung über unsere Cloud läuft.
