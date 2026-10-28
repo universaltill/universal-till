@@ -6,3 +6,8 @@
 # pos.validateMaskedPAN refuses any value with more than 4 digits before it
 # reaches the payments row.
 internal/db/migrations/001_init.sql masked_pan  # masked scheme+last4 only, enforced by pos.validateMaskedPAN (#792)
+
+# The read-only sales copy on additional tills (ut-docs#5074): the same
+# masked scheme+last4 value as payments.masked_pan, copied verbatim from the
+# main till for card reconciliation after a promote (design D4).
+internal/db/migrations/093_sales_mirror.sql masked_pan  # copy of payments.masked_pan: masked scheme+last4 only, enforced by pos.validateMaskedPAN on the selling till (#5074)

@@ -469,3 +469,52 @@ func TestRedactedJoinSnapshot_StripsUnpaidCheckinMarkers(t *testing.T) {
 		t.Errorf("LIVE DB markers mutated: rows=%d (err %v), want 2", n, err)
 	}
 }
+
+// ut-docs#5074: the join snapshot never carries this till's sales-copy
+// cursor, change log or other tills' acknowledgements; the copied rows
+// themselves (data) stay, and the live DB is untouched.
+func TestRedactedJoinSnapshot_ResetsSalesMirrorBookkeeping(t *testing.T) {
+	path := testDBPath(t)
+	d := openTest(t, path)
+	for _, s := range []string{
+		`INSERT INTO mirror_state (key, value) VALUES ('epoch', 'e1'), ('cursor', '42')`,
+		`INSERT INTO sales_mirror_log (op, ref_id) VALUES ('sale', 's1')`,
+		`INSERT INTO sales_mirror_acks (till_id, epoch, acked_seq, acked_at) VALUES ('t2', 'e1', 1, 'x')`,
+		`INSERT INTO mirror_sales (id, src_seq, epoch, origin_till_id, receipt_no, status, sale_type, tender_type,
+  currency, subtotal, discount_total, tax_total, total, rounding, service_charge_amount, service_charge_tax_basis_bp,
+  voucher_issue_total, offline, created_at, local_date, received_at)
+  VALUES ('m1', 1, 'e1', 't3', 'T3-1', 'completed', 'sale', 'cash', 'GBP', 1, 0, 0, 1, 0, 0, 0, 0, 0, 'x', '2026-10-25', 'x')`,
+	} {
+		if _, err := d.Exec(s); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	copyPath, cleanup, err := RedactedJoinSnapshot(d.DB, path)
+	if err != nil {
+		t.Fatalf("RedactedJoinSnapshot: %v", err)
+	}
+	defer cleanup()
+	cdb, err := sql.Open("sqlite", copyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cdb.Close()
+	count := func(q *sql.DB, tb string) int {
+		var n int
+		if err := q.QueryRow(`SELECT COUNT(*) FROM ` + tb).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	for _, tb := range []string{"mirror_state", "sales_mirror_log", "sales_mirror_acks"} {
+		if n := count(cdb, tb); n != 0 {
+			t.Errorf("join snapshot %s has %d rows, want 0", tb, n)
+		}
+		if n := count(d.DB, tb); n == 0 {
+			t.Errorf("LIVE %s was emptied", tb)
+		}
+	}
+	if n := count(cdb, "mirror_sales"); n != 1 {
+		t.Errorf("join snapshot mirror_sales = %d, want the copied row kept", n)
+	}
+}

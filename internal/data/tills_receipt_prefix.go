@@ -121,7 +121,8 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.upd
 // be taken: granted to an enrolled till, carried by a sale it holds or one
 // moved out by "Clear transaction history" (a till enrolled before migration
 // 092, or one since removed), or this till's own (a till promoted to main
-// till keeps its sync.receipt_prefix). ut-docs#5058, ut-docs#5074.
+// till keeps its sync.receipt_prefix), or seen in its read-only copy of the
+// other tills' sales (mirror_sales). ut-docs#5058, ut-docs#5074.
 func receiptPrefixesInUse(ctx context.Context, q dbExecutor) (map[string]bool, error) {
 	rows, err := q.QueryContext(ctx, `
 SELECT receipt_prefix FROM tills WHERE receipt_prefix != ''
@@ -145,5 +146,16 @@ SELECT value FROM settings WHERE key = 'sync.receipt_prefix' AND value != ''`)
 		}
 		out[strings.TrimSpace(p)] = true
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// ut-docs#5074 §3.6: and every prefix in this till's read-only sales copy.
+	copied, err := mirrorReceiptPrefixesInUse(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range copied {
+		out[strings.TrimSpace(p)] = true
+	}
+	return out, nil
 }
