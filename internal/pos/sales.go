@@ -1569,13 +1569,7 @@ func saleStatusTransitionAllowed(from, to string) bool {
 // is then the approver and blockedActorID the session operator who was
 // refused (audit_log.blocked_actor_id). "" is a plain, unelevated change.
 //
-// UpdateSaleStatus is UpdateSaleStatusOnTill for a main or single till.
-func UpdateSaleStatus(ctx context.Context, sqlDB *sql.DB, saleID, status, actorID, blockedActorID, reason string) error {
-	return UpdateSaleStatusOnTill(ctx, sqlDB, saleID, status, actorID, blockedActorID, reason, false)
-}
-
-// UpdateSaleStatusOnTill is UpdateSaleStatus that knows whether this is an
-// additional till (additionalTill: it syncs to a main till). An additional
+// additionalTill says this till syncs to a main till. An additional
 // till refuses to void a sale that issued or topped up a gift voucher with
 // ErrVoidVoucherSaleOnAdditionalTill, writing nothing (ut-docs#5133): the
 // voucher's value reached the main till through the sales journal, which
@@ -1586,7 +1580,7 @@ func UpdateSaleStatus(ctx context.Context, sqlDB *sql.DB, saleID, status, actorI
 // behaviour is unchanged. additionalTill is the till's current role, not
 // where the sale was made: a till whose sync.primary_url were cleared would
 // void its old voucher sales again (no code clears it today).
-func UpdateSaleStatusOnTill(ctx context.Context, sqlDB *sql.DB, saleID, status, actorID, blockedActorID, reason string, additionalTill bool) error {
+func UpdateSaleStatus(ctx context.Context, sqlDB *sql.DB, saleID, status, actorID, blockedActorID, reason string, additionalTill bool) error {
 	if saleID == "" {
 		return errors.New("saleID required")
 	}
