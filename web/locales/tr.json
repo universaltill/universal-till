@@ -1862,6 +1862,7 @@
   "pos.error.sale_not_found": "Satış bulunamadı",
   "pos.error.sale_status_transition": "Bu satış bu duruma getirilemez — tamamlanmış bir satış yalnızca iptal edilebilir.",
   "pos.error.server": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
+  "pos.error.void_voucher_additional_till": "Bu satışta bir hediye çeki satıldı veya bakiyesi yüklendi, bu yüzden ek kasada iptal edilemez: ana kasa çekin değerini korur. Hiçbir şey değiştirilmedi.",
   "pos.error.void_voucher_redeemed": "Bu satışta satılan hediye çeki zaten kullanılmış — satış iptal edilemez",
   "pos.gift_voucher.add": "Ekle",
   "pos.gift_voucher.error.check_failed": "Kart numarası kontrol edilemedi. Tekrar deneyin.",

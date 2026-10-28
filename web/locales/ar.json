@@ -1862,6 +1862,7 @@
   "pos.error.sale_not_found": "البيع غير موجود",
   "pos.error.sale_status_transition": "لا يمكن تغيير هذا البيع إلى هذه الحالة — البيع المكتمل يمكن إلغاؤه فقط.",
   "pos.error.server": "حدث خطأ ما. يرجى المحاولة مجددًا.",
+  "pos.error.void_voucher_additional_till": "تم في هذا البيع بيع قسيمة هدية أو شحنها، لذا لا يمكن إلغاؤه على صندوق إضافي: سيحتفظ الصندوق الرئيسي بقيمة القسيمة. لم يتم تغيير أي شيء.",
   "pos.error.void_voucher_redeemed": "تم بيع قسيمة في هذا البيع وقد استُخدمت بالفعل — لا يمكن إلغاؤه",
   "pos.gift_voucher.add": "إضافة",
   "pos.gift_voucher.error.check_failed": "تعذّر التحقق من رقم البطاقة. حاول مرة أخرى.",

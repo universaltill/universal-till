@@ -125,7 +125,8 @@ Was schiefgehen kann:
 - Eine Aufladung braucht einen aktiven Geschenkgutschein-Artikel im Katalog — gibt es keinen, sagt die Seite das.
 - Das Stornieren des Verkaufs wird abgelehnt, sobald ein Teil des aufgeladenen Betrags ausgegeben wurde.
 - An einer zusätzlichen Kasse muss die Hauptkasse beim Hinzufügen der Aufladung erreichbar (und auf dem neuesten Stand) sein; andernfalls sagt die Seite das und dem Verkauf wird nichts hinzugefügt.
+- An einer zusätzlichen Kasse kann ein Verkauf, mit dem ein Gutschein verkauft oder aufgeladen wurde, nicht storniert werden: Die Kasse sagt das, nichts ändert sich, und der Gutschein behält seinen Wert.
 
 ## Tagesabschluss und andere Kassen
 
-Der Tagesabschlussbericht (Z-Bericht) hat einen eigenen Abschnitt **GUTSCHEINE** für die an diesem Tag verkauften, eingelösten und korrigierten Gutscheine, und das Stornieren eines Verkaufs, mit dem ein Gutschein verkauft wurde, storniert den Gutschein mit — allerdings nur, solange er unbenutzt ist; siehe [Berichte & Tagesabschluss](/help/reports). Ein an einer Kasse verkaufter Gutschein kann an jeder anderen Kasse im Laden eingelöst werden; wie das funktioniert, während eine Kasse offline ist, steht unter [Mehrere Kassen (ein Laden)](/help/multitill).
+Der Tagesabschlussbericht (Z-Bericht) hat einen eigenen Abschnitt **GUTSCHEINE** für die an diesem Tag verkauften, eingelösten und korrigierten Gutscheine, und das Stornieren eines Verkaufs, mit dem ein Gutschein verkauft wurde, storniert den Gutschein mit — allerdings nur, solange er unbenutzt ist, und nicht an einer zusätzlichen Kasse, die diese Stornierung ablehnt; siehe [Berichte & Tagesabschluss](/help/reports). Ein an einer Kasse verkaufter Gutschein kann an jeder anderen Kasse im Laden eingelöst werden; wie das funktioniert, während eine Kasse offline ist, steht unter [Mehrere Kassen (ein Laden)](/help/multitill).

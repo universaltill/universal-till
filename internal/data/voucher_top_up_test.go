@@ -537,3 +537,32 @@ func TestReverseTopUp_ForcedCreditOnVoidVoucherIsVoidable(t *testing.T) {
 		t.Fatalf("after void: balance %d status %s, want 0 void", v.BalanceMinor, v.Status)
 	}
 }
+
+// SaleHasVoucherIssueOrTopUp (ut-docs#5133): true only for a sale whose
+// ledger holds an 'issue' or 'top_up' row; a redemption-only sale or an
+// unknown sale is false.
+func TestSaleHasVoucherIssueOrTopUp(t *testing.T) {
+	d := b8OpenDB(t, "voucher-sale-has-issue-topup.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+	vSeedVoucher(t, ctx, repo, "GS-1", 1000)
+	for _, vt := range []VoucherTransaction{
+		{ID: "t-issue", VoucherID: "GS-1", SaleID: "sale-issue", Type: "issue", AmountMinor: 1000},
+		{ID: "t-top", VoucherID: "GS-1", SaleID: "sale-top", Type: "top_up", AmountMinor: 500},
+		{ID: "t-red", VoucherID: "GS-1", SaleID: "sale-red", Type: "redemption", AmountMinor: 300},
+	} {
+		vt.CreatedAt = topUpNow()
+		if err := repo.RecordVoucherTransaction(ctx, nil, vt); err != nil {
+			t.Fatalf("record %s: %v", vt.ID, err)
+		}
+	}
+	for saleID, want := range map[string]bool{"sale-issue": true, "sale-top": true, "sale-red": false, "sale-none": false} {
+		got, err := repo.SaleHasVoucherIssueOrTopUp(ctx, nil, saleID)
+		if err != nil {
+			t.Fatalf("%s: %v", saleID, err)
+		}
+		if got != want {
+			t.Errorf("%s: got %v, want %v", saleID, got, want)
+		}
+	}
+}

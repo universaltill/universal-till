@@ -266,3 +266,54 @@ func TestAddGiftVoucherLine_TopUp(t *testing.T) {
 		t.Fatalf("restored line lost the top-up flag: %+v", lines)
 	}
 }
+
+// An additional till refuses to void a sale that issued or topped up a
+// voucher (ut-docs#5133): the main till holds the value via the journal and
+// never learns of a local void. Nothing is written on refusal.
+func TestUpdateSaleStatusOnTill_AdditionalTillRefusesVoucherSaleVoid(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupVoucherDB(t)
+	issueVoucherForTopUp(t, sqlDB, "GS-T1", 1000)
+	topUp, err := topUpSale(sqlDB, "GS-T1", 2500, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A second, untouched voucher: a main till would void its issue sale,
+	// so only the additional-till rule can refuse it.
+	issueSale := issueVoucherForTopUp(t, sqlDB, "GS-T2", 1500)
+	for _, c := range []struct{ name, saleID string }{{"issue", issueSale}, {"top-up", topUp}} {
+		err := UpdateSaleStatusOnTill(ctx, sqlDB, c.saleID, "voided", "", "", "x", true)
+		if !errors.Is(err, ErrVoidVoucherSaleOnAdditionalTill) {
+			t.Fatalf("%s sale: err = %v, want ErrVoidVoucherSaleOnAdditionalTill", c.name, err)
+		}
+		var st string
+		_ = sqlDB.QueryRow(`SELECT status FROM sales WHERE id = ?`, c.saleID).Scan(&st)
+		if st != "completed" {
+			t.Fatalf("%s sale: refused void left status %q", c.name, st)
+		}
+		var n int
+		_ = sqlDB.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_id = ? AND action = 'voided'`, c.saleID).Scan(&n)
+		if n != 0 {
+			t.Fatalf("%s sale: refused void wrote %d audit row(s)", c.name, n)
+		}
+	}
+	if _, balance, status, _ := voucherRow(t, sqlDB, "GS-T1"); balance != 3500 || status != "active" {
+		t.Fatalf("refused void changed the topped-up voucher: balance=%d status=%s, want 3500/active", balance, status)
+	}
+	if _, balance, status, _ := voucherRow(t, sqlDB, "GS-T2"); balance != 1500 || status != "active" {
+		t.Fatalf("refused void changed the issued voucher: balance=%d status=%s, want 1500/active", balance, status)
+	}
+	// Main/single till (additionalTill=false) still voids and reverses both.
+	if err := UpdateSaleStatusOnTill(ctx, sqlDB, topUp, "voided", "", "", "x", false); err != nil {
+		t.Fatalf("main-till void of the top-up: %v", err)
+	}
+	if _, balance, _, _ := voucherRow(t, sqlDB, "GS-T1"); balance != 1000 {
+		t.Fatalf("main-till void left balance %d, want 1000", balance)
+	}
+	if err := UpdateSaleStatusOnTill(ctx, sqlDB, issueSale, "voided", "", "", "x", false); err != nil {
+		t.Fatalf("main-till void of the issue: %v", err)
+	}
+	if _, _, status, _ := voucherRow(t, sqlDB, "GS-T2"); status != "void" {
+		t.Fatalf("main-till void left the issued voucher %q, want void", status)
+	}
+}
