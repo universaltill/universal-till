@@ -35,7 +35,12 @@ func TestPercentLocale_SaleScreenDiscountLabel(t *testing.T) {
 		t.Fatalf("seed scan: %v", err)
 	}
 	dp.Engine.SetDiscountPercent(750)
-	for lang, want := range map[string]string{"en": "(7.50%)", "de": "(7,50%)"} {
+	for lang, want := range map[string]string{
+		"en": "(7.50%)",
+		"de": "(7,50\u00a0%)",
+		"fa": "(۷٫۵۰٪)",
+		"tr": "(%7,50)",
+	} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/basket?lang="+lang, nil))
 		if rec.Code != http.StatusOK {
@@ -51,7 +56,7 @@ func TestPercentLocale_OnScreenReceiptDiscount(t *testing.T) {
 	chdirRoot(t)
 	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 1000, TaxRateBasisPoints: 0}}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 925}}
-	for lang, want := range map[string]string{"en": "(7.50%)", "de": "(7,50%)"} {
+	for lang, want := range map[string]string{"en": "(7.50%)", "de": "(7,50\u00a0%)"} {
 		html, err := renderReceipt(httpx.FuncsFor(lang), "R1", lines, payments, 1000, 0, 925, false, 75, "percent", 750, nil, false, false, false, false, nil, nil, "My Store", receiptDesign{ShowTax: true}, "", nil, "", nil, nil, "", "en")
 		if err != nil {
 			t.Fatalf("%s: renderReceipt: %v", lang, err)
@@ -77,7 +82,7 @@ func TestPercentLocale_InvoicePage(t *testing.T) {
 	}
 	for lang, c := range map[string]struct{ want, notWant string }{
 		"en": {"20.00%", "20,00%"},
-		"de": {"20,00%", "20.00%"},
+		"de": {"20,00\u00a0%", "20.00%"},
 	} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/invoice/"+inv.DisplayNo+"?lang="+lang, nil))
@@ -108,7 +113,7 @@ func TestPercentLocale_PrintedInvoice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for locale, want := range map[string]string{"en": "20.00%", "de": "20,00%"} {
+	for locale, want := range map[string]string{"en": "20.00%", "de": "20,00 %"} {
 		pinDefaultLocale(t, locale)
 		doc := buildInvoiceDoc(ctx, dp, inv, sale)
 		band := false
@@ -141,7 +146,7 @@ func TestPercentLocale_PrintedReceiptVATLines(t *testing.T) {
 	// label is translated too, not just the separator.
 	for locale, want := range map[string]string{
 		"en": "Total incl. VAT 20.00%",
-		"tr": "KDV dahil toplam 20,00%",
+		"tr": "KDV dahil toplam %20,00",
 	} {
 		pinDefaultLocale(t, locale)
 		doc, err := buildReceiptDoc(ctx, dp, "R-MIX")
@@ -176,7 +181,7 @@ func TestPercentLocale_ReportsTaxTab(t *testing.T) {
 	}
 	for lang, c := range map[string]struct{ want, notWant string }{
 		"en": {"7.5%", "7,5%"},
-		"de": {"7,5%", "7.5%"},
+		"de": {"7,5\u00a0%", "7.5%"},
 	} {
 		rec := getReportsTab(t, mux, "tax", "?days=14&lang="+lang)
 		if rec.Code != http.StatusOK {
@@ -199,6 +204,34 @@ func TestPercentLocale_PrintedVATLabelFitsReceiptWidth(t *testing.T) {
 		label := httpx.T(locale, "receipt.total_incl_vat") + " " + httpx.FormatPercentBP(2000, locale)
 		if n := utf8.RuneCountInString(label); n+amountAllowance > print.Width {
 			t.Errorf("%s: %q is %d columns; with an amount it overflows the %d-column receipt row", locale, label, n, print.Width)
+		}
+	}
+}
+
+// ut-docs#4281: the admin tax-codes table shows the rate in the locale's
+// separator and sign placement, while data-rate (read by the edit JS) stays
+// the raw machine value.
+func TestPercentLocale_TaxCodesTable(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newTaxCodesTestDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO tax_codes(id, name, rate_basis_points, is_active, takeaway_rate_basis_points) VALUES ('tax_81','Eight One',810,1,350)`); err != nil {
+		t.Fatal(err)
+	}
+	for lang, c := range map[string]struct{ rate, takeaway string }{
+		"en": {"<td>8.1%</td>", "<td>3.5%</td>"},
+		"de": {"<td>8,1\u00a0%</td>", "<td>3,5\u00a0%</td>"},
+		"tr": {"<td>%8,1</td>", "<td>%3,5</td>"},
+	} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/catalog/tax-codes?lang="+lang, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d", lang, rec.Code)
+		}
+		body := rec.Body.String()
+		for _, want := range []string{c.rate, c.takeaway, `data-rate="8.1"`, `data-takeaway="3.5"`} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("%s: expected %q in the table, got: %s", lang, want, body)
+			}
 		}
 	}
 }
