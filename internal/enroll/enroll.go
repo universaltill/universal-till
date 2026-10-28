@@ -59,6 +59,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/universaltill/universal-till/internal/approvalkey"
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/discovery"
@@ -783,7 +784,7 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 		country = countryCode(v)
 	}
 
-	fields := map[string]string{
+	fields := map[string]any{
 		"store_name":  storeName,
 		"device_id":   deviceID,
 		"device_name": DeviceName(ctx, kv),
@@ -805,6 +806,11 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 		fields["till_id"] = strings.TrimSpace(tid)
 	}
 	fields["platform"] = devicePlatform()
+	// ut-docs#5127: the approval key is pinned in the transaction that
+	// mints the token. A till with no usable key still registers.
+	if ak := approvalkey.Shared().Report(deviceID, ""); ak != nil {
+		fields["approval_key"] = ak
+	}
 	// The operator's acceptance of the cloud terms (ut-docs#4717), only when
 	// the current version was accepted on this till. Operator-initiated
 	// registrations collect it first, as do the plugin store's Download and

@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/universaltill/universal-till/internal/approvalkey"
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -316,6 +317,11 @@ type ReplacedTill struct {
 func postPairFull(ctx context.Context, endpoint, code, deviceID, deviceName, version string, firstTill bool, replaceDeviceID string) (pairAnswer, error) {
 	none := pairAnswer{}
 	body := map[string]any{"code": code, "device_id": deviceID, "device_name": deviceName, "version": version}
+	// ut-docs#5127: the cloud pins the till's approval key in the transaction
+	// that mints the credential. No key (unusable file) never blocks pairing.
+	if ak := approvalkey.Shared().Report(deviceID, ""); ak != nil {
+		body["approval_key"] = ak
+	}
 	if firstTill {
 		body["first_till"] = true
 		if replaceDeviceID != "" {
