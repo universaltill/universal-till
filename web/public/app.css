@@ -4951,7 +4951,28 @@ body.login-screen {
 .ai-match-label { overflow-wrap: anywhere; }
 /* The button's own text colour: --muted on the accent fill was 1.9:1. */
 .ai-match-detail { font-size: 0.85em; font-weight: 400; color: inherit; overflow-wrap: anywhere; }
-.ai-identify-controls { display: flex; gap: 0.5rem; justify-content: flex-end; }
+.ai-identify-controls { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: flex-end; }
+/* ut-docs#5122: on a short landscape screen (740x360) the 4:3 video
+   filled the capped panel and pushed Close below its visible area. The
+   controls row sticks to the panel's bottom edge, over the panel's own
+   bottom padding (hence -1rem), on the panel surface; on short screens
+   the video is also capped so most of it stays in view. */
+.ai-identify-panel > .ai-identify-controls {
+  position: sticky;
+  inset-block-end: -1rem;
+  margin-block-end: -1rem;
+  padding-block: 0.5rem 1rem;
+  background: var(--surface, #fff);
+}
+@media (max-height: 500px) {
+  /* Cap the width, not the height, so the preview keeps its 4:3 frame
+     (35dvh tall) instead of being cropped to a thin strip. */
+  .ai-identify-panel > .camera-overlay-video {
+    max-inline-size: calc(35vh * 4 / 3);
+    max-inline-size: calc(35dvh * 4 / 3);
+    margin-inline: auto;
+  }
+}
 
 /* Beginner guide (/help) — large readable steps, two-column on wide screens */
 .help-intro { color: var(--muted); font-size: 1.05rem; max-inline-size: 44rem; }
