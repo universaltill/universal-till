@@ -6,16 +6,20 @@ import (
 )
 
 // ut-docs#3121 AC 1: the floor is 500 MB or 10% of the disk, whichever is
-// larger.
+// larger — with the 10% part capped at 5 GiB, so a big disk with plenty of
+// room left is not "almost full" (ut-docs#5099).
 func TestFloor(t *testing.T) {
 	for _, c := range []struct {
 		total, want uint64
 	}{
-		{0, MinFreeBytes},           // unknown size: the absolute floor
-		{4 << 30, MinFreeBytes},     // 4 GiB: 10% is 410 MiB, under 500 MiB
-		{5000 << 20, MinFreeBytes},  // exactly 10% = 500 MiB
-		{64 << 30, (64 << 30) / 10}, // 64 GiB: 10% wins
-		{1 << 40, (1 << 40) / 10},   // 1 TiB
+		{0, MinFreeBytes},                 // unknown size: the absolute floor
+		{4 << 30, MinFreeBytes},           // 4 GiB: 10% is 410 MiB, under 500 MiB
+		{5000 << 20, MinFreeBytes},        // exactly 10% = 500 MiB
+		{32 << 30, (32 << 30) / 10},       // 32 GiB SD card: 10% (3.2 GiB) wins
+		{50 << 30, MaxPercentFloorBytes},  // exactly 10% = 5 GiB
+		{64 << 30, MaxPercentFloorBytes},  // 64 GiB: 10% (6.4 GiB) capped
+		{1 << 40, MaxPercentFloorBytes},   // 1 TiB
+		{926 << 30, MaxPercentFloorBytes}, // ut-docs#5099: the owner's Mac
 	} {
 		if got := Floor(c.total); got != c.want {
 			t.Errorf("Floor(%d) = %d, want %d", c.total, got, c.want)
@@ -24,7 +28,7 @@ func TestFloor(t *testing.T) {
 }
 
 func TestLow(t *testing.T) {
-	const total = 64 << 30 // floor = 6.4 GiB
+	const total = 32 << 30 // floor = 3.2 GiB
 	floor := Floor(total)
 	for _, c := range []struct {
 		free uint64
@@ -119,4 +123,23 @@ func TestProbeWith(t *testing.T) {
 			t.Errorf("Total = 0, want a real disk size")
 		}
 	})
+}
+
+// ut-docs#5099: 58 GB free of a 926 GB disk (6%) is not low; a big disk is
+// low only once it is under the 5 GiB cap.
+func TestLow_BigDiskUsesCappedFloor(t *testing.T) {
+	const total = 926 << 30
+	for _, c := range []struct {
+		free uint64
+		want bool
+	}{
+		{58 << 30, false},
+		{MaxPercentFloorBytes, false},
+		{MaxPercentFloorBytes - 1, true},
+		{1 << 30, true},
+	} {
+		if got := Low(Usage{Free: c.free, Total: total}); got != c.want {
+			t.Errorf("Low(free=%d of %d) = %v, want %v", c.free, uint64(total), got, c.want)
+		}
+	}
 }

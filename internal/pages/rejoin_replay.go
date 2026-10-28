@@ -86,12 +86,12 @@ func replayUnsentJournal(ctx context.Context, d *common.Deps, client *http.Clien
 	cursor := sinceSale
 	if cursor == "" {
 		cursor, _, _ = d.Settings.Get(ctx, "sync.push_cursor")
-		cursor = strings.TrimSpace(cursor)
 	}
+	afterAt, afterID := parseSalesPushCursor(cursor)
 	// Every unsent receipt at once, then batches of the list: paging by
 	// created_at alone would skip sales sharing an instant across a batch
 	// edge.
-	receipts, err := repo.LocalSalesSince(ctx, cursor, 1<<30)
+	receipts, err := repo.LocalSalesSince(ctx, afterAt, afterID, 1<<30)
 	if err != nil {
 		return out, err
 	}
@@ -116,7 +116,7 @@ func replayUnsentJournal(ctx context.Context, d *common.Deps, client *http.Clien
 
 	// No-sale opens and cleared baskets page by (created_at, id), exactly
 	// like their push steps.
-	afterAt, afterID := parseNoSalePushCursor(settingTrim(ctx, d, noSalePushCursorKey))
+	afterAt, afterID = parseNoSalePushCursor(settingTrim(ctx, d, noSalePushCursorKey))
 	for {
 		events, err := repo.LocalNoSaleEventsSince(ctx, afterAt, afterID, noSalePushBatch)
 		if err != nil {
@@ -218,7 +218,7 @@ func postJournal(ctx context.Context, client *http.Client, url, bearer string, b
 // countUnsentSales is the number of this till's sales past its push cursor
 // (the refusal message names it).
 func countUnsentSales(ctx context.Context, d *common.Deps) int {
-	n, err := data.NewPOSRepo(d.Db).CountLocalSalesSince(ctx, settingTrim(ctx, d, "sync.push_cursor"))
+	n, err := countQueuedSales(ctx, data.NewPOSRepo(d.Db), settingTrim(ctx, d, "sync.push_cursor"))
 	if err != nil {
 		logging.L().Warnf("re-join: count unsent sales: %v", err)
 	}

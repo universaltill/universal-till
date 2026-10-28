@@ -3,7 +3,7 @@ id: customer-order-tracking
 title: Müşteri sipariş takibi (QR)
 section: Günlük satış
 order: 46
-summary: "Müşteri, self servis kioskun onay ekranındaki ya da kasada girilen bir satışın fişindeki QR kodu okutarak siparişinin durumunu kendi telefonundan izler. Ücretli planlara dahildir."
+summary: "Müşteri, self servis kioskun onay ekranındaki ya da kasada girilen bir satışın fişindeki QR kodu okutarak siparişinin durumunu kendi telefonundan izler. Shop, Pro ve Multi-location planlarına dahildir."
 routes: [/o/{token}, /o/{token}/status]
 ---
 
@@ -29,7 +29,7 @@ Müşteri bir QR kodu okutarak siparişinin durumunu kendi telefonundan izler: s
 
 ## Notlar
 
-- Sipariş takibi ücretli planlara dahildir. Ücretsiz Yerel planda ya da ücretli özellikler duraklatılmışken (abonelik sona erdi veya kasa aboneliği 7 günden uzun süredir bulutla doğrulayamadı) onay ekranı ve fişler QR olmadan gösterilir; siparişin veya satışın kendisi bundan asla etkilenmez.
+- Sipariş takibi Shop, Pro ve Multi-location planlarına dahildir. Ücretsiz Yerel planda, Local Plus planında ya da ücretli özellikler duraklatılmışken (abonelik sona erdi veya kasa aboneliği 7 günden uzun süredir bulutla doğrulayamadı) onay ekranı ve fişler QR olmadan gösterilir; siparişin veya satışın kendisi bundan asla etkilenmez.
 - Takip sayfası bulutumuzda barındırılacak: müşterinin telefonu mağazanızın Wi-Fi ağına ihtiyaç duymaz ve kasanın kendi ağ adresi hiçbir QR kodunda ya da fişte görünmez.
 - Mağazanızda birden fazla kasa varsa ve sipariş kiosktan farklı bir kasada ödenirse, kioskun bağlantısı ödemeyi göremez: yaklaşık 2 saate kadar **Kasada ödeme bekleniyor** göstermeye devam eder, sonra yanıt vermez. Sipariş takibi bulutumuza taşınana kadar bunu önlemek için kiosk siparişlerinin ödemesini kioskun kendi kasasında alın.
 - [Fiş tasarımcısı](/help/designer) içindeki **Sipariş takip QR kodu (ücretli planlar)** kutusu, kasa fişlerindeki QR kodunu açar veya kapatır. Fiş tasarımcısını ilk kez kaydedene kadar açıktır; ancak mağazanız "Burada mı, paket mi" diye sormuyorsa (perakende ve hizmet mağazaları bu soru kapalı olarak başlar) kapalıdır. Tasarımcıyı kaydetmek kutuyu gösterildiği gibi bırakır. İadelerin ve iptal edilen satışların fişlerinde asla QR kodu bulunmaz; birden fazla kasası olan bir mağazada ek bir kasanın fişlerinde de bulunmaz: bu kasanın takip bağlantısını, sipariş takibi bulutumuza taşınana kadar ana kasanın **Siparişler** ekranı göremez.

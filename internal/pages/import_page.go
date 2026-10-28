@@ -60,6 +60,8 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 	registerImportFromSystem(mux, d)
 	registerImportFromFile(mux, d)
 
+	registerJoinSyncPoll(mux, d)
+
 	mux.HandleFunc("GET /import", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "import_export") {
 			// ut-docs#2095 (independent review, F3): from inside the /items
@@ -99,6 +101,19 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		// on the standalone page: the /items Import dialog is reached from a
 		// catalog the operator is already working in.
 		welcome := r.URL.Query().Get("welcome") == "1" && !inItemsShell
+		// ut-docs#5098: a till that joined a shop with products never shows
+		// the empty-shop welcome. Products here: the sale screen. Still
+		// pulling: the "Syncing your shop" state (never a blocker).
+		joinSyncing := false
+		if welcome && r.URL.Query().Get("syncing") == "1" {
+			switch joinSyncStep(r.Context(), d) {
+			case joinSyncHasProducts:
+				http.Redirect(w, r, "/", http.StatusSeeOther)
+				return
+			case joinSyncWaiting:
+				joinSyncing = true
+			}
+		}
 		// The Sample data card (load / already loaded) renders in both
 		// modes — inside the /items dialog it is how a shop that skipped
 		// the welcome finds sample data later; its result's "Go to catalog"
@@ -129,7 +144,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			"canRestoreBackup": canPerform(d, r, "data_management"),
 			// ADR-0166 §5: the pair-first wizard lands here with the first
 			// pull running; a status chip, never a modal.
-			"cloudSyncing": welcome && r.URL.Query().Get("syncing") == "1",
+			// ut-docs#5098: the join's first pull is still running and the
+			// catalogue is empty so far: only the syncing state shows.
+			"joinSyncing": joinSyncing,
 			// The wizard's pairing did not complete: a visible note, never
 			// a claim that the shop is syncing.
 			"cloudPairFailed": welcome && r.URL.Query().Get("pairfail") == "1",

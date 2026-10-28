@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -8,12 +9,20 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
 func helpMux(t *testing.T) *http.ServeMux {
+	t.Helper()
+	return helpMuxCfg(t, nil)
+}
+
+// helpMuxCfg is helpMux with a hook to shape the config (enrolment
+// credentials) before the handler is registered.
+func helpMuxCfg(t *testing.T, mutate func(*config.Config)) *http.ServeMux {
 	t.Helper()
 	chdirRoot(t)
 	db := openPagesTestDB(t)
@@ -27,6 +36,9 @@ func helpMux(t *testing.T) *http.ServeMux {
 	httpx.InitI18n(i18n, "en")
 
 	cfg := &config.Config{Theme: "default"}
+	if mutate != nil {
+		mutate(cfg)
+	}
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
 	dp := &common.Deps{
 		Cfg:      cfg,
@@ -327,5 +339,64 @@ func TestHelpTopicHTMXHasBackLinkLandingDoesNot(t *testing.T) {
 	}
 	if !strings.Contains(landing, `id="manual-tree"`) {
 		t.Error("landing fragment must carry the OOB tree so the nav reappears")
+	}
+}
+
+// ut-docs#5108: the Support partner topic shows a QR + link to my.'s
+// Support partner screen once the till is registered, and nothing extra
+// (just the prose) when it is not — no network call either way.
+func TestHelpSupportPartnerLinkWhenRegistered(t *testing.T) {
+	mux := helpMuxCfg(t, func(c *config.Config) {
+		c.Marketplace.EndpointURL = "https://cloud.example.test/api"
+		c.Marketplace.StoreID = "store-1"
+		c.Marketplace.MerchantToken = "tok"
+	})
+	want := html.EscapeString(enroll.PartnerURL("https://cloud.example.test/api", "store-1", "en"))
+	for name, hdr := range map[string][]string{"full page": nil, "htmx fragment": {"HX-Request", "true"}} {
+		rec := get(t, mux, "/help/support-partner", hdr...)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d", name, rec.Code)
+		}
+		body := rec.Body.String()
+		for _, w := range []string{want, `data-testid="help-partner-qr"`, `data-testid="help-partner-url"`, `data:image/png;base64,`} {
+			if !strings.Contains(body, w) {
+				t.Errorf("%s: missing %q", name, w)
+			}
+		}
+	}
+	if body := get(t, mux, "/help/sell").Body.String(); strings.Contains(body, "help-partner-link") {
+		t.Error("partner block leaked into another topic")
+	}
+}
+
+func TestHelpSupportPartnerNoLinkWhenUnregistered(t *testing.T) {
+	rec := get(t, helpMux(t), "/help/support-partner")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-topic="support-partner"`) {
+		t.Error("topic not rendered")
+	}
+	if strings.Contains(body, "help-partner-link") {
+		t.Error("partner link rendered on an unregistered till")
+	}
+}
+
+// A till that knows the cloud endpoint and its store but holds no
+// credential of its own (e.g. a replica registered only through its main
+// till) is not registered: prose only (review of ut-docs#5108).
+func TestHelpSupportPartnerNoLinkWithoutCredential(t *testing.T) {
+	mux := helpMuxCfg(t, func(c *config.Config) {
+		c.Marketplace.EndpointURL = "https://cloud.example.test/api"
+		c.Marketplace.StoreID = "store-1"
+		c.Marketplace.MerchantToken = ""
+	})
+	body := get(t, mux, "/help/support-partner").Body.String()
+	if !strings.Contains(body, `data-topic="support-partner"`) {
+		t.Error("topic not rendered")
+	}
+	if strings.Contains(body, "help-partner-link") {
+		t.Error("partner link rendered on a till with no credential of its own")
 	}
 }

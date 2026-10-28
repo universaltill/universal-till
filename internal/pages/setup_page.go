@@ -845,6 +845,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				logging.L().Warnf("setup wizard: saving the cloud pairing failed; pair again in Settings: %v", err)
 				cloudPairFailed = true
 			} else {
+				markJoinedShop(r.Context(), d)
 				requestOperatorCheckin(d, operatorCheckinWindow)
 				cloudSyncing = true
 			}

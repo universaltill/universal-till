@@ -23,6 +23,20 @@
   <a class="btn secondary" href="/items"{{ if .InItemsShell }} data-action="close-closest"{{ end }}><span class="back-arrow" aria-hidden="true">←</span> {{ T "nav.catalog" }}</a>
 </div>
 
+{{ if .joinSyncing }}
+<!-- ut-docs#5098: this till just joined a shop; its first catalogue pull is
+     still running and no product has arrived yet. Say so instead of offering
+     the empty-shop welcome. A status, never a modal: the poll sends the till
+     to the sale screen (or the welcome, if the shop is really empty) as soon
+     as the pull is done. -->
+<section class="card" data-testid="join-syncing" role="status" aria-live="polite"
+         hx-get="/ui/join-sync" hx-trigger="every 3s" hx-swap="none">
+  <p class="muted" data-testid="cloud-syncing-chip">{{ T "setup.cloud.syncing" }}</p>
+  <h2>{{ T "setup.cloud.syncing_title" }}</h2>
+  <p class="muted">{{ T "setup.cloud.syncing_body" }}</p>
+  <a class="btn secondary" href="/">{{ T "import.sample.start_selling" }}</a>
+</section>
+{{ else }}
 {{ if .welcome }}
 <!-- ut-docs#3709: the setup wizard lands here (?welcome=1). The three ways
      a new shop starts, explained in plain words; each option card's action
@@ -31,7 +45,6 @@
      autofocuses: no keyboard pops up on a touch till. -->
 <section class="card import-welcome" data-testid="import-welcome" aria-labelledby="import-welcome-title">
   {{ if .cloudPairFailed }}<p class="muted" role="alert" data-testid="cloud-pair-incomplete">{{ T "setup.cloud.pair_incomplete" }}</p>{{ end }}
-  {{ if .cloudSyncing }}<p class="muted" role="status" data-testid="cloud-syncing-chip">{{ T "setup.cloud.syncing" }}</p>{{ end }}
   <h2 id="import-welcome-title">{{ T "import.welcome.title" }}</h2>
   <p class="muted">{{ T "import.welcome.intro" }}</p>
   <div class="import-welcome-grid">
@@ -251,4 +264,5 @@ document.getElementById('import-result').addEventListener('change', function (e)
   <button class="btn" hx-post="/api/catalog/export-save" hx-target="#export-msg" hx-swap="innerHTML">{{ T "import.export_btn" }}</button>
   <div id="export-msg" class="muted" aria-live="polite" style="min-height:1.2rem;margin-top:.4rem"></div>
 </div>
+{{ end }}
 {{ end }}

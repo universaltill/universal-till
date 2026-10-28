@@ -63,6 +63,10 @@ wurde und es deshalb noch nichts anzuzeigen gibt. Das ist nicht der
 Wiederherstellungsbildschirm oben: Der setzt voraus, dass das Kassenprogramm
 läuft. Das Fenster zeigt außerdem den Ordner mit den Protokolldateien und in
 kleiner Schrift ein technisches Detail für den Support.
+Das Fenster erscheint in der Sprache Ihres Computers, sofern die Kasse in
+dieser Sprache verfügbar ist, sonst auf Englisch. Auf einem
+Windows-Computer ohne WebView2 (siehe nächster Abschnitt) öffnet sich
+dieselbe Meldung stattdessen in Ihrem Standard-Webbrowser.
 
 1. Schließen Sie das Fenster und öffnen Sie Universal Till erneut.
 2. Startet es immer noch nicht, installieren Sie Universal Till mit dem

@@ -441,6 +441,8 @@ func TestFiscalSignAsk_KnownOfflineShortCircuits(t *testing.T) {
 		invocations.Add(1)
 		return json.RawMessage(`{"status":"approved"}`), nil
 	})
+	// ut-docs#3137: only a signer that needs the network is skipped.
+	grantSignerPerm(t, dp, "com.test.fiscal-sign-counting", "net:*")
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
 		t.Fatal(err)
 	}
@@ -1370,6 +1372,7 @@ func TestFiscalSignStart_KnownOfflineSkipsDispatch(t *testing.T) {
 		invocations.Add(1)
 		return json.RawMessage(`{"status":"acknowledged","tx_id":"tx-1","tx_revision":1}`), nil
 	})
+	grantSignerPerm(t, dp, "com.test.fiscal-start-offline", "net:*")
 	in := pos.SaleInput{Currency: "EUR", Offline: true}
 	dispatchFiscalSignStart(context.Background(), dp, &in)
 	dp.WaitForAsyncWork()

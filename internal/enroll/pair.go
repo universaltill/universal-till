@@ -57,6 +57,11 @@ var ErrPairIdentityPinned = errors.New("this till's cloud identity is set in the
 // merchant or a well-formed token.
 var errPairAnswerRejected = errors.New("pair answer rejected")
 
+// ProblemKeyPairFailed tags a failed pairing attempt in the problems ring;
+// a successful pairing resolves it, so the shop's "Attention needed" does
+// not keep an earlier attempt's refusal (ut-docs#5098).
+const ProblemKeyPairFailed = "enrol.pair_failed"
+
 // Pair pairs this till with the shop the owner's pairing code belongs to
 // and returns the resulting status. Synchronous and bounded by ctx; the
 // till keeps selling offline whatever the outcome.
@@ -120,7 +125,7 @@ func Pair(ctx context.Context, cfg *config.Config, kv Settings, code string) (St
 	// 3. Pair.
 	storeID, merchantID, token, err := postPair(ctx, m.EndpointURL, code, newID, DeviceName(ctx, kv), buildinfo.Version)
 	if err != nil {
-		log.Warnf("enrolment: pairing this till with a shop failed: %v (ADR-0116 D5)", err)
+		log.WarnProblemf(ProblemKeyPairFailed, "enrolment: pairing this till with a shop failed: %v (ADR-0116 D5)", err)
 		return CurrentStatus(), err
 	}
 	if replica && storeID != own {
@@ -128,6 +133,7 @@ func Pair(ctx context.Context, cfg *config.Config, kv Settings, code string) (St
 		return CurrentStatus(), ErrPairStoreMismatch
 	}
 	adoptPaired(ctx, kv, replica, newID, storeID, merchantID, token)
+	logging.ResolveProblems(ProblemKeyPairFailed)
 	log.Infof("enrolment: this till is now paired with store %s as device %s (ADR-0116 D5)", storeID, newID)
 	return CurrentStatus(), nil
 }
@@ -459,7 +465,7 @@ func PairFirstTill(ctx context.Context, cfg *config.Config, code, tillName, repl
 	if err != nil {
 		var confirm *ReplaceConfirmError
 		if !errors.As(err, &confirm) { // the expected first half of a replace
-			logging.L().Warnf("enrolment: pair-first setup failed: %v (ADR-0166)", err)
+			logging.L().WarnProblemf(ProblemKeyPairFailed, "enrolment: pair-first setup failed: %v (ADR-0166)", err)
 		}
 		return nil, err
 	}
@@ -476,6 +482,7 @@ func (p *FirstTillPairing) Commit(ctx context.Context, cfg *config.Config, kv Se
 	defer releaseAttempt()
 	resetIdentityForPair(ctx, kv, false, p.DeviceID)
 	adoptPaired(ctx, kv, false, p.DeviceID, p.StoreID, p.MerchantID, p.Token)
+	logging.ResolveProblems(ProblemKeyPairFailed)
 	logging.L().Infof("enrolment: this till is now paired with store %s as device %s (ADR-0166)", p.StoreID, p.DeviceID)
 	return CurrentStatus(), nil
 }

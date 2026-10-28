@@ -116,6 +116,14 @@ const (
 	KeyGen = "cloudsync.catalog.gen"
 	// KeyResyncGen is the generation of a resync in progress ("" = none).
 	KeyResyncGen = "cloudsync.catalog.resync_gen"
+	// KeyFirstPullDone is set ("1") once a run reached the feed's high_water:
+	// the till holds the shop's catalogue as the cloud had it. The sale
+	// screen's join flow waits on it (ut-docs#5098).
+	KeyFirstPullDone = "cloudsync.catalog.first_pull_done"
+	// KeyJoinSince is the unix time the setup wizard finished a pairing with
+	// an existing cloud shop; the "Syncing your shop" state shows from then
+	// until the first pull is done, or a window passes (ut-docs#5098).
+	KeyJoinSince = "cloudsync.join_since"
 )
 
 // PageLimit is the page size the pull asks for (the contract's maximum).
@@ -263,13 +271,105 @@ func retireSeededGiftVoucherItem(ctx context.Context, db *sql.DB, opt Options) b
 }
 
 func run(ctx context.Context, db *sql.DB, fetch Fetcher, opt Options) (Result, error) {
+	r := newRunner(db, opt)
+	res, err := r.pull(ctx, db, fetch)
+	if ferr := r.retryDeferred(ctx, db, &res); err == nil {
+		err = ferr
+	}
+	return res, err
+}
+
+// retryDeferred applies, after the whole run, the rows that named a row
+// which had not arrived when they were first applied (ut-docs#5098). The
+// feed serves a row at its latest version, so a barcode written at version
+// 9 can name an item edited at version 12; the barcode used to be refused
+// for good and stuck until it changed. Now it applies here, once the item
+// is linked, or is recorded and logged as the refusal it then really is.
+// The cursor is not touched: it already moved past these rows.
+func (r *runner) retryDeferred(ctx context.Context, db *sql.DB, res *Result) error {
+	var rows []Row
+	for _, d := range r.deferred {
+		rows = append(rows, d.row)
+	}
+	r.deferred = nil
+	if len(rows) == 0 {
+		return nil
+	}
+	// A run cut short (deadline, shutdown) leaves the rows as the recorded
+	// refusals applyRow wrote when it deferred them: visible and reported,
+	// and a later edit or resync applies them.
+	if ctx.Err() != nil {
+		return nil
+	}
+	defer func() { r.lastPass, r.barcodes, r.photos = false, nil, nil }()
+	// The resolved barcodes of the last page are gone; resolve them again.
+	r.barcodes = r.resolveBarcodes(ctx, rows)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("catalogpull: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := r.outbox.Suppress(ctx, tx); err != nil {
+		return err
+	}
+	st, err := loadState(ctx, db, r.settings)
+	if err != nil {
+		return err
+	}
+	// One group in dependency order (kind order, categories parents-first),
+	// then repeated passes while any row still applies: a chain such as
+	// barcode -> item -> category resolves from the bottom up whatever the
+	// versions. A pass that settles nothing ends with the final one, which
+	// refuses what is left.
+	cur := orderGroup(rows)
+	for {
+		r.deferred = nil
+		for _, row := range cur {
+			if _, err := r.applyRow(ctx, tx, row, st.gen, res, true); err != nil {
+				return err
+			}
+		}
+		if len(r.deferred) == 0 {
+			break
+		}
+		next := make([]Row, 0, len(r.deferred))
+		for _, d := range r.deferred {
+			next = append(next, d.row)
+		}
+		if len(next) == len(cur) {
+			r.lastPass = true
+			r.deferred = nil
+			for _, row := range next {
+				if _, err := r.applyRow(ctx, tx, row, st.gen, res, true); err != nil {
+					return err
+				}
+			}
+			break
+		}
+		cur = orderGroup(next)
+	}
+	r.deferred = nil
+	if err := r.outbox.Unsuppress(ctx, tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("catalogpull: commit: %w", err)
+	}
+	if r.opt.ItemPhotoReplaced != nil {
+		for _, ph := range r.photos {
+			r.opt.ItemPhotoReplaced(ph.itemID, ph.path)
+		}
+	}
+	return nil
+}
+
+func (r *runner) pull(ctx context.Context, db *sql.DB, fetch Fetcher) (Result, error) {
 	var res Result
 	settings := data.NewSettingsRepo(db)
 	st, err := loadState(ctx, db, settings)
 	if err != nil {
 		return res, err
 	}
-	r := newRunner(db, opt)
 	resynced := false
 	for pages := 0; pages < maxPagesPerRun; pages++ {
 		if err := ctx.Err(); err != nil {
@@ -477,6 +577,16 @@ type runner struct {
 	// barcodes are the open page's item_barcode codes, resolved before its
 	// first chunk began (resolveBarcodes).
 	barcodes map[string]barcodeResolution
+	// deferred are rows refused only because a row they name had not
+	// arrived yet; lastPass is set while retryDeferred applies them for
+	// good (ut-docs#5098).
+	deferred []deferredRow
+	lastPass bool
+}
+
+type deferredRow struct {
+	row Row
+	err error
 }
 
 type replacedPhoto struct{ itemID, path string }

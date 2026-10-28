@@ -258,7 +258,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 			return strings.TrimSpace(v)
 		}
 		if primary := d.SyncPrimaryURL(r.Context()); primary != "" {
-			queued, _ := posRepo.CountLocalSalesSince(r.Context(), get("sync.push_cursor"))
+			queued, _ := countQueuedSales(r.Context(), posRepo, get("sync.push_cursor"))
 			fresh := withinLast(get("sync.last_contact_at"), 90*time.Second)
 			class := "ok"
 			if !fresh {
@@ -588,7 +588,7 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 	// only when this till's own journal is fully pushed — otherwise the
 	// primary hasn't counted our latest sales yet and a correction would
 	// briefly re-add sold stock.
-	if queued, err := posRepo.CountLocalSalesSince(ctx, get("sync.push_cursor")); err != nil || queued > 0 {
+	if queued, err := countQueuedSales(ctx, posRepo, get("sync.push_cursor")); err != nil || queued > 0 {
 		return
 	}
 	stockRepo := data.NewSyncStockRepo(posRepo)

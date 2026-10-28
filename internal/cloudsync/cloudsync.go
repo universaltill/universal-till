@@ -285,6 +285,19 @@ type Hooks struct {
 	// category list and Designer reorders make — unlisted categories keep
 	// their relative order after the listed ones. Audited, idempotent.
 	SetCategoryOrder func(ctx context.Context, ids []string) (string, error)
+	// SetCategoryItemOrder handles "set_category_item_order" (contract
+	// §3.14, ut-docs#3105): the owner's order of one category's items from
+	// my. Main-till only. apply decodes and validates the payload; the
+	// hook refuses an unknown category, an unknown item or one in another
+	// category (nothing written), then deals the listed items' sale-screen
+	// tiles into the slots the category's tiles already hold -- no other
+	// category's tile moves. Audited on a real change, idempotent.
+	SetCategoryItemOrder func(ctx context.Context, categoryID string, itemIDs []string) (string, error)
+	// ItemTilePositions supplies the snapshot's per-item tile_pos (contract
+	// §3.7, ut-docs#3105): item id -> 0-based position of its first
+	// sale-screen tile. nil, or an error, leaves tile_pos out of the
+	// snapshot; the cloud then keeps the values it had (§3.7).
+	ItemTilePositions func(ctx context.Context) (map[string]int, error)
 	// SetCatalogImage handles "set_catalog_image" (contract §3.9,
 	// ut-docs#3076): an item or category image set or removed in my.
 	// Main-till only like the catalog hooks above. apply decodes and
@@ -580,7 +593,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// (ut-docs#4385).
 	refusedMidTick := false
 	if isMainTill {
-		if err := pushSnapshotIfChanged(ctx, cfg, db); err != nil {
+		if err := pushSnapshotIfChanged(ctx, cfg, db, hooks.ItemTilePositions); err != nil {
 			refusedMidTick = pushRefused(ctx, settings, err, windowSeen)
 			logPushError("snapshot push", err)
 		}
@@ -715,7 +728,7 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// cloud just made is reported back now, not a tick later. The hash gate
 	// makes this free when nothing actually changed.
 	if isMainTill && catalogApplied && !refusedMidTick {
-		if err := pushSnapshotIfChanged(ctx, cfg, db); err != nil {
+		if err := pushSnapshotIfChanged(ctx, cfg, db, hooks.ItemTilePositions); err != nil {
 			pushRefused(ctx, settings, err, windowSeen)
 			logPushError("snapshot push after directives", err)
 		}
@@ -1246,6 +1259,15 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", bad
 		}
 		msg, err = hooks.SetCategoryOrder(ctx, ids)
+	case "set_category_item_order":
+		if hooks.SetCategoryItemOrder == nil {
+			return "failed", "set_category_item_order is not supported on this till"
+		}
+		cat, ids, bad := decodeCategoryItemOrder(payload(d.Payload))
+		if bad != "" {
+			return "failed", bad
+		}
+		msg, err = hooks.SetCategoryItemOrder(ctx, cat, ids)
 	case "set_catalog_image":
 		if hooks.SetCatalogImage == nil {
 			return "failed", "set_catalog_image is not supported on this till"
@@ -1824,6 +1846,13 @@ type snapshotItemRow struct {
 	// Omitted when the item is on the sell screen — the same as an older
 	// till that never sends it, which the cloud reads as visible.
 	SellScreen string `json:"sell_screen,omitempty"`
+	// TilePos (ut-docs#3105, contract §3.7) is the 0-based position of the
+	// item's first sale-screen tile in the till's grid order (global; only
+	// the relative order within a category matters to my.), so my. shows the
+	// effective item order. Omitted for an item with no tile, and for every
+	// item when the till could not work the positions out. A hidden item
+	// keeps its slot, so it has a value.
+	TilePos *int `json:"tile_pos,omitempty"`
 }
 
 // snapshotNetQuantity is an item's net quantity on the wire (ut-docs#3504):
@@ -1893,8 +1922,9 @@ func snapshotStockLevels(levels []data.LowStockItem) []snapshotStockLevelRow {
 // from what the cloud already has (tracked via a content hash in settings).
 // Schema 2 (contract §3.7): every item, inactive included, with its full
 // barcode set, modifier links, the till's own resolved groups and its
-// variants nested.
-func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) error {
+// variants nested. tilePositions (nil allowed) fills each item's tile_pos
+// (§3.7, ut-docs#3105).
+func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB, tilePositions func(context.Context) (map[string]int, error)) error {
 	eff := enroll.Effective(cfg)
 	m := eff.Marketplace
 
@@ -1935,6 +1965,16 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 		logging.L().Warnf("cloudsync: snapshot ever-sold items: %v", err)
 		sold = nil
 	}
+	// tile_pos (ut-docs#3105): a read error only costs the field, as for
+	// photos above -- never a half-filled one.
+	var tilePos map[string]int
+	if tilePositions != nil {
+		var err error
+		if tilePos, err = tilePositions(ctx); err != nil {
+			logging.L().Warnf("cloudsync: snapshot tile positions: %v", err)
+			tilePos = nil
+		}
+	}
 	rows := make([]snapshotItemRow, 0, len(items))
 	for _, it := range items {
 		row := snapshotItemRow{
@@ -1952,6 +1992,9 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 		}
 		if len(it.Barcodes) > 0 {
 			row.Barcode = it.Barcodes[0]
+		}
+		if p, ok := tilePos[it.ID]; ok {
+			row.TilePos = &p
 		}
 		if sold != nil {
 			v := sold[it.ID]

@@ -4818,10 +4818,15 @@ body.login-screen {
   table.t-cards .t-cards-actions .users-inline input[type="date"] { min-inline-size: 9.75rem; }
 }
 
-/* Camera identify overlay (opened on demand from the scan row) */
+/* Camera identify overlay (opened on demand from the scan row). The overlay
+   reserves the measured status row (--phone-sb-h, app.js measureBar; 4rem =
+   two bar rows if never measured) and keeps 1rem around the centred panel:
+   90dvh ended ~3px under the sticky .statusbar (z 90) at 1024x600
+   (ut-docs#3960). */
 .ai-identify-overlay {
   position: fixed;
   inset: 0;
+  padding-block-end: var(--phone-sb-h, 4rem);
   background: rgba(0, 0, 0, 0.55);
   display: flex;
   align-items: center;
@@ -4834,7 +4839,8 @@ body.login-screen {
   border-radius: 12px;
   padding: 1rem;
   inline-size: min(30rem, 92vw);
-  max-block-size: 90dvh;
+  max-block-size: calc(100vh - 2rem - var(--phone-sb-h, 4rem));
+  max-block-size: calc(100dvh - 2rem - var(--phone-sb-h, 4rem));
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -5007,6 +5013,13 @@ body.login-screen {
 /* Screenshots: full width of the reading column, never overflowing it. */
 .manual-topic img { max-inline-size: 100%; height: auto; border: 1px solid var(--border);
                     border-radius: .5rem; margin-block: .6rem; display: block; }
+/* ut-docs#5108: Support partner topic — QR + link to my.'s screen. */
+.manual-partner-link { margin-block: 1.2rem 0; padding: .8rem 1rem; border: 1px solid var(--border);
+                       border-radius: .5rem; text-align: start; }
+.manual-partner-link p { margin-block: 0 .4rem; }
+.manual-partner-link .manual-partner-qr { inline-size: 220px; max-inline-size: 100%; background: #fff; padding: .4rem;
+                                         image-rendering: pixelated; }
+.manual-partner-link a { overflow-wrap: anywhere; }
 .manual-untranslated { background: var(--panel, rgba(127,127,127,.12)); border-inline-start: 3px solid var(--accent, #2b6cb0);
                        padding: .5rem .7rem; border-radius: .3rem; color: var(--muted); }
 .manual-result-list { list-style: none; margin: 0; padding: 0; }
@@ -5985,6 +5998,10 @@ fieldset[data-main-till-lock]:disabled :is(input, textarea, select) { opacity: .
   /* :has() carries an id's specificity, so the drawer-foot (z 61) and
      scrim (z 460) lifts are excluded here rather than out-ranked. */
   html:not(.ut-scrim-on) body.sale-screen:not(.nav-drawer-open):has(#bugreport-panel.open) .statusbar { bottom: 0; z-index: 60; }
+  /* ut-docs#3960: the camera overlay (z 60) would dim and block the fixed
+     bar (z 39); it opens from the tender sheet, where bottom is already 0.
+     The overlay pads its end by --phone-sb-h, so the bar clears the panel. */
+  html:not(.ut-scrim-on) body.sale-screen:not(.nav-drawer-open):has(.ai-identify-overlay:not([hidden])) .statusbar { z-index: 61; }
   .bugreport-panel a[href="/my-reports"] { display: inline-flex; align-items: center; min-block-size: 44px; }
 }
 

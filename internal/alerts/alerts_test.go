@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -21,6 +24,28 @@ import (
 // token; nothing is sent when healthy or unregistered.
 // Unusual-sales detection: yesterday vs the same weekday's 4-week average.
 func TestUnusualSales(t *testing.T) {
+	// ref anchors both the seeded data and every unusualSales call to ONE
+	// Go-side instant, rather than each call independently reading the real
+	// clock — see unusualSales'/DayTotal's own doc comments (ut-docs#969:
+	// two independent real-clock reads a moment apart can disagree about
+	// what day "today" is, right around a UTC day boundary).
+	runUnusualSalesScenario(t, time.Now().UTC())
+}
+
+// localNoonDaysBack is the created_at (real UTC, RFC 3339) of a sale at
+// local noon, daysAgo local calendar days before ref's local day. DayTotal
+// matches local_date = date(ref,'localtime','-N days'), i.e. N LOCAL days
+// back; N×24h of UTC is not N local days across a DST change, which landed
+// baseline rows on the wrong local date near local midnight (ut-docs#5100).
+func localNoonDaysBack(ref time.Time, daysAgo int) string {
+	rl := ref.In(time.Local)
+	return time.Date(rl.Year(), rl.Month(), rl.Day()-daysAgo, 12, 0, 0, 0, time.Local).UTC().Format(time.RFC3339)
+}
+
+// runUnusualSalesScenario seeds a 4-week same-weekday baseline relative to ref
+// and asserts the zero-day / normal-day / blowout verdicts of unusualSales.
+func runUnusualSalesScenario(t *testing.T, ref time.Time) {
+	t.Helper()
 	f := filepath.Join(t.TempDir(), "unusual.db")
 	database, err := db.Open(f)
 	if err != nil {
@@ -34,12 +59,6 @@ func TestUnusualSales(t *testing.T) {
 			t.Fatalf("exec: %v", err)
 		}
 	}
-	// ref anchors both the seeded data and every unusualSales call below to
-	// ONE Go-side instant, rather than each call independently reading the
-	// real clock — see unusualSales'/DayTotal's own doc comments (ut-docs#969:
-	// two independent real-clock reads a moment apart can disagree about
-	// what day "today" is, right around a UTC day boundary).
-	ref := time.Now().UTC()
 	sale := func(id string, daysAgo, total int) {
 		// createdAt mirrors what production actually writes (real UTC, see
 		// internal/pos/sales.go's time.Now().UTC().Format(time.RFC3339)) —
@@ -47,7 +66,7 @@ func TestUnusualSales(t *testing.T) {
 		// only correct if created_at is genuine UTC. Seeding local wall-clock
 		// time here instead double-applies the conversion and silently shifts
 		// the computed date on any non-UTC machine.
-		createdAt := ref.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
+		createdAt := localNoonDaysBack(ref, daysAgo)
 		// local_date is set via date(?, 'localtime') on the same createdAt
 		// literal, exactly as InsertSale does in production (ut-docs#1342) —
 		// DayTotal now reads local_date directly (ut-docs#1664), so a fixture
@@ -88,43 +107,53 @@ func TestUnusualSales_EveryWeekdayIsDeterministic(t *testing.T) {
 		// 2026-08-23 is a Sunday; sweeps Sun through Sat.
 		ref := time.Date(2026, 8, 23+i, 0, 0, 30, 0, time.UTC)
 		t.Run(ref.Weekday().String(), func(t *testing.T) {
-			f := filepath.Join(t.TempDir(), "unusual_weekday.db")
-			database, err := db.Open(f)
-			if err != nil {
-				t.Fatalf("open db: %v", err)
-			}
-			defer database.Close()
-			d := database.DB
-			mustExec := func(q string, args ...any) {
-				t.Helper()
-				if _, err := d.Exec(q, args...); err != nil {
-					t.Fatalf("exec: %v", err)
-				}
-			}
-			sale := func(id string, daysAgo, total int) {
-				createdAt := ref.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
-				// local_date populated the same way as TestUnusualSales'
-				// own sale() helper — DayTotal reads it directly (ut-docs#1664).
-				mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at, local_date)
-				          VALUES (?, ?, 'completed', 'sale', ?, 0, ?, ?, date(?, 'localtime'))`,
-					id, "R-"+id, total, total, createdAt, createdAt)
-			}
-			sale("b1", 8, 1000)
-			sale("b2", 15, 900)
-			sale("b3", 22, 1100)
-			sale("b4", 29, 1000)
+			runUnusualSalesScenario(t, ref)
+		})
+	}
+}
 
-			if ratio, _, unusual := unusualSales(context.Background(), d, ref); !unusual || ratio != 0 {
-				t.Fatalf("zero day on a selling weekday should be unusual (ratio=%v unusual=%v)", ratio, unusual)
-			}
-			sale("y1", 1, 950)
-			if ratio, _, unusual := unusualSales(context.Background(), d, ref); unusual {
-				t.Fatalf("normal day flagged unusual (ratio=%v)", ratio)
-			}
-			sale("y2", 1, 1500)
-			if ratio, _, unusual := unusualSales(context.Background(), d, ref); !unusual || ratio < 1.8 {
-				t.Fatalf("blowout not flagged (ratio=%v unusual=%v)", ratio, unusual)
-			}
+// TestUnusualSales_AcrossDSTChange is the regression test for ut-docs#5100:
+// refs straddling both 2026 UK clock changes, just before and after local
+// midnight, must reach the same verdicts. It runs in a subprocess with
+// TZ=Europe/London because modernc sqlite caches its localtime on first use,
+// so t.Setenv("TZ") mid-process has no reliable effect (same pattern as
+// TestArchiveReport_GuardComparesLocalDayNotUTCDay in internal/data).
+func TestUnusualSales_AcrossDSTChange(t *testing.T) {
+	if os.Getenv("UT_TEST_DST_TZ") == "1" {
+		runUnusualSalesAcrossDSTChangeBody(t)
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestUnusualSales_AcrossDSTChange$", "-test.v")
+	cmd.Env = append(os.Environ(), "UT_TEST_DST_TZ=1", "TZ=Europe/London")
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "--- PASS") {
+		t.Fatalf("subprocess (TZ=Europe/London) failed: err=%v\n%s", err, out)
+	}
+}
+
+func runUnusualSalesAcrossDSTChangeBody(t *testing.T) {
+	// Fail loudly rather than silently pass in a zone without DST.
+	if time.Local.String() != "Europe/London" {
+		t.Fatalf("time.Local = %q, want Europe/London", time.Local)
+	}
+	_, janOff := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC).In(time.Local).Zone()
+	_, julOff := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC).In(time.Local).Zone()
+	if janOff == julOff {
+		t.Fatalf("time.Local has no DST (Jan offset %d == Jul offset %d)", janOff, julOff)
+	}
+	refs := []time.Time{
+		time.Date(2026, 10, 25, 23, 30, 0, 0, time.UTC),
+		time.Date(2026, 10, 26, 0, 30, 0, 0, time.UTC),
+		time.Date(2026, 10, 26, 23, 15, 0, 0, time.UTC), // the card's exact instant
+		time.Date(2026, 3, 29, 22, 30, 0, 0, time.UTC),
+		time.Date(2026, 3, 30, 0, 30, 0, 0, time.UTC),
+		time.Date(2026, 4, 5, 22, 59, 0, 0, time.UTC),
+		time.Date(2026, 3, 29, 23, 30, 0, 0, time.UTC), // 00:30 BST, spring-forward side
+		time.Date(2026, 4, 5, 23, 30, 0, 0, time.UTC),
+	}
+	for _, ref := range refs {
+		t.Run(ref.Format(time.RFC3339), func(t *testing.T) {
+			runUnusualSalesScenario(t, ref)
 		})
 	}
 }
@@ -484,7 +513,7 @@ func TestUnusualSales_ThinBaselineIsNotUnusual(t *testing.T) {
 	}
 	ref := time.Now().UTC()
 	sale := func(id string, daysAgo, total int) {
-		createdAt := ref.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
+		createdAt := localNoonDaysBack(ref, daysAgo)
 		// local_date is set via date(?, 'localtime') on the same createdAt
 		// literal, exactly as InsertSale does in production (ut-docs#1342) —
 		// DayTotal now reads local_date directly (ut-docs#1664), so a fixture
@@ -576,7 +605,7 @@ func testStartRunsDigestLoopBody(t *testing.T, anchorHour int) {
 	// Anchored to the SAME instant nowFunc is pinned to, above — not a
 	// fresh, independent read of the wall clock.
 	sale := func(id string, daysAgo, total int) {
-		createdAt := anchor.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
+		createdAt := localNoonDaysBack(anchor, daysAgo)
 		// local_date populated the same way as TestUnusualSales' own sale()
 		// helper — DayTotal reads it directly (ut-docs#1664).
 		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at, local_date)

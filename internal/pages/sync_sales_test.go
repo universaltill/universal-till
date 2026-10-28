@@ -783,14 +783,147 @@ func TestSyncPushTick_PushesLocalSalesAndAdvancesCursor(t *testing.T) {
 		t.Fatalf("expected the local sale pushed to the primary, got count=%d", count)
 	}
 	cursor, _, _ := replicaDp.Settings.Get(ctx, "sync.push_cursor")
-	if cursor != "2026-01-01T10:00:00Z" {
-		t.Fatalf("expected sync.push_cursor advanced to the pushed sale's created_at, got %q", cursor)
+	if cursor != "2026-01-01T10:00:00Z|push-sale-1" {
+		t.Fatalf("expected sync.push_cursor advanced to the pushed sale's created_at|id, got %q", cursor)
 	}
 	if v, _, _ := replicaDp.Settings.Get(ctx, "sync.last_push_at"); v == "" {
 		t.Fatalf("expected sync.last_push_at set")
 	}
 	if v, _, _ := replicaDp.Settings.Get(ctx, "sync.last_contact_at"); v == "" {
 		t.Fatalf("expected sync.last_contact_at set")
+	}
+}
+
+// ut-docs#5090: a 50-sale batch edge falling inside one created_at second must
+// not strand the rest of that second. Sale #50 and #51 share a second; the
+// composite (created_at|id) cursor makes the second tick pick #51 up.
+func TestSyncPushSales_BatchEdgeInsideOneSecondLosesNothing(t *testing.T) {
+	primaryMux, primaryDp := newSyncSalesTestDeps(t)
+	ctx := context.Background()
+	if _, err := data.NewTillsRepo(primaryDp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc")); err != nil {
+		t.Fatalf("enrol till: %v", err)
+	}
+	server := httptest.NewServer(primaryMux)
+	t.Cleanup(server.Close)
+
+	_, replicaDp := newSyncSalesTestDeps(t)
+	base := time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC)
+	const total = 51
+	var lastAt, lastID string
+	for i := 1; i <= total; i++ {
+		id := fmt.Sprintf("edge-%03d", i)
+		at := base.Add(time.Duration(i) * time.Second)
+		if i == total {
+			at = base.Add(time.Duration(total-1) * time.Second) // same second as #50
+		}
+		lastAt, lastID = at.Format(time.RFC3339), id
+		seedLocalSale(t, replicaDp, id, "R-"+id, lastAt)
+	}
+	if err := replicaDp.Settings.Set(ctx, "sync.primary_url", server.URL); err != nil {
+		t.Fatal(err)
+	}
+	if err := replicaDp.Settings.Set(ctx, "sync.bearer", "token-abc"); err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	syncPushSales(ctx, replicaDp, client, server.URL, "token-abc")
+	syncPushSales(ctx, replicaDp, client, server.URL, "token-abc")
+
+	var count int
+	if err := primaryDp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sales WHERE id LIKE 'edge-%'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != total {
+		t.Fatalf("primary has %d of %d sales; the batch-edge second was lost", count, total)
+	}
+	cursor, _, _ := replicaDp.Settings.Get(ctx, "sync.push_cursor")
+	if want := lastAt + "|" + lastID; cursor != want {
+		t.Fatalf("sync.push_cursor = %q, want %q", cursor, want)
+	}
+}
+
+// pushSettleHarness wires a replica->primary pair with a controllable clock.
+func pushSettleHarness(t *testing.T, now time.Time) (primaryDp, replicaDp *common.Deps, push func()) {
+	t.Helper()
+	primaryMux, pdp := newSyncSalesTestDeps(t)
+	ctx := context.Background()
+	if _, err := data.NewTillsRepo(pdp.Db).InsertTill(ctx, "Replica 1", hashBearer("token-abc")); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(primaryMux)
+	t.Cleanup(server.Close)
+	_, rdp := newSyncSalesTestDeps(t)
+	prev := salesPushNow
+	salesPushNow = func() time.Time { return now }
+	t.Cleanup(func() { salesPushNow = prev })
+	client := &http.Client{Timeout: 10 * time.Second}
+	return pdp, rdp, func() { syncPushSales(ctx, rdp, client, server.URL, "token-abc") }
+}
+
+func primarySaleCount(t *testing.T, dp *common.Deps, like string) int {
+	t.Helper()
+	var n int
+	if err := dp.Db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM sales WHERE id LIKE ?`, like).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// ut-docs#5090: ids are random, so a sale completing in the same second as an
+// already-pushed one may sort BEFORE the cursor id; the settle window keeps
+// the cursor behind the current second so it is still picked up.
+func TestSyncPushSales_SameSecondSmallerIDLaterIsNotLost(t *testing.T) {
+	at := time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC)
+	pdp, rdp, push := pushSettleHarness(t, at.Add(time.Second)) // "now" is inside the window
+	seedLocalSale(t, rdp, "sx-zzz", "R-sx-zzz", at.Format(time.RFC3339))
+	push()
+	seedLocalSale(t, rdp, "sx-aaa", "R-sx-aaa", at.Format(time.RFC3339))
+	push()
+	if n := primarySaleCount(t, pdp, "sx-%"); n != 2 {
+		t.Fatalf("primary has %d of 2 same-second sales", n)
+	}
+}
+
+func TestSyncPushSales_CursorHeldInsideSettleWindow(t *testing.T) {
+	ctx := context.Background()
+	at := time.Date(2026, 2, 1, 9, 0, 0, 0, time.UTC)
+	pdp, rdp, push := pushSettleHarness(t, at.Add(2*time.Second))
+	var kicks []time.Duration
+	prevKick := salesPushRekick
+	salesPushRekick = func(_ *common.Deps, after time.Duration) { kicks = append(kicks, after) }
+	t.Cleanup(func() { salesPushRekick = prevKick })
+	seedLocalSale(t, rdp, "st-1", "R-st-1", at.Format(time.RFC3339))
+	push()
+	if n := primarySaleCount(t, pdp, "st-%"); n != 1 {
+		t.Fatalf("sale should still be POSTed inside the window, primary has %d", n)
+	}
+	if v, _, _ := rdp.Settings.Get(ctx, "sync.push_cursor"); v != "" {
+		t.Fatalf("cursor advanced inside the settle window: %q", v)
+	}
+	if v, _, _ := rdp.Settings.Get(ctx, "sync.last_push_at"); v == "" {
+		t.Fatal("last_push_at should still be recorded")
+	}
+	if len(kicks) != 1 || kicks[0] != salesPushSettle+time.Second {
+		t.Fatalf("held-back push should schedule one follow-up kick, got %v", kicks)
+	}
+	kicks = nil
+	salesPushNow = func() time.Time { return at.Add(salesPushSettle + time.Second) }
+	push()
+	if v, _, _ := rdp.Settings.Get(ctx, "sync.push_cursor"); v != at.Format(time.RFC3339)+"|st-1" {
+		t.Fatalf("cursor after settling = %q", v)
+	}
+	if len(kicks) != 0 {
+		t.Fatalf("no follow-up kick expected once the cursor reached the last sale, got %v", kicks)
+	}
+	// The clock stepped back behind a sale's stamp: the sale can't settle in
+	// one window, so a kick would only re-send the batch every few seconds.
+	seedLocalSale(t, rdp, "st-2", "R-st-2", at.Add(time.Hour).Format(time.RFC3339))
+	push()
+	if n := primarySaleCount(t, pdp, "st-%"); n != 2 {
+		t.Fatalf("future-stamped sale should still be POSTed, primary has %d", n)
+	}
+	if len(kicks) != 0 {
+		t.Fatalf("no follow-up kick expected for a future-stamped sale, got %v", kicks)
 	}
 }
 

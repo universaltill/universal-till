@@ -70,7 +70,7 @@ Once a day the till removes files it no longer needs, so its disk doesn't fill u
 - Downloaded updates: removed after 7 days.
 - Uploaded files left behind when the till stopped in the middle of an upload or import: removed after 24 hours.
 
-If the disk gets almost full — less than 500 MB free, or less than a tenth of the disk, whichever is larger — the till cleans up at once instead of waiting for the next day, and keeps only the minimum: the newest 3 backups, the newest copy set aside by a restore, and issue reports and downloaded updates from the last day. Managers then see **Storage almost full** in the status bar until there is room again. Selling carries on; to free more space, remove files you don't need from the device, or ask whoever set it up.
+If the disk gets almost full — less than 500 MB free, or less than a tenth of the disk (at most 5 GB), whichever is larger — the till cleans up at once instead of waiting for the next day, and keeps only the minimum: the newest 3 backups, the newest copy set aside by a restore, and issue reports and downloaded updates from the last day. Managers then see **Storage almost full** in the status bar until there is room again. Selling carries on; to free more space, remove files you don't need from the device, or ask whoever set it up.
 
 The clean-up never removes sales, receipts, the audit log, Z reports or any other record you must keep by law. Each till cleans only its own disk.
 

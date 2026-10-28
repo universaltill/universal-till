@@ -4067,14 +4067,19 @@ WHERE id = ? AND (till_id IS NOT ? OR created_at IS NOT ?)`,
 	return nil
 }
 
-// LocalSalesSince lists this till's OWN completed sales after the cursor
-// (created_at), oldest first — the replica's push queue. Journaled-in
-// sales (till_id != ”) are excluded.
-func (r *POSRepo) LocalSalesSince(ctx context.Context, cursor string, limit int) ([]string, error) {
+// LocalSalesSince lists the receipt numbers of this till's OWN completed
+// sales strictly after the composite cursor (afterCreatedAt, afterID), oldest
+// first by (created_at, id) — the replica's push queue. created_at has only
+// second precision, so the id tiebreak is what lets a batch edge fall inside
+// one second without stranding the rest of it (ut-docs#5090). ("", "") means
+// from the beginning; a bare created_at (afterID "") re-includes the sales at
+// exactly that second. Journaled-in sales (till_id != ”) are excluded.
+func (r *POSRepo) LocalSalesSince(ctx context.Context, afterCreatedAt, afterID string, limit int) ([]string, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT receipt_no FROM sales
-WHERE status = 'completed' AND till_id = '' AND created_at > ?
-ORDER BY created_at LIMIT ?`, cursor, limit)
+WHERE status = 'completed' AND till_id = ''
+  AND (created_at > ? OR (created_at = ? AND id > ?))
+ORDER BY created_at, id LIMIT ?`, afterCreatedAt, afterCreatedAt, afterID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("local sales since: %w", err)
 	}
@@ -4090,12 +4095,14 @@ ORDER BY created_at LIMIT ?`, cursor, limit)
 	return out, rows.Err()
 }
 
-// CountLocalSalesSince is the replica's push-queue depth (D4 status chip).
-func (r *POSRepo) CountLocalSalesSince(ctx context.Context, cursor string) (int, error) {
+// CountLocalSalesSince is the replica's push-queue depth (D4 status chip):
+// the sales LocalSalesSince would return past the same composite cursor.
+func (r *POSRepo) CountLocalSalesSince(ctx context.Context, afterCreatedAt, afterID string) (int, error) {
 	var n int
 	err := r.db.QueryRowContext(ctx, `
 SELECT COUNT(*) FROM sales
-WHERE status = 'completed' AND till_id = '' AND created_at > ?`, cursor).Scan(&n)
+WHERE status = 'completed' AND till_id = ''
+  AND (created_at > ? OR (created_at = ? AND id > ?))`, afterCreatedAt, afterCreatedAt, afterID).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count local sales: %w", err)
 	}
