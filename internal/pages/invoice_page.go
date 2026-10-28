@@ -232,7 +232,7 @@ func buildInvoiceDoc(ctx context.Context, d *common.Deps, inv data.InvoiceRow, s
 			Amount: httpx.FormatMoney(l.LineTotal, locale),
 			// " - ", not the on-screen " · ": an ascii-charset printer
 			// would print the middle dot as '?'.
-			Sub: invoiceLineSub(l, locale, " - "),
+			Sub: invoiceLineSub(l, locale, " - ", false),
 		})
 	}
 	for _, b := range bands {
@@ -479,7 +479,7 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 		bands := make([]bandView, 0, len(raw))
 		for _, b := range raw {
 			bands = append(bands, bandView{
-				Rate: httpx.FormatPercentBP(int64(b.RateBP), locale),
+				Rate: httpx.FormatPercentBPDisplay(int64(b.RateBP), locale),
 				Net:  b.Net, Tax: b.Tax, Gross: b.Gross,
 			})
 		}
@@ -492,7 +492,7 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 		lines := make([]lineView, 0, len(sale.Lines))
 		for _, l := range sale.Lines {
 			lines = append(lines, lineView{Name: l.Name, Qty: l.Qty, LineTotal: l.LineTotal,
-				Sub: invoiceLineSub(l, locale, " · ")})
+				Sub: invoiceLineSub(l, locale, " · ", true)})
 		}
 		origDisplay := ""
 		if inv.OriginalInvoiceID != "" {
@@ -533,7 +533,7 @@ func invoiceLineUnitNet(l data.SaleDetailLine) (int64, bool) {
 // thermal invoice (buildInvoiceDoc) and the on-screen one so both say the
 // same thing; sep differs only because a thermal printer's charset may not
 // carry the middle dot.
-func invoiceLineSub(l data.SaleDetailLine, locale, sep string) string {
+func invoiceLineSub(l data.SaleDetailLine, locale, sep string, display bool) string {
 	unit, ok := invoiceLineUnitNet(l)
 	if !ok {
 		return ""
@@ -546,7 +546,11 @@ func invoiceLineSub(l data.SaleDetailLine, locale, sep string) string {
 	if l.LineDiscount != 0 {
 		s += " (" + httpx.T(locale, "invoice.after_discount") + ")"
 	}
-	return s + sep + httpx.T(locale, "invoice.vat") + " " + httpx.FormatPercentBP(int64(l.TaxRateBP), locale)
+	pct := httpx.FormatPercentBP(int64(l.TaxRateBP), locale)
+	if display {
+		pct = httpx.FormatPercentBPDisplay(int64(l.TaxRateBP), locale)
+	}
+	return s + sep + httpx.T(locale, "invoice.vat") + " " + pct
 }
 
 // timeOfSupply returns the sale's own date (the time of supply), formatted

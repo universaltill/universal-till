@@ -656,13 +656,76 @@ func LocalizeMajor(plain, locale string) string {
 }
 
 // FormatPercentBP renders a basis-point rate as a two-decimal percent in
-// the locale's decimal separator (ut-docs#4176): 750 is "7,50%" on a de
-// till, "7.50%" on an en one. Separator only, Latin digits -- the same
-// scope as LocalizeMajor, so it is safe on a print path too. The sign stays
-// a suffix for every locale; per-locale placement (fr "7,50 %", tr "%7,50")
-// is a separate item.
+// the locale's decimal separator and CLDR sign placement (ut-docs#4176,
+// ut-docs#4281): 750 is "7.50%" on en, "7,50%" on pt, "7,50 %" on de/es/fr
+// and "%7,50" on tr. PRINT-SAFE: Latin digits, an ASCII "%" and an ASCII
+// space before it (an ASCII-charset ESC/POS printer prints NBSP as "?"), so
+// fa/ar keep "7.50%". On-screen callers use FormatPercentBPDisplay.
 func FormatPercentBP(bp int64, locale string) string {
-	return LocalizeMajor(fmt.Sprintf("%.2f", float64(bp)/100), locale) + "%"
+	return formatPercent(fmt.Sprintf("%.2f", float64(bp)/100), locale, false)
+}
+
+// FormatPercentBPDisplay is FormatPercentBP for the screen (ut-docs#4281):
+// the same placement, but with the locale's real affix -- NBSP (U+00A0)
+// before "%" on de/es, U+202F on fr -- plus the locale's digit shape and
+// the Arabic percent sign U+066A on fa/ur/ps/ar ("۷٫۵۰٪"). Never use it on
+// a print path.
+func FormatPercentBPDisplay(bp int64, locale string) string {
+	return formatPercent(fmt.Sprintf("%.2f", float64(bp)/100), locale, true)
+}
+
+// FormatPercentDisplay is the on-screen percent for an already-shaped plain
+// decimal string with a dot separator, such as taxrate.FormatPercent's
+// "7.5", "20" or "-3" (ut-docs#4281): the locale's separator, sign
+// placement and digit shape, as FormatPercentBPDisplay.
+func FormatPercentDisplay(plain, locale string) string {
+	return formatPercent(plain, locale, true)
+}
+
+// formatPercent is the shared body of the percent formatters: separator via
+// LocalizeMajor, affix via percentAffix, and (display only) digit shape. A
+// leading minus stays first, before any prefix sign.
+func formatPercent(plain, locale string, display bool) string {
+	neg := strings.HasPrefix(plain, "-")
+	plain = strings.TrimPrefix(plain, "-")
+	prefix, suffix := percentAffix(locale, display)
+	out := prefix + LocalizeMajor(plain, locale) + suffix
+	if display {
+		out = LocalizeDigits(out, locale)
+	}
+	if neg {
+		out = "-" + out
+	}
+	return out
+}
+
+// percentAffix returns the text before and after a percent's number for a
+// locale (ut-docs#4281), keyed by base language like numberSeparators and
+// localeDigits. display selects the screen glyphs; print gets ASCII only.
+func percentAffix(locale string, display bool) (prefix, suffix string) {
+	lang := strings.ToLower(locale)
+	if i := strings.IndexAny(lang, "-_"); i > 0 {
+		lang = lang[:i]
+	}
+	switch lang {
+	case "tr":
+		return "%", ""
+	case "de", "es":
+		if display {
+			return "", "\u00a0%"
+		}
+		return "", " %"
+	case "fr":
+		if display {
+			return "", "\u202f%"
+		}
+		return "", " %"
+	case "fa", "ur", "ps", "ar":
+		if display {
+			return "", "\u066a"
+		}
+	}
+	return "", "%"
 }
 
 // MoneyPlaceholderLocalAttr is MoneyPlaceholderAttr for a MoneyPatternLocal
