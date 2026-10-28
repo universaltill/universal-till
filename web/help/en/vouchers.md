@@ -125,7 +125,8 @@ What can go wrong:
 - A top-up needs an active gift voucher item in the catalogue — if there is none, the page says so.
 - Voiding the sale is refused once part of the topped-up amount has been spent.
 - On an additional till, the main till must be reachable (and up to date) when you add the top-up; if it isn't, the page says so and nothing is added to the sale.
+- On an additional till, a sale that sold or topped up a voucher can't be voided: the till says so and nothing changes, and the voucher keeps its value.
 
 ## Day-end reports and other tills
 
-The day-end (Z) report has its own **GUTSCHEINE** section for vouchers sold, spent and corrected that day, and voiding a sale that sold a voucher cancels the voucher with it (only while it's unused) — see [Reports & end of day](/help/reports). A voucher sold on one till can be spent on any other till in the shop; how that works while a till is offline is covered in [Multiple tills (one shop)](/help/multitill).
+The day-end (Z) report has its own **GUTSCHEINE** section for vouchers sold, spent and corrected that day, and voiding a sale that sold a voucher cancels the voucher with it (only while it's unused, and not on an additional till, which refuses that void) — see [Reports & end of day](/help/reports). A voucher sold on one till can be spent on any other till in the shop; how that works while a till is offline is covered in [Multiple tills (one shop)](/help/multitill).

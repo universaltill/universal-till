@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -412,5 +413,106 @@ func TestVoucherPages_ReplicaFallsBackToMainTill(t *testing.T) {
 	}
 	if page := vGet(t, mux, "/vouchers/GS-FAR?lang=en", &vManager, false).Body.String(); strings.Contains(page, `hx-post="/vouchers/GS-FAR/top-up"`) {
 		t.Fatal("a voucher voided on the main till must not offer the Top up form")
+	}
+}
+
+// Voiding on an additional till (ut-docs#5133). The main till holds a
+// voucher issue / top-up's value through the sales journal and never learns
+// of a local void, and the replica cannot tell whether the sale reached it,
+// so the void of any voucher-issuing/topping-up sale is refused (409) with
+// nothing written.
+
+func voidSaleReq(t *testing.T, mux *http.ServeMux, saleID string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/sale/status?lang=en",
+		strings.NewReader(fmt.Sprintf(`{"saleId":%q,"status":"voided"}`, saleID)))
+	req.Header.Set("Content-Type", "application/json")
+	req = auth.WithUser(req, vManager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func saleStatus(t *testing.T, dp *common.Deps, saleID string) string {
+	t.Helper()
+	var st string
+	if err := dp.Db.QueryRow(`SELECT status FROM sales WHERE id = ?`, saleID).Scan(&st); err != nil {
+		t.Fatalf("sale %s: %v", saleID, err)
+	}
+	return st
+}
+
+func TestVoidSale_ReplicaRefusesTopUpSale(t *testing.T) {
+	mux, dp, primaryDp, primaryRepo := newReplicaTopUpDeps(t)
+	seedPrimaryVoucher(t, primaryRepo, "GS-V1", "", 2000)
+	if rec := vTopUp(t, mux, "GS-V1", "25", &vManager, true); rec.Code != http.StatusOK {
+		t.Fatalf("top-up: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := cashTender(mux); rec.Code != http.StatusOK {
+		t.Fatalf("tender: %d %s", rec.Code, rec.Body.String())
+	}
+	var saleID string
+	if err := dp.Db.QueryRow(`SELECT sale_id FROM voucher_transactions WHERE type = 'top_up'`).Scan(&saleID); err != nil {
+		t.Fatalf("top-up sale: %v", err)
+	}
+	mirrorBefore := vBalance(t, data.NewPOSRepo(dp.Db), "GS-V1").BalanceMinor
+
+	rec := voidSaleReq(t, mux, saleID)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("void = %d (%s), want 409", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(html.UnescapeString(rec.Body.String()), httpx.T("en", "pos.error.void_voucher_additional_till")) {
+		t.Fatalf("body %q lacks the pos.error.void_voucher_additional_till text", rec.Body.String())
+	}
+	if st := saleStatus(t, dp, saleID); st != "completed" {
+		t.Fatalf("refused void left the sale %q", st)
+	}
+	if got := vBalance(t, data.NewPOSRepo(dp.Db), "GS-V1").BalanceMinor; got != mirrorBefore {
+		t.Fatalf("mirror balance %d -> %d", mirrorBefore, got)
+	}
+	if n := countRows(t, dp, `SELECT COUNT(*) FROM voucher_transactions WHERE id LIKE 'topup-void:%'`); n != 0 {
+		t.Fatalf("%d topup-void row(s) written", n)
+	}
+	if got := vBalance(t, primaryRepo, "GS-V1").BalanceMinor; got != 2000 {
+		t.Fatalf("main till balance moved to %d", got)
+	}
+	_ = primaryDp
+}
+
+func TestVoidSale_ReplicaRefusesIssueSale(t *testing.T) {
+	mux, dp, _, _ := newReplicaTopUpDeps(t)
+	topUpSeedVoucher(t, dp, "GS-V2", 1500) // issues the voucher in a replica sale
+	var saleID string
+	if err := dp.Db.QueryRow(`SELECT sale_id FROM voucher_transactions WHERE type = 'issue'`).Scan(&saleID); err != nil {
+		t.Fatalf("issue sale: %v", err)
+	}
+	rec := voidSaleReq(t, mux, saleID)
+	if rec.Code != http.StatusConflict || !strings.Contains(html.UnescapeString(rec.Body.String()), httpx.T("en", "pos.error.void_voucher_additional_till")) {
+		t.Fatalf("void = %d (%s), want 409 with the new copy", rec.Code, rec.Body.String())
+	}
+	if st := saleStatus(t, dp, saleID); st != "completed" {
+		t.Fatalf("refused void left the sale %q", st)
+	}
+	if v := vBalance(t, data.NewPOSRepo(dp.Db), "GS-V2"); v.Status != "active" || v.BalanceMinor != 1500 {
+		t.Fatalf("voucher after refused void = %+v, want active/1500", v)
+	}
+}
+
+// Control: a sale with no voucher on it voids on a replica as before.
+func TestVoidSale_ReplicaVoidsPlainSale(t *testing.T) {
+	mux, dp, _, _ := newReplicaTopUpDeps(t)
+	saleID, err := pos.CompleteSale(context.Background(), dp.Db, pos.SaleInput{
+		SaleType: "sale", Currency: "GBP", TaxInclusive: true, AllowNegativeInventory: true,
+		Lines:    []pos.SaleLineInput{{ItemID: "itm1", Name: "Plain Item", Qty: 1, UnitPrice: money.FromMinor(500), TaxRateBasisPoints: 2000, LocationID: "loc_main"}},
+		Payments: []pos.PaymentInput{{MethodID: "cash", Amount: money.FromMinor(500)}},
+	})
+	if err != nil {
+		t.Fatalf("plain sale: %v", err)
+	}
+	if rec := voidSaleReq(t, mux, saleID); rec.Code != http.StatusNoContent {
+		t.Fatalf("plain void = %d (%s), want 204", rec.Code, rec.Body.String())
+	}
+	if st := saleStatus(t, dp, saleID); st != "voided" {
+		t.Fatalf("status %q, want voided", st)
 	}
 }

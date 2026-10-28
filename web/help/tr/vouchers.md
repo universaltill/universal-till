@@ -125,7 +125,8 @@ Neler ters gidebilir:
 - Bakiye yükleme için katalogda etkin bir hediye çeki ürünü gerekir — yoksa sayfa bunu söyler.
 - Yüklenen tutarın bir kısmı harcandıktan sonra satışı iptal etmek reddedilir.
 - Ek bir kasada, bakiye yüklemesini eklerken ana kasaya ulaşılabilir (ve güncel) olmalıdır; değilse sayfa bunu söyler ve satışa hiçbir şey eklenmez.
+- Ek bir kasada, hediye çeki satan veya hediye çekine bakiye yükleyen bir satış iptal edilemez: kasa bunu söyler, hiçbir şey değişmez ve hediye çeki değerini korur.
 
 ## Gün sonu raporları ve diğer kasalar
 
-Gün sonu (Z) raporunun, o gün satılan, harcanan ve düzeltilen hediye çekleri için kendi **GUTSCHEINE** bölümü vardır; hediye çeki satan bir satışı iptal etmek hediye çekini de (yalnızca kullanılmamışken) iptal eder — bkz. [Raporlar ve gün sonu](/help/reports). Bir kasada satılan hediye çeki dükkândaki başka herhangi bir kasada harcanabilir; bir kasa çevrimdışıyken bunun nasıl işlediği [Birden çok kasa (tek dükkân)](/help/multitill) sayfasında anlatılır.
+Gün sonu (Z) raporunun, o gün satılan, harcanan ve düzeltilen hediye çekleri için kendi **GUTSCHEINE** bölümü vardır; hediye çeki satan bir satışı iptal etmek hediye çekini de (yalnızca kullanılmamışken ve bu iptali reddeden ek kasada değil) iptal eder — bkz. [Raporlar ve gün sonu](/help/reports). Bir kasada satılan hediye çeki dükkândaki başka herhangi bir kasada harcanabilir; bir kasa çevrimdışıyken bunun nasıl işlediği [Birden çok kasa (tek dükkân)](/help/multitill) sayfasında anlatılır.

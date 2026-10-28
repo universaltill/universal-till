@@ -645,6 +645,20 @@ WHERE id = ? AND status IN ('active', 'redeemed') AND purpose = 'multi_purpose'`
 	return nil
 }
 
+// SaleHasVoucherIssueOrTopUp reports whether the sale issued a voucher or
+// topped one up (a 'issue' or 'top_up' ledger row carries its sale_id). An
+// additional till uses it to refuse voiding such a sale: the main till holds
+// the value through the sales journal and never learns of a local void
+// (ut-docs#5133).
+func (r *POSRepo) SaleHasVoucherIssueOrTopUp(ctx context.Context, tx *sql.Tx, saleID string) (bool, error) {
+	var has bool
+	if err := r.exec(tx).QueryRowContext(ctx, `
+SELECT EXISTS(SELECT 1 FROM voucher_transactions WHERE sale_id = ? AND type IN ('issue','top_up'))`, saleID).Scan(&has); err != nil {
+		return false, fmt.Errorf("sale voucher issue/top-up check: %w", err)
+	}
+	return has, nil
+}
+
 // VoidVouchersIssuedInSale voids every voucher whose 'issue' transaction
 // belongs to saleID, inside the caller's transaction — the voucher side of
 // voiding the sale that sold them (ut-docs#1008 review, blocker F2). For each

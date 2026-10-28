@@ -2757,7 +2757,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				actorID, blockedActorID = elev.ApproverID, elev.ActorID
 			}
 		}
-		if err := pos.UpdateSaleStatus(r.Context(), d.Db, in.SaleID, in.Status, actorID, blockedActorID, in.Reason); err != nil {
+		if err := pos.UpdateSaleStatus(r.Context(), d.Db, in.SaleID, in.Status, actorID, blockedActorID, in.Reason, d.SyncPrimaryURL(r.Context()) != ""); err != nil {
 			// ut-docs#944: raw Go error text (a wrapped SQL/engine error, or
 			// ErrSaleNotFound's own "sale not found: <id>") used to reach the
 			// operator verbatim regardless of locale. Not-found gets its own
@@ -2773,6 +2773,12 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			// needs to know WHY this specific void cannot happen.
 			if errors.Is(err, data.ErrVoucherRedeemedCannotVoid) {
 				common.LogAndLocalizedError(w, r, http.StatusConflict, "pos.error.void_voucher_redeemed", "pos-api", err)
+				return
+			}
+			// An additional till never voids a sale that sold or topped up a
+			// gift voucher: the main till keeps the value (ut-docs#5133).
+			if errors.Is(err, pos.ErrVoidVoucherSaleOnAdditionalTill) {
+				common.LogAndLocalizedError(w, r, http.StatusConflict, "pos.error.void_voucher_additional_till", "pos-api", err)
 				return
 			}
 			if errors.Is(err, pos.ErrSaleStatusTransition) {

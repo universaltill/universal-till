@@ -88,7 +88,7 @@ func TestUpdateSaleStatus_TransitionRules(t *testing.T) {
 			defer db.Close()
 			id := seedStatusSale(t, db, tc.from)
 
-			err := UpdateSaleStatus(ctx, db, id, tc.to, "actor1", "", "test")
+			err := UpdateSaleStatus(ctx, db, id, tc.to, "actor1", "", "test", false)
 			got := saleStatusOf(t, db, id)
 			if tc.allowed {
 				if err != nil {
@@ -121,7 +121,7 @@ func TestUpdateSaleStatus_ElevatedRecordsBlockedActor(t *testing.T) {
 	defer db.Close()
 	id := seedStatusSale(t, db, "completed")
 
-	if err := UpdateSaleStatus(ctx, db, id, "voided", "mgr1", "cashier1", "wrong item"); err != nil {
+	if err := UpdateSaleStatus(ctx, db, id, "voided", "mgr1", "cashier1", "wrong item", false); err != nil {
 		t.Fatalf("elevated void: %v", err)
 	}
 	var actor, blocked string
