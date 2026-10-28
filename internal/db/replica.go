@@ -240,7 +240,10 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 	// snapshot's copy here. install.* stays: it is this machine's
 	// provisioning marker, and clearing it would re-run provisioning over
 	// the owner's window mode. Prefix match via substr, as above.
-	for _, p := range []string{"diagnostics.", "cloudsync."} {
+	// restore.* (ut-docs#5068) is the main till's backup-restore number
+	// floors, jump token and report marker: copied here they would make this
+	// till's first Z claim a restore and jump its Z numbers.
+	for _, p := range []string{"diagnostics.", "cloudsync.", "restore."} {
 		if _, err := sqlDB.Exec(`DELETE FROM settings WHERE substr(key, 1, length(?)) = ?`, p, p); err != nil {
 			return false, fmt.Errorf("clear inherited %s* settings: %w", p, err)
 		}

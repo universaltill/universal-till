@@ -111,6 +111,11 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 		// secure_delete(1) guarantee applies: the token's bytes are zeroed.
 		execErr = DeleteTillCloudIdentity(cdb)
 	}
+	if execErr == nil {
+		// ut-docs#5068: the main till's restore number floors, jump token and
+		// marker are its own sequences' state, not the replica's.
+		execErr = deleteSettingsPrefixes(cdb, []string{"restore."})
+	}
 	if closeErr := cdb.Close(); execErr == nil {
 		execErr = closeErr
 	}

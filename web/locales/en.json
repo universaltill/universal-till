@@ -2282,6 +2282,8 @@
   "reports.zpaper.cash.calculated": "Calculated",
   "reports.zpaper.cash.new_float": "New float",
   "reports.zpaper.receipts_range": "Receipts %s - %s",
+  "reports.zpaper.restored_receipts": "Restored from a backup: receipts continue at %s (last in the backup: %s)",
+  "reports.zpaper.restored_z": "Z numbers continue at %d (last in the backup: %d)",
   "scan.camera.button": "Scan with camera",
   "scan.camera.camera_busy": "Camera is in use by another app. Close the other app and try again.",
   "scan.camera.camera_error": "Camera unavailable",

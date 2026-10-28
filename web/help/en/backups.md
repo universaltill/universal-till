@@ -28,6 +28,8 @@ instead.
 
 A restore keeps this till's own connection to your shop's cloud account, also when the backup was made on another till. If the file turns out not to be a backup this till can use, it keeps your current data, and Settings → Backups says the restore was not applied.
 
+After a restore, receipt numbers and Z numbers jump ahead, so a number the till issued after the backup was made is never used twice. The first day-close report afterwards says that the till was restored from a backup and which numbers it continues from.
+
 ## Restoring from a file
 
 Use this on a new till, or on one that replaces a broken till, with a backup file you copied off the old till (a USB stick, another computer, the Downloads folder).

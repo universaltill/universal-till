@@ -648,6 +648,17 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 			line("reports.zpaper.cash.new_float", signed(rc.NewFloat)),
 		)
 	}
+	// First Z after a backup restore (ut-docs#5068): say why the numbers
+	// jump, so the gap in the paper trail is explained on paper.
+	if rb := rep.RestoredFromBackup; rb != nil {
+		lastReceipt := rb.LastReceipt
+		if lastReceipt == "" {
+			lastReceipt = "-"
+		}
+		doc.Footer = append(doc.Footer, "",
+			fmt.Sprintf(T("reports.zpaper.restored_receipts"), rb.NextReceipt, lastReceipt),
+			fmt.Sprintf(T("reports.zpaper.restored_z"), rb.NextZ, rb.LastZ))
+	}
 	if rep.FirstReceipt != "" {
 		doc.Footer = append(doc.Footer, "", fmt.Sprintf(T("reports.zpaper.receipts_range"), rep.FirstReceipt, rep.LastReceipt))
 	}
@@ -773,6 +784,14 @@ func generateEOD(ctx context.Context, d *common.Deps, actor, blockedActorID, ann
 	// prefix). This is now report_archive's own unique key for this row,
 	// replacing the old "day" string as the audit entry's entity_id too.
 	period := rep.To
+	// A restore jump not yet reported rides on this Z (ut-docs#5068). A read
+	// failure is logged and the Z still closes: the jump itself is already
+	// in force, only its explanatory note is lost.
+	if m, merr := repo.PendingRestoreMarker(ctx); merr != nil {
+		logging.L().Errorf("eod: read restore marker: %v", merr)
+	} else {
+		rep.RestoredFromBackup = m
+	}
 	raw, err := json.Marshal(rep)
 	if err != nil {
 		return rep, false, err
@@ -788,6 +807,11 @@ func generateEOD(ctx context.Context, d *common.Deps, actor, blockedActorID, ann
 	created, err := repo.ArchiveReport(ctx, "eod", period, raw, rep.FirstReceipt, rep.LastReceipt, to)
 	if err != nil || !created {
 		return rep, created, err
+	}
+	if rep.RestoredFromBackup != nil {
+		if cerr := repo.ClearRestoreMarker(ctx); cerr != nil {
+			logging.L().Errorf("eod: clear restore marker: %v", cerr)
+		}
 	}
 	payload := map[string]any{"net": rep.Net, "sales": rep.SalesCount}
 	now := time.Now().UTC().Format(time.RFC3339)

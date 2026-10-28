@@ -27,6 +27,8 @@ yerine pencereyi kapatıp Universal Till'i yeniden açın.
 
 Geri yükleme, yedek başka bir kasada alınmış olsa bile bu kasanın mağazanızın bulut hesabıyla kendi bağlantısını korur. Dosya bu kasanın kullanabileceği bir yedek değilse, kasa mevcut verilerinizi korur ve Ayarlar → Yedekler geri yüklemenin uygulanmadığını söyler.
 
+Geri yüklemeden sonra fiş numaraları ve Z numaraları ileri atlar; böylece kasanın yedekten sonra verdiği bir numara ikinci kez kullanılmaz. Ardından alınan ilk gün sonu raporu, kasanın bir yedekten geri yüklendiğini ve numaraların hangi numaradan devam ettiğini belirtir.
+
 ## Bir dosyadan geri yükleme
 
 Bunu yeni bir kasada ya da bozulan bir kasanın yerine konan kasada, eski kasadan kopyaladığınız bir yedek dosyasıyla kullanın (bir USB bellek, başka bir bilgisayar, İndirilenler klasörü).
