@@ -342,11 +342,11 @@ func TestSalesMirrorCopy_NeverCountsOnThisTill(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		queue, err := repo.LocalSalesSince(ctx, "", 1000)
+		queue, err := repo.LocalSalesSince(ctx, "", "", 1000)
 		if err != nil {
 			t.Fatal(err)
 		}
-		queued, err := repo.CountLocalSalesSince(ctx, "")
+		queued, err := repo.CountLocalSalesSince(ctx, "", "")
 		if err != nil {
 			t.Fatal(err)
 		}
