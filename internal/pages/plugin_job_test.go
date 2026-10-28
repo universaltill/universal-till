@@ -404,6 +404,30 @@ func TestPluginJob_FailedAndTimedOut_3908(t *testing.T) {
 	})
 }
 
+// A job that ends at its deadline returns before its plugin ask does; the
+// ask still writes audit rows to the test DB. drainPluginJobs must wait
+// for the ask too, or a harness cleanup removes the DB's folder under it
+// ("TempDir RemoveAll cleanup: directory not empty", ut-docs#5117).
+func TestPluginJob_DrainWaitsForTheAsk_5117(t *testing.T) {
+	h := newJobHarness(t)
+	pluginJobDeadline = func(context.Context, *common.Deps, string) time.Duration { return 50 * time.Millisecond }
+	release := make(chan struct{})
+	var askReturned atomic.Bool
+	// Ignores its context on purpose, like the deadline case above.
+	h.onJob(func(context.Context, plugins.Event) (json.RawMessage, error) {
+		<-release
+		askReturned.Store(true)
+		return nil, nil
+	})
+	id, _ := h.startJob(true)
+	assertUnavailable(t, h.pollUntil(id), http.StatusOK)
+	time.AfterFunc(100*time.Millisecond, func() { close(release) })
+	drainPluginJobs(t, pluginJobs)
+	if !askReturned.Load() {
+		t.Fatal("drainPluginJobs returned while the timed-out job's plugin ask was still running")
+	}
+}
+
 func TestPluginJob_UnpolledCancelled_3908(t *testing.T) {
 	h := newJobHarness(t)
 	pluginJobUnpolledTTL = 150 * time.Millisecond
