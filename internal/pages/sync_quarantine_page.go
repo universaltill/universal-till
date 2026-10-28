@@ -32,11 +32,13 @@ const syncQuarantinePageSize = 200
 var quarantineReasonKeys = map[string]string{
 	"unknown voucher on redemption replay": "sync.quarantine_reason.unknown_voucher_redemption",
 	// ut-docs#4416: the same gap on a top-up replay shares the key (its text
-	// covers both). "single-purpose voucher on top-up replay" is only reachable
-	// from a malformed peer and shows the raw-English fallback until its own
-	// key lands (ut-docs#5134).
-	"unknown voucher on top-up replay":     "sync.quarantine_reason.unknown_voucher_redemption",
-	"voucher id collision on issue replay": "sync.quarantine_reason.voucher_id_collision_issue",
+	// covers both).
+	"unknown voucher on top-up replay": "sync.quarantine_reason.unknown_voucher_redemption",
+	// ut-docs#5134: only a malformed peer can produce this one (a >=1.13.0
+	// replica refuses single-purpose top-ups and a voucher's purpose never
+	// changes).
+	"single-purpose voucher on top-up replay": "sync.quarantine_reason.single_purpose_voucher_top_up",
+	"voucher id collision on issue replay":    "sync.quarantine_reason.voucher_id_collision_issue",
 	// ut-docs#1686's generic FK-violation branch (sync_sales.go's
 	// foreignKeyViolationReason): three more reasons the same
 	// permanentJournalFailureReason allowlist can now return, so they need

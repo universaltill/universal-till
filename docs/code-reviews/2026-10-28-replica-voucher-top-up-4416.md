@@ -11,7 +11,7 @@
 - **Forced credit.** New `pos.SaleInput.ForceVoucherTopUps` → `data.TopUpVoucher(..., force)` skips the void and ceiling checks. An unknown or single-purpose voucher still refuses, and a void voucher stays void.
   - It is set on journal replay (`applyJournal`: the remote sale already happened) and on an additional till's own tender (the main till checked at line-add; the local mirror may be stale).
   - `ForceVoucherTopUps` is not a wire field, and a body `issue_vouchers[].top_up` is still refused (the #4252 M1 fix).
-- **Replay.** A forced credit onto a void or over-ceiling voucher raises a Problem (`warnIfTopUpVoucherUnsound`). Two cases are quarantined instead of 422-ing the batch: "unknown voucher on top-up replay" (mapped to the reworded existing `sync.quarantine_reason.unknown_voucher_redemption`) and "single-purpose voucher on top-up replay" (raw-English fallback, ut-docs#5134).
+- **Replay.** A forced credit onto a void or over-ceiling voucher raises a Problem (`warnIfTopUpVoucherUnsound`). Two cases are quarantined instead of 422-ing the batch: "unknown voucher on top-up replay" (mapped to the reworded existing `sync.quarantine_reason.unknown_voucher_redemption`) and "single-purpose voucher on top-up replay" (raw-English fallback at the time; its own key since ut-docs#5134).
 - **Receipt balance on a mirror.** `VoucherTopUpsInSale.balance_after` keeps the ledger sum wherever the voucher's `issue` row is on this till, so the main till is unchanged. A mirror has no issue row, so it reads backwards from the current balance minus later rows.
 - **Voucher page on an additional till.**
   - The Top up form shows (the main-till-only note is gone), and `possible`/`void` are judged on the main till's row.

@@ -3038,6 +3038,7 @@
   "sync.quarantine_none": "Karantinada öğe yok — her kasadan her satış sorunsuz uygulandı.",
   "sync.quarantine_open": "Karantinadaki öğeleri görüntüle",
   "sync.quarantine_reason.duplicate_voucher_redemption": "Tekrarda aynı kupon bir satışta iki kez kullanıldı",
+  "sync.quarantine_reason.single_purpose_voucher_top_up": "Tekrarda belirli bir ürün için olan kupona bakiye yükleme reddedildi",
   "sync.quarantine_reason.unknown_line_reference": "Tekrar oynatmada satış satırında bilinmeyen ürün veya varyant",
   "sync.quarantine_reason.unknown_sale_reference": "Tekrar oynatmada bilinmeyen kasiyer, müşteri, kasa veya masa",
   "sync.quarantine_reason.unknown_voucher_redemption": "Tekrarda bilinmeyen kupon (kullanım veya bakiye yükleme)",
