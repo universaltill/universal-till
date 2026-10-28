@@ -359,10 +359,12 @@ func setupTaxPluginInstallHandler(d *common.Deps, svc *auth.Service) http.Handle
 		// to register the shop with the cloud before it has a real name —
 		// on a first boot store.name is still blank (075 clears 001's seed)
 		// until POST /api/setup saves the owner's name, and registration
-		// waits for that. installBasePluginsForSetup attempts every pending
+		// waits for that. Likewise while a my. pairing is held (ut-docs#5127):
+		// registration is on hold until the pairing is saved.
+		// installBasePluginsForSetup attempts every pending
 		// spec right after the name is saved, so the plugin still installs
 		// at the end of the wizard when the till is online.
-		if match.Offline || enroll.AwaitingShopName(r.Context(), d.Cfg, d.Settings) {
+		if match.Offline || enroll.RegistrationHeld() || enroll.AwaitingShopName(r.Context(), d.Cfg, d.Settings) {
 			if err := addPendingBasePlugins(r.Context(), d, []basePluginSpec{spec}); err != nil {
 				logging.L().Errorf("setup wizard: persist queued tax plugin install: %v", err)
 			}

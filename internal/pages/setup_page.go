@@ -809,6 +809,12 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			map[string]string{"via": "wizard", "country": st.Country, "currency": st.Currency}, now, "")
 		setSessionCookie(w, token, int(auth.SessionTTL.Seconds()))
 
+		if cloudHeld == nil {
+			// A stale hold (a pairing the owner abandoned for a standalone
+			// setup) must not suppress this till's own registration.
+			cloud.drop()
+		}
+
 		// Country base-plugin auto-install (ut-docs#591): best-effort —
 		// persists the pending list before any network attempt, then makes
 		// one short-timeout synchronous attempt; either way this never
@@ -858,6 +864,14 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				termsTicked(r), httpx.RequestLocale(r))
 		}
 		cloud.finish()
+		if cloudSyncing {
+			// ut-docs#5127: registration was held until the pairing was
+			// saved; a plugin left pending meanwhile retries now, under the
+			// paired identity, instead of waiting out the 5-minute tick.
+			// Not when saving failed: the retry would then register a
+			// till-born store that the owner's re-pair would orphan.
+			nudgeBasePluginRetry()
+		}
 
 		// German TSE provisioning kickoff (ADR-0053, ut-docs#802): same
 		// best-effort posture as the base-plugin install above — the pending

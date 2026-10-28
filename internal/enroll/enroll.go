@@ -54,6 +54,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -426,6 +427,7 @@ func RegisterNow(ctx context.Context, cfg *config.Config, kv Settings) (Status, 
 // callers can wait out shutdown instead of returning while it still runs.
 func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGroup) {
 	log := logging.L()
+	ReleaseRegistration() // a hold never outlives the process state it guarded
 	// Locals here; the mu-guarded globals are set under the lock below
 	// (ut-docs#3021).
 	storeIDExplicitLocal := os.Getenv("UT_MARKETPLACE_STORE_ID") != ""
@@ -577,6 +579,36 @@ func EnsureSigningKey(ctx context.Context, cfg *config.Config, kv Settings) conf
 	return Effective(cfg)
 }
 
+// registrationHoldMax bounds HoldRegistration: it must outlive the wizard's
+// own 30-minute pairing hold (pages.cloudPairHold) but can never strand a
+// till if nothing releases it (the wizard expires its held pairing lazily,
+// only when someone calls it again).
+const registrationHoldMax = 35 * time.Minute
+
+// registrationHeldUntil is the unix-nano deadline of the hold; 0 = none.
+var registrationHeldUntil atomic.Int64
+
+// HoldRegistration makes EnsureRegistered a no-op (it returns the effective
+// config without registering) until ReleaseRegistration, or at most
+// registrationHoldMax. The first-boot wizard takes it while a cloud pairing
+// is held in memory, so a plugin install queued before the pairing is saved
+// cannot register a till-born store that Commit would then orphan
+// (ut-docs#5127). Idempotent (a repeat refreshes the deadline); one Release
+// ends it. An explicit RegisterNow is deliberately not affected (it is only
+// reachable after setup); do not move the check into it.
+func HoldRegistration() {
+	registrationHeldUntil.Store(time.Now().Add(registrationHoldMax).UnixNano())
+}
+
+// ReleaseRegistration ends HoldRegistration.
+func ReleaseRegistration() { registrationHeldUntil.Store(0) }
+
+// RegistrationHeld reports whether HoldRegistration is in force.
+func RegistrationHeld() bool {
+	until := registrationHeldUntil.Load()
+	return until != 0 && time.Now().UnixNano() < until
+}
+
 // EnsureRegistered returns the effective config, first enrolling the till
 // when it isn't registered yet: store registration is lazy, and a plugin
 // download/install is the first interaction that actually needs a store
@@ -584,6 +616,13 @@ func EnsureSigningKey(ctx context.Context, cfg *config.Config, kv Settings) conf
 // config is returned regardless and the caller's marketplace call surfaces
 // its own error; the next attempt retries.
 func EnsureRegistered(ctx context.Context, cfg *config.Config, kv Settings) config.Config {
+	if RegistrationHeld() {
+		// A cloud pairing is held (my.-first wizard, ADR-0166): the till is
+		// about to adopt that shop's identity, so creating a till-born store
+		// now would leave it behind as an orphan (ut-docs#5127). Callers
+		// retry after the pairing is saved.
+		return Effective(cfg)
+	}
 	if s := CurrentStatus(); !s.Registered {
 		if _, err := RegisterNow(ctx, cfg, kv); err != nil {
 			if errors.Is(err, ErrStoreUnnamed) {
