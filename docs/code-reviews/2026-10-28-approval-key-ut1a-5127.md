@@ -68,8 +68,8 @@ at most once per identity (device + store) per process, in the background,
 never blocking. A failure (offline, 5xx) retries slowly (15 min, 1 h, 6 h) then
 waits for the next start. 404 (older cloud), 403 (legacy token) and 429 are
 logged at debug and ignored; 409 is logged once and remembered
-(`enroll.ApprovalKeyConflict`) for the future Settings > Cloud text (no UI
-built here). The dead `approval_key` field is gone from the /sync report;
+in memory (`approvalConflict`); the exported `ApprovalKeyConflict` accessor ships with its first caller, the Settings > Cloud text in UT-1b, because the
+deadcode baseline guard forbids an unreachable exported func (no UI built here). The dead `approval_key` field is gone from the /sync report;
 `approval_kid` stays on every sync (H2). `Store.KeyID` supplies the kid.
 
 Tests: cloud's `pop_vector.json` copied byte-for-byte into

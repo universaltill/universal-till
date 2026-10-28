@@ -52,18 +52,6 @@ var approvalReport struct {
 // approvalConflict: the cloud answered 409, a different key is pinned.
 var approvalConflict atomic.Bool
 
-// ApprovalKeyConflict reports whether the cloud said a different approval key
-// is already pinned for this till (moves then need a support reset). In
-// memory only; it is for the future Settings > Cloud text.
-func ApprovalKeyConflict() bool { return approvalConflict.Load() }
-
-func resetApprovalReport() {
-	approvalReport.Lock()
-	approvalReport.done, approvalReport.inflight = nil, nil
-	approvalReport.Unlock()
-	approvalConflict.Store(false)
-}
-
 // approvalIdentity resolves the device, store and bearer to report with.
 func approvalIdentity(m config.MarketplaceConfig) (deviceID, storeID, token string) {
 	eff := Effective(&config.Config{Marketplace: m}).Marketplace
