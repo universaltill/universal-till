@@ -208,6 +208,17 @@ func (s *Store) Report(deviceID, storeExternalID string) map[string]string {
 	}
 }
 
+// KeyID is this till's key id, creating the key on first use: the value the
+// /sync device report carries as approval_kid on every check-in. ("", false)
+// when the key cannot be loaded or created (already logged).
+func (s *Store) KeyID() (string, bool) {
+	k, err := s.LoadOrCreate()
+	if err != nil {
+		return "", false
+	}
+	return KID(k.Public().(ed25519.PublicKey)), true
+}
+
 // Approval is one move decision. Every field comes from the cloud's pending
 // record (pending_moves on /sync); the till never invents one.
 type Approval struct {

@@ -493,6 +493,9 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	// Startup fill: explicit (env) values win, the persisted identity fills
 	// the gaps. Safe to mutate cfg here — the server hasn't started yet.
 	m := &cfg.Marketplace
+	// ut-docs#5127: once per start, in the background, offline-safe. Runs
+	// after the startup fill below on the same config copy.
+	defer func() { kickApprovalKeyReport(ctx, *m, wg) }()
 	if m.DeviceID == "" {
 		m.DeviceID = id.DeviceID
 	}
@@ -887,6 +890,9 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 	displayStoreID = d.StoreID
 	mu.Unlock()
 	log.Infof("enrolment: till registered with marketplace as %s (device %s)", d.StoreID, deviceID)
+	// ut-docs#5127: pin the approval key if the register body's copy was not
+	// taken (an older cloud ignores it). Background, never blocks.
+	kickApprovalKeyReport(context.WithoutCancel(ctx), m, nil)
 	return nil
 }
 
@@ -1060,6 +1066,7 @@ func registerDevice(ctx context.Context, m config.MarketplaceConfig, deviceName 
 	if err := kv.Set(ctx, keyDeviceRegistered, deviceID); err != nil {
 		logging.L().Warnf("enrolment: persist device_registered: %v", err)
 	}
+	kickApprovalKeyReport(context.WithoutCancel(ctx), m, nil) // ut-docs#5127
 	return nil
 }
 

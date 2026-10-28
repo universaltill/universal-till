@@ -136,6 +136,7 @@ func Pair(ctx context.Context, cfg *config.Config, kv Settings, code string) (St
 	adoptPaired(ctx, kv, replica, newID, storeID, merchantID, token)
 	logging.ResolveProblems(ProblemKeyPairFailed)
 	log.Infof("enrolment: this till is now paired with store %s as device %s (ADR-0116 D5)", storeID, newID)
+	kickApprovalKeyReport(context.WithoutCancel(ctx), m, nil) // ut-docs#5127
 	return CurrentStatus(), nil
 }
 

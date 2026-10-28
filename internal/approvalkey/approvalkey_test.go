@@ -287,3 +287,46 @@ func TestLooseModesAreTightened(t *testing.T) {
 		t.Fatalf("file mode %v, want 0600", fi.Mode().Perm())
 	}
 }
+
+// The ut-cloud CL-2a vector (testdata/pop_vector.json, a byte-for-byte copy of
+// ut-cloud internal/approvalkey/testdata/pop_vector.json): the key-report
+// endpoint verifies a PoP whose store line is the store's external id, so the
+// till must produce exactly these bytes (ut-docs#5127, M-1).
+func TestCloudPopVector(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "pop_vector.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v struct {
+		DeviceID, KID, Pop, PopMessage, PublicKey, SeedHex, StoreExternalID string
+	}
+	var m map[string]string
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	v.DeviceID, v.KID, v.Pop, v.PopMessage = m["device_id"], m["kid"], m["pop"], m["pop_message"]
+	v.PublicKey, v.SeedHex, v.StoreExternalID = m["public_key"], m["seed_hex"], m["store_external_id"]
+	if v.StoreExternalID == "" {
+		t.Fatal("vector has no store line: the report endpoint's PoP must name the store")
+	}
+	s := storeWithSeed(t, v.SeedHex)
+	rep := s.Report(v.DeviceID, v.StoreExternalID)
+	if rep == nil || rep["kid"] != v.KID || rep["public_key"] != v.PublicKey {
+		t.Fatalf("report = %v, want kid %s key %s", rep, v.KID, v.PublicKey)
+	}
+	if got := string(PopMessage(v.DeviceID, v.StoreExternalID, v.PublicKey)); got != v.PopMessage {
+		t.Fatalf("pop message bytes differ:\n%q\n%q", got, v.PopMessage)
+	}
+	if rep["pop"] != v.Pop {
+		t.Fatalf("pop = %s, want %s", rep["pop"], v.Pop)
+	}
+}
+
+func TestKeyIDMatchesReportedKID(t *testing.T) {
+	v := loadVector(t)
+	s := storeWithSeed(t, v.SeedHex)
+	kid, ok := s.KeyID()
+	if !ok || kid != v.KID {
+		t.Fatalf("KeyID = %q, %v; want %s", kid, ok, v.KID)
+	}
+}

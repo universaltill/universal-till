@@ -2,7 +2,6 @@ package pages
 
 import (
 	"crypto/ed25519"
-	"encoding/base64"
 	"os"
 	"testing"
 
@@ -11,25 +10,26 @@ import (
 	"github.com/universaltill/universal-till/internal/paths"
 )
 
-// ut-docs#5127 (design §2 H2): every /sync device report carries the till's
-// approval key and its kid, so the cloud's quarantine rule sees it each time
-// — from a main till and from an additional till alike (any till can move).
+// ut-docs#5127 (design §2 H2, review M-1): every /sync device report carries
+// the till's approval_kid so the cloud's quarantine rule sees it each time —
+// from a main till and from an additional till alike (any till can move). The
+// key itself is NOT in the sync report: the cloud ignores it there, and the
+// till reports it by POST /v1/stores/devices/approval-key (internal/enroll).
 func checkApprovalReport(t *testing.T, storeID string, extra map[string]any) {
 	t.Helper()
-	rep, ok := extra["approval_key"].(map[string]string)
-	if !ok {
-		t.Fatalf("approval_key = %#v, want the {kid, public_key, pop} map", extra["approval_key"])
+	if _, ok := extra["approval_key"]; ok {
+		t.Fatal("approval_key is in the sync report; the cloud drops it there")
 	}
-	if extra["approval_kid"] != rep["kid"] || rep["kid"] == "" {
-		t.Fatalf("approval_kid = %#v, kid = %q", extra["approval_kid"], rep["kid"])
+	kid, _ := extra["approval_kid"].(string)
+	if len(kid) != 16 {
+		t.Fatalf("approval_kid = %#v, want a 16-hex key id", extra["approval_kid"])
 	}
-	pub, err := base64.RawURLEncoding.DecodeString(rep["public_key"])
-	if err != nil || approvalkey.KID(pub) != rep["kid"] {
-		t.Fatalf("public key / kid mismatch (%v)", err)
+	k, err := approvalkey.Shared().LoadOrCreate()
+	if err != nil {
+		t.Fatal(err)
 	}
-	sig, _ := base64.RawURLEncoding.DecodeString(rep["pop"])
-	if !ed25519.Verify(pub, approvalkey.PopMessage(enroll.CurrentStatus().DeviceID, storeID, rep["public_key"]), sig) {
-		t.Fatal("proof of possession does not verify for this device and store")
+	if want := approvalkey.KID(k.Public().(ed25519.PublicKey)); kid != want {
+		t.Fatalf("approval_kid = %s, want this till's key id %s", kid, want)
 	}
 }
 

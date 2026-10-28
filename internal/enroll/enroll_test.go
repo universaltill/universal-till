@@ -90,6 +90,7 @@ func resetState() {
 	redeemPinWarned.Store(false)
 	unsavedToken.Store(false)
 	signingKeyHits.Store(0)
+	resetApprovalReport()
 }
 
 // signingKeyHits counts testMarketplace's signing-key requests, so a test

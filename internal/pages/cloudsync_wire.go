@@ -1550,22 +1550,17 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 			if c, ok := remoteCountryReport(ctx, d); ok {
 				extra["country"] = c
 			}
-			// ut-docs#5127 (design §2, fix H2): the till's approval key on
-			// EVERY check-in, from a main and an additional till alike (any
-			// till can move). The cloud cancels a freshly TOFU-pinned key
-			// whose device syncs without the same approval_kid, so a thief's
-			// early pin dies at the genuine till's next sync. Never blocks:
-			// no usable key just reports nothing.
-			// Same device id and store id the sync request itself names
-			// (cloudsync buildSyncRequest), so the PoP matches what the
-			// cloud has on record.
-			approvalStore := ""
-			if d.Cfg != nil {
-				approvalStore = enroll.Effective(d.Cfg).Marketplace.StoreID
-			}
-			if rep := approvalkey.Shared().Report(enroll.CurrentStatus().DeviceID, approvalStore); rep != nil {
-				extra["approval_key"] = rep
-				extra["approval_kid"] = rep["kid"]
+			// ut-docs#5127 (design §2, fix H2): the key id of the till's
+			// approval key on EVERY check-in, from a main and an additional
+			// till alike (any till can move). The cloud cancels a freshly
+			// pinned key whose device syncs without the same approval_kid,
+			// so a thief's early pin dies at the genuine till's next sync.
+			// Only the kid rides here: the cloud reads nothing else from
+			// /sync, and the key itself is reported by the till's own POST
+			// (enroll.kickApprovalKeyReport). Never blocks: no usable key
+			// just reports nothing.
+			if kid, ok := approvalkey.Shared().KeyID(); ok {
+				extra["approval_kid"] = kid
 			}
 			// The main till's directive key, on every check-in (contract
 			// §1): created here at the first one. A satellite never
