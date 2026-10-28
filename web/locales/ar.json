@@ -3038,6 +3038,7 @@
   "sync.quarantine_none": "لا توجد عناصر معزولة — طُبّقت كل عملية بيع من كل صندوق بنجاح.",
   "sync.quarantine_open": "عرض العناصر المعزولة",
   "sync.quarantine_reason.duplicate_voucher_redemption": "استرداد القسيمة نفسها مرتين في عملية بيع واحدة عند إعادة التشغيل",
+  "sync.quarantine_reason.single_purpose_voucher_top_up": "رُفضت تعبئة رصيد قسيمة لسلعة محددة عند إعادة التشغيل",
   "sync.quarantine_reason.unknown_line_reference": "منتج أو متغيّر غير معروف في سطر البيع عند إعادة التشغيل",
   "sync.quarantine_reason.unknown_sale_reference": "أمين صندوق أو عميل أو صندوق أو طاولة غير معروف عند إعادة التشغيل",
   "sync.quarantine_reason.unknown_voucher_redemption": "قسيمة غير معروفة عند إعادة التشغيل (استرداد أو تعبئة رصيد)",

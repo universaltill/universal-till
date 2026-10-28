@@ -3023,6 +3023,7 @@
   "sync.quarantine_none": "No quarantined entries — every sale from every till has applied cleanly.",
   "sync.quarantine_open": "View quarantined entries",
   "sync.quarantine_reason.duplicate_voucher_redemption": "Same voucher redeemed twice in one sale on replay",
+  "sync.quarantine_reason.single_purpose_voucher_top_up": "Top-up of a voucher for a specific item refused on replay",
   "sync.quarantine_reason.unknown_line_reference": "Unknown product or variant on a sale line on replay",
   "sync.quarantine_reason.unknown_sale_reference": "Unknown cashier, customer, register or table on replay",
   "sync.quarantine_reason.unknown_voucher_redemption": "Unknown voucher on replay (redemption or top-up)",

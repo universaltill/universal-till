@@ -186,6 +186,9 @@ func TestPermanentJournalFailureReason_AllReasonsHaveALocaleKey(t *testing.T) {
 		fmt.Errorf("record voucher transaction: %w", data.ErrVoucherRedemptionAlreadyRecorded),
 		// ut-docs#4416: an unknown voucher on a top-up replay.
 		fmt.Errorf("voucher \"GS-1\": %w: %w", data.ErrVoucherTopUpRefused, data.ErrVoucherNotFound),
+		// ut-docs#5134: a top-up of a single-purpose voucher (only a malformed
+		// peer can send one).
+		fmt.Errorf("voucher \"GS-1\": %w: %w", data.ErrVoucherTopUpRefused, data.ErrVoucherNotMultiPurpose),
 	}
 	for _, err := range cases {
 		reason := permanentJournalFailureReason(err)

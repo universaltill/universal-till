@@ -364,5 +364,6 @@
   "settings.backup.upload.error.too_old": {"description": "Error when the uploaded backup comes from a version before the database schema reset, which this build cannot open.", "review": "standard"},
   "settings.backup.upload.error.too_large": {"description": "Error when the uploaded file is over the size cap (a fixed maximum, or less when the disk is fuller).", "review": "standard", "placeholders": ["the largest file size allowed, for example 1.5 GB"]},
   "status.backup_copy.label": {"description": "Status-bar chip for managers: no backup was downloaded or saved off this till in the last 7 days. Links to Settings → Backups.", "review": "standard", "max_length": 60},
-  "status.backup_copy.hint": {"description": "Tooltip of the no-backup-copied chip: why and how to copy a backup off the till.", "review": "standard"}
+  "status.backup_copy.hint": {"description": "Tooltip of the no-backup-copied chip: why and how to copy a backup off the till.", "review": "standard"},
+  "sync.quarantine_reason.single_purpose_voucher_top_up": {"description": "Reason column on /sync-quarantine: a journaled top-up of a single-purpose voucher (VAT fixed at issue) from an additional till was refused, so the entry is quarantined.", "review": "standard"}
 }
