@@ -1,5 +1,6 @@
 {{/* ut-docs#3121: free space on this till's disk is below the low-disk
-     floor (500 MB or 10% of the disk, whichever is larger). Rendered by
+     floor (500 MB or 10% of the disk capped at 5 GiB, whichever is larger;
+     ut-docs#5099). Rendered by
      GET /ui/disk-space-chip (disk_space_chip.go) into the status bar's
      #sb-disk-space-mount on every page, only for a viewer who may open
      Settings (admin/manager). A status chip, never a modal: selling

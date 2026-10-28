@@ -1648,7 +1648,8 @@
            hx-preserve + default innerHTML swap as #sb-cloud-auth-mount. -->
       <span id="sb-report-archive-mount" hx-preserve hx-get="/ui/report-archive-chip" hx-trigger="load, every 60s"></span>
       <!-- ut-docs#3121: free space on this till's disk is below the
-           low-disk floor (500 MB or 10% of the disk) — "Storage almost full"
+           low-disk floor (500 MB or 10% of the disk, at most 5 GiB — ut-docs#5099)
+           — "Storage almost full"
            (web/ui/partials/disk_space_chip.html), for a viewer who may open
            Settings only. A status chip, never a modal: selling carries on,
            and housekeeping has already pruned to its minimums. Filled by

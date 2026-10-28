@@ -64,7 +64,7 @@ Einmal am Tag löscht die Kasse Dateien, die sie nicht mehr braucht, damit der S
 - Heruntergeladene Updates: nach 7 Tagen gelöscht.
 - Hochgeladene Dateien, die liegen geblieben sind, weil die Kasse mitten in einem Upload oder Import ausgeschaltet wurde oder abgestürzt ist: nach 24 Stunden gelöscht.
 
-Wird der Speicher fast voll — weniger als 500 MB frei oder weniger als ein Zehntel des Speichers, je nachdem, was größer ist —, räumt die Kasse sofort auf, statt bis zum nächsten Tag zu warten, und behält nur das Nötigste: die neuesten 3 Datensicherungen, die neueste beim Wiederherstellen beiseitegelegte Kopie sowie Problemberichte und heruntergeladene Updates vom letzten Tag. Führungskräfte sehen dann in der Statusleiste **Speicher fast voll**, bis wieder Platz ist. Der Verkauf läuft weiter; um mehr Platz zu schaffen, löschen Sie nicht benötigte Dateien vom Gerät oder fragen Sie die Person, die es eingerichtet hat.
+Wird der Speicher fast voll — weniger als 500 MB frei oder weniger als ein Zehntel des Speichers (höchstens 5 GB), je nachdem, was größer ist —, räumt die Kasse sofort auf, statt bis zum nächsten Tag zu warten, und behält nur das Nötigste: die neuesten 3 Datensicherungen, die neueste beim Wiederherstellen beiseitegelegte Kopie sowie Problemberichte und heruntergeladene Updates vom letzten Tag. Führungskräfte sehen dann in der Statusleiste **Speicher fast voll**, bis wieder Platz ist. Der Verkauf läuft weiter; um mehr Platz zu schaffen, löschen Sie nicht benötigte Dateien vom Gerät oder fragen Sie die Person, die es eingerichtet hat.
 
 Verkäufe, Belege, das Prüfprotokoll, Z-Berichte und alle anderen Aufzeichnungen, die Sie gesetzlich aufbewahren müssen, werden dabei nie gelöscht. Jede Kasse räumt nur ihren eigenen Speicher auf.
 

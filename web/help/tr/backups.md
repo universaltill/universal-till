@@ -69,7 +69,7 @@ Kasa, diski dolmasın diye günde bir kez artık gerekmeyen dosyaları siler:
 - İndirilen güncellemeler: 7 gün sonra silinir.
 - Kasa bir yükleme veya içe aktarma sırasında kapandığı için geride kalan yüklenmiş dosyalar: 24 saat sonra silinir.
 
-Disk neredeyse dolarsa — 500 MB'tan az veya diskin onda birinden az boş alan kalırsa, hangisi büyükse — kasa ertesi günü beklemeden hemen temizlik yapar ve yalnızca en gerekli olanları tutar: en yeni 3 yedek, geri yükleme sırasında kenara ayrılan en yeni kopya ve son bir günün sorun bildirimleri ile indirilen güncellemeleri. Yöneticiler, yeniden yer açılana kadar durum çubuğunda **Depolama neredeyse dolu** görür. Satış devam eder; daha fazla yer açmak için cihazdan gerekmeyen dosyaları silin veya cihazı kuran kişiye sorun.
+Disk neredeyse dolarsa — 500 MB'tan az veya diskin onda birinden (en fazla 5 GB) az boş alan kalırsa, hangisi büyükse — kasa ertesi günü beklemeden hemen temizlik yapar ve yalnızca en gerekli olanları tutar: en yeni 3 yedek, geri yükleme sırasında kenara ayrılan en yeni kopya ve son bir günün sorun bildirimleri ile indirilen güncellemeleri. Yöneticiler, yeniden yer açılana kadar durum çubuğunda **Depolama neredeyse dolu** görür. Satış devam eder; daha fazla yer açmak için cihazdan gerekmeyen dosyaları silin veya cihazı kuran kişiye sorun.
 
 Bu temizlik satışları, fişleri, denetim kaydını, Z raporlarını veya yasal olarak saklamanız gereken başka hiçbir kaydı asla silmez. Her kasa yalnızca kendi diskini temizler.
 
