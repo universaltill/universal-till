@@ -748,6 +748,9 @@ const topUpReversalIDPrefix = "topup-void:"
 // four types the design names. The day-close never counts it: like the
 // top_up row itself it carries the voided sale's id, and both range
 // functions drop rows of a voided sale.
+// A 'void' voucher is reversed too (ut-docs#4416): a forced top-up (journal
+// replay, or an additional till's stale mirror) can credit a voided voucher,
+// and voiding that paid sale must still take the credit back; it stays void.
 func (r *POSRepo) reverseTopUpsInSale(ctx context.Context, tx *sql.Tx, saleID string) error {
 	if saleID == "" {
 		return nil
@@ -792,8 +795,8 @@ WHERE sale_id = ? AND type = 'top_up' ORDER BY rowid`, saleID)
 		res, err := r.exec(tx).ExecContext(ctx, `
 UPDATE vouchers
 SET balance = balance - ?,
-    status = CASE WHEN balance - ? = 0 THEN 'redeemed' ELSE status END
-WHERE id = ? AND status = 'active' AND balance >= ? AND purpose = 'multi_purpose'`,
+    status = CASE WHEN status = 'void' THEN 'void' WHEN balance - ? = 0 THEN 'redeemed' ELSE status END
+WHERE id = ? AND status IN ('active', 'void') AND balance >= ? AND purpose = 'multi_purpose'`,
 			t.amount, t.amount, t.voucherID, t.amount)
 		if err != nil {
 			return fmt.Errorf("reverse top-up of voucher %q: %w", t.voucherID, err)
@@ -1481,7 +1484,16 @@ var ErrVoucherTopUpOverCeiling = errors.New("voucher top-up would exceed the max
 // the read and the write loses cleanly. A 'redeemed' (Used up) voucher
 // becomes 'active' again; original_amount never moves — it is what was
 // first sold.
-func (r *POSRepo) TopUpVoucher(ctx context.Context, tx *sql.Tx, voucherID, saleID string, amountMinor, maxBalanceMinor int64, now string) (Voucher, error) {
+//
+// force (ut-docs#4416) is the journal-replay and additional-till path: the
+// top-up was already paid for at the till that rang it, so the credit must
+// land whatever the voucher's state is by now — the void check and the
+// ceiling check are skipped, in the reads and in the UPDATE. A void voucher
+// is credited but STAYS 'void' (a replay never reactivates it; the caller
+// surfaces it for a manager to refund or reissue). An unknown voucher and a
+// single-purpose one still refuse, force or not. 'redeemed' → 'active' as
+// without force.
+func (r *POSRepo) TopUpVoucher(ctx context.Context, tx *sql.Tx, voucherID, saleID string, amountMinor, maxBalanceMinor int64, force bool, now string) (Voucher, error) {
 	if tx == nil {
 		return Voucher{}, fmt.Errorf("top up voucher: a transaction is required")
 	}
@@ -1499,22 +1511,32 @@ func (r *POSRepo) TopUpVoucher(ctx context.Context, tx *sql.Tx, voucherID, saleI
 	if err != nil {
 		return Voucher{}, err
 	}
-	if before.Status == "void" {
+	if before.Status == "void" && !force {
 		return Voucher{}, fmt.Errorf("voucher %q (status void): %w: %w", voucherID, ErrVoucherTopUpRefused, ErrVoucherNotActive)
 	}
 	if before.Purpose != VoucherPurposeMulti {
 		return Voucher{}, fmt.Errorf("voucher %q (purpose %s): %w: %w", voucherID, before.Purpose, ErrVoucherTopUpRefused, ErrVoucherNotMultiPurpose)
 	}
 	// Written as a subtraction so a huge amount can't overflow the sum.
-	if before.BalanceMinor > maxBalanceMinor-amountMinor {
+	if !force && before.BalanceMinor > maxBalanceMinor-amountMinor {
 		return Voucher{}, fmt.Errorf("voucher %q (balance %d + %d > %d): %w: %w", voucherID, before.BalanceMinor, amountMinor, maxBalanceMinor, ErrVoucherTopUpRefused, ErrVoucherTopUpOverCeiling)
 	}
-	res, err := tx.ExecContext(ctx, `
+	query := `
 UPDATE vouchers
 SET balance = balance + ?,
     status = 'active'
-WHERE id = ? AND status IN ('active', 'redeemed') AND purpose = 'multi_purpose' AND balance <= ?`,
-		amountMinor, voucherID, maxBalanceMinor-amountMinor)
+WHERE id = ? AND status IN ('active', 'redeemed') AND purpose = 'multi_purpose' AND balance <= ?`
+	args := []any{amountMinor, voucherID, maxBalanceMinor - amountMinor}
+	if force {
+		// No void or ceiling predicate; a void row keeps its status.
+		query = `
+UPDATE vouchers
+SET balance = balance + ?,
+    status = CASE WHEN status = 'void' THEN 'void' ELSE 'active' END
+WHERE id = ? AND purpose = 'multi_purpose'`
+		args = args[:2]
+	}
+	res, err := tx.ExecContext(ctx, query, args...)
 	if err != nil {
 		return Voucher{}, fmt.Errorf("top up voucher %q: %w", voucherID, err)
 	}
@@ -1562,16 +1584,25 @@ type VoucherTopUp struct {
 // adjustment is already signed). Every writer of a vouchers balance writes
 // the matching ledger row in the same transaction (CreateVoucher+issue,
 // DebitVoucherForRedemption+redemption, AdjustVoucherBalance, TopUpVoucher,
-// ReleaseVoucherRedemption deleting the row it undoes), so on the till that
-// made the top-up — top-ups are main-till only in this card — the sum is
-// the balance. A void of the voucher itself sets balance 0 with no row, but
-// a void voucher can never be topped up.
+// ReleaseVoucherRedemption deleting the row it undoes), so on a till whose
+// voucher row was created by its own ledger the sum is the balance. An
+// additional till's mirror of a voucher issued elsewhere (EnsureVoucherLocalRow,
+// ut-docs#4416) has no 'issue' row and starts from the main till's balance with
+// no history, so there the balance after is read backwards instead: the
+// voucher's current balance minus the signed effect of every later row. A void
+// of the voucher itself sets balance 0 with no row, which is why the ledger
+// sum stays the rule wherever the issue row is present.
 func (r *POSRepo) VoucherTopUpsInSale(ctx context.Context, saleID string) ([]VoucherTopUp, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT t.voucher_id, COALESCE(v.holder_label, ''), t.amount,
-       (SELECT COALESCE(SUM(CASE WHEN l.type = 'redemption' THEN -l.amount ELSE l.amount END), 0)
-          FROM voucher_transactions l
-         WHERE l.voucher_id = t.voucher_id AND l.rowid <= t.rowid),
+       CASE WHEN EXISTS (SELECT 1 FROM voucher_transactions i WHERE i.voucher_id = t.voucher_id AND i.type = 'issue')
+            THEN (SELECT COALESCE(SUM(CASE WHEN l.type = 'redemption' THEN -l.amount ELSE l.amount END), 0)
+                    FROM voucher_transactions l
+                   WHERE l.voucher_id = t.voucher_id AND l.rowid <= t.rowid)
+            ELSE v.balance - (SELECT COALESCE(SUM(CASE WHEN l.type = 'redemption' THEN -l.amount ELSE l.amount END), 0)
+                                FROM voucher_transactions l
+                               WHERE l.voucher_id = t.voucher_id AND l.rowid > t.rowid)
+       END,
        EXISTS (SELECT 1 FROM voucher_transactions x WHERE x.id = ? || t.id)
 FROM voucher_transactions t
 JOIN vouchers v ON v.id = t.voucher_id

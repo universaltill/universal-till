@@ -7773,10 +7773,11 @@ type SaleDetailVoucherIssue struct {
 	VATRateBP *int   `json:"vat_rate_bp,omitempty"`
 	// TopUp (ut-docs#4252): this entry ADDED Amount to the existing voucher
 	// VoucherID (a 'top_up' ledger row) rather than issuing it. omitempty
-	// keeps every issue byte-identical on the wire. Replicas can't make
-	// top-ups yet (main till only), so no journal carries one today;
-	// applyJournal maps it through so a future replica top-up replays as a
-	// credit, never as a second issue of the same number.
+	// keeps every issue byte-identical on the wire. An additional till makes
+	// top-ups too (ut-docs#4416, gated on the main till accepting them);
+	// applyJournal maps it through so a replica top-up replays as a forced
+	// credit of the main till's voucher, never as a second issue of the
+	// same number.
 	TopUp bool `json:"top_up,omitempty"`
 }
 

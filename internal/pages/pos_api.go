@@ -242,6 +242,15 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	if saleInput.HeldOriginID == "" {
 		saleInput.HeldOriginID = engine.HeldOrigin().ID
 	}
+	// ut-docs#4416: on an additional till a top-up line was vetted against
+	// the MAIN till's row when it was added (POST /vouchers/{id}/top-up), so
+	// this till's sale books it onto its local mirror whatever the mirror
+	// looks like (stale, void, over the ceiling) — the main till force-
+	// credits the journaled sale the same way. Only that gated POST can put
+	// a top-up in a sale (the request body's own top_up is refused).
+	if d.SyncPrimaryURL(ctx) != "" {
+		saleInput.ForceVoucherTopUps = true
+	}
 	// DE+TR fiscal-signing-device hard gate (ADR-0048, ut-docs#715, fiscal.RequiresHardGate) — evaluated BEFORE the
 	// payment.<key>.authorize loop: "never configured" needs no plugin
 	// round trip, just local settings reads (never the network — a till
@@ -1938,12 +1947,12 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// purchase → 0% liability, specific item → taxed now at the item's
 		// own effective rate. goodsLines is everything else.
 		// ut-docs#4252 review M1: a top-up enters a sale only as a basket
-		// line, added through the manager-gated, main-till-only POST
+		// line, added through the manager-gated POST
 		// /vouchers/{id}/top-up. A top_up on the request body's own
 		// issue_vouchers would skip both checks (any session could credit a
-		// voucher; an additional till would credit its local mirror and
-		// journal the credit to the main till), so it is refused here,
-		// before the basket's own top-up lines are folded in below.
+		// voucher, and on an additional till without the main till having
+		// been asked first — ut-docs#4416), so it is refused here, before
+		// the basket's own top-up lines are folded in below.
 		for _, v := range in.IssueVouchers {
 			if v.TopUp {
 				http.Error(w, "invalid voucher issue", http.StatusBadRequest)

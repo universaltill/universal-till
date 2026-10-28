@@ -36,11 +36,16 @@ func topUpRows(t *testing.T, repo *POSRepo, voucherID string) []VoucherTransacti
 
 func topUpInTx(t *testing.T, repo *POSRepo, voucherID, saleID string, amount, ceiling int64) (Voucher, error) {
 	t.Helper()
+	return topUpInTxForce(t, repo, voucherID, saleID, amount, ceiling, false)
+}
+
+func topUpInTxForce(t *testing.T, repo *POSRepo, voucherID, saleID string, amount, ceiling int64, force bool) (Voucher, error) {
+	t.Helper()
 	tx, err := repo.db.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err := repo.TopUpVoucher(context.Background(), tx, voucherID, saleID, amount, ceiling, topUpNow())
+	v, err := repo.TopUpVoucher(context.Background(), tx, voucherID, saleID, amount, ceiling, force, topUpNow())
 	if err != nil {
 		_ = tx.Rollback()
 		return v, err
@@ -157,7 +162,7 @@ func TestTopUpVoucher_RequiresTx(t *testing.T) {
 	d := b8OpenDB(t, "voucher-topup-notx.db")
 	repo := NewPOSRepo(d.DB)
 	vSeedVoucher(t, context.Background(), repo, "GS-1", 1000)
-	if _, err := repo.TopUpVoucher(context.Background(), nil, "GS-1", "s1", 100, topUpTestCeiling, topUpNow()); err == nil {
+	if _, err := repo.TopUpVoucher(context.Background(), nil, "GS-1", "s1", 100, topUpTestCeiling, false, topUpNow()); err == nil {
 		t.Fatal("TopUpVoucher without a transaction must be refused")
 	}
 }
@@ -389,5 +394,146 @@ func TestVoidIssuingSale_RefusedAfterTopUp(t *testing.T) {
 	}
 	if v, _ := repo.GetVoucherBalance(ctx, nil, "GS-1"); v.BalanceMinor != 3500 || v.Status != "active" {
 		t.Fatalf("refused void changed the voucher: %+v", v)
+	}
+}
+
+// Forced credit (ut-docs#4416): a replica's top-up was paid for at the till
+// and the main till's journal replay must book it whatever the voucher's
+// state is by then. Unknown and single-purpose still refuse; void and the
+// ceiling are skipped; a void voucher stays void.
+func TestTopUpVoucher_ForceCreditsVoidAndKeepsItVoid(t *testing.T) {
+	d := b8OpenDB(t, "voucher-topup-force-void.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+	vSeedVoucher(t, ctx, repo, "GS-VOID", 1000)
+	if _, err := d.DB.Exec(`UPDATE vouchers SET status = 'void', balance = 0 WHERE id = 'GS-VOID'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := topUpInTxForce(t, repo, "GS-VOID", "s0", 100, topUpTestCeiling, false); !errors.Is(err, ErrVoucherNotActive) {
+		t.Fatalf("unforced void top-up err = %v, want ErrVoucherNotActive", err)
+	}
+	after, err := topUpInTxForce(t, repo, "GS-VOID", "s1", 700, topUpTestCeiling, true)
+	if err != nil {
+		t.Fatalf("forced top-up of a void voucher: %v", err)
+	}
+	if after.BalanceMinor != 700 || after.Status != "void" {
+		t.Fatalf("after forced top-up = %+v, want balance 700 and status still void", after)
+	}
+	rows := topUpRows(t, repo, "GS-VOID")
+	if len(rows) != 1 || rows[0].Type != "top_up" || rows[0].AmountMinor != 700 || rows[0].SaleID != "s1" {
+		t.Fatalf("ledger rows = %+v, want one top_up of 700", rows)
+	}
+}
+
+func TestTopUpVoucher_ForceSkipsCeilingAndStillReactivatesRedeemed(t *testing.T) {
+	d := b8OpenDB(t, "voucher-topup-force-ceiling.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+	vSeedVoucher(t, ctx, repo, "GS-OK", 1000)
+	if _, err := topUpInTxForce(t, repo, "GS-OK", "s0", 1001, 2000, false); !errors.Is(err, ErrVoucherTopUpOverCeiling) {
+		t.Fatalf("unforced over-ceiling err = %v", err)
+	}
+	after, err := topUpInTxForce(t, repo, "GS-OK", "s1", 1500, 2000, true)
+	if err != nil {
+		t.Fatalf("forced over-ceiling top-up: %v", err)
+	}
+	if after.BalanceMinor != 2500 || after.Status != "active" {
+		t.Fatalf("after = %+v, want 2500 active (ceiling skipped)", after)
+	}
+
+	vSeedVoucher(t, ctx, repo, "GS-RED", 1000)
+	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-RED", 1000, false); err != nil {
+		t.Fatal(err)
+	}
+	after, err = topUpInTxForce(t, repo, "GS-RED", "s2", 300, topUpTestCeiling, true)
+	if err != nil || after.BalanceMinor != 300 || after.Status != "active" {
+		t.Fatalf("forced top-up of a redeemed voucher = %+v, %v; want 300 active", after, err)
+	}
+}
+
+func TestTopUpVoucher_ForceStillRefusesUnknownAndSinglePurpose(t *testing.T) {
+	d := b8OpenDB(t, "voucher-topup-force-refusals.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+	if err := repo.CreateVoucher(ctx, nil, Voucher{
+		ID: "GS-SP", OriginalAmountMinor: 1000, BalanceMinor: 1000, Currency: "EUR",
+		Purpose: VoucherPurposeSingle, CreatedAt: topUpNow(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]error{"GS-NOPE": ErrVoucherNotFound, "GS-SP": ErrVoucherNotMultiPurpose} {
+		_, err := topUpInTxForce(t, repo, id, "s1", 100, topUpTestCeiling, true)
+		if !errors.Is(err, want) || !errors.Is(err, ErrVoucherTopUpRefused) {
+			t.Fatalf("%s: forced err = %v, want %v wrapped in ErrVoucherTopUpRefused", id, err, want)
+		}
+	}
+	if v, _ := repo.GetVoucherBalance(ctx, nil, "GS-SP"); v.BalanceMinor != 1000 {
+		t.Fatalf("single-purpose balance moved to %d", v.BalanceMinor)
+	}
+}
+
+// ut-docs#4416: an additional till's mirror of a voucher issued on the main
+// till has no 'issue' row — EnsureVoucherLocalRow seeds the main till's
+// balance with no history. The top-up receipt there must still show that
+// balance plus the top-up, and keep showing it after a later redemption or a
+// void of the top-up sale.
+func TestVoucherTopUpsInSale_MirrorWithoutIssueRow(t *testing.T) {
+	d := b8OpenDB(t, "voucher-topup-mirror.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+	if err := repo.EnsureVoucherLocalRow(ctx, nil, Voucher{ID: "GS-M", HolderLabel: "Sam", OriginalAmountMinor: 5000, BalanceMinor: 2000, Currency: "EUR", Purpose: VoucherPurposeMulti, Status: "active", IssuedSaleID: "main-sale", CreatedAt: topUpNow()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := topUpInTx(t, repo, "GS-M", "sale-top", 2500, topUpTestCeiling); err != nil {
+		t.Fatal(err)
+	}
+	want := func(label string, reversed bool) {
+		t.Helper()
+		tops, err := repo.VoucherTopUpsInSale(ctx, "sale-top")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(tops) != 1 || tops[0].BalanceAfterMinor != 4500 || tops[0].Reversed != reversed {
+			t.Fatalf("%s: top-ups = %+v, want balance after 4500 (2000 mirrored + 2500), reversed=%v", label, tops, reversed)
+		}
+	}
+	want("right after", false)
+	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-M", 700, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordVoucherTransaction(ctx, nil, VoucherTransaction{ID: "rm1", VoucherID: "GS-M", SaleID: "sale-c", Type: "redemption", AmountMinor: 700, CreatedAt: topUpNow()}); err != nil {
+		t.Fatal(err)
+	}
+	want("after a later redemption", false)
+	if err := voidSaleTx(t, repo, "sale-top"); err != nil {
+		t.Fatal(err)
+	}
+	want("after the top-up sale is voided", true)
+}
+
+// ut-docs#4416 review m3: a forced credit can land on a voided voucher (a
+// journal replay, or an additional till's stale mirror). Voiding that paid
+// sale must still take the credit back — the voucher stays void — instead
+// of refusing as if the voucher had been spent.
+func TestReverseTopUp_ForcedCreditOnVoidVoucherIsVoidable(t *testing.T) {
+	d := b8OpenDB(t, "voucher-topup-force-void-reverse.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+	vSeedVoucher(t, ctx, repo, "GS-VR", 1000)
+	if _, err := d.DB.Exec(`UPDATE vouchers SET status = 'void', balance = 0 WHERE id = 'GS-VR'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := topUpInTxForce(t, repo, "GS-VR", "s-forced", 700, topUpTestCeiling, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := voidSaleTx(t, repo, "s-forced"); err != nil {
+		t.Fatalf("void of the forced top-up sale: %v, want nil", err)
+	}
+	v, err := repo.GetVoucherBalance(ctx, nil, "GS-VR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.BalanceMinor != 0 || v.Status != "void" {
+		t.Fatalf("after void: balance %d status %s, want 0 void", v.BalanceMinor, v.Status)
 	}
 }
