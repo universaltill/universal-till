@@ -161,6 +161,9 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// authenticated perfectly and was still 401'd here, so plugin
 		// propagation silently never worked at all.
 		"/api/sync/plugins",
+		// ut-docs#5074: the sales copy's feed and state re-sync.
+		"/api/sync/sales-mirror",
+		"/api/sync/sales-mirror/state",
 		"/api/sync/assets",
 		"/api/sync/assets/file",
 		// ut-docs#2566: the categories scope of the photo sync surface.
@@ -488,5 +491,15 @@ func TestMiddleware_ResolvedSessionCarriesPermissionSnapshot(t *testing.T) {
 	h.ServeHTTP(httptest.NewRecorder(), req)
 	if !first || !second {
 		t.Fatalf("snapshot missing from request ctx: first=%v second=%v", first, second)
+	}
+}
+
+// ut-docs#5074: the sales copy's manager routes keep needing a session; only
+// the bearer-authed feed and state re-sync are exempt.
+func TestSalesMirrorManagerRoutesNeedASession(t *testing.T) {
+	for _, p := range []string{"/api/sync/sales-mirror/status", "/api/sync/sales-mirror/enable", "/api/sync/sales-mirror/disable"} {
+		if exempt(p) {
+			t.Errorf("%s is session-exempt; it is a manager route", p)
+		}
 	}
 }

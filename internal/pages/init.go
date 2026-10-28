@@ -534,6 +534,8 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerShopNameNoticeUI(mux, dp)                 // ut-docs#3114: "Name your shop" banner while store.name is a placeholder
 	registerReplacedBanner(mux, dp)                   // ut-docs#5058: "Replaced by <name>" banner on a replaced main till
 	registerSyncSales(mux, dp)
+	registerSyncSalesMirror(mux, dp)    // ut-docs#5074: the read-only sales copy's feed, main-till side (ships dark)
+	registerSalesMirrorStatus(mux, dp)  // ut-docs#5074: this till's copy status (manager)
 	registerSyncNoSales(mux, dp)        // ut-docs#3562: replica no-sale opens (LAN sync D3)
 	registerSyncClearedBaskets(mux, dp) // ut-docs#4711: replica cleared baskets (LAN sync D3)
 	registerSyncOrders(mux, dp)         // cross-till orders board, primary side (ut-docs#1350)
@@ -617,6 +619,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	netaccess.StartService("cloud sync", func() { StartCloudSync(bgCtx, dp, rederiveSettings, wg) })                  // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain
 	netaccess.StartService("cloud link", func() { StartCloudLink(bgCtx, dp, wg) })                                    // ADR-0117 main-till cloud link on the realtime tier; joined by app.Run's drain
 	netaccess.StartService("stock upload", func() { cloudsync.StartStockUpload(bgCtx, dp.Cfg, dp.Db, wg) })           // ADR-0169 §8 main-till on-hand upload to the cloud's stock mirror, realtime tier (ut-docs#4763); joined by app.Run's drain
+	StartSalesMirrorMaintenance(bgCtx, dp, wg)                                                                        // ut-docs#5074: prune the sales copy's change log; idle while the copy is off; joined by app.Run's drain
 	StartEODScheduler(bgCtx, dp, wg)                                                                                  // background Z-report (docs: G30); joined by app.Run's drain
 	netaccess.StartService("auto-update scheduler", func() { StartAutoUpdateScheduler(bgCtx, dp, wg) })               // background unattended update (ut-docs#79); joined by app.Run's drain
 	netaccess.StartService("plugin update scheduler", func() { StartPluginUpdateScheduler(bgCtx, dp, wg) })           // background installed-plugin update check + language-pack auto-apply (ut-docs#1953); joined by app.Run's drain
