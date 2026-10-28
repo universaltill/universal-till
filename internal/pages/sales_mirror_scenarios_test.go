@@ -338,7 +338,7 @@ func TestSalesMirrorScenario_CopyNeverCountsOnTheAdditionalTill(t *testing.T) {
 		eod, _ := repo.EndOfDayInstant(ctx, from, to)
 		eod.GeneratedAt = "" // stamped with the wall clock on every call (M3 review finding 1)
 		next, _ := repo.NextReceiptNo(ctx, nil)
-		queue, _ := repo.LocalSalesSince(ctx, "", 1000)
+		queue, _ := repo.LocalSalesSince(ctx, "", "", 1000)
 		var stock float64
 		_ = b.d.Db.QueryRow(`SELECT COALESCE(SUM(quantity), 0) FROM inventory`).Scan(&stock)
 		cursor, _, _ := b.d.Settings.Get(ctx, "sync.push_cursor")
