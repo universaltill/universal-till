@@ -45,6 +45,9 @@ func cloudSaveItem(ctx context.Context, d *common.Deps, p data.ItemPatch) (strin
 		return "", err
 	}
 	removeReplacedItemUpload(p.ID, res.ClearedImagePath)
+	// ut-docs#5124: an open basket line shows the item's new icon (and never
+	// a just-deleted upload) without a re-ring.
+	catalog.RefreshBasketPhoto(ctx, d, repo, p.ID)
 	auditCloudDirective(ctx, d, "item", p.ID, "cloud_item_saved", map[string]any{"created": res.Created, "changed": res.Changed})
 	if res.Created {
 		return "created " + res.Name, nil
