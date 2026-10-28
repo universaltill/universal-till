@@ -327,6 +327,7 @@ var demoDeniedRoutes = map[string]bool{
 	"GET /api/sync/sales-mirror/status":     true,
 	"POST /api/sync/sales-mirror/enable":    true,
 	"POST /api/sync/sales-mirror/disable":   true,
+	"POST /api/sync/closes":                 true, // ut-docs#5074 M7: additional tills' own closes for the copy
 	"POST /api/sync/tables/claim":           true,
 	"POST /api/sync/tables/release":         true,
 	"POST /api/sync/tables/release-all":     true,

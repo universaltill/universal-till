@@ -711,6 +711,9 @@ func syncPushTick(ctx context.Context, d *common.Deps, client *http.Client) {
 	syncPushSales(ctx, d, client, primary, bearer)
 	syncPushNoSales(ctx, d, client, primary, bearer)
 	syncPushClearedBaskets(ctx, d, client, primary, bearer)
+	// ut-docs#5074 M7: this till's own day closes for the sales copy; a
+	// no-op (settings reads only) while the copy is off.
+	syncPushCloses(ctx, d, client, primary, bearer, lantls.PeerPinned)
 }
 
 // parseSalesPushCursor splits the stored sync.push_cursor, "<created_at>|<id>"

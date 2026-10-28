@@ -164,6 +164,8 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// ut-docs#5074: the sales copy's feed and state re-sync.
 		"/api/sync/sales-mirror",
 		"/api/sync/sales-mirror/state",
+		// ut-docs#5074 M7: the push tick's closes step.
+		"/api/sync/closes",
 		"/api/sync/assets",
 		"/api/sync/assets/file",
 		// ut-docs#2566: the categories scope of the photo sync surface.

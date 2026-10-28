@@ -25,8 +25,13 @@ func TestSalesMirrorServeReadsUseIndexes(t *testing.T) {
 		"sales": mirrorLoadSalesSQL, "lines": mirrorLoadLinesSQL, "modifiers": mirrorLoadModifiersSQL,
 		"payments": mirrorLoadPaymentsSQL, "charges": mirrorLoadChargesSQL, "discounts": mirrorLoadDiscountsSQL,
 		"links": mirrorLoadLinksSQL, "closes": mirrorLoadClosesSQL,
+		"peer closes": mirrorLoadPeerClosesSQL,
 	} {
-		rows, err := d.DB.Query(`EXPLAIN QUERY PLAN `+fmt.Sprintf(q, "?,?,?"), "a", "b", "c")
+		ph, args := "?,?,?", []any{"a", "b", "c"}
+		if q == mirrorLoadPeerClosesSQL {
+			ph, args = "(?,?),(?,?)", []any{"t", "a", "t", "b"}
+		}
+		rows, err := d.DB.Query(`EXPLAIN QUERY PLAN `+fmt.Sprintf(q, ph), args...)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -41,7 +46,7 @@ func TestSalesMirrorServeReadsUseIndexes(t *testing.T) {
 		}
 		rows.Close()
 		for _, p := range plan {
-			if strings.HasPrefix(p, "SCAN ") && !strings.Contains(p, "USING TEMP") {
+			if strings.HasPrefix(p, "SCAN ") && !strings.Contains(p, "USING TEMP") && !strings.Contains(p, "VALUES CLAUSE") {
 				t.Errorf("%s read scans a table: %q (plan %q)", name, p, plan)
 			}
 		}

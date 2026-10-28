@@ -56,6 +56,7 @@ func newMirrorShop(t *testing.T, additional ...string) *mirrorShop {
 	mux, dp := newSyncSalesTestDeps(t)
 	shop := &mirrorShop{t: t, main: &mirrorTill{name: "M", d: dp, mux: mux}, tills: map[string]*mirrorTill{}}
 	shop.feed = registerMirrorMainRoutes(mux, dp)
+	registerSyncPeerCloses(mux, dp)
 	shop.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/sync/sales-mirror") {
 			shop.copyRequests.Add(1)
@@ -309,4 +310,11 @@ func (s *mirrorShop) seqAcked(till *mirrorTill) int64 {
 	var n int64
 	_ = s.main.d.Db.QueryRow(`SELECT COALESCE(MAX(acked_seq), -1) FROM sales_mirror_acks WHERE till_id = ?`, till.tillID).Scan(&n)
 	return n
+}
+
+// pushCloses runs the journal tick's closes step from till (the harness
+// trusts the test server's certificate in place of a pin).
+func (s *mirrorShop) pushCloses(till *mirrorTill) {
+	s.t.Helper()
+	syncPushCloses(s.t.Context(), till.d, s.client, s.server.URL, till.bearer, func(context.Context) bool { return true })
 }
