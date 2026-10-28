@@ -612,6 +612,8 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	netaccess.StartService("LAN sync push", func() { StartSyncPush(bgCtx, dp, wg) })                                  // replica journal loop (ADR-0011 D3); joined by app.Run's drain
 	StartSyncLink(bgCtx, dp, wg, syncAdminRepo)                                                                       // main-till link: admin-change watch + bye on shutdown (ADR-0114); joined by app.Run's drain
 	netaccess.StartService("LAN sync pull", func() { StartSyncPull(bgCtx, dp, rederiveSettings, wg) })                // joined by app.Run's drain
+	dp.SalesMirrorPullNow = make(chan struct{}, 1)                                                                    // before the link client, which kicks it (M4)
+	netaccess.StartService("sales mirror pull", func() { StartSalesMirrorPull(bgCtx, dp, wg) })                       // ut-docs#5074: the additional till's read-only sales copy; idle while off; joined by app.Run's drain
 	netaccess.StartService("main-till link client", func() { StartSyncLinkClient(bgCtx, dp, wg) })                    // replica side of the main-till link (ADR-0114); joined by app.Run's drain
 	netaccess.StartService("held-order table-claim re-affirm", func() { StartHeldOrderClaimReaffirm(bgCtx, dp, wg) }) // periodic held-order table-claim re-affirm (ut-docs#1724); joined by app.Run's drain
 	StartSelfOrderSessionSweep(bgCtx, dp, wg)                                                                         // evict idle table-QR self-order sessions (ADR-0103 D5, ut-docs#2261); joined by app.Run's drain

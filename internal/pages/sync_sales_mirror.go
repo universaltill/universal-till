@@ -717,6 +717,9 @@ func registerSalesMirrorStatus(mux *http.ServeMux, d *common.Deps) {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"main": salesMirrorMainStatus(r.Context(), d)}, "error": nil})
+		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
+			"main": salesMirrorMainStatus(r.Context(), d),
+			"copy": salesMirrorCopyStatus(r.Context(), d),
+		}, "error": nil})
 	})
 }
