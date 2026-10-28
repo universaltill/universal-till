@@ -67,8 +67,9 @@ const (
 	salesMirrorPausedVersionWait = "version_wait"
 )
 
-// salesMirrorApplyMu makes the pull and the link's frame apply (M4)
-// single-flight: both move the same cursor.
+// salesMirrorApplyMu makes every apply of the copy single-flight: they all
+// move the same cursor. Today only the pull applies; the contract's reserved
+// link frames would apply under it too.
 var salesMirrorApplyMu sync.Mutex
 
 // SalesMirrorStatus is this till's copy state for diagnostics and the
@@ -98,6 +99,9 @@ type salesMirrorPuller struct {
 	status       SalesMirrorStatus
 	lastBounds   time.Time
 	appliedSince int
+	// quietUntil: after a "satellite" answer, kicks (the link nudges every
+	// till) send nothing until then (M4 review finding 3).
+	quietUntil time.Time
 }
 
 func newSalesMirrorPuller(d *common.Deps, client *http.Client) *salesMirrorPuller {
@@ -108,8 +112,8 @@ func newSalesMirrorPuller(d *common.Deps, client *http.Client) *salesMirrorPulle
 	}
 }
 
-// salesMirrorPullers holds the process's puller so the status endpoint and
-// the link's frame handler (M4) reach the same one. Nil until started.
+// salesMirrorPullerRef holds the process's puller so the status endpoint
+// reaches it. Nil until started.
 var salesMirrorPullerRef struct {
 	sync.Mutex
 	p *salesMirrorPuller
@@ -124,7 +128,7 @@ func StartSalesMirrorPull(ctx context.Context, d *common.Deps, wg *sync.WaitGrou
 	salesMirrorPullerRef.Lock()
 	salesMirrorPullerRef.p = p
 	salesMirrorPullerRef.Unlock()
-	if d.SalesMirrorPullNow == nil {
+	if d.SalesMirrorPullNow == nil { // pages.Init makes it before the link client starts
 		d.SalesMirrorPullNow = make(chan struct{}, 1)
 	}
 	var reeval <-chan struct{}
@@ -191,6 +195,12 @@ func (p *salesMirrorPuller) tick(ctx context.Context) {
 		// D5: the feed is pinned TLS only; never send the bearer to be
 		// refused. Pairing again gives this till the pin.
 		p.setStatus(func(s *SalesMirrorStatus) { s.State = "needs_tls" })
+		return
+	}
+	p.mu.Lock()
+	quiet := p.now().Before(p.quietUntil)
+	p.mu.Unlock()
+	if quiet {
 		return
 	}
 	p.setStatus(func(s *SalesMirrorStatus) { s.State = "on"; s.LastPullAt = p.now().UTC().Format(time.RFC3339) })
@@ -296,7 +306,10 @@ func (p *salesMirrorPuller) refusal(r salesMirrorReply) error {
 		return errSalesMirrorStop
 	case r.status == http.StatusForbidden && r.err.Code == "satellite":
 		// Satellites hold no copy (ADR-0086): quiet, not an error each tick.
-		p.setStatus(func(s *SalesMirrorStatus) { s.State = "satellite" })
+		p.mu.Lock()
+		p.status.State = "satellite"
+		p.quietUntil = p.now().Add(salesMirrorPullEveryLinked)
+		p.mu.Unlock()
 		return errSalesMirrorStop
 	case r.status == http.StatusServiceUnavailable:
 		return errSalesMirrorStop
@@ -362,7 +375,7 @@ func (p *salesMirrorPuller) feedPage(ctx context.Context, base, bearer string, s
 		FromSeq: page.FromSeq, ToSeq: page.ToSeq, Horizon: page.Horizon, Records: page.Records}, o)
 	salesMirrorApplyMu.Unlock()
 	if errors.Is(err, data.ErrMirrorCursorMoved) {
-		return true, nil // a frame moved the cursor meanwhile: read it again
+		return true, nil // another apply moved the cursor meanwhile: read it again
 	}
 	if err != nil {
 		return false, err

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -123,6 +124,9 @@ func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.
 			d.RequestSyncPull()
 		}
 		logging.L().Infof("sync link: linked to the main till %s (%s)", main.TillID, main.Version)
+		// A link that just came up may have missed nudges: catch the sales
+		// copy up from its cursor (ut-docs#5074).
+		d.RequestSalesMirrorPull()
 	}
 	opts.OnSync = func(_ context.Context, scopes []fleetlink.Scope) {
 		// One full pull covers every scope the HTTP pull carries (admin,
@@ -131,6 +135,12 @@ func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.
 		// those costs no pull. Kicks coalesce, so a burst is one pull.
 		if linkScopesNeedPull(scopes) {
 			d.RequestSyncPull()
+		}
+		// ut-docs#5074: the main till's sales copy moved; pull it now
+		// instead of at the 5-minute linked floor. A no-op while the copy is
+		// off (the pull tick returns after its settings reads).
+		if linkScopesKickSalesMirror(scopes) {
+			d.RequestSalesMirrorPull()
 		}
 		// ut-docs#2858: an order held, resumed or moved on another till
 		// changes what this till's Open orders badge counts; move the held
@@ -265,6 +275,12 @@ func linkScopesNeedPull(scopes []fleetlink.Scope) bool {
 		}
 	}
 	return false
+}
+
+// linkScopesKickSalesMirror reports whether a sync nudge names the sales
+// copy (ut-docs#5074 M4).
+func linkScopesKickSalesMirror(scopes []fleetlink.Scope) bool {
+	return slices.Contains(scopes, fleetlink.ScopeSalesMirror)
 }
 
 // linkScopesTouchHeld reports whether a sync nudge names held sales.

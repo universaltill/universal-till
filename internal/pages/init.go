@@ -623,14 +623,16 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	netaccess.StartService("cloud link", func() { StartCloudLink(bgCtx, dp, wg) })                                    // ADR-0117 main-till cloud link on the realtime tier; joined by app.Run's drain
 	netaccess.StartService("stock upload", func() { cloudsync.StartStockUpload(bgCtx, dp.Cfg, dp.Db, wg) })           // ADR-0169 §8 main-till on-hand upload to the cloud's stock mirror, realtime tier (ut-docs#4763); joined by app.Run's drain
 	StartSalesMirrorMaintenance(bgCtx, dp, wg)                                                                        // ut-docs#5074: prune the sales copy's change log; idle while the copy is off; joined by app.Run's drain
-	StartEODScheduler(bgCtx, dp, wg)                                                                                  // background Z-report (docs: G30); joined by app.Run's drain
-	netaccess.StartService("auto-update scheduler", func() { StartAutoUpdateScheduler(bgCtx, dp, wg) })               // background unattended update (ut-docs#79); joined by app.Run's drain
-	netaccess.StartService("plugin update scheduler", func() { StartPluginUpdateScheduler(bgCtx, dp, wg) })           // background installed-plugin update check + language-pack auto-apply (ut-docs#1953); joined by app.Run's drain
-	StartFiscalSignReconcileSweep(bgCtx, dp, wg)                                                                      // periodic fiscal.sign.reconcile.ask sweep over backend-failure unsigned sales (ADR-0077 D3, ut-docs#1520); joined by app.Run's drain
-	backfillLocaleConfirmedForDivergedPendingTills(ctx, dp)                                                           // ut-docs#1892: one-time backfill before any pending language install can silently override a pre-#1074 manual locale choice
-	netaccess.StartService("base-plugin auto-install retry", func() { StartBasePluginRetry(bgCtx, dp, wg) })          // retry country base-plugin auto-install while offline (ut-docs#591); joined by app.Run's drain
-	netaccess.StartService("TSE provisioning retry", func() { StartTSEProvisionRetry(bgCtx, dp, wg) })                // retry German TSE provisioning kickoff while offline (ADR-0053, ut-docs#802); joined by app.Run's drain
-	netaccess.StartService("order-status stream bridge", func() { StartOrderStatusStreamBridge(bgCtx, dp, wg) })      // replica: hold the primary's order-status SSE stream open and republish locally (ADR-0079, ut-docs#1571); joined by app.Run's drain
+	dp.SalesMirrorNudgeNow = make(chan struct{}, 1)
+	StartSalesMirrorNudge(bgCtx, dp, wg)                                                                         // ut-docs#5074 M4: nudge linked tills to pull the sales copy within a second; idle with no peer or the copy off; joined by app.Run's drain
+	StartEODScheduler(bgCtx, dp, wg)                                                                             // background Z-report (docs: G30); joined by app.Run's drain
+	netaccess.StartService("auto-update scheduler", func() { StartAutoUpdateScheduler(bgCtx, dp, wg) })          // background unattended update (ut-docs#79); joined by app.Run's drain
+	netaccess.StartService("plugin update scheduler", func() { StartPluginUpdateScheduler(bgCtx, dp, wg) })      // background installed-plugin update check + language-pack auto-apply (ut-docs#1953); joined by app.Run's drain
+	StartFiscalSignReconcileSweep(bgCtx, dp, wg)                                                                 // periodic fiscal.sign.reconcile.ask sweep over backend-failure unsigned sales (ADR-0077 D3, ut-docs#1520); joined by app.Run's drain
+	backfillLocaleConfirmedForDivergedPendingTills(ctx, dp)                                                      // ut-docs#1892: one-time backfill before any pending language install can silently override a pre-#1074 manual locale choice
+	netaccess.StartService("base-plugin auto-install retry", func() { StartBasePluginRetry(bgCtx, dp, wg) })     // retry country base-plugin auto-install while offline (ut-docs#591); joined by app.Run's drain
+	netaccess.StartService("TSE provisioning retry", func() { StartTSEProvisionRetry(bgCtx, dp, wg) })           // retry German TSE provisioning kickoff while offline (ADR-0053, ut-docs#802); joined by app.Run's drain
+	netaccess.StartService("order-status stream bridge", func() { StartOrderStatusStreamBridge(bgCtx, dp, wg) }) // replica: hold the primary's order-status SSE stream open and republish locally (ADR-0079, ut-docs#1571); joined by app.Run's drain
 	// ADR-0079: release every open order-status SSE stream (browser
 	// EventSources, and on a primary the replicas' bridges) the instant
 	// shutdown begins — server.Start's own Shutdown fires on this same
