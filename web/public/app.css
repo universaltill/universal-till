@@ -5013,6 +5013,13 @@ body.login-screen {
 /* Screenshots: full width of the reading column, never overflowing it. */
 .manual-topic img { max-inline-size: 100%; height: auto; border: 1px solid var(--border);
                     border-radius: .5rem; margin-block: .6rem; display: block; }
+/* ut-docs#5108: Support partner topic — QR + link to my.'s screen. */
+.manual-partner-link { margin-block: 1.2rem 0; padding: .8rem 1rem; border: 1px solid var(--border);
+                       border-radius: .5rem; text-align: start; }
+.manual-partner-link p { margin-block: 0 .4rem; }
+.manual-partner-link .manual-partner-qr { inline-size: 220px; max-inline-size: 100%; background: #fff; padding: .4rem;
+                                         image-rendering: pixelated; }
+.manual-partner-link a { overflow-wrap: anywhere; }
 .manual-untranslated { background: var(--panel, rgba(127,127,127,.12)); border-inline-start: 3px solid var(--accent, #2b6cb0);
                        padding: .5rem .7rem; border-radius: .3rem; color: var(--muted); }
 .manual-result-list { list-style: none; margin: 0; padding: 0; }
