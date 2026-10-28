@@ -84,7 +84,7 @@ Bilmekte fayda var:
 
 - Sayfa en yeni 200 çeki gösterir. Daha fazlası varsa bunu belirtir — daha eskileri bulmak için arayın veya filtreleyin.
 - Henüz hiç çek yoksa sayfa nasıl başlayacağınızı söyler: bir Hediye çeki ürünüyle satın veya önceki sisteminizden bakiyeleri içe aktarın.
-- Ek bir kasada liste yalnızca bu kasanın gördüğü çekleri gösterir — burada satılan, içe aktarılan veya kullanılan. Tam liste ana kasadadır.
+- Ek bir kasada liste yalnızca bu kasanın gördüğü çekleri gösterir — burada satılan, içe aktarılan veya kullanılan. Tam liste ana kasadadır. Başka bir yerde satılan bir çeki açmak için tam kart numarasını arayın: kasa onu ana kasaya sorar.
 
 ## Bakiyeyi düzeltmek
 
@@ -124,7 +124,7 @@ Neler ters gidebilir:
 - Bir hediye çekine satış başına bir kez bakiye yüklenebilir ve hediye çeki kendi yüklemesini ödeyemez.
 - Bakiye yükleme için katalogda etkin bir hediye çeki ürünü gerekir — yoksa sayfa bunu söyler.
 - Yüklenen tutarın bir kısmı harcandıktan sonra satışı iptal etmek reddedilir.
-- Ek bir kasada sayfa, bakiyeyi ana kasada yüklemenizi ister.
+- Ek bir kasada, bakiye yüklemesini eklerken ana kasaya ulaşılabilir (ve güncel) olmalıdır; değilse sayfa bunu söyler ve satışa hiçbir şey eklenmez.
 
 ## Gün sonu raporları ve diğer kasalar
 

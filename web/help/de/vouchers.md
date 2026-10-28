@@ -84,7 +84,7 @@ Gut zu wissen:
 
 - Die Seite zeigt die neuesten 200 Gutscheine. Gibt es mehr, steht das dort — suchen oder filtern Sie, um ältere zu finden.
 - Gibt es noch keine Gutscheine, sagt die Seite, wie Sie beginnen: einen mit einem Gutschein-Artikel verkaufen oder Guthaben aus Ihrem bisherigen System importieren.
-- An einer zusätzlichen Kasse zeigt die Liste nur die Gutscheine, die diese Kasse kennt — hier verkauft, importiert oder eingelöst. Die vollständige Liste ist an der Hauptkasse.
+- An einer zusätzlichen Kasse zeigt die Liste nur die Gutscheine, die diese Kasse kennt — hier verkauft, importiert oder eingelöst. Die vollständige Liste ist an der Hauptkasse. Um einen anderswo verkauften Gutschein zu öffnen, suchen Sie nach seiner vollständigen Kartennummer: Die Kasse fragt die Hauptkasse danach.
 
 ## Ein Guthaben korrigieren
 
@@ -124,7 +124,7 @@ Was schiefgehen kann:
 - Ein Gutschein kann pro Verkauf einmal aufgeladen werden und kann seine eigene Aufladung nicht bezahlen.
 - Eine Aufladung braucht einen aktiven Geschenkgutschein-Artikel im Katalog — gibt es keinen, sagt die Seite das.
 - Das Stornieren des Verkaufs wird abgelehnt, sobald ein Teil des aufgeladenen Betrags ausgegeben wurde.
-- An einer zusätzlichen Kasse bittet die Seite Sie, an der Hauptkasse aufzuladen.
+- An einer zusätzlichen Kasse muss die Hauptkasse beim Hinzufügen der Aufladung erreichbar (und auf dem neuesten Stand) sein; andernfalls sagt die Seite das und dem Verkauf wird nichts hinzugefügt.
 
 ## Tagesabschluss und andere Kassen
 

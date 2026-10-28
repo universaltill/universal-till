@@ -22,6 +22,9 @@ import (
 //
 //   - GET /api/sync/vouchers/{id} (ut-docs#1668): a read-only balance lookup,
 //     used by voucher_api.go's plain balance query via fetchVoucherFromPrimary.
+//     It also answers accepts_top_up (ut-docs#4416): this main till
+//     force-credits a top-up journaled from an additional till, so a
+//     replica may add one to a basket; an older main till omits the key.
 //   - POST /api/sync/vouchers/{id}/redeem and .../{id}/release (ADR-0084,
 //     ut-docs#1716): an idempotent RESERVATION pair. At tender time a
 //     replica's voucherRedeemWriteThrough (voucher_sync_proxy.go) reserves
@@ -86,6 +89,17 @@ type syncVoucherRow struct {
 	Status         string `json:"status"`
 	IssuedSaleID   string `json:"issued_sale_id"`
 	CreatedAt      string `json:"created_at"`
+}
+
+// syncVoucherLookupRow is GET /api/sync/vouchers/{id}'s answer: the row plus
+// accepts_top_up (ut-docs#4416), the version gate for a top-up made on an
+// additional till. A main till that predates the replica top-up omits it (it
+// would not force-credit the journaled top-up), so a replica reads absent as
+// "refuse". Only this endpoint carries it; /redeem and /adjust answer a bare
+// syncVoucherRow, unchanged on the wire.
+type syncVoucherLookupRow struct {
+	syncVoucherRow
+	AcceptsTopUp bool `json:"accepts_top_up"`
 }
 
 func voucherToSyncRow(v data.Voucher) syncVoucherRow {
@@ -180,7 +194,7 @@ func registerSyncVouchers(mux *http.ServeMux, d *common.Deps) {
 			writeSyncOrdersJSON(w, http.StatusInternalServerError, nil, "server error")
 			return
 		}
-		writeSyncOrdersJSON(w, http.StatusOK, voucherToSyncRow(v), nil)
+		writeSyncOrdersJSON(w, http.StatusOK, syncVoucherLookupRow{syncVoucherRow: voucherToSyncRow(v), AcceptsTopUp: true}, nil)
 	})
 
 	// POST /api/sync/vouchers/{id}/redeem — the atomic, idempotent

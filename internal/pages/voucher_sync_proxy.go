@@ -100,33 +100,63 @@ func voucherFromSyncRow(row syncVoucherRow) data.Voucher {
 // caller falls through to its own local read. Read-only, no side effect:
 // voucher_api.go's plain balance lookup must never reserve anything.
 func fetchVoucherFromPrimary(ctx context.Context, d *common.Deps, client *http.Client, id string) (data.Voucher, bool) {
+	v, _, outcome := lookupVoucherOnPrimary(ctx, d, client, id)
+	return v, outcome == primaryLookupAnswered
+}
+
+// primaryLookup is lookupVoucherOnPrimary's outcome: unlike
+// fetchVoucherFromPrimary's single ok flag it keeps "the main till says it
+// has no such voucher" apart from "no usable answer", which a replica top-up
+// needs (ut-docs#4416).
+type primaryLookup int
+
+const (
+	// primaryLookupNotReplica: this till has no main till to ask.
+	primaryLookupNotReplica primaryLookup = iota
+	// primaryLookupUnreachable: transport error, timeout, a non-200 other
+	// than 404, or a body that doesn't decode.
+	primaryLookupUnreachable
+	// primaryLookupNotFound: the main till answered 404.
+	primaryLookupNotFound
+	// primaryLookupAnswered: 200 with a voucher row.
+	primaryLookupAnswered
+)
+
+// lookupVoucherOnPrimary is fetchVoucherFromPrimary with the outcome kept
+// apart, and the answer's accepts_top_up version gate (absent on an older
+// main till → false). Read-only, no side effect.
+func lookupVoucherOnPrimary(ctx context.Context, d *common.Deps, client *http.Client, id string) (v data.Voucher, acceptsTopUp bool, outcome primaryLookup) {
 	base, bearer, isReplica := replicaSyncTarget(ctx, d)
 	if !isReplica {
-		return data.Voucher{}, false
+		return data.Voucher{}, false, primaryLookupNotReplica
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/sync/vouchers/"+url.PathEscape(id), nil)
 	if err != nil {
-		return data.Voucher{}, false
+		return data.Voucher{}, false, primaryLookupUnreachable
 	}
 	req.Header.Set("Authorization", "Bearer "+bearer)
 	resp, err := client.Do(req)
 	if err != nil {
 		logging.L().Debugf("voucher proxy: primary unreachable on lookup %s (%v) — using local", id, err)
-		return data.Voucher{}, false
+		return data.Voucher{}, false, primaryLookupUnreachable
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		logging.L().Debugf("voucher proxy: primary answered %s on lookup %s — using local", resp.Status, id)
+		return data.Voucher{}, false, primaryLookupNotFound
+	}
 	if resp.StatusCode != http.StatusOK {
 		logging.L().Debugf("voucher proxy: primary answered %s on lookup %s — using local", resp.Status, id)
-		return data.Voucher{}, false
+		return data.Voucher{}, false, primaryLookupUnreachable
 	}
 	var out struct {
-		Data *syncVoucherRow `json:"data"`
+		Data *syncVoucherLookupRow `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || out.Data == nil {
 		logging.L().Debugf("voucher proxy: malformed primary response on lookup %s — using local", id)
-		return data.Voucher{}, false
+		return data.Voucher{}, false, primaryLookupUnreachable
 	}
-	return voucherFromSyncRow(*out.Data), true
+	return voucherFromSyncRow(out.Data.syncVoucherRow), out.Data.AcceptsTopUp, primaryLookupAnswered
 }
 
 // postVoucherActionOnPrimary is the one HTTP shape both reserve and release

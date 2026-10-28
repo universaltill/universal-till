@@ -125,6 +125,18 @@ func buildJournal(ctx context.Context, repo *data.POSRepo, receiptNo string) (jo
 // ut-docs#1686) is exactly that: a generic branch, not a third special case.
 func permanentJournalFailureReason(err error) string {
 	switch {
+	case errors.Is(err, data.ErrVoucherTopUpRefused) && errors.Is(err, data.ErrVoucherNotFound):
+		// ut-docs#4416: a top-up replay of a voucher this main till has no
+		// row for. Checked before the redemption case below, which would
+		// otherwise claim it (the top-up error wraps ErrVoucherNotFound).
+		// ForceVoucherTopUps lifts the void and ceiling refusals, never an
+		// unknown id, so retrying changes nothing.
+		return "unknown voucher on top-up replay"
+	case errors.Is(err, data.ErrVoucherTopUpRefused) && errors.Is(err, data.ErrVoucherNotMultiPurpose):
+		// ut-docs#4416: the voucher is single-purpose here (its VAT was
+		// fixed at issue); a top-up of it is refused even when forced, and
+		// would be refused identically on every retry.
+		return "single-purpose voucher on top-up replay"
 	case errors.Is(err, data.ErrVoucherNotFound):
 		// Unknown voucher on a redemption replay (ut-docs#1053 scenario 1):
 		// a pre-1.3.0 replica's voucher issue never journaled (the field
@@ -341,6 +353,11 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 		// (warnIfVoucherOverdrawn) rather than poison this replica's
 		// journal forever.
 		AllowVoucherOverdraft: true,
+		// ut-docs#4416: a top-up journaled from an additional till was
+		// already paid for there; credit it even if the voucher was voided
+		// (it stays void) or is over the ceiling since, and surface that
+		// below (warnIfTopUpVoucherUnsound).
+		ForceVoucherTopUps: true,
 	}
 	// Vouchers issued in the journaled sale (ut-docs#1053): reconstructed
 	// with their ORIGINAL ids/labels/amounts so the primary books the same
@@ -479,6 +496,9 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 	// Also guarded by the SaleExists idempotency check, so at most once per
 	// sale.
 	warnIfVoucherOverdrawn(ctx, repo, in, "journaled sale "+j.Sale.ReceiptNo+" from till "+tillID)
+	// …and for a force-applied top-up (ut-docs#4416) of a voucher that is
+	// void or over the ceiling by now.
+	warnIfTopUpVoucherUnsound(ctx, repo, in, "journaled sale "+j.Sale.ReceiptNo+" from till "+tillID)
 	// This node's stock genuinely changed when replaying the remote sale, so
 	// mirror it to inventory connectors (best-effort, non-blocking). Guarded by
 	// the SaleExists idempotency check above, so it fires at most once per sale.
@@ -587,6 +607,31 @@ func warnIfStockNegative(ctx context.Context, repo *data.POSRepo, in pos.SaleInp
 // same voucher is a distinct double-spend the manager should see.
 func warnIfVoucherOverdrawn(ctx context.Context, repo *data.POSRepo, in pos.SaleInput, source string) {
 	warnIfVoucherOverdrawnReason(ctx, repo, in, source, "offline double-spend force-applied (ut-docs#1053)")
+}
+
+// warnIfTopUpVoucherUnsound surfaces a force-applied top-up (ut-docs#4416)
+// whose voucher ended up void (the credit landed, the voucher stays void) or
+// above pos.MaxVoucherIssueAmount, as a back-office Problem naming the
+// voucher — same Warnf-is-the-surfacing plumbing as warnIfVoucherOverdrawn.
+// Best-effort: the sale already committed.
+func warnIfTopUpVoucherUnsound(ctx context.Context, repo *data.POSRepo, in pos.SaleInput, source string) {
+	for _, vi := range in.VoucherIssues {
+		if !vi.TopUp {
+			continue
+		}
+		v, err := repo.GetVoucherBalance(ctx, nil, vi.VoucherID)
+		if err != nil {
+			continue
+		}
+		switch {
+		case v.Status == "void":
+			logging.L().Warnf("voucher top-up on a void voucher: %q was topped up by %s after it was voided (balance now %s, status still void) — a manager should refund the customer or reissue the voucher",
+				vi.VoucherID, source, money.FromMinor(v.BalanceMinor))
+		case v.BalanceMinor > pos.MaxVoucherIssueAmount.Minor():
+			logging.L().Warnf("voucher top-up over the limit: %q balance is %s after %s, above the maximum voucher balance — a manager should refund the customer or reissue the voucher",
+				vi.VoucherID, money.FromMinor(v.BalanceMinor), source)
+		}
+	}
 }
 
 // warnIfVoucherOverdrawnReason is warnIfVoucherOverdrawn generalized with an

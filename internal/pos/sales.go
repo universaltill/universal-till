@@ -205,6 +205,19 @@ type SaleInput struct {
 	// data.DebitVoucherForRedemption). Every direct-sale path leaves it
 	// false — the live balance gate is unchanged.
 	AllowVoucherOverdraft bool
+	// ForceVoucherTopUps (ut-docs#4416), when true, books every top-up line
+	// (VoucherIssueInput.TopUp) even if the voucher has been voided or the
+	// credit takes it above MaxVoucherIssueAmount since the top-up was
+	// rung: the money already moved at the till that took it, so the sale
+	// must be recorded and the credit applied rather than refused (a void
+	// voucher is credited but stays void; applyJournal then surfaces it as
+	// a back-office Problem). An unknown voucher and a single-purpose one
+	// still refuse (data.TopUpVoucher). Set true ONLY by the LAN-sync
+	// journal replay (internal/pages/sync_sales.go's applyJournal) and by
+	// an additional till's own tender (internal/pages/pos_api.go
+	// completeTender) — the AllowVoucherOverdraft precedent above; the
+	// main till's own sale leaves it false and keeps the live checks.
+	ForceVoucherTopUps bool
 	// LegacyTipCoverage (ut-docs#2975), when true, counts a payment's tip
 	// toward covering the total (coverage = Amount - ChangeGiven) instead of
 	// the strict Amount - ChangeGiven - TipAmount every live tender path
@@ -1335,7 +1348,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				// per-voucher ceiling refuses the whole sale) and writes
 				// its own 'top_up' row — no vouchers row is created.
 				if v.TopUp {
-					if _, err := repo.TopUpVoucher(ctx, tx, v.VoucherID, saleID, v.Amount.Minor(), MaxVoucherIssueAmount.Minor(), now); err != nil {
+					if _, err := repo.TopUpVoucher(ctx, tx, v.VoucherID, saleID, v.Amount.Minor(), MaxVoucherIssueAmount.Minor(), in.ForceVoucherTopUps, now); err != nil {
 						return err
 					}
 					continue
