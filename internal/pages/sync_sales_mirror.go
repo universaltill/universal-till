@@ -718,6 +718,9 @@ func StartSalesMirrorMaintenance(ctx context.Context, d *common.Deps, wg *sync.W
 // salesMirrorMaintenanceTick prunes the log once. probe measures the disk
 // (caps halve below the low-disk floor).
 func salesMirrorMaintenanceTick(ctx context.Context, d *common.Deps, now time.Time, probe func(string) (diskspace.Usage, error)) {
+	// ut-docs#5074 M6: an adoption a promote left unfinished (one settings
+	// read otherwise).
+	resumeSalesMirrorAdoption(ctx, d)
 	if !salesMirrorMainGate(ctx, d) {
 		return
 	}

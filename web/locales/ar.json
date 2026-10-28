@@ -3757,5 +3757,10 @@
   "tills.sales_mirror.state.needs_tls": "يلزم اتصال آمن: أعد إقران هذا الصندوق",
   "tills.sales_mirror.state.main_off": "مُعطّل على الصندوق الأساسي",
   "tills.sales_mirror.state.satellite": "لا تُحفظ على صندوق تابع",
-  "tills.sales_mirror.state.catching_up": "جارٍ اللحاق"
+  "tills.sales_mirror.state.catching_up": "جارٍ اللحاق",
+  "tills.promote_adopted": "المبيعات المنسوخة من الصناديق الأخرى المضافة إلى سجل هذا الصندوق: %d.",
+  "tills.promote_adopt_failed": "المبيعات المنسوخة التي تعذّرت إضافتها وتبقى في النسخة: %d (راجع قائمة المشكلات).",
+  "tills.promote_adopt_voided": "المبيعات على هذا الصندوق التي عُلّمت ملغاة كما في النسخة: %d.",
+  "tills.promote_adopt_resumes": "توقفت إضافة النسخة في منتصفها؛ هي محفوظة وتكتمل تلقائيًا خلال بضع دقائق.",
+  "tills.promote_outside_z": "مبيعات تمت قبل آخر إغلاق للصندوق الأساسي السابق وقد لا تكون في أي تقرير Z: %d. تحقّق منها في التقارير."
 }

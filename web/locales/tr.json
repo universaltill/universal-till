@@ -3757,5 +3757,10 @@
   "tills.sales_mirror.state.needs_tls": "Güvenli bağlantı gerekli: bu kasayı yeniden eşleştirin",
   "tills.sales_mirror.state.main_off": "Ana kasada kapalı",
   "tills.sales_mirror.state.satellite": "Uydu kasada tutulmaz",
-  "tills.sales_mirror.state.catching_up": "Yetişiyor"
+  "tills.sales_mirror.state.catching_up": "Yetişiyor",
+  "tills.promote_adopted": "Diğer kasalardan kopyalanıp bu kasanın kaydına eklenen satış: %d.",
+  "tills.promote_adopt_failed": "Eklenemeyen ve kopyada kalan kopyalanmış satış: %d (sorunlar listesine bakın).",
+  "tills.promote_adopt_voided": "Kopyadaki gibi iptal edildi olarak işaretlenen bu kasanın satışları: %d.",
+  "tills.promote_adopt_resumes": "Kopyanın eklenmesi yarıda kaldı; kopya korunuyor ve birkaç dakika içinde kendiliğinden tamamlanır.",
+  "tills.promote_outside_z": "Önceki ana kasanın son gün sonundan önce yapılan ve hiçbir Z raporunda olmayabilecek satış: %d. Raporlar'da kontrol edin."
 }

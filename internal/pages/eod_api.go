@@ -707,6 +707,13 @@ func generateEOD(ctx context.Context, d *common.Deps, actor, blockedActorID, ann
 	if latest != nil {
 		from = *latest
 	}
+	// ut-docs#5074 M6: a promoted till starts its next Z no earlier than
+	// the previous main till's last copied close — everything before it was
+	// in that till's Z. Unset on every till that was never promoted with a
+	// copy, so the window is unchanged there.
+	if floor := eodWindowFloor(ctx, d); floor.After(from) {
+		from = floor
+	}
 	to := time.Now()
 	rep, err := repo.EndOfDayInstant(ctx, from, to)
 	if err != nil {

@@ -591,3 +591,226 @@ func (r *SalesMirrorRepo) StartResync(ctx context.Context, epoch string) error {
 		mirrorStateResyncEpoch: epoch, mirrorStateResyncResume: "0", mirrorStateResyncCursor: "",
 	})
 }
+
+// ---------------------------------------------------------------------
+// Promote: the copy becomes this till's record (ut-docs#5074 M6, design
+// §9.2).
+// ---------------------------------------------------------------------
+
+// EODWindowFloorKey is a promoted till's Z-window floor: the previous main
+// till's last copied day close. generateEOD starts the next Z no earlier,
+// so nothing the previous main till's Z already counted is counted again.
+// Per till ("reports.eod_" family): never synced.
+const EODWindowFloorKey = "reports.eod_window_floor"
+
+// salesMirrorAdoptBatch bounds one adoption transaction (design §11).
+const salesMirrorAdoptBatch = 500
+
+// MirrorAdoptResult says what an adoption did.
+type MirrorAdoptResult struct {
+	Adopted int // copied sales written into sales, verbatim
+	Failed  int // could not be written (a receipt number or reference this till refuses); they stay in the copy
+	Voided  int // sales this till held as completed that the copy knows were voided
+	// LateBeforeFloor: copied sales created before the floor that reached
+	// the previous main till only after its last close (logged after it),
+	// so they were in no Z; disclosed, never re-counted (M6 review finding 2).
+	LateBeforeFloor int
+}
+
+// The verbatim copy of one copied sale into this till's own tables. No
+// stock, voucher, receipt counter or hook is touched: these are plain row
+// inserts, not a sale. till_id is the sale's origin — for the previous main
+// till's own sales its register (the key its cloud sales aggregates were
+// uploaded under, data.tillKeyExpr, so this till's uploads for those days
+// replace them instead of adding a second till; M6 review finding 1), else
+// that till's id. sync_status 'synced' (it is nobody's to push).
+var mirrorAdoptSQL = []string{
+	`INSERT INTO sales (id, receipt_no, display_no, status, sale_type, tender_type, order_type, offline, sync_status,
+  register_id, cashier_id, customer_id, table_id, currency, subtotal, discount_total, tax_total, total, rounding, note,
+  created_at, completed_at, voided_at, till_id, service_charge_amount, service_charge_tax_basis_bp, voucher_issue_total,
+  local_date, voided_local_date)
+SELECT id, receipt_no, display_no, status, sale_type, tender_type, order_type, offline, 'synced',
+  register_id, cashier_id, customer_id, table_id, currency, subtotal, discount_total, tax_total, total, rounding, note,
+  created_at, completed_at, voided_at,
+  CASE WHEN origin_till_id = (SELECT value FROM mirror_state WHERE key = 'main_till_id') AND COALESCE(register_id, '') <> ''
+       THEN register_id ELSE origin_till_id END,
+  service_charge_amount, service_charge_tax_basis_bp, voucher_issue_total,
+  local_date, voided_local_date
+FROM mirror_sales WHERE id = ?`,
+	`INSERT INTO sale_lines (id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot,
+  quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, order_type, refund_of_line_id)
+SELECT id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot,
+  quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, order_type, refund_of_line_id
+FROM mirror_sale_lines WHERE sale_id = ? ORDER BY line_no`,
+	`INSERT INTO sale_line_modifiers (id, sale_line_id, group_id, option_id, group_name_snapshot, option_name_snapshot, price_delta_minor)
+SELECT m.id, m.sale_line_id, m.group_id, m.option_id, m.group_name_snapshot, m.option_name_snapshot, m.price_delta_minor
+FROM mirror_sale_line_modifiers m JOIN mirror_sale_lines l ON l.id = m.sale_line_id WHERE l.sale_id = ?`,
+	`INSERT INTO payments (id, sale_id, method_id, amount, currency, change_given, tip_amount, tip_recipient, paid_at,
+  local_date, voucher_id, reference, masked_pan, auth_code, terminal_id, trace_id)
+SELECT id, sale_id, method_id, amount, currency, change_given, tip_amount, tip_recipient, paid_at,
+  local_date, voucher_id, reference, masked_pan, auth_code, terminal_id, trace_id
+FROM mirror_payments WHERE sale_id = ?`,
+	`INSERT INTO sale_charges (sale_id, seq, key, label, amount_minor, tax_basis_bp, base)
+SELECT sale_id, seq, key, label, amount_minor, tax_basis_bp, base FROM mirror_sale_charges WHERE sale_id = ?`,
+	`INSERT INTO sale_discounts (id, sale_id, line_id, type, value, amount, reason)
+SELECT id, sale_id, line_id, type, value, amount, reason FROM mirror_sale_discounts WHERE sale_id = ?`,
+	// A refund's link to its original only when the original is here (it
+	// is adopted first: oldest first).
+	`INSERT INTO sale_links (id, sale_id, original_sale_id, reason)
+SELECT k.id, k.sale_id, k.original_sale_id, k.reason FROM mirror_sale_links k
+WHERE k.sale_id = ? AND EXISTS (SELECT 1 FROM sales o WHERE o.id = k.original_sale_id)`,
+}
+
+// AdoptCopy writes every copied sale this till does not hold into its own
+// sales tables, verbatim, oldest first, in transactions of 500, each sale
+// under its own savepoint: one this till refuses (a receipt number already
+// used here, a reference it lacks) is counted and left in the copy, never
+// half-written. Idempotent (only missing ids), so a failed run is simply
+// run again. Then a sale held here as completed that the copy knows was
+// voided is voided (the void reached the copy, not this till's journal).
+// Stock, vouchers, receipt counters, audit and hooks are not touched.
+func (r *SalesMirrorRepo) AdoptCopy(ctx context.Context) (MirrorAdoptResult, error) {
+	var res MirrorAdoptResult
+	afterCreated, afterID := "", ""
+	for {
+		rows, err := r.db.QueryContext(ctx, `
+SELECT m.id, m.created_at FROM mirror_sales m
+WHERE NOT EXISTS (SELECT 1 FROM sales s WHERE s.id = m.id)
+  AND (m.created_at > ? OR (m.created_at = ? AND m.id > ?))
+ORDER BY m.created_at, m.id LIMIT ?`, afterCreated, afterCreated, afterID, salesMirrorAdoptBatch)
+		if err != nil {
+			return res, fmt.Errorf("sales mirror adopt: list: %w", err)
+		}
+		var ids, created []string
+		for rows.Next() {
+			var id, c string
+			if err := rows.Scan(&id, &c); err != nil {
+				rows.Close()
+				return res, fmt.Errorf("sales mirror adopt: scan: %w", err)
+			}
+			ids, created = append(ids, id), append(created, c)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return res, err
+		}
+		if len(ids) == 0 {
+			break
+		}
+		if err := r.adoptBatch(ctx, ids, &res); err != nil {
+			return res, err
+		}
+		afterCreated, afterID = created[len(created)-1], ids[len(ids)-1]
+	}
+	out, err := r.db.ExecContext(ctx, `
+UPDATE sales SET status = 'voided', voided_at = m.voided_at, voided_local_date = m.voided_local_date
+FROM mirror_sales m
+WHERE sales.id = m.id AND sales.status = 'completed' AND m.status = 'voided'`)
+	if err != nil {
+		return res, fmt.Errorf("sales mirror adopt: voids: %w", err)
+	}
+	n, _ := out.RowsAffected()
+	res.Voided = int(n)
+	return res, nil
+}
+
+func (r *SalesMirrorRepo) adoptBatch(ctx context.Context, ids []string, res *MirrorAdoptResult) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("sales mirror adopt: begin: %w", err)
+	}
+	defer tx.Rollback()
+	for _, id := range ids {
+		if _, err := tx.ExecContext(ctx, `SAVEPOINT mirror_adopt`); err != nil {
+			return fmt.Errorf("sales mirror adopt: savepoint: %w", err)
+		}
+		var failed error
+		for _, q := range mirrorAdoptSQL {
+			if _, err := tx.ExecContext(ctx, q, id); err != nil {
+				failed = err
+				break
+			}
+		}
+		if failed != nil {
+			if _, err := tx.ExecContext(ctx, `ROLLBACK TO mirror_adopt`); err != nil {
+				return fmt.Errorf("sales mirror adopt: rollback: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, `RELEASE mirror_adopt`); err != nil {
+				return fmt.Errorf("sales mirror adopt: release: %w", err)
+			}
+			if !isConstraintError(failed) {
+				return fmt.Errorf("sales mirror adopt %s: %w", id, failed)
+			}
+			res.Failed++
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `RELEASE mirror_adopt`); err != nil {
+			return fmt.Errorf("sales mirror adopt: release: %w", err)
+		}
+		res.Adopted++
+	}
+	return tx.Commit()
+}
+
+// PreviousMainLastClose is the created_at ("YYYY-MM-DD HH:MM:SS", UTC) of
+// the latest copied end-of-day close of the till this till copied from as
+// its main till, "" when there is none.
+func (r *SalesMirrorRepo) PreviousMainLastClose(ctx context.Context) (string, error) {
+	st, err := readMirrorState(ctx, r.db)
+	if err != nil || st.MainTillID == "" {
+		return "", err
+	}
+	var last sql.NullString
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT MAX(created_at) FROM mirror_closes WHERE origin_till_id = ? AND kind = 'eod'`, st.MainTillID).Scan(&last); err != nil {
+		return "", fmt.Errorf("sales mirror: previous main till's last close: %w", err)
+	}
+	return last.String, nil
+}
+
+// HasCopy reports whether this till holds any copied sale or close.
+func (r *SalesMirrorRepo) HasCopy(ctx context.Context) (bool, error) {
+	var n int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM mirror_sales) OR EXISTS (SELECT 1 FROM mirror_closes)`).Scan(&n); err != nil {
+		return false, fmt.Errorf("sales mirror: has copy: %w", err)
+	}
+	return n == 1, nil
+}
+
+// HasUnadopted reports whether a copied sale is not yet in this till's own
+// sales (an adoption cut short, or refused rows).
+func (r *SalesMirrorRepo) HasUnadopted(ctx context.Context) (bool, error) {
+	var n int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM mirror_sales m WHERE NOT EXISTS (SELECT 1 FROM sales s WHERE s.id = m.id))`).Scan(&n); err != nil {
+		return false, fmt.Errorf("sales mirror: unadopted: %w", err)
+	}
+	return n == 1, nil
+}
+
+// SalesOutsideAnyZ counts what the floor leaves out although no Z counted
+// it (M6 review finding 2): this till's own completed sales created after
+// ownLastClose and before floor and after pushedUpTo (they never reached the
+// previous main till), and copied sales created before floor that the
+// previous main till logged only after its last close (late journal). Both
+// are disclosed on promote; the floor never moves below a close, which
+// would count that close's sales twice.
+func (r *SalesMirrorRepo) SalesOutsideAnyZ(ctx context.Context, floor, ownLastClose, pushedUpTo string) (own, late int, err error) {
+	if err = r.db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM sales
+WHERE till_id = '' AND status = 'completed'
+  AND datetime(created_at) < datetime(?) AND (? = '' OR datetime(created_at) >= datetime(?))
+  AND (? = '' OR created_at > ?)`, floor, ownLastClose, ownLastClose, pushedUpTo, pushedUpTo).Scan(&own); err != nil {
+		return 0, 0, fmt.Errorf("sales mirror: own sales outside any Z: %w", err)
+	}
+	if err = r.db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM mirror_sales m
+WHERE datetime(m.created_at) < datetime(?)
+  AND m.src_seq > COALESCE((SELECT MAX(c.src_seq) FROM mirror_closes c
+                            WHERE c.kind = 'eod' AND c.created_at = ? AND c.epoch = m.epoch), m.src_seq)`, floor, floor).Scan(&late); err != nil {
+		return 0, 0, fmt.Errorf("sales mirror: late sales outside any Z: %w", err)
+	}
+	return own, late, nil
+}

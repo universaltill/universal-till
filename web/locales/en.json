@@ -3757,5 +3757,10 @@
   "tills.sales_mirror.state.needs_tls": "Needs a secure link: pair this till again",
   "tills.sales_mirror.state.main_off": "Off on the main till",
   "tills.sales_mirror.state.satellite": "Not kept on a satellite",
-  "tills.sales_mirror.state.catching_up": "Catching up"
+  "tills.sales_mirror.state.catching_up": "Catching up",
+  "tills.promote_adopted": "Copied sales from the other tills added to this till's record: %d.",
+  "tills.promote_adopt_failed": "Copied sales that could not be added and stay in the copy: %d (see the problems list).",
+  "tills.promote_adopt_voided": "Sales on this till marked voided as in the copy: %d.",
+  "tills.promote_adopt_resumes": "Adding the copy stopped part-way; it is kept and finishes by itself within a few minutes.",
+  "tills.promote_outside_z": "Sales made before the previous main till's last close that may be in no Z report: %d. Check them in Reports."
 }

@@ -384,5 +384,10 @@
   "tills.sales_mirror.state.needs_tls": {"description": "State of this additional till's copy: it has no secure (pinned TLS) link to the main till yet.", "review": "standard"},
   "tills.sales_mirror.state.main_off": {"description": "State of this additional till's copy: the main till has the copy switched off.", "review": "standard"},
   "tills.sales_mirror.state.satellite": {"description": "State on a satellite till: satellites keep no copy of the shop's sales.", "review": "standard"},
-  "tills.sales_mirror.state.catching_up": {"description": "State of this additional till's copy: it is fetching changes or re-syncing; the count of changes to go follows.", "review": "standard"}
+  "tills.sales_mirror.state.catching_up": {"description": "State of this additional till's copy: it is fetching changes or re-syncing; the count of changes to go follows.", "review": "standard"},
+  "tills.promote_adopted": {"description": "Promote result on a till that kept a copy of the shop's sales: how many copied sales became its own record.", "review": "standard", "placeholders": ["number of sales"]},
+  "tills.promote_adopt_failed": {"description": "Promote result: some copied sales could not be added to this till's record (a receipt number or reference it refuses); they stay in the copy.", "review": "standard", "placeholders": ["number of sales"]},
+  "tills.promote_adopt_voided": {"description": "Promote result: sales this till held as completed that the copy knew were voided, now voided here too.", "review": "standard", "placeholders": ["number of sales"]},
+  "tills.promote_adopt_resumes": {"description": "Promote result: adopting the copy stopped (an error); nothing is lost and it resumes on its own.", "review": "standard"},
+  "tills.promote_outside_z": {"description": "Promote warning: sales from before the previous main till's last close that never reached it in time, so they may be in no Z report.", "review": "standard", "placeholders": ["number of sales"]}
 }
