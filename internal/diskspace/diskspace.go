@@ -15,6 +15,13 @@ import (
 // MinFreeBytes is the absolute floor: 500 MB.
 const MinFreeBytes uint64 = 500 << 20
 
+// MaxPercentFloorBytes caps the 10%-of-the-disk part of the floor at 5 GiB.
+// Till disks (Pi SD cards, tablets) are small, so 10% still decides there;
+// on a big desktop disk an uncapped 10% (92 GB of 926 GB) called a disk
+// with tens of GB free "almost full" and taught owners to ignore the chip
+// (ut-docs#5099).
+const MaxPercentFloorBytes uint64 = 5 << 30
+
 // ErrUnsupported is returned by Probe on a platform with no free-space call;
 // callers treat it as "unknown" and never prune or warn on it.
 var ErrUnsupported = errors.New("diskspace: no free-space probe on this platform")
@@ -28,9 +35,10 @@ type Usage struct {
 }
 
 // Floor is the free space below which the disk counts as low: 500 MB or 10%
-// of the disk, whichever is larger.
+// of the disk capped at 5 GiB, whichever is larger. The chip, the low-disk
+// housekeeping sweep and the disk.low Problem all read it.
 func Floor(total uint64) uint64 {
-	return max(MinFreeBytes, total/10)
+	return max(MinFreeBytes, min(total/10, MaxPercentFloorBytes))
 }
 
 // Low reports whether u is below the floor.

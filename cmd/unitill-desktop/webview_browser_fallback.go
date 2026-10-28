@@ -9,10 +9,15 @@ package main
 // data folder after a runtime self-update).
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/logging"
@@ -61,6 +66,54 @@ var (
 	fallbackOpen = openBrowser
 	fallbackWait = waitForServer
 )
+
+// startupFailureLinger is how long the shell keeps the temp page alive after
+// handing it to the browser: the browser reads the file asynchronously — after
+// a first-run wizard on a machine that never opened it — and the shell process
+// is exiting anyway (ut-docs#5051).
+var startupFailureLinger = func() { time.Sleep(5 * time.Minute) }
+
+// startupFailureInBrowser shows the static startup-failure page when no native
+// window exists (ut-docs#5051): html is written to a temp file in dir (which
+// must be absolute, so the path handed to the browser is unambiguous), open
+// is called on its file:// URL, linger gives the browser time to read it, then
+// the file is removed (a browser still holding it on Windows leaves it to the
+// OS temp cleanup; logged). open/linger are openBrowser/startupFailureLinger
+// in production.
+func startupFailureInBrowser(dir, html string, open func(string), linger func()) error {
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("startup-failure page: temp dir %q is not absolute", dir)
+	}
+	f, err := os.CreateTemp(dir, "unitill-startup-failure-*.html")
+	if err != nil {
+		return err
+	}
+	path := f.Name()
+	defer func() {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			logging.L().Warnf("cannot remove the startup-failure page %s: %v", path, err)
+		}
+	}()
+	_, werr := f.WriteString(html)
+	cerr := f.Close()
+	if err := errors.Join(werr, cerr); err != nil {
+		return err
+	}
+	open(fileURL(path))
+	linger()
+	return nil
+}
+
+// fileURL renders an absolute path as a file:// URL with spaces and other
+// specials escaped ("C:\Users\A B\x.html" -> "file:///C:/Users/A%20B/x.html"),
+// which rundll32's FileProtocolHandler and xdg-open both take unquoted.
+func fileURL(path string) string {
+	p := filepath.ToSlash(path)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return (&url.URL{Scheme: "file", Path: p}).String()
+}
 
 // openBrowser opens the OS default browser on url, best-effort.
 func openBrowser(url string) {

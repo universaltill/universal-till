@@ -187,3 +187,12 @@ func TestAvailableShellLang(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#5051: a Windows GUI app has no LANG, so the Windows UI language
+// ("tr-TR") must drive the page.
+func TestShellLang_WindowsUILanguageWithoutEnv(t *testing.T) {
+	empty := func(string) string { return "" }
+	if got := shellLang(empty, "tr-TR"); got != "tr" {
+		t.Errorf("shellLang = %q, want tr", got)
+	}
+}

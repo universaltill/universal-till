@@ -713,26 +713,75 @@ func syncPushTick(ctx context.Context, d *common.Deps, client *http.Client) {
 	syncPushClearedBaskets(ctx, d, client, primary, bearer)
 }
 
+// parseSalesPushCursor splits the stored sync.push_cursor, "<created_at>|<id>"
+// (the same shape as the no-sale cursor). A legacy bare "<created_at>" — what
+// db/replica.go seeds at join, or a till upgraded mid-queue — parses as
+// (created_at, ""): the query then re-includes the sales at exactly that
+// second once. That is intended: the primary's ingest is idempotent by sale id
+// (SaleExists), and it recovers sales the pre-ut-docs#5090 bug left behind.
+func parseSalesPushCursor(s string) (createdAt, id string) {
+	return parseNoSalePushCursor(strings.TrimSpace(s))
+}
+
+// salesPushSettle keeps the push cursor this far behind "now". Sale ids are
+// random UUIDs and created_at is stamped before the sale commits, so a sale
+// can appear at an already-pushed second with a smaller id, or commit after a
+// push passed its second. Sales inside the window are re-sent next tick; the
+// primary skips them by id (SaleExists).
+const salesPushSettle = 5 * time.Second
+
+// salesPushNow is the clock for the settle window (a seam for tests).
+var salesPushNow = time.Now
+
+// salesPushRekick schedules one extra push-loop wake-up after `after` (a seam
+// for tests). It nudges only the push loop, not the link (unlike
+// RequestSyncPush).
+var salesPushRekick = func(d *common.Deps, after time.Duration) {
+	if d.SyncPushNow == nil {
+		return
+	}
+	time.AfterFunc(after, func() {
+		select {
+		case d.SyncPushNow <- struct{}{}:
+		default:
+		}
+	})
+}
+
+// countQueuedSales is the push-queue depth past a stored sync.push_cursor.
+func countQueuedSales(ctx context.Context, repo *data.POSRepo, cursor string) (int, error) {
+	at, id := parseSalesPushCursor(cursor)
+	return repo.CountLocalSalesSince(ctx, at, id)
+}
+
 // syncPushSales is syncPushTick's sales-journal step: push local sales past
 // sync.push_cursor to the primary and advance the cursor on a 200.
 func syncPushSales(ctx context.Context, d *common.Deps, client *http.Client, primary, bearer string) {
 	repo := data.NewPOSRepo(d.Db)
-	cursor, _, _ := d.Settings.Get(ctx, "sync.push_cursor")
-	cursor = strings.TrimSpace(cursor)
-	receipts, err := repo.LocalSalesSince(ctx, cursor, 50)
+	cur, _, _ := d.Settings.Get(ctx, "sync.push_cursor")
+	afterAt, afterID := parseSalesPushCursor(cur)
+	receipts, err := repo.LocalSalesSince(ctx, afterAt, afterID, 50)
 	if err != nil || len(receipts) == 0 {
 		return
 	}
 	var batch []journalSale
-	maxCreated := cursor
 	for _, rn := range receipts {
 		j, found, err := buildJournal(ctx, repo, rn)
 		if err != nil || !found {
 			return
 		}
 		batch = append(batch, j)
-		if j.Sale.CreatedAt > maxCreated {
-			maxCreated = j.Sale.CreatedAt
+	}
+	// The batch is ordered by (created_at, id); the cursor advances to the
+	// last sale at or before the settle cutoff (buildJournal copies both
+	// fields from the DB row). Newer sales are still sent but re-sent next
+	// tick. RFC3339 UTC strings compare chronologically.
+	pushedAt := salesPushNow().UTC()
+	cutoff := pushedAt.Add(-salesPushSettle).Format(time.RFC3339)
+	newCursor := ""
+	for _, j := range batch {
+		if j.Sale.CreatedAt <= cutoff {
+			newCursor = j.Sale.CreatedAt + "|" + j.Sale.ID
 		}
 	}
 	raw, _ := json.Marshal(batch)
@@ -753,7 +802,19 @@ func syncPushSales(ctx context.Context, d *common.Deps, client *http.Client, pri
 		logging.L().Errorf("sync push rejected: %s", resp.Status)
 		return
 	}
-	_ = d.Settings.Set(ctx, "sync.push_cursor", maxCreated)
+	if newCursor != "" {
+		_ = d.Settings.Set(ctx, "sync.push_cursor", newCursor)
+	}
+	// A sale held inside the settle window is already on the primary but
+	// still counts as queued; wake the push loop once the window has passed
+	// so the queue chip and the D3b stock gate don't read a just-sent sale
+	// as queued for a whole 30s tick. Not for a sale stamped in the future
+	// (the clock stepped back): it won't settle in 6s, so kicking would
+	// re-send the batch every 6s; the normal tick picks it up.
+	lastSale := batch[len(batch)-1].Sale
+	if newCursor != lastSale.CreatedAt+"|"+lastSale.ID && lastSale.CreatedAt <= pushedAt.Format(time.RFC3339) {
+		salesPushRekick(d, salesPushSettle+time.Second)
+	}
 	now := recordMainContact(ctx, d, time.Now())
 	_ = d.Settings.Set(ctx, "sync.last_push_at", now)
 	logging.L().Infof("sync push: %d sale(s) journaled to the primary", len(batch))

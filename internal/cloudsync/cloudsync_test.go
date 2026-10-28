@@ -1047,7 +1047,7 @@ func TestPushSnapshotIfChangedUploadFails(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), d.DB); err == nil {
+	if err := pushSnapshotIfChanged(context.Background(), testCfg(srv.URL), d.DB, nil); err == nil {
 		t.Fatal("want error when the catalog-snapshot upload fails")
 	}
 }
@@ -1267,7 +1267,7 @@ func TestPushSnapshotIfChangedRepoErrors(t *testing.T) {
 	if _, err := itemsDB.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`); err != nil {
 		t.Fatal(err)
 	}
-	if err := pushSnapshotIfChanged(context.Background(), cfg, itemsDB); err == nil {
+	if err := pushSnapshotIfChanged(context.Background(), cfg, itemsDB, nil); err == nil {
 		t.Fatal("want error when items table is gone")
 	}
 
@@ -1279,7 +1279,7 @@ func TestPushSnapshotIfChangedRepoErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	testsupport.SeedItem(t, barcodesDB, testsupport.ItemSeed{ID: "it-1", SKU: "SKU1", Name: "Coke", BasePrice: 100, IsActive: true})
-	if err := pushSnapshotIfChanged(context.Background(), cfg, barcodesDB); err == nil {
+	if err := pushSnapshotIfChanged(context.Background(), cfg, barcodesDB, nil); err == nil {
 		t.Fatal("want error when item_barcodes table is gone")
 	}
 }

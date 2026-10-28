@@ -92,7 +92,7 @@ func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.
 		}
 	}
 	opts.Report = func(ctx context.Context) fleetlink.Report {
-		depth, _ := posRepo.CountLocalSalesSince(ctx, get(ctx, "sync.push_cursor"))
+		depth, _ := countQueuedSales(ctx, posRepo, get(ctx, "sync.push_cursor"))
 		return fleetlink.Report{
 			Version: buildinfo.Version,
 			// What the follow is doing about the main till's version

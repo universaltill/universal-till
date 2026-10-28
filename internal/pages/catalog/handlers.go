@@ -2796,7 +2796,15 @@ func RefreshBasketPhoto(ctx context.Context, d *common.Deps, repo *data.CatalogR
 		log.Printf("[catalog] refresh basket photo %s: %v", itemID, err)
 		return
 	}
-	d.Engine.SetItemImage(itemID, path)
+	// ut-docs#5124: an item whose picture is an icon id has no thumbnail row;
+	// resolve the same one picture the tile shows, else a refresh would blank it.
+	icon, err := repo.ItemIcon(ctx, itemID)
+	if err != nil {
+		// Still push the photo state (#4838); only the icon fallback is lost.
+		log.Printf("[catalog] refresh basket icon %s: %v", itemID, err)
+		icon = ""
+	}
+	d.Engine.SetItemImage(itemID, ui.ItemThumb(path, icon))
 }
 
 // ErrItemThumbRow marks a StoreItemPhoto whose file was written but whose

@@ -33,6 +33,7 @@ import (
 	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/kiosk"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -1389,7 +1390,11 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		CatalogTaxRateRefused: func(rateBP int, takeawayBP *int) bool {
 			return taxCodeRatesRefusedForCountry(d.CurrentState().Country, rateBP, takeawayBP)
 		},
-		CatalogItemPhotoReplaced: removeReplacedItemUpload,
+		CatalogItemPhotoReplaced: func(itemID, clearedPath string) {
+			removeReplacedItemUpload(itemID, clearedPath)
+			// ut-docs#5124: the open basket's line follows the new icon.
+			catalog.RefreshBasketPhoto(context.Background(), d, data.NewCatalogRepo(d.Db), itemID)
+		},
 		SaveModifierGroup: func(ctx context.Context, p data.ModifierGroupSave) (string, error) {
 			return cloudSaveModifierGroup(ctx, d, p)
 		},
@@ -1460,6 +1465,16 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// cloudSetCategoryOrder.
 		SetCategoryOrder: func(ctx context.Context, ids []string) (string, error) {
 			return cloudSetCategoryOrder(ctx, d, ids)
+		},
+		// set_category_item_order (contract §3.14, ut-docs#3105): the
+		// owner's order of one category's items from my., main-till only.
+		// See cloudSetCategoryItemOrder. ItemTilePositions fills the
+		// snapshot's tile_pos (§3.7).
+		SetCategoryItemOrder: func(ctx context.Context, categoryID string, itemIDs []string) (string, error) {
+			return cloudSetCategoryItemOrder(ctx, d, categoryID, itemIDs)
+		},
+		ItemTilePositions: func(ctx context.Context) (map[string]int, error) {
+			return cloudButtonStore(d).TilePositions(ctx)
 		},
 		// set_catalog_image (contract §3.9, ut-docs#3076): an item or
 		// category image set or removed in my., main-till only. cloudsync

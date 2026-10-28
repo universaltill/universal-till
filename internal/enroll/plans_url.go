@@ -79,3 +79,15 @@ func PlansURL(endpointURL, storeID, intent, tillLocale string) string {
 	q.Set("lang", CloudLocale(tillLocale))
 	return WebBase(endpointURL) + "/plans?" + q.Encode()
 }
+
+// PartnerURL is the cloud's public Support-partner redirect for this store
+// (ut-cloud's GET /partner, ut-docs#5108): <web base>/partner?store=…&lang=…,
+// which 302s to my.'s Support partner screen for that store, where the
+// shop's owner connects or disconnects a partner. It carries no secret —
+// my. still asks the owner to sign in and checks ownership.
+func PartnerURL(endpointURL, storeID, tillLocale string) string {
+	q := url.Values{}
+	q.Set("store", storeID)
+	q.Set("lang", CloudLocale(tillLocale))
+	return WebBase(endpointURL) + "/partner?" + q.Encode()
+}

@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/catimport/barcode"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
+	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
 )
@@ -4067,14 +4068,19 @@ WHERE id = ? AND (till_id IS NOT ? OR created_at IS NOT ?)`,
 	return nil
 }
 
-// LocalSalesSince lists this till's OWN completed sales after the cursor
-// (created_at), oldest first — the replica's push queue. Journaled-in
-// sales (till_id != ”) are excluded.
-func (r *POSRepo) LocalSalesSince(ctx context.Context, cursor string, limit int) ([]string, error) {
+// LocalSalesSince lists the receipt numbers of this till's OWN completed
+// sales strictly after the composite cursor (afterCreatedAt, afterID), oldest
+// first by (created_at, id) — the replica's push queue. created_at has only
+// second precision, so the id tiebreak is what lets a batch edge fall inside
+// one second without stranding the rest of it (ut-docs#5090). ("", "") means
+// from the beginning; a bare created_at (afterID "") re-includes the sales at
+// exactly that second. Journaled-in sales (till_id != ”) are excluded.
+func (r *POSRepo) LocalSalesSince(ctx context.Context, afterCreatedAt, afterID string, limit int) ([]string, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT receipt_no FROM sales
-WHERE status = 'completed' AND till_id = '' AND created_at > ?
-ORDER BY created_at LIMIT ?`, cursor, limit)
+WHERE status = 'completed' AND till_id = ''
+  AND (created_at > ? OR (created_at = ? AND id > ?))
+ORDER BY created_at, id LIMIT ?`, afterCreatedAt, afterCreatedAt, afterID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("local sales since: %w", err)
 	}
@@ -4090,12 +4096,14 @@ ORDER BY created_at LIMIT ?`, cursor, limit)
 	return out, rows.Err()
 }
 
-// CountLocalSalesSince is the replica's push-queue depth (D4 status chip).
-func (r *POSRepo) CountLocalSalesSince(ctx context.Context, cursor string) (int, error) {
+// CountLocalSalesSince is the replica's push-queue depth (D4 status chip):
+// the sales LocalSalesSince would return past the same composite cursor.
+func (r *POSRepo) CountLocalSalesSince(ctx context.Context, afterCreatedAt, afterID string) (int, error) {
 	var n int
 	err := r.db.QueryRowContext(ctx, `
 SELECT COUNT(*) FROM sales
-WHERE status = 'completed' AND till_id = '' AND created_at > ?`, cursor).Scan(&n)
+WHERE status = 'completed' AND till_id = ''
+  AND (created_at > ? OR (created_at = ? AND id > ?))`, afterCreatedAt, afterCreatedAt, afterID).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count local sales: %w", err)
 	}
@@ -8524,6 +8532,8 @@ type shortcutPriceRow struct {
 	SKU       string
 	Price     int64
 	Image     sql.NullString
+	// Icon is items.icon (ut-docs#5124): the basket line draws the same one picture the tile does (iconid.Picture).
+	Icon      string
 	TaxRateBP sql.NullInt64
 	// TaxCodeID is the JOINED tax_codes row's id (t.id), never the raw
 	// items.tax_code_id: a dangling reference (written before foreign keys
@@ -8546,13 +8556,14 @@ type shortcutPriceRow struct {
 // literal `%d AS tier` column so a UNION ALL of them can be ordered by
 // precedence and resolved with a single LIMIT 1 instead of the caller
 // probing tier by tier. Column shapes match across all four branches
-// (string/string/string/string/int64/NullInt64/NullInt64/NullString/NullString/int64/NullString)
+// (int tier, string x4, int64 price, NullInt64 x2, NullString item_type, NullString image, string icon, int64 rate, NullString tax id)
 // so SELECT * FROM (... UNION ALL ...) scans cleanly regardless of which
 // tier wins.
 const (
 	scanBarcodeVariantSelect = `
 SELECT %d AS tier, i.id, i.name, v.id, v.name, v.price, i.is_weighed, i.age_restricted, i.item_type,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
+       COALESCE(i.icon, ''),
        COALESCE(t.rate_basis_points, 0), t.id
 FROM variant_barcodes vb
 JOIN item_variants v ON v.id = vb.variant_id
@@ -8563,6 +8574,7 @@ WHERE vb.barcode = ?
 	scanBarcodeItemSelect = `
 SELECT %d AS tier, i.id, i.name, '', '', i.base_price, i.is_weighed, i.age_restricted, i.item_type,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
+       COALESCE(i.icon, ''),
        COALESCE(t.rate_basis_points, 0), t.id
 FROM item_barcodes ib
 JOIN items i ON i.id = ib.item_id
@@ -8595,7 +8607,7 @@ func (r *POSRepo) resolveScanBarcodeTiers(ctx context.Context, lookupKey, rawCod
 	row := r.db.QueryRowContext(ctx, "SELECT * FROM ("+query+") ORDER BY tier LIMIT 1", args...)
 	var res shortcutPriceRow
 	var tier int
-	if err := row.Scan(&tier, &res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.ItemType, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
+	if err := row.Scan(&tier, &res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.ItemType, &res.Image, &res.Icon, &res.TaxRateBP, &res.TaxCodeID); err != nil {
 		return shortcutPriceRow{}, false, false
 	}
 	return res, tier <= 2, true
@@ -8624,6 +8636,7 @@ func (r *POSRepo) resolveItemByID(ctx context.Context, itemID string) (shortcutP
 	row := r.db.QueryRowContext(ctx, `
 SELECT i.id, COALESCE(i.sku, ''), i.name, i.base_price, i.is_weighed, i.age_restricted, i.item_type,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
+       COALESCE(i.icon, ''),
        COALESCE(t.rate_basis_points, 0), t.id
 FROM items i
 LEFT JOIN tax_codes t ON t.id = i.tax_code_id
@@ -8631,7 +8644,7 @@ WHERE i.is_active = 1 AND i.id = ?
 LIMIT 1
 `, itemID)
 	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.SKU, &res.ItemName, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.ItemType, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
+	if err := row.Scan(&res.ItemID, &res.SKU, &res.ItemName, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.ItemType, &res.Image, &res.Icon, &res.TaxRateBP, &res.TaxCodeID); err != nil {
 		// A miss is normal; any other error is a bug that would otherwise
 		// surface only as a "quick button was out of date" toast (#3072).
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -8655,6 +8668,7 @@ func (r *POSRepo) resolveShortcut(ctx context.Context, code string) (shortcutPri
 	row := r.db.QueryRowContext(ctx, `
 SELECT sb.item_id, sb.label, i.name, i.base_price, i.is_weighed, i.age_restricted, i.item_type,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
+       COALESCE(i.icon, ''),
        COALESCE(t.rate_basis_points, 0), t.id
 FROM shortcut_buttons sb
 JOIN items i ON i.id = sb.item_id
@@ -8664,7 +8678,7 @@ WHERE sb.barcode = ?
 LIMIT 1
 `, code)
 	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.Label, &res.ItemName, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.ItemType, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
+	if err := row.Scan(&res.ItemID, &res.Label, &res.ItemName, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.ItemType, &res.Image, &res.Icon, &res.TaxRateBP, &res.TaxCodeID); err != nil {
 		return shortcutPriceRow{}, false
 	}
 	return res, true
@@ -8674,6 +8688,7 @@ func (r *POSRepo) resolveSKU(ctx context.Context, sku string) (shortcutPriceRow,
 	row := r.db.QueryRowContext(ctx, `
 SELECT i.id, i.sku, i.name, i.base_price, i.is_weighed, i.age_restricted, i.item_type,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
+       COALESCE(i.icon, ''),
        COALESCE(t.rate_basis_points, 0), t.id
 FROM items i
 LEFT JOIN tax_codes t ON t.id = i.tax_code_id
@@ -8681,7 +8696,7 @@ WHERE i.is_active = 1 AND i.sku = ?
 LIMIT 1
 `, sku)
 	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.SKU, &res.ItemName, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.ItemType, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err == nil {
+	if err := row.Scan(&res.ItemID, &res.SKU, &res.ItemName, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.ItemType, &res.Image, &res.Icon, &res.TaxRateBP, &res.TaxCodeID); err == nil {
 		return res, true
 	}
 	return r.resolveVariantSKU(ctx, sku)
@@ -8694,6 +8709,7 @@ func (r *POSRepo) resolveVariantSKU(ctx context.Context, sku string) (shortcutPr
 	row := r.db.QueryRowContext(ctx, `
 SELECT i.id, i.name, v.id, v.name, v.price, i.is_weighed, i.age_restricted, i.item_type,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
+       COALESCE(i.icon, ''),
        COALESCE(t.rate_basis_points, 0), t.id
 FROM item_variants v
 JOIN items i ON i.id = v.item_id
@@ -8703,7 +8719,7 @@ LIMIT 1
 `, sku)
 	var res shortcutPriceRow
 	res.SKU = sku
-	if err := row.Scan(&res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.ItemType, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
+	if err := row.Scan(&res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.ItemType, &res.Image, &res.Icon, &res.TaxRateBP, &res.TaxCodeID); err != nil {
 		return shortcutPriceRow{}, false
 	}
 	return res, true
@@ -8713,6 +8729,7 @@ func (r *POSRepo) resolveNameLike(ctx context.Context, like string) (shortcutPri
 	row := r.db.QueryRowContext(ctx, `
 SELECT i.id, i.name, i.base_price, i.is_weighed, i.age_restricted, i.item_type,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
+       COALESCE(i.icon, ''),
        COALESCE(t.rate_basis_points, 0), t.id
 FROM items i
 LEFT JOIN tax_codes t ON t.id = i.tax_code_id
@@ -8721,7 +8738,7 @@ ORDER BY i.name
 LIMIT 1
 `, like)
 	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.ItemName, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.ItemType, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err == nil {
+	if err := row.Scan(&res.ItemID, &res.ItemName, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.ItemType, &res.Image, &res.Icon, &res.TaxRateBP, &res.TaxCodeID); err == nil {
 		return res, true
 	}
 	return r.resolveVariantNameLike(ctx, like)
@@ -8734,6 +8751,7 @@ func (r *POSRepo) resolveVariantNameLike(ctx context.Context, like string) (shor
 	row := r.db.QueryRowContext(ctx, `
 SELECT i.id, i.name, v.id, v.name, v.price, i.is_weighed, i.age_restricted, i.item_type,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
+       COALESCE(i.icon, ''),
        COALESCE(t.rate_basis_points, 0), t.id
 FROM item_variants v
 JOIN items i ON i.id = v.item_id
@@ -8743,7 +8761,7 @@ ORDER BY v.name
 LIMIT 1
 `, like)
 	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.ItemType, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
+	if err := row.Scan(&res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.AgeRestricted, &res.ItemType, &res.Image, &res.Icon, &res.TaxRateBP, &res.TaxCodeID); err != nil {
 		return shortcutPriceRow{}, false
 	}
 	return res, true
@@ -8772,9 +8790,10 @@ func (r *POSRepo) toShortcutLine(code string, price int64, row shortcutPriceRow)
 		AgeRestricted: row.AgeRestricted.Int64 == 1,
 		ItemType:      row.ItemType.String,
 	}
-	if row.Image.Valid {
-		line.ImageURL = row.Image.String
-	}
+	// ut-docs#5124: one picture per item, resolved exactly as the sell-screen
+	// tile does (thumbnail row or library tile, else the items.icon id my.
+	// set) so the basket line never shows an empty box for an icon-only item.
+	line.ImageURL = iconid.Picture(row.Image.String, row.Icon)
 	if row.Label.Valid && row.Label.String != "" {
 		line.Label = row.Label.String
 	}
