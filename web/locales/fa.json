@@ -698,7 +698,7 @@
   "designer.receipt.show_logo": "چاپ لوگو در بالای رسید",
   "designer.receipt.show_sku": "نمایش کد کالا (SKU)",
   "designer.receipt.show_tax": "نمایش جمع جزء و مالیات",
-  "designer.receipt.show_tracking_qr": "کد QR پیگیری سفارش (طرح‌های پولی)",
+  "designer.receipt.show_tracking_qr": "کد QR پیگیری سفارش (طرح Shop و بالاتر)",
   "designer.receipt.tracking_qr_needs_cloud": "پس از انتقال پیگیری سفارش به فضای ابری ما در دسترس خواهد بود.",
   "designer.receipt.title": "طراحی رسید",
   "designer.reorder_hint": "هر تغییری که اینجا می‌دهید بلافاصله در صفحه فروش نمایش داده می‌شود.",
