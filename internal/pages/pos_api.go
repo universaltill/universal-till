@@ -2757,7 +2757,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				actorID, blockedActorID = elev.ApproverID, elev.ActorID
 			}
 		}
-		if err := pos.UpdateSaleStatusOnTill(r.Context(), d.Db, in.SaleID, in.Status, actorID, blockedActorID, in.Reason, d.SyncPrimaryURL(r.Context()) != ""); err != nil {
+		if err := pos.UpdateSaleStatus(r.Context(), d.Db, in.SaleID, in.Status, actorID, blockedActorID, in.Reason, d.SyncPrimaryURL(r.Context()) != ""); err != nil {
 			// ut-docs#944: raw Go error text (a wrapped SQL/engine error, or
 			// ErrSaleNotFound's own "sale not found: <id>") used to reach the
 			// operator verbatim regardless of locale. Not-found gets its own

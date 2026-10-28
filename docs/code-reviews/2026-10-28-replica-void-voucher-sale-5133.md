@@ -6,8 +6,8 @@ high-risk tier).
 
 ## What shipped
 
-- `pos.UpdateSaleStatusOnTill(..., additionalTill)`; `UpdateSaleStatus` delegates
-  with `false`. On an additional till (`sync.primary_url` set) a void of a
+- `pos.UpdateSaleStatus` gains an `additionalTill` parameter (tests pass
+  `false`; a separate wrapper tripped the desktop-shell deadcode guard). On an additional till (`sync.primary_url` set) a void of a
   sale that issued or topped up a gift voucher returns
   `ErrVoidVoucherSaleOnAdditionalTill` inside the transaction, before any
   write. `POST /api/pos/sale/status` maps it to 409
@@ -51,6 +51,12 @@ consistent with neighbouring keys.
   passes, except shellcheck-version (no local binary). docs-shots guard is
   fresh after `make docs-shots`.
 - No visual surface changed (API-only route), so no screenshots were checked.
+
+## CI follow-up
+
+`desktop-shell`'s deadcode guard flagged the first push: the old
+`UpdateSaleStatus` wrapper was only reached from tests. The wrapper is gone;
+the one function takes `additionalTill`.
 
 ## Verdict
 
