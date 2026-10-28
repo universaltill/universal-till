@@ -451,11 +451,7 @@ func CategoryThumb(imagePath, icon string) string {
 // malformed id as the neutral fallback, never the raw value. "" = no
 // picture: the tile falls back to its colour swatch.
 func ItemThumb(imagePath, icon string) string {
-	path, id := iconid.Resolve(imagePath, icon)
-	if path != "" {
-		return path
-	}
-	return iconid.AssetPath(id)
+	return iconid.Picture(imagePath, icon)
 }
 
 // itemIcons is CatalogRepo.ItemIcons for the tile loaders: a read error

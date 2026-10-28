@@ -33,6 +33,7 @@ import (
 	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/kiosk"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -1389,7 +1390,11 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		CatalogTaxRateRefused: func(rateBP int, takeawayBP *int) bool {
 			return taxCodeRatesRefusedForCountry(d.CurrentState().Country, rateBP, takeawayBP)
 		},
-		CatalogItemPhotoReplaced: removeReplacedItemUpload,
+		CatalogItemPhotoReplaced: func(itemID, clearedPath string) {
+			removeReplacedItemUpload(itemID, clearedPath)
+			// ut-docs#5124: the open basket's line follows the new icon.
+			catalog.RefreshBasketPhoto(context.Background(), d, data.NewCatalogRepo(d.Db), itemID)
+		},
 		SaveModifierGroup: func(ctx context.Context, p data.ModifierGroupSave) (string, error) {
 			return cloudSaveModifierGroup(ctx, d, p)
 		},
