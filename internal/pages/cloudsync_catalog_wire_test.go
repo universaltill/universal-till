@@ -490,8 +490,34 @@ func TestCloudDeleteItem_VoidOnlyItemIsDeletedWithAnAuditedVoidCount(t *testing.
 	if err := dp.Db.QueryRow(`SELECT data_json FROM audit_log WHERE action = 'cloud_item_deleted' AND entity_id = 'del-void'`).Scan(&payload); err != nil {
 		t.Fatalf("audit row: %v", err)
 	}
-	if !strings.Contains(payload, "item deleted with 1 voids") {
+	if !strings.Contains(payload, "item deleted with 1 void") {
 		t.Fatalf("audit payload = %s, want the void count line", payload)
+	}
+}
+
+// ut-docs#4778: a comp (and an ID check) on a never-sold item no longer
+// keeps it; the audit payload carries each count and the note.
+func TestCloudDeleteItem_CompedItemIsDeletedWithAnAuditedCompCount(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	seedDeleteItem(t, dp, "del-comp")
+	if _, err := dp.Db.Exec(`INSERT INTO shrinkage_events (id, reason_category, item_id, item_name, quantity, unit_price_minor, extended_value_minor, created_at)
+		VALUES ('se-dc', 'comp', 'del-comp', 'Oat latte', 1, 390, 390, '2026-10-21T21:42:44Z')`); err != nil {
+		t.Fatal(err)
+	}
+	msg, err := buildCloudHooks(dp, nil).DeleteItem(t.Context(), "del-comp")
+	if err != nil || msg != "deleted item Oat latte" {
+		t.Fatalf("delete: %q %v", msg, err)
+	}
+	if itemRowExists(t, dp, "del-comp") {
+		t.Fatal("item still on the till")
+	}
+	var comps int
+	var note string
+	if err := dp.Db.QueryRow(`SELECT json_extract(data_json, '$.comps'), json_extract(data_json, '$.note') FROM audit_log WHERE action = 'cloud_item_deleted' AND entity_id = 'del-comp'`).Scan(&comps, &note); err != nil {
+		t.Fatalf("audit row: %v", err)
+	}
+	if comps != 1 || note != "item deleted with 1 comp" {
+		t.Fatalf("audit comps = %d, note = %q", comps, note)
 	}
 }
 
