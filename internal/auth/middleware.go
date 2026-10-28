@@ -373,6 +373,7 @@ func exempt(path string) bool {
 // hx-triggers and fails on an unclassified one, or on a stale entry here.
 var backgroundPollPaths = map[string]bool{
 	// base.html / nav.html shell, on every page.
+	"/ui/join-sync":           true, // import.html: the joined till's "Syncing your shop" state, every 3 s (ut-docs#5098)
 	"/ui/main-till-status":    true,
 	"/ui/net-status":          true, // status-bar light, fetch every 10 s (ut-docs#3095)
 	"/ui/subscription-chip":   true, // status-bar subscription chip, every 60 s (ut-docs#2569)

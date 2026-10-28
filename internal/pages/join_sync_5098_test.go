@@ -88,7 +88,7 @@ func TestJoinSyncPollRedirectsWhenDone_5098(t *testing.T) {
 	mux, d := joinImportDeps(t)
 	markJoined(t, d, time.Now())
 	poll := func() *httptest.ResponseRecorder {
-		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/import/join-sync", nil), mgrUser)
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/join-sync", nil), mgrUser)
 		req.Header.Set("HX-Request", "true")
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)

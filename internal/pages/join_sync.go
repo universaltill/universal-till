@@ -107,7 +107,7 @@ func joinShopHasProducts(ctx context.Context, d *common.Deps) bool {
 // page alone) while the pull runs, then an HX-Redirect to the sale screen,
 // or to the welcome when the shop is really empty.
 func registerJoinSyncPoll(mux *http.ServeMux, d *common.Deps) {
-	mux.HandleFunc("GET /import/join-sync", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /ui/join-sync", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "import_export") {
 			w.WriteHeader(http.StatusForbidden)
 			return

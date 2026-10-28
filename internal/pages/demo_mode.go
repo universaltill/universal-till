@@ -211,7 +211,7 @@ var demoDeniedRoutes = map[string]bool{
 	// Catalogue/data/voucher import and saving exports to the filesystem
 	// (ADR-0113 §1.5: file ingest).
 	"GET /import":                   true,
-	"GET /import/join-sync":         true,
+	"GET /ui/join-sync":             true,
 	"POST /api/catalog/export-save": true,
 	"POST /api/data/export":         true,
 	"POST /api/data/import":         true,
