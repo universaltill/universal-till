@@ -107,7 +107,9 @@ func registerCloudAuthChip(mux *http.ServeMux, d *common.Deps) {
 		// ut-docs#5157: this till's data was restored onto a new device and
 		// its cloud identity reset. Shown until it is registered or paired
 		// again (or its main till vouches for it), after the replaced case.
-		if d != nil && d.Settings != nil && enroll.RestoredState(r.Context(), d.Settings) {
+		// A replica is told to join the main till again instead (status bar
+		// and Tills page, ut-docs#5162): Registration is the wrong fix there.
+		if d != nil && d.Settings != nil && d.SyncPrimaryURL(r.Context()) == "" && enroll.RestoredState(r.Context(), d.Settings) {
 			if es := restoredChipStatus(); !es.Registered && !es.ViaMainTill {
 				httpx.RenderPartial("ui/partials/cloud_auth_chip.html", map[string]any{
 					"variant":   cloudAuthRestored,

@@ -470,6 +470,9 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		m["menuItems"] = d.MenuSnapshot()
 		m["MainUnreachable"] = lv.State == linkUnreachable
 		m["MainUnreachableSince"] = lv.Since
+		// ut-docs#5162: a restored copy has no bearer; the chip says "join
+		// again" and so does this page (never both with the notice above).
+		m["NeedsRejoin"] = lv.State == linkRejoin
 		// ut-docs#4507: joining replaces this till's sales too — the join
 		// section warns and asks for a confirm (same as the join notice).
 		m["HasSales"] = hasSalesHistory(r.Context(), d)
@@ -1244,12 +1247,19 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 	// the cloud has not acknowledged would be wiped instead: refuse first,
 	// before anything is enrolled.
 	rejoin := isJoinedTill(r.Context(), d)
+	keptDayCloses := 0
 	if rejoin {
 		n, err := rejoinUnsentDayCloses(r.Context(), d)
 		if err != nil {
 			return "", &joinError{kind: joinErrRequestFailed, detail: err.Error()}
 		}
-		if n > 0 {
+		if n > 0 && enroll.RestoredState(r.Context(), d.Settings) {
+			// ut-docs#5162: a restored copy's cloud identity was reset, so it
+			// can never upload these; waiting would block the join forever.
+			// They stay in the backup copy the join takes of this till.
+			keptDayCloses = n
+			logging.L().Warnf("re-join: this restored till has %d day close(s) the cloud never received; they stay in this till's backup copy (ut-docs#5162)", n)
+		} else if n > 0 {
 			kind := joinErrUnsentDayCloses
 			if settingTrim(r.Context(), d, data.ReportArchiveCloudRefusedAtKey) != "" {
 				kind = joinErrUnsentDayClosesRefused // waiting would not help
@@ -1463,6 +1473,11 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 			time.Now().UTC().Format(time.RFC3339), "")
 		logging.L().Infof("re-join: sent %d unsent sale(s), %d no-sale open(s), %d cleared basket(s) to the new main till before the wipe (ut-docs#5058)",
 			replay.Sales, replay.NoSales, replay.ClearedBaskets)
+	}
+	if keptDayCloses > 0 {
+		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", out.Data.TillID, "rejoin_day_closes_kept_local",
+			map[string]any{"primary": primaryURL, "day_closes": keptDayCloses},
+			time.Now().UTC().Format(time.RFC3339), "")
 	}
 	_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", out.Data.TillID, "joined_primary",
 		map[string]any{"primary": primaryURL}, time.Now().UTC().Format(time.RFC3339), "")

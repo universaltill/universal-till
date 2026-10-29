@@ -40,7 +40,7 @@ Use a file from the old till's `backups` folder or one saved with **Save to Down
 
 At the end of setup, the welcome page has a **Restore a backup** button that opens the same place.
 
-A restored backup brings back products, sales, receipts, staff with their PINs, customers, settings, stock levels and photos as they were when the backup was made. Card terminal and payment plugin keys are not in a backup, and neither is the till's connection to the cloud. If you restore a phone or iCloud backup onto another device, or copy the database onto another device, that device starts unregistered and shows **Restored on a new device — connect again**: pair it with the shop again or register it as a new store in Settings → Till registration. Enter plugin keys and passwords again on each plugin's settings page; a field that says it can't be read needs a new value.
+A restored backup brings back products, sales, receipts, staff with their PINs, customers, settings, stock levels and photos as they were when the backup was made. Card terminal and payment plugin keys are not in a backup, and neither is the till's connection to the cloud. If you restore a phone or iCloud backup onto another device, or copy the database onto another device, that device starts unregistered and shows **Restored on a new device — connect again**: pair it with the shop again or register it as a new store in Settings → Till registration. Enter plugin keys and passwords again on each plugin's settings page; a field that says it can't be read needs a new value. A joined till instead shows **Join the main till again** — see Multiple tills.
 
 ## Replacing a till
 

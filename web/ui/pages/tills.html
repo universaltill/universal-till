@@ -7,7 +7,17 @@
 {{/* ut-docs#2722: on a replica whose main till stopped answering — the
      same state as the status-bar chip that links here, explained, with
      what happens by itself and the one case that needs a person. */}}
-{{ if .MainUnreachable }}
+{{/* ut-docs#5162: a restored copy (its bearer and till id were dropped) is
+     told to join again. A notice, never a modal; the unreachable notice
+     below stays out of its way. */}}
+{{ if .NeedsRejoin }}
+<div class="notice-block-warn" role="status" data-testid="tills-needs-rejoin">
+  <strong><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T "sync.link.rejoin" }}</strong>
+  <p>{{ T "sync.link.rejoin_hint" }}</p>
+  <p>{{ T "tills.rejoin_needed_help" }}</p>
+</div>
+{{ end }}
+{{ if and .MainUnreachable (not .NeedsRejoin) }}
 <div class="notice-block-warn" role="status" data-testid="tills-main-unreachable">
   <strong><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T "tills.main_unreachable_title" }}</strong>
   — {{ if .MainUnreachableSince }}{{ printf (T "sync.main_till_unreachable_since") (datetime .MainUnreachableSince) }}{{ else }}{{ T "sync.main_till_unreachable" }}{{ end }}

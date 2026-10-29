@@ -31,6 +31,11 @@ func setReplicaSettings(t *testing.T, s interface {
 		if err := s.Set(context.Background(), "sync.bearer", bearer); err != nil {
 			t.Fatal(err)
 		}
+		// A paired replica holds its till id too (without it the till reads
+		// as restored and needing to join again, ut-docs#5162).
+		if err := s.Set(context.Background(), "sync.till_id", "till-row-test"); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

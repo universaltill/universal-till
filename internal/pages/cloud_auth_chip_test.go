@@ -184,3 +184,22 @@ func TestCloudAuthChip_RestoredVariantAndGating(t *testing.T) {
 		})
 	}
 }
+
+// ut-docs#5162: a restored replica is told to join the main till again (the
+// status-bar chip and the Tills page); the "connect again" cloud chip would
+// point it at Settings → Registration, which is the wrong fix for a replica.
+func TestCloudAuthChip_RestoredHiddenOnReplica(t *testing.T) {
+	mux, d := newCloudAuthChipDeps(t, cloudsync.AuthChip{})
+	orig := restoredChipStatus
+	restoredChipStatus = func() enroll.Status { return enroll.Status{} }
+	t.Cleanup(func() { restoredChipStatus = orig })
+	for k, v := range map[string]string{"till_identity.restored_at": "2026-10-01T00:00:00Z", "sync.primary_url": "http://192.168.1.5:8080"} {
+		if err := d.Settings.Set(t.Context(), k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := getAs(mux, "/ui/cloud-auth-chip", &mgrUser).Body.String()
+	if strings.Contains(body, "restored") {
+		t.Fatalf("the restored chip must not show on a replica: %s", body)
+	}
+}

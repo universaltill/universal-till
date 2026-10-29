@@ -61,14 +61,14 @@
       "locale": "ar",
       "topic": "multitill",
       "signature": {
-        "headings": 6,
+        "headings": 7,
         "numbered_steps": 17,
         "sub_bullets": 1,
         "top_bullets": 11,
         "bold_leadins": 3
       },
       "english": {
-        "headings": 6,
+        "headings": 7,
         "numbered_steps": 17,
         "sub_bullets": 3,
         "top_bullets": 11,
@@ -308,14 +308,14 @@
       "locale": "fa",
       "topic": "multitill",
       "signature": {
-        "headings": 6,
+        "headings": 7,
         "numbered_steps": 17,
         "sub_bullets": 1,
         "top_bullets": 11,
         "bold_leadins": 3
       },
       "english": {
-        "headings": 6,
+        "headings": 7,
         "numbered_steps": 17,
         "sub_bullets": 3,
         "top_bullets": 11,
@@ -593,14 +593,14 @@
       "locale": "tr",
       "topic": "multitill",
       "signature": {
-        "headings": 6,
+        "headings": 7,
         "numbered_steps": 17,
         "sub_bullets": 1,
         "top_bullets": 11,
         "bold_leadins": 7
       },
       "english": {
-        "headings": 6,
+        "headings": 7,
         "numbered_steps": 17,
         "sub_bullets": 3,
         "top_bullets": 11,
