@@ -61,10 +61,13 @@ import (
 // till (registerID; empty from an older main till, which then falls back to
 // its Main location). The copy's own sales are told by their provisional
 // receipt prefix, its no-sale opens and cleared baskets by sync.restored_since;
-// what the original made before the clone keeps its register. A till that is
-// not a restored copy sends its journal unchanged. A copy restored by a build
-// from before sync.restored_since existed has only the prefix: its sales are
-// moved, its no-sale opens and cleared baskets keep the original's register.
+// what the original made before the clone keeps its register
+// (sync.restored_since is never earlier than just after the newest pre-restore
+// no-sale open or cleared basket, so a faster original clock cannot move them,
+// ut-docs#5185). A till that is not a restored copy sends its journal
+// unchanged. A copy restored by a build from before sync.restored_since
+// existed has only the prefix: its sales are moved, its no-sale opens and
+// cleared baskets keep the original's register.
 
 // rejoinSaleBatch is how many sales one replay request carries: the push
 // loop's batch, well inside /api/sync/sales's limit of 100.

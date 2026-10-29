@@ -178,3 +178,43 @@ func TestSalesAggregateKeys_IncludesNoSaleOnlyDayAndTill(t *testing.T) {
 		t.Fatalf("no-sale-only rollup = count %d cashiers %+v", agg.NoSaleCount, agg.Cashiers)
 	}
 }
+
+// ut-docs#5185: the newest entry of this till's OWN no-sale / cleared-basket
+// journal, across both tables, ignoring rows journaled in from another till.
+func TestNewestLocalJournalEntryAt(t *testing.T) {
+	d := b8OpenDB(t, "newest-journal.db")
+	repo := NewPOSRepo(d.DB)
+	ctx := context.Background()
+
+	got, err := repo.NewestLocalJournalEntryAt(ctx)
+	if err != nil || got != "" {
+		t.Fatalf("empty DB = %q, %v; want \"\"", got, err)
+	}
+
+	if _, err := repo.InsertNoSaleEvent(ctx, nil, NoSaleEvent{ID: "ns1", CreatedAt: "2026-10-29T10:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.InsertClearedBasket(ctx, ClearedBasket{ID: "cb1", CreatedAt: "2026-10-29T11:00:00Z", Total: money.FromMinor(1)}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = repo.NewestLocalJournalEntryAt(ctx); got != "2026-10-29T11:00:00Z" {
+		t.Fatalf("newest = %q, want the cleared basket's", got)
+	}
+	if _, err := repo.InsertNoSaleEvent(ctx, nil, NoSaleEvent{ID: "ns2", CreatedAt: "2026-10-29T12:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = repo.NewestLocalJournalEntryAt(ctx); got != "2026-10-29T12:00:00Z" {
+		t.Fatalf("newest = %q, want the no-sale's", got)
+	}
+
+	// Rows journaled in from another till are not this till's own.
+	if _, err := repo.ApplyJournaledNoSaleEvent(ctx, NoSaleEvent{ID: "ns-x", CreatedAt: "2026-12-01T00:00:00Z", TillID: "other"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO cleared_baskets (id, created_at, till_id) VALUES ('cb-x', '2027-01-01T00:00:00Z', 'other')`); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = repo.NewestLocalJournalEntryAt(ctx); got != "2026-10-29T12:00:00Z" {
+		t.Fatalf("newest = %q, want other tills' rows ignored", got)
+	}
+}
