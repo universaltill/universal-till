@@ -14,6 +14,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/lantls"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/netaccess"
@@ -50,6 +51,21 @@ import (
 // not acknowledged by the cloud yet is refused before anything is enrolled
 // (rejoinUnsentDayCloses), so they are never wiped unsent.
 
+// A restored copy keeps the ORIGINAL till's register (ut-docs#5177). A copy
+// made by a backup restore (ut-docs#5162) drops its LAN identity but keeps
+// sync.till_register_id so checkout still works offline. Its entries made
+// after the restore would reach the new main till under the original's
+// register: the wrong stock location for a sale, the wrong register on a
+// no-sale open or cleared basket. So for a restored copy the replay sends
+// those entries under the register the new main till provisioned for this
+// till (registerID; empty from an older main till, which then falls back to
+// its Main location). The copy's own sales are told by their provisional
+// receipt prefix, its no-sale opens and cleared baskets by sync.restored_since;
+// what the original made before the clone keeps its register. A till that is
+// not a restored copy sends its journal unchanged. A copy restored by a build
+// from before sync.restored_since existed has only the prefix: its sales are
+// moved, its no-sale opens and cleared baskets keep the original's register.
+
 // rejoinSaleBatch is how many sales one replay request carries: the push
 // loop's batch, well inside /api/sync/sales's limit of 100.
 const rejoinSaleBatch = 50
@@ -80,8 +96,21 @@ func rejoinUnsentDayCloses(ctx context.Context, d *common.Deps) (int, error) {
 // issued. sinceSale overrides the sales cursor ("" = the stored push
 // cursor). It stops at the first refusal; what was sent before stays sent
 // (the apply is idempotent, so a retried join sends it again harmlessly).
-func replayUnsentJournal(ctx context.Context, d *common.Deps, client *http.Client, base, bearer, sinceSale string) (rejoinReplay, error) {
+// registerID is the register the main till provisioned for this till (see the
+// restored-copy note above).
+func replayUnsentJournal(ctx context.Context, d *common.Deps, client *http.Client, base, bearer, sinceSale, registerID string) (rejoinReplay, error) {
 	var out rejoinReplay
+	copyPrefix, copySince := enroll.RestoredCopyMarks(ctx, d.Settings)
+	// madeByCopy reports whether a time-keyed entry was made after the
+	// restore. An unreadable instant leaves the entry unchanged.
+	since, sinceErr := time.Parse(time.RFC3339, copySince)
+	madeByCopy := func(createdAt string) bool {
+		if copySince == "" || sinceErr != nil {
+			return false
+		}
+		at, err := time.Parse(time.RFC3339, createdAt)
+		return err == nil && !at.Before(since)
+	}
 	repo := data.NewPOSRepo(d.Db)
 	cursor := sinceSale
 	if cursor == "" {
@@ -106,6 +135,9 @@ func replayUnsentJournal(ctx context.Context, d *common.Deps, client *http.Clien
 			if !found {
 				continue
 			}
+			if copyPrefix != "" && strings.HasPrefix(j.Sale.ReceiptNo, copyPrefix) {
+				j.Sale.RegisterID = registerID
+			}
 			batch = append(batch, j)
 		}
 		if err := postJournal(ctx, client, base+"/api/sync/sales", bearer, batch); err != nil {
@@ -127,6 +159,9 @@ func replayUnsentJournal(ctx context.Context, d *common.Deps, client *http.Clien
 		}
 		batch := make([]journalNoSale, 0, len(events))
 		for _, e := range events {
+			if madeByCopy(e.CreatedAt) {
+				e.RegisterID = registerID
+			}
 			batch = append(batch, journalNoSale{ID: e.ID, CreatedAt: e.CreatedAt, RegisterID: e.RegisterID,
 				ActorID: e.ActorID, ApproverID: e.ApproverID, Reason: e.Reason})
 		}
@@ -148,6 +183,9 @@ func replayUnsentJournal(ctx context.Context, d *common.Deps, client *http.Clien
 		}
 		batch := make([]journalClearedBasket, 0, len(clears))
 		for _, e := range clears {
+			if madeByCopy(e.CreatedAt) {
+				e.RegisterID = registerID
+			}
 			batch = append(batch, journalClearedBasket{ID: e.ID, CreatedAt: e.CreatedAt, RegisterID: e.RegisterID,
 				ActorID: e.ActorID, LineCount: e.LineCount, TotalMinor: e.Total.Minor()})
 		}
@@ -259,7 +297,7 @@ func replayStagedJoin(ctx context.Context, d *common.Deps, dbPath string) (rejoi
 		}
 		base, client = tlsBase, lantls.NewPinnedClient(60*time.Second, id.PrimaryCertPin).Client
 	}
-	return replayUnsentJournal(ctx, d, client, base, id.Bearer, "")
+	return replayUnsentJournal(ctx, d, client, base, id.Bearer, "", id.RegisterID)
 }
 
 // ReplayStagedJoinAtStart runs replayStagedJoin on the database about to be

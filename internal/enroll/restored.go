@@ -43,6 +43,10 @@ const (
 	keyTillCloudID = "till_identity.cloud_id"
 
 	keySyncReceiptPrefix = "sync.receipt_prefix"
+	// keySyncRestoredSince is when a restored replica copy was reset
+	// (ut-docs#5177). The "sync." prefix keeps it per-till: admin pulls never
+	// overwrite it.
+	keySyncRestoredSince = "sync.restored_since"
 )
 
 // installMarkerRel is the marker's place under the data root. It must start
@@ -53,6 +57,23 @@ var installMarkerRel = []string{"secrets", "install-id"}
 // provisionalPrefix is the receipt prefix clearClonedIdentity gives a restored
 // replica (ut-docs#5162).
 var provisionalPrefix = regexp.MustCompile(`^R[0-9a-f]{4}-$`)
+
+// RestoredCopyMarks reports what marks this till as a restored replica copy
+// (ut-docs#5177): its provisional receipt prefix (only a valid R<4 hex>- one,
+// else "") and the instant it was restored (sync.restored_since, trimmed).
+// Both empty means this is not a restored copy. A read error reads as empty.
+func RestoredCopyMarks(ctx context.Context, kv Settings) (prefix, since string) {
+	if kv == nil {
+		return "", ""
+	}
+	if v, _, err := kv.Get(ctx, keySyncReceiptPrefix); err == nil && provisionalPrefix.MatchString(strings.TrimSpace(v)) {
+		prefix = strings.TrimSpace(v)
+	}
+	if v, _, err := kv.Get(ctx, keySyncRestoredSince); err == nil {
+		since = strings.TrimSpace(v)
+	}
+	return prefix, since
+}
 
 // RestoredState reports whether the till's cloud identity was reset by a
 // restore and has not been re-established since. A read error reads as not
@@ -167,6 +188,12 @@ func clearClonedIdentity(ctx context.Context, kv Settings, replica bool, install
 	set(keySyncTillID, "")
 	set(discovery.PrimaryCertPinSettingKey, "")
 	set(discovery.PrimaryCertNextPinSettingKey, "")
+	// When the copy was restored (ut-docs#5177): its entries from now on carry
+	// the ORIGINAL till's register id, which a re-join rewrites. Kept like the
+	// prefix below, so a retried reset never moves it.
+	if cur, _, err := kv.Get(ctx, keySyncRestoredSince); err != nil || strings.TrimSpace(cur) == "" {
+		set(keySyncRestoredSince, time.Now().UTC().Format(time.RFC3339))
+	}
 	// A provisional prefix already set (an earlier boot reset, then failed
 	// to re-mark) is kept, so a retried reset never starts a second series.
 	if cur, _, err := kv.Get(ctx, keySyncReceiptPrefix); err == nil && provisionalPrefix.MatchString(strings.TrimSpace(cur)) {
