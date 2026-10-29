@@ -109,6 +109,8 @@ jobs:
         run: bash scripts/ci/ios-webview-zoom_test.sh
       - name: iOS bug-report screenshot bridge — wiring test (ut-docs#3355)
         run: bash scripts/ci/ios-screenshot-bridge_test.sh
+      - name: iOS secrets/ folder excluded from backup — wiring test (ut-docs#5140)
+        run: bash scripts/ci/ios-secrets-backup_test.sh
       - name: e2e launchers never open a browser (ut-docs#2704)
         run: bash scripts/ci/guard-e2e-no-browser.sh
       - name: e2e no-browser guard regression test

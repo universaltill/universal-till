@@ -7,14 +7,42 @@ import Mobile
 enum TillServer {
     /// The till's on-device data directory: Application Support/till — the
     /// sandboxed, backed-up, never-user-visible location iOS intends for
-    /// app data (mobile.Start's doc names it as the iOS choice).
+    /// app data (mobile.Start's doc names it as the iOS choice). Its
+    /// secrets/ (directive, approval and plugin-settings keys) and tls/
+    /// (LAN TLS identity key) subfolders are excluded from backup so a
+    /// restore never clones those keys onto a second device (ut-docs#5140).
+    /// The device id and token are SQLite settings rows in the backed-up
+    /// database and are NOT covered here (follow-up card).
     static func dataDirectory() throws -> String {
         let base = try FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask,
             appropriateFor: nil, create: true)
         let dir = base.appendingPathComponent("till", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // Best effort: a backup-metadata failure must never stop the till
+        // booting (offline-first; the recovery screen needs the Go server).
+        do {
+            try excludeSecretsFromBackup(in: dir)
+        } catch {
+            NSLog("UniversalTill: could not exclude key folders from backup: \(error)")
+        }
         return dir.path
+    }
+
+    /// Creates the key folders (0700, as the Go side does) and marks each
+    /// isExcludedFromBackup; the flag covers everything inside, including
+    /// files the Go side writes later. Re-applied on every launch because a
+    /// restore or an OS update can drop it.
+    static func excludeSecretsFromBackup(in dir: URL) throws {
+        for name in ["secrets", "tls"] {
+            var folder = dir.appendingPathComponent(name, isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: folder, withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700])
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try folder.setResourceValues(values)
+        }
     }
 
     /// Starts the server (idempotent while it is running) and returns the
