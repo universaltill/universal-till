@@ -95,6 +95,9 @@ func TestPluginStoreJSErrorLookupCoversServerErrorKeys(t *testing.T) {
 		"plugins.install.error.not_entitled",
 		"plugins.install.error.not_found",
 		"plugins.install.error.registered_required",
+		"plugins.install.error.pair_required",
+		"plugins.install.error.pair_again",
+		"plugins.install.error.till_removed",
 	} {
 		if !strings.Contains(body, "'"+key+"':") {
 			t.Errorf("store page's inline-script T lookup is missing %q — a shop owner would see the raw key instead of a translated message", key)

@@ -2,7 +2,6 @@ package pages
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -355,28 +354,12 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			DeviceID:   marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
 		})
 		if err != nil {
-			// ut-docs#673: a paid listing without an approved entitlement (or
-			// one still awaiting approval) fails this way — give the operator
-			// the specific, actionable reason instead of a generic gateway
-			// error, same pattern as the replica_use_primary key above.
-			var apiErr *marketplace.APIError
-			if errors.As(err, &apiErr) && apiErr.Code == "not_entitled" {
-				respond(w, http.StatusForbidden, "plugins.install.error.not_entitled")
-				return
-			}
-			// ut-docs#703: a listing that doesn't exist at all (stale catalog
-			// cache, a listing removed from the marketplace) — distinct from
-			// not_entitled, same pattern as the case above.
-			if errors.As(err, &apiErr) && apiErr.Code == "listing_not_found" {
-				respond(w, http.StatusNotFound, "plugins.install.error.not_found")
-				return
-			}
-			// ut-docs#704: an anonymous till hitting a "registered" access-tier
-			// listing (ADR-0013) — the cloud REST path now returns this code
-			// instead of a generic 500. Surface the actionable "claim your
-			// store" message, same pattern as the cases above.
-			if errors.As(err, &apiErr) && apiErr.Code == "registered_required" {
-				respond(w, http.StatusForbidden, "plugins.install.error.registered_required")
+			// ut-docs#673/#703/#704/#3541: marketplace codes (not entitled,
+			// unknown listing, claim your store, till not paired / removed)
+			// get the specific, actionable reason instead of a generic
+			// gateway error; the code -> key/status table lives in plugins.
+			if f, ok := plugins.MarketplaceCodeFailure(err); ok {
+				respond(w, f.Status, f.MessageKey)
 				return
 			}
 			respond(w, http.StatusBadGateway, fmt.Sprintf("download failed: %v", err))
