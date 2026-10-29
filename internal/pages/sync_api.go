@@ -1385,7 +1385,7 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 	if rejoin {
 		unsent := countUnsentSales(r.Context(), d)
 		var rerr error
-		replay, rerr = replayUnsentJournal(r.Context(), d, client, base, out.Data.Bearer, "")
+		replay, rerr = replayUnsentJournal(r.Context(), d, client, base, out.Data.Bearer, "", out.Data.RegisterID)
 		if rerr != nil {
 			logging.L().Errorf("re-join: send this till's unsent journal to the new main till: %v", rerr)
 			return fail(&joinError{kind: joinErrUnsentNotSent, detail: strconv.Itoa(unsent)})
@@ -1453,7 +1453,7 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name, role
 		// From the stored cursor again, not from the newest sale sent: a sale
 		// in the same second would be skipped, and the main till's apply
 		// skips what it already has.
-		last, err := replayUnsentJournal(r.Context(), d, client, base, out.Data.Bearer, "")
+		last, err := replayUnsentJournal(r.Context(), d, client, base, out.Data.Bearer, "", out.Data.RegisterID)
 		if err != nil {
 			logging.L().Errorf("re-join: last pass of this till's journal: %v", err)
 			if uerr := db.UnstageJoin(d.Cfg.DBPath); uerr != nil {

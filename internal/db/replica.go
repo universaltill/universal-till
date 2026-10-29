@@ -245,6 +245,12 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 			return false, fmt.Errorf("clear inherited %s* settings: %w", p, err)
 		}
 	}
+	// ut-docs#5177: a joined till is no longer a restored copy; the marker of
+	// one (enroll.clearClonedIdentity) must not make a later re-join rewrite
+	// the register of entries this till makes as a normal joined till.
+	if _, err := sqlDB.Exec(`DELETE FROM settings WHERE key = 'sync.restored_since'`); err != nil {
+		return false, fmt.Errorf("clear restored-copy marker: %w", err)
+	}
 	// The snapshot brought the primary's sessions; they mean nothing here.
 	if _, err := sqlDB.Exec(`DELETE FROM sessions`); err != nil {
 		return false, fmt.Errorf("clear sessions: %w", err)

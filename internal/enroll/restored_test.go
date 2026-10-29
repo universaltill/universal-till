@@ -504,3 +504,60 @@ func TestRestoreCheck_RepeatedResetKeepsProvisionalPrefix(t *testing.T) {
 		t.Fatalf("sync.receipt_prefix = %q, want the earlier provisional Rbeef- kept", p)
 	}
 }
+
+// ut-docs#5177: the restore instant is recorded on a replica copy (so a
+// re-join can tell the copy's own entries from the original's), kept on a
+// retried reset, and never written for a main till.
+func TestRestoreCheck_ReplicaRecordsRestoredSince(t *testing.T) {
+	restoreDir(t)
+	kv := replicaKV(t)
+	before := time.Now().UTC().Add(-time.Second)
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv) {
+		t.Fatal("want reset")
+	}
+	since, err := time.Parse(time.RFC3339, kv.get(keySyncRestoredSince))
+	if err != nil || since.Before(before) {
+		t.Fatalf("sync.restored_since = %q (err %v), want the restore instant", kv.get(keySyncRestoredSince), err)
+	}
+	prefix, gotSince := RestoredCopyMarks(context.Background(), kv)
+	if !provisionalPrefix.MatchString(prefix) || gotSince != kv.get(keySyncRestoredSince) {
+		t.Fatalf("RestoredCopyMarks = %q, %q", prefix, gotSince)
+	}
+}
+
+func TestRestoreCheck_RepeatedResetKeepsRestoredSince(t *testing.T) {
+	restoreDir(t)
+	kv := replicaKV(t)
+	if err := kv.Set(context.Background(), keySyncRestoredSince, "2026-10-01T08:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv) {
+		t.Fatal("want reset")
+	}
+	if got := kv.get(keySyncRestoredSince); got != "2026-10-01T08:00:00Z" {
+		t.Fatalf("sync.restored_since = %q, want the earlier instant kept", got)
+	}
+}
+
+func TestRestoreCheck_MainTillDoesNotRecordRestoredSince(t *testing.T) {
+	restoreDir(t)
+	kv := enrolledKV(t)
+	_ = kv.fakeKV.Set(context.Background(), keyInstallID, "install-A")
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv) {
+		t.Fatal("want reset")
+	}
+	if got := kv.get(keySyncRestoredSince); got != "" {
+		t.Fatalf("a main till's restore wrote sync.restored_since = %q", got)
+	}
+	if p, s := RestoredCopyMarks(context.Background(), kv); p != "" || s != "" {
+		t.Fatalf("RestoredCopyMarks on a main till = %q, %q, want empty", p, s)
+	}
+}
+
+func TestRestoredCopyMarks_IgnoresARealPrefix(t *testing.T) {
+	kv := newOrderedKV()
+	_ = kv.fakeKV.Set(context.Background(), keySyncReceiptPrefix, "T2-")
+	if p, s := RestoredCopyMarks(context.Background(), kv); p != "" || s != "" {
+		t.Fatalf("RestoredCopyMarks for T2- = %q, %q, want empty", p, s)
+	}
+}

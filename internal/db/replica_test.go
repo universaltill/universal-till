@@ -634,3 +634,33 @@ WHERE (till_id IS NULL OR till_id = '') AND (created_at > ? OR (created_at = ? A
 		t.Fatalf("inherited clears past the join cursor = %d (err %v), want 0", n, err)
 	}
 }
+
+// ut-docs#5177: a restored copy records sync.restored_since; the snapshot a
+// join restores can carry it (a re-join of a copy), and the joined till is no
+// longer a restored copy, so applying the identity drops it.
+func TestApplyReplicaIdentityClearsRestoredSince(t *testing.T) {
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init("") })
+
+	path := filepath.Join(t.TempDir(), "data", "unitill-pos.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+	if _, err := d.Exec(`INSERT INTO settings (key, value) VALUES ('sync.restored_since', '2026-10-29T09:00:00Z')`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := StageReplicaIdentity(path, ReplicaIdentity{
+		PrimaryURL: "http://primary.local", TillID: "till-2", Bearer: "b", ReceiptPrefix: "T2-",
+	}); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if applied, err := ApplyReplicaIdentity(d.DB, path); err != nil || !applied {
+		t.Fatalf("apply: applied=%v err=%v", applied, err)
+	}
+	var n int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = 'sync.restored_since'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("sync.restored_since survived the join (rows=%d err=%v)", n, err)
+	}
+}
