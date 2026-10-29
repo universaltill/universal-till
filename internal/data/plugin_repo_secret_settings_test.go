@@ -398,3 +398,38 @@ func TestReconcilePluginSettings_ResealExistingRowFailsClosedWithoutKeyStore(t *
 		t.Fatalf("failed reseal must leave the row exactly as it was, got %q", raw)
 	}
 }
+
+// ut-docs#5157: a sealed value that cannot be opened (the secrets key did
+// not travel with a restored backup) is flagged Unreadable so the settings
+// page can say "enter it again"; readable and plain rows are not.
+func TestListPluginSettings_UnreadableSealedValueIsFlagged(t *testing.T) {
+	d, repo := newSecretSettingsTestDB(t)
+	ctx := context.Background()
+	other := make([]byte, secrets.KeySize)
+	for i := range other {
+		other[i] = byte(i + 1)
+	}
+	foreign, err := secrets.Seal(other, []byte(`"sk_from_the_old_phone"`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, d, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope) VALUES ('u1', 'com.example.pay', 'stripe_secret_key', ?, 'global')`, foreign)
+	mustExec(t, d, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope) VALUES ('u2', 'com.example.pay', 'endpoint', '"https://x"', 'global')`)
+	if err := repo.UpsertPluginSetting(ctx, "com.example.pay", "sumup_api_key", `"readable"`); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := repo.ListPluginSettings(ctx, "com.example.pay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, r := range rows {
+		got[r.Key] = r.Unreadable
+	}
+	if !got["stripe_secret_key"] {
+		t.Fatalf("a value sealed under another key must be Unreadable: %v", got)
+	}
+	if got["endpoint"] || got["sumup_api_key"] {
+		t.Fatalf("plain and readable rows must not be Unreadable: %v", got)
+	}
+}

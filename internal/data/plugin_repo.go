@@ -816,7 +816,11 @@ FROM plugin_settings WHERE plugin_id = ? AND scope IN ('global', 'register') ORD
 		// ciphertext. An unopenable one is still LISTED (the operator needs
 		// the field on the page to re-enter it) but with an empty value —
 		// "not configured", the same as GetPluginSetting reports it.
-		s.ValueJSON, _ = openStoredSettingValue(ctx, s.PluginID, s.Key, s.ValueJSON)
+		var opened bool
+		s.ValueJSON, opened = openStoredSettingValue(ctx, s.PluginID, s.Key, s.ValueJSON)
+		// ut-docs#5157: tell the page the stored secret exists but this till
+		// cannot read it (e.g. restored without its secrets key).
+		s.Unreadable = !opened
 		out = append(out, s)
 	}
 	return out, rows.Err()
@@ -1558,6 +1562,11 @@ type PluginSettingRow struct {
 	// it, plus the unconditional key-name heuristic, via the same
 	// sealSettingValue seam every other writer uses — see ut-docs#1746.
 	DeclaredSecret bool
+	// Unreadable is set by ListPluginSettings when the stored value is
+	// sealed and cannot be opened on this till (ADR-0082; ut-docs#5157: the
+	// secrets key does not travel in a phone backup). ValueJSON is empty
+	// then; the settings page asks the operator to enter it again.
+	Unreadable bool
 }
 
 // PluginHookRow represents a plugin hook row.

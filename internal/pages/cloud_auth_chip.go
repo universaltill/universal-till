@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/cloudsync"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -27,6 +28,10 @@ import (
 // cloudAuthChipStatus is the chip's source; a var so tests can pin it.
 var cloudAuthChipStatus = cloudsync.AuthChipStatus
 
+// restoredChipStatus is the registration state the restored variant gates
+// on; a var so tests can pin it.
+var restoredChipStatus = enroll.CurrentStatus
+
 // The chip's variants (data-cloud-auth in the partial).
 const (
 	cloudAuthNone     = ""
@@ -34,6 +39,7 @@ const (
 	cloudAuthRepair   = "repair"
 	cloudAuthRegister = "register"
 	cloudAuthReplaced = "replaced" // ut-docs#5058: replaced as main till
+	cloudAuthRestored = "restored" // ut-docs#5157: data restored onto a new device
 )
 
 // cloudAuthChipVariant picks the chip's words.
@@ -97,6 +103,18 @@ func registerCloudAuthChip(mux *http.ServeMux, d *common.Deps) {
 				"replacedHint": replacedHintText(locale, rp),
 			})(w, r)
 			return
+		}
+		// ut-docs#5157: this till's data was restored onto a new device and
+		// its cloud identity reset. Shown until it is registered or paired
+		// again (or its main till vouches for it), after the replaced case.
+		if d != nil && d.Settings != nil && enroll.RestoredState(r.Context(), d.Settings) {
+			if es := restoredChipStatus(); !es.Registered && !es.ViaMainTill {
+				httpx.RenderPartial("ui/partials/cloud_auth_chip.html", map[string]any{
+					"variant":   cloudAuthRestored,
+					"canManage": canPerform(d, r, "settings"),
+				})(w, r)
+				return
+			}
 		}
 		st := cloudAuthChipStatus()
 		if !st.Show {

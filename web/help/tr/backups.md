@@ -39,7 +39,7 @@ Eski kasanın `backups` klasöründeki bir dosyayı ya da **İndirilenler’e ka
 
 Kurulumun sonunda karşılama sayfasında aynı yeri açan bir **Yedeği geri yükle** düğmesi vardır.
 
-Geri yüklenen bir yedek; ürünleri, satışları, fişleri, PIN'leriyle birlikte personeli, müşterileri, ayarları, stok seviyelerini ve fotoğrafları yedeğin alındığı andaki hâliyle geri getirir. Kart terminali ve ödeme eklentisi anahtarları yedekte yoktur: onları yeniden girin.
+Geri yüklenen bir yedek; ürünleri, satışları, fişleri, PIN'leriyle birlikte personeli, müşterileri, ayarları, stok seviyelerini ve fotoğrafları yedeğin alındığı andaki hâliyle geri getirir. Kart terminali ve ödeme eklentisi anahtarları yedekte yoktur, kasanın bulut bağlantısı da yoktur. Bir telefon veya iCloud yedeğini başka bir cihaza geri yüklerseniz ya da veritabanını başka bir cihaza kopyalarsanız, o cihaz kayıtsız başlar ve **Yeni cihazda geri yüklendi — yeniden bağlanın** uyarısını gösterir: Ayarlar → Kasa kaydı'ndan onu mağazayla yeniden eşleştirin veya yeni mağaza olarak kaydedin. Eklenti anahtarlarını ve parolalarını her eklentinin ayarlar sayfasında yeniden girin; okunamadığını söyleyen bir alan yeni bir değer ister.
 
 ## Bir kasayı değiştirme
 

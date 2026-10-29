@@ -257,6 +257,14 @@ func Run(ctx context.Context) error {
 
 	settingsStore := settings.NewStore(database.DB)
 
+	// ut-docs#5157: a data folder restored onto another device (iCloud)
+	// carries the old till's cloud identity. Detect it before anything reads
+	// that identity: after ApplyPendingRestore/ApplyReplicaIdentity, before
+	// LoadRuntimeConfig and enroll.Init (cfg still holds only the
+	// environment's pins here). Outside Init so demo mode, which skips Init,
+	// is covered too. Never blocks boot.
+	enroll.CheckRestoredInstall(ctx, cfg, settingsStore)
+
 	// Pinned LAN TLS (ADR-0114 §7, ut-docs#4092): once this till holds its
 	// main till's pin, every replica → main till request goes over pinned
 	// TLS. Read at request time, so a re-pairing or re-discovery applies to

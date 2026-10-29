@@ -47,13 +47,14 @@ Kayıt ve sahiplenme ücretsizdir, eklenti mağazası da öyle. Kasayı çevrimi
 
 ## Bulut bu kasayı artık kabul etmediğinde
 
-Bulut bu kasanın kimlik bilgisini art arda üç kez reddederse durum çubuğunda bir uyarı görünür. Uyarı hiçbir satışı engellemez: kasa çevrimdışı satışa devam eder, buluta saatte bir yeniden bağlanmayı dener ve göndermesi gereken her şeyi yeniden bağlanana kadar kasada tutar. Uyarı şu üçünden birini söyler:
+Bulut bu kasanın kimlik bilgisini art arda üç kez reddederse ya da bu kasanın verileri yeni bir cihaza geri yüklenirse durum çubuğunda bir uyarı görünür. Uyarı hiçbir satışı engellemez: kasa çevrimdışı satışa devam eder, buluta saatte bir yeniden bağlanmayı dener ve göndermesi gereken her şeyi yeniden bağlanana kadar kasada tutar. Uyarı şunlardan birini söyler:
 
 - **Mağazanın bulut hesabından kaldırıldı**: mağaza sahibi bu kasayı çevrimiçi olarak mağazadan kaldırdı.
 - **Bu kasanın yeniden eşleştirilmesi gerekiyor**: kasanın bulut kimlik bilgisi artık çalışmıyor, kasanın mağazayla yeniden eşleştirilmesi gerekir.
 - **Yeni mağaza olarak kaydol**: mağazanın sahip hesabı yok, bu yüzden kasa eşleştirilemez. Kasayı yeni bir mağaza olarak yeniden kaydedin; yalnızca eski cihaz geçmişi kaybolur.
+- **Yeni cihazda geri yüklendi — yeniden bağlanın**: bu kasanın verileri bir telefon veya iCloud yedeğinden (ya da kopyalanarak) yeni bir cihaza geldi, bu yüzden bulut bağlantısı sıfırlandı; kasadaki satışlara dokunulmaz. Ayarlar → Kasa kaydı'ndan kasayı mağazayla yeniden eşleştirin veya yeni mağaza olarak kaydedin. Eski cihaz kendi bağlantısını korur.
 
-Bir yönetici uyarıya dokunarak Ayarlar → Kasa kaydı'nı açabilir. Uyarı, bulutla bir sonraki başarılı bağlantıdan sonra kaybolur.
+Bir yönetici uyarıya dokunarak Ayarlar → Kasa kaydı'nı açabilir. Uyarı, bulutla bir sonraki başarılı bağlantıdan sonra kaybolur. Geri yükleme uyarısı, kasa yeniden eşleştirildiğinde veya kaydedildiğinde kaybolur.
 
 ## Şimdi kaydol veya Bu mağazayı sahiplen başarısız olduğunda
 
