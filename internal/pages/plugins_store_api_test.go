@@ -198,6 +198,37 @@ func TestStoreAPI_DownloadRegisteredRequired_403(t *testing.T) {
 	}
 }
 
+// TestStoreAPI_DownloadTillAuthCodes_403 pins ut-docs#3541: the download-token
+// route's till-auth answers surface as actionable pairing messages (403, so
+// the UI doesn't read it as the operator's own login expiring), not as the raw
+// "download failed: marketplace: <code>" 502.
+func TestStoreAPI_DownloadTillAuthCodes_403(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	for _, tc := range []struct{ code, key string }{
+		{"store_auth_required", "plugins.install.error.pair_required"},
+		{"device_revoked", "plugins.install.error.till_removed"},
+		{"token_retired", "plugins.install.error.pair_again"},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(`{"data":null,"error":{"code":"` + tc.code + `","message":"nope"}}`))
+			}))
+			t.Cleanup(srv.Close)
+			mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: srv.URL})
+
+			rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-paid"}, "accept_terms": {"on"}}, nil)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("download = %d, want 403 (%s)", rec.Code, rec.Body.String())
+			}
+			if ok, msg := storeRespOf(t, rec); ok || msg != tc.key {
+				t.Fatalf("envelope wrong: success=%v msg=%q, want %q", ok, msg, tc.key)
+			}
+		})
+	}
+}
+
 func TestStoreAPI_InstallWithoutStagedDownload_400(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	// Never dialled: port 1 on loopback is refused at once (ut-docs#5080; port 0 is not dialable).
