@@ -148,14 +148,8 @@ func (s *setupCloudState) guard(allow []*net.IPNet, w http.ResponseWriter, r *ht
 	if !languard.HostAllowed(r.Host, allow) {
 		return deny()
 	}
-	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
+	if !sameOriginRequest(r) {
 		return deny()
-	}
-	if origin := r.Header.Get("Origin"); origin != "" {
-		u, err := url.Parse(origin)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || !strings.EqualFold(u.Host, r.Host) {
-			return deny()
-		}
 	}
 	got := r.Header.Get(setupNonceHeader)
 	if got == "" {
