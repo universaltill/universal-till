@@ -1101,7 +1101,7 @@
   "inventory.days_left": "Days left",
   "inventory.days_left_hint": "Predicted days until this item runs out, from the last 28 days of sales",
   "inventory.dialog_context": "{item} — {location}",
-  "inventory.empty": "No stock recorded yet",
+  "inventory.empty": "No stock-tracked items yet. Add items in the Catalog, or untick an item’s “Not stock-tracked” box there.",
   "inventory.item_placeholder": "Type item name or SKU",
   "inventory.location": "Location",
   "inventory.low_stock": "Low Stock",

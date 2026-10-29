@@ -1101,7 +1101,7 @@
   "inventory.days_left": "روزهای باقی‌مانده",
   "inventory.days_left_hint": "برآورد روزهای باقی‌مانده تا تمام‌شدن این کالا بر اساس فروش ۲۸ روز اخیر",
   "inventory.dialog_context": "{item} — {location}",
-  "inventory.empty": "هنوز موجودی ثبت نشده",
+  "inventory.empty": "هنوز کالایی با پیگیری موجودی وجود ندارد. در کاتالوگ کالا اضافه کنید، یا تیک «موجودی پیگیری نمی‌شود» را از یک کالا در آنجا بردارید.",
   "inventory.item_placeholder": "نام کالا یا کد را بنویسید",
   "inventory.location": "محل",
   "inventory.low_stock": "موجودی کم",
