@@ -40,7 +40,7 @@ In the last two cases a chip in the status bar opens the panel described below, 
 
 ## Cloud sync is part of the paid plans
 
-Registering and claiming are free, and so is the plugin store. Keeping the till in sync with your online account (sales figures, the product list, changes made on the shop's cloud manage page) is part of the paid plans. While the shop is not on one, the till does not sync with the cloud, and Settings → Till registration says that cloud sync is off. It only checks in briefly when it is installed, after an update, and when it is first started each day.
+Registering and claiming are free, and so is the plugin store. Keeping the till in sync with your online account (sales figures, the product list, changes made on my.universaltill.com) is part of the paid plans. While the shop is not on one, the till does not sync with the cloud, and Settings → Till registration says that cloud sync is off. It only checks in briefly when it is installed, after an update, and when it is first started each day.
 
 1. Once the shop is on a paid plan, the till finds out when it is next started on a new day, or sooner when someone on it registers it, pairs it, installs a plugin or generates a claim code. You can also press **Check for a paid plan** in Settings → Till registration (a manager or admin approves it). Cloud sync then starts within a minute and keeps running by itself.
 2. If the plan ends, cloud sync stops after the till's next check-in. Selling never depends on it: every sale works offline either way.
