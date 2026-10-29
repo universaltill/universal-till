@@ -52,6 +52,9 @@ tracker watches check-in/sync only); no caller relies on `Retryable` beyond the 
   sandbox (wasm tests under load; it also hung for the Dev run). The wasm tests it stalled in
   (`FileImport`, `SecretSettings`) pass in 2s on the branch and on `main` when run alone; the full
   package is left to CI's `ci` job.
+- Manual screenshots: the change only alters error responses and the store page's script-only `T`
+  lookup, so no screenshotted pixel moves; the docs-shots surface hash was refreshed
+  (`update-docs-shots-surface-hash.sh`, `Docs-Shots-Unchanged: true`) instead of a regeneration.
 - No help topic documents plugin install errors, so there is no manual change.
 
 **Verdict:** safe to merge.
