@@ -90,6 +90,7 @@ func resetState() {
 	redeemPinWarned.Store(false)
 	unsavedToken.Store(false)
 	signingKeyHits.Store(0)
+	resetApprovalReport()
 }
 
 // signingKeyHits counts testMarketplace's signing-key requests, so a test
@@ -109,9 +110,11 @@ func testMarketplace(t *testing.T, failures int) (*httptest.Server, *int) {
 			http.Error(w, "boom", http.StatusInternalServerError)
 			return
 		}
-		var req map[string]string
+		// any: the body now nests approval_key (ut-docs#5127).
+		var req map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		if req["device_id"] == "" {
+		devID, _ := req["device_id"].(string)
+		if devID == "" {
 			http.Error(w, "device_id required", http.StatusBadRequest)
 			return
 		}
@@ -119,7 +122,7 @@ func testMarketplace(t *testing.T, failures int) (*httptest.Server, *int) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{
 			"store_id":    "store-abc",
 			"merchant_id": "store-abc",
-			"device_id":   req["device_id"],
+			"device_id":   devID,
 			"token":       "tok-123",
 		}})
 	})

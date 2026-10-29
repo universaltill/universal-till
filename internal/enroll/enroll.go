@@ -59,6 +59,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/universaltill/universal-till/internal/approvalkey"
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/discovery"
@@ -492,6 +493,9 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	// Startup fill: explicit (env) values win, the persisted identity fills
 	// the gaps. Safe to mutate cfg here — the server hasn't started yet.
 	m := &cfg.Marketplace
+	// ut-docs#5127: once per start, in the background, offline-safe. Runs
+	// after the startup fill below on the same config copy.
+	defer func() { kickApprovalKeyReport(ctx, *m, wg) }()
 	if m.DeviceID == "" {
 		m.DeviceID = id.DeviceID
 	}
@@ -783,7 +787,7 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 		country = countryCode(v)
 	}
 
-	fields := map[string]string{
+	fields := map[string]any{
 		"store_name":  storeName,
 		"device_id":   deviceID,
 		"device_name": DeviceName(ctx, kv),
@@ -805,6 +809,11 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 		fields["till_id"] = strings.TrimSpace(tid)
 	}
 	fields["platform"] = devicePlatform()
+	// ut-docs#5127: the approval key is pinned in the transaction that
+	// mints the token. A till with no usable key still registers.
+	if ak := approvalkey.Shared().Report(deviceID, ""); ak != nil {
+		fields["approval_key"] = ak
+	}
 	// The operator's acceptance of the cloud terms (ut-docs#4717), only when
 	// the current version was accepted on this till. Operator-initiated
 	// registrations collect it first, as do the plugin store's Download and
@@ -881,6 +890,9 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 	displayStoreID = d.StoreID
 	mu.Unlock()
 	log.Infof("enrolment: till registered with marketplace as %s (device %s)", d.StoreID, deviceID)
+	// ut-docs#5127: pin the approval key if the register body's copy was not
+	// taken (an older cloud ignores it). Background, never blocks.
+	kickApprovalKeyReport(context.WithoutCancel(ctx), m, nil)
 	return nil
 }
 
@@ -1054,6 +1066,7 @@ func registerDevice(ctx context.Context, m config.MarketplaceConfig, deviceName 
 	if err := kv.Set(ctx, keyDeviceRegistered, deviceID); err != nil {
 		logging.L().Warnf("enrolment: persist device_registered: %v", err)
 	}
+	kickApprovalKeyReport(context.WithoutCancel(ctx), m, nil) // ut-docs#5127
 	return nil
 }
 

@@ -55,8 +55,18 @@ func newFakePairCloud(t *testing.T) *fakePairCloud {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/stores/pair", func(w http.ResponseWriter, r *http.Request) {
 		c.calls.Add(1)
-		var body map[string]string
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		var anyBody map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&anyBody)
+		// Strings only; nested values (approval_key, ut-docs#5127) are kept
+		// as their JSON text under the same key.
+		body := map[string]string{}
+		for k, v := range anyBody {
+			if s, ok := v.(string); ok {
+				body[k] = s
+			} else if bb, err := json.Marshal(v); err == nil {
+				body[k] = string(bb)
+			}
+		}
 		c.mu.Lock()
 		c.lastBody = body
 		_, c.hadAuth = r.Header["Authorization"]
@@ -192,6 +202,8 @@ func TestPostPairSuccess(t *testing.T) {
 			t.Fatalf("pair body[%s] = %q, want %q (body %v)", k, body[k], v, body)
 		}
 	}
+	// approval_key rides along (ut-docs#5127); nothing else may.
+	delete(body, "approval_key")
 	if len(body) != len(want) {
 		t.Fatalf("pair body = %v, want exactly %v", body, want)
 	}
