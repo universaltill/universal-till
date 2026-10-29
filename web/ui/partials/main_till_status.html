@@ -7,6 +7,9 @@
        linked      — live link (hello + a frame within 12 s): green dot
        polling     — no live link (older main till / still connecting):
                      sync still works every 30 s; neutral hollow dot
+       rejoin      — no bearer or till id (the data was restored onto a new
+                     device, ut-docs#5162): amber pill like unreachable, a
+                     notice that links to /tills, never a modal
        unreachable — the main till is gone: amber pill, "since <time> —
                      selling offline" (ut-docs#2722's chip, kept)
      Each state is words first (never colour alone) and a real link to
@@ -20,7 +23,13 @@
      installs it by itself, "Update to vX needed" when it can't (then the chip
      links to Settings → Software update instead of /tills); the explanation
      is in the title. */}}
-{{ if eq .state "unreachable" -}}
+{{ if eq .state "rejoin" -}}
+<a class="sb-item sb-link is-unreachable sb-main-till" href="/tills" data-testid="sb-link" data-link-state="rejoin"
+   title="{{ T "sync.link.rejoin_hint" }}">
+  <span class="btn-ico" aria-hidden="true">{{ icon "sync" }}</span>
+  <span class="sb-link-text">{{ T "sync.link.rejoin" }}</span>
+</a>
+{{- else if eq .state "unreachable" -}}
 <a class="sb-item sb-link is-unreachable sb-main-till" href="/tills" data-testid="sb-link" data-link-state="unreachable"
    title="{{ T "sync.main_till_unreachable_hint" }}">
   <span class="btn-ico" aria-hidden="true">{{ icon "sync" }}</span>

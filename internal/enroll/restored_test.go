@@ -4,11 +4,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/paths"
 )
@@ -314,5 +316,191 @@ func TestRestoreCheck_CrashBeforeRemarkKeepsRestoredFlag(t *testing.T) {
 	}
 	if !RestoredState(context.Background(), kv) {
 		t.Fatal("restored flag lost after a crash between reset and re-mark")
+	}
+}
+
+// ut-docs#5162: a restored REPLICA also carries its LAN identity (the sync
+// bearer, till id and main-till TLS pins), so two devices would sync to the
+// main till as one till. The restore check must drop them too.
+
+const (
+	lanBearer  = "lan-bearer-secret-0001"
+	lanTillID  = "till-row-7"
+	lanPin     = "sha256:aaaa"
+	lanNextPin = "sha256:bbbb"
+	lanURL     = "http://192.168.1.5:8080"
+)
+
+// replicaKV is enrolledKV for a joined till: LAN identity plus the rows a
+// re-join keeps.
+func replicaKV(t *testing.T) *orderedKV {
+	t.Helper()
+	kv := enrolledKV(t)
+	for k, v := range map[string]string{
+		keySyncPrimaryURL:            lanURL,
+		keySyncBearer:                lanBearer,
+		keySyncTillID:                lanTillID,
+		keySyncTillName:              "Back office",
+		"sync.till_role":             "sale",
+		"sync.primary_till_id":       "main-1",
+		"sync.last_contact_at":       "2026-10-01T00:00:00Z",
+		"sync.push_cursor":           "117",
+		"sync.primary_cert_pin":      lanPin,
+		"sync.primary_cert_next_pin": lanNextPin,
+		"sync.receipt_prefix":        "T2-",
+		keyTillCloudID:               "cloud-id-of-original",
+		keyInstallID:                 "install-A",
+	} {
+		_ = kv.fakeKV.Set(context.Background(), k, v)
+	}
+	return kv
+}
+
+var lanKeptKeys = []string{keySyncPrimaryURL, keySyncTillName, "sync.till_role", "sync.primary_till_id", "sync.last_contact_at", "sync.push_cursor"}
+
+func TestRestoreCheck_ReplicaClearsLANIdentity(t *testing.T) {
+	restoreDir(t)
+	kv := replicaKV(t)
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv) {
+		t.Fatal("want reset")
+	}
+	for _, k := range []string{keySyncBearer, keySyncTillID, "sync.primary_cert_pin", "sync.primary_cert_next_pin", keyTillCloudID} {
+		if v := kv.get(k); v != "" {
+			t.Fatalf("%s = %q, want cleared", k, v)
+		}
+	}
+	want := map[string]string{keySyncPrimaryURL: lanURL, keySyncTillName: "Back office", "sync.till_role": "sale",
+		"sync.primary_till_id": "main-1", "sync.last_contact_at": "2026-10-01T00:00:00Z", "sync.push_cursor": "117"}
+	for _, k := range lanKeptKeys {
+		if got := kv.get(k); got != want[k] {
+			t.Fatalf("%s = %q, want kept (%q)", k, got, want[k])
+		}
+	}
+	if p := kv.get("sync.receipt_prefix"); !regexp.MustCompile(`^R[0-9a-f]{4}-$`).MatchString(p) {
+		t.Fatalf("sync.receipt_prefix = %q, want a provisional R<4 hex>- prefix", p)
+	}
+	if _, err := time.Parse(time.RFC3339, kv.get(keyRestoredAt)); err != nil {
+		t.Fatalf("restored_at = %q: %v", kv.get(keyRestoredAt), err)
+	}
+	if kv.get(keyToken) != "" || kv.get(keyDeviceID) == "till-old-device" {
+		t.Fatal("cloud identity not reset")
+	}
+}
+
+func TestRestoreCheck_ReplicaNormalRestartChangesNothing(t *testing.T) {
+	restoreDir(t)
+	kv := replicaKV(t)
+	writeMarker(t, "install-A")
+	before := map[string]string{}
+	for k, v := range kv.fakeKV.m {
+		before[k] = v
+	}
+	n := totalSets(kv)
+	if CheckRestoredInstall(context.Background(), &config.Config{}, kv) {
+		t.Fatal("matching marker reported a restore")
+	}
+	if totalSets(kv) != n {
+		t.Fatal("a normal restart wrote settings")
+	}
+	for k, v := range kv.fakeKV.m {
+		if before[k] != v {
+			t.Fatalf("%s changed on a normal restart", k)
+		}
+	}
+}
+
+func TestRestoreCheck_MainTillClearsCloudIDNoSyncKeys(t *testing.T) {
+	restoreDir(t)
+	kv := enrolledKV(t) // a promoted main till: no sync.primary_url
+	_ = kv.fakeKV.Set(context.Background(), keyTillCloudID, "promoted-from")
+	_ = kv.fakeKV.Set(context.Background(), keyInstallID, "install-A")
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv) {
+		t.Fatal("want reset")
+	}
+	if v := kv.get(keyTillCloudID); v != "" {
+		t.Fatalf("cloud_id = %q, want cleared", v)
+	}
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	for _, w := range kv.writes {
+		if strings.HasPrefix(w[0], "sync.") {
+			t.Fatalf("a main till's restore check wrote %q", w[0])
+		}
+	}
+}
+
+func TestRestoreCheck_UnregisteredReplicaSetsRestoredFlag(t *testing.T) {
+	restoreDir(t)
+	kv := newOrderedKV() // joined but never cloud-registered: no token, no pairing
+	for k, v := range map[string]string{keySyncPrimaryURL: lanURL, keySyncBearer: lanBearer, keySyncTillID: lanTillID, keyInstallID: "install-A"} {
+		_ = kv.fakeKV.Set(context.Background(), k, v)
+	}
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv) {
+		t.Fatal("want reset")
+	}
+	if !RestoredState(context.Background(), kv) {
+		t.Fatal("a replica holding a LAN bearer must get the restored flag")
+	}
+	if kv.get(keySyncBearer) != "" {
+		t.Fatal("bearer kept")
+	}
+}
+
+func TestRestoreCheck_EnvPinnedReplicaStillClearsLAN(t *testing.T) {
+	restoreDir(t)
+	kv := replicaKV(t)
+	cfg := &config.Config{Marketplace: config.MarketplaceConfig{MerchantToken: "pinned"}}
+	if CheckRestoredInstall(context.Background(), cfg, kv) {
+		t.Fatal("a pinned cloud identity is not reset")
+	}
+	for _, k := range []string{keySyncBearer, keySyncTillID, "sync.primary_cert_pin", "sync.primary_cert_next_pin"} {
+		if v := kv.get(k); v != "" {
+			t.Fatalf("%s = %q, want cleared even when the cloud identity is pinned", k, v)
+		}
+	}
+	if kv.get(keyToken) != "tok-old-secret-0001" || kv.get(keySyncPrimaryURL) != lanURL {
+		t.Fatal("pinned cloud identity or primary_url touched")
+	}
+	if RestoredState(context.Background(), kv) {
+		t.Fatal("restored flag set for a pinned till")
+	}
+}
+
+func TestRestoreCheck_ReplicaThenRepairKeepsDeviceID(t *testing.T) {
+	restoreDir(t)
+	kv := replicaKV(t)
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv) {
+		t.Fatal("want reset")
+	}
+	id := kv.get(keyDeviceID)
+	get := func(k string) string { return strings.TrimSpace(kv.get(k)) }
+	if repairCopiedIdentity(context.Background(), kv, get) {
+		t.Fatal("repairCopiedIdentity must not replace the freshly minted device id")
+	}
+	if kv.get(keyDeviceID) != id {
+		t.Fatal("device id changed")
+	}
+}
+
+func TestCloudIDKeyMatchesData(t *testing.T) {
+	if keyTillCloudID != data.TillIdentityCloudIDSettingsKey {
+		t.Fatalf("keyTillCloudID %q != data key %q", keyTillCloudID, data.TillIdentityCloudIDSettingsKey)
+	}
+}
+
+// A reset that repeats (an earlier boot reset, then failed to re-mark) keeps
+// the provisional receipt prefix it already gave, so the copy never starts
+// a second receipt series (ut-docs#5162 review).
+func TestRestoreCheck_RepeatedResetKeepsProvisionalPrefix(t *testing.T) {
+	restoreDir(t)
+	kv := replicaKV(t)
+	if err := kv.Set(context.Background(), keySyncReceiptPrefix, "Rbeef-"); err != nil {
+		t.Fatal(err)
+	}
+	if !CheckRestoredInstall(context.Background(), &config.Config{}, kv) {
+		t.Fatal("want reset")
+	}
+	if p := kv.get(keySyncReceiptPrefix); p != "Rbeef-" {
+		t.Fatalf("sync.receipt_prefix = %q, want the earlier provisional Rbeef- kept", p)
 	}
 }

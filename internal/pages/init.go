@@ -549,7 +549,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	rederiveSettings := newRederiveSettings(dp, authDisabled, i18n)
 	registerSyncSettings(mux, dp, rederiveSettings) // additional-till shop-wide settings write-through, main-till side (ut-docs#2791)
 	dp.MainTillUnreachable = func(ctx context.Context) bool {
-		return tillFollowsMain(ctx, dp) && replicaLinkView(ctx, dp).State == linkUnreachable
+		return tillFollowsMain(ctx, dp) && replicaLinkView(ctx, dp).mainTillGone()
 	}
 	registerSyncCatalog(mux, dp) // additional-till catalogue write-through, main-till side (ut-docs#2817); dispatches into the catalogue handlers on this same mux
 	syncAdminRepo := registerSyncAdmin(mux, dp)

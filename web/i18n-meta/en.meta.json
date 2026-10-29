@@ -1,4 +1,7 @@
 {
+  "sync.link.rejoin": {"description": "Status-bar chip on a joined till whose connection to the main till was dropped (its data was restored onto a new device): tells the owner to join the main till again. Links to the Tills page.", "review": "standard"},
+  "sync.link.rejoin_hint": {"description": "Tooltip of the 'join the main till again' status-bar chip: explains that the till no longer uses its old connection, that it keeps selling, and where to join again.", "review": "standard"},
+  "tills.rejoin_needed_help": {"description": "Notice on a joined till's Tills page after its data was restored onto a new device: the steps to join the main till again, and a warning not to revoke the original till if it is still in use. 'Join an existing shop' is the label of that section on the same page.", "review": "standard"},
   "app.name": {"description": "The product name, shown in the window title, the header and the about page. A brand name: never translate it.", "review": "standard"},
   "subscription.cap.order_tracking": {"description": "Name of the paid capability customer order tracking (tracking QR on the kiosk confirmation and receipt), listed on the Subscription card and in the paused-feature banner when the shop's plan no longer includes it.", "review": "standard"},
   "subscription.plan.local_plus": {"description": "Name of the Local Plus subscription plan (the cheapest paid tier), shown as the shop's plan on the Subscription card and status chip. A product name: never translate it.", "review": "standard"},

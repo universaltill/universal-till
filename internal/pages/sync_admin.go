@@ -260,8 +260,10 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 		if primary := d.SyncPrimaryURL(r.Context()); primary != "" {
 			queued, _ := countQueuedSales(r.Context(), posRepo, get("sync.push_cursor"))
 			fresh := withinLast(get("sync.last_contact_at"), 90*time.Second)
+			// A restored copy has no bearer or till id (ut-docs#5162).
+			rejoin := replicaUnpaired(r.Context(), d)
 			class := "ok"
-			if !fresh {
+			if !fresh || rejoin {
 				class = "warn"
 			}
 			label := get("sync.till_name")
@@ -278,6 +280,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 				"label":     label,
 				"queued":    queued,
 				"offline":   !fresh,
+				"rejoin":    rejoin,
 			})(w, r)
 			return
 		}

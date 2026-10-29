@@ -69,7 +69,7 @@ var shopWideLockRegions = map[string]string{
 // probe, so a dead main till never slows the page down.
 func lockedSettingsRegions(ctx context.Context, d *common.Deps) map[string]bool {
 	out := map[string]bool{}
-	if !tillFollowsMain(ctx, d) || replicaLinkView(ctx, d).State != linkUnreachable {
+	if !tillFollowsMain(ctx, d) || !replicaLinkView(ctx, d).mainTillGone() {
 		return out
 	}
 	for id := range shopWideLockRegions {

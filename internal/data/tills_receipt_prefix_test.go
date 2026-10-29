@@ -184,3 +184,22 @@ func TestEnrolTill_HighWaterTravelsInTheAdminBundle(t *testing.T) {
 		t.Fatalf("replica's %s = %q after the admin pull, want 2", TillNoHighWaterSettingsKey, v)
 	}
 }
+
+// ut-docs#5162: a restored copy of a joined till asks to keep a provisional
+// R<4 hex>- prefix. It is no T<n>-, so the main till grants a fresh number
+// instead, and two copies of one till can never share one.
+func TestEnrolTill_ProvisionalRestorePrefixGetsANewTillNo(t *testing.T) {
+	d := openMigratedDB(t, "tills-restored.db")
+	ctx := context.Background()
+	repo := NewTillsRepo(d.DB)
+	if _, n, err := repo.EnrolTill(ctx, "Till 2", "h2", TillRoleAdditional, ""); err != nil || n != 2 {
+		t.Fatalf("first till = %d, %v; want 2", n, err)
+	}
+	for _, p := range []string{"R1a2b-", "Rffff-"} {
+		id, n, err := repo.EnrolTill(ctx, "Restored copy "+p, "h-"+p, TillRoleAdditional, p)
+		if err != nil || n < 3 {
+			t.Fatalf("requested %q = %d, %v; want a fresh T<n>- (n >= 3)", p, n, err)
+		}
+		_ = id
+	}
+}
