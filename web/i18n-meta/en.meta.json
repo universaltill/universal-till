@@ -365,5 +365,7 @@
   "settings.backup.upload.error.too_large": {"description": "Error when the uploaded file is over the size cap (a fixed maximum, or less when the disk is fuller).", "review": "standard", "placeholders": ["the largest file size allowed, for example 1.5 GB"]},
   "status.backup_copy.label": {"description": "Status-bar chip for managers: no backup was downloaded or saved off this till in the last 7 days. Links to Settings → Backups.", "review": "standard", "max_length": 60},
   "status.backup_copy.hint": {"description": "Tooltip of the no-backup-copied chip: why and how to copy a backup off the till.", "review": "standard"},
-  "sync.quarantine_reason.single_purpose_voucher_top_up": {"description": "Reason column on /sync-quarantine: a journaled top-up of a single-purpose voucher (VAT fixed at issue) from an additional till was refused, so the entry is quarantined.", "review": "standard"}
+  "sync.quarantine_reason.single_purpose_voucher_top_up": {"description": "Reason column on /sync-quarantine: a journaled top-up of a single-purpose voucher (VAT fixed at issue) from an additional till was refused, so the entry is quarantined.", "review": "standard"},
+  "categories.item_count_plural": {"description": "Count of active catalog items in a category, shown in the category list and the menu designer ({count} is the number; plural forms per language).", "review": "standard", "plural": "count"},
+  "products.category_button_count_plural": {"description": "Count of quick buttons on the sale screen for a category, shown in the category tile overflow and the menu designer ({count} is the number; plural forms per language).", "review": "standard", "plural": "count"}
 }

@@ -116,7 +116,7 @@
           </button>
           {{ if .SellScreenHidden }} <span class="chip category-hidden-badge">{{ T "categories.hidden_badge" }}</span>{{ end }}
         </td>
-        <td>{{ printf (T "categories.item_count") .ItemCount }}</td>
+        <td>{{ TM "categories.item_count_plural" "count" .ItemCount }}</td>
         <td>{{ if .IsActive }}{{ T "categories.active" }}{{ else }}<span class="muted">{{ T "categories.inactive" }}</span>{{ end }}</td>
       </tr>
       {{ end }}

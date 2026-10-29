@@ -193,6 +193,40 @@ expect_pass "a positional verb alongside a template token"
 plant "zz.verb.percent-prose-no-hyphen" "including a 10%off code" "enthaelt einen 10%off Code"
 expect_pass "percent sign directly followed by prose letters, not a verb"
 
+# ICU MessageFormat values (ut-docs#4480): a plural's branch SET differs per
+# language, and a branch body that is only a digit ({2}) or only an argument
+# ({{count}} = branch holding the simple argument {count}) looks like a
+# template token to the verb regex. Such a key is compared by ICU argument
+# name + type instead.
+ICU_EN='{count, plural, one {# item} other {# items}}'
+plant "zz.icu.branch-sets-differ" "$ICU_EN" \
+  '{count, plural, zero {# a} one {{count}} two {2} few {# b} many {# c} other {# d}}'
+expect_pass "an ICU plural whose branches are only a digit / only an argument"
+
+plant "zz.icu.apostrophe" "$ICU_EN" \
+  "{count, plural, one {# l''item} other {'{'# items'}'}}"
+expect_pass "an ICU plural using apostrophe quoting"
+
+plant "zz.icu.offset-exact" "$ICU_EN" \
+  '{count, plural, offset:1 =0 {none} one {# item} other {# items}}'
+expect_pass "an ICU plural with offset and an exact =0 branch"
+
+plant "zz.icu.arg-renamed" "$ICU_EN" '{n, plural, one {# item} other {# items}}'
+expect_fail "an ICU plural whose argument was renamed"
+
+plant "zz.icu.type-changed" "$ICU_EN" '{count, select, one {# item} other {# items}}'
+expect_fail "an ICU argument whose type changed (plural -> select)"
+
+plant "zz.icu.dropped-arg" "Hi {name}: {count, plural, one {# item} other {# items}}" \
+  '{count, plural, one {# item} other {# items}}'
+expect_fail "an ICU message that dropped a simple argument"
+
+plant "zz.icu.unbalanced" "$ICU_EN" '{count, plural, one {# item} other {# items}'
+expect_fail "an ICU value with unbalanced braces"
+
+plant "zz.icu.plain-text" "$ICU_EN" '5 items'
+expect_fail "plain text where en.json has an ICU plural"
+
 restore
 expect_pass "the pristine sandbox copy of the real tree"
 

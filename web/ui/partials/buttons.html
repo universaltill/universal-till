@@ -741,7 +741,7 @@
                     @click="selectCategoryFromOverflow('{{ $g.ID }}')">
               {{ if $g.ImageURL }}<img class="category-tile-img" src="{{ imgv $g.ImageURL }}" alt="" loading="lazy">{{ end }}
               <span class="category-tile-name">{{ if $g.ID }}{{ $g.Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</span>
-              <span class="category-overflow-count">{{ printf (T "products.category_button_count") $g.VisibleButtons }}</span>
+              <span class="category-overflow-count">{{ TM "products.category_button_count_plural" "count" $g.VisibleButtons }}</span>
             </button>
             {{ end }}
           </div>
@@ -909,7 +909,7 @@
                   @click="openCategoryPopup($el)">
             {{ if .ImageURL }}<img class="category-tile-img" src="{{ imgv .ImageURL }}" alt="" loading="lazy">{{ end }}
             <span class="category-tile-name">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</span>
-            <span class="category-tile-count">{{ printf (T "categories.item_count") .ItemCount }}</span>
+            <span class="category-tile-count">{{ TM "categories.item_count_plural" "count" .ItemCount }}</span>
           </button>
           {{ end }}
         </div>
@@ -1168,7 +1168,7 @@
         <span class="cat-thumb" aria-hidden="true">{{ if $c.Thumb }}<img src="{{ imgv $c.Thumb }}" alt="" width="36" height="36" loading="lazy">{{ else if $c.Color }}<span class="cat-thumb-swatch" style="--swatch: {{ $c.Color }}"></span>{{ else }}<span class="cat-thumb-placeholder">{{ icon "tag" }}</span>{{ end }}</span>
         <span class="designer-cat-text">
           <span class="designer-cat-name">{{ $c.Name }}</span>
-          <span class="muted designer-cat-meta">{{ printf (T "products.category_button_count") $c.ButtonCount }} · {{ printf (T "categories.item_count") $c.ItemCount }}{{ if not $c.IsActive }} · {{ T "categories.inactive" }}{{ end }}</span>
+          <span class="muted designer-cat-meta">{{ TM "products.category_button_count_plural" "count" $c.ButtonCount }} · {{ TM "categories.item_count_plural" "count" $c.ItemCount }}{{ if not $c.IsActive }} · {{ T "categories.inactive" }}{{ end }}</span>
         </span>
       </button>
       <div class="list-actions designer-cat-actions">
