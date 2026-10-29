@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 
@@ -37,6 +38,9 @@ type InstallFailure struct {
 	MessageKey string
 	Message    string
 	Retryable  bool
+	// Status is the HTTP status the store download handler answers with; set
+	// only by MarketplaceCodeFailure (zero elsewhere).
+	Status int
 }
 
 // InstallStatusStore keeps the marketplace installer's bookkeeping — one
@@ -120,25 +124,39 @@ func (s *InstallStatusStore) ClearForPlugin(ctx context.Context, pluginID string
 	return s.repo.DeleteForPlugin(ctx, pluginID)
 }
 
-func ClassifyInstallError(err error) InstallFailure {
-	// ut-docs#673 review finding: a not_entitled marketplace.APIError (a paid
-	// listing needing approval, or a free one not yet approved) reached
-	// every install path except the store/download handler as the generic
-	// retryable failure — including the live Update button on /plugins,
-	// which then offered a Retry that can never succeed. Checked by type
-	// (errors.As, unwrapping through any "%w" wrapper a caller adds), not
-	// string-matching like the cases below, since the caller here already
-	// hands us the real error, not just its text.
+// MarketplaceCodeFailure maps a marketplace.APIError code (found with
+// errors.As through any "%w" wrapper) to the till's actionable, non-retryable
+// message, and the HTTP status the store download handler answers with. It is
+// the one table for these codes (ut-docs#3541), shared by ClassifyInstallError
+// and the store download handler. The till-auth codes answer 403, never 401,
+// so the UI doesn't read it as the operator's own login expiring.
+func MarketplaceCodeFailure(err error) (InstallFailure, bool) {
 	var apiErr *marketplace.APIError
-	if errors.As(err, &apiErr) && apiErr.Code == "not_entitled" {
-		return InstallFailure{MessageKey: "plugins.install.error.not_entitled", Message: "This plugin needs approval before it can be installed.", Retryable: false}
+	if !errors.As(err, &apiErr) || apiErr == nil {
+		return InstallFailure{}, false
 	}
-	// ut-docs#703: a listing_not_found marketplace.APIError means the listing
-	// doesn't exist at all (stale catalog cache, a listing removed from the
-	// marketplace) — distinct from not_entitled, and retrying without a fresh
-	// catalog can never succeed either.
-	if errors.As(err, &apiErr) && apiErr.Code == "listing_not_found" {
-		return InstallFailure{MessageKey: "plugins.install.error.not_found", Message: "The selected plugin was not found in the catalog.", Retryable: false}
+	switch apiErr.Code {
+	case "not_entitled": // ut-docs#673: paid/unapproved listing
+		return InstallFailure{MessageKey: "plugins.install.error.not_entitled", Message: "This plugin needs approval before it can be installed.", Status: http.StatusForbidden}, true
+	case "listing_not_found": // ut-docs#703: stale catalog / removed listing
+		return InstallFailure{MessageKey: "plugins.install.error.not_found", Message: "The selected plugin was not found in the catalog.", Status: http.StatusNotFound}, true
+	case "registered_required": // ut-docs#704: anonymous till, registered-tier listing
+		return InstallFailure{MessageKey: "plugins.install.error.registered_required", Message: "This plugin requires a claimed store account.", Status: http.StatusForbidden}, true
+	case "store_auth_required": // paid plugin from a till that is not paired
+		return InstallFailure{MessageKey: "plugins.install.error.pair_required", Message: "Pair this till with your shop to install this plugin.", Status: http.StatusForbidden}, true
+	case "device_revoked": // till removed/replaced/moved from the shop
+		return InstallFailure{MessageKey: "plugins.install.error.till_removed", Message: "This till was removed from your shop.", Status: http.StatusForbidden}, true
+	case "unauthorized", "token_retired", "device_mismatch":
+		return InstallFailure{MessageKey: "plugins.install.error.pair_again", Message: "Pair this till with your shop again.", Status: http.StatusForbidden}, true
+	}
+	return InstallFailure{}, false
+}
+
+func ClassifyInstallError(err error) InstallFailure {
+	// ut-docs#673/#703/#3541: marketplace codes are typed errors (errors.As
+	// through any "%w" wrapper) and none can succeed on retry.
+	if f, ok := MarketplaceCodeFailure(err); ok {
+		return f
 	}
 
 	// ADR-0169: a cloud-hosted plugin (type `channel`) can never run on a

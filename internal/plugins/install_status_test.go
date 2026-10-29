@@ -234,3 +234,67 @@ type testErr string
 func (e testErr) Error() string { return string(e) }
 
 func assertErr(message string) error { return testErr(message) }
+
+// TestMarketplaceCodeFailure pins the single marketplace-code -> till-message
+// table (ut-docs#3541): the three listing/entitlement codes plus the till-auth
+// codes ut-cloud's download-token route can answer. None is retryable.
+func TestMarketplaceCodeFailure(t *testing.T) {
+	cases := []struct {
+		code   string
+		key    string
+		status int
+	}{
+		{"not_entitled", "plugins.install.error.not_entitled", 403},
+		{"listing_not_found", "plugins.install.error.not_found", 404},
+		{"registered_required", "plugins.install.error.registered_required", 403},
+		{"store_auth_required", "plugins.install.error.pair_required", 403},
+		{"device_revoked", "plugins.install.error.till_removed", 403},
+		{"unauthorized", "plugins.install.error.pair_again", 403},
+		{"token_retired", "plugins.install.error.pair_again", 403},
+		{"device_mismatch", "plugins.install.error.pair_again", 403},
+	}
+	for _, tc := range cases {
+		for _, wrapped := range []bool{false, true} {
+			var err error = &marketplace.APIError{Code: tc.code, Message: "x"}
+			if wrapped {
+				err = fmt.Errorf("download: %w", err)
+			}
+			f, ok := MarketplaceCodeFailure(err)
+			if !ok {
+				t.Fatalf("%s (wrapped=%v): not mapped", tc.code, wrapped)
+			}
+			if f.MessageKey != tc.key || f.Retryable || f.Message == "" || f.Status != tc.status {
+				t.Errorf("%s (wrapped=%v): got %+v, want key %q non-retryable status %d", tc.code, wrapped, f, tc.key, tc.status)
+			}
+			if got := ClassifyInstallError(err); got.MessageKey != tc.key || got.Retryable {
+				t.Errorf("ClassifyInstallError(%s) = %+v, want key %q non-retryable", tc.code, got, tc.key)
+			}
+		}
+	}
+	for _, err := range []error{
+		&marketplace.APIError{Code: "something_else"},
+		fmt.Errorf("plain failure"),
+		nil,
+	} {
+		if _, ok := MarketplaceCodeFailure(err); ok {
+			t.Errorf("MarketplaceCodeFailure(%v) mapped, want false", err)
+		}
+	}
+}
+
+func TestClassifyInstallError_NewKeysResolveInLocales(t *testing.T) {
+	i18n, err := config.NewI18nFS(locales.FS, "en")
+	if err != nil {
+		t.Fatalf("load embedded locales: %v", err)
+	}
+	for _, key := range []string{
+		"plugins.install.error.registered_required",
+		"plugins.install.error.pair_required",
+		"plugins.install.error.pair_again",
+		"plugins.install.error.till_removed",
+	} {
+		if got := i18n.T("en", key); got == key {
+			t.Errorf("locale key %q missing in en.json", key)
+		}
+	}
+}
