@@ -968,7 +968,6 @@ inventory.cost_optional
 inventory.days_left
 inventory.days_left_hint
 inventory.dialog_context
-inventory.empty
 inventory.item_placeholder
 inventory.location
 inventory.low_stock

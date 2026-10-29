@@ -1101,7 +1101,7 @@
   "inventory.days_left": "الأيام المتبقية",
   "inventory.days_left_hint": "الأيام المتوقعة حتى نفاد هذا المنتج بناءً على مبيعات آخر 28 يوماً",
   "inventory.dialog_context": "{item} — {location}",
-  "inventory.empty": "لم يُسجَّل مخزون بعد",
+  "inventory.empty": "لا توجد أصناف يُتتبَّع مخزونها بعد. أضف أصنافًا في الكتالوج، أو ألغِ تحديد «لا يتم تتبع المخزون» لأحد الأصناف هناك.",
   "inventory.item_placeholder": "اكتب اسم الصنف أو رمزه",
   "inventory.location": "الموقع",
   "inventory.low_stock": "مخزون منخفض",

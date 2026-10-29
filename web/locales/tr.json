@@ -1101,7 +1101,7 @@
   "inventory.days_left": "Kalan gün",
   "inventory.days_left_hint": "Son 28 günün satışına göre bu ürünün tükenmesine kalan tahmini gün",
   "inventory.dialog_context": "{item} — {location}",
-  "inventory.empty": "Henüz stok kaydı yok",
+  "inventory.empty": "Henüz stok takibi yapılan ürün yok. Katalog’da ürün ekleyin veya oradaki bir ürünün “Stok takibi yapılmıyor” kutusunun işaretini kaldırın.",
   "inventory.item_placeholder": "Ürün adı veya SKU yazın",
   "inventory.location": "Konum",
   "inventory.low_stock": "Düşük stok",
