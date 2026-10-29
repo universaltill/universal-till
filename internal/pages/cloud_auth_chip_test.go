@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/cloudsync"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -134,6 +135,51 @@ func TestStoreHasOwner(t *testing.T) {
 			}
 			if got := storeHasOwner(t.Context(), d.Settings); got != c.want {
 				t.Fatalf("storeHasOwner = %t, want %t", got, c.want)
+			}
+		})
+	}
+}
+
+// ut-docs#5157: a till whose data was restored onto a new device shows a
+// "connect again" chip until it is registered or paired again.
+func TestCloudAuthChip_RestoredVariantAndGating(t *testing.T) {
+	const label = "Restored on a new device — connect again"
+	for _, c := range []struct {
+		name     string
+		restored bool
+		status   enroll.Status
+		want     bool
+	}{
+		{"restored and unregistered", true, enroll.Status{}, true},
+		{"restored but registered again", true, enroll.Status{Registered: true}, false},
+		{"restored but vouched by the main till", true, enroll.Status{ViaMainTill: true}, false},
+		{"not restored", false, enroll.Status{}, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			mux, d := newCloudAuthChipDeps(t, cloudsync.AuthChip{})
+			orig := restoredChipStatus
+			restoredChipStatus = func() enroll.Status { return c.status }
+			t.Cleanup(func() { restoredChipStatus = orig })
+			if c.restored {
+				if err := d.Settings.Set(t.Context(), "till_identity.restored_at", "2026-10-01T00:00:00Z"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			rec := getAs(mux, "/ui/cloud-auth-chip", &mgrUser)
+			body := rec.Body.String()
+			if !c.want {
+				if strings.Contains(body, "restored") {
+					t.Fatalf("restored chip must not show: %s", body)
+				}
+				return
+			}
+			for _, w := range []string{label, `data-cloud-auth="restored"`, `href="/settings#registration"`} {
+				if !strings.Contains(body, w) {
+					t.Fatalf("body lacks %q: %s", w, body)
+				}
+			}
+			if strings.Contains(body, "<dialog") || strings.Contains(body, "showModal") {
+				t.Fatalf("chip must never be a modal: %s", body)
 			}
 		})
 	}

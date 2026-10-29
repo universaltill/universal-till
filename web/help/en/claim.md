@@ -47,13 +47,14 @@ Registering and claiming are free, and so is the plugin store. Keeping the till 
 
 ## When the cloud stops accepting this till
 
-If the cloud refuses this till's credential three times in a row, a chip appears in the status bar. It never blocks a sale: the till keeps selling offline, tries the cloud again once an hour, and keeps everything it still has to send on the till until it is connected again. The chip says one of three things:
+If the cloud refuses this till's credential three times in a row, or this till's data was restored onto a new device, a chip appears in the status bar. It never blocks a sale: the till keeps selling offline, tries the cloud again once an hour, and keeps everything it still has to send on the till until it is connected again. The chip says one of these things:
 
 - **Removed from the shop's cloud account**: the shop's owner removed this till from the store online.
 - **This till needs pairing again**: the till's cloud credential no longer works, so the till must be paired with the shop again.
 - **Register as a new store**: the store has no owner account, so the till can't be paired. Register it again as a new store; only the old fleet history is lost.
+- **Restored on a new device — connect again**: this till's data was restored from a phone or iCloud backup (or copied) onto a new device, so its cloud connection was reset; the sales on the till are not touched. Pair it with the shop again, or register it as a new store, in Settings → Till registration. The old device keeps its own connection.
 
-A manager can tap the chip to open Settings → Till registration, straight to Pair with a shop below. The chip goes away after the next successful contact with the cloud.
+A manager can tap the chip to open Settings → Till registration, straight to Pair with a shop below. The chip goes away after the next successful contact with the cloud. The restored chip goes away once the till is paired or registered again.
 
 ## When Register now or Claim this store fails
 
