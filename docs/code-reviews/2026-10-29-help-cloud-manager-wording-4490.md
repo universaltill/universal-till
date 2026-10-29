@@ -35,6 +35,9 @@ Independent review by a different model (Sonnet; the change was authored by Opus
 - `go test` for `internal/httpx`, `internal/manual`, `internal/pages`,
   `internal/pages/catalog`, `internal/pages/common`: ok. `internal/plugins` left to CI
   (exceeds the local 10-minute default).
-- No screenshots affected (prose only).
+- `make docs-shots` re-run: PNGs byte-identical; only `web/help/img/manifest.json`'s
+  topic hashes for en/multitill and {en,fa,ar,tr}/sell moved. CI's `guard-docs-shots`
+  caught the missing manifest refresh on the first push (my local guard sweep had only
+  run the `guard-*.sh` names, not `run-docs-shots-guard.sh`); now passes locally.
 
 Verdict: safe to merge.
