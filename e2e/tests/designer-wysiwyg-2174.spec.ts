@@ -178,7 +178,7 @@ test.describe('Quick Buttons Designer as a live sale-screen replica (ut-docs#217
     const id = (await row.getAttribute('data-cat-id'))!;
     // No quick buttons yet, so — exactly as on the sale screen — no tab.
     await expect(page.locator(`#cat-tab-${id}`)).toHaveCount(0);
-    await expect(row.locator('.designer-cat-meta')).toContainText('0 button');
+    await expect(row.locator('.designer-cat-meta')).toContainText('0 buttons');
 
     // Rename (+ recolour) in place.
     await row.locator('[data-cat-edit]').click();

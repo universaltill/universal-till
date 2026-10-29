@@ -592,6 +592,14 @@ if key_call_hits:
 #    independent review found that treating them as one pool made a verb
 #    at a template-token argument index required, which no translation
 #    (not even a byte-for-byte copy of en.json) could ever satisfy.
+#    ICU MessageFormat values (ut-docs#4480, ADR-0160 §8): when the en value
+#    holds a complex argument ({n, plural|select|selectordinal|number ...}),
+#    the verb regex below is the wrong tool -- a plural's branch SET differs
+#    per language (Arabic has six, English two) and a branch body that is only
+#    a digit ({2}) or only an argument ({{n}}) reads as a template token. Such
+#    a key is compared across locales by ICU ARGUMENT NAME + TYPE instead: the
+#    locale value must parse as ICU (balanced braces, apostrophe quoting) and
+#    yield the same name -> type map as en. Non-ICU values keep the verb logic.
 verb_re = re.compile(
     r'%%'
     r'|%\[(\d+)\]\d*(?:\.\d+)?[vTtbcdoOqxXUeEfFgGspw](?![A-Za-z])'
@@ -658,18 +666,203 @@ def verbs_match(a, b):
     b_map = {idx: verb_shape(t) for t, idx in b_pf}
     return a_map == b_map
 
+icu_complex_re = re.compile(r'\{\s*[^\s,{}]+\s*,\s*(?:plural|select|selectordinal|number)\b')
+
+PLURAL_CATEGORIES = {"zero", "one", "two", "few", "many", "other"}
+
+def is_icu(s):
+    return icu_complex_re.search(s) is not None
+
+class IcuError(ValueError):
+    pass
+
+def icu_args(text):
+    # name -> frozenset of types (plain/plural/select/selectordinal/number/...)
+    # for every argument in an ICU message; raises IcuError on a malformed
+    # one. A plain {n} use of a name that is ALSO a complex argument (a branch
+    # body of "{n}") is dropped: it is the same argument, not a second one.
+    found = {}
+    pos = [0]
+    n = len(text)
+
+    def skip_ws():
+        while pos[0] < n and text[pos[0]] in " \t\r\n":
+            pos[0] += 1
+
+    def message(depth):
+        # Parses until a closing "}" of an enclosing argument (depth > 0,
+        # consumed by the caller) or end of text (depth == 0).
+        while pos[0] < n:
+            c = text[pos[0]]
+            if c == "'":
+                nxt = text[pos[0] + 1] if pos[0] + 1 < n else ""
+                if nxt == "'":
+                    pos[0] += 2
+                elif nxt in ("{", "}", "#"):
+                    pos[0] += 1
+                    while True:
+                        if pos[0] >= n:
+                            raise IcuError("unterminated apostrophe quote")
+                        if text[pos[0]] == "'":
+                            if pos[0] + 1 < n and text[pos[0] + 1] == "'":
+                                pos[0] += 2
+                                continue
+                            pos[0] += 1
+                            break
+                        pos[0] += 1
+                else:
+                    pos[0] += 1
+            elif c == "{":
+                pos[0] += 1
+                argument(depth + 1)
+            elif c == "}":
+                if depth == 0:
+                    raise IcuError("unbalanced '}'")
+                return
+            else:
+                pos[0] += 1
+        if depth > 0:
+            raise IcuError("unbalanced '{'")
+
+    def word():
+        start = pos[0]
+        while pos[0] < n and text[pos[0]] not in " \t\r\n,{}":
+            pos[0] += 1
+        return text[start:pos[0]]
+
+    def record(name, typ):
+        found.setdefault(name, set()).add(typ)
+
+    def argument(depth):
+        skip_ws()
+        name = word()
+        if not name:
+            raise IcuError("argument without a name")
+        skip_ws()
+        if pos[0] >= n:
+            raise IcuError("unbalanced '{'")
+        if text[pos[0]] == "}":
+            pos[0] += 1
+            record(name, "simple")
+            return
+        if text[pos[0]] != ",":
+            raise IcuError(f"expected ',' or '}}' after argument {name!r}")
+        pos[0] += 1
+        skip_ws()
+        typ = word()
+        skip_ws()
+        if typ in ("plural", "select", "selectordinal"):
+            if pos[0] >= n or text[pos[0]] != ",":
+                raise IcuError(f"{name!r}: {typ} needs options")
+            pos[0] += 1
+            skip_ws()
+            if typ != "select" and text.startswith("offset:", pos[0]):
+                pos[0] += len("offset:")
+                skip_ws()
+                start = pos[0]
+                while pos[0] < n and text[pos[0]].isdigit():
+                    pos[0] += 1
+                if start == pos[0]:
+                    raise IcuError(f"{name!r}: offset needs a number")
+                skip_ws()
+            options = 0
+            seen = set()
+            while pos[0] < n and text[pos[0]] != "}":
+                sel = word()
+                if not sel:
+                    raise IcuError(f"{name!r}: expected a selector")
+                # Mirror internal/msgfmt: CLDR categories or =N only, no
+                # repeats, `other` required -- a value it refuses renders
+                # English (ut-docs#4480 review).
+                if typ != "select" and sel not in PLURAL_CATEGORIES and not re.fullmatch(r"=\d+", sel):
+                    raise IcuError(f"{name!r}: unknown plural category {sel!r}")
+                if sel in seen:
+                    raise IcuError(f"{name!r}: duplicate branch {sel!r}")
+                seen.add(sel)
+                skip_ws()
+                if pos[0] >= n or text[pos[0]] != "{":
+                    raise IcuError(f"{name!r}: selector {sel!r} needs a {{message}}")
+                pos[0] += 1
+                message(depth)
+                pos[0] += 1  # the branch's "}"
+                skip_ws()
+                options += 1
+            if pos[0] >= n:
+                raise IcuError("unbalanced '{'")
+            if options == 0:
+                raise IcuError(f"{name!r}: {typ} has no options")
+            if "other" not in seen:
+                raise IcuError(f"{name!r}: {typ} needs an `other` branch")
+            pos[0] += 1
+            record(name, typ)
+            return
+        if not typ:
+            raise IcuError(f"{name!r}: missing argument type")
+        if pos[0] < n and text[pos[0]] == ",":
+            pos[0] += 1
+            level = 0  # optional style, up to the argument's closing "}"
+            while pos[0] < n and not (text[pos[0]] == "}" and level == 0):
+                if text[pos[0]] == "{":
+                    level += 1
+                elif text[pos[0]] == "}":
+                    level -= 1
+                pos[0] += 1
+        if pos[0] >= n:
+            raise IcuError("unbalanced '{'")
+        pos[0] += 1
+        record(name, typ)
+
+    message(0)
+    out = {}
+    for name, types in found.items():
+        if len(types) > 1:
+            types = types - {"simple"}
+        out[name] = frozenset(types)
+    return out
+
+def icu_describe(m):
+    return {k: "/".join(sorted(v)) for k, v in sorted(m.items())}
+
+def icu_mismatch(base_val, loc_val):
+    # None when loc_val is a valid ICU message with en's argument names and
+    # types; else a short reason.
+    try:
+        want = icu_args(base_val)
+    except IcuError as e:
+        return f"en value is not valid ICU ({e})", None, None
+    try:
+        got = icu_args(loc_val)
+    except IcuError as e:
+        return f"locale value is not valid ICU ({e})", icu_describe(want), None
+    if want != got:
+        return "ICU argument names/types differ", icu_describe(want), icu_describe(got)
+    return None
+
+
 base_values = json.load(open("web/locales/en.json"))
 verb_hits = []
+icu_hits = []
 for path in sorted(glob.glob("web/locales/*.json")):
     if path.endswith("en.json"):
         continue
     loc_values = json.load(open(path))
     for k in sorted(base_values.keys() & loc_values.keys()):
+        if is_icu(base_values[k]):
+            why = icu_mismatch(base_values[k], loc_values[k])
+            if why:
+                icu_hits.append((path, k) + why)
+            continue
         if not verbs_match(base_values[k], loc_values[k]):
             verb_hits.append((
                 path, k, verb_tokens(base_values[k]), verb_tokens(loc_values[k]),
                 percent_literal_count(base_values[k]), percent_literal_count(loc_values[k]),
             ))
+
+if icu_hits:
+    fail = True
+    print("guard-i18n: locale value has a format/template verb mismatch against en.json (ICU message: argument names/types must match en, value must parse as ICU):")
+    for path, k, why, want, got in icu_hits:
+        print(f"  {path}: {k}: {why}; en args={want} vs {got}")
 
 if verb_hits:
     fail = True
