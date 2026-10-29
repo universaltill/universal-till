@@ -19,13 +19,13 @@ func TestShippedCountPluralKeys_RenderEveryCategory(t *testing.T) {
 	cases := map[string]map[string][]string{
 		"categories.item_count_plural": {
 			"en": {"0 items", "1 item", "2 items", "5 items", "11 items", "100 items"},
-			"ar": {"٠ أصناف", "صنف واحد", "صنفان", "٥ أصناف", "١١ صنفًا", "١٠٠ صنف"},
+			"ar": {"لا أصناف", "صنف واحد", "صنفان", "٥ أصناف", "١١ صنفًا", "١٠٠ صنف"},
 			"fa": {"۰ کالا", "۱ کالا", "۲ کالا", "۵ کالا", "۱۱ کالا", "۱۰۰ کالا"},
 			"tr": {"0 ürün", "1 ürün", "2 ürün", "5 ürün", "11 ürün", "100 ürün"},
 		},
 		"products.category_button_count_plural": {
 			"en": {"0 buttons", "1 button", "2 buttons", "5 buttons", "11 buttons", "100 buttons"},
-			"ar": {"٠ أزرار", "زر واحد", "زرّان", "٥ أزرار", "١١ زرًا", "١٠٠ زر"},
+			"ar": {"لا أزرار", "زر واحد", "زران", "٥ أزرار", "١١ زرًا", "١٠٠ زر"},
 			"fa": {"۰ دکمه", "۱ دکمه", "۲ دکمه", "۵ دکمه", "۱۱ دکمه", "۱۰۰ دکمه"},
 			"tr": {"0 düğme", "1 düğme", "2 düğme", "5 düğme", "11 düğme", "100 düğme"},
 		},

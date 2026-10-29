@@ -227,6 +227,17 @@ expect_fail "an ICU value with unbalanced braces"
 plant "zz.icu.plain-text" "$ICU_EN" '5 items'
 expect_fail "plain text where en.json has an ICU plural"
 
+# The till's parser (internal/msgfmt) refuses these and TM silently shows
+# English, so the guard must refuse them too (ut-docs#4480 review).
+plant "zz.icu.no-other" "$ICU_EN" '{count, plural, zero {a} one {b} two {c} few {d} many {e}}'
+expect_fail "an ICU plural with no other branch"
+
+plant "zz.icu.typo-category" "$ICU_EN" '{count, plural, one {# item} othr {# items}}'
+expect_fail "an ICU plural with a misspelt plural category"
+
+plant "zz.icu.dup-branch" "$ICU_EN" '{count, plural, one {a} one {b} other {# items}}'
+expect_fail "an ICU plural with a duplicate branch"
+
 restore
 expect_pass "the pristine sandbox copy of the real tree"
 

@@ -191,7 +191,7 @@ test.describe('sale screen category strip overflow (ut-docs#2307)', () => {
       for (const c of cats) {
         const tile = dialog.locator('.category-overflow-tile', { hasText: c.name });
         await expect(tile, `sheet tile for ${c.name}`).toHaveCount(1);
-        await expect(tile.locator('.category-overflow-count')).toHaveText('1 button(s)');
+        await expect(tile.locator('.category-overflow-count')).toHaveText('1 button');
       }
 
       // Selecting the 14th category (card's own example) closes the sheet

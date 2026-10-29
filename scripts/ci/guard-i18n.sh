@@ -668,6 +668,8 @@ def verbs_match(a, b):
 
 icu_complex_re = re.compile(r'\{\s*[^\s,{}]+\s*,\s*(?:plural|select|selectordinal|number)\b')
 
+PLURAL_CATEGORIES = {"zero", "one", "two", "few", "many", "other"}
+
 def is_icu(s):
     return icu_complex_re.search(s) is not None
 
@@ -764,10 +766,19 @@ def icu_args(text):
                     raise IcuError(f"{name!r}: offset needs a number")
                 skip_ws()
             options = 0
+            seen = set()
             while pos[0] < n and text[pos[0]] != "}":
                 sel = word()
                 if not sel:
                     raise IcuError(f"{name!r}: expected a selector")
+                # Mirror internal/msgfmt: CLDR categories or =N only, no
+                # repeats, `other` required -- a value it refuses renders
+                # English (ut-docs#4480 review).
+                if typ != "select" and sel not in PLURAL_CATEGORIES and not re.fullmatch(r"=\d+", sel):
+                    raise IcuError(f"{name!r}: unknown plural category {sel!r}")
+                if sel in seen:
+                    raise IcuError(f"{name!r}: duplicate branch {sel!r}")
+                seen.add(sel)
                 skip_ws()
                 if pos[0] >= n or text[pos[0]] != "{":
                     raise IcuError(f"{name!r}: selector {sel!r} needs a {{message}}")
@@ -780,6 +791,8 @@ def icu_args(text):
                 raise IcuError("unbalanced '{'")
             if options == 0:
                 raise IcuError(f"{name!r}: {typ} has no options")
+            if "other" not in seen:
+                raise IcuError(f"{name!r}: {typ} needs an `other` branch")
             pos[0] += 1
             record(name, typ)
             return
