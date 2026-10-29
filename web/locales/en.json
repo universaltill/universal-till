@@ -61,7 +61,7 @@
   "auth.clear": "Clear",
   "auth.enter_pin": "Enter your PIN",
   "auth.error.invalid": "PIN not recognised",
-  "auth.error.locked": "Too many attempts — wait 30 seconds",
+  "auth.error.locked": "Too many attempts — try again shortly",
   "auth.error.pin_format": "PIN must be 4–8 digits",
   "auth.error.pin_mismatch": "PINs do not match",
   "auth.error.unavailable": "Sorry — the till can't reach its own data right now, so it can't sign you in. Close the app completely and open it again. If that doesn't help, report the problem so we can look into it.",
