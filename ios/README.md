@@ -110,7 +110,7 @@ ut-docs#3052). It never submits for App Store review.
 
 | Behaviour | Where |
 |---|---|
-| Data directory `Application Support/till` (sandboxed, in the device backup) | `TillServer.dataDirectory` |
+| Data directory `Application Support/till` (sandboxed, in the device backup — except `till/secrets` and `till/tls`, which are `isExcludedFromBackup`, ut-docs#5140) | `TillServer.dataDirectory`, `TillServer.excludeSecretsFromBackup` |
 | Start the server off the main thread; show its loopback address | `TillController.boot` |
 | Navigation stays on the till's own origin; other links open in Safari/Mail | `TillWebView.Coordinator` |
 | Camera (barcode viewfinder; item photos use the system camera via the file input, ut-docs#4096) granted to the till's own page only | `requestMediaCapturePermissionFor` |
