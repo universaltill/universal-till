@@ -61,7 +61,7 @@
   "auth.clear": "Temizle",
   "auth.enter_pin": "PIN'inizi girin",
   "auth.error.invalid": "PIN tanınmadı",
-  "auth.error.locked": "Çok fazla deneme — 30 saniye bekleyin",
+  "auth.error.locked": "Çok fazla deneme — kısa süre sonra tekrar deneyin",
   "auth.error.pin_format": "PIN 4–8 rakam olmalıdır",
   "auth.error.pin_mismatch": "PIN'ler eşleşmiyor",
   "auth.error.unavailable": "Üzgünüz — kasa şu anda kendi verilerine erişemiyor, bu yüzden oturumunuzu açamıyor. Uygulamayı tamamen kapatıp yeniden açın. Sorun sürerse, inceleyebilmemiz için bildirin.",

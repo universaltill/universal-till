@@ -22,7 +22,19 @@ const (
 	SessionTTL = 12 * time.Hour
 
 	maxFailedAttempts = 5
-	lockoutDuration   = 30 * time.Second
+
+	// lockoutDuration is the first lockout; every further lockout in a row
+	// doubles it (30 s, 60 s, 2 min, 4 min, 8 min...) up to
+	// maxLockoutDuration. A flat 30 s allowed ~600 guesses an hour, so a
+	// 4-digit PIN fell in ~17 h; at the 15 min cap the steady rate is ~20
+	// guesses an hour (~500 h for the 10 000-PIN space) (ut-docs#5141).
+	lockoutDuration    = 30 * time.Second
+	maxLockoutDuration = 15 * time.Minute
+
+	// lockoutQuietReset is how long without a single failed guess drops the
+	// escalation back to lockoutDuration. It must stay >= maxLockoutDuration
+	// so waiting the level out is never cheaper than just sitting out the cap.
+	lockoutQuietReset = time.Hour
 )
 
 var (
@@ -76,6 +88,16 @@ type Service struct {
 	mu       sync.Mutex
 	failures int
 	lockedTo time.Time
+	// lockouts is the consecutive-lockout level (the next lockout lasts
+	// lockoutDuration<<lockouts). A successful PIN does not reset it, or an
+	// attacker could hand the 30 s rate back by letting a real login through
+	// between rounds; only lockoutQuietReset of silence does (ut-docs#5141).
+	lockouts    int
+	lastFailure time.Time
+	// inFlight counts guesses between beginAttempt and endAttempt.
+	inFlight int
+	// now is the clock; nil means time.Now. Tests inject one to skip waits.
+	now func() time.Time
 }
 
 func NewService(db *sql.DB) *Service {
@@ -89,28 +111,78 @@ func hashToken(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// clock returns the current time (the injectable now, else time.Now).
+func (s *Service) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
 // locked reports whether PIN checks are currently locked out.
 func (s *Service) locked() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return time.Now().Before(s.lockedTo)
+	return s.clock().Before(s.lockedTo)
 }
 
+// recordFailure counts a wrong PIN. The 5th in a row locks the device for
+// lockoutDuration<<lockouts, capped at maxLockoutDuration (ut-docs#5141).
 func (s *Service) recordFailure() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.failures++
-	if s.failures >= maxFailedAttempts {
-		s.lockedTo = time.Now().Add(lockoutDuration)
-		s.failures = 0
-	}
+	s.failLocked()
 }
 
-func (s *Service) recordSuccess() {
+// beginAttempt checks the lockout and reserves a slot for this guess in one
+// step, before the (slow) PIN comparison: guesses still being verified
+// count against maxFailedAttempts, so concurrent guesses can't all pass the
+// check before any of them is recorded. false = locked out; true must be
+// followed by exactly one endAttempt (ut-docs#5141 review).
+func (s *Service) beginAttempt() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.failures = 0
-	s.lockedTo = time.Time{}
+	if s.clock().Before(s.lockedTo) || s.failures+s.inFlight >= maxFailedAttempts {
+		return false
+	}
+	s.inFlight++
+	return true
+}
+
+// endAttempt releases beginAttempt's slot and records the outcome. A guess
+// that errored before verifying counts as a failure (fail closed).
+func (s *Service) endAttempt(ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.inFlight--
+	if ok {
+		s.failures = 0
+		s.lockedTo = time.Time{}
+		return
+	}
+	s.failLocked()
+}
+
+// failLocked is recordFailure's body; s.mu must be held.
+func (s *Service) failLocked() {
+	now := s.clock()
+	if !s.lastFailure.IsZero() && now.Sub(s.lastFailure) > lockoutQuietReset {
+		s.lockouts = 0
+		s.failures = 0
+	}
+	s.lastFailure = now
+	s.failures++
+	if s.failures >= maxFailedAttempts {
+		d := lockoutDuration << s.lockouts
+		if d < maxLockoutDuration {
+			s.lockouts++
+		} else {
+			// Capped: stop incrementing so the shift can never overflow.
+			d = maxLockoutDuration
+		}
+		s.lockedTo = now.Add(d)
+		s.failures = 0
+	}
 }
 
 // FindUserByPIN identifies the operator a PIN belongs to (PIN-only login).
@@ -133,20 +205,20 @@ func (s *Service) FindUserByPIN(ctx context.Context, pin string) (data.UserRow, 
 
 // checkPIN verifies a PIN under the device-wide lockout: every failed check
 // (keypad login or manager approval) counts against the same limiter, so no
-// endpoint is a brute-force oracle.
+// endpoint is a brute-force oracle. Lockouts escalate from 30 s to a 15 min
+// cap and only decay after an hour without failures (ut-docs#5141).
 func (s *Service) checkPIN(ctx context.Context, pin string) (data.UserRow, error) {
-	if s.locked() {
+	if !s.beginAttempt() {
 		return data.UserRow{}, ErrLockedOut
 	}
 	u, ok, err := s.FindUserByPIN(ctx, pin)
+	s.endAttempt(err == nil && ok)
 	if err != nil {
 		return data.UserRow{}, err
 	}
 	if !ok {
-		s.recordFailure()
 		return data.UserRow{}, ErrInvalidPIN
 	}
-	s.recordSuccess()
 	return u, nil
 }
 
@@ -399,18 +471,18 @@ func (s *Service) ChangeOwnPINVia(ctx context.Context, userID, currentPIN, newPI
 	if persist == nil {
 		persist = func(ctx context.Context, hash string) error { return s.repo.SetUserPIN(ctx, userID, hash) }
 	}
-	if s.locked() {
+	if !s.beginAttempt() {
 		return ErrLockedOut
 	}
 	u, found, err := s.repo.GetUser(ctx, userID)
+	verified := err == nil && found && VerifyPIN(currentPIN, u.PinHash)
+	s.endAttempt(verified)
 	if err != nil {
 		return err
 	}
-	if !found || !VerifyPIN(currentPIN, u.PinHash) {
-		s.recordFailure()
+	if !verified {
 		return ErrInvalidPIN
 	}
-	s.recordSuccess()
 	if err := ValidatePINFormat(newPIN); err != nil {
 		return err
 	}
