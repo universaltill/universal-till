@@ -3,6 +3,7 @@ package pages
 import (
 	"errors"
 	"net/http"
+	"os"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -47,6 +48,20 @@ var errApproverInsufficientRole = errors.New("approver cannot perform this actio
 // own nil-handling can't quietly turn "mint a fresh Service" into a live
 // footgun.
 var errAuthServiceUnavailable = errors.New("auth service unavailable for elevation")
+
+// errStepUpCrossOrigin is checkStepUp's Err when the request is not a
+// same-origin call from the till's own page (Sec-Fetch-Site / Origin, see
+// sameOriginRequest). Refused before any PIN lookup, so a web page in the
+// till's browser can neither approve an action nor probe PINs
+// (ut-docs#5156, design-5127 §5 M5).
+var errStepUpCrossOrigin = errors.New("step-up request is not same-origin")
+
+// errStepUpSessionNotPermitted is checkStepUp's Err when the SESSION user
+// cannot perform action itself (canPerform, grant-based so a custom role
+// holding the grant passes — ADR-0128) — only checked when auth is enabled. Refused before any PIN lookup, so a cashier session
+// can neither burn the shared PIN lockout nor use step-up endpoints as a PIN
+// oracle (ut-docs#5156, design-5127 §5 M5).
+var errStepUpSessionNotPermitted = errors.New("session cannot perform step-up for this action")
 
 // elevationCheck is checkOrElevate's verdict, both branches of the
 // dual-attribution split (ut-docs#557) carried on one value: which session
@@ -112,8 +127,21 @@ func checkOrElevate(dp *common.Deps, r *http.Request, action, pin string) elevat
 // (getSessionUserID); Outcome is elevated only once a real approver PIN
 // verified, exactly like checkOrElevate's own PIN path (same
 // AuthorizeManager/Can sequence, same lockout sharing, same error
-// mapping) — the two functions differ ONLY in whether canPerform can ever
-// skip the PIN check at all.
+// mapping).
+//
+// Gates, in order, each refusing with needsElevation + a sentinel Err and
+// BEFORE any PIN lookup (ut-docs#5156, design-5127 §5 M5), so every caller —
+// the Settings → Data handlers, backup restore, the cloud-move approval —
+// gets them structurally:
+//
+//  1. sameOriginRequest: Sec-Fetch-Site/Origin must not be cross-origin
+//     (errStepUpCrossOrigin).
+//  2. dp.AuthSvc must exist (errAuthServiceUnavailable, fail closed).
+//  3. Unless auth is disabled (UT_AUTH=off), the SESSION user must hold
+//     action itself (canPerform: by grant, never by role name, so a custom
+//     role with the grant passes — ADR-0128) — the PIN alone is not enough
+//     (errStepUpSessionNotPermitted). AuthorizeManager is not called
+//     for a refused session, so it cannot burn the device-wide lockout.
 //
 // Use checkStepUp when the action is irreversible (or destroys/moves real
 // data) and the UI that reaches the handler is ALREADY manager-only — e.g.
@@ -129,6 +157,21 @@ func checkOrElevate(dp *common.Deps, r *http.Request, action, pin string) elevat
 // such recovery role, it only re-proves authority someone already holds.
 func checkStepUp(dp *common.Deps, r *http.Request, action, pin string) elevationCheck {
 	actorID := getSessionUserID(r)
+	refuse := func(err error) elevationCheck {
+		return elevationCheck{Outcome: needsElevation, ActorID: actorID, Err: err}
+	}
+
+	if !sameOriginRequest(r) {
+		return refuse(errStepUpCrossOrigin)
+	}
+	if dp.AuthSvc == nil {
+		return refuse(errAuthServiceUnavailable)
+	}
+	if !auth.Disabled(os.Getenv("UT_AUTH")) {
+		if _, ok := auth.FromContext(r.Context()); !ok || !canPerform(dp, r, action) {
+			return refuse(errStepUpSessionNotPermitted)
+		}
+	}
 	return verifyElevationPIN(dp, r, action, actorID, pin)
 }
 
@@ -183,8 +226,12 @@ func elevationErrorKey(err error) string {
 		return "elevation.error_locked_out"
 	case errors.Is(err, auth.ErrInvalidPIN):
 		return "elevation.error_invalid_pin"
-	case errors.Is(err, errAuthServiceUnavailable):
+	case errors.Is(err, errAuthServiceUnavailable), errors.Is(err, errStepUpCrossOrigin):
 		return "elevation.error_unavailable"
+	case errors.Is(err, errStepUpSessionNotPermitted):
+		// The session, not the PIN, is what lacks the right: say so with
+		// the same message requirePage shows (no new key).
+		return "common.error.manager_or_admin_required"
 	default: // errApproverInsufficientRole, or any other AuthorizeManager/Can failure
 		return "elevation.error_insufficient_role"
 	}
