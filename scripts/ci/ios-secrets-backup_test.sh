@@ -18,7 +18,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 check() {
-  local swift="$1" gokey="$2" bad=0 code
+  local swift="$1" gokey="$2" bad=0 code datadir
   code="$(grep -v '^ *//' "$swift")"
   grep -q '\["secrets", "tls"\]' <<<"$code" || { echo "secrets/ and tls/ are not both covered"; bad=1; }
   grep -q 'NSLog(' <<<"$code" || { echo "exclusion failure is not logged-and-continued"; bad=1; }
@@ -26,7 +26,8 @@ check() {
   grep -q 'setResourceValues(' <<<"$code" || { echo "exclusion flag is never applied"; bad=1; }
   grep -q 'posixPermissions: 0o700' <<<"$code" || { echo "secrets folder is not created 0700"; bad=1; }
   # dataDirectory() must apply it before handing the path to MobileStart.
-  awk '/static func dataDirectory/,/^    }$/' "$swift" | grep -v '^ *//' | grep -q 'excludeSecretsFromBackup(in: dir)' \
+  datadir="$(awk '/static func dataDirectory/,/^    }$/' "$swift" | grep -v '^ *//')"
+  grep -q 'excludeSecretsFromBackup(in: dir)' <<<"$datadir" \
     || { echo "dataDirectory() does not call excludeSecretsFromBackup"; bad=1; }
   grep -q '"secrets"' "$gokey" || { echo "Go side no longer keeps keys under secrets/"; bad=1; }
   return "$bad"
