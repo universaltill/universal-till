@@ -119,13 +119,6 @@ func (s *Service) clock() time.Time {
 	return time.Now()
 }
 
-// locked reports whether PIN checks are currently locked out.
-func (s *Service) locked() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.clock().Before(s.lockedTo)
-}
-
 // recordFailure counts a wrong PIN. The 5th in a row locks the device for
 // lockoutDuration<<lockouts, capped at maxLockoutDuration (ut-docs#5141).
 func (s *Service) recordFailure() {

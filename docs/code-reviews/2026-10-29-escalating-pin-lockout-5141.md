@@ -54,12 +54,12 @@ text.
 - TDD: the Dev subagent's tests failed before its fix (`svc.now undefined`).
   The concurrency test failed with "40 concurrent guesses were checked,
   want at most 5" before the review fix and passed after it.
-- `go test ./internal/auth/ -race`: ok. `gofmt`, `go build ./...` and
+- `go test ./internal/auth/ -race`: ok. CI's deadcode guard then caught `Service.locked` left test-only after the slot rework; it moved into the test file. `gofmt`, `go build ./...` and
   `golangci-lint run ./...` (0 issues) are clean. The guards in `ci.yml`'s
   build job pass locally, except two that can't run in this container:
   `guard-deadcode-baseline.sh` (deadcode tool pinned to an older Go) and
   `guard-shellcheck-version.sh` (no shellcheck). CI runs both. The diff
-  removes one function and adds no shell.
+  adds no shell.
 - No UI surface changed beyond a message value. The help topics don't
   mention the lockout duration (grepped).
 

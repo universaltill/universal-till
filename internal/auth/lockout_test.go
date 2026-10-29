@@ -23,6 +23,13 @@ func newLockoutService(t *testing.T) (*Service, *fakeClock) {
 	return svc, clk
 }
 
+// isLocked reports whether PIN checks are currently locked out.
+func isLocked(s *Service) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.clock().Before(s.lockedTo)
+}
+
 // failRound makes maxFailedAttempts wrong guesses, tripping a lockout.
 func failRound(t *testing.T, svc *Service) {
 	t.Helper()
@@ -46,7 +53,7 @@ func wantLockFor(t *testing.T, svc *Service, clk *fakeClock, d time.Duration) {
 		t.Fatalf("1s before %v: err = %v, want ErrLockedOut", d, err)
 	}
 	clk.advance(time.Second)
-	if svc.locked() {
+	if isLocked(svc) {
 		t.Fatalf("at %v the lock should have expired", d)
 	}
 }
@@ -126,7 +133,7 @@ func TestLockoutSharedByManagerAndPINChange(t *testing.T) {
 		t.Fatalf("AuthorizeManager during lockout: err = %v, want ErrLockedOut", err)
 	}
 	clk.advance(lockoutDuration)
-	if svc.locked() {
+	if isLocked(svc) {
 		t.Fatal("first lockout should last lockoutDuration")
 	}
 }
