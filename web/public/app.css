@@ -115,6 +115,9 @@
   --ui-scale-min-width: calc(100vw / 28.3);
 }
 @media (min-width: 901px) { :root { --ui-scale-min-width: calc(100vw / 46); } }
+/* ut-docs#2918: a 768-900px window at most 480px tall uses the side-by-side
+   grid too (the landscape-phone block below), so it gets the same budget. */
+@media (min-width: 768px) and (max-width: 900px) and (max-height: 480px) { :root { --ui-scale-min-width: calc(100vw / 46); } }
 html { font-size: min(calc(var(--ui-scale, 1) * var(--fluid-fs)), max(var(--fluid-fs), var(--ui-scale-min-width))); }
 /* --ut-bundle-fonts: the font subsets installed language bundles ship
    (ADR-0160 §8, ut-docs#4374), declared by /plugin-fonts/bundle-fonts.css.
@@ -1983,6 +1986,48 @@ body.osk-padded .item-form-modal { block-size: calc(100% - var(--osk-reserved-he
     overflow-y: auto;
   }
   .pos-container > .products { max-height: 26dvh; }
+}
+/* ut-docs#2918: a landscape phone (844x390, 896x414, 800x360) is inside the
+   900px stacked tier but too short for it: basket (capped at 45dvh), tender
+   and products stacked in ~360px left the basket showing only its header
+   and toggle, no line and no totals, and cut Pay in half. Such a window is
+   wide, not tall, so from 768px it gets the desktop arrangement instead:
+   the basket as a full-height column, products above tender beside it. The
+   divider stays hidden (the 900px block above; the drag is a desktop
+   affordance, #2308), so its track is dropped. 768px is where the basket's
+   22rem floor, the tender's ~281px min-content and the rail still fit side
+   by side; narrower, the basket table wraps every cell (measured at 740px).
+   Those short windows (667x375, 740x360) stay stacked, but the basket is no
+   longer capped: its lines and totals show in full, the sale screen scrolls
+   (the page-scroll fallback the <=480px tier uses), and the tender is pinned
+   to the bottom of that scroll so Pay is always whole and in reach however
+   long the basket gets -- the phone sheet's sticky tender (#3059), including
+   its unpin while a dialog inside is open (a sticky box is a stacking
+   context and would trap the payment overlay under the status bar).
+   min-width: 481px leaves the <=480px phone tier (#3059) alone; max-height:
+   480px matches the min-height: 481px the tablet blocks below key on, so
+   they never overlap. Regression test:
+   e2e/tests/landscape-phone-sale-2918.spec.ts. */
+@media (min-width: 768px) and (max-width: 900px) and (max-height: 480px) {
+  .pos-container {
+    grid-template-columns: minmax(var(--pos-basket-min-w), var(--basket-col-width, 26.25rem)) minmax(var(--pos-products-min-w), 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "basket products"
+      "basket tender";
+    column-gap: .8rem;
+  }
+  .pos-container > .basket { max-height: none; }
+}
+@media (min-width: 481px) and (max-width: 767px) and (max-height: 480px) {
+  .pos-container { grid-template-rows: max-content max-content max-content; overflow-y: auto; }
+  .pos-container > .basket { max-height: none; overflow-y: visible; }
+  .pos-container > .tender {
+    position: sticky; bottom: 0; z-index: 2;
+    box-shadow: 0 -4px 16px rgba(15, 23, 42, .14);
+  }
+  .pos-container > .tender:has(dialog[open]) { position: static; z-index: auto; }
+  .pos-container > .products { max-height: 80dvh; }
 }
 
 /* ---------- Cards & forms ---------- */

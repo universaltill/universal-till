@@ -91,7 +91,7 @@ Several small chips near the bottom of the left-hand menu tell you, at a glance,
 
 ## Selling on a phone
 
-On a phone the sale screen is laid out like a phone app, so the items get the screen:
+On a phone held upright the sale screen is laid out like a phone app, so the items get the screen (held sideways, it keeps the till's own layout: the basket on one side and the items with **Pay** beside it, or on a small phone the basket on top with **Pay** pinned to the bottom edge, so the lines, the total and Pay all stay in reach):
 
 - **☰** at the top opens the menu: Sell, Menu, Inventory and the other pages, plus Help, Report a problem, your name and **Lock** — and, for a manager, Users, Promotions and Translations. Tap outside it (or press Escape) to close it. A fiscal or diagnostic-mode alert shows in the top bar itself, never only in the menu. The search (magnifying glass) and edit (pencil) buttons sit at the other end of the top bar.
 - Items show as icons, three to a row: the item's picture if it has one, otherwise its colour with its initials. Tap an icon to add the item. The category buttons above are a row of rounded buttons that scrolls sideways and stays in place while the items scroll.
