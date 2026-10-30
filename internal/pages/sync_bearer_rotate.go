@@ -94,16 +94,50 @@ func SyncBearerRotator(d *common.Deps) lantls.BearerRotate {
 			logging.L().Warnf("sync: could not rotate this till's sync credential (it keeps the old one and tries again): %v", err)
 			return
 		}
-		// A re-join or another change while the call was out wins: never
-		// overwrite a bearer this call did not start from.
-		if cur, _, _ := d.Settings.Get(ctx, data.SyncBearerSettingsKey); cur != old {
-			return
-		}
-		if err := d.Settings.Set(ctx, data.SyncBearerSettingsKey, fresh); err != nil {
+		// A re-join or another change while the call was out wins: the swap
+		// happens only if the stored bearer is still the one this call
+		// started from. The old one is kept as the previous bearer
+		// (ut-docs#5203).
+		swapped, err := d.Settings.RotateSyncBearer(ctx, old, fresh)
+		if err != nil {
 			logging.L().Warnf("sync: could not store this till's rotated sync credential (it keeps the old one and tries again): %v", err)
 			return
 		}
-		logging.L().Infof("sync: this till's sync credential was rotated")
+		if swapped {
+			logging.L().Infof("sync: this till's sync credential was rotated")
+		}
+	}
+}
+
+// SyncBearerFallback returns the replica's hook for lantls.SetBearerFallback
+// (ut-docs#5203). When the main till answers 401 to the current bearer -- it
+// was restored from a backup taken before the last rotation, so it knows only
+// the bearer this till rotated away from -- the transport retries once with
+// the previous bearer the data layer kept, and adopts it if accepted. The hook
+// offers it only for the bearer that is current right now, so a request that
+// raced a re-join or a rotation is never answered with a stale credential.
+func SyncBearerFallback(d *common.Deps) lantls.BearerFallback {
+	return func(ctx context.Context, presented string) (string, func() bool, bool) {
+		if d.Settings == nil {
+			return "", nil, false
+		}
+		if _, current, ok := d.SyncTarget(ctx); !ok || current != presented {
+			return "", nil, false
+		}
+		prev, err := d.Settings.SyncBearerPrev(ctx)
+		if err != nil || prev == "" || prev == presented {
+			return "", nil, false
+		}
+		return prev, func() bool {
+			_, adopted, err := d.Settings.AdoptPrevSyncBearer(ctx, presented)
+			if adopted {
+				logging.L().Infof("sync: this till's sync credential was restored to the previous one the main till still knows (main till restored from a backup?)")
+			}
+			if err != nil {
+				logging.L().Warnf("sync: could not settle this till's previous sync credential: %v", err)
+			}
+			return adopted
+		}, true
 	}
 }
 

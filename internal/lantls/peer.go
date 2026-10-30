@@ -1,11 +1,13 @@
 package lantls
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -129,7 +131,10 @@ var bearerRotate atomic.Pointer[BearerRotate]
 // the latest attempt (unix nanoseconds).
 var (
 	bearerRotateBusy atomic.Bool
-	bearerRotateLast atomic.Int64
+	// bearerRotateAgain: a forced rotation was requested while one was in
+	// flight (the in-flight one may predate the bearer just adopted).
+	bearerRotateAgain atomic.Bool
+	bearerRotateLast  atomic.Int64
 )
 
 // SetBearerRotate installs the process-wide rotation hook; nil means a
@@ -150,24 +155,71 @@ func SetBearerRotate(fn BearerRotate) (restore func()) {
 // once per bearerRotateRetryEvery. A main till that does not know the
 // bearer to be stale simply keeps asking; an offline till gets the header
 // with its next answer.
-func fireBearerRotate() {
+func fireBearerRotate() { fireBearerRotateOpt(false) }
+
+// fireBearerRotateOpt is fireBearerRotate; force skips the once-a-minute
+// throttle (never the single-flight guard). A fallback adoption uses it: the
+// bearer just adopted is the older one a restored main till knows, and it
+// should be swapped for a fresh one at once (ut-docs#5203).
+func fireBearerRotateOpt(force bool) {
 	hook := bearerRotate.Load()
-	if hook == nil || !bearerRotateBusy.CompareAndSwap(false, true) {
+	if hook == nil {
+		return
+	}
+	if !bearerRotateBusy.CompareAndSwap(false, true) {
+		// A rotation is in flight; it may be using the bearer this request
+		// just replaced. A forced request is not dropped: the running
+		// goroutine runs the hook once more when it is done.
+		if force {
+			bearerRotateAgain.Store(true)
+		}
 		return
 	}
 	now := time.Now().UnixNano()
-	if last := bearerRotateLast.Load(); last != 0 && now-last < int64(bearerRotateRetryEvery) {
+	if last := bearerRotateLast.Load(); !force && last != 0 && now-last < int64(bearerRotateRetryEvery) {
 		bearerRotateBusy.Store(false)
 		return
 	}
 	bearerRotateLast.Store(now)
 	go func() {
 		defer logging.RecoverAndLog("lantls.bearer_rotate")
-		defer bearerRotateBusy.Store(false)
-		ctx, cancel := context.WithTimeout(context.Background(), bearerRotateTimeout)
-		defer cancel()
-		(*hook)(ctx)
+		func() {
+			defer bearerRotateBusy.Store(false)
+			ctx, cancel := context.WithTimeout(context.Background(), bearerRotateTimeout)
+			defer cancel()
+			(*hook)(ctx)
+		}()
+		// Busy is released first, so a force request arriving now either
+		// started its own run or left the flag for this check. Each flag
+		// is consumed by exactly one extra run: no unbounded loop.
+		if bearerRotateAgain.CompareAndSwap(true, false) {
+			fireBearerRotateOpt(true)
+		}
 	}()
+}
+
+// BearerFallback is the replica's way back to the bearer it held before its
+// last rotation (ut-docs#5203). A main till restored from a backup taken
+// before that rotation knows only the older bearer, so it answers 401 to the
+// current one. Given the bearer a request presented, it returns the previous
+// bearer to try (ok=false: none, or presented is not the current bearer any
+// more) and adopt, which the transport calls only after the main till has
+// accepted that previous bearer. adopt reports whether it actually switched
+// bearers (false: it lost a race to a concurrent adoption or a re-join), and
+// only then is a prompt rotation requested.
+type BearerFallback func(ctx context.Context, presented string) (previous string, adopt func() bool, ok bool)
+
+var bearerFallback atomic.Pointer[BearerFallback]
+
+// SetBearerFallback installs the process-wide fallback hook; nil means a 401
+// is final. It returns a func that restores the previous hook.
+func SetBearerFallback(fn BearerFallback) (restore func()) {
+	var p *BearerFallback
+	if fn != nil {
+		p = &fn
+	}
+	prev := bearerFallback.Swap(p)
+	return func() { bearerFallback.Store(prev) }
 }
 
 // PeerPinned reports whether this till holds a pin for its main till, i.e.
@@ -199,11 +251,63 @@ func (p *peerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("lantls: cannot read the main till's address or pin: %w", err)
 	}
 	resp, err := p.route(r, t)
+	if err == nil && resp.StatusCode == http.StatusUnauthorized {
+		resp = p.retryWithPreviousBearer(r, t, resp)
+	}
 	if err == nil && resp.Header.Get(BearerRotateHeader) != "" &&
 		samePeerHost(r.URL, t.PrimaryURL) && r.URL.Path != BearerRotatePath {
 		fireBearerRotate()
 	}
 	return resp, err
+}
+
+// retryWithPreviousBearer handles a 401 for the replica's current bearer
+// (ut-docs#5203). It sends r once more with the previous bearer when the
+// installed fallback hook offers one, and returns whichever answer stands:
+// the retry's (a 401 included) when it got one, else first. A 401 means the
+// main till refused the credential before any handler ran, so replaying is
+// safe for any method; a body is replayed only through GetBody. It never
+// retries the retry and never touches the rotation call itself.
+func (p *peerTransport) retryWithPreviousBearer(r *http.Request, t PeerTarget, first *http.Response) *http.Response {
+	hook := bearerFallback.Load()
+	if hook == nil || r.URL.Path == BearerRotatePath || !samePeerHost(r.URL, t.PrimaryURL) {
+		return first
+	}
+	presented, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !ok || presented == "" {
+		return first
+	}
+	hasBody := r.Body != nil && r.Body != http.NoBody
+	if hasBody && r.GetBody == nil {
+		return first
+	}
+	prev, adopt, ok := (*hook)(r.Context(), presented)
+	if !ok || prev == "" || prev == presented {
+		return first
+	}
+	retry := r.Clone(r.Context())
+	retry.Header.Set("Authorization", "Bearer "+prev)
+	if hasBody {
+		body, err := r.GetBody()
+		if err != nil {
+			return first
+		}
+		retry.Body = body
+	}
+	// Drain and close the 401 before the retry goes out, so the retry can
+	// reuse the keep-alive connection. The body is kept to hand back if the
+	// retry fails to produce any answer.
+	buf, _ := io.ReadAll(io.LimitReader(first.Body, 4096))
+	_ = first.Body.Close()
+	second, err := p.route(retry, t)
+	if err != nil {
+		first.Body = io.NopCloser(bytes.NewReader(buf))
+		return first
+	}
+	if second.StatusCode != http.StatusUnauthorized && adopt() {
+		fireBearerRotateOpt(true)
+	}
+	return second
 }
 
 // route sends r over pinned TLS when it is aimed at the main till and a pin

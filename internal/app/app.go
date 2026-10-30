@@ -522,6 +522,9 @@ func Run(ctx context.Context) error {
 	// the database closes, like the hooks above.
 	if deps != nil {
 		defer lantls.SetBearerRotate(pages.SyncBearerRotator(deps))()
+		// ut-docs#5203: a main till restored from a backup older than the
+		// last rotation is reached again with the previous bearer.
+		defer lantls.SetBearerFallback(pages.SyncBearerFallback(deps))()
 	}
 
 	if err := supervisor.AutoStartPlugins(ctx); err != nil {

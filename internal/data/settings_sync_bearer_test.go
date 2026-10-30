@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
@@ -350,5 +351,201 @@ func TestSyncBearer_MigrationLeavesNoBytesInLiveFiles(t *testing.T) {
 		if bytes.Contains(raw, []byte(secret)) {
 			t.Errorf("%s still contains the migrated bearer's bytes", filepath.Base(p))
 		}
+	}
+}
+
+// ut-docs#5203: the replica keeps the bearer it rotated away from, in a file
+// beside the current one, so a main till restored from an older backup (which
+// still knows only that bearer) can be reached again without a re-join.
+
+func (f *bearerFixture) prevFile() string { return f.file + "-prev" }
+
+func (f *bearerFixture) readPrev(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(f.prevFile())
+	if os.IsNotExist(err) {
+		return ""
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func TestSyncBearerPrev_RotateIsCompareAndSwap(t *testing.T) {
+	f := newBearerFixture(t)
+	f.register(t)
+	ctx := context.Background()
+	if err := f.repo.Set(ctx, "sync.bearer", "old"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := f.repo.SyncBearerPrev(ctx); err != nil || got != "" {
+		t.Fatalf("SyncBearerPrev before any rotation = %q, %v", got, err)
+	}
+
+	// A mismatch changes nothing.
+	if ok, err := f.repo.RotateSyncBearer(ctx, "not-current", "fresh"); err != nil || ok {
+		t.Fatalf("RotateSyncBearer with a stale old = %v, %v, want false, nil", ok, err)
+	}
+	if f.readFile(t) != "old" || f.readPrev(t) != "" {
+		t.Fatalf("a refused rotation changed files: current=%q prev=%q", f.readFile(t), f.readPrev(t))
+	}
+
+	ok, err := f.repo.RotateSyncBearer(ctx, "old", "fresh")
+	if err != nil || !ok {
+		t.Fatalf("RotateSyncBearer = %v, %v", ok, err)
+	}
+	if f.readFile(t) != "fresh" || f.readPrev(t) != "old" {
+		t.Fatalf("after rotation current=%q prev=%q, want fresh/old", f.readFile(t), f.readPrev(t))
+	}
+	if got, _ := f.repo.SyncBearerPrev(ctx); got != "old" {
+		t.Fatalf("SyncBearerPrev = %q, want old", got)
+	}
+	if runtime.GOOS != "windows" {
+		st, err := os.Stat(f.prevFile())
+		if err != nil || st.Mode().Perm() != 0o600 {
+			t.Fatalf("prev file mode = %v, %v, want 0600", st.Mode().Perm(), err)
+		}
+	}
+	if f.rowCount(t) != 0 {
+		t.Fatal("the bearer leaked into a settings row")
+	}
+}
+
+func TestSyncBearerPrev_UnregisteredIsInert(t *testing.T) {
+	f := newBearerFixture(t)
+	ctx := context.Background()
+	if err := f.repo.Set(ctx, "sync.bearer", "old"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := f.repo.SyncBearerPrev(ctx); err != nil || got != "" {
+		t.Fatalf("SyncBearerPrev = %q, %v, want empty", got, err)
+	}
+	// Rotation still swaps the row; there is simply no previous bearer.
+	if ok, err := f.repo.RotateSyncBearer(ctx, "old", "fresh"); err != nil || !ok {
+		t.Fatalf("RotateSyncBearer = %v, %v", ok, err)
+	}
+	if v, _, _ := f.repo.Get(ctx, "sync.bearer"); v != "fresh" {
+		t.Fatalf("bearer = %q, want fresh", v)
+	}
+	if got, _ := f.repo.SyncBearerPrev(ctx); got != "" {
+		t.Fatalf("SyncBearerPrev = %q on an unregistered db", got)
+	}
+	if _, ok, err := f.repo.AdoptPrevSyncBearer(ctx, "fresh"); err != nil || ok {
+		t.Fatalf("AdoptPrevSyncBearer on an unregistered db = %v, %v", ok, err)
+	}
+}
+
+func TestSyncBearerPrev_AdoptOnlyWhenCurrentIsTheFailedOne(t *testing.T) {
+	f := newBearerFixture(t)
+	f.register(t)
+	ctx := context.Background()
+	_ = f.repo.Set(ctx, "sync.bearer", "old")
+	if ok, err := f.repo.RotateSyncBearer(ctx, "old", "fresh"); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+
+	// The failed bearer is not the current one (a concurrent change won).
+	if got, ok, err := f.repo.AdoptPrevSyncBearer(ctx, "something-else"); err != nil || ok || got != "" {
+		t.Fatalf("Adopt with a non-current failed = %q, %v, %v", got, ok, err)
+	}
+	if f.readFile(t) != "fresh" || f.readPrev(t) != "old" {
+		t.Fatalf("a refused adopt changed files: %q / %q", f.readFile(t), f.readPrev(t))
+	}
+
+	got, ok, err := f.repo.AdoptPrevSyncBearer(ctx, "fresh")
+	if err != nil || !ok || got != "old" {
+		t.Fatalf("Adopt = %q, %v, %v, want old, true", got, ok, err)
+	}
+	// A swap, not a delete: the refused bearer stays as the previous one, so
+	// a mistaken adoption (a non-auth 401) heals on the next 401.
+	if f.readFile(t) != "old" || f.readPrev(t) != "fresh" {
+		t.Fatalf("after adopt current=%q prev=%q, want old / fresh", f.readFile(t), f.readPrev(t))
+	}
+	if got, ok, err := f.repo.AdoptPrevSyncBearer(ctx, "old"); err != nil || !ok || got != "fresh" {
+		t.Fatalf("adopt back = %q, %v, %v, want fresh, true", got, ok, err)
+	}
+	if f.readFile(t) != "fresh" || f.readPrev(t) != "old" {
+		t.Fatalf("after adopting back current=%q prev=%q, want fresh / old", f.readFile(t), f.readPrev(t))
+	}
+	// prev must never equal the failed bearer.
+	_ = os.WriteFile(f.prevFile(), []byte("fresh"), 0o600)
+	if _, ok, _ := f.repo.AdoptPrevSyncBearer(ctx, "fresh"); ok {
+		t.Fatal("adopt succeeded with prev == failed")
+	}
+}
+
+func TestKeepSyncBearerOutOfDB_EmptyRowClearsPrev(t *testing.T) {
+	f := newBearerFixture(t)
+	if err := os.MkdirAll(filepath.Dir(f.file), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.prevFile(), []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.repo.Set(context.Background(), "sync.bearer", ""); err != nil {
+		t.Fatal(err)
+	}
+	f.register(t)
+	if _, err := os.Stat(f.prevFile()); !os.IsNotExist(err) {
+		t.Fatalf("prev file survived an empty-row migration: %v", err)
+	}
+}
+
+func TestSyncBearerPrev_ClearedByEveryOtherBearerWrite(t *testing.T) {
+	ctx := context.Background()
+	cases := map[string]func(f *bearerFixture, t *testing.T){
+		"Set": func(f *bearerFixture, t *testing.T) { _ = f.repo.Set(ctx, "sync.bearer", "joined-again") },
+		"SetMany": func(f *bearerFixture, t *testing.T) {
+			_ = f.repo.SetMany(ctx, map[string]string{"sync.bearer": "joined-again"})
+		},
+		"Delete": func(f *bearerFixture, t *testing.T) { _ = f.repo.Delete(ctx, "sync.bearer") },
+		"ClearReplicaIdentity": func(f *bearerFixture, t *testing.T) {
+			if err := f.repo.ClearReplicaIdentity(ctx); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"GetOrCreate-absent": func(f *bearerFixture, t *testing.T) {
+			_ = f.repo.Delete(ctx, "sync.bearer")
+			_ = os.WriteFile(f.prevFile(), []byte("stale"), 0o600)
+			if _, err := f.repo.GetOrCreate(ctx, "sync.bearer", "minted"); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, act := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newBearerFixture(t)
+			f.register(t)
+			_ = f.repo.Set(ctx, "sync.bearer", "old")
+			if ok, err := f.repo.RotateSyncBearer(ctx, "old", "fresh"); err != nil || !ok {
+				t.Fatal(ok, err)
+			}
+			if f.readPrev(t) != "old" {
+				t.Fatal("setup: no prev file")
+			}
+			act(f, t)
+			if got := f.readPrev(t); got != "" {
+				t.Fatalf("prev file still holds %q after %s", got, name)
+			}
+			if got, _ := f.repo.SyncBearerPrev(ctx); got != "" {
+				t.Fatalf("SyncBearerPrev = %q after %s", got, name)
+			}
+		})
+	}
+}
+
+func TestSyncBearerPrev_ClearedByMigrationOfARow(t *testing.T) {
+	f := newBearerFixture(t)
+	if err := os.MkdirAll(filepath.Dir(f.file), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.prevFile(), []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f.setRow(t, "restored-row")
+	f.register(t)
+	if f.readFile(t) != "restored-row" || f.readPrev(t) != "" {
+		t.Fatalf("after migration current=%q prev=%q", f.readFile(t), f.readPrev(t))
 	}
 }
