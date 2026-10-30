@@ -684,6 +684,29 @@ type issueDownloadTokenEnvelope struct {
 	} `json:"error"`
 }
 
+// maxErrorReasonLen caps an APIError.Reason; the known reasons are short words.
+const maxErrorReasonLen = 32
+
+// errorDataReason reads data.reason from an error envelope's data object,
+// trimmed and capped. Anything that is not an object with a string reason
+// yields "" (a plain removal sends no data).
+func errorDataReason(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var d struct {
+		Reason string `json:"reason"`
+	}
+	if json.Unmarshal(raw, &d) != nil {
+		return ""
+	}
+	r := strings.TrimSpace(d.Reason)
+	if len(r) > maxErrorReasonLen {
+		r = r[:maxErrorReasonLen]
+	}
+	return r
+}
+
 // APIError is a structured error decoded from a marketplace JSON envelope's
 // `error` field (`{code, message}`, matching ut-cloud's `apiError` shape).
 // Callers can `errors.As` it to react to a specific code (e.g. "not_entitled"
@@ -691,6 +714,10 @@ type issueDownloadTokenEnvelope struct {
 type APIError struct {
 	Code    string
 	Message string
+	// Reason is the optional data.reason the cloud adds to a device_revoked
+	// answer ("replaced" or "moved"); empty for a plain removal and for every
+	// other code (ut-docs#5187). It does not appear in Error().
+	Reason string
 }
 
 func (e *APIError) Error() string {
@@ -740,10 +767,19 @@ func (c *Client) IssueDownloadToken(ctx context.Context, req *IssueDownloadToken
 	// status AND a structured {code, message} error body, not just a status
 	// code (ut-docs#673). Bailing on status before decoding, as this used to,
 	// silently threw that reason away.
+	rawBody, readErr := io.ReadAll(io.LimitReader(resp.Body, maxDownloadTokenBody))
 	var envelope issueDownloadTokenEnvelope
-	decodeErr := json.NewDecoder(resp.Body).Decode(&envelope)
+	decodeErr := json.Unmarshal(rawBody, &envelope)
+	if readErr != nil {
+		decodeErr = readErr
+	}
 	if envelope.Error != nil {
-		return nil, &APIError{Code: envelope.Error.Code, Message: envelope.Error.Message}
+		// ut-docs#5187: a device_revoked answer carries data.reason.
+		var errData struct {
+			Data json.RawMessage `json:"data"`
+		}
+		_ = json.Unmarshal(rawBody, &errData)
+		return nil, &APIError{Code: envelope.Error.Code, Message: envelope.Error.Message, Reason: errorDataReason(errData.Data)}
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("download token request failed: status %d", resp.StatusCode)
@@ -756,6 +792,9 @@ func (c *Client) IssueDownloadToken(ctx context.Context, req *IssueDownloadToken
 	}
 	return envelope.Data, nil
 }
+
+// maxDownloadTokenBody caps the download-token answer read into memory.
+const maxDownloadTokenBody = 1 << 20
 
 // AckDownloadRequest reports download outcome.
 type AckDownloadRequest struct {

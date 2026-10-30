@@ -358,7 +358,7 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			// unknown listing, claim your store, till not paired / removed)
 			// get the specific, actionable reason instead of a generic
 			// gateway error; the code -> key/status table lives in plugins.
-			if f, ok := plugins.MarketplaceCodeFailure(err); ok {
+			if f, ok := plugins.MarketplaceCodeFailure(err, storeHasOwner(r.Context(), d.Settings)); ok {
 				respond(w, f.Status, f.MessageKey)
 				return
 			}

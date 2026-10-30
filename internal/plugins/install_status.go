@@ -130,7 +130,11 @@ func (s *InstallStatusStore) ClearForPlugin(ctx context.Context, pluginID string
 // the one table for these codes (ut-docs#3541), shared by ClassifyInstallError
 // and the store download handler. The till-auth codes answer 403, never 401,
 // so the UI doesn't read it as the operator's own login expiring.
-func MarketplaceCodeFailure(err error) (InstallFailure, bool) {
+//
+// hasOwner says whether the till's store has an owner (the cloud-auth chip's
+// storeHasOwner): an unclaimed till whose credential the cloud rejects is told
+// to register as a new store, not to pair (ut-docs#5187).
+func MarketplaceCodeFailure(err error, hasOwner bool) (InstallFailure, bool) {
 	var apiErr *marketplace.APIError
 	if !errors.As(err, &apiErr) || apiErr == nil {
 		return InstallFailure{}, false
@@ -144,18 +148,32 @@ func MarketplaceCodeFailure(err error) (InstallFailure, bool) {
 		return InstallFailure{MessageKey: "plugins.install.error.registered_required", Message: "This plugin requires a claimed store account.", Status: http.StatusForbidden}, true
 	case "store_auth_required": // paid plugin from a till that is not paired
 		return InstallFailure{MessageKey: "plugins.install.error.pair_required", Message: "Pair this till with your shop to install this plugin.", Status: http.StatusForbidden}, true
-	case "device_revoked": // till removed/replaced/moved from the shop
+	case "device_revoked": // till removed/replaced/moved from the shop (ut-docs#5187: data.reason)
+		switch apiErr.Reason {
+		case "replaced":
+			return InstallFailure{MessageKey: "plugins.install.error.till_replaced", Message: "This till was replaced by another till in your shop.", Status: http.StatusForbidden}, true
+		case "moved":
+			return InstallFailure{MessageKey: "plugins.install.error.till_moved", Message: "This till was moved to another shop.", Status: http.StatusForbidden}, true
+		}
 		return InstallFailure{MessageKey: "plugins.install.error.till_removed", Message: "This till was removed from your shop.", Status: http.StatusForbidden}, true
-	case "unauthorized", "token_retired", "device_mismatch":
+	case "service_unavailable": // ut-cloud writeCountryRefused: country not served
+		return InstallFailure{MessageKey: "plugins.install.error.service_unavailable", Message: "Plugin downloads are not available for this shop.", Status: http.StatusForbidden}, true
+	case "unauthorized", "token_retired":
+		if !hasOwner {
+			return InstallFailure{MessageKey: "plugins.install.error.register_new", Message: "Register this till as a new store.", Status: http.StatusForbidden}, true
+		}
+		return InstallFailure{MessageKey: "plugins.install.error.pair_again", Message: "Pair this till with your shop again.", Status: http.StatusForbidden}, true
+	case "device_mismatch":
 		return InstallFailure{MessageKey: "plugins.install.error.pair_again", Message: "Pair this till with your shop again.", Status: http.StatusForbidden}, true
 	}
 	return InstallFailure{}, false
 }
 
-func ClassifyInstallError(err error) InstallFailure {
+// hasOwner is forwarded to MarketplaceCodeFailure.
+func ClassifyInstallError(err error, hasOwner bool) InstallFailure {
 	// ut-docs#673/#703/#3541: marketplace codes are typed errors (errors.As
 	// through any "%w" wrapper) and none can succeed on retry.
-	if f, ok := MarketplaceCodeFailure(err); ok {
+	if f, ok := MarketplaceCodeFailure(err, hasOwner); ok {
 		return f
 	}
 

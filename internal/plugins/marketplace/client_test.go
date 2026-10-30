@@ -186,6 +186,40 @@ func TestClient_IssueDownloadToken_NotEntitled(t *testing.T) {
 	}
 }
 
+// TestClient_IssueDownloadToken_DeviceRevokedReason pins ut-docs#5187: ut-cloud
+// adds data.reason ("replaced" / "moved") to a device_revoked answer, and the
+// client carries it on the APIError; a plain removal has no data.
+func TestClient_IssueDownloadToken_DeviceRevokedReason(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"replaced", `{"data":{"reason":"replaced","replaced_at":"2026-10-01T00:00:00Z","replaced_by":"till-2"},"error":{"code":"device_revoked","message":"gone"}}`, "replaced"},
+		{"moved", `{"data":{"reason":" moved ","moved_to":"store-2"},"error":{"code":"device_revoked","message":"gone"}}`, "moved"},
+		{"plain removal", `{"data":null,"error":{"code":"device_revoked","message":"gone"}}`, ""},
+		{"no data", `{"error":{"code":"device_revoked","message":"gone"}}`, ""},
+		{"non-object data", `{"data":"oops","error":{"code":"device_revoked","message":"gone"}}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			client := NewClient(&config.MarketplaceConfig{EndpointURL: server.URL, APIVersion: "1.0.0", ClientID: "test", RequestTimeoutSec: 30})
+			_, err := client.IssueDownloadToken(context.Background(), &IssueDownloadTokenRequest{PluginID: "l", MerchantID: "m", StoreID: "s", DeviceID: "d", DeviceArch: "linux/amd64"})
+			var apiErr *APIError
+			if !errors.As(err, &apiErr) {
+				t.Fatalf("expected *APIError, got %T: %v", err, err)
+			}
+			if apiErr.Code != "device_revoked" || apiErr.Reason != tc.want {
+				t.Errorf("got code %q reason %q, want device_revoked / %q", apiErr.Code, apiErr.Reason, tc.want)
+			}
+			if got, want := apiErr.Error(), "marketplace: device_revoked: gone"; got != want {
+				t.Errorf("Error() = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 // TestPluginSummary_DecodesLiveWireFormat pins the flattened camelCase schema
 // the deployed marketplace actually returns from /v1/catalog/plugins (vendor is
 // a plain string, id doubles as the listing id, type/trustLevel are camelCase).
