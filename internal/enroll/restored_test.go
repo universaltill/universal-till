@@ -14,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/paths"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // ut-docs#5157: an iCloud restore onto a second iPhone clones the data
@@ -644,5 +645,73 @@ func TestRestoreCheck_MainTillNeverLooksUpNewestEntry(t *testing.T) {
 	}
 	if *calls != 0 || kv.get(keySyncRestoredSince) != "" {
 		t.Fatalf("main till: lookup calls %d, restored_since %q", *calls, kv.get(keySyncRestoredSince))
+	}
+}
+
+// ut-docs#5172: with the bearer kept in a file (not a settings row), the
+// restore check still sees a held bearer and clears it.
+func TestRestoreCheck_ReplicaClearsBearerFile(t *testing.T) {
+	restoreDir(t)
+	dbh, err := db.Open(testsupport.MigratedDBFile(t, "restored.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { dbh.Close() })
+	ctx := context.Background()
+	repo := data.NewSettingsRepo(dbh.DB)
+	for k, v := range replicaKV(t).fakeKV.m {
+		if err := repo.Set(ctx, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bearerFile := paths.Data("secrets", "sync-bearer")
+	if err := data.KeepSyncBearerOutOfDB(ctx, dbh.DB, bearerFile); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(bearerFile); err != nil || strings.TrimSpace(string(b)) != lanBearer {
+		t.Fatalf("bearer file = %q, %v", b, err)
+	}
+	if !CheckRestoredInstall(ctx, &config.Config{}, repo, nil) {
+		t.Fatal("want reset")
+	}
+	if _, err := os.Stat(bearerFile); !os.IsNotExist(err) {
+		t.Fatalf("bearer file survived the restore reset: %v", err)
+	}
+	if v, ok, _ := repo.Get(ctx, keySyncBearer); ok || v != "" {
+		t.Fatalf("bearer = %q, want cleared", v)
+	}
+	if v, _, _ := repo.Get(ctx, keySyncPrimaryURL); v != lanURL {
+		t.Fatalf("primary url = %q, want kept", v)
+	}
+}
+
+// ut-docs#5172 review: the bearer file lives under secrets/, which an iCloud
+// restore does not bring, so a restored never-cloud-registered replica arrives
+// with no bearer at all. Its LAN pairing still shows in sync.till_id (a DB
+// row, written with the bearer at every join), and the copy must still get the
+// restored flag (ut-docs#5162: a re-join of a restored copy is not blocked by
+// day closes it can never upload).
+func TestRestoreCheck_UnregisteredReplicaWithoutBearerFileSetsRestoredFlag(t *testing.T) {
+	restoreDir(t)
+	dbh, err := db.Open(testsupport.MigratedDBFile(t, "restored.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { dbh.Close() })
+	ctx := context.Background()
+	repo := data.NewSettingsRepo(dbh.DB)
+	for k, v := range map[string]string{keySyncPrimaryURL: lanURL, keySyncTillID: lanTillID, keyInstallID: "install-A"} {
+		if err := repo.Set(ctx, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := data.KeepSyncBearerOutOfDB(ctx, dbh.DB, paths.Data("secrets", "sync-bearer")); err != nil {
+		t.Fatal(err)
+	}
+	if !CheckRestoredInstall(ctx, &config.Config{}, repo, nil) {
+		t.Fatal("want reset")
+	}
+	if !RestoredState(ctx, repo) {
+		t.Fatal("a restored replica that was paired with its main till must get the restored flag")
 	}
 }

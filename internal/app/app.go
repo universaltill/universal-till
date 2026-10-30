@@ -255,6 +255,16 @@ func Run(ctx context.Context) error {
 		log.Infof("replica identity applied — this till is now part of the shop")
 	}
 
+	// ut-docs#5172: the LAN bearer lives under secrets/ (excluded from backup),
+	// not in a settings row every DB backup would copy. After
+	// ApplyReplicaIdentity (a fresh join writes the row, which this migrates)
+	// and before anything reads settings or CheckRestoredInstall runs, so its
+	// held check and its clear of sync.bearer both go through the file. A
+	// failure keeps the row behaviour: sync must never break over this.
+	if err := data.KeepSyncBearerOutOfDB(ctx, database.DB, paths.Data("secrets", "sync-bearer")); err != nil {
+		log.Warnf("sync bearer stays in the database (ut-docs#5172): %v", err)
+	}
+
 	settingsStore := settings.NewStore(database.DB)
 
 	// ut-docs#5157: a data folder restored onto another device (iCloud)

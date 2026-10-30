@@ -37,6 +37,10 @@ check() {
   # A marker outside secrets/ would be backed up with the DB and never differ.
   grep -Eq 'installMarkerRel *= *\[\]string\{"secrets"' "$restored" \
     || { echo "install marker is not kept under secrets/"; bad=1; }
+  # The LAN sync bearer (ut-docs#5172) is kept in a file; outside secrets/ it
+  # would be backed up and restored with the DB.
+  grep -Eq 'KeepSyncBearerOutOfDB\(.*paths\.Data\("secrets", "sync-bearer"\)' "$ROOT/internal/app/app.go" \
+    || { echo "sync bearer file is not kept under secrets/"; bad=1; }
   return "$bad"
 }
 
