@@ -14,12 +14,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 GUARD="scripts/ci/guard-shellcheck-version.sh"
-BASELINE="0.9.0"
+BASELINE="0.11.0"
 FAIL_COUNT=0
 
 FAKE_BIN_DIR="$(mktemp -d)"
-# Invoked indirectly via `trap ... EXIT`, not a direct call -- shellcheck cannot see that (SC2317 false positive).
-# shellcheck disable=SC2317
+# Invoked indirectly via `trap ... EXIT`, not a direct call -- shellcheck cannot see that (SC2317/SC2329 false positive).
+# shellcheck disable=SC2317,SC2329
 cleanup() {
   local status=$?
   rm -rf "${FAKE_BIN_DIR}"
