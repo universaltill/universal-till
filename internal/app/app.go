@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -411,6 +412,32 @@ func Run(ctx context.Context) error {
 		pluginManager.Close(closeCtx)
 	}()
 
+	// ut-docs#5049: stop the server if the data folder is deleted or replaced
+	// under it (an uninstaller, a tester) instead of serving from an unlinked
+	// database while the data-dir lock guards nothing. Never fatal to build.
+	var (
+		fileLostMu  sync.Mutex
+		fileLostErr error
+	)
+	if !strings.Contains(cfg.DBPath, ":memory:") {
+		if fw, fwErr := db.NewFileWatch(cfg.DBPath); fwErr != nil {
+			log.Warnf("data-folder watchdog not started: %v", fwErr)
+		} else {
+			wg.Add(1)
+			go func() {
+				defer logging.RecoverAndLog("app.fileWatch")
+				defer wg.Done()
+				fw.Run(bgCtx, db.DefaultFileWatchInterval, func(lost error) {
+					log.Errorf("%v", lost)
+					fileLostMu.Lock()
+					fileLostErr = lost
+					fileLostMu.Unlock()
+					stopBg()
+				})
+			}()
+		}
+	}
+
 	netaccess.StartService("cloud enrolment", func() { enroll.Init(bgCtx, cfg, settingsStore, &wg) })
 
 	// The one line that makes a field report diagnosable (ut-docs#2720):
@@ -521,7 +548,17 @@ func Run(ctx context.Context) error {
 		log.Warnf("plugin auto-start failed: %v", err)
 	}
 
-	return server.Start(bgCtx, cfg, mux, catalogRepo, database.DB, supervisor, &wg)
+	startErr := server.Start(bgCtx, cfg, mux, catalogRepo, database.DB, supervisor, &wg)
+	fileLostMu.Lock()
+	lost := fileLostErr
+	fileLostMu.Unlock()
+	if lost != nil {
+		if startErr != nil {
+			return fmt.Errorf("%w (server: %v)", lost, startErr)
+		}
+		return lost
+	}
+	return startErr
 }
 
 // pluginShutdowner is the minimal internal/plugins.Supervisor surface
