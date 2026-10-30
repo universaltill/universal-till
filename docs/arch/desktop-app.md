@@ -161,6 +161,24 @@ release is dispatched. `release-runner-retry_test.sh` pins the rule and the
 `release-macos-nonblocking_test.sh`), so a starved macOS pool can only delay
 the .dmg, never the release.
 
+A starved `goreleaser` or `android-app` (cancelled, ut-docs#5209) no longer
+cascades: `windows-installer`, `macos-app`, `android-app` and `verify-versions`
+skip when `goreleaser` was cancelled, and `verify-versions` also when
+`android-app` was. A goreleaser *failure* still runs them. The retry then sees
+only the one starved job and re-runs it.
+
+Before a pre-publish re-run the retry checks that the release tag still
+exists. `cleanup-orphaned-tag` runs seconds after the cancel and can delete the
+tag before the starvation annotation is readable, while the retry reads it
+fine later. The retry gets the tag from `head_branch` (tag push) or from
+`cleanup-orphaned-tag`'s keep warning (dispatch). If the tag is gone or
+cannot be confirmed, it does not re-run and prints a warning: for a dispatch,
+dispatch a fresh release and delete a leftover tag by hand if there is one;
+for a tag push, use "Re-run failed jobs" by hand if the tag exists. A starved
+`prepare` never made a tag, so that re-run needs no check. If the retry gives
+up while a kept tag remains, that tag also needs deleting by hand
+(ut-docs#5211).
+
 **Rotate:** revoke the key in App Store Connect → Users and Access →
 Integrations, create a new one (role Developer), update both Key Vault and the
 GitHub secrets. The Developer ID certificate expires 2031-09-17.

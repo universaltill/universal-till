@@ -23,10 +23,19 @@
 # re-run pre-publish (the tag and draft must survive for that), else `delete`
 # (also on any API error: the old behaviour).
 #
-# Inputs (env): REPO, RUN_ID, RUN_ATTEMPT, GH_TOKEN (read by `gh`),
-# optional MAX_ATTEMPTS (3) and PREPUBLISH_MAX_ATTEMPTS (2).
+# A pre-publish re-run also needs the release tag to still exist (ut-docs#5209):
+# cleanup-orphaned-tag runs seconds after the starved cancel and can decide
+# `delete` before the starvation annotation is readable, while this retry
+# reads it fine later and would re-run into a missing tag. So main() resolves
+# the tag (`release_tag`: HEAD_BRANCH for a tag push, else the tag named in
+# cleanup-orphaned-tag's keep warning) and re-runs only if `tag_exists`.
 #
-# list_jobs/annotations_for/rerun_failed are their own functions so
+# Inputs (env): REPO, RUN_ID, RUN_ATTEMPT, GH_TOKEN (read by `gh`),
+# EVENT and HEAD_BRANCH (the triggering run's event and head_branch; for a
+# tag push head_branch is the tag name), optional MAX_ATTEMPTS (3) and
+# PREPUBLISH_MAX_ATTEMPTS (2).
+#
+# list_jobs/annotations_for/rerun_failed/tag_exists are their own functions so
 # release-runner-retry_test.sh can redefine them and exercise main() with no
 # network. Each `gh` result is captured with `x="$(...)"`, never read off a
 # process substitution, so a failing call fails the script (see
@@ -44,6 +53,11 @@ annotations_for() {
 
 rerun_failed() {
   gh api -X POST "repos/${REPO}/actions/runs/${RUN_ID}/rerun-failed-jobs"
+}
+
+# tag_exists <tag>: succeeds only when the tag ref is still in the repo.
+tag_exists() {
+  gh api "repos/${REPO}/git/ref/tags/$1" >/dev/null
 }
 
 # decide: reads "name<TAB>conclusion<TAB>starved(0|1)" lines on stdin and
@@ -91,8 +105,15 @@ decide() {
 # build_listing: "name<TAB>conclusion<TAB>starved" per job of the latest
 # attempt. Only cancelled jobs cost an annotations call.
 build_listing() {
-  local jobs rows name id conclusion starved notes
+  local jobs
   jobs="$(list_jobs)" || return 1
+  listing_from "${jobs}"
+}
+
+# listing_from <jobs json>: the build_listing rows for an already fetched
+# jobs listing (main() keeps the JSON for release_tag: one listing call).
+listing_from() {
+  local jobs="$1" rows name id conclusion starved notes
   rows="$(jq -r '.jobs[] | [.name, (.id | tostring), (.conclusion // "")] | @tsv' <<<"${jobs}")"
   while IFS=$'\t' read -r name id conclusion; do
     [ -n "${name}" ] || continue
@@ -128,13 +149,38 @@ keep_tag() {
   esac
 }
 
+# release_tag <jobs json>: prints the release tag, or nothing when it cannot be
+# determined or looks unsafe. A tag push: HEAD_BRANCH is the tag name.
+# workflow_dispatch: cleanup-orphaned-tag's keep warning names it (the phrase
+# below is pinned against release.yml by release-runner-retry_test.sh); a
+# delete message, no cleanup job or no match yields no tag.
+release_tag() {
+  local jobs="$1" tag="" id notes
+  if [ "${EVENT:-}" = push ]; then
+    tag="${HEAD_BRANCH:-}"
+  else
+    id="$(jq -r '[.jobs[] | select(.name == "cleanup-orphaned-tag") | .id][0] // empty' <<<"${jobs}")" || return 0
+    if [ -n "${id}" ]; then
+      notes="$(annotations_for "${id}")" || return 0
+      if [[ "${notes}" =~ Release\ ([^[:space:]]+)\ did\ not\ publish\ because\ a\ job\ was\ never\ given\ a\ runner\;\ keeping\ the\ tag ]]; then
+        tag="${BASH_REMATCH[1]}"
+      fi
+    fi
+  fi
+  if [[ "${tag}" =~ ^v[0-9A-Za-z._-]+$ ]]; then
+    printf '%s\n' "${tag}"
+  fi
+  return 0
+}
+
 main() {
-  local max="${MAX_ATTEMPTS:-3}" premax="${PREPUBLISH_MAX_ATTEMPTS:-2}" listing verdict
+  local max="${MAX_ATTEMPTS:-3}" premax="${PREPUBLISH_MAX_ATTEMPTS:-2}" jobs listing verdict tag
   if [ "${RUN_ATTEMPT}" -ge "${max}" ]; then
     echo "::warning::Release run ${RUN_ID}: automatic runner retries are used up (attempt ${RUN_ATTEMPT} of ${max}). Use \"Re-run failed jobs\" by hand."
     return 0
   fi
-  listing="$(build_listing)" || return 1
+  jobs="$(list_jobs)" || return 1
+  listing="$(listing_from "${jobs}")" || return 1
   verdict="$(decide <<<"${listing}")"
   case "${verdict}" in
     NOPUBLISH)
@@ -147,6 +193,19 @@ main() {
       if [ "${RUN_ATTEMPT}" -ge "${premax}" ]; then
         echo "::warning::Release run ${RUN_ID}: runner-starved jobs (${verdict#PRERUN }) stopped the release before it published, and no automatic retry remains (attempt ${RUN_ATTEMPT}); cleanup-orphaned-tag removed the tag. Dispatch a fresh release."
       else
+        # A starved `prepare` never created a tag (and cleanup, which needs
+        # prepare, never ran): nothing to check, the re-run makes the tag.
+        if [[ ", ${verdict#PRERUN }, " != *", prepare, "* ]]; then
+          tag="$(release_tag "${jobs}")"
+          if [ -z "${tag}" ] || ! tag_exists "${tag}"; then
+            if [ "${EVENT:-}" = push ]; then
+              echo "::warning::Release run ${RUN_ID}: runner-starved jobs (${verdict#PRERUN }) stopped the release before it published, but its pushed tag ${tag:-(unknown)} was not found or could not be confirmed, so the run is not retried. If the tag exists, use \"Re-run failed jobs\" by hand."
+            else
+              echo "::warning::Release run ${RUN_ID}: runner-starved jobs (${verdict#PRERUN }) stopped the release before it published, but its tag ${tag:-(unknown)} is gone or could not be confirmed, so the run is not retried. Dispatch a fresh release; if the tag still exists, delete it by hand: git push origin :refs/tags/${tag:-<tag>} and gh release delete ${tag:-<tag>} --cleanup-tag."
+            fi
+            return 0
+          fi
+        fi
         echo "Release run ${RUN_ID}: release not published; re-running runner-starved jobs: ${verdict#PRERUN }"
         if ! rerun_failed; then
           echo "::error::Release run ${RUN_ID}: the re-run request failed, but cleanup-orphaned-tag kept the tag and draft release for this retry. Delete them by hand: git push origin :refs/tags/<tag> and gh release delete <tag> --cleanup-tag."
