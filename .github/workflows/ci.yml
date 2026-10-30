@@ -89,6 +89,8 @@ jobs:
         run: bash scripts/ci/release-macos-nonblocking_test.sh
       - name: Every release job is time-bounded — wiring test (ut-docs#4059)
         run: bash scripts/ci/release-job-timeouts_test.sh
+      - name: A macOS release job starved of a runner is re-run (at most once in practice) — behaviour test (ut-docs#5175)
+        run: bash scripts/ci/release-runner-retry_test.sh
       - name: Heavy test runs stay parallel and complete — wiring test (ut-docs#4581)
         # Runs `go list ./...`, so it shares the restored module cache.
         env:

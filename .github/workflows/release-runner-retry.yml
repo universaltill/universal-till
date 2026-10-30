@@ -1,0 +1,39 @@
+# Re-runs a Release run whose macOS job GitHub never gave a runner
+# (ut-docs#5175). Release run 40889814547 published v0.35.3 without its .dmg
+# because `macos-app` was cancelled after ~15 min: "The job was not acquired
+# by Runner of type hosted even after multiple attempts" (hosted-capacity
+# starvation). The recovery was a manual "Re-run failed jobs".
+#
+# What it never does (scripts/ci/release-runner-retry.sh decides, with a
+# behaviour test): re-run a real build/notarize failure, re-run a release
+# that did not publish, or retry past MAX_ATTEMPTS (default 3).
+#
+# Honest limit: a re-run started with GITHUB_TOKEN may not itself fire another
+# workflow_run, so: at most once in practice (bounded by MAX_ATTEMPTS=3).
+name: Release runner retry
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  retry:
+    if: github.event.workflow_run.conclusion != 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # actions/checkout (explicit, so a private repo still works)
+      actions: write # POST rerun-failed-jobs
+      checks: read # job check-run annotations tell starvation from a real failure
+    steps:
+      - uses: actions/checkout@v7
+      - name: Re-run runner-starved release jobs
+        env:
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/ci/release-runner-retry.sh
