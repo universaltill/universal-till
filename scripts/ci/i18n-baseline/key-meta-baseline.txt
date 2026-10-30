@@ -1536,7 +1536,6 @@ plugins.install.error.forbidden
 plugins.install.error.incompatible
 plugins.install.error.invalid_package
 plugins.install.error.invalid_request
-plugins.install.error.network
 plugins.install.error.not_entitled
 plugins.install.error.not_found
 plugins.install.error.page_conflict
@@ -1546,18 +1545,6 @@ plugins.install.error.registered_required
 plugins.install.error.replica_use_primary
 plugins.install.error.retryable
 plugins.install.error.version_mismatch
-plugins.install.modal.cancel
-plugins.install.modal.close
-plugins.install.modal.description
-plugins.install.modal.done
-plugins.install.modal.progress.complete
-plugins.install.modal.progress.downloading
-plugins.install.modal.progress.failed
-plugins.install.modal.progress.fetching
-plugins.install.modal.progress.initializing
-plugins.install.modal.progress.installing
-plugins.install.modal.progress.verifying
-plugins.install.modal.title
 plugins.install.success
 plugins.manage.action.disable
 plugins.manage.action.docs
