@@ -103,7 +103,8 @@ mkjobs "publish-release:2:failure" "macos-app:3:cancelled"
 STARVED_IDS=" 3 "
 run_case "(d) unpublished release is not re-run" 0 1
 
-# (d2) verify-versions (also macos-14) starved: publish-release is skipped and
+# (d2) a publish-gating job starved (verify-versions ran on macos-14 until
+# ut-docs#5200; the guard stays generic): publish-release is skipped and
 # cleanup-orphaned-tag already deleted the tag, so even an all-starved run
 # must not be re-run (review finding: nothing pinned the publish gate).
 mkjobs "verify-versions:6:cancelled" "macos-app:3:cancelled" "publish-release:2:skipped" "cleanup-orphaned-tag:7:success"
