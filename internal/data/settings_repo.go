@@ -205,6 +205,9 @@ func (r *SettingsRepo) GetOrCreate(ctx context.Context, key, ifAbsent string) (s
 		if found {
 			return v, nil
 		}
+		if err = removePrevSyncBearer(path); err != nil {
+			return "", err
+		}
 		err = writeSyncBearerFile(path, ifAbsent)
 		return ifAbsent, err
 	}

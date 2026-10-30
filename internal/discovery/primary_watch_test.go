@@ -823,3 +823,78 @@ func TestPrimaryWatch_RediscoveredSamePinKeepsTheNextPin(t *testing.T) {
 		t.Fatalf("next pin = %q; want %q kept", got, next)
 	}
 }
+
+// ut-docs#5203: a main till restored from a backup older than the replica's
+// last rotation holds the replica's PREVIOUS bearer hash. If it also moved to
+// new hardware, the replica re-finds it over mDNS and the proof is keyed by
+// that old hash -- so the replica must accept a proof under its previous
+// bearer too (the first sync call then 401s and the transport falls back).
+func rotatedWatchFixture(t *testing.T, candidates ...Candidate) *watchFixture {
+	t.Helper()
+	sqlDB, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "settings.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { sqlDB.Close() })
+	if _, err := sqlDB.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := data.KeepSyncBearerOutOfDB(ctx, sqlDB, filepath.Join(t.TempDir(), "secrets", "sync-bearer")); err != nil {
+		t.Fatal(err)
+	}
+	settings := data.NewSettingsRepo(sqlDB)
+	for k, v := range map[string]string{
+		"sync.primary_url":      deadURL,
+		"sync.bearer":           testBearer,
+		"sync.till_id":          testTillID,
+		PrimaryTillIDSettingKey: testPrimaryID,
+		"sync.last_contact_at":  "2026-09-16T23:33:27Z",
+	} {
+		if err := settings.Set(ctx, k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The replica rotates: testBearer becomes the previous bearer.
+	if ok, err := settings.RotateSyncBearer(ctx, testBearer, "the-rotated-bearer"); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	f := &watchFixture{settings: settings, now: time.Date(2026, 9, 25, 10, 0, 0, 0, time.UTC)}
+	f.w = NewPrimaryWatch(settings, nil)
+	f.w.now = func() time.Time { return f.now }
+	f.w.browse = func(context.Context, time.Duration) ([]Candidate, error) {
+		f.browses.Add(1)
+		return candidates, nil
+	}
+	return f
+}
+
+func TestChallenge_AcceptsProofKeyedByThePreviousBearer(t *testing.T) {
+	ctx := context.Background()
+	restored := newFakePrimary(t, testPrimaryID, testBearerHash()) // knows only the old bearer
+	f := rotatedWatchFixture(t, Candidate{Name: "Shop", TillID: testPrimaryID, BaseURL: restored.srv.URL})
+	var out FailureOutcome
+	for i := 0; i < UnreachableThreshold && !out.Relinked; i++ {
+		out = f.w.ContactFailed(ctx)
+	}
+	if !out.Relinked || out.NewURL != restored.srv.URL {
+		t.Fatalf("outcome = %+v, want relinked via the proof under the previous bearer", out)
+	}
+	if got := f.get(t, "sync.bearer"); got != "the-rotated-bearer" {
+		t.Fatalf("bearer = %q, re-discovery must not change it (the transport fallback does)", got)
+	}
+	if restored.sawBearer.Load() {
+		t.Fatal("a bearer was sent during re-discovery")
+	}
+}
+
+func TestChallenge_RefusesProofKeyedByNeitherBearer(t *testing.T) {
+	ctx := context.Background()
+	stranger := newFakePrimary(t, testPrimaryID, hex.EncodeToString(make([]byte, 32)))
+	f := rotatedWatchFixture(t, Candidate{Name: "Shop", TillID: testPrimaryID, BaseURL: stranger.srv.URL})
+	for i := 0; i < UnreachableThreshold; i++ {
+		if out := f.w.ContactFailed(ctx); out.Relinked {
+			t.Fatalf("relinked on a proof keyed by neither bearer: %+v", out)
+		}
+	}
+}

@@ -392,3 +392,206 @@ func TestPrimaryProof_CarriesPrevProofOnlyWhilePending(t *testing.T) {
 		t.Fatalf("prev_proof %q after the new bearer was used", prev)
 	}
 }
+
+// ut-docs#5203: a main till restored from a backup taken before the replica's
+// last rotation knows only the replica's previous bearer. The replica falls
+// back to it on the 401, then rotates again, with no re-join.
+
+// snapshotTill captures the main till's tills row as a backup taken before a
+// rotation holds it; the returned func puts the bearer columns back.
+func snapshotTill(t *testing.T, m *rotationMain, id string) func() {
+	t.Helper()
+	var hash string
+	var issued any
+	if err := m.dp.Db.QueryRow(`SELECT bearer_hash, bearer_issued_at FROM tills WHERE id = ?`, id).Scan(&hash, &issued); err != nil {
+		t.Fatal(err)
+	}
+	return func() {
+		if _, err := m.dp.Db.Exec(`UPDATE tills SET bearer_hash = ?, bearer_prev_hash = NULL, bearer_prev_expires_at = NULL, bearer_issued_at = ? WHERE id = ?`,
+			hash, issued, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func tillHash(t *testing.T, m *rotationMain, id string) string {
+	t.Helper()
+	var h string
+	if err := m.dp.Db.QueryRow(`SELECT bearer_hash FROM tills WHERE id = ?`, id).Scan(&h); err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+func TestSyncBearerFallback_MainRestoredFromOlderBackup(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		issued func(m *rotationMain) any // the restored row's bearer_issued_at
+	}{
+		{"legacy NULL issued_at", func(*rotationMain) any { return nil }},
+		{"recent issued_at", func(m *rotationMain) any { return m.now.Add(-time.Hour) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newRotationMain(t)
+			id := m.enrolLegacy(t, "legacy-bearer")
+			srv := httptest.NewServer(m.mux)
+			t.Cleanup(srv.Close)
+			replica, file := replicaOf(t, srv.URL, "legacy-bearer")
+			t.Cleanup(lantls.SetBearerRotate(SyncBearerRotator(replica)))
+			t.Cleanup(lantls.SetBearerFallback(SyncBearerFallback(replica)))
+
+			restore := snapshotTill(t, m, id) // the backup
+			if code, err := peerAdmin(replica); err != nil || code != http.StatusOK {
+				t.Fatalf("first contact: %d, %v", code, err)
+			}
+			waitForRotation(t, "the rotation", func() bool { return hex64.MatchString(fileBearer(t, file)) })
+			rotated := fileBearer(t, file)
+			if got, _ := replica.Settings.SyncBearerPrev(t.Context()); got != "legacy-bearer" {
+				t.Fatalf("previous bearer = %q, want the legacy one", got)
+			}
+
+			// The main till is restored from the backup.
+			restore()
+			if _, err := m.dp.Db.Exec(`UPDATE tills SET bearer_issued_at = ? WHERE id = ?`, tc.issued(m), id); err != nil {
+				t.Fatal(err)
+			}
+			if h := tillHash(t, m, id); h != hashBearer("legacy-bearer") {
+				t.Fatal("setup: the row was not restored")
+			}
+
+			code, err := peerAdmin(replica)
+			if err != nil || code != http.StatusOK {
+				t.Fatalf("sync after the main till was restored: %d, %v -- want 200 with no re-join", code, err)
+			}
+			// Adopted the old bearer, then rotated again at once.
+			waitForRotation(t, "the forced rotation", func() bool {
+				b := fileBearer(t, file)
+				return hex64.MatchString(b) && b != rotated
+			})
+			fresh := fileBearer(t, file)
+			waitForRotation(t, "the main till to hold the new hash", func() bool {
+				return tillHash(t, m, id) == hashBearer(fresh)
+			})
+			if got, _, _ := replica.Settings.Get(t.Context(), "sync.bearer"); got != fresh {
+				t.Fatalf("settings read %q, file holds %q", got, fresh)
+			}
+			if code, err := peerAdmin(replica); err != nil || code != http.StatusOK {
+				t.Fatalf("sync with the fresh bearer: %d, %v", code, err)
+			}
+		})
+	}
+}
+
+// The fallback never resurrects a bearer the main till has expired: a replica
+// restored from its own pre-rotation backup (current = the old bearer, no
+// prev) and a replica whose previous bearer is long dead both stay out.
+func TestSyncBearerFallback_DoesNotResurrectExpiredBearer(t *testing.T) {
+	m := newRotationMain(t)
+	m.enrolLegacy(t, "legacy-bearer")
+	srv := httptest.NewServer(m.mux)
+	t.Cleanup(srv.Close)
+	replica, file := replicaOf(t, srv.URL, "legacy-bearer")
+	t.Cleanup(lantls.SetBearerRotate(SyncBearerRotator(replica)))
+	t.Cleanup(lantls.SetBearerFallback(SyncBearerFallback(replica)))
+
+	if code, err := peerAdmin(replica); err != nil || code != http.StatusOK {
+		t.Fatalf("first contact: %d, %v", code, err)
+	}
+	waitForRotation(t, "the rotation", func() bool { return hex64.MatchString(fileBearer(t, file)) })
+	fresh := fileBearer(t, file)
+	if code, err := peerAdmin(replica); err != nil || code != http.StatusOK { // fresh is in use: grace starts
+		t.Fatalf("sync with the fresh bearer: %d, %v", code, err)
+	}
+	// Past the grace the main till refuses the legacy bearer.
+	m.now = m.now.Add(data.SyncBearerGrace + time.Minute)
+	// Make the replica's CURRENT bearer unknown to the main till (it was
+	// revoked or the row replaced). The row keeps bearer_prev_hash = the
+	// legacy bearer with an expired grace, so the past-grace branch of
+	// TillByBearerHashAt is what refuses the previous bearer.
+	if _, err := m.dp.Db.Exec(`UPDATE tills SET bearer_hash = ?`, hashBearer("someone-else")); err != nil {
+		t.Fatal(err)
+	}
+	code, err := peerAdmin(replica)
+	if err != nil || code != http.StatusUnauthorized {
+		t.Fatalf("expired bearers: %d, %v, want 401", code, err)
+	}
+	if got := fileBearer(t, file); got != fresh {
+		t.Fatalf("bearer file = %q after a refused fallback, want %q (no adopt)", got, fresh)
+	}
+	if got, _ := replica.Settings.SyncBearerPrev(t.Context()); got != "legacy-bearer" {
+		t.Fatalf("previous bearer = %q, want it left alone", got)
+	}
+}
+
+// A re-join starts a new pairing: the previous bearer of the old one is gone,
+// so a 401 afterwards is final.
+func TestSyncBearerFallback_RejoinDropsPrevious(t *testing.T) {
+	m := newRotationMain(t)
+	m.enrolLegacy(t, "legacy-bearer")
+	srv := httptest.NewServer(m.mux)
+	t.Cleanup(srv.Close)
+	replica, _ := replicaOf(t, srv.URL, "legacy-bearer")
+	if ok, err := replica.Settings.RotateSyncBearer(t.Context(), "legacy-bearer", strings.Repeat("a", 64)); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if err := replica.Settings.Set(t.Context(), "sync.bearer", "joined-anew"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := replica.Settings.SyncBearerPrev(t.Context()); got != "" {
+		t.Fatalf("previous bearer %q survived a re-join", got)
+	}
+}
+
+// A non-auth 401 (SQLITE_BUSY on the main till's bearer lookup, plain HTTP to
+// a pinned till) inside the grace window must not lock a healthy replica out:
+// the mistaken fallback to the previous bearer keeps the current one as the
+// new previous, so the next 401 for the old one heals it (ut-docs#5203).
+func TestSyncBearerFallback_TransientNonAuth401DoesNotLockOut(t *testing.T) {
+	m := newRotationMain(t)
+	m.enrolLegacy(t, "legacy-bearer")
+	var armed atomic.Bool
+	var rotateCalls atomic.Int32 // rotation requests the main till has fully answered
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/sync/admin" && armed.CompareAndSwap(true, false) {
+			http.Error(w, "transient", http.StatusUnauthorized)
+			return
+		}
+		m.mux.ServeHTTP(w, r)
+		if r.URL.Path == lantls.BearerRotatePath {
+			rotateCalls.Add(1)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	replica, file := replicaOf(t, srv.URL, "legacy-bearer")
+	t.Cleanup(lantls.SetBearerRotate(SyncBearerRotator(replica)))
+	t.Cleanup(lantls.SetBearerFallback(SyncBearerFallback(replica)))
+
+	if code, err := peerAdmin(replica); err != nil || code != http.StatusOK {
+		t.Fatalf("first contact: %d, %v", code, err)
+	}
+	waitForRotation(t, "the rotation", func() bool { return hex64.MatchString(fileBearer(t, file)) })
+	if code, err := peerAdmin(replica); err != nil || code != http.StatusOK { // grace starts
+		t.Fatalf("sync with the fresh bearer: %d, %v", code, err)
+	}
+
+	// One transient 401 for the fresh bearer; the legacy retry is accepted
+	// (still in grace) and adopted.
+	armed.Store(true)
+	if code, err := peerAdmin(replica); err != nil || code != http.StatusOK {
+		t.Fatalf("sync across the transient 401: %d, %v", code, err)
+	}
+	// The adoption asks for an immediate rotation with the legacy bearer; the
+	// main till refuses it (409) inside the grace. Wait for that answer so
+	// the clock below does not move under a request in flight.
+	waitForRotation(t, "the forced rotation to be answered", func() bool { return rotateCalls.Load() >= 2 })
+
+	// The grace passes; the main till refuses legacy, knows fresh.
+	m.now = m.now.Add(data.SyncBearerGrace + time.Minute)
+	if code, err := peerAdmin(replica); err != nil || code != http.StatusOK {
+		t.Fatalf("sync after the grace: %d, %v -- the replica was locked out", code, err)
+	}
+	held := fileBearer(t, file)
+	if rec := m.call(http.MethodGet, "/api/sync/admin", held); rec.Code != http.StatusOK {
+		t.Fatalf("the bearer the replica holds (%q) is refused by the main till: %d", held, rec.Code)
+	}
+}
