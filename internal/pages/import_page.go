@@ -1717,13 +1717,20 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			// warnings sat unnoticed among 209 rows that all rendered
 			// identically). Colour is never the only signal (icon too),
 			// and both are CSS vars so it stays legible across themes.
-			cls, statusHTML := "", htmlEscape(row.Status)
+			// statusAttr: at the phone tier (table-cards.js) the status is
+			// the fifth labelled cell, which waits behind More — so a warned,
+			// skipped or failed row keeps it on the collapsed card instead of
+			// leaving the tint as the only sign (ut-docs#4583). A clean "ok"
+			// stays behind More.
+			cls, statusAttr, statusHTML := "", "", htmlEscape(row.Status)
 			switch {
 			case row.Warned:
 				cls = ` class="row-warn"`
+				statusAttr = ` data-card-keep`
 				statusHTML = `<span class="row-warn-icon" aria-hidden="true">⚠</span>` + statusHTML
 			case row.Skipped || row.Failed:
 				cls = ` class="muted"`
+				statusAttr = ` data-card-keep`
 			}
 			if interactive && row.Skipped && len(row.FixFields) > 0 {
 				// Include/skip checkbox plus inline correction input(s) —
@@ -1780,9 +1787,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			if !commit && row.ItemType == catalogtypes.ItemTypeGiftVoucher {
 				nameHTML += ` <span class="tag import-item-type">` + htmlEscape(T("catalog.item_type.gift_voucher")) + `</span>`
 			}
-			fmt.Fprintf(&b, `<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
+			fmt.Fprintf(&b, `<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td%s>%s</td></tr>`,
 				cls, nameHTML, httpx.FormatMoney(row.PriceMinor, locale),
-				htmlEscape(row.Barcode), htmlEscape(row.Category), statusHTML)
+				htmlEscape(row.Barcode), htmlEscape(row.Category), statusAttr, statusHTML)
 		}
 		for _, row := range warnedRows {
 			writeRow(row)
