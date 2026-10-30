@@ -103,13 +103,35 @@ mkjobs "publish-release:2:failure" "macos-app:3:cancelled"
 STARVED_IDS=" 3 "
 run_case "(d) unpublished release is not re-run" 0 1
 
-# (d2) a publish-gating job starved (verify-versions ran on macos-14 until
-# ut-docs#5200; the guard stays generic): publish-release is skipped and
-# cleanup-orphaned-tag already deleted the tag, so even an all-starved run
-# must not be re-run (review finding: nothing pinned the publish gate).
+# (d2) a publish-gating job starved (ut-docs#5205: linux-shells on the hosted
+# arm pool; verify-versions ran on macos-14 until #5200): publish-release is
+# skipped. cleanup-orphaned-tag keeps the tag for exactly one automatic
+# retry, so attempt 1 re-runs and attempt 2 does not (a re-run started with
+# GITHUB_TOKEN may not fire another workflow_run).
 mkjobs "verify-versions:6:cancelled" "macos-app:3:cancelled" "publish-release:2:skipped" "cleanup-orphaned-tag:7:success"
 STARVED_IDS=" 3 6 "
-run_case "(d2) starved verify-versions with publish-release skipped is not re-run" 0 1
+run_case "(d2) starved publish-gating job, publish skipped, is re-run on attempt 1" 1 1
+run_case "(d2b) ... but not on attempt 2 (PREPUBLISH_MAX_ATTEMPTS)" 0 2
+PREPUBLISH_MAX_ATTEMPTS=3 run_case "(d2c) PREPUBLISH_MAX_ATTEMPTS is overridable" 1 2
+
+# (d3) the ut-docs#5205 incident: the arm linux-shells job starved, so
+# goreleaser and publish-release were skipped.
+mkjobs "prepare:1:success" "linux-shells (ubuntu-22.04-arm, arm64):8:cancelled" "goreleaser:9:skipped" "publish-release:2:skipped" "cleanup-orphaned-tag:7:success"
+STARVED_IDS=" 8 "
+run_case "(d3) starved arm linux-shells before publish is re-run on attempt 1" 1 1
+run_case "(d3b) ... not on attempt 2" 0 2
+verdict="$(printf 'a\tcancelled\t1\npublish-release\tskipped\t0\n' | decide)"
+if [ "${verdict}" = "PRERUN a" ]; then pass "(d3c) decide prints PRERUN <names>"; else fail "(d3c) decide gave: ${verdict}"; fi
+
+# (d4) a starved job plus a real failure before publish is never re-run
+mkjobs "linux-shells (ubuntu-22.04-arm, arm64):8:cancelled" "windows-installer:5:failure" "goreleaser:9:skipped" "publish-release:2:skipped"
+STARVED_IDS=" 8 "
+run_case "(d4) starved job plus a real failure pre-publish is not re-run" 0 1
+
+# (d5) nothing failed and publish did not run (e.g. whole run cancelled by hand)
+mkjobs "prepare:1:success" "publish-release:2:skipped"
+STARVED_IDS=" "
+run_case "(d5) unpublished run with no failures is not re-run" 0 1
 
 # (e) attempts exhausted
 mkjobs "publish-release:2:success" "macos-app:3:cancelled" "macos-dmg-attach:4:skipped"
@@ -172,6 +194,131 @@ if [ "${rc}" -eq 0 ] && grep -q -- "-X POST repos/o/r/actions/runs/42/rerun-fail
   pass "(j) direct execution re-runs through gh"
 else
   fail "(j) direct execution: exit ${rc}, gh calls: $(cat "${TMP}/gh.log" 2>/dev/null)"
+fi
+
+# (d6) a failing pre-publish re-run names the kept tag that needs deleting
+mkjobs "linux-shells (ubuntu-22.04-arm, arm64):8:cancelled" "publish-release:2:skipped"
+STARVED_IDS=" 8 "
+RERUN_FAILS=1
+rc=0
+out="$(RUN_ATTEMPT=1 main 2>&1)" || rc=$?
+if [ "${rc}" -ne 0 ] && [[ "${out}" == *"::error::"*"Delete them by hand"* ]]; then
+  pass "(d6) failing pre-publish rerun errors and names the kept tag"
+else
+  fail "(d6) rc=${rc}, output: ${out}"
+fi
+RERUN_FAILS=0
+
+# keep-tag mode (ut-docs#5205): cleanup-orphaned-tag keeps the tag only when
+# the same rule would re-run the run. Its own job is in the listing with an
+# empty conclusion (it is still running); that must not matter.
+keep_case() { # keep_case <label> <want keep|delete> <attempt>
+  local label="$1" want="$2" attempt="$3" out rc=0
+  out="$(RUN_ATTEMPT="${attempt}" keep_tag 2>/dev/null)" || rc=$?
+  if [ "${rc}" -ne 0 ]; then fail "${label}: exit ${rc}"
+  elif [ "${out}" != "${want}" ]; then fail "${label}: got '${out}', want '${want}'"
+  else pass "${label}"; fi
+}
+mkjobs "linux-shells (ubuntu-22.04-arm, arm64):8:cancelled" "goreleaser:9:skipped" "publish-release:2:skipped" "cleanup-orphaned-tag:7:"
+STARVED_IDS=" 8 "
+keep_case "(k1) keep-tag: starved-only on attempt 1 keeps the tag" keep 1
+keep_case "(k2) keep-tag: attempt 2 deletes" delete 2
+MAX_ATTEMPTS=1 keep_case "(k2b) keep-tag: MAX_ATTEMPTS reached deletes" delete 1
+mkjobs "linux-shells (ubuntu-22.04-arm, arm64):8:cancelled" "windows-installer:5:failure" "publish-release:2:skipped" "cleanup-orphaned-tag:7:"
+keep_case "(k3) keep-tag: a real failure deletes" delete 1
+mkjobs "linux-shells (ubuntu-22.04-arm, arm64):8:cancelled" "publish-release:2:skipped" "cleanup-orphaned-tag:7:"
+STARVED_IDS=" "
+keep_case "(k4) keep-tag: cancelled but not starved deletes" delete 1
+mkjobs "prepare:1:success" "publish-release:2:skipped" "cleanup-orphaned-tag:7:"
+keep_case "(k4b) keep-tag: nothing failed deletes" delete 1
+mkjobs "macos-app:3:cancelled" "publish-release:2:success" "cleanup-orphaned-tag:7:"
+STARVED_IDS=" 3 "
+keep_case "(k4c) keep-tag: published release with a starved job deletes" delete 1
+rc=0
+RUN_ID=42 RUN_ATTEMPT=1 bash "${SCRIPT}" bogus >/dev/null 2>&1 || rc=$?
+if [ "${rc}" -eq 2 ]; then pass "(k4d) unknown CLI arg exits 2"; else fail "(k4d) unknown CLI arg exited ${rc}, want 2"; fi
+LIST_FAILS=1
+keep_case "(k5) keep-tag: failing jobs listing deletes (exit 0)" delete 1
+LIST_FAILS=0
+mkjobs "linux-shells (ubuntu-22.04-arm, arm64):8:cancelled" "publish-release:2:skipped" "cleanup-orphaned-tag:7:"
+STARVED_IDS=" 8 "
+ANN_FAILS=1
+keep_case "(k6) keep-tag: failing annotations call deletes (exit 0)" delete 1
+ANN_FAILS=0
+
+# (k7) executed directly with `keep-tag` through the stub gh.
+mkjobs "linux-shells (ubuntu-22.04-arm, arm64):3:cancelled" "goreleaser:9:skipped" "publish-release:2:skipped" "cleanup-orphaned-tag:7:"
+printf '%s\n' "${JOBS_JSON}" >"${TMP}/jobs.json"
+rc=0
+out="$(PATH="${TMP}:${PATH}" GH_LOG="${TMP}/gh.log" GH_FIXTURES="${TMP}" \
+  REPO=o/r RUN_ID=42 RUN_ATTEMPT=1 bash "${SCRIPT}" keep-tag 2>/dev/null)" || rc=$?
+if [ "${rc}" -eq 0 ] && [ "${out}" = "keep" ]; then
+  pass "(k7) direct execution of keep-tag prints keep"
+else
+  fail "(k7) direct keep-tag: exit ${rc}, stdout '${out}'"
+fi
+rc=0
+out="$(PATH="${TMP}:${PATH}" GH_LOG="${TMP}/gh.log" GH_FIXTURES="${TMP}" \
+  REPO=o/r RUN_ID=42 RUN_ATTEMPT=2 bash "${SCRIPT}" keep-tag 2>/dev/null)" || rc=$?
+if [ "${rc}" -eq 0 ] && [ "${out}" = "delete" ]; then
+  pass "(k8) direct keep-tag on attempt 2 prints delete"
+else
+  fail "(k8) direct keep-tag attempt 2: exit ${rc}, stdout '${out}'"
+fi
+
+# WIRING (ut-docs#5205): release.yml must use the same rule, and the
+# downstream jobs must not run against a release that was never created.
+WF="${ROOT_DIR}/.github/workflows/release.yml"
+# job_block <job>: the text of one top-level job in release.yml.
+job_block() {
+  awk -v j="  $1:" '$0 == j {on=1; print; next} on && /^  [a-zA-Z0-9_-]+:$/ {exit} on {print}' "${WF}"
+}
+cleanup="$(job_block cleanup-orphaned-tag | grep -vE '^[[:space:]]*#' || true)"
+if [ -z "${cleanup}" ]; then
+  fail "wiring: could not extract cleanup-orphaned-tag from release.yml"
+else
+  keep_line="$(grep -n 'release-runner-retry.sh keep-tag' <<<"${cleanup}" | sed -n 1p | cut -d: -f1 || true)"
+  del_line="$(grep -n 'gh release delete' <<<"${cleanup}" | sed -n 1p | cut -d: -f1 || true)"
+  if ! grep -qF '= keep ]' <<<"${cleanup}"; then
+    fail "wiring: cleanup-orphaned-tag must compare keep-tag's output with = keep ]"
+  elif [ -n "${keep_line}" ] && [ -n "${del_line}" ] && [ "${keep_line}" -lt "${del_line}" ]; then
+    pass "wiring: cleanup-orphaned-tag calls keep-tag before it deletes"
+  else
+    fail "wiring: cleanup-orphaned-tag must call release-runner-retry.sh keep-tag before gh release delete"
+  fi
+  for perm in "actions: read" "checks: read" "contents: write"; do
+    if grep -qE "^[[:space:]]+${perm}([[:space:]]|\$)" <<<"${cleanup}"; then
+      pass "wiring: cleanup-orphaned-tag has ${perm}"
+    else
+      fail "wiring: cleanup-orphaned-tag lacks ${perm}"
+    fi
+  done
+  for envv in REPO RUN_ID RUN_ATTEMPT GH_TOKEN; do
+    if grep -qE "^[[:space:]]+${envv}:" <<<"${cleanup}"; then
+      pass "wiring: cleanup-orphaned-tag passes ${envv}"
+    else
+      fail "wiring: cleanup-orphaned-tag lacks env ${envv}"
+    fi
+  done
+fi
+for job in windows-installer macos-app android-app verify-versions; do
+  blk="$(job_block "${job}")"
+  ifl="$(grep -E '^    if:' <<<"${blk}" | sed -n 1p || true)"
+  if [ -z "${ifl}" ]; then
+    fail "wiring: ${job} has no if: line (parser broke?)"
+  elif [[ "${ifl}" == *"needs.goreleaser.result != 'skipped'"* ]]; then
+    pass "wiring: ${job} skips when goreleaser was skipped"
+  else
+    fail "wiring: ${job}'s if: lacks needs.goreleaser.result != 'skipped'"
+  fi
+done
+# The premise: linux-shells (hosted arm pool) still gates goreleaser.
+gr_needs="$(job_block goreleaser | grep -E '^    needs:' | sed -n 1p || true)"
+ls_block="$(job_block linux-shells)"
+if [[ "${gr_needs}" == *linux-shells* ]] && grep -qF 'ubuntu-22.04-arm' <<<"${ls_block}"; then
+  pass "wiring premise: goreleaser needs linux-shells, which runs on ubuntu-22.04-arm"
+else
+  fail "wiring premise changed: goreleaser no longer needs an arm linux-shells job; revisit ut-docs#5205"
 fi
 
 echo "${PASS_COUNT} passed, ${FAIL_COUNT} failed"

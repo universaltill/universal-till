@@ -5,8 +5,12 @@
 # starvation). The recovery was a manual "Re-run failed jobs".
 #
 # What it never does (scripts/ci/release-runner-retry.sh decides, with a
-# behaviour test): re-run a real build/notarize failure, re-run a release
-# that did not publish, or retry past MAX_ATTEMPTS (default 3).
+# behaviour test): re-run a real build/notarize failure, or retry past
+# MAX_ATTEMPTS (default 3). A release that did not publish is re-run only when
+# every failed job was starved of a runner (e.g. linux-shells on the hosted
+# arm pool, ut-docs#5205) and only on attempt 1 (PREPUBLISH_MAX_ATTEMPTS=2):
+# cleanup-orphaned-tag asks the same script (`keep-tag`) and keeps the tag and
+# draft for that one retry, deleting them otherwise.
 #
 # Honest limit: a re-run started with GITHUB_TOKEN may not itself fire another
 # workflow_run, so: at most once in practice (bounded by MAX_ATTEMPTS=3).

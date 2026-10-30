@@ -142,14 +142,24 @@ If `macos-app` is cancelled because GitHub never gave it a runner ("The job
 was not acquired by Runner of type hosted", ut-docs#5175),
 `.github/workflows/release-runner-retry.yml` re-runs it automatically
 (`scripts/ci/release-runner-retry.sh`): only when `publish-release`
-succeeded and every failed job is runner-starved — at most once in practice
-(bounded by `MAX_ATTEMPTS=3`). Real failures are never retried
-automatically. A starved publish-gating job is not retried either:
-`publish-release` never ran and `cleanup-orphaned-tag` removed the tag, so
-dispatch a fresh release. Every job that gates `publish-release` runs on
-Linux (`verify-versions` moved off `macos-14` in ut-docs#5200, pinned by
-`release-macos-nonblocking_test.sh`), so a starved macOS pool can only
-delay the .dmg, never the release.
+succeeded (post-publish case) and every failed job is runner-starved, at most
+once in practice (bounded by `MAX_ATTEMPTS=3`). Real failures are never
+retried automatically.
+
+A starved job *before* publish (ut-docs#5205), e.g. `linux-shells` on the
+hosted arm pool, skips `goreleaser` and `publish-release`, and the jobs that
+wait for the release (`windows-installer`, `macos-app`, `android-app`,
+`verify-versions`) are skipped too instead of failing. The runner retry then
+re-runs the failed jobs on attempt 1 only (`PREPUBLISH_MAX_ATTEMPTS=2`: a
+re-run started with `GITHUB_TOKEN` may not fire another `workflow_run`), and
+`cleanup-orphaned-tag` keeps the tag and draft for it. It asks the same script
+(`release-runner-retry.sh keep-tag`), so both agree; on attempt 2, with any
+real failure, or on any API error the tag is deleted as before and a fresh
+release is dispatched. `release-runner-retry_test.sh` pins the rule and the
+`release.yml` wiring. Every job that gates `publish-release` runs on Linux
+(`verify-versions` moved off `macos-14` in ut-docs#5200, pinned by
+`release-macos-nonblocking_test.sh`), so a starved macOS pool can only delay
+the .dmg, never the release.
 
 **Rotate:** revoke the key in App Store Connect → Users and Access →
 Integrations, create a new one (role Developer), update both Key Vault and the

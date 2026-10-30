@@ -8,13 +8,23 @@
 # Called by .github/workflows/release-runner-retry.yml when a Release run
 # did not succeed. It re-runs ("Re-run failed jobs") only when ALL of:
 #   - fewer than MAX_ATTEMPTS (default 3) attempts have run;
-#   - publish-release succeeded (an unpublished release needs a fresh
-#     dispatch; cleanup-orphaned-tag already removed its tag);
 #   - every failed/cancelled/timed-out job is runner-starved: conclusion
 #     `cancelled` AND a check-run annotation saying "was not acquired by
-#     Runner". A real build/notarize failure is never retried here.
+#     Runner". A real build/notarize failure is never retried here;
+#   - either publish-release succeeded (the post-publish case: the macOS
+#     .dmg), or it did not and this is attempt < PREPUBLISH_MAX_ATTEMPTS
+#     (default 2, i.e. attempt 1 only; ut-docs#5205). Pre-publish, a starved
+#     job (e.g. linux-shells on the hosted arm pool) skips goreleaser and
+#     publish-release; a re-run started with GITHUB_TOKEN may not fire
+#     another workflow_run, so only one automatic retry is promised.
 #
-# Inputs (env): REPO, RUN_ID, RUN_ATTEMPT, GH_TOKEN (read by `gh`).
+# `keep-tag` mode (cleanup-orphaned-tag in release.yml) applies the same rule
+# so the two cannot disagree: it prints `keep` only when this run will be
+# re-run pre-publish (the tag and draft must survive for that), else `delete`
+# (also on any API error: the old behaviour).
+#
+# Inputs (env): REPO, RUN_ID, RUN_ATTEMPT, GH_TOKEN (read by `gh`),
+# optional MAX_ATTEMPTS (3) and PREPUBLISH_MAX_ATTEMPTS (2).
 #
 # list_jobs/annotations_for/rerun_failed are their own functions so
 # release-runner-retry_test.sh can redefine them and exercise main() with no
@@ -38,7 +48,10 @@ rerun_failed() {
 
 # decide: reads "name<TAB>conclusion<TAB>starved(0|1)" lines on stdin and
 # prints exactly one verdict line, pure (no network):
-#   NOPUBLISH            publish-release is missing or not success
+#   NOPUBLISH            publish-release is not success and nothing failed,
+#                        or something failed for a real reason
+#   PRERUN <names>       publish-release is not success and every failed job
+#                        is runner-starved (ut-docs#5205)
 #   NONE                 nothing failed or was cancelled
 #   REAL <names>         a failed job is not runner-starved (comma-separated)
 #   RERUN <names>        every failed job is runner-starved
@@ -61,7 +74,11 @@ decide() {
     esac
   done
   if [ "${published}" = 0 ]; then
-    echo "NOPUBLISH"
+    if [ "${failed}" = 1 ] && [ -z "${real}" ]; then
+      echo "PRERUN ${starving}"
+    else
+      echo "NOPUBLISH"
+    fi
   elif [ "${failed}" = 0 ]; then
     echo "NONE"
   elif [ -n "${real}" ]; then
@@ -90,8 +107,29 @@ build_listing() {
   done <<<"${rows}"
 }
 
+# keep_tag: prints exactly `keep` or `delete` on stdout (diagnostics on
+# stderr); always exits 0 so cleanup-orphaned-tag still falls back to deleting.
+# cleanup's own job is in the listing with an empty conclusion: ignored.
+keep_tag() {
+  local max="${MAX_ATTEMPTS:-3}" premax="${PREPUBLISH_MAX_ATTEMPTS:-2}" listing verdict
+  if [ "${RUN_ATTEMPT}" -ge "${max}" ] || [ "${RUN_ATTEMPT}" -ge "${premax}" ]; then
+    echo delete
+    return 0
+  fi
+  if ! listing="$(build_listing)"; then
+    echo "::warning::Release run ${RUN_ID}: could not list jobs or annotations; deleting the tag as before." >&2
+    echo delete
+    return 0
+  fi
+  verdict="$(decide <<<"${listing}")"
+  case "${verdict}" in
+    PRERUN*) echo keep ;;
+    *) echo delete ;;
+  esac
+}
+
 main() {
-  local max="${MAX_ATTEMPTS:-3}" listing verdict
+  local max="${MAX_ATTEMPTS:-3}" premax="${PREPUBLISH_MAX_ATTEMPTS:-2}" listing verdict
   if [ "${RUN_ATTEMPT}" -ge "${max}" ]; then
     echo "::warning::Release run ${RUN_ID}: automatic runner retries are used up (attempt ${RUN_ATTEMPT} of ${max}). Use \"Re-run failed jobs\" by hand."
     return 0
@@ -100,10 +138,21 @@ main() {
   verdict="$(decide <<<"${listing}")"
   case "${verdict}" in
     NOPUBLISH)
-      echo "::notice::Release run ${RUN_ID}: publish-release did not succeed, so the release never published (cleanup-orphaned-tag removed its tag). Not retrying; dispatch a fresh release."
+      echo "::notice::Release run ${RUN_ID}: publish-release did not succeed and not only for runner starvation (or nothing failed), so the release never published (cleanup-orphaned-tag removed its tag). Not retrying; dispatch a fresh release."
       ;;
     NONE)
       echo "Release run ${RUN_ID}: no failed or cancelled jobs; nothing to retry."
+      ;;
+    PRERUN*)
+      if [ "${RUN_ATTEMPT}" -ge "${premax}" ]; then
+        echo "::warning::Release run ${RUN_ID}: runner-starved jobs (${verdict#PRERUN }) stopped the release before it published, and no automatic retry remains (attempt ${RUN_ATTEMPT}); cleanup-orphaned-tag removed the tag. Dispatch a fresh release."
+      else
+        echo "Release run ${RUN_ID}: release not published; re-running runner-starved jobs: ${verdict#PRERUN }"
+        if ! rerun_failed; then
+          echo "::error::Release run ${RUN_ID}: the re-run request failed, but cleanup-orphaned-tag kept the tag and draft release for this retry. Delete them by hand: git push origin :refs/tags/<tag> and gh release delete <tag> --cleanup-tag."
+          return 1
+        fi
+      fi
       ;;
     REAL*)
       echo "::warning::Release run ${RUN_ID}: not retrying automatically, these jobs failed for a reason other than runner starvation: ${verdict#REAL }. Fix it, then \"Re-run failed jobs\" by hand."
@@ -117,5 +166,9 @@ main() {
 
 # Only run when executed directly, never when sourced (the test sources this).
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
-  main
+  case "${1:-}" in
+    keep-tag) keep_tag ;;
+    "") main ;;
+    *) echo "usage: $0 [keep-tag]" >&2; exit 2 ;;
+  esac
 fi
