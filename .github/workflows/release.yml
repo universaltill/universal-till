@@ -449,6 +449,9 @@ jobs:
   # after publish. It Developer-ID signs + notarizes when the signing secrets are
   # configured, otherwise ad-hoc signs (Apple Silicon requires a signature to
   # run; ad-hoc downloads need right-click → Open). See docs/arch/desktop-app.md.
+  # A cancel because GitHub never gave it a runner is re-run automatically by
+  # release-runner-retry.yml (ut-docs#5175); any other failure still needs
+  # "Re-run failed jobs" by hand.
   macos-app:
     # Runs after goreleaser but does NOT require it to have SUCCEEDED — only
     # the release must exist (the wait step checks). A goreleaser job failure

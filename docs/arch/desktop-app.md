@@ -138,6 +138,13 @@ submits a **new** `.dmg` — the recorded id is only for `notarytool info/log`
 diagnosis. Mac tills whose nightly auto-update falls between publish and the
 attach retry the next night (the updater fails closed on a missing `.dmg`).
 
+If `macos-app` is cancelled because GitHub never gave it a runner ("The job
+was not acquired by Runner of type hosted", ut-docs#5175),
+`.github/workflows/release-runner-retry.yml` re-runs it automatically
+(`scripts/ci/release-runner-retry.sh`): only when `publish-release`
+succeeded, every failed job is runner-starved, and fewer than 3 attempts have
+run. Real failures are never retried automatically.
+
 **Rotate:** revoke the key in App Store Connect → Users and Access →
 Integrations, create a new one (role Developer), update both Key Vault and the
 GitHub secrets. The Developer ID certificate expires 2031-09-17.
