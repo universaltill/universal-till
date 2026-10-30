@@ -1731,7 +1731,7 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 		},
 	})
 	if err != nil {
-		failure := plugins.ClassifyInstallError(err)
+		failure := plugins.ClassifyInstallError(err, storeHasOwner(ctx, d.Settings))
 		saveFailed(failure.MessageKey, failure.Retryable)
 		return "", err
 	}

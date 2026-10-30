@@ -20,6 +20,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -204,19 +205,35 @@ func TestStoreAPI_DownloadRegisteredRequired_403(t *testing.T) {
 // "download failed: marketplace: <code>" 502.
 func TestStoreAPI_DownloadTillAuthCodes_403(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	for _, tc := range []struct{ code, key string }{
-		{"store_auth_required", "plugins.install.error.pair_required"},
-		{"device_revoked", "plugins.install.error.till_removed"},
-		{"token_retired", "plugins.install.error.pair_again"},
+	// ut-docs#5187: data.reason picks replaced/moved; an unclaimed store
+	// (no plan/subscription settings) is told to register, an owned one to pair.
+	for _, tc := range []struct {
+		name, code, data, key string
+		paidPlan              bool
+	}{
+		{"store_auth_required", "store_auth_required", "null", "plugins.install.error.pair_required", false},
+		{"device_revoked", "device_revoked", "null", "plugins.install.error.till_removed", false},
+		{"device_revoked replaced", "device_revoked", `{"reason":"replaced","replaced_by":"till-2"}`, "plugins.install.error.till_replaced", false},
+		{"device_revoked moved", "device_revoked", `{"reason":"moved","moved_to":"store-2"}`, "plugins.install.error.till_moved", false},
+		{"token_retired owned", "token_retired", "null", "plugins.install.error.pair_again", true},
+		{"token_retired anonymous", "token_retired", "null", "plugins.install.error.register_new", false},
+		{"unauthorized anonymous", "unauthorized", "null", "plugins.install.error.register_new", false},
+		{"device_mismatch anonymous", "device_mismatch", "null", "plugins.install.error.pair_again", false},
+		{"service_unavailable", "service_unavailable", "null", "plugins.install.error.service_unavailable", false},
 	} {
-		t.Run(tc.code, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
-				_, _ = w.Write([]byte(`{"data":null,"error":{"code":"` + tc.code + `","message":"nope"}}`))
+				_, _ = w.Write([]byte(`{"data":` + tc.data + `,"error":{"code":"` + tc.code + `","message":"nope"}}`))
 			}))
 			t.Cleanup(srv.Close)
-			mux, _ := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: srv.URL})
+			mux, d := newStoreAPIMux(t, config.MarketplaceConfig{EndpointURL: srv.URL})
+			if tc.paidPlan {
+				if err := d.Settings.Set(t.Context(), entitlement.KeyPlan, "shop"); err != nil {
+					t.Fatalf("seed plan: %v", err)
+				}
+			}
 
 			rec := postForm(mux, "/api/plugins/store/download", url.Values{"listing_id": {"lst-paid"}, "accept_terms": {"on"}}, nil)
 			if rec.Code != http.StatusForbidden {
