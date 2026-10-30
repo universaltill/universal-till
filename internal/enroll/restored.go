@@ -93,7 +93,7 @@ func RestoredState(ctx context.Context, kv Settings) bool {
 // the post-reset rows. cfg is still the environment-only config then, so
 // its marketplace fields are exactly the operator's pins. Never blocks boot
 // and never wipes when unsure.
-func CheckRestoredInstall(ctx context.Context, cfg *config.Config, kv Settings) (reset bool) {
+func CheckRestoredInstall(ctx context.Context, cfg *config.Config, kv Settings, newest NewestJournalEntry) (reset bool) {
 	log := logging.L()
 	dbID, _, err := kv.Get(ctx, keyInstallID)
 	if err != nil {
@@ -134,7 +134,7 @@ func CheckRestoredInstall(ctx context.Context, cfg *config.Config, kv Settings) 
 	if cfg != nil && (cfg.Marketplace.DeviceID != "" || cfg.Marketplace.ClientID != "" || cfg.Marketplace.MerchantToken != "") {
 		// The operator pinned the identity in the environment, which wins
 		// over the DB anyway; just re-mark this install.
-		clearClonedIdentity(ctx, kv, isReplica(ctx, kv), newID)
+		clearClonedIdentity(ctx, kv, isReplica(ctx, kv), newID, newest)
 		return remark(ctx, kv, path, newID, false)
 	}
 	get := func(key string) string {
@@ -158,7 +158,7 @@ func CheckRestoredInstall(ctx context.Context, cfg *config.Config, kv Settings) 
 	}
 	// After the restored flag: a crash part-way repeats the whole check on the
 	// next boot, which finds the flag and runs this again.
-	clearClonedIdentity(ctx, kv, replica, newID)
+	clearClonedIdentity(ctx, kv, replica, newID, newest)
 	log.Warnf("enrolment: this till's data was restored from a backup onto a new install; its cloud identity was reset and it must connect again (ut-docs#5157)")
 	return remark(ctx, kv, path, newID, true)
 }
@@ -173,7 +173,7 @@ func CheckRestoredInstall(ctx context.Context, cfg *config.Config, kv Settings) 
 // a provisional R<4 hex>- one: the original's T<n>- would mint the same
 // receipt numbers, and sales.receipt_no is UNIQUE at the main till; a join
 // grants a new T<n>- because that is not a valid T<n>- prefix.
-func clearClonedIdentity(ctx context.Context, kv Settings, replica bool, installID string) {
+func clearClonedIdentity(ctx context.Context, kv Settings, replica bool, installID string, newest NewestJournalEntry) {
 	set := func(key, value string) {
 		if err := kv.Set(ctx, key, value); err != nil {
 			logging.L().Warnf("enrolment: restore check: clear %s: %v (ut-docs#5162)", key, err)
@@ -190,9 +190,10 @@ func clearClonedIdentity(ctx context.Context, kv Settings, replica bool, install
 	set(discovery.PrimaryCertNextPinSettingKey, "")
 	// When the copy was restored (ut-docs#5177): its entries from now on carry
 	// the ORIGINAL till's register id, which a re-join rewrites. Kept like the
-	// prefix below, so a retried reset never moves it.
+	// prefix below, so a retried reset never moves it. Never earlier than just
+	// after the newest pre-restore journal entry (ut-docs#5185).
 	if cur, _, err := kv.Get(ctx, keySyncRestoredSince); err != nil || strings.TrimSpace(cur) == "" {
-		set(keySyncRestoredSince, time.Now().UTC().Format(time.RFC3339))
+		set(keySyncRestoredSince, restoredSince(ctx, newest).Format(time.RFC3339))
 	}
 	// A provisional prefix already set (an earlier boot reset, then failed
 	// to re-mark) is kept, so a retried reset never starts a second series.
@@ -204,6 +205,52 @@ func clearClonedIdentity(ctx context.Context, kv Settings, replica bool, install
 		hex = hex[:4]
 	}
 	set(keySyncReceiptPrefix, "R"+hex+"-")
+}
+
+// NewestJournalEntry returns the greatest created_at (RFC 3339) among this
+// till's own no-sale opens and cleared baskets, "" when there are none. The
+// boot code passes it in so enroll keeps no dependency on internal/data
+// (ut-docs#5185).
+type NewestJournalEntry func(ctx context.Context) (string, error)
+
+// restoredSince is the instant a restored replica copy's own entries start:
+// now, or one second after the newest pre-restore journal entry when that is
+// later. Rows made before the clone were stamped by the ORIGINAL till's
+// clock, which may run ahead of this one; the +1s matters because the replay
+// counts created_at == since as made by the copy. The trade-off: when the
+// original's clock ran ahead by more than the gap between backup and
+// restore, the copy's own no-sale opens and cleared baskets in that window
+// keep the original's register at re-join — the original's entries are
+// never moved. A lookup error or an unreadable value falls back to now and
+// never blocks boot (ut-docs#5185).
+func restoredSince(ctx context.Context, newest NewestJournalEntry) time.Time {
+	now := time.Now().UTC()
+	if newest == nil {
+		return now
+	}
+	v, err := newest(ctx)
+	if err != nil {
+		logging.L().Warnf("enrolment: restore check: newest journal entry: %v; using the restore time (ut-docs#5185)", err)
+		return now
+	}
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return now
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		logging.L().Warnf("enrolment: restore check: newest journal entry %q unreadable: %v; using the restore time (ut-docs#5185)", v, err)
+		return now
+	}
+	if after := t.UTC().Truncate(time.Second).Add(time.Second); after.After(now) {
+		if after.Sub(now) > 24*time.Hour {
+			// A clock set far ahead once: every entry the copy makes until
+			// then keeps the original's register. Said, not hidden.
+			logging.L().Warnf("enrolment: restore check: newest journal entry %s is %s ahead of this clock; entries made before then keep the original till's register at re-join (ut-docs#5185)", v, after.Sub(now).Round(time.Minute))
+		}
+		return after
+	}
+	return now
 }
 
 // remark writes the new marker, then the DB row last, so a crash between

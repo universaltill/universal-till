@@ -262,8 +262,10 @@ func Run(ctx context.Context) error {
 	// that identity: after ApplyPendingRestore/ApplyReplicaIdentity, before
 	// LoadRuntimeConfig and enroll.Init (cfg still holds only the
 	// environment's pins here). Outside Init so demo mode, which skips Init,
-	// is covered too. Never blocks boot.
-	enroll.CheckRestoredInstall(ctx, cfg, settingsStore)
+	// is covered too. Never blocks boot. The journal lookup keeps a restored
+	// replica's sync.restored_since after the original's newest entry even if
+	// the original's clock ran ahead (ut-docs#5185).
+	enroll.CheckRestoredInstall(ctx, cfg, settingsStore, data.NewPOSRepo(database.DB).NewestLocalJournalEntryAt)
 
 	// Pinned LAN TLS (ADR-0114 §7, ut-docs#4092): once this till holds its
 	// main till's pin, every replica → main till request goes over pinned

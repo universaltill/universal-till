@@ -145,3 +145,25 @@ ON CONFLICT(id) DO NOTHING`,
 	}
 	return n == 1, nil
 }
+
+// NewestLocalJournalEntryAt returns the greatest created_at among the
+// no-sale opens and cleared baskets with an empty till_id (the filter
+// LocalNoSaleEventsSince / LocalClearedBasketsSince use: this till's own,
+// plus a replica's rows inherited from its main till at join), or "" when
+// there are none. created_at is app-written RFC 3339 UTC seconds in both tables,
+// so the text MAX is the newest instant. The restore check uses it so
+// sync.restored_since is never earlier than an entry the original till
+// stamped with a clock that ran ahead of the copy's (ut-docs#5185).
+func (r *POSRepo) NewestLocalJournalEntryAt(ctx context.Context) (string, error) {
+	var newest sql.NullString
+	err := r.db.QueryRowContext(ctx, `
+SELECT MAX(created_at) FROM (
+  SELECT created_at FROM no_sale_events WHERE till_id IS NULL OR till_id = ''
+  UNION ALL
+  SELECT created_at FROM cleared_baskets WHERE till_id IS NULL OR till_id = ''
+)`).Scan(&newest)
+	if err != nil {
+		return "", fmt.Errorf("newest local journal entry: %w", err)
+	}
+	return newest.String, nil
+}
