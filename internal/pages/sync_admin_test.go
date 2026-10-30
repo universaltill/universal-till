@@ -303,7 +303,7 @@ func TestSyncChip_PrimaryModeWithTills(t *testing.T) {
 	// TillByBearerHash bumps last_seen_at as a side effect of authenticating
 	// (see syncTill / registerSyncAdmin's admin-bundle endpoint) -- simulate
 	// a real replica poll to freshen it.
-	if _, ok, err := tills.TillByBearerHash(ctx, hashBearer("token-abc")); err != nil || !ok {
+	if _, ok, err := tills.TillByBearerHashAt(ctx, hashBearer("token-abc"), time.Now()); err != nil || !ok {
 		t.Fatalf("authenticate till: ok=%v err=%v", ok, err)
 	}
 	rec = httptest.NewRecorder()
@@ -484,7 +484,7 @@ func TestSyncChip_PrimaryModeWarnsAndLinksToQuarantineWhenEntriesExist(t *testin
 	}
 	// Freshen last_seen_at so staleness alone would render "ok" -- isolating
 	// the assertion below to the quarantine-driven warn path.
-	if _, ok, err := tills.TillByBearerHash(ctx, hashBearer("token-abc")); err != nil || !ok {
+	if _, ok, err := tills.TillByBearerHashAt(ctx, hashBearer("token-abc"), time.Now()); err != nil || !ok {
 		t.Fatalf("authenticate till: ok=%v err=%v", ok, err)
 	}
 	if err := data.NewPOSRepo(dp.Db).InsertJournalQuarantine(ctx, data.JournalQuarantineEntry{

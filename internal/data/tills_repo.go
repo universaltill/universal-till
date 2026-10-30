@@ -24,14 +24,14 @@ type TillRow struct {
 	Role string
 	// TLSPinned is set once the till has authenticated a sync request over
 	// pinned LAN TLS (till_tls_pinned, ut-docs#2737). Filled by
-	// TillByBearerHash only.
+	// TillByBearerHashAt only.
 	TLSPinned bool
 	// BearerPrev is set when the caller authenticated with the till's
 	// previous bearer (still in its rotation grace, ut-docs#5198);
 	// BearerPending when that previous bearer's grace has not started
 	// because the new one was never used. RotateDue asks the caller to swap
 	// its bearer (POST /api/sync/bearer/rotate). All three are filled by
-	// TillByBearerHash only.
+	// TillByBearerHashAt only.
 	BearerPrev    bool
 	BearerPending bool
 	RotateDue     bool

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
 )
@@ -156,7 +157,7 @@ func TestSyncAdminVersion_TillAuthTouchDoesNotBump(t *testing.T) {
 		t.Fatalf("last_seen_at touch bumped generation %d -> %d (tills UPDATE trigger is not gated on name/enrolled_at)", base, got)
 	}
 	for range 3 {
-		if _, ok, err := NewTillsRepo(d.DB).TillByBearerHash(ctx, "hash-a"); err != nil || !ok {
+		if _, ok, err := NewTillsRepo(d.DB).TillByBearerHashAt(ctx, "hash-a", time.Now()); err != nil || !ok {
 			t.Fatalf("auth: ok=%v err=%v", ok, err)
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/fxlevel"
@@ -652,7 +653,7 @@ func TestAdminDumpFingerprint_StableAcrossTillAuthTouch(t *testing.T) {
 	}
 
 	// Exactly what every authenticated sync call does.
-	if _, ok, err := NewTillsRepo(primary.DB).TillByBearerHash(ctx, "hash-a"); err != nil || !ok {
+	if _, ok, err := NewTillsRepo(primary.DB).TillByBearerHashAt(ctx, "hash-a", time.Now()); err != nil || !ok {
 		t.Fatalf("auth: ok=%v err=%v", ok, err)
 	}
 

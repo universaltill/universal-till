@@ -21,12 +21,7 @@ const (
 	SyncBearerMaxAge = 30 * 24 * time.Hour
 )
 
-// TillByBearerHash resolves the sync caller; touches last_seen_at.
-func (r *TillsRepo) TillByBearerHash(ctx context.Context, bearerHash string) (TillRow, bool, error) {
-	return r.TillByBearerHashAt(ctx, bearerHash, time.Now())
-}
-
-// TillByBearerHashAt is TillByBearerHash at a given time.
+// TillByBearerHashAt resolves the sync caller at now; touches last_seen_at.
 //
 // The hash may be the till's current bearer or the previous one a rotation
 // kept. The first use of a new bearer starts the previous bearer's grace

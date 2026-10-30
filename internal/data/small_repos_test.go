@@ -407,7 +407,7 @@ func TestTillsRepo_EnrollListLookupDelete(t *testing.T) {
 
 	// TillByBearerHash resolves the till AND touches last_seen_at as a
 	// side effect (a replica's sync auth doubles as a heartbeat).
-	till, ok, err := repo.TillByBearerHash(ctx, "hash-abc")
+	till, ok, err := repo.TillByBearerHashAt(ctx, "hash-abc", time.Now())
 	if err != nil || !ok || till.ID != id {
 		t.Fatalf("expected to resolve the till by its bearer hash, got till=%+v ok=%v err=%v", till, ok, err)
 	}
@@ -419,7 +419,7 @@ func TestTillsRepo_EnrollListLookupDelete(t *testing.T) {
 		t.Fatal("expected last_seen_at to be stamped after TillByBearerHash")
 	}
 
-	if _, ok, err := repo.TillByBearerHash(ctx, "wrong-hash"); err != nil || ok {
+	if _, ok, err := repo.TillByBearerHashAt(ctx, "wrong-hash", time.Now()); err != nil || ok {
 		t.Fatalf("expected no match for a wrong bearer hash, got ok=%v err=%v", ok, err)
 	}
 
