@@ -56,7 +56,7 @@ packaging/macos/make-dmg.sh   <version> dist/macos   # → dist/macos/unitill-po
 ```
 
 CI builds and attaches the `.dmg` on every `v*` tag (the `macos-app` job in
-`.github/workflows/release.yml`, on a `macos-14` Apple Silicon runner). The
+`.github/workflows/release.yml`, on a `macos-15` Apple Silicon runner). The
 download page offers it as the primary macOS download.
 
 ## Proper signing + notarization (removes the Gatekeeper prompt)
