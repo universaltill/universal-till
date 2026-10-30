@@ -454,6 +454,47 @@ func TestAdminDumpApplyRoundTrip_ThemeIsPerTillAndNeverSyncs(t *testing.T) {
 	}
 }
 
+// ut-docs#5198: the rotation state of a till's bearer (when it was issued,
+// the previous hash and its expiry) is as private to the main till as the
+// hash itself -- it must neither travel in the dump nor survive on a replica
+// that already holds it from a full-DB join snapshot.
+func TestAdminDumpApplyRoundTrip_TillsRosterRedactsBearerRotationColumns(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+	const rotated = `INSERT INTO tills (id, name, bearer_hash, bearer_issued_at, bearer_prev_hash, bearer_prev_expires_at)
+VALUES ('till-a', 'Front Counter', 'realhash-a', '2026-10-01T00:00:00Z', 'oldhash-a', '2026-10-01T00:10:00Z')`
+	mustExec(t, primary, rotated)
+	mustExec(t, replica, rotated)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	for _, rec := range bundle.Tables["tills"] {
+		for _, c := range []string{"bearer_issued_at", "bearer_prev_hash", "bearer_prev_expires_at"} {
+			if _, ok := rec[c]; ok {
+				t.Fatalf("%s must never appear in a dumped tills row, got %+v", c, rec)
+			}
+		}
+	}
+	if _, err := NewSyncAdminRepo(replica.DB).ApplyAdminWithResult(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var issued, prev, exp sql.NullString
+	if err := replica.QueryRow(`SELECT bearer_issued_at, bearer_prev_hash, bearer_prev_expires_at FROM tills WHERE id = 'till-a'`).
+		Scan(&issued, &prev, &exp); err != nil {
+		t.Fatal(err)
+	}
+	if issued.Valid || prev.Valid || exp.Valid {
+		t.Fatalf("rotation columns survived an admin apply on the replica: %v %v %v", issued, prev, exp)
+	}
+	var kept string
+	if err := primary.QueryRow(`SELECT bearer_prev_hash FROM tills WHERE id = 'till-a'`).Scan(&kept); err != nil || kept != "oldhash-a" {
+		t.Fatalf("primary's own bearer_prev_hash must be unchanged: %q %v", kept, err)
+	}
+}
+
 // ut-docs#405: the shop's till roster now syncs like any other admin
 // table, but bearer_hash is that row's sync-auth secret and must never
 // leave the primary — redactCols strips it out of the dump, and migration

@@ -57,6 +57,11 @@ func exempt(path string) bool {
 		// ut-docs#3562: the replica push tick's no-sale journal, syncTill-
 		// authed in the handler like /api/sync/sales.
 		"/api/sync/no-sales",
+		// ut-docs#5198: a replica swapping its LAN sync bearer, syncTill-
+		// authed in the handler. Omitting it here would 401 every rotation
+		// -- the /api/sync/stock failure class again -- and the old bearer
+		// would die at the end of its grace.
+		"/api/sync/bearer/rotate",
 		// ut-docs#4711: the same tick's cleared-basket journal, syncTill-authed.
 		"/api/sync/cleared-baskets",
 		// ut-docs#4566: a failed join withdraws its own enrolment with the

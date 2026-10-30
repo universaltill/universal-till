@@ -109,7 +109,7 @@ func registerSyncUsers(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("POST /api/sync/users/apply", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
-		till, ok := syncTill(r, tills)
+		till, ok := syncTill(w, r, tills)
 		if !ok {
 			writeSyncUserError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
 			return

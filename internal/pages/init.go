@@ -562,6 +562,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncAssets(mux, dp)
 	registerSyncQuarantinePage(mux, dp) // ut-docs#1133: quarantined LAN-sync journal entries, primary-only admin panel (ADR-0065 follow-up)
 	registerPrimaryProof(mux, dp)       // main till answers a moved-till challenge (ut-docs#2722)
+	registerSyncBearerRotate(mux, dp)   // a replica swaps its LAN sync bearer, main-till side (ut-docs#5198)
 	registerMainTillStatus(mux, dp)     // replica's main-till connectivity chip (ut-docs#2722, #2742)
 	registerCloudAuthChip(mux, dp)      // refused cloud credential chip (ADR-0116 D6, ut-docs#3524)
 	registerDiskSpaceChip(mux, dp)      // low-disk chip for managers (ut-docs#3121)

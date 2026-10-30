@@ -1,6 +1,7 @@
 // Join snapshot (ut-docs#426): the full-DB copy served to a joining replica
-// over GET /api/sync/snapshot must NOT carry other tills' bearer_hash — the
-// sync-auth secret that must never leave the primary (same rule the D4
+// over GET /api/sync/snapshot must NOT carry other tills' bearer_hash (nor the
+// previous one a bearer rotation keeps, ut-docs#5198) — the sync-auth
+// secret that must never leave the primary (same rule the D4
 // admin-bundle redactCols in internal/data/sync_admin_repo.go enforces on
 // every incremental pull). Real disaster-recovery backups (Snapshot) keep
 // the real values: restoring one restores the shop's real till roster.
@@ -102,7 +103,7 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 		cleanup()
 		return "", nil, fmt.Errorf("open join snapshot copy: %w", err)
 	}
-	_, execErr := cdb.Exec(`UPDATE tills SET bearer_hash = NULL`)
+	_, execErr := cdb.Exec(`UPDATE tills SET bearer_hash = NULL, bearer_prev_hash = NULL`)
 	if execErr == nil {
 		// ut-docs#2730: nor this till's own cloud identity — above all its
 		// store token. The joining replica gets its own device id at

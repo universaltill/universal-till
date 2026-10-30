@@ -154,6 +154,8 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		"/api/sync/cleared-baskets",
 		// ut-docs#4566: a failed join's best-effort enrolment withdrawal.
 		"/api/sync/enroll/withdraw",
+		// ut-docs#5198: a replica swapping its LAN bearer, syncTill-authed.
+		"/api/sync/bearer/rotate",
 		"/api/sync/admin",
 		"/api/sync/stock",
 		// ut-docs#460: the replica pull tick's plugin-set poll. Missing at

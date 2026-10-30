@@ -135,6 +135,12 @@ type ProofRequest struct {
 type ProofResponse struct {
 	PrimaryTillID string `json:"primary_till_id"`
 	Proof         string `json:"proof"`
+	// PrevProof is the same proof keyed by the till's previous bearer hash,
+	// sent only while a bearer rotation has not been confirmed by use of the
+	// new bearer (ut-docs#5198): a replica whose rotation answer was lost
+	// still holds the old bearer and must be able to re-find a moved main
+	// till. Older main tills omit it; older replicas ignore it.
+	PrevProof string `json:"prev_proof,omitempty"`
 }
 
 // PrimaryProof computes HMAC-SHA256 keyed by the replica's bearer hash (hex,
@@ -675,10 +681,13 @@ func (w *PrimaryWatch) challengeVia(ctx context.Context, do func(*http.Request) 
 		return "", proofRefusedError{"proof names a different till"}
 	}
 	want := PrimaryProof(HashBearer(bearer), id, tillID, nonce, dialled, pin())
-	got, err := hex.DecodeString(out.Data.Proof)
 	wantRaw, _ := hex.DecodeString(want)
-	if err != nil || !hmac.Equal(got, wantRaw) {
-		return "", proofRefusedError{"proof does not match this till's pairing"}
+	// The current proof, or the one under the previous bearer hash while a
+	// rotation is pending (ut-docs#5198).
+	for _, proof := range []string{out.Data.Proof, out.Data.PrevProof} {
+		if got, err := hex.DecodeString(proof); err == nil && proof != "" && hmac.Equal(got, wantRaw) {
+			return id, nil
+		}
 	}
-	return id, nil
+	return "", proofRefusedError{"proof does not match this till's pairing"}
 }

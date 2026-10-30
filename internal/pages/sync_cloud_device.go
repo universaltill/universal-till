@@ -59,7 +59,7 @@ func registerSyncCloudDevice(mux *http.ServeMux, d *common.Deps) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": code})
 	}
 	mux.HandleFunc("POST /api/sync/cloud-device", func(w http.ResponseWriter, r *http.Request) {
-		till, ok := syncTill(r, tills)
+		till, ok := syncTill(w, r, tills)
 		if !ok {
 			fail(w, http.StatusUnauthorized, "unauthorized")
 			return

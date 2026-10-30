@@ -1103,25 +1103,25 @@ func TestHeldSalesRepo_ReconcileWithPrimary(t *testing.T) {
 }
 
 // ut-docs#2722: the primary-proof handshake needs a replica's stored bearer
-// hash by its till id — WITHOUT touching last_seen_at (a proof request is
+// hash by its till id -- WITHOUT touching last_seen_at (a proof request is
 // unauthenticated; it must not make an unreachable replica look alive).
-func TestTillsRepo_BearerHashByID(t *testing.T) {
+func TestTillsRepo_ProofHashesByID_DoesNotTouchLastSeen(t *testing.T) {
 	repo := newTillsTestDB(t)
 	ctx := context.Background()
 	id, err := repo.InsertTill(ctx, "Back Till", "hash-xyz")
 	if err != nil {
 		t.Fatal(err)
 	}
-	h, ok, err := repo.BearerHashByID(ctx, id)
+	h, _, ok, err := repo.ProofHashesByID(ctx, id)
 	if err != nil || !ok || h != "hash-xyz" {
-		t.Fatalf("BearerHashByID(%s) = %q, %v, %v; want hash-xyz, true, nil", id, h, ok, err)
+		t.Fatalf("ProofHashesByID(%s) = %q, %v, %v; want hash-xyz, true, nil", id, h, ok, err)
 	}
-	if _, ok, err := repo.BearerHashByID(ctx, "no-such-till"); err != nil || ok {
+	if _, _, ok, err := repo.ProofHashesByID(ctx, "no-such-till"); err != nil || ok {
 		t.Fatalf("unknown till: ok=%v err=%v, want false, nil", ok, err)
 	}
 	list, _ := repo.ListTills(ctx)
 	if len(list) != 1 || list[0].LastSeenAt != "" {
-		t.Fatalf("BearerHashByID touched last_seen_at: %+v", list)
+		t.Fatalf("ProofHashesByID touched last_seen_at: %+v", list)
 	}
 }
 
