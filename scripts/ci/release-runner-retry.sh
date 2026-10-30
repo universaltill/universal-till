@@ -201,14 +201,14 @@ main() {
             if [ "${EVENT:-}" = push ]; then
               echo "::warning::Release run ${RUN_ID}: runner-starved jobs (${verdict#PRERUN }) stopped the release before it published, but its pushed tag ${tag:-(unknown)} was not found or could not be confirmed, so the run is not retried. If the tag exists, use \"Re-run failed jobs\" by hand."
             else
-              echo "::warning::Release run ${RUN_ID}: runner-starved jobs (${verdict#PRERUN }) stopped the release before it published, but its tag ${tag:-(unknown)} is gone or could not be confirmed, so the run is not retried. Dispatch a fresh release; if the tag still exists, delete it by hand: git push origin :refs/tags/${tag:-<tag>} and gh release delete ${tag:-<tag>} --cleanup-tag."
+              echo "::warning::Release run ${RUN_ID}: runner-starved jobs (${verdict#PRERUN }) stopped the release before it published, but its tag ${tag:-(unknown)} is gone or could not be confirmed, so the run is not retried. Dispatch a fresh release; if the tag still exists, delete it by hand (release-orphan-tag-sweep.yml does this after ~2 h): git push origin :refs/tags/${tag:-<tag>} and gh release delete ${tag:-<tag>} --cleanup-tag."
             fi
             return 0
           fi
         fi
         echo "Release run ${RUN_ID}: release not published; re-running runner-starved jobs: ${verdict#PRERUN }"
         if ! rerun_failed; then
-          echo "::error::Release run ${RUN_ID}: the re-run request failed, but cleanup-orphaned-tag kept the tag and draft release for this retry. Delete them by hand: git push origin :refs/tags/<tag> and gh release delete <tag> --cleanup-tag."
+          echo "::error::Release run ${RUN_ID}: the re-run request failed, but cleanup-orphaned-tag kept the tag and draft release for this retry. Delete them by hand (release-orphan-tag-sweep.yml does this after ~2 h): git push origin :refs/tags/<tag> and gh release delete <tag> --cleanup-tag."
           return 1
         fi
       fi

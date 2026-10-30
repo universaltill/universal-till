@@ -175,9 +175,24 @@ fine later. The retry gets the tag from `head_branch` (tag push) or from
 cannot be confirmed, it does not re-run and prints a warning: for a dispatch,
 dispatch a fresh release and delete a leftover tag by hand if there is one;
 for a tag push, use "Re-run failed jobs" by hand if the tag exists. A starved
-`prepare` never made a tag, so that re-run needs no check. If the retry gives
-up while a kept tag remains, that tag also needs deleting by hand
-(ut-docs#5211).
+`prepare` never made a tag, so that re-run needs no check. If the retry never
+comes (the `workflow_run` was not delivered, the retry job was itself starved,
+the re-run request failed or it was refused), `release-orphan-tag-sweep.yml`
+cleans up: it runs hourly and, for a `workflow_dispatch` Release run that
+failed at least 2 hours ago (within 72 hours) whose latest
+`cleanup-orphaned-tag` carries the keep warning and whose `publish-release`
+did not succeed, deletes the draft release(s) and then the tag, so the version
+is not burned (ut-docs#5211). Only the newest Release run (any event) is ever eligible, because a re-dispatch
+recreates the same tag name and its in-flight draft; an orphan from an older run
+is not swept (its version is already skipped) and needs a manual delete if
+wanted. Before deleting it also checks the tag is the annotated one that run's
+`prepare` created (object sha equal to the run's head sha, tagger
+`github-actions[bot]`, message `Release <tag>`) and that no published release
+exists for it (two independent lookups). It never touches a pushed tag, a tag whose
+release is published, or a run still in progress, and does nothing if the
+releases lookup fails. Its job holds only `contents: write` (delete the draft
+and tag ref), `actions: read` and `checks: read`. Dispatch a fresh release
+afterwards.
 
 **Rotate:** revoke the key in App Store Connect → Users and Access →
 Integrations, create a new one (role Developer), update both Key Vault and the

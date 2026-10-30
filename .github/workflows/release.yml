@@ -1420,7 +1420,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$(bash scripts/ci/release-runner-retry.sh keep-tag)" = keep ]; then
-            echo "::warning::Release ${TAG} did not publish because a job was never given a runner; keeping the tag and draft release because release-runner-retry.yml will re-run it. If it does not, use \"Re-run failed jobs\" by hand or delete the tag."
+            echo "::warning::Release ${TAG} did not publish because a job was never given a runner; keeping the tag and draft release because release-runner-retry.yml will re-run it. If that retry does not happen, release-orphan-tag-sweep.yml deletes the tag and draft after about 2 hours (use \"Re-run failed jobs\" by hand before then)."
             exit 0
           fi
           echo "::warning::Release ${TAG} did not complete (publish-release: ${{ needs.publish-release.result }}) — deleting the tag so it doesn't burn this version number for the next attempt."
