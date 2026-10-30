@@ -360,8 +360,11 @@ jobs:
   # job verifies them, signs uninstall.exe (installer.nsi `!uninstfinalize`)
   # and the Setup.exe itself.
   windows-installer:
+    # ut-docs#5205: skipped (not failed) when goreleaser was skipped, e.g. a
+    # starved linux-shells arm runner; there is no release to wait for, so
+    # running would only add "real" failures. A goreleaser FAILURE still runs.
     needs: [prepare, goreleaser]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.goreleaser.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: release-signing
@@ -456,9 +459,11 @@ jobs:
     # Runs after goreleaser but does NOT require it to have SUCCEEDED — only
     # the release must exist (the wait step checks). A goreleaser job failure
     # after publishing (e.g. 422 double-uploads during a GitHub API outage)
-    # must not cost the .dmg, as it did for v0.2.9/v0.2.10.
+    # must not cost the .dmg, as it did for v0.2.9/v0.2.10. A goreleaser that
+    # was SKIPPED (upstream starvation, ut-docs#5205) is different: no release
+    # exists, so this job is skipped too instead of failing in the wait step.
     needs: [prepare, goreleaser]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.goreleaser.result != 'skipped' }}
     runs-on: macos-14 # Apple Silicon
     # ut-docs#2917: bounded. Notarization alone is capped at NOTARY_TIMEOUT
     # (below); the rest of the build is ~15 min. On timeout/rejection this job
@@ -578,13 +583,13 @@ jobs:
           fail=0
           for bin in unitill-pos unitill-desktop; do
             f="$mnt/Universal Till.app/Contents/MacOS/$bin"
+            # No "dev" grep: strings drops runs under 4 chars (ut-docs#5205), so an
+            # unstamped build fails the version check below instead.
             # Capture, then grep (not `strings | grep -q`: macOS strings
             # errors when grep closes the pipe early — see verify-versions).
             out="$(strings -a "$f" 2>/dev/null || true)"
             if [ ! -f "$f" ]; then
               echo "::error::missing macOS .app $bin"; fail=1
-            elif grep -qx "dev" <<< "$out"; then
-              echo "::error::macOS .app $bin embeds buildinfo.Version=dev"; fail=1
             elif [ "$bin" = unitill-pos ] && { ! [[ "${UT_MARKETPLACE_KEY_HEX:-}" =~ ^[0-9a-f]{64}$ ]] || ! LC_ALL=C grep -aqF "$UT_MARKETPLACE_KEY_HEX" "$f"; }; then
               # ADR-0158: the marketplace key must be compiled into the server,
               # the binary that verifies plugins. The shell never reads it
@@ -593,7 +598,7 @@ jobs:
             elif grep -qxE "v?${VERSION//./\\.}" <<< "$out"; then
               echo "ok: macOS .app $bin carries version $VERSION"
             else
-              echo "::error::macOS .app $bin does not contain version $VERSION"; fail=1
+              echo "::error::macOS .app $bin does not contain version $VERSION (an unstamped build, buildinfo.Version \"dev\", lands here; strings never prints a 3-char run, ut-docs#5205)"; fail=1
             fi
           done
           hdiutil detach -quiet -force "$mnt" || true
@@ -617,8 +622,9 @@ jobs:
   # "no Google contact" posture everywhere else. Own job like macos-app: only
   # needs the release to exist, never blocks or is blocked by goreleaser.
   android-app:
+    # ut-docs#5205: skipped when goreleaser was skipped (no release exists).
     needs: [prepare, goreleaser]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.goreleaser.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -849,8 +855,9 @@ jobs:
     # macos-app deliberately NOT needed (ut-docs#2917): a slow notarization
     # must not hold the release. The .dmg's version is checked in macos-app
     # itself and its checksum entry in macos-dmg-attach.
+    # ut-docs#5205: skipped when goreleaser was skipped (no release exists).
     needs: [prepare, goreleaser, android-app]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.goreleaser.result != 'skipped' }}
     runs-on: ubuntu-latest # ut-docs#5200: a starved macOS pool must not stop publishing; .dmg checks live in macos-app / macos-dmg-attach (ut-docs#2917)
     timeout-minutes: 20
     # contents: write, not the read-only this job actually needs (ut-docs#1376
@@ -952,11 +959,10 @@ jobs:
             # as safe with GNU strings on ubuntu-latest.)
             local out
             out="$(strings -a "$file" 2>/dev/null || true)"
-            if grep -qx "dev" <<< "$out"; then
-              echo "::error::$label embeds buildinfo.Version=dev — the ldflags -X version injection is broken for this build"
-              fail=1
-              return
-            fi
+            # No separate "dev" test: the unstamped default is 3 characters
+            # and `strings` (GNU and cctools) never prints runs under 4, so
+            # such a grep could not fire (ut-docs#5205). An unstamped build
+            # simply has no version line and fails the check below.
             # ADR-0158: the marketplace key must be compiled in. These builds
             # use -trimpath, so `go version -m` records no -ldflags; look for
             # the resolved key's bytes in the binary instead.
@@ -968,7 +974,7 @@ jobs:
             if grep -qxE "v?${VERSION//./\\.}" <<< "$out"; then
               echo "ok: $label carries version $VERSION"
             else
-              echo "::error::$label does not contain the expected version string $VERSION anywhere"
+              echo "::error::$label does not contain the expected version string $VERSION anywhere (an unstamped build, buildinfo.Version \"dev\", lands here — the ldflags -X version injection may be broken)"
               fail=1
             fi
           }
@@ -1363,6 +1369,13 @@ jobs:
   # Accepted deliberately — that window is a single `gh release edit`
   # call wide, versus the three real incidents this job exists to prevent,
   # all of which failed well before any release was buildable at all.
+  #
+  # Exception (ut-docs#5205): if the only failures are jobs GitHub never gave
+  # a runner (e.g. linux-shells on the hosted arm pool; goreleaser and
+  # publish-release are then skipped) and release-runner-retry.yml will still
+  # re-run the run, the tag and draft are KEPT so the re-run can publish.
+  # `release-runner-retry.sh keep-tag` decides, with the same rule as the
+  # retry itself; any doubt or API error means delete, as before.
   cleanup-orphaned-tag:
     needs:
       [
@@ -1389,14 +1402,23 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      actions: read # keep-tag lists this run's jobs
+      checks: read # ... and their annotations (starved vs. a real failure)
     steps:
       - uses: actions/checkout@v7
       - name: Delete the orphaned tag and any draft release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
+          if [ "$(bash scripts/ci/release-runner-retry.sh keep-tag)" = keep ]; then
+            echo "::warning::Release ${TAG} did not publish because a job was never given a runner; keeping the tag and draft release because release-runner-retry.yml will re-run it. If it does not, use \"Re-run failed jobs\" by hand or delete the tag."
+            exit 0
+          fi
           echo "::warning::Release ${TAG} did not complete (publish-release: ${{ needs.publish-release.result }}) — deleting the tag so it doesn't burn this version number for the next attempt."
           # `--cleanup-tag` removes both the release object and the tag in
           # one call when a (draft) release exists; if goreleaser never got
