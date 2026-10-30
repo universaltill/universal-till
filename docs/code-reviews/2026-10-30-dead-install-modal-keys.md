@@ -35,6 +35,7 @@ Restoring `storeHasOwner(ctx, d.Settings)` makes it pass.
 | 1 | nit | The edited comment in `record-dialog.js` wrapped after "and", leaving a ragged line | Fixed: reflowed |
 | 2 | minor | The test covers the install route only. The update (`plugin_api.go:715`) and cloud-sync install (`cloudsync_wire.go:1734`) callers pass the same `storeHasOwner(...)` but have no own test | Accepted: the card asked for one marketplace install test. The three call sites are identical one-liners, and `TestStoreAPI_DownloadTillAuthCodes_403` covers the download route |
 | 3 | info | Locally, `guard-deadcode-baseline.sh` (deadcode built with Go 1.26) and `guard-shellcheck-version.sh` (no shellcheck) fail, and they fail on `main` too | Environment only. CI has the tools |
+| 4 | minor | CI `guard-docs-shots_test.sh` failed: the `web/public/*.js` edits made the docs-shots surface hash stale | Fixed: `update-docs-shots-surface-hash.sh` (no rendered pixel changes: one unused inline action removed, one comment edited), committed with `Docs-Shots-Unchanged: true` |
 
 No UI surface changes. No user-visible text changes (the keys were unused). No help topic is
 affected.
