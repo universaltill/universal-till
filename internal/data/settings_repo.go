@@ -36,6 +36,12 @@ func (r *SettingsRepo) Get(ctx context.Context, key string) (string, bool, error
 	var err error
 	done := settingsObs.trace("get")
 	defer func() { done(err) }()
+	if path, ok := r.bearerFile(key); ok { // ut-docs#5172
+		var v string
+		var found bool
+		v, found, err = readSyncBearerFile(path)
+		return v, found, err
+	}
 	var val string
 	err = r.db.QueryRowContext(ctx, `
 SELECT value FROM settings WHERE key = ?
@@ -77,6 +83,10 @@ func (r *SettingsRepo) Set(ctx context.Context, key, value string) error {
 	var err error
 	done := settingsObs.trace("set")
 	defer func() { done(err) }()
+	if path, ok := r.bearerFile(key); ok { // ut-docs#5172
+		err = storeSyncBearer(path, value)
+		return err
+	}
 	_, err = r.db.ExecContext(ctx, `
 INSERT INTO settings (key, value, updated_at)
 VALUES (?, ?, ?)
@@ -94,7 +104,16 @@ ON CONFLICT(key) DO UPDATE SET
 // SetTx is Set inside the caller's transaction, so a value commits with
 // the writes it describes — the cloud catalogue pull's cursor commits with
 // its chunk (ADR-0162 §4, ut-docs#4463).
+//
+// The sync bearer (ut-docs#5172) lives in a file, which is NOT part of tx: it
+// is written immediately and survives a rollback.
 func (r *SettingsRepo) SetTx(ctx context.Context, tx *sql.Tx, key, value string) error {
+	if path, ok := r.bearerFile(key); ok {
+		if err := storeSyncBearer(path, value); err != nil {
+			return settingsObs.wrapf("set_tx", "set setting %s", err, key)
+		}
+		return nil
+	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO settings (key, value, updated_at)
 VALUES (?, ?, ?)
@@ -140,6 +159,16 @@ SELECT key, value FROM settings WHERE key LIKE ? ESCAPE '\'
 	if err = rows.Err(); err != nil {
 		return nil, settingsObs.wrap("get_by_prefix", err)
 	}
+	if path, ok := r.registeredBearerFile(); ok && strings.HasPrefix(SyncBearerSettingsKey, prefix) { // ut-docs#5172
+		v, found, ferr := readSyncBearerFile(path)
+		if ferr != nil {
+			err = ferr
+			return nil, err
+		}
+		if found {
+			out[SyncBearerSettingsKey] = v
+		}
+	}
 	return out, nil
 }
 
@@ -164,6 +193,21 @@ func (r *SettingsRepo) GetOrCreate(ctx context.Context, key, ifAbsent string) (s
 	var err error
 	done := settingsObs.trace("get_or_create")
 	defer func() { done(err) }()
+
+	if path, ok := r.bearerFile(key); ok { // ut-docs#5172
+		syncBearerMu.Lock()
+		defer syncBearerMu.Unlock()
+		v, found, rerr := readSyncBearerFile(path)
+		if rerr != nil {
+			err = rerr
+			return "", err
+		}
+		if found {
+			return v, nil
+		}
+		err = writeSyncBearerFile(path, ifAbsent)
+		return ifAbsent, err
+	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -201,8 +245,14 @@ func (r *SettingsRepo) SetMany(ctx context.Context, kv map[string]string) error 
 		return nil
 	}
 
+	// The sync bearer (ut-docs#5172) goes to its file after the tx commits and
+	// never reaches the SQL.
+	bearerPath, bearerRedirected := r.bearerFile(SyncBearerSettingsKey)
 	keys := make([]string, 0, len(kv))
 	for k := range kv {
+		if k == SyncBearerSettingsKey && bearerRedirected {
+			continue
+		}
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
@@ -231,6 +281,11 @@ ON CONFLICT(key) DO UPDATE SET
 	for _, k := range keys {
 		invalidateCachedSetting(r.db, k)
 	}
+	if v, has := kv[SyncBearerSettingsKey]; has && bearerRedirected {
+		if err = storeSyncBearer(bearerPath, v); err != nil {
+			return settingsObs.wrapf("set_many", "set setting %s", err, SyncBearerSettingsKey)
+		}
+	}
 	return nil
 }
 
@@ -239,6 +294,10 @@ func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
 	var err error
 	done := settingsObs.trace("delete")
 	defer func() { done(err) }()
+	if path, ok := r.bearerFile(key); ok { // ut-docs#5172
+		err = storeSyncBearer(path, "")
+		return err
+	}
 	_, err = r.db.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, key)
 	if err != nil {
 		return settingsObs.wrapf("delete", "delete setting %s", err, key)
@@ -335,6 +394,12 @@ ON CONFLICT(key) DO UPDATE SET
 	if err = tx.Commit(); err != nil {
 		return settingsObs.wrap("clear_replica_identity", err)
 	}
+	// The bearer is a sync.* key too (ut-docs#5172); its file is not in the tx.
+	if path, ok := r.registeredBearerFile(); ok {
+		if err = storeSyncBearer(path, ""); err != nil {
+			return settingsObs.wrap("clear_replica_identity", err)
+		}
+	}
 	return nil
 }
 
@@ -359,6 +424,17 @@ func (r *SettingsRepo) All(ctx context.Context) (map[string]string, error) {
 	err = rows.Err()
 	if err != nil {
 		err = settingsObs.wrap("all", err)
+		return out, err
+	}
+	if path, ok := r.registeredBearerFile(); ok { // ut-docs#5172
+		v, found, ferr := readSyncBearerFile(path)
+		if ferr != nil {
+			err = settingsObs.wrap("all", ferr)
+			return nil, err
+		}
+		if found {
+			out[SyncBearerSettingsKey] = v
+		}
 	}
 	return out, err
 }

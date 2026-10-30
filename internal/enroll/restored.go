@@ -143,11 +143,13 @@ func CheckRestoredInstall(ctx context.Context, cfg *config.Config, kv Settings, 
 	}
 	// A restored flag already set means an earlier boot reset and then died
 	// before re-marking: the identity is empty now, but the flag must stay.
-	// A replica that was never cloud-registered still held a LAN bearer: the
-	// copy must say it needs joining again (ut-docs#5162).
+	// A replica that was never cloud-registered still held a LAN pairing: the
+	// copy must say it needs joining again (ut-docs#5162). The bearer lives
+	// under secrets/, which a restore does not bring (ut-docs#5172), so the
+	// till id written with it at every join counts too.
 	replica := isReplica(ctx, kv)
 	held := get(keyToken) != "" || get(keyDeviceRegistered) != "" || get(keyPairedAt) != "" || RestoredState(ctx, kv) ||
-		(replica && get(keySyncBearer) != "")
+		(replica && (get(keySyncBearer) != "" || get(keySyncTillID) != ""))
 	// Needs sync.till_id (it marks the new device id as minted for it), so it
 	// runs before the LAN identity is cleared.
 	resetIdentityForPair(ctx, kv, replica, "till-"+uuid.NewString())
