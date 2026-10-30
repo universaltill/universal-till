@@ -36,9 +36,25 @@ list_jobs() {
   printf '%s\n' "${JOBS_JSON}"
 }
 ANN_FAILS=0
+KEEP_IDS=" "   # cleanup job ids whose annotations are the keep warning
+DELETE_IDS=" " # ... the delete warning
+PARTIAL_IDS=" " # ... the keep warning's start without its keep clause
+KEEP_TAG_NAME="v1.2.3"
 annotations_for() {
   if [ "${ANN_FAILS}" = 1 ]; then
     return 1
+  fi
+  if [[ "${KEEP_IDS}" == *" $1 "* ]]; then
+    printf '%s\n' "Release ${KEEP_TAG_NAME} did not publish because a job was never given a runner; keeping the tag and draft release because release-runner-retry.yml will re-run it. If it does not, use \"Re-run failed jobs\" by hand or delete the tag."
+    return 0
+  fi
+  if [[ "${PARTIAL_IDS}" == *" $1 "* ]]; then
+    printf '%s\n' "Release ${KEEP_TAG_NAME} did not publish because a job was never given a runner; deleting the tag."
+    return 0
+  fi
+  if [[ "${DELETE_IDS}" == *" $1 "* ]]; then
+    printf '%s\n' "Release ${KEEP_TAG_NAME} did not complete (publish-release: skipped) — deleting the tag so it doesn't burn this version number for the next attempt."
+    return 0
   fi
   if [[ "${STARVED_IDS}" == *" $1 "* ]]; then
     printf '%s\n%s\n' "Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times." "${STARVED_MSG}"
@@ -80,6 +96,14 @@ rerun_failed() {
   echo "RERUN-CALLED"
   [ "${RERUN_FAILS}" = 0 ]
 }
+# ut-docs#5209: a PRERUN re-run first confirms the release tag still exists.
+TAG_EXISTS=1
+tag_exists() {
+  echo "TAG-CHECKED $1"
+  [ "${TAG_EXISTS}" = 1 ]
+}
+# Default: a tag push whose tag is present, so the older PRERUN cases re-run.
+export EVENT=push HEAD_BRANCH=v1.2.3
 
 # Read by the sourced script's network functions (redefined above, so unused).
 export REPO=o/r RUN_ID=1
@@ -266,6 +290,78 @@ else
   fail "(k8) direct keep-tag attempt 2: exit ${rc}, stdout '${out}'"
 fi
 
+# (t) ut-docs#5209: a PRERUN re-run never re-runs a run whose tag is gone.
+# tag_case <label> <want rerun 0|1> <want tag check 0|1> [warning text]
+tag_case() {
+  local label="$1" want="$2" wantchk="$3" needle="${4:-}" out rc=0 got=0 chk=0
+  out="$(RUN_ATTEMPT=1 main 2>&1)" || rc=$?
+  [[ "${out}" == *"RERUN-CALLED"* ]] && got=1
+  [[ "${out}" == *"TAG-CHECKED"* ]] && chk=1
+  if [ "${rc}" -ne 0 ]; then fail "${label}: exit ${rc} (${out})"
+  elif [ "${got}" != "${want}" ]; then fail "${label}: reruns=${got}, want ${want} (${out})"
+  elif [ "${chk}" != "${wantchk}" ]; then fail "${label}: tag checked=${chk}, want ${wantchk} (${out})"
+  elif [ -n "${needle}" ] && [[ "${out}" != *"${needle}"* ]]; then fail "${label}: output lacks '${needle}' (${out})"
+  else pass "${label}"; fi
+}
+mkjobs "linux-shells (ubuntu-22.04-arm, arm64):8:cancelled" "goreleaser:9:skipped" "publish-release:2:skipped" "cleanup-orphaned-tag:7:success"
+STARVED_IDS=" 8 "
+unset EVENT HEAD_BRANCH
+export EVENT=workflow_dispatch HEAD_BRANCH=main
+KEEP_IDS=" 7 "
+TAG_EXISTS=1
+tag_case "(t1) dispatch + keep annotation + tag exists re-runs" 1 1
+TAG_EXISTS=0
+tag_case "(t2) dispatch + keep annotation + tag gone does not re-run" 0 1 "::warning::"
+KEEP_IDS=" "
+DELETE_IDS=" 7 "
+TAG_EXISTS=1
+tag_case "(t3) dispatch + delete annotation does not re-run" 0 0 "::warning::"
+DELETE_IDS=" "
+tag_case "(t3b) dispatch + cleanup job without a message does not re-run" 0 0 "::warning::"
+mkjobs "linux-shells (ubuntu-22.04-arm, arm64):8:cancelled" "goreleaser:9:skipped" "publish-release:2:skipped"
+KEEP_IDS=" 7 "
+tag_case "(t4) dispatch + no cleanup job does not re-run" 0 0 "::warning::"
+mkjobs "linux-shells (ubuntu-22.04-arm, arm64):8:cancelled" "goreleaser:9:skipped" "publish-release:2:skipped" "cleanup-orphaned-tag:7:success"
+KEEP_TAG_NAME='v1;rm'
+tag_case "(t5) malformed tag from the annotation never reaches tag_exists" 0 0 "::warning::"
+KEEP_TAG_NAME="v1.2.3"
+export EVENT=push HEAD_BRANCH=v2.0.0
+TAG_EXISTS=1
+tag_case "(t6) push + HEAD_BRANCH tag exists re-runs" 1 1
+TAG_EXISTS=0
+tag_case "(t7) push + tag gone does not re-run" 0 1 "::warning::"
+export HEAD_BRANCH='v1;rm'
+TAG_EXISTS=1
+tag_case "(t8) push + malformed HEAD_BRANCH never reaches tag_exists" 0 0 "::warning::"
+export HEAD_BRANCH=main
+tag_case "(t8b) push + non-tag HEAD_BRANCH does not re-run" 0 0 "::warning::"
+export HEAD_BRANCH=v2.0.0
+TAG_EXISTS=0
+tag_case "(t8c) push + tag gone points at Re-run failed jobs, not a fresh dispatch" 0 1 "Re-run failed jobs"
+TAG_EXISTS=1
+# (t9) dispatch with a starved prepare: no tag was ever made and cleanup never
+# ran, so the re-run goes ahead with no tag check.
+export EVENT=workflow_dispatch HEAD_BRANCH=main
+mkjobs "prepare:10:cancelled" "goreleaser:9:skipped" "publish-release:2:skipped" "cleanup-orphaned-tag:7:skipped"
+STARVED_IDS=" 10 "
+KEEP_IDS=" "
+tag_case "(t9) dispatch + starved prepare re-runs without a tag check" 1 0
+# (t10) the parse needs the keep clause, not just the "did not publish" start.
+mkjobs "linux-shells (ubuntu-22.04-arm, arm64):8:cancelled" "goreleaser:9:skipped" "publish-release:2:skipped" "cleanup-orphaned-tag:7:success"
+STARVED_IDS=" 8 "
+PARTIAL_IDS=" 7 "
+tag_case "(t10) a 'did not publish' line without the keep clause yields no tag" 0 0 "::warning::"
+PARTIAL_IDS=" "
+export EVENT=push HEAD_BRANCH=v1.2.3
+KEEP_IDS=" "
+
+# (c1) a cancelled (starved) goreleaser / android-app: dependents are skipped
+# by release.yml (ut-docs#5209), so the starved job alone is the PRERUN.
+verdict="$(printf 'goreleaser\tcancelled\t1\nwindows-installer\tskipped\t0\nmacos-app\tskipped\t0\nandroid-app\tskipped\t0\nverify-versions\tskipped\t0\npublish-release\tskipped\t0\n' | decide)"
+if [ "${verdict}" = "PRERUN goreleaser" ]; then pass "(c1) starved goreleaser with skipped dependents is PRERUN goreleaser"; else fail "(c1) decide gave: ${verdict}"; fi
+verdict="$(printf 'goreleaser\tsuccess\t0\nandroid-app\tcancelled\t1\nverify-versions\tskipped\t0\nchecksums\tskipped\t0\npublish-release\tskipped\t0\n' | decide)"
+if [ "${verdict}" = "PRERUN android-app" ]; then pass "(c2) starved android-app with skipped verify/checksums/publish is PRERUN android-app"; else fail "(c2) decide gave: ${verdict}"; fi
+
 # WIRING (ut-docs#5205): release.yml must use the same rule, and the
 # downstream jobs must not run against a release that was never created.
 WF="${ROOT_DIR}/.github/workflows/release.yml"
@@ -311,7 +407,24 @@ for job in windows-installer macos-app android-app verify-versions; do
   else
     fail "wiring: ${job}'s if: lacks needs.goreleaser.result != 'skipped'"
   fi
+  if [[ "${ifl}" == *"needs.goreleaser.result != 'cancelled'"* ]]; then
+    pass "wiring: ${job} skips when goreleaser was cancelled (ut-docs#5209)"
+  else
+    fail "wiring: ${job}'s if: lacks needs.goreleaser.result != 'cancelled'"
+  fi
 done
+vv_if="$(job_block verify-versions | grep -E '^    if:' | sed -n 1p || true)"
+if [[ "${vv_if}" == *"needs.android-app.result != 'cancelled'"* ]]; then
+  pass "wiring: verify-versions skips when android-app was cancelled (ut-docs#5209)"
+else
+  fail "wiring: verify-versions' if: lacks needs.android-app.result != 'cancelled'"
+fi
+# release_tag parses this exact phrase out of the keep warning's annotation.
+if [[ "${cleanup}" == *"did not publish because a job was never given a runner; keeping the tag"* ]]; then
+  pass "wiring: cleanup keep warning keeps the phrase release_tag parses"
+else
+  fail "wiring: cleanup-orphaned-tag's keep warning no longer says 'did not publish because a job was never given a runner; keeping the tag' (release_tag parses it, ut-docs#5209)"
+fi
 # The premise: linux-shells (hosted arm pool) still gates goreleaser.
 gr_needs="$(job_block goreleaser | grep -E '^    needs:' | sed -n 1p || true)"
 ls_block="$(job_block linux-shells)"

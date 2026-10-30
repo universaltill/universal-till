@@ -363,8 +363,9 @@ jobs:
     # ut-docs#5205: skipped (not failed) when goreleaser was skipped, e.g. a
     # starved linux-shells arm runner; there is no release to wait for, so
     # running would only add "real" failures. A goreleaser FAILURE still runs.
+    # Also skipped when goreleaser was CANCELLED (a starved runner, ut-docs#5209).
     needs: [prepare, goreleaser]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.goreleaser.result != 'skipped' }}
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.goreleaser.result != 'skipped' && needs.goreleaser.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: release-signing
@@ -462,8 +463,9 @@ jobs:
     # must not cost the .dmg, as it did for v0.2.9/v0.2.10. A goreleaser that
     # was SKIPPED (upstream starvation, ut-docs#5205) is different: no release
     # exists, so this job is skipped too instead of failing in the wait step.
+    # Same for a goreleaser CANCELLED by starvation (ut-docs#5209).
     needs: [prepare, goreleaser]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.goreleaser.result != 'skipped' }}
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.goreleaser.result != 'skipped' && needs.goreleaser.result != 'cancelled' }}
     runs-on: macos-14 # Apple Silicon
     # ut-docs#2917: bounded. Notarization alone is capped at NOTARY_TIMEOUT
     # (below); the rest of the build is ~15 min. On timeout/rejection this job
@@ -622,9 +624,10 @@ jobs:
   # "no Google contact" posture everywhere else. Own job like macos-app: only
   # needs the release to exist, never blocks or is blocked by goreleaser.
   android-app:
-    # ut-docs#5205: skipped when goreleaser was skipped (no release exists).
+    # ut-docs#5205: skipped when goreleaser was skipped (no release exists);
+    # ut-docs#5209: also when it was cancelled (starved).
     needs: [prepare, goreleaser]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.goreleaser.result != 'skipped' }}
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.goreleaser.result != 'skipped' && needs.goreleaser.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -855,9 +858,10 @@ jobs:
     # macos-app deliberately NOT needed (ut-docs#2917): a slow notarization
     # must not hold the release. The .dmg's version is checked in macos-app
     # itself and its checksum entry in macos-dmg-attach.
-    # ut-docs#5205: skipped when goreleaser was skipped (no release exists).
+    # ut-docs#5205: skipped when goreleaser was skipped (no release exists);
+    # ut-docs#5209: also when goreleaser or android-app was cancelled (starved).
     needs: [prepare, goreleaser, android-app]
-    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.goreleaser.result != 'skipped' }}
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.goreleaser.result != 'skipped' && needs.goreleaser.result != 'cancelled' && needs.android-app.result != 'cancelled' }}
     runs-on: ubuntu-latest # ut-docs#5200: a starved macOS pool must not stop publishing; .dmg checks live in macos-app / macos-dmg-attach (ut-docs#2917)
     timeout-minutes: 20
     # contents: write, not the read-only this job actually needs (ut-docs#1376
