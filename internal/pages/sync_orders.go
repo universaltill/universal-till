@@ -67,7 +67,7 @@ func registerSyncOrders(mux *http.ServeMux, d *common.Deps) {
 	// The primary's live recent-orders board — the same rows
 	// ListRecentOrders feeds the local fragment.
 	mux.HandleFunc("GET /api/sync/orders", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := syncTill(r, tills); !ok {
+		if _, ok := syncTill(w, r, tills); !ok {
 			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
 			return
 		}
@@ -104,7 +104,7 @@ func registerSyncOrders(mux *http.ServeMux, d *common.Deps) {
 	// TestSyncPullPathsAreExempt), or the bridge is 401'd before syncTill
 	// ever runs.
 	mux.HandleFunc("GET /api/sync/orders/stream", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := syncTill(r, tills); !ok {
+		if _, ok := syncTill(w, r, tills); !ok {
 			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
 			return
 		}
@@ -135,7 +135,7 @@ func registerSyncOrders(mux *http.ServeMux, d *common.Deps) {
 	// endpoint: 400 bad status, 404 unknown receipt, 200 for both an
 	// applied and a silently-dropped stale write.
 	mux.HandleFunc("POST /api/sync/orders/{receipt_no}/status", func(w http.ResponseWriter, r *http.Request) {
-		till, ok := syncTill(r, tills)
+		till, ok := syncTill(w, r, tills)
 		if !ok {
 			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
 			return

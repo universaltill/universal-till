@@ -25,8 +25,9 @@ import (
 // registerPrimaryProof: POST /api/sync/primary-proof, answered by a MAIN
 // till. A replica that re-found it over mDNS sends its own till id and a
 // fresh nonce; the main till proves it holds that till's pairing record by
-// returning discovery.PrimaryProof keyed by the stored bearer hash. The
-// bearer hash never leaves this till. Unauthenticated by design (the
+// returning discovery.PrimaryProof keyed by the stored bearer hash (and, for
+// a rotation still unconfirmed, by the previous one too). The bearer hashes
+// never leave this till. Unauthenticated by design (the
 // replica must not send its bearer to an unproven device), so: rate-limited
 // per source, strict input validation, 404 for anything that isn't an
 // enrolled till — and a replica never answers as a main till.
@@ -61,7 +62,7 @@ func registerPrimaryProof(mux *http.ServeMux, d *common.Deps) {
 			http.NotFound(w, r)
 			return
 		}
-		hash, ok, err := tills.BearerHashByID(r.Context(), req.TillID)
+		hash, prevHash, ok, err := tills.ProofHashesByID(r.Context(), req.TillID)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_primary_proof", err)
 			return
@@ -75,13 +76,20 @@ func registerPrimaryProof(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_primary_proof", err)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": discovery.ProofResponse{
+		pin := lantls.ServedPin(r.Context())
+		resp := discovery.ProofResponse{
 			PrimaryTillID: primaryID,
 			// Over TLS the proof also covers the pin served on this
 			// connection (ut-docs#4091); over plain HTTP, none.
-			Proof: discovery.PrimaryProof(hash, primaryID, req.TillID, req.Nonce, r.Host, lantls.ServedPin(r.Context())),
-		}, "error": nil})
+			Proof: discovery.PrimaryProof(hash, primaryID, req.TillID, req.Nonce, r.Host, pin),
+		}
+		if prevHash != "" {
+			// A rotation the replica may not have received (ut-docs#5198):
+			// it can still hold the previous bearer.
+			resp.PrevProof = discovery.PrimaryProof(prevHash, primaryID, req.TillID, req.Nonce, r.Host, pin)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": resp, "error": nil})
 	})
 }
 

@@ -187,7 +187,7 @@ func applyReportedTillName(tills *data.TillsRepo, registers *data.POSRepo, unusa
 func registerSyncLink(mux *http.ServeMux, d *common.Deps) {
 	tills := data.NewTillsRepo(d.Db)
 	mux.HandleFunc("GET /api/sync/link", func(w http.ResponseWriter, r *http.Request) {
-		till, ok := syncTill(r, tills)
+		till, ok := syncTill(w, r, tills)
 		if !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return

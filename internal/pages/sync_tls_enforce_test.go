@@ -73,7 +73,7 @@ func TestSyncTill_RefusesPlainHTTPOnceTheTillAuthenticatedOverTLS(t *testing.T) 
 
 	// The record is persistent (a main-till restart must not reopen plain
 	// HTTP for a pinned till): a fresh repo over the same DB still refuses.
-	row, ok, err := data.NewTillsRepo(d.Db).TillByBearerHash(t.Context(), hashBearer("bearer-pinned"))
+	row, ok, err := data.NewTillsRepo(d.Db).TillByBearerHashAt(t.Context(), hashBearer("bearer-pinned"), time.Now())
 	if err != nil || !ok || !row.TLSPinned {
 		t.Fatalf("stored record: TLSPinned=%v ok=%v err=%v; want pinned", row.TLSPinned, ok, err)
 	}

@@ -324,19 +324,33 @@ func displayPrimaryAddress(primaryURL string) string {
 // syncTill authenticates a replica's sync call by its bearer (only the
 // SHA-256 is stored; the hash lookup makes timing attacks moot).
 //
+// The bearer may be the till's previous one while a rotation's grace window
+// is open (ut-docs#5198). A bearer that is due to be swapped marks the
+// answer with lantls.BearerRotateHeader; the replica's peer transport then
+// calls POST /api/sync/bearer/rotate in the background.
+//
 // It also enforces pinned LAN TLS per till (ADR-0114 §7, ut-docs#2737): the
 // first bearer request a till makes over TLS records it as pinned, and from
 // then on its bearer is refused on plain HTTP. A till sends TLS only once it
 // holds this main till's pin (lantls.NewPeerClient) and then never falls
 // back, so a plain request with a pinned till's bearer is a stolen bearer or
 // a downgrade. A till that has never used TLS keeps plain HTTP (§11).
-func syncTill(r *http.Request, repo *data.TillsRepo) (data.TillRow, bool) {
+func syncTill(w http.ResponseWriter, r *http.Request, repo *data.TillsRepo) (data.TillRow, bool) {
 	h := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if h == "" {
 		return data.TillRow{}, false
 	}
-	t, ok, err := repo.TillByBearerHash(r.Context(), hashBearer(h))
-	if err != nil || !ok {
+	t, ok, err := repo.TillByBearerHashAt(r.Context(), hashBearer(h), syncBearerNow())
+	if err != nil {
+		return data.TillRow{}, false
+	}
+	if !ok {
+		if t.ID != "" {
+			// A previous bearer past its grace: a copy that outlived the
+			// rotation (an old backup) or a replica that never took the new
+			// one. The repo cleared it, so this is said once per rotation.
+			logging.L().Warnf("sync: an old sync credential for till %s was used after its rotation and was refused", t.ID)
+		}
 		return data.TillRow{}, false
 	}
 	switch {
@@ -356,8 +370,14 @@ func syncTill(r *http.Request, repo *data.TillsRepo) (data.TillRow, bool) {
 		}
 		t.TLSPinned = true
 	}
+	if t.RotateDue {
+		w.Header().Set(lantls.BearerRotateHeader, "1")
+	}
 	return t, true
 }
+
+// syncBearerNow is the clock bearer rotation runs on -- a seam for tests.
+var syncBearerNow = time.Now
 
 // joinWithdrawWindow bounds how long after enrolment a till may withdraw
 // its own enrolment (ut-docs#4566). A join enrols, then downloads the
@@ -783,7 +803,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Error(w, "withdraw must be done on the primary till", http.StatusConflict)
 			return
 		}
-		till, ok := syncTill(r, repo)
+		till, ok := syncTill(w, r, repo)
 		if !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -825,7 +845,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	// real backup snapshot itself stays pristine (it's a disaster-recovery
 	// artifact whose restore must bring back the real till roster).
 	mux.HandleFunc("GET /api/sync/snapshot", func(w http.ResponseWriter, r *http.Request) {
-		till, ok := syncTill(r, repo)
+		till, ok := syncTill(w, r, repo)
 		if !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -845,7 +865,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 	// Bearer-gated liveness — the first consumer of the sync surface;
 	// D2/D3 endpoints mount alongside it.
 	mux.HandleFunc("GET /api/sync/ping", func(w http.ResponseWriter, r *http.Request) {
-		till, ok := syncTill(r, repo)
+		till, ok := syncTill(w, r, repo)
 		if !ok {
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})

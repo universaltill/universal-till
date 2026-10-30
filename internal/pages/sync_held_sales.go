@@ -170,7 +170,7 @@ func registerSyncHeldSales(mux *http.ServeMux, d *common.Deps) {
 	// the ordinary "a newer write already landed" answer -- a business
 	// refusal against the primary's live state, never an error status.
 	mux.HandleFunc("POST /api/sync/held-sales/upsert", func(w http.ResponseWriter, r *http.Request) {
-		till, ok := syncTill(r, tills)
+		till, ok := syncTill(w, r, tills)
 		if !ok {
 			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
 			return
@@ -225,7 +225,7 @@ func registerSyncHeldSales(mux *http.ServeMux, d *common.Deps) {
 	// Delete by id. Idempotent -- a delete with nothing to delete is still
 	// 200/deleted.
 	mux.HandleFunc("POST /api/sync/held-sales/delete", func(w http.ResponseWriter, r *http.Request) {
-		till, ok := syncTill(r, tills)
+		till, ok := syncTill(w, r, tills)
 		if !ok {
 			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
 			return
@@ -256,7 +256,7 @@ func registerSyncHeldSales(mux *http.ServeMux, d *common.Deps) {
 	// a business refusal, never an error status, same as upsert's
 	// applied=false.
 	mux.HandleFunc("POST /api/sync/held-sales/claim", func(w http.ResponseWriter, r *http.Request) {
-		till, ok := syncTill(r, tills)
+		till, ok := syncTill(w, r, tills)
 		if !ok {
 			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
 			return
@@ -296,7 +296,7 @@ func registerSyncHeldSales(mux *http.ServeMux, d *common.Deps) {
 	// The primary's live open orders -- the same rows its own Open orders
 	// page and held strip read.
 	mux.HandleFunc("GET /api/sync/held-sales", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := syncTill(r, tills); !ok {
+		if _, ok := syncTill(w, r, tills); !ok {
 			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
 			return
 		}

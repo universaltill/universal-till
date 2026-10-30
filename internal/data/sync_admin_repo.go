@@ -373,7 +373,11 @@ var adminTables = []adminTable{
 	//     bundle's fingerprint on every pull, permanently defeating the
 	//     ?have= unchanged-poll check for the ENTIRE bundle, not just this
 	//     table — pinned by TestAdminDumpFingerprint_StableAcrossTillAuthTouch.
-	{name: "tills", pk: []string{"id"}, redactCols: []string{"bearer_hash", "last_seen_at"}},
+	//   - bearer_issued_at, bearer_prev_hash, bearer_prev_expires_at: the
+	//     main till's bearer-rotation state (migration 093, ut-docs#5198).
+	//     The previous hash is a sync-auth secret like bearer_hash; the two
+	//     timestamps are the main till's alone and would only go stale here.
+	{name: "tills", pk: []string{"id"}, redactCols: []string{"bearer_hash", "last_seen_at", "bearer_issued_at", "bearer_prev_hash", "bearer_prev_expires_at"}},
 }
 
 // nonAdminTables is every OTHER table in the schema, one reason each for why

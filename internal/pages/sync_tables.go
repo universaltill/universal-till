@@ -49,7 +49,7 @@ func registerSyncTables(mux *http.ServeMux, d *common.Deps) {
 	// The primary's live table occupancy — the same rows ListTablesWithState
 	// feeds the local floor-plan tiles and table picker.
 	mux.HandleFunc("GET /api/sync/tables", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := syncTill(r, tills); !ok {
+		if _, ok := syncTill(w, r, tills); !ok {
 			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
 			return
 		}

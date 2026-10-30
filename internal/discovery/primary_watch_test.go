@@ -43,6 +43,9 @@ type fakePrimary struct {
 	sawBearer  atomic.Bool
 	primaryID  string
 	bearerHash string
+	// prevHash is the previous bearer hash of a pending rotation
+	// (ut-docs#5198); "" = none, so no prev_proof is sent.
+	prevHash string
 }
 
 func newFakePrimary(t *testing.T, primaryID, bearerHash string) *fakePrimary {
@@ -62,10 +65,14 @@ func newFakePrimary(t *testing.T, primaryID, bearerHash string) *fakePrimary {
 			http.NotFound(w, r)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": ProofResponse{
+		resp := ProofResponse{
 			PrimaryTillID: f.primaryID,
 			Proof:         PrimaryProof(f.bearerHash, f.primaryID, req.TillID, req.Nonce, r.Host, ""),
-		}, "error": nil})
+		}
+		if f.prevHash != "" {
+			resp.PrevProof = PrimaryProof(f.prevHash, f.primaryID, req.TillID, req.Nonce, r.Host, "")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": resp, "error": nil})
 	}))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -154,6 +161,36 @@ func TestPrimaryWatch_RelinksOnIdentityMatchAndProof(t *testing.T) {
 	}
 	if _, unreachable := f.w.Unreachable(ctx); unreachable {
 		t.Fatal("still reported unreachable right after a successful re-link")
+	}
+}
+
+// ut-docs#5198: a replica whose bearer-rotation answer was lost still holds
+// the OLD bearer while the main till's current hash is the new one. The main
+// till also proves with the pending previous hash, so the replica can still
+// re-find a main till that moved -- and a proof under some other key is no
+// more accepted than before.
+func TestChallenge_AcceptsPrevProofWhilePending(t *testing.T) {
+	ctx := context.Background()
+	rotated := sha256.Sum256([]byte("the-rotated-bearer"))
+
+	prevHolder := newFakePrimary(t, testPrimaryID, hex.EncodeToString(rotated[:]))
+	prevHolder.prevHash = testBearerHash()
+	f := newWatchFixture(t, Candidate{Name: "Shop", TillID: testPrimaryID, BaseURL: prevHolder.srv.URL})
+	var out FailureOutcome
+	for i := 0; i < UnreachableThreshold && !out.Relinked; i++ {
+		out = f.w.ContactFailed(ctx)
+	}
+	if !out.Relinked || out.NewURL != prevHolder.srv.URL {
+		t.Fatalf("outcome = %+v, want relinked via the previous-bearer proof", out)
+	}
+
+	stranger := newFakePrimary(t, testPrimaryID, hex.EncodeToString(rotated[:]))
+	stranger.prevHash = "some-other-hash"
+	f = newWatchFixture(t, Candidate{Name: "Shop", TillID: testPrimaryID, BaseURL: stranger.srv.URL})
+	for i := 0; i < UnreachableThreshold; i++ {
+		if out := f.w.ContactFailed(ctx); out.Relinked {
+			t.Fatalf("relinked on a prev_proof under the wrong key: %+v", out)
+		}
 	}
 }
 

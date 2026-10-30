@@ -24,8 +24,17 @@ type TillRow struct {
 	Role string
 	// TLSPinned is set once the till has authenticated a sync request over
 	// pinned LAN TLS (till_tls_pinned, ut-docs#2737). Filled by
-	// TillByBearerHash only.
+	// TillByBearerHashAt only.
 	TLSPinned bool
+	// BearerPrev is set when the caller authenticated with the till's
+	// previous bearer (still in its rotation grace, ut-docs#5198);
+	// BearerPending when that previous bearer's grace has not started
+	// because the new one was never used. RotateDue asks the caller to swap
+	// its bearer (POST /api/sync/bearer/rotate). All three are filled by
+	// TillByBearerHashAt only.
+	BearerPrev    bool
+	BearerPending bool
+	RotateDue     bool
 }
 
 // Till roles (ut-docs#2781): the values tills.role and
@@ -169,25 +178,6 @@ func (r *TillsRepo) NameTakenExcept(ctx context.Context, name, exceptID string) 
 	return false, nil
 }
 
-// TillByBearerHash resolves the sync caller; touches last_seen_at.
-func (r *TillsRepo) TillByBearerHash(ctx context.Context, bearerHash string) (TillRow, bool, error) {
-	var t TillRow
-	err := r.db.QueryRowContext(ctx, `
-SELECT t.id, t.name, t.enrolled_at, COALESCE(t.last_seen_at, ''), t.role, p.till_id IS NOT NULL
-FROM tills t LEFT JOIN till_tls_pinned p ON p.till_id = t.id
-WHERE t.bearer_hash = ?`, bearerHash).
-		Scan(&t.ID, &t.Name, &t.EnrolledAt, &t.LastSeenAt, &t.Role, &t.TLSPinned)
-	if err == sql.ErrNoRows {
-		return TillRow{}, false, nil
-	}
-	if err != nil {
-		return TillRow{}, false, fmt.Errorf("till by bearer: %w", err)
-	}
-	_, _ = r.db.ExecContext(ctx, `UPDATE tills SET last_seen_at = ? WHERE id = ?`,
-		time.Now().UTC().Format(time.RFC3339), t.ID)
-	return t, true, nil
-}
-
 // MarkTLSPinned records that the till authenticated a sync request over
 // pinned LAN TLS (ADR-0114 §7, ut-docs#2737); idempotent. An unknown till id
 // fails on the foreign key rather than leaving an orphan row.
@@ -236,22 +226,4 @@ func (r *TillsRepo) DeleteTill(ctx context.Context, id string) error {
 		return fmt.Errorf("delete till: %w", err)
 	}
 	return nil
-}
-
-// BearerHashByID returns an enrolled till's stored bearer hash, for the
-// primary-proof handshake (ut-docs#2722): a replica that re-finds its main
-// till over mDNS asks it to prove it holds this till's pairing record before
-// sending it the bearer. Deliberately does NOT touch last_seen_at — the proof
-// request is unauthenticated, so it must never make a till look alive. A
-// missing or empty hash (a redacted snapshot copy) is "not found".
-func (r *TillsRepo) BearerHashByID(ctx context.Context, id string) (string, bool, error) {
-	var h string
-	err := r.db.QueryRowContext(ctx, `SELECT COALESCE(bearer_hash, '') FROM tills WHERE id = ?`, id).Scan(&h)
-	if err == sql.ErrNoRows || (err == nil && h == "") {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, fmt.Errorf("till bearer hash: %w", err)
-	}
-	return h, true, nil
 }

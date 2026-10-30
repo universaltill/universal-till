@@ -469,3 +469,39 @@ func TestRedactedJoinSnapshot_StripsUnpaidCheckinMarkers(t *testing.T) {
 		t.Errorf("LIVE DB markers mutated: rows=%d (err %v), want 2", n, err)
 	}
 }
+
+// ut-docs#5198: the previous bearer a till still accepts during a rotation's
+// grace window is as secret as the current one -- the join copy must not
+// carry it either, and the live DB keeps it.
+func TestRedactedJoinSnapshot_NullsPrevBearerHash(t *testing.T) {
+	path := testDBPath(t)
+	d := openTest(t, path)
+	if _, err := d.Exec(`INSERT INTO tills (id, name, bearer_hash, bearer_prev_hash) VALUES ('till-1', 'Till 1', 'hash-new', 'hash-old')`); err != nil {
+		t.Fatalf("seed till: %v", err)
+	}
+	copyPath, cleanup, err := RedactedJoinSnapshot(d.DB, path)
+	if err != nil {
+		t.Fatalf("RedactedJoinSnapshot: %v", err)
+	}
+	defer cleanup()
+
+	sd, err := sql.Open("sqlite", copyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sd.Close()
+	var prev sql.NullString
+	if err := sd.QueryRow(`SELECT bearer_prev_hash FROM tills WHERE id = 'till-1'`).Scan(&prev); err != nil {
+		t.Fatal(err)
+	}
+	if prev.Valid {
+		t.Errorf("redacted copy still carries bearer_prev_hash %q", prev.String)
+	}
+	if raw, err := os.ReadFile(copyPath); err != nil || bytes.Contains(raw, []byte("hash-old")) {
+		t.Errorf("previous bearer hash recoverable in the copy's raw bytes (read err %v)", err)
+	}
+	var live string
+	if err := d.QueryRow(`SELECT bearer_prev_hash FROM tills WHERE id = 'till-1'`).Scan(&live); err != nil || live != "hash-old" {
+		t.Errorf("LIVE DB bearer_prev_hash = %q (%v), want hash-old", live, err)
+	}
+}

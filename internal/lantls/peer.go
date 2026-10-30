@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/netaccess"
 )
 
@@ -98,6 +99,77 @@ func SetPeerReproof(fn PeerReproof) (restore func()) {
 	return func() { peerReproof.Store(prev) }
 }
 
+// Bearer rotation (ut-docs#5198). The main till marks an answer with
+// BearerRotateHeader when the bearer the replica just used is due to be
+// swapped. The replica's side of that lives here because every request to
+// the main till passes this transport, so no call site can miss the header.
+const (
+	// BearerRotateHeader is set by the main till on a response to a request
+	// whose bearer should rotate.
+	BearerRotateHeader = "X-UT-Sync-Bearer-Rotate"
+	// BearerRotatePath is the main till's rotation endpoint.
+	BearerRotatePath = "/api/sync/bearer/rotate"
+
+	// bearerRotateTimeout bounds one background rotation attempt.
+	bearerRotateTimeout = 20 * time.Second
+)
+
+// bearerRotateRetryEvery is the least time between two rotation attempts,
+// so a main till that keeps asking (or a rotation that keeps failing) costs
+// one call a minute, not one per request. A var only for tests.
+var bearerRotateRetryEvery = time.Minute
+
+// BearerRotate swaps this till's bearer for a fresh one from the main till.
+// It reports failure by logging and leaving the old bearer in place.
+type BearerRotate func(ctx context.Context)
+
+var bearerRotate atomic.Pointer[BearerRotate]
+
+// bearerRotateBusy is the single-flight guard; bearerRotateLast the start of
+// the latest attempt (unix nanoseconds).
+var (
+	bearerRotateBusy atomic.Bool
+	bearerRotateLast atomic.Int64
+)
+
+// SetBearerRotate installs the process-wide rotation hook; nil means a
+// rotation request from the main till is ignored. It returns a func that
+// restores the previous hook.
+func SetBearerRotate(fn BearerRotate) (restore func()) {
+	var p *BearerRotate
+	if fn != nil {
+		p = &fn
+	}
+	prev := bearerRotate.Swap(p)
+	bearerRotateLast.Store(0)
+	return func() { bearerRotate.Store(prev) }
+}
+
+// fireBearerRotate runs the hook in the background: off the request that
+// carried the header (a sale never waits for it), one at a time, and at most
+// once per bearerRotateRetryEvery. A main till that does not know the
+// bearer to be stale simply keeps asking; an offline till gets the header
+// with its next answer.
+func fireBearerRotate() {
+	hook := bearerRotate.Load()
+	if hook == nil || !bearerRotateBusy.CompareAndSwap(false, true) {
+		return
+	}
+	now := time.Now().UnixNano()
+	if last := bearerRotateLast.Load(); last != 0 && now-last < int64(bearerRotateRetryEvery) {
+		bearerRotateBusy.Store(false)
+		return
+	}
+	bearerRotateLast.Store(now)
+	go func() {
+		defer logging.RecoverAndLog("lantls.bearer_rotate")
+		defer bearerRotateBusy.Store(false)
+		ctx, cancel := context.WithTimeout(context.Background(), bearerRotateTimeout)
+		defer cancel()
+		(*hook)(ctx)
+	}()
+}
+
 // PeerPinned reports whether this till holds a pin for its main till, i.e.
 // whether its traffic to the main till is pinned TLS (fleetlink's report).
 func PeerPinned(ctx context.Context) bool {
@@ -126,6 +198,17 @@ func (p *peerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		closeBody(r)
 		return nil, fmt.Errorf("lantls: cannot read the main till's address or pin: %w", err)
 	}
+	resp, err := p.route(r, t)
+	if err == nil && resp.Header.Get(BearerRotateHeader) != "" &&
+		samePeerHost(r.URL, t.PrimaryURL) && r.URL.Path != BearerRotatePath {
+		fireBearerRotate()
+	}
+	return resp, err
+}
+
+// route sends r over pinned TLS when it is aimed at the main till and a pin
+// is held, and as it is otherwise.
+func (p *peerTransport) route(r *http.Request, t PeerTarget) (*http.Response, error) {
 	if t.Pin == "" || !samePeerHost(r.URL, t.PrimaryURL) {
 		return http.DefaultTransport.RoundTrip(r)
 	}

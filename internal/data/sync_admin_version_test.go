@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
 )
@@ -134,7 +135,9 @@ func TestSyncAdminVersion_TillsColumnSetPinsTheGatedTrigger(t *testing.T) {
 	// (TestTillsRepo_SetRoleBumpsAdminGenerationOnlyOnChange).
 	// receipt_prefix (ut-docs#5058 UT-5) travels too, gated by migration
 	// 092's trg_sync_admin_version_tills_prefix_upd.
-	want := []string{"bearer_hash", "enrolled_at", "id", "last_seen_at", "name", "receipt_prefix", "role"}
+	// bearer_issued_at, bearer_prev_hash and bearer_prev_expires_at
+	// (ut-docs#5198, migration 093) are redactCols: never in the bundle.
+	want := []string{"bearer_hash", "bearer_issued_at", "bearer_prev_expires_at", "bearer_prev_hash", "enrolled_at", "id", "last_seen_at", "name", "receipt_prefix", "role"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("tills columns = %v, want %v — migration 022's gated tills UPDATE trigger\n"+
 			"(WHEN NOT (OLD.name IS NEW.name AND OLD.enrolled_at IS NEW.enrolled_at))\n"+
@@ -154,7 +157,7 @@ func TestSyncAdminVersion_TillAuthTouchDoesNotBump(t *testing.T) {
 		t.Fatalf("last_seen_at touch bumped generation %d -> %d (tills UPDATE trigger is not gated on name/enrolled_at)", base, got)
 	}
 	for range 3 {
-		if _, ok, err := NewTillsRepo(d.DB).TillByBearerHash(ctx, "hash-a"); err != nil || !ok {
+		if _, ok, err := NewTillsRepo(d.DB).TillByBearerHashAt(ctx, "hash-a", time.Now()); err != nil || !ok {
 			t.Fatalf("auth: ok=%v err=%v", ok, err)
 		}
 	}

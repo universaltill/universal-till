@@ -517,6 +517,13 @@ func Run(ctx context.Context) error {
 		defer lantls.SetPeerReproof(deps.PrimaryWatch.Reproof)()
 	}
 
+	// Bearer rotation (ut-docs#5198): when the main till marks an answer as
+	// due, this till swaps its sync bearer in the background. Removed before
+	// the database closes, like the hooks above.
+	if deps != nil {
+		defer lantls.SetBearerRotate(pages.SyncBearerRotator(deps))()
+	}
+
 	if err := supervisor.AutoStartPlugins(ctx); err != nil {
 		log.Warnf("plugin auto-start failed: %v", err)
 	}
