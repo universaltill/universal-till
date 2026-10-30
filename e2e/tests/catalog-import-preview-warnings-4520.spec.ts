@@ -39,14 +39,12 @@ for (const vp of [
     const taxRow = page.locator('tr.row-warn', { hasText: 'Preview Oddball 4520' });
     await expect(taxRow).toBeVisible();
     const nqRow = page.locator('tr.row-warn', { hasText: 'Preview Flour 4520' });
-    if (vp.width < 600) {
-      // Phone card layout: the status cell sits behind each card's "More"
-      // toggle (the shared table pattern), so open it before reading it.
-      for (const row of [taxRow, nqRow]) {
-        await row.getByRole('button', { name: 'Daha fazla' }).click();
-      }
-    }
+    // No tap at any width: on the phone card a warned row's status stays
+    // on the collapsed card (data-card-keep) instead of behind "More", so
+    // the ⚠ and reason show at once — the tint is never the only signal
+    // (ut-docs#4583).
     await expect(taxRow.locator('.row-warn-icon')).toBeVisible();
+    await expect(nqRow.locator('.row-warn-icon')).toBeVisible();
     await expect(taxRow).toContainText('yüzde olarak okunamadı'); // tax_unparseable, translated
 
     await expect(nqRow).toBeVisible();
@@ -55,6 +53,13 @@ for (const vp of [
     const plainRow = page.locator('tr', { hasText: 'Preview Plain 4520' });
     await expect(plainRow).toBeVisible();
     await expect(plainRow).not.toHaveClass(/row-warn/);
+    if (vp.width < 600) {
+      // A warned card has nothing left behind "More"; a clean card keeps
+      // its plain status there.
+      await expect(taxRow.getByRole('button', { name: 'Daha fazla' })).toHaveCount(0);
+      await expect(plainRow.locator('td').nth(4)).toBeHidden();
+      await expect(plainRow.getByRole('button', { name: 'Daha fazla' })).toBeVisible();
+    }
     const [warnedBg, cleanBg] = await Promise.all([
       taxRow.locator('td').first().evaluate((el) => getComputedStyle(el).backgroundColor),
       plainRow.locator('td').first().evaluate((el) => getComputedStyle(el).backgroundColor),
