@@ -277,8 +277,8 @@ cleanup="$(job_block cleanup-orphaned-tag | grep -vE '^[[:space:]]*#' || true)"
 if [ -z "${cleanup}" ]; then
   fail "wiring: could not extract cleanup-orphaned-tag from release.yml"
 else
-  keep_line="$(grep -n 'release-runner-retry.sh keep-tag' <<<"${cleanup}" | head -1 | cut -d: -f1 || true)"
-  del_line="$(grep -n 'gh release delete' <<<"${cleanup}" | head -1 | cut -d: -f1 || true)"
+  keep_line="$(grep -n 'release-runner-retry.sh keep-tag' <<<"${cleanup}" | sed -n 1p | cut -d: -f1 || true)"
+  del_line="$(grep -n 'gh release delete' <<<"${cleanup}" | sed -n 1p | cut -d: -f1 || true)"
   if ! grep -qF '= keep ]' <<<"${cleanup}"; then
     fail "wiring: cleanup-orphaned-tag must compare keep-tag's output with = keep ]"
   elif [ -n "${keep_line}" ] && [ -n "${del_line}" ] && [ "${keep_line}" -lt "${del_line}" ]; then
@@ -303,7 +303,7 @@ else
 fi
 for job in windows-installer macos-app android-app verify-versions; do
   blk="$(job_block "${job}")"
-  ifl="$(grep -E '^    if:' <<<"${blk}" | head -1 || true)"
+  ifl="$(grep -E '^    if:' <<<"${blk}" | sed -n 1p || true)"
   if [ -z "${ifl}" ]; then
     fail "wiring: ${job} has no if: line (parser broke?)"
   elif [[ "${ifl}" == *"needs.goreleaser.result != 'skipped'"* ]]; then
@@ -313,8 +313,9 @@ for job in windows-installer macos-app android-app verify-versions; do
   fi
 done
 # The premise: linux-shells (hosted arm pool) still gates goreleaser.
-gr_needs="$(job_block goreleaser | grep -E '^    needs:' | head -1 || true)"
-if [[ "${gr_needs}" == *linux-shells* ]] && job_block linux-shells | grep -q 'ubuntu-22.04-arm'; then
+gr_needs="$(job_block goreleaser | grep -E '^    needs:' | sed -n 1p || true)"
+ls_block="$(job_block linux-shells)"
+if [[ "${gr_needs}" == *linux-shells* ]] && grep -qF 'ubuntu-22.04-arm' <<<"${ls_block}"; then
   pass "wiring premise: goreleaser needs linux-shells, which runs on ubuntu-22.04-arm"
 else
   fail "wiring premise changed: goreleaser no longer needs an arm linux-shells job; revisit ut-docs#5205"
