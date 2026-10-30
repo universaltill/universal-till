@@ -9,8 +9,7 @@
 # that did not publish, or retry past MAX_ATTEMPTS (default 3).
 #
 # Honest limit: a re-run started with GITHUB_TOKEN may not itself fire another
-# workflow_run, so in practice expect ONE automatic retry; MAX_ATTEMPTS is
-# the bound if it does chain.
+# workflow_run, so: at most once in practice (bounded by MAX_ATTEMPTS=3).
 name: Release runner retry
 
 on:
@@ -26,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      contents: read # actions/checkout (explicit, so a private repo still works)
       actions: write # POST rerun-failed-jobs
       checks: read # job check-run annotations tell starvation from a real failure
     steps:

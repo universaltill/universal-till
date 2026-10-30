@@ -35,7 +35,11 @@ list_jobs() {
   fi
   printf '%s\n' "${JOBS_JSON}"
 }
+ANN_FAILS=0
 annotations_for() {
+  if [ "${ANN_FAILS}" = 1 ]; then
+    return 1
+  fi
   if [[ "${STARVED_IDS}" == *" $1 "* ]]; then
     printf '%s\n%s\n' "Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times." "${STARVED_MSG}"
   else
@@ -71,7 +75,11 @@ run_case() {
     pass "${label}"
   fi
 }
-rerun_failed() { echo "RERUN-CALLED"; }
+RERUN_FAILS=0
+rerun_failed() {
+  echo "RERUN-CALLED"
+  [ "${RERUN_FAILS}" = 0 ]
+}
 
 # Read by the sourced script's network functions (redefined above, so unused).
 export REPO=o/r RUN_ID=1
@@ -95,6 +103,13 @@ mkjobs "publish-release:2:failure" "macos-app:3:cancelled"
 STARVED_IDS=" 3 "
 run_case "(d) unpublished release is not re-run" 0 1
 
+# (d2) verify-versions (also macos-14) starved: publish-release is skipped and
+# cleanup-orphaned-tag already deleted the tag, so even an all-starved run
+# must not be re-run (review finding: nothing pinned the publish gate).
+mkjobs "verify-versions:6:cancelled" "macos-app:3:cancelled" "publish-release:2:skipped" "cleanup-orphaned-tag:7:success"
+STARVED_IDS=" 3 6 "
+run_case "(d2) starved verify-versions with publish-release skipped is not re-run" 0 1
+
 # (e) attempts exhausted
 mkjobs "publish-release:2:success" "macos-app:3:cancelled" "macos-dmg-attach:4:skipped"
 STARVED_IDS=" 3 "
@@ -112,6 +127,51 @@ rc=0
 RUN_ATTEMPT=1 main >/dev/null 2>&1 || rc=$?
 if [ "${rc}" -ne 0 ]; then pass "(g) failing jobs listing exits non-zero"; else fail "(g) failing jobs listing exited 0"; fi
 LIST_FAILS=0
+
+# expect_fail <label>: main must exit non-zero for the current fixtures.
+expect_fail() {
+  local rc=0
+  RUN_ATTEMPT=1 main >/dev/null 2>&1 || rc=$?
+  if [ "${rc}" -ne 0 ]; then pass "$1"; else fail "$1 (exited 0)"; fi
+}
+mkjobs "publish-release:2:success" "macos-app:3:cancelled" "macos-dmg-attach:4:skipped"
+STARVED_IDS=" 3 "
+
+# (h) a failing annotations call fails the script
+ANN_FAILS=1
+expect_fail "(h) failing annotations call exits non-zero"
+ANN_FAILS=0
+
+# (i) a failing rerun POST fails the script (no green job with no .dmg)
+RERUN_FAILS=1
+expect_fail "(i) failing rerun-failed-jobs call exits non-zero"
+RERUN_FAILS=0
+
+# (j) executed directly (as the workflow does) with a stub `gh` on PATH: the
+# main guard runs main and the real network functions issue the POST.
+TMP="$(mktemp -d)"
+trap 'rm -rf "${TMP}"' EXIT
+printf '%s\n' "${JOBS_JSON}" >"${TMP}/jobs.json"
+cat >"${TMP}/gh" <<'GH'
+#!/usr/bin/env bash
+echo "$*" >>"${GH_LOG}"
+case "$*" in
+  *"-X POST"*rerun-failed-jobs*) exit 0 ;;
+  *"/jobs?"*) cat "${GH_FIXTURES}/jobs.json" ;;
+  *check-runs/3/annotations*) echo "The job was not acquired by Runner of type hosted even after multiple attempts" ;;
+  *annotations*) echo "Process completed with exit code 1." ;;
+  *) echo "unexpected gh call: $*" >&2; exit 2 ;;
+esac
+GH
+chmod +x "${TMP}/gh"
+rc=0
+PATH="${TMP}:${PATH}" GH_LOG="${TMP}/gh.log" GH_FIXTURES="${TMP}" \
+  REPO=o/r RUN_ID=42 RUN_ATTEMPT=1 bash "${SCRIPT}" >/dev/null 2>&1 || rc=$?
+if [ "${rc}" -eq 0 ] && grep -q -- "-X POST repos/o/r/actions/runs/42/rerun-failed-jobs" "${TMP}/gh.log" 2>/dev/null; then
+  pass "(j) direct execution re-runs through gh"
+else
+  fail "(j) direct execution: exit ${rc}, gh calls: $(cat "${TMP}/gh.log" 2>/dev/null)"
+fi
 
 echo "${PASS_COUNT} passed, ${FAIL_COUNT} failed"
 [ "${FAIL_COUNT}" -eq 0 ]
