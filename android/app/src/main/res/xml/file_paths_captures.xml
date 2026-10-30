@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ut-docs#5190: the ONLY path the captures FileProvider exposes — the app's
+     private cache `captures/` dir where the system camera saves an item photo
+     for the WebView's file input. Swept after an hour; never the shared
+     storage. -->
+<paths>
+    <cache-path
+        name="captures"
+        path="captures/" />
+</paths>
