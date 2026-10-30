@@ -144,9 +144,12 @@ was not acquired by Runner of type hosted", ut-docs#5175),
 (`scripts/ci/release-runner-retry.sh`): only when `publish-release`
 succeeded and every failed job is runner-starved — at most once in practice
 (bounded by `MAX_ATTEMPTS=3`). Real failures are never retried
-automatically. A starved `verify-versions` (also `macos-14`) is not retried
-either: `publish-release` never ran and `cleanup-orphaned-tag` removed the
-tag, so dispatch a fresh release.
+automatically. A starved publish-gating job is not retried either:
+`publish-release` never ran and `cleanup-orphaned-tag` removed the tag, so
+dispatch a fresh release. Every job that gates `publish-release` runs on
+Linux (`verify-versions` moved off `macos-14` in ut-docs#5200, pinned by
+`release-macos-nonblocking_test.sh`), so a starved macOS pool can only
+delay the .dmg, never the release.
 
 **Rotate:** revoke the key in App Store Connect → Users and Access →
 Integrations, create a new one (role Developer), update both Key Vault and the

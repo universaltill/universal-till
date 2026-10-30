@@ -851,7 +851,7 @@ jobs:
     # itself and its checksum entry in macos-dmg-attach.
     needs: [prepare, goreleaser, android-app]
     if: ${{ !cancelled() && needs.prepare.result == 'success' }}
-    runs-on: macos-14 # tar/unzip/strings for every format (kept from when it also mounted the .dmg)
+    runs-on: ubuntu-latest # ut-docs#5200: a starved macOS pool must not stop publishing; .dmg checks live in macos-app / macos-dmg-attach (ut-docs#2917)
     timeout-minutes: 20
     # contents: write, not the read-only this job actually needs (ut-docs#1376
     # follow-up): since .goreleaser.yaml's release.draft became true, this
@@ -948,6 +948,8 @@ jobs:
             # then reports that as the WHOLE pipeline failing even though grep
             # found what it was looking for — every check failed this way on
             # this job's first real run despite the versions being correct.
+            # (The job ran on macos-14 until ut-docs#5200; the capture is just
+            # as safe with GNU strings on ubuntu-latest.)
             local out
             out="$(strings -a "$file" 2>/dev/null || true)"
             if grep -qx "dev" <<< "$out"; then
@@ -1078,10 +1080,11 @@ jobs:
           # under set -euo pipefail, with no test ever running) when the APK
           # has two zip entries that collide once extracted onto this
           # runner's case-insensitive macOS filesystem — a v0.6.17 run hit
-          # this for a 9-patch PNG resource. `-o` force-overwrites instead of
-          # prompting; the directory was just freshly rm -rf'd/mkdir'd above,
-          # so there's nothing here worth an interactive confirmation either
-          # way.
+          # this for a 9-patch PNG resource (history: the job ran on macos-14
+          # until ut-docs#5200; `-o` stays harmless on Linux). `-o`
+          # force-overwrites instead of prompting; the directory was just
+          # freshly rm -rf'd/mkdir'd above, so there's nothing here worth an
+          # interactive confirmation either way.
           unzip -qo "unitill-pos_${VERSION}_android.apk" -d extracted
           checkAndroidLib extracted/lib/arm64-v8a/libgojni.so "android arm64-v8a libgojni.so (the omission that caused the real bug)"
           checkAndroidLib extracted/lib/armeabi-v7a/libgojni.so "android armeabi-v7a libgojni.so (the omission that caused the real bug)"
