@@ -5,7 +5,8 @@ import { watchConsole } from './helpers';
 // the stacked `max-width: 900px` tier, where basket (capped at 45dvh),
 // tender and products stacked in ~360px: the basket showed only its header
 // and the Dine in / Takeaway toggle (no line, no totals) and Pay was cut in
-// half. app.css now gives a short (max-height: 480px) window of 768-900px
+// half. app.css now gives a short (max-height: 480px; 700px since
+// ut-docs#5212, covered in tablet-tier-totals-416.spec.ts) window of 768-900px
 // the desktop arrangement (basket column | products over tender), and a
 // narrower short one (667x375, 740x360) a stacked, scrolling screen with an
 // uncapped basket and the tender pinned to the bottom. Without the fix the
