@@ -115,9 +115,9 @@
   --ui-scale-min-width: calc(100vw / 28.3);
 }
 @media (min-width: 901px) { :root { --ui-scale-min-width: calc(100vw / 46); } }
-/* ut-docs#2918: a 768-900px window at most 480px tall uses the side-by-side
+/* ut-docs#2918, #5212: a 768-900px window at most 700px tall uses the side-by-side
    grid too (the landscape-phone block below), so it gets the same budget. */
-@media (min-width: 768px) and (max-width: 900px) and (max-height: 480px) { :root { --ui-scale-min-width: calc(100vw / 46); } }
+@media (min-width: 768px) and (max-width: 900px) and (max-height: 700px) { :root { --ui-scale-min-width: calc(100vw / 46); } }
 html { font-size: min(calc(var(--ui-scale, 1) * var(--fluid-fs)), max(var(--fluid-fs), var(--ui-scale-min-width))); }
 /* --ut-bundle-fonts: the font subsets installed language bundles ship
    (ADR-0160 §8, ut-docs#4374), declared by /plugin-fonts/bundle-fonts.css.
@@ -2004,11 +2004,20 @@ body.osk-padded .item-form-modal { block-size: calc(100% - var(--osk-reserved-he
    long the basket gets -- the phone sheet's sticky tender (#3059), including
    its unpin while a dialog inside is open (a sticky box is a stacking
    context and would trap the payment overlay under the status bar).
-   min-width: 481px leaves the <=480px phone tier (#3059) alone; max-height:
-   480px matches the min-height: 481px the tablet blocks below key on, so
-   they never overlap. Regression test:
-   e2e/tests/landscape-phone-sale-2918.spec.ts. */
-@media (min-width: 768px) and (max-width: 900px) and (max-height: 480px) {
+   min-width: 481px leaves the <=480px phone tier (#3059) alone.
+   ut-docs#5212: the same goes up to 700px tall (was 480px). In the stacked
+   tier the basket's 45dvh cap is below its min-content (header, toggle,
+   thead, .basket-scroll's 6rem floor, totals: ~301px at scale 1) until
+   ~700px tall, so 900x600, 768x600 and 600x600 clipped the grand Total
+   line inside the basket's own scroll. A taller window keeps the stacked
+   tier, where the cap fits. The 700px threshold and the 301px are at UI
+   scale 1 (media queries are px, the min-content is rem); larger scales
+   are ut-docs#5220. These windows overlap the min-height: 481px
+   tablet blocks below; only the basket's container (#3050) applies there,
+   and it just picks the line shape for the basket's own width.
+   Regression tests: e2e/tests/landscape-phone-sale-2918.spec.ts,
+   e2e/tests/tablet-tier-totals-416.spec.ts. */
+@media (min-width: 768px) and (max-width: 900px) and (max-height: 700px) {
   .pos-container {
     grid-template-columns: minmax(var(--pos-basket-min-w), var(--basket-col-width, 26.25rem)) minmax(var(--pos-products-min-w), 1fr);
     grid-template-rows: minmax(0, 1fr) auto;
@@ -2019,7 +2028,17 @@ body.osk-padded .item-form-modal { block-size: calc(100% - var(--osk-reserved-he
   }
   .pos-container > .basket { max-height: none; }
 }
-@media (min-width: 481px) and (max-width: 767px) and (max-height: 480px) {
+/* ut-docs#5212: at 481-700px tall the side-by-side tender column (~280px at
+   768px wide) squeezed the barcode field to a sliver beside qty, + and the
+   two icons. From 541px tall there is height to spare, so the field takes
+   its own full-width row; shorter, the second row would push the first tile
+   row out of the products panel (measured at 768x481), so the scan row
+   stays one row as in the <=480px windows (ut-docs#5221). */
+@media (min-width: 768px) and (max-width: 900px) and (min-height: 541px) and (max-height: 700px) {
+  .pos-container > .tender .scan-row { flex-wrap: wrap; }
+  .pos-container > .tender .scan-row input[name="code"] { flex: 1 0 100%; }
+}
+@media (min-width: 481px) and (max-width: 767px) and (max-height: 700px) {
   .pos-container { grid-template-rows: max-content max-content max-content; overflow-y: auto; }
   .pos-container > .basket { max-height: none; overflow-y: visible; }
   .pos-container > .tender {
@@ -3591,8 +3610,9 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    so a scaled-up till drops to a roomier shape by itself (a viewport query
    would overflow at scale 1.5-2). min-height instead of orientation: the
    Android keyboard shrinks the viewport, and orientation would flip the
-   layout mid-typing. The short stacked landscape windows in this range
-   (900x600, 768x600) get the shorter lines too; landscape phones (height
+   layout mid-typing. The short landscape windows in this range (900x600,
+   768x600; side-by-side since ut-docs#5212) size their lines by the
+   basket column's width the same way; landscape phones (height
    < 481px, ut-docs#2918) and the <=480px tier (ut-docs#3059) are out. A
    browser without container queries keeps the stacked tier as it was.
    Only this element may be a container (TestAppCSSContainerOnlyOnTheBasket).
@@ -6578,6 +6598,12 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 
 @media (max-width: 480px) {
   :root { --phone-top-h: 56px; }
+  /* ut-docs#3148: the bar below is sticky, so an anchor jump
+     (/settings#settings-about) or scrollIntoView would put its target's
+     top edge under it and hide the heading. The tablet+ side rail sits
+     beside the page, so this is the phone tier only; pages without the
+     bar (self-order) get no gap. No :has() support = the old behaviour. */
+  html:has(.nav) { scroll-padding-block-start: calc(var(--phone-top-h) + .5rem); }
 
   /* Top bar: ☰ + logo, one row. */
   .nav {
