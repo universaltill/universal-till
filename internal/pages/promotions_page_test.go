@@ -515,3 +515,47 @@ func TestPromotionsPageDeactivateReactivate(t *testing.T) {
 		t.Fatalf("audit rows for TOGGLE2 = %d, want 3, err=%v", auditCount, err)
 	}
 }
+
+// ut-docs#3662: the row-edit form's controls are placeholder-only or bare, so
+// on the phone card nothing says which date is Starts and which is Ends. Each
+// control carries an accessible name from the existing promotions.* keys.
+func TestPromotionsPageList_RowEditControlsHaveAccessibleNames(t *testing.T) {
+	mux, _ := newPromotionsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	rec := postForm(mux, "/api/promotions", url.Values{
+		"code": {"NAMED"}, "type": {"percent"}, "value_percent": {"10"},
+	}, &manager)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("create: code=%d", rec.Code)
+	}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/promotions", nil), manager)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	i := strings.Index(body, `<form method="post" action="/api/promotions/NAMED/edit"`)
+	if i < 0 {
+		t.Fatalf("row edit form missing")
+	}
+	end := strings.Index(body[i:], "</form>")
+	if end < 0 {
+		t.Fatalf("row edit form not closed")
+	}
+	form := body[i : i+end]
+	want := map[string]string{
+		"starts_at": "Starts", "ends_at": "Ends", "description": "Description",
+		"type": "Type", "value_amount": "Value", "value_percent": "Value",
+	}
+	for name, label := range want {
+		j := strings.Index(form, `name="`+name+`"`)
+		if j < 0 {
+			t.Fatalf("control %s missing", name)
+		}
+		tag := form[strings.LastIndex(form[:j], "<") : j+strings.Index(form[j:], ">")]
+		if !strings.Contains(tag, `aria-label="`+label+`"`) {
+			t.Errorf("control %s: want aria-label=%q in %s", name, label, tag)
+		}
+		if (name == "starts_at" || name == "ends_at") && !strings.Contains(tag, `title="`+label+`"`) {
+			t.Errorf("control %s: want title=%q in %s", name, label, tag)
+		}
+	}
+}
