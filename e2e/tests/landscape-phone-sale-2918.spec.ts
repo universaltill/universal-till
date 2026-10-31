@@ -114,6 +114,103 @@ test.describe('landscape phone sale screen (ut-docs#2918)', () => {
     });
   }
 
+  // ut-docs#5221: at 768-900px wide the tender column is ~251px of row, too
+  // narrow for Pay (7rem) + three 2.75rem icons, so Open orders wrapped alone
+  // onto a second line; and at <=540px tall the barcode field was squeezed to
+  // a sliver beside qty, + and the camera/OSK/identify icons.
+  const ACTION_ROW = [
+    { width: 768, height: 400 },
+    { width: 768, height: 480 },
+    { width: 768, height: 600 },
+    { width: 900, height: 414 }, // the column is wider here: one row stays one row
+  ];
+  const iconBoxes = (page: import('@playwright/test').Page) =>
+    page.evaluate(() => {
+      const box = (el: Element) => {
+        const r = el.getBoundingClientRect();
+        return { top: Math.round(r.top * 10) / 10, w: r.width, h: r.height };
+      };
+      const q = (s: string) => document.querySelector(s) as HTMLElement;
+      const pay = q('.pos-container > .tender .payment-trigger');
+      return {
+        pay: { ...box(pay), clipped: pay.scrollWidth > pay.clientWidth },
+        hold: box(q('[data-testid="tender-footer-hold"]')),
+        newSale: box(q('[data-testid="kiosk-checkout-start"]')),
+        open: box(q('[data-testid="parked-orders-open"]')),
+        icons: Array.from(document.querySelectorAll('.pos-container > .tender .tender-icon-btn'))
+          .filter((el) => (el as HTMLElement).offsetParent !== null)
+          .map(box),
+      };
+    });
+
+  for (const vp of ACTION_ROW) {
+    test(`${vp.width}x${vp.height}: action row has Pay whole, every icon >= 44px, no lone icon (ut-docs#5221)`, async ({ page }) => {
+      const assertClean = watchConsole(page);
+      await page.setViewportSize(vp);
+      await page.goto('/');
+      await page.waitForSelector('.pos-container');
+      await addItems(page);
+      const pay = await wholeAndHit(payButton(page));
+      expect(pay.inView && pay.hit, 'Pay whole and hit-testable').toBe(true);
+      const g = await iconBoxes(page);
+      expect(g.pay.clipped, 'Pay label is not ellipsised').toBe(false);
+      for (const b of g.icons) {
+        expect(b.w, 'icon width >= 44px').toBeGreaterThanOrEqual(43.9);
+        expect(b.h, 'icon height >= 44px').toBeGreaterThanOrEqual(43.9);
+      }
+      expect(g.newSale.top, 'New sale on the same line as Hold').toBe(g.hold.top);
+      expect(g.open.top, 'Open orders not alone on its own line').toBe(g.hold.top);
+      if (vp.width === 900) expect(g.pay.top, 'one row stays one row').toBe(g.hold.top);
+      else expect(g.pay.top, 'Pay has its own line (deliberate two-row layout)').not.toBe(g.hold.top);
+      assertClean();
+    });
+  }
+
+  for (const vp of [{ width: 768, height: 400 }, { width: 768, height: 480 }]) {
+    test(`${vp.width}x${vp.height}: barcode field shows its placeholder, even with the OSK toggle and camera shown (ut-docs#5221)`, async ({ page }) => {
+      const assertClean = watchConsole(page);
+      await page.setViewportSize(vp);
+      await page.goto('/');
+      await page.waitForSelector('.pos-container');
+      await addItems(page);
+      for (const unhide of [false, true]) {
+        if (unhide) {
+          await page.evaluate(() => {
+            document.querySelectorAll<HTMLElement>('[data-osk-toggle], #barcode-scan-open, #plugin-identify-open')
+              .forEach((el) => { el.hidden = false; });
+          });
+        }
+        const m = await page.locator('.scan-row input[name="code"]').evaluate((el: HTMLInputElement) => {
+          const cs = getComputedStyle(el);
+          const ctx = document.createElement('canvas').getContext('2d')!;
+          ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+          const need = ctx.measureText(el.placeholder).width
+            + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)
+            + parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
+          return { width: el.getBoundingClientRect().width, need };
+        });
+        expect(m.width, `barcode field (unhidden=${unhide}) fits its placeholder`).toBeGreaterThanOrEqual(m.need);
+        const g = await iconBoxes(page);
+        for (const b of g.icons) {
+          expect(b.w).toBeGreaterThanOrEqual(43.9);
+          expect(b.h).toBeGreaterThanOrEqual(43.9);
+        }
+        // Everything but the + (qty's neighbour) shares one line: the icons.
+        const secondary = g.icons.filter((b) => b.top === g.hold.top);
+        expect(secondary.length, 'camera/OSK/identify/Hold/New/Open all on one line').toBe(g.icons.length - 1);
+        expect(g.pay.top, 'Pay below the icons').toBeGreaterThan(g.hold.top);
+        // No taller than the old scan row + two-line action row (180.47px at scale 1).
+        const tenderH = await page.locator('.pos-container > .tender').evaluate((el) => el.getBoundingClientRect().height);
+        expect(tenderH, 'tender must not grow').toBeLessThanOrEqual(180.5);
+        const pay = await wholeAndHit(payButton(page));
+        expect(pay.inView && pay.hit, 'Pay whole').toBe(true);
+        const tile = await wholeAndHit(page.locator('.pos-container > .products :is(.category-tile, .tile, .btn-tile)').first());
+        expect(tile.inView, 'a tile row still shows unscrolled').toBe(true);
+      }
+      assertClean();
+    });
+  }
+
   for (const vp of PINNED) {
     test(`${vp.width}x${vp.height}: Pay pinned whole; one scroll shows the totals`, async ({ page }) => {
       const assertClean = watchConsole(page);
