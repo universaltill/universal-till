@@ -2011,9 +2011,9 @@ body.osk-padded .item-form-modal { block-size: calc(100% - var(--osk-reserved-he
    ~700px tall, so 900x600, 768x600 and 600x600 clipped the grand Total
    line inside the basket's own scroll. A taller window keeps the stacked
    tier, where the cap fits. The 700px threshold and the 301px are at UI
-   scale 1 (media queries are px, the min-content is rem); larger scales
-   are ut-docs#5220. These windows overlap the min-height: 481px
-   tablet blocks below; only the basket's container (#3050) applies there,
+   scale 1 (media queries are px, the min-content is rem); taller windows
+   at larger scales: the ut-docs#5220 block below. These windows overlap
+   the min-height: 481px tablet blocks below; only the basket's container (#3050) applies there,
    and it just picks the line shape for the basket's own width.
    Regression tests: e2e/tests/landscape-phone-sale-2918.spec.ts,
    e2e/tests/tablet-tier-totals-416.spec.ts. */
@@ -2049,6 +2049,46 @@ body.osk-padded .item-form-modal { block-size: calc(100% - var(--osk-reserved-he
   .pos-container > .products { max-height: 80dvh; }
 }
 
+/* ut-docs#5220: the stacked tier taller than 700px at UI scale > 1. The
+   basket's min-content (header, toggle, thead, .basket-scroll's 6rem floor,
+   totals: ~17.7rem) is in rem and grows with --ui-scale, but the cap was in
+   dvh, and the `auto` basket and tender rows let the grid squeeze both
+   scroll containers below even that cap. Measured: from scale 1.25 at
+   600x760, 768x760, 900x720 and from 1.5 at 768x800, 880x960, 700x900 the
+   grand Total line sat below the basket's bottom edge, and at 768x760/1.5
+   the tender row shrank to 38px with Pay out of sight. Media queries are px
+   and the scale is any value from 0.5 to 2, so no threshold can follow it.
+   Instead:
+   - the cap gets a rem floor, 18.5rem (315px / 17px: what 45dvh gives at
+     scale 1 at this tier's 701px edge), so the Total line fits the basket
+     at any scale exactly as it does at scale 1;
+   - the basket and tender rows are max-content, so the grid never squeezes
+     them; products keep their 8rem floor and the extra height scrolls the
+     sale screen;
+   - the tender is pinned to the bottom of that scroll, as in the #2918
+     pinned layout above (unpinned while a dialog inside is open), so Pay stays
+     whole. Where everything fits (every height here at scale 1) nothing
+     scrolls and the pin is a no-op: the scale-1 rendering is unchanged.
+   Only a window with very little rem height (900x701-720 at scale 2:
+   ~22rem) cannot show the whole basket and the tender at once; the Total
+   line then sits under the pinned tender and is one scroll away, uncovered.
+   The 18.5rem leaves the same slack scale 1 has at 701px (~0.8rem over the
+   chrome with no discount or customer row), so an extra totals row is a
+   scroll away here exactly as it is at scale 1. The 900px+-tall cap below
+   (38dvh) gets the same floor. The <=700px-tall
+   windows use the short-window layouts above, the <=480px tier its own.
+   Regression test: e2e/tests/tablet-tier-totals-416.spec.ts. */
+@media (min-width: 481px) and (max-width: 900px) and (min-height: 701px) {
+  .pos-container { grid-template-rows: max-content max-content minmax(8rem, 1fr); overflow-y: auto; }
+  /* 45vh first: an engine without dvh drops the max() line and keeps a cap,
+     which the max-content row (unlike the old `auto`) would not enforce. */
+  .pos-container > .basket { max-height: 45vh; max-height: max(45dvh, 18.5rem); }
+  .pos-container > .tender {
+    position: sticky; bottom: 0; z-index: 2;
+    box-shadow: 0 -4px 16px rgba(15, 23, 42, .14);
+  }
+  .pos-container > .tender:has(dialog[open]) { position: static; z-index: auto; }
+}
 /* ---------- Cards & forms ---------- */
 .card {
   background: var(--surface); border: 1px solid var(--border);
@@ -3622,8 +3662,9 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
 }
 /* Upright only (landscape in this width range is never this tall): products
    get the height back. A long basket scrolls inside .basket-scroll. */
+/* ut-docs#5220: the same 18.5rem floor as the 701px+ block's 45dvh cap. */
 @media (min-width: 481px) and (max-width: 900px) and (min-height: 900px) {
-  .pos-container > .basket { max-height: 38dvh; }
+  .pos-container > .basket { max-height: max(38dvh, 18.5rem); }
 }
 /* Tier 1 -- room for everything on one row (800px at scale 1). Tier 2 --
    the name gets its own row above the controls (600px at scale 1, 800px at
