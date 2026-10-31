@@ -15,7 +15,21 @@
 Your language, your shop. Anyone can help translate the till in a browser, with no code and no Git:
 **[translate.universaltill.com](https://translate.universaltill.com/engage/universal-till/)** — sign in, pick a language, fix or add wording. Native speakers are very welcome, especially for French, Chinese, Malay, Spanish, Portuguese, Turkish, Arabic and Persian. Suggestions are reviewed before they reach tills.
 
-<a href="https://translate.universaltill.com/engage/universal-till/"><img src="https://translate.universaltill.com/widget/universal-till/-/de/svg-badge.svg" alt="Translation status"></a>
+Pick your language and help finish it:
+
+| Language | Status |
+|---|---|
+| Deutsch | <a href="https://translate.universaltill.com/engage/universal-till/-/de/"><img src="https://translate.universaltill.com/widget/universal-till/-/de/svg-badge.svg" alt="Deutsch translation status"></a> |
+| Español | <a href="https://translate.universaltill.com/engage/universal-till/-/es/"><img src="https://translate.universaltill.com/widget/universal-till/-/es/svg-badge.svg" alt="Español translation status"></a> |
+| Português | <a href="https://translate.universaltill.com/engage/universal-till/-/pt/"><img src="https://translate.universaltill.com/widget/universal-till/-/pt/svg-badge.svg" alt="Português translation status"></a> |
+| Français | <a href="https://translate.universaltill.com/engage/universal-till/-/fr/"><img src="https://translate.universaltill.com/widget/universal-till/-/fr/svg-badge.svg" alt="Français translation status"></a> |
+| Türkçe | <a href="https://translate.universaltill.com/engage/universal-till/-/tr/"><img src="https://translate.universaltill.com/widget/universal-till/-/tr/svg-badge.svg" alt="Türkçe translation status"></a> |
+| العربية | <a href="https://translate.universaltill.com/engage/universal-till/-/ar/"><img src="https://translate.universaltill.com/widget/universal-till/-/ar/svg-badge.svg" alt="العربية translation status"></a> |
+| فارسی | <a href="https://translate.universaltill.com/engage/universal-till/-/fa/"><img src="https://translate.universaltill.com/widget/universal-till/-/fa/svg-badge.svg" alt="فارسی translation status"></a> |
+| 简体中文 | <a href="https://translate.universaltill.com/engage/universal-till/-/zh_Hans/"><img src="https://translate.universaltill.com/widget/universal-till/-/zh_Hans/svg-badge.svg" alt="简体中文 translation status"></a> |
+| Bahasa Melayu | <a href="https://translate.universaltill.com/engage/universal-till/-/ms/"><img src="https://translate.universaltill.com/widget/universal-till/-/ms/svg-badge.svg" alt="Bahasa Melayu translation status"></a> |
+
+Your language is not listed? Say so on the [translation page](https://translate.universaltill.com/engage/universal-till/) and we will add it.
 
 ---
 

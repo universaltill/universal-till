@@ -27,3 +27,10 @@ retired (ut-docs#5189): languages now ship as Weblate-translated signed bundles
 (ADR-0160). Rows and links removed; the section now says German is live and
 others follow once approved. Still true in code: the bundle installs under the
 same plugin id, so nothing in the product flow changed.
+
+## Addendum: one widget per language
+The single German badge became a table with a status badge per language
+(de, es, pt, fr, tr, ar, fa, zh_Hans, ms), each linking to that language's
+Weblate engage page. All 18 badge and engage URLs were checked (200 after
+redirect). Note: a language listed here is a Weblate language, not yet a
+published bundle (only German is published today).
