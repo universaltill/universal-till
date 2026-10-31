@@ -146,6 +146,13 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- ut-docs#5190: item photo from the system camera (see CaptureFileProvider). -->
+        <provider
+            android:name=".CaptureFileProvider"
+            android:authorities="${applicationId}.captures"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -1692,7 +1692,9 @@
   // for an item photo (focus, flash, full resolution, retake), and the
   // in-page viewfinder showed a black box that went blank in the app.
   // iPadOS asks for desktop pages with a Mac user agent; a real Mac has no
-  // touch points. Android and desktop keep the viewfinder (#1472).
+  // touch points. Desktop browsers keep the viewfinder (#1472). The Android
+  // app (window.AndroidKiosk, injected by its shell) opens the system camera
+  // too (#5190): its file chooser launches the camera for this capture input.
   var appleTouch = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
     (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
   if (appleTouch) {
@@ -1708,7 +1710,7 @@
   }
   cameraBtn.addEventListener('click', function () {
     if (viewfinderBusy) return; // already open or a request is in flight
-    if (!appleTouch && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    if (!appleTouch && !window.AndroidKiosk && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       openViewfinder();
     } else {
       imageFileCamera.click();
@@ -1757,16 +1759,45 @@
     if (cutoutOffered()) { offerCutout(true); return; }
     imageForm.dispatchEvent(new Event('submit', { cancelable: true }));
   }
+  // ut-docs#5190: a photo from the system camera is full resolution (8MP and
+  // up), over the server's pixel limit and the 10MB cap. Bound it the way the
+  // viewfinder path above does: 1024px long edge, JPEG. Any failure to decode
+  // hands back the original rather than losing the photo.
+  function shrinkPhoto(file) {
+    return new Promise(function (resolve) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        var w = img.naturalWidth, h = img.naturalHeight;
+        if (!w || !h) { resolve(file); return; }
+        var scale = Math.min(1, 1024 / Math.max(w, h));
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.round(w * scale);
+        canvas.height = Math.round(h * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(function (blob) {
+          resolve(blob ? new File([blob], 'catalog-photo.jpg', { type: 'image/jpeg' }) : file);
+        }, 'image/jpeg', 0.85);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); resolve(file); };
+      img.src = url;
+    });
+  }
   imageFileCamera.addEventListener('change', function () {
-    if (this.files && this.files[0]) {
+    var picked = this.files && this.files[0];
+    if (!picked) return;
+    shrinkPhoto(picked).then(function (file) {
       var dt = new DataTransfer();
-      dt.items.add(this.files[0]);
+      dt.items.add(file);
       imageFileInput.files = dt.files;
-      imageFileNameEl.textContent = this.files[0].name;
-      showPendingFile(this.files[0]);
-      if (appleTouch) saveIOSPick();
+      imageFileNameEl.textContent = file.name;
+      showPendingFile(file);
+      // a native camera (iPhone/iPad, the Android app) is the decision, like
+      // Capture: save at once, the background-removal offer first
+      if (appleTouch || window.AndroidKiosk) saveIOSPick();
       else if (cutoutOffered()) offerCutout(false);
-    }
+    });
   });
   // ut-docs#3127: the operator chose in the "Remove background" panel. The
   // PNG (or the untouched original) is already in #image-file; mirror it,
