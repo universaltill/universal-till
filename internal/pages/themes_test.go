@@ -562,7 +562,59 @@ func TestWarningTextContrastOnWarningTint(t *testing.T) {
 			if ratio := wcagContrast(text, comp); ratio < 4.5 {
 				t.Errorf("%s: --warning-text on --warning-tint over %s = %.2f:1, want >= 4.5:1 (WCAG 1.4.3)", name, base, ratio)
 			}
+			// ut-docs#5228: --warning-text is also drawn on the plain base
+			// (.import-system-secrets not-set value), with no tint.
+			if ratio := wcagContrast(text, bg); ratio < 4.5 {
+				t.Errorf("%s: --warning-text on plain %s = %.2f:1, want >= 4.5:1 (WCAG 1.4.3)", name, base, ratio)
+			}
 		}
+	}
+}
+
+// ut-docs#5228: --warning (#d97706) is ~3.2:1 on a plain white surface, below
+// WCAG AA's 4.5:1 for normal text, so warning TEXT uses --warning-text. Only
+// non-text marks (an svg dot, an aria-hidden glyph) may still take
+// `color: var(--warning)`; a new text rule using it fails here.
+func TestWarningInkOnlyColoursIcons(t *testing.T) {
+	mux := http.NewServeMux()
+	registerStatic(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/public/app.css", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /public/app.css = %d, want 200", rec.Code)
+	}
+	appCSS := rec.Body.String()
+
+	// Non-text marks only: WCAG 1.4.11 (3:1) applies, not 1.4.3.
+	iconOnly := map[string]bool{
+		".tile-badge-lock svg": true, // 8px lock icon in a status dot
+		".row-warn-icon":       true, // aria-hidden ⚠ glyph before a message
+	}
+	rule := regexp.MustCompile(`(?s)([^{}]+)\{([^{}]*)\}`)
+	// Also the fallback form `var(--warning, #d97706)` (review finding 1).
+	ink := regexp.MustCompile(`(^|[;\s])color:\s*var\(--warning\s*[,)]`)
+	// Strip comments first: one with an unbalanced brace would otherwise
+	// swallow the next rule and hide a violation (review finding 2).
+	stripped := cssCommentRe.ReplaceAllString(appCSS, "")
+	seen := map[string]bool{}
+	for _, m := range rule.FindAllStringSubmatch(stripped, -1) {
+		if !ink.MatchString(m[2]) {
+			continue
+		}
+		sel := strings.TrimSpace(m[1])
+		seen[sel] = true
+		if !iconOnly[sel] {
+			t.Errorf("app.css: %q draws text in var(--warning) (~3.2:1 on white); use var(--warning-text)", sel)
+		}
+	}
+	// The scan must actually reach the known icon rules, or it proves nothing.
+	for sel := range iconOnly {
+		if !seen[sel] {
+			t.Errorf("app.css: scan did not find %q with color: var(--warning); update iconOnly", sel)
+		}
+	}
+	if want := `.import-system-secrets dd[data-secret-state="not-set"] { color: var(--warning-text);`; !strings.Contains(appCSS, want) {
+		t.Errorf("app.css: expected to find %q", want)
 	}
 }
 
