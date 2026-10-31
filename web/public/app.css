@@ -49,7 +49,9 @@
   /* ut-docs#2680: text colour for warning ink drawn ON --warning-tint (.tag.warn,
      .journal-replica-notice, .sync-banner). --warning itself is only ~2.6:1 on
      its own tint in the light themes; this is >=4.5:1 on the tint over --bg and
-     --surface in every light theme. --warning stays for borders/icons/dots. */
+     --surface in every light theme. --warning stays for borders/icons/dots.
+     ut-docs#5228: also for warning text on the plain surface (--warning is
+     ~3.2:1 on white); TestWarningInkOnlyColoursIcons enforces it. */
   --warning-text: #92400e;
   /* ut-docs#2207: same split as the tint BACKGROUNDS above, one step later
      — the notice/tag/block BORDER colours (.pos-notice.success/.error,
@@ -4539,7 +4541,8 @@ tr.row-warn td { background: var(--warning-tint); }
 .import-system-secrets div { display: flex; gap: .4rem; align-items: baseline; }
 .import-system-secrets dt { font-weight: 600; }
 .import-system-secrets dd { margin: 0; }
-.import-system-secrets dd[data-secret-state="not-set"] { color: var(--warning); font-weight: 600; }
+/* ut-docs#5228: text on the plain surface, so --warning-text (~7:1 on white), not --warning (~3.2:1). */
+.import-system-secrets dd[data-secret-state="not-set"] { color: var(--warning-text); font-weight: 600; }
 .import-system-run { border: 0; padding: 0; margin: 0; min-inline-size: 0; }
 .import-system-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-block: .5rem; }
 .import-system-actions .btn { flex: 1 1 auto; min-height: 44px; }
