@@ -1,4 +1,8 @@
 {
+  "agent.action.settings_set": {"description": "Title of the core-rendered confirm card when the AI assistant asks to change one or more shop settings. Nothing changes until the operator presses Confirm.", "review": "standard"},
+  "agent.field.setting": {"description": "Column value on the assistant's confirm card for a settings change: names the row's change as a setting (the row's item is the setting's own label from the Settings screen).", "review": "standard"},
+  "agent.value.on": {"description": "Before/after value on the assistant's confirm card for an on/off setting that is switched on.", "review": "standard"},
+  "agent.value.off": {"description": "Before/after value on the assistant's confirm card for an on/off setting that is switched off.", "review": "standard"},
   "sync.link.rejoin": {"description": "Status-bar chip on a joined till whose connection to the main till was dropped (its data was restored onto a new device): tells the owner to join the main till again. Links to the Tills page.", "review": "standard"},
   "sync.link.rejoin_hint": {"description": "Tooltip of the 'join the main till again' status-bar chip: explains that the till no longer uses its old connection, that it keeps selling, and where to join again.", "review": "standard"},
   "tills.rejoin_needed_help": {"description": "Notice on a joined till's Tills page after its data was restored onto a new device: the steps to join the main till again, and a warning not to revoke the original till if it is still in use. 'Join an existing shop' is the label of that section on the same page.", "review": "standard"},
