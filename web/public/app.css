@@ -46,6 +46,11 @@
   --success-tint: rgba(22, 163, 74, .12);
   --danger-tint: rgba(220, 38, 38, .1);
   --warning-tint: rgba(217, 119, 6, .12);
+  /* ut-docs#2680: text colour for warning ink drawn ON --warning-tint (.tag.warn,
+     .journal-replica-notice, .sync-banner). --warning itself is only ~2.6:1 on
+     its own tint in the light themes; this is >=4.5:1 on the tint over --bg and
+     --surface in every light theme. --warning stays for borders/icons/dots. */
+  --warning-text: #92400e;
   /* ut-docs#2207: same split as the tint BACKGROUNDS above, one step later
      — the notice/tag/block BORDER colours (.pos-notice.success/.error,
      .notice-block-warn/-success) were still a literal rgba() at .35 alpha,
@@ -215,7 +220,7 @@ body.tracking-screen { -webkit-user-select: text; user-select: text; }
 /* A tag flagging something that needs attention (e.g. a failing bug-report
    upload, ut-docs#637) — same warn tint .sync-banner below uses, reused
    here rather than inventing a second warning color. */
-.tag.warn { background: var(--warning-tint); color: var(--warning); border-color: var(--warning); }
+.tag.warn { background: var(--warning-tint); color: var(--warning-text); border-color: var(--warning); }
 /* A tag for a healthy live state (the Tills roster's "Linked", ut-docs#2742)
    — the success tint; the word itself carries the meaning. */
 .tag.ok { background: var(--success-tint); color: var(--success); border-color: var(--success); }
@@ -3823,7 +3828,7 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    .sync-banner already use, so it reads as a real notice, not muted status text. */
 .journal-replica-notice { margin-block-end: .75rem; padding: .5rem .75rem;
                            border-radius: var(--radius); font-size: .85rem;
-                           background: var(--warning-tint); color: var(--warning); }
+                           background: var(--warning-tint); color: var(--warning-text); }
 .journal table { width: 100%; border-collapse: collapse; background: var(--surface);
                  border-radius: var(--radius); overflow: hidden; }
 .journal th { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em;
@@ -4637,10 +4642,10 @@ body.login-screen {
    navigation control shouldn't change color depending on transient state.
    `.sync-chip`/`.fiscal-chip` themselves are now bare wrappers (htmx
    swap target + the state-class hook sync_admin_test.go's/
-   fiscal_chip_test.go's TestSyncChip_*/TestFiscalChip_* assert on,
+   fiscal_chip_test.go's TestSyncChip_* and TestFiscalChip_* assert on,
    "sync-chip ok"/"sync-chip warn"/"fiscal-chip ok"/"fiscal-chip warn") —
    no box styling of their own, nothing to define here. */
-.sync-banner { background: var(--warning-tint); color: var(--warning); border-radius: .5rem;
+.sync-banner { background: var(--warning-tint); color: var(--warning-text); border-radius: .5rem;
   padding: .6rem .9rem; margin-block-end: .8rem; }
 .sync-banner a { color: inherit; font-weight: 700; text-decoration: underline; }
 
