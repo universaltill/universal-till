@@ -6598,6 +6598,12 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 
 @media (max-width: 480px) {
   :root { --phone-top-h: 56px; }
+  /* ut-docs#3148: the bar below is sticky, so an anchor jump
+     (/settings#settings-about) or scrollIntoView would put its target's
+     top edge under it and hide the heading. The tablet+ side rail sits
+     beside the page, so this is the phone tier only; pages without the
+     bar (self-order) get no gap. No :has() support = the old behaviour. */
+  html:has(.nav) { scroll-padding-block-start: calc(var(--phone-top-h) + .5rem); }
 
   /* Top bar: ☰ + logo, one row. */
   .nav {
