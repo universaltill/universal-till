@@ -778,6 +778,49 @@ test.describe.serial('first-boot setup and PIN login', () => {
     }
   });
 
+  // ut-docs#1105: #1099's "operable by touch alone" criterion had no
+  // standing browser assertion — the test above runs in a non-touch
+  // context and fill()s the PIN. A kiosk at the login screen has no
+  // physical keyboard, so the escape hatch is only real if tapping its
+  // PIN field opens the on-screen keyboard in numeric mode and the keys
+  // actually type into it. Own touch-capable, cookie-less context (same
+  // pattern as the setup-field OSK test above); no submit, so no lockout
+  // budget is spent.
+  test('the login-screen exit-to-OS PIN field opens the numeric on-screen keyboard on a touch device', async ({ browser }) => {
+    const ctx = await browser.newContext({ hasTouch: true });
+    const p = await ctx.newPage();
+    await p.emulateMedia({ reducedMotion: 'reduce' }); // ut-docs#2223, see beforeAll
+    const assertOwnClean = watchConsole(p);
+    try {
+      await p.goto('/login');
+      await expect(p.locator('.pin-pad')).toBeVisible();
+
+      const details = p.locator('details.login-exit-os');
+      await details.locator('summary').tap();
+      const pinField = p.locator('#login-exit-os-form [name="manager_pin"]');
+      await expect(pinField).toBeVisible();
+
+      await pinField.tap();
+      const osk = p.locator('#osk');
+      await expect(osk).toBeVisible();
+      // Numeric layout: a digit pad, not qwerty (same check as
+      // osk-central-guard.spec.ts's numeric-inputmode case).
+      await expect(osk.locator('button[data-k="1"]')).toBeVisible();
+      // The native keyboard stays suppressed, so the OSK is the only input.
+      await expect(pinField).toHaveAttribute('inputmode', 'none');
+      await expect(osk.locator('button[data-k="q"]')).toHaveCount(0);
+      expect(await osk.locator('.osk-key').count(), 'the numeric layout has far fewer keys than a full qwerty layout').toBeLessThan(20);
+
+      // Typing through the OSK alone fills the field.
+      for (const k of ['4', '7', '1', '9']) await osk.locator(`button[data-k="${k}"]`).tap();
+      await expect(pinField).toHaveValue('4719');
+      await expect(pinField).toBeFocused();
+      assertOwnClean();
+    } finally {
+      await ctx.close();
+    }
+  });
+
   // ut-docs#1254 (review should-fix 4): the Android native shell's kiosk
   // lock-task only ever releases via window.AndroidKiosk.exitLockdown() —
   // added to the WebView by MainActivity.kt's addJavascriptInterface,
