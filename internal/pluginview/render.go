@@ -62,6 +62,12 @@ type ViewComponent struct {
 	// filled by ResolveConfirms (nil: no longer valid).
 	Proposal string
 	Confirm  *ViewConfirm
+	// item_list (ut-docs#4128): the ids and gap mask the plugin named;
+	// ItemList is core's own drawing, filled by ResolveItemLists (nil:
+	// nothing is drawn).
+	ItemIDs  []string
+	Missing  int
+	ItemList *ViewItemList
 	// chat (ut-docs#4132)
 	Chat *ViewChat
 }
@@ -86,6 +92,27 @@ func (v *View) ResolveConfirms(resolve func(id string) *ViewConfirm) {
 	for i := range v.Components {
 		if c := &v.Components[i]; c.Type == "confirm" && resolve != nil {
 			c.Confirm = resolve(c.Proposal)
+		}
+	}
+}
+
+// ViewItemList is core's drawing of an item_list: every field comes from
+// core's database or routes, none from the plugin.
+type ViewItemList struct {
+	Items []ViewListedItem
+	// CatalogURL is the catalogue filtered like the list ("" = none).
+	CatalogURL string
+}
+
+// ViewListedItem is one item: Thumb is a /public/ path ("" = no photo).
+type ViewListedItem struct{ Name, EditURL, Thumb string }
+
+// ResolveItemLists fills each item_list through resolve (core's catalogue,
+// for the signed-in operator); nil draws nothing.
+func (v *View) ResolveItemLists(resolve func(ids []string, missing int) *ViewItemList) {
+	for i := range v.Components {
+		if c := &v.Components[i]; c.Type == "item_list" && resolve != nil {
+			c.ItemList = resolve(c.ItemIDs, c.Missing)
 		}
 	}
 }
@@ -211,6 +238,9 @@ func (d *Document) Prepare(locale string) View {
 			}
 		case "confirm":
 			vc.Proposal = c.Confirm.Proposal
+		case "item_list":
+			vc.ItemIDs = c.ItemList.Items
+			vc.Missing = c.ItemList.Missing
 		case "chat":
 			vc.Chat = prepareChat(c.Chat, locale, t)
 		case "wizard_step":

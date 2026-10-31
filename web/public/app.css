@@ -7088,6 +7088,13 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .plugin-view-table-wrap { overflow-x: auto; }
 /* ut-docs#2838: the AI-agent confirm card's buttons (core-rendered). */
 .agent-confirm-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-block-start: .75rem; }
+/* ut-docs#4128: the catalog's ?missing= banner spans the action row. */
+.catalog-missing-filter { flex-basis: 100%; margin: 0; padding-block: .5rem; }
+/* ut-docs#4128: the AI assistant's item list (core-drawn). */
+.agent-item-list-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
+.agent-item-list-row { display: flex; align-items: center; gap: .75rem; min-block-size: 48px; }
+.agent-item-list-thumb { inline-size: 48px; block-size: 48px; flex: none; border-radius: 6px; object-fit: cover; background: var(--surface-2, rgba(128, 128, 128, .25)); }
+.agent-item-list-name { font-weight: 600; overflow-wrap: anywhere; padding-block: .5rem; }
 .plugin-view-table th { text-align: start; }
 .plugin-view-table .num { text-align: end; font-variant-numeric: tabular-nums; }
 /* nowrap only as a real table: in phone card mode (table-cards.js) it would

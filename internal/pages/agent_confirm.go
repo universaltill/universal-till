@@ -8,12 +8,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/agentaction"
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -98,6 +101,41 @@ func resolveAgentConfirms(ctx context.Context, d *common.Deps, v *pluginview.Vie
 		}
 		return agentConfirmCard(p, locale)
 	})
+	v.ResolveItemLists(func(ids []string, missing int) *pluginview.ViewItemList {
+		return agentItemList(ctx, d, u, ids, missing)
+	})
+}
+
+// agentItemList is core's drawing of an item_list (ut-docs#4128): names,
+// thumbnails and links come from the catalogue and core's routes, only for
+// an operator whose role may manage the catalogue (the page the links open
+// needs it too). Unknown or inactive ids are dropped.
+func agentItemList(ctx context.Context, d *common.Deps, u auth.User, ids []string, missing int) *pluginview.ViewItemList {
+	if d.AuthSvc == nil || !agentRoleAllows(ctx, d, u, "catalog_management") {
+		return nil
+	}
+	repo := data.NewCatalogRepo(d.Db)
+	thumbs, _ := repo.ItemThumbnailsFor(ctx, ids)
+	out := &pluginview.ViewItemList{}
+	for _, id := range ids {
+		it, ok, err := repo.GetItem(ctx, id)
+		if err != nil || !ok || !it.IsActive {
+			continue
+		}
+		li := pluginview.ViewListedItem{Name: it.Name, EditURL: "/catalog?item=" + url.QueryEscape(id)}
+		// Only a photo served from the till's own public tree is shown.
+		if p := thumbs[id]; strings.HasPrefix(p, "/public/") && !strings.Contains(p, "..") {
+			li.Thumb = p
+		}
+		out.Items = append(out.Items, li)
+	}
+	if len(out.Items) == 0 {
+		return nil
+	}
+	if missing >= 1 && missing <= data.GapAll {
+		out.CatalogURL = "/catalog?missing=" + strconv.Itoa(missing)
+	}
+	return out
 }
 
 func agentConfirmCard(p *agentaction.Proposal, locale string) *pluginview.ViewConfirm {

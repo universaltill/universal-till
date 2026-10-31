@@ -24,13 +24,29 @@ func put(t *testing.T, s *Store, o Operator) (string, error) {
 }
 
 func TestRegistry_OnlyTheTwoActions_2838(t *testing.T) {
-	if len(registry) != 3 {
-		t.Fatalf("registry has %d actions, want 3 (catalog.item.create.v1, stock.adjust.v1, settings.set.v1)", len(registry))
+	// ADR-0153 Decision 3's closed set: every registered action lives in an
+	// allowed area under its own prefix and names nothing on the sale,
+	// fiscal, payment, shift, user or backup paths. Sibling cards add
+	// entries (4128 catalog.item.update.v1, 4129 settings), so the check is
+	// the rule, not a count every card edits.
+	for name, a := range registry {
+		if a.Area != "catalog" && a.Area != "stock" && a.Area != "settings" {
+			t.Errorf("%s: area %q is not one ADR-0153 allows", name, a.Area)
+		}
+		if !strings.HasPrefix(name, a.Area+".") {
+			t.Errorf("%s is not under its area %q", name, a.Area)
+		}
+		for _, bad := range []string{"sale", "basket", "tender", "refund", "void", "payment", "fiscal", "tax", "shift", "drawer", "user", "role", "pin", "permission", "plugin", "secret", "backup", "delete", "ai."} {
+			if strings.Contains(name, bad) {
+				t.Errorf("%s names %q: never an agent action (ADR-0153 Decision 3)", name, bad)
+			}
+		}
 	}
 	for name, want := range map[string][2]string{
 		"catalog.item.create.v1": {"catalog", "catalog_management"},
 		"stock.adjust.v1":        {"stock", "stock_management"},
 		"settings.set.v1":        {"settings", "settings"},
+		"catalog.item.update.v1": {"catalog", "catalog_management"},
 	} {
 		a, ok := Lookup(name)
 		if !ok || a.Area != want[0] || a.RolePermission != want[1] {
