@@ -153,7 +153,13 @@ type ImportItem struct {
 	// never on the rest of the file (joinExternalID). Empty for a generic
 	// or ERP file. The till's
 	// own importer ignores it; ToRows carries it as ADR-0051 external_id.
-	ExternalID  string
+	ExternalID string
+	// ItemID is the item id from our own my. export's `id` column (ADR-0168
+	// §3: a till-master import matches the read copy by id first), read from
+	// a CSV only (the .xlsx path: ut-docs#4847). Empty for every other
+	// source. The till's own importer ignores it, and it is NOT
+	// carried into the ADR-0051 Row (RowFor/ToRows leave it out).
+	ItemID      string
 	Name        string
 	SKU         string
 	Barcode     string
