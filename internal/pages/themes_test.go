@@ -2,18 +2,24 @@ package pages
 
 import (
 	"database/sql"
+	"io/fs"
+	"maps"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/universaltill/universal-till/internal/pages/common"
+	uiassets "github.com/universaltill/universal-till/web"
 )
 
 func themeTestDeps(t *testing.T) (*common.Deps, string, string) {
@@ -301,7 +307,7 @@ func TestSemanticTintBackgrounds_MonochromeIsColourless(t *testing.T) {
 		".tag.warn { background: var(--warning-tint)",
 		".pos-notice.success { background: var(--success-tint)",
 		".pos-notice.error { background: var(--danger-tint)",
-		"background: var(--warning-tint); color: var(--warning); }\n.journal table",
+		"background: var(--warning-tint); color: var(--warning-text); }\n.journal table",
 		"tr.row-warn td { background: var(--warning-tint); }",
 		".notice-block-warn { background: var(--warning-tint);",
 		".notice-block-success { background: var(--success-tint);",
@@ -457,5 +463,226 @@ func TestResolvePluginThemeCSS_RejectsEscapingConfig(t *testing.T) {
 	}
 	if got := resolvePluginThemeCSS(t.Context(), d, "evil"); got != "" {
 		t.Errorf("expected empty path for escaping config, got %q", got)
+	}
+}
+
+// ut-docs#2680: amber --warning (#d97706) text on its own --warning-tint is
+// ~2.6-2.8:1 in the light themes, under WCAG 1.4.3's 4.5:1. The three rules
+// that paint warning TEXT on the tint read --warning-text instead. This
+// resolves the tokens per built-in theme (app.css :root overridden by the
+// theme file's :root, as the browser loads them), alpha-composites the tint
+// over --bg and --surface, and checks the real contrast ratio.
+func TestWarningTextContrastOnWarningTint(t *testing.T) {
+	mux := http.NewServeMux()
+	registerStatic(mux)
+	registerThemes(mux, &common.Deps{})
+
+	get := func(path string) string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want 200", path, rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	appCSS := get("/public/app.css")
+	for _, want := range []string{
+		".tag.warn { background: var(--warning-tint); color: var(--warning-text);",
+		".journal-replica-notice {",
+		".sync-banner { background: var(--warning-tint); color: var(--warning-text);",
+	} {
+		if !strings.Contains(appCSS, want) {
+			t.Errorf("app.css: expected to find %q", want)
+		}
+	}
+	if !strings.Contains(appCSS, "background: var(--warning-tint); color: var(--warning-text); }\n.journal table") {
+		t.Errorf("app.css: .journal-replica-notice must use color: var(--warning-text)")
+	}
+
+	// Every built-in theme file, not a hand-kept list (review F4): a new
+	// theme dropped into web/public/themes is checked automatically.
+	themes := map[string]string{"default": ""}
+	entries, err := fs.ReadDir(uiassets.FS, "public/themes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if n := e.Name(); !e.IsDir() && strings.HasSuffix(n, ".css") {
+			k := strings.TrimSuffix(n, ".css")
+			themes[k] = get("/themes/" + n)
+		}
+	}
+	if len(themes) < 7 {
+		t.Fatalf("found %d themes (default + web/public/themes/*.css), want at least 7", len(themes))
+	}
+	names := slices.Sorted(maps.Keys(themes))
+	for _, name := range names {
+		themeCSS := themes[name]
+		tokens := cssRootTokens(appCSS)
+		for k, v := range cssRootTokens(themeCSS) {
+			tokens[k] = v
+		}
+		// Errorf, not Fatalf (review F4): report every broken theme in one run.
+		resolve := func(tok string) (rgba [4]float64, ok bool) {
+			t.Helper()
+			v, ok := tokens[tok]
+			for depth := 0; ok && depth < 8 && strings.HasPrefix(v, "var("); depth++ {
+				ref := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(v, "var("), ")"))
+				v, ok = tokens[ref]
+			}
+			if !ok {
+				t.Errorf("%s: token %s cannot be resolved", name, tok)
+				return rgba, false
+			}
+			c, err := parseCSSColour(v)
+			if err != nil {
+				t.Errorf("%s: token %s = %q: %v", name, tok, v, err)
+				return rgba, false
+			}
+			return c, true
+		}
+		tint, ok1 := resolve("--warning-tint")
+		text, ok2 := resolve("--warning-text")
+		_, ok3 := resolve("--warning") // must exist too
+		if !ok1 || !ok2 || !ok3 {
+			continue
+		}
+		for _, base := range []string{"--bg", "--surface"} {
+			bg, ok := resolve(base)
+			if !ok {
+				continue
+			}
+			comp := [4]float64{
+				tint[0]*tint[3] + bg[0]*(1-tint[3]),
+				tint[1]*tint[3] + bg[1]*(1-tint[3]),
+				tint[2]*tint[3] + bg[2]*(1-tint[3]), 1,
+			}
+			if ratio := wcagContrast(text, comp); ratio < 4.5 {
+				t.Errorf("%s: --warning-text on --warning-tint over %s = %.2f:1, want >= 4.5:1 (WCAG 1.4.3)", name, base, ratio)
+			}
+		}
+	}
+}
+
+var (
+	cssCommentRe = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	cssRootRe    = regexp.MustCompile(`(?s):root\s*\{([^}]*)\}`)
+	cssDeclRe    = regexp.MustCompile(`(--[a-z0-9-]+)\s*:\s*([^;]+);`)
+	cssRGBARe    = regexp.MustCompile(`^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$`)
+)
+
+// cssRootTokens collects every `--x: v;` declared in the :root blocks of css,
+// later declarations winning.
+func cssRootTokens(css string) map[string]string {
+	out := map[string]string{}
+	css = cssCommentRe.ReplaceAllString(css, "")
+	for _, blk := range cssRootRe.FindAllStringSubmatch(css, -1) {
+		for _, d := range cssDeclRe.FindAllStringSubmatch(blk[1], -1) {
+			out[d[1]] = strings.TrimSpace(d[2])
+		}
+	}
+	return out
+}
+
+// parseCSSColour parses #rgb, #rrggbb and rgb()/rgba() into 0-255 channels
+// plus alpha 0-1.
+func parseCSSColour(v string) ([4]float64, error) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if strings.HasPrefix(v, "#") {
+		h := v[1:]
+		if len(h) == 3 {
+			h = string([]byte{h[0], h[0], h[1], h[1], h[2], h[2]})
+		}
+		if len(h) != 6 {
+			return [4]float64{}, strconv.ErrSyntax
+		}
+		n, err := strconv.ParseUint(h, 16, 32)
+		if err != nil {
+			return [4]float64{}, err
+		}
+		return [4]float64{float64(n >> 16 & 0xff), float64(n >> 8 & 0xff), float64(n & 0xff), 1}, nil
+	}
+	m := cssRGBARe.FindStringSubmatch(v)
+	if m == nil {
+		return [4]float64{}, strconv.ErrSyntax
+	}
+	var c [4]float64
+	c[3] = 1
+	for i := 0; i < 4; i++ {
+		if m[i+1] == "" {
+			continue
+		}
+		f, err := strconv.ParseFloat(m[i+1], 64)
+		if err != nil {
+			return c, err
+		}
+		c[i] = f
+	}
+	return c, nil
+}
+
+func relLuminance(c [4]float64) float64 {
+	lin := func(v float64) float64 {
+		v /= 255
+		if v <= 0.03928 {
+			return v / 12.92
+		}
+		return math.Pow((v+0.055)/1.055, 2.4)
+	}
+	return 0.2126*lin(c[0]) + 0.7152*lin(c[1]) + 0.0722*lin(c[2])
+}
+
+func wcagContrast(a, b [4]float64) float64 {
+	la, lb := relLuminance(a), relLuminance(b)
+	if la < lb {
+		la, lb = lb, la
+	}
+	return (la + 0.05) / (lb + 0.05)
+}
+
+// TestShippedCSS_NoCommentClosedEarly guards ut-docs#2680's second finding: a
+// "*/" inside a CSS comment (it was "TestSyncChip_*/TestFiscalChip_*") ends
+// the comment early. The browser then parses the comment's remaining text
+// plus the next rule as one invalid rule and drops it, so .sync-banner had no
+// warning tint or colour at all. Strip every well-formed comment; a "*/" left
+// over is a comment that closed early, and a "/*" left over is one that never
+// closes (the browser drops everything after it). Known limit: a "*/" or "/*"
+// inside a CSS string (content: "*/") is reported too; none ships, and
+// rewording the string is the fix if one ever does.
+func TestShippedCSS_NoCommentClosedEarly(t *testing.T) {
+	comment := regexp.MustCompile(`(?s)/\*.*?\*/`)
+	checked := 0
+	err := fs.WalkDir(uiassets.FS, "public", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && d.Name() == "vendor" {
+			return fs.SkipDir
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".css") {
+			return nil
+		}
+		b, err := fs.ReadFile(uiassets.FS, path)
+		if err != nil {
+			return err
+		}
+		checked++
+		rest := comment.ReplaceAllString(string(b), "")
+		if i := strings.Index(rest, "*/"); i >= 0 {
+			start := max(0, i-80)
+			t.Errorf("%s: a comment closes early (a \"*/\" inside it); the browser drops the rule after it. Text before the stray \"*/\": %q", path, rest[start:i])
+		}
+		if i := strings.Index(rest, "/*"); i >= 0 {
+			t.Errorf("%s: a comment never closes; the browser drops everything after it. It starts: %q", path, rest[i:min(len(rest), i+80)])
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked < 2 {
+		t.Fatalf("checked %d CSS files under web/public, want app.css and the themes", checked)
 	}
 }
