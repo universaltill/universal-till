@@ -410,6 +410,15 @@ func TestSalesAggregateFingerprints_MoveOnlyWithSourceRows(t *testing.T) {
 		t.Fatalf("no-sale open changed %v, want only %v", got, todayA)
 	}
 
+	// A late-journaled cleared basket on today/reg-A (ut-docs#4721).
+	mustExec(t, f.d, `INSERT INTO cleared_baskets (id, created_at, local_date, till_id, line_count, total_minor) VALUES ('cb-late', ?, ?, 'reg-A', 1, 300)`,
+		f.today.UTC().Format(time.RFC3339), f.day)
+	before = step
+	step = read()
+	if got := changed(before, step); !reflect.DeepEqual(got, []SalesAggregateKey{todayA}) {
+		t.Fatalf("cleared basket changed %v, want only %v", got, todayA)
+	}
+
 	// A deleted (archived) sale moves its day too.
 	mustExec(t, f.d, `DELETE FROM sale_lines WHERE sale_id = 's2'`)
 	mustExec(t, f.d, `DELETE FROM payments WHERE sale_id = 's2'`)

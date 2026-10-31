@@ -109,3 +109,23 @@ ON CONFLICT(id) DO NOTHING`,
 	}
 	return n == 1, nil
 }
+
+// clearedBasketTillKeyExpr is tillKeyExpr's rule over cleared_baskets (alias
+// c): till_id, else register_id, else the caller's own identity; its one '?'
+// is selfTill.
+const clearedBasketTillKeyExpr = `COALESCE(NULLIF(c.till_id, ''), NULLIF(c.register_id, ''), ?)`
+
+// ClearedBasketsForTill counts the baskets cleared before payment on one
+// (business date, till) and sums their totals (ut-docs#4721).
+func (r *POSRepo) ClearedBasketsForTill(ctx context.Context, day, tillID, selfTill string) (count int, total money.Money, err error) {
+	var minor int64
+	err = r.db.QueryRowContext(ctx, `
+SELECT COUNT(*), COALESCE(SUM(c.total_minor), 0)
+FROM cleared_baskets c
+WHERE c.local_date = date(?) AND `+clearedBasketTillKeyExpr+` = ?`,
+		day, selfTill, tillID).Scan(&count, &minor)
+	if err != nil {
+		return 0, money.FromMinor(0), fmt.Errorf("cleared baskets for till: %w", err)
+	}
+	return count, money.FromMinor(minor), nil
+}
