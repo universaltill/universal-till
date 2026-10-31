@@ -2054,15 +2054,24 @@ body.osk-padded .item-form-modal { block-size: calc(100% - var(--osk-reserved-he
    the same height as before (two .425rem row gaps = the .45rem + .4rem of
    the old scan row and two-line action row): 1) barcode field, qty, +; 2) the remaining
    icons (OSK, camera, identify, Hold, New sale, Open orders) sharing the
-   line evenly, each at least 44px at scale 1; 3) Pay alone, full width. Pay
+   line evenly, each at least 44px at scale 1; 3) Pay, full width (unless an
+   icon spills onto its row, ut-docs#5227). Pay
    sits after the icons here, the one place the visual order differs from
    the DOM order. Tab order and the form's submit are unaffected; the
    [hidden] icons stay hidden (no display is set on them). The row-1 basis
    is the full width less qty, + and two gaps, so exactly qty and + join the
    field and nothing else. Capped at 887px: from 888px the tender column
    (>=310px) holds the one-line action row, and three rows there would add
-   height (900x414: field ~120px, one action row, so it keeps the old
-   layout). */
+   height, so 888-900px keeps the old two rows and widens the column
+   instead (ut-docs#5227, block below).
+   ut-docs#5227: Pay is not forced onto a line of its own (it was
+   flex: 1 0 100%). At UI scale >= 1 its 7rem basis never fits beside the
+   3-5 icons of row 2,
+   so it still wraps to row 3 and its 999 grow takes the whole line. With a
+   plugin identify button, the OSK toggle and the camera all shown, row 2
+   has six icons (6 x 2.59rem + gaps = 298px against 251px at 768px), and the
+   sixth now joins Pay's row instead of opening a fourth row that pushed the
+   first tile row out of the products panel. */
 @media (min-width: 768px) and (max-width: 887px) and (max-height: 540px) {
   .pos-container > .tender { flex-flow: row wrap; align-content: start; column-gap: .4rem; row-gap: .425rem; }
   .pos-container > .tender .scan-row,
@@ -2072,7 +2081,23 @@ body.osk-padded .item-form-modal { block-size: calc(100% - var(--osk-reserved-he
   .pos-container > .tender .scan-row button[type="submit"] { flex: 0 0 2.75rem; }
   .pos-container > .tender .scan-row .tender-icon-btn:not([type="submit"]),
   .pos-container > .tender .tender-default-footer > .tender-icon-btn { flex: 1 1 0; min-inline-size: 2.59rem; }
-  .pos-container > .tender .tender-default-footer > .payment-trigger { flex: 1 0 100%; order: 1; }
+  .pos-container > .tender .tender-default-footer > .payment-trigger { flex: 999 1 7rem; order: 1; }
+}
+/* ut-docs#5227: at 888-900px wide and <=540px tall the scan row and the
+   action row each stay one line, and the tender column (309-321px) left
+   the barcode field 55-67px once the OSK toggle joined the camera beside
+   qty and + (it needs ~88px for "Barcode"); a plugin identify button
+   left ~21px. The basket column already runs at its 22rem floor at
+   768-844px wide in this tier (lines and totals whole, the #2918 cases), so
+   here it takes that floor too and its ~72px go to the products/tender
+   column: the field is 127-139px with the OSK toggle, and the tender keeps
+   its two rows (126.92px at 900x414). With a plugin identify button as well
+   it is 73-85px, still short of the ~88px placeholder; a third row would fix
+   that at the cost of height (ut-docs#5235). No divider track exists in
+   this tier, so a saved --basket-col-width is ignored here, as it already
+   is wherever the basket sits at its floor. */
+@media (min-width: 888px) and (max-width: 900px) and (max-height: 540px) {
+  .pos-container { grid-template-columns: var(--pos-basket-min-w) minmax(var(--pos-products-min-w), 1fr); }
 }
 @media (min-width: 481px) and (max-width: 767px) and (max-height: 700px) {
   .pos-container { grid-template-rows: max-content max-content max-content; overflow-y: auto; }

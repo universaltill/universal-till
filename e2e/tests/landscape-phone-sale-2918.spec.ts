@@ -211,6 +211,99 @@ test.describe('landscape phone sale screen (ut-docs#2918)', () => {
     });
   }
 
+  // ut-docs#5227: the two corners #5221 left. Unhides the OSK toggle and the
+  // camera, and with `identify` also a plugin identify button. No plugin
+  // answers catalog.identify on the shared worker till (its real one needs
+  // the WASM seed, plugin-identify-camera-errors-4102.spec.ts), so a missing
+  // one is stood in by a copy of the camera button under the real id: for
+  // layout only its box in the scan row matters.
+  const showIcons = (page: import('@playwright/test').Page, identify: boolean) =>
+    page.evaluate((identify) => {
+      if (identify && !document.querySelector('#plugin-identify-open')) {
+        const cam = document.querySelector('#barcode-scan-open')!;
+        const stand = cam.cloneNode(true) as HTMLElement;
+        stand.id = 'plugin-identify-open';
+        cam.after(stand);
+      }
+      const sel = identify ? '[data-osk-toggle], #barcode-scan-open, #plugin-identify-open' : '[data-osk-toggle], #barcode-scan-open';
+      document.querySelectorAll<HTMLElement>(sel).forEach((el) => { el.hidden = false; });
+    }, identify);
+  const fieldFit = (page: import('@playwright/test').Page) =>
+    page.locator('.scan-row input[name="code"]').evaluate((el: HTMLInputElement) => {
+      const cs = getComputedStyle(el);
+      const ctx = document.createElement('canvas').getContext('2d')!;
+      ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      const need = ctx.measureText(el.placeholder).width
+        + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)
+        + parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
+      return { width: el.getBoundingClientRect().width, need };
+    });
+  const tenderHeight = (page: import('@playwright/test').Page) =>
+    page.locator('.pos-container > .tender').evaluate((el) => el.getBoundingClientRect().height);
+
+  // 888-900px x <=540px: the field kept 55-67px beside qty, +, the OSK toggle
+  // and the camera. Still two rows: one scan row, one action row (126.92px).
+  for (const vp of [{ width: 888, height: 414 }, { width: 900, height: 414 }, { width: 900, height: 540 }]) {
+    test(`${vp.width}x${vp.height}: barcode field shows its placeholder with the OSK toggle, tender no taller (ut-docs#5227)`, async ({ page }) => {
+      const assertClean = watchConsole(page);
+      await page.setViewportSize(vp);
+      await page.goto('/');
+      await page.waitForSelector('.pos-container');
+      await addItems(page);
+      await showIcons(page, false);
+      const m = await fieldFit(page);
+      expect(m.width, 'barcode field fits its placeholder').toBeGreaterThanOrEqual(m.need);
+      expect(await tenderHeight(page), 'tender keeps its two rows').toBeLessThanOrEqual(127.5);
+      const g = await iconBoxes(page);
+      for (const b of g.icons) {
+        expect(b.w, 'icon width >= 44px').toBeGreaterThanOrEqual(43.9);
+        expect(b.h, 'icon height >= 44px').toBeGreaterThanOrEqual(43.9);
+      }
+      expect(g.pay.top, 'Pay shares the action row').toBe(g.hold.top);
+      expect(g.pay.clipped, 'Pay label is not ellipsised').toBe(false);
+      const pay = await wholeAndHit(payButton(page));
+      expect(pay.inView && pay.hit, 'Pay whole').toBe(true);
+      const tile = await wholeAndHit(page.locator('.pos-container > .products :is(.category-tile, .tile, .btn-tile)').first());
+      expect(tile.inView, 'a tile row still shows unscrolled').toBe(true);
+      const totals = await wholeAndHit(page.locator('.basket .totals'));
+      expect(totals.inView && totals.hit, 'totals whole in the narrower basket').toBe(true);
+      const overflowX = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+      expect(overflowX, 'no horizontal page overflow').toBeLessThanOrEqual(0);
+      assertClean();
+    });
+  }
+
+  // 768-887px x <=540px with identify, the OSK toggle and the camera: six
+  // icons on row 2 (298px against 251px) wrapped one to a fourth row. The
+  // sixth now joins Pay's row; the tender keeps three rows (180.47px).
+  for (const vp of [{ width: 768, height: 400 }, { width: 768, height: 480 }, { width: 887, height: 414 }]) {
+    test(`${vp.width}x${vp.height}: six icons stay in three rows, each >= 44px, a tile row and Pay unscrolled (ut-docs#5227)`, async ({ page }) => {
+      const assertClean = watchConsole(page);
+      await page.setViewportSize(vp);
+      await page.goto('/');
+      await page.waitForSelector('.pos-container');
+      await addItems(page);
+      await showIcons(page, true);
+      const g = await iconBoxes(page);
+      expect(g.icons.length, '+, OSK, camera, identify, Hold, New sale, Open orders').toBe(7);
+      for (const b of g.icons) {
+        expect(b.w, 'icon width >= 44px').toBeGreaterThanOrEqual(43.9);
+        expect(b.h, 'icon height >= 44px').toBeGreaterThanOrEqual(43.9);
+      }
+      const rows = new Set([...g.icons.map((b) => b.top), g.pay.top]);
+      expect(rows.size, 'icons and Pay on three rows, no fourth').toBe(3);
+      expect(g.pay.clipped, 'Pay label is not ellipsised').toBe(false);
+      expect(await tenderHeight(page), 'tender must not grow').toBeLessThanOrEqual(180.5);
+      const m = await fieldFit(page);
+      expect(m.width, 'barcode field fits its placeholder').toBeGreaterThanOrEqual(m.need);
+      const pay = await wholeAndHit(payButton(page));
+      expect(pay.inView && pay.hit, 'Pay whole and hit-testable').toBe(true);
+      const tile = await wholeAndHit(page.locator('.pos-container > .products :is(.category-tile, .tile, .btn-tile)').first());
+      expect(tile.inView, 'a tile row still shows unscrolled').toBe(true);
+      assertClean();
+    });
+  }
+
   for (const vp of PINNED) {
     test(`${vp.width}x${vp.height}: Pay pinned whole; one scroll shows the totals`, async ({ page }) => {
       const assertClean = watchConsole(page);
