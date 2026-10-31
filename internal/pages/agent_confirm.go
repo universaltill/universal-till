@@ -107,8 +107,12 @@ func agentConfirmCard(p *agentaction.Proposal, locale string) *pluginview.ViewCo
 		ConfirmLabel: fmt.Sprintf(httpx.T(locale, "agent.confirm.button"), httpx.FormatDecimal(strconv.Itoa(len(p.Rows)), locale)),
 	}
 	for _, r := range p.Rows {
+		item := r.Item
+		if r.ItemKey != "" {
+			item = httpx.T(locale, r.ItemKey)
+		}
 		c.Rows = append(c.Rows, pluginview.ViewConfirmRow{
-			Item: r.Item, Field: httpx.T(locale, r.FieldKey),
+			Item: item, Field: httpx.T(locale, r.FieldKey),
 			Before: agentValue(r.Before, locale), After: agentValue(r.After, locale),
 		})
 	}
@@ -119,6 +123,8 @@ func agentValue(v agentaction.Value, locale string) string {
 	switch v.Kind {
 	case "text":
 		return v.Text
+	case "key":
+		return httpx.T(locale, v.Text)
 	case "money":
 		return httpx.FormatMoneyIn(v.Minor, httpx.ActiveCurrency().Code, locale)
 	case "number":
@@ -142,6 +148,12 @@ func registerAgentProposals(mux *http.ServeMux, d *common.Deps) {
 			// A till that follows a main till forwards catalogue saves
 			// there; an agent change is never forwarded.
 			return "catalogue is edited on the main till"
+		}
+		if a.Area == "settings" && d.SyncPrimaryURL(ctx) != "" {
+			// A shop-wide setting changes on the main till and the
+			// satellites follow by sync (ADR-0086); an agent change is
+			// never forwarded.
+			return "settings are changed on the main till"
 		}
 		return ""
 	})
@@ -216,6 +228,15 @@ func agentProposalDecide(w http.ResponseWriter, r *http.Request, d *common.Deps,
 	if len(res.Stock) > 0 {
 		d.NudgeLink(fleetlink.ScopeStock)
 	}
+	for _, c := range res.Settings {
+		// The manual screen's d.SetState: the live runtime state follows
+		// the row just committed (only the stock guard lives in it), no
+		// restart. Never a LoadState: it would reset unrelated fields.
+		if c.Key == common.KeyAllowNegativeInventory {
+			on, _ := strconv.ParseBool(c.Value)
+			d.UpdateState(func(s *common.RuntimeState) { s.AllowNegativeInventory = on })
+		}
+	}
 	render(http.StatusOK, agentNotice{Level: "info", Key: "agent.notice.applied", Count: httpx.FormatDecimal(strconv.Itoa(res.Changes), locale)})
 	notifyAgentPlugin(ctx, d, p, "applied")
 }
@@ -255,6 +276,8 @@ func agentRoleAllows(ctx context.Context, d *common.Deps, u auth.User, perm stri
 		can, err = d.AuthSvc.Can(ctx, u, "catalog_management")
 	case "stock_management":
 		can, err = d.AuthSvc.Can(ctx, u, "stock_management")
+	case "settings":
+		can, err = d.AuthSvc.Can(ctx, u, "settings")
 	default:
 		return false
 	}

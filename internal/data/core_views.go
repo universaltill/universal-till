@@ -368,6 +368,13 @@ var coreViews = map[string]CoreView{
 	"shop.context.v1": {
 		Name: "shop.context.v1", Permission: "view:sales", DataClass: DataClassShop, Run: runShopContext("shop.context.v1"),
 	},
+	// ut-docs#4129: every Settings region as the assistant explains it
+	// (label, help, deep link, whether it may change it, the current value
+	// when readable). Shop facts, no secrets: the catalogue has no entry
+	// for one (agent_settings.go).
+	"settings.describe.v1": {
+		Name: "settings.describe.v1", Permission: "view:shop", DataClass: DataClassShop, Run: runSettingsDescribe,
+	},
 	// ut-docs#4045 (ADR-0121 §5 amendment): the same row under view:shop, a
 	// non-★ class, so a plugin that only shows prices (catalog.items.v1's
 	// price_minor) learns the decimals without view:sales, which also opens

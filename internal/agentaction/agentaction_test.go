@@ -24,12 +24,13 @@ func put(t *testing.T, s *Store, o Operator) (string, error) {
 }
 
 func TestRegistry_OnlyTheTwoActions_2838(t *testing.T) {
-	if len(registry) != 2 {
-		t.Fatalf("registry has %d actions, want 2 (catalog.item.create.v1, stock.adjust.v1)", len(registry))
+	if len(registry) != 3 {
+		t.Fatalf("registry has %d actions, want 3 (catalog.item.create.v1, stock.adjust.v1, settings.set.v1)", len(registry))
 	}
 	for name, want := range map[string][2]string{
 		"catalog.item.create.v1": {"catalog", "catalog_management"},
 		"stock.adjust.v1":        {"stock", "stock_management"},
+		"settings.set.v1":        {"settings", "settings"},
 	} {
 		a, ok := Lookup(name)
 		if !ok || a.Area != want[0] || a.RolePermission != want[1] {

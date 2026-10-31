@@ -27,6 +27,8 @@ func TestCoreViewRegistry_FirstSet(t *testing.T) {
 		"shop.context.v2": "view:shop",
 		// ut-docs#4094: which active items have a reference photo.
 		"catalog.photos.v1": "view:inventory",
+		// ut-docs#4129: setting explanations, under the non-sensitive class.
+		"settings.describe.v1": "view:shop",
 	}
 	if len(coreViews) != len(want) {
 		t.Fatalf("%d views registered, want the %d of ADR-0121 §5 + ADR-0149 §6 + ut-docs#4034/#4045/#4094", len(coreViews), len(want))
@@ -191,6 +193,7 @@ func TestCoreViewRowShapesArePinned(t *testing.T) {
 		{"shop.context.v1", ShopContextRow{}, "store_name till_name currency_code currency_decimals locale"},
 		{"shop.context.v2", ShopContextRow{}, "store_name till_name currency_code currency_decimals locale"},
 		{"catalog.photos.v1", CatalogPhotoViewRow{}, "item_id source photo_at"},
+		{"settings.describe.v1", AgentSettingViewRow{}, "key link label help? kind writable value?"},
 	}
 	for _, p := range pinned {
 		var keys []string
