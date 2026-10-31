@@ -10,6 +10,31 @@
 
 ---
 
+## 🌍 Help translate Universal Till
+
+Your language, your shop. Anyone can help translate the till in a browser, with no code and no Git:
+**[translate.universaltill.com](https://translate.universaltill.com/engage/universal-till/)** — sign in, pick a language, fix or add wording. Native speakers are very welcome, especially for French, Chinese, Malay, Spanish, Portuguese, Turkish, Arabic and Persian. Suggestions are reviewed before they reach tills.
+
+<a href="https://translate.universaltill.com/engage/universal-till/"><img src="https://translate.universaltill.com/widget/universal-till/svg-badge.svg" alt="Translation status"></a>
+
+Pick your language and help finish it:
+
+| Language | Status |
+|---|---|
+| Deutsch | <a href="https://translate.universaltill.com/engage/universal-till/-/de/"><img src="https://translate.universaltill.com/widget/universal-till/-/de/svg-badge.svg" alt="Deutsch translation status"></a> |
+| Español | <a href="https://translate.universaltill.com/engage/universal-till/-/es/"><img src="https://translate.universaltill.com/widget/universal-till/-/es/svg-badge.svg" alt="Español translation status"></a> |
+| Português | <a href="https://translate.universaltill.com/engage/universal-till/-/pt/"><img src="https://translate.universaltill.com/widget/universal-till/-/pt/svg-badge.svg" alt="Português translation status"></a> |
+| Français | <a href="https://translate.universaltill.com/engage/universal-till/-/fr/"><img src="https://translate.universaltill.com/widget/universal-till/-/fr/svg-badge.svg" alt="Français translation status"></a> |
+| Türkçe | <a href="https://translate.universaltill.com/engage/universal-till/-/tr/"><img src="https://translate.universaltill.com/widget/universal-till/-/tr/svg-badge.svg" alt="Türkçe translation status"></a> |
+| العربية | <a href="https://translate.universaltill.com/engage/universal-till/-/ar/"><img src="https://translate.universaltill.com/widget/universal-till/-/ar/svg-badge.svg" alt="العربية translation status"></a> |
+| فارسی | <a href="https://translate.universaltill.com/engage/universal-till/-/fa/"><img src="https://translate.universaltill.com/widget/universal-till/-/fa/svg-badge.svg" alt="فارسی translation status"></a> |
+| 简体中文 | <a href="https://translate.universaltill.com/engage/universal-till/-/zh_Hans/"><img src="https://translate.universaltill.com/widget/universal-till/-/zh_Hans/svg-badge.svg" alt="简体中文 translation status"></a> |
+| Bahasa Melayu | <a href="https://translate.universaltill.com/engage/universal-till/-/ms/"><img src="https://translate.universaltill.com/widget/universal-till/-/ms/svg-badge.svg" alt="Bahasa Melayu translation status"></a> |
+
+Your language is not listed? Say so on the [translation page](https://translate.universaltill.com/engage/universal-till/) and we will add it.
+
+---
+
 ## 🚀 What is Universal Till?
 
 **Universal Till** is a modern, free, and open-source point of sale (POS) system designed to run on **any hardware** — from Raspberry Pis to old tablets to professional POS terminals.
@@ -109,8 +134,7 @@ Owners manage the shop from any browser at
 - Multi-location management
 
 ### Plugin Marketplace
-Available now: Stripe / QR Pay / demo card payments, German & Spanish
-language packs, themes, a "No Sale" register-drawer plugin, an AI
+Available now: Stripe / QR Pay / demo card payments, themes, a "No Sale" register-drawer plugin, an AI
 assistant (self-hosted by default; a shop may opt into a hosted provider
 with its own key — ADR-0085), a webhook/ERP connector, and a help/FAQ
 plugin. One-click
@@ -575,9 +599,6 @@ keep it updated.
 | AI Assistant | integration | [ut-plugin-integration-ai](https://github.com/universaltill/ut-plugin-integration-ai) | [latest](https://github.com/universaltill/ut-plugin-integration-ai/releases/latest/download/latest.tar.gz) |
 | Webhook / ERP Connector | integration | [ut-plugin-integration-webhook](https://github.com/universaltill/ut-plugin-integration-webhook) | not packaged yet |
 | No-Sale Button | button | [ut-plugin-button-nosale](https://github.com/universaltill/ut-plugin-button-nosale) | [latest](https://github.com/universaltill/ut-plugin-button-nosale/releases/latest/download/latest.tar.gz) |
-| Spanish (Español) | language | [ut-plugin-language-es](https://github.com/universaltill/ut-plugin-language-es) | [latest](https://github.com/universaltill/ut-plugin-language-es/releases/latest/download/latest.tar.gz) |
-| German (Deutsch) | language | [ut-plugin-language-de](https://github.com/universaltill/ut-plugin-language-de) | [latest](https://github.com/universaltill/ut-plugin-language-de/releases/latest/download/latest.tar.gz) |
-| Portuguese (Português) | language | [ut-plugin-language-pt](https://github.com/universaltill/ut-plugin-language-pt) | [latest](https://github.com/universaltill/ut-plugin-language-pt/releases/latest/download/latest.tar.gz) |
 | Screen Top Theme | theme | [ut-plugin-theme-screen-top](https://github.com/universaltill/ut-plugin-theme-screen-top) | [latest](https://github.com/universaltill/ut-plugin-theme-screen-top/releases/latest/download/latest.tar.gz) |
 | Buttons Left Theme | theme | [ut-plugin-theme-buttons-left](https://github.com/universaltill/ut-plugin-theme-buttons-left) | [latest](https://github.com/universaltill/ut-plugin-theme-buttons-left/releases/latest/download/latest.tar.gz) |
 | Midnight Theme | theme | [ut-plugin-theme-midnight](https://github.com/universaltill/ut-plugin-theme-midnight) | [latest](https://github.com/universaltill/ut-plugin-theme-midnight/releases/latest/download/latest.tar.gz) |
@@ -664,13 +685,14 @@ Built into core (`web/locales/`), including full RTL layout:
 - Persian / Farsi (fa) — RTL
 - Turkish (tr)
 
-Available as install-time language plugins (offered right on the setup
-wizard's language step, installing on selection):
-- German (de) — `ut-plugin-language-de`
-- Spanish (es) — `ut-plugin-language-es`
-- Portuguese, European (pt) — `ut-plugin-language-pt`
+Further languages are translated by the community in
+[Weblate](https://translate.universaltill.com/engage/universal-till/) and
+reach tills as signed language bundles, offered right on the setup wizard's
+language step and installed on selection (German first; Spanish, Portuguese,
+French, Chinese, Malay and more follow as their translations are approved).
+The old per-language plugin repos (`ut-plugin-language-*`) are being retired.
 
-Want to add your language? See [CONTRIBUTING.md](CONTRIBUTING.md) for translation guidelines.
+Want to add or improve a language? Translate it in your browser at [translate.universaltill.com](https://translate.universaltill.com/engage/universal-till/); see [CONTRIBUTING.md](CONTRIBUTING.md) for the guidelines.
 
 ---
 
@@ -688,7 +710,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
       nav rail — added since)
 - [x] Plugin marketplace with one-click install (`ut-cloud`, ADR-0018) — live at [cloud.universaltill.com](https://cloud.universaltill.com)
 - [x] Payment plugins: Stripe, QR Pay, demo card terminal, SumUp (reader-driven)
-- [x] Language plugins: German, Spanish (core ships en/ar/fa/tr)
+- [x] Language bundles translated in Weblate: German live, more rolling out (core ships en/ar/fa/tr)
 - [x] Theme plugins, FAQ / help plugin
 - [x] AI assistant plugin (camera item ID, "Ask your till") — runs inside the plugin (WASM, ut-docs#2851); self-hosted by default, hosted Claude or OpenAI as a shop's own-key opt-in (ADR-0085, ut-docs#1791)
 - [x] Webhook connector plugin (`ut-plugin-integration-webhook`) — reference/template for real ERP connectors, not itself a finished SAP/Dynamics integration (ADR-0014)
