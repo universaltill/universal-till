@@ -23,7 +23,7 @@ permissions:
   contents: read
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15 # Apple Silicon; macos-14 is retired 2026-11-02 (ut-docs#5214)
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7

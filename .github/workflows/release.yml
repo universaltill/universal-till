@@ -466,7 +466,7 @@ jobs:
     # Same for a goreleaser CANCELLED by starvation (ut-docs#5209).
     needs: [prepare, goreleaser]
     if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.goreleaser.result != 'skipped' && needs.goreleaser.result != 'cancelled' }}
-    runs-on: macos-14 # Apple Silicon
+    runs-on: macos-15 # Apple Silicon; macos-14 is retired 2026-11-02 (ut-docs#5214)
     # ut-docs#2917: bounded. Notarization alone is capped at NOTARY_TIMEOUT
     # (below); the rest of the build is ~15 min. On timeout/rejection this job
     # fails loudly and no .dmg is attached — the other platforms already
