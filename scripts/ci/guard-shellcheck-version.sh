@@ -23,10 +23,11 @@
 # below (and the test's accepted versions) and say so in the commit/PR.
 set -euo pipefail
 
-# 0.9.0 = the Ubuntu 24 runner image, 0.11.0 = Ubuntu 26. 0.9.0 stays only
-# while actions/runner-images#14748's ubuntu-latest migration is mixed — drop
-# it once every ubuntu-latest job reports 0.11.0 (ut-docs#5207).
-ACCEPTED_VERSIONS=("0.9.0" "0.11.0")
+# 0.11.0 = the Ubuntu 26 runner image. 0.9.0 (the Ubuntu 24 image) was
+# accepted only while actions/runner-images#14748's ubuntu-latest migration
+# was mixed (ut-docs#5207); dropped once every ubuntu-latest job reported
+# 0.11.0 (ut-docs#5208).
+ACCEPTED_VERSIONS=("0.11.0")
 
 if ! command -v shellcheck >/dev/null 2>&1; then
   echo "❌ guard-shellcheck-version: no 'shellcheck' binary found on PATH — expected one of: ${ACCEPTED_VERSIONS[*]} (ubuntu-latest preinstalled)" >&2
@@ -57,7 +58,7 @@ for v in "${ACCEPTED_VERSIONS[@]}"; do
 done
 
 if [[ "${accepted}" -ne 1 ]]; then
-  echo "❌ guard-shellcheck-version: installed shellcheck is ${actual_version}, expected one of: ${ACCEPTED_VERSIONS[*]} (ut-docs#1955, ut-docs#5207)" >&2
+  echo "❌ guard-shellcheck-version: installed shellcheck is ${actual_version}, expected one of: ${ACCEPTED_VERSIONS[*]} (ut-docs#1955, ut-docs#5207, ut-docs#5208)" >&2
   echo "   This usually means the ubuntu-latest runner image shipped a new shellcheck build." >&2
   echo "   If ${actual_version}'s findings on scripts/ci/*.sh have been reviewed and are clean, add it to ACCEPTED_VERSIONS in this script deliberately." >&2
   exit 1
