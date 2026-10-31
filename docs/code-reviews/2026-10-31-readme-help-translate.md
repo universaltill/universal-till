@@ -19,3 +19,11 @@ nothing reaches tills without approval and the signed bundle build.
 
 ## Findings
 Reviewed by the author only (docs-only, a reviewer agent would cost more than the change). No findings.
+
+## Addendum: remove the old language-plugin links
+Owner pointed out README still linked the three `ut-plugin-language-*` repos
+(marketplace table, Internationalization section, roadmap). Those are being
+retired (ut-docs#5189): languages now ship as Weblate-translated signed bundles
+(ADR-0160). Rows and links removed; the section now says German is live and
+others follow once approved. Still true in code: the bundle installs under the
+same plugin id, so nothing in the product flow changed.
