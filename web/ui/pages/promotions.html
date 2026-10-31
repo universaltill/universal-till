@@ -34,7 +34,7 @@
           <td>{{ if .IsActive }}{{ T "promotions.active" }}{{ else }}<span class="muted">{{ T "promotions.inactive" }}</span>{{ end }}</td>
           <td class="users-actions">
             <form method="post" action="/api/promotions/{{ .Code }}/edit" class="users-inline" x-data="{ type: '{{ .Type }}' }">
-              <select name="type" x-model="type">
+              <select name="type" x-model="type" aria-label="{{ T "promotions.col.type" }}">
                 <option value="amount">{{ T "promotions.type.amount" }}</option>
                 <option value="percent">{{ T "promotions.type.percent" }}</option>
               </select>
@@ -43,11 +43,11 @@
                    it in (same root cause as ut-docs#1249/#1272) -- switching
                    to text+inputmode="decimal" avoids that; range/positivity
                    is already enforced server-side (parsePromotionForm). -->
-              <input type="text" inputmode="decimal" {{ moneypatternlocal currency.Decimals false }} name="value_amount" x-show="type === 'amount'" value="{{ majorlocal .ValueAmountMajor }}" style="width:5rem" placeholder="{{ T "promotions.col.value" }}" />
-              <input type="text" inputmode="decimal" {{ percentpatternlocal }} name="value_percent" x-show="type === 'percent'" value="{{ .ValuePercent }}" style="width:5rem" placeholder="{{ T "promotions.col.value" }}" />
-              <input type="text" name="description" value="{{ .Description }}" placeholder="{{ T "promotions.field.description" }}" style="width:8rem" />
-              <input type="date" name="starts_at" value="{{ .StartsAtDate }}" />
-              <input type="date" name="ends_at" value="{{ .EndsAtDate }}" />
+              <input type="text" inputmode="decimal" {{ moneypatternlocal currency.Decimals false }} name="value_amount" x-show="type === 'amount'" aria-label="{{ T "promotions.col.value" }}" value="{{ majorlocal .ValueAmountMajor }}" style="width:5rem" placeholder="{{ T "promotions.col.value" }}" />
+              <input type="text" inputmode="decimal" {{ percentpatternlocal }} name="value_percent" x-show="type === 'percent'" aria-label="{{ T "promotions.col.value" }}" value="{{ .ValuePercent }}" style="width:5rem" placeholder="{{ T "promotions.col.value" }}" />
+              <input type="text" name="description" value="{{ .Description }}" aria-label="{{ T "promotions.field.description" }}" placeholder="{{ T "promotions.field.description" }}" style="width:8rem" />
+              <input type="date" aria-label="{{ T "promotions.field.starts_at" }}" title="{{ T "promotions.field.starts_at" }}" name="starts_at" value="{{ .StartsAtDate }}" />
+              <input type="date" aria-label="{{ T "promotions.field.ends_at" }}" title="{{ T "promotions.field.ends_at" }}" name="ends_at" value="{{ .EndsAtDate }}" />
               <input type="hidden" name="customer_id" value="{{ .CustomerID }}" />
               <button type="submit" class="btn secondary">{{ T "promotions.edit" }}</button>
             </form>
