@@ -38,15 +38,16 @@ identity, because GitHub would then credit nobody.
 
 ## Translations
 
-The till ships English, Turkish, Arabic and Persian in `web/locales/`. Other
-languages are separate language-pack plugins, for example
-[ut-plugin-language-de](https://github.com/universaltill/ut-plugin-language-de)
-and [ut-plugin-language-es](https://github.com/universaltill/ut-plugin-language-es).
-To add a language, start from `web/locales/en.json` and open a pull request
-for a new `ut-plugin-language-<code>` pack.
+Translate in your browser at
+[translate.universaltill.com](https://translate.universaltill.com/engage/universal-till/):
+sign in, pick a language and edit. No Git needed. Translations are stored in
+[ut-translations](https://github.com/universaltill/ut-translations) and reach
+tills as signed language bundles. Older language-pack plugins (`ut-plugin-language-*`) are
+being replaced by these bundles.
 
 A translation must mean the same as the English. Having every key present is
-not enough. Shop owners can also change any wording on their own till under
+not enough. Receipt and legal wording is reviewed by a person before it
+ships. Shop owners can also change any wording on their own till under
 **Menu → Administration → Translations**.
 
 ## Plugins

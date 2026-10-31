@@ -10,6 +10,13 @@
 
 ---
 
+## 🌍 Help translate Universal Till
+
+Your language, your shop. Anyone can help translate the till in a browser, with no code and no Git:
+**[translate.universaltill.com](https://translate.universaltill.com/engage/universal-till/)** — sign in, pick a language, fix or add wording. Native speakers are very welcome, especially for French, Chinese, Malay, Spanish, Portuguese, Turkish, Arabic and Persian. Suggestions are reviewed before they reach tills.
+
+---
+
 ## 🚀 What is Universal Till?
 
 **Universal Till** is a modern, free, and open-source point of sale (POS) system designed to run on **any hardware** — from Raspberry Pis to old tablets to professional POS terminals.
@@ -670,7 +677,7 @@ wizard's language step, installing on selection):
 - Spanish (es) — `ut-plugin-language-es`
 - Portuguese, European (pt) — `ut-plugin-language-pt`
 
-Want to add your language? See [CONTRIBUTING.md](CONTRIBUTING.md) for translation guidelines.
+Want to add or improve a language? Translate it in your browser at [translate.universaltill.com](https://translate.universaltill.com/engage/universal-till/); see [CONTRIBUTING.md](CONTRIBUTING.md) for the guidelines.
 
 ---
 
