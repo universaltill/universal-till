@@ -117,3 +117,11 @@ call in JS: all are width-only and unaffected.
 
 ## Verdict
 Safe to merge. The change is CSS only and scoped to 481-900px-wide windows up to 700px tall. Wider, taller and <=480px layouts are untouched.
+
+## Addendum: docs-shots surface hash
+CI's `guard-docs-shots_test.sh` flagged the manual's screenshots as stale,
+because `app.css` changed. Every docs-shot is taken at 1024x600
+(`e2e/playwright.docs.config.ts`). Every changed rule is scoped to
+`max-width: 900px`, so no screenshotted pixel can change. Only the surface
+hash was refreshed (`scripts/ci/update-docs-shots-surface-hash.sh`, commit
+trailer `Docs-Shots-Unchanged: true`).
